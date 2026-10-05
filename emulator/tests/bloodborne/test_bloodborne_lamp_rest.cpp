@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -117,4 +118,20 @@ TEST(BloodborneLampRest, NobodyRefreshesAloneOrWithoutResting) {
     EXPECT_FALSE(coordinator.Tick(CentralYharnamLamp, 1, both));
     // A third member who has not sat down yet holds the party back.
     EXPECT_FALSE(coordinator.Tick(CentralYharnamLamp, 3, both));
+}
+
+TEST(BloodborneLampRest, ARestDoesWhatTheLampReloadWouldDoWithoutTheLoad) {
+    std::vector<std::string> calls;
+    static std::vector<std::string>* log;
+    log = &calls;
+    const LampRestCalls rest_calls{
+        .request_full_recover = [] { log->push_back("heal"); },
+        .clamp_restock_item = [] { log->push_back("clamp"); },
+        .restock_from_storage = [] { log->push_back("restock"); },
+        .request_world_respawn = [] { log->push_back("respawn"); },
+    };
+    EXPECT_TRUE(RefreshAtLamp(rest_calls));
+    EXPECT_EQ(calls, (std::vector<std::string>{"heal", "clamp", "restock", "respawn"}));
+
+    EXPECT_FALSE(RefreshAtLamp(LampRestCalls{})) << "nothing to call, nothing done";
 }

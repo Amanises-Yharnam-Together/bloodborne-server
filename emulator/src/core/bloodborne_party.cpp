@@ -242,6 +242,18 @@ bool LampRestCoordinator::Tick(std::optional<s32> resting_lamp, s32 session_memb
     return refresh;
 }
 
+bool RefreshAtLamp(const LampRestCalls& calls) {
+    if (!calls.request_full_recover || !calls.clamp_restock_item || !calls.restock_from_storage ||
+        !calls.request_world_respawn) {
+        return false;
+    }
+    calls.request_full_recover();
+    calls.clamp_restock_item();
+    calls.restock_from_storage();
+    calls.request_world_respawn();
+    return true;
+}
+
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {
     if (!observation.player_valid || !observation.map_usable || observation.stage_transition) {
         stable_ticks = 0;

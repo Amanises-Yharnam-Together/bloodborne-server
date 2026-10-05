@@ -187,6 +187,17 @@ private:
     bool everyone_was_resting = false;
 };
 
+// What a lamp reload would do, in place: heal, refill vials and bullets from storage the way the
+// respawn load does (0x01939470 calls 0x014DBB70 then 0x014DACE0), and respawn the world's
+// enemies (WorldChrMan +0xA6C, see the emulator). The session is untouched.
+struct LampRestCalls {
+    void (*request_full_recover)() = nullptr;
+    void (*clamp_restock_item)() = nullptr;
+    void (*restock_from_storage)() = nullptr;
+    void (*request_world_respawn)() = nullptr;
+};
+bool RefreshAtLamp(const LampRestCalls& calls);
+
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
 // Resonant) once the world has been stable for a while.

@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "common/logging/log.h"
@@ -1841,6 +1842,13 @@ constexpr s32 LampTouchAnimation = 101160;
 // (4) and the characters are released again (5, then 0). The healing fountain update requests it
 // 1.33 s after OnEvent_BonfireRespawn, which no Bloodborne talk script sends.
 constexpr u64 WorldRespawnStateOffset = 0xA6C;
+// The two restock steps of the respawn load (0x01939470): 0x014DBB70 sorts out one goods entry
+// (0x40000385) first, 0x014DACE0 then moves every goods with the restock flag from the storage
+// box into the inventory, up to its limit. Neither takes arguments.
+constexpr u64 RestockItemClampOffset = 0x014DBB70;
+constexpr u64 RestockFromStorageOffset = 0x014DACE0;
+constexpr std::array<u8, 7> RestockItemClampPrologue{0x55, 0x48, 0x89, 0xE5, 0x48, 0x8D, 0x05};
+
 // GlobalState +0x16F8 -> +0x14: players in the session (the count ESD function 52 checks).
 constexpr u64 SessionPlayersOffset = 0x16F8;
 
@@ -1848,6 +1856,7 @@ std::mutex lamp_rest_mutex;
 LampRestState lamp_rest;
 LampRestCoordinator lamp_rest_coordinator;
 bool lamp_rest_hooks_installed{};
+std::optional<std::chrono::steady_clock::time_point> lamp_touch_animation_at;
 alignas(16) std::array<u8, 0x100> no_talk_flag_range{}; // +0xA0 = +0xA4 = 0
 
 // What the game thread tells the rest board client, and what the client last heard back.
@@ -1902,9 +1911,9 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
         std::scoped_lock lock{lamp_rest_mutex};
         lamp_rest.Rest(flag, position.value_or(LampPosition{}));
     }
-    using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
-    reinterpret_cast<ForcePlayAnimation>(image_base + ForcePlayAnimationOffset)(
-        0, LocalPlayerEntity, LampTouchAnimation);
+    // Played from TickLampRest once the talk has closed; started here, the closing talk cancels
+    // it.
+    lamp_touch_animation_at = std::chrono::steady_clock::now() + std::chrono::milliseconds{500};
     LOG_INFO(Debug, "Bloodborne party member rests at lamp {} (position known={})", flag,
              position.has_value());
 }
@@ -1912,6 +1921,16 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
 // Both or neither: lamps that work in a session but still travel would take one player away.
 void InstallLampsAsCampfires(u64 base, u64 image_size) {
     if (!party_controller) {
+        return;
+    }
+    const auto starts_with = [base](u64 offset, std::span<const u8> bytes) {
+        return std::ranges::equal(
+            std::span<const u8>{reinterpret_cast<const u8*>(base + offset), bytes.size()}, bytes);
+    };
+    if (!starts_with(RestockItemClampOffset, RestockItemClampPrologue) ||
+        !starts_with(RestockFromStorageOffset,
+                     std::span<const u8>{StandardR15Prologue.data(), 6})) {
+        LOG_ERROR(Debug, "Bloodborne restock functions not found; lamps stay locked in a session");
         return;
     }
     if (EsdIsMultiplayerResultOffset + EsdIsMultiplayerResult.size() > image_size ||
@@ -1999,18 +2018,39 @@ std::vector<LampRest> FreshRestBoard() {
     return rest_board;
 }
 
-// Heals like a rest and asks WorldChrMan for the bonfire respawn (see WorldRespawnStateOffset).
+// Does what a reload at the lamp would (see RefreshAtLamp) and asks WorldChrMan for the bonfire
+// respawn (see WorldRespawnStateOffset).
 void RefreshWorldAtLamp(s32 lamp, s32 players) {
-    const bool healed =
-        reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset)();
-    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
-    const s32 respawn = world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : -1;
-    if (respawn == 0) {
-        WriteValue(world, WorldRespawnStateOffset, s32{1});
-    }
+    static s32 respawn_before;
+    respawn_before = -1;
+    const LampRestCalls calls{
+        .request_full_recover =
+            [] {
+                reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset)();
+            },
+        .clamp_restock_item =
+            [] {
+                reinterpret_cast<void PS4_SYSV_ABI (*)()>(image_base + RestockItemClampOffset)();
+            },
+        .restock_from_storage =
+            [] {
+                reinterpret_cast<void PS4_SYSV_ABI (*)()>(image_base + RestockFromStorageOffset)();
+            },
+        .request_world_respawn =
+            [] {
+                const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+                respawn_before =
+                    world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : -1;
+                if (respawn_before == 0) {
+                    WriteValue(world, WorldRespawnStateOffset, s32{1});
+                }
+            },
+    };
+    const bool refreshed = RefreshAtLamp(calls);
     LOG_INFO(Debug,
-             "Bloodborne party of {} rested at lamp {}: healed={} world respawn state {} -> {}",
-             players, lamp, healed, respawn, respawn == 0 ? 1 : respawn);
+             "Bloodborne party of {} rested at lamp {}: refreshed={} (healed, restocked) world "
+             "respawn state {} -> {}",
+             players, lamp, refreshed, respawn_before, respawn_before == 0 ? 1 : respawn_before);
 }
 
 void LogWorldRespawnChanges() {
@@ -2028,6 +2068,13 @@ void TickLampRest() {
         return;
     }
     LogWorldRespawnChanges();
+    if (lamp_touch_animation_at && std::chrono::steady_clock::now() >= *lamp_touch_animation_at) {
+        lamp_touch_animation_at.reset();
+        using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
+        const bool played = reinterpret_cast<ForcePlayAnimation>(
+            image_base + ForcePlayAnimationOffset)(0, LocalPlayerEntity, LampTouchAnimation);
+        LOG_INFO(Debug, "Bloodborne lamp touch animation {} played={}", LampTouchAnimation, played);
+    }
     const bool in_party_session = InPartySession();
     std::optional<s32> resting;
     {
@@ -2369,6 +2416,8 @@ bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64, const GuestRegisterSnapshot*) {
     return true;
 }
 
+bool InPartySession();
+
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers) {
     healing_fountain_availability = {};
     auto& record = healing_fountain_availability;
@@ -2387,7 +2436,8 @@ void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers
 
     record.player = GetLocalPlayer();
     record.host_effect = HasPlayerEffect(record.player, 9001);
-    if (!record.host_effect) {
+    // A party session (either role, see InstallLampsAsCampfires) uses its lamps too.
+    if (!record.host_effect && !InPartySession()) {
         record.result = "not_multiplayer_host";
         return;
     }
@@ -2398,6 +2448,19 @@ void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers
     }
     record.blocked_after = false;
     record.result = "applied";
+    // Diagnostics for lamps in a party session: the other availability bytes (+0x48 special map,
+    // +0x4A missing entity) and the lamp level (+0x28), once per lamp and change.
+    static std::mutex log_mutex;
+    static std::unordered_map<s32, std::string> logged;
+    const s32 entity = ReadValue<s32>(record.object, 0x20);
+    const std::string state =
+        fmt::format("special={} missing={} level={}", ReadValue<u8>(record.object, 0x48),
+                    ReadValue<u8>(record.object, 0x4A), ReadValue<s32>(record.object, 0x28));
+    std::scoped_lock lock{log_mutex};
+    if (logged[entity] != state) {
+        logged[entity] = state;
+        LOG_INFO(Debug, "Bloodborne lamp {} unlocked for the party: {}", entity, state);
+    }
 }
 
 u64 GetSummonManagerRoot() {
