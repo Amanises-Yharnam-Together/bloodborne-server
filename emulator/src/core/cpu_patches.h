@@ -58,6 +58,9 @@ using GuestCodeHook = void PS4_SYSV_ABI (*)(u64 tag, const GuestRegisterSnapshot
 /// caller with every other register as it was at the call.
 using GuestFunctionOverride = bool PS4_SYSV_ABI (*)(u64 tag,
                                                     const GuestRegisterSnapshot* registers);
+/// Like GuestCodeHook, but the guest continues with the general-purpose registers and flags the
+/// hook leaves in the snapshot (every register but rsp and the vector state).
+using GuestRegisterEditHook = void PS4_SYSV_ABI (*)(u64 tag, GuestRegisterSnapshot* registers);
 
 // Windows static guest red-zone protection
 struct RedZonePatchResult {
@@ -90,6 +93,10 @@ bool InstallGuestCodeHook(void* address, std::span<const u8> expected_instructio
 /// GuestFunctionOverride). Only for functions whose callers accept a 0 return value.
 bool InstallGuestFunctionOverride(void* address, std::span<const u8> expected_instructions, u64 tag,
                                   GuestFunctionOverride hook);
+
+/// InstallGuestCodeHook whose hook may change the registers (see GuestRegisterEditHook).
+bool InstallGuestRegisterEditHook(void* address, std::span<const u8> expected_instructions, u64 tag,
+                                  GuestRegisterEditHook hook);
 
 /// Applies CPU patches that need to be done before beginning executions.
 void PrePatchInstructions(u64 segment_addr, u64 segment_size);

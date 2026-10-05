@@ -341,6 +341,7 @@ add_executable(shadps4_bloodborne_test
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_party.cpp
     bloodborne/test_bloodborne_party.cpp
     bloodborne/test_bloodborne_party_controller.cpp
+    bloodborne/test_bloodborne_lamp_rest.cpp
 )
 target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(shadps4_bloodborne_test PRIVATE cxx_std_23)

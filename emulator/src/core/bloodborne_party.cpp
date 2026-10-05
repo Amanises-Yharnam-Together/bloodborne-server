@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <charconv>
 #include <cstring>
 
 #include "core/bloodborne_party.h"
@@ -165,6 +166,80 @@ std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds) {
             static_cast<u8>(value >> 8),
             static_cast<u8>(value >> 16),
             static_cast<u8>(value >> 24)};
+}
+
+bool IsLampTravelFlag(s32 flag) {
+    // 7MMM01LL: map code MMM (241 = m24_01), lamp LL.
+    return flag >= 70000000 && flag < 80000000 && flag % 10000 / 100 == 1;
+}
+
+bool IsPartySession(bool party_configured, s32 matching_state) {
+    return party_configured &&
+           (matching_state == MatchingStateHosting || matching_state == MatchingStateSummonedGuest);
+}
+
+void LampRestState::Rest(s32 rested_lamp, const LampPosition& at) {
+    lamp = rested_lamp;
+    rested_at = at;
+}
+
+std::optional<s32> LampRestState::Tick(const std::optional<LampPosition>& player,
+                                       bool in_party_session) {
+    if (!in_party_session) {
+        lamp.reset();
+    } else if (lamp && player) {
+        float distance_squared = 0.0f;
+        for (std::size_t axis = 0; axis < rested_at.size(); ++axis) {
+            const float delta = (*player)[axis] - rested_at[axis];
+            distance_squared += delta * delta;
+        }
+        if (distance_squared > LeaveDistance * LeaveDistance) {
+            lamp.reset();
+        }
+    }
+    return lamp;
+}
+
+std::string EncodeLampRestUpdate(std::string_view member, s32 lamp) {
+    return std::string{member} + ' ' + std::to_string(lamp);
+}
+
+std::optional<std::vector<LampRest>> ParseLampRestBoard(std::string_view body) {
+    std::vector<LampRest> board;
+    while (!body.empty()) {
+        const std::size_t end = body.find('\n');
+        const std::string_view line = body.substr(0, end);
+        body.remove_prefix(end == std::string_view::npos ? body.size() : end + 1);
+        if (line.empty()) {
+            continue;
+        }
+        const std::size_t space = line.find(' ');
+        if (space == std::string_view::npos || space == 0) {
+            return std::nullopt;
+        }
+        const std::string_view number = line.substr(space + 1);
+        s32 lamp = 0;
+        const auto [rest, error] =
+            std::from_chars(number.data(), number.data() + number.size(), lamp);
+        if (error != std::errc{} || rest != number.data() + number.size()) {
+            return std::nullopt;
+        }
+        board.push_back({std::string{line.substr(0, space)}, lamp});
+    }
+    return board;
+}
+
+bool LampRestCoordinator::Tick(std::optional<s32> resting_lamp, s32 session_members,
+                               std::span<const LampRest> board) {
+    bool everyone_resting = false;
+    if (resting_lamp && session_members > 1) {
+        const auto resting_here = std::ranges::count_if(
+            board, [&](const LampRest& rest) { return rest.lamp == *resting_lamp; });
+        everyone_resting = resting_here >= session_members;
+    }
+    const bool refresh = everyone_resting && !everyone_was_resting;
+    everyone_was_resting = everyone_resting;
+    return refresh;
 }
 
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {

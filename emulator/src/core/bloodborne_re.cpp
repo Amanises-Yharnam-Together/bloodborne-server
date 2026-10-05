@@ -11,6 +11,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -19,10 +20,13 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <vector>
 
 #include "common/logging/log.h"
 #include "common/memory_patcher.h"
@@ -30,8 +34,11 @@
 #include "common/singleton.h"
 #include "core/cpu_patches.h"
 #include "core/debugger.h"
+#include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
 #include "core/memory.h"
+
+#include <httplib.h>
 
 namespace Core::Bloodborne {
 namespace {
@@ -1810,11 +1817,245 @@ void LogLocalEffectChanges() {
     }
 }
 
+// Lamps as campfires (see IsLampTravelFlag). Two register hooks in the talk scripts' native code
+// let a party in a session use its lamps, and turn the travel dialog's flag into a rest; the
+// party's rest board on shadNet tells every member when the whole party rests at one lamp.
+//
+// ESD function 52 ("in multiplayer"): `cmp [count+0x14], 1; setg al; test ecx, ecx; setg cl; or
+// cl, al` (more than one player, or a pending matching). Only the warp chairs (lamps, the
+// Hunter's Dream headstones, chalice lamps) ask it; their multiplayer state has no rest.
+constexpr u64 EsdIsMultiplayerResultOffset = 0x0203C55F;
+constexpr std::array<u8, 7> EsdIsMultiplayerResult{0x85, 0xC9, 0x0F, 0x9F, 0xC1, 0x08, 0xC1};
+// Talk command 11 (SetEventFlag), with the flag in r15d: `mov ecx, [rax+0xA0]; cmp ecx, -1`
+// loads the flag range the talk may set ([rax+0xA0, rax+0xA4], -1 for any). A range that leaves
+// the flag out makes the command skip it.
+constexpr u64 TalkSetEventFlagRangeOffset = 0x0204232E;
+constexpr std::array<u8, 9> TalkSetEventFlagRange{0x8B, 0x88, 0xA0, 0x00, 0x00,
+                                                  0x00, 0x83, 0xF9, 0xFF};
+// ForcePlayAnimation(_, entity, animation) event binding, and the lamp touch common event 7200
+// plays before it warps.
+constexpr u64 ForcePlayAnimationOffset = 0x0132E290;
+constexpr s32 LampTouchAnimation = 101160;
+// WorldChrMan +0xA6C: the bonfire respawn left over from Dark Souls. 1 asks for it; WorldChrMan
+// then respawns every loaded block's characters (3), SprjEmkSystem restarts the event scripts
+// (4) and the characters are released again (5, then 0). The healing fountain update requests it
+// 1.33 s after OnEvent_BonfireRespawn, which no Bloodborne talk script sends.
+constexpr u64 WorldRespawnStateOffset = 0xA6C;
+// GlobalState +0x16F8 -> +0x14: players in the session (the count ESD function 52 checks).
+constexpr u64 SessionPlayersOffset = 0x16F8;
+
+std::mutex lamp_rest_mutex;
+LampRestState lamp_rest;
+LampRestCoordinator lamp_rest_coordinator;
+bool lamp_rest_hooks_installed{};
+alignas(16) std::array<u8, 0x100> no_talk_flag_range{}; // +0xA0 = +0xA4 = 0
+
+// What the game thread tells the rest board client, and what the client last heard back.
+std::atomic<bool> rest_board_active{};
+std::atomic<s32> rest_board_lamp{NotResting};
+std::mutex rest_board_mutex;
+std::vector<LampRest> rest_board;
+std::chrono::steady_clock::time_point rest_board_time{};
+std::jthread rest_board_client;
+
+bool InPartySession() {
+    const u64 multi_play = GetMatchingState();
+    return party_controller.has_value() && multi_play >= 0x10000 &&
+           HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead) &&
+           IsPartySession(true, ReadValue<s32>(multi_play, 0x124));
+}
+
+s32 SessionPlayers() {
+    const u64 global = GetGlobalState();
+    const u64 session = global >= 0x10000 ? ReadValue<u64>(global, SessionPlayersOffset) : 0;
+    return session >= 0x10000 ? ReadValue<s32>(session, 0x14) : 0;
+}
+
+// The local player's position, where the healing fountain update reads it ([+0x3B0]+0x68,
+// then +0x1E0).
+std::optional<LampPosition> LocalPlayerPosition() {
+    const u64 player = GetLocalPlayer();
+    const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
+    const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+    if (physics < 0x10000 || !HasMemoryAccess(physics, 0x1EC, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    return LampPosition{ReadValue<float>(physics, 0x1E0), ReadValue<float>(physics, 0x1E4),
+                        ReadValue<float>(physics, 0x1E8)};
+}
+
+void PS4_SYSV_ABI LetPartyUseLamps(u64, GuestRegisterSnapshot* registers) {
+    if (InPartySession()) {
+        registers->rax &= ~u64{0xFF};
+        registers->rcx = 0;
+    }
+}
+
+void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers) {
+    const s32 flag = static_cast<s32>(registers->r15);
+    if (!IsLampTravelFlag(flag) || !InPartySession()) {
+        return;
+    }
+    registers->rax = reinterpret_cast<u64>(no_talk_flag_range.data());
+    const auto position = LocalPlayerPosition();
+    {
+        std::scoped_lock lock{lamp_rest_mutex};
+        lamp_rest.Rest(flag, position.value_or(LampPosition{}));
+    }
+    using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
+    reinterpret_cast<ForcePlayAnimation>(image_base + ForcePlayAnimationOffset)(
+        0, LocalPlayerEntity, LampTouchAnimation);
+    LOG_INFO(Debug, "Bloodborne party member rests at lamp {} (position known={})", flag,
+             position.has_value());
+}
+
+// Both or neither: lamps that work in a session but still travel would take one player away.
+void InstallLampsAsCampfires(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (EsdIsMultiplayerResultOffset + EsdIsMultiplayerResult.size() > image_size ||
+        TalkSetEventFlagRangeOffset + TalkSetEventFlagRange.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkSetEventFlagRangeOffset),
+                                      TalkSetEventFlagRange, 0, RestInsteadOfLampTravel)) {
+        LOG_ERROR(Debug, "Bloodborne lamp rest hook unavailable; lamps stay locked in a session");
+        return;
+    }
+    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdIsMultiplayerResultOffset),
+                                      EsdIsMultiplayerResult, 0, LetPartyUseLamps)) {
+        LOG_ERROR(Debug, "Bloodborne lamp multiplayer hook unavailable; lamps stay locked in a "
+                         "session");
+        return;
+    }
+    lamp_rest_hooks_installed = true;
+    LOG_INFO(Debug, "Bloodborne lamps as campfires: a party rests at its lamps together");
+}
+
+// Posts this member's rest about once a second while it rests (once more when it stands up) and
+// keeps the board the server answers with. Runs on its own thread; the game never waits for it.
+void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string party) {
+    std::array<u8, 8> random_bytes{};
+    std::random_device random;
+    for (auto& byte : random_bytes) {
+        byte = static_cast<u8>(random());
+    }
+    const std::string member = BytesToHex(random_bytes);
+    httplib::Client client(base_url);
+    client.set_connection_timeout(std::chrono::seconds{1});
+    client.set_read_timeout(std::chrono::seconds{2});
+    const httplib::Headers headers{{"X-ShadPS4-Bloodborne-Party", party}};
+    LOG_INFO(Debug, "Bloodborne party rest board client for {} as member {}", base_url, member);
+
+    std::mutex wait_mutex;
+    std::condition_variable_any wait;
+    s32 posted = NotResting;
+    bool failing = false;
+    while (!stop.stop_requested()) {
+        {
+            std::unique_lock lock{wait_mutex};
+            wait.wait_for(lock, stop, std::chrono::seconds{1}, [] { return false; });
+        }
+        const s32 lamp = rest_board_active.load() ? rest_board_lamp.load() : NotResting;
+        if (lamp == NotResting && posted == NotResting) {
+            continue;
+        }
+        const auto response = client.Post("/bloodborne/party/rest", headers,
+                                          EncodeLampRestUpdate(member, lamp), "text/plain");
+        const auto board =
+            response && response->status == 200 ? ParseLampRestBoard(response->body) : std::nullopt;
+        if (!board) {
+            if (!failing) {
+                LOG_WARNING(Debug, "Bloodborne party rest board unreachable ({})",
+                            response ? std::to_string(response->status)
+                                     : httplib::to_string(response.error()));
+            }
+            failing = true;
+            continue;
+        }
+        failing = false;
+        posted = lamp;
+        std::scoped_lock lock{rest_board_mutex};
+        rest_board = *board;
+        rest_board_time = std::chrono::steady_clock::now();
+    }
+}
+
+void StartRestBoardClient() {
+    const char* party_setting = std::getenv("SHADPS4_BLOODBORNE_PARTY");
+    const auto party = party_setting ? ParsePartySetting(party_setting) : std::nullopt;
+    const std::string base_url = EmulatorSettings.GetShadNetWebApiServer();
+    if (!lamp_rest_hooks_installed || !party || !EmulatorSettings.IsShadNetEnabled() ||
+        base_url.empty()) {
+        return;
+    }
+    rest_board_client = std::jthread(RunRestBoardClient, base_url, *party);
+}
+
+std::vector<LampRest> FreshRestBoard() {
+    std::scoped_lock lock{rest_board_mutex};
+    if (std::chrono::steady_clock::now() - rest_board_time > std::chrono::seconds{3}) {
+        return {};
+    }
+    return rest_board;
+}
+
+// Heals like a rest and asks WorldChrMan for the bonfire respawn (see WorldRespawnStateOffset).
+void RefreshWorldAtLamp(s32 lamp, s32 players) {
+    const bool healed =
+        reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset)();
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const s32 respawn = world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : -1;
+    if (respawn == 0) {
+        WriteValue(world, WorldRespawnStateOffset, s32{1});
+    }
+    LOG_INFO(Debug,
+             "Bloodborne party of {} rested at lamp {}: healed={} world respawn state {} -> {}",
+             players, lamp, healed, respawn, respawn == 0 ? 1 : respawn);
+}
+
+void LogWorldRespawnChanges() {
+    static s32 last = 0;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const s32 state = world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : 0;
+    if (state != last) {
+        LOG_INFO(Debug, "Bloodborne world respawn state {} -> {}", last, state);
+        last = state;
+    }
+}
+
+void TickLampRest() {
+    if (!lamp_rest_hooks_installed) {
+        return;
+    }
+    LogWorldRespawnChanges();
+    const bool in_party_session = InPartySession();
+    std::optional<s32> resting;
+    {
+        std::scoped_lock lock{lamp_rest_mutex};
+        resting = lamp_rest.Tick(LocalPlayerPosition(), in_party_session);
+    }
+    static std::optional<s32> last_resting;
+    if (resting != last_resting) {
+        LOG_INFO(Debug, "Bloodborne party member {} lamp {}", resting ? "rests at" : "left the",
+                 resting.value_or(last_resting.value_or(NotResting)));
+        last_resting = resting;
+    }
+    rest_board_lamp.store(resting.value_or(NotResting));
+    rest_board_active.store(in_party_session);
+
+    const auto board = FreshRestBoard();
+    const s32 players = SessionPlayers();
+    if (lamp_rest_coordinator.Tick(resting, players, board)) {
+        RefreshWorldAtLamp(*resting, players);
+    }
+}
+
 void TickPartyController() {
     LogBloodstainStateChanges();
     LogLocalEffectChanges();
     LogOtherPlayersChanges();
     ObserveLocalAliveState();
+    TickLampRest();
     if (!party_controller) {
         return;
     }
@@ -4453,6 +4694,8 @@ void InstallSeamlessCoopPatches() {
 
     InstallGhostDeathRevive(base, image_size);
     InstallHostDeathKeepsGuests(base, image_size);
+    InstallLampsAsCampfires(base, image_size);
+    StartRestBoardClient();
     PatchSignTimers(base, image_size);
 
     std::memcpy(area_comparison, BeckoningSignedAreaComparison.data(),

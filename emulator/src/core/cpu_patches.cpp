@@ -2419,6 +2419,13 @@ bool InstallGuestFunctionOverride(void* address, std::span<const u8> expected_in
                             reinterpret_cast<const void*>(hook), true);
 }
 
+bool InstallGuestRegisterEditHook(void* address, std::span<const u8> expected_instructions, u64 tag,
+                                  GuestRegisterEditHook hook) {
+    // The trampoline already reloads every register (and the flags) from the snapshot.
+    return InstallGuestHook(address, expected_instructions, tag,
+                            reinterpret_cast<const void*>(hook), false);
+}
+
 void PrePatchInstructions(u64 segment_addr, u64 segment_size) {
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Linux and others have an FS segment pointing to valid memory, so continue to do full

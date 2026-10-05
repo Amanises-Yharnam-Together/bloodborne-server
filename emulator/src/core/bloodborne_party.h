@@ -143,6 +143,50 @@ constexpr float SignRepostSeconds = 5.0f;
 // `mov dword ptr [<reg> + 0x28], <seconds>` with the ModRM byte of the game's own store.
 std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds);
 
+// Lamps as campfires (a party session only; solo and co-op with strangers stay vanilla). A lamp
+// is used through its talk script (t<map><nnn>.esd), which 01.09 hides while the game is in
+// multiplayer (ESD function 52) and which asks "travel to the Hunter's Dream?" by setting
+// 70000100 + map * 10000 + lamp for common event 7200 to warp. In a party session that flag
+// means "rest here" instead, and the world refreshes once the whole party rests at one lamp.
+constexpr s32 NotResting = 0;
+bool IsLampTravelFlag(s32 flag);
+bool IsPartySession(bool party_configured, s32 matching_state);
+
+using LampPosition = std::array<float, 3>;
+
+// Where this player rests: from using a lamp until walking away from it (or the session ends).
+class LampRestState {
+public:
+    static constexpr float LeaveDistance = 4.0f;
+
+    void Rest(s32 lamp, const LampPosition& at);
+    std::optional<s32> Tick(const std::optional<LampPosition>& player, bool in_party_session);
+
+private:
+    std::optional<s32> lamp;
+    LampPosition rested_at{};
+};
+
+// The party's rest board on shadNet (POST /bloodborne/party/rest): each member posts
+// "<member> <lamp>" and gets back one "<member> <lamp>" line per member resting right now.
+struct LampRest {
+    std::string member;
+    s32 lamp = NotResting;
+};
+std::string EncodeLampRestUpdate(std::string_view member, s32 lamp);
+std::optional<std::vector<LampRest>> ParseLampRestBoard(std::string_view body);
+
+// Fires once each time every member of the session comes to rest at the lamp this player rests
+// at. Each member decides for itself; they all see the same board, so they refresh together.
+class LampRestCoordinator {
+public:
+    bool Tick(std::optional<s32> resting_lamp, s32 session_members,
+              std::span<const LampRest> board);
+
+private:
+    bool everyone_was_resting = false;
+};
+
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
 // Resonant) once the world has been stable for a while.
