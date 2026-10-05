@@ -180,6 +180,9 @@ constexpr u64 IsWhiteGhostOffset = 0x01331D80;
 constexpr u64 RequestFullRecoverOffset = 0x01337550;
 constexpr u64 UpDateBloodMarkOffset = 0x013308B0;
 constexpr u64 RevivePlayerOffset = 0x01332B20;
+// 01.09's local-player revive: refills HP and clears the death's controller locks ([+0x58]
+// +0x114 bit 0 and [+0x38]+0x48 bits 0-1), then makes the player a live one (type 0).
+constexpr u64 ReviveLocalCharacterOffset = 0x013179B0;
 // ChrResetAnimation(_, entity): sends the character's behaviour back to idle.
 constexpr u64 ChrResetAnimationOffset = 0x013370F0;
 // Native SoloPlayDeath_2: the local player's death respawn (bloodstain, warp to the last lamp).
@@ -2011,6 +2014,8 @@ void ReviveGuestAfterGhostDeath() {
         .update_blood_mark =
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + UpDateBloodMarkOffset),
         .revive_player = reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RevivePlayerOffset),
+        .revive_local_character =
+            reinterpret_cast<void PS4_SYSV_ABI (*)()>(image_base + ReviveLocalCharacterOffset),
         .restore_alive_state = RestoreLocalAliveState,
         .set_chr_type =
             reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, s32)>(image_base + SetChrTypeOffset),

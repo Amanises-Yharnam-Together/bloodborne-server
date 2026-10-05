@@ -106,14 +106,16 @@ u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes) {
 
 bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
     if (!calls.is_white_ghost || !calls.set_event_flag || !calls.request_full_recover ||
-        !calls.update_blood_mark || !calls.revive_player || !calls.restore_alive_state ||
-        !calls.set_chr_type || !calls.chr_reset_animation || !calls.is_white_ghost()) {
+        !calls.update_blood_mark || !calls.revive_player || !calls.revive_local_character ||
+        !calls.restore_alive_state || !calls.set_chr_type || !calls.chr_reset_animation ||
+        !calls.is_white_ghost()) {
         return false;
     }
     calls.set_event_flag(0, DeathEventFlag, false);
     calls.request_full_recover();
     calls.update_blood_mark();
     calls.revive_player();
+    calls.revive_local_character();
     calls.restore_alive_state();
     calls.set_chr_type(0, LocalPlayerEntity, WhiteGhostCharacterType);
     calls.chr_reset_animation(0, LocalPlayerEntity);

@@ -289,6 +289,9 @@ bool PS4_SYSV_ABI FakeRevivePlayer() {
     revive_calls.push_back("RevivePlayer");
     return true;
 }
+void PS4_SYSV_ABI FakeReviveLocalCharacter() {
+    revive_calls.push_back("ReviveLocalCharacter");
+}
 void FakeRestoreAliveState() {
     revive_calls.push_back("RestoreAliveState");
 }
@@ -305,6 +308,7 @@ constexpr GhostDeathCalls FakeCalls{
     .request_full_recover = FakeRequestFullRecover,
     .update_blood_mark = FakeUpDateBloodMark,
     .revive_player = FakeRevivePlayer,
+    .revive_local_character = FakeReviveLocalCharacter,
     .restore_alive_state = FakeRestoreAliveState,
     .set_chr_type = FakeSetChrType,
     .chr_reset_animation = FakeChrResetAnimation,
@@ -319,7 +323,9 @@ constexpr GhostDeathCalls FakeCalls{
 // set back (SetChrType also refreshes the character) and its behaviour is reset to idle.
 // RevivePlayer also leaves what the kill and the death processing set (the dead bit at +0x1E3 and
 // the action state the death sets): play-testing showed a guest that could attack but not move,
-// took no damage and that enemies ignored, so the state saved while it was alive goes back.
+// took no damage and that enemies ignored, so the state saved while it was alive goes back. The
+// lock itself is the death's controller flags ([+0x58]: +0x114 bit 0, [+0x38]+0x48 bit 0), which
+// 01.09's own local-player revive (0x013179B0) clears along with refilling HP.
 // (A summon reload instead needs the host's side of the summon handshake and drops the session.)
 TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
     revive_calls.clear();
@@ -331,6 +337,7 @@ TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
                                 "RequestFullRecover",
                                 "UpDateBloodMark",
                                 "RevivePlayer",
+                                "ReviveLocalCharacter",
                                 "RestoreAliveState",
                                 "SetChrType 10000 1",
                                 "ChrResetAnimation 10000",

@@ -85,6 +85,7 @@ struct GhostDeathCalls {
     bool PS4_SYSV_ABI (*request_full_recover)() = nullptr;
     bool PS4_SYSV_ABI (*update_blood_mark)() = nullptr;
     bool PS4_SYSV_ABI (*revive_player)() = nullptr;
+    void PS4_SYSV_ABI (*revive_local_character)() = nullptr;
     void (*restore_alive_state)() = nullptr; // ours: see AliveStateSnapshot
     void PS4_SYSV_ABI (*set_chr_type)(u64 unused, s32 entity, s32 type) = nullptr;
     void PS4_SYSV_ABI (*chr_reset_animation)(u64 unused, s32 entity) = nullptr;
