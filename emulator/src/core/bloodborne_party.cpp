@@ -46,6 +46,11 @@ bool StartSummonSearch(u64 player, s32 effect_id, AddSpEffectFn add_sp_effect) {
     return true;
 }
 
+bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending) {
+    return matching_state == MatchingStateSummonedGuest && reload_state != SummonReloadInProgress &&
+           !reload_pending;
+}
+
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {
     if (!observation.player_valid || !observation.map_usable || observation.stage_transition) {
         stable_ticks = 0;

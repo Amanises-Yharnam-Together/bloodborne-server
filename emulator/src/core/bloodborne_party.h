@@ -45,6 +45,16 @@ struct PartyObservation {
     bool search_effect_active = false;
 };
 
+// CSMultiPlayMan session state (+0x124) as seen in the rig, and the summon-reload marker the
+// game sets (+0x84 of the session rules) while it carries a guest into the host's world.
+constexpr s32 MatchingStateHosting = 3;
+constexpr s32 MatchingStateSummonedGuest = 6;
+constexpr s32 SummonReloadInProgress = 3;
+
+// Whether a world teardown must end the session even though the seamless patch keeps it
+// (see the test for why). `reload_pending` is our own deferred summon reload.
+bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending);
+
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
 // Resonant) once the world has been stable for a while.

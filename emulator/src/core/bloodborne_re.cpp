@@ -165,6 +165,8 @@ constexpr std::array<u8, 6> SummonBuildNegativeEventRestriction{
 };
 constexpr std::array<u8, 6> SummonBuildAllowedNegativeEvent{0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
 constexpr u64 StageTransitionStopMatchingCallOffset = 0x019471B1;
+// Same world teardown (0x019470F0), just before it decides whether to stop matching.
+constexpr u64 WorldTeardownMatchingOffset = 0x01947167;
 constexpr std::array<u8, 5> StageTransitionStopMatchingCall{0xE8, 0xEA, 0x95, 0x58, 0x00};
 constexpr std::array<u8, 5> StageTransitionKeepMatchingCall{0xE8, 0xEA, 0x8E, 0x58, 0x00};
 constexpr u64 SummonBuildEntryOffset = 0x01874710;
@@ -228,6 +230,11 @@ constexpr auto CrossMapNativeCalls = std::to_array<NativeCallSignature>({
      SetSummonReloadStateOffset,
      {0xC7, 0x87, 0x84, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xC3},
      11},
+    {"MultiPlayStopRequest",
+     MultiPlayStopRequestOffset,
+     {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
+      0xEC},
+     16},
     {"AddSpEffect",
      AddSpEffectOffset,
      {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
@@ -584,6 +591,11 @@ constexpr auto Sites = std::to_array<TraceSite>({
     {"SummonPoint.Resolve", 0x01582E70, TraceKind::SummonPoint, StandardR15Prologue, 6},
     {"HealingFountain.Register.Native", 0x0133B030, TraceKind::HealingFountainRegistration,
      StandardR15Prologue, 6},
+    {"WorldTeardown.MatchingDecision",
+     WorldTeardownMatchingOffset,
+     TraceKind::MatchingLeaveDecision,
+     {0x48, 0x8D, 0x05, 0x62, 0x65, 0xBF, 0x03},
+     7},
     {"HealingFountain.Availability.Host",
      HealingFountainAvailabilityOffset,
      TraceKind::HealingFountainAvailability,
@@ -752,6 +764,7 @@ bool summon_build_area_patch_installed{};
 bool summon_build_world_state_patch_installed{};
 bool summon_build_negative_event_patch_installed{};
 bool stage_transition_keep_matching_patch_installed{};
+bool world_teardown_hook_installed{};
 bool summon_build_host_placement_hook_installed{};
 bool cross_map_guest_handoff_hook_installed{};
 bool summon_reload_state_hook_installed{};
@@ -1681,6 +1694,29 @@ void TickPartyController() {
     const bool result = StartPlayerSummonSearch(player, party_controller->SearchEffectId());
     LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",
              party_controller->SearchEffectId(), GetCurrentPackedMap(), result);
+}
+
+// A summoned guest leaving the host's world (quit to title...) ends the session like the
+// unpatched game would; the keep-matching patch otherwise leaves the host a ghost member.
+void EndGuestSessionOnWorldTeardown() {
+    const u64 multi_play = GetMatchingState();
+    const u64 rules = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
+    if (multi_play < 0x10000 || !HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead) ||
+        rules < 0x10000 || !HasMemoryAccess(rules, 0x88, MemoryProt::CpuRead)) {
+        return;
+    }
+    const s32 matching_state = ReadValue<s32>(multi_play, 0x124);
+    const s32 reload_state = ReadValue<s32>(rules, 0x84);
+    const bool reload_pending =
+        pending_summon_reload_map.load(std::memory_order_acquire) != 0 ||
+        pending_summon_reload_state_map.load(std::memory_order_acquire) != 0;
+    if (!ShouldEndSessionOnWorldTeardown(matching_state, reload_state, reload_pending)) {
+        return;
+    }
+    using StopRequest = bool PS4_SYSV_ABI (*)(u64 multi_play);
+    const bool result =
+        reinterpret_cast<StopRequest>(image_base + MultiPlayStopRequestOffset)(multi_play);
+    LOG_INFO(Debug, "Bloodborne guest left the host world; ended the session result={}", result);
 }
 
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers) {
@@ -2903,6 +2939,9 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
         site.offset == HealingFountainAvailabilityOffset) {
         ApplyHealingFountainHostAvailability(*registers);
     }
+    if (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) {
+        EndGuestSessionOnWorldTeardown();
+    }
     if (site.kind == TraceKind::ActionFlags && !HasActionTransition(registers->rdi)) {
         return;
     }
@@ -3430,7 +3469,8 @@ bool VerifySites() {
              site.offset == StageWarpDescriptorFinalizeOffset) ||
             (deferred_summon_reload_hook_installed && site.offset == SosStatusUpdateOffset) ||
             (healing_fountain_host_availability_hook_installed &&
-             site.offset == HealingFountainAvailabilityOffset)) {
+             site.offset == HealingFountainAvailabilityOffset) ||
+            (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset)) {
             continue;
         }
         const auto expected = std::span<const u8>{site.prologue.data(), site.prologue_size};
@@ -3624,9 +3664,11 @@ void InstallSeamlessCoopPatches() {
     });
     const auto healing_fountain_host_availability = std::ranges::find_if(
         Sites, [](const auto& site) { return site.offset == HealingFountainAvailabilityOffset; });
+    const auto world_teardown = std::ranges::find_if(
+        Sites, [](const auto& site) { return site.offset == WorldTeardownMatchingOffset; });
     if (summon_build_entry == Sites.end() || cross_map_guest_handoff == Sites.end() ||
         deferred_summon_reload == Sites.end() || summon_reload_state == Sites.end() ||
-        healing_fountain_host_availability == Sites.end()) {
+        healing_fountain_host_availability == Sites.end() || world_teardown == Sites.end()) {
         LOG_ERROR(Debug, "Bloodborne seamless functional hook site is missing");
         return;
     }
@@ -3983,6 +4025,26 @@ void InstallSeamlessCoopPatches() {
         return;
     }
     healing_fountain_host_availability_hook_installed = true;
+    const auto world_teardown_expected =
+        std::span<const u8>{world_teardown->prologue.data(), world_teardown->prologue_size};
+    if (WorldTeardownMatchingOffset > image_size ||
+        world_teardown_expected.size() > image_size - WorldTeardownMatchingOffset ||
+        !std::ranges::equal(
+            std::span<const u8>{reinterpret_cast<const u8*>(base + WorldTeardownMatchingOffset),
+                                world_teardown_expected.size()},
+            world_teardown_expected)) {
+        LOG_ERROR(Debug, "Bloodborne world-teardown signature mismatch at {:#x}",
+                  WorldTeardownMatchingOffset);
+        return;
+    }
+    if (!InstallGuestCodeHook(
+            reinterpret_cast<void*>(base + WorldTeardownMatchingOffset), world_teardown_expected,
+            static_cast<size_t>(std::distance(Sites.begin(), world_teardown)), TraceEntry)) {
+        LOG_ERROR(Debug, "Failed to install Bloodborne world-teardown hook at {:#x}",
+                  WorldTeardownMatchingOffset);
+        return;
+    }
+    world_teardown_hook_installed = true;
 
     std::memcpy(area_comparison, BeckoningSignedAreaComparison.data(),
                 BeckoningSignedAreaComparison.size());
@@ -4137,7 +4199,8 @@ void InstallReverseEngineeringTrace() {
              site.offset == StageWarpDescriptorFinalizeOffset) ||
             (deferred_summon_reload_hook_installed && site.offset == SosStatusUpdateOffset) ||
             (healing_fountain_host_availability_hook_installed &&
-             site.offset == HealingFountainAvailabilityOffset)) {
+             site.offset == HealingFountainAvailabilityOffset) ||
+            (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset)) {
             ++hook_count;
             continue;
         }

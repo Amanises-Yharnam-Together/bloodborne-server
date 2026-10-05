@@ -173,3 +173,23 @@ TEST(BloodborneSummonSearch, DoesNothingWithoutAPlayerOrTheGameFunction) {
     EXPECT_FALSE(StartSummonSearch(0x213cdffe0, BeckoningBellEffect, nullptr));
     EXPECT_EQ(last_add.calls, 0);
 }
+
+// The seamless patch keeps the session over every world teardown so the cross-map handoff
+// survives its warp. A summoned guest whose world is torn down outside a summon reload is
+// leaving the host's world (quit to the title screen, for one), and must end the session the
+// way the unpatched game does, or the host keeps a ghost member and the guest never rejoins.
+TEST(BloodborneWorldTeardown, ASummonedGuestLeavingTheHostWorldEndsTheSession) {
+    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, false));
+}
+
+TEST(BloodborneWorldTeardown, KeepsTheSessionDuringASummonReload) {
+    EXPECT_FALSE(
+        ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, SummonReloadInProgress, false));
+    EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, true));
+}
+
+TEST(BloodborneWorldTeardown, LeavesHostsSearchesAndIdlePlayersAlone) {
+    for (const s32 state : {0, 1, 2, MatchingStateHosting, 4, 5, 7}) {
+        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, false)) << "state " << state;
+    }
+}
