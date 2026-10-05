@@ -166,6 +166,14 @@ TEST(BloodborneLampRest, PartyMembersJoinARestByStandingNearTheRestingPlayer) {
     // Walking away from the lamp ends it like any rest.
     EXPECT_EQ(rest.Tick(LampPosition{30.0f, 0.0f, 5.0f}, true), std::nullopt);
 
+    // Standing at the edge of a rest must not join and leave it over and over (each join
+    // would be a new rest for the party): joining takes being closer than leaving does.
+    LampRestState edge;
+    const LampPosition at_edge{10.0f, 0.0f, 5.0f + LampRestState::LeaveDistance - 0.1f};
+    EXPECT_FALSE(edge.JoinNearby(board, at_edge));
+    EXPECT_TRUE(edge.JoinNearby(
+        board, LampPosition{10.0f, 0.0f, 5.0f + LampRestState::JoinDistance - 0.1f}));
+
     // Rests without a position (and no position of our own) can't be joined.
     LampRestState other;
     EXPECT_FALSE(other.JoinNearby(std::vector<LampRest>{{"host", CentralYharnamLamp}}, AtLamp));

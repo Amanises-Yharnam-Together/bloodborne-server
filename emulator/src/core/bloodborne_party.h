@@ -159,6 +159,7 @@ struct LampRest;
 class LampRestState {
 public:
     static constexpr float LeaveDistance = 4.0f;
+    static constexpr float JoinDistance = 2.5f;
 
     void Rest(s32 lamp, const LampPosition& at);
     // Joins a party member's rest when standing near where it rests; true if it did.

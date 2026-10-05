@@ -215,7 +215,7 @@ bool LampRestState::JoinNearby(std::span<const LampRest> board,
     }
     for (const LampRest& rest : board) {
         if (rest.lamp != NotResting && rest.at &&
-            DistanceSquared(*rest.at, *player) <= LeaveDistance * LeaveDistance) {
+            DistanceSquared(*rest.at, *player) <= JoinDistance * JoinDistance) {
             Rest(rest.lamp, *rest.at);
             return true;
         }
