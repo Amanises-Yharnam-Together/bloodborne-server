@@ -8,6 +8,8 @@ param(
     [string]$Install = "C:\Bloodborne.PC.Online",
     [int]$GamePort = 32313,          # shadnet TCP; UDP matching = +1, WebAPI = +2
     [int]$BackendPort = 20453,
+    [string]$Party = "rig:hunters",  # both players share it; auto-rejoin needs a party
+    [switch]$Trace,                  # SHADPS4_BLOODBORNE_RE_TRACE for reverse engineering
     [switch]$Force
 )
 $ErrorActionPreference = "Stop"
@@ -72,6 +74,9 @@ foreach ($p in $players) {
 cd /d "%~dp0"
 set SHADPS4_BLOODBORNE_SEAMLESS_COOP=1
 set SHADPS4_P2P_PORT=$($p.P2P)
+set SHADPS4_BLOODBORNE_PARTY=$Party
+set SHADPS4_BLOODBORNE_PARTY_ROLE=$($p.Name)
+set SHADPS4_BLOODBORNE_RE_TRACE=$(if ($Trace) { 1 } else { 0 })
 start "" "$($env:BB_ROOT)\out\emulator\build\shadPS4.exe" -g "$Install\DATA\Bloodborne\CUSA03173\eboot.bin"
 "@ | Set-Content "$dir\launch.bat" -Encoding ascii
 }

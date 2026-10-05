@@ -38,4 +38,27 @@ std::optional<std::string> ParsePartySetting(std::string_view setting) {
     return std::string{setting};
 }
 
+PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {
+    if (!observation.player_valid || !observation.map_usable || observation.stage_transition) {
+        stable_ticks = 0;
+        return PartyAction::Wait;
+    }
+    if (!observation.matching_idle || observation.bell_effect_active) {
+        // In (or joining) a session, or our bell already took: the next time we are back home
+        // alone is a fresh start, so forget the old cooldown.
+        stable_ticks = 0;
+        last_ring.reset();
+        return PartyAction::Wait;
+    }
+    if (++stable_ticks < StableTicksBeforeRing) {
+        return PartyAction::Wait;
+    }
+    if (last_ring && now - *last_ring < RetryDelay) {
+        return PartyAction::Wait;
+    }
+    last_ring = now;
+    stable_ticks = 0;
+    return PartyAction::RingBell;
+}
+
 } // namespace Core::Bloodborne

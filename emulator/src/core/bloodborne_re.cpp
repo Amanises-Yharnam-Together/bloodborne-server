@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 
 #include <algorithm>
@@ -1606,6 +1607,69 @@ void ResumePreMatchCrossMapResponder() {
              record.target_map, record.target_area, record.attempts, record.native_result);
 }
 
+// Auto-rejoin for a configured party (SHADPS4_BLOODBORNE_PARTY + SHADPS4_BLOODBORNE_PARTY_ROLE).
+// Only ticked from the SOS-status hook on the game thread.
+std::optional<PartyController> party_controller;
+
+void InitPartyController() {
+    const char* party = std::getenv("SHADPS4_BLOODBORNE_PARTY");
+    const char* role = std::getenv("SHADPS4_BLOODBORNE_PARTY_ROLE");
+    if (party == nullptr || !ParsePartySetting(party)) {
+        return;
+    }
+    const std::string_view role_name = role != nullptr ? role : "";
+    if (role_name != "host" && role_name != "guest") {
+        LOG_WARNING(Debug, "Bloodborne party set but SHADPS4_BLOODBORNE_PARTY_ROLE is not "
+                           "host or guest; auto-rejoin disabled");
+        return;
+    }
+    party_controller.emplace(role_name == "host" ? PartyRole::Host : PartyRole::Guest);
+    LOG_INFO(Debug, "Bloodborne party auto-rejoin enabled as {}", role_name);
+}
+
+PartyObservation ObserveParty(u64 player, s32 bell_effect) {
+    PartyObservation observation{};
+    observation.player_valid =
+        player >= 0x10000 && HasMemoryAccess(player, sizeof(u64), MemoryProt::CpuRead);
+    observation.map_usable = IsUsablePackedMap(GetCurrentPackedMap());
+
+    const u64 state = GetGlobalState();
+    observation.stage_transition =
+        state < 0x10000 || !HasMemoryAccess(state, 0x1521, MemoryProt::CpuRead) ||
+        ReadValue<u8>(state, 0x08) != 0 || ReadValue<u8>(state, 0x1520) != 0 ||
+        pending_summon_reload_map.load(std::memory_order_acquire) != 0 ||
+        pending_summon_reload_state_map.load(std::memory_order_acquire) != 0;
+
+    // The cross-map responder resume owns the bell while it is armed; stay out of its way.
+    const u64 multi_play = GetMatchingState();
+    observation.matching_idle =
+        !IsUsablePackedMap(pending_responder_resume.target_map) && multi_play >= 0x10000 &&
+        HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead) &&
+        ReadValue<s32>(multi_play, 0x124) == 0 && ReadValue<u64>(multi_play, 0x18) == 0;
+
+    observation.bell_effect_active =
+        observation.player_valid && HasPlayerEffect(player, bell_effect);
+    return observation;
+}
+
+void TickPartyController() {
+    if (!party_controller) {
+        return;
+    }
+    const u64 player = GetLocalPlayer();
+    const PartyObservation observation = ObserveParty(player, party_controller->BellEffectId());
+    if (party_controller->Tick(observation, PartyController::Clock::now()) !=
+        PartyAction::RingBell) {
+        return;
+    }
+    using UseItemNativeApply = bool PS4_SYSV_ABI (*)(u64 player, s32 goods_id, s32 argument);
+    const auto use_item =
+        reinterpret_cast<UseItemNativeApply>(image_base + UseItemNativeApplyOffset);
+    const bool result = use_item(player, party_controller->BellGoodsId(), BellUseArgument);
+    LOG_INFO(Debug, "Bloodborne party auto-rejoin rang bell goods={} map={:#x} result={}",
+             party_controller->BellGoodsId(), GetCurrentPackedMap(), result);
+}
+
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers) {
     healing_fountain_availability = {};
     auto& record = healing_fountain_availability;
@@ -2820,6 +2884,7 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
         ApplyPreMatchCrossMapGuestWarp();
         ApplyDeferredSummonReload();
         ResumePreMatchCrossMapResponder();
+        TickPartyController();
     }
     if (healing_fountain_host_availability_hook_installed &&
         site.offset == HealingFountainAvailabilityOffset) {
@@ -3892,6 +3957,7 @@ void InstallSeamlessCoopPatches() {
         return;
     }
     deferred_summon_reload_hook_installed = true;
+    InitPartyController();
     const size_t healing_fountain_host_availability_index =
         static_cast<size_t>(std::distance(Sites.begin(), healing_fountain_host_availability));
     if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + HealingFountainAvailabilityOffset),
