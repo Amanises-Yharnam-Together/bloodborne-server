@@ -29,7 +29,7 @@ Start here when picking the work up in a new session.
   and co-op guard timers, stale-sign supersede and claim reset after join. User-confirmed:
   rejoin after a death is near-instant.
 
-## Phase 3 item: bell-less joining (implemented, waiting for Kaniel's play-test)
+## Phase 3 item: bell-less joining (done, confirmed by Kaniel in the rig 2026-10-05)
 - RE finding: a rung bell is just special effect 9000 (Beckoning, game adds 9003 too) / 9005 (Small Resonant) on
   the player. The SOS status (`0x0186FE40`) derives "searching" from the effects' special state.
   01.09 adds 9005 itself at `0x01C0D3B0` through the character's add-effect virtual
@@ -38,16 +38,18 @@ Start here when picking the work up in a new session.
   cross-map responder resume both use it instead of `UseItemNativeApply` (goods 200/205), so no
   item, animation or Insight is involved. The slot is checked against the verified 01.09
   function before calling.
-- To verify in the rig: both join without holding bells, the host's Insight does not drop, and
-  the log shows `auto-rejoin started search effect=9000|9005 ... result=true`.
+- Log line: `auto-rejoin started search effect=9000|9005 ... result=true`. Note the host's
+  effect is 9000; 9001 (used in Phase 1 code and still in the healing-fountain host check) is
+  not a search effect, so that fountain fix has likely never fired.
 - Eboot RE on this PC: scratch scripts flatten `eboot.bin` (fake SELF) and apply relocations,
   then disassemble with Python capstone (`py -3.12 -m pip install capstone`).
 
 ## Session teardown (2026-10-05)
 - The seamless keep-matching patch (call at `0x019471B1` in the world teardown `0x019470F0`)
   kept the session over *every* teardown, so a guest quitting to the title stayed in the room.
-  A hook at `0x0194716E` (non-RIP-relative; `0x01947167` could not be hooked) now calls the native `StopRequest` when the guest is summoned
-  (state 6) and no summon reload is running. Host-side teardowns (state 3) are unchanged.
+  A hook at `0x0194716E` (`0x01947167` is RIP-relative and cannot be hooked) now calls the
+  native `StopRequest` when the guest is summoned (state 6) and no summon reload is running.
+  Host-side teardowns (state 3) are unchanged. Confirmed: guest quit-to-menu and reload rejoins.
 - Server: signs not refreshed for 75 s are no longer offered (stale sign from a previous run).
 - Sign timers: 01.09 waits 5 s before a sign's first post and 30 s between re-posts
   (`0x018A9264/9324`, `0x018A9757/988F`), ignoring ss.info. Patched to 0 s / 5 s.
@@ -56,7 +58,17 @@ Start here when picking the work up in a new session.
 
 ## Next (user-approved order)
 1. **Deaths that don't disconnect (Phase 2):** suppress the phantom-death / boss-clear "return to
-   world" teardown.
+   world" teardown. Same area: a host quitting to the menu (state 3 teardown) probably still
+   keeps the room with a ghost member, since the keep-matching patch covers host deaths too.
+2. Rest of Phase 3 (travel together, boss kill doesn't dismiss), then Phase 4 (shared progress).
+
+## Planned for the end (Kaniel's call)
+- Near-zero join wait: the host only searches every 5 s (`--summon-poll`; also drives the
+  guard timers, so don't set 0). Plan: have shadnet hold `summon_messenger/get` open ~3 s and
+  answer as soon as a same-party sign arrives (long-poll). Check first whether the game's
+  matching task tolerates a slow answer (it sets a 15 s connect timeout, no receive timeout).
+  Fallback: 1 s interval.
+- Signaling: fix the lingering-connection reuse above if it shows up again.
 
 ## Known loose ends
 - shadnet logs `unhandled POST /v1/users/<npid>/feed`. Harmless so far.
