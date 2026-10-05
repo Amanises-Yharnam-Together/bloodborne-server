@@ -2074,8 +2074,86 @@ s32 CharacterHp(u64 character) {
     return data >= 0x10000 ? ReadValue<s32>(data, 0xF8) : 0;
 }
 
+// Diagnostics: what the respawn changes on each character besides its HP, to find how the event
+// scripts hide characters that the disable bit does not cover.
+struct CharacterState {
+    u64 character;
+    u32 handle;        // +0x08
+    u8 control_flags;  // [+0x18]+0x20
+    s32 control_state; // [+0x18]+0x10
+    u64 state_flags;   // +0x1E0
+    s32 hp;
+    bool operator==(const CharacterState&) const = default;
+};
+std::vector<CharacterState> characters_before_rest;
+
+CharacterState ReadCharacterState(u64 character) {
+    const u64 control = ReadValue<u64>(character, 0x18);
+    return CharacterState{
+        .character = character,
+        .handle = ReadValue<u32>(character, 0x08),
+        .control_flags = control >= 0x10000 ? ReadValue<u8>(control, 0x20) : u8{0xFF},
+        .control_state = control >= 0x10000 ? ReadValue<s32>(control, 0x10) : -1,
+        .state_flags = ReadValue<u64>(character, 0x1E0),
+        .hp = CharacterHp(character),
+    };
+}
+
+void LogCharacterChanges() {
+    s32 logged = 0;
+    for (const auto& before : characters_before_rest) {
+        if (!HasMemoryAccess(before.character, 0x3B8, MemoryProt::CpuRead)) {
+            continue;
+        }
+        auto after = ReadCharacterState(before.character);
+        if (after.handle == before.handle && after.control_flags == before.control_flags &&
+            after.control_state == before.control_state &&
+            after.state_flags == before.state_flags && (after.hp > 0) == (before.hp > 0)) {
+            continue;
+        }
+        if (++logged > 60) {
+            break;
+        }
+        LOG_INFO(Debug,
+                 "Bloodborne rest changed character {:#x} handle {:#x}: control {:#x}/{} -> "
+                 "{:#x}/{} flags {:#x} -> {:#x} hp {} -> {}",
+                 before.character, before.handle, before.control_flags, before.control_state,
+                 after.control_flags, after.control_state, before.state_flags, after.state_flags,
+                 before.hp, after.hp);
+    }
+    // Characters that only exist after the respawn (a generator spawning, for instance).
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    s32 added = 0;
+    if (world >= 0x10000) {
+        ForEachWorldCharacter(world, [&](u64 character) {
+            if (std::ranges::any_of(characters_before_rest, [&](const CharacterState& before) {
+                    return before.character == character;
+                })) {
+                return;
+            }
+            const auto state = ReadCharacterState(character);
+            ++added;
+            LOG_INFO(Debug,
+                     "Bloodborne rest added character {:#x} handle {:#x} control {:#x}/{} "
+                     "flags {:#x} hp {}",
+                     character, state.handle, state.control_flags, state.control_state,
+                     state.state_flags, state.hp);
+        });
+    }
+    // WorldChrMan +0xA40: the other list the respawn walks (0x018EB900 on each entry).
+    const u64 others = world >= 0x10000 ? ReadValue<u64>(world, 0xA40) : 0;
+    LOG_INFO(Debug, "Bloodborne rest: {} of {} characters changed, {} added, {} in +0xA40", logged,
+             characters_before_rest.size(), added,
+             others >= 0x10000 ? ReadValue<s32>(others, 8) : -1);
+    characters_before_rest.clear();
+}
+
 void RememberHiddenCharacters(u64 world) {
     hidden_characters.clear();
+    characters_before_rest.clear();
+    ForEachWorldCharacter(world, [](u64 character) {
+        characters_before_rest.push_back(ReadCharacterState(character));
+    });
     s32 disabled = 0;
     ForEachWorldCharacter(world, [&](u64 character) {
         const bool off = IsCharacterDisabled(character);
@@ -2089,6 +2167,7 @@ void RememberHiddenCharacters(u64 world) {
 }
 
 void HideCharactersAgain() {
+    LogCharacterChanges();
     s32 hidden = 0;
     for (const u64 character : hidden_characters) {
         if (HasMemoryAccess(character, 0x3B8, MemoryProt::CpuRead) &&
