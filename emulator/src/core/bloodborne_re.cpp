@@ -1833,10 +1833,11 @@ constexpr std::array<u8, 7> EsdIsMultiplayerResult{0x85, 0xC9, 0x0F, 0x9F, 0xC1,
 constexpr u64 TalkSetEventFlagRangeOffset = 0x0204232E;
 constexpr std::array<u8, 9> TalkSetEventFlagRange{0x8B, 0x88, 0xA0, 0x00, 0x00,
                                                   0x00, 0x83, 0xF9, 0xFF};
-// ForcePlayAnimation(_, entity, animation) event binding, and the lamp touch common event 7200
-// plays before it warps.
+// ForcePlayAnimation(_, entity, animation) event binding, and the lamp touch the Lua lamp warp
+// (Lua_Warp) plays with it. Common event 7200's 101160 is an event script id; this binding sets
+// it straight on the character, where it did nothing.
 constexpr u64 ForcePlayAnimationOffset = 0x0132E290;
-constexpr s32 LampTouchAnimation = 101160;
+constexpr s32 LampTouchAnimation = 7725;
 // WorldChrMan +0xA6C: the bonfire respawn left over from Dark Souls. 1 asks for it; WorldChrMan
 // then respawns every loaded block's characters (3), SprjEmkSystem restarts the event scripts
 // (4) and the characters are released again (5, then 0). The healing fountain update requests it
@@ -1894,6 +1895,13 @@ std::optional<LampPosition> LocalPlayerPosition() {
 }
 
 void PS4_SYSV_ABI LetPartyUseLamps(u64, GuestRegisterSnapshot* registers) {
+    // Diagnostics: whether this player's lamp talk scripts ask at all (once, then every 3000).
+    static std::atomic<u64> asked{};
+    const u64 count = asked.fetch_add(1) + 1;
+    if (count == 1 || count % 3000 == 0) {
+        LOG_INFO(Debug, "Bloodborne lamp talk asked 'in multiplayer' {} times (party session={})",
+                 count, InPartySession());
+    }
     if (InPartySession()) {
         registers->rax &= ~u64{0xFF};
         registers->rcx = 0;
@@ -1902,7 +1910,11 @@ void PS4_SYSV_ABI LetPartyUseLamps(u64, GuestRegisterSnapshot* registers) {
 
 void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers) {
     const s32 flag = static_cast<s32>(registers->r15);
-    if (!IsLampTravelFlag(flag) || !InPartySession()) {
+    if (!IsLampTravelFlag(flag)) {
+        return;
+    }
+    if (!InPartySession()) {
+        LOG_INFO(Debug, "Bloodborne lamp travel {} outside a party session", flag);
         return;
     }
     registers->rax = reinterpret_cast<u64>(no_talk_flag_range.data());
