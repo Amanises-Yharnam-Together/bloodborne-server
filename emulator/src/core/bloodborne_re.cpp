@@ -1931,6 +1931,15 @@ void ReviveGuestAfterGhostDeath() {
         .update_blood_mark =
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + UpDateBloodMarkOffset),
         .revive_player = reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RevivePlayerOffset),
+        .clear_dead_flag =
+            [] {
+                // The character kill (0x018BF9A0) sets bit 0 of +0x1E3; RevivePlayer keeps it.
+                const u64 player = GetLocalPlayer();
+                if (player >= 0x10000 && HasMemoryAccess(player, 0x1E4, MemoryProt::CpuWrite)) {
+                    WriteValue(player, 0x1E3,
+                               static_cast<u8>(ReadValue<u8>(player, 0x1E3) & ~u8{1}));
+                }
+            },
         .set_chr_type =
             reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, s32)>(image_base + SetChrTypeOffset),
         .chr_reset_animation =
@@ -1938,8 +1947,9 @@ void ReviveGuestAfterGhostDeath() {
     };
     const bool revived = ReviveDeadPartyGuest(calls);
     const u64 player = GetLocalPlayer();
-    LOG_INFO(Debug, "Bloodborne party guest died; revived in place={} type={}", revived,
-             player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1);
+    LOG_INFO(Debug, "Bloodborne party guest died; revived in place={} type={} flags1e3={:#x}",
+             revived, player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1,
+             player >= 0x10000 ? ReadValue<u8>(player, 0x1E3) : 0xFF);
 }
 
 void NoteHostDeathRespawn() {

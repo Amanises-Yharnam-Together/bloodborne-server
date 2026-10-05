@@ -85,6 +85,7 @@ struct GhostDeathCalls {
     bool PS4_SYSV_ABI (*request_full_recover)() = nullptr;
     bool PS4_SYSV_ABI (*update_blood_mark)() = nullptr;
     bool PS4_SYSV_ABI (*revive_player)() = nullptr;
+    void (*clear_dead_flag)() = nullptr; // ours: the kill's +0x1E3 bit 0 on the local player
     void PS4_SYSV_ABI (*set_chr_type)(u64 unused, s32 entity, s32 type) = nullptr;
     void PS4_SYSV_ABI (*chr_reset_animation)(u64 unused, s32 entity) = nullptr;
 };

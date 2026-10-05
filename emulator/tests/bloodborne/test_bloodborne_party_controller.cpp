@@ -289,6 +289,9 @@ bool PS4_SYSV_ABI FakeRevivePlayer() {
     revive_calls.push_back("RevivePlayer");
     return true;
 }
+void FakeClearDeadFlag() {
+    revive_calls.push_back("ClearDeadFlag");
+}
 void PS4_SYSV_ABI FakeSetChrType(u64, s32 entity, s32 type) {
     revive_calls.push_back("SetChrType " + std::to_string(entity) + " " + std::to_string(type));
 }
@@ -302,6 +305,7 @@ constexpr GhostDeathCalls FakeCalls{
     .request_full_recover = FakeRequestFullRecover,
     .update_blood_mark = FakeUpDateBloodMark,
     .revive_player = FakeRevivePlayer,
+    .clear_dead_flag = FakeClearDeadFlag,
     .set_chr_type = FakeSetChrType,
     .chr_reset_animation = FakeChrResetAnimation,
 };
@@ -313,6 +317,8 @@ constexpr GhostDeathCalls FakeCalls{
 // host death does (UpDateBloodMark) and is revived in place. RevivePlayer alone leaves the
 // character in its death pose and makes it a live player (type 0), so the white phantom type is
 // set back (SetChrType also refreshes the character) and its behaviour is reset to idle.
+// RevivePlayer also leaves the dead bit the kill set (+0x1E3 bit 0): play-testing showed a guest
+// that could attack but not move and that enemies ignored, so that bit is cleared too.
 // (A summon reload instead needs the host's side of the summon handshake and drops the session.)
 TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
     revive_calls.clear();
@@ -324,6 +330,7 @@ TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
                                 "RequestFullRecover",
                                 "UpDateBloodMark",
                                 "RevivePlayer",
+                                "ClearDeadFlag",
                                 "SetChrType 10000 1",
                                 "ChrResetAnimation 10000",
                             }));
