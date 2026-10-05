@@ -84,6 +84,9 @@ const std::vector<CodePatch>& HostDeathKeepGuestsPatches() {
     // `mov esi, 0xFCF` (start of the white phantom branch) -> `jmp HostDeadEpilogueOffset`.
     static const std::vector<CodePatch> patches{
         {0x013819C6, {0xBE, 0xCF, 0x0F, 0x00, 0x00}, {0xE9, 0x85, 0x00, 0x00, 0x00}},
+        // Character death step (0x018C49F0): skip removing the session's members from a dying
+        // host's world (`jne` -> `jmp` to the same target, then a nop).
+        {0x018C4D1D, {0x0F, 0x85, 0x97, 0x00, 0x00, 0x00}, {0xE9, 0x98, 0x00, 0x00, 0x00, 0x90}},
     };
     return patches;
 }

@@ -368,7 +368,7 @@ TEST(BloodborneGhostDeath, LeavesEveryoneElseAlone) {
 // phantom branch returns straight away, so the guests stay in the session.
 TEST(BloodborneHostDeath, GuestsIgnoreTheHostsDeath) {
     const auto& patches = HostDeathKeepGuestsPatches();
-    ASSERT_EQ(patches.size(), 1u);
+    ASSERT_EQ(patches.size(), 2u);
     const auto& patch = patches[0];
     EXPECT_EQ(patch.offset, 0x013819C6u);
     // The branch starts with SetEventFlag(4047, true): `mov esi, 0xFCF`.
@@ -434,4 +434,16 @@ TEST(BloodborneHostDeath, OnlyAHostWithASessionSkipsTheReload) {
     for (const s32 state : {0, 1, 2, 4, 5, MatchingStateSummonedGuest, 7}) {
         EXPECT_FALSE(ShouldReviveHostInPlace(state)) << "state " << state;
     }
+}
+
+// Play-test: after a host death the guest still saw the host, but the host no longer had the
+// guest's character. The character death step (0x018C49F0) walks the session's members when the
+// local player is hosting (state 3) and removes them, since unpatched the host is about to
+// reload. With no reload that branch is skipped: `jne` past it becomes a plain `jmp`.
+TEST(BloodborneHostDeath, TheHostKeepsItsGuestsCharactersWhenItDies) {
+    const auto& patch = HostDeathKeepGuestsPatches().at(1);
+    EXPECT_EQ(patch.offset, 0x018C4D1Du);
+    EXPECT_EQ(patch.original, (std::vector<u8>{0x0F, 0x85, 0x97, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(DecodeNearJumpTarget(patch.offset, std::span{patch.patched}.first(5)), 0x018C4DBAu);
+    EXPECT_EQ(patch.patched.back(), 0x90);
 }
