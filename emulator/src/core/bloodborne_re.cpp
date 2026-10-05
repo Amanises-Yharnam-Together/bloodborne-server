@@ -169,16 +169,14 @@ constexpr u64 StageTransitionStopMatchingCallOffset = 0x019471B1;
 // matching (mov rbx,[rax]; cmp [rbx+0x84],3). No RIP-relative code, so it can be hooked.
 constexpr u64 WorldTeardownMatchingOffset = 0x0194716E;
 // PartyGhostDeath_1's `cmp byte ptr [r14+0xC], 0` (ClearBoss), right before the menu branch that
-// GhostDeathKeepSessionPatches turns into a plain jump: where a party guest revives instead.
+// GhostDeathKeepSessionPatches turns into a plain jump: where a party guest respawns instead.
 constexpr u64 GhostDeathReviveOffset = 0x01382354;
-// Event script bindings ReviveDeadPartyGuest calls.
+// Event script bindings RespawnDeadPartyGuest calls.
 constexpr u64 IsWhiteGhostOffset = 0x01331D80;
 constexpr u64 RequestFullRecoverOffset = 0x01337550;
 constexpr u64 UpDateBloodMarkOffset = 0x013308B0;
 // Native SoloPlayDeath_2: the local player's death respawn (bloodstain, warp to the last lamp).
 constexpr u64 SoloPlayDeathRespawnOffset = 0x01381DE0;
-constexpr u64 RevivePlayerOffset = 0x01332B20;
-constexpr u64 ForcePlayAnimationOffset = 0x0132E290;
 
 // Sign poster timer stores (see FirstSignPostDelaySeconds / SignRepostSeconds).
 struct SignTimerSite {
@@ -1742,7 +1740,7 @@ bool MatchesImage(u64 base, u64 image_size, const CodePatch& patch) {
                               patch.original);
 }
 
-// Deaths that keep the party: a dead guest revives in the host's world instead of being sent
+// Deaths that keep the party: a dead guest respawns in the host's world instead of being sent
 // home. Optional and all-or-nothing: the byte patches alone would leave the guest dead.
 void InstallGhostDeathRevive(u64 base, u64 image_size) {
     const auto& patches = GhostDeathKeepSessionPatches();
@@ -1771,7 +1769,7 @@ void InstallGhostDeathRevive(u64 base, u64 image_size) {
         std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
                     patch.patched.size());
     }
-    LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests revive in the host's world");
+    LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests respawn in the host's world");
 }
 
 // A host death respawns the host at its lamp as usual but keeps the party: the session survives
@@ -1858,9 +1856,109 @@ void EndSessionOnWorldTeardown() {
              matching_state == MatchingStateHosting ? "host" : "guest", result);
 }
 
-// A party guest that died gets up again where the game would show the "returned to your world"
-// menu (the warp home behind it is patched out, see GhostDeathKeepSessionPatches).
-void ReviveGuestAfterGhostDeath() {
+// The other players in this world: WorldChrMan +0x30 count, +0x38 array of 0x38-byte entries
+// whose first field is the PlayerIns. Returns the host's character transform, if it is here.
+u64 FindHostTransform() {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000 || !HasMemoryAccess(world, 0x40, MemoryProt::CpuRead)) {
+        return 0;
+    }
+    const s32 count = ReadValue<s32>(world, 0x30);
+    const u64 entries = ReadValue<u64>(world, 0x38);
+    if (count <= 0 || count > 8 || entries < 0x10000 ||
+        !HasMemoryAccess(entries, static_cast<size_t>(count) * 0x38, MemoryProt::CpuRead)) {
+        return 0;
+    }
+    std::vector<u64> players;
+    std::vector<s32> types;
+    for (s32 index = 0; index < count; ++index) {
+        const u64 player = ReadValue<u64>(entries + static_cast<u64>(index) * 0x38, 0);
+        players.push_back(player);
+        types.push_back(player >= 0x10000 && HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead)
+                            ? ReadValue<s32>(player, 0x78)
+                            : -1);
+    }
+    const auto host = FindHostCharacter(types);
+    if (!host) {
+        return 0;
+    }
+    const u64 character = ReadValue<u64>(players[*host], 0x58);
+    const u64 character_state = character >= 0x10000 ? ReadValue<u64>(character, 0x08) : 0;
+    const u64 model = character_state >= 0x10000 ? ReadValue<u64>(character_state, 0x3B0) : 0;
+    const u64 transform = model >= 0x10000 ? ReadValue<u64>(model, 0x68) : 0;
+    return transform >= 0x10000 && HasMemoryAccess(transform, 0x1EC, MemoryProt::CpuRead)
+               ? transform
+               : 0;
+}
+
+// Reloads a dead guest into the host's world next to the host (or where it fell if the host is
+// not in sight), the same summon reload a cross-map join ends with. The session stays: the
+// reload marker (+0x84 == 3) keeps the world-teardown hook from ending it.
+bool ReloadGuestNextToHost() {
+    SummonPlacementDescriptor placement{};
+    std::string_view result;
+    if (!ReadLocalSummonPlacement(placement, result)) {
+        LOG_ERROR(Debug, "Bloodborne guest respawn: no placement ({})", result);
+        return false;
+    }
+    bool next_to_host = false;
+    if (const u64 transform = FindHostTransform()) {
+        const float x = ReadValue<float>(transform, 0x1E0);
+        const float y = ReadValue<float>(transform, 0x1E4);
+        const float z = ReadValue<float>(transform, 0x1E8);
+        const float heading = ReadValue<float>(transform, 0x1D4);
+        if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::isfinite(heading)) {
+            placement.x = x;
+            placement.y = y;
+            placement.z = z;
+            placement.heading = heading;
+            next_to_host = true;
+        }
+    }
+    const u64 state = GetGlobalState();
+    if (state < 0x10000 || !WriteTransportedSummonPlacement(state, placement)) {
+        LOG_ERROR(Debug, "Bloodborne guest respawn: cannot write the placement");
+        return false;
+    }
+
+    using PlacementSetter = void PS4_SYSV_ABI (*)(const void* value);
+    const auto set_map = reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonMapOffset);
+    const auto set_position =
+        reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonPositionOffset);
+    const auto set_orientation =
+        reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonOrientationOffset);
+    const auto apply_placement = [&] {
+        set_position(reinterpret_cast<const void*>(state + 0x14D0));
+        set_orientation(reinterpret_cast<const void*>(state + 0x14E0));
+        set_map(reinterpret_cast<const void*>(state + 0x14C4));
+    };
+    apply_placement();
+
+    using SummonedMapReload = void PS4_SYSV_ABI (*)();
+    reinterpret_cast<SummonedMapReload>(image_base + SummonedMapReloadOffset)();
+    const u64 rules = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
+    s32 reload_state = -1;
+    if (rules >= 0x10000 && HasMemoryAccess(rules, 0x88, MemoryProt::CpuWrite)) {
+        reload_state = ReadValue<s32>(rules, 0x84);
+        if (reload_state != SummonReloadInProgress) {
+            using SummonReloadStateSetter = void PS4_SYSV_ABI (*)(u64 state);
+            reinterpret_cast<SummonReloadStateSetter>(image_base +
+                                                      SetSummonReloadStateOffset)(rules);
+            reload_state = ReadValue<s32>(rules, 0x84);
+        }
+    }
+    apply_placement();
+    LOG_INFO(Debug,
+             "Bloodborne guest respawn reload map={:#x} pos=({}, {}, {}) next_to_host={} "
+             "reload_state={}",
+             placement.packed_region, placement.x, placement.y, placement.z, next_to_host,
+             reload_state);
+    return reload_state == SummonReloadInProgress;
+}
+
+// A party guest that died respawns where the game would show the "returned to your world" menu
+// (the warp home behind it is patched out, see GhostDeathKeepSessionPatches).
+void RespawnGuestAfterGhostDeath() {
     const GhostDeathCalls calls{
         .is_white_ghost =
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + IsWhiteGhostOffset),
@@ -1870,12 +1968,10 @@ void ReviveGuestAfterGhostDeath() {
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset),
         .update_blood_mark =
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + UpDateBloodMarkOffset),
-        .revive_player = reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RevivePlayerOffset),
-        .force_play_animation = reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, s32)>(
-            image_base + ForcePlayAnimationOffset),
+        .reload_next_to_host = ReloadGuestNextToHost,
     };
-    const bool revived = ReviveDeadPartyGuest(calls);
-    LOG_INFO(Debug, "Bloodborne party guest died; revived in place={}", revived);
+    const bool respawned = RespawnDeadPartyGuest(calls);
+    LOG_INFO(Debug, "Bloodborne party guest died; respawn reload started={}", respawned);
 }
 
 void NoteHostDeathRespawn() {
@@ -3112,7 +3208,7 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
         EndSessionOnWorldTeardown();
     }
     if (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) {
-        ReviveGuestAfterGhostDeath();
+        RespawnGuestAfterGhostDeath();
     }
     if (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset) {
         NoteHostDeathRespawn();

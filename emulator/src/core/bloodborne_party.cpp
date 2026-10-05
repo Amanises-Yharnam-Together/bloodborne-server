@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <bit>
 #include <cstring>
 
@@ -103,18 +104,23 @@ u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes) {
     return DecodeRel32(0xE9, offset, bytes);
 }
 
-bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
+std::optional<std::size_t> FindHostCharacter(std::span<const s32> character_types) {
+    const auto it = std::ranges::find(character_types, LiveCharacterType);
+    if (it == character_types.end()) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(it - character_types.begin());
+}
+
+bool RespawnDeadPartyGuest(const GhostDeathCalls& calls) {
     if (!calls.is_white_ghost || !calls.set_event_flag || !calls.request_full_recover ||
-        !calls.update_blood_mark || !calls.revive_player || !calls.force_play_animation ||
-        !calls.is_white_ghost()) {
+        !calls.update_blood_mark || !calls.reload_next_to_host || !calls.is_white_ghost()) {
         return false;
     }
     calls.set_event_flag(0, DeathEventFlag, false);
     calls.request_full_recover();
     calls.update_blood_mark();
-    calls.revive_player();
-    calls.force_play_animation(0, LocalPlayerEntity, AliveMotionAnimation);
-    return true;
+    return calls.reload_next_to_host();
 }
 
 std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds) {

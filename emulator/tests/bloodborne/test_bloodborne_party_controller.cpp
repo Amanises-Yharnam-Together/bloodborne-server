@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -266,32 +267,27 @@ TEST(BloodborneGhostDeath, DecodesOnlyNearCalls) {
 
 namespace {
 
-std::vector<std::string> revive_calls;
+std::vector<std::string> respawn_calls;
 bool white_ghost = true;
 
 bool PS4_SYSV_ABI FakeIsWhiteGhost() {
-    revive_calls.push_back("IsWhiteGhost");
+    respawn_calls.push_back("IsWhiteGhost");
     return white_ghost;
 }
 bool PS4_SYSV_ABI FakeSetEventFlag(u64, s32 flag, bool value) {
-    revive_calls.push_back("SetEventFlag " + std::to_string(flag) + (value ? " on" : " off"));
+    respawn_calls.push_back("SetEventFlag " + std::to_string(flag) + (value ? " on" : " off"));
     return true;
 }
 bool PS4_SYSV_ABI FakeRequestFullRecover() {
-    revive_calls.push_back("RequestFullRecover");
+    respawn_calls.push_back("RequestFullRecover");
     return true;
 }
 bool PS4_SYSV_ABI FakeUpDateBloodMark() {
-    revive_calls.push_back("UpDateBloodMark");
+    respawn_calls.push_back("UpDateBloodMark");
     return true;
 }
-bool PS4_SYSV_ABI FakeRevivePlayer() {
-    revive_calls.push_back("RevivePlayer");
-    return true;
-}
-bool PS4_SYSV_ABI FakeForcePlayAnimation(u64, s32 entity, s32 animation) {
-    revive_calls.push_back("ForcePlayAnimation " + std::to_string(entity) + " " +
-                           std::to_string(animation));
+bool FakeReloadNextToHost() {
+    respawn_calls.push_back("ReloadNextToHost");
     return true;
 }
 
@@ -300,41 +296,48 @@ constexpr GhostDeathCalls FakeCalls{
     .set_event_flag = FakeSetEventFlag,
     .request_full_recover = FakeRequestFullRecover,
     .update_blood_mark = FakeUpDateBloodMark,
-    .revive_player = FakeRevivePlayer,
-    .force_play_animation = FakeForcePlayAnimation,
+    .reload_next_to_host = FakeReloadNextToHost,
 };
 
 } // namespace
 
-// Where the game would open that menu, a party guest gets up again instead: the death event
-// (4000) is cleared so the next death runs, the guest drops its echoes in a bloodstain the way
-// a host death does (UpDateBloodMark), then the same revive the game uses after a load
-// (RevivePlayer, then the get-up animation 101200).
-TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
-    revive_calls.clear();
+// Where the game would open that menu, a party guest respawns instead: the death event (4000) is
+// cleared so the next death runs, the guest drops its echoes in a bloodstain the way a host death
+// does (UpDateBloodMark), then it reloads into the host's world next to the host, the way it
+// arrives when summoned. (An in-place RevivePlayer leaves a phantom stuck in its death state and
+// turns it into a live player.)
+TEST(BloodborneGhostDeath, ADeadPartyGuestRespawnsNextToTheHost) {
+    respawn_calls.clear();
     white_ghost = true;
-    EXPECT_TRUE(ReviveDeadPartyGuest(FakeCalls));
-    EXPECT_EQ(revive_calls, (std::vector<std::string>{
-                                "IsWhiteGhost",
-                                "SetEventFlag 4000 off",
-                                "RequestFullRecover",
-                                "UpDateBloodMark",
-                                "RevivePlayer",
-                                "ForcePlayAnimation 10000 101200",
-                            }));
+    EXPECT_TRUE(RespawnDeadPartyGuest(FakeCalls));
+    EXPECT_EQ(respawn_calls, (std::vector<std::string>{
+                                 "IsWhiteGhost",
+                                 "SetEventFlag 4000 off",
+                                 "RequestFullRecover",
+                                 "UpDateBloodMark",
+                                 "ReloadNextToHost",
+                             }));
 }
 
 TEST(BloodborneGhostDeath, LeavesEveryoneElseAlone) {
-    revive_calls.clear();
+    respawn_calls.clear();
     white_ghost = false;
-    EXPECT_FALSE(ReviveDeadPartyGuest(FakeCalls));
-    EXPECT_EQ(revive_calls, std::vector<std::string>{"IsWhiteGhost"});
+    EXPECT_FALSE(RespawnDeadPartyGuest(FakeCalls));
+    EXPECT_EQ(respawn_calls, std::vector<std::string>{"IsWhiteGhost"});
 
-    revive_calls.clear();
+    respawn_calls.clear();
     GhostDeathCalls missing = FakeCalls;
-    missing.revive_player = nullptr;
-    EXPECT_FALSE(ReviveDeadPartyGuest(missing));
-    EXPECT_TRUE(revive_calls.empty());
+    missing.reload_next_to_host = nullptr;
+    EXPECT_FALSE(RespawnDeadPartyGuest(missing));
+    EXPECT_TRUE(respawn_calls.empty());
+}
+
+// The guest finds the host among the other players in its world by character type: the host is
+// the live player (0); everyone else is a phantom (white 1, black 2) or grey (8).
+TEST(BloodborneGhostDeath, FindsTheHostAmongTheOtherPlayers) {
+    EXPECT_EQ(FindHostCharacter(std::vector<s32>{1, 0, 2}), std::optional<std::size_t>{1});
+    EXPECT_EQ(FindHostCharacter(std::vector<s32>{1, 2, 8}), std::nullopt);
+    EXPECT_EQ(FindHostCharacter(std::vector<s32>{}), std::nullopt);
 }
 
 // When the host dies, every guest runs HostDead (event 4000 param 1): for a white phantom it
