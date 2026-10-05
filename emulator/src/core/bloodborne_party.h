@@ -118,6 +118,9 @@ private:
     std::optional<AliveState> saved;
 };
 
+// OnSelfBloodMark(4032, "SelfBloodMark", attributes) in the native g_Initialize: `mov ecx, 0x30`.
+const std::vector<CodePatch>& GuestBloodstainPatches();
+
 // HostDead's white phantom branch and the epilogue the seamless patch jumps to.
 constexpr u64 HostDeadEpilogueOffset = 0x01381A50;
 const std::vector<CodePatch>& HostDeathKeepGuestsPatches();

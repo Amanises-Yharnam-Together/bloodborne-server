@@ -1866,6 +1866,18 @@ void InstallGhostDeathRevive(u64 base, u64 image_size) {
         std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
                     patch.patched.size());
     }
+    // Optional: without it the guest's stain is still dropped, it just can't pick it up.
+    const auto& stain_patches = GuestBloodstainPatches();
+    if (std::ranges::all_of(stain_patches, [&](const CodePatch& patch) {
+            return MatchesImage(base, image_size, patch);
+        })) {
+        for (const auto& patch : stain_patches) {
+            std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
+                        patch.patched.size());
+        }
+    } else {
+        LOG_ERROR(Debug, "Bloodborne guest bloodstain pickup patch signature mismatch");
+    }
     LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests revive in the host's world");
 }
 
@@ -1953,6 +1965,26 @@ void EndSessionOnWorldTeardown() {
              matching_state == MatchingStateHosting ? "host" : "guest", result);
 }
 
+// UpDateBloodMark (native 0x013D2910) takes the stain position from the player only while
+// GlobalState +0x1592 is set, which it is in the player's own world. In the host's world it
+// copies a stored position instead (+0x1500, where the guest was summoned from), so the stain
+// went somewhere unseen. Set it for the call.
+bool PS4_SYSV_ABI UpdateGuestBloodMark() {
+    const u64 global = GetGlobalState();
+    const bool can_flag =
+        global >= 0x10000 && HasMemoryAccess(global, 0x1593, MemoryProt::CpuWrite);
+    const u8 own_world = can_flag ? ReadValue<u8>(global, 0x1592) : 0;
+    if (can_flag) {
+        WriteValue(global, 0x1592, u8{1});
+    }
+    const bool result =
+        reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + UpDateBloodMarkOffset)();
+    if (can_flag) {
+        WriteValue(global, 0x1592, own_world);
+    }
+    return result;
+}
+
 AliveStateSnapshot local_alive_state;
 
 // The local player's state flags (+0x1E0, 8 bytes) and action state ([+0x3B0]+8: +0x1B4/+0x1B8).
@@ -2024,8 +2056,7 @@ void ReviveGuestAfterGhostDeath() {
             },
         .request_full_recover =
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset),
-        .update_blood_mark =
-            reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + UpDateBloodMarkOffset),
+        .update_blood_mark = UpdateGuestBloodMark,
         .revive_player = reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RevivePlayerOffset),
         .revive_local_character =
             reinterpret_cast<void PS4_SYSV_ABI (*)()>(image_base + ReviveLocalCharacterOffset),

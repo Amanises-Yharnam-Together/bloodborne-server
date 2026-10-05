@@ -77,6 +77,13 @@ const std::vector<CodePatch>& GhostDeathKeepSessionPatches() {
     return patches;
 }
 
+const std::vector<CodePatch>& GuestBloodstainPatches() {
+    static const std::vector<CodePatch> patches{
+        {0x0137EBC7, {0xB9, 0x30, 0x00, 0x00, 0x00}, {0xB9, 0x70, 0x00, 0x00, 0x00}},
+    };
+    return patches;
+}
+
 const std::vector<CodePatch>& HostDeathKeepGuestsPatches() {
     // `mov esi, 0xFCF` (start of the white phantom branch) -> `jmp HostDeadEpilogueOffset`.
     static const std::vector<CodePatch> patches{

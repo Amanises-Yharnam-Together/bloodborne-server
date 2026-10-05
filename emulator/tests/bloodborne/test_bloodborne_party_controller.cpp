@@ -396,3 +396,14 @@ TEST(BloodborneAliveState, KeepsTheLastStateSeenWhileAlive) {
     EXPECT_EQ(snapshot.Saved()->action, 0);
     EXPECT_EQ(snapshot.Saved()->action_sub, 1);
 }
+
+// A dead guest's bloodstain in the host's world: the native g_Initialize registers the
+// self-bloodstain pickup (event 4032, SelfBloodMark) only for ATTR_LIVE | ATTR_GREY (0x30), so a
+// white phantom could never touch it. ATTR_WHITE (0x40) is added.
+TEST(BloodborneGuestBloodstain, LetsAWhitePhantomPickUpItsOwnBloodstain) {
+    const auto& patches = GuestBloodstainPatches();
+    ASSERT_EQ(patches.size(), 1u);
+    EXPECT_EQ(patches[0].offset, 0x0137EBC7u);
+    EXPECT_EQ(patches[0].original, (std::vector<u8>{0xB9, 0x30, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(patches[0].patched, (std::vector<u8>{0xB9, 0x70, 0x00, 0x00, 0x00}));
+}
