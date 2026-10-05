@@ -404,6 +404,16 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
         it->state = State::Advertised;
         it->preparationRequester = -1;
     }
+    if (it->state == State::Delivered && it->joined) {
+        // Same game session advertising again after it already joined: the session ended
+        // (death, boss, host left) and the old claim points at a room that is gone.
+        it->state = State::Advertised;
+        it->claim = {};
+        it->rawClaim.clear();
+        it->hostPlacement.clear();
+        it->joined = false;
+        return {State::Advertised, {}, {}};
+    }
     if (it->state == State::Claimed) {
         const std::optional<qint64> hostMap = HostPlacementMap(it->hostPlacement);
         if (m_seamlessCoop && hostMap.has_value() &&
@@ -526,6 +536,7 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
     }
 
     target->state = State::Claimed;
+    target->joined = false;
     target->claim = request;
     target->rawClaim = rawRequest;
     if (m_seamlessCoop && !hostPlacement.isEmpty() &&
@@ -562,6 +573,9 @@ SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qi
         if (sessionMatches && userMatches && it->state != State::Consumed) {
             it->updatedAtMs = nowMs;
             if (m_seamlessCoop && !forceConsume && IsSeamlessActiveState(it->state)) {
+                // Consuming a delivered claim means the guest is joining. A consume before
+                // delivery is only the cross-map handoff and must keep the claim pending.
+                it->joined = it->joined || it->state == State::Delivered;
                 ++result.retained;
                 if (!it->hostPlacement.isEmpty()) {
                     result.pendingHostPlacement = it->hostPlacement;

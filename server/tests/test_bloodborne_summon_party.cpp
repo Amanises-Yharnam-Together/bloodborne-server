@@ -153,6 +153,53 @@ int main() {
           Broker::State::Advertised);
   }
 
+  // Once a delivered claim has been consumed the guest is in the host's world.
+  // If that same game session advertises again (it died and was sent home),
+  // the old claim points at a room that no longer exists: the sign must go
+  // back to a plain advertisement the host can claim afresh.
+  {
+    Broker::Options options;
+    options.seamlessCoop = true;
+    Broker broker(options);
+    const QByteArray sign = Advertisement("guest-session", 100);
+    const QByteArray removal =
+        R"({"MessageId":"SummonDataRemoveRequest","SessionId":"guest-session","UserId":100})";
+    const QByteArray claim = Claim("guest-session", 1, 100);
+
+    broker.Advertise(Parse(sign), sign, 10, partyA);
+    CHECK(broker.Claim(Parse(claim), claim, 20, {}, partyA).status ==
+          Broker::ClaimStatus::Claimed);
+    CHECK(broker.Advertise(Parse(sign), sign, 30, partyA).state ==
+          Broker::State::Delivered);
+    CHECK(broker.Consume(Parse(removal), 40).retained == 1); // joined
+
+    const auto again = broker.Advertise(Parse(sign), sign, 50, partyA);
+    CHECK(again.state == Broker::State::Advertised);
+    CHECK(again.pendingClaim.isEmpty());
+    CHECK(broker.Claim(Parse(claim), claim, 60, {}, partyA).status ==
+          Broker::ClaimStatus::Claimed);
+    CHECK(broker.Advertise(Parse(sign), sign, 70, partyA).state ==
+          Broker::State::Delivered);
+  }
+
+  // A consume before delivery is the cross-map handoff, not a join: the claim
+  // must survive it so the guest still receives it at the destination.
+  {
+    Broker::Options options;
+    options.seamlessCoop = true;
+    Broker broker(options);
+    const QByteArray sign = Advertisement("guest-session", 100);
+    const QByteArray removal =
+        R"({"MessageId":"SummonDataRemoveRequest","SessionId":"guest-session","UserId":100})";
+    const QByteArray claim = Claim("guest-session", 1, 100);
+    broker.Advertise(Parse(sign), sign, 10, partyA);
+    broker.Claim(Parse(claim), claim, 20, {}, partyA);
+    CHECK(broker.Consume(Parse(removal), 30).retained == 1);
+    const auto delivered = broker.Advertise(Parse(sign), sign, 40, partyA);
+    CHECK(delivered.state == Broker::State::Delivered);
+    CHECK(delivered.pendingClaim == claim);
+  }
+
   // Header values are untrusted: trimmed, capped, and anything with control
   // characters or without a "name:secret" shape is treated as no party at all.
   {

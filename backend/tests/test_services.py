@@ -107,6 +107,15 @@ class SsInfoTest(unittest.TestCase):
         self.assertEqual(self.tag(xml, "SummonDataCreateInterval2"), "5")
         self.assertEqual(self.tag(xml, "SummonDataGetListInterval2"), "5")
 
+    def test_coop_guard_timers_do_not_stall_rejoin(self):
+        # After a session ends the host waits out these guard timers (retail 60 s) before it
+        # takes a new sign, so a guest who died could not rejoin for over a minute.
+        xml = self.fetch_ss_info([])
+        self.assertEqual(self.tag(xml, "SummonDataGetListGuardTimer2"), "5")
+        self.assertEqual(self.tag(xml, "SummonDataGetListCoopGuardTimerClampTime2"), "5")
+        # Invasion timers are not ours to touch.
+        self.assertEqual(self.tag(xml, "SummonDataGetListInvationGuardTimerClampTime2"), "0")
+
     def test_summon_polling_interval_is_configurable(self):
         xml = self.fetch_ss_info(["--summon-poll", "12"])
         self.assertEqual(self.tag(xml, "SummonDataCreateInterval2"), "12")

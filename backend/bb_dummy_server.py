@@ -147,6 +147,9 @@ def id_list(items, key):
 # How often (seconds) the game re-posts its summon sign and polls for signs. Retail sends 30/35,
 # which makes every seamless (re)join wait a minute or more; a private server can afford 5.
 SUMMON_POLL_TAGS = ("SummonDataCreateInterval2", "SummonDataGetListInterval2")
+# After a co-op session ends the host waits out these guard timers (retail 60 s) before it takes
+# a new sign, which stalls every rejoin after a death. Same value as the poll interval.
+COOP_GUARD_TAGS = ("SummonDataGetListGuardTimer2", "SummonDataGetListCoopGuardTimerClampTime2")
 
 
 def build_ss_info(template_path, services_url, summon_url, summon_poll=5):
@@ -156,7 +159,7 @@ def build_ss_info(template_path, services_url, summon_url, summon_poll=5):
     if missing:
         sys.exit("template {} has no {} placeholder".format(template_path, " or ".join(missing)))
     xml = xml.replace("{SERVICES}", services_url).replace("{SUMMON}", summon_url)
-    for tag in SUMMON_POLL_TAGS:
+    for tag in SUMMON_POLL_TAGS + COOP_GUARD_TAGS:
         xml = re.sub(r"<{0}>[^<]*</{0}>".format(tag), "<{0}>{1}</{0}>".format(tag, summon_poll), xml)
     if "thehuntersdream" in xml:
         sys.exit("template still references thehuntersdream.com; regenerate it")

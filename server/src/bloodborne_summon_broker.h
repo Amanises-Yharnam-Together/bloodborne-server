@@ -71,6 +71,8 @@ private:
         QByteArray rawClaim;
         QByteArray hostPlacement;
         QByteArray party;
+        // The guest consumed a delivered claim, i.e. it is (or was) in the host's world.
+        bool joined = false;
         qint64 preparationRequester = -1;
         qint64 updatedAtMs = 0;
     };
