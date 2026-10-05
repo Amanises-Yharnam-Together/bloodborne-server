@@ -184,6 +184,8 @@ constexpr u64 RevivePlayerOffset = 0x01332B20;
 // 01.09's local-player revive: refills HP and clears the death's controller locks ([+0x58]
 // +0x114 bit 0 and [+0x38]+0x48 bits 0-1), then makes the player a live one (type 0).
 constexpr u64 ReviveLocalCharacterOffset = 0x013179B0;
+// Warp(_, character, target entity) event binding: moves a character to a map entity.
+constexpr u64 WarpOffset = 0x0132DF50;
 // ChrResetAnimation(_, entity): sends the character's behaviour back to idle.
 constexpr u64 ChrResetAnimationOffset = 0x013370F0;
 // Native SoloPlayDeath_2: the local player's death respawn (bloodstain, warp to the last lamp).
@@ -1985,6 +1987,23 @@ bool PS4_SYSV_ABI UpdateGuestBloodMark() {
     return result;
 }
 
+// The lamp a death respawns the player at: SetReturnPointEntityId (resting at a lamp) stores the
+// lamp's return-point entity in GlobalState +0x1528 (its warp param's +4), and SetDefaultMapUid
+// sends a death respawn there. Warp moves a character to an entity of the loaded map, so this
+// only does something when that lamp is in the map the host's world has loaded.
+void WarpGuestToLastLamp() {
+    const u64 global = GetGlobalState();
+    const s32 entity = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
+    if (entity == -1) {
+        LOG_INFO(Debug, "Bloodborne revive: no last lamp; staying where the guest fell");
+        return;
+    }
+    using Warp = bool PS4_SYSV_ABI (*)(u64 unused, s32 character, s32 target);
+    const bool result =
+        reinterpret_cast<Warp>(image_base + WarpOffset)(0, LocalPlayerEntity, entity);
+    LOG_INFO(Debug, "Bloodborne revive: warp to last lamp entity={} result={}", entity, result);
+}
+
 AliveStateSnapshot local_alive_state;
 
 // The local player's state flags (+0x1E0, 8 bytes) and action state ([+0x3B0]+8: +0x1B4/+0x1B8).
@@ -2065,6 +2084,7 @@ void ReviveGuestAfterGhostDeath() {
             reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, s32)>(image_base + SetChrTypeOffset),
         .chr_reset_animation =
             reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(image_base + ChrResetAnimationOffset),
+        .warp_to_last_lamp = WarpGuestToLastLamp,
     };
     const bool revived = ReviveDeadPartyGuest(calls);
     const u64 player = GetLocalPlayer();

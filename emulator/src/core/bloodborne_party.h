@@ -90,6 +90,7 @@ struct GhostDeathCalls {
     void (*restore_alive_state)() = nullptr; // ours: see AliveStateSnapshot
     void PS4_SYSV_ABI (*set_chr_type)(u64 unused, s32 entity, s32 type) = nullptr;
     void PS4_SYSV_ABI (*chr_reset_animation)(u64 unused, s32 entity) = nullptr;
+    void (*warp_to_last_lamp)() = nullptr; // ours: GlobalState +0x1528, see the emulator
 };
 constexpr s32 DeathEventFlag = 4000;
 constexpr s32 WhiteGhostCharacterType = 1;

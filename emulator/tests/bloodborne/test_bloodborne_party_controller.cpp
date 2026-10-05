@@ -304,6 +304,9 @@ void PS4_SYSV_ABI FakeSetChrType(u64, s32 entity, s32 type) {
 void PS4_SYSV_ABI FakeChrResetAnimation(u64, s32 entity) {
     revive_calls.push_back("ChrResetAnimation " + std::to_string(entity));
 }
+void FakeWarpToLastLamp() {
+    revive_calls.push_back("WarpToLastLamp");
+}
 
 constexpr GhostDeathCalls FakeCalls{
     .is_white_ghost = FakeIsWhiteGhost,
@@ -316,6 +319,7 @@ constexpr GhostDeathCalls FakeCalls{
     .restore_alive_state = FakeRestoreAliveState,
     .set_chr_type = FakeSetChrType,
     .chr_reset_animation = FakeChrResetAnimation,
+    .warp_to_last_lamp = FakeWarpToLastLamp,
 };
 
 } // namespace
@@ -333,6 +337,8 @@ constexpr GhostDeathCalls FakeCalls{
 // lock itself is the death's controller flags ([+0x58]: +0x114 bit 0, [+0x38]+0x48 bit 0), which
 // 01.09's own local-player revive (0x013179B0) clears along with refilling HP.
 // (A summon reload instead needs the host's side of the summon handshake and drops the session.)
+// Last, like a death in its own world, it is moved to the last lamp it rested at, which works
+// whenever that lamp is in the map the host's world has loaded; otherwise it stays where it fell.
 TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
     revive_calls.clear();
     white_ghost = true;
@@ -348,6 +354,7 @@ TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
                                 "RestoreAliveState",
                                 "SetChrType 10000 1",
                                 "ChrResetAnimation 10000",
+                                "WarpToLastLamp",
                             }));
 }
 

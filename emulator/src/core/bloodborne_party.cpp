@@ -115,7 +115,7 @@ bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
     if (!calls.is_white_ghost || !calls.set_event_flag || !calls.clear_return_state ||
         !calls.request_full_recover || !calls.update_blood_mark || !calls.revive_player ||
         !calls.revive_local_character || !calls.restore_alive_state || !calls.set_chr_type ||
-        !calls.chr_reset_animation || !calls.is_white_ghost()) {
+        !calls.chr_reset_animation || !calls.warp_to_last_lamp || !calls.is_white_ghost()) {
         return false;
     }
     calls.set_event_flag(0, DeathEventFlag, false);
@@ -127,6 +127,7 @@ bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
     calls.restore_alive_state();
     calls.set_chr_type(0, LocalPlayerEntity, WhiteGhostCharacterType);
     calls.chr_reset_animation(0, LocalPlayerEntity);
+    calls.warp_to_last_lamp();
     return true;
 }
 
