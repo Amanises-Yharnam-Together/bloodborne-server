@@ -250,6 +250,7 @@ endforeach()
 set(HTTP_TEST_SOURCES
     # Under test
     ${CMAKE_SOURCE_DIR}/src/core/libraries/network/http.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/bloodborne_party.cpp
     # Required to link RegisterLib's LIB_FUNCTION calls and the logger's
     # access to EmulatorSettings.
     ${CMAKE_SOURCE_DIR}/src/core/emulator_settings.cpp
@@ -328,6 +329,22 @@ if (WIN32)
 endif()
 
 gtest_discover_tests(shadps4_http_test
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    DISCOVERY_TIMEOUT 60
+)
+
+# ===========================================================================
+# Bloodborne co-op helpers (pure functions, no emulator dependencies)
+# ===========================================================================
+
+add_executable(shadps4_bloodborne_test
+    ${CMAKE_SOURCE_DIR}/src/core/bloodborne_party.cpp
+    bloodborne/test_bloodborne_party.cpp
+)
+target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(shadps4_bloodborne_test PRIVATE cxx_std_23)
+target_link_libraries(shadps4_bloodborne_test PRIVATE GTest::gtest_main)
+gtest_discover_tests(shadps4_bloodborne_test
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     DISCOVERY_TIMEOUT 60
 )

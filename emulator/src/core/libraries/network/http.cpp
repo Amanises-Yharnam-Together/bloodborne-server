@@ -23,6 +23,7 @@
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/path_util.h"
+#include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/debugger.h"
 #include "core/emulator_settings.h"
@@ -684,6 +685,7 @@ bool IsBloodborneSummonPath(std::string_view path) {
 }
 
 constexpr std::string_view BloodborneHostPlacementHeader = "X-ShadPS4-Bloodborne-Host-Placement";
+constexpr std::string_view BloodbornePartyHeader = "X-ShadPS4-Bloodborne-Party";
 
 bool IsBloodborneSummonRequestPath(std::string_view path) {
     return path.find("/summon_messenger/request") != std::string_view::npos;
@@ -831,6 +833,13 @@ bool ApplyBloodborneSeamlessRoute(SendRequestPlan& plan) {
     }
     RewriteHostHeader(plan);
     plan.headers.emplace_back("X-ShadPS4-Bloodborne-Seamless", "1");
+    if (const char* party_setting = std::getenv("SHADPS4_BLOODBORNE_PARTY")) {
+        if (const auto party = Core::Bloodborne::ParsePartySetting(party_setting)) {
+            plan.headers.emplace_back(BloodbornePartyHeader, *party);
+        } else {
+            LOG_WARNING(Lib_Http, "Ignoring SHADPS4_BLOODBORNE_PARTY: expected <name>:<secret>");
+        }
+    }
     if (IsBloodborneSummonRequestPath(plan.path) || IsBloodborneSummonSearchPath(plan.path)) {
         if (const auto placement = Core::Bloodborne::GetSeamlessHostPlacementHeader()) {
             plan.headers.emplace_back(BloodborneHostPlacementHeader, *placement);
