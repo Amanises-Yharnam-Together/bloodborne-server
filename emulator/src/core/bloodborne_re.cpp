@@ -112,6 +112,7 @@ constexpr u64 CandidateLocalStatePointerOffset = 0x0553E878;
 constexpr u64 SummonManagerRootPointerOffset = 0x0553B120; // FrpgNetMan
 // GameDataMan: +0x28 "has a bloodstain", +0x30 the bloodstain record UpDateBloodMark writes.
 constexpr u64 GameDataManPointerOffset = 0x0553B130;
+constexpr u64 EventManPointerOffset = 0x0553B108; // SprjEventMan
 // SetChrType(_, entity, type) event binding: sets +0x78 and refreshes the character (vtable 0x1A0).
 constexpr u64 SetChrTypeOffset = 0x01338DF0;
 constexpr u64 CurrentMapListPointerOffset = 0x0553B148;
@@ -1737,19 +1738,22 @@ void LogBloodstainStateChanges() {
     const u64 stain = stains >= 0x10000 ? ReadValue<u64>(stains, 0xC0) : 0;
     const u64 global = GetGlobalState();
     const u64 player = GetLocalPlayer();
-    const auto state = fmt::format(
-        "has_mark={} record_valid={} record_block={:#x} record_pos=({}, {}, {}) stain={:#x} "
-        "stain_hidden={} flag1592={} flag1770={} chr_type={}",
-        data >= 0x10000 ? ReadValue<u8>(data, 0x28) : 0xFF,
-        record >= 0x10000 ? ReadValue<u8>(record, 0x44) : 0xFF,
-        record >= 0x10000 ? ReadValue<u32>(record, 0x3C) : 0,
-        record >= 0x10000 ? ReadValue<float>(record, 0x18) : 0.0f,
-        record >= 0x10000 ? ReadValue<float>(record, 0x1C) : 0.0f,
-        record >= 0x10000 ? ReadValue<float>(record, 0x20) : 0.0f, stain,
-        stain >= 0x10000 ? ReadValue<u8>(stain, 0xC0) : 0xFF,
-        global >= 0x10000 ? ReadValue<u8>(global, 0x1592) : 0xFF,
-        global >= 0x10000 ? ReadValue<u8>(global, 0x1770) : 0xFF,
-        player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1);
+    const auto state =
+        fmt::format("has_mark={} record_valid={} record_30={} record_38={} record_block={:#x} "
+                    "record_pos=({}, {}, {}) stain={:#x} "
+                    "stain_hidden={} flag1592={} flag1770={} chr_type={}",
+                    data >= 0x10000 ? ReadValue<u8>(data, 0x28) : 0xFF,
+                    record >= 0x10000 ? ReadValue<u8>(record, 0x44) : 0xFF,
+                    record >= 0x10000 ? ReadValue<s32>(record, 0x30) : 0,
+                    record >= 0x10000 ? ReadValue<s32>(record, 0x38) : 0,
+                    record >= 0x10000 ? ReadValue<u32>(record, 0x3C) : 0,
+                    record >= 0x10000 ? ReadValue<float>(record, 0x18) : 0.0f,
+                    record >= 0x10000 ? ReadValue<float>(record, 0x1C) : 0.0f,
+                    record >= 0x10000 ? ReadValue<float>(record, 0x20) : 0.0f, stain,
+                    stain >= 0x10000 ? ReadValue<u8>(stain, 0xC0) : 0xFF,
+                    global >= 0x10000 ? ReadValue<u8>(global, 0x1592) : 0xFF,
+                    global >= 0x10000 ? ReadValue<u8>(global, 0x1770) : 0xFF,
+                    player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1);
     if (state != last) {
         last = state;
         LOG_INFO(Debug, "Bloodborne bloodstain state map={:#x} {}", GetCurrentPackedMap(), state);
@@ -2009,6 +2013,15 @@ void ReviveGuestAfterGhostDeath() {
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + IsWhiteGhostOffset),
         .set_event_flag = reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
             image_base + PartyGhostSetEventFlagOffset),
+        .clear_return_state =
+            [] {
+                // OnEvent_4000 (0x013813D0) sets it to 4 and skips deaths while it is above 0.
+                const u64 events = ReadValue<u64>(image_base + EventManPointerOffset, 0);
+                const u64 state = events >= 0x10000 ? ReadValue<u64>(events, 0x10) : 0;
+                if (state >= 0x10000) {
+                    WriteValue(state, 0x08, s32{0});
+                }
+            },
         .request_full_recover =
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset),
         .update_blood_mark =

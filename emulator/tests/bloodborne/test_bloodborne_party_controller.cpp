@@ -289,6 +289,9 @@ bool PS4_SYSV_ABI FakeRevivePlayer() {
     revive_calls.push_back("RevivePlayer");
     return true;
 }
+void FakeClearReturnState() {
+    revive_calls.push_back("ClearReturnState");
+}
 void PS4_SYSV_ABI FakeReviveLocalCharacter() {
     revive_calls.push_back("ReviveLocalCharacter");
 }
@@ -305,6 +308,7 @@ void PS4_SYSV_ABI FakeChrResetAnimation(u64, s32 entity) {
 constexpr GhostDeathCalls FakeCalls{
     .is_white_ghost = FakeIsWhiteGhost,
     .set_event_flag = FakeSetEventFlag,
+    .clear_return_state = FakeClearReturnState,
     .request_full_recover = FakeRequestFullRecover,
     .update_blood_mark = FakeUpDateBloodMark,
     .revive_player = FakeRevivePlayer,
@@ -317,7 +321,9 @@ constexpr GhostDeathCalls FakeCalls{
 } // namespace
 
 // Where the game would open that menu, a party guest gets up again instead: the death event
-// (4000) is cleared so the next death runs, the guest drops its echoes in a bloodstain the way a
+// (4000) and the "returning to its world" state OnEvent_4000 sets ([SprjEventMan+0x10]+8 = 4;
+// any death is ignored while it is above 0, and only a load resets it) are cleared so the next
+// death runs, the guest drops its echoes in a bloodstain the way a
 // host death does (UpDateBloodMark) and is revived in place. RevivePlayer alone leaves the
 // character in its death pose and makes it a live player (type 0), so the white phantom type is
 // set back (SetChrType also refreshes the character) and its behaviour is reset to idle.
@@ -334,6 +340,7 @@ TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
     EXPECT_EQ(revive_calls, (std::vector<std::string>{
                                 "IsWhiteGhost",
                                 "SetEventFlag 4000 off",
+                                "ClearReturnState",
                                 "RequestFullRecover",
                                 "UpDateBloodMark",
                                 "RevivePlayer",

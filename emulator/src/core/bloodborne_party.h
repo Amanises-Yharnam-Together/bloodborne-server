@@ -82,6 +82,7 @@ u64 DecodeNearCallTarget(u64 offset, std::span<const u8> bytes);
 struct GhostDeathCalls {
     bool PS4_SYSV_ABI (*is_white_ghost)() = nullptr;
     bool PS4_SYSV_ABI (*set_event_flag)(u64 unused, s32 flag, bool on) = nullptr;
+    void (*clear_return_state)() = nullptr; // ours: [SprjEventMan+0x10]+8, set by OnEvent_4000
     bool PS4_SYSV_ABI (*request_full_recover)() = nullptr;
     bool PS4_SYSV_ABI (*update_blood_mark)() = nullptr;
     bool PS4_SYSV_ABI (*revive_player)() = nullptr;
