@@ -1,8 +1,8 @@
-# Local mirror of the upstream CI checks, per component of the monorepo.
-# Usage: ci-check.ps1 -Component emulator|server [-All] [-SkipBuild] [-Src <dir>]
+﻿# Local mirror of the upstream CI checks, per component of the monorepo.
+# Usage: ci-check.ps1 -Component emulator|server|backend [-All] [-SkipBuild] [-Src <dir>]
 #   default lints only files changed vs. trunk(); -All lints every source file like a branch push.
 param(
-    [Parameter(Mandatory)][ValidateSet("emulator", "server")][string]$Component,
+    [Parameter(Mandatory)][ValidateSet("emulator", "server", "backend")][string]$Component,
     [switch]$All,
     [switch]$SkipBuild,
     [string]$Src
@@ -16,6 +16,14 @@ if (-not $Src) { $Src = Join-Path $env:BB_ROOT "bloodborne-server\$Component" }
 $out = Join-Path $env:BB_ROOT "out\$Component"
 Set-Location $Src
 $failed = @()
+
+if ($Component -eq "backend") {
+    # Python stand-in for the retail backend: no upstream CI, just its service tests.
+    py -3.12 -m unittest discover -s tests 2>&1 | Select-Object -Last 4
+    if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: backend tests"; exit 1 }
+    Write-Host "CI CHECK PASSED"
+    exit 0
+}
 
 # 1. clang-format 19 (both upstream CIs pin clang-format-19)
 $fmtVersion = & $clangFormat --version
@@ -86,3 +94,4 @@ if (-not $SkipBuild) {
 
 if ($failed) { Write-Host "CI CHECK FAILED: $($failed -join ', ')"; exit 1 }
 Write-Host "CI CHECK PASSED"
+

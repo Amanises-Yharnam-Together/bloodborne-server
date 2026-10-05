@@ -42,7 +42,7 @@ RegistrationSecretKey=
 "@ | Set-Content "$Rig\server\shadnet.cfg" -Encoding ascii
 
 # --- backend ------------------------------------------------------------------------------
-Copy-Item "$Install\LocalServer\server\*.py", "$Install\LocalServer\server\ss_info_template.xml" "$Rig\backend\" -Force
+Copy-Item "$PSScriptRoot\..\backend\*.py", "$PSScriptRoot\..\backend\ss_info_template.xml" "$Rig\backend\" -Force
 "" | Set-Content "$Rig\backend\notice.txt"
 
 # --- players ------------------------------------------------------------------------------
@@ -93,6 +93,7 @@ cd /d "%~dp0server\clientsample"
 
 Write-Host "Rig ready at $Rig"
 Write-Host "  1. start-servers.bat   2. register-accounts.bat (once)   3. host\launch.bat, guest\launch.bat"
+
 
 
 
