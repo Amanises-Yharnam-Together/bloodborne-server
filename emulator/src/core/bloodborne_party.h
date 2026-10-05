@@ -6,8 +6,10 @@
 #include <array>
 #include <chrono>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "common/types.h"
 
@@ -52,9 +54,44 @@ constexpr s32 MatchingStateHosting = 3;
 constexpr s32 MatchingStateSummonedGuest = 6;
 constexpr s32 SummonReloadInProgress = 3;
 
-// Whether a world teardown must end the session even though the seamless patch keeps it
-// (see the test for why). `reload_pending` is our own deferred summon reload.
+// Whether a world teardown must end the session even though the seamless patch keeps it: a
+// summoned guest or a host leaving its world (quit to title, death respawn), but never during a
+// summon reload (see the tests for why). `reload_pending` is our own deferred summon reload.
 bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending);
+
+// Deaths that keep the party. 01.09 runs the event scripts' death flow natively (the Lua source,
+// global_event.lua in script/eventcommon.luabnd.dcx, is never loaded), so the change is a few
+// byte patches in PartyGhostDeath / PartyGhostDeath_1 plus a revive where the menu used to be.
+constexpr u64 PartyGhostSetEventFlagOffset = 0x0132E5A0;       // SetEventFlag(_, flag, on)
+constexpr u64 PartyGhostCustomLuaCallStartOffset = 0x0132ED40; // CustomLuaCallStart(proxy, id, arg)
+constexpr u64 PartyGhostDeathMenuBranchOffset = 0x01382359;    // jne past the menu (ClearBoss)
+
+struct CodePatch {
+    u64 offset;
+    std::vector<u8> original;
+    std::vector<u8> patched;
+};
+const std::vector<CodePatch>& GhostDeathKeepSessionPatches();
+
+// Target of a `call rel32` at `offset`, or 0 if the bytes are not one.
+u64 DecodeNearCallTarget(u64 offset, std::span<const u8> bytes);
+
+// The event script bindings the revive uses (PS4 SysV; the unused first arguments are the script
+// state the native code passes along).
+struct GhostDeathCalls {
+    bool PS4_SYSV_ABI (*is_white_ghost)() = nullptr;
+    bool PS4_SYSV_ABI (*set_event_flag)(u64 unused, s32 flag, bool on) = nullptr;
+    bool PS4_SYSV_ABI (*request_full_recover)() = nullptr;
+    bool PS4_SYSV_ABI (*revive_player)() = nullptr;
+    bool PS4_SYSV_ABI (*force_play_animation)(u64 unused, s32 entity, s32 animation) = nullptr;
+};
+constexpr s32 DeathEventFlag = 4000;
+constexpr s32 LocalPlayerEntity = 10000;
+constexpr s32 AliveMotionAnimation = 101200;
+
+// Revives the local player in place if it is a white phantom (a party guest). Returns whether it
+// did; anyone else (and a missing binding) is left to the game.
+bool ReviveDeadPartyGuest(const GhostDeathCalls& calls);
 
 // The sign poster's timers (seconds, a float at +0x28 of the sign object): 01.09 waits 5 s
 // before a new sign's first post and 30 s between re-posts, ignoring ss.info's interval.

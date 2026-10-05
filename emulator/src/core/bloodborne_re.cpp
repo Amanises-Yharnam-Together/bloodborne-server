@@ -168,6 +168,14 @@ constexpr u64 StageTransitionStopMatchingCallOffset = 0x019471B1;
 // Same world teardown (0x019470F0), where it loads the session rules to decide whether to stop
 // matching (mov rbx,[rax]; cmp [rbx+0x84],3). No RIP-relative code, so it can be hooked.
 constexpr u64 WorldTeardownMatchingOffset = 0x0194716E;
+// PartyGhostDeath_1's `cmp byte ptr [r14+0xC], 0` (ClearBoss), right before the menu branch that
+// GhostDeathKeepSessionPatches turns into a plain jump: where a party guest revives instead.
+constexpr u64 GhostDeathReviveOffset = 0x01382354;
+// Event script bindings ReviveDeadPartyGuest calls.
+constexpr u64 IsWhiteGhostOffset = 0x01331D80;
+constexpr u64 RequestFullRecoverOffset = 0x01337550;
+constexpr u64 RevivePlayerOffset = 0x01332B20;
+constexpr u64 ForcePlayAnimationOffset = 0x0132E290;
 
 // Sign poster timer stores (see FirstSignPostDelaySeconds / SignRepostSeconds).
 struct SignTimerSite {
@@ -611,6 +619,11 @@ constexpr auto Sites = std::to_array<TraceSite>({
      TraceKind::MatchingLeaveDecision,
      {0x48, 0x8B, 0x18, 0x83, 0xBB, 0x84, 0x00, 0x00, 0x00, 0x03},
      10},
+    {"PartyGhostDeath1.Revive",
+     GhostDeathReviveOffset,
+     TraceKind::MatchingSignal,
+     {0x41, 0x80, 0x7E, 0x0C, 0x00},
+     5},
     {"HealingFountain.Availability.Host",
      HealingFountainAvailabilityOffset,
      TraceKind::HealingFountainAvailability,
@@ -780,6 +793,7 @@ bool summon_build_world_state_patch_installed{};
 bool summon_build_negative_event_patch_installed{};
 bool stage_transition_keep_matching_patch_installed{};
 bool world_teardown_hook_installed{};
+bool ghost_death_revive_hook_installed{};
 bool summon_build_host_placement_hook_installed{};
 bool cross_map_guest_handoff_hook_installed{};
 bool summon_reload_state_hook_installed{};
@@ -1711,6 +1725,44 @@ void TickPartyController() {
              party_controller->SearchEffectId(), GetCurrentPackedMap(), result);
 }
 
+void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers);
+
+// Deaths that keep the party: a dead guest revives in the host's world instead of being sent
+// home. Optional and all-or-nothing: the byte patches alone would leave the guest dead.
+void InstallGhostDeathRevive(u64 base, u64 image_size) {
+    const auto& patches = GhostDeathKeepSessionPatches();
+    for (const auto& patch : patches) {
+        if (patch.offset > image_size || patch.original.size() > image_size - patch.offset ||
+            !std::ranges::equal(
+                std::span<const u8>{reinterpret_cast<const u8*>(base + patch.offset),
+                                    patch.original.size()},
+                patch.original)) {
+            LOG_ERROR(Debug,
+                      "Bloodborne ghost-death signature mismatch at {:#x}; deaths still send "
+                      "guests home",
+                      patch.offset);
+            return;
+        }
+    }
+    const auto site = std::ranges::find_if(
+        Sites, [](const TraceSite& site) { return site.offset == GhostDeathReviveOffset; });
+    if (site == Sites.end() ||
+        !InstallGuestCodeHook(reinterpret_cast<void*>(base + GhostDeathReviveOffset),
+                              std::span<const u8>{site->prologue.data(), site->prologue_size},
+                              static_cast<size_t>(std::distance(Sites.begin(), site)),
+                              TraceEntry)) {
+        LOG_ERROR(Debug, "Failed to install Bloodborne ghost-death revive hook at {:#x}",
+                  GhostDeathReviveOffset);
+        return;
+    }
+    ghost_death_revive_hook_installed = true;
+    for (const auto& patch : patches) {
+        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
+                    patch.patched.size());
+    }
+    LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests revive in the host's world");
+}
+
 // Faster sign posts for party joins. Optional: on a mismatch the game keeps its own timers.
 void PatchSignTimers(u64 base, u64 image_size) {
     for (const auto& site : SignTimerSites) {
@@ -1734,9 +1786,10 @@ void PatchSignTimers(u64 base, u64 image_size) {
              FirstSignPostDelaySeconds, SignRepostSeconds);
 }
 
-// A summoned guest leaving the host's world (quit to title...) ends the session like the
-// unpatched game would; the keep-matching patch otherwise leaves the host a ghost member.
-void EndGuestSessionOnWorldTeardown() {
+// A summoned guest leaving the host's world, or a host leaving its own (quit to title, death
+// respawn), ends the session like the unpatched game would; the keep-matching patch otherwise
+// leaves a ghost member in the room.
+void EndSessionOnWorldTeardown() {
     const u64 multi_play = GetMatchingState();
     const u64 rules = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
     if (multi_play < 0x10000 || !HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead) ||
@@ -1754,7 +1807,26 @@ void EndGuestSessionOnWorldTeardown() {
     using StopRequest = bool PS4_SYSV_ABI (*)(u64 multi_play);
     const bool result =
         reinterpret_cast<StopRequest>(image_base + MultiPlayStopRequestOffset)(multi_play);
-    LOG_INFO(Debug, "Bloodborne guest left the host world; ended the session result={}", result);
+    LOG_INFO(Debug, "Bloodborne {} left its world; ended the session result={}",
+             matching_state == MatchingStateHosting ? "host" : "guest", result);
+}
+
+// A party guest that died gets up again where the game would show the "returned to your world"
+// menu (the warp home behind it is patched out, see GhostDeathKeepSessionPatches).
+void ReviveGuestAfterGhostDeath() {
+    const GhostDeathCalls calls{
+        .is_white_ghost =
+            reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + IsWhiteGhostOffset),
+        .set_event_flag = reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
+            image_base + PartyGhostSetEventFlagOffset),
+        .request_full_recover =
+            reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset),
+        .revive_player = reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RevivePlayerOffset),
+        .force_play_animation = reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, s32)>(
+            image_base + ForcePlayAnimationOffset),
+    };
+    const bool revived = ReviveDeadPartyGuest(calls);
+    LOG_INFO(Debug, "Bloodborne party guest died; revived in place={}", revived);
 }
 
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers) {
@@ -2978,7 +3050,10 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
         ApplyHealingFountainHostAvailability(*registers);
     }
     if (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) {
-        EndGuestSessionOnWorldTeardown();
+        EndSessionOnWorldTeardown();
+    }
+    if (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) {
+        ReviveGuestAfterGhostDeath();
     }
     if (site.kind == TraceKind::ActionFlags && !HasActionTransition(registers->rdi)) {
         return;
@@ -3508,7 +3583,8 @@ bool VerifySites() {
             (deferred_summon_reload_hook_installed && site.offset == SosStatusUpdateOffset) ||
             (healing_fountain_host_availability_hook_installed &&
              site.offset == HealingFountainAvailabilityOffset) ||
-            (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset)) {
+            (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) ||
+            (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset)) {
             continue;
         }
         const auto expected = std::span<const u8>{site.prologue.data(), site.prologue_size};
@@ -4075,6 +4151,7 @@ void InstallSeamlessCoopPatches() {
                   WorldTeardownMatchingOffset);
     }
 
+    InstallGhostDeathRevive(base, image_size);
     PatchSignTimers(base, image_size);
 
     std::memcpy(area_comparison, BeckoningSignedAreaComparison.data(),
@@ -4231,7 +4308,8 @@ void InstallReverseEngineeringTrace() {
             (deferred_summon_reload_hook_installed && site.offset == SosStatusUpdateOffset) ||
             (healing_fountain_host_availability_hook_installed &&
              site.offset == HealingFountainAvailabilityOffset) ||
-            (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset)) {
+            (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) ||
+            (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset)) {
             ++hook_count;
             continue;
         }

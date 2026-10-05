@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <bit>
+#include <cstring>
 
 #include "core/bloodborne_party.h"
 
@@ -49,8 +50,47 @@ bool StartSummonSearch(u64 player, s32 effect_id, AddSpEffectFn add_sp_effect) {
 }
 
 bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending) {
-    return matching_state == MatchingStateSummonedGuest && reload_state != SummonReloadInProgress &&
-           !reload_pending;
+    const bool in_session =
+        matching_state == MatchingStateSummonedGuest || matching_state == MatchingStateHosting;
+    return in_session && reload_state != SummonReloadInProgress && !reload_pending;
+}
+
+const std::vector<CodePatch>& GhostDeathKeepSessionPatches() {
+    static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
+    static const std::vector<CodePatch> patches{
+        // PartyGhostDeath: SetEventFlag(4047, true) twice. 4047 marks a player on the way out;
+        // left set, it would also swallow a later "host left" for the revived guest.
+        {0x01381FE7, {0xE8, 0xB4, 0xC5, 0xFA, 0xFF}, nop5},
+        {0x01381FF6, {0xE8, 0xA5, 0xC5, 0xFA, 0xFF}, nop5},
+        // CustomLuaCallStart(4063, local player): the host's OnGameLeave drops us.
+        {0x0138201B, {0xE8, 0x20, 0xCD, 0xFA, 0xFF}, nop5},
+        // SetFlagInitState(2), the reset for the load into our own world.
+        {0x0138202F, {0xC7, 0x00, 0x02, 0x00, 0x00, 0x00}, {0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00}},
+        // PartyGhostDeath_1: skip MissionDeadFailed and OnRequestMenuEnd(PartyGhostDeath_2).
+        {PartyGhostDeathMenuBranchOffset, {0x75, 0x2C}, {0xEB, 0x2C}},
+    };
+    return patches;
+}
+
+u64 DecodeNearCallTarget(u64 offset, std::span<const u8> bytes) {
+    if (bytes.size() != 5 || bytes[0] != 0xE8) {
+        return 0;
+    }
+    s32 displacement;
+    std::memcpy(&displacement, bytes.data() + 1, sizeof(displacement));
+    return offset + bytes.size() + static_cast<s64>(displacement);
+}
+
+bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
+    if (!calls.is_white_ghost || !calls.set_event_flag || !calls.request_full_recover ||
+        !calls.revive_player || !calls.force_play_animation || !calls.is_white_ghost()) {
+        return false;
+    }
+    calls.set_event_flag(0, DeathEventFlag, false);
+    calls.request_full_recover();
+    calls.revive_player();
+    calls.force_play_animation(0, LocalPlayerEntity, AliveMotionAnimation);
+    return true;
 }
 
 std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds) {

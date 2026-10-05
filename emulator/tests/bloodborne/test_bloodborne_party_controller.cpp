@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -182,14 +184,22 @@ TEST(BloodborneWorldTeardown, ASummonedGuestLeavingTheHostWorldEndsTheSession) {
     EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, false));
 }
 
-TEST(BloodborneWorldTeardown, KeepsTheSessionDuringASummonReload) {
-    EXPECT_FALSE(
-        ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, SummonReloadInProgress, false));
-    EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, true));
+// The same goes for a host whose world goes away (quit to the title screen, or the respawn
+// after a death): unpatched, the game stops matching there, and keeping the room leaves the
+// guests in it with a host that is gone.
+TEST(BloodborneWorldTeardown, AHostLeavingItsWorldEndsTheSession) {
+    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateHosting, 0, false));
 }
 
-TEST(BloodborneWorldTeardown, LeavesHostsSearchesAndIdlePlayersAlone) {
-    for (const s32 state : {0, 1, 2, MatchingStateHosting, 4, 5, 7}) {
+TEST(BloodborneWorldTeardown, KeepsTheSessionDuringASummonReload) {
+    for (const s32 state : {MatchingStateSummonedGuest, MatchingStateHosting}) {
+        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, SummonReloadInProgress, false));
+        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, true));
+    }
+}
+
+TEST(BloodborneWorldTeardown, LeavesSearchesAndIdlePlayersAlone) {
+    for (const s32 state : {0, 1, 2, 4, 5, 7}) {
         EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, false)) << "state " << state;
     }
 }
@@ -207,4 +217,107 @@ TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
 TEST(BloodborneSignTimers, PostsTheFirstSignAtOnceAndRepostsEveryFiveSeconds) {
     EXPECT_EQ(FirstSignPostDelaySeconds, 0.0f);
     EXPECT_EQ(SignRepostSeconds, 5.0f);
+}
+
+// 01.09 runs the event scripts' death flow natively (global_event.lua in eventcommon.luabnd is
+// only the source it was built from). When a white phantom dies, PartyGhostDeath broadcasts
+// event 4063, which makes the host drop the guest from the session (OnGameLeave), and
+// PartyGhostDeath_1 opens the "returned to your world" menu that leads to the warp home.
+TEST(BloodborneGhostDeath, KeepsTheSessionByDroppingTheLeaveBroadcastAndItsFlags) {
+    const auto& patches = GhostDeathKeepSessionPatches();
+    ASSERT_EQ(patches.size(), 5u);
+    for (const auto& patch : patches) {
+        EXPECT_EQ(patch.original.size(), patch.patched.size()) << std::hex << patch.offset;
+    }
+    // The three calls: SetEventFlag(4047) twice and CustomLuaCallStart(4063, player).
+    const std::array<std::pair<u64, u64>, 3> calls{{
+        {0x01381FE7, PartyGhostSetEventFlagOffset},
+        {0x01381FF6, PartyGhostSetEventFlagOffset},
+        {0x0138201B, PartyGhostCustomLuaCallStartOffset},
+    }};
+    for (std::size_t i = 0; i < calls.size(); ++i) {
+        EXPECT_EQ(patches[i].offset, calls[i].first);
+        EXPECT_EQ(DecodeNearCallTarget(patches[i].offset, patches[i].original), calls[i].second);
+        EXPECT_EQ(patches[i].patched, (std::vector<u8>{0x0F, 0x1F, 0x44, 0x00, 0x00}));
+    }
+    // SetFlagInitState(2), inlined as `mov dword ptr [rax], 2`.
+    EXPECT_EQ(patches[3].original, (std::vector<u8>{0xC7, 0x00, 0x02, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(patches[3].patched, (std::vector<u8>{0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00}));
+    // PartyGhostDeath_1: `if not ClearBoss then <menu, then warp home>` always skips the menu.
+    EXPECT_EQ(patches[4].offset, PartyGhostDeathMenuBranchOffset);
+    EXPECT_EQ(patches[4].original, (std::vector<u8>{0x75, 0x2C}));
+    EXPECT_EQ(patches[4].patched, (std::vector<u8>{0xEB, 0x2C}));
+}
+
+TEST(BloodborneGhostDeath, DecodesOnlyNearCalls) {
+    EXPECT_EQ(DecodeNearCallTarget(0x1000, std::vector<u8>{0xE8, 0x00, 0x00, 0x00, 0x00}), 0x1005u);
+    EXPECT_EQ(DecodeNearCallTarget(0x1000, std::vector<u8>{0xE8, 0xFB, 0xFF, 0xFF, 0xFF}), 0x1000u);
+    EXPECT_EQ(DecodeNearCallTarget(0x1000, std::vector<u8>{0xE9, 0x00, 0x00, 0x00, 0x00}), 0u);
+    EXPECT_EQ(DecodeNearCallTarget(0x1000, std::vector<u8>{0xE8, 0x00}), 0u);
+}
+
+namespace {
+
+std::vector<std::string> revive_calls;
+bool white_ghost = true;
+
+bool PS4_SYSV_ABI FakeIsWhiteGhost() {
+    revive_calls.push_back("IsWhiteGhost");
+    return white_ghost;
+}
+bool PS4_SYSV_ABI FakeSetEventFlag(u64, s32 flag, bool value) {
+    revive_calls.push_back("SetEventFlag " + std::to_string(flag) + (value ? " on" : " off"));
+    return true;
+}
+bool PS4_SYSV_ABI FakeRequestFullRecover() {
+    revive_calls.push_back("RequestFullRecover");
+    return true;
+}
+bool PS4_SYSV_ABI FakeRevivePlayer() {
+    revive_calls.push_back("RevivePlayer");
+    return true;
+}
+bool PS4_SYSV_ABI FakeForcePlayAnimation(u64, s32 entity, s32 animation) {
+    revive_calls.push_back("ForcePlayAnimation " + std::to_string(entity) + " " +
+                           std::to_string(animation));
+    return true;
+}
+
+constexpr GhostDeathCalls FakeCalls{
+    .is_white_ghost = FakeIsWhiteGhost,
+    .set_event_flag = FakeSetEventFlag,
+    .request_full_recover = FakeRequestFullRecover,
+    .revive_player = FakeRevivePlayer,
+    .force_play_animation = FakeForcePlayAnimation,
+};
+
+} // namespace
+
+// Where the game would open that menu, a party guest gets up again instead: the death event
+// (4000) is cleared so the next death runs, then the same revive the game uses after a load
+// (RevivePlayer, then the get-up animation 101200).
+TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
+    revive_calls.clear();
+    white_ghost = true;
+    EXPECT_TRUE(ReviveDeadPartyGuest(FakeCalls));
+    EXPECT_EQ(revive_calls, (std::vector<std::string>{
+                                "IsWhiteGhost",
+                                "SetEventFlag 4000 off",
+                                "RequestFullRecover",
+                                "RevivePlayer",
+                                "ForcePlayAnimation 10000 101200",
+                            }));
+}
+
+TEST(BloodborneGhostDeath, LeavesEveryoneElseAlone) {
+    revive_calls.clear();
+    white_ghost = false;
+    EXPECT_FALSE(ReviveDeadPartyGuest(FakeCalls));
+    EXPECT_EQ(revive_calls, std::vector<std::string>{"IsWhiteGhost"});
+
+    revive_calls.clear();
+    GhostDeathCalls missing = FakeCalls;
+    missing.revive_player = nullptr;
+    EXPECT_FALSE(ReviveDeadPartyGuest(missing));
+    EXPECT_TRUE(revive_calls.empty());
 }
