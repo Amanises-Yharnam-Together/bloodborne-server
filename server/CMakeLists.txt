@@ -83,6 +83,8 @@ set(SOURCES
     src/webapi_routes_session.cpp
     src/bloodborne_summon_broker.h
     src/bloodborne_summon_broker.cpp
+    src/bloodborne_party_rest.h
+    src/bloodborne_party_rest.cpp
     src/webapi_routes_bloodborne.h
     src/webapi_routes_bloodborne.cpp
     src/webapi_routes_common.h
@@ -124,6 +126,14 @@ if(BUILD_TESTING)
     target_include_directories(test_bloodborne_summon_party PRIVATE src)
     target_link_libraries(test_bloodborne_summon_party PRIVATE Qt6::Core)
     add_test(NAME bloodborne_summon_party COMMAND test_bloodborne_summon_party)
+
+    add_executable(test_bloodborne_party_rest EXCLUDE_FROM_ALL
+        tests/test_bloodborne_party_rest.cpp
+        src/bloodborne_party_rest.cpp
+    )
+    target_include_directories(test_bloodborne_party_rest PRIVATE src)
+    target_link_libraries(test_bloodborne_party_rest PRIVATE Qt6::Core)
+    add_test(NAME bloodborne_party_rest COMMAND test_bloodborne_party_rest)
 
     add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
         tests/bloodborne_matching_guest_probe.cpp

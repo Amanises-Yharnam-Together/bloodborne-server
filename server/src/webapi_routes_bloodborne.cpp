@@ -16,8 +16,11 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QList>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QString>
 
+#include "bloodborne_party_rest.h"
 #include "bloodborne_summon_broker.h"
 
 namespace WebApiRoutes {
@@ -221,6 +224,35 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                    }
                    return SummonResponse(QStringLiteral("SummonDataSummonResponse"));
                });
+
+    // Lamps as campfires: party members post where they rest and read back who else does.
+    // Called by the emulator itself (not the game) about once a second while a member rests.
+    auto restBoard = std::make_shared<Bloodborne::PartyRestBoard>();
+    auto lastBoards = std::make_shared<QHash<QByteArray, QByteArray>>();
+    auto lastBoardsMutex = std::make_shared<QMutex>();
+    http.route(
+        "/bloodborne/party/rest", QHttpServerRequest::Method::Post,
+        [restBoard, lastBoards,
+         lastBoardsMutex](const QHttpServerRequest& request) -> QHttpServerResponse {
+            const auto update = Bloodborne::ParseRestUpdate(request.body());
+            if (!update) {
+                return InvalidRequest(QStringLiteral("Invalid party rest update"));
+            }
+            const QByteArray party = Party(request);
+            const QByteArray board = Bloodborne::FormatRestBoard(restBoard->Update(
+                party, update->member, update->lamp, QDateTime::currentMSecsSinceEpoch()));
+            {
+                QMutexLocker lock(lastBoardsMutex.get());
+                QByteArray& last = (*lastBoards)[party];
+                if (last != board) {
+                    last = board;
+                    qInfo().noquote() << "Bloodborne party rest board:"
+                                      << (board.isEmpty() ? QByteArray("nobody resting")
+                                                          : board.trimmed().replace('\n', ", "));
+                }
+            }
+            return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
+        });
 }
 
 } // namespace WebApiRoutes
