@@ -1,27 +1,33 @@
-﻿# Local mirror of the CI checks for the Bloodborne co-op forks.
-# Usage: ci-check.ps1 -Repo shadp2p|shadnet-p2p [-All] [-SkipBuild]
+# Local mirror of the upstream CI checks, per component of the monorepo.
+# Usage: ci-check.ps1 -Component emulator|server [-All] [-SkipBuild] [-Src <dir>]
 #   default lints only files changed vs. trunk(); -All lints every source file like a branch push.
 param(
-    [Parameter(Mandatory)][ValidateSet("shadp2p", "shadnet-p2p")][string]$Repo,
+    [Parameter(Mandatory)][ValidateSet("emulator", "server")][string]$Component,
     [switch]$All,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string]$Src
 )
 $ErrorActionPreference = "Continue"
 . "$PSScriptRoot\env.ps1"
 $scripts = "$env:APPDATA\Python\Python312\Scripts"
 $clangFormat = "$scripts\clang-format.exe"
 $reuse = "$scripts\reuse.exe"
-Set-Location (Join-Path $env:BB_ROOT $Repo)
+if (-not $Src) { $Src = Join-Path $env:BB_ROOT "bloodborne-server\$Component" }
+$out = Join-Path $env:BB_ROOT "out\$Component"
+Set-Location $Src
 $failed = @()
 
-# 1. clang-format 19 (CI pins clang-format-19)
+# 1. clang-format 19 (both upstream CIs pin clang-format-19)
 $fmtVersion = & $clangFormat --version
 if ($fmtVersion -notmatch "version 19\.") { Write-Host "wrong clang-format: $fmtVersion"; exit 2 }
 if ($All) {
     $files = Get-ChildItem src -Recurse -Include *.cpp, *.h | ForEach-Object { $_.FullName }
 } else {
+    # jj paths are repo-relative (e.g. emulator/src/...); keep this component's sources.
     $files = jj diff --name-only -r "trunk()..@" 2>$null |
-        Where-Object { $_ -match '^(src|tests)[\\/].*\.(cpp|h)$' -and (Test-Path $_) }
+        Where-Object { $_ -match "^$Component[\\/](src|tests)[\\/].*\.(cpp|h)$" } |
+        ForEach-Object { Join-Path (Split-Path $Src -Parent) $_ } |
+        Where-Object { Test-Path $_ }
 }
 $fmtBad = @()
 foreach ($f in $files) {
@@ -29,36 +35,54 @@ foreach ($f in $files) {
     if ($LASTEXITCODE -ne 0) { $fmtBad += $f }
 }
 if ($fmtBad) { $failed += "clang-format"; Write-Host "clang-format violations:"; $fmtBad | ForEach-Object { "  $_" } }
-else { Write-Host "clang-format: ok ($($files.Count) files)" }
+else { Write-Host "clang-format: ok ($(@($files).Count) files)" }
 
-# 2. trailing whitespace (shadp2p CI script)
-if ($Repo -eq "shadp2p") {
-    $ws = Get-ChildItem src -Recurse -File | Select-String -Pattern '\s$' -List | Select-Object -First 5
-    if ($ws) { $failed += "trailing-whitespace"; $ws | ForEach-Object { "  $($_.Path):$($_.LineNumber)" } }
+# 2. trailing whitespace (emulator CI script), on the same files as clang-format. Upstream main
+#    already has a few offenders, so -All would flag code we never touched. CR is stripped first
+#    because Windows checkouts may use CRLF while CI runs on LF.
+if ($Component -eq "emulator") {
+    $ws = foreach ($f in $files) {
+        $n = 0
+        foreach ($line in [IO.File]::ReadAllLines($f)) {
+            $n++
+            if ($line.TrimEnd("`r") -match '\s$') { "${f}:$n"; break }
+        }
+    }
+    if ($ws) { $failed += "trailing-whitespace"; $ws | Select-Object -First 10 | ForEach-Object { "  $_" } }
     else { Write-Host "trailing whitespace: ok" }
 }
 
-# 3. REUSE licensing
-& $reuse lint -q
-if ($LASTEXITCODE -ne 0) { $failed += "reuse"; & $reuse lint | Select-Object -Last 15 } else { Write-Host "reuse: ok" }
+# 3. REUSE licensing (each component keeps its own LICENSES/ and REUSE.toml). Upstream CI lints a
+#    checkout without submodule contents; inside the monorepo reuse can't tell they are submodules,
+#    so lint a copy of just this component's tracked files (jj's view, including uncommitted edits).
+$repoRoot = Split-Path $Src -Parent
+$lintDir = Join-Path $env:TEMP "bb-reuse-$Component"
+Remove-Item -Recurse -Force $lintDir -ErrorAction SilentlyContinue
+Push-Location $repoRoot
+foreach ($rel in (jj file list $Component 2>$null)) {
+    $dst = Join-Path $lintDir ($rel.Substring($Component.Length + 1))
+    New-Item -ItemType Directory -Force (Split-Path $dst -Parent) | Out-Null
+    Copy-Item (Join-Path $repoRoot $rel) $dst
+}
+Pop-Location
+& $reuse --root $lintDir lint -q
+if ($LASTEXITCODE -ne 0) { $failed += "reuse"; & $reuse --root $lintDir lint --lines | Select-Object -First 25 }
+else { Write-Host "reuse: ok" }
 
 # 4. build + tests
 if (-not $SkipBuild) {
-    if ($Repo -eq "shadp2p") {
-        cmake --build build --parallel 24 2>&1 | Select-String -Pattern "error:|FAILED" | Select-Object -First 20
+    if ($Component -eq "emulator") {
+        & "$PSScriptRoot\build-emu.ps1" -Src $Src -Out $out
         if ($LASTEXITCODE -ne 0) { $failed += "build" }
-        ctest --test-dir build --output-on-failure -E GcnTest 2>&1 | Select-Object -Last 15
+        ctest --test-dir (Join-Path $out "tests") --output-on-failure -E GcnTest 2>&1 | Select-Object -Last 15
         if ($LASTEXITCODE -ne 0) { $failed += "ctest" }
     } else {
-        cmake --build build --parallel 24 --target all test_bloodborne_summon_broker 2>&1 | Select-String -Pattern "error:|FAILED" | Select-Object -First 20
+        & "$PSScriptRoot\build-server.ps1" -Src $Src -Out $out
         if ($LASTEXITCODE -ne 0) { $failed += "build" }
-        $env:Path = "C:\Qt\6.8.3\msvc2022_64\bin;" + $env:Path
-        ctest --test-dir build --output-on-failure 2>&1 | Select-Object -Last 15
+        ctest --test-dir $out --output-on-failure 2>&1 | Select-Object -Last 15
         if ($LASTEXITCODE -ne 0) { $failed += "ctest" }
     }
 }
 
 if ($failed) { Write-Host "CI CHECK FAILED: $($failed -join ', ')"; exit 1 }
 Write-Host "CI CHECK PASSED"
-
-
