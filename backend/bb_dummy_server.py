@@ -38,6 +38,7 @@ import binascii
 import datetime
 import json
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -143,13 +144,20 @@ def id_list(items, key):
     return out
 
 
-def build_ss_info(template_path, services_url, summon_url):
+# How often (seconds) the game re-posts its summon sign and polls for signs. Retail sends 30/35,
+# which makes every seamless (re)join wait a minute or more; a private server can afford 5.
+SUMMON_POLL_TAGS = ("SummonDataCreateInterval2", "SummonDataGetListInterval2")
+
+
+def build_ss_info(template_path, services_url, summon_url, summon_poll=5):
     with open(template_path, encoding="utf-8") as f:
         xml = f.read()
     missing = [p for p in ("{SERVICES}", "{SUMMON}") if p not in xml]
     if missing:
         sys.exit("template {} has no {} placeholder".format(template_path, " or ".join(missing)))
     xml = xml.replace("{SERVICES}", services_url).replace("{SUMMON}", summon_url)
+    for tag in SUMMON_POLL_TAGS:
+        xml = re.sub(r"<{0}>[^<]*</{0}>".format(tag), "<{0}>{1}</{0}>".format(tag, summon_poll), xml)
     if "thehuntersdream" in xml:
         sys.exit("template still references thehuntersdream.com; regenerate it")
     return base64.b64encode(xml.encode("utf-8"))
@@ -894,6 +902,8 @@ def main():
     ap.add_argument("--shadnet-webapi", default=None,
                     help="shadNet WebAPI for summon traffic (default: http://<address>:31315)")
     ap.add_argument("--template", default=os.path.join(here, "ss_info_template.xml"))
+    ap.add_argument("--summon-poll", type=int, default=5, metavar="SEC",
+                    help="seconds between summon sign posts/searches (retail: 30/35; default 5)")
     ap.add_argument("--store", metavar="FILE", default=None,
                     help="keep messages, bloodstains, ghosts, lanterns and chalice dungeons in this SQLite file")
     ap.add_argument("--show-own", metavar="LIST", default="",
@@ -919,7 +929,7 @@ def main():
 
     # Everything that can fail is checked before the port is taken, so a bad
     # flag or an unwritable store path exits cleanly instead of half-starting.
-    ss_info = build_ss_info(args.template, services_url, summon_url)
+    ss_info = build_ss_info(args.template, services_url, summon_url, max(1, args.summon_poll))
     store = None
     if args.store:
         try:

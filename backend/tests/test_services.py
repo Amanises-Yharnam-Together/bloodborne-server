@@ -1,7 +1,9 @@
 """Service-level tests for bb_dummy_server: start it on a free port and talk HTTP to it."""
 
+import base64
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -70,6 +72,47 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(a1, a2)
         self.assertEqual(len(set(a1)), 2)
         self.assertFalse(set(a1) & set(b))
+
+
+class SsInfoTest(unittest.TestCase):
+    """ss.info drives how often the game polls for summons; retail's 30-35 s makes every
+    (re)join take a minute or more, which defeats seamless auto-rejoin."""
+
+    def fetch_ss_info(self, extra_args):
+        port = free_port()
+        proc = subprocess.Popen(
+            [sys.executable, "-u", SERVER, "--address", "127.0.0.1", "--port", str(port)] + extra_args,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.time() + 10
+            while True:
+                try:
+                    with urllib.request.urlopen("http://127.0.0.1:{}/bb-eu/ss.info".format(port), timeout=1) as r:
+                        return base64.b64decode(r.read()).decode("utf-8")
+                except OSError:
+                    if time.time() > deadline:
+                        raise
+                    time.sleep(0.1)
+        finally:
+            proc.kill()
+            proc.wait()
+
+    @staticmethod
+    def tag(xml, name):
+        match = re.search(r"<{0}>([^<]*)</{0}>".format(name), xml)
+        return match.group(1) if match else None
+
+    def test_summon_polling_is_fast_by_default(self):
+        xml = self.fetch_ss_info([])
+        self.assertEqual(self.tag(xml, "SummonDataCreateInterval2"), "5")
+        self.assertEqual(self.tag(xml, "SummonDataGetListInterval2"), "5")
+
+    def test_summon_polling_interval_is_configurable(self):
+        xml = self.fetch_ss_info(["--summon-poll", "12"])
+        self.assertEqual(self.tag(xml, "SummonDataCreateInterval2"), "12")
+        self.assertEqual(self.tag(xml, "SummonDataGetListInterval2"), "12")
+        # Everything else in the template is left alone.
+        self.assertEqual(self.tag(xml, "ReloadServerStatusInfoInterval2"), "300")
 
 
 if __name__ == "__main__":
