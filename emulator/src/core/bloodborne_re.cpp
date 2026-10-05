@@ -165,8 +165,23 @@ constexpr std::array<u8, 6> SummonBuildNegativeEventRestriction{
 };
 constexpr std::array<u8, 6> SummonBuildAllowedNegativeEvent{0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
 constexpr u64 StageTransitionStopMatchingCallOffset = 0x019471B1;
-// Same world teardown (0x019470F0), just before it decides whether to stop matching.
-constexpr u64 WorldTeardownMatchingOffset = 0x01947167;
+// Same world teardown (0x019470F0), where it loads the session rules to decide whether to stop
+// matching (mov rbx,[rax]; cmp [rbx+0x84],3). No RIP-relative code, so it can be hooked.
+constexpr u64 WorldTeardownMatchingOffset = 0x0194716E;
+
+// Sign poster timer stores (see FirstSignPostDelaySeconds / SignRepostSeconds).
+struct SignTimerSite {
+    u64 offset;
+    u8 modrm;
+    float original_seconds;
+    float patched_seconds;
+};
+constexpr auto SignTimerSites = std::to_array<SignTimerSite>({
+    {0x018A9264, 0x47, 5.0f, FirstSignPostDelaySeconds},
+    {0x018A9324, 0x47, 5.0f, FirstSignPostDelaySeconds},
+    {0x018A9757, 0x43, 30.0f, SignRepostSeconds},
+    {0x018A988F, 0x43, 30.0f, SignRepostSeconds},
+});
 constexpr std::array<u8, 5> StageTransitionStopMatchingCall{0xE8, 0xEA, 0x95, 0x58, 0x00};
 constexpr std::array<u8, 5> StageTransitionKeepMatchingCall{0xE8, 0xEA, 0x8E, 0x58, 0x00};
 constexpr u64 SummonBuildEntryOffset = 0x01874710;
@@ -594,8 +609,8 @@ constexpr auto Sites = std::to_array<TraceSite>({
     {"WorldTeardown.MatchingDecision",
      WorldTeardownMatchingOffset,
      TraceKind::MatchingLeaveDecision,
-     {0x48, 0x8D, 0x05, 0x62, 0x65, 0xBF, 0x03},
-     7},
+     {0x48, 0x8B, 0x18, 0x83, 0xBB, 0x84, 0x00, 0x00, 0x00, 0x03},
+     10},
     {"HealingFountain.Availability.Host",
      HealingFountainAvailabilityOffset,
      TraceKind::HealingFountainAvailability,
@@ -1694,6 +1709,29 @@ void TickPartyController() {
     const bool result = StartPlayerSummonSearch(player, party_controller->SearchEffectId());
     LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",
              party_controller->SearchEffectId(), GetCurrentPackedMap(), result);
+}
+
+// Faster sign posts for party joins. Optional: on a mismatch the game keeps its own timers.
+void PatchSignTimers(u64 base, u64 image_size) {
+    for (const auto& site : SignTimerSites) {
+        const auto expected = EncodeSignTimerStore(site.modrm, site.original_seconds);
+        if (site.offset > image_size || expected.size() > image_size - site.offset ||
+            !std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(base + site.offset),
+                                                    expected.size()},
+                                expected)) {
+            LOG_ERROR(Debug,
+                      "Bloodborne sign timer signature mismatch at {:#x}; keeping the "
+                      "game's sign timers",
+                      site.offset);
+            return;
+        }
+    }
+    for (const auto& site : SignTimerSites) {
+        const auto patched = EncodeSignTimerStore(site.modrm, site.patched_seconds);
+        std::memcpy(reinterpret_cast<void*>(base + site.offset), patched.data(), patched.size());
+    }
+    LOG_INFO(Debug, "Bloodborne sign timers patched: first post after {} s, re-post every {} s",
+             FirstSignPostDelaySeconds, SignRepostSeconds);
 }
 
 // A summoned guest leaving the host's world (quit to title...) ends the session like the
@@ -4025,26 +4063,19 @@ void InstallSeamlessCoopPatches() {
         return;
     }
     healing_fountain_host_availability_hook_installed = true;
+    // Optional: without it a guest quitting to the title stays in the room, but every other
+    // patch still applies.
     const auto world_teardown_expected =
         std::span<const u8>{world_teardown->prologue.data(), world_teardown->prologue_size};
-    if (WorldTeardownMatchingOffset > image_size ||
-        world_teardown_expected.size() > image_size - WorldTeardownMatchingOffset ||
-        !std::ranges::equal(
-            std::span<const u8>{reinterpret_cast<const u8*>(base + WorldTeardownMatchingOffset),
-                                world_teardown_expected.size()},
-            world_teardown_expected)) {
-        LOG_ERROR(Debug, "Bloodborne world-teardown signature mismatch at {:#x}",
-                  WorldTeardownMatchingOffset);
-        return;
-    }
-    if (!InstallGuestCodeHook(
-            reinterpret_cast<void*>(base + WorldTeardownMatchingOffset), world_teardown_expected,
-            static_cast<size_t>(std::distance(Sites.begin(), world_teardown)), TraceEntry)) {
+    world_teardown_hook_installed = InstallGuestCodeHook(
+        reinterpret_cast<void*>(base + WorldTeardownMatchingOffset), world_teardown_expected,
+        static_cast<size_t>(std::distance(Sites.begin(), world_teardown)), TraceEntry);
+    if (!world_teardown_hook_installed) {
         LOG_ERROR(Debug, "Failed to install Bloodborne world-teardown hook at {:#x}",
                   WorldTeardownMatchingOffset);
-        return;
     }
-    world_teardown_hook_installed = true;
+
+    PatchSignTimers(base, image_size);
 
     std::memcpy(area_comparison, BeckoningSignedAreaComparison.data(),
                 BeckoningSignedAreaComparison.size());

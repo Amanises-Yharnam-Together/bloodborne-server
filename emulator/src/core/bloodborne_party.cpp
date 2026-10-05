@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <bit>
+
 #include "core/bloodborne_party.h"
 
 namespace Core::Bloodborne {
@@ -49,6 +51,17 @@ bool StartSummonSearch(u64 player, s32 effect_id, AddSpEffectFn add_sp_effect) {
 bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending) {
     return matching_state == MatchingStateSummonedGuest && reload_state != SummonReloadInProgress &&
            !reload_pending;
+}
+
+std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds) {
+    const auto value = std::bit_cast<u32>(seconds);
+    return {0xC7,
+            modrm,
+            0x28,
+            static_cast<u8>(value),
+            static_cast<u8>(value >> 8),
+            static_cast<u8>(value >> 16),
+            static_cast<u8>(value >> 24)};
 }
 
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {

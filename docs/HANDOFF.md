@@ -46,9 +46,11 @@ Start here when picking the work up in a new session.
 ## Session teardown (2026-10-05)
 - The seamless keep-matching patch (call at `0x019471B1` in the world teardown `0x019470F0`)
   kept the session over *every* teardown, so a guest quitting to the title stayed in the room.
-  A hook at `0x01947167` now calls the native `StopRequest` when the guest is summoned
+  A hook at `0x0194716E` (non-RIP-relative; `0x01947167` could not be hooked) now calls the native `StopRequest` when the guest is summoned
   (state 6) and no summon reload is running. Host-side teardowns (state 3) are unchanged.
 - Server: signs not refreshed for 75 s are no longer offered (stale sign from a previous run).
+- Sign timers: 01.09 waits 5 s before a sign's first post and 30 s between re-posts
+  (`0x018A9264/9324`, `0x018A9757/988F`), ignoring ss.info. Patched to 0 s / 5 s.
 - Known: the emulator's signaling reuses a lingering (locally deactivated) connection when the
   peer re-activates within 60 s; the game never hears that invite.
 

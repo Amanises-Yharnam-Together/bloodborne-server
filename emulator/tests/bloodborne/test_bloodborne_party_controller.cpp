@@ -193,3 +193,18 @@ TEST(BloodborneWorldTeardown, LeavesHostsSearchesAndIdlePlayersAlone) {
         EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, false)) << "state " << state;
     }
 }
+
+// The game's sign poster waits 5 s before a new sign's first post and 30 s between re-posts,
+// whatever ss.info says. The encoder must reproduce 01.09's own stores exactly...
+TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
+    EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
+              (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));
+    EXPECT_EQ(EncodeSignTimerStore(0x43, 30.0f),
+              (std::array<u8, 7>{0xC7, 0x43, 0x28, 0x00, 0x00, 0xF0, 0x41}));
+}
+
+// ...so a party member's sign goes up at once and is re-posted as often as the host searches.
+TEST(BloodborneSignTimers, PostsTheFirstSignAtOnceAndRepostsEveryFiveSeconds) {
+    EXPECT_EQ(FirstSignPostDelaySeconds, 0.0f);
+    EXPECT_EQ(SignRepostSeconds, 5.0f);
+}

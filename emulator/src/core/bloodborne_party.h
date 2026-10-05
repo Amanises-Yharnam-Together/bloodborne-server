@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <optional>
 #include <string>
@@ -54,6 +55,14 @@ constexpr s32 SummonReloadInProgress = 3;
 // Whether a world teardown must end the session even though the seamless patch keeps it
 // (see the test for why). `reload_pending` is our own deferred summon reload.
 bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending);
+
+// The sign poster's timers (seconds, a float at +0x28 of the sign object): 01.09 waits 5 s
+// before a new sign's first post and 30 s between re-posts, ignoring ss.info's interval.
+constexpr float FirstSignPostDelaySeconds = 0.0f;
+constexpr float SignRepostSeconds = 5.0f;
+
+// `mov dword ptr [<reg> + 0x28], <seconds>` with the ModRM byte of the game's own store.
+std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds);
 
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
