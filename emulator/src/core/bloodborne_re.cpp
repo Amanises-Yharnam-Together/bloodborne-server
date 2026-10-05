@@ -109,7 +109,9 @@ constexpr std::array<u8, 16> ReturnAndPadding{0xC3, 0x66, 0x66, 0x66, 0x66, 0x66
                                               0x66, 0x2E, 0x0F, 0x1F, 0x84};
 constexpr u64 GlobalStatePointerOffset = 0x05556678;
 constexpr u64 CandidateLocalStatePointerOffset = 0x0553E878;
-constexpr u64 SummonManagerRootPointerOffset = 0x0553B120;
+constexpr u64 SummonManagerRootPointerOffset = 0x0553B120; // FrpgNetMan
+// GameDataMan: +0x28 "has a bloodstain", +0x30 the bloodstain record UpDateBloodMark writes.
+constexpr u64 GameDataManPointerOffset = 0x0553B130;
 constexpr u64 CurrentMapListPointerOffset = 0x0553B148;
 constexpr u64 MatchingStatePointerOffset = 0x05540290;
 constexpr u64 SummonSessionRulesPointerOffset = 0x0553D6D0;
@@ -1716,7 +1718,38 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
     return observation;
 }
 
+// Diagnostics for guest bloodstains in the host's world (Phase 2): logs the local bloodstain
+// record, the spawned stain object and the world flags that gate them whenever they change.
+void LogBloodstainStateChanges() {
+    static std::string last;
+    const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
+    const u64 net = GetSummonManagerRoot();
+    const u64 stains = net >= 0x10000 ? ReadValue<u64>(net, 0xC68) : 0;
+    const u64 stain = stains >= 0x10000 ? ReadValue<u64>(stains, 0xC0) : 0;
+    const u64 global = GetGlobalState();
+    const u64 player = GetLocalPlayer();
+    const auto state = fmt::format(
+        "has_mark={} record_valid={} record_block={:#x} record_pos=({}, {}, {}) stain={:#x} "
+        "stain_hidden={} flag1592={} flag1770={} chr_type={}",
+        data >= 0x10000 ? ReadValue<u8>(data, 0x28) : 0xFF,
+        record >= 0x10000 ? ReadValue<u8>(record, 0x44) : 0xFF,
+        record >= 0x10000 ? ReadValue<u32>(record, 0x3C) : 0,
+        record >= 0x10000 ? ReadValue<float>(record, 0x18) : 0.0f,
+        record >= 0x10000 ? ReadValue<float>(record, 0x1C) : 0.0f,
+        record >= 0x10000 ? ReadValue<float>(record, 0x20) : 0.0f, stain,
+        stain >= 0x10000 ? ReadValue<u8>(stain, 0xC0) : 0xFF,
+        global >= 0x10000 ? ReadValue<u8>(global, 0x1592) : 0xFF,
+        global >= 0x10000 ? ReadValue<u8>(global, 0x1770) : 0xFF,
+        player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1);
+    if (state != last) {
+        last = state;
+        LOG_INFO(Debug, "Bloodborne bloodstain state map={:#x} {}", GetCurrentPackedMap(), state);
+    }
+}
+
 void TickPartyController() {
+    LogBloodstainStateChanges();
     if (!party_controller) {
         return;
     }
