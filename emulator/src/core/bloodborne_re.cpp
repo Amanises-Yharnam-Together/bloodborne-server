@@ -2112,6 +2112,47 @@ struct CharacterState {
     bool operator==(const CharacterState&) const = default;
 };
 std::vector<CharacterState> characters_before_rest;
+// A copy for the delayed comparison (LogCharactersActivatedByRest), 5 s after the respawn.
+std::vector<CharacterState> characters_at_rest;
+CharacterState ReadCharacterState(u64 character);
+std::optional<std::chrono::steady_clock::time_point> compare_activation_at;
+
+bool IsCharacterActive(const CharacterState& state) {
+    return (state.control_flags & 1) == 0 && state.control_state == 4 && state.hp > 0;
+}
+
+// Diagnostics: characters that were inactive or hidden but alive before the rest and are active
+// a few seconds after it, with their position and the words around +0x28..+0x60 to name them.
+void LogCharactersActivatedByRest() {
+    s32 logged = 0;
+    for (const auto& before : characters_at_rest) {
+        if (IsCharacterActive(before) || before.hp <= 0 ||
+            !HasMemoryAccess(before.character, 0x3B8, MemoryProt::CpuRead) ||
+            ReadValue<u32>(before.character, 0x08) != before.handle) {
+            continue;
+        }
+        const auto now = ReadCharacterState(before.character);
+        if (!IsCharacterActive(now) || ++logged > 30) {
+            continue;
+        }
+        const u64 modules = ReadValue<u64>(before.character, 0x3B0);
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        std::string words;
+        for (u64 offset = 0x20; offset < 0x80; offset += 4) {
+            words += fmt::format(" {:x}", ReadValue<u32>(before.character, offset));
+        }
+        LOG_INFO(Debug,
+                 "Bloodborne rest activated character {:#x} handle {:#x}: control {:#x}/{} "
+                 "flags {:#x} hp {} at ({}, {}, {}) words{}",
+                 before.character, before.handle, before.control_flags, before.control_state,
+                 before.state_flags, before.hp,
+                 physics >= 0x10000 ? ReadValue<float>(physics, 0x1E0) : 0.0f,
+                 physics >= 0x10000 ? ReadValue<float>(physics, 0x1E4) : 0.0f,
+                 physics >= 0x10000 ? ReadValue<float>(physics, 0x1E8) : 0.0f, words);
+    }
+    LOG_INFO(Debug, "Bloodborne rest: {} inactive characters became active", logged);
+    characters_at_rest.clear();
+}
 
 CharacterState ReadCharacterState(u64 character) {
     const u64 control = ReadValue<u64>(character, 0x18);
@@ -2192,8 +2233,16 @@ void LogCharacterChanges() {
     characters_before_rest.clear();
 }
 
+// The hidden characters stay remembered while the player stays in the same map: one that showed
+// up after an earlier rest and was killed is dead now, not hidden, and the next respawn would
+// bring it back (Kaniel saw exactly that with the window monster).
+u32 hidden_characters_map = 0;
+
 void RememberHiddenCharacters(u64 world) {
-    hidden_characters.clear();
+    if (const u32 map = GetCurrentPackedMap(); map != hidden_characters_map) {
+        hidden_characters.clear();
+        hidden_characters_map = map;
+    }
     characters_before_rest.clear();
     ForEachWorldCharacter(world, [](u64 character) {
         characters_before_rest.push_back(ReadCharacterState(character));
@@ -2202,7 +2251,8 @@ void RememberHiddenCharacters(u64 world) {
     ForEachWorldCharacter(world, [&](u64 character) {
         const bool off = IsCharacterDisabled(character);
         disabled += off ? 1 : 0;
-        if (KeepDisabledAfterRespawn(off, CharacterHp(character))) {
+        if (KeepDisabledAfterRespawn(off, CharacterHp(character)) &&
+            !std::ranges::contains(hidden_characters, character)) {
             hidden_characters.push_back(character);
         }
     });
@@ -2211,6 +2261,8 @@ void RememberHiddenCharacters(u64 world) {
 }
 
 void HideCharactersAgain() {
+    characters_at_rest = characters_before_rest;
+    compare_activation_at = std::chrono::steady_clock::now() + std::chrono::seconds{5};
     RestoreScriptFlags();
     LogCharacterChanges();
     s32 hidden = 0;
@@ -2226,7 +2278,6 @@ void HideCharactersAgain() {
         LOG_INFO(Debug, "Bloodborne party rest: hid {} of {} characters the respawn re-enabled",
                  hidden, hidden_characters.size());
     }
-    hidden_characters.clear();
 }
 
 // Does what a reload at the lamp would (see RefreshAtLamp) and asks WorldChrMan for the bonfire
@@ -2284,6 +2335,10 @@ void TickLampRest() {
         return;
     }
     LogWorldRespawnChanges();
+    if (compare_activation_at && std::chrono::steady_clock::now() >= *compare_activation_at) {
+        compare_activation_at.reset();
+        LogCharactersActivatedByRest();
+    }
     if (lamp_touch_animation_at && std::chrono::steady_clock::now() >= *lamp_touch_animation_at) {
         lamp_touch_animation_at.reset();
         using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
