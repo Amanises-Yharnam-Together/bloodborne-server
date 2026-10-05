@@ -1778,8 +1778,33 @@ void LogOtherPlayersChanges() {
     }
 }
 
+// Diagnostics for a guest reviving in place (Phase 2): the local player's active special
+// effects, logged when the set changes, to see what a phantom's death leaves on it.
+void LogLocalEffectChanges() {
+    static std::string last;
+    const u64 player = GetLocalPlayer();
+    const u64 manager = player >= 0x10000 ? ReadValue<u64>(player, 0x1C8) : 0;
+    std::string effects;
+    u64 node = manager >= 0x10000 ? ReadValue<u64>(manager, 0x08) : 0;
+    for (size_t index = 0; node >= 0x10000 && index < 128; ++index) {
+        const u64 next = ReadValue<u64>(node, 0x58);
+        if ((ReadValue<u32>(node, 0x1C) & 0x800C0003U) == 0) {
+            effects += fmt::format(" {}", ReadValue<s32>(node, 0x40));
+        }
+        if (next == node) {
+            break;
+        }
+        node = next;
+    }
+    if (effects != last) {
+        last = effects;
+        LOG_INFO(Debug, "Bloodborne local effects:{}", effects.empty() ? " none" : effects);
+    }
+}
+
 void TickPartyController() {
     LogBloodstainStateChanges();
+    LogLocalEffectChanges();
     LogOtherPlayersChanges();
     ObserveLocalAliveState();
     if (!party_controller) {
