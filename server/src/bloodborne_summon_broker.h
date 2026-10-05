@@ -43,6 +43,10 @@ public:
         QByteArray pendingHostPlacement;
     };
 
+    // Games re-advertise a placed sign about every 30 s. A sign not refreshed for longer than
+    // this belongs to a game that quit, and is no longer offered to searches.
+    static constexpr qint64 SignRefreshWindowMs = 75'000;
+
     SummonBroker();
     explicit SummonBroker(qint64 ttlMs);
     explicit SummonBroker(Options options);

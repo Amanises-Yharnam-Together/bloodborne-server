@@ -200,6 +200,34 @@ int main() {
     CHECK(delivered.pendingClaim == claim);
   }
 
+  // A sign its game stopped refreshing (the guest quit or crashed) is not
+  // offered any more, even though seamless keeps records for 15 minutes.
+  // Otherwise a host claims the dead sign of a previous run and connects to a
+  // guest still loading.
+  {
+    Broker::Options options;
+    options.seamlessCoop = true;
+    Broker broker(options);
+    const QByteArray sign = Advertisement("previous-run", 100);
+    const QByteArray search = Search(1);
+    broker.Advertise(Parse(sign), sign, 10, partyA);
+    CHECK(
+        broker
+            .Search(Parse(search), 10 + Broker::SignRefreshWindowMs, {}, partyA)
+            .size() == 1);
+    CHECK(
+        broker
+            .Search(Parse(search), 11 + Broker::SignRefreshWindowMs, {}, partyA)
+            .isEmpty());
+    // Refreshing brings it back.
+    broker.Advertise(Parse(sign), sign, 20 + Broker::SignRefreshWindowMs,
+                     partyA);
+    CHECK(
+        broker
+            .Search(Parse(search), 30 + Broker::SignRefreshWindowMs, {}, partyA)
+            .size() == 1);
+  }
+
   // Header values are untrusted: trimmed, capped, and anything with control
   // characters or without a "name:secret" shape is treated as no party at all.
   {

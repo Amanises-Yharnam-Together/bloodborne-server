@@ -445,7 +445,7 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
         if (it->party != party) {
             continue;
         }
-        if (it->state == State::Advertised &&
+        if (it->state == State::Advertised && nowMs - it->updatedAtMs <= SignRefreshWindowMs &&
             MatchesSearch(request, it->advertisement, anywhereSummons)) {
             if (anywhereSummons && hostMap.has_value() && requester >= 0 &&
                 Integer(it->advertisement, QStringLiteral("AreaId"), -1) != *hostMap) {
