@@ -2099,6 +2099,24 @@ CharacterState ReadCharacterState(u64 character) {
     };
 }
 
+// Puts back the script-set state flags the respawn cleared (see RestoreScriptFlagsAfterRespawn).
+void RestoreScriptFlags() {
+    s32 restored = 0;
+    for (const auto& before : characters_before_rest) {
+        if (!HasMemoryAccess(before.character, 0x3B8, MemoryProt::CpuWrite) ||
+            ReadValue<u32>(before.character, 0x08) != before.handle) {
+            continue;
+        }
+        const u64 now = ReadValue<u64>(before.character, 0x1E0);
+        const u64 flags = RestoreScriptFlagsAfterRespawn(before.state_flags, now, before.hp);
+        if (flags != now) {
+            WriteValue(before.character, 0x1E0, flags);
+            ++restored;
+        }
+    }
+    LOG_INFO(Debug, "Bloodborne party rest: restored script flags on {} characters", restored);
+}
+
 void LogCharacterChanges() {
     s32 logged = 0;
     for (const auto& before : characters_before_rest) {
@@ -2167,6 +2185,7 @@ void RememberHiddenCharacters(u64 world) {
 }
 
 void HideCharactersAgain() {
+    RestoreScriptFlags();
     LogCharacterChanges();
     s32 hidden = 0;
     for (const u64 character : hidden_characters) {

@@ -205,3 +205,15 @@ TEST(BloodborneLampRest, TheRespawnKeepsCharactersTheScriptsHadSwitchedOffSwitch
     EXPECT_FALSE(KeepDisabledAfterRespawn(true, 0));
     EXPECT_FALSE(KeepDisabledAfterRespawn(false, 300));
 }
+
+TEST(BloodborneLampRest, TheRespawnKeepsTheFlagsTheScriptsSetOnLiveCharacters) {
+    // From the rig: hidden characters went 0x124400 -> 0x100400 (0x4000 | 0x20000 cleared),
+    // others lost 0x40000000; the window monster near the Central Yharnam lamp came back.
+    EXPECT_EQ(RestoreScriptFlagsAfterRespawn(0x124400, 0x100400, 70), 0x124400u);
+    EXPECT_EQ(RestoreScriptFlagsAfterRespawn(0xFFFF000040100400, 0xFFFF000000100400, 3645),
+              0xFFFF000040100400u);
+    // Runtime state (aggro, 0x8000 / 0x100000000 ...) is what the respawn resets: left alone.
+    EXPECT_EQ(RestoreScriptFlagsAfterRespawn(0x100108400, 0x100400, 150), 0x100400u);
+    // A killed enemy comes back as the respawn made it.
+    EXPECT_EQ(RestoreScriptFlagsAfterRespawn(0x124400, 0x100400, 0), 0x100400u);
+}

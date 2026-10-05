@@ -229,6 +229,13 @@ std::optional<LampPosition> LampRestState::JoinablePosition() const {
     return lamp && !joined ? std::optional{rested_at} : std::nullopt;
 }
 
+u64 RestoreScriptFlagsAfterRespawn(u64 flags_before, u64 flags_after, s32 hp_before) {
+    if (hp_before <= 0) {
+        return flags_after;
+    }
+    return (flags_after & ~ScriptCharacterFlags) | (flags_before & ScriptCharacterFlags);
+}
+
 bool KeepDisabledAfterRespawn(bool disabled_before, s32 hp_before) {
     return disabled_before && hp_before > 0;
 }
