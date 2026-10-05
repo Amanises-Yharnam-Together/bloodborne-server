@@ -54,6 +54,10 @@ struct alignas(16) GuestRegisterSnapshot {
 };
 
 using GuestCodeHook = void PS4_SYSV_ABI (*)(u64 tag, const GuestRegisterSnapshot* registers);
+/// Like GuestCodeHook, but returning true skips the hooked function: the guest returns 0 to its
+/// caller with every other register as it was at the call.
+using GuestFunctionOverride = bool PS4_SYSV_ABI (*)(u64 tag,
+                                                    const GuestRegisterSnapshot* registers);
 
 // Windows static guest red-zone protection
 struct RedZonePatchResult {
@@ -81,6 +85,11 @@ void RegisterPatchModule(void* module_ptr, u64 module_size, void* trampoline_are
 /// addressing.
 bool InstallGuestCodeHook(void* address, std::span<const u8> expected_instructions, u64 tag,
                           GuestCodeHook hook);
+
+/// InstallGuestCodeHook at a function's entry whose hook may skip the function (see
+/// GuestFunctionOverride). Only for functions whose callers accept a 0 return value.
+bool InstallGuestFunctionOverride(void* address, std::span<const u8> expected_instructions, u64 tag,
+                                  GuestFunctionOverride hook);
 
 /// Applies CPU patches that need to be done before beginning executions.
 void PrePatchInstructions(u64 segment_addr, u64 segment_size);

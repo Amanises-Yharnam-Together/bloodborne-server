@@ -2251,8 +2251,8 @@ static bool CanCopyGuestHookInstructions(void* address, std::span<const u8> inst
     return true;
 }
 
-bool InstallGuestCodeHook(void* address, std::span<const u8> expected_instructions, u64 tag,
-                          GuestCodeHook hook) {
+static bool InstallGuestHook(void* address, std::span<const u8> expected_instructions, u64 tag,
+                             const void* hook, bool can_return) {
     constexpr size_t NearJumpBytes = 5;
     constexpr size_t GuestRedZoneBytes = 128;
     constexpr size_t SnapshotOffset = 0;
@@ -2344,28 +2344,45 @@ bool InstallGuestCodeHook(void* address, std::span<const u8> expected_instructio
             trampoline.vmovdqu(Xbyak::Ymm(static_cast<int>(index)), yword[rsp + offset]);
         }
         trampoline.ldmxcsr(dword[rsp + SnapshotOffset + offsetof(GuestRegisterSnapshot, mxcsr)]);
-        trampoline.mov(rbx, snapshot(offsetof(GuestRegisterSnapshot, rbx)));
-        trampoline.mov(rcx, snapshot(offsetof(GuestRegisterSnapshot, rcx)));
-        trampoline.mov(rdx, snapshot(offsetof(GuestRegisterSnapshot, rdx)));
-        trampoline.mov(rsi, snapshot(offsetof(GuestRegisterSnapshot, rsi)));
-        trampoline.mov(rdi, snapshot(offsetof(GuestRegisterSnapshot, rdi)));
-        trampoline.mov(rbp, snapshot(offsetof(GuestRegisterSnapshot, rbp)));
-        trampoline.mov(r8, snapshot(offsetof(GuestRegisterSnapshot, r8)));
-        trampoline.mov(r9, snapshot(offsetof(GuestRegisterSnapshot, r9)));
-        trampoline.mov(r10, snapshot(offsetof(GuestRegisterSnapshot, r10)));
-        trampoline.mov(r11, snapshot(offsetof(GuestRegisterSnapshot, r11)));
-        trampoline.mov(r12, snapshot(offsetof(GuestRegisterSnapshot, r12)));
-        trampoline.mov(r13, snapshot(offsetof(GuestRegisterSnapshot, r13)));
-        trampoline.mov(r14, snapshot(offsetof(GuestRegisterSnapshot, r14)));
-        trampoline.mov(r15, snapshot(offsetof(GuestRegisterSnapshot, r15)));
-        trampoline.mov(rax, snapshot(offsetof(GuestRegisterSnapshot, rflags)));
-        trampoline.push(rax);
-        trampoline.popfq();
+        Xbyak::Label return_to_caller;
+        if (can_return) {
+            // The override returned true: skip the function. Nothing above touched al.
+            trampoline.test(al, al);
+            trampoline.jnz(return_to_caller, Xbyak::CodeGenerator::LabelType::T_NEAR);
+        }
+        const auto restore_registers = [&] {
+            trampoline.mov(rbx, snapshot(offsetof(GuestRegisterSnapshot, rbx)));
+            trampoline.mov(rcx, snapshot(offsetof(GuestRegisterSnapshot, rcx)));
+            trampoline.mov(rdx, snapshot(offsetof(GuestRegisterSnapshot, rdx)));
+            trampoline.mov(rsi, snapshot(offsetof(GuestRegisterSnapshot, rsi)));
+            trampoline.mov(rdi, snapshot(offsetof(GuestRegisterSnapshot, rdi)));
+            trampoline.mov(rbp, snapshot(offsetof(GuestRegisterSnapshot, rbp)));
+            trampoline.mov(r8, snapshot(offsetof(GuestRegisterSnapshot, r8)));
+            trampoline.mov(r9, snapshot(offsetof(GuestRegisterSnapshot, r9)));
+            trampoline.mov(r10, snapshot(offsetof(GuestRegisterSnapshot, r10)));
+            trampoline.mov(r11, snapshot(offsetof(GuestRegisterSnapshot, r11)));
+            trampoline.mov(r12, snapshot(offsetof(GuestRegisterSnapshot, r12)));
+            trampoline.mov(r13, snapshot(offsetof(GuestRegisterSnapshot, r13)));
+            trampoline.mov(r14, snapshot(offsetof(GuestRegisterSnapshot, r14)));
+            trampoline.mov(r15, snapshot(offsetof(GuestRegisterSnapshot, r15)));
+            trampoline.mov(rax, snapshot(offsetof(GuestRegisterSnapshot, rflags)));
+            trampoline.push(rax);
+            trampoline.popfq();
+        };
+        restore_registers();
         trampoline.mov(rax, snapshot(offsetof(GuestRegisterSnapshot, rax)));
         trampoline.mov(rsp, snapshot(offsetof(GuestRegisterSnapshot, rsp)));
         trampoline.db(expected_instructions.data(), expected_instructions.size());
         trampoline.jmp(code + expected_instructions.size(),
                        Xbyak::CodeGenerator::LabelType::T_NEAR);
+        if (can_return) {
+            // At a function entry: return 0 to the caller with its registers intact.
+            trampoline.L(return_to_caller);
+            restore_registers();
+            trampoline.mov(rax, 0);
+            trampoline.mov(rsp, snapshot(offsetof(GuestRegisterSnapshot, rsp)));
+            trampoline.ret();
+        }
     } catch (const Xbyak::Error& error) {
         trampoline.setSize(trampoline_offset);
         HandleTrampolineError(module, error);
@@ -2388,6 +2405,18 @@ bool InstallGuestCodeHook(void* address, std::span<const u8> expected_instructio
 
     module->patched.insert(code);
     return true;
+}
+
+bool InstallGuestCodeHook(void* address, std::span<const u8> expected_instructions, u64 tag,
+                          GuestCodeHook hook) {
+    return InstallGuestHook(address, expected_instructions, tag,
+                            reinterpret_cast<const void*>(hook), false);
+}
+
+bool InstallGuestFunctionOverride(void* address, std::span<const u8> expected_instructions, u64 tag,
+                                  GuestFunctionOverride hook) {
+    return InstallGuestHook(address, expected_instructions, tag,
+                            reinterpret_cast<const void*>(hook), true);
 }
 
 void PrePatchInstructions(u64 segment_addr, u64 segment_size) {

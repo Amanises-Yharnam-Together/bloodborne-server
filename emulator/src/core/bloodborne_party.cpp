@@ -50,11 +50,7 @@ bool StartSummonSearch(u64 player, s32 effect_id, AddSpEffectFn add_sp_effect) {
     return true;
 }
 
-bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending,
-                                     bool host_death_respawn) {
-    if (matching_state == MatchingStateHosting && host_death_respawn) {
-        return false;
-    }
+bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending) {
     const bool in_session =
         matching_state == MatchingStateSummonedGuest || matching_state == MatchingStateHosting;
     return in_session && reload_state != SummonReloadInProgress && !reload_pending;
@@ -111,13 +107,17 @@ u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes) {
     return DecodeRel32(0xE9, offset, bytes);
 }
 
-bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
-    if (!calls.is_white_ghost || !calls.set_event_flag || !calls.clear_return_state ||
-        !calls.request_full_recover || !calls.update_blood_mark || !calls.revive_player ||
-        !calls.revive_local_character || !calls.restore_alive_state || !calls.set_chr_type ||
-        !calls.chr_reset_animation || !calls.warp_to_last_lamp || !calls.is_white_ghost()) {
-        return false;
-    }
+namespace {
+
+bool HasReviveCalls(const GhostDeathCalls& calls) {
+    return calls.set_event_flag && calls.clear_return_state && calls.request_full_recover &&
+           calls.update_blood_mark && calls.revive_player && calls.revive_local_character &&
+           calls.restore_alive_state && calls.chr_reset_animation && calls.warp_to_last_lamp;
+}
+
+// What both deaths share. `character_type` is set back after the local revive makes the player
+// a live one (only a guest needs that).
+void ReviveInPlace(const GhostDeathCalls& calls, std::optional<s32> character_type) {
     calls.set_event_flag(0, DeathEventFlag, false);
     calls.clear_return_state();
     calls.request_full_recover();
@@ -125,10 +125,32 @@ bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
     calls.revive_player();
     calls.revive_local_character();
     calls.restore_alive_state();
-    calls.set_chr_type(0, LocalPlayerEntity, WhiteGhostCharacterType);
+    if (character_type) {
+        calls.set_chr_type(0, LocalPlayerEntity, *character_type);
+    }
     calls.chr_reset_animation(0, LocalPlayerEntity);
     calls.warp_to_last_lamp();
+}
+
+} // namespace
+
+bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
+    if (!HasReviveCalls(calls) || !calls.is_white_ghost || !calls.set_chr_type ||
+        !calls.is_white_ghost()) {
+        return false;
+    }
+    ReviveInPlace(calls, WhiteGhostCharacterType);
     return true;
+}
+
+bool ShouldReviveHostInPlace(s32 matching_state) {
+    return matching_state == MatchingStateHosting;
+}
+
+void ReviveDeadPartyHost(const GhostDeathCalls& calls) {
+    if (HasReviveCalls(calls)) {
+        ReviveInPlace(calls, std::nullopt);
+    }
 }
 
 std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds) {

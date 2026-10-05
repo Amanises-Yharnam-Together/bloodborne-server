@@ -181,34 +181,26 @@ TEST(BloodborneSummonSearch, DoesNothingWithoutAPlayerOrTheGameFunction) {
 // leaving the host's world (quit to the title screen, for one), and must end the session the
 // way the unpatched game does, or the host keeps a ghost member and the guest never rejoins.
 TEST(BloodborneWorldTeardown, ASummonedGuestLeavingTheHostWorldEndsTheSession) {
-    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, false, false));
+    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, false));
 }
 
-// The same goes for a host whose world goes away (quit to the title screen, or the respawn
-// after a death): unpatched, the game stops matching there, and keeping the room leaves the
-// guests in it with a host that is gone.
+// The same goes for a host whose world goes away (quit to the title screen; a host with a party
+// no longer reloads on death): unpatched, the game stops matching there, and keeping the room
+// leaves the guests in it with a host that is gone.
 TEST(BloodborneWorldTeardown, AHostLeavingItsWorldEndsTheSession) {
-    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateHosting, 0, false, false));
-}
-
-// ...except when that world goes away because the host died: it respawns at its lamp and keeps
-// the party (the guests ignore HostDead in seamless mode, see BloodborneHostDeath).
-TEST(BloodborneWorldTeardown, AHostRespawningAfterDeathKeepsTheSession) {
-    EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(MatchingStateHosting, 0, false, true));
-    // Only the host respawns that way; a guest leaving still ends its session.
-    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, false, true));
+    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateHosting, 0, false));
 }
 
 TEST(BloodborneWorldTeardown, KeepsTheSessionDuringASummonReload) {
     for (const s32 state : {MatchingStateSummonedGuest, MatchingStateHosting}) {
-        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, SummonReloadInProgress, false, false));
-        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, true, false));
+        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, SummonReloadInProgress, false));
+        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, true));
     }
 }
 
 TEST(BloodborneWorldTeardown, LeavesSearchesAndIdlePlayersAlone) {
     for (const s32 state : {0, 1, 2, 4, 5, 7}) {
-        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, false, false)) << "state " << state;
+        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, false)) << "state " << state;
     }
 }
 
@@ -413,4 +405,33 @@ TEST(BloodborneGuestBloodstain, LetsAWhitePhantomPickUpItsOwnBloodstain) {
     EXPECT_EQ(patches[0].offset, 0x0137EBC7u);
     EXPECT_EQ(patches[0].original, (std::vector<u8>{0xB9, 0x30, 0x00, 0x00, 0x00}));
     EXPECT_EQ(patches[0].patched, (std::vector<u8>{0xB9, 0x70, 0x00, 0x00, 0x00}));
+}
+
+// Host death (Kaniel): like a guest's, with no world reload. Native SoloPlayDeath_2 (the death
+// respawn that reloads the world at the lamp) is replaced for a host with a party: same echo
+// drop, revive and lamp teleport as a guest, but it stays a live player and is not checked for
+// being a white phantom.
+TEST(BloodborneHostDeath, AHostWithAPartyRevivesLikeAGuestWithoutAReload) {
+    revive_calls.clear();
+    white_ghost = false;
+    ReviveDeadPartyHost(FakeCalls);
+    EXPECT_EQ(revive_calls, (std::vector<std::string>{
+                                "SetEventFlag 4000 off",
+                                "ClearReturnState",
+                                "RequestFullRecover",
+                                "UpDateBloodMark",
+                                "RevivePlayer",
+                                "ReviveLocalCharacter",
+                                "RestoreAliveState",
+                                "ChrResetAnimation 10000",
+                                "WarpToLastLamp",
+                            }));
+}
+
+// Only while hosting: a solo player (or a host whose room is gone) dies the game's way.
+TEST(BloodborneHostDeath, OnlyAHostWithASessionSkipsTheReload) {
+    EXPECT_TRUE(ShouldReviveHostInPlace(MatchingStateHosting));
+    for (const s32 state : {0, 1, 2, 4, 5, MatchingStateSummonedGuest, 7}) {
+        EXPECT_FALSE(ShouldReviveHostInPlace(state)) << "state " << state;
+    }
 }

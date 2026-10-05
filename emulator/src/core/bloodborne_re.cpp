@@ -812,8 +812,6 @@ bool stage_transition_keep_matching_patch_installed{};
 bool world_teardown_hook_installed{};
 bool ghost_death_revive_hook_installed{};
 bool host_death_respawn_hook_installed{};
-// Set when the host's death respawn starts; the next world teardown keeps the session.
-std::atomic<bool> host_death_respawn_pending{};
 bool summon_build_host_placement_hook_installed{};
 bool cross_map_guest_handoff_hook_installed{};
 bool summon_reload_state_hook_installed{};
@@ -1832,6 +1830,7 @@ void TickPartyController() {
 }
 
 void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers);
+bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64 tag, const GuestRegisterSnapshot* registers);
 
 bool MatchesImage(u64 base, u64 image_size, const CodePatch& patch) {
     return patch.offset <= image_size && patch.original.size() <= image_size - patch.offset &&
@@ -1884,9 +1883,9 @@ void InstallGhostDeathRevive(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests revive in the host's world");
 }
 
-// A host death respawns the host at its lamp as usual but keeps the party: the session survives
-// that one world teardown and the guests skip HostDead's warp home. All-or-nothing: guests that
-// stay with a host that ends the session would be stranded.
+// A host death with a party revives the host like a guest (no world reload) and the guests skip
+// HostDead's warp home. All-or-nothing: guests that stay with a host that reloads its world
+// would be stranded.
 void InstallHostDeathKeepsGuests(u64 base, u64 image_size) {
     const auto& patches = HostDeathKeepGuestsPatches();
     if (!world_teardown_hook_installed ||
@@ -1899,10 +1898,10 @@ void InstallHostDeathKeepsGuests(u64 base, u64 image_size) {
     const auto site = std::ranges::find_if(
         Sites, [](const TraceSite& site) { return site.offset == SoloPlayDeathRespawnOffset; });
     if (site == Sites.end() ||
-        !InstallGuestCodeHook(reinterpret_cast<void*>(base + SoloPlayDeathRespawnOffset),
-                              std::span<const u8>{site->prologue.data(), site->prologue_size},
-                              static_cast<size_t>(std::distance(Sites.begin(), site)),
-                              TraceEntry)) {
+        !InstallGuestFunctionOverride(
+            reinterpret_cast<void*>(base + SoloPlayDeathRespawnOffset),
+            std::span<const u8>{site->prologue.data(), site->prologue_size},
+            static_cast<size_t>(std::distance(Sites.begin(), site)), OverrideHostDeathRespawn)) {
         LOG_ERROR(Debug, "Failed to install Bloodborne host-death respawn hook at {:#x}",
                   SoloPlayDeathRespawnOffset);
         return;
@@ -1912,7 +1911,7 @@ void InstallHostDeathKeepsGuests(u64 base, u64 image_size) {
         std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
                     patch.patched.size());
     }
-    LOG_INFO(Debug, "Bloodborne host-death patch: guests stay when the host dies");
+    LOG_INFO(Debug, "Bloodborne host-death patch: a host with a party revives without a reload");
 }
 
 // Faster sign posts for party joins. Optional: on a mismatch the game keeps its own timers.
@@ -1953,12 +1952,7 @@ void EndSessionOnWorldTeardown() {
     const bool reload_pending =
         pending_summon_reload_map.load(std::memory_order_acquire) != 0 ||
         pending_summon_reload_state_map.load(std::memory_order_acquire) != 0;
-    const bool host_death_respawn = host_death_respawn_pending.exchange(false);
-    if (!ShouldEndSessionOnWorldTeardown(matching_state, reload_state, reload_pending,
-                                         host_death_respawn)) {
-        if (host_death_respawn && matching_state == MatchingStateHosting) {
-            LOG_INFO(Debug, "Bloodborne host respawning after death; kept the session");
-        }
+    if (!ShouldEndSessionOnWorldTeardown(matching_state, reload_state, reload_pending)) {
         return;
     }
     using StopRequest = bool PS4_SYSV_ABI (*)(u64 multi_play);
@@ -2078,10 +2072,8 @@ void RestoreLocalAliveState() {
              saved->action_sub);
 }
 
-// A party guest that died gets up again where the game would show the "returned to your world"
-// menu (the warp home behind it is patched out, see GhostDeathKeepSessionPatches).
-void ReviveGuestAfterGhostDeath() {
-    const GhostDeathCalls calls{
+GhostDeathCalls MakeReviveCalls() {
+    return GhostDeathCalls{
         .is_white_ghost =
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + IsWhiteGhostOffset),
         .set_event_flag = reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
@@ -2108,21 +2100,32 @@ void ReviveGuestAfterGhostDeath() {
             reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(image_base + ChrResetAnimationOffset),
         .warp_to_last_lamp = WarpGuestToLastLamp,
     };
-    const bool revived = ReviveDeadPartyGuest(calls);
+}
+
+// A party guest that died gets up again where the game would show the "returned to your world"
+// menu (the warp home behind it is patched out, see GhostDeathKeepSessionPatches).
+void ReviveGuestAfterGhostDeath() {
+    const bool revived = ReviveDeadPartyGuest(MakeReviveCalls());
     const u64 player = GetLocalPlayer();
     LOG_INFO(Debug, "Bloodborne party guest died; revived in place={} type={} flags1e3={:#x}",
              revived, player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1,
              player >= 0x10000 ? ReadValue<u8>(player, 0x1E3) : 0xFF);
 }
 
-void NoteHostDeathRespawn() {
+// Replaces native SoloPlayDeath_2 (bloodstain, then the reload at the lamp) for a host with a
+// session: it revives like a guest and the world is not reloaded.
+bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64, const GuestRegisterSnapshot*) {
     const u64 multi_play = GetMatchingState();
-    if (multi_play < 0x10000 || !HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead) ||
-        ReadValue<s32>(multi_play, 0x124) != MatchingStateHosting) {
-        return;
+    const s32 matching_state =
+        multi_play >= 0x10000 && HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead)
+            ? ReadValue<s32>(multi_play, 0x124)
+            : -1;
+    if (!ShouldReviveHostInPlace(matching_state)) {
+        return false;
     }
-    host_death_respawn_pending.store(true);
-    LOG_INFO(Debug, "Bloodborne host died with a party; respawning at the lamp");
+    ReviveDeadPartyHost(MakeReviveCalls());
+    LOG_INFO(Debug, "Bloodborne host died with a party; revived without a world reload");
+    return true;
 }
 
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers) {
@@ -3350,9 +3353,6 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
     }
     if (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) {
         ReviveGuestAfterGhostDeath();
-    }
-    if (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset) {
-        NoteHostDeathRespawn();
     }
     if (site.kind == TraceKind::ActionFlags && !HasActionTransition(registers->rdi)) {
         return;

@@ -55,10 +55,9 @@ constexpr s32 MatchingStateSummonedGuest = 6;
 constexpr s32 SummonReloadInProgress = 3;
 
 // Whether a world teardown must end the session even though the seamless patch keeps it: a
-// summoned guest or a host leaving its world (quit to title, death respawn), but never during a
+// summoned guest or a host leaving its world (quit to title), but never during a
 // summon reload (see the tests for why). `reload_pending` is our own deferred summon reload.
-bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending,
-                                     bool host_death_respawn);
+bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending);
 
 // Deaths that keep the party. 01.09 runs the event scripts' death flow natively (the Lua source,
 // global_event.lua in script/eventcommon.luabnd.dcx, is never loaded), so the change is a few
@@ -131,6 +130,10 @@ u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes);
 // Revives the local player in place if it is a white phantom (a party guest). Returns whether it
 // did; anyone else (and a missing binding) is left to the game.
 bool ReviveDeadPartyGuest(const GhostDeathCalls& calls);
+
+// The host's version: SoloPlayDeath_2 replaced while it hosts a session (no world reload).
+bool ShouldReviveHostInPlace(s32 matching_state);
+void ReviveDeadPartyHost(const GhostDeathCalls& calls);
 
 // The sign poster's timers (seconds, a float at +0x28 of the sign object): 01.09 waits 5 s
 // before a new sign's first post and 30 s between re-posts, ignoring ss.info's interval.
