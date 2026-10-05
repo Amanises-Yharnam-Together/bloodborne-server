@@ -101,23 +101,23 @@ last lamp. Both sides keep seeing and hitting each other; repeated deaths work.
   `revive restored alive state`, `warp to last lamp` / `moved to last lamp`.
 
 ## Next (user-approved order)
-1. **Death refinements** (Kaniel, 2026-10-05):
+1. **Lamps as campfires** (Kaniel): resting at a lamp is what refreshes the world, and it only
+   activates when every party member sits near it.
+2. Rest of Phase 3 (travel together, boss kill doesn't dismiss), then Phase 4 (shared progress,
+   guests as full players: loot, full HP/vials, their own save progress; they stay white
+   phantoms as the network role).
+
+## Planned for the end (Kaniel's call)
+- **Death refinements** (Kaniel moved these to the end, 2026-10-05):
    - Test with more than 2 players (rig has two; needs a third instance or a friend).
    - World refresh: dying to a boss should refresh the world; decide the general rule for when
-     the world refreshes (see lamps below).
+     the world refreshes (see lamps as campfires above).
    - Lamp teleport camera: it swoops to the lamp instead of cutting; look for the snap flag of
      the move (vtable +0x5F8's mode argument is 1 now).
    - Lamps in another block/map: currently no teleport (needs a load, which needs the summon
      handshake, see "Travel together").
    - Invaders (black phantoms) dying in seamless mode skip the warp home too; only relevant if
      invasions are kept.
-2. **Lamps as campfires** (Kaniel): resting at a lamp is what refreshes the world, and it only
-   activates when every party member sits near it.
-3. Rest of Phase 3 (travel together, boss kill doesn't dismiss), then Phase 4 (shared progress,
-   guests as full players: loot, full HP/vials, their own save progress; they stay white
-   phantoms as the network role).
-
-## Planned for the end (Kaniel's call)
 - Near-zero join wait: the host only searches every 5 s (`--summon-poll`; also drives the
   guard timers, so don't set 0). Plan: have shadnet hold `summon_messenger/get` open ~3 s and
   answer as soon as a same-party sign arrives (long-poll). Check first whether the game's
