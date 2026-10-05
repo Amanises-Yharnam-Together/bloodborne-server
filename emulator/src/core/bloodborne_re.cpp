@@ -184,8 +184,9 @@ constexpr u64 RevivePlayerOffset = 0x01332B20;
 // 01.09's local-player revive: refills HP and clears the death's controller locks ([+0x58]
 // +0x114 bit 0 and [+0x38]+0x48 bits 0-1), then makes the player a live one (type 0).
 constexpr u64 ReviveLocalCharacterOffset = 0x013179B0;
-// Warp(_, character, target entity) event binding: moves a character to a map entity.
-constexpr u64 WarpOffset = 0x0132DF50;
+// Resolves a respawn point id to a position and rotation in the loaded blocks.
+constexpr u64 ResolveRespawnPointOffset = 0x0154AFC0;
+constexpr u64 LoadedBlocksPointerOffset = 0x0553B148;
 // ChrResetAnimation(_, entity): sends the character's behaviour back to idle.
 constexpr u64 ChrResetAnimationOffset = 0x013370F0;
 // Native SoloPlayDeath_2: the local player's death respawn (bloodstain, warp to the last lamp).
@@ -1987,21 +1988,42 @@ bool PS4_SYSV_ABI UpdateGuestBloodMark() {
     return result;
 }
 
-// The lamp a death respawns the player at: SetReturnPointEntityId (resting at a lamp) stores the
-// lamp's return-point entity in GlobalState +0x1528 (its warp param's +4), and SetDefaultMapUid
-// sends a death respawn there. Warp moves a character to an entity of the loaded map, so this
-// only does something when that lamp is in the map the host's world has loaded.
+// The lamp a death respawns the player at: resting at a lamp stores its respawn point id in
+// GlobalState +0x1528 (SetReturnPointEntityId), and a death respawn resolves that id with
+// 0x0154AFC0 against the loaded blocks ([0x0553B148], like Warp.RespawnTransform.Resolve). The
+// same resolver finds the lamp while it is in a block the host's world has loaded; the guest is
+// then moved there the way the Warp binding moves a character (vtable +0x5F8, then +0x1E1 |= 2).
+// Otherwise the guest stays where it fell.
 void WarpGuestToLastLamp() {
     const u64 global = GetGlobalState();
-    const s32 entity = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
-    if (entity == -1) {
-        LOG_INFO(Debug, "Bloodborne revive: no last lamp; staying where the guest fell");
+    const s32 point = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
+    const u64 blocks = ReadValue<u64>(image_base + LoadedBlocksPointerOffset, 0);
+    const u64 player = GetLocalPlayer();
+    if (point == -1 || blocks < 0x10000 || player < 0x10000) {
+        LOG_INFO(Debug, "Bloodborne revive: no last lamp ({}); staying where the guest fell",
+                 point);
         return;
     }
-    using Warp = bool PS4_SYSV_ABI (*)(u64 unused, s32 character, s32 target);
-    const bool result =
-        reinterpret_cast<Warp>(image_base + WarpOffset)(0, LocalPlayerEntity, entity);
-    LOG_INFO(Debug, "Bloodborne revive: warp to last lamp entity={} result={}", entity, result);
+    alignas(16) std::array<float, 4> position{};
+    alignas(16) std::array<float, 4> rotation{};
+    using Resolve = bool PS4_SYSV_ABI (*)(u64 blocks, float* position, float* rotation, s32 point);
+    if (!reinterpret_cast<Resolve>(image_base + ResolveRespawnPointOffset)(
+            blocks, position.data(), rotation.data(), point)) {
+        LOG_INFO(Debug, "Bloodborne revive: last lamp {} is not in a loaded block; staying put",
+                 point);
+        return;
+    }
+    using Teleport = void PS4_SYSV_ABI (*)(u64 character, const float* position,
+                                           const float* rotation, s32 mode);
+    const u64 vtable = ReadValue<u64>(player, 0);
+    const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
+    if (teleport < 0x10000) {
+        return;
+    }
+    reinterpret_cast<Teleport>(teleport)(player, position.data(), rotation.data(), 1);
+    WriteValue(player, 0x1E1, static_cast<u8>(ReadValue<u8>(player, 0x1E1) | 2));
+    LOG_INFO(Debug, "Bloodborne revive: moved to last lamp {} at ({}, {}, {})", point, position[0],
+             position[1], position[2]);
 }
 
 AliveStateSnapshot local_alive_state;
