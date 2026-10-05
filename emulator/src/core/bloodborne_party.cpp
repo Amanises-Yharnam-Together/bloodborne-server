@@ -183,48 +183,105 @@ void LampRestState::Rest(s32 rested_lamp, const LampPosition& at) {
     rested_at = at;
 }
 
+namespace {
+float DistanceSquared(const LampPosition& a, const LampPosition& b) {
+    float sum = 0.0f;
+    for (std::size_t axis = 0; axis < a.size(); ++axis) {
+        sum += (a[axis] - b[axis]) * (a[axis] - b[axis]);
+    }
+    return sum;
+}
+
+std::string FormatCoordinate(float value) {
+    std::array<char, 32> text{};
+    const auto [end, error] = std::to_chars(text.data(), text.data() + text.size(), value);
+    return error == std::errc{} ? std::string{text.data(), end} : std::string{"0"};
+}
+
+std::optional<float> ParseCoordinate(std::string_view text) {
+    float value = 0.0f;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc{} || end != text.data() + text.size()) {
+        return std::nullopt;
+    }
+    return value;
+}
+} // namespace
+
+bool LampRestState::JoinNearby(std::span<const LampRest> board,
+                               const std::optional<LampPosition>& player) {
+    if (lamp || !player) {
+        return false;
+    }
+    for (const LampRest& rest : board) {
+        if (rest.lamp != NotResting && rest.at &&
+            DistanceSquared(*rest.at, *player) <= LeaveDistance * LeaveDistance) {
+            Rest(rest.lamp, *rest.at);
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<s32> LampRestState::Tick(const std::optional<LampPosition>& player,
                                        bool in_party_session) {
     if (!in_party_session) {
         lamp.reset();
     } else if (lamp && player) {
-        float distance_squared = 0.0f;
-        for (std::size_t axis = 0; axis < rested_at.size(); ++axis) {
-            const float delta = (*player)[axis] - rested_at[axis];
-            distance_squared += delta * delta;
-        }
-        if (distance_squared > LeaveDistance * LeaveDistance) {
+        if (DistanceSquared(*player, rested_at) > LeaveDistance * LeaveDistance) {
             lamp.reset();
         }
     }
     return lamp;
 }
 
-std::string EncodeLampRestUpdate(std::string_view member, s32 lamp) {
-    return std::string{member} + ' ' + std::to_string(lamp);
+std::string EncodeLampRestUpdate(std::string_view member, s32 lamp,
+                                 const std::optional<LampPosition>& at) {
+    std::string update = std::string{member} + ' ' + std::to_string(lamp);
+    if (lamp != NotResting && at) {
+        for (const float coordinate : *at) {
+            update += ' ' + FormatCoordinate(coordinate);
+        }
+    }
+    return update;
 }
 
 std::optional<std::vector<LampRest>> ParseLampRestBoard(std::string_view body) {
     std::vector<LampRest> board;
     while (!body.empty()) {
         const std::size_t end = body.find('\n');
-        const std::string_view line = body.substr(0, end);
+        std::string_view line = body.substr(0, end);
         body.remove_prefix(end == std::string_view::npos ? body.size() : end + 1);
-        if (line.empty()) {
+        std::vector<std::string_view> fields;
+        while (!line.empty()) {
+            const std::size_t space = line.find(' ');
+            fields.push_back(line.substr(0, space));
+            line.remove_prefix(space == std::string_view::npos ? line.size() : space + 1);
+        }
+        if (fields.empty()) {
             continue;
         }
-        const std::size_t space = line.find(' ');
-        if (space == std::string_view::npos || space == 0) {
+        if ((fields.size() != 2 && fields.size() != 5) || fields[0].empty()) {
             return std::nullopt;
         }
-        const std::string_view number = line.substr(space + 1);
-        s32 lamp = 0;
-        const auto [rest, error] =
-            std::from_chars(number.data(), number.data() + number.size(), lamp);
-        if (error != std::errc{} || rest != number.data() + number.size()) {
+        LampRest rest{.member = std::string{fields[0]}};
+        const auto [lamp_end, error] =
+            std::from_chars(fields[1].data(), fields[1].data() + fields[1].size(), rest.lamp);
+        if (error != std::errc{} || lamp_end != fields[1].data() + fields[1].size()) {
             return std::nullopt;
         }
-        board.push_back({std::string{line.substr(0, space)}, lamp});
+        if (fields.size() == 5) {
+            LampPosition at{};
+            for (std::size_t axis = 0; axis < at.size(); ++axis) {
+                const auto coordinate = ParseCoordinate(fields[2 + axis]);
+                if (!coordinate) {
+                    return std::nullopt;
+                }
+                at[axis] = *coordinate;
+            }
+            rest.at = at;
+        }
+        board.push_back(std::move(rest));
     }
     return board;
 }

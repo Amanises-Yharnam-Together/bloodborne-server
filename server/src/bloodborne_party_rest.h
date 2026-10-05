@@ -16,9 +16,10 @@ namespace Bloodborne {
 struct LampRest {
     QByteArray member;
     qint32 lamp = 0;
+    QByteArray at; // "<x> <y> <z>" where the member rests, or empty
 };
 
-// "<member> <lamp>", member 1-64 letters or digits; lamp 0 means not resting.
+// "<member> <lamp> [<x> <y> <z>]", member 1-64 letters or digits; lamp 0 means not resting.
 std::optional<LampRest> ParseRestUpdate(const QByteArray& body);
 // One "<member> <lamp>\n" line per rest.
 QByteArray FormatRestBoard(const QList<LampRest>& rests);
@@ -30,11 +31,12 @@ public:
 
     // Records the member's rest and returns its party's current rests, sorted by member.
     QList<LampRest> Update(const QByteArray& party, const QByteArray& member, qint32 lamp,
-                           qint64 nowMs);
+                           qint64 nowMs, const QByteArray& at = {});
 
 private:
     struct Entry {
         qint32 lamp = 0;
+        QByteArray at;
         qint64 updatedAtMs = 0;
     };
 

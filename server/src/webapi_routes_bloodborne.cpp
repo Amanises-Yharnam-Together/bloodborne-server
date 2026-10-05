@@ -239,8 +239,9 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                 return InvalidRequest(QStringLiteral("Invalid party rest update"));
             }
             const QByteArray party = Party(request);
-            const QByteArray board = Bloodborne::FormatRestBoard(restBoard->Update(
-                party, update->member, update->lamp, QDateTime::currentMSecsSinceEpoch()));
+            const QByteArray board = Bloodborne::FormatRestBoard(
+                restBoard->Update(party, update->member, update->lamp,
+                                  QDateTime::currentMSecsSinceEpoch(), update->at));
             {
                 QMutexLocker lock(lastBoardsMutex.get());
                 QByteArray& last = (*lastBoards)[party];

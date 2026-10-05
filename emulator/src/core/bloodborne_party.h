@@ -153,6 +153,7 @@ bool IsLampTravelFlag(s32 flag);
 bool IsPartySession(bool party_configured, s32 matching_state);
 
 using LampPosition = std::array<float, 3>;
+struct LampRest;
 
 // Where this player rests: from using a lamp until walking away from it (or the session ends).
 class LampRestState {
@@ -160,7 +161,12 @@ public:
     static constexpr float LeaveDistance = 4.0f;
 
     void Rest(s32 lamp, const LampPosition& at);
+    // Joins a party member's rest when standing near where it rests; true if it did.
+    bool JoinNearby(std::span<const LampRest> board, const std::optional<LampPosition>& player);
     std::optional<s32> Tick(const std::optional<LampPosition>& player, bool in_party_session);
+    std::optional<LampPosition> RestedAt() const {
+        return lamp ? std::optional{rested_at} : std::nullopt;
+    }
 
 private:
     std::optional<s32> lamp;
@@ -172,8 +178,10 @@ private:
 struct LampRest {
     std::string member;
     s32 lamp = NotResting;
+    std::optional<LampPosition> at; // where the member rests: "<member> <lamp> <x> <y> <z>"
 };
-std::string EncodeLampRestUpdate(std::string_view member, s32 lamp);
+std::string EncodeLampRestUpdate(std::string_view member, s32 lamp,
+                                 const std::optional<LampPosition>& at = std::nullopt);
 std::optional<std::vector<LampRest>> ParseLampRestBoard(std::string_view body);
 
 // Fires once each time every member of the session comes to rest at the lamp this player rests

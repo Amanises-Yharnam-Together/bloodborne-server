@@ -1833,11 +1833,10 @@ constexpr std::array<u8, 7> EsdIsMultiplayerResult{0x85, 0xC9, 0x0F, 0x9F, 0xC1,
 constexpr u64 TalkSetEventFlagRangeOffset = 0x0204232E;
 constexpr std::array<u8, 9> TalkSetEventFlagRange{0x8B, 0x88, 0xA0, 0x00, 0x00,
                                                   0x00, 0x83, 0xF9, 0xFF};
-// ForcePlayAnimation(_, entity, animation) event binding, and the lamp touch the Lua lamp warp
-// (Lua_Warp) plays with it. Common event 7200's 101160 is an event script id; this binding sets
-// it straight on the character, where it did nothing.
+// ForcePlayAnimation(_, entity, animation) event binding, and the lamp touch common event 7200
+// plays before it warps (Lua_Warp's 7725 does nothing on the player).
 constexpr u64 ForcePlayAnimationOffset = 0x0132E290;
-constexpr s32 LampTouchAnimation = 7725;
+constexpr s32 LampTouchAnimation = 101160;
 // WorldChrMan +0xA6C: the bonfire respawn left over from Dark Souls. 1 asks for it; WorldChrMan
 // then respawns every loaded block's characters (3), SprjEmkSystem restarts the event scripts
 // (4) and the characters are released again (5, then 0). The healing fountain update requests it
@@ -1863,6 +1862,8 @@ alignas(16) std::array<u8, 0x100> no_talk_flag_range{}; // +0xA0 = +0xA4 = 0
 // What the game thread tells the rest board client, and what the client last heard back.
 std::atomic<bool> rest_board_active{};
 std::atomic<s32> rest_board_lamp{NotResting};
+std::mutex rest_board_position_mutex;
+std::optional<LampPosition> rest_board_position;
 std::mutex rest_board_mutex;
 std::vector<LampRest> rest_board;
 std::chrono::steady_clock::time_point rest_board_time{};
@@ -1986,12 +1987,20 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
             std::unique_lock lock{wait_mutex};
             wait.wait_for(lock, stop, std::chrono::seconds{1}, [] { return false; });
         }
-        const s32 lamp = rest_board_active.load() ? rest_board_lamp.load() : NotResting;
-        if (lamp == NotResting && posted == NotResting) {
+        // In a session every member reads the board (to join a rest nearby); outside one only
+        // a member that still has a rest on it posts, to take it off.
+        const bool active = rest_board_active.load();
+        const s32 lamp = active ? rest_board_lamp.load() : NotResting;
+        if (!active && posted == NotResting) {
             continue;
         }
+        std::optional<LampPosition> at;
+        {
+            std::scoped_lock lock{rest_board_position_mutex};
+            at = rest_board_position;
+        }
         const auto response = client.Post("/bloodborne/party/rest", headers,
-                                          EncodeLampRestUpdate(member, lamp), "text/plain");
+                                          EncodeLampRestUpdate(member, lamp, at), "text/plain");
         const auto board =
             response && response->status == 200 ? ParseLampRestBoard(response->body) : std::nullopt;
         if (!board) {
@@ -2088,10 +2097,17 @@ void TickLampRest() {
         LOG_INFO(Debug, "Bloodborne lamp touch animation {} played={}", LampTouchAnimation, played);
     }
     const bool in_party_session = InPartySession();
+    const auto board = FreshRestBoard();
+    const auto position = LocalPlayerPosition();
     std::optional<s32> resting;
+    std::optional<LampPosition> rested_at;
     {
         std::scoped_lock lock{lamp_rest_mutex};
-        resting = lamp_rest.Tick(LocalPlayerPosition(), in_party_session);
+        if (in_party_session && lamp_rest.JoinNearby(board, position)) {
+            LOG_INFO(Debug, "Bloodborne party member joined a rest nearby");
+        }
+        resting = lamp_rest.Tick(position, in_party_session);
+        rested_at = lamp_rest.RestedAt();
     }
     static std::optional<s32> last_resting;
     if (resting != last_resting) {
@@ -2099,10 +2115,13 @@ void TickLampRest() {
                  resting.value_or(last_resting.value_or(NotResting)));
         last_resting = resting;
     }
+    {
+        std::scoped_lock lock{rest_board_position_mutex};
+        rest_board_position = rested_at;
+    }
     rest_board_lamp.store(resting.value_or(NotResting));
     rest_board_active.store(in_party_session);
 
-    const auto board = FreshRestBoard();
     const s32 players = SessionPlayers();
     if (lamp_rest_coordinator.Tick(resting, players, board)) {
         RefreshWorldAtLamp(*resting, players);

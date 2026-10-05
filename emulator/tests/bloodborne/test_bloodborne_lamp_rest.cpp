@@ -135,3 +135,39 @@ TEST(BloodborneLampRest, ARestDoesWhatTheLampReloadWouldDoWithoutTheLoad) {
 
     EXPECT_FALSE(RefreshAtLamp(LampRestCalls{})) << "nothing to call, nothing done";
 }
+
+TEST(BloodborneLampRest, ARestCarriesWhereThePlayerRests) {
+    EXPECT_EQ(EncodeLampRestUpdate("a1b2", CentralYharnamLamp, AtLamp), "a1b2 72410100 10 0 5");
+    EXPECT_EQ(EncodeLampRestUpdate("a1b2", NotResting, std::nullopt), "a1b2 0");
+
+    const auto board = ParseLampRestBoard("host 72410100 10 0 5.5\nguest 72410100\n");
+    ASSERT_TRUE(board.has_value());
+    ASSERT_EQ(board->size(), 2u);
+    ASSERT_TRUE((*board)[0].at.has_value());
+    EXPECT_EQ(*(*board)[0].at, (LampPosition{10.0f, 0.0f, 5.5f}));
+    EXPECT_FALSE((*board)[1].at.has_value());
+    EXPECT_FALSE(ParseLampRestBoard("host 72410100 10 0\n").has_value());
+    EXPECT_FALSE(ParseLampRestBoard("host 72410100 10 0 x\n").has_value());
+}
+
+TEST(BloodborneLampRest, PartyMembersJoinARestByStandingNearTheRestingPlayer) {
+    LampRestState rest;
+    const std::vector<LampRest> board{{"host", CentralYharnamLamp, AtLamp}};
+
+    // Too far away: not part of the rest.
+    EXPECT_FALSE(rest.JoinNearby(board, LampPosition{30.0f, 0.0f, 5.0f}));
+    EXPECT_EQ(rest.Tick(LampPosition{30.0f, 0.0f, 5.0f}, true), std::nullopt);
+
+    EXPECT_TRUE(rest.JoinNearby(board, LampPosition{12.0f, 0.0f, 6.0f}));
+    EXPECT_EQ(rest.RestedAt(), AtLamp) << "the rest is where the member who used the lamp is";
+    EXPECT_EQ(rest.Tick(LampPosition{12.0f, 0.0f, 6.0f}, true), CentralYharnamLamp);
+    // Already resting: nothing to join.
+    EXPECT_FALSE(rest.JoinNearby(board, LampPosition{12.0f, 0.0f, 6.0f}));
+    // Walking away from the lamp ends it like any rest.
+    EXPECT_EQ(rest.Tick(LampPosition{30.0f, 0.0f, 5.0f}, true), std::nullopt);
+
+    // Rests without a position (and no position of our own) can't be joined.
+    LampRestState other;
+    EXPECT_FALSE(other.JoinNearby(std::vector<LampRest>{{"host", CentralYharnamLamp}}, AtLamp));
+    EXPECT_FALSE(other.JoinNearby(board, std::nullopt));
+}

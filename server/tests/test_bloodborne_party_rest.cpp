@@ -73,6 +73,22 @@ int main() {
     CHECK(rests.size() == 1 && rests[0].member == "guest");
   }
 
+  // A rest can carry where the member rests ("<member> <lamp> <x> <y> <z>"),
+  // which the board hands back so the others can join it by standing close.
+  {
+    const auto update = Bloodborne::ParseRestUpdate("host 72410100 10 -2.5 5");
+    CHECK(update.has_value());
+    CHECK(update->lamp == Lamp);
+    CHECK(update->at == "10 -2.5 5");
+    CHECK(!Bloodborne::ParseRestUpdate("host 72410100 10 -2.5").has_value());
+    CHECK(!Bloodborne::ParseRestUpdate("host 72410100 10 x 5").has_value());
+
+    PartyRestBoard board;
+    const auto rests = board.Update(Party, "host", Lamp, 0, update->at);
+    CHECK(Bloodborne::FormatRestBoard(rests) ==
+          "host 72410100 10 -2.5 5" + QByteArray(1, 10));
+  }
+
   // No party key: nothing to coordinate.
   {
     PartyRestBoard board;

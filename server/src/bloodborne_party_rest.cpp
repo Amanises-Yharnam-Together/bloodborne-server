@@ -23,7 +23,7 @@ bool IsMemberName(const QByteArray& member) {
 
 std::optional<LampRest> ParseRestUpdate(const QByteArray& body) {
     const QList<QByteArray> parts = body.trimmed().split(' ');
-    if (parts.size() != 2 || !IsMemberName(parts[0])) {
+    if ((parts.size() != 2 && parts.size() != 5) || !IsMemberName(parts[0])) {
         return std::nullopt;
     }
     bool ok = false;
@@ -31,19 +31,33 @@ std::optional<LampRest> ParseRestUpdate(const QByteArray& body) {
     if (!ok) {
         return std::nullopt;
     }
-    return LampRest{parts[0], lamp};
+    LampRest rest{parts[0], lamp, {}};
+    if (parts.size() == 5) {
+        for (qsizetype axis = 2; axis < 5; ++axis) {
+            parts[axis].toFloat(&ok);
+            if (!ok) {
+                return std::nullopt;
+            }
+        }
+        rest.at = parts[2] + ' ' + parts[3] + ' ' + parts[4];
+    }
+    return rest;
 }
 
 QByteArray FormatRestBoard(const QList<LampRest>& rests) {
     QByteArray body;
     for (const LampRest& rest : rests) {
-        body += rest.member + ' ' + QByteArray::number(rest.lamp) + '\n';
+        body += rest.member + ' ' + QByteArray::number(rest.lamp);
+        if (!rest.at.isEmpty()) {
+            body += ' ' + rest.at;
+        }
+        body += '\n';
     }
     return body;
 }
 
 QList<LampRest> PartyRestBoard::Update(const QByteArray& party, const QByteArray& member,
-                                       qint32 lamp, qint64 nowMs) {
+                                       qint32 lamp, qint64 nowMs, const QByteArray& at) {
     if (party.isEmpty()) {
         return {};
     }
@@ -52,7 +66,7 @@ QList<LampRest> PartyRestBoard::Update(const QByteArray& party, const QByteArray
     if (lamp == 0) {
         members.remove(member);
     } else {
-        members.insert(member, Entry{lamp, nowMs});
+        members.insert(member, Entry{lamp, at, nowMs});
     }
     QList<LampRest> rests;
     for (auto it = members.begin(); it != members.end();) {
@@ -60,7 +74,7 @@ QList<LampRest> PartyRestBoard::Update(const QByteArray& party, const QByteArray
             it = members.erase(it);
             continue;
         }
-        rests.append(LampRest{it.key(), it->lamp});
+        rests.append(LampRest{it.key(), it->lamp, it->at});
         ++it;
     }
     if (members.isEmpty()) {
