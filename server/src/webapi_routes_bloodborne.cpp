@@ -24,6 +24,11 @@ namespace WebApiRoutes {
 namespace {
 
 constexpr auto HostPlacementHeader = "X-ShadPS4-Bloodborne-Host-Placement";
+constexpr auto PartyHeader = "X-ShadPS4-Bloodborne-Party";
+
+QByteArray Party(const QHttpServerRequest& request) {
+    return Bloodborne::NormalizePartyKey(request.value(PartyHeader));
+}
 
 QHttpServerResponse SummonResponse(const QString& messageId, const QByteArray& hostPlacement = {}) {
     QJsonObject body;
@@ -119,8 +124,8 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                    if (!body || !Bloodborne::HasRequiredAdvertisementFields(*body)) {
                        return InvalidRequest(QStringLiteral("Invalid summon advertisement"));
                    }
-                   const auto result = broker->Advertise(*body, request.body(),
-                                                         QDateTime::currentMSecsSinceEpoch());
+                   const auto result = broker->Advertise(
+                       *body, request.body(), QDateTime::currentMSecsSinceEpoch(), Party(request));
                    if (!result.pendingClaim.isEmpty()) {
                        const QByteArray response =
                            Bloodborne::BuildClaimDeliveryResponse(result.pendingClaim);
@@ -157,7 +162,7 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                    }
                    const QList<QByteArray> signs =
                        broker->Search(*body, QDateTime::currentMSecsSinceEpoch(),
-                                      request.value(HostPlacementHeader));
+                                      request.value(HostPlacementHeader), Party(request));
                    qInfo() << "Bloodborne summon: search for user"
                            << Integer(*body, QStringLiteral("UserId")) << "returned"
                            << signs.size();
@@ -196,7 +201,7 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                    }
                    const auto result =
                        broker->Claim(*body, request.body(), QDateTime::currentMSecsSinceEpoch(),
-                                     request.value(HostPlacementHeader));
+                                     request.value(HostPlacementHeader), Party(request));
                    switch (result.status) {
                    case Bloodborne::SummonBroker::ClaimStatus::Claimed:
                        qInfo() << "Bloodborne summon: claimed session" << result.targetSessionId

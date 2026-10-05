@@ -47,11 +47,14 @@ public:
     explicit SummonBroker(qint64 ttlMs);
     explicit SummonBroker(Options options);
 
-    AdvertiseResult Advertise(const QJsonObject& body, const QByteArray& rawBody, qint64 nowMs);
+    // `party` is the client's party key (X-ShadPS4-Bloodborne-Party). Signs advertised with a
+    // key are only found and claimed by requests with the same key; empty means public.
+    AdvertiseResult Advertise(const QJsonObject& body, const QByteArray& rawBody, qint64 nowMs,
+                              const QByteArray& party = {});
     QList<QByteArray> Search(const QJsonObject& request, qint64 nowMs,
-                             const QByteArray& hostPlacement = {});
+                             const QByteArray& hostPlacement = {}, const QByteArray& party = {});
     ClaimResult Claim(const QJsonObject& request, const QByteArray& rawRequest, qint64 nowMs,
-                      const QByteArray& hostPlacement = {});
+                      const QByteArray& hostPlacement = {}, const QByteArray& party = {});
     ConsumeResult Consume(const QJsonObject& request, qint64 nowMs);
 
     std::optional<State> StateFor(const QString& sessionId, qint64 userId, qint64 nowMs);
@@ -67,6 +70,7 @@ private:
         QJsonObject claim;
         QByteArray rawClaim;
         QByteArray hostPlacement;
+        QByteArray party;
         qint64 preparationRequester = -1;
         qint64 updatedAtMs = 0;
     };
@@ -82,6 +86,8 @@ private:
 };
 
 bool HasRequiredAdvertisementFields(const QJsonObject& body);
+// Validates an X-ShadPS4-Bloodborne-Party header value ("name:secret"); empty if unusable.
+QByteArray NormalizePartyKey(const QByteArray& header);
 QByteArray BuildClaimDeliveryResponse(const QByteArray& rawClaim);
 
 } // namespace Bloodborne

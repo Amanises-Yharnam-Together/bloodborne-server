@@ -362,7 +362,8 @@ SummonBroker::SummonBroker(Options options)
       m_seamlessAnywhereSummons(options.seamlessAnywhereSummons || options.seamlessCoop) {}
 
 SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
-                                                      const QByteArray& rawBody, qint64 nowMs) {
+                                                      const QByteArray& rawBody, qint64 nowMs,
+                                                      const QByteArray& party) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 
@@ -373,6 +374,7 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
         record.state = State::Advertised;
         record.advertisement = body;
         record.rawAdvertisement = rawBody;
+        record.party = party;
         record.updatedAtMs = nowMs;
         m_records.insert(key, std::move(record));
         return {State::Advertised, {}, {}};
@@ -380,6 +382,7 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
 
     it->advertisement = body;
     it->rawAdvertisement = rawBody;
+    it->party = party;
     it->updatedAtMs = nowMs;
     if (it->state == State::Preparing) {
         const std::optional<qint64> hostMap = HostPlacementMap(it->hostPlacement);
@@ -404,7 +407,7 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
 }
 
 QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
-                                       const QByteArray& hostPlacement) {
+                                       const QByteArray& hostPlacement, const QByteArray& party) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 
@@ -417,6 +420,9 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
     const bool anywhereSummons = m_seamlessCoop && m_seamlessAnywhereSummons;
     const std::optional<qint64> hostMap = HostPlacementMap(hostPlacement);
     for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+        if (it->party != party) {
+            continue;
+        }
         if (it->state == State::Advertised &&
             MatchesSearch(request, it->advertisement, anywhereSummons)) {
             if (anywhereSummons && hostMap.has_value() && requester >= 0 &&
@@ -457,7 +463,8 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
 
 SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
                                               const QByteArray& rawRequest, qint64 nowMs,
-                                              const QByteArray& hostPlacement) {
+                                              const QByteArray& hostPlacement,
+                                              const QByteArray& party) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 
@@ -466,11 +473,13 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
         OptionalInteger(request, QStringLiteral("TargetUserId"));
     const QJsonValue targetChara = request.value(QStringLiteral("TargetCharaId"));
 
+    // A sign from another party is invisible to this claim, exactly as it is to Search.
     auto target = m_records.end();
     if (!requestedSession.isEmpty()) {
         for (auto it = m_records.begin(); it != m_records.end(); ++it) {
-            if (it->advertisement.value(QStringLiteral("SessionId")).toString() ==
-                requestedSession) {
+            if (it->party == party &&
+                it->advertisement.value(QStringLiteral("SessionId")).toString() ==
+                    requestedSession) {
                 target = it;
                 break;
             }
@@ -478,7 +487,8 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
     }
     if (target == m_records.end() && targetUser.has_value()) {
         for (auto it = m_records.begin(); it != m_records.end(); ++it) {
-            if (Integer(it->advertisement, QStringLiteral("UserId"), -1) != *targetUser) {
+            if (it->party != party ||
+                Integer(it->advertisement, QStringLiteral("UserId"), -1) != *targetUser) {
                 continue;
             }
             if (!targetChara.isUndefined() && !targetChara.isNull() &&
@@ -604,6 +614,24 @@ bool HasRequiredAdvertisementFields(const QJsonObject& body) {
     }
     return !body.value(QStringLiteral("SessionId")).toString().isEmpty() &&
            !body.value(QStringLiteral("SummonData")).toString().isEmpty();
+}
+
+QByteArray NormalizePartyKey(const QByteArray& header) {
+    constexpr qsizetype MaxPartyKeySize = 128;
+    const QByteArray key = header.trimmed();
+    if (key.isEmpty() || key.size() > MaxPartyKeySize) {
+        return {};
+    }
+    for (const char c : key) {
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) {
+            return {};
+        }
+    }
+    const qsizetype colon = key.indexOf(':');
+    if (colon <= 0 || colon == key.size() - 1) {
+        return {};
+    }
+    return key;
 }
 
 QByteArray BuildClaimDeliveryResponse(const QByteArray& rawClaim) {

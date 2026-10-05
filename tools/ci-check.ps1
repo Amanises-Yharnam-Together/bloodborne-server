@@ -31,11 +31,16 @@ if ($fmtVersion -notmatch "version 19\.") { Write-Host "wrong clang-format: $fmt
 if ($All) {
     $files = Get-ChildItem src -Recurse -Include *.cpp, *.h | ForEach-Object { $_.FullName }
 } else {
-    # jj paths are repo-relative (e.g. emulator/src/...); keep this component's sources.
-    $files = jj diff --name-only -r "trunk()..@" 2>$null |
+    # jj prints paths relative to the cwd, so ask from the repo root (emulator/src/...) and keep
+    # this component's sources.
+    $repoRoot = Split-Path $Src -Parent
+    Push-Location $repoRoot
+    $changed = jj diff --name-only -r "trunk()..@" 2>$null
+    Pop-Location
+    $files = @($changed |
         Where-Object { $_ -match "^$Component[\\/](src|tests)[\\/].*\.(cpp|h)$" } |
-        ForEach-Object { Join-Path (Split-Path $Src -Parent) $_ } |
-        Where-Object { Test-Path $_ }
+        ForEach-Object { Join-Path $repoRoot $_ } |
+        Where-Object { Test-Path $_ })
 }
 $fmtBad = @()
 foreach ($f in $files) {

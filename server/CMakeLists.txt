@@ -117,6 +117,14 @@ if(BUILD_TESTING)
     target_link_libraries(test_bloodborne_summon_broker PRIVATE Qt6::Core)
     add_test(NAME bloodborne_summon_broker COMMAND test_bloodborne_summon_broker)
 
+    add_executable(test_bloodborne_summon_party EXCLUDE_FROM_ALL
+        tests/test_bloodborne_summon_party.cpp
+        src/bloodborne_summon_broker.cpp
+    )
+    target_include_directories(test_bloodborne_summon_party PRIVATE src)
+    target_link_libraries(test_bloodborne_summon_party PRIVATE Qt6::Core)
+    add_test(NAME bloodborne_summon_party COMMAND test_bloodborne_summon_party)
+
     add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
         tests/bloodborne_matching_guest_probe.cpp
         "${PROTO_OUT}/shadnet.pb.cc"
