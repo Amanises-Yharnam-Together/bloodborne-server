@@ -164,3 +164,6 @@
 [submodule "emulator/externals/zarchive"]
 	path = emulator/externals/zarchive
 	url = https://github.com/shadexternals/ZArchive.git
+[submodule "server/externals/protobuf"]
+	path = server/externals/protobuf
+	url = https://github.com/shadexternals/protobuf.git
