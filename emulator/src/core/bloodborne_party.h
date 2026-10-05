@@ -20,7 +20,8 @@ enum class PartyAction { Wait, StartSearch };
 
 // The special effects a rung bell leaves on the player. While one is active the game's SOS
 // status (0x0186FE40) reports the player as searching, so adding the effect is the whole bell.
-constexpr s32 BeckoningBellEffect = 9001;
+// The Beckoning Bell's is 9000 (special state 189); the game adds 9003 next to it by itself.
+constexpr s32 BeckoningBellEffect = 9000;
 constexpr s32 SmallResonantBellEffect = 9005;
 
 // 01.09's add-special-effect virtual (character vtable slot 0x3F0, 0x018C6DB0 for players).

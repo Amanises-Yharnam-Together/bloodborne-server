@@ -50,7 +50,9 @@ TEST(BloodbornePartyController, StartsTheRoleSearchOnceTheWorldHasBeenStableForA
 
 TEST(BloodbornePartyController, HostSearchesWithTheBeckoningBellEffect) {
     PartyController controller(PartyRole::Host);
-    EXPECT_EQ(controller.SearchEffectId(), BeckoningBellEffect);
+    // A real Beckoning Bell leaves 9000 (special state 189) on the host, which the game then
+    // pairs with 9003. 9001 is not a search effect and does nothing visible.
+    EXPECT_EQ(controller.SearchEffectId(), 9000);
     EXPECT_EQ(TickUntilDecision(controller, Idle(), T0), PartyAction::StartSearch);
 }
 

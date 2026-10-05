@@ -24,13 +24,13 @@ Start here when picking the work up in a new session.
 ## Done
 - Phase 0: our build, two instances, cross-map join.
 - Phase 1: party header (`SHADPS4_BLOODBORNE_PARTY`, server `NormalizePartyKey`), party-scoped
-  broker, `PartyController` auto-rings the role bell (host Beckoning goods 200 / effect 9001; guest
+  broker, `PartyController` auto-rings the role bell (host Beckoning goods 200 / effect 9000; guest
   Small Resonant 205 / 9005) from the SOS-status hook, backend `SyncCharaId`, 5 s summon polling
   and co-op guard timers, stale-sign supersede and claim reset after join. User-confirmed:
   rejoin after a death is near-instant.
 
 ## Phase 3 item: bell-less joining (implemented, waiting for Kaniel's play-test)
-- RE finding: a rung bell is just special effect 9001 (Beckoning) / 9005 (Small Resonant) on
+- RE finding: a rung bell is just special effect 9000 (Beckoning, game adds 9003 too) / 9005 (Small Resonant) on
   the player. The SOS status (`0x0186FE40`) derives "searching" from the effects' special state.
   01.09 adds 9005 itself at `0x01C0D3B0` through the character's add-effect virtual
   (vtable slot `0x3F0` = `0x018C6DB0`), args `(chr, id, chr, 0, 1, 0, 1.0f x5, stack 0)`.
@@ -39,7 +39,7 @@ Start here when picking the work up in a new session.
   item, animation or Insight is involved. The slot is checked against the verified 01.09
   function before calling.
 - To verify in the rig: both join without holding bells, the host's Insight does not drop, and
-  the log shows `auto-rejoin started search effect=9001|9005 ... result=true`.
+  the log shows `auto-rejoin started search effect=9000|9005 ... result=true`.
 - Eboot RE on this PC: scratch scripts flatten `eboot.bin` (fake SELF) and apply relocations,
   then disassemble with Python capstone (`py -3.12 -m pip install capstone`).
 
