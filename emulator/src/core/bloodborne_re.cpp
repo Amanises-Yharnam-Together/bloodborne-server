@@ -1849,6 +1849,15 @@ constexpr u64 RestockItemClampOffset = 0x014DBB70;
 constexpr u64 RestockFromStorageOffset = 0x014DACE0;
 constexpr std::array<u8, 7> RestockItemClampPrologue{0x55, 0x48, 0x89, 0xE5, 0x48, 0x8D, 0x05};
 
+// SprjEmkSystem's update (0x012F0F90): `mov ecx, [rax+0xA6C]; cmp ecx, 4` with rax = WorldChrMan.
+// In state 3 it restarts every event script and resets the temporary event flags, then moves
+// to 4. In a session that restart spawns things a reload never does (a quest monster behind the
+// window near the Central Yharnam lamp), so a party rest goes straight to 4: the characters still
+// respawn (WorldChrMan did that before state 3) and the scripts keep running as they were.
+constexpr u64 EventRestartStateOffset = 0x012F0FCB;
+constexpr std::array<u8, 9> EventRestartState{0x8B, 0x88, 0x6C, 0x0A, 0x00, 0x00, 0x83, 0xF9, 0x04};
+std::atomic<bool> party_rest_respawn_pending{};
+
 // GlobalState +0x16F8 -> +0x14: players in the session (the count ESD function 52 checks).
 constexpr u64 SessionPlayersOffset = 0x16F8;
 
@@ -1895,6 +1904,17 @@ std::optional<LampPosition> LocalPlayerPosition() {
                         ReadValue<float>(physics, 0x1E8)};
 }
 
+void PS4_SYSV_ABI SkipEventRestartForPartyRest(u64, GuestRegisterSnapshot* registers) {
+    const u64 world = registers->rax;
+    if (!party_rest_respawn_pending.load() || world < 0x10000 ||
+        ReadValue<s32>(world, WorldRespawnStateOffset) != 3) {
+        return;
+    }
+    party_rest_respawn_pending.store(false);
+    WriteValue(world, WorldRespawnStateOffset, s32{4});
+    LOG_INFO(Debug, "Bloodborne party rest: kept the event scripts running (no restart)");
+}
+
 void PS4_SYSV_ABI LetPartyUseLamps(u64, GuestRegisterSnapshot* registers) {
     // Diagnostics: whether this player's lamp talk scripts ask at all (once, then every 3000).
     static std::atomic<u64> asked{};
@@ -1903,7 +1923,7 @@ void PS4_SYSV_ABI LetPartyUseLamps(u64, GuestRegisterSnapshot* registers) {
         LOG_INFO(Debug, "Bloodborne lamp talk asked 'in multiplayer' {} times (party session={})",
                  count, InPartySession());
     }
-    if (InPartySession()) {
+    if (lamp_rest_hooks_installed && InPartySession()) {
         registers->rax &= ~u64{0xFF};
         registers->rcx = 0;
     }
@@ -1911,7 +1931,7 @@ void PS4_SYSV_ABI LetPartyUseLamps(u64, GuestRegisterSnapshot* registers) {
 
 void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers) {
     const s32 flag = static_cast<s32>(registers->r15);
-    if (!IsLampTravelFlag(flag)) {
+    if (!lamp_rest_hooks_installed || !IsLampTravelFlag(flag)) {
         return;
     }
     if (!InPartySession()) {
@@ -1957,6 +1977,12 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
                                       EsdIsMultiplayerResult, 0, LetPartyUseLamps)) {
         LOG_ERROR(Debug, "Bloodborne lamp multiplayer hook unavailable; lamps stay locked in a "
                          "session");
+        return;
+    }
+    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EventRestartStateOffset),
+                                      EventRestartState, 0, SkipEventRestartForPartyRest)) {
+        LOG_ERROR(Debug, "Bloodborne party rest would restart the event scripts; lamps stay "
+                         "locked in a session");
         return;
     }
     lamp_rest_hooks_installed = true;
@@ -2228,6 +2254,7 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
                     world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : -1;
                 if (respawn_before == 0) {
                     RememberHiddenCharacters(world);
+                    party_rest_respawn_pending.store(true);
                     WriteValue(world, WorldRespawnStateOffset, s32{1});
                 }
             },
