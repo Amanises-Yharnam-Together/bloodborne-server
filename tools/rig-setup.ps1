@@ -12,6 +12,8 @@ param(
 )
 $ErrorActionPreference = "Stop"
 if (-not $env:BB_ROOT) { $env:BB_ROOT = "C:\bb" }
+# shadPS4 reads these with a JSON parser; write UTF-8 without the BOM Windows PowerShell adds.
+function Write-Utf8([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding $false)) }
 $matchPort = $GamePort + 1
 $webPort = $GamePort + 2
 if ((Test-Path $Rig) -and -not $Force) { throw "$Rig exists; pass -Force to rebuild it" }
@@ -20,11 +22,11 @@ New-Item -ItemType Directory -Force "$Rig\server", "$Rig\backend" | Out-Null
 # --- server -------------------------------------------------------------------------------
 $shadnet = Join-Path $env:BB_ROOT "out\server\shadnet.exe"
 Copy-Item $shadnet "$Rig\server\" -Force
-# Qt runtime: reuse the DLL set shipped with the install's shadnet (same Qt major).
-Get-ChildItem "$Install\DATA\shadNet-P2P" | Where-Object { $_.Name -notin @("shadnet.exe", "shadnet.cfg", "db", "clientsample") } |
-    Copy-Item -Destination "$Rig\server\" -Recurse -Force
-& "C:\Qt\6.8.3\msvc2022_64\bin\windeployqt6.exe" --release --no-translations "$Rig\server\shadnet.exe" *> $null
-Copy-Item "$Install\DATA\shadNet-P2P\clientsample" "$Rig\server\" -Recurse -Force
+# Qt runtime matching our build (windeployqt warns on stderr about VCINSTALLDIR; harmless).
+cmd /c "`"C:\Qt\6.8.3\msvc2022_64\bin\windeployqt6.exe`" --release --no-translations `"$Rig\server\shadnet.exe`" >nul 2>nul"
+if (-not (Test-Path "$Rig\server\Qt6Core.dll")) { throw "windeployqt failed for $Rig\server\shadnet.exe" }
+New-Item -ItemType Directory -Force "$Rig\server\clientsample" | Out-Null
+Copy-Item "$Install\DATA\shadNet-P2P\clientsample\*" "$Rig\server\clientsample\" -Recurse -Force
 @"
 [General]
 Host=127.0.0.1
@@ -55,7 +57,7 @@ foreach ($p in $players) {
     $users = Get-Content "$dir\user\users.json" -Raw | ConvertFrom-Json
     $u = $users.Users.user[0]
     $u.shadnet_npid = $p.NpId; $u.shadnet_password = "rig"; $u.user_name = $p.NpId; $u.shadnet_token = ""
-    $users | ConvertTo-Json -Depth 10 | Set-Content "$dir\user\users.json" -Encoding utf8
+    Write-Utf8 "$dir\user\users.json" ($users | ConvertTo-Json -Depth 10)
     $cfgPath = "$dir\user\custom_configs\CUSA03173.json"
     $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
     $cfg.General.shadnet_server = "127.0.0.1:$GamePort"
@@ -63,9 +65,8 @@ foreach ($p in $players) {
     $cfg.General.enable_upnp = $false
     $cfg.GPU.full_screen = $false
     $cfg.GPU.window_width = 1280; $cfg.GPU.window_height = 720
-    $cfg | ConvertTo-Json -Depth 10 | Set-Content $cfgPath -Encoding utf8
-    @{ "https://ss4.scej-network.jp:20443" = "http://127.0.0.1:$BackendPort" } | ConvertTo-Json |
-        Set-Content "$dir\user\host_overrides.json" -Encoding utf8
+    Write-Utf8 $cfgPath ($cfg | ConvertTo-Json -Depth 10)
+    Write-Utf8 "$dir\user\host_overrides.json" (@{ "https://ss4.scej-network.jp:20443" = "http://127.0.0.1:$BackendPort" } | ConvertTo-Json)
     @"
 @echo off
 cd /d "%~dp0"
@@ -86,10 +87,13 @@ start "rig backend" py -3.12 bb_dummy_server.py --address 127.0.0.1 --port $Back
 @"
 @echo off
 cd /d "%~dp0server\clientsample"
-shadnet-sample.exe 127.0.0.1 $GamePort register rig_host rig rig_host.rig@p2p.db
-shadnet-sample.exe 127.0.0.1 $GamePort register rig_guest rig rig_guest.rig@p2p.db
+.\shadnet-sample.exe 127.0.0.1 $GamePort register rig_host rig rig_host.rig@p2p.db
+.\shadnet-sample.exe 127.0.0.1 $GamePort register rig_guest rig rig_guest.rig@p2p.db
 "@ | Set-Content "$Rig\register-accounts.bat" -Encoding ascii
 
 Write-Host "Rig ready at $Rig"
 Write-Host "  1. start-servers.bat   2. register-accounts.bat (once)   3. host\launch.bat, guest\launch.bat"
+
+
+
 
