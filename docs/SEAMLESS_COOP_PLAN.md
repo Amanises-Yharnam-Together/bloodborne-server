@@ -169,6 +169,11 @@ Most can start from the shadp2p source and its RE trace hooks plus the Debug Men
 - Two-instance local test rig (two shadPS4 instances on one PC with separate user dirs and `SHADPS4_P2P_PORT`).
 - Exit: reproducible build plus one working cross-map join recorded in a log.
 
+**Status (2026-10-05):** Phase 0 is done: two-instance rig, our build, cross-map join. Phase 1 is
+done in the rig: party-scoped summons, auto-ring of both bells, and rejoin after a death within
+seconds (5 s summon polling, 5 s co-op guard timers, stale-claim reset). See
+[PHASE1_PARTY.md](PHASE1_PARTY.md).
+
 **Phase 1: Persistent party**
 - PartyService in shadNet: create/join with password, survives room teardown.
 - Auto-rejoin: when a guest is sent home for any reason, the client re-claims the host automatically.
@@ -182,7 +187,12 @@ Most can start from the shadp2p source and its RE trace hooks plus the Debug Men
 **Phase 3: Travel together and no limits**
 - Lamp warp / Dream entry by host pulls guests along.
 - Boss kill no longer dismisses guests; summons allowed in cleared areas and Hunter's Dream.
-- Remove Insight cost; join via hotkey/menu instead of bells.
+- **Bell-less joining.** Today the party controller "rings" bells through the native use-item
+  path, so the game still plays the animation, uses the item and charges Insight. Instead, call
+  the layer under the bell directly: start the SOS/summon search state that the bell effect
+  (9001/9005) turns on, without the item. The goods-use and effect hooks the RE trace already
+  logs are the starting point. The party then reconnects with no item, no animation and no
+  Insight, and the bell items become optional.
 - Exit: full route Central Yharnam → Cleric Beast → Dream → Father Gascoigne without re-summoning by hand.
 
 **Phase 4: Shared progress**
