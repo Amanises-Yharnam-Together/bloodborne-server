@@ -1753,6 +1753,8 @@ void LogBloodstainStateChanges() {
     }
 }
 
+void ObserveLocalAliveState();
+
 // Diagnostics for a guest reviving in place (Phase 2): each side logs the other players'
 // character type and HP (WorldChrMan +0x30 count, +0x38 entries of 0x38 bytes) when they change.
 void LogOtherPlayersChanges() {
@@ -1779,6 +1781,7 @@ void LogOtherPlayersChanges() {
 void TickPartyController() {
     LogBloodstainStateChanges();
     LogOtherPlayersChanges();
+    ObserveLocalAliveState();
     if (!party_controller) {
         return;
     }
@@ -1918,6 +1921,58 @@ void EndSessionOnWorldTeardown() {
              matching_state == MatchingStateHosting ? "host" : "guest", result);
 }
 
+AliveStateSnapshot local_alive_state;
+
+// The local player's state flags (+0x1E0, 8 bytes) and action state ([+0x3B0]+8: +0x1B4/+0x1B8).
+u64 LocalActionModule(u64 player) {
+    const u64 model = ReadValue<u64>(player, 0x3B0);
+    return model >= 0x10000 ? ReadValue<u64>(model, 0x08) : 0;
+}
+
+std::optional<AliveState> ReadLocalAliveState(u64 player, bool& alive) {
+    alive = false;
+    const u64 module = LocalActionModule(player);
+    const u64 model = ReadValue<u64>(player, 0x3B0);
+    const u64 data = model >= 0x10000 ? ReadValue<u64>(model, 0x20) : 0;
+    if (player < 0x10000 || module < 0x10000 || data < 0x10000) {
+        return std::nullopt;
+    }
+    const AliveState state{
+        .flags = ReadValue<u64>(player, 0x1E0),
+        .action = ReadValue<s32>(module, 0x1B4),
+        .action_sub = ReadValue<s32>(module, 0x1B8),
+    };
+    alive = ReadValue<s32>(data, 0xF8) > 0 && (ReadValue<u8>(player, 0x1E3) & 1) == 0;
+    return state;
+}
+
+void ObserveLocalAliveState() {
+    bool alive = false;
+    if (const auto state = ReadLocalAliveState(GetLocalPlayer(), alive)) {
+        local_alive_state.Observe(alive, *state);
+    }
+}
+
+void RestoreLocalAliveState() {
+    const u64 player = GetLocalPlayer();
+    bool alive = false;
+    const auto before = ReadLocalAliveState(player, alive);
+    const auto& saved = local_alive_state.Saved();
+    if (!before || !saved) {
+        LOG_ERROR(Debug, "Bloodborne revive: no alive state to restore");
+        return;
+    }
+    WriteValue(player, 0x1E0, saved->flags);
+    const u64 module = LocalActionModule(player);
+    WriteValue(module, 0x1B4, saved->action);
+    WriteValue(module, 0x1B8, saved->action_sub);
+    LOG_INFO(Debug,
+             "Bloodborne revive restored alive state flags {:#x}->{:#x} action {}->{} "
+             "sub {}->{}",
+             before->flags, saved->flags, before->action, saved->action, before->action_sub,
+             saved->action_sub);
+}
+
 // A party guest that died gets up again where the game would show the "returned to your world"
 // menu (the warp home behind it is patched out, see GhostDeathKeepSessionPatches).
 void ReviveGuestAfterGhostDeath() {
@@ -1931,15 +1986,7 @@ void ReviveGuestAfterGhostDeath() {
         .update_blood_mark =
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + UpDateBloodMarkOffset),
         .revive_player = reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RevivePlayerOffset),
-        .clear_dead_flag =
-            [] {
-                // The character kill (0x018BF9A0) sets bit 0 of +0x1E3; RevivePlayer keeps it.
-                const u64 player = GetLocalPlayer();
-                if (player >= 0x10000 && HasMemoryAccess(player, 0x1E4, MemoryProt::CpuWrite)) {
-                    WriteValue(player, 0x1E3,
-                               static_cast<u8>(ReadValue<u8>(player, 0x1E3) & ~u8{1}));
-                }
-            },
+        .restore_alive_state = RestoreLocalAliveState,
         .set_chr_type =
             reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, s32)>(image_base + SetChrTypeOffset),
         .chr_reset_animation =

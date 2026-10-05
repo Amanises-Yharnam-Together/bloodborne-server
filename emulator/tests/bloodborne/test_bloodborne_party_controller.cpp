@@ -289,8 +289,8 @@ bool PS4_SYSV_ABI FakeRevivePlayer() {
     revive_calls.push_back("RevivePlayer");
     return true;
 }
-void FakeClearDeadFlag() {
-    revive_calls.push_back("ClearDeadFlag");
+void FakeRestoreAliveState() {
+    revive_calls.push_back("RestoreAliveState");
 }
 void PS4_SYSV_ABI FakeSetChrType(u64, s32 entity, s32 type) {
     revive_calls.push_back("SetChrType " + std::to_string(entity) + " " + std::to_string(type));
@@ -305,7 +305,7 @@ constexpr GhostDeathCalls FakeCalls{
     .request_full_recover = FakeRequestFullRecover,
     .update_blood_mark = FakeUpDateBloodMark,
     .revive_player = FakeRevivePlayer,
-    .clear_dead_flag = FakeClearDeadFlag,
+    .restore_alive_state = FakeRestoreAliveState,
     .set_chr_type = FakeSetChrType,
     .chr_reset_animation = FakeChrResetAnimation,
 };
@@ -317,8 +317,9 @@ constexpr GhostDeathCalls FakeCalls{
 // host death does (UpDateBloodMark) and is revived in place. RevivePlayer alone leaves the
 // character in its death pose and makes it a live player (type 0), so the white phantom type is
 // set back (SetChrType also refreshes the character) and its behaviour is reset to idle.
-// RevivePlayer also leaves the dead bit the kill set (+0x1E3 bit 0): play-testing showed a guest
-// that could attack but not move and that enemies ignored, so that bit is cleared too.
+// RevivePlayer also leaves what the kill and the death processing set (the dead bit at +0x1E3 and
+// the action state the death sets): play-testing showed a guest that could attack but not move,
+// took no damage and that enemies ignored, so the state saved while it was alive goes back.
 // (A summon reload instead needs the host's side of the summon handshake and drops the session.)
 TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
     revive_calls.clear();
@@ -330,7 +331,7 @@ TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
                                 "RequestFullRecover",
                                 "UpDateBloodMark",
                                 "RevivePlayer",
-                                "ClearDeadFlag",
+                                "RestoreAliveState",
                                 "SetChrType 10000 1",
                                 "ChrResetAnimation 10000",
                             }));
@@ -365,4 +366,19 @@ TEST(BloodborneHostDeath, GuestsIgnoreTheHostsDeath) {
 TEST(BloodborneHostDeath, DecodesOnlyNearJumps) {
     EXPECT_EQ(DecodeNearJumpTarget(0x1000, std::vector<u8>{0xE9, 0x00, 0x00, 0x00, 0x00}), 0x1005u);
     EXPECT_EQ(DecodeNearJumpTarget(0x1000, std::vector<u8>{0xE8, 0x00, 0x00, 0x00, 0x00}), 0u);
+}
+
+// The alive state to put back is captured from the guest itself while it is alive, since the
+// values the death overwrites are not constants.
+TEST(BloodborneAliveState, KeepsTheLastStateSeenWhileAlive) {
+    AliveStateSnapshot snapshot;
+    EXPECT_FALSE(snapshot.Saved().has_value());
+
+    snapshot.Observe(true, AliveState{.flags = 0x11, .action = 0, .action_sub = 1});
+    snapshot.Observe(true, AliveState{.flags = 0x22, .action = 0, .action_sub = 1});
+    snapshot.Observe(false, AliveState{.flags = 0x23, .action = 2, .action_sub = 2}); // dying
+    ASSERT_TRUE(snapshot.Saved().has_value());
+    EXPECT_EQ(snapshot.Saved()->flags, 0x22u);
+    EXPECT_EQ(snapshot.Saved()->action, 0);
+    EXPECT_EQ(snapshot.Saved()->action_sub, 1);
 }

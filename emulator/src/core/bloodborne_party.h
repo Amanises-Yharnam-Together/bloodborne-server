@@ -85,13 +85,36 @@ struct GhostDeathCalls {
     bool PS4_SYSV_ABI (*request_full_recover)() = nullptr;
     bool PS4_SYSV_ABI (*update_blood_mark)() = nullptr;
     bool PS4_SYSV_ABI (*revive_player)() = nullptr;
-    void (*clear_dead_flag)() = nullptr; // ours: the kill's +0x1E3 bit 0 on the local player
+    void (*restore_alive_state)() = nullptr; // ours: see AliveStateSnapshot
     void PS4_SYSV_ABI (*set_chr_type)(u64 unused, s32 entity, s32 type) = nullptr;
     void PS4_SYSV_ABI (*chr_reset_animation)(u64 unused, s32 entity) = nullptr;
 };
 constexpr s32 DeathEventFlag = 4000;
 constexpr s32 WhiteGhostCharacterType = 1;
 constexpr s32 LocalPlayerEntity = 10000;
+
+// What a character's death overwrites besides HP: the state flags at +0x1E0 (the kill sets the
+// dead bit, +0x1E3 bit 0) and the action state the death processing writes ([+0x3B0]+8: +0x1B4
+// and +0x1B8). Saved from the local player while it is alive, put back by the revive.
+struct AliveState {
+    u64 flags = 0;
+    s32 action = 0;
+    s32 action_sub = 0;
+};
+class AliveStateSnapshot {
+public:
+    void Observe(bool alive, const AliveState& state) {
+        if (alive) {
+            saved = state;
+        }
+    }
+    const std::optional<AliveState>& Saved() const {
+        return saved;
+    }
+
+private:
+    std::optional<AliveState> saved;
+};
 
 // HostDead's white phantom branch and the epilogue the seamless patch jumps to.
 constexpr u64 HostDeadEpilogueOffset = 0x01381A50;
