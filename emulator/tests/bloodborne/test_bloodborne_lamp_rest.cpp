@@ -179,3 +179,29 @@ TEST(BloodborneLampRest, PartyMembersJoinARestByStandingNearTheRestingPlayer) {
     EXPECT_FALSE(other.JoinNearby(std::vector<LampRest>{{"host", CentralYharnamLamp}}, AtLamp));
     EXPECT_FALSE(other.JoinNearby(board, std::nullopt));
 }
+
+TEST(BloodborneLampRest, OnlyARestStartedAtTheLampCanBeJoined) {
+    LampRestState user;
+    user.Rest(CentralYharnamLamp, AtLamp);
+    EXPECT_EQ(user.JoinablePosition(), AtLamp);
+
+    // Someone who joined by standing close shares no position: otherwise the lamp user, walking
+    // back after leaving, would join the joiner and start a rest nobody asked for.
+    LampRestState joiner;
+    ASSERT_TRUE(
+        joiner.JoinNearby(std::vector<LampRest>{{"host", CentralYharnamLamp, AtLamp}}, AtLamp));
+    EXPECT_EQ(joiner.JoinablePosition(), std::nullopt);
+    EXPECT_EQ(joiner.Tick(AtLamp, true), CentralYharnamLamp);
+
+    LampRestState idle;
+    EXPECT_EQ(idle.JoinablePosition(), std::nullopt);
+}
+
+TEST(BloodborneLampRest, TheRespawnKeepsCharactersTheScriptsHadSwitchedOffSwitchedOff) {
+    // A disabled character that is alive (full HP) is hidden by the event scripts, e.g. a quest
+    // NPC that only shows up later: the bonfire respawn re-enables it, so it is disabled again.
+    EXPECT_TRUE(KeepDisabledAfterRespawn(true, 300));
+    // A killed enemy is what the respawn is for.
+    EXPECT_FALSE(KeepDisabledAfterRespawn(true, 0));
+    EXPECT_FALSE(KeepDisabledAfterRespawn(false, 300));
+}

@@ -181,6 +181,7 @@ bool IsPartySession(bool party_configured, s32 matching_state) {
 void LampRestState::Rest(s32 rested_lamp, const LampPosition& at) {
     lamp = rested_lamp;
     rested_at = at;
+    joined = false;
 }
 
 namespace {
@@ -217,10 +218,19 @@ bool LampRestState::JoinNearby(std::span<const LampRest> board,
         if (rest.lamp != NotResting && rest.at &&
             DistanceSquared(*rest.at, *player) <= JoinDistance * JoinDistance) {
             Rest(rest.lamp, *rest.at);
+            joined = true;
             return true;
         }
     }
     return false;
+}
+
+std::optional<LampPosition> LampRestState::JoinablePosition() const {
+    return lamp && !joined ? std::optional{rested_at} : std::nullopt;
+}
+
+bool KeepDisabledAfterRespawn(bool disabled_before, s32 hp_before) {
+    return disabled_before && hp_before > 0;
 }
 
 std::optional<s32> LampRestState::Tick(const std::optional<LampPosition>& player,

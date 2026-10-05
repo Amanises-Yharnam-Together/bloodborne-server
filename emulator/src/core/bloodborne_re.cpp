@@ -2039,6 +2039,72 @@ std::vector<LampRest> FreshRestBoard() {
     return rest_board;
 }
 
+// Characters hidden before a party rest (see KeepDisabledAfterRespawn). WorldChrMan's blocks are
+// +0x20 (count) / +0x28 (0x160 bytes each); a block's characters +0xB8 / +0xC0 (0x38 bytes each,
+// the character first), the same walk as the respawn (0x01915330). A character's explicit
+// disable is [+0x18]+0x20 bit 0, set by 0x018C6390 (the SetDisable binding's call).
+constexpr u64 SetCharacterDisabledOffset = 0x018C6390;
+std::vector<u64> hidden_characters;
+
+template <typename Visit>
+void ForEachWorldCharacter(u64 world, Visit&& visit) {
+    const s32 blocks = ReadValue<s32>(world, 0x20);
+    const u64 block_array = ReadValue<u64>(world, 0x28);
+    for (s32 block = 0; block_array >= 0x10000 && block < std::min(blocks, 64); ++block) {
+        const u64 entry = block_array + static_cast<u64>(block) * 0x160;
+        const s32 count = ReadValue<s32>(entry, 0xB8);
+        const u64 characters = ReadValue<u64>(entry, 0xC0);
+        for (s32 index = 0; characters >= 0x10000 && index < std::min(count, 1024); ++index) {
+            const u64 character = ReadValue<u64>(characters + static_cast<u64>(index) * 0x38, 0);
+            if (character >= 0x10000 && HasMemoryAccess(character, 0x3B8, MemoryProt::CpuRead)) {
+                visit(character);
+            }
+        }
+    }
+}
+
+bool IsCharacterDisabled(u64 character) {
+    const u64 control = ReadValue<u64>(character, 0x18);
+    return control >= 0x10000 && (ReadValue<u8>(control, 0x20) & 1) != 0;
+}
+
+s32 CharacterHp(u64 character) {
+    const u64 modules = ReadValue<u64>(character, 0x3B0);
+    const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+    return data >= 0x10000 ? ReadValue<s32>(data, 0xF8) : 0;
+}
+
+void RememberHiddenCharacters(u64 world) {
+    hidden_characters.clear();
+    s32 disabled = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        const bool off = IsCharacterDisabled(character);
+        disabled += off ? 1 : 0;
+        if (KeepDisabledAfterRespawn(off, CharacterHp(character))) {
+            hidden_characters.push_back(character);
+        }
+    });
+    LOG_INFO(Debug, "Bloodborne party rest: {} characters disabled, {} of them hidden alive",
+             disabled, hidden_characters.size());
+}
+
+void HideCharactersAgain() {
+    s32 hidden = 0;
+    for (const u64 character : hidden_characters) {
+        if (HasMemoryAccess(character, 0x3B8, MemoryProt::CpuRead) &&
+            !IsCharacterDisabled(character)) {
+            reinterpret_cast<void PS4_SYSV_ABI (*)(u64, bool)>(
+                image_base + SetCharacterDisabledOffset)(character, true);
+            ++hidden;
+        }
+    }
+    if (!hidden_characters.empty()) {
+        LOG_INFO(Debug, "Bloodborne party rest: hid {} of {} characters the respawn re-enabled",
+                 hidden, hidden_characters.size());
+    }
+    hidden_characters.clear();
+}
+
 // Does what a reload at the lamp would (see RefreshAtLamp) and asks WorldChrMan for the bonfire
 // respawn (see WorldRespawnStateOffset).
 void RefreshWorldAtLamp(s32 lamp, s32 players) {
@@ -2063,6 +2129,7 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
                 respawn_before =
                     world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : -1;
                 if (respawn_before == 0) {
+                    RememberHiddenCharacters(world);
                     WriteValue(world, WorldRespawnStateOffset, s32{1});
                 }
             },
@@ -2080,6 +2147,9 @@ void LogWorldRespawnChanges() {
     const s32 state = world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : 0;
     if (state != last) {
         LOG_INFO(Debug, "Bloodborne world respawn state {} -> {}", last, state);
+        if (state == 0) {
+            HideCharactersAgain();
+        }
         last = state;
     }
 }
@@ -2107,7 +2177,7 @@ void TickLampRest() {
             LOG_INFO(Debug, "Bloodborne party member joined a rest nearby");
         }
         resting = lamp_rest.Tick(position, in_party_session);
-        rested_at = lamp_rest.RestedAt();
+        rested_at = lamp_rest.JoinablePosition();
     }
     static std::optional<s32> last_resting;
     if (resting != last_resting) {

@@ -168,10 +168,13 @@ public:
     std::optional<LampPosition> RestedAt() const {
         return lamp ? std::optional{rested_at} : std::nullopt;
     }
+    // Where others can join this rest: only a rest started at the lamp itself.
+    std::optional<LampPosition> JoinablePosition() const;
 
 private:
     std::optional<s32> lamp;
     LampPosition rested_at{};
+    bool joined = false;
 };
 
 // The party's rest board on shadNet (POST /bloodborne/party/rest): each member posts
@@ -206,6 +209,10 @@ struct LampRestCalls {
     void (*request_world_respawn)() = nullptr;
 };
 bool RefreshAtLamp(const LampRestCalls& calls);
+
+// The bonfire respawn re-enables every character of the loaded blocks; the event scripts that
+// hide some again do not all run in a session. A character to switch off again afterwards.
+bool KeepDisabledAfterRespawn(bool disabled_before, s32 hp_before);
 
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
