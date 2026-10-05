@@ -77,20 +77,20 @@ const std::vector<CodePatch>& GhostDeathKeepSessionPatches();
 // Target of a `call rel32` at `offset`, or 0 if the bytes are not one.
 u64 DecodeNearCallTarget(u64 offset, std::span<const u8> bytes);
 
-// The event script bindings the respawn uses (PS4 SysV; the unused first argument is the script
-// state the native code passes along), plus our own reload.
+// The event script bindings the revive uses (PS4 SysV; the unused first argument is the script
+// state the native code passes along).
 struct GhostDeathCalls {
     bool PS4_SYSV_ABI (*is_white_ghost)() = nullptr;
     bool PS4_SYSV_ABI (*set_event_flag)(u64 unused, s32 flag, bool on) = nullptr;
     bool PS4_SYSV_ABI (*request_full_recover)() = nullptr;
     bool PS4_SYSV_ABI (*update_blood_mark)() = nullptr;
-    bool (*reload_next_to_host)() = nullptr;
+    bool PS4_SYSV_ABI (*revive_player)() = nullptr;
+    void PS4_SYSV_ABI (*set_chr_type)(u64 unused, s32 entity, s32 type) = nullptr;
+    void PS4_SYSV_ABI (*chr_reset_animation)(u64 unused, s32 entity) = nullptr;
 };
 constexpr s32 DeathEventFlag = 4000;
-constexpr s32 LiveCharacterType = 0;
-
-// Index of the host (the one live player) among the other players' character types.
-std::optional<std::size_t> FindHostCharacter(std::span<const s32> character_types);
+constexpr s32 WhiteGhostCharacterType = 1;
+constexpr s32 LocalPlayerEntity = 10000;
 
 // HostDead's white phantom branch and the epilogue the seamless patch jumps to.
 constexpr u64 HostDeadEpilogueOffset = 0x01381A50;
@@ -98,26 +98,9 @@ const std::vector<CodePatch>& HostDeathKeepGuestsPatches();
 // Target of a `jmp rel32` at `offset`, or 0 if the bytes are not one.
 u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes);
 
-constexpr s32 WhiteGhostCharacterType = 1;
-constexpr s32 LocalPlayerEntity = 10000;
-
-// After a guest's respawn reload: once the guest stands in the host's world again, tells the
-// caller (once) to make it a white phantom if the load left it a live player.
-class GuestRespawnFixup {
-public:
-    void Started() {
-        stage = Stage::WaitingForLoad;
-    }
-    bool Tick(const PartyObservation& observation, s32 character_type);
-
-private:
-    enum class Stage { Idle, WaitingForLoad, Loading };
-    Stage stage = Stage::Idle;
-};
-
-// Respawns the local player next to the host if it is a white phantom (a party guest). Returns
-// whether it did; anyone else (and a missing call) is left to the game.
-bool RespawnDeadPartyGuest(const GhostDeathCalls& calls);
+// Revives the local player in place if it is a white phantom (a party guest). Returns whether it
+// did; anyone else (and a missing binding) is left to the game.
+bool ReviveDeadPartyGuest(const GhostDeathCalls& calls);
 
 // The sign poster's timers (seconds, a float at +0x28 of the sign object): 01.09 waits 5 s
 // before a new sign's first post and 30 s between re-posts, ignoring ss.info's interval.

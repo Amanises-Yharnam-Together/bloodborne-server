@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -267,28 +266,34 @@ TEST(BloodborneGhostDeath, DecodesOnlyNearCalls) {
 
 namespace {
 
-std::vector<std::string> respawn_calls;
+std::vector<std::string> revive_calls;
 bool white_ghost = true;
 
 bool PS4_SYSV_ABI FakeIsWhiteGhost() {
-    respawn_calls.push_back("IsWhiteGhost");
+    revive_calls.push_back("IsWhiteGhost");
     return white_ghost;
 }
 bool PS4_SYSV_ABI FakeSetEventFlag(u64, s32 flag, bool value) {
-    respawn_calls.push_back("SetEventFlag " + std::to_string(flag) + (value ? " on" : " off"));
+    revive_calls.push_back("SetEventFlag " + std::to_string(flag) + (value ? " on" : " off"));
     return true;
 }
 bool PS4_SYSV_ABI FakeRequestFullRecover() {
-    respawn_calls.push_back("RequestFullRecover");
+    revive_calls.push_back("RequestFullRecover");
     return true;
 }
 bool PS4_SYSV_ABI FakeUpDateBloodMark() {
-    respawn_calls.push_back("UpDateBloodMark");
+    revive_calls.push_back("UpDateBloodMark");
     return true;
 }
-bool FakeReloadNextToHost() {
-    respawn_calls.push_back("ReloadNextToHost");
+bool PS4_SYSV_ABI FakeRevivePlayer() {
+    revive_calls.push_back("RevivePlayer");
     return true;
+}
+void PS4_SYSV_ABI FakeSetChrType(u64, s32 entity, s32 type) {
+    revive_calls.push_back("SetChrType " + std::to_string(entity) + " " + std::to_string(type));
+}
+void PS4_SYSV_ABI FakeChrResetAnimation(u64, s32 entity) {
+    revive_calls.push_back("ChrResetAnimation " + std::to_string(entity));
 }
 
 constexpr GhostDeathCalls FakeCalls{
@@ -296,48 +301,45 @@ constexpr GhostDeathCalls FakeCalls{
     .set_event_flag = FakeSetEventFlag,
     .request_full_recover = FakeRequestFullRecover,
     .update_blood_mark = FakeUpDateBloodMark,
-    .reload_next_to_host = FakeReloadNextToHost,
+    .revive_player = FakeRevivePlayer,
+    .set_chr_type = FakeSetChrType,
+    .chr_reset_animation = FakeChrResetAnimation,
 };
 
 } // namespace
 
-// Where the game would open that menu, a party guest respawns instead: the death event (4000) is
-// cleared so the next death runs, the guest drops its echoes in a bloodstain the way a host death
-// does (UpDateBloodMark), then it reloads into the host's world next to the host, the way it
-// arrives when summoned. (An in-place RevivePlayer leaves a phantom stuck in its death state and
-// turns it into a live player.)
-TEST(BloodborneGhostDeath, ADeadPartyGuestRespawnsNextToTheHost) {
-    respawn_calls.clear();
+// Where the game would open that menu, a party guest gets up again instead: the death event
+// (4000) is cleared so the next death runs, the guest drops its echoes in a bloodstain the way a
+// host death does (UpDateBloodMark) and is revived in place. RevivePlayer alone leaves the
+// character in its death pose and makes it a live player (type 0), so the white phantom type is
+// set back (SetChrType also refreshes the character) and its behaviour is reset to idle.
+// (A summon reload instead needs the host's side of the summon handshake and drops the session.)
+TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
+    revive_calls.clear();
     white_ghost = true;
-    EXPECT_TRUE(RespawnDeadPartyGuest(FakeCalls));
-    EXPECT_EQ(respawn_calls, (std::vector<std::string>{
-                                 "IsWhiteGhost",
-                                 "SetEventFlag 4000 off",
-                                 "RequestFullRecover",
-                                 "UpDateBloodMark",
-                                 "ReloadNextToHost",
-                             }));
+    EXPECT_TRUE(ReviveDeadPartyGuest(FakeCalls));
+    EXPECT_EQ(revive_calls, (std::vector<std::string>{
+                                "IsWhiteGhost",
+                                "SetEventFlag 4000 off",
+                                "RequestFullRecover",
+                                "UpDateBloodMark",
+                                "RevivePlayer",
+                                "SetChrType 10000 1",
+                                "ChrResetAnimation 10000",
+                            }));
 }
 
 TEST(BloodborneGhostDeath, LeavesEveryoneElseAlone) {
-    respawn_calls.clear();
+    revive_calls.clear();
     white_ghost = false;
-    EXPECT_FALSE(RespawnDeadPartyGuest(FakeCalls));
-    EXPECT_EQ(respawn_calls, std::vector<std::string>{"IsWhiteGhost"});
+    EXPECT_FALSE(ReviveDeadPartyGuest(FakeCalls));
+    EXPECT_EQ(revive_calls, std::vector<std::string>{"IsWhiteGhost"});
 
-    respawn_calls.clear();
+    revive_calls.clear();
     GhostDeathCalls missing = FakeCalls;
-    missing.reload_next_to_host = nullptr;
-    EXPECT_FALSE(RespawnDeadPartyGuest(missing));
-    EXPECT_TRUE(respawn_calls.empty());
-}
-
-// The guest finds the host among the other players in its world by character type: the host is
-// the live player (0); everyone else is a phantom (white 1, black 2) or grey (8).
-TEST(BloodborneGhostDeath, FindsTheHostAmongTheOtherPlayers) {
-    EXPECT_EQ(FindHostCharacter(std::vector<s32>{1, 0, 2}), std::optional<std::size_t>{1});
-    EXPECT_EQ(FindHostCharacter(std::vector<s32>{1, 2, 8}), std::nullopt);
-    EXPECT_EQ(FindHostCharacter(std::vector<s32>{}), std::nullopt);
+    missing.chr_reset_animation = nullptr;
+    EXPECT_FALSE(ReviveDeadPartyGuest(missing));
+    EXPECT_TRUE(revive_calls.empty());
 }
 
 // When the host dies, every guest runs HostDead (event 4000 param 1): for a white phantom it
@@ -356,51 +358,4 @@ TEST(BloodborneHostDeath, GuestsIgnoreTheHostsDeath) {
 TEST(BloodborneHostDeath, DecodesOnlyNearJumps) {
     EXPECT_EQ(DecodeNearJumpTarget(0x1000, std::vector<u8>{0xE9, 0x00, 0x00, 0x00, 0x00}), 0x1005u);
     EXPECT_EQ(DecodeNearJumpTarget(0x1000, std::vector<u8>{0xE8, 0x00, 0x00, 0x00, 0x00}), 0u);
-}
-
-// The respawn reload brings the guest back as a live player (character type 0): the type comes
-// from GameDataMan's "next type", which only a real summon sets to white. So the guest is made a
-// white phantom again once it stands in the host's world after the load.
-TEST(BloodborneGuestRespawn, RestoresTheWhitePhantomOnceTheReloadedWorldIsUp) {
-    GuestRespawnFixup fixup;
-    PartyObservation loaded = Idle();
-    loaded.matching_idle = false; // still in the host's session
-    EXPECT_FALSE(fixup.Tick(loaded, LiveCharacterType)) << "nothing pending yet";
-
-    fixup.Started();
-    PartyObservation loading = loaded;
-    loading.stage_transition = true;
-    EXPECT_FALSE(fixup.Tick(loading, LiveCharacterType));
-    loading = loaded;
-    loading.player_valid = false;
-    EXPECT_FALSE(fixup.Tick(loading, LiveCharacterType));
-
-    EXPECT_TRUE(fixup.Tick(loaded, LiveCharacterType));
-    EXPECT_FALSE(fixup.Tick(loaded, LiveCharacterType)) << "only once per respawn";
-}
-
-TEST(BloodborneGuestRespawn, LeavesAGuestThatIsAlreadyWhiteOrLeftTheSessionAlone) {
-    GuestRespawnFixup fixup;
-    PartyObservation loaded = Idle();
-    loaded.matching_idle = false;
-    fixup.Started();
-    EXPECT_FALSE(fixup.Tick(loaded, WhiteGhostCharacterType));
-    EXPECT_FALSE(fixup.Tick(loaded, LiveCharacterType)) << "done once the type is right";
-
-    fixup.Started();
-    EXPECT_FALSE(fixup.Tick(Idle(), LiveCharacterType)) << "back home: a live player is right";
-    EXPECT_FALSE(fixup.Tick(loaded, LiveCharacterType));
-}
-
-TEST(BloodborneGuestRespawn, WaitsForTheReloadToStartBeforeLooking) {
-    GuestRespawnFixup fixup;
-    PartyObservation loaded = Idle();
-    loaded.matching_idle = false;
-    fixup.Started();
-    // The old world is still up for a few ticks after the reload is requested.
-    EXPECT_FALSE(fixup.Tick(loaded, WhiteGhostCharacterType));
-    PartyObservation loading = loaded;
-    loading.stage_transition = true;
-    EXPECT_FALSE(fixup.Tick(loading, WhiteGhostCharacterType));
-    EXPECT_TRUE(fixup.Tick(loaded, LiveCharacterType));
 }
