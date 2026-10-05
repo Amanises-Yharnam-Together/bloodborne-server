@@ -112,6 +112,20 @@ std::optional<std::size_t> FindHostCharacter(std::span<const s32> character_type
     return static_cast<std::size_t>(it - character_types.begin());
 }
 
+bool GuestRespawnFixup::Tick(const PartyObservation& observation, s32 character_type) {
+    const bool loading =
+        !observation.player_valid || !observation.map_usable || observation.stage_transition;
+    if (stage == Stage::WaitingForLoad && loading) {
+        stage = Stage::Loading;
+    }
+    if (stage != Stage::Loading || loading) {
+        return false;
+    }
+    stage = Stage::Idle;
+    // In the host's session and loaded as a live player: the reload lost the phantom type.
+    return !observation.matching_idle && character_type == LiveCharacterType;
+}
+
 bool RespawnDeadPartyGuest(const GhostDeathCalls& calls) {
     if (!calls.is_white_ghost || !calls.set_event_flag || !calls.request_full_recover ||
         !calls.update_blood_mark || !calls.reload_next_to_host || !calls.is_white_ghost()) {

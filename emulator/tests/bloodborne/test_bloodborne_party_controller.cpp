@@ -357,3 +357,50 @@ TEST(BloodborneHostDeath, DecodesOnlyNearJumps) {
     EXPECT_EQ(DecodeNearJumpTarget(0x1000, std::vector<u8>{0xE9, 0x00, 0x00, 0x00, 0x00}), 0x1005u);
     EXPECT_EQ(DecodeNearJumpTarget(0x1000, std::vector<u8>{0xE8, 0x00, 0x00, 0x00, 0x00}), 0u);
 }
+
+// The respawn reload brings the guest back as a live player (character type 0): the type comes
+// from GameDataMan's "next type", which only a real summon sets to white. So the guest is made a
+// white phantom again once it stands in the host's world after the load.
+TEST(BloodborneGuestRespawn, RestoresTheWhitePhantomOnceTheReloadedWorldIsUp) {
+    GuestRespawnFixup fixup;
+    PartyObservation loaded = Idle();
+    loaded.matching_idle = false; // still in the host's session
+    EXPECT_FALSE(fixup.Tick(loaded, LiveCharacterType)) << "nothing pending yet";
+
+    fixup.Started();
+    PartyObservation loading = loaded;
+    loading.stage_transition = true;
+    EXPECT_FALSE(fixup.Tick(loading, LiveCharacterType));
+    loading = loaded;
+    loading.player_valid = false;
+    EXPECT_FALSE(fixup.Tick(loading, LiveCharacterType));
+
+    EXPECT_TRUE(fixup.Tick(loaded, LiveCharacterType));
+    EXPECT_FALSE(fixup.Tick(loaded, LiveCharacterType)) << "only once per respawn";
+}
+
+TEST(BloodborneGuestRespawn, LeavesAGuestThatIsAlreadyWhiteOrLeftTheSessionAlone) {
+    GuestRespawnFixup fixup;
+    PartyObservation loaded = Idle();
+    loaded.matching_idle = false;
+    fixup.Started();
+    EXPECT_FALSE(fixup.Tick(loaded, WhiteGhostCharacterType));
+    EXPECT_FALSE(fixup.Tick(loaded, LiveCharacterType)) << "done once the type is right";
+
+    fixup.Started();
+    EXPECT_FALSE(fixup.Tick(Idle(), LiveCharacterType)) << "back home: a live player is right";
+    EXPECT_FALSE(fixup.Tick(loaded, LiveCharacterType));
+}
+
+TEST(BloodborneGuestRespawn, WaitsForTheReloadToStartBeforeLooking) {
+    GuestRespawnFixup fixup;
+    PartyObservation loaded = Idle();
+    loaded.matching_idle = false;
+    fixup.Started();
+    // The old world is still up for a few ticks after the reload is requested.
+    EXPECT_FALSE(fixup.Tick(loaded, WhiteGhostCharacterType));
+    PartyObservation loading = loaded;
+    loading.stage_transition = true;
+    EXPECT_FALSE(fixup.Tick(loading, WhiteGhostCharacterType));
+    EXPECT_TRUE(fixup.Tick(loaded, LiveCharacterType));
+}

@@ -98,6 +98,23 @@ const std::vector<CodePatch>& HostDeathKeepGuestsPatches();
 // Target of a `jmp rel32` at `offset`, or 0 if the bytes are not one.
 u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes);
 
+constexpr s32 WhiteGhostCharacterType = 1;
+constexpr s32 LocalPlayerEntity = 10000;
+
+// After a guest's respawn reload: once the guest stands in the host's world again, tells the
+// caller (once) to make it a white phantom if the load left it a live player.
+class GuestRespawnFixup {
+public:
+    void Started() {
+        stage = Stage::WaitingForLoad;
+    }
+    bool Tick(const PartyObservation& observation, s32 character_type);
+
+private:
+    enum class Stage { Idle, WaitingForLoad, Loading };
+    Stage stage = Stage::Idle;
+};
+
 // Respawns the local player next to the host if it is a white phantom (a party guest). Returns
 // whether it did; anyone else (and a missing call) is left to the game.
 bool RespawnDeadPartyGuest(const GhostDeathCalls& calls);

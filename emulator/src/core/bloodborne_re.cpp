@@ -112,6 +112,10 @@ constexpr u64 CandidateLocalStatePointerOffset = 0x0553E878;
 constexpr u64 SummonManagerRootPointerOffset = 0x0553B120; // FrpgNetMan
 // GameDataMan: +0x28 "has a bloodstain", +0x30 the bloodstain record UpDateBloodMark writes.
 constexpr u64 GameDataManPointerOffset = 0x0553B130;
+// GameDataMan +0x8C: the character type the local player is created with on the next load.
+constexpr size_t NextCharacterTypeOffset = 0x8C;
+// SetChrType(_, entity, type) event binding: sets +0x78 and refreshes the character (vtable 0x1A0).
+constexpr u64 SetChrTypeOffset = 0x01338DF0;
 constexpr u64 CurrentMapListPointerOffset = 0x0553B148;
 constexpr u64 MatchingStatePointerOffset = 0x05540290;
 constexpr u64 SummonSessionRulesPointerOffset = 0x0553D6D0;
@@ -800,6 +804,7 @@ bool stage_transition_keep_matching_patch_installed{};
 bool world_teardown_hook_installed{};
 bool ghost_death_revive_hook_installed{};
 bool host_death_respawn_hook_installed{};
+GuestRespawnFixup guest_respawn_fixup;
 // Set when the host's death respawn starts; the next world teardown keeps the session.
 std::atomic<bool> host_death_respawn_pending{};
 bool summon_build_host_placement_hook_installed{};
@@ -1748,8 +1753,25 @@ void LogBloodstainStateChanges() {
     }
 }
 
+void TickGuestRespawnFixup() {
+    const u64 player = GetLocalPlayer();
+    const PartyObservation observation = ObserveParty(player, SmallResonantBellEffect);
+    const s32 character_type = player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1;
+    if (!guest_respawn_fixup.Tick(observation, character_type)) {
+        return;
+    }
+    using SetChrType = void PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 type);
+    reinterpret_cast<SetChrType>(image_base + SetChrTypeOffset)(0, LocalPlayerEntity,
+                                                                WhiteGhostCharacterType);
+    LOG_INFO(Debug,
+             "Bloodborne guest respawned as a live player; made it a white phantom again "
+             "type={}",
+             ReadValue<s32>(player, 0x78));
+}
+
 void TickPartyController() {
     LogBloodstainStateChanges();
+    TickGuestRespawnFixup();
     if (!party_controller) {
         return;
     }
@@ -1967,6 +1989,11 @@ bool ReloadGuestNextToHost() {
     };
     apply_placement();
 
+    // A real summon loads the guest as a white phantom; ask for the same on this load.
+    const u64 game_data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    if (game_data >= 0x10000) {
+        WriteValue(game_data, NextCharacterTypeOffset, WhiteGhostCharacterType);
+    }
     using SummonedMapReload = void PS4_SYSV_ABI (*)();
     reinterpret_cast<SummonedMapReload>(image_base + SummonedMapReloadOffset)();
     const u64 rules = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
@@ -2004,6 +2031,9 @@ void RespawnGuestAfterGhostDeath() {
         .reload_next_to_host = ReloadGuestNextToHost,
     };
     const bool respawned = RespawnDeadPartyGuest(calls);
+    if (respawned) {
+        guest_respawn_fixup.Started();
+    }
     LOG_INFO(Debug, "Bloodborne party guest died; respawn reload started={}", respawned);
 }
 
