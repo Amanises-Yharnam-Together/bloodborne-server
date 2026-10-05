@@ -57,7 +57,8 @@ constexpr s32 SummonReloadInProgress = 3;
 // Whether a world teardown must end the session even though the seamless patch keeps it: a
 // summoned guest or a host leaving its world (quit to title, death respawn), but never during a
 // summon reload (see the tests for why). `reload_pending` is our own deferred summon reload.
-bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending);
+bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending,
+                                     bool host_death_respawn);
 
 // Deaths that keep the party. 01.09 runs the event scripts' death flow natively (the Lua source,
 // global_event.lua in script/eventcommon.luabnd.dcx, is never loaded), so the change is a few
@@ -82,12 +83,19 @@ struct GhostDeathCalls {
     bool PS4_SYSV_ABI (*is_white_ghost)() = nullptr;
     bool PS4_SYSV_ABI (*set_event_flag)(u64 unused, s32 flag, bool on) = nullptr;
     bool PS4_SYSV_ABI (*request_full_recover)() = nullptr;
+    bool PS4_SYSV_ABI (*update_blood_mark)() = nullptr;
     bool PS4_SYSV_ABI (*revive_player)() = nullptr;
     bool PS4_SYSV_ABI (*force_play_animation)(u64 unused, s32 entity, s32 animation) = nullptr;
 };
 constexpr s32 DeathEventFlag = 4000;
 constexpr s32 LocalPlayerEntity = 10000;
 constexpr s32 AliveMotionAnimation = 101200;
+
+// HostDead's white phantom branch and the epilogue the seamless patch jumps to.
+constexpr u64 HostDeadEpilogueOffset = 0x01381A50;
+const std::vector<CodePatch>& HostDeathKeepGuestsPatches();
+// Target of a `jmp rel32` at `offset`, or 0 if the bytes are not one.
+u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes);
 
 // Revives the local player in place if it is a white phantom (a party guest). Returns whether it
 // did; anyone else (and a missing binding) is left to the game.

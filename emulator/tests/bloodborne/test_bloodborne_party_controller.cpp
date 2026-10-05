@@ -181,26 +181,34 @@ TEST(BloodborneSummonSearch, DoesNothingWithoutAPlayerOrTheGameFunction) {
 // leaving the host's world (quit to the title screen, for one), and must end the session the
 // way the unpatched game does, or the host keeps a ghost member and the guest never rejoins.
 TEST(BloodborneWorldTeardown, ASummonedGuestLeavingTheHostWorldEndsTheSession) {
-    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, false));
+    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, false, false));
 }
 
 // The same goes for a host whose world goes away (quit to the title screen, or the respawn
 // after a death): unpatched, the game stops matching there, and keeping the room leaves the
 // guests in it with a host that is gone.
 TEST(BloodborneWorldTeardown, AHostLeavingItsWorldEndsTheSession) {
-    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateHosting, 0, false));
+    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateHosting, 0, false, false));
+}
+
+// ...except when that world goes away because the host died: it respawns at its lamp and keeps
+// the party (the guests ignore HostDead in seamless mode, see BloodborneHostDeath).
+TEST(BloodborneWorldTeardown, AHostRespawningAfterDeathKeepsTheSession) {
+    EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(MatchingStateHosting, 0, false, true));
+    // Only the host respawns that way; a guest leaving still ends its session.
+    EXPECT_TRUE(ShouldEndSessionOnWorldTeardown(MatchingStateSummonedGuest, 0, false, true));
 }
 
 TEST(BloodborneWorldTeardown, KeepsTheSessionDuringASummonReload) {
     for (const s32 state : {MatchingStateSummonedGuest, MatchingStateHosting}) {
-        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, SummonReloadInProgress, false));
-        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, true));
+        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, SummonReloadInProgress, false, false));
+        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, true, false));
     }
 }
 
 TEST(BloodborneWorldTeardown, LeavesSearchesAndIdlePlayersAlone) {
     for (const s32 state : {0, 1, 2, 4, 5, 7}) {
-        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, false)) << "state " << state;
+        EXPECT_FALSE(ShouldEndSessionOnWorldTeardown(state, 0, false, false)) << "state " << state;
     }
 }
 
@@ -273,6 +281,10 @@ bool PS4_SYSV_ABI FakeRequestFullRecover() {
     revive_calls.push_back("RequestFullRecover");
     return true;
 }
+bool PS4_SYSV_ABI FakeUpDateBloodMark() {
+    revive_calls.push_back("UpDateBloodMark");
+    return true;
+}
 bool PS4_SYSV_ABI FakeRevivePlayer() {
     revive_calls.push_back("RevivePlayer");
     return true;
@@ -287,6 +299,7 @@ constexpr GhostDeathCalls FakeCalls{
     .is_white_ghost = FakeIsWhiteGhost,
     .set_event_flag = FakeSetEventFlag,
     .request_full_recover = FakeRequestFullRecover,
+    .update_blood_mark = FakeUpDateBloodMark,
     .revive_player = FakeRevivePlayer,
     .force_play_animation = FakeForcePlayAnimation,
 };
@@ -294,7 +307,8 @@ constexpr GhostDeathCalls FakeCalls{
 } // namespace
 
 // Where the game would open that menu, a party guest gets up again instead: the death event
-// (4000) is cleared so the next death runs, then the same revive the game uses after a load
+// (4000) is cleared so the next death runs, the guest drops its echoes in a bloodstain the way
+// a host death does (UpDateBloodMark), then the same revive the game uses after a load
 // (RevivePlayer, then the get-up animation 101200).
 TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
     revive_calls.clear();
@@ -304,6 +318,7 @@ TEST(BloodborneGhostDeath, ADeadPartyGuestRevivesWhereItFell) {
                                 "IsWhiteGhost",
                                 "SetEventFlag 4000 off",
                                 "RequestFullRecover",
+                                "UpDateBloodMark",
                                 "RevivePlayer",
                                 "ForcePlayAnimation 10000 101200",
                             }));
@@ -320,4 +335,22 @@ TEST(BloodborneGhostDeath, LeavesEveryoneElseAlone) {
     missing.revive_player = nullptr;
     EXPECT_FALSE(ReviveDeadPartyGuest(missing));
     EXPECT_TRUE(revive_calls.empty());
+}
+
+// When the host dies, every guest runs HostDead (event 4000 param 1): for a white phantom it
+// shows MissionFailed and five seconds later warps home (HostDead_1). In seamless mode the white
+// phantom branch returns straight away, so the guests stay in the session.
+TEST(BloodborneHostDeath, GuestsIgnoreTheHostsDeath) {
+    const auto& patches = HostDeathKeepGuestsPatches();
+    ASSERT_EQ(patches.size(), 1u);
+    const auto& patch = patches[0];
+    EXPECT_EQ(patch.offset, 0x013819C6u);
+    // The branch starts with SetEventFlag(4047, true): `mov esi, 0xFCF`.
+    EXPECT_EQ(patch.original, (std::vector<u8>{0xBE, 0xCF, 0x0F, 0x00, 0x00}));
+    EXPECT_EQ(DecodeNearJumpTarget(patch.offset, patch.patched), HostDeadEpilogueOffset);
+}
+
+TEST(BloodborneHostDeath, DecodesOnlyNearJumps) {
+    EXPECT_EQ(DecodeNearJumpTarget(0x1000, std::vector<u8>{0xE9, 0x00, 0x00, 0x00, 0x00}), 0x1005u);
+    EXPECT_EQ(DecodeNearJumpTarget(0x1000, std::vector<u8>{0xE8, 0x00, 0x00, 0x00, 0x00}), 0u);
 }

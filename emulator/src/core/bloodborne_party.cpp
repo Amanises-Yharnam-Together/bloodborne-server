@@ -49,7 +49,11 @@ bool StartSummonSearch(u64 player, s32 effect_id, AddSpEffectFn add_sp_effect) {
     return true;
 }
 
-bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending) {
+bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool reload_pending,
+                                     bool host_death_respawn) {
+    if (matching_state == MatchingStateHosting && host_death_respawn) {
+        return false;
+    }
     const bool in_session =
         matching_state == MatchingStateSummonedGuest || matching_state == MatchingStateHosting;
     return in_session && reload_state != SummonReloadInProgress && !reload_pending;
@@ -72,22 +76,42 @@ const std::vector<CodePatch>& GhostDeathKeepSessionPatches() {
     return patches;
 }
 
-u64 DecodeNearCallTarget(u64 offset, std::span<const u8> bytes) {
-    if (bytes.size() != 5 || bytes[0] != 0xE8) {
+const std::vector<CodePatch>& HostDeathKeepGuestsPatches() {
+    // `mov esi, 0xFCF` (start of the white phantom branch) -> `jmp HostDeadEpilogueOffset`.
+    static const std::vector<CodePatch> patches{
+        {0x013819C6, {0xBE, 0xCF, 0x0F, 0x00, 0x00}, {0xE9, 0x85, 0x00, 0x00, 0x00}},
+    };
+    return patches;
+}
+
+namespace {
+u64 DecodeRel32(u8 opcode, u64 offset, std::span<const u8> bytes) {
+    if (bytes.size() != 5 || bytes[0] != opcode) {
         return 0;
     }
     s32 displacement;
     std::memcpy(&displacement, bytes.data() + 1, sizeof(displacement));
     return offset + bytes.size() + static_cast<s64>(displacement);
 }
+} // namespace
+
+u64 DecodeNearCallTarget(u64 offset, std::span<const u8> bytes) {
+    return DecodeRel32(0xE8, offset, bytes);
+}
+
+u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes) {
+    return DecodeRel32(0xE9, offset, bytes);
+}
 
 bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
     if (!calls.is_white_ghost || !calls.set_event_flag || !calls.request_full_recover ||
-        !calls.revive_player || !calls.force_play_animation || !calls.is_white_ghost()) {
+        !calls.update_blood_mark || !calls.revive_player || !calls.force_play_animation ||
+        !calls.is_white_ghost()) {
         return false;
     }
     calls.set_event_flag(0, DeathEventFlag, false);
     calls.request_full_recover();
+    calls.update_blood_mark();
     calls.revive_player();
     calls.force_play_animation(0, LocalPlayerEntity, AliveMotionAnimation);
     return true;

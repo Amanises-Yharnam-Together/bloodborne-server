@@ -174,6 +174,9 @@ constexpr u64 GhostDeathReviveOffset = 0x01382354;
 // Event script bindings ReviveDeadPartyGuest calls.
 constexpr u64 IsWhiteGhostOffset = 0x01331D80;
 constexpr u64 RequestFullRecoverOffset = 0x01337550;
+constexpr u64 UpDateBloodMarkOffset = 0x013308B0;
+// Native SoloPlayDeath_2: the local player's death respawn (bloodstain, warp to the last lamp).
+constexpr u64 SoloPlayDeathRespawnOffset = 0x01381DE0;
 constexpr u64 RevivePlayerOffset = 0x01332B20;
 constexpr u64 ForcePlayAnimationOffset = 0x0132E290;
 
@@ -619,6 +622,8 @@ constexpr auto Sites = std::to_array<TraceSite>({
      TraceKind::MatchingLeaveDecision,
      {0x48, 0x8B, 0x18, 0x83, 0xBB, 0x84, 0x00, 0x00, 0x00, 0x03},
      10},
+    {"SoloPlayDeath2.Respawn", SoloPlayDeathRespawnOffset, TraceKind::MatchingSignal,
+     StandardR15Prologue, 6},
     {"PartyGhostDeath1.Revive",
      GhostDeathReviveOffset,
      TraceKind::MatchingSignal,
@@ -794,6 +799,9 @@ bool summon_build_negative_event_patch_installed{};
 bool stage_transition_keep_matching_patch_installed{};
 bool world_teardown_hook_installed{};
 bool ghost_death_revive_hook_installed{};
+bool host_death_respawn_hook_installed{};
+// Set when the host's death respawn starts; the next world teardown keeps the session.
+std::atomic<bool> host_death_respawn_pending{};
 bool summon_build_host_placement_hook_installed{};
 bool cross_map_guest_handoff_hook_installed{};
 bool summon_reload_state_hook_installed{};
@@ -1727,16 +1735,19 @@ void TickPartyController() {
 
 void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers);
 
+bool MatchesImage(u64 base, u64 image_size, const CodePatch& patch) {
+    return patch.offset <= image_size && patch.original.size() <= image_size - patch.offset &&
+           std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(base + patch.offset),
+                                                  patch.original.size()},
+                              patch.original);
+}
+
 // Deaths that keep the party: a dead guest revives in the host's world instead of being sent
 // home. Optional and all-or-nothing: the byte patches alone would leave the guest dead.
 void InstallGhostDeathRevive(u64 base, u64 image_size) {
     const auto& patches = GhostDeathKeepSessionPatches();
     for (const auto& patch : patches) {
-        if (patch.offset > image_size || patch.original.size() > image_size - patch.offset ||
-            !std::ranges::equal(
-                std::span<const u8>{reinterpret_cast<const u8*>(base + patch.offset),
-                                    patch.original.size()},
-                patch.original)) {
+        if (!MatchesImage(base, image_size, patch)) {
             LOG_ERROR(Debug,
                       "Bloodborne ghost-death signature mismatch at {:#x}; deaths still send "
                       "guests home",
@@ -1761,6 +1772,37 @@ void InstallGhostDeathRevive(u64 base, u64 image_size) {
                     patch.patched.size());
     }
     LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests revive in the host's world");
+}
+
+// A host death respawns the host at its lamp as usual but keeps the party: the session survives
+// that one world teardown and the guests skip HostDead's warp home. All-or-nothing: guests that
+// stay with a host that ends the session would be stranded.
+void InstallHostDeathKeepsGuests(u64 base, u64 image_size) {
+    const auto& patches = HostDeathKeepGuestsPatches();
+    if (!world_teardown_hook_installed ||
+        !std::ranges::all_of(patches, [&](const CodePatch& patch) {
+            return MatchesImage(base, image_size, patch);
+        })) {
+        LOG_ERROR(Debug, "Bloodborne host-death patch unavailable; host deaths send guests home");
+        return;
+    }
+    const auto site = std::ranges::find_if(
+        Sites, [](const TraceSite& site) { return site.offset == SoloPlayDeathRespawnOffset; });
+    if (site == Sites.end() ||
+        !InstallGuestCodeHook(reinterpret_cast<void*>(base + SoloPlayDeathRespawnOffset),
+                              std::span<const u8>{site->prologue.data(), site->prologue_size},
+                              static_cast<size_t>(std::distance(Sites.begin(), site)),
+                              TraceEntry)) {
+        LOG_ERROR(Debug, "Failed to install Bloodborne host-death respawn hook at {:#x}",
+                  SoloPlayDeathRespawnOffset);
+        return;
+    }
+    host_death_respawn_hook_installed = true;
+    for (const auto& patch : patches) {
+        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
+                    patch.patched.size());
+    }
+    LOG_INFO(Debug, "Bloodborne host-death patch: guests stay when the host dies");
 }
 
 // Faster sign posts for party joins. Optional: on a mismatch the game keeps its own timers.
@@ -1801,7 +1843,12 @@ void EndSessionOnWorldTeardown() {
     const bool reload_pending =
         pending_summon_reload_map.load(std::memory_order_acquire) != 0 ||
         pending_summon_reload_state_map.load(std::memory_order_acquire) != 0;
-    if (!ShouldEndSessionOnWorldTeardown(matching_state, reload_state, reload_pending)) {
+    const bool host_death_respawn = host_death_respawn_pending.exchange(false);
+    if (!ShouldEndSessionOnWorldTeardown(matching_state, reload_state, reload_pending,
+                                         host_death_respawn)) {
+        if (host_death_respawn && matching_state == MatchingStateHosting) {
+            LOG_INFO(Debug, "Bloodborne host respawning after death; kept the session");
+        }
         return;
     }
     using StopRequest = bool PS4_SYSV_ABI (*)(u64 multi_play);
@@ -1821,12 +1868,24 @@ void ReviveGuestAfterGhostDeath() {
             image_base + PartyGhostSetEventFlagOffset),
         .request_full_recover =
             reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset),
+        .update_blood_mark =
+            reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + UpDateBloodMarkOffset),
         .revive_player = reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RevivePlayerOffset),
         .force_play_animation = reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, s32)>(
             image_base + ForcePlayAnimationOffset),
     };
     const bool revived = ReviveDeadPartyGuest(calls);
     LOG_INFO(Debug, "Bloodborne party guest died; revived in place={}", revived);
+}
+
+void NoteHostDeathRespawn() {
+    const u64 multi_play = GetMatchingState();
+    if (multi_play < 0x10000 || !HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead) ||
+        ReadValue<s32>(multi_play, 0x124) != MatchingStateHosting) {
+        return;
+    }
+    host_death_respawn_pending.store(true);
+    LOG_INFO(Debug, "Bloodborne host died with a party; respawning at the lamp");
 }
 
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers) {
@@ -3055,6 +3114,9 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
     if (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) {
         ReviveGuestAfterGhostDeath();
     }
+    if (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset) {
+        NoteHostDeathRespawn();
+    }
     if (site.kind == TraceKind::ActionFlags && !HasActionTransition(registers->rdi)) {
         return;
     }
@@ -3584,7 +3646,8 @@ bool VerifySites() {
             (healing_fountain_host_availability_hook_installed &&
              site.offset == HealingFountainAvailabilityOffset) ||
             (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) ||
-            (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset)) {
+            (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) ||
+            (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset)) {
             continue;
         }
         const auto expected = std::span<const u8>{site.prologue.data(), site.prologue_size};
@@ -4152,6 +4215,7 @@ void InstallSeamlessCoopPatches() {
     }
 
     InstallGhostDeathRevive(base, image_size);
+    InstallHostDeathKeepsGuests(base, image_size);
     PatchSignTimers(base, image_size);
 
     std::memcpy(area_comparison, BeckoningSignedAreaComparison.data(),
@@ -4309,7 +4373,8 @@ void InstallReverseEngineeringTrace() {
             (healing_fountain_host_availability_hook_installed &&
              site.offset == HealingFountainAvailabilityOffset) ||
             (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) ||
-            (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset)) {
+            (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) ||
+            (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset)) {
             ++hook_count;
             continue;
         }
