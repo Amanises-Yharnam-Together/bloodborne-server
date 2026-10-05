@@ -29,12 +29,22 @@ Start here when picking the work up in a new session.
   and co-op guard timers, stale-sign supersede and claim reset after join. User-confirmed:
   rejoin after a death is near-instant.
 
+## Phase 3 item: bell-less joining (implemented, waiting for Kaniel's play-test)
+- RE finding: a rung bell is just special effect 9001 (Beckoning) / 9005 (Small Resonant) on
+  the player. The SOS status (`0x0186FE40`) derives "searching" from the effects' special state.
+  01.09 adds 9005 itself at `0x01C0D3B0` through the character's add-effect virtual
+  (vtable slot `0x3F0` = `0x018C6DB0`), args `(chr, id, chr, 0, 1, 0, 1.0f x5, stack 0)`.
+- `StartSummonSearch` (bloodborne_party.cpp) makes that same call. Party auto-rejoin and the
+  cross-map responder resume both use it instead of `UseItemNativeApply` (goods 200/205), so no
+  item, animation or Insight is involved. The slot is checked against the verified 01.09
+  function before calling.
+- To verify in the rig: both join without holding bells, the host's Insight does not drop, and
+  the log shows `auto-rejoin started search effect=9001|9005 ... result=true`.
+- Eboot RE on this PC: scratch scripts flatten `eboot.bin` (fake SELF) and apply relocations,
+  then disassemble with Python capstone (`py -3.12 -m pip install capstone`).
+
 ## Next (user-approved order)
-1. **Bell-less joining (Phase 3 item):** start the summon search state that effects 9001/9005
-   enable, without the use-item path (no animation, item or Insight). Start from the goods-use /
-   effect trace sites in `bloodborne_re.cpp` and the RE capture jsonl. Verify that goods 200 is
-   the Beckoning Bell from the capture.
-2. **Deaths that don't disconnect (Phase 2):** suppress the phantom-death / boss-clear "return to
+1. **Deaths that don't disconnect (Phase 2):** suppress the phantom-death / boss-clear "return to
    world" teardown.
 
 ## Known loose ends

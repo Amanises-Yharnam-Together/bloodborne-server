@@ -186,10 +186,8 @@ constexpr u64 SelectSummonedPlacementOffset = 0x01332BC0;
 constexpr u64 SummonedMapReloadOffset = 0x01336B90;
 constexpr u64 StageTransitionOffset = 0x013CDE30;
 constexpr u64 SetSummonReloadStateOffset = 0x0178D9A0;
-constexpr u64 UseItemNativeApplyOffset = 0x018F9720;
-constexpr s32 SmallResonantBellGoodsId = 205;
-constexpr s32 SmallResonantBellEffectId = 9005;
-constexpr s32 BellUseArgument = 17;
+constexpr u64 AddSpEffectOffset = 0x018C6DB0;
+constexpr u64 CharacterAddSpEffectSlot = 0x3F0;
 constexpr u32 ResponderResumeStableObservations = 20;
 constexpr u32 ResponderResumeMaxAttempts = 2;
 constexpr auto ResponderResumeRetryDelay = std::chrono::seconds{15};
@@ -230,8 +228,8 @@ constexpr auto CrossMapNativeCalls = std::to_array<NativeCallSignature>({
      SetSummonReloadStateOffset,
      {0xC7, 0x87, 0x84, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xC3},
      11},
-    {"UseItemNativeApply",
-     UseItemNativeApplyOffset,
+    {"AddSpEffect",
+     AddSpEffectOffset,
      {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
       0xEC},
      16},
@@ -1491,6 +1489,27 @@ void ApplyPreMatchCrossMapGuestWarp() {
     record.result = "applied";
 }
 
+// Starts the bell's summon search directly (see StartSummonSearch), only through the player's own
+// add-effect virtual, and only if it is the 01.09 function we verified at startup.
+bool StartPlayerSummonSearch(u64 player, s32 effect_id) {
+    if (image_base == 0 || player < 0x10000 ||
+        !HasMemoryAccess(player, sizeof(u64), MemoryProt::CpuRead)) {
+        return false;
+    }
+    const u64 vtable = ReadValue<u64>(player, 0);
+    if (vtable < 0x10000 ||
+        !HasMemoryAccess(vtable + CharacterAddSpEffectSlot, sizeof(u64), MemoryProt::CpuRead) ||
+        ReadValue<u64>(vtable, CharacterAddSpEffectSlot) != image_base + AddSpEffectOffset) {
+        LOG_WARNING(Debug,
+                    "Bloodborne summon search skipped: player {:#x} has no 01.09 "
+                    "add-effect virtual",
+                    player);
+        return false;
+    }
+    return StartSummonSearch(player, effect_id,
+                             reinterpret_cast<AddSpEffectFn>(image_base + AddSpEffectOffset));
+}
+
 void ResumePreMatchCrossMapResponder() {
     auto& pending = pending_responder_resume;
     if (!IsUsablePackedMap(pending.target_map)) {
@@ -1556,7 +1575,7 @@ void ResumePreMatchCrossMapResponder() {
         record.result = "invalid_player";
         return;
     }
-    record.effect_active = HasPlayerEffect(record.player, SmallResonantBellEffectId);
+    record.effect_active = HasPlayerEffect(record.player, SmallResonantBellEffect);
     if (record.effect_active) {
         record.ready_observations = pending.ready_observations;
         record.attempts = pending.attempts;
@@ -1592,17 +1611,14 @@ void ResumePreMatchCrossMapResponder() {
         return;
     }
 
-    using UseItemNativeApply = bool PS4_SYSV_ABI (*)(u64 player, s32 goods_id, s32 argument);
-    const auto use_item =
-        reinterpret_cast<UseItemNativeApply>(image_base + UseItemNativeApplyOffset);
-    record.native_result = use_item(record.player, SmallResonantBellGoodsId, BellUseArgument);
+    record.native_result = StartPlayerSummonSearch(record.player, SmallResonantBellEffect);
     ++pending.attempts;
     pending.dispatched = true;
     pending.dispatched_at = std::chrono::steady_clock::now();
     record.attempts = pending.attempts;
     record.result = record.native_result ? "native_dispatched" : "native_rejected";
     LOG_INFO(Debug,
-             "Bloodborne seamless responder native bell dispatch map={:#x} area={} attempt={} "
+             "Bloodborne seamless responder search dispatch map={:#x} area={} attempt={} "
              "result={}",
              record.target_map, record.target_area, record.attempts, record.native_result);
 }
@@ -1627,7 +1643,7 @@ void InitPartyController() {
     LOG_INFO(Debug, "Bloodborne party auto-rejoin enabled as {}", role_name);
 }
 
-PartyObservation ObserveParty(u64 player, s32 bell_effect) {
+PartyObservation ObserveParty(u64 player, s32 search_effect) {
     PartyObservation observation{};
     observation.player_valid =
         player >= 0x10000 && HasMemoryAccess(player, sizeof(u64), MemoryProt::CpuRead);
@@ -1647,8 +1663,8 @@ PartyObservation ObserveParty(u64 player, s32 bell_effect) {
         HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead) &&
         ReadValue<s32>(multi_play, 0x124) == 0 && ReadValue<u64>(multi_play, 0x18) == 0;
 
-    observation.bell_effect_active =
-        observation.player_valid && HasPlayerEffect(player, bell_effect);
+    observation.search_effect_active =
+        observation.player_valid && HasPlayerEffect(player, search_effect);
     return observation;
 }
 
@@ -1657,17 +1673,14 @@ void TickPartyController() {
         return;
     }
     const u64 player = GetLocalPlayer();
-    const PartyObservation observation = ObserveParty(player, party_controller->BellEffectId());
+    const PartyObservation observation = ObserveParty(player, party_controller->SearchEffectId());
     if (party_controller->Tick(observation, PartyController::Clock::now()) !=
-        PartyAction::RingBell) {
+        PartyAction::StartSearch) {
         return;
     }
-    using UseItemNativeApply = bool PS4_SYSV_ABI (*)(u64 player, s32 goods_id, s32 argument);
-    const auto use_item =
-        reinterpret_cast<UseItemNativeApply>(image_base + UseItemNativeApplyOffset);
-    const bool result = use_item(player, party_controller->BellGoodsId(), BellUseArgument);
-    LOG_INFO(Debug, "Bloodborne party auto-rejoin rang bell goods={} map={:#x} result={}",
-             party_controller->BellGoodsId(), GetCurrentPackedMap(), result);
+    const bool result = StartPlayerSummonSearch(player, party_controller->SearchEffectId());
+    LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",
+             party_controller->SearchEffectId(), GetCurrentPackedMap(), result);
 }
 
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers) {

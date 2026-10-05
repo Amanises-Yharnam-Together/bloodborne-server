@@ -38,27 +38,35 @@ std::optional<std::string> ParsePartySetting(std::string_view setting) {
     return std::string{setting};
 }
 
+bool StartSummonSearch(u64 player, s32 effect_id, AddSpEffectFn add_sp_effect) {
+    if (player == 0 || add_sp_effect == nullptr) {
+        return false;
+    }
+    add_sp_effect(player, effect_id, player, 0, 1, 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+    return true;
+}
+
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {
     if (!observation.player_valid || !observation.map_usable || observation.stage_transition) {
         stable_ticks = 0;
         return PartyAction::Wait;
     }
-    if (!observation.matching_idle || observation.bell_effect_active) {
-        // In (or joining) a session, or our bell already took: the next time we are back home
+    if (!observation.matching_idle || observation.search_effect_active) {
+        // In (or joining) a session, or our search already took: the next time we are back home
         // alone is a fresh start, so forget the old cooldown.
         stable_ticks = 0;
-        last_ring.reset();
+        last_search.reset();
         return PartyAction::Wait;
     }
-    if (++stable_ticks < StableTicksBeforeRing) {
+    if (++stable_ticks < StableTicksBeforeSearch) {
         return PartyAction::Wait;
     }
-    if (last_ring && now - *last_ring < RetryDelay) {
+    if (last_search && now - *last_search < RetryDelay) {
         return PartyAction::Wait;
     }
-    last_ring = now;
+    last_search = now;
     stable_ticks = 0;
-    return PartyAction::RingBell;
+    return PartyAction::StartSearch;
 }
 
 } // namespace Core::Bloodborne
