@@ -125,6 +125,34 @@ int main() {
     CHECK(broker.Search(Parse(Search(2)), 20, {}, partyB).isEmpty());
   }
 
+  // A player has one sign at a time. When a guest re-rings in a new game
+  // session (after dying or restarting), its old, already-claimed sign must not
+  // keep being offered to the host: that wastes a claim cycle on a dead
+  // session.
+  {
+    Broker::Options options;
+    options.seamlessCoop = true;
+    Broker broker(options);
+    const QByteArray oldSign = Advertisement("old-session", 100);
+    const QByteArray newSign = Advertisement("new-session", 100);
+    broker.Advertise(Parse(oldSign), oldSign, 10, partyA);
+    const QByteArray oldClaim = Claim("old-session", 1, 100);
+    CHECK(broker.Claim(Parse(oldClaim), oldClaim, 20, {}, partyA).status ==
+          Broker::ClaimStatus::Claimed);
+
+    broker.Advertise(Parse(newSign), newSign, 30, partyA);
+    CHECK(!broker.StateFor(QStringLiteral("old-session"), 100, 31).has_value());
+    const QList<QByteArray> found =
+        broker.Search(Parse(Search(1)), 31, {}, partyA);
+    CHECK(found.size() == 1);
+    CHECK(found.front() == newSign);
+
+    // Another user's sign is untouched.
+    broker.Advertise(Parse(signB), signB, 40, partyA);
+    CHECK(broker.StateFor(QStringLiteral("new-session"), 100, 41) ==
+          Broker::State::Advertised);
+  }
+
   // Header values are untrusted: trimmed, capped, and anything with control
   // characters or without a "name:secret" shape is treated as no party at all.
   {

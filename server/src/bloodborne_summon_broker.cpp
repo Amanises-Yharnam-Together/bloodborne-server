@@ -370,6 +370,18 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
     const QString key = RecordKey(body);
     auto it = m_records.find(key);
     if (it == m_records.end() || it->state == State::Consumed) {
+        // One sign per player: a sign from a new game session supersedes older ones, which
+        // would otherwise keep being offered (and conflict-claimed) for their seamless TTL.
+        const qint64 userId = Integer(body, QStringLiteral("UserId"), -1);
+        for (auto other = m_records.begin(); other != m_records.end();) {
+            if (other.key() != key &&
+                Integer(other->advertisement, QStringLiteral("UserId"), -2) == userId) {
+                other = m_records.erase(other);
+            } else {
+                ++other;
+            }
+        }
+        it = m_records.find(key);
         Record record;
         record.state = State::Advertised;
         record.advertisement = body;
