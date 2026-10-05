@@ -1,4 +1,4 @@
-# Handoff: state on 2026-10-05
+# Handoff: state on 2026-10-05 (after Phase 2)
 
 Start here when picking the work up in a new session.
 
@@ -16,6 +16,11 @@ Start here when picking the work up in a new session.
 - `tools\rig-setup.ps1`, then `tools\rig-lowspec.ps1`, creates it: private shadnet on 32313-32315,
   backend on 20453, and host/guest dirs. Accounts are rig_host / rig_guest, password "rig".
 - `host\launch.bat` / `guest\launch.bat` set seamless, party `rig:hunters`, role and RE trace.
+  The RE trace (`SHADPS4_BLOODBORNE_RE_TRACE`) is now **0** in both: its ~150 hooks on hot code
+  made two instances lag. Set it to 1 only while reverse engineering.
+- Restart the servers with logs in files (Start-Process with -RedirectStandardError
+  `server\shadnet.err` / -RedirectStandardOutput `backend\backend.log`); `start-servers.bat` logs
+  to console windows only.
 - Low-spec profile: 540p, Potatoborne only (through a junctioned `rig\game` folder), no extra dmem.
   RAM commit is still close to the limit with two instances.
 - Logs: `rig\<p>\user\log\shad_log.txt`, `rig\server\shadnet.err` (timestamps),
@@ -49,18 +54,68 @@ Start here when picking the work up in a new session.
   kept the session over *every* teardown, so a guest quitting to the title stayed in the room.
   A hook at `0x0194716E` (`0x01947167` is RIP-relative and cannot be hooked) now calls the
   native `StopRequest` when the guest is summoned (state 6) and no summon reload is running.
-  Host-side teardowns (state 3) are unchanged. Confirmed: guest quit-to-menu and reload rejoins.
+  Phase 2 extended it to the host (state 3): a host quitting to the title ends the session, so
+  guests are not left in a room with a ghost host. Confirmed: guest quit-to-menu and reload rejoins.
 - Server: signs not refreshed for 75 s are no longer offered (stale sign from a previous run).
 - Sign timers: 01.09 waits 5 s before a sign's first post and 30 s between re-posts
   (`0x018A9264/9324`, `0x018A9757/988F`), ignoring ss.info. Patched to 0 s / 5 s.
 - Known: the emulator's signaling reuses a lingering (locally deactivated) connection when the
   peer re-activates within 60 s; the game never hears that invite.
 
+## Phase 2: deaths that don't disconnect (done, confirmed by Kaniel in the rig 2026-10-05)
+Kaniel's design: nobody leaves on death and the world does **not** reset. Host and guest deaths
+work the same: YOU DIED, echoes dropped in a bloodstain, get up, teleport to the player's own
+last lamp. Both sides keep seeing and hitting each other; repeated deaths work.
+- **The death flow is native.** 01.09 runs a compiled copy of the event scripts; the Lua source
+  (`global_event.lua` in `script/eventcommon.luabnd.dcx`) is never loaded, but it is the best map
+  of the native code (state names such as "PartyGhostDeath_wait" are string refs in the eboot).
+  `py -3.12 tools\re\lua50dis.py <eventcommon.luabnd.dcx> [function regex...]` disassembles it.
+  Event script bindings (name -> native function) were extracted from the registration code
+  around `0x01340000` (e.g. RevivePlayer `0x01332B20`, SetChrType `0x01338DF0`).
+- **Guest death** (bloodborne_party.cpp `GhostDeathKeepSessionPatches`, `ReviveDeadPartyGuest`):
+  PartyGhostDeath (`0x01381FD0`) no longer sends 4063 (the host's OnGameLeave drops the guest),
+  sets 4047 or SetFlagInitState(2); PartyGhostDeath_1 skips the "returned to your world" menu
+  and warp. A hook at `0x01382354` revives instead: clear death flag 4000 and the "returning"
+  state ([SprjEventMan+0x10]+8, set to 4 by OnEvent_4000 `0x013813D0`, blocks later deaths),
+  RequestFullRecover, UpDateBloodMark (with GlobalState +0x1592 set so the stain uses the death
+  position), RevivePlayer, 01.09's local-player revive `0x013179B0` (clears the death's
+  controller locks [+0x58]+0x114 / [[+0x58]+0x38]+0x48: no move, no damage, not targeted),
+  restore saved alive flags, SetChrType(white) (the revive makes a live player), ChrResetAnimation,
+  then the lamp teleport. The self-bloodstain pickup (OnSelfBloodMark 4032) is registered for
+  ATTR_WHITE too (`0x0137EBC7`), so guests can pick up their stain in the host's world.
+- **Lamp teleport**: GlobalState +0x1528 holds the last lamp's respawn point id (2412951 etc.);
+  `0x0154AFC0` resolves it against the loaded blocks ([`0x0553B148`]), then the character's
+  vtable +0x5F8 moves it (as the Warp binding does). Only works if the lamp's block is loaded;
+  otherwise the player gets up where it fell.
+- **Host death** (`ReviveDeadPartyHost`): new `InstallGuestFunctionOverride` in cpu_patches (a
+  hook at a function entry that can skip the function and return 0). Native SoloPlayDeath_2
+  (`0x01381DE0`, bloodstain + reload at the lamp) is replaced while hosting (state 3) by the same
+  revive, minus the white checks. Guests skip HostDead's warp home (`0x013819C6`), and the death
+  step no longer removes session members from a dying host's world (`0x018C4D1D`). Solo deaths
+  are vanilla.
+- Dead ends, so nobody retries them: an in-place RevivePlayer alone (stays in its death state);
+  a guest summon reload as a respawn (the host's half of the summon handshake never runs, the
+  guest leaves the room ~12 s later, and it always lands at the original summon spot); the Warp
+  binding with the respawn id (it wants a map entity).
+- Diagnostics (logged on change, cheap): `bloodstain state`, `other players`, `local effects`,
+  `revive restored alive state`, `warp to last lamp` / `moved to last lamp`.
+
 ## Next (user-approved order)
-1. **Deaths that don't disconnect (Phase 2):** suppress the phantom-death / boss-clear "return to
-   world" teardown. Same area: a host quitting to the menu (state 3 teardown) probably still
-   keeps the room with a ghost member, since the keep-matching patch covers host deaths too.
-2. Rest of Phase 3 (travel together, boss kill doesn't dismiss), then Phase 4 (shared progress).
+1. **Death refinements** (Kaniel, 2026-10-05):
+   - Test with more than 2 players (rig has two; needs a third instance or a friend).
+   - World refresh: dying to a boss should refresh the world; decide the general rule for when
+     the world refreshes (see lamps below).
+   - Lamp teleport camera: it swoops to the lamp instead of cutting; look for the snap flag of
+     the move (vtable +0x5F8's mode argument is 1 now).
+   - Lamps in another block/map: currently no teleport (needs a load, which needs the summon
+     handshake, see "Travel together").
+   - Invaders (black phantoms) dying in seamless mode skip the warp home too; only relevant if
+     invasions are kept.
+2. **Lamps as campfires** (Kaniel): resting at a lamp is what refreshes the world, and it only
+   activates when every party member sits near it.
+3. Rest of Phase 3 (travel together, boss kill doesn't dismiss), then Phase 4 (shared progress,
+   guests as full players: loot, full HP/vials, their own save progress; they stay white
+   phantoms as the network role).
 
 ## Planned for the end (Kaniel's call)
 - Near-zero join wait: the host only searches every 5 s (`--summon-poll`; also drives the
