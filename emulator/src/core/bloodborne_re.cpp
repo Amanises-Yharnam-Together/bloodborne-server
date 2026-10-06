@@ -3308,15 +3308,23 @@ constexpr std::array<u8, 7> GuestStateCheck{0x83, 0xB8, 0x24, 0x01, 0x00, 0x00, 
 constexpr std::array<u8, 7> GuestStateCheckRcx{0x83, 0xB9, 0x24, 0x01, 0x00, 0x00, 0x06};
 constexpr std::array<u8, 7> HostStateCheck{0x83, 0xB8, 0x24, 0x01, 0x00, 0x00, 0x03};
 constexpr auto ItemModuleChecks = std::to_array<ItemModuleCheck>({
-    {0x017D3759, GuestStateCheck}, {0x017D4F54, GuestStateCheck},
-    {0x017D5642, GuestStateCheck}, {0x017D6818, GuestStateCheck},
-    {0x017D6AD2, GuestStateCheck}, {0x017D83CB, GuestStateCheck},
-    {0x017D853B, GuestStateCheck}, {0x017D85F4, GuestStateCheck},
-    {0x017D88BB, GuestStateCheck}, {0x017D9AA8, GuestStateCheckRcx},
-    {0x017D9E1C, GuestStateCheck}, {0x017D9EE0, GuestStateCheckRcx},
-    {0x017DD17C, GuestStateCheck}, {0x017DDCD9, GuestStateCheck},
-    {0x017DE5EC, GuestStateCheck}, {0x017DE738, GuestStateCheck},
-    {0x017DE79D, HostStateCheck},  {0x017DE8CB, GuestStateCheck},
+    {0x017D3759, GuestStateCheck},
+    {0x017D4F54, GuestStateCheck},
+    {0x017D5642, GuestStateCheck},
+    {0x017D6818, GuestStateCheck},
+    {0x017D6AD2, GuestStateCheck},
+    {0x017D83CB, GuestStateCheck},
+    {0x017D853B, GuestStateCheck},
+    {0x017D88BB, GuestStateCheck},
+    {0x017D9AA8, GuestStateCheckRcx},
+    {0x017D9E1C, GuestStateCheck},
+    {0x017D9EE0, GuestStateCheckRcx},
+    {0x017DD17C, GuestStateCheck},
+    {0x017DDCD9, GuestStateCheck},
+    {0x017DE5EC, GuestStateCheck},
+    {0x017DE738, GuestStateCheck},
+    {0x017DE79D, HostStateCheck},
+    {0x017DE8CB, GuestStateCheck},
     {0x017DE925, HostStateCheck},
 });
 std::array<std::atomic<u64>, ItemModuleChecks.size()> item_module_check_hits{};
@@ -3339,6 +3347,8 @@ constexpr u64 MapItemHandleSessionCheckOffset = 0x017D52DB; // cmp [r15+0x98], -
 constexpr std::array<u8, 8> MapItemHandleSessionCheck{0x41, 0x83, 0xBF, 0x98,
                                                       0x00, 0x00, 0x00, 0xFF};
 constexpr std::array<u64, 2> MapItemPickupChecks{0x017D6831, 0x017D6AEF}; // [rax+0x1592], 0
+// Picking up a networked map item (0x017D8570): a summoned guest only asks the host for it.
+constexpr u64 MapItemTakeStateCheckOffset = 0x017D85F4; // cmp [rax+0x124], 6
 constexpr std::array<u8, 7> MapItemPickupCheck{0x80, 0xB8, 0x92, 0x15, 0x00, 0x00, 0x00};
 
 u64 SoloMapItemStandInAddress() {
@@ -3382,6 +3392,7 @@ void InstallSharedLoot(u64 base, u64 image_size) {
         !hook(MapItemCreateSessionCheckOffset, MapItemCreateSessionCheck,
               CreateMapItemsInJoinedSession) ||
         !hook(MapItemHandleStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest) ||
+        !hook(MapItemTakeStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest) ||
         !hook(MapItemHandleSessionCheckOffset, MapItemHandleSessionCheck,
               GiveMapItemsAHandleInJoinedSession)) {
         LOG_ERROR(Debug, "Bloodborne map item hooks unavailable; party guests see no map items");
@@ -3433,32 +3444,37 @@ void LogItemModuleChecks() {
 }
 
 // Diagnostics for the guest's missing pick-up prompt: the player's item button update
-// (0x012FD880) asks MapItemMan for the nearest usable item (0x017D9FB0, [rbp-0x40] = its
-// handle), then passes a busy check (0x0176B7E0) before showing the prompt.
+// (0x012FD880) asks MapItemMan for the nearest usable map item (0x017DA500, list +0x28,
+// [rbp-0x58] = its handle), passes a busy check (0x0176B7E0), shows the prompt and, once
+// pressed (0x01CD91F0 true), picks it up (0x017D8570).
 constexpr u64 ItemButtonUpdateOffset = 0x012FD8CD;
 constexpr std::array<u8, 10> ItemButtonUpdate{0x48, 0x8D, 0x7D, 0xC0, 0x41,
                                               0xBC, 0x04, 0x10, 0x00, 0x00};
-constexpr u64 ItemButtonFoundOffset = 0x012FD8E6;
-constexpr std::array<u8, 7> ItemButtonFound{0x44, 0x8B, 0x7D, 0xC0, 0x45, 0x85, 0xFF};
-constexpr u64 ItemButtonNotBusyOffset = 0x012FD964;
-constexpr std::array<u8, 7> ItemButtonNotBusy{0x49, 0x8B, 0x85, 0xB0, 0x03, 0x00, 0x00};
+constexpr u64 ItemButtonFoundOffset = 0x012FDC17;
+constexpr std::array<u8, 8> ItemButtonFound{0x8B, 0x45, 0xA8, 0x89, 0x45, 0x9C, 0x85, 0xC0};
+constexpr u64 ItemButtonNotBusyOffset = 0x012FDC84;
+constexpr u64 ItemButtonPressedOffset = 0x012FDD95;
+constexpr std::array<u8, 7> ItemButtonPlayerLoad{0x49, 0x8B, 0x85, 0xB0, 0x03, 0x00, 0x00};
 constexpr u64 MapItemManPointerOffset = 0x0553D6E0;
 std::atomic<u64> item_button_updates{};
 std::atomic<u64> item_button_found{};
 std::atomic<u64> item_button_not_busy{};
+std::atomic<u64> item_button_pressed{};
 std::atomic<u32> item_button_last_handle{};
 
 void PS4_SYSV_ABI NoteItemButton(u64 tag, const GuestRegisterSnapshot* registers) {
     if (tag == 0) {
         item_button_updates.fetch_add(1, std::memory_order_relaxed);
     } else if (tag == 1) {
-        const u32 handle = ReadValue<u32>(registers->rbp - 0x40, 0);
+        const u32 handle = ReadValue<u32>(registers->rbp - 0x58, 0);
         if (handle != 0) {
             item_button_found.fetch_add(1, std::memory_order_relaxed);
             item_button_last_handle.store(handle, std::memory_order_relaxed);
         }
-    } else {
+    } else if (tag == 2) {
         item_button_not_busy.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        item_button_pressed.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -3471,7 +3487,9 @@ void InstallItemButtonDiagnostics(u64 base) {
         !InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonFoundOffset),
                               ItemButtonFound, 1, NoteItemButton) ||
         !InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonNotBusyOffset),
-                              ItemButtonNotBusy, 2, NoteItemButton)) {
+                              ItemButtonPlayerLoad, 2, NoteItemButton) ||
+        !InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonPressedOffset),
+                              ItemButtonPlayerLoad, 3, NoteItemButton)) {
         LOG_ERROR(Debug, "Bloodborne item button diagnostics unavailable");
     }
 }
@@ -3502,9 +3520,10 @@ void LogItemButtonAndMapItems() {
         }
     }
     const std::string text =
-        fmt::format("button updates {} found {} (last handle {:#x}) not busy {};{}",
+        fmt::format("button updates {} found {} (last handle {:#x}) not busy {} pressed {};{}",
                     item_button_updates.load() > 0 ? "yes" : "no", item_button_found.load(),
-                    item_button_last_handle.load(), item_button_not_busy.load(), lists);
+                    item_button_last_handle.load(), item_button_not_busy.load(),
+                    item_button_pressed.load(), lists);
     if (text != last) {
         last = text;
         LOG_INFO(Debug, "Bloodborne map items: {}", text);
