@@ -305,6 +305,10 @@ bool GuestHandlesMapItemsAlone(bool party_configured) {
     return party_configured;
 }
 
+u32 MapItemPacketHeaderSeen(u32 header, bool party_configured) {
+    return party_configured ? 0 : header;
+}
+
 u32 PackedMapOfWarpPoint(s32 warp_point) {
     const u32 area = static_cast<u32>(warp_point / 100000);
     const u32 block = static_cast<u32>(warp_point / 10000 % 10);

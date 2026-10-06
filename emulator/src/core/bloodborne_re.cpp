@@ -3379,9 +3379,35 @@ void PS4_SYSV_ABI LetPartyGuestPickUpMapItems(u64, GuestRegisterSnapshot* regist
     }
 }
 
+// The map item packet just received ([rbp-0x1A0], see MapItemPacketHeaderSeen): the hook runs
+// before `mov eax, [rbp-0x1A0]; cmp ax, 1`, so an emptied header makes the loop skip it.
+constexpr u64 MapItemPacketHeaderOffset = 0x017D33E1;
+constexpr std::array<u8, 10> MapItemPacketHeader{0x8B, 0x85, 0x60, 0xFE, 0xFF,
+                                                 0xFF, 0x66, 0x83, 0xF8, 0x01};
+
+void PS4_SYSV_ABI IgnorePartyMapItemSync(u64, GuestRegisterSnapshot* registers) {
+    const u64 header_address = registers->rbp - 0x1A0;
+    const u32 header = ReadValue<u32>(header_address, 0);
+    const u32 seen = MapItemPacketHeaderSeen(header, party_controller.has_value());
+    if (seen != header) {
+        WriteValue(header_address, 0, seen);
+        static std::array<std::atomic<bool>, 8> logged{};
+        const u32 kind = header >> 16;
+        if (kind < logged.size() && !logged[kind].exchange(true)) {
+            LOG_INFO(Debug, "Bloodborne party: ignored a map item sync packet (kind {})", kind);
+        }
+    }
+}
+
 void InstallSharedLoot(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
+    }
+    if (MapItemPacketHeaderOffset + MapItemPacketHeader.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + MapItemPacketHeaderOffset),
+                                      MapItemPacketHeader, 0, IgnorePartyMapItemSync)) {
+        LOG_ERROR(Debug, "Bloodborne map item sync hook unavailable; the host's sync clears the "
+                         "guest's map items");
     }
     const auto hook = [base, image_size](u64 offset, std::span<const u8> bytes,
                                          GuestRegisterEditHook edit) {

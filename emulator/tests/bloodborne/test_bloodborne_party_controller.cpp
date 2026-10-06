@@ -455,6 +455,16 @@ TEST(BloodborneGuestLoot, PartyGuestsHandleMapItemsLikeASoloPlayer) {
     EXPECT_FALSE(GuestHandlesMapItemsAlone(false));
 }
 
+// Map item packets (channel 0x2C, header word 1, then the message kind): the host's item sync
+// clears the guest's map items, which party members keep for themselves. A configured party
+// reads every such packet as empty, so each player's map items stay its own.
+TEST(BloodborneGuestLoot, PartyMembersIgnoreEachOthersMapItemSync) {
+    EXPECT_EQ(MapItemPacketChannel, 0x2Cu);
+    constexpr u32 clear_items = 0x00030001;
+    EXPECT_EQ(MapItemPacketHeaderSeen(clear_items, true), 0u);
+    EXPECT_EQ(MapItemPacketHeaderSeen(clear_items, false), clear_items);
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));
