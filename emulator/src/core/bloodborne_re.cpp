@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -2028,6 +2029,51 @@ void PS4_SYSV_ABI LetPartyGuestsTalkLikeTheHost(u64, GuestRegisterSnapshot* regi
     }
 }
 
+// Diagnostics for a guest's missing lamp prompt: which talk functions the scripts ask and what
+// they answer (function id from the dispatcher's switch at 0x0203AD95, result at its common
+// exit 0x0203EECF), logged every 5 s while a party guest is in a session.
+constexpr u64 EsdFunctionIdOffset = 0x0203AD95;
+constexpr std::array<u8, 5> EsdFunctionId{0x89, 0xC1, 0x83, 0xF8, 0x3E};
+constexpr u64 EsdFunctionResultOffset = 0x0203EECF;
+constexpr std::array<u8, 9> EsdFunctionResult{0x41, 0xC7, 0x44, 0x24, 0x08, 0x02, 0x00, 0x00, 0x00};
+thread_local s32 esd_function_asked = -1;
+std::mutex esd_answers_mutex;
+std::map<std::pair<s32, s32>, u64> esd_answers;
+std::atomic<bool> esd_answers_wanted{};
+
+void PS4_SYSV_ABI NoteEsdFunction(u64, GuestRegisterSnapshot* registers) {
+    esd_function_asked = static_cast<s32>(registers->rax);
+}
+
+void PS4_SYSV_ABI NoteEsdAnswer(u64, GuestRegisterSnapshot* registers) {
+    if (!esd_answers_wanted.load(std::memory_order_relaxed)) {
+        return;
+    }
+    std::scoped_lock lock{esd_answers_mutex};
+    ++esd_answers[{esd_function_asked, static_cast<s32>(registers->rax)}];
+}
+
+void LogEsdAnswers(bool party_guest) {
+    static std::chrono::steady_clock::time_point last{};
+    esd_answers_wanted.store(party_guest, std::memory_order_relaxed);
+    const auto now = std::chrono::steady_clock::now();
+    if (!party_guest || now - last < std::chrono::seconds{5}) {
+        return;
+    }
+    last = now;
+    std::string text;
+    {
+        std::scoped_lock lock{esd_answers_mutex};
+        for (const auto& [key, count] : esd_answers) {
+            text += fmt::format("f{}={}x{} ", key.first, key.second, count);
+        }
+        esd_answers.clear();
+    }
+    if (!text.empty()) {
+        LOG_INFO(Debug, "Bloodborne guest talk answers: {}", text);
+    }
+}
+
 // Both or neither: lamps that work in a session but still travel would take one player away.
 void InstallLampsAsCampfires(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -2073,6 +2119,12 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
                              "in a session");
             return;
         }
+    }
+    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdFunctionIdOffset),
+                                      EsdFunctionId, 0, NoteEsdFunction) ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdFunctionResultOffset),
+                                      EsdFunctionResult, 0, NoteEsdAnswer)) {
+        LOG_ERROR(Debug, "Bloodborne talk diagnostics unavailable");
     }
     host_like_talk[3] = reinterpret_cast<u64>(host_like_talker.data()); // +0x18
     if (EsdTalkerTypeOffset + EsdTalkerType.size() > image_size ||
@@ -2902,8 +2954,28 @@ void RestoreSearchAfterTrip(bool in_session) {
              result);
 }
 
+// Experiment: SHADPS4_BLOODBORNE_GUEST_AS_HOST=1 makes a party guest a live player (SetChrType 0,
+// the event binding) for as long as it is in the session.
+const bool guest_as_host = SettingIsOn(std::getenv("SHADPS4_BLOODBORNE_GUEST_AS_HOST"));
+
+void PlayGuestAsHost(bool in_session) {
+    const u64 player = GetLocalPlayer();
+    if (player < 0x10000 || !HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) ||
+        !ShouldPlayGuestAsHost(guest_as_host, in_session, ReadValue<s32>(player, 0x78))) {
+        return;
+    }
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, s32)>(image_base + SetChrTypeOffset)(
+        0, LocalPlayerEntity, 0);
+    LOG_INFO(Debug, "Bloodborne guest-as-host experiment: the guest is a live player now");
+}
+
+void LogEsdAnswers(bool party_guest);
+
 void TickPlayersOnThisMap() {
     const bool in_session = InPartySession();
+    PlayGuestAsHost(in_session);
+    LogEsdAnswers(in_session && party_controller &&
+                  party_controller->SearchEffectId() == SmallResonantBellEffect);
     RestoreSearchAfterTrip(in_session);
     const u32 map = GetCurrentPackedMap();
     party_map_now.store(in_session ? map : 0);

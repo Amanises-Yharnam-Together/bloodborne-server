@@ -306,6 +306,18 @@ TEST(BloodbornePartyTrip, PutsTheSearchEffectBackAfterTheTrip) {
     EXPECT_FALSE(ShouldRestoreSearchAfterTrip(false, false)) << "no party session";
 }
 
+// Experiment (Kaniel, 2026-10-06): SHADPS4_BLOODBORNE_GUEST_AS_HOST=1 makes a party guest a live
+// player (character type 0) instead of a white phantom while it is in the session.
+TEST(BloodborneGuestAsHost, OnlyWhenSwitchedOnAndAWhitePhantomInAPartySession) {
+    EXPECT_TRUE(SettingIsOn("1"));
+    EXPECT_FALSE(SettingIsOn(nullptr));
+    EXPECT_FALSE(SettingIsOn("0"));
+    EXPECT_TRUE(ShouldPlayGuestAsHost(true, true, WhiteGhostCharacterType));
+    EXPECT_FALSE(ShouldPlayGuestAsHost(false, true, WhiteGhostCharacterType));
+    EXPECT_FALSE(ShouldPlayGuestAsHost(true, false, WhiteGhostCharacterType));
+    EXPECT_FALSE(ShouldPlayGuestAsHost(true, true, 0)) << "already live";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

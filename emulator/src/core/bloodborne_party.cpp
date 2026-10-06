@@ -253,6 +253,14 @@ bool TalksAsHost(bool in_party_session, s32 character_type) {
     return in_party_session && character_type == WhiteGhostCharacterType;
 }
 
+bool SettingIsOn(const char* setting) {
+    return setting != nullptr && std::string_view{setting} == "1";
+}
+
+bool ShouldPlayGuestAsHost(bool switched_on, bool in_party_session, s32 character_type) {
+    return switched_on && in_party_session && character_type == WhiteGhostCharacterType;
+}
+
 bool IsPartySession(bool party_configured, s32 matching_state) {
     return party_configured &&
            (matching_state == MatchingStateHosting || matching_state == MatchingStateSummonedGuest);

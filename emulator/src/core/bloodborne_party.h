@@ -163,6 +163,10 @@ bool LampRestsEnabled(const char* setting);
 bool IsPartySession(bool party_configured, s32 matching_state);
 // Whether the talk scripts should see this player as the host (ESD function 14 = 0).
 bool TalksAsHost(bool in_party_session, s32 character_type);
+// Whether an environment setting is "1".
+bool SettingIsOn(const char* setting);
+// The guest-as-host experiment: turn a white phantom in a party session into a live player.
+bool ShouldPlayGuestAsHost(bool switched_on, bool in_party_session, s32 character_type);
 
 using LampPosition = std::array<float, 3>;
 struct LampRest;
