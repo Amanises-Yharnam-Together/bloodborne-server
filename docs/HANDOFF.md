@@ -198,9 +198,20 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
   whether saves land.
 
 ## Next (Kaniel 2026-10-06, in this order)
-1. **Guest HP and the nerf on join:** a summoned guest's max HP is cut like a phantom's. The
-   guest-as-host experiment showed the full bar returns with a live type, but that also hid the
-   model, so find the phantom HP reduction itself and switch it off for party guests.
+1. **Guest HP and the nerf on join:** a summoned guest's max HP and damage are cut like a
+   phantom's. The guest-as-host experiment showed the full bar returns with a live type, but that
+   also hid the model, so find the phantom reductions themselves and switch them off for party
+   guests.
+   - Tried (commit "party guests keep their full HP", on `phase3-travel`): SpEffectParam row 9006
+     (added to a summoned guest) has maxHpRate 0.7 at +0x10. `KeepGuestFullHp` finds the loaded
+     param through SoloParamRepository (`0x05540340`, holder +0x70 -> +0x70) and writes 1.0. Both
+     rig logs confirm the write ("SpEffect 9006 max HP rate 0.7 -> 1"), but Kaniel's rig run
+     (2026-10-06) still shows **lowered HP and lowered damage**. So either 9006 isn't the effect
+     doing it, the rate was already applied to the character before the write (it happens on the
+     first party tick), or the cut comes from elsewhere (phantom-type scaling code, another
+     SpEffect such as 9000/9003/9005, or a multiplayer correction param). Next: read the guest's
+     active SpEffect list and max HP fields live, and find what reads the phantom type when
+     computing max HP and attack. Keep or drop the 9006 write depending on what that shows.
 2. **NPCs look transparent** to a guest (it can talk to them already).
 3. **Shared loot and achievements.**
 4. **Shared progression:** lamps lit, shortcuts and so on reach the guest's own save.
