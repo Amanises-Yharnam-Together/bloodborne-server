@@ -3314,11 +3314,10 @@ constexpr auto ItemModuleChecks = std::to_array<ItemModuleCheck>({
     {0x017D83CB, GuestStateCheck},    {0x017D853B, GuestStateCheck},
     {0x017D85F4, GuestStateCheck},    {0x017D88BB, GuestStateCheck},
     {0x017D9AA8, GuestStateCheckRcx}, {0x017D9E1C, GuestStateCheck},
-    {0x017D9EE0, GuestStateCheckRcx}, {0x017DC3CF, GuestStateCheck},
-    {0x017DD17C, GuestStateCheck},    {0x017DDCD9, GuestStateCheck},
-    {0x017DE5EC, GuestStateCheck},    {0x017DE738, GuestStateCheck},
-    {0x017DE79D, HostStateCheck},     {0x017DE8CB, GuestStateCheck},
-    {0x017DE925, HostStateCheck},
+    {0x017D9EE0, GuestStateCheckRcx}, {0x017DD17C, GuestStateCheck},
+    {0x017DDCD9, GuestStateCheck},    {0x017DE5EC, GuestStateCheck},
+    {0x017DE738, GuestStateCheck},    {0x017DE79D, HostStateCheck},
+    {0x017DE8CB, GuestStateCheck},    {0x017DE925, HostStateCheck},
 });
 std::array<std::atomic<u64>, ItemModuleChecks.size()> item_module_check_hits{};
 
@@ -3326,6 +3325,59 @@ void PS4_SYSV_ABI CountItemModuleCheck(u64 tag, const GuestRegisterSnapshot*) {
     if (tag < item_module_check_hits.size()) {
         item_module_check_hits[tag].fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+// Shared loot (see SoloMapItemStandIn): each hook points the checked register at the stand-in.
+// In all three spots the register is reloaded or overwritten right after the branch.
+constexpr u64 MapItemCreateStateCheckOffset = 0x017DC3CF;   // cmp [rax+0x124], 6
+constexpr u64 MapItemCreateSessionCheckOffset = 0x017DC3DC; // cmp [rdx+0x98], -1
+constexpr std::array<u8, 7> MapItemCreateSessionCheck{0x83, 0xBA, 0x98, 0x00, 0x00, 0x00, 0xFF};
+constexpr std::array<u64, 2> MapItemPickupChecks{0x017D6831, 0x017D6AEF}; // [rax+0x1592], 0
+constexpr std::array<u8, 7> MapItemPickupCheck{0x80, 0xB8, 0x92, 0x15, 0x00, 0x00, 0x00};
+
+u64 SoloMapItemStandInAddress() {
+    return reinterpret_cast<u64>(SoloMapItemStandIn().data());
+}
+
+void PS4_SYSV_ABI CreateMapItemsForPartyGuest(u64, GuestRegisterSnapshot* registers) {
+    if (GuestHandlesMapItemsAlone(InPartySession())) {
+        registers->rax = SoloMapItemStandInAddress();
+    }
+}
+
+void PS4_SYSV_ABI CreateMapItemsInJoinedSession(u64, GuestRegisterSnapshot* registers) {
+    if (GuestHandlesMapItemsAlone(InPartySession())) {
+        registers->rdx = SoloMapItemStandInAddress();
+    }
+}
+
+void PS4_SYSV_ABI LetPartyGuestPickUpMapItems(u64, GuestRegisterSnapshot* registers) {
+    if (GuestHandlesMapItemsAlone(InPartySession())) {
+        registers->rax = SoloMapItemStandInAddress();
+    }
+}
+
+void InstallSharedLoot(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    const auto hook = [base, image_size](u64 offset, std::span<const u8> bytes,
+                                         GuestRegisterEditHook edit) {
+        return offset + bytes.size() <= image_size &&
+               InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + offset), bytes, 0, edit);
+    };
+    if (!hook(MapItemCreateStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest) ||
+        !hook(MapItemCreateSessionCheckOffset, MapItemCreateSessionCheck,
+              CreateMapItemsInJoinedSession)) {
+        LOG_ERROR(Debug, "Bloodborne map item hooks unavailable; party guests see no map items");
+        return;
+    }
+    for (const u64 offset : MapItemPickupChecks) {
+        if (!hook(offset, MapItemPickupCheck, LetPartyGuestPickUpMapItems)) {
+            LOG_ERROR(Debug, "Bloodborne map item pickup hook unavailable at {:#x}", offset);
+        }
+    }
+    LOG_INFO(Debug, "Bloodborne party guests see and pick up their own map items");
 }
 
 void InstallItemModuleDiagnostics(u64 base, u64 image_size) {
@@ -6059,6 +6111,7 @@ void InstallSeamlessCoopPatches() {
     InstallLampsAsCampfires(base, image_size);
     InstallNoLevelSyncInParty(base, image_size);
     InstallSolidNpcsInParty(base, image_size);
+    InstallSharedLoot(base, image_size);
     InstallItemModuleDiagnostics(base, image_size);
     StartRestBoardClient();
     PatchSignTimers(base, image_size);

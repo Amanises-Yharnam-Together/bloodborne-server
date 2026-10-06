@@ -290,6 +290,21 @@ bool NpcTurnsIntoWanderGhost(bool in_party_session, bool param_says_wander_ghost
     return param_says_wander_ghost && !in_party_session;
 }
 
+const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn() {
+    static const auto stand_in = [] {
+        std::array<u8, GuestItemPickupAllowedOffset + 8> bytes{};
+        constexpr s32 no_session = -1;
+        std::memcpy(bytes.data() + JoinedSessionOffset, &no_session, sizeof(no_session));
+        bytes[GuestItemPickupAllowedOffset] = 1;
+        return bytes;
+    }();
+    return stand_in;
+}
+
+bool GuestHandlesMapItemsAlone(bool in_party_session) {
+    return in_party_session;
+}
+
 u32 PackedMapOfWarpPoint(s32 warp_point) {
     const u32 area = static_cast<u32>(warp_point / 100000);
     const u32 block = static_cast<u32>(warp_point / 10000 % 10);

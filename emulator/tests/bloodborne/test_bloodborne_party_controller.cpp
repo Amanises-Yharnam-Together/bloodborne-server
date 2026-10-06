@@ -439,6 +439,22 @@ TEST(BloodborneGuestNpcs, PartyGuestsSeeNpcsSolid) {
     EXPECT_FALSE(NpcTurnsIntoWanderGhost(true, false));
 }
 
+// The map item module skips a summoned guest: it creates no map items (matching state 6 or a
+// joined session, [session+0x98] != -1) and only lets it pick one up while GlobalState +0x1592
+// is set. A party guest reads its answers from a stand-in that says "solo".
+TEST(BloodborneGuestLoot, PartyGuestsHandleMapItemsLikeASoloPlayer) {
+    const auto& stand_in = SoloMapItemStandIn();
+    s32 state = -1;
+    std::memcpy(&state, stand_in.data() + MatchingStateOffset, sizeof(state));
+    EXPECT_EQ(state, 0) << "not a summoned guest";
+    s32 joined = 0;
+    std::memcpy(&joined, stand_in.data() + JoinedSessionOffset, sizeof(joined));
+    EXPECT_EQ(joined, -1) << "no joined session";
+    EXPECT_NE(stand_in[GuestItemPickupAllowedOffset], 0) << "pickups allowed";
+    EXPECT_TRUE(GuestHandlesMapItemsAlone(true));
+    EXPECT_FALSE(GuestHandlesMapItemsAlone(false));
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

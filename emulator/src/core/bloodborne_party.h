@@ -364,6 +364,16 @@ bool LevelSyncsGuest(bool in_party_session, bool above_host_band);
 constexpr u64 NpcWanderGhostFlagOffset = 0x145;
 constexpr u32 NpcWanderGhostFlag = 0x80;
 bool NpcTurnsIntoWanderGhost(bool in_party_session, bool param_says_wander_ghost);
+// Map items (MapItemMan, 0x017D-0x017E): a summoned guest (matching state at CSMultiPlayMan
+// +0x124 is 6, or the session's joined id at +0x98 is not -1) creates no map items
+// (0x017DC3CF) and may pick one up only while GlobalState +0x1592 is set (0x017D6831,
+// 0x017D6AEF). A party guest reads those checks from a stand-in that answers like a solo
+// player, so each player sees and picks up its own copy.
+constexpr u64 MatchingStateOffset = 0x124;
+constexpr u64 JoinedSessionOffset = 0x98;
+constexpr u64 GuestItemPickupAllowedOffset = 0x1592;
+const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn();
+bool GuestHandlesMapItemsAlone(bool in_party_session);
 // A loaded PARAM file: the type name at +0x0C, the row count (u16) at +0x0A and sorted 24-byte
 // row entries (id, padding, data offset) at +0x40.
 bool IsParamOfType(std::span<const u8> param, std::string_view type);
