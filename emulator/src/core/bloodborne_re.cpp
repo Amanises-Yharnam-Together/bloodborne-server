@@ -2009,7 +2009,6 @@ s32 guest_trip_point = HuntersDreamWarpPoint;
 // A guest's own warp into the host's map ended in a grey void (no position at arrival); a second
 // after arrival the guest is moved to the lamp the way a revive is.
 bool guest_trip_in_flight{};
-bool guest_white_on_meeting{};
 std::optional<std::chrono::steady_clock::time_point> guest_trip_fixup_at;
 void WarpGuestToLastLamp();
 std::optional<std::chrono::steady_clock::time_point> guest_lamp_touch_at;
@@ -3162,21 +3161,13 @@ void TickPlayersOnThisMap() {
     if (!EveryoneElseOnMap(board, self, map)) {
         return;
     }
+    // Not while the player is still being placed: a guest's own warp has no position for a moment
+    // and gets moved to its lamp (guest_trip_fixup_at); re-created then, the host never appeared.
+    if (guest_trip_fixup_at || !LocalPlayerPosition()) {
+        return;
+    }
     recreate_players_pending = false;
     LOG_INFO(Debug, "Bloodborne party trip: everyone is on map {:#x}; re-creating players", map);
-    // As a live player the guest runs the map as its own: it neither sees the host nor hits its
-    // enemies. A white phantom again, as the death revive does it. (Made white while apart, the
-    // host's game dropped it.)
-    if (guest_white_on_meeting) {
-        guest_white_on_meeting = false;
-        const u64 player = GetLocalPlayer();
-        if (player >= 0x10000 && ReadValue<s32>(player, 0x78) != WhiteGhostCharacterType) {
-            LOG_INFO(Debug, "Bloodborne party guest meets the host as type {}; white again",
-                     ReadValue<s32>(player, 0x78));
-            reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, s32)>(image_base + SetChrTypeOffset)(
-                0, LocalPlayerEntity, WhiteGhostCharacterType);
-        }
-    }
     RecreateRemotePlayers();
 }
 
@@ -3201,9 +3192,6 @@ void TickPartyTrip() {
         if (guest_trip_in_flight) {
             guest_trip_in_flight = false;
             guest_trip_fixup_at = std::chrono::steady_clock::now() + std::chrono::seconds{1};
-            // The load makes the guest a live player (type 0). That is what lets it use the
-            // Dream's NPCs while apart; it turns white again once it meets the host (below).
-            guest_white_on_meeting = true;
         }
     }
 }
