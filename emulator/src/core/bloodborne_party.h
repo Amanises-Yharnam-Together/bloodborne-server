@@ -173,7 +173,7 @@ u32 PackedMapOfWarpPoint(s32 warp_point);
 bool IsHeadstoneTravelFlag(s32 flag);
 s32 HeadstoneWarpPoint(s32 flag);
 // A party guest's lamp trip, which the game's event would end for a client.
-bool GuestMakesItsOwnLampTrip(bool in_party_session, s32 character_type);
+bool GuestMakesItsOwnLampTrip(bool in_party_session, PartyRole role);
 // Whether an environment setting is "1".
 bool SettingIsOn(const char* setting);
 // The guest-as-host experiment: turn a white phantom in a party session into a live player.

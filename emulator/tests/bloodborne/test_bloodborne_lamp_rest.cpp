@@ -59,9 +59,11 @@ TEST(BloodborneLampRest, AGuestsLampTripGoesToTheHuntersDreamLamp) {
     EXPECT_EQ(HuntersDreamWarpPoint, 2102962);
     EXPECT_EQ(PackedMapOfWarpPoint(HuntersDreamWarpPoint), 0x15000000u);
     EXPECT_EQ(PackedMapOfWarpPoint(2412951), 0x18010000u); // Central Yharnam's first lamp
-    EXPECT_TRUE(GuestMakesItsOwnLampTrip(true, WhiteGhostCharacterType));
-    EXPECT_FALSE(GuestMakesItsOwnLampTrip(true, 0)) << "the host's trip is the game's";
-    EXPECT_FALSE(GuestMakesItsOwnLampTrip(false, WhiteGhostCharacterType));
+    // By role, not character type: after a trip the guest is no longer a white phantom.
+    EXPECT_TRUE(GuestMakesItsOwnLampTrip(true, PartyRole::Guest));
+    EXPECT_FALSE(GuestMakesItsOwnLampTrip(true, PartyRole::Host))
+        << "the host's trip is the game's";
+    EXPECT_FALSE(GuestMakesItsOwnLampTrip(false, PartyRole::Guest));
 }
 
 // The Hunter's Dream headstones set 7210MMML (map MMM, lamp L) for event 12107000, which ends for

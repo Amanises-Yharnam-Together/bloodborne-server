@@ -293,8 +293,8 @@ s32 HeadstoneWarpPoint(s32 flag) {
     return flag % 10000 / 10 * 10000 + 2950 + flag % 10;
 }
 
-bool GuestMakesItsOwnLampTrip(bool in_party_session, s32 character_type) {
-    return in_party_session && character_type == WhiteGhostCharacterType;
+bool GuestMakesItsOwnLampTrip(bool in_party_session, PartyRole role) {
+    return in_party_session && role == PartyRole::Guest;
 }
 
 bool IsPartySession(bool party_configured, s32 matching_state) {

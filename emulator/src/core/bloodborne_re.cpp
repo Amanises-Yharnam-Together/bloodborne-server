@@ -2081,8 +2081,10 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
     }
     if (!lamp_rests_enabled) {
         LOG_INFO(Debug, "Bloodborne party member travels from lamp {} (party rests off)", flag);
-        const u64 player = GetLocalPlayer();
-        if (player >= 0x10000 && GuestMakesItsOwnLampTrip(true, ReadValue<s32>(player, 0x78))) {
+        if (GuestMakesItsOwnLampTrip(true,
+                                     party_controller->SearchEffectId() == SmallResonantBellEffect
+                                         ? PartyRole::Guest
+                                         : PartyRole::Host)) {
             const auto now = std::chrono::steady_clock::now();
             guest_lamp_touch_at = now + std::chrono::milliseconds{500};
             guest_lamp_trip_at = now + std::chrono::seconds{3};
