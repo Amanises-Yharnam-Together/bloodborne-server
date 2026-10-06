@@ -183,10 +183,24 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 - **Boss kill keeps the session** (BlockClear2_2/2_3 patches). Not rig-tested yet.
 - Guest-as-host experiment (`SHADPS4_BLOODBORNE_GUEST_AS_HOST=1`): full HP bar, but the model is
   invisible and lamps stay hidden. Off by default.
+- **Fixed and rig-confirmed (2026-10-06 evening):** multiplayer fog walls (event 7600) are off in a
+  party session; a guest dying far away revives in place (a travelled guest is a live player, so
+  `ShouldReviveHostInPlace` covers state 6 too) and a same-map reload counts as a trip's end;
+  the Doll's dialog (721001xx) is no longer taken for a lamp trip (it warped the guest and
+  dropped it).
+- **Seen once, then gone:** after a level-up the guest ignored the host's join invitation
+  (shadNet delivered it every 5 s, the guest never fetched it), even with a new character.
+  Restarting shadNet and both games fixed it, and a high-level guest joined fine afterwards.
+  If it returns, compare the sign body and check the server's retained advertisements.
 - Diagnostics to trim later: guest talk answers/flags, join-task and member-leave logs.
 - Rig launchers have `SHADPS4_BLOODBORNE_RE_TRACE=1` on (Kaniel asked for it).
 - Both rig clients log "permission denied" opening `userdata0005`/`0010` on every save; check
   whether saves land.
+
+## Next phase (Kaniel 2026-10-06): bosses
+- A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
+- No boss fog a guest cannot enter until the host goes there (phantom fog-wall gate, plan item 6).
+- Rig-test that a boss kill keeps the session (`BossClearKeepSessionPatches`, merged, untested).
 
 ## Backlog (Kaniel 2026-10-06: "add all of the current findings and problems to the backlog")
 - **Window monster after a rest:** a hostile character near the Central Yharnam lamp (only meant
