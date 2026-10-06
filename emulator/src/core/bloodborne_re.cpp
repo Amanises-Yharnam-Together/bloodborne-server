@@ -1870,6 +1870,15 @@ constexpr std::array<u8, 7> RespawnParamCheck{0x48, 0x8B, 0x40, 0x08, 0x48, 0x85
 alignas(16) std::array<u8, 0x150> no_respawn_param{};
 alignas(16) std::array<u64, 2> no_respawn_param_holder{};
 std::atomic<bool> party_rest_respawn_running{};
+// The respawn's thaw (state 5, 0x0191557C: `and byte ptr [rdi+0x359], 0xFB` for every character)
+// also thaws characters the scripts keep frozen, and one frame of thaw is enough for them to come
+// alive (the window monster near the Central Yharnam lamp). The hook points rdi at a stand-in for
+// characters that were frozen before the rest, so their bit is never cleared.
+constexpr u64 RespawnThawOffset = 0x0191557C;
+constexpr std::array<u8, 7> RespawnThaw{0x80, 0xA7, 0x59, 0x03, 0x00, 0x00, 0xFB};
+alignas(16) std::array<u8, 0x360> thaw_stand_in{};
+std::mutex frozen_before_rest_mutex;
+std::unordered_set<u64> frozen_before_rest;
 
 // GlobalState +0x16F8 -> +0x14: players in the session (the count ESD function 52 checks).
 constexpr u64 SessionPlayersOffset = 0x16F8;
@@ -1936,6 +1945,13 @@ void PS4_SYSV_ABI RespawnOnlyTheDead(u64, GuestRegisterSnapshot* registers) {
         return;
     }
     registers->rax = reinterpret_cast<u64>(no_respawn_param_holder.data());
+}
+
+void PS4_SYSV_ABI KeepScriptFreeze(u64, GuestRegisterSnapshot* registers) {
+    std::scoped_lock lock{frozen_before_rest_mutex};
+    if (frozen_before_rest.contains(registers->rdi)) {
+        registers->rdi = reinterpret_cast<u64>(thaw_stand_in.data());
+    }
 }
 
 void PS4_SYSV_ABI SkipEventRestartForPartyRest(u64, GuestRegisterSnapshot* registers) {
@@ -2018,6 +2034,12 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
     if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EventRestartStateOffset),
                                       EventRestartState, 0, SkipEventRestartForPartyRest)) {
         LOG_ERROR(Debug, "Bloodborne party rest would restart the event scripts; lamps stay "
+                         "locked in a session");
+        return;
+    }
+    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + RespawnThawOffset),
+                                      RespawnThaw, 0, KeepScriptFreeze)) {
+        LOG_ERROR(Debug, "Bloodborne party rest would thaw scripted characters; lamps stay "
                          "locked in a session");
         return;
     }
@@ -2296,9 +2318,19 @@ void RememberHiddenCharacters(u64 world) {
         hidden_characters_map = map;
     }
     characters_before_rest.clear();
+    {
+        std::scoped_lock lock{frozen_before_rest_mutex};
+        frozen_before_rest.clear();
+    }
     ForEachWorldCharacter(world, [](u64 character) {
         characters_before_rest.push_back(ReadCharacterState(character));
+        if ((characters_before_rest.back().freeze & 0x04) != 0) {
+            std::scoped_lock lock{frozen_before_rest_mutex};
+            frozen_before_rest.insert(character);
+        }
     });
+    LOG_INFO(Debug, "Bloodborne party rest: {} characters frozen by the scripts",
+             frozen_before_rest.size());
     s32 disabled = 0;
     ForEachWorldCharacter(world, [&](u64 character) {
         const bool off = IsCharacterDisabled(character);
