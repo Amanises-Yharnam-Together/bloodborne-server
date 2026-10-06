@@ -212,6 +212,16 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
      SpEffect such as 9000/9003/9005, or a multiplayer correction param). Next: read the guest's
      active SpEffect list and max HP fields live, and find what reads the phantom type when
      computing max HP and attack. Keep or drop the 9006 write depending on what that shows.
+   - **Found (2026-10-06):** the cut is level sync. The guest's effects were `6300 40 9006 9200 2`;
+     9200 is added by `0x01507DDC` when the player's level is above the host's band (host level *
+     (1 + rate) + add, from [global+0x18]+0x8E4/+0x8E0) and removed when it no longer is. The
+     max HP aggregate (`0x017E46E0`, product of the effects' maxHpRate) and the stamina/attack
+     aggregates multiply by `0x01582940` (CalcCorrectGraph rows 0x78-0x7C, host level vs own)
+     whenever 9200 is present. The rig's guest outlevels the host, hence lower HP and damage.
+     Fix: register hook at `0x01507DB5` clears the decision (bl) in a party session, so the game
+     removes 9200 itself (`InstallNoLevelSyncInParty`). The 9006 write stays (guests get 100%).
+     Param tooling: the game ships its paramdefs (`paramdef\paramdef.paramdefbnd.dcx`), so
+     gameparam rows can be decoded with field names.
 2. **NPCs look transparent** to a guest (it can talk to them already).
 3. **Shared loot and achievements.**
 4. **Shared progression:** lamps lit, shortcuts and so on reach the guest's own save.

@@ -417,6 +417,16 @@ TEST(BloodborneGuestHp, FindsARowInAParamFile) {
     EXPECT_EQ(SpEffectMaxHpRateOffset, 0x10u);
 }
 
+// A guest above the host's level band gets special effect 9200, which scales its max HP,
+// stamina and attack down to the host's level. A party guest is never synced down.
+TEST(BloodborneGuestHp, PartyGuestsAreNeverLevelSynced) {
+    EXPECT_EQ(LevelSyncEffect, 9200);
+    EXPECT_TRUE(LevelSyncsGuest(false, true)) << "outside a party the game decides";
+    EXPECT_FALSE(LevelSyncsGuest(false, false));
+    EXPECT_FALSE(LevelSyncsGuest(true, true));
+    EXPECT_FALSE(LevelSyncsGuest(true, false));
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

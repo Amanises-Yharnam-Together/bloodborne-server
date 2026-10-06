@@ -352,6 +352,12 @@ std::vector<MultiplayerWall> MultiplayerWallsOn(u32 packed_map);
 // 0.7 at +0x10). A party guest keeps its full HP.
 constexpr s32 PhantomHpEffect = 9006;
 constexpr u64 SpEffectMaxHpRateOffset = 0x10;
+// Level sync: a player whose level is above the host's band (host level * (1 + rate) + add,
+// from the online settings) gets special effect 9200 (0x01507DDC), and every character whose
+// effects include it has its max HP, stamina and attack scaled to the host's level through the
+// CalcCorrectGraph rows 120-124 (0x01582940). A party guest keeps its own level.
+constexpr s32 LevelSyncEffect = 9200;
+bool LevelSyncsGuest(bool in_party_session, bool above_host_band);
 // A loaded PARAM file: the type name at +0x0C, the row count (u16) at +0x0A and sorted 24-byte
 // row entries (id, padding, data offset) at +0x40.
 bool IsParamOfType(std::span<const u8> param, std::string_view type);

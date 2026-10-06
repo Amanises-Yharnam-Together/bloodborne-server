@@ -3235,6 +3235,32 @@ void KeepGuestFullHp() {
              PhantomHpEffect, before);
 }
 
+// The level sync check (see LevelSyncEffect): `seta bl` has just decided whether this player is
+// above the host's band; the next instructions compare it with the last answer ([r14+0x2C]) and
+// add or remove effect 9200 when it changed. Clearing bl in a party session removes the effect.
+constexpr u64 LevelSyncDecisionOffset = 0x01507DB5;
+constexpr std::array<u8, 8> LevelSyncDecision{0x41, 0x0F, 0xB6, 0x46, 0x2C, 0x0F, 0xB6, 0xCB};
+
+void PS4_SYSV_ABI KeepPartyGuestsLevel(u64, GuestRegisterSnapshot* registers) {
+    if (!LevelSyncsGuest(InPartySession(), (registers->rbx & 0xFF) != 0)) {
+        registers->rbx &= ~u64{0xFF};
+    }
+}
+
+void InstallNoLevelSyncInParty(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (LevelSyncDecisionOffset + LevelSyncDecision.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + LevelSyncDecisionOffset),
+                                      LevelSyncDecision, 0, KeepPartyGuestsLevel)) {
+        LOG_ERROR(Debug, "Bloodborne level sync hook unavailable; party guests are synced to the "
+                         "host's level");
+        return;
+    }
+    LOG_INFO(Debug, "Bloodborne party guests keep their own level (no effect {})", LevelSyncEffect);
+}
+
 void TickPlayersOnThisMap() {
     KeepGuestFullHp();
     const bool in_session = InPartySession();
@@ -5926,6 +5952,7 @@ void InstallSeamlessCoopPatches() {
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
     InstallSeamlessTravel(base, image_size);
     InstallLampsAsCampfires(base, image_size);
+    InstallNoLevelSyncInParty(base, image_size);
     StartRestBoardClient();
     PatchSignTimers(base, image_size);
 
