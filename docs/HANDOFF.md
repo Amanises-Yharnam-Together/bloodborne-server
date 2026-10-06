@@ -1,4 +1,4 @@
-# Handoff: state on 2026-10-05 (after Phase 2)
+# Handoff: state on 2026-10-06 (after lamps as campfires)
 
 Start here when picking the work up in a new session.
 
@@ -100,12 +100,49 @@ last lamp. Both sides keep seeing and hitting each other; repeated deaths work.
 - Diagnostics (logged on change, cheap): `bloodstain state`, `other players`, `local effects`,
   `revive restored alive state`, `warp to last lamp` / `moved to last lamp`.
 
+## Lamps as campfires (done for now, rig-tested by Kaniel 2026-10-06)
+Kaniel's design: a rest works "like a reload, but in place, without breaking the session". In a
+party session (party configured and matching state 3 or 6) only:
+- **Lamps work in a session.** The lamp talk scripts (t<map><nnn>.esd, 46 lamps; see `tools\re\esdump.py`) hide a lit lamp while ESD function 52 ("in multiplayer": session
+  players > 1 or a pending matching) is true. A register hook at `0x0203C55F` (ESD function
+  dispatcher `0x0203AD60`, case 52) makes it false. The healing fountain's +0x49 byte is cleared
+  for both roles (`0x012F836E`, previously host-with-9001 only).
+- **Using a lamp is a rest, not a trip.** "Travel to the Hunter's Dream?" OK sets flag
+  70000100 + map*10000 + lamp (7MMM01LL; 7MMM02LL lights a lamp) for common event 7200, which
+  touches the lamp (2004[14], anim 101160) and warps. Talk command 11 (`0x0204232E`, flag in
+  r15d) is pointed at a zero flag range for that flag, so it is never set; the player plays
+  101160 through ForcePlayAnimation (`0x0132E290`, started 0.5 s later or the closing talk
+  cancels it) and rests until walking 4 m away. ForcePlayAnimation's 7725 does nothing.
+- **Phantoms get no lamp prompt** (cause not found: the guest's lamp script runs and f52 is
+  false). A guest joins a rest by standing within 2.5 m of where a member used the lamp; only a
+  rest started at the lamp is joinable.
+- **Coordination:** shadnet `POST /bloodborne/party/rest` ("<member> <lamp> [x y z]", party
+  header) returns the party's current rests (fresh for 5 s). Each emulator posts once a second
+  in a session (`RunRestBoardClient`, own thread, cpp-httplib) and refreshes once on the rising
+  edge of "every session player rests at my lamp" (session players: [GlobalState+0x16F8]+0x14).
+- **The refresh** (`RefreshWorldAtLamp`): RequestFullRecover + the bonfire regene
+  `0x018FAC80(player, 0)` (rest special effects 100-109; RequestFullRecover alone left HP as it
+  was), the respawn load's restock from storage `0x014DBB70` then `0x014DACE0` (vials/bullets),
+  and the Dark Souls bonfire respawn left in 01.09: WorldChrMan(`0x0553E878`) +0xA6C = 1.
+  WorldChrMan freezes all block characters (+0x359 |= 4), respawns blocks (`0x0190E3B0`) and
+  WorldChrMan +0xA40 (`0x018EB900`), state 3; SprjEmkSystem (`0x012F0F90`) restarts all event
+  scripts and resets temporary flags in state 3, then 4, 5 (thaw), 0.
+- What the party rest changes in that respawn: the event restart is skipped (hook `0x012F0FCB`
+  moves 3 -> 4); only characters dead now and seen alive during this map visit respawn (hooks on
+  the NPC param loads `0x0190E445`/`0x0190E572` hand living ones a stand-in param with the skip
+  bit +0x145 & 0x2000000); disabled-alive characters ([+0x18]+0x20 bit 0, set by `0x018C6390`)
+  are disabled again; state flags 0x4000/0x20000/0x40000000 of live characters are put back.
+- New hook API: `InstallGuestRegisterEditHook` (cpu_patches): the trampoline already reloads
+  registers from the snapshot, so a hook can change them.
+- `py -3.12 tools\re\esdump.py <talkesdbnd.dcx> [esd]` dumps talk scripts (states, conditions,
+  commands). Bloodborne Enhanced's decompiled talk/event scripts (github
+  colorsolid/bloodborne-enhanced) are a good map; its Reawaken is a real reload.
+
 ## Next (user-approved order)
-1. **Lamps as campfires** (Kaniel): resting at a lamp is what refreshes the world, and it only
-   activates when every party member sits near it.
-2. Rest of Phase 3 (travel together, boss kill doesn't dismiss), then Phase 4 (shared progress,
+1. Rest of Phase 3 (travel together, boss kill doesn't dismiss), then Phase 4 (shared progress,
    guests as full players: loot, full HP/vials, their own save progress; they stay white
    phantoms as the network role).
+2. The backlog at the end of this file.
 
 ## Planned for the end (Kaniel's call)
 - **Death refinements** (Kaniel moved these to the end, 2026-10-05):
@@ -124,6 +161,32 @@ last lamp. Both sides keep seeing and hitting each other; repeated deaths work.
   matching task tolerates a slow answer (it sets a 15 s connect timeout, no receive timeout).
   Fallback: 1 s interval.
 - Signaling: fix the lingering-connection reuse above if it shows up again.
+
+## Backlog (Kaniel 2026-10-06: "add all of the current findings and problems to the backlog")
+- **Window monster after a rest:** a hostile character near the Central Yharnam lamp (only meant
+  to appear after a quest) appears the moment a party rest refreshes the world, on fresh saves
+  too. Bisected: not the lamp use, not WorldChrMan +0xA40, gone when the respawn is skipped. Not
+  explained by the disable bit, the +0x1E0 flags, dead-since-load, the event restart or the
+  +0x359 freeze (no character was frozen by the scripts). Logged suspect: handle 0x1001400c,
+  alive but inactive (control state 0) before the rest and active after, around
+  (-198, -28, 61). Untested suspect: the respawn's per-block call `0x018DAD90`. Alternative:
+  a real reload of the whole party at the lamp once "travel together" exists.
+- **Breakables** (boxes) are not restored by a rest (objects are outside the chr respawn); Kaniel
+  also saw boxes vanish, possibly the rig's low-spec profile. Check without the profile.
+- **Both rig clients crashed** during a second rest in a build with the freeze/thaw experiments,
+  running without Potatoborne; the experiments are reverted and the re-hide now checks
+  pointers against the live world. Watch for it.
+- **Living wounded enemies keep their damage** after a rest (only the killed respawn).
+- **Phantoms:** guests get no lamp prompt (rest by standing near instead) and see quest
+  characters as transparent phantoms; Kaniel wants guests to use lamps and interact with quest
+  characters (Phase 4).
+- **Full lamp menu** like Bloodborne Enhanced: rest, level up, travel, storage, workshop, shops.
+- The travel dialog still says "Travel to the Hunter's Dream?" for a rest.
+- Diagnostics to remove once the window monster is solved: `LogCharacterChanges`,
+  `LogCharactersActivatedByRest`, the lamp availability and talk-script counters.
+- Rig: Potatoborne drops enemy corpses at once (Kaniel saw bodies vanish); without it two
+  instances run out of memory more easily. A join once failed until both games restarted
+  (claim delivered every 5 s, guest never joined).
 
 ## Known loose ends
 - shadnet logs `unhandled POST /v1/users/<npid>/feed`. Harmless so far.
