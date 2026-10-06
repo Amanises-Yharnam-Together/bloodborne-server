@@ -216,6 +216,8 @@ bool KeepDisabledAfterRespawn(bool disabled_before, s32 hp_before);
 // A party rest respawns only what was killed during this visit to the map: living characters,
 // and characters the scripts keep dead from the start, are left out of the bonfire respawn.
 bool RespawnsAtPartyRest(s32 hp, bool alive_this_visit);
+// The respawn's freeze bit (+0x359 bit 2), put back as the scripts had it before the rest.
+u8 RestoreFreezeAfterRespawn(u8 before, u8 after);
 // The same for the character state flags (+0x1E0) the scripts set and the respawn clears.
 constexpr u64 ScriptCharacterFlags = 0x4000 | 0x20000 | 0x40000000;
 u64 RestoreScriptFlagsAfterRespawn(u64 flags_before, u64 flags_after, s32 hp_before);

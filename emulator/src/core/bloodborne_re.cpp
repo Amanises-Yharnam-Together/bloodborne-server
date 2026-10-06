@@ -2155,6 +2155,7 @@ struct CharacterState {
     u8 control_flags;  // [+0x18]+0x20
     s32 control_state; // [+0x18]+0x10
     u64 state_flags;   // +0x1E0
+    u8 freeze;         // +0x359
     s32 hp;
     bool operator==(const CharacterState&) const = default;
 };
@@ -2209,6 +2210,7 @@ CharacterState ReadCharacterState(u64 character) {
         .control_flags = control >= 0x10000 ? ReadValue<u8>(control, 0x20) : u8{0xFF},
         .control_state = control >= 0x10000 ? ReadValue<s32>(control, 0x10) : -1,
         .state_flags = ReadValue<u64>(character, 0x1E0),
+        .freeze = ReadValue<u8>(character, 0x359),
         .hp = CharacterHp(character),
     };
 }
@@ -2223,8 +2225,11 @@ void RestoreScriptFlags() {
         }
         const u64 now = ReadValue<u64>(before.character, 0x1E0);
         const u64 flags = RestoreScriptFlagsAfterRespawn(before.state_flags, now, before.hp);
-        if (flags != now) {
+        const u8 freeze_now = ReadValue<u8>(before.character, 0x359);
+        const u8 freeze = RestoreFreezeAfterRespawn(before.freeze, freeze_now);
+        if (flags != now || freeze != freeze_now) {
             WriteValue(before.character, 0x1E0, flags);
+            WriteValue(before.character, 0x359, freeze);
             ++restored;
         }
     }
