@@ -75,6 +75,47 @@ Seamless Co-op mods extend their games' sessions.
 - **Scope:** large: months of reverse engineering, high risk, and every game subsystem touches
   it. Only presence (seeing each other's avatars) is a reasonable first slice.
 
+## E1/E2 result (rig, 2026-10-06)
+The host went from Central Yharnam to the Dream (second lamp press) and back while the guest
+stayed behind.
+- The session held on both sides. Only the teardown hook needed skipping; the "kept on the new
+  stage" path (`0x0193C689`) never ran.
+- The guest still sees the host after the host is back, but the host doesn't see the guest, and
+  the guest's hits do nothing to enemies.
+- The rest-bug window monster existed only in the guest's world.
+
+What this means: the host's trip reloaded the host's world. The guest's player character in the
+host's game, and the link between the guest's enemy copies and the host's enemies, were made by
+the summon. The reload threw both away, while the guest kept its stale copy of the old world.
+So a live connection alone isn't enough. After the host reloads a map the guest is on, the guest
+has to enter the fresh world again, which means a summon reload over the live connection.
+That is option B's core step, minus the matching round trip.
+
+## Rig runs 3-8 (2026-10-06): repairing the session after a trip
+- With every LeaveSession and the teardown StopRequest skipped during a trip, the session survives
+  a host trip to the Dream and back on both sides. Nothing else tries to leave.
+- Join tasks (CSMultiPlayerIns, one per session player) live in CSMultiPlayMan (`0x05540230`)
+  +0x10..+0x18. Kind +0xE8 (0 remote host, 1 remote guest, 2/3 local), step +0x50, next step
+  +0x54, flags +0xED (bit 0: the member's data is synced, bit 1: exit, reason above bit 4),
+  slot +0xEC, member id +0xC8 (0x20 bytes). Vtable: +0x28 SetStep, +0x58 GetStep. Step 4
+  (`0x01E50090`) creates the remote character from the synced slot data, step 5 plays its
+  arrival, step 6 is in-session, 8/9 exit and delete. Built on join at `0x0178C20C` (allocator
+  `0x05540438` +0x58, constructor `0x01E4F9F0`, list add `0x01E55A70`).
+- The traveller's reload empties its whole join-task list, so the other player's character is gone
+  for good. Rebuilding the task works (the character comes back, run 6), but:
+  - creating a player into a map it is not on makes that player's game exit its own join
+    (kind 2 to step 8, reason 1) and lose the session;
+  - even on the same map (run 8), re-creating with the saved slot data froze the host on
+    arrival, and the guest's game again exited its join.
+- A guest left behind keeps a fully working world (it fought enemies while the host was in the
+  Dream).
+- Built for this: the trip marker, the join-task log, and the shadNet party map board
+  (`POST /bloodborne/party/map`, used to wait until everyone shares a map).
+
+## Decision (Kaniel, 2026-10-06)
+A first; if A can't work, C. B is out. Repairing the session after a reload (re-creating the
+guest's character, or a summon reload over the live session) counts as A.
+
 ## Recommendation
 1. **Run A's experiments now.** The build is ready, and one rig session answers E1 and E2. If the
    game tolerates a session spread over maps, A is by far the shortest path to what you want.

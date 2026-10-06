@@ -254,6 +254,21 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
             }
             return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
         });
+
+    // Seamless travel: party members post the map they are on and read back everyone's.
+    // Called by the emulator about once a second while in a party session.
+    auto mapBoard = std::make_shared<Bloodborne::PartyMapBoard>();
+    http.route(
+        "/bloodborne/party/map", QHttpServerRequest::Method::Post,
+        [mapBoard](const QHttpServerRequest& request) -> QHttpServerResponse {
+            const auto update = Bloodborne::ParseMapUpdate(request.body());
+            if (!update) {
+                return InvalidRequest(QStringLiteral("Invalid party map update"));
+            }
+            const QByteArray board = Bloodborne::FormatMapBoard(mapBoard->Update(
+                Party(request), update->member, update->map, QDateTime::currentMSecsSinceEpoch()));
+            return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
+        });
 }
 
 } // namespace WebApiRoutes

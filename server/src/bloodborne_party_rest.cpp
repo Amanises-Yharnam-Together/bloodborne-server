@@ -85,4 +85,47 @@ QList<LampRest> PartyRestBoard::Update(const QByteArray& party, const QByteArray
     return rests;
 }
 
+std::optional<MemberMap> ParseMapUpdate(const QByteArray& body) {
+    const QList<QByteArray> parts = body.trimmed().split(' ');
+    if (parts.size() != 2 || !IsMemberName(parts[0])) {
+        return std::nullopt;
+    }
+    bool ok = false;
+    const quint32 map = parts[1].toUInt(&ok, 16);
+    if (!ok) {
+        return std::nullopt;
+    }
+    return MemberMap{parts[0], map};
+}
+
+QByteArray FormatMapBoard(const QList<MemberMap>& maps) {
+    QByteArray body;
+    for (const MemberMap& entry : maps) {
+        body += entry.member + ' ' + QByteArray::number(entry.map, 16) + '\n';
+    }
+    return body;
+}
+
+QList<MemberMap> PartyMapBoard::Update(const QByteArray& party, const QByteArray& member,
+                                       quint32 map, qint64 nowMs) {
+    if (party.isEmpty()) {
+        return {};
+    }
+    QMutexLocker lock(&m_mutex);
+    auto& members = m_parties[party];
+    members.insert(member, Entry{map, nowMs});
+    QList<MemberMap> maps;
+    for (auto it = members.begin(); it != members.end();) {
+        if (nowMs - it->updatedAtMs > FreshMs) {
+            it = members.erase(it);
+            continue;
+        }
+        maps.append(MemberMap{it.key(), it->map});
+        ++it;
+    }
+    std::sort(maps.begin(), maps.end(),
+              [](const MemberMap& a, const MemberMap& b) { return a.member < b.member; });
+    return maps;
+}
+
 } // namespace Bloodborne

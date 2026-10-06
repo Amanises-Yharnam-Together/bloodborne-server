@@ -89,6 +89,31 @@ int main() {
           "host 72410100 10 -2.5 5" + QByteArray(1, 10));
   }
 
+  // Seamless travel: every member posts the map it is on ("<member> <map>",
+  // the packed map in hex) and reads back where the others are.
+  {
+    using Bloodborne::PartyMapBoard;
+    const auto update = Bloodborne::ParseMapUpdate("host 18010000");
+    CHECK(update.has_value());
+    CHECK(update->member == "host");
+    CHECK(update->map == 0x18010000u);
+    CHECK(!Bloodborne::ParseMapUpdate("host").has_value());
+    CHECK(!Bloodborne::ParseMapUpdate("host xyz").has_value());
+    CHECK(!Bloodborne::ParseMapUpdate("ho st 18010000").has_value());
+
+    PartyMapBoard board;
+    board.Update(Party, "host", 0x18010000, 0);
+    const auto maps = board.Update(Party, "guest", 0x15000000, 1);
+    const QByteArray newline(1, 10);
+    CHECK(Bloodborne::FormatMapBoard(maps) ==
+          "guest 15000000" + newline + "host 18010000" + newline);
+    // A member that stopped posting is gone.
+    const auto later =
+        board.Update(Party, "guest", 0x15000000, PartyMapBoard::FreshMs + 1);
+    CHECK(later.size() == 1 && later[0].member == "guest");
+    CHECK(board.Update({}, "host", 0x18010000, 0).isEmpty());
+  }
+
   // No party key: nothing to coordinate.
   {
     PartyRestBoard board;

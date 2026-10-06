@@ -820,6 +820,7 @@ bool summon_build_negative_event_patch_installed{};
 bool stage_transition_keep_matching_patch_installed{};
 bool world_teardown_hook_installed{};
 bool ghost_death_revive_hook_installed{};
+bool seamless_travel_hooks_installed{};
 bool host_death_respawn_hook_installed{};
 bool summon_build_host_placement_hook_installed{};
 bool cross_map_guest_handoff_hook_installed{};
@@ -1881,6 +1882,7 @@ std::mutex lamp_rest_mutex;
 LampRestState lamp_rest;
 LampRestCoordinator lamp_rest_coordinator;
 bool lamp_rest_hooks_installed{};
+bool lamp_rests_enabled = LampRestsEnabled(std::getenv("SHADPS4_BLOODBORNE_LAMP_REST"));
 std::optional<std::chrono::steady_clock::time_point> lamp_touch_animation_at;
 alignas(16) std::array<u8, 0x100> no_talk_flag_range{}; // +0xA0 = +0xA4 = 0
 
@@ -1893,6 +1895,14 @@ std::mutex rest_board_mutex;
 std::vector<LampRest> rest_board;
 std::chrono::steady_clock::time_point rest_board_time{};
 std::jthread rest_board_client;
+
+// Seamless travel: the map this member is on while in a party session (0 otherwise), posted to
+// the party's map board by the same client thread, and the board it read back.
+std::atomic<u32> party_map_now{};
+std::mutex map_board_mutex;
+std::vector<MemberMap> map_board;
+std::string map_board_member;
+std::chrono::steady_clock::time_point map_board_time{};
 
 bool InPartySession() {
     const u64 multi_play = GetMatchingState();
@@ -1976,6 +1986,10 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
         LOG_INFO(Debug, "Bloodborne lamp travel {} outside a party session", flag);
         return;
     }
+    if (!lamp_rests_enabled) {
+        LOG_INFO(Debug, "Bloodborne party member travels from lamp {} (party rests off)", flag);
+        return;
+    }
     const auto position = LocalPlayerPosition();
     LampUse use;
     {
@@ -1993,6 +2007,25 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
     lamp_touch_animation_at = std::chrono::steady_clock::now() + std::chrono::milliseconds{500};
     LOG_INFO(Debug, "Bloodborne party member rests at lamp {} (position known={})", flag,
              position.has_value());
+}
+
+// ESD function 14 (`mov rax, [r15+0x18]; test rax, rax`, then `mov eax, [rax+0x78]`): the talking
+// player's character type, which the lamp scripts (and others) require to be 0 for their prompt.
+// For a party guest the hook points r15 at a stand-in talk whose player has type 0; r15 is the
+// dispatcher's callee-saved register, restored on its way out.
+constexpr u64 EsdTalkerTypeOffset = 0x0203B7FB;
+constexpr std::array<u8, 7> EsdTalkerType{0x49, 0x8B, 0x47, 0x18, 0x48, 0x85, 0xC0};
+alignas(16) std::array<u8, 0x100> host_like_talker{};
+alignas(16) std::array<u64, 8> host_like_talk{};
+
+void PS4_SYSV_ABI LetPartyGuestsTalkLikeTheHost(u64, GuestRegisterSnapshot* registers) {
+    const u64 player = GetLocalPlayer();
+    const s32 type = player >= 0x10000 && HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead)
+                         ? ReadValue<s32>(player, 0x78)
+                         : -1;
+    if (lamp_rest_hooks_installed && TalksAsHost(InPartySession(), type)) {
+        registers->r15 = reinterpret_cast<u64>(host_like_talk.data());
+    }
 }
 
 // Both or neither: lamps that work in a session but still travel would take one player away.
@@ -2041,6 +2074,12 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
             return;
         }
     }
+    host_like_talk[3] = reinterpret_cast<u64>(host_like_talker.data()); // +0x18
+    if (EsdTalkerTypeOffset + EsdTalkerType.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdTalkerTypeOffset),
+                                      EsdTalkerType, 0, LetPartyGuestsTalkLikeTheHost)) {
+        LOG_ERROR(Debug, "Bloodborne talk hook unavailable; party guests get no lamp prompt");
+    }
     lamp_rest_hooks_installed = true;
     LOG_INFO(Debug, "Bloodborne lamps as campfires: a party rests at its lamps together");
 }
@@ -2068,6 +2107,18 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
         {
             std::unique_lock lock{wait_mutex};
             wait.wait_for(lock, stop, std::chrono::seconds{1}, [] { return false; });
+        }
+        if (const u32 map = party_map_now.load(); map != 0) {
+            const auto map_response = client.Post("/bloodborne/party/map", headers,
+                                                  EncodeMapUpdate(member, map), "text/plain");
+            if (const auto maps = map_response && map_response->status == 200
+                                      ? ParseMapBoard(map_response->body)
+                                      : std::nullopt) {
+                std::scoped_lock lock{map_board_mutex};
+                map_board = *maps;
+                map_board_member = member;
+                map_board_time = std::chrono::steady_clock::now();
+            }
         }
         // In a session every member reads the board (to join a rest nearby); outside one only
         // a member that still has a rest on it posts, to take it off.
@@ -2418,7 +2469,7 @@ void SampleLivingCharacters() {
 }
 
 void TickLampRest() {
-    if (!lamp_rest_hooks_installed) {
+    if (!lamp_rest_hooks_installed || !lamp_rests_enabled) {
         return;
     }
     SampleLivingCharacters();
@@ -2466,7 +2517,14 @@ void TickLampRest() {
     }
 }
 
+void TickPartyTrip();
+void LogJoinTaskChanges();
+void TickPlayersOnThisMap();
+
 void TickPartyController() {
+    TickPartyTrip();
+    TickPlayersOnThisMap();
+    LogJoinTaskChanges();
     LogBloodstainStateChanges();
     LogLocalEffectChanges();
     LogOtherPlayersChanges();
@@ -2626,6 +2684,313 @@ void PatchSignTimers(u64 base, u64 image_size) {
              FirstSignPostDelaySeconds, SignRepostSeconds);
 }
 
+// Seamless travel (see PartyTrip): the stage transition every trip goes through (lamps, the
+// Dream's headstones, the event warps), and LeaveSession, which 01.09 calls from several places
+// on the way (one is the stage change at 0x0193C689).
+constexpr u64 StageTransitionEntryOffset = 0x013CDE30;
+constexpr u64 LeaveSessionOffset = 0x015BED10;
+std::mutex party_trip_mutex;
+PartyTrip party_trip;
+
+bool PartyTripActive() {
+    std::scoped_lock lock{party_trip_mutex};
+    return party_trip.Active(PartyTrip::Clock::now());
+}
+
+void SaveRemoteJoinTasks();
+
+bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot*) {
+    if (InPartySession()) {
+        std::scoped_lock lock{party_trip_mutex};
+        party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap());
+        SaveRemoteJoinTasks();
+        LOG_INFO(Debug, "Bloodborne party trip started map={:#x}", GetCurrentPackedMap());
+    }
+    return false;
+}
+
+// Every LeaveSession while a party trip is under way is skipped (the stage change's own call at
+// 0x0193C689 is only one of them), and logged with its caller.
+bool PS4_SYSV_ABI KeepSessionAfterTrip(u64, const GuestRegisterSnapshot* registers) {
+    if (!PartyTripActive()) {
+        return false;
+    }
+    const u64 caller = ReadValue<u64>(registers->rsp, 0);
+    LOG_INFO(Debug, "Bloodborne party trip: skipped LeaveSession from {:#x} map={:#x}",
+             caller >= image_base ? caller - image_base : caller, GetCurrentPackedMap());
+    return true;
+}
+
+// CSMultiPlayMan (0x05540230) keeps the join tasks in a vector at +0x10..+0x18 (see
+// ShouldRecreateAfterTrip). The task's SetStep virtual (vtable +0x28) requests the next step.
+constexpr u64 MultiPlayManPointerOffset = 0x05540230;
+
+template <typename Visit>
+void ForEachJoinTask(Visit&& visit) {
+    const u64 manager = ReadValue<u64>(image_base + MultiPlayManPointerOffset, 0);
+    if (manager < 0x10000 || !HasMemoryAccess(manager, 0x20, MemoryProt::CpuRead)) {
+        return;
+    }
+    const u64 begin = ReadValue<u64>(manager, 0x10);
+    const u64 end = ReadValue<u64>(manager, 0x18);
+    if (begin < 0x10000 || end <= begin || end - begin > 8 * 16 ||
+        !HasMemoryAccess(begin, end - begin, MemoryProt::CpuRead)) {
+        return;
+    }
+    for (u64 entry = begin; entry < end; entry += 8) {
+        const u64 task = ReadValue<u64>(entry, 0);
+        if (task >= 0x10000 && HasMemoryAccess(task, 0xF0, MemoryProt::CpuRead)) {
+            visit(task);
+        }
+    }
+}
+
+void LogJoinTaskChanges() {
+    static std::string last;
+    std::string tasks;
+    ForEachJoinTask([&](u64 task) {
+        tasks += fmt::format("[kind={} step={} next={} flags={:#x}] ", ReadValue<s32>(task, 0xE8),
+                             ReadValue<s32>(task, 0x50), ReadValue<s32>(task, 0x54),
+                             ReadValue<u8>(task, 0xED));
+    });
+    if (tasks != last) {
+        last = tasks;
+        LOG_INFO(Debug, "Bloodborne join tasks: {}", tasks.empty() ? "none" : tasks);
+    }
+}
+
+// What the game does when a member joins (0x0178C20C): allocate 0x100 bytes from the allocator
+// at 0x05540438 (vtable +0x58), construct the task (0x01E4F9F0: task, member id, kind) and add it
+// to CSMultiPlayMan +0x08 (0x01E55A70). Member ids are 0x20 bytes: SprjSessionManager
+// (0x05540290) lists the session's at +0xF8..+0x100 and holds the local one at +0xD0; the game
+// compares them with 0x00CA1C70.
+constexpr u64 SessionManagerPointerOffset = 0x05540290;
+constexpr u64 TaskAllocatorPointerOffset = 0x05540438;
+constexpr u64 JoinTaskConstructOffset = 0x01E4F9F0;
+constexpr u64 JoinTaskListAddOffset = 0x01E55A70;
+constexpr u64 MemberIdEqualOffset = 0x00CA1C70;
+
+// The remote players' join state from before the trip: member id, slot (+0xEC) and flags (+0xED,
+// bit 0 = the member's data is synced). The rebuilt task needs both to create the character.
+// A member id (0x20 bytes) is a ref-counted identity pointer at +0 plus a lock at +8, so only the
+// pointer is kept: copying the lock and comparing through it hung the game.
+struct SavedJoinTask {
+    u64 identity = 0;
+    u8 slot = 0;
+    u8 flags = 0;
+};
+std::vector<SavedJoinTask> saved_join_tasks;
+
+// Only replaced by a trip that starts with remote players: a trip from a map they were not on
+// (the Dream) keeps what was saved before.
+void SaveRemoteJoinTasks() {
+    std::vector<SavedJoinTask> found;
+    ForEachJoinTask([&](u64 task) {
+        const s32 kind = ReadValue<s32>(task, 0xE8);
+        if (kind != RemoteHostTask && kind != RemoteGuestTask) {
+            return;
+        }
+        SavedJoinTask saved{};
+        saved.identity = ReadValue<u64>(task, 0xC8);
+        saved.slot = ReadValue<u8>(task, 0xEC);
+        saved.flags = ReadValue<u8>(task, 0xED);
+        found.push_back(saved);
+    });
+    if (!found.empty()) {
+        saved_join_tasks = std::move(found);
+    }
+    LOG_INFO(Debug, "Bloodborne party trip: {} remote join tasks saved", saved_join_tasks.size());
+}
+
+void RecreateRemotePlayers() {
+    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+    const u64 manager = ReadValue<u64>(image_base + MultiPlayManPointerOffset, 0);
+    if (session < 0x10000 || manager < 0x10000 ||
+        !HasMemoryAccess(session, 0x128, MemoryProt::CpuRead)) {
+        return;
+    }
+    using IdEqual = bool PS4_SYSV_ABI (*)(u64 a, u64 b);
+    const auto id_equal = reinterpret_cast<IdEqual>(image_base + MemberIdEqualOffset);
+    const bool hosting = ReadValue<s32>(session, 0x124) == MatchingStateHosting;
+    const u64 self = session + 0xD0;
+    const u64 begin = ReadValue<u64>(session, 0xF8);
+    const u64 end = ReadValue<u64>(session, 0x100);
+    LOG_INFO(Debug, "Bloodborne party trip: {} session members, hosting={}",
+             begin < end ? (end - begin) / 0x20 : 0, hosting);
+    if (begin < 0x10000 || end <= begin || end - begin > 0x20 * 8 ||
+        !HasMemoryAccess(begin, end - begin, MemoryProt::CpuRead)) {
+        return;
+    }
+    using SetStep = void PS4_SYSV_ABI (*)(u64 task, s32 step);
+    const auto set_step = [](u64 task, s32 step) {
+        reinterpret_cast<SetStep>(ReadValue<u64>(ReadValue<u64>(task, 0), 0x28))(task, step);
+    };
+    for (u64 member = begin; member < end; member += 0x20) {
+        if (id_equal(member, self)) {
+            continue;
+        }
+        u64 found = 0;
+        ForEachJoinTask([&](u64 task) {
+            if (!found && id_equal(task + 0xC8, member)) {
+                found = task;
+            }
+        });
+        if (found) {
+            const s32 kind = ReadValue<s32>(found, 0xE8);
+            if (ShouldRecreateAfterTrip(kind, ReadValue<s32>(found, 0x50))) {
+                set_step(found, CreateCharacterStep);
+                LOG_INFO(Debug, "Bloodborne party trip: re-creating remote player kind={}", kind);
+            }
+            continue;
+        }
+        const u64 allocator = ReadValue<u64>(image_base + TaskAllocatorPointerOffset, 0);
+        if (allocator < 0x10000) {
+            return;
+        }
+        using Allocate = u64 PS4_SYSV_ABI (*)(u64 allocator, u64 size, u64 alignment);
+        const u64 task = reinterpret_cast<Allocate>(
+            ReadValue<u64>(ReadValue<u64>(allocator, 0), 0x58))(allocator, 0x100, 8);
+        if (task < 0x10000) {
+            return;
+        }
+        const s32 kind = RemoteTaskKind(hosting);
+        using Construct = void PS4_SYSV_ABI (*)(u64 task, u64 member_id, s32 kind);
+        reinterpret_cast<Construct>(image_base + JoinTaskConstructOffset)(task, member, kind);
+        const u64 identity = ReadValue<u64>(member, 0);
+        auto saved = std::ranges::find_if(saved_join_tasks, [&](const SavedJoinTask& entry) {
+            return entry.identity == identity;
+        });
+        if (saved == saved_join_tasks.end() && saved_join_tasks.size() == 1) {
+            saved = saved_join_tasks.begin(); // two players: the one remote player there was
+        }
+        if (saved != saved_join_tasks.end()) {
+            WriteValue(task, 0xEC, saved->slot);
+            WriteValue(task, 0xED, static_cast<u8>(saved->flags | 1));
+        }
+        u64 holder = task;
+        using ListAdd = void PS4_SYSV_ABI (*)(u64 list, u64 entry);
+        reinterpret_cast<ListAdd>(image_base + JoinTaskListAddOffset)(
+            manager + 8, reinterpret_cast<u64>(&holder));
+        set_step(task, CreateCharacterStep);
+        LOG_INFO(Debug,
+                 "Bloodborne party trip: rebuilt the join task of a member kind={} "
+                 "task={:#x} slot known={}",
+                 kind, task, saved != saved_join_tasks.end());
+    }
+}
+
+// After this member's trip the other players are re-created once they are all on this map
+// (creating a player into a map it is not on makes its game leave the session).
+bool recreate_players_pending{};
+
+// The bell's search effect is lost with the old stage; put it back once the new one is up.
+bool restore_search_pending{};
+
+void RestoreSearchAfterTrip(bool in_session) {
+    if (!restore_search_pending || !party_controller) {
+        return;
+    }
+    restore_search_pending = false;
+    const u64 player = GetLocalPlayer();
+    const s32 effect = party_controller->SearchEffectId();
+    if (player < 0x10000 ||
+        !ShouldRestoreSearchAfterTrip(in_session, HasPlayerEffect(player, effect))) {
+        return;
+    }
+    const bool result = StartPlayerSummonSearch(player, effect);
+    LOG_INFO(Debug, "Bloodborne party trip: put the search effect {} back result={}", effect,
+             result);
+}
+
+void TickPlayersOnThisMap() {
+    const bool in_session = InPartySession();
+    RestoreSearchAfterTrip(in_session);
+    const u32 map = GetCurrentPackedMap();
+    party_map_now.store(in_session ? map : 0);
+    if (!in_session) {
+        recreate_players_pending = false;
+        saved_join_tasks.clear();
+        return;
+    }
+    if (!recreate_players_pending) {
+        return;
+    }
+    std::vector<MemberMap> board;
+    std::string self;
+    {
+        std::scoped_lock lock{map_board_mutex};
+        if (std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}) {
+            return;
+        }
+        board = map_board;
+        self = map_board_member;
+    }
+    if (!EveryoneElseOnMap(board, self, map)) {
+        return;
+    }
+    recreate_players_pending = false;
+    LOG_INFO(Debug, "Bloodborne party trip: everyone is on map {:#x}; re-creating players", map);
+    RecreateRemotePlayers();
+}
+
+// From the party tick: ends the trip once the player is on the new stage (GlobalState +0x08 is
+// the loading flag).
+void TickPartyTrip() {
+    const u64 state = GetGlobalState();
+    if (state < 0x10000 || !HasMemoryAccess(state, 0x09, MemoryProt::CpuRead)) {
+        return;
+    }
+    std::scoped_lock lock{party_trip_mutex};
+    const auto now = PartyTrip::Clock::now();
+    const bool was_active = party_trip.Active(now);
+    party_trip.ObserveStage(GetCurrentPackedMap(), ReadValue<u8>(state, 0x08) != 0);
+    if (was_active && !party_trip.Active(now)) {
+        LOG_INFO(Debug, "Bloodborne party trip: arrived map={:#x}", GetCurrentPackedMap());
+        recreate_players_pending = true;
+        restore_search_pending = true;
+    }
+}
+
+// CSMultiPlayMan's member-leave handler (mgr, member id): marks the member's join task as
+// exiting (reason 1 for anyone but the local player). Logged with its caller while in a party
+// session, to find who drops a member after a trip.
+constexpr u64 MemberLeaveOffset = 0x01E54DB0;
+
+bool PS4_SYSV_ABI LogMemberLeave(u64, const GuestRegisterSnapshot* registers) {
+    if (!party_controller) {
+        return false;
+    }
+    const u64 caller = ReadValue<u64>(registers->rsp, 0);
+    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+    const bool self = session >= 0x10000 && registers->rsi >= 0x10000 &&
+                      ReadValue<u64>(registers->rsi, 0) == ReadValue<u64>(session, 0xD0);
+    LOG_INFO(Debug, "Bloodborne member leave from {:#x} self={} trip={} map={:#x}",
+             caller >= image_base ? caller - image_base : caller, self, PartyTripActive(),
+             GetCurrentPackedMap());
+    return false;
+}
+
+void InstallSeamlessTravel(u64 base, u64 image_size) {
+    if (!party_controller || !world_teardown_hook_installed ||
+        LeaveSessionOffset + StandardR15Prologue.size() > image_size) {
+        return;
+    }
+    const std::span<const u8> prologue{StandardR15Prologue.data(), 6};
+    if (!InstallGuestFunctionOverride(reinterpret_cast<void*>(base + LeaveSessionOffset), prologue,
+                                      0, KeepSessionAfterTrip) ||
+        !InstallGuestFunctionOverride(reinterpret_cast<void*>(base + StageTransitionEntryOffset),
+                                      prologue, 0, RecordPartyTrip)) {
+        LOG_ERROR(Debug, "Bloodborne seamless travel hooks unavailable; a trip ends the session");
+        return;
+    }
+    seamless_travel_hooks_installed = true;
+    if (!InstallGuestFunctionOverride(reinterpret_cast<void*>(base + MemberLeaveOffset), prologue,
+                                      0, LogMemberLeave)) {
+        LOG_ERROR(Debug, "Bloodborne member-leave log unavailable");
+    }
+    LOG_INFO(Debug, "Bloodborne seamless travel: a party member's trip keeps the session");
+}
+
 // A summoned guest leaving the host's world, or a host leaving its own (quit to title, death
 // respawn), ends the session like the unpatched game would; the keep-matching patch otherwise
 // leaves a ghost member in the room.
@@ -2642,6 +3007,10 @@ void EndSessionOnWorldTeardown() {
         pending_summon_reload_map.load(std::memory_order_acquire) != 0 ||
         pending_summon_reload_state_map.load(std::memory_order_acquire) != 0;
     if (!ShouldEndSessionOnWorldTeardown(matching_state, reload_state, reload_pending)) {
+        return;
+    }
+    if (PartyTripActive()) {
+        LOG_INFO(Debug, "Bloodborne party trip: kept the session through the world teardown");
         return;
     }
     using StopRequest = bool PS4_SYSV_ABI (*)(u64 multi_play);
@@ -4607,7 +4976,8 @@ bool VerifySites() {
              site.offset == HealingFountainAvailabilityOffset) ||
             (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) ||
             (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) ||
-            (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset)) {
+            (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset) ||
+            (seamless_travel_hooks_installed && site.offset == StageTransitionEntryOffset)) {
             continue;
         }
         const auto expected = std::span<const u8>{site.prologue.data(), site.prologue_size};
@@ -5178,6 +5548,7 @@ void InstallSeamlessCoopPatches() {
     InstallHostDeathKeepsGuests(base, image_size);
     InstallBossClearKeepsSession(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
+    InstallSeamlessTravel(base, image_size);
     InstallLampsAsCampfires(base, image_size);
     StartRestBoardClient();
     PatchSignTimers(base, image_size);
@@ -5338,7 +5709,8 @@ void InstallReverseEngineeringTrace() {
              site.offset == HealingFountainAvailabilityOffset) ||
             (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) ||
             (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) ||
-            (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset)) {
+            (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset) ||
+            (seamless_travel_hooks_installed && site.offset == StageTransitionEntryOffset)) {
             ++hook_count;
             continue;
         }

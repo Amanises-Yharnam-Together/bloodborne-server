@@ -215,6 +215,97 @@ TEST(BloodborneWorldTeardown, LeavesSearchesAndIdlePlayersAlone) {
 
 // The game's sign poster waits 5 s before a new sign's first post and 30 s between re-posts,
 // whatever ss.info says. The encoder must reproduce 01.09's own stores exactly...
+// Seamless travel: a party member's trip (the game's stage transition, 0x013CDE30) keeps the
+// session through the world teardown and through the leave 01.09 does once the new stage loads
+// (0x0193C689). Quitting to the title is no trip, so it still ends the session.
+TEST(BloodbornePartyTrip, KeepsTheSessionFromTheTransitionUntilTheNewStageHasLoaded) {
+    PartyTrip trip;
+    EXPECT_FALSE(trip.Active(T0));
+    trip.Start(T0, 0x18010000);
+    EXPECT_TRUE(trip.Active(T0 + 1s));
+    trip.Finish();
+    EXPECT_FALSE(trip.Active(T0 + 2s));
+}
+
+// The trip ends at the first tick on the new stage (the party tick does not run while loading).
+TEST(BloodbornePartyTrip, EndsOnceThePlayerIsOnTheNewStage) {
+    constexpr u32 CentralYharnam = 0x18010000;
+    constexpr u32 HuntersDream = 0x15000000;
+    PartyTrip trip;
+    trip.Start(T0, CentralYharnam);
+    trip.ObserveStage(CentralYharnam, false);
+    EXPECT_TRUE(trip.Active(T0 + 1s)) << "still on the old stage";
+    trip.ObserveStage(HuntersDream, true);
+    EXPECT_TRUE(trip.Active(T0 + 2s)) << "still loading";
+    trip.ObserveStage(HuntersDream, false);
+    EXPECT_FALSE(trip.Active(T0 + 3s));
+}
+
+// A trip reloads the traveller's world, which destroys the other players' characters, while
+// their join tasks (CSMultiPlayerIns) stay in the in-session step. Sending a remote player's task
+// back to the step that creates its character brings it back on the new stage.
+TEST(BloodbornePartyTrip, RecreatesRemotePlayersThatWereInTheSession) {
+    EXPECT_TRUE(ShouldRecreateAfterTrip(RemoteHostTask, InSessionStep));
+    EXPECT_TRUE(ShouldRecreateAfterTrip(RemoteGuestTask, InSessionStep));
+    EXPECT_EQ(CreateCharacterStep, InSessionStep - 2);
+}
+
+// The reload also empties the join-task list, so a member without a task gets a new one of the
+// kind the game gives it on join: a host makes remote guests, a guest makes the remote host.
+TEST(BloodbornePartyTrip, RebuildsMissingTasksWithTheKindTheGameUsesOnJoin) {
+    EXPECT_EQ(RemoteTaskKind(true), RemoteGuestTask);
+    EXPECT_EQ(RemoteTaskKind(false), RemoteHostTask);
+}
+
+TEST(BloodbornePartyTrip, LeavesLocalAndUnfinishedJoinsAlone) {
+    for (const s32 local : {2, 3}) {
+        EXPECT_FALSE(ShouldRecreateAfterTrip(local, InSessionStep)) << local;
+    }
+    for (s32 step = 0; step <= 10; ++step) {
+        if (step != InSessionStep) {
+            EXPECT_FALSE(ShouldRecreateAfterTrip(RemoteGuestTask, step)) << step;
+        }
+    }
+}
+
+TEST(BloodbornePartyTrip, ATripThatNeverLoadsStopsCountingAfterAWhile) {
+    PartyTrip trip;
+    trip.Start(T0, 0x18010000);
+    EXPECT_TRUE(trip.Active(T0 + PartyTrip::Timeout - 1s));
+    EXPECT_FALSE(trip.Active(T0 + PartyTrip::Timeout));
+}
+
+// The party's map board on shadNet (POST /bloodborne/party/map): "<member> <map>" in hex.
+TEST(BloodbornePartyMaps, PostsAndReadsTheMapEachMemberIsOn) {
+    EXPECT_EQ(EncodeMapUpdate("a1b2", 0x18010000), "a1b2 18010000");
+    const auto board = ParseMapBoard("a1b2 18010000\nc3d4 15000000\n");
+    ASSERT_TRUE(board.has_value());
+    ASSERT_EQ(board->size(), 2u);
+    EXPECT_EQ((*board)[1].member, "c3d4");
+    EXPECT_EQ((*board)[1].map, 0x15000000u);
+    EXPECT_FALSE(ParseMapBoard("a1b2\n").has_value());
+    EXPECT_FALSE(ParseMapBoard("a1b2 zz\n").has_value());
+}
+
+// A trip's re-created players are only made once every other member is on this map: creating
+// a player into a map it is not on makes its game leave the session.
+TEST(BloodbornePartyMaps, RecreatesOnlyWhenEveryoneElseIsOnThisMap) {
+    const std::vector<MemberMap> apart{{"me", 0x15000000}, {"them", 0x18010000}};
+    const std::vector<MemberMap> together{{"me", 0x18010000}, {"them", 0x18010000}};
+    EXPECT_FALSE(EveryoneElseOnMap(apart, "me", 0x15000000));
+    EXPECT_TRUE(EveryoneElseOnMap(together, "me", 0x18010000));
+    const std::vector<MemberMap> alone{{"me", 0x18010000}};
+    EXPECT_FALSE(EveryoneElseOnMap(alone, "me", 0x18010000)) << "nobody else";
+}
+
+// The new stage's load drops the bell's search effect (9000/9003 for the host), which the game
+// only adds when a bell is rung. After a trip in a party session it is put back.
+TEST(BloodbornePartyTrip, PutsTheSearchEffectBackAfterTheTrip) {
+    EXPECT_TRUE(ShouldRestoreSearchAfterTrip(true, false));
+    EXPECT_FALSE(ShouldRestoreSearchAfterTrip(true, true)) << "still there";
+    EXPECT_FALSE(ShouldRestoreSearchAfterTrip(false, false)) << "no party session";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

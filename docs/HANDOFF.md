@@ -162,6 +162,21 @@ party session (party configured and matching state 3 or 6) only:
   Fallback: 1 s interval.
 - Signaling: fix the lingering-connection reuse above if it shows up again.
 
+## Phase 3 in progress (branch `phase3-travel`, 2026-10-06)
+- **Party rests are off (WIP, Kaniel's call).** In a party session a lamp travels on the first
+  press again. `SHADPS4_BLOODBORNE_LAMP_REST=1` turns the rests back on (the second press then
+  travels). All of "Lamps as campfires" above still applies with the switch on.
+- Boss kill keeps the session: `BossClearKeepSessionPatches` (BlockClear2_2 4063 and
+  BlockClear2_3Leave, BlockClear2_3 white branch). Not rig-tested yet.
+- A guest whose host left stays where it is (`OnLeave_Limit` 0x0138A4A0 skipped, 4047 cleared,
+  no auto-search while still a white phantom).
+- A party member's trip keeps the session (`PartyTrip`, marked at the stage transition
+  0x013CDE30, skips the teardown StopRequest). Plan and the first experiment's result:
+  `docs/SEAMLESS_TRAVEL_PLAN.md`.
+- The trace site named "ForceSummonSuccess" (0x013849A0) is BlockClear2.
+- Both rig clients log "permission denied" opening `userdata0005`/`0010` on every save; check
+  whether saves land.
+
 ## Backlog (Kaniel 2026-10-06: "add all of the current findings and problems to the backlog")
 - **Window monster after a rest:** a hostile character near the Central Yharnam lamp (only meant
   to appear after a quest) appears the moment a party rest refreshes the world, on fresh saves

@@ -188,6 +188,71 @@ bool IsLampTravelFlag(s32 flag) {
     return flag >= 70000000 && flag < 80000000 && flag % 10000 / 100 == 1;
 }
 
+bool LampRestsEnabled(const char* setting) {
+    return setting != nullptr && std::string_view{setting} == "1";
+}
+
+bool ShouldRecreateAfterTrip(s32 kind, s32 step) {
+    return (kind == RemoteHostTask || kind == RemoteGuestTask) && step == InSessionStep;
+}
+
+std::string EncodeMapUpdate(std::string_view member, u32 map) {
+    std::array<char, 8> hex{};
+    const auto [end, error] = std::to_chars(hex.data(), hex.data() + hex.size(), map, 16);
+    return std::string{member} + ' ' + std::string{hex.data(), end};
+}
+
+std::optional<std::vector<MemberMap>> ParseMapBoard(std::string_view body) {
+    std::vector<MemberMap> board;
+    while (!body.empty()) {
+        const auto end = body.find('\n');
+        const std::string_view line = body.substr(0, end);
+        body = end == std::string_view::npos ? std::string_view{} : body.substr(end + 1);
+        if (line.empty()) {
+            continue;
+        }
+        const auto space = line.find(' ');
+        if (space == std::string_view::npos || space == 0) {
+            return std::nullopt;
+        }
+        const std::string_view map_text = line.substr(space + 1);
+        u32 map = 0;
+        const auto [parsed_end, error] =
+            std::from_chars(map_text.data(), map_text.data() + map_text.size(), map, 16);
+        if (error != std::errc{} || parsed_end != map_text.data() + map_text.size()) {
+            return std::nullopt;
+        }
+        board.push_back(MemberMap{std::string{line.substr(0, space)}, map});
+    }
+    return board;
+}
+
+bool EveryoneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map) {
+    bool anyone_else = false;
+    for (const MemberMap& entry : board) {
+        if (entry.member == self) {
+            continue;
+        }
+        if (entry.map != map) {
+            return false;
+        }
+        anyone_else = true;
+    }
+    return anyone_else;
+}
+
+bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_active) {
+    return in_party_session && !search_effect_active;
+}
+
+s32 RemoteTaskKind(bool hosting) {
+    return hosting ? RemoteGuestTask : RemoteHostTask;
+}
+
+bool TalksAsHost(bool in_party_session, s32 character_type) {
+    return in_party_session && character_type == WhiteGhostCharacterType;
+}
+
 bool IsPartySession(bool party_configured, s32 matching_state) {
     return party_configured &&
            (matching_state == MatchingStateHosting || matching_state == MatchingStateSummonedGuest);

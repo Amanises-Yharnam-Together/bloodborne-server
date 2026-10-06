@@ -34,6 +34,24 @@ TEST(BloodborneLampRest, RecognisesTheFlagALampsTravelDialogSets) {
     EXPECT_FALSE(IsLampTravelFlag(-1));
 }
 
+// Party rests are work in progress (Kaniel, 2026-10-06): lamps travel as usual unless
+// SHADPS4_BLOODBORNE_LAMP_REST=1 turns the rests back on.
+TEST(BloodborneLampRest, PartyRestsAreOffUnlessSwitchedOn) {
+    EXPECT_FALSE(LampRestsEnabled(nullptr));
+    EXPECT_FALSE(LampRestsEnabled(""));
+    EXPECT_FALSE(LampRestsEnabled("0"));
+    EXPECT_TRUE(LampRestsEnabled("1"));
+}
+
+// Talk scripts gate their prompt on ESD function 14, the talking player's character type: a
+// white phantom (1) gets no lamp prompt. A party guest talks like the host (0) instead.
+TEST(BloodborneLampRest, APartyGuestTalksToLampsLikeTheHost) {
+    EXPECT_TRUE(TalksAsHost(true, WhiteGhostCharacterType));
+    EXPECT_FALSE(TalksAsHost(false, WhiteGhostCharacterType)) << "co-op with strangers";
+    EXPECT_FALSE(TalksAsHost(true, 0)) << "already the host";
+    EXPECT_FALSE(TalksAsHost(true, 2)) << "an invader";
+}
+
 TEST(BloodborneLampRest, OnlyAPartySessionTreatsLampsAsCampfires) {
     EXPECT_TRUE(IsPartySession(true, MatchingStateHosting));
     EXPECT_TRUE(IsPartySession(true, MatchingStateSummonedGuest));

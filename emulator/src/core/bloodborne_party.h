@@ -157,7 +157,12 @@ std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds);
 // means "rest here" instead, and the world refreshes once the whole party rests at one lamp.
 constexpr s32 NotResting = 0;
 bool IsLampTravelFlag(s32 flag);
+// Party rests are work in progress and off by default: lamps travel as usual. The value of
+// SHADPS4_BLOODBORNE_LAMP_REST; "1" turns them on.
+bool LampRestsEnabled(const char* setting);
 bool IsPartySession(bool party_configured, s32 matching_state);
+// Whether the talk scripts should see this player as the host (ESD function 14 = 0).
+bool TalksAsHost(bool in_party_session, s32 character_type);
 
 using LampPosition = std::array<float, 3>;
 struct LampRest;
@@ -230,6 +235,59 @@ bool RespawnsAtPartyRest(s32 hp, bool alive_this_visit);
 // The same for the character state flags (+0x1E0) the scripts set and the respawn clears.
 constexpr u64 ScriptCharacterFlags = 0x4000 | 0x20000 | 0x40000000;
 u64 RestoreScriptFlagsAfterRespawn(u64 flags_before, u64 flags_after, s32 hp_before);
+
+// A party member's trip to another stage keeps the session: 01.09 would end it twice, once when
+// the old world is torn down and once when the new stage has loaded (stage uid change). Active
+// from the stage transition until that second point, or until it has clearly gone wrong.
+class PartyTrip {
+public:
+    using Clock = std::chrono::steady_clock;
+    static constexpr Clock::duration Timeout = std::chrono::seconds{90};
+
+    void Start(Clock::time_point now, u32 from_stage) {
+        started = now;
+        from = from_stage;
+    }
+    void Finish() {
+        started.reset();
+    }
+    // The current stage (packed map) and whether the game is loading, from the party tick.
+    void ObserveStage(u32 stage, bool loading) {
+        if (started && !loading && stage != from) {
+            Finish();
+        }
+    }
+    bool Active(Clock::time_point now) const {
+        return started && now - *started < Timeout;
+    }
+
+private:
+    std::optional<Clock::time_point> started;
+    u32 from = 0;
+};
+
+// Join tasks (CSMultiPlayerIns, one per session player, in CSMultiPlayMan's list): the kind at
+// +0xE8 (0 the remote host, 1 a remote guest; 2 and 3 are the local player as guest or host)
+// and the step at +0x50. Step 4 creates the player's character from its synced data (once +0xED
+// bit 0 says the data is there), step 5 plays its arrival, step 6 is the steady in-session step.
+constexpr s32 RemoteHostTask = 0;
+constexpr s32 RemoteGuestTask = 1;
+constexpr s32 CreateCharacterStep = 4;
+constexpr s32 InSessionStep = 6;
+bool ShouldRecreateAfterTrip(s32 kind, s32 step);
+s32 RemoteTaskKind(bool hosting);
+bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_active);
+
+// The party's map board on shadNet (POST /bloodborne/party/map): each member posts
+// "<member> <map>" (the packed map in hex) and reads back one such line per member.
+struct MemberMap {
+    std::string member;
+    u32 map = 0;
+};
+std::string EncodeMapUpdate(std::string_view member, u32 map);
+std::optional<std::vector<MemberMap>> ParseMapBoard(std::string_view body);
+// Whether there is someone else in the party and all of them are on `map`.
+bool EveryoneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map);
 
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small

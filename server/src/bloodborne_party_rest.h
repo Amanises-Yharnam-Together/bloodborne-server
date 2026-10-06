@@ -44,4 +44,34 @@ private:
     QHash<QByteArray, QHash<QByteArray, Entry>> m_parties;
 };
 
+// Seamless travel: the map each party member is on (POST /bloodborne/party/map), so a member
+// knows when the others share its map.
+struct MemberMap {
+    QByteArray member;
+    quint32 map = 0; // packed map, e.g. 0x18010000
+};
+
+// "<member> <map>", the map in hex.
+std::optional<MemberMap> ParseMapUpdate(const QByteArray& body);
+// One "<member> <map>\n" line per member, the map in hex.
+QByteArray FormatMapBoard(const QList<MemberMap>& maps);
+
+class PartyMapBoard {
+public:
+    static constexpr qint64 FreshMs = 5'000;
+
+    // Records the member's map and returns its party's members, sorted by member.
+    QList<MemberMap> Update(const QByteArray& party, const QByteArray& member, quint32 map,
+                            qint64 nowMs);
+
+private:
+    struct Entry {
+        quint32 map = 0;
+        qint64 updatedAtMs = 0;
+    };
+
+    QMutex m_mutex;
+    QHash<QByteArray, QHash<QByteArray, Entry>> m_parties;
+};
+
 } // namespace Bloodborne
