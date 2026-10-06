@@ -1845,6 +1845,10 @@ constexpr u64 WorldRespawnStateOffset = 0xA6C;
 // The two restock steps of the respawn load (0x01939470): 0x014DBB70 sorts out one goods entry
 // (0x40000385) first, 0x014DACE0 then moves every goods with the restock flag from the storage
 // box into the inventory, up to its limit. Neither takes arguments.
+// The bonfire regene (Util_RequestRegene's work, 0x018FAC80(player, refill)): with refill 0 it
+// skips the Dark Souls flask refill and only applies the rest special effects 100-109 (HP and
+// the rest). RequestFullRecover alone did not heal the player at a lamp.
+constexpr u64 BonfireRegeneOffset = 0x018FAC80;
 constexpr u64 RestockItemClampOffset = 0x014DBB70;
 constexpr u64 RestockFromStorageOffset = 0x014DACE0;
 constexpr std::array<u8, 7> RestockItemClampPrologue{0x55, 0x48, 0x89, 0xE5, 0x48, 0x8D, 0x05};
@@ -1981,8 +1985,9 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
     };
     if (!starts_with(RestockItemClampOffset, RestockItemClampPrologue) ||
         !starts_with(RestockFromStorageOffset,
-                     std::span<const u8>{StandardR15Prologue.data(), 6})) {
-        LOG_ERROR(Debug, "Bloodborne restock functions not found; lamps stay locked in a session");
+                     std::span<const u8>{StandardR15Prologue.data(), 6}) ||
+        !starts_with(BonfireRegeneOffset, std::span<const u8>{StandardR15Prologue.data(), 6})) {
+        LOG_ERROR(Debug, "Bloodborne rest functions not found; lamps stay locked in a session");
         return;
     }
     if (EsdIsMultiplayerResultOffset + EsdIsMultiplayerResult.size() > image_size ||
@@ -2319,6 +2324,10 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
         .request_full_recover =
             [] {
                 reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset)();
+                if (const u64 player = GetLocalPlayer(); player >= 0x10000) {
+                    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(
+                        image_base + BonfireRegeneOffset)(player, 0);
+                }
             },
         .clamp_restock_item =
             [] {
