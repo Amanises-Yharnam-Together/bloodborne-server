@@ -3308,16 +3308,16 @@ constexpr std::array<u8, 7> GuestStateCheck{0x83, 0xB8, 0x24, 0x01, 0x00, 0x00, 
 constexpr std::array<u8, 7> GuestStateCheckRcx{0x83, 0xB9, 0x24, 0x01, 0x00, 0x00, 0x06};
 constexpr std::array<u8, 7> HostStateCheck{0x83, 0xB8, 0x24, 0x01, 0x00, 0x00, 0x03};
 constexpr auto ItemModuleChecks = std::to_array<ItemModuleCheck>({
-    {0x017D3759, GuestStateCheck},    {0x017D4F54, GuestStateCheck},
-    {0x017D52D2, GuestStateCheck},    {0x017D5642, GuestStateCheck},
-    {0x017D6818, GuestStateCheck},    {0x017D6AD2, GuestStateCheck},
-    {0x017D83CB, GuestStateCheck},    {0x017D853B, GuestStateCheck},
-    {0x017D85F4, GuestStateCheck},    {0x017D88BB, GuestStateCheck},
-    {0x017D9AA8, GuestStateCheckRcx}, {0x017D9E1C, GuestStateCheck},
-    {0x017D9EE0, GuestStateCheckRcx}, {0x017DD17C, GuestStateCheck},
-    {0x017DDCD9, GuestStateCheck},    {0x017DE5EC, GuestStateCheck},
-    {0x017DE738, GuestStateCheck},    {0x017DE79D, HostStateCheck},
-    {0x017DE8CB, GuestStateCheck},    {0x017DE925, HostStateCheck},
+    {0x017D3759, GuestStateCheck}, {0x017D4F54, GuestStateCheck},
+    {0x017D5642, GuestStateCheck}, {0x017D6818, GuestStateCheck},
+    {0x017D6AD2, GuestStateCheck}, {0x017D83CB, GuestStateCheck},
+    {0x017D853B, GuestStateCheck}, {0x017D85F4, GuestStateCheck},
+    {0x017D88BB, GuestStateCheck}, {0x017D9AA8, GuestStateCheckRcx},
+    {0x017D9E1C, GuestStateCheck}, {0x017D9EE0, GuestStateCheckRcx},
+    {0x017DD17C, GuestStateCheck}, {0x017DDCD9, GuestStateCheck},
+    {0x017DE5EC, GuestStateCheck}, {0x017DE738, GuestStateCheck},
+    {0x017DE79D, HostStateCheck},  {0x017DE8CB, GuestStateCheck},
+    {0x017DE925, HostStateCheck},
 });
 std::array<std::atomic<u64>, ItemModuleChecks.size()> item_module_check_hits{};
 
@@ -3328,10 +3328,16 @@ void PS4_SYSV_ABI CountItemModuleCheck(u64 tag, const GuestRegisterSnapshot*) {
 }
 
 // Shared loot (see SoloMapItemStandIn): each hook points the checked register at the stand-in.
-// In all three spots the register is reloaded or overwritten right after the branch.
+// In every spot the register is reloaded or overwritten right after the branch.
 constexpr u64 MapItemCreateStateCheckOffset = 0x017DC3CF;   // cmp [rax+0x124], 6
 constexpr u64 MapItemCreateSessionCheckOffset = 0x017DC3DC; // cmp [rdx+0x98], -1
 constexpr std::array<u8, 7> MapItemCreateSessionCheck{0x83, 0xBA, 0x98, 0x00, 0x00, 0x00, 0xFF};
+// A new map item gets its own handle (counter << 4 | kind in [item+0x20]) unless this player is
+// a summoned guest, which waits for the host's; without one the pickup prompt never finds it.
+constexpr u64 MapItemHandleStateCheckOffset = 0x017D52D2;   // cmp [rax+0x124], 6
+constexpr u64 MapItemHandleSessionCheckOffset = 0x017D52DB; // cmp [r15+0x98], -1
+constexpr std::array<u8, 8> MapItemHandleSessionCheck{0x41, 0x83, 0xBF, 0x98,
+                                                      0x00, 0x00, 0x00, 0xFF};
 constexpr std::array<u64, 2> MapItemPickupChecks{0x017D6831, 0x017D6AEF}; // [rax+0x1592], 0
 constexpr std::array<u8, 7> MapItemPickupCheck{0x80, 0xB8, 0x92, 0x15, 0x00, 0x00, 0x00};
 
@@ -3348,6 +3354,12 @@ void PS4_SYSV_ABI CreateMapItemsForPartyGuest(u64, GuestRegisterSnapshot* regist
 void PS4_SYSV_ABI CreateMapItemsInJoinedSession(u64, GuestRegisterSnapshot* registers) {
     if (GuestHandlesMapItemsAlone(InPartySession())) {
         registers->rdx = SoloMapItemStandInAddress();
+    }
+}
+
+void PS4_SYSV_ABI GiveMapItemsAHandleInJoinedSession(u64, GuestRegisterSnapshot* registers) {
+    if (GuestHandlesMapItemsAlone(InPartySession())) {
+        registers->r15 = SoloMapItemStandInAddress();
     }
 }
 
@@ -3368,7 +3380,10 @@ void InstallSharedLoot(u64 base, u64 image_size) {
     };
     if (!hook(MapItemCreateStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest) ||
         !hook(MapItemCreateSessionCheckOffset, MapItemCreateSessionCheck,
-              CreateMapItemsInJoinedSession)) {
+              CreateMapItemsInJoinedSession) ||
+        !hook(MapItemHandleStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest) ||
+        !hook(MapItemHandleSessionCheckOffset, MapItemHandleSessionCheck,
+              GiveMapItemsAHandleInJoinedSession)) {
         LOG_ERROR(Debug, "Bloodborne map item hooks unavailable; party guests see no map items");
         return;
     }

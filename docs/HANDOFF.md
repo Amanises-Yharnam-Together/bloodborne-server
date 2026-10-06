@@ -239,6 +239,12 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 - Rig-test that a boss kill keeps the session (`BossClearKeepSessionPatches`, merged, untested).
 
 ## Backlog (Kaniel 2026-10-06: "add all of the current findings and problems to the backlog")
+- **NPC hidden on the host shows on the guest** (Kaniel, 2026-10-06, two new characters, Hunter's
+  Dream workshop): the guest sees the living Doll standing while the host's is hidden (the host's
+  event scripts disable it before the Insight story step). Likely the event-side disable
+  ([+0x18]+0x20 bit 0, `0x018C6390`) only runs on the host and isn't sent to clients; before the
+  solid-NPC fix the guest had the Doll as a see-through wandering ghost instead. Idea: mirror the
+  host's disabled NPCs to the guest (party board) or run the guest's own map events for NPCs.
 - **Window monster after a rest:** a hostile character near the Central Yharnam lamp (only meant
   to appear after a quest) appears the moment a party rest refreshes the world, on fresh saves
   too. Bisected: not the lamp use, not WorldChrMan +0xA40, gone when the respawn is skipped. Not
