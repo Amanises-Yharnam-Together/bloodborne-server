@@ -163,7 +163,7 @@ bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
 }
 
 bool ShouldReviveHostInPlace(s32 matching_state) {
-    return matching_state == MatchingStateHosting;
+    return matching_state == MatchingStateHosting || matching_state == MatchingStateSummonedGuest;
 }
 
 void ReviveDeadPartyHost(const GhostDeathCalls& calls) {
@@ -184,8 +184,11 @@ std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds) {
 }
 
 bool IsLampTravelFlag(s32 flag) {
-    // 7MMM01LL: map code MMM (241 = m24_01), lamp LL.
-    return flag >= 70000000 && flag < 80000000 && flag % 10000 / 100 == 1;
+    // 7MMM01LL: map code MMM (241 = m24_01), lamp LL. Not the Hunter's Dream (210): it has no
+    // lamp to travel from, and the Doll's dialog sets 721001xx.
+    constexpr s32 HuntersDreamMapCode = 210;
+    return flag >= 70000000 && flag < 80000000 && flag % 10000 / 100 == 1 &&
+           flag / 10000 % 1000 != HuntersDreamMapCode;
 }
 
 bool LampRestsEnabled(const char* setting) {
@@ -295,6 +298,21 @@ s32 HeadstoneWarpPoint(s32 flag) {
 
 bool GuestMakesItsOwnLampTrip(bool in_party_session, PartyRole role) {
     return in_party_session && role == PartyRole::Guest;
+}
+
+std::vector<MultiplayerWall> MultiplayerWallsOn(u32 packed_map) {
+    // InitializeEvent(_, 7600, object, sfx) in m22-m35's event files (01.09).
+    static constexpr std::array<s32, 18> Walls{
+        2201999, 2301999, 2401999, 2401998, 2401997, 2401996, 2401995, 2411999, 2411998,
+        2411997, 2421999, 2421998, 2701999, 2701998, 2801999, 2801998, 3201999, 3501990,
+    };
+    std::vector<MultiplayerWall> walls;
+    for (const s32 object : Walls) {
+        if (PackedMapOfWarpPoint(object) == packed_map) {
+            walls.push_back(MultiplayerWall{object, object + 2000});
+        }
+    }
+    return walls;
 }
 
 bool IsPartySession(bool party_configured, s32 matching_state) {

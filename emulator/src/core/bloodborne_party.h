@@ -139,7 +139,8 @@ u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes);
 // did; anyone else (and a missing binding) is left to the game.
 bool ReviveDeadPartyGuest(const GhostDeathCalls& calls);
 
-// The host's version: SoloPlayDeath_2 replaced while it hosts a session (no world reload).
+// The live player's version: SoloPlayDeath_2 replaced while in a session (no world reload): the
+// host, and a guest that travelled (it is a live player afterwards).
 bool ShouldReviveHostInPlace(s32 matching_state);
 void ReviveDeadPartyHost(const GhostDeathCalls& calls);
 
@@ -259,16 +260,20 @@ public:
     using Clock = std::chrono::steady_clock;
     static constexpr Clock::duration Timeout = std::chrono::seconds{90};
 
-    void Start(Clock::time_point now, u32 from_stage) {
+    void Start(Clock::time_point now, u32 from_stage, u64 from_player) {
         started = now;
         from = from_stage;
+        player = from_player;
     }
     void Finish() {
         started.reset();
     }
-    // The current stage (packed map) and whether the game is loading, from the party tick.
-    void ObserveStage(u32 stage, bool loading) {
-        if (started && !loading && stage != from) {
+    // The current stage (packed map), whether the game is loading and the local player's
+    // character, from the party tick. Over on a new stage, or after a reload of the same one (a
+    // new character).
+    void ObserveStage(u32 stage, bool loading, u64 current_player) {
+        if (started && !loading && current_player != 0 &&
+            (stage != from || current_player != player)) {
             Finish();
         }
     }
@@ -279,6 +284,7 @@ public:
 private:
     std::optional<Clock::time_point> started;
     u32 from = 0;
+    u64 player = 0;
 };
 
 // Join tasks (CSMultiPlayerIns, one per session player, in CSMultiPlayMan's list): the kind at
@@ -333,6 +339,14 @@ private:
     bool apart = false;
     bool left_session = false;
 };
+
+// The multiplayer walls (common event 7600, from the maps' event files): the wall object and the
+// fog SFX the event shows while the game is in multiplayer.
+struct MultiplayerWall {
+    s32 object = 0;
+    s32 sfx = 0;
+};
+std::vector<MultiplayerWall> MultiplayerWallsOn(u32 packed_map);
 
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small

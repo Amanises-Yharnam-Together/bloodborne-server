@@ -2903,7 +2903,7 @@ std::vector<s32> effects_before_trip; // multiplayer effects to put back after t
 bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot*) {
     if (InPartySession()) {
         std::scoped_lock lock{party_trip_mutex};
-        party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap());
+        party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap(), GetLocalPlayer());
         SaveRemoteJoinTasks();
         effects_before_trip = LocalEffects();
         LOG_INFO(Debug, "Bloodborne party trip started map={:#x}", GetCurrentPackedMap());
@@ -3148,8 +3148,31 @@ void LogEsdAnswers(bool party_guest);
 
 void TickGuestLampTrip();
 
+// The multiplayer walls (MultiplayerWallsOn) turned off in a party session the way the event
+// scripts' own Lua_InvalidMultiWall does: collision and drawing off, the fog SFX invalidated.
+// Event 7600 shows them again on its next multiplayer edge, so this runs about once a second.
+constexpr u64 SetColiEnableOffset = 0x0132DEF0;
+constexpr u64 SetDrawEnableOffset = 0x0132DEC0;
+constexpr u64 InvalidSfxOffset = 0x01330870;
+
+void TurnOffMultiplayerWalls(bool in_session, u32 map) {
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (!in_session || now - last < std::chrono::seconds{1}) {
+        return;
+    }
+    last = now;
+    using EntitySwitch = void PS4_SYSV_ABI (*)(u64 unused, s32 entity, bool on);
+    for (const MultiplayerWall& wall : MultiplayerWallsOn(map)) {
+        reinterpret_cast<EntitySwitch>(image_base + SetColiEnableOffset)(0, wall.object, false);
+        reinterpret_cast<EntitySwitch>(image_base + SetDrawEnableOffset)(0, wall.object, false);
+        reinterpret_cast<EntitySwitch>(image_base + InvalidSfxOffset)(0, wall.sfx, true);
+    }
+}
+
 void TickPlayersOnThisMap() {
     const bool in_session = InPartySession();
+    TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
     PlayGuestAsHost(in_session);
     TickGuestLampTrip();
     LogEsdAnswers(in_session && party_controller &&
@@ -3200,7 +3223,8 @@ void TickPartyTrip() {
     std::scoped_lock lock{party_trip_mutex};
     const auto now = PartyTrip::Clock::now();
     const bool was_active = party_trip.Active(now);
-    party_trip.ObserveStage(GetCurrentPackedMap(), ReadValue<u8>(state, 0x08) != 0);
+    party_trip.ObserveStage(GetCurrentPackedMap(), ReadValue<u8>(state, 0x08) != 0,
+                            GetLocalPlayer());
     if (was_active && !party_trip.Active(now)) {
         const auto at = LocalPlayerPosition();
         LOG_INFO(Debug, "Bloodborne party trip: arrived map={:#x} at=({}, {}, {}) lamp={}",
@@ -3482,7 +3506,10 @@ bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64, const GuestRegisterSnapshot*) {
         return false;
     }
     ReviveDeadPartyHost(MakeReviveCalls());
-    LOG_INFO(Debug, "Bloodborne host died with a party; revived without a world reload");
+    LOG_INFO(Debug,
+             "Bloodborne live player died in a party session (state {}); revived without a "
+             "world reload",
+             matching_state);
     return true;
 }
 

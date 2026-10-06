@@ -27,6 +27,10 @@ TEST(BloodborneLampRest, RecognisesTheFlagALampsTravelDialogSets) {
     EXPECT_TRUE(IsLampTravelFlag(72900105));
     // Lighting a lamp for the first time (7MMM0200 + lamp) is left to the game.
     EXPECT_FALSE(IsLampTravelFlag(72410200));
+    // The Doll's dialog in the Hunter's Dream sets 721001xx; the Dream has no lamp to travel
+    // from (a guest levelling up was warped and kicked).
+    EXPECT_FALSE(IsLampTravelFlag(72100100));
+    EXPECT_FALSE(IsLampTravelFlag(72100107));
     // The Hunter's Dream headstones and anything else are not lamps.
     EXPECT_FALSE(IsLampTravelFlag(72100000));
     EXPECT_FALSE(IsLampTravelFlag(6707));

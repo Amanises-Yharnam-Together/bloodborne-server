@@ -246,7 +246,7 @@ TEST(BloodborneWorldTeardown, LeavesSearchesAndIdlePlayersAlone) {
 TEST(BloodbornePartyTrip, KeepsTheSessionFromTheTransitionUntilTheNewStageHasLoaded) {
     PartyTrip trip;
     EXPECT_FALSE(trip.Active(T0));
-    trip.Start(T0, 0x18010000);
+    trip.Start(T0, 0x18010000, 0x1000);
     EXPECT_TRUE(trip.Active(T0 + 1s));
     trip.Finish();
     EXPECT_FALSE(trip.Active(T0 + 2s));
@@ -257,12 +257,12 @@ TEST(BloodbornePartyTrip, EndsOnceThePlayerIsOnTheNewStage) {
     constexpr u32 CentralYharnam = 0x18010000;
     constexpr u32 HuntersDream = 0x15000000;
     PartyTrip trip;
-    trip.Start(T0, CentralYharnam);
-    trip.ObserveStage(CentralYharnam, false);
+    trip.Start(T0, CentralYharnam, 0x1000);
+    trip.ObserveStage(CentralYharnam, false, 0x1000);
     EXPECT_TRUE(trip.Active(T0 + 1s)) << "still on the old stage";
-    trip.ObserveStage(HuntersDream, true);
+    trip.ObserveStage(HuntersDream, true, 0x1000);
     EXPECT_TRUE(trip.Active(T0 + 2s)) << "still loading";
-    trip.ObserveStage(HuntersDream, false);
+    trip.ObserveStage(HuntersDream, false, 0x1000);
     EXPECT_FALSE(trip.Active(T0 + 3s));
 }
 
@@ -300,9 +300,23 @@ TEST(BloodbornePartyTrip, LeavesLocalAndUnfinishedJoinsAlone) {
     }
 }
 
+// A reload of the same map (a guest's death far from its lamp) is a trip too: the player is a
+// new character once it is over.
+TEST(BloodbornePartyTrip, EndsAfterAReloadOfTheSameMap) {
+    constexpr u32 CentralYharnam = 0x18010000;
+    PartyTrip trip;
+    trip.Start(T0, CentralYharnam, 0x1000);
+    trip.ObserveStage(CentralYharnam, false, 0x1000);
+    EXPECT_TRUE(trip.Active(T0 + 1s)) << "same map, same character";
+    trip.ObserveStage(CentralYharnam, false, 0);
+    EXPECT_TRUE(trip.Active(T0 + 2s)) << "no character yet";
+    trip.ObserveStage(CentralYharnam, false, 0x2000);
+    EXPECT_FALSE(trip.Active(T0 + 3s));
+}
+
 TEST(BloodbornePartyTrip, ATripThatNeverLoadsStopsCountingAfterAWhile) {
     PartyTrip trip;
-    trip.Start(T0, 0x18010000);
+    trip.Start(T0, 0x18010000, 0x1000);
     EXPECT_TRUE(trip.Active(T0 + PartyTrip::Timeout - 1s));
     EXPECT_FALSE(trip.Active(T0 + PartyTrip::Timeout));
 }
@@ -359,6 +373,24 @@ TEST(BloodborneGuestAsHost, OnlyWhenSwitchedOnAndAWhitePhantomInAPartySession) {
     EXPECT_FALSE(ShouldPlayGuestAsHost(false, true, WhiteGhostCharacterType));
     EXPECT_FALSE(ShouldPlayGuestAsHost(true, false, WhiteGhostCharacterType));
     EXPECT_FALSE(ShouldPlayGuestAsHost(true, true, 0)) << "already live";
+}
+
+// The multiplayer walls (common event 7600: wall object and its fog SFX, shown while in
+// multiplayer) are what keeps a summoned guest inside an area. A party session turns them off.
+TEST(BloodborneMultiplayerWalls, ListsTheWallsOfTheMapThePlayerIsOn) {
+    const auto central_yharnam = MultiplayerWallsOn(0x18010000);
+    ASSERT_EQ(central_yharnam.size(), 3u);
+    EXPECT_EQ(central_yharnam[0].object, 2411999);
+    EXPECT_EQ(central_yharnam[0].sfx, 2413999);
+    EXPECT_EQ(MultiplayerWallsOn(0x18000000).size(), 5u); // m24_00
+    EXPECT_TRUE(MultiplayerWallsOn(0x15000000).empty()) << "the Hunter's Dream has none";
+    for (const u32 map : {0x16000000u, 0x17000000u, 0x18000000u, 0x18010000u, 0x18020000u,
+                          0x1B000000u, 0x1C000000u, 0x20000000u, 0x23000000u}) {
+        for (const MultiplayerWall& wall : MultiplayerWallsOn(map)) {
+            EXPECT_EQ(PackedMapOfWarpPoint(wall.object), map) << wall.object;
+            EXPECT_EQ(wall.sfx, wall.object + 2000);
+        }
+    }
 }
 
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
@@ -584,9 +616,12 @@ TEST(BloodborneHostDeath, AHostWithAPartyRevivesLikeAGuestWithoutAReload) {
 }
 
 // Only while hosting: a solo player (or a host whose room is gone) dies the game's way.
-TEST(BloodborneHostDeath, OnlyAHostWithASessionSkipsTheReload) {
+// A guest that travelled is a live player (type 0), so its death takes the live player's path
+// (SoloPlayDeath_2, a reload at the lamp) too; it revives in place like the host.
+TEST(BloodborneHostDeath, OnlyAPlayerInASessionSkipsTheReload) {
     EXPECT_TRUE(ShouldReviveHostInPlace(MatchingStateHosting));
-    for (const s32 state : {0, 1, 2, 4, 5, MatchingStateSummonedGuest, 7}) {
+    EXPECT_TRUE(ShouldReviveHostInPlace(MatchingStateSummonedGuest));
+    for (const s32 state : {0, 1, 2, 4, 5, 7}) {
         EXPECT_FALSE(ShouldReviveHostInPlace(state)) << "state " << state;
     }
 }
