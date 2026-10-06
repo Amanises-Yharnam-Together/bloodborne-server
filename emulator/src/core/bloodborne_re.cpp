@@ -1857,6 +1857,14 @@ constexpr std::array<u8, 7> RestockItemClampPrologue{0x55, 0x48, 0x89, 0xE5, 0x4
 constexpr u64 EventRestartStateOffset = 0x012F0FCB;
 constexpr std::array<u8, 9> EventRestartState{0x8B, 0x88, 0x6C, 0x0A, 0x00, 0x00, 0x83, 0xF9, 0x04};
 std::atomic<bool> party_rest_respawn_pending{};
+// The bonfire respawn's two walks over a block's characters (0x0190E3B0) skip a character whose
+// NPC param has bit 0x2000000 at +0x145 (`mov rax, [rax+8]; test rax, rax` loads the param). For
+// a living character during a party rest the hook points rax at a stand-in with that bit set.
+constexpr std::array<u64, 2> RespawnParamChecks{0x0190E445, 0x0190E572};
+constexpr std::array<u8, 7> RespawnParamCheck{0x48, 0x8B, 0x40, 0x08, 0x48, 0x85, 0xC0};
+alignas(16) std::array<u8, 0x150> no_respawn_param{};
+alignas(16) std::array<u64, 2> no_respawn_param_holder{};
+std::atomic<bool> party_rest_respawn_running{};
 
 // GlobalState +0x16F8 -> +0x14: players in the session (the count ESD function 52 checks).
 constexpr u64 SessionPlayersOffset = 0x16F8;
@@ -1904,6 +1912,16 @@ std::optional<LampPosition> LocalPlayerPosition() {
                         ReadValue<float>(physics, 0x1E8)};
 }
 
+s32 CharacterHp(u64 character);
+
+void PS4_SYSV_ABI RespawnOnlyTheDead(u64, GuestRegisterSnapshot* registers) {
+    if (!party_rest_respawn_running.load() || registers->rax < 0x10000 ||
+        RespawnsAtPartyRest(CharacterHp(registers->rbx))) {
+        return;
+    }
+    registers->rax = reinterpret_cast<u64>(no_respawn_param_holder.data());
+}
+
 void PS4_SYSV_ABI SkipEventRestartForPartyRest(u64, GuestRegisterSnapshot* registers) {
     const u64 world = registers->rax;
     if (!party_rest_respawn_pending.load() || world < 0x10000 ||
@@ -1911,6 +1929,7 @@ void PS4_SYSV_ABI SkipEventRestartForPartyRest(u64, GuestRegisterSnapshot* regis
         return;
     }
     party_rest_respawn_pending.store(false);
+    party_rest_respawn_running.store(false);
     WriteValue(world, WorldRespawnStateOffset, s32{4});
     LOG_INFO(Debug, "Bloodborne party rest: kept the event scripts running (no restart)");
 }
@@ -1984,6 +2003,17 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
         LOG_ERROR(Debug, "Bloodborne party rest would restart the event scripts; lamps stay "
                          "locked in a session");
         return;
+    }
+    const u32 no_respawn = 0x2000000;
+    std::memcpy(no_respawn_param.data() + 0x145, &no_respawn, sizeof(no_respawn));
+    no_respawn_param_holder[1] = reinterpret_cast<u64>(no_respawn_param.data());
+    for (const u64 offset : RespawnParamChecks) {
+        if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + offset), RespawnParamCheck,
+                                          0, RespawnOnlyTheDead)) {
+            LOG_ERROR(Debug, "Bloodborne party rest would respawn the living; lamps stay locked "
+                             "in a session");
+            return;
+        }
     }
     lamp_rest_hooks_installed = true;
     LOG_INFO(Debug, "Bloodborne lamps as campfires: a party rests at its lamps together");
@@ -2306,6 +2336,7 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
                 if (respawn_before == 0) {
                     RememberHiddenCharacters(world);
                     party_rest_respawn_pending.store(true);
+                    party_rest_respawn_running.store(true);
                     WriteValue(world, WorldRespawnStateOffset, s32{1});
                 }
             },

@@ -213,6 +213,8 @@ bool RefreshAtLamp(const LampRestCalls& calls);
 // The bonfire respawn re-enables every character of the loaded blocks; the event scripts that
 // hide some again do not all run in a session. A character to switch off again afterwards.
 bool KeepDisabledAfterRespawn(bool disabled_before, s32 hp_before);
+// A party rest respawns only the dead: living characters are left out of the bonfire respawn.
+bool RespawnsAtPartyRest(s32 hp);
 // The same for the character state flags (+0x1E0) the scripts set and the respawn clears.
 constexpr u64 ScriptCharacterFlags = 0x4000 | 0x20000 | 0x40000000;
 u64 RestoreScriptFlagsAfterRespawn(u64 flags_before, u64 flags_after, s32 hp_before);
