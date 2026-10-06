@@ -112,6 +112,29 @@ That is option B's core step, minus the matching round trip.
 - Built for this: the trip marker, the join-task log, and the shadNet party map board
   (`POST /bloodborne/party/map`, used to wait until everyone shares a map).
 
+## Host trips work; guest trips (rig, 2026-10-06 evening)
+- **Host trip: done.** Rebuilding the guest's join task by identity pointer (the member id holds a
+  lock; byte copies hung the game) brings the guest back when both share a map. Bell effects are
+  put back after the trip.
+- **Guest lamps:** talk scripts gate on ESD f14 (talker type) and the talk object's own phantom
+  check (+0x25 via 0x0203AC04). Both are hooked for party guests, so guests get lamp, NPC and
+  door prompts.
+- **Guest trips:** the lamp event 7200 and the headstone event 12107000 end for clients, so the
+  emulator warps the guest itself (WarpNextStage_Bonfire; headstone flag 7210MMML maps to
+  respawn point MMM2950+L). A phantom's stage transition also calls StopRequest (0x01ED07A0),
+  which is now skipped during trips.
+- **Guest round trip works** (rig, 2026-10-06): the guest stays in the host's world and the
+  host's Dream (NPCs, level-up, pickups work there). Back on a shared map the guest rebuilds
+  both the host's join task (kind 0) and its own (kind 2); on a guest its own task is the one
+  that creates the host's character (step 4 only creates for kinds 1 and 2).
+- After a trip the guest's character type is 0, not the white phantom's 1. Changing it back
+  mid-session made both games drop each other, so guest trips are decided by party role, not
+  by type. Why the type changes is not known.
+- Dead end, so nobody retries it: making the guest's trip a summon load (the cross-map join's
+  path). Into a map without the host the guest is dropped, and it never helped.
+- Lamp/headstone return lands with no position for a moment; a second later the guest is moved
+  to its lamp with the revive's teleport (camera swoop; see the death refinements backlog).
+
 ## Decision (Kaniel, 2026-10-06)
 A first; if A can't work, C. B is out. Repairing the session after a reload (re-creating the
 guest's character, or a summon reload over the live session) counts as A.

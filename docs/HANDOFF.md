@@ -162,21 +162,29 @@ party session (party configured and matching state 3 or 6) only:
   Fallback: 1 s interval.
 - Signaling: fix the lingering-connection reuse above if it shows up again.
 
-## Phase 3 in progress (branch `phase3-travel`, 2026-10-06)
-- **Party rests are off (WIP, Kaniel's call).** In a party session a lamp travels on the first
-  press again. `SHADPS4_BLOODBORNE_LAMP_REST=1` turns the rests back on (the second press then
-  travels). All of "Lamps as campfires" above still applies with the switch on.
-- Boss kill keeps the session: `BossClearKeepSessionPatches` (BlockClear2_2 4063 and
-  BlockClear2_3Leave, BlockClear2_3 white branch). Not rig-tested yet.
-- A guest whose host left stays where it is (`OnLeave_Limit` 0x0138A4A0 skipped, 4047 cleared,
-  no auto-search while still a white phantom).
-- A party member's trip keeps the session (`PartyTrip`, marked at the stage transition
-  0x013CDE30, skips the teardown StopRequest). Plan and the first experiment's result:
-  `docs/SEAMLESS_TRAVEL_PLAN.md`.
-- Guest-as-host experiment (`SHADPS4_BLOODBORNE_GUEST_AS_HOST=1`, SetChrType 0 for a party
-  guest): the guest keeps its full HP bar (no phantom HP cut) and can fight, use ladders and
-  doors, but its model is invisible on both sides and lamps stay hidden. Off by default.
-- The trace site named "ForceSummonSuccess" (0x013849A0) is BlockClear2.
+## Phase 3: seamless travel (branch `phase3-travel`, 2026-10-06)
+Kaniel's design: either player travels on their own, nobody is pulled along or sent home, and the
+session stays up across maps. Kaniel chose option A (stretch the native session), see
+`docs/SEAMLESS_TRAVEL_PLAN.md` for the full findings and dead ends.
+- **Rig-confirmed:** host round trip (lamp to the Dream, headstone back) and guest round trip; both
+  see each other and hit enemies afterwards. The guest uses the Dream's NPCs, Doll and pickups.
+- **How:** `PartyTrip` (stage transition 0x013CDE30 marks a trip until the new stage is up) skips
+  the teardown StopRequest, every LeaveSession and CSMultiPlayMan StopRequest (0x01ED07A0). On
+  arrival the join tasks the reload wiped are rebuilt once every member is on the map (shadNet
+  party map board, `POST /bloodborne/party/map`): allocate, construct 0x01E4F9F0, add
+  0x01E55A70, saved slot/flags, SetStep(4). A guest also rebuilds its own task (kind 2). Bell
+  effects (9000/9003, 9005/9006) are put back.
+- **Guests use lamps:** talk hooks for ESD f14 (0x0203B7FB) and the talk object's phantom check
+  (0x0203AC04). Lamp event 7200 and headstone event 12107000 end for clients, so the emulator does
+  a party guest's trip (WarpNextStage_Bonfire; headstone flag 7210MMML -> point MMM2950+L),
+  then moves it to the lamp a second later.
+- **Party rests are off (WIP, Kaniel's call):** a lamp travels on the first press again;
+  `SHADPS4_BLOODBORNE_LAMP_REST=1` turns rests back on.
+- **Boss kill keeps the session** (BlockClear2_2/2_3 patches). Not rig-tested yet.
+- Guest-as-host experiment (`SHADPS4_BLOODBORNE_GUEST_AS_HOST=1`): full HP bar, but the model is
+  invisible and lamps stay hidden. Off by default.
+- Diagnostics to trim later: guest talk answers/flags, join-task and member-leave logs.
+- Rig launchers have `SHADPS4_BLOODBORNE_RE_TRACE=1` on (Kaniel asked for it).
 - Both rig clients log "permission denied" opening `userdata0005`/`0010` on every save; check
   whether saves land.
 
