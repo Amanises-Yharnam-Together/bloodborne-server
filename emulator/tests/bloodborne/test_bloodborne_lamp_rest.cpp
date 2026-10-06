@@ -228,11 +228,3 @@ TEST(BloodborneLampRest, APartyRestOnlyBringsBackWhatThePartyKilled) {
     // the Central Yharnam lamp came out after every rest).
     EXPECT_FALSE(RespawnsAtPartyRest(0, false));
 }
-
-TEST(BloodborneLampRest, TheRespawnLeavesTheScriptsFreezeWhereItWas) {
-    // WorldChrMan freezes every character for the respawn (+0x359 |= 4) and thaws all of them
-    // afterwards (&= ~4), including ones the scripts had frozen themselves.
-    EXPECT_EQ(RestoreFreezeAfterRespawn(0x05, 0x01), 0x05);
-    EXPECT_EQ(RestoreFreezeAfterRespawn(0x01, 0x01), 0x01);
-    EXPECT_EQ(RestoreFreezeAfterRespawn(0x00, 0x02), 0x02);
-}

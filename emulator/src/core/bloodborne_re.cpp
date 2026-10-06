@@ -1870,15 +1870,6 @@ constexpr std::array<u8, 7> RespawnParamCheck{0x48, 0x8B, 0x40, 0x08, 0x48, 0x85
 alignas(16) std::array<u8, 0x150> no_respawn_param{};
 alignas(16) std::array<u64, 2> no_respawn_param_holder{};
 std::atomic<bool> party_rest_respawn_running{};
-// The respawn's thaw (state 5, 0x0191557C: `and byte ptr [rdi+0x359], 0xFB` for every character)
-// also thaws characters the scripts keep frozen, and one frame of thaw is enough for them to come
-// alive (the window monster near the Central Yharnam lamp). The hook points rdi at a stand-in for
-// characters that were frozen before the rest, so their bit is never cleared.
-constexpr u64 RespawnThawOffset = 0x0191557C;
-constexpr std::array<u8, 7> RespawnThaw{0x80, 0xA7, 0x59, 0x03, 0x00, 0x00, 0xFB};
-alignas(16) std::array<u8, 0x360> thaw_stand_in{};
-std::mutex frozen_before_rest_mutex;
-std::unordered_set<u64> frozen_before_rest;
 
 // GlobalState +0x16F8 -> +0x14: players in the session (the count ESD function 52 checks).
 constexpr u64 SessionPlayersOffset = 0x16F8;
@@ -1945,13 +1936,6 @@ void PS4_SYSV_ABI RespawnOnlyTheDead(u64, GuestRegisterSnapshot* registers) {
         return;
     }
     registers->rax = reinterpret_cast<u64>(no_respawn_param_holder.data());
-}
-
-void PS4_SYSV_ABI KeepScriptFreeze(u64, GuestRegisterSnapshot* registers) {
-    std::scoped_lock lock{frozen_before_rest_mutex};
-    if (frozen_before_rest.contains(registers->rdi)) {
-        registers->rdi = reinterpret_cast<u64>(thaw_stand_in.data());
-    }
 }
 
 void PS4_SYSV_ABI SkipEventRestartForPartyRest(u64, GuestRegisterSnapshot* registers) {
@@ -2034,12 +2018,6 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
     if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EventRestartStateOffset),
                                       EventRestartState, 0, SkipEventRestartForPartyRest)) {
         LOG_ERROR(Debug, "Bloodborne party rest would restart the event scripts; lamps stay "
-                         "locked in a session");
-        return;
-    }
-    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + RespawnThawOffset),
-                                      RespawnThaw, 0, KeepScriptFreeze)) {
-        LOG_ERROR(Debug, "Bloodborne party rest would thaw scripted characters; lamps stay "
                          "locked in a session");
         return;
     }
@@ -2177,7 +2155,6 @@ struct CharacterState {
     u8 control_flags;  // [+0x18]+0x20
     s32 control_state; // [+0x18]+0x10
     u64 state_flags;   // +0x1E0
-    u8 freeze;         // +0x359
     s32 hp;
     bool operator==(const CharacterState&) const = default;
 };
@@ -2232,7 +2209,6 @@ CharacterState ReadCharacterState(u64 character) {
         .control_flags = control >= 0x10000 ? ReadValue<u8>(control, 0x20) : u8{0xFF},
         .control_state = control >= 0x10000 ? ReadValue<s32>(control, 0x10) : -1,
         .state_flags = ReadValue<u64>(character, 0x1E0),
-        .freeze = ReadValue<u8>(character, 0x359),
         .hp = CharacterHp(character),
     };
 }
@@ -2247,11 +2223,8 @@ void RestoreScriptFlags() {
         }
         const u64 now = ReadValue<u64>(before.character, 0x1E0);
         const u64 flags = RestoreScriptFlagsAfterRespawn(before.state_flags, now, before.hp);
-        const u8 freeze_now = ReadValue<u8>(before.character, 0x359);
-        const u8 freeze = RestoreFreezeAfterRespawn(before.freeze, freeze_now);
-        if (flags != now || freeze != freeze_now) {
+        if (flags != now) {
             WriteValue(before.character, 0x1E0, flags);
-            WriteValue(before.character, 0x359, freeze);
             ++restored;
         }
     }
@@ -2318,19 +2291,9 @@ void RememberHiddenCharacters(u64 world) {
         hidden_characters_map = map;
     }
     characters_before_rest.clear();
-    {
-        std::scoped_lock lock{frozen_before_rest_mutex};
-        frozen_before_rest.clear();
-    }
     ForEachWorldCharacter(world, [](u64 character) {
         characters_before_rest.push_back(ReadCharacterState(character));
-        if ((characters_before_rest.back().freeze & 0x04) != 0) {
-            std::scoped_lock lock{frozen_before_rest_mutex};
-            frozen_before_rest.insert(character);
-        }
     });
-    LOG_INFO(Debug, "Bloodborne party rest: {} characters frozen by the scripts",
-             frozen_before_rest.size());
     s32 disabled = 0;
     ForEachWorldCharacter(world, [&](u64 character) {
         const bool off = IsCharacterDisabled(character);
@@ -2350,9 +2313,15 @@ void HideCharactersAgain() {
     RestoreScriptFlags();
     LogCharacterChanges();
     s32 hidden = 0;
+    // Only characters still in the world's blocks: the list outlives a rest, and a stale pointer
+    // handed to the game's disable would crash it.
+    std::unordered_set<u64> current;
+    if (const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+        world >= 0x10000) {
+        ForEachWorldCharacter(world, [&](u64 character) { current.insert(character); });
+    }
     for (const u64 character : hidden_characters) {
-        if (HasMemoryAccess(character, 0x3B8, MemoryProt::CpuRead) &&
-            !IsCharacterDisabled(character)) {
+        if (current.contains(character) && !IsCharacterDisabled(character)) {
             reinterpret_cast<void PS4_SYSV_ABI (*)(u64, bool)>(
                 image_base + SetCharacterDisabledOffset)(character, true);
             ++hidden;
@@ -2364,25 +2333,6 @@ void HideCharactersAgain() {
     }
 }
 
-// Bisecting the window monster near the Central Yharnam lamp, which appears the moment the
-// party's rest refreshes the world: SHADPS4_BLOODBORNE_REST_SKIP lists parts to leave out (heal,
-// restock, respawn, groups). "groups" hides WorldChrMan +0xA40 (the second list the respawn
-// resets through 0x018EB900) by zeroing its count until the respawn has passed state 3.
-bool RestSkips(std::string_view part) {
-    const char* skip = std::getenv("SHADPS4_BLOODBORNE_REST_SKIP");
-    return skip != nullptr && std::string_view{skip}.find(part) != std::string_view::npos;
-}
-u64 hidden_group_list = 0;
-s32 hidden_group_count = 0;
-
-void RestoreGroupList() {
-    if (hidden_group_list >= 0x10000) {
-        WriteValue(hidden_group_list, 0x08, hidden_group_count);
-        LOG_INFO(Debug, "Bloodborne party rest: put back {} +0xA40 entries", hidden_group_count);
-    }
-    hidden_group_list = 0;
-}
-
 // Does what a reload at the lamp would (see RefreshAtLamp) and asks WorldChrMan for the bonfire
 // respawn (see WorldRespawnStateOffset).
 void RefreshWorldAtLamp(s32 lamp, s32 players) {
@@ -2391,9 +2341,6 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
     const LampRestCalls calls{
         .request_full_recover =
             [] {
-                if (RestSkips("heal")) {
-                    return;
-                }
                 reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset)();
                 if (const u64 player = GetLocalPlayer(); player >= 0x10000) {
                     reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(
@@ -2402,16 +2349,10 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
             },
         .clamp_restock_item =
             [] {
-                if (RestSkips("restock")) {
-                    return;
-                }
                 reinterpret_cast<void PS4_SYSV_ABI (*)()>(image_base + RestockItemClampOffset)();
             },
         .restock_from_storage =
             [] {
-                if (RestSkips("restock")) {
-                    return;
-                }
                 reinterpret_cast<void PS4_SYSV_ABI (*)()>(image_base + RestockFromStorageOffset)();
             },
         .request_world_respawn =
@@ -2419,17 +2360,6 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
                 const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
                 respawn_before =
                     world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : -1;
-                if (RestSkips("respawn")) {
-                    return;
-                }
-                if (respawn_before == 0 && RestSkips("groups")) {
-                    hidden_group_list = ReadValue<u64>(world, 0xA40);
-                    hidden_group_count =
-                        hidden_group_list >= 0x10000 ? ReadValue<s32>(hidden_group_list, 0x08) : 0;
-                    if (hidden_group_list >= 0x10000) {
-                        WriteValue(hidden_group_list, 0x08, s32{0});
-                    }
-                }
                 if (respawn_before == 0) {
                     RememberHiddenCharacters(world);
                     party_rest_respawn_pending.store(true);
@@ -2451,9 +2381,6 @@ void LogWorldRespawnChanges() {
     const s32 state = world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : 0;
     if (state != last) {
         LOG_INFO(Debug, "Bloodborne world respawn state {} -> {}", last, state);
-        if (state >= 3 || state == 0) {
-            RestoreGroupList();
-        }
         if (state == 0) {
             HideCharactersAgain();
         }

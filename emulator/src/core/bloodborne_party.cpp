@@ -236,10 +236,6 @@ u64 RestoreScriptFlagsAfterRespawn(u64 flags_before, u64 flags_after, s32 hp_bef
     return (flags_after & ~ScriptCharacterFlags) | (flags_before & ScriptCharacterFlags);
 }
 
-u8 RestoreFreezeAfterRespawn(u8 before, u8 after) {
-    return static_cast<u8>((after & ~0x04) | (before & 0x04));
-}
-
 bool RespawnsAtPartyRest(s32 hp, bool alive_this_visit) {
     return hp <= 0 && alive_this_visit;
 }
