@@ -3446,7 +3446,8 @@ void LogItemModuleChecks() {
 // Diagnostics for the guest's missing pick-up prompt: the player's item button update
 // (0x012FD880) asks MapItemMan for the nearest usable map item (0x017DA500, list +0x28,
 // [rbp-0x58] = its handle), passes a busy check (0x0176B7E0), shows the prompt and, once
-// pressed (0x01CD91F0 true), picks it up (0x017D8570).
+// pressed (0x01CD91F0 true), picks it up (0x017D8570). Inside the search, a usable item is
+// examined at 0x017DA58B and one in the button's range lands at 0x017DA7CE.
 constexpr u64 ItemButtonUpdateOffset = 0x012FD8CD;
 constexpr std::array<u8, 10> ItemButtonUpdate{0x48, 0x8D, 0x7D, 0xC0, 0x41,
                                               0xBC, 0x04, 0x10, 0x00, 0x00};
@@ -3455,43 +3456,63 @@ constexpr std::array<u8, 8> ItemButtonFound{0x8B, 0x45, 0xA8, 0x89, 0x45, 0x9C, 
 constexpr u64 ItemButtonNotBusyOffset = 0x012FDC84;
 constexpr u64 ItemButtonPressedOffset = 0x012FDD95;
 constexpr std::array<u8, 7> ItemButtonPlayerLoad{0x49, 0x8B, 0x85, 0xB0, 0x03, 0x00, 0x00};
+constexpr u64 MapItemSearchExaminedOffset = 0x017DA58B;
+constexpr std::array<u8, 6> MapItemSearchExamined{0xC4, 0xC1, 0x7A, 0x10, 0x46, 0x30};
+constexpr u64 MapItemSearchInRangeOffset = 0x017DA7CE;
+constexpr std::array<u8, 11> MapItemSearchInRange{0x41, 0x8B, 0x46, 0x20, 0x48, 0x8B,
+                                                  0x8D, 0x10, 0xFF, 0xFF, 0xFF};
 constexpr u64 MapItemManPointerOffset = 0x0553D6E0;
-std::atomic<u64> item_button_updates{};
-std::atomic<u64> item_button_found{};
-std::atomic<u64> item_button_not_busy{};
-std::atomic<u64> item_button_pressed{};
+std::array<std::atomic<u64>, 6> item_button_counts{};
 std::atomic<u32> item_button_last_handle{};
 
 void PS4_SYSV_ABI NoteItemButton(u64 tag, const GuestRegisterSnapshot* registers) {
-    if (tag == 0) {
-        item_button_updates.fetch_add(1, std::memory_order_relaxed);
-    } else if (tag == 1) {
-        const u32 handle = ReadValue<u32>(registers->rbp - 0x58, 0);
-        if (handle != 0) {
-            item_button_found.fetch_add(1, std::memory_order_relaxed);
-            item_button_last_handle.store(handle, std::memory_order_relaxed);
-        }
-    } else if (tag == 2) {
-        item_button_not_busy.fetch_add(1, std::memory_order_relaxed);
-    } else {
-        item_button_pressed.fetch_add(1, std::memory_order_relaxed);
+    if (tag >= item_button_counts.size()) {
+        return;
     }
+    if (tag == 1) {
+        const u32 handle = ReadValue<u32>(registers->rbp - 0x58, 0);
+        if (handle == 0) {
+            return;
+        }
+        item_button_last_handle.store(handle, std::memory_order_relaxed);
+    }
+    item_button_counts[tag].fetch_add(1, std::memory_order_relaxed);
 }
 
 void InstallItemButtonDiagnostics(u64 base) {
     if (!party_controller || !EnvFlagEnabled("SHADPS4_BLOODBORNE_RE_TRACE")) {
         return;
     }
-    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonUpdateOffset),
-                              ItemButtonUpdate, 0, NoteItemButton) ||
-        !InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonFoundOffset),
-                              ItemButtonFound, 1, NoteItemButton) ||
-        !InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonNotBusyOffset),
-                              ItemButtonPlayerLoad, 2, NoteItemButton) ||
-        !InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonPressedOffset),
-                              ItemButtonPlayerLoad, 3, NoteItemButton)) {
+    const auto probe = [base](u64 offset, std::span<const u8> bytes, u64 tag) {
+        return InstallGuestCodeHook(reinterpret_cast<void*>(base + offset), bytes, tag,
+                                    NoteItemButton);
+    };
+    if (!probe(ItemButtonUpdateOffset, ItemButtonUpdate, 0) ||
+        !probe(ItemButtonFoundOffset, ItemButtonFound, 1) ||
+        !probe(ItemButtonNotBusyOffset, ItemButtonPlayerLoad, 2) ||
+        !probe(ItemButtonPressedOffset, ItemButtonPlayerLoad, 3) ||
+        !probe(MapItemSearchExaminedOffset, MapItemSearchExamined, 4) ||
+        !probe(MapItemSearchInRangeOffset, MapItemSearchInRange, 5)) {
         LOG_ERROR(Debug, "Bloodborne item button diagnostics unavailable");
     }
+}
+
+// The local player's position, where the map item search reads it
+// ([[[player+0x58]+8]+0x3B0]+0x68]+0x1E0).
+std::optional<std::array<float, 3>> MapItemSearchPlayerPosition() {
+    const u64 player = GetLocalPlayer();
+    u64 node = player >= 0x10000 ? ReadValue<u64>(player, 0x58) : 0;
+    for (const u64 offset : {u64{8}, u64{0x3B0}, u64{0x68}}) {
+        if (node < 0x10000 || !HasMemoryAccess(node, offset + 8, MemoryProt::CpuRead)) {
+            return std::nullopt;
+        }
+        node = ReadValue<u64>(node, offset);
+    }
+    if (node < 0x10000 || !HasMemoryAccess(node, 0x1EC, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    return std::array<float, 3>{ReadValue<float>(node, 0x1E0), ReadValue<float>(node, 0x1E4),
+                                ReadValue<float>(node, 0x1E8)};
 }
 
 void LogItemButtonAndMapItems() {
@@ -3503,27 +3524,46 @@ void LogItemButtonAndMapItems() {
     }
     last_time = now;
     std::string lists;
+    std::string nearest;
+    const auto position = MapItemSearchPlayerPosition();
     const u64 manager = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
     if (manager >= 0x10000 && HasMemoryAccess(manager, 0x40, MemoryProt::CpuRead)) {
+        float best = 1e30f;
         for (const u64 list : {0x18, 0x28, 0x38}) {
             u32 count = 0, usable = 0, with_handle = 0;
             u64 item = ReadValue<u64>(manager, list);
             while (item >= 0x10000 && count < 4096 &&
-                   HasMemoryAccess(item, 0x50, MemoryProt::CpuRead)) {
+                   HasMemoryAccess(item, 0x58, MemoryProt::CpuRead)) {
                 ++count;
-                usable += (ReadValue<u16>(item, 0x48) & 0x40) != 0;
+                const u16 flags = ReadValue<u16>(item, 0x48);
+                usable += (flags & 0x40) != 0;
                 with_handle += (ReadValue<u32>(item, 0x20) >> 4) != 0;
+                if (position) {
+                    const float dx = ReadValue<float>(item, 0x30) - (*position)[0];
+                    const float dy = ReadValue<float>(item, 0x34) - (*position)[1];
+                    const float dz = ReadValue<float>(item, 0x38) - (*position)[2];
+                    const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    if (distance < best) {
+                        best = distance;
+                        nearest = fmt::format(
+                            " nearest list {:#x} {:.1f} m handle {:#x} flags {:#x} button {} "
+                            "text {}",
+                            list, distance, ReadValue<u32>(item, 0x20), flags,
+                            ReadValue<s32>(item, 0x4C), ReadValue<s32>(item, 0x50));
+                    }
+                }
                 item = ReadValue<u64>(item, 0);
             }
             lists += fmt::format(" [{:#x}: {} items, {} usable, {} with handle]", list, count,
                                  usable, with_handle);
         }
     }
-    const std::string text =
-        fmt::format("button updates {} found {} (last handle {:#x}) not busy {} pressed {};{}",
-                    item_button_updates.load() > 0 ? "yes" : "no", item_button_found.load(),
-                    item_button_last_handle.load(), item_button_not_busy.load(),
-                    item_button_pressed.load(), lists);
+    const std::string text = fmt::format(
+        "button updates {} examined {} in range {} found {} (last handle {:#x}) not busy {} "
+        "pressed {};{}{}",
+        item_button_counts[0].load() > 0 ? "yes" : "no", item_button_counts[4].load(),
+        item_button_counts[5].load(), item_button_counts[1].load(), item_button_last_handle.load(),
+        item_button_counts[2].load(), item_button_counts[3].load(), lists, nearest);
     if (text != last) {
         last = text;
         LOG_INFO(Debug, "Bloodborne map items: {}", text);
