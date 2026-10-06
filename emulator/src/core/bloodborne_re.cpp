@@ -3170,7 +3170,73 @@ void TurnOffMultiplayerWalls(bool in_session, u32 map) {
     }
 }
 
+// The loaded SpEffectParam, found through SoloParamRepository (0x05540340): its param slots hold
+// a pointer whose +0x70 -> +0x70 is the PARAM file (the goods lookup at 0x01F1E3D0 reads one this
+// way). Once found, row 9006 (the summoned guest's) gets a max HP rate of 1.0.
+constexpr u64 SoloParamRepositoryPointerOffset = 0x05540340;
+
+u64 FindLoadedParam(std::string_view type) {
+    const u64 repository = ReadValue<u64>(image_base + SoloParamRepositoryPointerOffset, 0);
+    if (repository < 0x10000 || !HasMemoryAccess(repository, 0x2000, MemoryProt::CpuRead)) {
+        return 0;
+    }
+    for (u64 slot = 0; slot < 0x2000; slot += 8) {
+        const u64 holder = ReadValue<u64>(repository, slot);
+        if (holder < 0x10000 || !HasMemoryAccess(holder, 0x78, MemoryProt::CpuRead)) {
+            continue;
+        }
+        const u64 inner = ReadValue<u64>(holder, 0x70);
+        if (inner < 0x10000 || !HasMemoryAccess(inner, 0x78, MemoryProt::CpuRead)) {
+            continue;
+        }
+        const u64 param = ReadValue<u64>(inner, 0x70);
+        if (param < 0x10000 || !HasMemoryAccess(param, 0x40, MemoryProt::CpuRead)) {
+            continue;
+        }
+        if (IsParamOfType({reinterpret_cast<const u8*>(param), 0x40}, type)) {
+            return param;
+        }
+    }
+    return 0;
+}
+
+void KeepGuestFullHp() {
+    static bool done = false;
+    static int attempts = 0;
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (done || !party_controller || now - last < std::chrono::seconds{1}) {
+        return;
+    }
+    last = now;
+    const u64 param = FindLoadedParam("SP_EFFECT_PARAM_ST");
+    if (param == 0) {
+        if (++attempts == 30) {
+            LOG_ERROR(Debug, "Bloodborne SpEffectParam not found in SoloParamRepository");
+        }
+        return;
+    }
+    done = true;
+    const u16 rows = ReadValue<u16>(param, 0x0A);
+    const u64 table_size = 0x40 + u64{rows} * 24;
+    if (!HasMemoryAccess(param, table_size, MemoryProt::CpuRead)) {
+        return;
+    }
+    const auto row =
+        FindParamRow({reinterpret_cast<const u8*>(param), table_size}, PhantomHpEffect);
+    if (!row || !HasMemoryAccess(param + *row, SpEffectMaxHpRateOffset + 4, MemoryProt::CpuWrite)) {
+        LOG_ERROR(Debug, "Bloodborne SpEffect {} not found; summoned guests keep 70% HP",
+                  PhantomHpEffect);
+        return;
+    }
+    const float before = ReadValue<float>(param + *row, SpEffectMaxHpRateOffset);
+    WriteValue(param + *row, SpEffectMaxHpRateOffset, 1.0f);
+    LOG_INFO(Debug, "Bloodborne party guests keep full HP (SpEffect {} max HP rate {} -> 1)",
+             PhantomHpEffect, before);
+}
+
 void TickPlayersOnThisMap() {
+    KeepGuestFullHp();
     const bool in_session = InPartySession();
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
     PlayGuestAsHost(in_session);

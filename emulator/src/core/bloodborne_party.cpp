@@ -315,6 +315,43 @@ std::vector<MultiplayerWall> MultiplayerWallsOn(u32 packed_map) {
     return walls;
 }
 
+bool IsParamOfType(std::span<const u8> param, std::string_view type) {
+    if (param.size() < 0x0C + type.size() + 1) {
+        return false;
+    }
+    return std::equal(type.begin(), type.end(), param.begin() + 0x0C) &&
+           param[0x0C + type.size()] == 0;
+}
+
+std::optional<u64> FindParamRow(std::span<const u8> param, s32 id) {
+    if (param.size() < 0x40) {
+        return std::nullopt;
+    }
+    u16 rows = 0;
+    std::memcpy(&rows, param.data() + 0x0A, sizeof(rows));
+    if (param.size() < 0x40 + std::size_t{rows} * 24) {
+        return std::nullopt;
+    }
+    std::size_t low = 0;
+    std::size_t high = rows;
+    while (low < high) {
+        const std::size_t middle = (low + high) / 2;
+        s32 row_id = 0;
+        std::memcpy(&row_id, param.data() + 0x40 + middle * 24, sizeof(row_id));
+        if (row_id == id) {
+            u64 offset = 0;
+            std::memcpy(&offset, param.data() + 0x40 + middle * 24 + 8, sizeof(offset));
+            return offset;
+        }
+        if (row_id < id) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    return std::nullopt;
+}
+
 bool IsPartySession(bool party_configured, s32 matching_state) {
     return party_configured &&
            (matching_state == MatchingStateHosting || matching_state == MatchingStateSummonedGuest);

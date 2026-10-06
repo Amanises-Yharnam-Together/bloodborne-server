@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -391,6 +392,29 @@ TEST(BloodborneMultiplayerWalls, ListsTheWallsOfTheMapThePlayerIsOn) {
             EXPECT_EQ(wall.sfx, wall.object + 2000);
         }
     }
+}
+
+// A summoned guest carries special effect 9006, whose max HP rate (SpEffectParam +0x10) is 0.7.
+// A party guest keeps its full HP: the row is found in the loaded param and set to 1.0.
+TEST(BloodborneGuestHp, FindsARowInAParamFile) {
+    // PARAM: row count (u16) at +0x0A, the type name at +0x0C, then 24-byte row entries at +0x40
+    // (id, padding, data offset, name offset), sorted by id.
+    std::vector<u8> param(0x40 + 3 * 24 + 3 * 16, 0);
+    param[0x0A] = 3;
+    const std::string name = "SP_EFFECT_PARAM_ST";
+    std::copy(name.begin(), name.end(), param.begin() + 0x0C);
+    const std::array<s32, 3> ids{9005, 9006, 9008};
+    for (std::size_t row = 0; row < ids.size(); ++row) {
+        const u64 data = 0x40 + 3 * 24 + row * 16;
+        std::memcpy(param.data() + 0x40 + row * 24, &ids[row], sizeof(s32));
+        std::memcpy(param.data() + 0x40 + row * 24 + 8, &data, sizeof(u64));
+    }
+    EXPECT_TRUE(IsParamOfType(param, "SP_EFFECT_PARAM_ST"));
+    EXPECT_FALSE(IsParamOfType(param, "EQUIP_PARAM_GOODS_ST"));
+    EXPECT_EQ(FindParamRow(param, 9006), std::optional<u64>{0x40 + 3 * 24 + 16});
+    EXPECT_EQ(FindParamRow(param, 9007), std::nullopt);
+    EXPECT_EQ(PhantomHpEffect, 9006);
+    EXPECT_EQ(SpEffectMaxHpRateOffset, 0x10u);
 }
 
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {

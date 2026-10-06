@@ -348,6 +348,15 @@ struct MultiplayerWall {
 };
 std::vector<MultiplayerWall> MultiplayerWallsOn(u32 packed_map);
 
+// The summoned guest's special effect that cuts its max HP (SpEffectParam row 9006: max HP rate
+// 0.7 at +0x10). A party guest keeps its full HP.
+constexpr s32 PhantomHpEffect = 9006;
+constexpr u64 SpEffectMaxHpRateOffset = 0x10;
+// A loaded PARAM file: the type name at +0x0C, the row count (u16) at +0x0A and sorted 24-byte
+// row entries (id, padding, data offset) at +0x40.
+bool IsParamOfType(std::span<const u8> param, std::string_view type);
+std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
+
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
 // Resonant) once the world has been stable for a while.
