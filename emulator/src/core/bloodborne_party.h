@@ -320,6 +320,13 @@ std::string EncodeTrophyUpdate(std::string_view member, std::span<const s32> tro
 std::optional<std::vector<s32>> ParseTrophyBoard(std::string_view body);
 std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s32> handled);
 
+// A guest's progress in the host's world never reaches its own save. Picked-up map items
+// (ItemLotParam getItemFlagId 5[0-3]MMxxxx, chalice dungeons 529xxxxx left out) set in a party
+// session are kept in a file, one flag per line, and set again in the guest's own world.
+bool IsMapPickupFlag(s32 flag);
+std::string FormatFlagList(std::span<const s32> flags);
+std::vector<s32> ParseFlagList(std::string_view text);
+
 // A guest that made its own trip is apart from the host until it joins a session again (the
 // session it travelled out of still counts for a moment after the trip starts).
 class GuestApart {

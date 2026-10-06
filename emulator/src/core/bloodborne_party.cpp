@@ -282,6 +282,35 @@ std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s3
     return missing;
 }
 
+bool IsMapPickupFlag(s32 flag) {
+    const bool chalice = flag >= 52900000 && flag < 53000000;
+    return flag >= 50000000 && flag < 54000000 && !chalice;
+}
+
+std::string FormatFlagList(std::span<const s32> flags) {
+    std::string text;
+    for (const s32 flag : flags) {
+        text += std::to_string(flag) + '\n';
+    }
+    return text;
+}
+
+std::vector<s32> ParseFlagList(std::string_view text) {
+    std::vector<s32> flags;
+    while (!text.empty()) {
+        const auto end = text.find('\n');
+        const std::string_view line = text.substr(0, end);
+        text = end == std::string_view::npos ? std::string_view{} : text.substr(end + 1);
+        s32 flag = 0;
+        const auto [parsed_end, error] =
+            std::from_chars(line.data(), line.data() + line.size(), flag);
+        if (!line.empty() && error == std::errc{} && parsed_end == line.data() + line.size()) {
+            flags.push_back(flag);
+        }
+    }
+    return flags;
+}
+
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before,
                                            std::span<const s32> after) {
     std::vector<s32> missing;

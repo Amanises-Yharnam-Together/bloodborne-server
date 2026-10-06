@@ -3666,12 +3666,137 @@ void LogItemButtonAndMapItems() {
     }
 }
 
+// A guest's progress in the host's world (see IsMapPickupFlag): the event flags it set there are
+// kept in a file and set again once it has been home for a while, so its next save has them.
+// EventFlagMan [0x0553B100]; 0x013CFD80(manager, flag, bits) reads a flag (the
+// GetEventFlagValue binding's call).
+constexpr u64 EventFlagManPointerOffset = 0x0553B100;
+constexpr u64 ReadEventFlagBitsOffset = 0x013CFD80;
+constexpr auto GuestProgressInterval = std::chrono::seconds{2};
+constexpr auto GuestProgressHomeDelay = std::chrono::seconds{10};
+
+bool EventFlagOn(s32 flag) {
+    const u64 manager = ReadValue<u64>(image_base + EventFlagManPointerOffset, 0);
+    if (manager < 0x10000) {
+        return false;
+    }
+    using ReadBits = u32 PS4_SYSV_ABI (*)(u64 manager, s32 flag, u32 bits);
+    return (reinterpret_cast<ReadBits>(image_base + ReadEventFlagBitsOffset)(manager, flag, 1) &
+            1) != 0;
+}
+
+std::vector<s32> MapPickupFlags() {
+    const u64 param = FindLoadedParam("ITEMLOT_PARAM_ST");
+    if (param == 0) {
+        return {};
+    }
+    const u16 rows = ReadValue<u16>(param, 0x0A);
+    std::vector<s32> flags;
+    for (u16 row = 0; row < rows; ++row) {
+        const u64 data = ReadValue<u64>(param, 0x40 + u64{row} * 24 + 8);
+        const s32 flag = ReadValue<s32>(param + data, 0x80); // getItemFlagId
+        if (IsMapPickupFlag(flag) && std::ranges::find(flags, flag) == flags.end()) {
+            flags.push_back(flag);
+        }
+    }
+    return flags;
+}
+
+std::filesystem::path GuestProgressFile() {
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "bloodborne_party_progress.txt";
+}
+
+void SaveGuestProgress(std::span<const s32> flags) {
+    std::ofstream file{GuestProgressFile(), std::ios::trunc};
+    file << FormatFlagList(flags);
+}
+
+void KeepGuestProgress(bool in_session) {
+    static std::chrono::steady_clock::time_point last{};
+    static std::chrono::steady_clock::time_point home_since{};
+    static std::vector<s32> watched;
+    static std::unordered_set<s32> seen_on;
+    static bool have_baseline = false;
+    static std::optional<std::vector<s32>> pending;
+    const auto now = std::chrono::steady_clock::now();
+    if (!party_controller || party_controller->SearchEffectId() != SmallResonantBellEffect ||
+        now - last < GuestProgressInterval) {
+        return;
+    }
+    last = now;
+    if (!pending) {
+        std::ifstream file{GuestProgressFile()};
+        const std::string text{std::istreambuf_iterator<char>{file}, {}};
+        pending = ParseFlagList(text);
+    }
+    if (watched.empty()) {
+        watched = MapPickupFlags();
+        if (watched.empty()) {
+            return;
+        }
+        LOG_INFO(Debug, "Bloodborne party: watching {} pickup flags for the guest's own save",
+                 watched.size());
+    }
+    if (in_session) {
+        home_since = {};
+        if (!have_baseline) {
+            seen_on.clear();
+            for (const s32 flag : watched) {
+                if (EventFlagOn(flag)) {
+                    seen_on.insert(flag);
+                }
+            }
+            have_baseline = true;
+            return;
+        }
+        bool changed = false;
+        for (const s32 flag : watched) {
+            if (!seen_on.contains(flag) && EventFlagOn(flag)) {
+                seen_on.insert(flag);
+                if (std::ranges::find(*pending, flag) == pending->end()) {
+                    pending->push_back(flag);
+                    changed = true;
+                    LOG_INFO(Debug, "Bloodborne party: guest picked up item flag {}", flag);
+                }
+            }
+        }
+        if (changed) {
+            SaveGuestProgress(*pending);
+        }
+        return;
+    }
+    have_baseline = false;
+    if (pending->empty() || GetLocalPlayer() < 0x10000) {
+        home_since = {};
+        return;
+    }
+    if (home_since == std::chrono::steady_clock::time_point{}) {
+        home_since = now;
+    }
+    if (now - home_since < GuestProgressHomeDelay) {
+        return;
+    }
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    std::vector<s32> left;
+    for (const s32 flag : *pending) {
+        reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
+        if (!EventFlagOn(flag)) {
+            left.push_back(flag);
+        }
+    }
+    LOG_INFO(Debug, "Bloodborne party: set {} of the guest's pickup flags in its own world",
+             pending->size() - left.size());
+    *pending = std::move(left);
+    SaveGuestProgress(*pending);
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
     KeepGuestFullHp();
     const bool in_session = InPartySession();
     UnlockPartyTrophies(in_session);
+    KeepGuestProgress(in_session);
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
     PlayGuestAsHost(in_session);
     TickGuestLampTrip();

@@ -480,6 +480,21 @@ TEST(BloodborneTrophies, MembersShareWhatTheyUnlockInTheParty) {
     EXPECT_EQ(TrophiesToUnlock(board, handled), (std::vector<s32>{3, 40}));
 }
 
+// A guest's progress in the host's world (picked-up items: ItemLotParam getItemFlagId,
+// 5[0-3]MMxxxx) is recorded and written into its own world once it is back home.
+TEST(BloodborneGuestProgress, RecordsMapPickupsAndKeepsThemInAFile) {
+    EXPECT_TRUE(IsMapPickupFlag(52400100));
+    EXPECT_TRUE(IsMapPickupFlag(50000040));
+    EXPECT_TRUE(IsMapPickupFlag(53600000));
+    EXPECT_FALSE(IsMapPickupFlag(52901000)) << "chalice dungeons";
+    EXPECT_FALSE(IsMapPickupFlag(72410100)) << "lamp";
+    EXPECT_FALSE(IsMapPickupFlag(4000));
+    const std::vector<s32> flags{52400100, 53600000};
+    EXPECT_EQ(FormatFlagList(flags), "52400100\n53600000\n");
+    EXPECT_EQ(ParseFlagList("52400100\n53600000\n"), flags);
+    EXPECT_EQ(ParseFlagList("52400100\nbad\n\n53600000"), flags) << "bad lines are skipped";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));
