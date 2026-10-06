@@ -282,6 +282,13 @@ TEST(BloodbornePartyTrip, RebuildsMissingTasksWithTheKindTheGameUsesOnJoin) {
     EXPECT_EQ(RemoteTaskKind(false), RemoteHostTask);
 }
 
+// On a guest, its own join task (kind 2) is the one that creates the host's character; a host's
+// own task is kind 3. A guest's trip loses it like the others.
+TEST(BloodbornePartyTrip, RebuildsTheGuestsOwnTaskToo) {
+    EXPECT_EQ(LocalTaskKind(false), 2);
+    EXPECT_EQ(LocalTaskKind(true), 3);
+}
+
 TEST(BloodbornePartyTrip, LeavesLocalAndUnfinishedJoinsAlone) {
     for (const s32 local : {2, 3}) {
         EXPECT_FALSE(ShouldRecreateAfterTrip(local, InSessionStep)) << local;

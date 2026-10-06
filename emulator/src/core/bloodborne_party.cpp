@@ -259,6 +259,10 @@ bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_acti
     return in_party_session && !search_effect_active;
 }
 
+s32 LocalTaskKind(bool hosting) {
+    return hosting ? 3 : 2;
+}
+
 s32 RemoteTaskKind(bool hosting) {
     return hosting ? RemoteGuestTask : RemoteHostTask;
 }

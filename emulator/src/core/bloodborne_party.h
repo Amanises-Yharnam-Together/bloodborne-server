@@ -291,6 +291,7 @@ constexpr s32 CreateCharacterStep = 4;
 constexpr s32 InSessionStep = 6;
 bool ShouldRecreateAfterTrip(s32 kind, s32 step);
 s32 RemoteTaskKind(bool hosting);
+s32 LocalTaskKind(bool hosting);
 bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_active);
 // The bell effects (9000/9003, 9005/9006) in `before` that are missing from `after`, in order.
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before, std::span<const s32> after);

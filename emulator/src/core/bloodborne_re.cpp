@@ -2975,6 +2975,7 @@ constexpr u64 MemberIdEqualOffset = 0x00CA1C70;
 // A member id (0x20 bytes) is a ref-counted identity pointer at +0 plus a lock at +8, so only the
 // pointer is kept: copying the lock and comparing through it hung the game.
 struct SavedJoinTask {
+    s32 kind = 0;
     u64 identity = 0;
     u8 slot = 0;
     u8 flags = 0;
@@ -2987,10 +2988,11 @@ void SaveRemoteJoinTasks() {
     std::vector<SavedJoinTask> found;
     ForEachJoinTask([&](u64 task) {
         const s32 kind = ReadValue<s32>(task, 0xE8);
-        if (kind != RemoteHostTask && kind != RemoteGuestTask) {
+        if (kind != RemoteHostTask && kind != RemoteGuestTask && kind != LocalTaskKind(false)) {
             return;
         }
         SavedJoinTask saved{};
+        saved.kind = kind;
         saved.identity = ReadValue<u64>(task, 0xC8);
         saved.slot = ReadValue<u8>(task, 0xEC);
         saved.flags = ReadValue<u8>(task, 0xED);
@@ -3025,24 +3027,9 @@ void RecreateRemotePlayers() {
     const auto set_step = [](u64 task, s32 step) {
         reinterpret_cast<SetStep>(ReadValue<u64>(ReadValue<u64>(task, 0), 0x28))(task, step);
     };
-    for (u64 member = begin; member < end; member += 0x20) {
-        if (id_equal(member, self)) {
-            continue;
-        }
-        u64 found = 0;
-        ForEachJoinTask([&](u64 task) {
-            if (!found && id_equal(task + 0xC8, member)) {
-                found = task;
-            }
-        });
-        if (found) {
-            const s32 kind = ReadValue<s32>(found, 0xE8);
-            if (ShouldRecreateAfterTrip(kind, ReadValue<s32>(found, 0x50))) {
-                set_step(found, CreateCharacterStep);
-                LOG_INFO(Debug, "Bloodborne party trip: re-creating remote player kind={}", kind);
-            }
-            continue;
-        }
+    // What the game does when a member joins (see above), into the step that creates the
+    // character, with the slot and synced-data flag saved at the trip's start.
+    const auto rebuild = [&](u64 member_id, s32 kind, const SavedJoinTask* saved) {
         const u64 allocator = ReadValue<u64>(image_base + TaskAllocatorPointerOffset, 0);
         if (allocator < 0x10000) {
             return;
@@ -3053,17 +3040,9 @@ void RecreateRemotePlayers() {
         if (task < 0x10000) {
             return;
         }
-        const s32 kind = RemoteTaskKind(hosting);
         using Construct = void PS4_SYSV_ABI (*)(u64 task, u64 member_id, s32 kind);
-        reinterpret_cast<Construct>(image_base + JoinTaskConstructOffset)(task, member, kind);
-        const u64 identity = ReadValue<u64>(member, 0);
-        auto saved = std::ranges::find_if(saved_join_tasks, [&](const SavedJoinTask& entry) {
-            return entry.identity == identity;
-        });
-        if (saved == saved_join_tasks.end() && saved_join_tasks.size() == 1) {
-            saved = saved_join_tasks.begin(); // two players: the one remote player there was
-        }
-        if (saved != saved_join_tasks.end()) {
+        reinterpret_cast<Construct>(image_base + JoinTaskConstructOffset)(task, member_id, kind);
+        if (saved) {
             WriteValue(task, 0xEC, saved->slot);
             WriteValue(task, 0xED, static_cast<u8>(saved->flags | 1));
         }
@@ -3073,9 +3052,47 @@ void RecreateRemotePlayers() {
             manager + 8, reinterpret_cast<u64>(&holder));
         set_step(task, CreateCharacterStep);
         LOG_INFO(Debug,
-                 "Bloodborne party trip: rebuilt the join task of a member kind={} "
-                 "task={:#x} slot known={}",
-                 kind, task, saved != saved_join_tasks.end());
+                 "Bloodborne party trip: rebuilt the join task of a member kind={} task={:#x} "
+                 "slot known={}",
+                 kind, task, saved != nullptr);
+    };
+    const auto task_for = [&](u64 member_id) {
+        u64 found = 0;
+        ForEachJoinTask([&](u64 task) {
+            if (!found && id_equal(task + 0xC8, member_id)) {
+                found = task;
+            }
+        });
+        return found;
+    };
+    for (u64 member = begin; member < end; member += 0x20) {
+        if (id_equal(member, self)) {
+            continue;
+        }
+        if (const u64 found = task_for(member)) {
+            const s32 kind = ReadValue<s32>(found, 0xE8);
+            if (ShouldRecreateAfterTrip(kind, ReadValue<s32>(found, 0x50))) {
+                set_step(found, CreateCharacterStep);
+                LOG_INFO(Debug, "Bloodborne party trip: re-creating remote player kind={}", kind);
+            }
+            continue;
+        }
+        const s32 kind = RemoteTaskKind(hosting);
+        const u64 identity = ReadValue<u64>(member, 0);
+        const SavedJoinTask* saved = nullptr;
+        for (const SavedJoinTask& entry : saved_join_tasks) {
+            if (entry.kind == kind && (entry.identity == identity || !saved)) {
+                saved = &entry; // by identity, else the one remote player there was
+            }
+        }
+        rebuild(member, kind, saved);
+    }
+    // On a guest its own task (kind 2) is the one that creates the host's character there.
+    if (!hosting && !task_for(self)) {
+        const auto saved = std::ranges::find_if(saved_join_tasks, [](const SavedJoinTask& entry) {
+            return entry.kind == LocalTaskKind(false);
+        });
+        rebuild(self, LocalTaskKind(false), saved != saved_join_tasks.end() ? &*saved : nullptr);
     }
 }
 
