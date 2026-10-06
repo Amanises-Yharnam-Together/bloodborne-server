@@ -197,7 +197,14 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 - Both rig clients log "permission denied" opening `userdata0005`/`0010` on every save; check
   whether saves land.
 
-## Next phase (Kaniel 2026-10-06): bosses
+## Next (Kaniel 2026-10-06, in this order)
+1. **Guest HP and the nerf on join:** a summoned guest's max HP is cut like a phantom's. The
+   guest-as-host experiment showed the full bar returns with a live type, but that also hid the
+   model, so find the phantom HP reduction itself and switch it off for party guests.
+2. Other guest-as-player items Kaniel lists next.
+3. Then bosses (below).
+
+### Bosses
 - A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
 - No boss fog a guest cannot enter until the host goes there (phantom fog-wall gate, plan item 6).
 - Rig-test that a boss kill keeps the session (`BossClearKeepSessionPatches`, merged, untested).
