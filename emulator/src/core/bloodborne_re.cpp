@@ -2327,6 +2327,25 @@ void HideCharactersAgain() {
     }
 }
 
+// Bisecting the window monster near the Central Yharnam lamp, which appears the moment the
+// party's rest refreshes the world: SHADPS4_BLOODBORNE_REST_SKIP lists parts to leave out (heal,
+// restock, respawn, groups). "groups" hides WorldChrMan +0xA40 (the second list the respawn
+// resets through 0x018EB900) by zeroing its count until the respawn has passed state 3.
+bool RestSkips(std::string_view part) {
+    const char* skip = std::getenv("SHADPS4_BLOODBORNE_REST_SKIP");
+    return skip != nullptr && std::string_view{skip}.find(part) != std::string_view::npos;
+}
+u64 hidden_group_list = 0;
+s32 hidden_group_count = 0;
+
+void RestoreGroupList() {
+    if (hidden_group_list >= 0x10000) {
+        WriteValue(hidden_group_list, 0x08, hidden_group_count);
+        LOG_INFO(Debug, "Bloodborne party rest: put back {} +0xA40 entries", hidden_group_count);
+    }
+    hidden_group_list = 0;
+}
+
 // Does what a reload at the lamp would (see RefreshAtLamp) and asks WorldChrMan for the bonfire
 // respawn (see WorldRespawnStateOffset).
 void RefreshWorldAtLamp(s32 lamp, s32 players) {
@@ -2335,6 +2354,9 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
     const LampRestCalls calls{
         .request_full_recover =
             [] {
+                if (RestSkips("heal")) {
+                    return;
+                }
                 reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset)();
                 if (const u64 player = GetLocalPlayer(); player >= 0x10000) {
                     reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(
@@ -2343,10 +2365,16 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
             },
         .clamp_restock_item =
             [] {
+                if (RestSkips("restock")) {
+                    return;
+                }
                 reinterpret_cast<void PS4_SYSV_ABI (*)()>(image_base + RestockItemClampOffset)();
             },
         .restock_from_storage =
             [] {
+                if (RestSkips("restock")) {
+                    return;
+                }
                 reinterpret_cast<void PS4_SYSV_ABI (*)()>(image_base + RestockFromStorageOffset)();
             },
         .request_world_respawn =
@@ -2354,6 +2382,17 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
                 const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
                 respawn_before =
                     world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : -1;
+                if (RestSkips("respawn")) {
+                    return;
+                }
+                if (respawn_before == 0 && RestSkips("groups")) {
+                    hidden_group_list = ReadValue<u64>(world, 0xA40);
+                    hidden_group_count =
+                        hidden_group_list >= 0x10000 ? ReadValue<s32>(hidden_group_list, 0x08) : 0;
+                    if (hidden_group_list >= 0x10000) {
+                        WriteValue(hidden_group_list, 0x08, s32{0});
+                    }
+                }
                 if (respawn_before == 0) {
                     RememberHiddenCharacters(world);
                     party_rest_respawn_pending.store(true);
@@ -2375,6 +2414,9 @@ void LogWorldRespawnChanges() {
     const s32 state = world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : 0;
     if (state != last) {
         LOG_INFO(Debug, "Bloodborne world respawn state {} -> {}", last, state);
+        if (state >= 3 || state == 0) {
+            RestoreGroupList();
+        }
         if (state == 0) {
             HideCharactersAgain();
         }
