@@ -241,6 +241,20 @@ bool EveryoneElseOnMap(std::span<const MemberMap> board, std::string_view self, 
     return anyone_else;
 }
 
+std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before,
+                                           std::span<const s32> after) {
+    std::vector<s32> missing;
+    for (const s32 effect : before) {
+        // The bells' effects; 9001 (in a session as host) the game puts back itself.
+        constexpr std::array<s32, 4> BellEffects{9000, 9003, 9005, 9006};
+        if (std::ranges::find(BellEffects, effect) != BellEffects.end() &&
+            std::ranges::find(after, effect) == after.end()) {
+            missing.push_back(effect);
+        }
+    }
+    return missing;
+}
+
 bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_active) {
     return in_party_session && !search_effect_active;
 }
@@ -259,6 +273,24 @@ bool SettingIsOn(const char* setting) {
 
 bool ShouldPlayGuestAsHost(bool switched_on, bool in_party_session, s32 character_type) {
     return switched_on && in_party_session && character_type == WhiteGhostCharacterType;
+}
+
+u32 PackedMapOfWarpPoint(s32 warp_point) {
+    const u32 area = static_cast<u32>(warp_point / 100000);
+    const u32 block = static_cast<u32>(warp_point / 10000 % 10);
+    return area << 24 | (block & 0xFF) << 16;
+}
+
+bool IsHeadstoneTravelFlag(s32 flag) {
+    return flag >= 72102000 && flag < 72104000;
+}
+
+s32 HeadstoneWarpPoint(s32 flag) {
+    return flag % 10000 / 10 * 10000 + 2950 + flag % 10;
+}
+
+bool GuestMakesItsOwnLampTrip(bool in_party_session, s32 character_type) {
+    return in_party_session && character_type == WhiteGhostCharacterType;
 }
 
 bool IsPartySession(bool party_configured, s32 matching_state) {
@@ -435,7 +467,7 @@ PartyAction PartyController::Tick(const PartyObservation& observation, Clock::ti
         return PartyAction::Wait;
     }
     if (!observation.matching_idle || observation.search_effect_active ||
-        observation.white_phantom) {
+        observation.white_phantom || observation.waiting_to_meet) {
         // In (or joining) a session, or our search already took: the next time we are back home
         // alone is a fresh start, so forget the old cooldown.
         stable_ticks = 0;

@@ -822,6 +822,7 @@ bool stage_transition_keep_matching_patch_installed{};
 bool world_teardown_hook_installed{};
 bool ghost_death_revive_hook_installed{};
 bool seamless_travel_hooks_installed{};
+bool stop_request_hook_installed{};
 bool host_death_respawn_hook_installed{};
 bool summon_build_host_placement_hook_installed{};
 bool cross_map_guest_handoff_hook_installed{};
@@ -1714,6 +1715,9 @@ void InitPartyController() {
     LOG_INFO(Debug, "Bloodborne party auto-rejoin enabled as {}", role_name);
 }
 
+bool PartyHostOnMyMap();
+extern GuestApart guest_apart;
+
 PartyObservation ObserveParty(u64 player, s32 search_effect) {
     PartyObservation observation{};
     observation.player_valid =
@@ -1736,6 +1740,7 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
 
     observation.search_effect_active =
         observation.player_valid && HasPlayerEffect(player, search_effect);
+    observation.waiting_to_meet = guest_apart.Apart() && !PartyHostOnMyMap();
     observation.white_phantom = observation.player_valid &&
                                 HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) &&
                                 ReadValue<s32>(player, 0x78) == WhiteGhostCharacterType;
@@ -1822,6 +1827,24 @@ void LogLocalEffectChanges() {
         last = effects;
         LOG_INFO(Debug, "Bloodborne local effects:{}", effects.empty() ? " none" : effects);
     }
+}
+
+std::vector<s32> LocalEffects() {
+    std::vector<s32> effects;
+    const u64 player = GetLocalPlayer();
+    const u64 manager = player >= 0x10000 ? ReadValue<u64>(player, 0x1C8) : 0;
+    u64 node = manager >= 0x10000 ? ReadValue<u64>(manager, 0x08) : 0;
+    for (size_t index = 0; node >= 0x10000 && index < 128; ++index) {
+        const u64 next = ReadValue<u64>(node, 0x58);
+        if ((ReadValue<u32>(node, 0x1C) & 0x800C0003U) == 0) {
+            effects.push_back(ReadValue<s32>(node, 0x40));
+        }
+        if (next == node) {
+            break;
+        }
+        node = next;
+    }
+    return effects;
 }
 
 // Lamps as campfires (see IsLampTravelFlag). Two register hooks in the talk scripts' native code
@@ -1978,8 +2001,78 @@ void PS4_SYSV_ABI LetPartyUseLamps(u64, GuestRegisterSnapshot* registers) {
     }
 }
 
+// A party guest's lamp trip (see GuestMakesItsOwnLampTrip): the touch animation, then the warp,
+// both from the party tick.
+// Set by a guest's own trip, cleared once it is in a session again (see waiting_to_meet).
+GuestApart guest_apart;
+s32 guest_trip_point = HuntersDreamWarpPoint;
+// A guest's own warp into the host's map ended in a grey void (no position at arrival); a second
+// after arrival the guest is moved to the lamp the way a revive is.
+bool guest_trip_in_flight{};
+bool guest_white_on_meeting{};
+std::optional<std::chrono::steady_clock::time_point> guest_trip_fixup_at;
+void WarpGuestToLastLamp();
+std::optional<std::chrono::steady_clock::time_point> guest_lamp_touch_at;
+std::optional<std::chrono::steady_clock::time_point> guest_lamp_trip_at;
+constexpr u64 WarpNextStageBonfireOffset = 0x0132E050;
+
+void TickGuestLampTrip() {
+    const auto now = std::chrono::steady_clock::now();
+    if (guest_trip_fixup_at && now >= *guest_trip_fixup_at) {
+        guest_trip_fixup_at.reset();
+        const auto at = LocalPlayerPosition();
+        LOG_INFO(Debug, "Bloodborne party guest trip: position after arrival known={} ({}, {}, {})",
+                 at.has_value(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f, at ? (*at)[2] : 0.0f);
+        WarpGuestToLastLamp();
+    }
+    if (guest_lamp_touch_at && now >= *guest_lamp_touch_at) {
+        guest_lamp_touch_at.reset();
+        using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
+        reinterpret_cast<ForcePlayAnimation>(image_base + ForcePlayAnimationOffset)(
+            0, LocalPlayerEntity, LampTouchAnimation);
+    }
+    if (guest_lamp_trip_at && now >= *guest_lamp_trip_at) {
+        guest_lamp_trip_at.reset();
+        using WarpNextStageBonfire = void PS4_SYSV_ABI (*)(u64 unused, s32 warp_point);
+        // As the events do with SetPlayerRespawnPoint: the lamp a death respawns at. The summon
+        // warp byte (+0x1520, SetSosSignWarp) makes the placement selector use the summon
+        // placement instead (0x01332BC0); it must be clear for a trip to a lamp.
+        if (const u64 global = GetGlobalState(); global >= 0x10000) {
+            LOG_INFO(Debug, "Bloodborne party guest trip: summon warp byte was {}",
+                     ReadValue<u8>(global, 0x1520));
+            WriteValue(global, 0x1528, guest_trip_point);
+            WriteValue(global, 0x1520, u8{0});
+        }
+        reinterpret_cast<WarpNextStageBonfire>(image_base +
+                                               WarpNextStageBonfireOffset)(0, guest_trip_point);
+        guest_apart.Travelled();
+        guest_trip_in_flight = true;
+        LOG_INFO(Debug, "Bloodborne party guest warps to {} ({:#x})", guest_trip_point,
+                 PackedMapOfWarpPoint(guest_trip_point));
+    }
+}
+
 void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers) {
     const s32 flag = static_cast<s32>(registers->r15);
+    if (flag >= 70000000 && flag < 80000000 && party_controller &&
+        party_controller->SearchEffectId() == SmallResonantBellEffect) {
+        LOG_INFO(Debug, "Bloodborne party guest talk sets flag {} (party session={})", flag,
+                 InPartySession()); // diagnostics
+    }
+    // Event 12107000 ends for a client: a party guest's headstone trip is ours to make. Not gated
+    // on the white-phantom type: in the host's Dream that check stopped the trip (the type is
+    // logged to find out why).
+    if (lamp_rest_hooks_installed && IsHeadstoneTravelFlag(flag) && InPartySession() &&
+        party_controller->SearchEffectId() == SmallResonantBellEffect) {
+        const auto now = std::chrono::steady_clock::now();
+        guest_trip_point = HeadstoneWarpPoint(flag);
+        guest_lamp_touch_at = now + std::chrono::milliseconds{500};
+        guest_lamp_trip_at = now + std::chrono::seconds{3};
+        const u64 player = GetLocalPlayer();
+        LOG_INFO(Debug, "Bloodborne party guest travels by headstone {} to {} (type {})", flag,
+                 guest_trip_point, player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1);
+        return;
+    }
     if (!lamp_rest_hooks_installed || !IsLampTravelFlag(flag)) {
         return;
     }
@@ -1989,6 +2082,13 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
     }
     if (!lamp_rests_enabled) {
         LOG_INFO(Debug, "Bloodborne party member travels from lamp {} (party rests off)", flag);
+        const u64 player = GetLocalPlayer();
+        if (player >= 0x10000 && GuestMakesItsOwnLampTrip(true, ReadValue<s32>(player, 0x78))) {
+            const auto now = std::chrono::steady_clock::now();
+            guest_lamp_touch_at = now + std::chrono::milliseconds{500};
+            guest_lamp_trip_at = now + std::chrono::seconds{3};
+            guest_trip_point = HuntersDreamWarpPoint;
+        }
         return;
     }
     const auto position = LocalPlayerPosition();
@@ -2019,6 +2119,22 @@ constexpr std::array<u8, 7> EsdTalkerType{0x49, 0x8B, 0x47, 0x18, 0x48, 0x85, 0x
 alignas(16) std::array<u8, 0x100> host_like_talker{};
 alignas(16) std::array<u64, 8> host_like_talk{};
 
+// A talk object marks itself "phantom talker" (+0x25, what ESD function 19 answers) when it starts
+// and the local player's type is neither live (0) nor grey (8): `mov eax, [rax+0x78]; or eax, 8`
+// with rax = the player. For a party guest the hook points rax at a stand-in of type 0.
+constexpr u64 TalkPhantomCheckOffset = 0x0203AC04;
+constexpr std::array<u8, 6> TalkPhantomCheck{0x8B, 0x40, 0x78, 0x83, 0xC8, 0x08};
+
+void PS4_SYSV_ABI LetPartyGuestsStartTalksLikeTheHost(u64, GuestRegisterSnapshot* registers) {
+    const u64 player = registers->rax;
+    const s32 type = player >= 0x10000 && HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead)
+                         ? ReadValue<s32>(player, 0x78)
+                         : -1;
+    if (lamp_rest_hooks_installed && TalksAsHost(InPartySession(), type)) {
+        registers->rax = reinterpret_cast<u64>(host_like_talker.data());
+    }
+}
+
 void PS4_SYSV_ABI LetPartyGuestsTalkLikeTheHost(u64, GuestRegisterSnapshot* registers) {
     const u64 player = GetLocalPlayer();
     const s32 type = player >= 0x10000 && HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead)
@@ -2036,6 +2152,12 @@ constexpr u64 EsdFunctionIdOffset = 0x0203AD95;
 constexpr std::array<u8, 5> EsdFunctionId{0x89, 0xC1, 0x83, 0xF8, 0x3E};
 constexpr u64 EsdFunctionResultOffset = 0x0203EECF;
 constexpr std::array<u8, 9> EsdFunctionResult{0x41, 0xC7, 0x44, 0x24, 0x08, 0x02, 0x00, 0x00, 0x00};
+// Talk commands (dispatcher 0x0203FFD0, command id in eax at 0x02040002) and the dialog answers
+// (ESD functions 21/22 leave through 0x0203EBCB with the result in ecx) go to the same log,
+// commands as "c<id>".
+constexpr u64 TalkCommandIdOffset = 0x02040002;
+constexpr std::array<u8, 5> TalkCommandId{0x89, 0xC1, 0x83, 0xF8, 0x57};
+constexpr u64 EsdDialogResultOffset = 0x0203EBCB;
 thread_local s32 esd_function_asked = -1;
 std::mutex esd_answers_mutex;
 std::map<std::pair<s32, s32>, u64> esd_answers;
@@ -2053,6 +2175,22 @@ void PS4_SYSV_ABI NoteEsdAnswer(u64, GuestRegisterSnapshot* registers) {
     ++esd_answers[{esd_function_asked, static_cast<s32>(registers->rax)}];
 }
 
+void PS4_SYSV_ABI NoteTalkCommand(u64, GuestRegisterSnapshot* registers) {
+    if (!esd_answers_wanted.load(std::memory_order_relaxed)) {
+        return;
+    }
+    std::scoped_lock lock{esd_answers_mutex};
+    ++esd_answers[{1000 + static_cast<s32>(registers->rax), 0}];
+}
+
+void PS4_SYSV_ABI NoteEsdDialogAnswer(u64, GuestRegisterSnapshot* registers) {
+    if (!esd_answers_wanted.load(std::memory_order_relaxed)) {
+        return;
+    }
+    std::scoped_lock lock{esd_answers_mutex};
+    ++esd_answers[{esd_function_asked, static_cast<s32>(registers->rcx)}];
+}
+
 void LogEsdAnswers(bool party_guest) {
     static std::chrono::steady_clock::time_point last{};
     esd_answers_wanted.store(party_guest, std::memory_order_relaxed);
@@ -2065,7 +2203,8 @@ void LogEsdAnswers(bool party_guest) {
     {
         std::scoped_lock lock{esd_answers_mutex};
         for (const auto& [key, count] : esd_answers) {
-            text += fmt::format("f{}={}x{} ", key.first, key.second, count);
+            text += key.first >= 1000 ? fmt::format("c{}x{} ", key.first - 1000, count)
+                                      : fmt::format("f{}={}x{} ", key.first, key.second, count);
         }
         esd_answers.clear();
     }
@@ -2123,8 +2262,16 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
     if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdFunctionIdOffset),
                                       EsdFunctionId, 0, NoteEsdFunction) ||
         !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdFunctionResultOffset),
-                                      EsdFunctionResult, 0, NoteEsdAnswer)) {
+                                      EsdFunctionResult, 0, NoteEsdAnswer) ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdDialogResultOffset),
+                                      EsdFunctionResult, 0, NoteEsdDialogAnswer) ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkCommandIdOffset),
+                                      TalkCommandId, 0, NoteTalkCommand)) {
         LOG_ERROR(Debug, "Bloodborne talk diagnostics unavailable");
+    }
+    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkPhantomCheckOffset),
+                                      TalkPhantomCheck, 0, LetPartyGuestsStartTalksLikeTheHost)) {
+        LOG_ERROR(Debug, "Bloodborne talk phantom hook unavailable; party guests get no lamps");
     }
     host_like_talk[3] = reinterpret_cast<u64>(host_like_talker.data()); // +0x18
     if (EsdTalkerTypeOffset + EsdTalkerType.size() > image_size ||
@@ -2750,12 +2897,14 @@ bool PartyTripActive() {
 }
 
 void SaveRemoteJoinTasks();
+std::vector<s32> effects_before_trip; // multiplayer effects to put back after the trip
 
 bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot*) {
     if (InPartySession()) {
         std::scoped_lock lock{party_trip_mutex};
         party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap());
         SaveRemoteJoinTasks();
+        effects_before_trip = LocalEffects();
         LOG_INFO(Debug, "Bloodborne party trip started map={:#x}", GetCurrentPackedMap());
     }
     return false;
@@ -2931,6 +3080,15 @@ void RecreateRemotePlayers() {
     }
 }
 
+// Whether everyone else in the party (for a guest: the host) is on this member's map.
+bool PartyHostOnMyMap() {
+    std::scoped_lock lock{map_board_mutex};
+    if (std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}) {
+        return false;
+    }
+    return EveryoneElseOnMap(map_board, map_board_member, GetCurrentPackedMap());
+}
+
 // After this member's trip the other players are re-created once they are all on this map
 // (creating a player into a map it is not on makes its game leave the session).
 bool recreate_players_pending{};
@@ -2944,14 +3102,13 @@ void RestoreSearchAfterTrip(bool in_session) {
     }
     restore_search_pending = false;
     const u64 player = GetLocalPlayer();
-    const s32 effect = party_controller->SearchEffectId();
-    if (player < 0x10000 ||
-        !ShouldRestoreSearchAfterTrip(in_session, HasPlayerEffect(player, effect))) {
+    if (player < 0x10000 || !in_session) {
         return;
     }
-    const bool result = StartPlayerSummonSearch(player, effect);
-    LOG_INFO(Debug, "Bloodborne party trip: put the search effect {} back result={}", effect,
-             result);
+    for (const s32 effect : EffectsToRestoreAfterTrip(effects_before_trip, LocalEffects())) {
+        const bool result = StartPlayerSummonSearch(player, effect);
+        LOG_INFO(Debug, "Bloodborne party trip: put effect {} back result={}", effect, result);
+    }
 }
 
 // Experiment: SHADPS4_BLOODBORNE_GUEST_AS_HOST=1 makes a party guest a live player (SetChrType 0,
@@ -2971,14 +3128,19 @@ void PlayGuestAsHost(bool in_session) {
 
 void LogEsdAnswers(bool party_guest);
 
+void TickGuestLampTrip();
+
 void TickPlayersOnThisMap() {
     const bool in_session = InPartySession();
     PlayGuestAsHost(in_session);
+    TickGuestLampTrip();
     LogEsdAnswers(in_session && party_controller &&
                   party_controller->SearchEffectId() == SmallResonantBellEffect);
     RestoreSearchAfterTrip(in_session);
     const u32 map = GetCurrentPackedMap();
-    party_map_now.store(in_session ? map : 0);
+    // Posted in and out of a session: a guest apart from the host waits for the host's map.
+    party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
+    guest_apart.Tick(in_session);
     if (!in_session) {
         recreate_players_pending = false;
         saved_join_tasks.clear();
@@ -3002,6 +3164,19 @@ void TickPlayersOnThisMap() {
     }
     recreate_players_pending = false;
     LOG_INFO(Debug, "Bloodborne party trip: everyone is on map {:#x}; re-creating players", map);
+    // As a live player the guest runs the map as its own: it neither sees the host nor hits its
+    // enemies. A white phantom again, as the death revive does it. (Made white while apart, the
+    // host's game dropped it.)
+    if (guest_white_on_meeting) {
+        guest_white_on_meeting = false;
+        const u64 player = GetLocalPlayer();
+        if (player >= 0x10000 && ReadValue<s32>(player, 0x78) != WhiteGhostCharacterType) {
+            LOG_INFO(Debug, "Bloodborne party guest meets the host as type {}; white again",
+                     ReadValue<s32>(player, 0x78));
+            reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, s32)>(image_base + SetChrTypeOffset)(
+                0, LocalPlayerEntity, WhiteGhostCharacterType);
+        }
+    }
     RecreateRemotePlayers();
 }
 
@@ -3017,9 +3192,19 @@ void TickPartyTrip() {
     const bool was_active = party_trip.Active(now);
     party_trip.ObserveStage(GetCurrentPackedMap(), ReadValue<u8>(state, 0x08) != 0);
     if (was_active && !party_trip.Active(now)) {
-        LOG_INFO(Debug, "Bloodborne party trip: arrived map={:#x}", GetCurrentPackedMap());
+        const auto at = LocalPlayerPosition();
+        LOG_INFO(Debug, "Bloodborne party trip: arrived map={:#x} at=({}, {}, {}) lamp={}",
+                 GetCurrentPackedMap(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f,
+                 at ? (*at)[2] : 0.0f, ReadValue<s32>(state, 0x1528));
         recreate_players_pending = true;
         restore_search_pending = true;
+        if (guest_trip_in_flight) {
+            guest_trip_in_flight = false;
+            guest_trip_fixup_at = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+            // The load makes the guest a live player (type 0). That is what lets it use the
+            // Dream's NPCs while apart; it turns white again once it meets the host (below).
+            guest_white_on_meeting = true;
+        }
     }
 }
 
@@ -3042,6 +3227,18 @@ bool PS4_SYSV_ABI LogMemberLeave(u64, const GuestRegisterSnapshot* registers) {
     return false;
 }
 
+// CSMultiPlayMan StopRequest (0x01ED07A0): a phantom's stage transition calls it (0x013CDEF6)
+// before LeaveSession, which takes the guest out of the room. Skipped during a party trip.
+bool PS4_SYSV_ABI KeepMatchingDuringTrip(u64, const GuestRegisterSnapshot* registers) {
+    if (!PartyTripActive()) {
+        return false;
+    }
+    const u64 caller = ReadValue<u64>(registers->rsp, 0);
+    LOG_INFO(Debug, "Bloodborne party trip: skipped StopRequest from {:#x}",
+             caller >= image_base ? caller - image_base : caller);
+    return true;
+}
+
 void InstallSeamlessTravel(u64 base, u64 image_size) {
     if (!party_controller || !world_teardown_hook_installed ||
         LeaveSessionOffset + StandardR15Prologue.size() > image_size) {
@@ -3056,6 +3253,12 @@ void InstallSeamlessTravel(u64 base, u64 image_size) {
         return;
     }
     seamless_travel_hooks_installed = true;
+    if (!InstallGuestFunctionOverride(reinterpret_cast<void*>(base + MultiPlayStopRequestOffset),
+                                      prologue, 0, KeepMatchingDuringTrip)) {
+        LOG_ERROR(Debug, "Bloodborne StopRequest hook unavailable; a guest's trip leaves the room");
+    } else {
+        stop_request_hook_installed = true;
+    }
     if (!InstallGuestFunctionOverride(reinterpret_cast<void*>(base + MemberLeaveOffset), prologue,
                                       0, LogMemberLeave)) {
         LOG_ERROR(Debug, "Bloodborne member-leave log unavailable");
@@ -5049,7 +5252,8 @@ bool VerifySites() {
             (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) ||
             (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) ||
             (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset) ||
-            (seamless_travel_hooks_installed && site.offset == StageTransitionEntryOffset)) {
+            (seamless_travel_hooks_installed && site.offset == StageTransitionEntryOffset) ||
+            (stop_request_hook_installed && site.offset == MultiPlayStopRequestOffset)) {
             continue;
         }
         const auto expected = std::span<const u8>{site.prologue.data(), site.prologue_size};
@@ -5782,7 +5986,8 @@ void InstallReverseEngineeringTrace() {
             (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) ||
             (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) ||
             (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset) ||
-            (seamless_travel_hooks_installed && site.offset == StageTransitionEntryOffset)) {
+            (seamless_travel_hooks_installed && site.offset == StageTransitionEntryOffset) ||
+            (stop_request_hook_installed && site.offset == MultiPlayStopRequestOffset)) {
             ++hook_count;
             continue;
         }

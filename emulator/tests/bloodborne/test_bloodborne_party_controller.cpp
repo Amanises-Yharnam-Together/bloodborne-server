@@ -84,6 +84,31 @@ TEST(BloodbornePartyController, AGuestLeftBehindByItsHostDoesNotSearch) {
     EXPECT_EQ(TickUntilDecision(controller, left_behind, T0), PartyAction::Wait);
 }
 
+// A guest that travelled on its own is in its own world; it rejoins only once it is back on the
+// host's map, so the cross-map join does not pull it to wherever the host is.
+TEST(BloodbornePartyController, AGuestApartWaitsUntilItIsOnTheHostsMap) {
+    PartyController controller(PartyRole::Guest);
+    PartyObservation apart = Idle();
+    apart.waiting_to_meet = true;
+    EXPECT_EQ(TickUntilDecision(controller, apart, T0), PartyAction::Wait);
+    EXPECT_EQ(TickUntilDecision(controller, Idle(), T0), PartyAction::StartSearch);
+}
+
+// The guest is still in the old session for a moment after its trip starts; only joining a
+// session again ends "apart".
+TEST(BloodborneGuestApart, EndsOnlyWithTheNextJoin) {
+    GuestApart apart;
+    apart.Tick(true);
+    EXPECT_FALSE(apart.Apart());
+    apart.Travelled();
+    apart.Tick(true); // the session it travelled out of
+    EXPECT_TRUE(apart.Apart());
+    apart.Tick(false);
+    EXPECT_TRUE(apart.Apart());
+    apart.Tick(true); // joined again
+    EXPECT_FALSE(apart.Apart());
+}
+
 TEST(BloodbornePartyController, AnyDisturbanceRestartsTheStabilityCount) {
     PartyController controller(PartyRole::Guest);
     for (u32 i = 1; i < PartyController::StableTicksBeforeSearch; ++i) {
@@ -300,6 +325,17 @@ TEST(BloodbornePartyMaps, RecreatesOnlyWhenEveryoneElseIsOnThisMap) {
 
 // The new stage's load drops the bell's search effect (9000/9003 for the host), which the game
 // only adds when a bell is rung. After a trip in a party session it is put back.
+// The multiplayer effects a player carries into a trip (the host's 9000/9003, the guest's
+// 9005/9006) are lost with the old stage; the ones it had are put back on arrival.
+TEST(BloodbornePartyTrip, PutsBackTheMultiplayerEffectsThePlayerHad) {
+    const std::vector<s32> before{6300, 9000, 40, 9003, 9001};
+    const std::vector<s32> after{6300, 40};
+    EXPECT_EQ(EffectsToRestoreAfterTrip(before, after), (std::vector<s32>{9000, 9003}));
+    const std::vector<s32> guest_before{6300, 40, 9006};
+    EXPECT_EQ(EffectsToRestoreAfterTrip(guest_before, after), (std::vector<s32>{9006}));
+    EXPECT_TRUE(EffectsToRestoreAfterTrip(before, before).empty());
+}
+
 TEST(BloodbornePartyTrip, PutsTheSearchEffectBackAfterTheTrip) {
     EXPECT_TRUE(ShouldRestoreSearchAfterTrip(true, false));
     EXPECT_FALSE(ShouldRestoreSearchAfterTrip(true, true)) << "still there";

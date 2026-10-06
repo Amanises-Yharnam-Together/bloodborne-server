@@ -46,7 +46,8 @@ struct PartyObservation {
     bool stage_transition = false;
     bool matching_idle = false; // no multiplayer session, not even a pending one
     bool search_effect_active = false;
-    bool white_phantom = false; // still in a host's world (the host may have left)
+    bool white_phantom = false;   // still in a host's world (the host may have left)
+    bool waiting_to_meet = false; // travelled on its own; the host is on another map
 };
 
 // CSMultiPlayMan session state (+0x124) as seen in the rig, and the summon-reload marker the
@@ -163,6 +164,16 @@ bool LampRestsEnabled(const char* setting);
 bool IsPartySession(bool party_configured, s32 matching_state);
 // Whether the talk scripts should see this player as the host (ESD function 14 = 0).
 bool TalksAsHost(bool in_party_session, s32 character_type);
+// The Hunter's Dream lamp the lamps' trip warps to (common event 7200: WarpPlayerToRespawnPoint).
+constexpr s32 HuntersDreamWarpPoint = 2102962;
+// The packed map WarpNextStage_Bonfire (0x0132E050) derives from a warp point: area AA and block B
+// of AABxxxx.
+u32 PackedMapOfWarpPoint(s32 warp_point);
+// The Dream's headstones: "travel to <lamp>" sets 7210MMML for event 12107000.
+bool IsHeadstoneTravelFlag(s32 flag);
+s32 HeadstoneWarpPoint(s32 flag);
+// A party guest's lamp trip, which the game's event would end for a client.
+bool GuestMakesItsOwnLampTrip(bool in_party_session, s32 character_type);
 // Whether an environment setting is "1".
 bool SettingIsOn(const char* setting);
 // The guest-as-host experiment: turn a white phantom in a party session into a live player.
@@ -281,6 +292,8 @@ constexpr s32 InSessionStep = 6;
 bool ShouldRecreateAfterTrip(s32 kind, s32 step);
 s32 RemoteTaskKind(bool hosting);
 bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_active);
+// The bell effects (9000/9003, 9005/9006) in `before` that are missing from `after`, in order.
+std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before, std::span<const s32> after);
 
 // The party's map board on shadNet (POST /bloodborne/party/map): each member posts
 // "<member> <map>" (the packed map in hex) and reads back one such line per member.
@@ -292,6 +305,33 @@ std::string EncodeMapUpdate(std::string_view member, u32 map);
 std::optional<std::vector<MemberMap>> ParseMapBoard(std::string_view body);
 // Whether there is someone else in the party and all of them are on `map`.
 bool EveryoneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map);
+
+// A guest that made its own trip is apart from the host until it joins a session again (the
+// session it travelled out of still counts for a moment after the trip starts).
+class GuestApart {
+public:
+    void Travelled() {
+        apart = true;
+        left_session = false;
+    }
+    void Tick(bool in_session) {
+        if (!apart) {
+            return;
+        }
+        if (!in_session) {
+            left_session = true;
+        } else if (left_session) {
+            apart = false;
+        }
+    }
+    bool Apart() const {
+        return apart;
+    }
+
+private:
+    bool apart = false;
+    bool left_session = false;
+};
 
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small

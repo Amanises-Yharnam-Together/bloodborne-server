@@ -173,6 +173,9 @@ party session (party configured and matching state 3 or 6) only:
 - A party member's trip keeps the session (`PartyTrip`, marked at the stage transition
   0x013CDE30, skips the teardown StopRequest). Plan and the first experiment's result:
   `docs/SEAMLESS_TRAVEL_PLAN.md`.
+- Guest-as-host experiment (`SHADPS4_BLOODBORNE_GUEST_AS_HOST=1`, SetChrType 0 for a party
+  guest): the guest keeps its full HP bar (no phantom HP cut) and can fight, use ladders and
+  doors, but its model is invisible on both sides and lamps stay hidden. Off by default.
 - The trace site named "ForceSummonSuccess" (0x013849A0) is BlockClear2.
 - Both rig clients log "permission denied" opening `userdata0005`/`0010` on every save; check
   whether saves land.

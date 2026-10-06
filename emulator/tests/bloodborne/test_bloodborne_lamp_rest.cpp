@@ -52,6 +52,32 @@ TEST(BloodborneLampRest, APartyGuestTalksToLampsLikeTheHost) {
     EXPECT_FALSE(TalksAsHost(true, 2)) << "an invader";
 }
 
+// Common event 7200 (the lamp's trip) ends at once for a client, so a party guest's trip is done
+// by the emulator: WarpNextStage_Bonfire to the Hunter's Dream lamp, 2102962. The binding packs
+// the map from the warp point the way this does.
+TEST(BloodborneLampRest, AGuestsLampTripGoesToTheHuntersDreamLamp) {
+    EXPECT_EQ(HuntersDreamWarpPoint, 2102962);
+    EXPECT_EQ(PackedMapOfWarpPoint(HuntersDreamWarpPoint), 0x15000000u);
+    EXPECT_EQ(PackedMapOfWarpPoint(2412951), 0x18010000u); // Central Yharnam's first lamp
+    EXPECT_TRUE(GuestMakesItsOwnLampTrip(true, WhiteGhostCharacterType));
+    EXPECT_FALSE(GuestMakesItsOwnLampTrip(true, 0)) << "the host's trip is the game's";
+    EXPECT_FALSE(GuestMakesItsOwnLampTrip(false, WhiteGhostCharacterType));
+}
+
+// The Hunter's Dream headstones set 7210MMML (map MMM, lamp L) for event 12107000, which ends for
+// a client too; the lamp it leads to is respawn point MMM2950 + L.
+TEST(BloodborneLampRest, AGuestsHeadstoneTripGoesToTheChosenLamp) {
+    EXPECT_TRUE(IsHeadstoneTravelFlag(72102411));
+    EXPECT_EQ(HeadstoneWarpPoint(72102411), 2412951); // Central Yharnam, Great Bridge
+    EXPECT_EQ(HeadstoneWarpPoint(72102200), 2202950);
+    EXPECT_EQ(HeadstoneWarpPoint(72103401), 3402951);
+    EXPECT_EQ(HeadstoneWarpPoint(72102110), 2112950);
+    // Chalice and dungeon warps of the Dream are something else.
+    EXPECT_FALSE(IsHeadstoneTravelFlag(72100300));
+    EXPECT_FALSE(IsHeadstoneTravelFlag(72100420));
+    EXPECT_FALSE(IsHeadstoneTravelFlag(72410101)) << "a lamp";
+}
+
 TEST(BloodborneLampRest, OnlyAPartySessionTreatsLampsAsCampfires) {
     EXPECT_TRUE(IsPartySession(true, MatchingStateHosting));
     EXPECT_TRUE(IsPartySession(true, MatchingStateSummonedGuest));
