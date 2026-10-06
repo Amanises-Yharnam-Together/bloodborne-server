@@ -3526,9 +3526,13 @@ void LogItemButtonAndMapItems() {
     std::string lists;
     std::string nearest;
     const auto position = MapItemSearchPlayerPosition();
+    if (position) {
+        nearest = fmt::format(" player at ({:.1f}, {:.1f}, {:.1f});", (*position)[0],
+                              (*position)[1], (*position)[2]);
+    }
     const u64 manager = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
     if (manager >= 0x10000 && HasMemoryAccess(manager, 0x40, MemoryProt::CpuRead)) {
-        float best = 1e30f;
+        std::vector<std::pair<float, std::string>> closest;
         for (const u64 list : {0x18, 0x28, 0x38}) {
             u32 count = 0, usable = 0, with_handle = 0;
             u64 item = ReadValue<u64>(manager, list);
@@ -3539,23 +3543,25 @@ void LogItemButtonAndMapItems() {
                 usable += (flags & 0x40) != 0;
                 with_handle += (ReadValue<u32>(item, 0x20) >> 4) != 0;
                 if (position) {
-                    const float dx = ReadValue<float>(item, 0x30) - (*position)[0];
-                    const float dy = ReadValue<float>(item, 0x34) - (*position)[1];
-                    const float dz = ReadValue<float>(item, 0x38) - (*position)[2];
-                    const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-                    if (distance < best) {
-                        best = distance;
-                        nearest = fmt::format(
-                            " nearest list {:#x} {:.1f} m handle {:#x} flags {:#x} button {} "
-                            "text {}",
-                            list, distance, ReadValue<u32>(item, 0x20), flags,
-                            ReadValue<s32>(item, 0x4C), ReadValue<s32>(item, 0x50));
-                    }
+                    const float x = ReadValue<float>(item, 0x30);
+                    const float y = ReadValue<float>(item, 0x34);
+                    const float z = ReadValue<float>(item, 0x38);
+                    const float dx = x - (*position)[0];
+                    const float dy = y - (*position)[1];
+                    const float dz = z - (*position)[2];
+                    closest.emplace_back(
+                        std::sqrt(dx * dx + dy * dy + dz * dz),
+                        fmt::format(" [{:#x} at ({:.1f}, {:.1f}, {:.1f}) flags {:#x}]",
+                                    ReadValue<u32>(item, 0x20), x, y, z, flags));
                 }
                 item = ReadValue<u64>(item, 0);
             }
             lists += fmt::format(" [{:#x}: {} items, {} usable, {} with handle]", list, count,
                                  usable, with_handle);
+        }
+        std::ranges::sort(closest, {}, &std::pair<float, std::string>::first);
+        for (size_t index = 0; index < std::min<size_t>(closest.size(), 4); ++index) {
+            nearest += fmt::format(" {:.1f} m{}", closest[index].first, closest[index].second);
         }
     }
     const std::string text = fmt::format(
