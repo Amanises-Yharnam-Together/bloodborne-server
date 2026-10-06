@@ -3356,25 +3356,25 @@ u64 SoloMapItemStandInAddress() {
 }
 
 void PS4_SYSV_ABI CreateMapItemsForPartyGuest(u64, GuestRegisterSnapshot* registers) {
-    if (GuestHandlesMapItemsAlone(InPartySession())) {
+    if (GuestHandlesMapItemsAlone(party_controller.has_value())) {
         registers->rax = SoloMapItemStandInAddress();
     }
 }
 
 void PS4_SYSV_ABI CreateMapItemsInJoinedSession(u64, GuestRegisterSnapshot* registers) {
-    if (GuestHandlesMapItemsAlone(InPartySession())) {
+    if (GuestHandlesMapItemsAlone(party_controller.has_value())) {
         registers->rdx = SoloMapItemStandInAddress();
     }
 }
 
 void PS4_SYSV_ABI GiveMapItemsAHandleInJoinedSession(u64, GuestRegisterSnapshot* registers) {
-    if (GuestHandlesMapItemsAlone(InPartySession())) {
+    if (GuestHandlesMapItemsAlone(party_controller.has_value())) {
         registers->r15 = SoloMapItemStandInAddress();
     }
 }
 
 void PS4_SYSV_ABI LetPartyGuestPickUpMapItems(u64, GuestRegisterSnapshot* registers) {
-    if (GuestHandlesMapItemsAlone(InPartySession())) {
+    if (GuestHandlesMapItemsAlone(party_controller.has_value())) {
         registers->rax = SoloMapItemStandInAddress();
     }
 }

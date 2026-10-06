@@ -301,8 +301,8 @@ const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn() {
     return stand_in;
 }
 
-bool GuestHandlesMapItemsAlone(bool in_party_session) {
-    return in_party_session;
+bool GuestHandlesMapItemsAlone(bool party_configured) {
+    return party_configured;
 }
 
 u32 PackedMapOfWarpPoint(s32 warp_point) {
