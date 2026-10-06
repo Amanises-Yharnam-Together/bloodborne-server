@@ -39,6 +39,7 @@
 #include "core/debugger.h"
 #include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
+#include "core/libraries/np/np_trophy.h"
 #include "core/memory.h"
 
 #include <httplib.h>
@@ -1923,6 +1924,51 @@ std::jthread rest_board_client;
 // Seamless travel: the map this member is on while in a party session (0 otherwise), posted to
 // the party's map board by the same client thread, and the board it read back.
 std::atomic<u32> party_map_now{};
+
+// Shared trophies: what the game unlocked itself while in a party session (posted to the
+// party's trophy board), every id this member has dealt with, and the other members' unlocks
+// waiting for the game thread to apply.
+std::atomic<bool> trophy_board_active{};
+std::mutex trophy_mutex;
+std::vector<s32> trophies_earned_in_party;
+std::vector<s32> trophies_handled;
+std::vector<s32> trophies_to_unlock;
+
+void NoteGameTrophyUnlock(s32 trophy) {
+    if (!trophy_board_active.load()) {
+        return;
+    }
+    std::scoped_lock lock{trophy_mutex};
+    if (std::ranges::find(trophies_earned_in_party, trophy) == trophies_earned_in_party.end()) {
+        trophies_earned_in_party.push_back(trophy);
+        trophies_handled.push_back(trophy);
+    }
+    LOG_INFO(Debug, "Bloodborne party: sharing trophy {} with the party", trophy);
+}
+
+void ReadTrophyBoard(std::span<const s32> board) {
+    std::scoped_lock lock{trophy_mutex};
+    for (const s32 trophy : TrophiesToUnlock(board, trophies_handled)) {
+        trophies_handled.push_back(trophy);
+        trophies_to_unlock.push_back(trophy);
+    }
+}
+
+// On the game thread: unlocks the other members' trophies.
+void UnlockPartyTrophies(bool in_session) {
+    trophy_board_active.store(in_session);
+    std::vector<s32> pending;
+    {
+        std::scoped_lock lock{trophy_mutex};
+        pending.swap(trophies_to_unlock);
+    }
+    for (const s32 trophy : pending) {
+        const int result = Libraries::Np::NpTrophy::UnlockTrophyFromParty(trophy);
+        LOG_INFO(Debug, "Bloodborne party: unlocked the party's trophy {} result={:#x}", trophy,
+                 static_cast<u32>(result));
+    }
+}
+
 std::mutex map_board_mutex;
 std::vector<MemberMap> map_board;
 std::string map_board_member;
@@ -2303,6 +2349,7 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
     std::condition_variable_any wait;
     s32 posted = NotResting;
     bool failing = false;
+    auto next_trophy_post = std::chrono::steady_clock::now();
     while (!stop.stop_requested()) {
         {
             std::unique_lock lock{wait_mutex};
@@ -2318,6 +2365,22 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 map_board = *maps;
                 map_board_member = member;
                 map_board_time = std::chrono::steady_clock::now();
+            }
+        }
+        if (trophy_board_active.load() && std::chrono::steady_clock::now() >= next_trophy_post) {
+            next_trophy_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
+            std::vector<s32> earned;
+            {
+                std::scoped_lock lock{trophy_mutex};
+                earned = trophies_earned_in_party;
+            }
+            const auto trophy_response =
+                client.Post("/bloodborne/party/trophy", headers, EncodeTrophyUpdate(member, earned),
+                            "text/plain");
+            if (const auto trophies = trophy_response && trophy_response->status == 200
+                                          ? ParseTrophyBoard(trophy_response->body)
+                                          : std::nullopt) {
+                ReadTrophyBoard(*trophies);
             }
         }
         // In a session every member reads the board (to join a rest nearby); outside one only
@@ -2361,6 +2424,7 @@ void StartRestBoardClient() {
         base_url.empty()) {
         return;
     }
+    Libraries::Np::NpTrophy::SetTrophyUnlockObserver(NoteGameTrophyUnlock);
     rest_board_client = std::jthread(RunRestBoardClient, base_url, *party);
 }
 
@@ -3607,6 +3671,7 @@ void TickPlayersOnThisMap() {
     LogItemButtonAndMapItems();
     KeepGuestFullHp();
     const bool in_session = InPartySession();
+    UnlockPartyTrophies(in_session);
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
     PlayGuestAsHost(in_session);
     TickGuestLampTrip();

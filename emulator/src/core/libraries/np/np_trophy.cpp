@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <mutex>
 #include <unordered_map>
 #include <pugixml.hpp>
 
@@ -137,6 +139,14 @@ static Common::SlotVector<OrbisNpTrophyHandle> trophy_handles{};
 static Common::SlotVector<ContextKey> trophy_contexts{};
 static std::unordered_map<ContextKey, TrophyContext, ContextKeyHash> contexts_internal{};
 
+// Shared trophies (Bloodborne party): the game's own context and handle, so another party
+// member's unlock can be applied here, and who wants to hear about the game's own unlocks.
+static OrbisNpTrophyContext last_context = ORBIS_NP_TROPHY_INVALID_CONTEXT;
+static OrbisNpTrophyHandle last_handle = ORBIS_NP_TROPHY_INVALID_HANDLE;
+static std::atomic<TrophyUnlockObserver> unlock_observer{};
+static std::recursive_mutex unlock_mutex;
+static thread_local bool unlocking_from_party = false;
+
 void ORBIS_NP_TROPHY_FLAG_ZERO(OrbisNpTrophyFlagArray* p) {
     for (int i = 0; i < ORBIS_NP_TROPHY_NUM_MAX; i++) {
         uint32_t array_index = i / 32;
@@ -215,6 +225,7 @@ s32 PS4_SYSV_ABI sceNpTrophyCreateContext(OrbisNpTrophyContext* context,
     const auto ctx_id = trophy_contexts.insert(user_id, service_label);
 
     *context = ctx_id.index + 1;
+    last_context = *context;
 
     auto& ctx = contexts_internal[key];
     ctx.context_id = *context;
@@ -238,6 +249,7 @@ s32 PS4_SYSV_ABI sceNpTrophyCreateHandle(OrbisNpTrophyHandle* handle) {
     const auto handle_id = trophy_handles.insert();
 
     *handle = handle_id.index + 1;
+    last_handle = *handle;
     LOG_INFO(Lib_NpTrophy, "New handle = {}", *handle);
     return ORBIS_OK;
 }
@@ -859,6 +871,7 @@ int PS4_SYSV_ABI sceNpTrophyRegisterContext(OrbisNpTrophyContext context,
 int PS4_SYSV_ABI sceNpTrophyUnlockTrophy(OrbisNpTrophyContext context, OrbisNpTrophyHandle handle,
                                          OrbisNpTrophyId trophyId, OrbisNpTrophyId* platinumId) {
     LOG_INFO(Lib_NpTrophy, "Unlocking trophy id {}", trophyId);
+    std::scoped_lock unlock_lock{unlock_mutex};
 
     if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT)
         return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
@@ -1009,7 +1022,27 @@ int PS4_SYSV_ABI sceNpTrophyUnlockTrophy(OrbisNpTrophyContext context, OrbisNpTr
                          platinum_id, platinum_timestamp);
     LOG_INFO(Lib_NpTrophy, "Trophy {} successfully saved.", trophyId);
 
+    if (const auto observer = unlock_observer.load(); observer && !unlocking_from_party) {
+        observer(trophyId);
+    }
     return ORBIS_OK;
+}
+
+void SetTrophyUnlockObserver(TrophyUnlockObserver observer) {
+    unlock_observer.store(observer);
+}
+
+int UnlockTrophyFromParty(OrbisNpTrophyId trophyId) {
+    std::scoped_lock lock{unlock_mutex};
+    if (last_context == ORBIS_NP_TROPHY_INVALID_CONTEXT ||
+        last_handle == ORBIS_NP_TROPHY_INVALID_HANDLE) {
+        return ORBIS_NP_TROPHY_ERROR_NOT_REGISTERED;
+    }
+    OrbisNpTrophyId platinum_id = ORBIS_NP_TROPHY_INVALID_TROPHY_ID;
+    unlocking_from_party = true;
+    const int result = sceNpTrophyUnlockTrophy(last_context, last_handle, trophyId, &platinum_id);
+    unlocking_from_party = false;
+    return result;
 }
 
 int PS4_SYSV_ABI sceNpTrophyGroupArrayGetNum() {

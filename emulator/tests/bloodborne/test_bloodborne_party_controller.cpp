@@ -465,6 +465,21 @@ TEST(BloodborneGuestLoot, PartyMembersIgnoreEachOthersMapItemSync) {
     EXPECT_EQ(MapItemPacketHeaderSeen(clear_items, false), clear_items);
 }
 
+// Shared trophies (POST /bloodborne/party/trophy): each member posts "<member> [<id>...]" with
+// what it unlocked in the party and reads back one id per line; it unlocks the ones it has not
+// handled yet.
+TEST(BloodborneTrophies, MembersShareWhatTheyUnlockInTheParty) {
+    const std::vector<s32> earned{12, 3};
+    EXPECT_EQ(EncodeTrophyUpdate("host", earned), "host 12 3");
+    EXPECT_EQ(EncodeTrophyUpdate("guest", {}), "guest");
+    EXPECT_EQ(ParseTrophyBoard("3\n12\n"), (std::optional<std::vector<s32>>{{3, 12}}));
+    EXPECT_EQ(ParseTrophyBoard(""), (std::optional<std::vector<s32>>{std::vector<s32>{}}));
+    EXPECT_EQ(ParseTrophyBoard("3\nx\n"), std::nullopt);
+    const std::vector<s32> board{3, 12, 40};
+    const std::vector<s32> handled{12};
+    EXPECT_EQ(TrophiesToUnlock(board, handled), (std::vector<s32>{3, 40}));
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

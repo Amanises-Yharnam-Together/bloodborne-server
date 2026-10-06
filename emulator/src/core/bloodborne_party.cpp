@@ -244,6 +244,44 @@ bool EveryoneElseOnMap(std::span<const MemberMap> board, std::string_view self, 
     return anyone_else;
 }
 
+std::string EncodeTrophyUpdate(std::string_view member, std::span<const s32> trophies) {
+    std::string body{member};
+    for (const s32 trophy : trophies) {
+        body += ' ' + std::to_string(trophy);
+    }
+    return body;
+}
+
+std::optional<std::vector<s32>> ParseTrophyBoard(std::string_view body) {
+    std::vector<s32> trophies;
+    while (!body.empty()) {
+        const auto end = body.find('\n');
+        const std::string_view line = body.substr(0, end);
+        body = end == std::string_view::npos ? std::string_view{} : body.substr(end + 1);
+        if (line.empty()) {
+            continue;
+        }
+        s32 trophy = 0;
+        const auto [parsed_end, error] =
+            std::from_chars(line.data(), line.data() + line.size(), trophy);
+        if (error != std::errc{} || parsed_end != line.data() + line.size() || trophy < 0) {
+            return std::nullopt;
+        }
+        trophies.push_back(trophy);
+    }
+    return trophies;
+}
+
+std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s32> handled) {
+    std::vector<s32> missing;
+    for (const s32 trophy : board) {
+        if (std::ranges::find(handled, trophy) == handled.end()) {
+            missing.push_back(trophy);
+        }
+    }
+    return missing;
+}
+
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before,
                                            std::span<const s32> after) {
     std::vector<s32> missing;

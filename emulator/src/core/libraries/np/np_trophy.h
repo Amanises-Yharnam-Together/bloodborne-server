@@ -225,5 +225,11 @@ int PS4_SYSV_ABI Func_9F80071876FFA5F6();
 int PS4_SYSV_ABI Func_F8EF6F5350A91990();
 int PS4_SYSV_ABI Func_FA7A2DD770447552();
 
+// Shared trophies (Bloodborne party): told about every trophy the game unlocks itself, and
+// unlocks another member's trophy with the game's own context and handle.
+using TrophyUnlockObserver = void (*)(OrbisNpTrophyId trophyId);
+void SetTrophyUnlockObserver(TrophyUnlockObserver observer);
+int UnlockTrophyFromParty(OrbisNpTrophyId trophyId);
+
 void RegisterLib(Core::Loader::SymbolsResolver* sym);
 } // namespace Libraries::Np::NpTrophy

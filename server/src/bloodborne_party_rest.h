@@ -74,4 +74,30 @@ private:
     QHash<QByteArray, QHash<QByteArray, Entry>> m_parties;
 };
 
+// Shared trophies: every trophy a party member unlocked in the party (POST
+// /bloodborne/party/trophy), so the other members unlock it too.
+struct TrophyUpdate {
+    QByteArray member;
+    QList<qint32> trophies;
+};
+
+// "<member> [<id>...]", ids 0-127 in decimal.
+std::optional<TrophyUpdate> ParseTrophyUpdate(const QByteArray& body);
+// One "<id>\n" line per trophy.
+QByteArray FormatTrophyBoard(const QList<qint32>& trophies);
+
+class PartyTrophyBoard {
+public:
+    static constexpr qint32 MaxTrophyId = 127;
+
+    // Adds the member's unlocks and returns every trophy its party unlocked, sorted. Unlocks
+    // stay for as long as the server runs, so a member that joins later still gets them.
+    QList<qint32> Update(const QByteArray& party, const QByteArray& member,
+                         const QList<qint32>& trophies);
+
+private:
+    QMutex m_mutex;
+    QHash<QByteArray, QList<qint32>> m_parties;
+};
+
 } // namespace Bloodborne

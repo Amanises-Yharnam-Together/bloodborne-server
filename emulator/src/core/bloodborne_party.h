@@ -313,6 +313,13 @@ std::optional<std::vector<MemberMap>> ParseMapBoard(std::string_view body);
 // Whether there is someone else in the party and all of them are on `map`.
 bool EveryoneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map);
 
+// Shared trophies on shadNet (POST /bloodborne/party/trophy): "<member> [<id>...]" with the
+// trophies this member unlocked in a party session; the answer is every trophy the party
+// unlocked, one id per line. A member unlocks the ones it has not handled yet.
+std::string EncodeTrophyUpdate(std::string_view member, std::span<const s32> trophies);
+std::optional<std::vector<s32>> ParseTrophyBoard(std::string_view body);
+std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s32> handled);
+
 // A guest that made its own trip is apart from the host until it joins a session again (the
 // session it travelled out of still counts for a moment after the trip starts).
 class GuestApart {

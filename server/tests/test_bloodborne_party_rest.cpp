@@ -114,6 +114,34 @@ int main() {
     CHECK(board.Update({}, "host", 0x18010000, 0).isEmpty());
   }
 
+  // Shared trophies: every member posts the trophies it unlocked in the party
+  // ("<member> [<id>...]") and reads back every trophy the party unlocked, one
+  // id per line, so the others unlock them too.
+  {
+    using Bloodborne::PartyTrophyBoard;
+    const auto update = Bloodborne::ParseTrophyUpdate("host 12 3");
+    CHECK(update.has_value());
+    CHECK(update->member == "host");
+    CHECK(update->trophies == QList<qint32>({12, 3}));
+    const auto empty = Bloodborne::ParseTrophyUpdate("guest");
+    CHECK(empty.has_value() && empty->trophies.isEmpty());
+    CHECK(!Bloodborne::ParseTrophyUpdate("").has_value());
+    CHECK(!Bloodborne::ParseTrophyUpdate("host x").has_value());
+    CHECK(!Bloodborne::ParseTrophyUpdate("host -1").has_value());
+    CHECK(!Bloodborne::ParseTrophyUpdate("host 128").has_value());
+
+    PartyTrophyBoard board;
+    board.Update(Party, "host", {12, 3});
+    board.Update("other:party", "stranger", {40});
+    const auto trophies = board.Update(Party, "guest", {});
+    const QByteArray newline(1, 10);
+    CHECK(Bloodborne::FormatTrophyBoard(trophies) ==
+          "3" + newline + "12" + newline);
+    // Unlocks stay on the board: a member that joins later still gets them.
+    CHECK(board.Update(Party, "late", {12}) == QList<qint32>({3, 12}));
+    CHECK(board.Update({}, "host", {5}).isEmpty());
+  }
+
   // No party key: nothing to coordinate.
   {
     PartyRestBoard board;

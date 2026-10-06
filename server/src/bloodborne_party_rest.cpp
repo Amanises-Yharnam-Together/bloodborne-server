@@ -128,4 +128,46 @@ QList<MemberMap> PartyMapBoard::Update(const QByteArray& party, const QByteArray
     return maps;
 }
 
+std::optional<TrophyUpdate> ParseTrophyUpdate(const QByteArray& body) {
+    const QList<QByteArray> parts = body.trimmed().split(' ');
+    if (parts.isEmpty() || !IsMemberName(parts[0])) {
+        return std::nullopt;
+    }
+    TrophyUpdate update{parts[0], {}};
+    for (qsizetype index = 1; index < parts.size(); ++index) {
+        bool ok = false;
+        const qint32 trophy = parts[index].toInt(&ok);
+        if (!ok || trophy < 0 || trophy > PartyTrophyBoard::MaxTrophyId) {
+            return std::nullopt;
+        }
+        update.trophies.append(trophy);
+    }
+    return update;
+}
+
+QByteArray FormatTrophyBoard(const QList<qint32>& trophies) {
+    QByteArray body;
+    for (const qint32 trophy : trophies) {
+        body += QByteArray::number(trophy) + '\n';
+    }
+    return body;
+}
+
+QList<qint32> PartyTrophyBoard::Update(const QByteArray& party, const QByteArray& member,
+                                       const QList<qint32>& trophies) {
+    Q_UNUSED(member);
+    if (party.isEmpty()) {
+        return {};
+    }
+    QMutexLocker lock(&m_mutex);
+    QList<qint32>& unlocked = m_parties[party];
+    for (const qint32 trophy : trophies) {
+        if (!unlocked.contains(trophy)) {
+            unlocked.append(trophy);
+        }
+    }
+    std::sort(unlocked.begin(), unlocked.end());
+    return unlocked;
+}
+
 } // namespace Bloodborne

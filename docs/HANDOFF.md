@@ -230,6 +230,18 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
      party session. Pushed as 0dd37445; rig-confirmed by Kaniel (all NPCs solid).
    - Item 1 (level sync, 668a39d4) is rig-confirmed too.
 3. **Shared loot and achievements.**
+   - **Loot done, rig-confirmed by Kaniel (2026-10-06):** Kaniel chose "each player picks up its
+     own copy". Enemy drops already worked for both. Map items (MapItemMan `[0x0553D6E0]`, lists
+     +0x18/+0x28/+0x38, item handle +0x20, flags +0x48 with 0x40 = usable, position +0x30) are
+     host-authoritative for a summoned guest: it skips creating them and numbering them
+     (`0x017DC3CF/DC`, `0x017D52D2/DB`), may pick up only with GlobalState +0x1592 set
+     (`0x017D6831`, `0x017D6AEF`), only asks the host to take one (`0x017D85F4`) and, decisive,
+     clears all its map items when the host's item sync arrives (packet channel 0x2C read in
+     `0x017D33D8`, kinds via jump table; clears at `0x017D3498-0x017D34A8`). `InstallSharedLoot`:
+     every one of those checks reads from `SoloMapItemStandIn` whenever a party is configured
+     (the join reload runs before the state reads as a session), and channel 0x2C packets read
+     as empty (`IgnorePartyMapItemSync`). Diagnostics (RE trace): `LogItemModuleChecks`,
+     `LogItemButtonAndMapItems` (prompt path 0x012FD880 / search 0x017DA500); trim later.
 4. **Shared progression:** lamps lit, shortcuts and so on reach the guest's own save.
 5. Then bosses (below). Kaniel: one item at a time.
 

@@ -269,6 +269,25 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                 Party(request), update->member, update->map, QDateTime::currentMSecsSinceEpoch()));
             return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
         });
+
+    // Shared trophies: party members post what they unlocked in the party and read back
+    // everything the party unlocked. Called by the emulator every few seconds in a session.
+    auto trophyBoard = std::make_shared<Bloodborne::PartyTrophyBoard>();
+    http.route("/bloodborne/party/trophy", QHttpServerRequest::Method::Post,
+               [trophyBoard](const QHttpServerRequest& request) -> QHttpServerResponse {
+                   const auto update = Bloodborne::ParseTrophyUpdate(request.body());
+                   if (!update) {
+                       return InvalidRequest(QStringLiteral("Invalid party trophy update"));
+                   }
+                   if (!update->trophies.isEmpty()) {
+                       qInfo().noquote() << "Bloodborne party trophies from" << update->member
+                                         << ":" << update->trophies;
+                   }
+                   const QByteArray board = Bloodborne::FormatTrophyBoard(
+                       trophyBoard->Update(Party(request), update->member, update->trophies));
+                   return QHttpServerResponse{"text/plain", board,
+                                              QHttpServerResponse::StatusCode::Ok};
+               });
 }
 
 } // namespace WebApiRoutes
