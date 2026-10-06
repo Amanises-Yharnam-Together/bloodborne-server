@@ -27,6 +27,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common/logging/log.h"
@@ -1918,9 +1919,20 @@ std::optional<LampPosition> LocalPlayerPosition() {
 
 s32 CharacterHp(u64 character);
 
+// Characters seen alive during this visit to the map (sampled once a second while in a party
+// session; see RespawnsAtPartyRest).
+std::mutex seen_alive_mutex;
+std::unordered_set<u64> seen_alive;
+u32 seen_alive_map = 0;
+
+bool WasAliveThisVisit(u64 character) {
+    std::scoped_lock lock{seen_alive_mutex};
+    return seen_alive.contains(character);
+}
+
 void PS4_SYSV_ABI RespawnOnlyTheDead(u64, GuestRegisterSnapshot* registers) {
     if (!party_rest_respawn_running.load() || registers->rax < 0x10000 ||
-        RespawnsAtPartyRest(CharacterHp(registers->rbx))) {
+        RespawnsAtPartyRest(CharacterHp(registers->rbx), WasAliveThisVisit(registers->rbx))) {
         return;
     }
     registers->rax = reinterpret_cast<u64>(no_respawn_param_holder.data());
@@ -2370,10 +2382,31 @@ void LogWorldRespawnChanges() {
     }
 }
 
+void SampleLivingCharacters() {
+    static std::chrono::steady_clock::time_point next{};
+    const auto now = std::chrono::steady_clock::now();
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (now < next || world < 0x10000) {
+        return;
+    }
+    next = now + std::chrono::seconds{1};
+    std::scoped_lock lock{seen_alive_mutex};
+    if (const u32 map = GetCurrentPackedMap(); map != seen_alive_map) {
+        seen_alive.clear();
+        seen_alive_map = map;
+    }
+    ForEachWorldCharacter(world, [](u64 character) {
+        if (CharacterHp(character) > 0) {
+            seen_alive.insert(character);
+        }
+    });
+}
+
 void TickLampRest() {
     if (!lamp_rest_hooks_installed) {
         return;
     }
+    SampleLivingCharacters();
     LogWorldRespawnChanges();
     if (compare_activation_at && std::chrono::steady_clock::now() >= *compare_activation_at) {
         compare_activation_at.reset();

@@ -218,10 +218,13 @@ TEST(BloodborneLampRest, TheRespawnKeepsTheFlagsTheScriptsSetOnLiveCharacters) {
     EXPECT_EQ(RestoreScriptFlagsAfterRespawn(0x124400, 0x100400, 0), 0x100400u);
 }
 
-TEST(BloodborneLampRest, APartyRestOnlyBringsBackTheDead) {
-    // Living characters keep whatever state the scripts gave them (a monster waiting behind the
-    // window near the Central Yharnam lamp came out after every full respawn).
-    EXPECT_TRUE(RespawnsAtPartyRest(0));
-    EXPECT_FALSE(RespawnsAtPartyRest(70));
-    EXPECT_FALSE(RespawnsAtPartyRest(9999));
+TEST(BloodborneLampRest, APartyRestOnlyBringsBackWhatThePartyKilled) {
+    // Living characters keep whatever state the scripts gave them.
+    EXPECT_FALSE(RespawnsAtPartyRest(70, true));
+    EXPECT_FALSE(RespawnsAtPartyRest(9999, true));
+    // Killed during this visit to the map: back it comes.
+    EXPECT_TRUE(RespawnsAtPartyRest(0, true));
+    // Dead since the map loaded: the scripts keep it that way (the monster behind the window near
+    // the Central Yharnam lamp came out after every rest).
+    EXPECT_FALSE(RespawnsAtPartyRest(0, false));
 }
