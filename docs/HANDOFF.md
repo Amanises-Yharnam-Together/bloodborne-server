@@ -201,8 +201,10 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 1. **Guest HP and the nerf on join:** a summoned guest's max HP is cut like a phantom's. The
    guest-as-host experiment showed the full bar returns with a live type, but that also hid the
    model, so find the phantom HP reduction itself and switch it off for party guests.
-2. Other guest-as-player items Kaniel lists next.
-3. Then bosses (below).
+2. **NPCs look transparent** to a guest (it can talk to them already).
+3. **Shared loot and achievements.**
+4. **Shared progression:** lamps lit, shortcuts and so on reach the guest's own save.
+5. Then bosses (below). Kaniel: one item at a time.
 
 ### Bosses
 - A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
