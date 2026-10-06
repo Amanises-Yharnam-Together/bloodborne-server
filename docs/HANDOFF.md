@@ -223,6 +223,12 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
      Param tooling: the game ships its paramdefs (`paramdef\paramdef.paramdefbnd.dcx`), so
      gameparam rows can be decoded with field names.
 2. **NPCs look transparent** to a guest (it can talk to them already).
+   - **Found (2026-10-06):** character creation (`0x018E4FB6`, `0x018D8934`) turns an NPC whose
+     NpcParam has isChangeWanderGhost (+0x145 bit 7; 76 rows, mostly friendly hunters, npcType 2
+     team 26) into a wandering ghost (type 4, ghost model +0x10C) when the matching state is 6
+     or [session+0x98] != -1. `InstallSolidNpcsInParty` points the flag read at a zero row in a
+     party session. Pushed as 0dd37445; rig-confirmed by Kaniel (all NPCs solid).
+   - Item 1 (level sync, 668a39d4) is rig-confirmed too.
 3. **Shared loot and achievements.**
 4. **Shared progression:** lamps lit, shortcuts and so on reach the guest's own save.
 5. Then bosses (below). Kaniel: one item at a time.

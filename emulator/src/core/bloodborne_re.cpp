@@ -3297,7 +3297,76 @@ void InstallSolidNpcsInParty(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne party guests see NPCs as the host does");
 }
 
+// Diagnostics for shared loot (RE trace only): the map item module (MapItemMan, 0x017D-0x017E)
+// asks "am I a summoned guest" (matching state 6) or "am I the host" (3) at these spots. Counting
+// which run while a guest walks up to and picks up an item shows where the guest is held back.
+struct ItemModuleCheck {
+    u64 offset;
+    std::array<u8, 7> bytes;
+};
+constexpr std::array<u8, 7> GuestStateCheck{0x83, 0xB8, 0x24, 0x01, 0x00, 0x00, 0x06};
+constexpr std::array<u8, 7> GuestStateCheckRcx{0x83, 0xB9, 0x24, 0x01, 0x00, 0x00, 0x06};
+constexpr std::array<u8, 7> HostStateCheck{0x83, 0xB8, 0x24, 0x01, 0x00, 0x00, 0x03};
+constexpr auto ItemModuleChecks = std::to_array<ItemModuleCheck>({
+    {0x017D3759, GuestStateCheck},    {0x017D4F54, GuestStateCheck},
+    {0x017D52D2, GuestStateCheck},    {0x017D5642, GuestStateCheck},
+    {0x017D6818, GuestStateCheck},    {0x017D6AD2, GuestStateCheck},
+    {0x017D83CB, GuestStateCheck},    {0x017D853B, GuestStateCheck},
+    {0x017D85F4, GuestStateCheck},    {0x017D88BB, GuestStateCheck},
+    {0x017D9AA8, GuestStateCheckRcx}, {0x017D9E1C, GuestStateCheck},
+    {0x017D9EE0, GuestStateCheckRcx}, {0x017DC3CF, GuestStateCheck},
+    {0x017DD17C, GuestStateCheck},    {0x017DDCD9, GuestStateCheck},
+    {0x017DE5EC, GuestStateCheck},    {0x017DE738, GuestStateCheck},
+    {0x017DE79D, HostStateCheck},     {0x017DE8CB, GuestStateCheck},
+    {0x017DE925, HostStateCheck},
+});
+std::array<std::atomic<u64>, ItemModuleChecks.size()> item_module_check_hits{};
+
+void PS4_SYSV_ABI CountItemModuleCheck(u64 tag, const GuestRegisterSnapshot*) {
+    if (tag < item_module_check_hits.size()) {
+        item_module_check_hits[tag].fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void InstallItemModuleDiagnostics(u64 base, u64 image_size) {
+    if (!party_controller || !EnvFlagEnabled("SHADPS4_BLOODBORNE_RE_TRACE")) {
+        return;
+    }
+    for (size_t index = 0; index < ItemModuleChecks.size(); ++index) {
+        const ItemModuleCheck& check = ItemModuleChecks[index];
+        if (check.offset + check.bytes.size() > image_size ||
+            !InstallGuestCodeHook(reinterpret_cast<void*>(base + check.offset), check.bytes, index,
+                                  CountItemModuleCheck)) {
+            LOG_ERROR(Debug, "Bloodborne item diagnostics: no hook at {:#x}", check.offset);
+        }
+    }
+}
+
+void LogItemModuleChecks() {
+    static std::array<u64, ItemModuleChecks.size()> logged{};
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::seconds{2}) {
+        return;
+    }
+    last = now;
+    std::string text;
+    for (size_t index = 0; index < ItemModuleChecks.size(); ++index) {
+        const u64 hits = item_module_check_hits[index].load(std::memory_order_relaxed);
+        if (hits != logged[index]) {
+            text += fmt::format(" {:#x}+{}", ItemModuleChecks[index].offset, hits - logged[index]);
+            logged[index] = hits;
+        }
+    }
+    if (!text.empty()) {
+        const u64 multi_play = GetMatchingState();
+        const s32 state = multi_play >= 0x10000 ? ReadValue<s32>(multi_play, 0x124) : -1;
+        LOG_INFO(Debug, "Bloodborne item checks (state {}):{}", state, text);
+    }
+}
+
 void TickPlayersOnThisMap() {
+    LogItemModuleChecks();
     KeepGuestFullHp();
     const bool in_session = InPartySession();
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
@@ -5990,6 +6059,7 @@ void InstallSeamlessCoopPatches() {
     InstallLampsAsCampfires(base, image_size);
     InstallNoLevelSyncInParty(base, image_size);
     InstallSolidNpcsInParty(base, image_size);
+    InstallItemModuleDiagnostics(base, image_size);
     StartRestBoardClient();
     PatchSignTimers(base, image_size);
 
