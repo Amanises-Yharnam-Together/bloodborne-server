@@ -286,6 +286,10 @@ bool LevelSyncsGuest(bool in_party_session, bool above_host_band) {
     return above_host_band && !in_party_session;
 }
 
+bool NpcTurnsIntoWanderGhost(bool in_party_session, bool param_says_wander_ghost) {
+    return param_says_wander_ghost && !in_party_session;
+}
+
 u32 PackedMapOfWarpPoint(s32 warp_point) {
     const u32 area = static_cast<u32>(warp_point / 100000);
     const u32 block = static_cast<u32>(warp_point / 10000 % 10);

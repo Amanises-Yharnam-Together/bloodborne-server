@@ -358,6 +358,12 @@ constexpr u64 SpEffectMaxHpRateOffset = 0x10;
 // CalcCorrectGraph rows 120-124 (0x01582940). A party guest keeps its own level.
 constexpr s32 LevelSyncEffect = 9200;
 bool LevelSyncsGuest(bool in_party_session, bool above_host_band);
+// Friendly NPCs on a summoned guest's side: character creation (0x018E4FB6, 0x018D8934) turns an
+// NPC whose NpcParam has isChangeWanderGhost into a wandering ghost (type 4, the ghost model at
+// +0x10C), drawn see-through. A party guest sees them as the host does.
+constexpr u64 NpcWanderGhostFlagOffset = 0x145;
+constexpr u32 NpcWanderGhostFlag = 0x80;
+bool NpcTurnsIntoWanderGhost(bool in_party_session, bool param_says_wander_ghost);
 // A loaded PARAM file: the type name at +0x0C, the row count (u16) at +0x0A and sorted 24-byte
 // row entries (id, padding, data offset) at +0x40.
 bool IsParamOfType(std::span<const u8> param, std::string_view type);

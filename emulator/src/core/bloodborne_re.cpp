@@ -3261,6 +3261,42 @@ void InstallNoLevelSyncInParty(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne party guests keep their own level (no effect {})", LevelSyncEffect);
 }
 
+// Both NPC creation sites read the flag with `mov reg, [rax+0x145]` and test bit 7 right after.
+// Pointing rax at an all-zero stand-in row for that read keeps the NPC a live character.
+constexpr u64 NpcWanderCheckOffset = 0x018E4FB6;
+constexpr std::array<u8, 9> NpcWanderCheck{0x8B, 0x88, 0x45, 0x01, 0x00, 0x00, 0xF6, 0xC1, 0x80};
+constexpr u64 NpcWanderTypeCheckOffset = 0x018D8934;
+constexpr std::array<u8, 8> NpcWanderTypeCheck{0x8B, 0x80, 0x45, 0x01, 0x00, 0x00, 0xA8, 0x80};
+alignas(8) constexpr std::array<u8, NpcWanderGhostFlagOffset + 8> no_wander_npc_param{};
+
+void PS4_SYSV_ABI KeepNpcsSolidForPartyGuests(u64, GuestRegisterSnapshot* registers) {
+    if (registers->rax < 0x10000 ||
+        !HasMemoryAccess(registers->rax + NpcWanderGhostFlagOffset, 4, MemoryProt::CpuRead)) {
+        return;
+    }
+    const bool wander =
+        (ReadValue<u32>(registers->rax, NpcWanderGhostFlagOffset) & NpcWanderGhostFlag) != 0;
+    if (wander && !NpcTurnsIntoWanderGhost(InPartySession(), wander)) {
+        registers->rax = reinterpret_cast<u64>(no_wander_npc_param.data());
+    }
+}
+
+void InstallSolidNpcsInParty(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (NpcWanderCheckOffset + NpcWanderCheck.size() > image_size ||
+        NpcWanderTypeCheckOffset + NpcWanderTypeCheck.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + NpcWanderCheckOffset),
+                                      NpcWanderCheck, 0, KeepNpcsSolidForPartyGuests) ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + NpcWanderTypeCheckOffset),
+                                      NpcWanderTypeCheck, 0, KeepNpcsSolidForPartyGuests)) {
+        LOG_ERROR(Debug, "Bloodborne NPC hooks unavailable; party guests see NPCs as ghosts");
+        return;
+    }
+    LOG_INFO(Debug, "Bloodborne party guests see NPCs as the host does");
+}
+
 void TickPlayersOnThisMap() {
     KeepGuestFullHp();
     const bool in_session = InPartySession();
@@ -5953,6 +5989,7 @@ void InstallSeamlessCoopPatches() {
     InstallSeamlessTravel(base, image_size);
     InstallLampsAsCampfires(base, image_size);
     InstallNoLevelSyncInParty(base, image_size);
+    InstallSolidNpcsInParty(base, image_size);
     StartRestBoardClient();
     PatchSignTimers(base, image_size);
 

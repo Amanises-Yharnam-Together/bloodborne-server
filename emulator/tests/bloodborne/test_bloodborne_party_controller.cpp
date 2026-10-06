@@ -427,6 +427,18 @@ TEST(BloodborneGuestHp, PartyGuestsAreNeverLevelSynced) {
     EXPECT_FALSE(LevelSyncsGuest(true, false));
 }
 
+// On a summoned guest's side, NPCs whose NpcParam has isChangeWanderGhost (+0x145 bit 7) are
+// created as wandering ghosts (character type 4, drawn see-through). A party guest sees them as
+// the host does.
+TEST(BloodborneGuestNpcs, PartyGuestsSeeNpcsSolid) {
+    EXPECT_EQ(NpcWanderGhostFlagOffset, 0x145u);
+    EXPECT_EQ(NpcWanderGhostFlag, 0x80u);
+    EXPECT_TRUE(NpcTurnsIntoWanderGhost(false, true)) << "outside a party the game decides";
+    EXPECT_FALSE(NpcTurnsIntoWanderGhost(false, false));
+    EXPECT_FALSE(NpcTurnsIntoWanderGhost(true, true));
+    EXPECT_FALSE(NpcTurnsIntoWanderGhost(true, false));
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));
