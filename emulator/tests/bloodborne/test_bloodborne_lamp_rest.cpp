@@ -72,6 +72,29 @@ TEST(BloodborneLampRest, UsingAnotherLampMovesTheRest) {
     EXPECT_EQ(rest.Tick(LampPosition{100.0f, 0.0f, 1.0f}, true), GreatBridgeLamp);
 }
 
+// Travel together: the first use of a lamp rests, using it again while resting there takes the
+// player (and so the party) on the trip the dialog offers.
+TEST(BloodborneLampRest, UsingTheLampAgainWhileRestingThereTravels) {
+    LampRestState rest;
+    EXPECT_EQ(rest.Use(CentralYharnamLamp, AtLamp), LampUse::Rest);
+    EXPECT_EQ(rest.Tick(AtLamp, true), CentralYharnamLamp);
+
+    EXPECT_EQ(rest.Use(CentralYharnamLamp, AtLamp), LampUse::Travel);
+    EXPECT_EQ(rest.Tick(AtLamp, true), std::nullopt) << "a trip ends the rest";
+    EXPECT_EQ(rest.Use(CentralYharnamLamp, AtLamp), LampUse::Rest);
+}
+
+TEST(BloodborneLampRest, AnotherLampOrAFinishedRestStartsANewRest) {
+    LampRestState rest;
+    EXPECT_EQ(rest.Use(CentralYharnamLamp, AtLamp), LampUse::Rest);
+    EXPECT_EQ(rest.Use(GreatBridgeLamp, AtLamp), LampUse::Rest);
+    EXPECT_EQ(rest.Tick(AtLamp, true), GreatBridgeLamp);
+
+    // Walked away: the rest is over, so the lamp rests again.
+    rest.Tick(LampPosition{10.0f, 0.0f, 5.0f + LampRestState::LeaveDistance + 0.1f}, true);
+    EXPECT_EQ(rest.Use(GreatBridgeLamp, AtLamp), LampUse::Rest);
+}
+
 TEST(BloodborneLampRest, BoardUpdatesAreOneLine) {
     EXPECT_EQ(EncodeLampRestUpdate("a1b2", CentralYharnamLamp), "a1b2 72410100");
     EXPECT_EQ(EncodeLampRestUpdate("a1b2", NotResting), "a1b2 0");

@@ -75,6 +75,15 @@ TEST(BloodbornePartyController, NeverSearchesWhileInASessionLoadingOrAlreadySear
     }
 }
 
+// Independent travel: a guest whose host left stays where it is, still a white phantom in the
+// host's old world. Searching from there would pull it to wherever the host went.
+TEST(BloodbornePartyController, AGuestLeftBehindByItsHostDoesNotSearch) {
+    PartyController controller(PartyRole::Guest);
+    PartyObservation left_behind = Idle();
+    left_behind.white_phantom = true;
+    EXPECT_EQ(TickUntilDecision(controller, left_behind, T0), PartyAction::Wait);
+}
+
 TEST(BloodbornePartyController, AnyDisturbanceRestartsTheStabilityCount) {
     PartyController controller(PartyRole::Guest);
     for (u32 i = 1; i < PartyController::StableTicksBeforeSearch; ++i) {

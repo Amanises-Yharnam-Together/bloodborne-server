@@ -92,6 +92,21 @@ const std::vector<CodePatch>& HostDeathKeepGuestsPatches() {
     return patches;
 }
 
+const std::vector<CodePatch>& BossClearKeepSessionPatches() {
+    static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
+    static const std::vector<CodePatch> patches{
+        // BlockClear2_2: CustomLuaCallStart(4063, local player), the white phantom's goodbye.
+        {0x013857AC, {0xE8, 0x8F, 0x95, 0xFA, 0xFF}, nop5},
+        // BlockClear2_2: OnKeyTime2(4050, "BlockClear2_3Leave"), LeaveSession for every member.
+        {0x01385877, {0xE8, 0x44, 0x59, 0xFA, 0xFF}, nop5},
+        // BlockClear2_3: clear 4047 and 4000 for white phantoms too (`jne` -> 2-byte nop).
+        {0x0138596D, {0x75, 0x1B}, {0x66, 0x90}},
+        // BlockClear2_3: skip the white phantom's reset and warp home (`jne` -> `jmp`).
+        {0x0138599C, {0x75, 0x46}, {0xEB, 0x46}},
+    };
+    return patches;
+}
+
 namespace {
 u64 DecodeRel32(u8 opcode, u64 offset, std::span<const u8> bytes) {
     if (bytes.size() != 5 || bytes[0] != opcode) {
@@ -182,6 +197,15 @@ void LampRestState::Rest(s32 rested_lamp, const LampPosition& at) {
     lamp = rested_lamp;
     rested_at = at;
     joined = false;
+}
+
+LampUse LampRestState::Use(s32 used_lamp, const LampPosition& at) {
+    if (lamp == used_lamp) {
+        lamp.reset();
+        return LampUse::Travel;
+    }
+    Rest(used_lamp, at);
+    return LampUse::Rest;
 }
 
 namespace {
@@ -337,7 +361,8 @@ PartyAction PartyController::Tick(const PartyObservation& observation, Clock::ti
         stable_ticks = 0;
         return PartyAction::Wait;
     }
-    if (!observation.matching_idle || observation.search_effect_active) {
+    if (!observation.matching_idle || observation.search_effect_active ||
+        observation.white_phantom) {
         // In (or joining) a session, or our search already took: the next time we are back home
         // alone is a fresh start, so forget the old cooldown.
         stable_ticks = 0;

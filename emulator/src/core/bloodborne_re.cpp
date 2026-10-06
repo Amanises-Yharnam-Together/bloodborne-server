@@ -1734,6 +1734,9 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
 
     observation.search_effect_active =
         observation.player_valid && HasPlayerEffect(player, search_effect);
+    observation.white_phantom = observation.player_valid &&
+                                HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) &&
+                                ReadValue<s32>(player, 0x78) == WhiteGhostCharacterType;
     return observation;
 }
 
@@ -1973,12 +1976,18 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
         LOG_INFO(Debug, "Bloodborne lamp travel {} outside a party session", flag);
         return;
     }
-    registers->rax = reinterpret_cast<u64>(no_talk_flag_range.data());
     const auto position = LocalPlayerPosition();
+    LampUse use;
     {
         std::scoped_lock lock{lamp_rest_mutex};
-        lamp_rest.Rest(flag, position.value_or(LampPosition{}));
+        use = lamp_rest.Use(flag, position.value_or(LampPosition{}));
     }
+    if (use == LampUse::Travel) {
+        // The game's own trip (common event 7200), for this player only.
+        LOG_INFO(Debug, "Bloodborne party member travels from lamp {}", flag);
+        return;
+    }
+    registers->rax = reinterpret_cast<u64>(no_talk_flag_range.data());
     // Played from TickLampRest once the talk has closed; started here, the closing talk cancels
     // it.
     lamp_touch_animation_at = std::chrono::steady_clock::now() + std::chrono::milliseconds{500};
@@ -2479,6 +2488,7 @@ void TickPartyController() {
 
 void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers);
 bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64 tag, const GuestRegisterSnapshot* registers);
+bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64 tag, const GuestRegisterSnapshot* registers);
 
 bool MatchesImage(u64 base, u64 image_size, const CodePatch& patch) {
     return patch.offset <= image_size && patch.original.size() <= image_size - patch.offset &&
@@ -2560,6 +2570,37 @@ void InstallHostDeathKeepsGuests(u64 base, u64 image_size) {
                     patch.patched.size());
     }
     LOG_INFO(Debug, "Bloodborne host-death patch: a host with a party revives without a reload");
+}
+
+// A boss kill keeps the party together: nobody leaves the session and the guest is not warped
+// home. All-or-nothing: half of it would leave a guest in a session its host already left.
+void InstallBossClearKeepsSession(u64 base, u64 image_size) {
+    const auto& patches = BossClearKeepSessionPatches();
+    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
+            return MatchesImage(base, image_size, patch);
+        })) {
+        LOG_ERROR(Debug, "Bloodborne boss-clear patch signature mismatch; boss kills end sessions");
+        return;
+    }
+    for (const auto& patch : patches) {
+        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
+                    patch.patched.size());
+    }
+    LOG_INFO(Debug, "Bloodborne boss-clear patch: a boss kill keeps the session");
+}
+
+constexpr u64 LeaveLimitOffset = 0x0138A4A0;
+constexpr std::array<u8, 6> LeaveLimitPrologue{0x55, 0x48, 0x89, 0xE5, 0x53, 0x50};
+
+void InstallGuestStaysWhenTheHostLeaves(u64 base, u64 image_size) {
+    if (!party_controller || LeaveLimitOffset + LeaveLimitPrologue.size() > image_size ||
+        !InstallGuestFunctionOverride(reinterpret_cast<void*>(base + LeaveLimitOffset),
+                                      LeaveLimitPrologue, 0, StayWhenTheHostLeaves)) {
+        LOG_ERROR(Debug, "Bloodborne leave-limit hook unavailable; a guest whose host leaves "
+                         "goes home");
+        return;
+    }
+    LOG_INFO(Debug, "Bloodborne party guests stay where they are when their host leaves");
 }
 
 // Faster sign posts for party joins. Optional: on a mismatch the game keeps its own timers.
@@ -2762,6 +2803,24 @@ void ReviveGuestAfterGhostDeath() {
 
 // Replaces native SoloPlayDeath_2 (bloodstain, then the reload at the lamp) for a host with a
 // session: it revives like a guest and the world is not reloaded.
+// OnLeave_Limit (event 4046), 5 s after a white phantom lost its host (the host left, travelled,
+// kicked it or the room went away): the reset and warp into the phantom's own world. A party
+// guest stays where it is instead; its host travelling is no reason to move it.
+bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64, const GuestRegisterSnapshot*) {
+    const u64 player = GetLocalPlayer();
+    if (!party_controller || player < 0x10000 ||
+        !HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) ||
+        ReadValue<s32>(player, 0x78) != WhiteGhostCharacterType) {
+        return false;
+    }
+    // The leave set 4047 ("on the way out"); left set, it swallows the next leave and death.
+    reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
+        image_base + PartyGhostSetEventFlagOffset)(0, 4047, false);
+    LOG_INFO(Debug, "Bloodborne party guest lost its host; staying where it is map={:#x}",
+             GetCurrentPackedMap());
+    return true;
+}
+
 bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64, const GuestRegisterSnapshot*) {
     const u64 multi_play = GetMatchingState();
     const s32 matching_state =
@@ -5117,6 +5176,8 @@ void InstallSeamlessCoopPatches() {
 
     InstallGhostDeathRevive(base, image_size);
     InstallHostDeathKeepsGuests(base, image_size);
+    InstallBossClearKeepsSession(base, image_size);
+    InstallGuestStaysWhenTheHostLeaves(base, image_size);
     InstallLampsAsCampfires(base, image_size);
     StartRestBoardClient();
     PatchSignTimers(base, image_size);

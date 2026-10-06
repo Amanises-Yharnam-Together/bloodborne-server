@@ -46,6 +46,7 @@ struct PartyObservation {
     bool stage_transition = false;
     bool matching_idle = false; // no multiplayer session, not even a pending one
     bool search_effect_active = false;
+    bool white_phantom = false; // still in a host's world (the host may have left)
 };
 
 // CSMultiPlayMan session state (+0x124) as seen in the rig, and the summon-reload marker the
@@ -124,6 +125,12 @@ const std::vector<CodePatch>& GuestBloodstainPatches();
 // HostDead's white phantom branch and the epilogue the seamless patch jumps to.
 constexpr u64 HostDeadEpilogueOffset = 0x01381A50;
 const std::vector<CodePatch>& HostDeathKeepGuestsPatches();
+// A boss kill that keeps the party: BlockClear2_2 no longer sends the guest's leave broadcast
+// (4063) or schedules BlockClear2_3Leave, and BlockClear2_3 clears a white phantom's leaving
+// flags instead of warping it home.
+constexpr u64 OnKeyTime2Offset = 0x0132B1C0; // OnKeyTime2(proxy, event, state, delay, ...)
+const std::vector<CodePatch>& BossClearKeepSessionPatches();
+
 // Target of a `jmp rel32` at `offset`, or 0 if the bytes are not one.
 u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes);
 
@@ -155,6 +162,8 @@ bool IsPartySession(bool party_configured, s32 matching_state);
 using LampPosition = std::array<float, 3>;
 struct LampRest;
 
+enum class LampUse { Rest, Travel };
+
 // Where this player rests: from using a lamp until walking away from it (or the session ends).
 class LampRestState {
 public:
@@ -162,6 +171,8 @@ public:
     static constexpr float JoinDistance = 2.5f;
 
     void Rest(s32 lamp, const LampPosition& at);
+    // The lamp's dialog was confirmed: a rest, or the trip if this player already rests there.
+    LampUse Use(s32 lamp, const LampPosition& at);
     // Joins a party member's rest when standing near where it rests; true if it did.
     bool JoinNearby(std::span<const LampRest> board, const std::optional<LampPosition>& player);
     std::optional<s32> Tick(const std::optional<LampPosition>& player, bool in_party_session);
