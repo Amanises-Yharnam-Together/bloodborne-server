@@ -3432,8 +3432,88 @@ void LogItemModuleChecks() {
     }
 }
 
+// Diagnostics for the guest's missing pick-up prompt: the player's item button update
+// (0x012FD880) asks MapItemMan for the nearest usable item (0x017D9FB0, [rbp-0x40] = its
+// handle), then passes a busy check (0x0176B7E0) before showing the prompt.
+constexpr u64 ItemButtonUpdateOffset = 0x012FD8CD;
+constexpr std::array<u8, 10> ItemButtonUpdate{0x48, 0x8D, 0x7D, 0xC0, 0x41,
+                                              0xBC, 0x04, 0x10, 0x00, 0x00};
+constexpr u64 ItemButtonFoundOffset = 0x012FD8E6;
+constexpr std::array<u8, 7> ItemButtonFound{0x44, 0x8B, 0x7D, 0xC0, 0x45, 0x85, 0xFF};
+constexpr u64 ItemButtonNotBusyOffset = 0x012FD964;
+constexpr std::array<u8, 7> ItemButtonNotBusy{0x49, 0x8B, 0x85, 0xB0, 0x03, 0x00, 0x00};
+constexpr u64 MapItemManPointerOffset = 0x0553D6E0;
+std::atomic<u64> item_button_updates{};
+std::atomic<u64> item_button_found{};
+std::atomic<u64> item_button_not_busy{};
+std::atomic<u32> item_button_last_handle{};
+
+void PS4_SYSV_ABI NoteItemButton(u64 tag, const GuestRegisterSnapshot* registers) {
+    if (tag == 0) {
+        item_button_updates.fetch_add(1, std::memory_order_relaxed);
+    } else if (tag == 1) {
+        const u32 handle = ReadValue<u32>(registers->rbp - 0x40, 0);
+        if (handle != 0) {
+            item_button_found.fetch_add(1, std::memory_order_relaxed);
+            item_button_last_handle.store(handle, std::memory_order_relaxed);
+        }
+    } else {
+        item_button_not_busy.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void InstallItemButtonDiagnostics(u64 base) {
+    if (!party_controller || !EnvFlagEnabled("SHADPS4_BLOODBORNE_RE_TRACE")) {
+        return;
+    }
+    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonUpdateOffset),
+                              ItemButtonUpdate, 0, NoteItemButton) ||
+        !InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonFoundOffset),
+                              ItemButtonFound, 1, NoteItemButton) ||
+        !InstallGuestCodeHook(reinterpret_cast<void*>(base + ItemButtonNotBusyOffset),
+                              ItemButtonNotBusy, 2, NoteItemButton)) {
+        LOG_ERROR(Debug, "Bloodborne item button diagnostics unavailable");
+    }
+}
+
+void LogItemButtonAndMapItems() {
+    static std::string last;
+    static std::chrono::steady_clock::time_point last_time{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_time < std::chrono::seconds{3}) {
+        return;
+    }
+    last_time = now;
+    std::string lists;
+    const u64 manager = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
+    if (manager >= 0x10000 && HasMemoryAccess(manager, 0x40, MemoryProt::CpuRead)) {
+        for (const u64 list : {0x18, 0x28, 0x38}) {
+            u32 count = 0, usable = 0, with_handle = 0;
+            u64 item = ReadValue<u64>(manager, list);
+            while (item >= 0x10000 && count < 4096 &&
+                   HasMemoryAccess(item, 0x50, MemoryProt::CpuRead)) {
+                ++count;
+                usable += (ReadValue<u16>(item, 0x48) & 0x40) != 0;
+                with_handle += (ReadValue<u32>(item, 0x20) >> 4) != 0;
+                item = ReadValue<u64>(item, 0);
+            }
+            lists += fmt::format(" [{:#x}: {} items, {} usable, {} with handle]", list, count,
+                                 usable, with_handle);
+        }
+    }
+    const std::string text =
+        fmt::format("button updates {} found {} (last handle {:#x}) not busy {};{}",
+                    item_button_updates.load() > 0 ? "yes" : "no", item_button_found.load(),
+                    item_button_last_handle.load(), item_button_not_busy.load(), lists);
+    if (text != last) {
+        last = text;
+        LOG_INFO(Debug, "Bloodborne map items: {}", text);
+    }
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
+    LogItemButtonAndMapItems();
     KeepGuestFullHp();
     const bool in_session = InPartySession();
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
@@ -6128,6 +6208,7 @@ void InstallSeamlessCoopPatches() {
     InstallSolidNpcsInParty(base, image_size);
     InstallSharedLoot(base, image_size);
     InstallItemModuleDiagnostics(base, image_size);
+    InstallItemButtonDiagnostics(base);
     StartRestBoardClient();
     PatchSignTimers(base, image_size);
 
