@@ -555,6 +555,16 @@ TEST(BloodborneGuestBloodstain, AJoinKeepsTheGuestsLostEchoes) {
     EXPECT_FALSE(RestoresBloodstainMark(true, true, false, -1, 0xFFFFFFFF)) << "picked up";
 }
 
+// The guest's kept progress belongs to one character: the save slot the game writes
+// (/savedata0/userdata000N, N 0-9; userdata0010 holds the system data).
+TEST(BloodborneGuestProgress, BelongsToTheCharacterBeingSaved) {
+    EXPECT_EQ(CharacterSlotOfSavePath("/savedata0/userdata0005"), std::optional<int>{5});
+    EXPECT_EQ(CharacterSlotOfSavePath("/savedata0/userdata0000"), std::optional<int>{0});
+    EXPECT_EQ(CharacterSlotOfSavePath("/savedata0/userdata0010"), std::nullopt);
+    EXPECT_EQ(CharacterSlotOfSavePath("/savedata0/backup0005"), std::nullopt);
+    EXPECT_EQ(CharacterSlotOfSavePath("/app0/userdata0005"), std::nullopt);
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

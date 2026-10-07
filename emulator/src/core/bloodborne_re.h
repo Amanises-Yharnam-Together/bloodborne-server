@@ -16,5 +16,7 @@ void ClearSeamlessHostPlacementHeader();
 void TraceMatching2LeaveRoom(std::uintptr_t return_address, std::uint64_t room_id);
 void InstallSeamlessCoopPatches();
 void InstallReverseEngineeringTrace();
+// Tells the party code which character save slot the game opened last.
+void NoteSaveFileOpened(std::string_view guest_path);
 
 } // namespace Core::Bloodborne

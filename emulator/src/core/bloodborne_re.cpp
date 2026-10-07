@@ -3774,8 +3774,13 @@ std::vector<s32> MapPickupFlags() {
     return flags;
 }
 
+// The character the kept progress belongs to: the save slot the game opened last (see
+// CharacterSlotOfSavePath), -1 until it opened one.
+std::atomic<int> character_slot{-1};
+
 std::filesystem::path GuestProgressFile() {
-    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "bloodborne_party_progress.txt";
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+           fmt::format("bloodborne_party_progress_slot{}.txt", character_slot.load());
 }
 
 // Every pickup flag the guest set in a party session, kept for good: its own world gets them
@@ -3783,9 +3788,11 @@ std::filesystem::path GuestProgressFile() {
 // there (the join reload brings the host's flags, which don't have the guest's pickups).
 std::mutex guest_picked_mutex;
 std::optional<std::vector<s32>> guest_picked;
+int guest_picked_slot = -1;
 
 std::vector<s32>& GuestPickedFlags() {
-    if (!guest_picked) {
+    if (!guest_picked || guest_picked_slot != character_slot.load()) {
+        guest_picked_slot = character_slot.load();
         std::ifstream file{GuestProgressFile()};
         const std::string text{std::istreambuf_iterator<char>{file}, {}};
         guest_picked = ParseFlagList(text);
@@ -3798,8 +3805,10 @@ void SaveGuestProgress(std::span<const s32> flags) {
     file << FormatFlagList(flags);
 }
 
+// A party guest with a known character (whose kept progress can be read and written).
 bool IsPartyGuestRole() {
-    return party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect;
+    return party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect &&
+           character_slot.load() >= 0;
 }
 
 // Sets the guest's remembered pickups that are not set yet; returns how many it set.
@@ -3893,13 +3902,16 @@ FlagStore ReadFlagStore() {
 // latest state per flag, kept in a file until they are set in its own world.
 std::mutex guest_world_mutex;
 std::optional<std::map<s32, bool>> guest_world;
+int guest_world_slot = -1;
 
 std::filesystem::path GuestWorldFile() {
-    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "bloodborne_party_world.txt";
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+           fmt::format("bloodborne_party_world_slot{}.txt", character_slot.load());
 }
 
 std::map<s32, bool>& GuestWorldChanges() {
-    if (!guest_world) {
+    if (!guest_world || guest_world_slot != character_slot.load()) {
+        guest_world_slot = character_slot.load();
         std::ifstream file{GuestWorldFile()};
         const std::string text{std::istreambuf_iterator<char>{file}, {}};
         guest_world = ParseWorldChanges(text);
@@ -4013,11 +4025,17 @@ void KeepGuestProgress(bool in_session) {
     static std::unordered_set<s32> seen_on;
     static bool have_baseline = false;
     static bool set_at_home = false;
+    static int slot = -1;
     const auto now = std::chrono::steady_clock::now();
     if (!IsPartyGuestRole() || now - last < GuestProgressInterval) {
         return;
     }
     last = now;
+    if (slot != character_slot.load()) {
+        slot = character_slot.load();
+        set_at_home = false;
+        home_since = {};
+    }
     if (watched.empty()) {
         watched = MapPickupFlags();
         if (watched.empty()) {
@@ -6839,6 +6857,14 @@ void InstallSeamlessCoopPatches() {
              StageTransitionStopMatchingCallOffset, SummonBuildEntryOffset,
              CrossMapGuestHandoffOffset, SosStatusUpdateOffset, SetSummonReloadStateOffset,
              HealingFountainAvailabilityOffset);
+}
+
+void NoteSaveFileOpened(std::string_view guest_path) {
+    if (const auto slot = CharacterSlotOfSavePath(guest_path)) {
+        if (character_slot.exchange(*slot) != *slot) {
+            LOG_INFO(Debug, "Bloodborne party: character save slot {}", *slot);
+        }
+    }
 }
 
 void InstallReverseEngineeringTrace() {

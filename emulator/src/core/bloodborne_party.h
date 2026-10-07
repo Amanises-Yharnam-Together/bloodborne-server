@@ -325,6 +325,8 @@ std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s3
 // (ItemLotParam getItemFlagId 5[0-3]MMxxxx, chalice dungeons 529xxxxx left out) set in a party
 // session are kept in a file, one flag per line, and set again in the guest's own world.
 bool IsMapPickupFlag(s32 flag);
+// The kept progress is per character: the save slot of /savedata0/userdata000N (N 0-9).
+std::optional<int> CharacterSlotOfSavePath(std::string_view path);
 std::string FormatFlagList(std::span<const s32> flags);
 std::vector<s32> ParseFlagList(std::string_view text);
 // The event flag store (EventFlagMan [0x0553B100]): blocks of +0x1C flags each, kept in a map at

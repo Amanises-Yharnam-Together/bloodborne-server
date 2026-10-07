@@ -282,6 +282,18 @@ std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s3
     return missing;
 }
 
+std::optional<int> CharacterSlotOfSavePath(std::string_view path) {
+    constexpr std::string_view prefix = "/savedata0/userdata000";
+    if (path.size() != prefix.size() + 1 || !path.starts_with(prefix)) {
+        return std::nullopt;
+    }
+    const char digit = path.back();
+    if (digit < '0' || digit > '9') {
+        return std::nullopt;
+    }
+    return digit - '0';
+}
+
 bool IsMapPickupFlag(s32 flag) {
     const bool chalice = flag >= 52900000 && flag < 53000000;
     return flag >= 50000000 && flag < 54000000 && !chalice;

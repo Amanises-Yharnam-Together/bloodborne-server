@@ -10,6 +10,7 @@
 #include "common/logging/log.h"
 #include "common/scope_exit.h"
 #include "common/singleton.h"
+#include "core/bloodborne_re.h"
 #include "core/file_sys/devices/console_device.h"
 #include "core/file_sys/devices/deci_tty6_device.h"
 #include "core/file_sys/devices/logger.h"
@@ -76,6 +77,9 @@ namespace Libraries::Kernel {
 
 s32 PS4_SYSV_ABI open(const char* raw_path, s32 flags, u16 mode) {
     LOG_INFO(Kernel_Fs, "path = {} flags = {:#x} mode = {:#o}", raw_path, flags, mode);
+    if (raw_path != nullptr) {
+        Core::Bloodborne::NoteSaveFileOpened(raw_path);
+    }
 
     auto* h = Common::Singleton<Core::FileSys::HandleTable>::Instance();
     auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
