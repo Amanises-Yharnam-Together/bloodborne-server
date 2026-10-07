@@ -33,7 +33,10 @@ def phantom_fog_event() -> list[tuple[int, int, bytes]]:
 
 
 def host_fog_event() -> list[tuple[int, int, bytes]]:
+    """m24_00's 12404840: the fog stays shut for a client until the boss's entrance has run."""
     return [
+        (1003, 5, struct.pack('<BBxx', 2, 1)),
+        (2005, 3, struct.pack('<iBxxx', 2401800, 0)),
         flag_condition(2, 12411700),
         (4, 3, struct.pack('<bxxxiBxxx', 2, 10000, 0)),
         (3, 24, struct.pack('<bxxxii', 2, 2410040, 2411800)),
@@ -127,9 +130,14 @@ class GuestsEnterBossFogFirst(unittest.TestCase):
         self.assertEqual((bank, ident), (2003, 22))
         self.assertEqual(struct.unpack('<iiB', payload[:9]), (HOST_ENTERED, GUEST_ENTERED, 1))
 
-    def test_the_host_event_is_untouched(self):
-        self.assertEqual(self.events[12414730], read_events(self.original)[12414730])
-        self.assertEqual(self.count, 3)
+    def test_a_guest_sees_the_fog_open_before_the_boss_entrance(self):
+        # The host's fog event opens the fog until the boss's entrance, but skipped that for a
+        # client, so a guest arriving first (Cleric Beast) faced a fog it could not enter.
+        bank, ident, payload = self.events[12414730][0]
+        self.assertEqual((bank, ident), (1003, 5))
+        self.assertEqual(payload[:2], bytes([2, tool.NEVER]))
+        self.assertEqual(self.events[12414730][1:], read_events(self.original)[12414730][1:])
+        self.assertEqual(self.count, 4)
 
     def test_a_guest_walking_into_the_arena_starts_the_boss(self):
         # The boss's entrance waited for an alive (host) player in the arena.

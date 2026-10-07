@@ -178,7 +178,8 @@ def open_boss_fog_for_guests(emevd: bytes) -> tuple[bytes, int]:
     party guest could therefore never enter first, and after a world reset it was stuck behind
     the fog until the host went in again. The wait on H moves to an unused condition group, and
     the final "set H + 1" becomes "set H..H + 1", so a guest entering starts the boss (the boss
-    start event waits on H) like a host entering does. A boss entrance that sets H when a
+    start event waits on H) like a host entering does. The host's fog event (which sets H) also
+    opens the fog for a client until the boss's entrance has run. A boss entrance that sets H when a
     player walks into the arena (m24_01 12411702) waits for an alive player; a white phantom
     passes too."""
     data = bytearray(emevd)
@@ -236,6 +237,15 @@ def open_boss_fog_for_guests(emevd: bytes) -> tuple[bytes, int]:
         starts_boss = any((bank, ident) == SET_EVENT_FLAG and args[k][4] == 1 and
                           struct.unpack_from('<i', args[k], 0)[0] in host_entered_flags
                           for k, (bank, ident, *_) in enumerate(instructions))
+        if button and starts_boss and player_type_checks(instructions, args, ALIVE):
+            # The host's fog event: it opens the fog until the boss's entrance has run, but
+            # skips that for a client (1003:5 state 1), so a guest arriving first faced a shut
+            # fog with no way in.
+            for k, (bank, ident, length, offset, _) in enumerate(instructions):
+                if (bank, ident) == (1003, 5) and length >= 2 and args[k][1] == 1:
+                    data[args_offset + offset + 1] = NEVER
+                    patched += 1
+            continue
         if button or not area or not starts_boss:
             continue
         for k in player_type_checks(instructions, args, ALIVE):
