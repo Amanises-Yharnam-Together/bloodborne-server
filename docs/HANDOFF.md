@@ -301,6 +301,22 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
   unable to press X. Also `MenuSeesAClient` (menu condition `0x01A13FE5`). The first build had a
   broken hook (prologue cut mid-instruction); the fixed one is NOT rig-tested yet. Test first.
 
+## Friend test (Kaniel hosting, a friend as guest, SeamlessCoop kit, 2026-10-07 evening)
+The kit's shadps4.exe and event files match the rig (phase3-travel). Host logs:
+`C:\Bloodborne.PC.Online - Copy\SeamlessCoop\user\log` (both runs closed cleanly); the guest's
+logs are on the friend's PC (same folder) and are needed for the first two items.
+- **Guest stuck without X after Gascoigne** (host got +3200 echoes from 0x013850A6), even with
+  the boss item held 8 s: the held-item theory does not explain it. Needs the guest's log.
+- **Crashes** "sometimes after certain actions or boss kills" (no pattern known; neither host
+  run crashed).
+- **Boss fog after a world reset:** the guest died, went to the Dream, the location was reset
+  twice; back at Gascoigne the guest saw the boss fog and could not pass (the Bosses item below).
+- **Pulled to the host at the Cathedral Ward:** instead of joining by bell the guest was
+  teleported to the host, where joining is impossible because the bell is disabled there until
+  the key is used.
+- **Boss HP bar** sometimes did not update for both players' damage.
+- Connection problems (already in the backlog: slow joins).
+
 ## Bosses
 - A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
 - No boss fog a guest cannot enter until the host goes there (phantom fog-wall gate, plan item 6).
