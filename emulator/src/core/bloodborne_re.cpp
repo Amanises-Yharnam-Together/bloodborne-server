@@ -3490,11 +3490,13 @@ void PS4_SYSV_ABI IgnorePartyMapItemSync(u64, GuestRegisterSnapshot* registers) 
 }
 
 // Full echoes for party guests (see RetargetRipLoad): the guest rate loads in the kill reward
-// (0x018FC947) and its calculation (0x018FCAA7) are pointed at the 1.0 at 0x04927EBC.
-constexpr std::array<u64, 2> GuestEchoRateLoads{0x018FC947, 0x018FCAA7};
-constexpr std::array<std::array<u8, 8>, 2> GuestEchoRateLoadBytes{{
+// (0x018FC947), its calculation (0x018FCAA7) and the boss reward (0x01335589, a phantom's echoes
+// x0.5 while more than one player is in the session) are pointed at the 1.0 at 0x04927EBC.
+constexpr std::array<u64, 3> GuestEchoRateLoads{0x018FC947, 0x018FCAA7, 0x01335589};
+constexpr std::array<std::array<u8, 8>, 3> GuestEchoRateLoadBytes{{
     {0xC5, 0xFA, 0x10, 0x1D, 0x71, 0xB5, 0x02, 0x03},
     {0xC5, 0xFA, 0x10, 0x1D, 0x21, 0xB4, 0x02, 0x03},
+    {0xC5, 0xFA, 0x59, 0x05, 0x8B, 0x05, 0x5F, 0x03},
 }};
 constexpr u64 FullEchoRateOffset = 0x04927EBC;
 

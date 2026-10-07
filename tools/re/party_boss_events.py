@@ -18,6 +18,9 @@ import sys
 import zlib
 
 NEVER = 0x7F  # no multiplayer state has this value
+MAIN_GROUP = 0
+UNUSED_GROUP = 7  # AND group 7, which no boss event waits on
+LOCAL_PLAYER = 10000
 
 
 def load_dcx(data: bytes) -> bytes:
@@ -46,6 +49,13 @@ def patch_events(emevd: bytes) -> tuple[bytes, int]:
             at = args_offset + offset
             if bank == 1003 and ident == 105 and length >= 2 and data[at + 1] == 1:
                 data[at + 1] = NEVER
+                patched += 1
+            # 4:3 "wait until the player (10000) is character type 0 (alive)" in the main
+            # condition group blocks a white phantom forever. Moved into a condition group no
+            # instruction waits on, it no longer blocks anyone (a host passes it at once anyway).
+            if (bank == 4 and ident == 3 and length >= 12 and data[at] == MAIN_GROUP and
+                    struct.unpack_from('<i', data, at + 4)[0] == LOCAL_PLAYER):
+                data[at] = UNUSED_GROUP
                 patched += 1
     return bytes(data), patched
 
