@@ -242,6 +242,18 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
      (the join reload runs before the state reads as a session), and channel 0x2C packets read
      as empty (`IgnorePartyMapItemSync`). Diagnostics (RE trace): `LogItemModuleChecks`,
      `LogItemButtonAndMapItems` (prompt path 0x012FD880 / search 0x017DA500); trim later.
+   - **Guest pickups persist, rig-confirmed (2026-10-07):** the join reload brings the host's
+     event flags, and the guest's own save never sees what it picked up there.
+     `KeepGuestProgress` polls the ItemLotParam getItemFlagId flags (`IsMapPickupFlag`, 969 of
+     them; EventFlagMan `[0x0553B100]`, read via `0x013CFD80(man, flag, 1)`) while the guest is
+     in a session, keeps new ones for good in `user/bloodborne_party_progress.txt`, and sets them
+     (SetEventFlag binding) before map items are created on every load
+     (`SetGuestPickupsBeforeMapItems`, from the item creation hook) and once after 10 s at home.
+   - **Trophies: built, NOT rig-tested (Kaniel 2026-10-07: mark untested).** shadNet
+     `POST /bloodborne/party/trophy` (`PartyTrophyBoard`, union per party for the server's
+     lifetime); np_trophy reports the game's own unlocks (`SetTrophyUnlockObserver`) and applies
+     the party's (`UnlockTrophyFromParty`, the game's last context/handle). Unlocks made in a
+     party session are posted every 3 s by the rest board thread.
 4. **Shared progression:** lamps lit, shortcuts and so on reach the guest's own save.
 5. Then bosses (below). Kaniel: one item at a time.
 
