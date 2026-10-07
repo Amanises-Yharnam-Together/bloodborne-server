@@ -669,6 +669,11 @@ TEST(BloodborneSharedLoot, AMessengerGiftIsEachPlayersOwn) {
     EXPECT_FALSE(KeepsLocalFlag(false, 12101020));
     EXPECT_FALSE(KeepsLocalFlag(true, 12101030));
     EXPECT_FALSE(KeepsLocalFlag(true, 12417830)) << "a lamp is shared";
+    // The pick in the messenger's talk (721010N0-N2 for messenger N) ended the other player's
+    // gift event too when both stood there.
+    EXPECT_TRUE(KeepsLocalFlag(true, 72101011));
+    EXPECT_TRUE(KeepsLocalFlag(true, 72101092));
+    EXPECT_FALSE(KeepsLocalFlag(true, 72101100));
 }
 
 // Every member posts the lamps it lit and sets the others' (the game copies only a lamp's

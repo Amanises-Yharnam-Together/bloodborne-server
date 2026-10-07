@@ -357,7 +357,11 @@ bool CarriesToGuestWorld(s32 flag) {
 bool KeepsLocalFlag(bool party_configured, s32 flag) {
     constexpr s32 FirstMessengerGift = 12101020;
     constexpr s32 LastMessengerGift = 12101029;
-    return party_configured && flag >= FirstMessengerGift && flag <= LastMessengerGift;
+    constexpr s32 FirstMessengerPick = 72101000;
+    constexpr s32 LastMessengerPick = 72101099;
+    const bool gift = flag >= FirstMessengerGift && flag <= LastMessengerGift;
+    const bool pick = flag >= FirstMessengerPick && flag <= LastMessengerPick;
+    return party_configured && (gift || pick);
 }
 
 std::optional<s32> TracedFlagSetting(const char* setting) {

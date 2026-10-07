@@ -352,7 +352,8 @@ bool CarriesToGuestWorld(s32 flag);
 std::optional<s32> LampOfActiveFlag(s32 flag);
 // The other player's "set this event flag" (0x017C0570) and "event ended" (0x017C0901) messages
 // leave these flags and events alone in a party: what one player received is not given to the
-// other (the Hunter's Dream messengers' gift events and flags, 12101020-12101029).
+// other (the Hunter's Dream messengers' gift events and flags, 12101020-12101029, and the
+// pick in their talk, 72101000-72101099).
 bool KeepsLocalFlag(bool party_configured, s32 flag);
 // SHADPS4_BLOODBORNE_TRACE_FLAG: a flag the flag tracer watches in a session (diagnostics).
 std::optional<s32> TracedFlagSetting(const char* setting);

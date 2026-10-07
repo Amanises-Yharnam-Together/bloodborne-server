@@ -4334,6 +4334,12 @@ constexpr std::array<u8, 11> RemoteSetFlag{0x45, 0x84, 0xFF, 0x0F, 0x95, 0xC0,
 
 void PS4_SYSV_ABI KeepLocalFlagsFromOthers(u64, GuestRegisterSnapshot* registers) {
     const s32 flag = static_cast<s32>(registers->rbx);
+    // Diagnostics: which Hunter's Dream flags the other player sends (gift investigation).
+    if (party_controller &&
+        ((flag >= 12100000 && flag < 12110000) || (flag >= 72100000 && flag < 72110000))) {
+        LOG_INFO(Debug, "Bloodborne party: the other player sends flag {} = {}", flag,
+                 registers->r15 & 0xFF);
+    }
     if (!KeepsLocalFlag(party_controller.has_value(), flag)) {
         return;
     }
