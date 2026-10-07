@@ -341,6 +341,10 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 - Rig: Potatoborne drops enemy corpses at once (Kaniel saw bodies vanish); without it two
   instances run out of memory more easily. A join once failed until both games restarted
   (claim delivered every 5 s, guest never joined).
+- **Death respawn polish (Kaniel 2026-10-07, only if it cannot break anything):** a death that
+  travels (`ChooseDeathRespawn` Travel) shows the body standing up at the death spot for ~0.2 s
+  before the loading screen; hide it. A death respawn on the same map (MoveToPoint, vtable
+  +0x5F8 teleport) just slides the player oddly; give it a loading screen too, like a trip.
 - **Slow joins (last in the backlog, Kaniel 2026-10-07).** The host picked the guest's sign three
   times (19:18, 19:19, 19:21; rooms 16-18), shadnet delivered each claim within seconds, but the
   host only activated signaling to the guest at ~19:22:55 (host log: CreateJoinRoom, then nothing
