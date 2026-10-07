@@ -320,7 +320,9 @@ to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
   cross-map candidate selection summons a guest straight onto the host's map. In the friend's
   second run the guest loaded m24_00 and then only searched (effect 9005), never joined. Fix
   idea: don't take a sign across maps while the host's area forbids multiplayer, or let the
-  party join there anyway.
+  party join there anyway. **Kaniel's call (2026-10-07): "join everywhere anywhere anytime
+  instantly"**: a party joins in every area and state, including areas the game locks for
+  multiplayer (Cathedral Ward before the key, boss areas, etc.), with no wait.
 - **Boss HP bar** sometimes did not update for both players' damage.
 - Connection problems (already in the backlog: slow joins).
 
