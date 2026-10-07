@@ -5,6 +5,7 @@
 
 #include <array>
 #include <chrono>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -334,6 +335,16 @@ struct FlagChanges {
 };
 FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> before,
                          std::span<const u8> after);
+// Shared progression: the guest's copy of the host's world follows the host's flag changes, so
+// the changes it sees in a session (lamps, shortcuts, bosses, quest steps) are kept, latest
+// state per flag, in a file of "<flag> <0|1>" lines and set in the guest's own world once it is
+// home. A join reload's bulk change, the death/multiplayer (4xxx) and system (9xxx) flags and
+// the pickups (their own list) are left out.
+bool CarriesToGuestWorld(s32 flag);
+bool IsBulkFlagChange(size_t changed_flags);
+void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
+std::string FormatWorldChanges(const std::map<s32, bool>& world);
+std::map<s32, bool> ParseWorldChanges(std::string_view text);
 
 // A guest that made its own trip is apart from the host until it joins a session again (the
 // session it travelled out of still counts for a moment after the trip starts).

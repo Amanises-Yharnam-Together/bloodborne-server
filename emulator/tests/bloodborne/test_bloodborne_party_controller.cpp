@@ -509,6 +509,29 @@ TEST(BloodborneGuestProgress, FindsTheFlagsABlockChanged) {
     EXPECT_EQ(changes.cleared, (std::vector<s32>{1241025}));
 }
 
+// Shared progression: what changes in the host's world during a session (lamps, shortcuts,
+// bosses, quest steps) reaches the guest's own world. A join reload changes hundreds of flags at
+// once and is not progress; nor are the death/multiplayer (4xxx) and system (9xxx) flags or the
+// pickups, which the pickup list keeps.
+TEST(BloodborneGuestProgress, CarriesTheSessionsWorldChangesHome) {
+    EXPECT_TRUE(CarriesToGuestWorld(7116)) << "lamp";
+    EXPECT_TRUE(CarriesToGuestWorld(12410102)) << "shortcut";
+    EXPECT_TRUE(CarriesToGuestWorld(70000030));
+    EXPECT_FALSE(CarriesToGuestWorld(4000)) << "death";
+    EXPECT_FALSE(CarriesToGuestWorld(9190));
+    EXPECT_FALSE(CarriesToGuestWorld(52410360)) << "pickups have their own list";
+    EXPECT_TRUE(IsBulkFlagChange(65));
+    EXPECT_FALSE(IsBulkFlagChange(12));
+
+    std::map<s32, bool> world;
+    RecordWorldChanges(world, FlagChanges{{7116, 4000, 12410102}, {12700000}});
+    RecordWorldChanges(world, FlagChanges{{12700000}, {7116}});
+    EXPECT_EQ(world, (std::map<s32, bool>{{7116, false}, {12410102, true}, {12700000, true}}));
+    const std::string text = FormatWorldChanges(world);
+    EXPECT_EQ(text, "7116 0\n12410102 1\n12700000 1\n");
+    EXPECT_EQ(ParseWorldChanges(text), world);
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

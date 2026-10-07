@@ -3820,6 +3820,59 @@ FlagStore ReadFlagStore() {
     return store;
 }
 
+// Shared progression (see CarriesToGuestWorld): the session's world changes the guest saw,
+// latest state per flag, kept in a file until they are set in its own world.
+std::mutex guest_world_mutex;
+std::optional<std::map<s32, bool>> guest_world;
+
+std::filesystem::path GuestWorldFile() {
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "bloodborne_party_world.txt";
+}
+
+std::map<s32, bool>& GuestWorldChanges() {
+    if (!guest_world) {
+        std::ifstream file{GuestWorldFile()};
+        const std::string text{std::istreambuf_iterator<char>{file}, {}};
+        guest_world = ParseWorldChanges(text);
+    }
+    return *guest_world;
+}
+
+void SaveGuestWorldChanges() {
+    std::ofstream file{GuestWorldFile(), std::ios::trunc};
+    file << FormatWorldChanges(*guest_world);
+}
+
+void KeepWorldChanges(const FlagChanges& changes) {
+    std::scoped_lock lock{guest_world_mutex};
+    auto& world = GuestWorldChanges();
+    const size_t before = world.size();
+    RecordWorldChanges(world, changes);
+    SaveGuestWorldChanges();
+    LOG_INFO(Debug, "Bloodborne party: guest's world keeps {} changes ({} new)", world.size(),
+             world.size() - before);
+}
+
+// At home: sets the kept changes in the guest's own world; the ones that took are done.
+size_t SetGuestWorldChanges() {
+    std::scoped_lock lock{guest_world_mutex};
+    auto& world = GuestWorldChanges();
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    size_t set = 0;
+    for (auto it = world.begin(); it != world.end();) {
+        reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, it->first,
+                                                                             it->second);
+        if (EventFlagOn(it->first) == it->second) {
+            ++set;
+            it = world.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    SaveGuestWorldChanges();
+    return set;
+}
+
 // Diagnostics for shared progression: every event flag set or cleared while in a party
 // session, to see what lighting a lamp, opening a shortcut or killing a boss sets.
 void LogFlagChangesInSession(bool in_session) {
@@ -3869,6 +3922,16 @@ void LogFlagChangesInSession(bool in_session) {
             };
             LOG_INFO(Debug, "Bloodborne flags in session: set{} | cleared{}", list(set),
                      list(cleared));
+            if (IsPartyGuestRole()) {
+                if (IsBulkFlagChange(set.size() + cleared.size())) {
+                    LOG_INFO(Debug,
+                             "Bloodborne party: {} flags changed at once (a load), not "
+                             "kept for the guest's world",
+                             set.size() + cleared.size());
+                } else {
+                    KeepWorldChanges(FlagChanges{std::move(set), std::move(cleared)});
+                }
+            }
         }
     }
     previous = std::move(current);
@@ -3941,6 +4004,10 @@ void KeepGuestProgress(bool in_session) {
     set_at_home = true;
     LOG_INFO(Debug, "Bloodborne party: set {} of the guest's pickup flags in its own world",
              SetGuestPickedFlags());
+    LOG_INFO(Debug,
+             "Bloodborne party: set {} of the session's world changes in the guest's own "
+             "world",
+             SetGuestWorldChanges());
 }
 
 void TickPlayersOnThisMap() {

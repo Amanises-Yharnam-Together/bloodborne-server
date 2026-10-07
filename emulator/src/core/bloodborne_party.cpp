@@ -332,6 +332,58 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
     return changes;
 }
 
+bool CarriesToGuestWorld(s32 flag) {
+    const bool death_or_multiplayer = flag >= 4000 && flag < 5000;
+    const bool system = flag >= 9000 && flag < 10000;
+    return flag > 0 && !death_or_multiplayer && !system && !IsMapPickupFlag(flag);
+}
+
+bool IsBulkFlagChange(size_t changed_flags) {
+    return changed_flags > 64;
+}
+
+void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes) {
+    for (const s32 flag : changes.set) {
+        if (CarriesToGuestWorld(flag)) {
+            world[flag] = true;
+        }
+    }
+    for (const s32 flag : changes.cleared) {
+        if (CarriesToGuestWorld(flag)) {
+            world[flag] = false;
+        }
+    }
+}
+
+std::string FormatWorldChanges(const std::map<s32, bool>& world) {
+    std::string text;
+    for (const auto& [flag, on] : world) {
+        text += std::to_string(flag) + (on ? " 1\n" : " 0\n");
+    }
+    return text;
+}
+
+std::map<s32, bool> ParseWorldChanges(std::string_view text) {
+    std::map<s32, bool> world;
+    while (!text.empty()) {
+        const auto end = text.find('\n');
+        const std::string_view line = text.substr(0, end);
+        text = end == std::string_view::npos ? std::string_view{} : text.substr(end + 1);
+        const auto space = line.find(' ');
+        if (space == std::string_view::npos || space + 2 != line.size()) {
+            continue;
+        }
+        s32 flag = 0;
+        const auto [parsed_end, error] = std::from_chars(line.data(), line.data() + space, flag);
+        const char state = line[space + 1];
+        if (error == std::errc{} && parsed_end == line.data() + space &&
+            (state == '0' || state == '1')) {
+            world[flag] = state == '1';
+        }
+    }
+    return world;
+}
+
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before,
                                            std::span<const s32> after) {
     std::vector<s32> missing;
