@@ -350,6 +350,8 @@ bool CarriesToGuestWorld(s32 flag);
 // to its lamp entity (map * 10000 + 1950 + lamp); the game clears the flag again for a character
 // whose lamp list ([0x0553B120]+0xC70) lacks the lamp.
 std::optional<s32> LampOfActiveFlag(s32 flag);
+// SHADPS4_BLOODBORNE_TRACE_FLAG: a flag the flag tracer watches in a session (diagnostics).
+std::optional<s32> TracedFlagSetting(const char* setting);
 struct FlagBit {
     u32 block = 0;
     u32 byte = 0;

@@ -12,7 +12,9 @@ never in state 1).
 It also patches common.emevd's death events (9400: the first death wakes in the Hunter's Dream,
 9404: the Dream after insight, 9421: a kidnapping wakes in the Gaol). They set where a death
 wakes the player but end for a client (1003:6 state 1), so a party guest runs them too; the
-emulator then takes the guest there (ChooseDeathRespawn).
+emulator then takes the guest there (ChooseDeathRespawn). The Hunter's Dream's first visit
+(m21_00 event 9401: the cutscene and the first Yharnam lamp, 12417810) ends for a client the
+same way, which left a guest's headstone with no place to awaken.
 
 Usage: py -3.12 party_boss_events.py <mods dvdroot_ps4\\event> <game event dir> [<update event dir>]
 (a file in a later directory replaces the same file in an earlier one, as the update does)
@@ -72,10 +74,14 @@ def patch_events(emevd: bytes) -> tuple[bytes, int]:
     return bytes(data), patched
 
 
-DEATH_EVENTS = {9400, 9404, 9421}
+# Events that end for a client (1003:6 state 1) but must run for a party guest, per file.
+CLIENT_EVENTS = {
+    'common.emevd.dcx': {9400, 9404, 9421},
+    'm21_00_00_00.emevd.dcx': {9401},
+}
 
 
-def patch_death_events(emevd: bytes) -> tuple[bytes, int]:
+def patch_client_events(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
     data = bytearray(emevd)
     fields = struct.unpack_from('<16q', data, 16)
     event_count, event_offset, _, instruction_offset = fields[0], fields[1], fields[2], fields[3]
@@ -84,7 +90,7 @@ def patch_death_events(emevd: bytes) -> tuple[bytes, int]:
     for index in range(event_count):
         event, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data,
                                                              event_offset + index * 48)
-        if event not in DEATH_EVENTS:
+        if event not in wanted:
             continue
         for k in range(count):
             bank, ident, length, offset, _ = struct.unpack_from(
@@ -101,28 +107,22 @@ def main() -> int:
     target = pathlib.Path(sys.argv[1])
     files: dict[str, pathlib.Path] = {}
     for source in sys.argv[2:]:
-        for path in pathlib.Path(source).glob('m*.emevd.dcx'):
+        for path in pathlib.Path(source).glob('*.emevd.dcx'):
             files[path.name] = path
-    common = None
-    for source in sys.argv[2:]:
-        if (pathlib.Path(source) / 'common.emevd.dcx').exists():
-            common = pathlib.Path(source) / 'common.emevd.dcx'
     target.mkdir(parents=True, exist_ok=True)
     total = 0
-    if common is not None:
-        original = common.read_bytes()
-        emevd, patched = patch_death_events(load_dcx(original))
-        if patched:
-            (target / common.name).write_bytes(save_dcx(original, emevd))
-            print(f'{common.name}: {patched} death event checks')
-            total += patched
-    for _, path in sorted(files.items()):
+    for name, path in sorted(files.items()):
         original = path.read_bytes()
-        emevd, patched = patch_events(load_dcx(original))
-        if patched:
-            (target / path.name).write_bytes(save_dcx(original, emevd))
-            print(f'{path.name}: {patched} boss event checks')
-            total += patched
+        emevd = load_dcx(original)
+        boss = client = 0
+        if name.startswith('m'):
+            emevd, boss = patch_events(emevd)
+        if name in CLIENT_EVENTS:
+            emevd, client = patch_client_events(emevd, CLIENT_EVENTS[name])
+        if boss or client:
+            (target / name).write_bytes(save_dcx(original, emevd))
+            print(f'{name}: {boss} boss event checks, {client} client event ends')
+            total += boss + client
     print(f'total: {total}')
     return 0
 

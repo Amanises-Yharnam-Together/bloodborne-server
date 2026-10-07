@@ -354,6 +354,19 @@ bool CarriesToGuestWorld(s32 flag) {
     return flag > 0 && !death_or_multiplayer && !trip && !IsMapPickupFlag(flag);
 }
 
+std::optional<s32> TracedFlagSetting(const char* setting) {
+    if (setting == nullptr) {
+        return std::nullopt;
+    }
+    const std::string_view text{setting};
+    s32 flag = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), flag);
+    if (error != std::errc{} || end != text.data() + text.size() || flag <= 0) {
+        return std::nullopt;
+    }
+    return flag;
+}
+
 FlagBit FlagBitLocation(s32 flag, u32 flags_per_block) {
     const u32 within = static_cast<u32>(flag) % flags_per_block;
     return {static_cast<u32>(flag) / flags_per_block, within / 8,

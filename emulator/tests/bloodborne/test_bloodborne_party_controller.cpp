@@ -651,6 +651,15 @@ TEST(BloodborneDeaths, APartyDeathWakesWhereTheGameSays) {
     EXPECT_EQ(ChooseDeathRespawn(0, false, false), DeathRespawn::StayPut);
 }
 
+// SHADPS4_BLOODBORNE_TRACE_FLAG=<flag> points the flag tracer at one flag in a session.
+TEST(BloodborneFlagTracer, TheTracedFlagComesFromTheSetting) {
+    EXPECT_EQ(TracedFlagSetting("12101020"), std::optional<s32>{12101020});
+    EXPECT_EQ(TracedFlagSetting(nullptr), std::nullopt);
+    EXPECT_EQ(TracedFlagSetting(""), std::nullopt);
+    EXPECT_EQ(TracedFlagSetting("lamp"), std::nullopt);
+    EXPECT_EQ(TracedFlagSetting("-5"), std::nullopt);
+}
+
 // A save slot's kept lists belong to the character that was there: once its pickups have been
 // set in its own world, a load where none of them is set is a new character in that slot.
 TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {

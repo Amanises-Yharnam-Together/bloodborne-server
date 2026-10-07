@@ -4150,8 +4150,8 @@ void RecordWatchedWrite(u64 rip, u64 rsp) {
     }
 }
 
-void WatchLampFlag(s32 flag, const FlagStore& store) {
-    if (!LampOfActiveFlag(flag) || store.flags_per_block == 0) {
+void WatchFlagWrites(s32 flag, const FlagStore& store) {
+    if (store.flags_per_block == 0) {
         return;
     }
     const FlagBit bit = FlagBitLocation(flag, store.flags_per_block);
@@ -4159,19 +4159,31 @@ void WatchLampFlag(s32 flag, const FlagStore& store) {
         if (block.id != bit.block || bit.byte >= block.bytes.size()) {
             continue;
         }
-        watched_flag_byte.store(block.address + bit.byte);
+        const u64 address = block.address + bit.byte;
+        if (watched_flag.load() == flag && watched_flag_byte.load() == address) {
+            return;
+        }
+        watched_flag_byte.store(address);
         watched_flag_mask.store(bit.mask);
         watched_flag.store(flag);
-        const u64 address = block.address + bit.byte;
         // From a thread of its own, so the game thread running the tick is armed too.
         std::thread([address, flag] {
             const bool armed = WatchByteWrites(address, RecordWatchedWrite);
-            LOG_INFO(Debug, "Bloodborne lamp tracer: watching flag {} at {:#x} (armed={})", flag,
+            LOG_INFO(Debug, "Bloodborne flag tracer: watching flag {} at {:#x} (armed={})", flag,
                      address, armed);
         }).detach();
         return;
     }
-    LOG_INFO(Debug, "Bloodborne lamp tracer: flag {} has no block", flag);
+}
+
+// SHADPS4_BLOODBORNE_TRACE_FLAG, else a lamp's active flag turning on (one watch at a time).
+const std::optional<s32> traced_flag =
+    TracedFlagSetting(std::getenv("SHADPS4_BLOODBORNE_TRACE_FLAG"));
+
+void WatchLampFlag(s32 flag, const FlagStore& store) {
+    if (!traced_flag && LampOfActiveFlag(flag)) {
+        WatchFlagWrites(flag, store);
+    }
 }
 
 void LogWatchedWrites() {
@@ -4186,7 +4198,7 @@ void LogWatchedWrites() {
                 callers += fmt::format(" {:#x}", caller - image_base);
             }
         }
-        LOG_INFO(Debug, "Bloodborne lamp tracer: write to flag {} ({}) at {:#x}, stack{}",
+        LOG_INFO(Debug, "Bloodborne flag tracer: write to flag {} ({}) at {:#x}, stack{}",
                  watched_flag.load(), write.bit_on ? "on" : "off",
                  write.rip >= image_base ? write.rip - image_base : write.rip, callers);
     }
@@ -4347,6 +4359,9 @@ void LogFlagChangesInSession(bool in_session) {
     FlagStore current = ReadFlagStore();
     if (current.blocks.empty()) {
         return;
+    }
+    if (traced_flag) {
+        WatchFlagWrites(*traced_flag, current);
     }
     if (previous && previous->flags_per_block == current.flags_per_block) {
         std::vector<s32> set;
