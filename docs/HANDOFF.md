@@ -257,7 +257,25 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 4. **Shared progression:** lamps lit, shortcuts and so on reach the guest's own save.
 5. Then bosses (below). Kaniel: one item at a time.
 
-### Bosses
+#### Shared progression (2026-10-07, Kaniel chose "everything")
+- `LogFlagChangesInSession` diffs the whole event flag store (`ReadFlagStore`, EventFlagMan
+  `[0x0553B100]`: block map +0x38, +0x1C flags per block, MSB first) every 3 s in a session.
+  A guest keeps the changes (`CarriesToGuestWorld`: not 4xxx, not pickups; >64 at once is a
+  load) per character slot in `user/bloodborne_party_world_slotN.txt` and sets them at home
+  after 10 s. The slot is the last `/savedata0/userdata000N` opened (`NoteSaveFileOpened` from
+  kernel open). Pickups: `bloodborne_party_progress_slotN.txt` (kept for good).
+- Guest changes also go to the host: shadNet `POST /bloodborne/party/flags` (`PartyFlagBoard`);
+  the host sets them (`SetPartyWorldChanges`). Needed because a guest lighting a lamp only sent
+  7116/70000030 to the host, not the lamp's own 12417830/31, so the host's lamp got stuck.
+- Lamp lit / shortcut / boss flags seen: lamp 6715 7116 70000030 12417830/31; shortcut
+  12410102/17 62411303; boss 2411 7017 9456 12411700/01.
+- Boss loot: echoes x0.5 for phantoms at `0x018FC947`, `0x018FCAA7`, `0x01335589` (now 1.0);
+  boss events patched by `tools\re\party_boss_events.py` (1003:105 client state, 4:3 "player
+  alive" wait moved to an unused condition group).
+- Lost echoes: a join clears GameDataMan +0x28 but keeps the record; `KeepGuestBloodstainMark`.
+- None of the 2026-10-07 afternoon fixes is rig-confirmed yet except pickups.
+
+## Bosses
 - A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
 - No boss fog a guest cannot enter until the host goes there (phantom fog-wall gate, plan item 6).
 - Rig-test that a boss kill keeps the session (`BossClearKeepSessionPatches`, merged, untested).
