@@ -1781,6 +1781,28 @@ void LogBloodstainStateChanges() {
     }
 }
 
+// See RestoresBloodstainMark: a party guest keeps its lost echoes through a join.
+void KeepGuestBloodstainMark() {
+    static bool mark_before = false;
+    const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
+    if (data < 0x10000 || record < 0x10000) {
+        return;
+    }
+    const bool mark_now = ReadValue<u8>(data, 0x28) != 0;
+    const s32 echoes = ReadValue<s32>(record, 0x38);
+    const u32 block = ReadValue<u32>(record, 0x3C);
+    const bool party_guest =
+        party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect;
+    if (RestoresBloodstainMark(party_guest, mark_before, mark_now, echoes, block)) {
+        WriteValue(data, 0x28, u8{1});
+        LOG_INFO(Debug, "Bloodborne party: kept the guest's lost echoes ({}) through the join",
+                 echoes);
+        return;
+    }
+    mark_before = mark_now;
+}
+
 void ObserveLocalAliveState();
 
 // Diagnostics for a guest reviving in place (Phase 2): each side logs the other players'
@@ -2789,6 +2811,7 @@ void TickPartyController() {
     TickPartyTrip();
     TickPlayersOnThisMap();
     LogJoinTaskChanges();
+    KeepGuestBloodstainMark();
     LogBloodstainStateChanges();
     LogLocalEffectChanges();
     LogOtherPlayersChanges();

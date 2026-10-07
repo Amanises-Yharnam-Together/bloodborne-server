@@ -391,6 +391,11 @@ constexpr u64 SpEffectMaxHpRateOffset = 0x10;
 // CalcCorrectGraph rows 120-124 (0x01582940). A party guest keeps its own level.
 constexpr s32 LevelSyncEffect = 9200;
 bool LevelSyncsGuest(bool in_party_session, bool above_host_band);
+// A party guest's lost echoes: joining the host clears GameDataMan +0x28 ("has a bloodstain")
+// but keeps the record (echoes +0x38, block +0x3C), so the enemy holding them gives nothing
+// back. The mark is set again while the record still holds echoes.
+bool RestoresBloodstainMark(bool party_guest, bool mark_before, bool mark_now, s32 echoes,
+                            u32 block);
 // Friendly NPCs on a summoned guest's side: character creation (0x018E4FB6, 0x018D8934) turns an
 // NPC whose NpcParam has isChangeWanderGhost into a wandering ghost (type 4, the ghost model at
 // +0x10C), drawn see-through. A party guest sees them as the host does.

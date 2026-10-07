@@ -544,6 +544,17 @@ TEST(BloodborneGuestLoot, PartyGuestsGetFullKillEchoes) {
               (std::array<u8, 8>{0xC5, 0xFA, 0x10, 0x1D, 0x0D, 0xB4, 0x02, 0x03}));
 }
 
+// A guest's lost echoes (GameDataMan +0x28 "has a bloodstain", the record's echoes at +0x38 and
+// block at +0x3C): joining the host clears the mark but keeps the record, so the enemy holding
+// the echoes gives nothing back. Picking the echoes up clears the record too (-1, 0xFFFFFFFF).
+TEST(BloodborneGuestBloodstain, AJoinKeepsTheGuestsLostEchoes) {
+    EXPECT_TRUE(RestoresBloodstainMark(true, true, false, 300, 0x18010000));
+    EXPECT_FALSE(RestoresBloodstainMark(false, true, false, 300, 0x18010000)) << "not a guest";
+    EXPECT_FALSE(RestoresBloodstainMark(true, false, false, 300, 0x18010000)) << "had none";
+    EXPECT_FALSE(RestoresBloodstainMark(true, true, true, 300, 0x18010000)) << "still set";
+    EXPECT_FALSE(RestoresBloodstainMark(true, true, false, -1, 0xFFFFFFFF)) << "picked up";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

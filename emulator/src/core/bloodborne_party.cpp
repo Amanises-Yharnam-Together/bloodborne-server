@@ -422,6 +422,11 @@ bool ShouldPlayGuestAsHost(bool switched_on, bool in_party_session, s32 characte
     return switched_on && in_party_session && character_type == WhiteGhostCharacterType;
 }
 
+bool RestoresBloodstainMark(bool party_guest, bool mark_before, bool mark_now, s32 echoes,
+                            u32 block) {
+    return party_guest && mark_before && !mark_now && echoes > 0 && block != 0xFFFFFFFF;
+}
+
 bool LevelSyncsGuest(bool in_party_session, bool above_host_band) {
     return above_host_band && !in_party_session;
 }
