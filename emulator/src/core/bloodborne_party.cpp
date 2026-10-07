@@ -350,7 +350,8 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 
 bool CarriesToGuestWorld(s32 flag) {
     const bool death_or_multiplayer = flag >= 4000 && flag < 5000;
-    return flag > 0 && !death_or_multiplayer && !IsMapPickupFlag(flag);
+    const bool trip = IsLampTravelFlag(flag) || IsHeadstoneTravelFlag(flag);
+    return flag > 0 && !death_or_multiplayer && !trip && !IsMapPickupFlag(flag);
 }
 
 FlagBit FlagBitLocation(s32 flag, u32 flags_per_block) {
@@ -370,6 +371,10 @@ std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u1
         }
     }
     return kept;
+}
+
+bool PostsToHostWorld(s32 flag) {
+    return LampOfActiveFlag(flag).has_value() || LampOfActiveFlag(flag - 1).has_value();
 }
 
 std::optional<s32> LampOfActiveFlag(s32 flag) {

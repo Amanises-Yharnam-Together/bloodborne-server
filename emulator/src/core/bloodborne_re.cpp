@@ -2003,12 +2003,12 @@ std::vector<std::pair<s32, bool>> flags_to_set;
 void PostWorldChanges(const FlagChanges& changes) {
     std::scoped_lock lock{flag_board_mutex};
     for (const s32 flag : changes.set) {
-        if (CarriesToGuestWorld(flag)) {
+        if (PostsToHostWorld(flag)) {
             flags_to_post.emplace_back(flag, true);
         }
     }
     for (const s32 flag : changes.cleared) {
-        if (CarriesToGuestWorld(flag)) {
+        if (PostsToHostWorld(flag)) {
             flags_to_post.emplace_back(flag, false);
         }
     }

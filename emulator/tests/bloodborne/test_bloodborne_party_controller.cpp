@@ -520,6 +520,8 @@ TEST(BloodborneGuestProgress, CarriesTheSessionsWorldChangesHome) {
     EXPECT_FALSE(CarriesToGuestWorld(4000)) << "death";
     EXPECT_TRUE(CarriesToGuestWorld(9456)) << "boss defeated (set with 2411 and 7017)";
     EXPECT_FALSE(CarriesToGuestWorld(52410360)) << "pickups have their own list";
+    EXPECT_FALSE(CarriesToGuestWorld(72410101)) << "a lamp trip, not progress";
+    EXPECT_FALSE(CarriesToGuestWorld(72102411)) << "a headstone trip";
     EXPECT_TRUE(IsBulkFlagChange(65));
     EXPECT_FALSE(IsBulkFlagChange(12));
 
@@ -624,6 +626,18 @@ TEST(BloodborneBossLoot, AGuestsBossItemArrivesAfterTheBossClear) {
     EXPECT_FALSE(DefersItemLotAward(false, true, ClientItemLotAwardReturn));
     EXPECT_FALSE(DefersItemLotAward(true, false, ClientItemLotAwardReturn));
     EXPECT_FALSE(DefersItemLotAward(true, true, 0x0132E498));
+}
+
+// A guest's changes in the host's world reach the host only for lamps (the game syncs the rest
+// itself): its trips (the host's lamp travelled too) and gifts (the host lost its own) stay out.
+TEST(BloodborneSharedProgression, OnlyLampsGoFromGuestToHost) {
+    EXPECT_TRUE(PostsToHostWorld(12417830));
+    EXPECT_TRUE(PostsToHostWorld(12417831));
+    EXPECT_FALSE(PostsToHostWorld(72410101)) << "lamp trip";
+    EXPECT_FALSE(PostsToHostWorld(72410201)) << "lighting talk; the event's flags carry it";
+    EXPECT_FALSE(PostsToHostWorld(6620)) << "messenger gift received";
+    EXPECT_FALSE(PostsToHostWorld(12101020)) << "messenger gift taken";
+    EXPECT_FALSE(PostsToHostWorld(12417832));
 }
 
 // A save slot's kept lists belong to the character that was there: once its pickups have been

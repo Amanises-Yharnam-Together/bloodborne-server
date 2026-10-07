@@ -361,13 +361,17 @@ FlagBit FlagBitLocation(s32 flag, u32 flags_per_block);
 // (+10/+11: lit). Those on before it (bit i of on_before: base + i, a lamp another party member
 // lit) are set again in a party.
 std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u16 on_before);
+// A guest's change in the host's world sent to the host (see PartyFlagBoard): a lamp's active
+// flags (LampOfActiveFlag and the one after), which the game does not sync itself.
+bool PostsToHostWorld(s32 flag);
 bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);
 std::map<s32, bool> ParseWorldChanges(std::string_view text);
 // Shared world changes the other way (POST /bloodborne/party/flags): a guest posts what changed
-// in its copy of the host's world ("<member> <since> [<flag>:<0|1>...]") and the host sets the
-// other members' changes after <since> (the answer: "<latest>", then "<flag> <0|1>" lines).
+// in its copy of the host's world (PostsToHostWorld flags; "<member> <since> [<flag>:<0|1>...]")
+// and the host sets the other members' changes after <since> (the answer: "<latest>", then
+// "<flag> <0|1>" lines).
 struct FlagBoardAnswer {
     s64 latest = 0;
     std::vector<std::pair<s32, bool>> changes;
