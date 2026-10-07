@@ -4000,6 +4000,21 @@ size_t SetGuestWorldChanges() {
     return set;
 }
 
+// Lamps lit by another party member (see LampOfActiveFlag): the lamp is added to this
+// character's lamp list (0x0146CE10(lamp, 0, 0, 0) finds or creates its entry, the same call the
+// lamp object's update makes with its own counters), so the game keeps it lit for this player too.
+constexpr u64 LampListEntryOffset = 0x0146CE10;
+
+void AddLampsLitInSession(std::span<const s32> set_flags) {
+    for (const s32 flag : set_flags) {
+        if (const auto lamp = LampOfActiveFlag(flag)) {
+            using LampEntry = void PS4_SYSV_ABI (*)(s32 lamp, s32, s32, s32);
+            reinterpret_cast<LampEntry>(image_base + LampListEntryOffset)(*lamp, 0, 0, 0);
+            LOG_INFO(Debug, "Bloodborne party: lamp {} is lit for this player too", *lamp);
+        }
+    }
+}
+
 // Diagnostics for shared progression: every event flag set or cleared while in a party
 // session, to see what lighting a lamp, opening a shortcut or killing a boss sets.
 void LogFlagChangesInSession(bool in_session) {
@@ -4049,6 +4064,7 @@ void LogFlagChangesInSession(bool in_session) {
             };
             LOG_INFO(Debug, "Bloodborne flags in session: set{} | cleared{}", list(set),
                      list(cleared));
+            AddLampsLitInSession(set);
             if (IsPartyGuestRole()) {
                 if (IsBulkFlagChange(set.size() + cleared.size())) {
                     LOG_INFO(Debug,

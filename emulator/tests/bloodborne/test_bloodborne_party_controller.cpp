@@ -584,6 +584,18 @@ TEST(BloodborneGuestProgress, SendsTheGuestsWorldChangesToTheHost) {
     EXPECT_EQ(ParseFlagBoard("6\n7116 2\n"), std::nullopt);
 }
 
+// A lamp counts as lit for a character only if it is in the character's lamp list; its
+// "active" flag (10007810 + map * 10000 + lamp * 20, the talk scripts' check) belongs to lamp
+// entity map * 10000 + 1950 + lamp. A lamp lit by another party member gets added to the list.
+TEST(BloodborneLamps, ALampLitByAnotherMemberIsTheirsToo) {
+    EXPECT_EQ(LampOfActiveFlag(12417830), std::optional<s32>{2411951});
+    EXPECT_EQ(LampOfActiveFlag(12417810), std::optional<s32>{2411950});
+    EXPECT_EQ(LampOfActiveFlag(12117850), std::optional<s32>{2111952});
+    EXPECT_EQ(LampOfActiveFlag(12417831), std::nullopt);
+    EXPECT_EQ(LampOfActiveFlag(7116), std::nullopt);
+    EXPECT_EQ(LampOfActiveFlag(12415390), std::nullopt);
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

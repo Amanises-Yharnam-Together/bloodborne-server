@@ -349,6 +349,20 @@ bool CarriesToGuestWorld(s32 flag) {
     return flag > 0 && !death_or_multiplayer && !IsMapPickupFlag(flag);
 }
 
+std::optional<s32> LampOfActiveFlag(s32 flag) {
+    constexpr s32 ActiveFlagBase = 10007810;
+    const s32 offset = flag - ActiveFlagBase;
+    if (offset < 0) {
+        return std::nullopt;
+    }
+    const s32 map = offset / 10000;
+    const s32 within = offset % 10000;
+    if (map < 210 || map >= 400 || within % 20 != 0 || within / 20 >= 20) {
+        return std::nullopt;
+    }
+    return map * 10000 + 1950 + within / 20;
+}
+
 bool IsBulkFlagChange(size_t changed_flags) {
     return changed_flags > 64;
 }
