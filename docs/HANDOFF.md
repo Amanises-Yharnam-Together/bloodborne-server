@@ -303,12 +303,15 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 
 ## Friend test (Kaniel hosting, a friend as guest, SeamlessCoop kit, 2026-10-07 evening)
 The kit's shadps4.exe and event files match the rig (phase3-travel). Host logs:
-`C:\Bloodborne.PC.Online - Copy\SeamlessCoop\user\log` (both runs closed cleanly); the guest's
-logs are on the friend's PC (same folder) and are needed for the first two items.
-- **Guest stuck without X after Gascoigne** (host got +3200 echoes from 0x013850A6), even with
-  the boss item held 8 s: the held-item theory does not explain it. Needs the guest's log.
-- **Crashes** "sometimes after certain actions or boss kills" (no pattern known; neither host
-  run crashed).
+`C:\Bloodborne.PC.Online - Copy\SeamlessCoop\user\log`; the guest's (friend's) logs are copied
+to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
+- **Guest stuck without X after Gascoigne.** The guest's log shows the kill (+3200 from
+  0x01385263; flags 2410 2412 4000 4047 ... set, 4000/4047 cleared later) but no item award at
+  all, so the boss-clear sequence itself blocks X, not the item dialog (the 8 s item hold is
+  beside the point). `LogActionBlockingState` ("Bloodborne action state: ...", every 0.5 s on
+  change) now logs the candidates; next step is a guest boss kill in the rig.
+- **Crashes** "sometimes after certain actions or boss kills" (no pattern known). All four runs
+  (both players, both runs) closed cleanly, so none was captured.
 - **Boss fog after a world reset:** the guest died, went to the Dream, the location was reset
   twice; back at Gascoigne the guest saw the boss fog and could not pass (the Bosses item below).
 - **Pulled to the host at the Cathedral Ward:** instead of joining by bell the guest was
