@@ -266,6 +266,16 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
   the normal kill-soul path (NpcParam isSoulGetByBoss, +0x149 bit 4, checked at `0x018C51C3`);
   look for the boss reward's client half rate and the host-only item lot award.
   Boss kill flags seen in the guest's world copy: 12411700/01/02/03, 12414700-12414733, 7017.
+  - **Echoes fixed (6ff9843a, not rig-tested):** every kill reward multiplies a summoned guest's
+    echoes by 0.5 (`0x018FC947`, `0x018FCAA7` load it); party clients load the 1.0 instead.
+  - **Boss item (not rig-tested):** a boss defeat event (e.g. 12411700) runs 2003:12 (boss kill,
+    echoes), then 1003:105 "end the event by multiplayer state" with state 1 (client), then the
+    trophy (2003:28), AwardItemLot (2003:4) and progress flags (2411, 9456). The native check
+    wasn't found; instead `tools\re\party_boss_events.py <mods event dir> <game event dir>
+    <update event dir>` writes map event files whose boss events compare against a state that
+    never happens (26 checks in 16 maps), into the rig's `CUSA03173-mods\dvdroot_ps4\event`.
+    Every party member (friends too) needs these files. Instruction names are in
+    `event\common.emedf.dcx` (UTF-16 strings, e.g. "マルチプレイ状態でイベント終了").
 
 ## Backlog (Kaniel 2026-10-06: "add all of the current findings and problems to the backlog")
 - **NPC hidden on the host shows on the guest** (Kaniel, 2026-10-06, two new characters, Hunter's
