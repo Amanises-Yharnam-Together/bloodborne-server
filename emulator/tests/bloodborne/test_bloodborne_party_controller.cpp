@@ -495,6 +495,20 @@ TEST(BloodborneGuestProgress, RecordsMapPickupsAndKeepsThemInAFile) {
     EXPECT_EQ(ParseFlagList("52400100\nbad\n\n53600000"), flags) << "bad lines are skipped";
 }
 
+// The event flag store: blocks of flags (EventFlagMan +0x1C flags each), a flag's bit at byte
+// index/8, most significant bit first. Comparing two copies of a block gives the flags that
+// were set or cleared in between.
+TEST(BloodborneGuestProgress, FindsTheFlagsABlockChanged) {
+    std::vector<u8> before(4, 0);
+    std::vector<u8> after(4, 0);
+    after[0] = 0x80;  // index 0
+    after[2] = 0x01;  // index 23
+    before[3] = 0x40; // index 25, cleared
+    const FlagChanges changes = ChangedFlags(1241, 1000, before, after);
+    EXPECT_EQ(changes.set, (std::vector<s32>{1241000, 1241023}));
+    EXPECT_EQ(changes.cleared, (std::vector<s32>{1241025}));
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

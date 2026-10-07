@@ -326,6 +326,14 @@ std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s3
 bool IsMapPickupFlag(s32 flag);
 std::string FormatFlagList(std::span<const s32> flags);
 std::vector<s32> ParseFlagList(std::string_view text);
+// The event flag store (EventFlagMan [0x0553B100]): blocks of +0x1C flags each, kept in a map at
+// +0x38 by block id; a flag's bit is at byte index/8, most significant bit first.
+struct FlagChanges {
+    std::vector<s32> set;
+    std::vector<s32> cleared;
+};
+FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> before,
+                         std::span<const u8> after);
 
 // A guest that made its own trip is apart from the host until it joins a session again (the
 // session it travelled out of still counts for a moment after the trip starts).

@@ -311,6 +311,27 @@ std::vector<s32> ParseFlagList(std::string_view text) {
     return flags;
 }
 
+FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> before,
+                         std::span<const u8> after) {
+    FlagChanges changes;
+    const size_t bytes = std::min(before.size(), after.size());
+    for (size_t byte = 0; byte < bytes; ++byte) {
+        const u8 differs = before[byte] ^ after[byte];
+        if (differs == 0) {
+            continue;
+        }
+        for (u32 bit = 0; bit < 8; ++bit) {
+            const u8 mask = static_cast<u8>(0x80 >> bit);
+            if ((differs & mask) == 0) {
+                continue;
+            }
+            const s32 flag = static_cast<s32>(block * flags_per_block + byte * 8 + bit);
+            ((after[byte] & mask) != 0 ? changes.set : changes.cleared).push_back(flag);
+        }
+    }
+    return changes;
+}
+
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before,
                                            std::span<const s32> after) {
     std::vector<s32> missing;

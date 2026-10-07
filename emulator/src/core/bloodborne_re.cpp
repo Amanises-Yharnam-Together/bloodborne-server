@@ -3763,6 +3763,117 @@ void SetGuestPickupsBeforeMapItems() {
     }
 }
 
+// A copy of the whole event flag store (see ChangedFlags): the manager's block map at +0x38 is a
+// tree (left +0x00, right +0x10, nil marker +0x19, block id +0x20); a block's bits are at
+// [node+0x30] (kind 2 at +0x28) or in the pool +0x28 at index [node+0x30] (kind 1), +0x20 bytes
+// each.
+struct FlagBlock {
+    u32 id = 0;
+    std::vector<u8> bytes;
+};
+
+struct FlagStore {
+    u32 flags_per_block = 0;
+    std::vector<FlagBlock> blocks;
+};
+
+FlagStore ReadFlagStore() {
+    FlagStore store;
+    const u64 manager = ReadValue<u64>(image_base + EventFlagManPointerOffset, 0);
+    if (manager < 0x10000 || !HasMemoryAccess(manager, 0x40, MemoryProt::CpuRead)) {
+        return store;
+    }
+    store.flags_per_block = ReadValue<u32>(manager, 0x1C);
+    const u32 block_bytes = ReadValue<u32>(manager, 0x20);
+    const u64 pool = ReadValue<u64>(manager, 0x28);
+    const u64 header = ReadValue<u64>(manager, 0x38);
+    if (store.flags_per_block == 0 || block_bytes == 0 || block_bytes > 0x10000 ||
+        header < 0x10000) {
+        return store;
+    }
+    std::vector<u64> stack;
+    u64 node = ReadValue<u64>(header, 0x08);
+    while ((node >= 0x10000 && ReadValue<u8>(node, 0x19) == 0) || !stack.empty()) {
+        while (node >= 0x10000 && ReadValue<u8>(node, 0x19) == 0 && stack.size() < 64) {
+            stack.push_back(node);
+            node = ReadValue<u64>(node, 0x00);
+        }
+        if (stack.empty()) {
+            break;
+        }
+        node = stack.back();
+        stack.pop_back();
+        const u32 kind = ReadValue<u32>(node, 0x28);
+        const u64 bits = kind == 2   ? ReadValue<u64>(node, 0x30)
+                         : kind == 1 ? pool + u64{block_bytes} * ReadValue<u32>(node, 0x30)
+                                     : 0;
+        if (bits >= 0x10000 && HasMemoryAccess(bits, block_bytes, MemoryProt::CpuRead)) {
+            FlagBlock block{ReadValue<u32>(node, 0x20), std::vector<u8>(block_bytes)};
+            std::memcpy(block.bytes.data(), reinterpret_cast<const void*>(bits), block_bytes);
+            store.blocks.push_back(std::move(block));
+        }
+        if (store.blocks.size() > 20000) {
+            break;
+        }
+        node = ReadValue<u64>(node, 0x10);
+    }
+    return store;
+}
+
+// Diagnostics for shared progression: every event flag set or cleared while in a party
+// session, to see what lighting a lamp, opening a shortcut or killing a boss sets.
+void LogFlagChangesInSession(bool in_session) {
+    static std::chrono::steady_clock::time_point last{};
+    static std::optional<FlagStore> previous;
+    const auto now = std::chrono::steady_clock::now();
+    if (!party_controller || now - last < std::chrono::seconds{3}) {
+        return;
+    }
+    last = now;
+    if (!in_session) {
+        previous.reset();
+        return;
+    }
+    FlagStore current = ReadFlagStore();
+    if (current.blocks.empty()) {
+        return;
+    }
+    if (previous && previous->flags_per_block == current.flags_per_block) {
+        std::vector<s32> set;
+        std::vector<s32> cleared;
+        size_t old_index = 0;
+        for (const FlagBlock& block : current.blocks) {
+            while (old_index < previous->blocks.size() &&
+                   previous->blocks[old_index].id < block.id) {
+                ++old_index;
+            }
+            if (old_index >= previous->blocks.size() ||
+                previous->blocks[old_index].id != block.id) {
+                continue;
+            }
+            const FlagChanges changes = ChangedFlags(
+                block.id, current.flags_per_block, previous->blocks[old_index].bytes, block.bytes);
+            set.insert(set.end(), changes.set.begin(), changes.set.end());
+            cleared.insert(cleared.end(), changes.cleared.begin(), changes.cleared.end());
+        }
+        if (!set.empty() || !cleared.empty()) {
+            const auto list = [](std::span<const s32> flags) {
+                std::string text;
+                for (size_t index = 0; index < std::min<size_t>(flags.size(), 48); ++index) {
+                    text += fmt::format(" {}", flags[index]);
+                }
+                if (flags.size() > 48) {
+                    text += fmt::format(" (+{})", flags.size() - 48);
+                }
+                return text;
+            };
+            LOG_INFO(Debug, "Bloodborne flags in session: set{} | cleared{}", list(set),
+                     list(cleared));
+        }
+    }
+    previous = std::move(current);
+}
+
 void KeepGuestProgress(bool in_session) {
     static std::chrono::steady_clock::time_point last{};
     static std::chrono::steady_clock::time_point home_since{};
@@ -3839,6 +3950,7 @@ void TickPlayersOnThisMap() {
     const bool in_session = InPartySession();
     UnlockPartyTrophies(in_session);
     KeepGuestProgress(in_session);
+    LogFlagChangesInSession(in_session);
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
     PlayGuestAsHost(in_session);
     TickGuestLampTrip();
