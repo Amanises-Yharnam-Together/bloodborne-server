@@ -511,14 +511,14 @@ TEST(BloodborneGuestProgress, FindsTheFlagsABlockChanged) {
 
 // Shared progression: what changes in the host's world during a session (lamps, shortcuts,
 // bosses, quest steps) reaches the guest's own world. A join reload changes hundreds of flags at
-// once and is not progress; nor are the death/multiplayer (4xxx) and system (9xxx) flags or the
+// once and is not progress; nor are the death/multiplayer (4xxx) flags or the
 // pickups, which the pickup list keeps.
 TEST(BloodborneGuestProgress, CarriesTheSessionsWorldChangesHome) {
     EXPECT_TRUE(CarriesToGuestWorld(7116)) << "lamp";
     EXPECT_TRUE(CarriesToGuestWorld(12410102)) << "shortcut";
     EXPECT_TRUE(CarriesToGuestWorld(70000030));
     EXPECT_FALSE(CarriesToGuestWorld(4000)) << "death";
-    EXPECT_FALSE(CarriesToGuestWorld(9190));
+    EXPECT_TRUE(CarriesToGuestWorld(9456)) << "boss defeated (set with 2411 and 7017)";
     EXPECT_FALSE(CarriesToGuestWorld(52410360)) << "pickups have their own list";
     EXPECT_TRUE(IsBulkFlagChange(65));
     EXPECT_FALSE(IsBulkFlagChange(12));

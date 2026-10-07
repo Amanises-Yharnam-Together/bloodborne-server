@@ -340,7 +340,7 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 // Shared progression: the guest's copy of the host's world follows the host's flag changes, so
 // the changes it sees in a session (lamps, shortcuts, bosses, quest steps) are kept, latest
 // state per flag, in a file of "<flag> <0|1>" lines and set in the guest's own world once it is
-// home. A join reload's bulk change, the death/multiplayer (4xxx) and system (9xxx) flags and
+// home. A join reload's bulk change, the death/multiplayer (4xxx) flags and
 // the pickups (their own list) are left out.
 bool CarriesToGuestWorld(s32 flag);
 bool IsBulkFlagChange(size_t changed_flags);

@@ -346,8 +346,7 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 
 bool CarriesToGuestWorld(s32 flag) {
     const bool death_or_multiplayer = flag >= 4000 && flag < 5000;
-    const bool system = flag >= 9000 && flag < 10000;
-    return flag > 0 && !death_or_multiplayer && !system && !IsMapPickupFlag(flag);
+    return flag > 0 && !death_or_multiplayer && !IsMapPickupFlag(flag);
 }
 
 bool IsBulkFlagChange(size_t changed_flags) {
