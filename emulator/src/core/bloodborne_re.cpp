@@ -2973,6 +2973,63 @@ void KeepBossHpInStep() {
     }
 }
 
+// Diagnostics for a guest alone on a map (the host elsewhere): its enemies lagged and took no
+// damage, the host runs them. For the 4 living characters nearest to the local player within
+// 40 m: handle, type +0x78, network update authority +0x1EC, state flags +0x1E0, and the
+// control block [+0x18] words +0x00..+0x3C, logged every 2 s on change to compare who runs an
+// enemy on the host, on a guest beside it and on a guest alone.
+void LogNearbyEnemyControl() {
+    static std::string last;
+    static std::chrono::steady_clock::time_point checked{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - checked < std::chrono::seconds{2}) {
+        return;
+    }
+    checked = now;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const auto me = LocalPlayerPosition();
+    if (world < 0x10000 || !me) {
+        return;
+    }
+    std::vector<std::pair<float, u64>> nearby;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (character == GetLocalPlayer() || CharacterHp(character) <= 0) {
+            return;
+        }
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (physics < 0x10000) {
+            return;
+        }
+        const float dx = ReadValue<float>(physics, 0x1E0) - (*me)[0];
+        const float dy = ReadValue<float>(physics, 0x1E4) - (*me)[1];
+        const float dz = ReadValue<float>(physics, 0x1E8) - (*me)[2];
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (distance < 40.0f) {
+            nearby.emplace_back(distance, character);
+        }
+    });
+    std::ranges::sort(nearby);
+    std::string text;
+    for (size_t index = 0; index < std::min<size_t>(nearby.size(), 4); ++index) {
+        const u64 character = nearby[index].second;
+        const u64 control = ReadValue<u64>(character, 0x18);
+        std::string words;
+        for (u64 offset = 0; offset < 0x40 && control >= 0x10000; offset += 4) {
+            words += fmt::format(" {:x}", ReadValue<u32>(control, offset));
+        }
+        text +=
+            fmt::format(" [{:#x} type {} auth {:#x} flags {:#x} ctrl{}]",
+                        ReadValue<u32>(character, 0x08), ReadValue<s32>(character, 0x78),
+                        ReadValue<s32>(character, 0x1EC), ReadValue<u64>(character, 0x1E0), words);
+    }
+    if (text != last) {
+        last = text;
+        LOG_INFO(Debug, "Bloodborne nearby enemies (map {:#x}):{}", GetCurrentPackedMap(),
+                 text.empty() ? " none" : text);
+    }
+}
+
 void TickPartyTrip();
 void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
@@ -2987,6 +3044,7 @@ void TickPartyController() {
     if (party_controller) {
         LogActionBlockingState();
         KeepBossHpInStep();
+        LogNearbyEnemyControl();
     }
     LogOtherPlayersChanges();
     ObserveLocalAliveState();
