@@ -273,7 +273,22 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
   boss events patched by `tools\re\party_boss_events.py` (1003:105 client state, 4:3 "player
   alive" wait moved to an unused condition group).
 - Lost echoes: a join clears GameDataMan +0x28 but keeps the record; `KeepGuestBloodstainMark`.
-- None of the 2026-10-07 afternoon fixes is rig-confirmed yet except pickups.
+- Guest -> host now sends only lamp active flags (`PostsToHostWorld`): sending everything moved the
+  host along on the guest's lamp trip (7MMM01LL) and took the host's messenger gifts (6620,
+  12101020-23). Trip flags (lamp, headstone) never go into the guest's own world either.
+- **Lamp lit by a guest** (rig-confirmed 2026-10-07): the host's first registration of the lamp
+  (`0x0146DA20`, from the bonfire registration `0x01327794`) wrote its flags base..base+11 off.
+  Found with the lamp tracer (`bloodborne_write_watch.cpp`: hardware write watch, DR0, on the
+  flag's byte; logs `lamp tracer: write ...` with the stack). Two hooks keep flags already on.
+- **Boss item popup**: the guest's 2003:36 award (`0x017DDC50` from `0x0132E4B5`) is held and
+  given 8 s later (`DefersItemLotAward`); in the boss-clear sequence its dialog left the guest
+  unable to press X. Also `MenuSeesAClient` (menu condition `0x01A13FE5`). Not rig-confirmed.
+- **Death triggers**: events set the respawn point on a death (common 9400: first death -> Dream
+  2102962; 9404: Dream 2102961; 9421: kidnapping (flag 9420) -> Gaol 2802959). A party revive
+  goes there, travelling when it is on another map (`ChooseDeathRespawn`, also covers a last
+  lamp on another map). `party_boss_events.py` now also patches those events' 1003:6 client
+  end. Not rig-tested.
+- Seen: a guest's first Dream arrival did not play the first-visit cutscene for the guest.
 
 ## Bosses
 - A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
