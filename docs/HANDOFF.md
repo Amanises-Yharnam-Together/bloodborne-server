@@ -341,6 +341,14 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 - Rig: Potatoborne drops enemy corpses at once (Kaniel saw bodies vanish); without it two
   instances run out of memory more easily. A join once failed until both games restarted
   (claim delivered every 5 s, guest never joined).
+- **Changes made while the other player is loading (Kaniel 2026-10-07).** A messenger gift
+  picked while the other player was on a loading screen stayed for both, so the game's own sync
+  (set-flag 0x017C0570, event end 0x017C0901, event network sync) behaves differently during a
+  load; other progression may be lost or doubled the same way. Plan: a rig test matrix (lamp,
+  shortcut, boss kill, pickup, NPC talk, each with the other player loading), a log line for
+  every sync message received while loading (and whether it applied), then catch up after the
+  load: re-post shared flags (lamps board) once the stage is up, and compare the guest's kept
+  world changes against its flag store on arrival.
 - **Death respawn polish (Kaniel 2026-10-07, only if it cannot break anything):** a death that
   travels (`ChooseDeathRespawn` Travel) shows the body standing up at the death spot for ~0.2 s
   before the loading screen; hide it. A death respawn on the same map (MoveToPoint, vtable
