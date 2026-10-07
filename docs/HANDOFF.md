@@ -316,7 +316,11 @@ to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
   twice; back at Gascoigne the guest saw the boss fog and could not pass (the Bosses item below).
 - **Pulled to the host at the Cathedral Ward:** instead of joining by bell the guest was
   teleported to the host, where joining is impossible because the bell is disabled there until
-  the key is used.
+  the key is used. Kaniel's guess (likely): a leftover of the forked seamless patches, whose
+  cross-map candidate selection summons a guest straight onto the host's map. In the friend's
+  second run the guest loaded m24_00 and then only searched (effect 9005), never joined. Fix
+  idea: don't take a sign across maps while the host's area forbids multiplayer, or let the
+  party join there anyway.
 - **Boss HP bar** sometimes did not update for both players' damage.
 - Connection problems (already in the backlog: slow joins).
 
