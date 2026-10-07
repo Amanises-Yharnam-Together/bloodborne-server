@@ -359,6 +359,19 @@ FlagBit FlagBitLocation(s32 flag, u32 flags_per_block) {
             static_cast<u8>(0x80 >> (within % 8))};
 }
 
+std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u16 on_before) {
+    std::vector<s32> kept;
+    if (!party_configured || base < 0) {
+        return kept;
+    }
+    for (s32 index = 0; index < 12; ++index) {
+        if ((on_before >> index) & 1) {
+            kept.push_back(base + index);
+        }
+    }
+    return kept;
+}
+
 std::optional<s32> LampOfActiveFlag(s32 flag) {
     constexpr s32 ActiveFlagBase = 10007810;
     const s32 offset = flag - ActiveFlagBase;

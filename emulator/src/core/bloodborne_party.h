@@ -357,6 +357,10 @@ struct FlagBit {
 };
 // Where a flag lives in the event flag store (blocks of flags_per_block flags, MSB first).
 FlagBit FlagBitLocation(s32 flag, u32 flags_per_block);
+// A lamp's first registration for a character (0x0146DA20) writes its flags base..base+11 off
+// (+10/+11: lit). Those on before it (bit i of on_before: base + i, a lamp another party member
+// lit) are set again in a party.
+std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u16 on_before);
 bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);

@@ -30,6 +30,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "common/logging/log.h"
@@ -4198,6 +4199,71 @@ void LogWatchedWrites() {
     }
 }
 
+// A lamp's first registration for a character (0x0146DA20, from the bonfire registration at
+// 0x01327794) writes its flags base..base+11 off; on the host that unlit a lamp a guest had lit
+// (found with the lamp tracer). One hook notes which were on before the writes (base in r12d,
+// entry in rbx, at `mov [rbx+0x14], r12d; test r12d, r12d`), one sets them again after
+// (`mov [rbx+0x18], r15d; mov byte [rbx+0x11], 1`, the registration's end).
+constexpr u64 LampRegistrationStartOffset = 0x0146DB21;
+constexpr std::array<u8, 7> LampRegistrationStart{0x44, 0x89, 0x63, 0x14, 0x45, 0x85, 0xE4};
+constexpr u64 LampRegistrationEndOffset = 0x0146DC0B;
+constexpr std::array<u8, 8> LampRegistrationEnd{0x44, 0x89, 0x7B, 0x18, 0xC6, 0x43, 0x11, 0x01};
+
+struct LampRegistration {
+    u64 entry = 0;
+    s32 base = -1;
+    u16 on_before = 0;
+};
+thread_local LampRegistration lamp_registration;
+
+void PS4_SYSV_ABI NoteLampFlagsBeforeRegistration(u64, GuestRegisterSnapshot* registers) {
+    const s32 base = static_cast<s32>(registers->r12);
+    lamp_registration = {registers->rbx, base, 0};
+    if (!party_controller || base < 0) {
+        return;
+    }
+    for (s32 index = 0; index < 12; ++index) {
+        if (EventFlagOn(base + index)) {
+            lamp_registration.on_before |= static_cast<u16>(1u << index);
+        }
+    }
+}
+
+void PS4_SYSV_ABI KeepLampLitAfterRegistration(u64, GuestRegisterSnapshot* registers) {
+    const LampRegistration noted = std::exchange(lamp_registration, {});
+    if (noted.entry != registers->rbx) {
+        return;
+    }
+    const std::vector<s32> kept =
+        LampFlagsKeptAtRegistration(party_controller.has_value(), noted.base, noted.on_before);
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    size_t set = 0;
+    for (const s32 flag : kept) {
+        if (!EventFlagOn(flag)) {
+            reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
+            ++set;
+        }
+    }
+    if (set != 0) {
+        LOG_INFO(Debug, "Bloodborne party: lamp registration at flag {} kept {} lit flags",
+                 noted.base, set);
+    }
+}
+
+void InstallLampsStayLitAtRegistration(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (LampRegistrationEndOffset + LampRegistrationEnd.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + LampRegistrationStartOffset),
+                                      LampRegistrationStart, 0, NoteLampFlagsBeforeRegistration) ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + LampRegistrationEndOffset),
+                                      LampRegistrationEnd, 0, KeepLampLitAfterRegistration)) {
+        LOG_ERROR(Debug, "Bloodborne lamp registration hooks unavailable; a lamp a guest lit "
+                         "stays unlit for the host");
+    }
+}
+
 void LogFlagChangesInSession(bool in_session) {
     static std::chrono::steady_clock::time_point last{};
     static std::optional<FlagStore> previous;
@@ -7078,6 +7144,7 @@ void InstallSeamlessCoopPatches() {
     InstallNoLevelSyncInParty(base, image_size);
     InstallSolidNpcsInParty(base, image_size);
     InstallSharedLoot(base, image_size);
+    InstallLampsStayLitAtRegistration(base, image_size);
     InstallItemModuleDiagnostics(base, image_size);
     InstallItemButtonDiagnostics(base);
     StartRestBoardClient();

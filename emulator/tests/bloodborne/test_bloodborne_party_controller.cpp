@@ -606,6 +606,17 @@ TEST(BloodborneLamps, TheTracerFindsTheByteOfAFlag) {
     EXPECT_EQ(FlagBitLocation(8000, 1000).mask, 0x80);
 }
 
+// Registering a lamp (0x0146DA20, first time for this character) writes its 12 flags from base
+// off: the host's game did that to a lamp a guest had lit. In a party the ones already on stay.
+TEST(BloodborneLamps, RegisteringALampKeepsItLitInAParty) {
+    EXPECT_EQ(LampFlagsKeptAtRegistration(true, 12417820, 0b1100'0000'0000),
+              (std::vector<s32>{12417830, 12417831}));
+    EXPECT_EQ(LampFlagsKeptAtRegistration(true, 12417820, 0b0000'0000'0101),
+              (std::vector<s32>{12417820, 12417822}));
+    EXPECT_TRUE(LampFlagsKeptAtRegistration(false, 12417820, 0b1100'0000'0000).empty());
+    EXPECT_TRUE(LampFlagsKeptAtRegistration(true, -1, 0b1100'0000'0000).empty());
+}
+
 // A save slot's kept lists belong to the character that was there: once its pickups have been
 // set in its own world, a load where none of them is set is a new character in that slot.
 TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {
