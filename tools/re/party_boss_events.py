@@ -21,6 +21,7 @@ NEVER = 0x7F  # no multiplayer state has this value
 MAIN_GROUP = 0
 UNUSED_GROUP = 7  # AND group 7, which no boss event waits on
 LOCAL_PLAYER = 10000
+AWARD_ITEM_LOT_INCLUDING_CLIENTS = 36  # 2003:36, "クライアントでもアイテム取得"
 
 
 def load_dcx(data: bytes) -> bytes:
@@ -45,8 +46,14 @@ def patch_events(emevd: bytes) -> tuple[bytes, int]:
                         for k in range(count)]
         if not any(bank == 2003 and ident == 12 for bank, ident, _, _, _ in instructions):
             continue
-        for bank, ident, length, offset, _ in instructions:
+        for number, (bank, ident, length, offset, _) in enumerate(instructions):
             at = args_offset + offset
+            # 2003:4 "award item lot" gives nothing to a client; 2003:36 is the same award
+            # "even for a client" (names in common.emedf.dcx), so each member gets the boss item.
+            if bank == 2003 and ident == 4:
+                struct.pack_into('<i', data, instruction_offset + first + number * 32 + 4,
+                                 AWARD_ITEM_LOT_INCLUDING_CLIENTS)
+                patched += 1
             if bank == 1003 and ident == 105 and length >= 2 and data[at + 1] == 1:
                 data[at + 1] = NEVER
                 patched += 1
