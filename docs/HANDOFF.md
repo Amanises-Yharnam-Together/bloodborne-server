@@ -327,6 +327,9 @@ to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
 - Connection problems (already in the backlog: slow joins).
 
 ## Bosses
+Order (Kaniel 2026-10-07): bosses first (including the guest's stuck X after a boss kill, the
+boss fog after a reset and the boss HP bar from the friend test), then "join everywhere anywhere
+anytime instantly" (Cathedral Ward pull, slow joins), then the rest of the backlog.
 - A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
 - No boss fog a guest cannot enter until the host goes there (phantom fog-wall gate, plan item 6).
 - Rig-test that a boss kill keeps the session (`BossClearKeepSessionPatches`, merged, untested).
