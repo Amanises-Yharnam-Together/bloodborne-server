@@ -2879,6 +2879,53 @@ void TickLampRest() {
     }
 }
 
+// Diagnostics for the boss HP bar that showed half on the guest while the host's was right:
+// every character with a boss-sized max HP, its HP fields ([[+0x3B0]+0x20]+0xF8..+0x104) and
+// the co-op HP effects (7500-7502, max HP x1.5/x2/x2.5) on it, logged on change.
+void LogBossHpState() {
+    static std::string last;
+    static std::chrono::steady_clock::time_point checked{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - checked < std::chrono::milliseconds{500}) {
+        return;
+    }
+    checked = now;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000) {
+        return;
+    }
+    std::string text;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        if (data < 0x10000 || ReadValue<s32>(data, 0xFC) < 1500) {
+            return;
+        }
+        std::string effects;
+        const u64 manager = ReadValue<u64>(character, 0x1C8);
+        u64 node = manager >= 0x10000 ? ReadValue<u64>(manager, 0x08) : 0;
+        for (size_t index = 0; node >= 0x10000 && index < 128; ++index) {
+            const s32 id = ReadValue<s32>(node, 0x40);
+            if (id >= 7500 && id <= 7502) {
+                effects += fmt::format(" {}", id);
+            }
+            const u64 next = ReadValue<u64>(node, 0x58);
+            if (next == node) {
+                break;
+            }
+            node = next;
+        }
+        text += fmt::format(" [{:#x} hp {} {} {} {} effects{}]", ReadValue<u32>(character, 0x08),
+                            ReadValue<s32>(data, 0xF8), ReadValue<s32>(data, 0xFC),
+                            ReadValue<s32>(data, 0x100), ReadValue<s32>(data, 0x104),
+                            effects.empty() ? " none" : effects);
+    });
+    if (text != last) {
+        last = text;
+        LOG_INFO(Debug, "Bloodborne boss HP:{}", text.empty() ? " none" : text);
+    }
+}
+
 void TickPartyTrip();
 void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
@@ -2892,6 +2939,7 @@ void TickPartyController() {
     LogLocalEffectChanges();
     if (party_controller) {
         LogActionBlockingState();
+        LogBossHpState();
     }
     LogOtherPlayersChanges();
     ObserveLocalAliveState();
