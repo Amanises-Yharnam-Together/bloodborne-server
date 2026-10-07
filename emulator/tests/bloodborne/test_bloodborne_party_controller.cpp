@@ -640,6 +640,19 @@ TEST(BloodborneSharedProgression, OnlyLampsGoFromGuestToHost) {
     EXPECT_FALSE(SharedWithParty(12417832));
 }
 
+// A guest walking into a boss fog sets the boss's "host entered" flag (party_boss_events.py),
+// which starts the boss; the guest's fog event is not synced, so the flag goes to the host over
+// the party's board. It only holds for this visit, so it never goes into the guest's own world.
+TEST(BloodborneBosses, AGuestEnteringTheBossFogStartsTheBossForTheHost) {
+    EXPECT_TRUE(SharedWithParty(12414700)) << "Father Gascoigne";
+    EXPECT_TRUE(SharedWithParty(12104800)) << "Gehrman";
+    EXPECT_TRUE(SharedWithParty(13604808)) << "Orphan of Kos";
+    EXPECT_FALSE(SharedWithParty(12414701)) << "a phantom entered (local music)";
+    EXPECT_FALSE(CarriesToGuestWorld(12414700));
+    EXPECT_FALSE(CarriesToGuestWorld(12414701));
+    EXPECT_TRUE(CarriesToGuestWorld(12411700)) << "boss defeated";
+}
+
 // A party death wakes where the game says (GlobalState +0x1528): the events set it on a death
 // (the first one: the Hunter's Dream 2102962; a kidnapping: the Gaol 2802959). In a loaded block
 // the player is moved there, otherwise it travels; after that trip it never travels again.

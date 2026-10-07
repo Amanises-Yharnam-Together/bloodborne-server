@@ -332,6 +332,16 @@ boss fog after a reset and the boss HP bar from the friend test), then "join eve
 anytime instantly" (Cathedral Ward pull, slow joins), then the rest of the backlog.
 - A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
 - No boss fog a guest cannot enter until the host goes there (phantom fog-wall gate, plan item 6).
+- **Boss fog for guests (2026-10-08, built, NOT rig-tested):** a phantom's fog event (m24_01
+  12414731) waits for the host's "entered" flag H (12414700, set by the host's 12414730) and
+  sets H+1; the boss start (12414702) waits on H. `party_boss_events.py` now moves the wait on H
+  to an unused condition group and turns the final set into Batch Set H..H+1 (2003:22, args
+  appended to the arguments table), in 13 maps (m29 chalice templates and m32 13204831 skipped).
+  Arena-walk entrances that set H (12411702 Gascoigne, 12411802) no longer require an alive
+  player. The phantom event isn't synced, so the emulator posts H to the host over the flag
+  board (`IsBossFogEntryFlag`, `SharedWithParty`); H never goes into the guest's own world.
+  Test: py -3.12 -m unittest discover -s toolse	ests. Rig: guest enters Gascoigne's fog
+  first, then after a guest death/reset.
 - Rig-test that a boss kill keeps the session (`BossClearKeepSessionPatches`, merged, untested).
 - **Full boss loot for the guest** (Kaniel 2026-10-07): on a boss kill the host got 4000 echoes
   and the boss item, the guest 2000 and no item; both should get full loot. Boss echoes skip

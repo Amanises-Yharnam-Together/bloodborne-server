@@ -374,8 +374,12 @@ std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u1
 enum class DeathRespawn { StayPut, MoveToPoint, Travel };
 DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip);
 // A flag every party member gets when another one sees it set (see PartyFlagBoard): a lamp's
-// active flags (LampOfActiveFlag and the one after), which the game does not sync itself.
+// active flags (LampOfActiveFlag and the one after), which the game does not sync itself, and
+// a boss fog's "entered" flag, which a guest's (unsynced) fog event sets to start the boss.
 bool SharedWithParty(s32 flag);
+// A boss fog's "host entered" flag (12414700 for Father Gascoigne): the boss start event waits
+// on it. Party guests set it too (party_boss_events.py); it holds for one map visit.
+bool IsBossFogEntryFlag(s32 flag);
 // What a member posts to the party's flag board from a change it saw: the SharedWithParty flags
 // that turned on.
 std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes);

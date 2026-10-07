@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <charconv>
 #include <cstring>
@@ -351,7 +352,19 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 bool CarriesToGuestWorld(s32 flag) {
     const bool death_or_multiplayer = flag >= 4000 && flag < 5000;
     const bool trip = IsLampTravelFlag(flag) || IsHeadstoneTravelFlag(flag);
-    return flag > 0 && !death_or_multiplayer && !trip && !IsMapPickupFlag(flag);
+    const bool boss_fog = IsBossFogEntryFlag(flag) || IsBossFogEntryFlag(flag - 1);
+    return flag > 0 && !death_or_multiplayer && !trip && !boss_fog && !IsMapPickupFlag(flag);
+}
+
+bool IsBossFogEntryFlag(s32 flag) {
+    // The flag each boss fog's host event sets and its phantom event waited for (found by
+    // party_boss_events.py's open_boss_fog_for_guests in the 01.09 map event files).
+    static constexpr std::array<s32, 21> Flags{
+        12104800, 12104850, 12204800, 12304700, 12304800, 12404800, 12414700,
+        12414800, 12424700, 12424800, 12504800, 12604800, 12604850, 12704800,
+        12804800, 13304800, 13404808, 13404858, 13504808, 13504858, 13604808,
+    };
+    return std::ranges::find(Flags, flag) != Flags.end();
 }
 
 bool KeepsLocalFlag(bool party_configured, s32 flag) {
@@ -417,7 +430,8 @@ std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
 }
 
 bool SharedWithParty(s32 flag) {
-    return LampOfActiveFlag(flag).has_value() || LampOfActiveFlag(flag - 1).has_value();
+    return LampOfActiveFlag(flag).has_value() || LampOfActiveFlag(flag - 1).has_value() ||
+           IsBossFogEntryFlag(flag);
 }
 
 std::optional<s32> LampOfActiveFlag(s32 flag) {
