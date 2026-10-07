@@ -596,6 +596,16 @@ TEST(BloodborneLamps, ALampLitByAnotherMemberIsTheirsToo) {
     EXPECT_EQ(LampOfActiveFlag(12415390), std::nullopt);
 }
 
+// The lamp tracer watches the byte holding one flag: block, byte and mask, MSB first.
+TEST(BloodborneLamps, TheTracerFindsTheByteOfAFlag) {
+    const FlagBit bit = FlagBitLocation(12417830, 1000);
+    EXPECT_EQ(bit.block, 12417u);
+    EXPECT_EQ(bit.byte, 103u);
+    EXPECT_EQ(bit.mask, 0x02);
+    EXPECT_EQ(FlagBitLocation(12417831, 1000).mask, 0x01);
+    EXPECT_EQ(FlagBitLocation(8000, 1000).mask, 0x80);
+}
+
 // A save slot's kept lists belong to the character that was there: once its pickups have been
 // set in its own world, a load where none of them is set is a new character in that slot.
 TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {

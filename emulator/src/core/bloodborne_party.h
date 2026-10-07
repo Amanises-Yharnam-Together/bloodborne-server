@@ -350,6 +350,13 @@ bool CarriesToGuestWorld(s32 flag);
 // to its lamp entity (map * 10000 + 1950 + lamp); the game clears the flag again for a character
 // whose lamp list ([0x0553B120]+0xC70) lacks the lamp.
 std::optional<s32> LampOfActiveFlag(s32 flag);
+struct FlagBit {
+    u32 block = 0;
+    u32 byte = 0;
+    u8 mask = 0;
+};
+// Where a flag lives in the event flag store (blocks of flags_per_block flags, MSB first).
+FlagBit FlagBitLocation(s32 flag, u32 flags_per_block);
 bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);

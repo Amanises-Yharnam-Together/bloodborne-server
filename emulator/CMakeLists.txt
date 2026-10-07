@@ -952,6 +952,8 @@ if (ARCHITECTURE STREQUAL "x86_64")
              src/core/bloodborne_party.h
              src/core/bloodborne_re.cpp
              src/core/bloodborne_re.h
+             src/core/bloodborne_write_watch.cpp
+             src/core/bloodborne_write_watch.h
              src/core/cpu_patches.cpp
              src/core/cpu_patches.h
              ${FIBER_LIB})

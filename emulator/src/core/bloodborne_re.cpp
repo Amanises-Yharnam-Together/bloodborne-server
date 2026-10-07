@@ -3,6 +3,7 @@
 
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
+#include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
 #include <array>
@@ -3982,6 +3983,7 @@ void SetGuestPickupsBeforeMapItems() {
 struct FlagBlock {
     u32 id = 0;
     std::vector<u8> bytes;
+    u64 address = 0;
 };
 
 struct FlagStore {
@@ -4020,7 +4022,7 @@ FlagStore ReadFlagStore() {
                          : kind == 1 ? pool + u64{block_bytes} * ReadValue<u32>(node, 0x30)
                                      : 0;
         if (bits >= 0x10000 && HasMemoryAccess(bits, block_bytes, MemoryProt::CpuRead)) {
-            FlagBlock block{ReadValue<u32>(node, 0x20), std::vector<u8>(block_bytes)};
+            FlagBlock block{ReadValue<u32>(node, 0x20), std::vector<u8>(block_bytes), bits};
             std::memcpy(block.bytes.data(), reinterpret_cast<const void*>(bits), block_bytes);
             store.blocks.push_back(std::move(block));
         }
@@ -4111,6 +4113,91 @@ void AddLampsLitInSession(std::span<const s32> set_flags) {
 
 // Diagnostics for shared progression: every event flag set or cleared while in a party
 // session, to see what lighting a lamp, opening a shortcut or killing a boss sets.
+// Lamp tracer (diagnostics): a lamp a guest lit gets its active flag set on the host, and the
+// host's game clears it again. A hardware write watch on the flag's byte records every write
+// (the instruction after it, the bit, and the image return addresses on the stack); the tick logs
+// them. Armed on the host when a lamp's active flag turns on in a session.
+struct WatchedWrite {
+    u64 rip = 0;
+    bool bit_on = false;
+    std::array<u64, 8> callers{};
+};
+constexpr size_t WatchedWriteCapacity = 64;
+std::array<WatchedWrite, WatchedWriteCapacity> watched_writes;
+std::atomic<size_t> watched_write_count{0};
+std::atomic<u64> watched_flag_byte{0};
+std::atomic<u8> watched_flag_mask{0};
+std::atomic<s32> watched_flag{0};
+
+void RecordWatchedWrite(u64 rip, u64 rsp) {
+    const size_t index = watched_write_count.fetch_add(1);
+    if (index >= WatchedWriteCapacity) {
+        return;
+    }
+    WatchedWrite& write = watched_writes[index];
+    write.rip = rip;
+    write.bit_on = (*reinterpret_cast<const volatile u8*>(watched_flag_byte.load()) &
+                    watched_flag_mask.load()) != 0;
+    const u64 low = image_base;
+    const u64 high = image_base + MemoryPatcher::g_eboot_image_size;
+    size_t found = 0;
+    for (size_t slot = 0; slot < 256 && found < write.callers.size(); ++slot) {
+        const u64 value = reinterpret_cast<const u64*>(rsp)[slot];
+        if (value > low && value < high) {
+            write.callers[found++] = value;
+        }
+    }
+}
+
+void WatchLampFlag(s32 flag, const FlagStore& store) {
+    if (!LampOfActiveFlag(flag) || store.flags_per_block == 0) {
+        return;
+    }
+    const FlagBit bit = FlagBitLocation(flag, store.flags_per_block);
+    for (const FlagBlock& block : store.blocks) {
+        if (block.id != bit.block || bit.byte >= block.bytes.size()) {
+            continue;
+        }
+        watched_flag_byte.store(block.address + bit.byte);
+        watched_flag_mask.store(bit.mask);
+        watched_flag.store(flag);
+        const u64 address = block.address + bit.byte;
+        // From a thread of its own, so the game thread running the tick is armed too.
+        std::thread([address, flag] {
+            const bool armed = WatchByteWrites(address, RecordWatchedWrite);
+            LOG_INFO(Debug, "Bloodborne lamp tracer: watching flag {} at {:#x} (armed={})", flag,
+                     address, armed);
+        }).detach();
+        return;
+    }
+    LOG_INFO(Debug, "Bloodborne lamp tracer: flag {} has no block", flag);
+}
+
+void LogWatchedWrites() {
+    static size_t logged = 0;
+    static std::chrono::steady_clock::time_point last_arm{};
+    const size_t count = std::min(watched_write_count.load(), WatchedWriteCapacity);
+    for (; logged < count; ++logged) {
+        const WatchedWrite& write = watched_writes[logged];
+        std::string callers;
+        for (const u64 caller : write.callers) {
+            if (caller != 0) {
+                callers += fmt::format(" {:#x}", caller - image_base);
+            }
+        }
+        LOG_INFO(Debug, "Bloodborne lamp tracer: write to flag {} ({}) at {:#x}, stack{}",
+                 watched_flag.load(), write.bit_on ? "on" : "off",
+                 write.rip >= image_base ? write.rip - image_base : write.rip, callers);
+    }
+    // Threads started since the watch was armed (a load) get armed too.
+    const auto now = std::chrono::steady_clock::now();
+    if (const u64 address = watched_flag_byte.load();
+        address != 0 && now - last_arm > std::chrono::seconds{10}) {
+        last_arm = now;
+        std::thread([address] { WatchByteWrites(address, RecordWatchedWrite); }).detach();
+    }
+}
+
 void LogFlagChangesInSession(bool in_session) {
     static std::chrono::steady_clock::time_point last{};
     static std::optional<FlagStore> previous;
@@ -4159,6 +4246,11 @@ void LogFlagChangesInSession(bool in_session) {
             LOG_INFO(Debug, "Bloodborne flags in session: set{} | cleared{}", list(set),
                      list(cleared));
             AddLampsLitInSession(set);
+            if (!IsPartyGuestRole()) {
+                for (const s32 flag : set) {
+                    WatchLampFlag(flag, current);
+                }
+            }
             if (IsPartyGuestRole()) {
                 if (IsBulkFlagChange(set.size() + cleared.size())) {
                     LOG_INFO(Debug,
@@ -4277,6 +4369,12 @@ void SetPartyWorldChanges(bool in_session) {
     }
     LOG_INFO(Debug, "Bloodborne party: set {} of {} world changes from guests", set,
              pending.size());
+    const FlagStore store = ReadFlagStore();
+    for (const auto& [flag, on] : pending) {
+        if (on) {
+            WatchLampFlag(flag, store);
+        }
+    }
 }
 
 void TickPlayersOnThisMap() {
@@ -4288,6 +4386,7 @@ void TickPlayersOnThisMap() {
     SetPartyWorldChanges(in_session);
     KeepGuestProgress(in_session);
     LogFlagChangesInSession(in_session);
+    LogWatchedWrites();
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
     PlayGuestAsHost(in_session);
     TickGuestLampTrip();

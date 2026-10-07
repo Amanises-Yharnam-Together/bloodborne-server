@@ -353,6 +353,12 @@ bool CarriesToGuestWorld(s32 flag) {
     return flag > 0 && !death_or_multiplayer && !IsMapPickupFlag(flag);
 }
 
+FlagBit FlagBitLocation(s32 flag, u32 flags_per_block) {
+    const u32 within = static_cast<u32>(flag) % flags_per_block;
+    return {static_cast<u32>(flag) / flags_per_block, within / 8,
+            static_cast<u8>(0x80 >> (within % 8))};
+}
+
 std::optional<s32> LampOfActiveFlag(s32 flag) {
     constexpr s32 ActiveFlagBase = 10007810;
     const s32 offset = flag - ActiveFlagBase;
