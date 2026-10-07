@@ -273,22 +273,33 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
   boss events patched by `tools\re\party_boss_events.py` (1003:105 client state, 4:3 "player
   alive" wait moved to an unused condition group).
 - Lost echoes: a join clears GameDataMan +0x28 but keeps the record; `KeepGuestBloodstainMark`.
-- Guest -> host now sends only lamp active flags (`PostsToHostWorld`): sending everything moved the
-  host along on the guest's lamp trip (7MMM01LL) and took the host's messenger gifts (6620,
-  12101020-23). Trip flags (lamp, headstone) never go into the guest's own world either.
-- **Lamp lit by a guest** (rig-confirmed 2026-10-07): the host's first registration of the lamp
-  (`0x0146DA20`, from the bonfire registration `0x01327794`) wrote its flags base..base+11 off.
-  Found with the lamp tracer (`bloodborne_write_watch.cpp`: hardware write watch, DR0, on the
-  flag's byte; logs `lamp tracer: write ...` with the stack). Two hooks keep flags already on.
+- **Lamps are shared both ways** (rig-confirmed 2026-10-07): every member posts the lamp active
+  flags it saw turn on (`SharedWithParty`/`FlagsToShare`, shadNet `/bloodborne/party/flags`) and
+  sets the other members' ones (`SetPartyWorldChanges`); the game itself only copies a lamp's
+  counters. Nothing else goes through the board: sending everything moved the host along on the
+  guest's lamp trip (7MMM01LL) and took the host's messenger gifts. Trip flags (lamp, headstone)
+  never go into the guest's own world either.
+- **Lamp lit by another member** (rig-confirmed): the first registration of the lamp for a
+  character (`0x0146DA20`, from the bonfire registration `0x01327794`) wrote its flags
+  base..base+11 off. Two hooks keep flags already on.
+- **Flag tracer** (`bloodborne_write_watch.cpp`): hardware write watch (DR0) on one flag's byte,
+  logging `flag tracer: write ...` with the stack. Armed for lamp active flags on the host, or for
+  `SHADPS4_BLOODBORNE_TRACE_FLAG=<flag>` (rig launchers: 12101020). Found both bugs in one run each.
+- **Messenger gifts are per player** (rig-confirmed): the other player's set-flag message
+  (`0x017C0565` hook) and event-end message (`0x017C0901`) leave 12101020-29 and the talk picks
+  72101000-99 alone (`KeepsLocalFlag`), and `party_boss_events.py` prepends 2000:2 0 (no network
+  sync) to the m21_00 gift events 12101020-28; map events are otherwise kept in step between
+  players. Diagnostic: `the other player sends flag ...` for 1210xxxx/7210xxxx.
+- **Death triggers** (rig-confirmed): events set the respawn point on a death (common 9400: first
+  death -> Dream 2102962; 9404: Dream 2102961; 9421: kidnapping (flag 9420) -> Gaol 2802959). A
+  party revive goes there, travelling 0.2 s later when it is on another map
+  (`ChooseDeathRespawn`, also covers a last lamp on another map). `party_boss_events.py` lets a
+  client run those events (1003:6) and the Dream's first visit (m21_00 9401: cutscene + first
+  Yharnam lamp, so the guest's headstone works). Kidnapping not tested.
 - **Boss item popup**: the guest's 2003:36 award (`0x017DDC50` from `0x0132E4B5`) is held and
   given 8 s later (`DefersItemLotAward`); in the boss-clear sequence its dialog left the guest
-  unable to press X. Also `MenuSeesAClient` (menu condition `0x01A13FE5`). Not rig-confirmed.
-- **Death triggers**: events set the respawn point on a death (common 9400: first death -> Dream
-  2102962; 9404: Dream 2102961; 9421: kidnapping (flag 9420) -> Gaol 2802959). A party revive
-  goes there, travelling when it is on another map (`ChooseDeathRespawn`, also covers a last
-  lamp on another map). `party_boss_events.py` now also patches those events' 1003:6 client
-  end. Not rig-tested.
-- Seen: a guest's first Dream arrival did not play the first-visit cutscene for the guest.
+  unable to press X. Also `MenuSeesAClient` (menu condition `0x01A13FE5`). The first build had a
+  broken hook (prologue cut mid-instruction); the fixed one is NOT rig-tested yet. Test first.
 
 ## Bosses
 - A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
