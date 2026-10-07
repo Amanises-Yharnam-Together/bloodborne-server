@@ -341,6 +341,12 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 - Rig: Potatoborne drops enemy corpses at once (Kaniel saw bodies vanish); without it two
   instances run out of memory more easily. A join once failed until both games restarted
   (claim delivered every 5 s, guest never joined).
+- **Slow joins (last in the backlog, Kaniel 2026-10-07).** The host picked the guest's sign three
+  times (19:18, 19:19, 19:21; rooms 16-18), shadnet delivered each claim within seconds, but the
+  host only activated signaling to the guest at ~19:22:55 (host log: CreateJoinRoom, then nothing
+  until sceNpSignalingActivateConnection); the guest joined at once after that. One claim had
+  host-placement-bytes 0. shadnet also stopped silently at 20:37 the same evening. Rig launchers
+  now keep the previous run's log as `shad_log.prev.txt`.
 
 ## Known loose ends
 - shadnet logs `unhandled POST /v1/users/<npid>/feed`. Harmless so far.
