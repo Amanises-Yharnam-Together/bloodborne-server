@@ -4345,6 +4345,23 @@ void PS4_SYSV_ABI KeepLocalFlagsFromOthers(u64, GuestRegisterSnapshot* registers
     registers->r15 = (registers->r15 & ~u64{0xFF}) | (local ? 1 : 0);
 }
 
+// The other player's "event ended" message (0x017C0901: event id in r15d, slot in r14d, then
+// 0x012EFE90 ends that event here): it ended a messenger's gift event for the player who did not
+// take the gift, which set the event's own flag (12101020 + n). A kept event gets id -1, which
+// 0x012EFE90 ignores.
+constexpr u64 RemoteEndEventOffset = 0x017C0901;
+constexpr std::array<u8, 14> RemoteEndEvent{0x84, 0xDB, 0x0F, 0x95, 0xC0, 0x0F, 0xB6,
+                                            0xC8, 0x44, 0x89, 0xFE, 0x44, 0x89, 0xF2};
+
+void PS4_SYSV_ABI KeepLocalEventsFromOthers(u64, GuestRegisterSnapshot* registers) {
+    const s32 event = static_cast<s32>(registers->r15);
+    if (KeepsLocalFlag(party_controller.has_value(), event)) {
+        LOG_INFO(Debug, "Bloodborne party: kept event {} running against the other player's end",
+                 event);
+        registers->r15 = (registers->r15 & ~u64{0xFFFFFFFF}) | u64{0xFFFFFFFF};
+    }
+}
+
 void InstallKeepLocalFlags(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
@@ -4353,6 +4370,11 @@ void InstallKeepLocalFlags(u64 base, u64 image_size) {
         !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + RemoteSetFlagOffset),
                                       RemoteSetFlag, 0, KeepLocalFlagsFromOthers)) {
         LOG_ERROR(Debug, "Bloodborne remote flag hook unavailable; messenger gifts are shared");
+    }
+    if (RemoteEndEventOffset + RemoteEndEvent.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + RemoteEndEventOffset),
+                                      RemoteEndEvent, 0, KeepLocalEventsFromOthers)) {
+        LOG_ERROR(Debug, "Bloodborne remote event hook unavailable; messenger gifts are shared");
     }
 }
 
@@ -4763,7 +4785,8 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
         return;
     case DeathRespawn::Travel:
         guest_trip_point = point;
-        guest_lamp_trip_at = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+        // Right away: getting up where the player fell first looked like a second respawn.
+        guest_lamp_trip_at = std::chrono::steady_clock::now() + std::chrono::milliseconds{200};
         LOG_INFO(Debug, "Bloodborne revive: respawn point {} is on map {:#x}; travelling there",
                  point, PackedMapOfWarpPoint(point));
         return;
