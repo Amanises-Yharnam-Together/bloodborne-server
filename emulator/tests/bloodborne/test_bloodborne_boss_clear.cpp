@@ -18,7 +18,7 @@ const std::vector<u8> Nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
 // member schedules BlockClear2_3Leave, which leaves the session. The two calls go.
 TEST(BloodborneBossClear, NobodyLeavesTheSessionAfterABossKill) {
     const auto& patches = BossClearKeepSessionPatches();
-    ASSERT_EQ(patches.size(), 4u);
+    ASSERT_EQ(patches.size(), 5u);
     for (const auto& patch : patches) {
         EXPECT_EQ(patch.original.size(), patch.patched.size()) << std::hex << patch.offset;
     }
@@ -37,7 +37,7 @@ TEST(BloodborneBossClear, NobodyLeavesTheSessionAfterABossKill) {
 // own world instead. Seamless: a white phantom clears them like everyone else and stays.
 TEST(BloodborneBossClear, TheGuestClearsItsLeavingFlagsAndStaysInsteadOfWarpingHome) {
     const auto& patches = BossClearKeepSessionPatches();
-    ASSERT_EQ(patches.size(), 4u);
+    ASSERT_EQ(patches.size(), 5u);
     // `cmp dword ptr [rcx + 0x78], 8; jne <skip the flags>` falls through for everyone.
     EXPECT_EQ(patches[2].offset, 0x0138596Du);
     EXPECT_EQ(patches[2].original, (std::vector<u8>{0x75, 0x1B}));
@@ -46,6 +46,20 @@ TEST(BloodborneBossClear, TheGuestClearsItsLeavingFlagsAndStaysInsteadOfWarpingH
     EXPECT_EQ(patches[3].offset, 0x0138599Cu);
     EXPECT_EQ(patches[3].original, (std::vector<u8>{0x75, 0x46}));
     EXPECT_EQ(patches[3].patched, (std::vector<u8>{0xEB, 0x46}));
+}
+
+// BlockClear2's white phantom branch calls SetLoadWait (event state +0x8D = 1), which the event
+// update copies to SprjActionButtonMan +0x52 (0x0133A114): no action button until the next
+// load, the trip home the guest no longer takes. Seamless: the guest never waits for it.
+TEST(BloodborneBossClear, TheGuestKeepsItsActionButtonAfterABossKill) {
+    const auto& patches = BossClearKeepSessionPatches();
+    ASSERT_EQ(patches.size(), 5u);
+    // `mov byte ptr [r14 + 0x8D], 1` -> an 8-byte nop.
+    EXPECT_EQ(patches[4].offset, 0x01384D03u);
+    EXPECT_EQ(patches[4].original,
+              (std::vector<u8>{0x41, 0xC6, 0x86, 0x8D, 0x00, 0x00, 0x00, 0x01}));
+    EXPECT_EQ(patches[4].patched,
+              (std::vector<u8>{0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00}));
 }
 
 } // namespace

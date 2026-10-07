@@ -104,6 +104,11 @@ const std::vector<CodePatch>& BossClearKeepSessionPatches() {
         {0x0138596D, {0x75, 0x1B}, {0x66, 0x90}},
         // BlockClear2_3: skip the white phantom's reset and warp home (`jne` -> `jmp`).
         {0x0138599C, {0x75, 0x46}, {0xEB, 0x46}},
+        // BlockClear2: the white phantom's SetLoadWait (event state +0x8D), which turns the
+        // action buttons off (SprjActionButtonMan +0x52) until the trip home it no longer takes.
+        {0x01384D03,
+         {0x41, 0xC6, 0x86, 0x8D, 0x00, 0x00, 0x00, 0x01},
+         {0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00}},
     };
     return patches;
 }

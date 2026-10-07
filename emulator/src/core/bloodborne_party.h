@@ -129,7 +129,8 @@ constexpr u64 HostDeadEpilogueOffset = 0x01381A50;
 const std::vector<CodePatch>& HostDeathKeepGuestsPatches();
 // A boss kill that keeps the party: BlockClear2_2 no longer sends the guest's leave broadcast
 // (4063) or schedules BlockClear2_3Leave, and BlockClear2_3 clears a white phantom's leaving
-// flags instead of warping it home.
+// flags instead of warping it home. BlockClear2 no longer makes a white phantom wait for that
+// load (SetLoadWait turned its action buttons off).
 constexpr u64 OnKeyTime2Offset = 0x0132B1C0; // OnKeyTime2(proxy, event, state, delay, ...)
 const std::vector<CodePatch>& BossClearKeepSessionPatches();
 
