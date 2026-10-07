@@ -379,6 +379,10 @@ std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp
     return std::nullopt;
 }
 
+bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip) {
+    return !in_session || on_trip;
+}
+
 bool IsBossFogEntryFlag(s32 flag) {
     // The flag each boss fog's host event sets and its phantom event waited for (found by
     // party_boss_events.py's open_boss_fog_for_guests in the 01.09 map event files).

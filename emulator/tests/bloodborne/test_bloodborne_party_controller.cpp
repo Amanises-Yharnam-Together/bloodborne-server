@@ -670,6 +670,15 @@ TEST(BloodborneBosses, ABossMissedByTheCoopHpBonusIsScaled) {
         << "never seen without the effect";
 }
 
+// A guest's trip (to the Hunter's Dream, say) loads its own world while the session stays up,
+// so the session's world changes go in on that load too: the lamp it lit at Gascoigne was
+// missing from its headstone, the host's had it.
+TEST(BloodborneGuestProgress, ATripLoadsTheSessionsWorldChangesToo) {
+    EXPECT_TRUE(SetsGuestWorldChangesOnLoad(false, false)) << "home, solo";
+    EXPECT_TRUE(SetsGuestWorldChangesOnLoad(true, true)) << "a party trip";
+    EXPECT_FALSE(SetsGuestWorldChangesOnLoad(true, false)) << "the join's reload into the host";
+}
+
 // A party death wakes where the game says (GlobalState +0x1528): the events set it on a death
 // (the first one: the Hunter's Dream 2102962; a kidnapping: the Gaol 2802959). In a loaded block
 // the player is moved there, otherwise it travels; after that trip it never travels again.

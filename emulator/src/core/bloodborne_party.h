@@ -347,6 +347,9 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 // home. A join reload's bulk change, the death/multiplayer (4xxx) flags and
 // the pickups (their own list) are left out.
 bool CarriesToGuestWorld(s32 flag);
+// Whether a load of the guest's world gets the kept world changes before its map items and
+// events: at home, and on a party trip (its own world loads while the session stays up).
+bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip);
 // A lamp's "active" flag (10007810 + map * 10000 + lamp * 20, what the lamp talk scripts check)
 // to its lamp entity (map * 10000 + 1950 + lamp); the game clears the flag again for a character
 // whose lamp list ([0x0553B120]+0xC70) lacks the lamp.

@@ -4089,11 +4089,15 @@ void SetGuestPickupsBeforeMapItems() {
                  "items were created",
                  set);
     }
-    // A load of the guest's own world (a join's reload already reads as a session): the
-    // session's world changes go in before its events start, so a boss killed in the host's
-    // world doesn't show its health bar here until the next load.
-    if (!InPartySession()) {
+    // A load of the guest's own world (a join's reload already reads as a session, a party
+    // trip loads its own world too): the session's world changes go in before its events
+    // start, so a boss killed in the host's world doesn't show its health bar here until the
+    // next load, and a lamp lit in the session is on the headstone.
+    const bool in_session = InPartySession();
+    if (!in_session) {
         ConfirmGuestPickupsInOwnWorld();
+    }
+    if (SetsGuestWorldChangesOnLoad(in_session, PartyTripActive())) {
         if (const size_t set = SetGuestWorldChanges(); set > 0) {
             LOG_INFO(Debug,
                      "Bloodborne party: set {} of the session's world changes as the guest's own "
