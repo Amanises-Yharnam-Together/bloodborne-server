@@ -16,6 +16,11 @@ emulator then takes the guest there (ChooseDeathRespawn). The Hunter's Dream's f
 (m21_00 event 9401: the cutscene and the first Yharnam lamp, 12417810) ends for a client the
 same way, which left a guest's headstone with no place to awaken.
 
+Events are kept in step between the players of a session unless they start with 2000:2 (network
+sync) 0, as the first visit does. The Hunter's Dream messengers' gift events (m21_00
+12101020-12101028) get that instruction, so one player's gift pick no longer finishes the other's
+gift event (the emulator also keeps their flags local, KeepsLocalFlag).
+
 Usage: py -3.12 party_boss_events.py <mods dvdroot_ps4\\event> <game event dir> [<update event dir>]
 (a file in a later directory replaces the same file in an earlier one, as the update does)
 """
@@ -103,6 +108,63 @@ def patch_client_events(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
     return bytes(data), patched
 
 
+# Events that get 2000:2 0 (no network sync) as their first instruction, per file.
+LOCAL_EVENTS = {
+    'm21_00_00_00.emevd.dcx': {12101020, 12101021, 12101022, 12101024, 12101026, 12101028},
+}
+NETWORK_SYNC = (2000, 2)
+INSTRUCTION_SIZE = 32
+# Header offset fields after the instruction table (DS3 layout): unknown, layers, params, linked
+# files, arguments, strings.
+SHIFTED_OFFSET_FIELDS = (5, 7, 9, 11, 13, 15)
+
+
+def make_events_local(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
+    data = bytearray(emevd)
+    fields = list(struct.unpack_from('<16q', data, 16))
+    event_count, event_offset = fields[0], fields[1]
+    instruction_count, instruction_offset = fields[2], fields[3]
+    args_offset, args_size = fields[13], fields[12]
+    events = [list(struct.unpack_from('<qqqqqii', data, event_offset + index * 48))
+              for index in range(event_count)]
+    targets = sorted((event[2] for event in events
+                      if event[0] in wanted and event[1] > 0 and
+                      not already_local(data, instruction_offset, args_offset, event)),
+                     reverse=True)
+    if not targets:
+        return emevd, 0
+    # The instruction's argument (4 bytes of 0) can share any aligned zero word of the table.
+    zero = next(at for at in range(0, args_size - 3, 4)
+                if data[args_offset + at:args_offset + at + 4] == bytes(4))
+    record = struct.pack('<iiqqq', NETWORK_SYNC[0], NETWORK_SYNC[1], 4, zero, -1)
+    instructions_end = instruction_offset + instruction_count * INSTRUCTION_SIZE
+    table = bytearray(data[instruction_offset:instructions_end])
+    for first in targets:
+        table[first:first] = record
+    for event in events:
+        moved = sum(1 for first in targets if event[2] > first)
+        if event[0] in wanted and event[2] in targets:
+            event[1] += 1
+        event[2] += moved * INSTRUCTION_SIZE
+    delta = len(targets) * INSTRUCTION_SIZE
+    out = data[:instruction_offset] + table + data[instructions_end:]
+    for index, event in enumerate(events):
+        struct.pack_into('<qqqqqii', out, event_offset + index * 48, *event)
+    fields[2] += len(targets)
+    for field in SHIFTED_OFFSET_FIELDS:
+        if fields[field] >= instructions_end:
+            fields[field] += delta
+    struct.pack_into('<16q', out, 16, *fields)
+    struct.pack_into('<I', out, 0x0C, struct.unpack_from('<I', out, 0x0C)[0] + delta)
+    return bytes(out), len(targets)
+
+
+def already_local(data: bytes, instruction_offset: int, args_offset: int, event: list) -> bool:
+    bank, ident, _, offset, _ = struct.unpack_from('<iiqqq', data, instruction_offset + event[2])
+    return ((bank, ident) == NETWORK_SYNC and
+            data[args_offset + offset:args_offset + offset + 4] == bytes(4))
+
+
 def main() -> int:
     target = pathlib.Path(sys.argv[1])
     files: dict[str, pathlib.Path] = {}
@@ -117,12 +179,16 @@ def main() -> int:
         boss = client = 0
         if name.startswith('m'):
             emevd, boss = patch_events(emevd)
+        local = 0
         if name in CLIENT_EVENTS:
             emevd, client = patch_client_events(emevd, CLIENT_EVENTS[name])
-        if boss or client:
+        if name in LOCAL_EVENTS:
+            emevd, local = make_events_local(emevd, LOCAL_EVENTS[name])
+        if boss or client or local:
             (target / name).write_bytes(save_dcx(original, emevd))
-            print(f'{name}: {boss} boss event checks, {client} client event ends')
-            total += boss + client
+            print(f'{name}: {boss} boss event checks, {client} client event ends, '
+                  f'{local} local events')
+            total += boss + client + local
     print(f'total: {total}')
     return 0
 
