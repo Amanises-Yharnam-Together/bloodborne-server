@@ -445,6 +445,15 @@ bool GuestHandlesMapItemsAlone(bool party_configured) {
     return party_configured;
 }
 
+std::array<u8, 8> RetargetRipLoad(std::span<const u8, 8> original, u64 address, u64 target) {
+    std::array<u8, 8> patched{};
+    std::copy(original.begin(), original.end(), patched.begin());
+    const s32 displacement =
+        static_cast<s32>(static_cast<s64>(target) - static_cast<s64>(address + patched.size()));
+    std::memcpy(patched.data() + 4, &displacement, sizeof(displacement));
+    return patched;
+}
+
 u32 MapItemPacketHeaderSeen(u32 header, bool party_configured) {
     return party_configured ? 0 : header;
 }

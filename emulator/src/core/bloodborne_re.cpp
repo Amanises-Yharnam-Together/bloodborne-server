@@ -3466,10 +3466,56 @@ void PS4_SYSV_ABI IgnorePartyMapItemSync(u64, GuestRegisterSnapshot* registers) 
     }
 }
 
+// Full echoes for party guests (see RetargetRipLoad): the guest rate loads in the kill reward
+// (0x018FC947) and its calculation (0x018FCAA7) are pointed at the 1.0 at 0x04927EBC.
+constexpr std::array<u64, 2> GuestEchoRateLoads{0x018FC947, 0x018FCAA7};
+constexpr std::array<std::array<u8, 8>, 2> GuestEchoRateLoadBytes{{
+    {0xC5, 0xFA, 0x10, 0x1D, 0x71, 0xB5, 0x02, 0x03},
+    {0xC5, 0xFA, 0x10, 0x1D, 0x21, 0xB4, 0x02, 0x03},
+}};
+constexpr u64 FullEchoRateOffset = 0x04927EBC;
+
+// Diagnostics: who adds echoes (AddSouls 0x018FC600(player, amount, _, apply rates)).
+constexpr u64 AddSoulsOffset = 0x018FC600;
+constexpr std::array<u8, 11> AddSoulsPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x56,
+                                              0x53, 0x48, 0x83, 0xEC, 0x10};
+
+void PS4_SYSV_ABI NoteAddSouls(u64, const GuestRegisterSnapshot* registers) {
+    const u64 caller = ReadValue<u64>(registers->rsp, 0);
+    LOG_INFO(Debug, "Bloodborne echoes: +{} (rates {}) from {:#x}",
+             static_cast<s32>(registers->rsi), registers->rcx & 0xFF,
+             caller >= image_base ? caller - image_base : caller);
+}
+
+void GiveGuestsFullEchoes(u64 base, u64 image_size) {
+    for (size_t index = 0; index < GuestEchoRateLoads.size(); ++index) {
+        const u64 offset = GuestEchoRateLoads[index];
+        if (offset + 8 > image_size ||
+            !std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(base + offset), 8},
+                                GuestEchoRateLoadBytes[index])) {
+            LOG_ERROR(Debug, "Bloodborne guest echo rate not found at {:#x}", offset);
+            return;
+        }
+    }
+    for (size_t index = 0; index < GuestEchoRateLoads.size(); ++index) {
+        const u64 offset = GuestEchoRateLoads[index];
+        const auto patched =
+            RetargetRipLoad(GuestEchoRateLoadBytes[index], offset, FullEchoRateOffset);
+        std::memcpy(reinterpret_cast<void*>(base + offset), patched.data(), patched.size());
+    }
+    LOG_INFO(Debug, "Bloodborne party guests get full echoes from kills");
+    if (AddSoulsOffset + AddSoulsPrologue.size() > image_size ||
+        !InstallGuestCodeHook(reinterpret_cast<void*>(base + AddSoulsOffset), AddSoulsPrologue, 0,
+                              NoteAddSouls)) {
+        LOG_ERROR(Debug, "Bloodborne echo diagnostics unavailable");
+    }
+}
+
 void InstallSharedLoot(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
     }
+    GiveGuestsFullEchoes(base, image_size);
     if (MapItemPacketHeaderOffset + MapItemPacketHeader.size() > image_size ||
         !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + MapItemPacketHeaderOffset),
                                       MapItemPacketHeader, 0, IgnorePartyMapItemSync)) {

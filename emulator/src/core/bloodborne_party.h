@@ -414,6 +414,8 @@ bool GuestHandlesMapItemsAlone(bool party_configured);
 // in a configured party every such packet reads as empty and each player's items stay its own.
 constexpr u32 MapItemPacketChannel = 0x2C;
 u32 MapItemPacketHeaderSeen(u32 header, bool party_configured);
+// An 8-byte `vmovss xmm, [rip+disp32]` at `address` changed to load from `target` instead.
+std::array<u8, 8> RetargetRipLoad(std::span<const u8, 8> original, u64 address, u64 target);
 // A loaded PARAM file: the type name at +0x0C, the row count (u16) at +0x0A and sorted 24-byte
 // row entries (id, padding, data offset) at +0x40.
 bool IsParamOfType(std::span<const u8> param, std::string_view type);

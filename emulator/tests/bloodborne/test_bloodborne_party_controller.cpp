@@ -532,6 +532,18 @@ TEST(BloodborneGuestProgress, CarriesTheSessionsWorldChangesHome) {
     EXPECT_EQ(ParseWorldChanges(text), world);
 }
 
+// Kill echoes (0x018FC860, and the calculation 0x018FC9D0) are multiplied by 0.5 for a summoned
+// guest: `vmovss xmm3, [rip+disp]` loads 0.5 from 0x04927EC0 (or 0x04927ED0). A party guest's
+// load is pointed at the 1.0 next to it (0x04927EBC).
+TEST(BloodborneGuestLoot, PartyGuestsGetFullKillEchoes) {
+    const std::array<u8, 8> original{0xC5, 0xFA, 0x10, 0x1D, 0x71, 0xB5, 0x02, 0x03};
+    EXPECT_EQ(RetargetRipLoad(original, 0x018FC947, 0x04927EBC),
+              (std::array<u8, 8>{0xC5, 0xFA, 0x10, 0x1D, 0x6D, 0xB5, 0x02, 0x03}));
+    const std::array<u8, 8> second{0xC5, 0xFA, 0x10, 0x1D, 0x21, 0xB4, 0x02, 0x03};
+    EXPECT_EQ(RetargetRipLoad(second, 0x018FCAA7, 0x04927EBC),
+              (std::array<u8, 8>{0xC5, 0xFA, 0x10, 0x1D, 0x0D, 0xB4, 0x02, 0x03}));
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

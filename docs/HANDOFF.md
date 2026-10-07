@@ -261,6 +261,11 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 - A guest triggers a boss the same way the host can (enters the boss fog first, starts the fight).
 - No boss fog a guest cannot enter until the host goes there (phantom fog-wall gate, plan item 6).
 - Rig-test that a boss kill keeps the session (`BossClearKeepSessionPatches`, merged, untested).
+- **Full boss loot for the guest** (Kaniel 2026-10-07): on a boss kill the host got 4000 echoes
+  and the boss item, the guest 2000 and no item; both should get full loot. Boss echoes skip
+  the normal kill-soul path (NpcParam isSoulGetByBoss, +0x149 bit 4, checked at `0x018C51C3`);
+  look for the boss reward's client half rate and the host-only item lot award.
+  Boss kill flags seen in the guest's world copy: 12411700/01/02/03, 12414700-12414733, 7017.
 
 ## Backlog (Kaniel 2026-10-06: "add all of the current findings and problems to the backlog")
 - **NPC hidden on the host shows on the guest** (Kaniel, 2026-10-06, two new characters, Hunter's
