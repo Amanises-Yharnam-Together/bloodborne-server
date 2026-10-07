@@ -2101,7 +2101,7 @@ s32 guest_trip_point = HuntersDreamWarpPoint;
 // after arrival the guest is moved to the lamp the way a revive is.
 bool guest_trip_in_flight{};
 std::optional<std::chrono::steady_clock::time_point> guest_trip_fixup_at;
-void WarpGuestToLastLamp();
+void MoveToRespawnPoint(bool arriving_from_trip);
 std::optional<std::chrono::steady_clock::time_point> guest_lamp_touch_at;
 std::optional<std::chrono::steady_clock::time_point> guest_lamp_trip_at;
 constexpr u64 WarpNextStageBonfireOffset = 0x0132E050;
@@ -2113,7 +2113,7 @@ void TickGuestLampTrip() {
         const auto at = LocalPlayerPosition();
         LOG_INFO(Debug, "Bloodborne party guest trip: position after arrival known={} ({}, {}, {})",
                  at.has_value(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f, at ? (*at)[2] : 0.0f);
-        WarpGuestToLastLamp();
+        MoveToRespawnPoint(true);
     }
     if (guest_lamp_touch_at && now >= *guest_lamp_touch_at) {
         guest_lamp_touch_at.reset();
@@ -4702,24 +4702,34 @@ bool PS4_SYSV_ABI UpdateGuestBloodMark() {
 // same resolver finds the lamp while it is in a block the host's world has loaded; the guest is
 // then moved there the way the Warp binding moves a character (vtable +0x5F8, then +0x1E1 |= 2).
 // Otherwise the guest stays where it fell.
-void WarpGuestToLastLamp() {
+// A point on another map (see ChooseDeathRespawn: the first death's Hunter's Dream, a
+// kidnapping's Gaol, a lamp elsewhere) is a trip there, as a guest's lamp trip is.
+void MoveToRespawnPoint(bool arriving_from_trip) {
     const u64 global = GetGlobalState();
     const s32 point = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
     const u64 blocks = ReadValue<u64>(image_base + LoadedBlocksPointerOffset, 0);
     const u64 player = GetLocalPlayer();
-    if (point == -1 || blocks < 0x10000 || player < 0x10000) {
-        LOG_INFO(Debug, "Bloodborne revive: no last lamp ({}); staying where the guest fell",
-                 point);
+    if (blocks < 0x10000 || player < 0x10000) {
         return;
     }
     alignas(16) std::array<float, 4> position{};
     alignas(16) std::array<float, 4> rotation{};
     using Resolve = bool PS4_SYSV_ABI (*)(u64 blocks, float* position, float* rotation, s32 point);
-    if (!reinterpret_cast<Resolve>(image_base + ResolveRespawnPointOffset)(
-            blocks, position.data(), rotation.data(), point)) {
-        LOG_INFO(Debug, "Bloodborne revive: last lamp {} is not in a loaded block; staying put",
-                 point);
+    const bool in_loaded_block =
+        point > 0 && reinterpret_cast<Resolve>(image_base + ResolveRespawnPointOffset)(
+                         blocks, position.data(), rotation.data(), point);
+    switch (ChooseDeathRespawn(point, in_loaded_block, arriving_from_trip)) {
+    case DeathRespawn::StayPut:
+        LOG_INFO(Debug, "Bloodborne revive: respawn point {} not reachable; staying put", point);
         return;
+    case DeathRespawn::Travel:
+        guest_trip_point = point;
+        guest_lamp_trip_at = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+        LOG_INFO(Debug, "Bloodborne revive: respawn point {} is on map {:#x}; travelling there",
+                 point, PackedMapOfWarpPoint(point));
+        return;
+    case DeathRespawn::MoveToPoint:
+        break;
     }
     using Teleport = void PS4_SYSV_ABI (*)(u64 character, const float* position,
                                            const float* rotation, s32 mode);
@@ -4732,6 +4742,10 @@ void WarpGuestToLastLamp() {
     WriteValue(player, 0x1E1, static_cast<u8>(ReadValue<u8>(player, 0x1E1) | 2));
     LOG_INFO(Debug, "Bloodborne revive: moved to last lamp {} at ({}, {}, {})", point, position[0],
              position[1], position[2]);
+}
+
+void WarpGuestToLastLamp() {
+    MoveToRespawnPoint(false);
 }
 
 AliveStateSnapshot local_alive_state;

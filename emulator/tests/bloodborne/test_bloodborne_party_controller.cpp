@@ -640,6 +640,17 @@ TEST(BloodborneSharedProgression, OnlyLampsGoFromGuestToHost) {
     EXPECT_FALSE(PostsToHostWorld(12417832));
 }
 
+// A party death wakes where the game says (GlobalState +0x1528): the events set it on a death
+// (the first one: the Hunter's Dream 2102962; a kidnapping: the Gaol 2802959). In a loaded block
+// the player is moved there, otherwise it travels; after that trip it never travels again.
+TEST(BloodborneDeaths, APartyDeathWakesWhereTheGameSays) {
+    EXPECT_EQ(ChooseDeathRespawn(2412951, true, false), DeathRespawn::MoveToPoint);
+    EXPECT_EQ(ChooseDeathRespawn(2102962, false, false), DeathRespawn::Travel);
+    EXPECT_EQ(ChooseDeathRespawn(2102962, false, true), DeathRespawn::StayPut);
+    EXPECT_EQ(ChooseDeathRespawn(-1, false, false), DeathRespawn::StayPut);
+    EXPECT_EQ(ChooseDeathRespawn(0, false, false), DeathRespawn::StayPut);
+}
+
 // A save slot's kept lists belong to the character that was there: once its pickups have been
 // set in its own world, a load where none of them is set is a new character in that slot.
 TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {

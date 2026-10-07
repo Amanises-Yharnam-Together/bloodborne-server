@@ -9,6 +9,11 @@ the map event files where those 1003:105 checks compare against a state that nev
 the guest runs the rest of the event too. Hosts and solo players are not affected (they are
 never in state 1).
 
+It also patches common.emevd's death events (9400: the first death wakes in the Hunter's Dream,
+9404: the Dream after insight, 9421: a kidnapping wakes in the Gaol). They set where a death
+wakes the player but end for a client (1003:6 state 1), so a party guest runs them too; the
+emulator then takes the guest there (ChooseDeathRespawn).
+
 Usage: py -3.12 party_boss_events.py <mods dvdroot_ps4\\event> <game event dir> [<update event dir>]
 (a file in a later directory replaces the same file in an earlier one, as the update does)
 """
@@ -67,14 +72,50 @@ def patch_events(emevd: bytes) -> tuple[bytes, int]:
     return bytes(data), patched
 
 
+DEATH_EVENTS = {9400, 9404, 9421}
+
+
+def patch_death_events(emevd: bytes) -> tuple[bytes, int]:
+    data = bytearray(emevd)
+    fields = struct.unpack_from('<16q', data, 16)
+    event_count, event_offset, _, instruction_offset = fields[0], fields[1], fields[2], fields[3]
+    args_offset = fields[13]
+    patched = 0
+    for index in range(event_count):
+        event, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data,
+                                                             event_offset + index * 48)
+        if event not in DEATH_EVENTS:
+            continue
+        for k in range(count):
+            bank, ident, length, offset, _ = struct.unpack_from(
+                '<iiqqq', data, instruction_offset + first + k * 32)
+            at = args_offset + offset
+            # 1003:6 "end the event by multiplayer state" (end type, state): state 1 is a client.
+            if bank == 1003 and ident == 6 and length >= 2 and data[at + 1] == 1:
+                data[at + 1] = NEVER
+                patched += 1
+    return bytes(data), patched
+
+
 def main() -> int:
     target = pathlib.Path(sys.argv[1])
     files: dict[str, pathlib.Path] = {}
     for source in sys.argv[2:]:
         for path in pathlib.Path(source).glob('m*.emevd.dcx'):
             files[path.name] = path
+    common = None
+    for source in sys.argv[2:]:
+        if (pathlib.Path(source) / 'common.emevd.dcx').exists():
+            common = pathlib.Path(source) / 'common.emevd.dcx'
     target.mkdir(parents=True, exist_ok=True)
     total = 0
+    if common is not None:
+        original = common.read_bytes()
+        emevd, patched = patch_death_events(load_dcx(original))
+        if patched:
+            (target / common.name).write_bytes(save_dcx(original, emevd))
+            print(f'{common.name}: {patched} death event checks')
+            total += patched
     for _, path in sorted(files.items()):
         original = path.read_bytes()
         emevd, patched = patch_events(load_dcx(original))

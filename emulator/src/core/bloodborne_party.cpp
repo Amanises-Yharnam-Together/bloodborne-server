@@ -373,6 +373,16 @@ std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u1
     return kept;
 }
 
+DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip) {
+    if (point <= 0) {
+        return DeathRespawn::StayPut;
+    }
+    if (in_loaded_block) {
+        return DeathRespawn::MoveToPoint;
+    }
+    return arriving_from_trip ? DeathRespawn::StayPut : DeathRespawn::Travel;
+}
+
 bool PostsToHostWorld(s32 flag) {
     return LampOfActiveFlag(flag).has_value() || LampOfActiveFlag(flag - 1).has_value();
 }

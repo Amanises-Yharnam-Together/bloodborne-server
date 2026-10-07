@@ -361,6 +361,11 @@ FlagBit FlagBitLocation(s32 flag, u32 flags_per_block);
 // (+10/+11: lit). Those on before it (bit i of on_before: base + i, a lamp another party member
 // lit) are set again in a party.
 std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u16 on_before);
+// Where a party death wakes the player (point: GlobalState +0x1528, which the events set on a
+// death: the first one to the Hunter's Dream, a kidnapping to the Gaol): moved there while the
+// point is in a loaded block, a trip there otherwise, except right after such a trip.
+enum class DeathRespawn { StayPut, MoveToPoint, Travel };
+DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip);
 // A guest's change in the host's world sent to the host (see PartyFlagBoard): a lamp's active
 // flags (LampOfActiveFlag and the one after), which the game does not sync itself.
 bool PostsToHostWorld(s32 flag);
