@@ -1993,8 +1993,8 @@ void UnlockPartyTrophies(bool in_session) {
     }
 }
 
-// Shared world changes the other way (see EncodeFlagUpdate): a guest's changes in the host's
-// world go to the party's flag board, and the host sets the other members' changes.
+// Lamps shared by the party (see FlagsToShare, EncodeFlagUpdate): every member posts the lamps
+// it saw lit to the party's flag board and sets the other members' ones.
 std::atomic<bool> party_host_role{};
 std::mutex flag_board_mutex;
 std::vector<std::pair<s32, bool>> flags_to_post;
@@ -2002,16 +2002,8 @@ std::vector<std::pair<s32, bool>> flags_to_set;
 
 void PostWorldChanges(const FlagChanges& changes) {
     std::scoped_lock lock{flag_board_mutex};
-    for (const s32 flag : changes.set) {
-        if (PostsToHostWorld(flag)) {
-            flags_to_post.emplace_back(flag, true);
-        }
-    }
-    for (const s32 flag : changes.cleared) {
-        if (PostsToHostWorld(flag)) {
-            flags_to_post.emplace_back(flag, false);
-        }
-    }
+    const auto shared = FlagsToShare(changes);
+    flags_to_post.insert(flags_to_post.end(), shared.begin(), shared.end());
 }
 
 std::mutex map_board_mutex;
@@ -2446,7 +2438,7 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 flags_to_post.insert(flags_to_post.begin(), outgoing.begin(), outgoing.end());
             } else {
                 flag_board_since = board->latest;
-                if (party_host_role.load() && !board->changes.empty()) {
+                if (!board->changes.empty()) {
                     std::scoped_lock lock{flag_board_mutex};
                     flags_to_set.insert(flags_to_set.end(), board->changes.begin(),
                                         board->changes.end());
@@ -4432,17 +4424,17 @@ void LogFlagChangesInSession(bool in_session) {
                     WatchLampFlag(flag, current);
                 }
             }
-            if (IsPartyGuestRole()) {
-                if (IsBulkFlagChange(set.size() + cleared.size())) {
-                    LOG_INFO(Debug,
-                             "Bloodborne party: {} flags changed at once (a load), not "
-                             "kept for the guest's world",
-                             set.size() + cleared.size());
-                } else {
-                    const FlagChanges changes{std::move(set), std::move(cleared)};
+            if (IsBulkFlagChange(set.size() + cleared.size())) {
+                LOG_INFO(Debug,
+                         "Bloodborne party: {} flags changed at once (a load), not kept or "
+                         "shared",
+                         set.size() + cleared.size());
+            } else {
+                const FlagChanges changes{std::move(set), std::move(cleared)};
+                if (IsPartyGuestRole()) {
                     KeepWorldChanges(changes);
-                    PostWorldChanges(changes);
                 }
+                PostWorldChanges(changes);
             }
         }
     }
@@ -4548,7 +4540,7 @@ void SetPartyWorldChanges(bool in_session) {
             ++set;
         }
     }
-    LOG_INFO(Debug, "Bloodborne party: set {} of {} world changes from guests", set,
+    LOG_INFO(Debug, "Bloodborne party: set {} of {} lamp flags from the party", set,
              pending.size());
     const FlagStore store = ReadFlagStore();
     for (const auto& [flag, on] : pending) {

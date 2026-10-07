@@ -631,13 +631,13 @@ TEST(BloodborneBossLoot, AGuestsBossItemArrivesAfterTheBossClear) {
 // A guest's changes in the host's world reach the host only for lamps (the game syncs the rest
 // itself): its trips (the host's lamp travelled too) and gifts (the host lost its own) stay out.
 TEST(BloodborneSharedProgression, OnlyLampsGoFromGuestToHost) {
-    EXPECT_TRUE(PostsToHostWorld(12417830));
-    EXPECT_TRUE(PostsToHostWorld(12417831));
-    EXPECT_FALSE(PostsToHostWorld(72410101)) << "lamp trip";
-    EXPECT_FALSE(PostsToHostWorld(72410201)) << "lighting talk; the event's flags carry it";
-    EXPECT_FALSE(PostsToHostWorld(6620)) << "messenger gift received";
-    EXPECT_FALSE(PostsToHostWorld(12101020)) << "messenger gift taken";
-    EXPECT_FALSE(PostsToHostWorld(12417832));
+    EXPECT_TRUE(SharedWithParty(12417830));
+    EXPECT_TRUE(SharedWithParty(12417831));
+    EXPECT_FALSE(SharedWithParty(72410101)) << "lamp trip";
+    EXPECT_FALSE(SharedWithParty(72410201)) << "lighting talk; the event's flags carry it";
+    EXPECT_FALSE(SharedWithParty(6620)) << "messenger gift received";
+    EXPECT_FALSE(SharedWithParty(12101020)) << "messenger gift taken";
+    EXPECT_FALSE(SharedWithParty(12417832));
 }
 
 // A party death wakes where the game says (GlobalState +0x1528): the events set it on a death
@@ -669,6 +669,14 @@ TEST(BloodborneSharedLoot, AMessengerGiftIsEachPlayersOwn) {
     EXPECT_FALSE(KeepsLocalFlag(false, 12101020));
     EXPECT_FALSE(KeepsLocalFlag(true, 12101030));
     EXPECT_FALSE(KeepsLocalFlag(true, 12417830)) << "a lamp is shared";
+}
+
+// Every member posts the lamps it lit and sets the others' (the game copies only a lamp's
+// counters, so a lamp the host lit was missing from the guest's headstone). Only lighting
+// travels: a lamp never goes out because another player's game cleared it.
+TEST(BloodborneSharedProgression, LampsLitAnywhereAreLitForEveryone) {
+    const auto shared = FlagsToShare(FlagChanges{{12417830, 12417831, 7116, 12101020}, {12417811}});
+    EXPECT_EQ(shared, (std::vector<std::pair<s32, bool>>{{12417830, true}, {12417831, true}}));
 }
 
 // A save slot's kept lists belong to the character that was there: once its pickups have been

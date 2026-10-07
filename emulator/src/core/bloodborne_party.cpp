@@ -402,7 +402,17 @@ DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_f
     return arriving_from_trip ? DeathRespawn::StayPut : DeathRespawn::Travel;
 }
 
-bool PostsToHostWorld(s32 flag) {
+std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
+    std::vector<std::pair<s32, bool>> shared;
+    for (const s32 flag : changes.set) {
+        if (SharedWithParty(flag)) {
+            shared.emplace_back(flag, true);
+        }
+    }
+    return shared;
+}
+
+bool SharedWithParty(s32 flag) {
     return LampOfActiveFlag(flag).has_value() || LampOfActiveFlag(flag - 1).has_value();
 }
 

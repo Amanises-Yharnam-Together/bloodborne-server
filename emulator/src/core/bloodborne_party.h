@@ -372,17 +372,19 @@ std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u1
 // point is in a loaded block, a trip there otherwise, except right after such a trip.
 enum class DeathRespawn { StayPut, MoveToPoint, Travel };
 DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip);
-// A guest's change in the host's world sent to the host (see PartyFlagBoard): a lamp's active
-// flags (LampOfActiveFlag and the one after), which the game does not sync itself.
-bool PostsToHostWorld(s32 flag);
+// A flag every party member gets when another one sees it set (see PartyFlagBoard): a lamp's
+// active flags (LampOfActiveFlag and the one after), which the game does not sync itself.
+bool SharedWithParty(s32 flag);
+// What a member posts to the party's flag board from a change it saw: the SharedWithParty flags
+// that turned on.
+std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes);
 bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);
 std::map<s32, bool> ParseWorldChanges(std::string_view text);
-// Shared world changes the other way (POST /bloodborne/party/flags): a guest posts what changed
-// in its copy of the host's world (PostsToHostWorld flags; "<member> <since> [<flag>:<0|1>...]")
-// and the host sets the other members' changes after <since> (the answer: "<latest>", then
-// "<flag> <0|1>" lines).
+// Lamps shared by the party (POST /bloodborne/party/flags): every member posts the lamps it saw
+// lit (FlagsToShare; "<member> <since> [<flag>:<0|1>...]") and sets the other members' changes
+// after <since> (the answer: "<latest>", then "<flag> <0|1>" lines).
 struct FlagBoardAnswer {
     s64 latest = 0;
     std::vector<std::pair<s32, bool>> changes;
