@@ -434,6 +434,9 @@ constexpr u64 JoinedSessionOffset = 0x98;
 constexpr u64 GuestItemPickupAllowedOffset = 0x1592;
 const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn();
 bool GuestHandlesMapItemsAlone(bool party_configured);
+// The menu scripts' "am I a summoned client" condition (0x01A13FD1, matching state 6 or a
+// joined session): with a party configured the answer is "no", like the item dialog's host.
+bool MenuSeesAClient(bool party_configured, bool summoned_client);
 // Map item packets between players (channel 0x2C, read at 0x017D33D8): header word 1, then the
 // message kind. The host's item sync clears the guest's map items (0x017D3498-0x017D34A8), so
 // in a configured party every such packet reads as empty and each player's items stay its own.

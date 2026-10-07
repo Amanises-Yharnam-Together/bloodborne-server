@@ -3582,11 +3582,29 @@ void GiveGuestsFullEchoes(u64 base, u64 image_size) {
     }
 }
 
+// See MenuSeesAClient: the condition ends `or cl, al; movzx esi, cl` (al: matching state 6,
+// cl: a joined session) and returns esi; cleared before that, the menu sees no client.
+constexpr u64 MenuClientConditionOffset = 0x01A13FE5;
+constexpr std::array<u8, 5> MenuClientCondition{0x08, 0xC1, 0x0F, 0xB6, 0xF1};
+
+void PS4_SYSV_ABI MenusTreatPartyGuestsAsHosts(u64, GuestRegisterSnapshot* registers) {
+    const bool client = (registers->rax & 0xFF) != 0 || (registers->rcx & 0xFF) != 0;
+    if (!MenuSeesAClient(party_controller.has_value(), client)) {
+        registers->rax &= ~u64{0xFF};
+        registers->rcx &= ~u64{0xFF};
+    }
+}
+
 void InstallSharedLoot(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
     }
     GiveGuestsFullEchoes(base, image_size);
+    if (MenuClientConditionOffset + MenuClientCondition.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + MenuClientConditionOffset),
+                                      MenuClientCondition, 0, MenusTreatPartyGuestsAsHosts)) {
+        LOG_ERROR(Debug, "Bloodborne menu client hook unavailable");
+    }
     if (MapItemPacketHeaderOffset + MapItemPacketHeader.size() > image_size ||
         !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + MapItemPacketHeaderOffset),
                                       MapItemPacketHeader, 0, IgnorePartyMapItemSync)) {

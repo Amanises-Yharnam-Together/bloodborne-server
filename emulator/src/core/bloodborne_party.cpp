@@ -515,6 +515,10 @@ const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn() {
     return stand_in;
 }
 
+bool MenuSeesAClient(bool party_configured, bool summoned_client) {
+    return summoned_client && !party_configured;
+}
+
 bool GuestHandlesMapItemsAlone(bool party_configured) {
     return party_configured;
 }

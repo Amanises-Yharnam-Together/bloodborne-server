@@ -605,6 +605,14 @@ TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {
     EXPECT_FALSE(IsNewCharacterInSlot({}, 0)) << "nothing confirmed yet";
 }
 
+// The menu scripts' "am I a summoned client" answer (0x01A13FD1): a party guest's item dialog
+// waited for a confirmation it never offered, so a party member answers "no".
+TEST(BloodborneGuestMenus, PartyGuestsAreNotClientsToTheMenus) {
+    EXPECT_TRUE(MenuSeesAClient(false, true));
+    EXPECT_FALSE(MenuSeesAClient(true, true));
+    EXPECT_FALSE(MenuSeesAClient(false, false));
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));
