@@ -617,6 +617,15 @@ TEST(BloodborneLamps, RegisteringALampKeepsItLitInAParty) {
     EXPECT_TRUE(LampFlagsKeptAtRegistration(true, -1, 0b1100'0000'0000).empty());
 }
 
+// A party guest's boss item (2003:36's award, returning to 0x0132E4B5) waits until the
+// boss-clear sequence is over; other awards and other players are not touched.
+TEST(BloodborneBossLoot, AGuestsBossItemArrivesAfterTheBossClear) {
+    EXPECT_TRUE(DefersItemLotAward(true, true, ClientItemLotAwardReturn));
+    EXPECT_FALSE(DefersItemLotAward(false, true, ClientItemLotAwardReturn));
+    EXPECT_FALSE(DefersItemLotAward(true, false, ClientItemLotAwardReturn));
+    EXPECT_FALSE(DefersItemLotAward(true, true, 0x0132E498));
+}
+
 // A save slot's kept lists belong to the character that was there: once its pickups have been
 // set in its own world, a load where none of them is set is a new character in that slot.
 TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {

@@ -445,6 +445,13 @@ constexpr u64 JoinedSessionOffset = 0x98;
 constexpr u64 GuestItemPickupAllowedOffset = 0x1592;
 const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn();
 bool GuestHandlesMapItemsAlone(bool party_configured);
+// The boss item: 2003:36 (AwardItemLot even for a client, 0x0132E4A0) calls the award
+// 0x017DDC50(item man, lot, 0), returning to 0x0132E4B5. For a party guest it lands inside the
+// boss-clear sequence and its dialog leaves the guest unable to confirm anything, so it is held
+// and given DeferredBossItemDelay later.
+constexpr u64 ClientItemLotAwardReturn = 0x0132E4B5;
+constexpr auto DeferredBossItemDelay = std::chrono::seconds{8};
+bool DefersItemLotAward(bool party_configured, bool summoned_guest, u64 return_offset);
 // The menu scripts' "am I a summoned client" condition (0x01A13FD1, matching state 6 or a
 // joined session): with a party configured the answer is "no", like the item dialog's host.
 bool MenuSeesAClient(bool party_configured, bool summoned_client);

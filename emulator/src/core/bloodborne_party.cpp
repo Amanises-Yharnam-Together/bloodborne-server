@@ -534,6 +534,10 @@ const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn() {
     return stand_in;
 }
 
+bool DefersItemLotAward(bool party_configured, bool summoned_guest, u64 return_offset) {
+    return party_configured && summoned_guest && return_offset == ClientItemLotAwardReturn;
+}
+
 bool MenuSeesAClient(bool party_configured, bool summoned_client) {
     return summoned_client && !party_configured;
 }

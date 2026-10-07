@@ -4264,6 +4264,74 @@ void InstallLampsStayLitAtRegistration(u64 base, u64 image_size) {
     }
 }
 
+// A party guest's boss item (see DefersItemLotAward): held at the award's entry and given
+// from the tick once the boss-clear sequence is over.
+constexpr u64 AwardItemLotOffset = 0x017DDC50;
+constexpr std::array<u8, 11> AwardItemLotPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57,
+                                                  0x41, 0x56, 0x41, 0x55, 0x41};
+std::mutex deferred_item_lots_mutex;
+std::vector<std::pair<s32, std::chrono::steady_clock::time_point>> deferred_item_lots;
+thread_local bool giving_deferred_item_lot = false;
+
+bool PS4_SYSV_ABI HoldGuestBossItem(u64, const GuestRegisterSnapshot* registers) {
+    if (giving_deferred_item_lot) {
+        return false;
+    }
+    const u64 caller = ReadValue<u64>(registers->rsp, 0);
+    if (!DefersItemLotAward(party_controller.has_value(), IsPartyGuestRole(),
+                            caller - image_base)) {
+        return false;
+    }
+    const s32 lot = static_cast<s32>(registers->rsi);
+    {
+        std::scoped_lock lock{deferred_item_lots_mutex};
+        deferred_item_lots.emplace_back(lot,
+                                        std::chrono::steady_clock::now() + DeferredBossItemDelay);
+    }
+    LOG_INFO(Debug, "Bloodborne party: guest's boss item lot {} held until the boss clear ends",
+             lot);
+    return true;
+}
+
+void GiveDeferredBossItems() {
+    std::vector<s32> due;
+    {
+        std::scoped_lock lock{deferred_item_lots_mutex};
+        const auto now = std::chrono::steady_clock::now();
+        std::erase_if(deferred_item_lots, [&](const auto& held) {
+            if (now < held.second) {
+                return false;
+            }
+            due.push_back(held.first);
+            return true;
+        });
+    }
+    using AwardItemLot = void PS4_SYSV_ABI (*)(u64, s32, u32);
+    for (const s32 lot : due) {
+        const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
+        if (item_man < 0x10000) {
+            LOG_ERROR(Debug, "Bloodborne party: no item man for held boss item lot {}", lot);
+            continue;
+        }
+        giving_deferred_item_lot = true;
+        reinterpret_cast<AwardItemLot>(image_base + AwardItemLotOffset)(item_man, lot, 0);
+        giving_deferred_item_lot = false;
+        LOG_INFO(Debug, "Bloodborne party: gave the guest's held boss item lot {}", lot);
+    }
+}
+
+void InstallDeferredBossItems(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (AwardItemLotOffset + AwardItemLotPrologue.size() > image_size ||
+        !InstallGuestFunctionOverride(reinterpret_cast<void*>(base + AwardItemLotOffset),
+                                      AwardItemLotPrologue, 0, HoldGuestBossItem)) {
+        LOG_ERROR(Debug, "Bloodborne boss item hook unavailable; a guest's boss item dialog "
+                         "may leave it stuck");
+    }
+}
+
 void LogFlagChangesInSession(bool in_session) {
     static std::chrono::steady_clock::time_point last{};
     static std::optional<FlagStore> previous;
@@ -4453,6 +4521,7 @@ void TickPlayersOnThisMap() {
     KeepGuestProgress(in_session);
     LogFlagChangesInSession(in_session);
     LogWatchedWrites();
+    GiveDeferredBossItems();
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
     PlayGuestAsHost(in_session);
     TickGuestLampTrip();
@@ -7145,6 +7214,7 @@ void InstallSeamlessCoopPatches() {
     InstallSolidNpcsInParty(base, image_size);
     InstallSharedLoot(base, image_size);
     InstallLampsStayLitAtRegistration(base, image_size);
+    InstallDeferredBossItems(base, image_size);
     InstallItemModuleDiagnostics(base, image_size);
     InstallItemButtonDiagnostics(base);
     StartRestBoardClient();
