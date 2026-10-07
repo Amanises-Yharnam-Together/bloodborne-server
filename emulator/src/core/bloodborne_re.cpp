@@ -4332,6 +4332,38 @@ void GiveDeferredBossItems() {
     }
 }
 
+// The other player's "set this event flag" message (see KeepsLocalFlag): at
+// `test r15b, r15b; setne al; movzx edx, al; mov esi, ebx` before the call to the setter
+// 0x013CFCC0 (flag in ebx, value in r15b). A kept flag gets its own current value, so the
+// write changes nothing.
+constexpr u64 RemoteSetFlagOffset = 0x017C0565;
+constexpr std::array<u8, 11> RemoteSetFlag{0x45, 0x84, 0xFF, 0x0F, 0x95, 0xC0,
+                                           0x0F, 0xB6, 0xD0, 0x89, 0xDE};
+
+void PS4_SYSV_ABI KeepLocalFlagsFromOthers(u64, GuestRegisterSnapshot* registers) {
+    const s32 flag = static_cast<s32>(registers->rbx);
+    if (!KeepsLocalFlag(party_controller.has_value(), flag)) {
+        return;
+    }
+    const bool local = EventFlagOn(flag);
+    if (((registers->r15 & 0xFF) != 0) != local) {
+        LOG_INFO(Debug, "Bloodborne party: kept flag {} {} against the other player's", flag,
+                 local ? "on" : "off");
+    }
+    registers->r15 = (registers->r15 & ~u64{0xFF}) | (local ? 1 : 0);
+}
+
+void InstallKeepLocalFlags(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (RemoteSetFlagOffset + RemoteSetFlag.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + RemoteSetFlagOffset),
+                                      RemoteSetFlag, 0, KeepLocalFlagsFromOthers)) {
+        LOG_ERROR(Debug, "Bloodborne remote flag hook unavailable; messenger gifts are shared");
+    }
+}
+
 void InstallDeferredBossItems(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
@@ -7244,6 +7276,7 @@ void InstallSeamlessCoopPatches() {
     InstallSharedLoot(base, image_size);
     InstallLampsStayLitAtRegistration(base, image_size);
     InstallDeferredBossItems(base, image_size);
+    InstallKeepLocalFlags(base, image_size);
     InstallItemModuleDiagnostics(base, image_size);
     InstallItemButtonDiagnostics(base);
     StartRestBoardClient();

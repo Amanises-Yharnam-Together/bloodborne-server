@@ -354,6 +354,12 @@ bool CarriesToGuestWorld(s32 flag) {
     return flag > 0 && !death_or_multiplayer && !trip && !IsMapPickupFlag(flag);
 }
 
+bool KeepsLocalFlag(bool party_configured, s32 flag) {
+    constexpr s32 FirstMessengerGift = 12101020;
+    constexpr s32 LastMessengerGift = 12101029;
+    return party_configured && flag >= FirstMessengerGift && flag <= LastMessengerGift;
+}
+
 std::optional<s32> TracedFlagSetting(const char* setting) {
     if (setting == nullptr) {
         return std::nullopt;

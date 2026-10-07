@@ -350,6 +350,10 @@ bool CarriesToGuestWorld(s32 flag);
 // to its lamp entity (map * 10000 + 1950 + lamp); the game clears the flag again for a character
 // whose lamp list ([0x0553B120]+0xC70) lacks the lamp.
 std::optional<s32> LampOfActiveFlag(s32 flag);
+// The other player's "set this event flag" message (0x017C0570: flag, value) leaves these flags
+// alone in a party: what one player received is not given to the other (the Hunter's Dream
+// messengers' gifts, 12101020-12101029).
+bool KeepsLocalFlag(bool party_configured, s32 flag);
 // SHADPS4_BLOODBORNE_TRACE_FLAG: a flag the flag tracer watches in a session (diagnostics).
 std::optional<s32> TracedFlagSetting(const char* setting);
 struct FlagBit {

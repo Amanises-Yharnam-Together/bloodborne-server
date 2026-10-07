@@ -660,6 +660,17 @@ TEST(BloodborneFlagTracer, TheTracedFlagComesFromTheSetting) {
     EXPECT_EQ(TracedFlagSetting("-5"), std::nullopt);
 }
 
+// The game's "set this event flag" message from the other player (0x017C0570) copied the
+// Hunter's Dream messengers' "gift given" flags, so one pick took the other's gift. In a party
+// those stay as they are locally.
+TEST(BloodborneSharedLoot, AMessengerGiftIsEachPlayersOwn) {
+    EXPECT_TRUE(KeepsLocalFlag(true, 12101020));
+    EXPECT_TRUE(KeepsLocalFlag(true, 12101029));
+    EXPECT_FALSE(KeepsLocalFlag(false, 12101020));
+    EXPECT_FALSE(KeepsLocalFlag(true, 12101030));
+    EXPECT_FALSE(KeepsLocalFlag(true, 12417830)) << "a lamp is shared";
+}
+
 // A save slot's kept lists belong to the character that was there: once its pickups have been
 // set in its own world, a load where none of them is set is a new character in that slot.
 TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {
