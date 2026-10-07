@@ -596,6 +596,15 @@ TEST(BloodborneLamps, ALampLitByAnotherMemberIsTheirsToo) {
     EXPECT_EQ(LampOfActiveFlag(12415390), std::nullopt);
 }
 
+// A save slot's kept lists belong to the character that was there: once its pickups have been
+// set in its own world, a load where none of them is set is a new character in that slot.
+TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {
+    const std::vector<s32> confirmed{52410360, 52410120};
+    EXPECT_TRUE(IsNewCharacterInSlot(confirmed, 0));
+    EXPECT_FALSE(IsNewCharacterInSlot(confirmed, 1));
+    EXPECT_FALSE(IsNewCharacterInSlot({}, 0)) << "nothing confirmed yet";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

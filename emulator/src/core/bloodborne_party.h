@@ -327,6 +327,9 @@ std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s3
 bool IsMapPickupFlag(s32 flag);
 // The kept progress is per character: the save slot of /savedata0/userdata000N (N 0-9).
 std::optional<int> CharacterSlotOfSavePath(std::string_view path);
+// Pickups once confirmed set in the character's own world never clear again, so a load of a
+// slot where none of them is set holds a new character, and the slot's kept lists are dropped.
+bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now);
 std::string FormatFlagList(std::span<const s32> flags);
 std::vector<s32> ParseFlagList(std::string_view text);
 // The event flag store (EventFlagMan [0x0553B100]): blocks of +0x1C flags each, kept in a map at

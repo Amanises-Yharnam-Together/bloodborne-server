@@ -294,6 +294,10 @@ std::optional<int> CharacterSlotOfSavePath(std::string_view path) {
     return digit - '0';
 }
 
+bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now) {
+    return !confirmed.empty() && confirmed_set_now == 0;
+}
+
 bool IsMapPickupFlag(s32 flag) {
     const bool chalice = flag >= 52900000 && flag < 53000000;
     return flag >= 50000000 && flag < 54000000 && !chalice;

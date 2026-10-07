@@ -2393,7 +2393,9 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
     s32 posted = NotResting;
     bool failing = false;
     auto next_trophy_post = std::chrono::steady_clock::now();
-    s64 flag_board_since = 0;
+    // The first post asks for nothing older than now: the board's history belongs to whatever
+    // characters played before (a new character must not get it).
+    s64 flag_board_since = std::numeric_limits<s64>::max();
     while (!stop.stop_requested()) {
         {
             std::unique_lock lock{wait_mutex};
@@ -3872,6 +3874,57 @@ size_t SetGuestPickedFlags() {
 }
 
 size_t SetGuestWorldChanges();
+void ForgetGuestWorldChanges();
+
+// Pickups confirmed set in the character's own world (see IsNewCharacterInSlot), per slot.
+std::filesystem::path GuestConfirmedFile() {
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+           fmt::format("bloodborne_party_confirmed_slot{}.txt", character_slot.load());
+}
+
+std::vector<s32> ReadGuestConfirmed() {
+    std::ifstream file{GuestConfirmedFile()};
+    const std::string text{std::istreambuf_iterator<char>{file}, {}};
+    return ParseFlagList(text);
+}
+
+// Before a load of the guest's own world sets its pickups: a slot whose confirmed pickups are
+// all missing holds a new character, so the slot's kept lists are dropped (pickups first, as
+// SetGuestPickupsBeforeMapItems sets them right after).
+void ForgetSlotIfNewCharacter() {
+    const std::vector<s32> confirmed = ReadGuestConfirmed();
+    const size_t set_now = static_cast<size_t>(std::ranges::count_if(confirmed, EventFlagOn));
+    if (!IsNewCharacterInSlot(confirmed, set_now)) {
+        return;
+    }
+    {
+        std::scoped_lock lock{guest_picked_mutex};
+        GuestPickedFlags().clear();
+        SaveGuestProgress({});
+    }
+    ForgetGuestWorldChanges();
+    std::error_code error;
+    std::filesystem::remove(GuestConfirmedFile(), error);
+    LOG_INFO(Debug, "Bloodborne party: new character in save slot {}; its kept lists start clean",
+             character_slot.load());
+}
+
+// After the pickups are set in the guest's own world: the ones that took are confirmed.
+void ConfirmGuestPickupsInOwnWorld() {
+    std::vector<s32> confirmed;
+    {
+        std::scoped_lock lock{guest_picked_mutex};
+        for (const s32 flag : GuestPickedFlags()) {
+            if (confirmed.size() < 16 && EventFlagOn(flag)) {
+                confirmed.push_back(flag);
+            }
+        }
+    }
+    if (!confirmed.empty()) {
+        std::ofstream file{GuestConfirmedFile(), std::ios::trunc};
+        file << FormatFlagList(confirmed);
+    }
+}
 
 // From the map item creation hook: before a load creates the guest's map items.
 void SetGuestPickupsBeforeMapItems() {
@@ -3881,6 +3934,9 @@ void SetGuestPickupsBeforeMapItems() {
         return;
     }
     last = now;
+    if (!InPartySession()) {
+        ForgetSlotIfNewCharacter();
+    }
     if (const size_t set = SetGuestPickedFlags(); set > 0) {
         LOG_INFO(Debug,
                  "Bloodborne party: set {} of the guest's pickup flags before its map "
@@ -3891,6 +3947,7 @@ void SetGuestPickupsBeforeMapItems() {
     // session's world changes go in before its events start, so a boss killed in the host's
     // world doesn't show its health bar here until the next load.
     if (!InPartySession()) {
+        ConfirmGuestPickupsInOwnWorld();
         if (const size_t set = SetGuestWorldChanges(); set > 0) {
             LOG_INFO(Debug,
                      "Bloodborne party: set {} of the session's world changes as the guest's own "
@@ -3981,6 +4038,12 @@ std::map<s32, bool>& GuestWorldChanges() {
 void SaveGuestWorldChanges() {
     std::ofstream file{GuestWorldFile(), std::ios::trunc};
     file << FormatWorldChanges(*guest_world);
+}
+
+void ForgetGuestWorldChanges() {
+    std::scoped_lock lock{guest_world_mutex};
+    GuestWorldChanges().clear();
+    SaveGuestWorldChanges();
 }
 
 void KeepWorldChanges(const FlagChanges& changes) {
