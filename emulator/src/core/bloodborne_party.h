@@ -381,6 +381,12 @@ bool SharedWithParty(s32 flag);
 // A boss fog's "host entered" flag (12414700 for Father Gascoigne): the boss start event waits
 // on it. Party guests set it too (party_boss_events.py); it holds for one map visit.
 bool IsBossFogEntryFlag(s32 flag);
+// The co-op HP effect a boss start gives the boss (SpEffect 7500/7501/7502, max HP x1.5/x2/x2.5)
+// sometimes misses a boss on one side (hidden by its entrance there), so that side keeps the
+// unscaled max HP. Given the max HP seen before any co-op effect, the new (max HP, HP) for a
+// living boss that has the effect but not the scaled max HP.
+std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp,
+                                               std::span<const s32> effects);
 // What a member posts to the party's flag board from a change it saw: the SharedWithParty flags
 // that turned on.
 std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes);

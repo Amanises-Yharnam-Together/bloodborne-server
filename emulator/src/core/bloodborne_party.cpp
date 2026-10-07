@@ -5,6 +5,7 @@
 #include <array>
 #include <bit>
 #include <charconv>
+#include <cmath>
 #include <cstring>
 
 #include "core/bloodborne_party.h"
@@ -359,6 +360,23 @@ bool CarriesToGuestWorld(s32 flag) {
     const bool trip = IsLampTravelFlag(flag) || IsHeadstoneTravelFlag(flag);
     const bool boss_fog = IsBossFogEntryFlag(flag) || IsBossFogEntryFlag(flag - 1);
     return flag > 0 && !death_or_multiplayer && !trip && !boss_fog && !IsMapPickupFlag(flag);
+}
+
+std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp,
+                                               std::span<const s32> effects) {
+    // SpEffectParam maxHpRate of the co-op boss effects 7500, 7501, 7502.
+    static constexpr std::array<float, 3> Rates{1.5f, 2.0f, 2.5f};
+    if (unscaled_max <= 0 || hp <= 0 || max != unscaled_max) {
+        return std::nullopt;
+    }
+    for (const s32 effect : effects) {
+        if (effect >= 7500 && effect < 7500 + static_cast<s32>(Rates.size())) {
+            const float rate = Rates[effect - 7500];
+            return std::pair{static_cast<s32>(std::lround(static_cast<float>(max) * rate)),
+                             static_cast<s32>(std::lround(static_cast<float>(hp) * rate))};
+        }
+    }
+    return std::nullopt;
 }
 
 bool IsBossFogEntryFlag(s32 flag) {

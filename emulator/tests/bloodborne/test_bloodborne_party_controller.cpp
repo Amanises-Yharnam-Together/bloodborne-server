@@ -653,6 +653,23 @@ TEST(BloodborneBosses, AGuestEnteringTheBossFogStartsTheBossForTheHost) {
     EXPECT_TRUE(CarriesToGuestWorld(12411700)) << "boss defeated";
 }
 
+// A boss start gives the boss a co-op HP effect (7500-7502: max HP x1.5/x2/x2.5). A boss still
+// hidden by its entrance on one side (the other side started the fight) keeps its unscaled max
+// HP there, so the two games' bars disagreed (Gascoigne: 2031 on the host, 3047 on the guest,
+// and his second body outlived the kill). Such a boss is scaled once it shows the effect.
+TEST(BloodborneBosses, ABossMissedByTheCoopHpBonusIsScaled) {
+    EXPECT_EQ(CoopHpScale(2031, 2031, 2031, std::vector<s32>{7500}),
+              (std::optional<std::pair<s32, s32>>{{3047, 3047}}));
+    EXPECT_EQ(CoopHpScale(2000, 2000, 1000, std::vector<s32>{7501}),
+              (std::optional<std::pair<s32, s32>>{{4000, 2000}}));
+    EXPECT_EQ(CoopHpScale(2000, 3000, 3000, std::vector<s32>{7500}), std::nullopt)
+        << "already scaled";
+    EXPECT_EQ(CoopHpScale(2000, 2000, 2000, std::vector<s32>{}), std::nullopt) << "solo";
+    EXPECT_EQ(CoopHpScale(2000, 2000, 0, std::vector<s32>{7500}), std::nullopt) << "dead";
+    EXPECT_EQ(CoopHpScale(0, 2000, 2000, std::vector<s32>{7500}), std::nullopt)
+        << "never seen without the effect";
+}
+
 // A party death wakes where the game says (GlobalState +0x1528): the events set it on a death
 // (the first one: the Hunter's Dream 2102962; a kidnapping: the Gaol 2802959). In a loaded block
 // the player is moved there, otherwise it travels; after that trip it never travels again.

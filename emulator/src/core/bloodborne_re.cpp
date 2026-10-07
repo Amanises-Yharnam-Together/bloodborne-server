@@ -1890,10 +1890,15 @@ void LogActionBlockingState() {
     }
 }
 
+std::vector<s32> EffectsOf(u64 character);
+
 std::vector<s32> LocalEffects() {
+    return EffectsOf(GetLocalPlayer());
+}
+
+std::vector<s32> EffectsOf(u64 character) {
     std::vector<s32> effects;
-    const u64 player = GetLocalPlayer();
-    const u64 manager = player >= 0x10000 ? ReadValue<u64>(player, 0x1C8) : 0;
+    const u64 manager = character >= 0x10000 ? ReadValue<u64>(character, 0x1C8) : 0;
     u64 node = manager >= 0x10000 ? ReadValue<u64>(manager, 0x08) : 0;
     for (size_t index = 0; node >= 0x10000 && index < 128; ++index) {
         const u64 next = ReadValue<u64>(node, 0x58);
@@ -2879,10 +2884,16 @@ void TickLampRest() {
     }
 }
 
-// Diagnostics for the boss HP bar that showed half on the guest while the host's was right:
-// every character with a boss-sized max HP, its HP fields ([[+0x3B0]+0x20]+0xF8..+0x104) and
-// the co-op HP effects (7500-7502, max HP x1.5/x2/x2.5) on it, logged on change.
-void LogBossHpState() {
+// The boss HP bar that showed two thirds on the guest while the host's was right: a boss start
+// gives the co-op HP effect (7500-7502) while the side that did not trigger the entrance may
+// still have the boss hidden by it, and there the max HP stays unscaled (see CoopHpScale).
+// Every character with a boss-sized max HP ([[+0x3B0]+0x20]: HP +0xF8, max +0xFC and +0x104)
+// is remembered without the effect and scaled when it has the effect but not the max HP. Its
+// HP fields, entity and co-op effects are logged on change.
+std::unordered_map<u64, s32> unscaled_boss_max;
+u32 unscaled_boss_map = 0;
+
+void KeepBossHpInStep() {
     static std::string last;
     static std::chrono::steady_clock::time_point checked{};
     const auto now = std::chrono::steady_clock::now();
@@ -2894,6 +2905,32 @@ void LogBossHpState() {
     if (world < 0x10000) {
         return;
     }
+    if (const u32 map = GetCurrentPackedMap(); map != unscaled_boss_map) {
+        unscaled_boss_max.clear();
+        unscaled_boss_map = map;
+    }
+    // Entity ids, as the lookup 0x0191A440 finds them: WorldChrMan +0x90 tables at +0x98, each
+    // with +0xE0 sorted (entity id, block << 14 | slot) pairs at +0xE8; the character is
+    // [[+0x28] + block * 0x160 + 0xC0] + slot * 0x38.
+    std::unordered_map<u64, s32> entities;
+    const s32 tables = std::min(ReadValue<s32>(world, 0x90), 16);
+    const u64 blocks = ReadValue<u64>(world, 0x28);
+    for (s32 table = 0; table < tables && blocks >= 0x10000; ++table) {
+        const u64 entries = ReadValue<u64>(world, 0x98 + 8 * table);
+        const s32 count = entries >= 0x10000 ? std::min(ReadValue<s32>(entries, 0xE0), 4096) : 0;
+        const u64 pairs = count > 0 ? ReadValue<u64>(entries, 0xE8) : 0;
+        for (s32 index = 0; index < count && pairs >= 0x10000; ++index) {
+            const s32 entity = ReadValue<s32>(pairs, 8 * index);
+            const s32 packed = ReadValue<s32>(pairs, 8 * index + 4);
+            if (packed < 0 || ((packed >> 14) & 0x3F) >= ReadValue<s32>(world, 0x20)) {
+                continue;
+            }
+            const u64 slots = ReadValue<u64>(blocks + ((packed >> 14) & 0x3F) * 0x160, 0xC0);
+            if (slots >= 0x10000) {
+                entities[ReadValue<u64>(slots + (packed & 0x3FFF) * 0x38, 0)] = entity;
+            }
+        }
+    }
     std::string text;
     ForEachWorldCharacter(world, [&](u64 character) {
         const u64 modules = ReadValue<u64>(character, 0x3B0);
@@ -2901,24 +2938,34 @@ void LogBossHpState() {
         if (data < 0x10000 || ReadValue<s32>(data, 0xFC) < 1500) {
             return;
         }
+        const auto entity = entities.find(character);
+        const std::vector<s32> all_effects = EffectsOf(character);
         std::string effects;
-        const u64 manager = ReadValue<u64>(character, 0x1C8);
-        u64 node = manager >= 0x10000 ? ReadValue<u64>(manager, 0x08) : 0;
-        for (size_t index = 0; node >= 0x10000 && index < 128; ++index) {
-            const s32 id = ReadValue<s32>(node, 0x40);
+        for (const s32 id : all_effects) {
             if (id >= 7500 && id <= 7502) {
                 effects += fmt::format(" {}", id);
             }
-            const u64 next = ReadValue<u64>(node, 0x58);
-            if (next == node) {
-                break;
-            }
-            node = next;
         }
-        text += fmt::format(" [{:#x} hp {} {} {} {} effects{}]", ReadValue<u32>(character, 0x08),
-                            ReadValue<s32>(data, 0xF8), ReadValue<s32>(data, 0xFC),
-                            ReadValue<s32>(data, 0x100), ReadValue<s32>(data, 0x104),
-                            effects.empty() ? " none" : effects);
+        const s32 max = ReadValue<s32>(data, 0xFC);
+        if (effects.empty()) {
+            unscaled_boss_max[character] = max;
+        } else if (const auto it = unscaled_boss_max.find(character);
+                   it != unscaled_boss_max.end()) {
+            const auto scaled =
+                CoopHpScale(it->second, max, ReadValue<s32>(data, 0xF8), all_effects);
+            if (scaled && HasMemoryAccess(data, 0x108, MemoryProt::CpuWrite)) {
+                WriteValue(data, 0xFC, scaled->first);
+                WriteValue(data, 0x104, scaled->first);
+                WriteValue(data, 0xF8, scaled->second);
+                LOG_INFO(Debug, "Bloodborne boss HP: scaled {:#x} for co-op: max {} -> {}",
+                         ReadValue<u32>(character, 0x08), max, scaled->first);
+            }
+        }
+        text += fmt::format(
+            " [{:#x} entity {} hp {} {} {} {} effects{}]", ReadValue<u32>(character, 0x08),
+            entity != entities.end() ? entity->second : -1, ReadValue<s32>(data, 0xF8),
+            ReadValue<s32>(data, 0xFC), ReadValue<s32>(data, 0x100), ReadValue<s32>(data, 0x104),
+            effects.empty() ? " none" : effects);
     });
     if (text != last) {
         last = text;
@@ -2939,7 +2986,7 @@ void TickPartyController() {
     LogLocalEffectChanges();
     if (party_controller) {
         LogActionBlockingState();
-        LogBossHpState();
+        KeepBossHpInStep();
     }
     LogOtherPlayersChanges();
     ObserveLocalAliveState();
