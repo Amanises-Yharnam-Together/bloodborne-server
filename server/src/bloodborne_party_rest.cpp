@@ -170,4 +170,58 @@ QList<qint32> PartyTrophyBoard::Update(const QByteArray& party, const QByteArray
     return unlocked;
 }
 
+std::optional<FlagUpdate> ParseFlagUpdate(const QByteArray& body) {
+    const QList<QByteArray> parts = body.trimmed().split(' ');
+    if (parts.size() < 2 || !IsMemberName(parts[0])) {
+        return std::nullopt;
+    }
+    bool ok = false;
+    FlagUpdate update{parts[0], parts[1].toLongLong(&ok), {}};
+    if (!ok || update.since < 0) {
+        return std::nullopt;
+    }
+    for (qsizetype index = 2; index < parts.size(); ++index) {
+        const QList<QByteArray> pair = parts[index].split(':');
+        if (pair.size() != 2 || (pair[1] != "0" && pair[1] != "1")) {
+            return std::nullopt;
+        }
+        const qint32 flag = pair[0].toInt(&ok);
+        if (!ok || flag <= 0) {
+            return std::nullopt;
+        }
+        update.changes.append(FlagChange{flag, pair[1] == "1"});
+    }
+    return update;
+}
+
+QByteArray FormatFlagBoard(const FlagBoardAnswer& answer) {
+    QByteArray body = QByteArray::number(answer.latest) + '\n';
+    for (const FlagChange& change : answer.changes) {
+        body += QByteArray::number(change.flag) + (change.on ? " 1\n" : " 0\n");
+    }
+    return body;
+}
+
+FlagBoardAnswer PartyFlagBoard::Update(const QByteArray& party, const QByteArray& member,
+                                       qint64 since, const QList<FlagChange>& changes) {
+    if (party.isEmpty()) {
+        return {};
+    }
+    QMutexLocker lock(&m_mutex);
+    Party& board = m_parties[party];
+    for (const FlagChange& change : changes) {
+        board.entries.append(Entry{++board.latest, member, change});
+    }
+    while (board.entries.size() > MaxChanges) {
+        board.entries.removeFirst();
+    }
+    FlagBoardAnswer answer{board.latest, {}};
+    for (const Entry& entry : board.entries) {
+        if (entry.sequence > since && entry.member != member) {
+            answer.changes.append(entry.change);
+        }
+    }
+    return answer;
+}
+
 } // namespace Bloodborne

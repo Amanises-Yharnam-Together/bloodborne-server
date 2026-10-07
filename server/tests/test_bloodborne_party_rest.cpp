@@ -142,6 +142,40 @@ int main() {
     CHECK(board.Update({}, "host", {5}).isEmpty());
   }
 
+  // Shared world changes: a member posts "<member> <since> [<flag>:<0|1>...]",
+  // the flags it changed in the session, and reads back the latest sequence
+  // number and every other member's change after <since> ("<flag> <0|1>").
+  {
+    using Bloodborne::PartyFlagBoard;
+    const auto update =
+        Bloodborne::ParseFlagUpdate("guest 0 12417830:1 12417831:1 7116:0");
+    CHECK(update.has_value());
+    CHECK(update->member == "guest");
+    CHECK(update->since == 0);
+    CHECK(update->changes.size() == 3);
+    CHECK(update->changes[0].flag == 12417830 && update->changes[0].on);
+    CHECK(update->changes[2].flag == 7116 && !update->changes[2].on);
+    CHECK(Bloodborne::ParseFlagUpdate("host 4").has_value());
+    CHECK(!Bloodborne::ParseFlagUpdate("host").has_value());
+    CHECK(!Bloodborne::ParseFlagUpdate("host x").has_value());
+    CHECK(!Bloodborne::ParseFlagUpdate("host 0 7116").has_value());
+    CHECK(!Bloodborne::ParseFlagUpdate("host 0 7116:2").has_value());
+
+    PartyFlagBoard board;
+    const QByteArray newline(1, 10);
+    const auto guest = board.Update(Party, "guest", 0, update->changes);
+    CHECK(guest.latest == 3);
+    CHECK(guest.changes.isEmpty()); // a member doesn't get its own changes back
+    board.Update("other:party", "stranger", 0, update->changes);
+    const auto host = board.Update(Party, "host", 0, {});
+    CHECK(host.latest == 3);
+    CHECK(Bloodborne::FormatFlagBoard(host) ==
+          "3" + newline + "12417830 1" + newline + "12417831 1" + newline +
+              "7116 0" + newline);
+    CHECK(board.Update(Party, "host", 3, {}).changes.isEmpty());
+    CHECK(board.Update({}, "host", 0, update->changes).latest == 0);
+  }
+
   // No party key: nothing to coordinate.
   {
     PartyRestBoard board;

@@ -100,4 +100,52 @@ private:
     QHash<QByteArray, QList<qint32>> m_parties;
 };
 
+// Shared world changes: the event flags a party member changed in the session (POST
+// /bloodborne/party/flags), so the host's world gets what a guest did there.
+struct FlagChange {
+    qint32 flag = 0;
+    bool on = false;
+};
+
+struct FlagUpdate {
+    QByteArray member;
+    qint64 since = 0;
+    QList<FlagChange> changes;
+};
+
+struct FlagBoardAnswer {
+    qint64 latest = 0;
+    QList<FlagChange> changes;
+};
+
+// "<member> <since> [<flag>:<0|1>...]".
+std::optional<FlagUpdate> ParseFlagUpdate(const QByteArray& body);
+// A "<latest>" line, then one "<flag> <0|1>" line per change.
+QByteArray FormatFlagBoard(const FlagBoardAnswer& answer);
+
+class PartyFlagBoard {
+public:
+    // Kept per party for as long as the server runs; the oldest go past this many.
+    static constexpr qsizetype MaxChanges = 4096;
+
+    // Adds the member's changes and returns the latest sequence number and the other members'
+    // changes after `since`, oldest first.
+    FlagBoardAnswer Update(const QByteArray& party, const QByteArray& member, qint64 since,
+                           const QList<FlagChange>& changes);
+
+private:
+    struct Entry {
+        qint64 sequence = 0;
+        QByteArray member;
+        FlagChange change;
+    };
+    struct Party {
+        qint64 latest = 0;
+        QList<Entry> entries;
+    };
+
+    QMutex m_mutex;
+    QHash<QByteArray, Party> m_parties;
+};
+
 } // namespace Bloodborne

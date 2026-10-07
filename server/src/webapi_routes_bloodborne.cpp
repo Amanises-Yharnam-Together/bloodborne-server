@@ -288,6 +288,25 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                    return QHttpServerResponse{"text/plain", board,
                                               QHttpServerResponse::StatusCode::Ok};
                });
+
+    // Shared world changes: party members post the event flags they changed in the session
+    // and read back the others' changes. Called by the emulator every few seconds in a session.
+    auto flagBoard = std::make_shared<Bloodborne::PartyFlagBoard>();
+    http.route(
+        "/bloodborne/party/flags", QHttpServerRequest::Method::Post,
+        [flagBoard](const QHttpServerRequest& request) -> QHttpServerResponse {
+            const auto update = Bloodborne::ParseFlagUpdate(request.body());
+            if (!update) {
+                return InvalidRequest(QStringLiteral("Invalid party flag update"));
+            }
+            if (!update->changes.isEmpty()) {
+                qInfo().noquote() << "Bloodborne party flags from" << update->member << ":"
+                                  << update->changes.size() << "changes";
+            }
+            const QByteArray board = Bloodborne::FormatFlagBoard(
+                flagBoard->Update(Party(request), update->member, update->since, update->changes));
+            return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
+        });
 }
 
 } // namespace WebApiRoutes

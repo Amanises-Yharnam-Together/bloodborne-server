@@ -570,6 +570,20 @@ TEST(BloodborneGuestProgress, BelongsToTheCharacterBeingSaved) {
     EXPECT_EQ(CharacterSlotOfSavePath("/app0/userdata0005"), std::nullopt);
 }
 
+// Shared world changes (POST /bloodborne/party/flags): "<member> <since> [<flag>:<0|1>...]";
+// the answer is the latest sequence number and the other members' changes after <since>.
+TEST(BloodborneGuestProgress, SendsTheGuestsWorldChangesToTheHost) {
+    const std::vector<std::pair<s32, bool>> changes{{12417830, true}, {7116, false}};
+    EXPECT_EQ(EncodeFlagUpdate("guest", 4, changes), "guest 4 12417830:1 7116:0");
+    EXPECT_EQ(EncodeFlagUpdate("host", 0, {}), "host 0");
+    const auto board = ParseFlagBoard("6\n12417830 1\n7116 0\n");
+    ASSERT_TRUE(board.has_value());
+    EXPECT_EQ(board->latest, 6);
+    EXPECT_EQ(board->changes, changes);
+    EXPECT_EQ(ParseFlagBoard("x\n"), std::nullopt);
+    EXPECT_EQ(ParseFlagBoard("6\n7116 2\n"), std::nullopt);
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

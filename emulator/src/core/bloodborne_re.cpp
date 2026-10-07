@@ -1991,6 +1991,27 @@ void UnlockPartyTrophies(bool in_session) {
     }
 }
 
+// Shared world changes the other way (see EncodeFlagUpdate): a guest's changes in the host's
+// world go to the party's flag board, and the host sets the other members' changes.
+std::atomic<bool> party_host_role{};
+std::mutex flag_board_mutex;
+std::vector<std::pair<s32, bool>> flags_to_post;
+std::vector<std::pair<s32, bool>> flags_to_set;
+
+void PostWorldChanges(const FlagChanges& changes) {
+    std::scoped_lock lock{flag_board_mutex};
+    for (const s32 flag : changes.set) {
+        if (CarriesToGuestWorld(flag)) {
+            flags_to_post.emplace_back(flag, true);
+        }
+    }
+    for (const s32 flag : changes.cleared) {
+        if (CarriesToGuestWorld(flag)) {
+            flags_to_post.emplace_back(flag, false);
+        }
+    }
+}
+
 std::mutex map_board_mutex;
 std::vector<MemberMap> map_board;
 std::string map_board_member;
@@ -2372,6 +2393,7 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
     s32 posted = NotResting;
     bool failing = false;
     auto next_trophy_post = std::chrono::steady_clock::now();
+    s64 flag_board_since = 0;
     while (!stop.stop_requested()) {
         {
             std::unique_lock lock{wait_mutex};
@@ -2403,6 +2425,28 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                                           ? ParseTrophyBoard(trophy_response->body)
                                           : std::nullopt) {
                 ReadTrophyBoard(*trophies);
+            }
+            std::vector<std::pair<s32, bool>> outgoing;
+            {
+                std::scoped_lock lock{flag_board_mutex};
+                outgoing.swap(flags_to_post);
+            }
+            const auto flag_response =
+                client.Post("/bloodborne/party/flags", headers,
+                            EncodeFlagUpdate(member, flag_board_since, outgoing), "text/plain");
+            const auto board = flag_response && flag_response->status == 200
+                                   ? ParseFlagBoard(flag_response->body)
+                                   : std::nullopt;
+            if (!board) {
+                std::scoped_lock lock{flag_board_mutex};
+                flags_to_post.insert(flags_to_post.begin(), outgoing.begin(), outgoing.end());
+            } else {
+                flag_board_since = board->latest;
+                if (party_host_role.load() && !board->changes.empty()) {
+                    std::scoped_lock lock{flag_board_mutex};
+                    flags_to_set.insert(flags_to_set.end(), board->changes.begin(),
+                                        board->changes.end());
+                }
             }
         }
         // In a session every member reads the board (to join a rest nearby); outside one only
@@ -4012,7 +4056,9 @@ void LogFlagChangesInSession(bool in_session) {
                              "kept for the guest's world",
                              set.size() + cleared.size());
                 } else {
-                    KeepWorldChanges(FlagChanges{std::move(set), std::move(cleared)});
+                    const FlagChanges changes{std::move(set), std::move(cleared)};
+                    KeepWorldChanges(changes);
+                    PostWorldChanges(changes);
                 }
             }
         }
@@ -4099,12 +4145,37 @@ void KeepGuestProgress(bool in_session) {
              SetGuestWorldChanges());
 }
 
+// On the host's game thread: sets the guests' world changes in the host's world.
+void SetPartyWorldChanges(bool in_session) {
+    party_host_role.store(party_controller.has_value() &&
+                          party_controller->SearchEffectId() != SmallResonantBellEffect);
+    std::vector<std::pair<s32, bool>> pending;
+    {
+        std::scoped_lock lock{flag_board_mutex};
+        pending.swap(flags_to_set);
+    }
+    if (!in_session || pending.empty()) {
+        return;
+    }
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    size_t set = 0;
+    for (const auto& [flag, on] : pending) {
+        if (EventFlagOn(flag) != on) {
+            reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, on);
+            ++set;
+        }
+    }
+    LOG_INFO(Debug, "Bloodborne party: set {} of {} world changes from guests", set,
+             pending.size());
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
     KeepGuestFullHp();
     const bool in_session = InPartySession();
     UnlockPartyTrophies(in_session);
+    SetPartyWorldChanges(in_session);
     KeepGuestProgress(in_session);
     LogFlagChangesInSession(in_session);
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());

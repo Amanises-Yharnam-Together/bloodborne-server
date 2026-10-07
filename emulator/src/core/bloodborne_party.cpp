@@ -395,6 +395,46 @@ std::map<s32, bool> ParseWorldChanges(std::string_view text) {
     return world;
 }
 
+std::string EncodeFlagUpdate(std::string_view member, s64 since,
+                             std::span<const std::pair<s32, bool>> changes) {
+    std::string body = std::string{member} + ' ' + std::to_string(since);
+    for (const auto& [flag, on] : changes) {
+        body += ' ' + std::to_string(flag) + (on ? ":1" : ":0");
+    }
+    return body;
+}
+
+std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body) {
+    FlagBoardAnswer answer;
+    const auto first_end = body.find('\n');
+    const std::string_view first = body.substr(0, first_end);
+    const auto [latest_end, latest_error] =
+        std::from_chars(first.data(), first.data() + first.size(), answer.latest);
+    if (latest_error != std::errc{} || latest_end != first.data() + first.size()) {
+        return std::nullopt;
+    }
+    body = first_end == std::string_view::npos ? std::string_view{} : body.substr(first_end + 1);
+    while (!body.empty()) {
+        const auto end = body.find('\n');
+        const std::string_view line = body.substr(0, end);
+        body = end == std::string_view::npos ? std::string_view{} : body.substr(end + 1);
+        if (line.empty()) {
+            continue;
+        }
+        const auto space = line.find(' ');
+        s32 flag = 0;
+        const auto [flag_end, flag_error] =
+            std::from_chars(line.data(), line.data() + std::min(space, line.size()), flag);
+        if (space == std::string_view::npos || flag_error != std::errc{} ||
+            flag_end != line.data() + space || line.size() != space + 2 ||
+            (line[space + 1] != '0' && line[space + 1] != '1')) {
+            return std::nullopt;
+        }
+        answer.changes.emplace_back(flag, line[space + 1] == '1');
+    }
+    return answer;
+}
+
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before,
                                            std::span<const s32> after) {
     std::vector<s32> missing;

@@ -347,6 +347,17 @@ bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);
 std::map<s32, bool> ParseWorldChanges(std::string_view text);
+// Shared world changes the other way (POST /bloodborne/party/flags): a guest posts what changed
+// in its copy of the host's world ("<member> <since> [<flag>:<0|1>...]") and the host sets the
+// other members' changes after <since> (the answer: "<latest>", then "<flag> <0|1>" lines).
+struct FlagBoardAnswer {
+    s64 latest = 0;
+    std::vector<std::pair<s32, bool>> changes;
+    bool operator==(const FlagBoardAnswer&) const = default;
+};
+std::string EncodeFlagUpdate(std::string_view member, s64 since,
+                             std::span<const std::pair<s32, bool>> changes);
+std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body);
 
 // A guest that made its own trip is apart from the host until it joins a session again (the
 // session it travelled out of still counts for a moment after the trip starts).
