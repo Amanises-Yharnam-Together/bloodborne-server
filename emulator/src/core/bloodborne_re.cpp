@@ -4267,8 +4267,8 @@ void InstallLampsStayLitAtRegistration(u64 base, u64 image_size) {
 // A party guest's boss item (see DefersItemLotAward): held at the award's entry and given
 // from the tick once the boss-clear sequence is over.
 constexpr u64 AwardItemLotOffset = 0x017DDC50;
-constexpr std::array<u8, 11> AwardItemLotPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57,
-                                                  0x41, 0x56, 0x41, 0x55, 0x41};
+constexpr std::array<u8, 10> AwardItemLotPrologue{0x55, 0x48, 0x89, 0xE5, 0x41,
+                                                  0x57, 0x41, 0x56, 0x41, 0x55};
 std::mutex deferred_item_lots_mutex;
 std::vector<std::pair<s32, std::chrono::steady_clock::time_point>> deferred_item_lots;
 thread_local bool giving_deferred_item_lot = false;
