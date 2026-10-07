@@ -1854,6 +1854,42 @@ void LogLocalEffectChanges() {
     }
 }
 
+// Diagnostics for a guest that can move and attack but not use X after a boss kill: the states
+// a boss clear or a leave could leave behind, logged on change. The event manager's "returning"
+// state ([SprjEventMan+0x10]+8, see ReviveCalls::clear_return_state), the player's state flags
+// (+0x1E0..+0x1E7) and action state ([+0x3B0]+8: +0x1B4/+0x1B8), its character type (+0x78),
+// GlobalState +0x1520 (summon warp) and +0x1592 (pickups allowed), and the leave/death flags.
+bool EventFlagOn(s32 flag);
+void LogActionBlockingState() {
+    static std::string last;
+    static std::chrono::steady_clock::time_point checked{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - checked < std::chrono::milliseconds{500}) {
+        return;
+    }
+    checked = now;
+    const u64 player = GetLocalPlayer();
+    const u64 global = GetGlobalState();
+    const u64 events = ReadValue<u64>(image_base + EventManPointerOffset, 0);
+    const u64 event_state = events >= 0x10000 ? ReadValue<u64>(events, 0x10) : 0;
+    const u64 model = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
+    const u64 action = model >= 0x10000 ? ReadValue<u64>(model, 0x08) : 0;
+    const std::string text = fmt::format(
+        "returning={} flags={:#x} action={} sub={} type={} warp={} pickups={} f4000={} f4047={}",
+        event_state >= 0x10000 ? ReadValue<s32>(event_state, 0x08) : -1,
+        player >= 0x10000 ? ReadValue<u64>(player, 0x1E0) : 0,
+        action >= 0x10000 ? ReadValue<s32>(action, 0x1B4) : -1,
+        action >= 0x10000 ? ReadValue<s32>(action, 0x1B8) : -1,
+        player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1,
+        global >= 0x10000 ? ReadValue<u8>(global, 0x1520) : 0xFF,
+        global >= 0x10000 ? ReadValue<u8>(global, 0x1592) : 0xFF, EventFlagOn(4000),
+        EventFlagOn(4047));
+    if (text != last) {
+        last = text;
+        LOG_INFO(Debug, "Bloodborne action state: {}", text);
+    }
+}
+
 std::vector<s32> LocalEffects() {
     std::vector<s32> effects;
     const u64 player = GetLocalPlayer();
@@ -2854,6 +2890,9 @@ void TickPartyController() {
     KeepGuestBloodstainMark();
     LogBloodstainStateChanges();
     LogLocalEffectChanges();
+    if (party_controller) {
+        LogActionBlockingState();
+    }
     LogOtherPlayersChanges();
     ObserveLocalAliveState();
     TickLampRest();
