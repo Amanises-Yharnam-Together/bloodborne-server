@@ -3871,6 +3871,8 @@ size_t SetGuestPickedFlags() {
     return set;
 }
 
+size_t SetGuestWorldChanges();
+
 // From the map item creation hook: before a load creates the guest's map items.
 void SetGuestPickupsBeforeMapItems() {
     static std::chrono::steady_clock::time_point last{};
@@ -3884,6 +3886,17 @@ void SetGuestPickupsBeforeMapItems() {
                  "Bloodborne party: set {} of the guest's pickup flags before its map "
                  "items were created",
                  set);
+    }
+    // A load of the guest's own world (a join's reload already reads as a session): the
+    // session's world changes go in before its events start, so a boss killed in the host's
+    // world doesn't show its health bar here until the next load.
+    if (!InPartySession()) {
+        if (const size_t set = SetGuestWorldChanges(); set > 0) {
+            LOG_INFO(Debug,
+                     "Bloodborne party: set {} of the session's world changes as the guest's own "
+                     "world loads",
+                     set);
+        }
     }
 }
 
