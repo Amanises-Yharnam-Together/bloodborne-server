@@ -3398,8 +3398,28 @@ bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot*) {
 
 // Every LeaveSession while a party trip is under way is skipped (the stage change's own call at
 // 0x0193C689 is only one of them), and logged with its caller.
+void LogGameCallChainAt(const char* what, u64 rsp) {
+    if (image_base == 0) {
+        return;
+    }
+    std::vector<u64> words;
+    for (u64 address = rsp; address < rsp + 0x2000; address += 8) {
+        if (!HasMemoryAccess(address, 8, MemoryProt::CpuRead)) {
+            break;
+        }
+        words.push_back(*reinterpret_cast<const u64*>(address));
+    }
+    LOG_INFO(Debug, "Bloodborne {} from the game:{}", what,
+             FormatGameAddresses(words, image_base, MemoryPatcher::g_eboot_image_size, 24));
+}
+
 bool PS4_SYSV_ABI KeepSessionAfterTrip(u64, const GuestRegisterSnapshot* registers) {
     if (!PartyTripActive()) {
+        // Diagnostics: a session that broke right after a boss kill (host to the title screen,
+        // a lone guest dropped after lighting the lamp): who leaves.
+        if (party_controller) {
+            LogGameCallChainAt("LeaveSession", registers->rsp);
+        }
         return false;
     }
     const u64 caller = ReadValue<u64>(registers->rsp, 0);
@@ -5474,6 +5494,9 @@ bool PS4_SYSV_ABI LogMemberLeave(u64, const GuestRegisterSnapshot* registers) {
 // before LeaveSession, which takes the guest out of the room. Skipped during a party trip.
 bool PS4_SYSV_ABI KeepMatchingDuringTrip(u64, const GuestRegisterSnapshot* registers) {
     if (!PartyTripActive()) {
+        if (party_controller) {
+            LogGameCallChainAt("CSMultiPlayMan StopRequest", registers->rsp);
+        }
         return false;
     }
     const u64 caller = ReadValue<u64>(registers->rsp, 0);
