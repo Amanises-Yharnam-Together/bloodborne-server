@@ -133,6 +133,11 @@ const std::vector<CodePatch>& HostDeathKeepGuestsPatches();
 // load (SetLoadWait turned its action buttons off).
 constexpr u64 OnKeyTime2Offset = 0x0132B1C0; // OnKeyTime2(proxy, event, state, delay, ...)
 const std::vector<CodePatch>& BossClearKeepSessionPatches();
+// Co-op areas (0x0191A750): a block's co-op is off while its flag in a table per area/block/part
+// is set (Cathedral Ward: 2405/2406, set at load until the player's own world opened the gate,
+// 12400160). A party joins anywhere: the flag check (0x01399BF0) reads as off.
+constexpr u64 EventFlagIsSetOffset = 0x01399BF0;
+const std::vector<CodePatch>& JoinAnywherePatches();
 
 // Target of a `jmp rel32` at `offset`, or 0 if the bytes are not one.
 u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes);

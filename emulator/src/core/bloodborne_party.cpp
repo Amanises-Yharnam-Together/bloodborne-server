@@ -121,6 +121,15 @@ const std::vector<CodePatch>& BossClearKeepSessionPatches() {
     return patches;
 }
 
+const std::vector<CodePatch>& JoinAnywherePatches() {
+    static const std::vector<CodePatch> patches{
+        // `call EventFlagIsSet` -> `xor eax, eax` + a 3-byte nop; the `xor al, 1` after it
+        // then says the area is open.
+        {0x0191A8B5, {0xE8, 0x36, 0xF3, 0xA7, 0xFF}, {0x31, 0xC0, 0x0F, 0x1F, 0x00}},
+    };
+    return patches;
+}
+
 namespace {
 u64 DecodeRel32(u8 opcode, u64 offset, std::span<const u8> bytes) {
     if (bytes.size() != 5 || bytes[0] != opcode) {

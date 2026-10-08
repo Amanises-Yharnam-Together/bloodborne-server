@@ -3329,6 +3329,25 @@ void InstallBossClearKeepsSession(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne boss-clear patch: a boss kill keeps the session");
 }
 
+// A party joins in any area, whatever the player's own world has opened (see JoinAnywherePatches).
+void InstallJoinAnywhere(u64 base, u64 image_size) {
+    const auto& patches = JoinAnywherePatches();
+    if (!party_controller) {
+        return;
+    }
+    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
+            return MatchesImage(base, image_size, patch);
+        })) {
+        LOG_ERROR(Debug, "Bloodborne join-anywhere patch unavailable; closed areas stay closed");
+        return;
+    }
+    for (const auto& patch : patches) {
+        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
+                    patch.patched.size());
+    }
+    LOG_INFO(Debug, "Bloodborne join-anywhere patch: a party joins in any area");
+}
+
 constexpr u64 LeaveLimitOffset = 0x0138A4A0;
 constexpr std::array<u8, 6> LeaveLimitPrologue{0x55, 0x48, 0x89, 0xE5, 0x53, 0x50};
 
@@ -8163,6 +8182,7 @@ void InstallSeamlessCoopPatches() {
     InstallGhostDeathRevive(base, image_size);
     InstallHostDeathKeepsGuests(base, image_size);
     InstallBossClearKeepsSession(base, image_size);
+    InstallJoinAnywhere(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
     InstallSeamlessTravel(base, image_size);
     InstallLampsAsCampfires(base, image_size);

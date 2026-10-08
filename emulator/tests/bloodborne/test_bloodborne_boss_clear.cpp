@@ -79,4 +79,16 @@ TEST(BloodborneBossClear, ALivePlayerOutsideAFriendsPartyStaysInTheSession) {
                                                    0x5F, 0x5D, 0xC3, 0x0F, 0x1F, 0x00}));
 }
 
+// A co-op area stays closed until the player's own world opened it (Cathedral Ward: its gate,
+// 12400160). Friend run 2026-10-09: the host rang the bell in Cathedral Ward, the guest's world
+// had not opened the gate, so its bell showed effect 9009 and it never posted a sign. In a party
+// the area check's flag read is `xor eax, eax`: the area is always open.
+TEST(BloodborneJoinAnywhere, APartyJoinsInAnAreaItsOwnWorldHasNotOpened) {
+    const auto& patches = JoinAnywherePatches();
+    ASSERT_EQ(patches.size(), 1u);
+    EXPECT_EQ(patches[0].offset, 0x0191A8B5u);
+    EXPECT_EQ(DecodeNearCallTarget(patches[0].offset, patches[0].original), EventFlagIsSetOffset);
+    EXPECT_EQ(patches[0].patched, (std::vector<u8>{0x31, 0xC0, 0x0F, 0x1F, 0x00}));
+}
+
 } // namespace
