@@ -18,7 +18,7 @@ const std::vector<u8> Nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
 // member schedules BlockClear2_3Leave, which leaves the session. The two calls go.
 TEST(BloodborneBossClear, NobodyLeavesTheSessionAfterABossKill) {
     const auto& patches = BossClearKeepSessionPatches();
-    ASSERT_EQ(patches.size(), 5u);
+    ASSERT_EQ(patches.size(), 6u);
     for (const auto& patch : patches) {
         EXPECT_EQ(patch.original.size(), patch.patched.size()) << std::hex << patch.offset;
     }
@@ -37,7 +37,7 @@ TEST(BloodborneBossClear, NobodyLeavesTheSessionAfterABossKill) {
 // own world instead. Seamless: a white phantom clears them like everyone else and stays.
 TEST(BloodborneBossClear, TheGuestClearsItsLeavingFlagsAndStaysInsteadOfWarpingHome) {
     const auto& patches = BossClearKeepSessionPatches();
-    ASSERT_EQ(patches.size(), 5u);
+    ASSERT_EQ(patches.size(), 6u);
     // `cmp dword ptr [rcx + 0x78], 8; jne <skip the flags>` falls through for everyone.
     EXPECT_EQ(patches[2].offset, 0x0138596Du);
     EXPECT_EQ(patches[2].original, (std::vector<u8>{0x75, 0x1B}));
@@ -53,13 +53,30 @@ TEST(BloodborneBossClear, TheGuestClearsItsLeavingFlagsAndStaysInsteadOfWarpingH
 // load, the trip home the guest no longer takes. Seamless: the guest never waits for it.
 TEST(BloodborneBossClear, TheGuestKeepsItsActionButtonAfterABossKill) {
     const auto& patches = BossClearKeepSessionPatches();
-    ASSERT_EQ(patches.size(), 5u);
+    ASSERT_EQ(patches.size(), 6u);
     // `mov byte ptr [r14 + 0x8D], 1` -> an 8-byte nop.
     EXPECT_EQ(patches[4].offset, 0x01384D03u);
     EXPECT_EQ(patches[4].original,
               (std::vector<u8>{0x41, 0xC6, 0x86, 0x8D, 0x00, 0x00, 0x00, 0x01}));
     EXPECT_EQ(patches[4].patched,
               (std::vector<u8>{0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00}));
+}
+
+// Outside a friends party BlockClear2_1 takes the solo route instead: a live player (the host,
+// or a guest alone in its own world) runs SoloBlockClear 3 s later, which ends with StopRequest
+// and a tail jump to LeaveSession. Friend runs (2026-10-08): the host left the room after the
+// Cleric Beast and went to the title; a lone guest lost the session after Gascoigne.
+// Seamless: SoloBlockClear returns once it has cleared the boss flags.
+TEST(BloodborneBossClear, ALivePlayerOutsideAFriendsPartyStaysInTheSession) {
+    const auto& patches = BossClearKeepSessionPatches();
+    ASSERT_EQ(patches.size(), 6u);
+    EXPECT_EQ(patches[5].offset, 0x01385A4Au);
+    // `mov rax, [rip + 0x41D0C27]; mov rbx, [rax + 0x16F8]`: the start of LeaveSession.
+    EXPECT_EQ(patches[5].original, (std::vector<u8>{0x48, 0x8B, 0x05, 0x27, 0x0C, 0x1D, 0x04, 0x48,
+                                                    0x8B, 0x98, 0xF8, 0x16, 0x00, 0x00}));
+    // The function's own epilogue: `add rsp, 8; pop rbx; pop r14; pop r15; pop rbp; ret`.
+    EXPECT_EQ(patches[5].patched, (std::vector<u8>{0x48, 0x83, 0xC4, 0x08, 0x5B, 0x41, 0x5E, 0x41,
+                                                   0x5F, 0x5D, 0xC3, 0x0F, 0x1F, 0x00}));
 }
 
 } // namespace
