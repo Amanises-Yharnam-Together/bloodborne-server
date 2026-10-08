@@ -2980,6 +2980,14 @@ void KeepBossHpInStep() {
 // enemy on the host, on a guest beside it and on a guest alone.
 void WatchEnemyHp(u64 hp_address, u32 handle);
 
+// The eboot offset of the vtable of the object at [character + offset] (0 when none): tells a
+// character's AI-driven parts from network-driven ones.
+u64 VtableOffsetAt(u64 character, u64 offset) {
+    const u64 object = ReadValue<u64>(character, offset);
+    const u64 vtable = object >= 0x10000 ? ReadValue<u64>(object, 0) : 0;
+    return vtable >= image_base ? vtable - image_base : 0;
+}
+
 void LogNearbyEnemyControl() {
     static std::string last;
     static std::chrono::steady_clock::time_point checked{};
@@ -3045,12 +3053,14 @@ void LogNearbyEnemyControl() {
         for (u64 offset = 0; offset < 0x40 && control >= 0x10000; offset += 4) {
             words += fmt::format(" {:x}", ReadValue<u32>(control, offset));
         }
-        text +=
-            fmt::format(" [{:#x} type {} b28 {} b29 {} b359 {:#x} auth {:#x} flags {:#x} ctrl{}]",
-                        ReadValue<u32>(character, 0x08), ReadValue<s32>(character, 0x78),
-                        ReadValue<u8>(character, 0x28), ReadValue<u8>(character, 0x29),
-                        ReadValue<u8>(character, 0x359), ReadValue<s32>(character, 0x1EC),
-                        ReadValue<u64>(character, 0x1E0), words);
+        text += fmt::format(
+            " [{:#x} type {} b28 {} b29 {} b359 {:#x} auth {:#x} flags {:#x} vt58 {:#x} "
+            "vt60 {:#x} vt68 {:#x} ctrl{}]",
+            ReadValue<u32>(character, 0x08), ReadValue<s32>(character, 0x78),
+            ReadValue<u8>(character, 0x28), ReadValue<u8>(character, 0x29),
+            ReadValue<u8>(character, 0x359), ReadValue<s32>(character, 0x1EC),
+            ReadValue<u64>(character, 0x1E0), VtableOffsetAt(character, 0x58),
+            VtableOffsetAt(character, 0x60), VtableOffsetAt(character, 0x68), words);
     }
     if (text != last) {
         last = text;
