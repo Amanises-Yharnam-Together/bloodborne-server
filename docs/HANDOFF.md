@@ -341,6 +341,37 @@ to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
 - **Boss HP bar** sometimes did not update for both players' damage.
 - Connection problems (already in the backlog: slow joins).
 
+## Friend runs 2026-10-08/09 (online kit, Kaniel + friend over Radmin VPN)
+All built, CI green, pushed on `phase3-travel`; none confirmed in a game yet unless noted.
+- **Boss kill outside a PSN friends party** (945aff4d): Lua `BlockClear2_1` sends a live player
+  not in a friends party to `SoloBlockClear` (compiled at 0x013859F0), which ends with
+  StopRequest and a tail jump to LeaveSession. Patched to return after the flags (0x01385A4A).
+  The rig accounts take the friends-party route, so the rig never hit it.
+- **Bell spam and Insight duping** (9edd8ec0): the guest's world file carried flags 9180-9199;
+  9185 ("a bell is ringing") made common event 9183 refund 1 Insight on every load.
+- **Second dog** (c41d647e): a visit ended when the player pointer changed (a guest rebuilt
+  when the host arrives); now `VisitTracker` (trip, map change, reload outside a session).
+- **Join anywhere** (3b338b33): the co-op area table check (0x0191A750, flags per area/block,
+  Cathedral Ward 2405/2406 until the player's own world opened the gate 12400160) reads as open.
+- **Time-of-day reload** (31a20f7f): Gascoigne's door cutscene (2002:6) reloads through the
+  stage load at 0x0193C5xx (StopRequest returns to 0x0193C65C), not a stage transition; in a
+  party it starts a trip.
+- **Enemy HP** (f6e12ff5): since seamless travel each member runs its own copy of a map, so
+  the host's hits never reached the guest's Gascoigne. `/bloodborne/party/hp` (map state board
+  format, `EncodeEnemyHp`): each member posts the enemies it hurt, others lower theirs to the
+  lowest share, never to 0.
+- **Parties of three** (1ad074d2): host rings again while hosting with room (`room_for_more`);
+  board members are online ids (hex); after a trip only session members on this map are
+  re-created (`PlanRecreate`, identity object scanned for the online id, fallback to "everyone
+  here"); host-on-my-map from the host's map state post; two guests without the host both run
+  enemies; echoes carry the kill's map (members there skip them); the kill board names posters.
+  Unverified: that a member's identity object holds its online id (watch for "re-creating
+  <names> on map" vs "re-creating ?" in the log).
+- Host crash at the Cathedral Ward door (2026-10-09 00:52): `Device lost` in
+  `vk_presenter.cpp:1135` (GPU driver / emulator), not co-op.
+- The friend's game fails the sign-timer signature at 0x018A9757 (first two sites match); the
+  log now shows the bytes found.
+
 ## State on 2026-10-08 (Kaniel's rig runs)
 Rig-confirmed today: a guest enters a boss fog first and starts the fight (13 maps patched by
 `party_boss_events.py`); the X button after a boss kill (BlockClear2's SetLoadWait skipped);
