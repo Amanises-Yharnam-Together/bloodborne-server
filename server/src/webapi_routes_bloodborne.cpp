@@ -308,6 +308,27 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
             return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
         });
 
+    // Enemy deaths kept in step across loads: a member posts "<handle>:1" for each enemy it
+    // killed during its visit to a map and "<handle>:0" when that visit ends (its copies
+    // respawn), in the flag board's format; a member loading a map later removes its copies of
+    // the others' kills there. Called by the emulator every few seconds.
+    auto killBoard = std::make_shared<Bloodborne::PartyFlagBoard>();
+    http.route(
+        "/bloodborne/party/kills", QHttpServerRequest::Method::Post,
+        [killBoard](const QHttpServerRequest& request) -> QHttpServerResponse {
+            const auto update = Bloodborne::ParseFlagUpdate(request.body());
+            if (!update) {
+                return InvalidRequest(QStringLiteral("Invalid party kill update"));
+            }
+            if (!update->changes.isEmpty()) {
+                qInfo().noquote() << "Bloodborne party kills from" << update->member << ":"
+                                  << update->changes.size() << "changes";
+            }
+            const QByteArray board = Bloodborne::FormatFlagBoard(
+                killBoard->Update(Party(request), update->member, update->since, update->changes));
+            return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
+        });
+
     // Shared kill echoes: a member posts the echoes it got from kills made with no other member
     // on its map and reads back the others'. Called by the emulator every few seconds.
     auto echoBoard = std::make_shared<Bloodborne::PartyEchoBoard>();
