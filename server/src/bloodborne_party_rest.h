@@ -148,6 +148,35 @@ private:
     QHash<QByteArray, Party> m_parties;
 };
 
+// World state per map (POST /bloodborne/party/mapstate): the latest flag bits each member
+// posted for the map it is on, so a guest loading the host's map takes the host's state.
+struct MapStateUpdate {
+    QByteArray member;
+    quint32 map = 0; // 0: only reading
+    QByteArray bits; // lowercase hex, two digits per byte
+};
+
+struct MapState {
+    quint32 map = 0;
+    QByteArray bits;
+};
+
+// "<member> <map> [<hex>]".
+std::optional<MapStateUpdate> ParseMapStateUpdate(const QByteArray& body);
+// One "<map> <hex>" line per other member.
+QByteArray FormatMapStateBoard(const QList<MapState>& states);
+
+class PartyMapStateBoard {
+public:
+    // Keeps the member's state (when it posts one) and returns the other members' latest.
+    QList<MapState> Update(const QByteArray& party, const QByteArray& member, quint32 map,
+                           const QByteArray& bits);
+
+private:
+    QMutex m_mutex;
+    QHash<QByteArray, QHash<QByteArray, MapState>> m_parties;
+};
+
 // Shared kill echoes: the echoes a party member got from a kill with no other member on its map
 // (POST /bloodborne/party/echoes), so the others get them too, as they would side by side.
 struct EchoUpdate {

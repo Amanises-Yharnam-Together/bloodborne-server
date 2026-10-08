@@ -274,4 +274,53 @@ EchoBoardAnswer PartyEchoBoard::Update(const QByteArray& party, const QByteArray
     return answer;
 }
 
+std::optional<MapStateUpdate> ParseMapStateUpdate(const QByteArray& body) {
+    const QList<QByteArray> parts = body.trimmed().split(' ');
+    if (parts.size() < 2 || parts.size() > 3 || !IsMemberName(parts[0])) {
+        return std::nullopt;
+    }
+    bool ok = false;
+    MapStateUpdate update{parts[0], parts[1].toUInt(&ok), {}};
+    if (!ok) {
+        return std::nullopt;
+    }
+    if (parts.size() == 3) {
+        const QByteArray& bits = parts[2];
+        if (bits.size() % 2 != 0 || !std::all_of(bits.begin(), bits.end(), [](char c) {
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+            })) {
+            return std::nullopt;
+        }
+        update.bits = bits;
+    }
+    return update;
+}
+
+QByteArray FormatMapStateBoard(const QList<MapState>& states) {
+    QByteArray body;
+    for (const MapState& state : states) {
+        body += QByteArray::number(state.map) + ' ' + state.bits + '\n';
+    }
+    return body;
+}
+
+QList<MapState> PartyMapStateBoard::Update(const QByteArray& party, const QByteArray& member,
+                                           quint32 map, const QByteArray& bits) {
+    if (party.isEmpty()) {
+        return {};
+    }
+    QMutexLocker lock(&m_mutex);
+    auto& members = m_parties[party];
+    if (map != 0 && !bits.isEmpty()) {
+        members[member] = MapState{map, bits};
+    }
+    QList<MapState> others;
+    for (auto it = members.cbegin(); it != members.cend(); ++it) {
+        if (it.key() != member) {
+            others.append(it.value());
+        }
+    }
+    return others;
+}
+
 } // namespace Bloodborne

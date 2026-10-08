@@ -208,6 +208,42 @@ int main() {
     CHECK(board.Update({}, "host", 0, update->echoes).latest == 0);
   }
 
+  // World state per map: the host posts "<member> <map> <hex flag bits>" for
+  // the map it is on (killed-for-good enemies, doors, shortcuts) and every
+  // member reads back the others' latest
+  // "<map> <hex>" lines, so a guest loading the host's map takes the host's
+  // state.
+  {
+    using Bloodborne::PartyMapStateBoard;
+    const auto update =
+        Bloodborne::ParseMapStateUpdate("host 402718720 00ff10");
+    CHECK(update.has_value());
+    CHECK(update->member == "host");
+    CHECK(update->map == 402718720u);
+    CHECK(update->bits == "00ff10");
+    CHECK(
+        Bloodborne::ParseMapStateUpdate("guest 0").has_value()); // reading only
+    CHECK(!Bloodborne::ParseMapStateUpdate("host").has_value());
+    CHECK(!Bloodborne::ParseMapStateUpdate("host x 00").has_value());
+    CHECK(!Bloodborne::ParseMapStateUpdate("host 1 0g").has_value());
+    CHECK(
+        !Bloodborne::ParseMapStateUpdate("host 1 0").has_value()); // odd length
+
+    PartyMapStateBoard board;
+    const QByteArray newline(1, 10);
+    CHECK(board.Update(Party, "host", 402718720u, "00ff10").isEmpty());
+    board.Update("other:party", "stranger", 1, "ff");
+    const auto guest = board.Update(Party, "guest", 0, {});
+    CHECK(guest.size() == 1);
+    CHECK(Bloodborne::FormatMapStateBoard(guest) ==
+          "402718720 00ff10" + newline);
+    board.Update(Party, "host", 402718720u, "01");
+    CHECK(
+        Bloodborne::FormatMapStateBoard(board.Update(Party, "guest", 0, {})) ==
+        "402718720 01" + newline); // the latest only
+    CHECK(board.Update({}, "guest", 0, {}).isEmpty());
+  }
+
   // No party key: nothing to coordinate.
   {
     PartyRestBoard board;
