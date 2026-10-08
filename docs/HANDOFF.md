@@ -460,6 +460,11 @@ e	ests. Rig: guest enters Gascoigne's fog
   doesn't revive its copy. The bloodstain record (GameDataMan +0x30: +0x18 position, +0x38
   echoes, +0x3C block, +0x30 always -1 so far) does not name the holder; find where it is kept.
 
+- **A guest resumes where it left (Kaniel 2026-10-08, session improvements):** after hours in a
+  session, a guest that quits or disconnects restarts at its own save's position (where it was
+  last summoned from) and has to walk back. Its game should remember the map, position and world
+  state it last had in the session, load there next time, and be summoned there.
+
 ## Known loose ends
 - shadnet logs `unhandled POST /v1/users/<npid>/feed`. Harmless so far.
 - The backend answers `ChairMessRespawnPointNotice` generically.
