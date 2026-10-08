@@ -324,7 +324,7 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                 qInfo().noquote() << "Bloodborne party kills from" << update->member << ":"
                                   << update->changes.size() << "changes";
             }
-            const QByteArray board = Bloodborne::FormatFlagBoard(
+            const QByteArray board = Bloodborne::FormatKillBoard(
                 killBoard->Update(Party(request), update->member, update->since, update->changes));
             return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
         });
@@ -374,8 +374,8 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                 qInfo().noquote() << "Bloodborne party echoes from" << update->member << ":"
                                   << update->echoes.size() << "kills";
             }
-            const QByteArray board = Bloodborne::FormatEchoBoard(
-                echoBoard->Update(Party(request), update->member, update->since, update->echoes));
+            const QByteArray board = Bloodborne::FormatEchoBoard(echoBoard->Update(
+                Party(request), update->member, update->since, update->echoes, update->maps));
             return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
         });
 }

@@ -208,6 +208,42 @@ int main() {
     CHECK(board.Update({}, "host", 0, update->echoes).latest == 0);
   }
 
+  // Three players: a kill's echoes carry the map they were made on
+  // ("<echoes>:<map>"), so a member on that map, who got them from the game,
+  // skips them and only a member elsewhere adds them ("<echoes> <map>").
+  {
+    using Bloodborne::PartyEchoBoard;
+    const auto update =
+        Bloodborne::ParseEchoUpdate("guest 0 120:402718720 4000");
+    CHECK(update.has_value());
+    CHECK(update->echoes.size() == 2 && update->maps.size() == 2);
+    CHECK(update->echoes[0] == 120 && update->maps[0] == 402718720u);
+    CHECK(update->echoes[1] == 4000 && update->maps[1] == 0u);
+    CHECK(!Bloodborne::ParseEchoUpdate("host 0 120:x").has_value());
+    CHECK(!Bloodborne::ParseEchoUpdate("host 0 0:5").has_value());
+
+    PartyEchoBoard board;
+    const QByteArray newline(1, 10);
+    board.Update(Party, "guest", 0, update->echoes, update->maps);
+    CHECK(Bloodborne::FormatEchoBoard(board.Update(Party, "host", 0, {}, {})) ==
+          "2" + newline + "120 402718720" + newline + "4000" + newline);
+  }
+
+  // Three players: the kill board names who posted each change, so one
+  // member's visit ending (its copy respawned) does not take back another
+  // member's kill of the same enemy.
+  {
+    using Bloodborne::FlagChange;
+    using Bloodborne::PartyFlagBoard;
+    PartyFlagBoard board;
+    const QByteArray newline(1, 10);
+    board.Update(Party, "guestA", 0, {FlagChange{268517532, true}});
+    board.Update(Party, "guestB", 0, {FlagChange{268517532, false}});
+    CHECK(Bloodborne::FormatKillBoard(board.Update(Party, "host", 0, {})) ==
+          "2" + newline + "268517532 1 guestA" + newline +
+              "268517532 0 guestB" + newline);
+  }
+
   // World state per map: the host posts "<member> <map> <hex flag bits>" for
   // the map it is on (killed-for-good enemies, doors, shortcuts) and every
   // member reads back the others' latest

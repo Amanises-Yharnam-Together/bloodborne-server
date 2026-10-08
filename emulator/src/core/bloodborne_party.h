@@ -7,9 +7,11 @@
 #include <chrono>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "common/types.h"
@@ -49,6 +51,9 @@ struct PartyObservation {
     bool search_effect_active = false;
     bool white_phantom = false;   // still in a host's world (the host may have left)
     bool waiting_to_meet = false; // travelled on its own; the host is on another map
+    // Hosting, with a party member online that is not in the session yet (a party of three:
+    // the Beckoning Bell's effect ends when the first cooperator arrives).
+    bool room_for_more = false;
 };
 
 // CSMultiPlayMan session state (+0x124) as seen in the rig, and the summon-reload marker the
@@ -305,6 +310,17 @@ private:
 constexpr s32 RemoteHostTask = 0;
 constexpr s32 RemoteGuestTask = 1;
 constexpr s32 CreateCharacterStep = 4;
+// A remote player's join state from before a trip: kind, the member id's identity pointer, slot
+// (+0xEC) and flags (+0xED, bit 0 = the member's data is synced).
+struct SavedJoinTask {
+    s32 kind = 0;
+    u64 identity = 0;
+    u8 slot = 0;
+    u8 flags = 0;
+};
+// The saved task a rebuilt one of `kind` takes: its member's own, else the only one of that kind.
+std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s32 kind,
+                                        u64 identity);
 constexpr s32 InSessionStep = 6;
 bool ShouldRecreateAfterTrip(s32 kind, s32 step);
 s32 RemoteTaskKind(bool hosting);
@@ -325,6 +341,27 @@ std::optional<std::vector<MemberMap>> ParseMapBoard(std::string_view body);
 bool EveryoneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map);
 // Whether no other member is on `map` (a usable map: 0 while loading counts as not alone).
 bool NoOneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map);
+
+// A party of three: the boards know a member by its online id, hex-encoded (board member names
+// are letters and digits only), and a session member's identity object holds its online id.
+std::string BoardMemberOfOnlineId(std::string_view online_id);
+std::string OnlineIdOfBoardMember(std::string_view member); // "" if it is not one
+// The one candidate found in `bytes` as a whole NUL-terminated name, or nothing.
+std::optional<std::string> FindOnlineIdIn(std::span<const u8> bytes,
+                                          std::span<const std::string> candidates);
+// After this member's trip: which session members (their board names, nullopt if unknown) to
+// re-create now, the ones on this map not handled yet, and whether every one is then handled.
+// With a member that cannot be told apart, all of them once everyone else is here.
+struct RecreatePlan {
+    std::vector<size_t> now;
+    bool done = false;
+};
+RecreatePlan PlanRecreate(std::span<const std::optional<std::string>> members,
+                          std::span<const MemberMap> board, std::string_view self, u32 map,
+                          const std::set<std::string>& handled);
+// Whether the host (its map from its map state post) is on `map` and still on the map board.
+bool HostIsHere(std::optional<u32> host_map, std::span<const MemberMap> board,
+                std::string_view self, u32 map);
 
 // Shared trophies on shadNet (POST /bloodborne/party/trophy): "<member> [<id>...]" with the
 // trophies this member unlocked in a party session; the answer is every trophy the party
@@ -447,12 +484,21 @@ std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body);
 // kill (AddSouls called from the enemy kill 0x018FC99B or the boss kill 0x01385263) while no
 // other member was on its map go to the board ("<member> <since> [<echoes>...]"), and the other
 // members add the ones after <since> (the answer: "<latest>", then one "<echoes>" line each).
+struct KillEchoes {
+    s32 amount = 0;
+    u32 map = 0; // where the kill was made; 0 from an older post
+    bool operator==(const KillEchoes&) const = default;
+};
 struct EchoBoardAnswer {
     s64 latest = 0;
-    std::vector<s32> echoes;
+    std::vector<KillEchoes> echoes;
     bool operator==(const EchoBoardAnswer&) const = default;
 };
-bool SharesKillEchoes(u64 caller_offset, bool alone_on_map);
+// `someone_elsewhere`: a party member in the session is on another map (the game shares the
+// echoes with the ones on this map itself).
+bool SharesKillEchoes(u64 caller_offset, bool someone_elsewhere);
+// Whether a member on `my_map` adds the echoes of a kill made on `kill_map`.
+bool GrantsKillEchoes(u32 kill_map, u32 my_map);
 // Whether the party boards (lamps and boss fog flags, trophies) are read, posted and applied:
 // whenever a party is configured and the player is loaded, in a session or not.
 bool SharesWithParty(bool party_configured, bool player_loaded);
@@ -533,6 +579,30 @@ std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes);
 // from the game itself), scaled by each copy's max HP (the co-op HP bonus may differ).
 std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max);
 
+// The kill board's answer names who posted each change ("<handle> <0|1> <member>").
+struct KillChange {
+    s32 handle = 0;
+    bool killed = false;
+    std::string member;
+    bool operator==(const KillChange&) const = default;
+};
+struct KillBoardAnswer {
+    s64 latest = 0;
+    std::vector<KillChange> changes;
+    bool operator==(const KillBoardAnswer&) const = default;
+};
+std::optional<KillBoardAnswer> ParseKillBoard(std::string_view body);
+// The other members' standing kills: an enemy stays killed while any member's kill of it stands.
+class PartyKills {
+public:
+    void Apply(std::span<const KillChange> changes);
+    bool Contains(u32 handle) const;
+    std::unordered_set<u32> All() const;
+
+private:
+    std::map<std::string, std::set<u32>> by_member;
+};
+
 class VisitKills {
 public:
     std::vector<std::pair<s32, bool>> Observe(u64 visit,
@@ -546,7 +616,8 @@ private:
     std::map<u32, s32> hp;
     std::vector<u32> killed;
 };
-std::string EncodeEchoUpdate(std::string_view member, s64 since, std::span<const s32> echoes);
+std::string EncodeEchoUpdate(std::string_view member, s64 since,
+                             std::span<const KillEchoes> echoes);
 std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body);
 
 // A guest that made its own trip is apart from the host until it joins a session again (the

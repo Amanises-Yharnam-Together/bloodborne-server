@@ -41,7 +41,9 @@
 #include "core/debugger.h"
 #include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
+#include "core/libraries/np/np_handler.h"
 #include "core/libraries/np/np_trophy.h"
+#include "core/libraries/system/userservice.h"
 #include "core/memory.h"
 
 #include <httplib.h>
@@ -1729,6 +1731,7 @@ void InitPartyController() {
 
 bool PartyHostOnMyMap();
 extern GuestApart guest_apart;
+bool HostHasRoomForMore();
 
 PartyObservation ObserveParty(u64 player, s32 search_effect) {
     PartyObservation observation{};
@@ -1753,6 +1756,9 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
     observation.search_effect_active =
         observation.player_valid && HasPlayerEffect(player, search_effect);
     observation.waiting_to_meet = guest_apart.Apart() && !PartyHostOnMyMap();
+    observation.room_for_more = party_controller &&
+                                party_controller->SearchEffectId() == BeckoningBellEffect &&
+                                HostHasRoomForMore();
     observation.white_phantom = observation.player_valid &&
                                 HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) &&
                                 ReadValue<s32>(player, 0x78) == WhiteGhostCharacterType;
@@ -2051,12 +2057,13 @@ std::vector<std::pair<s32, bool>> flags_to_post;
 // Kill echoes shared across maps (see SharesKillEchoes): the local kills made apart wait here
 // for the board thread, and the other members' wait for the game thread to add them.
 std::mutex echo_board_mutex;
-std::vector<s32> echoes_to_post;
-std::vector<s32> echoes_to_grant;
+std::vector<KillEchoes> echoes_to_post;
+std::vector<KillEchoes> echoes_to_grant;
 // Enemy deaths kept in step across loads (see VisitKills): this member's kills and visit ends
 // wait for the board thread; the others' current kills (character handles) are hidden here.
 std::mutex kill_board_mutex;
 std::vector<std::pair<s32, bool>> kills_to_post;
+PartyKills party_kills; // the other members' standing kills, by member
 std::unordered_set<u32> others_kills;
 // World state per map (see MapFlagBase): the host's own snapshot waiting for the board thread,
 // and the latest one read back (on a guest).
@@ -2438,13 +2445,39 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
 
 // Posts this member's rest about once a second while it rests (once more when it stands up) and
 // keeps the board the server answers with. Runs on its own thread; the game never waits for it.
-void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string party) {
-    std::array<u8, 8> random_bytes{};
-    std::random_device random;
-    for (auto& byte : random_bytes) {
-        byte = static_cast<u8>(random());
+// The signed-in user's online id, or "" before shadNet's login.
+std::string LocalOnlineId() {
+    int user_id = -1;
+    if (Libraries::UserService::sceUserServiceGetInitialUser(&user_id) != 0 || user_id < 0) {
+        return {};
     }
-    const std::string member = BytesToHex(random_bytes);
+    auto& np = Libraries::Np::NpHandler::GetInstance();
+    if (!np.IsPsnSignedIn(user_id)) {
+        return {};
+    }
+    const auto online_id = np.GetOnlineId(user_id);
+    return std::string{online_id.data, strnlen(online_id.data, sizeof(online_id.data))};
+}
+
+void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string party) {
+    // The boards know a member by its online id (hex, see BoardMemberOfOnlineId): a party of
+    // three tells its session members apart by it. Random if shadNet never signs in.
+    std::string member;
+    for (int attempt = 0; attempt < 120 && !stop.stop_requested() && member.empty(); ++attempt) {
+        if (const std::string online_id = LocalOnlineId(); !online_id.empty()) {
+            member = BoardMemberOfOnlineId(online_id);
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds{500});
+        }
+    }
+    if (member.empty()) {
+        std::array<u8, 8> random_bytes{};
+        std::random_device random;
+        for (auto& byte : random_bytes) {
+            byte = static_cast<u8>(random());
+        }
+        member = BytesToHex(random_bytes);
+    }
     httplib::Client client(base_url);
     client.set_connection_timeout(std::chrono::seconds{1});
     client.set_read_timeout(std::chrono::seconds{2});
@@ -2524,23 +2557,18 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 client.Post("/bloodborne/party/kills", headers,
                             EncodeFlagUpdate(member, kill_board_since, kills_out), "text/plain");
             if (const auto kills = kill_response && kill_response->status == 200
-                                       ? ParseFlagBoard(kill_response->body)
+                                       ? ParseKillBoard(kill_response->body)
                                        : std::nullopt) {
                 kill_board_since = kills->latest;
                 std::scoped_lock lock{kill_board_mutex};
-                for (const auto& [handle, killed] : kills->changes) {
-                    if (killed) {
-                        others_kills.insert(static_cast<u32>(handle));
-                    } else {
-                        others_kills.erase(static_cast<u32>(handle));
-                    }
-                }
+                party_kills.Apply(kills->changes);
+                others_kills = party_kills.All();
             } else {
                 std::scoped_lock lock{kill_board_mutex};
                 kills_to_post.insert(kills_to_post.begin(), kills_out.begin(), kills_out.end());
             }
             next_echo_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
-            std::vector<s32> echoes_out;
+            std::vector<KillEchoes> echoes_out;
             {
                 std::scoped_lock lock{echo_board_mutex};
                 echoes_out.swap(echoes_to_post);
@@ -3392,10 +3420,12 @@ void PatchSignTimers(u64 base, u64 image_size) {
             !std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(base + site.offset),
                                                     expected.size()},
                                 expected)) {
+            const u8* found = reinterpret_cast<const u8*>(base + site.offset);
             LOG_ERROR(Debug,
-                      "Bloodborne sign timer signature mismatch at {:#x}; keeping the "
-                      "game's sign timers",
-                      site.offset);
+                      "Bloodborne sign timer signature mismatch at {:#x} (found {}); "
+                      "keeping the game's sign timers",
+                      site.offset,
+                      BytesToHex(std::span<const u8>{found, std::min<size_t>(expected.size(), 8)}));
             return;
         }
     }
@@ -3525,12 +3555,6 @@ constexpr u64 MemberIdEqualOffset = 0x00CA1C70;
 // bit 0 = the member's data is synced). The rebuilt task needs both to create the character.
 // A member id (0x20 bytes) is a ref-counted identity pointer at +0 plus a lock at +8, so only the
 // pointer is kept: copying the lock and comparing through it hung the game.
-struct SavedJoinTask {
-    s32 kind = 0;
-    u64 identity = 0;
-    u8 slot = 0;
-    u8 flags = 0;
-};
 std::vector<SavedJoinTask> saved_join_tasks;
 
 // Only replaced by a trip that starts with remote players: a trip from a map they were not on
@@ -3555,7 +3579,7 @@ void SaveRemoteJoinTasks() {
     LOG_INFO(Debug, "Bloodborne party trip: {} remote join tasks saved", saved_join_tasks.size());
 }
 
-void RecreateRemotePlayers() {
+void RecreateRemotePlayers(std::span<const u64> only) {
     const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
     const u64 manager = ReadValue<u64>(image_base + MultiPlayManPointerOffset, 0);
     if (session < 0x10000 || manager < 0x10000 ||
@@ -3617,7 +3641,8 @@ void RecreateRemotePlayers() {
         return found;
     };
     for (u64 member = begin; member < end; member += 0x20) {
-        if (id_equal(member, self)) {
+        if (id_equal(member, self) ||
+            (!only.empty() && std::ranges::find(only, member) == only.end())) {
             continue;
         }
         if (const u64 found = task_for(member)) {
@@ -3630,13 +3655,9 @@ void RecreateRemotePlayers() {
         }
         const s32 kind = RemoteTaskKind(hosting);
         const u64 identity = ReadValue<u64>(member, 0);
-        const SavedJoinTask* saved = nullptr;
-        for (const SavedJoinTask& entry : saved_join_tasks) {
-            if (entry.kind == kind && (entry.identity == identity || !saved)) {
-                saved = &entry; // by identity, else the one remote player there was
-            }
-        }
-        rebuild(member, kind, saved);
+        // By identity, else the one remote player of that kind there was (two guests: no guess).
+        const auto picked = PickSavedJoinTask(saved_join_tasks, kind, identity);
+        rebuild(member, kind, picked ? &saved_join_tasks[*picked] : nullptr);
     }
     // On a guest its own task (kind 2) is the one that creates the host's character there.
     if (!hosting && !task_for(self)) {
@@ -3648,17 +3669,89 @@ void RecreateRemotePlayers() {
 }
 
 // Whether everyone else in the party (for a guest: the host) is on this member's map.
+std::optional<u32> HostMapFromItsPost() {
+    std::scoped_lock lock{map_state_mutex};
+    return host_map_state ? std::optional<u32>{host_map_state->map} : std::nullopt;
+}
+
 bool PartyHostOnMyMap() {
+    const std::optional<u32> host_map = HostMapFromItsPost();
     std::scoped_lock lock{map_board_mutex};
     if (std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}) {
         return false;
     }
-    return EveryoneElseOnMap(map_board, map_board_member, GetCurrentPackedMap());
+    // With two guests the other one may be elsewhere: the host's own post says where it is.
+    return host_map ? HostIsHere(host_map, map_board, map_board_member, GetCurrentPackedMap())
+                    : EveryoneElseOnMap(map_board, map_board_member, GetCurrentPackedMap());
 }
 
-// After this member's trip the other players are re-created once they are all on this map
-// (creating a player into a map it is not on makes its game leave the session).
+// After this member's trip the other players are re-created as they come to this map (creating a
+// player into a map it is not on makes its game leave the session), each once (see PlanRecreate).
 bool recreate_players_pending{};
+std::set<std::string> recreated_since_trip;
+
+// The session's members other than this one (SessionManager +0xF8..+0x100, 0x20 bytes each).
+std::vector<u64> OtherSessionMembers() {
+    std::vector<u64> members;
+    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+    if (session < 0x10000 || !HasMemoryAccess(session, 0x128, MemoryProt::CpuRead)) {
+        return members;
+    }
+    using IdEqual = bool PS4_SYSV_ABI (*)(u64 a, u64 b);
+    const auto id_equal = reinterpret_cast<IdEqual>(image_base + MemberIdEqualOffset);
+    const u64 begin = ReadValue<u64>(session, 0xF8);
+    const u64 end = ReadValue<u64>(session, 0x100);
+    if (begin < 0x10000 || end <= begin || end - begin > 0x20 * 8 ||
+        !HasMemoryAccess(begin, end - begin, MemoryProt::CpuRead)) {
+        return members;
+    }
+    for (u64 member = begin; member < end; member += 0x20) {
+        if (!id_equal(member, session + 0xD0)) {
+            members.push_back(member);
+        }
+    }
+    return members;
+}
+
+// Hosting, fewer than three in the session, and a party member online that is not in it.
+bool HostHasRoomForMore() {
+    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+    if (session < 0x10000 || !HasMemoryAccess(session, 0x128, MemoryProt::CpuRead) ||
+        ReadValue<s32>(session, 0x124) != MatchingStateHosting) {
+        return false;
+    }
+    const u64 begin = ReadValue<u64>(session, 0xF8);
+    const u64 end = ReadValue<u64>(session, 0x100);
+    const size_t in_session = begin >= 0x10000 && end > begin ? (end - begin) / 0x20 : 1;
+    std::scoped_lock lock{map_board_mutex};
+    if (std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}) {
+        return false;
+    }
+    constexpr size_t MaxPlayers = 3; // the host and two cooperators
+    return in_session < MaxPlayers && map_board.size() > in_session;
+}
+
+// The board name of a session member: its identity object (the member id's first pointer), or an
+// object it points to, holds its online id (see FindOnlineIdIn).
+std::optional<std::string> SessionMemberBoardName(u64 member,
+                                                  const std::vector<std::string>& online_ids) {
+    const auto scan = [&](u64 address, u64 size) -> std::optional<std::string> {
+        if (address < 0x10000 || !HasMemoryAccess(address, size, MemoryProt::CpuRead)) {
+            return std::nullopt;
+        }
+        return FindOnlineIdIn(std::span<const u8>{reinterpret_cast<const u8*>(address), size},
+                              online_ids);
+    };
+    const u64 identity = ReadValue<u64>(member, 0);
+    std::optional<std::string> found = scan(identity, 0x200);
+    for (u64 offset = 0; !found && identity >= 0x10000 && offset < 0x100; offset += 8) {
+        if (!HasMemoryAccess(identity + offset, 8, MemoryProt::CpuRead)) {
+            break;
+        }
+        found = scan(ReadValue<u64>(identity, offset), 0x100);
+    }
+    return found ? std::optional<std::string>{BoardMemberOfOnlineId(*found)} : std::nullopt;
+}
 
 // The bell's search effect is lost with the old stage; put it back once the new one is up.
 bool restore_search_pending{};
@@ -3967,7 +4060,7 @@ constexpr u64 AddSoulsOffset = 0x018FC600;
 constexpr std::array<u8, 11> AddSoulsPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x56,
                                               0x53, 0x48, 0x83, 0xEC, 0x10};
 
-bool LocalPlayerAloneInSession();
+bool SomeoneElsewhereInSession();
 
 void PS4_SYSV_ABI NoteAddSouls(u64, const GuestRegisterSnapshot* registers) {
     const u64 caller = ReadValue<u64>(registers->rsp, 0);
@@ -3975,9 +4068,9 @@ void PS4_SYSV_ABI NoteAddSouls(u64, const GuestRegisterSnapshot* registers) {
     LOG_INFO(Debug, "Bloodborne echoes: +{} (rates {}) from {:#x}", amount, registers->rcx & 0xFF,
              caller >= image_base ? caller - image_base : caller);
     if (amount > 0 && caller >= image_base &&
-        SharesKillEchoes(caller - image_base, LocalPlayerAloneInSession())) {
+        SharesKillEchoes(caller - image_base, SomeoneElsewhereInSession())) {
         std::scoped_lock lock{echo_board_mutex};
-        echoes_to_post.push_back(amount);
+        echoes_to_post.push_back(KillEchoes{amount, GetCurrentPackedMap()});
     }
 }
 
@@ -5083,15 +5176,38 @@ void SetPartyWorldChanges(bool sharing) {
 // get their AI controller, and puts the old words back once another member is on its map.
 std::unordered_map<u64, u16> lone_guest_ownership; // word address -> original value
 
-// In a party session with no other member on this map (the party's map board, fresh).
-bool LocalPlayerAloneInSession() {
+// In a party session with another member on another map (the party's map board, fresh): the
+// game shares a kill's echoes only with the members on the killer's map.
+bool SomeoneElsewhereInSession() {
     const u32 map = GetCurrentPackedMap();
     if (!InPartySession() || !IsUsablePackedMap(map)) {
         return false;
     }
     std::scoped_lock lock{map_board_mutex};
     return std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{3} &&
-           NoOneElseOnMap(map_board, map_board_member, map);
+           std::ranges::any_of(
+               map_board,
+               [&](const MemberMap& entry) {
+                   return entry.member != map_board_member && entry.map != map;
+               });
+}
+
+std::optional<u32> HostMapFromItsPost();
+
+// In a party session with the host away from this map (its own map state post, the party's map
+// board fresh); without the host's post yet, with no other member on this map.
+bool HostAwayFromMyMap() {
+    const u32 map = GetCurrentPackedMap();
+    if (!InPartySession() || !IsUsablePackedMap(map)) {
+        return false;
+    }
+    const std::optional<u32> host_map = HostMapFromItsPost();
+    std::scoped_lock lock{map_board_mutex};
+    if (std::chrono::steady_clock::now() - map_board_time >= std::chrono::seconds{3}) {
+        return false;
+    }
+    return host_map ? !HostIsHere(host_map, map_board, map_board_member, map)
+                    : NoOneElseOnMap(map_board, map_board_member, map);
 }
 
 // Adds the echoes the other members got from kills made apart (see SharesKillEchoes) through
@@ -5103,16 +5219,20 @@ void GrantPartyEchoes() {
     if (add_souls != image_base + AddSoulsOffset) {
         return;
     }
-    std::vector<s32> pending;
+    std::vector<KillEchoes> pending;
     {
         std::scoped_lock lock{echo_board_mutex};
         pending.swap(echoes_to_grant);
     }
     using AddSouls = void PS4_SYSV_ABI (*)(u64 player, s32 amount, s32, bool rates);
-    for (const s32 amount : pending) {
-        reinterpret_cast<AddSouls>(add_souls)(player, amount, 0, true);
+    const u32 map = GetCurrentPackedMap();
+    for (const KillEchoes& kill : pending) {
+        if (!GrantsKillEchoes(kill.map, map)) {
+            continue; // made on this map: the game gave them already
+        }
+        reinterpret_cast<AddSouls>(add_souls)(player, kill.amount, 0, true);
         LOG_INFO(Debug, "Bloodborne party: added {} echoes from a kill another member made apart",
-                 amount);
+                 kill.amount);
     }
 }
 
@@ -5122,7 +5242,9 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
         lone_guest_ownership.clear(); // the old map's characters are gone
         claimed_map = map;
     }
-    const bool alone = in_session && IsPartyGuestRole() && LocalPlayerAloneInSession();
+    // Not only alone: two guests on a map the host is not on both run its enemies, each in its
+    // own copy of the map (the kill and HP boards keep them in step).
+    const bool alone = in_session && IsPartyGuestRole() && HostAwayFromMyMap();
     if (!alone) {
         size_t handed_back = 0;
         for (const auto& [word, original] : lone_guest_ownership) {
@@ -5522,6 +5644,7 @@ void TickPlayersOnThisMap() {
     GrantPartyEchoes();
     if (!in_session) {
         recreate_players_pending = false;
+        recreated_since_trip.clear();
         saved_join_tasks.clear();
         return;
     }
@@ -5538,17 +5661,44 @@ void TickPlayersOnThisMap() {
         board = map_board;
         self = map_board_member;
     }
-    if (!EveryoneElseOnMap(board, self, map)) {
-        return;
-    }
     // Not while the player is still being placed: a guest's own warp has no position for a moment
     // and gets moved to its lamp (guest_trip_fixup_at); re-created then, the host never appeared.
     if (guest_trip_fixup_at || !LocalPlayerPosition()) {
         return;
     }
-    recreate_players_pending = false;
-    LOG_INFO(Debug, "Bloodborne party trip: everyone is on map {:#x}; re-creating players", map);
-    RecreateRemotePlayers();
+    std::vector<std::string> online_ids;
+    for (const MemberMap& entry : board) {
+        if (entry.member != self) {
+            if (std::string online_id = OnlineIdOfBoardMember(entry.member); !online_id.empty()) {
+                online_ids.push_back(std::move(online_id));
+            }
+        }
+    }
+    const std::vector<u64> members = OtherSessionMembers();
+    std::vector<std::optional<std::string>> names;
+    for (const u64 member : members) {
+        names.push_back(SessionMemberBoardName(member, online_ids));
+    }
+    const RecreatePlan plan = PlanRecreate(names, board, self, map, recreated_since_trip);
+    if (!plan.now.empty()) {
+        std::vector<u64> now;
+        std::string who;
+        for (const size_t index : plan.now) {
+            now.push_back(members[index]);
+            if (names[index]) {
+                recreated_since_trip.insert(*names[index]);
+                who += ' ' + OnlineIdOfBoardMember(*names[index]);
+            } else {
+                who += " ?";
+            }
+        }
+        LOG_INFO(Debug, "Bloodborne party trip: re-creating{} on map {:#x} ({} of {} members)", who,
+                 map, now.size(), members.size());
+        RecreateRemotePlayers(now);
+    }
+    if (plan.done) {
+        recreate_players_pending = false;
+    }
 }
 
 // From the party tick: ends the trip once the player is on the new stage (GlobalState +0x08 is
@@ -5569,6 +5719,7 @@ void TickPartyTrip() {
                  GetCurrentPackedMap(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f,
                  at ? (*at)[2] : 0.0f, ReadValue<s32>(state, 0x1528));
         recreate_players_pending = true;
+        recreated_since_trip.clear();
         restore_search_pending = true;
         if (IsPartyGuestRole()) {
             // Again on arrival, in case the load created no map items (see

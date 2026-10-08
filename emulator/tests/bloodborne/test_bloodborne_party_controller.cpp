@@ -1058,10 +1058,11 @@ TEST(BloodborneSharedEchoes, KillsMadeApartRewardTheWholeParty) {
     EXPECT_TRUE(SharesKillEchoes(0x01385263, true)) << "a boss kill";
     EXPECT_FALSE(SharesKillEchoes(0x018FC99B, false)) << "side by side the game shares them";
     EXPECT_FALSE(SharesKillEchoes(0x0132E4B5, true)) << "not a kill (an item, a bloodstain)";
-    EXPECT_EQ(EncodeEchoUpdate("guest", 3, std::vector<s32>{120, 4000}), "guest 3 120 4000");
-    EXPECT_EQ(EncodeEchoUpdate("host", 0, std::vector<s32>{}), "host 0");
+    EXPECT_EQ(EncodeEchoUpdate("guest", 3, std::vector<KillEchoes>{{120, 0}, {4000, 0}}),
+              "guest 3 120 4000");
+    EXPECT_EQ(EncodeEchoUpdate("host", 0, std::vector<KillEchoes>{}), "host 0");
     EXPECT_EQ(ParseEchoBoard("5\n120\n4000\n"),
-              (std::optional<EchoBoardAnswer>{EchoBoardAnswer{5, {120, 4000}}}));
+              (std::optional<EchoBoardAnswer>{EchoBoardAnswer{5, {{120, 0}, {4000, 0}}}}));
     EXPECT_EQ(ParseEchoBoard("2\n"), (std::optional<EchoBoardAnswer>{EchoBoardAnswer{2, {}}}));
     EXPECT_EQ(ParseEchoBoard("x\n"), std::nullopt);
     EXPECT_EQ(ParseEchoBoard("2\n-5\n"), std::nullopt);

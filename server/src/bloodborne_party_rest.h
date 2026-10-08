@@ -116,12 +116,15 @@ struct FlagUpdate {
 struct FlagBoardAnswer {
     qint64 latest = 0;
     QList<FlagChange> changes;
+    QList<QByteArray> members; // who posted each change
 };
 
 // "<member> <since> [<flag>:<0|1>...]".
 std::optional<FlagUpdate> ParseFlagUpdate(const QByteArray& body);
 // A "<latest>" line, then one "<flag> <0|1>" line per change.
 QByteArray FormatFlagBoard(const FlagBoardAnswer& answer);
+// The kill board's answer: a "<latest>" line, then one "<handle> <0|1> <member>" line per change.
+QByteArray FormatKillBoard(const FlagBoardAnswer& answer);
 
 class PartyFlagBoard {
 public:
@@ -183,16 +186,18 @@ struct EchoUpdate {
     QByteArray member;
     qint64 since = 0;
     QList<qint32> echoes;
+    QList<quint32> maps; // the map each kill was made on, 0 if not given
 };
 
 struct EchoBoardAnswer {
     qint64 latest = 0;
     QList<qint32> echoes;
+    QList<quint32> maps;
 };
 
-// "<member> <since> [<echoes>...]" (each a positive amount).
+// "<member> <since> [<echoes>[:<map>]...]" (each a positive amount, the map in decimal).
 std::optional<EchoUpdate> ParseEchoUpdate(const QByteArray& body);
-// A "<latest>" line, then one "<echoes>" line per kill.
+// A "<latest>" line, then one "<echoes>" or "<echoes> <map>" line per kill.
 QByteArray FormatEchoBoard(const EchoBoardAnswer& answer);
 
 class PartyEchoBoard {
@@ -203,13 +208,14 @@ public:
     // Adds the member's echoes and returns the latest sequence number and the other members'
     // echoes after `since`, oldest first.
     EchoBoardAnswer Update(const QByteArray& party, const QByteArray& member, qint64 since,
-                           const QList<qint32>& echoes);
+                           const QList<qint32>& echoes, const QList<quint32>& maps = {});
 
 private:
     struct Entry {
         qint64 sequence = 0;
         QByteArray member;
         qint32 echoes = 0;
+        quint32 map = 0;
     };
     struct Party {
         qint64 latest = 0;

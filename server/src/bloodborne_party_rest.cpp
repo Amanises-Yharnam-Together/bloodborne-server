@@ -194,6 +194,16 @@ std::optional<FlagUpdate> ParseFlagUpdate(const QByteArray& body) {
     return update;
 }
 
+QByteArray FormatKillBoard(const FlagBoardAnswer& answer) {
+    QByteArray body = QByteArray::number(answer.latest) + '\n';
+    for (qsizetype index = 0; index < answer.changes.size(); ++index) {
+        const FlagChange& change = answer.changes[index];
+        body += QByteArray::number(change.flag) + (change.on ? " 1 " : " 0 ") +
+                (index < answer.members.size() ? answer.members[index] : QByteArray{}) + '\n';
+    }
+    return body;
+}
+
 QByteArray FormatFlagBoard(const FlagBoardAnswer& answer) {
     QByteArray body = QByteArray::number(answer.latest) + '\n';
     for (const FlagChange& change : answer.changes) {
@@ -219,6 +229,7 @@ FlagBoardAnswer PartyFlagBoard::Update(const QByteArray& party, const QByteArray
     for (const Entry& entry : board.entries) {
         if (entry.sequence > since && entry.member != member) {
             answer.changes.append(entry.change);
+            answer.members.append(entry.member);
         }
     }
     return answer;
@@ -235,32 +246,51 @@ std::optional<EchoUpdate> ParseEchoUpdate(const QByteArray& body) {
         return std::nullopt;
     }
     for (qsizetype index = 2; index < parts.size(); ++index) {
-        const qint32 echoes = parts[index].toInt(&ok);
+        const QList<QByteArray> kill = parts[index].split(':');
+        if (kill.size() > 2) {
+            return std::nullopt;
+        }
+        const qint32 echoes = kill[0].toInt(&ok);
         if (!ok || echoes <= 0) {
             return std::nullopt;
         }
+        quint32 map = 0;
+        if (kill.size() == 2) {
+            map = kill[1].toUInt(&ok);
+            if (!ok) {
+                return std::nullopt;
+            }
+        }
         update.echoes.append(echoes);
+        update.maps.append(map);
     }
     return update;
 }
 
 QByteArray FormatEchoBoard(const EchoBoardAnswer& answer) {
     QByteArray body = QByteArray::number(answer.latest) + '\n';
-    for (const qint32 echoes : answer.echoes) {
-        body += QByteArray::number(echoes) + '\n';
+    for (qsizetype index = 0; index < answer.echoes.size(); ++index) {
+        const quint32 map = index < answer.maps.size() ? answer.maps[index] : 0;
+        body += QByteArray::number(answer.echoes[index]);
+        if (map != 0) {
+            body += ' ' + QByteArray::number(map);
+        }
+        body += '\n';
     }
     return body;
 }
 
 EchoBoardAnswer PartyEchoBoard::Update(const QByteArray& party, const QByteArray& member,
-                                       qint64 since, const QList<qint32>& echoes) {
+                                       qint64 since, const QList<qint32>& echoes,
+                                       const QList<quint32>& maps) {
     if (party.isEmpty()) {
         return {};
     }
     QMutexLocker lock(&m_mutex);
     Party& board = m_parties[party];
-    for (const qint32 amount : echoes) {
-        board.entries.append(Entry{++board.latest, member, amount});
+    for (qsizetype index = 0; index < echoes.size(); ++index) {
+        board.entries.append(
+            Entry{++board.latest, member, echoes[index], index < maps.size() ? maps[index] : 0});
     }
     while (board.entries.size() > MaxEntries) {
         board.entries.removeFirst();
@@ -269,6 +299,7 @@ EchoBoardAnswer PartyEchoBoard::Update(const QByteArray& party, const QByteArray
     for (const Entry& entry : board.entries) {
         if (entry.sequence > since && entry.member != member) {
             answer.echoes.append(entry.echoes);
+            answer.maps.append(entry.map);
         }
     }
     return answer;

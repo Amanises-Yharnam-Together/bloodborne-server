@@ -280,6 +280,123 @@ bool NoOneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32
         board, [&](const MemberMap& entry) { return entry.member != self && entry.map == map; });
 }
 
+namespace {
+bool IsOnlineIdChar(u8 c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' ||
+           c == '_';
+}
+} // namespace
+
+std::string BoardMemberOfOnlineId(std::string_view online_id) {
+    std::string member;
+    for (const char c : online_id) {
+        member += fmt::format("{:02x}", static_cast<u8>(c));
+    }
+    return member;
+}
+
+std::string OnlineIdOfBoardMember(std::string_view member) {
+    const auto nibble = [](char c) -> s32 {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        return -1;
+    };
+    if (member.empty() || member.size() % 2 != 0) {
+        return {};
+    }
+    std::string online_id;
+    for (size_t index = 0; index < member.size(); index += 2) {
+        const s32 high = nibble(member[index]);
+        const s32 low = nibble(member[index + 1]);
+        if (high < 0 || low < 0 || !IsOnlineIdChar(static_cast<u8>(high * 16 + low))) {
+            return {};
+        }
+        online_id += static_cast<char>(high * 16 + low);
+    }
+    return online_id;
+}
+
+std::optional<std::string> FindOnlineIdIn(std::span<const u8> bytes,
+                                          std::span<const std::string> candidates) {
+    std::optional<std::string> found;
+    for (const std::string& candidate : candidates) {
+        if (candidate.empty() || candidate.size() >= bytes.size()) {
+            continue;
+        }
+        for (size_t at = 0; at + candidate.size() < bytes.size(); ++at) {
+            if (!std::equal(candidate.begin(), candidate.end(), bytes.begin() + at) ||
+                bytes[at + candidate.size()] != 0 || (at > 0 && IsOnlineIdChar(bytes[at - 1]))) {
+                continue;
+            }
+            if (found && *found != candidate) {
+                return std::nullopt; // two members' names: not this member's object
+            }
+            found = candidate;
+            break;
+        }
+    }
+    return found;
+}
+
+RecreatePlan PlanRecreate(std::span<const std::optional<std::string>> members,
+                          std::span<const MemberMap> board, std::string_view self, u32 map,
+                          const std::set<std::string>& handled) {
+    RecreatePlan plan;
+    if (std::ranges::any_of(members, [](const auto& member) { return !member.has_value(); })) {
+        if (EveryoneElseOnMap(board, self, map)) {
+            for (size_t index = 0; index < members.size(); ++index) {
+                plan.now.push_back(index);
+            }
+            plan.done = true;
+        }
+        return plan;
+    }
+    plan.done = true;
+    for (size_t index = 0; index < members.size(); ++index) {
+        const std::string& name = *members[index];
+        if (handled.contains(name)) {
+            continue;
+        }
+        const auto entry = std::ranges::find_if(
+            board, [&](const MemberMap& member) { return member.member == name; });
+        if (entry != board.end() && entry->map == map) {
+            plan.now.push_back(index);
+        } else {
+            plan.done = false;
+        }
+    }
+    return plan;
+}
+
+bool HostIsHere(std::optional<u32> host_map, std::span<const MemberMap> board,
+                std::string_view self, u32 map) {
+    return host_map && *host_map == map && map != 0 &&
+           std::ranges::any_of(board, [&](const MemberMap& entry) {
+               return entry.member != self && entry.map == map;
+           });
+}
+
+std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s32 kind,
+                                        u64 identity) {
+    std::optional<size_t> only;
+    size_t of_kind = 0;
+    for (size_t index = 0; index < saved.size(); ++index) {
+        if (saved[index].kind != kind) {
+            continue;
+        }
+        if (saved[index].identity == identity) {
+            return index;
+        }
+        ++of_kind;
+        only = index;
+    }
+    return of_kind == 1 ? only : std::nullopt;
+}
+
 std::string EncodeTrophyUpdate(std::string_view member, std::span<const s32> trophies) {
     std::string body{member};
     for (const s32 trophy : trophies) {
@@ -849,18 +966,85 @@ bool SharesWithParty(bool party_configured, bool player_loaded) {
     return party_configured && player_loaded;
 }
 
-bool SharesKillEchoes(u64 caller_offset, bool alone_on_map) {
+bool SharesKillEchoes(u64 caller_offset, bool someone_elsewhere) {
     constexpr u64 EnemyKillReward = 0x018FC99B;
     constexpr u64 BossKillReward = 0x01385263;
-    return alone_on_map && (caller_offset == EnemyKillReward || caller_offset == BossKillReward);
+    return someone_elsewhere &&
+           (caller_offset == EnemyKillReward || caller_offset == BossKillReward);
 }
 
-std::string EncodeEchoUpdate(std::string_view member, s64 since, std::span<const s32> echoes) {
+bool GrantsKillEchoes(u32 kill_map, u32 my_map) {
+    return kill_map == 0 || kill_map != my_map;
+}
+
+std::string EncodeEchoUpdate(std::string_view member, s64 since,
+                             std::span<const KillEchoes> echoes) {
     std::string body = std::string{member} + ' ' + std::to_string(since);
-    for (const s32 amount : echoes) {
-        body += ' ' + std::to_string(amount);
+    for (const KillEchoes& kill : echoes) {
+        body += ' ' + std::to_string(kill.amount);
+        if (kill.map != 0) {
+            body += ':' + std::to_string(kill.map);
+        }
     }
     return body;
+}
+
+std::optional<KillBoardAnswer> ParseKillBoard(std::string_view body) {
+    KillBoardAnswer answer;
+    const auto first_end = body.find('\n');
+    const std::string_view first = body.substr(0, first_end);
+    const auto [latest_end, latest_error] =
+        std::from_chars(first.data(), first.data() + first.size(), answer.latest);
+    if (latest_error != std::errc{} || latest_end != first.data() + first.size()) {
+        return std::nullopt;
+    }
+    body = first_end == std::string_view::npos ? std::string_view{} : body.substr(first_end + 1);
+    while (!body.empty()) {
+        const auto end = body.find('\n');
+        const std::string_view line = body.substr(0, end);
+        body = end == std::string_view::npos ? std::string_view{} : body.substr(end + 1);
+        if (line.empty()) {
+            continue;
+        }
+        const auto space = line.find(' ');
+        s32 handle = 0;
+        const auto [handle_end, handle_error] =
+            std::from_chars(line.data(), line.data() + std::min(space, line.size()), handle);
+        if (space == std::string_view::npos || handle_error != std::errc{} ||
+            handle_end != line.data() + space || line.size() < space + 2 ||
+            (line[space + 1] != '0' && line[space + 1] != '1') ||
+            (line.size() > space + 2 && line[space + 2] != ' ')) {
+            return std::nullopt;
+        }
+        const std::string_view member =
+            line.size() > space + 3 ? line.substr(space + 3) : std::string_view{};
+        answer.changes.push_back(KillChange{handle, line[space + 1] == '1', std::string{member}});
+    }
+    return answer;
+}
+
+void PartyKills::Apply(std::span<const KillChange> changes) {
+    for (const KillChange& change : changes) {
+        const u32 handle = static_cast<u32>(change.handle);
+        if (change.killed) {
+            by_member[change.member].insert(handle);
+        } else if (const auto it = by_member.find(change.member); it != by_member.end()) {
+            it->second.erase(handle);
+        }
+    }
+}
+
+bool PartyKills::Contains(u32 handle) const {
+    return std::ranges::any_of(by_member,
+                               [&](const auto& entry) { return entry.second.contains(handle); });
+}
+
+std::unordered_set<u32> PartyKills::All() const {
+    std::unordered_set<u32> all;
+    for (const auto& [member, handles] : by_member) {
+        all.insert(handles.begin(), handles.end());
+    }
+    return all;
 }
 
 std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body) {
@@ -882,13 +1066,25 @@ std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body) {
             first = false;
             continue;
         }
+        const auto space = line.find(' ');
+        const std::string_view amount_text = line.substr(0, space);
         s32 amount = 0;
         const auto [amount_end, error] =
-            std::from_chars(line.data(), line.data() + line.size(), amount);
-        if (error != std::errc{} || amount_end != line.data() + line.size() || amount <= 0) {
+            std::from_chars(amount_text.data(), amount_text.data() + amount_text.size(), amount);
+        if (error != std::errc{} || amount_end != amount_text.data() + amount_text.size() ||
+            amount <= 0) {
             return std::nullopt;
         }
-        answer.echoes.push_back(amount);
+        u32 map = 0;
+        if (space != std::string_view::npos) {
+            const std::string_view map_text = line.substr(space + 1);
+            const auto [map_end, map_error] =
+                std::from_chars(map_text.data(), map_text.data() + map_text.size(), map);
+            if (map_error != std::errc{} || map_end != map_text.data() + map_text.size()) {
+                return std::nullopt;
+            }
+        }
+        answer.echoes.push_back(KillEchoes{amount, map});
     }
     if (first) {
         return std::nullopt;
@@ -1226,8 +1422,10 @@ PartyAction PartyController::Tick(const PartyObservation& observation, Clock::ti
         stable_ticks = 0;
         return PartyAction::Wait;
     }
-    if (!observation.matching_idle || observation.search_effect_active ||
-        observation.white_phantom || observation.waiting_to_meet) {
+    const bool may_search =
+        observation.matching_idle || (role == PartyRole::Host && observation.room_for_more);
+    if (!may_search || observation.search_effect_active || observation.white_phantom ||
+        observation.waiting_to_meet) {
         // In (or joining) a session, or our search already took: the next time we are back home
         // alone is a fresh start, so forget the old cooldown.
         stable_ticks = 0;
