@@ -3109,13 +3109,23 @@ void LogNearbyEnemyControl() {
         }
         text += fmt::format(
             " [{:#x} type {} b28 {} b29 {} b359 {:#x} auth {:#x} flags {:#x} vt58 {:#x} "
-            "vt60 {:#x} vt68 {:#x} own {:#x} ctrl{}]",
+            "vt60 {:#x} vt68 {:#x} own {:#x} effects{} ctrl{}]",
             ReadValue<u32>(character, 0x08), ReadValue<s32>(character, 0x78),
             ReadValue<u8>(character, 0x28), ReadValue<u8>(character, 0x29),
             ReadValue<u8>(character, 0x359), ReadValue<s32>(character, 0x1EC),
             ReadValue<u64>(character, 0x1E0), VtableOffsetAt(character, 0x58),
             VtableOffsetAt(character, 0x60), VtableOffsetAt(character, 0x68),
-            ReadValue<u16>(OwnershipWordAddress(world, character), 0), words);
+            ReadValue<u16>(OwnershipWordAddress(world, character), 0),
+            [&] {
+                // The enemy holding a player's lost echoes (red eyes) is marked somehow; its
+                // effects are the first suspect.
+                std::string list;
+                for (const s32 effect : EffectsOf(character)) {
+                    list += fmt::format(" {}", effect);
+                }
+                return list.empty() ? std::string{" none"} : list;
+            }(),
+            words);
     }
     if (text != last) {
         last = text;
