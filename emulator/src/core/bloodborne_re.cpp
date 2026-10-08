@@ -2433,6 +2433,7 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
     s32 posted = NotResting;
     bool failing = false;
     auto next_trophy_post = std::chrono::steady_clock::now();
+    auto next_echo_post = std::chrono::steady_clock::now();
     // The first post asks for nothing older than now: the board's history belongs to whatever
     // characters played before (a new character must not get it).
     s64 flag_board_since = std::numeric_limits<s64>::max();
@@ -2454,6 +2455,30 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 map_board_time = std::chrono::steady_clock::now();
             }
         }
+        // Kill echoes go both ways in and out of a session: a member on its own trip (a guest
+        // in the Hunter's Dream) still gets the party's kills made apart.
+        if (std::chrono::steady_clock::now() >= next_echo_post) {
+            next_echo_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
+            std::vector<s32> echoes_out;
+            {
+                std::scoped_lock lock{echo_board_mutex};
+                echoes_out.swap(echoes_to_post);
+            }
+            const auto echo_response =
+                client.Post("/bloodborne/party/echoes", headers,
+                            EncodeEchoUpdate(member, echo_board_since, echoes_out), "text/plain");
+            if (const auto echoes = echo_response && echo_response->status == 200
+                                        ? ParseEchoBoard(echo_response->body)
+                                        : std::nullopt) {
+                echo_board_since = echoes->latest;
+                std::scoped_lock lock{echo_board_mutex};
+                echoes_to_grant.insert(echoes_to_grant.end(), echoes->echoes.begin(),
+                                       echoes->echoes.end());
+            } else {
+                std::scoped_lock lock{echo_board_mutex};
+                echoes_to_post.insert(echoes_to_post.begin(), echoes_out.begin(), echoes_out.end());
+            }
+        }
         if (trophy_board_active.load() && std::chrono::steady_clock::now() >= next_trophy_post) {
             next_trophy_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
             std::vector<s32> earned;
@@ -2473,25 +2498,6 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
             {
                 std::scoped_lock lock{flag_board_mutex};
                 outgoing.swap(flags_to_post);
-            }
-            std::vector<s32> echoes_out;
-            {
-                std::scoped_lock lock{echo_board_mutex};
-                echoes_out.swap(echoes_to_post);
-            }
-            const auto echo_response =
-                client.Post("/bloodborne/party/echoes", headers,
-                            EncodeEchoUpdate(member, echo_board_since, echoes_out), "text/plain");
-            if (const auto echoes = echo_response && echo_response->status == 200
-                                        ? ParseEchoBoard(echo_response->body)
-                                        : std::nullopt) {
-                echo_board_since = echoes->latest;
-                std::scoped_lock lock{echo_board_mutex};
-                echoes_to_grant.insert(echoes_to_grant.end(), echoes->echoes.begin(),
-                                       echoes->echoes.end());
-            } else {
-                std::scoped_lock lock{echo_board_mutex};
-                echoes_to_post.insert(echoes_to_post.begin(), echoes_out.begin(), echoes_out.end());
             }
             const auto flag_response =
                 client.Post("/bloodborne/party/flags", headers,
