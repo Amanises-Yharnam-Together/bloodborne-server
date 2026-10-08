@@ -2978,6 +2978,8 @@ void KeepBossHpInStep() {
 // 40 m: handle, type +0x78, network update authority +0x1EC, state flags +0x1E0, and the
 // control block [+0x18] words +0x00..+0x3C, logged every 2 s on change to compare who runs an
 // enemy on the host, on a guest beside it and on a guest alone.
+void WatchEnemyHp(u64 hp_address, u32 handle);
+
 void LogNearbyEnemyControl() {
     static std::string last;
     static std::chrono::steady_clock::time_point checked{};
@@ -3010,6 +3012,17 @@ void LogNearbyEnemyControl() {
         }
     });
     std::ranges::sort(nearby);
+    // SHADPS4_BLOODBORNE_TRACE_ENEMY_HP=1: a hardware write watch on the nearest enemy's HP
+    // within 6 m, to find the code that applies its damage (and why a guest's never does).
+    static const bool trace_enemy_hp = std::getenv("SHADPS4_BLOODBORNE_TRACE_ENEMY_HP") != nullptr;
+    if (trace_enemy_hp && !nearby.empty() && nearby.front().first < 6.0f) {
+        const u64 character = nearby.front().second;
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        if (data >= 0x10000) {
+            WatchEnemyHp(data + 0xF8, ReadValue<u32>(character, 0x08));
+        }
+    }
     std::string text;
     for (size_t index = 0; index < std::min<size_t>(nearby.size(), 4); ++index) {
         const u64 character = nearby[index].second;
@@ -4362,6 +4375,22 @@ void WatchFlagWrites(s32 flag, const FlagStore& store) {
         }).detach();
         return;
     }
+}
+
+// The enemy HP tracer (see LogNearbyEnemyControl): watches the low byte of the HP, which most
+// damage changes; the log names the enemy's handle where a flag tracer names its flag.
+void WatchEnemyHp(u64 hp_address, u32 handle) {
+    if (watched_flag_byte.load() == hp_address) {
+        return;
+    }
+    watched_flag_byte.store(hp_address);
+    watched_flag_mask.store(0xFF);
+    watched_flag.store(static_cast<s32>(handle));
+    std::thread([hp_address, handle] {
+        const bool armed = WatchByteWrites(hp_address, RecordWatchedWrite);
+        LOG_INFO(Debug, "Bloodborne enemy HP tracer: watching {:#x} HP at {:#x} (armed={})", handle,
+                 hp_address, armed);
+    }).detach();
 }
 
 // SHADPS4_BLOODBORNE_TRACE_FLAG, else a lamp's active flag turning on (one watch at a time).
