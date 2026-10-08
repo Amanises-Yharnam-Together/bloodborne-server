@@ -4322,6 +4322,7 @@ void AddLampsLitInSession(std::span<const s32> set_flags) {
 struct WatchedWrite {
     u64 rip = 0;
     bool bit_on = false;
+    s32 dword = 0; // the aligned dword around the watched byte (an enemy's HP)
     std::array<u64, 8> callers{};
 };
 constexpr size_t WatchedWriteCapacity = 64;
@@ -4347,6 +4348,7 @@ void RecordWatchedWrite(u64 rip, u64 rsp) {
     write.rip = rip;
     write.bit_on = (*reinterpret_cast<const volatile u8*>(watched_flag_byte.load()) &
                     watched_flag_mask.load()) != 0;
+    write.dword = *reinterpret_cast<const volatile s32*>(watched_flag_byte.load() & ~u64{3});
     const u64 low = image_base;
     const u64 high = image_base + MemoryPatcher::g_eboot_image_size;
     size_t found = 0;
@@ -4423,8 +4425,8 @@ void LogWatchedWrites() {
                 callers += fmt::format(" {:#x}", caller - image_base);
             }
         }
-        LOG_INFO(Debug, "Bloodborne flag tracer: write to flag {} ({}) at {:#x}, stack{}",
-                 watched_flag.load(), write.bit_on ? "on" : "off",
+        LOG_INFO(Debug, "Bloodborne flag tracer: write to flag {} ({}, dword {}) at {:#x}, stack{}",
+                 watched_flag.load(), write.bit_on ? "on" : "off", write.dword,
                  write.rip >= image_base ? write.rip - image_base : write.rip, callers);
     }
     // Threads started since the watch was armed (a load) get armed too.
