@@ -316,9 +316,6 @@ std::optional<std::vector<MemberMap>> ParseMapBoard(std::string_view body);
 bool EveryoneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map);
 // Whether no other member is on `map` (a usable map: 0 while loading counts as not alone).
 bool NoOneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map);
-// A guest alone on its map kills an enemy its hits took to 0 HP (the host never will): one seen
-// alive (`hp_before` > 0) that has no HP now and is not dead yet.
-bool FinishesEnemyLocally(bool alone_on_map, s32 hp_before, s32 hp_now, bool dead);
 
 // Shared trophies on shadNet (POST /bloodborne/party/trophy): "<member> [<id>...]" with the
 // trophies this member unlocked in a party session; the answer is every trophy the party

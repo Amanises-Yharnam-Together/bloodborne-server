@@ -345,21 +345,13 @@ TEST(BloodbornePartyMaps, RecreatesOnlyWhenEveryoneElseIsOnThisMap) {
     EXPECT_FALSE(EveryoneElseOnMap(alone, "me", 0x18010000)) << "nobody else";
 }
 
-// A guest alone on a map (the others elsewhere) runs that map itself: the host has none of its
-// enemies, so nobody else will ever finish them. Its hits took a Cathedral Ward enemy to 0 HP,
-// but a client's enemy only dies when the host's update says so.
-TEST(BloodbornePartyMaps, AGuestAloneOnAMapFinishesItsOwnEnemies) {
+// A guest alone on a map (the others elsewhere): the host has none of its enemies.
+TEST(BloodbornePartyMaps, AGuestCanBeAloneOnItsMap) {
     const std::vector<MemberMap> apart{{"me", 0x18000000}, {"them", 0x18010000}};
     const std::vector<MemberMap> together{{"me", 0x18010000}, {"them", 0x18010000}};
     EXPECT_TRUE(NoOneElseOnMap(apart, "me", 0x18000000));
     EXPECT_FALSE(NoOneElseOnMap(together, "me", 0x18010000));
     EXPECT_FALSE(NoOneElseOnMap(apart, "me", 0)) << "loading";
-    // Only an enemy this guest saw alive and now sees at 0 HP, not yet dead.
-    EXPECT_TRUE(FinishesEnemyLocally(true, 157, 0, false));
-    EXPECT_FALSE(FinishesEnemyLocally(true, 0, 0, false)) << "never seen alive";
-    EXPECT_FALSE(FinishesEnemyLocally(true, 157, 0, true)) << "already dead";
-    EXPECT_FALSE(FinishesEnemyLocally(true, 157, 90, false)) << "alive";
-    EXPECT_FALSE(FinishesEnemyLocally(false, 157, 0, false)) << "the host is here";
 }
 
 // The new stage's load drops the bell's search effect (9000/9003 for the host), which the game

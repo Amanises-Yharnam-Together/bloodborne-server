@@ -261,10 +261,6 @@ bool NoOneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32
         board, [&](const MemberMap& entry) { return entry.member != self && entry.map == map; });
 }
 
-bool FinishesEnemyLocally(bool alone_on_map, s32 hp_before, s32 hp_now, bool dead) {
-    return alone_on_map && hp_before > 0 && hp_now <= 0 && !dead;
-}
-
 std::string EncodeTrophyUpdate(std::string_view member, std::span<const s32> trophies) {
     std::string body{member};
     for (const s32 trophy : trophies) {

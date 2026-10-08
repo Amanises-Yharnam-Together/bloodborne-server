@@ -4838,73 +4838,6 @@ void SetPartyWorldChanges(bool in_session) {
     }
 }
 
-// A guest alone on its map (see NoOneElseOnMap): its hits bring an enemy to 0 HP, but a client's
-// enemy only dies when the host's update says so (0x01916F5B calls the kill below), and the host
-// has none of this map's enemies. The kill 0x018BF9A0(character) sets the HP to 0, marks it dead
-// (+0x1E3 bit 0) and runs the death.
-constexpr u64 KillCharacterOffset = 0x018BF9A0;
-std::unordered_map<u64, s32> guest_enemy_hp;
-u32 guest_enemy_hp_map = 0;
-
-void FinishGuestEnemiesWhenAlone(bool in_session, u32 map) {
-    if (!in_session || !IsPartyGuestRole() || map != guest_enemy_hp_map) {
-        guest_enemy_hp.clear();
-        guest_enemy_hp_map = map;
-        if (!in_session || !IsPartyGuestRole()) {
-            return;
-        }
-    }
-    bool alone = false;
-    {
-        std::scoped_lock lock{map_board_mutex};
-        alone = std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{3} &&
-                NoOneElseOnMap(map_board, map_board_member, map);
-    }
-    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
-    if (world < 0x10000) {
-        return;
-    }
-    const u64 player = GetLocalPlayer();
-    const auto me = LocalPlayerPosition();
-    ForEachWorldCharacter(world, [&](u64 character) {
-        if (character == player || !me) {
-            return;
-        }
-        // Only enemies around the player: characters of a neighbouring map (Gascoigne's bodies
-        // from Central Yharnam) dropped to 0 HP as their block unloaded.
-        const u64 modules = ReadValue<u64>(character, 0x3B0);
-        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
-        const float dx = ReadValue<float>(physics, 0x1E0) - (*me)[0];
-        const float dy = ReadValue<float>(physics, 0x1E4) - (*me)[1];
-        const float dz = ReadValue<float>(physics, 0x1E8) - (*me)[2];
-        if (physics < 0x10000 || dx * dx + dy * dy + dz * dz > 30.0f * 30.0f) {
-            return;
-        }
-        // Byte +0x28 on puts an enemy to sleep (WorldChrMan's activation pass 0x019192A0 sets its
-        // wake-up target [+0x18]+0x14 to 0): a guest's enemies got it seconds after arriving
-        // alone and froze. Experiment: a guest alone keeps it off for the enemies around it.
-        if (alone && ReadValue<u8>(character, 0x28) != 0 &&
-            HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
-            WriteValue(character, 0x28, u8{0});
-            static u32 woken = 0;
-            if (++woken <= 20) {
-                LOG_INFO(Debug, "Bloodborne party: guest alone on map {:#x} woke enemy {:#x}", map,
-                         ReadValue<u32>(character, 0x08));
-            }
-        }
-        const s32 hp = CharacterHp(character);
-        auto [it, added] = guest_enemy_hp.try_emplace(character, hp);
-        const bool dead = (ReadValue<u8>(character, 0x1E3) & 1) != 0;
-        if (!added && FinishesEnemyLocally(alone, it->second, hp, dead)) {
-            using Kill = void PS4_SYSV_ABI (*)(u64);
-            reinterpret_cast<Kill>(image_base + KillCharacterOffset)(character);
-            LOG_INFO(Debug, "Bloodborne party: guest alone on map {:#x} finished enemy {:#x}", map,
-                     ReadValue<u32>(character, 0x08));
-        }
-        it->second = hp;
-    });
-}
-
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
@@ -4926,7 +4859,6 @@ void TickPlayersOnThisMap() {
     // Posted in and out of a session: a guest apart from the host waits for the host's map.
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
     guest_apart.Tick(in_session);
-    FinishGuestEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
     if (!in_session) {
         recreate_players_pending = false;
         saved_join_tasks.clear();
