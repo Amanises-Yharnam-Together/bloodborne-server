@@ -5217,6 +5217,100 @@ size_t ApplyHostMapState() {
     return changed;
 }
 
+// A party guest resumes where it left (see ResumePoint): its last map and position are kept in
+// user/bloodborne_party_resume_slotN.txt every few seconds; the first load after the game starts
+// goes back there (a trip to that map's first lamp if needed, then a move like a revive's).
+std::filesystem::path GuestResumeFile() {
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+           fmt::format("bloodborne_party_resume_slot{}.txt", character_slot.load());
+}
+
+void TeleportLocalPlayer(const LampPosition& at) {
+    const u64 player = GetLocalPlayer();
+    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
+    const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
+    if (teleport < 0x10000) {
+        return;
+    }
+    alignas(16) std::array<float, 4> position{at[0], at[1], at[2], 1.0f};
+    alignas(16) std::array<float, 4> rotation{};
+    using Teleport = void PS4_SYSV_ABI (*)(u64 character, const float* position,
+                                           const float* rotation, s32 mode);
+    reinterpret_cast<Teleport>(teleport)(player, position.data(), rotation.data(), 1);
+    WriteValue(player, 0x1E1, static_cast<u8>(ReadValue<u8>(player, 0x1E1) | 2));
+}
+
+void ResumeWhereTheGuestLeft(bool in_session) {
+    enum class Phase { WaitForLoad, Travelling, Recording };
+    static Phase phase = Phase::WaitForLoad;
+    static std::optional<std::chrono::steady_clock::time_point> stable_since;
+    static ResumePoint target;
+    static std::chrono::steady_clock::time_point last_saved{};
+    static ResumePoint saved;
+    if (!IsPartyGuestRole()) {
+        return;
+    }
+    const u64 global = GetGlobalState();
+    const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
+    const u32 map = GetCurrentPackedMap();
+    const auto at = LocalPlayerPosition();
+    const auto now = std::chrono::steady_clock::now();
+    const bool ready = !loading && IsUsablePackedMap(map) && at && character_slot.load() >= 0;
+    if (!ready) {
+        stable_since.reset();
+        return;
+    }
+    if (!stable_since) {
+        stable_since = now;
+    }
+    const bool settled = now - *stable_since >= std::chrono::seconds{3};
+    switch (phase) {
+    case Phase::WaitForLoad: {
+        if (!settled) {
+            return;
+        }
+        std::ifstream file{GuestResumeFile()};
+        const std::string text{std::istreambuf_iterator<char>{file}, {}};
+        const auto point = in_session ? std::nullopt : ParseResumePoint(text);
+        const ResumeStep step = point ? ChooseResumeStep(*point, map, *at) : ResumeStep{};
+        phase = Phase::Recording;
+        if (step.kind == ResumeStep::Kind::Move) {
+            TeleportLocalPlayer(point->position);
+            LOG_INFO(Debug, "Bloodborne party: guest resumed at ({}, {}, {}) on map {:#x}",
+                     point->position[0], point->position[1], point->position[2], map);
+        } else if (step.kind == ResumeStep::Kind::Travel) {
+            target = *point;
+            guest_trip_point = step.warp_point;
+            guest_lamp_trip_at = now;
+            phase = Phase::Travelling;
+            LOG_INFO(Debug, "Bloodborne party: guest resumes on map {:#x}; travelling to {}",
+                     point->map, step.warp_point);
+        }
+        return;
+    }
+    case Phase::Travelling:
+        if (map == target.map && settled) {
+            TeleportLocalPlayer(target.position);
+            phase = Phase::Recording;
+            LOG_INFO(Debug, "Bloodborne party: guest resumed at ({}, {}, {}) on map {:#x}",
+                     target.position[0], target.position[1], target.position[2], map);
+        }
+        return;
+    case Phase::Recording:
+        break;
+    }
+    if (!settled || now - last_saved < std::chrono::seconds{5}) {
+        return;
+    }
+    last_saved = now;
+    const ResumePoint point{map, *at};
+    if (ChooseResumeStep(saved, map, *at).kind == ResumeStep::Kind::Stay && saved.map == map) {
+        return; // within 5 m of the last one written
+    }
+    saved = point;
+    std::ofstream{GuestResumeFile(), std::ios::trunc} << EncodeResumePoint(point) << '\n';
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
@@ -5230,6 +5324,7 @@ void TickPlayersOnThisMap() {
     LogFlagChangesInSession(sharing);
     KeepEnemyDeathsInStep(sharing);
     SnapshotHostMapState(sharing);
+    ResumeWhereTheGuestLeft(in_session);
     LogWatchedWrites();
     GiveDeferredBossItems();
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());

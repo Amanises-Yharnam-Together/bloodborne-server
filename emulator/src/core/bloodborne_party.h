@@ -452,6 +452,28 @@ bool SharesWithParty(bool party_configured, bool player_loaded);
 // with character handles): the kills this member made during its current visit to a map, posted
 // as (handle, true), and taken back as (handle, false) when the visit ends. A visit is one load
 // of a map (the map and the player's character).
+// Where a party guest resumes (user/bloodborne_party_resume_slotN.txt, "<map> <x> <y> <z>"):
+// its last map and position, so the next start goes back there instead of to its save's
+// position (where it was first summoned from).
+struct ResumePoint {
+    u32 map = 0;
+    LampPosition position{};
+    bool operator==(const ResumePoint&) const = default;
+};
+std::string EncodeResumePoint(const ResumePoint& point);
+std::optional<ResumePoint> ParseResumePoint(std::string_view text);
+// The warp point a trip to a map uses: its first lamp (<area><block>2950), or the Hunter's Dream
+// headstones' point.
+s32 MapWarpPoint(u32 packed_map);
+struct ResumeStep {
+    enum class Kind { Stay, Move, Travel };
+    Kind kind = Kind::Stay;
+    s32 warp_point = 0;
+};
+// From where the guest loaded: stay (nothing remembered, or within 5 m), move on the same map,
+// or travel to the remembered map first.
+ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at);
+
 // World state per map (POST /bloodborne/party/mapstate): the host posts the bits of its map's
 // 10000 flags from MapFlagBase (MSB first, as the flag store keeps them) as "<member> <map>
 // <hex>", and a guest loading that map sets the TakesHostMapFlag ones to the host's.

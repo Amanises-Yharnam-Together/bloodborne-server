@@ -599,6 +599,67 @@ std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body) {
     return answer;
 }
 
+std::string EncodeResumePoint(const ResumePoint& point) {
+    return fmt::format("{} {} {} {}", point.map, point.position[0], point.position[1],
+                       point.position[2]);
+}
+
+std::optional<ResumePoint> ParseResumePoint(std::string_view text) {
+    ResumePoint point;
+    const char* cursor = text.data();
+    const char* end = text.data() + text.size();
+    const auto [map_end, map_error] = std::from_chars(cursor, end, point.map);
+    if (map_error != std::errc{}) {
+        return std::nullopt;
+    }
+    cursor = map_end;
+    for (float& coordinate : point.position) {
+        if (cursor == end || *cursor != ' ') {
+            return std::nullopt;
+        }
+        ++cursor;
+        const auto [next, error] = std::from_chars(cursor, end, coordinate);
+        if (error != std::errc{}) {
+            return std::nullopt;
+        }
+        cursor = next;
+    }
+    while (cursor != end && (*cursor == '\n' || *cursor == '\r' || *cursor == ' ')) {
+        ++cursor;
+    }
+    if (cursor != end) {
+        return std::nullopt;
+    }
+    return point;
+}
+
+s32 MapWarpPoint(u32 packed_map) {
+    constexpr u32 HuntersDream = 0x15000000;
+    constexpr s32 HuntersDreamHeadstones = 2102962;
+    if (packed_map == HuntersDream) {
+        return HuntersDreamHeadstones;
+    }
+    const s32 area = static_cast<s32>((packed_map >> 24) & 0xFF);
+    const s32 block = static_cast<s32>((packed_map >> 16) & 0xFF);
+    return (area * 10 + block) * 10000 + 2950;
+}
+
+ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at) {
+    if (point.map == 0) {
+        return {};
+    }
+    if (point.map != map) {
+        return {ResumeStep::Kind::Travel, MapWarpPoint(point.map)};
+    }
+    const float dx = point.position[0] - at[0];
+    const float dy = point.position[1] - at[1];
+    const float dz = point.position[2] - at[2];
+    if (dx * dx + dy * dy + dz * dz <= 5.0f * 5.0f) {
+        return {};
+    }
+    return {ResumeStep::Kind::Move, 0};
+}
+
 s32 MapFlagBase(u32 packed_map) {
     const s32 area = static_cast<s32>((packed_map >> 24) & 0xFF);
     const s32 block = static_cast<s32>((packed_map >> 16) & 0xFF);
