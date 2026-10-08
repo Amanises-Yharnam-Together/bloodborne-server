@@ -1117,12 +1117,13 @@ TEST(BloodborneSharedWorld, AGuestOnTheHostsMapTakesTheHostsState) {
 // A guest that played for hours in a session and quit restarted where it was first summoned
 // from (its save's position) and had to walk back. Its last map and position are remembered
 // (every few seconds, in and out of a session) and the next start goes back there: a trip to the
-// map's first lamp when it loads elsewhere, then a move to the position.
+// map's first lamp when it loads elsewhere, then a move to the position. A new character in the
+// same slot (far fewer event flags set than when the point was kept) starts where it starts.
 TEST(BloodborneGuestResume, AGuestResumesWhereItLeft) {
-    const ResumePoint point{0x18000000, {-120.5f, 10.25f, 33.0f}};
-    EXPECT_EQ(EncodeResumePoint(point), "402653184 -120.5 10.25 33");
-    EXPECT_EQ(ParseResumePoint("402653184 -120.5 10.25 33"), std::optional<ResumePoint>{point});
-    EXPECT_EQ(ParseResumePoint("402653184 1 2"), std::nullopt);
+    const ResumePoint point{0x18000000, {-120.5f, 10.25f, 33.0f}, 900};
+    EXPECT_EQ(EncodeResumePoint(point), "402653184 -120.5 10.25 33 900");
+    EXPECT_EQ(ParseResumePoint("402653184 -120.5 10.25 33 900"), std::optional<ResumePoint>{point});
+    EXPECT_EQ(ParseResumePoint("402653184 1 2 3"), std::nullopt);
     EXPECT_EQ(ParseResumePoint(""), std::nullopt);
 
     EXPECT_EQ(MapWarpPoint(0x18000000), 2402950) << "the Cathedral Ward's first lamp";
@@ -1132,11 +1133,13 @@ TEST(BloodborneGuestResume, AGuestResumesWhereItLeft) {
     using Kind = ResumeStep::Kind;
     const LampPosition near{-121.0f, 10.0f, 33.5f};
     const LampPosition far{50.0f, 0.0f, 0.0f};
-    EXPECT_EQ(ChooseResumeStep(point, 0x18000000, near).kind, Kind::Stay) << "already there";
-    EXPECT_EQ(ChooseResumeStep(point, 0x18000000, far).kind, Kind::Move);
-    const ResumeStep travel = ChooseResumeStep(point, 0x18010000, far);
+    EXPECT_EQ(ChooseResumeStep(point, 0x18000000, near, 905).kind, Kind::Stay) << "already there";
+    EXPECT_EQ(ChooseResumeStep(point, 0x18000000, far, 905).kind, Kind::Move);
+    const ResumeStep travel = ChooseResumeStep(point, 0x18010000, far, 900);
     EXPECT_EQ(travel.kind, Kind::Travel);
     EXPECT_EQ(travel.warp_point, 2402950);
-    EXPECT_EQ(ChooseResumeStep(ResumePoint{0, {}}, 0x18010000, far).kind, Kind::Stay)
+    EXPECT_EQ(ChooseResumeStep(ResumePoint{0, {}, 0}, 0x18010000, far, 900).kind, Kind::Stay)
         << "nothing remembered";
+    EXPECT_EQ(ChooseResumeStep(point, 0x18010000, far, 120).kind, Kind::Forget)
+        << "a new character in the slot";
 }

@@ -5229,6 +5229,18 @@ size_t ApplyHostMapState() {
 // A party guest resumes where it left (see ResumePoint): its last map and position are kept in
 // user/bloodborne_party_resume_slotN.txt every few seconds; the first load after the game starts
 // goes back there (a trip to that map's first lamp if needed, then a move like a revive's).
+// How many event flags are set (the whole store): only adds up as a character plays.
+s32 CountSetFlags() {
+    const FlagStore store = ReadFlagStore();
+    s32 count = 0;
+    for (const FlagBlock& block : store.blocks) {
+        for (const u8 byte : block.bytes) {
+            count += std::popcount(byte);
+        }
+    }
+    return count;
+}
+
 std::filesystem::path GuestResumeFile() {
     return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
            fmt::format("bloodborne_party_resume_slot{}.txt", character_slot.load());
@@ -5256,6 +5268,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     static ResumePoint target;
     static std::chrono::steady_clock::time_point last_saved{};
     static ResumePoint saved;
+    static s32 own_progress = 0;
     if (!IsPartyGuestRole()) {
         return;
     }
@@ -5281,9 +5294,16 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         std::ifstream file{GuestResumeFile()};
         const std::string text{std::istreambuf_iterator<char>{file}, {}};
         const auto point = in_session ? std::nullopt : ParseResumePoint(text);
-        const ResumeStep step = point ? ChooseResumeStep(*point, map, *at) : ResumeStep{};
+        own_progress = in_session ? 0 : CountSetFlags();
+        const ResumeStep step =
+            point ? ChooseResumeStep(*point, map, *at, own_progress) : ResumeStep{};
         phase = Phase::Recording;
-        if (step.kind == ResumeStep::Kind::Move) {
+        if (step.kind == ResumeStep::Kind::Forget) {
+            std::error_code error;
+            std::filesystem::remove(GuestResumeFile(), error);
+            LOG_INFO(Debug, "Bloodborne party: another character in save slot {}; no resume",
+                     character_slot.load());
+        } else if (step.kind == ResumeStep::Kind::Move) {
             TeleportLocalPlayer(point->position);
             LOG_INFO(Debug, "Bloodborne party: guest resumed at ({}, {}, {}) on map {:#x}",
                      point->position[0], point->position[1], point->position[2], map);
@@ -5312,8 +5332,13 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         return;
     }
     last_saved = now;
-    const ResumePoint point{map, *at};
-    if (ChooseResumeStep(saved, map, *at).kind == ResumeStep::Kind::Stay && saved.map == map) {
+    // The count of its own world: in a session the flag store is the host's.
+    if (!in_session) {
+        own_progress = CountSetFlags();
+    }
+    const ResumePoint point{map, *at, own_progress};
+    if (ChooseResumeStep(saved, map, *at, point.progress).kind == ResumeStep::Kind::Stay &&
+        saved.map == map) {
         return; // within 5 m of the last one written
     }
     saved = point;
@@ -7594,6 +7619,24 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
     }
     seamless_received_host_placement = placement;
     return true;
+}
+
+void LogGameCallChain(const char* what) {
+    if (image_base == 0) {
+        return;
+    }
+    // The HLE function runs on the guest thread's stack, so the game frames sit above this one.
+    volatile u64 marker = 0;
+    const u64 start = reinterpret_cast<u64>(&marker);
+    std::vector<u64> words;
+    for (u64 address = start; address < start + 0x4000; address += 8) {
+        if (!HasMemoryAccess(address, 8, MemoryProt::CpuRead)) {
+            break;
+        }
+        words.push_back(*reinterpret_cast<const u64*>(address));
+    }
+    LOG_INFO(Debug, "Bloodborne {} from the game:{}", what,
+             FormatGameAddresses(words, image_base, MemoryPatcher::g_eboot_image_size, 24));
 }
 
 void ClearSeamlessHostPlacementHeader() {

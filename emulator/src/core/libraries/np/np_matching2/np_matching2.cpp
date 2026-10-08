@@ -393,6 +393,7 @@ int PS4_SYSV_ABI sceNpMatching2LeaveRoom(OrbisNpMatching2ContextId ctxId,
     constexpr std::uintptr_t return_address = 0;
 #endif
     Core::Bloodborne::TraceMatching2LeaveRoom(return_address, request->roomId);
+    Core::Bloodborne::LogGameCallChain("Matching2 leave room");
 
     ContextObject* ctx = ContextManager::Instance().Get(ctxId);
     if (!ctx) {
@@ -905,6 +906,8 @@ int PS4_SYSV_ABI sceNpMatching2KickoutRoomMember(OrbisNpMatching2ContextId ctxId
                                                  OrbisNpMatching2RequestOptParam* requestOpt,
                                                  OrbisNpMatching2RequestId* requestId) {
     LOG_INFO(Lib_NpMatching2, "called, ctxId = {}, requestOpt = {}", ctxId, fmt::ptr(requestOpt));
+    // Which game code kicks a member (a party guest summoned on another map got kicked at once).
+    Core::Bloodborne::LogGameCallChain("Matching2 kickout");
 
     if (!IsInitialized()) {
         LOG_ERROR(Lib_NpMatching2, "not initialized");

@@ -465,6 +465,14 @@ e	ests. Rig: guest enters Gascoigne's fog
   last summoned from) and has to walk back. Its game should remember the map, position and world
   state it last had in the session, load there next time, and be summoned there.
 
+- **Slow joins are back (2026-10-08 22:42, new characters):** shadnet: claimed 22:42:21.98,
+  delivered the claim to the guest every 5 s, a "repeated claim" from the host at 22:43:17.03,
+  and the host's RequestSignalingInfos to the guest at 22:43:17.79 (56 s after the claim; the
+  join four minutes earlier took 1 s). Host: CreateJoinRoom, join task kind 3 step 0 -> 6, then
+  nothing until the activation. Guest: JoinRoom only after the host's activation. Suspect: the
+  host's first claim goes unanswered and its game retries after a timeout; find what the host's
+  join task waits for at step 6.
+
 ## Known loose ends
 - shadnet logs `unhandled POST /v1/users/<npid>/feed`. Harmless so far.
 - The backend answers `ChairMessRespawnPointNotice` generically.

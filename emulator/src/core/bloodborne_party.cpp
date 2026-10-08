@@ -600,8 +600,8 @@ std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body) {
 }
 
 std::string EncodeResumePoint(const ResumePoint& point) {
-    return fmt::format("{} {} {} {}", point.map, point.position[0], point.position[1],
-                       point.position[2]);
+    return fmt::format("{} {} {} {} {}", point.map, point.position[0], point.position[1],
+                       point.position[2], point.progress);
 }
 
 std::optional<ResumePoint> ParseResumePoint(std::string_view text) {
@@ -624,6 +624,15 @@ std::optional<ResumePoint> ParseResumePoint(std::string_view text) {
         }
         cursor = next;
     }
+    if (cursor == end || *cursor != ' ') {
+        return std::nullopt;
+    }
+    ++cursor;
+    const auto [progress_end, progress_error] = std::from_chars(cursor, end, point.progress);
+    if (progress_error != std::errc{}) {
+        return std::nullopt;
+    }
+    cursor = progress_end;
     while (cursor != end && (*cursor == '\n' || *cursor == '\r' || *cursor == ' ')) {
         ++cursor;
     }
@@ -644,9 +653,15 @@ s32 MapWarpPoint(u32 packed_map) {
     return (area * 10 + block) * 10000 + 2950;
 }
 
-ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at) {
+ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at,
+                            s32 progress) {
     if (point.map == 0) {
         return {};
+    }
+    // Event flags only add up as a character plays; far fewer set means another character.
+    constexpr s32 ProgressSlack = 20;
+    if (progress + ProgressSlack < point.progress) {
+        return {ResumeStep::Kind::Forget, 0};
     }
     if (point.map != map) {
         return {ResumeStep::Kind::Travel, MapWarpPoint(point.map)};

@@ -458,6 +458,7 @@ bool SharesWithParty(bool party_configured, bool player_loaded);
 struct ResumePoint {
     u32 map = 0;
     LampPosition position{};
+    s32 progress = 0; // event flags set when it was kept (a new character has far fewer)
     bool operator==(const ResumePoint&) const = default;
 };
 std::string EncodeResumePoint(const ResumePoint& point);
@@ -466,13 +467,14 @@ std::optional<ResumePoint> ParseResumePoint(std::string_view text);
 // headstones' point.
 s32 MapWarpPoint(u32 packed_map);
 struct ResumeStep {
-    enum class Kind { Stay, Move, Travel };
+    enum class Kind { Stay, Move, Travel, Forget };
     Kind kind = Kind::Stay;
     s32 warp_point = 0;
 };
 // From where the guest loaded: stay (nothing remembered, or within 5 m), move on the same map,
-// or travel to the remembered map first.
-ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at);
+// travel to the remembered map first, or forget the point (another character in the slot).
+ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at,
+                            s32 progress);
 
 // World state per map (POST /bloodborne/party/mapstate): the host posts the bits of its map's
 // 10000 flags from MapFlagBase (MSB first, as the flag store keeps them) as "<member> <map>
