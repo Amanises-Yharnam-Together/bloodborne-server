@@ -512,6 +512,27 @@ private:
     u32 generation = 0;
 };
 
+// Enemy HP kept in step (POST /bloodborne/party/hp, the map state board's format): each member
+// posts the enemies it has hurt during its visit, as (handle, HP, max HP), and every member
+// shows the lowest share of HP left. Since seamless travel each member runs its own copy of a
+// map, so the host's hits never reached the guest's Gascoigne (friend run 2026-10-09).
+struct EnemyHp {
+    u32 handle = 0;
+    s32 hp = 0;
+    s32 max = 0;
+    bool operator==(const EnemyHp&) const = default;
+};
+struct EnemyHpReport {
+    u64 visit = 0;
+    std::vector<EnemyHp> enemies;
+    bool operator==(const EnemyHpReport&) const = default;
+};
+std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies);
+std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes);
+// The HP to write on the local copy, or nothing: only ever down, never to 0 (a death comes
+// from the game itself), scaled by each copy's max HP (the co-op HP bonus may differ).
+std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max);
+
 class VisitKills {
 public:
     std::vector<std::pair<s32, bool>> Observe(u64 visit,

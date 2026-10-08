@@ -1125,6 +1125,26 @@ TEST(BloodborneSharedKills, ASummonIntoTheHostsWorldKeepsTheGuestsVisit) {
     EXPECT_TRUE(kills.Killed().empty());
 }
 
+// Friend run 2026-10-09, Gascoigne: the host's copy went 2031 -> 131 -> 0, the guest's only
+// moved with the guest's own hits (2031 -> 1753). Each member posts the enemies it hurt this
+// visit and takes the lowest share of HP left.
+TEST(BloodborneSharedEnemyHp, EveryMemberSeesTheLowestHpLeft) {
+    const std::vector<EnemyHp> hurt{{0x1001409c, 1595, 2031}, {0x10014085, 120, 300}};
+    const auto bytes = EncodeEnemyHp(0x1801000000000003, hurt);
+    EXPECT_EQ(bytes.size(), 8u + 2 * 12u);
+    EXPECT_EQ(DecodeEnemyHp(bytes), (EnemyHpReport{0x1801000000000003, hurt}));
+    EXPECT_EQ(DecodeEnemyHp(EncodeEnemyHp(7, {})), (EnemyHpReport{7, {}})) << "nothing hurt";
+    EXPECT_EQ(DecodeEnemyHp(std::vector<u8>{1, 2, 3}), std::nullopt);
+    EXPECT_EQ(DecodeEnemyHp(std::vector<u8>(8 + 5)), std::nullopt) << "a cut entry";
+
+    EXPECT_EQ(SharedEnemyHp(1753, 2031, 1595, 2031), 1595) << "the host hit harder";
+    EXPECT_EQ(SharedEnemyHp(1595, 2031, 1753, 2031), std::nullopt) << "never back up";
+    EXPECT_EQ(SharedEnemyHp(3047, 3047, 1016, 2031), 1525) << "a third left, co-op bonus here";
+    EXPECT_EQ(SharedEnemyHp(500, 2031, 0, 2031), 1) << "the game kills it, not the board";
+    EXPECT_EQ(SharedEnemyHp(0, 2031, 100, 2031), std::nullopt) << "already dead";
+    EXPECT_EQ(SharedEnemyHp(500, 2031, 100, 0), std::nullopt);
+}
+
 // A guest's trip loads the host's map with the guest's own save: a dog killed for good on the
 // host's save stood alive for it. The host posts its map's flags (10000 from the map's base:
 // 1241xxxx for m24_01) and the guest loading that map takes them, except its own pickups, the

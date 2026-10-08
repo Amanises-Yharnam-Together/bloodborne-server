@@ -344,6 +344,22 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
             return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
         });
 
+    // Enemy HP kept in step: every member posts the enemies it hurt on its map (the map state
+    // board's "<member> <map> <hex>" format, emulator EncodeEnemyHp) about every second and reads
+    // the others' latest, so each game shows the lowest HP left.
+    auto enemyHpBoard = std::make_shared<Bloodborne::PartyMapStateBoard>();
+    http.route(
+        "/bloodborne/party/hp", QHttpServerRequest::Method::Post,
+        [enemyHpBoard](const QHttpServerRequest& request) -> QHttpServerResponse {
+            const auto update = Bloodborne::ParseMapStateUpdate(request.body());
+            if (!update) {
+                return InvalidRequest(QStringLiteral("Invalid party enemy HP update"));
+            }
+            const QByteArray board = Bloodborne::FormatMapStateBoard(
+                enemyHpBoard->Update(Party(request), update->member, update->map, update->bits));
+            return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
+        });
+
     // Shared kill echoes: a member posts the echoes it got from kills made with no other member
     // on its map and reads back the others'. Called by the emulator every few seconds.
     auto echoBoard = std::make_shared<Bloodborne::PartyEchoBoard>();

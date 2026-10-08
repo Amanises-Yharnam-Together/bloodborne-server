@@ -769,6 +769,59 @@ u64 VisitTracker::Update(u32 new_map, u64 new_player, bool in_session, u64 new_t
     return (u64{map} << 32) | generation;
 }
 
+namespace {
+template <typename T>
+void AppendLittleEndian(std::vector<u8>& bytes, T value) {
+    for (size_t index = 0; index < sizeof(T); ++index) {
+        bytes.push_back(static_cast<u8>(static_cast<u64>(value) >> (8 * index)));
+    }
+}
+
+template <typename T>
+T ReadLittleEndian(std::span<const u8> bytes, size_t offset) {
+    u64 value = 0;
+    for (size_t index = 0; index < sizeof(T); ++index) {
+        value |= u64{bytes[offset + index]} << (8 * index);
+    }
+    return static_cast<T>(value);
+}
+} // namespace
+
+std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies) {
+    std::vector<u8> bytes;
+    bytes.reserve(8 + enemies.size() * 12);
+    AppendLittleEndian(bytes, visit);
+    for (const EnemyHp& enemy : enemies) {
+        AppendLittleEndian(bytes, enemy.handle);
+        AppendLittleEndian(bytes, static_cast<u32>(enemy.hp));
+        AppendLittleEndian(bytes, static_cast<u32>(enemy.max));
+    }
+    return bytes;
+}
+
+std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes) {
+    if (bytes.size() < 8 || (bytes.size() - 8) % 12 != 0) {
+        return std::nullopt;
+    }
+    EnemyHpReport report{ReadLittleEndian<u64>(bytes, 0), {}};
+    for (size_t offset = 8; offset < bytes.size(); offset += 12) {
+        report.enemies.push_back({ReadLittleEndian<u32>(bytes, offset),
+                                  static_cast<s32>(ReadLittleEndian<u32>(bytes, offset + 4)),
+                                  static_cast<s32>(ReadLittleEndian<u32>(bytes, offset + 8))});
+    }
+    return report;
+}
+
+std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max) {
+    if (hp <= 0 || max <= 0 || other_max <= 0 || other_hp < 0) {
+        return std::nullopt;
+    }
+    // Rounded up: a sliver left on either side is still alive here.
+    const s64 scaled = (s64{other_hp} * max + other_max - 1) / other_max;
+    const s32 target = static_cast<s32>(std::max<s64>(scaled, 1));
+    return target < hp ? std::optional<s32>{target} : std::nullopt;
+}
+
 std::vector<std::pair<s32, bool>> VisitKills::Observe(
     u64 visit, std::span<const std::pair<u32, s32>> characters) {
     std::vector<std::pair<s32, bool>> changes;

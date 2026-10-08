@@ -2060,6 +2060,10 @@ std::vector<std::pair<s32, bool>> kills_to_post;
 std::unordered_set<u32> others_kills;
 // World state per map (see MapFlagBase): the host's own snapshot waiting for the board thread,
 // and the latest one read back (on a guest).
+// Enemy HP kept in step (see EnemyHpReport): this member's hurt enemies and the others'.
+std::mutex enemy_hp_mutex;
+MemberMapState local_enemy_hp;
+std::vector<MemberMapState> others_enemy_hp;
 std::mutex map_state_mutex;
 MemberMapState local_map_state;
 std::optional<MemberMapState> host_map_state;
@@ -2473,6 +2477,24 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 map_board = *maps;
                 map_board_member = member;
                 map_board_time = std::chrono::steady_clock::now();
+            }
+        }
+        {
+            MemberMapState mine;
+            {
+                std::scoped_lock lock{enemy_hp_mutex};
+                mine = local_enemy_hp;
+            }
+            if (mine.map != 0) {
+                const auto hp_response =
+                    client.Post("/bloodborne/party/hp", headers,
+                                EncodeMapStateUpdate(member, mine.map, mine.bits), "text/plain");
+                if (const auto states = hp_response && hp_response->status == 200
+                                            ? ParseMapStateBoard(hp_response->body)
+                                            : std::nullopt) {
+                    std::scoped_lock lock{enemy_hp_mutex};
+                    others_enemy_hp = *states;
+                }
             }
         }
         // Kill echoes go both ways in and out of a session: a member on its own trip (a guest
@@ -5145,6 +5167,65 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     }
 }
 
+// Enemy HP kept in step (see EnemyHpReport): posts the enemies this member has hurt during its
+// visit and lowers its copies to the lowest share of HP another member on this map reports.
+void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
+    struct Copy {
+        u64 data;
+        s32 hp;
+        s32 max;
+    };
+    std::unordered_map<u32, Copy> alive;
+    std::vector<EnemyHp> hurt;
+    for (const u64 character : characters) {
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        if (data < 0x10000 || (ReadValue<u8>(character, 0x1E3) & 1) != 0) {
+            continue;
+        }
+        const u32 handle = ReadValue<u32>(character, 0x08);
+        const s32 hp = ReadValue<s32>(data, 0xF8);
+        const s32 max = ReadValue<s32>(data, 0xFC);
+        if (hp <= 0 || max <= 0) {
+            continue;
+        }
+        alive[handle] = Copy{data, hp, max};
+        if (hp < max) {
+            hurt.push_back({handle, hp, max});
+        }
+    }
+    std::vector<MemberMapState> others;
+    {
+        std::scoped_lock lock{enemy_hp_mutex};
+        local_enemy_hp = MemberMapState{map, EncodeEnemyHp(visit, hurt)};
+        others = others_enemy_hp;
+    }
+    size_t lowered = 0;
+    for (const MemberMapState& state : others) {
+        const auto report = state.map == map ? DecodeEnemyHp(state.bits) : std::nullopt;
+        if (!report) {
+            continue;
+        }
+        for (const EnemyHp& enemy : report->enemies) {
+            const auto it = alive.find(enemy.handle);
+            if (it == alive.end()) {
+                continue;
+            }
+            const auto target = SharedEnemyHp(it->second.hp, it->second.max, enemy.hp, enemy.max);
+            if (target && HasMemoryAccess(it->second.data, 0xFC, MemoryProt::CpuWrite)) {
+                WriteValue(it->second.data, 0xF8, *target);
+                it->second.hp = *target;
+                ++lowered;
+            }
+        }
+    }
+    static u32 logged = 0;
+    if (lowered > 0 && ++logged <= 200) {
+        LOG_INFO(Debug, "Bloodborne party: lowered {} enemies to another member's HP on map {:#x}",
+                 lowered, map);
+    }
+}
+
 // Enemy deaths kept in step across loads: this member's kills during its visit go to the
 // party's kill board (VisitKills), and its copies of the enemies another member killed during
 // that member's current visit are hidden with the event disable byte (+0x28, see
@@ -5185,6 +5266,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
         }
     });
     const auto changes = visit_kills.Observe(visit, characters);
+    ShareEnemyHp(map, visit, pointers);
     if (!changes.empty()) {
         const auto kills = std::ranges::count_if(changes, [](const auto& c) { return c.second; });
         LOG_INFO(Debug, "Bloodborne party: kill board gets {} kills, {} back (visit {:#x})", kills,
