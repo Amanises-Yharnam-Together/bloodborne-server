@@ -314,6 +314,11 @@ std::string EncodeMapUpdate(std::string_view member, u32 map);
 std::optional<std::vector<MemberMap>> ParseMapBoard(std::string_view body);
 // Whether there is someone else in the party and all of them are on `map`.
 bool EveryoneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map);
+// Whether no other member is on `map` (a usable map: 0 while loading counts as not alone).
+bool NoOneElseOnMap(std::span<const MemberMap> board, std::string_view self, u32 map);
+// A guest alone on its map kills an enemy its hits took to 0 HP (the host never will): one seen
+// alive (`hp_before` > 0) that has no HP now and is not dead yet.
+bool FinishesEnemyLocally(bool alone_on_map, s32 hp_before, s32 hp_now, bool dead);
 
 // Shared trophies on shadNet (POST /bloodborne/party/trophy): "<member> [<id>...]" with the
 // trophies this member unlocked in a party session; the answer is every trophy the party
@@ -350,6 +355,22 @@ bool CarriesToGuestWorld(s32 flag);
 // Whether a load of the guest's world gets the kept world changes before its map items and
 // events: at home, and on a party trip (its own world loads while the session stays up).
 bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip);
+// True once per party trip: the first time it is asked while the trip is on.
+class OncePerTrip {
+public:
+    bool Take(bool on_trip) {
+        if (!on_trip) {
+            taken = false;
+            return false;
+        }
+        const bool first = !taken;
+        taken = true;
+        return first;
+    }
+
+private:
+    bool taken = false;
+};
 // A lamp's "active" flag (10007810 + map * 10000 + lamp * 20, what the lamp talk scripts check)
 // to its lamp entity (map * 10000 + 1950 + lamp); the game clears the flag again for a character
 // whose lamp list ([0x0553B120]+0xC70) lacks the lamp.

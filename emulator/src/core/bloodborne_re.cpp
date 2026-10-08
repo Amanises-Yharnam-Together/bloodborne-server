@@ -4146,8 +4146,20 @@ void ConfirmGuestPickupsInOwnWorld() {
 // From the map item creation hook: before a load creates the guest's map items.
 void SetGuestPickupsBeforeMapItems() {
     static std::chrono::steady_clock::time_point last{};
+    static OncePerTrip trip_load;
     const auto now = std::chrono::steady_clock::now();
-    if (!IsPartyGuestRole() || now - last < std::chrono::seconds{5}) {
+    if (!IsPartyGuestRole()) {
+        return;
+    }
+    // A trip loads the guest's own world: its world changes go in once per trip, before the
+    // throttle below (which skipped a Hunter's Dream load right after a pass on the old map).
+    if (trip_load.Take(PartyTripActive())) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: set {} of the session's world changes as a trip loads the "
+                 "guest's own world",
+                 SetGuestWorldChanges());
+    }
+    if (now - last < std::chrono::seconds{5}) {
         return;
     }
     last = now;
@@ -4813,6 +4825,50 @@ void SetPartyWorldChanges(bool in_session) {
     }
 }
 
+// A guest alone on its map (see NoOneElseOnMap): its hits bring an enemy to 0 HP, but a client's
+// enemy only dies when the host's update says so (0x01916F5B calls the kill below), and the host
+// has none of this map's enemies. The kill 0x018BF9A0(character) sets the HP to 0, marks it dead
+// (+0x1E3 bit 0) and runs the death.
+constexpr u64 KillCharacterOffset = 0x018BF9A0;
+std::unordered_map<u64, s32> guest_enemy_hp;
+u32 guest_enemy_hp_map = 0;
+
+void FinishGuestEnemiesWhenAlone(bool in_session, u32 map) {
+    if (!in_session || !IsPartyGuestRole() || map != guest_enemy_hp_map) {
+        guest_enemy_hp.clear();
+        guest_enemy_hp_map = map;
+        if (!in_session || !IsPartyGuestRole()) {
+            return;
+        }
+    }
+    bool alone = false;
+    {
+        std::scoped_lock lock{map_board_mutex};
+        alone = std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{3} &&
+                NoOneElseOnMap(map_board, map_board_member, map);
+    }
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000) {
+        return;
+    }
+    const u64 player = GetLocalPlayer();
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (character == player) {
+            return;
+        }
+        const s32 hp = CharacterHp(character);
+        auto [it, added] = guest_enemy_hp.try_emplace(character, hp);
+        const bool dead = (ReadValue<u8>(character, 0x1E3) & 1) != 0;
+        if (!added && FinishesEnemyLocally(alone, it->second, hp, dead)) {
+            using Kill = void PS4_SYSV_ABI (*)(u64);
+            reinterpret_cast<Kill>(image_base + KillCharacterOffset)(character);
+            LOG_INFO(Debug, "Bloodborne party: guest alone on map {:#x} finished enemy {:#x}", map,
+                     ReadValue<u32>(character, 0x08));
+        }
+        it->second = hp;
+    });
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
@@ -4834,6 +4890,7 @@ void TickPlayersOnThisMap() {
     // Posted in and out of a session: a guest apart from the host waits for the host's map.
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
     guest_apart.Tick(in_session);
+    FinishGuestEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
     if (!in_session) {
         recreate_players_pending = false;
         saved_join_tasks.clear();
@@ -4884,6 +4941,13 @@ void TickPartyTrip() {
                  at ? (*at)[2] : 0.0f, ReadValue<s32>(state, 0x1528));
         recreate_players_pending = true;
         restore_search_pending = true;
+        if (IsPartyGuestRole()) {
+            // Again on arrival, in case the load created no map items (see
+            // SetGuestPickupsBeforeMapItems): the headstone reads the lamps when it is used.
+            LOG_INFO(Debug,
+                     "Bloodborne party trip: set {} of the session's world changes on arrival",
+                     SetGuestWorldChanges());
+        }
         if (guest_trip_in_flight) {
             guest_trip_in_flight = false;
             guest_trip_fixup_at = std::chrono::steady_clock::now() + std::chrono::seconds{1};

@@ -345,6 +345,23 @@ TEST(BloodbornePartyMaps, RecreatesOnlyWhenEveryoneElseIsOnThisMap) {
     EXPECT_FALSE(EveryoneElseOnMap(alone, "me", 0x18010000)) << "nobody else";
 }
 
+// A guest alone on a map (the others elsewhere) runs that map itself: the host has none of its
+// enemies, so nobody else will ever finish them. Its hits took a Cathedral Ward enemy to 0 HP,
+// but a client's enemy only dies when the host's update says so.
+TEST(BloodbornePartyMaps, AGuestAloneOnAMapFinishesItsOwnEnemies) {
+    const std::vector<MemberMap> apart{{"me", 0x18000000}, {"them", 0x18010000}};
+    const std::vector<MemberMap> together{{"me", 0x18010000}, {"them", 0x18010000}};
+    EXPECT_TRUE(NoOneElseOnMap(apart, "me", 0x18000000));
+    EXPECT_FALSE(NoOneElseOnMap(together, "me", 0x18010000));
+    EXPECT_FALSE(NoOneElseOnMap(apart, "me", 0)) << "loading";
+    // Only an enemy this guest saw alive and now sees at 0 HP, not yet dead.
+    EXPECT_TRUE(FinishesEnemyLocally(true, 157, 0, false));
+    EXPECT_FALSE(FinishesEnemyLocally(true, 0, 0, false)) << "never seen alive";
+    EXPECT_FALSE(FinishesEnemyLocally(true, 157, 0, true)) << "already dead";
+    EXPECT_FALSE(FinishesEnemyLocally(true, 157, 90, false)) << "alive";
+    EXPECT_FALSE(FinishesEnemyLocally(false, 157, 0, false)) << "the host is here";
+}
+
 // The new stage's load drops the bell's search effect (9000/9003 for the host), which the game
 // only adds when a bell is rung. After a trip in a party session it is put back.
 // The multiplayer effects a player carries into a trip (the host's 9000/9003, the guest's
@@ -677,6 +694,18 @@ TEST(BloodborneGuestProgress, ATripLoadsTheSessionsWorldChangesToo) {
     EXPECT_TRUE(SetsGuestWorldChangesOnLoad(false, false)) << "home, solo";
     EXPECT_TRUE(SetsGuestWorldChangesOnLoad(true, true)) << "a party trip";
     EXPECT_FALSE(SetsGuestWorldChangesOnLoad(true, false)) << "the join's reload into the host";
+}
+
+// The trip's load can create map items more than once, and the 5 s throttle of the pickup
+// pass skipped the Hunter's Dream load entirely (the Central Yharnam lamp was missing from the
+// guest's headstone). The world changes go in once per trip, whatever the throttle.
+TEST(BloodborneGuestProgress, EachTripGetsTheWorldChangesOnce) {
+    OncePerTrip once;
+    EXPECT_FALSE(once.Take(false));
+    EXPECT_TRUE(once.Take(true));
+    EXPECT_FALSE(once.Take(true)) << "same trip";
+    EXPECT_FALSE(once.Take(false));
+    EXPECT_TRUE(once.Take(true)) << "the next trip";
 }
 
 // A party death wakes where the game says (GlobalState +0x1528): the events set it on a death
