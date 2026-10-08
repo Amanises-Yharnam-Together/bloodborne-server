@@ -5132,7 +5132,11 @@ void KeepEnemyDeathsInStep(bool sharing) {
     std::vector<u64> pointers;
     ForEachWorldCharacter(world, [&](u64 character) {
         if (character != player) {
-            characters.emplace_back(ReadValue<u32>(character, 0x08), CharacterHp(character));
+            // Only a real death (+0x1E3 bit 0) is a kill: characters of a map being torn down
+            // read 0 HP too, and a guest leaving for the Dream "killed" the dog for the host.
+            const s32 hp = CharacterHp(character);
+            const bool dead = (ReadValue<u8>(character, 0x1E3) & 1) != 0;
+            characters.emplace_back(ReadValue<u32>(character, 0x08), dead ? 0 : std::max(hp, 1));
             pointers.push_back(character);
         }
     });
