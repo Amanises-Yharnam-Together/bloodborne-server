@@ -16,6 +16,7 @@
 #include "core/libraries/network/net.h"
 #include "core/libraries/network/net_util.h"
 #include "core/libraries/np/np_error.h"
+#include "core/libraries/np/np_signaling/np_signaling_reuse.h"
 #include "core/libraries/np/np_signaling/np_signaling_state.h"
 #include "core/libraries/np/np_signaling/np_signaling_stubs.h"
 
@@ -1206,6 +1207,22 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& p
             }
         }
 
+        // A new activation for a connection both sides closed (see np_signaling_reuse.h): the
+        // lingering one ends now and the request gets a new answerer connection below.
+        if (kind == ControlKind::ActivationRequest && conn_id != 0) {
+            const ConnectionInfo& old = g_connections[conn_id];
+            if (LingeringConnectionIsFinished(old.state == ConnState::Established,
+                                              old.deactivate_lingering, old.peer_deactivated,
+                                              old.dead_fired)) {
+                LOG_INFO(Lib_NpSignaling,
+                         "Control: ActivationRequest from '{}' after both closed connection {}; "
+                         "starting a new one",
+                         from_id, conn_id);
+                dead_conn = conn_id;
+                conn_id = 0;
+            }
+        }
+
         if (kind == ControlKind::ActivationRequest) {
             if (conn_id == 0) {
                 s32 ctx_id = 0;
@@ -1278,6 +1295,7 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& p
                      conn_id, from_id, pkt.reason, from_addr, sceNetNtohs(from_port),
                      static_cast<s32>(ci.state));
             if (reason == ControlReason::Deactivate && ci.state == ConnState::Established) {
+                ci.peer_deactivated = true;
                 peer_deactivated_conn = conn_id;
             } else {
                 dead_conn = conn_id;

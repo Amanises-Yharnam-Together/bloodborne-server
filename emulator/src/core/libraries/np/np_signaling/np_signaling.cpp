@@ -16,6 +16,7 @@
 #include "core/libraries/np/np_manager.h"
 #include "core/libraries/np/np_signaling/np_signaling.h"
 #include "core/libraries/np/np_signaling/np_signaling_helpers.h"
+#include "core/libraries/np/np_signaling/np_signaling_reuse.h"
 #include "core/libraries/np/np_signaling/np_signaling_state.h"
 #include "core/libraries/np/np_signaling/np_signaling_stubs.h"
 
@@ -298,6 +299,29 @@ s32 PS4_SYSV_ABI sceNpSignalingActivateConnection(OrbisNpSignalingContextId ctxI
         return ORBIS_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     }
     const std::string peer_online_id_str = OnlineIdToString(peer_online_id);
+
+    // A connection to this peer that both sides already closed ends now (DEAD, as its linger
+    // would), so this activation starts a new one (see np_signaling_reuse.h).
+    s32 finished = 0;
+    {
+        SignalingMutexGuard lock;
+        const auto existing = g_npid_to_conn.find(MakeCtxNpIdKey(ctxId, peer_npid));
+        if (existing != g_npid_to_conn.end()) {
+            const auto conn = g_connections.find(existing->second);
+            if (conn != g_connections.end() &&
+                LingeringConnectionIsFinished(
+                    conn->second.state == ConnState::Established, conn->second.deactivate_lingering,
+                    conn->second.peer_deactivated, conn->second.dead_fired)) {
+                finished = existing->second;
+            }
+        }
+    }
+    if (finished != 0) {
+        LOG_INFO(Lib_NpSignaling,
+                 "ctxId={} peer='{}': connection {} was closed by both; starting a new one", ctxId,
+                 peer_online_id_str, finished);
+        CloseConnectionAndDispatchDead(finished, ORBIS_NP_SIGNALING_ERROR_TERMINATED_BY_MYSELF);
+    }
 
     s32 cid = 0;
     bool reused_established = false;

@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include "core/bloodborne_party.h"
+#include "core/libraries/np/np_signaling/np_signaling_reuse.h"
 
 using namespace Core::Bloodborne;
 using namespace std::chrono_literals;
@@ -1014,4 +1015,15 @@ TEST(BloodborneCrashes, TheCrashLineNamesTheGameOffset) {
               "crash: exception 0xc0000005 at 0x8018bf9a0 (eboot+0x18bf9a0) thread Game:Main");
     EXPECT_EQ(FormatCrashLine(0xC0000005, 0x7FF612345678, 0x800000000, 0x50DC000, ""),
               "crash: exception 0xc0000005 at 0x7ff612345678 (emulator) thread ?");
+}
+
+// The host summoned the guest a second time 48 s after both closed their connection; the host's
+// emulator reused the lingering connection and the guest's game never heard the invite.
+TEST(BloodborneSignaling, AConnectionBothSidesClosedIsNotReused) {
+    using Libraries::Np::NpSignaling::LingeringConnectionIsFinished;
+    EXPECT_TRUE(LingeringConnectionIsFinished(true, true, true, false));
+    EXPECT_FALSE(LingeringConnectionIsFinished(true, true, false, false)) << "peer still on";
+    EXPECT_FALSE(LingeringConnectionIsFinished(true, false, true, false)) << "we are still on";
+    EXPECT_FALSE(LingeringConnectionIsFinished(false, true, true, false)) << "never established";
+    EXPECT_FALSE(LingeringConnectionIsFinished(true, true, true, true)) << "already dead";
 }

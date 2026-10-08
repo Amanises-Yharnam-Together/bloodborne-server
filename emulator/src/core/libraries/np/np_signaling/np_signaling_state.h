@@ -175,6 +175,7 @@ struct ConnectionInfo {
     NpCommon::OrbisNpCalloutEntry step_callout{};
     bool step_callout_armed = false;
     bool deactivate_lingering = false;
+    bool peer_deactivated = false; // the peer's Close (deactivate) arrived while established
 
     u32 echo_derived_value = 0;
 };
