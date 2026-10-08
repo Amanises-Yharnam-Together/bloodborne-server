@@ -340,7 +340,8 @@ anytime instantly" (Cathedral Ward pull, slow joins), then the rest of the backl
   Arena-walk entrances that set H (12411702 Gascoigne, 12411802) no longer require an alive
   player. The phantom event isn't synced, so the emulator posts H to the host over the flag
   board (`IsBossFogEntryFlag`, `SharedWithParty`); H never goes into the guest's own world.
-  Test: py -3.12 -m unittest discover -s toolse	ests. Rig: guest enters Gascoigne's fog
+  Test: py -3.12 -m unittest discover -s tools
+e	ests. Rig: guest enters Gascoigne's fog
   first, then after a guest death/reset.
 - Rig-test that a boss kill keeps the session (`BossClearKeepSessionPatches`, merged, untested).
 - **Full boss loot for the guest** (Kaniel 2026-10-07): on a boss kill the host got 4000 echoes
@@ -360,6 +361,13 @@ anytime instantly" (Cathedral Ward pull, slow joins), then the rest of the backl
     `event\common.emedf.dcx` (UTF-16 strings, e.g. "マルチプレイ状態でイベント終了").
 
 ## Backlog (Kaniel 2026-10-06: "add all of the current findings and problems to the backlog")
+- **NPC hidden on the host shows on the guest: the switch is known (2026-10-08).** A character's
+  byte +0x28 is the event disable ("hidden by the story"): when it is on, WorldChrMan's
+  activation pass (`0x019192A0`) sets the character's wake-up target ([+0x18]+0x14) to 0 and it
+  is neither drawn nor run. Clearing it on a lone guest showed exactly the NPCs the host's events
+  hide (Cathedral Ward, like Yosefka in her clinic). Fix idea: post the host's +0x28 per entity
+  id (entity lookup: WorldChrMan +0x90/+0x98 tables, see `KeepBossHpInStep`) and mirror it on the
+  guest. Kaniel asked for this to be fixed.
 - **NPC hidden on the host shows on the guest** (Kaniel, 2026-10-06, two new characters, Hunter's
   Dream workshop): the guest sees the living Doll standing while the host's is hidden (the host's
   event scripts disable it before the Insight story step). Likely the event-side disable
