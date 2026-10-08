@@ -4838,6 +4838,62 @@ void SetPartyWorldChanges(bool in_session) {
     }
 }
 
+// A guest alone on its map (see NoOneElseOnMap): the host has none of this map's enemies, so
+// they stood still and took no deaths. Experiment: the guest claims the network update authority
+// the boss events give the host (RequestForceUpdateNetwork 0x01335070: [+0x1EC] = 0xFFF) for the
+// characters around it, and hands it back (0) once another member is on its map.
+std::unordered_set<u64> lone_guest_authority;
+
+void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
+    static u32 claimed_map = 0;
+    if (map != claimed_map) {
+        lone_guest_authority.clear(); // the old map's characters are gone
+        claimed_map = map;
+    }
+    bool alone = false;
+    if (in_session && IsPartyGuestRole()) {
+        std::scoped_lock lock{map_board_mutex};
+        alone = std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{3} &&
+                NoOneElseOnMap(map_board, map_board_member, map);
+    }
+    if (!alone) {
+        size_t handed_back = 0;
+        for (const u64 character : lone_guest_authority) {
+            if (HasMemoryAccess(character, 0x1F0, MemoryProt::CpuWrite) &&
+                ReadValue<s32>(character, 0x1EC) == 0xFFF) {
+                WriteValue(character, 0x1EC, s32{0});
+                ++handed_back;
+            }
+        }
+        if (!lone_guest_authority.empty()) {
+            LOG_INFO(Debug, "Bloodborne party: guest no longer alone; handed back {} enemies",
+                     handed_back);
+            lone_guest_authority.clear();
+        }
+        return;
+    }
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const u64 player = GetLocalPlayer();
+    if (world < 0x10000) {
+        return;
+    }
+    size_t claimed = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (character == player || CharacterHp(character) <= 0 ||
+            !HasMemoryAccess(character, 0x1F0, MemoryProt::CpuWrite) ||
+            ReadValue<s32>(character, 0x1EC) != 0) {
+            return;
+        }
+        WriteValue(character, 0x1EC, s32{0xFFF});
+        lone_guest_authority.insert(character);
+        ++claimed;
+    });
+    if (claimed > 0) {
+        LOG_INFO(Debug, "Bloodborne party: guest alone on map {:#x} claimed {} enemies", map,
+                 claimed);
+    }
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
@@ -4859,6 +4915,7 @@ void TickPlayersOnThisMap() {
     // Posted in and out of a session: a guest apart from the host waits for the host's map.
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
     guest_apart.Tick(in_session);
+    ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
     if (!in_session) {
         recreate_players_pending = false;
         saved_join_tasks.clear();
