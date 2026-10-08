@@ -3014,12 +3014,20 @@ void LogNearbyEnemyControl() {
     std::ranges::sort(nearby);
     // SHADPS4_BLOODBORNE_TRACE_ENEMY_HP=1: a hardware write watch on the nearest enemy's HP
     // within 6 m, to find the code that applies its damage (and why a guest's never does).
-    static const bool trace_enemy_hp = std::getenv("SHADPS4_BLOODBORNE_TRACE_ENEMY_HP") != nullptr;
-    if (trace_enemy_hp && !nearby.empty() && nearby.front().first < 6.0f) {
+    // =ctrl instead watches the nearest enemy's wake-up target ([+0x18]+0x14: 4 active, 0
+    // asleep), set by WorldChrMan's activation pass (0x019192A0), for a guest alone whose
+    // enemies stay asleep.
+    static const char* trace_enemy = std::getenv("SHADPS4_BLOODBORNE_TRACE_ENEMY_HP");
+    if (trace_enemy != nullptr && !nearby.empty() && nearby.front().first < 6.0f) {
         const u64 character = nearby.front().second;
         const u64 modules = ReadValue<u64>(character, 0x3B0);
         const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
-        if (data >= 0x10000) {
+        const u64 control = ReadValue<u64>(character, 0x18);
+        if (std::string_view{trace_enemy} == "ctrl") {
+            if (control >= 0x10000) {
+                WatchEnemyHp(control + 0x14, ReadValue<u32>(character, 0x08));
+            }
+        } else if (data >= 0x10000) {
             WatchEnemyHp(data + 0xF8, ReadValue<u32>(character, 0x08));
         }
     }
@@ -3032,9 +3040,11 @@ void LogNearbyEnemyControl() {
             words += fmt::format(" {:x}", ReadValue<u32>(control, offset));
         }
         text +=
-            fmt::format(" [{:#x} type {} auth {:#x} flags {:#x} ctrl{}]",
+            fmt::format(" [{:#x} type {} b28 {} b29 {} b359 {:#x} auth {:#x} flags {:#x} ctrl{}]",
                         ReadValue<u32>(character, 0x08), ReadValue<s32>(character, 0x78),
-                        ReadValue<s32>(character, 0x1EC), ReadValue<u64>(character, 0x1E0), words);
+                        ReadValue<u8>(character, 0x28), ReadValue<u8>(character, 0x29),
+                        ReadValue<u8>(character, 0x359), ReadValue<s32>(character, 0x1EC),
+                        ReadValue<u64>(character, 0x1E0), words);
     }
     if (text != last) {
         last = text;
@@ -4347,9 +4357,12 @@ std::atomic<s32> watched_flag{0};
 std::atomic<s32> watched_last_value{-1};
 
 void RecordWatchedWrite(u64 rip, u64 rsp) {
-    // Rewrites of the same value (the per-frame max HP clamp rewrites the HP) are skipped.
+    // Rewrites of the same value from the same place are skipped (the per-frame max HP clamp
+    // rewrites the HP); a new place is kept even when it writes the same value.
+    static std::atomic<u64> last_rip{0};
     const s32 value = *reinterpret_cast<const volatile u8*>(watched_flag_byte.load());
-    if (watched_last_value.exchange(value) == value) {
+    const bool same_value = watched_last_value.exchange(value) == value;
+    if (last_rip.exchange(rip) == rip && same_value) {
         return;
     }
     const size_t index = watched_write_count.fetch_add(1);
@@ -4852,8 +4865,19 @@ void FinishGuestEnemiesWhenAlone(bool in_session, u32 map) {
         return;
     }
     const u64 player = GetLocalPlayer();
+    const auto me = LocalPlayerPosition();
     ForEachWorldCharacter(world, [&](u64 character) {
-        if (character == player) {
+        if (character == player || !me) {
+            return;
+        }
+        // Only enemies around the player: characters of a neighbouring map (Gascoigne's bodies
+        // from Central Yharnam) dropped to 0 HP as their block unloaded.
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        const float dx = ReadValue<float>(physics, 0x1E0) - (*me)[0];
+        const float dy = ReadValue<float>(physics, 0x1E4) - (*me)[1];
+        const float dz = ReadValue<float>(physics, 0x1E8) - (*me)[2];
+        if (physics < 0x10000 || dx * dx + dy * dy + dz * dz > 30.0f * 30.0f) {
             return;
         }
         const s32 hp = CharacterHp(character);
