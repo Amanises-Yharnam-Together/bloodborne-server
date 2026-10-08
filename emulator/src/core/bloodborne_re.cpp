@@ -1199,6 +1199,8 @@ void ApplyCrossMapSummonHostPlacement(const GuestRegisterSnapshot& registers) {
     host_placement_rewrite.result = "applied";
 }
 
+bool IsPartyGuestRole();
+
 void ApplyCrossMapSummonGuestPlacement(const GuestRegisterSnapshot& registers) {
     guest_placement_handoff = {};
     guest_placement_handoff.result = "invalid_object";
@@ -1246,6 +1248,13 @@ void ApplyCrossMapSummonGuestPlacement(const GuestRegisterSnapshot& registers) {
         return;
     }
     if (record.current_map == record.received_map) {
+        // A party guest joining in place: the summon reload uses the placement it was handed
+        // (the host's spot); its own goes there instead.
+        if (IsPartyGuestRole() && transported_host.has_value() &&
+            HasMemoryAccess(state, 0x14F0, MemoryProt::CpuWrite) &&
+            WriteTransportedSummonPlacement(state, *transported_host)) {
+            record.placement_refreshed = true;
+        }
         record.result = "same_map";
         return;
     }
@@ -7565,6 +7574,19 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
         return false;
     }
 
+    // A party guest joins where it is (Kaniel 2026-10-08: no teleport to the host on a join, the
+    // forked cross-map summon's leftover): its own map, position and heading replace the host's,
+    // so the pre-match warp and the summon reload keep it in place.
+    if (SummonPlacementDescriptor own{}; IsPartyGuestRole()) {
+        std::string_view own_result;
+        if (ReadLocalSummonPlacement(own, own_result)) {
+            LOG_INFO(Debug,
+                     "Bloodborne party: guest joins in place on map {:#x} ({}, {}, {}) instead of "
+                     "the host's map {:#x}",
+                     own.packed_region, own.x, own.y, own.z, placement.packed_region);
+            placement = own;
+        }
+    }
     std::scoped_lock lock{seamless_placement_mutex};
     if (!seamless_received_host_placement.has_value() ||
         !IsSameSummonPlacement(*seamless_received_host_placement, placement)) {
