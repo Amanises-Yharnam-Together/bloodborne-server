@@ -3384,8 +3384,11 @@ std::vector<s32> effects_before_trip; // multiplayer effects to put back after t
 
 void ParkEnemyWatch();
 
+std::atomic<u64> party_trips_started{0}; // ends the visit of KeepEnemyDeathsInStep
+
 bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot*) {
     if (InPartySession()) {
+        ++party_trips_started;
         std::scoped_lock lock{party_trip_mutex};
         party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap(), GetLocalPlayer());
         SaveRemoteJoinTasks();
@@ -5129,6 +5132,7 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
 // KeepBossHpInStep's notes): a guest arriving at the host's map found the host's dead wolf alive.
 void KeepEnemyDeathsInStep(bool sharing) {
     static VisitKills visit_kills;
+    static VisitTracker visit_tracker;
     static std::unordered_map<u64, u32> hidden; // character -> handle, hidden by us
     static u64 hidden_visit = 0;
     static std::chrono::steady_clock::time_point checked{};
@@ -5143,7 +5147,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
     if (world < 0x10000 || !IsUsablePackedMap(map)) {
         return;
     }
-    const u64 visit = (u64{map} << 32) | (player & 0xFFFFFFFF);
+    const u64 visit =
+        visit_tracker.Update(map, player, InPartySession(), party_trips_started.load());
     if (visit != hidden_visit) {
         hidden.clear(); // the old visit's characters are gone
         hidden_visit = visit;
@@ -5161,12 +5166,19 @@ void KeepEnemyDeathsInStep(bool sharing) {
         }
     });
     const auto changes = visit_kills.Observe(visit, characters);
+    if (!changes.empty()) {
+        const auto kills = std::ranges::count_if(changes, [](const auto& c) { return c.second; });
+        LOG_INFO(Debug, "Bloodborne party: kill board gets {} kills, {} back (visit {:#x})", kills,
+                 changes.size() - kills, visit);
+    }
     std::unordered_set<u32> others;
     {
         std::scoped_lock lock{kill_board_mutex};
         kills_to_post.insert(kills_to_post.end(), changes.begin(), changes.end());
         others = others_kills;
     }
+    // Its own kills too: a guest pulled into the host's world sees the host's copy alive.
+    others.insert(visit_kills.Killed().begin(), visit_kills.Killed().end());
     size_t newly_hidden = 0;
     for (size_t index = 0; index < pointers.size(); ++index) {
         const u64 character = pointers[index];
@@ -5186,7 +5198,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
         }
     }
     if (newly_hidden > 0) {
-        LOG_INFO(Debug, "Bloodborne party: hid {} enemies another member killed on map {:#x}",
+        LOG_INFO(Debug, "Bloodborne party: hid {} enemies a member killed on map {:#x}",
                  newly_hidden, map);
     }
 }

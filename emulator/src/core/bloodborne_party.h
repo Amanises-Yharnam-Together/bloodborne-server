@@ -490,10 +490,26 @@ struct MemberMapState {
 std::string EncodeMapStateUpdate(std::string_view member, u32 map, std::span<const u8> bits);
 std::optional<std::vector<MemberMapState>> ParseMapStateBoard(std::string_view body);
 
+// A member's visit to a map (see VisitKills): it ends when the enemies respawn for that member.
+// trips counts the party trips started (lamps, the Dream, a death sent home).
+class VisitTracker {
+public:
+    u64 Update(u32 map, u64 player, bool in_session, u64 trips);
+
+private:
+    u32 map = 0;
+    u64 player = 0;
+    u64 trips = 0;
+    u32 generation = 0;
+};
+
 class VisitKills {
 public:
     std::vector<std::pair<s32, bool>> Observe(u64 visit,
                                               std::span<const std::pair<u32, s32>> characters);
+    const std::vector<u32>& Killed() const {
+        return killed;
+    }
 
 private:
     u64 current = 0;

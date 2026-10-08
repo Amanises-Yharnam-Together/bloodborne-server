@@ -1097,6 +1097,34 @@ TEST(BloodborneSharedKills, AMembersKillsLastForItsVisit) {
     EXPECT_EQ(fresh.Observe(3, one_dead), Changes{});
 }
 
+// What ends a visit is what respawns the enemies for that member: a trip (lamp travel, the
+// Dream, a death sent home), another map, or a reload outside a session. A guest pulled into
+// the host's world when the host arrives reloads the same map in a session: its kills there
+// stand (friend run 2026-10-08: the guest killed the dog, the host came back, the guest's
+// summon withdrew the kill and the host's dog stood alive).
+TEST(BloodborneSharedKills, ASummonIntoTheHostsWorldKeepsTheGuestsVisit) {
+    VisitTracker visits;
+    const u64 first = visits.Update(0x18010000, 0x1000, false, 0);
+    EXPECT_EQ(visits.Update(0x18010000, 0x1000, false, 0), first);
+    EXPECT_EQ(visits.Update(0x18010000, 0x2000, true, 0), first) << "summoned on the same map";
+    const u64 tripped = visits.Update(0x18010000, 0x3000, true, 1);
+    EXPECT_NE(tripped, first) << "a trip to a lamp on the same map";
+    const u64 moved = visits.Update(0x15000000, 0x3000, true, 1);
+    EXPECT_NE(moved, tripped) << "another map";
+    const u64 back = visits.Update(0x18010000, 0x4000, true, 1);
+    EXPECT_NE(back, first);
+    EXPECT_NE(back, moved);
+    EXPECT_NE(visits.Update(0x18010000, 0x5000, false, 1), back) << "a reload out of a session";
+
+    // The killer hides its own kills too while it stands in another world's copy of the map.
+    VisitKills kills;
+    kills.Observe(back, std::vector<std::pair<u32, s32>>{{0x10014085, 300}});
+    kills.Observe(back, std::vector<std::pair<u32, s32>>{{0x10014085, 0}});
+    EXPECT_EQ(kills.Killed(), (std::vector<u32>{0x10014085}));
+    kills.Observe(back + 1, std::vector<std::pair<u32, s32>>{{0x10014085, 300}});
+    EXPECT_TRUE(kills.Killed().empty());
+}
+
 // A guest's trip loads the host's map with the guest's own save: a dog killed for good on the
 // host's save stood alive for it. The host posts its map's flags (10000 from the map's base:
 // 1241xxxx for m24_01) and the guest loading that map takes them, except its own pickups, the

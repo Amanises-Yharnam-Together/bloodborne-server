@@ -744,6 +744,17 @@ std::optional<std::vector<MemberMapState>> ParseMapStateBoard(std::string_view b
     return states;
 }
 
+u64 VisitTracker::Update(u32 new_map, u64 new_player, bool in_session, u64 new_trips) {
+    const bool reloaded_alone = new_player != player && !in_session;
+    if (new_map != map || new_trips != trips || reloaded_alone || generation == 0) {
+        ++generation;
+    }
+    map = new_map;
+    player = new_player;
+    trips = new_trips;
+    return (u64{map} << 32) | generation;
+}
+
 std::vector<std::pair<s32, bool>> VisitKills::Observe(
     u64 visit, std::span<const std::pair<u32, s32>> characters) {
     std::vector<std::pair<s32, bool>> changes;
