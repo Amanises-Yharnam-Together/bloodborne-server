@@ -307,6 +307,25 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                 flagBoard->Update(Party(request), update->member, update->since, update->changes));
             return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
         });
+
+    // Shared kill echoes: a member posts the echoes it got from kills made with no other member
+    // on its map and reads back the others'. Called by the emulator every few seconds.
+    auto echoBoard = std::make_shared<Bloodborne::PartyEchoBoard>();
+    http.route(
+        "/bloodborne/party/echoes", QHttpServerRequest::Method::Post,
+        [echoBoard](const QHttpServerRequest& request) -> QHttpServerResponse {
+            const auto update = Bloodborne::ParseEchoUpdate(request.body());
+            if (!update) {
+                return InvalidRequest(QStringLiteral("Invalid party echo update"));
+            }
+            if (!update->echoes.isEmpty()) {
+                qInfo().noquote() << "Bloodborne party echoes from" << update->member << ":"
+                                  << update->echoes.size() << "kills";
+            }
+            const QByteArray board = Bloodborne::FormatEchoBoard(
+                echoBoard->Update(Party(request), update->member, update->since, update->echoes));
+            return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
+        });
 }
 
 } // namespace WebApiRoutes

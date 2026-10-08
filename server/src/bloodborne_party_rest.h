@@ -148,4 +148,47 @@ private:
     QHash<QByteArray, Party> m_parties;
 };
 
+// Shared kill echoes: the echoes a party member got from a kill with no other member on its map
+// (POST /bloodborne/party/echoes), so the others get them too, as they would side by side.
+struct EchoUpdate {
+    QByteArray member;
+    qint64 since = 0;
+    QList<qint32> echoes;
+};
+
+struct EchoBoardAnswer {
+    qint64 latest = 0;
+    QList<qint32> echoes;
+};
+
+// "<member> <since> [<echoes>...]" (each a positive amount).
+std::optional<EchoUpdate> ParseEchoUpdate(const QByteArray& body);
+// A "<latest>" line, then one "<echoes>" line per kill.
+QByteArray FormatEchoBoard(const EchoBoardAnswer& answer);
+
+class PartyEchoBoard {
+public:
+    // Kept per party for as long as the server runs; the oldest go past this many.
+    static constexpr qsizetype MaxEntries = 4096;
+
+    // Adds the member's echoes and returns the latest sequence number and the other members'
+    // echoes after `since`, oldest first.
+    EchoBoardAnswer Update(const QByteArray& party, const QByteArray& member, qint64 since,
+                           const QList<qint32>& echoes);
+
+private:
+    struct Entry {
+        qint64 sequence = 0;
+        QByteArray member;
+        qint32 echoes = 0;
+    };
+    struct Party {
+        qint64 latest = 0;
+        QList<Entry> entries;
+    };
+
+    QMutex m_mutex;
+    QHash<QByteArray, Party> m_parties;
+};
+
 } // namespace Bloodborne

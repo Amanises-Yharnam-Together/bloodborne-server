@@ -176,6 +176,38 @@ int main() {
     CHECK(board.Update({}, "host", 0, update->changes).latest == 0);
   }
 
+  // Shared kill echoes: a member that killed an enemy with no other member on
+  // its map posts
+  // "<member> <since> [<echoes>...]" and reads back the latest sequence number
+  // and every other member's echoes after <since>, one per line.
+  {
+    using Bloodborne::PartyEchoBoard;
+    const auto update = Bloodborne::ParseEchoUpdate("guest 0 120 4000");
+    CHECK(update.has_value());
+    CHECK(update->member == "guest");
+    CHECK(update->since == 0);
+    CHECK(update->echoes.size() == 2);
+    CHECK(update->echoes[0] == 120 && update->echoes[1] == 4000);
+    CHECK(Bloodborne::ParseEchoUpdate("host 7").has_value());
+    CHECK(!Bloodborne::ParseEchoUpdate("host").has_value());
+    CHECK(!Bloodborne::ParseEchoUpdate("host 0 -5").has_value());
+    CHECK(!Bloodborne::ParseEchoUpdate("host 0 0").has_value());
+    CHECK(!Bloodborne::ParseEchoUpdate("host 0 x").has_value());
+
+    PartyEchoBoard board;
+    const QByteArray newline(1, 10);
+    const auto guest = board.Update(Party, "guest", 0, update->echoes);
+    CHECK(guest.latest == 2);
+    CHECK(guest.echoes.isEmpty()); // a member doesn't get its own echoes back
+    board.Update("other:party", "stranger", 0, update->echoes);
+    const auto host = board.Update(Party, "host", 0, {});
+    CHECK(host.latest == 2);
+    CHECK(Bloodborne::FormatEchoBoard(host) ==
+          "2" + newline + "120" + newline + "4000" + newline);
+    CHECK(board.Update(Party, "host", 2, {}).echoes.isEmpty());
+    CHECK(board.Update({}, "host", 0, update->echoes).latest == 0);
+  }
+
   // No party key: nothing to coordinate.
   {
     PartyRestBoard board;

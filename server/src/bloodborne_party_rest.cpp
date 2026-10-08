@@ -224,4 +224,54 @@ FlagBoardAnswer PartyFlagBoard::Update(const QByteArray& party, const QByteArray
     return answer;
 }
 
+std::optional<EchoUpdate> ParseEchoUpdate(const QByteArray& body) {
+    const QList<QByteArray> parts = body.trimmed().split(' ');
+    if (parts.size() < 2 || !IsMemberName(parts[0])) {
+        return std::nullopt;
+    }
+    bool ok = false;
+    EchoUpdate update{parts[0], parts[1].toLongLong(&ok), {}};
+    if (!ok || update.since < 0) {
+        return std::nullopt;
+    }
+    for (qsizetype index = 2; index < parts.size(); ++index) {
+        const qint32 echoes = parts[index].toInt(&ok);
+        if (!ok || echoes <= 0) {
+            return std::nullopt;
+        }
+        update.echoes.append(echoes);
+    }
+    return update;
+}
+
+QByteArray FormatEchoBoard(const EchoBoardAnswer& answer) {
+    QByteArray body = QByteArray::number(answer.latest) + '\n';
+    for (const qint32 echoes : answer.echoes) {
+        body += QByteArray::number(echoes) + '\n';
+    }
+    return body;
+}
+
+EchoBoardAnswer PartyEchoBoard::Update(const QByteArray& party, const QByteArray& member,
+                                       qint64 since, const QList<qint32>& echoes) {
+    if (party.isEmpty()) {
+        return {};
+    }
+    QMutexLocker lock(&m_mutex);
+    Party& board = m_parties[party];
+    for (const qint32 amount : echoes) {
+        board.entries.append(Entry{++board.latest, member, amount});
+    }
+    while (board.entries.size() > MaxEntries) {
+        board.entries.removeFirst();
+    }
+    EchoBoardAnswer answer{board.latest, {}};
+    for (const Entry& entry : board.entries) {
+        if (entry.sequence > since && entry.member != member) {
+            answer.echoes.append(entry.echoes);
+        }
+    }
+    return answer;
+}
+
 } // namespace Bloodborne
