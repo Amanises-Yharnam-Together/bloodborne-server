@@ -1053,3 +1053,12 @@ TEST(BloodborneSharedEchoes, KillsMadeApartRewardTheWholeParty) {
     EXPECT_EQ(ParseEchoBoard("x\n"), std::nullopt);
     EXPECT_EQ(ParseEchoBoard("2\n-5\n"), std::nullopt);
 }
+
+// Lamps, boss fog entries and trophies go between the members whenever they are a party, not
+// only while in a session: a guest on its own trip (the Hunter's Dream) is out of one, and
+// what the host did meanwhile only reached it after rejoining, if at all.
+TEST(BloodborneSharedProgression, ThePartySharesInAndOutOfASession) {
+    EXPECT_TRUE(SharesWithParty(true, true));
+    EXPECT_FALSE(SharesWithParty(true, false)) << "loading: no player to apply them to";
+    EXPECT_FALSE(SharesWithParty(false, true)) << "no party";
+}

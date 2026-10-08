@@ -318,6 +318,13 @@ to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
   pointers `and ~0xF`), so the heap was corrupted earlier; the minidump lacks the guest stack,
   hence the stack line added after it. Read crash-*.dmp with `%TEMP%/bbre/mdstack.py`-style
   parsing (lldb here has no Python).
+- Second catch (guest, 2026-10-08 21:20): Game:Main, read from 0x4 at eboot+0xBAFC0 inside a
+  destructor chain (0x23D3270 array destroy, 0x01F586F5 free, 0x01834930 virtual destructor)
+  while its world was torn down for a headstone trip out of a session. Both catches: a guest
+  outside a session, its bell search (9005) on, a trip's world teardown. Suspect: the forked
+  keep-matching patch carries the search over the teardown (`ShouldEndSessionOnWorldTeardown`
+  leaves searches alone on purpose, for the cross-map handoff). The teardown now logs its
+  matching state and effects to confirm before changing that.
 - **Crashes** "sometimes after certain actions or boss kills" (no pattern known). All four runs
   (both players, both runs) closed cleanly, so none was captured.
 - **Boss fog after a world reset:** the guest died, went to the Dream, the location was reset

@@ -444,6 +444,9 @@ struct EchoBoardAnswer {
     bool operator==(const EchoBoardAnswer&) const = default;
 };
 bool SharesKillEchoes(u64 caller_offset, bool alone_on_map);
+// Whether the party boards (lamps and boss fog flags, trophies) are read, posted and applied:
+// whenever a party is configured and the player is loaded, in a session or not.
+bool SharesWithParty(bool party_configured, bool player_loaded);
 std::string EncodeEchoUpdate(std::string_view member, s64 since, std::span<const s32> echoes);
 std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body);
 

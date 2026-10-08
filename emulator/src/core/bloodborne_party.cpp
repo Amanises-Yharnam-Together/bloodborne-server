@@ -595,6 +595,10 @@ std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body) {
     return answer;
 }
 
+bool SharesWithParty(bool party_configured, bool player_loaded) {
+    return party_configured && player_loaded;
+}
+
 bool SharesKillEchoes(u64 caller_offset, bool alone_on_map) {
     constexpr u64 EnemyKillReward = 0x018FC99B;
     constexpr u64 BossKillReward = 0x01385263;

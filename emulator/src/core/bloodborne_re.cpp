@@ -2020,8 +2020,8 @@ void ReadTrophyBoard(std::span<const s32> board) {
 }
 
 // On the game thread: unlocks the other members' trophies.
-void UnlockPartyTrophies(bool in_session) {
-    trophy_board_active.store(in_session);
+void UnlockPartyTrophies(bool sharing) {
+    trophy_board_active.store(sharing);
     std::vector<s32> pending;
     {
         std::scoped_lock lock{trophy_mutex};
@@ -4751,7 +4751,7 @@ void InstallDeferredBossItems(u64 base, u64 image_size) {
     }
 }
 
-void LogFlagChangesInSession(bool in_session) {
+void LogFlagChangesInSession(bool sharing) {
     static std::chrono::steady_clock::time_point last{};
     static std::optional<FlagStore> previous;
     const auto now = std::chrono::steady_clock::now();
@@ -4759,7 +4759,7 @@ void LogFlagChangesInSession(bool in_session) {
         return;
     }
     last = now;
-    if (!in_session) {
+    if (!sharing) {
         previous.reset();
         return;
     }
@@ -4904,7 +4904,7 @@ void KeepGuestProgress(bool in_session) {
 }
 
 // On the host's game thread: sets the guests' world changes in the host's world.
-void SetPartyWorldChanges(bool in_session) {
+void SetPartyWorldChanges(bool sharing) {
     party_host_role.store(party_controller.has_value() &&
                           party_controller->SearchEffectId() != SmallResonantBellEffect);
     std::vector<std::pair<s32, bool>> pending;
@@ -4912,7 +4912,13 @@ void SetPartyWorldChanges(bool in_session) {
         std::scoped_lock lock{flag_board_mutex};
         pending.swap(flags_to_set);
     }
-    if (!in_session || pending.empty()) {
+    if (pending.empty()) {
+        return;
+    }
+    if (!sharing) {
+        // Loading: they wait for the player.
+        std::scoped_lock lock{flag_board_mutex};
+        flags_to_set.insert(flags_to_set.begin(), pending.begin(), pending.end());
         return;
     }
     using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
@@ -5029,10 +5035,12 @@ void TickPlayersOnThisMap() {
     LogItemButtonAndMapItems();
     KeepGuestFullHp();
     const bool in_session = InPartySession();
-    UnlockPartyTrophies(in_session);
-    SetPartyWorldChanges(in_session);
+    // The boards go both ways in and out of a session (a guest on its own trip is out of one).
+    const bool sharing = SharesWithParty(party_controller.has_value(), GetLocalPlayer() >= 0x10000);
+    UnlockPartyTrophies(sharing);
+    SetPartyWorldChanges(sharing);
     KeepGuestProgress(in_session);
-    LogFlagChangesInSession(in_session);
+    LogFlagChangesInSession(sharing);
     LogWatchedWrites();
     GiveDeferredBossItems();
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
@@ -5184,6 +5192,19 @@ void EndSessionOnWorldTeardown() {
     const bool reload_pending =
         pending_summon_reload_map.load(std::memory_order_acquire) != 0 ||
         pending_summon_reload_state_map.load(std::memory_order_acquire) != 0;
+    // Diagnostics for the guest crashes in a world teardown outside a session (a lamp or
+    // headstone trip while its bell searched, 2026-10-08): the matching state the keep-matching
+    // patch carries over each teardown.
+    LOG_INFO(Debug,
+             "Bloodborne world teardown: matching state {} reload state {} reload pending {} "
+             "trip {} effects{}",
+             matching_state, reload_state, reload_pending, PartyTripActive(), [] {
+                 std::string text;
+                 for (const s32 effect : LocalEffects()) {
+                     text += fmt::format(" {}", effect);
+                 }
+                 return text;
+             }());
     if (!ShouldEndSessionOnWorldTeardown(matching_state, reload_state, reload_pending)) {
         return;
     }
