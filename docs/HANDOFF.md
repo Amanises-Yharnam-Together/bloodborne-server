@@ -341,6 +341,25 @@ to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
 - **Boss HP bar** sometimes did not update for both players' damage.
 - Connection problems (already in the backlog: slow joins).
 
+## State on 2026-10-08 (Kaniel's rig runs)
+Rig-confirmed today: a guest enters a boss fog first and starts the fight (13 maps patched by
+`party_boss_events.py`); the X button after a boss kill (BlockClear2's SetLoadWait skipped);
+headstone lamps after a trip (world changes applied once per trip and on arrival); quick re-summon
+(signaling: a connection both sides closed is never reused); a guest alone on a map runs its
+enemies (ownership word in WorldChrMan +0xA40, `ClaimEnemiesWhenAlone`); kill echoes shared
+apart (`/bloodborne/party/echoes`); the host's map state taken by a guest loading its map
+(`/bloodborne/party/mapstate`, the dog).
+Built, not rig-confirmed: boss co-op HP bonus on a hidden boss (`CoopHpScale`; note the game
+recomputes max HP every frame at 0x01A0D881, so the write may not stick), Gascoigne's voice
+loop (should follow from the HP fix), boards shared outside a session (lamps, trophies,
+`SharesWithParty`), enemy deaths across loads (`/bloodborne/party/kills`, `VisitKills`), a
+guest's map changes reaching the host (`SharedWithParty` with `TakesHostMapFlag`).
+Open: the teardown crash suspect (bell search kept over a trip's teardown, see the friend test
+notes), the Doll/Yosefka hidden NPCs (mirror +0x28), lost echoes whose holder dies while the
+owner is away, guest cutscenes freezing the host's enemies (flag 9180).
+Diagnostics to trim later: nearby enemy log (vtables, ownership, effects), boss HP log,
+teardown log, enemy HP tracer (SHADPS4_BLOODBORNE_TRACE_ENEMY_HP, off in the launchers).
+
 ## Bosses
 Order (Kaniel 2026-10-07): bosses first (including the guest's stuck X after a boss kill, the
 boss fog after a reset and the boss HP bar from the friend test), then "join everywhere anywhere
