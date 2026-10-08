@@ -532,6 +532,15 @@ TEST(BloodborneGuestProgress, CarriesTheSessionsWorldChangesHome) {
     EXPECT_FALSE(CarriesToGuestWorld(52410360)) << "pickups have their own list";
     EXPECT_FALSE(CarriesToGuestWorld(72410101)) << "a lamp trip, not progress";
     EXPECT_FALSE(CarriesToGuestWorld(72102411)) << "a headstone trip";
+    // The bell's bookkeeping (common events 9181-9198): 9185 "a bell is ringing" makes 9183
+    // refund 1 Insight with a "resonance ended" message once the bell effect is gone. Kept in
+    // the guest's world it came back on every load (friend run 2026-10-08: the bell messages
+    // kept coming and the guest's Insight went up each time).
+    EXPECT_FALSE(CarriesToGuestWorld(9185));
+    EXPECT_FALSE(CarriesToGuestWorld(9199));
+    EXPECT_FALSE(CarriesToGuestWorld(9180));
+    EXPECT_EQ(ParseWorldChanges("9185 1\n7116 1\n9199 1\n"), (std::map<s32, bool>{{7116, true}}))
+        << "a saved world drops them too";
     EXPECT_TRUE(IsBulkFlagChange(65));
     EXPECT_FALSE(IsBulkFlagChange(12));
 

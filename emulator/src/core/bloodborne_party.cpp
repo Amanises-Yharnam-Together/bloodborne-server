@@ -374,7 +374,10 @@ bool CarriesToGuestWorld(s32 flag) {
     const bool death_or_multiplayer = flag >= 4000 && flag < 5000;
     const bool trip = IsLampTravelFlag(flag) || IsHeadstoneTravelFlag(flag);
     const bool boss_fog = IsBossFogEntryFlag(flag) || IsBossFogEntryFlag(flag - 1);
-    return flag > 0 && !death_or_multiplayer && !trip && !boss_fog && !IsMapPickupFlag(flag);
+    // The bell's bookkeeping (common events 9181-9198), not progress.
+    const bool bell = flag >= 9180 && flag < 9200;
+    return flag > 0 && !death_or_multiplayer && !trip && !boss_fog && !bell &&
+           !IsMapPickupFlag(flag);
 }
 
 std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp,
@@ -553,7 +556,7 @@ std::map<s32, bool> ParseWorldChanges(std::string_view text) {
         const auto [parsed_end, error] = std::from_chars(line.data(), line.data() + space, flag);
         const char state = line[space + 1];
         if (error == std::errc{} && parsed_end == line.data() + space &&
-            (state == '0' || state == '1')) {
+            (state == '0' || state == '1') && CarriesToGuestWorld(flag)) {
             world[flag] = state == '1';
         }
     }
