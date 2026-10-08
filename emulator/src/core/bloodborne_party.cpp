@@ -491,8 +491,12 @@ std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
 }
 
 bool SharedWithParty(s32 flag) {
-    return LampOfActiveFlag(flag).has_value() || LampOfActiveFlag(flag - 1).has_value() ||
-           IsBossFogEntryFlag(flag);
+    const bool lamp_active =
+        LampOfActiveFlag(flag).has_value() || LampOfActiveFlag(flag - 1).has_value();
+    // A lamp's other flags (its counters, 7810-8209 in a map's range) stay with the game.
+    const s32 within = flag % MapFlagCount;
+    const bool lamp_block = within >= 7810 && within < 8210;
+    return lamp_active || IsBossFogEntryFlag(flag) || (TakesHostMapFlag(flag) && !lamp_block);
 }
 
 std::optional<s32> LampOfActiveFlag(s32 flag) {

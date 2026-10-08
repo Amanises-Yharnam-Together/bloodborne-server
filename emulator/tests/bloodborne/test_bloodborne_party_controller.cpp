@@ -638,9 +638,13 @@ TEST(BloodborneBossLoot, AGuestsBossItemArrivesAfterTheBossClear) {
     EXPECT_FALSE(DefersItemLotAward(true, true, 0x0132E498));
 }
 
-// A guest's changes in the host's world reach the host only for lamps (the game syncs the rest
-// itself): its trips (the host's lamp travelled too) and gifts (the host lost its own) stay out.
-TEST(BloodborneSharedProgression, OnlyLampsGoFromGuestToHost) {
+// A guest's changes reach the host for lamps and for the maps' own flags (a dog killed for
+// good, a door, a shortcut made while it was alone: the host takes them as the guest takes the
+// host's, see TakesHostMapFlag): its trips (the host's lamp travelled too) and gifts (the host
+// lost its own) stay out, and so do a lamp's other flags.
+TEST(BloodborneSharedProgression, LampsAndMapStateGoBetweenMembers) {
+    EXPECT_TRUE(SharedWithParty(12410102)) << "a shortcut";
+    EXPECT_TRUE(SharedWithParty(12401800)) << "a boss killed";
     EXPECT_TRUE(SharedWithParty(12417830));
     EXPECT_TRUE(SharedWithParty(12417831));
     EXPECT_FALSE(SharedWithParty(72410101)) << "lamp trip";
