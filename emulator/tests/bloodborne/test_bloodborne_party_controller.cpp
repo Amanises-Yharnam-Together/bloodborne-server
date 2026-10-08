@@ -1027,3 +1027,12 @@ TEST(BloodborneSignaling, AConnectionBothSidesClosedIsNotReused) {
     EXPECT_FALSE(LingeringConnectionIsFinished(false, true, true, false)) << "never established";
     EXPECT_FALSE(LingeringConnectionIsFinished(true, true, true, true)) << "already dead";
 }
+
+// The guest's stack is not in the minidump (it is not a host thread stack), so the report
+// lists the eboot addresses found on it: the return addresses of the crashing call chain.
+TEST(BloodborneCrashes, TheReportListsTheGameAddressesOnTheStack) {
+    const std::vector<u64> stack{0x30FD32890, 0x8018E6D48, 0x7EFB4E310, 0x801A2BFA8, 0x900000000};
+    EXPECT_EQ(FormatGameAddresses(stack, 0x800000000, 0x50DC000, 8),
+              " eboot+0x18e6d48 eboot+0x1a2bfa8");
+    EXPECT_EQ(FormatGameAddresses(stack, 0x800000000, 0x50DC000, 1), " eboot+0x18e6d48");
+}

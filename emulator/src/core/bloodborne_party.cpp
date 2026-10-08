@@ -401,6 +401,22 @@ std::string FormatCrashLine(u32 code, u64 address, u64 image_base, u64 image_siz
                        thread.empty() ? "?" : thread);
 }
 
+std::string FormatGameAddresses(std::span<const u64> words, u64 image_base, u64 image_size,
+                                size_t max) {
+    std::string text;
+    size_t found = 0;
+    for (const u64 word : words) {
+        if (found == max) {
+            break;
+        }
+        if (word >= image_base && word - image_base < image_size) {
+            text += fmt::format(" eboot+{:#x}", word - image_base);
+            ++found;
+        }
+    }
+    return text;
+}
+
 bool IsBossFogEntryFlag(s32 flag) {
     // The flag each boss fog's host event sets and its phantom event waited for (found by
     // party_boss_events.py's open_boss_fog_for_guests in the 01.09 map event files).

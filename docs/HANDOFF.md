@@ -310,6 +310,14 @@ to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
   all, so the boss-clear sequence itself blocks X, not the item dialog (the 8 s item hold is
   beside the point). `LogActionBlockingState` ("Bloodborne action state: ...", every 0.5 s on
   change) now logs the candidates; next step is a guest boss kill in the rig.
+- **Crash catcher (2026-10-08):** an unhandled exception writes `user/log/crash-<time>.txt`
+  (code, address, eboot offset, thread, registers, the eboot words on the guest stack) and a
+  minidump. First catch (guest, 2026-10-08 20:14, solo between sessions, lamp trip Cathedral
+  Ward -> Dream): access violation reading 0 at eboot+0x1F3DD51 in thread EzWorkPool_TypeB3
+  while the Dream's entryfilelist loaded. 0x1F3DD51 is the game heap's free-list unlink (tagged
+  pointers `and ~0xF`), so the heap was corrupted earlier; the minidump lacks the guest stack,
+  hence the stack line added after it. Read crash-*.dmp with `%TEMP%/bbre/mdstack.py`-style
+  parsing (lldb here has no Python).
 - **Crashes** "sometimes after certain actions or boss kills" (no pattern known). All four runs
   (both players, both runs) closed cleanly, so none was captured.
 - **Boss fog after a world reset:** the guest died, went to the Dream, the location was reset

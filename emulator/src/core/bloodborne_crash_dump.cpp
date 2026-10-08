@@ -3,11 +3,13 @@
 
 #include "core/bloodborne_crash_dump.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <exception>
+#include <span>
 #include <string>
 
 #include <fmt/format.h>
@@ -91,6 +93,28 @@ void WriteCrashReport(void* exception_pointers) {
         text += " (abort or std::terminate)";
     }
     text += '\n';
+    if (exception != nullptr && exception->ContextRecord != nullptr) {
+        const CONTEXT& context = *exception->ContextRecord;
+        text +=
+            fmt::format("rax={:#x} rbx={:#x} rcx={:#x} rdx={:#x} rsi={:#x} rdi={:#x} rbp={:#x} "
+                        "rsp={:#x}\nr8={:#x} r9={:#x} r10={:#x} r11={:#x} r12={:#x} r13={:#x} "
+                        "r14={:#x} r15={:#x}\n",
+                        context.Rax, context.Rbx, context.Rcx, context.Rdx, context.Rsi,
+                        context.Rdi, context.Rbp, context.Rsp, context.R8, context.R9, context.R10,
+                        context.R11, context.R12, context.R13, context.R14, context.R15);
+        // The guest's stack is not in the minidump: its eboot words are the call chain.
+        MEMORY_BASIC_INFORMATION region{};
+        if (VirtualQuery(reinterpret_cast<void*>(context.Rsp), &region, sizeof(region)) != 0 &&
+            region.State == MEM_COMMIT && (region.Protect & (PAGE_READWRITE | PAGE_READONLY))) {
+            const u64 end = reinterpret_cast<u64>(region.BaseAddress) + region.RegionSize;
+            const size_t count = static_cast<size_t>(std::min<u64>((end - context.Rsp) / 8, 2048));
+            const std::span words{reinterpret_cast<const u64*>(context.Rsp), count};
+            text +=
+                "stack:" +
+                FormatGameAddresses(words, crash_image_base.load(), crash_image_size.load(), 48) +
+                '\n';
+        }
+    }
 
     const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
                            std::chrono::system_clock::now().time_since_epoch())

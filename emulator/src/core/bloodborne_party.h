@@ -406,6 +406,9 @@ bool IsBossFogEntryFlag(s32 flag);
 // address, the eboot offset when it is inside the game, and the thread's name.
 std::string FormatCrashLine(u32 code, u64 address, u64 image_base, u64 image_size,
                             std::string_view thread);
+// The words of a stack that point into the eboot, as " eboot+0x..." (at most `max` of them).
+std::string FormatGameAddresses(std::span<const u64> words, u64 image_base, u64 image_size,
+                                size_t max);
 // The co-op HP effect a boss start gives the boss (SpEffect 7500/7501/7502, max HP x1.5/x2/x2.5)
 // sometimes misses a boss on one side (hidden by its entrance there), so that side keeps the
 // unscaled max HP. Given the max HP seen before any co-op effect, the new (max HP, HP) for a
