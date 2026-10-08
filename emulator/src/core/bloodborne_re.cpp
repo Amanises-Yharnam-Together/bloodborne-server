@@ -2980,6 +2980,29 @@ void KeepBossHpInStep() {
 // enemy on the host, on a guest beside it and on a guest alone.
 void WatchEnemyHp(u64 hp_address, u32 handle);
 
+// The character's entry in WorldChrMan +0xA40's per-block table ([+0x10 + block * 8], words at
+// [+0x18], block = [+0x90] bits 11..15, slot = bits 0..10): the controller update 0x018E6540
+// gives the character its AI controller (+0x3B8) when the word is >= 0 and the network one
+// (+0x3C0) when it is negative.
+u64 OwnershipWordAddress(u64 world, u64 character) {
+    const s32 index = ReadValue<s32>(character, 0x90);
+    const u64 table = ReadValue<u64>(world, 0xA40);
+    if (index < 0 || table < 0x10000) {
+        return 0;
+    }
+    const s32 block = (index >> 11) & 0x1F;
+    const s32 slot = index & 0x7FF;
+    if (block >= ReadValue<s32>(table, 0x08)) {
+        return 0;
+    }
+    const u64 entry = ReadValue<u64>(table, 0x10 + 8 * block);
+    if (entry < 0x10000 || slot >= ReadValue<s32>(entry, 0x10)) {
+        return 0;
+    }
+    const u64 words = ReadValue<u64>(entry, 0x18);
+    return words >= 0x10000 ? words + 2 * slot : 0;
+}
+
 // The eboot offset of the vtable of the object at [character + offset] (0 when none): tells a
 // character's AI-driven parts from network-driven ones.
 u64 VtableOffsetAt(u64 character, u64 offset) {
@@ -3055,12 +3078,13 @@ void LogNearbyEnemyControl() {
         }
         text += fmt::format(
             " [{:#x} type {} b28 {} b29 {} b359 {:#x} auth {:#x} flags {:#x} vt58 {:#x} "
-            "vt60 {:#x} vt68 {:#x} ctrl{}]",
+            "vt60 {:#x} vt68 {:#x} own {:#x} ctrl{}]",
             ReadValue<u32>(character, 0x08), ReadValue<s32>(character, 0x78),
             ReadValue<u8>(character, 0x28), ReadValue<u8>(character, 0x29),
             ReadValue<u8>(character, 0x359), ReadValue<s32>(character, 0x1EC),
             ReadValue<u64>(character, 0x1E0), VtableOffsetAt(character, 0x58),
-            VtableOffsetAt(character, 0x60), VtableOffsetAt(character, 0x68), words);
+            VtableOffsetAt(character, 0x60), VtableOffsetAt(character, 0x68),
+            ReadValue<u16>(OwnershipWordAddress(world, character), 0), words);
     }
     if (text != last) {
         last = text;
@@ -4872,15 +4896,16 @@ void SetPartyWorldChanges(bool in_session) {
 }
 
 // A guest alone on its map (see NoOneElseOnMap): the host has none of this map's enemies, so
-// they stood still and took no deaths. Experiment: the guest claims the network update authority
-// the boss events give the host (RequestForceUpdateNetwork 0x01335070: [+0x1EC] = 0xFFF) for the
-// characters around it, and hands it back (0) once another member is on its map.
-std::unordered_set<u64> lone_guest_authority;
+// they stood still and took no deaths. The controller update 0x018E6540 runs a character on its
+// network controller while its ownership word (OwnershipWordAddress) is negative, which it is
+// on a client. Experiment: a guest alone sets the word of the characters around it to 0, so they
+// get their AI controller, and puts the old words back once another member is on its map.
+std::unordered_map<u64, u16> lone_guest_ownership; // word address -> original value
 
 void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     static u32 claimed_map = 0;
     if (map != claimed_map) {
-        lone_guest_authority.clear(); // the old map's characters are gone
+        lone_guest_ownership.clear(); // the old map's characters are gone
         claimed_map = map;
     }
     bool alone = false;
@@ -4891,17 +4916,16 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     }
     if (!alone) {
         size_t handed_back = 0;
-        for (const u64 character : lone_guest_authority) {
-            if (HasMemoryAccess(character, 0x1F0, MemoryProt::CpuWrite) &&
-                ReadValue<s32>(character, 0x1EC) == 0xFFF) {
-                WriteValue(character, 0x1EC, s32{0});
+        for (const auto& [word, original] : lone_guest_ownership) {
+            if (HasMemoryAccess(word, 2, MemoryProt::CpuWrite) && ReadValue<u16>(word, 0) == 0) {
+                WriteValue(word, 0, original);
                 ++handed_back;
             }
         }
-        if (!lone_guest_authority.empty()) {
+        if (!lone_guest_ownership.empty()) {
             LOG_INFO(Debug, "Bloodborne party: guest no longer alone; handed back {} enemies",
                      handed_back);
-            lone_guest_authority.clear();
+            lone_guest_ownership.clear();
         }
         return;
     }
@@ -4912,17 +4936,24 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     }
     size_t claimed = 0;
     ForEachWorldCharacter(world, [&](u64 character) {
-        if (character == player || CharacterHp(character) <= 0 ||
-            !HasMemoryAccess(character, 0x1F0, MemoryProt::CpuWrite) ||
-            ReadValue<s32>(character, 0x1EC) != 0) {
+        if (character == player || CharacterHp(character) <= 0) {
             return;
         }
-        WriteValue(character, 0x1EC, s32{0xFFF});
-        lone_guest_authority.insert(character);
+        const u64 word = OwnershipWordAddress(world, character);
+        if (word == 0 || !HasMemoryAccess(word, 2, MemoryProt::CpuWrite)) {
+            return;
+        }
+        const u16 value = ReadValue<u16>(word, 0);
+        if (static_cast<s16>(value) >= 0) {
+            return;
+        }
+        lone_guest_ownership.try_emplace(word, value);
+        WriteValue(word, 0, u16{0});
         ++claimed;
     });
-    if (claimed > 0) {
-        LOG_INFO(Debug, "Bloodborne party: guest alone on map {:#x} claimed {} enemies", map,
+    static u32 logged = 0;
+    if (claimed > 0 && ++logged <= 30) {
+        LOG_INFO(Debug, "Bloodborne party: guest alone on map {:#x} took over {} enemies", map,
                  claimed);
     }
 }
