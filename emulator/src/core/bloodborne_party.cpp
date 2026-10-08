@@ -595,6 +595,71 @@ std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body) {
     return answer;
 }
 
+s32 MapFlagBase(u32 packed_map) {
+    const s32 area = static_cast<s32>((packed_map >> 24) & 0xFF);
+    const s32 block = static_cast<s32>((packed_map >> 16) & 0xFF);
+    return (1000 + area * 10 + block) * MapFlagCount;
+}
+
+bool TakesHostMapFlag(s32 flag) {
+    const s32 prefix = flag / MapFlagCount;
+    const bool map_flag = prefix >= 1200 && prefix < 1400;
+    const bool boss_fog = IsBossFogEntryFlag(flag) || IsBossFogEntryFlag(flag - 1);
+    return map_flag && !boss_fog && !IsMapPickupFlag(flag) && !KeepsLocalFlag(true, flag);
+}
+
+std::string EncodeMapStateUpdate(std::string_view member, u32 map, std::span<const u8> bits) {
+    std::string body = std::string{member} + ' ' + std::to_string(map);
+    if (!bits.empty()) {
+        body += ' ';
+        for (const u8 byte : bits) {
+            body += fmt::format("{:02x}", byte);
+        }
+    }
+    return body;
+}
+
+std::optional<std::vector<MemberMapState>> ParseMapStateBoard(std::string_view body) {
+    std::vector<MemberMapState> states;
+    const auto nibble = [](char c) -> s32 {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        return -1;
+    };
+    while (!body.empty()) {
+        const auto end = body.find('\n');
+        const std::string_view line = body.substr(0, end);
+        body = end == std::string_view::npos ? std::string_view{} : body.substr(end + 1);
+        if (line.empty()) {
+            continue;
+        }
+        const auto space = line.find(' ');
+        if (space == std::string_view::npos) {
+            return std::nullopt;
+        }
+        MemberMapState state;
+        const auto [map_end, error] = std::from_chars(line.data(), line.data() + space, state.map);
+        const std::string_view hex = line.substr(space + 1);
+        if (error != std::errc{} || map_end != line.data() + space || hex.size() % 2 != 0) {
+            return std::nullopt;
+        }
+        for (size_t index = 0; index < hex.size(); index += 2) {
+            const s32 high = nibble(hex[index]);
+            const s32 low = nibble(hex[index + 1]);
+            if (high < 0 || low < 0) {
+                return std::nullopt;
+            }
+            state.bits.push_back(static_cast<u8>(high * 16 + low));
+        }
+        states.push_back(std::move(state));
+    }
+    return states;
+}
+
 std::vector<std::pair<s32, bool>> VisitKills::Observe(
     u64 visit, std::span<const std::pair<u32, s32>> characters) {
     std::vector<std::pair<s32, bool>> changes;

@@ -2049,6 +2049,11 @@ std::vector<s32> echoes_to_grant;
 std::mutex kill_board_mutex;
 std::vector<std::pair<s32, bool>> kills_to_post;
 std::unordered_set<u32> others_kills;
+// World state per map (see MapFlagBase): the host's own snapshot waiting for the board thread,
+// and the latest one read back (on a guest).
+std::mutex map_state_mutex;
+MemberMapState local_map_state;
+std::optional<MemberMapState> host_map_state;
 std::vector<std::pair<s32, bool>> flags_to_set;
 
 void PostWorldChanges(const FlagChanges& changes) {
@@ -2464,6 +2469,21 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
         // Kill echoes go both ways in and out of a session: a member on its own trip (a guest
         // in the Hunter's Dream) still gets the party's kills made apart.
         if (std::chrono::steady_clock::now() >= next_echo_post) {
+            MemberMapState mine;
+            {
+                std::scoped_lock lock{map_state_mutex};
+                mine = local_map_state;
+            }
+            const auto map_state_response =
+                client.Post("/bloodborne/party/mapstate", headers,
+                            EncodeMapStateUpdate(member, mine.map, mine.bits), "text/plain");
+            if (const auto states = map_state_response && map_state_response->status == 200
+                                        ? ParseMapStateBoard(map_state_response->body)
+                                        : std::nullopt;
+                states && !states->empty()) {
+                std::scoped_lock lock{map_state_mutex};
+                host_map_state = states->front();
+            }
             std::vector<std::pair<s32, bool>> kills_out;
             {
                 std::scoped_lock lock{kill_board_mutex};
@@ -4275,6 +4295,8 @@ void ConfirmGuestPickupsInOwnWorld() {
 }
 
 // From the map item creation hook: before a load creates the guest's map items.
+size_t ApplyHostMapState();
+
 void SetGuestPickupsBeforeMapItems() {
     static std::chrono::steady_clock::time_point last{};
     static OncePerTrip trip_load;
@@ -4285,6 +4307,8 @@ void SetGuestPickupsBeforeMapItems() {
     // A trip loads the guest's own world: its world changes go in once per trip, before the
     // throttle below (which skipped a Hunter's Dream load right after a pass on the old map).
     if (trip_load.Take(PartyTripActive())) {
+        LOG_INFO(Debug, "Bloodborne party: took {} flags of the host's state for map {:#x}",
+                 ApplyHostMapState(), GetCurrentPackedMap());
         LOG_INFO(Debug,
                  "Bloodborne party: set {} of the session's world changes as a trip loads the "
                  "guest's own world",
@@ -5134,6 +5158,65 @@ void KeepEnemyDeathsInStep(bool sharing) {
     }
 }
 
+// The host's map state for the board (see MapFlagBase), every 3 s while sharing.
+void SnapshotHostMapState(bool sharing) {
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (!sharing || IsPartyGuestRole() || now - last < std::chrono::seconds{3}) {
+        return;
+    }
+    last = now;
+    const u32 map = GetCurrentPackedMap();
+    if (!IsUsablePackedMap(map)) {
+        return;
+    }
+    const FlagStore store = ReadFlagStore();
+    if (store.flags_per_block == 0) {
+        return;
+    }
+    const s32 base = MapFlagBase(map);
+    std::vector<u8> bits((MapFlagCount + 7) / 8);
+    for (s32 index = 0; index < MapFlagCount; ++index) {
+        const FlagBit bit = FlagBitLocation(base + index, store.flags_per_block);
+        for (const FlagBlock& block : store.blocks) {
+            if (block.id == bit.block) {
+                if (bit.byte < block.bytes.size() && (block.bytes[bit.byte] & bit.mask) != 0) {
+                    bits[index / 8] |= static_cast<u8>(0x80 >> (index % 8));
+                }
+                break;
+            }
+        }
+    }
+    std::scoped_lock lock{map_state_mutex};
+    local_map_state = MemberMapState{map, std::move(bits)};
+}
+
+// On a guest loading the host's map: its flags in that map's range become the host's
+// (TakesHostMapFlag), before the map's events start.
+size_t ApplyHostMapState() {
+    std::optional<MemberMapState> state;
+    {
+        std::scoped_lock lock{map_state_mutex};
+        state = host_map_state;
+    }
+    const u32 map = GetCurrentPackedMap();
+    if (!state || state->map != map || state->bits.size() * 8 < MapFlagCount) {
+        return 0;
+    }
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    const s32 base = MapFlagBase(map);
+    size_t changed = 0;
+    for (s32 index = 0; index < MapFlagCount; ++index) {
+        const s32 flag = base + index;
+        const bool host_on = (state->bits[index / 8] & (0x80 >> (index % 8))) != 0;
+        if (TakesHostMapFlag(flag) && EventFlagOn(flag) != host_on) {
+            reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, host_on);
+            ++changed;
+        }
+    }
+    return changed;
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
@@ -5146,6 +5229,7 @@ void TickPlayersOnThisMap() {
     KeepGuestProgress(in_session);
     LogFlagChangesInSession(sharing);
     KeepEnemyDeathsInStep(sharing);
+    SnapshotHostMapState(sharing);
     LogWatchedWrites();
     GiveDeferredBossItems();
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());

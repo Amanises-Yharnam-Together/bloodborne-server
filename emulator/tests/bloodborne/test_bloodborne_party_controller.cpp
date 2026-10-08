@@ -1083,3 +1083,29 @@ TEST(BloodborneSharedKills, AMembersKillsLastForItsVisit) {
     EXPECT_EQ(fresh.Observe(3, one_dead), Changes{});
     EXPECT_EQ(fresh.Observe(3, one_dead), Changes{});
 }
+
+// A guest's trip loads the host's map with the guest's own save: a dog killed for good on the
+// host's save stood alive for it. The host posts its map's flags (10000 from the map's base:
+// 1241xxxx for m24_01) and the guest loading that map takes them, except its own pickups, the
+// messengers' gifts and a boss fog's entered flags.
+TEST(BloodborneSharedWorld, AGuestOnTheHostsMapTakesTheHostsState) {
+    EXPECT_EQ(MapFlagBase(0x18010000), 12410000) << "Central Yharnam";
+    EXPECT_EQ(MapFlagBase(0x18000000), 12400000) << "Cathedral Ward";
+    EXPECT_EQ(MapFlagBase(0x15000000), 12100000) << "Hunter's Dream";
+    EXPECT_TRUE(TakesHostMapFlag(12410102)) << "a shortcut";
+    EXPECT_TRUE(TakesHostMapFlag(12411700)) << "a boss killed";
+    EXPECT_FALSE(TakesHostMapFlag(52410360)) << "outside the map's range";
+    EXPECT_FALSE(TakesHostMapFlag(12101020)) << "a messenger gift";
+    EXPECT_FALSE(TakesHostMapFlag(12414700)) << "a boss fog entered";
+    EXPECT_FALSE(TakesHostMapFlag(12414701));
+    const std::vector<u8> bits{0x00, 0xFF, 0x10};
+    EXPECT_EQ(EncodeMapStateUpdate("host", 0x18010000, bits), "host 402718720 00ff10");
+    EXPECT_EQ(EncodeMapStateUpdate("guest", 0, {}), "guest 0");
+    const auto board = ParseMapStateBoard("402718720 00ff10\n");
+    ASSERT_TRUE(board.has_value());
+    ASSERT_EQ(board->size(), 1u);
+    EXPECT_EQ((*board)[0].map, 0x18010000u);
+    EXPECT_EQ((*board)[0].bits, bits);
+    EXPECT_EQ(ParseMapStateBoard(""), (std::optional<std::vector<MemberMapState>>{{}}));
+    EXPECT_EQ(ParseMapStateBoard("1 0g\n"), std::nullopt);
+}

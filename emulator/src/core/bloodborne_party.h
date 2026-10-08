@@ -452,6 +452,20 @@ bool SharesWithParty(bool party_configured, bool player_loaded);
 // with character handles): the kills this member made during its current visit to a map, posted
 // as (handle, true), and taken back as (handle, false) when the visit ends. A visit is one load
 // of a map (the map and the player's character).
+// World state per map (POST /bloodborne/party/mapstate): the host posts the bits of its map's
+// 10000 flags from MapFlagBase (MSB first, as the flag store keeps them) as "<member> <map>
+// <hex>", and a guest loading that map sets the TakesHostMapFlag ones to the host's.
+s32 MapFlagBase(u32 packed_map);
+bool TakesHostMapFlag(s32 flag);
+constexpr s32 MapFlagCount = 10000;
+struct MemberMapState {
+    u32 map = 0;
+    std::vector<u8> bits;
+    bool operator==(const MemberMapState&) const = default;
+};
+std::string EncodeMapStateUpdate(std::string_view member, u32 map, std::span<const u8> bits);
+std::optional<std::vector<MemberMapState>> ParseMapStateBoard(std::string_view body);
+
 class VisitKills {
 public:
     std::vector<std::pair<s32, bool>> Observe(u64 visit,
