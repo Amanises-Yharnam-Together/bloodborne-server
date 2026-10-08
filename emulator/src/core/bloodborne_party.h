@@ -434,6 +434,19 @@ std::string EncodeFlagUpdate(std::string_view member, s64 since,
                              std::span<const std::pair<s32, bool>> changes);
 std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body);
 
+// Kill echoes shared across maps (POST /bloodborne/party/echoes): the echoes a member got from a
+// kill (AddSouls called from the enemy kill 0x018FC99B or the boss kill 0x01385263) while no
+// other member was on its map go to the board ("<member> <since> [<echoes>...]"), and the other
+// members add the ones after <since> (the answer: "<latest>", then one "<echoes>" line each).
+struct EchoBoardAnswer {
+    s64 latest = 0;
+    std::vector<s32> echoes;
+    bool operator==(const EchoBoardAnswer&) const = default;
+};
+bool SharesKillEchoes(u64 caller_offset, bool alone_on_map);
+std::string EncodeEchoUpdate(std::string_view member, s64 since, std::span<const s32> echoes);
+std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body);
+
 // A guest that made its own trip is apart from the host until it joins a session again (the
 // session it travelled out of still counts for a moment after the trip starts).
 class GuestApart {

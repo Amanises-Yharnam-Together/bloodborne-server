@@ -595,6 +595,53 @@ std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body) {
     return answer;
 }
 
+bool SharesKillEchoes(u64 caller_offset, bool alone_on_map) {
+    constexpr u64 EnemyKillReward = 0x018FC99B;
+    constexpr u64 BossKillReward = 0x01385263;
+    return alone_on_map && (caller_offset == EnemyKillReward || caller_offset == BossKillReward);
+}
+
+std::string EncodeEchoUpdate(std::string_view member, s64 since, std::span<const s32> echoes) {
+    std::string body = std::string{member} + ' ' + std::to_string(since);
+    for (const s32 amount : echoes) {
+        body += ' ' + std::to_string(amount);
+    }
+    return body;
+}
+
+std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body) {
+    EchoBoardAnswer answer;
+    bool first = true;
+    while (!body.empty()) {
+        const auto end = body.find('\n');
+        const std::string_view line = body.substr(0, end);
+        body = end == std::string_view::npos ? std::string_view{} : body.substr(end + 1);
+        if (line.empty() && !first) {
+            continue;
+        }
+        if (first) {
+            const auto [latest_end, error] =
+                std::from_chars(line.data(), line.data() + line.size(), answer.latest);
+            if (error != std::errc{} || latest_end != line.data() + line.size()) {
+                return std::nullopt;
+            }
+            first = false;
+            continue;
+        }
+        s32 amount = 0;
+        const auto [amount_end, error] =
+            std::from_chars(line.data(), line.data() + line.size(), amount);
+        if (error != std::errc{} || amount_end != line.data() + line.size() || amount <= 0) {
+            return std::nullopt;
+        }
+        answer.echoes.push_back(amount);
+    }
+    if (first) {
+        return std::nullopt;
+    }
+    return answer;
+}
+
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before,
                                            std::span<const s32> after) {
     std::vector<s32> missing;

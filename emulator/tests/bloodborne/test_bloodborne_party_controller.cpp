@@ -1036,3 +1036,20 @@ TEST(BloodborneCrashes, TheReportListsTheGameAddressesOnTheStack) {
               " eboot+0x18e6d48 eboot+0x1a2bfa8");
     EXPECT_EQ(FormatGameAddresses(stack, 0x800000000, 0x50DC000, 1), " eboot+0x18e6d48");
 }
+
+// Side by side the game shares kill echoes itself; apart (a guest alone in the Cathedral Ward,
+// the host in Central Yharnam) only the killer got them. A kill made with no other member on the
+// map posts its echoes to the party's echo board, and the others add them.
+TEST(BloodborneSharedEchoes, KillsMadeApartRewardTheWholeParty) {
+    EXPECT_TRUE(SharesKillEchoes(0x018FC99B, true)) << "an enemy kill";
+    EXPECT_TRUE(SharesKillEchoes(0x01385263, true)) << "a boss kill";
+    EXPECT_FALSE(SharesKillEchoes(0x018FC99B, false)) << "side by side the game shares them";
+    EXPECT_FALSE(SharesKillEchoes(0x0132E4B5, true)) << "not a kill (an item, a bloodstain)";
+    EXPECT_EQ(EncodeEchoUpdate("guest", 3, std::vector<s32>{120, 4000}), "guest 3 120 4000");
+    EXPECT_EQ(EncodeEchoUpdate("host", 0, std::vector<s32>{}), "host 0");
+    EXPECT_EQ(ParseEchoBoard("5\n120\n4000\n"),
+              (std::optional<EchoBoardAnswer>{EchoBoardAnswer{5, {120, 4000}}}));
+    EXPECT_EQ(ParseEchoBoard("2\n"), (std::optional<EchoBoardAnswer>{EchoBoardAnswer{2, {}}}));
+    EXPECT_EQ(ParseEchoBoard("x\n"), std::nullopt);
+    EXPECT_EQ(ParseEchoBoard("2\n-5\n"), std::nullopt);
+}

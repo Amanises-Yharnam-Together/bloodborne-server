@@ -2039,6 +2039,11 @@ void UnlockPartyTrophies(bool in_session) {
 std::atomic<bool> party_host_role{};
 std::mutex flag_board_mutex;
 std::vector<std::pair<s32, bool>> flags_to_post;
+// Kill echoes shared across maps (see SharesKillEchoes): the local kills made apart wait here
+// for the board thread, and the other members' wait for the game thread to add them.
+std::mutex echo_board_mutex;
+std::vector<s32> echoes_to_post;
+std::vector<s32> echoes_to_grant;
 std::vector<std::pair<s32, bool>> flags_to_set;
 
 void PostWorldChanges(const FlagChanges& changes) {
@@ -2431,6 +2436,7 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
     // The first post asks for nothing older than now: the board's history belongs to whatever
     // characters played before (a new character must not get it).
     s64 flag_board_since = std::numeric_limits<s64>::max();
+    s64 echo_board_since = std::numeric_limits<s64>::max();
     while (!stop.stop_requested()) {
         {
             std::unique_lock lock{wait_mutex};
@@ -2467,6 +2473,25 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
             {
                 std::scoped_lock lock{flag_board_mutex};
                 outgoing.swap(flags_to_post);
+            }
+            std::vector<s32> echoes_out;
+            {
+                std::scoped_lock lock{echo_board_mutex};
+                echoes_out.swap(echoes_to_post);
+            }
+            const auto echo_response =
+                client.Post("/bloodborne/party/echoes", headers,
+                            EncodeEchoUpdate(member, echo_board_since, echoes_out), "text/plain");
+            if (const auto echoes = echo_response && echo_response->status == 200
+                                        ? ParseEchoBoard(echo_response->body)
+                                        : std::nullopt) {
+                echo_board_since = echoes->latest;
+                std::scoped_lock lock{echo_board_mutex};
+                echoes_to_grant.insert(echoes_to_grant.end(), echoes->echoes.begin(),
+                                       echoes->echoes.end());
+            } else {
+                std::scoped_lock lock{echo_board_mutex};
+                echoes_to_post.insert(echoes_to_post.begin(), echoes_out.begin(), echoes_out.end());
             }
             const auto flag_response =
                 client.Post("/bloodborne/party/flags", headers,
@@ -3803,11 +3828,18 @@ constexpr u64 AddSoulsOffset = 0x018FC600;
 constexpr std::array<u8, 11> AddSoulsPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x56,
                                               0x53, 0x48, 0x83, 0xEC, 0x10};
 
+bool LocalPlayerAloneInSession();
+
 void PS4_SYSV_ABI NoteAddSouls(u64, const GuestRegisterSnapshot* registers) {
     const u64 caller = ReadValue<u64>(registers->rsp, 0);
-    LOG_INFO(Debug, "Bloodborne echoes: +{} (rates {}) from {:#x}",
-             static_cast<s32>(registers->rsi), registers->rcx & 0xFF,
+    const s32 amount = static_cast<s32>(registers->rsi);
+    LOG_INFO(Debug, "Bloodborne echoes: +{} (rates {}) from {:#x}", amount, registers->rcx & 0xFF,
              caller >= image_base ? caller - image_base : caller);
+    if (amount > 0 && caller >= image_base &&
+        SharesKillEchoes(caller - image_base, LocalPlayerAloneInSession())) {
+        std::scoped_lock lock{echo_board_mutex};
+        echoes_to_post.push_back(amount);
+    }
 }
 
 void GiveGuestsFullEchoes(u64 base, u64 image_size) {
@@ -4902,18 +4934,46 @@ void SetPartyWorldChanges(bool in_session) {
 // get their AI controller, and puts the old words back once another member is on its map.
 std::unordered_map<u64, u16> lone_guest_ownership; // word address -> original value
 
+// In a party session with no other member on this map (the party's map board, fresh).
+bool LocalPlayerAloneInSession() {
+    const u32 map = GetCurrentPackedMap();
+    if (!InPartySession() || !IsUsablePackedMap(map)) {
+        return false;
+    }
+    std::scoped_lock lock{map_board_mutex};
+    return std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{3} &&
+           NoOneElseOnMap(map_board, map_board_member, map);
+}
+
+// Adds the echoes the other members got from kills made apart (see SharesKillEchoes) through
+// the player's AddSouls (vtable +0x3D0, the call the kill reward makes, with its rates).
+void GrantPartyEchoes() {
+    const u64 player = GetLocalPlayer();
+    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
+    const u64 add_souls = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x3D0) : 0;
+    if (add_souls != image_base + AddSoulsOffset) {
+        return;
+    }
+    std::vector<s32> pending;
+    {
+        std::scoped_lock lock{echo_board_mutex};
+        pending.swap(echoes_to_grant);
+    }
+    using AddSouls = void PS4_SYSV_ABI (*)(u64 player, s32 amount, s32, bool rates);
+    for (const s32 amount : pending) {
+        reinterpret_cast<AddSouls>(add_souls)(player, amount, 0, true);
+        LOG_INFO(Debug, "Bloodborne party: added {} echoes from a kill another member made apart",
+                 amount);
+    }
+}
+
 void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     static u32 claimed_map = 0;
     if (map != claimed_map) {
         lone_guest_ownership.clear(); // the old map's characters are gone
         claimed_map = map;
     }
-    bool alone = false;
-    if (in_session && IsPartyGuestRole()) {
-        std::scoped_lock lock{map_board_mutex};
-        alone = std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{3} &&
-                NoOneElseOnMap(map_board, map_board_member, map);
-    }
+    const bool alone = in_session && IsPartyGuestRole() && LocalPlayerAloneInSession();
     if (!alone) {
         size_t handed_back = 0;
         for (const auto& [word, original] : lone_guest_ownership) {
@@ -4980,6 +5040,7 @@ void TickPlayersOnThisMap() {
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
     guest_apart.Tick(in_session);
     ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
+    GrantPartyEchoes();
     if (!in_session) {
         recreate_players_pending = false;
         saved_join_tasks.clear();
