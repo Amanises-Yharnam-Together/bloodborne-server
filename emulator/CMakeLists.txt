@@ -944,6 +944,8 @@ set(CORE src/core/aerolib/stubs.cpp
          src/core/user_manager.h
          src/core/user_settings.cpp
          src/core/user_settings.h
+         src/core/bloodborne_crash_dump.cpp
+         src/core/bloodborne_crash_dump.h
 )
 
 if (ARCHITECTURE STREQUAL "x86_64")
@@ -1331,7 +1333,7 @@ elseif (${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
 endif()
 
 if (WIN32)
-    target_link_libraries(shadps4 PRIVATE mincore wepoll wbemuuid)
+    target_link_libraries(shadps4 PRIVATE mincore wepoll wbemuuid dbghelp)
 
     if (MSVC)
         # MSVC likes putting opinions on what people can use, disable:

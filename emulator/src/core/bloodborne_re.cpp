@@ -4880,6 +4880,18 @@ void FinishGuestEnemiesWhenAlone(bool in_session, u32 map) {
         if (physics < 0x10000 || dx * dx + dy * dy + dz * dz > 30.0f * 30.0f) {
             return;
         }
+        // Byte +0x28 on puts an enemy to sleep (WorldChrMan's activation pass 0x019192A0 sets its
+        // wake-up target [+0x18]+0x14 to 0): a guest's enemies got it seconds after arriving
+        // alone and froze. Experiment: a guest alone keeps it off for the enemies around it.
+        if (alone && ReadValue<u8>(character, 0x28) != 0 &&
+            HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
+            WriteValue(character, 0x28, u8{0});
+            static u32 woken = 0;
+            if (++woken <= 20) {
+                LOG_INFO(Debug, "Bloodborne party: guest alone on map {:#x} woke enemy {:#x}", map,
+                         ReadValue<u32>(character, 0x08));
+            }
+        }
         const s32 hp = CharacterHp(character);
         auto [it, added] = guest_enemy_hp.try_emplace(character, hp);
         const bool dead = (ReadValue<u8>(character, 0x1E3) & 1) != 0;

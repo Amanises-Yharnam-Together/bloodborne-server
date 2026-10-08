@@ -9,6 +9,7 @@
 #include "common/sha1.h"
 #include "common/string_util.h"
 #include "core/aerolib/aerolib.h"
+#include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_re.h"
 #include "core/cpu_patches.h"
 #include "core/libraries/error_codes.h"
@@ -345,6 +346,7 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             MemoryPatcher::g_eboot_image_size = base_size;
             MemoryPatcher::OnGameLoaded();
 #ifdef ARCH_X86_64
+            Bloodborne::InstallCrashCatcher(base_virtual_addr, base_size);
             Bloodborne::InstallSeamlessCoopPatches();
             Bloodborne::InstallReverseEngineeringTrace();
 #endif

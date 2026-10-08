@@ -1013,3 +1013,13 @@ TEST(BloodborneHostDeath, TheHostKeepsItsGuestsCharactersWhenItDies) {
     EXPECT_EQ(DecodeNearJumpTarget(patch.offset, std::span{patch.patched}.first(5)), 0x018C4DBAu);
     EXPECT_EQ(patch.patched.back(), 0x90);
 }
+
+// Random crashes left logs that just stop (the logger never flushed). The crash catcher writes
+// one line itself: the exception, where it happened and, inside the game, the eboot offset that
+// the RE notes use.
+TEST(BloodborneCrashes, TheCrashLineNamesTheGameOffset) {
+    EXPECT_EQ(FormatCrashLine(0xC0000005, 0x8018BF9A0, 0x800000000, 0x50DC000, "Game:Main"),
+              "crash: exception 0xc0000005 at 0x8018bf9a0 (eboot+0x18bf9a0) thread Game:Main");
+    EXPECT_EQ(FormatCrashLine(0xC0000005, 0x7FF612345678, 0x800000000, 0x50DC000, ""),
+              "crash: exception 0xc0000005 at 0x7ff612345678 (emulator) thread ?");
+}

@@ -5,6 +5,7 @@
 #include "common/assert.h"
 #include "common/decoder.h"
 #include "common/signal_context.h"
+#include "core/bloodborne_crash_dump.h"
 #include "core/cpu_patches.h" // Windows static guest red-zone protection
 #include "core/libraries/kernel/threads/exception.h"
 #include "core/signals.h"
@@ -84,6 +85,7 @@ static LONG WINAPI SignalHandler(EXCEPTION_POINTERS* pExp) noexcept {
                                       : code != EXCEPTION_BREAKPOINT;
     if (report_unhandled) { // Windows static guest red-zone protection
         LOG_CRITICAL(Debug, "Unhandled Exception code {:#x} at {}", code, address);
+        Bloodborne::WriteCrashReport(pExp);
         Common::Singleton<Core::Emulator>::Instance()->Shutdown();
     }
 

@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cstring>
 
+#include <fmt/format.h>
+
 #include "core/bloodborne_party.h"
 
 namespace Core::Bloodborne {
@@ -393,6 +395,14 @@ std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp
 
 bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip) {
     return !in_session || on_trip;
+}
+
+std::string FormatCrashLine(u32 code, u64 address, u64 image_base, u64 image_size,
+                            std::string_view thread) {
+    const bool in_game = address >= image_base && address - image_base < image_size;
+    return fmt::format("crash: exception {:#x} at {:#x} ({}) thread {}", code, address,
+                       in_game ? fmt::format("eboot+{:#x}", address - image_base) : "emulator",
+                       thread.empty() ? "?" : thread);
 }
 
 bool IsBossFogEntryFlag(s32 flag) {

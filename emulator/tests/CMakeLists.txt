@@ -346,7 +346,7 @@ add_executable(shadps4_bloodborne_test
 )
 target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(shadps4_bloodborne_test PRIVATE cxx_std_23)
-target_link_libraries(shadps4_bloodborne_test PRIVATE GTest::gtest_main)
+target_link_libraries(shadps4_bloodborne_test PRIVATE GTest::gtest_main fmt::fmt)
 gtest_discover_tests(shadps4_bloodborne_test
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     DISCOVERY_TIMEOUT 60
