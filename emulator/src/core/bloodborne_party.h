@@ -138,6 +138,10 @@ const std::vector<CodePatch>& BossClearKeepSessionPatches();
 // 12400160). A party joins anywhere: the flag check (0x01399BF0) reads as off.
 constexpr u64 EventFlagIsSetOffset = 0x01399BF0;
 const std::vector<CodePatch>& JoinAnywherePatches();
+// A world load that is not a trip (0x0193C5xx: a cutscene that changes the time of day and
+// warps the player, e.g. Gascoigne's 24000020) calls StopRequest (returning to 0x0193C65C) and
+// LeaveSession for a member of a session. In a party it is a trip like a lamp's.
+bool IsWorldReloadStopRequest(u64 caller_offset);
 
 // Target of a `jmp rel32` at `offset`, or 0 if the bytes are not one.
 u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes);

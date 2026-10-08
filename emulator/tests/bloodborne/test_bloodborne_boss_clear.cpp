@@ -91,4 +91,13 @@ TEST(BloodborneJoinAnywhere, APartyJoinsInAnAreaItsOwnWorldHasNotOpened) {
     EXPECT_EQ(patches[0].patched, (std::vector<u8>{0x31, 0xC0, 0x0F, 0x1F, 0x00}));
 }
 
+// Friend run 2026-10-09: after Gascoigne the Cathedral Ward door's cutscene (2002:6, evening)
+// reloads the world. That load called StopRequest from 0x0193C657 and LeaveSession: the host left
+// the room and went to the title, the guest lost the session. In a party it starts a trip.
+TEST(BloodborneTimeOfDay, ATimeOfDayReloadIsATrip) {
+    EXPECT_TRUE(IsWorldReloadStopRequest(0x0193C65C));
+    EXPECT_FALSE(IsWorldReloadStopRequest(0x013CDEFB)) << "a lamp trip's own call";
+    EXPECT_FALSE(IsWorldReloadStopRequest(0x019471B6)) << "the world teardown";
+}
+
 } // namespace

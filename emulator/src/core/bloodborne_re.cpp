@@ -5524,6 +5524,13 @@ bool PS4_SYSV_ABI LogMemberLeave(u64, const GuestRegisterSnapshot* registers) {
 // CSMultiPlayMan StopRequest (0x01ED07A0): a phantom's stage transition calls it (0x013CDEF6)
 // before LeaveSession, which takes the guest out of the room. Skipped during a party trip.
 bool PS4_SYSV_ABI KeepMatchingDuringTrip(u64, const GuestRegisterSnapshot* registers) {
+    const u64 return_address = ReadValue<u64>(registers->rsp, 0);
+    if (!PartyTripActive() && return_address >= image_base &&
+        IsWorldReloadStopRequest(return_address - image_base) && InPartySession()) {
+        // A time-of-day cutscene's reload: a trip, so the session and its LeaveSession are kept.
+        RecordPartyTrip(0, registers);
+        LOG_INFO(Debug, "Bloodborne party: a world reload (time of day) is a trip");
+    }
     if (!PartyTripActive()) {
         if (party_controller) {
             LogGameCallChainAt("CSMultiPlayMan StopRequest", registers->rsp);

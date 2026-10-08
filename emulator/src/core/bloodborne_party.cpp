@@ -121,6 +121,11 @@ const std::vector<CodePatch>& BossClearKeepSessionPatches() {
     return patches;
 }
 
+bool IsWorldReloadStopRequest(u64 caller_offset) {
+    constexpr u64 WorldLoadStopRequestReturn = 0x0193C65C;
+    return caller_offset == WorldLoadStopRequestReturn;
+}
+
 const std::vector<CodePatch>& JoinAnywherePatches() {
     static const std::vector<CodePatch> patches{
         // `call EventFlagIsSet` -> `xor eax, eax` + a 3-byte nop; the `xor al, 1` after it
