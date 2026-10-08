@@ -5277,6 +5277,16 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     const u32 map = GetCurrentPackedMap();
     const auto at = LocalPlayerPosition();
     const auto now = std::chrono::steady_clock::now();
+    // A session that ended under the guest (a kick, a lost connection) sends it home: that load
+    // goes back to the last point too, not to its save's position (Yosefka's clinic).
+    static bool was_in_session = false;
+    if (in_session) {
+        was_in_session = true;
+    } else if (loading && was_in_session && !PartyTripActive()) {
+        was_in_session = false;
+        phase = Phase::WaitForLoad;
+        LOG_INFO(Debug, "Bloodborne party: guest sent home; it will resume at its last point");
+    }
     const bool ready = !loading && IsUsablePackedMap(map) && at && character_slot.load() >= 0;
     if (!ready) {
         stable_since.reset();
