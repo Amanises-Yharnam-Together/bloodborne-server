@@ -3023,7 +3023,13 @@ void LogNearbyEnemyControl() {
         const u64 modules = ReadValue<u64>(character, 0x3B0);
         const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
         const u64 control = ReadValue<u64>(character, 0x18);
-        if (std::string_view{trace_enemy} == "ctrl") {
+        if (std::string_view{trace_enemy} == "sleep") {
+            // Who puts a lone guest's enemies to sleep (+0x28, the event disable) seconds after it
+            // arrives: armed while it is still off.
+            if (ReadValue<u8>(character, 0x28) == 0) {
+                WatchEnemyHp(character + 0x28, ReadValue<u32>(character, 0x08));
+            }
+        } else if (std::string_view{trace_enemy} == "ctrl") {
             if (control >= 0x10000) {
                 WatchEnemyHp(control + 0x14, ReadValue<u32>(character, 0x08));
             }
@@ -3242,12 +3248,15 @@ bool PartyTripActive() {
 void SaveRemoteJoinTasks();
 std::vector<s32> effects_before_trip; // multiplayer effects to put back after the trip
 
+void ParkEnemyWatch();
+
 bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot*) {
     if (InPartySession()) {
         std::scoped_lock lock{party_trip_mutex};
         party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap(), GetLocalPlayer());
         SaveRemoteJoinTasks();
         effects_before_trip = LocalEffects();
+        ParkEnemyWatch();
         LOG_INFO(Debug, "Bloodborne party trip started map={:#x}", GetCurrentPackedMap());
     }
     return false;
@@ -4426,6 +4435,20 @@ void WatchEnemyHp(u64 hp_address, u32 handle) {
         LOG_INFO(Debug, "Bloodborne enemy HP tracer: watching {:#x} HP at {:#x} (armed={})", handle,
                  hp_address, armed);
     }).detach();
+}
+
+// Before a trip's load frees the watched character: the watch moves to a byte of our own (a
+// write watch on freed, reused memory fired all over the load).
+u8 parked_watch_byte = 0;
+
+void ParkEnemyWatch() {
+    const u64 parked = reinterpret_cast<u64>(&parked_watch_byte);
+    if (std::getenv("SHADPS4_BLOODBORNE_TRACE_ENEMY_HP") == nullptr ||
+        watched_flag_byte.load() == 0 || watched_flag_byte.load() == parked) {
+        return;
+    }
+    watched_flag_byte.store(parked);
+    std::thread([parked] { WatchByteWrites(parked, RecordWatchedWrite); }).detach();
 }
 
 // SHADPS4_BLOODBORNE_TRACE_FLAG, else a lamp's active flag turning on (one watch at a time).
