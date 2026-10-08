@@ -447,6 +447,21 @@ bool SharesKillEchoes(u64 caller_offset, bool alone_on_map);
 // Whether the party boards (lamps and boss fog flags, trophies) are read, posted and applied:
 // whenever a party is configured and the player is loaded, in a session or not.
 bool SharesWithParty(bool party_configured, bool player_loaded);
+
+// Enemy deaths kept in step across loads (POST /bloodborne/party/kills, the flag board's format
+// with character handles): the kills this member made during its current visit to a map, posted
+// as (handle, true), and taken back as (handle, false) when the visit ends. A visit is one load
+// of a map (the map and the player's character).
+class VisitKills {
+public:
+    std::vector<std::pair<s32, bool>> Observe(u64 visit,
+                                              std::span<const std::pair<u32, s32>> characters);
+
+private:
+    u64 current = 0;
+    std::map<u32, s32> hp;
+    std::vector<u32> killed;
+};
 std::string EncodeEchoUpdate(std::string_view member, s64 since, std::span<const s32> echoes);
 std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body);
 

@@ -1062,3 +1062,24 @@ TEST(BloodborneSharedProgression, ThePartySharesInAndOutOfASession) {
     EXPECT_FALSE(SharesWithParty(true, false)) << "loading: no player to apply them to";
     EXPECT_FALSE(SharesWithParty(false, true)) << "no party";
 }
+
+// A member arriving at a map loads it with every enemy alive; the session only carries what
+// happens while both are there, so the wolf the host had killed stood alive on the guest's side
+// (a leftover only the guest could fight). Every member posts the enemies it killed during its
+// visit to a map (handles are the same in every game), and takes them back when the visit ends.
+TEST(BloodborneSharedKills, AMembersKillsLastForItsVisit) {
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    const std::vector<std::pair<u32, s32>> alive{{0x10014085, 300}, {0x10014088, 250}};
+    EXPECT_EQ(kills.Observe(1, alive), Changes{});
+    const std::vector<std::pair<u32, s32>> one_dead{{0x10014085, 0}, {0x10014088, 250}};
+    EXPECT_EQ(kills.Observe(1, one_dead), (Changes{{0x10014085, true}}));
+    EXPECT_EQ(kills.Observe(1, one_dead), Changes{}) << "posted once";
+    // A new visit (a trip, a reload): its kills there respawn.
+    EXPECT_EQ(kills.Observe(2, alive), (Changes{{0x10014085, false}}));
+    EXPECT_EQ(kills.Observe(2, alive), Changes{});
+    // Seen dead from the start of a visit (already dead when it loaded): not this visit's kill.
+    VisitKills fresh;
+    EXPECT_EQ(fresh.Observe(3, one_dead), Changes{});
+    EXPECT_EQ(fresh.Observe(3, one_dead), Changes{});
+}

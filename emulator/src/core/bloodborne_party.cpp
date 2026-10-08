@@ -595,6 +595,29 @@ std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body) {
     return answer;
 }
 
+std::vector<std::pair<s32, bool>> VisitKills::Observe(
+    u64 visit, std::span<const std::pair<u32, s32>> characters) {
+    std::vector<std::pair<s32, bool>> changes;
+    if (visit != current) {
+        for (const u32 handle : killed) {
+            changes.emplace_back(static_cast<s32>(handle), false);
+        }
+        killed.clear();
+        hp.clear();
+        current = visit;
+    }
+    for (const auto& [handle, now] : characters) {
+        const auto [it, added] = hp.try_emplace(handle, now);
+        if (!added && it->second > 0 && now <= 0 &&
+            std::ranges::find(killed, handle) == killed.end()) {
+            killed.push_back(handle);
+            changes.emplace_back(static_cast<s32>(handle), true);
+        }
+        it->second = now;
+    }
+    return changes;
+}
+
 bool SharesWithParty(bool party_configured, bool player_loaded) {
     return party_configured && player_loaded;
 }

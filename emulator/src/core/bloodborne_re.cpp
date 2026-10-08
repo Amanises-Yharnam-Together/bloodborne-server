@@ -2044,6 +2044,11 @@ std::vector<std::pair<s32, bool>> flags_to_post;
 std::mutex echo_board_mutex;
 std::vector<s32> echoes_to_post;
 std::vector<s32> echoes_to_grant;
+// Enemy deaths kept in step across loads (see VisitKills): this member's kills and visit ends
+// wait for the board thread; the others' current kills (character handles) are hidden here.
+std::mutex kill_board_mutex;
+std::vector<std::pair<s32, bool>> kills_to_post;
+std::unordered_set<u32> others_kills;
 std::vector<std::pair<s32, bool>> flags_to_set;
 
 void PostWorldChanges(const FlagChanges& changes) {
@@ -2438,6 +2443,7 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
     // characters played before (a new character must not get it).
     s64 flag_board_since = std::numeric_limits<s64>::max();
     s64 echo_board_since = std::numeric_limits<s64>::max();
+    s64 kill_board_since = std::numeric_limits<s64>::max();
     while (!stop.stop_requested()) {
         {
             std::unique_lock lock{wait_mutex};
@@ -2458,6 +2464,30 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
         // Kill echoes go both ways in and out of a session: a member on its own trip (a guest
         // in the Hunter's Dream) still gets the party's kills made apart.
         if (std::chrono::steady_clock::now() >= next_echo_post) {
+            std::vector<std::pair<s32, bool>> kills_out;
+            {
+                std::scoped_lock lock{kill_board_mutex};
+                kills_out.swap(kills_to_post);
+            }
+            const auto kill_response =
+                client.Post("/bloodborne/party/kills", headers,
+                            EncodeFlagUpdate(member, kill_board_since, kills_out), "text/plain");
+            if (const auto kills = kill_response && kill_response->status == 200
+                                       ? ParseFlagBoard(kill_response->body)
+                                       : std::nullopt) {
+                kill_board_since = kills->latest;
+                std::scoped_lock lock{kill_board_mutex};
+                for (const auto& [handle, killed] : kills->changes) {
+                    if (killed) {
+                        others_kills.insert(static_cast<u32>(handle));
+                    } else {
+                        others_kills.erase(static_cast<u32>(handle));
+                    }
+                }
+            } else {
+                std::scoped_lock lock{kill_board_mutex};
+                kills_to_post.insert(kills_to_post.begin(), kills_out.begin(), kills_out.end());
+            }
             next_echo_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
             std::vector<s32> echoes_out;
             {
@@ -5040,6 +5070,70 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     }
 }
 
+// Enemy deaths kept in step across loads: this member's kills during its visit go to the
+// party's kill board (VisitKills), and its copies of the enemies another member killed during
+// that member's current visit are hidden with the event disable byte (+0x28, see
+// KeepBossHpInStep's notes): a guest arriving at the host's map found the host's dead wolf alive.
+void KeepEnemyDeathsInStep(bool sharing) {
+    static VisitKills visit_kills;
+    static std::unordered_map<u64, u32> hidden; // character -> handle, hidden by us
+    static u64 hidden_visit = 0;
+    static std::chrono::steady_clock::time_point checked{};
+    const auto now = std::chrono::steady_clock::now();
+    if (!sharing || now - checked < std::chrono::milliseconds{500}) {
+        return;
+    }
+    checked = now;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const u64 player = GetLocalPlayer();
+    const u32 map = GetCurrentPackedMap();
+    if (world < 0x10000 || !IsUsablePackedMap(map)) {
+        return;
+    }
+    const u64 visit = (u64{map} << 32) | (player & 0xFFFFFFFF);
+    if (visit != hidden_visit) {
+        hidden.clear(); // the old visit's characters are gone
+        hidden_visit = visit;
+    }
+    std::vector<std::pair<u32, s32>> characters;
+    std::vector<u64> pointers;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (character != player) {
+            characters.emplace_back(ReadValue<u32>(character, 0x08), CharacterHp(character));
+            pointers.push_back(character);
+        }
+    });
+    const auto changes = visit_kills.Observe(visit, characters);
+    std::unordered_set<u32> others;
+    {
+        std::scoped_lock lock{kill_board_mutex};
+        kills_to_post.insert(kills_to_post.end(), changes.begin(), changes.end());
+        others = others_kills;
+    }
+    size_t newly_hidden = 0;
+    for (size_t index = 0; index < pointers.size(); ++index) {
+        const u64 character = pointers[index];
+        const auto [handle, hp] = characters[index];
+        const auto it = hidden.find(character);
+        if (it == hidden.end() && hp > 0 && others.contains(handle) &&
+            ReadValue<u8>(character, 0x28) == 0 &&
+            HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
+            WriteValue(character, 0x28, u8{1});
+            hidden.emplace(character, handle);
+            ++newly_hidden;
+        } else if (it != hidden.end() && !others.contains(handle) &&
+                   HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
+            // The killer's visit ended: the enemy respawned for it, so it comes back here too.
+            WriteValue(character, 0x28, u8{0});
+            hidden.erase(it);
+        }
+    }
+    if (newly_hidden > 0) {
+        LOG_INFO(Debug, "Bloodborne party: hid {} enemies another member killed on map {:#x}",
+                 newly_hidden, map);
+    }
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
@@ -5051,6 +5145,7 @@ void TickPlayersOnThisMap() {
     SetPartyWorldChanges(sharing);
     KeepGuestProgress(in_session);
     LogFlagChangesInSession(sharing);
+    KeepEnemyDeathsInStep(sharing);
     LogWatchedWrites();
     GiveDeferredBossItems();
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
