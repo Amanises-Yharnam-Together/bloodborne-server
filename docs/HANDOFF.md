@@ -432,6 +432,15 @@ e	ests. Rig: guest enters Gascoigne's fog
   host-placement-bytes 0. shadnet also stopped silently at 20:37 the same evening. Rig launchers
   now keep the previous run's log as `shad_log.prev.txt`.
 
+- **Lost echoes held by an enemy, killed while the owner is away (Kaniel 2026-10-08):** side by
+  side the shared enemy holding a member's echoes works. Broken: the guest died to the first
+  wolf, the host killed that wolf while the guest was in the Dream; the guest got nothing, and
+  after joining its game brought back its own local copy of the wolf (red eyes, attacks only the
+  guest, can't hurt the host). Kaniel says this desync predates our work. Fix: when the holder
+  dies while its owner is apart, the owner gets its echoes back (or a bloodstain), and its game
+  doesn't revive its copy. The bloodstain record (GameDataMan +0x30: +0x18 position, +0x38
+  echoes, +0x3C block, +0x30 always -1 so far) does not name the holder; find where it is kept.
+
 ## Known loose ends
 - shadnet logs `unhandled POST /v1/users/<npid>/feed`. Harmless so far.
 - The backend answers `ChairMessRespawnPointNotice` generically.
