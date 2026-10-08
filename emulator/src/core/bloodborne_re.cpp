@@ -4331,7 +4331,14 @@ std::atomic<u64> watched_flag_byte{0};
 std::atomic<u8> watched_flag_mask{0};
 std::atomic<s32> watched_flag{0};
 
+std::atomic<s32> watched_last_value{-1};
+
 void RecordWatchedWrite(u64 rip, u64 rsp) {
+    // Rewrites of the same value (the per-frame max HP clamp rewrites the HP) are skipped.
+    const s32 value = *reinterpret_cast<const volatile u8*>(watched_flag_byte.load());
+    if (watched_last_value.exchange(value) == value) {
+        return;
+    }
     const size_t index = watched_write_count.fetch_add(1);
     if (index >= WatchedWriteCapacity) {
         return;
@@ -4383,6 +4390,7 @@ void WatchEnemyHp(u64 hp_address, u32 handle) {
     if (watched_flag_byte.load() == hp_address) {
         return;
     }
+    watched_last_value.store(ReadValue<u8>(hp_address, 0));
     watched_flag_byte.store(hp_address);
     watched_flag_mask.store(0xFF);
     watched_flag.store(static_cast<s32>(handle));
