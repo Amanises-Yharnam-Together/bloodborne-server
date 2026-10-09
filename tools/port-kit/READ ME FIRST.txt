@@ -1,0 +1,70 @@
+BLOODBORNE PC SEAMLESS CO-OP TEST KIT
+=====================================
+
+This is a test build of seamless co-op on Bloodborne PC, the native port: the game runs
+natively instead of in shadPS4, usually much smoother and at 60 FPS. The co-op is the same as
+in the shadPS4 kit. One player (the host) runs the servers; the other (the guest) only runs the
+game.
+
+BOTH PLAYERS MUST USE THIS KIT. Do not team up one player on this kit and one on the shadPS4
+kit: that mix has not been tested yet.
+
+YOU NEED
+  - Your own Bloodborne.PC.Online folder (game 01.09), the same one you
+    already play with. Keep the same mods enabled as the host. Nothing in it
+    gets changed.
+  - The VPN you already use with the host (Radmin VPN), connected.
+  - A Vulkan 1.3 graphics card with a current driver, Windows 10 (1903+) or 11.
+    Nothing else: Python and the libraries are inside the kit.
+
+STEPS (guest)
+  1. Unzip the zip straight into your Bloodborne.PC.Online folder, next to
+     "LAUNCH - shadPS4 Launcher.bat". You get a SeamlessCoopPort folder and a few
+     "... Port Co-op" .bat files beside your old ones.
+  2. In SeamlessCoopPort, right-click "FIREWALL - Allow (run as admin)" and run it
+     as administrator.
+  3. Run "SETUP - Port Co-op". If you have the shadPS4 co-op kit (SeamlessCoop)
+     it offers the same answers: just press Enter on each. Otherwise:
+       Bloodborne.PC.Online folder   Enter (it finds the folder it is in)
+       host or guest                 guest
+       Host IP                       the host's 26.x.x.x address from Radmin VPN
+       Account name / password       the same as in the shadPS4 kit, or pick new
+                                     ones and tell the host so they can register them
+       Party                         exactly what the host tells you
+       P2P UDP port                  Enter (auto)
+       Frame rate                    Enter (60)
+  4. Wait for the host to say the servers are up. Optional check: open
+     http://HOST-IP:20443/status in a browser; it should say "ok": true.
+  5. Run "LAUNCH - Port Co-op", load your character, and wait. You are pulled into
+     the host's world automatically after a few seconds. No bells needed.
+     The first start takes longer (it prepares the game and builds its shader cache).
+
+STEPS (host)
+  The same as the guest, with "host" in step 3 and your own VPN IP as Host IP. Then:
+  - Run "SERVER - Port Co-op Host" and leave both windows open. When the shadPS4 kit
+    (SeamlessCoop) is beside this one it starts that kit's servers, so every account
+    registered there works here too. If those servers are already running, it says so
+    and starts nothing.
+  - Register new accounts with "SERVER - Port Co-op Register User".
+
+SAVES
+  SETUP copies your saves once, from the shadPS4 co-op kit (SeamlessCoop) when you
+  have it, else from your install. From then on this kit keeps its own saves in
+  SeamlessCoopPort\user\savedata: progress made here does not go back to shadPS4.
+  To copy them again, delete SeamlessCoopPort\user\savedata and run SETUP.
+
+CONTROLS AND SETTINGS
+  - In the game, Insert (or L3+R3 on a gamepad) opens the port's menu: resolution,
+    upscaler (FSR, DLSS on RTX cards), effects. "Apply and restart" keeps co-op on.
+  - Keyboard: WASD move, arrows camera, Space Cross, Left Shift Circle, E Square,
+    Q Triangle, 1/3 L1/R1, R/F L2/R2, Z/C L3/R3, I/K/J/L d-pad, Enter Options.
+  - Always start with "LAUNCH - Port Co-op". Bloodborne.exe in the kit is the port's
+    own launcher: starting the game from it plays WITHOUT co-op. Updates come as a new
+    kit from the host, never from the launcher.
+
+PROBLEMS
+  - Black screen at start: delete SeamlessCoopPort\user\shader and start again.
+  - If something goes wrong, send the host these files from SeamlessCoopPort\user\log:
+    shad_log.txt and console.txt (and the .prev ones from the start before).
+  - When the host sends a newer kit, unzip it the same way (overwrite) and run
+    "SETUP - Port Co-op" again (Enter keeps every answer).
