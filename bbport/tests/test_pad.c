@@ -5,6 +5,7 @@
 
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
+void bbgpu_game_thread_tick(void) {}
 /* Co-op autoplay (gpu/bbcoop): what the rig's script holds now. */
 static int autoplay;
 static uint32_t autoplay_buttons;

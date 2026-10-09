@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <SDL3/SDL.h>
+#include "bbport_save_editor.h"
 #include "bbport_settings.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -664,6 +665,102 @@ void AdvancedTab() {
            upscaler_on, [&](int i) { s.debug_view = i; });
 }
 
+/// The save editor: the character's echoes, insight and attributes, and items given to it,
+/// changed in the running game (bbport_save_editor.h); the game saves them as usual.
+void SaveTab() {
+    static int category = 0, item_index = 0, quantity = 1;
+    const auto character = BbSaveEditor::Read();
+    if (!character) {
+        Note(T("Load your character first: the page edits the character in the world.",
+               "Сначала загрузите персонажа: страница меняет персонажа в игре."),
+             Dim());
+        return;
+    }
+    const BbSaveEditor::Character c = *character;
+    char text[96];
+    std::snprintf(text, sizeof(text), "%d", c.echoes);
+    if (const int step = Row("echoes", T("Blood Echoes", "Отголоски крови"), text,
+                             T("Left/right: 10,000 at a time.", "Влево/вправо: по 10 000."), true)) {
+        BbSaveEditor::SetEchoes(BbSaveEditor::ClampEchoes(std::int64_t{c.echoes} + step * 10'000));
+    }
+    std::snprintf(text, sizeof(text), "%d", c.insight);
+    if (const int step = Row("insight", T("Insight", "Озарение"), text, nullptr, true)) {
+        BbSaveEditor::SetInsight(BbSaveEditor::ClampInsight(c.insight + step));
+    }
+    static const char* names_en[] = {"Vitality", "Endurance", "Strength", "Skill", "Bloodtinge",
+                                     "Arcane"};
+    static const char* names_ru[] = {"Живучесть", "Выносливость", "Сила", "Ловкость",
+                                     "Кровь", "Тайна"};
+    for (int i = 0; i < BbSaveEditor::AttributeCount; ++i) {
+        std::snprintf(text, sizeof(text), "%d", c.attributes[i]);
+        if (const int step = Row(names_en[i], T(names_en[i], names_ru[i]), text,
+                                 T("The level follows (one per point); HP and stamina are "
+                                   "recalculated as at the Doll.",
+                                   "Уровень меняется вместе с ним (по одному за очко); здоровье и "
+                                   "выносливость пересчитываются, как у Куклы."),
+                                 true)) {
+            std::int32_t attributes[BbSaveEditor::AttributeCount];
+            std::copy(std::begin(c.attributes), std::end(c.attributes), attributes);
+            attributes[i] = BbSaveEditor::ClampAttribute(attributes[i] + step);
+            BbSaveEditor::SetAttributes(attributes);
+        }
+    }
+    std::snprintf(text, sizeof(text), T("Level %d, HP %d / %d", "Уровень %d, здоровье %d / %d"),
+                  c.level, c.hp, c.hp_max);
+    Note(text, Dim());
+
+    ImGui::Spacing();
+    const auto& items = BbSaveEditor::Items();
+    if (items.empty()) {
+        Note(T("Items: no item list found. It comes from the shadPS4 kit's save editor "
+               "(DATA/Bloodborne Save Editor/resources) or BB_SAVE_EDITOR_DATA.",
+               "Предметы: список не найден. Он берётся из редактора сохранений набора shadPS4 "
+               "(DATA/Bloodborne Save Editor/resources) или BB_SAVE_EDITOR_DATA."),
+             Dim());
+        return;
+    }
+    static constexpr std::uint32_t categories[] = {BbSaveEditor::GoodsCategory,
+                                                   BbSaveEditor::WeaponCategory,
+                                                   BbSaveEditor::ArmorCategory};
+    const char* category_names[] = {T("Items", "Предметы"), T("Weapons", "Оружие"),
+                                    T("Attire", "Одежда")};
+    Choice("item_category", T("Category", "Категория"), category, 3,
+           [&](int i) { return category_names[i]; }, [](int) { return true; }, nullptr, true,
+           [&](int i) {
+               category = i;
+               item_index = 0;
+           });
+    std::vector<const BbSaveEditor::Item*> shown;
+    for (const auto& item : items) {
+        if (item.category == categories[category]) {
+            shown.push_back(&item);
+        }
+    }
+    if (shown.empty()) {
+        return;
+    }
+    item_index = std::clamp(item_index, 0, int(shown.size()) - 1);
+    if (const int step = Row("item", T("Item", "Предмет"), shown[item_index]->name.c_str(),
+                             T("Left/right picks; Cross on the Give row hands it over.",
+                               "Влево/вправо — выбор; Cross на строке «Выдать» — выдать."),
+                             true)) {
+        item_index = (item_index + step + int(shown.size())) % int(shown.size());
+    }
+    std::snprintf(text, sizeof(text), "%d", quantity);
+    if (const int step = Row("quantity", T("Quantity", "Количество"), text, nullptr,
+                             categories[category] == BbSaveEditor::GoodsCategory)) {
+        quantity = std::clamp(quantity + step, 1, 99);
+    }
+    if (Row("give", T("Give", "Выдать"), nullptr,
+            T("Goods over the carry limit go to storage.",
+              "Сверх лимита предметы уходят в хранилище."),
+            true) != 0) {
+        const auto* item = shown[item_index];
+        BbSaveEditor::GiveItem(item->category, item->id,
+                               item->category == BbSaveEditor::GoodsCategory ? quantity : 1);
+    }
+}
+
 } // namespace Ui
 
 void Menu() {
@@ -672,9 +769,10 @@ void Menu() {
     const ImVec2 display = io.DisplaySize;
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 165));
 
-    static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Advanced"};
-    static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Дополнительно"};
-    constexpr int tabs = 4;
+    static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Advanced", "Save"};
+    static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Дополнительно",
+                                   "Сохранение"};
+    constexpr int tabs = 5;
     if (focus_request) {
         focus_request = false;
         state.focus_first = true;
@@ -808,7 +906,8 @@ void Menu() {
     case 0: DisplayTab(); break;
     case 1: UpscalerTab(); break;
     case 2: EffectsTab(); break;
-    default: AdvancedTab(); break;
+    case 3: AdvancedTab(); break;
+    default: SaveTab(); break;
     }
     if (RestartNeeded()) {
         ImGui::Spacing();

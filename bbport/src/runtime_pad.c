@@ -587,6 +587,7 @@ static void touch_ids(PadData *d) {
     d->touch_held_time=d->touch_count ? (uint32_t)(d->timestamp-since) : 0;
 }
 static void sample(PadData *d) {
+    bbgpu_game_thread_tick();
     sample_host(d);
     if (bbgpu_overlay_captures_input()) { hold_after_capture=1; return; }
     record_sample(d);
