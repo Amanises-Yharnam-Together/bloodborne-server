@@ -404,4 +404,31 @@ SCENARIOS = {
         },
         "timeout": 1200,
     },
+    "crash-rejoin-hp": {
+        "about": "after the guest's game crashes and it joins again, the host's hits still reach "
+                 "the guest's copy of an enemy (friend run 2026-10-09: HP bars apart after a crash)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-solo 120",
+                     "wait-session 2 420", "wait 20", f"hurt {ENEMY} 200", "wait 12", "snapshot",
+                     f"expect-hp {ENEMY} <= 200", "expect-session 2"],
+            "guest": [[START, "godmode", "wait-session 2 300", "wait 15", "done"],
+                      [START, "godmode", "wait-session 2 420", "wait 45", "snapshot",
+                       f"expect-hp {ENEMY} <= 200", "expect-session 2"]],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
+    "guest-death-seen": {
+        "about": "the guest dies in the host's world and gets up; the host still has it on its "
+                 "map (friend run 2026-10-09: invisible after respawning)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 60", "wait-members 2 120",
+                     "wait 10", "snapshot", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 10", "kill self", "wait 50",
+                      "wait-members 2 120", "snapshot", "expect-session 2"],
+        },
+        "expect": {"guest": [r"party guest died; revived"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
 }
