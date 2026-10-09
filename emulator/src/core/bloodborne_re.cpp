@@ -1769,6 +1769,8 @@ void InitPartyController() {
 
 bool HostHasRoomForMore();
 
+bool EventFlagOn(s32 flag);
+
 PartyObservation ObserveParty(u64 player, s32 search_effect) {
     PartyObservation observation{};
     observation.player_valid =
@@ -1791,6 +1793,7 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
 
     observation.search_effect_active =
         observation.player_valid && HasPlayerEffect(player, search_effect);
+    observation.boss_sequence = EventFlagOn(4000) || EventFlagOn(4047);
     observation.room_for_more = party_controller &&
                                 party_controller->SearchEffectId() == BeckoningBellEffect &&
                                 HostHasRoomForMore();

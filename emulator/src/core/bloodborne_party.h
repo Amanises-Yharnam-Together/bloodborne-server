@@ -53,6 +53,9 @@ struct PartyObservation {
     // Hosting, with a party member online that is not in the session yet (a party of three:
     // the Beckoning Bell's effect ends when the first cooperator arrives).
     bool room_for_more = false;
+    // A boss fight or its clear sequence runs (event flags 4000 / 4047): a player joining then is
+    // kicked by the game, which ends the session.
+    bool boss_sequence = false;
 };
 
 // CSMultiPlayMan session state (+0x124) as seen in the rig, and the summon-reload marker the

@@ -89,6 +89,23 @@ TEST(BloodborneThreePlayers, TheHostRingsAgainWhenItsBellOutlastsTheSearch) {
         << "a full session never rings";
 }
 
+// Kaniel 2026-10-09: the re-ring fired right after a boss kill, a player started joining during
+// the boss-clear sequence, the game kicked it and ended the session (no X, menus stuck). No bell
+// rings while a boss fight or its clear sequence runs (event flags 4000 / 4047).
+TEST(BloodborneThreePlayers, NoBellRingsDuringABossSequence) {
+    PartyController host(PartyRole::Host);
+    PartyObservation boss = HostingWithOneGuest();
+    boss.boss_sequence = true;
+    EXPECT_EQ(TickUntilDecision(host, boss), PartyAction::Wait);
+    boss.search_effect_active = true;
+    EXPECT_EQ(host.Tick(boss, T0 + PartyController::RetryDelay * 4), PartyAction::Wait)
+        << "not the stale-bell ring either";
+    PartyController alone(PartyRole::Host);
+    PartyObservation solo{
+        .player_valid = true, .map_usable = true, .matching_idle = true, .boss_sequence = true};
+    EXPECT_EQ(TickUntilDecision(alone, solo), PartyAction::Wait);
+}
+
 // Session members are game objects; the boards know members by online id. The member's identity
 // object holds its online id, NUL-terminated.
 TEST(BloodborneThreePlayers, ASessionMemberIsFoundByItsOnlineId) {

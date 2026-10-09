@@ -1501,7 +1501,8 @@ bool SkipsLeaveLimit(s32 character_type, size_t other_members) {
 }
 
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {
-    if (!observation.player_valid || !observation.map_usable || observation.stage_transition) {
+    if (!observation.player_valid || !observation.map_usable || observation.stage_transition ||
+        observation.boss_sequence) {
         stable_ticks = 0;
         return PartyAction::Wait;
     }
