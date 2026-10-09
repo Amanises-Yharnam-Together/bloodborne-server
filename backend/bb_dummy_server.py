@@ -152,7 +152,7 @@ SUMMON_POLL_TAGS = ("SummonDataCreateInterval2", "SummonDataGetListInterval2")
 COOP_GUARD_TAGS = ("SummonDataGetListGuardTimer2", "SummonDataGetListCoopGuardTimerClampTime2")
 
 
-def build_ss_info(template_path, services_url, summon_url, summon_poll=1):
+def build_ss_info(template_path, services_url, summon_url, summon_poll=5):
     with open(template_path, encoding="utf-8") as f:
         xml = f.read()
     missing = [p for p in ("{SERVICES}", "{SUMMON}") if p not in xml]
@@ -905,8 +905,8 @@ def main():
     ap.add_argument("--shadnet-webapi", default=None,
                     help="shadNet WebAPI for summon traffic (default: http://<address>:31315)")
     ap.add_argument("--template", default=os.path.join(here, "ss_info_template.xml"))
-    ap.add_argument("--summon-poll", type=int, default=1, metavar="SEC",
-                    help="seconds between summon sign posts/searches (retail: 30/35; default 1)")
+    ap.add_argument("--summon-poll", type=int, default=5, metavar="SEC",
+                    help="seconds between summon sign posts/searches (retail: 30/35; default 5)")
     ap.add_argument("--store", metavar="FILE", default=None,
                     help="keep messages, bloodstains, ghosts, lanterns and chalice dungeons in this SQLite file")
     ap.add_argument("--show-own", metavar="LIST", default="",
