@@ -5017,8 +5017,9 @@ s64 SteadyMilliseconds() {
         .count();
 }
 
-// When the last load that kept the map's objects came (a bulk flag change; see CharacterSettles).
-std::atomic<s64> world_loaded_ms{-1'000'000'000};
+// When the map's world last changed hands (a bulk flag change, i.e. a load that kept the map's
+// objects; a guest starting or ending its run of the map's enemies): see CharacterSettles.
+std::atomic<s64> world_changed_ms{-1'000'000'000};
 
 void LogFlagChangesInSession(bool sharing) {
     static std::chrono::steady_clock::time_point last{};
@@ -5077,7 +5078,7 @@ void LogFlagChangesInSession(bool sharing) {
                 }
             }
             if (IsBulkFlagChange(set.size() + cleared.size())) {
-                world_loaded_ms.store(SteadyMilliseconds()); // deaths now are no kills
+                world_changed_ms.store(SteadyMilliseconds()); // deaths now are no kills
                 LOG_INFO(Debug,
                          "Bloodborne party: {} flags changed at once (a load), not kept or "
                          "shared",
@@ -5287,6 +5288,13 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     // Not only alone: two guests on a map the host is not on both run its enemies, each in its
     // own copy of the map (the kill and HP boards keep them in step).
     const bool alone = in_session && IsPartyGuestRole() && HostAwayFromMyMap();
+    // Starting or ending its run of the map's enemies, the guest's own world settles on them (the
+    // rig's dog test: Father Gascoigne, dead in the guest's save, went down when the host left).
+    static bool was_alone = false;
+    if (alone != was_alone) {
+        was_alone = alone;
+        world_changed_ms.store(SteadyMilliseconds());
+    }
     if (!alone) {
         size_t handed_back = 0;
         for (const auto& [word, original] : lone_guest_ownership) {
@@ -5433,7 +5441,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     const s64 now_ms = SteadyMilliseconds();
     for (size_t index = 0; index < characters.size(); ++index) {
         const auto changed = enemy_owner_changed_ms.find(pointers[index]);
-        characters[index].settling = CharacterSettles(now_ms, world_loaded_ms.load(),
+        characters[index].settling = CharacterSettles(now_ms, world_changed_ms.load(),
                                                       changed != enemy_owner_changed_ms.end()
                                                           ? std::optional{changed->second}
                                                           : std::nullopt);

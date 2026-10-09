@@ -32,6 +32,10 @@ WARD_ENEMY = "0x10010019"  # 211 HP, 7 m from the Cathedral Ward lamp (the neare
 # has 999 HP and dies of nothing: an object, as Central Yharnam's 0x100140a0)
 CLERIC_BEAST = "0x1001409f"  # entity 2410800; its death runs event 12411700
 CLERIC_BEAST_DEFEATED = 2411  # set by event 12411700 after Handle Boss Defeat
+GASCOIGNE = "0x1001409c"  # entity 2410810 (his beast form: 0x1001409e, 2410811)
+# Event 12411800's own flag: on, the map's load puts Gascoigne down (Force Character Death);
+# off, he waits for the fight. Both rig saves have him beaten.
+GASCOIGNE_DEFEATED = 12411800
 FORBIDDEN_WOODS_LAMP_LIT = 12707810  # a lamp neither rig character has lit (see LampOfActiveFlag)
 START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
@@ -166,6 +170,24 @@ SCENARIOS = {
         "expect": {"host": [r"flags in session: set [^|]*\b4000\b"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
+    },
+    "boss-refight": {
+        "about": "the host fights Father Gascoigne, whom the guest beat long ago in its own "
+                 "world: he stays in the host's world (the guest's old kill must not hide him) "
+                 "and dies there with the guest in the session",
+        "roles": {
+            "host": [START, f"set-flag {GASCOIGNE_DEFEATED} 0", f"travel {CENTRAL_YHARNAM_LAMP}",
+                     "godmode", "wait-session 2 300", "wait 20", f"expect-hp {GASCOIGNE} > 0",
+                     f"kill {GASCOIGNE}", f"wait-flag {GASCOIGNE_DEFEATED} 1 60", "wait 20",
+                     "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 90", "snapshot",
+                      "expect-session 2"],
+        },
+        "forbid": {
+            "host": SESSION_HOLDS + [r"hid \d+ enemies a member killed"],
+            "guest": SESSION_HOLDS + [r"kill board gets [^\n]*0x100140(9c|9e) "],
+        },
+        "timeout": 720,
     },
     "lamp-share": {
         "about": "a lamp the guest lights is lit in the host's world too",
