@@ -3681,8 +3681,7 @@ bool PartyHostOnMyMap() {
         return false;
     }
     // With two guests the other one may be elsewhere: the host's own post says where it is.
-    return host_map ? HostIsHere(host_map, map_board, map_board_member, GetCurrentPackedMap())
-                    : EveryoneElseOnMap(map_board, map_board_member, GetCurrentPackedMap());
+    return HostOnMyMap(host_map, map_board, map_board_member, GetCurrentPackedMap());
 }
 
 // After this member's trip the other players are re-created as they come to this map (creating a
@@ -3727,8 +3726,7 @@ bool HostHasRoomForMore() {
     if (std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}) {
         return false;
     }
-    constexpr size_t MaxPlayers = 3; // the host and two cooperators
-    return in_session < MaxPlayers && map_board.size() > in_session;
+    return RoomForMore(true, in_session, map_board.size());
 }
 
 // The board name of a session member: its identity object (the member id's first pointer), or an
@@ -5185,11 +5183,7 @@ bool SomeoneElsewhereInSession() {
     }
     std::scoped_lock lock{map_board_mutex};
     return std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{3} &&
-           std::ranges::any_of(
-               map_board,
-               [&](const MemberMap& entry) {
-                   return entry.member != map_board_member && entry.map != map;
-               });
+           SomeoneElsewhere(map_board, map_board_member, map);
 }
 
 std::optional<u32> HostMapFromItsPost();
@@ -5206,8 +5200,7 @@ bool HostAwayFromMyMap() {
     if (std::chrono::steady_clock::now() - map_board_time >= std::chrono::seconds{3}) {
         return false;
     }
-    return host_map ? !HostIsHere(host_map, map_board, map_board_member, map)
-                    : NoOneElseOnMap(map_board, map_board_member, map);
+    return HostAway(host_map, map_board, map_board_member, map);
 }
 
 // Adds the echoes the other members got from kills made apart (see SharesKillEchoes) through
@@ -5323,22 +5316,11 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
         others = others_enemy_hp;
     }
     size_t lowered = 0;
-    for (const MemberMapState& state : others) {
-        const auto report = state.map == map ? DecodeEnemyHp(state.bits) : std::nullopt;
-        if (!report) {
-            continue;
-        }
-        for (const EnemyHp& enemy : report->enemies) {
-            const auto it = alive.find(enemy.handle);
-            if (it == alive.end()) {
-                continue;
-            }
-            const auto target = SharedEnemyHp(it->second.hp, it->second.max, enemy.hp, enemy.max);
-            if (target && HasMemoryAccess(it->second.data, 0xFC, MemoryProt::CpuWrite)) {
-                WriteValue(it->second.data, 0xF8, *target);
-                it->second.hp = *target;
-                ++lowered;
-            }
+    for (const auto& [handle, copy] : alive) {
+        const auto target = LowestSharedHp(handle, copy.hp, copy.max, map, others);
+        if (target && HasMemoryAccess(copy.data, 0xFC, MemoryProt::CpuWrite)) {
+            WriteValue(copy.data, 0xF8, *target);
+            ++lowered;
         }
     }
     static u32 logged = 0;
@@ -5758,8 +5740,8 @@ bool PS4_SYSV_ABI LogMemberLeave(u64, const GuestRegisterSnapshot* registers) {
 // before LeaveSession, which takes the guest out of the room. Skipped during a party trip.
 bool PS4_SYSV_ABI KeepMatchingDuringTrip(u64, const GuestRegisterSnapshot* registers) {
     const u64 return_address = ReadValue<u64>(registers->rsp, 0);
-    if (!PartyTripActive() && return_address >= image_base &&
-        IsWorldReloadStopRequest(return_address - image_base) && InPartySession()) {
+    if (return_address >= image_base &&
+        StartsTripOnWorldReload(return_address - image_base, PartyTripActive(), InPartySession())) {
         // A time-of-day cutscene's reload: a trip, so the session and its LeaveSession are kept.
         RecordPartyTrip(0, registers);
         LOG_INFO(Debug, "Bloodborne party: a world reload (time of day) is a trip");

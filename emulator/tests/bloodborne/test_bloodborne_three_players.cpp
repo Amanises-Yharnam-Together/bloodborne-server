@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -171,4 +172,118 @@ TEST(BloodborneThreePlayers, AKillStandsUntilEveryKillerTakesItBack) {
     EXPECT_TRUE(kills.Contains(268517532)) << "guestB's kill stands";
     kills.Apply(std::vector<KillChange>{{268517532, false, "guestB"}});
     EXPECT_FALSE(kills.Contains(268517532));
+}
+
+// More of the same rules at their edges.
+TEST(BloodborneThreePlayers, ReCreationWaitsForMembersNotOnTheBoard) {
+    const std::vector<MemberMap> board{{"me", 0x18010000}, {"guestA", 0x18010000}};
+    // guestB is in the session but posts no map (loading, or its game is gone).
+    const std::vector<std::optional<std::string>> members{"guestA", "guestB"};
+    const auto plan = PlanRecreate(members, board, "me", 0x18010000, {"guestA"});
+    EXPECT_TRUE(plan.now.empty()) << "guestA is done already";
+    EXPECT_FALSE(plan.done);
+    const auto alone = PlanRecreate({}, board, "me", 0x18010000, {});
+    EXPECT_TRUE(alone.now.empty());
+    EXPECT_TRUE(alone.done) << "nobody else in the session";
+}
+
+TEST(BloodborneThreePlayers, OnlineIdsAtTheEdgesOfTheObject) {
+    const std::vector<std::string> candidates{"Kaniel"};
+    std::vector<u8> at_start(16, 0);
+    const std::string name = "Kaniel";
+    std::copy(name.begin(), name.end(), at_start.begin());
+    EXPECT_EQ(FindOnlineIdIn(at_start, candidates), std::optional<std::string>{"Kaniel"});
+    std::vector<u8> cut(name.begin(), name.end()); // no NUL after it: not known to end there
+    EXPECT_EQ(FindOnlineIdIn(cut, candidates), std::nullopt);
+    EXPECT_EQ(FindOnlineIdIn(at_start, std::vector<std::string>{}), std::nullopt);
+    std::vector<u8> twice(48, 0);
+    std::copy(name.begin(), name.end(), twice.begin() + 2);
+    std::copy(name.begin(), name.end(), twice.begin() + 24);
+    EXPECT_EQ(FindOnlineIdIn(twice, candidates), std::optional<std::string>{"Kaniel"})
+        << "the same member twice";
+    EXPECT_EQ(OnlineIdOfBoardMember("4b6"), "") << "odd length";
+    EXPECT_EQ(OnlineIdOfBoardMember("4B"), "") << "the boards use lowercase";
+    EXPECT_EQ(OnlineIdOfBoardMember("20"), "") << "a space is not an online id";
+    EXPECT_EQ(OnlineIdOfBoardMember("a1b2c3d4e5f60718"), "") << "an old random member";
+    EXPECT_EQ(OnlineIdOfBoardMember(BoardMemberOfOnlineId("my_name-1")), "my_name-1");
+}
+
+TEST(BloodborneThreePlayers, SavedTasksOfAnotherKindAreNeverTaken) {
+    EXPECT_EQ(PickSavedJoinTask(std::vector<SavedJoinTask>{}, RemoteGuestTask, 0xA0), std::nullopt);
+    const std::vector<SavedJoinTask> host_only{{RemoteHostTask, 0xA0, 0, 1}};
+    EXPECT_EQ(PickSavedJoinTask(host_only, RemoteGuestTask, 0xA0), std::nullopt)
+        << "same identity, other kind";
+}
+
+TEST(BloodborneThreePlayers, KillBoardEdges) {
+    EXPECT_EQ(ParseKillBoard("5\n7 2\n"), std::nullopt);
+    EXPECT_EQ(ParseKillBoard("5\n7 1x\n"), std::nullopt);
+    EXPECT_EQ(ParseKillBoard("\n7 1\n"), std::nullopt);
+    PartyKills kills;
+    kills.Apply(std::vector<KillChange>{{9, false, "nobody"}}); // nothing to take back
+    kills.Apply(std::vector<KillChange>{{7, true, "guestA"}, {8, true, "guestB"}});
+    EXPECT_EQ(kills.All(), (std::unordered_set<u32>{7, 8}));
+    EXPECT_FALSE(kills.Contains(9));
+}
+
+TEST(BloodborneThreePlayers, EchoAndHpBoardEdges) {
+    EXPECT_EQ(ParseEchoBoard("1\n120 0\n"),
+              (std::optional<EchoBoardAnswer>{EchoBoardAnswer{1, {{120, 0}}}}));
+    EXPECT_EQ(SharedEnemyHp(500, 2031, 3000, 2031), std::nullopt) << "a report above max";
+    EXPECT_EQ(SharedEnemyHp(2'000'000'000, 2'000'000'000, 1, 2'000'000'000), 1) << "no overflow";
+    const std::vector<EnemyHp> dead{{0x10014085, -1, 300}};
+    EXPECT_EQ(DecodeEnemyHp(EncodeEnemyHp(1, dead)), (EnemyHpReport{1, dead}));
+}
+
+// The decisions the game code makes from the boards.
+TEST(BloodborneThreePlayers, WhoRunsTheEnemiesAndWhoWaits) {
+    const std::vector<MemberMap> two_guests{
+        {"me", 0x18010000}, {"guestB", 0x18010000}, {"host", 0x15000000}};
+    EXPECT_TRUE(HostAway(0x15000000, two_guests, "me", 0x18010000))
+        << "two guests without the host: both run the enemies";
+    EXPECT_FALSE(HostOnMyMap(0x15000000, two_guests, "me", 0x18010000));
+    const std::vector<MemberMap> with_host{
+        {"me", 0x18010000}, {"host", 0x18010000}, {"guestB", 0x15000000}};
+    EXPECT_FALSE(HostAway(0x18010000, with_host, "me", 0x18010000));
+    EXPECT_TRUE(HostOnMyMap(0x18010000, with_host, "me", 0x18010000))
+        << "the other guest being elsewhere does not matter";
+    // No host post yet: the two-player rules.
+    EXPECT_FALSE(HostAway(std::nullopt, with_host, "me", 0x18010000)) << "someone is here";
+    EXPECT_FALSE(HostOnMyMap(std::nullopt, with_host, "me", 0x18010000)) << "not everyone";
+    const std::vector<MemberMap> alone{{"me", 0x18010000}, {"host", 0x15000000}};
+    EXPECT_TRUE(HostAway(std::nullopt, alone, "me", 0x18010000));
+
+    EXPECT_TRUE(SomeoneElsewhere(with_host, "me", 0x18010000));
+    const std::vector<MemberMap> together{{"me", 0x18010000}, {"host", 0x18010000}};
+    EXPECT_FALSE(SomeoneElsewhere(together, "me", 0x18010000));
+    EXPECT_FALSE(SomeoneElsewhere(std::vector<MemberMap>{{"me", 0x18010000}}, "me", 0x18010000));
+}
+
+TEST(BloodborneThreePlayers, TheHostRingsOnlyWhileTheSessionHasRoom) {
+    EXPECT_TRUE(RoomForMore(true, 2, 3)) << "one guest in, one outside";
+    EXPECT_TRUE(RoomForMore(true, 1, 2)) << "a guest dropped out";
+    EXPECT_FALSE(RoomForMore(true, 2, 2)) << "everyone is in";
+    EXPECT_FALSE(RoomForMore(true, 3, 4)) << "three is the game's limit";
+    EXPECT_FALSE(RoomForMore(false, 1, 3)) << "not hosting: the idle search does it";
+}
+
+TEST(BloodborneThreePlayers, EachCopyTakesTheLowestHpOnItsMap) {
+    const u32 here = 0x18010000;
+    const std::vector<MemberMapState> others{
+        {here, EncodeEnemyHp(1, std::vector<EnemyHp>{{0x1001409c, 1500, 2031}})},
+        {here, EncodeEnemyHp(2, std::vector<EnemyHp>{{0x1001409c, 900, 2031}})},
+        {0x15000000, EncodeEnemyHp(3, std::vector<EnemyHp>{{0x1001409c, 10, 2031}})},
+        {here, std::vector<u8>{1, 2, 3}}, // a cut post
+    };
+    EXPECT_EQ(LowestSharedHp(0x1001409c, 2031, 2031, here, others), 900)
+        << "the lowest on this map, not the copy on another map";
+    EXPECT_EQ(LowestSharedHp(0x1001409c, 800, 2031, here, others), std::nullopt) << "lower here";
+    EXPECT_EQ(LowestSharedHp(0x10014085, 300, 300, here, others), std::nullopt) << "not hurt";
+}
+
+TEST(BloodborneThreePlayers, OnlyAWorldReloadInAPartySessionStartsATrip) {
+    EXPECT_TRUE(StartsTripOnWorldReload(0x0193C65C, false, true));
+    EXPECT_FALSE(StartsTripOnWorldReload(0x0193C65C, true, true)) << "a trip already";
+    EXPECT_FALSE(StartsTripOnWorldReload(0x0193C65C, false, false)) << "no party session";
+    EXPECT_FALSE(StartsTripOnWorldReload(0x013CDEFB, false, true)) << "a lamp trip's own call";
 }

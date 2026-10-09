@@ -121,6 +121,10 @@ const std::vector<CodePatch>& BossClearKeepSessionPatches() {
     return patches;
 }
 
+bool StartsTripOnWorldReload(u64 caller_offset, bool trip_active, bool in_party_session) {
+    return IsWorldReloadStopRequest(caller_offset) && !trip_active && in_party_session;
+}
+
 bool IsWorldReloadStopRequest(u64 caller_offset) {
     constexpr u64 WorldLoadStopRequestReturn = 0x0193C65C;
     return caller_offset == WorldLoadStopRequestReturn;
@@ -378,6 +382,26 @@ bool HostIsHere(std::optional<u32> host_map, std::span<const MemberMap> board,
            std::ranges::any_of(board, [&](const MemberMap& entry) {
                return entry.member != self && entry.map == map;
            });
+}
+
+bool HostOnMyMap(std::optional<u32> host_map, std::span<const MemberMap> board,
+                 std::string_view self, u32 map) {
+    return host_map ? HostIsHere(host_map, board, self, map) : EveryoneElseOnMap(board, self, map);
+}
+
+bool HostAway(std::optional<u32> host_map, std::span<const MemberMap> board, std::string_view self,
+              u32 map) {
+    return host_map ? !HostIsHere(host_map, board, self, map) : NoOneElseOnMap(board, self, map);
+}
+
+bool SomeoneElsewhere(std::span<const MemberMap> board, std::string_view self, u32 map) {
+    return std::ranges::any_of(
+        board, [&](const MemberMap& entry) { return entry.member != self && entry.map != map; });
+}
+
+bool RoomForMore(bool hosting, size_t in_session, size_t party_online) {
+    constexpr size_t MaxPlayers = 3; // the host and two cooperators
+    return hosting && in_session < MaxPlayers && party_online > in_session;
 }
 
 std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s32 kind,
@@ -927,6 +951,26 @@ std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes) {
                                   static_cast<s32>(ReadLittleEndian<u32>(bytes, offset + 8))});
     }
     return report;
+}
+
+std::optional<s32> LowestSharedHp(u32 handle, s32 hp, s32 max, u32 map,
+                                  std::span<const MemberMapState> others) {
+    std::optional<s32> lowest;
+    for (const MemberMapState& state : others) {
+        const auto report = state.map == map ? DecodeEnemyHp(state.bits) : std::nullopt;
+        if (!report) {
+            continue;
+        }
+        for (const EnemyHp& enemy : report->enemies) {
+            if (enemy.handle != handle) {
+                continue;
+            }
+            if (const auto target = SharedEnemyHp(lowest.value_or(hp), max, enemy.hp, enemy.max)) {
+                lowest = target;
+            }
+        }
+    }
+    return lowest;
 }
 
 std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max) {

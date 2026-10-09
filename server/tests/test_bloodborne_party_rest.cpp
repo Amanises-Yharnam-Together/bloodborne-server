@@ -221,6 +221,10 @@ int main() {
     CHECK(update->echoes[1] == 4000 && update->maps[1] == 0u);
     CHECK(!Bloodborne::ParseEchoUpdate("host 0 120:x").has_value());
     CHECK(!Bloodborne::ParseEchoUpdate("host 0 0:5").has_value());
+    CHECK(!Bloodborne::ParseEchoUpdate("host 0 120:").has_value());
+    CHECK(!Bloodborne::ParseEchoUpdate("host 0 1:2:3").has_value());
+    const auto no_map = Bloodborne::ParseEchoUpdate("host 0 120:0");
+    CHECK(no_map.has_value() && no_map->maps == QList<quint32>({0}));
 
     PartyEchoBoard board;
     const QByteArray newline(1, 10);

@@ -147,6 +147,9 @@ const std::vector<CodePatch>& JoinAnywherePatches();
 // warps the player, e.g. Gascoigne's 24000020) calls StopRequest (returning to 0x0193C65C) and
 // LeaveSession for a member of a session. In a party it is a trip like a lamp's.
 bool IsWorldReloadStopRequest(u64 caller_offset);
+// Whether that StopRequest starts a party trip: from the world load, in a party session, with no
+// trip under way.
+bool StartsTripOnWorldReload(u64 caller_offset, bool trip_active, bool in_party_session);
 
 // Target of a `jmp rel32` at `offset`, or 0 if the bytes are not one.
 u64 DecodeNearJumpTarget(u64 offset, std::span<const u8> bytes);
@@ -362,6 +365,17 @@ RecreatePlan PlanRecreate(std::span<const std::optional<std::string>> members,
 // Whether the host (its map from its map state post) is on `map` and still on the map board.
 bool HostIsHere(std::optional<u32> host_map, std::span<const MemberMap> board,
                 std::string_view self, u32 map);
+// A guest apart waits for this: the host on its map. Without the host's post yet, everyone else.
+bool HostOnMyMap(std::optional<u32> host_map, std::span<const MemberMap> board,
+                 std::string_view self, u32 map);
+// A guest runs its map's enemies while this holds: the host is not on its map (two guests there
+// both do). Without the host's post yet, no other member on its map.
+bool HostAway(std::optional<u32> host_map, std::span<const MemberMap> board, std::string_view self,
+              u32 map);
+// Another member is on another map (kill echoes go to the board then).
+bool SomeoneElsewhere(std::span<const MemberMap> board, std::string_view self, u32 map);
+// The host rings again: hosting, fewer than three in the session, a party member online outside.
+bool RoomForMore(bool hosting, size_t in_session, size_t party_online);
 
 // Shared trophies on shadNet (POST /bloodborne/party/trophy): "<member> [<id>...]" with the
 // trophies this member unlocked in a party session; the answer is every trophy the party
@@ -578,6 +592,10 @@ std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes);
 // The HP to write on the local copy, or nothing: only ever down, never to 0 (a death comes
 // from the game itself), scaled by each copy's max HP (the co-op HP bonus may differ).
 std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max);
+// The HP to write on this member's copy of `handle`: the lowest share any other member on `map`
+// reports (their posts, in the map state board's format), or nothing.
+std::optional<s32> LowestSharedHp(u32 handle, s32 hp, s32 max, u32 map,
+                                  std::span<const MemberMapState> others);
 
 // The kill board's answer names who posted each change ("<handle> <0|1> <member>").
 struct KillChange {
