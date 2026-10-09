@@ -1,7 +1,12 @@
 # Seamless co-op on the native port (Bloodborne PC)
 
 `bbport/` is [Supermedo/bloodborne_pc](https://github.com/Supermedo/bloodborne_pc) (branch
-`windows`, v1.6), imported with its history: the game's own x86-64 code runs natively on a small
+`windows`, v1.6), imported with its history, with
+[AdrianCsT/bloodborne_pc](https://github.com/AdrianCsT/bloodborne_pc) 1.6.16 merged in
+(deadinside28's 0.4 on Windows and its fixes; both are subtree merges into `bbport/`, so later
+releases merge with `git merge -X subtree=bbport <ref>`). Upstream 0.5 is not in yet: its new
+modules are Linux-only (local branch `merge-0.5` holds the resolved merge, unported). The game's
+own x86-64 code runs natively on a small
 C runtime (`bbport/src`) with shadPS4's renderer (`bbport/gpu`). The seamless co-op runs on it
 as it does in the emulator, from the same sources: nothing in `emulator/src/core/bloodborne_*`
 is copied or forked. All players must run the same build; the port and the emulator play on the
@@ -52,14 +57,14 @@ folder: `SeamlessCoopPort\` and the "... Port Co-op" launchers beside it.
   `WINPYTHON=<python.org 3.10+ python.exe>`: it otherwise takes the last Python it finds, which
   may be too old), then `tools\make-port-kit.ps1 [-Package <bbport>\out\stage\bbport-windows]
   [-Servers <shadPS4 kit>]`. It writes `C:\bb\port-kit` and `C:\bb\port-kit.zip`: the port's
-  package (frozen `Bloodborne.exe`, so players need no Python or MSYS2), the kit's scripts from
+  package (the launcher frozen as `BLauncher.exe`, so players need no Python or MSYS2), the kit's scripts from
   `tools\port-kit` (CRLF added), and the servers, backend and map event files of a shadPS4 kit.
 - `tools\port-kit\tools\setup.ps1` takes the shadPS4 kit's answers when it sits beside it, copies
   the saves once (from that kit, else the install) to `user\savedata\1`, and makes
   `game\CUSA03173` (the game with its update, links only) and `game\CUSA03173-mods` (the
   install's mods plus the co-op event files), which the port reads beside the game.
 - `2 - PLAY.bat` sets the same co-op variables as the shadPS4 kit plus the port's `BB_*` ones and
-  runs `Bloodborne.exe --run` (run.py). Logs: `user\log\shad_log.txt` and `console.txt`.
+  runs `BLauncher.exe --run` (run.py). Logs: `user\log\shad_log.txt` and `console.txt`.
 - The HOST scripts start the shadPS4 kit's servers when it is beside this one (its accounts).
 - Port and shadPS4 players in one party are not tested yet: everyone uses the same kit.
 
