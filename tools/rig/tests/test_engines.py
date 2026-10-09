@@ -40,6 +40,11 @@ class EngineTest(unittest.TestCase):
                           str(self.root / "rig" / "game" / "CUSA03173" / "eboot.bin")])
         self.assertEqual(self.emulator.environment("host"), {})
 
+    def test_only_the_emulator_starts_its_games_one_after_the_other(self):
+        # Two emulator games loading at once were slow; the port's load in parallel.
+        self.assertTrue(self.emulator.staggered_start)
+        self.assertFalse(self.port.staggered_start)
+
     def test_the_port_starts_through_its_launcher(self):
         self.assertEqual(self.port.command("host"),
                          [sys.executable, str(self.root / "out" / "bbport" / "run.py")])

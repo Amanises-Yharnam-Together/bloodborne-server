@@ -51,6 +51,8 @@ class Emulator:
     # What one game commits (its 8.25 GB backing for the PS4's memory, then Vulkan and the rest):
     # measured 12.3 GB. Windows refuses a game that does not fit ("Insufficient system resources").
     commit_gb = 12.5
+    # Each game starts once the one before is in the world: two loading at once were slow.
+    staggered_start = True
 
     def __init__(self, root: pathlib.Path = BB_ROOT):
         self.rig = root / "rig"
@@ -94,6 +96,8 @@ class Port(Emulator):
     # The PS4's memory (5056 MiB direct, 448 MiB flexible: runtime_memory.c) and the renderer;
     # an estimate until measured on the rig.
     commit_gb = 7.5
+    # The port's games load side by side: all start at once.
+    staggered_start = False
 
     def __init__(self, root: pathlib.Path = BB_ROOT):
         super().__init__(root)

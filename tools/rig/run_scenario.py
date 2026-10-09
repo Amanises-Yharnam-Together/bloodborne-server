@@ -484,8 +484,8 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     for role in roles:
         processes[role] = launch(role, stages[role][0])
         print(f"  started {role}")
-        # The next game once this one is in the world (two games loading at once is slow).
-        wait_until = time.time() + 90
+        # The next game once this one is in the world, where loading side by side is slow.
+        wait_until = time.time() + 90 if ENGINE.staggered_start else 0
         while (time.time() < wait_until and IN_WORLD not in read_log(role)
                and processes[role].poll() is None):
             time.sleep(2)
