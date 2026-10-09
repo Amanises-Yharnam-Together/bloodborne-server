@@ -958,6 +958,8 @@ if (ARCHITECTURE STREQUAL "x86_64")
              src/core/bloodborne_write_watch.h
              src/core/cpu_patches.cpp
              src/core/cpu_patches.h
+             src/core/guest_hook.cpp
+             src/core/guest_hook.h
              ${FIBER_LIB})
 endif()
 
