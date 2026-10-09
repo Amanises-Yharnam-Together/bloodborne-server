@@ -178,16 +178,35 @@ Remove-View "$gameDir\CUSA03173"
 Merge-Game "$src\CUSA03173" "$src\CUSA03173-patch" "$gameDir\CUSA03173"
 
 $modsDst = "$gameDir\CUSA03173-mods\dvdroot_ps4"
+Remove-View $modsDst
 New-Item -ItemType Directory -Force $modsDst | Out-Null
-foreach ($item in Get-ChildItem -Force $modsDst) {
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { Remove-Junction $item.FullName }
-    else { Remove-Item -Recurse -Force $item.FullName }
-}
+# The install's active mods (the mod manager copies them into dvdroot_ps4), file by file as hard
+# links, without the files of mods the port does without: Vertex Explosion Fix (the port fixes
+# vertex explosions itself; the mod only costs the characters their face shapes).
+$installMods = "$src\CUSA03173-mods\dvdroot_ps4"
 $skip = @("MODS", "!BACKUP", "!INSTLOGS", "JSGME.exe", "JSGME.ini", "event", "dvdroot_ps4")
-if (Test-Path "$src\CUSA03173-mods\dvdroot_ps4") {
-    foreach ($item in Get-ChildItem -Force "$src\CUSA03173-mods\dvdroot_ps4" | Where-Object { $_.Name -notin $skip }) {
-        if ($item.PSIsContainer) { New-Item -ItemType Junction -Path "$modsDst\$($item.Name)" -Target $item.FullName | Out-Null }
-        else { Copy-Item $item.FullName "$modsDst\" }
+$withoutMods = @("! Vertex Explosion Fix*")
+$left = @{}
+foreach ($pattern in $withoutMods) {
+    foreach ($mod in Get-ChildItem -Directory "$installMods\MODS" -Filter $pattern -ErrorAction SilentlyContinue) {
+        foreach ($file in Get-ChildItem -Recurse -File $mod.FullName) {
+            $relative = $file.FullName.Substring($mod.FullName.Length + 1) -replace '^dvdroot_ps4\\', ''
+            $left[$relative.ToLowerInvariant()] = $file.Length
+        }
+        Write-Host "  Leaving out the mod '$($mod.Name)' (not needed on the port)"
+    }
+}
+if (Test-Path $installMods) {
+    foreach ($item in Get-ChildItem -Force $installMods | Where-Object { $_.Name -notin $skip }) {
+        $files = if ($item.PSIsContainer) { Get-ChildItem -Recurse -File -Force $item.FullName } else { @($item) }
+        foreach ($file in $files) {
+            $relative = $file.FullName.Substring($installMods.Length + 1)
+            $key = $relative.ToLowerInvariant()
+            if ($left.ContainsKey($key) -and $left[$key] -eq $file.Length) { continue }
+            $target = Join-Path $modsDst $relative
+            New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
+            Add-FileLink $target $file.FullName
+        }
     }
 }
 New-Item -ItemType Directory -Force "$modsDst\event" | Out-Null
