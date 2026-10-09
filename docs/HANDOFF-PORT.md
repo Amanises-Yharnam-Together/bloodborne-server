@@ -15,9 +15,13 @@ on Windows (host import of the runtime's section views, game code hooks with Sys
 opt-in BB_PC_MODEL=1; free_check/gnm_hooks diagnostics still stubbed). Fixes: staging pool lock
 (the friend's RTX 3070 crash dump: RecordHostCopy -> RunGuestCopy -> Buffer::Flush into a
 dangling staging buffer), enemy HP shared across blocks of one area (the guest rejoined in place
-on another block), 1 s sign polling (backend default), the game's 5 s arrival wait skipped
-(QuickArrivalPatches 0x01E4B09F), item-button and remote-death diagnostics on in every co-op
-game. Save tab in the settings menu (BbSaveEditor: echoes, insight, attributes through
+on another block), item-button and remote-death diagnostics on in every co-op game. Tried and
+reverted (both broke joins in the rig): 1 s sign polling (the guest got a claim every second
+and never joined the room) and skipping the game's 5 s arrival wait at 0x01E4B09F (the guest
+dropped the host's connection ~5 s after it formed: lone-guest, host-crash). Rig tests run in
+the background now (no focus taken). Full run 2026-10-09 (stopped at Kaniel's word): 15 passed
+before the two failures; lone-guest and host-crash pass again without the patch; the rest of
+the set (resume onward, the new scenarios, join3/trip3/crash3, soak) is still to run. Save tab in the settings menu (BbSaveEditor: echoes, insight, attributes through
 0x1c13d00, items through 0x131cb70 on the game's thread from its pad reads; item list from the
 shadPS4 kit's DATA/Bloodborne Save Editor/resources). New rig verb expect-others-near and
 scenarios hp-across-blocks, echoes-after-crash, lamp-after-crash, crash3, host-death-boss, soak.
