@@ -116,6 +116,20 @@ class DebugPatchTests(unittest.TestCase):
             (font / 'DbgFont14h.tpf').write_bytes(b'test')
             validate_patch_requirements(names, game)
 
+    def test_debug_menu_takes_the_fonts_as_the_nexus_mod_installs_them(self):
+        # Debug Menu and XML Patch (nexusmods.com/bloodborne/mods/253): compressed fonts in
+        # font/, plain ones in adhoc/font/.
+        names = effect_patches({'debug_menu': '1'})
+        for files in (('font/DbgFont14h.ccm.dcx', 'font/DbgFont14h.tpf.dcx'),
+                      ('adhoc/font/DbgFont14h.ccm', 'adhoc/font/DbgFont14h.tpf')):
+            with self.subTest(files=files), tempfile.TemporaryDirectory() as directory:
+                game = Path(directory)
+                for name in files:
+                    path = game / 'dvdroot_ps4' / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b'test')
+                validate_patch_requirements(names, game)
+
     def test_conflicting_enemy_control_patch_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'conflicts with Enemy Control'):
             validate_patch_requirements(['Enemy Control', 'Restore Debug Camera'], Path('.'))

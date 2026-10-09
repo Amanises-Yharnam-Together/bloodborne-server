@@ -66,8 +66,13 @@ def validate_patch_requirements(names, game):
         raise ValueError('Restore Debug Camera conflicts with Enemy Control; enable only one')
     if 'Restore Debug Menu (READ NOTES)' in names:
         font = game / 'dvdroot_ps4/font'
-        missing = [name for name in ('DbgFont14h.ccm', 'DbgFont14h.tpf')
-                   if not (font / name).is_file() or (font / name).stat().st_size == 0]
+        # Plain in font/, or as the Nexus mod installs them: compressed (.dcx) in font/, plain in
+        # adhoc/font/.
+        def present(name):
+            return any(path.is_file() and path.stat().st_size > 0
+                       for path in (font / name, font / f'{name}.dcx',
+                                    game / 'dvdroot_ps4/adhoc/font' / name))
+        missing = [name for name in ('DbgFont14h.ccm', 'DbgFont14h.tpf') if not present(name)]
         if missing:
             raise ValueError('Debug menu needs non-empty font files in '
                              f'{font}: {", ".join(missing)}. Install the fonts from '
