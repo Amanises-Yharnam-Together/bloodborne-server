@@ -1,20 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // bbport (Windows): the Linux-only parts of the GPU library, as inert stand-ins.
 //
-// bbport_guest_hooks, bbport_free_check and bbport_gnm_hooks are built on mprotect, SIGTRAP and
-// ucontext hooks (the PC memory model's write hooks, BB_FREE_CHECK, BB_GNM_CENSUS). CMakeLists.txt
-// leaves them out of the Windows build and this file answers their interfaces: no hook is
-// installed.
+// bbport_free_check (BB_FREE_CHECK, BB_LABEL_TRAP) and bbport_gnm_hooks (BB_GNM_CENSUS,
+// BB_GNM_OBSERVE) are diagnostics built on mprotect, SIGTRAP and ucontext hooks; the PC memory
+// model does not need them. CMakeLists.txt leaves them out of the Windows build and this file
+// answers their interfaces: no hook is installed, the diagnostics stay off.
 #ifdef _WIN32
 #include "bbport_free_check.h"
 #include "bbport_gnm_hooks.h"
-#include "bbport_guest_hooks.h"
-
-namespace BbGuestHooks {
-void Install(RangeCallback on_gpu_range_allocated) {
-    (void)on_gpu_range_allocated;
-}
-} // namespace BbGuestHooks
 
 namespace BbFreeCheck {
 bool Enabled() {
