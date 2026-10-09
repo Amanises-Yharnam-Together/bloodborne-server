@@ -12,6 +12,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
+#include "bbport_game_menu.h"
 #include "bbport_overlay.h"
 #include "bbport_timeline.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
@@ -348,38 +349,57 @@ static vk::Format GetFrameViewFormat(const Libraries::VideoOut::PixelFormat form
     return {};
 }
 
-// bbport: raw copy of an image for BB_FRAME_DUMP_TRIGGER, written once the GPU is done.
-static void DumpRaw(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
-                    vk::Image image, vk::ImageLayout layout, u32 w, u32 h, const char* name,
-                    int index) {
+// bbport: raw copy of an image for BB_FRAME_DUMP_TRIGGER, written once the GPU is done. The
+// copy is recorded through the scheduler (Record) like the presenter's other commands; the
+// buffer is created and the file written on this thread's side.
+struct RawDump {
+    VkBuffer buffer{};
+    VmaAllocation allocation{};
+    VmaAllocationInfo info{};
+    VkDeviceSize size{};
+    u32 width{}, height{};
+    std::string path;
+};
+
+static bool BeginRawDump(const Instance& instance, u32 w, u32 h, const char* name, int index,
+                         RawDump& dump) {
     const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                                        .size = VkDeviceSize(w) * h * 4,
                                        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
     const VmaAllocationCreateInfo alloc_ci{
         .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
         .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
-    VkBuffer buffer{};
-    VmaAllocation allocation{};
-    VmaAllocationInfo info{};
-    if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
-                        &info) != VK_SUCCESS) {
-        return;
+    if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &dump.buffer,
+                        &dump.allocation, &dump.info) != VK_SUCCESS) {
+        return false;
     }
-    cmdbuf.copyImageToBuffer(image, layout, buffer,
-                             vk::BufferImageCopy{.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                                                 .imageExtent = {w, h, 1}});
+    dump.size = buffer_ci.size;
+    dump.width = w;
+    dump.height = h;
     const char* dir = std::getenv("BB_DUMP_DIR");
     char path[512];
     std::snprintf(path, sizeof(path), "%s/%s_%03d_%ux%u.raw", dir && *dir ? dir : "out/dump", name,
                   index, w, h);
-    scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation, info,
-                                      size = buffer_ci.size, file = std::string{path}] {
-        vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
-        if (FILE* f = std::fopen(file.c_str(), "wb")) {
-            std::fwrite(info.pMappedData, 1, size, f);
+    dump.path = path;
+    return true;
+}
+
+static void CopyRawDump(vk::CommandBuffer cmdbuf, const RawDump& dump, vk::Image image,
+                        vk::ImageLayout layout) {
+    cmdbuf.copyImageToBuffer(image, layout, dump.buffer,
+                             vk::BufferImageCopy{.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                                 .imageExtent = {dump.width, dump.height, 1}});
+}
+
+/// After the Record() that copies: the file is written once the GPU is past the current tick.
+static void EndRawDump(const Instance& instance, Scheduler& scheduler, RawDump dump) {
+    scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), dump = std::move(dump)] {
+        vmaInvalidateAllocation(allocator, dump.allocation, 0, VK_WHOLE_SIZE);
+        if (FILE* f = std::fopen(dump.path.c_str(), "wb")) {
+            std::fwrite(dump.info.pMappedData, 1, dump.size, f);
             std::fclose(f);
         }
-        vmaDestroyBuffer(allocator, buffer, allocation);
+        vmaDestroyBuffer(allocator, dump.buffer, dump.allocation);
     });
 }
 
@@ -456,10 +476,14 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             runtime.Transit(&image, vk::ImageLayout::eTransferSrcOptimal,
                             vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
             runtime.FlushBarriers();
-            const vk::CommandBuffer cmdbuf = draw_scheduler.CommandBuffer();
-            DumpRaw(instance, draw_scheduler, cmdbuf, image.GetImage(),
-                    vk::ImageLayout::eTransferSrcOptimal, image.info.size.width,
-                    image.info.size.height, "display", frame_dump_index);
+            RawDump dump{};
+            if (BeginRawDump(instance, image.info.size.width, image.info.size.height, "display",
+                             frame_dump_index, dump)) {
+                draw_scheduler.Record([dump, source = image.GetImage()](vk::CommandBuffer cmdbuf) {
+                    CopyRawDump(cmdbuf, dump, source, vk::ImageLayout::eTransferSrcOptimal);
+                });
+                EndRawDump(instance, draw_scheduler, std::move(dump));
+            }
         }
         image_view = *image.FindView(view_info).image_view;
         image_size = vk::Extent2D{image.info.size.width, image.info.size.height};
@@ -571,13 +595,19 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         // recorded presenter passes above.
         const vk::CommandBuffer cmdbuf = draw_scheduler.CommandBuffer();
         // The presented image as the swapchain blit reads it (General after the pass).
-        const vk::MemoryBarrier2 done{.srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-                                      .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
-                                      .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
-                                      .dstAccessMask = vk::AccessFlagBits2::eTransferRead};
-        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &done});
-        DumpRaw(instance, draw_scheduler, cmdbuf, frame->image, vk::ImageLayout::eGeneral,
-                frame->width, frame->height, "output", frame_dump_index);
+        RawDump dump{};
+        if (BeginRawDump(instance, frame->width, frame->height, "output", frame_dump_index, dump)) {
+            draw_scheduler.Record([dump, image = frame->image](vk::CommandBuffer cmdbuf) {
+                const vk::MemoryBarrier2 done{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                    .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                    .dstAccessMask = vk::AccessFlagBits2::eTransferRead};
+                cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &done});
+                CopyRawDump(cmdbuf, dump, image, vk::ImageLayout::eGeneral);
+            });
+            EndRawDump(instance, draw_scheduler, std::move(dump));
+        }
         ++frame_dump_index;
     }
     if (generated) {
@@ -599,12 +629,16 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                                           .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
                                           .dstAccessMask = vk::AccessFlagBits2::eTransferRead};
             cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &done});
-            DumpRaw(instance, draw_scheduler, cmdbuf, generated->image, vk::ImageLayout::eGeneral,
-                    generated->width, generated->height, "generated", frame_dump_index - 1);
+            const auto dump_image = [&](vk::Image image, u32 w, u32 h, const char* name) {
+                RawDump dump{};
+                if (BeginRawDump(instance, w, h, name, frame_dump_index - 1, dump)) {
+                    CopyRawDump(cmdbuf, dump, image, vk::ImageLayout::eGeneral);
+                    EndRawDump(instance, draw_scheduler, std::move(dump));
+                }
+            };
+            dump_image(generated->image, generated->width, generated->height, "generated");
             if (hudless) {
-                DumpRaw(instance, draw_scheduler, cmdbuf, hudless->image,
-                        vk::ImageLayout::eGeneral, hudless->width, hudless->height, "hudless",
-                        frame_dump_index - 1);
+                dump_image(hudless->image, hudless->width, hudless->height, "hudless");
             }
         }
         if (!recorded) {
@@ -887,6 +921,7 @@ void Presenter::PresentFrame(Frame* frame, bool is_reusing_frame, bool is_game_f
                          MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height),
                          vk::Filter::eLinear);
         // bbport: the settings menu / FPS counter over the frame, at display resolution.
+        BbGameMenu::Poll(); // the port's pages in the game's System menu
         const bool overlay = BbOverlay::Visible();
         const std::array post_barriers{
             vk::ImageMemoryBarrier{

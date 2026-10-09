@@ -165,6 +165,18 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
         fprintf(stderr,"Fault: exception 0x%08lx at %s (thread %lu)\n",record->ExceptionCode,where,GetCurrentThreadId());
     fprintf(stderr,"  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
             c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
+    /* Outside the image and any module (generated code, a freed mapping): the region of RIP
+     * (Linux prints its /proc/self/maps line). */
+    HMODULE rip_module=NULL;
+    if (!(image && (uintptr_t)c->Rip-(uintptr_t)image<0x10000000) &&
+        !GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)c->Rip,&rip_module)) {
+        MEMORY_BASIC_INFORMATION region;
+        if (VirtualQuery((void *)c->Rip,&region,sizeof(region)))
+            fprintf(stderr,"  mapping of RIP: %p-%p state 0x%lx protect 0x%lx type 0x%lx\n",region.BaseAddress,
+                    (void *)((char *)region.BaseAddress+region.RegionSize),region.State,region.Protect,region.Type);
+        else
+            fputs("  mapping of RIP: none\n",stderr);
+    }
     if (gpu_enabled) bbgpu_dump_guest_writes(info);
     bbcoop_crash_report(info); /* user/log/crash-*.txt and .dmp */
     /* rbp chain (guest and host code keep frame pointers). */
@@ -428,6 +440,11 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
 volatile int runtime_restarting;
 void runtime_restart(void) {
     fflush(NULL);
+    /* The GPU threads still run until exec (Linux) or TerminateProcess (Windows): their Vulkan
+     * calls fail once the device goes away, and an assertion there must not end the process
+     * (exit 23) before the new launch starts. */
+    runtime_restarting = 1;
+    __sync_synchronize();
 #ifdef _WIN32
     /* run.py sets BB_RESTART_COMMAND: the launch command line, started again (new patches). */
     const char *command=getenv("BB_RESTART_COMMAND");
@@ -695,6 +712,7 @@ int main(int argc, char **argv) {
         memcpy(image + relocs[i].target, &value, 8);
     }
     if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
+    /* bbport (upstream): the GPU side's code hooks and the in-game settings menu. */
     if (!cpu_only) bbgpu_patch_image(image, size);
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));

@@ -122,6 +122,7 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
                                   std::uint64_t(g[REG_RSI]), std::uint64_t(g[REG_RDI]),
                                   std::uint64_t(g[REG_R14]), std::uint64_t(g[REG_R15])};
 #endif
+    // rax and r14 (upstream: the block the guest read and its heap).
     BbFreeCheck::DumpAtFault(regs[0], regs[6]);
     if (Mode() == 0) {
         return;

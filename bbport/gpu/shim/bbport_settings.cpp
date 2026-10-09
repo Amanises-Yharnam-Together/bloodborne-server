@@ -10,6 +10,16 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace BbSettings {
 
 namespace {
@@ -188,7 +198,7 @@ void ConfigureDlssSupport(bool available, const char* problem) {
     v.dlss_problem = available || kept.empty() ? nullptr : kept.c_str();
     if (v.upscaler == UpscalerDlss && !available) {
         std::printf("Upscaler: DLSS unavailable (%s); falling back to FSR 3.1\n",
-                    kept.empty() ? "bbport_dlss.dll or nvngx_dlss.dll missing" : kept.c_str());
+                    kept.empty() ? "the DLSS bridge or NVIDIA's DLSS library is missing" : kept.c_str());
         v.upscaler = UpscalerFsr3;
     }
 }
@@ -306,7 +316,14 @@ void Save() {
     FILE* file = std::fopen(temporary.c_str(), "w");
     bool ok = file && std::fwrite(out.data(), 1, out.size(), file) == out.size();
     ok = file && std::fclose(file) == 0 && ok;
-    if (!ok || std::rename(temporary.c_str(), Path()) != 0) {
+#ifdef _WIN32
+    // bbport (Windows): rename() does not replace an existing file there.
+    const bool replaced =
+        ok && MoveFileExA(temporary.c_str(), Path(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+#else
+    const bool replaced = ok && std::rename(temporary.c_str(), Path()) == 0;
+#endif
+    if (!replaced) {
         std::printf("Settings: cannot write %s\n", Path());
     }
 }

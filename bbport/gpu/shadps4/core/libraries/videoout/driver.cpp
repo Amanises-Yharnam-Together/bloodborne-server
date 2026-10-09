@@ -309,6 +309,8 @@ static void PrintMemory() {}
 #else
 static void PrintMemory() {
     u64 vram_kib = 0, gtt_kib = 0;
+    u64 rss = 0;
+#ifndef _WIN32 // bbport (Windows): no /proc; VRAM, GTT and RSS print as 0 there.
     std::vector<u64> clients;
     if (DIR* dir = opendir("/proc/self/fdinfo")) {
         while (const dirent* entry = readdir(dir)) {
@@ -344,7 +346,8 @@ static void PrintMemory() {
         }
         std::fclose(statm);
     }
-    const u64 rss = u64(rss_pages) * u64(sysconf(_SC_PAGESIZE));
+    rss = u64(rss_pages) * u64(sysconf(_SC_PAGESIZE));
+#endif
     const u64 device = BbStats::device_alloc_bytes.load() - BbStats::device_free_bytes.load();
     u64 vma_blocks = 0, vma_used = 0;
     Vulkan::VmaDeviceUsage(vma_blocks, vma_used);
@@ -644,10 +647,12 @@ void VideoOutDriver::Flip(const Request& req) {
                         BbStats::gnm_frame_waits.exchange(0) / double(frames),
                         BbStats::gnm_frame_wait_ns.exchange(0) / (1e6 * double(frames)),
                         BbStats::asc_submits.exchange(0) / double(frames));
-            std::printf("EOP fences: %llu decoded, %llu labels written, %lld pending\n",
+            std::printf("EOP fences: %llu decoded, %llu labels written, %lld pending; %.1f labels/frame "
+                        "written by the GPU\n",
                         (unsigned long long)BbStats::eop_decoded.load(),
                         (unsigned long long)BbStats::eop_written.load(),
-                        (long long)(BbStats::eop_decoded.load() - BbStats::eop_written.load()));
+                        (long long)(BbStats::eop_decoded.load() - BbStats::eop_written.load()),
+                        BbStats::gpu_labels.exchange(0) / double(frames));
             if (const u64 early = BbStats::idle_flushes.exchange(0)) {
                 std::printf("Honest labels: %.1f submissions/frame sent early (GPU idle)\n",
                             early / double(frames));

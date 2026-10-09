@@ -184,7 +184,7 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
     {
         const Dlss* dlss = Dlss::Get();
         static std::string problem;
-        problem = !dlss ? "bbport_dlss.dll and nvngx_dlss.dll are not installed"
+        problem = !dlss ? "the DLSS bridge and NVIDIA's DLSS library are not installed"
                         : dlss->Problem();
         BbSettings::ConfigureDlssSupport(dlss && dlss->Available(), problem.c_str());
     }
@@ -1822,6 +1822,7 @@ void TemporalUpscaler::RunScaled() {
         if (BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
             RecordTaa(cmdbuf, color_view, depth_view);
         } else if (UseDlss()) {
+            fsr4_linear_frame = false;
             ok4 = RecordDlss(cmdbuf,
                              {color_image, color_view, color.info.pixel_format,
                               vk::ImageAspectFlagBits::eColor, source_width, source_height},

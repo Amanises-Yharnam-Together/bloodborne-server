@@ -122,6 +122,9 @@ bool ProgramReadable(const Program& pgm) {
     return ok;
 }
 } // namespace
+#include "video_core/buffer_cache/buffer.h"
+#include "video_core/buffer_cache/buffer_cache.h"
+#include "bbport_guest_memory.h"
 
 namespace Vulkan {
 
@@ -482,6 +485,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
+        // bbport BB_LAYER_MEMORY: buffers over nearly all memory go through the page table.
+        .paged_buffers = VideoCore::BufferCache::LayerPagedActive(),
     };
     async_compile = AsyncCompileEnabled() && !EmulatorSettings.IsShaderCollect();
     g_assert_speculative_exit = SpeculativeAssertExit;

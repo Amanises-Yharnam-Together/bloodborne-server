@@ -284,7 +284,7 @@ def link(game, out, module_names=DEFAULT_MODULES, red_zones=os.name == 'nt'):
                   red_zone_sites=red_zone_sites,
                   main_tls=dict(zip(('vaddr', 'filesz', 'memsz', 'align'), main_tls_values)),
                   unresolved_imports=unresolved)
-    (out / 'link.json').write_text(json.dumps(report, indent=2) + '\n')
+    (out / 'link.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     summary = ', '.join(f"{t['file']}@{t['base']:#x}" for t in table)
     print(f'Linked modules: {summary}; {len(bindings)} native bindings, {len(unresolved)} imports left to the host runtime, '
           f'fs->gs patched={fs_patched}, red-zone-safe stores at {red_zone_sites} sites')

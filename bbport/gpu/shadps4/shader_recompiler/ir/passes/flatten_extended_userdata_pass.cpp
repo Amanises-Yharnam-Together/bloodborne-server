@@ -166,7 +166,7 @@ void EnsureSrtFaultHandler() {
     std::call_once(once, [] {
         g_srt_codegen_start = g_srt_codegen.getCurr();
         // Call after the memory invalidation handler
-        constexpr u32 priority = 1;
+        constexpr u32 priority = 2;
         Core::Signals::Instance()->RegisterAccessViolationHandler(SrtWalkerSignalHandler, priority);
     });
 }

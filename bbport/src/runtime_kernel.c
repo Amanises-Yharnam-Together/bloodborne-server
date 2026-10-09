@@ -15,14 +15,16 @@
 #include <sys/time.h>
 #include <x86intrin.h>
 #ifndef _WIN32
+#include <sys/random.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 #include <dlfcn.h>
 #include <dirent.h>
 #include <ucontext.h>
 #include <signal.h>
-#include <sys/uio.h>
-#include <sys/random.h>
-#include <sys/resource.h>
+#else
+#include <windows.h>
 #endif
 #define ERR(n) ((int32_t)(UINT32_C(0x80020000)|(n)))
 #define PAGE 16384
@@ -339,7 +341,7 @@ static const RuntimeExport exports[]={
     {"pthread_setspecific",posix_key_set}, {"pthread_getspecific",key_get},
 };
 uintptr_t runtime_kernel_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
-#ifndef _WIN32
+
 static void sample_start(void);
 static void sample_report(void);
 
@@ -355,9 +357,15 @@ static void guest_call_sites(uint64_t out[3]) {
     const uintptr_t text_lo=0x800000000ull, text_hi=0x800000000ull+0x50d96dcull;
     static _Thread_local uintptr_t stack_hi;
     if (!stack_hi) {
+#ifdef _WIN32
+        ULONG_PTR low=0, high=0;
+        GetCurrentThreadStackLimits(&low,&high);
+        stack_hi=(uintptr_t)high;
+#else
         pthread_attr_t attr; void *base=NULL; size_t size=0;
         if (!pthread_getattr_np(pthread_self(),&attr)) { pthread_attr_getstack(&attr,&base,&size); pthread_attr_destroy(&attr); }
         stack_hi=(uintptr_t)base+size;
+#endif
     }
     const uintptr_t *sp=(const uintptr_t *)__builtin_frame_address(0);
     int found=0;
@@ -368,7 +376,11 @@ void runtime_wait_note(int kind, uint64_t ns) {
     static int enabled=-1;
     if (enabled<0) enabled=getenv("BB_FRAME_STATS")!=NULL;
     if (!enabled) return;
+#ifdef _WIN32
+    if (!wait_tid) wait_tid=(int)GetCurrentThreadId();
+#else
     if (!wait_tid) wait_tid=(int)syscall(SYS_gettid);
+#endif
     uint64_t sites[3];
     guest_call_sites(sites);
     const uint64_t key=((sites[0]<<20)^(sites[1]*0x9E3779B1ull)^(sites[2]<<7)^((uint64_t)wait_tid<<4)^(uint64_t)kind)|1;
@@ -410,6 +422,12 @@ void runtime_wait_report(double frames) {
     printf("\n");
 }
 
+#ifdef _WIN32
+/* No SIGPROF, /proc/self/task or dladdr on Windows: BB_SAMPLE_THREAD and BB_DUMP_GOT are not
+ * available there; the wait profile still is. */
+static void sample_start(void) {}
+static void sample_report(void) {}
+#else
 /* bbport BB_SAMPLE_THREAD=<name> (with frame stats): where that thread runs, sampled with SIGPROF
  * every 0.5 ms; reported with the wait profile. A thread that never blocks but waits for the GPU
  * shows up spinning in its polling loop. */
@@ -514,11 +532,6 @@ static void sample_report(void) {
     }
     printf("\n");
 }
+#endif
 /* The first three return addresses into the game's code on the calling thread's stack. */
 void runtime_guest_call_sites(uint64_t out[3]) { guest_call_sites(out); }
-#else
-/* No call-site walk, wait profile or thread sampler on Windows: the callers only record statistics. */
-void runtime_wait_note(int kind, uint64_t ns) { (void)kind; (void)ns; }
-void runtime_wait_report(double frames) { (void)frames; }
-void runtime_guest_call_sites(uint64_t out[3]) { out[0]=out[1]=out[2]=0; }
-#endif

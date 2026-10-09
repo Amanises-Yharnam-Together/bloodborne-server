@@ -203,8 +203,19 @@ def main():
                    '--output-res', env.get('BB_OUTPUT_RES', ''),
                    '--patches-dir', env.get('BB_PATCHES_DIR', data / 'patches'),
                    '--patches-config', env.get('BB_PATCHES_CONFIG', data / 'patches.json'))
+        # As run.sh (0.5): the GPU memory defaults the renderer is tuned for. Background upload of
+        # rewritten GPU memory, command buffers decoded from a copy, small GPU outputs written
+        # beside the game's writes; BB_PC_MODEL=1 is the experimental memory and translation
+        # model (BB_GUEST_IN_PLACE), BB_AS_0_3=1 the 0.3 synchronisation for comparisons.
+        if env.get('BB_AS_0_3') == '1':
+            env.update(BB_GUEST_IN_PLACE='0', BB_HOST_COPY_WAITS='all', BB_PRODUCER_CHECK='1')
+        env.setdefault('BB_PREUPLOAD', '1')
+        env.setdefault('BB_GUEST_IN_PLACE', env.get('BB_PC_MODEL', '0'))
+        env.setdefault('BB_COPY_GPU_BUFFERS', '1')
+        env.setdefault('BB_GPU_WRITE_TWINS', '1')
+        env.setdefault('BB_GPU_WRITE_TWINS_MAX', '65536')
         if not env.get('BB_VBLANK_HZ'):
-            env['BB_VBLANK_HZ'] = {'uncap': '0', '90': '90'}.get(fps, '60')
+            env['BB_VBLANK_HZ'] = {'uncap': '480', '90': '90'}.get(fps, '60')
 
         # The in-game restart starts this script again once this process is gone.
         # GPU caches (shaders, pipelines) beside the saves; read before main(), so set here.

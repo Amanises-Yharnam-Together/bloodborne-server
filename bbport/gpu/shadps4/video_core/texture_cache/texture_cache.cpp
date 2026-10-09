@@ -229,15 +229,45 @@ void TextureCache::InvalidateMemory(VAddr addr, size_t size) {
     });
 }
 
+// bbport BB_IMAGE_WATCH=addr (diagnostics): how the image at that address is used (first 300).
+void TextureCache::WatchImage(const Image& image, const char* what) {
+    static const u64 watched = [] {
+        const char* env = std::getenv("BB_IMAGE_WATCH");
+        return env ? std::strtoull(env, nullptr, 0) : 0ull;
+    }();
+    if (!watched || image.info.guest_address != watched) {
+        return;
+    }
+    static std::atomic<u32> printed{0};
+    if (printed.fetch_add(1) < 300) {
+        std::printf("Image watch %#llx: %s, flags %#x\n", (unsigned long long)watched, what,
+                    u32(image.flags));
+    }
+}
+
 void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
     std::scoped_lock lock{mutex};
-    ForEachImageInRegion(address, max_size, [&](ImageId image_id, Image& image) {
+    // bbport: only an image starting at `address` is affected, so the images over its first byte
+    // are all there is to look at (the whole range was walked for every GPU write binding).
+    ForEachImageInRegion(address, 1, [&](ImageId image_id, Image& image) {
+        static const bool log = std::getenv("BB_IMAGE_SYNC_LOG") != nullptr;
+        if (log) {
+            static std::atomic<u32> printed{0};
+            if (printed.fetch_add(1) < 200) {
+                std::printf("Image sync: GPU write %#llx+%#llx over image %#llx %ux%u fmt %u flags %#x%s\n",
+                            (unsigned long long)address, (unsigned long long)max_size,
+                            (unsigned long long)image.info.guest_address, image.info.size.width,
+                            image.info.size.height, u32(image.info.pixel_format), u32(image.flags),
+                            image.info.guest_address == address ? "" : " (not at its start: kept)");
+            }
+        }
         // Only consider images that match base address.
         // TODO: Maybe also consider subresources
         if (image.info.guest_address != address) {
             return;
         }
         // Ensure image is reuploaded when accessed again.
+        WatchImage(image, "GPU write (marked for refresh)");
         image.flags |= ImageFlagBits::GpuDirty;
     });
 }
@@ -743,8 +773,10 @@ ImageId TextureCache::FindImageFromRange(VAddr address, size_t size, bool ensure
 ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, ViewMemo* memo,
                                      bool refresh) {
     Image& image = slot_images[image_id];
+    WatchImage(image, refresh ? "texture (refresh)" : "texture (no refresh)");
     if (desc.type == BindingType::Storage) {
         image.flags |= ImageFlagBits::GpuModified;
+        image.gpu_write_tick = scheduler.CurrentTick();
         if (readback_linear_images && (!image.info.props.is_tiled || image.info.size.width <= 8) &&
             image.info.guest_address != 0) {
             std::unique_lock lk{download_images_mutex};
@@ -773,7 +805,9 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, Vi
 
 ImageView& TextureCache::FindRenderTarget(ImageId image_id, const ImageDesc& desc) {
     Image& image = slot_images[image_id];
+    WatchImage(image, "render target");
     image.flags |= ImageFlagBits::GpuModified;
+    image.gpu_write_tick = scheduler.CurrentTick();
     if (readback_linear_images && (!image.info.props.is_tiled || image.info.size.width <= 8)) {
         std::unique_lock lk{download_images_mutex};
         download_images.emplace(image_id);
@@ -800,7 +834,9 @@ ImageView& TextureCache::FindRenderTarget(ImageId image_id, const ImageDesc& des
 
 ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc) {
     Image& image = slot_images[image_id];
+    WatchImage(image, "depth target");
     image.flags |= ImageFlagBits::GpuModified;
+    image.gpu_write_tick = scheduler.CurrentTick();
     image.usage.depth_target = 1u;
     UpdateImage(image_id);
 
@@ -838,6 +874,7 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
 }
 
 void TextureCache::RefreshImage(Image& image) {
+    WatchImage(image, "refresh entered");
     if (False(image.flags & ImageFlagBits::Dirty) || image.info.num_samples > 1) {
         return;
     }
@@ -860,6 +897,15 @@ void TextureCache::RefreshImage(Image& image) {
     const u32 num_mips = image.info.resources.levels;
     const bool is_gpu_modified = True(image.flags & ImageFlagBits::GpuModified);
     const bool is_gpu_dirty = True(image.flags & ImageFlagBits::GpuDirty);
+    static const bool sync_log = std::getenv("BB_IMAGE_SYNC_LOG") != nullptr;
+    if (sync_log && is_gpu_dirty) {
+        static std::atomic<u32> printed{0};
+        if (printed.fetch_add(1) < 100) {
+            std::printf("Image sync: refresh of %#llx (%ux%u) from memory the GPU wrote, flags %#x\n",
+                        (unsigned long long)image.info.guest_address, image.info.size.width,
+                        image.info.size.height, u32(image.flags));
+        }
+    }
 
     BbStats::image_upload_bytes.fetch_add(image.info.guest_size, std::memory_order_relaxed);
     boost::container::small_vector<vk::BufferImageCopy, 14> image_copies;
@@ -900,6 +946,7 @@ void TextureCache::RefreshImage(Image& image) {
         });
     }
 
+    WatchImage(image, image_copies.empty() ? "refresh: nothing to copy" : "refresh: uploading");
     if (image_copies.empty()) {
         image.flags &= ~ImageFlagBits::Dirty;
         return;
@@ -1121,6 +1168,7 @@ void TextureCache::GarbageCollectImages() {
     }
     BbStats::gc_used_bytes.store(total_used_memory, std::memory_order_relaxed);
     BbStats::gc_trigger_bytes.store(trigger_gc_memory, std::memory_order_relaxed);
+    BbStats::gc_critical_bytes.store(critical_gc_memory, std::memory_order_relaxed);
     // bbport: gc_tick (one per guest submission, hundreds a second) at each of the last 64
     // seconds, for ages in seconds. The usage compared is all of our VRAM, not only images: on a
     // discrete GPU it stays over the trigger, where an age of 16 ticks (~3 frames) evicted every

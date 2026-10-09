@@ -1,11 +1,16 @@
 /* Offline AppContent provider for the configured base-game profile.
  * Add-on licenses come from BB_ADDCONT (entitlement labels, comma-separated, e.g.
- * SPEXPANSIONDLC03 for The Old Hunters, whose data ships with the game). No package/DLC
- * mounting, downloads or entitlement checks. */
+ * SPEXPANSIONDLC03 for The Old Hunters, whose data ships with the game) and from the add-on
+ * folders in <user>/addcont (see addon_list). No package/DLC mounting, downloads or entitlement
+ * checks. */
 #include "runtime.h"
+#include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #define INVALID_ID ((int32_t)0x805a1000)
 #define NOT_LOADED ((int32_t)0x805a1001)
 #define PARAMETER ((int32_t)0x80d90002)
@@ -92,23 +97,60 @@ static ABI int32_t param_int(uint32_t id,int32_t *out) {
     printf("Runtime: AppContent parameter %u = %d\n",id,*out);
     return 0;
 }
+/* SceAppContentAddcontInfo: entitlement label (16 chars + NUL), padding, download status. */
+#define LABEL_SIZE 17
+#define ADDON_INSTALLED 4u
+typedef struct { char label[LABEL_SIZE]; char padding[3]; uint32_t status; } AddonInfo;
+/* Add-ons are the folders <user>/addcont/<title id>/<entitlement label> (shadPS4's layout),
+ * each reported as installed. No add-on data is mounted: Bloodborne: The Old Hunters
+ * (SPEXPANSIONDLC03) needs only the entitlement, its data ships with patch 1.09. Without a list
+ * the count is returned, with one at most capacity entries are written. Never touch unused list
+ * slots. */
 static ABI int32_t addon_list(uint32_t service,void *list,uint32_t capacity,uint32_t *hits) {
     require_initialized();
     if (service) { fputs("STOP: nonzero AppContent service label unsupported\n",stderr); exit(21); }
     if ((!capacity || !list) && !hits) return PARAMETER;
-    /* BB_ADDCONT licenses, reported as installed; nothing is mounted. Without a list only the
-     * count is returned. Never touch unused list slots. */
-    uint32_t n=addcont_count;
-    if (capacity && list) {
-        if (n>capacity) n=capacity;
-        for (uint32_t i=0;i<n;++i) {
-            AddcontInfo info; memset(&info,0,sizeof(info));
-            memcpy(info.label,addcont[i],sizeof(info.label)); info.status=ADDCONT_INSTALLED;
-            memcpy((unsigned char *)list+i*sizeof(info),&info,sizeof(info));
+    /* BB_ADDCONT labels first, then the add-on folders (not already listed); nothing is mounted. */
+    int fill=list && capacity;
+    uint32_t count=0;
+    char found[ADDCONT_MAX*2][LABEL_SIZE];
+    uint32_t nfound=0;
+    for (unsigned i=0;i<addcont_count && nfound<ADDCONT_MAX*2;++i) memcpy(found[nfound++],addcont[i],LABEL_SIZE);
+    char root[4096];
+    snprintf(root,sizeof(root),"%s/addcont",runtime_file_user_dir());
+    DIR *titles=opendir(root);
+    for (struct dirent *t; titles && (t=readdir(titles));) {
+        if (t->d_name[0]=='.') continue;
+        char title[4096+256];
+        snprintf(title,sizeof(title),"%s/%s",root,t->d_name);
+        DIR *labels=opendir(title);
+        for (struct dirent *l; labels && (l=readdir(labels));) {
+            struct stat entry;
+            char path[sizeof(title)+256];
+            size_t n=strlen(l->d_name);
+            if (l->d_name[0]=='.' || n>=LABEL_SIZE) continue;
+            snprintf(path,sizeof(path),"%s/%s",title,l->d_name);
+            if (stat(path,&entry) || !S_ISDIR(entry.st_mode)) continue;
+            int known=0;
+            for (uint32_t i=0;i<nfound;++i) known|=!strcmp(found[i],l->d_name);
+            if (known || nfound>=ADDCONT_MAX*2) continue;
+            memset(found[nfound],0,LABEL_SIZE); memcpy(found[nfound++],l->d_name,n);
         }
+        if (labels) closedir(labels);
     }
-    if (hits) *hits=n;
-    if (!lists) printf("Runtime: AppContent add-on list queried; %u reported\n",n);
+    if (titles) closedir(titles);
+    for (uint32_t i=0;i<nfound;++i) {
+        if (fill && count>=capacity) break;
+        if (fill) {
+            AddonInfo info;
+            memset(&info,'\0',sizeof(info)); memcpy(info.label,found[i],LABEL_SIZE);
+            info.status=ADDON_INSTALLED;
+            memcpy((unsigned char *)list+(size_t)count*sizeof(info),&info,sizeof(info));
+        }
+        ++count;
+    }
+    if (hits) *hits=count;
+    if (!lists) printf("Runtime: AppContent add-on list queried; %u reported (BB_ADDCONT, %s)\n",(unsigned)count,root);
     ++lists; return 0;
 }
 uintptr_t runtime_content_resolve(const char *name) {

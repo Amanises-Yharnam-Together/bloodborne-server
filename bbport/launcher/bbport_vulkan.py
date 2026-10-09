@@ -24,26 +24,6 @@ LIBRARY_DIRS = (
 )
 
 
-AMD_VENDOR = "0x1002"
-
-
-def amd_gpu(drm_dir=Path("/sys/class/drm")):
-    """Whether the system has an AMD GPU (the new memory model runs on AMD only for now).
-
-    True or False from the kernel's PCI vendor ids; None when they cannot be read (a sandbox
-    without /sys): the game itself turns the model off on another GPU.
-    """
-    vendors = set()
-    for path in drm_dir.glob("card[0-9]*/device/vendor"):
-        try:
-            vendors.add(path.read_text().strip().lower())
-        except OSError:
-            continue
-    if not vendors:
-        return None
-    return AMD_VENDOR in vendors
-
-
 def elf64(path):
     """Reject 32-bit ICDs in distributions that install both architectures."""
     try:
@@ -58,7 +38,7 @@ def host_nvidia(manifest_dirs, library_dirs):
     for directory in manifest_dirs:
         for manifest in sorted(directory.glob("*nvidia*.json")):
             try:
-                data = json.loads(manifest.read_text())
+                data = json.loads(manifest.read_text(encoding='utf-8'))
                 library = Path(data["ICD"]["library_path"])
             except (OSError, ValueError, KeyError, TypeError):
                 continue
@@ -119,7 +99,7 @@ def configure(env, manifest_dirs=MANIFEST_DIRS, library_dirs=LIBRARY_DIRS):
     data["ICD"]["library_path"] = str(libraries / driver.name)
     manifest = cache / "nvidia_icd.json"
     temporary = cache / f"nvidia_icd.{os.getpid()}.tmp"
-    temporary.write_text(json.dumps(data, indent=2) + "\n")
+    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     temporary.replace(manifest)
     env["VK_DRIVER_FILES"] = str(manifest) + (":" + bundled if bundled else "")
     env["LD_LIBRARY_PATH"] = str(libraries) + (
