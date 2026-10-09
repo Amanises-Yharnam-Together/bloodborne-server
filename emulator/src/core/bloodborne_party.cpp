@@ -1176,6 +1176,10 @@ s32 LocalTaskKind(bool hosting) {
     return hosting ? 3 : 2;
 }
 
+bool ReopensClosedSession(bool party, s32 matching_state, u8 closing) {
+    return party && matching_state == MatchingStateHosting && closing != 0;
+}
+
 s32 RemoteTaskKind(bool hosting) {
     return hosting ? RemoteGuestTask : RemoteHostTask;
 }

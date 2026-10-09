@@ -106,6 +106,16 @@ TEST(BloodborneThreePlayers, NoBellRingsDuringABossSequence) {
     EXPECT_EQ(TickUntilDecision(alone, solo), PartyAction::Wait);
 }
 
+// Kaniel 2026-10-09: after the game's kick-all (SessionManager +0x118 set) every later joiner was
+// kicked on arrival (reason 0xff000019) until the room was made again: a crashed friend could
+// never rejoin. A party host's session reopens.
+TEST(BloodborneThreePlayers, APartyHostsSessionNeverStaysClosedToJoiners) {
+    EXPECT_TRUE(ReopensClosedSession(true, MatchingStateHosting, 1));
+    EXPECT_FALSE(ReopensClosedSession(true, MatchingStateHosting, 0)) << "not closed";
+    EXPECT_FALSE(ReopensClosedSession(false, MatchingStateHosting, 1)) << "not a party";
+    EXPECT_FALSE(ReopensClosedSession(true, 0, 1)) << "not hosting";
+}
+
 // Session members are game objects; the boards know members by online id. The member's identity
 // object holds its online id, NUL-terminated.
 TEST(BloodborneThreePlayers, ASessionMemberIsFoundByItsOnlineId) {

@@ -3324,6 +3324,8 @@ void TickPlayersOnThisMap();
 
 void TickAutoplay();
 
+void ReopenClosedPartySession();
+
 void TickPartyController() {
     TickAutoplay();
     TickPartyTrip();
@@ -3343,6 +3345,7 @@ void TickPartyController() {
     if (!party_controller) {
         return;
     }
+    ReopenClosedPartySession();
     const u64 player = GetLocalPlayer();
     const PartyObservation observation = ObserveParty(player, party_controller->SearchEffectId());
     if (party_controller->Tick(observation, PartyController::Clock::now()) !=
@@ -3642,6 +3645,22 @@ void LogJoinTaskChanges() {
 // (0x05540290) lists the session's at +0xF8..+0x100 and holds the local one at +0xD0; the game
 // compares them with 0x00CA1C70.
 constexpr u64 SessionManagerPointerOffset = 0x05540290;
+
+// See ReopensClosedSession: a crashed friend was kicked on every rejoin (Kaniel 2026-10-09).
+void ReopenClosedPartySession() {
+    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+    if (session < 0x10000 || !HasMemoryAccess(session, 0x128, MemoryProt::CpuRead)) {
+        return;
+    }
+    const u8 closing = ReadValue<u8>(session, SessionClosingOffset);
+    if (!ReopensClosedSession(party_controller.has_value(), ReadValue<s32>(session, 0x124),
+                              closing)) {
+        return;
+    }
+    WriteValue(session, SessionClosingOffset, u8{0});
+    LOG_INFO(Debug, "Bloodborne party: reopened the session the game had closed to joiners");
+}
+
 constexpr u64 TaskAllocatorPointerOffset = 0x05540438;
 constexpr u64 JoinTaskConstructOffset = 0x01E4F9F0;
 constexpr u64 JoinTaskListAddOffset = 0x01E55A70;

@@ -342,6 +342,11 @@ std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s3
 constexpr s32 InSessionStep = 6;
 bool ShouldRecreateAfterTrip(s32 kind, s32 step);
 s32 RemoteTaskKind(bool hosting);
+// SessionManager +0x118: set by the game's kick-all (0x0178D7F8, the ForceSummonSuccess handler);
+// while it is set the host kicks every joiner on arrival (0x01ED121E, reason 0xff000019) until the
+// room is made again. A party host's session is reopened instead.
+constexpr u64 SessionClosingOffset = 0x118;
+bool ReopensClosedSession(bool party, s32 matching_state, u8 closing);
 // The kind of a join task rebuilt after a trip for the member with `identity`: on the host every
 // other member is a remote guest; on a guest the member's own saved kind (the host 0, another
 // guest 1), else a guest when the saved tasks name another member as the host, else the host.

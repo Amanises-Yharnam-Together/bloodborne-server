@@ -917,6 +917,12 @@ int PS4_SYSV_ABI sceNpMatching2KickoutRoomMember(OrbisNpMatching2ContextId ctxId
         LOG_ERROR(Lib_NpMatching2, "request or requestId null");
         return ORBIS_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     }
+    // The reason the game gives (Bloodborne: 0xff000020 the library's member timeout,
+    // 0xff000019 a closing session or the game's kick-all).
+    u32 reason = 0;
+    std::memcpy(&reason, request->optData.data, sizeof(reason));
+    LOG_INFO(Lib_NpMatching2, "kickout room={} member={} reason={:#x}", request->roomId,
+             request->memberId, reason);
 
     ContextObject* ctx = ContextManager::Instance().Get(ctxId);
     if (!ctx) {

@@ -124,6 +124,14 @@ TEST_F(BloodborneEboot, EveryPatchFindsTheGamesOwnBytes) {
     }
 }
 
+// The joiner kick of a closing session tests SessionManager +0x118 (ReopensClosedSession):
+// cmp byte [r12 + 0x118], 0 at 0x01ED121E.
+TEST_F(BloodborneEboot, TheClosingSessionKickTestsTheFlagWeClear) {
+    EXPECT_EQ(Bytes(0x01ED121E, 9),
+              (std::vector<u8>{0x41, 0x80, 0xBC, 0x24, 0x18, 0x01, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(SessionClosingOffset, 0x118u);
+}
+
 TEST_F(BloodborneEboot, TheSignTimersAreTheGamesStores) {
     for (const SignTimerSite& site : SignTimerSites) {
         const auto expected = EncodeSignTimerStore(site.modrm, site.original_seconds);
