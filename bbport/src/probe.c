@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <cpuid.h>
 #include "runtime.h"
 #include "gpu/bbgpu.h"
 #include "gpu/bbcoop.h"
@@ -22,6 +23,7 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 #include <execinfo.h>
+#include <pthread.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #endif
@@ -40,6 +42,42 @@ static int gpu_enabled;
 int vulkan_smoke(void);
 
 static void fail(const char *message) { fprintf(stderr, "ERROR: %s\n", message); exit(1); }
+
+/* The game's code was compiled for the PS4's CPU (AMD Jaguar) and runs as it is: AVX, BMI1
+ * (andn/bextr/blsr/tzcnt), MOVBE, LZCNT and POPCNT, thousands of each in eboot.bin. A CPU without
+ * them stops at the first one with SIGILL (exit code 132, issue #26), and lzcnt/tzcnt even run as
+ * bsr/bsf there, with other results. Said before the game starts; BB_SKIP_CPU_CHECK=1 skips it. */
+static void check_cpu(void) {
+    const char *skip = getenv("BB_SKIP_CPU_CHECK");
+    if (skip && !strcmp(skip, "1")) return;
+    unsigned a, b, c, d, leaf1_c = 0, leaf7_b = 0, ext1_c = 0;
+    if (__get_cpuid(1, &a, &b, &c, &d)) leaf1_c = c;
+    if (__get_cpuid_count(7, 0, &a, &b, &c, &d)) leaf7_b = b;
+    if (__get_cpuid(0x80000001u, &a, &b, &c, &d)) ext1_c = c;
+    int avx = (leaf1_c & bit_AVX) && (leaf1_c & bit_OSXSAVE);
+    if (avx) {
+        unsigned lo, hi;
+        __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+        avx = (lo & 6) == 6; /* the OS saves SSE and AVX state */
+    }
+    const struct { int present; const char *name; } features[] = {
+        {avx, "AVX"}, {(leaf7_b & bit_BMI) != 0, "BMI1"}, {(leaf1_c & bit_MOVBE) != 0, "MOVBE"},
+        {(ext1_c & bit_LZCNT) != 0, "LZCNT"}, {(leaf1_c & bit_POPCNT) != 0, "POPCNT"},
+        {(leaf1_c & bit_SSE4_2) != 0, "SSE4.2"},
+    };
+    char missing[64] = "";
+    for (unsigned i = 0; i < sizeof(features) / sizeof(features[0]); ++i) {
+        if (features[i].present) continue;
+        if (missing[0]) strcat(missing, ", ");
+        strcat(missing, features[i].name);
+    }
+    if (!missing[0]) return;
+    fprintf(stderr,
+            "ERROR: this CPU lacks %s. Bloodborne's code was compiled for the PS4's CPU and uses "
+            "these instructions directly: it needs an Intel Haswell (4th generation Core, 2013) or "
+            "newer, or an AMD Ryzen. BB_SKIP_CPU_CHECK=1 starts anyway.\n", missing);
+    exit(1);
+}
 static uint64_t read64(FILE *f) {
     unsigned char b[8];
     if (fread(b, 1, 8, f) != 8) fail("truncated boot file");
@@ -126,6 +164,18 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
         fprintf(stderr,"Fault: exception 0x%08lx at %s (thread %lu)\n",record->ExceptionCode,where,GetCurrentThreadId());
     fprintf(stderr,"  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
             c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
+    /* Outside the image and any module (generated code, a freed mapping): the region of RIP
+     * (Linux prints its /proc/self/maps line). */
+    HMODULE rip_module=NULL;
+    if (!(image && (uintptr_t)c->Rip-(uintptr_t)image<0x10000000) &&
+        !GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)c->Rip,&rip_module)) {
+        MEMORY_BASIC_INFORMATION region;
+        if (VirtualQuery((void *)c->Rip,&region,sizeof(region)))
+            fprintf(stderr,"  mapping of RIP: %p-%p state 0x%lx protect 0x%lx type 0x%lx\n",region.BaseAddress,
+                    (void *)((char *)region.BaseAddress+region.RegionSize),region.State,region.Protect,region.Type);
+        else
+            fputs("  mapping of RIP: none\n",stderr);
+    }
     if (gpu_enabled) bbgpu_dump_guest_writes(info);
     bbcoop_crash_report(info); /* user/log/crash-*.txt and .dmp */
     /* rbp chain (guest and host code keep frame pointers). */
@@ -222,6 +272,26 @@ static void fault(int sig, siginfo_t *info, void *context) {
         snprintf(line, sizeof(line), "Fault (signal %d) at RIP %p, address %p\n", sig, (void *)rip, info->si_addr);
     { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
     if (gpu_enabled) bbgpu_dump_guest_writes(context);
+    /* Outside the image and any shared object (generated code, a freed mapping): the mapping
+     * from /proc/self/maps, and the thread. */
+    if (rip - (uintptr_t)image >= 0x10000000 && !(dladdr((void *)rip, &where) && where.dli_fname)) {
+        char thread[32] = "?";
+        pthread_getname_np(pthread_self(), thread, sizeof(thread));
+        snprintf(line, sizeof(line), "  thread %s; mapping of RIP: ", thread);
+        { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
+        FILE *maps = fopen("/proc/self/maps", "r");
+        int found = 0;
+        while (maps && fgets(line, sizeof(line), maps)) {
+            unsigned long from, to;
+            if (sscanf(line, "%lx-%lx", &from, &to) == 2 && rip >= from && rip < to) {
+                ssize_t written_=write(2, line, strlen(line)); (void)written_;
+                found = 1;
+                break;
+            }
+        }
+        if (maps) fclose(maps);
+        if (!found) { ssize_t written_=write(2, "none\n", 5); (void)written_; }
+    }
     /* Host call chain (frames with unwind info; guest frames end it). */
     void *frames[32];
     int depth = backtrace(frames, 32);
@@ -351,8 +421,14 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
 /* Restarts the game through run.sh (the settings menu: a new render resolution is a patch
  * applied at start). Descriptors are closed first so the old GPU device and its memory are
  * released before the new process opens its own. */
+volatile int runtime_restarting;
 void runtime_restart(void) {
     fflush(NULL);
+    /* The GPU threads still run until exec (Linux) or TerminateProcess (Windows): their Vulkan
+     * calls fail once the device goes away, and an assertion there must not end the process
+     * (exit 23) before the new launch starts. */
+    runtime_restarting = 1;
+    __sync_synchronize();
 #ifdef _WIN32
     /* run.py sets BB_RESTART_COMMAND: the launch command line, started again (new patches). */
     const char *command=getenv("BB_RESTART_COMMAND");
@@ -394,6 +470,7 @@ int main(int argc, char **argv) {
     runtime_memory_reserve();
     runtime_thread_tcb_offset();
 #endif
+    check_cpu();
     int cpu_only = 0, strict_imports = 0;
     unsigned timeout_seconds = 10;
     const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL;
@@ -612,6 +689,8 @@ int main(int argc, char **argv) {
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
 #endif
+    /* bbport (upstream): the GPU side's code hooks and the in-game settings menu. */
+    if (!cpu_only) bbgpu_patch_image(image, size);
     /* Seamless co-op (SHADPS4_BLOODBORNE_SEAMLESS_COOP=1): its patches and hooks go into the eboot
      * (image offset 0, up to the first linked module) while the image is still writable. */
     for (uint64_t i = 0; i < ns; ++i)

@@ -177,6 +177,49 @@ void Runtime::FillBuffer(const VideoCore::Buffer* dst, u64 offset, u64 size, u32
                  vk::AccessFlagBits2::eTransferWrite);
 }
 
+void Runtime::CopyFromGuestChunk(vk::Buffer src, const VideoCore::Buffer* dst,
+                                 std::span<const vk::BufferCopy> copies) {
+    if (copies.empty()) {
+        return;
+    }
+    scheduler.EndRendering();
+    bool needs_flush = false;
+    for (const auto& copy : copies) {
+        needs_flush |= IsBufferAccessed(dst, copy.dstOffset, copy.size, true);
+    }
+    if (needs_flush) {
+        FlushBarriers();
+    }
+    scheduler.Record([src, dst_handle = dst->Handle(),
+                      regions = scheduler.RecordData(copies)](vk::CommandBuffer cmdbuf) {
+        cmdbuf.copyBuffer(src, dst_handle, regions.size(), regions.data());
+    });
+    for (const auto& copy : copies) {
+        AccessBuffer(dst, copy.dstOffset, copy.size, vk::PipelineStageFlagBits2::eCopy,
+                     vk::AccessFlagBits2::eTransferWrite);
+    }
+}
+
+void Runtime::UpdateBuffer(const VideoCore::Buffer* dst, u64 offset, std::span<const u8> data) {
+    if (data.empty()) {
+        return;
+    }
+    scheduler.EndRendering();
+    if (IsBufferAccessed(dst, offset, data.size(), true)) {
+        FlushBarriers();
+    }
+    constexpr std::size_t Piece = 32 * 1024; // vkCmdUpdateBuffer takes 64 KiB at most
+    for (std::size_t at = 0; at < data.size(); at += Piece) {
+        const auto piece = data.subspan(at, std::min(Piece, data.size() - at));
+        scheduler.Record([handle = dst->Handle(), to = offset + at,
+                          bytes = scheduler.RecordData(piece)](vk::CommandBuffer cmdbuf) {
+            cmdbuf.updateBuffer(handle, to, bytes.size_bytes(), bytes.data());
+        });
+    }
+    AccessBuffer(dst, offset, data.size(), vk::PipelineStageFlagBits2::eClear,
+                 vk::AccessFlagBits2::eTransferWrite);
+}
+
 void Runtime::InlineData(VideoCore::Buffer* dst, u64 offset, u32 value) {
     scheduler.EndRendering();
 
@@ -188,7 +231,7 @@ void Runtime::InlineData(VideoCore::Buffer* dst, u64 offset, u32 value) {
         cmdbuf.updateBuffer(handle, offset, sizeof(value), &value);
     });
 
-    AccessBuffer(dst, offset, sizeof(value), vk::PipelineStageFlagBits2::eCopy,
+    AccessBuffer(dst, offset, sizeof(value), vk::PipelineStageFlagBits2::eClear,
                  vk::AccessFlagBits2::eTransferWrite);
 }
 
@@ -764,6 +807,9 @@ bool Runtime::IsBufferAccessed(const VideoCore::Buffer* handle, u64 offset, u64 
         .range_start = offset,
         .range_end = offset + size - 1,
     };
+    if (global_write) {
+        return true; // bbport: a paged write may have touched it (AccessGlobal)
+    }
     bool has_access = barrier_tracker.FindRange(range, Access::Write);
     if (check_read_access && !has_access) {
         has_access |= barrier_tracker.FindRange(range, Access::Read);
@@ -827,6 +873,14 @@ void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size
     memory_barrier.srcAccessMask |= src_access & WRITE_MASK;
 }
 
+void Runtime::AccessGlobal(vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access) {
+    memory_barrier.srcStageMask |= src_stage;
+    if (src_access & vk::AccessFlagBits2::eShaderWrite) {
+        memory_barrier.srcAccessMask |= vk::AccessFlagBits2::eShaderWrite;
+        global_write = true;
+    }
+}
+
 void Runtime::FlushBarriers() {
     BeforeImageAccess();
     vk::DependencyInfo dep_info{};
@@ -862,6 +916,7 @@ void Runtime::FlushBarriers() {
 
     image_barriers.clear();
     barrier_tracker.Clear();
+    global_write = false;
     ++access_epoch;
 }
 

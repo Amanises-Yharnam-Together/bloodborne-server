@@ -119,7 +119,12 @@ add_host_shader(upscale_reactive.comp upscale_reactive_comp)
 add_host_shader(taa.comp taa_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_ldr_comp LDR_OUTPUT=1)
+add_host_shader(fsr4_color.comp fsr4_decode_comp)
+add_host_shader(fsr4_color.comp fsr4_encode_comp ENCODE=1)
+add_host_shader(fsr4_reactive.comp fsr4_reactive_comp)
 add_host_shader(buffer_multi_copy.comp buffer_multi_copy_comp)
+add_host_shader(occlusion_resolve.comp occlusion_resolve_comp)
+add_host_shader(indirect_guard.comp indirect_guard_comp)
 add_host_shader(depth_resample.frag depth_resample_frag)
 add_host_shader(depth_resample.frag depth_stencil_resample_frag HAS_STENCIL=1)
 add_host_shader(depth_resample.frag depth_stencil_bits_frag STENCIL_BITS=1)
@@ -142,6 +147,8 @@ set(COMMON
 file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
+# The layer's own modules (independent of the shadPS4 code): layer/.
+file(GLOB LAYER_SOURCES CONFIGURE_DEPENDS layer/*.cpp)
 # Windows: a DLL cannot leave the runtime_* symbols for bb-probe.exe to resolve, so the
 # library is static there and linked into the executable.
 if (WIN32)
@@ -149,7 +156,7 @@ if (WIN32)
 else()
     set(BBGPU_KIND SHARED)
 endif()
-add_library(bbgpu ${BBGPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES}
+add_library(bbgpu ${BBGPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES} ${LAYER_SOURCES}
     shadps4/core/libraries/gnmdriver/gnmdriver.cpp
     shadps4/core/libraries/videoout/driver.cpp shadps4/core/libraries/videoout/video_out.cpp
     shadps4/core/libraries/kernel/equeue.cpp ${AVPLAYER}
@@ -237,13 +244,20 @@ target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui
     third_party/imgui/backends/imgui_impl_vulkan.cpp)
 target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/backends)
 target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
-    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
+    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf"
+    BB_SERIF_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
-    OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf)
-target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
+target_include_directories(bbgpu PRIVATE shim layer shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include
     ${BB_EMULATOR_SRC})
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
+# Loaded with bb-probe at startup (DT_NEEDED, never dlopen): thread_local access without a
+# TLS descriptor call (_dl_tlsdesc_return was ~2% of the draw recording thread).
+# Linux only: on Windows bbgpu is a static library linked into bb-probe.exe.
+if (NOT WIN32)
+    target_compile_options(bbgpu PRIVATE -ftls-model=initial-exec)
+endif()
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 if (NOT WIN32)
     target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
@@ -320,6 +334,9 @@ target_link_libraries(pixel-format-test PRIVATE bbgpu)
 add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)
+add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bbport_settings.cpp)
+target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(settings-test PRIVATE .. shim)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)
@@ -342,6 +359,14 @@ target_include_directories(camera-motion-test PRIVATE shim shadps4 ${SHADER_INCL
 target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_dependencies(camera-motion-test host_shaders)
+
+add_executable(translation-memory-test EXCLUDE_FROM_ALL ../tests/test_translation_memory.cpp
+    ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(translation-memory-test PRIVATE shim shadps4 third_party/gcn/include)
+target_compile_options(translation-memory-test PRIVATE -UNDEBUG -fPIC)
+set_source_files_properties(../tests/test_translation_memory.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(translation-memory-test PRIVATE bbgpu)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
