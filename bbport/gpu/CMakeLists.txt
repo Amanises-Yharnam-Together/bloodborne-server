@@ -148,9 +148,8 @@ file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
 if (WIN32)
-    # Linux-only (mprotect/SIGTRAP hooks, memfd and dma-buf chunks, the PC memory model):
-    # shim/bbport_win_stubs.cpp answers their interfaces.
-    list(FILTER SHIM_SOURCES EXCLUDE REGEX "shim/bbport_(guest_hooks|free_check|gnm_hooks|guest_memory)\\.cpp$")
+    # Linux-only (mprotect/SIGTRAP hooks): shim/bbport_win_stubs.cpp answers their interfaces.
+    list(FILTER SHIM_SOURCES EXCLUDE REGEX "shim/bbport_(guest_hooks|free_check|gnm_hooks)\\.cpp$")
 endif()
 # The layer's own modules (independent of the shadPS4 code): layer/.
 file(GLOB LAYER_SOURCES CONFIGURE_DEPENDS layer/*.cpp)

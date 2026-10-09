@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // bbport (Windows): the Linux-only parts of the GPU library, as inert stand-ins.
 //
-// bbport_guest_hooks, bbport_free_check, bbport_gnm_hooks and bbport_guest_memory are built on
-// mprotect, SIGTRAP and ucontext hooks, memfd and dma-buf exports (the PC memory model, BB_FREE_CHECK,
-// BB_GNM_CENSUS). CMakeLists.txt leaves them out of the Windows build and this file answers their
-// interfaces: no hook is installed, no direct memory chunk is made (the runtime keeps its
-// pagefile-backed section) and the PC memory model stays off, as with BB_GUEST_IN_PLACE=0.
+// bbport_guest_hooks, bbport_free_check and bbport_gnm_hooks are built on mprotect, SIGTRAP and
+// ucontext hooks (the PC memory model's write hooks, BB_FREE_CHECK, BB_GNM_CENSUS). CMakeLists.txt
+// leaves them out of the Windows build and this file answers their interfaces: no hook is
+// installed.
 #ifdef _WIN32
 #include "bbport_free_check.h"
 #include "bbport_gnm_hooks.h"
 #include "bbport_guest_hooks.h"
-#include "bbport_guest_memory.h"
 
 namespace BbGuestHooks {
 void Install(RangeCallback on_gpu_range_allocated) {
@@ -80,30 +78,4 @@ void CheckSubmission(const std::uint32_t* commands, std::uint64_t dwords) {
 DriverWrite::~DriverWrite() = default;
 } // namespace BbGnmHooks
 
-namespace BbGuestMemory {
-bool Usable(const Vulkan::Instance& instance) {
-    (void)instance;
-    return false;
-}
-bool PcModelGpu(const Vulkan::Instance& instance) {
-    (void)instance;
-    return false;
-}
-void Install(const Vulkan::Instance& instance) {
-    (void)instance;
-}
-const Chunk* Find(std::uint64_t phys) {
-    (void)phys;
-    return nullptr;
-}
-bool HostImported() {
-    return false;
-}
-bool LayerMemory() {
-    return false;
-}
-vk::ExternalMemoryHandleTypeFlagBits HandleType() {
-    return vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT;
-}
-} // namespace BbGuestMemory
 #endif
