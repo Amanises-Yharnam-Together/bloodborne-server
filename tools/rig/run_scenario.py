@@ -43,6 +43,9 @@ SHADNET_PORT = 32313
 BACKEND_PORT = 20453
 RUNS = RIG / "runs"
 RUNS_KEPT = 20
+# What one rig game commits (its 8.25 GB backing for the PS4's memory, then Vulkan and the rest):
+# measured 12.3 GB. Windows refuses a game that does not fit ("Insufficient system resources").
+COMMIT_PER_GAME_GB = 13
 
 # Each role's game: its folder under the rig (with its own user dir, save and account) and P2P port.
 ROLES = {
@@ -294,6 +297,25 @@ def keep_logs(run_dir: pathlib.Path, roles: list[str], suffix: str = ""):
                 pass
 
 
+def free_commit_gb() -> float:
+    """What Windows can still commit (its commit limit minus what is committed), in GB."""
+    out = subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         "$c = (Get-Counter '\\Memory\\Committed Bytes','\\Memory\\Commit Limit')"
+         ".CounterSamples; $c[1].CookedValue - $c[0].CookedValue"],
+        capture_output=True, text=True).stdout.strip()
+    try:
+        return float(out) / 2**30
+    except ValueError:
+        return float("inf")  # not known: let the games try
+
+
+def boot_failure(text: str) -> str | None:
+    """Why a game stopped before it got going: the emulator's failed assertion and its reason."""
+    found = re.search(r"Assertion Failed!\s*\n(.*)", text)
+    return found.group(1).strip() or "assertion failed" if found else None
+
+
 def until_done(text: str) -> str:
     """A log up to its script's end: what follows is the rig stopping the games (the others see
     the first one go and leave its room)."""
@@ -328,6 +350,12 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     for role in roles:
         if not scenario.get("no_baseline") and restore_baseline(role):
             print(f"  {role}: saves put back to the baseline")
+    need = COMMIT_PER_GAME_GB * len(roles)
+    free = free_commit_gb()
+    if free < need:
+        print(f"  not enough memory for {len(roles)} games: {free:.1f} GB can be committed, "
+              f"{need} GB needed (close something big, or give Windows a bigger page file)")
+        return False
     stop_servers()
     start_servers(run_dir)
     if not server_is_current():
@@ -344,7 +372,8 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
         print(f"  started {role}")
         # The next game once this one is in the world (two games loading at once is slow).
         wait_until = time.time() + 90
-        while time.time() < wait_until and IN_WORLD not in read_log(role):
+        while (time.time() < wait_until and IN_WORLD not in read_log(role)
+               and processes[role].poll() is None):
             time.sleep(2)
     done = {}
     crashed = {}
@@ -366,6 +395,10 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
             elif reports := new_crashes(role, started):
                 crashed[role] = reports[0]
                 print(f"  {role} crashed after {time.time() - started:.0f} s: {reports[0]}")
+            elif processes[role].poll() is not None:
+                # Gone without a crash report: it never got going (the memory ran out, say).
+                crashed[role] = boot_failure(read_log(role)) or "the game exited"
+                print(f"  {role} stopped after {time.time() - started:.0f} s: {crashed[role]}")
         if crashed:
             break  # the others wait for it in vain
         time.sleep(2)
@@ -375,7 +408,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
         # A crash is the emulator's (the GPU's device lost, so far), not the scenario's: once more.
         if attempt == 1:
             print("  a game crashed; running the scenario once more")
-            time.sleep(5)
+            time.sleep(30)  # what a dead game held goes back to Windows
             return run(name, batch, attempt + 1)
         print("  FAILED: a game crashed again")
         return False

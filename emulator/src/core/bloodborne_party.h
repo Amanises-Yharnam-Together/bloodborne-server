@@ -554,9 +554,10 @@ struct ResumeStep {
     s32 warp_point = 0;
 };
 // From where the guest loaded: stay (nothing remembered, or within 5 m), move on the same map,
-// travel to the remembered map first, or forget the point (another character in the slot).
-ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at,
-                            s32 progress);
+// travel to the remembered map first, or forget the point (another character in the slot). A
+// guest no longer on the map it loaded on (`loaded_map`, 0 if not known) travelled on: it stays.
+ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at, s32 progress,
+                            u32 loaded_map = 0);
 
 // World state per map (POST /bloodborne/party/mapstate): the host posts the bits of its map's
 // 10000 flags from MapFlagBase (MSB first, as the flag store keeps them) as "<member> <map>

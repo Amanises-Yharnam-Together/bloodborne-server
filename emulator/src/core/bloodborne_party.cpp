@@ -812,9 +812,9 @@ s32 MapWarpPoint(u32 packed_map) {
     return (area * 10 + block) * 10000 + 2950;
 }
 
-ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at,
-                            s32 progress) {
-    if (point.map == 0) {
+ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at, s32 progress,
+                            u32 loaded_map) {
+    if (point.map == 0 || (loaded_map != 0 && loaded_map != map)) {
         return {};
     }
     // Event flags only add up as a character plays; far fewer set means another character.

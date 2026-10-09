@@ -1225,3 +1225,18 @@ TEST(BloodborneGuestResume, AGuestResumesWhereItLeft) {
     EXPECT_EQ(ChooseResumeStep(point, 0x18010000, far, 120).kind, Kind::Forget)
         << "a new character in the slot";
 }
+
+// The point is about where the game loaded the guest: a guest that travels on (a lamp, a trip)
+// before it is settled there has chosen where to be. The rig's guest went to the Cathedral Ward
+// right after loading, and the resume took it back to Central Yharnam, away from its host.
+TEST(BloodborneGuestResume, NotOnceTheGuestTravelledOn) {
+    using Kind = ResumeStep::Kind;
+    const ResumePoint point{0x18010000, {-199.7f, -50.8f, 179.4f}, 900};
+    const LampPosition ward{17.6f, -9.5f, 102.7f};
+    EXPECT_EQ(ChooseResumeStep(point, 0x18000000, ward, 900, 0x18010000).kind, Kind::Stay)
+        << "loaded in Central Yharnam, then travelled to the Ward";
+    EXPECT_EQ(ChooseResumeStep(point, 0x18000000, ward, 900, 0x18000000).kind, Kind::Travel)
+        << "loaded in the Ward: back to the point";
+    EXPECT_EQ(ChooseResumeStep(point, 0x18000000, ward, 900).kind, Kind::Travel)
+        << "where it loaded not known: as before";
+}

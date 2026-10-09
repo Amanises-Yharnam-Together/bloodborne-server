@@ -5549,6 +5549,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     static std::chrono::steady_clock::time_point last_saved{};
     static ResumePoint saved;
     static s32 own_progress = 0;
+    static u32 loaded_map = 0; // where the load the resume is for put the guest
     if (!IsPartyGuestRole()) {
         return;
     }
@@ -5565,6 +5566,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     } else if (loading && was_in_session && !PartyTripActive()) {
         was_in_session = false;
         phase = Phase::WaitForLoad;
+        loaded_map = 0;
         LOG_INFO(Debug, "Bloodborne party: guest sent home; it will resume at its last point");
     }
     const bool ready = !loading && IsUsablePackedMap(map) && at && character_slot.load() >= 0;
@@ -5574,6 +5576,9 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     }
     if (!stable_since) {
         stable_since = now;
+    }
+    if (phase == Phase::WaitForLoad && loaded_map == 0) {
+        loaded_map = map;
     }
     const bool settled = now - *stable_since >= std::chrono::seconds{3};
     switch (phase) {
@@ -5586,8 +5591,12 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         const auto point = in_session ? std::nullopt : ParseResumePoint(text);
         own_progress = in_session ? 0 : CountSetFlags();
         const ResumeStep step =
-            point ? ChooseResumeStep(*point, map, *at, own_progress) : ResumeStep{};
+            point ? ChooseResumeStep(*point, map, *at, own_progress, loaded_map) : ResumeStep{};
         phase = Phase::Recording;
+        if (point && map != loaded_map) {
+            LOG_INFO(Debug, "Bloodborne party: guest travelled on from map {:#x}; no resume",
+                     loaded_map);
+        }
         if (step.kind == ResumeStep::Kind::Forget) {
             std::error_code error;
             std::filesystem::remove(GuestResumeFile(), error);
@@ -8109,7 +8118,9 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
             using WarpNextStageBonfire = void PS4_SYSV_ABI (*)(u64 unused, s32 warp_point);
             reinterpret_cast<WarpNextStageBonfire>(image_base + WarpNextStageBonfireOffset)(0,
                                                                                             point);
-            if (IsPartyGuestRole()) {
+            // As a guest's own lamp trip in a session (TickGuestLampTrip) does; out of one it is
+            // the game's own travel, as a player's at a lamp.
+            if (IsPartyGuestRole() && InPartySession()) {
                 guest_apart.Travelled();
                 guest_trip_in_flight = true;
             }

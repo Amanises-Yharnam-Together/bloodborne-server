@@ -370,6 +370,27 @@ Kaniel's ask: "you should be able to test every change yourself".
 - Bugs it found on its first runs, all fixed: a guest's trip start posted kills (host hid living
   enemies); the HP board kept a quit member's report (next session's enemy started hurt); the
   guest found the host's online id only deeper in the identity object.
+- Then (2026-10-09 morning), fixed: the kill board took only deaths with +0x1E3 bit 0 (the
+  game's kill); a fight's death sets bit 2 (0x018C52D1, the handler that gives the local player
+  its echoes), so almost nothing was shared (Kaniel's friend-run log: 67 kill rewards, 2 kills
+  posted); `IsRealDeath`. And the guest's resume ran after the guest had already travelled on
+  (it decides once settled 3 s on a map): the rig's guest went to the Ward and was taken back to
+  Central Yharnam, away from its host; now a guest no longer on the map it loaded on stays.
+- Rig-confirmed on 2026-10-09: boot, join (the guest keeps its max HP, no level sync 9200),
+  trip, hp-apart, boss-kill (Cleric Beast), lamp-share, lone-guest, kill-apart (a fight kill
+  hidden for the guest coming back), echoes-apart (+202 to the guest in the Ward, +202 to the
+  host in Central Yharnam), host-death, guest-death, join-ward (once; the other run hit the
+  resume bug). Not run yet: dog, join-apart, join-after-trip, host-crash, guest-crash, resume,
+  join3, trip3.
+- Memory: a rig game commits about 12.3 GB (its 8.25 GB SEC_COMMIT backing, address_space.cpp,
+  then Vulkan); the PC's commit limit is 82.4 GB, and with "NVIDIA Overlay.exe" holding 22.7 GB
+  of GPU memory (grown since the day before) only one game fit, so the second one died at boot
+  ("Insufficient system resources"). The runner now checks the free commit first (13 GB a game)
+  and says so, and a game that exits without a crash report counts as a crash (one retry).
+- Open: `waiting_to_meet` (GuestApart): a guest apart from its own trip or a resume does not
+  ring until the host is on its map. That predates join-in-place and goes against "join
+  anywhere, anytime"; join-apart / join-after-trip / resume test it (the 2026-10-08 "host kicks a
+  guest summoned on another map" may still be there).
 
 ## Friend runs 2026-10-08/09 (online kit, Kaniel + friend over Radmin VPN)
 All built, CI green, pushed on `phase3-travel`; none confirmed in a game yet unless noted.

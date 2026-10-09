@@ -110,6 +110,14 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(run_scenario.until_done(log).endswith("done (ok)"))
         self.assertEqual(run_scenario.until_done("no end yet"), "no end yet")
 
+    def test_a_game_that_never_got_going_says_why(self):
+        log = ("[Loader] <Info> Files found in game mods folder\n"
+               "[Debug] <Critical> (shadPS4:Main) address_space.cpp:200 Impl: Assertion Failed!\n"
+               "Insufficient system resources exist to complete the requested service.\n")
+        self.assertEqual(run_scenario.boot_failure(log),
+                         "Insufficient system resources exist to complete the requested service.")
+        self.assertIsNone(run_scenario.boot_failure("a game in the world\n"))
+
     def test_old_runs_go_newest_stay(self):
         with tempfile.TemporaryDirectory() as folder:
             runs = pathlib.Path(folder)

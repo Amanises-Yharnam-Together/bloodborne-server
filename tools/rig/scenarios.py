@@ -112,6 +112,22 @@ SCENARIOS = {
         },
         "timeout": 720,
     },
+    "dog": {
+        "about": "Kaniel's dog: the guest kills an enemy while the host is in the Dream; the host "
+                 "coming back finds it dead, not alive again",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 40", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 25",
+                     "snapshot"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 45", *attack(ENEMY),
+                      "wait 5", "wait-members 2 240", "wait 20", "snapshot"],
+        },
+        "expect": {
+            "guest": [r"kill board gets 1 kills"],
+            "host": [r"hid \d+ enemies a member killed on map 0x18010000"],
+        },
+        "timeout": 720,
+    },
     "hp-apart": {
         "about": "after the guest's trip each runs its own copy of the map; the host hurts an "
                  "enemy and the guest's copy follows",
@@ -161,6 +177,32 @@ SCENARIOS = {
         "expect": {"host": [r"join-anywhere patch"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 720,
+    },
+    "join-apart": {
+        "about": "joining across maps: the host in Cathedral Ward, the guest in Central Yharnam; "
+                 "the guest joins where it is and the session holds (no kick)",
+        "roles": {
+            "host": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                     "wait-session 2 360", "wait 60", "snapshot", "expect-session 2",
+                     f"expect-map {CATHEDRAL_WARD}"],
+            "guest": [START, "godmode", "wait-session 2 360", "wait 60", "snapshot",
+                      "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    "join-after-trip": {
+        "about": "a guest that travelled on its own before any session (in its own world) still "
+                 "rings and joins the host on another map",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 420", "wait 30", "snapshot",
+                     "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"],
+            "guest": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                      "wait-session 2 420", "wait 30", "snapshot", "expect-session 2",
+                      f"expect-map {CATHEDRAL_WARD}"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 780,
     },
     "lone-guest": {
         "about": "a guest alone on a map runs its enemies, and hands them back when the host comes",
@@ -245,13 +287,15 @@ SCENARIOS = {
     },
     "resume": {
         "about": "a guest that quits apart from the host comes back where it was, not where its "
-                 "save put it",
+                 "save put it, and joins the host from there",
         "roles": {
-            "host": [START, "godmode", "wait-session 2 300", "wait 200", "snapshot"],
+            "host": [START, "godmode", "wait-session 2 300", "wait 60", "wait-solo 120",
+                     "wait-session 2 420", "wait 20", "snapshot"],
             "guest": [[START, "godmode", "wait-session 2 300", "wait 10",
                        f"travel {CATHEDRAL_WARD_LAMP}", "wait 25", "snapshot", "done"],
                       ["godmode", f"wait-map {CATHEDRAL_WARD} 180", "wait 15", "snapshot",
-                       f"expect-map {CATHEDRAL_WARD}"]],
+                       f"expect-map {CATHEDRAL_WARD}", "wait-session 2 300", "wait 10",
+                       "snapshot", "expect-session 2", f"expect-map {CATHEDRAL_WARD}"]],
         },
         "expect": {"guest": [r"guest resume[sd] .*0x18000000"]},
         "timeout": 720,
