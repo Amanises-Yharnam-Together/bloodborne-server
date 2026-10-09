@@ -952,7 +952,11 @@ std::optional<s32> LowestSharedHp(u32 handle, s32 hp, s32 max, u32 map,
                                   std::span<const MemberMapState> others) {
     std::optional<s32> lowest;
     for (const MemberMapState& state : others) {
-        const auto report = state.map == map ? DecodeEnemyHp(state.bits) : std::nullopt;
+        // Any block of the same area (packed map 0xAABBCCDD, area AA): a member who joined in
+        // place stands on another block of it (Cathedral Ward next to Central Yharnam), and the
+        // blocks give their enemies distinct handles; another area may reuse a handle.
+        const auto report =
+            (state.map >> 24) == (map >> 24) ? DecodeEnemyHp(state.bits) : std::nullopt;
         if (!report) {
             continue;
         }
