@@ -197,7 +197,9 @@ SCENARIOS = {
         "roles": {
             "host": [START, f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 0", "wait-session 2 300",
                      f"wait-flag {FORBIDDEN_WOODS_LAMP_LIT} 1 90", "snapshot"],
-            "guest": [START, "wait-session 2 300", "wait 10",
+            # The guest's world loads again 10-20 s after the join; a flag set in the same 3 s
+            # reads as part of that load and is not shared, so the lamp is lit after it.
+            "guest": [START, "wait-session 2 300", "wait 30",
                       f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "wait 30", "snapshot"],
         },
         "timeout": 600,
