@@ -424,9 +424,27 @@ Kaniel's ask: "you should be able to test every change yourself".
   checks the free commit first (12.5 GB a game), closes its games gently (taskkill, then /F
   after 15 s), and a game that exits without a crash report counts as a crash (one retry). A
   role's "crash" (a stage ending in done) is a hard kill, which leaves 0.2-0.4 GB each time.
-- Open: `waiting_to_meet` (GuestApart) still keeps a guest apart from ringing until the host is
-  on its map after an in-session trip or a resume trip (the autoplay's own travel out of a
-  session no longer marks a guest apart); with joins across maps working it could go.
+- Gone (6a7b26ff): `waiting_to_meet` (GuestApart) kept a guest that travelled on from ringing
+  until the host was on its map, so after a host crash it never rejoined (host-crash-apart, red
+  then green). The join's stored placement (the guest's own spot) is now spent when its session
+  ends (`JoinPlacementLife`); kept, it warped the guest back to where it had first joined. And
+  `IsRealDeath` skips deaths with bit 0x20 (a world's put-down, Gascoigne 0x26): the dog's false
+  kill was a race the settle lost. On 6a7b26ff the rig ran host-crash-apart, join3, trip3, boot,
+  join, trip, kill-apart, hp-apart, boss-kill, boss-refight, join-ward (all passed), dog (failed
+  before the 0x20 rule) and lamp-share (failed: the flag was set within the post-join reload's
+  3 s diff; the scenario now waits 30 s). Not yet run on it: join-apart onward, dog, lamp-share.
+
+## Friend playtest 2026-10-09 afternoon (6a7b26ff kit, three players) — open
+Logs and crash dumps: project library `bug-reports/2026-10-09-friend-forest-crash/` (one guest's
+shad_log.txt / .prev.txt, two crash reports). Kaniel wants them fixed after the bloodborne_pc port.
+- **Cathedral Ward crash** still happens when the party goes there together.
+- **Forest after Amelia:** a guest's game crashed; after it joined again it saw Amelia's fog wall
+  as if the fight were ahead, and the party got random amounts of echoes (Kaniel suspects bosses
+  being killed: likely the kill board or HP board after the rejoin; check its log for "kill board
+  gets" around the rejoin).
+- Crash reports: `0xc0000005` at eboot+0x1524b24 on CSChrThread5 (read from 0x18; stack
+  eboot+0x1515677, +0x2032405) and at eboot+0x1d6fa68 on GXWorker:1 (read from -1; deep render
+  stack through +0x227e455/+0x1d20101).
 
 ## Friend runs 2026-10-08/09 (online kit, Kaniel + friend over Radmin VPN)
 All built, CI green, pushed on `phase3-travel`; none confirmed in a game yet unless noted.
