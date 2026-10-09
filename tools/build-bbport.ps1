@@ -2,7 +2,8 @@
 # what the rig plays with in <Out>: run.py with its scripts and patches, and the build in bin\
 # (tools\rig\engines.py). The DLLs come from MSYS2 (run.py puts C:\msys64\clang64\bin on PATH).
 # Usage: build-bbport.ps1 [-Src <bbport dir>] [-Out <dir>] [-Test]
-#   -Test also builds and runs the port's co-op tests (guest code hooks, the rig's log file).
+#   -Test also builds and runs the port's co-op tests (guest code hooks, the rig's log file) and the
+#   renderer's buffer format check.
 param(
     [string]$Src,
     [string]$Out,
@@ -26,7 +27,7 @@ $unix = (& (Join-Path $msys "usr\bin\cygpath.exe") -u $Src).Trim()
 & $bash -lc "cd '$unix' && bash build.sh"
 if ($LASTEXITCODE -ne 0) { Write-Host "bbport build failed"; exit 1 }
 if ($Test) {
-    & $bash -lc "cd '$unix' && source ./msys2-env.sh && ninja -C out/gpu coop-hooks-test log-file-test >out/test-build.log 2>&1 || { tail -40 out/test-build.log; exit 1; }; out/gpu/coop-hooks-test.exe && out/gpu/log-file-test.exe"
+    & $bash -lc "cd '$unix' && source ./msys2-env.sh && ninja -C out/gpu coop-hooks-test log-file-test pixel-format-test >out/test-build.log 2>&1 || { tail -40 out/test-build.log; exit 1; }; out/gpu/coop-hooks-test.exe && out/gpu/log-file-test.exe && out/gpu/pixel-format-test.exe"
     if ($LASTEXITCODE -ne 0) { Write-Host "bbport tests failed"; exit 1 }
 }
 
