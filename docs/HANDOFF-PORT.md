@@ -6,7 +6,27 @@ mechanic simpler or more reliable. No mixed parties (port and shadPS4 players ne
 leave/rejoin a session as a fix: everything is seamless. See docs/BBPORT.md for how the port and
 its co-op are wired, built, packaged and tested.
 
-## Where things are
+## State 2026-10-09 night (branch merge-05b, to become bbport)
+
+Done (Tasks 2-6, merge first): deadinside28 0.5-pre3 merged onto the AdrianCsT base (0.5's
+settings pages in the game's System menu with Adrian's XeSS/frame generation; co-op keeps the
+PLAY ONLINE/OFFLINE screen, 0.5 skips it into offline otherwise). The 0.5 PC memory model runs
+on Windows (host import of the runtime's section views, game code hooks with System V ABI;
+opt-in BB_PC_MODEL=1; free_check/gnm_hooks diagnostics still stubbed). Fixes: staging pool lock
+(the friend's RTX 3070 crash dump: RecordHostCopy -> RunGuestCopy -> Buffer::Flush into a
+dangling staging buffer), enemy HP shared across blocks of one area (the guest rejoined in place
+on another block), 1 s sign polling (backend default), the game's 5 s arrival wait skipped
+(QuickArrivalPatches 0x01E4B09F), item-button and remote-death diagnostics on in every co-op
+game. Save tab in the settings menu (BbSaveEditor: echoes, insight, attributes through
+0x1c13d00, items through 0x131cb70 on the game's thread from its pad reads; item list from the
+shadPS4 kit's DATA/Bloodborne Save Editor/resources). New rig verb expect-others-near and
+scenarios hp-across-blocks, echoes-after-crash, lamp-after-crash, crash3, host-death-boss, soak.
+
+Open: invisible guest after respawn and host pickups after a guest crash have no cause yet
+(the new diagnostics and guest-death-seen should show it); a fixed ~6 s post-load phase before
+events start (paid twice per join, not found yet); the save editor's offsets were read from the
+eboot, check the "Save editor: level ..." console line once in the world.
+
 
 - `bbport` (pushed, 0bc9a1c9 plus this plan): our co-op port on Supermedo's Windows 1.6 with
   **AdrianCsT 1.6.16 merged in** (deadinside28 0.4 on Windows and 64 Windows fixes, among them
