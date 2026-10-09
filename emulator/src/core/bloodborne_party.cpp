@@ -1507,6 +1507,23 @@ PartyAction PartyController::Tick(const PartyObservation& observation, Clock::ti
     }
     const bool may_search =
         observation.matching_idle || (role == PartyRole::Host && observation.room_for_more);
+    // A host with room whose bell stays on: on the port the effect outlasted the game's search
+    // after the first guest arrived (rig join3 2026-10-09), so the bell rings again every
+    // RetryDelay until the session is full.
+    if (may_search && role == PartyRole::Host && observation.room_for_more &&
+        observation.search_effect_active && !observation.white_phantom) {
+        if (!ringing_since) {
+            ringing_since = now;
+            return PartyAction::Wait;
+        }
+        if (now - *ringing_since < RetryDelay) {
+            return PartyAction::Wait;
+        }
+        ringing_since = now;
+        last_search = now;
+        return PartyAction::StartSearch;
+    }
+    ringing_since.reset();
     if (!may_search || observation.search_effect_active || observation.white_phantom) {
         // In (or joining) a session, or our search already took: the next time we are back home
         // alone is a fresh start, so forget the old cooldown.

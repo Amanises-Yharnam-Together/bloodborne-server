@@ -799,6 +799,8 @@ private:
     PartyRole role;
     u32 stable_ticks = 0;
     std::optional<Clock::time_point> last_search;
+    /// Since when a hosting bell with room for more has been on (see Tick).
+    std::optional<Clock::time_point> ringing_since;
 };
 
 // Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY=<script file>), for tests with no one at the pad: the

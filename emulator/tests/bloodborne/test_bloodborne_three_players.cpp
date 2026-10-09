@@ -67,6 +67,28 @@ TEST(BloodborneThreePlayers, TheHostRingsAgainForTheSecondGuest) {
         << "a guest in a session never searches";
 }
 
+// On the port the bell's effect stayed on after the first guest arrived while the game had
+// stopped searching (rig join3 2026-10-09: the second guest's sign was never taken). A host with
+// room whose bell has been on for RetryDelay rings again.
+TEST(BloodborneThreePlayers, TheHostRingsAgainWhenItsBellOutlastsTheSearch) {
+    PartyController host(PartyRole::Host);
+    PartyObservation ringing = HostingWithOneGuest();
+    ringing.search_effect_active = true;
+    EXPECT_EQ(TickUntilDecision(host, ringing), PartyAction::Wait) << "just rung";
+    EXPECT_EQ(host.Tick(ringing, T0 + std::chrono::seconds{10}), PartyAction::Wait);
+    EXPECT_EQ(host.Tick(ringing, T0 + PartyController::RetryDelay), PartyAction::StartSearch);
+    EXPECT_EQ(host.Tick(ringing, T0 + PartyController::RetryDelay + std::chrono::seconds{1}),
+              PartyAction::Wait)
+        << "then again only after another RetryDelay";
+
+    PartyController full(PartyRole::Host);
+    PartyObservation everyone_in = ringing;
+    everyone_in.room_for_more = false;
+    EXPECT_EQ(full.Tick(everyone_in, T0), PartyAction::Wait);
+    EXPECT_EQ(full.Tick(everyone_in, T0 + PartyController::RetryDelay * 2), PartyAction::Wait)
+        << "a full session never rings";
+}
+
 // Session members are game objects; the boards know members by online id. The member's identity
 // object holds its online id, NUL-terminated.
 TEST(BloodborneThreePlayers, ASessionMemberIsFoundByItsOnlineId) {
