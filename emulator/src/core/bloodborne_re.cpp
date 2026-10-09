@@ -1839,8 +1839,11 @@ void LogOtherPlayersChanges() {
             continue;
         }
         const u64 data = ReadValue<u64>(ReadValue<u64>(player, 0x3B0), 0x20);
-        state += fmt::format(" [type={} hp={}/{}]", ReadValue<s32>(player, 0x78),
-                             ReadValue<s32>(data, 0x128), ReadValue<s32>(data, 0x12C));
+        // The death flags too: a guest that got up invisible to the host (friend run
+        // 2026-10-09) left no trace here.
+        state += fmt::format(" [type={} hp={}/{} dead={:#x}]", ReadValue<s32>(player, 0x78),
+                             ReadValue<s32>(data, 0x128), ReadValue<s32>(data, 0x12C),
+                             ReadValue<u8>(player, 0x1E3));
     }
     if (state != last) {
         last = state;
@@ -4309,8 +4312,11 @@ void PS4_SYSV_ABI NoteItemButton(u64 tag, const GuestRegisterSnapshot* registers
     item_button_counts[tag].fetch_add(1, std::memory_order_relaxed);
 }
 
+// On in every co-op game (was SHADPS4_BLOODBORNE_RE_TRACE only): a host could not pick up
+// items after its guest's crash (friend run 2026-10-09) and the logs could not say where the
+// pickup stopped. Six counting hooks, logged with the map items when they change.
 void InstallItemButtonDiagnostics(u64 base) {
-    if (!party_controller || !EnvFlagEnabled("SHADPS4_BLOODBORNE_RE_TRACE")) {
+    if (!party_controller) {
         return;
     }
     const auto probe = [base](u64 offset, std::span<const u8> bytes, u64 tag) {
