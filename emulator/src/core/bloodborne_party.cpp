@@ -1180,6 +1180,23 @@ s32 RemoteTaskKind(bool hosting) {
     return hosting ? RemoteGuestTask : RemoteHostTask;
 }
 
+s32 RebuiltTaskKind(bool hosting, std::span<const SavedJoinTask> saved, u64 identity) {
+    if (hosting) {
+        return RemoteGuestTask;
+    }
+    bool host_elsewhere = false;
+    for (const SavedJoinTask& task : saved) {
+        if (task.kind != RemoteHostTask && task.kind != RemoteGuestTask) {
+            continue; // this player's own task
+        }
+        if (task.identity == identity) {
+            return task.kind;
+        }
+        host_elsewhere |= task.kind == RemoteHostTask;
+    }
+    return host_elsewhere ? RemoteGuestTask : RemoteHostTask;
+}
+
 bool TalksAsHost(bool in_party_session, s32 character_type) {
     return in_party_session && character_type == WhiteGhostCharacterType;
 }

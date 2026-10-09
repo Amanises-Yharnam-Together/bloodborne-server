@@ -386,22 +386,39 @@ SCENARIOS = {
         "timeout": 900,
     },
     "trip3": {
-        "about": "a party of three apart: the second guest waits in the Dream while the host "
+        "about": "a party of three apart (everyone sees both others at the end): the second guest waits in the Dream while the host "
                  "goes there and back; the host re-creates only the guest on its map, then the "
                  "second guest when it comes back",
         "roles": {
             "host": [START, "godmode", "wait-session 3 480", "wait 40", f"travel {HUNTERS_DREAM}",
                      "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 60", "wait-members 3 300",
-                     "wait 20", "snapshot", "expect-session 3"],
+                     "wait 20", "snapshot", "expect-session 3", "expect-others-near 2 15"],
             "guest": [START, "godmode", "wait-session 3 480", "wait 150", "wait-members 3 300",
-                      "wait 25", "snapshot", "expect-session 3"],
+                      "wait 25", "snapshot", "expect-session 3", "expect-others-near 2 15"],
             "guest2": [START, "godmode", "wait-session 3 480", "wait 10",
                        f"travel {HUNTERS_DREAM}", "wait 90", f"travel {CENTRAL_YHARNAM_LAMP}",
-                       "wait-members 3 300", "wait 25", "snapshot", "expect-session 3"],
+                       "wait-members 3 300", "wait 25", "snapshot", "expect-session 3",
+                       "expect-others-near 2 15"],
         },
         "expect": {
             "host": [r"re-creating rig_guest on map 0x18010000 \(1 of 2 members\)",
                      r"re-creating rig_guest2 on map 0x18010000"],
+        },
+        "timeout": 1200,
+    },
+    "guest-trip3": {
+        "about": "a party of three: one guest goes to the Dream and back; afterwards both guests "
+                 "and the host see each other (Kaniel 2026-10-09: guests did not see each other "
+                 "after travelling)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait 150", "wait-members 3 300",
+                     "wait 25", "snapshot", "expect-session 3", "expect-others-near 2 15"],
+            "guest": [START, "godmode", "wait-session 3 480", "wait 20",
+                      f"travel {HUNTERS_DREAM}", "wait 20", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait-members 3 300", "wait 25", "snapshot", "expect-session 3",
+                      "expect-others-near 2 15"],
+            "guest2": [START, "godmode", "wait-session 3 480", "wait 150", "wait-members 3 300",
+                       "wait 25", "snapshot", "expect-session 3", "expect-others-near 2 15"],
         },
         "timeout": 1200,
     },

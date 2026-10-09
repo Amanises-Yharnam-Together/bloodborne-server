@@ -3706,8 +3706,8 @@ void RecreateRemotePlayers(std::span<const u64> only) {
             }
             continue;
         }
-        const s32 kind = RemoteTaskKind(hosting);
         const u64 identity = ReadValue<u64>(member, 0);
+        const s32 kind = RebuiltTaskKind(hosting, saved_join_tasks, identity);
         // By identity, else the one remote player of that kind there was (two guests: no guess).
         const auto picked = PickSavedJoinTask(saved_join_tasks, kind, identity);
         rebuild(member, kind, picked ? &saved_join_tasks[*picked] : nullptr);

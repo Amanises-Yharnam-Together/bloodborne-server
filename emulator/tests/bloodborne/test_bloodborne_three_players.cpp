@@ -278,6 +278,24 @@ TEST(BloodborneThreePlayers, EachCopyTakesTheLowestHpOnItsMap) {
     EXPECT_EQ(LowestSharedHp(0x10014085, 300, 300, here, others), std::nullopt) << "not hurt";
 }
 
+TEST(BloodborneThreePlayers, AGuestRebuildsTheOtherGuestAsAGuest) {
+    // Kaniel 2026-10-09: after a trip the two guests did not see each other. A guest rebuilt
+    // every other member as the remote host (kind 0); the other guest is a remote guest (kind 1),
+    // as the game made it at the join.
+    const std::vector<SavedJoinTask> saved{
+        {RemoteHostTask, 0xA0, 0, 0x4},
+        {RemoteGuestTask, 0xB0, 1, 0xC},
+        {LocalTaskKind(false), 0xC0, 2, 0xC},
+    };
+    EXPECT_EQ(RebuiltTaskKind(false, saved, 0xA0), RemoteHostTask) << "the host";
+    EXPECT_EQ(RebuiltTaskKind(false, saved, 0xB0), RemoteGuestTask) << "the other guest";
+    EXPECT_EQ(RebuiltTaskKind(true, saved, 0xB0), RemoteGuestTask) << "the host's guests";
+    // Not saved (it joined during the trip): a guest when the host is someone else.
+    EXPECT_EQ(RebuiltTaskKind(false, saved, 0xD0), RemoteGuestTask);
+    EXPECT_EQ(RebuiltTaskKind(false, std::vector<SavedJoinTask>{}, 0xD0), RemoteHostTask)
+        << "nothing known: the one other member of a two-player party is the host";
+}
+
 TEST(BloodborneThreePlayers, AnotherBlockOfTheSameAreaSharesItsEnemyHp) {
     // Friend run 2026-10-09: the guest joined in place in Central Yharnam (0x18010000) while the
     // host stood in Cathedral Ward (0x18000000), and no HP was shared for the rest of the game.

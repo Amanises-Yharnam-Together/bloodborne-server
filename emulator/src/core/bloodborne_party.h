@@ -339,6 +339,10 @@ std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s3
 constexpr s32 InSessionStep = 6;
 bool ShouldRecreateAfterTrip(s32 kind, s32 step);
 s32 RemoteTaskKind(bool hosting);
+// The kind of a join task rebuilt after a trip for the member with `identity`: on the host every
+// other member is a remote guest; on a guest the member's own saved kind (the host 0, another
+// guest 1), else a guest when the saved tasks name another member as the host, else the host.
+s32 RebuiltTaskKind(bool hosting, std::span<const SavedJoinTask> saved, u64 identity);
 s32 LocalTaskKind(bool hosting);
 bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_active);
 // The bell effects (9000/9003, 9005/9006) in `before` that are missing from `after`, in order.
