@@ -655,6 +655,10 @@ struct SeenCharacter {
 // handed it back (ClaimEnemiesWhenAlone): its own world's state settles on it then (a boss it
 // killed for good goes down).
 constexpr auto EnemyOwnerChangeSettles = std::chrono::seconds{5};
+// Whether a character still settles at `now_ms`: within EnemyOwnerChangeSettles of the last load
+// that kept the map's objects (`loaded_ms`, a bulk flag change: a summon into the host's world)
+// or of its own takeover or hand-back (`owner_changed_ms`).
+bool CharacterSettles(s64 now_ms, s64 loaded_ms, std::optional<s64> owner_changed_ms);
 
 class VisitKills {
 public:

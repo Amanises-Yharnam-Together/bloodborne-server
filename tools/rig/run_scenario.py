@@ -92,8 +92,15 @@ def games_running() -> bool:
 
 
 def stop_games():
-    """Stops the rig's games, never another copy, and waits until they are gone (their logs
-    stay open until then)."""
+    """Closes the rig's games, never another copy, and waits until they are gone (their logs
+    stay open until then). A window close first: a game stopped hard leaves some of its memory
+    with the GPU driver until Windows restarts (0.2-0.4 GB a game, measured), which over a day of
+    runs left no room for three games. A game that does not close in 15 s is stopped."""
+    for pid in games()[0]:
+        subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True)
+    deadline = time.time() + 15
+    while time.time() < deadline and games()[0]:
+        time.sleep(0.5)
     for pid in games()[0]:
         subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
     deadline = time.time() + 20

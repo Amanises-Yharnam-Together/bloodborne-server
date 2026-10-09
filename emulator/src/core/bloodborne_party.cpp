@@ -987,6 +987,12 @@ bool WatchesKills(bool sharing, bool trip_active, bool loading) {
     return sharing && !trip_active && !loading;
 }
 
+bool CharacterSettles(s64 now_ms, s64 loaded_ms, std::optional<s64> owner_changed_ms) {
+    const s64 settle =
+        std::chrono::duration_cast<std::chrono::milliseconds>(EnemyOwnerChangeSettles).count();
+    return now_ms - loaded_ms < settle || (owner_changed_ms && now_ms - *owner_changed_ms < settle);
+}
+
 bool IsRealDeath(u8 death_flags) {
     return (death_flags & 0x05) != 0;
 }

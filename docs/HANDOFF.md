@@ -376,21 +376,44 @@ Kaniel's ask: "you should be able to test every change yourself".
   posted); `IsRealDeath`. And the guest's resume ran after the guest had already travelled on
   (it decides once settled 3 s on a map): the rig's guest went to the Ward and was taken back to
   Central Yharnam, away from its host; now a guest no longer on the map it loaded on stays.
+- Then (2026-10-09 midday, after a reboot freed 34 GB that crashed games had left with the GPU
+  driver), each found by a rig scenario and fixed:
+  - **Joins across maps never happened** (join-apart): shadNet kept a party sign on another map
+    in Preparing until its guest came to the host's map, which a guest joining in place never
+    does. A party's sign is offered at once (spoofed beside the host) and its claim delivered on
+    the guest's own map (server `SummonBroker`, party signs only).
+  - **A guest whose host crashed stood on as a phantom** (host-crash) and a phantom never rings.
+    `StayWhenTheHostLeaves` now stays only while the session has someone else; otherwise the
+    game takes the guest home and it resumes where it was (`SkipsLeaveLimit`).
+  - **The host reused a dead guest's connection** (guest-crash): the host's game closed it and
+    opened it again for the restarted guest, and the emulator handed back the old one because
+    the dead peer never closed its side. A connection this game closed is never reused
+    (`LingeringConnectionIsFinished`).
+  - **The host went to the title screen** when its guest's game died apart from it
+    (crash-apart): the game ran the leave limit (event 4046, from eboot+0x1393323) on the host,
+    and its warp home found no map. A live player always skips it (`SkipsLeaveLimit`).
+  - **Joins could miss**: a guest hears of a claim only when it re-posts its sign, the host's
+    connection reaches it at once, and its game drops a connection it cannot place after ~5 s;
+    with a re-post every 5 s a claim right after one came too late. Signs re-post every 1 s.
+  - **False kills**: a guest's world loading on the same map (new objects, `SeenCharacter`
+    instance), and a guest taking over a map's enemies when the host left, put down enemies its
+    own save had killed for good (Father Gascoigne, 0x1001409c/0x1001409e, dead flags 0x26), and
+    the host hid its living Gascoigne. Deaths in the 5 s after a takeover or hand-back are not
+    kills (`EnemyOwnerChangeSettles`, per character).
 - Rig-confirmed on 2026-10-09: boot, join (the guest keeps its max HP, no level sync 9200),
-  trip, hp-apart, boss-kill (Cleric Beast), lamp-share, lone-guest, kill-apart (a fight kill
-  hidden for the guest coming back), echoes-apart (+202 to the guest in the Ward, +202 to the
-  host in Central Yharnam), host-death, guest-death, join-ward (once; the other run hit the
-  resume bug). Not run yet: dog, join-apart, join-after-trip, host-crash, guest-crash, resume,
-  join3, trip3.
+  trip, hp-apart, boss-kill (Cleric Beast), lamp-share, lone-guest, kill-apart, echoes-apart
+  (+202 to the guest in the Ward, +202 to the host in Central Yharnam), host-death,
+  guest-death, join-ward, join-apart, join-after-trip, host-crash, guest-crash, crash-apart,
+  resume (the guest back at the spot it stood in the host's world), join3 (one bell summons
+  both guests), trip3 (the host re-creates only the guest on its map, then the second guest).
 - Memory: a rig game commits about 12.3 GB (its 8.25 GB SEC_COMMIT backing, address_space.cpp,
-  then Vulkan); the PC's commit limit is 82.4 GB, and with "NVIDIA Overlay.exe" holding 22.7 GB
-  of GPU memory (grown since the day before) only one game fit, so the second one died at boot
-  ("Insufficient system resources"). The runner now checks the free commit first (12.5 GB a game)
-  and says so, and a game that exits without a crash report counts as a crash (one retry).
-- Open: `waiting_to_meet` (GuestApart): a guest apart from its own trip or a resume does not
-  ring until the host is on its map. That predates join-in-place and goes against "join
-  anywhere, anytime"; join-apart / join-after-trip / resume test it (the 2026-10-08 "host kicks a
-  guest summoned on another map" may still be there).
+  then Vulkan); the PC's commit limit is about 80 GB. Games that died in the GPU driver ("Device
+  lost") seem to leave their memory held until a reboot (a clean kill gives it back). The runner
+  checks the free commit first (12.5 GB a game), and a game that exits without a crash report
+  counts as a crash (one retry).
+- Open: `waiting_to_meet` (GuestApart) still keeps a guest apart from ringing until the host is
+  on its map after an in-session trip or a resume trip (the autoplay's own travel out of a
+  session no longer marks a guest apart); with joins across maps working it could go.
 
 ## Friend runs 2026-10-08/09 (online kit, Kaniel + friend over Radmin VPN)
 All built, CI green, pushed on `phase3-travel`; none confirmed in a game yet unless noted.

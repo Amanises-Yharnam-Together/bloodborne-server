@@ -5011,6 +5011,15 @@ void InstallDeferredBossItems(u64 base, u64 image_size) {
     }
 }
 
+s64 SteadyMilliseconds() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// When the last load that kept the map's objects came (a bulk flag change; see CharacterSettles).
+std::atomic<s64> world_loaded_ms{-1'000'000'000};
+
 void LogFlagChangesInSession(bool sharing) {
     static std::chrono::steady_clock::time_point last{};
     static std::optional<FlagStore> previous;
@@ -5068,6 +5077,7 @@ void LogFlagChangesInSession(bool sharing) {
                 }
             }
             if (IsBulkFlagChange(set.size() + cleared.size())) {
+                world_loaded_ms.store(SteadyMilliseconds()); // deaths now are no kills
                 LOG_INFO(Debug,
                          "Bloodborne party: {} flags changed at once (a load), not kept or "
                          "shared",
@@ -5266,12 +5276,6 @@ void GrantPartyEchoes() {
 // the game thread only.
 std::unordered_map<u64, s64> enemy_owner_changed_ms;
 
-s64 SteadyMilliseconds() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
-
 void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     static u32 claimed_map = 0;
     if (map != claimed_map) {
@@ -5427,12 +5431,12 @@ void KeepEnemyDeathsInStep(bool sharing) {
         }
     });
     const s64 now_ms = SteadyMilliseconds();
-    const s64 settle_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(EnemyOwnerChangeSettles).count();
     for (size_t index = 0; index < characters.size(); ++index) {
         const auto changed = enemy_owner_changed_ms.find(pointers[index]);
-        characters[index].settling =
-            changed != enemy_owner_changed_ms.end() && now_ms - changed->second < settle_ms;
+        characters[index].settling = CharacterSettles(now_ms, world_loaded_ms.load(),
+                                                      changed != enemy_owner_changed_ms.end()
+                                                          ? std::optional{changed->second}
+                                                          : std::nullopt);
     }
     const auto changes = visit_kills.Observe(visit, characters);
     ShareEnemyHp(map, visit, pointers);

@@ -1182,6 +1182,20 @@ TEST(BloodborneSharedKills, ATakeoverIsNoKill) {
     EXPECT_GT(EnemyOwnerChangeSettles, std::chrono::seconds{0});
 }
 
+// With the kill board naming them: the two false kills came as the guest was summoned into the
+// host's world (226 flags changed at once, a load that keeps the map's objects), where Father
+// Gascoigne was dead and the guest's copy alive a moment before. A character settles for
+// EnemyOwnerChangeSettles after such a load, and after its takeover or hand-back.
+TEST(BloodborneSharedKills, ACharacterSettlesAfterALoadOrATakeover) {
+    constexpr s64 Settle =
+        std::chrono::duration_cast<std::chrono::milliseconds>(EnemyOwnerChangeSettles).count();
+    EXPECT_TRUE(CharacterSettles(100'000, 100'000 - Settle + 1, std::nullopt)) << "after a load";
+    EXPECT_FALSE(CharacterSettles(100'000, 100'000 - Settle, std::nullopt)) << "settled";
+    EXPECT_TRUE(CharacterSettles(100'000, 0, 99'000)) << "just taken over";
+    EXPECT_FALSE(CharacterSettles(100'000, 0, 100'000 - Settle)) << "taken over long ago";
+    EXPECT_FALSE(CharacterSettles(100'000, 0, std::nullopt)) << "nothing happened";
+}
+
 TEST(BloodborneSharedKills, AWorldThatLoadsIsNoKill) {
     VisitKills kills;
     using Changes = std::vector<std::pair<s32, bool>>;
