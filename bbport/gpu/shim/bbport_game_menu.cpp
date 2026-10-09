@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_game_menu.h"
 
+#ifdef _WIN32
+#include <malloc.h>
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -20,6 +25,25 @@ namespace {
 using u8 = std::uint8_t;
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
+
+// The game's code (and everything it calls back) uses the System V ABI; on Windows the host's
+// default is the Microsoft one.
+#define GAME_ABI __attribute__((sysv_abi))
+
+void* AlignedAlloc(std::size_t size) {
+#ifdef _WIN32
+    return _aligned_malloc(size, 16);
+#else
+    return std::aligned_alloc(16, size);
+#endif
+}
+void AlignedFree(void* p) {
+#ifdef _WIN32
+    _aligned_free(p);
+#else
+    std::free(p);
+#endif
+}
 
 // The game's menu code (eboot 1.09 vaddrs; found from the System menu builder 0x1bb3ad0).
 constexpr u64 MsgLookup = 0xf6f340;      ///< (repository, table, category, id) -> UTF-16 text
@@ -257,7 +281,7 @@ void DestroyFunction(u8* f) {
     if (!impl) {
         return;
     }
-    using Destroy = void (*)(void*, int);
+    using Destroy = void (GAME_ABI *)(void*, int);
     Destroy destroy = (*reinterpret_cast<Destroy**>(impl))[4];
     destroy(impl, impl != f);
     *reinterpret_cast<void**>(f + 0x20) = nullptr;
@@ -267,7 +291,7 @@ void DestroyFunction(u8* f) {
 void DestroyText(u8* text) {
     if (*reinterpret_cast<u64*>(text + 0x28) >= 8) {
         void* allocator = *reinterpret_cast<void**>(text + 0x30);
-        using Free = void (*)(void*, void*);
+        using Free = void (GAME_ABI *)(void*, void*);
         (*reinterpret_cast<Free**>(allocator))[0x70 / 8](allocator, *reinterpret_cast<void**>(text + 0x10));
     }
     *reinterpret_cast<u64*>(text + 0x28) = 7;
@@ -287,7 +311,7 @@ void DestroyValues(u8* list, std::size_t count_offset) {
 }
 
 void MakeTexts(u8* pair, u32 name, u32 help) {
-    using Make = void* (*)(void*, u32, u32);
+    using Make = void* (GAME_ABI *)(void*, u32, u32);
     Game<Make>(MakeText)(pair, TextName, name);
     Game<Make>(MakeText)(pair + TextSize, TextHelp, help);
 }
@@ -302,21 +326,21 @@ bool UpscalerAvailable(int i) {
 }
 
 void AddRows(void* page, const std::vector<Row>& rows) {
-    using Push = void (*)(void*, void*);
-    using AddRow = void (*)(void*, void*, int*, void*, const int*);
-    using Make = void* (*)(void*, u32, u32);
+    using Push = void (GAME_ABI *)(void*, void*);
+    using AddRow = void (GAME_ABI *)(void*, void*, int*, void*, const int*);
+    using Make = void* (GAME_ABI *)(void*, u32, u32);
     for (const Row& row : rows) {
         alignas(16) u8 pair[2 * TextSize] = {};
         MakeTexts(pair, row.name, row.help);
         if (row.kind == Kind::Slider) {
-            using Slider = void (*)(void*, void*, u8*, const u8*);
+            using Slider = void (GAME_ABI *)(void*, void*, u8*, const u8*);
             Game<Slider>(SliderRow)(page, pair, &bytes[row.field], &default_bytes[row.field]);
             DestroyTexts(pair);
             continue;
         }
         if (row.kind == Kind::Toggle) {
-            using PairRowFn = void (*)(void*, void*, u8*, void*, const u8*);
-            u8* two = static_cast<u8*>(std::aligned_alloc(16, PairListSize));
+            using PairRowFn = void (GAME_ABI *)(void*, void*, u8*, void*, const u8*);
+            u8* two = static_cast<u8*>(AlignedAlloc(PairListSize));
             std::memset(two, 0, PairListSize);
             for (std::size_t i = 0; i < 2; ++i) {
                 alignas(16) u8 value[ValueSize] = {};
@@ -327,11 +351,11 @@ void AddRows(void* page, const std::vector<Row>& rows) {
             }
             Game<PairRowFn>(PairRow)(page, pair, &bytes[row.field], two, &default_bytes[row.field]);
             DestroyValues(two, PairCountOffset);
-            std::free(two);
+            AlignedFree(two);
             DestroyTexts(pair);
             continue;
         }
-        u8* list = static_cast<u8*>(std::aligned_alloc(16, ListSize));
+        u8* list = static_cast<u8*>(AlignedAlloc(ListSize));
         std::memset(list, 0, ListSize);
         for (std::size_t i = 0; i < row.choices.size(); ++i) {
             if (row.field == Upscaler && !UpscalerAvailable(int(i))) {
@@ -345,7 +369,7 @@ void AddRows(void* page, const std::vector<Row>& rows) {
         }
         Game<AddRow>(ListRow)(page, pair, &values[row.field], list, &default_values[row.field]);
         DestroyValues(list, ListCountOffset);
-        std::free(list);
+        AlignedFree(list);
         DestroyTexts(pair);
     }
 }
@@ -353,19 +377,19 @@ void AddRows(void* page, const std::vector<Row>& rows) {
 std::atomic<const char16_t*> title_override{nullptr}; // while the game builds one of our pages (its menu thread)
 // Called by the game's menu code (guest threads, System V ABI like the game), one set per page.
 template <int P>
-void Rows(void* page, void*) {
+GAME_ABI void Rows(void* page, void*) {
     LoadValues();
     AddRows(page, pages[P].rows);
 }
 template <int P>
-void* Content(void* a, void* b) {
-    using Open = void* (*)(void*, void*, const char*, void*, u64, u64);
+GAME_ABI void* Content(void* a, void* b) {
+    using Open = void* (GAME_ABI *)(void*, void*, const char*, void*, u64, u64);
     title_override = nullptr; // the title was looked up just before
     return Game<Open>(OpenPage)(a, b, Game<const char*>(ControlsLayout),
                                 reinterpret_cast<void*>(&Rows<P>), 0, 0);
 }
 void* Factory(void* out, void* arg, void* content, const char16_t* title) {
-    using Create = void* (*)(void*, void*, void*);
+    using Create = void* (GAME_ABI *)(void*, void*, void*);
     alignas(16) u8 function[FunctionSize] = {};
     *reinterpret_cast<u64*>(function) = image_base + ContentVtable;
     *reinterpret_cast<void**>(function + 8) = content;
@@ -378,7 +402,7 @@ void* Factory(void* out, void* arg, void* content, const char16_t* title) {
     return out;
 }
 template <int P>
-void* PageFactory(void* out, void* arg) {
+GAME_ABI void* PageFactory(void* out, void* arg) {
     return Factory(out, arg, reinterpret_cast<void*>(&Content<P>), TextOf(pages[P].name));
 }
 constexpr std::size_t MaxPages = 6;
@@ -388,13 +412,13 @@ void* const factories[MaxPages] = {
     reinterpret_cast<void*>(&PageFactory<4>), reinterpret_cast<void*>(&PageFactory<5>)};
 
 // ---- Hooks ----
-using LookupFn = const char16_t* (*)(void*, u32, u32, u32);
-using AddFn = void* (*)(void*, void*, void*, void*);
+using LookupFn = const char16_t* (GAME_ABI *)(void*, u32, u32, u32);
+using AddFn = void* (GAME_ABI *)(void*, void*, void*, void*);
 LookupFn lookup_original = nullptr;
 AddFn add_original = nullptr;
 std::atomic<const void*> screen_sound_text{nullptr};
 
-const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
+GAME_ABI const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
     if (id >= IdBase && id < IdBase + texts.size()) {
         return TextOf(id);
     }
@@ -422,7 +446,7 @@ const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
 }
 
 void AddItem(void* menu, u32 name, u32 help, void* factory) {
-    using ToFunction = void* (*)(void*, void*);
+    using ToFunction = void* (GAME_ABI *)(void*, void*);
     alignas(16) u8 pair[2 * TextSize] = {};
     MakeTexts(pair, name, help);
     alignas(16) u8 source[FunctionSize] = {};
@@ -437,7 +461,7 @@ void AddItem(void* menu, u32 name, u32 help, void* factory) {
     DestroyTexts(pair);
 }
 
-void* AddHook(void* menu, void* pair, void* function, void* out) {
+GAME_ABI void* AddHook(void* menu, void* pair, void* function, void* out) {
     void* result = add_original(menu, pair, function, out);
     const void* screen_sound = screen_sound_text.load();
     if (screen_sound && *reinterpret_cast<const void* const*>(pair) == screen_sound) {
@@ -489,11 +513,21 @@ u8* MapNear(unsigned char* image, u64 image_size, std::size_t size) {
     const u64 base = reinterpret_cast<u64>(image);
     for (u64 k = 1; k <= 64; ++k) {
         for (const u64 hint : {base - k * (24ull << 20), base + image_size + k * (24ull << 20)}) {
+#ifdef _WIN32
+            // Plain memory: the guest range's placeholder reservation (runtime_memory.c) starts
+            // above the image and its neighbourhood.
+            void* p = VirtualAlloc(reinterpret_cast<void*>(hint), size, MEM_RESERVE | MEM_COMMIT,
+                                   PAGE_READWRITE);
+            if (p) {
+                return static_cast<u8*>(p);
+            }
+#else
             void* p = mmap(reinterpret_cast<void*>(hint), size, PROT_READ | PROT_WRITE,
                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
             if (p != MAP_FAILED) {
                 return static_cast<u8*>(p);
             }
+#endif
         }
     }
     return nullptr;
@@ -506,7 +540,11 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
         return;
     }
     image_base = reinterpret_cast<u64>(image);
+#ifdef _WIN32
+    const std::size_t page = 4096;
+#else
     const std::size_t page = std::size_t(sysconf(_SC_PAGESIZE));
+#endif
     u8* stubs = MapNear(image, size, page);
     if (!stubs) {
         std::printf("Game menu: no memory near the image, the port's pages are off\n");
@@ -533,7 +571,13 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
                reinterpret_cast<void*>(&LookupHook), reinterpret_cast<void**>(&lookup_original), cursor) &&
         Detour(image, AddPageItem, AddPageItemPrologue, sizeof(AddPageItemPrologue),
                reinterpret_cast<void*>(&AddHook), reinterpret_cast<void**>(&add_original), cursor);
+#ifdef _WIN32
+    DWORD old_protect = 0;
+    VirtualProtect(stubs, page, PAGE_EXECUTE_READ, &old_protect);
+    FlushInstructionCache(GetCurrentProcess(), stubs, page);
+#else
     mprotect(stubs, page, PROT_READ | PROT_EXEC);
+#endif
     std::printf("Game menu: %s (%zu pages in System)\n", ok ? "the port's pages are in" : "hooks failed, off",
                 pages.size());
 }

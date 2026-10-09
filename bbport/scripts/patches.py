@@ -68,10 +68,13 @@ def intel_cpu(cpuinfo='/proc/cpuinfo'):
 
 # The title's PLAY ONLINE / PLAY OFFLINE dialog: the port has no PSN, the game goes straight to the
 # main menu offline. On by default (the launcher's switch); BB_SKIP_NETWORK_CHOICE=0 shows it.
+# Seamless co-op plays online (SHADPS4_BLOODBORNE_SEAMLESS_COOP=1): the dialog stays.
 SKIP_NETWORK_CHOICE='Skip Online/Offline Choice'
 
 
 def skip_network_choice(env=os.environ):
+    if env.get('SHADPS4_BLOODBORNE_SEAMLESS_COOP')=='1':
+        return False
     return env.get('BB_SKIP_NETWORK_CHOICE','1')!='0'
 
 

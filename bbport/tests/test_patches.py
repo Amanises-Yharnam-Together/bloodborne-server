@@ -172,6 +172,18 @@ class ExternalPatchTests(unittest.TestCase):
         self.assertEqual(external_patches(XML.parent), [])
 
 
+class NetworkChoiceTests(unittest.TestCase):
+    def test_skipped_by_default(self):
+        self.assertTrue(patches.skip_network_choice({}))
+        self.assertFalse(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': '0'}))
+
+    def test_seamless_coop_plays_online(self):
+        # Co-op needs PLAY ONLINE: the skip would put the game offline, whatever the launcher says.
+        coop = {'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1'}
+        self.assertFalse(patches.skip_network_choice(coop))
+        self.assertFalse(patches.skip_network_choice({**coop, 'BB_SKIP_NETWORK_CHOICE': '1'}))
+
+
 class IntelTonemapTests(unittest.TestCase):
     def cpuinfo(self, vendor):
         path = Path(tempfile.mkdtemp()) / 'cpuinfo'

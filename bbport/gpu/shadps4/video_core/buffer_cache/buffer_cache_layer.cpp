@@ -14,8 +14,11 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_set>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/mman.h>
-#include <ucontext.h>
+#endif
 #include <map>
 #include <tuple>
 #include <string>
@@ -1086,15 +1089,15 @@ bool BufferCache::LayerGpuWriteToVram(VAddr address, u64 size) {
     if (log && !vram && size >= (u64{1} << 20)) {
         static std::map<std::pair<VAddr, u64>, u32> seen;
         if (seen.size() < 64 && seen[{address, size}]++ == 0) {
-            std::string near;
+            std::string nearby;
             texture_cache.ForEachImageInRegion(address, size, [&](ImageId, Image& image) {
-                near += fmt::format(" [{:#x}+{:#x} {}x{} fmt {}]", image.info.guest_address,
-                                    image.info.guest_size, image.info.size.width,
-                                    image.info.size.height, u32(image.info.pixel_format));
+                nearby += fmt::format(" [{:#x}+{:#x} {}x{} fmt {}]", image.info.guest_address,
+                                      image.info.guest_size, image.info.size.width,
+                                      image.info.size.height, u32(image.info.pixel_format));
             });
             std::printf("Layer write in place: %#llx+%#llx; images:%s\n",
                         (unsigned long long)address, (unsigned long long)size,
-                        near.empty() ? " none" : near.c_str());
+                        nearby.empty() ? " none" : nearby.c_str());
         }
     }
     return vram;
@@ -1224,9 +1227,19 @@ bool LayerTrapsOn() {
     return on;
 }
 
+/// Write traps: the block's pages read-only (armed) or writable again.
+void LayerProtect(u64 address, u64 size, bool writable) {
+#ifdef _WIN32
+    DWORD old_protect = 0;
+    VirtualProtect(reinterpret_cast<void*>(address), size,
+                   writable ? PAGE_READWRITE : PAGE_READONLY, &old_protect);
+#else
+    mprotect(reinterpret_cast<void*>(address), size, writable ? PROT_READ | PROT_WRITE : PROT_READ);
+#endif
+}
+
 void LayerUnprotect(u64 block) {
-    mprotect(reinterpret_cast<void*>(block << layer_trap_shift), u64{1} << layer_trap_shift,
-             PROT_READ | PROT_WRITE);
+    LayerProtect(block << layer_trap_shift, u64{1} << layer_trap_shift, true);
 }
 
 bool LayerTrapHandler(void* context, void* fault_address) {
@@ -1239,8 +1252,7 @@ bool LayerTrapHandler(void* context, void* fault_address) {
         if (!layer_trap_armed.erase(block)) {
             return false;
         }
-        const auto* g = static_cast<const ucontext_t*>(context)->uc_mcontext.gregs;
-        layer_trap_hits.emplace_back(block, u64(g[REG_RIP]));
+        layer_trap_hits.emplace_back(block, reinterpret_cast<u64>(Common::GetRip(context)));
     }
     LayerUnprotect(block); // the write runs again, now through
     layer_trap_faults.fetch_add(1, std::memory_order_relaxed);
@@ -1273,7 +1285,7 @@ void BufferCache::LayerArmTraps(u64 first, u64 end) {
         }
         std::scoped_lock lk{layer_trap_mutex};
         if (layer_trap_armed.insert(block).second) {
-            mprotect(reinterpret_cast<void*>(address), block_size, PROT_READ);
+            LayerProtect(address, block_size, false);
         }
     }
 }

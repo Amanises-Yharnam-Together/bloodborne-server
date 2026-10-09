@@ -96,5 +96,14 @@ const Chunk* Find(std::uint64_t phys) {
     (void)phys;
     return nullptr;
 }
+bool HostImported() {
+    return false;
+}
+bool LayerMemory() {
+    return false;
+}
+vk::ExternalMemoryHandleTypeFlagBits HandleType() {
+    return vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT;
+}
 } // namespace BbGuestMemory
 #endif
