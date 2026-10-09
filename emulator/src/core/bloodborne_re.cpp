@@ -5388,10 +5388,10 @@ void KeepEnemyDeathsInStep(bool sharing) {
     std::vector<u64> pointers;
     ForEachWorldCharacter(world, [&](u64 character) {
         if (character != player) {
-            // Only a real death (+0x1E3 bit 0) is a kill: characters of a map being torn down
-            // read 0 HP too, and a guest leaving for the Dream "killed" the dog for the host.
+            // Only a real death is a kill: characters of a map being torn down read 0 HP too,
+            // and a guest leaving for the Dream "killed" the dog for the host.
             const s32 hp = CharacterHp(character);
-            const bool dead = (ReadValue<u8>(character, 0x1E3) & 1) != 0;
+            const bool dead = IsRealDeath(ReadValue<u8>(character, 0x1E3));
             characters.emplace_back(ReadValue<u32>(character, 0x08), dead ? 0 : std::max(hp, 1));
             pointers.push_back(character);
         }
@@ -5527,6 +5527,18 @@ void TeleportLocalPlayer(const LampPosition& at) {
                                            const float* rotation, s32 mode);
     reinterpret_cast<Teleport>(teleport)(player, position.data(), rotation.data(), 1);
     WriteValue(player, 0x1E1, static_cast<u8>(ReadValue<u8>(player, 0x1E1) | 2));
+}
+
+// The local player's heading (transform +0x1D4, as the summon placement reads it), radians. A
+// teleport turns the player to the rotation it is given, a moment later (a heading written right
+// after it does not stay).
+std::optional<float> LocalPlayerHeading() {
+    const u64 player = GetLocalPlayer();
+    const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
+    const u64 transform = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+    return transform >= 0x10000 && HasMemoryAccess(transform, 0x1D8, MemoryProt::CpuRead)
+               ? std::optional{ReadValue<float>(transform, 0x1D4)}
+               : std::nullopt;
 }
 
 void ResumeWhereTheGuestLeft(bool in_session) {
@@ -5919,8 +5931,9 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     }
     reinterpret_cast<Teleport>(teleport)(player, position.data(), rotation.data(), 1);
     WriteValue(player, 0x1E1, static_cast<u8>(ReadValue<u8>(player, 0x1E1) | 2));
-    LOG_INFO(Debug, "Bloodborne revive: moved to last lamp {} at ({}, {}, {})", point, position[0],
-             position[1], position[2]);
+    LOG_INFO(Debug,
+             "Bloodborne revive: moved to last lamp {} at ({}, {}, {}) rotation ({}, {}, {})",
+             point, position[0], position[1], position[2], rotation[0], rotation[1], rotation[2]);
 }
 
 void WarpGuestToLastLamp() {
@@ -7866,6 +7879,9 @@ struct AutoplayRun {
     std::optional<std::chrono::steady_clock::time_point> hold_until;
     u32 travel_map = 0;
     std::optional<double> travel_fixed_at; // seconds into the step it was moved to the lamp
+    u32 attack_handle = 0;
+    std::optional<u32> attack_placed; // the attack cycle the player was last put in place for
+    s32 noted_max_hp = 0;             // note-max-hp: the player's max HP then
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -7922,7 +7938,15 @@ struct AutoplayCharacter {
 };
 
 // The character a command names: by handle, or the nearest living one within 30 m (0).
+std::atomic<u32> autoplay_marked{0};
+
 std::optional<AutoplayCharacter> FindAutoplayCharacter(u32 handle) {
+    if (handle == AutoplayMarked) {
+        handle = autoplay_marked.load();
+        if (handle == 0) {
+            return std::nullopt;
+        }
+    }
     if (handle == AutoplaySelf) {
         const u64 player = GetLocalPlayer();
         const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
@@ -7985,10 +8009,11 @@ void LogAutoplaySnapshot() {
             const float dz = ReadValue<float>(physics, 0x1E8) - (*at)[2];
             const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
             if (distance < 30.0f) {
-                close_by.emplace_back(distance, fmt::format("{:#x} hp {}/{} at {:.1f} m",
-                                                            ReadValue<u32>(character, 0x08),
-                                                            ReadValue<s32>(data, 0xF8),
-                                                            ReadValue<s32>(data, 0xFC), distance));
+                close_by.emplace_back(
+                    distance, fmt::format("{:#x} hp {}/{} dead {:#x} at {:.1f} m",
+                                          ReadValue<u32>(character, 0x08),
+                                          ReadValue<s32>(data, 0xF8), ReadValue<s32>(data, 0xFC),
+                                          ReadValue<u8>(character, 0x1E3), distance));
             }
         });
     }
@@ -7996,12 +8021,15 @@ void LogAutoplaySnapshot() {
     for (size_t index = 0; index < close_by.size() && index < 6; ++index) {
         enemies += " [" + close_by[index].second + "]";
     }
+    const auto self = FindAutoplayCharacter(AutoplaySelf);
     LOG_INFO(Debug,
-             "Bloodborne autoplay snapshot: map {:#x} at ({:.1f}, {:.1f}, {:.1f}) session {} "
-             "members on map {} in party session {} nearby:{}",
+             "Bloodborne autoplay snapshot: map {:#x} at ({:.1f}, {:.1f}, {:.1f}) heading {:.2f} "
+             "hp {}/{} session {} members on map {} in party session {} nearby:{}",
              GetCurrentPackedMap(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f,
-             at ? (*at)[2] : 0.0f, AutoplaySessionMembers(), AutoplayMembersOnMyMap(),
-             InPartySession(), enemies.empty() ? " none" : enemies);
+             at ? (*at)[2] : 0.0f, LocalPlayerHeading().value_or(0.0f),
+             self ? ReadValue<s32>(self->data, 0xF8) : 0,
+             self ? ReadValue<s32>(self->data, 0xFC) : 0, AutoplaySessionMembers(),
+             AutoplayMembersOnMyMap(), InPartySession(), enemies.empty() ? " none" : enemies);
 }
 
 std::string AutoplayText(const AutoplayCommand& command) {
@@ -8040,6 +8068,10 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
     if (verb == "wait-session") {
         return AutoplaySessionMembers() >= static_cast<size_t>(number(0, 2)) ||
                waited_out(number(1, 180));
+    }
+    // wait-solo [<timeout>]: until the session is gone (a member quit or crashed).
+    if (verb == "wait-solo") {
+        return AutoplaySessionMembers() <= 1 || waited_out(number(0, 180));
     }
     if (verb == "wait-members") {
         return AutoplayMembersOnMyMap() >= static_cast<size_t>(number(0, 2)) ||
@@ -8136,6 +8168,80 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
                  ReadValue<u32>(found->character, 0x08), hp, target_hp, found->distance);
         return true;
     }
+    // mark <target>: the character later commands call "marked" (the nearest one now, say).
+    if (verb == "mark") {
+        const auto target = ParseAutoplayTarget(arg(0));
+        const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+        if (!found) {
+            failure = "no such character";
+            return false;
+        }
+        autoplay_marked.store(ReadValue<u32>(found->character, 0x08));
+        LOG_INFO(Debug, "Bloodborne autoplay: marked {:#x} hp {} at {:.1f} m",
+                 autoplay_marked.load(), ReadValue<s32>(found->data, 0xF8), found->distance);
+        return true;
+    }
+    // approach <target> [<dx> [<dz>]]: stand there, beside it.
+    if (verb == "approach") {
+        const auto target = ParseAutoplayTarget(arg(0));
+        const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+        const u64 modules = found ? ReadValue<u64>(found->character, 0x3B0) : 0;
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (physics < 0x10000) {
+            failure = "no such character";
+            return false;
+        }
+        TeleportLocalPlayer({ReadValue<float>(physics, 0x1E0) + static_cast<float>(number(1, 1.5)),
+                             ReadValue<float>(physics, 0x1E4) + 0.2f,
+                             ReadValue<float>(physics, 0x1E8) + static_cast<float>(number(2, 0))});
+        return true;
+    }
+    // attack <target> [<timeout>]: one HP left, then light attacks from each side in turn until
+    // it dies (AttackStanceFor): a real hit, so the kill reward and the death run as in play.
+    if (verb == "attack") {
+        if (!begun) {
+            const auto target = ParseAutoplayTarget(arg(0));
+            const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+            if (!found || !HasMemoryAccess(found->data, 0xFC, MemoryProt::CpuWrite)) {
+                failure = "no such character";
+                return false;
+            }
+            const s32 hp = ReadValue<s32>(found->data, 0xF8);
+            WriteValue(found->data, 0xF8, std::min(hp, s32{1}));
+            autoplay_run.attack_handle = ReadValue<u32>(found->character, 0x08);
+            autoplay_run.attack_placed.reset();
+            LOG_INFO(Debug, "Bloodborne autoplay: attacking {:#x} (hp {} -> 1) at {:.1f} m",
+                     autoplay_run.attack_handle, hp, found->distance);
+        }
+        // By its handle from here on: "nearest" would be the next enemy once this one is dead.
+        const auto found = FindAutoplayCharacter(autoplay_run.attack_handle);
+        const s32 hp = found ? ReadValue<s32>(found->data, 0xF8) : 0;
+        if (hp <= 0) {
+            autoplay_buttons.store(0);
+            LOG_INFO(Debug, "Bloodborne autoplay: {:#x} {} in attack cycle {}",
+                     autoplay_run.attack_handle, found ? "died" : "is gone",
+                     autoplay_run.attack_placed.value_or(0));
+            return true;
+        }
+        const u32 cycle = AttackCycleAt(elapsed);
+        const u64 modules = ReadValue<u64>(found->character, 0x3B0);
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (autoplay_run.attack_placed != cycle && physics >= 0x10000) {
+            if (autoplay_run.attack_placed) {
+                LOG_INFO(Debug, "Bloodborne autoplay: attack cycle {} missed (heading {:.2f})",
+                         *autoplay_run.attack_placed, LocalPlayerHeading().value_or(0.0f));
+            }
+            const AttackStance stance = AttackStanceFor(ReadValue<float>(physics, 0x1E0),
+                                                        ReadValue<float>(physics, 0x1E8), cycle);
+            TeleportLocalPlayer({stance.x, ReadValue<float>(physics, 0x1E4) + 0.2f, stance.z});
+            autoplay_run.attack_placed = cycle;
+        }
+        autoplay_buttons.store(AttackHoldsR1(elapsed) ? AutoplayButton("r1") : 0);
+        if (elapsed > number(1, 40)) {
+            failure = fmt::format("still alive after {:.0f} s: hp {}", elapsed, hp);
+        }
+        return false;
+    }
     if (verb == "teleport") {
         TeleportLocalPlayer({static_cast<float>(number(0, 0)), static_cast<float>(number(1, 0)),
                              static_cast<float>(number(2, 0))});
@@ -8209,6 +8315,46 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         const auto holds = CompareAutoplay(hp, arg(1), static_cast<s64>(number(2, 0)));
         if (!holds || !*holds) {
             failure = fmt::format("hp is {}", hp);
+            return false;
+        }
+        return true;
+    }
+    // note-max-hp: the player's max HP now, for a later expect-max-hp self == noted.
+    if (verb == "note-max-hp") {
+        const auto self = FindAutoplayCharacter(AutoplaySelf);
+        if (!self) {
+            failure = "no player";
+            return false;
+        }
+        autoplay_run.noted_max_hp = ReadValue<s32>(self->data, 0xFC);
+        LOG_INFO(Debug, "Bloodborne autoplay: max hp {}", autoplay_run.noted_max_hp);
+        return true;
+    }
+    // expect-max-hp <target> <op> <value|noted>: its max HP (a party guest's is not cut to 70%).
+    if (verb == "expect-max-hp") {
+        const auto target = ParseAutoplayTarget(arg(0));
+        const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+        if (!found) {
+            failure = "no such character";
+            return false;
+        }
+        const s32 max = ReadValue<s32>(found->data, 0xFC);
+        const s64 limit =
+            arg(2) == "noted" ? autoplay_run.noted_max_hp : static_cast<s64>(number(2, 0));
+        const auto holds = CompareAutoplay(max, arg(1), limit);
+        if (!holds || !*holds) {
+            failure = fmt::format("max hp is {}", max);
+            return false;
+        }
+        return true;
+    }
+    // expect-effect <id> <0|1>: whether the player has that SpEffect (9200: the level sync).
+    if (verb == "expect-effect") {
+        const auto effects = LocalEffects();
+        const bool has =
+            std::ranges::find(effects, static_cast<s32>(number(0, 0))) != effects.end();
+        if (has != (number(1, 1) != 0)) {
+            failure = fmt::format("effect {} is {}", arg(0), has ? "on" : "off");
             return false;
         }
         return true;

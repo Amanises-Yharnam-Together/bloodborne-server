@@ -11,10 +11,13 @@ Commands (see RunAutoplayStep in bloodborne_re.cpp): wait <s>, wait-session <n> 
 wait-members <n> [<timeout>] (party members on this map), wait-map <map> [<timeout>],
 travel <warp point> [<timeout>], ensure-map <map> <warp point> [<timeout>] (travel unless
 there already), hurt <nearest|handle> <hp>, kill <nearest|self|handle>,
-teleport <x> <y> <z>, press <button> [<ms>], stick <x> <y> [<ms>], snapshot, log <text>,
+teleport <x> <y> <z>, approach <target> [<dx> [<dz>]], mark <target> (later "marked"),
+attack <target> [<timeout>] (1 HP left, then light attacks from each side until it dies),
+press <button> [<ms>], stick <x> <y> [<ms>], snapshot, log <text>,
 expect-hp <handle|self> <op> <value>, expect-session <n>, expect-map <map>,
 set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeout>],
-godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
+wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, for
+expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>, godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
 """
 
@@ -24,12 +27,22 @@ CENTRAL_YHARNAM_LAMP = 2412950  # the first lamp, where the rig's characters sta
 CATHEDRAL_WARD = "0x18000000"
 CATHEDRAL_WARD_LAMP = 2402950
 ENEMY = "0x1001400b"  # 484 HP, 17 m from the lamp (farther ones are not awake)
+WARD_ENEMY = "0x10010019"  # 211 HP, 7 m from the Cathedral Ward lamp (the nearest, 0x10010075,
+# has 999 HP and dies of nothing: an object, as Central Yharnam's 0x100140a0)
 CLERIC_BEAST = "0x1001409f"  # entity 2410800; its death runs event 12411700
 CLERIC_BEAST_DEFEATED = 2411  # set by event 12411700 after Handle Boss Defeat
 FORBIDDEN_WOODS_LAMP_LIT = 12707810  # a lamp neither rig character has lit (see LampOfActiveFlag)
 START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
+LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
 # The session must hold: a game that leaves the room (LeaveRoom) broke it.
 SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
+
+
+def attack(target: str) -> list[str]:
+    """A real kill of an ordinary enemy (the kill reward and the death run as in play; the
+    game's own kill leaves one standing in a party)."""
+    return [f"attack {target} 40"]
+
 
 SCENARIOS = {
     "setup": {
@@ -52,10 +65,13 @@ SCENARIOS = {
         "timeout": 300,
     },
     "join": {
-        "about": "host and guest join each other by themselves (the bells ring on their own)",
+        "about": "host and guest join each other by themselves (the bells ring on their own); the "
+                 "guest keeps its full HP and its own level",
         "roles": {
             "host": [START, "wait-session 2 300", "wait 10", "snapshot", "expect-session 2"],
-            "guest": [START, "wait-session 2 300", "wait 10", "snapshot", "expect-session 2"],
+            "guest": [START, "note-max-hp", "wait-session 2 300", "wait 10", "snapshot",
+                      "expect-session 2", "expect-max-hp self == noted",
+                      f"expect-effect {LEVEL_SYNC} 0"],
         },
         "expect": {
             "host": [r"auto-rejoin started search effect=9000"],
@@ -84,8 +100,8 @@ SCENARIOS = {
         "about": "the host kills an enemy while the guest is in the Dream; the guest's copy of it "
                  "is hidden when it comes back",
         "roles": {
-            "host": [START, "godmode", "wait-session 2 300", "wait 45", f"kill {ENEMY}", "wait 5",
-                     "wait-members 2 240", "wait 20", "snapshot"],
+            "host": [START, "godmode", "wait-session 2 300", "wait 45", *attack(ENEMY),
+                     "wait 5", "wait-members 2 240", "wait 20", "snapshot"],
             "guest": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
                       "wait 40", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 25",
                       "snapshot"],
@@ -168,10 +184,13 @@ SCENARIOS = {
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait 80", "snapshot"],
             "guest": [START, "godmode", "wait-session 2 300", "wait 10",
-                      f"travel {CATHEDRAL_WARD_LAMP}", "wait 10", "snapshot", "kill nearest",
-                      "wait 15", "snapshot"],
+                      f"travel {CATHEDRAL_WARD_LAMP}", "wait 10", "snapshot",
+                      *attack(WARD_ENEMY), "wait 15", "snapshot"],
         },
-        "expect": {"host": [r"added \d+ echoes from a kill another member made apart"]},
+        "expect": {
+            "guest": [r"Bloodborne echoes: \+\d+ \(rates 1\) from 0x18fc99b"],
+            "host": [r"added \d+ echoes from a kill another member made apart"],
+        },
         "timeout": 600,
     },
     "host-death": {
@@ -197,6 +216,45 @@ SCENARIOS = {
         "expect": {"guest": [r"party guest died; revived"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
+    },
+    "host-crash": {
+        "about": "the host's game crashes (the GPU's device lost does that in play); the guest "
+                 "stays where it is, and they join again once the host is back",
+        "roles": {
+            "host": [[START, "godmode", "wait-session 2 300", "wait 15", "done"],
+                     [START, "godmode", "wait-session 2 420", "wait 10", "snapshot",
+                      "expect-session 2"]],
+            "guest": [START, "godmode", "wait-session 2 300", "wait-solo 120", "wait 10",
+                      "snapshot", f"expect-map {CENTRAL_YHARNAM}", "wait-session 2 420", "wait 10",
+                      "snapshot", "expect-session 2"],
+        },
+        "timeout": 900,
+    },
+    "guest-crash": {
+        "about": "the guest's game crashes; the host plays on, and they join again once the guest "
+                 "is back (a dead game's sign must not stall the host)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-solo 120", "wait 10",
+                     "snapshot", f"expect-map {CENTRAL_YHARNAM}", "wait-session 2 420", "wait 10",
+                     "snapshot", "expect-session 2"],
+            "guest": [[START, "godmode", "wait-session 2 300", "wait 15", "done"],
+                      [START, "godmode", "wait-session 2 420", "wait 10", "snapshot",
+                       "expect-session 2"]],
+        },
+        "timeout": 900,
+    },
+    "resume": {
+        "about": "a guest that quits apart from the host comes back where it was, not where its "
+                 "save put it",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 200", "snapshot"],
+            "guest": [[START, "godmode", "wait-session 2 300", "wait 10",
+                       f"travel {CATHEDRAL_WARD_LAMP}", "wait 25", "snapshot", "done"],
+                      ["godmode", f"wait-map {CATHEDRAL_WARD} 180", "wait 15", "snapshot",
+                       f"expect-map {CATHEDRAL_WARD}"]],
+        },
+        "expect": {"guest": [r"guest resume[sd] .*0x18000000"]},
+        "timeout": 720,
     },
     "join3": {
         "about": "a party of three: the host rings again after the first guest and both guests "

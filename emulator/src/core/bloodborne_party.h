@@ -636,6 +636,10 @@ private:
 
 // Whether enemy deaths are watched now: sharing, and the world standing (no trip, no load).
 bool WatchesKills(bool sharing, bool trip_active, bool loading);
+// Whether a character's death flags (+0x1E3) mark a real death: bit 0 from the game's kill (an
+// event's ForceCharacterDeath, 0x018BFAD3), bit 2 from a death by damage (0x018C52D1, after the
+// kill reward). Both are cleared when it comes back (0x018CC550).
+bool IsRealDeath(u8 death_flags);
 
 class VisitKills {
 public:
@@ -776,17 +780,33 @@ struct AutoplayCommand {
 };
 std::vector<AutoplayCommand> ParseAutoplayScript(std::string_view text);
 // The pad button a script names (cross, circle, square, triangle, options, up, down, left, right,
-// l1, r1, l2, r2), 0 if none.
+// l1, r1, l2, r2, l3, r3), 0 if none.
 u32 AutoplayButton(std::string_view name);
 // Whether Cross is down `ms` after the title screen's autoplay began.
 bool TitlePressesCross(u64 ms);
 // The game's own kill (what an event's ForceCharacterDeath does): HP to 0, the dead flag
 // (+0x1E3 bit 0), then the death step (0x018BD9D0). `void (character)`.
 constexpr u64 KillCharacterOffset = 0x018BF9A0;
-// A target: "nearest" (0), "self" (AutoplaySelf, the player) or a character handle in hex.
+// A target: "nearest" (0), "self" (AutoplaySelf, the player), "marked" (AutoplayMarked, the one
+// the last mark command picked) or a character handle in hex.
 constexpr u32 AutoplaySelf = 0xFFFFFFFF;
+constexpr u32 AutoplayMarked = 0xFFFFFFFE;
 std::optional<u32> ParseAutoplayTarget(std::string_view text);
 // `value <op> limit` for op <, <=, ==, !=, >=, >; nothing for another op.
 std::optional<bool> CompareAutoplay(s64 value, std::string_view op, s64 limit);
+// attack <target>: a real hit, so the kill reward and the death run as in play (the game's own
+// kill leaves an ordinary enemy standing in a party). Cycle k (AttackCycleSeconds each) stands
+// AttackDistance from the target on side k % 4 (+z, +x, -z, -x) and holds R1 from 0.3 s to 0.5 s
+// into the cycle. The teleport there turns the player to heading 0, which faces -z, so the first
+// side is the one that faces the target.
+struct AttackStance {
+    float x = 0.0f;
+    float z = 0.0f;
+};
+constexpr double AttackCycleSeconds = 1.5;
+constexpr float AttackDistance = 1.2f;
+AttackStance AttackStanceFor(float target_x, float target_z, u32 cycle);
+u32 AttackCycleAt(double elapsed);
+bool AttackHoldsR1(double elapsed);
 
 } // namespace Core::Bloodborne

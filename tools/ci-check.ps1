@@ -18,9 +18,12 @@ Set-Location $Src
 $failed = @()
 
 if ($Component -eq "tools") {
-    # The RE and log tools (tools\re): their own unit tests.
-    py -3.12 -m unittest discover -s re\tests 2>&1 | Select-Object -Last 4
-    if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: tools tests"; exit 1 }
+    # The RE and log tools (tools\re) and the rig's runner and scenarios (tools\rig): their own
+    # unit tests.
+    foreach ($tests in @("re\tests", "rig\tests")) {
+        py -3.12 -m unittest discover -s $tests 2>&1 | Select-Object -Last 4
+        if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: $tests"; exit 1 }
+    }
     Write-Host "CI CHECK PASSED"
     exit 0
 }

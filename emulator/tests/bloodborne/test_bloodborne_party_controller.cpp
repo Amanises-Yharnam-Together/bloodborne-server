@@ -1156,6 +1156,20 @@ TEST(BloodborneSharedKills, NoKillsAreWatchedWhileTheWorldGoesAway) {
     EXPECT_FALSE(WatchesKills(false, false, false)) << "not sharing";
 }
 
+// What counts as a kill is a real death, from a character's death flags (+0x1E3): bit 0 from the
+// game's kill (an event's ForceCharacterDeath, 0x018BFAD3), bit 2 from a death by damage (set
+// after the kill reward, 0x018C52D1). Only bit 0 counted at first, so a fight's kills never
+// reached the kill board (the rig: the host killed an enemy, +995 echoes, no kill posted; a
+// friend run: 67 kill rewards, 2 kills posted). 0 HP alone is not one: a map torn down reads 0.
+TEST(BloodborneSharedKills, AKillIsADeathTheGameMarked) {
+    EXPECT_TRUE(IsRealDeath(0x01)) << "the game's kill";
+    EXPECT_TRUE(IsRealDeath(0x04)) << "killed in a fight";
+    EXPECT_TRUE(IsRealDeath(0x05));
+    EXPECT_FALSE(IsRealDeath(0x00)) << "alive, or a map going away";
+    EXPECT_FALSE(IsRealDeath(0x08)) << "bit 3 is something else (set and cleared at 0x018C2605)";
+    EXPECT_FALSE(IsRealDeath(0xF2));
+}
+
 // A guest's trip loads the host's map with the guest's own save: a dog killed for good on the
 // host's save stood alive for it. The host posts its map's flags (10000 from the map's base:
 // 1241xxxx for m24_01) and the guest loading that map takes them, except its own pickups, the

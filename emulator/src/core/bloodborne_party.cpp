@@ -987,6 +987,10 @@ bool WatchesKills(bool sharing, bool trip_active, bool loading) {
     return sharing && !trip_active && !loading;
 }
 
+bool IsRealDeath(u8 death_flags) {
+    return (death_flags & 0x05) != 0;
+}
+
 std::vector<std::pair<s32, bool>> VisitKills::Observe(
     u64 visit, std::span<const std::pair<u32, s32>> characters) {
     std::vector<std::pair<s32, bool>> changes;
@@ -1519,7 +1523,7 @@ std::vector<AutoplayCommand> ParseAutoplayScript(std::string_view text) {
 }
 
 u32 AutoplayButton(std::string_view name) {
-    static constexpr std::array<std::pair<std::string_view, u32>, 13> Buttons{{
+    static constexpr std::array<std::pair<std::string_view, u32>, 15> Buttons{{
         {"cross", 0x4000},
         {"circle", 0x2000},
         {"square", 0x8000},
@@ -1533,6 +1537,8 @@ u32 AutoplayButton(std::string_view name) {
         {"r1", 0x800},
         {"l2", 0x100},
         {"r2", 0x200},
+        {"l3", 0x2},
+        {"r3", 0x4},
     }};
     for (const auto& [button, bit] : Buttons) {
         if (button == name) {
@@ -1554,6 +1560,9 @@ std::optional<u32> ParseAutoplayTarget(std::string_view text) {
     }
     if (text == "self") {
         return AutoplaySelf;
+    }
+    if (text == "marked") {
+        return AutoplayMarked;
     }
     if (text.starts_with("0x")) {
         text.remove_prefix(2);
@@ -1586,6 +1595,22 @@ std::optional<bool> CompareAutoplay(s64 value, std::string_view op, s64 limit) {
         return value > limit;
     }
     return std::nullopt;
+}
+
+AttackStance AttackStanceFor(float target_x, float target_z, u32 cycle) {
+    static constexpr std::array<std::pair<float, float>, 4> Sides{
+        {{0.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, -1.0f}, {-1.0f, 0.0f}}};
+    const auto [x, z] = Sides[cycle % Sides.size()];
+    return {target_x + AttackDistance * x, target_z + AttackDistance * z};
+}
+
+u32 AttackCycleAt(double elapsed) {
+    return elapsed <= 0.0 ? 0u : static_cast<u32>(elapsed / AttackCycleSeconds);
+}
+
+bool AttackHoldsR1(double elapsed) {
+    const double into = std::max(elapsed, 0.0) - AttackCycleAt(elapsed) * AttackCycleSeconds;
+    return into >= 0.3 && into < 0.5;
 }
 
 } // namespace Core::Bloodborne

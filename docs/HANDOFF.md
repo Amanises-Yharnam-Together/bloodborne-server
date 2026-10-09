@@ -341,6 +341,36 @@ to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
 - **Boss HP bar** sometimes did not update for both players' damage.
 - Connection problems (already in the backlog: slow joins).
 
+## Automated rig tests (2026-10-09): test every change without players
+Kaniel's ask: "you should be able to test every change yourself".
+- **Autoplay** (`SHADPS4_BLOODBORNE_AUTOPLAY=<script>`): the pad reader (pad.cpp ProcessStates ->
+  `AutoplayPad`) presses Cross on the title screen until the player is in the world (about 25 s),
+  then the party tick runs the script (`RunAutoplayStep`): wait, wait-session, wait-members,
+  wait-map, travel / ensure-map (the direct warp lands at (0, 0, 0) over the void: the respawn
+  point is written again and `MoveToRespawnPoint` runs after arrival), hurt, kill (the game's kill
+  0x018BF9A0; it kills bosses, but holds back an ordinary enemy's death when
+  `[[chr+0x18]+0x30]+0x18 & 1`), attack (ordinary kills: 1 HP, then the player is teleported
+  beside it, heading written at transform +0x1D4, and R1 pressed, a side and a quarter turn per
+  1.5 s cycle until it dies, so the kill reward and death run as in play; `AttackStanceFor`),
+  mark, approach, teleport, press, stick, set/expect/wait-flag, godmode, snapshot,
+  expect-hp/session/map. Each step logs `Bloodborne autoplay: step i/N ... ok|FAILED`, then
+  `done (ok|failed)`.
+- **Runner**: `py -3.12 tools\rig\run_scenario.py <scenario>...` (`--list`, `--save-baseline`,
+  `--add-guest2`). For each scenario it restarts the rig's shadNet/backend (only what listens on
+  the rig's ports 32313/20453; a killed game's summon sign stayed claimable for 75 s and the next
+  test's host claimed it, so three tests in a row never joined), refuses an old shadNet without
+  `/bloodborne/party/hp`, puts every role's saves back to `rig\<role>\baseline`, launches each
+  role (host, guest, guest2) with its script, waits for done, retries once on a crash (the GPU's
+  device lost shows up in the rig too), and checks steps, `expect`/`forbid` lines and
+  check_party_log problems. It stops only its own games (the build's shadPS4.exe) and does not
+  start while another copy runs (someone playing). Every run's game logs, scripts and server logs
+  (summon request bodies traced) stay in `rig\runs\<when>\<scenario>\` (last 20 batches).
+  Scenarios: `tools\rig\scenarios.py`; their commands, roles and patterns are unit-tested
+  (`tools\rig\tests`, part of `ci-check.ps1 -Component tools`).
+- Bugs it found on its first runs, all fixed: a guest's trip start posted kills (host hid living
+  enemies); the HP board kept a quit member's report (next session's enemy started hurt); the
+  guest found the host's online id only deeper in the identity object.
+
 ## Friend runs 2026-10-08/09 (online kit, Kaniel + friend over Radmin VPN)
 All built, CI green, pushed on `phase3-travel`; none confirmed in a game yet unless noted.
 - **Boss kill outside a PSN friends party** (945aff4d): Lua `BlockClear2_1` sends a live player
