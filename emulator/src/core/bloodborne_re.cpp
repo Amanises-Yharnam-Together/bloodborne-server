@@ -5401,8 +5401,21 @@ void KeepEnemyDeathsInStep(bool sharing) {
     ShareEnemyHp(map, visit, pointers);
     if (!changes.empty()) {
         const auto kills = std::ranges::count_if(changes, [](const auto& c) { return c.second; });
-        LOG_INFO(Debug, "Bloodborne party: kill board gets {} kills, {} back (visit {:#x})", kills,
-                 changes.size() - kills, visit);
+        // Which ones, with their death flags (+0x1E3) and HP now: a kill that is not one shows
+        // what marked it.
+        std::string which;
+        for (const auto& [handle, killed] : changes) {
+            const auto at =
+                std::ranges::find(characters, static_cast<u32>(handle), &SeenCharacter::handle);
+            const u64 character = at != characters.end() ? pointers[at - characters.begin()] : 0;
+            which += fmt::format(" {}{:#x}", killed ? "" : "back ", static_cast<u32>(handle));
+            if (character != 0) {
+                which += fmt::format(" (dead {:#x} hp {})", ReadValue<u8>(character, 0x1E3),
+                                     CharacterHp(character));
+            }
+        }
+        LOG_INFO(Debug, "Bloodborne party: kill board gets {} kills, {} back (visit {:#x}):{}",
+                 kills, changes.size() - kills, visit, which);
     }
     std::unordered_set<u32> others;
     {
@@ -6046,12 +6059,18 @@ void ReviveGuestAfterGhostDeath() {
 // session: it revives like a guest and the world is not reloaded.
 // OnLeave_Limit (event 4046), 5 s after a white phantom lost its host (the host left, travelled,
 // kicked it or the room went away): the reset and warp into the phantom's own world. A party
-// guest stays where it is instead; its host travelling is no reason to move it.
+// guest stays where it is instead while the session goes on; with nobody left (the host
+// crashed) it goes home, as a phantom never rings again (GuestStaysWhenItsHostLeaves).
+std::vector<u64> OtherSessionMembers();
 bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64, const GuestRegisterSnapshot*) {
     const u64 player = GetLocalPlayer();
     if (!party_controller || player < 0x10000 ||
         !HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) ||
         ReadValue<s32>(player, 0x78) != WhiteGhostCharacterType) {
+        return false;
+    }
+    if (!GuestStaysWhenItsHostLeaves(OtherSessionMembers().size())) {
+        LOG_INFO(Debug, "Bloodborne party guest lost its host and the session; going home");
         return false;
     }
     // The leave set 4047 ("on the way out"); left set, it swallows the next leave and death.

@@ -111,6 +111,18 @@ TEST(BloodborneGuestApart, EndsOnlyWithTheNextJoin) {
     EXPECT_FALSE(apart.Apart());
 }
 
+// A white phantom whose host is gone (OnLeave_Limit, event 4046) is reset into its own world.
+// A party guest stayed where it was instead, which a host's trip once needed; now a trip keeps
+// the session and never gets there. The rig's host crashed: its guest stood on as a phantom
+// with no host, and a phantom never rings, so they never joined again. It stays only while the
+// session still has someone; otherwise it goes home (and resumes where it was, see
+// ResumeWhereTheGuestLeft) and rings from there.
+TEST(BloodbornePartyController, AGuestWhoseSessionIsGoneGoesHome) {
+    EXPECT_TRUE(GuestStaysWhenItsHostLeaves(1)) << "the session goes on (another guest, a trip)";
+    EXPECT_TRUE(GuestStaysWhenItsHostLeaves(2));
+    EXPECT_FALSE(GuestStaysWhenItsHostLeaves(0)) << "the host crashed or quit: nobody left";
+}
+
 TEST(BloodbornePartyController, AnyDisturbanceRestartsTheStabilityCount) {
     PartyController controller(PartyRole::Guest);
     for (u32 i = 1; i < PartyController::StableTicksBeforeSearch; ++i) {
@@ -1031,11 +1043,15 @@ TEST(BloodborneCrashes, TheCrashLineNamesTheGameOffset) {
 }
 
 // The host summoned the guest a second time 48 s after both closed their connection; the host's
-// emulator reused the lingering connection and the guest's game never heard the invite.
-TEST(BloodborneSignaling, AConnectionBothSidesClosedIsNotReused) {
+// emulator reused the lingering connection and the guest's game never heard the invite. And in
+// the rig's guest-crash test the guest's game died without closing anything: the host's game
+// closed its connection, opened it again for the restarted guest, got the old one back, and the
+// new guest never got a handshake. A connection this game closed is never reused.
+TEST(BloodborneSignaling, AConnectionThisGameClosedIsNotReused) {
     using Libraries::Np::NpSignaling::LingeringConnectionIsFinished;
     EXPECT_TRUE(LingeringConnectionIsFinished(true, true, true, false));
-    EXPECT_FALSE(LingeringConnectionIsFinished(true, true, false, false)) << "peer still on";
+    EXPECT_TRUE(LingeringConnectionIsFinished(true, true, false, false))
+        << "the peer never closed it (its game died)";
     EXPECT_FALSE(LingeringConnectionIsFinished(true, false, true, false)) << "we are still on";
     EXPECT_FALSE(LingeringConnectionIsFinished(false, true, true, false)) << "never established";
     EXPECT_FALSE(LingeringConnectionIsFinished(true, true, true, true)) << "already dead";

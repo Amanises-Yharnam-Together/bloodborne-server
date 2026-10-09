@@ -61,6 +61,15 @@ class ScenarioTest(unittest.TestCase):
                 with self.subTest(scenario=name, role=role):
                     self.assertEqual(run_scenario.stages_of(script)[0][0], scenarios.START)
 
+    def test_only_the_kill_made_is_posted(self):
+        [pattern] = scenarios.only_kill("0x1001400b")
+        made = ("Bloodborne party: kill board gets 1 kills, 0 back (visit 0x1801000000000001): "
+                "0x1001400b (dead 0x6 hp 0)")
+        false = ("Bloodborne party: kill board gets 2 kills, 0 back (visit 0x1801000000000001): "
+                 "0x1001409c (dead 0x1 hp 0) 0x1001409e (dead 0x1 hp 0)")
+        self.assertIsNone(re.search(pattern, made))
+        self.assertIsNotNone(re.search(pattern, false))
+
     def test_an_attack_is_one_step_with_a_time_limit(self):
         self.assertEqual(scenarios.attack("marked"), ["attack marked 40"])
 

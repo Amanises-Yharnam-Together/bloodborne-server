@@ -1471,6 +1471,10 @@ bool RefreshAtLamp(const LampRestCalls& calls) {
     return true;
 }
 
+bool GuestStaysWhenItsHostLeaves(size_t other_members) {
+    return other_members > 0;
+}
+
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {
     if (!observation.player_valid || !observation.map_usable || observation.stage_transition) {
         stable_ticks = 0;

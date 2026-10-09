@@ -38,6 +38,11 @@ LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
 SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
 
 
+def only_kill(handle: str) -> list[str]:
+    """No kill posted but this one: a false kill hides a living enemy from the others."""
+    return [rf"kill board gets (?!1 kills, 0 back \(visit [^)]*\): {handle} )"]
+
+
 def attack(target: str) -> list[str]:
     """A real kill of an ordinary enemy (the kill reward and the death run as in play; the
     game's own kill leaves one standing in a party)."""
@@ -108,8 +113,9 @@ SCENARIOS = {
         },
         "expect": {
             "host": [r"kill board gets 1 kills"],
-            "guest": [r"hid \d+ enemies a member killed on map 0x18010000"],
+            "guest": [r"hid 1 enemies a member killed on map 0x18010000"],
         },
+        "forbid": {"host": only_kill(ENEMY)},
         "timeout": 720,
     },
     "dog": {
@@ -124,8 +130,9 @@ SCENARIOS = {
         },
         "expect": {
             "guest": [r"kill board gets 1 kills"],
-            "host": [r"hid \d+ enemies a member killed on map 0x18010000"],
+            "host": [r"hid 1 enemies a member killed on map 0x18010000"],
         },
+        "forbid": {"guest": only_kill(ENEMY)},
         "timeout": 720,
     },
     "hp-apart": {

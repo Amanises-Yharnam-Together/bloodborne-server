@@ -763,6 +763,10 @@ std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
 // Resonant) once the world has been stable for a while.
+// Whether a party guest that lost its host stays where it is (see StayWhenTheHostLeaves): only
+// while the session has `other_members` besides it.
+bool GuestStaysWhenItsHostLeaves(size_t other_members);
+
 class PartyController {
 public:
     using Clock = std::chrono::steady_clock;
