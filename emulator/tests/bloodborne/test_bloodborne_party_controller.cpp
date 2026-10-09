@@ -86,31 +86,6 @@ TEST(BloodbornePartyController, AGuestLeftBehindByItsHostDoesNotSearch) {
     EXPECT_EQ(TickUntilDecision(controller, left_behind, T0), PartyAction::Wait);
 }
 
-// A guest that travelled on its own is in its own world; it rejoins only once it is back on the
-// host's map, so the cross-map join does not pull it to wherever the host is.
-TEST(BloodbornePartyController, AGuestApartWaitsUntilItIsOnTheHostsMap) {
-    PartyController controller(PartyRole::Guest);
-    PartyObservation apart = Idle();
-    apart.waiting_to_meet = true;
-    EXPECT_EQ(TickUntilDecision(controller, apart, T0), PartyAction::Wait);
-    EXPECT_EQ(TickUntilDecision(controller, Idle(), T0), PartyAction::StartSearch);
-}
-
-// The guest is still in the old session for a moment after its trip starts; only joining a
-// session again ends "apart".
-TEST(BloodborneGuestApart, EndsOnlyWithTheNextJoin) {
-    GuestApart apart;
-    apart.Tick(true);
-    EXPECT_FALSE(apart.Apart());
-    apart.Travelled();
-    apart.Tick(true); // the session it travelled out of
-    EXPECT_TRUE(apart.Apart());
-    apart.Tick(false);
-    EXPECT_TRUE(apart.Apart());
-    apart.Tick(true); // joined again
-    EXPECT_FALSE(apart.Apart());
-}
-
 // A white phantom whose host is gone (OnLeave_Limit, event 4046) is reset into its own world.
 // A party guest stayed where it was instead, which a host's trip once needed; now a trip keeps
 // the session and never gets there. The rig's host crashed: its guest stood on as a phantom
@@ -132,6 +107,23 @@ TEST(BloodbornePartyController, AGuestWhoseSessionIsGoneGoesHome) {
 TEST(BloodbornePartyController, ALivePlayerNeverTakesTheLeaveWarp) {
     EXPECT_TRUE(SkipsLeaveLimit(0, 0)) << "the host, its guest gone";
     EXPECT_TRUE(SkipsLeaveLimit(0, 1));
+}
+
+// The rig's host-crash-apart test: the guest joined in Central Yharnam (the placement its sign got
+// with the claim is its own spot there), travelled to the Ward and lost its host; once out of the
+// session, that old placement warped it back to where it had joined. A placement is for its one
+// join: spent once the session it brought is over.
+TEST(BloodbornePartyController, AJoinsPlacementIsSpentWhenItsSessionEnds) {
+    JoinPlacementLife life;
+    life.Received();
+    EXPECT_FALSE(life.Spent(0, true)) << "not joined yet: the claim is on its way";
+    EXPECT_FALSE(life.Spent(MatchingStateSummonedGuest, false)) << "in the session it brought";
+    EXPECT_FALSE(life.Spent(MatchingStateSummonedGuest, false));
+    EXPECT_FALSE(life.Spent(0, false)) << "still leaving (a reload or the room's close pending)";
+    EXPECT_TRUE(life.Spent(0, true)) << "the session is over";
+    EXPECT_FALSE(life.Spent(0, true)) << "spent once";
+    life.Received();
+    EXPECT_FALSE(life.Spent(0, true)) << "the next join's placement";
 }
 
 TEST(BloodbornePartyController, AnyDisturbanceRestartsTheStabilityCount) {
@@ -1251,6 +1243,15 @@ TEST(BloodborneSharedKills, AKillIsADeathTheGameMarked) {
     EXPECT_FALSE(IsRealDeath(0x00)) << "alive, or a map going away";
     EXPECT_FALSE(IsRealDeath(0x08)) << "bit 3 is something else (set and cleared at 0x018C2605)";
     EXPECT_FALSE(IsRealDeath(0xF2));
+}
+
+// The dog test again (2026-10-09, after a reboot): the host left for the Dream and the guest's own
+// world put down Father Gascoigne, beaten in its save, a second before the guest saw the host
+// gone, so the settle after its takeover came too late. A world's put-down has bit 5 (0x26, 48
+// times in the day's rig logs); a fight's kill reads 0x6 and stays so (21 later snapshots).
+TEST(BloodborneSharedKills, AnEnemyTheWorldPutsDownIsNoKill) {
+    EXPECT_FALSE(IsRealDeath(0x26)) << "Gascoigne, dead in the guest's save";
+    EXPECT_TRUE(IsRealDeath(0x06)) << "killed in a fight";
 }
 
 // A guest's trip loads the host's map with the guest's own save: a dog killed for good on the

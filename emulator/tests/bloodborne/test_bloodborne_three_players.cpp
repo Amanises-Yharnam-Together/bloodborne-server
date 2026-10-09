@@ -241,15 +241,12 @@ TEST(BloodborneThreePlayers, WhoRunsTheEnemiesAndWhoWaits) {
         {"me", 0x18010000}, {"guestB", 0x18010000}, {"host", 0x15000000}};
     EXPECT_TRUE(HostAway(0x15000000, two_guests, "me", 0x18010000))
         << "two guests without the host: both run the enemies";
-    EXPECT_FALSE(HostOnMyMap(0x15000000, two_guests, "me", 0x18010000));
     const std::vector<MemberMap> with_host{
         {"me", 0x18010000}, {"host", 0x18010000}, {"guestB", 0x15000000}};
-    EXPECT_FALSE(HostAway(0x18010000, with_host, "me", 0x18010000));
-    EXPECT_TRUE(HostOnMyMap(0x18010000, with_host, "me", 0x18010000))
+    EXPECT_FALSE(HostAway(0x18010000, with_host, "me", 0x18010000))
         << "the other guest being elsewhere does not matter";
     // No host post yet: the two-player rules.
     EXPECT_FALSE(HostAway(std::nullopt, with_host, "me", 0x18010000)) << "someone is here";
-    EXPECT_FALSE(HostOnMyMap(std::nullopt, with_host, "me", 0x18010000)) << "not everyone";
     const std::vector<MemberMap> alone{{"me", 0x18010000}, {"host", 0x15000000}};
     EXPECT_TRUE(HostAway(std::nullopt, alone, "me", 0x18010000));
 

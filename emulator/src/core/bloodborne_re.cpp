@@ -846,6 +846,7 @@ std::mutex seamless_placement_mutex;
 std::optional<SummonPlacementDescriptor> seamless_host_placement;
 std::optional<SummonPlacementDescriptor> seamless_received_host_placement;
 bool seamless_received_host_placement_consumed{};
+JoinPlacementLife seamless_received_host_placement_life;
 std::atomic<u32> pending_summon_reload_map{};
 std::atomic<u32> pending_summon_reload_state_map{};
 
@@ -1453,10 +1454,28 @@ void ApplyPreMatchCrossMapGuestWarp() {
     pre_match_guest_warp = {};
     auto& record = pre_match_guest_warp;
 
+    const u64 matching = GetMatchingState();
+    const bool matching_readable =
+        matching >= 0x10000 && HasMemoryAccess(matching, 0x128, MemoryProt::CpuRead);
+    const s32 matching_state = matching_readable ? ReadValue<s32>(matching, 0x124) : -1;
+    const u64 global = GetGlobalState();
+    const bool session_over =
+        matching_readable && matching_state == 0 && ReadValue<u64>(matching, 0x18) == 0 &&
+        global >= 0x10000 && HasMemoryAccess(global, 0x1521, MemoryProt::CpuRead) &&
+        ReadValue<u8>(global, 0x08) == 0 && ReadValue<u8>(global, 0x1520) == 0 &&
+        pending_summon_reload_map.load(std::memory_order_acquire) == 0 &&
+        pending_summon_reload_state_map.load(std::memory_order_acquire) == 0;
     std::optional<SummonPlacementDescriptor> transported_host;
     bool placement_consumed = false;
     {
         std::scoped_lock lock{seamless_placement_mutex};
+        if (seamless_received_host_placement.has_value() &&
+            seamless_received_host_placement_life.Spent(matching_state, session_over)) {
+            LOG_INFO(Debug, "Bloodborne party: the join's placement on map {:#x} is spent",
+                     seamless_received_host_placement->packed_region);
+            seamless_received_host_placement.reset();
+            seamless_received_host_placement_consumed = false;
+        }
         transported_host = seamless_received_host_placement;
         placement_consumed = seamless_received_host_placement_consumed;
     }
@@ -1716,8 +1735,6 @@ void InitPartyController() {
     LOG_INFO(Debug, "Bloodborne party auto-rejoin enabled as {}", role_name);
 }
 
-bool PartyHostOnMyMap();
-extern GuestApart guest_apart;
 bool HostHasRoomForMore();
 
 PartyObservation ObserveParty(u64 player, s32 search_effect) {
@@ -1742,7 +1759,6 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
 
     observation.search_effect_active =
         observation.player_valid && HasPlayerEffect(player, search_effect);
-    observation.waiting_to_meet = guest_apart.Apart() && !PartyHostOnMyMap();
     observation.room_for_more = party_controller &&
                                 party_controller->SearchEffectId() == BeckoningBellEffect &&
                                 HostHasRoomForMore();
@@ -2149,8 +2165,6 @@ void PS4_SYSV_ABI LetPartyUseLamps(u64, GuestRegisterSnapshot* registers) {
 
 // A party guest's lamp trip (see GuestMakesItsOwnLampTrip): the touch animation, then the warp,
 // both from the party tick.
-// Set by a guest's own trip, cleared once it is in a session again (see waiting_to_meet).
-GuestApart guest_apart;
 s32 guest_trip_point = HuntersDreamWarpPoint;
 // A guest's own warp into the host's map ended in a grey void (no position at arrival); a second
 // after arrival the guest is moved to the lamp the way a revive is.
@@ -2190,7 +2204,6 @@ void TickGuestLampTrip() {
         }
         reinterpret_cast<WarpNextStageBonfire>(image_base +
                                                WarpNextStageBonfireOffset)(0, guest_trip_point);
-        guest_apart.Travelled();
         guest_trip_in_flight = true;
         LOG_INFO(Debug, "Bloodborne party guest warps to {} ({:#x})", guest_trip_point,
                  PackedMapOfWarpPoint(guest_trip_point));
@@ -3668,20 +3681,10 @@ void RecreateRemotePlayers(std::span<const u64> only) {
     }
 }
 
-// Whether everyone else in the party (for a guest: the host) is on this member's map.
+// The host's map from its own map state post (with two guests the other one may be elsewhere).
 std::optional<u32> HostMapFromItsPost() {
     std::scoped_lock lock{map_state_mutex};
     return host_map_state ? std::optional<u32>{host_map_state->map} : std::nullopt;
-}
-
-bool PartyHostOnMyMap() {
-    const std::optional<u32> host_map = HostMapFromItsPost();
-    std::scoped_lock lock{map_board_mutex};
-    if (std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}) {
-        return false;
-    }
-    // With two guests the other one may be elsewhere: the host's own post says where it is.
-    return HostOnMyMap(host_map, map_board, map_board_member, GetCurrentPackedMap());
 }
 
 // After this member's trip the other players are re-created as they come to this map (creating a
@@ -5731,9 +5734,7 @@ void TickPlayersOnThisMap() {
                   party_controller->SearchEffectId() == SmallResonantBellEffect);
     RestoreSearchAfterTrip(in_session);
     const u32 map = GetCurrentPackedMap();
-    // Posted in and out of a session: a guest apart from the host waits for the host's map.
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
-    guest_apart.Tick(in_session);
     ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
     GrantPartyEchoes();
     if (!in_session) {
@@ -8196,7 +8197,6 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
             // As a guest's own lamp trip in a session (TickGuestLampTrip) does; out of one it is
             // the game's own travel, as a player's at a lamp.
             if (IsPartyGuestRole() && InPartySession()) {
-                guest_apart.Travelled();
                 guest_trip_in_flight = true;
             }
             std::scoped_lock lock{autoplay_mutex};
@@ -8654,6 +8654,7 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
     if (!seamless_received_host_placement.has_value() ||
         !IsSameSummonPlacement(*seamless_received_host_placement, placement)) {
         seamless_received_host_placement_consumed = false;
+        seamless_received_host_placement_life.Received();
     }
     seamless_received_host_placement = placement;
     return true;

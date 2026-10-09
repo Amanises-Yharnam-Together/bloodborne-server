@@ -49,8 +49,7 @@ struct PartyObservation {
     bool stage_transition = false;
     bool matching_idle = false; // no multiplayer session, not even a pending one
     bool search_effect_active = false;
-    bool white_phantom = false;   // still in a host's world (the host may have left)
-    bool waiting_to_meet = false; // travelled on its own; the host is on another map
+    bool white_phantom = false; // still in a host's world (the host may have left)
     // Hosting, with a party member online that is not in the session yet (a party of three:
     // the Beckoning Bell's effect ends when the first cooperator arrives).
     bool room_for_more = false;
@@ -378,9 +377,6 @@ RecreatePlan PlanRecreate(std::span<const std::optional<std::string>> members,
 // Whether the host (its map from its map state post) is on `map` and still on the map board.
 bool HostIsHere(std::optional<u32> host_map, std::span<const MemberMap> board,
                 std::string_view self, u32 map);
-// A guest apart waits for this: the host on its map. Without the host's post yet, everyone else.
-bool HostOnMyMap(std::optional<u32> host_map, std::span<const MemberMap> board,
-                 std::string_view self, u32 map);
 // A guest runs its map's enemies while this holds: the host is not on its map (two guests there
 // both do). Without the host's post yet, no other member on its map.
 bool HostAway(std::optional<u32> host_map, std::span<const MemberMap> board, std::string_view self,
@@ -639,7 +635,8 @@ private:
 bool WatchesKills(bool sharing, bool trip_active, bool loading);
 // Whether a character's death flags (+0x1E3) mark a real death: bit 0 from the game's kill (an
 // event's ForceCharacterDeath, 0x018BFAD3), bit 2 from a death by damage (0x018C52D1, after the
-// kill reward). Both are cleared when it comes back (0x018CC550).
+// kill reward). Both are cleared when it comes back (0x018CC550). Not with bit 5: an enemy its
+// world puts down, dead in that save (0x26; cleared at 0x013320DF), is no kill made now.
 bool IsRealDeath(u8 death_flags);
 
 // A character as the kill board sees it: its handle, its HP (0 once really dead, see
@@ -680,33 +677,6 @@ private:
 std::string EncodeEchoUpdate(std::string_view member, s64 since,
                              std::span<const KillEchoes> echoes);
 std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body);
-
-// A guest that made its own trip is apart from the host until it joins a session again (the
-// session it travelled out of still counts for a moment after the trip starts).
-class GuestApart {
-public:
-    void Travelled() {
-        apart = true;
-        left_session = false;
-    }
-    void Tick(bool in_session) {
-        if (!apart) {
-            return;
-        }
-        if (!in_session) {
-            left_session = true;
-        } else if (left_session) {
-            apart = false;
-        }
-    }
-    bool Apart() const {
-        return apart;
-    }
-
-private:
-    bool apart = false;
-    bool left_session = false;
-};
 
 // The multiplayer walls (common event 7600, from the maps' event files): the wall object and the
 // fog SFX the event shows while the game is in multiplayer.
@@ -780,6 +750,33 @@ std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
 // it goes home and resumes where it was); a live player (the host, or a guest after its own
 // trip) always, as it is in its own world already.
 bool SkipsLeaveLimit(s32 character_type, size_t other_members);
+
+// The placement a guest's sign gets with its claim (for a party guest, its own spot: it joins in
+// place) is for that one join. The pre-match warp and the summon handoff move the guest to it, so
+// kept after the session it brought, it warped a guest that had travelled on and then lost its
+// host back to where it had joined. Spent once that session is over: `session_over` is matching
+// idle with no reload or stage transition pending.
+class JoinPlacementLife {
+public:
+    void Received() {
+        joined = false;
+    }
+    // True once, on the tick the placement is spent (forget it then).
+    bool Spent(s32 matching_state, bool session_over) {
+        if (matching_state == MatchingStateSummonedGuest) {
+            joined = true;
+            return false;
+        }
+        if (!joined || !session_over) {
+            return false;
+        }
+        joined = false;
+        return true;
+    }
+
+private:
+    bool joined = false;
+};
 
 class PartyController {
 public:

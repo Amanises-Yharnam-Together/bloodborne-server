@@ -384,11 +384,6 @@ bool HostIsHere(std::optional<u32> host_map, std::span<const MemberMap> board,
            });
 }
 
-bool HostOnMyMap(std::optional<u32> host_map, std::span<const MemberMap> board,
-                 std::string_view self, u32 map) {
-    return host_map ? HostIsHere(host_map, board, self, map) : EveryoneElseOnMap(board, self, map);
-}
-
 bool HostAway(std::optional<u32> host_map, std::span<const MemberMap> board, std::string_view self,
               u32 map) {
     return host_map ? !HostIsHere(host_map, board, self, map) : NoOneElseOnMap(board, self, map);
@@ -995,7 +990,8 @@ bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner
 }
 
 bool IsRealDeath(u8 death_flags) {
-    return (death_flags & 0x05) != 0;
+    constexpr u8 PutDownByTheWorld = 0x20;
+    return (death_flags & 0x05) != 0 && (death_flags & PutDownByTheWorld) == 0;
 }
 
 std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
@@ -1490,8 +1486,7 @@ PartyAction PartyController::Tick(const PartyObservation& observation, Clock::ti
     }
     const bool may_search =
         observation.matching_idle || (role == PartyRole::Host && observation.room_for_more);
-    if (!may_search || observation.search_effect_active || observation.white_phantom ||
-        observation.waiting_to_meet) {
+    if (!may_search || observation.search_effect_active || observation.white_phantom) {
         // In (or joining) a session, or our search already took: the next time we are back home
         // alone is a fresh start, so forget the old cooldown.
         stable_ticks = 0;
