@@ -80,10 +80,12 @@ static Block blocks[LIMIT];
 static Vma *vmas; static size_t vma_count, vma_capacity;
 #ifndef _WIN32
 static int pool_fd=-1;
+#endif
 /* bbport: direct memory in GPU-visible system memory the GPU library allocates (dma-buf chunks,
  * BB_GUEST_GPU_MEMORY=1): the GPU reads the game's data in place instead of the CPU copying it
  * into staging buffers first. Chunks are allocated when the game allocates direct memory in them;
- * a chunk the GPU library cannot provide stays in the memfd. */
+ * a chunk the GPU library cannot provide stays in the memfd. Windows has no dma-buf: there a chunk
+ * stays in the section and the GPU library imports its backing view (host memory import). */
 #define CHUNK (UINT64_C(256) << 20)
 typedef int (*GuestChunkAlloc)(uint64_t phys, uint64_t size);
 static GuestChunkAlloc chunk_alloc;
@@ -92,39 +94,80 @@ static int *chunk_fds; /* per CHUNK of direct memory: -1 not decided, -2 memfd, 
 #define CHUNK_IMPORTED (-3)
 /* Released memory in a chunk the GPU uses is cleared, not punched out: the GPU holds those pages. */
 #define GPU_CHUNK(fd) ((fd)>=0 || (fd)==CHUNK_IMPORTED)
-#endif
 static unsigned char *backing_base; /* second view of the pool: host writes bypass guest/GPU page protection */
-#ifndef _WIN32
 /* Drivers whose dma-buf maps at offset 0 only (NVIDIA): a chunk per direct allocation instead of
  * the CHUNK grid. The game maps each of its allocations once, whole, so its mappings and the
  * backing view start at offset 0 of their chunk. */
 static int whole_chunks;
 typedef struct { uint64_t phys, size; int fd; } Region;
 #define MAX_REGIONS 256
-static Region regions[MAX_REGIONS];
-static size_t region_count;
+static Region chunk_regions[MAX_REGIONS];
+static size_t chunk_region_count;
 /* The region holding phys (sorted by phys), or NULL; *next: start of the next region above. */
 static const Region *region_at(uint64_t phys, uint64_t *next) {
     *next=POOL_SIZE;
-    for (size_t i=0;i<region_count;++i) {
-        if (phys<regions[i].phys) { *next=regions[i].phys; return NULL; }
-        if (phys<regions[i].phys+regions[i].size) return &regions[i];
+    for (size_t i=0;i<chunk_region_count;++i) {
+        if (phys<chunk_regions[i].phys) { *next=chunk_regions[i].phys; return NULL; }
+        if (phys<chunk_regions[i].phys+chunk_regions[i].size) return &chunk_regions[i];
     }
     return NULL;
 }
-static void add_region(uint64_t phys, uint64_t size) {
-    if (region_count==MAX_REGIONS) return;
+/* Asks the GPU library for the chunk [phys, phys+size); returns its state for chunk_fds/Region. */
+static int take_chunk(uint64_t phys, uint64_t size) {
     int fd=chunk_alloc(phys,size);
+#ifdef _WIN32
+    /* The section's memory imported in place, or left as it is. */
+    return fd==CHUNK_IMPORTED ? fd : -2;
+#else
     if (fd>=0 && mmap(backing_base+phys,size,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_FIXED,fd,0)==MAP_FAILED) {
         close(fd);
         fd=-1;
     }
-    size_t i=region_count;
-    while (i>0 && regions[i-1].phys>phys) { regions[i]=regions[i-1]; --i; }
-    regions[i]=(Region){phys,size,fd>=0 || fd==CHUNK_IMPORTED ? fd : -2};
-    ++region_count;
-}
+    return fd>=0 || fd==CHUNK_IMPORTED ? fd : -2;
 #endif
+}
+static void add_region(uint64_t phys, uint64_t size) {
+    if (chunk_region_count==MAX_REGIONS) return;
+    int fd=take_chunk(phys,size);
+    size_t i=chunk_region_count;
+    while (i>0 && chunk_regions[i-1].phys>phys) { chunk_regions[i]=chunk_regions[i-1]; --i; }
+    chunk_regions[i]=(Region){phys,size,fd};
+    ++chunk_region_count;
+}
+/* Size of direct memory chunk c (the last one may be shorter). */
+static uint64_t chunk_size(uint64_t c) {
+    const uint64_t start=c*CHUNK;
+    return POOL_SIZE-start<CHUNK ? POOL_SIZE-start : CHUNK;
+}
+/* Decides where the chunks of [phys, phys+size) of direct memory live (lock held). */
+static void ensure_chunks(uint64_t phys, uint64_t size) {
+    if (!chunk_fds || phys>=POOL_SIZE) return;
+    if (whole_chunks) {
+        if (!chunk_alloc) return;
+        const uint64_t end=phys+size<POOL_SIZE ? phys+size : POOL_SIZE;
+        for (uint64_t at=phys;at<end;) {
+            uint64_t next;
+            const Region *r=region_at(at,&next);
+            if (r) { at=r->phys+r->size; continue; }
+            const uint64_t gap_end=next<end ? next : end;
+            add_region(at,gap_end-at);
+            at=gap_end;
+        }
+        return;
+    }
+    const uint64_t last=(phys+size-1<POOL_SIZE ? phys+size-1 : POOL_SIZE-1)/CHUNK;
+    for (uint64_t c=phys/CHUNK;c<=last;++c) {
+        if (chunk_fds[c]!=-1) continue;
+        chunk_fds[c]=chunk_alloc ? take_chunk(c*CHUNK,chunk_size(c)) : -2;
+    }
+}
+/* chunk_fds for the pool: every chunk undecided. */
+static int init_chunks(void) {
+    chunk_fds=malloc((POOL_SIZE/CHUNK+1)*sizeof(int));
+    if (!chunk_fds) return -1;
+    for (uint64_t c=0;c<=POOL_SIZE/CHUNK;++c) chunk_fds[c]=-1;
+    return 0;
+}
 #define FLEX_SPAN (UINT64_C(1024) * 1024 * 1024)
 static uint64_t flex_bitmap[FLEX_SPAN/PAGE/64];
 /* GPU hooks (bbgpu): notified outside the lock, in order, after each operation. */
@@ -274,10 +317,9 @@ static int host_protect(uintptr_t address, uint64_t size, int prot) {
     }
     return 0;
 }
-/* Released pages read as zero when reused, like the memfd's punched holes. */
+/* Released pages read as zero when reused, like the memfd's punched holes. A chunk the GPU imported
+ * (GPU_CHUNK) is cleared the same way: the GPU holds its pages. */
 static void host_discard(uint64_t phys, uint64_t size) { memset(backing_base+phys,0,size); }
-/* No GPU-visible direct memory chunks on Windows (BB_GUEST_GPU_MEMORY is a Linux dma-buf feature). */
-static void ensure_chunks(uint64_t phys, uint64_t size) { (void)phys; (void)size; }
 /* Direct memory occupies [0,POOL_SIZE) of the section, flexible memory [POOL_SIZE,+FLEX_SPAN). */
 static int pool(void) {
     if (backing_base) return 0;
@@ -286,7 +328,7 @@ static int pool(void) {
     section=CreateFileMapping2(INVALID_HANDLE_VALUE,NULL,FILE_MAP_ALL_ACCESS,PAGE_EXECUTE_READWRITE,SEC_COMMIT,bytes,NULL,NULL,0);
     if (!section) { fprintf(stderr,"Runtime: cannot create %" PRIu64 " MiB of guest memory (error %lu); is the page file large enough?\n",bytes>>20,GetLastError()); return -1; }
     backing_base=MapViewOfFile3(section,GetCurrentProcess(),NULL,0,bytes,0,PAGE_READWRITE,NULL,0);
-    return backing_base ? 0 : -1;
+    return backing_base ? init_chunks() : -1;
 }
 #else
 /* Direct memory occupies [0,POOL_SIZE) of the memfd, flexible memory [POOL_SIZE,+FLEX_SPAN). */
@@ -297,42 +339,7 @@ static int pool(void) {
     void *view=mmap(NULL,POOL_SIZE+FLEX_SPAN,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_NORESERVE,pool_fd,0);
     if (view==MAP_FAILED) return -1;
     backing_base=view;
-    chunk_fds=malloc((POOL_SIZE/CHUNK+1)*sizeof(int));
-    if (!chunk_fds) return -1;
-    for (uint64_t c=0;c<=POOL_SIZE/CHUNK;++c) chunk_fds[c]=-1;
-    return 0;
-}
-/* Size of direct memory chunk c (the last one may be shorter). */
-static uint64_t chunk_size(uint64_t c) {
-    const uint64_t start=c*CHUNK;
-    return POOL_SIZE-start<CHUNK ? POOL_SIZE-start : CHUNK;
-}
-/* Decides where the chunks of [phys, phys+size) of direct memory live (lock held). */
-static void ensure_chunks(uint64_t phys, uint64_t size) {
-    if (!chunk_fds || phys>=POOL_SIZE) return;
-    if (whole_chunks) {
-        if (!chunk_alloc) return;
-        const uint64_t end=phys+size<POOL_SIZE ? phys+size : POOL_SIZE;
-        for (uint64_t at=phys;at<end;) {
-            uint64_t next;
-            const Region *r=region_at(at,&next);
-            if (r) { at=r->phys+r->size; continue; }
-            const uint64_t gap_end=next<end ? next : end;
-            add_region(at,gap_end-at);
-            at=gap_end;
-        }
-        return;
-    }
-    const uint64_t last=(phys+size-1<POOL_SIZE ? phys+size-1 : POOL_SIZE-1)/CHUNK;
-    for (uint64_t c=phys/CHUNK;c<=last;++c) {
-        if (chunk_fds[c]!=-1) continue;
-        int fd=chunk_alloc ? chunk_alloc(c*CHUNK,chunk_size(c)) : -1;
-        if (fd>=0 && mmap(backing_base+c*CHUNK,chunk_size(c),PROT_READ|PROT_WRITE,MAP_SHARED|MAP_FIXED,fd,0)==MAP_FAILED) {
-            close(fd);
-            fd=-1;
-        }
-        chunk_fds[c]=fd>=0 || fd==CHUNK_IMPORTED ? fd : -2;
-    }
+    return init_chunks();
 }
 /* mmap of direct or flexible memory at phys, split where it crosses chunks. */
 static void *map_phys(uintptr_t address, uint64_t size, int prot, uint64_t phys) {
@@ -899,17 +906,12 @@ static void *toggle_watcher(void *path) {
 /* bbport: the GPU library provides direct memory chunks (see CHUNK). */
 /* bbport: the host address of direct memory phys in the backing view (host memory import). */
 void *runtime_memory_backing_pointer(uint64_t phys) { return backing_base ? backing_base+phys : NULL; }
-#ifndef _WIN32
 void runtime_memory_set_guest_chunk_whole(int whole) { whole_chunks=whole; }
 void runtime_memory_set_guest_chunk_allocator(int (*alloc)(uint64_t phys, uint64_t size)) {
     write_lock();
     chunk_alloc=alloc;
     write_unlock();
 }
-#else
-void runtime_memory_set_guest_chunk_whole(int whole) { (void)whole; }
-void runtime_memory_set_guest_chunk_allocator(int (*alloc)(uint64_t phys, uint64_t size)) { (void)alloc; }
-#endif
 void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalidate) {
     const char *toggles=getenv("BB_TOGGLE_FILE");
     static pthread_t watcher;
