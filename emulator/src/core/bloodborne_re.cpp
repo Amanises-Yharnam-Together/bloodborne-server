@@ -1043,6 +1043,38 @@ u64 GetLocalPlayer() {
     return local_state >= 0x10000 ? ReadValue<u64>(local_state, 0x60) : 0;
 }
 
+// The effect manager's node removal (player +0x1C8 manager, node, 1): what the bell's own
+// code calls to take off 9003/9004 (0x015069BA). It unlinks the node (+0x58 next, +0x60 prev).
+constexpr u64 RemoveEffectNodeOffset = 0x017E1D90;
+constexpr std::array<u8, 8> RemoveEffectNodePrologue{0x55, 0x48, 0x89, 0xE5,
+                                                     0x41, 0x57, 0x41, 0x56};
+
+// Takes `effect_id` off the player (the game's thread). False when it is not on.
+bool EndPlayerEffect(u64 player, s32 effect_id) {
+    const u64 manager = player >= 0x10000 ? ReadValue<u64>(player, 0x1C8) : 0;
+    if (manager < 0x10000 || image_base == 0 ||
+        !std::ranges::equal(
+            std::span<const u8>{reinterpret_cast<const u8*>(image_base + RemoveEffectNodeOffset),
+                                RemoveEffectNodePrologue.size()},
+            RemoveEffectNodePrologue)) {
+        return false;
+    }
+    u64 node = ReadValue<u64>(manager, 0x08);
+    for (size_t index = 0; node >= 0x10000 && index < 512; ++index) {
+        if (ReadValue<s32>(node, 0x40) == effect_id) {
+            using Remove = void PS4_SYSV_ABI (*)(u64 manager, u64 node, u32 now);
+            reinterpret_cast<Remove>(image_base + RemoveEffectNodeOffset)(manager, node, 1);
+            return true;
+        }
+        const u64 next = ReadValue<u64>(node, 0x58);
+        if (next == node) {
+            break;
+        }
+        node = next;
+    }
+    return false;
+}
+
 bool HasPlayerEffect(u64 player, s32 effect_id) {
     const u64 manager = player >= 0x10000 ? ReadValue<u64>(player, 0x1C8) : 0;
     if (manager < 0x10000) {
@@ -3313,6 +3345,14 @@ void TickPartyController() {
     if (party_controller->Tick(observation, PartyController::Clock::now()) !=
         PartyAction::StartSearch) {
         return;
+    }
+    // A bell that outlasted its search (see PartyController::Tick): the game starts a search only
+    // when the effect goes on, so the old one comes off first.
+    const bool ended = observation.search_effect_active &&
+                       EndPlayerEffect(player, party_controller->SearchEffectId());
+    if (ended) {
+        LOG_INFO(Debug, "Bloodborne party: ended the host's stale bell effect {} to ring again",
+                 party_controller->SearchEffectId());
     }
     const bool result = StartPlayerSummonSearch(player, party_controller->SearchEffectId());
     LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",
