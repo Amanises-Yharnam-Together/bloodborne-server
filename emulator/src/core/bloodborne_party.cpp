@@ -1471,8 +1471,8 @@ bool RefreshAtLamp(const LampRestCalls& calls) {
     return true;
 }
 
-bool GuestStaysWhenItsHostLeaves(size_t other_members) {
-    return other_members > 0;
+bool SkipsLeaveLimit(s32 character_type, size_t other_members) {
+    return character_type != WhiteGhostCharacterType || other_members > 0;
 }
 
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {

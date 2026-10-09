@@ -6068,8 +6068,9 @@ void ReviveGuestAfterGhostDeath() {
 // session: it revives like a guest and the world is not reloaded.
 // OnLeave_Limit (event 4046), 5 s after a white phantom lost its host (the host left, travelled,
 // kicked it or the room went away): the reset and warp into the phantom's own world. A party
-// guest stays where it is instead while the session goes on; with nobody left (the host
-// crashed) it goes home, as a phantom never rings again (GuestStaysWhenItsHostLeaves).
+// member skips it (SkipsLeaveLimit): a phantom while the session goes on (with nobody left, the
+// host crashed, it goes home, as a phantom never rings again), and a live player always: the
+// game ran it on a host whose guest died apart from it, and the warp took the host to the title.
 std::vector<u64> OtherSessionMembers();
 bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64, const GuestRegisterSnapshot* registers) {
     const u64 player = GetLocalPlayer();
@@ -6077,23 +6078,19 @@ bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64, const GuestRegisterSnapshot* regist
         !HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead)) {
         return false;
     }
-    if (ReadValue<s32>(player, 0x78) != WhiteGhostCharacterType) {
-        // Not a phantom: the game's own reset and warp, logged (a host should never get here).
-        LOG_INFO(Debug, "Bloodborne leave limit for a player of type {} map={:#x}",
-                 ReadValue<s32>(player, 0x78), GetCurrentPackedMap());
-        if (registers != nullptr) {
-            LogGameCallChainAt("leave limit", registers->rsp);
-        }
-        return false;
-    }
-    if (!GuestStaysWhenItsHostLeaves(OtherSessionMembers().size())) {
+    const s32 type = ReadValue<s32>(player, 0x78);
+    if (!SkipsLeaveLimit(type, OtherSessionMembers().size())) {
         LOG_INFO(Debug, "Bloodborne party guest lost its host and the session; going home");
         return false;
+    }
+    if (type != WhiteGhostCharacterType && registers != nullptr) {
+        LogGameCallChainAt("leave limit", registers->rsp);
     }
     // The leave set 4047 ("on the way out"); left set, it swallows the next leave and death.
     reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
         image_base + PartyGhostSetEventFlagOffset)(0, 4047, false);
-    LOG_INFO(Debug, "Bloodborne party guest lost its host; staying where it is map={:#x}",
+    LOG_INFO(Debug,
+             "Bloodborne party member (type {}) lost a member; staying where it is map={:#x}", type,
              GetCurrentPackedMap());
     return true;
 }

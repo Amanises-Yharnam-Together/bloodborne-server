@@ -118,9 +118,20 @@ TEST(BloodborneGuestApart, EndsOnlyWithTheNextJoin) {
 // session still has someone; otherwise it goes home (and resumes where it was, see
 // ResumeWhereTheGuestLeft) and rings from there.
 TEST(BloodbornePartyController, AGuestWhoseSessionIsGoneGoesHome) {
-    EXPECT_TRUE(GuestStaysWhenItsHostLeaves(1)) << "the session goes on (another guest, a trip)";
-    EXPECT_TRUE(GuestStaysWhenItsHostLeaves(2));
-    EXPECT_FALSE(GuestStaysWhenItsHostLeaves(0)) << "the host crashed or quit: nobody left";
+    EXPECT_TRUE(SkipsLeaveLimit(WhiteGhostCharacterType, 1))
+        << "the session goes on (another guest, a trip)";
+    EXPECT_TRUE(SkipsLeaveLimit(WhiteGhostCharacterType, 2));
+    EXPECT_FALSE(SkipsLeaveLimit(WhiteGhostCharacterType, 0))
+        << "the host crashed or quit: nobody left";
+}
+
+// The rig's crash-apart test: a guest's game died while it was in the Ward, apart from its host,
+// and the host's game ran the leave limit too (from eboot+0x1393323): its warp "home" found no
+// map and took the host to the title screen. A live player (the host, or a guest after its own
+// trip) is in its own world already, so a party member never takes that warp.
+TEST(BloodbornePartyController, ALivePlayerNeverTakesTheLeaveWarp) {
+    EXPECT_TRUE(SkipsLeaveLimit(0, 0)) << "the host, its guest gone";
+    EXPECT_TRUE(SkipsLeaveLimit(0, 1));
 }
 
 TEST(BloodbornePartyController, AnyDisturbanceRestartsTheStabilityCount) {

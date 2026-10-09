@@ -763,9 +763,12 @@ std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
 // Resonant) once the world has been stable for a while.
-// Whether a party guest that lost its host stays where it is (see StayWhenTheHostLeaves): only
-// while the session has `other_members` besides it.
-bool GuestStaysWhenItsHostLeaves(size_t other_members);
+// OnLeave_Limit (event 4046, 0x0138A4A0) resets a player into its own world and warps it there,
+// meant for a white phantom whose host is gone. Whether a party member skips it (see
+// StayWhenTheHostLeaves): a phantom only while the session has `other_members` besides it (else
+// it goes home and resumes where it was); a live player (the host, or a guest after its own
+// trip) always, as it is in its own world already.
+bool SkipsLeaveLimit(s32 character_type, size_t other_members);
 
 class PartyController {
 public:
