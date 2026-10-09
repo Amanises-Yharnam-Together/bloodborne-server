@@ -26,6 +26,12 @@ void runtime_mutex_report(void);
 uintptr_t runtime_memory_resolve(const char *name);
 void runtime_memory_report(void);
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
+/* Co-op (gpu/bbcoop): the guest's protection of a mapped address in the PS4 range and the run of
+ * mappings around it with that protection, as sceKernelQueryMemoryProtection reports them;
+ * 0 when nothing is mapped there. */
+int runtime_memory_protection(uintptr_t address, uintptr_t *start, uintptr_t *end, uint32_t *prot);
+/* Co-op (gpu/bbcoop): a trophy another party member unlocked, recorded like the game's own. */
+int32_t runtime_trophy_unlock_from_party(int32_t id);
 const char *runtime_import_name(const char *name);
 uintptr_t runtime_rwlock_resolve(const char *name);
 void runtime_rwlock_report(void);

@@ -5,6 +5,16 @@
 
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
+/* Co-op autoplay (gpu/bbcoop): what the rig's script holds now. */
+static int autoplay;
+static uint32_t autoplay_buttons;
+static uint8_t autoplay_sticks[4]={128,128,128,128};
+int bbcoop_autoplay_pad(uint32_t *buttons, uint8_t sticks[4]) {
+    if (!autoplay) return 0;
+    *buttons=autoplay_buttons;
+    memcpy(sticks,autoplay_sticks,4);
+    return 1;
+}
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
     (void)table; (void)count; (void)name;
     return 0;
@@ -38,6 +48,17 @@ int main(void) {
     assert(pad_read_state(1,&data)==0 && data.touch_count==1 && data.touches[0].x==1440);
     inject(path,"");
     assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.touch_count==0);
+    /* Autoplay: its buttons on top of the pad's, and the sticks it moves; not under the menu. */
+    autoplay=1; autoplay_buttons=BTN_CIRCLE; autoplay_sticks[0]=200;
+    inject(path,"cross");
+    assert(pad_read_state(1,&data)==0 && data.buttons==(BTN_CROSS|BTN_CIRCLE) && data.connected);
+    assert(data.left_x==200 && data.left_y==128 && data.right_x==128 && data.right_y==128);
+    capture=1;
+    assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.left_x==128);
+    capture=0;
+    autoplay=0; autoplay_sticks[0]=128;
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
 
     SDL_VirtualJoystickTouchpadDesc touch={.nfingers=2};
     SDL_VirtualJoystickDesc desc;
@@ -79,5 +100,5 @@ int main(void) {
     assert(SDL_DetachVirtualJoystick(id));
     SDL_Quit();
     unlink(path);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture");
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, co-op autoplay");
 }

@@ -1,6 +1,7 @@
 // bbport: the MemoryManager surface used by the video core and GnmDriver.
 // Guest memory lives at identical host addresses; the C runtime owns the VMAs.
 #pragma once
+#include "common/enum.h"
 #include "common/types.h"
 #include "common/singleton.h"
 #include "core/address_space.h"
@@ -8,8 +9,26 @@
 namespace Vulkan { class Rasterizer; }
 
 namespace Core {
+// bbport co-op: shadPS4's protection bits, as the guest's own (sceKernelMprotect).
+enum class MemoryProt : u32 {
+    NoAccess = 0,
+    CpuRead = 1,
+    CpuWrite = 2,
+    CpuReadWrite = 3,
+    CpuExec = 4,
+    GpuRead = 16,
+    GpuWrite = 32,
+    GpuReadWrite = 48,
+};
+DECLARE_ENUM_FLAG_OPERATORS(MemoryProt)
+
 class MemoryManager {
 public:
+    // bbport co-op (gpu/bbcoop/memory.cpp): whether an address can be a guest one, and the
+    // guest's protection of the mapping holding it (0, or -1 when nothing is mapped there).
+    bool IsValidMapping(VAddr virtual_addr, u64 size = 0);
+    s32 QueryProtection(VAddr addr, void** start, void** end, u32* prot);
+
     void SetRasterizer(Vulkan::Rasterizer* rasterizer_);
     AddressSpace& GetAddressSpace() { return impl; }
     bool IsValidGpuMapping(VAddr virtual_addr, u64 size) {

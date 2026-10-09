@@ -155,40 +155,68 @@ add_library(bbgpu ${BBGPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOU
     shadps4/core/libraries/kernel/equeue.cpp ${AVPLAYER}
     shadps4/core/libraries/videodec/video_utils.cpp)
 add_dependencies(bbgpu host_shaders)
-# bbport co-op: PS4 network and PSN libraries with the shadNet client, from shadp2p
-# (github.com/Wozzardman/shadp2p, GPL-2.0), for private Bloodborne co-op servers.
-find_package(Protobuf CONFIG REQUIRED)
+# bbport co-op: PS4 network and PSN libraries with the shadNet client (shadp2p,
+# github.com/Wozzardman/shadp2p, GPL-2.0) and the seamless co-op code, all from the emulator in
+# this repository (../../emulator/src), for private Bloodborne co-op servers. Its headers come
+# last: this port's own shadPS4 copy (shadps4/) and shims (shim/) go first.
+set(BB_EMULATOR_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../emulator/src)
+find_package(Protobuf CONFIG QUIET)
+if (NOT Protobuf_FOUND)
+    # Debian and Ubuntu ship protobuf without its CMake package; CMake's FindProtobuf module
+    # provides the same protobuf::libprotobuf and protobuf::protoc targets.
+    find_package(Protobuf REQUIRED)
+endif()
 set(SHADNET_PROTO_OUT "${CMAKE_CURRENT_BINARY_DIR}/shadnet_proto_gen")
 file(MAKE_DIRECTORY "${SHADNET_PROTO_OUT}")
 add_custom_command(
     OUTPUT "${SHADNET_PROTO_OUT}/shadnet.pb.cc" "${SHADNET_PROTO_OUT}/shadnet.pb.h"
-    COMMAND protobuf::protoc "--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet"
-            "--cpp_out=${SHADNET_PROTO_OUT}" "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto")
-file(GLOB_RECURSE BBNET_SOURCES CONFIGURE_DEPENDS shadps4/core/libraries/network/*.cpp
-    shadps4/core/libraries/np/*.cpp shadps4/shadnet/*.cpp)
+    COMMAND protobuf::protoc "--proto_path=${BB_EMULATOR_SRC}/shadnet"
+            "--cpp_out=${SHADNET_PROTO_OUT}" "${BB_EMULATOR_SRC}/shadnet/shadnet.proto"
+    DEPENDS "${BB_EMULATOR_SRC}/shadnet/shadnet.proto")
+file(GLOB_RECURSE BBNET_SOURCES CONFIGURE_DEPENDS ${BB_EMULATOR_SRC}/core/libraries/network/*.cpp
+    ${BB_EMULATOR_SRC}/core/libraries/np/*.cpp ${BB_EMULATOR_SRC}/shadnet/*.cpp)
 # Trophies and the system dialogs stay in the C runtime; their shadPS4 versions need the
 # emulator's UI layers.
 list(FILTER BBNET_SOURCES EXCLUDE REGEX
     "np_trophy|trophy_ui|np_sns_facebook_dialog|np_profile_dialog/|np_commerce/")
+# Seamless co-op: the emulator's code unchanged, with this port's hook installer and the services
+# it needs (bbcoop/, called through bbcoop.h).
+file(GLOB BBCOOP_SOURCES CONFIGURE_DEPENDS bbcoop/*.cpp)
+set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
+    ${BB_EMULATOR_SRC}/core/bloodborne_re.cpp ${BB_EMULATOR_SRC}/core/bloodborne_party.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_crash_dump.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_write_watch.cpp ${BB_EMULATOR_SRC}/core/guest_hook.cpp
+    ${BB_EMULATOR_SRC}/core/file_format/psf.cpp)
+# The build's revision for the log, refreshed at every build (bbcoop/revision.cmake).
+add_custom_target(bbcoop_revision
+    COMMAND ${CMAKE_COMMAND} -DOUT=${CMAKE_CURRENT_BINARY_DIR}/include/bbcoop_revision.h
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/bbcoop/revision.cmake
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/include/bbcoop_revision.h)
 find_package(nlohmann_json CONFIG REQUIRED)
-add_library(bbnet STATIC ${BBNET_SOURCES} "${SHADNET_PROTO_OUT}/shadnet.pb.cc" bbnet/bbnet_glue.cpp)
-target_include_directories(bbnet PRIVATE shim shadps4 shadps4/shadnet "${SHADNET_PROTO_OUT}"
-    third_party/imgui third_party/httplib)
+add_library(bbnet STATIC ${BBNET_SOURCES} "${SHADNET_PROTO_OUT}/shadnet.pb.cc" bbnet/bbnet_glue.cpp
+    ${BBCOOP_SOURCES})
+add_dependencies(bbnet bbcoop_revision)
+target_include_directories(bbnet PRIVATE shim shadps4 . "${SHADNET_PROTO_OUT}" ${SHADER_INCLUDE}
+    third_party/imgui third_party/httplib third_party/xbyak ${BB_EMULATOR_SRC})
 target_link_libraries(bbnet PRIVATE nlohmann_json::nlohmann_json)
 # HTTPS (the community game server only speaks TLS) and gzip replies in cpp-httplib.
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 target_compile_definitions(bbnet PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT CPPHTTPLIB_ZLIB_SUPPORT)
 target_link_libraries(bbnet PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
+# UPnP port mapping (net_upnp.cpp); Windows links the static library.
+find_path(MINIUPNPC_INCLUDE miniupnpc.h PATH_SUFFIXES miniupnpc REQUIRED)
+if (WIN32)
+    find_library(MINIUPNPC_LIBRARY NAMES libminiupnpc.a miniupnpc REQUIRED)
+    target_compile_definitions(bbnet PRIVATE MINIUPNP_STATICLIB)
+else()
+    find_library(MINIUPNPC_LIBRARY NAMES miniupnpc REQUIRED)
+endif()
+target_include_directories(bbnet PRIVATE "${MINIUPNPC_INCLUDE}")
+target_link_libraries(bbnet PRIVATE "${MINIUPNPC_LIBRARY}")
 if (WIN32)
     target_sources(bbnet PRIVATE third_party/wepoll/wepoll.c)
     target_include_directories(bbnet PRIVATE third_party/wepoll)
-    find_path(MINIUPNPC_INCLUDE miniupnpc.h PATH_SUFFIXES miniupnpc REQUIRED)
-    find_library(MINIUPNPC_LIBRARY NAMES libminiupnpc.a miniupnpc REQUIRED)
-    target_include_directories(bbnet PRIVATE "${MINIUPNPC_INCLUDE}")
-    target_compile_definitions(bbnet PRIVATE MINIUPNP_STATICLIB)
-    target_link_libraries(bbnet PRIVATE "${MINIUPNPC_LIBRARY}")
 endif()
 target_compile_definitions(bbnet PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbnet PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
@@ -198,8 +226,9 @@ if (WIN32)
     target_compile_definitions(bbnet PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(bbnet PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-include ${CMAKE_CURRENT_SOURCE_DIR}/shim/bb_win_compat.h>)
-    target_link_libraries(bbnet PUBLIC ws2_32 iphlpapi bcrypt crypt32)
+    target_link_libraries(bbnet PUBLIC ws2_32 iphlpapi bcrypt crypt32 dbghelp)
 endif()
+target_link_libraries(bbnet PUBLIC Zydis::Zydis)
 target_link_libraries(bbgpu PUBLIC bbnet)
 # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
 # embedded Cyrillic font (third_party/fonts).
@@ -211,7 +240,8 @@ target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
     BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
     OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf)
-target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
+target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include
+    ${BB_EMULATOR_SRC})
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
@@ -265,6 +295,23 @@ target_include_directories(motion-history-test PRIVATE ..)
 add_executable(motion-shader-test EXCLUDE_FROM_ALL ../tests/test_motion_shaders.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(motion-shader-test PRIVATE shim shadps4 third_party/gcn/include)
 target_link_libraries(motion-shader-test PRIVATE bbgpu)
+# bbport co-op: the shim's log (its file names the thread) for the tests below, with shadPS4's
+# thread helpers built apart from the tests' -Werror.
+add_library(test-log OBJECT EXCLUDE_FROM_ALL shim/common/logging/log.cpp shadps4/common/thread.cpp
+    shadps4/common/error.cpp shadps4/common/string_util.cpp)
+target_include_directories(test-log PUBLIC shim shadps4)
+target_link_libraries(test-log PUBLIC fmt::fmt)
+# bbport co-op: guest code hooks (bbcoop/guest_hooks.cpp) with the emulator's trampoline
+# generator, run against small functions written by the test.
+add_executable(coop-hooks-test EXCLUDE_FROM_ALL ../tests/test_coop_hooks.cpp bbcoop/guest_hooks.cpp
+    ${BB_EMULATOR_SRC}/core/guest_hook.cpp shadps4/common/decoder.cpp)
+target_include_directories(coop-hooks-test PRIVATE shim shadps4 third_party/xbyak ${BB_EMULATOR_SRC})
+target_compile_options(coop-hooks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_link_libraries(coop-hooks-test PRIVATE test-log Zydis::Zydis)
+# bbport co-op: the log file the rig's tools read (BB_LOG_FILE), in shadPS4's line format.
+add_executable(log-file-test EXCLUDE_FROM_ALL ../tests/test_log_file.cpp)
+target_compile_options(log-file-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_link_libraries(log-file-test PRIVATE test-log)
 add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)

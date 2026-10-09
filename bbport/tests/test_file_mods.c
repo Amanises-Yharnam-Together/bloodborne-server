@@ -4,6 +4,9 @@
 static int32_t guest_errno;
 int32_t *runtime_errno(void) { return &guest_errno; }
 int32_t runtime_guest_errno(int e) { return e; }
+/* Co-op (gpu/bbcoop): every path the game opens. */
+static char opened[256];
+void bbcoop_file_opened(const char *guest_path) { snprintf(opened,sizeof(opened),"%s",guest_path); }
 uintptr_t runtime_lookup(const RuntimeExport *table,size_t n,const char *name) {
     for (size_t i=0;i<n;++i) if (!strcmp(table[i].name,name)) return (uintptr_t)table[i].function;
     return 0;
@@ -43,11 +46,13 @@ int main(void) {
     }
     assert(found && !do_close(dir));
     int save=(int)do_open("/data/test-save",0x202,0644); assert(save>=3);
+    assert(!strcmp(opened,"/data/test-save"));
+    assert(do_open("/savedata0/userdata0003",0,0)<0 && !strcmp(opened,"/savedata0/userdata0003"));
     assert(do_write(save,"save",4)==4 && !do_close(save));
     assert(!path_op("/data/test-save",2,0));
     assert(!unlink(link) && !unlink(source) && !rmdir(game));
     const char *dirs[]={"temp0","download0","data"};
     for (int i=0;i<3;++i) { char p[1024]; snprintf(p,sizeof(p),"%s/%s",user,dirs[i]); assert(!rmdir(p)); }
     assert(!rmdir(user) && !rmdir(root));
-    puts("Guest mod files: reads, stat, merged listing, readonly assets and writable saves PASS");
+    puts("Guest mod files: reads, stat, merged listing, readonly assets, writable saves and co-op file notes PASS");
 }

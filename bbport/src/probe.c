@@ -7,6 +7,7 @@
 #include <inttypes.h>
 #include "runtime.h"
 #include "gpu/bbgpu.h"
+#include "gpu/bbcoop.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
 #error This prototype requires x86-64 GCC or Clang (including MinGW).
 #endif
@@ -126,6 +127,7 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     fprintf(stderr,"  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
             c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
     if (gpu_enabled) bbgpu_dump_guest_writes(info);
+    bbcoop_crash_report(info); /* user/log/crash-*.txt and .dmp */
     /* rbp chain (guest and host code keep frame pointers). */
     uintptr_t rbp=(uintptr_t)c->Rbp;
     for (int depth=0; depth<24 && rbp; ++depth) {
@@ -559,6 +561,9 @@ int main(int argc, char **argv) {
         }
     }
     image = allocate(round_page(size));
+    /* Co-op hooks' trampolines (gpu/bbcoop): next to the image, in reach of its rel32 jumps. */
+    enum { COOP_CODE_BYTES=1024*1024 };
+    unsigned char *coop_code=runtime_low_map(COOP_CODE_BYTES,PROT_READ|PROT_WRITE|PROT_EXEC);
     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
     fclose(f);
     if (!cpu_only) {
@@ -607,6 +612,11 @@ int main(int argc, char **argv) {
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
 #endif
+    /* Seamless co-op (SHADPS4_BLOODBORNE_SEAMLESS_COOP=1): its patches and hooks go into the eboot
+     * (image offset 0, up to the first linked module) while the image is still writable. */
+    for (uint64_t i = 0; i < ns; ++i)
+        bbcoop_note_segment((uint64_t)(uintptr_t)(image + segments[i].address), segments[i].size, (unsigned)segments[i].flags);
+    bbcoop_install(image, module_count ? modules[0].base : size, coop_code, coop_code ? COOP_CODE_BYTES : 0, app0);
     protect(traps, round_page((import_count + 1) * 32), 5);
     protect(image, round_page(size), 0);
     int executable_entry = 0;

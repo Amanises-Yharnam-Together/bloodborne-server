@@ -7,6 +7,7 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
+#include "gpu/bbcoop.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -293,6 +294,12 @@ static ABI int32_t trophy_unlock(int32_t ctx,int32_t handle,int32_t id,int32_t *
     (void)ctx; (void)handle;
     printf("Runtime: trophy %d unlocked\n",id);
     if (platinum) *platinum=-1;
+    bbcoop_trophy_unlocked(id); /* co-op: the party gets it too */
+    return 0;
+}
+/* Co-op (gpu/bbcoop): a trophy another party member unlocked. */
+int32_t runtime_trophy_unlock_from_party(int32_t id) {
+    printf("Runtime: trophy %d unlocked (party)\n",id);
     return 0;
 }
 static ABI int32_t trophy_game_info(int32_t ctx,int32_t handle,void *details,void *data) {

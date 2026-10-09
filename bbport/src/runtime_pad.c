@@ -9,6 +9,7 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
+#include "gpu/bbcoop.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -286,6 +287,17 @@ static void sample(PadData *d) {
     if (injected.buttons & BTN_R2) d->r2=255;
     uint8_t *axes[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};
     for (int i=0;i<4;++i) if (injected.stick[i]>=0) *axes[i]=(uint8_t)injected.stick[i];
+    /* Co-op autoplay (rig tests): its buttons on top, a stick it moves instead of the pad's. */
+    uint32_t autoplay_buttons=0;
+    uint8_t autoplay_sticks[4]={128,128,128,128};
+    if (bbcoop_autoplay_pad(&autoplay_buttons,autoplay_sticks)) {
+        d->buttons|=autoplay_buttons;
+        for (int i=0;i<4;i+=2)
+            if (autoplay_sticks[i]!=128 || autoplay_sticks[i+1]!=128) {
+                *axes[i]=autoplay_sticks[i]; *axes[i+1]=autoplay_sticks[i+1];
+            }
+        d->connected=1;
+    }
     if (hold_after_capture) {
         if (d->buttons) d->buttons=0;
         else hold_after_capture=0;

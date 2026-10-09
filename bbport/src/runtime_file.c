@@ -5,6 +5,7 @@
  * Paths containing ".." components are rejected rather than normalized. */
 #define _GNU_SOURCE
 #include "runtime.h"
+#include "gpu/bbcoop.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -200,6 +201,7 @@ static int game_path(const char *p) {
 }
 /* All operations return >=0 or -(host errno); wrappers adapt the convention. */
 static int64_t do_open(const char *guest,int flags,int mode) {
+    if (guest) bbcoop_file_opened(guest); /* co-op: the character's save slot */
     if (game_path(guest) && (flags & (3|0x8|0x200|0x400|0x800))) return -EROFS;
     char path[1024];
     int e=translate(guest,path,sizeof(path));

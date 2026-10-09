@@ -191,11 +191,16 @@ static void direct_memory(void) {
     assert((uint32_t)map(&invalid,length*2,3,0,b,0)==0x80020016);
     assert(map(&x,length,3,0,a,2097152)==0 && !((uintptr_t)x%2097152));
     assert(map(&y,length,3,0,a,0)==0);
+    /* Co-op (gpu/bbcoop) asks for the guest's protection of an address and its mapping. */
+    uintptr_t start=0,end=0; uint32_t prot=0;
+    assert(runtime_memory_protection((uintptr_t)x+8,&start,&end,&prot));
+    assert(start<=(uintptr_t)x && end>=(uintptr_t)x+length && prot==3);
     assert(*(uint64_t *)x==0);
     *(uint64_t *)x=UINT64_C(0xabcdef0123456789);
     assert(*(uint64_t *)y==UINT64_C(0xabcdef0123456789)); /* real shared backing */
     assert((uint32_t)unmap((char *)x+4096,length)==0x80020016); /* unaligned */
     assert(unmap(x,length)==0 && unmap(y,length)==0);
+    assert(!runtime_memory_protection((uintptr_t)x+8,&start,&end,&prot));
     assert(release(a,length)==0 && release(b,length)==0 && release(c,length)==0);
     assert(alloc(0,pool,length,0,0,&a)==0 && a==0);
     x=NULL; assert(map(&x,length,3,0,a,0)==0);

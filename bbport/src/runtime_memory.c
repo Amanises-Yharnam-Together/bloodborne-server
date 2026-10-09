@@ -565,21 +565,28 @@ static ABI int32_t kernel_mprotect(const void *address, uint64_t size, int prot)
     flush_hooks();
     return result;
 }
-static ABI int32_t query_protection(void *address, void **start, void **end, uint32_t *prot) {
+int runtime_memory_protection(uintptr_t address, uintptr_t *start, uintptr_t *end, uint32_t *prot) {
     read_lock();
-    size_t i=vma_index((uintptr_t)address);
-    if (i==vma_count || vmas[i].start>(uintptr_t)address || vmas[i].kind==KIND_RESERVED) {
-        read_unlock(); return ACCESS;
+    size_t i=vma_index(address);
+    if (i==vma_count || vmas[i].start>address || vmas[i].kind==KIND_RESERVED) {
+        read_unlock(); return 0;
     }
     /* Report the whole contiguous run with identical protection. */
     size_t first=i, last=i;
     while (first && vmas[first-1].end==vmas[first].start && vmas[first-1].kind!=KIND_RESERVED && vmas[first-1].prot==vmas[i].prot) --first;
     while (last+1<vma_count && vmas[last+1].start==vmas[last].end && vmas[last+1].kind!=KIND_RESERVED && vmas[last+1].prot==vmas[i].prot) ++last;
-    if (start) *start=(void *)vmas[first].start;
-    if (end) *end=(void *)vmas[last].end;
+    if (start) *start=vmas[first].start;
+    if (end) *end=vmas[last].end;
     if (prot) *prot=(uint32_t)vmas[i].prot;
-    __atomic_add_fetch(&queries,1,__ATOMIC_RELAXED);
     read_unlock();
+    return 1;
+}
+static ABI int32_t query_protection(void *address, void **start, void **end, uint32_t *prot) {
+    uintptr_t first, last;
+    if (!runtime_memory_protection((uintptr_t)address,&first,&last,prot)) return ACCESS;
+    if (start) *start=(void *)first;
+    if (end) *end=(void *)last;
+    __atomic_add_fetch(&queries,1,__ATOMIC_RELAXED);
     return 0;
 }
 static ABI int32_t virtual_query(const void *address, int flags, VirtualQueryInfo *info, uint64_t info_size) {
