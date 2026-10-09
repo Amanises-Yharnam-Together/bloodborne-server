@@ -3455,22 +3455,6 @@ void InstallGuestStaysWhenTheHostLeaves(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne party guests stay where they are when their host leaves");
 }
 
-// Faster joins (see QuickArrivalPatches). Optional: on a mismatch the game keeps its timer.
-void InstallQuickArrival(u64 base, u64 image_size) {
-    const auto& patches = QuickArrivalPatches();
-    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
-            return MatchesImage(base, image_size, patch);
-        })) {
-        LOG_ERROR(Debug, "Bloodborne quick arrival patch unavailable; joins keep the 5 s wait");
-        return;
-    }
-    for (const auto& patch : patches) {
-        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
-                    patch.patched.size());
-    }
-    LOG_INFO(Debug, "Bloodborne quick arrival: a joining guest skips the 5 s arrival wait");
-}
-
 // Faster sign posts for party joins. Optional: on a mismatch the game keeps its own timers.
 void PatchSignTimers(u64 base, u64 image_size) {
     for (const auto& site : SignTimerSites) {
@@ -9250,7 +9234,6 @@ void InstallSeamlessCoopPatches() {
     InstallItemButtonDiagnostics(base);
     StartRestBoardClient();
     PatchSignTimers(base, image_size);
-    InstallQuickArrival(base, image_size);
 
     std::memcpy(area_comparison, BeckoningSignedAreaComparison.data(),
                 BeckoningSignedAreaComparison.size());

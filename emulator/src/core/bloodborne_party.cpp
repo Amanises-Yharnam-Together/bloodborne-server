@@ -61,16 +61,6 @@ bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool 
     return in_session && reload_state != SummonReloadInProgress && !reload_pending;
 }
 
-const std::vector<CodePatch>& QuickArrivalPatches() {
-    static const std::vector<CodePatch> patches{
-        // vmovss xmm0, [rip+0x3743a89] (5.0) -> vxorps xmm0, xmm0, xmm0; nop4
-        {0x01E4B09F,
-         {0xC5, 0xFA, 0x10, 0x05, 0x89, 0x3A, 0x74, 0x03},
-         {0xC5, 0xF8, 0x57, 0xC0, 0x0F, 0x1F, 0x40, 0x00}},
-    };
-    return patches;
-}
-
 const std::vector<CodePatch>& GhostDeathKeepSessionPatches() {
     static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
     static const std::vector<CodePatch> patches{

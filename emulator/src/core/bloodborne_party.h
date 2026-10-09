@@ -142,10 +142,6 @@ const std::vector<CodePatch>& BossClearKeepSessionPatches();
 // 12400160). A party joins anywhere: the flag check (0x01399BF0) reads as off.
 constexpr u64 EventFlagIsSetOffset = 0x01399BF0;
 const std::vector<CodePatch>& JoinAnywherePatches();
-// Faster joins: the summon arrival task (constructor 0x01E4AE90, made by the summon scheduler)
-// copies a 5 s timer (image+0x0558EB30) that its StartNotifyWait state counts down before the
-// joining guest goes on (5.0-5.1 s in every rig join). The copy loads 0 instead.
-const std::vector<CodePatch>& QuickArrivalPatches();
 // A world load that is not a trip (0x0193C5xx: a cutscene that changes the time of day and
 // warps the player, e.g. Gascoigne's 24000020) calls StopRequest (returning to 0x0193C65C) and
 // LeaveSession for a member of a session. In a party it is a trip like a lamp's.

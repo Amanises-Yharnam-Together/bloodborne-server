@@ -115,7 +115,6 @@ TEST_F(BloodborneEboot, EveryPatchFindsTheGamesOwnBytes) {
         {"host death", &HostDeathKeepGuestsPatches()},
         {"boss clear", &BossClearKeepSessionPatches()},
         {"join anywhere", &JoinAnywherePatches()},
-        {"quick arrival", &QuickArrivalPatches()},
     };
     for (const auto& [name, patches] : tables) {
         for (const CodePatch& patch : *patches) {
