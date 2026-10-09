@@ -3234,7 +3234,10 @@ void TickPartyTrip();
 void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
 
+void TickAutoplay();
+
 void TickPartyController() {
+    TickAutoplay();
     TickPartyTrip();
     TickPlayersOnThisMap();
     LogJoinTaskChanges();
@@ -3728,15 +3731,47 @@ std::optional<std::string> SessionMemberBoardName(u64 member,
         return FindOnlineIdIn(std::span<const u8>{reinterpret_cast<const u8*>(address), size},
                               online_ids);
     };
+    // The objects the identity points at, two levels down (a guest found the host's name only
+    // deeper than a host found a guest's, rig 2026-10-09).
+    const auto pointers = [&](u64 address, u64 size) {
+        std::vector<u64> found;
+        for (u64 offset = 0; address >= 0x10000 && offset < size; offset += 8) {
+            if (!HasMemoryAccess(address + offset, 8, MemoryProt::CpuRead)) {
+                break;
+            }
+            const u64 value = ReadValue<u64>(address, offset);
+            if (value >= 0x10000 && HasMemoryAccess(value, 0x40, MemoryProt::CpuRead)) {
+                found.push_back(value);
+            }
+        }
+        return found;
+    };
     const u64 identity = ReadValue<u64>(member, 0);
     std::optional<std::string> found = scan(identity, 0x200);
-    for (u64 offset = 0; !found && identity >= 0x10000 && offset < 0x100; offset += 8) {
-        if (!HasMemoryAccess(identity + offset, 8, MemoryProt::CpuRead)) {
+    for (const u64 first : found ? std::vector<u64>{} : pointers(identity, 0x100)) {
+        if ((found = scan(first, 0x100))) {
             break;
         }
-        found = scan(ReadValue<u64>(identity, offset), 0x100);
+        for (const u64 second : pointers(first, 0x80)) {
+            if ((found = scan(second, 0x80))) {
+                break;
+            }
+        }
+        if (found) {
+            break;
+        }
     }
-    return found ? std::optional<std::string>{BoardMemberOfOnlineId(*found)} : std::nullopt;
+    if (!found) {
+        static std::unordered_set<u64> logged;
+        if (logged.insert(identity).second && logged.size() < 16 && identity >= 0x10000 &&
+            HasMemoryAccess(identity, 0x40, MemoryProt::CpuRead)) {
+            LOG_INFO(Debug, "Bloodborne party: no online id in session member {:#x}, identity {}",
+                     member,
+                     BytesToHex(std::span<const u8>{reinterpret_cast<const u8*>(identity), 0x40}));
+        }
+        return std::nullopt;
+    }
+    return BoardMemberOfOnlineId(*found);
 }
 
 // The bell's search effect is lost with the old stage; put it back once the new one is up.
@@ -5329,7 +5364,11 @@ void KeepEnemyDeathsInStep(bool sharing) {
     static u64 hidden_visit = 0;
     static std::chrono::steady_clock::time_point checked{};
     const auto now = std::chrono::steady_clock::now();
-    if (!sharing || now - checked < std::chrono::milliseconds{500}) {
+    const u64 global = GetGlobalState();
+    const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
+    // Not while the world goes away: a trip's start posted the old map's characters as kills.
+    if (!WatchesKills(sharing, PartyTripActive(), loading) ||
+        now - checked < std::chrono::milliseconds{500}) {
         return;
     }
     checked = now;
@@ -7811,7 +7850,496 @@ bool VerifySites() {
     return true;
 }
 
+// Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY=<script>, see ParseAutoplayScript): tests with no one at
+// the pad. The pad reader (AutoplayPad) presses Cross on the title screen until the player is in
+// the world; the party tick then runs the script's commands one after the other, logging each
+// ("Bloodborne autoplay: step 3/9 travel 2102962 ok"), and "Bloodborne autoplay: done (ok)" or
+// "done (failed)" at the end, which the rig's test driver waits for.
+struct AutoplayRun {
+    enum class Phase { Off, Title, World, Done };
+    Phase phase = Phase::Off;
+    std::vector<AutoplayCommand> script;
+    size_t next = 0;
+    std::chrono::steady_clock::time_point started{};
+    std::chrono::steady_clock::time_point step_started{};
+    bool step_begun = false;
+    std::optional<std::chrono::steady_clock::time_point> hold_until;
+    u32 travel_map = 0;
+    std::optional<double> travel_fixed_at; // seconds into the step it was moved to the lamp
+};
+std::mutex autoplay_mutex;
+AutoplayRun autoplay_run;
+std::atomic<u32> autoplay_buttons{0};
+std::atomic<bool> autoplay_godmode{false};
+std::atomic<u32> autoplay_sticks{0x80808080}; // lx, ly, rx, ry
+std::once_flag autoplay_loaded;
+
+void LoadAutoplay() {
+    const char* path = std::getenv("SHADPS4_BLOODBORNE_AUTOPLAY");
+    if (path == nullptr || *path == '\0') {
+        return;
+    }
+    std::ifstream file(path);
+    const std::string text{std::istreambuf_iterator<char>{file}, {}};
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.script = ParseAutoplayScript(text);
+    autoplay_run.phase = AutoplayRun::Phase::Title;
+    autoplay_run.started = std::chrono::steady_clock::now();
+    LOG_INFO(Debug, "Bloodborne autoplay: {} steps from {}", autoplay_run.script.size(), path);
+}
+
+bool AutoplayInWorld() {
+    const u64 global = GetGlobalState();
+    return GetLocalPlayer() >= 0x10000 && IsUsablePackedMap(GetCurrentPackedMap()) &&
+           global >= 0x10000 && HasMemoryAccess(global, 0x09, MemoryProt::CpuRead) &&
+           ReadValue<u8>(global, 0x08) == 0 && LocalPlayerPosition().has_value();
+}
+
+size_t AutoplaySessionMembers() {
+    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+    if (session < 0x10000 || !HasMemoryAccess(session, 0x128, MemoryProt::CpuRead)) {
+        return 1;
+    }
+    const u64 begin = ReadValue<u64>(session, 0xF8);
+    const u64 end = ReadValue<u64>(session, 0x100);
+    return begin >= 0x10000 && end > begin && end - begin <= 0x20 * 8 ? (end - begin) / 0x20 : 1;
+}
+
+size_t AutoplayMembersOnMyMap() {
+    const u32 map = GetCurrentPackedMap();
+    std::scoped_lock lock{map_board_mutex};
+    if (std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}) {
+        return 0;
+    }
+    return static_cast<size_t>(
+        std::ranges::count_if(map_board, [&](const MemberMap& entry) { return entry.map == map; }));
+}
+
+struct AutoplayCharacter {
+    u64 character = 0;
+    u64 data = 0;
+    float distance = 0.0f;
+};
+
+// The character a command names: by handle, or the nearest living one within 30 m (0).
+std::optional<AutoplayCharacter> FindAutoplayCharacter(u32 handle) {
+    if (handle == AutoplaySelf) {
+        const u64 player = GetLocalPlayer();
+        const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        return data >= 0x10000 ? std::optional{AutoplayCharacter{player, data, 0.0f}}
+                               : std::nullopt;
+    }
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const auto me = LocalPlayerPosition();
+    if (world < 0x10000 || !me) {
+        return std::nullopt;
+    }
+    std::optional<AutoplayCharacter> found;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (character == GetLocalPlayer()) {
+            return;
+        }
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (data < 0x10000 || physics < 0x10000) {
+            return;
+        }
+        const float dx = ReadValue<float>(physics, 0x1E0) - (*me)[0];
+        const float dy = ReadValue<float>(physics, 0x1E4) - (*me)[1];
+        const float dz = ReadValue<float>(physics, 0x1E8) - (*me)[2];
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (handle != 0) {
+            if (ReadValue<u32>(character, 0x08) == handle) {
+                found = AutoplayCharacter{character, data, distance};
+            }
+            return;
+        }
+        if (ReadValue<s32>(data, 0xF8) > 0 && distance < 30.0f &&
+            (!found || distance < found->distance)) {
+            found = AutoplayCharacter{character, data, distance};
+        }
+    });
+    return found;
+}
+
+void LogAutoplaySnapshot() {
+    const auto at = LocalPlayerPosition();
+    std::string enemies;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    std::vector<std::pair<float, std::string>> close_by;
+    if (world >= 0x10000 && at) {
+        ForEachWorldCharacter(world, [&](u64 character) {
+            if (character == GetLocalPlayer()) {
+                return;
+            }
+            const u64 modules = ReadValue<u64>(character, 0x3B0);
+            const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+            const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+            if (data < 0x10000 || physics < 0x10000) {
+                return;
+            }
+            const float dx = ReadValue<float>(physics, 0x1E0) - (*at)[0];
+            const float dy = ReadValue<float>(physics, 0x1E4) - (*at)[1];
+            const float dz = ReadValue<float>(physics, 0x1E8) - (*at)[2];
+            const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (distance < 30.0f) {
+                close_by.emplace_back(distance, fmt::format("{:#x} hp {}/{} at {:.1f} m",
+                                                            ReadValue<u32>(character, 0x08),
+                                                            ReadValue<s32>(data, 0xF8),
+                                                            ReadValue<s32>(data, 0xFC), distance));
+            }
+        });
+    }
+    std::ranges::sort(close_by);
+    for (size_t index = 0; index < close_by.size() && index < 6; ++index) {
+        enemies += " [" + close_by[index].second + "]";
+    }
+    LOG_INFO(Debug,
+             "Bloodborne autoplay snapshot: map {:#x} at ({:.1f}, {:.1f}, {:.1f}) session {} "
+             "members on map {} in party session {} nearby:{}",
+             GetCurrentPackedMap(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f,
+             at ? (*at)[2] : 0.0f, AutoplaySessionMembers(), AutoplayMembersOnMyMap(),
+             InPartySession(), enemies.empty() ? " none" : enemies);
+}
+
+std::string AutoplayText(const AutoplayCommand& command) {
+    std::string text = command.verb;
+    for (const std::string& arg : command.args) {
+        text += ' ' + arg;
+    }
+    return text;
+}
+
+// Runs one script command for this tick: true once it is done, `failure` set if it failed.
+bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
+                     std::string& failure) {
+    const auto arg = [&](size_t index) -> std::string_view {
+        return index < command.args.size() ? std::string_view{command.args[index]}
+                                           : std::string_view{};
+    };
+    const auto number = [&](size_t index, double fallback) {
+        const std::string_view text = arg(index);
+        double value = fallback;
+        if (!text.empty()) {
+            std::from_chars(text.data(), text.data() + text.size(), value);
+        }
+        return value;
+    };
+    const auto waited_out = [&](double limit) {
+        if (elapsed > limit) {
+            failure = fmt::format("timed out after {:.0f} s", elapsed);
+        }
+        return false;
+    };
+    const std::string& verb = command.verb;
+    if (verb == "wait") {
+        return elapsed >= number(0, 1.0);
+    }
+    if (verb == "wait-session") {
+        return AutoplaySessionMembers() >= static_cast<size_t>(number(0, 2)) ||
+               waited_out(number(1, 180));
+    }
+    if (verb == "wait-members") {
+        return AutoplayMembersOnMyMap() >= static_cast<size_t>(number(0, 2)) ||
+               waited_out(number(1, 180));
+    }
+    if (verb == "wait-map") {
+        const auto map = ParseAutoplayTarget(arg(0));
+        return (map && AutoplayInWorld() && GetCurrentPackedMap() == *map) ||
+               waited_out(number(1, 180));
+    }
+    // ensure-map <map> <warp point>: travel there unless already on that map (a test's start).
+    if (verb == "ensure-map" && !begun) {
+        const auto map = ParseAutoplayTarget(arg(0));
+        if (!map) {
+            failure = "no such map";
+            return false;
+        }
+        // Already there, unless falling through the void (a save made after a bad warp).
+        const auto at = LocalPlayerPosition();
+        if (GetCurrentPackedMap() == *map && at && (*at)[1] > -500.0f) {
+            return true;
+        }
+    }
+    if (verb == "travel" || verb == "ensure-map") {
+        const bool ensure = verb == "ensure-map";
+        const s32 point = static_cast<s32>(number(ensure ? 1 : 0, HuntersDreamWarpPoint));
+        if (!begun) {
+            const u64 global = GetGlobalState();
+            if (global < 0x10000) {
+                failure = "no game state";
+                return false;
+            }
+            WriteValue(global, 0x1528, point);
+            WriteValue(global, 0x1520, u8{0});
+            using WarpNextStageBonfire = void PS4_SYSV_ABI (*)(u64 unused, s32 warp_point);
+            reinterpret_cast<WarpNextStageBonfire>(image_base + WarpNextStageBonfireOffset)(0,
+                                                                                            point);
+            if (IsPartyGuestRole()) {
+                guest_apart.Travelled();
+                guest_trip_in_flight = true;
+            }
+            std::scoped_lock lock{autoplay_mutex};
+            autoplay_run.travel_map = PackedMapOfWarpPoint(point);
+            autoplay_run.travel_fixed_at.reset();
+            return false;
+        }
+        const bool arrived = elapsed > 5.0 && AutoplayInWorld() && !PartyTripActive() &&
+                             GetCurrentPackedMap() == autoplay_run.travel_map;
+        if (arrived && !autoplay_run.travel_fixed_at) {
+            // The warp alone leaves the player at (0, 0, 0), above the void: to the lamp, as a
+            // guest's trip does (guest_trip_fixup_at). The load put the save's last lamp back as
+            // the respawn point, so the lamp travelled to goes in again first.
+            if (const u64 global = GetGlobalState(); global >= 0x10000) {
+                WriteValue(global, 0x1528, point);
+            }
+            MoveToRespawnPoint(true);
+            std::scoped_lock lock{autoplay_mutex};
+            autoplay_run.travel_fixed_at = elapsed;
+            return false;
+        }
+        if (arrived && elapsed > *autoplay_run.travel_fixed_at + 2.0) {
+            const auto at = LocalPlayerPosition();
+            if (!at || (*at)[1] < -500.0f) {
+                failure = "arrived in the void";
+                return false;
+            }
+            return true;
+        }
+        return waited_out(number(ensure ? 2 : 1, 180));
+    }
+    if (verb == "hurt" || verb == "kill") {
+        const auto target = ParseAutoplayTarget(arg(0));
+        const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+        if (!found || !HasMemoryAccess(found->data, 0xFC, MemoryProt::CpuWrite)) {
+            failure = "no such character";
+            return false;
+        }
+        const s32 hp = ReadValue<s32>(found->data, 0xF8);
+        const s32 target_hp = verb == "kill" ? 0 : std::min(hp, static_cast<s32>(number(1, 1)));
+        // A kill goes through the game's own (writing 0 HP leaves a standing corpse); checked
+        // against its prologue first.
+        static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+        if (verb == "kill" &&
+            std::ranges::equal(
+                std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
+                                    KillPrologue.size()},
+                KillPrologue)) {
+            using Kill = void PS4_SYSV_ABI (*)(u64 character);
+            reinterpret_cast<Kill>(image_base + KillCharacterOffset)(found->character);
+        } else {
+            WriteValue(found->data, 0xF8, target_hp);
+        }
+        LOG_INFO(Debug, "Bloodborne autoplay: {} {:#x} hp {} -> {} at {:.1f} m", verb,
+                 ReadValue<u32>(found->character, 0x08), hp, target_hp, found->distance);
+        return true;
+    }
+    if (verb == "teleport") {
+        TeleportLocalPlayer({static_cast<float>(number(0, 0)), static_cast<float>(number(1, 0)),
+                             static_cast<float>(number(2, 0))});
+        return true;
+    }
+    if (verb == "press" || verb == "stick") {
+        u32 buttons = 0;
+        u32 sticks = 0x80808080;
+        if (verb == "press") {
+            buttons = AutoplayButton(arg(0));
+            if (buttons == 0) {
+                failure = "no such button";
+                return false;
+            }
+        } else {
+            const u32 x = static_cast<u32>(std::clamp(number(0, 128), 0.0, 255.0));
+            const u32 y = static_cast<u32>(std::clamp(number(1, 128), 0.0, 255.0));
+            sticks = x | (y << 8) | 0x80800000;
+        }
+        autoplay_buttons.store(buttons);
+        autoplay_sticks.store(sticks);
+        std::scoped_lock lock{autoplay_mutex};
+        autoplay_run.hold_until =
+            std::chrono::steady_clock::now() +
+            std::chrono::milliseconds{static_cast<s64>(number(verb == "press" ? 1 : 2, 150))};
+        return false;
+    }
+    if (verb == "set-flag") {
+        using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+        reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(
+            0, static_cast<s32>(number(0, 0)), number(1, 1) != 0);
+        return true;
+    }
+    if (verb == "expect-flag" || verb == "wait-flag") {
+        const bool on = EventFlagOn(static_cast<s32>(number(0, 0)));
+        if (on == (number(1, 1) != 0)) {
+            return true;
+        }
+        if (verb == "expect-flag") {
+            failure = fmt::format("flag is {}", on ? 1 : 0);
+            return false;
+        }
+        return waited_out(number(2, 180));
+    }
+    // godmode [off]: the player's HP back to its max on every party tick (tests that stand
+    // around near enemies), until switched off.
+    if (verb == "godmode") {
+        autoplay_godmode.store(arg(0) != "off");
+        return true;
+    }
+    if (verb == "snapshot") {
+        LogAutoplaySnapshot();
+        return true;
+    }
+    if (verb == "log") {
+        std::string text;
+        for (const std::string& word : command.args) {
+            text += (text.empty() ? "" : " ") + word;
+        }
+        LOG_INFO(Debug, "Bloodborne autoplay log: {}", text);
+        return true;
+    }
+    if (verb == "expect-hp") {
+        const auto target = ParseAutoplayTarget(arg(0));
+        const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+        if (!found) {
+            failure = "no such character";
+            return false;
+        }
+        const s32 hp = ReadValue<s32>(found->data, 0xF8);
+        const auto holds = CompareAutoplay(hp, arg(1), static_cast<s64>(number(2, 0)));
+        if (!holds || !*holds) {
+            failure = fmt::format("hp is {}", hp);
+            return false;
+        }
+        return true;
+    }
+    if (verb == "expect-session") {
+        const size_t members = AutoplaySessionMembers();
+        if (members != static_cast<size_t>(number(0, 1))) {
+            failure = fmt::format("{} in the session", members);
+            return false;
+        }
+        return true;
+    }
+    if (verb == "expect-map") {
+        const auto map = ParseAutoplayTarget(arg(0));
+        if (!map || GetCurrentPackedMap() != *map) {
+            failure = fmt::format("on map {:#x}", GetCurrentPackedMap());
+            return false;
+        }
+        return true;
+    }
+    if (verb == "done") {
+        return true;
+    }
+    failure = "unknown command";
+    return false;
+}
+
+// From the party tick (the game thread), once the player is in the world.
+void TickAutoplay() {
+    if (autoplay_godmode.load()) {
+        if (const auto self = FindAutoplayCharacter(AutoplaySelf);
+            self && ReadValue<s32>(self->data, 0xF8) > 0 &&
+            HasMemoryAccess(self->data, 0x100, MemoryProt::CpuWrite)) {
+            WriteValue(self->data, 0xF8, ReadValue<s32>(self->data, 0xFC));
+        }
+    }
+    AutoplayCommand command;
+    size_t index = 0;
+    size_t total = 0;
+    bool begun = false;
+    double elapsed = 0.0;
+    const auto now = std::chrono::steady_clock::now();
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        if (autoplay_run.phase != AutoplayRun::Phase::World) {
+            return;
+        }
+        if (autoplay_run.hold_until) {
+            if (now < *autoplay_run.hold_until) {
+                return;
+            }
+            autoplay_run.hold_until.reset();
+            autoplay_buttons.store(0);
+            autoplay_sticks.store(0x80808080);
+            LOG_INFO(Debug, "Bloodborne autoplay: step {}/{} {} ok", autoplay_run.next + 1,
+                     autoplay_run.script.size(),
+                     AutoplayText(autoplay_run.script[autoplay_run.next]));
+            ++autoplay_run.next;
+            autoplay_run.step_started = now;
+            autoplay_run.step_begun = false;
+            return;
+        }
+        if (autoplay_run.next >= autoplay_run.script.size() ||
+            autoplay_run.script[autoplay_run.next].verb == "done") {
+            autoplay_run.phase = AutoplayRun::Phase::Done;
+            LOG_INFO(Debug, "Bloodborne autoplay: done (ok)");
+            return;
+        }
+        command = autoplay_run.script[autoplay_run.next];
+        index = autoplay_run.next;
+        total = autoplay_run.script.size();
+        begun = autoplay_run.step_begun;
+        autoplay_run.step_begun = true;
+        elapsed = std::chrono::duration<double>(now - autoplay_run.step_started).count();
+    }
+    std::string failure;
+    const bool finished = RunAutoplayStep(command, begun, elapsed, failure);
+    std::scoped_lock lock{autoplay_mutex};
+    if (!failure.empty()) {
+        LOG_ERROR(Debug, "Bloodborne autoplay: step {}/{} {} FAILED: {}", index + 1, total,
+                  AutoplayText(command), failure);
+        LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
+        autoplay_run.phase = AutoplayRun::Phase::Done;
+        autoplay_buttons.store(0);
+        autoplay_sticks.store(0x80808080);
+        return;
+    }
+    if (finished && !autoplay_run.hold_until) {
+        LOG_INFO(Debug, "Bloodborne autoplay: step {}/{} {} ok", index + 1, total,
+                 AutoplayText(command));
+        ++autoplay_run.next;
+        autoplay_run.step_started = std::chrono::steady_clock::now();
+        autoplay_run.step_begun = false;
+    }
+}
+
+// From the pad reader: on the title screen, Cross now and then until the player is in the world.
+void TickAutoplayTitle() {
+    std::scoped_lock lock{autoplay_mutex};
+    if (autoplay_run.phase != AutoplayRun::Phase::Title) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (AutoplayInWorld()) {
+        autoplay_run.phase = AutoplayRun::Phase::World;
+        autoplay_run.step_started = now;
+        autoplay_run.step_begun = false;
+        autoplay_buttons.store(0);
+        LOG_INFO(Debug, "Bloodborne autoplay: in the world on map {:#x}", GetCurrentPackedMap());
+        return;
+    }
+    const auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - autoplay_run.started);
+    autoplay_buttons.store(TitlePressesCross(static_cast<u64>(ms.count())) ? AutoplayButton("cross")
+                                                                           : 0);
+}
+
 } // namespace
+
+bool AutoplayPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& sticks) {
+    std::call_once(autoplay_loaded, LoadAutoplay);
+    if (autoplay_run.phase == AutoplayRun::Phase::Off) {
+        return false;
+    }
+    TickAutoplayTitle();
+    buttons = autoplay_buttons.load();
+    const u32 packed = autoplay_sticks.load();
+    sticks = {static_cast<u8>(packed), static_cast<u8>(packed >> 8), static_cast<u8>(packed >> 16),
+              static_cast<u8>(packed >> 24)};
+    return true;
+}
 
 std::optional<std::string> GetSeamlessHostPlacementHeader() {
     std::optional<SummonPlacementDescriptor> placement;

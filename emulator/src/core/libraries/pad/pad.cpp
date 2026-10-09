@@ -4,6 +4,7 @@
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/singleton.h"
+#include "core/bloodborne_re.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/libs.h"
 #include "core/libraries/pad/pad_errors.h"
@@ -366,7 +367,11 @@ int PS4_SYSV_ABI scePadOutputReport() {
 }
 
 int ProcessStates(OrbisPadData* pData, const Input::State* states, s32 num) {
-    if (num > 0 && !states[0].connected) {
+    // Bloodborne autoplay (tests): its buttons and sticks on top of the real pad's.
+    u32 autoplay_buttons = 0;
+    std::array<u8, 4> autoplay_sticks{128, 128, 128, 128};
+    const bool autoplay = Core::Bloodborne::AutoplayPad(autoplay_buttons, autoplay_sticks);
+    if (num > 0 && !states[0].connected && !autoplay) {
         pData[0] = {};
         pData[0].orientation = {0.0f, 0.0f, 0.0f, 1.0f};
         pData[0].connected = false;
@@ -424,6 +429,16 @@ int ProcessStates(OrbisPadData* pData, const Input::State* states, s32 num) {
         pData[i].timestamp = states[i].time;
         pData[i].connectedCount = states[i].connected_count;
         pData[i].deviceUniqueDataLen = 0;
+        if (autoplay) {
+            pData[i].buttons |= static_cast<OrbisPadButtonDataOffset>(autoplay_buttons);
+            if (autoplay_sticks[0] != 128 || autoplay_sticks[1] != 128) {
+                pData[i].leftStick = {autoplay_sticks[0], autoplay_sticks[1]};
+            }
+            if (autoplay_sticks[2] != 128 || autoplay_sticks[3] != 128) {
+                pData[i].rightStick = {autoplay_sticks[2], autoplay_sticks[3]};
+            }
+            pData[i].connected = true;
+        }
     }
 
     return num;

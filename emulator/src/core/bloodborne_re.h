@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -20,5 +21,8 @@ void InstallSeamlessCoopPatches();
 void InstallReverseEngineeringTrace();
 // Tells the party code which character save slot the game opened last.
 void NoteSaveFileOpened(std::string_view guest_path);
+// Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY): the buttons and sticks (lx, ly, rx, ry) it holds now;
+// false when it is off. Called by the pad reader.
+bool AutoplayPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& sticks);
 
 } // namespace Core::Bloodborne

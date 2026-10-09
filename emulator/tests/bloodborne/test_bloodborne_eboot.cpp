@@ -136,7 +136,7 @@ TEST_F(BloodborneEboot, TheSignTimersAreTheGamesStores) {
 TEST_F(BloodborneEboot, TheNamedGameFunctionsStartThere) {
     for (const u64 offset :
          {EventFlagIsSetOffset, PartyGhostSetEventFlagOffset, PartyGhostCustomLuaCallStartOffset,
-          OnKeyTime2Offset, MultiPlayStopRequest, LeaveSession}) {
+          OnKeyTime2Offset, MultiPlayStopRequest, LeaveSession, KillCharacterOffset}) {
         EXPECT_EQ(Bytes(offset, FunctionPrologue.size()), FunctionPrologue) << std::hex << offset;
     }
 }
@@ -159,6 +159,9 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     // The co-op area check: the flag read, then `xor al, 1`.
     EXPECT_EQ(CallTarget(0x0191A8B5), EventFlagIsSetOffset);
     EXPECT_EQ(Bytes(0x0191A8BA, 2), (std::vector<u8>{0x34, 0x01}));
+    // The kill autoplay uses: the dead flag (`or byte ptr [r15 + 0x1E3], 1`) on its way out.
+    EXPECT_EQ(Bytes(0x018BFAD3, 8),
+              (std::vector<u8>{0x41, 0x80, 0x8F, 0xE3, 0x01, 0x00, 0x00, 0x01}));
     // Host death: the jump lands on the epilogue it names.
     const CodePatch& host_dead = HostDeathKeepGuestsPatches().front();
     EXPECT_EQ(DecodeNearJumpTarget(host_dead.offset, host_dead.patched), HostDeadEpilogueOffset);

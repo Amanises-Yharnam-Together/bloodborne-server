@@ -1146,6 +1146,16 @@ TEST(BloodborneSharedEnemyHp, EveryMemberSeesTheLowestHpLeft) {
     EXPECT_EQ(SharedEnemyHp(500, 2031, 100, 0), std::nullopt);
 }
 
+// Rig test 2026-10-09 ("apart"): a guest's trip out of the host's map posted 2 kills at its
+// start (the old map's characters going away), so the host hid 2 living enemies while the guest
+// was in the Dream. Deaths are only watched while the world stands: not on a trip or a load.
+TEST(BloodborneSharedKills, NoKillsAreWatchedWhileTheWorldGoesAway) {
+    EXPECT_TRUE(WatchesKills(true, false, false));
+    EXPECT_FALSE(WatchesKills(true, true, false)) << "a party trip under way";
+    EXPECT_FALSE(WatchesKills(true, false, true)) << "a load";
+    EXPECT_FALSE(WatchesKills(false, false, false)) << "not sharing";
+}
+
 // A guest's trip loads the host's map with the guest's own save: a dog killed for good on the
 // host's save stood alive for it. The host posts its map's flags (10000 from the map's base:
 // 1241xxxx for m24_01) and the guest loading that map takes them, except its own pickups, the

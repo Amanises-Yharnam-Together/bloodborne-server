@@ -284,6 +284,22 @@ int main() {
     CHECK(board.Update({}, "guest", 0, {}).isEmpty());
   }
 
+  // Enemy HP (the map state board with a freshness window): a member that
+  // stopped posting (its game quit) drops out, so the next session's enemies
+  // do not start hurt by an old report (rig test 2026-10-09).
+  {
+    using Bloodborne::PartyMapStateBoard;
+    PartyMapStateBoard board(5'000);
+    const QByteArray newline(1, 10);
+    board.Update(Party, "guest", 402718720u, "00ff10", 1'000);
+    CHECK(Bloodborne::FormatMapStateBoard(board.Update(
+              Party, "host", 0, {}, 4'000)) == "402718720 00ff10" + newline);
+    CHECK(board.Update(Party, "host", 0, {}, 7'000).isEmpty()); // gone stale
+    PartyMapStateBoard kept; // the host's map state: kept
+    kept.Update(Party, "host", 402718720u, "01", 1'000);
+    CHECK(kept.Update(Party, "guest", 0, {}, 999'000).size() == 1);
+  }
+
   // No party key: nothing to coordinate.
   {
     PartyRestBoard board;

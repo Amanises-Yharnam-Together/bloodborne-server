@@ -336,20 +336,27 @@ QByteArray FormatMapStateBoard(const QList<MapState>& states) {
 }
 
 QList<MapState> PartyMapStateBoard::Update(const QByteArray& party, const QByteArray& member,
-                                           quint32 map, const QByteArray& bits) {
+                                           quint32 map, const QByteArray& bits, qint64 nowMs) {
     if (party.isEmpty()) {
         return {};
     }
     QMutexLocker lock(&m_mutex);
     auto& members = m_parties[party];
     if (map != 0 && !bits.isEmpty()) {
-        members[member] = MapState{map, bits};
+        members[member] = Entry{MapState{map, bits}, nowMs};
+    } else if (const auto own = members.find(member); own != members.end()) {
+        own->postedAtMs = nowMs; // still there, only reading
     }
     QList<MapState> others;
-    for (auto it = members.cbegin(); it != members.cend(); ++it) {
-        if (it.key() != member) {
-            others.append(it.value());
+    for (auto it = members.begin(); it != members.end();) {
+        if (m_freshMs > 0 && nowMs - it->postedAtMs > m_freshMs) {
+            it = members.erase(it);
+            continue;
         }
+        if (it.key() != member) {
+            others.append(it->state);
+        }
+        ++it;
     }
     return others;
 }

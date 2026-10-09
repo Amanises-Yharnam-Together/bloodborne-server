@@ -171,13 +171,22 @@ QByteArray FormatMapStateBoard(const QList<MapState>& states);
 
 class PartyMapStateBoard {
 public:
+    // `freshMs` > 0: a member's state is dropped once it has not posted for that long.
+    explicit PartyMapStateBoard(qint64 freshMs = 0) : m_freshMs(freshMs) {}
+
     // Keeps the member's state (when it posts one) and returns the other members' latest.
     QList<MapState> Update(const QByteArray& party, const QByteArray& member, quint32 map,
-                           const QByteArray& bits);
+                           const QByteArray& bits, qint64 nowMs = 0);
 
 private:
+    struct Entry {
+        MapState state;
+        qint64 postedAtMs = 0;
+    };
+
+    qint64 m_freshMs;
     QMutex m_mutex;
-    QHash<QByteArray, QHash<QByteArray, MapState>> m_parties;
+    QHash<QByteArray, QHash<QByteArray, Entry>> m_parties;
 };
 
 // Shared kill echoes: the echoes a party member got from a kill with no other member on its map

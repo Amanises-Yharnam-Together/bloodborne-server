@@ -983,6 +983,10 @@ std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max) {
     return target < hp ? std::optional<s32>{target} : std::nullopt;
 }
 
+bool WatchesKills(bool sharing, bool trip_active, bool loading) {
+    return sharing && !trip_active && !loading;
+}
+
 std::vector<std::pair<s32, bool>> VisitKills::Observe(
     u64 visit, std::span<const std::pair<u32, s32>> characters) {
     std::vector<std::pair<s32, bool>> changes;
@@ -1485,6 +1489,103 @@ PartyAction PartyController::Tick(const PartyObservation& observation, Clock::ti
     last_search = now;
     stable_ticks = 0;
     return PartyAction::StartSearch;
+}
+
+std::vector<AutoplayCommand> ParseAutoplayScript(std::string_view text) {
+    std::vector<AutoplayCommand> script;
+    while (!text.empty()) {
+        const auto end = text.find('\n');
+        std::string_view line = text.substr(0, end);
+        text = end == std::string_view::npos ? std::string_view{} : text.substr(end + 1);
+        if (const auto comment = line.find('#'); comment != std::string_view::npos) {
+            line = line.substr(0, comment);
+        }
+        std::vector<std::string> words;
+        size_t at = 0;
+        while (at < line.size()) {
+            const auto start = line.find_first_not_of(" \t\r", at);
+            if (start == std::string_view::npos) {
+                break;
+            }
+            const auto stop = line.find_first_of(" \t\r", start);
+            words.emplace_back(line.substr(start, stop - start));
+            at = stop == std::string_view::npos ? line.size() : stop;
+        }
+        if (!words.empty()) {
+            script.push_back({words.front(), {words.begin() + 1, words.end()}});
+        }
+    }
+    return script;
+}
+
+u32 AutoplayButton(std::string_view name) {
+    static constexpr std::array<std::pair<std::string_view, u32>, 13> Buttons{{
+        {"cross", 0x4000},
+        {"circle", 0x2000},
+        {"square", 0x8000},
+        {"triangle", 0x1000},
+        {"options", 0x8},
+        {"up", 0x10},
+        {"right", 0x20},
+        {"down", 0x40},
+        {"left", 0x80},
+        {"l1", 0x400},
+        {"r1", 0x800},
+        {"l2", 0x100},
+        {"r2", 0x200},
+    }};
+    for (const auto& [button, bit] : Buttons) {
+        if (button == name) {
+            return bit;
+        }
+    }
+    return 0;
+}
+
+bool TitlePressesCross(u64 ms) {
+    constexpr u64 Period = 2000;
+    constexpr u64 Held = 150;
+    return ms >= Period && ms % Period < Held;
+}
+
+std::optional<u32> ParseAutoplayTarget(std::string_view text) {
+    if (text == "nearest") {
+        return 0;
+    }
+    if (text == "self") {
+        return AutoplaySelf;
+    }
+    if (text.starts_with("0x")) {
+        text.remove_prefix(2);
+    }
+    u32 handle = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), handle, 16);
+    if (text.empty() || error != std::errc{} || end != text.data() + text.size()) {
+        return std::nullopt;
+    }
+    return handle;
+}
+
+std::optional<bool> CompareAutoplay(s64 value, std::string_view op, s64 limit) {
+    if (op == "<") {
+        return value < limit;
+    }
+    if (op == "<=") {
+        return value <= limit;
+    }
+    if (op == "==") {
+        return value == limit;
+    }
+    if (op == "!=") {
+        return value != limit;
+    }
+    if (op == ">=") {
+        return value >= limit;
+    }
+    if (op == ">") {
+        return value > limit;
+    }
+    return std::nullopt;
 }
 
 } // namespace Core::Bloodborne

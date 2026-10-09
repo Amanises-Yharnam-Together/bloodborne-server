@@ -634,6 +634,9 @@ private:
     std::map<std::string, std::set<u32>> by_member;
 };
 
+// Whether enemy deaths are watched now: sharing, and the world standing (no trip, no load).
+bool WatchesKills(bool sharing, bool trip_active, bool loading);
+
 class VisitKills {
 public:
     std::vector<std::pair<s32, bool>> Observe(u64 visit,
@@ -762,5 +765,28 @@ private:
     u32 stable_ticks = 0;
     std::optional<Clock::time_point> last_search;
 };
+
+// Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY=<script file>), for tests with no one at the pad: the
+// emulator presses Cross on the title screen until the player is in the world, then runs the
+// script, one command per line ("<verb> <args...>", # starts a comment).
+struct AutoplayCommand {
+    std::string verb;
+    std::vector<std::string> args;
+    bool operator==(const AutoplayCommand&) const = default;
+};
+std::vector<AutoplayCommand> ParseAutoplayScript(std::string_view text);
+// The pad button a script names (cross, circle, square, triangle, options, up, down, left, right,
+// l1, r1, l2, r2), 0 if none.
+u32 AutoplayButton(std::string_view name);
+// Whether Cross is down `ms` after the title screen's autoplay began.
+bool TitlePressesCross(u64 ms);
+// The game's own kill (what an event's ForceCharacterDeath does): HP to 0, the dead flag
+// (+0x1E3 bit 0), then the death step (0x018BD9D0). `void (character)`.
+constexpr u64 KillCharacterOffset = 0x018BF9A0;
+// A target: "nearest" (0), "self" (AutoplaySelf, the player) or a character handle in hex.
+constexpr u32 AutoplaySelf = 0xFFFFFFFF;
+std::optional<u32> ParseAutoplayTarget(std::string_view text);
+// `value <op> limit` for op <, <=, ==, !=, >=, >; nothing for another op.
+std::optional<bool> CompareAutoplay(s64 value, std::string_view op, s64 limit);
 
 } // namespace Core::Bloodborne
