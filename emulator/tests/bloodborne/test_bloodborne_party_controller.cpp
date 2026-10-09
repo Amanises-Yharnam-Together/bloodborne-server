@@ -166,6 +166,37 @@ TEST(BloodbornePartyController, SearchesAgainAfterTheSessionEnds) {
     EXPECT_EQ(TickUntilDecision(controller, Idle(), T0 + 3s), PartyAction::StartSearch);
 }
 
+// Rig pickup-after-reload 2026-10-10: the host claimed the guest's sign, the guest dropped the
+// connection 5 s after it formed and never joined the room, and both waited out the scenario:
+// the host's searches still found that sign but never summoned it again, and the guest's sign
+// kept handing it the dead room's claim. A guest whose sign was claimed and that is idle again
+// StaleClaimDelay later rings again (a new sign the host has not tried).
+TEST(BloodbornePartyController, AGuestRingsAgainWhenAClaimCameToNothing) {
+    PartyController guest(PartyRole::Guest);
+    PartyObservation ringing = Idle();
+    ringing.search_effect_active = true;
+    EXPECT_EQ(TickUntilDecision(guest, ringing, T0), PartyAction::Wait) << "a sign, no claim";
+    ringing.claim_seen = true;
+    EXPECT_EQ(guest.Tick(ringing, T0 + 1s), PartyAction::Wait) << "claimed: joining";
+    EXPECT_EQ(guest.Tick(ringing, T0 + 1s + PartyController::StaleClaimDelay - 1s),
+              PartyAction::Wait);
+    EXPECT_EQ(guest.Tick(ringing, T0 + 1s + PartyController::StaleClaimDelay),
+              PartyAction::StartSearch)
+        << "the claim came to nothing";
+
+    PartyController joining(PartyRole::Guest);
+    PartyObservation pending = ringing;
+    pending.matching_idle = false;
+    EXPECT_EQ(joining.Tick(pending, T0), PartyAction::Wait);
+    EXPECT_EQ(joining.Tick(pending, T0 + PartyController::StaleClaimDelay * 2), PartyAction::Wait)
+        << "a join under way is never cut off";
+
+    PartyController host(PartyRole::Host);
+    EXPECT_EQ(host.Tick(ringing, T0), PartyAction::Wait);
+    EXPECT_EQ(host.Tick(ringing, T0 + PartyController::StaleClaimDelay * 2), PartyAction::Wait)
+        << "only a guest's sign is claimed";
+}
+
 namespace {
 
 struct AddSpEffectCall {

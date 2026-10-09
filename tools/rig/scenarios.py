@@ -26,6 +26,7 @@ uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in o
 HUNTERS_DREAM = 2102962
 CENTRAL_YHARNAM = "0x18010000"
 CENTRAL_YHARNAM_LAMP = 2412950  # the first lamp, where the rig's characters start
+CENTRAL_YHARNAM_LAMP_2 = 2412951  # talk 241001, 3 m from talk 241319 (Gilbert's window?)
 CATHEDRAL_WARD = "0x18000000"
 CATHEDRAL_WARD_LAMP = 2402950
 ENEMY = "0x1001400b"  # 484 HP, 17 m from the lamp (farther ones are not awake)
@@ -451,8 +452,9 @@ SCENARIOS = {
     },
     "pickup-after-crash": {
         "about": "after the guest's game crashes and it joins again, both still pick up map items "
-                 "with X (friend run 2026-10-09: no pickups after a crash); the item by the lamp, "
-                 "the next one is in another block (see pickup-far)",
+                 "with X (friend run 2026-10-09: no pickups after a crash); the item by the lamp: "
+                 "the next one is 21 m down, and a jump there drops the player through the floor "
+                 "and crashes the game in 0x0191B6E0 (twice with the guest back, twice without)",
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait-solo 120",
                      "wait-session 2 420", "wait 15", "pickup 20", "wait 5", "snapshot",
@@ -488,17 +490,66 @@ SCENARIOS = {
         },
         "timeout": 700,
     },
-    "pickup-far": {
-        "about": "the host picks up two map items, the second one 36 m away and 21 m down "
-                 "(pickup-after-crash's host crashed twice going there after the guest's rejoin, "
-                 "falling to y -98 first)",
+    "pickup-after-trip": {
+        "about": "after a trip that keeps the session (the host to the Dream and back, the guest "
+                 "to the Dream and back) both still pick up the item by the lamp with X (Kaniel "
+                 "2026-10-09: no pickups in the Forbidden Woods after the time-of-day reload)",
         "roles": {
-            "host": [START, "godmode", "wait-session 2 300", "wait 10", "pickup 60", "wait 3",
-                     "pickup 60", "wait 5", "snapshot", "expect-session 2"],
-            "guest": [START, "godmode", "wait-session 2 300", "wait 60", "snapshot",
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 120", "wait 15",
+                     "pickup 20", "wait 5", "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 90", f"travel {HUNTERS_DREAM}",
+                      "wait 10", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
+                      "wait 15", "pickup 20", "wait 5", "snapshot", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    "pickup-after-reload": {
+        "about": "after each one's map reloads in place in the session (a warp to the lamp it "
+                 "stands at, as the time-of-day reload Kaniel had before the Forbidden Woods "
+                 "pickups stopped, 2026-10-09) both still pick up the item by the lamp with X",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10",
+                     f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 120", "wait 15",
+                     "pickup 20", "wait 5", "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 80",
+                      f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 15",
+                      "pickup 20", "wait 5", "snapshot", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    "guest-talk-gilbert": {
+        "about": "at the second Central Yharnam lamp (talk 241001) a guest presses X at the window "
+                 "3 m from it (talk 241319, Gilbert's), turned towards it; it must not take the lamp "
+                 "to the Dream (Kaniel 2026-10-09: 'Talk' there used the lamp)",
+        "roles": {
+            # The host stays: its warp to another lamp of its map made the guest's game drop the
+            # room for a moment (rig 2026-10-10, as pickup-after-reload's in-place warp).
+            "host": [START, "godmode", "wait-session 2 300", "wait 230", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 20",
+                      f"travel {CENTRAL_YHARNAM_LAMP_2}", "wait 15",
+                      "snapshot",
+                      "teleport -198.45 -28.4 63.96 2.29", "wait 2", "teleport -198.45 -28.4 63.96 2.29", "wait 3", "snapshot",
+                      "press cross 200", "wait 6", "snapshot", "press circle 200", "wait 4",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      "teleport -198.45 -28.4 63.96 2.29", "wait 2", "teleport -198.45 -28.4 63.96 2.29", "wait 3", "snapshot",
+                      "press cross 200", "wait 6", "snapshot", "press circle 200", "wait 4",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      "teleport -197.6 -28.4 64.7 2.29", "wait 2", "teleport -197.6 -28.4 64.7 2.29", "wait 3", "snapshot",
+                      "press cross 200", "wait 6", "snapshot", "press circle 200", "wait 4",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      "teleport -198.45 -28.4 63.96 2.6", "wait 2", "teleport -198.45 -28.4 63.96 2.6", "wait 3", "snapshot",
+                      "press cross 200", "wait 6", "snapshot", "press circle 200", "wait 4",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      "teleport -198.45 -28.4 63.96 2.0", "wait 2", "teleport -198.45 -28.4 63.96 2.0", "wait 3", "snapshot",
+                      "press cross 200", "wait 6", "snapshot", "press circle 200", "wait 4",
+                      f"expect-map {CENTRAL_YHARNAM}",
                       "expect-session 2"],
         },
-        "timeout": 600,
+        "timeout": 900,
     },
     "crash-rejoin-hp": {
         "about": "after the guest's game crashes and it joins again, the host's hit still reaches "

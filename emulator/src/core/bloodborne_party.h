@@ -56,6 +56,8 @@ struct PartyObservation {
     // A boss fight or its clear sequence runs (event flags 4000 / 4047): a player joining then is
     // kicked by the game, which ends the session.
     bool boss_sequence = false;
+    // A guest: a host claimed this sign (the summon broker delivered the claim) since it rang.
+    bool claim_seen = false;
 };
 
 // CSMultiPlayMan session state (+0x124) as seen in the rig, and the summon-reload marker the
@@ -800,6 +802,8 @@ public:
     using Clock = std::chrono::steady_clock;
     static constexpr u32 StableTicksBeforeSearch = 20;
     static constexpr Clock::duration RetryDelay = std::chrono::seconds{15};
+    // A claimed sign whose guest is idle again this long after the claim came rings again.
+    static constexpr Clock::duration StaleClaimDelay = std::chrono::seconds{30};
 
     explicit PartyController(PartyRole role) : role{role} {}
 
@@ -814,6 +818,8 @@ private:
     std::optional<Clock::time_point> last_search;
     /// Since when a hosting bell with room for more has been on (see Tick).
     std::optional<Clock::time_point> ringing_since;
+    /// Since when a guest's sign has been claimed with the guest idle (see Tick).
+    std::optional<Clock::time_point> claimed_since;
 };
 
 // Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY=<script file>), for tests with no one at the pad: the

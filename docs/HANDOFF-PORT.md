@@ -6,6 +6,39 @@ mechanic simpler or more reliable. No mixed parties (port and shadPS4 players ne
 leave/rejoin a session as a fix: everything is seamless. See docs/BBPORT.md for how the port and
 its co-op are wired, built, packaged and tested.
 
+## State 2026-10-10 early morning
+
+Rig on 3f730dc0 and later: guest-crash, host-crash, resume, crash-apart, boss-kill,
+host-death-boss, join3, crash3, guest-trip3, trip3 (after the fix below), crash-rejoin-hp,
+guest-talk-at-lamp, guest-talk-by-the-lamp, pickup, pickup-after-crash, hp-across-blocks,
+guest-death-seen and echoes-after-crash pass.
+
+- Fixed: a guest that went to the Dream lost the slot of the guest it left behind (its trip
+  back saved only the tasks found in the Dream), so back on that guest's map the rebuilt task
+  had no slot and the two guests never saw each other (trip3). MergeSavedJoinTasks keeps the
+  saved tasks of members not met on this map.
+- crash-rejoin-hp checks only the host's hit: in a session the host's game owns its enemies' HP
+  and puts a guest's direct write back within seconds (the rig's hurt on a guest is no hit).
+- New rig verb `pickup [<meters>] [<timeout>]` (onto the nearest usable map item, X until it
+  is gone); `teleport` and `approach` take a heading; snapshots give nearby positions. Never
+  pick up far items: a jump 21 m down from the lamp item drops the player through the floor
+  and crashes the game in 0x0191B6E0 (a character lookup by entity over a block's list), with
+  or without a crash before (pickup-far, removed).
+- Forest pickups (Kaniel's log, 2026-10-09): the item button kept finding items but no press
+  ever reached the pickup (0x01CD91F0, the action button check, said no) from the time-of-day
+  reload into the Forbidden Woods (a trip that kept the session) on, before the friend's crash.
+  pickup-after-crash passes, so the trip is the lead: scenario pickup-after-trip.
+- Guest "Talk" at the Central Yharnam lamp: 0x100140a0 (999 HP, 2 m from the lamp) is the lamp
+  itself. Facing it, X opens the lamp's menu for a guest (talk commands 17, 39, 68; circle
+  closes it), and the menu's choice is the lamp trip to the Dream that guests are allowed. Only
+  the lamp's talk script (241000) starts for a guest there; Gilbert's never did. Talk
+  positions are logged now ("Bloodborne talk <id> (entity ...) at ...") to place the guest at
+  his window.
+- lamp-after-crash fails: a lamp the guest lit in the session reads unlit in the host's world
+  after the guest's crash and rejoin (its own world has it: the progress file sets it at
+  load). The flag board gives a new game nothing older than its first post (a new character
+  must not get old lamps), and the host posted that lamp before the crash.
+
 ## State 2026-10-09 night (branch merge-05b, to become bbport)
 
 Done (Tasks 2-6, merge first): deadinside28 0.5-pre3 merged onto the AdrianCsT base (0.5's

@@ -1541,6 +1541,23 @@ PartyAction PartyController::Tick(const PartyObservation& observation, Clock::ti
         return PartyAction::StartSearch;
     }
     ringing_since.reset();
+    // A guest whose sign a host claimed but that is idle again: the join failed (the guest let
+    // the connection go), the host does not take that sign again and the broker keeps handing
+    // it the dead room's claim. A new sign after StaleClaimDelay.
+    if (role == PartyRole::Guest && observation.matching_idle && observation.search_effect_active &&
+        observation.claim_seen && !observation.white_phantom) {
+        if (!claimed_since) {
+            claimed_since = now;
+            return PartyAction::Wait;
+        }
+        if (now - *claimed_since < StaleClaimDelay) {
+            return PartyAction::Wait;
+        }
+        claimed_since.reset();
+        last_search = now;
+        return PartyAction::StartSearch;
+    }
+    claimed_since.reset();
     if (!may_search || observation.search_effect_active || observation.white_phantom) {
         // In (or joining) a session, or our search already took: the next time we are back home
         // alone is a fresh start, so forget the old cooldown.

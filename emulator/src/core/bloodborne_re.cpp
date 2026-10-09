@@ -1771,6 +1771,10 @@ bool HostHasRoomForMore();
 
 bool EventFlagOn(s32 flag);
 
+// A party guest: the summon broker delivered a host's claim for its sign (the host placement
+// header came, SetSeamlessHostPlacementHeader) since its bell went on.
+std::atomic<bool> guest_claim_seen{};
+
 PartyObservation ObserveParty(u64 player, s32 search_effect) {
     PartyObservation observation{};
     observation.player_valid =
@@ -1800,6 +1804,11 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
     observation.white_phantom = observation.player_valid &&
                                 HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) &&
                                 ReadValue<s32>(player, 0x78) == WhiteGhostCharacterType;
+    // A claim counts for the sign it came to: gone once a join is under way or the bell is off.
+    if (!observation.matching_idle || !observation.search_effect_active) {
+        guest_claim_seen.store(false);
+    }
+    observation.claim_seen = guest_claim_seen.load();
     return observation;
 }
 
@@ -2370,12 +2379,23 @@ void PS4_SYSV_ABI LetPartyGuestsStartTalksLikeTheHost(u64, GuestRegisterSnapshot
         // Diagnostics: which talk scripts start for a guest in range of them (the talk's ESD id
         // at +0x10, e.g. 241000 for a Central Yharnam lamp): a guest's "Talk" at Gilbert's
         // window took it through the lamp.
+        // Once per talk and map: the update asks every frame while the guest is in range.
         const u64 talk = registers->r15;
-        static std::atomic<s32> last_logged{};
-        static std::atomic<u32> logged{};
         const s32 id = talk >= 0x10000 ? ReadValue<s32>(talk, 0x10) : 0;
-        if (id != 0 && last_logged.exchange(id) != id &&
-            logged.fetch_add(1, std::memory_order_relaxed) < 200) {
+        static std::mutex started_mutex;
+        static std::set<s32> started;
+        static u32 started_map = 0;
+        bool first = false;
+        {
+            const u32 map = GetCurrentPackedMap();
+            std::scoped_lock lock{started_mutex};
+            if (map != started_map) {
+                started.clear();
+                started_map = map;
+            }
+            first = id != 0 && started.size() < 64 && started.insert(id).second;
+        }
+        if (first) {
             LOG_INFO(Debug, "Bloodborne party guest starts talk {} (type {})", id, type);
         }
     }
@@ -2435,6 +2455,50 @@ void PS4_SYSV_ABI NoteEsdDialogAnswer(u64, GuestRegisterSnapshot* registers) {
     }
     std::scoped_lock lock{esd_answers_mutex};
     ++esd_answers[{esd_function_asked, static_cast<s32>(registers->rcx)}];
+}
+
+// Diagnostics: the talks a map's talk update (0x0204C0B0) weighs each frame, logged once per
+// talk and map with where its character stands. At 0x0204C63B (`mov rax, [rcx+r13*8+0x28]`,
+// before the reach check) rcx + r13 * 8 is the talk's entry (+0x10 the talk, its ESD id at
+// +0x10; +0x20 the character's entity), r14 the character and xmm0 its distance to the player.
+// Only talks enabled there (+0x34) come this far: a guest at Gilbert's window got the lamp.
+constexpr u64 TalkReachCheckOffset = 0x0204C63B;
+constexpr std::array<u8, 5> TalkReachCheck{0x4A, 0x8B, 0x44, 0xE9, 0x28};
+
+void PS4_SYSV_ABI NoteTalkInReach(u64, const GuestRegisterSnapshot* registers) {
+    const u64 entry = registers->rcx + registers->r13 * 8;
+    if (!HasMemoryAccess(entry, 0x38, MemoryProt::CpuRead)) {
+        return;
+    }
+    const u64 talk = ReadValue<u64>(entry, 0x10);
+    const s32 id = talk >= 0x10000 ? ReadValue<s32>(talk, 0x10) : 0;
+    static std::mutex seen_mutex;
+    static std::set<s32> seen;
+    static u32 seen_map = 0;
+    {
+        const u32 map = GetCurrentPackedMap();
+        std::scoped_lock lock{seen_mutex};
+        if (map != seen_map) {
+            seen.clear();
+            seen_map = map;
+        }
+        if (id == 0 || seen.size() >= 64 || !seen.insert(id).second) {
+            return;
+        }
+    }
+    float distance;
+    std::memcpy(&distance, registers->ymm[0].data(), sizeof(distance));
+    u64 node = registers->r14 >= 0x10000 ? ReadValue<u64>(registers->r14, 0x58) : 0;
+    for (const u64 offset : {u64{8}, u64{0x3B0}, u64{0x68}}) {
+        node = node >= 0x10000 && HasMemoryAccess(node, offset + 8, MemoryProt::CpuRead)
+                   ? ReadValue<u64>(node, offset)
+                   : 0;
+    }
+    const bool placed = node >= 0x10000 && HasMemoryAccess(node, 0x1EC, MemoryProt::CpuRead);
+    LOG_INFO(Debug, "Bloodborne talk {} (entity {}) at ({:.1f}, {:.1f}, {:.1f}), {:.1f} m away", id,
+             ReadValue<u32>(entry, 0x20), placed ? ReadValue<float>(node, 0x1E0) : 0.0f,
+             placed ? ReadValue<float>(node, 0x1E4) : 0.0f,
+             placed ? ReadValue<float>(node, 0x1E8) : 0.0f, distance);
 }
 
 void LogEsdAnswers(bool party_guest) {
@@ -2514,6 +2578,10 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
         !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkCommandIdOffset),
                                       TalkCommandId, 0, NoteTalkCommand)) {
         LOG_ERROR(Debug, "Bloodborne talk diagnostics unavailable");
+    }
+    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + TalkReachCheckOffset), TalkReachCheck,
+                              0, NoteTalkInReach)) {
+        LOG_ERROR(Debug, "Bloodborne talk reach diagnostics unavailable");
     }
     if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkPhantomCheckOffset),
                                       TalkPhantomCheck, 0, LetPartyGuestsStartTalksLikeTheHost)) {
@@ -3368,9 +3436,11 @@ void TickPartyController() {
     const bool ended = observation.search_effect_active &&
                        EndPlayerEffect(player, party_controller->SearchEffectId());
     if (ended) {
-        LOG_INFO(Debug, "Bloodborne party: ended the host's stale bell effect {} to ring again",
+        LOG_INFO(Debug, "Bloodborne party: ended the {} stale bell effect {} to ring again",
+                 observation.claim_seen ? "guest's claimed" : "host's",
                  party_controller->SearchEffectId());
     }
+    guest_claim_seen.store(false);
     const bool result = StartPlayerSummonSearch(player, party_controller->SearchEffectId());
     LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",
              party_controller->SearchEffectId(), GetCurrentPackedMap(), result);
@@ -8859,6 +8929,7 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
     // forked cross-map summon's leftover): its own map, position and heading replace the host's,
     // so the pre-match warp and the summon reload keep it in place.
     if (SummonPlacementDescriptor own{}; IsPartyGuestRole()) {
+        guest_claim_seen.store(true); // see PartyController::Tick's StaleClaimDelay
         std::string_view own_result;
         if (ReadLocalSummonPlacement(own, own_result)) {
             LOG_INFO(Debug,
