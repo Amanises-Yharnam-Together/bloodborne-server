@@ -11,7 +11,7 @@ Commands (see RunAutoplayStep in bloodborne_re.cpp): wait <s>, wait-session <n> 
 wait-members <n> [<timeout>] (party members on this map), wait-map <map> [<timeout>],
 travel <warp point> [<timeout>], ensure-map <map> <warp point> [<timeout>] (travel unless
 there already), hurt <nearest|handle> <hp>, kill <nearest|self|handle>,
-teleport <x> <y> <z>, approach <target> [<dx> [<dz>]], mark <target> (later "marked"),
+teleport <x> <y> <z> [<heading>], approach <target> [<dx> [<dz>]], mark <target> (later "marked"),
 attack <target> [<timeout>] (1 HP left, then light attacks from each side until it dies),
 press <button> [<ms>], stick <x> <y> [<ms>], pickup [<meters>] [<timeout>] (onto the
 nearest usable map item, then X until it is gone), snapshot, log <text>,
@@ -29,6 +29,7 @@ CENTRAL_YHARNAM_LAMP = 2412950  # the first lamp, where the rig's characters sta
 CATHEDRAL_WARD = "0x18000000"
 CATHEDRAL_WARD_LAMP = 2402950
 ENEMY = "0x1001400b"  # 484 HP, 17 m from the lamp (farther ones are not awake)
+BY_THE_LAMP = "0x100140a0"  # 999 HP, 1.6 m from the first lamp: by Gilbert's window
 AWAY_FROM_LAMP = "-215.0 -54.5 178.0"  # beside that enemy, 17 m from the lamp
 WARD_ENEMY = "0x10010019"  # 211 HP, 7 m from the Cathedral Ward lamp (the nearest, 0x10010075,
 # has 999 HP and dies of nothing: an object, as Central Yharnam's 0x100140a0)
@@ -449,18 +450,55 @@ SCENARIOS = {
         "timeout": 600,
     },
     "pickup-after-crash": {
-        "about": "after the guest's game crashes the host still picks up map items with X, alone "
-                 "and once the guest is back (friend run 2026-10-09: no pickups after a crash)",
+        "about": "after the guest's game crashes and it joins again, both still pick up map items "
+                 "with X (friend run 2026-10-09: no pickups after a crash); the item by the lamp, "
+                 "the next one is in another block (see pickup-far)",
         "roles": {
-            "host": [START, "godmode", "wait-session 2 300", "wait-solo 120", "pickup 60",
-                     "wait-session 2 420", "wait 15", "pickup 60", "wait 5", "snapshot",
+            "host": [START, "godmode", "wait-session 2 300", "wait-solo 120",
+                     "wait-session 2 420", "wait 15", "pickup 20", "wait 5", "snapshot",
                      "expect-session 2"],
             "guest": [[START, "godmode", "wait-session 2 300", "wait 15", "done"],
-                      [START, "godmode", "wait-session 2 420", "wait 40", "pickup 60", "wait 5",
+                      [START, "godmode", "wait-session 2 420", "wait 40", "pickup 20", "wait 5",
                        "snapshot", "expect-session 2"]],
         },
         "allow": CRASH_CLEANUP,
         "timeout": 900,
+    },
+    "guest-talk-by-the-lamp": {
+        "about": "a guest in the session presses X on each side of the character beside the first "
+                 "Central Yharnam lamp (Gilbert's window), turned towards it; it must not take the "
+                 "lamp to the Dream (Kaniel 2026-10-09: 'Talk' there used the lamp)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 140", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10", "snapshot",
+                      f"approach {BY_THE_LAMP} 0 1.2 0", "wait 3", "snapshot", "press cross 200", "wait 6", "press circle 200", "wait 4", "snapshot",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      f"approach {BY_THE_LAMP} 0 -1.2 3.14", "wait 3", "snapshot", "press cross 200", "wait 6", "press circle 200", "wait 4", "snapshot",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      f"approach {BY_THE_LAMP} 1.2 0 1.57", "wait 3", "snapshot", "press cross 200", "wait 6", "press circle 200", "wait 4", "snapshot",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      f"approach {BY_THE_LAMP} 1.2 0 -1.57", "wait 3", "snapshot", "press cross 200", "wait 6", "press circle 200", "wait 4", "snapshot",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      f"approach {BY_THE_LAMP} -1.2 0 -1.57", "wait 3", "snapshot", "press cross 200", "wait 6", "press circle 200", "wait 4", "snapshot",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      f"approach {BY_THE_LAMP} -1.2 0 1.57", "wait 3", "snapshot", "press cross 200", "wait 6", "press circle 200", "wait 4", "snapshot",
+                      f"expect-map {CENTRAL_YHARNAM}",
+                      "expect-session 2"],
+        },
+        "timeout": 700,
+    },
+    "pickup-far": {
+        "about": "the host picks up two map items, the second one 36 m away and 21 m down "
+                 "(pickup-after-crash's host crashed twice going there after the guest's rejoin, "
+                 "falling to y -98 first)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", "pickup 60", "wait 3",
+                     "pickup 60", "wait 5", "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 60", "snapshot",
+                      "expect-session 2"],
+        },
+        "timeout": 600,
     },
     "crash-rejoin-hp": {
         "about": "after the guest's game crashes and it joins again, the host's hit still reaches "

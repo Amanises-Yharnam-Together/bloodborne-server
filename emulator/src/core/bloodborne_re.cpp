@@ -5728,7 +5728,9 @@ std::filesystem::path GuestResumeFile() {
            fmt::format("bloodborne_party_resume_slot{}.txt", character_slot.load());
 }
 
-void TeleportLocalPlayer(const LampPosition& at) {
+// `heading` (radians about the vertical axis) goes in as the rotation's y; whether the player
+// turns to it shows in the snapshot's heading.
+void TeleportLocalPlayer(const LampPosition& at, float heading = 0.0f) {
     const u64 player = GetLocalPlayer();
     const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
     const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
@@ -5736,7 +5738,7 @@ void TeleportLocalPlayer(const LampPosition& at) {
         return;
     }
     alignas(16) std::array<float, 4> position{at[0], at[1], at[2], 1.0f};
-    alignas(16) std::array<float, 4> rotation{};
+    alignas(16) std::array<float, 4> rotation{0.0f, heading, 0.0f, 0.0f};
     using Teleport = void PS4_SYSV_ABI (*)(u64 character, const float* position,
                                            const float* rotation, s32 mode);
     reinterpret_cast<Teleport>(teleport)(player, position.data(), rotation.data(), 1);
@@ -8243,10 +8245,13 @@ void LogAutoplaySnapshot() {
             const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
             if (distance < 30.0f) {
                 close_by.emplace_back(
-                    distance, fmt::format("{:#x} hp {}/{} dead {:#x} at {:.1f} m",
-                                          ReadValue<u32>(character, 0x08),
-                                          ReadValue<s32>(data, 0xF8), ReadValue<s32>(data, 0xFC),
-                                          ReadValue<u8>(character, 0x1E3), distance));
+                    distance,
+                    fmt::format("{:#x} hp {}/{} dead {:#x} at {:.1f} m ({:.1f}, {:.1f}, {:.1f})",
+                                ReadValue<u32>(character, 0x08), ReadValue<s32>(data, 0xF8),
+                                ReadValue<s32>(data, 0xFC), ReadValue<u8>(character, 0x1E3),
+                                distance, ReadValue<float>(physics, 0x1E0),
+                                ReadValue<float>(physics, 0x1E4),
+                                ReadValue<float>(physics, 0x1E8)));
             }
         });
     }
@@ -8415,7 +8420,7 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
                  autoplay_marked.load(), ReadValue<s32>(found->data, 0xF8), found->distance);
         return true;
     }
-    // approach <target> [<dx> [<dz>]]: stand there, beside it.
+    // approach <target> [<dx> [<dz> [<heading>]]]: stand there, beside it, turned to <heading>.
     if (verb == "approach") {
         const auto target = ParseAutoplayTarget(arg(0));
         const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
@@ -8427,7 +8432,8 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         }
         TeleportLocalPlayer({ReadValue<float>(physics, 0x1E0) + static_cast<float>(number(1, 1.5)),
                              ReadValue<float>(physics, 0x1E4) + 0.2f,
-                             ReadValue<float>(physics, 0x1E8) + static_cast<float>(number(2, 0))});
+                             ReadValue<float>(physics, 0x1E8) + static_cast<float>(number(2, 0))},
+                            static_cast<float>(number(3, 0)));
         return true;
     }
     // attack <target> [<timeout>]: one HP left, then light attacks from each side in turn until
@@ -8478,7 +8484,8 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
     }
     if (verb == "teleport") {
         TeleportLocalPlayer({static_cast<float>(number(0, 0)), static_cast<float>(number(1, 0)),
-                             static_cast<float>(number(2, 0))});
+                             static_cast<float>(number(2, 0))},
+                            static_cast<float>(number(3, 0)));
         return true;
     }
     // pickup [<meters>] [<timeout>]: onto the nearest usable map item within reach (30 m), then
