@@ -33,7 +33,8 @@ PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).r
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 DATA_DIR = Path(os.environ.get('BB_DATA_DIR', PORT_DIR))
 # Co-op test build: its own settings, and no updates (a public release would replace it).
-COOP_TEST = False
+# This repository's build carries the seamless co-op, which upstream releases don't.
+COOP_TEST = True
 CONFIG_DIR = Path(os.environ.get('APPDATA', Path.home())) / ('bbport-launcher-coop' if COOP_TEST else 'bbport-launcher')
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
 PATCH_VERSION = '01.09'
@@ -1339,6 +1340,12 @@ class Launcher:
     # ---- updates -------------------------------------------------------------------------------
     def check_update(self, manual=False):
         """Helper thread: asks GitHub for the newest release and offers it when it is newer."""
+        if COOP_TEST:  # a release would replace this build with one the other players don't run
+            if manual:
+                self.ui_calls.put(lambda: self.messagebox.showinfo('Bloodborne', _(
+                    'This is a co-op test build: updates come with the co-op kit, not from GitHub.',
+                    'Это тестовая сборка для кооператива: обновления приходят с комплектом, а не с GitHub.')))
+            return
         try:
             version, url, page = latest_release()
         except (OSError, ValueError, KeyError) as failure:
