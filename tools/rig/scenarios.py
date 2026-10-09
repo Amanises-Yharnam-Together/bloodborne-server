@@ -183,9 +183,12 @@ SCENARIOS = {
             "guest": [START, "godmode", "wait-session 2 300", "wait 90", "snapshot",
                       "expect-session 2"],
         },
+        # Before the fight nothing hides Gascoigne; once the host kills him the guest sees him die
+        # in the session and posts that, which is fine.
         "forbid": {
-            "host": SESSION_HOLDS + [r"hid \d+ enemies a member killed"],
-            "guest": SESSION_HOLDS + [r"kill board gets [^\n]*0x100140(9c|9e) "],
+            "host": SESSION_HOLDS + [r"(?s)hid \d+ enemies a member killed.*autoplay: kill "
+                                     r"0x1001409c"],
+            "guest": SESSION_HOLDS,
         },
         "timeout": 720,
     },
