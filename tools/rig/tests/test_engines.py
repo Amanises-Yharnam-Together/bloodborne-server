@@ -188,6 +188,18 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(env["SHADPS4_BLOODBORNE_AUTOPLAY"], str(script))
         self.assertEqual(env["BB_SHADNET_NPID"], "rig_guest", "the port's own settings too")
 
+    def test_test_games_never_take_the_focus(self):
+        # Kaniel 2026-10-09: test games must run in the background, not pull his window away.
+        for engine in ("emulator", "port"):
+            run_scenario.use_engine(engine)
+            env = run_scenario.game_environment("host", None, "rig:x")
+            self.assertEqual(env["SDL_WINDOW_ACTIVATE_WHEN_SHOWN"], "0", engine)
+            self.assertEqual(env["SDL_WINDOW_ACTIVATE_WHEN_RAISED"], "0", engine)
+        options = run_scenario.background_window_options()
+        if sys.platform == "win32":
+            self.assertEqual(options["startupinfo"].wShowWindow, 4)  # SW_SHOWNOACTIVATE
+            self.assertTrue(options["creationflags"] & 0x08000000)  # CREATE_NO_WINDOW
+
     def test_a_boot_check_plays_nothing_and_meets_no_one(self):
         env = run_scenario.game_environment("host", None, "smoke:boot")
         self.assertNotIn("SHADPS4_BLOODBORNE_AUTOPLAY", env)

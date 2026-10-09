@@ -306,7 +306,22 @@ def game_environment(role: str, script: pathlib.Path | None, party: str) -> dict
     if script is not None:
         env["SHADPS4_BLOODBORNE_AUTOPLAY"] = str(script)
     env.update(ENGINE.environment(role))
+    # In the background: the games' windows (SDL, both engines) open and come up without taking
+    # the focus from whatever the person at the PC is doing.
+    env["SDL_WINDOW_ACTIVATE_WHEN_SHOWN"] = "0"
+    env["SDL_WINDOW_ACTIVATE_WHEN_RAISED"] = "0"
     return env
+
+
+def background_window_options() -> dict:
+    """Popen options for a game started in the background: no console window of its own, and
+    its first window shown without being activated."""
+    if os.name != "nt":
+        return {}
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = 4  # SW_SHOWNOACTIVATE
+    return {"startupinfo": startup, "creationflags": subprocess.CREATE_NO_WINDOW}
 
 
 def set_aside(path: pathlib.Path):
@@ -331,13 +346,15 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters") -> s
     env = game_environment(role, script_path, party)
     if ENGINE.name == "emulator":
         return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                **background_window_options())
     console = console_path(role)
     set_aside(console)
     console.parent.mkdir(parents=True, exist_ok=True)
     with open(console, "wb") as output:  # the game keeps its own handle
         return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
-                                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
+                                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                                **background_window_options())
 
 
 def stop_game(game: subprocess.Popen):
