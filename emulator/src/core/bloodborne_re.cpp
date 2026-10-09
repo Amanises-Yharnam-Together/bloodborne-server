@@ -5205,6 +5205,7 @@ void SetPartyWorldChanges(bool sharing) {
 // on a client. Experiment: a guest alone sets the word of the characters around it to 0, so they
 // get their AI controller, and puts the old words back once another member is on its map.
 std::unordered_map<u64, u16> lone_guest_ownership; // word address -> original value
+std::unordered_map<u64, u64> lone_guest_character; // word address -> its character
 
 // In a party session with another member on another map (the party's map board, fresh): the
 // game shares a kill's echoes only with the members on the killer's map.
@@ -5261,10 +5262,22 @@ void GrantPartyEchoes() {
     }
 }
 
+// When this member took each character over or handed it back (see EnemyOwnerChangeSettles);
+// the game thread only.
+std::unordered_map<u64, s64> enemy_owner_changed_ms;
+
+s64 SteadyMilliseconds() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
 void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     static u32 claimed_map = 0;
     if (map != claimed_map) {
         lone_guest_ownership.clear(); // the old map's characters are gone
+        lone_guest_character.clear();
+        enemy_owner_changed_ms.clear();
         claimed_map = map;
     }
     // Not only alone: two guests on a map the host is not on both run its enemies, each in its
@@ -5277,11 +5290,16 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
                 WriteValue(word, 0, original);
                 ++handed_back;
             }
+            if (const auto character = lone_guest_character.find(word);
+                character != lone_guest_character.end()) {
+                enemy_owner_changed_ms[character->second] = SteadyMilliseconds();
+            }
         }
         if (!lone_guest_ownership.empty()) {
             LOG_INFO(Debug, "Bloodborne party: guest no longer alone; handed back {} enemies",
                      handed_back);
             lone_guest_ownership.clear();
+            lone_guest_character.clear();
         }
         return;
     }
@@ -5304,6 +5322,8 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
             return;
         }
         lone_guest_ownership.try_emplace(word, value);
+        lone_guest_character[word] = character;
+        enemy_owner_changed_ms[character] = SteadyMilliseconds();
         WriteValue(word, 0, u16{0});
         ++claimed;
     });
@@ -5406,6 +5426,14 @@ void KeepEnemyDeathsInStep(bool sharing) {
             pointers.push_back(character);
         }
     });
+    const s64 now_ms = SteadyMilliseconds();
+    const s64 settle_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(EnemyOwnerChangeSettles).count();
+    for (size_t index = 0; index < characters.size(); ++index) {
+        const auto changed = enemy_owner_changed_ms.find(pointers[index]);
+        characters[index].settling =
+            changed != enemy_owner_changed_ms.end() && now_ms - changed->second < settle_ms;
+    }
     const auto changes = visit_kills.Observe(visit, characters);
     ShareEnemyHp(map, visit, pointers);
     if (!changes.empty()) {
@@ -5437,7 +5465,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
     size_t newly_hidden = 0;
     for (size_t index = 0; index < pointers.size(); ++index) {
         const u64 character = pointers[index];
-        const auto [handle, hp, instance] = characters[index];
+        const u32 handle = characters[index].handle;
+        const s32 hp = characters[index].hp;
         const auto it = hidden.find(character);
         if (it == hidden.end() && hp > 0 && others.contains(handle) &&
             ReadValue<u8>(character, 0x28) == 0 &&

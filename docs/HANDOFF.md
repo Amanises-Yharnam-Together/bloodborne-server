@@ -385,7 +385,7 @@ Kaniel's ask: "you should be able to test every change yourself".
 - Memory: a rig game commits about 12.3 GB (its 8.25 GB SEC_COMMIT backing, address_space.cpp,
   then Vulkan); the PC's commit limit is 82.4 GB, and with "NVIDIA Overlay.exe" holding 22.7 GB
   of GPU memory (grown since the day before) only one game fit, so the second one died at boot
-  ("Insufficient system resources"). The runner now checks the free commit first (13 GB a game)
+  ("Insufficient system resources"). The runner now checks the free commit first (12.5 GB a game)
   and says so, and a game that exits without a crash report counts as a crash (one retry).
 - Open: `waiting_to_meet` (GuestApart): a guest apart from its own trip or a resume does not
   ring until the host is on its map. That predates join-in-place and goes against "join

@@ -45,7 +45,7 @@ RUNS = RIG / "runs"
 RUNS_KEPT = 20
 # What one rig game commits (its 8.25 GB backing for the PS4's memory, then Vulkan and the rest):
 # measured 12.3 GB. Windows refuses a game that does not fit ("Insufficient system resources").
-COMMIT_PER_GAME_GB = 13
+COMMIT_PER_GAME_GB = 12.5
 
 # Each role's game: its folder under the rig (with its own user dir, save and account) and P2P port.
 ROLES = {

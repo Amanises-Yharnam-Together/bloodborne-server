@@ -1162,6 +1162,26 @@ TEST(BloodborneSharedKills, ASummonIntoTheHostsWorldKeepsTheGuestsVisit) {
 // visit goes on: a reload in a session keeps it), and two enemies dead in the guest's save but
 // alive in the host's world a moment before were posted as kills; the host hid 2 living
 // enemies. A kill is one character object going from alive to dead: a reload makes new ones.
+// The rig's dog test, with the kills named: when the host left for the Dream its guest took over
+// the map's enemies, and its own world (where it had killed Father Gascoigne, 0x1001409c and his
+// beast form 0x1001409e, dead flags 0x26) put him down on the spot; posted as kills, they hid the
+// host's living Gascoigne when the host came back. A death while a character settles after its
+// takeover or hand-back is the member's world state, not a kill: seen, not posted. Only that
+// character: a guest alone keeps taking over enemies as they load, and fights the others.
+TEST(BloodborneSharedKills, ATakeoverIsNoKill) {
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    using Seen = std::vector<SeenCharacter>;
+    EXPECT_EQ(kills.Observe(1, Seen{{0x1001409c, 2031, 0xA000}, {0x1001400b, 484, 0xB000}}),
+              Changes{});
+    EXPECT_EQ(kills.Observe(1, Seen{{0x1001409c, 0, 0xA000, true}, {0x1001400b, 0, 0xB000}}),
+              (Changes{{0x1001400b, true}}))
+        << "Gascoigne settling after his takeover; the other one killed meanwhile";
+    EXPECT_EQ(kills.Observe(1, Seen{{0x1001409c, 0, 0xA000}, {0x1001400b, 0, 0xB000}}), Changes{})
+        << "still dead once settled: not a kill either";
+    EXPECT_GT(EnemyOwnerChangeSettles, std::chrono::seconds{0});
+}
+
 TEST(BloodborneSharedKills, AWorldThatLoadsIsNoKill) {
     VisitKills kills;
     using Changes = std::vector<std::pair<s32, bool>>;

@@ -37,6 +37,9 @@ START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
 # The session must hold: a game that leaves the room (LeaveRoom) broke it.
 SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
+# A member's game died: the others' games close the room it was in (and open a new one for its
+# return), which check_party_log reports as leaving the session outside a trip.
+CRASH_CLEANUP = [r"left the session outside a trip"]
 
 
 def only_kill(handle: str) -> list[str]:
@@ -278,6 +281,7 @@ SCENARIOS = {
                       "snapshot", f"expect-map {CENTRAL_YHARNAM}", "wait-session 2 420", "wait 10",
                       "snapshot", "expect-session 2"],
         },
+        "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
     "guest-crash": {
@@ -291,6 +295,7 @@ SCENARIOS = {
                       [START, "godmode", "wait-session 2 420", "wait 10", "snapshot",
                        "expect-session 2"]],
         },
+        "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
     "resume": {
@@ -306,6 +311,7 @@ SCENARIOS = {
         },
         "expect": {"guest": [r"guest resumed at \(-21\d(\.\d+)?, -5\d(\.\d+)?, "
                              r"17\d(\.\d+)?\) on map 0x18010000"]},
+        "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
     "crash-apart": {
@@ -320,6 +326,7 @@ SCENARIOS = {
                       ["godmode", f"wait-map {CATHEDRAL_WARD} 180", "wait-session 2 420",
                        "wait 10", "snapshot", "expect-session 2", f"expect-map {CATHEDRAL_WARD}"]],
         },
+        "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
     "join3": {

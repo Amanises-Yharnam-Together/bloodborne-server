@@ -1002,12 +1002,13 @@ std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
         seen.clear();
         current = visit;
     }
-    for (const auto& [handle, now, instance] : characters) {
+    for (const auto& [handle, now, instance, settling] : characters) {
         const auto [it, added] = seen.try_emplace(handle, Seen{now, instance});
         // The same object seen alive, now dead: a world that loaded brings new objects, some
-        // dead already (in a save that killed them for good).
-        if (!added && it->second.instance == instance && it->second.hp > 0 && now <= 0 &&
-            std::ranges::find(killed, handle) == killed.end()) {
+        // dead already (in a save that killed them for good), and one that settles after a
+        // takeover puts such ones down where they stand.
+        if (!added && !settling && it->second.instance == instance && it->second.hp > 0 &&
+            now <= 0 && std::ranges::find(killed, handle) == killed.end()) {
             killed.push_back(handle);
             changes.emplace_back(static_cast<s32>(handle), true);
         }

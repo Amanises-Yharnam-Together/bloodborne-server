@@ -648,7 +648,13 @@ struct SeenCharacter {
     u32 handle = 0;
     s32 hp = 0;
     u64 instance = 0;
+    bool settling = false; // just taken over or handed back (see EnemyOwnerChangeSettles)
 };
+
+// How long a character's death is only seen, not posted, after this member took it over or
+// handed it back (ClaimEnemiesWhenAlone): its own world's state settles on it then (a boss it
+// killed for good goes down).
+constexpr auto EnemyOwnerChangeSettles = std::chrono::seconds{5};
 
 class VisitKills {
 public:
