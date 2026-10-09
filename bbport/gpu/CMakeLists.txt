@@ -321,6 +321,12 @@ if (WIN32)
     target_include_directories(memory-chunks-test PRIVATE .. ../src)
     target_link_libraries(memory-chunks-test PRIVATE onecore bcrypt -pthread)
     target_link_options(memory-chunks-test PRIVATE -Wl,--disable-high-entropy-va)
+    # Save data metadata replaced whole (rename over an existing file).
+    add_executable(savedata-replace-test EXCLUDE_FROM_ALL ../tests/test_savedata_replace.c ../src/compat_win.c)
+    set_target_properties(savedata-replace-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(savedata-replace-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(savedata-replace-test PRIVATE .. ../src)
+    target_link_libraries(savedata-replace-test PRIVATE bcrypt -pthread)
     # Whether the GPU imports the runtime's section views (the PC memory model's host import).
     # Needs a Vulkan device, so it is run by hand, not by build-bbport -Test.
     add_executable(host-import-test EXCLUDE_FROM_ALL ../tests/test_host_import_windows.c)
