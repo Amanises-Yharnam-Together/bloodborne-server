@@ -399,18 +399,31 @@ Kaniel's ask: "you should be able to test every change yourself".
     instance), and a guest taking over a map's enemies when the host left, put down enemies its
     own save had killed for good (Father Gascoigne, 0x1001409c/0x1001409e, dead flags 0x26), and
     the host hid its living Gascoigne. Deaths in the 5 s after a takeover or hand-back are not
-    kills (`EnemyOwnerChangeSettles`, per character).
+    kills (`EnemyOwnerChangeSettles`, per character), nor deaths in the 5 s after a load (many
+    flags at once) or after a guest starts or ends running the map alone (`world_changed_ms`,
+    `CharacterSettles`): the dog still posted Gascoigne, who was at 0 HP in the host's world, so
+    the takeover (living enemies only) never marked him, and the guest's own world put him down
+    the moment it took the map over.
+- **Boss progress stays separate** (Kaniel, 2026-10-09): bosses beaten together count for both;
+  one beaten before teaming up stays with whoever beat it (no union of boss flags). The kill
+  board is for ordinary enemies only: hiding a boss's body would leave the host without its
+  "defeated" flag, key and lamp. Scenario boss-refight: the host clears Gascoigne's flag
+  (12411800) and kills him with a guest whose save beat him; nothing may hide him before.
 - Rig-confirmed on 2026-10-09: boot, join (the guest keeps its max HP, no level sync 9200),
   trip, hp-apart, boss-kill (Cleric Beast), lamp-share, lone-guest, kill-apart, echoes-apart
   (+202 to the guest in the Ward, +202 to the host in Central Yharnam), host-death,
   guest-death, join-ward, join-apart, join-after-trip, host-crash, guest-crash, crash-apart,
   resume (the guest back at the spot it stood in the host's world), join3 (one bell summons
-  both guests), trip3 (the host re-creates only the guest on its map, then the second guest).
+  both guests), trip3 (the host re-creates only the guest on its map, then the second guest),
+  dog (the guest kills an enemy while the host is in the Dream; the host finds it dead and
+  nothing else hidden), boss-refight. The last build of the day (aab45f97, in both kits) re-ran
+  dog, boss-refight, kill-apart and join; the rest passed on that day's earlier builds.
 - Memory: a rig game commits about 12.3 GB (its 8.25 GB SEC_COMMIT backing, address_space.cpp,
   then Vulkan); the PC's commit limit is about 80 GB. Games that died in the GPU driver ("Device
   lost") seem to leave their memory held until a reboot (a clean kill gives it back). The runner
-  checks the free commit first (12.5 GB a game), and a game that exits without a crash report
-  counts as a crash (one retry).
+  checks the free commit first (12.5 GB a game), closes its games gently (taskkill, then /F
+  after 15 s), and a game that exits without a crash report counts as a crash (one retry). A
+  role's "crash" (a stage ending in done) is a hard kill, which leaves 0.2-0.4 GB each time.
 - Open: `waiting_to_meet` (GuestApart) still keeps a guest apart from ringing until the host is
   on its map after an in-session trip or a resume trip (the autoplay's own travel out of a
   session no longer marks a guest apart); with joins across maps working it could go.

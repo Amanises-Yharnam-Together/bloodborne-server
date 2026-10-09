@@ -354,6 +354,22 @@ SCENARIOS = {
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
+    "host-crash-apart": {
+        "about": "the host's game dies while the guest is apart from it (in the Ward); the guest "
+                 "stays there, rings from there, and they join again without meeting first",
+        "roles": {
+            "host": [[START, "godmode", "wait-session 2 300", "wait 60", "done"],
+                     [START, "godmode", "wait-session 2 420", "wait 20", "snapshot",
+                      "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"]],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10",
+                      f"travel {CATHEDRAL_WARD_LAMP}", "wait 15", "snapshot",
+                      f"expect-map {CATHEDRAL_WARD}", "wait-solo 180", "wait 10", "snapshot",
+                      f"expect-map {CATHEDRAL_WARD}", "wait-session 2 420", "wait 20",
+                      "snapshot", "expect-session 2", f"expect-map {CATHEDRAL_WARD}"],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 1080,
+    },
     "join3": {
         "about": "a party of three: both guests join the host (one bell summons both)",
         "roles": {
