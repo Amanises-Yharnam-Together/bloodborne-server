@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
 #include "common/logging/log.h"
 
@@ -38,7 +39,8 @@ static bool EndsWith(const std::string& text, const std::string& suffix) {
 
 int main() {
     const auto folder = std::filesystem::temp_directory_path() / "bbport-log-file-test";
-    std::filesystem::remove_all(folder);
+    std::error_code ignored; // the log keeps its file open until exit: Windows can't remove it
+    std::filesystem::remove_all(folder, ignored);
     const auto path = folder / "log" / "shad_log.txt"; // the folder is made for it
     SetVariable("BB_LOG_FILE", path.string());
     SetVariable("BB_LOG_LEVEL", "info");
@@ -66,7 +68,7 @@ int main() {
         CHECK(EndsWith(lines[2], " lambda: from a lambda"));
     }
     file.close();
-    std::filesystem::remove_all(folder);
+    std::filesystem::remove_all(folder, ignored);
 
     if (failures != 0) {
         std::fprintf(stderr, "log file: %d check(s) failed\n", failures);
