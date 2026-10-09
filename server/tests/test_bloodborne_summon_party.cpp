@@ -182,6 +182,32 @@ int main() {
           Broker::State::Delivered);
   }
 
+  // A party of three: once the first guest has joined, the host's search must
+  // not offer that guest's sign again, or the host never takes the second
+  // guest's (port rig 2026-10-09: the second guest kept its sign up for
+  // minutes).
+  {
+    Broker::Options options;
+    options.seamlessCoop = true;
+    Broker broker(options);
+    const QByteArray first = Advertisement("guest-one", 100);
+    const QByteArray second = Advertisement("guest-two", 200);
+    const QByteArray removal =
+        R"({"MessageId":"SummonDataRemoveRequest","SessionId":"guest-one","UserId":100})";
+    const QByteArray claim = Claim("guest-one", 1, 100);
+    broker.Advertise(Parse(first), first, 10, partyA);
+    broker.Advertise(Parse(second), second, 10, partyA);
+    broker.Claim(Parse(claim), claim, 20, {}, partyA);
+    CHECK(broker.Advertise(Parse(first), first, 30, partyA).state ==
+          Broker::State::Delivered);
+    CHECK(broker.Consume(Parse(removal), 40).retained == 1); // joined
+    broker.Advertise(Parse(second), second, 45, partyA);
+    const QByteArray search = Search(1);
+    const auto found = broker.Search(Parse(search), 50, {}, partyA);
+    CHECK(found.size() == 1);
+    CHECK(Parse(found.front()).value("UserId").toInt() == 200);
+  }
+
   // A consume before delivery is the cross-map handoff, not a join: the claim
   // must survive it so the guest still receives it at the destination.
   {

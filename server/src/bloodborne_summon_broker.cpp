@@ -463,7 +463,8 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
             candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
                                                        it->rawAdvertisement, it->advertisement,
                                                        request, anywhereSummons)});
-        } else if (m_seamlessCoop && IsSeamlessActiveState(it->state) && requester >= 0 &&
+        } else if (m_seamlessCoop && IsSeamlessActiveState(it->state) && !it->joined &&
+                   requester >= 0 &&
                    Integer(it->claim, QStringLiteral("UserId"), -2) == requester &&
                    MatchesSearch(request, it->advertisement, anywhereSummons)) {
             candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
