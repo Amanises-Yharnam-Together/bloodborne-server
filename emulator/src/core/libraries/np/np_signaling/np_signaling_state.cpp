@@ -1207,17 +1207,18 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& p
             }
         }
 
-        // A new activation for a connection both sides closed (see np_signaling_reuse.h): the
+        // A new activation for a connection this game closed (see np_signaling_reuse.h): the
         // lingering one ends now and the request gets a new answerer connection below.
         if (kind == ControlKind::ActivationRequest && conn_id != 0) {
             const ConnectionInfo& old = g_connections[conn_id];
             if (LingeringConnectionIsFinished(old.state == ConnState::Established,
                                               old.deactivate_lingering, old.peer_deactivated,
                                               old.dead_fired)) {
-                LOG_INFO(Lib_NpSignaling,
-                         "Control: ActivationRequest from '{}' after both closed connection {}; "
-                         "starting a new one",
-                         from_id, conn_id);
+                LOG_INFO(
+                    Lib_NpSignaling,
+                    "Control: ActivationRequest from '{}' after this game closed connection {}; "
+                    "starting a new one",
+                    from_id, conn_id);
                 dead_conn = conn_id;
                 conn_id = 0;
             }

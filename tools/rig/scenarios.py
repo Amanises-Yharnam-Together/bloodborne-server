@@ -27,6 +27,7 @@ CENTRAL_YHARNAM_LAMP = 2412950  # the first lamp, where the rig's characters sta
 CATHEDRAL_WARD = "0x18000000"
 CATHEDRAL_WARD_LAMP = 2402950
 ENEMY = "0x1001400b"  # 484 HP, 17 m from the lamp (farther ones are not awake)
+AWAY_FROM_LAMP = "-215.0 -54.5 178.0"  # beside that enemy, 17 m from the lamp
 WARD_ENEMY = "0x10010019"  # 211 HP, 7 m from the Cathedral Ward lamp (the nearest, 0x10010075,
 # has 999 HP and dies of nothing: an object, as Central Yharnam's 0x100140a0)
 CLERIC_BEAST = "0x1001409f"  # entity 2410800; its death runs event 12411700
@@ -293,23 +294,36 @@ SCENARIOS = {
         "timeout": 900,
     },
     "resume": {
-        "about": "a guest that quits apart from the host comes back where it was, not where its "
-                 "save put it, and joins the host from there",
+        "about": "a guest whose game dies in the host's world comes back where it was (its own "
+                 "save still has it at the lamp it joined from) and joins the host again",
         "roles": {
-            "host": [START, "godmode", "wait-session 2 300", "wait 60", "wait-solo 120",
-                     "wait-session 2 420", "wait 20", "snapshot"],
+            "host": [START, "godmode", "wait-session 2 300", "wait 40", "wait-solo 120",
+                     "wait-session 2 420", "wait 20", "snapshot", "expect-session 2"],
+            "guest": [[START, "godmode", "wait-session 2 300", "wait 10",
+                       f"teleport {AWAY_FROM_LAMP}", "wait 15", "snapshot", "done"],
+                      ["godmode", "wait-session 2 420", "wait 10", "snapshot",
+                       "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"]],
+        },
+        "expect": {"guest": [r"guest resumed at \(-21\d(\.\d+)?, -5\d(\.\d+)?, "
+                             r"17\d(\.\d+)?\) on map 0x18010000"]},
+        "timeout": 900,
+    },
+    "crash-apart": {
+        "about": "a guest's game dies while it is apart from the host (in the Ward); the host "
+                 "stays in its world (it once went to the title screen) and they join again",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 40", "wait-solo 120",
+                     "wait 30", "snapshot", f"expect-map {CENTRAL_YHARNAM}",
+                     "wait-session 2 420", "wait 20", "snapshot", "expect-session 2"],
             "guest": [[START, "godmode", "wait-session 2 300", "wait 10",
                        f"travel {CATHEDRAL_WARD_LAMP}", "wait 25", "snapshot", "done"],
-                      ["godmode", f"wait-map {CATHEDRAL_WARD} 180", "wait 15", "snapshot",
-                       f"expect-map {CATHEDRAL_WARD}", "wait-session 2 300", "wait 10",
-                       "snapshot", "expect-session 2", f"expect-map {CATHEDRAL_WARD}"]],
+                      ["godmode", f"wait-map {CATHEDRAL_WARD} 180", "wait-session 2 420",
+                       "wait 10", "snapshot", "expect-session 2", f"expect-map {CATHEDRAL_WARD}"]],
         },
-        "expect": {"guest": [r"guest resume[sd] .*0x18000000"]},
-        "timeout": 720,
+        "timeout": 900,
     },
     "join3": {
-        "about": "a party of three: the host rings again after the first guest and both guests "
-                 "join",
+        "about": "a party of three: both guests join the host (one bell summons both)",
         "roles": {
             "host": [START, "godmode", "wait-session 3 480", "wait 10", "snapshot",
                      "expect-session 3"],
@@ -318,8 +332,6 @@ SCENARIOS = {
             "guest2": [START, "godmode", "wait-session 3 480", "wait 10", "snapshot",
                        "expect-session 3"],
         },
-        "expect": {"host": [r"(?s)auto-rejoin started search effect=9000.*"
-                            r"auto-rejoin started search effect=9000"]},
         "timeout": 900,
     },
     "trip3": {

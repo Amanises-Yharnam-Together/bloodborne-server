@@ -794,10 +794,15 @@ TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
               (std::array<u8, 7>{0xC7, 0x43, 0x28, 0x00, 0x00, 0xF0, 0x41}));
 }
 
-// ...so a party member's sign goes up at once and is re-posted as often as the host searches.
-TEST(BloodborneSignTimers, PostsTheFirstSignAtOnceAndRepostsEveryFiveSeconds) {
+// ...so a party member's sign goes up at once and is re-posted every second. A guest only hears
+// of a summon (the host's claim) when it re-posts its sign, while the host's connection reaches
+// it at once, and its game drops a connection it cannot place after about 5 s: with a re-post
+// every 5 s, a claim that came just after one was heard too late (the rig's dog test: the claim
+// 73 ms after the guest's post, the guest's game closed the connection 5.2 s later, and the
+// delivered claim found nothing to join).
+TEST(BloodborneSignTimers, PostsTheFirstSignAtOnceAndRepostsEverySecond) {
     EXPECT_EQ(FirstSignPostDelaySeconds, 0.0f);
-    EXPECT_EQ(SignRepostSeconds, 5.0f);
+    EXPECT_EQ(SignRepostSeconds, 1.0f);
 }
 
 // 01.09 runs the event scripts' death flow natively (global_event.lua in eventcommon.luabnd is

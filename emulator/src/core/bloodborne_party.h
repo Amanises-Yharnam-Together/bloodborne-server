@@ -166,7 +166,7 @@ void ReviveDeadPartyHost(const GhostDeathCalls& calls);
 // The sign poster's timers (seconds, a float at +0x28 of the sign object): 01.09 waits 5 s
 // before a new sign's first post and 30 s between re-posts, ignoring ss.info's interval.
 constexpr float FirstSignPostDelaySeconds = 0.0f;
-constexpr float SignRepostSeconds = 5.0f;
+constexpr float SignRepostSeconds = 1.0f;
 
 // `mov dword ptr [<reg> + 0x28], <seconds>` with the ModRM byte of the game's own store.
 std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds);

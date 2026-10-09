@@ -3447,15 +3447,24 @@ void ParkEnemyWatch();
 
 std::atomic<u64> party_trips_started{0}; // ends the visit of KeepEnemyDeathsInStep
 
-bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot*) {
+void LogGameCallChainAt(const char* what, u64 rsp);
+
+bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot* registers) {
     if (InPartySession()) {
         ++party_trips_started;
-        std::scoped_lock lock{party_trip_mutex};
-        party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap(), GetLocalPlayer());
+        {
+            std::scoped_lock lock{party_trip_mutex};
+            party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap(), GetLocalPlayer());
+        }
         SaveRemoteJoinTasks();
         effects_before_trip = LocalEffects();
         ParkEnemyWatch();
         LOG_INFO(Debug, "Bloodborne party trip started map={:#x}", GetCurrentPackedMap());
+        // Who moves the player (a lamp, a death, a time-of-day cutscene, or something else: the
+        // rig's host left for the title when its guest's game died apart from it).
+        if (registers != nullptr) {
+            LogGameCallChainAt("party trip", registers->rsp);
+        }
     }
     return false;
 }
@@ -6062,11 +6071,19 @@ void ReviveGuestAfterGhostDeath() {
 // guest stays where it is instead while the session goes on; with nobody left (the host
 // crashed) it goes home, as a phantom never rings again (GuestStaysWhenItsHostLeaves).
 std::vector<u64> OtherSessionMembers();
-bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64, const GuestRegisterSnapshot*) {
+bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64, const GuestRegisterSnapshot* registers) {
     const u64 player = GetLocalPlayer();
     if (!party_controller || player < 0x10000 ||
-        !HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) ||
-        ReadValue<s32>(player, 0x78) != WhiteGhostCharacterType) {
+        !HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead)) {
+        return false;
+    }
+    if (ReadValue<s32>(player, 0x78) != WhiteGhostCharacterType) {
+        // Not a phantom: the game's own reset and warp, logged (a host should never get here).
+        LOG_INFO(Debug, "Bloodborne leave limit for a player of type {} map={:#x}",
+                 ReadValue<s32>(player, 0x78), GetCurrentPackedMap());
+        if (registers != nullptr) {
+            LogGameCallChainAt("leave limit", registers->rsp);
+        }
         return false;
     }
     if (!GuestStaysWhenItsHostLeaves(OtherSessionMembers().size())) {

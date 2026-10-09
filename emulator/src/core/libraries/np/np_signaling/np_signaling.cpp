@@ -300,7 +300,7 @@ s32 PS4_SYSV_ABI sceNpSignalingActivateConnection(OrbisNpSignalingContextId ctxI
     }
     const std::string peer_online_id_str = OnlineIdToString(peer_online_id);
 
-    // A connection to this peer that both sides already closed ends now (DEAD, as its linger
+    // A connection to this peer that this game already closed ends now (DEAD, as its linger
     // would), so this activation starts a new one (see np_signaling_reuse.h).
     s32 finished = 0;
     {
@@ -318,7 +318,7 @@ s32 PS4_SYSV_ABI sceNpSignalingActivateConnection(OrbisNpSignalingContextId ctxI
     }
     if (finished != 0) {
         LOG_INFO(Lib_NpSignaling,
-                 "ctxId={} peer='{}': connection {} was closed by both; starting a new one", ctxId,
+                 "ctxId={} peer='{}': connection {} was closed here; starting a new one", ctxId,
                  peer_online_id_str, finished);
         CloseConnectionAndDispatchDead(finished, ORBIS_NP_SIGNALING_ERROR_TERMINATED_BY_MYSELF);
     }
