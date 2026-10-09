@@ -31,6 +31,17 @@ TEST(BloodborneLampRest, RecognisesTheFlagALampsTravelDialogSets) {
     // from (a guest levelling up was warped and kicked).
     EXPECT_FALSE(IsLampTravelFlag(72100100));
     EXPECT_FALSE(IsLampTravelFlag(72100107));
+    // Gilbert's talk at his window by the Central Yharnam lamp (t241319) sets 70000140, a flag of
+    // no map: a guest talking to him was sent to the Dream (Kaniel 2026-10-09, rig
+    // guest-talk-gilbert 2026-10-10).
+    EXPECT_FALSE(IsLampTravelFlag(70000140));
+    EXPECT_FALSE(IsLampTravelFlag(70000100));
+    // Nor 799001xx (no map 990), in the talks of many NPCs (t241190 and t241335 in Central
+    // Yharnam, t210140 in the Dream).
+    EXPECT_FALSE(IsLampTravelFlag(79900104));
+    EXPECT_FALSE(IsLampTravelFlag(79900111));
+    // A later area's lamp still is (m34: t340502 asks for 73400120).
+    EXPECT_TRUE(IsLampTravelFlag(73400120));
     // The Hunter's Dream headstones and anything else are not lamps.
     EXPECT_FALSE(IsLampTravelFlag(72100000));
     EXPECT_FALSE(IsLampTravelFlag(6707));

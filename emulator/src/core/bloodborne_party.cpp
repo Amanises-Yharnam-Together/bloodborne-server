@@ -216,11 +216,15 @@ std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds) {
 }
 
 bool IsLampTravelFlag(s32 flag) {
-    // 7MMM01LL: map code MMM (241 = m24_01), lamp LL. Not the Hunter's Dream (210): it has no
-    // lamp to travel from, and the Doll's dialog sets 721001xx.
+    // 7MMM01LL: map code MMM (241 = m24_01), lamp LL. Only the maps after the Hunter's Dream (210)
+    // up to the last ones (m36): the Dream has no lamp to travel from (the Doll's dialog sets
+    // 721001xx), and the flags of no map are the talks' own (Gilbert's talk sets 70000140, many
+    // NPCs 799001xx).
     constexpr s32 HuntersDreamMapCode = 210;
+    constexpr s32 PastTheLastMapCode = 400;
+    const s32 map_code = flag / 10000 % 1000;
     return flag >= 70000000 && flag < 80000000 && flag % 10000 / 100 == 1 &&
-           flag / 10000 % 1000 != HuntersDreamMapCode;
+           map_code > HuntersDreamMapCode && map_code < PastTheLastMapCode;
 }
 
 bool LampRestsEnabled(const char* setting) {
