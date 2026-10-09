@@ -5,6 +5,7 @@
 
 #include <array>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "common/types.h"
@@ -85,6 +86,11 @@ private:
     u64 keep_blocks = 0; ///< bbport: ring blocks never trimmed
     std::array<std::vector<LargeBuffer>, NUM_TYPES> large_caches;
     u64 frame = 0;
+    /// bbport: Request runs on the GPU thread and the draw preparation workers, FreeDeferred on
+    /// the deferred-operation thread, TickFrame on the presenter's: a ring growing in one while
+    /// another held a block moved the block under it, and a guest copy then flushed a dangling
+    /// buffer (NVIDIA: a null read in the driver on the recording thread under VRAM pressure).
+    mutable std::mutex mutex;
 };
 
 } // namespace Vulkan

@@ -59,6 +59,7 @@ StagingBufferPool::~StagingBufferPool() = default;
 
 StagingBufferRef StagingBufferPool::Request(u64 size, MemoryType type, u64 alignment,
                                             bool deferred) {
+    std::scoped_lock lock{mutex};
     Ring& ring = rings[u32(type)];
     if (deferred || size > BLOCK_SIZE) {
         return RequestLarge(size, type, deferred);
@@ -150,6 +151,7 @@ StagingBufferRef StagingBufferPool::RequestLarge(u64 size, MemoryType type, bool
 }
 
 void StagingBufferPool::FreeDeferred(const StagingBufferRef& ref) {
+    std::scoped_lock lock{mutex};
     auto& cache = large_caches[u32(ref.type)];
     const auto it = std::ranges::find_if(
         cache, [&](const LargeBuffer& entry) { return entry.buffer.get() == ref.buffer; });
@@ -160,6 +162,7 @@ void StagingBufferPool::FreeDeferred(const StagingBufferRef& ref) {
 }
 
 void StagingBufferPool::TickFrame() {
+    std::scoped_lock lock{mutex};
     ++frame;
     for (Ring& ring : rings) {
         TrimRing(ring);
