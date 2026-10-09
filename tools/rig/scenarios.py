@@ -13,7 +13,8 @@ travel <warp point> [<timeout>], ensure-map <map> <warp point> [<timeout>] (trav
 there already), hurt <nearest|handle> <hp>, kill <nearest|self|handle>,
 teleport <x> <y> <z>, approach <target> [<dx> [<dz>]], mark <target> (later "marked"),
 attack <target> [<timeout>] (1 HP left, then light attacks from each side until it dies),
-press <button> [<ms>], stick <x> <y> [<ms>], snapshot, log <text>,
+press <button> [<ms>], stick <x> <y> [<ms>], pickup [<meters>] [<timeout>] (onto the
+nearest usable map item, then X until it is gone), snapshot, log <text>,
 expect-hp <handle|self> <op> <value>, expect-session <n>, expect-map <map>,
 set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeout>],
 wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, for
@@ -422,21 +423,60 @@ SCENARIOS = {
         },
         "timeout": 1200,
     },
+    "guest-talk-at-lamp": {
+        "about": "a guest in the session presses X at the first Central Yharnam lamp, where "
+                 "Gilbert's window is (Kaniel 2026-10-09: the 'Talk' prompt took the guest to "
+                 "the Dream through the lamp); the talk log shows which script answered",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 80", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 15", "snapshot",
+                      "press cross 200", "wait 8", "press cross 200", "wait 8",
+                      "press circle 200", "wait 8", "snapshot", f"expect-map {CENTRAL_YHARNAM}",
+                      "expect-session 2"],
+        },
+        "timeout": 600,
+    },
+    "pickup": {
+        "about": "host and guest each pick up a map item with X in a session (the host could not "
+                 "pick up items in the Forbidden Woods, 2026-10-09)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", "pickup 60", "wait 5",
+                     "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 30", "pickup 60", "wait 5",
+                      "snapshot", "expect-session 2"],
+        },
+        "timeout": 600,
+    },
+    "pickup-after-crash": {
+        "about": "after the guest's game crashes the host still picks up map items with X, alone "
+                 "and once the guest is back (friend run 2026-10-09: no pickups after a crash)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-solo 120", "pickup 60",
+                     "wait-session 2 420", "wait 15", "pickup 60", "wait 5", "snapshot",
+                     "expect-session 2"],
+            "guest": [[START, "godmode", "wait-session 2 300", "wait 15", "done"],
+                      [START, "godmode", "wait-session 2 420", "wait 40", "pickup 60", "wait 5",
+                       "snapshot", "expect-session 2"]],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
     "crash-rejoin-hp": {
-        "about": "after the guest's game crashes and it joins again, HP still goes both ways: the "
-                 "host's hit reaches the guest's copy of an enemy and the guest's hit the host's "
+        "about": "after the guest's game crashes and it joins again, the host's hit still reaches "
+                 "the guest's copy of an enemy "
                  "(friend run 2026-10-09: HP bars apart after a crash)",
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait-solo 120",
                      "wait-session 2 420", "wait 20", f"hurt {ENEMY} 300", "wait 40", "snapshot",
-                     f"expect-hp {ENEMY} <= 150", "expect-session 2"],
+                     "expect-session 2"],
             "guest": [[START, "godmode", "wait-session 2 300", "wait 15", "done"],
                       [START, "godmode", "wait-session 2 420", "wait 35", "snapshot",
-                       f"expect-hp {ENEMY} <= 300", f"hurt {ENEMY} 150", "wait 15", "snapshot",
-                       "expect-session 2"]],
+                       f"expect-hp {ENEMY} <= 300", "expect-session 2"]],
         },
-        "expect": {"host": [r"lowered \d+ enemies to another member's HP"],
-                   "guest": [r"lowered \d+ enemies to another member's HP"]},
+        # In a session the host's game owns its enemies' HP and sends it to the guest itself (a
+        # guest writing its copy's HP is put back within seconds), so only the host's hit is
+        # checked here; the boards cover members apart (hp-apart).
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },

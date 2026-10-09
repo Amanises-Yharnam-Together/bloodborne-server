@@ -416,6 +416,18 @@ std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s3
     return of_kind == 1 ? only : std::nullopt;
 }
 
+std::vector<SavedJoinTask> MergeSavedJoinTasks(std::span<const SavedJoinTask> before,
+                                               std::span<const SavedJoinTask> found) {
+    std::vector<SavedJoinTask> merged{found.begin(), found.end()};
+    for (const SavedJoinTask& task : before) {
+        if (std::ranges::none_of(
+                found, [&](const SavedJoinTask& now) { return now.identity == task.identity; })) {
+            merged.push_back(task);
+        }
+    }
+    return merged;
+}
+
 std::string EncodeTrophyUpdate(std::string_view member, std::span<const s32> trophies) {
     std::string body{member};
     for (const s32 trophy : trophies) {

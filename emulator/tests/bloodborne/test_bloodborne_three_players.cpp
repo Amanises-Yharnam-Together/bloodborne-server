@@ -345,6 +345,31 @@ TEST(BloodborneThreePlayers, AGuestRebuildsTheOtherGuestAsAGuest) {
         << "nothing known: the one other member of a two-player party is the host";
 }
 
+TEST(BloodborneThreePlayers, AMemberAwayDuringATripKeepsItsSavedSlot) {
+    // Rig trip3 2026-10-10: the second guest went to the Dream, where only the host came; its
+    // trip back saved the host's task alone and dropped the first guest's slot, so back on the
+    // first guest's map that guest was rebuilt without a slot and never appeared.
+    const std::vector<SavedJoinTask> before{
+        {RemoteHostTask, 0xA0, 0, 0x4},
+        {RemoteGuestTask, 0xB0, 1, 0xC},
+        {LocalTaskKind(false), 0xC0, 2, 0xC},
+    };
+    const std::vector<SavedJoinTask> in_the_dream{
+        {RemoteHostTask, 0xA0, 0, 0x5},
+        {LocalTaskKind(false), 0xC0, 2, 0xD},
+    };
+    const auto merged = MergeSavedJoinTasks(before, in_the_dream);
+    ASSERT_EQ(merged.size(), 3u);
+    const auto guest = PickSavedJoinTask(merged, RemoteGuestTask, 0xB0);
+    ASSERT_TRUE(guest.has_value()) << "the first guest's slot from before";
+    EXPECT_EQ(merged[*guest].slot, 1);
+    const auto host = PickSavedJoinTask(merged, RemoteHostTask, 0xA0);
+    ASSERT_TRUE(host.has_value());
+    EXPECT_EQ(merged[*host].flags, 0x5) << "a member there now: its newest state";
+    EXPECT_EQ(MergeSavedJoinTasks(before, {}), before)
+        << "a trip from a map with no remote players keeps what was saved";
+}
+
 TEST(BloodborneThreePlayers, AnotherBlockOfTheSameAreaSharesItsEnemyHp) {
     // Friend run 2026-10-09: the guest joined in place in Central Yharnam (0x18010000) while the
     // host stood in Cathedral Ward (0x18000000), and no HP was shared for the rest of the game.

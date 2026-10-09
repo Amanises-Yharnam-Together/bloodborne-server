@@ -2367,6 +2367,17 @@ void PS4_SYSV_ABI LetPartyGuestsStartTalksLikeTheHost(u64, GuestRegisterSnapshot
                          : -1;
     if (lamp_rest_hooks_installed && TalksAsHost(InPartySession(), type)) {
         registers->rax = reinterpret_cast<u64>(host_like_talker.data());
+        // Diagnostics: which talk scripts start for a guest in range of them (the talk's ESD id
+        // at +0x10, e.g. 241000 for a Central Yharnam lamp): a guest's "Talk" at Gilbert's
+        // window took it through the lamp.
+        const u64 talk = registers->r15;
+        static std::atomic<s32> last_logged{};
+        static std::atomic<u32> logged{};
+        const s32 id = talk >= 0x10000 ? ReadValue<s32>(talk, 0x10) : 0;
+        if (id != 0 && last_logged.exchange(id) != id &&
+            logged.fetch_add(1, std::memory_order_relaxed) < 200) {
+            LOG_INFO(Debug, "Bloodborne party guest starts talk {} (type {})", id, type);
+        }
     }
 }
 
@@ -3672,8 +3683,8 @@ constexpr u64 MemberIdEqualOffset = 0x00CA1C70;
 // pointer is kept: copying the lock and comparing through it hung the game.
 std::vector<SavedJoinTask> saved_join_tasks;
 
-// Only replaced by a trip that starts with remote players: a trip from a map they were not on
-// (the Dream) keeps what was saved before.
+// Merged at each trip's start (MergeSavedJoinTasks): a trip from a map a member was not on (the
+// Dream) keeps that member's slot from before.
 void SaveRemoteJoinTasks() {
     std::vector<SavedJoinTask> found;
     ForEachJoinTask([&](u64 task) {
@@ -3688,10 +3699,9 @@ void SaveRemoteJoinTasks() {
         saved.flags = ReadValue<u8>(task, 0xED);
         found.push_back(saved);
     });
-    if (!found.empty()) {
-        saved_join_tasks = std::move(found);
-    }
-    LOG_INFO(Debug, "Bloodborne party trip: {} remote join tasks saved", saved_join_tasks.size());
+    saved_join_tasks = MergeSavedJoinTasks(saved_join_tasks, found);
+    LOG_INFO(Debug, "Bloodborne party trip: {} remote join tasks saved ({} found)",
+             saved_join_tasks.size(), found.size());
 }
 
 void RecreateRemotePlayers(std::span<const u64> only) {
@@ -4395,6 +4405,38 @@ std::optional<std::array<float, 3>> MapItemSearchPlayerPosition() {
     }
     return std::array<float, 3>{ReadValue<float>(node, 0x1E0), ReadValue<float>(node, 0x1E4),
                                 ReadValue<float>(node, 0x1E8)};
+}
+
+struct MapItemSpot {
+    u32 handle;
+    std::array<float, 3> at;
+};
+
+// The usable map items (MapItemMan's list +0x28, flag 0x40 at +0x48; see
+// LogItemButtonAndMapItems) with their distance from `from`, nearest first.
+std::vector<std::pair<float, MapItemSpot>> UsableMapItemsNear(const std::array<float, 3>& from) {
+    std::vector<std::pair<float, MapItemSpot>> found;
+    const u64 manager = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
+    if (manager < 0x10000 || !HasMemoryAccess(manager, 0x40, MemoryProt::CpuRead)) {
+        return found;
+    }
+    u64 item = ReadValue<u64>(manager, 0x28);
+    for (u32 count = 0;
+         item >= 0x10000 && count < 4096 && HasMemoryAccess(item, 0x58, MemoryProt::CpuRead);
+         ++count, item = ReadValue<u64>(item, 0)) {
+        if ((ReadValue<u16>(item, 0x48) & 0x40) == 0) {
+            continue;
+        }
+        const std::array<float, 3> at{ReadValue<float>(item, 0x30), ReadValue<float>(item, 0x34),
+                                      ReadValue<float>(item, 0x38)};
+        const float dx = at[0] - from[0];
+        const float dy = at[1] - from[1];
+        const float dz = at[2] - from[2];
+        found.push_back(
+            {std::sqrt(dx * dx + dy * dy + dz * dz), MapItemSpot{ReadValue<u32>(item, 0x20), at}});
+    }
+    std::ranges::sort(found, {}, &std::pair<float, MapItemSpot>::first);
+    return found;
 }
 
 void LogItemButtonAndMapItems() {
@@ -8072,6 +8114,7 @@ struct AutoplayRun {
     u32 attack_handle = 0;
     std::optional<u32> attack_placed; // the attack cycle the player was last put in place for
     s32 noted_max_hp = 0;             // note-max-hp: the player's max HP then
+    u32 pickup_handle = 0;            // pickup: the map item it went for
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -8437,6 +8480,45 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         TeleportLocalPlayer({static_cast<float>(number(0, 0)), static_cast<float>(number(1, 0)),
                              static_cast<float>(number(2, 0))});
         return true;
+    }
+    // pickup [<meters>] [<timeout>]: onto the nearest usable map item within reach (30 m), then
+    // X for 0.3 s of every 1.5 s until the item leaves the usable list: a real pickup through the
+    // item button (the host could not pick up items in the Forbidden Woods, 2026-10-09).
+    if (verb == "pickup") {
+        const auto position = MapItemSearchPlayerPosition();
+        const auto items =
+            position ? UsableMapItemsNear(*position) : std::vector<std::pair<float, MapItemSpot>>{};
+        if (!begun) {
+            if (items.empty() || items.front().first > number(0, 30)) {
+                failure = "no usable map item near";
+                return false;
+            }
+            const MapItemSpot& spot = items.front().second;
+            autoplay_run.pickup_handle = spot.handle;
+            TeleportLocalPlayer({spot.at[0], spot.at[1] + 0.2f, spot.at[2]});
+            LOG_INFO(Debug, "Bloodborne autoplay: picking up map item {:#x} {:.1f} m away",
+                     spot.handle, items.front().first);
+        }
+        const bool there = std::ranges::any_of(items, [](const auto& item) {
+            return item.second.handle == autoplay_run.pickup_handle;
+        });
+        if (!there) {
+            autoplay_buttons.store(0);
+            LOG_INFO(Debug, "Bloodborne autoplay: map item {:#x} picked up after {:.1f} s",
+                     autoplay_run.pickup_handle, elapsed);
+            return true;
+        }
+        autoplay_buttons.store(
+            elapsed > 1.0 && std::fmod(elapsed, 1.5) < 0.3 ? AutoplayButton("cross") : 0);
+        if (elapsed > number(1, 20)) {
+            autoplay_buttons.store(0);
+            failure = fmt::format(
+                "map item {:#x} still there after {:.0f} s (item button found {} not busy {} "
+                "pressed {})",
+                autoplay_run.pickup_handle, elapsed, item_button_counts[1].load(),
+                item_button_counts[2].load(), item_button_counts[3].load());
+        }
+        return false;
     }
     if (verb == "press" || verb == "stick") {
         u32 buttons = 0;

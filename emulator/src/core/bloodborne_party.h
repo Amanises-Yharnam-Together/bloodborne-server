@@ -335,10 +335,15 @@ struct SavedJoinTask {
     u64 identity = 0;
     u8 slot = 0;
     u8 flags = 0;
+    bool operator==(const SavedJoinTask&) const = default;
 };
 // The saved task a rebuilt one of `kind` takes: its member's own, else the only one of that kind.
 std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s32 kind,
                                         u64 identity);
+// What a trip's start keeps: the tasks found now, and the saved ones of members not on this map
+// (their slots are still theirs when they are met again).
+std::vector<SavedJoinTask> MergeSavedJoinTasks(std::span<const SavedJoinTask> before,
+                                               std::span<const SavedJoinTask> found);
 constexpr s32 InSessionStep = 6;
 bool ShouldRecreateAfterTrip(s32 kind, s32 step);
 s32 RemoteTaskKind(bool hosting);
