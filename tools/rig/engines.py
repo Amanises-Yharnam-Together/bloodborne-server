@@ -1,0 +1,232 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""The two builds the rig plays Bloodborne with: the emulator (shadPS4, the default) and the
+native port (Bloodborne PC, bbport/ in this repository, staged by tools/build-bbport.ps1).
+
+Each keeps its own rig folders, saves and baseline (the emulator's in rig/<role>, the port's in
+rig/port/<role>), plays on the same servers with the same accounts, and logs in shadPS4's format
+to user/log/shad_log.txt, which the rig's checks read (tools/re/check_party_log.py).
+"""
+import json
+import os
+import pathlib
+import shutil
+import sys
+
+BB_ROOT = pathlib.Path(os.environ.get("BB_ROOT", r"C:\bb"))
+SHADNET_PORT = 32313
+WEBAPI_PORT = SHADNET_PORT + 2
+BACKEND_PORT = 20453
+GAME_SERVER = "https://ss4.scej-network.jp:20443"
+# The rig's accounts on its shadNet (rig-setup.ps1, run_scenario.py --add-guest2).
+ACCOUNTS = {"host": "rig_host", "guest": "rig_guest", "guest2": "rig_guest2"}
+PASSWORD = "rig"
+# Every build's game process, the rig's own and anyone else's (a player's copy).
+GAME_PROCESSES = ("shadPS4.exe", "bb-probe.exe")
+
+# The port's settings on the rig (bbport.ini, read by the port and its scripts): as low as the
+# emulator rig's (rig-lowspec.ps1), so two or three games fit on one PC. Kept when present: a
+# tester may change them.
+LOW_SPEC_SETTINGS = """# The rig's low-spec profile (tools/rig/engines.py).
+upscaler=off
+preset=0
+output_res=1280x720
+live_resolution=0
+model_lod=2
+effect_chromatic_aberration=0
+effect_dof=0
+effect_motion_blur=0
+effect_ssao=0
+effect_game_aa=0
+effect_dynamic_shadows=0
+skip_intro=1
+tweak_no_camera_rotation=1
+"""
+
+
+class Emulator:
+    """shadPS4 (out/emulator/build, tools/build-emu.ps1) on the rig's low-spec game."""
+
+    name = "emulator"
+    # What one game commits (its 8.25 GB backing for the PS4's memory, then Vulkan and the rest):
+    # measured 12.3 GB. Windows refuses a game that does not fit ("Insufficient system resources").
+    commit_gb = 12.5
+
+    def __init__(self, root: pathlib.Path = BB_ROOT):
+        self.rig = root / "rig"
+        self.exe = root / "out" / "emulator" / "build" / "shadPS4.exe"
+        self.game = self.rig / "game" / "CUSA03173" / "eboot.bin"
+
+    def role_dir(self, role: str) -> pathlib.Path:
+        return self.rig / role
+
+    def user_dir(self, role: str) -> pathlib.Path:
+        return self.role_dir(role) / "user"
+
+    def saves(self, role: str) -> pathlib.Path:
+        return self.user_dir(role) / "home" / "1000" / "savedata"
+
+    def log_path(self, role: str) -> pathlib.Path:
+        return self.user_dir(role) / "log" / "shad_log.txt"
+
+    def command(self, role: str) -> list[str]:
+        return [str(self.exe), "-g", str(self.game)]
+
+    def environment(self, role: str) -> dict[str, str]:
+        return {}  # its settings are in the role's user folder (rig-setup.ps1)
+
+    def prepare(self, role: str):
+        pass
+
+    def missing(self) -> str | None:
+        """What the rig lacks to play with this build, if anything."""
+        if not self.exe.is_file():
+            return f"no emulator build at {self.exe} (tools/build-emu.ps1)"
+        if not self.game.is_file():
+            return f"no game at {self.game} (tools/rig-lowspec.ps1)"
+        return None
+
+
+class Port(Emulator):
+    """The native port, started through its launcher script (run.py prepares the game image)."""
+
+    name = "port"
+    # The PS4's memory (5056 MiB direct, 448 MiB flexible: runtime_memory.c) and the renderer;
+    # an estimate until measured on the rig.
+    commit_gb = 7.5
+
+    def __init__(self, root: pathlib.Path = BB_ROOT):
+        super().__init__(root)
+        self.home = root / "out" / "bbport"  # run.py, scripts, patches; the build in bin
+        self.exe = self.home / "bin" / "bb-probe.exe"
+        # The game with its 1.09 update over it (merge_game, run_scenario.py --setup).
+        self.game_dir = self.rig / "port" / "game" / "CUSA03173"
+        self.mods = self.rig / "game" / "CUSA03173-mods"  # Potatoborne (rig-lowspec.ps1)
+
+    def role_dir(self, role: str) -> pathlib.Path:
+        return self.rig / "port" / role
+
+    def saves(self, role: str) -> pathlib.Path:
+        return self.user_dir(role) / "savedata"
+
+    def command(self, role: str) -> list[str]:
+        return [sys.executable, str(self.home / "run.py")]
+
+    def environment(self, role: str) -> dict[str, str]:
+        return {
+            "BB_DATA_DIR": str(self.role_dir(role)),
+            "BB_USER_DIR": str(self.user_dir(role)),
+            "BB_GAME_DIR": str(self.game_dir),
+            "BB_PROBE": str(self.exe),
+            "BB_MODS_DIR": str(self.mods),
+            "BB_FPS": "30",
+            "BB_DMEM_MB": "5056",
+            "BB_LOG_FILE": str(self.log_path(role)),
+            "BB_LOG_LEVEL": "info",
+            "BB_ONLINE": "1",
+            "BB_UPNP": "0",
+            "BB_SHADNET_SERVER": f"127.0.0.1:{SHADNET_PORT}",
+            "BB_SHADNET_WEBAPI": f"http://127.0.0.1:{WEBAPI_PORT}",
+            "BB_SHADNET_NPID": ACCOUNTS[role],
+            "BB_SHADNET_PASSWORD": PASSWORD,
+            "BB_USER_NAME": ACCOUNTS[role],
+        }
+
+    def missing(self) -> str | None:
+        if not self.exe.is_file() or not (self.home / "run.py").is_file():
+            return f"no port build at {self.home} (tools/build-bbport.ps1)"
+        if not (self.game_dir / "eboot.bin").is_file():
+            return (f"no game for the port at {self.game_dir} "
+                    "(tools/rig/run_scenario.py --engine port --setup)")
+        return None
+
+    def prepare(self, role: str):
+        """The role's settings, and its game server: the rig's backend (run.py uses
+        host_overrides.custom.json as it is)."""
+        self.user_dir(role).mkdir(parents=True, exist_ok=True)
+        settings = self.role_dir(role) / "bbport.ini"
+        if not settings.exists():
+            settings.write_text(LOW_SPEC_SETTINGS, encoding="utf-8", newline="\n")
+        overrides = {GAME_SERVER: f"http://127.0.0.1:{BACKEND_PORT}"}
+        (self.user_dir(role) / "host_overrides.custom.json").write_text(
+            json.dumps(overrides, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+
+ENGINES = {engine.name: engine for engine in (Emulator(), Port())}
+
+
+def link(path: pathlib.Path, target: pathlib.Path):
+    """`path` shows `target` without copying it: a junction for a folder (a symlink off Windows),
+    a hard link for a file, a copy when the file is on another drive."""
+    if target.is_dir():
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target.resolve()), str(path))
+        else:
+            path.symlink_to(target.resolve(), target_is_directory=True)
+        return
+    try:
+        os.link(target, path)
+    except OSError:
+        shutil.copy2(target, path)
+
+
+def is_link(path: pathlib.Path) -> bool:
+    return path.is_symlink() or getattr(os.path, "isjunction", lambda _: False)(path)
+
+
+def unlink(path: pathlib.Path):
+    """Removes a link itself (a junction or folder link is a folder to Windows)."""
+    if os.name == "nt" and path.is_dir():
+        os.rmdir(path)
+    else:
+        path.unlink()
+
+
+def remove_view(view: pathlib.Path):
+    """A game view made by merge_game, links and all, never what they show."""
+    if is_link(view):
+        unlink(view)
+        return
+    if not view.is_dir():
+        return
+    for entry in view.iterdir():
+        if is_link(entry):
+            unlink(entry)
+        elif entry.is_dir():
+            remove_view(entry)
+        else:
+            entry.unlink()  # a hard link (the file stays in the game) or a copy
+    view.rmdir()
+
+
+def merge_game(game: pathlib.Path, update: pathlib.Path, view: pathlib.Path):
+    """The game with its update over it, in `view`, made of links: the emulator reads a game's
+    "-patch" folder over the game itself, the port reads one folder. Neither is changed."""
+    remove_view(view)
+    view.mkdir(parents=True)
+    _merge(game, update if update.is_dir() else None, view)
+
+
+def _merge(game: pathlib.Path, update: pathlib.Path | None, view: pathlib.Path):
+    entries = {entry.name.casefold(): [entry, None] for entry in game.iterdir()}
+    for entry in update.iterdir() if update else ():
+        entries.setdefault(entry.name.casefold(), [None, None])[1] = entry
+    for own, newer in entries.values():
+        if newer is None:
+            link(view / own.name, own)
+        elif own is not None and own.is_dir() and newer.is_dir():
+            (view / own.name).mkdir()
+            _merge(own, newer, view / own.name)
+        else:
+            link(view / newer.name, newer)
+
+
+def copy_saves(emulator_saves: pathlib.Path, port_saves: pathlib.Path, user_id: int = 1):
+    """The emulator's saves (<title id>/<save folder>/) where the port keeps them:
+    <user id>/<title id>/<save folder>/ (bbport/src/runtime_savedata.c, user 1)."""
+    destination = port_saves / str(user_id)
+    for title in emulator_saves.iterdir():
+        if title.is_dir():
+            shutil.rmtree(destination / title.name, ignore_errors=True)
+            shutil.copytree(title, destination / title.name)

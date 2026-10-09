@@ -1,8 +1,8 @@
 ﻿# Local mirror of the upstream CI checks, per component of the monorepo.
-# Usage: ci-check.ps1 -Component emulator|server|backend|tools [-All] [-SkipBuild] [-Src <dir>]
+# Usage: ci-check.ps1 -Component emulator|server|backend|tools|bbport [-All] [-SkipBuild] [-Src <dir>]
 #   default lints only files changed vs. trunk(); -All lints every source file like a branch push.
 param(
-    [Parameter(Mandatory)][ValidateSet("emulator", "server", "backend", "tools")][string]$Component,
+    [Parameter(Mandatory)][ValidateSet("emulator", "server", "backend", "tools", "bbport")][string]$Component,
     [switch]$All,
     [switch]$SkipBuild,
     [string]$Src
@@ -24,6 +24,16 @@ if ($Component -eq "tools") {
         py -3.12 -m unittest discover -s $tests 2>&1 | Select-Object -Last 4
         if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: $tests"; exit 1 }
     }
+    Write-Host "CI CHECK PASSED"
+    exit 0
+}
+
+if ($Component -eq "bbport") {
+    # The native port (Bloodborne PC): upstream lints neither format nor licenses and runs no tests
+    # on Windows; its build (MSYS2 CLANG64) and the co-op tests (guest code hooks, the rig's log).
+    if ($SkipBuild) { Write-Host "CI CHECK PASSED (nothing to lint)"; exit 0 }
+    & "$PSScriptRoot\build-bbport.ps1" -Src $Src -Test
+    if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: bbport build or tests"; exit 1 }
     Write-Host "CI CHECK PASSED"
     exit 0
 }

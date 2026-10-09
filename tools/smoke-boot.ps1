@@ -2,12 +2,20 @@
 # seamless co-op patch and hook went into the running game (tools\re\check_party_log.py --boot).
 # Needs no player: the patches go in while the game boots. Refuses to run next to a running game.
 # Usage: smoke-boot.ps1 [-Role host|guest] [-Seconds 40] [-Exe <shadPS4.exe>] [-Game <eboot.bin>]
+#        smoke-boot.ps1 -Engine port [-Role host|guest] [-Seconds 40]   (the native port)
 param(
     [ValidateSet("host", "guest")][string]$Role = "host",
     [int]$Seconds = 40,
     [string]$Exe,
-    [string]$Game
+    [string]$Game,
+    [ValidateSet("emulator", "port")][string]$Engine = "emulator"
 )
+# The native port (Bloodborne PC) boots through the rig's runner, which knows its folders and
+# settings (tools\rig\engines.py).
+if ($Engine -eq "port") {
+    py -3.12 (Join-Path $PSScriptRoot "rig\run_scenario.py") --engine port --boot-check $Role --seconds $Seconds
+    exit $LASTEXITCODE
+}
 . "$PSScriptRoot\env.ps1"
 if (-not $Exe) { $Exe = Join-Path $env:BB_ROOT "out\emulator\build\shadPS4.exe" }
 if (-not $Game) { $Game = Join-Path $env:BB_ROOT "rig\game\CUSA03173\eboot.bin" }

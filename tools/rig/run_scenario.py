@@ -12,10 +12,15 @@ stay in rig/runs/<when>/<scenario>/ (the last RUNS_KEPT batches).
   py -3.12 tools/rig/run_scenario.py <scenario> [<scenario>...] [--keep-servers] [--list]
   py -3.12 tools/rig/run_scenario.py --save-baseline
   py -3.12 tools/rig/run_scenario.py --add-guest2   (a third game for parties of three)
+  py -3.12 tools/rig/run_scenario.py --boot-check host [--seconds 40]   (tools/smoke-boot.ps1)
 
 Every scenario starts from the same saves: --save-baseline keeps each role's save and party files
 (rig/<role>/baseline) and every run puts them back first, so one test's progress (a boss killed,
 a lamp lit, a remembered spot) never leaks into the next.
+
+--engine port plays with the native port (Bloodborne PC, tools/build-bbport.ps1) instead of the
+emulator, in rig/port/<role> (engines.py); --engine port --setup makes those folders from the
+emulator rig's (its game with the update, each role's baseline saves and party files).
 """
 import argparse
 import os
@@ -33,26 +38,29 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "re"))
 import check_party_log  # noqa: E402
+import engines  # noqa: E402
+from engines import BACKEND_PORT, BB_ROOT, SHADNET_PORT  # noqa: E402
 from scenarios import SCENARIOS  # noqa: E402
 
-BB_ROOT = pathlib.Path(os.environ.get("BB_ROOT", r"C:\bb"))
 RIG = BB_ROOT / "rig"
-EXE = BB_ROOT / "out" / "emulator" / "build" / "shadPS4.exe"
-GAME = RIG / "game" / "CUSA03173" / "eboot.bin"
-SHADNET_PORT = 32313
-BACKEND_PORT = 20453
 RUNS = RIG / "runs"
 RUNS_KEPT = 20
-# What one rig game commits (its 8.25 GB backing for the PS4's memory, then Vulkan and the rest):
-# measured 12.3 GB. Windows refuses a game that does not fit ("Insufficient system resources").
-COMMIT_PER_GAME_GB = 12.5
 
-# Each role's game: its folder under the rig (with its own user dir, save and account) and P2P port.
+# Each role's game: its P2P port and party role. Its folder (its own user dir, save and account)
+# is the build's (engines.py).
 ROLES = {
-    "host": {"dir": RIG / "host", "port": 51600, "role": "host"},
-    "guest": {"dir": RIG / "guest", "port": 51601, "role": "guest"},
-    "guest2": {"dir": RIG / "guest2", "port": 51602, "role": "guest"},
+    "host": {"port": 51600, "role": "host"},
+    "guest": {"port": 51601, "role": "guest"},
+    "guest2": {"port": 51602, "role": "guest"},
 }
+
+# The build the games run: the emulator unless --engine says otherwise.
+ENGINE = engines.ENGINES["emulator"]
+
+
+def use_engine(name: str):
+    global ENGINE
+    ENGINE = engines.ENGINES[name]
 
 DONE = re.compile(r"Bloodborne autoplay: done \((ok|failed)\)")
 IN_WORLD = "Bloodborne autoplay: in the world"
@@ -66,8 +74,8 @@ def port_open(port: int) -> bool:
 
 
 def split_games(listing: str, exe: pathlib.Path) -> tuple[list[int], list[int]]:
-    """The rig's games (the build's shadPS4.exe) and every other one (Kaniel's own copy), from
-    "<pid>\t<path>" lines."""
+    """The rig's games (the build's game executable) and every other one (Kaniel's own copy),
+    from "<pid>\t<path>" lines."""
     rig, others = [], []
     for line in listing.splitlines():
         pid, _, path = line.strip().partition("\t")
@@ -78,12 +86,14 @@ def split_games(listing: str, exe: pathlib.Path) -> tuple[list[int], list[int]]:
 
 
 def games() -> tuple[list[int], list[int]]:
+    """Every build's games: someone playing the emulator stops a port run too."""
+    names = " OR ".join(f"Name='{name}'" for name in engines.GAME_PROCESSES)
     listing = subprocess.run(
         ["powershell", "-NoProfile", "-Command",
-         "Get-CimInstance Win32_Process -Filter \"Name='shadPS4.exe'\" | "
+         f"Get-CimInstance Win32_Process -Filter \"{names}\" | "
          "ForEach-Object { \"$($_.ProcessId)`t$($_.ExecutablePath)\" }"],
         capture_output=True, text=True).stdout
-    return split_games(listing, EXE)
+    return split_games(listing, ENGINE.exe)
 
 
 def games_running() -> bool:
@@ -164,24 +174,25 @@ def prune_runs(runs: pathlib.Path, kept: int):
 
 
 def user_dir(role: str) -> pathlib.Path:
-    return ROLES[role]["dir"] / "user"
+    return ENGINE.user_dir(role)
 
 
-def save_baseline(role: str):
+def save_baseline(role: str, engine: engines.Emulator | None = None):
     """Keeps the role's save and party files (rig/<role>/baseline) for every later run."""
-    baseline = ROLES[role]["dir"] / "baseline"
+    engine = engine or ENGINE
+    baseline = engine.role_dir(role) / "baseline"
     if baseline.exists():
         shutil.rmtree(baseline)
-    shutil.copytree(user_dir(role) / "home" / "1000" / "savedata", baseline / "savedata")
-    for party_file in user_dir(role).glob("bloodborne_party_*.txt"):
+    shutil.copytree(engine.saves(role), baseline / "savedata")
+    for party_file in engine.user_dir(role).glob("bloodborne_party_*.txt"):
         shutil.copy2(party_file, baseline / party_file.name)
 
 
 def restore_baseline(role: str) -> bool:
-    baseline = ROLES[role]["dir"] / "baseline"
+    baseline = ENGINE.role_dir(role) / "baseline"
     if not baseline.is_dir():
         return False
-    saves = user_dir(role) / "home" / "1000" / "savedata"
+    saves = ENGINE.saves(role)
     shutil.rmtree(saves, ignore_errors=True)
     shutil.copytree(baseline / "savedata", saves)
     for party_file in user_dir(role).glob("bloodborne_party_*.txt"):
@@ -191,24 +202,51 @@ def restore_baseline(role: str) -> bool:
     return True
 
 
+def setup_port(emulator: engines.Emulator, port: engines.Port) -> list[str]:
+    """The port's rig folders, from the emulator rig's: the game with its update in one folder
+    (the port reads one), and each role's saves and party files (its baseline, else its current
+    ones) as the port's own baseline. A role the port has a folder for already stays as it is.
+    The roles made."""
+    game = emulator.game.parent
+    engines.merge_game(game, game.with_name(f"{game.name}-patch"), port.game_dir)
+    made = []
+    for role in ROLES:
+        if not emulator.user_dir(role).is_dir() or port.user_dir(role).exists():
+            continue
+        baseline = emulator.role_dir(role) / "baseline"
+        saves = baseline / "savedata" if baseline.is_dir() else emulator.saves(role)
+        party_files = baseline if baseline.is_dir() else emulator.user_dir(role)
+        port.saves(role).mkdir(parents=True)
+        if saves.is_dir():
+            engines.copy_saves(saves, port.saves(role))
+        for party_file in party_files.glob("bloodborne_party_*.txt"):
+            shutil.copy2(party_file, port.user_dir(role) / party_file.name)
+        port.prepare(role)
+        save_baseline(role, port)
+        made.append(role)
+    return made
+
+
 def add_guest2():
     """rig/guest2: the guest's folder (its save, settings, mods) with its own account
     rig_guest2, registered on the rig's shadNet."""
-    source = ROLES["guest"]["dir"] / "user"
-    target = ROLES["guest2"]["dir"] / "user"
+    source = user_dir("guest")
+    target = user_dir("guest2")
     if target.exists():
         print(f"{target} exists already")
     else:
         shutil.copytree(source, target, ignore=shutil.ignore_patterns("log", "captures"))
         (target / "log").mkdir()
-        users = (target / "users.json").read_text(encoding="utf-8")
-        users = users.replace('"shadnet_npid": "rig_guest"', '"shadnet_npid": "rig_guest2"')
-        users = users.replace('"user_name": "rig_guest"', '"user_name": "rig_guest2"')
-        (target / "users.json").write_text(users, encoding="utf-8", newline="\n")
+        users_file = target / "users.json"  # the emulator's account (the port's: engines.py)
+        if users_file.exists():
+            users = users_file.read_text(encoding="utf-8")
+            users = users.replace('"shadnet_npid": "rig_guest"', '"shadnet_npid": "rig_guest2"')
+            users = users.replace('"user_name": "rig_guest"', '"user_name": "rig_guest2"')
+            users_file.write_text(users, encoding="utf-8", newline="\n")
         print(f"made {target}")
-    baseline = ROLES["guest"]["dir"] / "baseline"
-    if baseline.is_dir() and not (ROLES["guest2"]["dir"] / "baseline").exists():
-        shutil.copytree(baseline, ROLES["guest2"]["dir"] / "baseline")  # starts where guest does
+    baseline = ENGINE.role_dir("guest") / "baseline"
+    if baseline.is_dir() and not (ENGINE.role_dir("guest2") / "baseline").exists():
+        shutil.copytree(baseline, ENGINE.role_dir("guest2") / "baseline")  # starts where guest does
         print("guest2: baseline copied from the guest's")
     start_servers()
     sample = RIG / "server" / "clientsample"
@@ -231,7 +269,13 @@ def server_is_current() -> bool:
 
 
 def log_path(role: str) -> pathlib.Path:
-    return ROLES[role]["dir"] / "user" / "log" / "shad_log.txt"
+    return ENGINE.log_path(role)
+
+
+def console_path(role: str) -> pathlib.Path:
+    """What the port prints (its loader and runtime) beside the log; the emulator prints nothing
+    the log has not."""
+    return ENGINE.user_dir(role) / "log" / "console.txt"
 
 
 def read_log(role: str) -> str:
@@ -247,34 +291,60 @@ def stages_of(script: list) -> list[list[str]]:
     return script if script and isinstance(script[0], list) else [script]
 
 
-def launch(role: str, script: list[str]) -> subprocess.Popen:
-    config = ROLES[role]
-    folder = config["dir"]
-    script_path = folder / "autoplay.txt"
-    script_path.write_text("\n".join(script) + "\n", encoding="utf-8", newline="\n")
-    log = log_path(role)
-    for _ in range(20):  # a game that just stopped may still hold it for a moment
-        try:
-            if log.exists():
-                log.replace(log.with_name("shad_log.prev.txt"))
-            break
-        except PermissionError:
-            time.sleep(0.5)
+def game_environment(role: str, script: pathlib.Path | None, party: str) -> dict[str, str]:
+    """A role's game's settings: co-op on in `party`, the trace on, the autoplay script if any,
+    and what the build needs besides."""
     env = dict(os.environ)
     env.update({
         "SHADPS4_BLOODBORNE_SEAMLESS_COOP": "1",
-        "SHADPS4_P2P_PORT": str(config["port"]),
-        "SHADPS4_BLOODBORNE_PARTY": "rig:hunters",
-        "SHADPS4_BLOODBORNE_PARTY_ROLE": config["role"],
+        "SHADPS4_P2P_PORT": str(ROLES[role]["port"]),
+        "SHADPS4_BLOODBORNE_PARTY": party,
+        "SHADPS4_BLOODBORNE_PARTY_ROLE": ROLES[role]["role"],
         "SHADPS4_BLOODBORNE_RE_TRACE": "1",
-        "SHADPS4_BLOODBORNE_AUTOPLAY": str(script_path),
     })
-    return subprocess.Popen([str(EXE), "-g", str(GAME)], cwd=folder, env=env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    env.pop("SHADPS4_BLOODBORNE_AUTOPLAY", None)
+    if script is not None:
+        env["SHADPS4_BLOODBORNE_AUTOPLAY"] = str(script)
+    env.update(ENGINE.environment(role))
+    return env
+
+
+def set_aside(path: pathlib.Path):
+    """The last game's file as <name>.prev<suffix>, for the next game's to start afresh."""
+    for _ in range(20):  # a game that just stopped may still hold it for a moment
+        try:
+            if path.exists():
+                path.replace(path.with_name(f"{path.stem}.prev{path.suffix}"))
+            return
+        except PermissionError:
+            time.sleep(0.5)
+
+
+def launch(role: str, script: list[str] | None, party: str = "rig:hunters") -> subprocess.Popen:
+    folder = ENGINE.role_dir(role)
+    script_path = None
+    if script is not None:
+        script_path = folder / "autoplay.txt"
+        script_path.write_text("\n".join(script) + "\n", encoding="utf-8", newline="\n")
+    set_aside(log_path(role))
+    ENGINE.prepare(role)
+    env = game_environment(role, script_path, party)
+    if ENGINE.name == "emulator":
+        return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    console = console_path(role)
+    set_aside(console)
+    console.parent.mkdir(parents=True, exist_ok=True)
+    with open(console, "wb") as output:  # the game keeps its own handle
+        return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
+                                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
 
 
 def stop_game(game: subprocess.Popen):
-    """One game, at once (as a crash would), and wait until it is gone."""
+    """One game, at once (as a crash would), and wait until it is gone: whatever it started
+    goes with it (the port's launcher starts the game itself)."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(game.pid)], capture_output=True)
     game.kill()
     try:
         game.wait(timeout=20)
@@ -284,7 +354,7 @@ def stop_game(game: subprocess.Popen):
 
 def new_crashes(role: str, since: float) -> list[str]:
     """The first lines of the crash reports a role's game wrote since `since`."""
-    folder = ROLES[role]["dir"] / "user" / "log"
+    folder = user_dir(role) / "log"
     reports = []
     for report in sorted(folder.glob("crash-*.txt")):
         if report.stat().st_mtime >= since:
@@ -296,12 +366,46 @@ def keep_logs(run_dir: pathlib.Path, roles: list[str], suffix: str = ""):
     """Each role's game log and script, next to the servers' logs."""
     run_dir.mkdir(parents=True, exist_ok=True)
     for role in roles:
+        script = ENGINE.role_dir(role) / "autoplay.txt"
         for source, kept in ((log_path(role), f"{role}{suffix}.log"),
-                             (ROLES[role]["dir"] / "autoplay.txt", f"{role}{suffix}-script.txt")):
+                             (console_path(role), f"{role}{suffix}-console.txt"),
+                             (script, f"{role}{suffix}-script.txt")):
             try:
                 shutil.copy2(source, run_dir / kept)
             except OSError:
                 pass
+
+
+def boot_check(role: str, seconds: int) -> int:
+    """The boot smoke test (tools/smoke-boot.ps1): the role's game alone, in a party of its own
+    so it never meets a real one, for `seconds`; every co-op patch and hook must be in by then
+    (check_party_log.py --boot). Needs no player and no server."""
+    if missing := ENGINE.missing():
+        print(missing)
+        return 2
+    if games_running():
+        print("A game is running; not starting another.")
+        return 2
+    started = time.time()
+    game = launch(role, None, party="smoke:boot")
+    while time.time() < started + seconds and game.poll() is None:
+        time.sleep(1)
+    exited = game.poll()
+    stop_game(game)
+    stop_games()
+    text = read_log(role)
+    print(f"{log_path(role)} (build {check_party_log.revision(text)})")
+    if exited is not None:
+        print(f"  the game ended by itself after {time.time() - started:.0f} s (code {exited}): "
+              f"{boot_failure(text) or 'see ' + str(console_path(role))}")
+    failures = check_party_log.check_boot(text)
+    for failure in failures:
+        print(f"  FAIL {failure}")
+    for warning in check_party_log.trace_warnings(text):
+        print(f"  warning (trace only) {warning}")
+    print("  boot: " + ("FAILED" if failures else
+                        f"ok, {len(check_party_log.BOOT_MARKERS)} parts in"))
+    return 1 if failures else 0
 
 
 def free_commit_gb() -> float:
@@ -347,9 +451,12 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     roles = list(scenario["roles"])
     run_dir = batch / (name if attempt == 1 else f"{name}-{attempt}")
     print(f"== {name}: {scenario.get('about', '')}")
+    if missing := ENGINE.missing():
+        print(f"  {missing}")
+        return False
     for role in roles:
-        if not (ROLES[role]["dir"] / "user").is_dir():
-            print(f"  {role}: no rig folder at {ROLES[role]['dir']}")
+        if not user_dir(role).is_dir():
+            print(f"  {role}: no rig folder at {ENGINE.role_dir(role)}")
             return False
     if games()[1]:
         print("  another game is running (someone is playing): not starting the rig's")
@@ -357,7 +464,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     for role in roles:
         if not scenario.get("no_baseline") and restore_baseline(role):
             print(f"  {role}: saves put back to the baseline")
-    need = COMMIT_PER_GAME_GB * len(roles)
+    need = ENGINE.commit_gb * len(roles)
     free = free_commit_gb()
     if free < need:
         print(f"  not enough memory for {len(roles)} games: {free:.1f} GB can be committed, "
@@ -458,7 +565,29 @@ def main(argv: list[str]) -> int:
                         help="keep every role's saves as the start of later runs")
     parser.add_argument("--add-guest2", action="store_true",
                         help="make the third game's rig folder and account")
+    parser.add_argument("--engine", choices=sorted(engines.ENGINES), default="emulator",
+                        help="the build the games run (default: the emulator)")
+    parser.add_argument("--setup", action="store_true",
+                        help="make the port's rig folders from the emulator rig's (--engine port)")
+    parser.add_argument("--boot-check", choices=sorted(ROLES), metavar="ROLE",
+                        help="boot the role's game alone and check that co-op went in")
+    parser.add_argument("--seconds", type=int, default=40,
+                        help="how long --boot-check lets the game boot (default 40)")
     args = parser.parse_args(argv)
+    use_engine(args.engine)
+    if args.setup:
+        if ENGINE.name != "port":
+            print("--setup makes the port's rig folders: --engine port --setup")
+            return 2
+        if games_running():
+            print("A game is running; its game folder may be in use.")
+            return 2
+        made = setup_port(engines.ENGINES["emulator"], ENGINE)
+        print(f"game for the port: {ENGINE.game_dir}")
+        print(f"made {', '.join(made)}" if made else "every role had a port folder already")
+        return 0
+    if args.boot_check:
+        return boot_check(args.boot_check, args.seconds)
     if args.add_guest2:
         add_guest2()
         return 0
@@ -466,8 +595,8 @@ def main(argv: list[str]) -> int:
         if games_running():
             print("A game is running; its saves may be half written.")
             return 2
-        for role, config in ROLES.items():
-            if (config["dir"] / "user").is_dir():
+        for role in ROLES:
+            if user_dir(role).is_dir():
                 save_baseline(role)
                 print(f"{role}: baseline saved")
         return 0
