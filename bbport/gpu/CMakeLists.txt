@@ -148,9 +148,8 @@ file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
 if (WIN32)
-    # Linux-only (mprotect/SIGTRAP hooks, memfd and dma-buf chunks, the PC memory model):
-    # shim/bbport_win_stubs.cpp answers their interfaces.
-    list(FILTER SHIM_SOURCES EXCLUDE REGEX "shim/bbport_(guest_hooks|free_check|gnm_hooks|guest_memory)\\.cpp$")
+    # Linux-only (mprotect/SIGTRAP hooks): shim/bbport_win_stubs.cpp answers their interfaces.
+    list(FILTER SHIM_SOURCES EXCLUDE REGEX "shim/bbport_(free_check|gnm_hooks)\\.cpp$")
 endif()
 # The layer's own modules (independent of the shadPS4 code): layer/.
 file(GLOB LAYER_SOURCES CONFIGURE_DEPENDS layer/*.cpp)
@@ -315,6 +314,25 @@ if (WIN32)
     target_compile_options(file-windows-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     target_include_directories(file-windows-test PRIVATE ../src)
     target_link_libraries(file-windows-test PRIVATE bcrypt -pthread)
+    # The runtime's direct memory chunks for the PC memory model (no GPU: a recording allocator).
+    add_executable(memory-chunks-test EXCLUDE_FROM_ALL ../tests/test_memory_chunks.c ../src/compat_win.c)
+    set_target_properties(memory-chunks-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(memory-chunks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(memory-chunks-test PRIVATE .. ../src)
+    target_link_libraries(memory-chunks-test PRIVATE onecore bcrypt -pthread)
+    target_link_options(memory-chunks-test PRIVATE -Wl,--disable-high-entropy-va)
+    # Save data metadata replaced whole (rename over an existing file).
+    add_executable(savedata-replace-test EXCLUDE_FROM_ALL ../tests/test_savedata_replace.c ../src/compat_win.c)
+    set_target_properties(savedata-replace-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(savedata-replace-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(savedata-replace-test PRIVATE .. ../src)
+    target_link_libraries(savedata-replace-test PRIVATE bcrypt -pthread)
+    # Whether the GPU imports the runtime's section views (the PC memory model's host import).
+    # Needs a Vulkan device, so it is run by hand, not by build-bbport -Test.
+    add_executable(host-import-test EXCLUDE_FROM_ALL ../tests/test_host_import_windows.c)
+    set_target_properties(host-import-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(host-import-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_link_libraries(host-import-test PRIVATE Vulkan::Vulkan onecore)
 endif()
 
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
@@ -339,6 +357,18 @@ add_executable(coop-hooks-test EXCLUDE_FROM_ALL ../tests/test_coop_hooks.cpp bbc
 target_include_directories(coop-hooks-test PRIVATE shim shadps4 third_party/xbyak ${BB_EMULATOR_SRC})
 target_compile_options(coop-hooks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_link_libraries(coop-hooks-test PRIVATE test-log Zydis::Zydis)
+# The PC memory model's hooks in the game's code (bbport_guest_hooks.cpp), on functions the test
+# writes at the hooked offsets: native detours, and int3 traps with the argument "traps".
+add_executable(guest-hooks-test EXCLUDE_FROM_ALL ../tests/test_guest_hooks.cpp
+    shim/bbport_guest_hooks.cpp shim/bbport_heap_sites.cpp)
+target_include_directories(guest-hooks-test PRIVATE shim)
+target_compile_options(guest-hooks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if (WIN32)
+    target_include_directories(guest-hooks-test PRIVATE shim/win_posix)
+    target_compile_definitions(guest-hooks-test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    # The fake image at 0x800000000 must stay free, as in bb-probe.
+    target_link_options(guest-hooks-test PRIVATE -Wl,--disable-high-entropy-va)
+endif()
 # bbport co-op: the log file the rig's tools read (BB_LOG_FILE), in shadPS4's line format.
 add_executable(log-file-test EXCLUDE_FROM_ALL ../tests/test_log_file.cpp)
 target_compile_options(log-file-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

@@ -15,7 +15,9 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <ftw.h>
 #endif
 
@@ -127,7 +129,14 @@ static int write_atomic(const char *path, const void *data, size_t size) {
     if (!f) return -1;
     int ok=fwrite(data,1,size,f)==size && !fflush(f) && !fsync(fileno(f));
     ok=!fclose(f) && ok;
+#ifdef _WIN32
+    /* POSIX rename replaces an existing target; the CRT's fails. MoveFileEx replaces it in one
+     * step (the old file stays if it fails) and flushes the rename before it returns. */
+    if (ok && !MoveFileExA(temp,path,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) ok=0;
+    if (!ok) { unlink(temp); return -1; }
+#else
     if (!ok || rename(temp,path)) { unlink(temp); return -1; }
+#endif
     return 0;
 }
 static void write_param(const char *meta, const Param *p) {
