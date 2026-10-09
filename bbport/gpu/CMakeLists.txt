@@ -315,6 +315,12 @@ if (WIN32)
     target_compile_options(file-windows-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     target_include_directories(file-windows-test PRIVATE ../src)
     target_link_libraries(file-windows-test PRIVATE bcrypt -pthread)
+    # Whether the GPU imports the runtime's section views (the PC memory model's host import).
+    # Needs a Vulkan device, so it is run by hand, not by build-bbport -Test.
+    add_executable(host-import-test EXCLUDE_FROM_ALL ../tests/test_host_import_windows.c)
+    set_target_properties(host-import-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(host-import-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_link_libraries(host-import-test PRIVATE Vulkan::Vulkan onecore)
 endif()
 
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
