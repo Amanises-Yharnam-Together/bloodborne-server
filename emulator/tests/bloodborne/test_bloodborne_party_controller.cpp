@@ -1084,9 +1084,9 @@ TEST(BloodborneSharedProgression, ThePartySharesInAndOutOfASession) {
 TEST(BloodborneSharedKills, AMembersKillsLastForItsVisit) {
     VisitKills kills;
     using Changes = std::vector<std::pair<s32, bool>>;
-    const std::vector<std::pair<u32, s32>> alive{{0x10014085, 300}, {0x10014088, 250}};
+    const std::vector<SeenCharacter> alive{{0x10014085, 300}, {0x10014088, 250}};
     EXPECT_EQ(kills.Observe(1, alive), Changes{});
-    const std::vector<std::pair<u32, s32>> one_dead{{0x10014085, 0}, {0x10014088, 250}};
+    const std::vector<SeenCharacter> one_dead{{0x10014085, 0}, {0x10014088, 250}};
     EXPECT_EQ(kills.Observe(1, one_dead), (Changes{{0x10014085, true}}));
     EXPECT_EQ(kills.Observe(1, one_dead), Changes{}) << "posted once";
     // A new visit (a trip, a reload): its kills there respawn.
@@ -1119,11 +1119,28 @@ TEST(BloodborneSharedKills, ASummonIntoTheHostsWorldKeepsTheGuestsVisit) {
 
     // The killer hides its own kills too while it stands in another world's copy of the map.
     VisitKills kills;
-    kills.Observe(back, std::vector<std::pair<u32, s32>>{{0x10014085, 300}});
-    kills.Observe(back, std::vector<std::pair<u32, s32>>{{0x10014085, 0}});
+    kills.Observe(back, std::vector<SeenCharacter>{{0x10014085, 300}});
+    kills.Observe(back, std::vector<SeenCharacter>{{0x10014085, 0}});
     EXPECT_EQ(kills.Killed(), (std::vector<u32>{0x10014085}));
-    kills.Observe(back + 1, std::vector<std::pair<u32, s32>>{{0x10014085, 300}});
+    kills.Observe(back + 1, std::vector<SeenCharacter>{{0x10014085, 300}});
     EXPECT_TRUE(kills.Killed().empty());
+}
+
+// Rig test "dog" 2026-10-09: the host left, the guest's own world loaded on the same map (the
+// visit goes on: a reload in a session keeps it), and two enemies dead in the guest's save but
+// alive in the host's world a moment before were posted as kills; the host hid 2 living
+// enemies. A kill is one character object going from alive to dead: a reload makes new ones.
+TEST(BloodborneSharedKills, AWorldThatLoadsIsNoKill) {
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    using Seen = std::vector<SeenCharacter>;
+    EXPECT_EQ(kills.Observe(1, Seen{{0x1001409c, 2031, 0xA000}}), Changes{});
+    EXPECT_EQ(kills.Observe(1, Seen{{0x1001409c, 0, 0xB000}}), Changes{})
+        << "dead already in the world that loaded";
+    EXPECT_EQ(kills.Observe(1, Seen{{0x1001409c, 2031, 0xC000}}), Changes{});
+    EXPECT_EQ(kills.Observe(1, Seen{{0x1001409c, 0, 0xC000}}), (Changes{{0x1001409c, true}}))
+        << "killed in this world";
+    EXPECT_EQ(kills.Killed(), (std::vector<u32>{0x1001409c}));
 }
 
 // Friend run 2026-10-09, Gascoigne: the host's copy went 2031 -> 131 -> 0, the guest's only

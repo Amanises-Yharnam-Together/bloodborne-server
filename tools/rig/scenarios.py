@@ -311,7 +311,7 @@ SCENARIOS = {
             "guest2": [START, "godmode", "wait-session 3 480", "wait 10", "snapshot",
                        "expect-session 3"],
         },
-        "expect": {"host": [r"auto-rejoin started search effect=9000(.|\n)*"
+        "expect": {"host": [r"(?s)auto-rejoin started search effect=9000.*"
                             r"auto-rejoin started search effect=9000"]},
         "timeout": 900,
     },

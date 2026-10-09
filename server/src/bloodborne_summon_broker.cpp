@@ -415,8 +415,10 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
         return {State::Advertised, {}, {}};
     }
     if (it->state == State::Claimed) {
+        // A sign outside a party gets the host's placement first and comes to the host's map;
+        // a party guest joins where it is (its emulator keeps its own placement).
         const std::optional<qint64> hostMap = HostPlacementMap(it->hostPlacement);
-        if (m_seamlessCoop && hostMap.has_value() &&
+        if (m_seamlessCoop && it->party.isEmpty() && hostMap.has_value() &&
             Integer(body, QStringLiteral("AreaId"), -1) != *hostMap) {
             return {State::Claimed, {}, it->hostPlacement};
         }
@@ -447,7 +449,10 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
         }
         if (it->state == State::Advertised && nowMs - it->updatedAtMs <= SignRefreshWindowMs &&
             MatchesSearch(request, it->advertisement, anywhereSummons)) {
-            if (anywhereSummons && hostMap.has_value() && requester >= 0 &&
+            // A sign on another map waits until its guest has come to the host's map, unless it
+            // is a party's: a party guest joins where it is, so it is offered at once (as if
+            // beside the host).
+            if (anywhereSummons && it->party.isEmpty() && hostMap.has_value() && requester >= 0 &&
                 Integer(it->advertisement, QStringLiteral("AreaId"), -1) != *hostMap) {
                 it->state = State::Preparing;
                 it->hostPlacement = hostPlacement;

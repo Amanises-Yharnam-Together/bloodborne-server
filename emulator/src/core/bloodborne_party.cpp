@@ -991,25 +991,27 @@ bool IsRealDeath(u8 death_flags) {
     return (death_flags & 0x05) != 0;
 }
 
-std::vector<std::pair<s32, bool>> VisitKills::Observe(
-    u64 visit, std::span<const std::pair<u32, s32>> characters) {
+std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
+                                                      std::span<const SeenCharacter> characters) {
     std::vector<std::pair<s32, bool>> changes;
     if (visit != current) {
         for (const u32 handle : killed) {
             changes.emplace_back(static_cast<s32>(handle), false);
         }
         killed.clear();
-        hp.clear();
+        seen.clear();
         current = visit;
     }
-    for (const auto& [handle, now] : characters) {
-        const auto [it, added] = hp.try_emplace(handle, now);
-        if (!added && it->second > 0 && now <= 0 &&
+    for (const auto& [handle, now, instance] : characters) {
+        const auto [it, added] = seen.try_emplace(handle, Seen{now, instance});
+        // The same object seen alive, now dead: a world that loaded brings new objects, some
+        // dead already (in a save that killed them for good).
+        if (!added && it->second.instance == instance && it->second.hp > 0 && now <= 0 &&
             std::ranges::find(killed, handle) == killed.end()) {
             killed.push_back(handle);
             changes.emplace_back(static_cast<s32>(handle), true);
         }
-        it->second = now;
+        it->second = {now, instance};
     }
     return changes;
 }

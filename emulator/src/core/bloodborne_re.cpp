@@ -5384,7 +5384,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
         hidden.clear(); // the old visit's characters are gone
         hidden_visit = visit;
     }
-    std::vector<std::pair<u32, s32>> characters;
+    std::vector<SeenCharacter> characters;
     std::vector<u64> pointers;
     ForEachWorldCharacter(world, [&](u64 character) {
         if (character != player) {
@@ -5392,7 +5392,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
             // and a guest leaving for the Dream "killed" the dog for the host.
             const s32 hp = CharacterHp(character);
             const bool dead = IsRealDeath(ReadValue<u8>(character, 0x1E3));
-            characters.emplace_back(ReadValue<u32>(character, 0x08), dead ? 0 : std::max(hp, 1));
+            characters.push_back(
+                {ReadValue<u32>(character, 0x08), dead ? 0 : std::max(hp, 1), character});
             pointers.push_back(character);
         }
     });
@@ -5414,7 +5415,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     size_t newly_hidden = 0;
     for (size_t index = 0; index < pointers.size(); ++index) {
         const u64 character = pointers[index];
-        const auto [handle, hp] = characters[index];
+        const auto [handle, hp, instance] = characters[index];
         const auto it = hidden.find(character);
         if (it == hidden.end() && hp > 0 && others.contains(handle) &&
             ReadValue<u8>(character, 0x28) == 0 &&

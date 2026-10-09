@@ -642,17 +642,28 @@ bool WatchesKills(bool sharing, bool trip_active, bool loading);
 // kill reward). Both are cleared when it comes back (0x018CC550).
 bool IsRealDeath(u8 death_flags);
 
+// A character as the kill board sees it: its handle, its HP (0 once really dead, see
+// IsRealDeath) and the object itself, which a world that loads makes anew.
+struct SeenCharacter {
+    u32 handle = 0;
+    s32 hp = 0;
+    u64 instance = 0;
+};
+
 class VisitKills {
 public:
-    std::vector<std::pair<s32, bool>> Observe(u64 visit,
-                                              std::span<const std::pair<u32, s32>> characters);
+    std::vector<std::pair<s32, bool>> Observe(u64 visit, std::span<const SeenCharacter> characters);
     const std::vector<u32>& Killed() const {
         return killed;
     }
 
 private:
+    struct Seen {
+        s32 hp = 0;
+        u64 instance = 0;
+    };
     u64 current = 0;
-    std::map<u32, s32> hp;
+    std::map<u32, Seen> seen;
     std::vector<u32> killed;
 };
 std::string EncodeEchoUpdate(std::string_view member, s64 since,

@@ -228,6 +228,43 @@ int main() {
             .size() == 1);
   }
 
+  // A party guest on another map joins where it is (Kaniel 2026-10-08: no
+  // teleport to the host on a join). Its sign used to wait in Preparing until
+  // the guest came to the host's map, which a guest joining in place never
+  // does: the rig's host in the Cathedral Ward never saw the sign of its guest
+  // in Central Yharnam. Now it is found at once, as if beside the host, and the
+  // claim reaches the guest on its own map.
+  {
+    Broker::Options options;
+    options.seamlessCoop = true;
+    Broker broker(options);
+    QByteArray sign = Advertisement("guest-yharnam", 100);
+    sign.replace("\"AreaId\":385875968", "\"AreaId\":402718720");
+    QByteArray search = Search(1);
+    search.replace("\"AreaId\":385875968", "\"AreaId\":402653184");
+    const QByteArray wardPlacement =
+        "1,18000000,43110000,c2e80000,42800000,c016cbe4,-240100";
+    const QByteArray claim = Claim("guest-yharnam", 1, 100);
+    broker.Advertise(Parse(sign), sign, 10, partyA);
+    const auto found = broker.Search(Parse(search), 20, wardPlacement, partyA);
+    CHECK(found.size() == 1);
+    CHECK(found.front().contains("\"AreaId\":402653184"));
+    CHECK(broker.StateFor(QStringLiteral("guest-yharnam"), 100, 20) ==
+          Broker::State::Advertised);
+    CHECK(broker.Claim(Parse(claim), claim, 30, wardPlacement, partyA).status ==
+          Broker::ClaimStatus::Claimed);
+    const auto delivered = broker.Advertise(Parse(sign), sign, 40, partyA);
+    CHECK(delivered.state == Broker::State::Delivered);
+    CHECK(delivered.pendingClaim == claim);
+
+    // Without a party a sign still comes to the host's map first.
+    Broker publicBroker(options);
+    publicBroker.Advertise(Parse(sign), sign, 10);
+    CHECK(publicBroker.Search(Parse(search), 20, wardPlacement).isEmpty());
+    CHECK(publicBroker.StateFor(QStringLiteral("guest-yharnam"), 100, 20) ==
+          Broker::State::Preparing);
+  }
+
   // Header values are untrusted: trimmed, capped, and anything with control
   // characters or without a "name:secret" shape is treated as no party at all.
   {
