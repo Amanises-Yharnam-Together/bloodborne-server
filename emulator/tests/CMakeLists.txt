@@ -344,8 +344,14 @@ add_executable(shadps4_bloodborne_test
     bloodborne/test_bloodborne_lamp_rest.cpp
     bloodborne/test_bloodborne_boss_clear.cpp
     bloodborne/test_bloodborne_three_players.cpp
+    bloodborne/test_bloodborne_eboot.cpp
+    bloodborne/test_bloodborne_contracts.cpp
+    bloodborne/test_bloodborne_fuzz.cpp
 )
 target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+# The party boards' messages, shared with shadNet's tests (see test_bloodborne_contracts.cpp).
+target_compile_definitions(shadps4_bloodborne_test PRIVATE
+    BLOODBORNE_CONTRACTS="${CMAKE_SOURCE_DIR}/../server/tests/contracts/bloodborne_party_boards.txt")
 target_compile_features(shadps4_bloodborne_test PRIVATE cxx_std_23)
 target_link_libraries(shadps4_bloodborne_test PRIVATE GTest::gtest_main fmt::fmt)
 gtest_discover_tests(shadps4_bloodborne_test

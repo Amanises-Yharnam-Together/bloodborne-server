@@ -135,6 +135,24 @@ if(BUILD_TESTING)
     target_link_libraries(test_bloodborne_party_rest PRIVATE Qt6::Core)
     add_test(NAME bloodborne_party_rest COMMAND test_bloodborne_party_rest)
 
+    add_executable(test_bloodborne_party_contracts EXCLUDE_FROM_ALL
+        tests/test_bloodborne_party_contracts.cpp
+        src/bloodborne_party_rest.cpp
+    )
+    target_include_directories(test_bloodborne_party_contracts PRIVATE src)
+    target_link_libraries(test_bloodborne_party_contracts PRIVATE Qt6::Core)
+    target_compile_definitions(test_bloodborne_party_contracts PRIVATE
+        BLOODBORNE_CONTRACTS="${CMAKE_CURRENT_SOURCE_DIR}/tests/contracts/bloodborne_party_boards.txt")
+    add_test(NAME bloodborne_party_contracts COMMAND test_bloodborne_party_contracts)
+
+    add_executable(test_bloodborne_party_fuzz EXCLUDE_FROM_ALL
+        tests/test_bloodborne_party_fuzz.cpp
+        src/bloodborne_party_rest.cpp
+    )
+    target_include_directories(test_bloodborne_party_fuzz PRIVATE src)
+    target_link_libraries(test_bloodborne_party_fuzz PRIVATE Qt6::Core)
+    add_test(NAME bloodborne_party_fuzz COMMAND test_bloodborne_party_fuzz)
+
     add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
         tests/bloodborne_matching_guest_probe.cpp
         "${PROTO_OUT}/shadnet.pb.cc"

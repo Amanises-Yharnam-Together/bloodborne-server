@@ -170,6 +170,19 @@ constexpr float SignRepostSeconds = 5.0f;
 
 // `mov dword ptr [<reg> + 0x28], <seconds>` with the ModRM byte of the game's own store.
 std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds);
+// The game's sign timer stores.
+struct SignTimerSite {
+    u64 offset;
+    u8 modrm;
+    float original_seconds;
+    float patched_seconds;
+};
+constexpr std::array<SignTimerSite, 4> SignTimerSites{{
+    {0x018A9264, 0x47, 5.0f, FirstSignPostDelaySeconds},
+    {0x018A9324, 0x47, 5.0f, FirstSignPostDelaySeconds},
+    {0x018A9757, 0x43, 30.0f, SignRepostSeconds},
+    {0x018A988F, 0x43, 30.0f, SignRepostSeconds},
+}};
 
 // Lamps as campfires (a party session only; solo and co-op with strangers stay vanilla). A lamp
 // is used through its talk script (t<map><nnn>.esd), which 01.09 hides while the game is in

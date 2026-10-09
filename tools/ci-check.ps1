@@ -1,8 +1,8 @@
 ﻿# Local mirror of the upstream CI checks, per component of the monorepo.
-# Usage: ci-check.ps1 -Component emulator|server|backend [-All] [-SkipBuild] [-Src <dir>]
+# Usage: ci-check.ps1 -Component emulator|server|backend|tools [-All] [-SkipBuild] [-Src <dir>]
 #   default lints only files changed vs. trunk(); -All lints every source file like a branch push.
 param(
-    [Parameter(Mandatory)][ValidateSet("emulator", "server", "backend")][string]$Component,
+    [Parameter(Mandatory)][ValidateSet("emulator", "server", "backend", "tools")][string]$Component,
     [switch]$All,
     [switch]$SkipBuild,
     [string]$Src
@@ -16,6 +16,14 @@ if (-not $Src) { $Src = Join-Path $env:BB_ROOT "bloodborne-server\$Component" }
 $out = Join-Path $env:BB_ROOT "out\$Component"
 Set-Location $Src
 $failed = @()
+
+if ($Component -eq "tools") {
+    # The RE and log tools (tools\re): their own unit tests.
+    py -3.12 -m unittest discover -s re\tests 2>&1 | Select-Object -Last 4
+    if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: tools tests"; exit 1 }
+    Write-Host "CI CHECK PASSED"
+    exit 0
+}
 
 if ($Component -eq "backend") {
     # Python stand-in for the retail backend: no upstream CI, just its service tests.
@@ -87,6 +95,9 @@ if (-not $SkipBuild) {
     if ($Component -eq "emulator") {
         & "$PSScriptRoot\build-emu.ps1" -Src $Src -Out $out
         if ($LASTEXITCODE -ne 0) { $failed += "build" }
+        # The game-file checks (test_bloodborne_eboot.cpp) need the game's eboot; the rig has one.
+        $eboot = Join-Path $env:BB_ROOT "rig\game\CUSA03173-patch\eboot.bin"
+        if (-not $env:BLOODBORNE_EBOOT -and (Test-Path $eboot)) { $env:BLOODBORNE_EBOOT = $eboot }
         ctest --test-dir (Join-Path $out "tests") --output-on-failure -E GcnTest 2>&1 | Select-Object -Last 15
         if ($LASTEXITCODE -ne 0) { $failed += "ctest" }
     } else {

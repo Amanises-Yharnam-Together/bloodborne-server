@@ -207,19 +207,6 @@ constexpr u64 ChrResetAnimationOffset = 0x013370F0;
 // Native SoloPlayDeath_2: the local player's death respawn (bloodstain, warp to the last lamp).
 constexpr u64 SoloPlayDeathRespawnOffset = 0x01381DE0;
 
-// Sign poster timer stores (see FirstSignPostDelaySeconds / SignRepostSeconds).
-struct SignTimerSite {
-    u64 offset;
-    u8 modrm;
-    float original_seconds;
-    float patched_seconds;
-};
-constexpr auto SignTimerSites = std::to_array<SignTimerSite>({
-    {0x018A9264, 0x47, 5.0f, FirstSignPostDelaySeconds},
-    {0x018A9324, 0x47, 5.0f, FirstSignPostDelaySeconds},
-    {0x018A9757, 0x43, 30.0f, SignRepostSeconds},
-    {0x018A988F, 0x43, 30.0f, SignRepostSeconds},
-});
 constexpr std::array<u8, 5> StageTransitionStopMatchingCall{0xE8, 0xEA, 0x95, 0x58, 0x00};
 constexpr std::array<u8, 5> StageTransitionKeepMatchingCall{0xE8, 0xEA, 0x8E, 0x58, 0x00};
 constexpr u64 SummonBuildEntryOffset = 0x01874710;
@@ -3490,8 +3477,9 @@ void LogGameCallChainAt(const char* what, u64 rsp) {
 bool PS4_SYSV_ABI KeepSessionAfterTrip(u64, const GuestRegisterSnapshot* registers) {
     if (!PartyTripActive()) {
         // Diagnostics: a session that broke right after a boss kill (host to the title screen,
-        // a lone guest dropped after lighting the lamp): who leaves.
-        if (party_controller) {
+        // a lone guest dropped after lighting the lamp): who leaves. Every world load calls it,
+        // so only while in a party session.
+        if (party_controller && InPartySession()) {
             LogGameCallChainAt("LeaveSession", registers->rsp);
         }
         return false;
@@ -5747,7 +5735,7 @@ bool PS4_SYSV_ABI KeepMatchingDuringTrip(u64, const GuestRegisterSnapshot* regis
         LOG_INFO(Debug, "Bloodborne party: a world reload (time of day) is a trip");
     }
     if (!PartyTripActive()) {
-        if (party_controller) {
+        if (party_controller && InPartySession()) {
             LogGameCallChainAt("CSMultiPlayMan StopRequest", registers->rsp);
         }
         return false;
