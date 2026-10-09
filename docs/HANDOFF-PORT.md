@@ -35,9 +35,15 @@ its co-op are wired, built, packaged and tested.
 - The rig now starts the port's games side by side (`Engine.staggered_start`); confirm with join
   first (it was only ever run staggered).
 
-## Tasks, in order
+## Tasks
 
-1. **Full rig run on the merged build.** `py -3.12 tools\rig\run_scenario.py --engine port <all>`
+Order (Kaniel, 2026-10-09 20:23): **merge and fix everything first, test at the end.** Do Task 5
+(upstream 0.5 on Windows, merged onto this branch) first, then Tasks 2, 3, 4 and 6 (fixes, join
+speed, new scenarios and verbs, menu), with only the fast checks along the way (unit tests,
+`ci-check`, the port's tests, a boot check). Then Task 1, the full rig run over everything, and
+fix what fails; then Task 7.
+
+1. **Full rig run, last.** `py -3.12 tools\rig\run_scenario.py --engine port <all>`
    (start detached; logs in C:\bb\rig\runs\<when>\<scenario>, shadnet.log has timestamps). Only
    when Kaniel is not playing; never stop a game that is not the rig's own (C:\bb\out\bbport).
    Kill the runner with `taskkill /T` (killing `py.exe` alone leaves python and its games).
