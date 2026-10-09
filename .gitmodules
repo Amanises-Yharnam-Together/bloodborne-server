@@ -167,3 +167,21 @@
 [submodule "server/externals/protobuf"]
 	path = server/externals/protobuf
 	url = https://github.com/shadexternals/protobuf.git
+[submodule "bbport/gpu/third_party/fsr-vulkan"]
+	path = bbport/gpu/third_party/fsr-vulkan
+	url = https://github.com/FireBurn/FSR-Vulkan.git
+[submodule "bbport/gpu/third_party/imgui"]
+	path = bbport/gpu/third_party/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "bbport/third_party/LibAtrac9"]
+	path = bbport/third_party/LibAtrac9
+	url = https://github.com/Thealexbarney/LibAtrac9.git
+[submodule "bbport/gpu/third_party/magic_enum"]
+	path = bbport/gpu/third_party/magic_enum
+	url = https://github.com/Neargye/magic_enum.git
+[submodule "bbport/gpu/third_party/miniz"]
+	path = bbport/gpu/third_party/miniz
+	url = https://github.com/richgel999/miniz.git
+[submodule "bbport/gpu/third_party/xbyak"]
+	path = bbport/gpu/third_party/xbyak
+	url = https://github.com/herumi/xbyak.git
