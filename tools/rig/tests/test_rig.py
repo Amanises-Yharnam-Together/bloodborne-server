@@ -20,7 +20,7 @@ VERBS = {
     "wait", "wait-session", "wait-members", "wait-map", "travel", "ensure-map", "hurt", "kill",
     "mark", "approach", "attack", "teleport", "press", "stick", "set-flag", "expect-flag",
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
-    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect",
+    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
 }
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
            "l1", "r1", "l2", "r2", "l3", "r3"}

@@ -602,8 +602,8 @@ std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes);
 // The HP to write on the local copy, or nothing: only ever down, never to 0 (a death comes
 // from the game itself), scaled by each copy's max HP (the co-op HP bonus may differ).
 std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max);
-// The HP to write on this member's copy of `handle`: the lowest share any other member on `map`
-// reports (their posts, in the map state board's format), or nothing.
+// The HP to write on this member's copy of `handle`: the lowest share any other member in `map`'s
+// area reports (their posts, in the map state board's format), or nothing.
 std::optional<s32> LowestSharedHp(u32 handle, s32 hp, s32 max, u32 map,
                                   std::span<const MemberMapState> others);
 

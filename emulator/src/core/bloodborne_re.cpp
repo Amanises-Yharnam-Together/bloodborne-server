@@ -2118,6 +2118,43 @@ std::optional<LampPosition> LocalPlayerPosition() {
 
 s32 CharacterHp(u64 character);
 
+// The other players' characters in this world (WorldChrMan +0x30 count, +0x38 entries of 0x38
+// bytes; the local player is one of them), with HP (+0x128 of their data) and position.
+struct OtherPlayer {
+    u64 character = 0;
+    s32 type = 0;
+    s32 hp = 0;
+    u8 dead_flags = 0;
+    std::optional<LampPosition> at;
+};
+std::vector<OtherPlayer> OtherPlayers() {
+    std::vector<OtherPlayer> players;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const s32 count = world >= 0x10000 ? ReadValue<s32>(world, 0x30) : 0;
+    const u64 entries = world >= 0x10000 ? ReadValue<u64>(world, 0x38) : 0;
+    const u64 local = GetLocalPlayer();
+    for (s32 index = 0; entries >= 0x10000 && index < std::min(count, 8); ++index) {
+        const u64 player = ReadValue<u64>(entries + static_cast<u64>(index) * 0x38, 0);
+        if (player < 0x10000 || player == local ||
+            !HasMemoryAccess(player, 0x3B8, MemoryProt::CpuRead)) {
+            continue;
+        }
+        OtherPlayer other{player, ReadValue<s32>(player, 0x78)};
+        const u64 modules = ReadValue<u64>(player, 0x3B0);
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        other.hp = data >= 0x10000 ? ReadValue<s32>(data, 0x128) : 0;
+        other.dead_flags = ReadValue<u8>(player, 0x1E3);
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (physics >= 0x10000 && HasMemoryAccess(physics, 0x1EC, MemoryProt::CpuRead)) {
+            other.at = LampPosition{ReadValue<float>(physics, 0x1E0),
+                                    ReadValue<float>(physics, 0x1E4),
+                                    ReadValue<float>(physics, 0x1E8)};
+        }
+        players.push_back(other);
+    }
+    return players;
+}
+
 // Characters seen alive during this visit to the map (sampled once a second while in a party
 // session; see RespawnsAtPartyRest).
 std::mutex seen_alive_mutex;
@@ -8449,6 +8486,29 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         const size_t members = AutoplaySessionMembers();
         if (members != static_cast<size_t>(number(0, 1))) {
             failure = fmt::format("{} in the session", members);
+            return false;
+        }
+        return true;
+    }
+    // expect-others-near <n> <meters>: at least n other players stand alive within <meters> of
+    // the player (a guest that got up invisible to the host: its copy dead, or left where it died).
+    if (verb == "expect-others-near") {
+        const auto here = LocalPlayerPosition();
+        const double limit = number(1, 10);
+        size_t near = 0;
+        std::string seen;
+        for (const OtherPlayer& other : OtherPlayers()) {
+            const double distance =
+                here && other.at ? std::hypot((*other.at)[0] - (*here)[0], (*other.at)[1] - (*here)[1],
+                                              (*other.at)[2] - (*here)[2])
+                                 : -1.0;
+            seen += fmt::format(" [type={} hp={} dead={:#x} at {:.1f} m]", other.type, other.hp,
+                                other.dead_flags, distance);
+            near += other.hp > 0 && (other.dead_flags & 0x05) == 0 && distance >= 0.0 &&
+                    distance <= limit;
+        }
+        if (near < static_cast<size_t>(number(0, 1))) {
+            failure = fmt::format("{} alive within {} m:{}", near, limit, seen.empty() ? " none" : seen);
             return false;
         }
         return true;

@@ -17,7 +17,8 @@ press <button> [<ms>], stick <x> <y> [<ms>], snapshot, log <text>,
 expect-hp <handle|self> <op> <value>, expect-session <n>, expect-map <map>,
 set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeout>],
 wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, for
-expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>, godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
+expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
+expect-others-near <n> <meters> (n other players alive that close), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
 """
 
@@ -405,30 +406,129 @@ SCENARIOS = {
         "timeout": 1200,
     },
     "crash-rejoin-hp": {
-        "about": "after the guest's game crashes and it joins again, the host's hits still reach "
-                 "the guest's copy of an enemy (friend run 2026-10-09: HP bars apart after a crash)",
+        "about": "after the guest's game crashes and it joins again, HP still goes both ways: the "
+                 "host's hit reaches the guest's copy of an enemy and the guest's hit the host's "
+                 "(friend run 2026-10-09: HP bars apart after a crash)",
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait-solo 120",
-                     "wait-session 2 420", "wait 20", f"hurt {ENEMY} 200", "wait 12", "snapshot",
-                     f"expect-hp {ENEMY} <= 200", "expect-session 2"],
+                     "wait-session 2 420", "wait 20", f"hurt {ENEMY} 300", "wait 40", "snapshot",
+                     f"expect-hp {ENEMY} <= 150", "expect-session 2"],
             "guest": [[START, "godmode", "wait-session 2 300", "wait 15", "done"],
-                      [START, "godmode", "wait-session 2 420", "wait 45", "snapshot",
-                       f"expect-hp {ENEMY} <= 200", "expect-session 2"]],
+                      [START, "godmode", "wait-session 2 420", "wait 35", "snapshot",
+                       f"expect-hp {ENEMY} <= 300", f"hurt {ENEMY} 150", "wait 15", "snapshot",
+                       "expect-session 2"]],
         },
+        "expect": {"host": [r"lowered \d+ enemies to another member's HP"],
+                   "guest": [r"lowered \d+ enemies to another member's HP"]},
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
-    "guest-death-seen": {
-        "about": "the guest dies in the host's world and gets up; the host still has it on its "
-                 "map (friend run 2026-10-09: invisible after respawning)",
+    "hp-across-blocks": {
+        "about": "the guest joins in place in Cathedral Ward while the host is in Central "
+                 "Yharnam (two blocks of one area); HP reports still count between them",
         "roles": {
-            "host": [START, "godmode", "wait-session 2 300", "wait 60", "wait-members 2 120",
-                     "wait 10", "snapshot", "expect-session 2"],
-            "guest": [START, "wait-session 2 300", "wait 10", "kill self", "wait 50",
-                      "wait-members 2 120", "snapshot", "expect-session 2"],
+            "host": [START, "godmode", "wait-session 2 420", "wait 30", f"hurt {ENEMY} 200",
+                     "wait 30", "snapshot", "expect-session 2"],
+            "guest": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                      "wait-session 2 420", "wait 20", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait-members 2 240", "wait 20", "snapshot", f"expect-hp {ENEMY} <= 200",
+                      "expect-session 2"],
+        },
+        "expect": {"guest": [r"lowered \d+ enemies to another member's HP"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 900,
+    },
+    "guest-death-seen": {
+        "about": "the guest dies away from the lamp in the host's world and gets up at the lamp; "
+                 "the host sees it there alive (friend run 2026-10-09: invisible after respawning)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 90", "wait-members 2 120",
+                     "wait 10", "snapshot", "expect-others-near 1 12", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 10", f"teleport {AWAY_FROM_LAMP}",
+                      "wait 5", "kill self", "wait 50", "wait-members 2 120", "snapshot",
+                      "expect-others-near 1 12", "expect-session 2"],
         },
         "expect": {"guest": [r"party guest died; revived"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
+    },
+    "echoes-after-crash": {
+        "about": "after the guest's crash and rejoin, a kill it makes alone in Cathedral Ward still "
+                 "sends the host its echoes and reaches the kill board",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-solo 120",
+                     "wait-session 2 420", "wait 90", "snapshot", "expect-session 2"],
+            "guest": [[START, "godmode", "wait-session 2 300", "wait 15", "done"],
+                      [START, "godmode", "wait-session 2 420", "wait 10",
+                       f"travel {CATHEDRAL_WARD_LAMP}", "wait 10", *attack(WARD_ENEMY),
+                       "wait 15", "snapshot", "expect-session 2"]],
+        },
+        "expect": {
+            "guest": [r"kill board gets 1 kills"],
+            "host": [r"added \d+ echoes from a kill another member made apart"],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 1080,
+    },
+    "lamp-after-crash": {
+        "about": "a lamp the guest lights in the session stays lit in both worlds after the "
+                 "guest's game crashes and comes back",
+        "roles": {
+            "host": [START, f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 0", "wait-session 2 300",
+                     f"wait-flag {FORBIDDEN_WOODS_LAMP_LIT} 1 90", "wait-solo 120",
+                     "wait-session 2 420", "wait 20", "snapshot",
+                     f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "expect-session 2"],
+            "guest": [[START, "wait-session 2 300", "wait 30",
+                       f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "wait 20", "done"],
+                      [START, "wait-session 2 420", "wait 20", "snapshot",
+                       f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "expect-session 2"]],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 1080,
+    },
+    "crash3": {
+        "about": "a party of three: one guest's game crashes; host and the other guest stay "
+                 "together, and the party is three again once it is back",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait 30", "wait-session 2 120",
+                     "wait-session 3 480", "wait 20", "snapshot", "expect-session 3"],
+            "guest": [START, "godmode", "wait-session 3 480", "wait 30", "wait-session 2 120",
+                      "snapshot", "expect-session 2", "wait-session 3 480", "wait 20",
+                      "snapshot", "expect-session 3"],
+            "guest2": [[START, "godmode", "wait-session 3 480", "wait 20", "done"],
+                       [START, "godmode", "wait-session 3 480", "wait 20", "snapshot",
+                        "expect-session 3"]],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 1500,
+    },
+    "host-death-boss": {
+        "about": "the host dies in the middle of the Cleric Beast fight; it gets up without a "
+                 "reload, the session holds and the boss is still there",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 15", f"hurt {CLERIC_BEAST} 1500",
+                     "wait 5", "kill self", "wait 40", "snapshot", f"expect-hp {CLERIC_BEAST} > 0",
+                     f"expect-flag {CLERIC_BEAST_DEFEATED} 0", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 80", "snapshot",
+                      "expect-session 2"],
+        },
+        "expect": {"host": [r"live player died in a party session"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "soak": {
+        "about": "half an hour of trips back and forth with the session up (leaks, slow growth, "
+                 "a trip that breaks after many)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300",
+                     *[step for _ in range(12) for step in
+                       (f"travel {HUNTERS_DREAM}", "wait 20", f"travel {CENTRAL_YHARNAM_LAMP}",
+                        "wait-members 2 240", "wait 40")],
+                     "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 2100", "wait-members 2 240",
+                      "snapshot", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 2700,
     },
 }

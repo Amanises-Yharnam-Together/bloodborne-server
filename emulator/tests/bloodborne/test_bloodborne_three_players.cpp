@@ -278,6 +278,19 @@ TEST(BloodborneThreePlayers, EachCopyTakesTheLowestHpOnItsMap) {
     EXPECT_EQ(LowestSharedHp(0x10014085, 300, 300, here, others), std::nullopt) << "not hurt";
 }
 
+TEST(BloodborneThreePlayers, AnotherBlockOfTheSameAreaSharesItsEnemyHp) {
+    // Friend run 2026-10-09: the guest joined in place in Central Yharnam (0x18010000) while the
+    // host stood in Cathedral Ward (0x18000000), and no HP was shared for the rest of the game.
+    // The blocks of an area (m24_00, m24_01) give their enemies distinct handles.
+    const u32 here = 0x18010000;
+    const std::vector<MemberMapState> others{
+        {0x18000000, EncodeEnemyHp(1, std::vector<EnemyHp>{{0x1001400b, 100, 484}})},
+        {0x15000000, EncodeEnemyHp(2, std::vector<EnemyHp>{{0x1001400b, 10, 484}})},
+    };
+    EXPECT_EQ(LowestSharedHp(0x1001400b, 484, 484, here, others), 100)
+        << "the Ward's report, not the other area's";
+}
+
 TEST(BloodborneThreePlayers, OnlyAWorldReloadInAPartySessionStartsATrip) {
     EXPECT_TRUE(StartsTripOnWorldReload(0x0193C65C, false, true));
     EXPECT_FALSE(StartsTripOnWorldReload(0x0193C65C, true, true)) << "a trip already";
