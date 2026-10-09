@@ -103,16 +103,18 @@ class SsInfoTest(unittest.TestCase):
         return match.group(1) if match else None
 
     def test_summon_polling_is_fast_by_default(self):
+        # Once a second: a searching host found a new sign up to 5 s late, and the guest's sign
+        # went up up to 5 s after its bell (a join measured 2026-10-09).
         xml = self.fetch_ss_info([])
-        self.assertEqual(self.tag(xml, "SummonDataCreateInterval2"), "5")
-        self.assertEqual(self.tag(xml, "SummonDataGetListInterval2"), "5")
+        self.assertEqual(self.tag(xml, "SummonDataCreateInterval2"), "1")
+        self.assertEqual(self.tag(xml, "SummonDataGetListInterval2"), "1")
 
     def test_coop_guard_timers_do_not_stall_rejoin(self):
         # After a session ends the host waits out these guard timers (retail 60 s) before it
         # takes a new sign, so a guest who died could not rejoin for over a minute.
         xml = self.fetch_ss_info([])
-        self.assertEqual(self.tag(xml, "SummonDataGetListGuardTimer2"), "5")
-        self.assertEqual(self.tag(xml, "SummonDataGetListCoopGuardTimerClampTime2"), "5")
+        self.assertEqual(self.tag(xml, "SummonDataGetListGuardTimer2"), "1")
+        self.assertEqual(self.tag(xml, "SummonDataGetListCoopGuardTimerClampTime2"), "1")
         # Invasion timers are not ours to touch.
         self.assertEqual(self.tag(xml, "SummonDataGetListInvationGuardTimerClampTime2"), "0")
 
