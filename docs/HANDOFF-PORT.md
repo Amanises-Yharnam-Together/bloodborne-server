@@ -27,13 +27,22 @@ guest-death-seen and echoes-after-crash pass.
 - Forest pickups (Kaniel's log, 2026-10-09): the item button kept finding items but no press
   ever reached the pickup (0x01CD91F0, the action button check, said no) from the time-of-day
   reload into the Forbidden Woods (a trip that kept the session) on, before the friend's crash.
-  pickup-after-crash passes, so the trip is the lead: scenario pickup-after-trip.
-- Guest "Talk" at the Central Yharnam lamp: 0x100140a0 (999 HP, 2 m from the lamp) is the lamp
-  itself. Facing it, X opens the lamp's menu for a guest (talk commands 17, 39, 68; circle
-  closes it), and the menu's choice is the lamp trip to the Dream that guests are allowed. Only
-  the lamp's talk script (241000) starts for a guest there; Gilbert's never did. Talk
-  positions are logged now ("Bloodborne talk <id> (entity ...) at ...") to place the guest at
-  his window.
+  Not reproduced: pickup-after-crash, pickup-after-trip (both to the Dream and back) and
+  pickup-after-reload (in-place warps) all pick up. Next: a real time-of-day reload, or the
+  item there (0x52 by the start of the woods carried flags 0x41, the others 0xf841).
+- Fixed: a guest talking to Gilbert at his window by the Central Yharnam lamp (talk 241319, 3 m
+  from lamp 241001) went to the Dream. His talk sets 70000140, which IsLampTravelFlag took for a
+  lamp's trip (any 7MMM01LL but the Dream's); now only map codes 211-399 count (the 799001xx
+  many NPC talks set are out too). Rig guest-talk-gilbert reproduced it (heading h faces
+  (-sin h, cos h)).
+- Fixed: a guest whose sign was claimed but whose join came to nothing (it let the connection
+  go 5 s after it formed, no JoinRoom; seen once each in 2026-10-09 lone-guest and 2026-10-10
+  pickup-after-reload, so the reverted quick-arrival patch was likely not the cause) waited
+  forever: the host never took that sign again and the broker kept handing it the dead room's
+  claim. It rings again after StaleClaimDelay (30 s).
+- A host's warp to another lamp of its own map (pickup-after-reload, the first try of
+  guest-talk-gilbert) makes the guest's game drop the room for a moment; players cannot do that
+  (lamps lead to the Dream), so the scenarios no longer do it.
 - lamp-after-crash fails: a lamp the guest lit in the session reads unlit in the host's world
   after the guest's crash and rejoin (its own world has it: the progress file sets it at
   load). The flag board gives a new game nothing older than its first post (a new character
