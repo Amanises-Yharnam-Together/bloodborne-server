@@ -66,6 +66,9 @@ int compat_random(void *buffer, size_t size);
 /* Sleeps with sub-millisecond precision (high-resolution waitable timer; winpthreads'
  * nanosleep rounds up to the 15.6 ms scheduler tick). */
 void compat_sleep_ns(uint64_t ns);
+/* GNU strcasestr (not in the MinGW-w64 C library). */
+char *compat_strcasestr(const char *haystack, const char *needle);
+#define strcasestr compat_strcasestr
 /* rm -rf: 0 when the tree is gone (or never existed). */
 int compat_remove_tree(const char *path);
 /* errno for a Win32 error code. */

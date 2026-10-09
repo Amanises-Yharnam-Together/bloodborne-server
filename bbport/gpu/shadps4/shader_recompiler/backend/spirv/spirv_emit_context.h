@@ -258,9 +258,20 @@ public:
     Id motion_in_cur{};
     Id motion_in_prev{};
     Id motion_frag_out{};
+    Id motion_params{};    ///< storage buffers of the vertex stage (DefineMotionBuffers)
+    Id motion_positions{};
+    Id motion_diag{};
     [[nodiscard]] bool VertexMotion() const {
         return sw_stage == SwStage::Vertex && hw_stage == HwStage::Vertex &&
-               runtime_info.hw.vs.motion_vectors && MotionVectors::positions_address != 0;
+               runtime_info.hw.vs.motion_vectors && MotionVectors::buffers_ready;
+    }
+    /// The vertex shader accesses the motion storage buffers (BB_OM_PART=nobda: no).
+    [[nodiscard]] bool VertexMotionBuffers() const {
+        return VertexMotion() && MotionVectors::UsesBuffers();
+    }
+    /// The vertex shader writes the two motion varyings (BB_OM_PART=novary: no).
+    [[nodiscard]] bool VertexMotionVaryings() const {
+        return VertexMotion() && MotionVectors::WritesVaryings();
     }
     [[nodiscard]] bool FragmentMotion() const {
         return sw_stage == SwStage::Fragment && runtime_info.hw.fs.motion_vectors;
@@ -413,6 +424,7 @@ private:
     void DefineOutputs();
     void DefinePushDataBlock();
     void DefineBuffers();
+    void DefineMotionBuffers();
     void DefineImagesAndSamplers();
     void DefineSharedMemory();
     void DefineFunctions();

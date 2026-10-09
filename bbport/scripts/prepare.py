@@ -11,6 +11,9 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import sys
+
+import game_check
 
 
 def span(data, offset, size):
@@ -120,6 +123,10 @@ def inspect_libc(path):
     return evidence
 
 
+class GameCheckError(Exception):
+    """Game files bbport does not run (game_check.py)."""
+
+
 def prepare(game, out):
     source = (game / 'eboot.bin').read_bytes()
     elf, header, ph, segments, missing = parse_self(source)
@@ -134,6 +141,9 @@ def prepare(game, out):
         if p['filesz'] > p['memsz']:
             raise ValueError('segment file size exceeds memory size')
         image[p['vaddr']:p['vaddr'] + p['filesz']] = span(elf, p['offset'], p['filesz'])
+    # bbport: only the supported executable runs (game_check.py); others fail in the game's code.
+    if found := game_check.problem(game, hashlib.sha256(image).hexdigest()):
+        raise GameCheckError(game_check.explain(*found))
     dp = next(p for p in ph if p['type'] == 2)
     dyn = []
     for pos in range(dp['offset'], dp['offset'] + dp['filesz'], 16):
@@ -237,7 +247,9 @@ def prepare(game, out):
                   bundled_modules=sorted(p.name for p in (game / 'sce_module').iterdir()),
                   resources=dict(resources), resource_bytes=total_bytes,
                   status='Prepared only; execution and Vulkan are tested separately.')
-    (out / 'analysis.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+    (out / 'analysis.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    # A zh/ja/ko Windows console cannot encode the title's trademark sign (#55).
+    sys.stdout.reconfigure(errors='replace')
     print(f"{report['sfo'].get('TITLE')} | entry={header[4]:#x} | image={size:,} bytes")
     print(f"{len(names)} imported symbols; {sum(counts.values()):,} relocations; {len(report['needed'])} required modules")
     print(f"Unavailable non-loadable metadata headers: {missing}; not a byte-exact ELF reconstruction")
@@ -252,5 +264,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     try:
         prepare(args.game, args.out)
+    except GameCheckError as error:
+        parser.exit(2, f'\nUnsupported game files: {error}\nSet BB_SKIP_GAME_CHECK=1 to start anyway.\n')
     except (ValueError, OSError, StopIteration, KeyError, IndexError) as error:
         parser.exit(1, f'prepare failed: {error}\n')

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <mutex>
 #include <unordered_map>
 #include <boost/container/flat_map.hpp>
 #include <queue>
@@ -22,6 +23,7 @@
 #include "shader_recompiler/ir/reg.h"
 #include "shader_recompiler/ir/srt_gvn_table.h"
 #include "shader_recompiler/ir/value.h"
+#include "bbport_toggles.h"
 
 #ifdef ARCH_X86_64
 
@@ -29,10 +31,35 @@ using namespace Xbyak::util;
 
 static Xbyak::CodeGenerator g_srt_codegen(32_MB);
 static const u8* g_srt_codegen_start = nullptr;
+// bbport: shaders are translated on the GPU thread and on the draw-preparation workers at the
+// same time (BB_ASYNC_COMPILE); they all append their walker code to the one buffer above, one
+// walker at a time. Nothing under this lock reads guest memory.
+static std::mutex g_srt_codegen_mutex;
+
+// bbport: a speculative translation leaves through its recovery point on a fault or a failed
+// check (runtime_fault_recover, vk_pipeline_cache.cpp). A jump out of the lock above would leave
+// it locked for good, so the recovery point is disarmed while it is held: anything failing there
+// stops the port as it did before. Declared before the lock, so it is restored after unlocking.
+struct NoSpeculativeExit {
+    sigjmp_buf* const saved = runtime_fault_recover;
+    NoSpeculativeExit() {
+        runtime_fault_recover = nullptr;
+    }
+    ~NoSpeculativeExit() {
+        runtime_fault_recover = saved;
+    }
+};
+
+namespace {
+void EnsureSrtFaultHandler();
+}
 
 namespace Shader {
 
 PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
+    NoSpeculativeExit no_exit;
+    std::scoped_lock lock{g_srt_codegen_mutex};
+    EnsureSrtFaultHandler();
     const auto func_addr = (PFN_SrtWalker)g_srt_codegen.getCurr();
     g_srt_codegen.db(ptr, size);
     g_srt_codegen.ready();
@@ -77,6 +104,17 @@ static bool SrtWalkerSignalHandler(void* context, void* fault_address) {
         return false; // Not in SRT code range
     }
 
+    // bbport: draw-preparation workers run the same walker concurrently. A thread that faulted
+    // on the instruction before another one patched it finds the patch here and retries; decoding
+    // it as the original MOV would trip the ASSERT below (exit 23).
+    static std::mutex patch_mutex;
+    std::scoped_lock patch_lock{patch_mutex};
+    const u8* bytes = reinterpret_cast<const u8*>(code);
+    if ((bytes[0] == 0x48 && bytes[1] == 0x31 && bytes[2] == 0xFF) ||
+        (bytes[0] == 0x45 && bytes[1] == 0x31 && bytes[2] == 0xD2)) {
+        return true;
+    }
+
     // Patch instruction to zero register
     ZydisDecodedInstruction instruction;
     ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
@@ -118,6 +156,19 @@ static bool SrtWalkerSignalHandler(void* context, void* fault_address) {
                 fault_address);
 
     return true;
+}
+
+// Registers the walker fault handler once, whichever walker is added first (generated here or
+// loaded from the pipeline cache through RegisterWalkerCode). Called with g_srt_codegen_mutex
+// held, so the buffer is still empty and its current position is its start.
+void EnsureSrtFaultHandler() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        g_srt_codegen_start = g_srt_codegen.getCurr();
+        // Call after the memory invalidation handler
+        constexpr u32 priority = 1;
+        Core::Signals::Instance()->RegisterAccessViolationHandler(SrtWalkerSignalHandler, priority);
+    });
 }
 
 using namespace Shader;
@@ -639,15 +690,11 @@ static void GenerateSrtProgram(Info& info, PassInfo& pass_info) {
     if (pass_info.srt_roots.empty()) {
         return;
     }
+    NoSpeculativeExit no_exit;
+    std::scoped_lock lock{g_srt_codegen_mutex};
 
     // Register the signal handler for SRT walker, if not already registered
-    if (g_srt_codegen_start == nullptr) {
-        g_srt_codegen_start = c.getCurr();
-        auto* signals = Core::Signals::Instance();
-        // Call after the memory invalidation handler
-        constexpr u32 priority = 1;
-        signals->RegisterAccessViolationHandler(SrtWalkerSignalHandler, priority);
-    }
+    EnsureSrtFaultHandler();
 
     info.srt_info.walker_func = c.getCurr<PFN_SrtWalker>();
     pass_info.dst_off_dw = NUM_USER_DATA_REGS;

@@ -54,6 +54,11 @@ public:
         return swapchain;
     }
 
+    /// bbport: false while the window is minimised (0x0 surface): frames are not presented.
+    bool IsPresentable() const {
+        return !zero_extent && swapchain;
+    }
+
     u32 GetWidth() const {
         return width;
     }
@@ -84,6 +89,17 @@ public:
 
     bool HasHDR() const {
         return supports_hdr;
+    }
+
+    /// bbport: frame generation shows two images per game frame: the swapchain has one more
+    /// than usual while it is on (minImageCount + 2).
+    [[nodiscard]] bool WantsFrameGenerationImages() const;
+    /// Whether the current swapchain was made with that extra image.
+    [[nodiscard]] bool HasFrameGenerationImages() const {
+        return fg_images;
+    }
+    [[nodiscard]] vk::PresentModeKHR GetPresentMode() const {
+        return present_mode;
     }
 
     void SetHDR(bool hdr);
@@ -132,6 +148,8 @@ private:
     u32 image_index = 0;
     u32 frame_index = 0;
     bool needs_recreation = true;
+    bool zero_extent = false; ///< bbport: the surface was 0x0 (minimised) at the last Create
+    bool fg_images = false;    // bbport: made with the frame generation image
     bool needs_hdr = false;    // The game requested HDR swapchain
     bool supports_hdr = false; // SC supports HDR output
 };

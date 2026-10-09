@@ -7,6 +7,7 @@
 #include <bcrypt.h>
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include "compat_win.h"
 
 /* bb_jmp_buf: rbx rbp rdi rsi r12-r15 (0-56), rsp after return (64), return address (72),
@@ -106,6 +107,16 @@ int compat_random(void *buffer, size_t size) {
         buffer = (char *)buffer + chunk; size -= chunk;
     }
     return 0;
+}
+
+char *compat_strcasestr(const char *haystack, const char *needle) {
+    if (!*needle) return (char *)haystack;
+    for (; *haystack; ++haystack) {
+        const char *h = haystack, *n = needle;
+        while (*h && *n && tolower((unsigned char)*h) == tolower((unsigned char)*n)) { ++h; ++n; }
+        if (!*n) return (char *)haystack;
+    }
+    return NULL;
 }
 
 /* One high-resolution timer per thread (Windows 10 1803+); a plain waitable timer before. */

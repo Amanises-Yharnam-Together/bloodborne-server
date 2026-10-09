@@ -32,11 +32,13 @@ bool Visible();
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
 
-/// The menu is open or a text entry is shown: the game's input is held neutral.
+/// The menu or the text dialog is open: the game's input is held neutral.
 bool CapturesInput();
 
-/// Window thread: the game's text dialog (sceImeDialog). Shown as a box on screen until
-/// `active` is false; typing goes to the window (sdl_window), the box only displays it.
-void SetTextEntry(bool active, const std::string& prompt, const std::string& text);
+/// The settings menu is open: the window shows the system cursor over it.
+bool MenuOpen();
+
+/// Window thread: the game's text dialog (ImeDialog) state, drawn as a box over the frame.
+void SetTextPrompt(bool active, const std::string& prompt, const std::string& text);
 
 } // namespace BbOverlay

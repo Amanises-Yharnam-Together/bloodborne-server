@@ -29,6 +29,15 @@ public:
         return enabled;
     }
 
+    /// Descriptor set 1 of the pipelines with motion vertex shaders (params, positions,
+    /// diagnostics). Static: the pipeline cache builds the pipeline layouts, and there is one
+    /// ObjectMotion. Null until the buffers exist.
+    [[nodiscard]] static vk::DescriptorSetLayout Layout() noexcept {
+        return layout_handle;
+    }
+    /// Binds that set for the next draws of the graphics pipeline layout `pipeline_layout`.
+    void BindBuffers(vk::PipelineLayout pipeline_layout);
+
     using DrawInfo = Motion::Draw;
     u32 PrepareDraw(const DrawInfo& draw);
     /// Small skeletons: whether the bone palette changed (Motion::History::Moving).
@@ -51,45 +60,92 @@ public:
 
     /// The motion image for the compose pass (layout General after this call) and whether it
     /// holds this frame's vectors at `width` x `height`.
-    vk::ImageView PrepareRead(vk::CommandBuffer cmdbuf, u32 width, u32 height, bool& valid);
+    vk::ImageView PrepareRead(u32 width, u32 height, bool& valid);
     /// The image of the last PrepareRead (layout General), or null.
     [[nodiscard]] vk::ImageView View() const noexcept {
-        return view ? *view : vk::ImageView{};
+        return read_target && read_target->view ? *read_target->view : vk::ImageView{};
     }
     [[nodiscard]] vk::Image Image(u32 width, u32 height) const noexcept {
-        return written && width == image_width && height == image_height
-            ? vk::Image(image) : vk::Image{};
+        const Target* target = Find(width, height);
+        return target && target->written ? vk::Image(target->image) : vk::Image{};
     }
 
 private:
-    void EnsureImage(u32 width, u32 height);
+    /// bbport: a motion image per render-target size. Scenes with G-buffer passes at two sizes
+    /// (a reduced proxy and the full target) shared one image: every switch recreated it after
+    /// a full GPU wait (Scheduler::Finish), twice a frame — ~70% of the draw recording thread's
+    /// time and an idle GPU — and threw this frame's vectors away.
+    struct Target {
+        VideoCore::UniqueImage image;
+        vk::UniqueImageView view;
+        u32 width = 0, height = 0;
+        bool written = false; ///< this frame's vectors are in the image
+        vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+        u64 used_frame = 0;
+    };
+    static constexpr u32 MaxTargets = 4;
+
+    [[nodiscard]] const Target* Find(u32 width, u32 height) const noexcept {
+        for (const auto& target : targets) {
+            if (target.image && target.width == width && target.height == height) {
+                return &target;
+            }
+        }
+        return nullptr;
+    }
+    /// The image of this size, created when missing (replacing the one used longest ago; it is
+    /// destroyed once the GPU is done with it, without waiting).
+    Target& GetTarget(u32 width, u32 height);
 
     const Instance& instance;
     Scheduler& scheduler;
     bool enabled = false;
 
-    // Parameter ring (host visible): FrameSlots frames of ParamsPerFrame entries (two u32x4),
-    // element 0 all zero (motion off).
-    static constexpr u32 FrameSlots = 4;
+    // Parameter ring (host visible): `frame_slots` frames of ParamsPerFrame entries (two u32x4;
+    // the last word is a tag of the others, see Shader::MotionVectors::Tag), element 0 all zero
+    // (motion off). The push constant of a draw is `index | frame16 << 16`, so the index must
+    // fit 16 bits.
+    static constexpr u32 MaxFrameSlots = 4;
     static constexpr u32 ParamsPerFrame = 8192;
+    static_assert(1 + MaxFrameSlots * ParamsPerFrame <= 0xFFFF);
     // Positions (device local): two halves (current/previous frame) of vec4; element 0 is reserved.
     static constexpr u32 PositionsPerFrame = 4u << 20;
     Motion::History history{PositionsPerFrame};
     Motion::IndexRangeCache index_ranges;
-    std::array<u64, FrameSlots> params_ticks{};
+    u32 frame_slots = MaxFrameSlots; ///< BB_OM_SLOTS=1..4 (stress test)
+    bool no_param_wait = false;      ///< BB_OM_NOWAIT=1: reuse a ring slot without waiting (stress test)
+    std::array<u64, MaxFrameSlots> params_ticks{};
     vk::Buffer params_buffer{};
     VmaAllocation params_allocation{};
     u32* params_mapped{};
     vk::Buffer positions_buffer{};
     VmaAllocation positions_allocation{};
+    vk::UniqueDescriptorSetLayout set_layout;
+    vk::UniqueDescriptorPool pool;
+    vk::DescriptorSet set{};
+    static inline vk::DescriptorSetLayout layout_handle{};
+    void CreateDescriptorSet();
+
+    // Guard counters of the vertex shaders (Shader::MotionVectors::Diag*): device local, copied
+    // at the start of every frame into a ring of host readbacks that are read once the GPU is
+    // past the copy (the counters only ever grow).
+    static constexpr u32 DiagWords = 8;
+    vk::Buffer diag_buffer{};
+    VmaAllocation diag_allocation{};
+    vk::Buffer diag_read_buffer{};
+    VmaAllocation diag_read_allocation{};
+    const u32* diag_read_mapped{};
+    std::array<u64, MaxFrameSlots> diag_ticks{};
+    std::array<u32, DiagWords> diag_seen{};
+    bool diag_cleared = false;
+    bool diag_reported = false;
+    void ReadDiagnostics();
+    void RecordDiagnostics(u32 slot);
 
     u64 frame = 0;
     u32 params_used = 0;
-    VideoCore::UniqueImage image;
-    vk::UniqueImageView view;
-    u32 image_width = 0, image_height = 0;
-    bool written = false; ///< this frame's vectors are in the image
-    vk::ImageLayout image_layout = vk::ImageLayout::eUndefined;
+    std::array<Target, MaxTargets> targets;
+    const Target* read_target = nullptr; ///< of the last PrepareRead
 };
 
 } // namespace Vulkan

@@ -119,6 +119,9 @@ add_host_shader(upscale_reactive.comp upscale_reactive_comp)
 add_host_shader(taa.comp taa_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_ldr_comp LDR_OUTPUT=1)
+add_host_shader(fsr4_color.comp fsr4_decode_comp)
+add_host_shader(fsr4_color.comp fsr4_encode_comp ENCODE=1)
+add_host_shader(fsr4_reactive.comp fsr4_reactive_comp)
 add_host_shader(buffer_multi_copy.comp buffer_multi_copy_comp)
 add_host_shader(depth_resample.frag depth_resample_frag)
 add_host_shader(depth_resample.frag depth_stencil_resample_frag HAS_STENCIL=1)
@@ -142,6 +145,11 @@ set(COMMON
 file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
+if (WIN32)
+    # Linux-only (mprotect/SIGTRAP hooks, memfd and dma-buf chunks, the PC memory model):
+    # shim/bbport_win_stubs.cpp answers their interfaces.
+    list(FILTER SHIM_SOURCES EXCLUDE REGEX "shim/bbport_(guest_hooks|free_check|gnm_hooks|guest_memory)\\.cpp$")
+endif()
 # Windows: a DLL cannot leave the runtime_* symbols for bb-probe.exe to resolve, so the
 # library is static there and linked into the executable.
 if (WIN32)
@@ -244,6 +252,11 @@ target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_pa
     ${BB_EMULATOR_SRC})
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
+# Loaded with bb-probe at startup (DT_NEEDED, never dlopen): thread_local access without a
+# TLS descriptor call (_dl_tlsdesc_return was ~2% of the draw recording thread).
+if (NOT WIN32)
+    target_compile_options(bbgpu PRIVATE -ftls-model=initial-exec)
+endif()
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 if (NOT WIN32)
     target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
@@ -256,6 +269,8 @@ if (WIN32)
     # <windows.h> out of the way of std::min/max and the Vulkan/SDL headers.
     target_compile_definitions(bbgpu PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(bbgpu PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/shim/bb_win_compat.h)
+    # <sys/uio.h> (process_vm_readv), <dlfcn.h> and <execinfo.h> for the diagnostics.
+    target_include_directories(bbgpu PRIVATE shim/win_posix)
     target_include_directories(bbgpu PRIVATE third_party/xbyak)
     target_link_libraries(bbgpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm)
 else()
@@ -281,17 +296,28 @@ if (WIN32)
     # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
     target_link_options(bb-probe PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
     add_executable(bb-gpu-capabilities ../tools/gpu_capabilities.c ../packaging/windows/bb-gpu-capabilities.rc)
-    target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan)
-    # "Play Bloodborne.exe": the game with the launcher's saved settings, no launcher window.
+    target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)
+    # Bloodborne.exe (bb-play): the game with the launcher's saved settings, no launcher window.
     add_executable(bb-play WIN32 ../packaging/windows/play.c ../packaging/windows/play.rc)
     target_compile_options(bb-play PRIVATE -municode)
     target_link_options(bb-play PRIVATE -municode)
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
+if (WIN32)
+    add_executable(file-windows-test EXCLUDE_FROM_ALL ../tests/test_file_windows.c ../src/compat_win.c)
+    set_target_properties(file-windows-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(file-windows-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(file-windows-test PRIVATE ../src)
+    target_link_libraries(file-windows-test PRIVATE bcrypt -pthread)
+endif()
+
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
 target_compile_options(motion-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(motion-history-test PRIVATE ..)
+add_executable(pm4-resync-test EXCLUDE_FROM_ALL ../tests/test_pm4_resync.cpp)
+target_compile_options(pm4-resync-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(pm4-resync-test PRIVATE ..)
 add_executable(motion-shader-test EXCLUDE_FROM_ALL ../tests/test_motion_shaders.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(motion-shader-test PRIVATE shim shadps4 third_party/gcn/include)
 target_link_libraries(motion-shader-test PRIVATE bbgpu)
@@ -320,6 +346,9 @@ target_link_libraries(pixel-format-test PRIVATE bbgpu)
 add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)
+add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bbport_settings.cpp)
+target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(settings-test PRIVATE .. shim)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)

@@ -19,7 +19,7 @@ if not exist "%GAMEDIR%\CUSA03173\eboot.bin" (
 rem A newer kit brings newer event files; put them in place on every start.
 copy /y "%KIT%event-patch\*" "%GAMEDIR%\CUSA03173-mods\dvdroot_ps4\event\" >nul
 
-rem The port (run.py, inside Bloodborne.exe): this kit's game, saves and settings.
+rem The port (run.py, inside BLauncher.exe): this kit's game, saves and settings.
 set "BB_DATA_DIR=%KIT:~0,-1%"
 set "BB_USER_DIR=%KIT%user"
 set "BB_GAME_DIR=%GAMEDIR%\CUSA03173"
@@ -48,4 +48,4 @@ set SHADPS4_BLOODBORNE_RE_TRACE=0
 if not exist "%KIT%user\log" mkdir "%KIT%user\log"
 if exist "%KIT%user\log\shad_log.txt" copy /y "%KIT%user\log\shad_log.txt" "%KIT%user\log\shad_log.prev.txt" >nul
 if exist "%KIT%user\log\console.txt" copy /y "%KIT%user\log\console.txt" "%KIT%user\log\console.prev.txt" >nul
-start "Bloodborne co-op" /min cmd /c ""%KIT%Bloodborne.exe" --run >"%KIT%user\log\console.txt" 2>&1"
+start "Bloodborne co-op" /min cmd /c ""%KIT%BLauncher.exe" --run >"%KIT%user\log\console.txt" 2>&1"

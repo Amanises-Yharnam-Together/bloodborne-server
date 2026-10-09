@@ -22,6 +22,7 @@
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_fsr4.h"
+#include "video_core/renderer_vulkan/vk_xess.h"
 #include "video_core/texture_cache/image.h"
 
 struct FfxVkPortableUpscaleContext;
@@ -37,6 +38,12 @@ class Scheduler;
 class Runtime;
 class CameraMotion;
 class SceneTargets;
+class FrameGeneration;
+
+/// bbport BB_FINAL_DUMP_TRIGGER: the frame as presented (after FSR and post processing) is saved
+/// as final_<w>x<h> in BB_DUMP_DIR when the trigger file exists (consumed). `image` in General.
+void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+                         vk::Image image, u32 width, u32 height, vk::Format format);
 
 class TemporalUpscaler {
 public:
@@ -47,6 +54,12 @@ public:
 
     [[nodiscard]] bool Enabled() const noexcept {
         return enabled;
+    }
+
+    /// bbport: FSR 3.1 frame generation (vk_frame_generation.h) takes each frame's depth and
+    /// motion vectors at the upscale and the scene before the first UI draw.
+    void SetFrameGeneration(FrameGeneration* value) noexcept {
+        frame_generation = value;
     }
 
     /// A draw into a full-size RGBA16F target with the scene depth: the scene color.
@@ -121,6 +134,10 @@ public:
         u32 width, height;
     };
     bool DisplayOverride(VAddr address, Display& display);
+    /// BB_PRESENT_DUMP_TRIGGER: whether this presented frame is to be saved (consumes the trigger).
+    bool PresentDumpDue();
+    /// Saves `image` (General layout, 4 bytes a pixel) as present_<w>x<h> in BB_DUMP_DIR.
+    void DumpPresented(vk::Image image, u32 width, u32 height, vk::Format format);
 
 private:
     /// bbport: views of guest images the upscaler reads, kept across frames: FSR 4 registers
@@ -140,6 +157,12 @@ private:
 
     void Run();
     void RunScaled();
+    /// The upscale of this frame is recorded: hands frame generation what the game overwrites
+    /// before the frame is presented.
+    void CaptureForFrameGeneration(vk::Image depth, vk::ImageLayout layout, vk::Format format,
+                                   u32 w, u32 h, float frame_ms, bool was_reset);
+    /// The first UI draw of a native-size frame: the finished scene is copied for frame generation.
+    void CaptureNativeHudless(VideoCore::ImageId color);
     void RunUiOnly(VideoCore::ImageId color, VideoCore::ImageId depth);
     void EnsureUiResources(u32 width, u32 height, vk::Format color, vk::Format depth);
     void PrepareUiDepth(VideoCore::ImageId depth);
@@ -171,14 +194,21 @@ private:
     bool RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource& color,
                     const Dlss::Resource& depth, u32 w, u32 h, u32 ow, u32 oh, float frame_ms,
                     bool hdr);
+    /// bbport: XeSS selected and ready (libxess.dll, a GPU with DP4a).
+    [[nodiscard]] bool UseXess() const;
+    /// Records XeSS into `cmdbuf` (output in General). `hdr`: linear scene color input.
+    bool RecordXess(vk::CommandBuffer cmdbuf, const Xess::Resource& color,
+                    const Xess::Resource& depth, u32 w, u32 h, u32 ow, u32 oh, bool hdr);
     /// Records FSR 4 into output_image; on a permanent failure FSR 3 takes over.
     bool RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color, Fsr4Upscaler::Image depth,
                     u32 w, u32 h, u32 ow, u32 oh, float frame_ms);
     void RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color, vk::ImageView depth);
     /// Sharpness above 1 for FSR 3/4 (their RCAS stops at 1): one more RCAS pass over the target
     /// (output_image, or the 8-bit UI image with ldr) in General layout after the upscaler.
-    void ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, bool ldr, u32 w, u32 h);
+    /// `whole_range`: for XeSS, which has no sharpener, the pass covers the whole 0..2 sharpness.
+    void ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h, bool whole_range = false);
 
+    FrameGeneration* frame_generation = nullptr;
     const Instance& instance;
     Scheduler& scheduler;
     VideoCore::TextureCache& texture_cache;
@@ -193,6 +223,8 @@ private:
 
     bool enabled = false;
     bool failed = false;
+    /// An FSR 3 dispatch recorded on a recording thread failed; `failed` at the next frame.
+    std::atomic<bool> dispatch_failed{false};
     u64 trigger_hash = 0x9a9cf8a9;
     VideoCore::ImageId scene_color{};
     bool done_this_frame = false;
@@ -244,6 +276,7 @@ private:
         bool valid = false;
     };
     std::mutex display_mutex;
+    int present_dump_remaining = 0, present_dump_index = 0;
     std::unordered_map<VAddr, DisplayImage> displays;
     FfxVkPortableUpscaleContext* context = nullptr;
     bool resources_ready = false; ///< images below match width/height/out size
@@ -252,6 +285,7 @@ private:
     std::unique_ptr<Fsr4Upscaler> fsr4;
     bool fsr4_failed = false;
     bool dlss_failed = false;
+    bool xess_failed = false;
     VideoCore::UniqueImage motion_image;
     VideoCore::UniqueImage output_image;
     vk::UniqueImageView motion_view;
@@ -277,6 +311,26 @@ private:
     vk::UniquePipelineLayout taa_sharpen_pipeline_layout;
     vk::UniquePipeline taa_sharpen_pipeline;
     vk::UniquePipeline taa_sharpen_ldr_pipeline;
+    // bbport: FSR 4 in linear light on the scaled presets (fsr4_color.comp): the decoded input
+    // and the passes that decode it and encode the output again.
+    VideoCore::UniqueImage fsr4_linear_image;
+    bool fsr4_linear_frame = false; ///< this frame's FSR 4 input was decoded (and the output encoded)
+    vk::UniqueImageView fsr4_linear_view;
+    vk::UniqueDescriptorSetLayout fsr4_decode_desc_layout;
+    vk::UniquePipelineLayout fsr4_decode_pipeline_layout;
+    vk::UniquePipeline fsr4_decode_pipeline;
+    vk::UniqueDescriptorSetLayout fsr4_encode_desc_layout;
+    vk::UniquePipelineLayout fsr4_encode_pipeline_layout;
+    vk::UniquePipeline fsr4_encode_pipeline;
+    vk::UniqueSampler fsr4_linear_sampler;
+    vk::UniqueDescriptorSetLayout fsr4_reactive_desc_layout;
+    vk::UniquePipelineLayout fsr4_reactive_pipeline_layout;
+    vk::UniquePipeline fsr4_reactive_pipeline;
+    /// bbport: FSR 4 takes no reactive mask: its output is blended with `color` (the frame it
+    /// upscaled, render size, General layout, same colour space as the output) where the mask
+    /// marks blended effects (fsr4_reactive.comp). Recorded after FSR 4 into `cmdbuf`.
+    void RecordFsr4Reactive(vk::CommandBuffer cmdbuf, vk::ImageView color, u32 w, u32 h, u32 ow,
+                            u32 oh);
     // ExtraSharpen: a copy of the upscaled frame (RCAS reads neighbours) and the target views.
     VideoCore::UniqueImage extra_sharpen_image;
     vk::UniqueImageView extra_sharpen_view;

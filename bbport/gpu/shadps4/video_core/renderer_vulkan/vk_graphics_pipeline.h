@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <boost/container/static_vector.hpp>
 #include <xxhash.h>
 
@@ -102,12 +104,22 @@ public:
         return key;
     }
 
+    /// bbport: a pipeline a draw-preparation worker builds is described with the worker's copy of
+    /// each stage's Info (the user data of that draw); before it is shared, the stages are
+    /// pointed at the Infos of the programs, which the GPU thread binds resources through.
+    void SetStages(const std::array<const Shader::Info*, MaxShaderStages>& infos) {
+        std::ranges::copy(infos, stages.begin());
+    }
+
     /// Gets the attributes and bindings for vertex inputs.
+    /// bbport: `sharps`, when given, are the V#s of the fetch shader's attributes as the GPU
+    /// command thread read them (in the draw packet): the V# tables they come from may have been
+    /// rewritten by a later constant engine dump by the time the recording thread gets here.
     template <typename Attribute, typename Binding>
     void GetVertexInputs(VertexInputs<Attribute>& attributes, VertexInputs<Binding>& bindings,
                          VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT>& divisors,
                          VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0,
-                         u32 step_rate_1) const;
+                         u32 step_rate_1, std::span<const AmdGpu::Buffer> sharps = {}) const;
 
 private:
     void BuildDescSetLayout(bool preloading);

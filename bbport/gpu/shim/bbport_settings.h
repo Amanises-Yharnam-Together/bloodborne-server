@@ -10,42 +10,44 @@
 namespace BbSettings {
 
 enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, UpscalerFsr411 = 3,
-                      UpscalerTaa = 4, UpscalerDlss = 5, UpscalerCount };
+                      UpscalerTaa = 4, UpscalerDlss = 5, UpscalerXess = 6, UpscalerCount };
 /// FSR 4 v07 or FSR 4.1.1: the same inputs, settings and placement in the frame.
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
 }
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
+enum class MenuLanguage { English, Russian };
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
 /// menu label, default (the game's own behaviour).
 struct Effect {
     const char* key;
     const char* label;
+    const char* label_ru;
     bool default_on;
 };
 inline constexpr Effect Effects[] = {
-    {"effect_chromatic_aberration", "Хроматическая аберрация", true},
-    {"effect_dof", "Глубина резкости (DoF)", true},
-    {"effect_motion_blur", "Размытие в движении", true},
-    {"effect_ssao", "Затенение SSAO", true},
-    {"effect_game_aa", "Собственное сглаживание игры", true},
-    {"effect_dynamic_shadows", "Тени от динамических источников", true},
-    {"effect_ssr", "Отражения SSR (не было в игре)", false},
-    {"skip_intro", "Пропуск заставок при запуске", false},
-    {"debug_camera", "Свободная камера (Cross + L3)", false},
-    {"debug_menu", "Debug menu (нужны файлы шрифтов)", false},
-    {"cheat_no_death", "Чит: бессмертие (не ниже 1 HP)", false},
-    {"cheat_stealth", "Чит: враги не замечают", false},
-    {"cheat_silent", "Чит: враги не слышат", false},
-    {"cheat_rally_no_decay", "Чит: Rally не угасает", false},
-    {"cheat_enemy_control", "Чит: управление врагом (R3 / L3)", false},
-    {"tweak_no_rally", "Без Rally (возврата HP)", false},
-    {"tweak_camera_distance", "Камера дальше", false},
-    {"tweak_no_camera_rotation", "Без автоповорота камеры", false},
-    {"tweak_easy_run", "Бег с меньшим наклоном стика", false},
-    {"tweak_ragdoll", "Физика тел как в Dark Souls", false},
+    {"effect_chromatic_aberration", "Chromatic aberration", "Хроматическая аберрация", true},
+    {"effect_dof", "Depth of field (DoF)", "Глубина резкости (DoF)", true},
+    {"effect_motion_blur", "Motion blur", "Размытие в движении", true},
+    {"effect_ssao", "Ambient occlusion (SSAO)", "Затенение SSAO", true},
+    {"effect_game_aa", "Game's own anti-aliasing", "Собственное сглаживание игры", true},
+    {"effect_dynamic_shadows", "Shadows from dynamic lights", "Тени от динамических источников", true},
+    {"effect_ssr", "Screen-space reflections (not in original game)", "Отражения SSR (не было в игре)", false},
+    {"skip_intro", "Skip startup intros", "Пропуск заставок при запуске", false},
+    {"debug_camera", "Free camera (Cross + L3)", "Свободная камера (Cross + L3)", false},
+    {"debug_menu", "Debug menu (requires font files)", "Debug menu (нужны файлы шрифтов)", false},
+    {"cheat_no_death", "Cheat: never die (not below 1 HP)", "Чит: бессмертие (не ниже 1 HP)", false},
+    {"cheat_stealth", "Cheat: enemies do not see you", "Чит: враги не замечают", false},
+    {"cheat_silent", "Cheat: enemies do not hear you", "Чит: враги не слышат", false},
+    {"cheat_rally_no_decay", "Cheat: Rally never fades", "Чит: Rally не угасает", false},
+    {"cheat_enemy_control", "Cheat: control an enemy (R3 / L3)", "Чит: управление врагом (R3 / L3)", false},
+    {"tweak_no_rally", "No Rally (no HP given back)", "Без Rally (возврата HP)", false},
+    {"tweak_camera_distance", "Camera further away", "Камера дальше", false},
+    {"tweak_no_camera_rotation", "No camera auto-rotation", "Без автоповорота камеры", false},
+    {"tweak_easy_run", "Run with less stick tilt", "Бег с меньшим наклоном стика", false},
+    {"tweak_ragdoll", "Dark Souls-style ragdoll physics", "Физика тел как в Dark Souls", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
 /// Live output resolutions: the upscaler's output and the UI host targets.
@@ -55,6 +57,7 @@ inline constexpr int OutputCount = 4;
 inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
 
 struct Values {
+    std::atomic<MenuLanguage> menu_language{MenuLanguage::Russian};
     std::atomic<int> upscaler{UpscalerFsr3};
     std::atomic<int> preset{NativeAA};
     std::atomic<bool> sharpen{true};
@@ -67,6 +70,8 @@ struct Values {
     std::atomic<float> reactive_max{0.9f};
     std::atomic<int> debug_view{DebugNone};
     std::atomic<bool> show_fps{false};
+    /// The settings menu's position (fraction of the screen), -1 until it is moved.
+    std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
     std::atomic<bool> fsr4_auto_exposure{true};
     std::atomic<bool> fsr4_invert_jitter{false};
@@ -84,6 +89,17 @@ struct Values {
     /// DLSS (bbport_dlss.dll, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};
+    /// XeSS (libxess.dll, any GPU with DP4a) is ready, or why not (null before the device exists).
+    std::atomic<bool> xess_supported{false};
+    std::atomic<const char*> xess_problem{nullptr};
+    /// FSR 3.1 frame generation (vk_frame_generation.h): one interpolated frame between every
+    /// two game frames, on top of the selected upscaler. Off by default (bbport.ini
+    /// frame_generation, BB_FRAME_GEN).
+    std::atomic<bool> frame_generation{false};
+    /// What the presenter measured (overlay): interpolated frames are being shown, game frames
+    /// and presented images a second.
+    std::atomic<bool> fg_active{false};
+    std::atomic<float> fg_base_fps{0.0f}, fg_presented_fps{0.0f};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
@@ -96,6 +112,8 @@ struct Values {
 };
 
 Values& Get();
+/// Localized overlay text; the Language selector itself stays in English.
+const char* MenuText(const char* english, const char* russian);
 
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();
@@ -103,6 +121,8 @@ void Load();
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411);
 /// After device creation: DLSS availability; a DLSS setting falls back to FSR 3.1 without it.
 void ConfigureDlssSupport(bool available, const char* problem);
+/// After device creation: XeSS availability; an XeSS setting falls back to FSR 3.1 without it.
+void ConfigureXessSupport(bool available, const char* problem);
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
 bool FixedRenderSession();
 int RenderPreset();

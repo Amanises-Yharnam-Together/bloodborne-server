@@ -82,15 +82,70 @@ struct SwVertexRuntimeInfo {
 /// clip-space positions per referenced vertex and read the previous frame's; the
 /// fragment shader writes the screen-space difference to an extra color attachment.
 struct MotionVectors {
-    static constexpr u32 CurrentLocation = 30;  ///< varying: current clip position
-    static constexpr u32 PreviousLocation = 31; ///< varying: previous clip position, z = valid
+    // bbport: 26/27, not 30/31. The interface limit (maxVertexOutputComponents and
+    // maxFragmentInputComponents, 128 on AMD and NVIDIA) counts built-ins too: location 31
+    // exceeded it (VUID-RuntimeSpirv-Location-06272), which AMD's driver does not survive.
+    // 27 leaves room for 16 built-in components; draws using these locations get no motion.
+    static constexpr u32 CurrentLocation = 26;  ///< varying: current clip position
+    static constexpr u32 PreviousLocation = 27; ///< varying: previous clip position, z = valid
     static constexpr u32 Output = 7;            ///< color attachment index
-    /// Per-draw parameters (u32x4: store base, load base, vertices per instance, flags) and
-    /// the position array (vec4 per vertex; element 0 is scratch), fixed for the session.
-    static inline u64 params_address = 0;
-    static inline u64 positions_address = 0;
+    /// The motion buffers are descriptor-bound storage buffers (set 1: 0 params, 1 positions,
+    /// 2 diagnostics), fixed for the session. Per-draw parameters: u32x4 store base, load base,
+    /// vertices per instance, flags; positions: vec4 per vertex, element 0 is scratch.
+    static constexpr u32 DescriptorSet = 1;
+    static constexpr u32 ParamsBinding = 0, PositionsBinding = 1, DiagBinding = 2;
+    /// ObjectMotion created the buffers; shaders may use them.
+    static inline bool buffers_ready = false;
     static constexpr u32 FlagStore = 1;
     static constexpr u32 FlagLoad = 2;
+
+    /// Guards. The push constant motion_param is `index | frame16 << 16` (0: off). The shader
+    /// only touches memory inside the two buffers: `param_entries` params entries (element 0
+    /// included) and `position_elements` vec4 (element 0 is reserved). A params entry whose
+    /// word 7 differs from Tag() of the other seven words and the draw's frame16 is torn or
+    /// stale (overwritten while the GPU still reads it) and is skipped. Violations are counted
+    /// in the u32 array of the diagnostics binding (device local, read back by the CPU).
+    static inline u32 param_entries = 0;
+    static inline u32 position_elements = 0;
+    /// One 16-byte store of the position (default) or, with BB_OM_STORE=atomic, four atomic
+    /// exchanges. Two invocations of the same vertex write the same value to the same slot, so the
+    /// plain store is safe, and it costs a fifth of the atomics (RTX 4070, Hunter's Dream replay:
+    /// 150 FPS motion off, 123 atomic, 142 plain).
+    static inline bool plain_store = true;
+    /// BB_OM_GUARD=0 (A/B tests only): no tag or element bounds checks in the shader.
+    static inline bool guards = true;
+    /// BB_OM_PART (bisection of the AMD Windows device loss; default Full). Read once when
+    /// ObjectMotion is built, before any shader is compiled, so one process only ever holds
+    /// one variant (the motion vertex shaders are never persisted either).
+    ///   NoBda:  the vertex shader writes both varyings (previous = current, z = 0 invalid)
+    ///           without any access to the motion buffers.
+    ///   NoFs:   vertex shader unchanged; no fragment output, no attachment 7.
+    ///   NoVary: vertex shader accesses the buffers but writes no varyings; no fragment output,
+    ///           no attachment 7.
+    enum class Part : u32 { Full, NoBda, NoFs, NoVary };
+    static inline Part part = Part::Full;
+    [[nodiscard]] static bool UsesBuffers() {
+        return part != Part::NoBda;
+    }
+    [[nodiscard]] static bool WritesVaryings() {
+        return part != Part::NoVary;
+    }
+    /// Fragment motion output and attachment 7.
+    [[nodiscard]] static bool WritesFragmentOutput() {
+        return part == Part::Full || part == Part::NoBda;
+    }
+    static constexpr u32 DiagStoreOob = 0, DiagLoadOob = 1, DiagTornParams = 2, DiagBadIndex = 3;
+    static constexpr u32 DiagLastBadIndex = 4, DiagLastTorn = 5; ///< last offending motion_param
+    static constexpr u32 DiagWords = 8;
+    static constexpr u32 TagSeed = 0x9E3779B9u, TagPrime = 0x01000193u;
+    /// Word 7 of a params entry: a mix of words 0-6 and the frame number (low 16 bits).
+    [[nodiscard]] static constexpr u32 Tag(const u32* words, u32 frame16) {
+        u32 h = TagSeed + frame16;
+        for (u32 i = 0; i < 7; ++i) {
+            h = (h ^ words[i]) * TagPrime;
+        }
+        return h ^ (h >> 15);
+    }
 };
 
 struct HwLocalRuntimeInfo {

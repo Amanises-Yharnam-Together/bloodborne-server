@@ -356,7 +356,9 @@ constexpr NumberConversion MapNumberConversion(const NumberFormat num_fmt,
         case DataFormat::Format16_16_16_16:
             return NumberConversion::Sint16ToSnormNz;
         default:
-            // 32-bit channels (Bloodborne binds such buffers): no conversion, the data as it is.
+            // bbport: was UNREACHABLE. Seen on macOS with data format 45 (FMASK 8 S4 F1) and
+            // SnormNz, a combination no real resource has (a stale or unused descriptor); it
+            // ended the game. No conversion is the harmless answer.
             return NumberConversion::None;
         }
     }

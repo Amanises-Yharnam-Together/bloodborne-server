@@ -9,6 +9,13 @@ extern "C" {
 #endif
 __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
 static inline int gettid(void) { return (int)GetCurrentThreadId(); }
+// POSIX pause(): the caller waits for a signal that never comes here (assert.cpp, restarting).
+__declspec(dllimport) void __stdcall Sleep(unsigned long milliseconds);
+static inline int pause(void) {
+    for (;;) {
+        Sleep(0xffffffffUL);
+    }
+}
 #ifdef __cplusplus
 }
 #endif

@@ -17,7 +17,7 @@ if (-not $Package) { $Package = Join-Path $env:BB_ROOT "bloodborne-server\bbport
 if (-not $Servers) { $Servers = Join-Path $env:BB_ROOT "online-kit" }
 if (-not $Out) { $Out = Join-Path $env:BB_ROOT "port-kit" }
 $source = Join-Path $PSScriptRoot "port-kit"
-foreach ($need in "$Package\Bloodborne.exe", "$Package\bin\bb-probe.exe", "$Servers\server\shadnet.exe",
+foreach ($need in "$Package\BLauncher.exe", "$Package\bin\bb-probe.exe", "$Servers\server\shadnet.exe",
                   "$Servers\backend\bb_dummy_server.py", "$Servers\event-patch") {
     if (-not (Test-Path $need)) { throw "Missing $need" }
 }
