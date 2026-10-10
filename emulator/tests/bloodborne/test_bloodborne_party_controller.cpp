@@ -996,6 +996,16 @@ TEST(BloodborneGuestBloodstain, LetsAWhitePhantomPickUpItsOwnBloodstain) {
     EXPECT_EQ(patches[0].patched, (std::vector<u8>{0xB9, 0x70, 0x00, 0x00, 0x00}));
 }
 
+// No echo theft, everywhere (Kaniel): the steal's `je` (to the store of the stolen flag) is
+// nopped, so it always returns without taking the bloodstain.
+TEST(BloodborneGuestBloodstain, NoEnemyStealsTheBloodstain) {
+    const auto& patches = NoEchoTheftPatches();
+    ASSERT_EQ(patches.size(), 1u);
+    EXPECT_EQ(patches[0].offset, 0x018E7613u);
+    EXPECT_EQ(patches[0].original, (std::vector<u8>{0x74, 0x09}));
+    EXPECT_EQ(patches[0].patched, (std::vector<u8>{0x90, 0x90}));
+}
+
 // Host death (Kaniel): like a guest's, with no world reload. Native SoloPlayDeath_2 (the death
 // respawn that reloads the world at the lamp) is replaced for a host with a party: same echo
 // drop, revive and lamp teleport as a guest, but it stays a live player and is not checked for

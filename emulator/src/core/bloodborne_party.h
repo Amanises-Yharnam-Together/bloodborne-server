@@ -130,6 +130,12 @@ private:
 
 // OnSelfBloodMark(4032, "SelfBloodMark", attributes) in the native g_Initialize: `mov ecx, 0x30`.
 const std::vector<CodePatch>& GuestBloodstainPatches();
+// No echo theft (Kaniel, 2026-10-10: everywhere, solo too): every 3 s the game lets an enemy within
+// 10 m of the local bloodstain steal it while the player is 15 m or more away (the blue-eyed
+// enemy, 0x018686D0); the stain is gone until that enemy is killed, so a party member back from
+// its lamp never found it. The steal (EnemyIns vtable +0x3E0, 0x018E75A0) returns at once instead:
+// its `je` past the return becomes two nops.
+const std::vector<CodePatch>& NoEchoTheftPatches();
 
 // HostDead's white phantom branch and the epilogue the seamless patch jumps to.
 constexpr u64 HostDeadEpilogueOffset = 0x01381A50;

@@ -3445,6 +3445,22 @@ void InstallGhostDeathRevive(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests revive in the host's world");
 }
 
+// See NoEchoTheftPatches: no enemy steals a bloodstain, in or out of a party.
+void InstallNoEchoTheft(u64 base, u64 image_size) {
+    const auto& patches = NoEchoTheftPatches();
+    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
+            return MatchesImage(base, image_size, patch);
+        })) {
+        LOG_ERROR(Debug, "Bloodborne no-echo-theft patch signature mismatch");
+        return;
+    }
+    for (const auto& patch : patches) {
+        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
+                    patch.patched.size());
+    }
+    LOG_INFO(Debug, "Bloodborne no echo theft: enemies leave bloodstains where they are");
+}
+
 // A host death with a party revives the host like a guest (no world reload) and the guests skip
 // HostDead's warp home. All-or-nothing: guests that stay with a host that reloads its world
 // would be stranded.
@@ -10242,6 +10258,7 @@ void InstallSeamlessCoopPatches() {
     }
 
     InstallGhostDeathRevive(base, image_size);
+    InstallNoEchoTheft(base, image_size);
     InstallHostDeathKeepsGuests(base, image_size);
     InstallBossClearKeepsSession(base, image_size);
     InstallJoinAnywhere(base, image_size);

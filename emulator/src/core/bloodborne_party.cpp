@@ -86,6 +86,14 @@ const std::vector<CodePatch>& GuestBloodstainPatches() {
     return patches;
 }
 
+const std::vector<CodePatch>& NoEchoTheftPatches() {
+    // cmp byte [rax + 0xC0], 0 (stolen already); `je` to the steal -> nop nop (the return).
+    static const std::vector<CodePatch> patches{
+        {0x018E7613, {0x74, 0x09}, {0x90, 0x90}},
+    };
+    return patches;
+}
+
 const std::vector<CodePatch>& HostDeathKeepGuestsPatches() {
     // `mov esi, 0xFCF` (start of the white phantom branch) -> `jmp HostDeadEpilogueOffset`.
     static const std::vector<CodePatch> patches{

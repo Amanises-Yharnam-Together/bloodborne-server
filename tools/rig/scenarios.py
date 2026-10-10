@@ -60,6 +60,11 @@ CRASH_CLEANUP = [r"left the session outside a trip"]
 # (from the first lamp it lands on a ledge 15 m down, about 40% of max HP; 8 m up did nothing, and
 # a 25 m drop kills outright).
 PARTY_DEATH = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"}
+# After a real death each player has its own bloodstain where it fell (GameDataMan's record on
+# this map) and no enemy takes it (no echo theft): the bloodstain state lines say so.
+BLOODSTAIN_DROPPED = (r"bloodstain state map=0x18010000 has_mark=1 record_valid=\d+ "
+                      r"record_30=-?\d+ record_38=\d+ record_block=0x18010000")
+BLOODSTAIN_STOLEN = r"bloodstain state .* stain_hidden=1"
 LETHAL_FALL = ["hurt self 1", "rise 25"]
 # A first down takes three hits (R1 beside the downed member), at least 0.4 s apart. Each R1
 # lunges the hitter on, out of reach (2.5 m) after one, so it steps back beside it before each.
@@ -768,11 +773,12 @@ SCENARIOS = {
         },
         "expect": {
             "host": [r"party death: died for real on map 0x18010000 \(reset=true\)",
-                     r"travelling there \(reset=true\)"],
+                     r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
             "guest": [r"party death: wipe \d+ ends down \d+; dies \(reset=true",
-                      r"travelling there \(reset=true\)"],
+                      r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
         },
-        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "forbid": {"host": SESSION_HOLDS + [BLOODSTAIN_STOLEN],
+                   "guest": SESSION_HOLDS + [BLOODSTAIN_STOLEN]},
         "timeout": 900,
     },
     "down-alone": {
@@ -863,14 +869,16 @@ SCENARIOS = {
         },
         "expect": {
             "host": [r"party death: died for real on map 0x18010000 \(reset=true\)",
-                     r"travelling there \(reset=true\)"],
+                     r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
             "guest": [r"party death: wipe \d+ ends down \d+; dies \(reset=true",
-                      r"travelling there \(reset=true\)"],
+                      r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
             "guest2": [r"party death: down \d+ on map 0x18010000",
                        r"party death: wipe \d+ ends down \d+; dies \(reset=true",
-                       r"travelling there \(reset=true\)"],
+                       r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
         },
-        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
+        "forbid": {"host": SESSION_HOLDS + [BLOODSTAIN_STOLEN],
+                   "guest": SESSION_HOLDS + [BLOODSTAIN_STOLEN],
+                   "guest2": SESSION_HOLDS + [BLOODSTAIN_STOLEN]},
         "timeout": 1200,
     },
     "soak": {

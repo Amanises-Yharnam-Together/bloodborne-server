@@ -112,6 +112,7 @@ TEST_F(BloodborneEboot, EveryPatchFindsTheGamesOwnBytes) {
     const std::vector<std::pair<const char*, const std::vector<CodePatch>*>> tables{
         {"ghost death", &GhostDeathKeepSessionPatches()},
         {"guest bloodstain", &GuestBloodstainPatches()},
+        {"no echo theft", &NoEchoTheftPatches()},
         {"host death", &HostDeathKeepGuestsPatches()},
         {"boss clear", &BossClearKeepSessionPatches()},
         {"join anywhere", &JoinAnywherePatches()},
