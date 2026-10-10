@@ -54,11 +54,15 @@ SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
 # return), which check_party_log reports as leaving the session outside a trip.
 CRASH_CLEANUP = [r"left the session outside a trip"]
 # Party death (SHADPS4_BLOODBORNE_PARTY_DEATH): a lethal hit puts a member down while another
-# stands on its map. A lethal fall is the hit the rig can deal: 1 HP left, then a few metres up.
+# stands on its map. A lethal fall is the hit the rig can deal: 1 HP left, then 25 m up
+# (from the first lamp it lands on a ledge 15 m down, about 40% of max HP; 8 m up did nothing, and
+# a 25 m drop kills outright).
 PARTY_DEATH = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"}
-LETHAL_FALL = ["hurt self 1", "rise 8"]
-# A first down takes three hits (R1 beside the downed member), at least 0.4 s apart.
-REVIVE_HITS = [step for _ in range(3) for step in ("press r1 150", "wait 1")]
+LETHAL_FALL = ["hurt self 1", "rise 25"]
+# A first down takes three hits (R1 beside the downed member), at least 0.4 s apart. Each R1
+# lunges the hitter on, out of reach (2.5 m) after one, so it steps back beside it before each.
+REVIVE_HITS = [step for _ in range(3)
+               for step in ("approach-downed", "wait 1", "press r1 150", "wait 1")]
 
 
 def only_kill(handle: str) -> list[str]:
