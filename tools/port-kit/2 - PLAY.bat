@@ -44,6 +44,10 @@ if /i not "%P2PPORT%"=="auto" if not "%P2PPORT%"=="51610" if not "%P2PPORT%"=="5
 set "SHADPS4_BLOODBORNE_PARTY=%PARTY%"
 set "SHADPS4_BLOODBORNE_PARTY_ROLE=%ROLE%"
 set SHADPS4_BLOODBORNE_RE_TRACE=0
+rem Harder enemies: HP,damage,poise multipliers for every enemy and boss (1 - SETUP), or off.
+if "%HARDER%"=="" set "HARDER=3,1.5,3"
+set "SHADPS4_BLOODBORNE_HARDER_ENEMIES="
+if /i not "%HARDER%"=="off" set "SHADPS4_BLOODBORNE_HARDER_ENEMIES=%HARDER%"
 
 if not exist "%KIT%user\log" mkdir "%KIT%user\log"
 if exist "%KIT%user\log\shad_log.txt" copy /y "%KIT%user\log\shad_log.txt" "%KIT%user\log\shad_log.prev.txt" >nul

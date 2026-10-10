@@ -3965,7 +3965,10 @@ void TurnOffMultiplayerWalls(bool in_session, u32 map) {
 // way). Once found, row 9006 (the summoned guest's) gets a max HP rate of 1.0.
 constexpr u64 SoloParamRepositoryPointerOffset = 0x05540340;
 
-u64 FindLoadedParam(std::string_view type) {
+// Calls `found` with each loaded PARAM file of `type` (AtkParam_Pc and AtkParam_Npc share one)
+// until it returns true; returns that file, or 0.
+template <typename Found>
+u64 FindLoadedParamWhere(std::string_view type, Found&& found) {
     const u64 repository = ReadValue<u64>(image_base + SoloParamRepositoryPointerOffset, 0);
     if (repository < 0x10000 || !HasMemoryAccess(repository, 0x2000, MemoryProt::CpuRead)) {
         return 0;
@@ -3983,11 +3986,15 @@ u64 FindLoadedParam(std::string_view type) {
         if (param < 0x10000 || !HasMemoryAccess(param, 0x40, MemoryProt::CpuRead)) {
             continue;
         }
-        if (IsParamOfType({reinterpret_cast<const u8*>(param), 0x40}, type)) {
+        if (IsParamOfType({reinterpret_cast<const u8*>(param), 0x40}, type) && found(param)) {
             return param;
         }
     }
     return 0;
+}
+
+u64 FindLoadedParam(std::string_view type) {
+    return FindLoadedParamWhere(type, [](u64) { return true; });
 }
 
 void KeepGuestFullHp() {
@@ -4023,6 +4030,104 @@ void KeepGuestFullHp() {
     WriteValue(param + *row, SpEffectMaxHpRateOffset, 1.0f);
     LOG_INFO(Debug, "Bloodborne party guests keep full HP (SpEffect {} max HP rate {} -> 1)",
              PhantomHpEffect, before);
+}
+
+// Harder enemies (see HarderEnemies): NpcParam's HP and poise and AtkParam_Npc's damage are
+// scaled in the loaded tables, which the game reads when it creates a character, so this runs
+// from the title screen on (the pad reader and the save slot's opening call it). Row 271000 of
+// each table (Father Gascoigne) shows whether the scaled values are still there; a table that
+// was loaded again is scaled again.
+const std::optional<HarderEnemies> harder_enemies = [] {
+    const char* setting = std::getenv("SHADPS4_BLOODBORNE_HARDER_ENEMIES");
+    return ParseHarderEnemies(setting != nullptr ? setting : "");
+}();
+std::mutex harder_enemies_mutex;
+
+// A loaded PARAM file up to the end of its last row, when all of it is writable.
+std::optional<std::span<u8>> WritableParam(u64 param, u64 row_size) {
+    const u16 rows = ReadValue<u16>(param, 0x0A);
+    const u64 entries = 0x40 + u64{rows} * 24;
+    if (rows == 0 || !HasMemoryAccess(param, entries, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    u64 size = entries;
+    for (u64 row = 0; row < rows; ++row) {
+        size = std::max(size, ReadValue<u64>(param, 0x40 + row * 24 + 8) + row_size);
+    }
+    if (size > 0x1000000 || !HasMemoryAccess(param, size, MemoryProt::CpuWrite)) {
+        return std::nullopt;
+    }
+    return std::span<u8>{reinterpret_cast<u8*>(param), size};
+}
+
+// Row 271000's {HP, poise} or {attack, 0} as this table holds it now.
+std::optional<std::pair<s32, s32>> HarderEnemiesMarker(std::span<const u8> param, u64 first,
+                                                       u64 second) {
+    const auto row = FindParamRow(param, NpcAttackMarkerRow);
+    if (!row || *row + second + 2 > param.size()) {
+        return std::nullopt;
+    }
+    u32 one = 0;
+    s16 two = 0;
+    std::memcpy(&one, param.data() + *row + first, first == NpcHpOffset ? 4 : 2);
+    if (second != 0) {
+        std::memcpy(&two, param.data() + *row + second, sizeof(two));
+    }
+    return std::pair{static_cast<s32>(one), static_cast<s32>(two)};
+}
+
+void MakeEnemiesHarder() {
+    if (!harder_enemies) {
+        return;
+    }
+    std::scoped_lock lock{harder_enemies_mutex};
+    static std::chrono::steady_clock::time_point last{};
+    static std::optional<std::pair<s32, s32>> npc_marker;
+    static std::optional<std::pair<s32, s32>> attack_marker;
+    static u64 npc_table = 0;
+    static u64 attack_table = 0;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::seconds{1}) {
+        return;
+    }
+    last = now;
+    constexpr u64 NpcRowSize = 0x184;
+    constexpr u64 AtkRowSize = 0xA4;
+    const u64 npc = FindLoadedParam("NPC_PARAM_ST");
+    const u64 attacks = FindLoadedParamWhere("ATK_PARAM_ST", [](u64 param) {
+        const u16 rows = ReadValue<u16>(param, 0x0A);
+        const u64 entries = 0x40 + u64{rows} * 24;
+        return HasMemoryAccess(param, entries, MemoryProt::CpuRead) &&
+               FindParamRow({reinterpret_cast<const u8*>(param), entries}, NpcAttackMarkerRow);
+    });
+    const bool in_world = GetLocalPlayer() >= 0x10000;
+    if (const auto table = npc != 0 ? WritableParam(npc, NpcRowSize) : std::nullopt) {
+        if (npc != npc_table ||
+            HarderEnemiesMarker(*table, NpcHpOffset, NpcPoiseOffset) != npc_marker) {
+            const std::size_t rows = MakeNpcParamHarder(*table, *harder_enemies);
+            npc_table = npc;
+            npc_marker = HarderEnemiesMarker(*table, NpcHpOffset, NpcPoiseOffset);
+            LOG_INFO(Debug,
+                     "Bloodborne harder enemies: {} NpcParam rows x{} HP, x{} poise (Father "
+                     "Gascoigne HP {}, poise {}){}",
+                     rows, harder_enemies->hp, harder_enemies->poise,
+                     npc_marker ? npc_marker->first : -1, npc_marker ? npc_marker->second : -1,
+                     in_world ? "; enemies already on this map keep their old stats" : "");
+        }
+    }
+    if (const auto table = attacks != 0 ? WritableParam(attacks, AtkRowSize) : std::nullopt) {
+        if (attacks != attack_table ||
+            HarderEnemiesMarker(*table, AtkPhysOffset, 0) != attack_marker) {
+            const std::size_t rows = MakeNpcAttacksHarder(*table, harder_enemies->damage);
+            attack_table = attacks;
+            attack_marker = HarderEnemiesMarker(*table, AtkPhysOffset, 0);
+            LOG_INFO(Debug,
+                     "Bloodborne harder enemies: {} AtkParam_Npc rows x{} damage (Father "
+                     "Gascoigne's first swing {}){}",
+                     rows, harder_enemies->damage, attack_marker ? attack_marker->first : -1,
+                     in_world ? "; enemies already on this map keep their old stats" : "");
+        }
+    }
 }
 
 // The level sync check (see LevelSyncEffect): `seta bl` has just decided whether this player is
@@ -8856,6 +8961,7 @@ void TickAutoplayTitle() {
 } // namespace
 
 bool AutoplayPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& sticks) {
+    MakeEnemiesHarder();
     std::call_once(autoplay_loaded, LoadAutoplay);
     if (autoplay_run.phase == AutoplayRun::Phase::Off) {
         return false;
@@ -9523,6 +9629,7 @@ void InstallSeamlessCoopPatches() {
 
 void NoteSaveFileOpened(std::string_view guest_path) {
     if (const auto slot = CharacterSlotOfSavePath(guest_path)) {
+        MakeEnemiesHarder();
         if (character_slot.exchange(*slot) != *slot) {
             LOG_INFO(Debug, "Bloodborne party: character save slot {}", *slot);
         }

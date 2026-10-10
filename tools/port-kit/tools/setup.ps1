@@ -77,6 +77,9 @@ $party = Ask "Party" $(if ($saved["PARTY"]) { $saved["PARTY"] } else { "hunters:
 $defPort = if ($saved["P2PPORT"] -and $saved["P2PPORT"] -notin @("51610", "51611")) { $saved["P2PPORT"] } else { "auto" }
 $p2pPort = Ask "P2P UDP port (auto unless you port-forward)" $defPort { param($v) $v -eq "auto" -or (& $isPort $v) } "Type auto, or a number from 1024 to 65535."
 $fps = Ask "Frame rate (60, or 30 as on shadPS4)" $(if ($saved["FPS"]) { $saved["FPS"] } else { "60" }) $isFps "Type 60 or 30."
+# Every enemy's and boss's HP, damage and poise multipliers; everyone in a party should use the same.
+$isHarder = { param($v) $v -eq "off" -or $v -match '^\d+(\.\d+)?,\d+(\.\d+)?,\d+(\.\d+)?$' }
+$harder = Ask "Harder enemies: HP,damage,poise multipliers (off for the normal game)" $(if ($saved["HARDER"]) { $saved["HARDER"] } else { "3,1.5,3" }) $isHarder "Type off, or three numbers from 1 to 10 like 3,1.5,3."
 
 # --- saves -----------------------------------------------------------------------------------
 # The port keeps saves in user\savedata\<user>\<title>\ (user 1), shadPS4 in
@@ -228,13 +231,14 @@ $lines = @(
     "set `"PARTY=$party`"",
     "set `"P2PPORT=$p2pPort`"",
     "set `"FPS=$fps`"",
+    "set `"HARDER=$harder`"",
     "set `"GAMEDIR=$gameDir`""
 )
 [IO.File]::WriteAllLines($settingsPath, $lines, (New-Object Text.ASCIIEncoding))
 
 Write-Host ""
 Write-Host "  Done." -ForegroundColor Green
-Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS"
+Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS, harder enemies $harder"
 Write-Host "    shadnet ${hostIp}:31313, WebAPI ${hostIp}:31315, backend ${hostIp}:20443"
 if ($role -eq "host") {
     Write-Host ""

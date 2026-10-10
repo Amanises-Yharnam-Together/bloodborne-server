@@ -758,6 +758,33 @@ std::array<u8, 8> RetargetRipLoad(std::span<const u8, 8> original, u64 address, 
 bool IsParamOfType(std::span<const u8> param, std::string_view type);
 std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
 
+// Harder enemies (SHADPS4_BLOODBORNE_HARDER_ENEMIES=<hp>,<damage>,<poise>, e.g. "3,1.5,3"):
+// every NpcParam row's HP and poise and every AtkParam_Npc row's damage are multiplied once,
+// in the loaded tables, before any enemy is created. Bosses get the game's own co-op HP effect
+// (7500-7502) on top. Each multiplier is 1 to 10; "", "0", "off" or all ones mean vanilla.
+struct HarderEnemies {
+    float hp = 1.0f;
+    float damage = 1.0f;
+    float poise = 1.0f;
+};
+std::optional<HarderEnemies> ParseHarderEnemies(std::string_view setting);
+// NpcParam (NPC_PARAM_ST, 0x184-byte rows): hp (u32) and superArmorDurability (s16, poise).
+constexpr u64 NpcHpOffset = 0x20;
+constexpr u64 NpcPoiseOffset = 0x118;
+// AtkParam_Npc (ATK_PARAM_ST): atkPhys, atkMag, atkFire, atkThun (u16 each). AtkParam_Pc has
+// the same type; the enemies' table is the one with Father Gascoigne's first axe swing.
+constexpr u64 AtkPhysOffset = 0x50;
+constexpr s32 NpcAttackMarkerRow = 271000;
+u32 HarderEnemyHp(u32 hp, float rate);
+// Most enemies have no poise (0: any hit staggers), so a multiplier gets a floor too: 15, or 50
+// for a boss-sized HP (1000+), times the multiplier. 9999 means never staggered and stays.
+s16 HarderEnemyPoise(s16 poise, u32 hp, float rate);
+u16 HarderEnemyAttack(u16 attack, float rate);
+// The rows changed (each row's data once, rows outside the table skipped); 0 for another table
+// (for attacks, also for AtkParam_Pc).
+std::size_t MakeNpcParamHarder(std::span<u8> param, const HarderEnemies& harder);
+std::size_t MakeNpcAttacksHarder(std::span<u8> param, float damage);
+
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
 // Resonant) once the world has been stable for a while.
