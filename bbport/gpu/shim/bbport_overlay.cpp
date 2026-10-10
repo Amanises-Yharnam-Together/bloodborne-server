@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include <SDL3/SDL.h>
+#include "../bbcoop.h"
 #include "bbport_save_editor.h"
 #include "bbport_settings.h"
 #include "imgui.h"
@@ -1041,6 +1043,237 @@ void TextPrompt() {
     ImGui::End();
 }
 
+// Party death (bbcoop.h): the other members down the left side, under the game's own bars, after
+// Elden Ring Nightreign's party list; whom an attack would revive; this player's own down in the
+// middle of the screen. Drawn shapes in the menu's colours, no art from either game.
+namespace Party {
+
+bbcoop_panel panel{}; // present thread: as Visible() read it last
+bool shown = false;
+
+bool Read() {
+    shown = bbcoop_party_panel(&panel) != 0;
+    return shown;
+}
+
+ImU32 Rgba(float r, float g, float b, float a) {
+    return ImGui::GetColorU32(ImVec4(r, g, b, a));
+}
+
+float Alpha(ImU32 color) {
+    return float((color >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
+}
+
+// Each member keeps a colour by its place on the board, as Nightreign's players do.
+ImU32 MemberColor(int index, float alpha) {
+    static constexpr ImVec4 colors[] = {{0.42f, 0.62f, 0.92f, 1.0f},
+                                        {0.88f, 0.70f, 0.32f, 1.0f},
+                                        {0.56f, 0.82f, 0.52f, 1.0f},
+                                        {0.78f, 0.52f, 0.86f, 1.0f}};
+    ImVec4 color = colors[index % 4];
+    color.w = alpha;
+    return ImGui::GetColorU32(color);
+}
+
+/// Text with a soft shadow (readable over bright scenes); `align` 0.5 centres it on `at`.
+void Text(ImDrawList* draw, ImFont* font, float size, ImVec2 at, ImU32 color, const char* text,
+          float align = 0.0f) {
+    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    at.x = std::floor(at.x - extent.x * align);
+    const float shadow = std::max(1.0f, size * 0.07f);
+    draw->AddText(font, size, ImVec2(at.x + shadow, at.y + shadow),
+                  Rgba(0, 0, 0, 0.8f * Alpha(color)), text);
+    draw->AddText(font, size, at, color, text);
+}
+
+/// The revive ring, after Nightreign's: a purple part per hit still needed (hits empty it part by
+/// part), inside a pale ring that turns gold once the party's hits land.
+void ReviveRing(ImDrawList* draw, ImVec2 centre, float radius, u32 landed, u32 needed,
+                float alpha) {
+    const u32 parts = std::max(needed, 1u);
+    const float step = 2.0f * IM_PI / float(parts);
+    const float gap = parts > 1 ? std::min(0.16f, step * 0.3f) : 0.0f;
+    draw->AddCircleFilled(centre, radius, Rgba(0.03f, 0.03f, 0.05f, 0.85f * alpha));
+    const float inner = radius * 0.42f, outer = radius * 0.78f;
+    for (u32 i = 0; i < parts; ++i) {
+        const float a0 = -IM_PI * 0.5f + step * float(i) + gap * 0.5f;
+        draw->PathArcTo(centre, (inner + outer) * 0.5f, a0, a0 + step - gap);
+        draw->PathStroke(i < landed ? Rgba(0.10f, 0.10f, 0.13f, alpha)
+                                    : Rgba(0.40f, 0.30f, 0.86f, alpha),
+                         outer - inner);
+    }
+    draw->AddCircle(centre, radius * 0.92f,
+                    landed > 0 ? Ui::Gold(alpha) : Rgba(0.62f, 0.68f, 0.86f, 0.9f * alpha), 0,
+                    std::max(1.5f, radius * 0.11f));
+}
+
+void MemberList(ImDrawList* draw, const ImVec2& display, float pulse) {
+    using Ui::S;
+    using Ui::T;
+    const float x = S(48.0f), height = S(54.0f), gap = S(10.0f), bar = S(240.0f);
+    float y = std::round(display.y * 0.16f);
+    char line[64];
+    for (int i = 0; i < panel.member_count; ++i) {
+        const bbcoop_panel_member& member = panel.members[i];
+        const bool down = member.vital == BBCOOP_VITAL_DOWN;
+        const bool dead = member.vital == BBCOOP_VITAL_DEAD;
+        const float a = member.here ? 1.0f : 0.55f;
+        const ImU32 clear = Rgba(0.0f, 0.0f, 0.0f, 0.0f);
+        // The member's colour as a thin line fading out at both ends, then a frame fading out to
+        // the right: red while down.
+        const ImU32 color = MemberColor(i, a);
+        const float line_w = S(2.0f), mid_y = y + height * 0.5f;
+        draw->AddRectFilledMultiColor(ImVec2(x, y), ImVec2(x + line_w, mid_y), clear, clear, color,
+                                      color);
+        draw->AddRectFilledMultiColor(ImVec2(x, mid_y), ImVec2(x + line_w, y + height), color,
+                                      color, clear, clear);
+        const ImU32 frame = down ? Rgba(0.46f, 0.04f, 0.06f, (0.55f + 0.20f * pulse) * a)
+                                 : Rgba(0.03f, 0.04f, 0.07f, 0.62f * a);
+        draw->AddRectFilledMultiColor(ImVec2(x + S(8.0f), y), ImVec2(x + S(330.0f), y + height),
+                                      frame, clear, clear, frame);
+        draw->AddLine(ImVec2(x + S(8.0f), y), ImVec2(x + S(150.0f), y),
+                      Rgba(0.75f, 0.78f, 0.92f, 0.35f * a), S(1.0f));
+        // The icon: the revive ring while down (as Nightreign's replaces the portrait), a cross
+        // while dead, the member's colour as a small diamond while up.
+        const ImVec2 icon(x + S(34.0f), mid_y);
+        if (down) {
+            ReviveRing(draw, icon, S(21.0f), member.landed, member.needed,
+                       a * (0.80f + 0.20f * pulse));
+        } else if (dead) {
+            const float r = S(7.0f);
+            draw->AddLine(ImVec2(icon.x - r, icon.y - r), ImVec2(icon.x + r, icon.y + r),
+                          Ui::Dim(a), S(2.0f));
+            draw->AddLine(ImVec2(icon.x + r, icon.y - r), ImVec2(icon.x - r, icon.y + r),
+                          Ui::Dim(a), S(2.0f));
+        } else {
+            const float r = S(7.0f);
+            draw->AddQuadFilled(ImVec2(icon.x, icon.y - r), ImVec2(icon.x + r, icon.y),
+                                ImVec2(icon.x, icon.y + r), ImVec2(icon.x - r, icon.y), color);
+        }
+        const float text_x = x + S(64.0f);
+        const char* name = member.name[0] != '\0' ? member.name : T("Hunter", "Охотник");
+        const ImU32 name_color = down   ? Rgba(1.0f, 0.86f, 0.82f, a)
+                                 : dead ? Ui::Dim(a)
+                                        : Rgba(0.95f, 0.94f, 0.92f, a);
+        Text(draw, serif_font, S(21.0f), ImVec2(text_x, y + S(4.0f)), name_color, name);
+        if (!member.here) {
+            const float name_w = serif_font->CalcTextSizeA(S(21.0f), FLT_MAX, 0.0f, name).x;
+            Text(draw, sans_font, S(13.0f), ImVec2(text_x + name_w + S(10.0f), y + S(10.0f)),
+                 Ui::Dim(0.95f), T("elsewhere", "в другом месте"));
+        }
+        const float status_y = y + S(33.0f);
+        if (down) {
+            std::snprintf(line, sizeof(line), "%s  %u / %u", T("Down", "Повержен"), member.landed,
+                          member.needed);
+            Text(draw, sans_font, S(14.0f), ImVec2(text_x, status_y - S(3.0f)),
+                 Rgba(1.0f, 0.52f, 0.46f, a), line);
+        } else if (dead) {
+            Text(draw, sans_font, S(14.0f), ImVec2(text_x, status_y - S(3.0f)), Ui::Dim(a),
+                 T("Dead", "Погиб"));
+        } else {
+            // HP: red, the rest grey, framed in a thin light line.
+            const float fill = member.hp_max > 0
+                                   ? std::clamp(float(member.hp) / float(member.hp_max), 0.0f, 1.0f)
+                                   : 0.0f;
+            const ImVec2 b0(text_x, status_y), b1(text_x + bar, status_y + S(7.0f));
+            const float split = b0.x + bar * fill;
+            draw->AddRectFilled(ImVec2(b0.x - S(1.0f), b0.y - S(1.0f)),
+                                ImVec2(b1.x + S(1.0f), b1.y + S(1.0f)),
+                                Rgba(0.0f, 0.0f, 0.0f, 0.75f * a));
+            draw->AddRectFilledMultiColor(
+                ImVec2(split, b0.y), b1, Rgba(0.36f, 0.36f, 0.38f, 0.8f * a),
+                Rgba(0.30f, 0.30f, 0.32f, 0.8f * a), Rgba(0.22f, 0.22f, 0.24f, 0.8f * a),
+                Rgba(0.26f, 0.26f, 0.28f, 0.8f * a));
+            draw->AddRectFilledMultiColor(
+                b0, ImVec2(split, b1.y), Rgba(0.50f, 0.07f, 0.06f, a), Rgba(0.80f, 0.20f, 0.14f, a),
+                Rgba(0.60f, 0.10f, 0.08f, a), Rgba(0.38f, 0.04f, 0.04f, a));
+            if (fill > 0.0f && fill < 1.0f) {
+                draw->AddLine(ImVec2(split, b0.y), ImVec2(split, b1.y),
+                              Rgba(1.0f, 0.86f, 0.80f, 0.9f * a), S(1.5f));
+            }
+            draw->AddRect(ImVec2(b0.x - S(1.0f), b0.y - S(1.0f)),
+                          ImVec2(b1.x + S(1.0f), b1.y + S(1.0f)),
+                          Rgba(0.80f, 0.80f, 0.84f, 0.45f * a), 0.0f, 0, S(1.0f));
+        }
+        y += height + gap;
+    }
+}
+
+/// An attack now would revive someone: the prompt low in the middle, as the game's own prompts.
+void RevivePrompt(ImDrawList* draw, const ImVec2& display) {
+    using Ui::S;
+    using Ui::T;
+    const bbcoop_panel_member& member = panel.members[panel.revive_target];
+    char line[96];
+    std::snprintf(
+        line, sizeof(line),
+        T("R1 / R2: strike to revive %s  %u / %u", "R1 / R2: ударьте, чтобы поднять %s  %u / %u"),
+        member.name[0] != '\0' ? member.name : T("Hunter", "Охотник"), member.landed,
+        member.needed);
+    const float size = S(21.0f), mid = display.x * 0.5f, y = std::round(display.y * 0.74f);
+    const float w = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, line).x + S(120.0f);
+    const ImU32 band = Rgba(0.0f, 0.0f, 0.0f, 0.62f), clear = Rgba(0.0f, 0.0f, 0.0f, 0.0f);
+    draw->AddRectFilledMultiColor(ImVec2(mid - w * 0.5f, y - S(10.0f)), ImVec2(mid, y + S(38.0f)),
+                                  clear, band, band, clear);
+    draw->AddRectFilledMultiColor(ImVec2(mid, y - S(10.0f)), ImVec2(mid + w * 0.5f, y + S(38.0f)),
+                                  band, clear, clear, band);
+    Ui::Ornament(draw, mid - w * 0.5f, mid + w * 0.5f, y - S(10.0f));
+    Ui::Ornament(draw, mid - w * 0.5f, mid + w * 0.5f, y + S(38.0f));
+    Text(draw, serif_font, size, ImVec2(mid, y + S(2.0f)), Ui::Bright(), line, 0.5f);
+}
+
+/// This player is down: a red edge around the screen, its revive ring and how to give up.
+void OwnDown(ImDrawList* draw, const ImVec2& display, float pulse) {
+    using Ui::S;
+    using Ui::T;
+    const float edge = display.y * 0.24f;
+    const ImU32 red = Rgba(0.30f, 0.0f, 0.0f, 0.50f + 0.12f * pulse);
+    const ImU32 clear = Rgba(0.30f, 0.0f, 0.0f, 0.0f);
+    draw->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(display.x, edge), red, red, clear, clear);
+    draw->AddRectFilledMultiColor(ImVec2(0, display.y - edge), display, clear, clear, red, red);
+    draw->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(edge, display.y), red, clear, clear, red);
+    draw->AddRectFilledMultiColor(ImVec2(display.x - edge, 0), display, clear, red, red, clear);
+
+    const float mid = display.x * 0.5f;
+    const ImVec2 centre(mid, std::round(display.y * 0.64f));
+    ReviveRing(draw, centre, S(40.0f), panel.landed, panel.needed, 0.85f + 0.15f * pulse);
+    float y = centre.y + S(54.0f);
+    Text(draw, serif_font, S(30.0f), ImVec2(mid, y), Ui::Bright(),
+         T("You are down", "Вы повержены"), 0.5f);
+    y += S(40.0f);
+    Text(draw, serif_font, S(18.0f), ImVec2(mid, y), Ui::Plain(0.9f),
+         T("A party member can raise you by striking you",
+           "Союзник может поднять вас, ударив несколько раз"),
+         0.5f);
+    y += S(34.0f);
+    Text(draw, sans_font, S(15.0f), ImVec2(mid, y), Ui::Gold(0.85f),
+         T("Hold Circle to give up", "Удерживайте Круг, чтобы сдаться"), 0.5f);
+    y += S(24.0f);
+    const float w = S(180.0f);
+    draw->AddRectFilled(ImVec2(mid - w * 0.5f, y), ImVec2(mid + w * 0.5f, y + S(4.0f)),
+                        Rgba(0.0f, 0.0f, 0.0f, 0.6f));
+    if (panel.give_up > 0.0f) {
+        draw->AddRectFilled(
+            ImVec2(mid - w * 0.5f, y),
+            ImVec2(mid - w * 0.5f + w * std::clamp(panel.give_up, 0.0f, 1.0f), y + S(4.0f)),
+            Rgba(0.90f, 0.42f, 0.25f, 1.0f));
+    }
+}
+
+void Draw() {
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
+    MemberList(draw, display, pulse);
+    if (panel.vital == BBCOOP_VITAL_DOWN) {
+        OwnDown(draw, display, pulse);
+    } else if (panel.revive_target >= 0 && panel.revive_target < panel.member_count) {
+        RevivePrompt(draw, display);
+    }
+}
+
+} // namespace Party
+
 /// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1,
 /// consumed when the file appears (it is removed), one key press per frame.
 void ScriptedKeys() {
@@ -1279,7 +1512,8 @@ bool HandleEvent(const SDL_Event& event) {
 }
 
 bool Visible() {
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps);
+    const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
+    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps || party);
 }
 
 bool MenuOpen() {
@@ -1322,6 +1556,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
 
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
+    if (Party::shown && !menu_open) {
+        Party::Draw();
+    }
     if (menu_open) {
         Menu();
     }

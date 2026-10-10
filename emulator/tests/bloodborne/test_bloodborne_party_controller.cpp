@@ -764,11 +764,11 @@ TEST(BloodborneGuestProgress, EachTripGetsTheWorldChangesOnce) {
 // (the first one: the Hunter's Dream 2102962; a kidnapping: the Gaol 2802959). In a loaded block
 // the player is moved there, otherwise it travels; after that trip it never travels again.
 TEST(BloodborneDeaths, APartyDeathWakesWhereTheGameSays) {
-    EXPECT_EQ(ChooseDeathRespawn(2412951, true, false), DeathRespawn::MoveToPoint);
-    EXPECT_EQ(ChooseDeathRespawn(2102962, false, false), DeathRespawn::Travel);
-    EXPECT_EQ(ChooseDeathRespawn(2102962, false, true), DeathRespawn::StayPut);
-    EXPECT_EQ(ChooseDeathRespawn(-1, false, false), DeathRespawn::StayPut);
-    EXPECT_EQ(ChooseDeathRespawn(0, false, false), DeathRespawn::StayPut);
+    EXPECT_EQ(ChooseDeathRespawn(2412951, true, false, false), DeathRespawn::MoveToPoint);
+    EXPECT_EQ(ChooseDeathRespawn(2102962, false, false, false), DeathRespawn::Travel);
+    EXPECT_EQ(ChooseDeathRespawn(2102962, false, true, false), DeathRespawn::StayPut);
+    EXPECT_EQ(ChooseDeathRespawn(-1, false, false, false), DeathRespawn::StayPut);
+    EXPECT_EQ(ChooseDeathRespawn(0, false, false, false), DeathRespawn::StayPut);
 }
 
 // SHADPS4_BLOODBORNE_TRACE_FLAG=<flag> points the flag tracer at one flag in a session.

@@ -57,7 +57,7 @@ protected:
         if (messages.empty()) {
             GTEST_SKIP() << "no contracts file at " << BLOODBORNE_CONTRACTS;
         }
-        ASSERT_EQ(messages.size(), 16u);
+        ASSERT_EQ(messages.size(), 18u);
     }
     const std::string& Message(const std::string& name) const {
         return messages.at(name);
@@ -133,4 +133,28 @@ TEST_F(BloodborneContracts, EchoBoard) {
     EXPECT_EQ(EncodeEchoUpdate(Kaniel, 3, kills), Message("echoes.update"));
     EXPECT_EQ(ParseEchoBoard(Message("echoes.answer")),
               (std::optional<EchoBoardAnswer>{EchoBoardAnswer{5, kills}}));
+}
+
+TEST_F(BloodborneContracts, VitalsBoard) {
+    const MemberVitals self{.member = Kaniel,
+                            .map = CentralYharnam,
+                            .vital = Vital::Up,
+                            .hp = 1200,
+                            .max = 1520,
+                            .at = {-12.5f, 3.0f, 40.25f}};
+    const std::vector<ReviveHitTotal> hits{{Lisara, 4, 2}};
+    EXPECT_EQ(EncodeVitalsUpdate(self, hits), Message("vitals.update"));
+    const MemberVitals lisara{.member = Lisara,
+                              .map = CentralYharnam,
+                              .vital = Vital::Down,
+                              .hp = 1,
+                              .max = 1380,
+                              .down = 4,
+                              .landed = 2,
+                              .needed = 3,
+                              .at = {-11.0f, 3.0f, 41.0f},
+                              .revive_hits = 2};
+    EXPECT_EQ(ParseVitalsBoard(Message("vitals.answer")),
+              (std::optional<VitalsBoard>{
+                  VitalsBoard{{self, lisara}, {PartyWipe{1, HuntersDream, {Kaniel, Lisara}}}}}));
 }

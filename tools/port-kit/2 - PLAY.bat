@@ -44,6 +44,9 @@ if /i not "%P2PPORT%"=="auto" if not "%P2PPORT%"=="51610" if not "%P2PPORT%"=="5
 set "SHADPS4_BLOODBORNE_PARTY=%PARTY%"
 set "SHADPS4_BLOODBORNE_PARTY_ROLE=%ROLE%"
 set SHADPS4_BLOODBORNE_RE_TRACE=0
+rem Party death (Nightreign style): on unless SETUP turned it off.
+if "%PARTYDEATH%"=="" set "PARTYDEATH=1"
+set "SHADPS4_BLOODBORNE_PARTY_DEATH=%PARTYDEATH%"
 
 if not exist "%KIT%user\log" mkdir "%KIT%user\log"
 if exist "%KIT%user\log\shad_log.txt" copy /y "%KIT%user\log\shad_log.txt" "%KIT%user\log\shad_log.prev.txt" >nul

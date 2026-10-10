@@ -439,6 +439,15 @@ int ProcessStates(OrbisPadData* pData, const Input::State* states, s32 num) {
             }
             pData[i].connected = true;
         }
+        // Bloodborne party death: a downed player only keeps the menu and the camera.
+        auto buttons = static_cast<u32>(pData[i].buttons);
+        std::array<u8, 4> sticks{pData[i].leftStick.x, pData[i].leftStick.y, pData[i].rightStick.x,
+                                 pData[i].rightStick.y};
+        Core::Bloodborne::FilterPartyDeathPad(buttons, sticks, pData[i].analogButtons.l2,
+                                              pData[i].analogButtons.r2);
+        pData[i].buttons = static_cast<OrbisPadButtonDataOffset>(buttons);
+        pData[i].leftStick = {sticks[0], sticks[1]};
+        pData[i].rightStick = {sticks[2], sticks[3]};
     }
 
     return num;

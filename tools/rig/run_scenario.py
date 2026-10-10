@@ -258,8 +258,9 @@ def add_guest2():
 
 
 def server_is_current() -> bool:
-    """Whether the rig's shadNet has the newest party boards (/bloodborne/party/hp)."""
-    request = urllib.request.Request("http://127.0.0.1:32315/bloodborne/party/hp", data=b"probe 0",
+    """Whether the rig's shadNet has the newest party boards (/bloodborne/party/vitals)."""
+    request = urllib.request.Request("http://127.0.0.1:32315/bloodborne/party/vitals",
+                                     data=b"probe 0 off 0 0 0 0 0 0 0 0",
                                      headers={"X-ShadPS4-Bloodborne-Party": "probe:probe"})
     try:
         with urllib.request.urlopen(request, timeout=3) as response:
@@ -291,9 +292,14 @@ def stages_of(script: list) -> list[list[str]]:
     return script if script and isinstance(script[0], list) else [script]
 
 
-def game_environment(role: str, script: pathlib.Path | None, party: str) -> dict[str, str]:
+# Settings a scenario switches on for its games ("settings"); never taken from the PC's own.
+SCENARIO_SETTINGS = ("SHADPS4_BLOODBORNE_PARTY_DEATH",)
+
+
+def game_environment(role: str, script: pathlib.Path | None, party: str,
+                     settings: dict[str, str] | None = None) -> dict[str, str]:
     """A role's game's settings: co-op on in `party`, the trace on, the autoplay script if any,
-    and what the build needs besides."""
+    the scenario's own settings, and what the build needs besides."""
     env = dict(os.environ)
     env.update({
         "SHADPS4_BLOODBORNE_SEAMLESS_COOP": "1",
@@ -305,6 +311,9 @@ def game_environment(role: str, script: pathlib.Path | None, party: str) -> dict
     env.pop("SHADPS4_BLOODBORNE_AUTOPLAY", None)
     if script is not None:
         env["SHADPS4_BLOODBORNE_AUTOPLAY"] = str(script)
+    for name in SCENARIO_SETTINGS:
+        env.pop(name, None)
+    env.update(settings or {})
     env.update(ENGINE.environment(role))
     # In the background: the games' windows (SDL, both engines) open and come up without taking
     # the focus from whatever the person at the PC is doing.
@@ -335,7 +344,8 @@ def set_aside(path: pathlib.Path):
             time.sleep(0.5)
 
 
-def launch(role: str, script: list[str] | None, party: str = "rig:hunters") -> subprocess.Popen:
+def launch(role: str, script: list[str] | None, party: str = "rig:hunters",
+           settings: dict[str, str] | None = None) -> subprocess.Popen:
     folder = ENGINE.role_dir(role)
     script_path = None
     if script is not None:
@@ -343,7 +353,7 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters") -> s
         script_path.write_text("\n".join(script) + "\n", encoding="utf-8", newline="\n")
     set_aside(log_path(role))
     ENGINE.prepare(role)
-    env = game_environment(role, script_path, party)
+    env = game_environment(role, script_path, party, settings)
     if ENGINE.name == "emulator":
         return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -490,7 +500,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     stop_servers()
     start_servers(run_dir)
     if not server_is_current():
-        print("  The rig's shadNet is too old (no /bloodborne/party/hp): copy "
+        print("  The rig's shadNet is too old (no /bloodborne/party/vitals): copy "
               rf"{BB_ROOT}\out\server\shadnet.exe into {RIG}\server.")
         return False
     started = time.time()
@@ -499,7 +509,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     stage = {role: 0 for role in roles}
     processes = {}
     for role in roles:
-        processes[role] = launch(role, stages[role][0])
+        processes[role] = launch(role, stages[role][0], settings=scenario.get("settings"))
         print(f"  started {role}")
         # The next game once this one is in the world, where loading side by side is slow.
         wait_until = time.time() + 90 if ENGINE.staggered_start else 0
@@ -519,7 +529,8 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
                       "stopping its game and starting it again")
                 stop_game(processes[role])
                 keep_logs(run_dir, [role], f"-stage{stage[role]}")
-                processes[role] = launch(role, stages[role][stage[role]])
+                processes[role] = launch(role, stages[role][stage[role]],
+                                         settings=scenario.get("settings"))
             elif found:
                 done[role] = found.group(1)
                 print(f"  {role} done ({found.group(1)}) after {time.time() - started:.0f} s")

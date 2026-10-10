@@ -381,6 +381,46 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                 Party(request), update->member, update->since, update->echoes, update->maps));
             return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};
         });
+
+    // Party death: members post their state, HP, revive progress and position (every second,
+    // a few times a second while someone is down) and read back everyone's, with the wipes the
+    // board declared: a map where nobody stands any more takes everyone down there.
+    auto vitalsBoard = std::make_shared<Bloodborne::PartyVitalsBoard>();
+    auto lastVitals = std::make_shared<QHash<QByteArray, QByteArray>>();
+    auto lastVitalsMutex = std::make_shared<QMutex>();
+    http.route("/bloodborne/party/vitals", QHttpServerRequest::Method::Post,
+               [vitalsBoard, lastVitals,
+                lastVitalsMutex](const QHttpServerRequest& request) -> QHttpServerResponse {
+                   const auto update = Bloodborne::ParseVitalsUpdate(request.body());
+                   if (!update) {
+                       return InvalidRequest(QStringLiteral("Invalid party vitals update"));
+                   }
+                   const QByteArray party = Party(request);
+                   const auto answer =
+                       vitalsBoard->Update(party, *update, QDateTime::currentMSecsSinceEpoch());
+                   // Logged when someone's state or the wipes change, not for every HP change.
+                   QByteArray summary;
+                   for (const auto& member : answer.members) {
+                       summary += member.member + ' ' + member.vital + ' ' +
+                                  QByteArray::number(member.map, 16) + ", ";
+                   }
+                   for (const auto& wipe : answer.wipes) {
+                       summary += "wipe " + QByteArray::number(wipe.id) + " of " +
+                                  QByteArray::number(wipe.map, 16) + " (" + wipe.members.join(' ') +
+                                  "), ";
+                   }
+                   {
+                       QMutexLocker lock(lastVitalsMutex.get());
+                       QByteArray& last = (*lastVitals)[party];
+                       if (last != summary) {
+                           last = summary;
+                           qInfo().noquote() << "Bloodborne party vitals:"
+                                             << (summary.isEmpty() ? summary : summary.chopped(2));
+                       }
+                   }
+                   return QHttpServerResponse{"text/plain", Bloodborne::FormatVitalsBoard(answer),
+                                              QHttpServerResponse::StatusCode::Ok};
+               });
 }
 
 } // namespace WebApiRoutes

@@ -26,6 +26,35 @@ void bbcoop_crash_report(void *exception_pointers);
  * sticks (lx, ly, rx, ry; 128 is centred) it holds now; 0 when it is off. */
 int bbcoop_autoplay_pad(uint32_t *buttons, uint8_t sticks[4]);
 
+/* Party death (SHADPS4_BLOODBORNE_PARTY_DEATH): sees what the game will read from the pad (the
+ * give-up hold, attacks that revive a downed member) and, while the player is down, lets go of
+ * all but Options and the camera stick. */
+void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2);
+
+/* Party death's panel, for the overlay: the other party members playing it (online id, state,
+ * HP, revive progress while down; `here` on this player's map), whom an attack would revive now
+ * (an index into members, or -1) and this player's own down. */
+enum { BBCOOP_VITAL_OFF, BBCOOP_VITAL_UP, BBCOOP_VITAL_DOWN, BBCOOP_VITAL_DEAD };
+enum { BBCOOP_PANEL_MEMBERS = 4 };
+typedef struct bbcoop_panel_member {
+    char name[20]; /* "" when unknown */
+    int vital;     /* BBCOOP_VITAL_* */
+    int here;
+    int32_t hp, hp_max;
+    uint32_t landed, needed;
+} bbcoop_panel_member;
+typedef struct bbcoop_panel {
+    int member_count;
+    bbcoop_panel_member members[BBCOOP_PANEL_MEMBERS];
+    int revive_target;
+    int vital; /* this player's */
+    uint32_t landed, needed;
+    float give_up; /* the give-up hold, 0 to 1 */
+} bbcoop_panel;
+/* Fills `panel`; 0 when there is nothing to draw (party death off, no party session, nobody else
+ * on the vitals board and this player not down). */
+int bbcoop_party_panel(bbcoop_panel *panel);
+
 /* The game opens a file (its guest path): the party code notes the character's save slot. */
 void bbcoop_file_opened(const char *guest_path);
 

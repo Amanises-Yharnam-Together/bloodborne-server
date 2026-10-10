@@ -20,8 +20,10 @@ VERBS = {
     "wait", "wait-session", "wait-members", "wait-map", "travel", "ensure-map", "hurt", "kill",
     "mark", "approach", "attack", "teleport", "press", "stick", "set-flag", "expect-flag",
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
-    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
+    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "pickup",
+    "rise", "approach-downed", "wait-vital", "wait-member-vital",
 }
+VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
            "l1", "r1", "l2", "r2", "l3", "r3"}
 
@@ -36,6 +38,18 @@ class ScenarioTest(unittest.TestCase):
                         self.assertIn(words[0], VERBS)
                         if words[0] == "press":
                             self.assertIn(words[1], BUTTONS)
+                        if words[0] in ("wait-vital", "wait-member-vital"):
+                            self.assertIn(words[1], VITALS)
+
+    def test_party_death_scenarios_switch_it_on(self):
+        for name, scenario in scenarios.SCENARIOS.items():
+            commands = [command.split()[0] for script in scenario["roles"].values()
+                        for command in sum(run_scenario.stages_of(script), [])]
+            uses = any(verb in ("approach-downed", "wait-vital", "wait-member-vital")
+                       for verb in commands)
+            with self.subTest(scenario=name):
+                self.assertEqual(
+                    scenario.get("settings", {}).get("SHADPS4_BLOODBORNE_PARTY_DEATH") == "1", uses)
 
     def test_every_role_is_a_rig_game(self):
         for name, scenario in scenarios.SCENARIOS.items():

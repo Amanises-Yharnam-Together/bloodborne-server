@@ -16,6 +16,14 @@ int bbcoop_autoplay_pad(uint32_t *buttons, uint8_t sticks[4]) {
     memcpy(sticks,autoplay_sticks,4);
     return 1;
 }
+/* Party death (gpu/bbcoop): a downed player keeps only the menu and the camera. */
+static int downed;
+void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2) {
+    if (!downed) return;
+    *buttons&=BTN_OPTIONS;
+    sticks[0]=sticks[1]=128;
+    *l2=*r2=0;
+}
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
     (void)table; (void)count; (void)name;
     return 0;
@@ -68,6 +76,14 @@ int main(void) {
     assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.left_x==128);
     capture=0;
     autoplay=0; autoplay_sticks[0]=128;
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    /* Party death: what the game reads, autoplay's buttons and sticks too, goes through it. */
+    downed=1; autoplay=1; autoplay_buttons=BTN_R1; autoplay_sticks[0]=200; autoplay_sticks[2]=60;
+    inject(path,"cross options r2");
+    assert(pad_read_state(1,&data)==0 && data.buttons==BTN_OPTIONS && data.r2==0);
+    assert(data.left_x==128 && data.left_y==128 && data.right_x==60 && data.right_y==128);
+    downed=0; autoplay=0; autoplay_sticks[0]=128; autoplay_sticks[2]=128;
     inject(path,"");
     assert(pad_read_state(1,&data)==0 && data.buttons==0);
 
@@ -126,5 +142,5 @@ int main(void) {
     SDL_Quit();
     unlink(path);
     unlink(config);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, co-op autoplay");
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, co-op autoplay, party death");
 }

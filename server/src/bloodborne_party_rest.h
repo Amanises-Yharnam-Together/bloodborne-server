@@ -235,4 +235,79 @@ private:
     QHash<QByteArray, Party> m_parties;
 };
 
+// Party death: each member's state, HP, revive progress and position (POST
+// /bloodborne/party/vitals), so the others draw it and revive it, and the server decides when
+// a map's party is wiped: when nobody on a map stands any more, everyone down there dies.
+struct ReviveHits {
+    QByteArray target;
+    quint32 down = 0;
+    quint32 hits = 0;
+};
+
+struct MemberVitals {
+    QByteArray member;
+    quint32 map = 0;  // packed map, 0 while loading
+    QByteArray vital; // off, up, down or dead
+    qint32 hp = 0;
+    qint32 max = 0;
+    quint32 down = 0;   // the id of its current or last down
+    quint32 landed = 0; // revive progress
+    quint32 needed = 0;
+    QByteArray at;          // "<x> <y> <z>"
+    quint32 reviveHits = 0; // the party's revive hits on its down (in the answer)
+};
+
+struct VitalsUpdate {
+    MemberVitals self;
+    QList<ReviveHits> hits;
+};
+
+struct PartyWipe {
+    quint32 id = 0;
+    quint32 map = 0;
+    QList<QByteArray> members;
+};
+
+struct VitalsBoardAnswer {
+    QList<MemberVitals> members;
+    QList<PartyWipe> wipes;
+};
+
+// "<member> <map> <vital> <hp> <max> <down> <landed> <needed> <x> <y> <z>
+// [<target>:<down>:<hits>...]", the map in hex.
+std::optional<VitalsUpdate> ParseVitalsUpdate(const QByteArray& body);
+// One line per member as posted, with its revive hits added at the end, then one
+// "wipe <id> <map> <member>..." line per wipe.
+QByteArray FormatVitalsBoard(const VitalsBoardAnswer& answer);
+
+class PartyVitalsBoard {
+public:
+    // Members post a few times a second while someone is down, else every second.
+    static constexpr qint64 FreshMs = 5'000;
+    // A wipe stays on the board this long, so every member it takes reads it.
+    static constexpr qint64 WipeMs = 20'000;
+
+    // Records the member's vitals, declares a wipe for its map when nobody there stands any
+    // more, and returns its party's members (sorted) and the wipes of the last WipeMs.
+    VitalsBoardAnswer Update(const QByteArray& party, const VitalsUpdate& update, qint64 nowMs);
+
+private:
+    struct Entry {
+        VitalsUpdate update;
+        qint64 postedAtMs = 0;
+    };
+    struct Wipe {
+        PartyWipe wipe;
+        qint64 declaredAtMs = 0;
+    };
+    struct Party {
+        QHash<QByteArray, Entry> members;
+        QList<Wipe> wipes;
+        quint32 lastWipe = 0;
+    };
+
+    QMutex m_mutex;
+    QHash<QByteArray, Party> m_parties;
+};
+
 } // namespace Bloodborne

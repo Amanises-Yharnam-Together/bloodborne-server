@@ -361,4 +361,140 @@ QList<MapState> PartyMapStateBoard::Update(const QByteArray& party, const QByteA
     return others;
 }
 
+namespace {
+
+bool IsVital(const QByteArray& vital) {
+    return vital == "off" || vital == "up" || vital == "down" || vital == "dead";
+}
+
+std::optional<ReviveHits> ParseReviveHits(const QByteArray& text) {
+    const QList<QByteArray> parts = text.split(':');
+    if (parts.size() != 3 || !IsMemberName(parts[0])) {
+        return std::nullopt;
+    }
+    bool downOk = false;
+    bool hitsOk = false;
+    const quint32 down = parts[1].toUInt(&downOk);
+    const quint32 hits = parts[2].toUInt(&hitsOk);
+    if (!downOk || !hitsOk) {
+        return std::nullopt;
+    }
+    return ReviveHits{parts[0], down, hits};
+}
+
+} // namespace
+
+std::optional<VitalsUpdate> ParseVitalsUpdate(const QByteArray& body) {
+    // A party has three members; a few more revive targets than that is no client of ours.
+    constexpr qsizetype MaxReviveTargets = 8;
+    const QList<QByteArray> parts = body.trimmed().split(' ');
+    if (parts.size() < 11 || parts.size() > 11 + MaxReviveTargets || !IsMemberName(parts[0]) ||
+        !IsVital(parts[2])) {
+        return std::nullopt;
+    }
+    VitalsUpdate update;
+    MemberVitals& self = update.self;
+    self.member = parts[0];
+    self.vital = parts[2];
+    bool ok[9]{};
+    self.map = parts[1].toUInt(&ok[0], 16);
+    self.hp = parts[3].toInt(&ok[1]);
+    self.max = parts[4].toInt(&ok[2]);
+    self.down = parts[5].toUInt(&ok[3]);
+    self.landed = parts[6].toUInt(&ok[4]);
+    self.needed = parts[7].toUInt(&ok[5]);
+    parts[8].toFloat(&ok[6]);
+    parts[9].toFloat(&ok[7]);
+    parts[10].toFloat(&ok[8]);
+    if (!std::all_of(std::begin(ok), std::end(ok), [](bool value) { return value; })) {
+        return std::nullopt;
+    }
+    self.at = parts[8] + ' ' + parts[9] + ' ' + parts[10];
+    for (qsizetype index = 11; index < parts.size(); ++index) {
+        const auto hits = ParseReviveHits(parts[index]);
+        if (!hits) {
+            return std::nullopt;
+        }
+        update.hits.append(*hits);
+    }
+    return update;
+}
+
+QByteArray FormatVitalsBoard(const VitalsBoardAnswer& answer) {
+    QByteArray body;
+    for (const MemberVitals& member : answer.members) {
+        body += member.member + ' ' + QByteArray::number(member.map, 16) + ' ' + member.vital +
+                ' ' + QByteArray::number(member.hp) + ' ' + QByteArray::number(member.max) + ' ' +
+                QByteArray::number(member.down) + ' ' + QByteArray::number(member.landed) + ' ' +
+                QByteArray::number(member.needed) + ' ' + member.at + ' ' +
+                QByteArray::number(member.reviveHits) + '\n';
+    }
+    for (const PartyWipe& wipe : answer.wipes) {
+        body += "wipe " + QByteArray::number(wipe.id) + ' ' + QByteArray::number(wipe.map, 16);
+        for (const QByteArray& member : wipe.members) {
+            body += ' ' + member;
+        }
+        body += '\n';
+    }
+    return body;
+}
+
+VitalsBoardAnswer PartyVitalsBoard::Update(const QByteArray& party, const VitalsUpdate& update,
+                                           qint64 nowMs) {
+    if (party.isEmpty()) {
+        return {};
+    }
+    QMutexLocker lock(&m_mutex);
+    Party& state = m_parties[party];
+    state.members.insert(update.self.member, Entry{update, nowMs});
+    for (auto it = state.members.begin(); it != state.members.end();) {
+        it = nowMs - it->postedAtMs > FreshMs ? state.members.erase(it) : std::next(it);
+    }
+    state.wipes.removeIf([&](const Wipe& wipe) { return nowMs - wipe.declaredAtMs > WipeMs; });
+
+    // The poster's map: wiped when nobody there stands and someone there is down that no
+    // wipe of the last WipeMs took yet.
+    const quint32 map = update.self.map;
+    bool standing = false;
+    QList<QByteArray> down;
+    for (auto it = state.members.cbegin(); it != state.members.cend() && map != 0; ++it) {
+        const MemberVitals& member = it->update.self;
+        if (member.map != map) {
+            continue;
+        }
+        standing = standing || member.vital == "up";
+        const bool wiped =
+            std::any_of(state.wipes.cbegin(), state.wipes.cend(), [&](const Wipe& wipe) {
+                return wipe.wipe.members.contains(member.member);
+            });
+        if (member.vital == "down" && !wiped) {
+            down.append(member.member);
+        }
+    }
+    if (!standing && !down.isEmpty()) {
+        std::sort(down.begin(), down.end());
+        state.wipes.append(Wipe{PartyWipe{++state.lastWipe, map, down}, nowMs});
+    }
+
+    VitalsBoardAnswer answer;
+    for (auto it = state.members.cbegin(); it != state.members.cend(); ++it) {
+        MemberVitals member = it->update.self;
+        member.reviveHits = 0;
+        for (auto other = state.members.cbegin(); other != state.members.cend(); ++other) {
+            for (const ReviveHits& hits : other->update.hits) {
+                if (hits.target == member.member && hits.down == member.down) {
+                    member.reviveHits += hits.hits;
+                }
+            }
+        }
+        answer.members.append(member);
+    }
+    std::sort(answer.members.begin(), answer.members.end(),
+              [](const MemberVitals& a, const MemberVitals& b) { return a.member < b.member; });
+    for (const Wipe& wipe : state.wipes) {
+        answer.wipes.append(wipe.wipe);
+    }
+    return answer;
+}
+
 } // namespace Bloodborne

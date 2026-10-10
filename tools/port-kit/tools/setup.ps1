@@ -45,6 +45,7 @@ $isRole = { param($v) $v -eq "host" -or $v -eq "guest" }
 $isInstall = { param($v) Test-Path (Join-Path $v "DATA\Bloodborne\CUSA03173\eboot.bin") }
 $isPort = { param($v) ($v -match '^\d{4,5}$') -and [int]$v -ge 1024 -and [int]$v -le 65535 }
 $isFps = { param($v) $v -in @("30", "60") }
+$isYesNo = { param($v) $v -in @("yes", "no") }
 
 Write-Host ""
 Write-Host "  Bloodborne seamless co-op on Bloodborne PC (native port): setup"
@@ -77,6 +78,11 @@ $party = Ask "Party" $(if ($saved["PARTY"]) { $saved["PARTY"] } else { "hunters:
 $defPort = if ($saved["P2PPORT"] -and $saved["P2PPORT"] -notin @("51610", "51611")) { $saved["P2PPORT"] } else { "auto" }
 $p2pPort = Ask "P2P UDP port (auto unless you port-forward)" $defPort { param($v) $v -eq "auto" -or (& $isPort $v) } "Type auto, or a number from 1024 to 65535."
 $fps = Ask "Frame rate (60, or 30 as on shadPS4)" $(if ($saved["FPS"]) { $saved["FPS"] } else { "60" }) $isFps "Type 60 or 30."
+Write-Host ""
+Write-Host "  Party death, as in Elden Ring Nightreign: a killing blow puts you down instead of killing"
+Write-Host "  you while a partner stands on your map; they revive you by hitting you (R1/R2), and you"
+Write-Host "  can hold Circle to give up. Both players should answer the same."
+$partyDeath = Ask "Party death (yes/no)" $(if ($saved["PARTYDEATH"] -eq "0") { "no" } else { "yes" }) $isYesNo "Type yes or no."
 
 # --- saves -----------------------------------------------------------------------------------
 # The port keeps saves in user\savedata\<user>\<title>\ (user 1), shadPS4 in
@@ -228,13 +234,14 @@ $lines = @(
     "set `"PARTY=$party`"",
     "set `"P2PPORT=$p2pPort`"",
     "set `"FPS=$fps`"",
+    "set `"PARTYDEATH=$(if ($partyDeath -eq "yes") { "1" } else { "0" })`"",
     "set `"GAMEDIR=$gameDir`""
 )
 [IO.File]::WriteAllLines($settingsPath, $lines, (New-Object Text.ASCIIEncoding))
 
 Write-Host ""
 Write-Host "  Done." -ForegroundColor Green
-Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS"
+Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS, party death $partyDeath"
 Write-Host "    shadnet ${hostIp}:31313, WebAPI ${hostIp}:31315, backend ${hostIp}:20443"
 if ($role -eq "host") {
     Write-Host ""

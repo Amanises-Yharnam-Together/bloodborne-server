@@ -644,9 +644,13 @@ std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u1
     return kept;
 }
 
-DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip) {
+DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip,
+                                bool reset) {
     if (point <= 0) {
         return DeathRespawn::StayPut;
+    }
+    if (reset && !arriving_from_trip) {
+        return DeathRespawn::Travel;
     }
     if (in_loaded_block) {
         return DeathRespawn::MoveToPoint;
@@ -1696,6 +1700,353 @@ u32 AttackCycleAt(double elapsed) {
 bool AttackHoldsR1(double elapsed) {
     const double into = std::max(elapsed, 0.0) - AttackCycleAt(elapsed) * AttackCycleSeconds;
     return into >= 0.3 && into < 0.5;
+}
+
+bool PartyDeathEnabled(const char* setting) {
+    return SettingIsOn(setting);
+}
+
+namespace {
+// Read from the 01.09 eboot: each is the address after a `call IsNoDead` (see the eboot tests).
+constexpr std::array<NoDeadCaller, 12> NoDeadCallerTable{{
+    // Hit damage (0x01A2A770: HP minus the hit), and its check once the hit is applied.
+    {0x01A2BF7D, NoDeadCheck::Lethal},
+    {0x01A2C05F, NoDeadCheck::Lethal},
+    // Special effect HP changes (0x01A2FA40: poison, rapid poison, frenzy and the like).
+    {0x01A2FB4A, NoDeadCheck::Lethal},
+    {0x01A2FBE6, NoDeadCheck::Lethal},
+    {0x01A2FDD4, NoDeadCheck::Lethal},
+    // Fall damage (0x01A35A00, from the landing at 0x01516138), and its check afterwards.
+    {0x01A35E10, NoDeadCheck::Lethal},
+    {0x01A35E7E, NoDeadCheck::Lethal},
+    // The game's kills: an event's ForceCharacterDeath (KillCharacterOffset), the character's
+    // own kill (0x018BF760, from its vtable) and another (0x018CDE10).
+    {0x018BF9EE, NoDeadCheck::Instant},
+    {0x018BF86C, NoDeadCheck::Instant},
+    {0x018CE5EE, NoDeadCheck::Instant},
+    // HP set outright (0x018BCD40, which the revive and the event bindings use, and 0x018BC470).
+    {0x018BCD9C, NoDeadCheck::Instant},
+    {0x018BC5C5, NoDeadCheck::Instant},
+}};
+
+template <typename T>
+std::optional<T> ParseNumber(std::string_view text, int base = 10) {
+    T value{};
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, base);
+    if (text.empty() || error != std::errc{} || end != text.data() + text.size()) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+std::vector<std::string_view> SplitFields(std::string_view line) {
+    std::vector<std::string_view> fields;
+    while (!line.empty()) {
+        const std::size_t space = line.find(' ');
+        fields.push_back(line.substr(0, space));
+        line.remove_prefix(space == std::string_view::npos ? line.size() : space + 1);
+    }
+    return fields;
+}
+} // namespace
+
+std::span<const NoDeadCaller> NoDeadCallers() {
+    return NoDeadCallerTable;
+}
+
+NoDeadCheck ClassifyNoDeadCheck(u64 return_offset) {
+    const auto caller =
+        std::ranges::find(NoDeadCallerTable, return_offset,
+                          [](const NoDeadCaller& entry) { return entry.return_offset; });
+    return caller == NoDeadCallerTable.end() ? NoDeadCheck::Other : caller->check;
+}
+
+bool KeepsPlayerAlive(NoDeadCheck check, bool armed, bool down, bool answer) {
+    return (check == NoDeadCheck::Lethal && (armed || down)) || answer;
+}
+
+std::string_view VitalName(Vital vital) {
+    switch (vital) {
+    case Vital::Up:
+        return "up";
+    case Vital::Down:
+        return "down";
+    case Vital::Dead:
+        return "dead";
+    case Vital::Off:
+        break;
+    }
+    return "off";
+}
+
+std::optional<Vital> ParseVital(std::string_view name) {
+    for (const Vital vital : {Vital::Off, Vital::Up, Vital::Down, Vital::Dead}) {
+        if (VitalName(vital) == name) {
+            return vital;
+        }
+    }
+    return std::nullopt;
+}
+
+u32 ReviveHitsNeeded(u32 downs) {
+    return downs <= 1 ? 3 : downs == 2 ? 6 : 12;
+}
+
+s32 RevivedHp(s32 max) {
+    return std::max(max / 2, 1);
+}
+
+u32 DownedState::GoDown(s64 now_ms) {
+    if (up_since && now_ms - *up_since >= PenaltyResetMs) {
+        downs = 0;
+    }
+    ++downs;
+    vital = Vital::Down;
+    down_id = next_id++;
+    needed = ReviveHitsNeeded(downs);
+    landed = 0;
+    seen_hits = 0;
+    return down_id;
+}
+
+bool DownedState::Hits(u32 total, s64 now_ms) {
+    if (vital != Vital::Down || total <= seen_hits) {
+        return false;
+    }
+    landed = std::min(needed, landed + (total - seen_hits));
+    seen_hits = total;
+    drain_at = now_ms + RefillDelayMs;
+    return landed >= needed;
+}
+
+void DownedState::Tick(s64 now_ms) {
+    while (vital == Vital::Down && landed > 0 && now_ms >= drain_at) {
+        --landed;
+        drain_at += RefillStepMs;
+    }
+}
+
+void DownedState::GetUp(s64 now_ms) {
+    vital = Vital::Up;
+    landed = 0;
+    up_since = now_ms;
+}
+
+void DownedState::Died() {
+    vital = Vital::Dead;
+    landed = 0;
+}
+
+void DownedState::Alive(s64 now_ms) {
+    vital = Vital::Up;
+    downs = 0;
+    up_since = now_ms;
+}
+
+void DownedState::ClearPenalty() {
+    downs = 0;
+}
+
+bool HoldToConfirm::Tick(bool held, s64 now_ms) {
+    if (!held) {
+        held_since.reset();
+        fired = false;
+        return false;
+    }
+    if (!held_since) {
+        held_since = now_ms;
+    }
+    if (fired || now_ms - *held_since < hold_ms) {
+        return false;
+    }
+    fired = true;
+    return true;
+}
+
+void HoldToConfirm::Restart(bool held) {
+    held_since.reset();
+    fired = held;
+}
+
+float HoldToConfirm::Progress(s64 now_ms) const {
+    if (!held_since || fired || hold_ms <= 0) {
+        return 0.0f;
+    }
+    return std::clamp(static_cast<float>(now_ms - *held_since) / static_cast<float>(hold_ms), 0.0f,
+                      1.0f);
+}
+
+std::string EncodeVitalsUpdate(const MemberVitals& self, std::span<const ReviveHitTotal> hits) {
+    std::string update =
+        fmt::format("{} {:x} {} {} {} {} {} {}", self.member, self.map, VitalName(self.vital),
+                    self.hp, self.max, self.down, self.landed, self.needed);
+    for (const float coordinate : self.at) {
+        update += ' ' + FormatCoordinate(coordinate);
+    }
+    for (const ReviveHitTotal& total : hits) {
+        update += fmt::format(" {}:{}:{}", total.target, total.down, total.hits);
+    }
+    return update;
+}
+
+std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body) {
+    VitalsBoard board;
+    while (!body.empty()) {
+        const std::size_t end = body.find('\n');
+        const std::string_view line = body.substr(0, end);
+        body.remove_prefix(end == std::string_view::npos ? body.size() : end + 1);
+        const std::vector<std::string_view> fields = SplitFields(line);
+        if (fields.empty()) {
+            continue;
+        }
+        if (fields[0] == "wipe") {
+            const auto id = fields.size() >= 4 ? ParseNumber<u32>(fields[1]) : std::nullopt;
+            const auto map = fields.size() >= 4 ? ParseNumber<u32>(fields[2], 16) : std::nullopt;
+            if (!id || !map) {
+                return std::nullopt;
+            }
+            board.wipes.push_back(PartyWipe{*id, *map, {fields.begin() + 3, fields.end()}});
+            continue;
+        }
+        if (fields.size() != 12 || fields[0].empty()) {
+            return std::nullopt;
+        }
+        const auto map = ParseNumber<u32>(fields[1], 16);
+        const auto vital = ParseVital(fields[2]);
+        const auto hp = ParseNumber<s32>(fields[3]);
+        const auto max = ParseNumber<s32>(fields[4]);
+        const auto down = ParseNumber<u32>(fields[5]);
+        const auto landed = ParseNumber<u32>(fields[6]);
+        const auto needed = ParseNumber<u32>(fields[7]);
+        const auto x = ParseCoordinate(fields[8]);
+        const auto y = ParseCoordinate(fields[9]);
+        const auto z = ParseCoordinate(fields[10]);
+        const auto revive_hits = ParseNumber<u32>(fields[11]);
+        if (!map || !vital || !hp || !max || !down || !landed || !needed || !x || !y || !z ||
+            !revive_hits) {
+            return std::nullopt;
+        }
+        board.members.push_back(MemberVitals{.member = std::string{fields[0]},
+                                             .map = *map,
+                                             .vital = *vital,
+                                             .hp = *hp,
+                                             .max = *max,
+                                             .down = *down,
+                                             .landed = *landed,
+                                             .needed = *needed,
+                                             .at = {*x, *y, *z},
+                                             .revive_hits = *revive_hits});
+    }
+    return board;
+}
+
+std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self) {
+    for (const PartyWipe& wipe : board.wipes) {
+        if (std::ranges::find(wipe.members, self) != wipe.members.end()) {
+            return wipe.id;
+        }
+    }
+    return std::nullopt;
+}
+
+bool SomeoneElseStands(std::span<const MemberVitals> board, std::string_view self, u32 map) {
+    return map != 0 && std::ranges::any_of(board, [&](const MemberVitals& member) {
+               return member.member != self && member.map == map && member.vital == Vital::Up;
+           });
+}
+
+bool ReviveHits::Press(std::string_view target, u32 down, s64 now_ms) {
+    if (last_press && now_ms - *last_press < GapMs) {
+        return false;
+    }
+    last_press = now_ms;
+    const auto total = std::ranges::find(totals, target, &ReviveHitTotal::target);
+    if (total == totals.end()) {
+        totals.push_back(ReviveHitTotal{std::string{target}, down, 1});
+    } else if (total->down != down) {
+        *total = ReviveHitTotal{std::string{target}, down, 1};
+    } else {
+        ++total->hits;
+    }
+    return true;
+}
+
+std::vector<ReviveHitTotal> ReviveHits::Totals(std::span<const MemberVitals> board) {
+    std::erase_if(totals, [&](const ReviveHitTotal& total) {
+        return std::ranges::none_of(board, [&](const MemberVitals& member) {
+            return member.member == total.target && member.vital == Vital::Down &&
+                   member.down == total.down;
+        });
+    });
+    return totals;
+}
+
+std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, std::string_view self,
+                                         u32 map, const LampPosition& me) {
+    std::optional<DownedMember> nearest;
+    float nearest_distance = ReviveHits::Reach * ReviveHits::Reach;
+    for (const MemberVitals& member : board) {
+        if (member.member == self || member.map != map || member.vital != Vital::Down) {
+            continue;
+        }
+        const float distance = DistanceSquared(member.at, me);
+        if (distance <= nearest_distance) {
+            nearest_distance = distance;
+            nearest = DownedMember{member.member, member.down};
+        }
+    }
+    return nearest;
+}
+
+PadInput DownedPad(const PadInput& pad) {
+    return PadInput{.buttons = pad.buttons & PadOptions,
+                    .sticks = {128, 128, pad.sticks[2], pad.sticks[3]}};
+}
+
+bool AttackPressed(u32 before, u32 now) {
+    return (now & ~before & (PadR1 | PadR2)) != 0;
+}
+
+DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms) {
+    if (wiped) {
+        return DownEnd::Wipe;
+    }
+    if (gave_up) {
+        return DownEnd::GiveUp;
+    }
+    if (revived) {
+        return DownEnd::Revive;
+    }
+    return board_age_ms >= BoardLostMs ? DownEnd::BoardLost : DownEnd::None;
+}
+
+bool DeathResetsMap(bool wiped, bool someone_else_stands) {
+    return wiped || !someone_else_stands;
+}
+
+PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view self, u32 map,
+                           const std::optional<LampPosition>& me) {
+    PartyPanel panel;
+    const auto target = me ? ReviveTarget(board, self, map, *me) : std::nullopt;
+    for (const MemberVitals& entry : board) {
+        if (entry.member == self || entry.vital == Vital::Off) {
+            continue;
+        }
+        if (target && entry.member == target->member) {
+            panel.revive_target = static_cast<s32>(panel.members.size());
+        }
+        panel.members.push_back(PanelMember{
+            .member = entry.member,
+            .name = OnlineIdOfBoardMember(entry.member),
+            .vital = entry.vital,
+            .here = map != 0 && entry.map == map,
+            .hp = entry.hp,
+            .max = entry.max,
+            .landed = entry.landed,
+            .needed = entry.needed,
+        });
+    }
+    return panel;
 }
 
 } // namespace Core::Bloodborne

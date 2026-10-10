@@ -62,7 +62,7 @@ std::map<std::string, QByteArray> ReadContracts(const char *path) {
 
 int main() {
   const auto messages = ReadContracts(BLOODBORNE_CONTRACTS);
-  CHECK(messages.size() == 16);
+  CHECK(messages.size() == 18);
   const auto message = [&](const char *name) { return messages.at(name); };
 
   {
@@ -119,6 +119,22 @@ int main() {
     CHECK(update->maps == QList<quint32>({CentralYharnam, 0}));
     Bloodborne::EchoBoardAnswer answer{5, {120, 4000}, {CentralYharnam, 0}};
     CHECK(Bloodborne::FormatEchoBoard(answer) == message("echoes.answer"));
+  }
+
+  {
+    const auto update = Bloodborne::ParseVitalsUpdate(message("vitals.update"));
+    CHECK(update && update->self.member == Kaniel &&
+          update->self.map == CentralYharnam && update->self.vital == "up");
+    CHECK(update->self.hp == 1200 && update->self.max == 1520 &&
+          update->self.at == "-12.5 3 40.25");
+    CHECK(update->hits.size() == 1 && update->hits[0].target == Lisara &&
+          update->hits[0].down == 4 && update->hits[0].hits == 2);
+    Bloodborne::VitalsBoardAnswer answer;
+    answer.members.append(update->self);
+    answer.members.append(
+        {Lisara, CentralYharnam, "down", 1, 1380, 4, 2, 3, "-11 3 41", 2});
+    answer.wipes.append({1, HuntersDream, {Kaniel, Lisara}});
+    CHECK(Bloodborne::FormatVitalsBoard(answer) == message("vitals.answer"));
   }
 
   std::cout << "bloodborne party contracts: ok\n";

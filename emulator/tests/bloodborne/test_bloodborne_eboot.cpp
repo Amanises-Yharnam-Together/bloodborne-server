@@ -174,3 +174,15 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     const CodePatch& host_dead = HostDeathKeepGuestsPatches().front();
     EXPECT_EQ(DecodeNearJumpTarget(host_dead.offset, host_dead.patched), HostDeadEpilogueOffset);
 }
+
+// Party death: every IsNoDead caller in the table returns from a call to it, and the hook at its
+// exit finds the bytes it copies.
+TEST_F(BloodborneEboot, TheNoDeadCallersCallIsNoDead) {
+    EXPECT_EQ(Bytes(IsNoDeadOffset, FunctionPrologue.size()), FunctionPrologue);
+    EXPECT_EQ(Bytes(IsNoDeadExitOffset, IsNoDeadExit.size()),
+              std::vector<u8>(IsNoDeadExit.begin(), IsNoDeadExit.end()));
+    for (const NoDeadCaller& caller : NoDeadCallers()) {
+        EXPECT_EQ(CallTarget(caller.return_offset - 5), IsNoDeadOffset)
+            << std::hex << caller.return_offset;
+    }
+}

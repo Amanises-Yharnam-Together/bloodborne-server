@@ -33,6 +33,7 @@ STEPS (guest)
        Party                         exactly what the host tells you
        P2P UDP port                  Enter (auto)
        Frame rate                    Enter (60)
+       Party death                   Enter (yes), the same as the host
   4. Wait for the host to say the servers are up. Optional check: open
      http://HOST-IP:20443/status in a browser; it should say "ok": true.
   5. Run "LAUNCH - Port Co-op", load your character, and wait. You are pulled into
@@ -52,6 +53,18 @@ SAVES
   have it, else from your install. From then on this kit keeps its own saves in
   SeamlessCoopPort\user\savedata: progress made here does not go back to shadPS4.
   To copy them again, delete SeamlessCoopPort\user\savedata and run SETUP.
+
+PARTY DEATH (AS IN ELDEN RING NIGHTREIGN)
+  On unless you answered "no" in SETUP; both players should answer the same.
+  - A killing blow puts you down at 1 HP instead of killing you while your partner
+    stands on the same map. Enemies leave you alone while you are down.
+  - Your partner revives you by hitting you: walk up and press R1 or R2 right next to
+    you, 3 hits the first time, 6 the next, 12 after that (this starts over after 3
+    minutes without going down, or at a lamp). Progress drains if they stop hitting.
+  - Hold Circle for 3 seconds to give up: you die as before and wake at your lamp.
+  - When everyone on a map is down, everyone there dies, drops their echoes and
+    wakes at their own last lamp with the map reset. Alone on a map, a death is such
+    a wipe at once.
 
 CONTROLS AND SETTINGS
   - In the game, Insert (or L3+R3 on a gamepad) opens the port's menu: resolution,

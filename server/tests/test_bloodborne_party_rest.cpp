@@ -300,6 +300,124 @@ int main() {
     CHECK(kept.Update(Party, "guest", 0, {}, 999'000).size() == 1);
   }
 
+  // Party death: each member posts its vitals ("<member> <map> <vital> <hp>
+  // <max> <down> <landed> <needed> <x> <y> <z>", map in hex) with its revive
+  // hits on downed members ("<target>:<down>:<hits>" totals).
+  {
+    using Bloodborne::ParseVitalsUpdate;
+    const auto update = ParseVitalsUpdate(
+        "host 18010000 up 900 1000 0 0 0 1 2.5 -3 guest:4:2 third:9:1");
+    CHECK(update.has_value());
+    CHECK(update->self.member == "host" && update->self.map == 0x18010000u);
+    CHECK(update->self.vital == "up" && update->self.hp == 900 &&
+          update->self.max == 1000);
+    CHECK(update->self.at == "1 2.5 -3");
+    CHECK(update->hits.size() == 2);
+    CHECK(update->hits[0].target == "guest" && update->hits[0].down == 4 &&
+          update->hits[0].hits == 2);
+    CHECK(update->hits[1].target == "third" && update->hits[1].down == 9);
+    CHECK(ParseVitalsUpdate("guest 18010000 down 1 1000 4 2 3 0 0 0")
+              .has_value());
+    CHECK(!ParseVitalsUpdate("").has_value());
+    CHECK(!ParseVitalsUpdate("host 18010000 sleeping 1 1 0 0 0 1 2 3"));
+    CHECK(!ParseVitalsUpdate("host 18010000 up 1 1 0 0 0 1 2"));
+    CHECK(!ParseVitalsUpdate("host 18010000 up 1 1 0 0 0 1 2 x"));
+    CHECK(!ParseVitalsUpdate("host zz up 1 1 0 0 0 1 2 3"));
+    CHECK(!ParseVitalsUpdate("host 18010000 up 1 1 -1 0 0 1 2 3"));
+    CHECK(!ParseVitalsUpdate("host 18010000 up 1 1 0 0 0 1 2 3 guest:4"));
+    CHECK(!ParseVitalsUpdate("host 18010000 up 1 1 0 0 0 1 2 3 bad-name:4:1"));
+    CHECK(!ParseVitalsUpdate("bad\nname 18010000 up 1 1 0 0 0 1 2 3"));
+  }
+
+  // The answer: every member's line with the party's revive hits on its
+  // current down added, then the wipes. Hits add up per down, from everyone.
+  {
+    using Bloodborne::ParseVitalsUpdate;
+    Bloodborne::PartyVitalsBoard board;
+    board.Update(
+        Party,
+        *ParseVitalsUpdate("host 18010000 up 900 1000 0 0 0 1 0 0 guest:4:2"),
+        1'000);
+    board.Update(Party,
+                 *ParseVitalsUpdate("guest 18010000 down 1 1000 4 0 3 0 0 0"),
+                 1'100);
+    const auto answer = board.Update(
+        Party,
+        *ParseVitalsUpdate(
+            "third 18010000 up 800 1000 0 0 0 2 0 0 guest:4:1 guest:3:5"),
+        1'200);
+    CHECK(answer.members.size() == 3);
+    CHECK(answer.members[0].member == "guest" &&
+          answer.members[0].reviveHits == 3);
+    CHECK(answer.wipes.isEmpty());
+    CHECK(Bloodborne::FormatVitalsBoard(answer) ==
+          "guest 18010000 down 1 1000 4 0 3 0 0 0 3\n"
+          "host 18010000 up 900 1000 0 0 0 1 0 0 0\n"
+          "third 18010000 up 800 1000 0 0 0 2 0 0 0\n");
+  }
+
+  // A map where nobody stands any more is wiped, once: everyone down there.
+  // Members on other maps neither stand nor fall with it.
+  {
+    using Bloodborne::ParseVitalsUpdate;
+    using Bloodborne::PartyVitalsBoard;
+    PartyVitalsBoard board;
+    const auto post = [&](const char *body, qint64 now) {
+      return board.Update(Party, *ParseVitalsUpdate(body), now);
+    };
+    post("host 18010000 up 900 1000 0 0 0 0 0 0", 1'000);
+    post("guest 18010000 down 1 1000 4 0 3 0 0 0", 1'100);
+    CHECK(
+        post("third 15000000 up 900 1000 0 0 0 0 0 0", 1'200).wipes.isEmpty());
+    auto answer = post("host 18010000 down 1 1000 7 0 3 0 0 0", 1'300);
+    CHECK(answer.wipes.size() == 1);
+    CHECK(answer.wipes[0].id == 1 && answer.wipes[0].map == 0x18010000u);
+    CHECK(answer.wipes[0].members == QList<QByteArray>({"guest", "host"}));
+    CHECK(Bloodborne::FormatVitalsBoard(answer).endsWith(
+        "wipe 1 18010000 guest host\n"));
+    // The others read it on their next post; it is not declared again.
+    answer = post("guest 18010000 down 1 1000 4 0 3 0 0 0", 1'400);
+    CHECK(answer.wipes.size() == 1 && answer.wipes[0].id == 1);
+    CHECK(post("third 15000000 up 900 1000 0 0 0 0 0 0", 1'500).wipes.size() ==
+          1);
+    // A member that died for real is not wiped again.
+    post("host 18010000 dead 0 1000 7 0 3 0 0 0", 2'000);
+    answer = post("guest 18010000 down 1 1000 4 0 3 0 0 0", 2'100);
+    CHECK(answer.wipes.size() == 1 && answer.wipes[0].id == 1);
+    // A wipe stays for WipeMs; a member still down after that is wiped again.
+    answer = post("guest 18010000 down 1 1000 4 0 3 0 0 0",
+                  1'300 + PartyVitalsBoard::WipeMs + 1);
+    CHECK(answer.wipes.size() == 1 && answer.wipes[0].id == 2);
+    CHECK(answer.wipes[0].members == QList<QByteArray>({"guest"}));
+  }
+
+  // Down with nobody else standing on the map is a wipe at once. A member that
+  // went quiet, plays without party death or is loading (map 0) stands nowhere.
+  {
+    using Bloodborne::ParseVitalsUpdate;
+    Bloodborne::PartyVitalsBoard board;
+    board.Update(
+        Party, *ParseVitalsUpdate("host 18010000 up 900 1000 0 0 0 0 0 0"), 0);
+    board.Update(Party,
+                 *ParseVitalsUpdate("third 18010000 off 900 1000 0 0 0 0 0 0"),
+                 9'000);
+    board.Update(Party, *ParseVitalsUpdate("fourth 0 up 900 1000 0 0 0 0 0 0"),
+                 9'000);
+    const auto answer = board.Update(
+        Party, *ParseVitalsUpdate("guest 18010000 down 1 1000 1 0 3 0 0 0"),
+        9'000);
+    CHECK(answer.members.size() == 3); // the host went quiet
+    CHECK(answer.wipes.size() == 1);
+    CHECK(answer.wipes[0].members == QList<QByteArray>({"guest"}));
+    // Another party sees none of it.
+    CHECK(
+        board
+            .Update("other:party",
+                    *ParseVitalsUpdate("host 18010000 up 900 1000 0 0 0 0 0 0"),
+                    9'000)
+            .wipes.isEmpty());
+  }
+
   // No party key: nothing to coordinate.
   {
     PartyRestBoard board;

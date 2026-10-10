@@ -6,10 +6,12 @@ their folders, settings and game view, without starting a game.
 Run: py -3.12 -m unittest discover -s tools\\rig\\tests
 """
 import json
+import os
 import pathlib
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import engines  # noqa: E402
@@ -199,6 +201,14 @@ class RunnerTest(unittest.TestCase):
         if sys.platform == "win32":
             self.assertEqual(options["startupinfo"].wShowWindow, 4)  # SW_SHOWNOACTIVATE
             self.assertTrue(options["creationflags"] & 0x08000000)  # CREATE_NO_WINDOW
+
+    def test_a_scenario_switches_on_its_own_settings_only(self):
+        party_death = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"}
+        env = run_scenario.game_environment("host", None, "rig:x", party_death)
+        self.assertEqual(env["SHADPS4_BLOODBORNE_PARTY_DEATH"], "1")
+        with unittest.mock.patch.dict(os.environ, party_death):
+            env = run_scenario.game_environment("host", None, "rig:x")
+        self.assertNotIn("SHADPS4_BLOODBORNE_PARTY_DEATH", env, "not from the PC's own settings")
 
     def test_a_boot_check_plays_nothing_and_meets_no_one(self):
         env = run_scenario.game_environment("host", None, "smoke:boot")

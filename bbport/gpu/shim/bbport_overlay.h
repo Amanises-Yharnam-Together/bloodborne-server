@@ -26,7 +26,7 @@ bool HandleEvent(const SDL_Event& event);
 /// Turns SDL text input on while the menu edits a value (window thread, once per poll).
 void UpdateTextInput(SDL_Window* window);
 
-/// Whether anything is drawn this frame (menu open or FPS counter on).
+/// Whether anything is drawn this frame (menu open, FPS counter on, party death's panel).
 bool Visible();
 
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).

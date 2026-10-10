@@ -480,9 +480,11 @@ FlagBit FlagBitLocation(s32 flag, u32 flags_per_block);
 std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u16 on_before);
 // Where a party death wakes the player (point: GlobalState +0x1528, which the events set on a
 // death: the first one to the Hunter's Dream, a kidnapping to the Gaol): moved there while the
-// point is in a loaded block, a trip there otherwise, except right after such a trip.
+// point is in a loaded block, a trip there otherwise, except right after such a trip. A death
+// that resets the map (see DeathResetsMap) always makes the trip, so the map reloads.
 enum class DeathRespawn { StayPut, MoveToPoint, Travel };
-DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip);
+DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip,
+                                bool reset);
 // A flag every party member gets when another one sees it set (see PartyFlagBoard): a lamp's
 // active flags (LampOfActiveFlag and the one after), which the game does not sync itself, and
 // a boss fog's "entered" flag, which a guest's (unsynced) fog event sets to start the boss.
@@ -860,5 +862,230 @@ constexpr float AttackDistance = 1.2f;
 AttackStance AttackStanceFor(float target_x, float target_z, u32 cycle);
 u32 AttackCycleAt(double elapsed);
 bool AttackHoldsR1(double elapsed);
+
+// Party death, after Elden Ring Nightreign (SHADPS4_BLOODBORNE_PARTY_DEATH=1): in a party session
+// a lethal hit puts the player down at 1 HP instead of killing it while another party member
+// stands on its map. The others revive it by hitting it; it can hold Circle to give up (today's
+// death). When nobody on a map is left standing, everyone down there dies for real (a wipe,
+// decided by shadNet) and wakes at its own last lamp with the map reloaded; a lethal hit with
+// nobody else standing on the map is such a wipe at once.
+bool PartyDeathEnabled(const char* setting);
+
+// IsNoDead(data module) (0x01A577D0): the game's lethal HP changes leave 1 HP instead of 0 when it
+// answers true, as the debug Player No Dead does. Its callers by return address (call + 5): a
+// lethal check that may put the player down, one that stays a real death (the game's kills), or
+// another question about it.
+enum class NoDeadCheck { Other, Lethal, Instant };
+struct NoDeadCaller {
+    u64 return_offset = 0;
+    NoDeadCheck check = NoDeadCheck::Other;
+};
+constexpr u64 IsNoDeadOffset = 0x01A577D0;
+// IsNoDead's one exit, `mov al, r14b; add rsp, 8`: the answer in r14b, the data module in rbx and
+// the caller's return address at [rbp + 8].
+constexpr u64 IsNoDeadExitOffset = 0x01A57923;
+constexpr std::array<u8, 7> IsNoDeadExit{0x44, 0x88, 0xF0, 0x48, 0x83, 0xC4, 0x08};
+std::span<const NoDeadCaller> NoDeadCallers();
+NoDeadCheck ClassifyNoDeadCheck(u64 return_offset);
+// What IsNoDead answers for the local player (true keeps it at 1 HP): `armed` when a lethal hit
+// would put it down now, `down` while it is down, `answer` the game's own.
+bool KeepsPlayerAlive(NoDeadCheck check, bool armed, bool down, bool answer);
+
+// A party member's state on the vitals board: not playing party death, standing, down, or dead
+// for real until it wakes at its lamp.
+enum class Vital : u8 { Off, Up, Down, Dead };
+std::string_view VitalName(Vital vital);
+std::optional<Vital> ParseVital(std::string_view name);
+
+// Revive hits a downed player needs: 3 the first time it goes down, 6 the second, 12 from the
+// third (DownedState forgets old downs).
+u32 ReviveHitsNeeded(u32 downs);
+// The HP a revived player gets up with: half its max, at least 1.
+s32 RevivedHp(s32 max);
+
+// The local player's side of party death. Times are steady milliseconds.
+class DownedState {
+public:
+    // Revive progress drains one hit per RefillStepMs once nobody hit for RefillDelayMs.
+    static constexpr s64 RefillDelayMs = 3'500;
+    static constexpr s64 RefillStepMs = 1'000;
+    // The down count starts over after this long up, at a lamp, and after a real death.
+    static constexpr s64 PenaltyResetMs = 180'000;
+
+    // `first_id`: the first down's id, different for each run of the game so a party member's
+    // hits on an old down never count for a new one.
+    explicit DownedState(u32 first_id) : next_id{first_id} {}
+
+    // A lethal hit put the player down; returns the down's id.
+    u32 GoDown(s64 now_ms);
+    // The party's revive hits on this down so far (the vitals board's total): true when they
+    // revive the player.
+    bool Hits(u32 total, s64 now_ms);
+    void Tick(s64 now_ms);
+    void GetUp(s64 now_ms);
+    // A real death (give up, wipe, or a death that skips the down), until the respawn.
+    void Died();
+    void Alive(s64 now_ms);
+    void ClearPenalty();
+
+    Vital Current() const {
+        return vital;
+    }
+    u32 DownId() const {
+        return down_id;
+    }
+    u32 HitsNeeded() const {
+        return needed;
+    }
+    u32 HitsLanded() const {
+        return landed;
+    }
+
+private:
+    Vital vital = Vital::Up;
+    u32 next_id;
+    u32 down_id = 0;
+    u32 downs = 0;
+    u32 needed = 0;
+    u32 landed = 0;
+    u32 seen_hits = 0;
+    s64 drain_at = 0;
+    std::optional<s64> up_since;
+};
+
+// Holding a button for `hold_ms` (giving up): fires once per hold.
+class HoldToConfirm {
+public:
+    explicit HoldToConfirm(s64 hold_ms) : hold_ms{hold_ms} {}
+    bool Tick(bool held, s64 now_ms);
+    // Starts over (a new down): a button `held` already counts only once let go.
+    void Restart(bool held);
+    float Progress(s64 now_ms) const;
+
+private:
+    s64 hold_ms;
+    std::optional<s64> held_since;
+    bool fired = false;
+};
+constexpr s64 GiveUpHoldMs = 3'000;
+
+// The party's vitals board on shadNet (POST /bloodborne/party/vitals). Each member posts
+// "<member> <map> <vital> <hp> <max> <down> <landed> <needed> <x> <y> <z>" (map in hex, down the
+// id of its current or last down, landed/needed its revive progress, x y z where it is) and its
+// revive hits on others as "<target>:<down>:<hits>" totals. The answer has the same line per
+// member with the party's revive hits on that member's down added at the end, then a
+// "wipe <id> <map> <member>..." line for each wipe shadNet declared lately.
+struct MemberVitals {
+    std::string member;
+    u32 map = 0;
+    Vital vital = Vital::Off;
+    s32 hp = 0;
+    s32 max = 0;
+    u32 down = 0;
+    u32 landed = 0;
+    u32 needed = 0;
+    LampPosition at{};
+    u32 revive_hits = 0; // in the answer only
+    bool operator==(const MemberVitals&) const = default;
+};
+struct ReviveHitTotal {
+    std::string target;
+    u32 down = 0;
+    u32 hits = 0;
+    bool operator==(const ReviveHitTotal&) const = default;
+};
+struct PartyWipe {
+    u32 id = 0;
+    u32 map = 0;
+    std::vector<std::string> members;
+    bool operator==(const PartyWipe&) const = default;
+};
+struct VitalsBoard {
+    std::vector<MemberVitals> members;
+    std::vector<PartyWipe> wipes;
+    bool operator==(const VitalsBoard&) const = default;
+};
+std::string EncodeVitalsUpdate(const MemberVitals& self, std::span<const ReviveHitTotal> hits);
+std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body);
+// The wipe on the board that takes this member, if any.
+std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self);
+// Whether another member stands on `map` (a usable map): a lethal hit then puts this player down
+// instead of wiping the map at once.
+bool SomeoneElseStands(std::span<const MemberVitals> board, std::string_view self, u32 map);
+
+// This player's revive hits: an attack press (R1 or R2 going down) counts for the nearest downed
+// member within Reach on its map (ReviveTarget), at most one every GapMs.
+class ReviveHits {
+public:
+    static constexpr float Reach = 2.5f;
+    static constexpr s64 GapMs = 400;
+
+    // An attack press at `now_ms` on `target`'s down `down`: true if it counts.
+    bool Press(std::string_view target, u32 down, s64 now_ms);
+    // The totals to post: the hits on downs still current on the board (the rest are dropped).
+    std::vector<ReviveHitTotal> Totals(std::span<const MemberVitals> board);
+
+private:
+    std::vector<ReviveHitTotal> totals;
+    std::optional<s64> last_press;
+};
+struct DownedMember {
+    std::string member;
+    u32 down = 0;
+};
+std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, std::string_view self,
+                                         u32 map, const LampPosition& me);
+
+// The PS4 pad buttons party death reads (the same bits as AutoplayButton's).
+constexpr u32 PadOptions = 0x8;
+constexpr u32 PadR2 = 0x200;
+constexpr u32 PadR1 = 0x800;
+constexpr u32 PadCircle = 0x2000;
+struct PadInput {
+    u32 buttons = 0;
+    std::array<u8, 4> sticks{128, 128, 128, 128}; // lx, ly, rx, ry; 128 is centred
+    u8 l2 = 0;
+    u8 r2 = 0;
+};
+// What a downed player's pad keeps: Options (the menu) and the camera stick.
+PadInput DownedPad(const PadInput& pad);
+// R1 or R2 going down between two reads of the pad: an attack, which may be a revive hit.
+bool AttackPressed(u32 before, u32 now);
+
+// What ends a down (checked in this order): a wipe of its map, the give-up hold, the party's
+// revive hits, or a vitals board unheard of for BoardLostMs (shadNet gone: nobody stays down for
+// good). Every end but a revive is a real death.
+enum class DownEnd { None, Wipe, GiveUp, Revive, BoardLost };
+constexpr s64 BoardLostMs = 10'000;
+DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms);
+// Whether a real death in a party session resets its map (see ChooseDeathRespawn): a wipe, or a
+// death with nobody else standing on the map (a wipe of one), as a solo death would.
+bool DeathResetsMap(bool wiped, bool someone_else_stands);
+
+// The party panel the port's overlay draws, after Elden Ring Nightreign's party list: the other
+// members playing party death, in the board's order, and the local player's own down.
+struct PanelMember {
+    std::string member; // its board name
+    std::string name;   // its online id, "" when the board name is not one
+    Vital vital = Vital::Up;
+    bool here = false; // on the local player's map
+    s32 hp = 0;
+    s32 max = 0;
+    u32 landed = 0; // revive progress while down
+    u32 needed = 0;
+    bool operator==(const PanelMember&) const = default;
+};
+struct PartyPanel {
+    std::vector<PanelMember> members;
+    s32 revive_target = -1;   // the member an attack would revive now (ReviveTarget), or -1
+    Vital vital = Vital::Off; // the local player's, with its revive progress and give-up hold
+    u32 landed = 0;
+    u32 needed = 0;
+    float give_up = 0.0f; // 0 to 1
+};
+// The panel's members from the board; `me` is where the local player stands while it can revive
+// someone (nothing while it is down or dead). The local player's own fields are left to fill.
+PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view self, u32 map,
+                           const std::optional<LampPosition>& me);
 
 } // namespace Core::Bloodborne

@@ -611,6 +611,10 @@ static void sample(PadData *d) {
             }
         d->connected=1;
     }
+    /* Party death: a downed player only keeps the menu and the camera. */
+    uint8_t sticks[4]={d->left_x,d->left_y,d->right_x,d->right_y};
+    bbcoop_party_death_pad(&d->buttons,sticks,&d->l2,&d->r2);
+    for (int i=0;i<4;++i) *axes[i]=sticks[i];
     if (hold_after_capture) {
         if (d->buttons) d->buttons=0;
         else hold_after_capture=0;
