@@ -251,16 +251,19 @@ def save_baseline(role: str, engine: engines.Emulator | None = None):
         shutil.copy2(party_file, baseline / party_file.name)
 
 
-def restore_baseline(role: str) -> bool:
+def restore_baseline(role: str, saves_from: pathlib.Path | None = None) -> bool:
+    """The role's baseline saves and party files put back; with `saves_from` (a scenario's
+    "saves", under rig/saves), that savedata instead and no party files: a new character."""
     baseline = ENGINE.role_dir(role) / "baseline"
-    if not baseline.is_dir():
+    source = saves_from if saves_from is not None else baseline / "savedata"
+    if not source.is_dir():
         return False
     saves = ENGINE.saves(role)
     shutil.rmtree(saves, ignore_errors=True)
-    shutil.copytree(baseline / "savedata", saves)
+    shutil.copytree(source, saves)
     for party_file in user_dir(role).glob("bloodborne_party_*.txt"):
         party_file.unlink()
-    for party_file in baseline.glob("bloodborne_party_*.txt"):
+    for party_file in baseline.glob("bloodborne_party_*.txt") if saves_from is None else []:
         shutil.copy2(party_file, user_dir(role) / party_file.name)
     return True
 
@@ -569,9 +572,11 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     if games()[1]:
         print("  another game is running (someone is playing): not starting the rig's")
         return False
+    saves_from = RIG / "saves" / scenario["saves"] / "savedata" if "saves" in scenario else None
     for role in roles:
-        if not scenario.get("no_baseline") and restore_baseline(role):
-            print(f"  {role}: saves put back to the baseline")
+        if not scenario.get("no_baseline") and restore_baseline(role, saves_from):
+            print(f"  {role}: saves put back to "
+                  f"{saves_from.parent.name if saves_from else 'the baseline'}")
     keep_shots(run_dir / "earlier", roles)  # an aborted run's, apart from this one's
     need = ENGINE.commit_gb * len(roles)
     free = free_commit_gb()
@@ -724,9 +729,11 @@ def play(name: str) -> int:
     if games()[1]:
         print("Another game is running (someone is playing): not starting the rig's.")
         return 2
+    saves_from = RIG / "saves" / scenario["saves"] / "savedata" if "saves" in scenario else None
     for role in roles:
-        if restore_baseline(role):
-            print(f"{role}: saves put back to the baseline")
+        if restore_baseline(role, saves_from):
+            print(f"{role}: saves put back to "
+                  f"{saves_from.parent.name if saves_from else 'the baseline'}")
     need = ENGINE.commit_gb * len(roles)
     if (free := free_commit_gb()) < need:
         print(f"Not enough memory for {len(roles)} games: {free:.1f} GB can be committed, "

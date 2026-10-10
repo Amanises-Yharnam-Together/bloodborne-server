@@ -9972,6 +9972,41 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         }
         return true;
     }
+    // dump <target>: a character's first 0x800 bytes, its control block (+0x18) and its module
+    // pointers (+0x3B0) with each module's first 0x100 bytes, logged in hex, to diff one character between the host's and a guest's
+    // world (Iosefka shown on a guest with the event hide byte set, 2026-10-10).
+    if (verb == "dump") {
+        const auto target = ParseAutoplayTarget(arg(0));
+        const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+        if (!found || !HasMemoryAccess(found->character, 0x400, MemoryProt::CpuRead)) {
+            failure = "no such character";
+            return false;
+        }
+        const u32 handle = ReadValue<u32>(found->character, 0x08);
+        const auto dump = [&](const char* what, u64 base, u64 size) {
+            if (base < 0x10000 || !HasMemoryAccess(base, size, MemoryProt::CpuRead)) {
+                return;
+            }
+            for (u64 offset = 0; offset < size; offset += 0x20) {
+                std::string row;
+                for (u64 byte = 0; byte < 0x20; ++byte) {
+                    row += fmt::format("{:02x}", ReadValue<u8>(base, offset + byte));
+                }
+                LOG_INFO(Debug, "Bloodborne autoplay dump {:#x} {} +{:03x}: {}", handle, what,
+                         offset, row);
+            }
+        };
+        dump("chr", found->character, 0x800);
+        dump("ctrl", ReadValue<u64>(found->character, 0x18), 0x100);
+        const u64 modules = ReadValue<u64>(found->character, 0x3B0);
+        dump("modules", modules, 0x100);
+        // Each module's first bytes: what draws the character is in one of them.
+        for (u64 index = 0; modules >= 0x10000 && index < 0x20; ++index) {
+            dump(fmt::format("module{:02x}", index).c_str(), ReadValue<u64>(modules, index * 8),
+                 0x100);
+        }
+        return true;
+    }
     // peek <target> <offset>, poke <target> <offset> <value> [1] (hex): a character's u32 (or byte)
     // at an offset, logged or written (reverse engineering on the rig: a field's meaning tried in
     // play).

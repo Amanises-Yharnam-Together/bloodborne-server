@@ -50,6 +50,18 @@ GASCOIGNE_DEFEATED = 12411800
 # Hidden by the host's story (event disable +0x28) and shown on the guest after its join until
 # guests followed the host (Kaniel 2026-10-10: Iosefka at her clinic door, play-down-revive).
 STORY_HIDDEN = "0x10014005"
+IOSEFKA_AT = (-200.0, -40.5, 209.8)  # her census position on the rig
+# 3 m from her on each side, facing her (a heading h faces (-sin h, cos h)).
+IOSEFKA_VIEWS = [("south", -200.0, 206.8, 0.0), ("north", -200.0, 212.8, 3.1416),
+                 ("west", -203.0, 209.8, -1.5708), ("east", -197.0, 209.8, 1.5708)]
+# Up the hallway north of her: out of the other player's pictures.
+IOSEFKA_WAIT = "-200.0 -40.5 218.0 0.0"
+
+
+def IOSEFKA_LOOK(role: str) -> list[str]:
+    """3 m south of Iosefka, a little to the side (the player's back hides what is straight
+    ahead), a picture facing her."""
+    return [f"teleport -199.2 {IOSEFKA_AT[1]} 206.8 0.0", "wait 3", f"shot {role}-iosefka"]
 # Event flags neither rig character has: one of another map (the Forbidden Woods) and one of
 # Central Yharnam's range. A guest's own world setting them must not reach the host's world (its
 # save's progress, re-set after a reload, killed the clinic's beast in a new host's world).
@@ -196,6 +208,43 @@ SCENARIOS = {
         },
         "expect": {"guest": [rf"characters as the host has them on map 0x18010000: hid \d+, "
                              rf"showed \d+:.* {STORY_HIDDEN}"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "iosefka-new": {
+        "about": "iosefka-look on a new character (Kaniel's, rig/saves/new-character): every "
+                 "character nearby in both worlds, then Iosefka's dump and pictures (the guest "
+                 "saw her on new characters, Kaniel 2026-10-10)",
+        "saves": "new-character",
+        "roles": {
+            role: ["godmode", "census 300", "wait-session 2 300", "wait 20", "census 300",
+                   f"dump {STORY_HIDDEN}",
+                   *[step for name, x, z, heading in IOSEFKA_VIEWS
+                     for step in (f"teleport {x} {IOSEFKA_AT[1]} {z} {heading}", "wait 3",
+                                  f"shot {role}-{name}")],
+                   "census 300"]
+            for role in ("host", "guest")
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "iosefka-look": {
+        "about": "Iosefka in the clinic's upstairs doorway (Kaniel's first screenshot: the guest "
+                 "saw her there, the host did not): each player in turn looks at her from 3 m "
+                 "south (the other waits up the hallway), then the guest tries the two flag "
+                 "bits her character has in the host's world and not in its own (+0x1E1 0x80, "
+                 "+0x1E4 1), a picture after each",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 20",
+                     f"expect-hidden {STORY_HIDDEN} 1 30", f"dump {STORY_HIDDEN}",
+                     *IOSEFKA_LOOK("host"), f"teleport {IOSEFKA_WAIT}", "wait 60"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 20",
+                      f"expect-hidden {STORY_HIDDEN} 1 30", f"dump {STORY_HIDDEN}",
+                      f"teleport {IOSEFKA_WAIT}", "wait 20", *IOSEFKA_LOOK("guest"),
+                      f"poke {STORY_HIDDEN} 1e4 1 1", "wait 2", "shot guest-poke-1e4",
+                      f"poke {STORY_HIDDEN} 1e1 84 1", "wait 2", "shot guest-poke-1e1",
+                      f"dump {STORY_HIDDEN}"],
+        },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
