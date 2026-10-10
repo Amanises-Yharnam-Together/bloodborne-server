@@ -18,6 +18,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/texture_cache/gc_policy.h"
 #include "video_core/texture_cache/host_compatibility.h"
 #include "video_core/texture_cache/texture_cache.h"
 #include "video_core/texture_cache/tile_manager.h"
@@ -1268,19 +1269,23 @@ void TextureCache::GarbageCollectImages() {
             return true;
         }
         auto& image = slot_images[image_id];
-        const bool download = image.SafeToDownload();
-        const bool tiled = image.info.IsTiled();
+        constexpr auto CpuWritten = ImageFlagBits::MaybeCpuDirty | ImageFlagBits::CpuDirty;
+        const GcImageState state{.gpu_modified = True(image.flags & ImageFlagBits::GpuModified),
+                                 .cpu_dirty = True(image.flags & CpuWritten),
+                                 .gpu_dirty = True(image.flags & ImageFlagBits::GpuDirty),
+                                 .tiled = image.info.IsTiled()};
+        const GcAction action = GcActionFor(state, pressured);
         // bbport: images that cannot go now (GPU-written: their contents exist only here, and
         // tiled ones cannot be written back at all) neither use up the deletions nor stay first
         // in line. The oldest ten being such render targets stopped the collector for good, and
         // VRAM grew with every area visited up to the pressure mark (~10 GB on 16 GB).
-        if ((tiled && download) || (download && !pressured)) {
+        if (action == GcAction::Keep) {
             lru_cache.Touch(image.lru_id, gc_tick);
             BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
         --num_deletions;
-        if (download) {
+        if (action == GcAction::WriteBackAndEvict) {
             // bbport: synchronously, while the image still protects its pages. A deferred
             // write-back landed after FreeImage had unprotected them, over whatever the game
             // had meanwhile stored there (e.g. its heap after unloading an area).
