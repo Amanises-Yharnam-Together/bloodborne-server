@@ -472,6 +472,24 @@ void DisplayTab() {
     Toggle("fps", T("FPS counter", "Счётчик FPS"), s.show_fps,
            T("Frames per second and frame time in the top right corner.",
              "Кадры в секунду и время кадра в правом верхнем углу."));
+    Choice("fps_limit", T("FPS limit", "Лимит FPS"), BbSettings::FpsLimitIndex(s.fps_limit),
+           BbSettings::FpsLimitCount,
+           [&](int i) {
+               static char text[16];
+               if (BbSettings::FpsLimits[i] == 0) {
+                   return T("Off", "Выкл");
+               }
+               std::snprintf(text, sizeof(text), "%d", BbSettings::FpsLimits[i]);
+               return static_cast<const char*>(text);
+           },
+           [](int) { return true; },
+           T("Highest frame rate. A limit unlocks the game's frame rate from the next start "
+             "(the 60 FPS mode is the game's own fixed 60); then it changes at once. Off keeps "
+             "the launcher's mode.",
+             "Предел частоты кадров. С лимитом частота кадров игры разблокируется со следующего "
+             "запуска (режим 60 FPS — собственные 60 игры); дальше меняется сразу. Выкл "
+             "оставляет режим лаунчера."),
+           true, [&](int i) { Store(s.fps_limit, BbSettings::FpsLimits[i], true); });
     static const char* languages[] = {"English", "Русский"};
     Choice("language", "Language", s.menu_language == BbSettings::MenuLanguage::Russian ? 1 : 0, 2,
            [](int i) { return languages[i]; }, [](int) { return true; },
@@ -480,6 +498,22 @@ void DisplayTab() {
                                         : BbSettings::MenuLanguage::English;
                BbSettings::Save();
            });
+}
+
+void DlssModelRow() {
+    auto& s = BbSettings::Get();
+    Choice("dlss_model", T("DLSS model", "Модель DLSS"), BbSettings::DlssModelIndex(s.dlss_model),
+           BbSettings::DlssModelCount,
+           [&](int i) {
+               return i == 0 ? T("Default", "По умолчанию") : BbSettings::DlssModelNames[i];
+           },
+           [](int) { return true; },
+           T("NVIDIA's DLSS preset: K best quality, L and M faster, J like K with a little less "
+             "ghosting. Default lets NVIDIA pick per quality mode.",
+             "Пресет NVIDIA DLSS: K лучшее качество, L и M быстрее, J как K с чуть меньшими "
+             "шлейфами. По умолчанию NVIDIA выбирает сама."),
+           s.upscaler == BbSettings::UpscalerDlss,
+           [&](int i) { Store(s.dlss_model, BbSettings::DlssModels[i], true); });
 }
 
 void UpscalerTab() {
@@ -541,6 +575,7 @@ void UpscalerTab() {
              "Native AA: апскейлер только сглаживает. Остальные пресеты рисуют сцену ниже "
              "разрешения вывода (показан размер); интерфейс — в разрешении вывода."),
            upscaler_on && !taa, [&](int i) { Store(s.preset, i, true); });
+    DlssModelRow();
     Toggle("sharpen", T("Sharpening", "Резкость"), s.sharpen,
            T("RCAS sharpening after the upscaler.", "Повышение резкости RCAS после апскейлера."),
            upscaler_on);

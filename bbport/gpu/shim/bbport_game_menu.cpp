@@ -230,8 +230,9 @@ void DefineTexts() {
             limits.push_back(fps == 0 ? off : AddText(text.c_str(), text.c_str()));
         }
         row(FpsLimit, "FPS limit", "Лимит FPS",
-            "Frame rate cap of the unlocked frame rate (the launcher's FPS mode)",
-            "Предел частоты кадров в режиме без ограничения (режим FPS в лаунчере)", limits);
+            "Highest frame rate; a limit unlocks the frame rate from the next start",
+            "Предел частоты кадров; с лимитом частота разблокируется со следующего запуска",
+            limits);
     }
     row(ShowFps, "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
         "Частота кадров в правом верхнем углу", toggle);

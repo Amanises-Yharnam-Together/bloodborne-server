@@ -105,6 +105,17 @@ def run_script(name, *args, capture=False):
     return None
 
 
+def frame_mode(requested, fps_limit):
+    """The frame rate mode to launch with: the unlocked one when the game menu set an FPS limit
+    (bbport.ini fps_limit; the fixed 60 FPS timestep cannot go above 60), else the one asked for.
+    The 30 FPS mode stays as it is."""
+    try:
+        limit = int(fps_limit or 0)
+    except ValueError:
+        limit = 0
+    return 'uncap' if limit > 0 and requested != '30' else requested
+
+
 def ini_value(path, key):
     try:
         for line in Path(path).read_text(encoding='utf-8', errors='replace').splitlines():
@@ -177,6 +188,7 @@ def main():
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
                 env.pop(key, None)
         fps = env.get('BB_FPS', 'uncap') if patched else '30'
+        fps = frame_mode(fps, ini_value(config, 'fps_limit'))
         scaled_render = scaled_output = None
         if not env.get('BB_RENDER_RES'):
             printed = run_script('patches.py', '--print-scaled', '--settings', config, capture=True).split()
