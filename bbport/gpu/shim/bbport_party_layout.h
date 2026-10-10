@@ -22,10 +22,11 @@ inline float Scale(float display_h) {
 }
 
 /// The game's own HUD, as fractions of its frame's height (measured on the rig's 1080p pictures):
-/// the top-left quick items and their counts end about here...
-inline constexpr float GameQuickItemsBottom = 225.0f / 1080.0f;
-/// ...and the game's notices in the middle ("Entered the world of ...") take about these lines.
-inline constexpr float GameNoticeTop = 734.0f / 1080.0f;
+/// the top-left quick items, their counts and the small round marker under them end about here...
+inline constexpr float GameQuickItemsBottom = 210.0f / 1080.0f;
+/// ...and the frame of the game's notices in the middle ("Entered the world of ...") starts about
+/// here; their text ends about at the bottom line.
+inline constexpr float GameNoticeTop = 700.0f / 1080.0f;
 inline constexpr float GameNoticeBottom = 780.0f / 1080.0f;
 
 /// The party list: its top left corner.
