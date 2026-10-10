@@ -1852,7 +1852,7 @@ bool AttackHoldsR1(double elapsed) {
 }
 
 bool PartyDeathEnabled(const char* setting, bool by_default) {
-    if (setting == nullptr || *setting == ' ') {
+    if (setting == nullptr || *setting == '\0') {
         return by_default;
     }
     return std::string_view{setting} != "0";
