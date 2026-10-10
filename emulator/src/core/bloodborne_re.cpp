@@ -2118,6 +2118,11 @@ std::vector<MemberMapState> others_enemy_hp;
 std::mutex map_state_mutex;
 MemberMapState local_map_state;
 std::optional<MemberMapState> host_map_state;
+// Characters hidden or shown as on the host (see CharacterShown): the host's own, waiting for the
+// board thread, and the host's latest read back (on a guest).
+std::mutex shown_board_mutex;
+MemberMapState local_shown;
+std::optional<MemberMapState> host_shown;
 std::vector<std::pair<s32, bool>> flags_to_set;
 
 void PostWorldChanges(const FlagChanges& changes) {
@@ -2626,6 +2631,23 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                                  hp_response ? hp_response->status : -1);
                     }
                 }
+            }
+        }
+        {
+            // The host posts its map's characters; a guest only reads (map 0).
+            MemberMapState mine;
+            {
+                std::scoped_lock lock{shown_board_mutex};
+                mine = local_shown;
+            }
+            const auto shown_response =
+                client.Post("/bloodborne/party/shown", headers,
+                            EncodeMapStateUpdate(member, mine.map, mine.bits), "text/plain");
+            if (shown_response && shown_response->status == 200) {
+                const auto states = ParseMapStateBoard(shown_response->body);
+                std::scoped_lock lock{shown_board_mutex};
+                host_shown =
+                    states && !states->empty() ? std::optional{states->front()} : std::nullopt;
             }
         }
         // Kill echoes go both ways in and out of a session: a member on its own trip (a guest
@@ -3733,11 +3755,17 @@ void SaveRemoteJoinTasks() {
         saved.identity = ReadValue<u64>(task, 0xC8);
         saved.slot = ReadValue<u8>(task, 0xEC);
         saved.flags = ReadValue<u8>(task, 0xED);
+        saved.step = ReadValue<s32>(task, 0x50);
         found.push_back(saved);
     });
     saved_join_tasks = MergeSavedJoinTasks(saved_join_tasks, found);
-    LOG_INFO(Debug, "Bloodborne party trip: {} remote join tasks saved ({} found)",
-             saved_join_tasks.size(), found.size());
+    std::string which;
+    for (const SavedJoinTask& saved : saved_join_tasks) {
+        which += fmt::format(" [kind={} slot={} flags={:#x} step={}]", saved.kind, saved.slot,
+                             saved.flags, saved.step);
+    }
+    LOG_INFO(Debug, "Bloodborne party trip: {} remote join tasks saved ({} found):{}",
+             saved_join_tasks.size(), found.size(), which);
 }
 
 void RecreateRemotePlayers(std::span<const u64> only) {
@@ -3778,7 +3806,9 @@ void RecreateRemotePlayers(std::span<const u64> only) {
         }
         using Construct = void PS4_SYSV_ABI (*)(u64 task, u64 member_id, s32 kind);
         reinterpret_cast<Construct>(image_base + JoinTaskConstructOffset)(task, member_id, kind);
-        if (saved) {
+        // A member still joining when the trip began: the game's own join, from its first step.
+        const bool fresh = saved && !RebuildsFromSave(*saved);
+        if (saved && !fresh) {
             WriteValue(task, 0xEC, saved->slot);
             WriteValue(task, 0xED, static_cast<u8>(saved->flags | 1));
         }
@@ -3786,11 +3816,16 @@ void RecreateRemotePlayers(std::span<const u64> only) {
         using ListAdd = void PS4_SYSV_ABI (*)(u64 list, u64 entry);
         reinterpret_cast<ListAdd>(image_base + JoinTaskListAddOffset)(
             manager + 8, reinterpret_cast<u64>(&holder));
-        set_step(task, CreateCharacterStep);
+        if (!fresh) {
+            set_step(task, CreateCharacterStep);
+        }
         LOG_INFO(Debug,
                  "Bloodborne party trip: rebuilt the join task of a member kind={} task={:#x} "
-                 "slot known={}",
-                 kind, task, saved != nullptr);
+                 "slot known={}{}",
+                 kind, task, saved != nullptr,
+                 fresh
+                     ? fmt::format(" (it was still joining at step {}: a fresh join)", saved->step)
+                     : "");
     };
     const auto task_for = [&](u64 member_id) {
         u64 found = 0;
@@ -5652,16 +5687,19 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     }
 }
 
-// Enemy HP kept in step (see EnemyHpReport): posts the enemies this member has hurt during its
-// visit and lowers its copies to the lowest share of HP another member on this map reports.
+// Enemy HP kept in step (see EnemyHpReport): posts the enemies this member has hurt in the
+// session during its visit (VisitDamage) and lowers its copies to the lowest share of HP another
+// member on this map reports. Out of a session each world is its member's own: nothing either way.
 void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     struct Copy {
         u64 data;
         s32 hp;
         s32 max;
     };
+    static VisitDamage damage;
+    const bool in_session = InPartySession();
     std::unordered_map<u32, Copy> alive;
-    std::vector<EnemyHp> hurt;
+    std::vector<EnemyHp> standing;
     for (const u64 character : characters) {
         const u64 modules = ReadValue<u64>(character, 0x3B0);
         const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
@@ -5675,10 +5713,9 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
             continue;
         }
         alive[handle] = Copy{data, hp, max};
-        if (hp < max) {
-            hurt.push_back({handle, hp, max});
-        }
+        standing.push_back({handle, hp, max});
     }
+    const std::vector<EnemyHp> hurt = damage.Hurt(visit, in_session, standing);
     std::vector<MemberMapState> others;
     {
         std::scoped_lock lock{enemy_hp_mutex};
@@ -5708,20 +5745,31 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
                      hurt.size(), map, SteadyMilliseconds() / 1000.0);
         }
     }
+    if (!in_session) {
+        return;
+    }
     size_t lowered = 0;
+    std::string which;
     for (const auto& [handle, copy] : alive) {
         const auto target = LowestSharedHp(handle, copy.hp, copy.max, map, others);
         if (target && HasMemoryAccess(copy.data, 0xFC, MemoryProt::CpuWrite)) {
             WriteValue(copy.data, 0xF8, *target);
             ++lowered;
+            if (which.size() < 200) {
+                which += fmt::format(" {:#x} {}->{}", handle, copy.hp, *target);
+            }
         }
     }
     static u32 logged = 0;
     if (lowered > 0 && ++logged <= 200) {
-        LOG_INFO(Debug, "Bloodborne party: lowered {} enemies to another member's HP on map {:#x}",
-                 lowered, map);
+        LOG_INFO(Debug,
+                 "Bloodborne party: lowered {} enemies to another member's HP on map {:#x}:{}",
+                 lowered, map, which);
     }
 }
+
+void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
+                               const std::unordered_set<u32>& kill_hidden);
 
 // Enemy deaths kept in step across loads: this member's kills during its visit go to the
 // party's kill board (VisitKills), and its copies of the enemies another member killed during
@@ -5825,6 +5873,61 @@ void KeepEnemyDeathsInStep(bool sharing) {
     if (newly_hidden > 0) {
         LOG_INFO(Debug, "Bloodborne party: hid {} enemies a member killed on map {:#x}",
                  newly_hidden, map);
+    }
+    std::unordered_set<u32> kill_hidden;
+    for (const auto& [character, handle] : hidden) {
+        kill_hidden.insert(handle);
+    }
+    ShowCharactersLikeTheHost(map, pointers, kill_hidden);
+}
+
+// Every character of the map hidden or shown as the host's world has it (see CharacterShown):
+// the host posts its own, a guest in the session on the host's map follows them.
+void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
+                               const std::unordered_set<u32>& kill_hidden) {
+    std::vector<CharacterShown> mine;
+    mine.reserve(characters.size());
+    for (const u64 character : characters) {
+        mine.push_back({ReadValue<u32>(character, 0x08), ReadValue<u8>(character, 0x28) != 0});
+    }
+    if (!IsPartyGuestRole()) {
+        std::scoped_lock lock{shown_board_mutex};
+        local_shown = MemberMapState{map, EncodeShownCharacters(mine)};
+        return;
+    }
+    std::optional<MemberMapState> host;
+    {
+        std::scoped_lock lock{shown_board_mutex};
+        host = host_shown;
+    }
+    if (!InPartySession() || !host || host->map != map) {
+        return;
+    }
+    const auto hosts = DecodeShownCharacters(host->bits);
+    if (!hosts) {
+        return;
+    }
+    size_t hid = 0;
+    size_t showed = 0;
+    std::string which;
+    for (const CharacterShown& change : ShownLikeTheHost(*hosts, mine, kill_hidden)) {
+        const auto at = std::ranges::find(mine, change.handle, &CharacterShown::handle);
+        const u64 character = characters[at - mine.begin()];
+        if (!HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
+            continue;
+        }
+        WriteValue(character, 0x28, static_cast<u8>(change.hidden ? 1 : 0));
+        ++(change.hidden ? hid : showed);
+        if (which.size() < 200) {
+            which += fmt::format(" {}{:#x}", change.hidden ? "" : "+", change.handle);
+        }
+    }
+    static u32 logged = 0;
+    if (hid + showed > 0 && ++logged <= 200) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: characters as the host has them on map {:#x}: hid {}, "
+                 "showed {}:{}",
+                 map, hid, showed, which);
     }
 }
 
@@ -9088,6 +9191,54 @@ void LogAutoplaySnapshot() {
              AutoplayMembersOnMyMap(), InPartySession(), enemies.empty() ? " none" : enemies);
 }
 
+// census [<meters>]: every character that close (default 60 m), nearest first, with its HP, death
+// flags (+0x1E3), story hide (+0x28) and explicit disable ([+0x18]+0x20 bit 0): which world
+// shows or killed what (the clinic's beast, Iosefka).
+void LogAutoplayCensus(float meters) {
+    const auto at = LocalPlayerPosition();
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000 || !at) {
+        LOG_INFO(Debug, "Bloodborne autoplay census: no world");
+        return;
+    }
+    std::vector<std::pair<float, std::string>> close_by;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (character == GetLocalPlayer()) {
+            return;
+        }
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (data < 0x10000 || physics < 0x10000) {
+            return;
+        }
+        const float x = ReadValue<float>(physics, 0x1E0);
+        const float y = ReadValue<float>(physics, 0x1E4);
+        const float z = ReadValue<float>(physics, 0x1E8);
+        const float dx = x - (*at)[0];
+        const float dy = y - (*at)[1];
+        const float dz = z - (*at)[2];
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (distance < meters) {
+            close_by.emplace_back(
+                distance, fmt::format("{:#x} hp {}/{} dead {:#x} hidden {} disabled {} at {:.1f} m "
+                                      "({:.1f}, {:.1f}, {:.1f})",
+                                      ReadValue<u32>(character, 0x08), ReadValue<s32>(data, 0xF8),
+                                      ReadValue<s32>(data, 0xFC), ReadValue<u8>(character, 0x1E3),
+                                      ReadValue<u8>(character, 0x28),
+                                      IsCharacterDisabled(character) ? 1 : 0, distance, x, y, z));
+        }
+    });
+    std::ranges::sort(close_by);
+    LOG_INFO(Debug,
+             "Bloodborne autoplay census: map {:#x}, {} characters within {:.0f} m of "
+             "({:.1f}, {:.1f}, {:.1f})",
+             GetCurrentPackedMap(), close_by.size(), meters, (*at)[0], (*at)[1], (*at)[2]);
+    for (const auto& [distance, line] : close_by) {
+        LOG_INFO(Debug, "Bloodborne autoplay census: {}", line);
+    }
+}
+
 std::string AutoplayText(const AutoplayCommand& command) {
     std::string text = command.verb;
     for (const std::string& arg : command.args) {
@@ -9530,6 +9681,10 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         LogAutoplaySnapshot();
         return true;
     }
+    if (verb == "census") {
+        LogAutoplayCensus(static_cast<float>(number(0, 60)));
+        return true;
+    }
     // shot <name> [<timeout>]: a picture of the port's next frame (AutoplayShotPath), once its
     // presenter took the request. The emulator has no request file: skipped. A picture not taken
     // in time (10 s) is noted and the script goes on: it shows the HUD, it tests nothing.
@@ -9591,6 +9746,24 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
             return false;
         }
         return true;
+    }
+    // expect-hidden <handle> <0|1> [<timeout>]: the character hidden by the story (its event
+    // disable byte, +0x28) or not, within the time given (default: now).
+    if (verb == "expect-hidden") {
+        const auto target = ParseAutoplayTarget(arg(0));
+        const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+        if (!found) {
+            failure = "no such character";
+            return false;
+        }
+        const bool hidden = ReadValue<u8>(found->character, 0x28) != 0;
+        if (hidden == (number(1, 1) != 0)) {
+            return true;
+        }
+        if (elapsed >= number(2, 0)) {
+            failure = fmt::format("hidden is {}", hidden ? 1 : 0);
+        }
+        return false;
     }
     // note-max-hp: the player's max HP now, for a later expect-max-hp self == noted.
     if (verb == "note-max-hp") {

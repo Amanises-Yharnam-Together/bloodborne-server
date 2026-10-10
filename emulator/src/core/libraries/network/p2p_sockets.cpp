@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -23,6 +24,7 @@
 #include "common/logging/log.h"
 #include "common/singleton.h"
 #include "core/libraries/kernel/kernel.h"
+#include "core/libraries/network/net_delay.h"
 #include "core/libraries/network/net_util.h"
 #include "net.h"
 #include "net_error.h"
@@ -213,6 +215,14 @@ public:
         physical_port = ntohs(actual.sin_port);
         running.store(true, std::memory_order_release);
         receive_thread = std::thread(&P2PTransport::ReceiveMain, this);
+        if (const char* env = std::getenv("SHADPS4_P2P_DELAY_MS"); env != nullptr) {
+            if (const auto range = ParseDelayRange(env)) {
+                delay_line.emplace(*range, static_cast<u32>(physical_port));
+                delay_thread = std::thread(&P2PTransport::DelayMain, this);
+                LOG_INFO(Lib_Net, "P2P transport: every packet sent held {}-{} ms (test ping)",
+                         range->min_ms, range->max_ms);
+            }
+        }
 
         LOG_INFO(Lib_Net,
                  "P2P transport ready: UDP physical_port={} (set SHADPS4_P2P_PORT to pin it)",
@@ -231,6 +241,12 @@ public:
         if (receive_thread.joinable()) {
             receive_thread.join();
         }
+        delay_ready.notify_all();
+        if (delay_thread.joinable()) {
+            delay_thread.join();
+        }
+        delay_line.reset();
+        delayed.clear();
 
         CloseSocket(host_socket);
         physical_port = 0;
@@ -308,6 +324,16 @@ public:
         dest.sin_family = AF_INET;
         dest.sin_addr.s_addr = dest_addr_nbo;
         dest.sin_port = dest_port_nbo;
+
+        if (delay_line) {
+            {
+                std::lock_guard lock(delay_mutex);
+                delayed.push_back(
+                    {delay_line->DueAt(DelayLine::Clock::now()), dest, std::move(framed)});
+            }
+            delay_ready.notify_one();
+            return static_cast<int>(len);
+        }
 
         const auto rc = ::sendto(host_socket, reinterpret_cast<const char*>(framed.data()),
                                  static_cast<int>(framed.size()), 0,
@@ -456,9 +482,45 @@ private:
 #endif
     }
 
+    // The test ping (SHADPS4_P2P_DELAY_MS): packets wait their turn here, sent by DelayMain.
+    void DelayMain() {
+#if defined(__linux__) || defined(_WIN32)
+        std::unique_lock lock(delay_mutex);
+        while (running.load(std::memory_order_acquire)) {
+            if (delayed.empty()) {
+                delay_ready.wait_for(lock, std::chrono::milliseconds(50));
+                continue;
+            }
+            if (DelayLine::Clock::now() < delayed.front().due) {
+                delay_ready.wait_until(lock, delayed.front().due);
+                continue;
+            }
+            DelayedFrame frame = std::move(delayed.front());
+            delayed.pop_front();
+            lock.unlock();
+            (void)::sendto(host_socket, reinterpret_cast<const char*>(frame.framed.data()),
+                           static_cast<int>(frame.framed.size()), 0,
+                           reinterpret_cast<const sockaddr*>(&frame.dest), sizeof(frame.dest));
+            lock.lock();
+        }
+#endif
+    }
+
+    struct DelayedFrame {
+        DelayLine::Clock::time_point due;
+        sockaddr_in dest;
+        std::vector<u8> framed;
+    };
+
     mutable std::mutex start_mutex;
     std::atomic<bool> running{false};
     std::thread receive_thread;
+
+    std::optional<DelayLine> delay_line;
+    std::thread delay_thread;
+    std::mutex delay_mutex;
+    std::condition_variable delay_ready;
+    std::deque<DelayedFrame> delayed;
 
     net_socket host_socket{kInvalidSocket};
     u16 physical_port{0};

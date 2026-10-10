@@ -86,7 +86,7 @@ class Emulator:
     def environment(self, role: str) -> dict[str, str]:
         return {}  # its settings are in the role's user folder (rig-setup.ps1)
 
-    def prepare(self, role: str):
+    def prepare(self, role: str, backend_port: int = BACKEND_PORT):
         pass
 
     def missing(self) -> str | None:
@@ -154,14 +154,14 @@ class Port(Emulator):
                     "(tools/rig/run_scenario.py --engine port --setup)")
         return None
 
-    def prepare(self, role: str):
-        """The role's settings, and its game server: the rig's backend (run.py uses
-        host_overrides.custom.json as it is)."""
+    def prepare(self, role: str, backend_port: int = BACKEND_PORT):
+        """The role's settings, and its game server: the rig's backend, or what stands in front
+        of it at `backend_port` (run.py uses host_overrides.custom.json as it is)."""
         self.user_dir(role).mkdir(parents=True, exist_ok=True)
         settings = self.role_dir(role) / "bbport.ini"
         if not settings.exists():
             settings.write_text(LOW_SPEC_SETTINGS, encoding="utf-8", newline="\n")
-        overrides = {GAME_SERVER: f"http://127.0.0.1:{BACKEND_PORT}"}
+        overrides = {GAME_SERVER: f"http://127.0.0.1:{backend_port}"}
         (self.user_dir(role) / "host_overrides.custom.json").write_text(
             json.dumps(overrides, indent=2) + "\n", encoding="utf-8", newline="\n")
 

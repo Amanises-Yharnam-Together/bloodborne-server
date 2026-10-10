@@ -370,6 +370,19 @@ TEST(BloodborneThreePlayers, AMemberAwayDuringATripKeepsItsSavedSlot) {
         << "a trip from a map with no remote players keeps what was saved";
 }
 
+TEST(BloodborneThreePlayers, AGuestStillJoiningAtATripIsRebuiltAsAFreshJoin) {
+    // Rig hp-after-host-trip with a ping, 2026-10-10 (Kaniel's screenshot): the host left for the
+    // Dream while its join task for the guest was at step 3, its data not synced (flags 0x4). Back
+    // on the map the host rebuilt it from that save straight into the character step with the
+    // data marked synced: a guest with no data behind it, a "Beckoner" name plate and no body.
+    const SavedJoinTask joined{RemoteGuestTask, 0xB0, 1, 0xC, InSessionStep};
+    const SavedJoinTask joining{RemoteGuestTask, 0xB0, 0, 0x4, 3};
+    EXPECT_TRUE(RebuildsFromSave(joined)) << "its data is there: straight to its character";
+    EXPECT_FALSE(RebuildsFromSave(joining)) << "the game's own join, from the start";
+    EXPECT_TRUE(RebuildsFromSave(SavedJoinTask{RemoteGuestTask, 0xB0, 1, 0x5, 5}))
+        << "arriving: its character is made";
+}
+
 TEST(BloodborneThreePlayers, AnotherBlockOfTheSameAreaSharesItsEnemyHp) {
     // Friend run 2026-10-09: the guest joined in place in Central Yharnam (0x18010000) while the
     // host stood in Cathedral Ward (0x18000000), and no HP was shared for the rest of the game.

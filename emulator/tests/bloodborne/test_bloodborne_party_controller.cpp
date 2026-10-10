@@ -1231,6 +1231,63 @@ TEST(BloodborneSharedEnemyHp, EveryMemberSeesTheLowestHpLeft) {
     EXPECT_EQ(SharedEnemyHp(500, 2031, 100, 0), std::nullopt);
 }
 
+// Kaniel 2026-10-10, Iosefka's Clinic: the guest saw Iosefka standing at her door while the
+// host's story hid her (event disable byte +0x28). After its join the guest's world is rebuilt as
+// the host's client and does not run the events that hide her, so every character the host's
+// world hides or shows is mirrored to the guests on its map.
+TEST(BloodborneHiddenCharacters, TheHostsHiddenCharactersTravelAsHandlesAndAByte) {
+    const std::vector<CharacterShown> host{{0x10014005, true}, {0x1001400b, false}};
+    const auto bytes = EncodeShownCharacters(host);
+    EXPECT_EQ(bytes.size(), 2 * 5u);
+    EXPECT_EQ(DecodeShownCharacters(bytes), host);
+    EXPECT_EQ(DecodeShownCharacters(EncodeShownCharacters({})), std::vector<CharacterShown>{});
+    EXPECT_EQ(DecodeShownCharacters(std::vector<u8>{1, 2, 3}), std::nullopt) << "a cut entry";
+}
+
+TEST(BloodborneHiddenCharacters, AGuestHidesAndShowsWhatTheHostDoes) {
+    const std::vector<CharacterShown> host{
+        {0x10014005, true},  // Iosefka, hidden by the host's story
+        {0x100140ae, true},  // hidden on both already
+        {0x1001400b, false}, // an enemy both show
+        {0x10014053, false}, // shown by the host, hidden on the guest
+    };
+    const std::vector<CharacterShown> guest{
+        {0x10014005, false}, {0x100140ae, true}, {0x1001400b, false},
+        {0x10014053, true},  {0x10014099, true}, // the host has no such character: left alone
+    };
+    EXPECT_EQ(ShownLikeTheHost(host, guest, {}),
+              (std::vector<CharacterShown>{{0x10014005, true}, {0x10014053, false}}));
+    EXPECT_EQ(ShownLikeTheHost(host, guest, {0x10014053}),
+              (std::vector<CharacterShown>{{0x10014005, true}}))
+        << "one the kill board hid here (another member killed it) stays hidden";
+    EXPECT_EQ(ShownLikeTheHost({}, guest, {}), std::vector<CharacterShown>{})
+        << "nothing from the host: nothing changes";
+}
+
+// Kaniel 2026-10-10, the dog by the first lamp: before the guest joined, its own world posted
+// its hurt dog to the HP board and the host lowered its dog to it; as the session formed the
+// host's dog died (+235 echoes, its loot on the ground). Only damage done in the session counts:
+// out of one nothing is posted, and an enemy hurt before counts from where it stood then.
+TEST(BloodborneSharedEnemyHp, OnlyDamageDoneInTheSessionIsShared) {
+    VisitDamage damage;
+    const std::vector<EnemyHp> dog_hurt{{0x10014009, 5, 364}};
+    EXPECT_EQ(damage.Hurt(1, false, dog_hurt), std::vector<EnemyHp>{})
+        << "the guest's own world, before its join";
+    EXPECT_EQ(damage.Hurt(1, true, dog_hurt), std::vector<EnemyHp>{})
+        << "the session formed: hurt before it, not by it";
+    const std::vector<EnemyHp> dog_full{{0x10014009, 364, 364}};
+    EXPECT_EQ(damage.Hurt(1, true, dog_full), std::vector<EnemyHp>{})
+        << "its world rebuilt as the host's client: the host's dog";
+    const std::vector<EnemyHp> dog_hit{{0x10014009, 200, 364}};
+    EXPECT_EQ(damage.Hurt(1, true, dog_hit), dog_hit) << "hit in the session";
+    EXPECT_EQ(damage.Hurt(1, false, dog_hit), std::vector<EnemyHp>{}) << "the session ended";
+    EXPECT_EQ(damage.Hurt(1, true, dog_hit), std::vector<EnemyHp>{})
+        << "a new session starts from the HP then";
+    EXPECT_EQ(damage.Hurt(2, true, dog_hit), std::vector<EnemyHp>{}) << "a new visit too";
+    const std::vector<EnemyHp> dog_lower{{0x10014009, 150, 364}};
+    EXPECT_EQ(damage.Hurt(2, true, dog_lower), dog_lower);
+}
+
 // Rig test 2026-10-09 ("apart"): a guest's trip out of the host's map posted 2 kills at its
 // start (the old map's characters going away), so the host hid 2 living enemies while the guest
 // was in the Dream. Deaths are only watched while the world stands: not on a trip or a load.
