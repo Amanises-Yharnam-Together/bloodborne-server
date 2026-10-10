@@ -9,7 +9,9 @@
 #include <unistd.h>
 #endif
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -140,6 +142,20 @@ constexpr float SharpnessStep = 0.2f; // the game's slider: 0..10 -> 0.0 .. 2.0
 constexpr int SharpnessSteps = 11;
 constexpr int LodValues[] = {-2, 0, 1, 2};
 constexpr float HighlightsStep = 0.1f; // the game's slider: 0..10 -> 0.0 .. 1.0
+/// Rows with a few ordered choices on the game's 0..10 slider (the quality preset, the output
+/// resolution): a pop-up list let the rows below it show through, so only the last row of a page
+/// is a list. The game keeps its own copy of a slider's value while the page is open, so every
+/// position stands for a choice (ranges, as the row's help says), and a choice is shown at
+/// ChoicePosition.
+int steps_count[FieldCount]; ///< choices of a slider-with-choices row, else 0
+
+int ChoiceFromPosition(u8 position, int count) {
+    return std::clamp((int(position) * (count - 1) + 5) / 10, 0, count - 1);
+}
+
+u8 ChoicePosition(int choice, int count) {
+    return u8((std::clamp(choice, 0, count - 1) * 10 * 2 + (count - 1)) / (2 * (count - 1)));
+}
 
 /// The rows' values of settings `s`.
 void Fill(const BbSettings::Values& s, int* values) {
@@ -169,14 +185,14 @@ void Fill(const BbSettings::Values& s, int* values) {
 void LoadValues() {
     Fill(BbSettings::Get(), values);
     for (int f = 0; f < FieldCount; ++f) {
-        bytes[f] = u8(values[f]);
+        bytes[f] = steps_count[f] ? ChoicePosition(values[f], steps_count[f]) : u8(values[f]);
     }
     std::memcpy(applied, values, sizeof(values));
     values_valid = true;
 }
 
 // ---- Pages and rows ----
-enum class Kind { List, Toggle, Slider };
+enum class Kind { List, Toggle, Slider, Steps };
 struct Row {
     Field field;
     u32 name, help;
@@ -207,34 +223,48 @@ void DefineTexts() {
             {f, AddText(en, ru), AddText(help_en, help_ru), std::move(choices), kind, hdr_only});
     };
 
-    page("Display", "Изображение", "Resolution, upscaler and sharpness (bbport)",
-         "Разрешение, апскейлер и резкость (bbport)");
+    // Two pages of the ControllSetting layout's six rows (the game's other layouts are fixed
+    // forms): the picture, then the game's effects. The other patches (intros, the free camera,
+    // the debug menu) and the game's own AA are in the overlay menu and the launcher.
+    page("Display", "Изображение", "Resolution, upscaler, sharpness and model detail (bbport)",
+         "Разрешение, апскейлер, резкость и детализация (bbport)");
+    // Sliders and toggles first, the pop-up list last: a list opens downwards over the rows
+    // below it, and their values showed through it.
+    row(Preset, "Quality preset", "Пресет",
+        "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
+        "Разрешение сцены: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
+        {AddText("Native AA", "Native AA"), AddText("Quality", "Quality"), AddText("Balanced", "Balanced"),
+         AddText("Performance", "Performance"), AddText("Ultra Performance", "Ultra Performance")},
+        Kind::Steps);
+    row(Sharpness, "Sharpness", "Резкость", "RCAS after the upscaler: 0 off, 10 strongest",
+        "RCAS после апскейлера: 0 выкл, 10 сильнее всего", {}, Kind::Slider);
     row(OutputRes, "Output resolution", "Разрешение вывода",
-        "Size of the final frame and the interface", "Размер готового кадра и интерфейса",
+        "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
+        "Готовый кадр: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
         {AddText("1280 x 720", "1280 x 720"), AddText("1920 x 1080", "1920 x 1080"),
-         AddText("2560 x 1440", "2560 x 1440"), AddText("3840 x 2160", "3840 x 2160")});
+         AddText("2560 x 1440", "2560 x 1440"), AddText("3840 x 2160", "3840 x 2160")},
+        Kind::Steps);
+    row(ShowFps, "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
+        "Частота кадров в правом верхнем углу", toggle);
+    row(ModelLod, "Model detail", "Детализация",
+        "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest",
+        "После перезапуска: 0-1 максимальная, 2-4 как в игре, 5-7 ниже, 8-10 минимальная",
+        {AddText("Highest", "Максимальная"), AddText("Game default", "Как в игре"),
+         AddText("Lower", "Ниже"), AddText("Lowest", "Минимальная")},
+        Kind::Steps);
+    // The page's only pop-up list, last: it opens below itself.
     row(Upscaler, "Upscaler", "Апскейлер", "Temporal upscaler and anti-aliasing",
         "Временной апскейлер и сглаживание",
         {off, AddText("FSR 3.1", "FSR 3.1"), AddText("FSR 4", "FSR 4"), AddText("FSR 4.1.1", "FSR 4.1.1"),
          AddText("TAA", "TAA"), AddText("DLSS", "DLSS")});
-    row(Preset, "Quality preset", "Пресет", "Scene resolution relative to the output",
-        "Разрешение сцены относительно вывода",
-        {AddText("Native AA", "Native AA"), AddText("Quality", "Quality"), AddText("Balanced", "Balanced"),
-         AddText("Performance", "Performance"), AddText("Ultra Performance", "Ultra Performance")});
-    row(DlssModel, "DLSS model", "Модель DLSS",
-        "NVIDIA's DLSS preset: K best quality, L and M faster, J like K (RTX, DLSS only)",
-        "Пресет NVIDIA DLSS: K лучшее качество, L и M быстрее, J как K (RTX, только DLSS)",
-        {AddText("Default", "По умолчанию"), AddText("K", "K"), AddText("L", "L"), AddText("M", "M"),
-         AddText("J", "J")});
-    row(Sharpness, "Sharpness", "Резкость", "RCAS after the upscaler: 0 off, 10 strongest",
-        "RCAS после апскейлера: 0 выкл, 10 сильнее всего", {}, Kind::Slider);
 
     page("Screen", "Экран", "Window mode and HDR output (bbport)", "Режим окна и вывод HDR (bbport)");
     row(WindowModeField, "Window mode", "Режим окна",
-        "Borderless fills the screen without taking it over; exclusive takes the display over",
-        "Без рамки — на весь экран без захвата дисплея; эксклюзивный захватывает дисплей",
+        "0-2 windowed, 3-7 borderless (full screen, quick Alt+Tab), 8-10 exclusive fullscreen",
+        "0-2 в окне, 3-7 без рамки (весь экран, быстрый Alt+Tab), 8-10 эксклюзивный",
         {AddText("Windowed", "В окне"), AddText("Borderless", "Без рамки"),
-         AddText("Exclusive fullscreen", "Эксклюзивный")});
+         AddText("Exclusive fullscreen", "Эксклюзивный")},
+        Kind::Steps);
     row(Hdr, "HDR", "HDR", "HDR10 output (shown when HDR is on for this display in Windows)",
         "Вывод HDR10 (виден, когда для этого монитора в Windows включён HDR)", toggle, Kind::List, true);
     {
@@ -250,18 +280,27 @@ void DefineTexts() {
             whites.push_back(AddText(text.c_str(), text_ru.c_str()));
         }
         row(HdrPeak, "HDR peak brightness", "Пиковая яркость HDR",
-            "The display's peak brightness: the brightest highlights reach it",
-            "Пиковая яркость монитора: самые яркие света доходят до неё", peaks, Kind::List, true);
+            "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)",
+            "Нит: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (пик монитора)", peaks,
+            Kind::Steps, true);
         row(HdrPaperWhite, "HDR UI brightness", "Яркость интерфейса HDR",
-            "Brightness of white in the picture and the interface (paper white)",
-            "Яркость белого в картинке и интерфейсе (paper white)", whites, Kind::List, true);
+            "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400",
+            "Белый, нит: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400", whites,
+            Kind::Steps, true);
     }
     row(HdrHighlights, "HDR highlights", "Света HDR",
         "How far bright parts of the picture reach toward the peak: 0 none, 10 all the way",
         "Насколько яркие места картинки тянутся к пику: 0 нет, 10 до конца", {}, Kind::Slider, true);
 
-    page("Frame rate", "Частота кадров", "Frame rate limit and counter (bbport)",
-         "Ограничение и счётчик кадров (bbport)");
+    // bbport co-op: the frame rate limit (a list, last: it opens below itself) and the DLSS model.
+    page("Frame rate", "Частота кадров", "Frame rate limit and DLSS model (bbport)",
+         "Ограничение кадров и модель DLSS (bbport)");
+    row(DlssModel, "DLSS model", "Модель DLSS",
+        "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K",
+        "RTX, только DLSS: 0-1 по умолчанию, 2-3 K лучше всего, 4-6 L, 7-8 M быстрее, 9-10 J как K",
+        {AddText("Default", "По умолчанию"), AddText("K", "K"), AddText("L", "L"), AddText("M", "M"),
+         AddText("J", "J")},
+        Kind::Steps);
     {
         std::vector<u32> limits;
         for (int i = 0; i < BbSettings::FpsLimitCount; ++i) {
@@ -274,19 +313,15 @@ void DefineTexts() {
             "Предел частоты кадров; с лимитом частота разблокируется со следующего запуска",
             limits);
     }
-    row(ShowFps, "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
-        "Частота кадров в правом верхнем углу", toggle);
 
-    page("Game effects", "Эффекты игры", "Model detail and effects (bbport; after a restart)",
-         "Детализация и эффекты (bbport; после перезапуска)");
-    row(ModelLod, "Model detail", "Детализация", "Level of detail of models (after a restart)",
-        "Детализация моделей (после перезапуска)",
-        {AddText("Highest", "Максимальная"), AddText("Game default", "Как в игре"),
-         AddText("Lower", "Ниже"), AddText("Lowest", "Минимальная")});
+    page("Effects", "Эффекты", "The game's effects (bbport; after a restart)",
+         "Эффекты игры (bbport; после перезапуска)");
+
     // Short names for the game's narrow name column (BbSettings::Effects order); the help line
     // has the details.
     struct Short {
         const char *key, *en, *ru, *help_en, *help_ru;
+        bool graphics = true;
     };
     static const Short shorts[] = {
         {"effect_chromatic_aberration", "Chromatic aberration", "Хром. аберрация",
@@ -298,27 +333,26 @@ void DefineTexts() {
         {"effect_ssao", "Ambient occlusion", "Затенение SSAO", "Shading in corners and contacts (SSAO)",
          "Затенение в углах и местах касания (SSAO)"},
         {"effect_game_aa", "Game's own AA", "Сглаживание игры", "The game's own anti-aliasing",
-         "Собственное сглаживание игры"},
+         "Собственное сглаживание игры", false},
         {"effect_dynamic_shadows", "Dynamic shadows", "Динамические тени", "Shadows from dynamic lights",
          "Тени от динамических источников света"},
         {"effect_ssr", "SSR reflections", "Отражения SSR", "Screen-space reflections (not in the original)",
          "Экранные отражения (не было в оригинале)"},
         {"skip_intro", "Skip intros", "Пропуск заставок", "Skip the startup logos and intro",
-         "Пропуск логотипов и заставки при запуске"},
+         "Пропуск логотипов и заставки при запуске", false},
         {"debug_camera", "Free camera", "Свободная камера", "Toggled with Cross + L3",
-         "Включается Cross + L3"},
+         "Включается Cross + L3", false},
         {"debug_menu", "Debug menu", "Debug menu", "The game's debug menu (requires font files)",
-         "Отладочное меню игры (нужны файлы шрифтов)"},
+         "Отладочное меню игры (нужны файлы шрифтов)", false},
     };
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
-        if (pages.back().rows.size() == RowsPerPage) {
-            page("Game patches", "Патчи игры", "More game patches (bbport; after a restart)",
-                 "Другие патчи игры (bbport; после перезапуска)");
-        }
         const auto& effect = BbSettings::Effects[e];
         const Short* name = nullptr;
         for (const Short& s : shorts) {
             if (std::strcmp(s.key, effect.key) == 0) name = &s;
+        }
+        if ((name && !name->graphics) || pages.back().rows.size() == RowsPerPage) {
+            continue; // the overlay menu and the launcher have it
         }
         // A new effect without a short name: its full label.
         const std::string help_en = std::string(name ? name->help_en : effect.label) + " (after a restart)";
@@ -398,7 +432,7 @@ void AddRows(void* page, const std::vector<Row>& rows) {
         }
         alignas(16) u8 pair[2 * TextSize] = {};
         MakeTexts(pair, row.name, row.help);
-        if (row.kind == Kind::Slider) {
+        if (row.kind == Kind::Slider || row.kind == Kind::Steps) {
             using Slider = void (GAME_ABI *)(void*, void*, u8*, const u8*);
             Game<Slider>(SliderRow)(page, pair, &bytes[row.field], &default_bytes[row.field]);
             DestroyTexts(pair);
@@ -487,6 +521,24 @@ std::atomic<const void*> screen_sound_text{nullptr};
 
 GAME_ABI const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
     if (id >= IdBase && id < IdBase + texts.size()) {
+        // BB_GAME_MENU_TRACE=1: how often the game asks for our texts (per 2 s).
+        static const bool count = [] {
+            const char* env = std::getenv("BB_GAME_MENU_TRACE");
+            return env && env[0] == '1';
+        }();
+        if (count) {
+            static std::atomic<u64> lookups{0};
+            static std::atomic<long long> printed{0};
+            ++lookups;
+            const long long now = std::chrono::duration_cast<std::chrono::seconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+            if (now - printed.load() >= 2) {
+                printed = now;
+                std::printf("Game menu: %llu lookups of the port's texts in 2 s (last id %u)\n",
+                            (unsigned long long)lookups.exchange(0), id - IdBase);
+            }
+        }
         return TextOf(id);
     }
     if (title_override && category == TextName && id == ControlsTitle) {
@@ -621,6 +673,7 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     for (const Page& p : pages) {
         for (const Row& r : p.rows) {
             byte_field[r.field] = r.kind != Kind::List;
+            steps_count[r.field] = r.kind == Kind::Steps ? int(r.choices.size()) : 0;
         }
     }
     static const BbSettings::Values defaults;
@@ -629,7 +682,8 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
         default_values[FirstEffect + e] = BbSettings::Effects[e].default_on;
     }
     for (int f = 0; f < FieldCount; ++f) {
-        default_bytes[f] = u8(default_values[f]);
+        default_bytes[f] =
+            steps_count[f] ? ChoicePosition(default_values[f], steps_count[f]) : u8(default_values[f]);
     }
     u8* cursor = stubs;
     // The lookup first: the menu hook only acts once it has seen the Screen/Sound text.
@@ -656,8 +710,25 @@ void Poll() {
     }
     for (int f = 0; f < FieldCount; ++f) {
         if (byte_field[f]) {
-            values[f] = bytes[f];
+            // A slider with choices: its position, not the choice's number.
+            values[f] = steps_count[f] ? ChoiceFromPosition(bytes[f], steps_count[f]) : bytes[f];
         }
+    }
+    // The output resolution and the preset re-create the scene targets and the upscaler (a few
+    // grey frames): a slider walking through its steps did that at each one. Applied once they
+    // rest for 0.4 s; the other rows at once.
+    using Clock = std::chrono::steady_clock;
+    static int resting[2] = {-1, -1};
+    static Clock::time_point rested_since{};
+    const auto now = Clock::now();
+    if (resting[0] != values[OutputRes] || resting[1] != values[Preset]) {
+        resting[0] = values[OutputRes];
+        resting[1] = values[Preset];
+        rested_since = now;
+    }
+    if (now - rested_since < std::chrono::milliseconds(400)) {
+        values[OutputRes] = applied[OutputRes];
+        values[Preset] = applied[Preset];
     }
     if (std::memcmp(values, applied, sizeof(values)) == 0) {
         return;

@@ -4,7 +4,8 @@
  * BB_GAMEPAD). --displays: the monitors, "name<tab>WxH<tab>primary (1 or 0)" per line in SDL's
  * order (the launcher's monitor list, BB_DISPLAY; issue #69). --read-input: one key or button for the
  * launcher's controls (below). --upscalers: one "UPSCALER <name> supported|unsupported: <reason>"
- * line per upscaler (below). */
+ * line per upscaler (below). --device: "vendorID<tab>name" of the GPU the game takes (run.sh:
+ * memory model and driver workarounds by vendor and chip). */
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -485,6 +486,7 @@ int main(int argc, char **argv) {
         return list_displays();
     }
     const int live_mode = argc > 1 && !strcmp(argv[1], "--live-resolution");
+    const int device_mode = argc > 1 && !strcmp(argv[1], "--device");
     const VkApplicationInfo app = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName = "bbport scene scaling probe",
@@ -505,6 +507,13 @@ int main(int argc, char **argv) {
         fprintf(stderr, "GPU scene scaling: %s\n", error);
         vkDestroyInstance(instance, NULL);
         return 1;
+    }
+    if (device_mode) {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(selected, &props);
+        printf("%#06x\t%s\n", props.vendorID, props.deviceName);
+        vkDestroyInstance(instance, NULL);
+        return 0;
     }
     if (live_mode) {
         printf("%d\n", live_resolution_suits(selected));

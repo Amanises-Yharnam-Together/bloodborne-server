@@ -24,7 +24,7 @@ VERBS = {
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
-    "shot", "expect-hidden", "census", "peek", "poke",
+    "shot", "expect-hidden", "census", "peek", "poke", "dump",
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
@@ -86,6 +86,8 @@ class ScenarioTest(unittest.TestCase):
 
     def test_every_script_starts_where_the_baseline_is(self):
         for name, scenario in scenarios.SCENARIOS.items():
+            if "saves" in scenario:  # its own saves: the character starts where it was left
+                continue
             for role, script in scenario["roles"].items():
                 with self.subTest(scenario=name, role=role):
                     self.assertEqual(run_scenario.stages_of(script)[0][0], scenarios.START)
@@ -109,6 +111,31 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(run_scenario.stages_of([["wait 1"], ["snapshot"]]),
                          [["wait 1"], ["snapshot"]], "stopped and started again in between")
         self.assertEqual(run_scenario.stages_of([]), [[]])
+
+    def test_a_scenario_can_start_from_other_saves(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            (root / "baseline" / "savedata").mkdir(parents=True)
+            (root / "baseline" / "savedata" / "old").write_text("x")
+            (root / "baseline" / "bloodborne_party_1.txt").write_text("old")
+            other = root / "new" / "savedata"
+            other.mkdir(parents=True)
+            (other / "fresh").write_text("y")
+            user = root / "user"
+            user.mkdir()
+            (user / "bloodborne_party_1.txt").write_text("played")
+            engine = unittest.mock.Mock()
+            engine.role_dir.return_value = root
+            engine.saves.return_value = user / "savedata"
+            with unittest.mock.patch.object(run_scenario, "ENGINE", engine), \
+                    unittest.mock.patch.object(run_scenario, "user_dir", lambda role: user):
+                self.assertTrue(run_scenario.restore_baseline("host", other))
+                self.assertTrue((user / "savedata" / "fresh").is_file())
+                self.assertFalse((user / "bloodborne_party_1.txt").exists(),
+                                 "a new character has no party files")
+                self.assertTrue(run_scenario.restore_baseline("host"))
+                self.assertTrue((user / "savedata" / "old").is_file())
+                self.assertEqual((user / "bloodborne_party_1.txt").read_text(), "old")
 
 
     NETSTAT = "\n".join([

@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
+#include <string>
 #include <SDL3/SDL.h>
 #include "common/assert.h"
 #include "common/logging/log.h"
@@ -65,8 +67,27 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     const SDL_DisplayID display = ChooseDisplay();
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
+    const bool full = BbSettings::Get().window_mode.load() != BbSettings::Windowed;
+    // bbport: in a window, an output above the game's 1920x1080 (bbport.ini output_res) used to be
+    // rendered at that size and then shrunk into a 1920x1080 window. The window takes the output
+    // size instead, or fills the display's usable area (maximized) when that size does not fit.
+    s32 want_w = width_, want_h = height_;
+    bool maximize = false;
+    const int output = BbSettings::Get().output_res.load();
+    if (!full && output >= 0 && output < int(std::size(BbSettings::OutputWidths))) {
+        const s32 ow = BbSettings::OutputWidths[output], oh = BbSettings::OutputHeights[output];
+        if (ow > want_w && oh > want_h) {
+            want_w = ow;
+            want_h = oh;
+            SDL_Rect usable{};
+            maximize = SDL_GetDisplayUsableBounds(display, &usable) && (ow > usable.w || oh > usable.h);
+            std::printf("Window: sized for the %dx%d output%s\n", ow, oh,
+                        maximize ? " (maximized: that size does not fit the screen)" : "");
+        }
+    }
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, want_w);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, want_h);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_MAXIMIZED_BOOLEAN, maximize);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
     // Window mode (BbSettings::WindowMode, from bbport.ini or the launcher's BB_FULLSCREEN): set

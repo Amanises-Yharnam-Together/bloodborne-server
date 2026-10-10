@@ -33,6 +33,17 @@ its co-op are wired, built, packaged and tested.
 - **Guest cannot hit the NPC by the Oedon Chapel lamp** (Kaniel, Cathedral Ward; rig ward-npc,
   NPC 0x10010075): the host hurts it to 600 and both games show 600, but none of the guest's
   hits land in 20 s. Kaniel: guests should be able to damage NPCs.
+- **Iosefka still drawn on a guest** (Kaniel 2026-10-10, rig games, new characters): the woman
+  upstairs in the clinic (0x10014005, entity 2410710, at -200.0 -40.5 209.8) shows on the guest
+  only. Her hide byte (+0x28) is mirrored and set in both worlds; copying the host's two extra
+  state flag bits (+0x1E0: 0x8000, 0x1'0000'0000) too did not hide her (tried, reverted). The
+  host's story unloads her model: m24_01 events 12410000 and 12410645 run `Set Character
+  Backread State` (2004:29) on 2410710 by Iosefka's state flags 1140-1146, and the `dump` verb
+  shows her model, sound and texture modules empty on the host and loaded on the guest. Fix:
+  find the game's 2004:29 handler (or the backread switch it calls) and run it on a guest for
+  characters the host has unloaded; the shown board would carry a "backread removed" bit. Rig:
+  `--play iosefka-new` (a copy of Kaniel's new character, rig/saves/new-character), scenarios
+  iosefka-look / iosefka-new (pictures, census, dumps).
 - **DLSS 5** (DLSS-NR): leaked runtime only (nvngx_dlssnr.dll from NBA 2K27, injected by an
   OptiScaler fork); no SDK, no documented inputs; not redistributable. Revisit if NVIDIA
   publishes the SDK.

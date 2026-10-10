@@ -903,6 +903,20 @@ static void SleepUntil(std::chrono::steady_clock::time_point time) {
     }
 }
 
+void Presenter::WaitRendered(const Frame* frame) {
+    if (!frame || !frame->ready_semaphore) {
+        return;
+    }
+    const vk::SemaphoreWaitInfo info{
+        .semaphoreCount = 1,
+        .pSemaphores = &frame->ready_semaphore,
+        .pValues = &frame->ready_tick,
+    };
+    // A lost device ends the wait (the presenter reports it); a timeout waits again.
+    while (instance.GetDevice().waitSemaphores(&info, 1'000'000'000) == vk::Result::eTimeout) {
+    }
+}
+
 void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame) {
     Frame* const generated = std::exchange(frame->generated, nullptr);
     // Redraws of the last frame and blank frames never generate; with the switch off this is
