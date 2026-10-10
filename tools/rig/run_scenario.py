@@ -713,9 +713,10 @@ def play_scripts(scenario: dict) -> dict[str, list[str]]:
     return {role: [START, f"wait-session {len(roles)} 300"] for role in roles}
 
 
-def play(name: str) -> int:
+def play(name: str, title: bool = False) -> int:
     """--play <scenario>: its games with its settings, left to the person at the PC once they are
-    in the world together. The servers stay up until every game is closed."""
+    in the world together (with --title: at the title screen, no autoplay at all). The servers
+    stay up until every game is closed."""
     scenario = SCENARIOS[name]
     roles = list(scenario["roles"])
     run_dir = RUNS / time.strftime("%Y%m%d-%H%M%S") / f"play-{name}"
@@ -731,7 +732,7 @@ def play(name: str) -> int:
         return 2
     saves_from = RIG / "saves" / scenario["saves"] / "savedata" if "saves" in scenario else None
     for role in roles:
-        if restore_baseline(role, saves_from):
+        if not scenario.get("no_baseline") and restore_baseline(role, saves_from):
             print(f"{role}: saves put back to "
                   f"{saves_from.parent.name if saves_from else 'the baseline'}")
     need = ENGINE.commit_gb * len(roles)
@@ -749,7 +750,8 @@ def play(name: str) -> int:
     scripts = play_scripts(scenario)
     processes = {}
     for role in roles:
-        processes[role] = launch(role, scripts[role], settings=scenario.get("settings"))
+        processes[role] = launch(role, None if title else scripts[role],
+                                 settings=scenario.get("settings"))
         print(f"started {role}")
         wait_until = time.time() + 90 if ENGINE.staggered_start else 0
         while (time.time() < wait_until and IN_WORLD not in read_log(role)
@@ -757,14 +759,19 @@ def play(name: str) -> int:
             time.sleep(2)
     started = time.time()
     joined = set()
-    while time.time() < started + 360 and len(joined) < len(roles):
+    if title:
+        print(f"Started {', '.join(roles)} to the title screen: the games are yours; close them "
+              "when you are done.")
+    while not title and time.time() < started + 360 and len(joined) < len(roles):
         for role in roles:
             if role not in joined and DONE.search(read_log(role)):
                 joined.add(role)
         if any(game.poll() is not None for game in processes.values()):
             break
         time.sleep(2)
-    if len(joined) == len(roles):
+    if title:
+        pass
+    elif len(joined) == len(roles):
         print(f"Ready after {time.time() - started:.0f} s: {', '.join(roles)} are in the world "
               "together. The games are yours; close them when you are done.")
     else:
@@ -806,6 +813,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--play", metavar="SCENARIO",
                         help="start a scenario's games with its settings and leave them to you "
                              "once they are in the world together")
+    parser.add_argument("--title", action="store_true",
+                        help="with --play: leave the games at the title screen, no autoplay")
     parser.add_argument("--ping", type=ping_setting, default=latency.DEFAULT_PING,
                         help="round trip in ms between the games and to the servers, \"80\" "
                              f"or \"50-100\" (default {latency.DEFAULT_PING}; 0 for none)")
@@ -842,7 +851,7 @@ def act(args: argparse.Namespace) -> int:
         if args.play not in SCENARIOS:
             print(f"No such scenario: {args.play} (--list shows them)")
             return 2
-        return play(args.play)
+        return play(args.play, title=args.title)
     if args.add_guest2:
         add_guest2()
         return 0

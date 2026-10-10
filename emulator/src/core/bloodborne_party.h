@@ -722,6 +722,9 @@ std::optional<s32> LowestSharedHp(u32 handle, s32 hp, s32 max, u32 map,
 struct CharacterShown {
     u32 handle = 0;
     bool hidden = false;
+    // Its enable switch off (2004:5; the byte's bit 1): the host's story switches some story
+    // NPCs off instead (the copy of Iosefka by her door, 0x10014000, on new characters).
+    bool disabled = false;
     bool operator==(const CharacterShown&) const = default;
 };
 std::vector<u8> EncodeShownCharacters(std::span<const CharacterShown> characters);
@@ -732,6 +735,21 @@ std::optional<std::vector<CharacterShown>> DecodeShownCharacters(std::span<const
 std::vector<CharacterShown> ShownLikeTheHost(std::span<const CharacterShown> host,
                                              std::span<const CharacterShown> mine,
                                              const std::unordered_set<u32>& kill_hidden);
+// A character's enable switch (event command 2004:5; `disabled` = off: not drawn, no hits, no AI).
+struct CharacterSwitch {
+    u32 handle = 0;
+    bool disabled = false;
+    bool operator==(const CharacterSwitch&) const = default;
+};
+// The host's story removes some characters (2004:29 sets the +0x28 byte) before their model loads;
+// a guest's copy, built at its join, stays loaded and drawn with the byte set. What to switch on
+// this member's copies (`mine`: each one's switch now): off where the host removed or switched
+// it off, back on where the host shows it again but only if this member turned it off
+// (`switched_off`), never one the kill board hid (`kill_hidden`).
+std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown> host,
+                                                 std::span<const CharacterSwitch> mine,
+                                                 const std::unordered_set<u32>& switched_off,
+                                                 const std::unordered_set<u32>& kill_hidden);
 
 // The kill board's answer names who posted each change ("<handle> <0|1> <member>").
 struct KillChange {

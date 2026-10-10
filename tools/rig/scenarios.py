@@ -214,17 +214,28 @@ SCENARIOS = {
     "iosefka-new": {
         "about": "iosefka-look on a new character (Kaniel's, rig/saves/new-character): every "
                  "character nearby in both worlds, then Iosefka's dump and pictures (the guest "
-                 "saw her on new characters, Kaniel 2026-10-10)",
+                 "saw her on new characters, Kaniel 2026-10-10). The host's story removed her "
+                 "before her model loaded; the guest switches its loaded copy off (2004:5), the "
+                 "host's stays as its story left it",
         "saves": "new-character",
         "roles": {
             role: ["godmode", "census 300", "wait-session 2 300", "wait 20", "census 300",
-                   f"dump {STORY_HIDDEN}",
+                   f"expect-disabled {STORY_HIDDEN} {1 if role == 'guest' else 0} 30",
+                   f"dump {STORY_HIDDEN}", f"dump {CLINIC}",
                    *[step for name, x, z, heading in IOSEFKA_VIEWS
                      for step in (f"teleport {x} {IOSEFKA_AT[1]} {z} {heading}", "wait 3",
                                   f"shot {role}-{name}")],
                    "census 300"]
             for role in ("host", "guest")
         },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "iosefka-mine": {
+        "about": "iosefka-new on the characters each game has now (no saves put back): Kaniel's "
+                 "own new characters (2026-10-10, copies in rig/saves/kaniel-1010-<role>)",
+        "no_baseline": True,
+        "roles": None,  # iosefka-new's, set below
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
@@ -1064,4 +1075,11 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 2700,
     },
+}
+
+# On Kaniel's characters the host's story switched off the copy of Iosefka by her door: so does
+# the guest.
+SCENARIOS["iosefka-mine"]["roles"] = {
+    role: [*steps[:6], f"expect-disabled {CLINIC} 1 30", *steps[6:]]
+    for role, steps in SCENARIOS["iosefka-new"]["roles"].items()
 }

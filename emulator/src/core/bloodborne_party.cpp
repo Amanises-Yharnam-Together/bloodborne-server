@@ -1137,7 +1137,7 @@ std::vector<u8> EncodeShownCharacters(std::span<const CharacterShown> characters
     bytes.reserve(characters.size() * 5);
     for (const CharacterShown& character : characters) {
         AppendLittleEndian(bytes, character.handle);
-        bytes.push_back(character.hidden ? 1 : 0);
+        bytes.push_back(static_cast<u8>((character.hidden ? 1 : 0) | (character.disabled ? 2 : 0)));
     }
     return bytes;
 }
@@ -1148,7 +1148,9 @@ std::optional<std::vector<CharacterShown>> DecodeShownCharacters(std::span<const
     }
     std::vector<CharacterShown> characters;
     for (size_t offset = 0; offset < bytes.size(); offset += 5) {
-        characters.push_back({ReadLittleEndian<u32>(bytes, offset), bytes[offset + 4] != 0});
+        const u8 state = bytes[offset + 4];
+        characters.push_back(
+            {ReadLittleEndian<u32>(bytes, offset), (state & 1) != 0, (state & 2) != 0});
     }
     return characters;
 }
@@ -1166,6 +1168,29 @@ std::vector<CharacterShown> ShownLikeTheHost(std::span<const CharacterShown> hos
         if (it != hosts.end() && it->second != character.hidden &&
             !kill_hidden.contains(character.handle)) {
             changes.push_back({character.handle, it->second});
+        }
+    }
+    return changes;
+}
+
+std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown> host,
+                                                 std::span<const CharacterSwitch> mine,
+                                                 const std::unordered_set<u32>& switched_off,
+                                                 const std::unordered_set<u32>& kill_hidden) {
+    std::unordered_map<u32, bool> hosts; // off in the host's world: removed or switched off
+    for (const CharacterShown& character : host) {
+        hosts[character.handle] = character.hidden || character.disabled;
+    }
+    std::vector<CharacterSwitch> changes;
+    for (const CharacterSwitch& character : mine) {
+        const auto it = hosts.find(character.handle);
+        if (it == hosts.end() || kill_hidden.contains(character.handle)) {
+            continue;
+        }
+        if (it->second && !character.disabled) {
+            changes.push_back({character.handle, true});
+        } else if (!it->second && character.disabled && switched_off.contains(character.handle)) {
+            changes.push_back({character.handle, false});
         }
     }
     return changes;

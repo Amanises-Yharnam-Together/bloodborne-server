@@ -168,6 +168,13 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     // The co-op area check: the flag read, then `xor al, 1`.
     EXPECT_EQ(CallTarget(0x0191A8B5), EventFlagIsSetOffset);
     EXPECT_EQ(Bytes(0x0191A8BA, 2), (std::vector<u8>{0x34, 0x01}));
+    // Event commands 2004:5 (Change Character Enable State) and 2004:29 (Set Character Backread
+    // State): the enable switch a guest uses on what the host's story removed, and the +0x28
+    // byte (`setne byte ptr [rax + 0x28]`) the shown board carries.
+    EXPECT_EQ(CallTarget(0x017BAA35), 0x018C6390u);
+    EXPECT_EQ(Bytes(0x018C6390, 8),
+              (std::vector<u8>{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56}));
+    EXPECT_EQ(Bytes(0x017BBCC4, 4), (std::vector<u8>{0x0F, 0x95, 0x40, 0x28}));
     // The kill autoplay uses: the dead flag (`or byte ptr [r15 + 0x1E3], 1`) on its way out.
     EXPECT_EQ(Bytes(0x018BFAD3, 8),
               (std::vector<u8>{0x41, 0x80, 0x8F, 0xE3, 0x01, 0x00, 0x00, 0x01}));

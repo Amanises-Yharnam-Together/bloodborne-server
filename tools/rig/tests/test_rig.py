@@ -24,7 +24,7 @@ VERBS = {
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
-    "shot", "expect-hidden", "census", "peek", "poke", "dump",
+    "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump",
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
@@ -86,7 +86,7 @@ class ScenarioTest(unittest.TestCase):
 
     def test_every_script_starts_where_the_baseline_is(self):
         for name, scenario in scenarios.SCENARIOS.items():
-            if "saves" in scenario:  # its own saves: the character starts where it was left
+            if "saves" in scenario or scenario.get("no_baseline"):  # where it was left
                 continue
             for role, script in scenario["roles"].items():
                 with self.subTest(scenario=name, role=role):

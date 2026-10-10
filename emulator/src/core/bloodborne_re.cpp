@@ -6053,6 +6053,77 @@ void KeepEnemyDeathsInStep(bool sharing) {
     ShowCharactersLikeTheHost(map, pointers, kill_hidden);
 }
 
+// SetCharacterDisabledOffset is also what event command 2004:5 runs (bank 2004 handler
+// 0x017BA6A0, case 5): off hides the model and stops hits and AI, and it returns at once when
+// the switch is already so.
+constexpr std::array<u8, 8> SetCharacterDisabledPrologue{0x55, 0x48, 0x89, 0xE5,
+                                                         0x41, 0x57, 0x41, 0x56};
+
+// The game's thread only.
+bool SetCharacterDisabled(u64 character, bool disabled) {
+    if (image_base == 0 || ReadValue<u64>(character, 0x18) < 0x10000 ||
+        !std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(
+                                                    image_base + SetCharacterDisabledOffset),
+                                                SetCharacterDisabledPrologue.size()},
+                            SetCharacterDisabledPrologue)) {
+        return false;
+    }
+    using Set = void PS4_SYSV_ABI (*)(u64 character, u32 disabled);
+    reinterpret_cast<Set>(image_base + SetCharacterDisabledOffset)(character, disabled ? 1 : 0);
+    return true;
+}
+
+// The host's story removes some characters before their model loads (2004:29, the +0x28 byte;
+// Iosefka upstairs in the clinic on new characters). This guest's copies, built at its join,
+// stay loaded and drawn with the byte set, so they are switched off here (and those the host
+// switched off: the copy of Iosefka by her door), and back on once the host shows them again (see
+// SwitchedLikeTheHost). Never the players.
+void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
+                                 std::span<const CharacterShown> host,
+                                 const std::unordered_set<u32>& kill_hidden) {
+    static std::unordered_set<u32> switched_off;
+    static u32 switched_map = 0;
+    if (map != switched_map) {
+        switched_off.clear(); // the old map's characters are gone
+        switched_map = map;
+    }
+    std::unordered_set<u64> players;
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    std::vector<CharacterSwitch> mine;
+    std::vector<u64> pointers;
+    for (const u64 character : characters) {
+        if (!players.contains(character)) {
+            mine.push_back({ReadValue<u32>(character, 0x08), IsCharacterDisabled(character)});
+            pointers.push_back(character);
+        }
+    }
+    std::string which;
+    for (const CharacterSwitch& change :
+         SwitchedLikeTheHost(host, mine, switched_off, kill_hidden)) {
+        const auto at = std::ranges::find(mine, change.handle, &CharacterSwitch::handle);
+        if (!SetCharacterDisabled(pointers[at - mine.begin()], change.disabled)) {
+            continue;
+        }
+        if (change.disabled) {
+            switched_off.insert(change.handle);
+        } else {
+            switched_off.erase(change.handle);
+        }
+        if (which.size() < 200) {
+            which += fmt::format(" {}{:#x}", change.disabled ? "" : "+", change.handle);
+        }
+    }
+    static u32 logged = 0;
+    if (!which.empty() && ++logged <= 200) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: characters switched like the host has them on map {:#x} "
+                 "(off, +on):{}",
+                 map, which);
+    }
+}
+
 // Every character of the map hidden or shown as the host's world has it (see CharacterShown):
 // the host posts its own, a guest in the session on the host's map follows them.
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
@@ -6060,7 +6131,8 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
     std::vector<CharacterShown> mine;
     mine.reserve(characters.size());
     for (const u64 character : characters) {
-        mine.push_back({ReadValue<u32>(character, 0x08), ReadValue<u8>(character, 0x28) != 0});
+        mine.push_back({ReadValue<u32>(character, 0x08), ReadValue<u8>(character, 0x28) != 0,
+                        IsCharacterDisabled(character)});
     }
     if (!IsPartyGuestRole()) {
         std::scoped_lock lock{shown_board_mutex};
@@ -6101,6 +6173,7 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                  "showed {}:{}",
                  map, hid, showed, which);
     }
+    SwitchCharactersLikeTheHost(map, characters, *hosts, kill_hidden);
 }
 
 // The host's map state for the board (see MapFlagBase), every 3 s while sharing.
@@ -9419,6 +9492,21 @@ void LogAutoplaySnapshot() {
 // census [<meters>]: every character that close (default 60 m), nearest first, with its HP, death
 // flags (+0x1E3), story hide (+0x28) and explicit disable ([+0x18]+0x20 bit 0): which world
 // shows or killed what (the clinic's beast, Iosefka).
+// A character's backread level ([+0x18] +0x10 now, +0x14 wanted; 4 full, 0 none: the state
+// machine 0x018BD320) and its draw flags ([+0x58] +0x114, bit 0x40 cleared by the enable switch),
+// for the census: which copy of a character is drawn in one world and not the other.
+s32 BackreadLevel(u64 character, u64 offset) {
+    const u64 control = ReadValue<u64>(character, 0x18);
+    return control >= 0x10000 ? ReadValue<s32>(control, offset) : -1;
+}
+
+u32 DrawFlags(u64 character) {
+    const u64 model = ReadValue<u64>(character, 0x58);
+    return model >= 0x10000 && HasMemoryAccess(model, 0x116, MemoryProt::CpuRead)
+               ? ReadValue<u16>(model, 0x114)
+               : 0xFFFFFFFF;
+}
+
 void LogAutoplayCensus(float meters) {
     const auto at = LocalPlayerPosition();
     const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
@@ -9446,12 +9534,14 @@ void LogAutoplayCensus(float meters) {
         const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
         if (distance < meters) {
             close_by.emplace_back(
-                distance, fmt::format("{:#x} hp {}/{} dead {:#x} hidden {} disabled {} at {:.1f} m "
-                                      "({:.1f}, {:.1f}, {:.1f})",
-                                      ReadValue<u32>(character, 0x08), ReadValue<s32>(data, 0xF8),
-                                      ReadValue<s32>(data, 0xFC), ReadValue<u8>(character, 0x1E3),
-                                      ReadValue<u8>(character, 0x28),
-                                      IsCharacterDisabled(character) ? 1 : 0, distance, x, y, z));
+                distance,
+                fmt::format("{:#x} hp {}/{} dead {:#x} hidden {} disabled {} at {:.1f} m "
+                            "({:.1f}, {:.1f}, {:.1f}) backread {}/{} draw {:#x}",
+                            ReadValue<u32>(character, 0x08), ReadValue<s32>(data, 0xF8),
+                            ReadValue<s32>(data, 0xFC), ReadValue<u8>(character, 0x1E3),
+                            ReadValue<u8>(character, 0x28), IsCharacterDisabled(character) ? 1 : 0,
+                            distance, x, y, z, BackreadLevel(character, 0x10),
+                            BackreadLevel(character, 0x14), DrawFlags(character)));
         }
     });
     std::ranges::sort(close_by);
@@ -9973,8 +10063,9 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         return true;
     }
     // dump <target>: a character's first 0x800 bytes, its control block (+0x18) and its module
-    // pointers (+0x3B0) with each module's first 0x100 bytes, logged in hex, to diff one character between the host's and a guest's
-    // world (Iosefka shown on a guest with the event hide byte set, 2026-10-10).
+    // pointers (+0x3B0) with each module's first 0x100 bytes, logged in hex, to diff one character
+    // between the host's and a guest's world (Iosefka shown on a guest with the event hide byte
+    // set, 2026-10-10).
     if (verb == "dump") {
         const auto target = ParseAutoplayTarget(arg(0));
         const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
@@ -10050,6 +10141,24 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         }
         if (elapsed >= number(2, 0)) {
             failure = fmt::format("hidden is {}", hidden ? 1 : 0);
+        }
+        return false;
+    }
+    // expect-disabled <handle> <0|1> [<timeout>]: the character's enable switch off (2004:5,
+    // IsCharacterDisabled) or on, within the time given (default: now).
+    if (verb == "expect-disabled") {
+        const auto target = ParseAutoplayTarget(arg(0));
+        const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+        if (!found) {
+            failure = "no such character";
+            return false;
+        }
+        const bool disabled = IsCharacterDisabled(found->character);
+        if (disabled == (number(1, 1) != 0)) {
+            return true;
+        }
+        if (elapsed >= number(2, 0)) {
+            failure = fmt::format("disabled is {}", disabled ? 1 : 0);
         }
         return false;
     }

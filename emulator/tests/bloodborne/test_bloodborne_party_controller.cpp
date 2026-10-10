@@ -1266,6 +1266,12 @@ TEST(BloodborneHiddenCharacters, TheHostsHiddenCharactersTravelAsHandlesAndAByte
     EXPECT_EQ(DecodeShownCharacters(bytes), host);
     EXPECT_EQ(DecodeShownCharacters(EncodeShownCharacters({})), std::vector<CharacterShown>{});
     EXPECT_EQ(DecodeShownCharacters(std::vector<u8>{1, 2, 3}), std::nullopt) << "a cut entry";
+    // The enable switch rides in the same byte (bit 1): the host's story switched off the copy
+    // of Iosefka by her door (0x10014000) on Kaniel's new characters.
+    const std::vector<CharacterShown> switched{{0x10014000, false, true}, {0x10014005, true, true}};
+    EXPECT_EQ(EncodeShownCharacters(switched)[4], 2);
+    EXPECT_EQ(EncodeShownCharacters(switched)[9], 3);
+    EXPECT_EQ(DecodeShownCharacters(EncodeShownCharacters(switched)), switched);
 }
 
 TEST(BloodborneHiddenCharacters, AGuestHidesAndShowsWhatTheHostDoes) {
@@ -1285,6 +1291,40 @@ TEST(BloodborneHiddenCharacters, AGuestHidesAndShowsWhatTheHostDoes) {
               (std::vector<CharacterShown>{{0x10014005, true}}))
         << "one the kill board hid here (another member killed it) stays hidden";
     EXPECT_EQ(ShownLikeTheHost({}, guest, {}), std::vector<CharacterShown>{})
+        << "nothing from the host: nothing changes";
+}
+
+// Kaniel 2026-10-10: on new characters the guest still saw Iosefka upstairs in the clinic. The
+// host's story removes her (2004:29, the +0x28 byte) before her model loads; the guest's copy,
+// built at its join, stays loaded and drawn with the byte set. The guest turns such characters
+// off with the game's enable switch, and back on only the ones it turned off.
+TEST(BloodborneHiddenCharacters, AGuestSwitchesOffWhatTheHostRemoved) {
+    const std::vector<CharacterShown> host{
+        {0x10014005, true},        // Iosefka, removed by the host's story
+        {0x100140ae, true},        // removed, and already off here
+        {0x1001400b, false},       // an enemy both show
+        {0x10014053, false},       // shown by the host again
+        {0x10014060, false},       // shown by the host, off here by the guest's own story
+        {0x10014000, false, true}, // switched off by the host's story (by Iosefka's door)
+    };
+    const std::vector<CharacterSwitch> guest{
+        {0x10014005, false}, {0x100140ae, true}, {0x1001400b, false},
+        {0x10014053, true},  {0x10014060, true}, {0x10014099, false}, // not in the host's world
+        {0x10014000, false},
+    };
+    const std::unordered_set<u32> switched_off{0x10014053};
+    EXPECT_EQ(
+        SwitchedLikeTheHost(host, guest, switched_off, {}),
+        (std::vector<CharacterSwitch>{{0x10014005, true}, {0x10014053, false}, {0x10014000, true}}))
+        << "only what this guest turned off comes back on";
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {0x10014005, 0x10014000}),
+              std::vector<CharacterSwitch>{})
+        << "ones the kill board hid are left alone";
+    const std::vector<CharacterSwitch> back_on{{0x10014005, false}};
+    EXPECT_EQ(SwitchedLikeTheHost(host, back_on, {0x10014005}, {}),
+              (std::vector<CharacterSwitch>{{0x10014005, true}}))
+        << "turned on again by the guest's world: off again";
+    EXPECT_EQ(SwitchedLikeTheHost({}, guest, switched_off, {}), std::vector<CharacterSwitch>{})
         << "nothing from the host: nothing changes";
 }
 
