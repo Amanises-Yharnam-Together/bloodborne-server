@@ -83,8 +83,9 @@ $isHarder = { param($v) $v -eq "off" -or $v -match '^\d+(\.\d+)?,\d+(\.\d+)?,\d+
 $harder = Ask "Harder enemies: HP,damage,poise multipliers (off for the normal game)" $(if ($saved["HARDER"]) { $saved["HARDER"] } else { "3,1.5,3" }) $isHarder "Type off, or three numbers from 1 to 10 like 3,1.5,3."
 Write-Host ""
 Write-Host "  Party death, as in Elden Ring Nightreign: a killing blow puts you down instead of killing"
-Write-Host "  you while a partner stands on your map; they revive you by hitting you (R1/R2), and you"
-Write-Host "  can hold Circle to give up. Both players should answer the same."
+Write-Host "  you while a partner stands on your map; they revive you by striking you (R1/R2, their"
+Write-Host "  weapon's damage counts), and you can hold Circle to give up. On unless you answer no;"
+Write-Host "  both players should answer the same."
 $partyDeath = Ask "Party death (yes/no)" $(if ($saved["PARTYDEATH"] -eq "0") { "no" } else { "yes" }) $isYesNo "Type yes or no."
 
 # --- saves -----------------------------------------------------------------------------------

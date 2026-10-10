@@ -903,14 +903,15 @@ float HeadingTowards(float x, float z, float to_x, float to_z);
 u32 AttackCycleAt(double elapsed);
 bool AttackHoldsR1(double elapsed);
 
-// Party death, after Elden Ring Nightreign (SHADPS4_BLOODBORNE_PARTY_DEATH=1): in a party session
-// a lethal hit puts the player down at 1 HP instead of killing it while another party member
-// stands on its map. The others revive it by striking it (their weapons' damage adds up); it can
-// hold Circle to give up (today's
-// death). When nobody on a map is left standing, everyone down there dies for real (a wipe,
-// decided by shadNet) and wakes at its own last lamp with the map reloaded; a lethal hit with
-// nobody else standing on the map is such a wipe at once.
-bool PartyDeathEnabled(const char* setting);
+// Party death, after Elden Ring Nightreign (SHADPS4_BLOODBORNE_PARTY_DEATH): in a party session a
+// lethal hit puts the player down at 1 HP instead of killing it while another party member stands
+// on its map. The others revive it by striking it (their weapons' damage adds up); it can hold
+// Circle to give up (today's death). When nobody on a map is left standing, everyone down there
+// dies for real (a wipe, decided by shadNet) and wakes at its own last lamp with the map reloaded;
+// a lethal hit with nobody else standing on the map is such a wipe at once.
+// The setting: "1" on, "0" off, unset or empty `by_default` (the build's: on in the port, which has
+// the party HUD; off in the emulator).
+bool PartyDeathEnabled(const char* setting, bool by_default);
 
 // IsNoDead(data module) (0x01A577D0): the game's lethal HP changes leave 1 HP instead of 0 when it
 // answers true, as the debug Player No Dead does. Its callers by return address (call + 5): a

@@ -298,8 +298,10 @@ def stages_of(script: list) -> list[list[str]]:
     return script if script and isinstance(script[0], list) else [script]
 
 
-# Settings a scenario switches on for its games ("settings"); never taken from the PC's own.
-SCENARIO_SETTINGS = ("SHADPS4_BLOODBORNE_PARTY_DEATH",)
+# Settings a scenario switches on for its games ("settings"), and what they are otherwise (party
+# death is on in the games by default; scenarios that don't ask for it run without); never taken
+# from the PC's own.
+SCENARIO_SETTINGS = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "0"}
 
 
 def game_environment(role: str, script: pathlib.Path | None, party: str,
@@ -317,8 +319,7 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     env.pop("SHADPS4_BLOODBORNE_AUTOPLAY", None)
     if script is not None:
         env["SHADPS4_BLOODBORNE_AUTOPLAY"] = str(script)
-    for name in SCENARIO_SETTINGS:
-        env.pop(name, None)
+    env.update(SCENARIO_SETTINGS)
     env.update(settings or {})
     env.update(ENGINE.environment(role))
     # In the background: the games' windows (SDL, both engines) open and come up without taking

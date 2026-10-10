@@ -1851,8 +1851,11 @@ bool AttackHoldsR1(double elapsed) {
     return into >= 0.3 && into < 0.5;
 }
 
-bool PartyDeathEnabled(const char* setting) {
-    return SettingIsOn(setting);
+bool PartyDeathEnabled(const char* setting, bool by_default) {
+    if (setting == nullptr || *setting == ' ') {
+        return by_default;
+    }
+    return std::string_view{setting} != "0";
 }
 
 namespace {
