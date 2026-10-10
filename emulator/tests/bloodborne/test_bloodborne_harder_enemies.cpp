@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
 #include <cstring>
 #include <string_view>
 #include <vector>
@@ -150,4 +151,24 @@ TEST(BloodborneHarderEnemies, SharedRowDataScalesOnce) {
     std::memcpy(param.data() + 0x40 + 24 + 8, &first, sizeof(first));
     EXPECT_EQ(MakeNpcParamHarder(param, HarderEnemies{3.0f, 1.0f, 1.0f}), 1u);
     EXPECT_EQ(Get<u32>(param, 0, RowSize, NpcHpOffset), 240u);
+}
+
+// Bosses get one HP multiplier: the game's co-op bonus (7500-7503) is set to x1.
+TEST(BloodborneHarderEnemies, RemovesTheCoopBossHpBonus) {
+    constexpr std::size_t RowSize = 0x210;
+    auto param = MakeParam("SP_EFFECT_PARAM_ST", RowSize, {7500, 7501, 7502, 7503, 9006});
+    const std::array<float, 5> rates{1.5f, 2.0f, 2.5f, 3.0f, 0.7f};
+    for (std::size_t row = 0; row < rates.size(); ++row) {
+        Set<float>(param, row, RowSize, SpEffectMaxHpRateOffset, rates[row]);
+        Set<float>(param, row, RowSize, 0x108, rates[row]); // poison resistance stays
+    }
+    EXPECT_EQ(RemoveCoopBossHpBonus(param), 4u);
+    for (std::size_t row = 0; row < 4; ++row) {
+        EXPECT_FLOAT_EQ(Get<float>(param, row, RowSize, SpEffectMaxHpRateOffset), 1.0f);
+        EXPECT_FLOAT_EQ(Get<float>(param, row, RowSize, 0x108), rates[row]);
+    }
+    EXPECT_FLOAT_EQ(Get<float>(param, 4, RowSize, SpEffectMaxHpRateOffset), 0.7f);
+    EXPECT_EQ(RemoveCoopBossHpBonus(param), 0u) << "already done";
+    auto npc = MakeParam("NPC_PARAM_ST", 0x184, {7500});
+    EXPECT_EQ(RemoveCoopBossHpBonus(npc), 0u);
 }

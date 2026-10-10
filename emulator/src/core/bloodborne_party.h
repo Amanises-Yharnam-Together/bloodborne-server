@@ -784,6 +784,12 @@ u16 HarderEnemyAttack(u16 attack, float rate);
 // (for attacks, also for AtkParam_Pc).
 std::size_t MakeNpcParamHarder(std::span<u8> param, const HarderEnemies& harder);
 std::size_t MakeNpcAttacksHarder(std::span<u8> param, float damage);
+// The game's co-op boss HP bonus (SpEffect 7500-7503, max HP x1.5/x2/x2.5/x3, given at a boss
+// start) would stack on the HP multiplier, so with harder enemies its max HP rate becomes 1 and
+// the HP multiplier is the only one. The rows' status resistance bonus stays. Returns the rows
+// changed.
+constexpr std::array<s32, 4> CoopBossHpEffects{7500, 7501, 7502, 7503};
+std::size_t RemoveCoopBossHpBonus(std::span<u8> sp_effect_param);
 
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small

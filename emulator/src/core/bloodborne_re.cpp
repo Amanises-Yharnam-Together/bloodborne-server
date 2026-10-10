@@ -3122,7 +3122,13 @@ void TickLampRest() {
 std::unordered_map<u64, s32> unscaled_boss_max;
 u32 unscaled_boss_map = 0;
 
+bool EnemiesAreHarder();
+
 void KeepBossHpInStep() {
+    // With harder enemies the co-op effects no longer scale the max HP (RemoveCoopBossHpBonus).
+    if (EnemiesAreHarder()) {
+        return;
+    }
     static std::string last;
     static std::chrono::steady_clock::time_point checked{};
     const auto now = std::chrono::steady_clock::now();
@@ -4076,6 +4082,10 @@ std::optional<std::pair<s32, s32>> HarderEnemiesMarker(std::span<const u8> param
     return std::pair{static_cast<s32>(one), static_cast<s32>(two)};
 }
 
+bool EnemiesAreHarder() {
+    return harder_enemies.has_value();
+}
+
 void MakeEnemiesHarder() {
     if (!harder_enemies) {
         return;
@@ -4126,6 +4136,17 @@ void MakeEnemiesHarder() {
                      "Gascoigne's first swing {}){}",
                      rows, harder_enemies->damage, attack_marker ? attack_marker->first : -1,
                      in_world ? "; enemies already on this map keep their old stats" : "");
+        }
+    }
+    // Checked every time: a reloaded SpEffectParam gets the bonus back.
+    if (const u64 effects = FindLoadedParam("SP_EFFECT_PARAM_ST"); effects != 0) {
+        if (const auto table = WritableParam(effects, 0x210)) {
+            if (const std::size_t rows = RemoveCoopBossHpBonus(*table); rows != 0) {
+                LOG_INFO(Debug,
+                         "Bloodborne harder enemies: the co-op boss HP bonus (SpEffect "
+                         "7500-7503) is off in {} rows; bosses get x{} HP only",
+                         rows, harder_enemies->hp);
+            }
         }
     }
 }

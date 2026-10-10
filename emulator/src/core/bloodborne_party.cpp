@@ -1449,6 +1449,29 @@ std::size_t MakeNpcParamHarder(std::span<u8> param, const HarderEnemies& harder)
     });
 }
 
+std::size_t RemoveCoopBossHpBonus(std::span<u8> sp_effect_param) {
+    if (!IsParamOfType(sp_effect_param, "SP_EFFECT_PARAM_ST")) {
+        return 0;
+    }
+    std::size_t changed = 0;
+    for (const s32 effect : CoopBossHpEffects) {
+        const auto row = FindParamRow(sp_effect_param, effect);
+        if (!row || *row > sp_effect_param.size() ||
+            sp_effect_param.size() - *row < SpEffectMaxHpRateOffset + sizeof(float)) {
+            continue;
+        }
+        float rate = 0.0f;
+        std::memcpy(&rate, sp_effect_param.data() + *row + SpEffectMaxHpRateOffset, sizeof(rate));
+        if (rate != 1.0f) {
+            rate = 1.0f;
+            std::memcpy(sp_effect_param.data() + *row + SpEffectMaxHpRateOffset, &rate,
+                        sizeof(rate));
+            ++changed;
+        }
+    }
+    return changed;
+}
+
 std::size_t MakeNpcAttacksHarder(std::span<u8> param, float damage) {
     if (!FindParamRow(param, NpcAttackMarkerRow)) {
         return 0;

@@ -18,7 +18,9 @@ title screen on (`MakeEnemiesHarder`, rules in `bloodborne_party` + tests):
 - AtkParam_Npc `atkPhys/Mag/Fire/Thun` (+0x50..0x56) x damage. AtkParam_Pc has the same type
   and is told apart by row 271000 (Gascoigne's first axe swing). Hostile NPC hunters that fight
   with player weapons use AtkParam_Pc and are not scaled yet.
-- Bosses still get the game's co-op HP effect (7500-7502, x1.5-x2.5) on top.
+- One HP multiplier for bosses too (Kaniel): the game's co-op boss HP bonus (SpEffect
+  7500-7503 maxHpRate x1.5-x3) is set to 1 and KeepBossHpInStep stands down; the rows' status
+  resistance bonus stays.
 - Shared enemy HP is synced as a share of max HP, so a member with another setting stays in step,
   but everyone should use the same setting. Not checked yet: whether poise > 0 really stops the
   stagger on every hit for enemies that had 0 (rig + playtest).
