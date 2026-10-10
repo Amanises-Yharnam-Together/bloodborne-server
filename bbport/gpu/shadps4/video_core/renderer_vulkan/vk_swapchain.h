@@ -91,6 +91,14 @@ public:
         return supports_hdr;
     }
 
+    /// bbport: the image format of the HDR10 (ST.2084 PQ) swapchain.
+    static vk::Format HdrFormat();
+    /// bbport: asks the surface again which formats it offers (the display's HDR was switched
+    /// on or off while the game runs).
+    void RefreshFormats() {
+        FindPresentFormat();
+    }
+
     /// bbport: frame generation shows two images per game frame: the swapchain has one more
     /// than usual while it is on (minImageCount + 2).
     [[nodiscard]] bool WantsFrameGenerationImages() const;

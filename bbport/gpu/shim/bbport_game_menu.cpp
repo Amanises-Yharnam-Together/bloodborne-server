@@ -126,6 +126,7 @@ const char16_t* TextOf(u32 id) {
 // ---- The port's values the game's rows edit (ints: the list rows bind ints). ----
 enum Field : int {
     OutputRes, Upscaler, Preset, Sharpness, ShowFps, FpsLimit, DlssModel,
+    WindowModeField, Hdr, HdrPeak, HdrPaperWhite, HdrHighlights,
     ModelLod, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
 };
 int values[FieldCount];  // what the game's rows show and change (list rows bind ints)
@@ -138,6 +139,7 @@ std::atomic<bool> values_valid{false};
 constexpr float SharpnessStep = 0.2f; // the game's slider: 0..10 -> 0.0 .. 2.0
 constexpr int SharpnessSteps = 11;
 constexpr int LodValues[] = {-2, 0, 1, 2};
+constexpr float HighlightsStep = 0.1f; // the game's slider: 0..10 -> 0.0 .. 1.0
 
 /// The rows' values of settings `s`.
 void Fill(const BbSettings::Values& s, int* values) {
@@ -150,6 +152,11 @@ void Fill(const BbSettings::Values& s, int* values) {
     values[ShowFps] = s.show_fps;
     values[FpsLimit] = BbSettings::FpsLimitIndex(s.fps_limit);
     values[DlssModel] = BbSettings::DlssModelIndex(s.dlss_model);
+    values[WindowModeField] = std::clamp(s.window_mode.load(), 0, BbSettings::WindowModeCount - 1);
+    values[Hdr] = s.hdr;
+    values[HdrPeak] = BbSettings::HdrPeakIndex(s.hdr_peak_nits);
+    values[HdrPaperWhite] = BbSettings::HdrPaperWhiteIndex(s.hdr_paper_white);
+    values[HdrHighlights] = std::clamp(int(std::lround(s.hdr_highlights / HighlightsStep)), 0, 10);
     values[ModelLod] = 1;
     for (int i = 0; i < 4; ++i) {
         if (LodValues[i] == s.model_lod) values[ModelLod] = i;
@@ -175,6 +182,7 @@ struct Row {
     u32 name, help;
     std::vector<u32> choices; ///< value texts, value = index (a toggle: off, on)
     Kind kind = Kind::List;
+    bool hdr_only = false; ///< shown only while the display can show HDR
 };
 struct Page {
     u32 name, help;
@@ -190,12 +198,13 @@ void DefineTexts() {
         pages.push_back({name, AddText(help_en, help_ru), {}});
     };
     const auto row = [](Field f, const char* en, const char* ru, const char* help_en,
-                        const char* help_ru, std::vector<u32> choices, Kind kind = Kind::List) {
+                        const char* help_ru, std::vector<u32> choices, Kind kind = Kind::List,
+                        bool hdr_only = false) {
         if (kind == Kind::List && choices.size() == 2) {
             kind = Kind::Toggle; // left/right in place, as the game's own on/off rows
         }
         pages.back().rows.push_back(
-            {f, AddText(en, ru), AddText(help_en, help_ru), std::move(choices), kind});
+            {f, AddText(en, ru), AddText(help_en, help_ru), std::move(choices), kind, hdr_only});
     };
 
     page("Display", "Изображение", "Resolution, upscaler and sharpness (bbport)",
@@ -219,6 +228,37 @@ void DefineTexts() {
          AddText("J", "J")});
     row(Sharpness, "Sharpness", "Резкость", "RCAS after the upscaler: 0 off, 10 strongest",
         "RCAS после апскейлера: 0 выкл, 10 сильнее всего", {}, Kind::Slider);
+
+    page("Screen", "Экран", "Window mode and HDR output (bbport)", "Режим окна и вывод HDR (bbport)");
+    row(WindowModeField, "Window mode", "Режим окна",
+        "Borderless fills the screen without taking it over; exclusive takes the display over",
+        "Без рамки — на весь экран без захвата дисплея; эксклюзивный захватывает дисплей",
+        {AddText("Windowed", "В окне"), AddText("Borderless", "Без рамки"),
+         AddText("Exclusive fullscreen", "Эксклюзивный")});
+    row(Hdr, "HDR", "HDR", "HDR10 output (shown when HDR is on for this display in Windows)",
+        "Вывод HDR10 (виден, когда для этого монитора в Windows включён HDR)", toggle, Kind::List, true);
+    {
+        std::vector<u32> peaks, whites;
+        for (const int nits : BbSettings::HdrPeakNits) {
+            const std::string text = std::to_string(nits) + " nits";
+            const std::string text_ru = std::to_string(nits) + " нит";
+            peaks.push_back(AddText(text.c_str(), text_ru.c_str()));
+        }
+        for (const int nits : BbSettings::HdrPaperWhiteNits) {
+            const std::string text = std::to_string(nits) + " nits";
+            const std::string text_ru = std::to_string(nits) + " нит";
+            whites.push_back(AddText(text.c_str(), text_ru.c_str()));
+        }
+        row(HdrPeak, "HDR peak brightness", "Пиковая яркость HDR",
+            "The display's peak brightness: the brightest highlights reach it",
+            "Пиковая яркость монитора: самые яркие света доходят до неё", peaks, Kind::List, true);
+        row(HdrPaperWhite, "HDR UI brightness", "Яркость интерфейса HDR",
+            "Brightness of white in the picture and the interface (paper white)",
+            "Яркость белого в картинке и интерфейсе (paper white)", whites, Kind::List, true);
+    }
+    row(HdrHighlights, "HDR highlights", "Света HDR",
+        "How far bright parts of the picture reach toward the peak: 0 none, 10 all the way",
+        "Насколько яркие места картинки тянутся к пику: 0 нет, 10 до конца", {}, Kind::Slider, true);
 
     page("Frame rate", "Частота кадров", "Frame rate limit and counter (bbport)",
          "Ограничение и счётчик кадров (bbport)");
@@ -351,7 +391,11 @@ void AddRows(void* page, const std::vector<Row>& rows) {
     using Push = void (GAME_ABI *)(void*, void*);
     using AddRow = void (GAME_ABI *)(void*, void*, int*, void*, const int*);
     using Make = void* (GAME_ABI *)(void*, u32, u32);
+    const bool hdr_display = BbSettings::Get().hdr_supported.load();
     for (const Row& row : rows) {
+        if (row.hdr_only && !hdr_display) {
+            continue;
+        }
         alignas(16) u8 pair[2 * TextSize] = {};
         MakeTexts(pair, row.name, row.help);
         if (row.kind == Kind::Slider) {
@@ -630,6 +674,12 @@ void Poll() {
     s.show_fps = values[ShowFps] != 0;
     s.fps_limit = BbSettings::FpsLimits[std::clamp(values[FpsLimit], 0, BbSettings::FpsLimitCount - 1)];
     s.dlss_model = BbSettings::DlssModels[std::clamp(values[DlssModel], 0, BbSettings::DlssModelCount - 1)];
+    s.window_mode = std::clamp(values[WindowModeField], 0, BbSettings::WindowModeCount - 1);
+    s.hdr = values[Hdr] != 0;
+    s.hdr_peak_nits = BbSettings::HdrPeakNits[std::clamp(values[HdrPeak], 0, BbSettings::HdrPeakCount - 1)];
+    s.hdr_paper_white =
+        BbSettings::HdrPaperWhiteNits[std::clamp(values[HdrPaperWhite], 0, BbSettings::HdrPaperWhiteCount - 1)];
+    s.hdr_highlights = std::clamp(values[HdrHighlights], 0, 10) * HighlightsStep;
     s.model_lod = LodValues[std::clamp(values[ModelLod], 0, 3)];
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         s.effects[e] = values[FirstEffect + e] != 0;

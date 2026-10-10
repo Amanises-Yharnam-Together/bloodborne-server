@@ -34,6 +34,9 @@ public:
     void BeginTextInput(const std::string& initial, const std::string& prompt);
     /// 0 while typing, 1 confirmed (Enter), 2 cancelled (Escape); text is UTF-8.
     int PollTextInput(std::string& text);
+    /// The display under the window has HDR switched on (SDL's view: Windows HDR on, a Wayland
+    /// compositor's HDR mode). BB_HDR=1 claims it regardless.
+    bool IsHdrDisplay() const { return hdr_display.load(std::memory_order_relaxed); }
 
 private:
     std::atomic<s32> width, height;
@@ -44,6 +47,11 @@ private:
     std::string text, text_prompt, base_title;
     void UpdateTextTitle();
     void UpdateCursor();
+    /// Window thread: windowed, borderless or exclusive fullscreen (BbSettings::WindowMode).
+    void ApplyWindowMode(int mode);
+    void UpdateHdrState();
+    int applied_window_mode{-1};
+    std::atomic<bool> hdr_display{false};
     u64 last_mouse_motion_ms{}; ///< SDL_GetTicks of the last mouse motion (UpdateCursor)
     bool cursor_hidden{};
     SDL_Window* window{};

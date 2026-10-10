@@ -103,4 +103,42 @@ int main() {
     assert(BbSettings::DlssModels[BbSettings::DlssModelIndex(11)] == 11);
     assert(BbSettings::DlssModelIndex(99) == 0 && "unknown: NVIDIA's default");
     std::puts("PASS: FPS limit and DLSS model settings");
+
+    // Kaniel 2026-10-10: window mode (windowed, borderless, exclusive) and HDR output in the game's
+    // menus. The launcher's BB_FULLSCREEN counts until the file has a window mode.
+    char fourth[512];
+    std::snprintf(fourth, sizeof(fourth), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+    close(mkstemp(fourth));
+    setenv("BB_CONFIG", fourth, 1);
+    setenv("BB_FULLSCREEN", "1", 1);
+    BbSettings::Load();
+    assert(s.window_mode == BbSettings::Borderless && "the launcher's fullscreen is borderless");
+    assert(!s.hdr && s.hdr_peak_nits == 1000 && s.hdr_paper_white == 200);
+    s.window_mode = BbSettings::ExclusiveFullscreen;
+    s.hdr = true;
+    s.hdr_peak_nits = 1500;
+    s.hdr_paper_white = 250;
+    s.hdr_highlights = 0.7f;
+    BbSettings::Save();
+    const std::string saved4 = Read(fourth);
+    assert(saved4.find("window_mode=fullscreen\n") != std::string::npos);
+    assert(saved4.find("hdr=1\n") != std::string::npos);
+    assert(saved4.find("hdr_peak_nits=1500\n") != std::string::npos);
+    assert(saved4.find("hdr_paper_white=250\n") != std::string::npos);
+    assert(saved4.find("hdr_highlights=0.70\n") != std::string::npos);
+    s.hdr = false;
+    BbSettings::Load();
+    assert(s.window_mode == BbSettings::ExclusiveFullscreen && "the file's mode wins over BB_FULLSCREEN");
+    assert(s.hdr && s.hdr_peak_nits == 1500 && s.hdr_paper_white == 250 && s.hdr_highlights == 0.7f);
+    setenv("BB_FULLSCREEN", "0", 1);
+    unlink(fourth);
+    BbSettings::Load();
+    assert(s.window_mode == BbSettings::Windowed);
+    unsetenv("BB_FULLSCREEN");
+    // The menu's rows show the nearest offered brightness.
+    assert(BbSettings::HdrPeakNits[BbSettings::HdrPeakIndex(1000)] == 1000);
+    assert(BbSettings::HdrPeakNits[BbSettings::HdrPeakIndex(1100)] == 1000);
+    assert(BbSettings::HdrPeakNits[BbSettings::HdrPeakIndex(9000)] == 4000);
+    assert(BbSettings::HdrPaperWhiteNits[BbSettings::HdrPaperWhiteIndex(203)] == 200);
+    std::puts("PASS: window mode and HDR settings");
 }

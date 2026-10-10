@@ -439,6 +439,52 @@ bool RestartNeeded() {
     return restart;
 }
 
+/// HDR output: only while the display can show it (HDR switched on for it in Windows).
+void HdrRows() {
+    auto& s = BbSettings::Get();
+    if (!s.hdr_supported) {
+        Note(T("HDR: switch HDR on for this display in Windows to get the HDR options here.",
+               "HDR: включите HDR для этого монитора в Windows, и здесь появятся настройки HDR."),
+             Dim());
+        return;
+    }
+    Toggle("hdr", T("HDR output", "Вывод HDR"), s.hdr,
+           T("HDR10 output: the picture's white sits at the UI brightness, its highlights reach "
+             "toward the peak brightness.",
+             "Вывод HDR10: белый цвет картинки — на яркости интерфейса, яркие места тянутся к "
+             "пиковой яркости."));
+    const bool on = s.hdr;
+    static char peak_names[BbSettings::HdrPeakCount][24], white_names[BbSettings::HdrPaperWhiteCount][24];
+    for (int i = 0; i < BbSettings::HdrPeakCount; ++i) {
+        std::snprintf(peak_names[i], sizeof(peak_names[i]), "%d %s", BbSettings::HdrPeakNits[i],
+                      T("nits", "нит"));
+    }
+    for (int i = 0; i < BbSettings::HdrPaperWhiteCount; ++i) {
+        std::snprintf(white_names[i], sizeof(white_names[i]), "%d %s", BbSettings::HdrPaperWhiteNits[i],
+                      T("nits", "нит"));
+    }
+    Choice("hdr_peak", T("HDR peak brightness", "Пиковая яркость HDR"),
+           BbSettings::HdrPeakIndex(s.hdr_peak_nits), BbSettings::HdrPeakCount,
+           [](int i) { return peak_names[i]; }, [](int) { return true; },
+           T("Your display's peak brightness (Windows HDR Calibration or the display's specs).",
+             "Пиковая яркость вашего монитора (калибровка HDR в Windows или характеристики монитора)."),
+           on, [&](int i) { Store(s.hdr_peak_nits, BbSettings::HdrPeakNits[i], true); });
+    Choice("hdr_paper_white", T("HDR UI brightness", "Яркость интерфейса HDR"),
+           BbSettings::HdrPaperWhiteIndex(s.hdr_paper_white), BbSettings::HdrPaperWhiteCount,
+           [](int i) { return white_names[i]; }, [](int) { return true; },
+           T("Brightness of white in the picture and the interface (paper white). 200 is a good "
+             "start; lower in a dark room.",
+             "Яркость белого в картинке и интерфейсе (paper white). 200 — хорошее начало; в тёмной "
+             "комнате ниже."),
+           on, [&](int i) { Store(s.hdr_paper_white, BbSettings::HdrPaperWhiteNits[i], true); });
+    SliderRow("hdr_highlights", T("HDR highlights", "Света HDR"), s.hdr_highlights, 0.0f, 1.0f, 0.1f,
+              T("How far the brightest parts of the picture (fire, lamps, sky) reach toward the peak "
+                "brightness. 0 keeps the SDR picture.",
+                "Насколько самые яркие места картинки (огонь, фонари, небо) тянутся к пиковой "
+                "яркости. 0 — картинка как в SDR."),
+              on);
+}
+
 void DisplayTab() {
     auto& s = BbSettings::Get();
     static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160"};
@@ -469,6 +515,17 @@ void DisplayTab() {
              "в размере пресета, смена — через перезапуск. Авто включает её на мощных дискретных "
              "видеокартах. Применяется после перезапуска игры."),
            true, [&](int i) { Store(s.live_resolution, i - 1, true); });
+    const char* window_modes[] = {T("Windowed", "В окне"), T("Borderless window", "Окно без рамки"),
+                                  T("Exclusive fullscreen", "Эксклюзивный полный экран")};
+    Choice("window_mode", T("Window mode", "Режим окна"),
+           std::clamp(s.window_mode.load(), 0, BbSettings::WindowModeCount - 1), BbSettings::WindowModeCount,
+           [&](int i) { return window_modes[i]; }, [](int) { return true; },
+           T("Borderless fills the screen without taking it over: quick Alt+Tab, overlays and HDR "
+             "keep working. Exclusive fullscreen switches the display over to the game.",
+             "Без рамки — на весь экран без захвата дисплея: быстрый Alt+Tab, оверлеи и HDR "
+             "работают. Эксклюзивный полный экран переключает дисплей на игру."),
+           true, [&](int i) { Store(s.window_mode, i, true); });
+    HdrRows();
     Toggle("fps", T("FPS counter", "Счётчик FPS"), s.show_fps,
            T("Frames per second and frame time in the top right corner.",
              "Кадры в секунду и время кадра в правом верхнем углу."));
@@ -598,11 +655,11 @@ void UpscalerTab() {
     Toggle("frame_generation", T("Frame generation (FSR 3.1)", "Генерация кадров (FSR 3.1)"),
            s.frame_generation,
            T("Doubles the frame rate: one interpolated frame between every two game frames. Adds a "
-             "little input lag; best from 60 FPS. Needs SDR output; pauses while the frame rate is "
-             "above half the display's refresh rate.",
+             "little input lag; best from 60 FPS. Pauses while the frame rate is above half the "
+             "display's refresh rate.",
              "Удваивает частоту кадров: между каждыми двумя кадрами игры показывается один "
-             "интерполированный. Немного добавляет задержки ввода; лучше от 60 FPS. Нужен "
-             "SDR-вывод; приостанавливается, пока частота кадров выше половины частоты экрана."),
+             "интерполированный. Немного добавляет задержки ввода; лучше от 60 FPS. "
+             "Приостанавливается, пока частота кадров выше половины частоты экрана."),
            upscaler_on);
     if (BbSettings::IsFsr4(s.upscaler)) {
         Toggle("fsr4_exposure", T("FSR 4: auto exposure", "FSR 4: автоэкспозиция"), s.fsr4_auto_exposure,

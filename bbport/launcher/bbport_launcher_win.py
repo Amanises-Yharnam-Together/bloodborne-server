@@ -172,11 +172,11 @@ TWEAKS = [
     ('tweak_ragdoll', ('Dark Souls-style ragdoll physics (corpses fly further)',
                        'Физика тел как в Dark Souls (тела отлетают дальше)'), False),
 ]
-INI_FLAGS = {'sharpen', 'object_motion', 'frame_generation', 'show_fps', *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS)}
+INI_FLAGS = {'sharpen', 'object_motion', 'frame_generation', 'show_fps', 'hdr', *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS)}
 INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'frame_generation': '0', 'show_fps': '1',
                 'output_res': '1920x1080', 'model_lod': '0',
-                'live_resolution': 'auto',
+                'live_resolution': 'auto', 'window_mode': 'windowed', 'hdr': '0',
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS}}
 APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'), 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
@@ -206,6 +206,10 @@ LODS = [('0', ('As in the game', 'Как в игре')), ('-2', ('Highest (−2)
         ('1', ('Lower (1)', 'Ниже (1)')), ('2', ('Lowest (2)', 'Минимальная (2)'))]
 FPS_MODES = [('uncap', ('Unlocked (frame-time patch)', 'Без ограничения (патч)')), ('60', ('60 FPS',)),
              ('90', ('90 FPS',)), ('30', ('30 FPS (as on PS4)', '30 FPS (как на PS4)'))]
+# bbport.ini window_mode; the game's System menu and the Insert menu change it too.
+WINDOW_MODES = [('windowed', ('Windowed', 'В окне')),
+                ('borderless', ('Borderless window (full screen)', 'Окно без рамки (на весь экран)')),
+                ('fullscreen', ('Exclusive fullscreen', 'Эксклюзивный полный экран'))]
 PRESENT_MODES = [('Mailbox', ('Mailbox (low latency, no tearing)', 'Mailbox (без разрывов)')),
                  ('Fifo', ('FIFO (VSync)',)), ('FifoRelaxed', ('FIFO Relaxed',)),
                  ('Immediate', ('Immediate (tearing)', 'Immediate (с разрывами)'))]
@@ -431,6 +435,16 @@ def load_ini():
     return values, lines
 
 
+def migrate_display_settings(ini, lines, app):
+    """The launcher's old Fullscreen and Allow HDR switches (settings.json) become the bbport.ini
+    keys the game's menus share, once, for a file that has neither yet."""
+    present = {line.split('=', 1)[0].strip() for line in lines if '=' in line and not line.lstrip().startswith('#')}
+    if 'window_mode' not in present:
+        ini['window_mode'] = 'borderless' if app.get('fullscreen') else 'windowed'
+    if 'hdr' not in present:
+        ini['hdr'] = '1' if app.get('hdr') else '0'
+
+
 def save_ini(values, lines):
     """Rewrites the edited keys in place, appends missing ones, keeps comments and other keys."""
     written, out = set(), []
@@ -566,7 +580,7 @@ def game_environment(s, frame_generation=None):
         frame_generation = ini.get('frame_generation') == '1'
     # Auto caps the game only while frame generation can run: the game turns it off with the
     # upscaler off or with HDR output, and the cap would then only cost frames.
-    frame_generation = (frame_generation and not s['hdr']
+    frame_generation = (frame_generation
                         and ini.get('upscaler', INI_DEFAULTS['upscaler']) != 'off')
     env = dict(os.environ)
     env['BB_GAME_DIR'] = s['game_dir']
@@ -582,10 +596,8 @@ def game_environment(s, frame_generation=None):
         env['BB_USER_NAME'] = str(s['player_name']).strip()
     if str(s.get('addcont', '')).strip():
         env['BB_ADDCONT'] = str(s['addcont']).strip()
-    env['BB_FULLSCREEN'] = '1' if s['fullscreen'] else '0'
+    # Window mode and HDR are bbport.ini keys (window_mode, hdr) the game reads itself.
     env['BB_PRESENT_MODE'] = s['present_mode']
-    if s['hdr']:
-        env['BB_HDR'] = '1'
     env['BB_FPS'] = s['fps_mode']
     cap = frame_cap_value(s.get('frame_cap', ''), frame_generation, display_refresh())
     if cap:
@@ -1748,6 +1760,7 @@ class Launcher:
         self.root = root
         self.app = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
         self.ini, self.ini_lines = load_ini()
+        migrate_display_settings(self.ini, self.ini_lines, self.app)
         self.vars = {}
         # The ReShade preset lives in bin/reshade/ReShade.ini (the game's menu changes it too), not in settings.json.
         self.reshade_preset = tk.StringVar(value=get_reshade_preset() if reshade_ready() else '')
@@ -2364,7 +2377,7 @@ class Launcher:
             holder = self.cell(quick, 5, 1, ' ')
         else:
             holder = self.cell(quick, 5, 0, '', span=2)
-        self.switch(holder, self.var('fullscreen', 'app'), _('Fullscreen', 'Полный экран')).pack(anchor='w')
+        self.choice(holder, 'window_mode', 'ini', WINDOW_MODES, 30).pack(anchor='w')
         holder = self.cell(quick, 6, 0, '', span=2)
         row = self.switch(holder, self.var('frame_generation', 'ini'),
                           _('Frame generation (FSR 3.1)', 'Генерация кадров (FSR 3.1)'))
@@ -2543,11 +2556,17 @@ class Launcher:
                  _('1 keeps frame pacing even; more can raise FPS when the graphics card is the limit.',
                    '1 — ровная подача кадров; больше может поднять FPS, если упирается в видеокарту.'))
         f = self.card(page, _('Window', 'Окно'))
-        self.check(f, 'fullscreen', 'app', _('Fullscreen', 'Полноэкранный режим'))
+        self.row(f, _('Window mode', 'Режим окна'), self.choice(f, 'window_mode', 'ini', WINDOW_MODES),
+                 _('Borderless fills the screen without taking it over (quick Alt+Tab, overlays work); '
+                   'exclusive fullscreen takes the display over.',
+                   'Без рамки — на весь экран без захвата дисплея (быстрый Alt+Tab, оверлеи работают); '
+                   'эксклюзивный режим захватывает дисплей.'))
         self.row(f, _('Presentation', 'Режим показа кадров'), self.choice(f, 'present_mode', 'app', PRESENT_MODES))
-        self.check(f, 'hdr', 'app', _('Allow HDR output', 'Разрешить HDR'),
-                   _('When HDR is on in Windows and the display supports it.',
-                     'Если HDR включён в Windows и монитор его поддерживает.'))
+        self.check(f, 'hdr', 'ini', _('HDR output', 'Вывод HDR'),
+                   _('Used when HDR is on in Windows and the display supports it. Peak brightness, UI '
+                     'brightness and highlights are set in the game (System menu, Screen; or Insert).',
+                     'Работает, если HDR включён в Windows и монитор его поддерживает. Пиковая яркость, '
+                     'яркость интерфейса и светов — в игре (System, Экран; или Insert).'))
 
     def build_game(self):
         page = self.scrolled_page('game', _('Game & effects', 'Игра и эффекты'),

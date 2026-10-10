@@ -64,6 +64,16 @@ inline constexpr int FpsLimitCount = int(sizeof(FpsLimits) / sizeof(FpsLimits[0]
 inline constexpr int DlssModels[] = {0, 11, 12, 13, 10};
 inline constexpr const char* DlssModelNames[] = {"default", "K", "L", "M", "J"};
 inline constexpr int DlssModelCount = int(sizeof(DlssModels) / sizeof(DlssModels[0]));
+/// How the game's window sits on the screen (bbport.ini window_mode; else the launcher's
+/// BB_FULLSCREEN: 1 borderless, 0 windowed). Live.
+enum WindowMode : int { Windowed = 0, Borderless = 1, ExclusiveFullscreen = 2, WindowModeCount };
+inline constexpr const char* WindowModeNames[] = {"windowed", "borderless", "fullscreen"};
+/// HDR output (HDR10, ST.2084 PQ): the display's peak brightness and the brightness of SDR
+/// white (the game's UI, paper white) the menus offer, in nits.
+inline constexpr int HdrPeakNits[] = {400, 600, 800, 1000, 1500, 2000, 4000};
+inline constexpr int HdrPeakCount = int(sizeof(HdrPeakNits) / sizeof(HdrPeakNits[0]));
+inline constexpr int HdrPaperWhiteNits[] = {80, 100, 150, 200, 250, 300, 400};
+inline constexpr int HdrPaperWhiteCount = int(sizeof(HdrPaperWhiteNits) / sizeof(HdrPaperWhiteNits[0]));
 
 struct Values {
     std::atomic<MenuLanguage> menu_language{MenuLanguage::Russian};
@@ -113,6 +123,17 @@ struct Values {
     /// What the presenter measured (overlay): interpolated frames are being shown, game frames
     /// and presented images a second.
     std::atomic<bool> fg_active{false};
+    /// Window mode (WindowMode). Applied by the window thread whenever it changes.
+    std::atomic<int> window_mode{Windowed};
+    /// HDR output (bbport.ini hdr): used when the display supports it (hdr_supported). Live.
+    std::atomic<bool> hdr{false};
+    std::atomic<int> hdr_peak_nits{1000};
+    std::atomic<int> hdr_paper_white{200};
+    /// Highlight expansion 0..1: how far the brightest parts of the SDR frame reach toward the
+    /// peak brightness (0: the SDR picture at paper white only).
+    std::atomic<float> hdr_highlights{0.5f};
+    /// Set by the renderer: the swapchain offers HDR10 and the display has HDR switched on.
+    std::atomic<bool> hdr_supported{false};
     std::atomic<float> fg_base_fps{0.0f}, fg_presented_fps{0.0f};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
@@ -151,6 +172,9 @@ int EffectiveFrameLimit(int fps_limit, bool uncapped_vblank);
 int FpsLimitIndex(int limit);
 /// The DLSS model row's choice for a preset value, 0 (NVIDIA's default) if not offered.
 int DlssModelIndex(int preset);
+/// The HDR rows' choices for a brightness: the nearest offered value.
+int HdrPeakIndex(int nits);
+int HdrPaperWhiteIndex(int nits);
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
 float PresetScale(int preset);

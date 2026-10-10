@@ -19,9 +19,15 @@ static constexpr vk::SurfaceFormatKHR SURFACE_FORMAT_HDR = {
     .colorSpace = vk::ColorSpaceKHR::eHdr10St2084EXT,
 };
 
+vk::Format Swapchain::HdrFormat() {
+    return SURFACE_FORMAT_HDR.format;
+}
+
+// bbport: the frames stay SDR with HDR output too (host_passes/hdr_pass.h), so frame generation
+// works the same.
 bool Swapchain::WantsFrameGenerationImages() const {
     const auto& settings = BbSettings::Get();
-    return !needs_hdr && settings.frame_generation.load(std::memory_order_relaxed) &&
+    return settings.frame_generation.load(std::memory_order_relaxed) &&
            settings.upscaler.load(std::memory_order_relaxed) != BbSettings::UpscalerOff;
 }
 
@@ -177,8 +183,9 @@ void Swapchain::FindPresentFormat() {
         std::find_if(formats.begin(), formats.end(), [](const vk::SurfaceFormatKHR& format) {
             return format == SURFACE_FORMAT_HDR;
         }) != formats.end();
-    // Also make sure that user allowed us to use HDR
+    // Also make sure that user allowed us to use HDR (bbport: BB_HDR=0 turns it off)
     supports_hdr &= EmulatorSettings.IsHdrAllowed();
+    LOG_INFO(Render_Vulkan, "HDR10 swapchain: {}", supports_hdr ? "available" : "not offered");
 
     // If there is a single undefined surface format, the device doesn't care, so we'll just use
     // RGBA sRGB.

@@ -68,6 +68,24 @@ folder: `SeamlessCoopPort\` and the "... Port Co-op" launchers beside it.
 - The HOST scripts start the shadPS4 kit's servers when it is beside this one (its accounts).
 - Port and shadPS4 players in one party are not tested yet: everyone uses the same kit.
 
+## Window mode and HDR output
+
+Port-only display settings in bbport.ini, shown on the game's System menu page "Screen" and in
+the Insert menu (the launcher's Window card edits the same keys):
+
+- `window_mode=windowed|borderless|fullscreen`: borderless is SDL 3's fullscreen at the desktop's
+  mode, `fullscreen` asks for the closest exclusive display mode. Changes apply at once. Without the
+  key the launcher's old `BB_FULLSCREEN=1` means borderless.
+- `hdr=1`, `hdr_peak_nits`, `hdr_paper_white`, `hdr_highlights` (0..1): HDR10 (Rec.2020, ST.2084)
+  output. Offered only when the Vulkan surface lists HDR10 and SDL reports HDR on for the window's
+  display (Windows HDR on); `BB_HDR=1` skips the display check, `BB_HDR=0` turns HDR off. Every
+  pass up to presentation stays SDR (upscalers, frame generation, the rig's pictures); the
+  presenter composes into an SDR image, draws the overlay into its own layer and encodes both into
+  the swapchain (`host_passes/hdr_pass.h`, `host_shaders/hdr_output.frag`): SDR white at the paper
+  white, highlights stretched toward the peak (an inverse tonemap of the game's 8-bit frame; the
+  game's own UI over bright areas is stretched too). Real scene-referred HDR (the game's RGBA16F
+  scene before its tonemap) is the next step: see /mnt/project-files/research/hdr-feasibility.md.
+
 ## Rig
 
 - `py -3.12 tools\rig\run_scenario.py --engine port --setup` makes `C:\bb\rig\port`: the game

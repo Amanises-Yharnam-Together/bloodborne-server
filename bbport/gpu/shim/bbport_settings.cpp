@@ -79,6 +79,20 @@ void Set(Values& v, const std::string& key, const std::string& value) {
                 v.dlss_model = DlssModels[m];
             }
         }
+    } else if (key == "window_mode") {
+        for (int m = 0; m < WindowModeCount; ++m) {
+            if (value == WindowModeNames[m]) {
+                v.window_mode = m;
+            }
+        }
+    } else if (key == "hdr") {
+        v.hdr = i != 0;
+    } else if (key == "hdr_peak_nits") {
+        v.hdr_peak_nits = std::clamp(i, 100, 10000);
+    } else if (key == "hdr_paper_white") {
+        v.hdr_paper_white = std::clamp(i, 50, 1000);
+    } else if (key == "hdr_highlights") {
+        v.hdr_highlights = Clamp(f, 0.0f, 1.0f);
     } else if (key == "menu_pos") {
         float x = -1.0f, y = -1.0f;
         if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2 && x >= 0.0f && x <= 1.0f && y >= 0.0f &&
@@ -142,7 +156,9 @@ void Load() {
                               : MenuLanguage::English;
     }
     bool file_fps_limit = false;
+    bool file_window_mode = false;
     v.fps_limit = 0;
+    v.window_mode = Windowed;
     v.dlss_model = 0;
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
@@ -155,6 +171,7 @@ void Load() {
             }
             Set(v, text.substr(0, eq), text.substr(eq + 1));
             file_fps_limit = file_fps_limit || text.substr(0, eq) == "fps_limit";
+            file_window_mode = file_window_mode || text.substr(0, eq) == "window_mode";
         }
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
@@ -181,6 +198,13 @@ void Load() {
     // The launcher's frame cap until the game menu has set one (it is kept in this file).
     if (const char* value = std::getenv("BB_FPS_LIMIT"); value && !file_fps_limit) {
         Set(v, "fps_limit", value);
+    }
+    // The launcher's fullscreen switch until the game menu has picked a window mode.
+    if (const char* value = std::getenv("BB_FULLSCREEN"); value && !file_window_mode) {
+        v.window_mode = value[0] == '1' ? Borderless : Windowed;
+    }
+    if (const char* value = std::getenv("BB_WINDOW_MODE"); value && *value) {
+        Set(v, "window_mode", value);
     }
     v.startup_preset = v.preset;
     v.startup_upscaler = v.upscaler;
@@ -256,6 +280,27 @@ int DlssModelIndex(int preset) {
     return 0;
 }
 
+namespace {
+template <int N>
+int Nearest(const int (&choices)[N], int value) {
+    int best = 0;
+    for (int i = 1; i < N; ++i) {
+        if (std::abs(choices[i] - value) < std::abs(choices[best] - value)) {
+            best = i;
+        }
+    }
+    return best;
+}
+} // namespace
+
+int HdrPeakIndex(int nits) {
+    return Nearest(HdrPeakNits, nits);
+}
+
+int HdrPaperWhiteIndex(int nits) {
+    return Nearest(HdrPaperWhiteNits, nits);
+}
+
 bool FixedRenderSession() {
     const char* size = std::getenv("BB_RENDER_RES");
     return size && size[0];
@@ -304,6 +349,11 @@ void Save() {
     put("show_fps", flag(v.show_fps));
     put("fps_limit", std::to_string(v.fps_limit.load()));
     put("dlss_model", DlssModelNames[DlssModelIndex(v.dlss_model)]);
+    put("window_mode", WindowModeNames[std::clamp(v.window_mode.load(), 0, WindowModeCount - 1)]);
+    put("hdr", flag(v.hdr));
+    put("hdr_peak_nits", std::to_string(v.hdr_peak_nits.load()));
+    put("hdr_paper_white", std::to_string(v.hdr_paper_white.load()));
+    put("hdr_highlights", fixed(v.hdr_highlights, 2));
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
     // Read by patches.py at start.

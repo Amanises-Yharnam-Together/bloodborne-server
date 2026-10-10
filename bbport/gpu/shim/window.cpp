@@ -7,6 +7,7 @@
 #include "common/logging/log.h"
 #include "sdl_window.h"
 #include "bbport_overlay.h"
+#include "bbport_settings.h"
 
 namespace Frontend {
 
@@ -68,8 +69,8 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
-    const char* fullscreen = std::getenv("BB_FULLSCREEN");
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen && fullscreen[0] == '1');
+    // Window mode (BbSettings::WindowMode, from bbport.ini or the launcher's BB_FULLSCREEN): set
+    // right after creation, then whenever a menu changes it.
     base_title = title;
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
@@ -94,11 +95,58 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     } else {
         UNREACHABLE_MSG("Unsupported SDL video driver {}", driver ? driver : "(none)");
     }
+    ApplyWindowMode(BbSettings::Get().window_mode.load());
+    UpdateHdrState();
     int w = 0, h = 0;
     SDL_GetWindowSizeInPixels(window, &w, &h);
     width = w;
     height = h;
     LOG_INFO(Frontend, "Window {}x{} on {}", w, h, driver);
+}
+
+// Windowed: a normal window with a frame. Borderless: a window over the whole screen at the
+// desktop's own mode (SDL 3's fullscreen without a display mode), quick to Alt+Tab, overlays and
+// HDR keep working. Exclusive: the display switches to the window (the desktop's resolution and
+// refresh rate).
+void WindowSDL::ApplyWindowMode(int mode) {
+    mode = mode >= 0 && mode < BbSettings::WindowModeCount ? mode : int(BbSettings::Windowed);
+    applied_window_mode = mode;
+    if (mode == BbSettings::Windowed) {
+        SDL_SetWindowFullscreen(window, false);
+        SDL_SetWindowBordered(window, true);
+    } else {
+        const SDL_DisplayMode* exclusive = nullptr;
+        SDL_DisplayMode closest{};
+        if (mode == BbSettings::ExclusiveFullscreen) {
+            const SDL_DisplayID display = SDL_GetDisplayForWindow(window);
+            const SDL_DisplayMode* desktop = SDL_GetDesktopDisplayMode(display);
+            if (desktop && SDL_GetClosestFullscreenDisplayMode(display, desktop->w, desktop->h,
+                                                               desktop->refresh_rate, true, &closest)) {
+                exclusive = &closest;
+            }
+        }
+        if (!SDL_SetWindowFullscreenMode(window, exclusive)) {
+            std::printf("Window: no display mode for exclusive fullscreen (%s), borderless instead\n",
+                        SDL_GetError());
+            SDL_SetWindowFullscreenMode(window, nullptr);
+        }
+        SDL_SetWindowFullscreen(window, true);
+    }
+    SDL_SyncWindow(window);
+    std::printf("Window: %s\n", BbSettings::WindowModeNames[mode]);
+}
+
+void WindowSDL::UpdateHdrState() {
+    bool hdr = false;
+#ifdef SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN
+    hdr = SDL_GetBooleanProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false);
+#endif
+    if (const char* env = std::getenv("BB_HDR"); env && env[0] == '1') {
+        hdr = true;
+    }
+    if (hdr != hdr_display.exchange(hdr)) {
+        std::printf("Window: the display's HDR is %s\n", hdr ? "on" : "off");
+    }
 }
 
 WindowSDL::~WindowSDL() {
@@ -183,6 +231,12 @@ bool WindowSDL::PollEvents() {
             height = h;
             break;
         }
+#ifdef SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN
+        case SDL_EVENT_WINDOW_HDR_STATE_CHANGED:
+#endif
+        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+            UpdateHdrState();
+            break;
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
             is_open = false;
@@ -190,6 +244,9 @@ bool WindowSDL::PollEvents() {
         default:
             break;
         }
+    }
+    if (const int mode = BbSettings::Get().window_mode.load(); mode != applied_window_mode) {
+        ApplyWindowMode(mode);
     }
     UpdateCursor();
     return is_open;

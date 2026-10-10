@@ -8,9 +8,12 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <optional>
+#include <string>
 
 #include "core/libraries/videoout/buffer.h"
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
+#include "video_core/renderer_vulkan/host_passes/hdr_pass.h"
 #include "video_core/renderer_vulkan/host_passes/pp_pass.h"
 #include "video_core/renderer_vulkan/vk_frame_generation.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -77,13 +80,9 @@ public:
         return swapchain.HasHDR();
     }
 
-    void SetHDR(bool enable) {
-        if (!IsHDRSupported()) {
-            return;
-        }
-        swapchain.SetHDR(enable);
-        pp_settings.hdr = enable ? 1 : 0;
-    }
+    /// The game's own HDR request (VideoOut colorimetry). bbport: Bloodborne renders SDR and
+    /// never asks; HDR output follows the port's setting instead (UpdateHdrOutput).
+    void SetHDR(bool) {}
 
     VideoCore::Image& RegisterVideoOutSurface(
         const Libraries::VideoOut::BufferAttributeGroup& attribute, VAddr cpu_address) {
@@ -114,6 +113,11 @@ private:
 
     /// One image of the swapchain: the frame blitted, the overlay drawn over it, presented.
     void PresentFrame(Frame* frame, bool is_reusing_frame, bool is_game_frame);
+    /// bbport: HDR output on or off as the setting and the display allow (swapchain recreated).
+    void UpdateHdrOutput();
+    /// bbport: the overlay and HDR encode of a frame composed into hdr_pass.Game().
+    void RecordHdrOutput(vk::CommandBuffer cmdbuf, Frame* frame, vk::Extent2D extent, bool overlay,
+                         std::optional<std::string> shot);
     /// bbport: the next image of the ring of interpolated frames, free and of this size.
     Frame* AcquireGeneratedFrame(u32 width, u32 height, vk::Format format);
     /// bbport: the frame without UI, made by the host passes like the presented one.
@@ -131,6 +135,8 @@ private:
     HostPasses::FsrPass fsr_pass;
     HostPasses::FsrPass::Settings fsr_settings{};
     HostPasses::PostProcessingPass::Settings pp_settings{};
+    HostPasses::HdrOutputPass hdr_pass;
+    bool last_display_hdr{false}; ///< UpdateHdrOutput: the display's HDR state last seen
     HostPasses::PostProcessingPass pp_pass;
     std::mutex passes_mutex; ///< bbport: the passes are recorded on the recording threads
     AmdGpu::Liverpool* liverpool;
