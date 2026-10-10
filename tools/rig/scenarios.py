@@ -11,8 +11,9 @@ Commands (see RunAutoplayStep in bloodborne_re.cpp): wait <s>, wait-session <n> 
 wait-members <n> [<timeout>] (party members on this map), wait-map <map> [<timeout>],
 travel <warp point> [<timeout>], ensure-map <map> <warp point> [<timeout>] (travel unless
 there already), hurt <nearest|handle> <hp>, kill <nearest|self|handle>,
-teleport <x> <y> <z> [<heading>], approach <target> [<dx> [<dz>]], mark <target> (later "marked"),
+teleport <x> <y> <z> [<heading>], approach <target> [<dx> [<dz> [<heading>]]], mark <target> (later "marked"),
 attack <target> [<timeout>] (1 HP left, then light attacks from each side until it dies),
+hit <target> [<timeout>] (light attacks until one lands),
 press <button> [<ms>], stick <x> <y> [<ms>], pickup [<meters>] [<timeout>] (onto the
 nearest usable map item, then X until it is gone), snapshot, log <text>,
 expect-hp <handle|self> <op> <value>, expect-session <n>, expect-map <map>,
@@ -560,6 +561,39 @@ SCENARIOS = {
                       "expect-session 2"],
         },
         "timeout": 900,
+    },
+    "hp-after-host-trip": {
+        "about": "after the host's trip to the Dream and back, enemy HP still goes both ways: the "
+                 "host's hit reaches the guest's copy and the guest's real hit the host's (Kaniel "
+                 "2026-10-10: HP not shared after trips, he thinks)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 120", "wait 20",
+                     f"hurt {ENEMY} 300", "wait 40", "snapshot", f"expect-hp {ENEMY} < 300",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 45", "wait-members 2 240",
+                      "wait 30", "snapshot", f"expect-hp {ENEMY} <= 300", f"hit {ENEMY}",
+                      "wait 10", "snapshot", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    "hp-after-guest-trip": {
+        "about": "after the guest's trip to the Dream and back, enemy HP still goes both ways: the "
+                 "host's hit reaches the guest's copy and the guest's real hit the host's",
+        "roles": {
+            # The host hits once the guest is back (its wait-members), the guest looks 14 s
+            # later and then hits (the t= on step lines puts both logs on one clock).
+            "host": [START, "godmode", "wait-session 2 300", "wait 60", "wait-members 2 240",
+                     "wait 20", f"hurt {ENEMY} 300", "wait 60", "snapshot",
+                     f"expect-hp {ENEMY} < 300", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                      "wait 10", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
+                      "wait 60", "snapshot", f"expect-hp {ENEMY} <= 300", f"hit {ENEMY}",
+                      "wait 10", "snapshot", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 720,
     },
     "crash-rejoin-hp": {
         "about": "after the guest's game crashes and it joins again, the host's hit still reaches "
