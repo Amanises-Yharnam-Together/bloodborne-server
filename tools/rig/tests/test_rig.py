@@ -182,6 +182,23 @@ class RunnerTest(unittest.TestCase):
                     self.assertEqual(script, [scenarios.START, f"wait-session {players} 300"])
                     self.assertTrue(all(step.split()[0] in VERBS for step in script))
 
+    def test_every_game_sees_one_hp_for_the_shared_enemy(self):
+        # Kaniel 2026-10-10: two players hitting one enemy saw different HP bars. A scenario's
+        # "same_hp" handle must show the same HP in every role's last census, below its max.
+        line = "[Debug] <Info> () x: Bloodborne autoplay census: {} hp {}/{} dead 0x0 hidden 0"
+        host = "\n".join([line.format("0x1001400b", 484, 484), line.format("0x1001400b", 300, 484)])
+        guest = line.format("0x1001400b", 301, 484)
+        self.assertEqual(run_scenario.last_census_hp(host, "0x1001400b"), (300, 484))
+        self.assertIsNone(run_scenario.same_hp_problem({"host": host, "guest": guest},
+                                                       "0x1001400b"))
+        self.assertIn("apart", run_scenario.same_hp_problem(
+            {"host": host, "guest": line.format("0x1001400b", 400, 484)}, "0x1001400b"))
+        self.assertIn("never hit", run_scenario.same_hp_problem(
+            {"host": line.format("0x1001400b", 484, 484), "guest": line.format("0x1001400b", 484, 484)},
+            "0x1001400b"))
+        self.assertIn("no census", run_scenario.same_hp_problem({"host": host, "guest": ""},
+                                                                "0x1001400b"))
+
     def test_old_runs_go_newest_stay(self):
         with tempfile.TemporaryDirectory() as folder:
             runs = pathlib.Path(folder)

@@ -430,6 +430,9 @@ std::optional<int> CharacterSlotOfSavePath(std::string_view path);
 // Pickups once confirmed set in the character's own world never clear again, so a load of a
 // slot where none of them is set holds a new character, and the slot's kept lists are dropped.
 bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now);
+// Whether the character loaded now is another one than the one a slot's lists were kept for
+// (`progress_kept`, its own world's set event flags then; 0 not known): far fewer set now.
+bool IsOtherCharacter(s32 progress_now, s32 progress_kept);
 std::string FormatFlagList(std::span<const s32> flags);
 std::vector<s32> ParseFlagList(std::string_view text);
 // The event flag store (EventFlagMan [0x0553B100]): blocks of +0x1C flags each, kept in a map at
@@ -627,18 +630,43 @@ struct EnemyHpReport {
     std::vector<EnemyHp> enemies;
     bool operator==(const EnemyHpReport&) const = default;
 };
-// The enemies this member hurt in the party session during its visit: none out of a session,
-// and each counts from the HP it had when the session or the visit began (or the most it had
-// since: a guest's world rebuilt as the host's client), so damage a member's own world had
-// before never reaches the others (a guest's hurt dog lowered a new host's to 1 HP; it died).
-class VisitDamage {
+// Enemy HP between members whose worlds are separate (after a trip each member runs its own copy
+// of a map, and the game no longer sends HP between them): each member posts the damage its
+// copy of each enemy took from it this visit (EnemyHp.hp is that damage), under its own source
+// (EnemyHpReport.visit: the member and its visit), and every copy takes the others' damage on
+// top, scaled by max HP. Two players hitting one enemy add up (the lowest HP left, shared
+// before, let their damage overlap: friend run 2026-10-10). A copy never goes below 1 HP from
+// the others: the death comes from the game and the kill board.
+struct EnemyCopy {
+    u32 handle = 0;
+    s32 hp = 0;
+    s32 max = 0;
+};
+struct EnemyWrite {
+    u32 handle = 0;
+    s32 hp = 0;
+    bool operator==(const EnemyWrite&) const = default;
+};
+class SharedDamage {
 public:
-    std::vector<EnemyHp> Hurt(u64 visit, bool in_session, std::span<const EnemyHp> alive);
+    struct Step {
+        std::vector<EnemyHp> post;      // this member's own damage, to post
+        std::vector<EnemyWrite> writes; // the HP to write on this member's copies
+    };
+    // `active`: in the session with worlds apart (else nothing is posted or written, and the
+    // counts start over when it is next active).
+    Step Update(u64 visit, bool active, std::span<const EnemyCopy> alive,
+                std::span<const EnemyHpReport> others);
 
 private:
+    struct Track {
+        s32 start = 0;   // the copy's HP when first seen this visit (or since it came back up)
+        s32 written = 0; // what the others' damage took off it
+    };
     u64 visit = 0;
-    bool in_session = false;
-    std::map<u32, s32> start_hp;
+    bool active = false;
+    std::map<u32, Track> tracks;
+    std::map<std::pair<u64, u32>, s32> written; // (other member's source, handle) -> taken
 };
 std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies);
 std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes);

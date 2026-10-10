@@ -47,7 +47,7 @@ EVENTS = {
     "trips": "Bloodborne party trip started",
     "time-of-day trips": "a world reload (time of day) is a trip",
     "players re-created": "re-creating",
-    "enemies lowered to a member's HP": "enemies to another member's HP",
+    "enemies lowered by the others' damage": "enemies by the other members' damage",
     "echoes from kills apart": "echoes from a kill another member made apart",
     "kill board posts": "kill board gets",
     "enemies hidden (killed by a member)": "enemies a member killed",

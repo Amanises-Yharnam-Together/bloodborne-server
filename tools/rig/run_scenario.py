@@ -639,6 +639,14 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
         return False
 
     passed = True
+    if handle := scenario.get("same_hp"):
+        texts = {role: role_text(run_dir, role, stage[role] + 1) for role in roles}
+        if problem := same_hp_problem(texts, handle):
+            print(f"    {problem}")
+            passed = False
+        else:
+            print(f"    {handle}: one HP in every game "
+                  f"({', '.join(str(last_census_hp(t, handle)) for t in texts.values())})")
     for role in roles:
         text = role_text(run_dir, role, stage[role] + 1)
         status = done.get(role, "timed out")
@@ -664,6 +672,27 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     print(f"  {'PASSED' if passed else 'FAILED'} in {time.time() - started:.0f} s (logs in "
           f"{run_dir})")
     return passed
+
+
+def last_census_hp(text: str, handle: str) -> tuple[int, int] | None:
+    """The character's HP and max HP in the role's last census (the autoplay verb), if any."""
+    found = re.findall(rf"autoplay census: {re.escape(handle)} hp (-?\d+)/(\d+)", text)
+    return (int(found[-1][0]), int(found[-1][1])) if found else None
+
+
+def same_hp_problem(texts: dict[str, str], handle: str) -> str | None:
+    """What is wrong with the shared enemy's HP across the roles' last censuses, or None: every
+    game must show the same HP (2 apart at most: shares round), hurt below its max."""
+    seen = {role: last_census_hp(text, handle) for role, text in texts.items()}
+    if missing := [role for role, hp in seen.items() if hp is None]:
+        return f"no census of {handle} in {', '.join(missing)}"
+    values = [hp for hp, _ in seen.values()]
+    shown = ", ".join(f"{role} {hp}/{top}" for role, (hp, top) in seen.items())
+    if max(values) - min(values) > 2:
+        return f"{handle} HP apart: {shown}"
+    if all(hp >= top for hp, top in seen.values()):
+        return f"{handle} never hit: {shown}"
+    return None
 
 
 def play_scripts(scenario: dict) -> dict[str, list[str]]:

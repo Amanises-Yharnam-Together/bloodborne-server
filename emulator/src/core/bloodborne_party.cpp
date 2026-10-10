@@ -497,6 +497,12 @@ std::optional<int> CharacterSlotOfSavePath(std::string_view path) {
     return digit - '0';
 }
 
+bool IsOtherCharacter(s32 progress_now, s32 progress_kept) {
+    // Event flags only add up as a character plays; far fewer set means another character.
+    constexpr s32 ProgressSlack = 20;
+    return progress_kept > 0 && progress_now + ProgressSlack < progress_kept;
+}
+
 bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now) {
     return !confirmed.empty() && confirmed_set_now == 0;
 }
@@ -847,9 +853,7 @@ ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPositio
     if (point.map == 0 || (loaded_map != 0 && loaded_map != map)) {
         return {};
     }
-    // Event flags only add up as a character plays; far fewer set means another character.
-    constexpr s32 ProgressSlack = 20;
-    if (progress + ProgressSlack < point.progress) {
+    if (IsOtherCharacter(progress, point.progress)) {
         return {ResumeStep::Kind::Forget, 0};
     }
     if (point.map != map) {
@@ -958,27 +962,58 @@ T ReadLittleEndian(std::span<const u8> bytes, size_t offset) {
 }
 } // namespace
 
-std::vector<EnemyHp> VisitDamage::Hurt(u64 new_visit, bool now_in_session,
-                                       std::span<const EnemyHp> alive) {
-    if (new_visit != visit || now_in_session != in_session) {
-        start_hp.clear();
+SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
+                                        std::span<const EnemyCopy> alive,
+                                        std::span<const EnemyHpReport> others) {
+    if (new_visit != visit || now_active != active) {
+        tracks.clear();
+        written.clear();
         visit = new_visit;
-        in_session = now_in_session;
+        active = now_active;
     }
-    std::vector<EnemyHp> hurt;
-    if (!in_session) {
-        return hurt;
+    Step step;
+    if (!active) {
+        return step;
     }
-    for (const EnemyHp& enemy : alive) {
-        const auto [it, first] = start_hp.try_emplace(enemy.handle, enemy.hp);
-        if (!first && enemy.hp > it->second) {
-            it->second = enemy.hp;
+    for (const EnemyCopy& copy : alive) {
+        if (copy.hp <= 0 || copy.max <= 0) {
+            continue;
         }
-        if (enemy.hp < it->second) {
-            hurt.push_back(enemy);
+        auto [track, first] = tracks.try_emplace(copy.handle, Track{copy.hp, 0});
+        s32 own = track->second.start - copy.hp - track->second.written;
+        if (own < 0) { // it came back up (a reload, a heal): count from here
+            track->second.start = copy.hp + track->second.written;
+            own = 0;
+        }
+        if (own > 0) {
+            step.post.push_back({copy.handle, own, copy.max});
+        }
+        // Each other member's damage on its copy, as a share of this copy's max HP, on top of
+        // what this copy already took from that member.
+        s32 hp = copy.hp;
+        for (const EnemyHpReport& report : others) {
+            for (const EnemyHp& damage : report.enemies) {
+                if (damage.handle != copy.handle || damage.max <= 0 || damage.hp <= 0) {
+                    continue;
+                }
+                const s32 scaled =
+                    static_cast<s32>((s64{damage.hp} * copy.max + damage.max / 2) / damage.max);
+                s32& taken = written[{report.visit, copy.handle}];
+                const s32 delta = scaled - taken;
+                if (delta <= 0 || hp <= 1) {
+                    continue;
+                }
+                const s32 lowered = std::max(hp - delta, 1);
+                taken += hp - lowered;
+                track->second.written += hp - lowered;
+                hp = lowered;
+            }
+        }
+        if (hp != copy.hp) {
+            step.writes.push_back({copy.handle, hp});
         }
     }
-    return hurt;
+    return step;
 }
 
 std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies) {

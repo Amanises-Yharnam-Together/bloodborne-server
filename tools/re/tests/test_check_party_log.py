@@ -55,12 +55,12 @@ class SessionTest(unittest.TestCase):
         text = "\n".join([
             line("Bloodborne party trip started map=0x18010000"),
             line("Bloodborne party trip: re-creating Kaniel on map 0x18010000 (1 of 2 members)"),
-            line("Bloodborne party: lowered 3 enemies to another member's HP on map 0x18010000"),
+            line("Bloodborne party: lowered 3 enemies by the other members' damage on map 0x18010000"),
         ])
         counts, problems = tool.summarize(text)
         self.assertEqual(counts["trips"], 1)
         self.assertEqual(counts["players re-created"], 1)
-        self.assertEqual(counts["enemies lowered to a member's HP"], 1)
+        self.assertEqual(counts["enemies lowered by the others' damage"], 1)
         self.assertEqual(problems, [])
 
     def test_flags_the_known_problems(self):

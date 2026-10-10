@@ -2609,31 +2609,6 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
             }
         }
         {
-            MemberMapState mine;
-            {
-                std::scoped_lock lock{enemy_hp_mutex};
-                mine = local_enemy_hp;
-            }
-            if (mine.map != 0) {
-                const auto hp_response =
-                    client.Post("/bloodborne/party/hp", headers,
-                                EncodeMapStateUpdate(member, mine.map, mine.bits), "text/plain");
-                if (const auto states = hp_response && hp_response->status == 200
-                                            ? ParseMapStateBoard(hp_response->body)
-                                            : std::nullopt) {
-                    std::scoped_lock lock{enemy_hp_mutex};
-                    others_enemy_hp = *states;
-                } else {
-                    static auto last_logged = std::chrono::steady_clock::time_point{};
-                    if (std::chrono::steady_clock::now() - last_logged > std::chrono::seconds{10}) {
-                        last_logged = std::chrono::steady_clock::now();
-                        LOG_INFO(Debug, "Bloodborne party: HP board post failed (status {})",
-                                 hp_response ? hp_response->status : -1);
-                    }
-                }
-            }
-        }
-        {
             // The host posts its map's characters; a guest only reads (map 0).
             MemberMapState mine;
             {
@@ -2779,6 +2754,50 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
     }
 }
 
+// Enemy HP (see SharedDamage) on its own client, five times a second: on the rest board's
+// one-second round the other members' hits showed late (friend run 2026-10-10).
+void RunHpBoardClient(std::stop_token stop, std::string base_url, std::string party) {
+    const std::string member = FindBoardMember(stop);
+    httplib::Client client(base_url);
+    client.set_keep_alive(true);
+    client.set_connection_timeout(std::chrono::seconds{1});
+    client.set_read_timeout(std::chrono::seconds{1});
+    const httplib::Headers headers{{"X-ShadPS4-Bloodborne-Party", party}};
+    std::mutex wait_mutex;
+    std::condition_variable_any wait;
+    while (!stop.stop_requested()) {
+        {
+            std::unique_lock lock{wait_mutex};
+            wait.wait_for(lock, stop, std::chrono::milliseconds{200}, [] { return false; });
+        }
+        MemberMapState mine;
+        {
+            std::scoped_lock lock{enemy_hp_mutex};
+            mine = local_enemy_hp;
+        }
+        if (mine.map == 0) {
+            continue;
+        }
+        const auto hp_response =
+            client.Post("/bloodborne/party/hp", headers,
+                        EncodeMapStateUpdate(member, mine.map, mine.bits), "text/plain");
+        if (const auto states = hp_response && hp_response->status == 200
+                                    ? ParseMapStateBoard(hp_response->body)
+                                    : std::nullopt) {
+            std::scoped_lock lock{enemy_hp_mutex};
+            others_enemy_hp = *states;
+        } else {
+            static auto last_logged = std::chrono::steady_clock::time_point{};
+            if (std::chrono::steady_clock::now() - last_logged > std::chrono::seconds{10}) {
+                last_logged = std::chrono::steady_clock::now();
+                LOG_INFO(Debug, "Bloodborne party: HP board post failed (status {})",
+                         hp_response ? hp_response->status : -1);
+            }
+        }
+    }
+}
+std::jthread hp_board_client;
+
 void StartRestBoardClient() {
     const char* party_setting = std::getenv("SHADPS4_BLOODBORNE_PARTY");
     const auto party = party_setting ? ParsePartySetting(party_setting) : std::nullopt;
@@ -2789,6 +2808,7 @@ void StartRestBoardClient() {
     }
     Libraries::Np::NpTrophy::SetTrophyUnlockObserver(NoteGameTrophyUnlock);
     rest_board_client = std::jthread(RunRestBoardClient, base_url, *party);
+    hp_board_client = std::jthread(RunHpBoardClient, base_url, *party);
 }
 
 std::vector<LampRest> FreshRestBoard() {
@@ -3768,6 +3788,14 @@ void SaveRemoteJoinTasks() {
              saved_join_tasks.size(), found.size(), which);
 }
 
+// Members rebuilt while their data had not come yet (see RebuildsFromSave): their tasks wait at
+// their saved step until the member stands in the world (the vitals board), then go on to create
+// the character (FinishWaitingJoins). The data comes by slot, not by task: a guest that finished
+// loading while the host was away had sent it already, and a fresh join stayed stuck (rig
+// hp-together 2026-10-10: host and guest never saw each other).
+std::set<u64> joins_waiting_for_data; // member identity pointers
+s64 waiting_member_seen_ms = 0;
+
 void RecreateRemotePlayers(std::span<const u64> only) {
     const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
     const u64 manager = ReadValue<u64>(image_base + MultiPlayManPointerOffset, 0);
@@ -3806,26 +3834,30 @@ void RecreateRemotePlayers(std::span<const u64> only) {
         }
         using Construct = void PS4_SYSV_ABI (*)(u64 task, u64 member_id, s32 kind);
         reinterpret_cast<Construct>(image_base + JoinTaskConstructOffset)(task, member_id, kind);
-        // A member still joining when the trip began: the game's own join, from its first step.
-        const bool fresh = saved && !RebuildsFromSave(*saved);
-        if (saved && !fresh) {
+        // A member still joining when the trip began: back at its step, waiting for its data.
+        const bool waiting = saved && !RebuildsFromSave(*saved);
+        if (saved) {
             WriteValue(task, 0xEC, saved->slot);
-            WriteValue(task, 0xED, static_cast<u8>(saved->flags | 1));
+            WriteValue(task, 0xED, static_cast<u8>(waiting ? saved->flags : saved->flags | 1));
         }
         u64 holder = task;
         using ListAdd = void PS4_SYSV_ABI (*)(u64 list, u64 entry);
         reinterpret_cast<ListAdd>(image_base + JoinTaskListAddOffset)(
             manager + 8, reinterpret_cast<u64>(&holder));
-        if (!fresh) {
+        if (waiting) {
+            set_step(task, saved->step);
+            joins_waiting_for_data.insert(ReadValue<u64>(member_id, 0));
+            waiting_member_seen_ms = 0;
+        } else {
             set_step(task, CreateCharacterStep);
         }
         LOG_INFO(Debug,
                  "Bloodborne party trip: rebuilt the join task of a member kind={} task={:#x} "
                  "slot known={}{}",
                  kind, task, saved != nullptr,
-                 fresh
-                     ? fmt::format(" (it was still joining at step {}: a fresh join)", saved->step)
-                     : "");
+                 waiting ? fmt::format(" (it was still joining at step {}: waits for its data)",
+                                       saved->step)
+                         : "");
     };
     const auto task_for = [&](u64 member_id) {
         u64 found = 0;
@@ -4793,13 +4825,34 @@ std::vector<s32> ReadGuestConfirmed() {
     return ParseFlagList(text);
 }
 
+// The set event flags of the slot's character's own world when it last loaded (see
+// IsOtherCharacter), per slot.
+std::filesystem::path GuestOwnerFile() {
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+           fmt::format("bloodborne_party_owner_slot{}.txt", character_slot.load());
+}
+
+s32 CountSetFlags();
+
 // Before a load of the guest's own world sets its pickups: a slot whose confirmed pickups are
-// all missing holds a new character, so the slot's kept lists are dropped (pickups first, as
+// all missing, or whose world has far fewer event flags set than when it last loaded, holds a
+// new character, so the slot's kept lists are dropped (pickups first, as
 // SetGuestPickupsBeforeMapItems sets them right after).
 void ForgetSlotIfNewCharacter() {
     const std::vector<s32> confirmed = ReadGuestConfirmed();
     const size_t set_now = static_cast<size_t>(std::ranges::count_if(confirmed, EventFlagOn));
-    if (!IsNewCharacterInSlot(confirmed, set_now)) {
+    s32 progress_kept = 0;
+    {
+        std::ifstream file{GuestOwnerFile()};
+        file >> progress_kept;
+    }
+    const s32 progress_now = CountSetFlags();
+    const bool other = IsOtherCharacter(progress_now, progress_kept);
+    if (progress_now > 0) {
+        std::ofstream file{GuestOwnerFile(), std::ios::trunc};
+        file << (other ? progress_now : std::max(progress_now, progress_kept)) << '\n';
+    }
+    if (!IsNewCharacterInSlot(confirmed, set_now) && !other) {
         return;
     }
     {
@@ -4810,8 +4863,10 @@ void ForgetSlotIfNewCharacter() {
     ForgetGuestWorldChanges();
     std::error_code error;
     std::filesystem::remove(GuestConfirmedFile(), error);
-    LOG_INFO(Debug, "Bloodborne party: new character in save slot {}; its kept lists start clean",
-             character_slot.load());
+    LOG_INFO(Debug,
+             "Bloodborne party: new character in save slot {} ({} event flags set, {} kept); its "
+             "kept lists start clean",
+             character_slot.load(), progress_now, progress_kept);
 }
 
 // After the pickups are set in the guest's own world: the ones that took are confirmed.
@@ -5687,19 +5742,44 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
     }
 }
 
-// Enemy HP kept in step (see EnemyHpReport): posts the enemies this member has hurt in the
-// session during its visit (VisitDamage) and lowers its copies to the lowest share of HP another
-// member on this map reports. Out of a session each world is its member's own: nothing either way.
+// Whether some player in this world is a phantom (WorldChrMan's players, type +0x78: 1 a summoned
+// client): a guest joined into the host's world, before either made a trip. The game then sends
+// enemy HP between them itself; after a trip each member runs its own copy of the map (all type
+// 0) and only the HP board keeps the copies in step.
+bool SharesOneWorld() {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const s32 count = world >= 0x10000 ? ReadValue<s32>(world, 0x30) : 0;
+    const u64 entries = world >= 0x10000 ? ReadValue<u64>(world, 0x38) : 0;
+    for (s32 index = 0; entries >= 0x10000 && index < std::min(count, 8); ++index) {
+        const u64 player = ReadValue<u64>(entries + static_cast<u64>(index) * 0x38, 0);
+        if (player >= 0x10000 && ReadValue<s32>(player, 0x78) == 1) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// This game's tag on its HP reports (the upper half of EnemyHpReport.visit), so the others count
+// each member's damage apart.
+const u32 enemy_hp_source = [] {
+    std::random_device random;
+    return static_cast<u32>(random()) | 1u;
+}();
+
+// Enemy HP kept in step (see SharedDamage): in the session, with the worlds apart, posts the
+// damage this member did to its copies during its visit and takes the others' on top. Out of a
+// session each world is its member's own, and in one world the game sends the HP itself.
 void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     struct Copy {
         u64 data;
         s32 hp;
         s32 max;
     };
-    static VisitDamage damage;
+    static SharedDamage damage;
     const bool in_session = InPartySession();
+    const bool active = in_session && !SharesOneWorld();
     std::unordered_map<u32, Copy> alive;
-    std::vector<EnemyHp> standing;
+    std::vector<EnemyCopy> standing;
     for (const u64 character : characters) {
         const u64 modules = ReadValue<u64>(character, 0x3B0);
         const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
@@ -5715,12 +5795,27 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
         alive[handle] = Copy{data, hp, max};
         standing.push_back({handle, hp, max});
     }
-    const std::vector<EnemyHp> hurt = damage.Hurt(visit, in_session, standing);
     std::vector<MemberMapState> others;
     {
         std::scoped_lock lock{enemy_hp_mutex};
-        local_enemy_hp = MemberMapState{map, EncodeEnemyHp(visit, hurt)};
         others = others_enemy_hp;
+    }
+    // The other members' reports for this area (any block of it: one who joined in place stands
+    // on another block, and the blocks give their enemies distinct handles).
+    std::vector<EnemyHpReport> reports;
+    for (const MemberMapState& state : others) {
+        if ((state.map >> 24) == (map >> 24)) {
+            if (auto report = DecodeEnemyHp(state.bits)) {
+                reports.push_back(std::move(*report));
+            }
+        }
+    }
+    const u64 source = (u64{enemy_hp_source} << 32) | (visit & 0xFFFFFFFFu);
+    const SharedDamage::Step step = damage.Update(visit, active, standing, reports);
+    const std::vector<EnemyHp>& hurt = step.post;
+    {
+        std::scoped_lock lock{enemy_hp_mutex};
+        local_enemy_hp = MemberMapState{map, EncodeEnemyHp(source, hurt)};
     }
     // Diagnostics (rig hp-after-guest-trip: the host's hit reached a guest back from a trip only
     // ~30 s later): what the board hands this member for its area, when that changes.
@@ -5745,26 +5840,33 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
                      hurt.size(), map, SteadyMilliseconds() / 1000.0);
         }
     }
-    if (!in_session) {
-        return;
-    }
     size_t lowered = 0;
     std::string which;
-    for (const auto& [handle, copy] : alive) {
-        const auto target = LowestSharedHp(handle, copy.hp, copy.max, map, others);
-        if (target && HasMemoryAccess(copy.data, 0xFC, MemoryProt::CpuWrite)) {
-            WriteValue(copy.data, 0xF8, *target);
-            ++lowered;
-            if (which.size() < 200) {
-                which += fmt::format(" {:#x} {}->{}", handle, copy.hp, *target);
-            }
+    for (const EnemyWrite& write : step.writes) {
+        const auto it = alive.find(write.handle);
+        if (it == alive.end() || !HasMemoryAccess(it->second.data, 0xFC, MemoryProt::CpuWrite)) {
+            continue;
+        }
+        WriteValue(it->second.data, 0xF8, write.hp);
+        ++lowered;
+        if (which.size() < 200) {
+            which += fmt::format(" {:#x} {}->{}", write.handle, it->second.hp, write.hp);
         }
     }
     static u32 logged = 0;
-    if (lowered > 0 && ++logged <= 200) {
+    if (lowered > 0 && ++logged <= 400) {
         LOG_INFO(Debug,
-                 "Bloodborne party: lowered {} enemies to another member's HP on map {:#x}:{}",
-                 lowered, map, which);
+                 "Bloodborne party: lowered {} enemies by the other members' damage on map "
+                 "{:#x}:{} (t={:.1f})",
+                 lowered, map, which, SteadyMilliseconds() / 1000.0);
+    }
+    static bool was_active = false;
+    if (active != was_active) {
+        was_active = active;
+        LOG_INFO(Debug, "Bloodborne party: enemy HP {} (map {:#x})",
+                 active ? "shared over the HP board (worlds apart)"
+                        : (in_session ? "sent by the game (one world)" : "own (no session)"),
+                 map);
     }
 }
 
@@ -5786,7 +5888,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
     // Not while the world goes away: a trip's start posted the old map's characters as kills.
     if (!WatchesKills(sharing, PartyTripActive(), loading) ||
-        now - checked < std::chrono::milliseconds{500}) {
+        now - checked < std::chrono::milliseconds{200}) {
         return;
     }
     checked = now;
@@ -6142,6 +6244,8 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     std::ofstream{GuestResumeFile(), std::ios::trunc} << EncodeResumePoint(point) << '\n';
 }
 
+void FinishWaitingJoins(bool in_session);
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
@@ -6168,6 +6272,7 @@ void TickPlayersOnThisMap() {
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
     ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
     GrantPartyEchoes();
+    FinishWaitingJoins(in_session);
     if (!in_session) {
         recreate_players_pending = false;
         recreated_since_trip.clear();
@@ -6853,6 +6958,48 @@ VitalsView ReadVitalsBoard() {
                           .count();
     }
     return view;
+}
+
+// See joins_waiting_for_data: once another member has stood on this map for 3 s (its data sent
+// by then), its waiting task creates its character from the slot data.
+void FinishWaitingJoins(bool in_session) {
+    if (joins_waiting_for_data.empty()) {
+        return;
+    }
+    if (!in_session) {
+        joins_waiting_for_data.clear();
+        return;
+    }
+    const VitalsView view = ReadVitalsBoard();
+    const bool stands = view.Fresh() && !view.member.empty() &&
+                        SomeoneElseStands(view.board.members, view.member, GetCurrentPackedMap());
+    const s64 now = SteadyMilliseconds();
+    if (!stands) {
+        waiting_member_seen_ms = 0;
+        return;
+    }
+    if (waiting_member_seen_ms == 0) {
+        waiting_member_seen_ms = now;
+    }
+    if (now - waiting_member_seen_ms < 3000) {
+        return;
+    }
+    using SetStep = void PS4_SYSV_ABI (*)(u64 task, s32 step);
+    ForEachJoinTask([&](u64 task) {
+        const u64 identity = ReadValue<u64>(task, 0xC8);
+        if (!joins_waiting_for_data.contains(identity) ||
+            ReadValue<s32>(task, 0x50) >= CreateCharacterStep) {
+            return;
+        }
+        WriteValue(task, 0xED, static_cast<u8>(ReadValue<u8>(task, 0xED) | 1));
+        reinterpret_cast<SetStep>(ReadValue<u64>(ReadValue<u64>(task, 0), 0x28))(
+            task, CreateCharacterStep);
+        LOG_INFO(Debug,
+                 "Bloodborne party trip: a member that was still joining stands here now; "
+                 "creating its character (task {:#x})",
+                 task);
+    });
+    joins_waiting_for_data.clear();
 }
 
 // Hands the client this member's vitals: posted at once when more than its position changed.

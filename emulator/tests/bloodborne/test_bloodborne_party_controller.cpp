@@ -782,6 +782,18 @@ TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {
     EXPECT_FALSE(IsNewCharacterInSlot({}, 0)) << "nothing confirmed yet";
 }
 
+// Friend run 2026-10-10: a new character in the slot of one that never had a pickup confirmed
+// in its own world got the old one's 9 kept pickups, so those items were gone from its world.
+// Event flags only add up as a character plays: a slot loading with far fewer set than when its
+// lists were kept holds another character.
+TEST(BloodborneGuestProgress, AFreshCharacterHasFarFewerFlagsThanTheOneBefore) {
+    EXPECT_TRUE(IsOtherCharacter(1200, 5400)) << "a new character";
+    EXPECT_FALSE(IsOtherCharacter(5400, 5400));
+    EXPECT_FALSE(IsOtherCharacter(5390, 5400)) << "a few flags cleared by events";
+    EXPECT_FALSE(IsOtherCharacter(6000, 5400)) << "played on";
+    EXPECT_FALSE(IsOtherCharacter(1200, 0)) << "nothing kept: no character to compare with";
+}
+
 // The menu scripts' "am I a summoned client" answer (0x01A13FD1): a party guest's item dialog
 // waited for a confirmation it never offered, so a party member answers "no".
 TEST(BloodborneGuestMenus, PartyGuestsAreNotClientsToTheMenus) {
@@ -1264,28 +1276,76 @@ TEST(BloodborneHiddenCharacters, AGuestHidesAndShowsWhatTheHostDoes) {
         << "nothing from the host: nothing changes";
 }
 
-// Kaniel 2026-10-10, the dog by the first lamp: before the guest joined, its own world posted
-// its hurt dog to the HP board and the host lowered its dog to it; as the session formed the
-// host's dog died (+235 echoes, its loot on the ground). Only damage done in the session counts:
-// out of one nothing is posted, and an enemy hurt before counts from where it stood then.
-TEST(BloodborneSharedEnemyHp, OnlyDamageDoneInTheSessionIsShared) {
-    VisitDamage damage;
-    const std::vector<EnemyHp> dog_hurt{{0x10014009, 5, 364}};
-    EXPECT_EQ(damage.Hurt(1, false, dog_hurt), std::vector<EnemyHp>{})
-        << "the guest's own world, before its join";
-    EXPECT_EQ(damage.Hurt(1, true, dog_hurt), std::vector<EnemyHp>{})
-        << "the session formed: hurt before it, not by it";
-    const std::vector<EnemyHp> dog_full{{0x10014009, 364, 364}};
-    EXPECT_EQ(damage.Hurt(1, true, dog_full), std::vector<EnemyHp>{})
-        << "its world rebuilt as the host's client: the host's dog";
-    const std::vector<EnemyHp> dog_hit{{0x10014009, 200, 364}};
-    EXPECT_EQ(damage.Hurt(1, true, dog_hit), dog_hit) << "hit in the session";
-    EXPECT_EQ(damage.Hurt(1, false, dog_hit), std::vector<EnemyHp>{}) << "the session ended";
-    EXPECT_EQ(damage.Hurt(1, true, dog_hit), std::vector<EnemyHp>{})
-        << "a new session starts from the HP then";
-    EXPECT_EQ(damage.Hurt(2, true, dog_hit), std::vector<EnemyHp>{}) << "a new visit too";
-    const std::vector<EnemyHp> dog_lower{{0x10014009, 150, 364}};
-    EXPECT_EQ(damage.Hurt(2, true, dog_lower), dog_lower);
+// Kaniel 2026-10-10: after trips, two players hitting one enemy saw different HP bars, and their
+// damage did not add up (each copy took only its own hits; the board kept the lowest). Each
+// member posts its own damage and takes the others' on top.
+TEST(BloodborneSharedEnemyHp, TwoPlayersHittingOneEnemyAddUp) {
+    SharedDamage host;
+    SharedDamage guest;
+    constexpr u64 HostSource = 0xA0000001, GuestSource = 0xB0000001;
+    const auto copies = [](s32 hp) { return std::vector<EnemyCopy>{{0x10014066, hp, 500}}; };
+    EXPECT_TRUE(host.Update(1, true, copies(500), {}).post.empty()) << "nothing hit yet";
+    EXPECT_TRUE(guest.Update(1, true, copies(500), {}).post.empty());
+
+    // The host hits for 100, the guest for 60, each on its own copy.
+    auto from_host = host.Update(1, true, copies(400), {});
+    ASSERT_EQ(from_host.post.size(), 1u);
+    EXPECT_EQ(from_host.post[0].hp, 100) << "the host's own damage";
+    auto from_guest = guest.Update(1, true, copies(440), {});
+    ASSERT_EQ(from_guest.post.size(), 1u);
+    EXPECT_EQ(from_guest.post[0].hp, 60);
+
+    // Each takes the other's damage on top: both at 340 (500 - 100 - 60).
+    const std::vector<EnemyHpReport> to_host{{GuestSource, from_guest.post}};
+    const std::vector<EnemyHpReport> to_guest{{HostSource, from_host.post}};
+    EXPECT_EQ(host.Update(1, true, copies(400), to_host).writes,
+              (std::vector<EnemyWrite>{{0x10014066, 340}}));
+    EXPECT_EQ(guest.Update(1, true, copies(440), to_guest).writes,
+              (std::vector<EnemyWrite>{{0x10014066, 340}}));
+
+    // The same reports again change nothing, and the written damage is not posted as one's own.
+    const auto again = host.Update(1, true, copies(340), to_host);
+    EXPECT_TRUE(again.writes.empty());
+    ASSERT_EQ(again.post.size(), 1u);
+    EXPECT_EQ(again.post[0].hp, 100);
+
+    // The host hits again (340 -> 290): it posts 150; the guest takes the 50 more.
+    from_host = host.Update(1, true, copies(290), to_host);
+    EXPECT_EQ(from_host.post[0].hp, 150);
+    EXPECT_EQ(
+        guest.Update(1, true, copies(340), std::vector<EnemyHpReport>{{HostSource, from_host.post}})
+            .writes,
+        (std::vector<EnemyWrite>{{0x10014066, 290}}));
+}
+
+TEST(BloodborneSharedEnemyHp, OtherMembersDamageNeverKillsAndScalesByMaxHp) {
+    SharedDamage copy;
+    const std::vector<EnemyCopy> one{{0x10014066, 1000, 1000}};
+    copy.Update(1, true, one, {});
+    // Another member with a different max HP (another HP setting): half its max is half of ours.
+    EXPECT_EQ(
+        copy.Update(1, true, one, std::vector<EnemyHpReport>{{7, {{0x10014066, 250, 500}}}}).writes,
+        (std::vector<EnemyWrite>{{0x10014066, 500}}));
+    EXPECT_EQ(copy.Update(1, true, std::vector<EnemyCopy>{{0x10014066, 500, 1000}},
+                          std::vector<EnemyHpReport>{{7, {{0x10014066, 600, 500}}}})
+                  .writes,
+              (std::vector<EnemyWrite>{{0x10014066, 1}}))
+        << "more than is left: 1 HP, the game kills it";
+}
+
+TEST(BloodborneSharedEnemyHp, ASessionWithOneWorldSharesNothing) {
+    SharedDamage copy;
+    const std::vector<EnemyCopy> hurt{{0x10014066, 300, 500}};
+    const std::vector<EnemyHpReport> others{{7, {{0x10014066, 100, 500}}}};
+    const auto step = copy.Update(1, false, hurt, others);
+    EXPECT_TRUE(step.post.empty() && step.writes.empty())
+        << "out of a session, or one world: the game sends the HP itself";
+    copy.Update(1, true, hurt, {});
+    EXPECT_TRUE(copy.Update(1, true, hurt, {}).post.empty())
+        << "damage from before counts from where it stood then";
+    EXPECT_TRUE(
+        copy.Update(2, true, std::vector<EnemyCopy>{{0x10014066, 500, 500}}, {}).post.empty())
+        << "a new visit starts over";
 }
 
 // Rig test 2026-10-09 ("apart"): a guest's trip out of the host's map posted 2 kills at its

@@ -14,6 +14,21 @@ call "%KIT%settings.bat"
 rem The shadPS4 co-op kit's servers when it is beside this one: the same accounts (server\db).
 set "SERVERKIT=%KIT%"
 if exist "%KIT%..\SeamlessCoop\server\shadnet.exe" set "SERVERKIT=%KIT%..\SeamlessCoop\"
+rem That kit's shadnet.exe may be older than this one's (the party boards the port needs: party
+rem death's vitals, the host's hidden NPCs): this kit's goes over it, the old one kept beside it.
+if not "%SERVERKIT%"=="%KIT%" (
+    fc /b "%KIT%server\shadnet.exe" "%SERVERKIT%server\shadnet.exe" >nul 2>nul
+    if errorlevel 1 (
+        tasklist /fi "imagename eq shadnet.exe" | find /i "shadnet.exe" >nul
+        if errorlevel 1 (
+            copy /y "%SERVERKIT%server\shadnet.exe" "%SERVERKIT%server\shadnet.exe.old" >nul
+            copy /y "%KIT%server\shadnet.exe" "%SERVERKIT%server\shadnet.exe" >nul
+            echo Updated the co-op server to this kit's version.
+        ) else (
+            echo An older co-op server is running: close its window and run this again to update it.
+        )
+    )
+)
 
 set "PY=py -3"
 where py >nul 2>nul

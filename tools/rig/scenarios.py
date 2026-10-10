@@ -198,6 +198,27 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
+    "hp-together": {
+        "about": "the host goes to the Dream and back, then the guest; then both stand by one "
+                 "enemy and hit it, and both games show the same HP with both players' damage "
+                 "in it, and each sees the other (Kaniel 2026-10-10: HP bars apart after trips; host and guest unseen after the host's early trip)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 40", f"travel {HUNTERS_DREAM}",
+                     "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 70",
+                     "census 40", f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 8",
+                     "census 40", "wait 4", "census 40", "expect-others-near 1 40", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 70", "wait-members 2 240",
+                      "wait 5", f"travel {HUNTERS_DREAM}", "wait 5",
+                      f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 15",
+                      "census 40", f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 45",
+                      "census 40", "wait 4", "census 40", "expect-others-near 1 40", "expect-session 2"],
+        },
+        "same_hp": ENEMY,
+        "expect": {"host": [r"enemy HP shared over the HP board"],
+                   "guest": [r"enemy HP shared over the HP board"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 900,
+    },
     "hurt-before-join": {
         "about": "an enemy hurt in the guest's own world before it joins stays whole in the "
                  "host's: no HP crosses worlds outside a session, and the session forming "
@@ -253,7 +274,7 @@ SCENARIOS = {
                       "wait 10", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 45",
                       "snapshot", f"expect-hp {ENEMY} <= 200"],
         },
-        "expect": {"guest": [r"lowered \d+ enemies to another member's HP"]},
+        "expect": {"guest": [r"lowered \d+ enemies by the other members' damage"]},
         "timeout": 720,
     },
     "boss-kill": {
@@ -708,7 +729,7 @@ SCENARIOS = {
                       "wait-members 2 240", "wait 20", "snapshot", f"expect-hp {ENEMY} <= 200",
                       "expect-session 2"],
         },
-        "expect": {"guest": [r"lowered \d+ enemies to another member's HP"]},
+        "expect": {"guest": [r"lowered \d+ enemies by the other members' damage"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 900,
     },
