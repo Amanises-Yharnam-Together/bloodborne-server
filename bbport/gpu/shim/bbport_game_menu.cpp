@@ -125,7 +125,7 @@ const char16_t* TextOf(u32 id) {
 
 // ---- The port's values the game's rows edit (ints: the list rows bind ints). ----
 enum Field : int {
-    OutputRes, Upscaler, Preset, Sharpness, ShowFps,
+    OutputRes, Upscaler, Preset, Sharpness, ShowFps, FpsLimit, DlssModel,
     ModelLod, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
 };
 int values[FieldCount];  // what the game's rows show and change (list rows bind ints)
@@ -148,6 +148,8 @@ void Fill(const BbSettings::Values& s, int* values) {
     values[Sharpness] =
         s.sharpen ? std::clamp(int(std::lround(s.sharpness / SharpnessStep)), 1, SharpnessSteps - 1) : 0;
     values[ShowFps] = s.show_fps;
+    values[FpsLimit] = BbSettings::FpsLimitIndex(s.fps_limit);
+    values[DlssModel] = BbSettings::DlssModelIndex(s.dlss_model);
     values[ModelLod] = 1;
     for (int i = 0; i < 4; ++i) {
         if (LodValues[i] == s.model_lod) values[ModelLod] = i;
@@ -210,8 +212,27 @@ void DefineTexts() {
         "Разрешение сцены относительно вывода",
         {AddText("Native AA", "Native AA"), AddText("Quality", "Quality"), AddText("Balanced", "Balanced"),
          AddText("Performance", "Performance"), AddText("Ultra Performance", "Ultra Performance")});
+    row(DlssModel, "DLSS model", "Модель DLSS",
+        "NVIDIA's DLSS preset: K best quality, L and M faster, J like K (RTX, DLSS only)",
+        "Пресет NVIDIA DLSS: K лучшее качество, L и M быстрее, J как K (RTX, только DLSS)",
+        {AddText("Default", "По умолчанию"), AddText("K", "K"), AddText("L", "L"), AddText("M", "M"),
+         AddText("J", "J")});
     row(Sharpness, "Sharpness", "Резкость", "RCAS after the upscaler: 0 off, 10 strongest",
         "RCAS после апскейлера: 0 выкл, 10 сильнее всего", {}, Kind::Slider);
+
+    page("Frame rate", "Частота кадров", "Frame rate limit and counter (bbport)",
+         "Ограничение и счётчик кадров (bbport)");
+    {
+        std::vector<u32> limits;
+        for (int i = 0; i < BbSettings::FpsLimitCount; ++i) {
+            const int fps = BbSettings::FpsLimits[i];
+            const std::string text = std::to_string(fps);
+            limits.push_back(fps == 0 ? off : AddText(text.c_str(), text.c_str()));
+        }
+        row(FpsLimit, "FPS limit", "Лимит FPS",
+            "Frame rate cap of the unlocked frame rate (the launcher's FPS mode)",
+            "Предел частоты кадров в режиме без ограничения (режим FPS в лаунчере)", limits);
+    }
     row(ShowFps, "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
         "Частота кадров в правом верхнем углу", toggle);
 
@@ -405,11 +426,12 @@ template <int P>
 GAME_ABI void* PageFactory(void* out, void* arg) {
     return Factory(out, arg, reinterpret_cast<void*>(&Content<P>), TextOf(pages[P].name));
 }
-constexpr std::size_t MaxPages = 6;
+constexpr std::size_t MaxPages = 8;
 void* const factories[MaxPages] = {
     reinterpret_cast<void*>(&PageFactory<0>), reinterpret_cast<void*>(&PageFactory<1>),
     reinterpret_cast<void*>(&PageFactory<2>), reinterpret_cast<void*>(&PageFactory<3>),
-    reinterpret_cast<void*>(&PageFactory<4>), reinterpret_cast<void*>(&PageFactory<5>)};
+    reinterpret_cast<void*>(&PageFactory<4>), reinterpret_cast<void*>(&PageFactory<5>),
+    reinterpret_cast<void*>(&PageFactory<6>), reinterpret_cast<void*>(&PageFactory<7>)};
 
 // ---- Hooks ----
 using LookupFn = const char16_t* (GAME_ABI *)(void*, u32, u32, u32);
@@ -605,6 +627,8 @@ void Poll() {
         s.sharpness = std::clamp(values[Sharpness], 0, SharpnessSteps - 1) * SharpnessStep;
     }
     s.show_fps = values[ShowFps] != 0;
+    s.fps_limit = BbSettings::FpsLimits[std::clamp(values[FpsLimit], 0, BbSettings::FpsLimitCount - 1)];
+    s.dlss_model = BbSettings::DlssModels[std::clamp(values[DlssModel], 0, BbSettings::DlssModelCount - 1)];
     s.model_lod = LodValues[std::clamp(values[ModelLod], 0, 3)];
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         s.effects[e] = values[FirstEffect + e] != 0;

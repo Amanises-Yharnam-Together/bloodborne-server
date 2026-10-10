@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <string>
 #include "common/types.h"
+#include "bbport_settings.h"
 
 enum GpuReadbacksMode : int { Disabled, Relaxed, Precise };
 
@@ -49,10 +50,10 @@ public:
         }();
         return value;
     }
-    /// Frames per second the present thread lets through; 0 = no limit (BB_FPS_LIMIT).
+    /// Frames per second the present thread lets through now; 0 = no limit (the game menu's
+    /// FPS limit, else BB_FPS_LIMIT; the unlocked frame rate only).
     u32 GetFrameLimit() {
-        static const u32 value = u32(std::max(0L, Number("BB_FPS_LIMIT", 0)));
-        return value;
+        return u32(BbSettings::EffectiveFrameLimit(BbSettings::Get().fps_limit, IsUncappedVblank()));
     }
     bool IsCopyGpuBuffers() { static const auto value = Flag("BB_COPY_GPU_BUFFERS", false); return value; }
     bool IsDirectMemoryAccessEnabled() { static const auto value = Flag("BB_DIRECT_MEMORY_ACCESS", false); return value; }

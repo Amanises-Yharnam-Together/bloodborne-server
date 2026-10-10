@@ -48,6 +48,7 @@ public:
         u32 input_width, input_height, output_width, output_height;
         int quality;
         bool hdr;
+        u32 model = 0; ///< NVIDIA's render preset (BbSettings::DlssModels), 0 its default
         bool operator==(const FeatureDesc&) const = default;
     };
     struct Frame {

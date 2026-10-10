@@ -9,6 +9,12 @@
 #include <unistd.h>
 #include "gpu/shim/bbport_settings.h"
 
+#ifdef _WIN32
+// MSYS2 builds: the CRT has no setenv.
+static int setenv(const char* name, const char* value, int) { return _putenv_s(name, value); }
+static int unsetenv(const char* name) { return _putenv_s(name, ""); }
+#endif
+
 static std::string Read(const char* path) {
     std::ifstream file(path);
     std::stringstream text;
@@ -17,7 +23,10 @@ static std::string Read(const char* path) {
 }
 
 int main() {
-    char path[] = "/tmp/bbport-settings-test-XXXXXX";
+    // Windows (MSYS2): the user's temp folder; elsewhere /tmp.
+    const char* temp = std::getenv("TEMP");
+    std::string pattern = std::string(temp && temp[0] ? temp : "/tmp") + "/bbport-settings-test-XXXXXX";
+    char* path = pattern.data();
     const int fd = mkstemp(path);
     assert(fd >= 0);
     const char ini[] = "# launcher\nupscaler=fsr3\nkey.cross=X, Space\npad.circle=a\nshow_fps=0\n"
@@ -49,4 +58,49 @@ int main() {
     assert(s.menu_x == 0.625f && s.menu_y == 0.125f && s.upscaler == BbSettings::UpscalerFsr411);
     unlink(path);
     std::puts("PASS: settings save keeps other keys, menu position");
+
+    // Kaniel 2026-10-10: an FPS limit and the DLSS model in the game's own menu. The menu's
+    // frame cap is kept in bbport.ini and wins over the launcher's (BB_FPS_LIMIT) once set there.
+    std::string second = std::string(temp && temp[0] ? temp : "/tmp") + "/bbport-settings-test-XXXXXX";
+    const int fd2 = mkstemp(second.data());
+    assert(fd2 >= 0);
+    const char ini2[] = "fps_limit=144\ndlss_model=K\n";
+    assert(write(fd2, ini2, sizeof(ini2) - 1) == ssize_t(sizeof(ini2) - 1));
+    close(fd2);
+    setenv("BB_CONFIG", second.c_str(), 1);
+    setenv("BB_FPS_LIMIT", "60", 1);
+    BbSettings::Load();
+    assert(s.fps_limit == 144 && "the menu's cap, not the launcher's");
+    assert(s.dlss_model == 11 && "NVSDK_NGX_DLSS_Hint_Render_Preset_K");
+    s.fps_limit = 240;
+    s.dlss_model = 13;
+    BbSettings::Save();
+    const std::string saved2 = Read(second.c_str());
+    assert(saved2.find("fps_limit=240\n") != std::string::npos);
+    assert(saved2.find("dlss_model=M\n") != std::string::npos);
+    unlink(second.c_str());
+    // No fps_limit in the file: the launcher's.
+    char third[512];
+    std::snprintf(third, sizeof(third), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+    close(mkstemp(third));
+    setenv("BB_CONFIG", third, 1);
+    BbSettings::Load();
+    assert(s.fps_limit == 60);
+    unlink(third);
+    unsetenv("BB_FPS_LIMIT");
+
+    // The cap applies to the unlocked frame rate only: the game's 30 and 60 modes keep their
+    // own fixed timestep (a cap below it would slow the game down).
+    assert(BbSettings::EffectiveFrameLimit(144, true) == 144);
+    assert(BbSettings::EffectiveFrameLimit(144, false) == 0);
+    assert(BbSettings::EffectiveFrameLimit(0, true) == 0);
+    // The menu's rows: a cap or model from elsewhere shows as the nearest choice below it.
+    assert(BbSettings::FpsLimitIndex(0) == 0);
+    assert(BbSettings::FpsLimitIndex(144) == 5);
+    assert(BbSettings::FpsLimits[BbSettings::FpsLimitIndex(75)] == 60);
+    assert(BbSettings::FpsLimits[BbSettings::FpsLimitIndex(1000)] == 240);
+    assert(BbSettings::DlssModelIndex(0) == 0);
+    assert(BbSettings::DlssModels[BbSettings::DlssModelIndex(11)] == 11);
+    assert(BbSettings::DlssModelIndex(99) == 0 && "unknown: NVIDIA's default");
+    std::puts("PASS: FPS limit and DLSS model settings");
 }

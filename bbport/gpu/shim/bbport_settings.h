@@ -55,6 +55,15 @@ inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
 inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
 inline constexpr int OutputCount = 4;
 inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
+/// The frame caps the game menu offers (FPS limit), 0 = none.
+inline constexpr int FpsLimits[] = {0, 30, 60, 90, 120, 144, 165, 240};
+inline constexpr int FpsLimitCount = int(sizeof(FpsLimits) / sizeof(FpsLimits[0]));
+/// The DLSS models the game menu offers: NVIDIA's NVSDK_NGX_DLSS_Hint_Render_Preset values (0 its
+/// default per quality mode; K transformer, best quality; L and M lighter, NVIDIA's own picks for
+/// Ultra Performance and Performance; J like K, a little less ghosting, more flicker).
+inline constexpr int DlssModels[] = {0, 11, 12, 13, 10};
+inline constexpr const char* DlssModelNames[] = {"default", "K", "L", "M", "J"};
+inline constexpr int DlssModelCount = int(sizeof(DlssModels) / sizeof(DlssModels[0]));
 
 struct Values {
     std::atomic<MenuLanguage> menu_language{MenuLanguage::Russian};
@@ -96,6 +105,11 @@ struct Values {
     /// two game frames, on top of the selected upscaler. Off by default (bbport.ini
     /// frame_generation, BB_FRAME_GEN).
     std::atomic<bool> frame_generation{false};
+    /// Frame cap of the unlocked frame rate, 0 none (bbport.ini fps_limit, the game menu; else
+    /// the launcher's BB_FPS_LIMIT). Live.
+    std::atomic<int> fps_limit{0};
+    /// DLSS render preset (DlssModels; bbport.ini dlss_model), 0 NVIDIA's default. Live.
+    std::atomic<int> dlss_model{0};
     /// What the presenter measured (overlay): interpolated frames are being shown, game frames
     /// and presented images a second.
     std::atomic<bool> fg_active{false};
@@ -129,6 +143,14 @@ int RenderPreset();
 bool ResolutionNeedsRestart();
 /// Writes the file (menu changes).
 void Save();
+
+/// The cap the present thread applies: the menu's with the unlocked frame rate (vblank above
+/// 120 Hz), none with the game's own fixed 30/60 timestep.
+int EffectiveFrameLimit(int fps_limit, bool uncapped_vblank);
+/// The FPS limit row's choice for a cap: the largest choice not above it.
+int FpsLimitIndex(int limit);
+/// The DLSS model row's choice for a preset value, 0 (NVIDIA's default) if not offered.
+int DlssModelIndex(int preset);
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
 float PresetScale(int preset);

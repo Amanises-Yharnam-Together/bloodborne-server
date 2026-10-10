@@ -818,11 +818,10 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
     Common::AccurateTimer timer{vblank_period};
 
-    // bbport: frame limit (see EmulatorSettings::GetFrameLimit). A request waits in the queue
-    // until its slot; slots advance by one period (no drift) but never lag behind by more.
-    const u32 frame_limit = EmulatorSettings.GetFrameLimit();
-    const auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
-                                          : std::chrono::nanoseconds(0);
+    // bbport: frame limit (see EmulatorSettings::GetFrameLimit; the game menu changes it live).
+    // A request waits in the queue until its slot; slots advance by one period (no drift) but
+    // never lag behind by more.
+    u32 frame_limit = EmulatorSettings.GetFrameLimit();
     auto next_flip = std::chrono::steady_clock::now();
     std::printf("VideoOut: vblank %u Hz, frame limit %u FPS\n",
                 EmulatorSettings.GetVblankFrequency(), frame_limit);
@@ -837,12 +836,17 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         return {};
     };
 
-    // bbport: with a frame limit or the uncapped presets a queued flip is presented as soon as
-    // it arrives and its slot allows (no limit: at once), between vblanks, instead of on the
-    // next vblank tick.
-    const bool immediate_flips = frame_limit != 0 || EmulatorSettings.IsUncappedVblank();
-
     while (!token.stop_requested()) {
+        if (const u32 limit = EmulatorSettings.GetFrameLimit(); limit != frame_limit) {
+            frame_limit = limit;
+            std::printf("VideoOut: frame limit %u FPS\n", frame_limit);
+        }
+        const auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
+                                              : std::chrono::nanoseconds(0);
+        // bbport: with a frame limit or the uncapped presets a queued flip is presented as soon
+        // as it arrives and its slot allows (no limit: at once), between vblanks, instead of on
+        // the next vblank tick.
+        const bool immediate_flips = frame_limit != 0 || EmulatorSettings.IsUncappedVblank();
         timer.Start();
         const auto tick_deadline = std::chrono::steady_clock::now() + vblank_period;
 

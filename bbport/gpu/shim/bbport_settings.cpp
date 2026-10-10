@@ -70,6 +70,15 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
+    } else if (key == "fps_limit") {
+        v.fps_limit = std::clamp(i, 0, 1000);
+    } else if (key == "dlss_model") {
+        v.dlss_model = 0;
+        for (int m = 0; m < DlssModelCount; ++m) {
+            if (value == DlssModelNames[m]) {
+                v.dlss_model = DlssModels[m];
+            }
+        }
     } else if (key == "menu_pos") {
         float x = -1.0f, y = -1.0f;
         if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2 && x >= 0.0f && x <= 1.0f && y >= 0.0f &&
@@ -132,6 +141,9 @@ void Load() {
                               ? MenuLanguage::Russian
                               : MenuLanguage::English;
     }
+    bool file_fps_limit = false;
+    v.fps_limit = 0;
+    v.dlss_model = 0;
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
         while (std::fgets(line, sizeof(line), file)) {
@@ -142,6 +154,7 @@ void Load() {
                 continue;
             }
             Set(v, text.substr(0, eq), text.substr(eq + 1));
+            file_fps_limit = file_fps_limit || text.substr(0, eq) == "fps_limit";
         }
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
@@ -164,6 +177,10 @@ void Load() {
         if (const char* value = std::getenv(env)) {
             Set(v, key, value);
         }
+    }
+    // The launcher's frame cap until the game menu has set one (it is kept in this file).
+    if (const char* value = std::getenv("BB_FPS_LIMIT"); value && !file_fps_limit) {
+        Set(v, "fps_limit", value);
     }
     v.startup_preset = v.preset;
     v.startup_upscaler = v.upscaler;
@@ -216,6 +233,29 @@ void ConfigureXessSupport(bool available, const char* problem) {
     }
 }
 
+int EffectiveFrameLimit(int fps_limit, bool uncapped_vblank) {
+    return uncapped_vblank ? std::max(fps_limit, 0) : 0;
+}
+
+int FpsLimitIndex(int limit) {
+    int index = 0;
+    for (int i = 0; i < FpsLimitCount; ++i) {
+        if (FpsLimits[i] <= limit) {
+            index = i;
+        }
+    }
+    return index;
+}
+
+int DlssModelIndex(int preset) {
+    for (int i = 0; i < DlssModelCount; ++i) {
+        if (DlssModels[i] == preset) {
+            return i;
+        }
+    }
+    return 0;
+}
+
 bool FixedRenderSession() {
     const char* size = std::getenv("BB_RENDER_RES");
     return size && size[0];
@@ -262,6 +302,8 @@ void Save() {
     put("reactive_max", fixed(v.reactive_max, 2));
     put("debug_view", std::to_string(v.debug_view.load()));
     put("show_fps", flag(v.show_fps));
+    put("fps_limit", std::to_string(v.fps_limit.load()));
+    put("dlss_model", DlssModelNames[DlssModelIndex(v.dlss_model)]);
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
     // Read by patches.py at start.

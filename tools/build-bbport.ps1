@@ -5,7 +5,7 @@
 #   -Test also builds and runs the port's co-op tests (guest code hooks, the rig's log file), the
 #   renderer's buffer format check, the runtime's direct memory chunks and the game code hooks of
 #   the PC memory model, the replacement of save data files, the party HUD's layout and its
-#   reading of the game's HUD art.
+#   reading of the game's HUD art, and the settings file (the game menu's FPS limit and DLSS model).
 param(
     [string]$Src,
     [string]$Out,
@@ -29,7 +29,7 @@ $unix = (& (Join-Path $msys "usr\bin\cygpath.exe") -u $Src).Trim()
 & $bash -lc "cd '$unix' && bash build.sh"
 if ($LASTEXITCODE -ne 0) { Write-Host "bbport build failed"; exit 1 }
 if ($Test) {
-    & $bash -lc "cd '$unix' && source ./msys2-env.sh && ninja -C out/gpu coop-hooks-test log-file-test pixel-format-test memory-chunks-test guest-hooks-test savedata-replace-test save-editor-test party-layout-test game-art-test >out/test-build.log 2>&1 || { tail -40 out/test-build.log; exit 1; }; out/gpu/coop-hooks-test.exe && out/gpu/log-file-test.exe && out/gpu/pixel-format-test.exe && out/gpu/memory-chunks-test.exe >out/memory-chunks-test.log && tail -1 out/memory-chunks-test.log && out/gpu/guest-hooks-test.exe >out/guest-hooks-test.log && out/gpu/guest-hooks-test.exe traps >>out/guest-hooks-test.log && grep ': ok' out/guest-hooks-test.log && out/gpu/savedata-replace-test.exe && out/gpu/save-editor-test.exe && out/gpu/party-layout-test.exe && out/gpu/game-art-test.exe"
+    & $bash -lc "cd '$unix' && source ./msys2-env.sh && ninja -C out/gpu coop-hooks-test log-file-test pixel-format-test memory-chunks-test guest-hooks-test savedata-replace-test save-editor-test party-layout-test game-art-test settings-test >out/test-build.log 2>&1 || { tail -40 out/test-build.log; exit 1; }; out/gpu/coop-hooks-test.exe && out/gpu/log-file-test.exe && out/gpu/pixel-format-test.exe && out/gpu/memory-chunks-test.exe >out/memory-chunks-test.log && tail -1 out/memory-chunks-test.log && out/gpu/guest-hooks-test.exe >out/guest-hooks-test.log && out/gpu/guest-hooks-test.exe traps >>out/guest-hooks-test.log && grep ': ok' out/guest-hooks-test.log && out/gpu/savedata-replace-test.exe && out/gpu/save-editor-test.exe && out/gpu/party-layout-test.exe && out/gpu/game-art-test.exe && out/gpu/settings-test.exe"
     if ($LASTEXITCODE -ne 0) { Write-Host "bbport tests failed"; exit 1 }
 }
 
