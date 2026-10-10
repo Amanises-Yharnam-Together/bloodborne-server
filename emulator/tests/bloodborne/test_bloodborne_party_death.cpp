@@ -452,3 +452,29 @@ TEST(BloodbornePartyDeath, ListsTheOthersOnThePartyPanel) {
     EXPECT_FALSE(BuildPartyPanel(board, Kaniel, 0, std::nullopt).members[0].here); // loading
     EXPECT_TRUE(BuildPartyPanel({}, Kaniel, CentralYharnam, std::nullopt).members.empty());
 }
+
+// Enemies forget a downed player at once: a target node of theirs that is a live character target
+// (slot type 1 with the alive bit, kind 1) on a downed player's handle has its memory run out.
+TEST(BloodbornePartyDeath, EnemiesForgetADownedPlayersTargetNode) {
+    const std::vector<u32> downed{0x10068000, 0x10068001};
+    EXPECT_TRUE(ForgetsTargetNode(0x81, 1, 0x10068000, downed));
+    EXPECT_TRUE(ForgetsTargetNode(0x01, 1, 0x10068001, downed));
+    EXPECT_FALSE(ForgetsTargetNode(0x81, 1, 0x10068002, downed)) << "another target";
+    EXPECT_FALSE(ForgetsTargetNode(0x83, 1, 0x10068000, downed)) << "a last-known place";
+    EXPECT_FALSE(ForgetsTargetNode(0x81, 0, 0x10068000, downed)) << "not a character";
+    EXPECT_FALSE(ForgetsTargetNode(0x81, 1, 0x10068000, {}));
+}
+
+// The others down on this map, where the board has them (the game finds their characters there).
+TEST(BloodbornePartyDeath, FindsTheOthersDownOnThisMap) {
+    const std::vector<MemberVitals> board{
+        Member(Kaniel, CentralYharnam, Vital::Down, 1, {1.0f, 2.0f, 3.0f}),
+        Member(Lisara, CentralYharnam, Vital::Down, 4, {4.0f, 5.0f, 6.0f}),
+        Member(Third, HuntersDream, Vital::Down, 2, {7.0f, 8.0f, 9.0f}),
+        Member("00ff", CentralYharnam, Vital::Up, 0, {0.0f, 0.0f, 0.0f}),
+        Member("6f6666", 0, Vital::Down, 3, {0.0f, 0.0f, 0.0f}), // loading
+    };
+    EXPECT_EQ(OthersDownOnMap(board, Kaniel, CentralYharnam),
+              (std::vector<LampPosition>{{4.0f, 5.0f, 6.0f}}));
+    EXPECT_TRUE(OthersDownOnMap(board, Kaniel, 0).empty());
+}

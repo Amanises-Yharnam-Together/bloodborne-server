@@ -1077,6 +1077,19 @@ DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms);
 // death with nobody else standing on the map (a wipe of one), as a solo death would.
 bool DeathResetsMap(bool wiped, bool someone_else_stands);
 
+// Enemies forget a downed player at once. Hide and Silence only stop them noticing it again; one
+// that already targets it keeps a node in its targeting system ([[[enemy +0x3B8] +0xB0] +0x560],
+// nodes from +0x18, next at +0x08) until the node's memory timer (+0x2C) runs out, a few seconds
+// of swings at the downed player. A node of a live character target (+0x02: slot type 1, bit 7
+// alive; +0x28 kind 1) on a downed player's handle (+0x50) gets ForgottenTargetTimer, and the
+// game's own update drops it the next frame (0x012A6AD0). Enemies after anyone else are left be.
+bool ForgetsTargetNode(u8 slot, s32 kind, u32 handle, std::span<const u32> downed);
+constexpr float ForgottenTargetTimer = 1.0e-4f;
+// Where the board has the other members down on `map` (their characters in this world are found
+// there: the enemies near a downed guest may be run by the host's game).
+std::vector<LampPosition> OthersDownOnMap(std::span<const MemberVitals> board,
+                                          std::string_view self, u32 map);
+
 // The party panel the port's overlay draws, after Elden Ring Nightreign's party list: the other
 // members playing party death, in the board's order, and the local player's own down.
 struct PanelMember {

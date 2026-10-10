@@ -2051,6 +2051,21 @@ DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms) {
     return board_age_ms >= BoardLostMs ? DownEnd::BoardLost : DownEnd::None;
 }
 
+bool ForgetsTargetNode(u8 slot, s32 kind, u32 handle, std::span<const u32> downed) {
+    return (slot & 0x7F) == 1 && kind == 1 && std::ranges::find(downed, handle) != downed.end();
+}
+
+std::vector<LampPosition> OthersDownOnMap(std::span<const MemberVitals> board,
+                                          std::string_view self, u32 map) {
+    std::vector<LampPosition> downed;
+    for (const MemberVitals& member : board) {
+        if (map != 0 && member.member != self && member.map == map && member.vital == Vital::Down) {
+            downed.push_back(member.at);
+        }
+    }
+    return downed;
+}
+
 bool DeathResetsMap(bool wiped, bool someone_else_stands) {
     return wiped || !someone_else_stands;
 }

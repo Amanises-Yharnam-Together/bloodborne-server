@@ -6416,6 +6416,81 @@ constexpr u8 DownedNoDamageFlags = 0x2 | 0x8;
 constexpr u64 PlayerHideFlagOffset = 0x0553E88E;
 constexpr u64 PlayerSilenceFlagOffset = 0x0553E88F;
 
+// The enemies' targeting systems (see ForgetsTargetNode): the enemy one's vtable and its base's.
+constexpr u64 EnemyTargetingVtableOffset = 0x0531B9F0;
+constexpr u64 BaseTargetingVtableOffset = 0x05366280;
+
+// Every enemy in this world forgets the characters with these handles (see ForgetsTargetNode);
+// returns how many target nodes it changed.
+u32 ForgetDownedTargets(std::span<const u32> handles) {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (handles.empty() || world < 0x10000) {
+        return 0;
+    }
+    u32 forgotten = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        const u64 manager = ReadValue<u64>(character, 0x3B8);
+        const u64 ai = manager >= 0x10000 && HasMemoryAccess(manager, 0xB8, MemoryProt::CpuRead)
+                           ? ReadValue<u64>(manager, 0xB0)
+                           : 0;
+        const u64 targeting = ai >= 0x10000 && HasMemoryAccess(ai, 0x568, MemoryProt::CpuRead)
+                                  ? ReadValue<u64>(ai, 0x560)
+                                  : 0;
+        if (targeting < 0x10000 || !HasMemoryAccess(targeting, 0x20, MemoryProt::CpuRead)) {
+            return;
+        }
+        const u64 vtable = ReadValue<u64>(targeting, 0);
+        if (vtable != image_base + EnemyTargetingVtableOffset &&
+            vtable != image_base + BaseTargetingVtableOffset) {
+            return;
+        }
+        u64 node = ReadValue<u64>(targeting, 0x18);
+        for (int count = 0;
+             count < 64 && node >= 0x10000 && HasMemoryAccess(node, 0x54, MemoryProt::CpuWrite);
+             ++count, node = ReadValue<u64>(node, 0x08)) {
+            if (ForgetsTargetNode(ReadValue<u8>(node, 0x02), ReadValue<s32>(node, 0x28),
+                                  ReadValue<u32>(node, 0x50), handles) &&
+                ReadValue<float>(node, 0x2C) != ForgottenTargetTimer) {
+                WriteValue(node, 0x2C, ForgottenTargetTimer);
+                ++forgotten;
+            }
+        }
+    });
+    return forgotten;
+}
+
+// The handles of the downed players in this world: the local player while `down`, and each other
+// member the board has down on this map (the other player character nearest to where it posted).
+std::vector<u32> DownedPlayerHandles(u64 player, bool down,
+                                     std::span<const LampPosition> others_down) {
+    std::vector<u32> handles;
+    if (down && player >= 0x10000) {
+        handles.push_back(ReadValue<u32>(player, 0x08));
+    }
+    if (others_down.empty()) {
+        return handles;
+    }
+    const std::vector<OtherPlayer> players = OtherPlayers();
+    for (const LampPosition& at : others_down) {
+        const OtherPlayer* nearest = nullptr;
+        float nearest_distance = 4.0f;
+        for (const OtherPlayer& other : players) {
+            const float distance = other.at
+                                       ? std::hypot((*other.at)[0] - at[0], (*other.at)[1] - at[1],
+                                                    (*other.at)[2] - at[2])
+                                       : nearest_distance + 1.0f;
+            if (distance <= nearest_distance) {
+                nearest_distance = distance;
+                nearest = &other;
+            }
+        }
+        if (nearest != nullptr) {
+            handles.push_back(ReadValue<u32>(nearest->character, 0x08));
+        }
+    }
+    return handles;
+}
+
 // The fall damage step (0x01A35C33) takes a fall into the void as a fixed lethal height while
 // [[character +0x58] +0x38] +0x48 bit 1 is set. Such a fall stays a real death: nobody could
 // reach the player down there.
@@ -6631,6 +6706,7 @@ struct PartyDeathRun {
     u8 flags_added = 0;
     u8 hide_before = 0;
     u8 silence_before = 0;
+    u32 targets_forgotten = 0; // since the last log line
 };
 PartyDeathRun party_death_run;
 
@@ -6836,6 +6912,25 @@ void TickPartyDeath() {
             LOG_INFO(Debug, "Bloodborne party death: up again after a real death");
         }
         break;
+    }
+
+    // Enemies forget the downed players here (this one and the others), every tick while any is
+    // down: an enemy that sees a downed guest again (Hide is the local player's only) would take it
+    // as a target again.
+    const std::vector<LampPosition> others_down =
+        in_session ? OthersDownOnMap(board, view.member, map) : std::vector<LampPosition>{};
+    const std::vector<u32> downed_handles =
+        DownedPlayerHandles(player, run.downed.Current() == Vital::Down, others_down);
+    if (const u32 forgotten = ForgetDownedTargets(downed_handles); forgotten > 0) {
+        if (run.targets_forgotten == 0) {
+            LOG_INFO(Debug,
+                     "Bloodborne party death: enemies forgot {} target(s) on downed players "
+                     "(self down={}, others down={})",
+                     forgotten, run.downed.Current() == Vital::Down, others_down.size());
+        }
+        run.targets_forgotten += forgotten;
+    } else if (downed_handles.empty()) {
+        run.targets_forgotten = 0;
     }
 
     const auto at = LocalPlayerPosition();

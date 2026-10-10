@@ -811,6 +811,8 @@ SCENARIOS = {
         "expect": {
             "host": [r"party death: revive hit on"],
             "guest": [r"party death: down \d+ on map 0x18010000",
+                      r"party death: enemies forgot \d+ target\(s\) on downed players "
+                      r"\(self down=true",
                       r"party death: revived from down"],
         },
         "forbid": {"host": SESSION_HOLDS,
