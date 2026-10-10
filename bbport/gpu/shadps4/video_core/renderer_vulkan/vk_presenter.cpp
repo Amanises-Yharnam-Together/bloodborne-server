@@ -1078,7 +1078,8 @@ void Presenter::PresentFrame(Frame* frame, bool is_reusing_frame, bool is_game_f
                                vk::PipelineStageFlagBits::eAllCommands,
                                vk::DependencyFlagBits::eByRegion, {}, {}, post_barriers);
         if (overlay) {
-            BbOverlay::Render(cmdbuf, swapchain.ImageView(), extent);
+            BbOverlay::Render(cmdbuf, swapchain.ImageView(), extent,
+                              FitImage(frame->width, frame->height, extent.width, extent.height));
         }
         if (shot) {
             RecordShot(instance, scheduler, cmdbuf, swapchain_image,

@@ -29,8 +29,9 @@ void UpdateTextInput(SDL_Window* window);
 /// Whether anything is drawn this frame (menu open, FPS counter on, party death's panel).
 bool Visible();
 
-/// Present thread: draws into `view` (layout ColorAttachmentOptimal).
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
+/// Present thread: draws into `view` (layout ColorAttachmentOptimal). `game` is where the game's
+/// frame sits in it (letterboxed when the shapes differ); the party HUD follows it.
+void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, vk::Rect2D game);
 
 /// The menu or the text dialog is open: the game's input is held neutral.
 bool CapturesInput();

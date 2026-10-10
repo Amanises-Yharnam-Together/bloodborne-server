@@ -16,6 +16,7 @@
 
 #include <SDL3/SDL.h>
 #include "../bbcoop.h"
+#include "bbport_party_layout.h"
 #include "bbport_save_editor.h"
 #include "bbport_settings.h"
 #include "imgui.h"
@@ -1050,6 +1051,7 @@ namespace Party {
 
 bbcoop_panel panel{}; // present thread: as Visible() read it last
 bool shown = false;
+BbPartyLayout::Rect game{}; // present thread: the game's frame on screen, as Render() got it
 
 bool Read() {
     shown = bbcoop_party_panel(&panel) != 0;
@@ -1107,11 +1109,12 @@ void ReviveRing(ImDrawList* draw, ImVec2 centre, float radius, u32 landed, u32 n
                     std::max(1.5f, radius * 0.11f));
 }
 
-void MemberList(ImDrawList* draw, const ImVec2& display, float pulse) {
+void MemberList(ImDrawList* draw, float pulse) {
     using Ui::S;
     using Ui::T;
-    const float x = S(48.0f), height = S(54.0f), gap = S(10.0f), bar = S(240.0f);
-    float y = std::round(display.y * 0.16f);
+    const float x = BbPartyLayout::ListLeft(game, base_scale), height = S(54.0f), gap = S(10.0f),
+                bar = S(240.0f);
+    float y = BbPartyLayout::ListTop(game);
     char line[64];
     for (int i = 0; i < panel.member_count; ++i) {
         const bbcoop_panel_member& member = panel.members[i];
@@ -1200,7 +1203,7 @@ void MemberList(ImDrawList* draw, const ImVec2& display, float pulse) {
 }
 
 /// An attack now would revive someone: the prompt low in the middle, as the game's own prompts.
-void RevivePrompt(ImDrawList* draw, const ImVec2& display) {
+void RevivePrompt(ImDrawList* draw) {
     using Ui::S;
     using Ui::T;
     const bbcoop_panel_member& member = panel.members[panel.revive_target];
@@ -1210,7 +1213,8 @@ void RevivePrompt(ImDrawList* draw, const ImVec2& display) {
         T("R1 / R2: strike to revive %s  %u / %u", "R1 / R2: ударьте, чтобы поднять %s  %u / %u"),
         member.name[0] != '\0' ? member.name : T("Hunter", "Охотник"), member.landed,
         member.needed);
-    const float size = S(21.0f), mid = display.x * 0.5f, y = std::round(display.y * 0.74f);
+    const float size = S(21.0f), mid = game.x + game.w * 0.5f,
+                y = BbPartyLayout::RevivePromptY(game);
     const float w = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, line).x + S(120.0f);
     const ImU32 band = Rgba(0.0f, 0.0f, 0.0f, 0.62f), clear = Rgba(0.0f, 0.0f, 0.0f, 0.0f);
     draw->AddRectFilledMultiColor(ImVec2(mid - w * 0.5f, y - S(10.0f)), ImVec2(mid, y + S(38.0f)),
@@ -1223,52 +1227,53 @@ void RevivePrompt(ImDrawList* draw, const ImVec2& display) {
 }
 
 /// This player is down: a red edge around the screen, its revive ring and how to give up.
-void OwnDown(ImDrawList* draw, const ImVec2& display, float pulse) {
+void OwnDown(ImDrawList* draw, float pulse) {
+    using namespace BbPartyLayout;
     using Ui::S;
     using Ui::T;
-    const float edge = display.y * 0.24f;
+    // The red edge frames the game's picture (inside any black bars).
+    const ImVec2 g0(game.x, game.y), g1(game.x + game.w, game.y + game.h);
+    const float edge = game.h * 0.24f;
     const ImU32 red = Rgba(0.30f, 0.0f, 0.0f, 0.50f + 0.12f * pulse);
     const ImU32 clear = Rgba(0.30f, 0.0f, 0.0f, 0.0f);
-    draw->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(display.x, edge), red, red, clear, clear);
-    draw->AddRectFilledMultiColor(ImVec2(0, display.y - edge), display, clear, clear, red, red);
-    draw->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(edge, display.y), red, clear, clear, red);
-    draw->AddRectFilledMultiColor(ImVec2(display.x - edge, 0), display, clear, red, red, clear);
+    draw->AddRectFilledMultiColor(g0, ImVec2(g1.x, g0.y + edge), red, red, clear, clear);
+    draw->AddRectFilledMultiColor(ImVec2(g0.x, g1.y - edge), g1, clear, clear, red, red);
+    draw->AddRectFilledMultiColor(g0, ImVec2(g0.x + edge, g1.y), red, clear, clear, red);
+    draw->AddRectFilledMultiColor(ImVec2(g1.x - edge, g0.y), g1, clear, red, red, clear);
 
-    const float mid = display.x * 0.5f;
-    const ImVec2 centre(mid, std::round(display.y * 0.64f));
-    ReviveRing(draw, centre, S(40.0f), panel.landed, panel.needed, 0.85f + 0.15f * pulse);
-    float y = centre.y + S(54.0f);
-    Text(draw, serif_font, S(30.0f), ImVec2(mid, y), Ui::Bright(),
+    const float mid = game.x + game.w * 0.5f;
+    const ImVec2 centre(mid, DownRingY(game, base_scale));
+    ReviveRing(draw, centre, S(DownRingRadius), panel.landed, panel.needed,
+               0.85f + 0.15f * pulse);
+    Text(draw, serif_font, S(30.0f), ImVec2(mid, centre.y + S(DownTitleBelow)), Ui::Bright(),
          T("You are down", "Вы повержены"), 0.5f);
-    y += S(40.0f);
-    Text(draw, serif_font, S(18.0f), ImVec2(mid, y), Ui::Plain(0.9f),
+    Text(draw, serif_font, S(18.0f), ImVec2(mid, centre.y + S(DownHintBelow)), Ui::Plain(0.9f),
          T("A party member can raise you by striking you",
            "Союзник может поднять вас, ударив несколько раз"),
          0.5f);
-    y += S(34.0f);
-    Text(draw, sans_font, S(15.0f), ImVec2(mid, y), Ui::Gold(0.85f),
+    Text(draw, sans_font, S(15.0f), ImVec2(mid, centre.y + S(DownGiveUpBelow)), Ui::Gold(0.85f),
          T("Hold Circle to give up", "Удерживайте Круг, чтобы сдаться"), 0.5f);
-    y += S(24.0f);
-    const float w = S(180.0f);
-    draw->AddRectFilled(ImVec2(mid - w * 0.5f, y), ImVec2(mid + w * 0.5f, y + S(4.0f)),
-                        Rgba(0.0f, 0.0f, 0.0f, 0.6f));
+    // The give-up bar: an empty track with a faint frame (so it shows before Circle is held),
+    // filling while it's held.
+    const float y = centre.y + S(DownBarBelow), w = S(180.0f), h = S(DownBarHeight);
+    const ImVec2 b0(mid - w * 0.5f, y), b1(mid + w * 0.5f, y + h);
+    draw->AddRectFilled(b0, b1, Rgba(0.0f, 0.0f, 0.0f, 0.6f));
     if (panel.give_up > 0.0f) {
-        draw->AddRectFilled(
-            ImVec2(mid - w * 0.5f, y),
-            ImVec2(mid - w * 0.5f + w * std::clamp(panel.give_up, 0.0f, 1.0f), y + S(4.0f)),
-            Rgba(0.90f, 0.42f, 0.25f, 1.0f));
+        draw->AddRectFilled(b0, ImVec2(b0.x + w * std::clamp(panel.give_up, 0.0f, 1.0f), b1.y),
+                            Rgba(0.90f, 0.42f, 0.25f, 1.0f));
     }
+    draw->AddRect(ImVec2(b0.x - S(1.0f), b0.y - S(1.0f)), ImVec2(b1.x + S(1.0f), b1.y + S(1.0f)),
+                  Ui::Gold(0.45f), 0.0f, 0, S(1.0f));
 }
 
 void Draw() {
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
     const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
-    MemberList(draw, display, pulse);
+    MemberList(draw, pulse);
     if (panel.vital == BBCOOP_VITAL_DOWN) {
-        OwnDown(draw, display, pulse);
+        OwnDown(draw, pulse);
     } else if (panel.revive_target >= 0 && panel.revive_target < panel.member_count) {
-        RevivePrompt(draw, display);
+        RevivePrompt(draw);
     }
 }
 
@@ -1525,7 +1530,7 @@ bool CapturesInput() {
     return menu_open || prompt_active;
 }
 
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
+void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, vk::Rect2D game) {
 
     // Present interval for the FPS readout (measured also while nothing is drawn).
     const auto now = std::chrono::steady_clock::now();
@@ -1546,7 +1551,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
     io.DeltaTime = ms > 0.0f && ms < 1000.0f ? ms / 1000.0f : 1.0f / 60.0f;
     // UI scale follows the display height (1080p = 1).
-    const float scale = std::max(float(extent.height) / 1080.0f, 0.75f);
+    const float scale = BbPartyLayout::Scale(float(extent.height));
     if (std::abs(scale - base_scale) > 0.01f) {
         ImGuiStyle& style = ImGui::GetStyle();
         style.ScaleAllSizes(scale / base_scale);
@@ -1557,6 +1562,8 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
     if (Party::shown && !menu_open) {
+        Party::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
+                       float(game.extent.height)};
         Party::Draw();
     }
     if (menu_open) {

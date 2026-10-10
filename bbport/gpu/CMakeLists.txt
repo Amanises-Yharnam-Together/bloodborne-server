@@ -381,6 +381,10 @@ target_link_libraries(pixel-format-test PRIVATE bbgpu)
 add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)
+# bbport co-op: party death's HUD keeps clear of the game's own HUD (shim/bbport_party_layout.h).
+add_executable(party-layout-test EXCLUDE_FROM_ALL ../tests/test_party_layout.cpp)
+target_compile_options(party-layout-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-layout-test PRIVATE ..)
 add_executable(save-editor-test EXCLUDE_FROM_ALL ../tests/test_save_editor.cpp
                shim/bbport_save_editor_items.cpp)
 target_compile_options(save-editor-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
