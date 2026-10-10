@@ -351,6 +351,7 @@ add_executable(shadps4_bloodborne_test
     bloodborne/test_bloodborne_autoplay.cpp
     bloodborne/test_bloodborne_harder_enemies.cpp
     bloodborne/test_bloodborne_party_death.cpp
+    bloodborne/test_bloodborne_member_data.cpp
 )
 target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 # The party boards' messages, shared with shadNet's tests (see test_bloodborne_contracts.cpp).

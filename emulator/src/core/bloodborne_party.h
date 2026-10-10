@@ -383,6 +383,63 @@ std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s3
 // (their slots are still theirs when they are met again).
 std::vector<SavedJoinTask> MergeSavedJoinTasks(std::span<const SavedJoinTask> before,
                                                std::span<const SavedJoinTask> found);
+
+// A member's character data (2026-10-10 RE). Each game sends its own to the others in parts, on
+// the session's packet channels, through the net sync object at 0x0553D6D0 (send 0x017894E0:
+// object, member id, channel, buffer, size; receive 0x01789200, polled every frame at 0x01783160):
+// channel 8 (0x168 bytes: attributes PlayerGameData +0x40..+0x90, face +0x4AC, name), 0x0B, 0x0C
+// (0x80 bytes: the gear) and 0x0D, plus 0x13, 0x3B and 0x3C. The receiver copies them into its
+// remote player slot (GameDataMan [0x0553B130] +0x10, 4 slots of 0x6A0; the member's slot is the
+// net sync list +0x68, node id +0x10, slot +0x30) and sets a bit per part in the slot's byte at
+// GameDataMan [+0x18][slot]: 0x02 channel 8, 0x04 channel 0x0C, 0x08 channel 0x0D, 0x10 channel
+// 0x0B (0x01 is the slot's own). A join task waits at step 3 for the gear (task +0xED bit 3, set
+// by channel 0x0C), and at step 4 for +0xED bit 0, which the world update (0x01947310) sets once
+// the member leaves the net sync's pending list (+0x48, 0x0178B4D0) with all five bits (0x1F).
+// A game sends all of its parts after each load (0x0193A979 calls 0x01781AC0), its gear again on
+// every change (0x018FA610) and channels 0x0D/0x13 from the player update (0x018F4FF0); stats and
+// face only after a load. A one-byte packet on channel 0x0A asks a member for everything: its game
+// answers with all parts (0x01783EDA), and entering a session asks every pending member
+// (0x0178D9C0).
+constexpr u64 NetSyncSendOffset = 0x017894E0;
+constexpr u64 NetSyncReceiveOffset = 0x01789200;
+constexpr u64 BroadcastMemberDataOffset = 0x01781AC0;
+constexpr u32 MemberDataRequestChannel = 0x0A;
+constexpr u8 MemberDataParts = 0x1E;
+bool HasAllMemberData(u8 parts);
+// A member rebuilt after a trip while its data had not come (see RebuildsFromSave) waits for it:
+// once the member has stood on this map a moment, its data is asked for (channel 0x0A) and asked
+// again every few seconds until all its parts are in, then its character is created. The parts
+// seen before a request are stale (from before the trip, or none): each request clears them.
+class MemberDataWait {
+public:
+    enum class Action { None, Request, Create };
+    static constexpr s64 SettleMs = 1000;
+    static constexpr s64 RepeatMs = 5000;
+    Action Tick(s64 now_ms, bool member_here, u8 parts);
+    s32 Requests() const {
+        return requests;
+    }
+
+private:
+    std::optional<s64> here_since;
+    std::optional<s64> requested_at;
+    s32 requests = 0;
+};
+// The player's own stats and face (what channel 8 carries) change mid-session on a level up, a
+// stat reset or the mirror, and the game sends them only after a load, so the others keep the old
+// ones. A change that has held for a moment is sent to everyone again (BroadcastMemberDataOffset).
+// The first value seen in a session is the one the game sent itself.
+class OwnDataWatch {
+public:
+    static constexpr s64 SettleMs = 2000;
+    // `fingerprint` of the player's data, or nullopt while it cannot be sent (no session, loading).
+    bool Observe(std::optional<u64> fingerprint, s64 now_ms);
+
+private:
+    std::optional<u64> sent;
+    std::optional<u64> pending;
+    s64 pending_since = 0;
+};
 constexpr s32 InSessionStep = 6;
 bool ShouldRecreateAfterTrip(s32 kind, s32 step);
 s32 RemoteTaskKind(bool hosting);

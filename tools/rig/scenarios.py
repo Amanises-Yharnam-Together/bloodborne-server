@@ -288,6 +288,27 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 900,
     },
+    "early-trip": {
+        "about": "the host goes to the Dream and back while the guest is still loading in: back "
+                 "on the map the host asks the guest for its character data and both see each "
+                 "other; then the guest raises a stat (a level up) and the host gets the new data "
+                 "(Kaniel 2026-10-10: guest unseen after the host's early trip; char info "
+                 "updated for everybody on a level up)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 2", f"travel {HUNTERS_DREAM}",
+                     "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 40",
+                     "census 40", "expect-others-near 1 40", "wait 30", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 60", "wait-members 2 240",
+                      "wait 20", "census 40", "expect-others-near 1 40", "raise-stat 0 1",
+                      "wait 15", "expect-session 2"],
+        },
+        "expect": {"host": [r"asked a member still joining for its data",
+                            r"a member that was still joining sent its data",
+                            r"member slot \d stats or face changed"],
+                   "guest": [r"stats or face changed; sent its data"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 800,
+    },
     "ward-npc": {
         "about": "both players by the Cathedral Ward lamp (Oedon Chapel): the host hurts the NPC "
                  "there and the guest's copy follows (the game sends no NPC HP), then the guest "
