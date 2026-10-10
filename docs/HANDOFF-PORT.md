@@ -6,6 +6,27 @@ mechanic simpler or more reliable. No mixed parties (port and shadPS4 players ne
 leave/rejoin a session as a fix: everything is seamless. See docs/BBPORT.md for how the port and
 its co-op are wired, built, packaged and tested.
 
+## Harder enemies (branch harder-enemies, 2026-10-10)
+
+Kaniel: bosses are too weak for a party (poise-locked and R1-spammed), so every enemy and boss
+gets more HP, damage and poise. `SHADPS4_BLOODBORNE_HARDER_ENEMIES=<hp>,<damage>,<poise>`
+(kit SETUP asks, default `3,1.5,3`, `off` for vanilla) scales the loaded tables once, from the
+title screen on (`MakeEnemiesHarder`, rules in `bloodborne_party` + tests):
+- NpcParam `hp` (+0x20) x hp; 1-HP event dummies stay.
+- NpcParam `superArmorDurability` (+0x118, poise) x poise, with a floor of 15 (50 for base HP
+  1000+) x poise, since most enemies and bosses (Gascoigne: 0) have none; 9999 stays.
+- AtkParam_Npc `atkPhys/Mag/Fire/Thun` (+0x50..0x56) x damage. AtkParam_Pc has the same type
+  and is told apart by row 271000 (Gascoigne's first axe swing). Hostile NPC hunters that fight
+  with player weapons use AtkParam_Pc and are not scaled yet.
+- One HP multiplier for bosses too (Kaniel): the game's co-op boss HP bonus (SpEffect
+  7500-7503 maxHpRate x1.5-x3) is set to 1 and KeepBossHpInStep stands down; the rows' status
+  resistance bonus stays.
+- Shared enemy HP is synced as a share of max HP, so a member with another setting stays in step,
+  but everyone should use the same setting. Not checked yet: whether poise > 0 really stops the
+  stagger on every hit for enemies that had 0 (rig + playtest).
+Offsets from Paramdex BB defs, checked against the 01.09 gameparam (row size 0x184 / 0xA4,
+Gascoigne 1440 HP, poise 0, first swing 136 physical).
+
 ## State 2026-10-10 early morning
 
 Rig on 3f730dc0 and later: guest-crash, host-crash, resume, crash-apart, boss-kill,

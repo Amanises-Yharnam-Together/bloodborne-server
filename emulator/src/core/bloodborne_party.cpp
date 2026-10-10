@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -1359,6 +1360,146 @@ std::optional<u64> FindParamRow(std::span<const u8> param, s32 id) {
         }
     }
     return std::nullopt;
+}
+
+std::optional<HarderEnemies> ParseHarderEnemies(std::string_view setting) {
+    std::array<float, 3> rates{};
+    std::size_t count = 0;
+    while (true) {
+        const std::size_t comma = setting.find(',');
+        std::string_view part = setting.substr(0, comma);
+        while (!part.empty() && IsWhitespace(part.front())) {
+            part.remove_prefix(1);
+        }
+        while (!part.empty() && IsWhitespace(part.back())) {
+            part.remove_suffix(1);
+        }
+        float rate = 0.0f;
+        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), rate);
+        if (count == rates.size() || part.empty() || error != std::errc{} ||
+            end != part.data() + part.size() || !(rate >= 1.0f && rate <= 10.0f)) {
+            return std::nullopt;
+        }
+        rates[count++] = rate;
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        setting.remove_prefix(comma + 1);
+    }
+    if (count != rates.size() || (rates[0] == 1.0f && rates[1] == 1.0f && rates[2] == 1.0f)) {
+        return std::nullopt;
+    }
+    return HarderEnemies{rates[0], rates[1], rates[2]};
+}
+
+u32 HarderEnemyHp(u32 hp, float rate) {
+    if (hp <= 1) {
+        return hp;
+    }
+    const double scaled = std::round(static_cast<double>(hp) * rate);
+    return static_cast<u32>(std::min(scaled, 9'999'999.0));
+}
+
+s16 HarderEnemyPoise(s16 poise, u32 hp, float rate) {
+    if (rate <= 1.0f || hp <= 1 || poise >= 9999 || poise < 0) {
+        return poise;
+    }
+    const double floor = (hp >= 1000 ? 50.0 : 15.0) * rate;
+    const double scaled = std::max(std::round(static_cast<double>(poise) * rate), floor);
+    return static_cast<s16>(std::min(scaled, 9998.0));
+}
+
+u16 HarderEnemyAttack(u16 attack, float rate) {
+    const double scaled = std::round(static_cast<double>(attack) * rate);
+    return static_cast<u16>(std::min(scaled, 65535.0));
+}
+
+namespace {
+
+// Calls `scale` with each distinct row's data that holds `row_end` bytes; returns how many.
+template <typename Scale>
+std::size_t ForEachParamRow(std::span<u8> param, std::string_view type, u64 row_end,
+                            Scale&& scale) {
+    if (!IsParamOfType(param, type)) {
+        return 0;
+    }
+    u16 rows = 0;
+    std::memcpy(&rows, param.data() + 0x0A, sizeof(rows));
+    if (param.size() < 0x40 + std::size_t{rows} * 24) {
+        return 0;
+    }
+    std::vector<u64> seen;
+    std::size_t changed = 0;
+    for (std::size_t row = 0; row < rows; ++row) {
+        u64 data = 0;
+        std::memcpy(&data, param.data() + 0x40 + row * 24 + 8, sizeof(data));
+        if (data < 0x40 + std::size_t{rows} * 24 || data > param.size() ||
+            param.size() - data < row_end ||
+            std::find(seen.begin(), seen.end(), data) != seen.end()) {
+            continue;
+        }
+        seen.push_back(data);
+        if (scale(param.data() + data)) {
+            ++changed;
+        }
+    }
+    return changed;
+}
+
+} // namespace
+
+std::size_t MakeNpcParamHarder(std::span<u8> param, const HarderEnemies& harder) {
+    return ForEachParamRow(param, "NPC_PARAM_ST", NpcPoiseOffset + 2, [&](u8* row) {
+        u32 hp = 0;
+        s16 poise = 0;
+        std::memcpy(&hp, row + NpcHpOffset, sizeof(hp));
+        std::memcpy(&poise, row + NpcPoiseOffset, sizeof(poise));
+        const u32 new_hp = HarderEnemyHp(hp, harder.hp);
+        const s16 new_poise = HarderEnemyPoise(poise, hp, harder.poise);
+        std::memcpy(row + NpcHpOffset, &new_hp, sizeof(new_hp));
+        std::memcpy(row + NpcPoiseOffset, &new_poise, sizeof(new_poise));
+        return new_hp != hp || new_poise != poise;
+    });
+}
+
+std::size_t RemoveCoopBossHpBonus(std::span<u8> sp_effect_param) {
+    if (!IsParamOfType(sp_effect_param, "SP_EFFECT_PARAM_ST")) {
+        return 0;
+    }
+    std::size_t changed = 0;
+    for (const s32 effect : CoopBossHpEffects) {
+        const auto row = FindParamRow(sp_effect_param, effect);
+        if (!row || *row > sp_effect_param.size() ||
+            sp_effect_param.size() - *row < SpEffectMaxHpRateOffset + sizeof(float)) {
+            continue;
+        }
+        float rate = 0.0f;
+        std::memcpy(&rate, sp_effect_param.data() + *row + SpEffectMaxHpRateOffset, sizeof(rate));
+        if (rate != 1.0f) {
+            rate = 1.0f;
+            std::memcpy(sp_effect_param.data() + *row + SpEffectMaxHpRateOffset, &rate,
+                        sizeof(rate));
+            ++changed;
+        }
+    }
+    return changed;
+}
+
+std::size_t MakeNpcAttacksHarder(std::span<u8> param, float damage) {
+    if (!FindParamRow(param, NpcAttackMarkerRow)) {
+        return 0;
+    }
+    return ForEachParamRow(param, "ATK_PARAM_ST", AtkPhysOffset + 8, [&](u8* row) {
+        bool changed = false;
+        for (u64 field = AtkPhysOffset; field < AtkPhysOffset + 8; field += 2) {
+            u16 attack = 0;
+            std::memcpy(&attack, row + field, sizeof(attack));
+            const u16 scaled = HarderEnemyAttack(attack, damage);
+            std::memcpy(row + field, &scaled, sizeof(scaled));
+            changed |= scaled != attack;
+        }
+        return changed;
+    });
 }
 
 bool IsPartySession(bool party_configured, s32 matching_state) {

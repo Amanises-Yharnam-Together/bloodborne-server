@@ -78,6 +78,9 @@ $party = Ask "Party" $(if ($saved["PARTY"]) { $saved["PARTY"] } else { "hunters:
 $defPort = if ($saved["P2PPORT"] -and $saved["P2PPORT"] -notin @("51610", "51611")) { $saved["P2PPORT"] } else { "auto" }
 $p2pPort = Ask "P2P UDP port (auto unless you port-forward)" $defPort { param($v) $v -eq "auto" -or (& $isPort $v) } "Type auto, or a number from 1024 to 65535."
 $fps = Ask "Frame rate (60, or 30 as on shadPS4)" $(if ($saved["FPS"]) { $saved["FPS"] } else { "60" }) $isFps "Type 60 or 30."
+# Every enemy's and boss's HP, damage and poise multipliers; everyone in a party should use the same.
+$isHarder = { param($v) $v -eq "off" -or $v -match '^\d+(\.\d+)?,\d+(\.\d+)?,\d+(\.\d+)?$' }
+$harder = Ask "Harder enemies: HP,damage,poise multipliers (off for the normal game)" $(if ($saved["HARDER"]) { $saved["HARDER"] } else { "3,1.5,3" }) $isHarder "Type off, or three numbers from 1 to 10 like 3,1.5,3."
 Write-Host ""
 Write-Host "  Party death, as in Elden Ring Nightreign: a killing blow puts you down instead of killing"
 Write-Host "  you while a partner stands on your map; they revive you by striking you (R1/R2, their"
@@ -235,6 +238,7 @@ $lines = @(
     "set `"PARTY=$party`"",
     "set `"P2PPORT=$p2pPort`"",
     "set `"FPS=$fps`"",
+    "set `"HARDER=$harder`"",
     "set `"PARTYDEATH=$(if ($partyDeath -eq "yes") { "1" } else { "0" })`"",
     "set `"GAMEDIR=$gameDir`""
 )
@@ -242,7 +246,7 @@ $lines = @(
 
 Write-Host ""
 Write-Host "  Done." -ForegroundColor Green
-Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS, party death $partyDeath"
+Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS, party death $partyDeath, harder enemies $harder"
 Write-Host "    shadnet ${hostIp}:31313, WebAPI ${hostIp}:31315, backend ${hostIp}:20443"
 if ($role -eq "host") {
     Write-Host ""

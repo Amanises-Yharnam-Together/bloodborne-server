@@ -44,6 +44,10 @@ if /i not "%P2PPORT%"=="auto" if not "%P2PPORT%"=="51610" if not "%P2PPORT%"=="5
 set "SHADPS4_BLOODBORNE_PARTY=%PARTY%"
 set "SHADPS4_BLOODBORNE_PARTY_ROLE=%ROLE%"
 set SHADPS4_BLOODBORNE_RE_TRACE=0
+rem Harder enemies: HP,damage,poise multipliers for every enemy and boss (1 - SETUP), or off.
+if "%HARDER%"=="" set "HARDER=3,1.5,3"
+set "SHADPS4_BLOODBORNE_HARDER_ENEMIES="
+if /i not "%HARDER%"=="off" set "SHADPS4_BLOODBORNE_HARDER_ENEMIES=%HARDER%"
 rem Party death (Nightreign style): on unless SETUP turned it off.
 if "%PARTYDEATH%"=="" set "PARTYDEATH=1"
 set "SHADPS4_BLOODBORNE_PARTY_DEATH=%PARTYDEATH%"
