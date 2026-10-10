@@ -435,6 +435,59 @@ bool RebuildsFromSave(const SavedJoinTask& saved) {
     return saved.step > CreateCharacterStep;
 }
 
+bool HasAllMemberData(u8 parts) {
+    return (parts & MemberDataParts) == MemberDataParts;
+}
+
+MemberDataWait::Action MemberDataWait::Tick(s64 now_ms, bool member_here, u8 parts) {
+    if (!member_here) {
+        here_since.reset();
+        requested_at.reset();
+        return Action::None;
+    }
+    if (!here_since) {
+        here_since = now_ms;
+    }
+    if (now_ms - *here_since < SettleMs) {
+        return Action::None;
+    }
+    if (requested_at && HasAllMemberData(parts)) {
+        return Action::Create;
+    }
+    if (!requested_at || now_ms - *requested_at >= RepeatMs) {
+        requested_at = now_ms;
+        ++requests;
+        return Action::Request;
+    }
+    return Action::None;
+}
+
+bool OwnDataWatch::Observe(std::optional<u64> fingerprint, s64 now_ms) {
+    if (!fingerprint) {
+        sent.reset();
+        pending.reset();
+        return false;
+    }
+    if (!sent) {
+        sent = fingerprint;
+        return false;
+    }
+    if (*fingerprint == *sent) {
+        pending.reset();
+        return false;
+    }
+    if (pending != fingerprint) {
+        pending = fingerprint;
+        pending_since = now_ms;
+    }
+    if (now_ms - pending_since < SettleMs) {
+        return false;
+    }
+    sent = fingerprint;
+    pending.reset();
+    return true;
+}
+
 std::vector<SavedJoinTask> MergeSavedJoinTasks(std::span<const SavedJoinTask> before,
                                                std::span<const SavedJoinTask> found) {
     std::vector<SavedJoinTask> merged{found.begin(), found.end()};

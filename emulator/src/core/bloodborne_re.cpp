@@ -3838,12 +3838,11 @@ void SaveRemoteJoinTasks() {
 }
 
 // Members rebuilt while their data had not come yet (see RebuildsFromSave): their tasks wait at
-// their saved step until the member stands in the world (the vitals board), then go on to create
-// the character (FinishWaitingJoins). The data comes by slot, not by task: a guest that finished
-// loading while the host was away had sent it already, and a fresh join stayed stuck (rig
-// hp-together 2026-10-10: host and guest never saw each other).
-std::set<u64> joins_waiting_for_data; // member identity pointers
-s64 waiting_member_seen_ms = 0;
+// their saved step until the member stands in the world (the vitals board), then ask it for its
+// data (MemberDataWait, FinishWaitingJoins). A guest sends its data once, after its load: one that
+// finished loading while the host was away had sent it to a world that is gone (rig hp-together
+// 2026-10-10: host and guest never saw each other).
+std::map<u64, MemberDataWait> joins_waiting_for_data; // by member identity pointer
 
 void RecreateRemotePlayers(std::span<const u64> only) {
     const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
@@ -3895,8 +3894,7 @@ void RecreateRemotePlayers(std::span<const u64> only) {
             manager + 8, reinterpret_cast<u64>(&holder));
         if (waiting) {
             set_step(task, saved->step);
-            joins_waiting_for_data.insert(ReadValue<u64>(member_id, 0));
-            waiting_member_seen_ms = 0;
+            joins_waiting_for_data[ReadValue<u64>(member_id, 0)] = MemberDataWait{};
         } else {
             set_step(task, CreateCharacterStep);
         }
@@ -6388,6 +6386,9 @@ void ResumeWhereTheGuestLeft(bool in_session) {
 }
 
 void FinishWaitingJoins(bool in_session);
+void ResendOwnDataOnChange(bool in_session);
+void LogMemberDataChanges(bool in_session);
+u64 OwnGameData();
 
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
@@ -6416,6 +6417,8 @@ void TickPlayersOnThisMap() {
     ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
     GrantPartyEchoes();
     FinishWaitingJoins(in_session);
+    ResendOwnDataOnChange(in_session);
+    LogMemberDataChanges(in_session);
     if (!in_session) {
         recreate_players_pending = false;
         recreated_since_trip.clear();
@@ -7103,8 +7106,54 @@ VitalsView ReadVitalsBoard() {
     return view;
 }
 
-// See joins_waiting_for_data: once another member has stood on this map for 3 s (its data sent
-// by then), its waiting task creates its character from the slot data.
+// The net sync object (SummonSessionRulesPointerOffset, see MemberDataWait): +0x84 is 4 in a
+// session, +0x68 the list of members with a remote player slot (head node; node: next +0, member
+// id +0x10, slot +0x30). The slot's byte of received parts is GameDataMan [+0x18][slot].
+std::optional<s32> MemberDataSlot(u64 net, u64 member_id) {
+    if (net < 0x10000 || !HasMemoryAccess(net, 0x88, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    using IdEqual = bool PS4_SYSV_ABI (*)(u64 a, u64 b);
+    const auto id_equal = reinterpret_cast<IdEqual>(image_base + MemberIdEqualOffset);
+    const u64 head = ReadValue<u64>(net, 0x68);
+    if (head < 0x10000 || !HasMemoryAccess(head, 8, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    u64 node = ReadValue<u64>(head, 0);
+    for (s32 hops = 0; node >= 0x10000 && node != head && hops < 16; ++hops) {
+        if (!HasMemoryAccess(node, 0x34, MemoryProt::CpuRead)) {
+            break;
+        }
+        if (id_equal(node + 0x10, member_id)) {
+            const s32 slot = ReadValue<s32>(node, 0x30);
+            return slot >= 0 && slot < 4 ? std::optional{slot} : std::nullopt;
+        }
+        node = ReadValue<u64>(node, 0);
+    }
+    return std::nullopt;
+}
+
+u64 MemberDataPartsAddress(s32 slot) {
+    const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    const u64 parts = data >= 0x10000 && HasMemoryAccess(data, 0x20, MemoryProt::CpuRead)
+                          ? ReadValue<u64>(data, 0x18)
+                          : 0;
+    return parts >= 0x10000 && HasMemoryAccess(parts + slot, 1, MemoryProt::CpuWrite) ? parts + slot
+                                                                                      : 0;
+}
+
+// The game's own request (0x01781A70 sends the same): one zero byte on channel 0x0A, which the
+// member's game answers with all of its data.
+void SendMemberDataRequest(u64 net, u64 member_id) {
+    using Send =
+        s32 PS4_SYSV_ABI (*)(u64 net, u64 member_id, u32 channel, const void* buffer, u32 size);
+    const u8 zero = 0;
+    reinterpret_cast<Send>(image_base + NetSyncSendOffset)(net, member_id, MemberDataRequestChannel,
+                                                           &zero, 1);
+}
+
+// See joins_waiting_for_data: once another member has stood on this map a moment, the waiting
+// members are asked for their data until all of it is in, then their characters are created.
 void FinishWaitingJoins(bool in_session) {
     if (joins_waiting_for_data.empty()) {
         return;
@@ -7114,35 +7163,128 @@ void FinishWaitingJoins(bool in_session) {
         return;
     }
     const VitalsView view = ReadVitalsBoard();
-    const bool stands = view.Fresh() && !view.member.empty() &&
-                        SomeoneElseStands(view.board.members, view.member, GetCurrentPackedMap());
+    const bool here = view.Fresh() && !view.member.empty() &&
+                      SomeoneElseStands(view.board.members, view.member, GetCurrentPackedMap());
     const s64 now = SteadyMilliseconds();
-    if (!stands) {
-        waiting_member_seen_ms = 0;
-        return;
-    }
-    if (waiting_member_seen_ms == 0) {
-        waiting_member_seen_ms = now;
-    }
-    if (now - waiting_member_seen_ms < 3000) {
-        return;
-    }
+    const u64 net = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
     using SetStep = void PS4_SYSV_ABI (*)(u64 task, s32 step);
+    std::vector<u64> done;
     ForEachJoinTask([&](u64 task) {
         const u64 identity = ReadValue<u64>(task, 0xC8);
-        if (!joins_waiting_for_data.contains(identity) ||
-            ReadValue<s32>(task, 0x50) >= CreateCharacterStep) {
+        const auto waiting = joins_waiting_for_data.find(identity);
+        if (waiting == joins_waiting_for_data.end()) {
             return;
         }
-        WriteValue(task, 0xED, static_cast<u8>(ReadValue<u8>(task, 0xED) | 1));
-        reinterpret_cast<SetStep>(ReadValue<u64>(ReadValue<u64>(task, 0), 0x28))(
-            task, CreateCharacterStep);
-        LOG_INFO(Debug,
-                 "Bloodborne party trip: a member that was still joining stands here now; "
-                 "creating its character (task {:#x})",
-                 task);
+        const s32 step = ReadValue<s32>(task, 0x50);
+        const u8 flags = ReadValue<u8>(task, 0xED);
+        if (step > CreateCharacterStep) {
+            done.push_back(identity);
+            return;
+        }
+        const u64 member_id = task + 0xC8;
+        const std::optional<s32> slot = MemberDataSlot(net, member_id);
+        const u64 parts = slot ? MemberDataPartsAddress(*slot) : 0;
+        switch (waiting->second.Tick(now, here, parts ? ReadValue<u8>(parts, 0) : 0)) {
+        case MemberDataWait::Action::None:
+            return;
+        case MemberDataWait::Action::Request:
+            if (parts) {
+                WriteValue(parts, 0, static_cast<u8>(ReadValue<u8>(parts, 0) & ~MemberDataParts));
+            }
+            SendMemberDataRequest(net, member_id);
+            LOG_INFO(Debug,
+                     "Bloodborne party trip: asked a member still joining for its data (request "
+                     "{}, task {:#x} step={} flags={:#x} slot={})",
+                     waiting->second.Requests(), task, step, flags,
+                     slot ? fmt::format("{}", *slot) : "none");
+            return;
+        case MemberDataWait::Action::Create:
+            WriteValue(task, 0xED, static_cast<u8>(flags | 1));
+            if (step < CreateCharacterStep) {
+                reinterpret_cast<SetStep>(ReadValue<u64>(ReadValue<u64>(task, 0), 0x28))(
+                    task, CreateCharacterStep);
+            }
+            done.push_back(identity);
+            LOG_INFO(Debug,
+                     "Bloodborne party trip: a member that was still joining sent its data; "
+                     "creating its character (task {:#x} step={} flags={:#x} slot={})",
+                     task, step, flags, slot.value_or(-1));
+            return;
+        }
     });
-    joins_waiting_for_data.clear();
+    for (const u64 identity : done) {
+        joins_waiting_for_data.erase(identity);
+    }
+}
+
+// See OwnDataWatch: the stats and face channel 8 carries, PlayerGameData ([GameDataMan +0x08],
+// the remote slots at [GameDataMan +0x10] + 0x6A0 each have the same layout) +0x40..+0x90 (every
+// 8 bytes), +0xD4, +0xE0, +0xE4 and the face (0xF0 bytes at +0x4AC).
+std::optional<u64> MemberDataFingerprint(u64 data) {
+    if (data < 0x10000 || !HasMemoryAccess(data, 0x5A0, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    u64 hash = 0xCBF29CE484222325ull;
+    const auto mix = [&](u64 at, u64 size) {
+        for (u64 index = 0; index < size; ++index) {
+            hash = (hash ^ ReadValue<u8>(data, at + index)) * 0x100000001B3ull;
+        }
+    };
+    for (u64 at = 0x40; at <= 0x90; at += 8) {
+        mix(at, 4);
+    }
+    mix(0xD4, 4);
+    mix(0xE0, 8);
+    mix(0x4AC, 0xF0);
+    return hash;
+}
+
+u64 OwnGameData() {
+    const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    return data >= 0x10000 && HasMemoryAccess(data, 0x10, MemoryProt::CpuRead)
+               ? ReadValue<u64>(data, 0x08)
+               : 0;
+}
+
+std::optional<u64> OwnDataFingerprint() {
+    return MemberDataFingerprint(OwnGameData());
+}
+
+// The remote player slots' stats and face, logged when they change in a session (a member's
+// level up seen here; the rig's raise-stat).
+void LogMemberDataChanges(bool in_session) {
+    static std::array<std::optional<u64>, 4> seen;
+    const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    const u64 slots = data >= 0x10000 && HasMemoryAccess(data, 0x20, MemoryProt::CpuRead)
+                          ? ReadValue<u64>(data, 0x10)
+                          : 0;
+    for (s32 slot = 0; slot < 4; ++slot) {
+        const auto now = in_session && slots >= 0x10000
+                             ? MemberDataFingerprint(slots + static_cast<u64>(slot) * 0x6A0)
+                             : std::nullopt;
+        if (now && seen[slot] && *now != *seen[slot]) {
+            LOG_INFO(Debug, "Bloodborne party: member slot {} stats or face changed (first {})",
+                     slot, ReadValue<s32>(slots + static_cast<u64>(slot) * 0x6A0, 0x40));
+        }
+        seen[slot] = now;
+    }
+}
+
+// A level up (or any change to the stats or face) in a session reaches the others: the game's
+// own after-load broadcast of all of the player's data (BroadcastMemberDataOffset).
+void ResendOwnDataOnChange(bool in_session) {
+    static OwnDataWatch watch;
+    const u64 net = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
+    const u64 state = GetGlobalState();
+    const bool can_send =
+        in_session && net >= 0x10000 && HasMemoryAccess(net, 0x88, MemoryProt::CpuRead) &&
+        ReadValue<s32>(net, 0x84) == 4 && ReadValue<u64>(net, 0x10) != 0 && state >= 0x10000 &&
+        HasMemoryAccess(state, 0x09, MemoryProt::CpuRead) && ReadValue<u8>(state, 0x08) == 0;
+    if (watch.Observe(can_send ? OwnDataFingerprint() : std::nullopt, SteadyMilliseconds())) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)()>(image_base + BroadcastMemberDataOffset)();
+        LOG_INFO(Debug, "Bloodborne party: the player's stats or face changed; sent its data to "
+                        "the session again");
+    }
 }
 
 // Hands the client this member's vitals: posted at once when more than its position changed.
@@ -10096,6 +10238,21 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
             dump(fmt::format("module{:02x}", index).c_str(), ReadValue<u64>(modules, index * 8),
                  0x100);
         }
+        return true;
+    }
+    // raise-stat <index> <amount>: one of the player's stats (PlayerGameData +0x40 + 8 * index,
+    // what channel 8 sends) raised, as a level up does (see OwnDataWatch).
+    if (verb == "raise-stat") {
+        const u64 mine = OwnGameData();
+        const u64 at = 0x40 + 8 * static_cast<u64>(number(0, 0));
+        if (mine < 0x10000 || at > 0x90 || !HasMemoryAccess(mine + at, 4, MemoryProt::CpuWrite)) {
+            failure = "no player data";
+            return false;
+        }
+        const s32 before = ReadValue<s32>(mine, at);
+        WriteValue(mine, at, static_cast<s32>(before + number(1, 1)));
+        LOG_INFO(Debug, "Bloodborne autoplay raise-stat: +{:#x} {} -> {}", at, before,
+                 ReadValue<s32>(mine, at));
         return true;
     }
     // peek <target> <offset>, poke <target> <offset> <value> [1] (hex): a character's u32 (or byte)

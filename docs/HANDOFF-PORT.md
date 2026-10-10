@@ -14,10 +14,18 @@ its co-op are wired, built, packaged and tested.
   host's world. Back on the map the host rebuilds the task at its saved step and slot and waits
   (`RebuildsFromSave`, `joins_waiting_for_data`), but the data never comes again, so the guest
   stays invisible to the host until it rejoins. Rig: hp-together with the host's "wait 40"
-  before its trip cut to "wait 10" (with the ping) reproduces it. Fix: find how a guest's game
-  sends its character data (the host's step 3 -> 4 needs it: CSMultiPlayerIns, step 4 at
-  0x01E50090 creates the character from the slot data) and have the guest send it again when
-  the host comes back to its map.
+  before its trip cut to "wait 10" (with the ping) reproduces it.
+  **Found and built (branch char-data, not rig-run yet):** how the game sends a member's
+  character data and how to ask for it again; the whole map is in `bloodborne_party.h` above
+  `MemberDataWait`. In short: each game sends its own data in parts on packet channels 8 (stats,
+  face, name), 0x0B, 0x0C (gear), 0x0D (+0x13, 0x3B, 0x3C) after every load; the receiver fills
+  its remote slot (GameDataMan +0x10, 0x6A0 each) and a parts byte per slot (+0x18, all = 0x1F).
+  A one-byte packet on channel 0x0A is the game's own "send me your data", answered with every
+  part. Now the host asks a waiting guest for its data (every 5 s until all parts are in) when
+  it is back on the guest's map, then creates its character; and a player whose stats or face
+  change in a session (level up) sends everything again (`OwnDataWatch`, the game's after-load
+  broadcast 0x01781AC0). Gear changes the game sends by itself. Rig: `early-trip` (host trips 2 s
+  after the session forms; then the guest's `raise-stat`).
 - **Join stall: the guest connects but never joins** (rig ward-npc 20261010-200656, 1 of 25
   joins): the host summoned, both games' signaling came up, and the guest never removed its sign
   or called JoinRoom; both dropped the link 6 s later. The guest joins on the host's signaling,

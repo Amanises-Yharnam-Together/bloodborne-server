@@ -110,7 +110,9 @@ class Port(Emulator):
 
     def __init__(self, root: pathlib.Path = BB_ROOT):
         super().__init__(root)
-        self.home = root / "out" / "bbport"  # run.py, scripts, patches; the build in bin
+        # run.py, scripts, patches; the build in bin. BB_RIG_PORT_HOME runs another staged build
+        # (a branch's own) without touching the shared one.
+        self.home = pathlib.Path(os.environ.get("BB_RIG_PORT_HOME", root / "out" / "bbport"))
         self.exe = self.home / "bin" / "bb-probe.exe"
         # The game with its 1.09 update over it (merge_game, run_scenario.py --setup).
         self.game_dir = self.rig / "port" / "game" / "CUSA03173"

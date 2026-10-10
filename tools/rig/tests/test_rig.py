@@ -24,7 +24,7 @@ VERBS = {
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
-    "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump",
+    "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",

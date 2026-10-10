@@ -194,3 +194,25 @@ TEST_F(BloodborneEboot, TheNoDeadCallersCallIsNoDead) {
             << std::hex << caller.return_offset;
     }
 }
+
+// A member's character data (see MemberDataWait): the game's send and receive, its own one-byte
+// request on channel 0x0A, the answer to it, the after-load broadcast, and the pending check that
+// wants all five bits of the slot's byte.
+TEST_F(BloodborneEboot, TheMemberDataRequestIsTheGamesOwn) {
+    for (const u64 offset : {NetSyncSendOffset, NetSyncReceiveOffset, BroadcastMemberDataOffset}) {
+        EXPECT_EQ(Bytes(offset, FunctionPrologue.size()), FunctionPrologue) << std::hex << offset;
+    }
+    const std::vector<u8> request_channel{0xBA, MemberDataRequestChannel, 0x00, 0x00, 0x00};
+    // The game's request helper: mov edx, 0xA; mov r8d, 1; ... call send.
+    EXPECT_EQ(Bytes(0x01781A99, 5), request_channel);
+    EXPECT_EQ(CallTarget(0x01781AA4), NetSyncSendOffset);
+    // The answer: the request is received at 0x01783EEB, the parts go out after it.
+    EXPECT_EQ(Bytes(0x01783EDA, 5), request_channel);
+    EXPECT_EQ(CallTarget(0x01783EEB), NetSyncReceiveOffset);
+    EXPECT_EQ(CallTarget(0x017849C4), NetSyncSendOffset) << "the gear (channel 0x0C)";
+    // The broadcast after a load.
+    EXPECT_EQ(CallTarget(0x0193A979), BroadcastMemberDataOffset);
+    // cmp byte ptr [rcx + rax], 0x1F: a pending member is done when its slot's byte is full.
+    EXPECT_EQ(Bytes(0x0178B578, 4), (std::vector<u8>{0x80, 0x3C, 0x01, 0x1F}));
+    EXPECT_EQ(MemberDataParts | 0x01, 0x1F);
+}
