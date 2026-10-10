@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <unordered_map>
 #include <vector>
 
 #include <fmt/format.h>
@@ -428,6 +429,10 @@ std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s3
         only = index;
     }
     return of_kind == 1 ? only : std::nullopt;
+}
+
+bool RebuildsFromSave(const SavedJoinTask& saved) {
+    return saved.step > CreateCharacterStep;
 }
 
 std::vector<SavedJoinTask> MergeSavedJoinTasks(std::span<const SavedJoinTask> before,
@@ -953,6 +958,29 @@ T ReadLittleEndian(std::span<const u8> bytes, size_t offset) {
 }
 } // namespace
 
+std::vector<EnemyHp> VisitDamage::Hurt(u64 new_visit, bool now_in_session,
+                                       std::span<const EnemyHp> alive) {
+    if (new_visit != visit || now_in_session != in_session) {
+        start_hp.clear();
+        visit = new_visit;
+        in_session = now_in_session;
+    }
+    std::vector<EnemyHp> hurt;
+    if (!in_session) {
+        return hurt;
+    }
+    for (const EnemyHp& enemy : alive) {
+        const auto [it, first] = start_hp.try_emplace(enemy.handle, enemy.hp);
+        if (!first && enemy.hp > it->second) {
+            it->second = enemy.hp;
+        }
+        if (enemy.hp < it->second) {
+            hurt.push_back(enemy);
+        }
+    }
+    return hurt;
+}
+
 std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies) {
     std::vector<u8> bytes;
     bytes.reserve(8 + enemies.size() * 12);
@@ -1010,6 +1038,45 @@ std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max) {
     const s64 scaled = (s64{other_hp} * max + other_max - 1) / other_max;
     const s32 target = static_cast<s32>(std::max<s64>(scaled, 1));
     return target < hp ? std::optional<s32>{target} : std::nullopt;
+}
+
+std::vector<u8> EncodeShownCharacters(std::span<const CharacterShown> characters) {
+    std::vector<u8> bytes;
+    bytes.reserve(characters.size() * 5);
+    for (const CharacterShown& character : characters) {
+        AppendLittleEndian(bytes, character.handle);
+        bytes.push_back(character.hidden ? 1 : 0);
+    }
+    return bytes;
+}
+
+std::optional<std::vector<CharacterShown>> DecodeShownCharacters(std::span<const u8> bytes) {
+    if (bytes.size() % 5 != 0) {
+        return std::nullopt;
+    }
+    std::vector<CharacterShown> characters;
+    for (size_t offset = 0; offset < bytes.size(); offset += 5) {
+        characters.push_back({ReadLittleEndian<u32>(bytes, offset), bytes[offset + 4] != 0});
+    }
+    return characters;
+}
+
+std::vector<CharacterShown> ShownLikeTheHost(std::span<const CharacterShown> host,
+                                             std::span<const CharacterShown> mine,
+                                             const std::unordered_set<u32>& kill_hidden) {
+    std::unordered_map<u32, bool> hosts;
+    for (const CharacterShown& character : host) {
+        hosts[character.handle] = character.hidden;
+    }
+    std::vector<CharacterShown> changes;
+    for (const CharacterShown& character : mine) {
+        const auto it = hosts.find(character.handle);
+        if (it != hosts.end() && it->second != character.hidden &&
+            !kill_hidden.contains(character.handle)) {
+            changes.push_back({character.handle, it->second});
+        }
+    }
+    return changes;
 }
 
 bool WatchesKills(bool sharing, bool trip_active, bool loading) {

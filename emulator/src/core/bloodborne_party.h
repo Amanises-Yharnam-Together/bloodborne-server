@@ -335,14 +335,19 @@ constexpr s32 RemoteHostTask = 0;
 constexpr s32 RemoteGuestTask = 1;
 constexpr s32 CreateCharacterStep = 4;
 // A remote player's join state from before a trip: kind, the member id's identity pointer, slot
-// (+0xEC) and flags (+0xED, bit 0 = the member's data is synced).
+// (+0xEC), flags (+0xED, bit 0 = the member's data is synced) and step (+0x50).
 struct SavedJoinTask {
     s32 kind = 0;
     u64 identity = 0;
     u8 slot = 0;
     u8 flags = 0;
+    s32 step = 6; // InSessionStep
     bool operator==(const SavedJoinTask&) const = default;
 };
+// Whether a member's task is rebuilt after a trip from its save, straight into the character
+// step (its data was there before the trip), or runs the game's own join from the start (it was
+// still joining: its data never came, and a character made without it is a body-less phantom).
+bool RebuildsFromSave(const SavedJoinTask& saved);
 // The saved task a rebuilt one of `kind` takes: its member's own, else the only one of that kind.
 std::optional<size_t> PickSavedJoinTask(std::span<const SavedJoinTask> saved, s32 kind,
                                         u64 identity);
@@ -622,6 +627,19 @@ struct EnemyHpReport {
     std::vector<EnemyHp> enemies;
     bool operator==(const EnemyHpReport&) const = default;
 };
+// The enemies this member hurt in the party session during its visit: none out of a session,
+// and each counts from the HP it had when the session or the visit began (or the most it had
+// since: a guest's world rebuilt as the host's client), so damage a member's own world had
+// before never reaches the others (a guest's hurt dog lowered a new host's to 1 HP; it died).
+class VisitDamage {
+public:
+    std::vector<EnemyHp> Hurt(u64 visit, bool in_session, std::span<const EnemyHp> alive);
+
+private:
+    u64 visit = 0;
+    bool in_session = false;
+    std::map<u32, s32> start_hp;
+};
 std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies);
 std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes);
 // The HP to write on the local copy, or nothing: only ever down, never to 0 (a death comes
@@ -631,6 +649,25 @@ std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max);
 // area reports (their posts, in the map state board's format), or nothing.
 std::optional<s32> LowestSharedHp(u32 handle, s32 hp, s32 max, u32 map,
                                   std::span<const MemberMapState> others);
+
+// Characters hidden or shown as the host's world has them (POST /bloodborne/party/shown, the map
+// state board's format): the host posts every character of its map with its event disable byte
+// (+0x28, "hidden by the story"), and a guest on that map in the session sets its copies the
+// same. A guest's world, rebuilt as the host's client when it joins, does not run the events
+// that hide story NPCs (Iosefka at her clinic door, the Doll), so it showed them.
+struct CharacterShown {
+    u32 handle = 0;
+    bool hidden = false;
+    bool operator==(const CharacterShown&) const = default;
+};
+std::vector<u8> EncodeShownCharacters(std::span<const CharacterShown> characters);
+std::optional<std::vector<CharacterShown>> DecodeShownCharacters(std::span<const u8> bytes);
+// What to write on this member's copies to match the host: every character both worlds have
+// that differs, apart from those this member's kill board hid (`kill_hidden`: another member
+// killed them, which the host may not have heard yet).
+std::vector<CharacterShown> ShownLikeTheHost(std::span<const CharacterShown> host,
+                                             std::span<const CharacterShown> mine,
+                                             const std::unordered_set<u32>& kill_hidden);
 
 // The kill board's answer names who posted each change ("<handle> <0|1> <member>").
 struct KillChange {

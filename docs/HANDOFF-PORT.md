@@ -6,6 +6,49 @@ mechanic simpler or more reliable. No mixed parties (port and shadPS4 players ne
 leave/rejoin a session as a fix: everything is seamless. See docs/BBPORT.md for how the port and
 its co-op are wired, built, packaged and tested.
 
+## Sync fixes and a ping on the rig (branch sync-fixes, 2026-10-10)
+
+Kaniel's playtest on the rig (play-down-revive): the guest saw Iosefka at her clinic door while
+the host's world hid her, and on new characters the dog 35 m from the first lamp died by itself
+in the host's world, its loot on the ground.
+- **A ping on the rig** (default 50-100 ms round trip, `--ping 0` for none): each game holds what
+  it sends the others half the ping (`SHADPS4_P2P_DELAY_MS=25-50`, `net_delay.h`, in the P2P
+  transport's send; packets keep their order), and the runner puts delaying TCP proxies 1000
+  ports above shadNet (32313), its web API (the party boards, 32315) and the backend (20453)
+  (`tools/rig/latency.py`). The games derive shadNet's STUN port as the TCP port + 1, so with a
+  ping the runner sets the rig's `shadnet.cfg` `MatchingUdpPort` to 33314 (UDP is not proxied:
+  shadNet must see each game's own address). The first try without that: no join (endpoint
+  unresolved).
+- **Iosefka / story NPCs**: a guest's world, rebuilt as the host's client at its join, does not run
+  the events that hide story NPCs, so it showed them. The host now posts every character of its
+  map with its event disable byte (+0x28) to a new board, `POST /bloodborne/party/shown` (map
+  state board format, `EncodeShownCharacters`), and a guest in the session on that map sets its
+  copies the same (`ShownLikeTheHost`, skipping those its kill board hid). On the rig the guest
+  hid 6 characters the host hides (Iosefka 0x10014005, 0x100140ae, the dog 0x10014009, ...).
+  Scenario story-hidden. The rig's shadNet needs this build (`server_is_current` probes /shown);
+  so do the kit's.
+- **The dog**: before the session the guest's own world posted its hurt dog to the HP board and
+  the host's dog was lowered to that (rig hurt-before-join, red: the host's dog at 5 HP before
+  the join); Kaniel's host then got +235 echoes and the loot the moment the session formed. Now
+  only damage done in the session is posted or applied (`VisitDamage`: none out of a session,
+  each enemy counted from its HP when the session or the visit began, or the most since).
+- **Invisible guest after the host's trip** (Kaniel, hp-after-host-trip with the ping): the host left for the
+  Dream while its join task for the guest was at step 3 (data not synced, flags 0x4); back on the map
+  it rebuilt the guest from that save into the character step with the data marked synced: a
+  "Beckoner" name plate and no body. Saved tasks now keep their step, and a member still joining is
+  rebuilt as the game's own fresh join (`RebuildsFromSave`). Not yet rig-confirmed (Kaniel stopped
+  the rig): rerun hp-after-host-trip with the ping and look at the guest on the host's screen.
+- Kit 2026-10-10 17:11: C:\bb\port-kit-sync.zip (servers from C:\bb\out\sync-kit-servers = online-kit
+  + the new shadNet). The host's HOST bat runs ..\SeamlessCoop\server\shadnet.exe when it is there:
+  that copy needs the new shadnet.exe too.
+- New rig verbs: `census [<meters>]` (every character that close: HP, death flags, hidden,
+  disabled, position) and `expect-hidden <handle> <0|1> [<timeout>]`. New scenarios:
+  story-hidden, hurt-before-join, clinic (both players by Iosefka's door, censuses),
+  guest-flags-stay (a guest's own flag sets do not reach the host's world: passes).
+- Checked and not the cause: the game does not pass a guest's own event flag sets to the host
+  (guest-flags-stay). Kaniel's host did get Forbidden Woods flags (12700130...) late in that run,
+  9 s after the guest's world set them again; where from is not known yet.
+
 ## Harder enemies (branch harder-enemies, 2026-10-10)
 
 Kaniel: bosses are too weak for a party (poise-locked and R1-spammed), so every enemy and boss

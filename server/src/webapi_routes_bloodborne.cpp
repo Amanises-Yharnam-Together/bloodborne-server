@@ -363,6 +363,25 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                                               QHttpServerResponse::StatusCode::Ok};
                });
 
+    // Characters hidden or shown as on the host: the host posts every character of its map with
+    // its event disable byte (the map state board's format, emulator EncodeShownCharacters) about
+    // every second, guests post map 0 and read it, and hide or show their copies the same (story
+    // NPCs the host's events hide, as Iosefka at her clinic door). A host that stopped posting
+    // drops out after a few seconds.
+    auto shownBoard = std::make_shared<Bloodborne::PartyMapStateBoard>(5'000);
+    http.route("/bloodborne/party/shown", QHttpServerRequest::Method::Post,
+               [shownBoard](const QHttpServerRequest& request) -> QHttpServerResponse {
+                   const auto update = Bloodborne::ParseMapStateUpdate(request.body());
+                   if (!update) {
+                       return InvalidRequest(QStringLiteral("Invalid party shown update"));
+                   }
+                   const QByteArray board = Bloodborne::FormatMapStateBoard(
+                       shownBoard->Update(Party(request), update->member, update->map, update->bits,
+                                          QDateTime::currentMSecsSinceEpoch()));
+                   return QHttpServerResponse{"text/plain", board,
+                                              QHttpServerResponse::StatusCode::Ok};
+               });
+
     // Shared kill echoes: a member posts the echoes it got from kills made with no other member
     // on its map and reads back the others'. Called by the emulator every few seconds.
     auto echoBoard = std::make_shared<Bloodborne::PartyEchoBoard>();

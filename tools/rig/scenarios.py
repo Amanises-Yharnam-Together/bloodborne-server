@@ -47,6 +47,19 @@ GASCOIGNE = "0x1001409c"  # entity 2410810 (his beast form: 0x1001409e, 2410811)
 # Event 12411800's own flag: on, the map's load puts Gascoigne down (Force Character Death);
 # off, he waits for the fight. Both rig saves have him beaten.
 GASCOIGNE_DEFEATED = 12411800
+# Hidden by the host's story (event disable +0x28) and shown on the guest after its join until
+# guests followed the host (Kaniel 2026-10-10: Iosefka at her clinic door, play-down-revive).
+STORY_HIDDEN = "0x10014005"
+# Event flags neither rig character has: one of another map (the Forbidden Woods) and one of
+# Central Yharnam's range. A guest's own world setting them must not reach the host's world (its
+# save's progress, re-set after a reload, killed the clinic's beast in a new host's world).
+# The dog 35 m from the first lamp (364 HP). Kaniel 2026-10-10: it died in a new host's world as
+# the session formed, its loot on the ground: the guest's own world had posted it hurt and the
+# host's was lowered to that before the join.
+DOG = "0x10014009"
+CLINIC = "0x10014000"  # 573 HP, by Iosefka's door 32 m from the first lamp, 10 m up
+OTHER_MAP_FLAG = 12700131
+THIS_MAP_FLAG = 12410999
 FORBIDDEN_WOODS_LAMP_LIT = 12707810  # a lamp neither rig character has lit (see LampOfActiveFlag)
 START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
@@ -169,6 +182,65 @@ SCENARIOS = {
         },
         "forbid": {"guest": only_kill(ENEMY)},
         "timeout": 720,
+    },
+    "story-hidden": {
+        "about": "a character the host's story hides (Iosefka) stays hidden on the guest after "
+                 "its join: the guest hides and shows every character as the host does",
+        "roles": {
+            "host": [START, "godmode", "census 80", "wait-session 2 300", "wait 20", "census 80",
+                     f"expect-hidden {STORY_HIDDEN} 1"],
+            "guest": [START, "godmode", "census 80", "wait-session 2 300", "wait 20", "census 80",
+                      f"expect-hidden {STORY_HIDDEN} 1 30", "wait 10",
+                      f"expect-hidden {STORY_HIDDEN} 1"],
+        },
+        "expect": {"guest": [rf"characters as the host has them on map 0x18010000: hid \d+, "
+                             rf"showed \d+:.* {STORY_HIDDEN}"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "hurt-before-join": {
+        "about": "an enemy hurt in the guest's own world before it joins stays whole in the "
+                 "host's: no HP crosses worlds outside a session, and the session forming "
+                 "kills nothing (the dog by the first lamp)",
+        "roles": {
+            "host": [START, "godmode", "wait 25", f"expect-hp {DOG} == 364",
+                     "wait-session 2 300", "wait 30", "census 60", f"expect-hp {DOG} == 364",
+                     "expect-session 2"],
+            "guest": [START, "godmode", f"hurt {DOG} 5", "wait-session 2 300", "wait 30",
+                      "census 60", f"expect-hp {DOG} > 300", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS + [r"Bloodborne echoes: \+\d+"],
+                   "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "clinic": {
+        "about": "both players by Iosefka's Clinic in the session: what each world shows and "
+                 "kills there (Kaniel 2026-10-10: the clinic's beast dead in a new host's world, "
+                 "with its loot)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", f"approach {CLINIC} 2 0",
+                     "wait 5", "census 40", "wait 40", "census 40", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 15",
+                      f"approach {CLINIC} -2 0", "wait 5", "census 40", "wait 40", "census 40",
+                      "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "guest-flags-stay": {
+        "about": "flags a guest's own world sets in the session stay in it: the host's world "
+                 "does not get them (lamps and boss fogs go over the party's flag board)",
+        "roles": {
+            "host": [START, "godmode", f"expect-flag {OTHER_MAP_FLAG} 0",
+                     f"expect-flag {THIS_MAP_FLAG} 0", "wait-session 2 300", "wait 45",
+                     f"expect-flag {OTHER_MAP_FLAG} 0", f"expect-flag {THIS_MAP_FLAG} 0",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10",
+                      f"set-flag {OTHER_MAP_FLAG} 1", f"set-flag {THIS_MAP_FLAG} 1", "wait 40",
+                      f"expect-flag {OTHER_MAP_FLAG} 1", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
     },
     "hp-apart": {
         "about": "after the guest's trip each runs its own copy of the map; the host hurts an "

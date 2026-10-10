@@ -45,7 +45,8 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "re"))
 import check_party_log  # noqa: E402
 import engines  # noqa: E402
-from engines import BACKEND_PORT, BB_ROOT, SHADNET_PORT  # noqa: E402
+import latency  # noqa: E402
+from engines import BACKEND_PORT, BB_ROOT, SHADNET_PORT, WEBAPI_PORT  # noqa: E402
 from scenarios import SCENARIOS, START  # noqa: E402
 
 RIG = BB_ROOT / "rig"
@@ -67,6 +68,61 @@ ENGINE = engines.ENGINES["emulator"]
 def use_engine(name: str):
     global ENGINE
     ENGINE = engines.ENGINES[name]
+
+
+# The round trip (ms, low and high) the games have to each other and to the servers, or None:
+# their P2P packets are held by the games themselves, the servers' traffic by delaying proxies
+# (latency.py) 1000 ports above each server (the port's games only: the emulator's server
+# addresses are in its own settings).
+PING = None
+DELAYED_PORT_OFFSET = 1000
+
+
+def use_ping(ping: tuple[int, int] | None):
+    global PING
+    PING = ping
+
+
+def delayed_ports() -> dict[int, int]:
+    """Each delaying proxy's port and the server port it passes on to."""
+    return {port + DELAYED_PORT_OFFSET: port for port in (SHADNET_PORT, WEBAPI_PORT, BACKEND_PORT)}
+
+
+def server_port(port: int) -> int:
+    """Where the games reach a server: through its proxy when there is a ping."""
+    return port + DELAYED_PORT_OFFSET if PING else port
+
+
+def matching_udp_port() -> int:
+    """Where shadNet takes the games' STUN pings: the port they reach it on + 1, as the games
+    derive it (np_matching2_mm.cpp). With a ping that is the proxy's port + 1, and shadNet itself
+    listens there: UDP must come straight from each game, whose address it records."""
+    return server_port(SHADNET_PORT) + 1
+
+
+def with_matching_udp_port(config: str, port: int) -> str:
+    """shadnet.cfg's text with its MatchingUdpPort set to `port`."""
+    return re.sub(r"(?m)^MatchingUdpPort=\d+$", f"MatchingUdpPort={port}", config)
+
+
+def configure_shadnet():
+    config = RIG / "server" / "shadnet.cfg"
+    if config.is_file():
+        text = config.read_text(encoding="utf-8")
+        wanted = with_matching_udp_port(text, matching_udp_port())
+        if wanted != text:
+            config.write_text(wanted, encoding="utf-8", newline="")
+
+
+def start_delay_proxies() -> list[latency.DelayProxy]:
+    if not PING:
+        return []
+    proxies = [latency.DelayProxy(listen, target, latency.one_way(PING))
+               for listen, target in delayed_ports().items()]
+    for proxy in proxies:
+        proxy.start()
+    print(f"ping {PING[0]}-{PING[1]} ms between the games and to the servers")
+    return proxies
 
 DONE = re.compile(r"Bloodborne autoplay: done \((ok|failed)\)")
 IN_WORLD = "Bloodborne autoplay: in the world"
@@ -161,6 +217,7 @@ def start_server(command: list[str], cwd: pathlib.Path, log: pathlib.Path | None
 def start_servers(log_dir: pathlib.Path | None = None):
     """The rig's shadNet and backend, the ones not up yet, their output in log_dir."""
     if not port_open(SHADNET_PORT):
+        configure_shadnet()
         start_server([str(RIG / "server" / "shadnet.exe")], RIG / "server",
                      log_dir / "shadnet.log" if log_dir else None)
     if not port_open(BACKEND_PORT):
@@ -264,9 +321,9 @@ def add_guest2():
 
 
 def server_is_current() -> bool:
-    """Whether the rig's shadNet has the newest party boards (/bloodborne/party/vitals)."""
-    request = urllib.request.Request("http://127.0.0.1:32315/bloodborne/party/vitals",
-                                     data=b"probe 0 off 0 0 0 0 0 0 0 0",
+    """Whether the rig's shadNet has the newest party boards (/bloodborne/party/shown)."""
+    request = urllib.request.Request("http://127.0.0.1:32315/bloodborne/party/shown",
+                                     data=b"probe 0",
                                      headers={"X-ShadPS4-Bloodborne-Party": "probe:probe"})
     try:
         with urllib.request.urlopen(request, timeout=3) as response:
@@ -322,6 +379,12 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     env.update(SCENARIO_SETTINGS)
     env.update(settings or {})
     env.update(ENGINE.environment(role))
+    env.pop("SHADPS4_P2P_DELAY_MS", None)
+    if PING:
+        env["SHADPS4_P2P_DELAY_MS"] = latency.game_setting(PING)
+        if "BB_SHADNET_SERVER" in env:
+            env["BB_SHADNET_SERVER"] = f"127.0.0.1:{server_port(SHADNET_PORT)}"
+            env["BB_SHADNET_WEBAPI"] = f"http://127.0.0.1:{server_port(WEBAPI_PORT)}"
     # In the background: the games' windows (SDL, both engines) open and come up without taking
     # the focus from whatever the person at the PC is doing.
     env["SDL_WINDOW_ACTIVATE_WHEN_SHOWN"] = "0"
@@ -359,7 +422,7 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters",
         script_path = folder / "autoplay.txt"
         script_path.write_text("\n".join(script) + "\n", encoding="utf-8", newline="\n")
     set_aside(log_path(role))
-    ENGINE.prepare(role)
+    ENGINE.prepare(role, backend_port=server_port(BACKEND_PORT))
     env = game_environment(role, script_path, party, settings)
     if ENGINE.name == "emulator":
         return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
@@ -519,7 +582,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     stop_servers()
     start_servers(run_dir)
     if not server_is_current():
-        print("  The rig's shadNet is too old (no /bloodborne/party/vitals): copy "
+        print("  The rig's shadNet is too old (no /bloodborne/party/shown): copy "
               rf"{BB_ROOT}\out\server\shadnet.exe into {RIG}\server.")
         return False
     started = time.time()
@@ -637,7 +700,7 @@ def play(name: str) -> int:
     stop_servers()
     start_servers(run_dir)
     if not server_is_current():
-        print(rf"The rig's shadNet is too old (no /bloodborne/party/vitals): copy "
+        print(rf"The rig's shadNet is too old (no /bloodborne/party/shown): copy "
               rf"{BB_ROOT}\out\server\shadnet.exe into {RIG}\server.")
         stop_servers()
         return 2
@@ -673,7 +736,14 @@ def play(name: str) -> int:
     return 0
 
 
-def main(argv: list[str]) -> int:
+def ping_setting(text: str) -> tuple[int, int] | None:
+    try:
+        return latency.parse_ping(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("scenarios", nargs="*")
     parser.add_argument("--keep-servers", action="store_true",
@@ -694,8 +764,25 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--play", metavar="SCENARIO",
                         help="start a scenario's games with its settings and leave them to you "
                              "once they are in the world together")
-    args = parser.parse_args(argv)
+    parser.add_argument("--ping", type=ping_setting, default=latency.DEFAULT_PING,
+                        help="round trip in ms between the games and to the servers, \"80\" "
+                             f"or \"50-100\" (default {latency.DEFAULT_PING}; 0 for none)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str]) -> int:
+    args = parse_args(argv)
     use_engine(args.engine)
+    use_ping(args.ping)
+    proxies = start_delay_proxies() if args.play or args.scenarios or args.boot_check else []
+    try:
+        return act(args)
+    finally:
+        for proxy in proxies:
+            proxy.stop()
+
+
+def act(args: argparse.Namespace) -> int:
     if args.setup:
         if ENGINE.name != "port":
             print("--setup makes the port's rig folders: --engine port --setup")

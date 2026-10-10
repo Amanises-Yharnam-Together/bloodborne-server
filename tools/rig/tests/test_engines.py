@@ -96,6 +96,10 @@ class EngineTest(unittest.TestCase):
             port.prepare("host")
             self.assertEqual((port.role_dir("host") / "bbport.ini").read_text(encoding="utf-8"),
                              "show_fps=1\n", "a tester's own settings stay")
+            port.prepare("host", backend_port=21453)
+            self.assertEqual(json.loads(overrides.read_text(encoding="utf-8")),
+                             {"https://ss4.scej-network.jp:20443": "http://127.0.0.1:21453"},
+                             "or the proxy in front of it")
 
     def test_a_missing_build_or_game_is_named(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -220,6 +224,43 @@ class RunnerTest(unittest.TestCase):
             env = run_scenario.game_environment("host", None, "rig:x")
         # Off unless the scenario asks (the games' default is on), never from the PC's settings.
         self.assertEqual(env["SHADPS4_BLOODBORNE_PARTY_DEATH"], "0")
+
+    def test_a_ping_delays_the_games_traffic_both_to_each_other_and_to_the_servers(self):
+        run_scenario.use_engine("port")
+        run_scenario.use_ping((50, 100))
+        try:
+            env = run_scenario.game_environment("host", None, "rig:x")
+            self.assertEqual(env["SHADPS4_P2P_DELAY_MS"], "25-50", "half the ping each way")
+            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:33313", "through the proxy")
+            self.assertEqual(env["BB_SHADNET_WEBAPI"], "http://127.0.0.1:33315")
+            self.assertEqual(run_scenario.delayed_ports(), {33313: 32313, 33315: 32315,
+                                                            21453: 20453})
+            run_scenario.use_ping(None)
+            env = run_scenario.game_environment("host", None, "rig:x")
+            self.assertNotIn("SHADPS4_P2P_DELAY_MS", env)
+            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:32313")
+        finally:
+            run_scenario.use_ping(None)
+
+    def test_the_servers_udp_port_follows_the_one_the_games_reach(self):
+        # A game sends its STUN pings to the TCP port it reached + 1 (np_matching2_mm.cpp): with
+        # a ping that is the proxy's port + 1, which shadNet must listen on itself (UDP is not
+        # proxied: shadNet must see each game's own address; the games hold what they send).
+        config = "[General]\nUnsecuredPort=32313\nMatchingUdpPort=32314\nWebApiPort=32315\n"
+        run_scenario.use_ping((50, 100))
+        try:
+            self.assertEqual(run_scenario.matching_udp_port(), 33314)
+            self.assertEqual(run_scenario.with_matching_udp_port(config, 33314),
+                             config.replace("MatchingUdpPort=32314", "MatchingUdpPort=33314"))
+            run_scenario.use_ping(None)
+            self.assertEqual(run_scenario.matching_udp_port(), 32314)
+        finally:
+            run_scenario.use_ping(None)
+
+    def test_the_rig_plays_with_a_ping_unless_told(self):
+        self.assertEqual(run_scenario.parse_args([]).ping, (50, 100))
+        self.assertIsNone(run_scenario.parse_args(["--ping", "0"]).ping)
+        self.assertEqual(run_scenario.parse_args(["--ping", "200"]).ping, (200, 200))
 
     def test_a_boot_check_plays_nothing_and_meets_no_one(self):
         env = run_scenario.game_environment("host", None, "smoke:boot")
