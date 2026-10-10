@@ -18,9 +18,6 @@ its co-op are wired, built, packaged and tested.
   sends its character data (the host's step 3 -> 4 needs it: CSMultiPlayerIns, step 4 at
   0x01E50090 creates the character from the slot data) and have the guest send it again when
   the host comes back to its map.
-- **Friend's GPU crashes** (2026-10-10, RTX 3070 laptop, logs in C:\bb\logs\friend-20261010):
-  0xc0000005 on bb:VkRecorder (read 0x130) and twice on bb:Present (read 0x200 / 0x0). Not
-  looked at yet.
 - **Join stall: the guest connects but never joins** (rig ward-npc 20261010-200656, 1 of 25
   joins): the host summoned, both games' signaling came up, and the guest never removed its sign
   or called JoinRoom; both dropped the link 6 s later. The guest joins on the host's signaling,
@@ -44,9 +41,6 @@ its co-op are wired, built, packaged and tested.
   characters the host has unloaded; the shown board would carry a "backread removed" bit. Rig:
   `--play iosefka-new` (a copy of Kaniel's new character, rig/saves/new-character), scenarios
   iosefka-look / iosefka-new (pictures, census, dumps).
-- **DLSS 5** (DLSS-NR): leaked runtime only (nvngx_dlssnr.dll from NBA 2K27, injected by an
-  OptiScaler fork); no SDK, no documented inputs; not redistributable. Revisit if NVIDIA
-  publishes the SDK.
 
 ## Sync fixes and a ping on the rig (branch sync-fixes, 2026-10-10)
 
