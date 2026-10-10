@@ -3,6 +3,8 @@
 // of the swapchain image, and draws the overlay (menu, FPS counter, party HUD) into `Overlay()`;
 // Render() then writes both into the HDR10 swapchain image (shaders/hdr_output.frag). Everything
 // before it (upscalers, frame generation, the rig's pictures) keeps its SDR images.
+// With scene highlights (vk_scene_hdr.h) the frame's gain map goes into `Gain()` and scales the
+// picture's linear color instead of the stretch.
 
 #pragma once
 
@@ -23,6 +25,7 @@ public:
         float paper_white = 200.0f;
         float peak = 1000.0f;
         float highlights = 0.5f;
+        float use_gain = 0.0f; ///< 1: Gain() holds this frame's gain map
     };
 
     /// `sdr_format`: the frame's (and overlay's) format; `hdr_format`: the swapchain's.
@@ -41,8 +44,12 @@ public:
     [[nodiscard]] vk::ImageView OverlayView() const {
         return overlay.view;
     }
+    /// RG16F: r is the gain over the frame's linear color (1 where nothing is to be brightened).
+    [[nodiscard]] vk::Image Gain() const {
+        return gain.image;
+    }
 
-    /// Game in ShaderReadOnlyOptimal, Overlay in ShaderReadOnlyOptimal, `target` (the swapchain
+    /// Game, Overlay and Gain in ShaderReadOnlyOptimal, `target` (the swapchain
     /// image's view) in ColorAttachmentOptimal.
     void Render(vk::CommandBuffer cmdbuf, vk::ImageView target, vk::Extent2D extent,
                 const Settings& settings);
@@ -53,13 +60,14 @@ private:
         vk::ImageView view{};
         VmaAllocation allocation{};
     };
-    Image MakeImage(vk::Extent2D extent, vk::ImageUsageFlags usage, const char* name);
+    Image MakeImage(vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage,
+                    const char* name);
     void DestroyImage(Image& image);
 
     const Instance* instance{};
     vk::Format sdr_format{};
     vk::Extent2D extent{};
-    Image game, overlay;
+    Image game, overlay, gain;
     vk::UniquePipeline pipeline{};
     vk::UniquePipelineLayout pipeline_layout{};
     vk::UniqueDescriptorSetLayout desc_set_layout{};

@@ -477,11 +477,17 @@ void HdrRows() {
              "Яркость белого в картинке и интерфейсе (paper white). 200 — хорошее начало; в тёмной "
              "комнате ниже."),
            on, [&](int i) { Store(s.hdr_paper_white, BbSettings::HdrPaperWhiteNits[i], true); });
+    Toggle("hdr_scene", T("HDR scene highlights", "Света HDR из сцены"), s.hdr_scene,
+           T("Highlights (fire, lamps, sky) as bright as the game's 16-bit scene before its "
+             "tonemap. Off: the SDR picture's highlights are stretched.",
+             "Света (огонь, фонари, небо) такой яркости, как в 16-битной сцене игры до тонмаппинга. "
+             "Выкл: яркие места SDR картинки растягиваются."),
+           on);
     SliderRow("hdr_highlights", T("HDR highlights", "Света HDR"), s.hdr_highlights, 0.0f, 1.0f, 0.1f,
-              T("How far the brightest parts of the picture (fire, lamps, sky) reach toward the peak "
-                "brightness. 0 keeps the SDR picture.",
-                "Насколько самые яркие места картинки (огонь, фонари, небо) тянутся к пиковой "
-                "яркости. 0 — картинка как в SDR."),
+              T("How bright the highlights (fire, lamps, sky) get. With scene highlights 0.5 is "
+                "the scene as rendered; 0 keeps the SDR picture.",
+                "Насколько яркие света (огонь, фонари, небо). Со светами из сцены 0.5 — как в "
+                "сцене; 0 — картинка как в SDR."),
               on);
 }
 

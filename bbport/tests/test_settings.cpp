@@ -114,11 +114,13 @@ int main() {
     BbSettings::Load();
     assert(s.window_mode == BbSettings::Borderless && "the launcher's fullscreen is borderless");
     assert(!s.hdr && s.hdr_peak_nits == 1000 && s.hdr_paper_white == 200);
+    assert(s.hdr_scene && "highlights from the 16-bit scene by default");
     s.window_mode = BbSettings::ExclusiveFullscreen;
     s.hdr = true;
     s.hdr_peak_nits = 1500;
     s.hdr_paper_white = 250;
     s.hdr_highlights = 0.7f;
+    s.hdr_scene = false;
     BbSettings::Save();
     const std::string saved4 = Read(fourth);
     assert(saved4.find("window_mode=fullscreen\n") != std::string::npos);
@@ -126,10 +128,12 @@ int main() {
     assert(saved4.find("hdr_peak_nits=1500\n") != std::string::npos);
     assert(saved4.find("hdr_paper_white=250\n") != std::string::npos);
     assert(saved4.find("hdr_highlights=0.70\n") != std::string::npos);
+    assert(saved4.find("hdr_scene=0\n") != std::string::npos);
     s.hdr = false;
     BbSettings::Load();
     assert(s.window_mode == BbSettings::ExclusiveFullscreen && "the file's mode wins over BB_FULLSCREEN");
     assert(s.hdr && s.hdr_peak_nits == 1500 && s.hdr_paper_white == 250 && s.hdr_highlights == 0.7f);
+    assert(!s.hdr_scene);
     setenv("BB_FULLSCREEN", "0", 1);
     unlink(fourth);
     BbSettings::Load();

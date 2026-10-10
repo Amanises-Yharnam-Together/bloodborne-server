@@ -128,7 +128,7 @@ const char16_t* TextOf(u32 id) {
 // ---- The port's values the game's rows edit (ints: the list rows bind ints). ----
 enum Field : int {
     OutputRes, Upscaler, Preset, Sharpness, ShowFps, FpsLimit, DlssModel,
-    WindowModeField, Hdr, HdrPeak, HdrPaperWhite, HdrHighlights,
+    WindowModeField, Hdr, HdrScene, HdrPeak, HdrPaperWhite, HdrHighlights,
     ModelLod, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
 };
 int values[FieldCount];  // what the game's rows show and change (list rows bind ints)
@@ -170,6 +170,7 @@ void Fill(const BbSettings::Values& s, int* values) {
     values[DlssModel] = BbSettings::DlssModelIndex(s.dlss_model);
     values[WindowModeField] = std::clamp(s.window_mode.load(), 0, BbSettings::WindowModeCount - 1);
     values[Hdr] = s.hdr;
+    values[HdrScene] = s.hdr_scene;
     values[HdrPeak] = BbSettings::HdrPeakIndex(s.hdr_peak_nits);
     values[HdrPaperWhite] = BbSettings::HdrPaperWhiteIndex(s.hdr_paper_white);
     values[HdrHighlights] = std::clamp(int(std::lround(s.hdr_highlights / HighlightsStep)), 0, 10);
@@ -267,6 +268,10 @@ void DefineTexts() {
         Kind::Steps);
     row(Hdr, "HDR", "HDR", "HDR10 output (shown when HDR is on for this display in Windows)",
         "Вывод HDR10 (виден, когда для этого монитора в Windows включён HDR)", toggle, Kind::List, true);
+    row(HdrScene, "HDR scene highlights", "Света HDR из сцены",
+        "On: highlights as bright as the game's 16-bit scene. Off: the SDR picture stretched",
+        "Вкл: света как в 16-битной сцене игры. Выкл: растянутая SDR картинка", toggle, Kind::List,
+        true);
     {
         std::vector<u32> peaks, whites;
         for (const int nits : BbSettings::HdrPeakNits) {
@@ -289,8 +294,8 @@ void DefineTexts() {
             Kind::Steps, true);
     }
     row(HdrHighlights, "HDR highlights", "Света HDR",
-        "How far bright parts of the picture reach toward the peak: 0 none, 10 all the way",
-        "Насколько яркие места картинки тянутся к пику: 0 нет, 10 до конца", {}, Kind::Slider, true);
+        "0 none, 5 as bright as the scene (scene highlights), 10 brightest",
+        "0 нет, 5 как в сцене (света из сцены), 10 ярче всего", {}, Kind::Slider, true);
 
     // bbport co-op: the frame rate limit (a list, last: it opens below itself) and the DLSS model.
     page("Frame rate", "Частота кадров", "Frame rate limit and DLSS model (bbport)",
@@ -747,6 +752,7 @@ void Poll() {
     s.dlss_model = BbSettings::DlssModels[std::clamp(values[DlssModel], 0, BbSettings::DlssModelCount - 1)];
     s.window_mode = std::clamp(values[WindowModeField], 0, BbSettings::WindowModeCount - 1);
     s.hdr = values[Hdr] != 0;
+    s.hdr_scene = values[HdrScene] != 0;
     s.hdr_peak_nits = BbSettings::HdrPeakNits[std::clamp(values[HdrPeak], 0, BbSettings::HdrPeakCount - 1)];
     s.hdr_paper_white =
         BbSettings::HdrPaperWhiteNits[std::clamp(values[HdrPaperWhite], 0, BbSettings::HdrPaperWhiteCount - 1)];

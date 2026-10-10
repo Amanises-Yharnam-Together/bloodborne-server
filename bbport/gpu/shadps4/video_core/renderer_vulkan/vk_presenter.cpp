@@ -139,6 +139,7 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
       instance{window, EmulatorSettings.GetGpuId(), EmulatorSettings.IsVkValidationEnabled(),
                EmulatorSettings.IsVkCrashDiagnosticEnabled()},
       draw_scheduler{instance, true}, frame_generation{instance, draw_scheduler},
+      scene_hdr{instance, draw_scheduler},
       present_scheduler{instance}, flip_scheduler{instance},
       swapchain{instance, window}, runtime{instance, draw_scheduler},
       rasterizer{std::make_unique<Rasterizer>(instance, draw_scheduler, runtime, liverpool)},
@@ -168,6 +169,8 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     // bbport: frame generation presents two images a frame: the overlay's buffers cover them.
     BbOverlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images + 2);
     rasterizer->GetUpscaler().SetFrameGeneration(&frame_generation);
+    scene_hdr.SetSlots(num_images);
+    rasterizer->GetUpscaler().SetSceneHdr(&scene_hdr);
 }
 
 Presenter::~Presenter() {
@@ -636,6 +639,10 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     pp_settings.srgb_input =
         attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
 
+    // bbport: HDR output with scene highlights (vk_scene_hdr.h): this frame's gain map.
+    const auto hdr_job = scene_hdr.Prepare(frame->id, view_info.format, image_size);
+    frame->gain_slot = hdr_job.valid ? int(frame->id) : -1;
+
     // bbport: frame generation (vk_frame_generation.h): an interpolated frame between the
     // previous game frame and this one, made from this finished frame and its twin without the
     // UI (the library puts this frame's UI back over the interpolated one).
@@ -719,6 +726,17 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             pp_pass.Render(cmdbuf, hudless_pass, image_size, hudless_target, pp);
         }
     });
+    if (hdr_job.valid) {
+        const auto& s = BbSettings::Get();
+        const float headroom = float(s.hdr_peak_nits.load(std::memory_order_relaxed)) /
+                               float(std::max(s.hdr_paper_white.load(std::memory_order_relaxed), 1));
+        // hdr_highlights 0.5: the scene's own brightness.
+        const float strength = 2.0f * s.hdr_highlights.load(std::memory_order_relaxed);
+        draw_scheduler.Record([this, hdr_job, image_view, headroom,
+                               strength](vk::CommandBuffer cmdbuf) {
+            scene_hdr.Record(cmdbuf, hdr_job, image_view, headroom, strength);
+        });
+    }
     if (frame_dump) {
         // A raw command buffer: the dump records straight into it (direct recording), after the
         // recorded presenter passes above.
@@ -736,6 +754,15 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                 CopyRawDump(cmdbuf, dump, image, vk::ImageLayout::eGeneral);
             });
             EndRawDump(instance, draw_scheduler, std::move(dump));
+        }
+        // HDR scene highlights: the gain map (RG16F: gain, UI coverage).
+        RawDump gain_dump{};
+        if (hdr_job.valid && BeginRawDump(instance, hdr_job.size.width, hdr_job.size.height,
+                                          "hdr_gain", frame_dump_index, gain_dump)) {
+            draw_scheduler.Record([gain_dump, image = hdr_job.gain_image](vk::CommandBuffer cmdbuf) {
+                CopyRawDump(cmdbuf, gain_dump, image, vk::ImageLayout::eTransferSrcOptimal);
+            });
+            EndRawDump(instance, draw_scheduler, std::move(gain_dump));
         }
         ++frame_dump_index;
     }
@@ -788,6 +815,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             // Shown right before this frame (Present); it waits for the same submission.
             generated->ready_semaphore = frame->ready_semaphore;
             generated->ready_tick = frame->ready_tick;
+            generated->gain_slot = frame->gain_slot;
             if (fg_plan.present) {
                 frame->generated = generated;
             }
@@ -820,6 +848,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
 Frame* Presenter::PrepareBlankFrame(bool present_thread) {
     // Request a free presentation frame.
     Frame* frame = GetRenderFrame();
+    frame->gain_slot = -1;
 
     auto& scheduler = present_thread ? present_scheduler : draw_scheduler;
     scheduler.EndRendering();
@@ -971,6 +1000,13 @@ void Presenter::UpdateHdrOutput() {
     const bool supported = swapchain.HasHDR() && display_hdr;
     s.hdr_supported.store(supported, std::memory_order_relaxed);
     const bool wanted = supported && s.hdr.load(std::memory_order_relaxed);
+    // BB_HDR_SCENE_TEST=1: the gain maps are made with SDR output too (BB_FRAME_DUMP_TRIGGER
+    // saves them as hdr_gain), for checking them on a display without HDR.
+    static const bool scene_test = [] {
+        const char* env = std::getenv("BB_HDR_SCENE_TEST");
+        return env && *env == '1';
+    }();
+    scene_hdr.SetActive((wanted || scene_test) && s.hdr_scene.load(std::memory_order_relaxed));
     if (wanted != swapchain.GetHDR()) {
         std::printf("Presenter: HDR output %s\n", wanted ? "on (HDR10)" : "off (SDR)");
         swapchain.SetHDR(wanted);
@@ -1034,15 +1070,37 @@ void Presenter::RecordHdrOutput(vk::CommandBuffer cmdbuf, Frame* frame, vk::Exte
         BbOverlay::Render(cmdbuf, hdr_pass.OverlayView(), extent,
                           FitImage(frame->width, frame->height, extent.width, extent.height));
     }
-    const std::array to_read{transition(hdr_pass.Overlay(), Access::eColorAttachmentWrite,
-                                        Access::eShaderRead, Layout::eColorAttachmentOptimal,
-                                        Layout::eShaderReadOnlyOptimal)};
+    // The frame's gain map (vk_scene_hdr.h), placed like the frame; 1 in the borders.
+    const auto gain = frame->gain_slot >= 0 ? scene_hdr.GainImage(u32(frame->gain_slot))
+                                            : SceneHdr::Gain{};
+    const std::array to_fill{transition(hdr_pass.Gain(), Access::eNone, Access::eTransferWrite,
+                                        Layout::eUndefined, Layout::eTransferDstOptimal)};
+    barrier(to_fill);
+    const vk::ClearColorValue no_gain{std::array<float, 4>{1.0f, 0.0f, 0.0f, 0.0f}};
+    cmdbuf.clearColorImage(hdr_pass.Gain(), Layout::eTransferDstOptimal, no_gain, color_range);
+    if (gain.image) {
+        const vk::MemoryBarrier clear_done{.srcAccessMask = Access::eTransferWrite,
+                                           .dstAccessMask = Access::eTransferWrite};
+        cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                               vk::PipelineStageFlagBits::eTransfer,
+                               vk::DependencyFlagBits::eByRegion, clear_done, {}, {});
+        cmdbuf.blitImage(gain.image, Layout::eTransferSrcOptimal, hdr_pass.Gain(),
+                         Layout::eTransferDstOptimal,
+                         MakeImageBlitFit(gain.width, gain.height, extent.width, extent.height),
+                         vk::Filter::eLinear);
+    }
+    const std::array to_read{
+        transition(hdr_pass.Overlay(), Access::eColorAttachmentWrite, Access::eShaderRead,
+                   Layout::eColorAttachmentOptimal, Layout::eShaderReadOnlyOptimal),
+        transition(hdr_pass.Gain(), Access::eTransferWrite, Access::eShaderRead,
+                   Layout::eTransferDstOptimal, Layout::eShaderReadOnlyOptimal)};
     barrier(to_read);
     const auto& s = BbSettings::Get();
     hdr_pass.Render(cmdbuf, swapchain.ImageView(), extent,
                     {.paper_white = float(s.hdr_paper_white.load(std::memory_order_relaxed)),
                      .peak = float(s.hdr_peak_nits.load(std::memory_order_relaxed)),
-                     .highlights = s.hdr_highlights.load(std::memory_order_relaxed)});
+                     .highlights = s.hdr_highlights.load(std::memory_order_relaxed),
+                     .use_gain = gain.image ? 1.0f : 0.0f});
     const std::array to_present{transition(swapchain.Image(), Access::eColorAttachmentWrite,
                                            Access::eNone, Layout::eColorAttachmentOptimal,
                                            Layout::ePresentSrcKHR)};

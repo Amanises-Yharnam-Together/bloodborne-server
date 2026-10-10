@@ -29,6 +29,12 @@ void HdrOutputPass::Create(const Instance& instance_, vk::Format sdr_format_, vk
             .descriptorCount = 1,
             .stageFlags = vk::ShaderStageFlagBits::eFragment,
         },
+        vk::DescriptorSetLayoutBinding{
+            .binding = 2,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eFragment,
+        },
     };
     desc_set_layout = Check<"create HDR output descriptor set layout">(
         device.createDescriptorSetLayoutUnique({
@@ -123,15 +129,16 @@ void HdrOutputPass::Destroy() {
     }
     DestroyImage(game);
     DestroyImage(overlay);
+    DestroyImage(gain);
     extent = {};
 }
 
-HdrOutputPass::Image HdrOutputPass::MakeImage(vk::Extent2D size, vk::ImageUsageFlags usage,
-                                              const char* name) {
+HdrOutputPass::Image HdrOutputPass::MakeImage(vk::Extent2D size, vk::Format format,
+                                              vk::ImageUsageFlags usage, const char* name) {
     Image out;
     const VkImageCreateInfo image_ci = static_cast<VkImageCreateInfo>(vk::ImageCreateInfo{
         .imageType = vk::ImageType::e2D,
-        .format = sdr_format,
+        .format = format,
         .extent = {size.width, size.height, 1},
         .mipLevels = 1,
         .arrayLayers = 1,
@@ -148,7 +155,7 @@ HdrOutputPass::Image HdrOutputPass::MakeImage(vk::Extent2D size, vk::ImageUsageF
     out.view = Check<"create HDR output image view">(instance->GetDevice().createImageView({
         .image = out.image,
         .viewType = vk::ImageViewType::e2D,
-        .format = sdr_format,
+        .format = format,
         .subresourceRange{
             .aspectMask = vk::ImageAspectFlagBits::eColor,
             .levelCount = 1,
@@ -177,8 +184,10 @@ void HdrOutputPass::EnsureImages(vk::Extent2D size) {
     Check<"wait for the GPU before replacing the HDR output images">(instance->GetDevice().waitIdle());
     Destroy();
     using Usage = vk::ImageUsageFlagBits;
-    game = MakeImage(size, Usage::eTransferDst | Usage::eTransferSrc | Usage::eColorAttachment, "game");
-    overlay = MakeImage(size, Usage::eTransferDst | Usage::eColorAttachment, "overlay");
+    game = MakeImage(size, sdr_format,
+                     Usage::eTransferDst | Usage::eTransferSrc | Usage::eColorAttachment, "game");
+    overlay = MakeImage(size, sdr_format, Usage::eTransferDst | Usage::eColorAttachment, "overlay");
+    gain = MakeImage(size, vk::Format::eR16G16Sfloat, Usage::eTransferDst, "gain");
     extent = size;
 }
 
@@ -195,6 +204,11 @@ void HdrOutputPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView target, vk::E
             .imageView = overlay.view,
             .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
         },
+        vk::DescriptorImageInfo{
+            .sampler = *sampler,
+            .imageView = gain.view,
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        },
     };
     const std::array set_writes{
         vk::WriteDescriptorSet{
@@ -208,6 +222,12 @@ void HdrOutputPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView target, vk::E
             .descriptorCount = 1,
             .descriptorType = vk::DescriptorType::eCombinedImageSampler,
             .pImageInfo = &image_infos[1],
+        },
+        vk::WriteDescriptorSet{
+            .dstBinding = 2,
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .pImageInfo = &image_infos[2],
         },
     };
     const vk::RenderingAttachmentInfo attachment{

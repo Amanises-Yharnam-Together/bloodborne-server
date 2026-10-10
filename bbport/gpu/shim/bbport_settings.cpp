@@ -93,6 +93,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.hdr_paper_white = std::clamp(i, 50, 1000);
     } else if (key == "hdr_highlights") {
         v.hdr_highlights = Clamp(f, 0.0f, 1.0f);
+    } else if (key == "hdr_scene") {
+        v.hdr_scene = i != 0;
     } else if (key == "menu_pos") {
         float x = -1.0f, y = -1.0f;
         if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2 && x >= 0.0f && x <= 1.0f && y >= 0.0f &&
@@ -354,6 +356,7 @@ void Save() {
     put("hdr_peak_nits", std::to_string(v.hdr_peak_nits.load()));
     put("hdr_paper_white", std::to_string(v.hdr_paper_white.load()));
     put("hdr_highlights", fixed(v.hdr_highlights, 2));
+    put("hdr_scene", flag(v.hdr_scene));
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
     // Read by patches.py at start.
