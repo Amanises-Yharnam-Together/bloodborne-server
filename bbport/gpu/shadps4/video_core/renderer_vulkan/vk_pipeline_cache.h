@@ -7,6 +7,8 @@
 #include <condition_variable>
 #include <mutex>
 #include <optional>
+#include <memory>
+#include <unordered_map>
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
@@ -135,6 +137,8 @@ extern std::atomic<u32> g_bb_wait_timeouts;
 
 struct PreparedDraw;
 
+class PipelineCompiler;
+
 class PipelineCache {
 public:
     explicit PipelineCache(const Instance& instance, Scheduler& scheduler,
@@ -148,8 +152,10 @@ public:
     bool LoadGraphicsPipeline(Serialization::Archive& ar);
     bool LoadPipelineStage(Serialization::Archive& ar, size_t stage);
 
+    /// `indirect`: the draw's arguments are in memory (bbport: never skipped while compiling).
     const GraphicsPipeline* GetGraphicsPipeline(const DrawIndirectParams params = {},
-                                                const PreparedDraw* prepared = nullptr);
+                                                const PreparedDraw* prepared = nullptr,
+                                                bool indirect = false);
 
     /// bbport: worker side of draw preparation: selects the pipeline key for `sel.regs`. With
     /// BB_ASYNC_COMPILE it also compiles the programs, permutations and the pipeline that do
@@ -286,6 +292,15 @@ private:
                    std::vector<std::variant<GraphicsPipelineKey, ComputePipelineKey>>>
         module_related_pipelines;
 
+    /// bbport BB_ASYNC_PIPELINES: a new graphics pipeline of a pass drawn every frame is compiled
+    /// on worker threads (PipelineCompiler) while its draws go without it for a frame or two,
+    /// instead of the game standing still for the driver (18 ms a pipeline on a GTX 1060, 1-4 s
+    /// hitches on a first session). Other passes (one-time renders) compile at once, as before.
+    /// A draw-prep worker or a draw that needs it meanwhile finds the key claimed in
+    /// pipelines_compiling (skippable draws go without, others wait).
+    bool AsyncSkippable(const PipelineSelection& sel, bool indirect);
+    u64 async_started = 0, async_skipped = 0, async_waited = 0; ///< statistics
+    std::unique_ptr<PipelineCompiler> compiler; ///< joined first, in ~PipelineCache
     std::jthread driver_cache_saver; // last: stops before anything it uses is destroyed
 };
 

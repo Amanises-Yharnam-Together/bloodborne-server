@@ -117,6 +117,11 @@ public:
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     void ReadMemory(VAddr device_addr, u64 size, bool is_write = false, bool assume_locks = false);
 
+    /// bbport BB_LAYER_READ_TRAPS: a CPU access hit a page whose newest data the GPU wrote into a
+    /// VRAM copy only: the block's GPU data is copied back into the game's memory first (on the
+    /// GPU command thread unless `assume_locks`). False: not such a page.
+    bool LayerReadTrapHit(VAddr address, bool assume_locks);
+
     /// bbport: a new draw or dispatch is being recorded: the per-binding housekeeping of
     /// EnsureResident (unmaps, demotions, assets, late writes) runs once for it, not per binding.
     void NewPacket() noexcept {
@@ -401,8 +406,8 @@ private:
     void LayerProcessIdle();
     /// VRAM near the texture collector's critical mark: idle mirrors go back in place.
     void LayerYieldToImages(u32 now);
-    /// Cuts the room to grow (LayerGrowthEnd) from mirrors until `wanted` bytes are freed.
-    u64 LayerTrimSlack(u64 wanted);
+    /// Makes mirrors with memory left without valid blocks again over those blocks only.
+    u64 LayerCompactMirrors(u64 wanted);
     /// The GPU writes [address, address + size) in the submission being recorded (write ticks).
     void NoteWriteTick(VAddr address, u64 size);
     /// Page table entry of a block (LayerPagedRecord), its writes, and rewrites after changes.
@@ -434,6 +439,11 @@ private:
     /// Headroom below the texture collector's critical mark: copies stop at it, and past
     /// ShrinkCriticalMargin idle mirrors go back in place (LayerProcessIdle).
     static constexpr u64 PromoteCriticalMargin = 384_MB;
+    /// Freed beyond the pause mark when stale mirrors go (LayerYieldToImages): room for the
+    /// copies waiting.
+    static constexpr u64 StaleHeadroom = 256_MB;
+    /// The mirrors' share of the driver's VRAM budget the texture collector's mark does not take.
+    static u64 LayerMirrorFloor(u64 budget);
     static constexpr u64 ShrinkCriticalMargin = 128_MB;
 
     const Vulkan::Instance& instance;
@@ -500,9 +510,28 @@ private:
     /// Watched blocks that went back in place for writes (LayerDemote): not watched again.
     IntervalList<> layer_watch_failed;
     std::unordered_map<u64, u8> layer_watch_strikes; ///< watched blocks sent back for requests
+    /// Ranges a GPU-writing binding sent back in place once (LayerBind): the second time they
+    /// stay there (dynamic_blocks).
+    IntervalList<> layer_write_bounces;
+    /// Per 2 MiB of guest addresses (as group_use): the second a binding last took a mirror there
+    /// directly (LayerBind), or blocks there moved to VRAM. Paged bindings do not count. Stale
+    /// ones go back in place first when VRAM is short (LayerYieldToImages).
+    std::vector<u32> layer_group_use;
+    void NoteDirectUse(VAddr address, u64 size);
     /// Dynamic blocks made so by the CPU's writes (ProcessDemotions), not by the GPU's.
     IntervalList<> layer_cpu_hot;
     u64 layer_volatile_refresh_bytes = 0; ///< statistics
+    u64 layer_volatile_in_pass_bytes = 0; ///< statistics: volatile reads bound in place in passes
+    /// BB_LAYER_READ_TRAPS: pages trapped for reads since the GPU wrote them in a VRAM copy only
+    /// (their mutex: the draw recording thread arms, the GPU command thread lifts), the newest
+    /// copy back recorded (a page without GPU data left waits for it), statistics.
+    RangeSet layer_read_trapped;
+    std::mutex layer_read_trap_mutex;
+    u64 layer_copy_back_tick = 0;
+    std::atomic<u64> layer_read_trap_hits{0}, layer_read_trap_bytes{0};
+    static bool LayerReadTrapsOn();
+    void LayerArmReadTraps(VAddr address, u64 size);
+    void LayerCopyBackForCpu(VAddr address);
     u64 layer_watch_refreshes = 0;        ///< statistics: watched blocks uploaded again
     /// Statistics: trap hits announced; by the game's code on watched / other blocks; by other
     /// code on watched / other blocks.
