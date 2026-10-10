@@ -791,12 +791,23 @@ void SaveTab() {
                              categories[category] == BbSaveEditor::GoodsCategory)) {
         quantity = std::clamp(quantity + step, 1, 99);
     }
+    static int upgrade = 0;
+    std::snprintf(text, sizeof(text), "+%d", upgrade);
+    if (const int step = Row("upgrade", T("Upgrade", "Улучшение"), text,
+                             T("Weapons: given at this level (+0 .. +10).",
+                               "Оружие: выдаётся с этим уровнем (+0 .. +10)."),
+                             categories[category] == BbSaveEditor::WeaponCategory)) {
+        upgrade = std::clamp(upgrade + step, 0, 10);
+    }
     if (Row("give", T("Give", "Выдать"), nullptr,
             T("Goods over the carry limit go to storage.",
               "Сверх лимита предметы уходят в хранилище."),
             true) != 0) {
         const auto* item = shown[item_index];
-        BbSaveEditor::GiveItem(item->category, item->id,
+        const std::uint32_t id = item->category == BbSaveEditor::WeaponCategory
+                                     ? BbSaveEditor::UpgradedWeaponId(item->id, upgrade)
+                                     : item->id;
+        BbSaveEditor::GiveItem(item->category, id,
                                item->category == BbSaveEditor::GoodsCategory ? quantity : 1);
     }
 }

@@ -56,6 +56,14 @@ int main() {
     }
     assert(vial && chikage && cap);
     assert(ParseItems("not json", "", "").empty());
+
+    // Kaniel 2026-10-10: weapons given upgraded. The game's EquipParamWeapon has a row per level:
+    // Chikage 2000000 .. 2001000 (+10), the Hunter Pistol 6000000 .. 6001000.
+    assert(UpgradedWeaponId(2000000, 0) == 2000000);
+    assert(UpgradedWeaponId(2000000, 10) == 2001000);
+    assert(UpgradedWeaponId(6000000, 3) == 6000300);
+    assert(UpgradedWeaponId(2000000, 12) == 2001000 && UpgradedWeaponId(2000000, -1) == 2000000);
+    assert(UpgradedWeaponId(2000700, 2) == 2000200) ; // a level is from the weapon's base
     std::puts("save editor: ok");
     return 0;
 }

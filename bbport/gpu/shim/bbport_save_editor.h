@@ -76,6 +76,13 @@ inline std::array<std::uint8_t, 0x24> StatsRequest(std::int32_t level,
     return request;
 }
 
+/// A weapon's id at an upgrade level (+0 .. +10): the game's weapon table keeps one row per level,
+/// the base id + 100 per level (Chikage 2000000, +10 2001000).
+inline std::uint32_t UpgradedWeaponId(std::uint32_t id, int level) {
+    const std::uint32_t base = id - id % 10000 + id % 100; // a level's id back to +0
+    return base + 100u * static_cast<std::uint32_t>(level < 0 ? 0 : level > 10 ? 10 : level);
+}
+
 /// The PC save editor's item lists (resources/items.json, weapons.json, armors.json: goods in
 /// groups, weapons by hand, armor by id), sorted by category and name; empty on bad input.
 std::vector<Item> ParseItems(std::string_view goods, std::string_view weapons,
