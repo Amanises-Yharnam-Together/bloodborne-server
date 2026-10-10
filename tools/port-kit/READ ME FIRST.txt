@@ -58,13 +58,19 @@ PARTY DEATH (AS IN ELDEN RING NIGHTREIGN)
   On unless you answered "no" in SETUP; both players should answer the same.
   - A killing blow puts you down at 1 HP instead of killing you while your partner
     stands on the same map. Enemies leave you alone while you are down.
-  - Your partner revives you by hitting you: walk up and press R1 or R2 right next to
-    you, 3 hits the first time, 6 the next, 12 after that (this starts over after 3
-    minutes without going down, or at a lamp). Progress drains if they stop hitting.
+  - Your partner revives you by striking you: walk up and press R1 or R2 right next to
+    you. Each strike deals their weapon's attack rating (R2 half again): they must deal
+    your max HP the first time, twice that the next, four times after that (this starts
+    over after 3 minutes without going down, or at a lamp). A stronger weapon revives
+    sooner. Progress drains if they stop striking.
   - Hold Circle for 3 seconds to give up: you die as before and wake at your lamp.
   - When everyone on a map is down, everyone there dies, drops their echoes and
     wakes at their own last lamp with the map reset. Alone on a map, a death is such
     a wipe at once.
+
+BLOODSTAINS
+  No enemy steals a bloodstain any more (no blue-eyed enemy holding your echoes): your
+  bloodstain stays where you died until you pick it up, in co-op and solo.
 
 CONTROLS AND SETTINGS
   - In the game, Insert (or L3+R3 on a gamepad) opens the port's menu: resolution,
