@@ -3,8 +3,10 @@
 // native port, through the C interface in gpu/bbcoop.h, and the shadPS4 services it uses that
 // this port has no emulator for (the eboot's place, param.sfo, shared trophies).
 
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -18,6 +20,7 @@
 #include "common/memory_patcher.h"
 #include "common/singleton.h"
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/cpu_patches.h"
 #include "core/file_format/psf.h"
@@ -55,8 +58,25 @@ extern "C" void bbcoop_note_segment(uint64_t address, uint64_t size, unsigned fl
     Core::NoteImageSegment(static_cast<uintptr_t>(address), size, flags);
 }
 
+namespace {
+std::string game_folder; // app0, as bbcoop_install got it
+} // namespace
+
+extern "C" int bbcoop_game_file(const char* relative, char* out, size_t size) {
+    if (game_folder.empty()) {
+        return 0;
+    }
+    const auto path = (std::filesystem::path{game_folder} / relative).string();
+    if (path.size() + 1 > size) {
+        return 0;
+    }
+    std::memcpy(out, path.c_str(), path.size() + 1);
+    return 1;
+}
+
 extern "C" void bbcoop_install(unsigned char* image, uint64_t eboot_size, void* code,
                                uint64_t code_size, const char* app0) {
+    game_folder = app0 != nullptr ? app0 : "";
     auto* param_sfo = Common::Singleton<PSF>::Instance();
     const auto sfo = std::filesystem::path{app0 != nullptr ? app0 : "."} / "sce_sys" / "param.sfo";
     if (!param_sfo->Open(sfo)) {
@@ -96,6 +116,50 @@ extern "C" int bbcoop_autoplay_pad(uint32_t* buttons, uint8_t sticks[4]) {
     *buttons = held;
     std::memcpy(sticks, moved.data(), moved.size());
     return 1;
+}
+
+extern "C" void bbcoop_party_death_pad(uint32_t* buttons, uint8_t sticks[4], uint8_t* l2,
+                                       uint8_t* r2) {
+    std::array<std::uint8_t, 4> moved{};
+    std::memcpy(moved.data(), sticks, moved.size());
+    Core::Bloodborne::FilterPartyDeathPad(*buttons, moved, *l2, *r2);
+    std::memcpy(sticks, moved.data(), moved.size());
+}
+
+static_assert(BBCOOP_VITAL_OFF == static_cast<int>(Core::Bloodborne::Vital::Off) &&
+              BBCOOP_VITAL_UP == static_cast<int>(Core::Bloodborne::Vital::Up) &&
+              BBCOOP_VITAL_DOWN == static_cast<int>(Core::Bloodborne::Vital::Down) &&
+              BBCOOP_VITAL_DEAD == static_cast<int>(Core::Bloodborne::Vital::Dead));
+
+extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
+    *panel = bbcoop_panel{.revive_target = -1};
+    Core::Bloodborne::PartyPanel party;
+    if (!Core::Bloodborne::ReadPartyPanel(party)) {
+        return 0;
+    }
+    const auto count = std::min<std::size_t>(party.members.size(), BBCOOP_PANEL_MEMBERS);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& member = party.members[index];
+        auto& out = panel->members[index];
+        std::snprintf(out.name, sizeof(out.name), "%s", member.name.c_str());
+        out.vital = static_cast<int>(member.vital);
+        out.here = member.here ? 1 : 0;
+        out.hp = member.hp;
+        out.hp_max = member.max;
+        out.landed = member.landed;
+        out.needed = member.needed;
+    }
+    panel->member_count = static_cast<int>(count);
+    panel->revive_target = party.revive_target < static_cast<s32>(count) ? party.revive_target : -1;
+    panel->vital = static_cast<int>(party.vital);
+    panel->landed = party.landed;
+    panel->needed = party.needed;
+    panel->give_up = party.give_up;
+    return 1;
+}
+
+extern "C" float bbcoop_revive_share(uint32_t landed, uint32_t needed) {
+    return Core::Bloodborne::ReviveShare(landed, needed);
 }
 
 extern "C" void bbcoop_file_opened(const char* guest_path) {

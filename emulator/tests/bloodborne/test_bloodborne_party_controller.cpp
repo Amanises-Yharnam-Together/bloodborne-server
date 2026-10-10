@@ -733,11 +733,11 @@ TEST(BloodborneGuestProgress, EachTripGetsTheWorldChangesOnce) {
 // (the first one: the Hunter's Dream 2102962; a kidnapping: the Gaol 2802959). In a loaded block
 // the player is moved there, otherwise it travels; after that trip it never travels again.
 TEST(BloodborneDeaths, APartyDeathWakesWhereTheGameSays) {
-    EXPECT_EQ(ChooseDeathRespawn(2412951, true, false), DeathRespawn::MoveToPoint);
-    EXPECT_EQ(ChooseDeathRespawn(2102962, false, false), DeathRespawn::Travel);
-    EXPECT_EQ(ChooseDeathRespawn(2102962, false, true), DeathRespawn::StayPut);
-    EXPECT_EQ(ChooseDeathRespawn(-1, false, false), DeathRespawn::StayPut);
-    EXPECT_EQ(ChooseDeathRespawn(0, false, false), DeathRespawn::StayPut);
+    EXPECT_EQ(ChooseDeathRespawn(2412951, true, false, false), DeathRespawn::MoveToPoint);
+    EXPECT_EQ(ChooseDeathRespawn(2102962, false, false, false), DeathRespawn::Travel);
+    EXPECT_EQ(ChooseDeathRespawn(2102962, false, true, false), DeathRespawn::StayPut);
+    EXPECT_EQ(ChooseDeathRespawn(-1, false, false, false), DeathRespawn::StayPut);
+    EXPECT_EQ(ChooseDeathRespawn(0, false, false, false), DeathRespawn::StayPut);
 }
 
 // SHADPS4_BLOODBORNE_TRACE_FLAG=<flag> points the flag tracer at one flag in a session.
@@ -994,6 +994,16 @@ TEST(BloodborneGuestBloodstain, LetsAWhitePhantomPickUpItsOwnBloodstain) {
     EXPECT_EQ(patches[0].offset, 0x0137EBC7u);
     EXPECT_EQ(patches[0].original, (std::vector<u8>{0xB9, 0x30, 0x00, 0x00, 0x00}));
     EXPECT_EQ(patches[0].patched, (std::vector<u8>{0xB9, 0x70, 0x00, 0x00, 0x00}));
+}
+
+// No echo theft, everywhere (Kaniel): the steal's `je` (to the store of the stolen flag) is
+// nopped, so it always returns without taking the bloodstain.
+TEST(BloodborneGuestBloodstain, NoEnemyStealsTheBloodstain) {
+    const auto& patches = NoEchoTheftPatches();
+    ASSERT_EQ(patches.size(), 1u);
+    EXPECT_EQ(patches[0].offset, 0x018E7613u);
+    EXPECT_EQ(patches[0].original, (std::vector<u8>{0x74, 0x09}));
+    EXPECT_EQ(patches[0].patched, (std::vector<u8>{0x90, 0x90}));
 }
 
 // Host death (Kaniel): like a guest's, with no world reload. Native SoloPlayDeath_2 (the death

@@ -22,6 +22,12 @@ wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, fo
 expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
 expect-others-near <n> <meters> (n other players alive that close), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
+Party death (the scenario's "settings" switch it on): rise <metres> (straight up, to fall),
+approach-downed (beside the nearest downed member on the map), revive-downed [<timeout>] (R1
+on the downed member until nobody on the map is down), wait-vital <up|down|dead>
+[<timeout>] (this player's state), wait-member-vital <up|down|dead> [<timeout>] (another
+member's, on the vitals board). shot <name>: the port's picture of its next frame, overlays and
+all (the party HUD), kept in the run's folder as <role>-<name>.png; the emulator skips it.
 """
 
 HUNTERS_DREAM = 2102962
@@ -49,6 +55,22 @@ SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
 # A member's game died: the others' games close the room it was in (and open a new one for its
 # return), which check_party_log reports as leaving the session outside a trip.
 CRASH_CLEANUP = [r"left the session outside a trip"]
+# Party death (SHADPS4_BLOODBORNE_PARTY_DEATH): a lethal hit puts a member down while another
+# stands on its map. A lethal fall is the hit the rig can deal: 1 HP left, then 25 m up
+# (from the first lamp it lands on a ledge 15 m down, about 40% of max HP; 8 m up did nothing, and
+# a 25 m drop kills outright).
+PARTY_DEATH = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"}
+# After a real death each player has its own bloodstain where it fell (GameDataMan's record on
+# this map) and no enemy takes it (no echo theft): the bloodstain state lines say so.
+BLOODSTAIN_DROPPED = (r"bloodstain state map=0x18010000 has_mark=1 record_valid=\d+ "
+                      r"record_30=-?\d+ record_38=\d+ record_block=0x18010000")
+BLOODSTAIN_STOLEN = r"bloodstain state .* stain_hidden=1"
+LETHAL_FALL = ["hurt self 1", "rise 25"]
+# A first down takes three hits (R1 beside the downed member), at least 0.4 s apart. Each R1
+# lunges the hitter on, out of reach (2.5 m) after one, so it steps back beside it before each.
+# Revive hits until the downed member is up: how many depends on the striker's weapon (party death
+# takes its attack rating in damage).
+REVIVE_HITS = ["revive-downed 60"]
 
 
 def only_kill(handle: str) -> list[str]:
@@ -695,6 +717,169 @@ SCENARIOS = {
         "expect": {"host": [r"live player died in a party session"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
+    },
+    "down-revive": {
+        "about": "party death: the guest falls with 1 HP and goes down instead of dying; the host "
+                 "comes over and strikes it until its weapon has dealt the guest's max HP, and it gets up with half its HP",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
+                     "shot sees-down", "approach-downed", "wait 2", "shot revive-prompt",
+                     *REVIVE_HITS, "wait-member-vital up 30", "wait 3", "shot after-revive",
+                     "wait 2", "snapshot", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", *LETHAL_FALL, "wait-vital down 30",
+                      "wait 2", "shot down", "wait 1", "expect-hp self == 1", "wait-vital up 90",
+                      "wait 3", "shot after-revive", "snapshot", "expect-hp self > 1",
+                      "expect-session 2"],
+        },
+        "expect": {
+            "host": [r"party death: revive hit on"],
+            "guest": [r"party death: down \d+ on map 0x18010000",
+                      r"party death: revived from down"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party guest died"]},
+        "timeout": 600,
+    },
+    "give-up": {
+        "about": "party death: the downed guest holds Circle and dies as a party member dies "
+                 "today: it gets up at its lamp without a reload and the session holds",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
+                     "wait 60", "snapshot", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", *LETHAL_FALL, "wait-vital down 30",
+                      "wait 2", "press circle 3600", "wait-vital dead 15", "wait-vital up 90",
+                      "wait 10", "snapshot", "expect-session 2"],
+        },
+        "expect": {
+            "guest": [r"party death: giving up ends down \d+; dies \(reset=false",
+                      r"party guest died; revived"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"reset=true"]},
+        "timeout": 600,
+    },
+    "wipe": {
+        "about": "party death: the guest goes down, then the host falls with nobody left "
+                 "standing; both die (the guest by the server's wipe) and wake at their lamps "
+                 "with the map reloaded, and the session holds",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait-member-vital down 120", "wait 3",
+                     *LETHAL_FALL, "wait-vital dead 30", "wait-vital up 120",
+                     "wait-members 2 240", "wait 15", "snapshot", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", *LETHAL_FALL, "wait-vital down 30",
+                      "wait-vital dead 60", "wait-vital up 120", "wait-members 2 240", "wait 15",
+                      "snapshot", "expect-session 2"],
+        },
+        "expect": {
+            "host": [r"party death: died for real on map 0x18010000 \(reset=true\)",
+                     r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
+            "guest": [r"party death: wipe \d+ ends down \d+; dies \(reset=true",
+                      r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
+        },
+        "forbid": {"host": SESSION_HOLDS + [BLOODSTAIN_STOLEN],
+                   "guest": SESSION_HOLDS + [BLOODSTAIN_STOLEN]},
+        "timeout": 900,
+    },
+    "down-alone": {
+        "about": "party death: with the host away in the Hunter's Dream nobody else stands on the "
+                 "guest's map, so its lethal fall is a real death that reloads the map (a wipe "
+                 "of one)",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 120", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
+                     "wait 10", "snapshot", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 70", *LETHAL_FALL, "wait-vital dead 30",
+                      "wait-vital up 120", "wait-members 2 300", "wait 10", "snapshot",
+                      "expect-session 2"],
+        },
+        "expect": {
+            "guest": [r"party death: died for real on map 0x18010000 \(reset=true\)",
+                      r"travelling there \(reset=true\)"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party death: down \d+"]},
+        "timeout": 900,
+    },
+    "down-by-enemy": {
+        "about": "party death: the guest with 1 HP stands next to an ordinary enemy until it "
+                 "hits; it goes down, the enemy leaves it alone (still 1 HP after 20 s), and the "
+                 "host revives it",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 150",
+                     "wait 22", "approach-downed", "wait 2", *REVIVE_HITS,
+                     "wait 5", "snapshot", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", "hurt self 1", f"approach {ENEMY}",
+                      "wait-vital down 90", "wait 20", "expect-hp self == 1", "wait-vital up 90",
+                      "wait 3", "snapshot", "expect-hp self > 1", "expect-session 2"],
+        },
+        "expect": {
+            "host": [r"party death: revive hit on"],
+            "guest": [r"party death: down \d+ on map 0x18010000",
+                      r"party death: enemies forgot \d+ target\(s\) on downed players "
+                      r"\(self down=true",
+                      r"party death: revived from down"],
+        },
+        "forbid": {"host": SESSION_HOLDS,
+                   "guest": SESSION_HOLDS + [r"party death: killed while down"]},
+        "timeout": 600,
+    },
+    "down-revive3": {
+        "about": "party death in a party of three: the guest goes down and the second guest, "
+                 "not the host, revives it",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait-member-vital down 180",
+                     "wait 2", "shot sees-down", "wait 38", "snapshot", "expect-session 3"],
+            "guest": [START, "wait-session 3 480", "wait 20", *LETHAL_FALL, "wait-vital down 30",
+                      "wait 2", "shot down", "wait 1", "expect-hp self == 1", "wait-vital up 90",
+                      "wait 3", "shot after-revive", "snapshot", "expect-hp self > 1",
+                      "expect-session 3"],
+            "guest2": [START, "godmode", "wait-session 3 480", "wait-member-vital down 180",
+                       "shot sees-down", "approach-downed", "wait 2", "shot revive-prompt",
+                       *REVIVE_HITS, "wait 5", "snapshot", "expect-session 3"],
+        },
+        "expect": {
+            "guest": [r"party death: down \d+ on map 0x18010000",
+                      r"party death: revived from down"],
+            "guest2": [r"party death: revive hit on"],
+        },
+        "forbid": {"host": SESSION_HOLDS + [r"party death: revive hit on"],
+                   "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
+        "timeout": 900,
+    },
+    "wipe3": {
+        "about": "party death in a party of three: both guests go down, then the host falls with "
+                 "nobody left standing; all three die and wake at their lamps with the map "
+                 "reloaded, and the session holds",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "wait-session 3 480", "wait-member-vital down 180", "wait 25",
+                     "shot sees-both-down", *LETHAL_FALL, "wait-vital dead 30",
+                     "wait-vital up 150", "wait-members 3 300", "wait 15", "snapshot",
+                     "expect-session 3"],
+            "guest": [START, "wait-session 3 480", "wait 20", *LETHAL_FALL, "wait-vital down 30",
+                      "wait-vital dead 90", "wait-vital up 150", "wait-members 3 300", "wait 15",
+                      "snapshot", "expect-session 3"],
+            "guest2": [START, "wait-session 3 480", "wait-member-vital down 180", "wait 5",
+                       *LETHAL_FALL, "wait-vital down 30", "wait-vital dead 90",
+                       "wait-vital up 150", "wait-members 3 300", "wait 15", "snapshot",
+                       "expect-session 3"],
+        },
+        "expect": {
+            "host": [r"party death: died for real on map 0x18010000 \(reset=true\)",
+                     r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
+            "guest": [r"party death: wipe \d+ ends down \d+; dies \(reset=true",
+                      r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
+            "guest2": [r"party death: down \d+ on map 0x18010000",
+                       r"party death: wipe \d+ ends down \d+; dies \(reset=true",
+                       r"travelling there \(reset=true\)", BLOODSTAIN_DROPPED],
+        },
+        "forbid": {"host": SESSION_HOLDS + [BLOODSTAIN_STOLEN],
+                   "guest": SESSION_HOLDS + [BLOODSTAIN_STOLEN],
+                   "guest2": SESSION_HOLDS + [BLOODSTAIN_STOLEN]},
+        "timeout": 1200,
     },
     "soak": {
         "about": "half an hour of trips back and forth with the session up (leaks, slow growth, "

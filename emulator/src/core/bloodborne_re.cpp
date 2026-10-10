@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include <fmt/ranges.h>
 #include "common/logging/log.h"
 #include "common/memory_patcher.h"
 #include "common/path_util.h"
@@ -2031,6 +2032,8 @@ bool lamp_rest_hooks_installed{};
 bool lamp_rests_enabled = LampRestsEnabled(std::getenv("SHADPS4_BLOODBORNE_LAMP_REST"));
 std::optional<std::chrono::steady_clock::time_point> lamp_touch_animation_at;
 alignas(16) std::array<u8, 0x100> no_talk_flag_range{}; // +0xA0 = +0xA4 = 0
+// Every lamp the local player used (party death forgets its old downs at a lamp).
+std::atomic<u32> lamp_uses{};
 
 // What the game thread tells the rest board client, and what the client last heard back.
 std::atomic<bool> rest_board_active{};
@@ -2309,6 +2312,7 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
     if (!lamp_rest_hooks_installed || !IsLampTravelFlag(flag)) {
         return;
     }
+    lamp_uses.fetch_add(1);
     if (!InPartySession()) {
         LOG_INFO(Debug, "Bloodborne lamp travel {} outside a party session", flag);
         return;
@@ -2541,9 +2545,9 @@ std::string LocalOnlineId() {
     return std::string{online_id.data, strnlen(online_id.data, sizeof(online_id.data))};
 }
 
-void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string party) {
-    // The boards know a member by its online id (hex, see BoardMemberOfOnlineId): a party of
-    // three tells its session members apart by it. Random if shadNet never signs in.
+// The boards know a member by its online id (hex, see BoardMemberOfOnlineId): a party of three
+// tells its session members apart by it. Random if shadNet never signs in.
+std::string FindBoardMember(std::stop_token stop) {
     std::string member;
     for (int attempt = 0; attempt < 120 && !stop.stop_requested() && member.empty(); ++attempt) {
         if (const std::string online_id = LocalOnlineId(); !online_id.empty()) {
@@ -2560,6 +2564,11 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
         }
         member = BytesToHex(random_bytes);
     }
+    return member;
+}
+
+void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string party) {
+    const std::string member = FindBoardMember(stop);
     httplib::Client client(base_url);
     client.set_connection_timeout(std::chrono::seconds{1});
     client.set_read_timeout(std::chrono::seconds{2});
@@ -3343,6 +3352,7 @@ void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
 
 void TickAutoplay();
+void TickPartyDeath();
 
 void ReopenClosedPartySession();
 
@@ -3361,6 +3371,7 @@ void TickPartyController() {
     }
     LogOtherPlayersChanges();
     ObserveLocalAliveState();
+    TickPartyDeath();
     TickLampRest();
     if (!party_controller) {
         return;
@@ -3438,6 +3449,22 @@ void InstallGhostDeathRevive(u64 base, u64 image_size) {
         LOG_ERROR(Debug, "Bloodborne guest bloodstain pickup patch signature mismatch");
     }
     LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests revive in the host's world");
+}
+
+// See NoEchoTheftPatches: no enemy steals a bloodstain, in or out of a party.
+void InstallNoEchoTheft(u64 base, u64 image_size) {
+    const auto& patches = NoEchoTheftPatches();
+    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
+            return MatchesImage(base, image_size, patch);
+        })) {
+        LOG_ERROR(Debug, "Bloodborne no-echo-theft patch signature mismatch");
+        return;
+    }
+    for (const auto& patch : patches) {
+        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
+                    patch.patched.size());
+    }
+    LOG_INFO(Debug, "Bloodborne no echo theft: enemies leave bloodstains where they are");
 }
 
 // A host death with a party revives the host like a guest (no world reload) and the guests skip
@@ -6261,6 +6288,22 @@ bool PS4_SYSV_ABI UpdateGuestBloodMark() {
     return result;
 }
 
+// Party death (see PartyDeathEnabled). The IsNoDead exit hook (KeepPartyMemberUp) keeps the
+// local player at 1 HP where a lethal hit would kill it while it is armed (another member stands
+// on its map) or down; the party tick (TickPartyDeath) puts it down, gets it up, lets it give up
+// and wipes it; the vitals board client (RunVitalsBoardClient) tells the party.
+const bool party_death_enabled = PartyDeathEnabled(std::getenv("SHADPS4_BLOODBORNE_PARTY_DEATH"));
+bool party_death_hook_installed{};
+// What the game thread tells the hook: the local player's data module while party death is live
+// (0 otherwise: the hook leaves everyone alone), and whether a lethal hit puts it down.
+std::atomic<u64> party_death_data{};
+std::atomic<bool> party_death_armed{};
+std::atomic<bool> party_death_down{};
+// Lethal hits the hook kept from killing the armed player: each change puts it down.
+std::atomic<u32> party_death_catches{};
+// The next death respawn resets the map (see DeathResetsMap).
+std::atomic<bool> party_death_reset{};
+
 // The lamp a death respawns the player at: resting at a lamp stores its respawn point id in
 // GlobalState +0x1528 (SetReturnPointEntityId), and a death respawn resolves that id with
 // 0x0154AFC0 against the loaded blocks ([0x0553B148], like Warp.RespawnTransform.Resolve). The
@@ -6268,8 +6311,10 @@ bool PS4_SYSV_ABI UpdateGuestBloodMark() {
 // then moved there the way the Warp binding moves a character (vtable +0x5F8, then +0x1E1 |= 2).
 // Otherwise the guest stays where it fell.
 // A point on another map (see ChooseDeathRespawn: the first death's Hunter's Dream, a
-// kidnapping's Gaol, a lamp elsewhere) is a trip there, as a guest's lamp trip is.
+// kidnapping's Gaol, a lamp elsewhere) is a trip there, as a guest's lamp trip is. So is a death
+// that resets the map (party death's wipe), wherever the lamp is.
 void MoveToRespawnPoint(bool arriving_from_trip) {
+    const bool reset = !arriving_from_trip && party_death_reset.exchange(false);
     const u64 global = GetGlobalState();
     const s32 point = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
     const u64 blocks = ReadValue<u64>(image_base + LoadedBlocksPointerOffset, 0);
@@ -6283,7 +6328,7 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     const bool in_loaded_block =
         point > 0 && reinterpret_cast<Resolve>(image_base + ResolveRespawnPointOffset)(
                          blocks, position.data(), rotation.data(), point);
-    switch (ChooseDeathRespawn(point, in_loaded_block, arriving_from_trip)) {
+    switch (ChooseDeathRespawn(point, in_loaded_block, arriving_from_trip, reset)) {
     case DeathRespawn::StayPut:
         LOG_INFO(Debug, "Bloodborne revive: respawn point {} not reachable; staying put", point);
         return;
@@ -6291,8 +6336,10 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
         guest_trip_point = point;
         // Right away: getting up where the player fell first looked like a second respawn.
         guest_lamp_trip_at = std::chrono::steady_clock::now() + std::chrono::milliseconds{200};
-        LOG_INFO(Debug, "Bloodborne revive: respawn point {} is on map {:#x}; travelling there",
-                 point, PackedMapOfWarpPoint(point));
+        LOG_INFO(Debug,
+                 "Bloodborne revive: respawn point {} is on map {:#x}; travelling there "
+                 "(reset={})",
+                 point, PackedMapOfWarpPoint(point), reset);
         return;
     case DeathRespawn::MoveToPoint:
         break;
@@ -6453,6 +6500,620 @@ bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64, const GuestRegisterSnapshot*) {
              "world reload",
              matching_state);
     return true;
+}
+
+// The local player's data module ([[player +0x3B0] +0x20]: HP +0xF8, max HP +0xFC, flags +0x200).
+u64 PlayerDataModule(u64 player) {
+    const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
+    return modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+}
+
+// The local player's attack rating for the weapon in its right hand, as the equipment menu shows
+// it: UpdateWeaponAtk (0x018FCCB0, the character) works out one per weapon slot (physical + arcane
+// + fire + bolt with scaling, upgrades and gems) into the character's PlayerGameData (its vtable
+// +0x1C8), right hand 1 at +0x5E4 and right hand 2 at +0x5EC; ChrAsm ([player +0x4B8]) +0x10 says
+// which right-hand weapon is held. On the game thread.
+constexpr u64 UpdateWeaponAtkOffset = 0x018FCCB0;
+struct AttackRatings {
+    std::array<s32, 4> slots{-1, -1, -1, -1}; // left 1, right 1, left 2, right 2
+    s32 right_hand = -1;
+    std::array<s32, 4> weapons{-1, -1, -1, -1}; // ChrAsm +0x64: the weapon ids in the same order
+
+    s32 Held() const {
+        return right_hand == 1 ? slots[3] : right_hand == 0 ? slots[1] : 0;
+    }
+};
+AttackRatings ReadAttackRatings(u64 player) {
+    AttackRatings ratings;
+    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
+    const u64 game_data_of = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x1C8) : 0;
+    const u64 asm_data = player >= 0x10000 ? ReadValue<u64>(player, 0x4B8) : 0;
+    if (game_data_of < 0x10000 || asm_data < 0x10000) {
+        return ratings;
+    }
+    static constexpr std::array<u8, 6> UpdatePrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+    if (std::ranges::equal(
+            std::span<const u8>{reinterpret_cast<const u8*>(image_base + UpdateWeaponAtkOffset),
+                                UpdatePrologue.size()},
+            UpdatePrologue)) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64)>(image_base + UpdateWeaponAtkOffset)(player);
+    }
+    const u64 player_data = reinterpret_cast<u64 PS4_SYSV_ABI (*)(u64)>(game_data_of)(player);
+    if (player_data < 0x10000 || !HasMemoryAccess(player_data, 0x5F0, MemoryProt::CpuRead)) {
+        return ratings;
+    }
+    for (u64 slot = 0; slot < 4; ++slot) {
+        ratings.slots[slot] = ReadValue<s32>(player_data, 0x5E0 + slot * 4);
+        ratings.weapons[slot] = ReadValue<s32>(asm_data, 0x64 + slot * 4);
+    }
+    ratings.right_hand = ReadValue<s32>(asm_data, 0x10);
+    return ratings;
+}
+
+// Data module +0x200 flags a downed player wears: bit 1 skips any HP loss, bit 3 a hit's damage.
+constexpr u8 DownedNoDamageFlags = 0x2 | 0x8;
+// WorldChrManDbg's static "Player Hide" and "Player Silence" (debug menu flags): the AI's view of
+// the local player (0x01A55390, 0x01A55230) takes it as unseen and unheard, so enemies leave a
+// downed player alone.
+constexpr u64 PlayerHideFlagOffset = 0x0553E88E;
+constexpr u64 PlayerSilenceFlagOffset = 0x0553E88F;
+
+// The enemies' targeting systems (see ForgetsTargetNode): the enemy one's vtable and its base's.
+constexpr u64 EnemyTargetingVtableOffset = 0x0531B9F0;
+constexpr u64 BaseTargetingVtableOffset = 0x05366280;
+
+// Every enemy in this world forgets the characters with these handles (see ForgetsTargetNode);
+// returns how many target nodes it changed.
+u32 ForgetDownedTargets(std::span<const u32> handles) {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (handles.empty() || world < 0x10000) {
+        return 0;
+    }
+    u32 forgotten = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        const u64 manager = ReadValue<u64>(character, 0x3B8);
+        const u64 ai = manager >= 0x10000 && HasMemoryAccess(manager, 0xB8, MemoryProt::CpuRead)
+                           ? ReadValue<u64>(manager, 0xB0)
+                           : 0;
+        const u64 targeting = ai >= 0x10000 && HasMemoryAccess(ai, 0x568, MemoryProt::CpuRead)
+                                  ? ReadValue<u64>(ai, 0x560)
+                                  : 0;
+        if (targeting < 0x10000 || !HasMemoryAccess(targeting, 0x20, MemoryProt::CpuRead)) {
+            return;
+        }
+        const u64 vtable = ReadValue<u64>(targeting, 0);
+        if (vtable != image_base + EnemyTargetingVtableOffset &&
+            vtable != image_base + BaseTargetingVtableOffset) {
+            return;
+        }
+        u64 node = ReadValue<u64>(targeting, 0x18);
+        for (int count = 0;
+             count < 64 && node >= 0x10000 && HasMemoryAccess(node, 0x54, MemoryProt::CpuWrite);
+             ++count, node = ReadValue<u64>(node, 0x08)) {
+            if (ForgetsTargetNode(ReadValue<u8>(node, 0x02), ReadValue<s32>(node, 0x28),
+                                  ReadValue<u32>(node, 0x50), handles) &&
+                ReadValue<float>(node, 0x2C) != ForgottenTargetTimer) {
+                WriteValue(node, 0x2C, ForgottenTargetTimer);
+                ++forgotten;
+            }
+        }
+    });
+    return forgotten;
+}
+
+// The handles of the downed players in this world: the local player while `down`, and each other
+// member the board has down on this map (the other player character nearest to where it posted).
+std::vector<u32> DownedPlayerHandles(u64 player, bool down,
+                                     std::span<const LampPosition> others_down) {
+    std::vector<u32> handles;
+    if (down && player >= 0x10000) {
+        handles.push_back(ReadValue<u32>(player, 0x08));
+    }
+    if (others_down.empty()) {
+        return handles;
+    }
+    const std::vector<OtherPlayer> players = OtherPlayers();
+    for (const LampPosition& at : others_down) {
+        const OtherPlayer* nearest = nullptr;
+        float nearest_distance = 4.0f;
+        for (const OtherPlayer& other : players) {
+            const float distance = other.at
+                                       ? std::hypot((*other.at)[0] - at[0], (*other.at)[1] - at[1],
+                                                    (*other.at)[2] - at[2])
+                                       : nearest_distance + 1.0f;
+            if (distance <= nearest_distance) {
+                nearest_distance = distance;
+                nearest = &other;
+            }
+        }
+        if (nearest != nullptr) {
+            handles.push_back(ReadValue<u32>(nearest->character, 0x08));
+        }
+    }
+    return handles;
+}
+
+// The fall damage step (0x01A35C33) takes a fall into the void as a fixed lethal height while
+// [[character +0x58] +0x38] +0x48 bit 1 is set. Such a fall stays a real death: nobody could
+// reach the player down there.
+bool FallsIntoTheVoid(u64 data) {
+    const u64 character = ReadValue<u64>(data, 0x08);
+    const u64 control = character >= 0x10000 ? ReadValue<u64>(character, 0x58) : 0;
+    const u64 state = control >= 0x10000 ? ReadValue<u64>(control, 0x38) : 0;
+    return state >= 0x10000 && (ReadValue<u8>(state, 0x48) & 2) != 0;
+}
+
+// Diagnostics: IsNoDead's other callers that ask about the local player, once each.
+void NoteOtherNoDeadCheck(u64 return_offset) {
+    static std::mutex mutex;
+    static std::unordered_set<u64> seen;
+    std::scoped_lock lock{mutex};
+    if (seen.size() < 64 && seen.insert(return_offset).second) {
+        LOG_INFO(Debug, "Bloodborne party death: IsNoDead asked from {:#x} (left alone)",
+                 return_offset);
+    }
+}
+
+// IsNoDead's exit (see IsNoDeadExit): for the local player a lethal check answers "no dead"
+// while it is armed or down, and each catch that puts it down is counted for the party tick.
+void PS4_SYSV_ABI KeepPartyMemberUp(u64, GuestRegisterSnapshot* registers) {
+    const u64 data = party_death_data.load(std::memory_order_relaxed);
+    if (data == 0 || registers->rbx != data) {
+        return;
+    }
+    u64 return_address = 0;
+    std::memcpy(&return_address, reinterpret_cast<const void*>(registers->rbp + 8),
+                sizeof(return_address));
+    const u64 return_offset = return_address - image_base;
+    NoDeadCheck check = ClassifyNoDeadCheck(return_offset);
+    if (check == NoDeadCheck::Other) {
+        NoteOtherNoDeadCheck(return_offset);
+        return;
+    }
+    check = NoDeadCheckAt(check, ReadValue<s32>(data, 0xF8));
+    if (check == NoDeadCheck::Other) {
+        return; // a hit that left HP
+    }
+    if (check == NoDeadCheck::Lethal && FallsIntoTheVoid(data)) {
+        check = NoDeadCheck::Instant;
+    }
+    const bool answer = (registers->r14 & 0xFF) != 0;
+    const bool down = party_death_down.load(std::memory_order_relaxed);
+    if (answer ||
+        !KeepsPlayerAlive(check, party_death_armed.load(std::memory_order_relaxed), down, answer)) {
+        return;
+    }
+    registers->r14 = (registers->r14 & ~u64{0xFF}) | 1;
+    if (!down) {
+        party_death_catches.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// SHADPS4_BLOODBORNE_DOWNED_ANIMATION: an animation a downed player plays (none by default; for
+// trying poses that lie down), undone by ChrResetAnimation when it gets up.
+const s32 downed_animation = [] {
+    const char* setting = std::getenv("SHADPS4_BLOODBORNE_DOWNED_ANIMATION");
+    s32 animation = 0;
+    if (setting != nullptr) {
+        std::from_chars(setting, setting + std::strlen(setting), animation);
+    }
+    return animation;
+}();
+
+// What the pad reader saw (FilterPartyDeathPad): the buttons held before the downed filter, the
+// attack presses so far and whether the last one was heavy (R2).
+std::atomic<u32> party_pad_buttons{};
+std::atomic<u32> party_attack_presses{};
+std::atomic<bool> party_attack_heavy{};
+
+// The vitals board (see RunVitalsBoardClient): what the game thread posts and what the client
+// last heard back, as the member it posts as.
+std::mutex vitals_mutex;
+std::condition_variable_any vitals_wake;
+MemberVitals vitals_mine;
+std::vector<ReviveHitTotal> vitals_hits;
+bool vitals_changed{};
+VitalsBoard vitals_board;
+std::string vitals_member;
+std::optional<std::chrono::steady_clock::time_point> vitals_heard_at;
+std::jthread vitals_board_client;
+
+// What the port's overlay draws (ReadPartyPanel), as of the last party tick.
+std::mutex panel_mutex;
+PartyPanel panel_now;
+
+void SetPartyPanel(PartyPanel panel) {
+    std::scoped_lock lock{panel_mutex};
+    panel_now = std::move(panel);
+}
+
+struct VitalsView {
+    VitalsBoard board;
+    std::string member;
+    s64 age_ms = std::numeric_limits<s64>::max();
+
+    bool Fresh() const {
+        return age_ms <= 3'000;
+    }
+};
+
+VitalsView ReadVitalsBoard() {
+    std::scoped_lock lock{vitals_mutex};
+    VitalsView view{vitals_board, vitals_member};
+    if (vitals_heard_at) {
+        view.age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - *vitals_heard_at)
+                          .count();
+    }
+    return view;
+}
+
+// Hands the client this member's vitals: posted at once when more than its position changed.
+void PostVitals(const MemberVitals& mine, std::vector<ReviveHitTotal> hits) {
+    std::scoped_lock lock{vitals_mutex};
+    MemberVitals moved = vitals_mine;
+    moved.at = mine.at;
+    const bool changed = moved != mine || hits != vitals_hits;
+    vitals_mine = mine;
+    vitals_hits = std::move(hits);
+    if (changed) {
+        vitals_changed = true;
+        vitals_wake.notify_all();
+    }
+}
+
+// Posts this member's vitals to the party's vitals board on shadNet and keeps its answer: once a
+// second, four times a second while anyone in the party is down (revive progress), and soon after
+// a change. Out of a session it posts "off" once, then waits.
+void RunVitalsBoardClient(std::stop_token stop, std::string base_url, std::string party) {
+    const std::string member = FindBoardMember(stop);
+    {
+        std::scoped_lock lock{vitals_mutex};
+        vitals_member = member;
+    }
+    httplib::Client client(base_url);
+    client.set_connection_timeout(std::chrono::seconds{1});
+    client.set_read_timeout(std::chrono::seconds{2});
+    const httplib::Headers headers{{"X-ShadPS4-Bloodborne-Party", party}};
+    LOG_INFO(Debug, "Bloodborne party vitals board client for {} as member {}", base_url, member);
+
+    bool posted_on = false;
+    bool failing = false;
+    bool someone_down = false;
+    auto last_post = std::chrono::steady_clock::now();
+    while (!stop.stop_requested()) {
+        MemberVitals mine;
+        std::vector<ReviveHitTotal> hits;
+        {
+            std::unique_lock lock{vitals_mutex};
+            vitals_wake.wait_until(lock, stop, last_post + std::chrono::milliseconds{100},
+                                   [] { return false; });
+            vitals_wake.wait_until(
+                lock, stop, last_post + std::chrono::milliseconds{someone_down ? 250 : 1'000},
+                [] { return vitals_changed; });
+            vitals_changed = false;
+            mine = vitals_mine;
+            hits = vitals_hits;
+        }
+        if (stop.stop_requested() || (mine.vital == Vital::Off && !posted_on)) {
+            last_post = std::chrono::steady_clock::now();
+            continue;
+        }
+        mine.member = member;
+        last_post = std::chrono::steady_clock::now();
+        const auto response = client.Post("/bloodborne/party/vitals", headers,
+                                          EncodeVitalsUpdate(mine, hits), "text/plain");
+        const auto board =
+            response && response->status == 200 ? ParseVitalsBoard(response->body) : std::nullopt;
+        if (!board) {
+            if (!failing) {
+                LOG_WARNING(Debug, "Bloodborne party vitals board unreachable ({})",
+                            response ? std::to_string(response->status)
+                                     : httplib::to_string(response.error()));
+            }
+            failing = true;
+            continue;
+        }
+        failing = false;
+        posted_on = mine.vital != Vital::Off;
+        someone_down = std::ranges::any_of(
+            board->members, [](const MemberVitals& other) { return other.vital == Vital::Down; });
+        std::scoped_lock lock{vitals_mutex};
+        vitals_board = *board;
+        vitals_heard_at = std::chrono::steady_clock::now();
+    }
+}
+
+void StartVitalsBoardClient() {
+    const char* party_setting = std::getenv("SHADPS4_BLOODBORNE_PARTY");
+    const auto party = party_setting ? ParsePartySetting(party_setting) : std::nullopt;
+    const std::string base_url = EmulatorSettings.GetShadNetWebApiServer();
+    if (!party_death_hook_installed || !party || !EmulatorSettings.IsShadNetEnabled() ||
+        base_url.empty()) {
+        return;
+    }
+    vitals_board_client = std::jthread(RunVitalsBoardClient, base_url, *party);
+}
+
+// The local player's side of party death, on the game thread.
+struct PartyDeathRun {
+    // Down ids start somewhere new each run, so the party's hits on an old down never count.
+    DownedState downed{static_cast<u32>(std::random_device{}() % 0x40000000U) + 1};
+    HoldToConfirm give_up{GiveUpHoldMs};
+    ReviveHits revive_hits;
+    u32 seen_catches = 0;
+    u32 seen_attacks = 0;
+    u32 seen_lamp_uses = 0;
+    u32 handled_wipe = 0;
+    u8 flags_added = 0;
+    u8 hide_before = 0;
+    u8 silence_before = 0;
+    u32 targets_forgotten = 0; // since the last log line
+};
+PartyDeathRun party_death_run;
+
+void SetPlayerFlag(u64 offset, u8 value) {
+    WriteValue(image_base + offset, 0, value);
+}
+
+void GoDown(PartyDeathRun& run, u64 data, s64 now_ms) {
+    const u32 down = run.downed.GoDown(now_ms, ReadValue<s32>(data, 0xFC));
+    run.give_up.Restart((party_pad_buttons.load() & PadCircle) != 0);
+    party_death_down.store(true);
+    const u8 flags = ReadValue<u8>(data, 0x200);
+    run.flags_added = DownedNoDamageFlags & static_cast<u8>(~flags);
+    WriteValue(data, 0x200, static_cast<u8>(flags | DownedNoDamageFlags));
+    WriteValue(data, 0xF8, s32{1});
+    run.hide_before = ReadValue<u8>(image_base + PlayerHideFlagOffset, 0);
+    run.silence_before = ReadValue<u8>(image_base + PlayerSilenceFlagOffset, 0);
+    SetPlayerFlag(PlayerHideFlagOffset, 1);
+    SetPlayerFlag(PlayerSilenceFlagOffset, 1);
+    bool posed = false;
+    if (downed_animation > 0) {
+        using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
+        posed = reinterpret_cast<ForcePlayAnimation>(image_base + ForcePlayAnimationOffset)(
+            0, LocalPlayerEntity, downed_animation);
+    }
+    LOG_INFO(Debug,
+             "Bloodborne party death: down {} on map {:#x}, {} damage to get up (max HP {}, "
+             "pose {} played={})",
+             down, GetCurrentPackedMap(), run.downed.DamageNeeded(), ReadValue<s32>(data, 0xFC),
+             downed_animation, posed);
+}
+
+// Each tick while down: no damage, 1 HP, unseen and unheard (the game may undo any of them).
+void KeepDown(PartyDeathRun& run, u64 data) {
+    const u8 flags = ReadValue<u8>(data, 0x200);
+    if ((flags & DownedNoDamageFlags) != DownedNoDamageFlags) {
+        run.flags_added |= DownedNoDamageFlags & static_cast<u8>(~flags);
+        WriteValue(data, 0x200, static_cast<u8>(flags | DownedNoDamageFlags));
+    }
+    if (ReadValue<s32>(data, 0xF8) > 1) {
+        WriteValue(data, 0xF8, s32{1});
+    }
+    SetPlayerFlag(PlayerHideFlagOffset, 1);
+    SetPlayerFlag(PlayerSilenceFlagOffset, 1);
+}
+
+void EndDown(PartyDeathRun& run, u64 data) {
+    party_death_down.store(false);
+    WriteValue(data, 0x200, static_cast<u8>(ReadValue<u8>(data, 0x200) & ~run.flags_added));
+    run.flags_added = 0;
+    SetPlayerFlag(PlayerHideFlagOffset, run.hide_before);
+    SetPlayerFlag(PlayerSilenceFlagOffset, run.silence_before);
+}
+
+void GetUp(PartyDeathRun& run, u64 data, s64 now_ms) {
+    EndDown(run, data);
+    const s32 hp = RevivedHp(ReadValue<s32>(data, 0xFC));
+    WriteValue(data, 0xF8, hp);
+    run.downed.GetUp(now_ms);
+    if (downed_animation > 0) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(image_base + ChrResetAnimationOffset)(
+            0, LocalPlayerEntity);
+    }
+    LOG_INFO(Debug, "Bloodborne party death: revived from down {} with {} HP", run.downed.DownId(),
+             hp);
+}
+
+// A real death from the down (a wipe, giving up, shadNet gone): the game's own kill, then the
+// party death respawn (see MoveToRespawnPoint), which reloads the map if `reset`.
+void DieFromDown(PartyDeathRun& run, u64 player, u64 data, bool reset, std::string_view why) {
+    EndDown(run, data);
+    run.downed.Died();
+    party_death_reset.store(reset);
+    static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+    const bool killed = std::ranges::equal(
+        std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
+                            KillPrologue.size()},
+        KillPrologue);
+    if (killed) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64 character)>(image_base +
+                                                               KillCharacterOffset)(player);
+    } else {
+        WriteValue(data, 0xF8, s32{0});
+    }
+    LOG_INFO(Debug, "Bloodborne party death: {} ends down {}; dies (reset={}, game kill={})", why,
+             run.downed.DownId(), reset, killed);
+}
+
+void TickPartyDeath() {
+    if (!party_death_hook_installed) {
+        return;
+    }
+    auto& run = party_death_run;
+    const u64 player = GetLocalPlayer();
+    const u64 data = PlayerDataModule(player);
+    if (data < 0x10000 || !HasMemoryAccess(data, 0x204, MemoryProt::CpuWrite)) {
+        party_death_data.store(0);
+        SetPartyPanel({});
+        return; // loading
+    }
+    const s64 now = SteadyMilliseconds();
+    const bool in_session = InPartySession();
+    const u32 map = GetCurrentPackedMap();
+    const VitalsView view = ReadVitalsBoard();
+    const std::span<const MemberVitals> board =
+        view.Fresh() ? std::span<const MemberVitals>{view.board.members}
+                     : std::span<const MemberVitals>{};
+    const bool armed =
+        in_session && !view.member.empty() && SomeoneElseStands(board, view.member, map);
+    party_death_armed.store(armed);
+    party_death_data.store(in_session || run.downed.Current() == Vital::Down ? data : 0);
+    bool alive = false;
+    ReadLocalAliveState(player, alive);
+    if (const u32 uses = lamp_uses.load(); uses != run.seen_lamp_uses) {
+        run.seen_lamp_uses = uses;
+        run.downed.ClearPenalty();
+    }
+
+    switch (run.downed.Current()) {
+    case Vital::Off:
+    case Vital::Up: {
+        const u32 catches = party_death_catches.load();
+        const bool caught = catches != run.seen_catches;
+        run.seen_catches = catches;
+        if (caught && alive) {
+            GoDown(run, data, now);
+            break;
+        }
+        if (!alive) {
+            // A real death: one of the game's kills, or a lethal hit with nobody else standing.
+            run.downed.Died();
+            party_death_reset.store(in_session && DeathResetsMap(false, armed));
+            LOG_INFO(Debug, "Bloodborne party death: died for real on map {:#x} (reset={})", map,
+                     party_death_reset.load());
+            break;
+        }
+        const u32 attacks = party_attack_presses.load();
+        const bool attacked = attacks != run.seen_attacks;
+        run.seen_attacks = attacks;
+        const auto at = LocalPlayerPosition();
+        const auto target = attacked && in_session && at
+                                ? ReviveTarget(board, view.member, map, *at)
+                                : std::nullopt;
+        const AttackRatings ratings = target ? ReadAttackRatings(player) : AttackRatings{};
+        const s32 rating = ratings.Held();
+        const bool heavy = party_attack_heavy.load();
+        const u32 damage = ReviveHitDamage(rating, heavy);
+        if (target && run.revive_hits.Press(target->member, target->down, damage, now)) {
+            LOG_INFO(Debug,
+                     "Bloodborne party death: revive hit on {} (down {}) for {} damage (attack "
+                     "rating {}, heavy={}; ratings {} weapons {} right hand {})",
+                     target->member, target->down, damage, rating, heavy,
+                     fmt::join(ratings.slots, " "), fmt::join(ratings.weapons, " "),
+                     ratings.right_hand);
+        }
+        break;
+    }
+    case Vital::Down: {
+        if (!alive) {
+            // Killed anyway (a fall into the void, an event's kill).
+            EndDown(run, data);
+            run.downed.Died();
+            party_death_reset.store(in_session && DeathResetsMap(false, armed));
+            LOG_INFO(Debug, "Bloodborne party death: killed while down {} (reset={})",
+                     run.downed.DownId(), party_death_reset.load());
+            break;
+        }
+        KeepDown(run, data);
+        const auto wipe = view.Fresh() ? WipeFor(view.board, view.member) : std::nullopt;
+        const bool wiped = wipe && *wipe != run.handled_wipe;
+        const bool gave_up = run.give_up.Tick((party_pad_buttons.load() & PadCircle) != 0, now);
+        u32 damage = 0;
+        for (const MemberVitals& entry : board) {
+            if (entry.member == view.member && entry.down == run.downed.DownId()) {
+                damage = entry.revive_damage;
+            }
+        }
+        const bool revived = run.downed.Damage(damage, now);
+        run.downed.Tick(now);
+        switch (EndOfDown(wiped, gave_up, revived, view.age_ms)) {
+        case DownEnd::None:
+            break;
+        case DownEnd::Revive:
+            GetUp(run, data, now);
+            break;
+        case DownEnd::Wipe:
+            run.handled_wipe = *wipe;
+            DieFromDown(run, player, data, true, fmt::format("wipe {}", *wipe));
+            break;
+        case DownEnd::GiveUp:
+            DieFromDown(run, player, data, in_session && DeathResetsMap(false, armed), "giving up");
+            break;
+        case DownEnd::BoardLost:
+            DieFromDown(run, player, data, in_session, "the vitals board going quiet");
+            break;
+        }
+        break;
+    }
+    case Vital::Dead:
+        if (alive) {
+            run.downed.Alive(now);
+            party_death_reset.store(false);
+            LOG_INFO(Debug, "Bloodborne party death: up again after a real death");
+        }
+        break;
+    }
+
+    // Enemies forget the downed players here (this one and the others), every tick while any is
+    // down: an enemy that sees a downed guest again (Hide is the local player's only) would take it
+    // as a target again.
+    const std::vector<LampPosition> others_down =
+        in_session ? OthersDownOnMap(board, view.member, map) : std::vector<LampPosition>{};
+    const std::vector<u32> downed_handles =
+        DownedPlayerHandles(player, run.downed.Current() == Vital::Down, others_down);
+    if (const u32 forgotten = ForgetDownedTargets(downed_handles); forgotten > 0) {
+        if (run.targets_forgotten == 0) {
+            LOG_INFO(Debug,
+                     "Bloodborne party death: enemies forgot {} target(s) on downed players "
+                     "(self down={}, others down={})",
+                     forgotten, run.downed.Current() == Vital::Down, others_down.size());
+        }
+        run.targets_forgotten += forgotten;
+    } else if (downed_handles.empty()) {
+        run.targets_forgotten = 0;
+    }
+
+    const auto at = LocalPlayerPosition();
+    PostVitals(
+        MemberVitals{
+            .map = in_session ? map : 0,
+            .vital = in_session ? run.downed.Current() : Vital::Off,
+            .hp = ReadValue<s32>(data, 0xF8),
+            .max = ReadValue<s32>(data, 0xFC),
+            .down = run.downed.DownId(),
+            .landed = run.downed.DamageLanded(),
+            .needed = run.downed.DamageNeeded(),
+            .at = at.value_or(LampPosition{}),
+        },
+        run.revive_hits.Totals(board));
+
+    const Vital vital = run.downed.Current();
+    PartyPanel panel = in_session ? BuildPartyPanel(board, view.member, map,
+                                                    vital == Vital::Up ? at : std::nullopt)
+                                  : PartyPanel{};
+    panel.vital = in_session ? vital : Vital::Off;
+    panel.landed = run.downed.DamageLanded();
+    panel.needed = run.downed.DamageNeeded();
+    panel.give_up = vital == Vital::Down ? run.give_up.Progress(now) : 0.0f;
+    SetPartyPanel(std::move(panel));
+}
+
+// Party death needs a party (SHADPS4_BLOODBORNE_PARTY) and the setting.
+void InstallPartyDeath(u64 base, u64 image_size) {
+    if (!party_death_enabled || !party_controller) {
+        return;
+    }
+    if (IsNoDeadExitOffset + IsNoDeadExit.size() > image_size ||
+        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + IsNoDeadExitOffset),
+                                      IsNoDeadExit, 0, KeepPartyMemberUp)) {
+        LOG_ERROR(Debug, "Bloodborne party death hook unavailable; deaths stay as they are");
+        return;
+    }
+    party_death_hook_installed = true;
+    LOG_INFO(Debug, "Bloodborne party death: a lethal hit puts a party member down while another "
+                    "stands on its map (damage revives it, holding Circle gives up)");
 }
 
 bool InPartySession();
@@ -8473,6 +9134,25 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         return (map && AutoplayInWorld() && GetCurrentPackedMap() == *map) ||
                waited_out(number(1, 180));
     }
+    // wait-vital <up|down|dead> [<timeout>]: until this player's party death state is that.
+    // wait-member-vital <vital> [<timeout>]: until another member's is, on the vitals board.
+    if (verb == "wait-vital" || verb == "wait-member-vital") {
+        const auto vital = ParseVital(arg(0));
+        if (!vital) {
+            failure = "no such vital";
+            return false;
+        }
+        if (verb == "wait-vital") {
+            return party_death_run.downed.Current() == *vital || waited_out(number(1, 60));
+        }
+        const VitalsView view = ReadVitalsBoard();
+        return (view.Fresh() && std::ranges::any_of(view.board.members,
+                                                    [&](const MemberVitals& member) {
+                                                        return member.member != view.member &&
+                                                               member.vital == *vital;
+                                                    })) ||
+               waited_out(number(1, 60));
+    }
     // ensure-map <map> <warp point>: travel there unless already on that map (a test's start).
     if (verb == "ensure-map" && !begun) {
         const auto map = ParseAutoplayTarget(arg(0));
@@ -8730,6 +9410,73 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         }
         return false;
     }
+    // rise <metres>: straight up from where the player stands, to fall back down.
+    if (verb == "rise") {
+        const auto at = LocalPlayerPosition();
+        if (!at) {
+            failure = "not in the world";
+            return false;
+        }
+        TeleportLocalPlayer({(*at)[0], (*at)[1] + static_cast<float>(number(0, 8)), (*at)[2]},
+                            LocalPlayerHeading().value_or(0.0f));
+        return true;
+    }
+    // approach-downed: a metre from the nearest downed party member on this map, where the
+    // vitals board has it.
+    if (verb == "approach-downed") {
+        const VitalsView view = ReadVitalsBoard();
+        const auto me = LocalPlayerPosition();
+        const auto distance = [&](const LampPosition& at) {
+            return std::hypot(at[0] - (*me)[0], at[1] - (*me)[1], at[2] - (*me)[2]);
+        };
+        std::optional<LampPosition> nearest;
+        for (const MemberVitals& member : view.board.members) {
+            if (me && view.Fresh() && member.member != view.member && member.vital == Vital::Down &&
+                member.map == GetCurrentPackedMap() &&
+                (!nearest || distance(member.at) < distance(*nearest))) {
+                nearest = member.at;
+            }
+        }
+        if (!nearest) {
+            failure = "nobody down on this map";
+            return false;
+        }
+        TeleportLocalPlayer({(*nearest)[0] + 1.0f, (*nearest)[1] + 0.2f, (*nearest)[2]});
+        return true;
+    }
+    // revive-downed [<timeout>]: strikes the nearest downed party member on this map until nobody
+    // is down (how many hits depends on the weapon): every 1.5 s a metre from it, then R1.
+    if (verb == "revive-downed") {
+        const VitalsView view = ReadVitalsBoard();
+        const auto me = LocalPlayerPosition();
+        std::optional<LampPosition> downed;
+        for (const MemberVitals& member : view.board.members) {
+            if (view.Fresh() && member.member != view.member && member.vital == Vital::Down &&
+                member.map == GetCurrentPackedMap()) {
+                downed = member.at;
+            }
+        }
+        if (!downed || !me) {
+            autoplay_buttons.store(0);
+            if (!begun) {
+                failure = "nobody down on this map";
+                return false;
+            }
+            LOG_INFO(Debug, "Bloodborne autoplay: nobody down after {:.1f} s of revive hits",
+                     elapsed);
+            return true;
+        }
+        const double phase = std::fmod(elapsed, 1.5);
+        if (phase < 0.1) {
+            TeleportLocalPlayer({(*downed)[0] + 1.0f, (*downed)[1] + 0.2f, (*downed)[2]});
+        }
+        autoplay_buttons.store(phase >= 0.6 && phase < 0.75 ? AutoplayButton("r1") : 0);
+        if (elapsed > number(0, 60)) {
+            autoplay_buttons.store(0);
+            failure = fmt::format("still down after {:.0f} s of revive hits", elapsed);
+        }
+        return false;
+    }
     if (verb == "press" || verb == "stick") {
         u32 buttons = 0;
         u32 sticks = 0x80808080;
@@ -8778,6 +9525,45 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
     if (verb == "snapshot") {
         LogAutoplaySnapshot();
         return true;
+    }
+    // shot <name> [<timeout>]: a picture of the port's next frame (AutoplayShotPath), once its
+    // presenter took the request. The emulator has no request file: skipped. A picture not taken
+    // in time (10 s) is noted and the script goes on: it shows the HUD, it tests nothing.
+    if (verb == "shot") {
+        static const char* request = std::getenv("BB_SHOT_TRIGGER");
+        if (request == nullptr) {
+            LOG_INFO(Debug, "Bloodborne autoplay: shot {} skipped (nothing takes pictures)",
+                     arg(0));
+            return true;
+        }
+        if (!begun) {
+            const auto path = AutoplayShotPath(request, arg(0));
+            if (!path) {
+                failure = "no such shot name";
+                return false;
+            }
+            std::error_code error;
+            std::filesystem::create_directories(std::filesystem::path{*path}.parent_path(), error);
+            // Written whole, then moved into place: the presenter never reads half a path.
+            const std::string partial = std::string{request} + ".part";
+            std::ofstream{partial, std::ios::binary | std::ios::trunc} << *path;
+            std::filesystem::rename(partial, request, error);
+            if (error) {
+                failure = fmt::format("no shot request: {}", error.message());
+                return false;
+            }
+            LOG_INFO(Debug, "Bloodborne autoplay: shot {} asked for", *path);
+        }
+        std::error_code error;
+        if (!std::filesystem::exists(request, error)) {
+            return true;
+        }
+        if (elapsed > number(1, 10)) {
+            LOG_WARNING(Debug, "Bloodborne autoplay: shot {} not taken in {:.0f} s", arg(0),
+                        elapsed);
+            return true;
+        }
+        return false;
     }
     if (verb == "log") {
         std::string text;
@@ -8993,6 +9779,32 @@ bool AutoplayPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& sticks) {
     sticks = {static_cast<u8>(packed), static_cast<u8>(packed >> 8), static_cast<u8>(packed >> 16),
               static_cast<u8>(packed >> 24)};
     return true;
+}
+
+void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& sticks,
+                         std::uint8_t& l2, std::uint8_t& r2) {
+    if (!party_death_hook_installed) {
+        return;
+    }
+    const u32 before = party_pad_buttons.exchange(buttons, std::memory_order_relaxed);
+    if (AttackPressed(before, buttons)) {
+        party_attack_heavy.store(HeavyAttackPressed(before, buttons), std::memory_order_relaxed);
+        party_attack_presses.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!party_death_down.load(std::memory_order_relaxed)) {
+        return;
+    }
+    const PadInput kept = DownedPad({.buttons = buttons, .sticks = sticks, .l2 = l2, .r2 = r2});
+    buttons = kept.buttons;
+    sticks = kept.sticks;
+    l2 = kept.l2;
+    r2 = kept.r2;
+}
+
+bool ReadPartyPanel(PartyPanel& panel) {
+    std::scoped_lock lock{panel_mutex};
+    panel = panel_now;
+    return !panel.members.empty() || panel.vital == Vital::Down;
 }
 
 std::optional<std::string> GetSeamlessHostPlacementHeader() {
@@ -9573,6 +10385,7 @@ void InstallSeamlessCoopPatches() {
     }
 
     InstallGhostDeathRevive(base, image_size);
+    InstallNoEchoTheft(base, image_size);
     InstallHostDeathKeepsGuests(base, image_size);
     InstallBossClearKeepsSession(base, image_size);
     InstallJoinAnywhere(base, image_size);
@@ -9587,7 +10400,9 @@ void InstallSeamlessCoopPatches() {
     InstallKeepLocalFlags(base, image_size);
     InstallItemModuleDiagnostics(base, image_size);
     InstallItemButtonDiagnostics(base);
+    InstallPartyDeath(base, image_size);
     StartRestBoardClient();
+    StartVitalsBoardClient();
     PatchSignTimers(base, image_size);
 
     std::memcpy(area_comparison, BeckoningSignedAreaComparison.data(),

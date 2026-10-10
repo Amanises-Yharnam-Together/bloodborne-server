@@ -45,7 +45,10 @@ std::string RandomText(std::mt19937& random) {
                                                  "1e40",
                                                  ":",
                                                  "268517532",
-                                                 "0x10"};
+                                                 "0x10",
+                                                 "up",
+                                                 "down",
+                                                 "wipe"};
     std::uniform_int_distribution<int> coin(0, 1);
     std::uniform_int_distribution<int> any(0, 255);
     std::string text;
@@ -105,6 +108,7 @@ TEST(BloodborneFuzz, NoParserCrashesOnRandomInput) {
         (void)ParseMapStateBoard(text);
         (void)ParseTrophyBoard(text);
         (void)ParseLampRestBoard(text);
+        (void)ParseVitalsBoard(text);
         (void)ParseResumePoint(text);
         (void)ParseWorldChanges(text);
         (void)ParsePartySetting(text);
@@ -202,5 +206,33 @@ TEST(BloodborneFuzz, ServerAnswersReadBackTheSame) {
             EXPECT_EQ((*map_board)[index].map, maps[index].map);
         }
         EXPECT_EQ(ParseMapStateBoard(state_text), states);
+
+        VitalsBoard vitals;
+        std::string vitals_text;
+        for (int index = count(random); index > 0; --index) {
+            MemberVitals member{.member = BoardMemberOfOnlineId(fmt::format("v{}", index)),
+                                .map = any_u32(random),
+                                .vital = static_cast<Vital>(any_u32(random) % 4),
+                                .hp = positive(random),
+                                .max = positive(random),
+                                .down = any_u32(random),
+                                .landed = any_u32(random) % 13,
+                                .needed = any_u32(random) % 13,
+                                .at = {static_cast<float>(byte(random)) - 128.0f, 0.5f,
+                                       static_cast<float>(byte(random)) * 0.25f},
+                                .revive_damage = any_u32(random)};
+            vitals_text +=
+                EncodeVitalsUpdate(member, {}) + fmt::format(" {}\n", member.revive_damage);
+            vitals.members.push_back(std::move(member));
+        }
+        if (count(random) > 3) {
+            const PartyWipe wipe{any_u32(random),
+                                 any_u32(random),
+                                 {BoardMemberOfOnlineId("v1"), BoardMemberOfOnlineId("v2")}};
+            vitals_text += fmt::format("wipe {} {:x} {} {}\n", wipe.id, wipe.map, wipe.members[0],
+                                       wipe.members[1]);
+            vitals.wipes.push_back(wipe);
+        }
+        EXPECT_EQ(ParseVitalsBoard(vitals_text), vitals);
     }
 }

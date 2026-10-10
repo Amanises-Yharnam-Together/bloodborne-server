@@ -112,6 +112,7 @@ TEST_F(BloodborneEboot, EveryPatchFindsTheGamesOwnBytes) {
     const std::vector<std::pair<const char*, const std::vector<CodePatch>*>> tables{
         {"ghost death", &GhostDeathKeepSessionPatches()},
         {"guest bloodstain", &GuestBloodstainPatches()},
+        {"no echo theft", &NoEchoTheftPatches()},
         {"host death", &HostDeathKeepGuestsPatches()},
         {"boss clear", &BossClearKeepSessionPatches()},
         {"join anywhere", &JoinAnywherePatches()},
@@ -173,4 +174,16 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     // Host death: the jump lands on the epilogue it names.
     const CodePatch& host_dead = HostDeathKeepGuestsPatches().front();
     EXPECT_EQ(DecodeNearJumpTarget(host_dead.offset, host_dead.patched), HostDeadEpilogueOffset);
+}
+
+// Party death: every IsNoDead caller in the table returns from a call to it, and the hook at its
+// exit finds the bytes it copies.
+TEST_F(BloodborneEboot, TheNoDeadCallersCallIsNoDead) {
+    EXPECT_EQ(Bytes(IsNoDeadOffset, FunctionPrologue.size()), FunctionPrologue);
+    EXPECT_EQ(Bytes(IsNoDeadExitOffset, IsNoDeadExit.size()),
+              std::vector<u8>(IsNoDeadExit.begin(), IsNoDeadExit.end()));
+    for (const NoDeadCaller& caller : NoDeadCallers()) {
+        EXPECT_EQ(CallTarget(caller.return_offset - 5), IsNoDeadOffset)
+            << std::hex << caller.return_offset;
+    }
 }

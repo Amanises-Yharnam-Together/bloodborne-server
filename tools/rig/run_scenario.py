@@ -13,10 +13,16 @@ stay in rig/runs/<when>/<scenario>/ (the last RUNS_KEPT batches).
   py -3.12 tools/rig/run_scenario.py --save-baseline
   py -3.12 tools/rig/run_scenario.py --add-guest2   (a third game for parties of three)
   py -3.12 tools/rig/run_scenario.py --boot-check host [--seconds 40]   (tools/smoke-boot.ps1)
+  py -3.12 tools/rig/run_scenario.py --engine port --play down-revive   (games to play by hand)
 
 Every scenario starts from the same saves: --save-baseline keeps each role's save and party files
 (rig/<role>/baseline) and every run puts them back first, so one test's progress (a boss killed,
 a lamp lit, a remembered spot) never leaks into the next.
+
+--play <scenario> starts that scenario's games with its settings (down-revive: two players with
+party death on, down-revive3: three), lets them get into the world and into one session by
+themselves, then leaves them to the person at the PC; the servers stay up until every game is
+closed.
 
 --engine port plays with the native port (Bloodborne PC, tools/build-bbport.ps1) instead of the
 emulator, in rig/port/<role> (engines.py); --engine port --setup makes those folders from the
@@ -40,7 +46,7 @@ sys.path.insert(0, str(HERE.parent / "re"))
 import check_party_log  # noqa: E402
 import engines  # noqa: E402
 from engines import BACKEND_PORT, BB_ROOT, SHADNET_PORT  # noqa: E402
-from scenarios import SCENARIOS  # noqa: E402
+from scenarios import SCENARIOS, START  # noqa: E402
 
 RIG = BB_ROOT / "rig"
 RUNS = RIG / "runs"
@@ -258,8 +264,9 @@ def add_guest2():
 
 
 def server_is_current() -> bool:
-    """Whether the rig's shadNet has the newest party boards (/bloodborne/party/hp)."""
-    request = urllib.request.Request("http://127.0.0.1:32315/bloodborne/party/hp", data=b"probe 0",
+    """Whether the rig's shadNet has the newest party boards (/bloodborne/party/vitals)."""
+    request = urllib.request.Request("http://127.0.0.1:32315/bloodborne/party/vitals",
+                                     data=b"probe 0 off 0 0 0 0 0 0 0 0",
                                      headers={"X-ShadPS4-Bloodborne-Party": "probe:probe"})
     try:
         with urllib.request.urlopen(request, timeout=3) as response:
@@ -291,9 +298,14 @@ def stages_of(script: list) -> list[list[str]]:
     return script if script and isinstance(script[0], list) else [script]
 
 
-def game_environment(role: str, script: pathlib.Path | None, party: str) -> dict[str, str]:
+# Settings a scenario switches on for its games ("settings"); never taken from the PC's own.
+SCENARIO_SETTINGS = ("SHADPS4_BLOODBORNE_PARTY_DEATH",)
+
+
+def game_environment(role: str, script: pathlib.Path | None, party: str,
+                     settings: dict[str, str] | None = None) -> dict[str, str]:
     """A role's game's settings: co-op on in `party`, the trace on, the autoplay script if any,
-    and what the build needs besides."""
+    the scenario's own settings, and what the build needs besides."""
     env = dict(os.environ)
     env.update({
         "SHADPS4_BLOODBORNE_SEAMLESS_COOP": "1",
@@ -305,6 +317,9 @@ def game_environment(role: str, script: pathlib.Path | None, party: str) -> dict
     env.pop("SHADPS4_BLOODBORNE_AUTOPLAY", None)
     if script is not None:
         env["SHADPS4_BLOODBORNE_AUTOPLAY"] = str(script)
+    for name in SCENARIO_SETTINGS:
+        env.pop(name, None)
+    env.update(settings or {})
     env.update(ENGINE.environment(role))
     # In the background: the games' windows (SDL, both engines) open and come up without taking
     # the focus from whatever the person at the PC is doing.
@@ -335,7 +350,8 @@ def set_aside(path: pathlib.Path):
             time.sleep(0.5)
 
 
-def launch(role: str, script: list[str] | None, party: str = "rig:hunters") -> subprocess.Popen:
+def launch(role: str, script: list[str] | None, party: str = "rig:hunters",
+           settings: dict[str, str] | None = None) -> subprocess.Popen:
     folder = ENGINE.role_dir(role)
     script_path = None
     if script is not None:
@@ -343,7 +359,7 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters") -> s
         script_path.write_text("\n".join(script) + "\n", encoding="utf-8", newline="\n")
     set_aside(log_path(role))
     ENGINE.prepare(role)
-    env = game_environment(role, script_path, party)
+    env = game_environment(role, script_path, party, settings)
     if ENGINE.name == "emulator":
         return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -391,6 +407,17 @@ def keep_logs(run_dir: pathlib.Path, roles: list[str], suffix: str = ""):
                 shutil.copy2(source, run_dir / kept)
             except OSError:
                 pass
+
+
+def keep_shots(run_dir: pathlib.Path, roles: list[str]):
+    """Each role's pictures (its script's `shot <name>` steps) moved next to its log as
+    <role>-<name>.png, and a request no frame took dropped: the next run starts with neither."""
+    for role in roles:
+        ENGINE.shot_request(role).unlink(missing_ok=True)
+        shots = ENGINE.shots(role)
+        for shot in sorted(shots.glob("*.png")) if shots.is_dir() else []:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(shot), str(run_dir / f"{role}-{shot.name}"))
 
 
 def boot_check(role: str, seconds: int) -> int:
@@ -481,6 +508,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     for role in roles:
         if not scenario.get("no_baseline") and restore_baseline(role):
             print(f"  {role}: saves put back to the baseline")
+    keep_shots(run_dir / "earlier", roles)  # an aborted run's, apart from this one's
     need = ENGINE.commit_gb * len(roles)
     free = free_commit_gb()
     if free < need:
@@ -490,7 +518,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     stop_servers()
     start_servers(run_dir)
     if not server_is_current():
-        print("  The rig's shadNet is too old (no /bloodborne/party/hp): copy "
+        print("  The rig's shadNet is too old (no /bloodborne/party/vitals): copy "
               rf"{BB_ROOT}\out\server\shadnet.exe into {RIG}\server.")
         return False
     started = time.time()
@@ -499,7 +527,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     stage = {role: 0 for role in roles}
     processes = {}
     for role in roles:
-        processes[role] = launch(role, stages[role][0])
+        processes[role] = launch(role, stages[role][0], settings=scenario.get("settings"))
         print(f"  started {role}")
         # The next game once this one is in the world, where loading side by side is slow.
         wait_until = time.time() + 90 if ENGINE.staggered_start else 0
@@ -519,7 +547,8 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
                       "stopping its game and starting it again")
                 stop_game(processes[role])
                 keep_logs(run_dir, [role], f"-stage{stage[role]}")
-                processes[role] = launch(role, stages[role][stage[role]])
+                processes[role] = launch(role, stages[role][stage[role]],
+                                         settings=scenario.get("settings"))
             elif found:
                 done[role] = found.group(1)
                 print(f"  {role} done ({found.group(1)}) after {time.time() - started:.0f} s")
@@ -535,6 +564,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
         time.sleep(2)
     stop_games()
     keep_logs(run_dir, roles)
+    keep_shots(run_dir, roles)
     if crashed:
         # A crash is the emulator's (the GPU's device lost, so far), not the scenario's: once more.
         if attempt == 1:
@@ -572,6 +602,76 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     return passed
 
 
+def play_scripts(scenario: dict) -> dict[str, list[str]]:
+    """--play: each of a scenario's roles only gets into the world and into one session with the
+    others; the rest is the person's."""
+    roles = list(scenario["roles"])
+    return {role: [START, f"wait-session {len(roles)} 300"] for role in roles}
+
+
+def play(name: str) -> int:
+    """--play <scenario>: its games with its settings, left to the person at the PC once they are
+    in the world together. The servers stay up until every game is closed."""
+    scenario = SCENARIOS[name]
+    roles = list(scenario["roles"])
+    run_dir = RUNS / time.strftime("%Y%m%d-%H%M%S") / f"play-{name}"
+    if missing := ENGINE.missing():
+        print(missing)
+        return 2
+    for role in roles:
+        if not user_dir(role).is_dir():
+            print(f"{role}: no rig folder at {ENGINE.role_dir(role)}")
+            return 2
+    if games()[1]:
+        print("Another game is running (someone is playing): not starting the rig's.")
+        return 2
+    for role in roles:
+        if restore_baseline(role):
+            print(f"{role}: saves put back to the baseline")
+    need = ENGINE.commit_gb * len(roles)
+    if (free := free_commit_gb()) < need:
+        print(f"Not enough memory for {len(roles)} games: {free:.1f} GB can be committed, "
+              f"{need} GB needed.")
+        return 2
+    stop_servers()
+    start_servers(run_dir)
+    if not server_is_current():
+        print(rf"The rig's shadNet is too old (no /bloodborne/party/vitals): copy "
+              rf"{BB_ROOT}\out\server\shadnet.exe into {RIG}\server.")
+        stop_servers()
+        return 2
+    scripts = play_scripts(scenario)
+    processes = {}
+    for role in roles:
+        processes[role] = launch(role, scripts[role], settings=scenario.get("settings"))
+        print(f"started {role}")
+        wait_until = time.time() + 90 if ENGINE.staggered_start else 0
+        while (time.time() < wait_until and IN_WORLD not in read_log(role)
+               and processes[role].poll() is None):
+            time.sleep(2)
+    started = time.time()
+    joined = set()
+    while time.time() < started + 360 and len(joined) < len(roles):
+        for role in roles:
+            if role not in joined and DONE.search(read_log(role)):
+                joined.add(role)
+        if any(game.poll() is not None for game in processes.values()):
+            break
+        time.sleep(2)
+    if len(joined) == len(roles):
+        print(f"Ready after {time.time() - started:.0f} s: {', '.join(roles)} are in the world "
+              "together. The games are yours; close them when you are done.")
+    else:
+        print(f"Not together yet ({', '.join(sorted(joined)) or 'nobody'} joined); the games stay "
+              "open as they are.")
+    while any(game.poll() is None for game in processes.values()):
+        time.sleep(5)
+    keep_logs(run_dir, roles)
+    stop_servers()
+    print(f"Every game is closed; logs in {run_dir}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("scenarios", nargs="*")
@@ -590,6 +690,9 @@ def main(argv: list[str]) -> int:
                         help="boot the role's game alone and check that co-op went in")
     parser.add_argument("--seconds", type=int, default=40,
                         help="how long --boot-check lets the game boot (default 40)")
+    parser.add_argument("--play", metavar="SCENARIO",
+                        help="start a scenario's games with its settings and leave them to you "
+                             "once they are in the world together")
     args = parser.parse_args(argv)
     use_engine(args.engine)
     if args.setup:
@@ -605,6 +708,11 @@ def main(argv: list[str]) -> int:
         return 0
     if args.boot_check:
         return boot_check(args.boot_check, args.seconds)
+    if args.play:
+        if args.play not in SCENARIOS:
+            print(f"No such scenario: {args.play} (--list shows them)")
+            return 2
+        return play(args.play)
     if args.add_guest2:
         add_guest2()
         return 0

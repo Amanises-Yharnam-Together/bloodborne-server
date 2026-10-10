@@ -45,6 +45,7 @@ $isRole = { param($v) $v -eq "host" -or $v -eq "guest" }
 $isInstall = { param($v) Test-Path (Join-Path $v "DATA\Bloodborne\CUSA03173\eboot.bin") }
 $isPort = { param($v) ($v -match '^\d{4,5}$') -and [int]$v -ge 1024 -and [int]$v -le 65535 }
 $isFps = { param($v) $v -in @("30", "60") }
+$isYesNo = { param($v) $v -in @("yes", "no") }
 
 Write-Host ""
 Write-Host "  Bloodborne seamless co-op on Bloodborne PC (native port): setup"
@@ -80,6 +81,11 @@ $fps = Ask "Frame rate (60, or 30 as on shadPS4)" $(if ($saved["FPS"]) { $saved[
 # Every enemy's and boss's HP, damage and poise multipliers; everyone in a party should use the same.
 $isHarder = { param($v) $v -eq "off" -or $v -match '^\d+(\.\d+)?,\d+(\.\d+)?,\d+(\.\d+)?$' }
 $harder = Ask "Harder enemies: HP,damage,poise multipliers (off for the normal game)" $(if ($saved["HARDER"]) { $saved["HARDER"] } else { "3,1.5,3" }) $isHarder "Type off, or three numbers from 1 to 10 like 3,1.5,3."
+Write-Host ""
+Write-Host "  Party death, as in Elden Ring Nightreign: a killing blow puts you down instead of killing"
+Write-Host "  you while a partner stands on your map; they revive you by hitting you (R1/R2), and you"
+Write-Host "  can hold Circle to give up. Both players should answer the same."
+$partyDeath = Ask "Party death (yes/no)" $(if ($saved["PARTYDEATH"] -eq "0") { "no" } else { "yes" }) $isYesNo "Type yes or no."
 
 # --- saves -----------------------------------------------------------------------------------
 # The port keeps saves in user\savedata\<user>\<title>\ (user 1), shadPS4 in
@@ -232,13 +238,14 @@ $lines = @(
     "set `"P2PPORT=$p2pPort`"",
     "set `"FPS=$fps`"",
     "set `"HARDER=$harder`"",
+    "set `"PARTYDEATH=$(if ($partyDeath -eq "yes") { "1" } else { "0" })`"",
     "set `"GAMEDIR=$gameDir`""
 )
 [IO.File]::WriteAllLines($settingsPath, $lines, (New-Object Text.ASCIIEncoding))
 
 Write-Host ""
 Write-Host "  Done." -ForegroundColor Green
-Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS, harder enemies $harder"
+Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS, party death $partyDeath, harder enemies $harder"
 Write-Host "    shadnet ${hostIp}:31313, WebAPI ${hostIp}:31315, backend ${hostIp}:20443"
 if ($role -eq "host") {
     Write-Host ""

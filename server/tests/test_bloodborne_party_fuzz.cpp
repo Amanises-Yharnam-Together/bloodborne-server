@@ -42,6 +42,9 @@ QByteArray RandomBody(std::mt19937 &random) {
                                                "120:",
                                                "120:402718720",
                                                "1:2:3",
+                                               "up",
+                                               "down",
+                                               "guest:4:2",
                                                "00ff10",
                                                "0g",
                                                "-12.5",
@@ -79,6 +82,7 @@ int main() {
   Bloodborne::PartyEchoBoard echoes;
   Bloodborne::PartyMapStateBoard states;
   Bloodborne::PartyMapBoard maps;
+  Bloodborne::PartyVitalsBoard vitals;
   for (int round = 0; round < 20000; ++round) {
     const QByteArray body = RandomBody(random);
     (void)Bloodborne::ParseRestUpdate(body);
@@ -101,12 +105,17 @@ int main() {
       (void)Bloodborne::FormatMapBoard(
           maps.Update("p", update->member, update->map, round));
     }
+    if (const auto update = Bloodborne::ParseVitalsUpdate(body)) {
+      (void)Bloodborne::FormatVitalsBoard(vitals.Update("p", *update, round));
+    }
   }
   // Whatever was posted, a well-formed post still works.
   const auto answer =
       echoes.Update("p", "reader", 0, {}, {}); // everything after 0
   CHECK(answer.echoes.size() == answer.maps.size());
   CHECK(Bloodborne::ParseEchoUpdate("guest 0 120:402718720").has_value());
+  CHECK(Bloodborne::ParseVitalsUpdate("guest 18010000 down 1 9 4 0 3 0 0 0")
+            .has_value());
 
   std::cout << "bloodborne party fuzz: ok\n";
   return 0;

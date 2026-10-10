@@ -6,10 +6,12 @@ their folders, settings and game view, without starting a game.
 Run: py -3.12 -m unittest discover -s tools\\rig\\tests
 """
 import json
+import os
 import pathlib
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import engines  # noqa: E402
@@ -67,6 +69,16 @@ class EngineTest(unittest.TestCase):
                          "the emulator rig's low-memory mod")
         self.assertEqual((env["BB_FPS"], env["BB_DMEM_MB"]), ("30", "5056"),
                          "the low-spec profile: 30 FPS, the PS4's own memory")
+
+    def test_only_the_port_takes_pictures_and_in_its_role_folder(self):
+        # A script's `shot <name>` writes the request file; the port's presenter takes it.
+        role = self.root / "rig" / "port" / "guest"
+        self.assertEqual(self.port.environment("guest")["BB_SHOT_TRIGGER"],
+                         str(role / "shot.request"))
+        self.assertEqual(self.port.shot_request("guest"), role / "shot.request")
+        self.assertEqual(self.port.shots("guest"), role / "shots")
+        self.assertNotIn("BB_SHOT_TRIGGER", self.emulator.environment("guest"),
+                         "the emulator draws no party HUD: its scripts skip their shots")
 
     def test_the_port_is_made_ready_to_play_on_the_rig(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -199,6 +211,14 @@ class RunnerTest(unittest.TestCase):
         if sys.platform == "win32":
             self.assertEqual(options["startupinfo"].wShowWindow, 4)  # SW_SHOWNOACTIVATE
             self.assertTrue(options["creationflags"] & 0x08000000)  # CREATE_NO_WINDOW
+
+    def test_a_scenario_switches_on_its_own_settings_only(self):
+        party_death = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"}
+        env = run_scenario.game_environment("host", None, "rig:x", party_death)
+        self.assertEqual(env["SHADPS4_BLOODBORNE_PARTY_DEATH"], "1")
+        with unittest.mock.patch.dict(os.environ, party_death):
+            env = run_scenario.game_environment("host", None, "rig:x")
+        self.assertNotIn("SHADPS4_BLOODBORNE_PARTY_DEATH", env, "not from the PC's own settings")
 
     def test_a_boot_check_plays_nothing_and_meets_no_one(self):
         env = run_scenario.game_environment("host", None, "smoke:boot")

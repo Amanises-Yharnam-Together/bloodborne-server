@@ -4,6 +4,7 @@
 // Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY=<script>): the emulator presses the buttons itself, from
 // the title screen into the world, then runs a test script, so a test needs no one at the pad.
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -111,4 +112,21 @@ TEST(BloodborneAutoplay, AnAttackPressesR1OncePerCycle) {
     EXPECT_FALSE(AttackHoldsR1(0.5)) << "released";
     EXPECT_FALSE(AttackHoldsR1(AttackCycleSeconds - 0.01));
     EXPECT_TRUE(AttackHoldsR1(AttackCycleSeconds + 0.4)) << "again in the next cycle";
+}
+
+TEST(BloodborneAutoplay, AShotGoesIntoTheShotsFolderBesideTheRequest) {
+    const std::filesystem::path request =
+        std::filesystem::path{"rig"} / "port" / "host" / "shot.request";
+    EXPECT_EQ(AutoplayShotPath(request.string(), "host-sees-down"),
+              (request.parent_path() / "shots" / "host-sees-down.png").string());
+    EXPECT_EQ(AutoplayShotPath(request.string(), "Guest_2"),
+              (request.parent_path() / "shots" / "Guest_2.png").string());
+    EXPECT_EQ(AutoplayShotPath(request.string(), std::string(40, 'a')),
+              (request.parent_path() / "shots" / (std::string(40, 'a') + ".png")).string());
+    // Only a plain name: never a path of its own, nothing else in the folder.
+    for (const char* name : {"", "a b", "../host", "x.png", "a/b", "a\\b", "down!"}) {
+        EXPECT_EQ(AutoplayShotPath(request.string(), name), std::nullopt) << name;
+    }
+    EXPECT_EQ(AutoplayShotPath(request.string(), std::string(41, 'a')), std::nullopt);
+    EXPECT_EQ(AutoplayShotPath("", "down"), std::nullopt) << "no request file, no picture";
 }
