@@ -57,7 +57,7 @@ STORY_HIDDEN = "0x10014005"
 # the session formed, its loot on the ground: the guest's own world had posted it hurt and the
 # host's was lowered to that before the join.
 DOG = "0x10014009"
-WARD_NPC = "0x10010038"  # 910 HP by the Oedon Chapel lamp, hidden in the rig saves
+WARD_NPC = "0x10010075"  # the NPC sitting by the Oedon Chapel lamp (999 HP)
 CLINIC = "0x10014000"  # 573 HP, by Iosefka's door 32 m from the first lamp, 10 m up
 OTHER_MAP_FLAG = 12700131
 THIS_MAP_FLAG = 12410999
@@ -233,11 +233,8 @@ SCENARIOS = {
                  "there and the guest's copy follows (the game sends no NPC HP), then the guest "
                  "hits it and the host's copy follows; one HP in both games (Kaniel 2026-10-10)",
         "roles": {
-            # The rig's saves have the NPC hidden by the story: the host shows it (the guest
-            # follows the host's hidden characters).
             "host": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
-                     "wait-session 2 420", "wait 10", f"poke {WARD_NPC} 28 0 1", "wait 5",
-                     f"hurt {WARD_NPC} 600", "wait 40", "census 60", "wait 10", "census 60",
+                     "wait-session 2 420", "wait 15", f"hurt {WARD_NPC} 600", "wait 40", "census 60", "wait 10", "census 60",
                      "expect-session 2"],
             "guest": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
                       "wait-session 2 420", "wait 25", "census 60",

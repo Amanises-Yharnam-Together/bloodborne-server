@@ -989,8 +989,12 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
             track->second.start = copy.hp + track->second.written;
             own = 0;
         }
-        if (own > 0) {
-            step.post.push_back({copy.handle, own, copy.max});
+        // Two reads must agree: a world showing its characters at 1 HP for one read (hidden
+        // or loading) posted that as damage.
+        const s32 confirmed = std::min(own, track->second.last_own);
+        track->second.last_own = own;
+        if (confirmed > 0) {
+            step.post.push_back({copy.handle, confirmed, copy.max});
         }
         // Each other member's damage on its copy, as a share of this copy's max HP, on top of
         // what this copy already took from that member.

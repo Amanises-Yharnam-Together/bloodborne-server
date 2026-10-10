@@ -1300,9 +1300,11 @@ TEST(BloodborneSharedEnemyHp, TwoPlayersHittingOneEnemyAddUp) {
     EXPECT_TRUE(guest.Update(1, true, copies(500), {}).post.empty());
 
     // The host hits for 100, the guest for 60, each on its own copy.
+    host.Update(1, true, copies(400), {}); // a hit is posted on the second read
     auto from_host = host.Update(1, true, copies(400), {});
     ASSERT_EQ(from_host.post.size(), 1u);
     EXPECT_EQ(from_host.post[0].hp, 100) << "the host's own damage";
+    guest.Update(1, true, copies(440), {});
     auto from_guest = guest.Update(1, true, copies(440), {});
     ASSERT_EQ(from_guest.post.size(), 1u);
     EXPECT_EQ(from_guest.post[0].hp, 60);
@@ -1322,6 +1324,7 @@ TEST(BloodborneSharedEnemyHp, TwoPlayersHittingOneEnemyAddUp) {
     EXPECT_EQ(again.post[0].hp, 100);
 
     // The host hits again (340 -> 290): it posts 150; the guest takes the 50 more.
+    host.Update(1, true, copies(290), to_host);
     from_host = host.Update(1, true, copies(290), to_host);
     EXPECT_EQ(from_host.post[0].hp, 150);
     EXPECT_EQ(
@@ -1339,6 +1342,24 @@ TEST(BloodborneSharedEnemyHp, InOneWorldAGuestTakesTheHostsNpcHp) {
     EXPECT_EQ(LowerToHostHp(guest, host), (std::vector<EnemyWrite>{{0x10010038, 422}}))
         << "down to the host's HP, never up";
     EXPECT_TRUE(LowerToHostHp(guest, {}).empty());
+}
+
+// Friend run 2026-10-10 by Vicar Amelia: for one read the host's world showed 77 enemies at 1 HP
+// (characters being hidden and loaded), it posted that as its damage, the guest's copies went to
+// 1 HP and a boss died ("Prey Slaughtered", +11800 echoes). Damage counts once two reads agree.
+TEST(BloodborneSharedEnemyHp, AOneReadBlipIsNoDamage) {
+    SharedDamage copy;
+    const auto at = [](s32 hp) { return std::vector<EnemyCopy>{{0x10008000, hp, 979}}; };
+    EXPECT_TRUE(copy.Update(1, true, at(979), {}).post.empty());
+    EXPECT_TRUE(copy.Update(1, true, at(1), {}).post.empty()) << "one read: not yet";
+    EXPECT_TRUE(copy.Update(1, true, at(979), {}).post.empty()) << "back: it was a blip";
+    EXPECT_TRUE(copy.Update(1, true, at(800), {}).post.empty());
+    const auto hit = copy.Update(1, true, at(800), {});
+    ASSERT_EQ(hit.post.size(), 1u) << "two reads agree: a hit";
+    EXPECT_EQ(hit.post[0].hp, 179);
+    const auto more = copy.Update(1, true, at(700), {});
+    ASSERT_EQ(more.post.size(), 1u);
+    EXPECT_EQ(more.post[0].hp, 179) << "the newest read waits for the next";
 }
 
 TEST(BloodborneSharedEnemyHp, OtherMembersDamageNeverKillsAndScalesByMaxHp) {

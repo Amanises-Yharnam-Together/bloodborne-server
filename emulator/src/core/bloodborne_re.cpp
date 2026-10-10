@@ -5816,11 +5816,19 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     // a guest lowers its copies to it (see LowerToHostHp).
     const bool one_world = in_session && !active;
     if (one_world && !IsPartyGuestRole()) {
+        // Two reads must agree here too (see SharedDamage): the higher of the last two.
+        static std::unordered_map<u32, s32> last_hp;
+        std::unordered_map<u32, s32> now_hp;
         for (const EnemyCopy& copy : standing) {
-            if (copy.hp < copy.max) {
-                step.post.push_back({copy.handle, copy.hp, copy.max});
+            const auto before = last_hp.find(copy.handle);
+            const s32 confirmed =
+                before != last_hp.end() ? std::max(copy.hp, before->second) : copy.max;
+            now_hp[copy.handle] = copy.hp;
+            if (confirmed < copy.max) {
+                step.post.push_back({copy.handle, confirmed, copy.max});
             }
         }
+        last_hp = std::move(now_hp);
     } else if (one_world) {
         step.writes = LowerToHostHp(standing, reports);
     }

@@ -669,8 +669,9 @@ public:
 
 private:
     struct Track {
-        s32 start = 0;   // the copy's HP when first seen this visit (or since it came back up)
-        s32 written = 0; // what the others' damage took off it
+        s32 start = 0;    // the copy's HP when first seen this visit (or since it came back up)
+        s32 written = 0;  // what the others' damage took off it
+        s32 last_own = 0; // the previous read's own damage: posted is the lower of the two
     };
     u64 visit = 0;
     bool active = false;
