@@ -869,9 +869,9 @@ bool PartyDeathEnabled(const char* setting);
 
 // IsNoDead(data module) (0x01A577D0): the game's lethal HP changes leave 1 HP instead of 0 when it
 // answers true, as the debug Player No Dead does. Its callers by return address (call + 5): a
-// lethal check that may put the player down, one that stays a real death (the game's kills), or
-// another question about it.
-enum class NoDeadCheck { Other, Lethal, Instant };
+// lethal check that may put the player down, one that stays a real death (the game's kills), one
+// asked after every hit (lethal only when the hit left no HP), or another question about it.
+enum class NoDeadCheck { Other, Lethal, Instant, AfterHit };
 struct NoDeadCaller {
     u64 return_offset = 0;
     NoDeadCheck check = NoDeadCheck::Other;
@@ -883,6 +883,9 @@ constexpr u64 IsNoDeadExitOffset = 0x01A57923;
 constexpr std::array<u8, 7> IsNoDeadExit{0x44, 0x88, 0xF0, 0x48, 0x83, 0xC4, 0x08};
 std::span<const NoDeadCaller> NoDeadCallers();
 NoDeadCheck ClassifyNoDeadCheck(u64 return_offset);
+// The check with the player's HP as it is asked: the one after every hit is lethal only at 0 HP or
+// less, and another question otherwise.
+NoDeadCheck NoDeadCheckAt(NoDeadCheck check, s32 hp);
 // What IsNoDead answers for the local player (true keeps it at 1 HP): `armed` when a lethal hit
 // would put it down now, `down` while it is down, `answer` the game's own.
 bool KeepsPlayerAlive(NoDeadCheck check, bool armed, bool down, bool answer);

@@ -59,6 +59,20 @@ TEST(BloodbornePartyDeath, KnowsWhichLethalChecksPutThePlayerDown) {
     }
 }
 
+// The hit's second check (0x01A2C05F) is asked after every hit, whatever HP is left: only a hit
+// that left 0 HP or less is lethal there (the rig: any enemy hit put a full HP player down).
+TEST(BloodbornePartyDeath, TheCheckAfterEveryHitIsLethalOnlyWithNoHpLeft) {
+    EXPECT_EQ(ClassifyNoDeadCheck(0x01A2C05F), NoDeadCheck::AfterHit);
+    EXPECT_EQ(NoDeadCheckAt(NoDeadCheck::AfterHit, 594), NoDeadCheck::Other);
+    EXPECT_EQ(NoDeadCheckAt(NoDeadCheck::AfterHit, 1), NoDeadCheck::Other);
+    EXPECT_EQ(NoDeadCheckAt(NoDeadCheck::AfterHit, 0), NoDeadCheck::Lethal);
+    EXPECT_EQ(NoDeadCheckAt(NoDeadCheck::AfterHit, -40), NoDeadCheck::Lethal);
+    // The others are asked only when HP would run out, so HP does not change them.
+    EXPECT_EQ(NoDeadCheckAt(NoDeadCheck::Lethal, 594), NoDeadCheck::Lethal);
+    EXPECT_EQ(NoDeadCheckAt(NoDeadCheck::Instant, 594), NoDeadCheck::Instant);
+    EXPECT_EQ(NoDeadCheckAt(NoDeadCheck::Other, 0), NoDeadCheck::Other);
+}
+
 TEST(BloodbornePartyDeath, KeepsTheDownedOrArmedPlayerAliveOnlyAtLethalChecks) {
     // Armed (another member stands on the map): a lethal hit leaves 1 HP.
     EXPECT_TRUE(KeepsPlayerAlive(NoDeadCheck::Lethal, true, false, false));

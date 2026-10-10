@@ -1696,9 +1696,10 @@ bool PartyDeathEnabled(const char* setting) {
 namespace {
 // Read from the 01.09 eboot: each is the address after a `call IsNoDead` (see the eboot tests).
 constexpr std::array<NoDeadCaller, 12> NoDeadCallerTable{{
-    // Hit damage (0x01A2A770: HP minus the hit), and its check once the hit is applied.
+    // Hit damage (0x01A2A770: HP minus the hit, asked only when that is 0 or less), and its check
+    // once the hit is applied, asked after every hit (0x01A2C03B skips only the kill).
     {0x01A2BF7D, NoDeadCheck::Lethal},
-    {0x01A2C05F, NoDeadCheck::Lethal},
+    {0x01A2C05F, NoDeadCheck::AfterHit},
     // Special effect HP changes (0x01A2FA40: poison, rapid poison, frenzy and the like).
     {0x01A2FB4A, NoDeadCheck::Lethal},
     {0x01A2FBE6, NoDeadCheck::Lethal},
@@ -1746,6 +1747,13 @@ NoDeadCheck ClassifyNoDeadCheck(u64 return_offset) {
         std::ranges::find(NoDeadCallerTable, return_offset,
                           [](const NoDeadCaller& entry) { return entry.return_offset; });
     return caller == NoDeadCallerTable.end() ? NoDeadCheck::Other : caller->check;
+}
+
+NoDeadCheck NoDeadCheckAt(NoDeadCheck check, s32 hp) {
+    if (check != NoDeadCheck::AfterHit) {
+        return check;
+    }
+    return hp <= 0 ? NoDeadCheck::Lethal : NoDeadCheck::Other;
 }
 
 bool KeepsPlayerAlive(NoDeadCheck check, bool armed, bool down, bool answer) {
@@ -1807,10 +1815,15 @@ bool DownedState::Hits(u32 total, s64 now_ms) {
 }
 
 void DownedState::Tick(s64 now_ms) {
-    while (vital == Vital::Down && landed > 0 && now_ms >= drain_at) {
-        --landed;
-        drain_at += RefillStepMs;
+    if (vital != Vital::Down || landed == 0 || now_ms < drain_at) {
+        return;
     }
+    // One hit per step due since drain_at, worked out at once: as a loop, clang made it a 128-bit
+    // division (__udivti3), which clang-cl's links on Windows lack.
+    const s64 due = (now_ms - drain_at) / RefillStepMs + 1;
+    const u32 drained = due < static_cast<s64>(landed) ? static_cast<u32>(due) : landed;
+    landed -= drained;
+    drain_at += static_cast<s64>(drained) * RefillStepMs;
 }
 
 void DownedState::GetUp(s64 now_ms) {

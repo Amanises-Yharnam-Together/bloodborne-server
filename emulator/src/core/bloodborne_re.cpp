@@ -6410,6 +6410,10 @@ void PS4_SYSV_ABI KeepPartyMemberUp(u64, GuestRegisterSnapshot* registers) {
         NoteOtherNoDeadCheck(return_offset);
         return;
     }
+    check = NoDeadCheckAt(check, ReadValue<s32>(data, 0xF8));
+    if (check == NoDeadCheck::Other) {
+        return; // a hit that left HP
+    }
     if (check == NoDeadCheck::Lethal && FallsIntoTheVoid(data)) {
         check = NoDeadCheck::Instant;
     }
