@@ -786,6 +786,80 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party death: down \d+"]},
         "timeout": 900,
     },
+    "down-by-enemy": {
+        "about": "party death: the guest with 1 HP stands next to the nearest enemy until it "
+                 "hits; it goes down, the enemy leaves it alone (still 1 HP after 20 s), and the "
+                 "host revives it",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 150",
+                     "wait 22", "approach-downed", "wait 2", *REVIVE_HITS,
+                     "wait 5", "snapshot", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", "hurt self 1", "approach nearest",
+                      "wait-vital down 90", "wait 20", "expect-hp self == 1", "wait-vital up 90",
+                      "wait 3", "snapshot", "expect-hp self > 1", "expect-session 2"],
+        },
+        "expect": {
+            "host": [r"party death: revive hit on"],
+            "guest": [r"party death: down \d+ on map 0x18010000",
+                      r"party death: revived from down"],
+        },
+        "forbid": {"host": SESSION_HOLDS,
+                   "guest": SESSION_HOLDS + [r"party death: killed while down"]},
+        "timeout": 600,
+    },
+    "down-revive3": {
+        "about": "party death in a party of three: the guest goes down and the second guest, "
+                 "not the host, revives it",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait-member-vital down 180",
+                     "wait 40", "snapshot", "expect-session 3"],
+            "guest": [START, "wait-session 3 480", "wait 20", *LETHAL_FALL, "wait-vital down 30",
+                      "wait 3", "expect-hp self == 1", "wait-vital up 90", "wait 3", "snapshot",
+                      "expect-hp self > 1", "expect-session 3"],
+            "guest2": [START, "godmode", "wait-session 3 480", "wait-member-vital down 180",
+                       "approach-downed", "wait 2", *REVIVE_HITS, "wait 5", "snapshot",
+                       "expect-session 3"],
+        },
+        "expect": {
+            "guest": [r"party death: down \d+ on map 0x18010000",
+                      r"party death: revived from down"],
+            "guest2": [r"party death: revive hit on"],
+        },
+        "forbid": {"host": SESSION_HOLDS + [r"party death: revive hit on"],
+                   "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
+        "timeout": 900,
+    },
+    "wipe3": {
+        "about": "party death in a party of three: both guests go down, then the host falls with "
+                 "nobody left standing; all three die and wake at their lamps with the map "
+                 "reloaded, and the session holds",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "wait-session 3 480", "wait-member-vital down 180", "wait 25",
+                     *LETHAL_FALL, "wait-vital dead 30", "wait-vital up 150",
+                     "wait-members 3 300", "wait 15", "snapshot", "expect-session 3"],
+            "guest": [START, "wait-session 3 480", "wait 20", *LETHAL_FALL, "wait-vital down 30",
+                      "wait-vital dead 90", "wait-vital up 150", "wait-members 3 300", "wait 15",
+                      "snapshot", "expect-session 3"],
+            "guest2": [START, "wait-session 3 480", "wait-member-vital down 180", "wait 5",
+                       *LETHAL_FALL, "wait-vital down 30", "wait-vital dead 90",
+                       "wait-vital up 150", "wait-members 3 300", "wait 15", "snapshot",
+                       "expect-session 3"],
+        },
+        "expect": {
+            "host": [r"party death: died for real on map 0x18010000 \(reset=true\)",
+                     r"travelling there \(reset=true\)"],
+            "guest": [r"party death: wipe \d+ ends down \d+; dies \(reset=true",
+                      r"travelling there \(reset=true\)"],
+            "guest2": [r"party death: down \d+ on map 0x18010000",
+                       r"party death: wipe \d+ ends down \d+; dies \(reset=true",
+                       r"travelling there \(reset=true\)"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
+        "timeout": 1200,
+    },
     "soak": {
         "about": "half an hour of trips back and forth with the session up (leaks, slow growth, "
                  "a trip that breaks after many)",
