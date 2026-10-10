@@ -497,6 +497,10 @@ std::optional<int> CharacterSlotOfSavePath(std::string_view path) {
     return digit - '0';
 }
 
+LampUnblock LampBytesToClear(bool blocked, bool missing, bool host_effect, bool in_party_session) {
+    return {blocked && (host_effect || in_party_session), missing && in_party_session};
+}
+
 bool IsOtherCharacter(s32 progress_now, s32 progress_kept) {
     // Event flags only add up as a character plays; far fewer set means another character.
     constexpr s32 ProgressSlack = 20;
@@ -992,6 +996,9 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
         // what this copy already took from that member.
         s32 hp = copy.hp;
         for (const EnemyHpReport& report : others) {
+            if ((report.visit & HostHpReport) != 0) {
+                continue; // HP from one world, not damage
+            }
             for (const EnemyHp& damage : report.enemies) {
                 if (damage.handle != copy.handle || damage.max <= 0 || damage.hp <= 0) {
                     continue;
@@ -1014,6 +1021,31 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
         }
     }
     return step;
+}
+
+std::vector<EnemyWrite> LowerToHostHp(std::span<const EnemyCopy> mine,
+                                      std::span<const EnemyHpReport> reports) {
+    std::vector<EnemyWrite> writes;
+    for (const EnemyCopy& copy : mine) {
+        std::optional<s32> lowest;
+        for (const EnemyHpReport& report : reports) {
+            if ((report.visit & HostHpReport) == 0) {
+                continue;
+            }
+            for (const EnemyHp& enemy : report.enemies) {
+                if (enemy.handle == copy.handle) {
+                    if (const auto target = SharedEnemyHp(lowest.value_or(copy.hp), copy.max,
+                                                          enemy.hp, enemy.max)) {
+                        lowest = target;
+                    }
+                }
+            }
+        }
+        if (lowest) {
+            writes.push_back({copy.handle, *lowest});
+        }
+    }
+    return writes;
 }
 
 std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies) {

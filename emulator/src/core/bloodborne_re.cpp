@@ -5810,12 +5810,25 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
             }
         }
     }
-    const u64 source = (u64{enemy_hp_source} << 32) | (visit & 0xFFFFFFFFu);
-    const SharedDamage::Step step = damage.Update(visit, active, standing, reports);
+    const u64 source = (u64{enemy_hp_source & 0x7FFFFFFFu} << 32) | (visit & 0xFFFFFFFFu);
+    SharedDamage::Step step = damage.Update(visit, active, standing, reports);
+    // In one world: the host posts its hurt characters' HP (NPCs: the game does not send theirs),
+    // a guest lowers its copies to it (see LowerToHostHp).
+    const bool one_world = in_session && !active;
+    if (one_world && !IsPartyGuestRole()) {
+        for (const EnemyCopy& copy : standing) {
+            if (copy.hp < copy.max) {
+                step.post.push_back({copy.handle, copy.hp, copy.max});
+            }
+        }
+    } else if (one_world) {
+        step.writes = LowerToHostHp(standing, reports);
+    }
     const std::vector<EnemyHp>& hurt = step.post;
     {
         std::scoped_lock lock{enemy_hp_mutex};
-        local_enemy_hp = MemberMapState{map, EncodeEnemyHp(source, hurt)};
+        local_enemy_hp =
+            MemberMapState{map, EncodeEnemyHp(one_world ? (source | HostHpReport) : source, hurt)};
     }
     // Diagnostics (rig hp-after-guest-trip: the host's hit reached a guest back from a trip only
     // ~30 s later): what the board hands this member for its area, when that changes.
@@ -7383,20 +7396,28 @@ void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers
 
     record.blocked_before = ReadValue<u8>(record.object, 0x49) != 0;
     record.blocked_after = record.blocked_before;
-    if (!record.blocked_before) {
+    const bool missing = ReadValue<u8>(record.object, 0x4A) != 0;
+    if (!record.blocked_before && !missing) {
         record.result = "already_allowed";
         return;
     }
 
     record.player = GetLocalPlayer();
     record.host_effect = HasPlayerEffect(record.player, 9001);
-    // A party session (either role, see InstallLampsAsCampfires) uses its lamps too.
-    if (!record.host_effect && !InPartySession()) {
+    // A party session (either role, see InstallLampsAsCampfires) uses its lamps too, also one
+    // whose entity reads missing (see LampBytesToClear).
+    const LampUnblock clear =
+        LampBytesToClear(record.blocked_before, missing, record.host_effect, InPartySession());
+    if (clear == LampUnblock{}) {
         record.result = "not_multiplayer_host";
         return;
     }
-
-    if (!WriteValue(record.object, 0x49, u8{})) {
+    if (clear.missing) {
+        LOG_INFO(Debug, "Bloodborne lamp {} read its entity missing; cleared for the party",
+                 ReadValue<s32>(record.object, 0x20));
+        WriteValue(record.object, 0x4A, u8{});
+    }
+    if (clear.blocked && !WriteValue(record.object, 0x49, u8{})) {
         record.result = "write_rejected";
         return;
     }
@@ -9892,6 +9913,34 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
             failure = fmt::format("hp is {}", hp);
             return false;
         }
+        return true;
+    }
+    // peek <target> <offset>, poke <target> <offset> <value> [1] (hex): a character's u32 (or byte)
+    // at an offset, logged or written (reverse engineering on the rig: a field's meaning tried in
+    // play).
+    if (verb == "peek" || verb == "poke") {
+        const auto target = ParseAutoplayTarget(arg(0));
+        const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+        u32 offset = 0;
+        u32 value = 0;
+        const std::string_view offset_text = arg(1);
+        const std::string_view value_text = arg(2);
+        std::from_chars(offset_text.data(), offset_text.data() + offset_text.size(), offset, 16);
+        std::from_chars(value_text.data(), value_text.data() + value_text.size(), value, 16);
+        if (!found || offset > 0x2000 ||
+            !HasMemoryAccess(found->character + offset, 4, MemoryProt::CpuRead)) {
+            failure = "no such character";
+            return false;
+        }
+        const u32 before = ReadValue<u32>(found->character, offset);
+        if (verb == "poke" && arg(3) == "1") {
+            WriteValue(found->character, offset, static_cast<u8>(value)); // one byte
+        } else if (verb == "poke") {
+            WriteValue(found->character, offset, value);
+        }
+        LOG_INFO(Debug, "Bloodborne autoplay {}: {:#x} +{:#x} = {:#x}{}", verb,
+                 ReadValue<u32>(found->character, 0x08), offset, before,
+                 verb == "poke" ? fmt::format(" -> {:#x}", value) : "");
         return true;
     }
     // expect-hidden <handle> <0|1> [<timeout>]: the character hidden by the story (its event

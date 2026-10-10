@@ -773,6 +773,18 @@ TEST(BloodborneSharedProgression, LampsLitAnywhereAreLitForEveryone) {
     EXPECT_EQ(shared, (std::vector<std::pair<s32, bool>>{{12417830, true}, {12417831, true}}));
 }
 
+// Friend run 2026-10-10: after the host opened the Cathedral Ward door (its cutscene reloads the
+// world for the time of day) the guest's lamp read "entity missing" until it travelled on.
+TEST(BloodborneLamps, APartyMemberUsesItsLampsBlockedOrMissing) {
+    EXPECT_EQ(LampBytesToClear(true, false, false, true), (LampUnblock{true, false}));
+    EXPECT_EQ(LampBytesToClear(true, true, false, true), (LampUnblock{true, true}));
+    EXPECT_EQ(LampBytesToClear(false, true, false, true), (LampUnblock{false, true}));
+    EXPECT_EQ(LampBytesToClear(true, true, true, false), (LampUnblock{true, false}))
+        << "a multiplayer host outside a party: as the game's lamp fix always was";
+    EXPECT_EQ(LampBytesToClear(true, true, false, false), LampUnblock{})
+        << "nobody else's lamps change";
+}
+
 // A save slot's kept lists belong to the character that was there: once its pickups have been
 // set in its own world, a load where none of them is set is a new character in that slot.
 TEST(BloodborneGuestProgress, ANewCharacterInASlotStartsClean) {
@@ -1316,6 +1328,17 @@ TEST(BloodborneSharedEnemyHp, TwoPlayersHittingOneEnemyAddUp) {
         guest.Update(1, true, copies(340), std::vector<EnemyHpReport>{{HostSource, from_host.post}})
             .writes,
         (std::vector<EnemyWrite>{{0x10014066, 290}}));
+}
+
+TEST(BloodborneSharedEnemyHp, InOneWorldAGuestTakesTheHostsNpcHp) {
+    const std::vector<EnemyCopy> guest{{0x10010038, 910, 910}, {0x1001001f, 100, 123}};
+    const std::vector<EnemyHpReport> host{
+        {HostHpReport | 7, {{0x10010038, 422, 910}, {0x1001001f, 120, 123}}},
+        {7, {{0x10010038, 300, 910}}}, // a damage report (worlds apart): not HP
+    };
+    EXPECT_EQ(LowerToHostHp(guest, host), (std::vector<EnemyWrite>{{0x10010038, 422}}))
+        << "down to the host's HP, never up";
+    EXPECT_TRUE(LowerToHostHp(guest, {}).empty());
 }
 
 TEST(BloodborneSharedEnemyHp, OtherMembersDamageNeverKillsAndScalesByMaxHp) {

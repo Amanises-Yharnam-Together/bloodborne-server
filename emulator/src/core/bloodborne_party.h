@@ -155,6 +155,15 @@ const std::vector<CodePatch>& JoinAnywherePatches();
 // warps the player, e.g. Gascoigne's 24000020) calls StopRequest (returning to 0x0193C65C) and
 // LeaveSession for a member of a session. In a party it is a trip like a lamp's.
 bool IsWorldReloadStopRequest(u64 caller_offset);
+// A lamp object's availability bytes (+0x49 blocked in multiplayer, +0x4A its entity missing)
+// that a party member's lamp has cleared. After the host's time-of-day reload (Cathedral Ward
+// door, 2026-10-10) a guest's lamp read "entity missing" until it travelled, so it stayed unusable.
+struct LampUnblock {
+    bool blocked = false;
+    bool missing = false;
+    bool operator==(const LampUnblock&) const = default;
+};
+LampUnblock LampBytesToClear(bool blocked, bool missing, bool host_effect, bool in_party_session);
 // Whether that StopRequest starts a party trip: from the world load, in a party session, with no
 // trip under way.
 bool StartsTripOnWorldReload(u64 caller_offset, bool trip_active, bool in_party_session);
@@ -668,6 +677,13 @@ private:
     std::map<u32, Track> tracks;
     std::map<std::pair<u64, u32>, s32> written; // (other member's source, handle) -> taken
 };
+// In one world the game sends enemy HP from the host, but not an NPC's (rig 2026-10-10: the
+// host's Oedon Chapel NPC at 422 while the guest's showed 910). There the host posts the HP its
+// hurt characters have (EnemyHp.hp is HP, the report's source has HostHpReport set), and a guest
+// lowers its copies to that share; the guest's own hits reach the host by the game.
+constexpr u64 HostHpReport = u64{1} << 63;
+std::vector<EnemyWrite> LowerToHostHp(std::span<const EnemyCopy> mine,
+                                      std::span<const EnemyHpReport> reports);
 std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies);
 std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes);
 // The HP to write on the local copy, or nothing: only ever down, never to 0 (a death comes
