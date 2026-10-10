@@ -1328,6 +1328,66 @@ TEST(BloodborneHiddenCharacters, AGuestSwitchesOffWhatTheHostRemoved) {
         << "nothing from the host: nothing changes";
 }
 
+// Kaniel's friend 2026-10-11: no enemies in the Forbidden Woods. While the guest was in the
+// Cathedral Ward, the host's world had the woods' enemies by the border switched off (its events
+// park characters far from the player), and the guest switched its copies off too; they stayed off
+// when it walked in. The host marks characters far from it, and a guest follows only the near
+// ones, turning back on any far one it turned off.
+TEST(BloodborneHiddenCharacters, FarFromTheHostRidesInBitTwo) {
+    const std::vector<CharacterShown> host{{0x1000801b, false, true, true}, {0x10014005, true}};
+    EXPECT_EQ(EncodeShownCharacters(host)[4], 6);
+    EXPECT_EQ(DecodeShownCharacters(EncodeShownCharacters(host)), host);
+}
+
+TEST(BloodborneHiddenCharacters, AGuestLeavesCharactersFarFromTheHostAsTheyAre) {
+    const std::vector<CharacterShown> host{
+        {0x1000801b, false, true, true}, // switched off far from the host: the woods' border
+        {0x1000801c, false, true, true}, // the same, and this guest switched it off before
+        {0x10014000, false, true},       // switched off near the host: Iosefka's door
+    };
+    const std::vector<CharacterSwitch> guest{
+        {0x1000801b, false}, {0x1000801c, true}, {0x10014000, false}};
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {0x1000801c}, {}),
+              (std::vector<CharacterSwitch>{{0x1000801c, false}, {0x10014000, true}}));
+
+    const std::vector<CharacterShown> host_hidden{
+        {0x10010000, true, false, true}, // hidden far from the host (Cathedral Ward on arrival)
+        {0x10010001, true, false, true}, // the same, hidden here by this guest before
+        {0x10014005, true},              // hidden near the host: Iosefka
+    };
+    const std::vector<CharacterShown> mine{
+        {0x10010000, false}, {0x10010001, true}, {0x10014005, false}};
+    EXPECT_EQ(ShownLikeTheHost(host_hidden, mine, {}, {0x10010001}),
+              (std::vector<CharacterShown>{{0x10010001, false}, {0x10014005, true}}));
+    EXPECT_EQ(ShownLikeTheHost(host_hidden, mine, {}, {}),
+              (std::vector<CharacterShown>{{0x10014005, true}}))
+        << "a far one this guest's own world hid stays hidden";
+}
+
+// The same run: the woods' enemies were switched off while the guest's map was the Cathedral
+// Ward's, and they stay loaded across the border. On the guest's map change the list of what it
+// switched off was dropped, so nothing ever turned them back on, even with both players in the
+// woods hitting them. A map change now turns back on what this guest changed that is still here.
+TEST(BloodborneHiddenCharacters, AMapChangeUndoesWhatTheGuestSwitchedOff) {
+    const std::vector<CharacterSwitch> mine{
+        {0x1000801b, true},  // switched off by this guest, still loaded across the border
+        {0x1000801c, false}, // switched off by this guest, on again since
+        {0x10008030, true},  // off by the guest's own world
+    };
+    EXPECT_EQ(UndoneOnMapChange({0x1000801b, 0x1000801c, 0x10010000}, mine),
+              (std::vector<CharacterSwitch>{{0x1000801b, false}}));
+    EXPECT_EQ(UndoneOnMapChange({}, mine), std::vector<CharacterSwitch>{});
+}
+
+TEST(BloodborneHiddenCharacters, FarMeansBeyondFiftyMetresOfTheHost) {
+    const LampPosition host{0.0f, 0.0f, 0.0f};
+    EXPECT_FALSE(FarFromHost(host, LampPosition{30.0f, 0.0f, 40.0f}));
+    EXPECT_TRUE(FarFromHost(host, LampPosition{30.0f, 1.0f, 40.0f}));
+    EXPECT_FALSE(FarFromHost(std::nullopt, LampPosition{500.0f, 0.0f, 0.0f}))
+        << "no host position: nothing is far";
+    EXPECT_FALSE(FarFromHost(host, std::nullopt));
+}
+
 // Kaniel 2026-10-10: after trips, two players hitting one enemy saw different HP bars, and their
 // damage did not add up (each copy took only its own hits; the board kept the lowest). Each
 // member posts its own damage and takes the others' on top.

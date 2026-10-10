@@ -782,16 +782,25 @@ struct CharacterShown {
     // Its enable switch off (2004:5; the byte's bit 1): the host's story switches some story
     // NPCs off instead (the copy of Iosefka by her door, 0x10014000, on new characters).
     bool disabled = false;
+    // Farther than FarFromHostMetres from the host (bit 2). The host's events park characters far
+    // from its player (+0x28 and the switch: the woods' enemies by the Cathedral Ward border), so
+    // a guest elsewhere does not follow those (Kaniel's friend, 2026-10-11: an empty forest).
+    bool distant = false;
     bool operator==(const CharacterShown&) const = default;
 };
+constexpr float FarFromHostMetres = 50.0f;
+bool FarFromHost(const std::optional<LampPosition>& host,
+                 const std::optional<LampPosition>& character);
 std::vector<u8> EncodeShownCharacters(std::span<const CharacterShown> characters);
 std::optional<std::vector<CharacterShown>> DecodeShownCharacters(std::span<const u8> bytes);
 // What to write on this member's copies to match the host: every character both worlds have
 // that differs, apart from those this member's kill board hid (`kill_hidden`: another member
-// killed them, which the host may not have heard yet).
+// killed them, which the host may not have heard yet). A character far from the host is left as
+// it is, except one this member hid (`hidden_here`), which is shown again.
 std::vector<CharacterShown> ShownLikeTheHost(std::span<const CharacterShown> host,
                                              std::span<const CharacterShown> mine,
-                                             const std::unordered_set<u32>& kill_hidden);
+                                             const std::unordered_set<u32>& kill_hidden,
+                                             const std::unordered_set<u32>& hidden_here = {});
 // A character's enable switch (event command 2004:5; `disabled` = off: not drawn, no hits, no AI).
 struct CharacterSwitch {
     u32 handle = 0;
@@ -801,12 +810,16 @@ struct CharacterSwitch {
 // The host's story removes some characters (2004:29 sets the +0x28 byte) before their model loads;
 // a guest's copy, built at its join, stays loaded and drawn with the byte set. What to switch on
 // this member's copies (`mine`: each one's switch now): off where the host removed or switched
-// it off, back on where the host shows it again but only if this member turned it off
-// (`switched_off`), never one the kill board hid (`kill_hidden`).
+// it off near it, back on where the host shows it again or has it far away but only if this
+// member turned it off (`switched_off`), never one the kill board hid (`kill_hidden`).
 std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown> host,
                                                  std::span<const CharacterSwitch> mine,
                                                  const std::unordered_set<u32>& switched_off,
                                                  const std::unordered_set<u32>& kill_hidden);
+// On this member's map change: back on, every character it switched off (`switched_off`) that is
+// still loaded and off (`mine`). Characters by a map border stay loaded across it.
+std::vector<CharacterSwitch> UndoneOnMapChange(const std::unordered_set<u32>& switched_off,
+                                               std::span<const CharacterSwitch> mine);
 
 // The kill board's answer names who posted each change ("<handle> <0|1> <member>").
 struct KillChange {

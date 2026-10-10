@@ -2149,17 +2149,21 @@ s32 SessionPlayers() {
     return session >= 0x10000 ? ReadValue<s32>(session, 0x14) : 0;
 }
 
-// The local player's position, where the healing fountain update reads it ([+0x3B0]+0x68,
+// A character's position, where the healing fountain update reads the player's ([+0x3B0]+0x68,
 // then +0x1E0).
-std::optional<LampPosition> LocalPlayerPosition() {
-    const u64 player = GetLocalPlayer();
-    const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
+std::optional<LampPosition> CharacterPosition(u64 character) {
+    const u64 modules = character >= 0x10000 ? ReadValue<u64>(character, 0x3B0) : 0;
     const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
     if (physics < 0x10000 || !HasMemoryAccess(physics, 0x1EC, MemoryProt::CpuRead)) {
         return std::nullopt;
     }
     return LampPosition{ReadValue<float>(physics, 0x1E0), ReadValue<float>(physics, 0x1E4),
                         ReadValue<float>(physics, 0x1E8)};
+}
+
+// The local player's position.
+std::optional<LampPosition> LocalPlayerPosition() {
+    return CharacterPosition(GetLocalPlayer());
 }
 
 s32 CharacterHp(u64 character);
@@ -6071,6 +6075,48 @@ bool SetCharacterDisabled(u64 character, bool disabled) {
     return true;
 }
 
+// What this guest changed to match the host: characters it hid (+0x28) and switched off. Kept
+// across loads of the same map; see UndoGuestChangesOnMapChange.
+std::unordered_set<u32> guest_hidden_here;
+std::unordered_set<u32> guest_switched_off;
+
+// On a map change, what this guest hid or switched off and is still loaded is shown and switched
+// on again before the lists are dropped: characters by a map border stay loaded across it, and
+// nothing else ever turned the Forbidden Woods' enemies back on for Kaniel's friend (2026-10-11).
+void UndoGuestChangesOnMapChange(u32 map, std::span<const u64> characters) {
+    static u32 changed_map = 0;
+    if (map == changed_map) {
+        return;
+    }
+    changed_map = map;
+    std::vector<CharacterSwitch> mine;
+    std::vector<u64> pointers;
+    size_t shown = 0;
+    for (const u64 character : characters) {
+        const u32 handle = ReadValue<u32>(character, 0x08);
+        if (guest_hidden_here.contains(handle) && ReadValue<u8>(character, 0x28) != 0 &&
+            HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
+            WriteValue(character, 0x28, u8{0});
+            ++shown;
+        }
+        mine.push_back({handle, IsCharacterDisabled(character)});
+        pointers.push_back(character);
+    }
+    size_t switched_on = 0;
+    for (const CharacterSwitch& change : UndoneOnMapChange(guest_switched_off, mine)) {
+        const auto at = std::ranges::find(mine, change.handle, &CharacterSwitch::handle);
+        switched_on += SetCharacterDisabled(pointers[at - mine.begin()], false) ? 1 : 0;
+    }
+    if (shown + switched_on > 0) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: map {:#x}: showed {} and switched on {} characters this guest "
+                 "had changed to match the host",
+                 map, shown, switched_on);
+    }
+    guest_hidden_here.clear();
+    guest_switched_off.clear();
+}
+
 // The host's story removes some characters before their model loads (2004:29, the +0x28 byte;
 // Iosefka upstairs in the clinic on new characters). This guest's copies, built at its join,
 // stay loaded and drawn with the byte set, so they are switched off here (and those the host
@@ -6079,12 +6125,7 @@ bool SetCharacterDisabled(u64 character, bool disabled) {
 void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                                  std::span<const CharacterShown> host,
                                  const std::unordered_set<u32>& kill_hidden) {
-    static std::unordered_set<u32> switched_off;
-    static u32 switched_map = 0;
-    if (map != switched_map) {
-        switched_off.clear(); // the old map's characters are gone
-        switched_map = map;
-    }
+    auto& switched_off = guest_switched_off;
     std::unordered_set<u64> players;
     for (const OtherPlayer& other : OtherPlayers()) {
         players.insert(other.character);
@@ -6126,13 +6167,18 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
 // the host posts its own, a guest in the session on the host's map follows them.
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                                const std::unordered_set<u32>& kill_hidden) {
+    UndoGuestChangesOnMapChange(map, characters);
+    auto& hidden_here = guest_hidden_here;
+    const bool hosting = !IsPartyGuestRole();
+    const auto host_at = hosting ? LocalPlayerPosition() : std::nullopt;
     std::vector<CharacterShown> mine;
     mine.reserve(characters.size());
     for (const u64 character : characters) {
         mine.push_back({ReadValue<u32>(character, 0x08), ReadValue<u8>(character, 0x28) != 0,
-                        IsCharacterDisabled(character)});
+                        IsCharacterDisabled(character),
+                        hosting && FarFromHost(host_at, CharacterPosition(character))});
     }
-    if (!IsPartyGuestRole()) {
+    if (hosting) {
         std::scoped_lock lock{shown_board_mutex};
         local_shown = MemberMapState{map, EncodeShownCharacters(mine)};
         return;
@@ -6152,13 +6198,18 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
     size_t hid = 0;
     size_t showed = 0;
     std::string which;
-    for (const CharacterShown& change : ShownLikeTheHost(*hosts, mine, kill_hidden)) {
+    for (const CharacterShown& change : ShownLikeTheHost(*hosts, mine, kill_hidden, hidden_here)) {
         const auto at = std::ranges::find(mine, change.handle, &CharacterShown::handle);
         const u64 character = characters[at - mine.begin()];
         if (!HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
             continue;
         }
         WriteValue(character, 0x28, static_cast<u8>(change.hidden ? 1 : 0));
+        if (change.hidden) {
+            hidden_here.insert(change.handle);
+        } else {
+            hidden_here.erase(change.handle);
+        }
         ++(change.hidden ? hid : showed);
         if (which.size() < 200) {
             which += fmt::format(" {}{:#x}", change.hidden ? "" : "+", change.handle);
