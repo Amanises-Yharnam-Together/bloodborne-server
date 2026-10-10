@@ -16,6 +16,8 @@ struct PartyPanel;
 std::optional<std::string> GetSeamlessHostPlacementHeader();
 bool SetSeamlessHostPlacementHeader(std::string_view value);
 void ClearSeamlessHostPlacementHeader();
+// The server handed this game a summon (its claim on our sign). Called by the HTTP worker.
+void NoteSummonDelivered();
 // Logs the eboot addresses on the current (guest) stack: who in the game called an HLE function.
 void LogGameCallChain(const char* what);
 void TraceMatching2LeaveRoom(std::uintptr_t return_address, std::uint64_t room_id);

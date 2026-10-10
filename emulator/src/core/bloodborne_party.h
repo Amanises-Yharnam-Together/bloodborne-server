@@ -164,6 +164,25 @@ struct LampUnblock {
     bool operator==(const LampUnblock&) const = default;
 };
 LampUnblock LampBytesToClear(bool blocked, bool missing, bool host_effect, bool in_party_session);
+// A summon the server handed to this game (its claim) that has not become a join. Rig 2026-10-10:
+// the guest got the summon, its signaling to the host came up, and it never joined the host's
+// room (1 of 25 joins). Says once per summon when to log the game's state, so the next stall
+// shows what held it.
+class SummonJoinWatch {
+public:
+    using Clock = std::chrono::steady_clock;
+    static constexpr auto Patience = std::chrono::seconds{8};
+    // The server repeats a claim on every sign refresh (about 1 s); a gap of this means its next.
+    static constexpr auto NewSummonGap = std::chrono::seconds{5};
+    void Delivered(Clock::time_point now);
+    // `joining`: a join task or a session. True once, Patience after the summon arrived.
+    bool Stalled(bool joining, Clock::time_point now);
+
+private:
+    std::optional<Clock::time_point> since_;
+    Clock::time_point last_{};
+    bool reported_ = false;
+};
 // Whether that StopRequest starts a party trip: from the world load, in a party session, with no
 // trip under way.
 bool StartsTripOnWorldReload(u64 caller_offset, bool trip_active, bool in_party_session);

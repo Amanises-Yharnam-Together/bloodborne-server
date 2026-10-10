@@ -501,6 +501,27 @@ LampUnblock LampBytesToClear(bool blocked, bool missing, bool host_effect, bool 
     return {blocked && (host_effect || in_party_session), missing && in_party_session};
 }
 
+void SummonJoinWatch::Delivered(Clock::time_point now) {
+    if (!since_ || (reported_ && now - last_ >= NewSummonGap)) {
+        since_ = now;
+        reported_ = false;
+    }
+    last_ = now;
+}
+
+bool SummonJoinWatch::Stalled(bool joining, Clock::time_point now) {
+    if (joining) {
+        since_.reset();
+        reported_ = false;
+        return false;
+    }
+    if (!since_ || reported_ || now - *since_ < Patience) {
+        return false;
+    }
+    reported_ = true;
+    return true;
+}
+
 bool IsOtherCharacter(s32 progress_now, s32 progress_kept) {
     // Event flags only add up as a character plays; far fewer set means another character.
     constexpr s32 ProgressSlack = 20;

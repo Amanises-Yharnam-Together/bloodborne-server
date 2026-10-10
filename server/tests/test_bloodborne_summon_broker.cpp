@@ -229,8 +229,8 @@ int main() {
   CHECK(anywhere.Search(Parse(search), 9'010, hostPlacement).isEmpty());
   CHECK(anywhere.StateFor(QStringLiteral("remote-session"), 3000, 9'010) ==
         Bloodborne::SummonBroker::State::Preparing);
-  const auto preparation = anywhere.Advertise(
-      Parse(remoteAdvertisement), remoteAdvertisement, 9'011);
+  const auto preparation = anywhere.Advertise(Parse(remoteAdvertisement),
+                                              remoteAdvertisement, 9'011);
   CHECK(preparation.state == Bloodborne::SummonBroker::State::Preparing);
   CHECK(preparation.pendingClaim.isEmpty());
   CHECK(preparation.pendingHostPlacement == hostPlacement);
@@ -245,7 +245,8 @@ int main() {
 
   QByteArray destinationAdvertisementRaw = remoteAdvertisement;
   destinationAdvertisementRaw.replace("\"AreaId\":111", "\"AreaId\":385941504");
-  const QJsonObject destinationAdvertisement = Parse(destinationAdvertisementRaw);
+  const QJsonObject destinationAdvertisement =
+      Parse(destinationAdvertisementRaw);
   const auto prepared = anywhere.Advertise(destinationAdvertisement,
                                            destinationAdvertisementRaw, 9'013);
   CHECK(prepared.state == Bloodborne::SummonBroker::State::Advertised);
@@ -276,7 +277,8 @@ int main() {
   CHECK(retained.pendingHostPlacement == hostPlacement);
   const auto destinationDelivery = anywhere.Advertise(
       destinationAdvertisement, destinationAdvertisementRaw, 9'040);
-  CHECK(destinationDelivery.state == Bloodborne::SummonBroker::State::Delivered);
+  CHECK(destinationDelivery.state ==
+        Bloodborne::SummonBroker::State::Delivered);
   CHECK(destinationDelivery.pendingClaim == remoteClaim);
   CHECK(destinationDelivery.pendingHostPlacement == hostPlacement);
   const QByteArray remoteDeliveryResponse =
@@ -284,6 +286,40 @@ int main() {
   CHECK(remoteDeliveryResponse.contains(
       "\"HostData\":\"remote-host-owned-data\""));
   CHECK(!remoteDeliveryResponse.contains("\"SeamlessWarp\""));
+
+  // Rig 2026-10-10: the guest got the claim and never joined the host's room.
+  // The host's game keeps that sign on its pending list and never summons it
+  // again, so a claim nobody joined is dropped after the join window and the
+  // sign comes back to searches under a new id.
+  Bloodborne::SummonBroker::Options windowOptions;
+  windowOptions.seamlessCoop = true;
+  Bloodborne::SummonBroker stalled(windowOptions);
+  CHECK(stalled.Advertise(Parse(advertisement), advertisement, 0).state ==
+        Bloodborne::SummonBroker::State::Advertised);
+  CHECK(stalled.Claim(Parse(claim), claim, 100).status ==
+        Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  CHECK(stalled.Advertise(Parse(advertisement), advertisement, 200)
+            .pendingClaim == claim);
+  CHECK(stalled.Advertise(Parse(advertisement), advertisement, 20'100)
+            .pendingClaim == claim);
+  const auto dropped =
+      stalled.Advertise(Parse(advertisement), advertisement, 20'300);
+  CHECK(dropped.state == Bloodborne::SummonBroker::State::Advertised);
+  CHECK(dropped.pendingClaim.isEmpty());
+  const QList<QByteArray> renamed = stalled.Search(Parse(search), 20'400);
+  CHECK(renamed.size() == 1);
+  const QString newId =
+      Parse(renamed.front()).value(QStringLiteral("SessionId")).toString();
+  CHECK(!newId.isEmpty() && newId != QStringLiteral("guest-session"));
+  CHECK(renamed.front().contains("\"CharaId\":9223372036854775808"));
+  CHECK(stalled.Claim(Parse(targetUserClaim), targetUserClaim, 20'500).status ==
+        Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  CHECK(stalled.Advertise(Parse(advertisement), advertisement, 20'600)
+            .pendingClaim == targetUserClaim);
+  CHECK(stalled.Consume(Parse(removal), 20'700).retained == 1);
+  // A claim the guest joined stays.
+  CHECK(stalled.StateFor(QStringLiteral("guest-session"), 2465, 50'000) ==
+        Bloodborne::SummonBroker::State::Delivered);
 
   std::cout << "Bloodborne summon broker state test passed\n";
   return 0;

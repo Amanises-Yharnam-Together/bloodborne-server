@@ -3397,12 +3397,15 @@ void TickAutoplay();
 void TickPartyDeath();
 
 void ReopenClosedPartySession();
+s32 SessionPlayers();
+void WatchSummonJoin();
 
 void TickPartyController() {
     TickAutoplay();
     TickPartyTrip();
     TickPlayersOnThisMap();
     LogJoinTaskChanges();
+    WatchSummonJoin();
     KeepGuestBloodstainMark();
     LogBloodstainStateChanges();
     LogLocalEffectChanges();
@@ -3748,6 +3751,52 @@ void ReopenClosedPartySession() {
     }
     WriteValue(session, SessionClosingOffset, u8{0});
     LOG_INFO(Debug, "Bloodborne party: reopened the session the game had closed to joiners");
+}
+
+std::atomic<bool> summon_delivered{false};
+
+} // namespace
+
+void NoteSummonDelivered() {
+    summon_delivered.store(true, std::memory_order_release);
+}
+
+namespace {
+
+// See SummonJoinWatch: the guest's state when a summon has not become a join.
+void WatchSummonJoin() {
+    static SummonJoinWatch watch;
+    const auto now = SummonJoinWatch::Clock::now();
+    if (summon_delivered.exchange(false, std::memory_order_acq_rel)) {
+        watch.Delivered(now);
+    }
+    bool joining = SessionPlayers() > 1;
+    ForEachJoinTask([&](u64) { joining = true; });
+    if (!watch.Stalled(joining, now)) {
+        return;
+    }
+    const u64 player = GetLocalPlayer();
+    const u64 multi_play = GetMatchingState();
+    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+    const bool session_readable =
+        session >= 0x10000 && HasMemoryAccess(session, 0x128, MemoryProt::CpuRead);
+    std::string effects;
+    for (const s32 effect : EffectsOf(player)) {
+        effects += fmt::format(" {}", effect);
+    }
+    LOG_WARNING(Debug,
+                "Bloodborne party: a summon came {} s ago and the game has not joined: map {:#x} "
+                "matching state {} session state {} closing {} players {} player flags {:#x} "
+                "effects{}",
+                std::chrono::duration_cast<std::chrono::seconds>(SummonJoinWatch::Patience).count(),
+                GetCurrentPackedMap(),
+                multi_play >= 0x10000 && HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead)
+                    ? ReadValue<s32>(multi_play, 0x124)
+                    : -1,
+                session_readable ? ReadValue<s32>(session, 0x124) : -1,
+                session_readable ? ReadValue<u8>(session, SessionClosingOffset) : 0xFF,
+                SessionPlayers(), player >= 0x10000 ? ReadValue<u64>(player, 0x1E0) : 0,
+                effects.empty() ? std::string{" none"} : effects);
 }
 
 constexpr u64 TaskAllocatorPointerOffset = 0x05540438;

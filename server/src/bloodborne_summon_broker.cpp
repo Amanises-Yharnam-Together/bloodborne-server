@@ -7,11 +7,13 @@
 #include <limits>
 #include <vector>
 
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QMutexLocker>
 #include <QSet>
+#include <QUuid>
 
 namespace Bloodborne {
 namespace {
@@ -294,7 +296,8 @@ std::optional<QString> SummonDataWithAvailableResult(const QJsonObject& advertis
 
 QByteArray PrepareAdvertisementForSearch(const QByteArray& rawAdvertisement,
                                          const QJsonObject& advertisement,
-                                         const QJsonObject& request, bool spoofLocation) {
+                                         const QJsonObject& request, bool spoofLocation,
+                                         const QString& sessionId) {
     const QList<TopLevelMember> members = TopLevelMembers(rawAdvertisement);
     if (members.isEmpty()) {
         return rawAdvertisement;
@@ -322,6 +325,8 @@ QByteArray PrepareAdvertisementForSearch(const QByteArray& rawAdvertisement,
         const QJsonValue replacement = request.value(key);
         if (member.key == "SummonData" && summonData.has_value()) {
             appendMember(BuildRawMember(member.key, *summonData));
+        } else if (member.key == "SessionId" && !sessionId.isEmpty()) {
+            appendMember(BuildRawMember(member.key, sessionId));
         } else if (spoofLocation && ShouldSpoofAdvertisementField(member.key) &&
                    !replacement.isUndefined() && !replacement.isNull()) {
             appendMember(BuildRawMember(member.key, replacement));
@@ -357,6 +362,7 @@ SummonBroker::SummonBroker(qint64 ttlMs)
 
 SummonBroker::SummonBroker(Options options)
     : m_ttlMs(std::max<qint64>(1, options.ttlMs)),
+      m_claimJoinWindowMs(std::max<qint64>(1, options.claimJoinWindowMs)),
       m_seamlessTtlMs(std::max<qint64>(m_ttlMs, options.seamlessTtlMs)),
       m_seamlessCoop(options.seamlessCoop),
       m_seamlessAnywhereSummons(options.seamlessAnywhereSummons || options.seamlessCoop) {}
@@ -423,6 +429,7 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
             return {State::Claimed, {}, it->hostPlacement};
         }
         it->state = State::Delivered;
+        it->deliveredAtMs = nowMs;
     }
     if (it->state == State::Delivered) {
         return {State::Delivered, it->rawClaim, it->hostPlacement};
@@ -460,16 +467,18 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
                 it->updatedAtMs = nowMs;
                 continue;
             }
-            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
-                                                       it->rawAdvertisement, it->advertisement,
-                                                       request, anywhereSummons)});
+            candidates.push_back(
+                {it->updatedAtMs,
+                 PrepareAdvertisementForSearch(it->rawAdvertisement, it->advertisement, request,
+                                               anywhereSummons, it->searchSessionId)});
         } else if (m_seamlessCoop && IsSeamlessActiveState(it->state) && !it->joined &&
                    requester >= 0 &&
                    Integer(it->claim, QStringLiteral("UserId"), -2) == requester &&
                    MatchesSearch(request, it->advertisement, anywhereSummons)) {
-            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
-                                                       it->rawAdvertisement, it->advertisement,
-                                                       request, anywhereSummons)});
+            candidates.push_back(
+                {it->updatedAtMs,
+                 PrepareAdvertisementForSearch(it->rawAdvertisement, it->advertisement, request,
+                                               anywhereSummons, it->searchSessionId)});
         }
     }
     std::sort(candidates.begin(), candidates.end(),
@@ -629,6 +638,25 @@ void SummonBroker::PurgeExpiredLocked(qint64 nowMs) {
         } else {
             ++it;
         }
+    }
+    DropUnjoinedClaimsLocked(nowMs);
+}
+
+void SummonBroker::DropUnjoinedClaimsLocked(qint64 nowMs) {
+    for (Record& record : m_records) {
+        if (record.state != State::Delivered || record.joined ||
+            nowMs - record.deliveredAtMs <= m_claimJoinWindowMs) {
+            continue;
+        }
+        qWarning() << "Bloodborne summon: user"
+                   << Integer(record.advertisement, QStringLiteral("UserId"), -1)
+                   << "never joined the summon; the sign is offered again under a new id";
+        record.state = State::Advertised;
+        record.claim = {};
+        record.rawClaim.clear();
+        record.hostPlacement.clear();
+        record.searchSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        record.updatedAtMs = nowMs;
     }
 }
 

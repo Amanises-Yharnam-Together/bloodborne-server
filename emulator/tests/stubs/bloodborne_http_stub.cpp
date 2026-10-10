@@ -24,6 +24,8 @@ void ClearSeamlessHostPlacementHeader() {
     host_placement.reset();
 }
 
+void NoteSummonDelivered() {}
+
 } // namespace Core::Bloodborne
 
 namespace Core::Debugger {

@@ -23,6 +23,9 @@ public:
         qint64 seamlessTtlMs = 15 * 60 * 1000;
         bool seamlessCoop = false;
         bool seamlessAnywhereSummons = false;
+        // A delivered claim the guest has not joined within this is dropped (see
+        // DropUnjoinedClaimsLocked).
+        qint64 claimJoinWindowMs = 20'000;
     };
 
     struct AdvertiseResult {
@@ -79,11 +82,19 @@ private:
         bool joined = false;
         qint64 preparationRequester = -1;
         qint64 updatedAtMs = 0;
+        qint64 deliveredAtMs = 0;
+        // The id searches show for this sign once a claim on it was dropped; empty: its own.
+        QString searchSessionId;
     };
 
     void PurgeExpiredLocked(qint64 nowMs);
+    // A claim delivered but not joined within the window (rig 2026-10-10: the guest never
+    // joined the host's room) is dropped, and the sign shows a new id from then on: the host's
+    // game keeps the old one on its pending list and never summons it again.
+    void DropUnjoinedClaimsLocked(qint64 nowMs);
 
     qint64 m_ttlMs;
+    qint64 m_claimJoinWindowMs = 20'000;
     qint64 m_seamlessTtlMs;
     bool m_seamlessCoop;
     bool m_seamlessAnywhereSummons;

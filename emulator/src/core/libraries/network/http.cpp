@@ -1814,6 +1814,14 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
             } else if (!placement.has_value() && IsBloodborneSummonCreatePath(plan.path)) {
                 Core::Bloodborne::ClearSeamlessHostPlacementHeader();
             }
+            // A claim delivery answers our sign's refresh with the host's request.
+            constexpr std::string_view ClaimField = "\"TargetUserId\"";
+            if (IsBloodborneSummonCreatePath(plan.path) &&
+                std::string_view{reinterpret_cast<const char*>(local_res.body.data()),
+                                 local_res.body.size()}
+                        .find(ClaimField) != std::string_view::npos) {
+                Core::Bloodborne::NoteSummonDelivered();
+            }
         }
 
         CaptureBloodborneSummon(plan, local_res, worker_errno);

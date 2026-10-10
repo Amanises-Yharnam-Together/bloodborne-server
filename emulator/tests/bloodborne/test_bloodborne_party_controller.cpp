@@ -1344,6 +1344,31 @@ TEST(BloodborneSharedEnemyHp, InOneWorldAGuestTakesTheHostsNpcHp) {
     EXPECT_TRUE(LowerToHostHp(guest, {}).empty());
 }
 
+TEST(BloodborneSummonJoinWatch, ASummonThatNeverBecomesAJoinIsReportedOnce) {
+    using Clock = SummonJoinWatch::Clock;
+    const Clock::time_point t0{};
+    SummonJoinWatch watch;
+    EXPECT_FALSE(watch.Stalled(false, t0 + 60s)) << "no summon yet";
+    for (auto t = 0s; t <= 8s; t += 1s) {
+        watch.Delivered(t0 + t); // the server hands it over on every sign refresh
+        EXPECT_EQ(watch.Stalled(false, t0 + t), t == 8s);
+    }
+    watch.Delivered(t0 + 9s);
+    EXPECT_FALSE(watch.Stalled(false, t0 + 20s)) << "once per summon";
+    watch.Delivered(t0 + 40s); // after a gap: the server's next summon
+    EXPECT_FALSE(watch.Stalled(false, t0 + 47s));
+    EXPECT_TRUE(watch.Stalled(false, t0 + 48s));
+}
+
+TEST(BloodborneSummonJoinWatch, AJoinEndsTheWait) {
+    using Clock = SummonJoinWatch::Clock;
+    const Clock::time_point t0{};
+    SummonJoinWatch watch;
+    watch.Delivered(t0);
+    EXPECT_FALSE(watch.Stalled(true, t0 + 2s));
+    EXPECT_FALSE(watch.Stalled(false, t0 + 30s)) << "it joined";
+}
+
 // Friend run 2026-10-10 by Vicar Amelia: for one read the host's world showed 77 enemies at 1 HP
 // (characters being hidden and loaded), it posted that as its damage, the guest's copies went to
 // 1 HP and a boss died ("Prey Slaughtered", +11800 echoes). Damage counts once two reads agree.
