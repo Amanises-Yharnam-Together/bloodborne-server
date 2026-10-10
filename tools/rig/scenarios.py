@@ -787,7 +787,7 @@ SCENARIOS = {
         "timeout": 900,
     },
     "down-by-enemy": {
-        "about": "party death: the guest with 1 HP stands next to the nearest enemy until it "
+        "about": "party death: the guest with 1 HP stands next to an ordinary enemy until it "
                  "hits; it goes down, the enemy leaves it alone (still 1 HP after 20 s), and the "
                  "host revives it",
         "settings": PARTY_DEATH,
@@ -795,7 +795,7 @@ SCENARIOS = {
             "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 150",
                      "wait 22", "approach-downed", "wait 2", *REVIVE_HITS,
                      "wait 5", "snapshot", "expect-session 2"],
-            "guest": [START, "wait-session 2 300", "wait 15", "hurt self 1", "approach nearest",
+            "guest": [START, "wait-session 2 300", "wait 15", "hurt self 1", f"approach {ENEMY}",
                       "wait-vital down 90", "wait 20", "expect-hp self == 1", "wait-vital up 90",
                       "wait 3", "snapshot", "expect-hp self > 1", "expect-session 2"],
         },
