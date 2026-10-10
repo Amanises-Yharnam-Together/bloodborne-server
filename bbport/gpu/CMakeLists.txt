@@ -385,6 +385,12 @@ target_include_directories(ui-composition-test PRIVATE ..)
 add_executable(party-layout-test EXCLUDE_FROM_ALL ../tests/test_party_layout.cpp)
 target_compile_options(party-layout-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-layout-test PRIVATE ..)
+# bbport co-op: the party panel's HP bar from the game's own HUD art, read from its files
+# (shim/bbport_game_art.h): BC7, the PS4's block order, a TPF in a DCX (made-up data).
+add_executable(game-art-test EXCLUDE_FROM_ALL ../tests/test_game_art.cpp shim/bbport_game_art.cpp)
+target_compile_options(game-art-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(game-art-test PRIVATE ..)
+target_link_libraries(game-art-test PRIVATE miniz::miniz)
 add_executable(save-editor-test EXCLUDE_FROM_ALL ../tests/test_save_editor.cpp
                shim/bbport_save_editor_items.cpp)
 target_compile_options(save-editor-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

@@ -58,8 +58,25 @@ extern "C" void bbcoop_note_segment(uint64_t address, uint64_t size, unsigned fl
     Core::NoteImageSegment(static_cast<uintptr_t>(address), size, flags);
 }
 
+namespace {
+std::string game_folder; // app0, as bbcoop_install got it
+} // namespace
+
+extern "C" int bbcoop_game_file(const char* relative, char* out, size_t size) {
+    if (game_folder.empty()) {
+        return 0;
+    }
+    const auto path = (std::filesystem::path{game_folder} / relative).string();
+    if (path.size() + 1 > size) {
+        return 0;
+    }
+    std::memcpy(out, path.c_str(), path.size() + 1);
+    return 1;
+}
+
 extern "C" void bbcoop_install(unsigned char* image, uint64_t eboot_size, void* code,
                                uint64_t code_size, const char* app0) {
+    game_folder = app0 != nullptr ? app0 : "";
     auto* param_sfo = Common::Singleton<PSF>::Instance();
     const auto sfo = std::filesystem::path{app0 != nullptr ? app0 : "."} / "sce_sys" / "param.sfo";
     if (!param_sfo->Open(sfo)) {

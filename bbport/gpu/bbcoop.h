@@ -2,6 +2,7 @@
 /* bbport co-op: the emulator's seamless co-op (../emulator/src/core/bloodborne_*.cpp) in the
  * native port. What the loader and the C runtime call; gpu/bbcoop/ implements it. */
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +58,9 @@ int bbcoop_party_panel(bbcoop_panel *panel);
 /* A revive's progress, 0 to 1: the share of the damage it needs that has landed (`landed`
  * and `needed` from the panel). */
 float bbcoop_revive_share(uint32_t landed, uint32_t needed);
+/* Where a file of the player's game folder (app0) is on this PC, `relative` like
+ * "dvdroot_ps4/menu/common.tpf.dcx"; 0 before the game is installed or when `out` is too small. */
+int bbcoop_game_file(const char *relative, char *out, size_t size);
 
 /* The game opens a file (its guest path): the party code notes the character's save slot. */
 void bbcoop_file_opened(const char *guest_path);
