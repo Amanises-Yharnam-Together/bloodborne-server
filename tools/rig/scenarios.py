@@ -25,7 +25,8 @@ uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in o
 Party death (the scenario's "settings" switch it on): rise <metres> (straight up, to fall),
 approach-downed (beside the nearest downed member on the map), wait-vital <up|down|dead>
 [<timeout>] (this player's state), wait-member-vital <up|down|dead> [<timeout>] (another
-member's, on the vitals board).
+member's, on the vitals board). shot <name>: the port's picture of its next frame, overlays and
+all (the party HUD), kept in the run's folder as <role>-<name>.png; the emulator skips it.
 """
 
 HUNTERS_DREAM = 2102962
@@ -716,11 +717,13 @@ SCENARIOS = {
         "settings": PARTY_DEATH,
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
-                     "approach-downed", "wait 2", *REVIVE_HITS, "wait-member-vital up 30",
-                     "wait 5", "snapshot", "expect-session 2"],
+                     "shot sees-down", "approach-downed", "wait 2", "shot revive-prompt",
+                     *REVIVE_HITS, "wait-member-vital up 30", "wait 3", "shot after-revive",
+                     "wait 2", "snapshot", "expect-session 2"],
             "guest": [START, "wait-session 2 300", "wait 15", *LETHAL_FALL, "wait-vital down 30",
-                      "wait 3", "expect-hp self == 1", "wait-vital up 90", "wait 3", "snapshot",
-                      "expect-hp self > 1", "expect-session 2"],
+                      "wait 2", "shot down", "wait 1", "expect-hp self == 1", "wait-vital up 90",
+                      "wait 3", "shot after-revive", "snapshot", "expect-hp self > 1",
+                      "expect-session 2"],
         },
         "expect": {
             "host": [r"party death: revive hit on"],
@@ -818,13 +821,14 @@ SCENARIOS = {
         "settings": PARTY_DEATH,
         "roles": {
             "host": [START, "godmode", "wait-session 3 480", "wait-member-vital down 180",
-                     "wait 40", "snapshot", "expect-session 3"],
+                     "wait 2", "shot sees-down", "wait 38", "snapshot", "expect-session 3"],
             "guest": [START, "wait-session 3 480", "wait 20", *LETHAL_FALL, "wait-vital down 30",
-                      "wait 3", "expect-hp self == 1", "wait-vital up 90", "wait 3", "snapshot",
-                      "expect-hp self > 1", "expect-session 3"],
+                      "wait 2", "shot down", "wait 1", "expect-hp self == 1", "wait-vital up 90",
+                      "wait 3", "shot after-revive", "snapshot", "expect-hp self > 1",
+                      "expect-session 3"],
             "guest2": [START, "godmode", "wait-session 3 480", "wait-member-vital down 180",
-                       "approach-downed", "wait 2", *REVIVE_HITS, "wait 5", "snapshot",
-                       "expect-session 3"],
+                       "shot sees-down", "approach-downed", "wait 2", "shot revive-prompt",
+                       *REVIVE_HITS, "wait 5", "snapshot", "expect-session 3"],
         },
         "expect": {
             "guest": [r"party death: down \d+ on map 0x18010000",
@@ -842,8 +846,9 @@ SCENARIOS = {
         "settings": PARTY_DEATH,
         "roles": {
             "host": [START, "wait-session 3 480", "wait-member-vital down 180", "wait 25",
-                     *LETHAL_FALL, "wait-vital dead 30", "wait-vital up 150",
-                     "wait-members 3 300", "wait 15", "snapshot", "expect-session 3"],
+                     "shot sees-both-down", *LETHAL_FALL, "wait-vital dead 30",
+                     "wait-vital up 150", "wait-members 3 300", "wait 15", "snapshot",
+                     "expect-session 3"],
             "guest": [START, "wait-session 3 480", "wait 20", *LETHAL_FALL, "wait-vital down 30",
                       "wait-vital dead 90", "wait-vital up 150", "wait-members 3 300", "wait 15",
                       "snapshot", "expect-session 3"],

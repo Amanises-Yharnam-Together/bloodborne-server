@@ -71,6 +71,15 @@ class Emulator:
     def log_path(self, role: str) -> pathlib.Path:
         return self.user_dir(role) / "log" / "shad_log.txt"
 
+    def shot_request(self, role: str) -> pathlib.Path:
+        """Where a script's `shot <name>` asks the game for a picture of its next frame (the
+        port's presenter takes it: BB_SHOT_TRIGGER)."""
+        return self.role_dir(role) / "shot.request"
+
+    def shots(self, role: str) -> pathlib.Path:
+        """Where those pictures land, as <name>.png (AutoplayShotPath)."""
+        return self.role_dir(role) / "shots"
+
     def command(self, role: str) -> list[str]:
         return [str(self.exe), "-g", str(self.game)]
 
@@ -134,6 +143,7 @@ class Port(Emulator):
             "BB_SHADNET_NPID": ACCOUNTS[role],
             "BB_SHADNET_PASSWORD": PASSWORD,
             "BB_USER_NAME": ACCOUNTS[role],
+            "BB_SHOT_TRIGGER": str(self.shot_request(role)),
         }
 
     def missing(self) -> str | None:

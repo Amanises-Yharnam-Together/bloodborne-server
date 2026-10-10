@@ -34,6 +34,7 @@
 #include <iomanip>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <system_error>
@@ -41,6 +42,7 @@
 #include <utility>
 #include <vector>
 #include <SDL3/SDL.h>
+#include <miniz.h>
 #include <vk_mem_alloc.h>
 #ifdef MemoryBarrier
 #undef MemoryBarrier // bbport: winnt.h macro (through fmt), clashes with vk::MemoryBarrier
@@ -400,6 +402,129 @@ static void EndRawDump(const Instance& instance, Scheduler& scheduler, RawDump d
             std::fclose(f);
         }
         vmaDestroyBuffer(allocator, dump.buffer, dump.allocation);
+    });
+}
+
+// bbport: the rig's pictures (a script's `shot <name>`, AutoplayShotPath in the co-op code):
+// BB_SHOT_TRIGGER names a request file holding a picture's path, and the next presented frame,
+// overlays and all, goes there as a PNG. Nothing without the setting (players).
+static std::optional<std::string> TakeShotRequest() {
+    static const char* request = std::getenv("BB_SHOT_TRIGGER");
+    if (request == nullptr) {
+        return std::nullopt;
+    }
+    FILE* file = std::fopen(request, "rb");
+    if (file == nullptr) {
+        return std::nullopt;
+    }
+    std::array<char, 1024> text{};
+    const size_t size = std::fread(text.data(), 1, text.size(), file);
+    std::fclose(file);
+    std::remove(request);
+    std::string path{text.data(), size};
+    while (!path.empty() && std::isspace(static_cast<unsigned char>(path.back()))) {
+        path.pop_back();
+    }
+    if (path.empty()) {
+        return std::nullopt;
+    }
+    return path;
+}
+
+// The swapchain image as it will be presented (in `layout` now): copied to the host by this
+// frame's commands and left ready to present; the PNG is written once the GPU is done.
+static void RecordShot(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+                       vk::Image image, vk::ImageLayout layout, vk::Extent2D extent,
+                       vk::Format format, std::string path) {
+    const bool bgra = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
+    const bool rgba = format == vk::Format::eR8G8B8A8Unorm || format == vk::Format::eR8G8B8A8Srgb;
+    const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                       .size = VkDeviceSize(extent.width) * extent.height * 4,
+                                       .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    const VmaAllocationCreateInfo alloc_ci{
+        .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+    VkBuffer buffer{};
+    VmaAllocation allocation{};
+    VmaAllocationInfo info{};
+    // An 8-bit swapchain only (an HDR one gets no picture).
+    const bool copied = (bgra || rgba) && vmaCreateBuffer(instance.GetAllocator(), &buffer_ci,
+                                                          &alloc_ci, &buffer, &allocation,
+                                                          &info) == VK_SUCCESS;
+    const vk::ImageSubresourceRange color_range{
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = 1,
+    };
+    const vk::ImageMemoryBarrier to_copy{
+        .srcAccessMask = vk::AccessFlagBits::eMemoryWrite,
+        .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+        .oldLayout = layout,
+        .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresourceRange = color_range,
+    };
+    cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                           vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlagBits::eByRegion,
+                           {}, {}, to_copy);
+    if (copied) {
+        cmdbuf.copyImageToBuffer(
+            image, vk::ImageLayout::eTransferSrcOptimal, buffer,
+            vk::BufferImageCopy{.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                .imageExtent = {extent.width, extent.height, 1}});
+    }
+    const vk::ImageMemoryBarrier to_present{
+        .srcAccessMask = vk::AccessFlagBits::eTransferRead,
+        .dstAccessMask = vk::AccessFlagBits::eNone,
+        .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+        .newLayout = vk::ImageLayout::ePresentSrcKHR,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresourceRange = color_range,
+    };
+    cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                           vk::PipelineStageFlagBits::eBottomOfPipe,
+                           vk::DependencyFlagBits::eByRegion, {}, {}, to_present);
+    if (!copied) {
+        LOG_WARNING(Render_Vulkan, "Shot: no picture for {} ({} swapchain)", path,
+                    vk::to_string(format));
+        return;
+    }
+    scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation,
+                                      info, width = extent.width, height = extent.height, bgra,
+                                      path = std::move(path)] {
+        vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+        auto* pixels = static_cast<u8*>(info.pMappedData);
+        const size_t bytes = size_t(width) * height * 4;
+        for (size_t at = 0; at < bytes; at += 4) {
+            if (bgra) {
+                std::swap(pixels[at], pixels[at + 2]);
+            }
+            pixels[at + 3] = 0xFF; // the swapchain's alpha means nothing on screen
+        }
+        size_t png_size = 0;
+        void* png = tdefl_write_image_to_png_file_in_memory_ex(
+            pixels, static_cast<int>(width), static_cast<int>(height), 4, &png_size,
+            MZ_DEFAULT_LEVEL, MZ_FALSE);
+        bool saved = false;
+        if (png != nullptr) {
+            if (FILE* file = std::fopen(path.c_str(), "wb")) {
+                saved = std::fwrite(png, 1, png_size, file) == png_size;
+                saved = std::fclose(file) == 0 && saved;
+            }
+            mz_free(png);
+        }
+        vmaDestroyBuffer(allocator, buffer, allocation);
+        if (saved) {
+            LOG_INFO(Render_Vulkan, "Shot: saved {}", path);
+        } else {
+            LOG_WARNING(Render_Vulkan, "Shot: could not save {}", path);
+        }
     });
 }
 
@@ -923,6 +1048,7 @@ void Presenter::PresentFrame(Frame* frame, bool is_reusing_frame, bool is_game_f
         // bbport: the settings menu / FPS counter over the frame, at display resolution.
         BbGameMenu::Poll(); // the port's pages in the game's System menu
         const bool overlay = BbOverlay::Visible();
+        auto shot = TakeShotRequest(); // the rig's picture of this frame, if asked for
         const std::array post_barriers{
             vk::ImageMemoryBarrier{
                 .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
@@ -953,6 +1079,13 @@ void Presenter::PresentFrame(Frame* frame, bool is_reusing_frame, bool is_game_f
                                vk::DependencyFlagBits::eByRegion, {}, {}, post_barriers);
         if (overlay) {
             BbOverlay::Render(cmdbuf, swapchain.ImageView(), extent);
+        }
+        if (shot) {
+            RecordShot(instance, scheduler, cmdbuf, swapchain_image,
+                       overlay ? vk::ImageLayout::eColorAttachmentOptimal
+                               : vk::ImageLayout::ePresentSrcKHR,
+                       extent, swapchain.GetSurfaceFormat().format, std::move(*shot));
+        } else if (overlay) {
             const vk::ImageMemoryBarrier to_present{
                 .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
                 .dstAccessMask = vk::AccessFlagBits::eNone,

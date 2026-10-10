@@ -832,6 +832,11 @@ std::vector<AutoplayCommand> ParseAutoplayScript(std::string_view text);
 u32 AutoplayButton(std::string_view name);
 // Whether Cross is down `ms` after the title screen's autoplay began.
 bool TitlePressesCross(u64 ms);
+// shot <name>: a picture of the port's next frame, overlays and all (the rig's look at the party
+// HUD). The rig names a request file (BB_SHOT_TRIGGER); the step writes the picture's path into
+// it and the port's presenter takes it: <the request's folder>/shots/<name>.png. A name is 1 to 40
+// letters, digits, '-' or '_'; nothing for another, or without a request file.
+std::optional<std::string> AutoplayShotPath(std::string_view request, std::string_view name);
 // The game's own kill (what an event's ForceCharacterDeath does): HP to 0, the dead flag
 // (+0x1E3 bit 0), then the death step (0x018BD9D0). `void (character)`.
 constexpr u64 KillCharacterOffset = 0x018BF9A0;

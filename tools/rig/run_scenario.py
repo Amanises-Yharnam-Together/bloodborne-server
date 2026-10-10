@@ -403,6 +403,17 @@ def keep_logs(run_dir: pathlib.Path, roles: list[str], suffix: str = ""):
                 pass
 
 
+def keep_shots(run_dir: pathlib.Path, roles: list[str]):
+    """Each role's pictures (its script's `shot <name>` steps) moved next to its log as
+    <role>-<name>.png, and a request no frame took dropped: the next run starts with neither."""
+    for role in roles:
+        ENGINE.shot_request(role).unlink(missing_ok=True)
+        shots = ENGINE.shots(role)
+        for shot in sorted(shots.glob("*.png")) if shots.is_dir() else []:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(shot), str(run_dir / f"{role}-{shot.name}"))
+
+
 def boot_check(role: str, seconds: int) -> int:
     """The boot smoke test (tools/smoke-boot.ps1): the role's game alone, in a party of its own
     so it never meets a real one, for `seconds`; every co-op patch and hook must be in by then
@@ -491,6 +502,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     for role in roles:
         if not scenario.get("no_baseline") and restore_baseline(role):
             print(f"  {role}: saves put back to the baseline")
+    keep_shots(run_dir / "earlier", roles)  # an aborted run's, apart from this one's
     need = ENGINE.commit_gb * len(roles)
     free = free_commit_gb()
     if free < need:
@@ -546,6 +558,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
         time.sleep(2)
     stop_games()
     keep_logs(run_dir, roles)
+    keep_shots(run_dir, roles)
     if crashed:
         # A crash is the emulator's (the GPU's device lost, so far), not the scenario's: once more.
         if attempt == 1:

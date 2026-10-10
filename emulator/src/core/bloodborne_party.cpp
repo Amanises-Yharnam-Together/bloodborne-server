@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 
 #include <fmt/format.h>
 
@@ -1624,6 +1625,18 @@ bool TitlePressesCross(u64 ms) {
     constexpr u64 Period = 2000;
     constexpr u64 Held = 150;
     return ms >= Period && ms % Period < Held;
+}
+
+std::optional<std::string> AutoplayShotPath(std::string_view request, std::string_view name) {
+    const auto plain = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               c == '-' || c == '_';
+    };
+    if (request.empty() || name.empty() || name.size() > 40 || !std::ranges::all_of(name, plain)) {
+        return std::nullopt;
+    }
+    const std::filesystem::path shots = std::filesystem::path{request}.parent_path() / "shots";
+    return (shots / (std::string{name} + ".png")).string();
 }
 
 std::optional<u32> ParseAutoplayTarget(std::string_view text) {

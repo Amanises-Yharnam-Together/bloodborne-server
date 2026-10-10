@@ -9204,6 +9204,45 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         LogAutoplaySnapshot();
         return true;
     }
+    // shot <name> [<timeout>]: a picture of the port's next frame (AutoplayShotPath), once its
+    // presenter took the request. The emulator has no request file: skipped. A picture not taken
+    // in time (10 s) is noted and the script goes on: it shows the HUD, it tests nothing.
+    if (verb == "shot") {
+        static const char* request = std::getenv("BB_SHOT_TRIGGER");
+        if (request == nullptr) {
+            LOG_INFO(Debug, "Bloodborne autoplay: shot {} skipped (nothing takes pictures)",
+                     arg(0));
+            return true;
+        }
+        if (!begun) {
+            const auto path = AutoplayShotPath(request, arg(0));
+            if (!path) {
+                failure = "no such shot name";
+                return false;
+            }
+            std::error_code error;
+            std::filesystem::create_directories(std::filesystem::path{*path}.parent_path(), error);
+            // Written whole, then moved into place: the presenter never reads half a path.
+            const std::string partial = std::string{request} + ".part";
+            std::ofstream{partial, std::ios::binary | std::ios::trunc} << *path;
+            std::filesystem::rename(partial, request, error);
+            if (error) {
+                failure = fmt::format("no shot request: {}", error.message());
+                return false;
+            }
+            LOG_INFO(Debug, "Bloodborne autoplay: shot {} asked for", *path);
+        }
+        std::error_code error;
+        if (!std::filesystem::exists(request, error)) {
+            return true;
+        }
+        if (elapsed > number(1, 10)) {
+            LOG_WARNING(Debug, "Bloodborne autoplay: shot {} not taken in {:.0f} s", arg(0),
+                        elapsed);
+            return true;
+        }
+        return false;
+    }
     if (verb == "log") {
         std::string text;
         for (const std::string& word : command.args) {

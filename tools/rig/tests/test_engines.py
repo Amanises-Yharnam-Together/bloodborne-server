@@ -70,6 +70,16 @@ class EngineTest(unittest.TestCase):
         self.assertEqual((env["BB_FPS"], env["BB_DMEM_MB"]), ("30", "5056"),
                          "the low-spec profile: 30 FPS, the PS4's own memory")
 
+    def test_only_the_port_takes_pictures_and_in_its_role_folder(self):
+        # A script's `shot <name>` writes the request file; the port's presenter takes it.
+        role = self.root / "rig" / "port" / "guest"
+        self.assertEqual(self.port.environment("guest")["BB_SHOT_TRIGGER"],
+                         str(role / "shot.request"))
+        self.assertEqual(self.port.shot_request("guest"), role / "shot.request")
+        self.assertEqual(self.port.shots("guest"), role / "shots")
+        self.assertNotIn("BB_SHOT_TRIGGER", self.emulator.environment("guest"),
+                         "the emulator draws no party HUD: its scripts skip their shots")
+
     def test_the_port_is_made_ready_to_play_on_the_rig(self):
         with tempfile.TemporaryDirectory() as folder:
             port = engines.Port(pathlib.Path(folder))
