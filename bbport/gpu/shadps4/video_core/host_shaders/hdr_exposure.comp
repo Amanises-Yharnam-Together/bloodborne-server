@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: scene HDR (vk_scene_hdr.h), step 1: how the game's tonemap maps the 16-bit scene to the
+// SDR picture in the mid-tones, as one exposure ratio for the frame (log of SDR / scene
+// luminance), smoothed over frames. Mid-tones only: the tonemap's toe and shoulder bend there.
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D scene;   ///< RGBA16F, before the game's post and tonemap
+layout(binding = 1) uniform sampler2D hudless; ///< the finished SDR scene without the UI
+
+layout(std430, binding = 2) buffer Exposure {
+    float log_ratio; ///< log(SDR / scene luminance) in the mid-tones
+    float valid;     ///< 1 once a frame had enough mid-tones
+};
+
+layout(push_constant) uniform Params {
+    uint decode_srgb; ///< the SDR view reads sRGB-encoded values (not an sRGB format)
+};
+
+const uint GridX = 64, GridY = 36;
+const uint Threads = 256;
+
+shared float sums[Threads];
+shared float counts[Threads];
+
+vec3 SrgbToLinear(vec3 c) {
+    return mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, lessThanEqual(c, vec3(0.04045)));
+}
+
+float Luma(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+void main() {
+    const uint id = gl_LocalInvocationIndex;
+    float sum = 0.0, count = 0.0;
+    for (uint i = id; i < GridX * GridY; i += Threads) {
+        const vec2 uv = (vec2(i % GridX, i / GridX) + 0.5) / vec2(GridX, GridY);
+        vec3 sdr = textureLod(hudless, uv, 0.0).rgb;
+        if (decode_srgb != 0u) {
+            sdr = SrgbToLinear(sdr);
+        }
+        const float ls = Luma(sdr);
+        const float lh = Luma(max(textureLod(scene, uv, 0.0).rgb, vec3(0.0)));
+        if (ls > 0.03 && ls < 0.3 && lh > 1e-5 && !isinf(lh) && !isnan(lh)) {
+            sum += log(ls / lh);
+            count += 1.0;
+        }
+    }
+    sums[id] = sum;
+    counts[id] = count;
+    barrier();
+    for (uint stride = Threads / 2; stride > 0; stride /= 2) {
+        if (id < stride) {
+            sums[id] += sums[id + stride];
+            counts[id] += counts[id + stride];
+        }
+        barrier();
+    }
+    // Too few mid-tones (a dark cave, a white flash): keep the last frames' exposure.
+    if (id == 0 && counts[0] >= 32.0) {
+        const float ratio = sums[0] / counts[0];
+        log_ratio = valid > 0.5 ? mix(log_ratio, ratio, 0.15) : ratio;
+        valid = 1.0;
+    }
+}

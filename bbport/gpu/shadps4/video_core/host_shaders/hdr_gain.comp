@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: scene HDR (vk_scene_hdr.h), step 2: per pixel, how much brighter than the SDR picture
+// a highlight is in the game's 16-bit scene. Near white the tonemap compresses and clips; there
+// the scene's luminance at the frame's mid-tone exposure is the highlight's real brightness.
+// Where the UI was drawn (the frame differs from its copy without UI) the gain stays 1.
+// Output: r = gain over the SDR picture's linear color, g = UI coverage (debug).
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D scene;
+layout(binding = 1) uniform sampler2D hudless;
+layout(binding = 2) uniform sampler2D display; ///< the game's finished frame, UI included
+layout(std430, binding = 3) readonly buffer Exposure {
+    float log_ratio;
+    float valid;
+};
+layout(binding = 4, rg16f) uniform writeonly image2D gain;
+
+layout(push_constant) uniform Params {
+    float headroom;    ///< peak / paper white
+    float strength;    ///< 1: the scene's brightness; 0: SDR; 2: twice as far (log)
+    uint decode_srgb;
+    uint has_hudless;  ///< 0: no UI copy this frame (no UI drawn), the display is UI-free
+};
+
+vec3 SrgbToLinear(vec3 c) {
+    return mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, lessThanEqual(c, vec3(0.04045)));
+}
+
+vec3 Read(sampler2D image, vec2 uv) {
+    const vec3 c = textureLod(image, uv, 0.0).rgb;
+    return decode_srgb != 0u ? SrgbToLinear(c) : c;
+}
+
+float Luma(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+void main() {
+    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    const ivec2 size = imageSize(gain);
+    if (any(greaterThanEqual(pixel, size))) {
+        return;
+    }
+    const vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+    const vec3 frame = Read(display, uv);
+    const vec3 clean = has_hudless != 0u ? Read(hudless, uv) : frame;
+    // Compared gamma encoded, so a faint UI shadow over a dark scene counts as much as one over
+    // a bright one.
+    const vec3 diff = abs(pow(frame, vec3(1.0 / 2.2)) - pow(clean, vec3(1.0 / 2.2)));
+    const float ui = smoothstep(2.0 / 255.0, 6.0 / 255.0, max(max(diff.r, diff.g), diff.b));
+    if (valid < 0.5) {
+        imageStore(gain, pixel, vec4(1.0, ui, 0.0, 0.0));
+        return;
+    }
+    // A small box filter: the scene is jittered and not anti-aliased yet at some presets.
+    const vec2 texel = 0.5 / vec2(textureSize(scene, 0));
+    const vec3 hdr = 0.25 * (textureLod(scene, uv + vec2(-texel.x, -texel.y), 0.0).rgb +
+                             textureLod(scene, uv + vec2(texel.x, -texel.y), 0.0).rgb +
+                             textureLod(scene, uv + vec2(-texel.x, texel.y), 0.0).rgb +
+                             textureLod(scene, uv + vec2(texel.x, texel.y), 0.0).rgb);
+    float lh = Luma(max(hdr, vec3(0.0))) * exp(log_ratio);
+    if (isnan(lh) || isinf(lh)) {
+        lh = 0.0;
+    }
+    const float ls = Luma(clean);
+    // Only toward white, where the tonemap's shoulder squeezes: the mid-tones keep the game's
+    // grading exactly.
+    const float weight = smoothstep(0.25, 0.8, ls) * (1.0 - ui);
+    const float g = clamp(lh / max(ls, 1e-4), 1.0, headroom);
+    const float value = min(exp(log(g) * strength * weight), headroom);
+    imageStore(gain, pixel, vec4(value, ui, 0.0, 0.0));
+}

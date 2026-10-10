@@ -18,6 +18,7 @@
 #include "video_core/renderer_vulkan/vk_frame_generation.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
+#include "video_core/renderer_vulkan/vk_scene_hdr.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 #include "video_core/texture_cache/texture_cache.h"
@@ -45,6 +46,9 @@ struct Frame {
     u8 id{};
     /// bbport: frame generation: the interpolated frame shown right before this one (Present).
     Frame* generated{nullptr};
+    /// bbport: HDR output: the SceneHdr gain image of this frame (an interpolated frame: of the
+    /// frame after it), -1 for none.
+    int gain_slot{-1};
 };
 
 enum SchedulerType {
@@ -145,6 +149,7 @@ private:
     Scheduler draw_scheduler;
     /// bbport: FSR 3.1 frame generation; before the rasterizer, whose upscaler feeds it.
     FrameGeneration frame_generation;
+    SceneHdr scene_hdr;
     std::deque<u64> recent_frame_ticks; ///< bbport: BB_FRAMES_AHEAD bound (PrepareFrame)
     Scheduler present_scheduler;
     Scheduler flip_scheduler;

@@ -39,6 +39,7 @@ class Runtime;
 class CameraMotion;
 class SceneTargets;
 class FrameGeneration;
+class SceneHdr;
 
 /// bbport BB_FINAL_DUMP_TRIGGER: the frame as presented (after FSR and post processing) is saved
 /// as final_<w>x<h> in BB_DUMP_DIR when the trigger file exists (consumed). `image` in General.
@@ -60,6 +61,11 @@ public:
     /// motion vectors at the upscale and the scene before the first UI draw.
     void SetFrameGeneration(FrameGeneration* value) noexcept {
         frame_generation = value;
+    }
+    /// bbport: HDR highlights (vk_scene_hdr.h) take the scene color before the game's post
+    /// processing and the finished scene before the first UI draw.
+    void SetSceneHdr(SceneHdr* value) noexcept {
+        scene_hdr = value;
     }
 
     /// A draw into a full-size RGBA16F target with the scene depth: the scene color.
@@ -163,6 +169,10 @@ private:
                                    u32 w, u32 h, float frame_ms, bool was_reset);
     /// The first UI draw of a native-size frame: the finished scene is copied for frame generation.
     void CaptureNativeHudless(VideoCore::ImageId color);
+    /// The scene color at the post-processing combine, for HDR highlights.
+    void CaptureSceneForHdr();
+    /// The finished scene before the first UI draw of a scaled frame (`ui_image`).
+    void CaptureScaledHudless(u32 width, u32 height);
     void RunUiOnly(VideoCore::ImageId color, VideoCore::ImageId depth);
     void EnsureUiResources(u32 width, u32 height, vk::Format color, vk::Format depth);
     void PrepareUiDepth(VideoCore::ImageId depth);
@@ -209,6 +219,7 @@ private:
     void ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h, bool whole_range = false);
 
     FrameGeneration* frame_generation = nullptr;
+    SceneHdr* scene_hdr = nullptr;
     const Instance& instance;
     Scheduler& scheduler;
     VideoCore::TextureCache& texture_cache;

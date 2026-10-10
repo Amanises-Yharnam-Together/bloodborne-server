@@ -48,6 +48,8 @@ add_host_shader(fsr.comp fsr_rcas_comp SAMPLE_RCAS=1)
 add_host_shader(taa_sharpen.comp taa_sharpen_comp)
 add_host_shader(post_process.frag post_process_frag)
 add_host_shader(hdr_output.frag hdr_output_frag)
+add_host_shader(hdr_exposure.comp hdr_exposure_comp)
+add_host_shader(hdr_gain.comp hdr_gain_comp)
 
 foreach(BPP IN ITEMS 8 16 32 64 96 128)
     add_host_shader(tiling.comp tiling_micro_${BPP}_comp BITS_PER_PIXEL=${BPP} IS_MACRO_TILED=0)

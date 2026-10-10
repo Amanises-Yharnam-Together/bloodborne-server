@@ -10,6 +10,9 @@ Files are <dir>/fNNN_<name>_<w>x<h>_<format>.raw (vk_temporal_upscaler.cpp DumpI
   FSR gets motionVectorScale 1): hue = direction, brightness =
   length (MOTION_SCALE pixels and more = full), plus a "_mag" image of the length alone;
 - f32 (depth): normalized over its own range, near = bright.
+Also the presenter's BB_FRAME_DUMP_TRIGGER gain maps of HDR scene highlights,
+hdr_gain_NNN_<w>x<h>.raw (vk_scene_hdr.h, RG16F: gain, UI coverage): gain 1 black, up to
+GAIN_SCALE white on a log scale; the game's UI in blue.
 Writes <same name>.png next to each file.
 """
 import re
@@ -21,6 +24,8 @@ from PIL import Image
 
 MOTION_SCALE = 16.0  # pixels for full brightness
 NAME = re.compile(r'f(\d+)_(\w+?)_(\d+)x(\d+)_(\w+)\.raw$')
+GAIN_NAME = re.compile(r'^hdr_gain_(\d+)_(\d+)x(\d+)\.raw$')
+GAIN_SCALE = 10.0  # gain for full white
 
 
 def srgb(linear):
@@ -65,7 +70,26 @@ def motion_to_png(uv, width, height):
     return (rgb * 255).astype(np.uint8), mag, length
 
 
+def gain_to_png(gain, ui):
+    """HDR scene highlights: log-scaled gain (1 black, GAIN_SCALE white), UI coverage in blue."""
+    gain = np.nan_to_num(gain, nan=1.0, posinf=GAIN_SCALE, neginf=1.0)
+    level = np.clip(np.log(np.maximum(gain, 1.0)) / np.log(GAIN_SCALE), 0.0, 1.0)
+    rgb = np.stack([level, level, np.maximum(level, np.clip(ui, 0.0, 1.0) * 0.6)], axis=-1)
+    return (rgb * 255.0 + 0.5).astype(np.uint8)
+
+
+def convert_gain(path, w, h):
+    data = np.frombuffer(path.read_bytes(), np.float16)[: w * h * 2].reshape(h, w, 2)
+    gain, ui = data[..., 0].astype(np.float32), data[..., 1].astype(np.float32)
+    out = path.with_suffix('.png')
+    Image.fromarray(gain_to_png(gain, ui)).save(out)
+    return (f'{out.name} gain: max {np.nanmax(gain):.2f}, above 1.05 {np.mean(gain > 1.05) * 100:.1f}%, '
+            f'UI {np.mean(ui > 0.5) * 100:.1f}%')
+
+
 def convert(path):
+    if g := GAIN_NAME.match(path.name):
+        return convert_gain(path, int(g.group(2)), int(g.group(3)))
     m = NAME.search(path.name)
     if not m:
         return None

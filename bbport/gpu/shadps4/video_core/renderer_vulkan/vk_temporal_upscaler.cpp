@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
+#include "video_core/renderer_vulkan/vk_scene_hdr.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
@@ -423,15 +424,60 @@ bool TemporalUpscaler::OnFrameStart() {
 }
 
 void TemporalUpscaler::OnDispatch(u64 cs_hash) {
-    if (cs_hash != trigger_hash || done_this_frame || failed || Scaled()) {
+    if (cs_hash != trigger_hash) {
         return;
     }
-    done_this_frame = true;
-    if (!scene_color || !camera_motion.Ready() || !Active()) {
-        reset = true;
+    if (!done_this_frame && !failed && !Scaled()) {
+        done_this_frame = true;
+        if (!scene_color || !camera_motion.Ready() || !Active()) {
+            reset = true;
+        } else {
+            Run();
+        }
+    }
+    // After the upscale: at Native AA the anti-aliased scene.
+    CaptureSceneForHdr();
+}
+
+void TemporalUpscaler::CaptureSceneForHdr() {
+    if (!scene_hdr || !scene_hdr->WantsScene() || !scene_color) {
         return;
     }
-    Run();
+    auto& color = texture_cache.GetImage(scene_color);
+    const vk::Format format = color.info.pixel_format;
+    if (format != vk::Format::eR16G16B16A16Sfloat) {
+        return;
+    }
+    scheduler.EndRendering();
+    if (scene_targets.ProxyCurrent(color)) {
+        // A reduced scene (live presets): its render-size proxy holds it.
+        const auto size = scene_targets.ProxySize(color);
+        VideoCore::ImageViewInfo ci;
+        ci.format = format;
+        const auto proxy = scene_targets.Read(scene_color, ci, vk::PipelineStageFlagBits2::eTransfer,
+                                              vk::AccessFlagBits2::eTransferRead);
+        scene_hdr->CaptureScene(proxy.image, proxy.layout, format, size.width, size.height);
+        return;
+    }
+    // BB_RENDER_RES: the scene fills the top left of the aligned target.
+    const auto scene = scaled_session
+                           ? SceneSize(color.info.size.width, color.info.size.height)
+                           : std::array<u32, 2>{color.info.size.width, color.info.size.height};
+    runtime.Transit(&color, vk::ImageLayout::eTransferSrcOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+    runtime.FlushBarriers();
+    scene_hdr->CaptureScene(color.GetImage(), vk::ImageLayout::eTransferSrcOptimal, format,
+                            scene[0], scene[1]);
+}
+
+void TemporalUpscaler::CaptureScaledHudless(u32 w, u32 h) {
+    if (frame_generation && frame_generation->WantsHudless()) {
+        frame_generation->CaptureHudless(vk::Image(ui_image), vk::ImageLayout::eGeneral, ui_format,
+                                         w, h);
+    }
+    if (scene_hdr && scene_hdr->WantsHudless()) {
+        scene_hdr->CaptureHudless(vk::Image(ui_image), vk::ImageLayout::eGeneral, ui_format, w, h);
+    }
 }
 
 bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
@@ -1464,8 +1510,10 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
     if (!Scaled() && vs_hash == ui_trigger_vs) done_this_frame = true;
     // bbport: frame generation: the finished native-size scene, before the first Scaleform draw
     // (HUD, menus) of an upscaled frame.
-    if (!Scaled() && frame_generation && UiComposition::MovieShader(vs_hash) &&
-        frame_generation->WantsHudless() && dispatched_last_frame && color && color == ldr_target) {
+    // HDR highlights (vk_scene_hdr.h): the same image, also without an upscaler running.
+    if (!Scaled() && UiComposition::MovieShader(vs_hash) && color && color == ldr_target &&
+        ((frame_generation && frame_generation->WantsHudless() && dispatched_last_frame) ||
+         (scene_hdr && scene_hdr->WantsHudless()))) {
         CaptureNativeHudless(color);
     }
     // bbport: a UI draw without a color target (a Scaleform mask: color writes off) writes the
@@ -1963,10 +2011,7 @@ void TemporalUpscaler::RunScaled() {
             dispatched_last_frame = true;
             CaptureForFrameGeneration(depth_image, depth_layout, depth_format, w, h, frame_ms,
                                       was_reset);
-            if (frame_generation && frame_generation->WantsHudless()) {
-                frame_generation->CaptureHudless(vk::Image(ui_image), vk::ImageLayout::eGeneral,
-                                                 ui_format, ow, oh);
-            }
+            CaptureScaledHudless(ow, oh);
             if (const int dump = DumpFrame(); dump >= 0) {
                 camera_motion.PrintState(dump);
                 DumpImages(instance, scheduler, cmdbuf, dump,
@@ -2075,9 +2120,8 @@ void TemporalUpscaler::RunScaled() {
     barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral, all,
             rw, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             color_access);
-    if (ok && frame_generation && frame_generation->WantsHudless()) {
-        frame_generation->CaptureHudless(vk::Image(ui_image), vk::ImageLayout::eGeneral, ui_format,
-                                         ow, oh);
+    if (ok) {
+        CaptureScaledHudless(ow, oh);
     }
 
     done_this_frame = true; // the UI is not jittered
@@ -2121,8 +2165,14 @@ void TemporalUpscaler::CaptureNativeHudless(VideoCore::ImageId color) {
     runtime.Transit(&image, vk::ImageLayout::eTransferSrcOptimal,
                     vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
     runtime.FlushBarriers();
-    frame_generation->CaptureHudless(image.GetImage(), vk::ImageLayout::eTransferSrcOptimal, format,
-                                     image.info.size.width, image.info.size.height);
+    if (frame_generation && dispatched_last_frame) {
+        frame_generation->CaptureHudless(image.GetImage(), vk::ImageLayout::eTransferSrcOptimal,
+                                         format, image.info.size.width, image.info.size.height);
+    }
+    if (scene_hdr) {
+        scene_hdr->CaptureHudless(image.GetImage(), vk::ImageLayout::eTransferSrcOptimal, format,
+                                  image.info.size.width, image.info.size.height);
+    }
 }
 
 vk::ImageView TemporalUpscaler::Mirror(vk::Image image, std::vector<MirrorView>& views,

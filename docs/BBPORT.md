@@ -76,15 +76,25 @@ the Insert menu (the launcher's Window card edits the same keys):
 - `window_mode=windowed|borderless|fullscreen`: borderless is SDL 3's fullscreen at the desktop's
   mode, `fullscreen` asks for the closest exclusive display mode. Changes apply at once. Without the
   key the launcher's old `BB_FULLSCREEN=1` means borderless.
-- `hdr=1`, `hdr_peak_nits`, `hdr_paper_white`, `hdr_highlights` (0..1): HDR10 (Rec.2020, ST.2084)
+- `hdr=1`, `hdr_peak_nits`, `hdr_paper_white`, `hdr_highlights` (0..1), `hdr_scene`: HDR10 (Rec.2020, ST.2084)
   output. Offered only when the Vulkan surface lists HDR10 and SDL reports HDR on for the window's
   display (Windows HDR on); `BB_HDR=1` skips the display check, `BB_HDR=0` turns HDR off. Every
   pass up to presentation stays SDR (upscalers, frame generation, the rig's pictures); the
   presenter composes into an SDR image, draws the overlay into its own layer and encodes both into
   the swapchain (`host_passes/hdr_pass.h`, `host_shaders/hdr_output.frag`): SDR white at the paper
-  white, highlights stretched toward the peak (an inverse tonemap of the game's 8-bit frame; the
-  game's own UI over bright areas is stretched too). Real scene-referred HDR (the game's RGBA16F
-  scene before its tonemap) is the next step: see /mnt/project-files/research/hdr-feasibility.md.
+  white, highlights brightened toward the peak.
+- `hdr_scene=1` (default): the highlights come from the game's RGBA16F scene before its tonemap
+  (`vk_scene_hdr.h`). The upscaler hooks copy the scene color at the post-processing combine
+  (cs 0x9a9cf8a9) and the finished scene before the first Scaleform draw; per frame
+  `hdr_exposure.comp` measures the tonemap's mid-tone ratio (SDR / scene luminance, smoothed) and
+  `hdr_gain.comp` writes a gain map (RG16F, display buffer size): toward white, the scene's
+  luminance at that exposure over the SDR luminance, capped at peak / paper white, 1 where the UI
+  was drawn. The HDR encode multiplies the SDR frame's linear color by it, so the game's grading
+  and UI stay as in SDR. `hdr_highlights` 0.5 is the scene as rendered (0 SDR, 1 twice as far in
+  log). Frames without a scene (menus, movies) and `hdr_scene=0` stretch the SDR frame instead (an
+  inverse tonemap of the 8-bit frame). `BB_HDR_SCENE_TEST=1` makes the gain maps with SDR output
+  too; `BB_FRAME_DUMP_TRIGGER` then saves them as `hdr_gain_NNN_<w>x<h>.raw` (`tools/dump_view.py`
+  draws them). Background: /mnt/project-files/research/hdr-feasibility.md.
 
 ## Rig
 
