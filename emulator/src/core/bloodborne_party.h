@@ -56,8 +56,6 @@ struct PartyObservation {
     // A boss fight or its clear sequence runs (event flags 4000 / 4047): a player joining then is
     // kicked by the game, which ends the session.
     bool boss_sequence = false;
-    // A guest: a host claimed this sign (the summon broker delivered the claim) since it rang.
-    bool claim_seen = false;
 };
 
 // CSMultiPlayMan session state (+0x124) as seen in the rig, and the summon-reload marker the
@@ -802,8 +800,6 @@ public:
     using Clock = std::chrono::steady_clock;
     static constexpr u32 StableTicksBeforeSearch = 20;
     static constexpr Clock::duration RetryDelay = std::chrono::seconds{15};
-    // A claimed sign whose guest is idle again this long after the claim came rings again.
-    static constexpr Clock::duration StaleClaimDelay = std::chrono::seconds{30};
 
     explicit PartyController(PartyRole role) : role{role} {}
 
@@ -818,8 +814,6 @@ private:
     std::optional<Clock::time_point> last_search;
     /// Since when a hosting bell with room for more has been on (see Tick).
     std::optional<Clock::time_point> ringing_since;
-    /// Since when a guest's sign has been claimed with the guest idle (see Tick).
-    std::optional<Clock::time_point> claimed_since;
 };
 
 // Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY=<script file>), for tests with no one at the pad: the
@@ -849,8 +843,7 @@ std::optional<bool> CompareAutoplay(s64 value, std::string_view op, s64 limit);
 // attack <target>: a real hit, so the kill reward and the death run as in play (the game's own
 // kill leaves an ordinary enemy standing in a party). Cycle k (AttackCycleSeconds each) stands
 // AttackDistance from the target on side k % 4 (+z, +x, -z, -x) and holds R1 from 0.3 s to 0.5 s
-// into the cycle. The teleport there turns the player to heading 0, which faces -z, so the first
-// side is the one that faces the target.
+// into the cycle, turned towards the target (HeadingTowards).
 struct AttackStance {
     float x = 0.0f;
     float z = 0.0f;
@@ -858,6 +851,9 @@ struct AttackStance {
 constexpr double AttackCycleSeconds = 1.5;
 constexpr float AttackDistance = 1.2f;
 AttackStance AttackStanceFor(float target_x, float target_z, u32 cycle);
+// The teleport heading (radians) that turns a player at (x, z) to face (to_x, to_z): heading h
+// faces (-sin h, cos h).
+float HeadingTowards(float x, float z, float to_x, float to_z);
 u32 AttackCycleAt(double elapsed);
 bool AttackHoldsR1(double elapsed);
 

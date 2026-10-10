@@ -35,11 +35,21 @@ guest-death-seen and echoes-after-crash pass.
   lamp's trip (any 7MMM01LL but the Dream's); now only map codes 211-399 count (the 799001xx
   many NPC talks set are out too). Rig guest-talk-gilbert reproduced it (heading h faces
   (-sin h, cos h)).
-- Fixed: a guest whose sign was claimed but whose join came to nothing (it let the connection
-  go 5 s after it formed, no JoinRoom; seen once each in 2026-10-09 lone-guest and 2026-10-10
-  pickup-after-reload, so the reverted quick-arrival patch was likely not the cause) waited
-  forever: the host never took that sign again and the broker kept handing it the dead room's
-  claim. It rings again after StaleClaimDelay (30 s).
+- Join stalls (no session for minutes, both sides waiting): 4 of 19 joins from 01:12 to 02:52 on
+  2026-10-10, against about 1 in 60 before; 7 of 7 again once the per-frame talk-position hook
+  (0x0204C63B, every talk every frame) and the guest's per-frame talk-start log came out (kit
+  3bc22a7f still had them). Two shapes: the guest got the claim but never ran the host's
+  matching check (OnMatchingCheck 0x013808B0), so it never removed its sign
+  (SummonDataRemoveRequest) or called JoinRoom; or the host made its room but its queued summon
+  never started (SummonSelection.QueueInsert without RequestQueued 0x01873605, which needs
+  MultiPlayMan +0x124 == 3, [rbx+0x78] and [rbx+0x90] == -1). After a stall the host keeps the
+  sign in its pending candidates (list at [manager+0x1A8], entry +0x10 state) and never asks
+  again. A guest re-ring did not help (the sign keeps its SessionId) and was taken out again.
+- Enemy HP after trips (Kaniel 2026-10-10, "not shared after tp's, I think"): hp-after-host-trip
+  and hp-after-guest-trip pass, the game's own sync both ways within 2 s after either trip
+  (the guest's real hit via the new rig verb `hit`). The boards cover members apart: lowest HP
+  wins there, so two members hitting their own copies apart do not add up. A first failure was
+  the test's timing; step lines now carry t= (one clock for both games).
 - A host's warp to another lamp of its own map (pickup-after-reload, the first try of
   guest-talk-gilbert) makes the guest's game drop the room for a moment; players cannot do that
   (lamps lead to the Dream), so the scenarios no longer do it.

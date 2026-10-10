@@ -1771,10 +1771,6 @@ bool HostHasRoomForMore();
 
 bool EventFlagOn(s32 flag);
 
-// A party guest: the summon broker delivered a host's claim for its sign (the host placement
-// header came, SetSeamlessHostPlacementHeader) since its bell went on.
-std::atomic<bool> guest_claim_seen{};
-
 PartyObservation ObserveParty(u64 player, s32 search_effect) {
     PartyObservation observation{};
     observation.player_valid =
@@ -1804,11 +1800,6 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
     observation.white_phantom = observation.player_valid &&
                                 HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) &&
                                 ReadValue<s32>(player, 0x78) == WhiteGhostCharacterType;
-    // A claim counts for the sign it came to: gone once a join is under way or the bell is off.
-    if (!observation.matching_idle || !observation.search_effect_active) {
-        guest_claim_seen.store(false);
-    }
-    observation.claim_seen = guest_claim_seen.load();
     return observation;
 }
 
@@ -2376,28 +2367,6 @@ void PS4_SYSV_ABI LetPartyGuestsStartTalksLikeTheHost(u64, GuestRegisterSnapshot
                          : -1;
     if (lamp_rest_hooks_installed && TalksAsHost(InPartySession(), type)) {
         registers->rax = reinterpret_cast<u64>(host_like_talker.data());
-        // Diagnostics: which talk scripts start for a guest in range of them (the talk's ESD id
-        // at +0x10, e.g. 241000 for a Central Yharnam lamp): a guest's "Talk" at Gilbert's
-        // window took it through the lamp.
-        // Once per talk and map: the update asks every frame while the guest is in range.
-        const u64 talk = registers->r15;
-        const s32 id = talk >= 0x10000 ? ReadValue<s32>(talk, 0x10) : 0;
-        static std::mutex started_mutex;
-        static std::set<s32> started;
-        static u32 started_map = 0;
-        bool first = false;
-        {
-            const u32 map = GetCurrentPackedMap();
-            std::scoped_lock lock{started_mutex};
-            if (map != started_map) {
-                started.clear();
-                started_map = map;
-            }
-            first = id != 0 && started.size() < 64 && started.insert(id).second;
-        }
-        if (first) {
-            LOG_INFO(Debug, "Bloodborne party guest starts talk {} (type {})", id, type);
-        }
     }
 }
 
@@ -2457,49 +2426,12 @@ void PS4_SYSV_ABI NoteEsdDialogAnswer(u64, GuestRegisterSnapshot* registers) {
     ++esd_answers[{esd_function_asked, static_cast<s32>(registers->rcx)}];
 }
 
-// Diagnostics: the talks a map's talk update (0x0204C0B0) weighs each frame, logged once per
-// talk and map with where its character stands. At 0x0204C63B (`mov rax, [rcx+r13*8+0x28]`,
-// before the reach check) rcx + r13 * 8 is the talk's entry (+0x10 the talk, its ESD id at
-// +0x10; +0x20 the character's entity), r14 the character and xmm0 its distance to the player.
-// Only talks enabled there (+0x34) come this far: a guest at Gilbert's window got the lamp.
-constexpr u64 TalkReachCheckOffset = 0x0204C63B;
-constexpr std::array<u8, 5> TalkReachCheck{0x4A, 0x8B, 0x44, 0xE9, 0x28};
-
-void PS4_SYSV_ABI NoteTalkInReach(u64, const GuestRegisterSnapshot* registers) {
-    const u64 entry = registers->rcx + registers->r13 * 8;
-    if (!HasMemoryAccess(entry, 0x38, MemoryProt::CpuRead)) {
-        return;
-    }
-    const u64 talk = ReadValue<u64>(entry, 0x10);
-    const s32 id = talk >= 0x10000 ? ReadValue<s32>(talk, 0x10) : 0;
-    static std::mutex seen_mutex;
-    static std::set<s32> seen;
-    static u32 seen_map = 0;
-    {
-        const u32 map = GetCurrentPackedMap();
-        std::scoped_lock lock{seen_mutex};
-        if (map != seen_map) {
-            seen.clear();
-            seen_map = map;
-        }
-        if (id == 0 || seen.size() >= 64 || !seen.insert(id).second) {
-            return;
-        }
-    }
-    float distance;
-    std::memcpy(&distance, registers->ymm[0].data(), sizeof(distance));
-    u64 node = registers->r14 >= 0x10000 ? ReadValue<u64>(registers->r14, 0x58) : 0;
-    for (const u64 offset : {u64{8}, u64{0x3B0}, u64{0x68}}) {
-        node = node >= 0x10000 && HasMemoryAccess(node, offset + 8, MemoryProt::CpuRead)
-                   ? ReadValue<u64>(node, offset)
-                   : 0;
-    }
-    const bool placed = node >= 0x10000 && HasMemoryAccess(node, 0x1EC, MemoryProt::CpuRead);
-    LOG_INFO(Debug, "Bloodborne talk {} (entity {}) at ({:.1f}, {:.1f}, {:.1f}), {:.1f} m away", id,
-             ReadValue<u32>(entry, 0x20), placed ? ReadValue<float>(node, 0x1E0) : 0.0f,
-             placed ? ReadValue<float>(node, 0x1E4) : 0.0f,
-             placed ? ReadValue<float>(node, 0x1E8) : 0.0f, distance);
-}
+// Where a talk is: a map's talk update (0x0204C0B0) weighs each enabled talk every frame; at
+// 0x0204C63B (`mov rax, [rcx+r13*8+0x28]`, before the reach check) rcx + r13 * 8 is its entry
+// (+0x10 the talk, its ESD id at +0x10; +0x20 the character's entity) and r14 the character.
+// A hook there found Gilbert's window (talk 241319 at (-199.2, -28.6, 63.3), 3 m from lamp
+// 241001) but runs for every talk every frame, and joins failed far more often while it was on
+// (rig 2026-10-10: 4 of 19, against 1 in 60): install one only to look a talk up.
 
 void LogEsdAnswers(bool party_guest) {
     static std::chrono::steady_clock::time_point last{};
@@ -2578,10 +2510,6 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
         !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkCommandIdOffset),
                                       TalkCommandId, 0, NoteTalkCommand)) {
         LOG_ERROR(Debug, "Bloodborne talk diagnostics unavailable");
-    }
-    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + TalkReachCheckOffset), TalkReachCheck,
-                              0, NoteTalkInReach)) {
-        LOG_ERROR(Debug, "Bloodborne talk reach diagnostics unavailable");
     }
     if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkPhantomCheckOffset),
                                       TalkPhantomCheck, 0, LetPartyGuestsStartTalksLikeTheHost)) {
@@ -2681,6 +2609,13 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                                             : std::nullopt) {
                     std::scoped_lock lock{enemy_hp_mutex};
                     others_enemy_hp = *states;
+                } else {
+                    static auto last_logged = std::chrono::steady_clock::time_point{};
+                    if (std::chrono::steady_clock::now() - last_logged > std::chrono::seconds{10}) {
+                        last_logged = std::chrono::steady_clock::now();
+                        LOG_INFO(Debug, "Bloodborne party: HP board post failed (status {})",
+                                 hp_response ? hp_response->status : -1);
+                    }
                 }
             }
         }
@@ -3436,11 +3371,9 @@ void TickPartyController() {
     const bool ended = observation.search_effect_active &&
                        EndPlayerEffect(player, party_controller->SearchEffectId());
     if (ended) {
-        LOG_INFO(Debug, "Bloodborne party: ended the {} stale bell effect {} to ring again",
-                 observation.claim_seen ? "guest's claimed" : "host's",
+        LOG_INFO(Debug, "Bloodborne party: ended the host's stale bell effect {} to ring again",
                  party_controller->SearchEffectId());
     }
-    guest_claim_seen.store(false);
     const bool result = StartPlayerSummonSearch(player, party_controller->SearchEffectId());
     LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",
              party_controller->SearchEffectId(), GetCurrentPackedMap(), result);
@@ -5598,6 +5531,29 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
         std::scoped_lock lock{enemy_hp_mutex};
         local_enemy_hp = MemberMapState{map, EncodeEnemyHp(visit, hurt)};
         others = others_enemy_hp;
+    }
+    // Diagnostics (rig hp-after-guest-trip: the host's hit reached a guest back from a trip only
+    // ~30 s later): what the board hands this member for its area, when that changes.
+    {
+        static std::string last_seen;
+        std::string seen;
+        for (const MemberMapState& state : others) {
+            if (const auto report =
+                    (state.map >> 24) == (map >> 24) ? DecodeEnemyHp(state.bits) : std::nullopt) {
+                seen += fmt::format(" [{:#x}: {} hurt]", state.map, report->enemies.size());
+            }
+        }
+        if (seen != last_seen) {
+            last_seen = seen;
+            LOG_INFO(Debug, "Bloodborne party: HP board for map {:#x}:{} (t={:.1f})", map,
+                     seen.empty() ? " nothing" : seen, SteadyMilliseconds() / 1000.0);
+        }
+        static size_t last_hurt = 0;
+        if (hurt.size() != last_hurt) {
+            last_hurt = hurt.size();
+            LOG_INFO(Debug, "Bloodborne party: posting {} hurt enemies on map {:#x} (t={:.1f})",
+                     hurt.size(), map, SteadyMilliseconds() / 1000.0);
+        }
     }
     size_t lowered = 0;
     for (const auto& [handle, copy] : alive) {
@@ -8187,6 +8143,7 @@ struct AutoplayRun {
     std::optional<u32> attack_placed; // the attack cycle the player was last put in place for
     s32 noted_max_hp = 0;             // note-max-hp: the player's max HP then
     u32 pickup_handle = 0;            // pickup: the map item it went for
+    s32 hit_from_hp = 0;              // hit: the target's HP when it began
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -8541,14 +8498,64 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
                 LOG_INFO(Debug, "Bloodborne autoplay: attack cycle {} missed (heading {:.2f})",
                          *autoplay_run.attack_placed, LocalPlayerHeading().value_or(0.0f));
             }
-            const AttackStance stance = AttackStanceFor(ReadValue<float>(physics, 0x1E0),
-                                                        ReadValue<float>(physics, 0x1E8), cycle);
-            TeleportLocalPlayer({stance.x, ReadValue<float>(physics, 0x1E4) + 0.2f, stance.z});
+            const float target_x = ReadValue<float>(physics, 0x1E0);
+            const float target_z = ReadValue<float>(physics, 0x1E8);
+            const AttackStance stance = AttackStanceFor(target_x, target_z, cycle);
+            TeleportLocalPlayer({stance.x, ReadValue<float>(physics, 0x1E4) + 0.2f, stance.z},
+                                HeadingTowards(stance.x, stance.z, target_x, target_z));
             autoplay_run.attack_placed = cycle;
         }
         autoplay_buttons.store(AttackHoldsR1(elapsed) ? AutoplayButton("r1") : 0);
         if (elapsed > number(1, 40)) {
             failure = fmt::format("still alive after {:.0f} s: hp {}", elapsed, hp);
+        }
+        return false;
+    }
+    // hit <target> [<timeout>]: light attacks from each side in turn (as attack, without taking
+    // its HP down first) until one lands: a real hit that the game sends to the other players.
+    if (verb == "hit") {
+        if (!begun) {
+            const auto target = ParseAutoplayTarget(arg(0));
+            const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+            if (!found) {
+                failure = "no such character";
+                return false;
+            }
+            autoplay_run.attack_handle = ReadValue<u32>(found->character, 0x08);
+            autoplay_run.attack_placed.reset();
+            autoplay_run.hit_from_hp = ReadValue<s32>(found->data, 0xF8);
+            LOG_INFO(Debug, "Bloodborne autoplay: hitting {:#x} (hp {}) at {:.1f} m",
+                     autoplay_run.attack_handle, autoplay_run.hit_from_hp, found->distance);
+        }
+        const auto found = FindAutoplayCharacter(autoplay_run.attack_handle);
+        if (!found) {
+            autoplay_buttons.store(0);
+            failure = "the target is gone";
+            return false;
+        }
+        const s32 hp = ReadValue<s32>(found->data, 0xF8);
+        if (hp < autoplay_run.hit_from_hp) {
+            autoplay_buttons.store(0);
+            LOG_INFO(Debug, "Bloodborne autoplay: hit {:#x}: hp {} -> {} in attack cycle {}",
+                     autoplay_run.attack_handle, autoplay_run.hit_from_hp, hp,
+                     autoplay_run.attack_placed.value_or(0));
+            return true;
+        }
+        const u32 cycle = AttackCycleAt(elapsed);
+        const u64 modules = ReadValue<u64>(found->character, 0x3B0);
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (autoplay_run.attack_placed != cycle && physics >= 0x10000) {
+            const float target_x = ReadValue<float>(physics, 0x1E0);
+            const float target_z = ReadValue<float>(physics, 0x1E8);
+            const AttackStance stance = AttackStanceFor(target_x, target_z, cycle);
+            TeleportLocalPlayer({stance.x, ReadValue<float>(physics, 0x1E4) + 0.2f, stance.z},
+                                HeadingTowards(stance.x, stance.z, target_x, target_z));
+            autoplay_run.attack_placed = cycle;
+        }
+        autoplay_buttons.store(AttackHoldsR1(elapsed) ? AutoplayButton("r1") : 0);
+        if (elapsed > number(1, 30)) {
+            autoplay_buttons.store(0);
+            failure = fmt::format("no hit landed in {:.0f} s: hp {}", elapsed, hp);
         }
         return false;
     }
@@ -8817,8 +8824,8 @@ void TickAutoplay() {
         return;
     }
     if (finished && !autoplay_run.hold_until) {
-        LOG_INFO(Debug, "Bloodborne autoplay: step {}/{} {} ok", index + 1, total,
-                 AutoplayText(command));
+        LOG_INFO(Debug, "Bloodborne autoplay: step {}/{} {} ok (t={:.1f})", index + 1, total,
+                 AutoplayText(command), SteadyMilliseconds() / 1000.0);
         ++autoplay_run.next;
         autoplay_run.step_started = std::chrono::steady_clock::now();
         autoplay_run.step_begun = false;
@@ -8929,7 +8936,6 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
     // forked cross-map summon's leftover): its own map, position and heading replace the host's,
     // so the pre-match warp and the summon reload keep it in place.
     if (SummonPlacementDescriptor own{}; IsPartyGuestRole()) {
-        guest_claim_seen.store(true); // see PartyController::Tick's StaleClaimDelay
         std::string_view own_result;
         if (ReadLocalSummonPlacement(own, own_result)) {
             LOG_INFO(Debug,

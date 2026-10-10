@@ -74,9 +74,9 @@ TEST(BloodborneAutoplay, ReadsTargetsAndComparisons) {
 }
 
 // attack <target>: a real hit (the kill reward and the death run as in play). The teleport that
-// puts the player beside it also turns the player to heading 0 (written headings do not stay),
-// which faces -z: the rig's first swing, from the +z side, killed. So each cycle tries the next
-// side: +z first, then +x, -z and -x, in case a map or a teleport turns the player otherwise.
+// puts the player beside it turns the player towards it (HeadingTowards; a written heading does
+// not stay). Each cycle tries the next side, +z first, then +x, -z and -x, in case a wall or the
+// enemy's own swing is in the way.
 TEST(BloodborneAutoplay, AnAttackCirclesTheTarget) {
     const AttackStance first = AttackStanceFor(10.0f, 20.0f, 0);
     EXPECT_NEAR(first.x, 10.0f, 1e-4f);
@@ -88,6 +88,15 @@ TEST(BloodborneAutoplay, AnAttackCirclesTheTarget) {
     EXPECT_NEAR(AttackStanceFor(10.0f, 20.0f, 3).x, 10.0f - AttackDistance, 1e-4f);
     EXPECT_NEAR(AttackStanceFor(10.0f, 20.0f, 4).z, first.z, 1e-4f) << "then all over again";
     EXPECT_NEAR(AttackStanceFor(10.0f, 20.0f, 4).x, first.x, 1e-4f);
+}
+
+// A teleport's heading h faces (-sin h, cos h): rig 2026-10-10 by the second Central Yharnam
+// lamp, -0.85 from beside the lamp opened the lamp's menu and 2.29 at Gilbert's window his talk.
+TEST(BloodborneAutoplay, TheHeadingTowardsAPointFacesIt) {
+    EXPECT_NEAR(HeadingTowards(-198.45f, 63.96f, -199.2f, 63.3f), 2.29f, 0.01f) << "the window";
+    EXPECT_NEAR(HeadingTowards(-197.6f, 64.7f, -196.8f, 65.4f), -0.85f, 0.01f) << "the lamp";
+    EXPECT_NEAR(HeadingTowards(0.0f, 0.0f, 0.0f, 5.0f), 0.0f, 1e-4f) << "+z";
+    EXPECT_NEAR(HeadingTowards(0.0f, 0.0f, 5.0f, 0.0f), -1.5708f, 1e-3f) << "+x";
 }
 
 TEST(BloodborneAutoplay, AnAttackPressesR1OncePerCycle) {
