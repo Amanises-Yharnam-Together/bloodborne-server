@@ -13,10 +13,16 @@ stay in rig/runs/<when>/<scenario>/ (the last RUNS_KEPT batches).
   py -3.12 tools/rig/run_scenario.py --save-baseline
   py -3.12 tools/rig/run_scenario.py --add-guest2   (a third game for parties of three)
   py -3.12 tools/rig/run_scenario.py --boot-check host [--seconds 40]   (tools/smoke-boot.ps1)
+  py -3.12 tools/rig/run_scenario.py --engine port --play down-revive   (games to play by hand)
 
 Every scenario starts from the same saves: --save-baseline keeps each role's save and party files
 (rig/<role>/baseline) and every run puts them back first, so one test's progress (a boss killed,
 a lamp lit, a remembered spot) never leaks into the next.
+
+--play <scenario> starts that scenario's games with its settings (down-revive: two players with
+party death on, down-revive3: three), lets them get into the world and into one session by
+themselves, then leaves them to the person at the PC; the servers stay up until every game is
+closed.
 
 --engine port plays with the native port (Bloodborne PC, tools/build-bbport.ps1) instead of the
 emulator, in rig/port/<role> (engines.py); --engine port --setup makes those folders from the
@@ -40,7 +46,7 @@ sys.path.insert(0, str(HERE.parent / "re"))
 import check_party_log  # noqa: E402
 import engines  # noqa: E402
 from engines import BACKEND_PORT, BB_ROOT, SHADNET_PORT  # noqa: E402
-from scenarios import SCENARIOS  # noqa: E402
+from scenarios import SCENARIOS, START  # noqa: E402
 
 RIG = BB_ROOT / "rig"
 RUNS = RIG / "runs"
@@ -596,6 +602,76 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     return passed
 
 
+def play_scripts(scenario: dict) -> dict[str, list[str]]:
+    """--play: each of a scenario's roles only gets into the world and into one session with the
+    others; the rest is the person's."""
+    roles = list(scenario["roles"])
+    return {role: [START, f"wait-session {len(roles)} 300"] for role in roles}
+
+
+def play(name: str) -> int:
+    """--play <scenario>: its games with its settings, left to the person at the PC once they are
+    in the world together. The servers stay up until every game is closed."""
+    scenario = SCENARIOS[name]
+    roles = list(scenario["roles"])
+    run_dir = RUNS / time.strftime("%Y%m%d-%H%M%S") / f"play-{name}"
+    if missing := ENGINE.missing():
+        print(missing)
+        return 2
+    for role in roles:
+        if not user_dir(role).is_dir():
+            print(f"{role}: no rig folder at {ENGINE.role_dir(role)}")
+            return 2
+    if games()[1]:
+        print("Another game is running (someone is playing): not starting the rig's.")
+        return 2
+    for role in roles:
+        if restore_baseline(role):
+            print(f"{role}: saves put back to the baseline")
+    need = ENGINE.commit_gb * len(roles)
+    if (free := free_commit_gb()) < need:
+        print(f"Not enough memory for {len(roles)} games: {free:.1f} GB can be committed, "
+              f"{need} GB needed.")
+        return 2
+    stop_servers()
+    start_servers(run_dir)
+    if not server_is_current():
+        print(rf"The rig's shadNet is too old (no /bloodborne/party/vitals): copy "
+              rf"{BB_ROOT}\out\server\shadnet.exe into {RIG}\server.")
+        stop_servers()
+        return 2
+    scripts = play_scripts(scenario)
+    processes = {}
+    for role in roles:
+        processes[role] = launch(role, scripts[role], settings=scenario.get("settings"))
+        print(f"started {role}")
+        wait_until = time.time() + 90 if ENGINE.staggered_start else 0
+        while (time.time() < wait_until and IN_WORLD not in read_log(role)
+               and processes[role].poll() is None):
+            time.sleep(2)
+    started = time.time()
+    joined = set()
+    while time.time() < started + 360 and len(joined) < len(roles):
+        for role in roles:
+            if role not in joined and DONE.search(read_log(role)):
+                joined.add(role)
+        if any(game.poll() is not None for game in processes.values()):
+            break
+        time.sleep(2)
+    if len(joined) == len(roles):
+        print(f"Ready after {time.time() - started:.0f} s: {', '.join(roles)} are in the world "
+              "together. The games are yours; close them when you are done.")
+    else:
+        print(f"Not together yet ({', '.join(sorted(joined)) or 'nobody'} joined); the games stay "
+              "open as they are.")
+    while any(game.poll() is None for game in processes.values()):
+        time.sleep(5)
+    keep_logs(run_dir, roles)
+    stop_servers()
+    print(f"Every game is closed; logs in {run_dir}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("scenarios", nargs="*")
@@ -614,6 +690,9 @@ def main(argv: list[str]) -> int:
                         help="boot the role's game alone and check that co-op went in")
     parser.add_argument("--seconds", type=int, default=40,
                         help="how long --boot-check lets the game boot (default 40)")
+    parser.add_argument("--play", metavar="SCENARIO",
+                        help="start a scenario's games with its settings and leave them to you "
+                             "once they are in the world together")
     args = parser.parse_args(argv)
     use_engine(args.engine)
     if args.setup:
@@ -629,6 +708,11 @@ def main(argv: list[str]) -> int:
         return 0
     if args.boot_check:
         return boot_check(args.boot_check, args.seconds)
+    if args.play:
+        if args.play not in SCENARIOS:
+            print(f"No such scenario: {args.play} (--list shows them)")
+            return 2
+        return play(args.play)
     if args.add_guest2:
         add_guest2()
         return 0

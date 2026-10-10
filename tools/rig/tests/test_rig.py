@@ -171,6 +171,16 @@ class RunnerTest(unittest.TestCase):
             self.assertFalse(engine.shot_request("host").exists(),
                              "a request no frame took is not taken by the next run's first frame")
 
+    def test_play_gets_the_games_into_the_world_together_and_leaves_the_rest_to_you(self):
+        for name, players in (("down-revive", 2), ("down-revive3", 3)):
+            scenario = scenarios.SCENARIOS[name]
+            scripts = run_scenario.play_scripts(scenario)
+            with self.subTest(scenario=name):
+                self.assertEqual(list(scripts), list(scenario["roles"]))
+                for script in scripts.values():
+                    self.assertEqual(script, [scenarios.START, f"wait-session {players} 300"])
+                    self.assertTrue(all(step.split()[0] in VERBS for step in script))
+
     def test_old_runs_go_newest_stay(self):
         with tempfile.TemporaryDirectory() as folder:
             runs = pathlib.Path(folder)
