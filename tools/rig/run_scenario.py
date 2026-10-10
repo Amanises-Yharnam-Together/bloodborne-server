@@ -641,12 +641,14 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     passed = True
     if handle := scenario.get("same_hp"):
         texts = {role: role_text(run_dir, role, stage[role] + 1) for role in roles}
-        if problem := same_hp_problem(texts, handle):
-            print(f"    {problem}")
-            passed = False
-        else:
-            print(f"    {handle}: one HP in every game "
-                  f"({', '.join(str(last_census_hp(t, handle)) for t in texts.values())})")
+        for index in [*scenario.get("same_hp_census", []), -1]:
+            where = "last census" if index < 0 else f"census {index + 1}"
+            if problem := same_hp_problem(texts, handle, index):
+                print(f"    {where}: {problem}")
+                passed = False
+            else:
+                print(f"    {where}: {handle} one HP in every game ("
+                      f"{', '.join(str(last_census_hp(t, handle, index)) for t in texts.values())})")
     for role in roles:
         text = role_text(run_dir, role, stage[role] + 1)
         status = done.get(role, "timed out")
@@ -674,16 +676,20 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     return passed
 
 
-def last_census_hp(text: str, handle: str) -> tuple[int, int] | None:
-    """The character's HP and max HP in the role's last census (the autoplay verb), if any."""
+def last_census_hp(text: str, handle: str, index: int = -1) -> tuple[int, int] | None:
+    """The character's HP and max HP in the role's census number `index` (the autoplay verb;
+    -1 the last), if any."""
     found = re.findall(rf"autoplay census: {re.escape(handle)} hp (-?\d+)/(\d+)", text)
-    return (int(found[-1][0]), int(found[-1][1])) if found else None
+    if not -len(found) <= index < len(found):
+        return None
+    return int(found[index][0]), int(found[index][1])
 
 
-def same_hp_problem(texts: dict[str, str], handle: str) -> str | None:
-    """What is wrong with the shared enemy's HP across the roles' last censuses, or None: every
-    game must show the same HP (2 apart at most: shares round), hurt below its max."""
-    seen = {role: last_census_hp(text, handle) for role, text in texts.items()}
+def same_hp_problem(texts: dict[str, str], handle: str, index: int = -1) -> str | None:
+    """What is wrong with the shared enemy's HP across the roles' censuses number `index` (-1 the
+    last), or None: every game must show the same HP (2 apart at most: shares round), hurt
+    below its max."""
+    seen = {role: last_census_hp(text, handle, index) for role, text in texts.items()}
     if missing := [role for role, hp in seen.items() if hp is None]:
         return f"no census of {handle} in {', '.join(missing)}"
     values = [hp for hp, _ in seen.values()]

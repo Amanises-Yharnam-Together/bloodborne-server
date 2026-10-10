@@ -199,21 +199,29 @@ SCENARIOS = {
         "timeout": 600,
     },
     "hp-together": {
-        "about": "the host goes to the Dream and back, then the guest; then both stand by one "
-                 "enemy and hit it, and both games show the same HP with both players' damage "
-                 "in it, and each sees the other (Kaniel 2026-10-10: HP bars apart after trips; host and guest unseen after the host's early trip)",
+        "about": "both players hit one enemy in one world (after the join), then the host goes "
+                 "to the Dream and back, then the guest, and both hit it again from their own "
+                 "worlds; each time both games show the same HP with both players' damage in it, "
+                 "and at the end each sees the other (Kaniel 2026-10-10: HP bars apart after "
+                 "trips; host and guest unseen after the host's early trip)",
         "roles": {
-            "host": [START, "godmode", "wait-session 2 300", "wait 40", f"travel {HUNTERS_DREAM}",
-                     "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 70",
-                     "census 40", f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 8",
-                     "census 40", "wait 4", "census 40", "expect-others-near 1 40", "expect-session 2"],
-            "guest": [START, "godmode", "wait-session 2 300", "wait 70", "wait-members 2 240",
-                      "wait 5", f"travel {HUNTERS_DREAM}", "wait 5",
-                      f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 15",
+            "host": [START, "godmode", "wait-session 2 300", "wait 30", "census 40",
+                     f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 12", "census 40",
+                     "wait 10", f"travel {HUNTERS_DREAM}", "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}",
+                     "wait-members 2 240", "wait 70", "census 40", f"hit {ENEMY} 30", "wait 1",
+                     f"hit {ENEMY} 30", "wait 8", "census 40", "wait 4", "census 40",
+                     "expect-others-near 1 40", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 30", "census 40",
+                      f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 12", "census 40",
+                      "wait 25", "wait-members 2 240", "wait 5", f"travel {HUNTERS_DREAM}",
+                      "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 15",
                       "census 40", f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 45",
-                      "census 40", "wait 4", "census 40", "expect-others-near 1 40", "expect-session 2"],
+                      "census 40", "wait 4", "census 40", "expect-others-near 1 40",
+                      "expect-session 2"],
         },
+        # The second census of each (after the hits in one world), and the last.
         "same_hp": ENEMY,
+        "same_hp_census": [1],
         "expect": {"host": [r"enemy HP shared over the HP board"],
                    "guest": [r"enemy HP shared over the HP board"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
