@@ -7,6 +7,8 @@
 #include <condition_variable>
 #include <mutex>
 #include <optional>
+#include <memory>
+#include <unordered_map>
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
@@ -65,6 +67,9 @@ struct Program {
     /// bbport: `info` as translated, for draw-preparation workers (they must not read `info`,
     /// whose user data the GPU thread rewrites every draw). Guarded by programs_mutex.
     std::unique_ptr<Shader::Info> info_template;
+    /// bbport: XXH3 of the code bytes `info` was translated from, set with info_template. A
+    /// permutation translated from other bytes at the same address does not belong here.
+    u64 code_hash{};
 
     Program() = default;
     Program(Shader::HwStage stage, Shader::SwStage l_stage, Shader::ShaderParams params)
@@ -132,8 +137,13 @@ extern std::atomic<u32> g_bb_worker_compiles;
 extern std::atomic<u64> g_bb_wait_ns;
 extern std::atomic<u32> g_bb_waits;
 extern std::atomic<u32> g_bb_wait_timeouts;
+/// bbport: worker translations thrown away because the guest code they read was not the
+/// program's (see CompilePermutation).
+extern std::atomic<u32> g_bb_spec_discards;
 
 struct PreparedDraw;
+
+class PipelineCompiler;
 
 class PipelineCache {
 public:
@@ -148,8 +158,10 @@ public:
     bool LoadGraphicsPipeline(Serialization::Archive& ar);
     bool LoadPipelineStage(Serialization::Archive& ar, size_t stage);
 
+    /// `indirect`: the draw's arguments are in memory (bbport: never skipped while compiling).
     const GraphicsPipeline* GetGraphicsPipeline(const DrawIndirectParams params = {},
-                                                const PreparedDraw* prepared = nullptr);
+                                                const PreparedDraw* prepared = nullptr,
+                                                bool indirect = false);
 
     /// bbport: worker side of draw preparation: selects the pipeline key for `sel.regs`. With
     /// BB_ASYNC_COMPILE it also compiles the programs, permutations and the pipeline that do
@@ -231,11 +243,13 @@ private:
     std::optional<std::vector<u32>> GetShaderPatch(u64 hash, Shader::HwStage stage, size_t perm_idx,
                                                    std::string_view ext);
     /// `persist`: also write the SPIR-V to the shader cache (not for a duplicate compile of
-    /// something another thread has under way).
+    /// something another thread has under way). `spv_out`, when not persisting: receives the
+    /// SPIR-V, for a caller that writes it only after checking the translation.
     vk::ShaderModule CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                    const std::span<const u32>& code, size_t perm_idx,
                                    Shader::Backend::Bindings& binding,
-                                   Shader::Pools& translator_pools, bool persist);
+                                   Shader::Pools& translator_pools, bool persist,
+                                   std::vector<u32>* spv_out = nullptr);
     const Shader::RuntimeInfo& BuildRuntimeInfo(PipelineSelection& sel, Shader::HwStage stage,
                                                 Shader::SwStage l_stage);
 
@@ -286,6 +300,15 @@ private:
                    std::vector<std::variant<GraphicsPipelineKey, ComputePipelineKey>>>
         module_related_pipelines;
 
+    /// bbport BB_ASYNC_PIPELINES: a new graphics pipeline of a pass drawn every frame is compiled
+    /// on worker threads (PipelineCompiler) while its draws go without it for a frame or two,
+    /// instead of the game standing still for the driver (18 ms a pipeline on a GTX 1060, 1-4 s
+    /// hitches on a first session). Other passes (one-time renders) compile at once, as before.
+    /// A draw-prep worker or a draw that needs it meanwhile finds the key claimed in
+    /// pipelines_compiling (skippable draws go without, others wait).
+    bool AsyncSkippable(const PipelineSelection& sel, bool indirect);
+    u64 async_started = 0, async_skipped = 0, async_waited = 0; ///< statistics
+    std::unique_ptr<PipelineCompiler> compiler; ///< joined first, in ~PipelineCache
     std::jthread driver_cache_saver; // last: stops before anything it uses is destroyed
 };
 

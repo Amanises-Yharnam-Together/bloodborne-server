@@ -5,14 +5,19 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <csetjmp>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <exception>
+#include <functional>
 #include <mutex>
+#include <new>
 #include <ranges>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <xxhash.h>
 
@@ -125,6 +130,9 @@ bool ProgramReadable(const Program& pgm) {
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "bbport_guest_memory.h"
+#include "bbport_settings.h"
+#include "game_profile.h"
+#include "bbport_toggles.h"
 
 namespace Vulkan {
 
@@ -418,6 +426,56 @@ void SpeculativeAssertExit() {
 }
 } // namespace
 
+/// bbport BB_ASYNC_PIPELINES: worker threads creating graphics pipelines (the driver's compile,
+/// vkCreateGraphicsPipelines, with its own VkPipelineCache synchronization). Jobs run in order.
+class PipelineCompiler {
+public:
+    explicit PipelineCompiler(u32 threads) {
+        for (u32 i = 0; i < threads; ++i) {
+            workers.emplace_back([this] { Run(); });
+        }
+    }
+    ~PipelineCompiler() {
+        {
+            std::scoped_lock lk{mutex};
+            stop = true;
+        }
+        cv.notify_all();
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    }
+    void Submit(std::function<void()> job) {
+        {
+            std::scoped_lock lk{mutex};
+            jobs.push_back(std::move(job));
+        }
+        cv.notify_one();
+    }
+
+private:
+    void Run() {
+        for (;;) {
+            std::function<void()> job;
+            {
+                std::unique_lock lk{mutex};
+                cv.wait(lk, [&] { return stop || !jobs.empty(); });
+                if (jobs.empty()) {
+                    return; // stopping, every job done
+                }
+                job = std::move(jobs.front());
+                jobs.pop_front();
+            }
+            job();
+        }
+    }
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::function<void()>> jobs;
+    std::vector<std::thread> workers;
+    bool stop = false;
+};
+
 PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                              AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
     : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_},
@@ -487,6 +545,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
         // bbport BB_LAYER_MEMORY: buffers over nearly all memory go through the page table.
         .paged_buffers = VideoCore::BufferCache::LayerPagedActive(),
+        // The game's buffer copy shader, from its profile (games/).
+        .buffer_copy_shader_hash = Game::BufferCopyShader(),
     };
     async_compile = AsyncCompileEnabled() && !EmulatorSettings.IsShaderCollect();
     g_assert_speculative_exit = SpeculativeAssertExit;
@@ -503,6 +563,7 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
 }
 
 PipelineCache::~PipelineCache() {
+    compiler.reset(); // its jobs publish into the cache: joined first
     if (shutdown_hook) {
         Storage::RemoveShutdownHook(shutdown_hook);
     }
@@ -600,26 +661,40 @@ void PipelineCache::CreateDriverCache() {
 }
 
 void PipelineCache::SaveDriverCache() {
-    std::scoped_lock lock{driver_cache_mutex};
-    const auto start = std::chrono::steady_clock::now();
-    const u32 marker = num_new_pipelines;
-    auto [result, data] = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
-    if (result != vk::Result::eSuccess || data.size() < sizeof(VkPipelineCacheHeaderVersionOne)) {
-        return;
-    }
-    std::vector<u8> file(sizeof(DriverCacheHeader) + data.size());
-    const DriverCacheHeader header{.magic = DriverCacheMagic,
-                                   .version = DriverCacheVersion,
-                                   .payload_size = data.size(),
-                                   .payload_hash = XXH3_64bits(data.data(), data.size())};
-    std::memcpy(file.data(), &header, sizeof(header));
-    std::memcpy(file.data() + sizeof(header), data.data(), data.size());
-    if (Storage::DataBase::Instance().SaveDriverCache(file)) {
-        saved_pipelines = marker;
-        std::printf("GPU: driver pipeline cache saved: %zu KiB in %lld ms\n", data.size() / 1024,
-                    static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                               std::chrono::steady_clock::now() - start)
-                                               .count()));
+    // bbport: the save is optional, and it copies megabytes. With Windows short of memory the copy
+    // threw std::bad_alloc on the saver thread, and the escaping exception ended the game (exit 3).
+    // A failed save is skipped; the next one tries again. BB_TEST_CACHE_SAVE_OOM=1 makes the first
+    // save fail that way, so a run can check the game goes on.
+    static std::atomic<bool> test_out_of_memory{std::getenv("BB_TEST_CACHE_SAVE_OOM") != nullptr};
+    try {
+        if (test_out_of_memory.exchange(false)) {
+            throw std::bad_alloc();
+        }
+        std::scoped_lock lock{driver_cache_mutex};
+        const auto start = std::chrono::steady_clock::now();
+        const u32 marker = num_new_pipelines;
+        auto [result, data] = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
+        if (result != vk::Result::eSuccess || data.size() < sizeof(VkPipelineCacheHeaderVersionOne)) {
+            return;
+        }
+        std::vector<u8> file(sizeof(DriverCacheHeader) + data.size());
+        const DriverCacheHeader header{.magic = DriverCacheMagic,
+                                       .version = DriverCacheVersion,
+                                       .payload_size = data.size(),
+                                       .payload_hash = XXH3_64bits(data.data(), data.size())};
+        std::memcpy(file.data(), &header, sizeof(header));
+        std::memcpy(file.data() + sizeof(header), data.data(), data.size());
+        if (Storage::DataBase::Instance().SaveDriverCache(file)) {
+            saved_pipelines = marker;
+            std::printf("GPU: driver pipeline cache saved: %zu KiB in %lld ms\n", data.size() / 1024,
+                        static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                   std::chrono::steady_clock::now() - start)
+                                                   .count()));
+        }
+    } catch (const std::bad_alloc&) {
+        std::printf("GPU: driver pipeline cache not saved this time (out of memory)\n");
+    } catch (const std::exception& e) {
+        std::printf("GPU: driver pipeline cache not saved this time (%s)\n", e.what());
     }
 }
 
@@ -659,6 +734,7 @@ std::atomic<u32> g_bb_worker_compiles;
 std::atomic<u64> g_bb_wait_ns;
 std::atomic<u32> g_bb_waits;
 std::atomic<u32> g_bb_wait_timeouts;
+std::atomic<u32> g_bb_spec_discards;
 namespace {
 /// Set while a draw-preparation worker selects a pipeline: what it compiles counts as its own.
 thread_local bool t_speculative = false;
@@ -687,6 +763,42 @@ std::chrono::milliseconds MaxCompileWait() {
         return std::chrono::milliseconds(env ? std::clamp(std::atoi(env), 0, 5000) : 50);
     }();
     return wait;
+}
+
+/// Content hash of a program's code as it is in guest memory now.
+u64 CodeHash(std::span<const u32> code) {
+    return XXH3_64bits(code.data(), code.size_bytes());
+}
+
+/// The pipeline layout and the descriptor updates of a permutation come from the program's
+/// Info, its bindings from its own translation: both must list the same resources.
+bool SameResources(const Shader::Info& a, const Shader::Info& b) {
+    return a.buffers.size() == b.buffers.size() && a.images.size() == b.images.size() &&
+           a.samplers.size() == b.samplers.size() && a.fmasks.size() == b.fmasks.size();
+}
+
+/// A worker's translation that is thrown away: the GPU thread translates it in order.
+void NoteDiscarded(u64 hash, size_t perm_idx, const char* why) {
+    ++g_bb_spec_discards;
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1, std::memory_order_relaxed) < 8) {
+        LOG_WARNING(Render_Vulkan, "Shader {:#x} permutation {} translated ahead of the GPU "
+                                   "thread was dropped: {}",
+                    hash, perm_idx, why);
+    }
+}
+
+/// Test hook for the check in CompilePermutation, BB_TEST_TORN_SHADER_CODE=N: every Nth worker
+/// permutation translates its code with the last 40% replaced by s_endpgm, as a worker reading
+/// memory the game has reused would. Each one must be dropped ("Async compile: ... N dropped")
+/// and the validation layer must stay quiet.
+bool TestTornShaderCode() {
+    static const int every = [] {
+        const char* env = std::getenv("BB_TEST_TORN_SHADER_CODE");
+        return env ? std::atoi(env) : 0;
+    }();
+    static std::atomic<int> count{0};
+    return every > 0 && count.fetch_add(1, std::memory_order_relaxed) % every == 0;
 }
 
 /// Waits (bounded) until `done()` holds; false on timeout.
@@ -781,9 +893,51 @@ const GraphicsPipeline* PipelineCache::PublishGraphicsPipeline(
     return result;
 }
 
+namespace {
+/// bbport BB_ASYNC_PIPELINES: per render target (its address), how many frames in a row draws
+/// went to it. Only the GPU thread (pipeline selection) touches it.
+struct TargetStreak {
+    u32 last_frame = ~0u;
+    u32 frames = 0;
+};
+std::unordered_map<u64, TargetStreak> target_streaks;
+
+/// The draw's render target: its first color buffer written, else its depth buffer, else 0.
+u64 DrawTarget(const AmdGpu::Regs& regs) {
+    if (regs.color_control.mode != AmdGpu::ColorControl::OperationMode::Disable) {
+        for (u32 cb = 0; cb < AmdGpu::NUM_COLOR_BUFFERS; ++cb) {
+            if (regs.color_buffers[cb] && regs.color_target_mask.GetMask(cb)) {
+                return regs.color_buffers[cb].Address();
+            }
+        }
+    }
+    return regs.depth_buffer.DepthValid() ? regs.depth_buffer.DepthAddress() : 0;
+}
+
+/// Counts the frames in a row a target is drawn to (once per frame and target).
+void NoteDrawTarget(const AmdGpu::Regs& regs) {
+    static u64 last_target = 0;
+    static u32 last_frame = ~0u;
+    const u32 frame = BbStats::frame_number.load(std::memory_order_relaxed);
+    const u64 target = DrawTarget(regs);
+    if (target == 0 || (target == last_target && frame == last_frame)) {
+        return;
+    }
+    last_target = target;
+    last_frame = frame;
+    auto& streak = target_streaks[target];
+    if (streak.last_frame != frame) {
+        streak.frames = streak.last_frame + 1 == frame ? streak.frames + 1 : 1;
+        streak.last_frame = frame;
+    }
+}
+} // namespace
+
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
-                                                           const PreparedDraw* prepared) {
+                                                           const PreparedDraw* prepared,
+                                                           bool indirect) {
     used_prepared = nullptr;
+    NoteDrawTarget(liverpool->regs);
     if (prepared) {
         if (const auto* pipeline = TryPreparedPipeline(*prepared)) {
             used_prepared = prepared;
@@ -801,6 +955,9 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             return it->second.get();
         }
     }
+    // bbport BB_ASYNC_PIPELINES (upstream 0.5): a pass drawn every frame goes without its new
+    // pipeline while a compiler thread builds it, instead of the game standing still.
+    const bool skippable = AsyncSkippable(sel, indirect);
     bool claimed = false;
     {
         std::unique_lock lock{pipelines_mutex};
@@ -813,12 +970,55 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
                 claimed = true;
                 break;
             }
+            if (skippable) {
+                ++async_skipped;
+                return nullptr; // drawn from the frame its pipeline is ready
+            }
             // A worker is compiling it: wait for that. Past the bound, build a copy.
+            ++async_waited;
             if (!WaitForCompile(pipelines_cv, lock,
                                 [&] { return !pipelines_compiling.contains(key); })) {
                 break;
             }
         }
+    }
+    if (skippable && claimed) {
+        if (!compiler) {
+            const char* env = std::getenv("BB_ASYNC_PIPELINE_THREADS");
+            const u32 threads = env && *env ? u32(std::strtoul(env, nullptr, 10))
+                                            : std::clamp(std::thread::hardware_concurrency() / 4, 1u, 4u);
+            compiler = std::make_unique<PipelineCompiler>(std::max(threads, 1u));
+            std::printf("GPU: new pipelines of passes drawn every frame compile on %u threads "
+                        "(BB_ASYNC_PIPELINES=0: on the GPU thread, the game waits)\n",
+                        std::max(threads, 1u));
+        }
+        ++async_started;
+        ++g_bb_compiles;
+        // The claim (pipelines_compiling) keeps the draw-prep workers and later draws off it;
+        // publishing the pipeline lifts it.
+        compiler->Submit([this, key, infos = sel.infos, runtime_infos = sel.runtime_infos,
+                          fetch = sel.fetch_shader, modules = sel.modules]() mutable {
+            const auto pipeline_hash = std::hash<GraphicsPipelineKey>{}(key);
+            GraphicsPipeline::SerializationSupport sdata{};
+            std::unique_ptr<GraphicsPipeline> pipeline;
+            try {
+                pipeline = std::make_unique<GraphicsPipeline>(
+                    instance, scheduler, desc_heap, profile, key, *pipeline_cache, infos,
+                    runtime_infos, fetch, modules, sdata, false);
+            } catch (const std::exception& e) {
+                // The next draw that needs it compiles it on the GPU thread (and reports why).
+                std::printf("GPU: background pipeline compile failed (%s)\n", e.what());
+                {
+                    std::scoped_lock lock{pipelines_mutex};
+                    pipelines_compiling.erase(key);
+                }
+                pipelines_cv.notify_all();
+                return;
+            }
+            PublishGraphicsPipeline(key, pipeline_hash, std::move(pipeline), sdata, true);
+        });
+        sel.fetch_shader.reset();
+        return nullptr;
     }
     const auto pipeline_hash = std::hash<GraphicsPipelineKey>{}(key);
     LOG_INFO(Render_Vulkan, "Compiling graphics pipeline {:#x}", pipeline_hash);
@@ -879,6 +1079,58 @@ bool PipelineCache::EnsureGraphicsPipeline(PipelineSelection& worker_sel) {
     pipeline->SetStages(stable);
     PublishGraphicsPipeline(key, pipeline_hash, std::move(pipeline), sdata, true);
     return true;
+}
+
+bool PipelineCache::AsyncSkippable(const PipelineSelection& selection, bool indirect) {
+    // Only a pass drawn every frame may go without a draw for a frame or two (its render target
+    // drawn to in each of the last frames, below). A one-time render compiles at once, as during
+    // loading screens (a frame of fewer than 300 draws before this one). The pipeline must not
+    // depend on the draw's vertex buffers (VK_EXT_vertex_input_dynamic_state). A size rule (the
+    // scene's, the output's) missed most passes: many set a 16384 scissor.
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_ASYNC_PIPELINES");
+        return !(env && env[0] == '0');
+    }();
+    if (!enabled || !instance.IsVertexInputDynamicState() || !selection.regs) {
+        return false;
+    }
+    static u32 frame_seen = ~0u;
+    static u64 draws_at_start = 0, last_frame_draws = 0;
+    const u32 frame = BbStats::frame_number.load(std::memory_order_relaxed);
+    const u64 draws = BbStats::draws.load(std::memory_order_relaxed);
+    if (frame != frame_seen) {
+        last_frame_draws = draws - draws_at_start;
+        draws_at_start = draws;
+        frame_seen = frame;
+        static u32 printed = 0;
+        const u32 second = BbStats::coarse_second.load(std::memory_order_relaxed);
+        if (async_started != 0 && second - printed >= 5) {
+            printed = second;
+            std::printf("GPU: %llu pipelines compiled in the background, %llu draws went without "
+                        "theirs meanwhile, %llu waited for one\n",
+                        (unsigned long long)async_started, (unsigned long long)async_skipped,
+                        (unsigned long long)async_waited);
+            async_started = async_skipped = async_waited = 0;
+        }
+    }
+    if (last_frame_draws < 300) {
+        return false;
+    }
+    // A full-screen pass (one triangle or quad: lighting, fog, post-processing) waits for its
+    // pipeline: going without one for a frame left whole frames grey. So does an indirect draw
+    // (its size unknown here). What may go without is geometry, which shows a frame later.
+    constexpr u32 FullScreenIndices = 12;
+    if (indirect || selection.regs->num_indices <= FullScreenIndices) {
+        return false;
+    }
+    // A pass drawn every frame: its render target drawn to in each of the last 8 frames (the
+    // scene, the output, shadow maps, half-size and depth-only passes alike). A one-time render
+    // (a face baked for a character, a texture made once) goes to a target new or used now and
+    // then: compiled at once, as before.
+    constexpr u32 PerFrameStreak = 8;
+    const u64 target = DrawTarget(*selection.regs);
+    const auto streak = target_streaks.find(target);
+    return target != 0 && streak != target_streaks.end() && streak->second.frames >= PerFrameStreak;
 }
 
 const ComputePipeline* PipelineCache::GetComputePipeline() {
@@ -1252,7 +1504,8 @@ bool PipelineCache::RefreshComputeKey() {
 vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                               const std::span<const u32>& code, size_t perm_idx,
                                               Shader::Backend::Bindings& binding,
-                                              Shader::Pools& translator_pools, bool persist) {
+                                              Shader::Pools& translator_pools, bool persist,
+                                              std::vector<u32>* spv_out) {
     LOG_INFO(Render_Vulkan, "Compiling {} shader {:#x} {}", info.hw_stage, info.pgm_hash,
              perm_idx != 0 ? "(permutation)" : "");
     DumpShader(code, info.pgm_hash, info.hw_stage, perm_idx, "bin");
@@ -1276,6 +1529,8 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
 
     if (persist) {
         RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
+    } else if (spv_out) {
+        *spv_out = std::move(spv);
     }
 
     const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
@@ -1361,10 +1616,21 @@ std::optional<PipelineCache::Result> PipelineCache::CompileNewProgram(
     const auto start = binding;
     vk::ShaderModule module;
     std::optional<Shader::StageSpecialization> spec;
+    // A worker's SPIR-V goes to the shader cache only once the translation is known good.
+    std::vector<u32> spv;
+    u64 code_before{};
+    bool unchanged = true;
     const auto compile = [&] {
+        code_before = CodeHash(params.code);
         module = CompileModule(new_program->info, runtime_info, params.code, 0, binding,
-                               translator_pools, persist);
+                               translator_pools, persist && !speculative,
+                               speculative && persist ? &spv : nullptr);
         spec.emplace(new_program->info, runtime_info, profile, start);
+        if (speculative) {
+            // The bytes it translated must still be there, under the footer that names it.
+            unchanged = CodeHash(params.code) == code_before &&
+                        AmdGpu::SearchBinaryInfo(params.code.data()).shader_hash == params.hash;
+        }
     };
     bool faulted = false;
     if (speculative) {
@@ -1383,6 +1649,11 @@ std::optional<PipelineCache::Result> PipelineCache::CompileNewProgram(
     } else {
         compile();
     }
+    if (!faulted && !unchanged) {
+        instance.GetDevice().destroyShaderModule(module);
+        NoteDiscarded(params.hash, 0, "its code changed while it was translated");
+        faulted = true;
+    }
     if (faulted) {
         if (claimed) {
             {
@@ -1393,6 +1664,10 @@ std::optional<PipelineCache::Result> PipelineCache::CompileNewProgram(
         }
         return std::nullopt;
     }
+    if (speculative && persist) {
+        RegisterShaderBinary(std::move(spv), params.hash, 0);
+    }
+    new_program->code_hash = code_before;
     const u64 perm_hash = HashCombine(params.hash, 0);
     if (persist) {
         RegisterShaderMeta(new_program->info, spec->fetch_shader_data, *spec, perm_hash, 0);
@@ -1426,6 +1701,7 @@ PipelineCache::Result PipelineCache::GetPermutation(Program& program, HwStage hw
         // Programs loaded by the pipeline cache warm-up get their template on first use.
         std::unique_lock lock{programs_mutex};
         program.info_template = std::make_unique<Shader::Info>(program.info);
+        program.code_hash = CodeHash(params.code);
     }
     auto& info = program.info;
     info.pgm_base = params.Base(); // Needs to be actualized for inline cbuffer address fixup
@@ -1489,10 +1765,25 @@ std::optional<PipelineCache::Result> PipelineCache::CompilePermutation(
     }
     const u64 perm_hash = HashCombine(params.hash, perm_idx);
     vk::ShaderModule module;
+    // A worker's SPIR-V goes to the shader cache only once the translation is known good.
+    std::vector<u32> spv;
+    u64 code_before{};
+    u64 code_after{};
+    bool same_resources = true;
     const auto compile = [&] {
+        std::span<const u32> code = params.code;
+        std::vector<u32> torn;
+        if (speculative && TestTornShaderCode()) {
+            torn.assign(code.begin(), code.end());
+            std::fill(torn.begin() + torn.size() * 6 / 10, torn.end(), 0xBF810000u); // s_endpgm
+            code = torn;
+        }
+        code_before = CodeHash(code);
         auto new_info = Shader::Info(hw_stage, sw_stage, params);
-        module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding,
-                               translator_pools, true);
+        module = CompileModule(new_info, runtime_info, code, perm_idx, binding, translator_pools,
+                               !speculative, speculative ? &spv : nullptr);
+        code_after = CodeHash(code);
+        same_resources = SameResources(new_info, info);
     };
     bool faulted = false;
     if (speculative) {
@@ -1509,6 +1800,37 @@ std::optional<PipelineCache::Result> PipelineCache::CompilePermutation(
     } else {
         compile();
     }
+    // bbport: a worker runs at idle priority and can fall far behind the GPU thread on a busy
+    // CPU, until the game has reused the memory of the draw it is preparing. Its translation
+    // then comes from other bytes than the program's, and lists other resources than the
+    // program's Info, which the pipeline layout is built from: the layout and the module
+    // disagree (VUID-VkGraphicsPipelineCreateInfo-layout-07988/07990). Such a translation is
+    // thrown away; the GPU thread translates the draw in order.
+    const char* dropped = nullptr;
+    if (!faulted && speculative) {
+        if (code_before != program.code_hash) {
+            dropped = "the code at its address is not the program's";
+        } else if (code_after != code_before) {
+            dropped = "its code changed while it was translated";
+        } else if (!same_resources) {
+            dropped = "its resources differ from the program's";
+        }
+    } else if (!faulted && !speculative && (!same_resources || code_before != program.code_hash)) {
+        // In order, the game itself put other code under this hash: nothing to fall back to,
+        // but the log names it.
+        static std::atomic<int> warned{0};
+        if (warned.fetch_add(1, std::memory_order_relaxed) < 8) {
+            LOG_WARNING(Render_Vulkan,
+                        "Shader {:#x} permutation {}: code {:#x} (program {:#x}), resources {}",
+                        params.hash, perm_idx, code_before, program.code_hash,
+                        same_resources ? "the program's" : "not the program's");
+        }
+    }
+    if (dropped) {
+        instance.GetDevice().destroyShaderModule(module);
+        NoteDiscarded(params.hash, perm_idx, dropped);
+        faulted = true;
+    }
     if (faulted) {
         {
             // The slot stays: an invalid specialization never matches.
@@ -1519,6 +1841,9 @@ std::optional<PipelineCache::Result> PipelineCache::CompilePermutation(
         }
         programs_cv.notify_all();
         return std::nullopt;
+    }
+    if (speculative) {
+        RegisterShaderBinary(std::move(spv), params.hash, perm_idx);
     }
     RegisterShaderMeta(info, spec.fetch_shader_data, spec, perm_hash, perm_idx);
     {
