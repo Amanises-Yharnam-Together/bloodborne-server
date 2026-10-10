@@ -37,11 +37,15 @@ MemberVitals Member(const std::string& member, u32 map, Vital vital, u32 down = 
 
 } // namespace
 
-TEST(BloodbornePartyDeath, IsOnlyOnWhenSwitchedOn) {
-    EXPECT_TRUE(PartyDeathEnabled("1"));
-    EXPECT_FALSE(PartyDeathEnabled(nullptr));
-    EXPECT_FALSE(PartyDeathEnabled(""));
-    EXPECT_FALSE(PartyDeathEnabled("0"));
+// The setting: "1" on, "0" off, unset or empty the build's default (the port's is on, Kaniel
+// 2026-10-10; the emulator's off, it has no party HUD).
+TEST(BloodbornePartyDeath, FollowsTheSettingOrTheBuildsDefault) {
+    for (const bool by_default : {false, true}) {
+        EXPECT_TRUE(PartyDeathEnabled("1", by_default));
+        EXPECT_FALSE(PartyDeathEnabled("0", by_default));
+        EXPECT_EQ(PartyDeathEnabled(nullptr, by_default), by_default);
+        EXPECT_EQ(PartyDeathEnabled("", by_default), by_default);
+    }
 }
 
 // IsNoDead's callers by return address: the hit, special effect and fall damage checks may put

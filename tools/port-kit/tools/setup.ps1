@@ -80,8 +80,9 @@ $p2pPort = Ask "P2P UDP port (auto unless you port-forward)" $defPort { param($v
 $fps = Ask "Frame rate (60, or 30 as on shadPS4)" $(if ($saved["FPS"]) { $saved["FPS"] } else { "60" }) $isFps "Type 60 or 30."
 Write-Host ""
 Write-Host "  Party death, as in Elden Ring Nightreign: a killing blow puts you down instead of killing"
-Write-Host "  you while a partner stands on your map; they revive you by hitting you (R1/R2), and you"
-Write-Host "  can hold Circle to give up. Both players should answer the same."
+Write-Host "  you while a partner stands on your map; they revive you by striking you (R1/R2, their"
+Write-Host "  weapon's damage counts), and you can hold Circle to give up. On unless you answer no;"
+Write-Host "  both players should answer the same."
 $partyDeath = Ask "Party death (yes/no)" $(if ($saved["PARTYDEATH"] -eq "0") { "no" } else { "yes" }) $isYesNo "Type yes or no."
 
 # --- saves -----------------------------------------------------------------------------------
