@@ -23,7 +23,8 @@ VERBS = {
     "mark", "approach", "attack", "teleport", "press", "stick", "set-flag", "expect-flag",
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
-    "pickup", "hit", "rise", "approach-downed", "wait-vital", "wait-member-vital", "shot",
+    "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
+    "shot",
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
@@ -59,7 +60,7 @@ class ScenarioTest(unittest.TestCase):
         for name, scenario in scenarios.SCENARIOS.items():
             commands = [command.split()[0] for script in scenario["roles"].values()
                         for command in sum(run_scenario.stages_of(script), [])]
-            uses = any(verb in ("approach-downed", "wait-vital", "wait-member-vital")
+            uses = any(verb in ("approach-downed", "revive-downed", "wait-vital", "wait-member-vital")
                        for verb in commands)
             with self.subTest(scenario=name):
                 self.assertEqual(

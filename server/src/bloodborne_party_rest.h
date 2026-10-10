@@ -237,11 +237,12 @@ private:
 
 // Party death: each member's state, HP, revive progress and position (POST
 // /bloodborne/party/vitals), so the others draw it and revive it, and the server decides when
-// a map's party is wiped: when nobody on a map stands any more, everyone down there dies.
+// a map's party is wiped: when nobody on a map stands any more, everyone down there dies. Revive
+// progress and the revive "hits" are damage (the strikers' attack ratings), summed as they come.
 struct ReviveHits {
     QByteArray target;
     quint32 down = 0;
-    quint32 hits = 0;
+    quint32 hits = 0; // damage dealt
 };
 
 struct MemberVitals {
@@ -251,7 +252,7 @@ struct MemberVitals {
     qint32 hp = 0;
     qint32 max = 0;
     quint32 down = 0;   // the id of its current or last down
-    quint32 landed = 0; // revive progress
+    quint32 landed = 0; // revive progress (damage)
     quint32 needed = 0;
     QByteArray at;          // "<x> <y> <z>"
     quint32 reviveHits = 0; // the party's revive hits on its down (in the answer)

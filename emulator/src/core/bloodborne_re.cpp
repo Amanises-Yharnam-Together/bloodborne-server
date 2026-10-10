@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include <fmt/ranges.h>
 #include "common/logging/log.h"
 #include "common/memory_patcher.h"
 #include "common/path_util.h"
@@ -6365,6 +6366,48 @@ u64 PlayerDataModule(u64 player) {
     return modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
 }
 
+// The local player's attack rating for the weapon in its right hand, as the equipment menu shows
+// it: UpdateWeaponAtk (0x018FCCB0, the character) works out one per weapon slot (physical + arcane
+// + fire + bolt with scaling, upgrades and gems) into the character's PlayerGameData (its vtable
+// +0x1C8), right hand 1 at +0x5E4 and right hand 2 at +0x5EC; ChrAsm ([player +0x4B8]) +0x10 says
+// which right-hand weapon is held. On the game thread.
+constexpr u64 UpdateWeaponAtkOffset = 0x018FCCB0;
+struct AttackRatings {
+    std::array<s32, 4> slots{-1, -1, -1, -1}; // left 1, right 1, left 2, right 2
+    s32 right_hand = -1;
+    std::array<s32, 4> weapons{-1, -1, -1, -1}; // ChrAsm +0x64: the weapon ids in the same order
+
+    s32 Held() const {
+        return right_hand == 1 ? slots[3] : right_hand == 0 ? slots[1] : 0;
+    }
+};
+AttackRatings ReadAttackRatings(u64 player) {
+    AttackRatings ratings;
+    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
+    const u64 game_data_of = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x1C8) : 0;
+    const u64 asm_data = player >= 0x10000 ? ReadValue<u64>(player, 0x4B8) : 0;
+    if (game_data_of < 0x10000 || asm_data < 0x10000) {
+        return ratings;
+    }
+    static constexpr std::array<u8, 6> UpdatePrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+    if (std::ranges::equal(
+            std::span<const u8>{reinterpret_cast<const u8*>(image_base + UpdateWeaponAtkOffset),
+                                UpdatePrologue.size()},
+            UpdatePrologue)) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64)>(image_base + UpdateWeaponAtkOffset)(player);
+    }
+    const u64 player_data = reinterpret_cast<u64 PS4_SYSV_ABI (*)(u64)>(game_data_of)(player);
+    if (player_data < 0x10000 || !HasMemoryAccess(player_data, 0x5F0, MemoryProt::CpuRead)) {
+        return ratings;
+    }
+    for (u64 slot = 0; slot < 4; ++slot) {
+        ratings.slots[slot] = ReadValue<s32>(player_data, 0x5E0 + slot * 4);
+        ratings.weapons[slot] = ReadValue<s32>(asm_data, 0x64 + slot * 4);
+    }
+    ratings.right_hand = ReadValue<s32>(asm_data, 0x10);
+    return ratings;
+}
+
 // Data module +0x200 flags a downed player wears: bit 1 skips any HP loss, bit 3 a hit's damage.
 constexpr u8 DownedNoDamageFlags = 0x2 | 0x8;
 // WorldChrManDbg's static "Player Hide" and "Player Silence" (debug menu flags): the AI's view of
@@ -6440,10 +6483,11 @@ const s32 downed_animation = [] {
     return animation;
 }();
 
-// What the pad reader saw (FilterPartyDeathPad): the buttons held before the downed filter, and
-// the attack presses so far.
+// What the pad reader saw (FilterPartyDeathPad): the buttons held before the downed filter, the
+// attack presses so far and whether the last one was heavy (R2).
 std::atomic<u32> party_pad_buttons{};
 std::atomic<u32> party_attack_presses{};
+std::atomic<bool> party_attack_heavy{};
 
 // The vitals board (see RunVitalsBoardClient): what the game thread posts and what the client
 // last heard back, as the member it posts as.
@@ -6595,7 +6639,7 @@ void SetPlayerFlag(u64 offset, u8 value) {
 }
 
 void GoDown(PartyDeathRun& run, u64 data, s64 now_ms) {
-    const u32 down = run.downed.GoDown(now_ms);
+    const u32 down = run.downed.GoDown(now_ms, ReadValue<s32>(data, 0xFC));
     run.give_up.Restart((party_pad_buttons.load() & PadCircle) != 0);
     party_death_down.store(true);
     const u8 flags = ReadValue<u8>(data, 0x200);
@@ -6613,9 +6657,9 @@ void GoDown(PartyDeathRun& run, u64 data, s64 now_ms) {
             0, LocalPlayerEntity, downed_animation);
     }
     LOG_INFO(Debug,
-             "Bloodborne party death: down {} on map {:#x}, {} hits to get up (max HP {}, "
+             "Bloodborne party death: down {} on map {:#x}, {} damage to get up (max HP {}, "
              "pose {} played={})",
-             down, GetCurrentPackedMap(), run.downed.HitsNeeded(), ReadValue<s32>(data, 0xFC),
+             down, GetCurrentPackedMap(), run.downed.DamageNeeded(), ReadValue<s32>(data, 0xFC),
              downed_animation, posed);
 }
 
@@ -6730,9 +6774,17 @@ void TickPartyDeath() {
         const auto target = attacked && in_session && at
                                 ? ReviveTarget(board, view.member, map, *at)
                                 : std::nullopt;
-        if (target && run.revive_hits.Press(target->member, target->down, now)) {
-            LOG_INFO(Debug, "Bloodborne party death: revive hit on {} (down {})", target->member,
-                     target->down);
+        const AttackRatings ratings = target ? ReadAttackRatings(player) : AttackRatings{};
+        const s32 rating = ratings.Held();
+        const bool heavy = party_attack_heavy.load();
+        const u32 damage = ReviveHitDamage(rating, heavy);
+        if (target && run.revive_hits.Press(target->member, target->down, damage, now)) {
+            LOG_INFO(Debug,
+                     "Bloodborne party death: revive hit on {} (down {}) for {} damage (attack "
+                     "rating {}, heavy={}; ratings {} weapons {} right hand {})",
+                     target->member, target->down, damage, rating, heavy,
+                     fmt::join(ratings.slots, " "), fmt::join(ratings.weapons, " "),
+                     ratings.right_hand);
         }
         break;
     }
@@ -6750,13 +6802,13 @@ void TickPartyDeath() {
         const auto wipe = view.Fresh() ? WipeFor(view.board, view.member) : std::nullopt;
         const bool wiped = wipe && *wipe != run.handled_wipe;
         const bool gave_up = run.give_up.Tick((party_pad_buttons.load() & PadCircle) != 0, now);
-        u32 hits = 0;
+        u32 damage = 0;
         for (const MemberVitals& entry : board) {
             if (entry.member == view.member && entry.down == run.downed.DownId()) {
-                hits = entry.revive_hits;
+                damage = entry.revive_damage;
             }
         }
-        const bool revived = run.downed.Hits(hits, now);
+        const bool revived = run.downed.Damage(damage, now);
         run.downed.Tick(now);
         switch (EndOfDown(wiped, gave_up, revived, view.age_ms)) {
         case DownEnd::None:
@@ -6794,8 +6846,8 @@ void TickPartyDeath() {
             .hp = ReadValue<s32>(data, 0xF8),
             .max = ReadValue<s32>(data, 0xFC),
             .down = run.downed.DownId(),
-            .landed = run.downed.HitsLanded(),
-            .needed = run.downed.HitsNeeded(),
+            .landed = run.downed.DamageLanded(),
+            .needed = run.downed.DamageNeeded(),
             .at = at.value_or(LampPosition{}),
         },
         run.revive_hits.Totals(board));
@@ -6805,8 +6857,8 @@ void TickPartyDeath() {
                                                     vital == Vital::Up ? at : std::nullopt)
                                   : PartyPanel{};
     panel.vital = in_session ? vital : Vital::Off;
-    panel.landed = run.downed.HitsLanded();
-    panel.needed = run.downed.HitsNeeded();
+    panel.landed = run.downed.DamageLanded();
+    panel.needed = run.downed.DamageNeeded();
     panel.give_up = vital == Vital::Down ? run.give_up.Progress(now) : 0.0f;
     SetPartyPanel(std::move(panel));
 }
@@ -6824,7 +6876,7 @@ void InstallPartyDeath(u64 base, u64 image_size) {
     }
     party_death_hook_installed = true;
     LOG_INFO(Debug, "Bloodborne party death: a lethal hit puts a party member down while another "
-                    "stands on its map (hits revive it, holding Circle gives up)");
+                    "stands on its map (damage revives it, holding Circle gives up)");
 }
 
 bool InPartySession();
@@ -9155,6 +9207,39 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         TeleportLocalPlayer({(*nearest)[0] + 1.0f, (*nearest)[1] + 0.2f, (*nearest)[2]});
         return true;
     }
+    // revive-downed [<timeout>]: strikes the nearest downed party member on this map until nobody
+    // is down (how many hits depends on the weapon): every 1.5 s a metre from it, then R1.
+    if (verb == "revive-downed") {
+        const VitalsView view = ReadVitalsBoard();
+        const auto me = LocalPlayerPosition();
+        std::optional<LampPosition> downed;
+        for (const MemberVitals& member : view.board.members) {
+            if (view.Fresh() && member.member != view.member && member.vital == Vital::Down &&
+                member.map == GetCurrentPackedMap()) {
+                downed = member.at;
+            }
+        }
+        if (!downed || !me) {
+            autoplay_buttons.store(0);
+            if (!begun) {
+                failure = "nobody down on this map";
+                return false;
+            }
+            LOG_INFO(Debug, "Bloodborne autoplay: nobody down after {:.1f} s of revive hits",
+                     elapsed);
+            return true;
+        }
+        const double phase = std::fmod(elapsed, 1.5);
+        if (phase < 0.1) {
+            TeleportLocalPlayer({(*downed)[0] + 1.0f, (*downed)[1] + 0.2f, (*downed)[2]});
+        }
+        autoplay_buttons.store(phase >= 0.6 && phase < 0.75 ? AutoplayButton("r1") : 0);
+        if (elapsed > number(0, 60)) {
+            autoplay_buttons.store(0);
+            failure = fmt::format("still down after {:.0f} s of revive hits", elapsed);
+        }
+        return false;
+    }
     if (verb == "press" || verb == "stick") {
         u32 buttons = 0;
         u32 sticks = 0x80808080;
@@ -9465,6 +9550,7 @@ void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& st
     }
     const u32 before = party_pad_buttons.exchange(buttons, std::memory_order_relaxed);
     if (AttackPressed(before, buttons)) {
+        party_attack_heavy.store(HeavyAttackPressed(before, buttons), std::memory_order_relaxed);
         party_attack_presses.fetch_add(1, std::memory_order_relaxed);
     }
     if (!party_death_down.load(std::memory_order_relaxed)) {

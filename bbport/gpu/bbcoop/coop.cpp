@@ -141,6 +141,10 @@ extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
     return 1;
 }
 
+extern "C" float bbcoop_revive_share(uint32_t landed, uint32_t needed) {
+    return Core::Bloodborne::ReviveShare(landed, needed);
+}
+
 extern "C" void bbcoop_file_opened(const char* guest_path) {
     Core::Bloodborne::NoteSaveFileOpened(guest_path);
 }

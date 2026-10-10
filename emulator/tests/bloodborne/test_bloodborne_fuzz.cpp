@@ -220,9 +220,9 @@ TEST(BloodborneFuzz, ServerAnswersReadBackTheSame) {
                                 .needed = any_u32(random) % 13,
                                 .at = {static_cast<float>(byte(random)) - 128.0f, 0.5f,
                                        static_cast<float>(byte(random)) * 0.25f},
-                                .revive_hits = any_u32(random)};
+                                .revive_damage = any_u32(random)};
             vitals_text +=
-                EncodeVitalsUpdate(member, {}) + fmt::format(" {}\n", member.revive_hits);
+                EncodeVitalsUpdate(member, {}) + fmt::format(" {}\n", member.revive_damage);
             vitals.members.push_back(std::move(member));
         }
         if (count(random) > 3) {

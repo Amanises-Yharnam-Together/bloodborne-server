@@ -1796,33 +1796,45 @@ std::optional<Vital> ParseVital(std::string_view name) {
     return std::nullopt;
 }
 
-u32 ReviveHitsNeeded(u32 downs) {
-    return downs <= 1 ? 3 : downs == 2 ? 6 : 12;
+u32 ReviveDamageNeeded(u32 downs, s32 max) {
+    const u32 bar = static_cast<u32>(std::max(max, 1));
+    return downs <= 1 ? bar : downs == 2 ? bar * 2 : bar * 4;
+}
+
+u32 ReviveHitDamage(s32 attack_rating, bool heavy) {
+    const u32 rating = static_cast<u32>(std::max(attack_rating, 1));
+    return heavy ? std::max(rating * 3 / 2, 1u) : rating;
+}
+
+float ReviveShare(u32 landed, u32 needed) {
+    return needed == 0 ? 0.0f
+                       : std::min(static_cast<float>(landed) / static_cast<float>(needed), 1.0f);
 }
 
 s32 RevivedHp(s32 max) {
     return std::max(max / 2, 1);
 }
 
-u32 DownedState::GoDown(s64 now_ms) {
+u32 DownedState::GoDown(s64 now_ms, s32 max) {
     if (up_since && now_ms - *up_since >= PenaltyResetMs) {
         downs = 0;
     }
     ++downs;
     vital = Vital::Down;
     down_id = next_id++;
-    needed = ReviveHitsNeeded(downs);
+    needed = ReviveDamageNeeded(downs, max);
+    drain_step = static_cast<u32>(std::max(max / 3, 1));
     landed = 0;
-    seen_hits = 0;
+    seen_damage = 0;
     return down_id;
 }
 
-bool DownedState::Hits(u32 total, s64 now_ms) {
-    if (vital != Vital::Down || total <= seen_hits) {
+bool DownedState::Damage(u32 total, s64 now_ms) {
+    if (vital != Vital::Down || total <= seen_damage) {
         return false;
     }
-    landed = std::min(needed, landed + (total - seen_hits));
-    seen_hits = total;
+    landed = std::min(needed, landed + (total - seen_damage));
+    seen_damage = total;
     drain_at = now_ms + RefillDelayMs;
     return landed >= needed;
 }
@@ -1831,12 +1843,14 @@ void DownedState::Tick(s64 now_ms) {
     if (vital != Vital::Down || landed == 0 || now_ms < drain_at) {
         return;
     }
-    // One hit per step due since drain_at, worked out at once: as a loop, clang made it a 128-bit
-    // division (__udivti3), which clang-cl's links on Windows lack.
+    // One drain step per RefillStepMs due since drain_at, worked out at once: as a loop, clang made
+    // it a 128-bit division (__udivti3), which clang-cl's links on Windows lack.
     const s64 due = (now_ms - drain_at) / RefillStepMs + 1;
-    const u32 drained = due < static_cast<s64>(landed) ? static_cast<u32>(due) : landed;
-    landed -= drained;
-    drain_at += static_cast<s64>(drained) * RefillStepMs;
+    const s64 steps_left = (static_cast<s64>(landed) + drain_step - 1) / drain_step;
+    const s64 steps = due < steps_left ? due : steps_left;
+    const s64 drained = steps * drain_step;
+    landed = drained < static_cast<s64>(landed) ? landed - static_cast<u32>(drained) : 0;
+    drain_at += steps * RefillStepMs;
 }
 
 void DownedState::GetUp(s64 now_ms) {
@@ -1897,7 +1911,7 @@ std::string EncodeVitalsUpdate(const MemberVitals& self, std::span<const ReviveH
         update += ' ' + FormatCoordinate(coordinate);
     }
     for (const ReviveHitTotal& total : hits) {
-        update += fmt::format(" {}:{}:{}", total.target, total.down, total.hits);
+        update += fmt::format(" {}:{}:{}", total.target, total.down, total.damage);
     }
     return update;
 }
@@ -1934,9 +1948,9 @@ std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body) {
         const auto x = ParseCoordinate(fields[8]);
         const auto y = ParseCoordinate(fields[9]);
         const auto z = ParseCoordinate(fields[10]);
-        const auto revive_hits = ParseNumber<u32>(fields[11]);
+        const auto revive_damage = ParseNumber<u32>(fields[11]);
         if (!map || !vital || !hp || !max || !down || !landed || !needed || !x || !y || !z ||
-            !revive_hits) {
+            !revive_damage) {
             return std::nullopt;
         }
         board.members.push_back(MemberVitals{.member = std::string{fields[0]},
@@ -1948,7 +1962,7 @@ std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body) {
                                              .landed = *landed,
                                              .needed = *needed,
                                              .at = {*x, *y, *z},
-                                             .revive_hits = *revive_hits});
+                                             .revive_damage = *revive_damage});
     }
     return board;
 }
@@ -1968,18 +1982,18 @@ bool SomeoneElseStands(std::span<const MemberVitals> board, std::string_view sel
            });
 }
 
-bool ReviveHits::Press(std::string_view target, u32 down, s64 now_ms) {
+bool ReviveHits::Press(std::string_view target, u32 down, u32 damage, s64 now_ms) {
     if (last_press && now_ms - *last_press < GapMs) {
         return false;
     }
     last_press = now_ms;
     const auto total = std::ranges::find(totals, target, &ReviveHitTotal::target);
     if (total == totals.end()) {
-        totals.push_back(ReviveHitTotal{std::string{target}, down, 1});
+        totals.push_back(ReviveHitTotal{std::string{target}, down, damage});
     } else if (total->down != down) {
-        *total = ReviveHitTotal{std::string{target}, down, 1};
+        *total = ReviveHitTotal{std::string{target}, down, damage};
     } else {
-        ++total->hits;
+        total->damage += damage;
     }
     return true;
 }
@@ -2018,6 +2032,10 @@ PadInput DownedPad(const PadInput& pad) {
 
 bool AttackPressed(u32 before, u32 now) {
     return (now & ~before & (PadR1 | PadR2)) != 0;
+}
+
+bool HeavyAttackPressed(u32 before, u32 now) {
+    return (now & ~before & PadR2) != 0 && (now & PadR1) == 0;
 }
 
 DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms) {

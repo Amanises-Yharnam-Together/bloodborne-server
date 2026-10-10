@@ -54,6 +54,9 @@ typedef struct bbcoop_panel {
 /* Fills `panel`; 0 when there is nothing to draw (party death off, no party session, nobody else
  * on the vitals board and this player not down). */
 int bbcoop_party_panel(bbcoop_panel *panel);
+/* A revive's progress, 0 to 1: the share of the damage it needs that has landed (`landed`
+ * and `needed` from the panel). */
+float bbcoop_revive_share(uint32_t landed, uint32_t needed);
 
 /* The game opens a file (its guest path): the party code notes the character's save slot. */
 void bbcoop_file_opened(const char *guest_path);

@@ -866,7 +866,8 @@ bool AttackHoldsR1(double elapsed);
 
 // Party death, after Elden Ring Nightreign (SHADPS4_BLOODBORNE_PARTY_DEATH=1): in a party session
 // a lethal hit puts the player down at 1 HP instead of killing it while another party member
-// stands on its map. The others revive it by hitting it; it can hold Circle to give up (today's
+// stands on its map. The others revive it by striking it (their weapons' damage adds up); it can
+// hold Circle to give up (today's
 // death). When nobody on a map is left standing, everyone down there dies for real (a wipe,
 // decided by shadNet) and wakes at its own last lamp with the map reloaded; a lethal hit with
 // nobody else standing on the map is such a wipe at once.
@@ -901,16 +902,22 @@ enum class Vital : u8 { Off, Up, Down, Dead };
 std::string_view VitalName(Vital vital);
 std::optional<Vital> ParseVital(std::string_view name);
 
-// Revive hits a downed player needs: 3 the first time it goes down, 6 the second, 12 from the
-// third (DownedState forgets old downs).
-u32 ReviveHitsNeeded(u32 downs);
+// Revive damage a downed player needs: its max HP the first time it goes down, twice that the
+// second, four times from the third (DownedState forgets old downs); at least 1.
+u32 ReviveDamageNeeded(u32 downs, s32 max);
+// What one revive hit deals: the striker's attack rating for the weapon in its right hand (the
+// equipment menu's), half again for R2 (`heavy`); at least 1.
+u32 ReviveHitDamage(s32 attack_rating, bool heavy);
+// The share of a revive done, 0 to 1 (the panel's ring and text).
+float ReviveShare(u32 landed, u32 needed);
 // The HP a revived player gets up with: half its max, at least 1.
 s32 RevivedHp(s32 max);
 
 // The local player's side of party death. Times are steady milliseconds.
 class DownedState {
 public:
-    // Revive progress drains one hit per RefillStepMs once nobody hit for RefillDelayMs.
+    // Revive progress drains a third of the max HP per RefillStepMs once nobody hit for
+    // RefillDelayMs.
     static constexpr s64 RefillDelayMs = 3'500;
     static constexpr s64 RefillStepMs = 1'000;
     // The down count starts over after this long up, at a lamp, and after a real death.
@@ -920,11 +927,11 @@ public:
     // hits on an old down never count for a new one.
     explicit DownedState(u32 first_id) : next_id{first_id} {}
 
-    // A lethal hit put the player down; returns the down's id.
-    u32 GoDown(s64 now_ms);
-    // The party's revive hits on this down so far (the vitals board's total): true when they
-    // revive the player.
-    bool Hits(u32 total, s64 now_ms);
+    // A lethal hit put the player (of `max` HP) down; returns the down's id.
+    u32 GoDown(s64 now_ms, s32 max);
+    // The party's revive damage on this down so far (the vitals board's total): true when it
+    // revives the player.
+    bool Damage(u32 total, s64 now_ms);
     void Tick(s64 now_ms);
     void GetUp(s64 now_ms);
     // A real death (give up, wipe, or a death that skips the down), until the respawn.
@@ -938,10 +945,10 @@ public:
     u32 DownId() const {
         return down_id;
     }
-    u32 HitsNeeded() const {
+    u32 DamageNeeded() const {
         return needed;
     }
-    u32 HitsLanded() const {
+    u32 DamageLanded() const {
         return landed;
     }
 
@@ -952,7 +959,8 @@ private:
     u32 downs = 0;
     u32 needed = 0;
     u32 landed = 0;
-    u32 seen_hits = 0;
+    u32 seen_damage = 0;
+    u32 drain_step = 1;
     s64 drain_at = 0;
     std::optional<s64> up_since;
 };
@@ -975,9 +983,9 @@ constexpr s64 GiveUpHoldMs = 3'000;
 
 // The party's vitals board on shadNet (POST /bloodborne/party/vitals). Each member posts
 // "<member> <map> <vital> <hp> <max> <down> <landed> <needed> <x> <y> <z>" (map in hex, down the
-// id of its current or last down, landed/needed its revive progress, x y z where it is) and its
-// revive hits on others as "<target>:<down>:<hits>" totals. The answer has the same line per
-// member with the party's revive hits on that member's down added at the end, then a
+// id of its current or last down, landed/needed its revive progress in damage, x y z where it is)
+// and its revive damage on others as "<target>:<down>:<damage>" totals. The answer has the same
+// line per member with the party's revive damage on that member's down added at the end, then a
 // "wipe <id> <map> <member>..." line for each wipe shadNet declared lately.
 struct MemberVitals {
     std::string member;
@@ -989,13 +997,13 @@ struct MemberVitals {
     u32 landed = 0;
     u32 needed = 0;
     LampPosition at{};
-    u32 revive_hits = 0; // in the answer only
+    u32 revive_damage = 0; // in the answer only
     bool operator==(const MemberVitals&) const = default;
 };
 struct ReviveHitTotal {
     std::string target;
     u32 down = 0;
-    u32 hits = 0;
+    u32 damage = 0;
     bool operator==(const ReviveHitTotal&) const = default;
 };
 struct PartyWipe {
@@ -1017,16 +1025,17 @@ std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self);
 // instead of wiping the map at once.
 bool SomeoneElseStands(std::span<const MemberVitals> board, std::string_view self, u32 map);
 
-// This player's revive hits: an attack press (R1 or R2 going down) counts for the nearest downed
-// member within Reach on its map (ReviveTarget), at most one every GapMs.
+// This player's revive hits: an attack press (R1 or R2 going down) deals its damage
+// (ReviveHitDamage) to the nearest downed member within Reach on its map (ReviveTarget), at most
+// one every GapMs.
 class ReviveHits {
 public:
     static constexpr float Reach = 2.5f;
     static constexpr s64 GapMs = 400;
 
-    // An attack press at `now_ms` on `target`'s down `down`: true if it counts.
-    bool Press(std::string_view target, u32 down, s64 now_ms);
-    // The totals to post: the hits on downs still current on the board (the rest are dropped).
+    // An attack press dealing `damage` at `now_ms` on `target`'s down `down`: true if it counts.
+    bool Press(std::string_view target, u32 down, u32 damage, s64 now_ms);
+    // The totals to post: the damage on downs still current on the board (the rest is dropped).
     std::vector<ReviveHitTotal> Totals(std::span<const MemberVitals> board);
 
 private:
@@ -1055,6 +1064,8 @@ struct PadInput {
 PadInput DownedPad(const PadInput& pad);
 // R1 or R2 going down between two reads of the pad: an attack, which may be a revive hit.
 bool AttackPressed(u32 before, u32 now);
+// R2 going down without R1: a heavy attack (ReviveHitDamage).
+bool HeavyAttackPressed(u32 before, u32 now);
 
 // What ends a down (checked in this order): a wipe of its map, the give-up hold, the party's
 // revive hits, or a vitals board unheard of for BoardLostMs (shadNet gone: nobody stays down for
@@ -1075,7 +1086,7 @@ struct PanelMember {
     bool here = false; // on the local player's map
     s32 hp = 0;
     s32 max = 0;
-    u32 landed = 0; // revive progress while down
+    u32 landed = 0; // revive progress while down, in damage (ReviveShare)
     u32 needed = 0;
     bool operator==(const PanelMember&) const = default;
 };

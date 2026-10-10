@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // Party death, after Elden Ring Nightreign: a lethal hit puts a party member down instead of
-// killing it, the others revive it by hitting it, and a map where nobody is left standing is
+// killing it, the others revive it by dealing it damage, and a map where nobody is left standing is
 // wiped. The rules here are plain functions; the hooks that use them are in the emulator.
 
 #include <array>
@@ -87,12 +87,39 @@ TEST(BloodbornePartyDeath, KeepsTheDownedOrArmedPlayerAliveOnlyAtLethalChecks) {
     EXPECT_TRUE(KeepsPlayerAlive(NoDeadCheck::Lethal, false, false, true));
 }
 
-TEST(BloodbornePartyDeath, NeedsMoreHitsForEachDown) {
-    EXPECT_EQ(ReviveHitsNeeded(1), 3u);
-    EXPECT_EQ(ReviveHitsNeeded(2), 6u);
-    EXPECT_EQ(ReviveHitsNeeded(3), 12u);
-    EXPECT_EQ(ReviveHitsNeeded(9), 12u);
-    EXPECT_EQ(ReviveHitsNeeded(0), 3u);
+// A revive takes damage, not a number of hits: the downed player's max HP the first time, twice
+// that the second, four times from the third, so a stronger weapon revives sooner.
+TEST(BloodbornePartyDeath, NeedsMoreDamageForEachDown) {
+    EXPECT_EQ(ReviveDamageNeeded(1, 594), 594u);
+    EXPECT_EQ(ReviveDamageNeeded(2, 594), 1188u);
+    EXPECT_EQ(ReviveDamageNeeded(3, 594), 2376u);
+    EXPECT_EQ(ReviveDamageNeeded(9, 594), 2376u);
+    EXPECT_EQ(ReviveDamageNeeded(0, 594), 594u);
+    EXPECT_EQ(ReviveDamageNeeded(1, 0), 1u); // a max HP not read yet still needs a hit
+}
+
+// A revive hit deals the striker's attack rating (the menu's, for the weapon in its right hand),
+// half again for R2; at least 1.
+TEST(BloodbornePartyDeath, AReviveHitDealsTheWeaponsAttackRating) {
+    EXPECT_EQ(ReviveHitDamage(300, false), 300u);
+    EXPECT_EQ(ReviveHitDamage(300, true), 450u);
+    EXPECT_EQ(ReviveHitDamage(0, false), 1u);
+    EXPECT_EQ(ReviveHitDamage(-5, true), 1u);
+}
+
+TEST(BloodbornePartyDeath, AHeavyAttackIsR2GoingDownWithoutR1) {
+    EXPECT_TRUE(HeavyAttackPressed(0, PadR2));
+    EXPECT_FALSE(HeavyAttackPressed(0, PadR1));
+    EXPECT_FALSE(HeavyAttackPressed(0, PadR1 | PadR2));
+    EXPECT_FALSE(HeavyAttackPressed(PadR2, PadR2)) << "held, not pressed";
+}
+
+// The panel's ring and text show the share of the damage dealt.
+TEST(BloodbornePartyDeath, ShowsReviveProgressAsAShare) {
+    EXPECT_FLOAT_EQ(ReviveShare(297, 594), 0.5f);
+    EXPECT_FLOAT_EQ(ReviveShare(0, 594), 0.0f);
+    EXPECT_FLOAT_EQ(ReviveShare(700, 594), 1.0f);
+    EXPECT_FLOAT_EQ(ReviveShare(5, 0), 0.0f);
 }
 
 TEST(BloodbornePartyDeath, GetsUpWithHalfItsHp) {
@@ -105,85 +132,86 @@ TEST(BloodbornePartyDeath, GetsUpWithHalfItsHp) {
 TEST(BloodbornePartyDeath, GoesDownWithANewDownEachTime) {
     DownedState state{100};
     EXPECT_EQ(state.Current(), Vital::Up);
-    const u32 first = state.GoDown(0);
+    const u32 first = state.GoDown(0, 600);
     EXPECT_EQ(state.Current(), Vital::Down);
     EXPECT_EQ(state.DownId(), first);
-    EXPECT_EQ(state.HitsNeeded(), 3u);
-    EXPECT_EQ(state.HitsLanded(), 0u);
+    EXPECT_EQ(state.DamageNeeded(), 600u);
+    EXPECT_EQ(state.DamageLanded(), 0u);
     state.GetUp(1'000);
     EXPECT_EQ(state.Current(), Vital::Up);
-    const u32 second = state.GoDown(2'000);
+    const u32 second = state.GoDown(2'000, 600);
     EXPECT_NE(second, first);
-    EXPECT_EQ(state.HitsNeeded(), 6u);
+    EXPECT_EQ(state.DamageNeeded(), 1200u);
     state.GetUp(3'000);
-    state.GoDown(4'000);
-    EXPECT_EQ(state.HitsNeeded(), 12u);
+    state.GoDown(4'000, 600);
+    EXPECT_EQ(state.DamageNeeded(), 2400u);
 }
 
-TEST(BloodbornePartyDeath, IsRevivedByThePartysHits) {
+TEST(BloodbornePartyDeath, IsRevivedByThePartysDamage) {
     DownedState state{1};
-    state.GoDown(0);
-    EXPECT_FALSE(state.Hits(1, 100));
-    EXPECT_EQ(state.HitsLanded(), 1u);
+    state.GoDown(0, 600);
+    EXPECT_FALSE(state.Damage(250, 100));
+    EXPECT_EQ(state.DamageLanded(), 250u);
     // The board repeats its total: the same hit is not counted again.
-    EXPECT_FALSE(state.Hits(1, 200));
-    EXPECT_EQ(state.HitsLanded(), 1u);
-    EXPECT_TRUE(state.Hits(3, 300));
-    EXPECT_EQ(state.HitsLanded(), 3u);
+    EXPECT_FALSE(state.Damage(250, 200));
+    EXPECT_EQ(state.DamageLanded(), 250u);
+    EXPECT_TRUE(state.Damage(700, 300));
+    EXPECT_EQ(state.DamageLanded(), 600u);
 }
 
+// Progress drains a third of the max HP each second once nobody hit for 3.5 s.
 TEST(BloodbornePartyDeath, LosesReviveProgressWhenNobodyHits) {
     DownedState state{1};
-    state.GoDown(0);
-    state.Hits(2, 1'000);
+    state.GoDown(0, 600);
+    state.Damage(450, 1'000);
     state.Tick(4'400);
-    EXPECT_EQ(state.HitsLanded(), 2u);
+    EXPECT_EQ(state.DamageLanded(), 450u);
     state.Tick(4'500); // 3.5 s after the last hit
-    EXPECT_EQ(state.HitsLanded(), 1u);
+    EXPECT_EQ(state.DamageLanded(), 250u);
     state.Tick(5'400);
-    EXPECT_EQ(state.HitsLanded(), 1u);
+    EXPECT_EQ(state.DamageLanded(), 250u);
     state.Tick(5'500);
-    EXPECT_EQ(state.HitsLanded(), 0u);
+    EXPECT_EQ(state.DamageLanded(), 50u);
     state.Tick(9'000);
-    EXPECT_EQ(state.HitsLanded(), 0u);
+    EXPECT_EQ(state.DamageLanded(), 0u);
     // A new hit counts from there.
-    EXPECT_FALSE(state.Hits(3, 9'100));
-    EXPECT_EQ(state.HitsLanded(), 1u);
+    EXPECT_FALSE(state.Damage(750, 9'100));
+    EXPECT_EQ(state.DamageLanded(), 300u);
 }
 
 TEST(BloodbornePartyDeath, ForgetsOldDownsAfterThreeMinutesUpOrAtALamp) {
     DownedState state{1};
-    state.GoDown(0);
+    state.GoDown(0, 600);
     state.GetUp(1'000);
-    state.GoDown(1'000 + DownedState::PenaltyResetMs);
-    EXPECT_EQ(state.HitsNeeded(), 3u);
+    state.GoDown(1'000 + DownedState::PenaltyResetMs, 600);
+    EXPECT_EQ(state.DamageNeeded(), 600u);
     state.GetUp(200'000);
-    state.GoDown(201'000);
-    EXPECT_EQ(state.HitsNeeded(), 6u);
+    state.GoDown(201'000, 600);
+    EXPECT_EQ(state.DamageNeeded(), 1200u);
     state.GetUp(202'000);
     state.ClearPenalty();
-    state.GoDown(203'000);
-    EXPECT_EQ(state.HitsNeeded(), 3u);
+    state.GoDown(203'000, 600);
+    EXPECT_EQ(state.DamageNeeded(), 600u);
 }
 
 TEST(BloodbornePartyDeath, ARealDeathEndsTheDownAndRespawnsFresh) {
     DownedState state{1};
-    state.GoDown(0);
+    state.GoDown(0, 600);
     state.GetUp(1'000);
-    state.GoDown(2'000);
+    state.GoDown(2'000, 600);
     state.Died();
     EXPECT_EQ(state.Current(), Vital::Dead);
-    EXPECT_FALSE(state.Hits(10, 2'500));
+    EXPECT_FALSE(state.Damage(10, 2'500));
     state.Alive(10'000);
     EXPECT_EQ(state.Current(), Vital::Up);
-    state.GoDown(11'000);
-    EXPECT_EQ(state.HitsNeeded(), 3u);
+    state.GoDown(11'000, 600);
+    EXPECT_EQ(state.DamageNeeded(), 600u);
 }
 
 TEST(BloodbornePartyDeath, IgnoresHitsWhileUp) {
     DownedState state{1};
-    EXPECT_FALSE(state.Hits(5, 0));
-    EXPECT_EQ(state.HitsLanded(), 0u);
+    EXPECT_FALSE(state.Damage(5, 0));
+    EXPECT_EQ(state.DamageLanded(), 0u);
 }
 
 TEST(BloodbornePartyDeath, GivesUpOnlyAfterAFullHold) {
@@ -206,20 +234,20 @@ TEST(BloodbornePartyDeath, GivesUpOnlyAfterAFullHold) {
 
 TEST(BloodbornePartyDeath, CountsAttackPressesAsReviveHits) {
     ReviveHits hits;
-    EXPECT_TRUE(hits.Press(Lisara, 4, 0));
+    EXPECT_TRUE(hits.Press(Lisara, 4, 300, 0));
     // Faster than an attack: one swing.
-    EXPECT_FALSE(hits.Press(Lisara, 4, ReviveHits::GapMs - 1));
-    EXPECT_TRUE(hits.Press(Lisara, 4, ReviveHits::GapMs));
-    EXPECT_TRUE(hits.Press(Third, 2, ReviveHits::GapMs * 2));
+    EXPECT_FALSE(hits.Press(Lisara, 4, 300, ReviveHits::GapMs - 1));
+    EXPECT_TRUE(hits.Press(Lisara, 4, 450, ReviveHits::GapMs));
+    EXPECT_TRUE(hits.Press(Third, 2, 300, ReviveHits::GapMs * 2));
     const std::vector<MemberVitals> board{Member(Lisara, CentralYharnam, Vital::Down, 4),
                                           Member(Third, CentralYharnam, Vital::Down, 2)};
-    EXPECT_EQ(hits.Totals(board), (std::vector<ReviveHitTotal>{{Lisara, 4, 2}, {Third, 2, 1}}));
+    EXPECT_EQ(hits.Totals(board), (std::vector<ReviveHitTotal>{{Lisara, 4, 750}, {Third, 2, 300}}));
     // A down that ended (revived, or a new one) is dropped.
     const std::vector<MemberVitals> later{Member(Lisara, CentralYharnam, Vital::Up, 4),
                                           Member(Third, CentralYharnam, Vital::Down, 3)};
     EXPECT_TRUE(hits.Totals(later).empty());
-    EXPECT_TRUE(hits.Press(Third, 3, ReviveHits::GapMs * 3));
-    EXPECT_EQ(hits.Totals(later), (std::vector<ReviveHitTotal>{{Third, 3, 1}}));
+    EXPECT_TRUE(hits.Press(Third, 3, 300, ReviveHits::GapMs * 3));
+    EXPECT_EQ(hits.Totals(later), (std::vector<ReviveHitTotal>{{Third, 3, 300}}));
 }
 
 TEST(BloodbornePartyDeath, RevivesTheNearestDownedMemberInReach) {
@@ -263,20 +291,21 @@ TEST(BloodbornePartyDeath, EncodesTheVitalsUpdate) {
     MemberVitals self = Member(Kaniel, CentralYharnam, Vital::Down, 7, {-12.5f, 3.0f, 40.25f});
     self.hp = 1;
     self.max = 1520;
-    self.landed = 1;
-    self.needed = 3;
+    self.landed = 300;
+    self.needed = 1520;
     EXPECT_EQ(EncodeVitalsUpdate(self, {}),
-              "4b616e69656c 18010000 down 1 1520 7 1 3 -12.5 3 40.25");
-    const std::vector<ReviveHitTotal> hits{{Lisara, 4, 2}, {Third, 9, 1}};
+              "4b616e69656c 18010000 down 1 1520 7 300 1520 -12.5 3 40.25");
+    const std::vector<ReviveHitTotal> hits{{Lisara, 4, 620}, {Third, 9, 1}};
     EXPECT_EQ(EncodeVitalsUpdate(self, hits),
-              "4b616e69656c 18010000 down 1 1520 7 1 3 -12.5 3 40.25 4c6973617261:4:2 "
+              "4b616e69656c 18010000 down 1 1520 7 300 1520 -12.5 3 40.25 4c6973617261:4:620 "
               "7468697264:9:1");
 }
 
 TEST(BloodbornePartyDeath, ParsesTheVitalsBoard) {
-    const auto board = ParseVitalsBoard("4b616e69656c 18010000 up 1200 1520 0 0 0 -12.5 3 40.25 0\n"
-                                        "4c6973617261 18010000 down 1 1380 4 2 3 -11 3 41 2\n"
-                                        "wipe 5 15000000 4b616e69656c 7468697264\n");
+    const auto board =
+        ParseVitalsBoard("4b616e69656c 18010000 up 1200 1520 0 0 0 -12.5 3 40.25 0\n"
+                         "4c6973617261 18010000 down 1 1380 4 620 1380 -11 3 41 620\n"
+                         "wipe 5 15000000 4b616e69656c 7468697264\n");
     ASSERT_TRUE(board);
     ASSERT_EQ(board->members.size(), 2u);
     EXPECT_EQ(board->members[0].member, Kaniel);
@@ -289,9 +318,9 @@ TEST(BloodbornePartyDeath, ParsesTheVitalsBoard) {
     EXPECT_EQ(lisara.vital, Vital::Down);
     EXPECT_EQ(lisara.max, 1380);
     EXPECT_EQ(lisara.down, 4u);
-    EXPECT_EQ(lisara.landed, 2u);
-    EXPECT_EQ(lisara.needed, 3u);
-    EXPECT_EQ(lisara.revive_hits, 2u);
+    EXPECT_EQ(lisara.landed, 620u);
+    EXPECT_EQ(lisara.needed, 1380u);
+    EXPECT_EQ(lisara.revive_damage, 620u);
     ASSERT_EQ(board->wipes.size(), 1u);
     EXPECT_EQ(board->wipes[0].id, 5u);
     EXPECT_EQ(board->wipes[0].map, HuntersDream);

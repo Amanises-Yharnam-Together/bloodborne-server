@@ -23,7 +23,8 @@ expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
 expect-others-near <n> <meters> (n other players alive that close), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
 Party death (the scenario's "settings" switch it on): rise <metres> (straight up, to fall),
-approach-downed (beside the nearest downed member on the map), wait-vital <up|down|dead>
+approach-downed (beside the nearest downed member on the map), revive-downed [<timeout>] (R1
+on the downed member until nobody on the map is down), wait-vital <up|down|dead>
 [<timeout>] (this player's state), wait-member-vital <up|down|dead> [<timeout>] (another
 member's, on the vitals board). shot <name>: the port's picture of its next frame, overlays and
 all (the party HUD), kept in the run's folder as <role>-<name>.png; the emulator skips it.
@@ -62,8 +63,9 @@ PARTY_DEATH = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"}
 LETHAL_FALL = ["hurt self 1", "rise 25"]
 # A first down takes three hits (R1 beside the downed member), at least 0.4 s apart. Each R1
 # lunges the hitter on, out of reach (2.5 m) after one, so it steps back beside it before each.
-REVIVE_HITS = [step for _ in range(3)
-               for step in ("approach-downed", "wait 1", "press r1 150", "wait 1")]
+# Revive hits until the downed member is up: how many depends on the striker's weapon (party death
+# takes its attack rating in damage).
+REVIVE_HITS = ["revive-downed 60"]
 
 
 def only_kill(handle: str) -> list[str]:
@@ -713,7 +715,7 @@ SCENARIOS = {
     },
     "down-revive": {
         "about": "party death: the guest falls with 1 HP and goes down instead of dying; the host "
-                 "comes over and hits it three times, and it gets up with half its HP",
+                 "comes over and strikes it until its weapon has dealt the guest's max HP, and it gets up with half its HP",
         "settings": PARTY_DEATH,
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",

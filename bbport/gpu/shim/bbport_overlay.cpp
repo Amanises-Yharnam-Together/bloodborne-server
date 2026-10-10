@@ -1088,25 +1088,31 @@ void Text(ImDrawList* draw, ImFont* font, float size, ImVec2 at, ImU32 color, co
     draw->AddText(font, size, at, color, text);
 }
 
-/// The revive ring, after Nightreign's: a purple part per hit still needed (hits empty it part by
-/// part), inside a pale ring that turns gold once the party's hits land.
+/// The revive ring, after Nightreign's: purple for the damage still needed, emptying clockwise as
+/// the party's strikes deal it (bbcoop_revive_share), inside a pale ring that turns gold once
+/// they land.
 void ReviveRing(ImDrawList* draw, ImVec2 centre, float radius, u32 landed, u32 needed,
                 float alpha) {
-    const u32 parts = std::max(needed, 1u);
-    const float step = 2.0f * IM_PI / float(parts);
-    const float gap = parts > 1 ? std::min(0.16f, step * 0.3f) : 0.0f;
+    const float share = bbcoop_revive_share(landed, needed);
     draw->AddCircleFilled(centre, radius, Rgba(0.03f, 0.03f, 0.05f, 0.85f * alpha));
-    const float inner = radius * 0.42f, outer = radius * 0.78f;
-    for (u32 i = 0; i < parts; ++i) {
-        const float a0 = -IM_PI * 0.5f + step * float(i) + gap * 0.5f;
-        draw->PathArcTo(centre, (inner + outer) * 0.5f, a0, a0 + step - gap);
-        draw->PathStroke(i < landed ? Rgba(0.10f, 0.10f, 0.13f, alpha)
-                                    : Rgba(0.40f, 0.30f, 0.86f, alpha),
-                         outer - inner);
+    const float inner = radius * 0.42f, outer = radius * 0.78f, mid = (inner + outer) * 0.5f;
+    const float top = -IM_PI * 0.5f, split = top + 2.0f * IM_PI * share;
+    if (share > 0.0f) {
+        draw->PathArcTo(centre, mid, top, split, 48);
+        draw->PathStroke(Rgba(0.10f, 0.10f, 0.13f, alpha), 0, outer - inner);
+    }
+    if (share < 1.0f) {
+        draw->PathArcTo(centre, mid, split, top + 2.0f * IM_PI, 48);
+        draw->PathStroke(Rgba(0.40f, 0.30f, 0.86f, alpha), 0, outer - inner);
     }
     draw->AddCircle(centre, radius * 0.92f,
                     landed > 0 ? Ui::Gold(alpha) : Rgba(0.62f, 0.68f, 0.86f, 0.9f * alpha), 0,
                     std::max(1.5f, radius * 0.11f));
+}
+
+/// Revive progress as text: the share of the damage dealt.
+int RevivePercent(u32 landed, u32 needed) {
+    return int(std::lround(bbcoop_revive_share(landed, needed) * 100.0f));
 }
 
 void MemberList(ImDrawList* draw, float pulse) {
@@ -1166,8 +1172,8 @@ void MemberList(ImDrawList* draw, float pulse) {
         }
         const float status_y = y + S(33.0f);
         if (down) {
-            std::snprintf(line, sizeof(line), "%s  %u / %u", T("Down", "Повержен"), member.landed,
-                          member.needed);
+            std::snprintf(line, sizeof(line), "%s  %d%%", T("Down", "Повержен"),
+                          RevivePercent(member.landed, member.needed));
             Text(draw, sans_font, S(14.0f), ImVec2(text_x, status_y - S(3.0f)),
                  Rgba(1.0f, 0.52f, 0.46f, a), line);
         } else if (dead) {
@@ -1210,9 +1216,9 @@ void RevivePrompt(ImDrawList* draw) {
     char line[96];
     std::snprintf(
         line, sizeof(line),
-        T("R1 / R2: strike to revive %s  %u / %u", "R1 / R2: ударьте, чтобы поднять %s  %u / %u"),
-        member.name[0] != '\0' ? member.name : T("Hunter", "Охотник"), member.landed,
-        member.needed);
+        T("R1 / R2: strike to revive %s  %d%%", "R1 / R2: ударьте, чтобы поднять %s  %d%%"),
+        member.name[0] != '\0' ? member.name : T("Hunter", "Охотник"),
+        RevivePercent(member.landed, member.needed));
     const float size = S(21.0f), mid = game.x + game.w * 0.5f,
                 y = BbPartyLayout::RevivePromptY(game);
     const float w = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, line).x + S(120.0f);
@@ -1249,7 +1255,7 @@ void OwnDown(ImDrawList* draw, float pulse) {
          T("You are down", "Вы повержены"), 0.5f);
     Text(draw, serif_font, S(18.0f), ImVec2(mid, centre.y + S(DownHintBelow)), Ui::Plain(0.9f),
          T("A party member can raise you by striking you",
-           "Союзник может поднять вас, ударив несколько раз"),
+           "Союзник может поднять вас, нанося вам удары"),
          0.5f);
     Text(draw, sans_font, S(15.0f), ImVec2(mid, centre.y + S(DownGiveUpBelow)), Ui::Gold(0.85f),
          T("Hold Circle to give up", "Удерживайте Круг, чтобы сдаться"), 0.5f);

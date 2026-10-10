@@ -153,7 +153,7 @@ TEST_F(BloodborneContracts, VitalsBoard) {
                               .landed = 2,
                               .needed = 3,
                               .at = {-11.0f, 3.0f, 41.0f},
-                              .revive_hits = 2};
+                              .revive_damage = 2};
     EXPECT_EQ(ParseVitalsBoard(Message("vitals.answer")),
               (std::optional<VitalsBoard>{
                   VitalsBoard{{self, lisara}, {PartyWipe{1, HuntersDream, {Kaniel, Lisara}}}}}));
