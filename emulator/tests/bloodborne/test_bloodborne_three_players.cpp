@@ -156,7 +156,11 @@ TEST(BloodborneThreePlayers, OnlyTheMembersOnThisMapAreReCreated) {
     const std::vector<MemberMap> later{
         {"me", 0x18010000}, {"guestA", 0x18010000}, {"guestB", 0x18010000}};
     plan = PlanRecreate(members, later, "me", 0x18010000, handled);
-    EXPECT_EQ(plan.now, (std::vector<size_t>{1}));
+    // Kaniel 2026-10-11: Lisara came back from the Dream before the host and re-created
+    // krolebord, who had stayed; once the host arrived she no longer saw krolebord. When the
+    // host's copy is made the one made before it is lost, so a later arrival re-creates everyone
+    // on this map again (as when all arrive together, which worked).
+    EXPECT_EQ(plan.now, (std::vector<size_t>{0, 1}));
     EXPECT_TRUE(plan.done);
 
     // A member that cannot be told apart: back to waiting for everyone on this map.

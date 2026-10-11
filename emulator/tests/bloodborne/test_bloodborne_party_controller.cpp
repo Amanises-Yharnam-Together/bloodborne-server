@@ -765,6 +765,64 @@ TEST(BloodborneSharedLoot, AMessengerGiftIsEachPlayersOwn) {
     EXPECT_FALSE(KeepsLocalFlag(true, 72101100));
 }
 
+// Kaniel 2026-10-11: in her own Hunter's Dream Lisara found the workshop shut. Its doors open with
+// flag 9403, which Central Yharnam's event 12410900 sets for a live player walking by; she went
+// that way only as a phantom in the host's world. A guest out in the world in a session has been
+// there, so it sets the Dream's flags for itself, and its world keeps them.
+TEST(BloodborneSharedProgression, AGuestOutInTheWorldOpensItsOwnDream) {
+    constexpr u32 CentralYharnam = 0x18010000;
+    constexpr u32 HuntersDream = 0x15000000;
+    EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam), (std::vector<s32>{9401, 9403}));
+    EXPECT_TRUE(GuestProgressFlags(true, true, HuntersDream).empty())
+        << "the Dream alone is no trip out";
+    EXPECT_TRUE(GuestProgressFlags(true, false, CentralYharnam).empty()) << "not in a session";
+    EXPECT_TRUE(GuestProgressFlags(false, true, CentralYharnam).empty()) << "the host's own";
+    EXPECT_TRUE(GuestProgressFlags(true, true, 0).empty()) << "loading";
+    for (const s32 flag : GuestProgressFlags(true, true, CentralYharnam)) {
+        EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
+    }
+}
+
+// Kaniel 2026-10-11: after the Cleric Beast the host had 4 insight, the guests 3: the kill's 3
+// and not the 1 for finding the boss. That award (event 12411702) ends once flag 9300 is on, and
+// the host's game sent its 9300 to the guests. Each player keeps its own "found this boss" flag,
+// and a guest that saw the boss die in the session without one gets that insight then.
+TEST(BloodborneSharedLoot, FindingABossIsEachPlayersOwn) {
+    EXPECT_TRUE(KeepsLocalFlag(true, 9300)) << "the Cleric Beast";
+    EXPECT_TRUE(KeepsLocalFlag(true, 9336)) << "Father Gascoigne";
+    EXPECT_FALSE(KeepsLocalFlag(false, 9300));
+    EXPECT_FALSE(KeepsLocalFlag(true, 9180)) << "the bell flags are another matter";
+}
+
+TEST(BloodborneSharedLoot, AGuestGetsTheInsightForFindingABossWhenItDies) {
+    std::set<s32> on;
+    const auto flag_on = [&](s32 flag) { return on.contains(flag); };
+    EncounterInsightWatch watch;
+    EXPECT_TRUE(watch.Tick(true, true, flag_on).empty());
+    on.insert(12411700); // the Cleric Beast dies (its defeat event ran)
+    const auto award = watch.Tick(true, true, flag_on);
+    ASSERT_EQ(award.size(), 1u);
+    EXPECT_EQ(award[0], (EncounterInsight{12411700, 9300, 1}));
+    EXPECT_TRUE(watch.Tick(true, true, flag_on).empty()) << "once";
+
+    EncounterInsightWatch found_before;
+    on = {9336};
+    found_before.Tick(true, true, flag_on);
+    on.insert(12411800); // Gascoigne dies; this guest found him before
+    EXPECT_TRUE(found_before.Tick(true, true, flag_on).empty());
+
+    EncounterInsightWatch dead_already;
+    on = {12411700};
+    EXPECT_TRUE(dead_already.Tick(true, true, flag_on).empty()) << "dead before the session";
+    EXPECT_TRUE(dead_already.Tick(true, true, flag_on).empty());
+
+    EncounterInsightWatch host;
+    on.clear();
+    host.Tick(false, true, flag_on);
+    on.insert(12411700);
+    EXPECT_TRUE(host.Tick(false, true, flag_on).empty()) << "the host's own event gives it";
+}
+
 // Every member posts the lamps it lit and sets the others' (the game copies only a lamp's
 // counters, so a lamp the host lit was missing from the guest's headstone). Only lighting
 // travels: a lamp never goes out because another player's game cleared it.
@@ -804,6 +862,12 @@ TEST(BloodborneGuestProgress, AFreshCharacterHasFarFewerFlagsThanTheOneBefore) {
     EXPECT_FALSE(IsOtherCharacter(5390, 5400)) << "a few flags cleared by events";
     EXPECT_FALSE(IsOtherCharacter(6000, 5400)) << "played on";
     EXPECT_FALSE(IsOtherCharacter(1200, 0)) << "nothing kept: no character to compare with";
+    // krolebord 2026-10-11: every restart read as a new character (5800 set against 5859 kept,
+    // 5672 against 5739: a load clears a few dozen area flags), the kept pickups were dropped
+    // and he could loot the same items again.
+    EXPECT_FALSE(IsOtherCharacter(5800, 5859));
+    EXPECT_FALSE(IsOtherCharacter(5672, 5739));
+    EXPECT_FALSE(IsOtherCharacter(5150, 5400)) << "a load can clear a few hundred";
 }
 
 // The menu scripts' "am I a summoned client" answer (0x01A13FD1): a party guest's item dialog
@@ -1154,6 +1218,45 @@ TEST(BloodborneSharedKills, AMembersKillsLastForItsVisit) {
     VisitKills fresh;
     EXPECT_EQ(fresh.Observe(3, one_dead), Changes{});
     EXPECT_EQ(fresh.Observe(3, one_dead), Changes{});
+}
+
+// Kaniel 2026-10-11: the host and Lisara went to the Dream and back while krolebord stayed in
+// Central Yharnam, and half of it was alive again: the host's trip took its 82 kills back. While
+// another member stays on the map, a visit's kills stand (held), hidden for this member too
+// when it comes back; they go back once nobody of the party is on that map.
+TEST(BloodborneSharedKills, KillsStandWhileSomeoneStaysOnTheMap) {
+    constexpr u32 Yharnam = 0x18010000;
+    constexpr u32 Dream = 0x15000000;
+    const auto visit = [](u32 map, u64 n) { return (u64{map} << 32) | n; };
+    using Changes = std::vector<std::pair<s32, bool>>;
+    const std::vector<SeenCharacter> alive{{0x10014085, 300}, {0x10014088, 250}};
+    const std::vector<SeenCharacter> one_dead{{0x10014085, 0}, {0x10014088, 250}};
+    const std::vector<u32> krolebord_here{Yharnam};
+    VisitKills kills;
+    kills.Observe(visit(Yharnam, 1), alive, krolebord_here);
+    EXPECT_EQ(kills.Observe(visit(Yharnam, 1), one_dead, krolebord_here),
+              (Changes{{0x10014085, true}}));
+    EXPECT_EQ(kills.Observe(visit(Dream, 2), {}, krolebord_here), Changes{})
+        << "krolebord stayed: the kill stands";
+    EXPECT_EQ(kills.Held(Yharnam), (std::vector<u32>{0x10014085}));
+    EXPECT_EQ(kills.Observe(visit(Yharnam, 3), alive, krolebord_here), Changes{})
+        << "back: the respawned copy is hidden, nothing posted";
+    EXPECT_EQ(kills.Held(Yharnam), (std::vector<u32>{0x10014085}));
+    EXPECT_EQ(kills.Observe(visit(Yharnam, 3), alive, {}), Changes{})
+        << "krolebord left, but this member is there";
+    EXPECT_EQ(kills.Observe(visit(Dream, 4), {}, {}), (Changes{{0x10014085, false}}))
+        << "nobody left on the map: the enemies respawn for everyone";
+    EXPECT_TRUE(kills.Held(Yharnam).empty());
+}
+
+// Kaniel 2026-10-11: an enemy another member killed vanished in front of the player (hidden with
+// the event disable byte) instead of dying. One near this player dies by the game's own kill.
+TEST(BloodborneSharedKills, AnotherMembersKillNearbyDiesInsteadOfVanishing) {
+    const LampPosition me{0.0f, 0.0f, 0.0f};
+    EXPECT_TRUE(DiesInsteadOfHiding(me, LampPosition{20.0f, 0.0f, 20.0f}));
+    EXPECT_FALSE(DiesInsteadOfHiding(me, LampPosition{40.0f, 0.0f, 40.0f})) << "far: hidden";
+    EXPECT_FALSE(DiesInsteadOfHiding(std::nullopt, LampPosition{1.0f, 0.0f, 0.0f}));
+    EXPECT_FALSE(DiesInsteadOfHiding(me, std::nullopt));
 }
 
 // What ends a visit is what respawns the enemies for that member: a trip (lamp travel, the

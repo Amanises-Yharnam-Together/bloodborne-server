@@ -535,6 +535,11 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 // home. A join reload's bulk change, the death/multiplayer (4xxx) flags and
 // the pickups (their own list) are left out.
 bool CarriesToGuestWorld(s32 flag);
+// The Hunter's Dream flags a guest out in the world (any map but the Dream) in a session sets for
+// itself: 9401 (Central Yharnam reached: the Dream's first visit, its shop) and 9403 (the
+// workshop's doors open, set by Central Yharnam's 12410900 for a live player only). A phantom in
+// the host's world never set them, so its own Dream stayed shut (Kaniel 2026-10-11).
+std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map);
 // Whether a load of the guest's world gets the kept world changes before its map items and
 // events: at home, and on a party trip (its own world loads while the session stays up).
 bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip);
@@ -561,8 +566,44 @@ std::optional<s32> LampOfActiveFlag(s32 flag);
 // The other player's "set this event flag" (0x017C0570) and "event ended" (0x017C0901) messages
 // leave these flags and events alone in a party: what one player received is not given to the
 // other (the Hunter's Dream messengers' gift events and flags, 12101020-12101029, and the
-// pick in their talk, 72101000-72101099).
+// pick in their talk, 72101000-72101099, and each boss's "found" flag, see EncounterInsight).
 bool KeepsLocalFlag(bool party_configured, s32 flag);
+// The insight for finding a boss: the boss's entrance event gives `amount` (common event 9350)
+// unless `once_flag` is on, then sets it; `kill_event` is the boss's defeat event (its flag goes
+// on once it has run). From the map event files (the events that start 9350 behind a flag).
+struct EncounterInsight {
+    s32 kill_event = 0;
+    s32 once_flag = 0;
+    s32 amount = 0;
+    bool operator==(const EncounterInsight&) const = default;
+};
+std::span<const EncounterInsight> EncounterInsights();
+// A guest's insight for finding a boss it saw die in the session (Kaniel 2026-10-11: the host's
+// game sent its "found" flag, so the guest's entrance event gave nothing). Tick gives the bosses
+// whose defeat event went on while this guest is in a session and whose found flag is off.
+class EncounterInsightWatch {
+public:
+    template <typename FlagOn>
+    std::vector<EncounterInsight> Tick(bool guest, bool in_session, FlagOn flag_on) {
+        std::vector<EncounterInsight> award;
+        if (!in_session) {
+            seen.clear();
+            return award;
+        }
+        for (const EncounterInsight& boss : EncounterInsights()) {
+            const bool dead = flag_on(boss.kill_event);
+            const auto it = seen.find(boss.kill_event);
+            if (guest && it != seen.end() && !it->second && dead && !flag_on(boss.once_flag)) {
+                award.push_back(boss);
+            }
+            seen[boss.kill_event] = dead;
+        }
+        return award;
+    }
+
+private:
+    std::map<s32, bool> seen; // defeat event -> its flag at the last tick of this session
+};
 // SHADPS4_BLOODBORNE_TRACE_FLAG: a flag the flag tracer watches in a session (diagnostics).
 std::optional<s32> TracedFlagSetting(const char* setting);
 struct FlagBit {
@@ -879,6 +920,11 @@ bool IsDeadInItsWorld(u8 death_flags);
 // session, so no kill board had them).
 std::unordered_set<u32> DeadInTheHostsWorld(std::span<const CharacterShown> host);
 constexpr float FarFromHostMetres = 50.0f;
+// Whether an enemy another member killed dies here by the game's own kill (near this player:
+// within DiesNearMetres) rather than being hidden (Kaniel 2026-10-11: they vanished).
+constexpr float DiesNearMetres = 40.0f;
+bool DiesInsteadOfHiding(const std::optional<LampPosition>& me,
+                         const std::optional<LampPosition>& enemy);
 bool FarFromHost(const std::optional<LampPosition>& host,
                  const std::optional<LampPosition>& character);
 std::vector<u8> EncodeShownCharacters(std::span<const CharacterShown> characters);
@@ -1006,10 +1052,18 @@ bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner
 
 class VisitKills {
 public:
-    std::vector<std::pair<s32, bool>> Observe(u64 visit, std::span<const SeenCharacter> characters);
+    // `others_maps`: where the other members are now. A visit's kills stand while another member
+    // is on that visit's map (the high 32 bits of the visit, see VisitTracker): they are held
+    // instead of taken back, and taken back once neither this member nor another is on that map
+    // (Kaniel 2026-10-11: the host's trip to the Dream respawned half of Central Yharnam while
+    // krolebord was still there).
+    std::vector<std::pair<s32, bool>> Observe(u64 visit, std::span<const SeenCharacter> characters,
+                                              std::span<const u32> others_maps = {});
     const std::vector<u32>& Killed() const {
         return killed;
     }
+    // This member's held kills on `map` (hidden on its own copies there).
+    std::vector<u32> Held(u32 map) const;
 
 private:
     struct Seen {
@@ -1019,6 +1073,7 @@ private:
     u64 current = 0;
     std::map<u32, Seen> seen;
     std::vector<u32> killed;
+    std::map<u32, std::vector<u32>> held; // map -> kills of an earlier visit standing there
 };
 std::string EncodeEchoUpdate(std::string_view member, s64 since,
                              std::span<const KillEchoes> echoes);

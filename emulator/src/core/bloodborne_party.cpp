@@ -378,18 +378,29 @@ RecreatePlan PlanRecreate(std::span<const std::optional<std::string>> members,
         return plan;
     }
     plan.done = true;
+    std::vector<size_t> here;
+    bool someone_new = false;
     for (size_t index = 0; index < members.size(); ++index) {
         const std::string& name = *members[index];
+        const auto entry = std::ranges::find_if(
+            board, [&](const MemberMap& member) { return member.member == name; });
+        const bool on_map = entry != board.end() && entry->map == map;
+        if (on_map) {
+            here.push_back(index);
+        }
         if (handled.contains(name)) {
             continue;
         }
-        const auto entry = std::ranges::find_if(
-            board, [&](const MemberMap& member) { return member.member == name; });
-        if (entry != board.end() && entry->map == map) {
-            plan.now.push_back(index);
+        if (on_map) {
+            someone_new = true;
         } else {
             plan.done = false;
         }
+    }
+    // A later arrival re-creates everyone here again: making its copy lost the one made before
+    // (Kaniel 2026-10-11: Lisara no longer saw krolebord once the host arrived after her).
+    if (someone_new) {
+        plan.now = std::move(here);
     }
     return plan;
 }
@@ -579,9 +590,11 @@ bool SummonJoinWatch::Stalled(bool joining, Clock::time_point now) {
 }
 
 bool IsOtherCharacter(s32 progress_now, s32 progress_kept) {
-    // Event flags only add up as a character plays; far fewer set means another character.
-    constexpr s32 ProgressSlack = 20;
-    return progress_kept > 0 && progress_now + ProgressSlack < progress_kept;
+    // Event flags mostly add up as a character plays; far fewer set means another character. A
+    // load clears some area flags (dozens to a few hundred: krolebord's restarts read 5800 set
+    // against 5859 kept), so "far" is a quarter of what was kept.
+    const s32 slack = std::max<s32>(20, progress_kept / 4);
+    return progress_kept > 0 && progress_now + slack < progress_kept;
 }
 
 bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now) {
@@ -648,6 +661,14 @@ bool CarriesToGuestWorld(s32 flag) {
            !IsMapPickupFlag(flag);
 }
 
+std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map) {
+    constexpr u32 HuntersDream = 0x15000000;
+    if (!guest || !in_session || map == 0 || map == HuntersDream) {
+        return {};
+    }
+    return {9401, 9403};
+}
+
 std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp,
                                                std::span<const s32> effects) {
     // SpEffectParam maxHpRate of the co-op boss effects 7500, 7501, 7502.
@@ -711,7 +732,25 @@ bool KeepsLocalFlag(bool party_configured, s32 flag) {
     constexpr s32 LastMessengerPick = 72101099;
     const bool gift = flag >= FirstMessengerGift && flag <= LastMessengerGift;
     const bool pick = flag >= FirstMessengerPick && flag <= LastMessengerPick;
-    return party_configured && (gift || pick);
+    const bool found =
+        std::ranges::any_of(EncounterInsights(), [flag](const EncounterInsight& boss) {
+            return boss.once_flag == flag;
+        });
+    return party_configured && (gift || pick || found);
+}
+
+std::span<const EncounterInsight> EncounterInsights() {
+    // {defeat event, found flag, insight}: each map's xx1800/xx1700/xx1850 defeat event and the
+    // entrance event beside it (xx1802, xx1702, xx1852, or xx1801/xx1851 in the Chalice and DLC
+    // maps) that starts 9350 behind the found flag.
+    static constexpr std::array<EncounterInsight, 20> bosses{{
+        {12101800, 9343, 1}, {12101850, 9307, 5}, {12201800, 9338, 1}, {12301800, 9339, 1},
+        {12301700, 9340, 1}, {12401800, 9301, 1}, {12411700, 9300, 1}, {12411800, 9336, 1},
+        {12421800, 9304, 3}, {12501800, 9341, 1}, {12601800, 9306, 3}, {12601850, 9342, 2},
+        {12801800, 9305, 1}, {13201800, 9303, 2}, {13301800, 9302, 3}, {13401800, 9344, 1},
+        {13401850, 9302, 1}, {13501800, 9346, 1}, {13501850, 9348, 2}, {13601800, 9347, 5},
+    }};
+    return bosses;
 }
 
 std::optional<s32> TracedFlagSetting(const char* setting) {
@@ -1366,6 +1405,19 @@ std::unordered_set<u32> DeadInTheHostsWorld(std::span<const CharacterShown> host
     return dead;
 }
 
+bool DiesInsteadOfHiding(const std::optional<LampPosition>& me,
+                         const std::optional<LampPosition>& enemy) {
+    if (!me || !enemy) {
+        return false;
+    }
+    float squared = 0.0f;
+    for (size_t axis = 0; axis < 3; ++axis) {
+        const float delta = (*enemy)[axis] - (*me)[axis];
+        squared += delta * delta;
+    }
+    return squared < DiesNearMetres * DiesNearMetres;
+}
+
 bool FarFromHost(const std::optional<LampPosition>& host,
                  const std::optional<LampPosition>& character) {
     if (!host || !character) {
@@ -1488,15 +1540,40 @@ bool IsRealDeath(u8 death_flags) {
 }
 
 std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
-                                                      std::span<const SeenCharacter> characters) {
+                                                      std::span<const SeenCharacter> characters,
+                                                      std::span<const u32> others_maps) {
     std::vector<std::pair<s32, bool>> changes;
+    const auto map_of = [](u64 v) { return static_cast<u32>(v >> 32); };
+    const auto someone_on = [&](u32 map) {
+        return map != 0 && std::ranges::find(others_maps, map) != others_maps.end();
+    };
     if (visit != current) {
-        for (const u32 handle : killed) {
-            changes.emplace_back(static_cast<s32>(handle), false);
+        const u32 old_map = map_of(current);
+        if (someone_on(old_map)) {
+            auto& standing = held[old_map];
+            for (const u32 handle : killed) {
+                if (std::ranges::find(standing, handle) == standing.end()) {
+                    standing.push_back(handle);
+                }
+            }
+        } else {
+            for (const u32 handle : killed) {
+                changes.emplace_back(static_cast<s32>(handle), false);
+            }
         }
         killed.clear();
         seen.clear();
         current = visit;
+    }
+    for (auto it = held.begin(); it != held.end();) {
+        if (it->first == map_of(current) || someone_on(it->first)) {
+            ++it;
+            continue;
+        }
+        for (const u32 handle : it->second) {
+            changes.emplace_back(static_cast<s32>(handle), false);
+        }
+        it = held.erase(it);
     }
     for (const auto& [handle, now, instance, settling] : characters) {
         const auto [it, added] = seen.try_emplace(handle, Seen{now, instance});
@@ -1511,6 +1588,11 @@ std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
         it->second = {now, instance};
     }
     return changes;
+}
+
+std::vector<u32> VisitKills::Held(u32 map) const {
+    const auto it = held.find(map);
+    return it != held.end() ? it->second : std::vector<u32>{};
 }
 
 bool SharesWithParty(bool party_configured, bool player_loaded) {

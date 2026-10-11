@@ -5196,10 +5196,15 @@ FlagStore ReadFlagStore() {
         header < 0x10000) {
         return store;
     }
+    // The game changes the tree while this walks it (a load on another thread: Lisara's crash,
+    // 2026-10-11, a node pointing past a thread's stack), so every node is checked first.
+    const auto readable = [](u64 node) {
+        return node >= 0x10000 && HasMemoryAccess(node, 0x38, MemoryProt::CpuRead);
+    };
     std::vector<u64> stack;
-    u64 node = ReadValue<u64>(header, 0x08);
-    while ((node >= 0x10000 && ReadValue<u8>(node, 0x19) == 0) || !stack.empty()) {
-        while (node >= 0x10000 && ReadValue<u8>(node, 0x19) == 0 && stack.size() < 64) {
+    u64 node = readable(header) ? ReadValue<u64>(header, 0x08) : 0;
+    while ((readable(node) && ReadValue<u8>(node, 0x19) == 0) || !stack.empty()) {
+        while (readable(node) && ReadValue<u8>(node, 0x19) == 0 && stack.size() < 64) {
             stack.push_back(node);
             node = ReadValue<u64>(node, 0x00);
         }
@@ -6361,7 +6366,30 @@ void KeepEnemyDeathsInStep(bool sharing) {
                                                           ? std::optional{changed->second}
                                                           : std::nullopt);
     }
-    const auto changes = visit_kills.Observe(visit, characters);
+    // Where the others are: this member's kills stand while one of them stays on the map.
+    std::vector<u32> others_maps;
+    {
+        std::scoped_lock lock{map_board_mutex};
+        if (std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{10}) {
+            for (const MemberMap& entry : map_board) {
+                if (entry.member != map_board_member) {
+                    others_maps.push_back(entry.map);
+                }
+            }
+        }
+    }
+    // Enemies another member killed that died here by the game's kill (DiesInsteadOfHiding) are
+    // that member's kills, not this one's.
+    static std::unordered_set<u32> died_for_others;
+    static u64 died_visit = 0;
+    if (visit != died_visit) {
+        died_for_others.clear();
+        died_visit = visit;
+    }
+    auto changes = visit_kills.Observe(visit, characters, others_maps);
+    std::erase_if(changes, [](const std::pair<s32, bool>& change) {
+        return change.second && died_for_others.contains(static_cast<u32>(change.first));
+    });
     ShareEnemyHp(map, visit, pointers);
     if (!changes.empty()) {
         const auto kills = std::ranges::count_if(changes, [](const auto& c) { return c.second; });
@@ -6389,6 +6417,9 @@ void KeepEnemyDeathsInStep(bool sharing) {
     }
     // Its own kills too: a guest pulled into the host's world sees the host's copy alive.
     others.insert(visit_kills.Killed().begin(), visit_kills.Killed().end());
+    // And its earlier visit's kills here that stood while another member stayed.
+    const std::vector<u32> held = visit_kills.Held(map);
+    others.insert(held.begin(), held.end());
     // And what is dead in the host's world, killed before the session too (its save): a guest
     // back from a trip runs its own world, where those were alive (Kaniel 2026-10-11).
     if (IsPartyGuestRole() && InPartySession()) {
@@ -6405,6 +6436,13 @@ void KeepEnemyDeathsInStep(bool sharing) {
         }
     }
     size_t newly_hidden = 0;
+    size_t newly_died = 0;
+    const auto me = LocalPlayerPosition();
+    static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+    const bool can_kill = std::ranges::equal(
+        std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
+                            KillPrologue.size()},
+        KillPrologue);
     for (size_t index = 0; index < pointers.size(); ++index) {
         const u64 character = pointers[index];
         const u32 handle = characters[index].handle;
@@ -6413,6 +6451,15 @@ void KeepEnemyDeathsInStep(bool sharing) {
         if (it == hidden.end() && hp > 0 && others.contains(handle) &&
             ReadValue<u8>(character, 0x28) == 0 &&
             HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
+            if (can_kill && !died_for_others.contains(handle) &&
+                DiesInsteadOfHiding(me, CharacterPosition(character))) {
+                // Near this player: it dies as the game kills (no echoes), not vanishing.
+                using Kill = void PS4_SYSV_ABI (*)(u64 character);
+                reinterpret_cast<Kill>(image_base + KillCharacterOffset)(character);
+                died_for_others.insert(handle);
+                ++newly_died;
+                continue;
+            }
             WriteValue(character, 0x28, u8{1});
             hidden.emplace(character, handle);
             ++newly_hidden;
@@ -6423,9 +6470,10 @@ void KeepEnemyDeathsInStep(bool sharing) {
             hidden.erase(it);
         }
     }
-    if (newly_hidden > 0) {
-        LOG_INFO(Debug, "Bloodborne party: hid {} enemies a member killed on map {:#x}",
-                 newly_hidden, map);
+    if (newly_hidden + newly_died > 0) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: hid {} enemies a member killed on map {:#x}, {} near died",
+                 newly_hidden, map, newly_died);
     }
     std::unordered_set<u32> kill_hidden;
     for (const auto& [character, handle] : hidden) {
@@ -6832,6 +6880,41 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     std::ofstream{GuestResumeFile(), std::ios::trunc} << EncodeResumePoint(point) << '\n';
 }
 
+// Insight +1 (common event 9350 applies it once per point, 10 frames apart).
+constexpr s32 InsightPointEffect = 4680;
+
+// A guest's insight for finding a boss it saw die in the session (see EncounterInsightWatch):
+// its found flag set here (each player keeps its own, KeepsLocalFlag) and one point at a time
+// through the player's own add-effect virtual, as 9350 does.
+void GiveEncounterInsight(bool in_session) {
+    static EncounterInsightWatch watch;
+    static s32 points_due = 0;
+    static std::chrono::steady_clock::time_point last_point{};
+    for (const EncounterInsight& boss :
+         watch.Tick(IsPartyGuestRole(), in_session, [](s32 flag) { return EventFlagOn(flag); })) {
+        reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
+            image_base + PartyGhostSetEventFlagOffset)(0, boss.once_flag, true);
+        points_due += boss.amount;
+        LOG_INFO(Debug, "Bloodborne party: boss of {} down; {} insight for finding it (flag {})",
+                 boss.kill_event, boss.amount, boss.once_flag);
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (points_due <= 0 || now - last_point < std::chrono::milliseconds{300}) {
+        return;
+    }
+    const u64 player = GetLocalPlayer();
+    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
+    if (vtable < 0x10000 ||
+        !HasMemoryAccess(vtable + CharacterAddSpEffectSlot, sizeof(u64), MemoryProt::CpuRead) ||
+        ReadValue<u64>(vtable, CharacterAddSpEffectSlot) != image_base + AddSpEffectOffset) {
+        return;
+    }
+    reinterpret_cast<AddSpEffectFn>(image_base + AddSpEffectOffset)(
+        player, InsightPointEffect, player, 0, 1, 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+    last_point = now;
+    --points_due;
+}
+
 void FinishWaitingJoins(bool in_session);
 void ResendOwnDataOnChange(bool in_session);
 void LogMemberDataChanges(bool in_session);
@@ -6867,6 +6950,16 @@ void TickPlayersOnThisMap() {
     FinishWaitingJoins(in_session);
     ResendOwnDataOnChange(in_session);
     LogMemberDataChanges(in_session);
+    GiveEncounterInsight(in_session);
+    for (const s32 flag :
+         GuestProgressFlags(IsPartyGuestRole(), in_session, IsUsablePackedMap(map) ? map : 0)) {
+        if (!EventFlagOn(flag)) {
+            // Set while in the session, so the guest's world keeps it (KeepWorldChanges).
+            reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
+                image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
+            LOG_INFO(Debug, "Bloodborne party: guest out in the world; set Dream flag {}", flag);
+        }
+    }
     static RecreateAfterJoin recreate_after_join;
     if (recreate_after_join.Tick(IsPartyGuestRole(), in_session,
                                  in_session ? OtherSessionMembers().size() : 0,
@@ -8168,8 +8261,14 @@ void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers
         return;
     }
     if (clear.missing) {
-        LOG_INFO(Debug, "Bloodborne lamp {} read its entity missing; cleared for the party",
-                 ReadValue<s32>(record.object, 0x20));
+        // Once per lamp: this runs for every lamp near the player many times a second, and the
+        // line filled the log by hundreds of thousands (Kaniel 2026-10-11: 3 FPS late in a run).
+        static std::set<s32> logged_lamps;
+        const s32 lamp = ReadValue<s32>(record.object, 0x20);
+        if (logged_lamps.insert(lamp).second) {
+            LOG_INFO(Debug, "Bloodborne lamp {} read its entity missing; cleared for the party",
+                     lamp);
+        }
         WriteValue(record.object, 0x4A, u8{});
     }
     if (clear.blocked && !WriteValue(record.object, 0x49, u8{})) {
