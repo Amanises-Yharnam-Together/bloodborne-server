@@ -903,6 +903,19 @@ TEST(BloodborneGuestBloodstain, AGuestSeesItsStainInTheHostsWorld) {
         << "the game would not show it: no more tries this visit";
 }
 
+// Kaniel 2026-10-12: the party killed a Wandering Nightmare (NpcParam 118020, item lot 11800200,
+// drop flag 52300990) and only the host got its Blood Stone Shards. A guest's copy died by the
+// host's kill (hidden or the game's kill, no drop). A member's kill of an enemy whose item lot
+// drops once (a lot flag) gives the others that lot while their flag is off.
+TEST(BloodborneSharedKills, AMembersKillGivesTheOneTimeDrop) {
+    EXPECT_TRUE(GetsMemberKillDrop(true, true, 52300990, false));
+    EXPECT_FALSE(GetsMemberKillDrop(true, true, 52300990, true)) << "got it already";
+    EXPECT_FALSE(GetsMemberKillDrop(true, true, 0, false)) << "a random drop is each player's own";
+    EXPECT_FALSE(GetsMemberKillDrop(true, false, 52300990, false))
+        << "dead in the host's save, not killed by a member now";
+    EXPECT_FALSE(GetsMemberKillDrop(false, true, 52300990, false)) << "no session";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

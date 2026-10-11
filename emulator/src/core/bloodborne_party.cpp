@@ -1629,6 +1629,10 @@ std::vector<std::pair<s32, bool>> VisitKills::Forget() {
     return changes;
 }
 
+bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on) {
+    return in_session && member_kill && lot_flag > 0 && !flag_on;
+}
+
 bool SharesWithParty(bool party_configured, bool player_loaded) {
     return party_configured && player_loaded;
 }

@@ -1204,6 +1204,12 @@ std::array<u8, 8> RetargetRipLoad(std::span<const u8, 8> original, u64 address, 
 // row entries (id, padding, data offset) at +0x40.
 bool IsParamOfType(std::span<const u8> param, std::string_view type);
 std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
+// An enemy's one-time drop: NpcParam +0x2C is its item lot, ItemLotParam +0x80 the flag a lot
+// that drops once sets (0: a random drop). A member's kill gives the others that lot while their
+// flag is off (Kaniel 2026-10-12: only the host got a Wandering Nightmare's shards).
+constexpr u64 NpcItemLotOffset = 0x2C;
+constexpr u64 ItemLotFlagOffset = 0x80;
+bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on);
 
 // Harder enemies (SHADPS4_BLOODBORNE_HARDER_ENEMIES=<hp>,<damage>,<poise>, e.g. "3,1.5,3"):
 // every NpcParam row's HP and poise and every AtkParam_Npc row's damage are multiplied once,

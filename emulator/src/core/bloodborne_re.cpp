@@ -6438,6 +6438,52 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                                const std::unordered_set<u32>& kill_hidden);
 
+// See GetsMemberKillDrop: the character's NpcParam row is [vtable +0x168 (character) +8], as
+// the respawn walk reads it (0x0190E433). The game's thread only.
+void GiveMemberKillDrop(u64 character, u32 handle) {
+    const u64 vtable = ReadValue<u64>(character, 0);
+    const u64 npc_of = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x168) : 0;
+    if (npc_of < 0x10000) {
+        return;
+    }
+    const u64 holder = reinterpret_cast<u64 PS4_SYSV_ABI (*)(u64)>(npc_of)(character);
+    const u64 npc = holder >= 0x10000 ? ReadValue<u64>(holder, 8) : 0;
+    if (npc < 0x10000 || !HasMemoryAccess(npc, NpcItemLotOffset + 4, MemoryProt::CpuRead)) {
+        return;
+    }
+    const s32 lot = ReadValue<s32>(npc, NpcItemLotOffset);
+    const u64 lots = lot > 0 ? FindLoadedParam("ITEMLOT_PARAM_ST") : 0;
+    if (lots == 0) {
+        return;
+    }
+    const u64 table_size = 0x40 + u64{ReadValue<u16>(lots, 0x0A)} * 24;
+    if (!HasMemoryAccess(lots, table_size, MemoryProt::CpuRead)) {
+        return;
+    }
+    const auto row = FindParamRow({reinterpret_cast<const u8*>(lots), table_size}, lot);
+    if (!row || !HasMemoryAccess(lots + *row, ItemLotFlagOffset + 4, MemoryProt::CpuRead)) {
+        return;
+    }
+    const s32 flag = ReadValue<s32>(lots + *row, ItemLotFlagOffset);
+    if (!GetsMemberKillDrop(InPartySession(), true, flag, flag > 0 && EventFlagOn(flag))) {
+        return;
+    }
+    const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
+    if (item_man < 0x10000) {
+        return;
+    }
+    giving_deferred_item_lot = true;
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, u32)>(image_base +
+                                                           AwardItemLotOffset)(item_man, lot, 0);
+    giving_deferred_item_lot = false;
+    if (!EventFlagOn(flag)) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, bool)>(
+            image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
+    }
+    LOG_INFO(Debug, "Bloodborne party: a member killed {:#x}; gave its drop, item lot {} (flag {})",
+             handle, lot, flag);
+}
+
 // A death respawn reset the map: this member's kills are taken back (VisitKills::Forget).
 std::atomic<bool> party_kills_reset{};
 
@@ -6548,6 +6594,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
         kills_to_post.insert(kills_to_post.end(), changes.begin(), changes.end());
         others = others_kills;
     }
+    // The other members' kills now (not this member's own, nor what lay dead in a save).
+    const std::unordered_set<u32> member_kills = others;
     // Its own kills too: a guest pulled into the host's world sees the host's copy alive.
     others.insert(visit_kills.Killed().begin(), visit_kills.Killed().end());
     // And its earlier visit's kills here that stood while another member stayed.
@@ -6601,12 +6649,18 @@ void KeepEnemyDeathsInStep(bool sharing) {
                 using Kill = void PS4_SYSV_ABI (*)(u64 character);
                 reinterpret_cast<Kill>(image_base + KillCharacterOffset)(character);
                 died_for_others.insert(handle);
+                if (member_kills.contains(handle)) {
+                    GiveMemberKillDrop(character, handle);
+                }
                 ++newly_died;
                 continue;
             }
             WriteValue(character, 0x28, u8{1});
             hidden.emplace(character, handle);
             ++newly_hidden;
+            if (member_kills.contains(handle)) {
+                GiveMemberKillDrop(character, handle);
+            }
         } else if (it != hidden.end() && !others.contains(handle) &&
                    HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
             // The killer's visit ended: the enemy respawned for it, so it comes back here too.
