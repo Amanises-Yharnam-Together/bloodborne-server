@@ -442,7 +442,7 @@ private:
             if (payload[4] == 0x10) {
                 return InternalChannel::Control;
             }
-            if (payload[4] == 0x30) {
+            if ((payload[4] & 0xF0) == 0x30) { // co-op: 0x30 damage, 0x31 vitals, 0x32 kills
                 return InternalChannel::Coop;
             }
         }

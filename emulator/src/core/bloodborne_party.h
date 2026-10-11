@@ -3,9 +3,11 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -851,6 +853,49 @@ private:
     };
     std::map<u64, Received> by_sender;
 };
+// The other co-op frames on the same link (Kaniel 2026-10-11): a member's vitals line (party
+// death) and its standing kills, each at once on a change and again every DirectDamageResendMs,
+// standing DirectDamageLifeMs at the receiver. Every type from 0x30 to 0x3F is the co-op channel.
+constexpr u8 DirectVitalsType = 0x31;
+constexpr u8 DirectKillsType = 0x32;
+bool IsCoopFrameType(u8 type);
+std::vector<u8> EncodeCoopFrame(u8 type, std::span<const u8> payload);
+std::optional<std::pair<u8, std::vector<u8>>> DecodeCoopFrame(std::span<const u8> frame);
+// A peer's frames by sender, each standing DirectDamageLifeMs after it came.
+template <typename T>
+class DirectInbox {
+public:
+    void Take(u64 sender, T value, s64 now_ms) {
+        by_sender[sender] = {std::move(value), now_ms};
+    }
+    // The fresh ones, newest first.
+    std::vector<T> Fresh(s64 now_ms) {
+        std::erase_if(by_sender, [now_ms](const auto& entry) {
+            return now_ms - entry.second.second > DirectDamageLifeMs;
+        });
+        std::vector<std::pair<T, s64>> fresh;
+        for (const auto& [sender, received] : by_sender) {
+            fresh.push_back(received);
+        }
+        std::ranges::stable_sort(fresh, std::greater{}, &std::pair<T, s64>::second);
+        std::vector<T> values;
+        for (auto& [value, at] : fresh) {
+            values.push_back(std::move(value));
+        }
+        return values;
+    }
+
+private:
+    std::map<u64, std::pair<T, s64>> by_sender;
+};
+struct DirectKills {
+    std::string member;
+    std::vector<u32> handles;
+    bool operator==(const DirectKills&) const = default;
+};
+std::vector<u8> EncodeDirectKills(std::string_view member, std::span<const u32> handles);
+std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload);
+std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills);
 // One report per source from copies of it (direct and the board): per enemy the most damage, or
 // for HP from one world (HostHpReport) the least HP; in the order the sources first come.
 std::vector<EnemyHpReport> MergeEnemyHpReports(std::span<const EnemyHpReport> reports);
@@ -1521,6 +1566,17 @@ struct VitalsBoard {
 };
 std::string EncodeVitalsUpdate(const MemberVitals& self, std::span<const ReviveHitTotal> hits);
 std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body);
+// A member's own update (EncodeVitalsUpdate's line), as a peer sends it straight over the link.
+struct DirectVitals {
+    MemberVitals self;
+    std::vector<ReviveHitTotal> hits;
+    bool operator==(const DirectVitals&) const = default;
+};
+std::optional<DirectVitals> ParseVitalsUpdate(std::string_view line);
+// The board's answer with the peers' own lines over its copies of them (or added), and each
+// member's revive damage the most of the board's and the peers' hits on its current down. The
+// wipes stay the board's: shadNet declares each once for everyone.
+VitalsBoard MergeDirectVitals(const VitalsBoard& board, std::span<const DirectVitals> direct);
 // The wipe on the board that takes this member, if any.
 std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self);
 // Whether another member stands on `map` (a usable map): a lethal hit then puts this player down

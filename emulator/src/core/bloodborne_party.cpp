@@ -2964,6 +2964,136 @@ std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body) {
     return board;
 }
 
+bool IsCoopFrameType(u8 type) {
+    return (type & 0xF0) == 0x30;
+}
+
+std::vector<u8> EncodeCoopFrame(u8 type, std::span<const u8> payload) {
+    std::vector<u8> frame{'S', 'H', 'A', 'D', type};
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    return frame;
+}
+
+std::optional<std::pair<u8, std::vector<u8>>> DecodeCoopFrame(std::span<const u8> frame) {
+    if (frame.size() < 5 || !std::ranges::equal(frame.first(4), std::string_view{"SHAD"}) ||
+        !IsCoopFrameType(frame[4])) {
+        return std::nullopt;
+    }
+    return std::pair{frame[4], std::vector<u8>(frame.begin() + 5, frame.end())};
+}
+
+std::vector<u8> EncodeDirectKills(std::string_view member, std::span<const u32> handles) {
+    std::vector<u8> payload;
+    const size_t name = std::min<size_t>(member.size(), 0xFF);
+    const size_t count = std::min<size_t>(handles.size(), 300);
+    payload.push_back(static_cast<u8>(name));
+    payload.insert(payload.end(), member.begin(), member.begin() + name);
+    AppendLittleEndian(payload, static_cast<u16>(count));
+    for (size_t index = 0; index < count; ++index) {
+        AppendLittleEndian(payload, handles[index]);
+    }
+    return payload;
+}
+
+std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload) {
+    if (payload.empty() || payload.size() < 1u + payload[0] + 2u) {
+        return std::nullopt;
+    }
+    const size_t name = payload[0];
+    DirectKills kills{std::string(payload.begin() + 1, payload.begin() + 1 + name), {}};
+    const size_t count = ReadLittleEndian<u16>(payload, 1 + name);
+    const size_t start = 1 + name + 2;
+    if (payload.size() != start + count * 4) {
+        return std::nullopt;
+    }
+    for (size_t index = 0; index < count; ++index) {
+        kills.handles.push_back(ReadLittleEndian<u32>(payload, start + index * 4));
+    }
+    return kills;
+}
+
+std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills) {
+    std::unordered_set<u32> handles;
+    for (const DirectKills& member : kills) {
+        handles.insert(member.handles.begin(), member.handles.end());
+    }
+    return handles;
+}
+
+std::optional<DirectVitals> ParseVitalsUpdate(std::string_view line) {
+    const std::vector<std::string_view> fields = SplitFields(line);
+    if (fields.size() < 11 || fields[0].empty()) {
+        return std::nullopt;
+    }
+    const auto map = ParseNumber<u32>(fields[1], 16);
+    const auto vital = ParseVital(fields[2]);
+    const auto hp = ParseNumber<s32>(fields[3]);
+    const auto max = ParseNumber<s32>(fields[4]);
+    const auto down = ParseNumber<u32>(fields[5]);
+    const auto landed = ParseNumber<u32>(fields[6]);
+    const auto needed = ParseNumber<u32>(fields[7]);
+    const auto x = ParseCoordinate(fields[8]);
+    const auto y = ParseCoordinate(fields[9]);
+    const auto z = ParseCoordinate(fields[10]);
+    if (!map || !vital || !hp || !max || !down || !landed || !needed || !x || !y || !z) {
+        return std::nullopt;
+    }
+    DirectVitals update{MemberVitals{.member = std::string{fields[0]},
+                                     .map = *map,
+                                     .vital = *vital,
+                                     .hp = *hp,
+                                     .max = *max,
+                                     .down = *down,
+                                     .landed = *landed,
+                                     .needed = *needed,
+                                     .at = {*x, *y, *z}},
+                        {}};
+    for (size_t index = 11; index < fields.size(); ++index) {
+        const std::string_view hit = fields[index];
+        const size_t first = hit.find(':');
+        const size_t second = first == std::string_view::npos ? first : hit.find(':', first + 1);
+        if (second == std::string_view::npos) {
+            return std::nullopt;
+        }
+        const auto hit_down = ParseNumber<u32>(hit.substr(first + 1, second - first - 1));
+        const auto damage = ParseNumber<u32>(hit.substr(second + 1));
+        if (first == 0 || !hit_down || !damage) {
+            return std::nullopt;
+        }
+        update.hits.push_back({std::string{hit.substr(0, first)}, *hit_down, *damage});
+    }
+    return update;
+}
+
+VitalsBoard MergeDirectVitals(const VitalsBoard& board, std::span<const DirectVitals> direct) {
+    VitalsBoard merged = board;
+    for (const DirectVitals& update : direct) {
+        const auto same =
+            std::ranges::find(merged.members, update.self.member, &MemberVitals::member);
+        if (same == merged.members.end()) {
+            merged.members.push_back(update.self);
+            merged.members.back().revive_damage = 0;
+            continue;
+        }
+        const bool same_down = same->down == update.self.down;
+        const u32 board_damage = same_down ? same->revive_damage : 0;
+        *same = update.self;
+        same->revive_damage = board_damage;
+    }
+    for (MemberVitals& member : merged.members) {
+        u32 hits = 0;
+        for (const DirectVitals& update : direct) {
+            for (const ReviveHitTotal& total : update.hits) {
+                if (total.target == member.member && total.down == member.down) {
+                    hits += total.damage;
+                }
+            }
+        }
+        member.revive_damage = std::max(member.revive_damage, hits);
+    }
+    return merged;
+}
+
 std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self) {
     for (const PartyWipe& wipe : board.wipes) {
         if (std::ranges::find(wipe.members, self) != wipe.members.end()) {

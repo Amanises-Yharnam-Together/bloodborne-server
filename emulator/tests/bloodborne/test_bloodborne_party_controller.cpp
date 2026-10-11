@@ -1904,6 +1904,98 @@ TEST(BloodborneDirectDamage, TheNewerOfTwoCopiesOfAReportWins) {
                                          }));
 }
 
+// Kaniel 2026-10-11: party death and kills straight from game to game too ("SHAD" frames of
+// DirectVitalsType and DirectKillsType on the same P2P link), the boards underneath.
+TEST(BloodborneDirectBoards, CoopFramesCarryTheirTypeAndPayload) {
+    const std::vector<u8> payload{1, 2, 3};
+    const std::vector<u8> frame = EncodeCoopFrame(DirectVitalsType, payload);
+    EXPECT_EQ(frame, (std::vector<u8>{'S', 'H', 'A', 'D', DirectVitalsType, 1, 2, 3}));
+    const auto back = DecodeCoopFrame(frame);
+    ASSERT_TRUE(back);
+    EXPECT_EQ(back->first, DirectVitalsType);
+    EXPECT_EQ(back->second, payload);
+    EXPECT_FALSE(DecodeCoopFrame(std::vector<u8>{'S', 'H', 'A', 'D', 0x10, 1})) << "signaling";
+    EXPECT_FALSE(DecodeCoopFrame(std::vector<u8>{'S', 'H', 'A'})) << "cut short";
+    EXPECT_TRUE(IsCoopFrameType(DirectDamageType) && IsCoopFrameType(DirectKillsType));
+}
+
+// A member's own vitals line (the board update's format) goes to the peers as it is.
+TEST(BloodborneDirectBoards, AVitalsUpdateReadsBack) {
+    const MemberVitals self{.member = "6b616e69656c",
+                            .map = 0x18010000,
+                            .vital = Vital::Down,
+                            .hp = 1,
+                            .max = 1900,
+                            .down = 87180471,
+                            .landed = 25,
+                            .needed = 1900,
+                            .at = {-199.5f, -50.75f, 179.25f}};
+    const std::vector<ReviveHitTotal> hits{{"4c6973617261", 574863293, 75}};
+    const auto back = ParseVitalsUpdate(EncodeVitalsUpdate(self, hits));
+    ASSERT_TRUE(back);
+    EXPECT_EQ(back->self, self);
+    EXPECT_EQ(back->hits, hits);
+    EXPECT_FALSE(ParseVitalsUpdate("6b616e69656c 18010000 down"));
+}
+
+// The board answer with the peers' own lines put in (fresher), and the revive damage on each
+// member's down the most of the board's sum and the direct hits' sum; wipes stay the board's
+// (shadNet declares them, once for everyone).
+TEST(BloodborneDirectBoards, DirectVitalsGoOverTheBoardsCopy) {
+    VitalsBoard board;
+    board.members = {
+        {.member = "aa", .map = 0x18010000, .vital = Vital::Up, .hp = 400, .max = 500},
+        {.member = "bb", .map = 0x18010000, .vital = Vital::Up, .hp = 300, .max = 500, .down = 4},
+    };
+    board.wipes = {PartyWipe{3, 0x16000000, {"cc"}}};
+    std::vector<DirectVitals> direct{
+        {MemberVitals{.member = "bb",
+                      .map = 0x18010000,
+                      .vital = Vital::Down,
+                      .hp = 1,
+                      .max = 500,
+                      .down = 5,
+                      .needed = 500},
+         {}},
+        {MemberVitals{.member = "aa", .map = 0x18010000, .vital = Vital::Up, .hp = 380, .max = 500},
+         {{"bb", 5, 120}, {"cc", 9, 40}}},
+    };
+    const VitalsBoard merged = MergeDirectVitals(board, direct);
+    ASSERT_EQ(merged.members.size(), 2u);
+    EXPECT_EQ(merged.members[0].hp, 380) << "aa's own line";
+    EXPECT_EQ(merged.members[1].vital, Vital::Down) << "bb went down: seen before the board";
+    EXPECT_EQ(merged.members[1].revive_damage, 120u) << "aa's hits on bb's down 5";
+    EXPECT_EQ(merged.wipes, board.wipes);
+
+    board.members[1] = {.member = "bb", .vital = Vital::Down, .down = 5, .revive_damage = 200};
+    EXPECT_EQ(MergeDirectVitals(board, direct).members[1].revive_damage, 200u)
+        << "the board had more (another member's hits)";
+    direct.push_back({MemberVitals{.member = "dd", .map = 0x18010000, .vital = Vital::Up}, {}});
+    EXPECT_EQ(MergeDirectVitals(board, direct).members.size(), 3u) << "not on the board yet";
+}
+
+// A member's standing kills go to the peers whole (at once on a change, again every half
+// second); a peer's frames stand until it goes quiet, and its kills hide enemies at once.
+TEST(BloodborneDirectBoards, AMembersKillsTravelWhole) {
+    const std::vector<u32> kills{0x10014068, 0x10008040};
+    const auto back = DecodeDirectKills(EncodeDirectKills("6b616e69656c", kills));
+    ASSERT_TRUE(back);
+    EXPECT_EQ(back->member, "6b616e69656c");
+    EXPECT_EQ(back->handles, kills);
+    EXPECT_FALSE(DecodeDirectKills(std::vector<u8>{3, 'a', 'b'}));
+
+    DirectInbox<DirectKills> inbox;
+    inbox.Take(1, *back, 1'000);
+    inbox.Take(2, DirectKills{"4c69", {0x10014075}}, 1'100);
+    EXPECT_EQ(DirectKillHandles(inbox.Fresh(1'200)),
+              (std::unordered_set<u32>{0x10014068, 0x10008040, 0x10014075}));
+    inbox.Take(1, DirectKills{"6b616e69656c", {}}, 1'300);
+    EXPECT_EQ(DirectKillHandles(inbox.Fresh(1'400)), (std::unordered_set<u32>{0x10014075}))
+        << "its visit ended: the enemies came back for it";
+    EXPECT_TRUE(DirectKillHandles(inbox.Fresh(1'100 + DirectDamageLifeMs + 1)).empty())
+        << "both went quiet";
+}
+
 TEST(BloodborneSharedEnemyHp, InOneWorldAGuestTakesTheHostsNpcHp) {
     const std::vector<EnemyCopy> guest{{0x10010038, 910, 910}, {0x1001001f, 100, 123}};
     const std::vector<EnemyHpReport> host{

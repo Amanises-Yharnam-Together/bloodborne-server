@@ -6111,6 +6111,12 @@ void InstallOwnHitCount(u64 base, u64 image_size) {
 // read from the P2P transport on the game's thread. Only the room's peers are heard.
 DirectDamageInbox direct_damage_inbox;
 
+// The other games' party death vitals and standing kills over the same link (see
+// DirectVitalsType): read with the damage, used over the boards' copies.
+std::mutex direct_boards_mutex;
+DirectInbox<DirectVitals> direct_vitals_inbox;
+DirectInbox<DirectKills> direct_kills_inbox;
+
 bool TakeDirectDamage() {
     std::array<u8, 1400> buffer{};
     std::optional<std::vector<Libraries::Np::NpMatching2::RoomPeerAddress>> peers;
@@ -6128,15 +6134,59 @@ bool TakeDirectDamage() {
         }
         const bool from_peer = std::ranges::any_of(
             *peers, [&](const auto& peer) { return peer.addr == addr && peer.port == port; });
-        auto state =
-            DecodeDirectDamage(std::span<const u8>{buffer.data(), static_cast<size_t>(size)});
-        if (!from_peer || !state) {
+        const std::span<const u8> bytes{buffer.data(), static_cast<size_t>(size)};
+        const auto frame = DecodeCoopFrame(bytes);
+        if (!from_peer || !frame) {
             continue;
         }
-        direct_damage_inbox.Take((u64{addr} << 16) | port, std::move(*state), SteadyMilliseconds());
+        const u64 sender = (u64{addr} << 16) | port;
+        const s64 now = SteadyMilliseconds();
+        if (frame->first == DirectVitalsType) {
+            const std::string line(frame->second.begin(), frame->second.end());
+            if (auto vitals = ParseVitalsUpdate(line)) {
+                std::scoped_lock lock{direct_boards_mutex};
+                direct_vitals_inbox.Take(sender, std::move(*vitals), now);
+            }
+            continue;
+        }
+        if (frame->first == DirectKillsType) {
+            if (auto kills = DecodeDirectKills(frame->second)) {
+                std::scoped_lock lock{direct_boards_mutex};
+                direct_kills_inbox.Take(sender, std::move(*kills), now);
+                took = true;
+            }
+            continue;
+        }
+        auto state = DecodeDirectDamage(bytes);
+        if (!state) {
+            continue;
+        }
+        direct_damage_inbox.Take(sender, std::move(*state), now);
         took = true;
     }
     return took;
+}
+
+// A co-op frame to every room peer.
+void SendToRoomPeers(const std::vector<u8>& frame) {
+    for (const auto& peer : Libraries::Np::NpMatching2::GetActiveRoomPeers()) {
+        Libraries::Net::P2PCoopSendTo(frame.data(), static_cast<u32>(frame.size()), peer.addr,
+                                      peer.port);
+    }
+}
+
+std::string BoardMemberName();
+
+// This member's standing kills to every room peer: at once when they changed, else every
+// DirectDamageResendMs. Its whole set each time: a lost frame is made good by the next one.
+void SendDirectKills(std::span<const u32> kills, bool changed) {
+    static s64 sent_at = 0;
+    const s64 now = SteadyMilliseconds();
+    if (!changed && now - sent_at < DirectDamageResendMs) {
+        return;
+    }
+    sent_at = now;
+    SendToRoomPeers(EncodeCoopFrame(DirectKillsType, EncodeDirectKills(BoardMemberName(), kills)));
 }
 
 // This member's report to every room peer: at once when it changed, else every
@@ -6433,6 +6483,17 @@ void KeepEnemyDeathsInStep(bool sharing) {
     // And its earlier visit's kills here that stood while another member stayed.
     const std::vector<u32> held = visit_kills.Held(map);
     others.insert(held.begin(), held.end());
+    // Straight over the P2P link: this member's standing kills out, the peers' in (the board
+    // brings the same a moment later, and to members who load in later).
+    if (InPartySession()) {
+        std::vector<u32> mine(visit_kills.Killed().begin(), visit_kills.Killed().end());
+        mine.insert(mine.end(), held.begin(), held.end());
+        SendDirectKills(mine, !changes.empty());
+        std::scoped_lock lock{direct_boards_mutex};
+        const std::unordered_set<u32> direct =
+            DirectKillHandles(direct_kills_inbox.Fresh(SteadyMilliseconds()));
+        others.insert(direct.begin(), direct.end());
+    }
     // And what is dead in the host's world, killed before the session too (its save): a guest
     // back from a trip runs its own world, where those were alive (Kaniel 2026-10-11).
     if (IsPartyGuestRole() && InPartySession()) {
@@ -7677,14 +7738,32 @@ struct VitalsView {
 };
 
 VitalsView ReadVitalsBoard() {
-    std::scoped_lock lock{vitals_mutex};
-    VitalsView view{vitals_board, vitals_member};
-    if (vitals_heard_at) {
-        view.age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::steady_clock::now() - *vitals_heard_at)
-                          .count();
+    VitalsView view;
+    {
+        std::scoped_lock lock{vitals_mutex};
+        view = VitalsView{vitals_board, vitals_member};
+        if (vitals_heard_at) {
+            view.age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - *vitals_heard_at)
+                              .count();
+        }
+    }
+    // The peers' own lines straight over the P2P link, fresher than the board's copies.
+    std::vector<DirectVitals> direct;
+    {
+        std::scoped_lock lock{direct_boards_mutex};
+        direct = direct_vitals_inbox.Fresh(SteadyMilliseconds());
+    }
+    if (!direct.empty()) {
+        view.board = MergeDirectVitals(view.board, direct);
+        view.age_ms = std::min<s64>(view.age_ms, 0);
     }
     return view;
+}
+
+std::string BoardMemberName() {
+    std::scoped_lock lock{vitals_mutex};
+    return vitals_member;
 }
 
 // The net sync object (SummonSessionRulesPointerOffset, see MemberDataWait): +0x84 is 4 in a
@@ -7879,6 +7958,19 @@ void PostVitals(const MemberVitals& mine, std::vector<ReviveHitTotal> hits) {
     if (changed) {
         vitals_changed = true;
         vitals_wake.notify_all();
+    }
+    // Straight to the room's peers too (see DirectVitalsType), once the board named this member.
+    static s64 sent_at = 0;
+    const s64 now = SteadyMilliseconds();
+    if (mine.vital != Vital::Off && !vitals_member.empty() &&
+        (changed || now - sent_at >= DirectDamageResendMs)) {
+        sent_at = now;
+        MemberVitals self = mine;
+        self.member = vitals_member;
+        const std::string line = EncodeVitalsUpdate(self, vitals_hits);
+        SendToRoomPeers(EncodeCoopFrame(
+            DirectVitalsType,
+            std::span<const u8>{reinterpret_cast<const u8*>(line.data()), line.size()}));
     }
 }
 
