@@ -1659,6 +1659,29 @@ TEST(BloodbornePartyController, OnlyAGuestRecreatesAfterItsJoinAndNotLongAfter) 
 // Kaniel 2026-10-10: after trips, two players hitting one enemy saw different HP bars, and their
 // damage did not add up (each copy took only its own hits; the board kept the lowest). Each
 // member posts its own damage and takes the others' on top.
+// Kaniel 2026-10-11, after the party wipe in the Cathedral Ward: the reset map's 0x1001006e came
+// back at 2116 HP and was lowered to 1837 by the damage the others had posted before the wipe
+// (their visits went on until their own reloads), and each member's copy took a different part
+// of it. After a death that reset the map, the damage reported before it is not taken.
+TEST(BloodborneSharedEnemyHp, AMapResetLeavesTheOldDamageBehind) {
+    SharedDamage host;
+    constexpr u64 GuestBefore = 0xB0000001, GuestAfter = 0xB0000002;
+    const auto copies = [](s32 hp) { return std::vector<EnemyCopy>{{0x1001006e, hp, 2116}}; };
+    const std::vector<EnemyHpReport> before{{GuestBefore, {{0x1001006e, 279, 2116}}}};
+    EXPECT_EQ(host.Update(1, true, copies(2116), before).writes,
+              (std::vector<EnemyWrite>{{0x1001006e, 1837}}))
+        << "before the wipe the guest's damage counts";
+
+    host.ForgetDamageBefore(before);
+    EXPECT_TRUE(host.Update(2, true, copies(2116), before).writes.empty())
+        << "the reloaded copy keeps its full HP";
+    const std::vector<EnemyHpReport> after{{GuestBefore, {{0x1001006e, 400, 2116}}},
+                                           {GuestAfter, {{0x1001006e, 100, 2116}}}};
+    EXPECT_EQ(host.Update(2, true, copies(2116), after).writes,
+              (std::vector<EnemyWrite>{{0x1001006e, 2016}}))
+        << "only the guest's hits after its own reload";
+}
+
 TEST(BloodborneSharedEnemyHp, TwoPlayersHittingOneEnemyAddUp) {
     SharedDamage host;
     SharedDamage guest;

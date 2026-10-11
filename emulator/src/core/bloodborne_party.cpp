@@ -1093,6 +1093,12 @@ T ReadLittleEndian(std::span<const u8> bytes, size_t offset) {
 }
 } // namespace
 
+void SharedDamage::ForgetDamageBefore(std::span<const EnemyHpReport> others) {
+    for (const EnemyHpReport& report : others) {
+        before_reset.insert(report.visit);
+    }
+}
+
 SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
                                         std::span<const EnemyCopy> alive,
                                         std::span<const EnemyHpReport> others, s64 now_ms) {
@@ -1153,6 +1159,9 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
         for (const EnemyHpReport& report : others) {
             if ((report.visit & HostHpReport) != 0) {
                 continue; // HP from one world, not damage
+            }
+            if (before_reset.contains(report.visit)) {
+                continue; // damage on the world before a map reset
             }
             for (const EnemyHp& damage : report.enemies) {
                 if (damage.handle != copy.handle || damage.max <= 0 || damage.hp <= 0) {

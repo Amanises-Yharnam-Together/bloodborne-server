@@ -6165,6 +6165,10 @@ const u32 enemy_hp_source = [] {
 // Enemy HP kept in step (see SharedDamage): in the session, with the worlds apart, posts the
 // damage this member did to its copies during its visit and takes the others' on top. Out of a
 // session each world is its member's own, and in one world the game sends the HP itself.
+// A death respawn reset the map: the damage the others reported on the world before it is left
+// behind (SharedDamage::ForgetDamageBefore).
+std::atomic<bool> party_hp_reset{};
+
 void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     struct Copy {
         u64 data;
@@ -6220,6 +6224,9 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     }
     const std::vector<EnemyHpReport> reports = MergeEnemyHpReports(copies);
     const u64 source = (u64{enemy_hp_source & 0x7FFFFFFFu} << 32) | (visit & 0xFFFFFFFFu);
+    if (party_hp_reset.exchange(false)) {
+        damage.ForgetDamageBefore(reports);
+    }
     SharedDamage::Step step = damage.Update(visit, active, standing, reports, SteadyMilliseconds());
     // In one world: the host posts its hurt characters' HP (NPCs: the game does not send theirs),
     // a guest lowers its copies to it (see LowerToHostHp).
@@ -7230,6 +7237,7 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     const bool reset = !arriving_from_trip && party_death_reset.exchange(false);
     if (reset) {
         party_kills_reset.store(true);
+        party_hp_reset.store(true);
     }
     const u64 global = GetGlobalState();
     const s32 point = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
