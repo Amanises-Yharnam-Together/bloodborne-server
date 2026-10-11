@@ -1602,6 +1602,24 @@ std::vector<u32> VisitKills::Held(u32 map) const {
     return it != held.end() ? it->second : std::vector<u32>{};
 }
 
+std::vector<std::pair<s32, bool>> VisitKills::Forget() {
+    std::vector<std::pair<s32, bool>> changes;
+    for (const u32 handle : killed) {
+        changes.emplace_back(static_cast<s32>(handle), false);
+    }
+    for (const auto& [map, handles] : held) {
+        for (const u32 handle : handles) {
+            if (std::ranges::find(killed, handle) == killed.end()) {
+                changes.emplace_back(static_cast<s32>(handle), false);
+            }
+        }
+    }
+    killed.clear();
+    held.clear();
+    seen.clear();
+    return changes;
+}
+
 bool SharesWithParty(bool party_configured, bool player_loaded) {
     return party_configured && player_loaded;
 }

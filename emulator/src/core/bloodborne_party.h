@@ -1067,6 +1067,9 @@ public:
     }
     // This member's held kills on `map` (hidden on its own copies there).
     std::vector<u32> Held(u32 map) const;
+    // A death that resets the map (a party wipe): every kill of this member is taken back, the
+    // held ones too, and the next visit starts with none.
+    std::vector<std::pair<s32, bool>> Forget();
 
 private:
     struct Seen {

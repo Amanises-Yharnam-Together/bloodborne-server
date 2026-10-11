@@ -1311,6 +1311,37 @@ TEST(BloodborneSharedKills, ASummonIntoTheHostsWorldKeepsTheGuestsVisit) {
 // visit from the kill board while they lay dead in its world; the guest's copies came back to
 // life (duplicate enemies, and no echoes for the host when the guest killed them again). Walking
 // across a border loads nothing and respawns nothing: the visit goes on, under the map it began on.
+// Kaniel 2026-10-11: after the whole party died in the Cathedral Ward the map did not reset. The
+// wipe sent everyone to the lamp one after another, so each member's kills were held for the
+// others still on the map, and the host hid 16 enemies on the reloaded map. A death that resets
+// the map takes back every kill of this member, the held ones too.
+TEST(BloodborneSharedKills, AMapResetTakesBackEveryKill) {
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    using Seen = std::vector<SeenCharacter>;
+    const u64 ward = (u64{0x18000000} << 32) | 7;
+    const std::vector<u32> others_there{0x18000000};
+    kills.Observe(ward, Seen{{0x10010060, 300}, {0x10010020, 200}}, others_there);
+    kills.Observe(ward, Seen{{0x10010060, 0}, {0x10010020, 200}}, others_there);
+    const u64 after_lamp = ward + 2;
+    kills.Observe(after_lamp, Seen{{0x10010020, 200}}, others_there);
+    kills.Observe(after_lamp, Seen{{0x10010020, 0}}, others_there);
+    ASSERT_EQ(kills.Held(0x18000000), (std::vector<u32>{0x10010060}));
+    ASSERT_EQ(kills.Killed(), (std::vector<u32>{0x10010020}));
+
+    auto back = kills.Forget();
+    std::ranges::sort(back);
+    EXPECT_EQ(back, (Changes{{0x10010020, false}, {0x10010060, false}}));
+    EXPECT_TRUE(kills.Killed().empty());
+    EXPECT_TRUE(kills.Held(0x18000000).empty());
+
+    const u64 reloaded = after_lamp + 1;
+    EXPECT_EQ(kills.Observe(reloaded, Seen{{0x10010060, 300}, {0x10010020, 200}}, others_there),
+              Changes{})
+        << "nothing left to hold or take back";
+    EXPECT_TRUE(kills.Held(0x18000000).empty());
+}
+
 TEST(BloodborneSharedKills, WalkingAcrossABorderKeepsTheVisit) {
     VisitTracker visits;
     VisitKills kills;
