@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <vector>
@@ -34,6 +35,10 @@ public:
             change = SilenceChange{peer, false, now_ms - seen.last_ms, seen.packets};
             seen.reported = false;
         }
+        if (seen.packets > 0) {
+            const s64 interval = now_ms - seen.last_ms;
+            seen.pace_ms = seen.pace_ms == 0 ? interval : (seen.pace_ms * 7 + interval) / 8;
+        }
         seen.last_ms = now_ms;
         ++seen.packets;
         return change;
@@ -49,7 +54,9 @@ public:
                 it = peers.erase(it);
                 continue;
             }
-            if (!seen.reported && gap > quiet_ms) {
+            // Against the peer's own pace: a slow one (the matching server's heartbeat, every
+            // 3-4 s) is quiet only once it misses a few beats.
+            if (!seen.reported && seen.packets > 1 && gap > std::max(quiet_ms, 3 * seen.pace_ms)) {
                 seen.reported = true;
                 changes.push_back({it->first, true, gap, seen.packets});
             }
@@ -62,6 +69,7 @@ private:
     static constexpr s64 ForgetMs = 60000;
     struct Peer {
         s64 last_ms{};
+        s64 pace_ms{}; // its usual time between packets
         u64 packets{};
         bool reported{};
     };

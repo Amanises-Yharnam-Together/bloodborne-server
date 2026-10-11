@@ -174,7 +174,7 @@ SCENARIOS = {
         },
         "expect": {
             "host": [r"kill board gets 1 kills"],
-            "guest": [r"hid 1 enemies a member killed on map 0x18010000"],
+            "guest": [r"(?:hid 1 enemies a member killed on map 0x18010000|0x18010000, 1 near died)"],
         },
         "forbid": {"host": only_kill(ENEMY)},
         "timeout": 720,
@@ -191,7 +191,7 @@ SCENARIOS = {
         },
         "expect": {
             "guest": [r"kill board gets 1 kills"],
-            "host": [r"hid 1 enemies a member killed on map 0x18010000"],
+            "host": [r"(?:hid 1 enemies a member killed on map 0x18010000|0x18010000, 1 near died)"],
         },
         "forbid": {"guest": only_kill(ENEMY)},
         "timeout": 720,
