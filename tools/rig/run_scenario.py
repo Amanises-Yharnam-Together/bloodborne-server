@@ -665,6 +665,14 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
         else:
             hits = sum(hit_damage(text, handle) for text in texts.values())
             print(f"    {handle} took each hit once ({hits} in all)")
+    if limit := scenario.get("max_hp_lag"):
+        handle = scenario["hp_sums_hits"]
+        texts = {role: role_text(run_dir, role, stage[role] + 1) for role in roles}
+        lag = hp_board_lag(texts, handle)
+        print(f"    {handle}: a hit reached the other games' bars within "
+              f"{'?' if lag is None else f'{lag:.2f}'} s (at most {limit} s)")
+        if lag is None or lag > limit:
+            passed = False
     for role in roles:
         text = role_text(run_dir, role, stage[role] + 1)
         status = done.get(role, "timed out")
@@ -718,8 +726,9 @@ def same_hp_problem(texts: dict[str, str], handle: str, index: int = -1) -> str 
 
 
 def hit_damage(text: str, handle: str) -> int:
-    """What the role's own `hit` steps took off the character (each hit line's drop)."""
-    found = re.findall(rf"autoplay: hit {re.escape(handle)}: hp (-?\d+) -> (-?\d+)", text)
+    """What the role's own hits took off the character, as the game's hit function saw them (the
+    `hit` step's drop may hold another member's damage the board wrote meanwhile)."""
+    found = re.findall(rf"hit on {re.escape(handle)} by this player \S+: (-?\d+) -> (-?\d+)", text)
     return sum(int(before) - int(after) for before, after in found)
 
 
@@ -738,6 +747,26 @@ def hits_sum_problem(texts: dict[str, str], handle: str) -> str | None:
         if abs((top - hp) - hits) > 3:
             return f"{role} took {top - hp} of {handle}, the hits {hits}"
     return None
+
+
+def hp_board_lag(texts: dict[str, str], handle: str) -> float | None:
+    """The average time (s, on the rig's one clock) from a role's own hit on the character to
+    the first lowering of it by the board in each other role, or None if none was lowered."""
+    pattern = re.escape(handle)
+    hits = {role: [float(t) for t in re.findall(
+        rf"hit on {pattern} by this player \S+: -?\d+ -> -?\d+ \(t=([\d.]+)\)", text)]
+        for role, text in texts.items()}
+    lowered = {role: [float(t) for t in re.findall(
+        rf"damage on map \S+: (?:\S+ \S+ )*?{pattern} -?\d+->-?\d+[^\n]*\(t=([\d.]+)\)", text)]
+        for role, text in texts.items()}
+    lags = []
+    for role, times in hits.items():
+        for at in times:
+            for other, seen in lowered.items():
+                after = [t for t in seen if t >= at]
+                if other != role and after:
+                    lags.append(min(after) - at)
+    return sum(lags) / len(lags) if lags else None
 
 
 def play_scripts(scenario: dict) -> dict[str, list[str]]:

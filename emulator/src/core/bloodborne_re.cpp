@@ -2759,8 +2759,13 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
     }
 }
 
-// Enemy HP (see SharedDamage) on its own client, five times a second: on the rest board's
-// one-second round the other members' hits showed late (friend run 2026-10-10).
+// Enemy HP (see SharedDamage) on its own client, every HpBoardRound and at once when this
+// member's own damage changes (see HpBoardWait): on the rest board's one-second round the other
+// members' hits showed late (friend run 2026-10-10), and on a 200 ms round the host's two-hit
+// kills were over before the guests' bars moved (forest run 2026-10-11).
+std::condition_variable_any enemy_hp_wake;
+bool enemy_hp_changed = false; // enemy_hp_mutex
+
 void RunHpBoardClient(std::stop_token stop, std::string base_url, std::string party) {
     const std::string member = FindBoardMember(stop);
     httplib::Client client(base_url);
@@ -2768,16 +2773,13 @@ void RunHpBoardClient(std::stop_token stop, std::string base_url, std::string pa
     client.set_connection_timeout(std::chrono::seconds{1});
     client.set_read_timeout(std::chrono::seconds{1});
     const httplib::Headers headers{{"X-ShadPS4-Bloodborne-Party", party}};
-    std::mutex wait_mutex;
-    std::condition_variable_any wait;
     while (!stop.stop_requested()) {
-        {
-            std::unique_lock lock{wait_mutex};
-            wait.wait_for(lock, stop, std::chrono::milliseconds{200}, [] { return false; });
-        }
         MemberMapState mine;
         {
-            std::scoped_lock lock{enemy_hp_mutex};
+            std::unique_lock lock{enemy_hp_mutex};
+            enemy_hp_wake.wait_for(lock, stop, HpBoardWait(enemy_hp_changed),
+                                   [] { return enemy_hp_changed; });
+            enemy_hp_changed = false;
             mine = local_enemy_hp;
         }
         if (mine.map == 0) {
@@ -6168,8 +6170,12 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     const std::vector<EnemyHp>& hurt = step.post;
     {
         std::scoped_lock lock{enemy_hp_mutex};
-        local_enemy_hp =
-            MemberMapState{map, EncodeEnemyHp(one_world ? (source | HostHpReport) : source, hurt)};
+        MemberMapState now{map, EncodeEnemyHp(one_world ? (source | HostHpReport) : source, hurt)};
+        if (now != local_enemy_hp) {
+            local_enemy_hp = std::move(now);
+            enemy_hp_changed = true; // posted at once (see HpBoardWait)
+            enemy_hp_wake.notify_all();
+        }
     }
     // Diagnostics (rig hp-after-guest-trip: the host's hit reached a guest back from a trip only
     // ~30 s later): what the board hands this member for its area, when that changes.
@@ -6241,8 +6247,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     const u64 global = GetGlobalState();
     const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
     // Not while the world goes away: a trip's start posted the old map's characters as kills.
-    if (!WatchesKills(sharing, PartyTripActive(), loading) ||
-        now - checked < std::chrono::milliseconds{200}) {
+    if (!WatchesKills(sharing, PartyTripActive(), loading) || now - checked < HpBoardRound) {
         return;
     }
     checked = now;

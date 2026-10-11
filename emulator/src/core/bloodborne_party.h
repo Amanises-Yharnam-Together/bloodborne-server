@@ -767,6 +767,12 @@ private:
 // hurt characters have (EnemyHp.hp is HP, the report's source has HostHpReport set), and a guest
 // lowers its copies to that share; the guest's own hits reach the host by the game.
 constexpr u64 HostHpReport = u64{1} << 63;
+// How often the HP board is posted and read, and the world's enemies read for it (see
+// HpBoardWait).
+constexpr std::chrono::milliseconds HpBoardRound{100};
+// How long the HP board client waits before its next post: none when this member's own damage
+// changed (a hit), else a round.
+std::chrono::milliseconds HpBoardWait(bool own_damage_changed);
 // The game's hit (0x01A2A770, called through the victim's damage module): rdi the module (+0x08
 // the victim), rsi the attacker (null for none), rdx the hit. Hooked at its entry (HP before)
 // and at the return from its IsNoDead check once the hit is applied (r14 the module again).
