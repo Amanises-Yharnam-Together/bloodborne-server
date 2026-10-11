@@ -1809,6 +1809,9 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
 
 // Diagnostics for guest bloodstains in the host's world (Phase 2): logs the local bloodstain
 // record, the spawned stain object and the world flags that gate them whenever they change.
+// The stain's marker (+0x88) and effect (+0x98) are what 0x01868A50 makes when it shows the
+// stain (and frees when it hides it): a stain recorded but never shown has neither (Kaniel
+// 2026-10-11: no bloodstains in sight after the party wipe at the Tomb of Oedon).
 void LogBloodstainStateChanges() {
     static std::string last;
     const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
@@ -1821,7 +1824,8 @@ void LogBloodstainStateChanges() {
     const auto state =
         fmt::format("has_mark={} record_valid={} record_30={} record_38={} record_block={:#x} "
                     "record_pos=({}, {}, {}) stain={:#x} "
-                    "stain_hidden={} flag1592={} flag1770={} chr_type={}",
+                    "stain_hidden={} shown_marker={:#x} shown_effect={:#x} flag1592={} "
+                    "flag1770={} chr_type={}",
                     data >= 0x10000 ? ReadValue<u8>(data, 0x28) : 0xFF,
                     record >= 0x10000 ? ReadValue<u8>(record, 0x44) : 0xFF,
                     record >= 0x10000 ? ReadValue<s32>(record, 0x30) : 0,
@@ -1831,6 +1835,8 @@ void LogBloodstainStateChanges() {
                     record >= 0x10000 ? ReadValue<float>(record, 0x1C) : 0.0f,
                     record >= 0x10000 ? ReadValue<float>(record, 0x20) : 0.0f, stain,
                     stain >= 0x10000 ? ReadValue<u8>(stain, 0xC0) : 0xFF,
+                    stain >= 0x10000 ? ReadValue<u64>(stain, 0x88) : 0,
+                    stain >= 0x10000 ? ReadValue<u64>(stain, 0x98) : 0,
                     global >= 0x10000 ? ReadValue<u8>(global, 0x1592) : 0xFF,
                     global >= 0x10000 ? ReadValue<u8>(global, 0x1770) : 0xFF,
                     player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1);
