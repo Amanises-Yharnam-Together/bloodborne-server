@@ -730,11 +730,10 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         const auto& s = BbSettings::Get();
         const float headroom = float(s.hdr_peak_nits.load(std::memory_order_relaxed)) /
                                float(std::max(s.hdr_paper_white.load(std::memory_order_relaxed), 1));
-        // hdr_highlights 0.5: the scene's own brightness.
-        const float strength = 2.0f * s.hdr_highlights.load(std::memory_order_relaxed);
+        const float highlights = s.hdr_highlights.load(std::memory_order_relaxed);
         draw_scheduler.Record([this, hdr_job, image_view, headroom,
-                               strength](vk::CommandBuffer cmdbuf) {
-            scene_hdr.Record(cmdbuf, hdr_job, image_view, headroom, strength);
+                               highlights](vk::CommandBuffer cmdbuf) {
+            scene_hdr.Record(cmdbuf, hdr_job, image_view, headroom, highlights);
         });
     }
     if (frame_dump) {
@@ -997,9 +996,16 @@ void Presenter::UpdateHdrOutput() {
         last_display_hdr = display_hdr;
         swapchain.RefreshFormats();
     }
-    const bool supported = swapchain.HasHDR() && display_hdr;
+    // The display's HDR state can blink off for a moment (display or mode changes, the swapchain
+    // switching format): HDR output stays on until it has been off for a while, so a blink does
+    // not rebuild the swapchain twice.
+    constexpr u32 OffPresents = 90;
+    const bool now_supported = swapchain.HasHDR() && display_hdr;
+    hdr_unsupported_presents = now_supported ? 0 : hdr_unsupported_presents + 1;
+    const bool supported = now_supported || (swapchain.GetHDR() && hdr_unsupported_presents < OffPresents);
     s.hdr_supported.store(supported, std::memory_order_relaxed);
-    const bool wanted = supported && s.hdr.load(std::memory_order_relaxed);
+    const bool setting = s.hdr.load(std::memory_order_relaxed);
+    const bool wanted = supported && setting;
     // BB_HDR_SCENE_TEST=1: the gain maps are made with SDR output too (BB_FRAME_DUMP_TRIGGER
     // saves them as hdr_gain), for checking them on a display without HDR.
     static const bool scene_test = [] {
@@ -1008,7 +1014,9 @@ void Presenter::UpdateHdrOutput() {
     }();
     scene_hdr.SetActive((wanted || scene_test) && s.hdr_scene.load(std::memory_order_relaxed));
     if (wanted != swapchain.GetHDR()) {
-        std::printf("Presenter: HDR output %s\n", wanted ? "on (HDR10)" : "off (SDR)");
+        std::printf("Presenter: HDR output %s (setting %d, display HDR %d, HDR10 swapchain %d)\n",
+                    wanted ? "on (HDR10)" : "off (SDR)", int(setting), int(display_hdr),
+                    int(swapchain.HasHDR()));
         swapchain.SetHDR(wanted);
     }
 }
