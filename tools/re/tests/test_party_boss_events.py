@@ -206,3 +206,32 @@ class GuestsEarnInsight(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class GuestsUseTheDreamShops(unittest.TestCase):
+    """Kaniel 2026-10-11: guests could not use the insight shop, and often did not see the
+    Hunter Chief Emblem (10,000 echoes) at the messengers. The insight messenger (m21_00 event
+    12105043, 2100219) wakes, and sets the flag its talk opens the shop on (12105045), only for a
+    non-client; the messengers' shop lines (event 12101000, slots 0-9: flags 12101000-12101009,
+    e.g. 12101004 for the emblem) are kept in step with a host whose Dream is not there."""
+
+    DREAM = 'm21_00_00_00.emevd.dcx'
+
+    def test_the_insight_messenger_wakes_for_a_guest(self):
+        wake = [(2000, 2, struct.pack('<i', 0)),
+                (1003, 101, struct.pack('<BBxxi', 0, 1, 12100320)),
+                (1003, 6, struct.pack('<BBxx', 0, 1)),
+                (2003, 2, struct.pack('<iBxxx', 12105045, 1))]
+        patched, count = tool.patch_client_events(build_emevd({12105043: wake}),
+                                                  tool.CLIENT_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12105043][2][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(count, 1)
+
+    def test_the_shop_lines_unlock_in_the_guests_own_dream(self):
+        lines = [(1003, 2, struct.pack('<BBBxi', 0, 1, 0, 0)),
+                 (3, 4, struct.pack('<BBxxiB', 0, 3, 0, 1)),
+                 (2004, 26, struct.pack('<ii', 0, 1))]
+        patched, count = tool.make_events_local(build_emevd({12101000: lines}),
+                                                tool.LOCAL_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12101000][0], (2000, 2, bytes(4)))
+        self.assertEqual(count, 1)
