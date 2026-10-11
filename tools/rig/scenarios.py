@@ -259,6 +259,19 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
+    "phantom-look": {
+        "about": "how a guest is drawn (Kaniel 2026-10-11: no blue phantom tint on guests): "
+                 "after the join each player dumps its own character and model and takes a "
+                 "picture; the guest's own character shows the tint",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 20", "dump self",
+                     "shot host-self", "wait 30"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 20", "dump self",
+                      "shot guest-self", "dump nearest", "wait 10"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 480,
+    },
     "hp-together": {
         "about": "both players hit one enemy in one world (after the join), then the host goes "
                  "to the Dream and back, then the guest, and both hit it again from their own "

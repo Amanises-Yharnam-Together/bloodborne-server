@@ -3583,6 +3583,26 @@ void InstallJoinAnywhere(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne join-anywhere patch: a party joins in any area");
 }
 
+// See QuietSummonBannerPatches: a party's joins show one banner, not two.
+void InstallQuietSummonBanners(u64 base, u64 image_size) {
+    const auto& patches = QuietSummonBannerPatches();
+    if (!party_controller) {
+        return;
+    }
+    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
+            return MatchesImage(base, image_size, patch);
+        })) {
+        LOG_ERROR(Debug, "Bloodborne summon banner patch signature mismatch; joins keep the "
+                         "chime banner");
+        return;
+    }
+    for (const auto& patch : patches) {
+        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
+                    patch.patched.size());
+    }
+    LOG_INFO(Debug, "Bloodborne summon banner patch: no chime banner before a join's own");
+}
+
 constexpr u64 LeaveLimitOffset = 0x0138A4A0;
 constexpr std::array<u8, 6> LeaveLimitPrologue{0x55, 0x48, 0x89, 0xE5, 0x53, 0x50};
 
@@ -4291,6 +4311,72 @@ void MakeEnemiesHarder() {
                          "Bloodborne harder enemies: the co-op boss HP bonus (SpEffect "
                          "7500-7503) is off in {} rows; bosses get x{} HP only",
                          rows, harder_enemies->hp);
+            }
+        }
+    }
+}
+
+// The text of message `id` the way the game shows it (MessageLookupOffset), or null.
+const char16_t* GameMessage(u64 repository, u32 category, s32 id) {
+    using Lookup =
+        const char16_t* PS4_SYSV_ABI (*)(u64 repository, u32 version, u32 category, s32 id);
+    return reinterpret_cast<Lookup>(image_base + MessageLookupOffset)(repository, 0, category, id);
+}
+
+// See PolishedMessages: writes each replacement over the English text the game holds. Returns
+// how many messages changed (0 once done, or for another language).
+std::size_t PolishMessages() {
+    const u64 repository = ReadValue<u64>(image_base + MsgRepositoryPointerOffset, 0);
+    if (repository < 0x10000 || !HasMemoryAccess(repository, 0x10, MemoryProt::CpuRead)) {
+        return 0;
+    }
+    std::size_t changed = 0;
+    for (const PolishedMessage& message : PolishedMessages()) {
+        // The network banners read the override category first, as the game does.
+        const char16_t* text = nullptr;
+        if (message.category == EventTextCategory) {
+            text = GameMessage(repository, EventTextOverrideCategory, message.id);
+        }
+        if (text == nullptr) {
+            text = GameMessage(repository, message.category, message.id);
+        }
+        const u64 address = reinterpret_cast<u64>(text);
+        const std::size_t capacity = message.original.size() + 1;
+        if (text == nullptr ||
+            !HasMemoryAccess(address, capacity * sizeof(char16_t), MemoryProt::CpuReadWrite)) {
+            continue;
+        }
+        const std::u16string_view current{text, message.original.size()};
+        if (text[message.original.size()] != u'\0' ||
+            PolishedText(message.category, message.id, current) != message.replacement) {
+            continue;
+        }
+        std::u16string written{message.replacement};
+        written.resize(capacity, u'\0');
+        std::memcpy(reinterpret_cast<void*>(address), written.data(),
+                    written.size() * sizeof(char16_t));
+        ++changed;
+    }
+    return changed;
+}
+
+// Multiplayer UI polish for a party (Kaniel 2026-10-11): Host/Guest text and no bell icons, in
+// the loaded message files and SpEffectParam. Checked every second: a reloaded file gets it
+// again.
+void PolishMultiplayerUi() {
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (!party_controller || now - last < std::chrono::seconds{1}) {
+        return;
+    }
+    last = now;
+    if (const std::size_t messages = PolishMessages(); messages != 0) {
+        LOG_INFO(Debug, "Bloodborne party UI: {} messages now say Host and Guest", messages);
+    }
+    if (const u64 effects = FindLoadedParam("SP_EFFECT_PARAM_ST"); effects != 0) {
+        if (const auto table = WritableParam(effects, 0x210)) {
+            if (const std::size_t rows = RemoveBellIcons(*table); rows != 0) {
+                LOG_INFO(Debug, "Bloodborne party UI: no bell icons ({} SpEffect rows)", rows);
             }
         }
     }
@@ -6445,6 +6531,7 @@ void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
     KeepGuestFullHp();
+    PolishMultiplayerUi();
     const bool in_session = InPartySession();
     // The boards go both ways in and out of a session (a guest on its own trip is out of one).
     const bool sharing = SharesWithParty(party_controller.has_value(), GetLocalPlayer() >= 0x10000);
@@ -10282,6 +10369,8 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         };
         dump("chr", found->character, 0x800);
         dump("ctrl", ReadValue<u64>(found->character, 0x18), 0x100);
+        // The model (draw flags at +0x114): how a phantom is drawn.
+        dump("model", ReadValue<u64>(found->character, 0x58), 0x400);
         const u64 modules = ReadValue<u64>(found->character, 0x3B0);
         dump("modules", modules, 0x100);
         // Each module's first bytes: what draws the character is in one of them.
@@ -11171,6 +11260,7 @@ void InstallSeamlessCoopPatches() {
     InstallHostDeathKeepsGuests(base, image_size);
     InstallBossClearKeepsSession(base, image_size);
     InstallJoinAnywhere(base, image_size);
+    InstallQuietSummonBanners(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
     InstallSeamlessTravel(base, image_size);
     InstallLampsAsCampfires(base, image_size);
