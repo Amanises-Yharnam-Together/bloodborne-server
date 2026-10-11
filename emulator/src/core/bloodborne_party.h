@@ -746,8 +746,10 @@ public:
     };
     // `active`: in the session with worlds apart (else nothing is posted or written, and the
     // counts start over when it is next active).
+    // `now_ms`: the clock for holding the damage of a member whose hits the game also sends (see
+    // SharedDamageHoldMs); 0 holds nothing.
     Step Update(u64 visit, bool active, std::span<const EnemyCopy> alive,
-                std::span<const EnemyHpReport> others);
+                std::span<const EnemyHpReport> others, s64 now_ms = 0);
 
 private:
     struct Track {
@@ -760,8 +762,14 @@ private:
     u64 visit = 0;
     bool active = false;
     std::map<u32, Track> tracks;
-    std::map<std::pair<u64, u32>, s32> written; // (other member's source, handle) -> taken
+    std::map<std::pair<u64, u32>, s32> written;    // (other member's source, handle) -> taken
+    std::map<std::pair<u64, u32>, s32> written_by; // of `written`, what the board wrote
+    std::map<std::pair<u64, u32>, s64> held_since; // a member's unwritten damage, held since
+    std::set<u64> game_sends; // sources whose hits the game sent here after a write of them
 };
+// A report can come straight over the P2P link before the game's own copy of the same hit; once
+// that happened for a member, its new damage waits this long for the game's copy.
+constexpr s64 SharedDamageHoldMs = 250;
 // In one world the game sends enemy HP from the host, but not an NPC's (rig 2026-10-10: the
 // host's Oedon Chapel NPC at 422 while the guest's showed 910). There the host posts the HP its
 // hurt characters have (EnemyHp.hp is HP, the report's source has HostHpReport set), and a guest
@@ -773,6 +781,31 @@ constexpr std::chrono::milliseconds HpBoardRound{100};
 // How long the HP board client waits before its next post: none when this member's own damage
 // changed (a hit), else a round.
 std::chrono::milliseconds HpBoardWait(bool own_damage_changed);
+// Enemy HP straight from game to game (Kaniel 2026-10-11): this member's HP board report also goes
+// to every room peer over the port's P2P transport, as a "SHAD" frame of DirectDamageType with the
+// map (the board's MemberMapState), at once on a change and again every DirectDamageResendMs. A
+// sender's last frame stands for DirectDamageLifeMs. The board stays underneath.
+constexpr u8 DirectDamageType = 0x30;
+constexpr s64 DirectDamageResendMs = 500;
+constexpr s64 DirectDamageLifeMs = 2'000;
+std::vector<u8> EncodeDirectDamage(u32 map, std::span<const u8> report);
+std::optional<MemberMapState> DecodeDirectDamage(std::span<const u8> frame);
+class DirectDamageInbox {
+public:
+    void Take(u64 sender, MemberMapState state, s64 now_ms);
+    // The fresh frames, newest first.
+    std::vector<MemberMapState> Fresh(s64 now_ms);
+
+private:
+    struct Received {
+        MemberMapState state;
+        s64 at = 0;
+    };
+    std::map<u64, Received> by_sender;
+};
+// One report per source from copies of it (direct and the board): per enemy the most damage, or
+// for HP from one world (HostHpReport) the least HP; in the order the sources first come.
+std::vector<EnemyHpReport> MergeEnemyHpReports(std::span<const EnemyHpReport> reports);
 // The game's hit (0x01A2A770, called through the victim's damage module): rdi the module (+0x08
 // the victim), rsi the attacker (null for none), rdx the hit. Hooked at its entry (HP before)
 // and at the return from its IsNoDead check once the hit is applied (r14 the module again).

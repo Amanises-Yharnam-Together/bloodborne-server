@@ -925,9 +925,10 @@ SCENARIOS = {
         "same_hp": ENEMY,
         "hp_sums_hits": ENEMY,
         # From a hit to the other games' bars, on average (0.47 s on a 200 ms board round, 0.30 s
-        # posting on the hit with 100 ms rounds; forest run 2026-10-11: the host's two-hit kills
-        # ended before the guests' bars moved).
-        "max_hp_lag": 0.4,
+        # posting on the hit with 100 ms rounds, then straight from game to game over the P2P
+        # link; forest run 2026-10-11: the host's two-hit kills ended before the guests' bars
+        # moved).
+        "max_hp_lag": 0.15,
         "expect": {"host": [r"enemy HP shared over the HP board"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
         "timeout": 1200,

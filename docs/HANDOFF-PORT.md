@@ -6,6 +6,32 @@ mechanic simpler or more reliable. No mixed parties (port and shadPS4 players ne
 leave/rejoin a session as a fix: everything is seamless. See docs/BBPORT.md for how the port and
 its co-op are wired, built, packaged and tested.
 
+## Damage straight from game to game, and the stuck third summon (2026-10-11 evening)
+
+- **Direct damage over the P2P link.** Each game's HP board report also goes to every room peer
+  over the port's own UDP transport (`p2p_sockets.cpp`: "SHAD" frames of type 0x30 on the
+  internal vport, `P2PCoopSendTo` / `P2PCoopRecvFrom`), at once when it changes and every 0.5 s
+  (`DirectDamageType`, `EncodeDirectDamage`). The peers are the room's live matching2 signaling
+  links (`GetActiveRoomPeers`, a snapshot the handshake thread takes; every member links to every
+  other). Frames are read every frame, only from those peers (`TakeDirectDamage`), kept by sender
+  for 2 s (`DirectDamageInbox`) and merged with the board's copies of the same reports
+  (`MergeEnemyHpReports`: most damage, least HP). A hit (or a frame) runs the enemy step on the
+  next frame (`enemy_step_due`). The board stays underneath. Rig hit3 lag from a hit to the other
+  bars: 0.52 s (200 ms board) -> 0.33 s (#18) -> 0.07 s.
+- **A report ahead of the game's own copy of a hit**: a guest's report reaches the host 0.1 s after
+  its hit, before the game's copy; the host wrote it and the game's hit took it again. When the
+  game's copy lands after a write, the write is given back (raised again), and that member's
+  damage is held `SharedDamageHoldMs` (250 ms) for the game's copy from then on (`game_sends`).
+- **The stuck third summon** (rig hit3 twice in a row): after the second guest's join the host's
+  searches got the first guest's sign 48 times and never claimed it. The host's summon queue
+  (`QueueInsert` 0x01875320: a map at [status+0x10] keyed by the prepared object's first u32,
+  entry byte +0x23) already had an entry for that sign's prepared object: the insert overwrote it
+  keeping +0x23 and queued nothing ([status+0x78] stays 0, so `RequestQueued` 0x01873605 never
+  runs). The QueueInsert trace now logs the key and any existing entry. Server fix: a sign shown
+  to one host `UnclaimedOffersBeforeNewId` (4) times without a claim shows a new id, i.e. a new
+  pending candidate on the host. Unit-tested; the rig runs after it joined in ~20 s without
+  needing it (the stall is intermittent).
+
 ## Double damage and duplicate enemies (Kaniel's friend run, 2026-10-11)
 
 - **A guest's hits counted twice.** After a trip each member runs its own copy of the map, but the

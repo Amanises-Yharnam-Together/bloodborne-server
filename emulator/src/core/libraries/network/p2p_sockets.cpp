@@ -48,6 +48,8 @@ enum class InternalChannel {
     Signaling,
     Control,
     Matching2,
+    // Seamless co-op's own frames between the games ("SHAD" type 0x30: enemy damage).
+    Coop,
 };
 
 struct QueuedPacket {
@@ -391,6 +393,8 @@ private:
             return control_queue;
         case InternalChannel::Matching2:
             return matching2_queue;
+        case InternalChannel::Coop:
+            return coop_queue;
         }
         return signaling_queue;
     }
@@ -402,6 +406,9 @@ private:
             }
             if (payload[4] == 0x10) {
                 return InternalChannel::Control;
+            }
+            if (payload[4] == 0x30) {
+                return InternalChannel::Coop;
             }
         }
         // STUN echo (6 bytes) and generic signaling 0x05/0x06/0x07 land here.
@@ -416,7 +423,12 @@ private:
         packet.payload.assign(payload, payload + size);
 
         std::lock_guard lock(internal_mutex);
-        QueueFor(channel).push_back(std::move(packet));
+        auto& queue = QueueFor(channel);
+        // Nobody may read the co-op queue (no party): keep only the newest frames.
+        if (channel == InternalChannel::Coop && queue.size() >= 256) {
+            queue.pop_front();
+        }
+        queue.push_back(std::move(packet));
     }
 
     void ReceiveMain() {
@@ -533,6 +545,7 @@ private:
     std::deque<QueuedPacket> signaling_queue;
     std::deque<QueuedPacket> control_queue;
     std::deque<QueuedPacket> matching2_queue;
+    std::deque<QueuedPacket> coop_queue;
 };
 
 int ReadIntegerOption(const void* optval, u32 optlen, int* out) {
@@ -1052,6 +1065,18 @@ int P2PMatching2SendTo(const void* data, u32 len, u32 dest_addr, u16 dest_port) 
 
 int P2PMatching2RecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {
     return P2PTransport::Instance().ReceiveInternal(InternalChannel::Matching2, buf, len, from_addr,
+                                                    from_port);
+}
+
+int P2PCoopSendTo(const void* data, u32 len, u32 dest_addr, u16 dest_port) {
+    if (!P2PTransport::Instance().IsReady()) {
+        return -1; // no session has started the transport
+    }
+    return P2PTransport::Instance().SendInternal(data, len, dest_addr, dest_port);
+}
+
+int P2PCoopRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {
+    return P2PTransport::Instance().ReceiveInternal(InternalChannel::Coop, buf, len, from_addr,
                                                     from_port);
 }
 

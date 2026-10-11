@@ -751,21 +751,23 @@ def hits_sum_problem(texts: dict[str, str], handle: str) -> str | None:
 
 def hp_board_lag(texts: dict[str, str], handle: str) -> float | None:
     """The average time (s, on the rig's one clock) from a role's own hit on the character to
-    the first lowering of it by the board in each other role, or None if none was lowered."""
+    the lowering of it by that hit's damage (3 HP either way, within 5 s) in each other role, or
+    None if none was lowered. A game the hit reached through the game itself lowers nothing."""
     pattern = re.escape(handle)
-    hits = {role: [float(t) for t in re.findall(
-        rf"hit on {pattern} by this player \S+: -?\d+ -> -?\d+ \(t=([\d.]+)\)", text)]
+    hits = {role: [(int(a) - int(b), float(t)) for a, b, t in re.findall(
+        rf"hit on {pattern} by this player \S+: (-?\d+) -> (-?\d+) \(t=([\d.]+)\)", text)]
         for role, text in texts.items()}
-    lowered = {role: [float(t) for t in re.findall(
-        rf"damage on map \S+: (?:\S+ \S+ )*?{pattern} -?\d+->-?\d+[^\n]*\(t=([\d.]+)\)", text)]
-        for role, text in texts.items()}
+    lowered = {role: [(int(a) - int(b), float(t)) for a, b, t in re.findall(
+        rf"damage on map \S+: (?:\S+ \S+ )*?{pattern} (-?\d+)->(-?\d+)[^\n]*\(t=([\d.]+)\)",
+        text)] for role, text in texts.items()}
     lags = []
-    for role, times in hits.items():
-        for at in times:
+    for role, own in hits.items():
+        for damage, at in own:
             for other, seen in lowered.items():
-                after = [t for t in seen if t >= at]
-                if other != role and after:
-                    lags.append(min(after) - at)
+                matching = [t for drop, t in seen
+                            if drop > 0 and abs(drop - damage) <= 3 and 0 <= t - at <= 5]
+                if other != role and matching:
+                    lags.append(min(matching) - at)
     return sum(lags) / len(lags) if lags else None
 
 

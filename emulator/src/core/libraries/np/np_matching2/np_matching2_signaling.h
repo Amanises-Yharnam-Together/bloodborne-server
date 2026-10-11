@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "common/types.h"
 #include "core/libraries/np/np_matching2/np_matching2.h"
 
@@ -11,6 +13,14 @@ namespace Libraries::Np::NpMatching2 {
 struct ContextObject;
 
 void StartMatching2HandshakeThread();
+
+// The room's peers with a live signaling link (network byte order), for seamless co-op's own
+// frames between the games.
+struct RoomPeerAddress {
+    u32 addr = 0;
+    u16 port = 0;
+};
+std::vector<RoomPeerAddress> GetActiveRoomPeers();
 void StopMatching2HandshakeThread();
 
 bool SendMatching2StunPing(const ContextObject& ctx);
