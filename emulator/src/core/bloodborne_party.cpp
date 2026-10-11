@@ -668,6 +668,10 @@ bool CarriesToGuestWorld(s32 flag) {
            !IsMapPickupFlag(flag);
 }
 
+bool GameThreadStalled(s64 now_ms, s64 last_tick_ms) {
+    return last_tick_ms > 0 && now_ms - last_tick_ms >= GameStallMs;
+}
+
 std::span<const s32> ShopLineFlags() {
     static constexpr std::array<s32, 10> flags{12101000, 12101001, 12101002, 12101003, 12101004,
                                                12101005, 12101006, 12101007, 12101008, 12101009};

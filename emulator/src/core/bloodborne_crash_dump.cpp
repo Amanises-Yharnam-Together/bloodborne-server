@@ -139,6 +139,61 @@ void WriteCrashReport(void* exception_pointers) {
     CloseHandle(dump);
 }
 
+void WriteFreezeReport(u32 thread_id, s64 stalled_ms) {
+    std::string text =
+        fmt::format("freeze: the game thread {} has not ticked for {} ms\n", thread_id, stalled_ms);
+    const HANDLE thread = OpenThread(
+        THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, FALSE, thread_id);
+    if (thread != nullptr && SuspendThread(thread) != static_cast<DWORD>(-1)) {
+        CONTEXT context{};
+        context.ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext(thread, &context)) {
+            const u64 base = crash_image_base.load();
+            const u64 size = crash_image_size.load();
+            text += fmt::format("rip={:#x}{} rsp={:#x} rbp={:#x}\n", context.Rip,
+                                context.Rip >= base && context.Rip < base + size
+                                    ? fmt::format(" (eboot+{:#x})", context.Rip - base)
+                                    : std::string{},
+                                context.Rsp, context.Rbp);
+            text += fmt::format("rax={:#x} rbx={:#x} rcx={:#x} rdx={:#x} rsi={:#x} rdi={:#x}\n"
+                                "r8={:#x} r9={:#x} r10={:#x} r11={:#x} r12={:#x} r13={:#x} "
+                                "r14={:#x} r15={:#x}\n",
+                                context.Rax, context.Rbx, context.Rcx, context.Rdx, context.Rsi,
+                                context.Rdi, context.R8, context.R9, context.R10, context.R11,
+                                context.R12, context.R13, context.R14, context.R15);
+            MEMORY_BASIC_INFORMATION region{};
+            if (VirtualQuery(reinterpret_cast<void*>(context.Rsp), &region, sizeof(region)) != 0 &&
+                region.State == MEM_COMMIT && (region.Protect & (PAGE_READWRITE | PAGE_READONLY))) {
+                const u64 end = reinterpret_cast<u64>(region.BaseAddress) + region.RegionSize;
+                const size_t count =
+                    static_cast<size_t>(std::min<u64>((end - context.Rsp) / 8, 2048));
+                const std::span words{reinterpret_cast<const u64*>(context.Rsp), count};
+                text += "stack:" + FormatGameAddresses(words, base, size, 48) + '\n';
+            }
+        }
+        ResumeThread(thread);
+    }
+    if (thread != nullptr) {
+        CloseHandle(thread);
+    }
+    const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+    const auto folder = Common::FS::GetUserPath(Common::FS::PathType::LogDir);
+    WriteFileText((folder / fmt::format("freeze-{}.txt", stamp)).wstring(), text);
+    const HANDLE dump =
+        CreateFileW((folder / fmt::format("freeze-{}.dmp", stamp)).c_str(), GENERIC_WRITE, 0,
+                    nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (dump == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    const auto type = static_cast<MINIDUMP_TYPE>(MiniDumpWithIndirectlyReferencedMemory |
+                                                 MiniDumpScanMemory | MiniDumpWithThreadInfo);
+    MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), dump, type, nullptr, nullptr,
+                      nullptr);
+    CloseHandle(dump);
+}
+
 void InstallCrashCatcher(u64 image_base, u64 image_size) {
     crash_image_base.store(image_base);
     crash_image_size.store(image_size);
@@ -149,6 +204,33 @@ void InstallCrashCatcher(u64 image_base, u64 image_size) {
 #else
 void InstallCrashCatcher(u64, u64) {}
 void WriteCrashReport(void*) {}
+void WriteFreezeReport(u32, s64) {}
 #endif
+
+namespace {
+std::atomic<s64> game_tick_ms{0};
+std::atomic<u32> game_thread_id{0};
+
+s64 NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+} // namespace
+
+void NoteGameThreadTick() {
+#ifdef _WIN32
+    game_thread_id.store(GetCurrentThreadId(), std::memory_order_relaxed);
+#endif
+    game_tick_ms.store(NowMs(), std::memory_order_release);
+}
+
+void ReportFreezeOnClose() {
+    const s64 last = game_tick_ms.load(std::memory_order_acquire);
+    const s64 now = NowMs();
+    if (GameThreadStalled(now, last)) {
+        WriteFreezeReport(game_thread_id.load(), now - last);
+    }
+}
 
 } // namespace Core::Bloodborne

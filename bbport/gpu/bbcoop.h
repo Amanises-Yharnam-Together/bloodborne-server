@@ -23,6 +23,10 @@ void bbcoop_install(unsigned char *image, uint64_t eboot_size, void *code, uint6
  * (user/log/crash-*.txt and .dmp). */
 void bbcoop_crash_report(void *exception_pointers);
 
+/* The window is closing: a game whose thread has stopped ticking writes a freeze report
+ * (user/log/freeze-*.txt and .dmp) first. */
+void bbcoop_window_closing(void);
+
 /* Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY, the rig's scripted tests): the PS4 pad buttons and the
  * sticks (lx, ly, rx, ry; 128 is centred) it holds now; 0 when it is off. */
 int bbcoop_autoplay_pad(uint32_t *buttons, uint8_t sticks[4]);

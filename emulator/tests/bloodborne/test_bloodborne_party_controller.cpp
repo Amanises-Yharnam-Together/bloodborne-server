@@ -933,6 +933,15 @@ TEST(BloodborneDreamShop, ShopLinesAreRecheckedOncePerSlot) {
     EXPECT_FALSE(RechecksShopLines(true, 2, false, 0)) << "loading";
 }
 
+// Kaniel 2026-10-12: the game stopped (no game-thread log for 30 s, the others' games dropped the
+// session) and he closed the window; nothing said where it hung. Closing a game whose thread has
+// not ticked for GameStallMs writes a freeze report.
+TEST(BloodborneFreezeReport, ClosingAStalledGameReportsTheFreeze) {
+    EXPECT_TRUE(GameThreadStalled(100'000, 100'000 - GameStallMs));
+    EXPECT_FALSE(GameThreadStalled(100'000, 100'000 - GameStallMs + 1)) << "ticking";
+    EXPECT_FALSE(GameThreadStalled(100'000, 0)) << "never ticked: the title screen, a load";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

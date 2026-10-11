@@ -107,6 +107,10 @@ extern "C" void bbcoop_crash_report(void* exception_pointers) {
     Core::Bloodborne::WriteCrashReport(exception_pointers);
 }
 
+extern "C" void bbcoop_window_closing(void) {
+    Core::Bloodborne::ReportFreezeOnClose();
+}
+
 extern "C" int bbcoop_autoplay_pad(uint32_t* buttons, uint8_t sticks[4]) {
     std::uint32_t held = 0;
     std::array<std::uint8_t, 4> moved{128, 128, 128, 128};

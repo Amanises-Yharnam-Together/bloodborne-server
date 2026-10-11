@@ -550,6 +550,9 @@ std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map);
 // so once per save slot, out of the Dream, they are cleared and the next Dream visit sets them
 // again from the player's own badges.
 std::span<const s32> ShopLineFlags();
+// A game thread that has not run the party tick for GameStallMs is stuck (a load ticks on).
+constexpr s64 GameStallMs = 5'000;
+bool GameThreadStalled(s64 now_ms, s64 last_tick_ms);
 bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 map);
 // Whether a load of the guest's world gets the kept world changes before its map items and
 // events: at home, and on a party trip (its own world loads while the session stays up).

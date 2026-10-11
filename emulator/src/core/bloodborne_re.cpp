@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_write_watch.h"
@@ -3479,6 +3480,7 @@ s32 SessionPlayers();
 void WatchSummonJoin();
 
 void TickPartyController() {
+    NoteGameThreadTick();
     TickAutoplay();
     TickPartyTrip();
     TickPlayersOnThisMap();
