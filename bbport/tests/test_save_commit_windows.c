@@ -1,0 +1,345 @@
+/* Save files (/savedataN) are written to a temporary copy and swapped in with one replace, so a
+ * crash or a failed replace keeps the previous save (upstream #64, Windows port).
+ * After configuring the GPU build: ninja -C out/gpu save-commit-test && out/gpu/save-commit-test.exe
+ * (that target embeds the UTF-8 manifest, which the non-ASCII case needs). Standalone, from the
+ * repository root in an MSYS2 CLANG64 shell (the non-ASCII case is then skipped):
+ * clang -std=c11 -O2 -Wall -Wextra -Werror -UNDEBUG -pthread -Isrc \
+ *   tests/test_save_commit_windows.c src/compat_win.c -lbcrypt -o out/save-commit-test.exe
+ */
+#include "../src/runtime_file.c"
+#include <assert.h>
+
+static int32_t guest_errno;
+int32_t *runtime_errno(void) { return &guest_errno; }
+int32_t runtime_guest_errno(int e) { return e; }
+void runtime_memory_note_write(uintptr_t address,uint64_t size) { (void)address; (void)size; }
+uintptr_t runtime_lookup(const RuntimeExport *table,size_t n,const char *name) {
+    for (size_t i=0;i<n;++i) if (!strcmp(table[i].name,name)) return (uintptr_t)table[i].function;
+    return 0;
+}
+
+enum { RDONLY=0, WRONLY=1, RDWR=2, CREAT=0x200, TRUNC=0x400 };
+
+static wchar_t *wide(const char *utf8) {
+    int n=MultiByteToWideChar(CP_UTF8,0,utf8,-1,NULL,0);
+    wchar_t *w=malloc((size_t)n*sizeof(wchar_t));
+    assert(w && MultiByteToWideChar(CP_UTF8,0,utf8,-1,w,n)==n);
+    return w;
+}
+static void put_file(const char *path,const char *text) {
+    wchar_t *w=wide(path);
+    HANDLE h=CreateFileW(w,GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+    assert(h!=INVALID_HANDLE_VALUE);
+    DWORD n; assert(WriteFile(h,text,(DWORD)strlen(text),&n,NULL) && n==strlen(text));
+    CloseHandle(h); free(w);
+}
+/* Contents of a host file, or "(missing)". */
+static const char *get_file(const char *path) {
+    static char buffer[4][256]; static int turn;
+    char *out=buffer[turn++&3];
+    wchar_t *w=wide(path);
+    HANDLE h=CreateFileW(w,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+    free(w);
+    if (h==INVALID_HANDLE_VALUE) { strcpy(out,"(missing)"); return out; }
+    DWORD n=0; assert(ReadFile(h,out,255,&n,NULL));
+    out[n]=0; CloseHandle(h);
+    return out;
+}
+static HANDLE hold_open(const char *path,DWORD share) {
+    wchar_t *w=wide(path);
+    HANDLE h=CreateFileW(w,GENERIC_READ,share,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+    free(w); assert(h!=INVALID_HANDLE_VALUE);
+    return h;
+}
+/* Number of ".bbtmp" files in a host directory (recursively not needed here). */
+static int count_temps(const char *dir) {
+    char pattern[1100]; snprintf(pattern,sizeof(pattern),"%s\\*",dir);
+    wchar_t *w=wide(pattern);
+    WIN32_FIND_DATAW find;
+    HANDLE h=FindFirstFileW(w,&find);
+    free(w);
+    int count=0;
+    if (h==INVALID_HANDLE_VALUE) return 0;
+    do {
+        size_t n=wcslen(find.cFileName);
+        if (n>6 && !wcscmp(find.cFileName+n-6,L".bbtmp")) ++count;
+    } while (FindNextFileW(h,&find));
+    FindClose(h);
+    return count;
+}
+/* Names the guest sees when it lists a directory, joined by '|'. */
+static const char *guest_listing(const char *guest_dir) {
+    static char names[1024];
+    int fd=(int)runtime_file_open(guest_dir,0,0); assert(fd>=3);
+    char buffer[4096]; int64_t base=0;
+    int64_t got=runtime_file_getdents(fd,buffer,sizeof(buffer),&base); assert(got>=0);
+    names[0]=0;
+    for (int64_t at=0; at<got;) {
+        uint16_t reclen; memcpy(&reclen,buffer+at+4,2);
+        char name[256]; size_t n=(unsigned char)buffer[at+7];
+        memcpy(name,buffer+at+8,n); name[n]=0;
+        if (names[0]) strcat(names,"|");
+        strcat(names,name);
+        at+=reclen;
+    }
+    assert(!runtime_file_close(fd));
+    return names;
+}
+static int has_name(const char *listing,const char *name) {
+    size_t n=strlen(name);
+    for (const char *p=listing; (p=strstr(p,name)); ++p)
+        if ((p==listing || p[-1]=='|') && (p[n]==0 || p[n]=='|')) return 1;
+    return 0;
+}
+static int64_t write_text(int fd,const char *text) { return runtime_file_write(fd,text,strlen(text)); }
+
+static char root[MAX_PATH],hostfile[MAX_PATH+64];
+static const char *host(const char *name) { snprintf(hostfile,sizeof(hostfile),"%s/%s",root,name); return hostfile; }
+
+typedef struct { HANDLE holder; DWORD delay_ms; } Release;
+static DWORD WINAPI release_later(void *arg) {
+    Release *r=arg; Sleep(r->delay_ms); CloseHandle(r->holder); return 0;
+}
+
+/* The cases below report every failed check instead of stopping at the first. */
+static int failed;
+#define CHECK(cond) do { if (!(cond)) { printf("  FAIL line %d: %s\n",__LINE__,#cond); ++failed; } } while (0)
+
+/* open(O_CREAT) of a missing file then close() leaves an empty file. */
+static void case_create_close(void) {
+    int fd=(int)runtime_file_open("/savedata0/created.dat",WRONLY|CREAT,0); CHECK(fd>=3);
+    CHECK(!runtime_file_close(fd));
+    CHECK(!strcmp(get_file(host("created.dat")),""));
+    GuestStat st; CHECK(runtime_file_stat("/savedata0/created.dat",&st)==0 && st.size==0);
+    CHECK(!count_temps(root));
+}
+/* open(O_TRUNC) of an existing file then close() leaves it empty. */
+static void case_trunc_close(void) {
+    put_file(host("trunc.dat"),"OLDOLD");
+    int fd=(int)runtime_file_open("/savedata0/trunc.dat",WRONLY|TRUNC,0); CHECK(fd>=3);
+    CHECK(!runtime_file_close(fd));
+    CHECK(!strcmp(get_file(host("trunc.dat")),""));
+    CHECK(!count_temps(root));
+}
+/* The game's save sequence: unlink the backup, rename the save to it, write a new save. */
+static void case_game_sequence(void) {
+    put_file(host("userdata0000"),"U1"); put_file(host("backup0000"),"B1");
+    CHECK(path_op("/savedata0/backup0000",2,0)==0);
+    CHECK(do_rename("/savedata0/userdata0000","/savedata0/backup0000")==0);
+    int fd=(int)runtime_file_open("/savedata0/userdata0000",WRONLY|CREAT|TRUNC,0); CHECK(fd>=3);
+    CHECK(write_text(fd,"U2")==2);
+    CHECK(!runtime_file_close(fd));
+    CHECK(!strcmp(get_file(host("userdata0000")),"U2") && !strcmp(get_file(host("backup0000")),"U1"));
+    CHECK(!count_temps(root));
+}
+/* The written data follows the file: a rename while a descriptor writes moves its pending commit. */
+static void case_rename_open_writer(void) {
+    put_file(host("ren.dat"),"OLD"); put_file(host("ren.bak"),"STALE");
+    int fd=(int)runtime_file_open("/savedata0/ren.dat",WRONLY|TRUNC,0); CHECK(fd>=3);
+    CHECK(write_text(fd,"WRITTEN")==7);
+    CHECK(do_rename("/savedata0/ren.dat","/savedata0/ren.bak")==0);
+    GuestStat st; CHECK(runtime_file_stat("/savedata0/ren.dat",&st)==-ENOENT);
+    CHECK(runtime_file_stat("/savedata0/ren.bak",&st)==0 && st.size==7);
+    CHECK(!runtime_file_close(fd));
+    CHECK(!strcmp(get_file(host("ren.dat")),"(missing)"));
+    CHECK(!strcmp(get_file(host("ren.bak")),"WRITTEN"));
+    CHECK(!count_temps(root));
+    /* A file that exists only as the writer's copy (created, nothing committed yet). */
+    fd=(int)runtime_file_open("/savedata0/new.dat",WRONLY|CREAT,0); CHECK(fd>=3);
+    CHECK(write_text(fd,"FRESH")==5);
+    CHECK(do_rename("/savedata0/new.dat","/savedata0/new.bak")==0);
+    CHECK(!runtime_file_close(fd));
+    CHECK(!strcmp(get_file(host("new.dat")),"(missing)") && !strcmp(get_file(host("new.bak")),"FRESH"));
+    /* Renaming another file over the name a writer has open orphans that writer. */
+    put_file(host("over.dat"),"OLD"); put_file(host("over.src"),"SOURCE");
+    fd=(int)runtime_file_open("/savedata0/over.dat",WRONLY|TRUNC,0); CHECK(fd>=3);
+    CHECK(write_text(fd,"ORPHAN")==6);
+    CHECK(do_rename("/savedata0/over.src","/savedata0/over.dat")==0);
+    CHECK(!runtime_file_close(fd));
+    CHECK(!strcmp(get_file(host("over.dat")),"SOURCE") && !count_temps(root));
+}
+/* Unlinking a file a descriptor still writes: the data goes nowhere, the name stays free. */
+static void case_unlink_open_writer(void) {
+    put_file(host("gone.dat"),"OLD");
+    int fd=(int)runtime_file_open("/savedata0/gone.dat",WRONLY|TRUNC,0); CHECK(fd>=3);
+    CHECK(write_text(fd,"WRITTEN")==7);
+    CHECK(path_op("/savedata0/gone.dat",2,0)==0);
+    GuestStat st; CHECK(runtime_file_stat("/savedata0/gone.dat",&st)==-ENOENT);
+    CHECK(!runtime_file_close(fd));
+    CHECK(!strcmp(get_file(host("gone.dat")),"(missing)") && !count_temps(root));
+    /* A file that exists only as the writer's copy. */
+    fd=(int)runtime_file_open("/savedata0/gone2.dat",WRONLY|CREAT,0); CHECK(fd>=3);
+    CHECK(write_text(fd,"WRITTEN")==7);
+    CHECK(path_op("/savedata0/gone2.dat",2,0)==0);
+    CHECK(!runtime_file_close(fd));
+    CHECK(!strcmp(get_file(host("gone2.dat")),"(missing)") && !count_temps(root));
+    /* Re-created under the same name after the unlink: only the new descriptor's data stays. */
+    put_file(host("again.dat"),"OLD");
+    int first=(int)runtime_file_open("/savedata0/again.dat",WRONLY|TRUNC,0); CHECK(first>=3);
+    CHECK(write_text(first,"FIRST")==5);
+    CHECK(path_op("/savedata0/again.dat",2,0)==0);
+    int second=(int)runtime_file_open("/savedata0/again.dat",WRONLY|CREAT|TRUNC,0); CHECK(second>=3);
+    CHECK(write_text(second,"SECOND")==6);
+    CHECK(!runtime_file_close(first));
+    CHECK(!runtime_file_close(second));
+    CHECK(!strcmp(get_file(host("again.dat")),"SECOND") && !count_temps(root));
+}
+
+int main(void) {
+    char temp[MAX_PATH];
+    DWORD length=GetTempPathA(sizeof(temp),temp);
+    assert(length>0 && length<sizeof(temp));
+    assert(GetTempFileNameA(temp,"bbs",0,root));
+    assert(DeleteFileA(root) && CreateDirectoryA(root,NULL));
+    for (char *p=root; *p; ++p) if (*p=='\\') *p='/';
+    assert(!runtime_file_mount("/savedata0",root));
+    char path[MAX_PATH+64];
+
+    /* 1. A new save appears in one step: nothing at the final name until the close, no leftovers. */
+    int fd=(int)runtime_file_open("/savedata0/slot.dat",WRONLY|CREAT|TRUNC,0); assert(fd>=3);
+    assert(write_text(fd,"NEW1")==4);
+    assert(!strcmp(get_file(host("slot.dat")),"(missing)"));
+    GuestStat st; assert(!runtime_file_stat("/savedata0/slot.dat",&st) && st.size==4); /* the game stats what it writes */
+    assert(count_temps(root)==1);
+    assert(!has_name(guest_listing("/savedata0"),"slot.dat.1.bbtmp") && !strstr(guest_listing("/savedata0"),"bbtmp"));
+    assert(!runtime_file_close(fd));
+    assert(!strcmp(get_file(host("slot.dat")),"NEW1") && !count_temps(root));
+    assert(has_name(guest_listing("/savedata0"),"slot.dat"));
+
+    /* 2. Overwrite: the old contents stay until the close replaces them. */
+    put_file(host("slot.dat"),"OLDOLDOLD");
+    fd=(int)runtime_file_open("/savedata0/slot.dat",WRONLY|TRUNC,0); assert(fd>=3);
+    assert(write_text(fd,"NEW2")==4);
+    assert(!strcmp(get_file(host("slot.dat")),"OLDOLDOLD"));
+    assert(!runtime_file_close(fd));
+    assert(!strcmp(get_file(host("slot.dat")),"NEW2") && !count_temps(root));
+
+    /* 3. Read-write open without truncation starts from the old contents; seeks, reads and
+     * truncation work on the copy; a read-only open by path sees the copy meanwhile. */
+    put_file(host("rw.dat"),"0123456789");
+    fd=(int)runtime_file_open("/savedata0/rw.dat",RDWR,0); assert(fd>=3);
+    char buffer[32] = {0};
+    assert(runtime_file_read(fd,buffer,4)==4 && !memcmp(buffer,"0123",4));
+    assert(runtime_file_lseek(fd,3,0)==3);
+    assert(write_text(fd,"ab")==2);
+    assert(runtime_file_lseek(fd,0,0)==0);
+    assert(runtime_file_read(fd,buffer,10)==10 && !memcmp(buffer,"012ab56789",10));
+    assert(!strcmp(get_file(host("rw.dat")),"0123456789"));
+    int reader=(int)runtime_file_open("/savedata0/rw.dat",RDONLY,0); assert(reader>=3);
+    assert(runtime_file_read(reader,buffer,10)==10 && !memcmp(buffer,"012ab56789",10));
+    assert(!runtime_file_close(reader));
+    assert(runtime_file_stat("/savedata0/rw.dat",&st)==0 && st.size==10);
+    assert(do_ftruncate(fd,8)==0);
+    assert(runtime_file_stat("/savedata0/rw.dat",&st)==0 && st.size==8);
+    assert(!runtime_file_close(fd));
+    assert(!strcmp(get_file(host("rw.dat")),"012ab567") && !count_temps(root));
+
+    /* 4. Opened for writing but never written: the file is untouched and no copy is left. */
+    put_file(host("idle.dat"),"KEEP");
+    fd=(int)runtime_file_open("/savedata0/idle.dat",WRONLY,0); assert(fd>=3);
+    assert(count_temps(root)==1);
+    assert(!runtime_file_close(fd));
+    assert(!strcmp(get_file(host("idle.dat")),"KEEP") && !count_temps(root));
+
+    /* 5. Copies a crash left behind are removed when the save directory is mounted. */
+    assert(CreateDirectoryA(host("sub"),NULL));
+    put_file(host("slot.dat.5.bbtmp"),"half"); put_file(host("sub/inner.dat.9.bbtmp"),"half");
+    put_file(host("sub/inner.dat"),"GOOD"); put_file(host("notatemp.bbtmp.txt"),"x");
+    runtime_file_unmount("/savedata0");
+    assert(!runtime_file_mount("/savedata0",root));
+    assert(!strcmp(get_file(host("slot.dat.5.bbtmp")),"(missing)") && !strcmp(get_file(host("sub/inner.dat.9.bbtmp")),"(missing)"));
+    assert(!strcmp(get_file(host("sub/inner.dat")),"GOOD") && !strcmp(get_file(host("notatemp.bbtmp.txt")),"x"));
+    assert(!strcmp(get_file(host("slot.dat")),"NEW2"));
+
+    /* The game mounts the same save again while another handle writes (SaveData mounts often):
+     * the copy that is open stays. */
+    fd=(int)runtime_file_open("/savedata0/slot.dat",WRONLY|TRUNC,0); assert(fd>=3);
+    assert(write_text(fd,"NEW5")==4 && count_temps(root)==1);
+    assert(!runtime_file_mount("/savedata0",root));
+    assert(count_temps(root)==1);
+    assert(!runtime_file_close(fd));
+    assert(!strcmp(get_file(host("slot.dat")),"NEW5") && !count_temps(root));
+    put_file(host("slot.dat"),"NEW2");
+
+    /* 6. Files outside /savedataN are written in place, as before. */
+    runtime_file_mount("/data",root);
+    fd=(int)runtime_file_open("/data/plain.dat",WRONLY|CREAT|TRUNC,0); assert(fd>=3);
+    assert(write_text(fd,"direct")==6 && count_temps(root)==0);
+    assert(!runtime_file_close(fd));
+    assert(!strcmp(get_file(host("plain.dat")),"direct"));
+    runtime_file_unmount("/data");
+
+    /* 7. A reader of the old save that is still open (the CRT default is no delete sharing,
+     * these opens allow it) does not stop the replace, and keeps reading the old contents. */
+    put_file(host("slot.dat"),"OLD7");
+    int old_reader=(int)runtime_file_open("/savedata0/slot.dat",RDONLY,0); assert(old_reader>=3);
+    fd=(int)runtime_file_open("/savedata0/slot.dat",WRONLY|TRUNC,0); assert(fd>=3);
+    assert(write_text(fd,"NEW7")==4);
+    unsigned retries_before=save_retries_total;
+    assert(!runtime_file_close(fd));
+    assert(!strcmp(get_file(host("slot.dat")),"NEW7") && save_retries_total==retries_before);
+    assert(runtime_file_read(old_reader,buffer,4)==4 && !memcmp(buffer,"OLD7",4));
+    assert(!runtime_file_close(old_reader));
+
+    /* 8. A replace that keeps failing (an outside program holds the old file without delete
+     * sharing): after the retries the old save is untouched, the close reports it, no copy is left. */
+    put_file(host("slot.dat"),"OLD8");
+    HANDLE outside=hold_open(host("slot.dat"),FILE_SHARE_READ|FILE_SHARE_WRITE);
+    fd=(int)runtime_file_open("/savedata0/slot.dat",WRONLY|TRUNC,0); assert(fd>=3);
+    assert(write_text(fd,"NEW8")==4);
+    retries_before=save_retries_total;
+    ULONGLONG started=GetTickCount64();
+    int64_t r=runtime_file_close(fd);
+    ULONGLONG waited=GetTickCount64()-started;
+    assert(r<0);
+    assert(waited>=1800 && waited<4000);
+    assert(save_retries_total>retries_before+3);
+    CloseHandle(outside);
+    assert(!strcmp(get_file(host("slot.dat")),"OLD8") && !count_temps(root));
+    assert(runtime_file_stat("/savedata0/slot.dat",&st)==0 && st.size==4); /* no longer mapped to the dropped copy */
+
+    /* 9. The same holder letting go in time: the retry succeeds. */
+    put_file(host("slot.dat"),"OLD9");
+    outside=hold_open(host("slot.dat"),FILE_SHARE_READ|FILE_SHARE_WRITE);
+    fd=(int)runtime_file_open("/savedata0/slot.dat",WRONLY|TRUNC,0); assert(fd>=3);
+    assert(write_text(fd,"NEW9")==4);
+    Release release={outside,400};
+    HANDLE thread=CreateThread(NULL,0,release_later,&release,0,NULL); assert(thread);
+    retries_before=save_retries_total;
+    started=GetTickCount64();
+    assert(!runtime_file_close(fd));
+    waited=GetTickCount64()-started;
+    WaitForSingleObject(thread,INFINITE); CloseHandle(thread);
+    assert(save_retries_total>retries_before && waited<1900);
+    assert(!strcmp(get_file(host("slot.dat")),"NEW9") && !count_temps(root));
+
+    /* 10. Non-ASCII names (the manifest selects the UTF-8 code page for the narrow calls). */
+    if (GetACP()==CP_UTF8) {
+        snprintf(path,sizeof(path),"%s/%s",root,"sa\xc3\xb1" "e-\xe6\x97\xa5\xe6\x9c\xac");
+        wchar_t *wd=wide(path); assert(CreateDirectoryW(wd,NULL)); free(wd);
+        runtime_file_mount("/savedata1",path);
+        put_file(host("sa\xc3\xb1" "e-\xe6\x97\xa5\xe6\x9c\xac/slot.dat"),"OLD10");
+        fd=(int)runtime_file_open("/savedata1/slot.dat",WRONLY|TRUNC,0); assert(fd>=3);
+        assert(write_text(fd,"NEW10")==5);
+        assert(!strcmp(get_file(host("sa\xc3\xb1" "e-\xe6\x97\xa5\xe6\x9c\xac/slot.dat")),"OLD10"));
+        assert(!runtime_file_close(fd));
+        assert(!strcmp(get_file(host("sa\xc3\xb1" "e-\xe6\x97\xa5\xe6\x9c\xac/slot.dat")),"NEW10"));
+        assert(!count_temps(path));
+        runtime_file_unmount("/savedata1");
+        puts("  non-ASCII save directory: PASS");
+    } else puts("  non-ASCII save directory: SKIPPED (no UTF-8 manifest in this build; use ninja save-commit-test)");
+
+    /* 11. A descriptor that is never written still creates or truncates the file. */
+    case_create_close();
+    case_trunc_close();
+
+    /* 12. Rename and unlink by path while a descriptor writes the file. */
+    case_game_sequence();
+    case_rename_open_writer();
+    case_unlink_open_writer();
+
+    runtime_file_unmount("/savedata0");
+    if (failed) { printf("Save files: %d check(s) FAILED\n",failed); return 1; }
+    puts("Save files: temporary copy and one replace, failed replace keeps the old save, retries, stale copies PASS");
+    return 0;
+}

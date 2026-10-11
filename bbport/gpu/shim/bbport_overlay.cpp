@@ -86,6 +86,11 @@ std::mutex imgui_mutex; // the ImGui context: window thread (input) and present 
 bool initialized = false;
 std::atomic<bool> menu_open{false};
 bool l3_down = false, r3_down = false;
+// L3+R3: a tap toggles the settings menu (on release), a hold opens the quit box (Tick).
+constexpr auto quit_hold = std::chrono::milliseconds(1500);
+std::chrono::steady_clock::time_point combo_since{};
+bool combo_held = false, combo_fired = false;
+std::atomic<bool> quit_open{false};
 bool dirty = false; // settings changed while open: saved on close
 float base_scale = 1.0f;
 ImFont* sans_font = nullptr;
@@ -104,20 +109,24 @@ float frame_ms_avg = 0.0f;
 
 float PixelDensity(SDL_WindowID id);
 
+// The system cursor shows over the menu (window.cpp); ImGui learns where it is now, not at the
+// next motion: mouse motion is not passed on while the menu is closed.
+void SyncMousePos() {
+    if (SDL_Window* window = SDL_GetMouseFocus()) {
+        float x = 0.0f, y = 0.0f;
+        SDL_GetMouseState(&x, &y);
+        const float density = PixelDensity(SDL_GetWindowID(window));
+        ImGui::GetIO().AddMousePosEvent(x * density, y * density);
+    }
+}
+
 void SetOpen(bool value) {
     if (menu_open.exchange(value) == value) {
         return;
     }
-    // The system cursor shows over the menu (window.cpp); ImGui learns where it is now, not at
-    // the next motion: mouse motion is not passed on while the menu is closed.
     if (value) {
         focus_request = true;
-        if (SDL_Window* window = SDL_GetMouseFocus()) {
-            float x = 0.0f, y = 0.0f;
-            SDL_GetMouseState(&x, &y);
-            const float density = PixelDensity(SDL_GetWindowID(window));
-            ImGui::GetIO().AddMousePosEvent(x * density, y * density);
-        }
+        SyncMousePos();
     }
     if (!value && dirty) {
         dirty = false;
@@ -1037,6 +1046,15 @@ void Menu() {
             runtime_restart();
         }
     }
+    ImGui::Spacing();
+    if (Row("quit", T("Quit to desktop", "Выйти на рабочий стол"), nullptr,
+            T("Asks first: progress since the last autosave is lost. Holding L3 + R3 asks too.",
+              "Сначала спросит: прогресс после последнего автосохранения теряется. Удержание L3 + R3 "
+              "тоже спрашивает."),
+            true) != 0) {
+        SetOpen(false);
+        quit_open = true;
+    }
     // Up / down: the next enabled row (also off a row that became disabled).
     if (state.rows != 0) {
         int focus = std::clamp(state.focus, 0, state.rows - 1);
@@ -1086,9 +1104,9 @@ void Menu() {
     // Controls.
     ImGui::PushFont(sans_font, 15.0f);
     const char* controls = T("Enter / Cross: change     Left / Right: value     Q / E, L1 / R1: tabs     "
-                             "Esc / Circle: close     Insert, L3 + R3: menu",
+                             "Esc / Circle: close     Insert, L3 + R3: menu     hold L3 + R3: quit",
                              "Enter / Крест: изменить     Влево / Вправо: значение     Q / E, L1 / R1: "
-                             "вкладки     Esc / Круг: закрыть     Insert, L3 + R3: меню");
+                             "вкладки     Esc / Круг: закрыть     Insert, L3 + R3: меню     удерживать L3 + R3: выход");
     const ImVec2 cs = ImGui::CalcTextSize(controls);
     draw->AddText(ImVec2(win.x + (size.x - cs.x) * 0.5f, win.y + size.y - S(40.0f)), Gold(0.65f), controls);
     ImGui::PopFont();
@@ -1128,6 +1146,104 @@ void FpsCounter() {
                     upscaler_name);
     }
     ImGui::End();
+}
+
+// Hold L3 + R3, or the menu's Quit row: asks before quitting, so a stray press does not drop
+// progress since the last autosave. The quit goes through the window thread's close path, which
+// runs the shutdown hooks before exiting. Cancel has the focus when the box opens.
+void QuitBox() {
+    using namespace Ui;
+    static int choice = 0; // 0 Cancel, 1 Quit
+    static int last_frame = -2;
+    if (ImGui::GetFrameCount() != last_frame + 1) {
+        choice = 0;
+    }
+    last_frame = ImGui::GetFrameCount();
+    const auto pressed = [](std::initializer_list<ImGuiKey> keys) {
+        for (const ImGuiKey key : keys) {
+            if (ImGui::IsKeyPressed(key, false)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (pressed({ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight,
+                 ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight, ImGuiKey_Tab})) {
+        choice = 1 - choice;
+    }
+    bool activate = pressed({ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space, ImGuiKey_GamepadFaceDown});
+    if (pressed({ImGuiKey_GamepadFaceRight})) {
+        choice = 0;
+        activate = true;
+    }
+
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 165));
+    const ImVec2 size(std::min(S(620.0f), display.x - S(40.0f)), S(230.0f));
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.035f, 0.032f, 0.028f, 0.94f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##quit", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 win = ImGui::GetWindowPos();
+    const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
+    Ornament(draw, x0, x1, win.y + S(10.0f));
+    Ornament(draw, x0, x1, win.y + size.y - S(10.0f));
+
+    ImGui::PushFont(serif_font, 30.0f);
+    const char* title = T("Quit to desktop?", "Выйти на рабочий стол?");
+    const ImVec2 ts = ImGui::CalcTextSize(title);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(36.0f)), Bright(), title);
+    ImGui::PopFont();
+    ImGui::PushFont(serif_font, 17.0f);
+    const char* note = T("Progress since the last autosave is lost.",
+                         "Прогресс после последнего автосохранения будет потерян.");
+    const ImVec2 ns = ImGui::CalcTextSize(note);
+    draw->AddText(ImVec2(win.x + (size.x - ns.x) * 0.5f, win.y + S(88.0f)), Plain(0.85f), note);
+    ImGui::PopFont();
+
+    ImGui::PushFont(serif_font, 24.0f);
+    const char* labels[2] = {T("Cancel", "Отмена"), T("Quit", "Выйти")};
+    const float gap = S(90.0f);
+    const float w0 = ImGui::CalcTextSize(labels[0]).x, w1 = ImGui::CalcTextSize(labels[1]).x;
+    float x = win.x + (size.x - (w0 + gap + w1)) * 0.5f;
+    const float y = win.y + S(140.0f);
+    for (int i = 0; i < 2; ++i) {
+        const float w = i == 0 ? w0 : w1;
+        ImGui::SetCursorScreenPos(ImVec2(x - S(10.0f), y - S(4.0f)));
+        ImGui::PushID(i);
+        if (ImGui::InvisibleButton("##quit_choice", ImVec2(w + S(20.0f), S(40.0f)))) {
+            choice = i;
+            activate = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            choice = i;
+        }
+        ImGui::PopID();
+        draw->AddText(ImVec2(x, y), i == choice ? Bright() : Dim(), labels[i]);
+        if (i == choice) {
+            draw->AddLine(ImVec2(x - S(6.0f), y + S(33.0f)), ImVec2(x + w + S(6.0f), y + S(33.0f)), Gold(0.9f),
+                          S(1.5f));
+        }
+        x += w + gap;
+    }
+    ImGui::PopFont();
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+
+    if (activate) {
+        if (choice == 1) {
+            BbSettings::Save();
+            SDL_Event quit{};
+            quit.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&quit);
+        }
+        quit_open = false;
+    }
 }
 
 void TextPrompt() {
@@ -1619,7 +1735,7 @@ bool HandleEvent(const SDL_Event& event) {
         return false;
     }
     ImGuiIO& io = ImGui::GetIO();
-    const bool is_open = menu_open;
+    const bool is_open = menu_open || quit_open;
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
@@ -1629,7 +1745,8 @@ bool HandleEvent(const SDL_Event& event) {
         const bool insert = event.key.key == SDLK_INSERT ||
                             (event.key.scancode == SDL_SCANCODE_KP_0 && !(event.key.mod & SDL_KMOD_NUM));
         if (down && !event.key.repeat && (insert || (is_open && event.key.key == SDLK_ESCAPE))) {
-            SetOpen(insert ? !is_open : false);
+            quit_open = false;
+            SetOpen(insert && !is_open);
             return true;
         }
         if (!is_open) {
@@ -1653,13 +1770,24 @@ bool HandleEvent(const SDL_Event& event) {
             r3_down = down;
         }
         if (down && l3_down && r3_down) {
-            SetOpen(!is_open);
+            combo_held = true;
+            combo_fired = false;
+            combo_since = std::chrono::steady_clock::now();
+            return true;
+        }
+        if (!down && combo_held) {
+            combo_held = false;
+            if (!combo_fired) { // a tap: toggles the settings menu, or closes the quit box
+                quit_open = false;
+                SetOpen(!is_open);
+            }
             return true;
         }
         if (!is_open) {
             return false;
         }
         if (down && button == SDL_GAMEPAD_BUTTON_EAST) { // Circle: back to the game
+            quit_open = false;
             SetOpen(false);
             return true;
         }
@@ -1712,16 +1840,88 @@ bool HandleEvent(const SDL_Event& event) {
 
 bool Visible() {
     const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps || party);
+    return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party);
 }
 
 bool MenuOpen() {
-    return menu_open;
+    return menu_open || quit_open;
 }
 
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
-    return menu_open || prompt_active;
+    return menu_open || quit_open || prompt_active;
+}
+
+void Tick() {
+    std::scoped_lock lock{imgui_mutex};
+    if (initialized && combo_held && !combo_fired &&
+        std::chrono::steady_clock::now() - combo_since >= quit_hold) {
+        combo_fired = true;
+        SetOpen(false);
+        quit_open = true;
+        SyncMousePos();
+    }
+}
+
+void TestTick() {
+    // BB_TEST_L3R3=<seconds>:<held seconds>[,...]: presses L3+R3 through the SDL event queue, so
+    // a harness run exercises the tap (settings menu) and the hold (quit box) without a pad.
+    static std::vector<std::pair<double, bool>> presses = [] {
+        std::vector<std::pair<double, bool>> parsed;
+        const char* env = std::getenv("BB_TEST_L3R3");
+        for (const char* at = env; at && *at;) {
+            char* end = nullptr;
+            const double start = std::strtod(at, &end);
+            if (end == at || *end != ':') {
+                break;
+            }
+            const double held = std::strtod(end + 1, &end);
+            parsed.emplace_back(start, true);
+            parsed.emplace_back(start + held, false);
+            at = *end == ',' ? end + 1 : end;
+        }
+        return parsed;
+    }();
+    static const auto test_start = std::chrono::steady_clock::now();
+    const double elapsed =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - test_start).count();
+    while (initialized && !presses.empty() && elapsed >= presses.front().first) {
+        const bool down = presses.front().second;
+        presses.erase(presses.begin());
+        for (const u8 button : {SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK}) {
+            SDL_Event event{};
+            event.type = down ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
+            event.gbutton.button = button;
+            event.gbutton.down = down;
+            SDL_PushEvent(&event);
+        }
+        std::printf("Overlay: test L3+R3 %s at %.1f s\n", down ? "down" : "up", elapsed);
+    }
+
+    static std::vector<double> times = [] {
+        std::vector<double> parsed;
+        const char* env = std::getenv("BB_TEST_OVERLAY_AT");
+        for (const char* at = env; at && *at;) {
+            char* end = nullptr;
+            const double seconds = std::strtod(at, &end);
+            if (end == at) {
+                break;
+            }
+            parsed.push_back(seconds);
+            at = *end == ',' ? end + 1 : end;
+        }
+        return parsed;
+    }();
+    static const auto start = std::chrono::steady_clock::now();
+    if (times.empty() || !initialized) {
+        return;
+    }
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    while (!times.empty() && now >= times.front()) {
+        times.erase(times.begin());
+        SetOpen(!menu_open);
+        std::printf("Overlay: test toggle at %.1f s, menu %s\n", now, menu_open ? "open" : "closed");
+    }
 }
 
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, vk::Rect2D game) {
@@ -1765,6 +1965,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     }
     if (menu_open) {
         Menu();
+    }
+    if (quit_open) {
+        QuitBox();
     }
     if (BbSettings::Get().show_fps && !menu_open) {
         FpsCounter();

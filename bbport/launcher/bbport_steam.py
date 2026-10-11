@@ -1,9 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Adds the game to Steam as a non-Steam shortcut (Steam's userdata/<id>/config/shortcuts.vdf).
 
 shortcuts.vdf is Valve's binary KeyValues: a type byte (0 = map, 1 = string, 2 = int32,
 7 = uint64), a NUL-terminated key, then the value; 8 ends a map. The file holds one map,
 "shortcuts", whose entries are maps named "0", "1", ...
+
+Based on launcher/bbport_steam.py of Supermedo/bloodborne_pc (commit e076119, GPL-2.0-or-later);
+Steam has to be closed (it rewrites the file as it exits), the first backup is kept, and the file is
+replaced in one step.
 """
+import ctypes
 import os
 from pathlib import Path
 import struct
@@ -30,10 +36,11 @@ def parse(data, at=0):
             value, at = parse(data, at)
         elif kind == STRING:
             value, at = _cstring(data, at)
-        elif kind == INT32:
-            value, at = struct.unpack_from('<i', data, at)[0], at + 4
-        elif kind == UINT64:
-            value, at = struct.unpack_from('<Q', data, at)[0], at + 8
+        elif kind in (INT32, UINT64):
+            fmt, size = ('<i', 4) if kind == INT32 else ('<Q', 8)
+            if at + size > len(data):
+                raise ValueError('shortcuts.vdf ends inside a number')
+            value, at = struct.unpack_from(fmt, data, at)[0], at + size
         else:
             raise ValueError(f'unknown field type {kind} in shortcuts.vdf')
         items.append((kind, key, value))
@@ -75,8 +82,11 @@ def entry(name, exe, start_dir, icon, options=''):
 
 
 def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
-    """Adds the shortcut to one shortcuts.vdf, or updates the entry that starts the same exe.
-    Returns 'added' or 'updated'. A copy of the old file is kept as shortcuts.vdf.bak."""
+    """Adds the shortcut to one shortcuts.vdf, or updates the entry with the same exe and name (the two
+    Steam makes its id of; in a source tree the exe is python(w).exe, which other shortcuts may use too,
+    so the exe alone is not enough). Returns 'added' or 'updated'. The file as it was before the first change is kept as
+    shortcuts.vdf.bak (a later change does not replace it). Raises OSError or ValueError, and then
+    leaves the file as it was."""
     vdf_path = Path(vdf_path)
     data = vdf_path.read_bytes() if vdf_path.exists() else b''
     root = parse(data)[0] if data else []
@@ -88,21 +98,25 @@ def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
     target = f'"{exe}"'.lower()
     for index, (kind, key, value) in enumerate(shortcuts):
         fields = {k.lower(): v for _t, k, v in value} if kind == MAP else {}
-        if str(fields.get('exe', '')).lower() == target:
+        if str(fields.get('exe', '')).lower() == target and fields.get('appname') == name:
             # Keep what Steam or the player added (play time, tags).
-            kept = {k.lower() for k in ('LastPlayTime', 'tags')}
+            kept = {'lastplaytime', 'tags'}
             old = {k.lower(): (t, k, v) for t, k, v in value}
             shortcuts[index] = (MAP, key, [old[k.lower()] if k.lower() in kept and k.lower() in old else (t, k, v)
                                             for t, k, v in new])
             result = 'updated'
             break
     else:
-        shortcuts.append((MAP, str(len(shortcuts)), new))
+        used = {key for _kind, key, _value in shortcuts}  # the keys need not be a run 0..n-1
+        shortcuts.append((MAP, str(next(n for n in range(len(used) + 1) if str(n) not in used)), new))
         result = 'added'
-    if data:
-        vdf_path.with_name(vdf_path.name + '.bak').write_bytes(data)
+    backup = vdf_path.with_name(vdf_path.name + '.bak')
+    if data and not backup.exists():
+        backup.write_bytes(data)
     vdf_path.parent.mkdir(parents=True, exist_ok=True)
-    vdf_path.write_bytes(dump(root) + bytes([END]))
+    partial = vdf_path.with_name(vdf_path.name + '.tmp')
+    partial.write_bytes(dump(root) + bytes([END]))
+    os.replace(partial, vdf_path)
     return result
 
 
@@ -125,20 +139,47 @@ def user_configs(steam):
 
 
 def steam_running():
-    import subprocess
-    result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq steam.exe', '/NH'], capture_output=True,
-                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    return b'steam.exe' in result.stdout.lower()
+    """Whether steam.exe is in the process list (read from a snapshot, no helper program started):
+    True or False, or None when the list could not be read (then nothing is known)."""
+    from ctypes import wintypes
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD), ('th32ProcessID', wintypes.DWORD),
+                    ('th32DefaultHeapID', ctypes.c_void_p), ('th32ModuleID', wintypes.DWORD),
+                    ('cntThreads', wintypes.DWORD), ('th32ParentProcessID', wintypes.DWORD),
+                    ('pcPriClassBase', ctypes.c_long), ('dwFlags', wintypes.DWORD),
+                    ('szExeFile', wintypes.WCHAR * 260)]
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.Process32FirstW.argtypes = kernel32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(ProcessEntry)]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot in (None, ctypes.c_void_p(-1).value):
+        return None
+    try:
+        found = ProcessEntry()
+        found.dwSize = ctypes.sizeof(ProcessEntry)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(found))
+        while more:
+            if found.szExeFile.lower() == 'steam.exe':
+                return True
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(found))
+        return False
+    finally:
+        kernel32.CloseHandle(snapshot)
 
 
-if __name__ == '__main__':  # self-test on a temporary file
-    import tempfile
-    with tempfile.TemporaryDirectory() as folder:
-        vdf = Path(folder) / 'shortcuts.vdf'
-        print(add_shortcut(vdf, 'Bloodborne', r'C:\Games\bb\Play Bloodborne.exe', r'C:\Games\bb', 'x.exe'))
-        print(add_shortcut(vdf, 'Other', r'C:\Other\o.exe', r'C:\Other', ''))
-        print(add_shortcut(vdf, 'Bloodborne', r'C:\Games\bb\Play Bloodborne.exe', r'C:\Games\bb', 'y.exe'))
-        root = parse(vdf.read_bytes())[0]
-        print([[f for f in e[2] if f[1] in ('AppName', 'icon', 'appid')] for e in root[0][2]])
-        assert dump(root) + bytes([END]) == vdf.read_bytes()
-    print(os.path.basename(__file__), 'ok')
+def add_to_accounts(steam, name, exe, start_dir, icon, options=''):
+    """Adds the shortcut for every Steam account of STEAM (its install folder). Returns (done, failed):
+    done lists (shortcuts.vdf path, 'added' or 'updated'), failed lists (path, the error); a file that
+    cannot be written is left as it was and does not stop the others."""
+    done, failed = [], []
+    for config in user_configs(steam):
+        path = config / 'shortcuts.vdf'
+        try:
+            done.append((path, add_shortcut(path, name, exe, start_dir, icon, options)))
+        except (OSError, ValueError) as error:
+            failed.append((path, error))
+    return done, failed

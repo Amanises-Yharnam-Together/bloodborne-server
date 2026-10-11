@@ -18,6 +18,7 @@ import sys
 import time
 from pathlib import Path
 from bbport_assets import fsr411_problem
+from bbport_controls import CONTROLS  # input, label, default keys and buttons; the Windows launcher shares it
 from bbport_i18n import language, set_language, tr
 
 import gi
@@ -93,7 +94,7 @@ EFFECTS = [
     ("effect_dynamic_shadows", "Тени от динамических источников", True),
     ("effect_ssr", "Отражения SSR (не было в игре)", False),
     ("skip_intro", "Пропуск заставок при запуске", False),
-    ("debug_camera", "Свободная камера (Cross + L3 / Space + Z)", False),
+    ("debug_camera", "Свободная камера (Cross + L3 / E + C)", False),
     ("debug_menu", "Debug menu (левый touchpad / Tab; нужны шрифты)", False),
 ]
 MODEL_LOD = [("Как в игре", "0"), ("Максимальная (-2)", "-2"), ("Ниже (1)", "1"),
@@ -343,37 +344,6 @@ def combo_value(row):
     return row.values[row.get_selected()]
 
 
-# Controls (runtime_pad.c): input, label, default keyboard keys, default gamepad buttons (SDL names).
-# bbport.ini key.<input>= / pad.<input>= replace a default; no line keeps it.
-CONTROLS = [
-    ("cross", "Крест", "Space", "a"),
-    ("circle", "Круг", "Left Shift", "b"),
-    ("square", "Квадрат", "E", "x"),
-    ("triangle", "Треугольник", "Q", "y"),
-    ("l1", "L1", "1", "leftshoulder"),
-    ("r1", "R1", "3", "rightshoulder"),
-    ("l2", "L2", "R", "lefttrigger"),
-    ("r2", "R2", "F", "righttrigger"),
-    ("l3", "L3", "Z", "leftstick"),
-    ("r3", "R3", "C", "rightstick"),
-    ("options", "Options", "Return", "start"),
-    ("touchpad", "Тачпад, левая половина (жесты)", "Tab", "back, touchpad"),
-    ("touchpad_right", "Тачпад, правая половина (личные вещи)", "Backspace", ""),
-    ("up", "Крестовина вверх", "I", "dpup"),
-    ("down", "Крестовина вниз", "K", "dpdown"),
-    ("left", "Крестовина влево", "J", "dpleft"),
-    ("right", "Крестовина вправо", "L", "dpright"),
-    ("move_up", "Движение вперёд", "W", None),
-    ("move_down", "Движение назад", "S", None),
-    ("move_left", "Движение влево", "A", None),
-    ("move_right", "Движение вправо", "D", None),
-    ("look_up", "Камера вверх", "Up", None),
-    ("look_down", "Камера вниз", "Down", None),
-    ("look_left", "Камера влево", "Left", None),
-    ("look_right", "Камера вправо", "Right", None),
-]
-
-
 def connected_gamepads():
     """(GUID, name) of the connected gamepads (bb-gpu-capabilities --gamepads), [] if unknown."""
     tool = PORT_DIR / ("bin" if PACKAGED else "out") / "bb-gpu-capabilities"
@@ -392,11 +362,12 @@ def connected_displays():
         run = subprocess.run([str(tool), "--displays"], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return []
-    rows = [line.split("\t") for line in run.stdout.splitlines() if line.count("\t") == 2]
-    names = [name for name, _, _ in rows]
-    return [(name if names.count(name) == 1 else str(number),
+    # "number<tab>name<tab>WxH<tab>refresh Hz<tab>primary" per monitor (tools/gpu_capabilities.c)
+    rows = [line.split("\t") for line in run.stdout.splitlines() if line.count("\t") == 4]
+    names = [name for _, name, _, _, _ in rows]
+    return [(name if names.count(name) == 1 else number,
              f"{number}: {name} ({size})" + (tr(", основной") if primary == "1" else ""))
-            for number, (name, size, primary) in enumerate(rows, 1)]
+            for number, name, size, _, primary in rows]
 
 
 class FolderList:

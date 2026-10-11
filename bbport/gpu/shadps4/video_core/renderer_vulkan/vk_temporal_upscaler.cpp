@@ -180,7 +180,7 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
       runtime{runtime_}, camera_motion{camera_motion_}, scene_targets{scene_targets_} {
     // Reject unsupported shaders before allocating resources or recording a frame.
     BbSettings::ConfigureUpscalerSupport(instance.IsFsr4Int8Supported(),
-                                         instance.IsFsr411Supported());
+                                         instance.IsFsr411Available());
     fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
     {
         const Dlss* dlss = Dlss::Get();
@@ -1350,7 +1350,7 @@ void TemporalUpscaler::Run() {
         CaptureForFrameGeneration(input_depth, input_depth_layout, depth_format, w, h, frame_ms,
                                   was_reset);
         if (BbSettings::Get().upscaler != BbSettings::UpscalerTaa) {
-            ExtraSharpen(vk::Image(output_image), false, ow, oh, UseXess());
+            ExtraSharpen(vk::Image(output_image), false, ow, oh, FullRangeSharpen());
         }
         // bbport: BB_DUMP_TRIGGER on this (HDR scene color) path too: the upscaler's inputs and
         // its result, for ghosting and history checks (tools/dump_view.py).
@@ -1984,7 +1984,7 @@ void TemporalUpscaler::RunScaled() {
         }
         if (ok4) {
             if (BbSettings::Get().upscaler != BbSettings::UpscalerTaa) {
-                ExtraSharpen(vk::Image(output_image), false, ow, oh, UseXess());
+                ExtraSharpen(vk::Image(output_image), false, ow, oh, FullRangeSharpen());
             }
             barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
                     vk::ImageLayout::eGeneral, all, rw, vk::ImageLayout::eGeneral,
@@ -2343,7 +2343,7 @@ namespace Vulkan {
 bool TemporalUpscaler::UseFsr4() const {
     const int selected = BbSettings::Get().upscaler;
     const bool supported = selected == BbSettings::UpscalerFsr411
-                               ? instance.IsFsr411Supported()
+                               ? instance.IsFsr411Available()
                                : instance.IsFsr4Int8Supported();
     return BbSettings::IsFsr4(selected) && supported && !fsr4_failed;
 }
@@ -2394,6 +2394,13 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         reset = true;
     }
     return ok;
+}
+
+bool TemporalUpscaler::FullRangeSharpen() const {
+    // XeSS and FSR 4.1.1 through fsr4vk have no RCAS of their own: ExtraSharpen covers 0..2. Only while
+    // fsr4vk is the upscaler in use: after it failed (fsr4_failed) FSR 3.1 runs, with its own RCAS.
+    return UseXess() || (BbSettings::Get().upscaler == BbSettings::UpscalerFsr411 && UseFsr4() &&
+                         !instance.IsFsr411Supported());
 }
 
 bool TemporalUpscaler::UseDlss() const {

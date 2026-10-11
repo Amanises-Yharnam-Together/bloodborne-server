@@ -1,4 +1,5 @@
 from paths import ROOT
+import os
 import struct
 import tempfile
 import unittest
@@ -89,6 +90,136 @@ class NativeUiTests(unittest.TestCase):
         self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
 
 
+class FpsListTests(unittest.TestCase):
+    """The FPS++ lists follow shadps4-emu/ps4_cheats of 2026-10-02 (timesteps, foliage wind)."""
+
+    def writes(self, preset):
+        return compile_patches(XML, patches.FPS_PRESETS[preset], '01.09', SEGMENTS)
+
+    def test_lists_only_layer_a_float_over_its_own_immediate(self):
+        # A 9-byte "mov dword [rsp+18h], imm32" followed by a 4-byte write of the immediate is the
+        # lists' own layering. Any other overlap is two patches fighting over the same bytes
+        # (upstream's call at 0x02715D71 over the one at 0x02715D75 was one).
+        for preset in ('60', '90', 'uncap'):
+            with self.subTest(preset=preset):
+                spans = sorted((offset, offset + len(data)) for offset, data in self.writes(preset))
+                for (start, end), (next_start, next_end) in zip(spans, spans[1:]):
+                    if next_start < end:
+                        self.assertEqual((end - start, next_start - start, next_end - next_start), (9, 5, 4))
+
+    def test_foliage_wind_goes_to_the_frame_timer_in_every_list(self):
+        for preset in ('60', '90', 'uncap'):
+            with self.subTest(preset=preset):
+                found = {offset + EBOOT_BASE: data for offset, data in self.writes(preset)}
+                self.assertEqual(found[0x02713D91], bytes.fromhex('736B0403'))
+                self.assertIn(0x02418E3D, found)
+                self.assertIn(0x02418E9C, found)
+                self.assertNotIn(0x02715D71, found)
+
+    def test_lists_do_not_write_the_stale_physics_float(self):
+        # 0x011383CA sits inside a NOP of the game: the old lists' write there never did anything.
+        for preset in ('60', '90', 'uncap'):
+            with self.subTest(preset=preset):
+                for offset, data in self.writes(preset):
+                    self.assertFalse(offset <= 0x011383CA - EBOOT_BASE < offset + len(data))
+
+    def test_uncap_keeps_the_games_240_fps_ceiling(self):
+        # ps4_cheats' 2026-10-02 Uncap list writes a frame time of 0.0 at three of the four frame
+        # limiter sites, which let the title screen and menus run at 1100 to 1400 FPS. Ours keeps
+        # 1/240 there, the ceiling the older list had, so menus stay at 240 FPS with no frame cap.
+        found = {offset + EBOOT_BASE: data for offset, data in self.writes('uncap')}
+        for address in (0x02434840, 0x0243485A, 0x0243487E, 0x024348B3):
+            with self.subTest(address=hex(address)):
+                self.assertEqual(found[address], bytes.fromhex('41C74424188988883B'))
+
+    def test_sprint_fix_stays_with_the_high_frame_rates(self):
+        self.assertNotIn('Sprint Fix (High FPS)', patches.FPS_PRESETS['60'])
+        for preset in ('90', 'uncap'):
+            self.assertIn('Sprint Fix (High FPS)', patches.FPS_PRESETS[preset])
+
+    def test_every_line_of_the_uncap_lists_becomes_one_write(self):
+        # The expected count comes from the XML: one write per <Line> of each listed 01.09 patch.
+        # A list edit that changes the count is fine as long as this still holds.
+        names = patches.FPS_PRESETS['uncap']
+        lines = sum(len(meta.findall('./PatchList/Line'))
+                    for meta in ET.parse(XML).getroot().iter('Metadata')
+                    if meta.get('Name') in names and meta.get('AppVer') == '01.09')
+        self.assertGreater(lines, 0)
+        self.assertEqual(len(self.writes('uncap')), lines)
+
+    def unknown_names(self, presets):
+        """(preset, name) of every listed patch the XML does not have for the app version."""
+        known = {meta.get('Name') for meta in ET.parse(XML).getroot().iter('Metadata')
+                 if meta.get('AppVer') == patches.APP_VERSION}
+        return [(preset, name) for preset, names in presets.items() for name in names
+                if name not in known]
+
+    def test_every_preset_names_patches_the_xml_has(self):
+        # The write-count test above reads the same XML with the same filter, so a misspelled or
+        # missing name would drop out on both sides of it. This one names the culprit.
+        self.assertEqual(self.unknown_names(patches.FPS_PRESETS), [])
+
+    def test_a_misspelled_preset_name_is_reported(self):
+        presets = {'60': ['60 FPS++'], 'uncap': ['Uncap FPS+', 'Sprint Fix (High FPS)']}
+        self.assertEqual(self.unknown_names(presets), [('uncap', 'Uncap FPS+')])
+
+
+class PatchedGameTests(unittest.TestCase):
+    """Patches exist for one game version; run.sh asks patches.py whether a game gets them."""
+
+    def test_only_the_patch_version_or_an_unreadable_one_gets_patches(self):
+        self.assertEqual(patches.APP_VERSION, '01.09')
+        for version, expected in ((None, True), ('', True), ('01.09', True), ('01.00', False), ('01.10', False)):
+            with self.subTest(version=version):
+                self.assertEqual(patches.game_is_patched(version, {}), expected)
+
+    def test_force_patches_wins_but_an_empty_value_does_not(self):
+        self.assertTrue(patches.game_is_patched('01.00', {'BB_FORCE_PATCHES': '1'}))
+        self.assertFalse(patches.game_is_patched('01.00', {'BB_FORCE_PATCHES': ''}))
+
+    def print_patched(self, version):
+        import subprocess
+        import sys
+        from test_game_check import param_sfo
+        with tempfile.TemporaryDirectory() as directory:
+            game = Path(directory)
+            if version:
+                (game / 'sce_sys').mkdir()
+                (game / 'sce_sys/param.sfo').write_bytes(param_sfo({'APP_VER': version}))
+            env = {key: value for key, value in os.environ.items() if key != 'BB_FORCE_PATCHES'}
+            run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--print-patched',
+                                  '--game-dir', str(game)], env=env, capture_output=True, text=True,
+                                 encoding='utf-8')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        return run.stdout.strip()
+
+    def test_the_command_line_answers_for_run_sh(self):
+        self.assertEqual(self.print_patched('01.09'), 'patched')
+        self.assertEqual(self.print_patched('01.00'), 'unpatched')
+        self.assertEqual(self.print_patched(None), 'patched')  # no param.sfo: unreadable
+
+
+class NoteTests(unittest.TestCase):
+    """The launcher shows a patch's Note as a tooltip after turning the two characters \\n into a
+    line break. A raw line break inside the attribute is no use: XML turns it into a space."""
+
+    def test_multi_line_notes_keep_their_line_breaks(self):
+        for name in ('30 FPS++', '60 FPS++', '90 FPS++'):
+            with self.subTest(name=name):
+                notes = [m.get('Note') for m in ET.parse(XML).getroot().iter('Metadata')
+                         if m.get('Name') == name and m.get('AppVer') == '01.09']
+                self.assertEqual(len(notes), 1)
+                shown = notes[0].replace('\\n', '\n')  # what bbport_launcher.py does
+                first, second = shown.split('\n')
+                self.assertTrue(first.rstrip().endswith('etc..'), first)
+                self.assertTrue(second.startswith('Will help'), second)
+
+    def test_no_note_spans_source_lines(self):
+        import re
+        text = XML.read_text(encoding='utf-8')
+        self.assertEqual(re.findall(r'Note="[^"]*[\r\n][^"]*"', text), [])
+
+
 class DebugPatchTests(unittest.TestCase):
     def test_camera_patch_is_optional_and_compatible_with_fps_and_debug_menu(self):
         self.assertEqual(effect_patches({'debug_camera': '0', 'debug_menu': '0'}), [])
@@ -172,6 +303,71 @@ class ExternalPatchTests(unittest.TestCase):
         self.assertEqual(external_patches(XML.parent), [])
 
 
+class SkipNetworkChoiceTests(unittest.TestCase):
+    """The title's PLAY ONLINE / PLAY OFFLINE dialog is skipped by default."""
+    ADDRESS = 0x01F39030
+
+    def test_on_unless_the_environment_turns_it_off(self):
+        self.assertTrue(patches.skip_network_choice({}))
+        self.assertTrue(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': '1'}))
+        self.assertFalse(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': '0'}))
+
+    def test_off_spellings_turn_it_off_in_any_case(self):
+        for value in ('0', 'false', 'False', 'FALSE', 'no', 'No', 'off', 'OFF', ' off '):
+            with self.subTest(value=value):
+                self.assertFalse(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': value}))
+
+    def test_unset_empty_and_other_values_keep_it_on(self):
+        for value in ('', '1', 'true', 'yes', 'on', 'anything'):
+            with self.subTest(value=value):
+                self.assertTrue(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': value}))
+
+    def test_patch_is_one_function_body_and_not_enabled_by_the_file(self):
+        meta = [m for m in ET.parse(XML).getroot().iter('Metadata')
+                if m.get('Name') == patches.SKIP_NETWORK_CHOICE and m.get('AppVer') == '01.09']
+        self.assertEqual(len(meta), 1)
+        self.assertEqual(meta[0].get('isEnabled'), 'false')  # only patches.py's switch turns it on
+        writes = compile_patches(XML, [patches.SKIP_NETWORK_CHOICE], '01.09', SEGMENTS)
+        self.assertEqual([(offset + EBOOT_BASE, len(data)) for offset, data in writes],
+                         [(self.ADDRESS, 46)])
+        self.assertEqual(writes[0][1][:4].hex(), '554889e5')  # push rbp; mov rbp, rsp
+        self.assertEqual(writes[0][1][-1:], b'\xc3')  # ret
+
+    def compile(self, env):
+        """patches.py as run.py runs it, on an ELF with one segment; returns (log, writes)."""
+        import os
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            header = bytearray(64)
+            header[0:7] = b'\x7fELF\x02\x01\x01'
+            struct.pack_into('<Q', header, 0x20, 64)
+            struct.pack_into('<HH', header, 0x36, 56, 1)
+            (out / 'eboot.elf').write_bytes(bytes(header) + struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, 0x6000000, 0x6000000, 0x1000))
+            settings = {key: value for key, value in os.environ.items() if key != 'BB_SKIP_NETWORK_CHOICE'}
+            settings.update(env)
+            run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out),
+                                  '--fps', '60', '--settings', str(out / 'none.ini'),
+                                  '--game-dir', str(out), '--xml', str(XML)],
+                                 env=settings, capture_output=True, text=True, encoding='utf-8')
+            self.assertEqual(run.returncode, 0, run.stderr)
+            blob = (out / 'patches.bin').read_bytes()
+        count, = struct.unpack_from('<Q', blob, 16)
+        position, writes = 24, {}
+        for _ in range(count):
+            offset, length = struct.unpack_from('<QQ', blob, position)
+            writes[offset] = blob[position + 16:position + 16 + length]
+            position += 16 + length
+        return run.stdout, writes
+
+    def test_main_applies_it_by_default_and_not_with_the_switch_off(self):
+        log, writes = self.compile({})
+        self.assertIn(patches.SKIP_NETWORK_CHOICE, log)
+        self.assertEqual(len(writes[self.ADDRESS - EBOOT_BASE]), 46)
+        log, writes = self.compile({'BB_SKIP_NETWORK_CHOICE': '0'})
+        self.assertNotIn(patches.SKIP_NETWORK_CHOICE, log)
+        self.assertNotIn(self.ADDRESS - EBOOT_BASE, writes)
 class NetworkChoiceTests(unittest.TestCase):
     def test_skipped_by_default(self):
         self.assertTrue(patches.skip_network_choice({}))

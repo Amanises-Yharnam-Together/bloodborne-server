@@ -24,7 +24,9 @@ export USERPROFILE=${USERPROFILE:-$(cygpath -w "/c/Users/$(id -un)")}
 if [[ ! -x out/pyenv/Scripts/python.exe ]]; then
     "$python" -m venv out/pyenv
 fi
-out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow
+# Only when missing: pip asks PyPI on every call and hangs for minutes without a connection.
+out/pyenv/Scripts/python.exe -c 'import PyInstaller, PIL' 2>/dev/null ||
+    out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow
 # The scripts run inside BLauncher.exe (--script): the standard modules they import come along.
 hidden=()
 for module in argparse base64 collections hashlib json re shutil struct tempfile xml.etree.ElementTree \
@@ -33,7 +35,8 @@ for module in argparse base64 collections hashlib json re shutil struct tempfile
 done
 out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level WARN --windowed \
     --name BLauncher --icon "$(cygpath -w "$PWD/launcher/bloodborne.ico")" --distpath out/pyi-dist \
-    --workpath out/pyi-work --specpath out/pyi-work --paths "$(cygpath -w "$PWD/scripts")" "${hidden[@]}" \
+    --workpath out/pyi-work --specpath out/pyi-work --paths "$(cygpath -w "$PWD/scripts")" \
+    --paths "$(cygpath -w "$PWD/tools")" --hidden-import fetch_fsr4vk --hidden-import bbport_icons "${hidden[@]}" \
     "$(cygpath -w "$PWD/launcher/bbport_launcher_win.py")"
 
 # PkgTool (maxton/LibOrbisPkg v0.2, LGPL-3.0, shipped unmodified) extracts the game from the .pkg files the
@@ -147,6 +150,11 @@ mkdir -p "$dest/licenses"
 cp out/xess/bin/libxess.dll "$dest/bin/"
 cp out/xess/LICENSE.txt "$dest/licenses/Intel-XeSS-LICENSE.txt"
 cp out/xess/third-party-programs.txt "$dest/licenses/Intel-XeSS-third-party-programs.txt"
+# The AMD FidelityFX SDK (MIT) and FireBurn's FSR-Vulkan port of it (MIT) are linked into the game's GPU
+# library, so their licenses ship with it.
+fsr_vulkan=gpu/third_party/fsr-vulkan
+cp "$fsr_vulkan/upstream/ffx-1.1.4/sdk/LICENSE.txt" "$dest/licenses/AMD-FidelityFX-SDK-LICENSE.txt"
+cp "$fsr_vulkan/LICENSE.txt" "$dest/licenses/FireBurn-FSR-Vulkan-LICENSE.txt"
 mkdir -p "$dest/bin/pkgtool" "$dest/licenses"
 cp out/pkgtool/PkgTool.exe out/pkgtool/LibOrbisPkg.dll "$dest/bin/pkgtool/"
 cp out/pkgtool/LICENSE.txt "$dest/licenses/PkgTool-LICENSE.txt"
@@ -161,10 +169,15 @@ echo 'Texture files (.png) that effects load go here.' > "$dest/bin/reshade/text
 echo 'ReShade saves its screenshots here (the key is Print Screen).' > "$dest/bin/reshade/screenshots/README.txt"
 cp "$reshade_src"/licenses/*.txt "$dest/licenses/"
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
+# fsr4vk (GPLv3; experimental FSR 4.1.1) is downloaded by the launcher into <install>\fsr4vk: none of it ships here.
+if [[ -n $(find "$dest" \( -type d -iname fsr4vk -o -iname 'amd_fidelityfx_upscaler_vk*' \)) ]]; then
+    echo 'an fsr4vk file ended up in the package; it must be downloaded by the launcher' >&2
+    exit 1
+fi
 mkdir -p dist
 rm -f dist/bbport-windows.zip
-(cd out/stage && powershell -NoProfile -Command \
-    "Compress-Archive -Path bbport-windows -DestinationPath ../../dist/bbport-windows.zip")
+# Forward slashes in every entry name (Compress-Archive of Windows PowerShell stored backslashes).
+out/pyenv/Scripts/python.exe -I packaging/windows/make_zip.py out/stage bbport-windows dist/bbport-windows.zip
 
 # Refresh dist/bbport-windows, keeping what players create there (saves, settings, mods), and
 # only while nothing runs from it: deleting a running launcher's files breaks it.
@@ -181,8 +194,10 @@ else
         cp -r "$play/bin/reshade/ReShade.ini" "$play/bin/reshade/presets" out/reshade-keep/
     fi
     mkdir -p "$play"
-    find "$play" -mindepth 1 -maxdepth 1 ! -name user ! -name mods ! -name bbport.ini \
-        ! -name mods.json ! -name patches.json -exec rm -rf {} +
+    # The launcher updater's USER_FILES, plus the FSR 4 assets the launcher downloads.
+    find "$play" -mindepth 1 -maxdepth 1 ! -name user ! -name out ! -name mods ! -name bbport.ini \
+        ! -name mods.json ! -name patches.json ! -name last_run.log ! -name fsr4vk \
+        ! -name fsr4_shaders -exec rm -rf {} +
     cp -r "$dest/." "$play/"
     if [[ -d out/reshade-keep ]]; then
         cp out/reshade-keep/ReShade.ini "$play/bin/reshade/"

@@ -351,11 +351,45 @@ if (WIN32)
     set_target_properties(host-import-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(host-import-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     target_link_libraries(host-import-test PRIVATE Vulkan::Vulkan onecore)
+    # Save files written to a copy and replaced in one step. The manifest (UTF-8 code page) lets
+    # it cover non-ASCII paths as the game runs.
+    add_executable(save-commit-test EXCLUDE_FROM_ALL ../tests/test_save_commit_windows.c ../src/compat_win.c
+        ../packaging/windows/bb-probe.rc)
+    set_target_properties(save-commit-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(save-commit-test PRIVATE $<$<COMPILE_LANGUAGE:C>:-UNDEBUG -Wall -Wextra -Werror>)
+    target_include_directories(save-commit-test PRIVATE ../src)
+    target_link_libraries(save-commit-test PRIVATE bcrypt -pthread)
+    # Stick neutral and dead zone on SDL virtual controllers (run from a scratch directory: it
+    # writes two small files next to itself).
+    add_executable(pad-calibration-test EXCLUDE_FROM_ALL ../tests/test_pad_calibration.c ../src/compat_win.c)
+    set_target_properties(pad-calibration-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(pad-calibration-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(pad-calibration-test PRIVATE .. ../src)
+    target_link_libraries(pad-calibration-test PRIVATE PkgConfig::SDL3 bcrypt -pthread)
+    # Mouse inputs, wheel steps, the stick fallback and the camera hook's turn (no window, no game).
+    add_executable(mouse-camera-test EXCLUDE_FROM_ALL ../tests/test_mouse_camera.c ../src/compat_win.c)
+    set_target_properties(mouse-camera-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(mouse-camera-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(mouse-camera-test PRIVATE .. ../src)
+    target_link_libraries(mouse-camera-test PRIVATE PkgConfig::SDL3 bcrypt -pthread)
 endif()
 
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
 target_compile_options(motion-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(motion-history-test PRIVATE ..)
+add_executable(cache-consistency-test EXCLUDE_FROM_ALL ../tests/test_cache_consistency.cpp)
+target_compile_options(cache-consistency-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(cache-consistency-test PRIVATE shadps4)
+# The same checks plus the blobs on disk (Storage::DataBase), which uses the GPU library's file
+# helpers and log: ninja -C out/gpu cache-storage-test && out/gpu/cache-storage-test.exe
+add_executable(cache-storage-test EXCLUDE_FROM_ALL ../tests/test_cache_consistency.cpp)
+target_compile_definitions(cache-storage-test PRIVATE BB_CACHE_STORAGE_TEST)
+target_compile_options(cache-storage-test PRIVATE -UNDEBUG -fPIC)
+target_include_directories(cache-storage-test PRIVATE shim shadps4 third_party/gcn/include)
+target_link_libraries(cache-storage-test PRIVATE bbgpu)
+if (WIN32)
+    target_link_libraries(cache-storage-test PRIVATE onecore) # CreateFileMapping2, used by the library's memory code
+endif()
 add_executable(pm4-resync-test EXCLUDE_FROM_ALL ../tests/test_pm4_resync.cpp)
 target_compile_options(pm4-resync-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(pm4-resync-test PRIVATE ..)
@@ -424,6 +458,10 @@ add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bb
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)
 
+add_executable(spec-drop-test EXCLUDE_FROM_ALL ../tests/test_spec_drop.cpp)
+target_compile_options(spec-drop-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(spec-drop-test PRIVATE shim)
+
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)
 # The test's Vulkan-Hpp inline methods have a different set of platform extensions
@@ -445,6 +483,14 @@ target_include_directories(camera-motion-test PRIVATE shim shadps4 ${SHADER_INCL
 target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_dependencies(camera-motion-test host_shaders)
+# bbport (Windows): bb-probe gives bbgpu the loader's compat layer (bb_setjmp, compat_strcasestr),
+# onecore (CreateFileMapping2) and winpthreads; the renderer tests link them themselves.
+if(WIN32)
+    foreach(test IN ITEMS motion-shader-test scene-resolution-test taa-shader-test camera-motion-test)
+        target_sources(${test} PRIVATE ../src/compat_win.c)
+        target_link_libraries(${test} PRIVATE onecore -pthread)
+    endforeach()
+endif()
 
 add_executable(translation-memory-test EXCLUDE_FROM_ALL ../tests/test_translation_memory.cpp
     ../tests/test_gpu_runtime_stubs.cpp)

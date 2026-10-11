@@ -63,7 +63,7 @@ def selected(root, config):
     available = discover(root)
     if not config or not Path(config).is_file():
         return available
-    settings = json.loads(Path(config).read_text(encoding='utf-8'))
+    settings = json.loads(Path(config).read_text(encoding='utf-8-sig'))
     disabled_names = settings.get('disabled', [])
     if not isinstance(disabled_names, list) or not all(isinstance(n, str) for n in disabled_names):
         raise ValueError('Disabled mods must be a list of folder names')
@@ -102,19 +102,18 @@ def mod_files(folder):
             yield relative, source
 
 
-# Windows without the symlink privilege (Developer Mode off): directories become junctions,
-# files hard links (copies across volumes). Those are not symlinks, so the overlay remembers
-# what it linked and where to.
+# On Windows the overlay never holds a symlink, whether or not the user may create them (Developer
+# Mode): the game panics reading files through symlinks (Dantelion2 FileTransferTask.cpp(865), every
+# boot, with any loose-file mod; upstream #102). Directories become junctions, files hard links
+# (copies across volumes). Those are not symlinks, so the overlay remembers what it linked and
+# where to. Everything else uses symlinks.
 LINKED = {}
 
 
 def make_link(link, target):
-    try:
+    if os.name != 'nt':
         link.symlink_to(target, target_is_directory=target.is_dir())
         return
-    except OSError:
-        if os.name != 'nt':
-            raise
     if target.is_dir():
         import _winapi
         _winapi.CreateJunction(str(target), str(link))
@@ -124,17 +123,6 @@ def make_link(link, target):
         except OSError:
             shutil.copy2(target, link)
     LINKED[str(link)] = target
-
-
-def symlinks_work(directory):
-    probe = Path(tempfile.mkdtemp(prefix='link-test-', dir=directory))
-    try:
-        (probe / 'link').symlink_to(probe, target_is_directory=True)
-        return True
-    except OSError:
-        return False
-    finally:
-        shutil.rmtree(probe, ignore_errors=True)
 
 
 def is_link(path):
@@ -169,6 +157,37 @@ def expand(directory):
         directory.mkdir(exist_ok=True)
 
 
+GB = 1024 ** 3
+
+
+def beside_game(game, out):
+    """Hard links only reach files on the same volume: with the game on another drive than out,
+    the overlay goes beside the game."""
+    return os.name == 'nt' and out.drive.casefold() != game.drive.casefold()
+
+
+def copy_bytes(game, replacements):
+    """Bytes an overlay copies when no file can be hard-linked (the game and out on different
+    volumes): the game's files at the top and in each folder a mod reaches (the other folders
+    become junctions, which cross volumes), plus the mod files. A game file a mod replaces is
+    copied first and removed after, so it counts."""
+    reached = {()}
+    for relative, _ in replacements:
+        parts = [part.casefold() for part in relative.parts[:-1]]
+        reached.update(tuple(parts[:depth]) for depth in range(1, len(parts) + 1))
+    total = sum(source.stat().st_size for _, source in replacements)
+    pending = [(game, ())]
+    while pending:
+        directory, key = pending.pop()
+        for entry in directory.iterdir():
+            if entry.is_dir():
+                if key + (entry.name.casefold(),) in reached:
+                    pending.append((entry, key + (entry.name.casefold(),)))
+            else:
+                total += entry.stat().st_size
+    return total
+
+
 def build_overlay(game, out, mods):
     game = Path(game).resolve(strict=True)
     replacements = []
@@ -187,10 +206,25 @@ def build_overlay(game, out, mods):
         return game
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
-    if os.name == 'nt' and not symlinks_work(out) and out.drive.casefold() != game.drive.casefold():
-        # Hard links only reach files on the same volume: the overlay goes beside the game.
-        out = game.parent
-    overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=out))
+    overlay = None
+    if beside_game(game, out):
+        try:
+            overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=game.parent))
+        except OSError as error:
+            # A read-only or access-restricted library: build on out's volume instead. Files that
+            # cannot be hard-linked across volumes are copied (never symlinked, upstream #102),
+            # for every launch: the overlay is private to a launch and removed when it ends.
+            need, free = copy_bytes(game, replacements), shutil.disk_usage(out).free
+            if need > free:
+                raise ValueError(
+                    f'cannot write to {game.parent} ({error.strerror or error}), so the overlay would be built '
+                    f'in {out}, where hard links cannot reach the game: it needs a copy of {need / GB:.1f} GB '
+                    f'and only {free / GB:.1f} GB are free there. Either make {game.parent} writable, '
+                    f'or put the game on the same drive as {out}.') from None
+            print(f'Mods: cannot write to {game.parent} ({error.strerror or error}); '
+                  f'building the overlay in {out}, this build copies {need / GB:.1f} GB', file=sys.stderr)
+    if overlay is None:
+        overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=out))
     try:
         for entry in game.iterdir():
             make_link(overlay / entry.name, entry)
@@ -217,6 +251,55 @@ def build_overlay(game, out, mods):
         raise
 
 
+# The file the button icons replace (the launcher generates it from the player's own copy).
+ICONS_FILE = 'dvdroot_ps4/menu/common.tpf.dcx'
+ICONS_LAYER = 'button icons'
+
+
+def user_layers(game, mods_dir, config=None, enabled='1'):
+    """[(name, folder)] of the player's mods, lowest priority first (none when mods are switched off)."""
+    layers = []
+    if enabled == '1':
+        # shadPS4's loose overlay convention, beside the original game.
+        legacy = Path(str(Path(game).resolve()) + '-mods')
+        if legacy.is_dir():
+            layers.append((legacy.name, legacy))
+        # A directly selected loose overlay is also accepted.
+        if child(mods_dir, 'dvdroot_ps4').is_dir():
+            layers.append((Path(mods_dir).name, Path(mods_dir)))
+        else:
+            for name in selected(mods_dir, config):
+                layers.append((name, Path(mods_dir) / name))
+    return layers
+
+
+def supplier(layers, relative):
+    """The name of the last layer that has the game file `relative` (any letter case), or None."""
+    found = None
+    for name, root in layers:
+        if any(path.as_posix().casefold() == relative.casefold() for path, _ in mod_files(root)):
+            found = name
+    return found
+
+
+def icons_note(layers):
+    """Why the button icons cannot be used with these mod layers (a mod has its own menu/common.tpf.dcx, and the
+    player's file wins), or None."""
+    owner = supplier(layers, ICONS_FILE)
+    return f'Button icons are off for this run: {owner} has its own menu/common.tpf.dcx' if owner else None
+
+
+def mod_layers(game, mods_dir, config=None, enabled='1', icons=None):
+    """([(name, folder)], note): the layers of an overlay, lowest priority first. The button icons, when given,
+    go first so that any mod replaces them; a mod that has the same file as the icons takes them out, and the
+    note says so (None otherwise)."""
+    layers = user_layers(game, mods_dir, config, enabled)
+    if not icons:
+        return layers, None
+    note = icons_note(layers)
+    return (layers, note) if note else ([(ICONS_LAYER, Path(icons)), *layers], None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('game', type=Path)
@@ -224,19 +307,11 @@ def main():
     parser.add_argument('--mods-dir', required=True, type=Path)
     parser.add_argument('--config', type=Path)
     parser.add_argument('--enabled', choices=('0', '1'), default='1')
+    parser.add_argument('--icons-layer', type=Path, help='a folder with the generated button icons (a layer under the mods)')
     args = parser.parse_args()
-    layers = []
-    if args.enabled == '1':
-        # shadPS4's loose overlay convention, beside the original game.
-        legacy = Path(str(args.game.resolve()) + '-mods')
-        if legacy.is_dir():
-            layers.append((legacy.name, legacy))
-        # A directly selected loose overlay is also accepted.
-        if child(args.mods_dir, 'dvdroot_ps4').is_dir():
-            layers.append((args.mods_dir.name, args.mods_dir))
-        else:
-            for name in selected(args.mods_dir, args.config):
-                layers.append((name, args.mods_dir / name))
+    layers, note = mod_layers(args.game, args.mods_dir, args.config, args.enabled, args.icons_layer)
+    if note:
+        print(f'Mods: {note}', file=sys.stderr)
     print(build_overlay(args.game, args.out, layers))
 
 

@@ -18,9 +18,16 @@ Starting
   FSR 4 assets.
 - Bloodborne.exe starts the game straight away with the settings saved in the launcher,
   without opening it. Set things up once in BLauncher.exe, then use Bloodborne.exe (or a
-  shortcut to it, or add it to Steam with "Add a Non-Steam Game"). If no game folder is chosen
+  shortcut to it, or "Add to Steam" on the Play page). If no game folder is chosen
   yet it opens the launcher. BLauncher.exe --play does the same. The log goes to
-  user\last_run.log.
+  user\last_run.log. Advanced -> "Close the launcher when the game starts" closes the launcher
+  once the game window is up (not while mods are prepared, which can take 30 to 40 seconds with
+  large mods); the game writes user\last_run.log itself, so it keeps filling after that.
+- Add to Steam (Play page) writes a non-Steam game shortcut to Bloodborne.exe into the
+  shortcuts.vdf of every Steam account on this PC (Steam's userdata\<id>\config folder) and keeps
+  the old file as shortcuts.vdf.bak. Steam rewrites that file as it exits, so close Steam fully
+  first (the launcher refuses while it runs), press the button, then start Steam. Pressing it
+  again updates the entry for the same Bloodborne.exe instead of adding a second one.
 - Installing from .pkg files: "Install from PKG..." (on the Play page, and on "Game & effects")
   opens one window. "Choose PKG files..." takes the game .pkg (about 31 GB), the v1.09 update
   .pkg and the DLC .pkg of Bloodborne; "Scan a folder..." looks for .pkg files in a folder and
@@ -38,14 +45,30 @@ Starting
   (CUSA03173, CUSA00900, CUSA00207, CUSA01363, CUSA03023); an update other than 01.09 is
   accepted with a warning. PkgTool needs the .NET Framework 4, which Windows 10 and 11 include.
 - Advanced -> "Desktop shortcut" puts Bloodborne on the desktop.
-- Updates: when a new version is out, the launcher shows it at the bottom left; "Update"
+- Updates: when a new version is out, a card at the top right of the launcher says so; "Update"
   downloads and installs it and opens the launcher again (saves, settings and mods are kept).
-  Advanced -> "Check for updates" checks by hand.
+  Advanced -> "Check for updates" checks by hand. Only stable versions are offered unless
+  Advanced -> "Beta versions" is on (it is on by default while you run a beta, and a beta user
+  is still offered the final release when it comes out).
 - Advanced -> "Launcher language": English, Russian, Arabic, Spanish, Portuguese, French,
   German, Italian, Polish, Turkish, Chinese, Japanese, Korean (default: the Windows language).
+- Advanced -> Display & FPS -> "Monitor" (shown with more than one monitor) picks the monitor
+  the game opens on; "Primary monitor" is the default. The launcher saves the monitor's name and
+  starts the game with BB_DISPLAY set to it. If that monitor is not connected the launcher says
+  so and the game uses the primary one. BB_DISPLAY also takes a monitor number (1, 2, ...).
+- Advanced -> "Experimental features" (off by default) unlocks options that are still being
+  tested; the launcher marks them (experimental). For now that is object motion vectors on AMD
+  graphics cards, which the game keeps off there because they cost frame rate and drew some
+  objects wrong with frame generation. With the switch on and "Object motion vectors" on
+  (Graphics), the launcher starts the game with BB_OBJECT_MOTION_AMD=1.
 - In the game, Insert (or L3+R3 on a gamepad) opens the port's menu (upscaler, resolution,
-  effects). Keyboard: WASD move, arrows camera, Space Cross, Left Shift Circle, E Square,
-  Q Triangle, 1/3 L1/R1, R/F L2/R2, Z/C L3/R3, I/K/J/L d-pad, Enter Options, Tab touchpad.
+  effects). Keyboard (Dark Souls III layout; the Controls tab of the launcher changes it): WASD move,
+  mouse or IJKL camera, Space Circle, E/Enter Cross, R Square, F Triangle, left/right button R1/L1,
+  Shift + button R2/L2, Left Ctrl L2, C L3, Q R3, arrows or wheel d-pad, Esc Options (menu),
+  Tab or G left touchpad (gestures), Backspace right touchpad.
+- The buttons the game shows follow your controller: Xbox icons for an Xbox pad, PlayStation icons for a
+  PlayStation pad, your keys and mouse buttons with none (Controls > Button icons picks one by hand). They
+  are redrawn at start from your own copy of the game and kept in out\icons; nothing in the game folder changes.
 
 Data
 - Saves and shader caches: user\ next to BLauncher.exe (the launcher can pick another folder).
@@ -83,16 +106,37 @@ Upscaling
 - The launcher checks what your PC can run: upscalers it cannot are marked "not available" with the
   reason and cannot be picked. If the saved one cannot run, the launcher switches to DLSS (RTX
   GPUs) or FSR 3.1 and says so once. FSR 4 is allowed on Radeon RX 5000/6000 GPUs but marked "may
-  be slow"; FSR 4.1.1 needs a Vulkan extension (VK_VALVE_shader_mixed_float_dot_product) that
-  only Linux (Mesa) drivers offer, so it shows as not available on Windows drivers without it.
+  be slow".
+
+FSR 4.1.1 (experimental)
+- The built-in FSR 4.1.1 needs a Vulkan extension (VK_VALVE_shader_mixed_float_dot_product) that
+  no Windows driver offers yet. On Windows the game can instead use fsr4vk
+  (https://github.com/dvj5411/fsr4vk), a separate program that runs the same AMD model. It is
+  experimental: here it was checked on a GeForce RTX 4070 and a Radeon RX 6600.
+- It is off until you opt in, and it is not in this zip. To use it:
+  1. Advanced -> Performance -> turn on "Experimental features".
+  2. Graphics -> "FSR 4.1.1 (experimental)" -> "Download FSR 4.1.1" (about 14 MB, once).
+  3. Graphics -> Upscaler -> "FSR 4.1.1 (experimental)".
+  If you downloaded it with an earlier version, the same place offers "Update FSR 4.1.1": the new
+  build makes it work on AMD cards.
+- The download is fsr4vk v0.4.3 with one fix for AMD's Windows driver, built by this port and
+  hosted on its GitHub release next to its source (fsr4vk-v0.4.3-amdfix-src.zip). It is checked
+  against a fixed SHA-256 and goes to the fsr4vk folder next to BLauncher.exe. Launcher updates
+  leave that folder alone. fsr4vk is GPL-3.0; its licenses and SOURCE.txt are in the fsr4vk folder
+  after the download. The game loads it as a separate program and does not include its code.
+- Until the files are downloaded and Experimental features is on, the entry is greyed out and says
+  why. If it was your saved upscaler and either goes away, the launcher switches to DLSS (RTX GPUs)
+  or FSR 3.1 and says so once.
+- Cost on a GeForce RTX 4070, 1080p output from 720p: about 2.4 ms per frame, against about 2.0 ms
+  for FSR 4 and 0.55 ms for FSR 3.1. Measured once, not a benchmark.
 
 Frame generation (optional)
-- Graphics -> "Frame generation (FSR 3.1)" (also on the Play page and in the in-game menu, or
+- Graphics -> "Frame generation" (also on the Play page and in the in-game menu, or
   frame_generation=1 in bbport.ini, or BB_FRAME_GEN=1 for one run) shows one interpolated frame
-  between every two game frames: 60 FPS of the game are shown as 120. It is AMD's FSR 3.1 frame
-  interpolation and optical flow, driven by the game's depth and motion vectors, on top of the
-  upscaler you picked (FSR 4, FSR 3.1, DLSS, XeSS or TAA). The HUD of the game frame is kept over
-  the interpolated frame, so it does not smear. Default: off.
+  between every two game frames: 60 FPS of the game are shown as 120. It is AMD's FidelityFX
+  frame interpolation and optical flow, driven by the game's depth and motion vectors, and it
+  works with every upscaler (FSR 4, FSR 4.1.1, FSR 3.1, DLSS, XeSS or TAA). The HUD of the game
+  frame is kept over the interpolated frame, so it does not smear. Default: off.
 - It costs input lag: the game frame is shown about half a frame interval later than without
   it. Best with at least 60 FPS before generation; below that the interpolated frames show
   more artifacts and the lag is more noticeable.
@@ -159,4 +203,7 @@ Credits
 - ReShade, which the optional post-processing uses: crosire/reshade 6.8.0, BSD-3-Clause, unmodified,
   in bin\reshade\ (https://reshade.me). Effects by CeeJay.dk (SweetFX, MIT), AMD (FidelityFX CAS, MIT)
   and haasn/JPulowski (Deband, MIT); licenses: licenses\ReShade-*.txt.
+- AMD FidelityFX SDK (FSR 3.1, FSR 4) and FireBurn's FSR-Vulkan port of it, both MIT, built into the
+  game's GPU library; licenses: licenses\AMD-FidelityFX-SDK-LICENSE.txt and
+  licenses\FireBurn-FSR-Vulkan-LICENSE.txt.
 - The full list of projects and patch authors is in README.md (Credits and licenses).

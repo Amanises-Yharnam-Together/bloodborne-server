@@ -3,10 +3,13 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location('bbmods', ROOT / 'scripts/mods.py')
 mods = importlib.util.module_from_spec(spec)
@@ -135,6 +138,7 @@ class ModTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mods.selected(self.moddir, config)
 
+    @unittest.skipIf(os.name == 'nt', 'run.sh is the Linux launcher; Windows starts the game through run.py')
     def test_run_uses_overlay_propagates_exit_and_cleans_view(self):
         self.mod('A')
         python = self.root / 'python'
@@ -158,3 +162,269 @@ class ModTests(unittest.TestCase):
         self.assertEqual(mounted['content'], 'mod')
         self.assertFalse(Path(mounted['path']).exists())
         self.assertEqual((self.assets/'a.dcx').read_bytes(), b'original')
+
+
+class WindowsLinkTests(unittest.TestCase):
+    """On Windows the overlay holds junctions and hard links, never symlinks (upstream #102): with
+    Developer Mode on, symlinks are created fine and the game then panics reading through them
+    (Dantelion2 FileTransferTask.cpp(865), every boot, with any loose-file mod)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.game = self.root / 'CUSA03173'
+        for folder in ('chr', 'map'):
+            (self.game / 'dvdroot_ps4' / folder).mkdir(parents=True)
+            (self.game / 'dvdroot_ps4' / folder / 'a.dcx').write_bytes(b'original ' + folder.encode())
+        (self.game / 'eboot.bin').write_bytes(b'original executable')
+        self.mod = self.root / 'mods' / 'A' / 'dvdroot_ps4' / 'chr'
+        self.mod.mkdir(parents=True)
+        (self.mod / 'a.dcx').write_bytes(b'mod')
+        (self.mod / 'new.dcx').write_bytes(b'new')
+        self.layers = [('A', self.root / 'mods' / 'A')]
+
+    def build_with_symlinks_recorded(self):
+        real = Path.symlink_to
+        calls = []
+
+        def record(path, *args, **kwargs):
+            calls.append(str(path))
+            return real(path, *args, **kwargs)
+        with mock.patch.object(Path, 'symlink_to', record):
+            overlay = mods.build_overlay(self.game, self.root / 'out', self.layers)
+        return overlay, calls
+
+    @unittest.skipUnless(os.name == 'nt', 'junctions and hard links are Windows')
+    def test_no_symlink_is_made_or_left_behind_and_the_game_reads_through_the_links(self):
+        overlay, calls = self.build_with_symlinks_recorded()
+        self.assertEqual(calls, [])
+        entries = [overlay, *overlay.rglob('*')]
+        # rglob does not enter junctions: the untouched map folder is one, the merged chr folder is real.
+        self.assertTrue(entries)
+        self.assertFalse([p for p in entries if p.is_symlink()])
+        self.assertTrue((overlay / 'dvdroot_ps4' / 'map').is_junction())
+        self.assertFalse((overlay / 'dvdroot_ps4' / 'chr').is_junction())
+        self.assertEqual((overlay / 'dvdroot_ps4/map/a.dcx').read_bytes(), b'original map')
+        self.assertEqual((overlay / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+        self.assertEqual((overlay / 'dvdroot_ps4/chr/new.dcx').read_bytes(), b'new')
+        self.assertTrue((overlay / 'eboot.bin').samefile(self.game / 'eboot.bin'))  # a hard link
+        self.assertTrue((overlay / 'dvdroot_ps4/chr/a.dcx').samefile(self.mod / 'a.dcx'))
+
+    @unittest.skipUnless(os.name == 'nt', 'junctions and hard links are Windows')
+    def test_removing_the_overlay_leaves_the_game_and_the_mod_alone(self):
+        overlay, _ = self.build_with_symlinks_recorded()
+        shutil.rmtree(overlay)
+        self.assertFalse(overlay.exists())
+        self.assertEqual((self.game / 'dvdroot_ps4/map/a.dcx').read_bytes(), b'original map')
+        self.assertEqual((self.game / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'original chr')
+        self.assertEqual((self.game / 'eboot.bin').read_bytes(), b'original executable')
+        self.assertEqual((self.mod / 'a.dcx').read_bytes(), b'mod')
+
+    def test_windows_uses_junctions_and_hard_links_even_where_symlinks_succeed(self):
+        junctions = []
+        links = []
+        windows = types.SimpleNamespace(name='nt', link=lambda target, link: links.append((str(target), str(link))))
+        winapi = types.SimpleNamespace(CreateJunction=lambda target, link: junctions.append((target, link)))
+        real_symlink_to = Path.symlink_to
+        symlinks = []
+
+        def symlink_that_works(path, *args, **kwargs):  # Developer Mode on: this succeeds
+            symlinks.append(str(path))
+            return real_symlink_to(path, *args, **kwargs)
+        folder, file = self.game / 'dvdroot_ps4', self.game / 'eboot.bin'
+        with mock.patch.object(mods, 'os', windows), mock.patch.dict(sys.modules, {'_winapi': winapi}), \
+                mock.patch.object(Path, 'symlink_to', symlink_that_works):
+            mods.make_link(self.root / 'folder-link', folder)
+            mods.make_link(self.root / 'file-link', file)
+        self.assertEqual(symlinks, [])
+        self.assertEqual(junctions, [(str(folder), str(self.root / 'folder-link'))])
+        self.assertEqual(links, [(str(file), str(self.root / 'file-link'))])
+        self.assertEqual(mods.LINKED.pop(str(self.root / 'folder-link')), folder)
+        self.assertEqual(mods.LINKED.pop(str(self.root / 'file-link')), file)
+
+    def test_windows_copies_a_file_when_it_cannot_be_hard_linked(self):
+        def refuse(target, link):
+            raise OSError('cross-device link')
+        windows = types.SimpleNamespace(name='nt', link=refuse)
+        with mock.patch.object(mods, 'os', windows):
+            mods.make_link(self.root / 'copy', self.game / 'eboot.bin')
+        self.assertEqual((self.root / 'copy').read_bytes(), b'original executable')
+        self.assertFalse((self.root / 'copy').is_symlink())
+        mods.LINKED.pop(str(self.root / 'copy'))
+
+    def build_with_game_on_another_drive(self, writable_parent, link_fails=False, need_gb=None, free_gb=None):
+        """build_overlay as for a game on another drive than out; returns the overlay and keeps
+        stderr in self.log. link_fails: os.link refuses like across volumes (EXDEV). need_gb and
+        free_gb stand in for the size of the copy and the free space on out's volume."""
+        import contextlib
+        import errno
+        import io
+        real = tempfile.mkdtemp
+        gb = 1024 ** 3
+
+        def mkdtemp(*args, dir=None, **kwargs):
+            if Path(dir).resolve() == self.game.parent.resolve() and not writable_parent:
+                raise PermissionError(13, 'Access is denied', str(dir))
+            return real(*args, dir=dir, **kwargs)
+        self.log = io.StringIO()
+        self.link = mock.Mock(side_effect=OSError(errno.EXDEV, 'Invalid cross-device link'))
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(mods, 'beside_game', return_value=True))
+            stack.enter_context(mock.patch.object(mods.tempfile, 'mkdtemp', mkdtemp))
+            stack.enter_context(contextlib.redirect_stderr(self.log))
+            if link_fails:
+                stack.enter_context(mock.patch('os.link', self.link))
+            if need_gb is not None:
+                stack.enter_context(mock.patch.object(mods, 'copy_bytes', return_value=int(need_gb * gb)))
+            if free_gb is not None:
+                usage = types.SimpleNamespace(total=100 * gb, used=0, free=int(free_gb * gb))
+                stack.enter_context(mock.patch.object(mods.shutil, 'disk_usage', return_value=usage))
+            overlay = mods.build_overlay(self.game, self.root / 'out', self.layers)
+        self.addCleanup(shutil.rmtree, overlay, True)
+        return overlay
+
+    def test_game_on_another_drive_gets_its_overlay_beside_it(self):
+        overlay = self.build_with_game_on_another_drive(writable_parent=True)
+        self.assertEqual(overlay.parent, self.game.parent.resolve())
+        self.assertEqual((overlay / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+        self.assertNotIn('copies', self.log.getvalue())
+
+    def test_unwritable_game_folder_falls_back_to_out_and_says_so(self):
+        overlay = self.build_with_game_on_another_drive(writable_parent=False)
+        out = (self.root / 'out').resolve()
+        self.assertEqual(overlay.parent, out)
+        self.assertEqual((overlay / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+        self.assertEqual((overlay / 'dvdroot_ps4/chr/new.dcx').read_bytes(), b'new')
+        self.assertEqual((overlay / 'dvdroot_ps4/map/a.dcx').read_bytes(), b'original map')
+        self.assertEqual((overlay / 'eboot.bin').read_bytes(), b'original executable')
+        notes = [line for line in self.log.getvalue().splitlines() if str(out) in line]
+        self.assertEqual(len(notes), 1, self.log.getvalue())
+        self.assertTrue(notes[0].startswith('Mods: '), notes[0])
+        self.assertRegex(notes[0], r'this build copies \d+\.\d GB')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows links files with os.link; the others use symlinks')
+    def test_files_that_cannot_be_hard_linked_are_copied_never_symlinked(self):
+        overlay = self.build_with_game_on_another_drive(writable_parent=False, link_fails=True)
+        self.assertTrue(self.link.called)  # the copy path ran: every link attempt was refused
+        for name, original in (('eboot.bin', self.game / 'eboot.bin'),
+                               ('dvdroot_ps4/chr/a.dcx', self.mod / 'a.dcx'),
+                               ('dvdroot_ps4/chr/new.dcx', self.mod / 'new.dcx')):
+            with self.subTest(name=name):
+                self.assertEqual((overlay / name).read_bytes(), original.read_bytes())
+                self.assertFalse((overlay / name).samefile(original))  # a copy, not a link
+        self.assertFalse([p for p in [overlay, *overlay.rglob('*')] if p.is_symlink()])
+
+    def test_copy_bytes_counts_the_files_a_cross_volume_overlay_copies(self):
+        replacements = list(mods.mod_files(self.root / 'mods' / 'A'))
+        # The game's top-level files, its files in the folders the mod touches (chr; map stays a
+        # junction), and the mod's own files.
+        expected = len(b'original executable') + len(b'original chr') + len(b'mod') + len(b'new')
+        self.assertEqual(mods.copy_bytes(self.game.resolve(), replacements), expected)
+
+    def test_a_copy_that_does_not_fit_stops_before_copying_and_says_why(self):
+        with self.assertRaises(ValueError) as caught:
+            self.build_with_game_on_another_drive(writable_parent=False, need_gb=50, free_gb=20)
+        message = str(caught.exception)
+        self.assertIn('50.0 GB', message)
+        self.assertIn('20.0 GB', message)
+        self.assertIn(str(self.game.parent.resolve()), message)  # the folder to make writable
+        self.assertIn('same drive', message)
+        self.assertEqual(list((self.root / 'out').glob('mod-game-*')), [])
+
+    def test_a_copy_that_fits_says_how_big_it_is(self):
+        self.build_with_game_on_another_drive(writable_parent=False, need_gb=5, free_gb=20)
+        self.assertIn('this build copies 5.0 GB', self.log.getvalue())
+
+    @unittest.skipIf(os.name == 'nt', 'symlinks are the other systems')
+    def test_other_systems_keep_using_symlinks(self):
+        overlay, calls = self.build_with_symlinks_recorded()
+        self.assertTrue(calls)
+        self.assertTrue((overlay / 'dvdroot_ps4' / 'map').is_symlink())
+        self.assertEqual((overlay / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+
+
+class IconLayerTests(unittest.TestCase):
+    """The button icons are a layer under the player's mods: alone they still make an overlay, and a mod that
+    supplies the same file wins."""
+    COMMON = 'dvdroot_ps4/menu/common.tpf.dcx'
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.game = self.root / 'CUSA03173'
+        (self.game / 'dvdroot_ps4/menu').mkdir(parents=True)
+        (self.game / 'dvdroot_ps4/menu/common.tpf.dcx').write_bytes(b'game icons')
+        (self.game / 'dvdroot_ps4/menu/other.dcx').write_bytes(b'other')
+        (self.game / 'eboot.bin').write_bytes(b'exe')
+        self.moddir = self.root / 'mods'
+        self.icons = self.root / 'icons-cache'
+        (self.icons / 'dvdroot_ps4/menu').mkdir(parents=True)
+        (self.icons / 'dvdroot_ps4/menu/common.tpf.dcx').write_bytes(b'generated icons')
+
+    def user_mod(self, name, file='common.tpf.dcx'):
+        folder = self.moddir / name / 'dvdroot_ps4/menu'
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / file).write_bytes(name.encode())
+
+    def overlay(self, layers):
+        return mods.build_overlay(self.game, self.root / 'out', layers)
+
+    def test_icons_alone_make_an_overlay_with_the_generated_file(self):
+        layers, note = mods.mod_layers(self.game, self.moddir, None, '1', self.icons)
+        self.assertEqual([name for name, _ in layers], ['button icons'])
+        self.assertIsNone(note)
+        result = self.overlay(layers)
+        self.assertEqual((result / self.COMMON).read_bytes(), b'generated icons')
+        self.assertEqual((result / 'dvdroot_ps4/menu/other.dcx').read_bytes(), b'other')
+        self.assertEqual((self.game / self.COMMON).read_bytes(), b'game icons')
+        self.assertFalse([p for p in [result, *result.rglob('*')] if p.is_symlink()])
+
+    def test_the_icons_go_under_the_mods_and_other_mods_still_apply(self):
+        self.user_mod('Other', 'other.dcx')
+        layers, note = mods.mod_layers(self.game, self.moddir, None, '1', self.icons)
+        self.assertEqual([name for name, _ in layers], ['button icons', 'Other'])
+        self.assertIsNone(note)
+        result = self.overlay(layers)
+        self.assertEqual((result / self.COMMON).read_bytes(), b'generated icons')
+        self.assertEqual((result / 'dvdroot_ps4/menu/other.dcx').read_bytes(), b'Other')
+
+    def test_a_mod_that_supplies_the_file_wins_and_the_icons_are_dropped_with_a_note(self):
+        self.user_mod('Mine')
+        layers, note = mods.mod_layers(self.game, self.moddir, None, '1', self.icons)
+        self.assertEqual([name for name, _ in layers], ['Mine'])
+        self.assertIn('Mine', note)
+        self.assertIn('off', note)
+        self.assertEqual((self.overlay(layers) / self.COMMON).read_bytes(), b'Mine')
+
+    def test_a_disabled_mod_does_not_count_and_the_sibling_mods_folder_does(self):
+        self.user_mod('Mine')
+        config = self.root / 'mods.json'
+        config.write_text(json.dumps({'disabled': ['Mine']}))
+        layers, note = mods.mod_layers(self.game, self.moddir, config, '1', self.icons)
+        self.assertEqual([name for name, _ in layers], ['button icons'])
+        legacy = Path(str(self.game) + '-mods/dvdroot_ps4/menu')
+        legacy.mkdir(parents=True)
+        (legacy / 'COMMON.TPF.DCX').write_bytes(b'legacy')  # another case spells the same file
+        layers, note = mods.mod_layers(self.game, self.moddir, config, '1', self.icons)
+        self.assertEqual([name for name, _ in layers], [self.game.name + '-mods'])
+        self.assertIn('-mods', note)
+
+    def test_mods_switched_off_leave_the_icons(self):
+        self.user_mod('Mine')
+        layers, note = mods.mod_layers(self.game, self.moddir, None, '0', self.icons)
+        self.assertEqual([name for name, _ in layers], ['button icons'])
+        self.assertIsNone(note)
+
+    def test_without_icons_the_layers_are_the_mods_alone(self):
+        self.user_mod('Mine')
+        layers, note = mods.mod_layers(self.game, self.moddir, None, '1', None)
+        self.assertEqual([name for name, _ in layers], ['Mine'])
+        self.assertIsNone(note)
+
+    def test_the_script_takes_the_icons_layer(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'scripts/mods.py'), str(self.game),
+                                 '--out', str(self.root / 'out'), '--mods-dir', str(self.moddir),
+                                 '--icons-layer', str(self.icons)], capture_output=True, text=True, check=True)
+        self.assertEqual((Path(result.stdout.strip()) / self.COMMON).read_bytes(), b'generated icons')
