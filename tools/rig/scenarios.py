@@ -432,6 +432,14 @@ SCENARIOS = {
         },
         "timeout": 720,
     },
+    "save-backups": {
+        "about": "the saves are backed up by themselves (Kaniel 2026-10-11): with a backup every "
+                 "minute, the first one lands a minute after the start, in user/save-backups",
+        "roles": {"host": [START, "wait 150", "snapshot"]},
+        "settings": {"SHADPS4_BLOODBORNE_SAVE_BACKUPS": "1,2"},
+        "expect": {"host": [r"Bloodborne save backups: every 1 min", r"Bloodborne save backup: "]},
+        "timeout": 420,
+    },
     "boss-putdown": {
         "about": "the reverse of boss-refight (Kaniel 2026-10-11, Prey Slaughtered after a "
                  "teleport): the host beat Father Gascoigne long ago, the guest has not; after "

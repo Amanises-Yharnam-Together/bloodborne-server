@@ -359,9 +359,12 @@ def stages_of(script: list) -> list[list[str]]:
 
 
 # Settings a scenario switches on for its games ("settings"), and what they are otherwise (party
-# death is on in the games by default; scenarios that don't ask for it run without); never taken
-# from the PC's own.
-SCENARIO_SETTINGS = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "0"}
+# death is on in the games by default; scenarios that don't ask for it run without; the save
+# backups too); never taken from the PC's own.
+SCENARIO_SETTINGS = {
+    "SHADPS4_BLOODBORNE_PARTY_DEATH": "0",
+    "SHADPS4_BLOODBORNE_SAVE_BACKUPS": "off",
+}
 
 
 def game_environment(role: str, script: pathlib.Path | None, party: str,

@@ -8,6 +8,9 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <map>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -1870,6 +1873,155 @@ const std::vector<CodePatch>& QuietSummonBannerPatches() {
         {0x0196B9F4, {0xE8, 0x87, 0x44, 0x29, 0x00}, nop5},
     };
     return patches;
+}
+
+std::optional<SaveBackups> ParseSaveBackups(std::string_view setting) {
+    const auto trim = [](std::string_view text) {
+        while (!text.empty() && IsWhitespace(text.front())) {
+            text.remove_prefix(1);
+        }
+        while (!text.empty() && IsWhitespace(text.back())) {
+            text.remove_suffix(1);
+        }
+        return text;
+    };
+    setting = trim(setting);
+    if (setting == "off" || setting == "0") {
+        return std::nullopt;
+    }
+    const std::size_t comma = setting.find(',');
+    if (comma == std::string_view::npos) {
+        return SaveBackups{};
+    }
+    const std::string_view minutes_text = trim(setting.substr(0, comma));
+    const std::string_view kept_text = trim(setting.substr(comma + 1));
+    int minutes = 0;
+    std::size_t kept = 0;
+    const auto [minutes_end, minutes_error] =
+        std::from_chars(minutes_text.data(), minutes_text.data() + minutes_text.size(), minutes);
+    const auto [kept_end, kept_error] =
+        std::from_chars(kept_text.data(), kept_text.data() + kept_text.size(), kept);
+    if (minutes_error != std::errc{} || kept_error != std::errc{} ||
+        minutes_end != minutes_text.data() + minutes_text.size() ||
+        kept_end != kept_text.data() + kept_text.size() || minutes < 1 || kept < 1) {
+        return SaveBackups{};
+    }
+    return SaveBackups{std::chrono::minutes{minutes}, kept};
+}
+
+std::string SaveBackupName(std::chrono::sys_seconds when) {
+    const auto day = std::chrono::floor<std::chrono::days>(when);
+    const std::chrono::year_month_day date{day};
+    const std::chrono::hh_mm_ss time{when - day};
+    return fmt::format("{:04}{:02}{:02}-{:02}{:02}{:02}", static_cast<int>(date.year()),
+                       static_cast<unsigned>(date.month()), static_cast<unsigned>(date.day()),
+                       time.hours().count(), time.minutes().count(), time.seconds().count());
+}
+
+namespace {
+
+namespace fs = std::filesystem;
+
+bool IsSaveBackupName(const std::string& name) {
+    return name.size() == 15 && name[8] == '-' &&
+           std::ranges::all_of(name.substr(0, 8), [](char c) { return c >= '0' && c <= '9'; }) &&
+           std::ranges::all_of(name.substr(9), [](char c) { return c >= '0' && c <= '9'; });
+}
+
+// The backups in `user_dir`, oldest first.
+std::vector<fs::path> SaveBackupsIn(const fs::path& user_dir) {
+    std::vector<fs::path> backups;
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(user_dir / SaveBackupsFolder, error)) {
+        if (entry.is_directory(error) && IsSaveBackupName(entry.path().filename().string())) {
+            backups.push_back(entry.path());
+        }
+    }
+    std::ranges::sort(backups);
+    return backups;
+}
+
+// Every save file under `root` (savedata, home/<id>/savedata, the party files), by its path
+// relative to `root`, with its bytes.
+std::map<std::string, std::string> SaveFilesUnder(const fs::path& root) {
+    std::map<std::string, std::string> files;
+    std::error_code error;
+    const auto add = [&](const fs::path& path) {
+        std::ifstream file{path, std::ios::binary};
+        if (file) {
+            files[fs::relative(path, root, error).generic_string()] =
+                std::string{std::istreambuf_iterator<char>{file}, {}};
+        }
+    };
+    const auto add_tree = [&](const fs::path& folder) {
+        for (auto it = fs::recursive_directory_iterator(folder, error);
+             !error && it != fs::recursive_directory_iterator(); it.increment(error)) {
+            if (it->is_regular_file(error)) {
+                add(it->path());
+            }
+        }
+        error.clear();
+    };
+    if (fs::is_directory(root / "savedata", error)) {
+        add_tree(root / "savedata");
+    }
+    for (const auto& entry : fs::directory_iterator(root / "home", error)) {
+        if (fs::is_directory(entry.path() / "savedata", error)) {
+            add_tree(entry.path() / "savedata");
+        }
+    }
+    error.clear();
+    for (const auto& entry : fs::directory_iterator(root, error)) {
+        const std::string name = entry.path().filename().string();
+        if (entry.is_regular_file(error) && name.starts_with("bloodborne_party_") &&
+            name.ends_with(".txt")) {
+            add(entry.path());
+        }
+    }
+    return files;
+}
+
+} // namespace
+
+std::optional<fs::path> BackUpSaves(const fs::path& user_dir, std::string_view name) {
+    const auto files = SaveFilesUnder(user_dir);
+    if (files.empty()) {
+        return std::nullopt;
+    }
+    const auto backups = SaveBackupsIn(user_dir);
+    if (!backups.empty() && SaveFilesUnder(backups.back()) == files) {
+        return std::nullopt;
+    }
+    const fs::path backup = user_dir / SaveBackupsFolder / std::string{name};
+    std::error_code error;
+    for (const auto& [relative, bytes] : files) {
+        const fs::path path = backup / fs::path{relative};
+        fs::create_directories(path.parent_path(), error);
+        std::ofstream file{path, std::ios::binary | std::ios::trunc};
+        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (!file) {
+            fs::remove_all(backup, error);
+            return std::nullopt;
+        }
+    }
+    // The game wrote while this read: the copy may be half old, half new.
+    if (SaveFilesUnder(user_dir) != files) {
+        fs::remove_all(backup, error);
+        return std::nullopt;
+    }
+    return backup;
+}
+
+std::size_t PruneSaveBackups(const fs::path& user_dir, std::size_t kept) {
+    const auto backups = SaveBackupsIn(user_dir);
+    std::size_t removed = 0;
+    std::error_code error;
+    for (std::size_t index = 0; index + kept < backups.size(); ++index) {
+        if (fs::remove_all(backups[index], error) > 0) {
+            ++removed;
+        }
+    }
+    return removed;
 }
 
 const std::vector<DeathFlagSite>& DeathFlagSites() {

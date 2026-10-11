@@ -5,6 +5,7 @@
 
 #include <array>
 #include <chrono>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <set>
@@ -1107,6 +1108,27 @@ std::optional<std::string> AutoplayShotPath(std::string_view request, std::strin
 // (+0x1E3 bit 0), then the death step (0x018BD9D0). `void (character)`.
 constexpr u64 KillCharacterOffset = 0x018BF9A0;
 constexpr u64 DeathStepOffset = 0x018BD9D0;
+// Save backups (Kaniel 2026-10-11): every few minutes the saves are copied to
+// user/save-backups/<yyyymmdd-hhmmss>/, the newest few kept. SHADPS4_BLOODBORNE_SAVE_BACKUPS =
+// "<minutes>,<kept>" (default 10 minutes, 20 kept; "off" or "0" for none). A backup holds the
+// port's user/savedata, the emulator's user/home/<user id>/savedata and the party's files
+// (user/bloodborne_party_*.txt), at the same paths under it.
+struct SaveBackups {
+    std::chrono::minutes every{10};
+    std::size_t kept = 20;
+    bool operator==(const SaveBackups&) const = default;
+};
+std::optional<SaveBackups> ParseSaveBackups(std::string_view setting);
+constexpr const char* SaveBackupsFolder = "save-backups";
+std::string SaveBackupName(std::chrono::sys_seconds when);
+// A backup of `user_dir` named `name`: its path, or nothing when there are no saves, when they
+// are the same as the newest backup's, or when they changed while being copied (the game was
+// writing; the next try gets them).
+std::optional<std::filesystem::path> BackUpSaves(const std::filesystem::path& user_dir,
+                                                 std::string_view name);
+// Deletes all but the newest `kept` backups; returns how many went.
+std::size_t PruneSaveBackups(const std::filesystem::path& user_dir, std::size_t kept);
+
 // Boss-death tracer (Kaniel 2026-10-11: Father Gascoigne died in the host's world with nobody
 // hitting him, and a guest got "Prey Slaughtered"): the game sets a character's dead flag
 // (`or byte ptr [reg + 0x1E3], 1`) in three places, each once per death: the two deaths at 0 HP

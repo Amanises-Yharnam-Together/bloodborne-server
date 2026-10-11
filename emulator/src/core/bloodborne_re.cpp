@@ -15,6 +15,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -3624,6 +3625,46 @@ void InstallBossDeathTracer(u64 base, u64 image_size) {
     }
     LOG_INFO(Debug, "Bloodborne boss-death tracer: big characters' deaths are logged with their "
                     "call chain");
+}
+
+// See SaveBackups: a thread of its own copies the saves a minute after the start, then every few
+// minutes, and keeps the newest few.
+void StartSaveBackups() {
+    const char* setting = std::getenv("SHADPS4_BLOODBORNE_SAVE_BACKUPS");
+    const auto backups = ParseSaveBackups(setting != nullptr ? setting : "");
+    if (!backups) {
+        LOG_INFO(Debug, "Bloodborne save backups are off");
+        return;
+    }
+    const std::filesystem::path user_dir = Common::FS::GetUserPath(Common::FS::PathType::UserDir);
+    std::thread([user_dir, backups = *backups] {
+        std::this_thread::sleep_for(std::chrono::minutes{1});
+        while (true) {
+            // Named in the PC's local time, as the player reads it.
+            const std::time_t now =
+                std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+            std::tm local{};
+#ifdef _WIN32
+            localtime_s(&local, &now);
+#else
+            localtime_r(&now, &local);
+#endif
+            using namespace std::chrono;
+            const sys_seconds when =
+                sys_days{year{local.tm_year + 1900} / static_cast<unsigned>(local.tm_mon + 1) /
+                         static_cast<unsigned>(local.tm_mday)} +
+                hours{local.tm_hour} + minutes{local.tm_min} + seconds{local.tm_sec};
+            if (const auto made = BackUpSaves(user_dir, SaveBackupName(when))) {
+                LOG_INFO(Debug, "Bloodborne save backup: {} ({} older ones removed)",
+                         Common::FS::PathToUTF8String(*made),
+                         PruneSaveBackups(user_dir, backups.kept));
+            }
+            std::this_thread::sleep_for(backups.every);
+        }
+    }).detach();
+    LOG_INFO(Debug, "Bloodborne save backups: every {} min into {}, the newest {} kept",
+             backups->every.count(), Common::FS::PathToUTF8String(user_dir / SaveBackupsFolder),
+             backups->kept);
 }
 
 // See QuietSummonBannerPatches: a party's joins show one banner, not two.
@@ -11317,6 +11358,7 @@ void InstallSeamlessCoopPatches() {
     InstallItemModuleDiagnostics(base, image_size);
     InstallItemButtonDiagnostics(base);
     InstallPartyDeath(base, image_size);
+    StartSaveBackups();
     StartRestBoardClient();
     StartVitalsBoardClient();
     PatchSignTimers(base, image_size);
