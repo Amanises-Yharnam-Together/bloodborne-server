@@ -229,6 +229,13 @@ std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds) {
             static_cast<u8>(value >> 24)};
 }
 
+bool IsSignTimerStore(std::span<const u8> bytes, const SignTimerSite& site) {
+    const auto store = EncodeSignTimerStore(site.modrm, site.original_seconds);
+    constexpr size_t TimeStart = 3;
+    return bytes.size() >= store.size() &&
+           std::ranges::equal(bytes.first(TimeStart), std::span{store}.first(TimeStart));
+}
+
 bool IsLampTravelFlag(s32 flag) {
     // 7MMM01LL: map code MMM (241 = m24_01), lamp LL. Only the maps after the Hunter's Dream (210)
     // up to the last ones (m36): the Dream has no lamp to travel from (the Doll's dialog sets

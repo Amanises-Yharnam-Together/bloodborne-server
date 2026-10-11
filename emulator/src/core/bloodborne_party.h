@@ -220,6 +220,9 @@ constexpr std::array<SignTimerSite, 4> SignTimerSites{{
     {0x018A9757, 0x43, 30.0f, SignRepostSeconds},
     {0x018A988F, 0x43, 30.0f, SignRepostSeconds},
 }};
+// The game's store at a site, whatever time it holds: game patches rewrite the re-post time (the
+// bundled "Uncap FPS++" writes 60 s), and the store is ours to rewrite all the same.
+bool IsSignTimerStore(std::span<const u8> bytes, const SignTimerSite& site);
 
 // Lamps as campfires (a party session only; solo and co-op with strangers stay vanilla). A lamp
 // is used through its talk script (t<map><nnn>.esd), which 01.09 hides while the game is in

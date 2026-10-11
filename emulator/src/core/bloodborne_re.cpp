@@ -3715,9 +3715,9 @@ void PatchSignTimers(u64 base, u64 image_size) {
     for (const auto& site : SignTimerSites) {
         const auto expected = EncodeSignTimerStore(site.modrm, site.original_seconds);
         if (site.offset > image_size || expected.size() > image_size - site.offset ||
-            !std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(base + site.offset),
-                                                    expected.size()},
-                                expected)) {
+            !IsSignTimerStore(std::span<const u8>{reinterpret_cast<const u8*>(base + site.offset),
+                                                  expected.size()},
+                              site)) {
             const u8* found = reinterpret_cast<const u8*>(base + site.offset);
             LOG_ERROR(Debug,
                       "Bloodborne sign timer signature mismatch at {:#x} (found {}); "

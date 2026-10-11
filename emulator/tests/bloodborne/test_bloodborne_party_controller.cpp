@@ -896,6 +896,25 @@ TEST(BloodborneSignTimers, PostsTheFirstSignAtOnceAndRepostsEverySecond) {
     EXPECT_EQ(SignRepostSeconds, 1.0f);
 }
 
+// The bundled "Uncap FPS++" game patch takes the re-post stores for frame timers and writes 60 s
+// into them (0x01CA975A and 0x01CA9892 in its addresses): the sign then went up once a minute, a
+// host's claim found the guest's game long past its 5 s, and krolebord's join took many bells.
+TEST(BloodborneSignTimers, TakesTheStoresWhateverTimeAGamePatchWroteInThem) {
+    const SignTimerSite& repost = SignTimerSites[2];
+    const auto game = EncodeSignTimerStore(repost.modrm, repost.original_seconds);
+    const auto uncapped = EncodeSignTimerStore(repost.modrm, 60.0f);
+    EXPECT_TRUE(IsSignTimerStore(game, repost));
+    EXPECT_TRUE(IsSignTimerStore(uncapped, repost));
+
+    auto other_register = game;
+    other_register[1] = 0x47;
+    EXPECT_FALSE(IsSignTimerStore(other_register, repost));
+    auto other_field = game;
+    other_field[2] = 0x30;
+    EXPECT_FALSE(IsSignTimerStore(other_field, repost));
+    EXPECT_FALSE(IsSignTimerStore(std::span<const u8>{game}.first(6), repost));
+}
+
 // 01.09 runs the event scripts' death flow natively (global_event.lua in eventcommon.luabnd is
 // only the source it was built from). When a white phantom dies, PartyGhostDeath broadcasts
 // event 4063, which makes the host drop the guest from the session (OnGameLeave), and
