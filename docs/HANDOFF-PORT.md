@@ -6,6 +6,41 @@ mechanic simpler or more reliable. No mixed parties (port and shadPS4 players ne
 leave/rejoin a session as a fix: everything is seamless. See docs/BBPORT.md for how the port and
 its co-op are wired, built, packaged and tested.
 
+## Double damage and duplicate enemies (Kaniel's friend run, 2026-10-11)
+
+- **A guest's hits counted twice.** After a trip each member runs its own copy of the map, but the
+  guest's hits still reach the host's copy through the game. The host counted that drop as its
+  own damage and posted it to the HP board, so the guest's copy took every hit a second time half
+  a second later (friend's log: 0x10014066 450 -> 401 its hit, 401 -> 350 from the board), and
+  the host's copy took the guest's post on top of the game's hit. Now a member's own damage is
+  what its own hits did: hooks on the game's hit function (`HitOffset` 0x01A2A770, entry: the
+  victim at [rdi+8], the attacker in rsi; `HitAppliedOffset` 0x01A2C05F, the AfterHit return:
+  HP after) count, per handle, what hits by the local player took off (`own_hit_damage`). The
+  rest of a copy's drop (another player's hit the game sent) pays for the others' posts before
+  the board writes anything (`SharedDamage`, `EnemyCopy::own_hits`). The first hits of each
+  kind log "hit on <handle> by this player / another player / other". Counted hit by hit, a
+  world that shows its characters at 1 HP for a moment posts nothing (the friend's world posted
+  97 such characters and the host's 97 copies went to 1 HP). Poison and other status effect HP
+  ticks (0x01A2FA40, hooked at its two SetHp calls `EffectHpChangeOffsets`, which run only when
+  HP changes) count for the member whose own hit was the last on that enemy (`OwnDamage`). The
+  rig's `hurt` counts as the player's hits. On the rig the host never logged a guest's hit as
+  "another player": the guest's hits reach the host's copy some other way, which counting only
+  one's own hits does not need to know. Rig (all pass, 2026-10-11): guest-hit-once,
+  hit-after-host-trip, hit3; `hp_sums_hits` checks the census equals max HP less every hit.
+- **A guest unseen after the host's early trip, without party death.** The host asks a member
+  that was still joining for its data only once the vitals board shows it on the host's map
+  (`FinishWaitingJoins`), and the vitals board ran only with party death on (the rig runs with it
+  off). Now it always runs; without party death a member posts Up, its map and position.
+- **Duplicate enemies at a border.** The kill board's visit (`VisitTracker`) ended on every map
+  change, and walking from Central Yharnam into the Cathedral Ward is one: the host withdrew all
+  72 kills of its visit (still dead in its world) and they came back to life for the guest; the
+  guest killed them again for no echoes, and the same for the NPC by the Ward lamp. A visit now
+  ends only on a load: a party trip, a reload out of a session, or a summon onto another map; it
+  keeps the map it began on.
+- Seen in the host's log, not looked into: after the Gascoigne kill the time-of-day reload
+  (0x0193C65C) ran several times in a row by the Ward/Central Yharnam border, each a party trip
+  flipping the map between 0x18000000 and 0x18010000, and the same by Hemwick (0x16000000).
+
 ## Backlog (Kaniel 2026-10-10)
 
 - **Guest unseen after a host's early trip.** A host that travels (lamp, Dream) while a guest is

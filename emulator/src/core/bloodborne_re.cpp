@@ -5980,6 +5980,108 @@ bool SharesOneWorld() {
     return false;
 }
 
+// This player's own hits, counted at the game's hit function (see HitOffset): what each took off
+// its victim, by the victim's handle, since the game started. Another player's hit that the game
+// applies here (after a trip a guest's hits still reach the host's copy) is not this player's
+// damage (Kaniel's friend run 2026-10-11: each of the guest's hits came back to it a second time).
+// Poison and the like count too, on enemies this player hit last (see OwnDamage).
+std::mutex own_hits_mutex;
+std::unordered_map<u64, std::pair<u64, s32>> hits_in_flight; // victim -> (attacker, HP before)
+OwnDamage own_damage;
+bool hit_hooks_installed = false;
+
+void PS4_SYSV_ABI NoteHitStart(u64, const GuestRegisterSnapshot* registers) {
+    const u64 victim = ReadValue<u64>(registers->rdi, 0x08);
+    if (victim < 0x10000) {
+        return;
+    }
+    std::scoped_lock lock{own_hits_mutex};
+    hits_in_flight[victim] = {registers->rsi, CharacterHp(victim)};
+}
+
+void PS4_SYSV_ABI NoteHitApplied(u64, const GuestRegisterSnapshot* registers) {
+    const u64 victim = ReadValue<u64>(registers->r14, 0x08);
+    u64 attacker = 0;
+    s32 before = 0;
+    {
+        std::scoped_lock lock{own_hits_mutex};
+        const auto hit = hits_in_flight.find(victim);
+        if (hit == hits_in_flight.end()) {
+            return;
+        }
+        std::tie(attacker, before) = hit->second;
+        hits_in_flight.erase(hit);
+    }
+    const s32 taken = before - std::max(CharacterHp(victim), 0);
+    const u64 player = GetLocalPlayer();
+    if (victim == player || player == 0) {
+        return;
+    }
+    const u32 handle = ReadValue<u32>(victim, 0x08);
+    {
+        std::scoped_lock lock{own_hits_mutex};
+        own_damage.Hit(handle, attacker == player, taken);
+    }
+    if (taken <= 0) {
+        return;
+    }
+    // Diagnostics: who hits what, for the first hits of each kind of attacker.
+    static std::atomic<u32> logged_own{0}, logged_players{0}, logged_others{0};
+    if (attacker != player && logged_players.load() >= 20 && logged_others.load() >= 20) {
+        return;
+    }
+    bool by_player = false;
+    if (attacker != player && attacker >= 0x10000) {
+        for (const OtherPlayer& other : OtherPlayers()) {
+            by_player |= other.character == attacker;
+        }
+    }
+    std::atomic<u32>& logged =
+        attacker == player ? logged_own : (by_player ? logged_players : logged_others);
+    if (logged.fetch_add(1) < 20) {
+        LOG_INFO(Debug, "Bloodborne party: hit on {:#x} by {} {:#x}: {} -> {} (t={:.1f})", handle,
+                 attacker == player ? "this player" : (by_player ? "another player" : "other"),
+                 attacker >= 0x10000 ? ReadValue<u32>(attacker, 0x08) : 0, before, before - taken,
+                 SteadyMilliseconds() / 1000.0);
+    }
+}
+
+// A status effect's HP change (see EffectHpChangeOffsets), only reached when HP changes.
+void PS4_SYSV_ABI NoteEffectHpChange(u64, const GuestRegisterSnapshot* registers) {
+    const u64 victim = ReadValue<u64>(registers->r12, 0x00);
+    if (victim < 0x10000 || victim == GetLocalPlayer()) {
+        return;
+    }
+    const s32 before = ReadValue<s32>(registers->r12, 0x08);
+    const s32 max = ReadValue<s32>(registers->r12, 0x0C);
+    const s32 after = std::clamp(static_cast<s32>(registers->rsi), 0, std::max(max, 0));
+    std::scoped_lock lock{own_hits_mutex};
+    own_damage.Effect(ReadValue<u32>(victim, 0x08), before - after);
+}
+
+void InstallOwnHitCount(u64 base, u64 image_size) {
+    if (!party_controller || HitAppliedOffset + HitApplied.size() > image_size) {
+        return;
+    }
+    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + HitOffset), HitPrologue, 0,
+                              NoteHitStart) ||
+        !InstallGuestCodeHook(reinterpret_cast<void*>(base + HitAppliedOffset), HitApplied, 0,
+                              NoteHitApplied)) {
+        LOG_ERROR(Debug, "Bloodborne hit hooks unavailable; shared enemy damage counts every drop");
+        return;
+    }
+    hit_hooks_installed = true;
+    for (const u64 offset : EffectHpChangeOffsets) {
+        if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + offset), EffectHpChange, 0,
+                                  NoteEffectHpChange)) {
+            LOG_ERROR(Debug,
+                      "Bloodborne status effect HP hook unavailable at {:#x}; poison is not "
+                      "shared",
+                      offset);
+        }
+    }
+}
+
 // This game's tag on its HP reports (the upper half of EnemyHpReport.visit), so the others count
 // each member's damage apart.
 const u32 enemy_hp_source = [] {
@@ -6001,6 +6103,11 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     const bool active = in_session && !SharesOneWorld();
     std::unordered_map<u32, Copy> alive;
     std::vector<EnemyCopy> standing;
+    std::map<u32, s64> own_hits;
+    if (hit_hooks_installed) {
+        std::scoped_lock lock{own_hits_mutex};
+        own_hits = own_damage.All();
+    }
     for (const u64 character : characters) {
         const u64 modules = ReadValue<u64>(character, 0x3B0);
         const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
@@ -6014,7 +6121,12 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
             continue;
         }
         alive[handle] = Copy{data, hp, max};
-        standing.push_back({handle, hp, max});
+        std::optional<s64> hits;
+        if (hit_hooks_installed) {
+            const auto counted = own_hits.find(handle);
+            hits = counted != own_hits.end() ? counted->second : 0;
+        }
+        standing.push_back({handle, hp, max, hits});
     }
     std::vector<MemberMapState> others;
     {
@@ -7589,8 +7701,7 @@ void StartVitalsBoardClient() {
     const char* party_setting = std::getenv("SHADPS4_BLOODBORNE_PARTY");
     const auto party = party_setting ? ParsePartySetting(party_setting) : std::nullopt;
     const std::string base_url = EmulatorSettings.GetShadNetWebApiServer();
-    if (!party_death_hook_installed || !party || !EmulatorSettings.IsShadNetEnabled() ||
-        base_url.empty()) {
+    if (!party_controller || !party || !EmulatorSettings.IsShadNetEnabled() || base_url.empty()) {
         return;
     }
     vitals_board_client = std::jthread(RunVitalsBoardClient, base_url, *party);
@@ -7700,6 +7811,19 @@ void DieFromDown(PartyDeathRun& run, u64 player, u64 data, bool reset, std::stri
 
 void TickPartyDeath() {
     if (!party_death_hook_installed) {
+        // Without party death the vitals board still says who stands on which map: a host back
+        // from a trip asks a member that was still joining for its data only once it stands here
+        // (FinishWaitingJoins; rig 2026-10-11, party death off: the guest stayed unseen).
+        const u64 data = PlayerDataModule(GetLocalPlayer());
+        if (data >= 0x10000 && HasMemoryAccess(data, 0x100, MemoryProt::CpuRead)) {
+            const bool in_session = InPartySession();
+            PostVitals(MemberVitals{.map = in_session ? GetCurrentPackedMap() : 0,
+                                    .vital = in_session ? Vital::Up : Vital::Off,
+                                    .hp = ReadValue<s32>(data, 0xF8),
+                                    .max = ReadValue<s32>(data, 0xFC),
+                                    .at = LocalPlayerPosition().value_or(LampPosition{})},
+                       {});
+        }
         return;
     }
     auto& run = party_death_run;
@@ -10069,6 +10193,9 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
             reinterpret_cast<Kill>(image_base + KillCharacterOffset)(found->character);
         } else {
             WriteValue(found->data, 0xF8, target_hp);
+            // It stands for this player's hits (see own_damage), which the HP board shares.
+            std::scoped_lock lock{own_hits_mutex};
+            own_damage.Hit(ReadValue<u32>(found->character, 0x08), true, hp - target_hp);
         }
         LOG_INFO(Debug, "Bloodborne autoplay: {} {:#x} hp {} -> {} at {:.1f} m", verb,
                  ReadValue<u32>(found->character, 0x08), hp, target_hp, found->distance);
@@ -11358,6 +11485,7 @@ void InstallSeamlessCoopPatches() {
     InstallItemModuleDiagnostics(base, image_size);
     InstallItemButtonDiagnostics(base);
     InstallPartyDeath(base, image_size);
+    InstallOwnHitCount(base, image_size);
     StartSaveBackups();
     StartRestBoardClient();
     StartVitalsBoardClient();

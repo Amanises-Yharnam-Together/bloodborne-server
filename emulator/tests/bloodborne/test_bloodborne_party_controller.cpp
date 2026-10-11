@@ -1157,10 +1157,10 @@ TEST(BloodborneSharedKills, AMembersKillsLastForItsVisit) {
 }
 
 // What ends a visit is what respawns the enemies for that member: a trip (lamp travel, the
-// Dream, a death sent home), another map, or a reload outside a session. A guest pulled into
-// the host's world when the host arrives reloads the same map in a session: its kills there
-// stand (friend run 2026-10-08: the guest killed the dog, the host came back, the guest's
-// summon withdrew the kill and the host's dog stood alive).
+// Dream, a death sent home) or a reload outside a session. A guest pulled into the host's world
+// when the host arrives reloads the same map in a session: its kills there stand (friend run
+// 2026-10-08: the guest killed the dog, the host came back, the guest's summon withdrew the kill
+// and the host's dog stood alive).
 TEST(BloodborneSharedKills, ASummonIntoTheHostsWorldKeepsTheGuestsVisit) {
     VisitTracker visits;
     const u64 first = visits.Update(0x18010000, 0x1000, false, 0);
@@ -1168,12 +1168,12 @@ TEST(BloodborneSharedKills, ASummonIntoTheHostsWorldKeepsTheGuestsVisit) {
     EXPECT_EQ(visits.Update(0x18010000, 0x2000, true, 0), first) << "summoned on the same map";
     const u64 tripped = visits.Update(0x18010000, 0x3000, true, 1);
     EXPECT_NE(tripped, first) << "a trip to a lamp on the same map";
-    const u64 moved = visits.Update(0x15000000, 0x3000, true, 1);
-    EXPECT_NE(moved, tripped) << "another map";
-    const u64 back = visits.Update(0x18010000, 0x4000, true, 1);
+    const u64 moved = visits.Update(0x15000000, 0x3000, true, 2);
+    EXPECT_NE(moved, tripped) << "a trip to another map";
+    const u64 back = visits.Update(0x18010000, 0x4000, true, 3);
     EXPECT_NE(back, first);
     EXPECT_NE(back, moved);
-    EXPECT_NE(visits.Update(0x18010000, 0x5000, false, 1), back) << "a reload out of a session";
+    EXPECT_NE(visits.Update(0x18010000, 0x5000, false, 3), back) << "a reload out of a session";
 
     // The killer hides its own kills too while it stands in another world's copy of the map.
     VisitKills kills;
@@ -1182,6 +1182,35 @@ TEST(BloodborneSharedKills, ASummonIntoTheHostsWorldKeepsTheGuestsVisit) {
     EXPECT_EQ(kills.Killed(), (std::vector<u32>{0x10014085}));
     kills.Observe(back + 1, std::vector<SeenCharacter>{{0x10014085, 300}});
     EXPECT_TRUE(kills.Killed().empty());
+}
+
+// Kaniel's friend run 2026-10-11: the host walked from Central Yharnam (0x18010000) into the
+// Cathedral Ward (0x18000000), its visit ended with the map, and it withdrew all 72 kills of that
+// visit from the kill board while they lay dead in its world; the guest's copies came back to
+// life (duplicate enemies, and no echoes for the host when the guest killed them again). Walking
+// across a border loads nothing and respawns nothing: the visit goes on, under the map it began on.
+TEST(BloodborneSharedKills, WalkingAcrossABorderKeepsTheVisit) {
+    VisitTracker visits;
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    const u64 first = visits.Update(0x18010000, 0x1000, true, 1);
+    kills.Observe(first, std::vector<SeenCharacter>{{0x10014068, 210}});
+    EXPECT_EQ(kills.Observe(first, std::vector<SeenCharacter>{{0x10014068, 0}}),
+              (Changes{{0x10014068, true}}));
+
+    const u64 ward = visits.Update(0x18000000, 0x1000, true, 1);
+    EXPECT_EQ(ward, first) << "into the Cathedral Ward";
+    EXPECT_EQ(kills.Observe(ward, std::vector<SeenCharacter>{{0x10014068, 0}}), Changes{})
+        << "the kill stands across the border";
+    EXPECT_EQ(visits.Update(0x16000000, 0x1000, true, 1), first) << "on into Hemwick";
+    EXPECT_EQ(visits.Update(0x18010000, 0x1000, true, 1), first) << "and back";
+    EXPECT_EQ(visits.Update(0x18000000, 0x1000, false, 1), first) << "out of a session too";
+
+    const u64 tripped = visits.Update(0x18000000, 0x2000, true, 2);
+    EXPECT_NE(tripped, first) << "a lamp in the Ward";
+    EXPECT_EQ(tripped >> 32, 0x18000000u) << "the map the visit began on";
+    EXPECT_NE(visits.Update(0x15000000, 0x3000, true, 2), tripped)
+        << "a summon into the host's world on another map is a load";
 }
 
 // Rig test "dog" 2026-10-09: the host left, the guest's own world loaded on the same map (the
@@ -1431,6 +1460,90 @@ TEST(BloodborneSharedEnemyHp, TwoPlayersHittingOneEnemyAddUp) {
         guest.Update(1, true, copies(340), std::vector<EnemyHpReport>{{HostSource, from_host.post}})
             .writes,
         (std::vector<EnemyWrite>{{0x10014066, 290}}));
+}
+
+// Kaniel's friend run 2026-10-11: after trips the guest's hits still reach the host's copy
+// through the game. The host counted that as its own damage and posted it, so the guest's copy
+// took each of the guest's hits a second time half a second later (0x10014066 450 -> 401, its
+// own hit, then 401 -> 350 from the board), and the host's copy took the guest's post on top of
+// the game's hit. A member's own damage is now what its own hits took off (EnemyCopy::own_hits,
+// from the game's hit function); the rest of a drop (another player's hit the game sent) pays for
+// the others' posts before anything is written.
+TEST(BloodborneSharedEnemyHp, AHitTheGameSendsCountsOnce) {
+    SharedDamage host;
+    SharedDamage guest;
+    constexpr u64 HostSource = 0xA0000001, GuestSource = 0xB0000001;
+    const auto board = [](u64 source, const std::vector<EnemyHp>& posted) {
+        return std::vector<EnemyHpReport>{{source, posted}};
+    };
+    const auto at = [](s32 hp, s64 own_hits) {
+        return std::vector<EnemyCopy>{{0x10014066, hp, 500, own_hits}};
+    };
+    host.Update(1, true, at(500, 7), {}); // counted up from before this visit
+    guest.Update(1, true, at(500, 0), {});
+
+    // The guest hits for 50: its copy and, through the game, the host's.
+    const auto from_guest = guest.Update(1, true, at(450, 50), {});
+    ASSERT_EQ(from_guest.post.size(), 1u) << "its own hit: no second read needed";
+    EXPECT_EQ(from_guest.post[0].hp, 50);
+    const auto from_host = host.Update(1, true, at(450, 7), {});
+    EXPECT_TRUE(from_host.post.empty()) << "the guest's hit is not the host's damage";
+
+    const std::vector<EnemyHpReport> to_host{{GuestSource, from_guest.post}};
+    EXPECT_TRUE(host.Update(1, true, at(450, 7), to_host).writes.empty())
+        << "the host's copy already took it from the game";
+    EXPECT_TRUE(
+        guest.Update(1, true, at(450, 50), board(HostSource, from_host.post)).writes.empty())
+        << "no echo";
+
+    // The host hits for 100 (the game does not send it): the guest takes it from the board.
+    const auto hit = host.Update(1, true, at(350, 107), to_host);
+    ASSERT_EQ(hit.post.size(), 1u);
+    EXPECT_EQ(hit.post[0].hp, 100);
+    EXPECT_EQ(guest.Update(1, true, at(450, 50), board(HostSource, hit.post)).writes,
+              (std::vector<EnemyWrite>{{0x10014066, 350}}));
+
+    // A guest hit the game did not send (the host's copy was not loaded yet) still comes over
+    // the board: only what the game sent is taken off.
+    const auto more = guest.Update(1, true, at(320, 80), board(HostSource, hit.post));
+    ASSERT_EQ(more.post.size(), 1u);
+    EXPECT_EQ(more.post[0].hp, 80);
+    EXPECT_EQ(host.Update(1, true, at(350, 107), board(GuestSource, more.post)).writes,
+              (std::vector<EnemyWrite>{{0x10014066, 320}}));
+}
+
+// What a member's own hits took off each enemy (EnemyCopy::own_hits), and its poison: a status
+// effect's HP tick is this member's when its own hit was the last to land on that enemy (Kaniel
+// 2026-10-11: keep sharing poison).
+TEST(BloodborneSharedEnemyHp, PoisonIsTheLastHittersDamage) {
+    OwnDamage own;
+    own.Hit(0x10014066, true, 50);
+    own.Effect(0x10014066, 8);
+    EXPECT_EQ(own.Total(0x10014066), 58) << "poisoned by this member's knife";
+    own.Hit(0x10014066, false, 40);
+    own.Effect(0x10014066, 8);
+    EXPECT_EQ(own.Total(0x10014066), 58) << "another player hit it last";
+    own.Hit(0x10014066, true, 0); // a knife that only builds poison up
+    own.Effect(0x10014066, 8);
+    EXPECT_EQ(own.Total(0x10014066), 66);
+    own.Effect(0x10014085, 8);
+    EXPECT_EQ(own.Total(0x10014085), 0) << "never hit: the world's own poison (a swamp)";
+    own.Hit(0x10014066, true, -5);
+    own.Effect(0x10014066, -3);
+    EXPECT_EQ(own.Total(0x10014066), 66) << "nothing takes HP back";
+    EXPECT_EQ(own.All().size(), 1u);
+}
+
+// The friend run's other half: for two reads the guest's world showed 97 characters far below
+// their HP (most never hit), it posted that as its damage, and the host's 97 copies went to 1 HP.
+// Counted from its own hits, a member posts nothing for them.
+TEST(BloodborneSharedEnemyHp, AWorldShowingLowHpPostsNoDamage) {
+    SharedDamage copy;
+    const auto at = [](s32 hp) { return std::vector<EnemyCopy>{{0x10024000, hp, 3617, 0}}; };
+    copy.Update(1, true, at(3617), {});
+    copy.Update(1, true, at(1), {});
+    EXPECT_TRUE(copy.Update(1, true, at(1), {}).post.empty());
+    EXPECT_TRUE(copy.Update(1, true, at(3617), {}).post.empty());
 }
 
 TEST(BloodborneSharedEnemyHp, InOneWorldAGuestTakesTheHostsNpcHp) {

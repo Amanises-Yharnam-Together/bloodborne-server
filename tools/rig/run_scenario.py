@@ -657,6 +657,14 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
             else:
                 print(f"    {where}: {handle} one HP in every game ("
                       f"{', '.join(str(last_census_hp(t, handle, index)) for t in texts.values())})")
+    if handle := scenario.get("hp_sums_hits"):
+        texts = {role: role_text(run_dir, role, stage[role] + 1) for role in roles}
+        if problem := hits_sum_problem(texts, handle):
+            print(f"    {problem}")
+            passed = False
+        else:
+            hits = sum(hit_damage(text, handle) for text in texts.values())
+            print(f"    {handle} took each hit once ({hits} in all)")
     for role in roles:
         text = role_text(run_dir, role, stage[role] + 1)
         status = done.get(role, "timed out")
@@ -706,6 +714,29 @@ def same_hp_problem(texts: dict[str, str], handle: str, index: int = -1) -> str 
         return f"{handle} HP apart: {shown}"
     if all(hp >= top for hp, top in seen.values()):
         return f"{handle} never hit: {shown}"
+    return None
+
+
+def hit_damage(text: str, handle: str) -> int:
+    """What the role's own `hit` steps took off the character (each hit line's drop)."""
+    found = re.findall(rf"autoplay: hit {re.escape(handle)}: hp (-?\d+) -> (-?\d+)", text)
+    return sum(int(before) - int(after) for before, after in found)
+
+
+def hits_sum_problem(texts: dict[str, str], handle: str) -> str | None:
+    """What is wrong with the shared enemy's HP in each role's last census, or None: every game
+    must show its max HP less all the roles' hits together, each hit counted once (3 apart at
+    most: shares round)."""
+    hits = sum(hit_damage(text, handle) for text in texts.values())
+    if hits <= 0:
+        return f"no hit on {handle}"
+    for role, text in texts.items():
+        seen = last_census_hp(text, handle)
+        if seen is None:
+            return f"no census of {handle} in {role}"
+        hp, top = seen
+        if abs((top - hp) - hits) > 3:
+            return f"{role} took {top - hp} of {handle}, the hits {hits}"
     return None
 
 
