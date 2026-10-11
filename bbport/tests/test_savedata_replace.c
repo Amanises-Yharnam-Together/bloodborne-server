@@ -12,6 +12,10 @@
 const char *runtime_file_user_dir(void) { return "."; }
 int runtime_file_mount(const char *guest, const char *host) { (void)guest; (void)host; return 0; }
 void runtime_file_unmount(const char *guest) { (void)guest; }
+/* runtime_file.c's replace, as it is for a file nobody else holds. */
+int runtime_file_replace_host(const char *from, const char *to) {
+    return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ? 0 : -1;
+}
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t n, const char *name) {
     for (size_t i = 0; i < n; ++i)
         if (!strcmp(table[i].name, name)) return (uintptr_t)table[i].function;

@@ -139,12 +139,13 @@ class ChannelTests(unittest.TestCase):
 class CheckTests(unittest.TestCase):
     """Launcher.check_update on a stand-in window: what gets offered, and silence on a failure."""
 
-    def check(self, running, beta, body, manual=False):
+    def check(self, running, beta, body, manual=False, coop=False):
+        """The release logic as a public build runs it; coop: the co-op test build, which never updates."""
         offers, errors, infos = [], [], []
         window = types.SimpleNamespace(
             app={'beta_versions': beta}, ui_calls=queue.Queue(), offer_update=lambda *release: offers.append(release),
             messagebox=types.SimpleNamespace(showerror=lambda *a: errors.append(a), showinfo=lambda *a: infos.append(a)))
-        with mock.patch.object(launcher, 'VERSION', running), \
+        with mock.patch.object(launcher, 'VERSION', running), mock.patch.object(launcher, 'COOP_TEST', coop), \
                 mock.patch.object(launcher, 'fetch_update_release', side_effect=body if isinstance(body, Exception) else None,
                                   return_value=None if isinstance(body, Exception) else body):
             launcher.Launcher.check_update(window, manual)
@@ -170,6 +171,14 @@ class CheckTests(unittest.TestCase):
     def test_the_manual_check_says_so_when_up_to_date(self):
         _offers, _errors, infos = self.check('1.6.16', False, launcher.newest_release(RELEASES, False), manual=True)
         self.assertEqual(len(infos), 1)
+
+    def test_the_coop_build_offers_nothing_and_says_why_when_asked(self):
+        found = launcher.newest_release(RELEASES, True)
+        offers, errors, infos = self.check('1.6.16', True, found, coop=True)
+        self.assertEqual((offers, errors, infos), ([], [], []))
+        offers, errors, infos = self.check('1.6.16', True, found, manual=True, coop=True)
+        self.assertEqual((offers, errors, len(infos)), ([], [], 1))
+        self.assertIn('co-op', infos[0][1])
 
     def test_a_failed_check_is_quiet_unless_asked_for(self):
         for failure in (OSError('offline'), ValueError('not JSON'), KeyError('tag_name')):

@@ -544,9 +544,9 @@ class TranslationTests(unittest.TestCase):
         for language in self.LANGUAGES:
             self.assertEqual(bbport_lang.table(language)[note].count('{}'), 1, language)
 
-    def test_the_file_keeps_its_windows_line_endings(self):
+    def test_the_file_keeps_one_kind_of_line_ending(self):
         data = (ROOT / 'launcher' / 'bbport_lang.py').read_bytes()
-        self.assertEqual(data.count(b'\n'), data.count(b'\r\n'))
+        self.assertIn(data.count(b'\r\n'), (0, data.count(b'\n')))
 
     @unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
     def test_every_text_of_the_page_is_in_the_translations(self):

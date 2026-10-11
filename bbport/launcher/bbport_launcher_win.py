@@ -2471,6 +2471,11 @@ class Launcher:
         self.label(parent, text, 'small', MUTED, wraplength=self.px(680), justify='left').grid(
             row=self.next_row(parent), column=0, columnspan=2, sticky='w', pady=(self.px(top), 0))
 
+    def section(self, parent, title, top=18):
+        """A heading inside a card (the Online page's groups)."""
+        self.label(parent, title, 'body_bold').grid(row=self.next_row(parent), column=0, columnspan=2, sticky='w',
+                                                     pady=(self.px(top), self.px(2)))
+
     def folder(self, parent, key, title, prompt, hint=None, on_change=None):
         px = self.px
         var = self.var(key, 'app')

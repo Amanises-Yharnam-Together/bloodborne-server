@@ -330,7 +330,7 @@ if (WIN32)
     add_executable(file-windows-test EXCLUDE_FROM_ALL ../tests/test_file_windows.c ../src/compat_win.c)
     set_target_properties(file-windows-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(file-windows-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-    target_include_directories(file-windows-test PRIVATE ../src)
+    target_include_directories(file-windows-test PRIVATE .. ../src)
     target_link_libraries(file-windows-test PRIVATE bcrypt -pthread)
     # The runtime's direct memory chunks for the PC memory model (no GPU: a recording allocator).
     add_executable(memory-chunks-test EXCLUDE_FROM_ALL ../tests/test_memory_chunks.c ../src/compat_win.c)
@@ -357,7 +357,7 @@ if (WIN32)
         ../packaging/windows/bb-probe.rc)
     set_target_properties(save-commit-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(save-commit-test PRIVATE $<$<COMPILE_LANGUAGE:C>:-UNDEBUG -Wall -Wextra -Werror>)
-    target_include_directories(save-commit-test PRIVATE ../src)
+    target_include_directories(save-commit-test PRIVATE .. ../src)
     target_link_libraries(save-commit-test PRIVATE bcrypt -pthread)
     # Stick neutral and dead zone on SDL virtual controllers (run from a scratch directory: it
     # writes two small files next to itself).
