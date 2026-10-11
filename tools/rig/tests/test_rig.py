@@ -226,6 +226,26 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("no census", run_scenario.same_hp_problem({"host": host, "guest": ""},
                                                                 "0x1001400b"))
 
+    def test_the_shared_enemy_took_each_hit_once(self):
+        # Kaniel's friend 2026-10-11: each of the guest's hits came back a second time. With
+        # "hp_sums_hits", the last census must show max HP less every role's own hits (each hit
+        # line's drop), a few HP apart at most (shares round).
+        census = "[Debug] <Info> () x: Bloodborne autoplay census: {} hp {}/{} dead 0x0 hidden 0"
+        hit = "[Debug] <Info> () x: Bloodborne autoplay: hit {}: hp {} -> {} in attack cycle 0"
+        texts = {
+            "host": "\n".join([hit.format("0x1001400b", 484, 430),
+                               census.format("0x1001400b", 330, 484)]),
+            "guest": "\n".join([hit.format("0x1001400b", 430, 380),
+                                hit.format("0x1001400b", 380, 330),
+                                census.format("0x1001400b", 331, 484)]),
+        }
+        self.assertEqual(run_scenario.hit_damage(texts["guest"], "0x1001400b"), 100)
+        self.assertIsNone(run_scenario.hits_sum_problem(texts, "0x1001400b"))
+        twice = dict(texts, host=texts["host"].replace("330/484", "280/484"))
+        self.assertIn("took 204", run_scenario.hits_sum_problem(twice, "0x1001400b"))
+        self.assertIn("no hit", run_scenario.hits_sum_problem(
+            {"host": census.format("0x1001400b", 484, 484)}, "0x1001400b"))
+
     def test_old_runs_go_newest_stay(self):
         with tempfile.TemporaryDirectory() as folder:
             runs = pathlib.Path(folder)

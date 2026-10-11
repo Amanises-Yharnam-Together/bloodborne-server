@@ -689,13 +689,15 @@ std::string EncodeMapStateUpdate(std::string_view member, u32 map, std::span<con
 std::optional<std::vector<MemberMapState>> ParseMapStateBoard(std::string_view body);
 
 // A member's visit to a map (see VisitKills): it ends when the enemies respawn for that member.
-// trips counts the party trips started (lamps, the Dream, a death sent home).
+// trips counts the party trips started (lamps, the Dream, a death sent home). The visit is named
+// by the map it began on, not the one the player walked on to.
 class VisitTracker {
 public:
     u64 Update(u32 map, u64 player, bool in_session, u64 trips);
 
 private:
-    u32 map = 0;
+    u32 map = 0;      // where this visit began
+    u32 seen_map = 0; // where the player was at the last update
     u64 player = 0;
     u64 trips = 0;
     u32 generation = 0;
@@ -727,6 +729,9 @@ struct EnemyCopy {
     u32 handle = 0;
     s32 hp = 0;
     s32 max = 0;
+    // What this member's own hits took off this copy (the game's hit function, attacker = the
+    // local player), counted up since the game started; nothing when that hook is not in.
+    std::optional<s64> own_hits;
 };
 struct EnemyWrite {
     u32 handle = 0;
@@ -746,9 +751,11 @@ public:
 
 private:
     struct Track {
-        s32 start = 0;    // the copy's HP when first seen this visit (or since it came back up)
-        s32 written = 0;  // what the others' damage took off it
-        s32 last_own = 0; // the previous read's own damage: posted is the lower of the two
+        s32 start = 0;       // the copy's HP when first seen this visit (or since it came back up)
+        s32 written = 0;     // what the others' damage took off it
+        s32 last_own = 0;    // the previous read's own damage: posted is the lower of the two
+        s64 hits_before = 0; // EnemyCopy::own_hits when first seen this visit
+        s32 paid = 0;        // what the game sent of the others' damage that their posts used up
     };
     u64 visit = 0;
     bool active = false;
@@ -760,6 +767,39 @@ private:
 // hurt characters have (EnemyHp.hp is HP, the report's source has HostHpReport set), and a guest
 // lowers its copies to that share; the guest's own hits reach the host by the game.
 constexpr u64 HostHpReport = u64{1} << 63;
+// The game's hit (0x01A2A770, called through the victim's damage module): rdi the module (+0x08
+// the victim), rsi the attacker (null for none), rdx the hit. Hooked at its entry (HP before)
+// and at the return from its IsNoDead check once the hit is applied (r14 the module again).
+constexpr u64 HitOffset = 0x01A2A770;
+constexpr std::array<u8, 10> HitPrologue{0x55, 0x48, 0x89, 0xE5, 0x41,
+                                         0x57, 0x41, 0x56, 0x41, 0x55};
+constexpr u64 HitAppliedOffset = 0x01A2C05F;
+// mov rcx, [r14 + 8]; mov rdx, [rcx + 0x3B0]
+constexpr std::array<u8, 11> HitApplied{0x49, 0x8B, 0x4E, 0x08, 0x48, 0x8B,
+                                        0x91, 0xB0, 0x03, 0x00, 0x00};
+// Status effect HP changes (0x01A2FA40, poison and the like; run for every character every frame):
+// its two calls of SetHp, hooked just before each, where HP changes. r12 is the HP field block
+// (data +0xF0: [r12] the character, [r12 + 8] the HP) and esi the new HP.
+constexpr std::array<u64, 2> EffectHpChangeOffsets{0x01A2FB5D, 0x01A2FBF9};
+// xor edx, edx; xor ecx, ecx; mov rdi, r12
+constexpr std::array<u8, 7> EffectHpChange{0x31, 0xD2, 0x31, 0xC9, 0x4C, 0x89, 0xE7};
+constexpr u64 SetHpOffset = 0x01A0D470;
+
+// What this member's own hits took off each enemy, by handle (see EnemyCopy::own_hits), with the
+// HP ticks of status effects (poison) on enemies whose last hit was its own.
+class OwnDamage {
+public:
+    void Hit(u32 handle, bool mine, s32 taken);
+    void Effect(u32 handle, s32 taken);
+    s64 Total(u32 handle) const;
+    const std::map<u32, s64>& All() const {
+        return totals;
+    }
+
+private:
+    std::map<u32, s64> totals;
+    std::map<u32, bool> last_hit_mine;
+};
 std::vector<EnemyWrite> LowerToHostHp(std::span<const EnemyCopy> mine,
                                       std::span<const EnemyHpReport> reports);
 std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies);

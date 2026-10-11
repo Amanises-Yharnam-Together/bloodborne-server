@@ -866,6 +866,68 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 720,
     },
+    "guest-hit-once": {
+        "about": "after both players' trips each runs its own copy of the map; the guest's real "
+                 "hits reach the host's copy through the game and count once: the host does not "
+                 "post them back, and both end at max HP less the guest's hits (Kaniel's friend "
+                 "2026-10-11: each hit repeated a split second later)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 120", "wait 120",
+                     "census 40", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 45", "wait-members 2 240",
+                      "wait 5", f"travel {HUNTERS_DREAM}", "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait-members 2 240", "wait 20", f"hit {ENEMY} 30", "wait 1",
+                      f"hit {ENEMY} 30", "wait 20", "census 40", "expect-session 2"],
+        },
+        "same_hp": ENEMY,
+        "hp_sums_hits": ENEMY,
+        "expect": {"host": [r"enemy HP shared over the HP board"],
+                   "guest": [r"hit on 0x1001400b by this player",
+                             r"enemy HP shared over the HP board"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    "hit-after-host-trip": {
+        "about": "only the host went to the Dream and back: the guest's hits must still reach "
+                 "the host's copy (rig 2026-10-11: the guest stayed in 'one world' mode, its "
+                 "copy went back to the host's full HP and its hits were lost)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 120", "wait 90",
+                     "census 40", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 45", "wait-members 2 240",
+                      "wait 30", f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 20",
+                      "census 40", "expect-session 2"],
+        },
+        "same_hp": ENEMY,
+        "hp_sums_hits": ENEMY,
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    "hit3": {
+        "about": "a party of three, each back from its own trip (worlds apart): all three hit "
+                 "one enemy in turn, and every game ends at its max HP less the three hits, each "
+                 "counted once (Kaniel 2026-10-11)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 3 300", "wait 100",
+                     f"hit {ENEMY} 30", "wait 70", "census 40", "expect-session 3"],
+            "guest": [START, "godmode", "wait-session 3 480", "wait 45", "wait-members 3 300",
+                      "wait 5", f"travel {HUNTERS_DREAM}", "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait-members 3 300", "wait 60", f"hit {ENEMY} 30", "wait 55",
+                      "census 40", "expect-session 3"],
+            "guest2": [START, "godmode", "wait-session 3 480", "wait 45", "wait-members 3 300",
+                       "wait 25", f"travel {HUNTERS_DREAM}", "wait 5",
+                       f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 3 300", "wait 75",
+                       f"hit {ENEMY} 30", "wait 45", "census 40", "expect-session 3"],
+        },
+        "same_hp": ENEMY,
+        "hp_sums_hits": ENEMY,
+        "expect": {"host": [r"enemy HP shared over the HP board"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
+        "timeout": 1200,
+    },
     "crash-rejoin-hp": {
         "about": "after the guest's game crashes and it joins again, the host's hit still reaches "
                  "the guest's copy of an enemy "

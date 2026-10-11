@@ -213,6 +213,27 @@ TEST_F(BloodborneEboot, TheNoDeadCallersCallIsNoDead) {
     }
 }
 
+// Shared enemy damage counts this player's own hits at the game's hit function: its entry, and the
+// return from the IsNoDead check that follows the applied hit (the AfterHit caller).
+TEST_F(BloodborneEboot, TheHitHooksFindTheGamesHit) {
+    EXPECT_EQ(Bytes(HitOffset, HitPrologue.size()),
+              std::vector<u8>(HitPrologue.begin(), HitPrologue.end()));
+    EXPECT_EQ(Bytes(HitAppliedOffset, HitApplied.size()),
+              std::vector<u8>(HitApplied.begin(), HitApplied.end()));
+    EXPECT_EQ(CallTarget(HitAppliedOffset - 5), IsNoDeadOffset);
+    EXPECT_EQ(ClassifyNoDeadCheck(HitAppliedOffset), NoDeadCheck::AfterHit);
+    EXPECT_EQ(CallTarget(0x01A2A6B5), HitOffset) << "the damage module's hit calls it";
+    // Status effect HP changes: each site sets up the SetHp call that follows it.
+    for (const u64 offset : EffectHpChangeOffsets) {
+        EXPECT_EQ(Bytes(offset, EffectHpChange.size()),
+                  std::vector<u8>(EffectHpChange.begin(), EffectHpChange.end()))
+            << std::hex << offset;
+        EXPECT_EQ(CallTarget(offset + EffectHpChange.size() + 4), SetHpOffset)
+            << std::hex << offset;
+    }
+    EXPECT_EQ(CallTarget(0x01A2BFA3), SetHpOffset) << "the hit sets HP the same way";
+}
+
 // A member's character data (see MemberDataWait): the game's send and receive, its own one-byte
 // request on channel 0x0A, the answer to it, the after-load broadcast, and the pending check that
 // wants all five bits of the slot's byte.

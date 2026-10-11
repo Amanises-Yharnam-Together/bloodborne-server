@@ -1015,11 +1015,15 @@ std::optional<std::vector<MemberMapState>> ParseMapStateBoard(std::string_view b
 }
 
 u64 VisitTracker::Update(u32 new_map, u64 new_player, bool in_session, u64 new_trips) {
-    const bool reloaded_alone = new_player != player && !in_session;
-    if (new_map != map || new_trips != trips || reloaded_alone || generation == 0) {
+    // A new player character is a load: outside a session, or onto another map (a summon there).
+    // A map change with the same character is a walk across a border (Central Yharnam into the
+    // Cathedral Ward): it loads nothing and the enemies stay as they are, so the visit goes on.
+    const bool reloaded = new_player != player && (!in_session || new_map != seen_map);
+    if (new_trips != trips || reloaded || generation == 0) {
         ++generation;
+        map = new_map;
     }
-    map = new_map;
+    seen_map = new_map;
     player = new_player;
     trips = new_trips;
     return (u64{map} << 32) | generation;
@@ -1061,20 +1065,42 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
             continue;
         }
         auto [track, first] = tracks.try_emplace(copy.handle, Track{copy.hp, 0});
-        s32 own = track->second.start - copy.hp - track->second.written;
-        if (own < 0) { // it came back up (a reload, a heal): count from here
-            track->second.start = copy.hp + track->second.written;
-            own = 0;
+        if (first) {
+            track->second.hits_before = copy.own_hits.value_or(0);
         }
-        // Two reads must agree: a world showing its characters at 1 HP for one read (hidden
-        // or loading) posted that as damage.
-        const s32 confirmed = std::min(own, track->second.last_own);
-        track->second.last_own = own;
-        if (confirmed > 0) {
-            step.post.push_back({copy.handle, confirmed, copy.max});
+        Track& seen = track->second;
+        // This member's own damage: what its own hits took off (counted by the game's hit
+        // function), or else everything the board did not write.
+        const s32 hits = copy.own_hits ? static_cast<s32>(*copy.own_hits - seen.hits_before) : 0;
+        // The rest of the drop: other players' hits the game sent (after a trip a guest's hits
+        // still reach the host's copy), which pays for their posts before anything is written.
+        s32 sent = seen.start - copy.hp - seen.written - hits;
+        if (sent < 0) { // it came back up (a reload, a heal): count from here
+            seen.start = copy.hp + seen.written + hits;
+            seen.paid = 0;
+            sent = 0;
+        }
+        const s32 own = copy.own_hits ? hits : sent;
+        if (!copy.own_hits) {
+            sent = 0; // not told apart: all of it is this member's
+        }
+        s32 unpaid = std::max(sent - seen.paid, 0);
+        if (copy.own_hits) {
+            // Counted hit by hit: a world showing its characters at 1 HP is no damage.
+            if (own > 0) {
+                step.post.push_back({copy.handle, own, copy.max});
+            }
+        } else {
+            // Two reads must agree: a world showing its characters at 1 HP for one read (hidden
+            // or loading) posted that as damage.
+            const s32 confirmed = std::min(own, seen.last_own);
+            seen.last_own = own;
+            if (confirmed > 0) {
+                step.post.push_back({copy.handle, confirmed, copy.max});
+            }
         }
         // Each other member's damage on its copy, as a share of this copy's max HP, on top of
-        // what this copy already took from that member.
+        // what this copy already took from that member (from the board or through the game).
         s32 hp = copy.hp;
         for (const EnemyHpReport& report : others) {
             if ((report.visit & HostHpReport) != 0) {
@@ -1087,13 +1113,21 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
                 const s32 scaled =
                     static_cast<s32>((s64{damage.hp} * copy.max + damage.max / 2) / damage.max);
                 s32& taken = written[{report.visit, copy.handle}];
-                const s32 delta = scaled - taken;
+                s32 delta = scaled - taken;
+                if (delta <= 0) {
+                    continue;
+                }
+                const s32 paid = std::min(delta, unpaid);
+                unpaid -= paid;
+                seen.paid += paid;
+                taken += paid;
+                delta -= paid;
                 if (delta <= 0 || hp <= 1) {
                     continue;
                 }
                 const s32 lowered = std::max(hp - delta, 1);
                 taken += hp - lowered;
-                track->second.written += hp - lowered;
+                seen.written += hp - lowered;
                 hp = lowered;
             }
         }
@@ -1102,6 +1136,25 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
         }
     }
     return step;
+}
+
+void OwnDamage::Hit(u32 handle, bool mine, s32 taken) {
+    last_hit_mine[handle] = mine;
+    if (mine && taken > 0) {
+        totals[handle] += taken;
+    }
+}
+
+void OwnDamage::Effect(u32 handle, s32 taken) {
+    const auto last = last_hit_mine.find(handle);
+    if (taken > 0 && last != last_hit_mine.end() && last->second) {
+        totals[handle] += taken;
+    }
+}
+
+s64 OwnDamage::Total(u32 handle) const {
+    const auto total = totals.find(handle);
+    return total != totals.end() ? total->second : 0;
 }
 
 std::vector<EnemyWrite> LowerToHostHp(std::span<const EnemyCopy> mine,
