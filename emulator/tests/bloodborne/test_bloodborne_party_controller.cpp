@@ -1546,6 +1546,16 @@ TEST(BloodborneSharedEnemyHp, AWorldShowingLowHpPostsNoDamage) {
     EXPECT_TRUE(copy.Update(1, true, at(3617), {}).post.empty());
 }
 
+// Kaniel's forest run 2026-10-11: the host's hits (285 on 456 HP enemies) showed their damage
+// numbers on the guests at once, but the guests' bars dropped a second later or never (the second
+// hit killed it first). A change of this member's damage is posted at once; otherwise the board is
+// read every HpBoardRound, and the world is read as often.
+TEST(BloodborneSharedEnemyHp, TheBoardCarriesAHitWithinARound) {
+    EXPECT_EQ(HpBoardWait(true), std::chrono::milliseconds{0}) << "own damage changed: post now";
+    EXPECT_EQ(HpBoardWait(false), HpBoardRound);
+    EXPECT_LE(HpBoardRound, std::chrono::milliseconds{100});
+}
+
 TEST(BloodborneSharedEnemyHp, InOneWorldAGuestTakesTheHostsNpcHp) {
     const std::vector<EnemyCopy> guest{{0x10010038, 910, 910}, {0x1001001f, 100, 123}};
     const std::vector<EnemyHpReport> host{

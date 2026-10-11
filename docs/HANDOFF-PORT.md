@@ -27,6 +27,13 @@ its co-op are wired, built, packaged and tested.
   "another player": the guest's hits reach the host's copy some other way, which counting only
   one's own hits does not need to know. Rig (all pass, 2026-10-11): guest-hit-once,
   hit-after-host-trip, hit3; `hp_sums_hits` checks the census equals max HP less every hit.
+- **Bars late for the host's hits** (forest run 2026-10-11, 3 players): the host's hits (285 on
+  456 HP woods enemies) do not reach the guests' copies through the game, only its kill does (a
+  hit by "other 0x0" taking all HP). Over the HP board the bar dropped about a second after the
+  damage number, often after the host's second hit had killed it. The board now posts at once
+  when this member's own damage changes and runs on 100 ms rounds (`HpBoardRound`,
+  `HpBoardWait`); rig hit3's average lag from a hit to the other bars went 0.47 s -> 0.30 s
+  (`max_hp_lag` 0.4).
 - **A guest unseen after the host's early trip, without party death.** The host asks a member
   that was still joining for its data only once the vitals board shows it on the host's map
   (`FinishWaitingJoins`), and the vitals board ran only with party death on (the rig runs with it

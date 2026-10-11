@@ -228,14 +228,19 @@ class RunnerTest(unittest.TestCase):
 
     def test_the_shared_enemy_took_each_hit_once(self):
         # Kaniel's friend 2026-10-11: each of the guest's hits came back a second time. With
-        # "hp_sums_hits", the last census must show max HP less every role's own hits (each hit
-        # line's drop), a few HP apart at most (shares round).
+        # "hp_sums_hits", the last census must show max HP less every role's own hits (the game's
+        # hit function, "by this player"), a few HP apart at most (shares round). Not the `hit`
+        # step's drop: another member's damage written by the board while it swings counts there
+        # (rig hit3 2026-10-11: the guest's step saw the host's 484 -> 482).
         census = "[Debug] <Info> () x: Bloodborne autoplay census: {} hp {}/{} dead 0x0 hidden 0"
-        hit = "[Debug] <Info> () x: Bloodborne autoplay: hit {}: hp {} -> {} in attack cycle 0"
+        hit = ("[Debug] <Info> () x: Bloodborne party: hit on {} by this player 0x10044000: "
+               "{} -> {} (t=1.0)")
+        step = "[Debug] <Info> () x: Bloodborne autoplay: hit {}: hp {} -> {} in attack cycle 0"
         texts = {
             "host": "\n".join([hit.format("0x1001400b", 484, 430),
                                census.format("0x1001400b", 330, 484)]),
-            "guest": "\n".join([hit.format("0x1001400b", 430, 380),
+            "guest": "\n".join([step.format("0x1001400b", 430, 420),
+                                hit.format("0x1001400b", 430, 380),
                                 hit.format("0x1001400b", 380, 330),
                                 census.format("0x1001400b", 331, 484)]),
         }
@@ -245,6 +250,24 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("took 204", run_scenario.hits_sum_problem(twice, "0x1001400b"))
         self.assertIn("no hit", run_scenario.hits_sum_problem(
             {"host": census.format("0x1001400b", 484, 484)}, "0x1001400b"))
+
+    def test_a_hit_reaches_the_other_games_within_the_lag(self):
+        # Kaniel's forest run 2026-10-11: the host's hits showed on the guests' bars a second late.
+        # The rig's games share one clock (t=): from each role's own hit to the first lowering of
+        # that enemy in each other game, on average (one late round is no trend).
+        hit = ("[Debug] <Info> () x: Bloodborne party: hit on {} by this player 0x10044000: "
+               "{} -> {} (t={})")
+        low = ("[Debug] <Info> () x: Bloodborne party: lowered 1 enemies by the other members' "
+               "damage on map 0x18010000: {} {}->{} (t={})")
+        texts = {
+            "host": hit.format("0x1001400b", 484, 382, "100.0"),
+            "guest": "\n".join([low.format("0x1001400b", 484, 382, "100.3"),
+                                hit.format("0x1001400b", 382, 280, "110.0")]),
+            "guest2": "\n".join([low.format("0x1001400b", 484, 382, "100.6"),
+                                 low.format("0x1001400b", 382, 280, "110.2")]),
+        }
+        self.assertAlmostEqual(run_scenario.hp_board_lag(texts, "0x1001400b"), 1.1 / 3)
+        self.assertIsNone(run_scenario.hp_board_lag({"host": texts["host"]}, "0x1001400b"))
 
     def test_old_runs_go_newest_stay(self):
         with tempfile.TemporaryDirectory() as folder:

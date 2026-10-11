@@ -1157,6 +1157,10 @@ s64 OwnDamage::Total(u32 handle) const {
     return total != totals.end() ? total->second : 0;
 }
 
+std::chrono::milliseconds HpBoardWait(bool own_damage_changed) {
+    return own_damage_changed ? std::chrono::milliseconds{0} : HpBoardRound;
+}
+
 std::vector<EnemyWrite> LowerToHostHp(std::span<const EnemyCopy> mine,
                                       std::span<const EnemyHpReport> reports) {
     std::vector<EnemyWrite> writes;
