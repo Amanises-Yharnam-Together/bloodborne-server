@@ -229,6 +229,13 @@ std::array<u8, 7> EncodeSignTimerStore(u8 modrm, float seconds) {
             static_cast<u8>(value >> 24)};
 }
 
+bool IsSignTimerStore(std::span<const u8> bytes, const SignTimerSite& site) {
+    const auto store = EncodeSignTimerStore(site.modrm, site.original_seconds);
+    constexpr size_t TimeStart = 3;
+    return bytes.size() >= store.size() &&
+           std::ranges::equal(bytes.first(TimeStart), std::span{store}.first(TimeStart));
+}
+
 bool IsLampTravelFlag(s32 flag) {
     // 7MMM01LL: map code MMM (241 = m24_01), lamp LL. Only the maps after the Hunter's Dream (210)
     // up to the last ones (m36): the Dream has no lamp to travel from (the Doll's dialog sets
@@ -1086,6 +1093,12 @@ T ReadLittleEndian(std::span<const u8> bytes, size_t offset) {
 }
 } // namespace
 
+void SharedDamage::ForgetDamageBefore(std::span<const EnemyHpReport> others) {
+    for (const EnemyHpReport& report : others) {
+        before_reset.insert(report.visit);
+    }
+}
+
 SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
                                         std::span<const EnemyCopy> alive,
                                         std::span<const EnemyHpReport> others, s64 now_ms) {
@@ -1146,6 +1159,9 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
         for (const EnemyHpReport& report : others) {
             if ((report.visit & HostHpReport) != 0) {
                 continue; // HP from one world, not damage
+            }
+            if (before_reset.contains(report.visit)) {
+                continue; // damage on the world before a map reset
             }
             for (const EnemyHp& damage : report.enemies) {
                 if (damage.handle != copy.handle || damage.max <= 0 || damage.hp <= 0) {
@@ -1593,6 +1609,24 @@ std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
 std::vector<u32> VisitKills::Held(u32 map) const {
     const auto it = held.find(map);
     return it != held.end() ? it->second : std::vector<u32>{};
+}
+
+std::vector<std::pair<s32, bool>> VisitKills::Forget() {
+    std::vector<std::pair<s32, bool>> changes;
+    for (const u32 handle : killed) {
+        changes.emplace_back(static_cast<s32>(handle), false);
+    }
+    for (const auto& [map, handles] : held) {
+        for (const u32 handle : handles) {
+            if (std::ranges::find(killed, handle) == killed.end()) {
+                changes.emplace_back(static_cast<s32>(handle), false);
+            }
+        }
+    }
+    killed.clear();
+    held.clear();
+    seen.clear();
+    return changes;
 }
 
 bool SharesWithParty(bool party_configured, bool player_loaded) {

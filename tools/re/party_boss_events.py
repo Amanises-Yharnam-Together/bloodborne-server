@@ -87,9 +87,10 @@ def patch_events(emevd: bytes) -> tuple[bytes, int]:
 
 # Events that end for a client (1003:6 state 1) but must run for a party guest, per file.
 # 9350 awards insight (SpEffect 4680 once per point; see let_guests_earn_insight).
+# m21_00 12105043 wakes the insight messenger and sets the flag its shop opens on (12105045).
 CLIENT_EVENTS = {
     'common.emevd.dcx': {9350, 9400, 9404, 9421},
-    'm21_00_00_00.emevd.dcx': {9401},
+    'm21_00_00_00.emevd.dcx': {9401, 12105043},
 }
 INSIGHT_EVENT = 9350
 INITIALIZE_EVENT = (2000, 0)
@@ -151,8 +152,11 @@ def patch_client_events(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
 
 
 # Events that get 2000:2 0 (no network sync) as their first instruction, per file.
+# m21_00 12101000 (slots 0-9) unlocks the messengers' shop lines from the player's own items
+# (12101004: the Hunter Chief Emblem); kept in step, a guest's Dream waited on the host's.
 LOCAL_EVENTS = {
-    'm21_00_00_00.emevd.dcx': {12101020, 12101021, 12101022, 12101024, 12101026, 12101028},
+    'm21_00_00_00.emevd.dcx': {12101000, 12101020, 12101021, 12101022, 12101024, 12101026,
+                               12101028},
 }
 NETWORK_SYNC = (2000, 2)
 INSTRUCTION_SIZE = 32

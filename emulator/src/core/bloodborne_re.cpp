@@ -3715,9 +3715,9 @@ void PatchSignTimers(u64 base, u64 image_size) {
     for (const auto& site : SignTimerSites) {
         const auto expected = EncodeSignTimerStore(site.modrm, site.original_seconds);
         if (site.offset > image_size || expected.size() > image_size - site.offset ||
-            !std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(base + site.offset),
-                                                    expected.size()},
-                                expected)) {
+            !IsSignTimerStore(std::span<const u8>{reinterpret_cast<const u8*>(base + site.offset),
+                                                  expected.size()},
+                              site)) {
             const u8* found = reinterpret_cast<const u8*>(base + site.offset);
             LOG_ERROR(Debug,
                       "Bloodborne sign timer signature mismatch at {:#x} (found {}); "
@@ -6165,6 +6165,10 @@ const u32 enemy_hp_source = [] {
 // Enemy HP kept in step (see SharedDamage): in the session, with the worlds apart, posts the
 // damage this member did to its copies during its visit and takes the others' on top. Out of a
 // session each world is its member's own, and in one world the game sends the HP itself.
+// A death respawn reset the map: the damage the others reported on the world before it is left
+// behind (SharedDamage::ForgetDamageBefore).
+std::atomic<bool> party_hp_reset{};
+
 void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     struct Copy {
         u64 data;
@@ -6220,6 +6224,9 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     }
     const std::vector<EnemyHpReport> reports = MergeEnemyHpReports(copies);
     const u64 source = (u64{enemy_hp_source & 0x7FFFFFFFu} << 32) | (visit & 0xFFFFFFFFu);
+    if (party_hp_reset.exchange(false)) {
+        damage.ForgetDamageBefore(reports);
+    }
     SharedDamage::Step step = damage.Update(visit, active, standing, reports, SteadyMilliseconds());
     // In one world: the host posts its hurt characters' HP (NPCs: the game does not send theirs),
     // a guest lowers its copies to it (see LowerToHostHp).
@@ -6311,6 +6318,9 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                                const std::unordered_set<u32>& kill_hidden);
 
+// A death respawn reset the map: this member's kills are taken back (VisitKills::Forget).
+std::atomic<bool> party_kills_reset{};
+
 // Enemy deaths kept in step across loads: this member's kills during its visit go to the
 // party's kill board (VisitKills), and its copies of the enemies another member killed during
 // that member's current visit are hidden with the event disable byte (+0x28, see
@@ -6386,7 +6396,10 @@ void KeepEnemyDeathsInStep(bool sharing) {
         died_for_others.clear();
         died_visit = visit;
     }
-    auto changes = visit_kills.Observe(visit, characters, others_maps);
+    auto changes = party_kills_reset.exchange(false) ? visit_kills.Forget()
+                                                     : std::vector<std::pair<s32, bool>>{};
+    const auto observed = visit_kills.Observe(visit, characters, others_maps);
+    changes.insert(changes.end(), observed.begin(), observed.end());
     std::erase_if(changes, [](const std::pair<s32, bool>& change) {
         return change.second && died_for_others.contains(static_cast<u32>(change.first));
     });
@@ -7222,6 +7235,10 @@ std::atomic<bool> party_death_reset{};
 // that resets the map (party death's wipe), wherever the lamp is.
 void MoveToRespawnPoint(bool arriving_from_trip) {
     const bool reset = !arriving_from_trip && party_death_reset.exchange(false);
+    if (reset) {
+        party_kills_reset.store(true);
+        party_hp_reset.store(true);
+    }
     const u64 global = GetGlobalState();
     const s32 point = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
     const u64 blocks = ReadValue<u64>(image_base + LoadedBlocksPointerOffset, 0);

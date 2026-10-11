@@ -220,6 +220,9 @@ constexpr std::array<SignTimerSite, 4> SignTimerSites{{
     {0x018A9757, 0x43, 30.0f, SignRepostSeconds},
     {0x018A988F, 0x43, 30.0f, SignRepostSeconds},
 }};
+// The game's store at a site, whatever time it holds: game patches rewrite the re-post time (the
+// bundled "Uncap FPS++" writes 60 s), and the store is ours to rewrite all the same.
+bool IsSignTimerStore(std::span<const u8> bytes, const SignTimerSite& site);
 
 // Lamps as campfires (a party session only; solo and co-op with strangers stay vanilla). A lamp
 // is used through its talk script (t<map><nnn>.esd), which 01.09 hides while the game is in
@@ -791,6 +794,9 @@ public:
     // SharedDamageHoldMs); 0 holds nothing.
     Step Update(u64 visit, bool active, std::span<const EnemyCopy> alive,
                 std::span<const EnemyHpReport> others, s64 now_ms = 0);
+    // A death reset the map: the damage in `others` (reported before the reset, on the world that
+    // was) is not taken from now on; the members' reports after their own reloads are.
+    void ForgetDamageBefore(std::span<const EnemyHpReport> others);
 
 private:
     struct Track {
@@ -806,7 +812,8 @@ private:
     std::map<std::pair<u64, u32>, s32> written;    // (other member's source, handle) -> taken
     std::map<std::pair<u64, u32>, s32> written_by; // of `written`, what the board wrote
     std::map<std::pair<u64, u32>, s64> held_since; // a member's unwritten damage, held since
-    std::set<u64> game_sends; // sources whose hits the game sent here after a write of them
+    std::set<u64> game_sends;   // sources whose hits the game sent here after a write of them
+    std::set<u64> before_reset; // sources that reported on the world before a map reset
 };
 // A report can come straight over the P2P link before the game's own copy of the same hit; once
 // that happened for a member, its new damage waits this long for the game's copy.
@@ -1064,6 +1071,9 @@ public:
     }
     // This member's held kills on `map` (hidden on its own copies there).
     std::vector<u32> Held(u32 map) const;
+    // A death that resets the map (a party wipe): every kill of this member is taken back, the
+    // held ones too, and the next visit starts with none.
+    std::vector<std::pair<s32, bool>> Forget();
 
 private:
     struct Seen {

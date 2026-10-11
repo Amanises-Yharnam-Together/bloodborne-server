@@ -896,6 +896,25 @@ TEST(BloodborneSignTimers, PostsTheFirstSignAtOnceAndRepostsEverySecond) {
     EXPECT_EQ(SignRepostSeconds, 1.0f);
 }
 
+// The bundled "Uncap FPS++" game patch takes the re-post stores for frame timers and writes 60 s
+// into them (0x01CA975A and 0x01CA9892 in its addresses): the sign then went up once a minute, a
+// host's claim found the guest's game long past its 5 s, and krolebord's join took many bells.
+TEST(BloodborneSignTimers, TakesTheStoresWhateverTimeAGamePatchWroteInThem) {
+    const SignTimerSite& repost = SignTimerSites[2];
+    const auto game = EncodeSignTimerStore(repost.modrm, repost.original_seconds);
+    const auto uncapped = EncodeSignTimerStore(repost.modrm, 60.0f);
+    EXPECT_TRUE(IsSignTimerStore(game, repost));
+    EXPECT_TRUE(IsSignTimerStore(uncapped, repost));
+
+    auto other_register = game;
+    other_register[1] = 0x47;
+    EXPECT_FALSE(IsSignTimerStore(other_register, repost));
+    auto other_field = game;
+    other_field[2] = 0x30;
+    EXPECT_FALSE(IsSignTimerStore(other_field, repost));
+    EXPECT_FALSE(IsSignTimerStore(std::span<const u8>{game}.first(6), repost));
+}
+
 // 01.09 runs the event scripts' death flow natively (global_event.lua in eventcommon.luabnd is
 // only the source it was built from). When a white phantom dies, PartyGhostDeath broadcasts
 // event 4063, which makes the host drop the guest from the session (OnGameLeave), and
@@ -1292,6 +1311,37 @@ TEST(BloodborneSharedKills, ASummonIntoTheHostsWorldKeepsTheGuestsVisit) {
 // visit from the kill board while they lay dead in its world; the guest's copies came back to
 // life (duplicate enemies, and no echoes for the host when the guest killed them again). Walking
 // across a border loads nothing and respawns nothing: the visit goes on, under the map it began on.
+// Kaniel 2026-10-11: after the whole party died in the Cathedral Ward the map did not reset. The
+// wipe sent everyone to the lamp one after another, so each member's kills were held for the
+// others still on the map, and the host hid 16 enemies on the reloaded map. A death that resets
+// the map takes back every kill of this member, the held ones too.
+TEST(BloodborneSharedKills, AMapResetTakesBackEveryKill) {
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    using Seen = std::vector<SeenCharacter>;
+    const u64 ward = (u64{0x18000000} << 32) | 7;
+    const std::vector<u32> others_there{0x18000000};
+    kills.Observe(ward, Seen{{0x10010060, 300}, {0x10010020, 200}}, others_there);
+    kills.Observe(ward, Seen{{0x10010060, 0}, {0x10010020, 200}}, others_there);
+    const u64 after_lamp = ward + 2;
+    kills.Observe(after_lamp, Seen{{0x10010020, 200}}, others_there);
+    kills.Observe(after_lamp, Seen{{0x10010020, 0}}, others_there);
+    ASSERT_EQ(kills.Held(0x18000000), (std::vector<u32>{0x10010060}));
+    ASSERT_EQ(kills.Killed(), (std::vector<u32>{0x10010020}));
+
+    auto back = kills.Forget();
+    std::ranges::sort(back);
+    EXPECT_EQ(back, (Changes{{0x10010020, false}, {0x10010060, false}}));
+    EXPECT_TRUE(kills.Killed().empty());
+    EXPECT_TRUE(kills.Held(0x18000000).empty());
+
+    const u64 reloaded = after_lamp + 1;
+    EXPECT_EQ(kills.Observe(reloaded, Seen{{0x10010060, 300}, {0x10010020, 200}}, others_there),
+              Changes{})
+        << "nothing left to hold or take back";
+    EXPECT_TRUE(kills.Held(0x18000000).empty());
+}
+
 TEST(BloodborneSharedKills, WalkingAcrossABorderKeepsTheVisit) {
     VisitTracker visits;
     VisitKills kills;
@@ -1609,6 +1659,29 @@ TEST(BloodbornePartyController, OnlyAGuestRecreatesAfterItsJoinAndNotLongAfter) 
 // Kaniel 2026-10-10: after trips, two players hitting one enemy saw different HP bars, and their
 // damage did not add up (each copy took only its own hits; the board kept the lowest). Each
 // member posts its own damage and takes the others' on top.
+// Kaniel 2026-10-11, after the party wipe in the Cathedral Ward: the reset map's 0x1001006e came
+// back at 2116 HP and was lowered to 1837 by the damage the others had posted before the wipe
+// (their visits went on until their own reloads), and each member's copy took a different part
+// of it. After a death that reset the map, the damage reported before it is not taken.
+TEST(BloodborneSharedEnemyHp, AMapResetLeavesTheOldDamageBehind) {
+    SharedDamage host;
+    constexpr u64 GuestBefore = 0xB0000001, GuestAfter = 0xB0000002;
+    const auto copies = [](s32 hp) { return std::vector<EnemyCopy>{{0x1001006e, hp, 2116}}; };
+    const std::vector<EnemyHpReport> before{{GuestBefore, {{0x1001006e, 279, 2116}}}};
+    EXPECT_EQ(host.Update(1, true, copies(2116), before).writes,
+              (std::vector<EnemyWrite>{{0x1001006e, 1837}}))
+        << "before the wipe the guest's damage counts";
+
+    host.ForgetDamageBefore(before);
+    EXPECT_TRUE(host.Update(2, true, copies(2116), before).writes.empty())
+        << "the reloaded copy keeps its full HP";
+    const std::vector<EnemyHpReport> after{{GuestBefore, {{0x1001006e, 400, 2116}}},
+                                           {GuestAfter, {{0x1001006e, 100, 2116}}}};
+    EXPECT_EQ(host.Update(2, true, copies(2116), after).writes,
+              (std::vector<EnemyWrite>{{0x1001006e, 2016}}))
+        << "only the guest's hits after its own reload";
+}
+
 TEST(BloodborneSharedEnemyHp, TwoPlayersHittingOneEnemyAddUp) {
     SharedDamage host;
     SharedDamage guest;
