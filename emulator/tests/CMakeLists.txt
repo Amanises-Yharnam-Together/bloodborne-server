@@ -278,6 +278,7 @@ set(HTTP_TEST_SOURCES
     network/test_http_parse_response_header.cpp
     network/test_http_lifecycle.cpp
     network/test_net_delay.cpp
+    network/test_net_silence.cpp
 )
 
 add_executable(shadps4_http_test ${HTTP_TEST_SOURCES})

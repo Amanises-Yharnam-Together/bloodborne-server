@@ -748,6 +748,36 @@ SCENARIOS = {
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
+    "pickup-after-leave": {
+        "about": "the guest's game goes away and the host, alone now, picks up a map item with X "
+                 "before anyone joins again (the leave's 'load wait' stayed on: Kaniel "
+                 "2026-10-11, no pickups or talks after a friend left)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-solo 120", "wait 10",
+                     "pickup 20", "wait 3", "snapshot"],
+            "guest": [[START, "godmode", "wait-session 2 300", "wait 15", "done"],
+                      ["wait 1", "done"]],
+        },
+        "expect": {"host": [r"lost a member; staying where it is"]},
+        "allow": CRASH_CLEANUP,
+        "timeout": 600,
+    },
+    "pickup-after-leave3": {
+        "about": "a party of three: one guest's game goes away; the host and the other guest "
+                 "still pick up map items with X (Kaniel 2026-10-11: after a friend left neither "
+                 "could pick up or talk, only fight)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait 20", "wait-session 2 120",
+                     "wait 10", "pickup 20", "wait 3", "snapshot"],
+            "guest": [START, "godmode", "wait-session 3 480", "wait 20", "wait-session 2 120",
+                      "wait 10", "pickup 20", "wait 3", "snapshot"],
+            "guest2": [[START, "godmode", "wait-session 3 480", "wait 10", "done"],
+                       ["wait 1", "done"]],
+        },
+        "expect": {role: [r"lost a member; staying where it is"] for role in ("host", "guest")},
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
     "guest-talk-by-the-lamp": {
         "about": "a guest in the session presses X on each side of the character beside the first "
                  "Central Yharnam lamp (Gilbert's window), turned towards it; it must not take the "
@@ -862,6 +892,20 @@ SCENARIOS = {
                       "wait 10", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
                       "wait 60", "snapshot", f"expect-hp {ENEMY} <= 300", f"hit {ENEMY}",
                       "wait 10", "snapshot", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    "dead-before-session": {
+        "about": "an enemy the host killed before the guest joined stays dead for the guest after "
+                 "its trip to the Dream and back, in its own world (Kaniel 2026-10-11: the "
+                 "guests saw enemies dead in the host's world alive again)",
+        "roles": {
+            "host": [START, "godmode", f"kill {ENEMY}", "wait-session 2 300", "wait 60",
+                     "wait-members 2 240", "wait 40", "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                      "wait 10", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
+                      "wait 10", f"expect-hidden {ENEMY} 1 30", "snapshot", "expect-session 2"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 720,
