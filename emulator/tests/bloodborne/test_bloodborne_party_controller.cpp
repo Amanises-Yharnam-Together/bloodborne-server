@@ -878,6 +878,31 @@ TEST(BloodborneGuestMenus, PartyGuestsAreNotClientsToTheMenus) {
     EXPECT_FALSE(MenuSeesAClient(false, false));
 }
 
+// Kaniel 2026-10-11: the party died at Father Gascoigne, everyone quit and came back, and only
+// the host found a bloodstain. A load shows a player's own stain only in its own world (0x017C243F
+// tests GlobalState +0x1592), and a guest joined back in the host's world, so its stain (the
+// record and its echoes, kept through the join) was never shown there. Its game shows it there.
+TEST(BloodborneGuestBloodstain, AGuestSeesItsStainInTheHostsWorld) {
+    constexpr u32 Ward = 0x18000000;
+    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, Ward, Ward, false, 0));
+    EXPECT_FALSE(ShowsGuestBloodstain(false, true, false, true, Ward, Ward, false, 0))
+        << "the host's own world shows its stain itself";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, false, false, true, Ward, Ward, false, 0))
+        << "out of a session the guest is in its own world";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, true, true, Ward, Ward, false, 0)) << "loading";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, false, Ward, Ward, false, 0))
+        << "no stain";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 0x18010000, Ward, false, 0))
+        << "the stain lies on another map";
+    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, 0x18000001, Ward, false, 0))
+        << "another block of the same map";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, Ward, Ward, true, 0))
+        << "shown already";
+    EXPECT_FALSE(
+        ShowsGuestBloodstain(true, true, false, true, Ward, Ward, false, GuestBloodstainTries))
+        << "the game would not show it: no more tries this visit";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

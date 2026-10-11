@@ -1157,6 +1157,14 @@ bool LevelSyncsGuest(bool in_party_session, bool above_host_band);
 // back. The mark is set again while the record still holds echoes.
 bool RestoresBloodstainMark(bool party_guest, bool mark_before, bool mark_now, s32 echoes,
                             u32 block);
+// A load shows a player's own bloodstain only in its own world (0x017C243F tests GlobalState
+// +0x1592), so a guest joined in the host's world never saw its stain there (Kaniel 2026-10-11).
+// Its game shows it (0x01868A50, as that load does) once loaded, while it has a stain on the map
+// it stands on (`record_block`, the record's +0x3C) that is not shown (`shown`: the stain's
+// marker exists), up to GuestBloodstainTries times a visit.
+constexpr int GuestBloodstainTries = 3;
+bool ShowsGuestBloodstain(bool party_guest, bool in_session, bool loading, bool has_stain,
+                          u32 record_block, u32 map, bool shown, int tries);
 // Friendly NPCs on a summoned guest's side: character creation (0x018E4FB6, 0x018D8934) turns an
 // NPC whose NpcParam has isChangeWanderGhost into a wandering ghost (type 4, the ghost model at
 // +0x10C), drawn see-through. A party guest sees them as the host does.

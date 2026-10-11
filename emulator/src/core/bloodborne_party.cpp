@@ -1818,6 +1818,13 @@ bool ShouldPlayGuestAsHost(bool switched_on, bool in_party_session, s32 characte
     return switched_on && in_party_session && character_type == WhiteGhostCharacterType;
 }
 
+bool ShowsGuestBloodstain(bool party_guest, bool in_session, bool loading, bool has_stain,
+                          u32 record_block, u32 map, bool shown, int tries) {
+    const bool same_map = map != 0 && (record_block >> 16) == (map >> 16);
+    return party_guest && in_session && !loading && has_stain && same_map && !shown &&
+           tries < GuestBloodstainTries;
+}
+
 bool RestoresBloodstainMark(bool party_guest, bool mark_before, bool mark_now, s32 echoes,
                             u32 block) {
     return party_guest && mark_before && !mark_now && echoes > 0 && block != 0xFFFFFFFF;

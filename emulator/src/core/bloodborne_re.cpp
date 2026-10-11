@@ -1809,6 +1809,30 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
 
 // Diagnostics for guest bloodstains in the host's world (Phase 2): logs the local bloodstain
 // record, the spawned stain object and the world flags that gate them whenever they change.
+// The local player's own bloodstain: [[SprjEventMan +0x80] +8], the object the game's show/hide
+// (0x01868A50) takes when a load shows it (0x017C23EB-0x017C25DC) and on a join (0x0193A75A).
+// (Not FrpgNetMan +0xC68's: passed that, the show crashed krolebord's game, Kaniel 2026-10-11.)
+u64 OwnBloodstain() {
+    const u64 events = ReadValue<u64>(image_base + EventManPointerOffset, 0);
+    const u64 list = events >= 0x10000 ? ReadValue<u64>(events, 0x80) : 0;
+    return list >= 0x10000 ? ReadValue<u64>(list, 8) : 0;
+}
+
+// A stain object the show can take: readable, and its marker (+0x88) and effect (+0x98) either
+// absent or readable (the show frees them first).
+bool LooksLikeBloodstain(u64 stain) {
+    if (stain < 0x10000 || !HasMemoryAccess(stain, 0xC8, MemoryProt::CpuRead)) {
+        return false;
+    }
+    for (const u64 offset : {u64{0x88}, u64{0x98}}) {
+        const u64 part = ReadValue<u64>(stain, offset);
+        if (part != 0 && (part < 0x10000 || !HasMemoryAccess(part, 0x98, MemoryProt::CpuRead))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // The stain's marker (+0x88) and effect (+0x98) are what 0x01868A50 makes when it shows the
 // stain (and frees when it hides it): a stain recorded but never shown has neither (Kaniel
 // 2026-10-11: no bloodstains in sight after the party wipe at the Tomb of Oedon).
@@ -1816,9 +1840,7 @@ void LogBloodstainStateChanges() {
     static std::string last;
     const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
     const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
-    const u64 net = GetSummonManagerRoot();
-    const u64 stains = net >= 0x10000 ? ReadValue<u64>(net, 0xC68) : 0;
-    const u64 stain = stains >= 0x10000 ? ReadValue<u64>(stains, 0xC0) : 0;
+    const u64 stain = OwnBloodstain();
     const u64 global = GetGlobalState();
     const u64 player = GetLocalPlayer();
     const auto state =
@@ -1844,6 +1866,47 @@ void LogBloodstainStateChanges() {
         last = state;
         LOG_INFO(Debug, "Bloodborne bloodstain state map={:#x} {}", GetCurrentPackedMap(), state);
     }
+}
+
+constexpr u64 ShowBloodstainOffset = 0x01868A50;
+bool InPartySession();
+
+// See ShowsGuestBloodstain: a guest's own stain in the host's world.
+void ShowGuestBloodstain() {
+    static int tries = 0;
+    static u64 tried_player = 0;
+    static u32 tried_map = 0;
+    const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
+    const u64 global = GetGlobalState();
+    const u64 player = GetLocalPlayer();
+    const u32 map = GetCurrentPackedMap();
+    if (data < 0x10000 || record < 0x10000 || player < 0x10000) {
+        return;
+    }
+    if (player != tried_player || map != tried_map) {
+        tries = 0; // a load: a new visit
+        tried_player = player;
+        tried_map = map;
+    }
+    const u64 stain = OwnBloodstain();
+    const bool party_guest =
+        party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect;
+    const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
+    if (!LooksLikeBloodstain(stain) ||
+        !ShowsGuestBloodstain(party_guest, InPartySession(), loading,
+                              ReadValue<u8>(data, 0x28) != 0, ReadValue<u32>(record, 0x3C),
+                              IsUsablePackedMap(map) ? map : 0, ReadValue<u64>(stain, 0x88) != 0,
+                              tries)) {
+        return;
+    }
+    ++tries;
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, bool, bool)>(image_base + ShowBloodstainOffset)(
+        stain, true, false);
+    LOG_INFO(Debug,
+             "Bloodborne party: showed the guest's own bloodstain ({} echoes) in the host's "
+             "world on map {:#x}: marker {:#x}",
+             ReadValue<s32>(record, 0x38), map, ReadValue<u64>(stain, 0x88));
 }
 
 // See RestoresBloodstainMark: a party guest keeps its lost echoes through a join.
@@ -3422,6 +3485,7 @@ void TickPartyController() {
     LogJoinTaskChanges();
     WatchSummonJoin();
     KeepGuestBloodstainMark();
+    ShowGuestBloodstain();
     LogBloodstainStateChanges();
     LogLocalEffectChanges();
     if (party_controller) {
