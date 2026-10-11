@@ -43,7 +43,9 @@
 #include "core/debugger.h"
 #include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
+#include "core/libraries/network/sockets.h"
 #include "core/libraries/np/np_handler.h"
+#include "core/libraries/np/np_matching2/np_matching2_signaling.h"
 #include "core/libraries/np/np_trophy.h"
 #include "core/libraries/system/userservice.h"
 #include "core/memory.h"
@@ -5991,6 +5993,9 @@ std::mutex own_hits_mutex;
 std::unordered_map<u64, std::pair<u64, s32>> hits_in_flight; // victim -> (attacker, HP before)
 OwnDamage own_damage;
 bool hit_hooks_installed = false;
+// This player's damage changed, or another game's came: the enemy step runs on the next frame
+// instead of waiting out its round, so the damage goes out (or is shown) at once.
+std::atomic<bool> enemy_step_due{false};
 
 void PS4_SYSV_ABI NoteHitStart(u64, const GuestRegisterSnapshot* registers) {
     const u64 victim = ReadValue<u64>(registers->rdi, 0x08);
@@ -6023,6 +6028,9 @@ void PS4_SYSV_ABI NoteHitApplied(u64, const GuestRegisterSnapshot* registers) {
     {
         std::scoped_lock lock{own_hits_mutex};
         own_damage.Hit(handle, attacker == player, taken);
+    }
+    if (attacker == player && taken > 0) {
+        enemy_step_due.store(true);
     }
     if (taken <= 0) {
         return;
@@ -6058,7 +6066,12 @@ void PS4_SYSV_ABI NoteEffectHpChange(u64, const GuestRegisterSnapshot* registers
     const s32 max = ReadValue<s32>(registers->r12, 0x0C);
     const s32 after = std::clamp(static_cast<s32>(registers->rsi), 0, std::max(max, 0));
     std::scoped_lock lock{own_hits_mutex};
-    own_damage.Effect(ReadValue<u32>(victim, 0x08), before - after);
+    const u32 handle = ReadValue<u32>(victim, 0x08);
+    const s64 total = own_damage.Total(handle);
+    own_damage.Effect(handle, before - after);
+    if (own_damage.Total(handle) != total) {
+        enemy_step_due.store(true);
+    }
 }
 
 void InstallOwnHitCount(u64 base, u64 image_size) {
@@ -6081,6 +6094,54 @@ void InstallOwnHitCount(u64 base, u64 image_size) {
                       "shared",
                       offset);
         }
+    }
+}
+
+// Enemy HP straight from game to game (see DirectDamageType): the other games' frames, by sender,
+// read from the P2P transport on the game's thread. Only the room's peers are heard.
+DirectDamageInbox direct_damage_inbox;
+
+bool TakeDirectDamage() {
+    std::array<u8, 1400> buffer{};
+    std::optional<std::vector<Libraries::Np::NpMatching2::RoomPeerAddress>> peers;
+    bool took = false;
+    for (int frames = 0; frames < 64; ++frames) {
+        u32 addr = 0;
+        u16 port = 0;
+        const int size = Libraries::Net::P2PCoopRecvFrom(
+            buffer.data(), static_cast<u32>(buffer.size()), &addr, &port);
+        if (size <= 0) {
+            break;
+        }
+        if (!peers) {
+            peers = Libraries::Np::NpMatching2::GetActiveRoomPeers();
+        }
+        const bool from_peer = std::ranges::any_of(
+            *peers, [&](const auto& peer) { return peer.addr == addr && peer.port == port; });
+        auto state =
+            DecodeDirectDamage(std::span<const u8>{buffer.data(), static_cast<size_t>(size)});
+        if (!from_peer || !state) {
+            continue;
+        }
+        direct_damage_inbox.Take((u64{addr} << 16) | port, std::move(*state), SteadyMilliseconds());
+        took = true;
+    }
+    return took;
+}
+
+// This member's report to every room peer: at once when it changed, else every
+// DirectDamageResendMs (a lost frame is made good by the next one: its counts only grow).
+void SendDirectDamage(const MemberMapState& mine, bool changed) {
+    static s64 sent_at = 0;
+    const s64 now = SteadyMilliseconds();
+    if (mine.map == 0 || (!changed && now - sent_at < DirectDamageResendMs)) {
+        return;
+    }
+    sent_at = now;
+    const std::vector<u8> frame = EncodeDirectDamage(mine.map, mine.bits);
+    for (const auto& peer : Libraries::Np::NpMatching2::GetActiveRoomPeers()) {
+        Libraries::Net::P2PCoopSendTo(frame.data(), static_cast<u32>(frame.size()), peer.addr,
+                                      peer.port);
     }
 }
 
@@ -6130,23 +6191,26 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
         }
         standing.push_back({handle, hp, max, hits});
     }
-    std::vector<MemberMapState> others;
+    // The other games' frames straight over the P2P link first, then the board (the same reports,
+    // later).
+    std::vector<MemberMapState> others = direct_damage_inbox.Fresh(SteadyMilliseconds());
     {
         std::scoped_lock lock{enemy_hp_mutex};
-        others = others_enemy_hp;
+        others.insert(others.end(), others_enemy_hp.begin(), others_enemy_hp.end());
     }
     // The other members' reports for this area (any block of it: one who joined in place stands
     // on another block, and the blocks give their enemies distinct handles).
-    std::vector<EnemyHpReport> reports;
+    std::vector<EnemyHpReport> copies;
     for (const MemberMapState& state : others) {
         if ((state.map >> 24) == (map >> 24)) {
             if (auto report = DecodeEnemyHp(state.bits)) {
-                reports.push_back(std::move(*report));
+                copies.push_back(std::move(*report));
             }
         }
     }
+    const std::vector<EnemyHpReport> reports = MergeEnemyHpReports(copies);
     const u64 source = (u64{enemy_hp_source & 0x7FFFFFFFu} << 32) | (visit & 0xFFFFFFFFu);
-    SharedDamage::Step step = damage.Update(visit, active, standing, reports);
+    SharedDamage::Step step = damage.Update(visit, active, standing, reports, SteadyMilliseconds());
     // In one world: the host posts its hurt characters' HP (NPCs: the game does not send theirs),
     // a guest lowers its copies to it (see LowerToHostHp).
     const bool one_world = in_session && !active;
@@ -6171,10 +6235,14 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     {
         std::scoped_lock lock{enemy_hp_mutex};
         MemberMapState now{map, EncodeEnemyHp(one_world ? (source | HostHpReport) : source, hurt)};
-        if (now != local_enemy_hp) {
+        const bool changed = now != local_enemy_hp;
+        if (changed) {
             local_enemy_hp = std::move(now);
             enemy_hp_changed = true; // posted at once (see HpBoardWait)
             enemy_hp_wake.notify_all();
+        }
+        if (in_session) {
+            SendDirectDamage(local_enemy_hp, changed);
         }
     }
     // Diagnostics (rig hp-after-guest-trip: the host's hit reached a guest back from a trip only
@@ -6246,8 +6314,12 @@ void KeepEnemyDeathsInStep(bool sharing) {
     const auto now = std::chrono::steady_clock::now();
     const u64 global = GetGlobalState();
     const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
+    if (TakeDirectDamage()) {
+        enemy_step_due.store(true);
+    }
     // Not while the world goes away: a trip's start posted the old map's characters as kills.
-    if (!WatchesKills(sharing, PartyTripActive(), loading) || now - checked < HpBoardRound) {
+    if (!WatchesKills(sharing, PartyTripActive(), loading) ||
+        (now - checked < HpBoardRound && !enemy_step_due.exchange(false))) {
         return;
     }
     checked = now;
@@ -8520,6 +8592,40 @@ void WriteSummonSelection(std::ostream& out, const TraceSite& site,
     } else if (is_queue_insert) {
         out << ",\"queue_object\":";
         WriteHex(out, registers.rsi);
+        // Diagnostics for the stuck third summon (rig 2026-10-11): the queue is a map keyed by
+        // the u32 at the object's start ([status+0x10], node +0x20 key, +0x28 entry); an entry
+        // already there is overwritten keeping its +0x23 byte, and nothing is queued.
+        const u64 object = registers.rsi;
+        if (object >= 0x10000 && HasMemoryAccess(object, 0x48, MemoryProt::CpuRead)) {
+            const u32 key = ReadValue<u32>(object, 0);
+            out << ",\"queue_key\":" << key;
+            std::string name;
+            for (u64 index = 0; index < 0x24; ++index) {
+                const char c = ReadValue<char>(object, 0x24 + index);
+                if (c < 0x20 || c > 0x7E) {
+                    break;
+                }
+                name += c;
+            }
+            out << ",\"queue_name\":\"" << name << '"';
+            const u64 header = status >= 0x10000 ? ReadValue<u64>(status, 0x10) : 0;
+            u64 node = header >= 0x10000 ? ReadValue<u64>(header, 0x08) : 0;
+            for (int depth = 0; node >= 0x10000 && depth < 64 && ReadValue<u8>(node, 0x19) == 0;
+                 ++depth) {
+                const u32 node_key = ReadValue<u32>(node, 0x20);
+                if (node_key == key) {
+                    const u64 entry = ReadValue<u64>(node, 0x28);
+                    out << ",\"queue_existing\":";
+                    WriteHex(out, entry);
+                    if (entry >= 0x10000) {
+                        out << ",\"queue_existing_22\":" << u32{ReadValue<u8>(entry, 0x22)}
+                            << ",\"queue_existing_23\":" << u32{ReadValue<u8>(entry, 0x23)};
+                    }
+                    break;
+                }
+                node = ReadValue<u64>(node, node_key < key ? 0x10 : 0x00);
+            }
+        }
     }
     out << '}';
 }

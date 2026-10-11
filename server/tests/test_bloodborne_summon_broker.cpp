@@ -321,6 +321,36 @@ int main() {
   CHECK(stalled.StateFor(QStringLiteral("guest-session"), 2465, 50'000) ==
         Bloodborne::SummonBroker::State::Delivered);
 
+  // Rig 2026-10-11, three players: after the second guest's join the host's
+  // searches returned the first guest's sign 48 times and the host never
+  // claimed it (its game keeps a stale queue entry for that sign). A sign one
+  // host has been shown UnclaimedOffersBeforeNewId times without a claim shows
+  // a new id.
+  Bloodborne::SummonBroker unclaimed(windowOptions);
+  CHECK(unclaimed.Advertise(Parse(advertisement), advertisement, 0).state ==
+        Bloodborne::SummonBroker::State::Advertised);
+  QString shown;
+  for (int offer = 1;
+       offer <= Bloodborne::SummonBroker::UnclaimedOffersBeforeNewId; ++offer) {
+    const QList<QByteArray> found =
+        unclaimed.Search(Parse(search), offer * 5'000);
+    CHECK(found.size() == 1);
+    shown = Parse(found.front()).value(QStringLiteral("SessionId")).toString();
+    CHECK(shown == QStringLiteral("guest-session"));
+  }
+  const QList<QByteArray> renewed = unclaimed.Search(Parse(search), 30'000);
+  CHECK(renewed.size() == 1);
+  const QString renewedId =
+      Parse(renewed.front()).value(QStringLiteral("SessionId")).toString();
+  CHECK(renewedId != shown && !renewedId.isEmpty());
+  CHECK(Parse(unclaimed.Search(Parse(search), 35'000).front())
+            .value(QStringLiteral("SessionId"))
+            .toString() == renewedId);
+  CHECK(
+      unclaimed.Claim(Parse(targetUserClaim), targetUserClaim, 36'000).status ==
+      Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  CHECK(Bloodborne::SummonBroker::UnclaimedOffersBeforeNewId >= 3);
+
   std::cout << "Bloodborne summon broker state test passed\n";
   return 0;
 }

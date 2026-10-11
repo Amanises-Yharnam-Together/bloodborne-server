@@ -1534,6 +1534,40 @@ TEST(BloodborneSharedEnemyHp, PoisonIsTheLastHittersDamage) {
     EXPECT_EQ(own.All().size(), 1u);
 }
 
+// Rig 2026-10-11, damage straight over the P2P link: the guest's report reached the host 0.1 s
+// after its hit, before the game's own copy of the hit, so the host wrote 484 -> 382 and the
+// game's hit took it to 280 (one hit, counted twice). When the game's copy lands after a write,
+// the write is given back; from then on that member's damage waits SharedDamageHoldMs for the
+// game's copy before it is written.
+TEST(BloodborneSharedEnemyHp, AReportAheadOfTheGamesHitIsGivenBack) {
+    SharedDamage host;
+    constexpr u64 Guest = 0xB0000001;
+    const auto at = [](s32 hp) { return std::vector<EnemyCopy>{{0x1001400b, hp, 484, 0}}; };
+    const auto report = [](s32 damage) {
+        return std::vector<EnemyHpReport>{{Guest, {{0x1001400b, damage, 484}}}};
+    };
+    host.Update(1, true, at(484), {}, 1'000);
+    EXPECT_EQ(host.Update(1, true, at(484), report(102), 1'100).writes,
+              (std::vector<EnemyWrite>{{0x1001400b, 382}}))
+        << "the report first: written at once";
+    EXPECT_EQ(host.Update(1, true, at(280), report(102), 1'200).writes,
+              (std::vector<EnemyWrite>{{0x1001400b, 382}}))
+        << "the game's copy of the same hit: the write given back";
+    EXPECT_TRUE(host.Update(1, true, at(382), report(102), 1'300).writes.empty());
+
+    // The guest hits again (123): its report now waits for the game's copy.
+    EXPECT_TRUE(host.Update(1, true, at(382), report(225), 2'000).writes.empty()) << "held";
+    EXPECT_TRUE(host.Update(1, true, at(259), report(225), 2'100).writes.empty())
+        << "the game's copy came: nothing to write";
+    EXPECT_TRUE(host.Update(1, true, at(259), report(225), 3'000).writes.empty());
+
+    // A hit the game never sends (the host's copy not loaded then) is written after the hold.
+    EXPECT_TRUE(host.Update(1, true, at(259), report(275), 4'000).writes.empty());
+    EXPECT_EQ(host.Update(1, true, at(259), report(275), 4'000 + SharedDamageHoldMs).writes,
+              (std::vector<EnemyWrite>{{0x1001400b, 209}}));
+    EXPECT_LE(SharedDamageHoldMs, 300);
+}
+
 // The friend run's other half: for two reads the guest's world showed 97 characters far below
 // their HP (most never hit), it posted that as its damage, and the host's 97 copies went to 1 HP.
 // Counted from its own hits, a member posts nothing for them.
@@ -1554,6 +1588,58 @@ TEST(BloodborneSharedEnemyHp, TheBoardCarriesAHitWithinARound) {
     EXPECT_EQ(HpBoardWait(true), std::chrono::milliseconds{0}) << "own damage changed: post now";
     EXPECT_EQ(HpBoardWait(false), HpBoardRound);
     EXPECT_LE(HpBoardRound, std::chrono::milliseconds{100});
+}
+
+// Kaniel 2026-10-11: damage straight from game to game over the P2P link (the port's UDP transport,
+// "SHAD" frames of type 0x30) instead of through the server. A frame carries the map and this
+// member's HP board report, as the board does.
+TEST(BloodborneDirectDamage, AFrameCarriesTheMapAndTheReport) {
+    const std::vector<EnemyHp> hurt{{0x10008040, 285, 456}};
+    const std::vector<u8> report = EncodeEnemyHp(0xA000000500000003, hurt);
+    const std::vector<u8> frame = EncodeDirectDamage(0x16000000, report);
+    ASSERT_GE(frame.size(), 10u);
+    EXPECT_EQ((std::vector<u8>(frame.begin(), frame.begin() + 5)),
+              (std::vector<u8>{'S', 'H', 'A', 'D', DirectDamageType}));
+    const auto back = DecodeDirectDamage(frame);
+    ASSERT_TRUE(back);
+    EXPECT_EQ(back->map, 0x16000000u);
+    EXPECT_EQ(DecodeEnemyHp(back->bits), (EnemyHpReport{0xA000000500000003, hurt}));
+    EXPECT_FALSE(DecodeDirectDamage(std::vector<u8>{'S', 'H', 'A', 'D', 0x10, 1, 0, 0, 0, 0}))
+        << "another SHAD frame (signaling control)";
+    EXPECT_FALSE(DecodeDirectDamage(std::vector<u8>(frame.begin(), frame.begin() + 8)))
+        << "cut short";
+}
+
+// A sender's frames stand until they stop coming (it left the room or its game died): its last
+// one is dropped DirectDamageLifeMs after it arrived. Frames come again every half second.
+TEST(BloodborneDirectDamage, ASendersLastFrameStandsUntilItGoesQuiet) {
+    DirectDamageInbox inbox;
+    inbox.Take(1, {0x16000000, {1, 2}}, 1'000);
+    inbox.Take(2, {0x16000000, {3}}, 1'200);
+    inbox.Take(1, {0x16000000, {4}}, 1'400);
+    EXPECT_EQ(inbox.Fresh(1'500),
+              (std::vector<MemberMapState>{{0x16000000, {4}}, {0x16000000, {3}}}));
+    EXPECT_EQ(inbox.Fresh(1'200 + DirectDamageLifeMs + 1),
+              (std::vector<MemberMapState>{{0x16000000, {4}}}))
+        << "sender 2 went quiet";
+    EXPECT_GE(DirectDamageLifeMs, 4 * DirectDamageResendMs);
+}
+
+// The same member's report comes both ways (directly and over the board, which lags): per enemy
+// the most damage (its counts only grow) or, for HP from one world, the least HP.
+TEST(BloodborneDirectDamage, TheNewerOfTwoCopiesOfAReportWins) {
+    const std::vector<EnemyHpReport> both{
+        {7, {{0x10008040, 100, 456}, {0x10008041, 50, 456}}}, // the board, older
+        {7, {{0x10008040, 285, 456}}},                        // direct, newer
+        {9, {{0x10008040, 20, 456}}},                         // another member
+        {HostHpReport | 5, {{0x10010075, 600, 999}}},         // HP (one world), older
+        {HostHpReport | 5, {{0x10010075, 422, 999}}},         // HP, newer
+    };
+    EXPECT_EQ(MergeEnemyHpReports(both), (std::vector<EnemyHpReport>{
+                                             {7, {{0x10008040, 285, 456}, {0x10008041, 50, 456}}},
+                                             {9, {{0x10008040, 20, 456}}},
+                                             {HostHpReport | 5, {{0x10010075, 422, 999}}},
+                                         }));
 }
 
 TEST(BloodborneSharedEnemyHp, InOneWorldAGuestTakesTheHostsNpcHp) {
