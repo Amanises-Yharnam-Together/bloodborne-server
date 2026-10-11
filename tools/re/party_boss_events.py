@@ -86,10 +86,46 @@ def patch_events(emevd: bytes) -> tuple[bytes, int]:
 
 
 # Events that end for a client (1003:6 state 1) but must run for a party guest, per file.
+# 9350 awards insight (SpEffect 4680 once per point; see let_guests_earn_insight).
 CLIENT_EVENTS = {
-    'common.emevd.dcx': {9400, 9404, 9421},
+    'common.emevd.dcx': {9350, 9400, 9404, 9421},
     'm21_00_00_00.emevd.dcx': {9401},
 }
+INSIGHT_EVENT = 9350
+INITIALIZE_EVENT = (2000, 0)
+
+
+def let_guests_earn_insight(emevd: bytes) -> tuple[bytes, int]:
+    """Every insight award (a boss found or killed, a place reached) is a map event starting
+    common event 9350 with the points (2000:0). Some of those end for a client (1003:6 state 1)
+    or unless the local player is alive (4:3 player 10000 type 0, in a group an END tests or in
+    the main group), so a party guest, a white phantom, never got the insight (Kaniel
+    2026-10-11). In those events the client end never matches and the alive check moves to a
+    condition group nothing tests (an empty group passes)."""
+    data = bytearray(emevd)
+    fields = struct.unpack_from('<16q', data, 16)
+    event_count, event_offset, instruction_offset = fields[0], fields[1], fields[3]
+    args_offset = fields[13]
+    patched = 0
+    for index in range(event_count):
+        _, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data, event_offset + index * 48)
+        instructions = [struct.unpack_from('<iiqqq', data, instruction_offset + first + k * 32)
+                        for k in range(count)]
+        if not any((bank, ident) == INITIALIZE_EVENT and length >= 8 and
+                   struct.unpack_from('<i', data, args_offset + offset + 4)[0] == INSIGHT_EVENT
+                   for bank, ident, length, offset, _ in instructions):
+            continue
+        for bank, ident, length, offset, _ in instructions:
+            at = args_offset + offset
+            if bank == 1003 and ident == 6 and length >= 2 and data[at + 1] == 1:
+                data[at + 1] = NEVER
+                patched += 1
+            if (bank == 4 and ident == 3 and length >= 9 and data[at] != UNUSED_GROUP and
+                    struct.unpack_from('<i', data, at + 4)[0] == LOCAL_PLAYER and
+                    data[at + 8] == ALIVE):
+                data[at] = UNUSED_GROUP
+                patched += 1
+    return bytes(data), patched
 
 
 def patch_client_events(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
@@ -283,20 +319,22 @@ def main() -> int:
     for name, path in sorted(files.items()):
         original = path.read_bytes()
         emevd = load_dcx(original)
-        boss = client = fog = 0
+        boss = client = fog = insight = 0
         if name.startswith('m'):
             emevd, boss = patch_events(emevd)
             emevd, fog = open_boss_fog_for_guests(emevd)
+            emevd, insight = let_guests_earn_insight(emevd)
         local = 0
         if name in CLIENT_EVENTS:
             emevd, client = patch_client_events(emevd, CLIENT_EVENTS[name])
         if name in LOCAL_EVENTS:
             emevd, local = make_events_local(emevd, LOCAL_EVENTS[name])
-        if boss or client or local or fog:
+        if boss or client or local or fog or insight:
             (target / name).write_bytes(save_dcx(original, emevd))
             print(f'{name}: {boss} boss event checks, {fog} boss fog checks, '
-                  f'{client} client event ends, {local} local events')
-            total += boss + client + local + fog
+                  f'{insight} insight event checks, {client} client event ends, '
+                  f'{local} local events')
+            total += boss + client + local + fog + insight
     print(f'total: {total}')
     return 0
 

@@ -25,6 +25,7 @@
 #include "common/singleton.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/network/net_delay.h"
+#include "core/libraries/network/net_silence.h"
 #include "core/libraries/network/net_util.h"
 #include "net.h"
 #include "net_error.h"
@@ -313,6 +314,7 @@ public:
             len > kMaxP2PPayload || dest_addr_nbo == 0 || dest_port_nbo == 0) {
             return -1;
         }
+        NoteSilence(std::nullopt);
 
         std::vector<u8> framed(kVPortHeaderSize + len);
         std::memcpy(framed.data(), &source_vport_nbo, sizeof(source_vport_nbo));
@@ -384,6 +386,39 @@ public:
 
 private:
     P2PTransport() = default;
+
+    // Logs a peer that stops sending and is heard again (see PeerSilence): on every packet
+    // received (`heard`) and every send, so a peer going quiet is noticed while the game talks.
+    void NoteSilence(std::optional<u64> heard) {
+        const s64 now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch())
+                               .count();
+        std::vector<SilenceChange> changes;
+        {
+            std::lock_guard lock(silence_mutex);
+            if (heard) {
+                if (const auto back = silence.Heard(*heard, now_ms)) {
+                    changes.push_back(*back);
+                }
+            }
+            if (now_ms - silence_checked_ms >= 1000) {
+                silence_checked_ms = now_ms;
+                const auto quiet = silence.Check(now_ms);
+                changes.insert(changes.end(), quiet.begin(), quiet.end());
+            }
+        }
+        for (const SilenceChange& change : changes) {
+            const u32 addr = static_cast<u32>(change.peer >> 16);
+            const u16 port = ntohs(static_cast<u16>(change.peer & 0xFFFF));
+            if (change.silent) {
+                LOG_WARNING(Lib_Net, "P2P: nothing from {:#x}:{} for {} ms ({} packets before)",
+                            addr, port, change.gap_ms, change.packets);
+            } else {
+                LOG_INFO(Lib_Net, "P2P: {:#x}:{} heard again after {} ms", addr, port,
+                         change.gap_ms);
+            }
+        }
+    }
 
     std::deque<QueuedPacket>& QueueFor(InternalChannel channel) {
         switch (channel) {
@@ -461,6 +496,7 @@ private:
                 LOG_DEBUG(Lib_Net, "P2P dropping too-short UDP frame size={}", rc);
                 continue;
             }
+            NoteSilence((u64{from.sin_addr.s_addr} << 16) | from.sin_port);
 
             u16 source_vport_nbo = 0;
             u16 dest_vport_nbo = 0;
@@ -540,6 +576,10 @@ private:
     std::mutex registry_mutex;
     std::unordered_map<u16, P2PSocket*> game_sockets;
     u16 next_ephemeral_vport{30000};
+
+    std::mutex silence_mutex;
+    PeerSilence silence{3000};
+    s64 silence_checked_ms{0};
 
     std::mutex internal_mutex;
     std::deque<QueuedPacket> signaling_queue;

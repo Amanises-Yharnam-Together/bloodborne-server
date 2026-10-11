@@ -157,5 +157,52 @@ class GuestsEnterBossFogFirst(unittest.TestCase):
         self.assertEqual((again, count), (self.patched, 0))
 
 
+def init_insight(amount: int) -> tuple[int, int, bytes]:
+    return 2000, 0, struct.pack('<iii', 0, tool.INSIGHT_EVENT, amount)
+
+
+class GuestsEarnInsight(unittest.TestCase):
+    """Kaniel 2026-10-11: party guests never got insight from finding or killing bosses. Every
+    insight award runs common event 9350 (SpEffect 4680 once per point), which ends for a client,
+    and some of the map events that start it end for a client or wait for an alive player."""
+
+    def test_the_insight_award_runs_for_a_client(self):
+        award = [(1003, 6, struct.pack('<BBxx', 0, 1)),
+                 (2004, 8, struct.pack('<iiB', 10000, 4680, 0))]
+        patched, count = tool.patch_client_events(build_emevd({9350: award}),
+                                                  tool.CLIENT_EVENTS['common.emevd.dcx'])
+        self.assertEqual(read_events(patched)[9350][0][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(count, 1)
+
+    def test_the_events_that_award_insight_run_for_a_guest(self):
+        original = build_emevd({
+            # m24_01 12410995: a spot that gives 1 insight, ends for a client.
+            12410995: [(1003, 6, struct.pack('<BBxx', 0, 1)), init_insight(1)],
+            # m24_01 12410834: ends unless the player is alive (group 15).
+            12410834: [(4, 3, struct.pack('<bxxxiBxxx', 15, 10000, 0)),
+                       (1000, 2, struct.pack('<BBbx', 0, 0, 15)), init_insight(3)],
+            # No insight: left alone.
+            12410996: [(1003, 6, struct.pack('<BBxx', 0, 1)),
+                       (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0))],
+        })
+        patched, count = tool.let_guests_earn_insight(original)
+        events = read_events(patched)
+        self.assertEqual(events[12410995][0][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(events[12410834][0][2][0], tool.UNUSED_GROUP,
+                         'an alive check no longer ends the event for a phantom')
+        self.assertEqual(events[12410834][1:], read_events(original)[12410834][1:])
+        self.assertEqual(events[12410996], read_events(original)[12410996])
+        self.assertEqual(count, 2)
+        self.assertEqual(tool.let_guests_earn_insight(patched), (patched, 0))
+
+    def test_only_the_local_players_alive_check_moves(self):
+        original = build_emevd({13401801: [
+            (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 2)),  # a black phantom: stays
+            (4, 3, struct.pack('<bxxxiBxxx', 2, 2410800, 0)),  # another character: stays
+            init_insight(1)]})
+        patched, count = tool.let_guests_earn_insight(original)
+        self.assertEqual((patched, count), (original, 0))
+
+
 if __name__ == '__main__':
     unittest.main()

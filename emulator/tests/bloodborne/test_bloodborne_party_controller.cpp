@@ -1417,6 +1417,92 @@ TEST(BloodborneHiddenCharacters, FarMeansBeyondFiftyMetresOfTheHost) {
     EXPECT_FALSE(FarFromHost(host, std::nullopt));
 }
 
+// Kaniel 2026-10-11, a party of three in Central Yharnam: nobody saw a character by a window
+// (0x1001400c) while together; one guest saw it once the host was by the bridge, and it went away
+// again as the host came back. The host's world has it removed (+0x28, switched off) even with the
+// host beside it: its story, not parking. Far from the host, a guest went by its own world. What
+// the host's world had for a character while near the host now stands once the host moves away.
+TEST(BloodborneHiddenCharacters, WhatTheHostHadNearItStandsWhenItMovesAway) {
+    constexpr u32 Map = 0x18010000;
+    HostNearStates states;
+    const std::vector<CharacterShown> near{{0x1001400c, true, true, false}};
+    EXPECT_EQ(states.Fill(Map, near), near);
+    const std::vector<CharacterShown> far{{0x1001400c, true, true, true}};
+    EXPECT_EQ(states.Fill(Map, far), near) << "removed near the host: still removed";
+
+    // Hidden and switched off by this guest while the host was near: nothing to undo.
+    const std::vector<CharacterShown> mine{{0x1001400c, true, true}};
+    EXPECT_EQ(ShownLikeTheHost(states.Fill(Map, far), mine, {}, {0x1001400c}),
+              std::vector<CharacterShown>{});
+    EXPECT_EQ(SwitchedLikeTheHost(states.Fill(Map, far), {{{0x1001400c, true}}}, {0x1001400c}, {}),
+              std::vector<CharacterSwitch>{});
+}
+
+TEST(BloodborneHiddenCharacters, ParkedFarFromTheHostStaysAsTheHostLastSawIt) {
+    constexpr u32 Map = 0x15010000;
+    HostNearStates states;
+    // Never near the host: as posted (the guest goes by its own world).
+    const std::vector<CharacterShown> parked{{0x1000801b, false, true, true}};
+    EXPECT_EQ(states.Fill(Map, parked), parked);
+    // The host walked by it (shown), then left and its events parked it again.
+    EXPECT_EQ(states.Fill(Map, {{{0x1000801b, false, false, false}}}),
+              (std::vector<CharacterShown>{{0x1000801b, false, false, false}}));
+    EXPECT_EQ(states.Fill(Map, parked),
+              (std::vector<CharacterShown>{{0x1000801b, false, false, false}}))
+        << "shown near the host: shown";
+    // Another map: nothing carries over.
+    EXPECT_EQ(states.Fill(0x18010000, {{{0x1000801b, false, true, true}}}),
+              (std::vector<CharacterShown>{{0x1000801b, false, true, true}}));
+    EXPECT_EQ(states.Fill(Map, parked), parked);
+}
+
+// Kaniel 2026-10-11: after the guests' trip to the Dream and back (their own worlds now), they
+// saw enemies that were dead in the host's world. Those died before this session (dead in the
+// host's save), so nobody's kill board had them. The host's shown board says which characters
+// are dead in its world (bit 3), and a guest takes them as killed.
+TEST(BloodborneHiddenCharacters, DeadInTheHostsWorldRidesInBitThree) {
+    const std::vector<CharacterShown> host{{0x1001408f, false, false, false, true},
+                                           {0x10014090, true, false, false, false}};
+    EXPECT_EQ(EncodeShownCharacters(host)[4], 8);
+    EXPECT_EQ(DecodeShownCharacters(EncodeShownCharacters(host)), host);
+    EXPECT_EQ(DeadInTheHostsWorld(host), (std::unordered_set<u32>{0x1001408f}));
+    EXPECT_TRUE(DeadInTheHostsWorld({}).empty());
+}
+
+TEST(BloodborneHiddenCharacters, DeadMeansKilledOrPutDownInTheSave) {
+    EXPECT_TRUE(IsDeadInItsWorld(0x01)) << "killed by an event";
+    EXPECT_TRUE(IsDeadInItsWorld(0x06)) << "killed by damage";
+    EXPECT_TRUE(IsDeadInItsWorld(0x26)) << "dead in the save, put down at load";
+    EXPECT_FALSE(IsDeadInItsWorld(0x00));
+    EXPECT_FALSE(IsDeadInItsWorld(0x20));
+}
+
+// Kaniel 2026-10-11: Lisara joined a session krolebord was already in and did not see him; after
+// both went to the Dream and back (where the other players are re-created) they saw each other.
+// A guest that joins where another guest already is re-creates the others once, as after a trip.
+TEST(BloodbornePartyController, AGuestJoiningAnotherGuestRecreatesThemOnce) {
+    RecreateAfterJoin recreate;
+    EXPECT_FALSE(recreate.Tick(true, false, 0, 0)) << "not in a session yet";
+    EXPECT_FALSE(recreate.Tick(true, true, 1, 1000)) << "only the host: nothing to fix";
+    EXPECT_FALSE(recreate.Tick(true, true, 2, 1500)) << "settling first";
+    EXPECT_TRUE(recreate.Tick(true, true, 2, 1000 + RecreateAfterJoin::SettleMs + 1));
+    EXPECT_FALSE(recreate.Tick(true, true, 2, 20000)) << "once";
+    // Out of the session and in again: a new join.
+    EXPECT_FALSE(recreate.Tick(true, false, 0, 30000));
+    EXPECT_FALSE(recreate.Tick(true, true, 2, 31000));
+    EXPECT_TRUE(recreate.Tick(true, true, 2, 31000 + RecreateAfterJoin::SettleMs + 1));
+}
+
+TEST(BloodbornePartyController, OnlyAGuestRecreatesAfterItsJoinAndNotLongAfter) {
+    RecreateAfterJoin host;
+    EXPECT_FALSE(host.Tick(false, true, 2, 0));
+    EXPECT_FALSE(host.Tick(false, true, 2, 10000)) << "the host's guests join it";
+    RecreateAfterJoin late;
+    EXPECT_FALSE(late.Tick(true, true, 1, 0));
+    EXPECT_FALSE(late.Tick(true, true, 2, RecreateAfterJoin::WindowMs + 1))
+        << "a third player joining much later builds its own copies";
+}
+
 // Kaniel 2026-10-10: after trips, two players hitting one enemy saw different HP bars, and their
 // damage did not add up (each copy took only its own hits; the board kept the lowest). Each
 // member posts its own damage and takes the others' on top.

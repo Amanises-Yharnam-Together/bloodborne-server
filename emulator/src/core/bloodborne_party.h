@@ -866,8 +866,18 @@ struct CharacterShown {
     // from its player (+0x28 and the switch: the woods' enemies by the Cathedral Ward border), so
     // a guest elsewhere does not follow those (Kaniel's friend, 2026-10-11: an empty forest).
     bool distant = false;
+    // Dead in the host's world (bit 3; IsDeadInItsWorld), killed now or dead in its save. Guests
+    // whose worlds are apart take these as killed (DeadInTheHostsWorld).
+    bool dead = false;
     bool operator==(const CharacterShown&) const = default;
 };
+// A character's death flags (+0x1E3) say it is dead in its world: killed (bits 0 and 2, see
+// IsRealDeath) or dead in the save and put down at load (0x26).
+bool IsDeadInItsWorld(u8 death_flags);
+// The characters the host's shown board has as dead (Kaniel 2026-10-11: after a trip to the
+// Dream and back the guests' own worlds had the host's dead enemies alive; they died before the
+// session, so no kill board had them).
+std::unordered_set<u32> DeadInTheHostsWorld(std::span<const CharacterShown> host);
 constexpr float FarFromHostMetres = 50.0f;
 bool FarFromHost(const std::optional<LampPosition>& host,
                  const std::optional<LampPosition>& character);
@@ -900,6 +910,48 @@ std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown>
 // still loaded and off (`mine`). Characters by a map border stay loaded across it.
 std::vector<CharacterSwitch> UndoneOnMapChange(const std::unordered_set<u32>& switched_off,
                                                std::span<const CharacterSwitch> mine);
+// A guest joining a session another guest is already in re-creates the other players once, as
+// after a trip (Kaniel 2026-10-11: Lisara joined after krolebord and did not see him until both
+// went to the Dream and back). Tick says when: a guest, SettleMs after its join, seeing two or
+// more other members within WindowMs of it.
+class RecreateAfterJoin {
+public:
+    static constexpr s64 SettleMs = 5000;
+    static constexpr s64 WindowMs = 60000;
+    bool Tick(bool guest, bool in_session, size_t others, s64 now_ms) {
+        if (!in_session) {
+            joined_ms.reset();
+            done = false;
+            return false;
+        }
+        if (!joined_ms) {
+            joined_ms = now_ms;
+        }
+        const s64 since = now_ms - *joined_ms;
+        if (!guest || done || others < 2 || since <= SettleMs || since > WindowMs) {
+            return false;
+        }
+        done = true;
+        return true;
+    }
+
+private:
+    std::optional<s64> joined_ms;
+    bool done = false;
+};
+// What the host's world had for each character the last time it was near the host (Kaniel
+// 2026-10-11: a character by a window in Central Yharnam is removed in the host's world even with
+// the host beside it, its story; once the host was far, a guest went by its own world and showed
+// it). Fill gives the host's post with each far character it saw near before put back to that
+// state, as a near one; one never near the host stays far. Another map starts over.
+class HostNearStates {
+public:
+    std::vector<CharacterShown> Fill(u32 map, std::span<const CharacterShown> host);
+
+private:
+    u32 map = 0;
+    std::map<u32, CharacterShown> near_states;
+};
 
 // The kill board's answer names who posted each change ("<handle> <0|1> <member>").
 struct KillChange {

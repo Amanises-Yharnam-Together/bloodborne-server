@@ -3693,6 +3693,11 @@ void InstallQuietSummonBanners(u64 base, u64 image_size) {
 
 constexpr u64 LeaveLimitOffset = 0x0138A4A0;
 constexpr std::array<u8, 6> LeaveLimitPrologue{0x55, 0x48, 0x89, 0xE5, 0x53, 0x50};
+// The event system's "load wait" byte: SetLoadWait (0x013358F0) sets it, the leave handlers
+// (0x013840E0 and others) set it with 4047, and only its constructor (0x01339669) clears it.
+// Every event update copies it to SprjActionButtonMan +0x52 (0x0133A114): no action button.
+constexpr u64 LoadWaitOffset = 0x8D;
+constexpr u64 ActionButtonManPointerOffset = 0x05540048;
 
 void InstallGuestStaysWhenTheHostLeaves(u64 base, u64 image_size) {
     if (!party_controller || LeaveLimitOffset + LeaveLimitPrologue.size() > image_size ||
@@ -6384,6 +6389,21 @@ void KeepEnemyDeathsInStep(bool sharing) {
     }
     // Its own kills too: a guest pulled into the host's world sees the host's copy alive.
     others.insert(visit_kills.Killed().begin(), visit_kills.Killed().end());
+    // And what is dead in the host's world, killed before the session too (its save): a guest
+    // back from a trip runs its own world, where those were alive (Kaniel 2026-10-11).
+    if (IsPartyGuestRole() && InPartySession()) {
+        std::optional<MemberMapState> host;
+        {
+            std::scoped_lock lock{shown_board_mutex};
+            host = host_shown;
+        }
+        if (host && host->map == map) {
+            if (const auto hosts = DecodeShownCharacters(host->bits)) {
+                const auto dead = DeadInTheHostsWorld(*hosts);
+                others.insert(dead.begin(), dead.end());
+            }
+        }
+    }
     size_t newly_hidden = 0;
     for (size_t index = 0; index < pointers.size(); ++index) {
         const u64 character = pointers[index];
@@ -6522,6 +6542,15 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
     }
 }
 
+// A boss-sized character (max HP [[+0x3B0]+0x20]+0xFC of DeathTraceMinMaxHp or more): boss
+// progress stays with whoever beat the boss (Kaniel 2026-10-09), so the host's dead bosses are
+// not passed on as dead.
+bool IsBossSized(u64 character) {
+    const u64 modules = ReadValue<u64>(character, 0x3B0);
+    const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+    return data >= 0x10000 && ReadValue<s32>(data, 0xFC) >= DeathTraceMinMaxHp;
+}
+
 // Every character of the map hidden or shown as the host's world has it (see CharacterShown):
 // the host posts its own, a guest in the session on the host's map follows them.
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
@@ -6535,7 +6564,9 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
     for (const u64 character : characters) {
         mine.push_back({ReadValue<u32>(character, 0x08), ReadValue<u8>(character, 0x28) != 0,
                         IsCharacterDisabled(character),
-                        hosting && FarFromHost(host_at, CharacterPosition(character))});
+                        hosting && FarFromHost(host_at, CharacterPosition(character)),
+                        hosting && IsDeadInItsWorld(ReadValue<u8>(character, 0x1E3)) &&
+                            !IsBossSized(character)});
     }
     if (hosting) {
         std::scoped_lock lock{shown_board_mutex};
@@ -6547,17 +6578,23 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
         std::scoped_lock lock{shown_board_mutex};
         host = host_shown;
     }
+    // What the host's world had near the host stands once it moves away (see HostNearStates).
+    static HostNearStates host_near;
+    if (!InPartySession()) {
+        host_near = {};
+    }
     if (!InPartySession() || !host || host->map != map) {
         return;
     }
-    const auto hosts = DecodeShownCharacters(host->bits);
-    if (!hosts) {
+    const auto posted = DecodeShownCharacters(host->bits);
+    if (!posted) {
         return;
     }
+    const std::vector<CharacterShown> hosts = host_near.Fill(map, *posted);
     size_t hid = 0;
     size_t showed = 0;
     std::string which;
-    for (const CharacterShown& change : ShownLikeTheHost(*hosts, mine, kill_hidden, hidden_here)) {
+    for (const CharacterShown& change : ShownLikeTheHost(hosts, mine, kill_hidden, hidden_here)) {
         const auto at = std::ranges::find(mine, change.handle, &CharacterShown::handle);
         const u64 character = characters[at - mine.begin()];
         if (!HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
@@ -6581,7 +6618,7 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                  "showed {}:{}",
                  map, hid, showed, which);
     }
-    SwitchCharactersLikeTheHost(map, characters, *hosts, kill_hidden);
+    SwitchCharactersLikeTheHost(map, characters, hosts, kill_hidden);
 }
 
 // The host's map state for the board (see MapFlagBase), every 3 s while sharing.
@@ -6830,6 +6867,14 @@ void TickPlayersOnThisMap() {
     FinishWaitingJoins(in_session);
     ResendOwnDataOnChange(in_session);
     LogMemberDataChanges(in_session);
+    static RecreateAfterJoin recreate_after_join;
+    if (recreate_after_join.Tick(IsPartyGuestRole(), in_session,
+                                 in_session ? OtherSessionMembers().size() : 0,
+                                 SteadyMilliseconds())) {
+        LOG_INFO(Debug, "Bloodborne party: joined where another guest is; re-creating the others");
+        recreate_players_pending = true;
+        recreated_since_trip.clear();
+    }
     if (!in_session) {
         recreate_players_pending = false;
         recreated_since_trip.clear();
@@ -7248,9 +7293,24 @@ bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64, const GuestRegisterSnapshot* regist
     // The leave set 4047 ("on the way out"); left set, it swallows the next leave and death.
     reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
         image_base + PartyGhostSetEventFlagOffset)(0, 4047, false);
+    // It also set the event system's load wait (+0x8D, the SetLoadWait binding 0x013358F0; the
+    // timer passes the event system in rsi) for the reload skipped here, and only a new event
+    // system clears it: Kaniel 2026-10-11, after a friend's game went away neither the host nor
+    // the other guest could pick up items or talk, only fight.
+    const u64 events = registers != nullptr ? registers->rsi : 0;
+    const u64 buttons = ReadValue<u64>(image_base + ActionButtonManPointerOffset, 0);
+    s32 load_wait = -1;
+    if (events >= 0x10000 && HasMemoryAccess(events, LoadWaitOffset + 1, MemoryProt::CpuWrite)) {
+        load_wait = ReadValue<u8>(events, LoadWaitOffset);
+        if (load_wait == 1) {
+            WriteValue(events, LoadWaitOffset, u8{0});
+        }
+    }
     LOG_INFO(Debug,
-             "Bloodborne party member (type {}) lost a member; staying where it is map={:#x}", type,
-             GetCurrentPackedMap());
+             "Bloodborne party member (type {}) lost a member; staying where it is map={:#x} "
+             "load wait {} (action buttons {}) cleared",
+             type, GetCurrentPackedMap(), load_wait,
+             buttons >= 0x10000 ? ReadValue<u8>(buttons, 0x52) : -1);
     return true;
 }
 

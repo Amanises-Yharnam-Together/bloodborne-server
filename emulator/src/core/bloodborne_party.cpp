@@ -1347,9 +1347,23 @@ std::vector<u8> EncodeShownCharacters(std::span<const CharacterShown> characters
     for (const CharacterShown& character : characters) {
         AppendLittleEndian(bytes, character.handle);
         bytes.push_back(static_cast<u8>((character.hidden ? 1 : 0) | (character.disabled ? 2 : 0) |
-                                        (character.distant ? 4 : 0)));
+                                        (character.distant ? 4 : 0) | (character.dead ? 8 : 0)));
     }
     return bytes;
+}
+
+bool IsDeadInItsWorld(u8 death_flags) {
+    return (death_flags & 0x05) != 0;
+}
+
+std::unordered_set<u32> DeadInTheHostsWorld(std::span<const CharacterShown> host) {
+    std::unordered_set<u32> dead;
+    for (const CharacterShown& character : host) {
+        if (character.dead) {
+            dead.insert(character.handle);
+        }
+    }
+    return dead;
 }
 
 bool FarFromHost(const std::optional<LampPosition>& host,
@@ -1373,7 +1387,7 @@ std::optional<std::vector<CharacterShown>> DecodeShownCharacters(std::span<const
     for (size_t offset = 0; offset < bytes.size(); offset += 5) {
         const u8 state = bytes[offset + 4];
         characters.push_back({ReadLittleEndian<u32>(bytes, offset), (state & 1) != 0,
-                              (state & 2) != 0, (state & 4) != 0});
+                              (state & 2) != 0, (state & 4) != 0, (state & 8) != 0});
     }
     return characters;
 }
@@ -1400,6 +1414,27 @@ std::vector<CharacterShown> ShownLikeTheHost(std::span<const CharacterShown> hos
         }
     }
     return changes;
+}
+
+std::vector<CharacterShown> HostNearStates::Fill(u32 host_map,
+                                                 std::span<const CharacterShown> host) {
+    if (host_map != map) {
+        map = host_map;
+        near_states.clear();
+    }
+    std::vector<CharacterShown> filled;
+    filled.reserve(host.size());
+    for (const CharacterShown& character : host) {
+        if (!character.distant) {
+            near_states[character.handle] = character;
+            filled.push_back(character);
+        } else if (const auto it = near_states.find(character.handle); it != near_states.end()) {
+            filled.push_back(it->second);
+        } else {
+            filled.push_back(character);
+        }
+    }
+    return filled;
 }
 
 std::vector<CharacterSwitch> UndoneOnMapChange(const std::unordered_set<u32>& switched_off,
