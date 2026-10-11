@@ -668,6 +668,17 @@ bool CarriesToGuestWorld(s32 flag) {
            !IsMapPickupFlag(flag);
 }
 
+std::span<const s32> ShopLineFlags() {
+    static constexpr std::array<s32, 10> flags{12101000, 12101001, 12101002, 12101003, 12101004,
+                                               12101005, 12101006, 12101007, 12101008, 12101009};
+    return flags;
+}
+
+bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 map) {
+    constexpr u32 HuntersDream = 0x15000000;
+    return party_configured && slot >= 0 && !done_for_slot && map != 0 && map != HuntersDream;
+}
+
 std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map) {
     constexpr u32 HuntersDream = 0x15000000;
     if (!guest || !in_session || map == 0 || map == HuntersDream) {

@@ -545,6 +545,12 @@ bool CarriesToGuestWorld(s32 flag);
 // workshop's doors open, set by Central Yharnam's 12410900 for a live player only). A phantom in
 // the host's world never set them, so its own Dream stayed shut (Kaniel 2026-10-11).
 std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map);
+// The messengers' weapon lines: Dream event 12101000, started per slot 0-9, sets 12101000 + slot
+// once the player has that slot's badge. A broken patch of that event (2026-10-12) set them all,
+// so once per save slot, out of the Dream, they are cleared and the next Dream visit sets them
+// again from the player's own badges.
+std::span<const s32> ShopLineFlags();
+bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 map);
 // Whether a load of the guest's world gets the kept world changes before its map items and
 // events: at home, and on a party trip (its own world loads while the session stays up).
 bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip);

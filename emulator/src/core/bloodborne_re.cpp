@@ -7118,6 +7118,39 @@ void ResendOwnDataOnChange(bool in_session);
 void LogMemberDataChanges(bool in_session);
 u64 OwnGameData();
 
+// See RechecksShopLines: once per save slot, the messengers' weapon lines a broken event patch
+// opened are cleared; the next Dream visit opens them again for the player's own badges.
+void RecheckShopLinesOnce(u32 map) {
+    const int slot = character_slot.load();
+    const auto marker = Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+                        fmt::format("bloodborne_party_shoplines_slot{}.txt", slot);
+    static int checked_slot = -2;
+    static bool done = false;
+    if (slot != checked_slot) {
+        checked_slot = slot;
+        std::error_code error;
+        done = slot < 0 || std::filesystem::exists(marker, error);
+    }
+    if (!RechecksShopLines(party_controller.has_value(), slot, done, map) ||
+        GetLocalPlayer() < 0x10000) {
+        return;
+    }
+    done = true;
+    int cleared = 0;
+    for (const s32 flag : ShopLineFlags()) {
+        if (EventFlagOn(flag)) {
+            reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
+                image_base + PartyGhostSetEventFlagOffset)(0, flag, false);
+            ++cleared;
+        }
+    }
+    std::ofstream{marker} << "rechecked" << std::endl;
+    LOG_INFO(Debug,
+             "Bloodborne party: cleared {} messenger weapon lines in save slot {}; the next Dream "
+             "visit opens them for this character's badges",
+             cleared, slot);
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
@@ -7158,6 +7191,7 @@ void TickPlayersOnThisMap() {
             LOG_INFO(Debug, "Bloodborne party: guest out in the world; set Dream flag {}", flag);
         }
     }
+    RecheckShopLinesOnce(IsUsablePackedMap(map) ? map : 0);
     static RecreateAfterJoin recreate_after_join;
     if (recreate_after_join.Tick(IsPartyGuestRole(), in_session,
                                  in_session ? OtherSessionMembers().size() : 0,

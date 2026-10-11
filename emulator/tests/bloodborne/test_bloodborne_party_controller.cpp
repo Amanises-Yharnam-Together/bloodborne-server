@@ -916,6 +916,23 @@ TEST(BloodborneSharedKills, AMembersKillGivesTheOneTimeDrop) {
     EXPECT_FALSE(GetsMemberKillDrop(false, true, 52300990, false)) << "no session";
 }
 
+// Kaniel 2026-10-12: a broken Dream event patch opened the messengers' weapon lines (flags
+// 12101000-12101009) whatever badges the player had, and those flags stay in the save. Once per
+// save slot, out of the Dream, they are cleared; the next Dream visit opens the lines again for
+// the badges the player has.
+TEST(BloodborneDreamShop, ShopLinesAreRecheckedOncePerSlot) {
+    EXPECT_EQ(ShopLineFlags().size(), 10u);
+    EXPECT_EQ(ShopLineFlags().front(), 12101000);
+    EXPECT_EQ(ShopLineFlags().back(), 12101009);
+    constexpr u32 Ward = 0x18000000, Dream = 0x15000000;
+    EXPECT_TRUE(RechecksShopLines(true, 2, false, Ward));
+    EXPECT_FALSE(RechecksShopLines(true, 2, true, Ward)) << "done for this slot";
+    EXPECT_FALSE(RechecksShopLines(true, 2, false, Dream)) << "in the Dream the lines are live";
+    EXPECT_FALSE(RechecksShopLines(true, -1, false, Ward)) << "no character yet";
+    EXPECT_FALSE(RechecksShopLines(false, 2, false, Ward)) << "no party";
+    EXPECT_FALSE(RechecksShopLines(true, 2, false, 0)) << "loading";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));
