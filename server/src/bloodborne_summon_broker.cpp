@@ -467,6 +467,18 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
                 it->updatedAtMs = nowMs;
                 continue;
             }
+            if (requester >= 0) {
+                it->unclaimedOffers = it->offeredTo == requester ? it->unclaimedOffers + 1 : 1;
+                it->offeredTo = requester;
+                if (it->unclaimedOffers > UnclaimedOffersBeforeNewId) {
+                    qWarning() << "Bloodborne summon: user" << requester << "was shown the sign of"
+                               << Integer(it->advertisement, QStringLiteral("UserId"), -1)
+                               << UnclaimedOffersBeforeNewId
+                               << "times without a claim; it shows a new id";
+                    it->searchSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                    it->unclaimedOffers = 1;
+                }
+            }
             candidates.push_back(
                 {it->updatedAtMs,
                  PrepareAdvertisementForSearch(it->rawAdvertisement, it->advertisement, request,
@@ -552,6 +564,7 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
 
     target->state = State::Claimed;
     target->joined = false;
+    target->unclaimedOffers = 0;
     target->claim = request;
     target->rawClaim = rawRequest;
     if (m_seamlessCoop && !hostPlacement.isEmpty() &&

@@ -268,6 +268,12 @@ class RunnerTest(unittest.TestCase):
         }
         self.assertAlmostEqual(run_scenario.hp_board_lag(texts, "0x1001400b"), 1.1 / 3)
         self.assertIsNone(run_scenario.hp_board_lag({"host": texts["host"]}, "0x1001400b"))
+        # Rig hit3 2026-10-11: a game the hit reached through the game itself lowers nothing for
+        # it; its next lowering (another hit, 35 s on) or a write given back (up) is no lag.
+        later = dict(texts, host="\n".join([
+            texts["host"], low.format("0x1001400b", 280, 178, "145.0"),
+            low.format("0x1001400b", 76, 178, "145.1")]))
+        self.assertAlmostEqual(run_scenario.hp_board_lag(later, "0x1001400b"), 1.1 / 3)
 
     def test_old_runs_go_newest_stay(self):
         with tempfile.TemporaryDirectory() as folder:

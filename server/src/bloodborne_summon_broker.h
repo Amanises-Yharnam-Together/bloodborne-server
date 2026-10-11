@@ -49,6 +49,10 @@ public:
     // Games re-advertise a placed sign about every 30 s. A sign not refreshed for longer than
     // this belongs to a game that quit, and is no longer offered to searches.
     static constexpr qint64 SignRefreshWindowMs = 75'000;
+    // A sign shown to one host this many times without a claim shows a new id from the next
+    // search on (rig 2026-10-11: the host's game kept a stale queue entry for it and never
+    // claimed it in 48 searches).
+    static constexpr int UnclaimedOffersBeforeNewId = 4;
 
     SummonBroker();
     explicit SummonBroker(qint64 ttlMs);
@@ -85,6 +89,9 @@ private:
         qint64 deliveredAtMs = 0;
         // The id searches show for this sign once a claim on it was dropped; empty: its own.
         QString searchSessionId;
+        // The host it was last shown to, and how many times in a row without a claim.
+        qint64 offeredTo = -1;
+        int unclaimedOffers = 0;
     };
 
     void PurgeExpiredLocked(qint64 nowMs);

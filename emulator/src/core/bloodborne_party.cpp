@@ -1049,10 +1049,12 @@ T ReadLittleEndian(std::span<const u8> bytes, size_t offset) {
 
 SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
                                         std::span<const EnemyCopy> alive,
-                                        std::span<const EnemyHpReport> others) {
+                                        std::span<const EnemyHpReport> others, s64 now_ms) {
     if (new_visit != visit || now_active != active) {
         tracks.clear();
         written.clear();
+        written_by.clear();
+        held_since.clear();
         visit = new_visit;
         active = now_active;
     }
@@ -1112,7 +1114,8 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
                 }
                 const s32 scaled =
                     static_cast<s32>((s64{damage.hp} * copy.max + damage.max / 2) / damage.max);
-                s32& taken = written[{report.visit, copy.handle}];
+                const std::pair<u64, u32> key{report.visit, copy.handle};
+                s32& taken = written[key];
                 s32 delta = scaled - taken;
                 if (delta <= 0) {
                     continue;
@@ -1122,14 +1125,44 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
                 seen.paid += paid;
                 taken += paid;
                 delta -= paid;
-                if (delta <= 0 || hp <= 1) {
+                if (delta <= 0) {
+                    held_since.erase(key);
+                    continue;
+                }
+                // A member whose hits the game sends here too: wait a moment for its copy.
+                if (now_ms != 0 && game_sends.contains(report.visit)) {
+                    const auto [since, fresh] = held_since.try_emplace(key, now_ms);
+                    if (now_ms - since->second < SharedDamageHoldMs) {
+                        continue;
+                    }
+                }
+                held_since.erase(key);
+                if (hp <= 1) {
                     continue;
                 }
                 const s32 lowered = std::max(hp - delta, 1);
                 taken += hp - lowered;
                 seen.written += hp - lowered;
+                written_by[key] += hp - lowered;
                 hp = lowered;
             }
+        }
+        // The game's copy of a hit already written from a report (it came straight over the P2P
+        // link first): the write is given back, and that member's damage is held from now on.
+        if (const s32 back = std::min(unpaid, seen.written); back > 0) {
+            s32 left = back;
+            for (auto& [key, amount] : written_by) {
+                if (key.second != copy.handle || amount <= 0 || left <= 0) {
+                    continue;
+                }
+                const s32 part = std::min(amount, left);
+                amount -= part;
+                left -= part;
+                game_sends.insert(key.first);
+            }
+            seen.written -= back;
+            seen.paid += back;
+            hp = std::min(hp + back, copy.max);
         }
         if (hp != copy.hp) {
             step.writes.push_back({copy.handle, hp});
@@ -1159,6 +1192,69 @@ s64 OwnDamage::Total(u32 handle) const {
 
 std::chrono::milliseconds HpBoardWait(bool own_damage_changed) {
     return own_damage_changed ? std::chrono::milliseconds{0} : HpBoardRound;
+}
+
+std::vector<u8> EncodeDirectDamage(u32 map, std::span<const u8> report) {
+    std::vector<u8> frame{'S', 'H', 'A', 'D', DirectDamageType};
+    frame.reserve(frame.size() + 4 + report.size());
+    AppendLittleEndian(frame, map);
+    frame.insert(frame.end(), report.begin(), report.end());
+    return frame;
+}
+
+std::optional<MemberMapState> DecodeDirectDamage(std::span<const u8> frame) {
+    constexpr size_t Header = 5 + 4;
+    if (frame.size() < Header || !std::ranges::equal(frame.first(4), std::string_view{"SHAD"}) ||
+        frame[4] != DirectDamageType) {
+        return std::nullopt;
+    }
+    MemberMapState state{ReadLittleEndian<u32>(frame, 5), {}};
+    state.bits.assign(frame.begin() + Header, frame.end());
+    if (!DecodeEnemyHp(state.bits)) {
+        return std::nullopt;
+    }
+    return state;
+}
+
+void DirectDamageInbox::Take(u64 sender, MemberMapState state, s64 now_ms) {
+    by_sender[sender] = Received{std::move(state), now_ms};
+}
+
+std::vector<MemberMapState> DirectDamageInbox::Fresh(s64 now_ms) {
+    std::erase_if(by_sender, [now_ms](const auto& entry) {
+        return now_ms - entry.second.at > DirectDamageLifeMs;
+    });
+    std::vector<const Received*> fresh;
+    for (const auto& [sender, received] : by_sender) {
+        fresh.push_back(&received);
+    }
+    std::ranges::stable_sort(fresh, std::greater{}, &Received::at);
+    std::vector<MemberMapState> states;
+    for (const Received* received : fresh) {
+        states.push_back(received->state);
+    }
+    return states;
+}
+
+std::vector<EnemyHpReport> MergeEnemyHpReports(std::span<const EnemyHpReport> reports) {
+    std::vector<EnemyHpReport> merged;
+    for (const EnemyHpReport& report : reports) {
+        const auto same = std::ranges::find(merged, report.visit, &EnemyHpReport::visit);
+        if (same == merged.end()) {
+            merged.push_back(report);
+            continue;
+        }
+        const bool hp = (report.visit & HostHpReport) != 0;
+        for (const EnemyHp& enemy : report.enemies) {
+            const auto mine = std::ranges::find(same->enemies, enemy.handle, &EnemyHp::handle);
+            if (mine == same->enemies.end()) {
+                same->enemies.push_back(enemy);
+            } else if (hp ? enemy.hp < mine->hp : enemy.hp > mine->hp) {
+                *mine = enemy;
+            }
+        }
+    }
+    return merged;
 }
 
 std::vector<EnemyWrite> LowerToHostHp(std::span<const EnemyCopy> mine,

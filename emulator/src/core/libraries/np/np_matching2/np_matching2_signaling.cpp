@@ -33,6 +33,9 @@ constexpr auto kMatching2HandshakeTimeout = std::chrono::seconds(10);
 constexpr auto kMatching2StunPingInterval = std::chrono::seconds(5);
 
 std::atomic<bool> g_matching2_stop{false};
+// The room's peers with a live signaling link, as the handshake thread last saw them.
+std::mutex g_active_peers_mutex;
+std::vector<RoomPeerAddress> g_active_peers;
 std::mutex g_matching2_thread_mutex;
 std::thread g_matching2_thread;
 
@@ -290,6 +293,7 @@ void Matching2HandshakeThreadMain() {
         const auto now = std::chrono::steady_clock::now();
         const bool should_stun_ping = last_stun_ping.time_since_epoch().count() == 0 ||
                                       now - last_stun_ping >= kMatching2StunPingInterval;
+        std::vector<RoomPeerAddress> active;
         for (u32 id = 1; id <= ContextManager::kMaxContexts; ++id) {
             ContextObject* ctx =
                 ContextManager::Instance().Get(static_cast<OrbisNpMatching2ContextId>(id));
@@ -305,6 +309,11 @@ void Matching2HandshakeThreadMain() {
             auto room_it = ctx->room_cache.find(ctx->room_id);
             if (room_it == ctx->room_cache.end()) {
                 continue;
+            }
+            for (const auto& [member_id, peer] : ctx->peers) {
+                if (peer.status == kMatching2ConnActive && peer.addr != 0 && peer.port != 0) {
+                    active.push_back({peer.addr, peer.port});
+                }
             }
             for (auto& [member_id, peer] : ctx->peers) {
                 if (peer.status != kMatching2ConnPending || !peer.handshake_started) {
@@ -330,12 +339,21 @@ void Matching2HandshakeThreadMain() {
         if (should_stun_ping) {
             last_stun_ping = now;
         }
+        {
+            std::scoped_lock lock{g_active_peers_mutex};
+            g_active_peers = std::move(active);
+        }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 }
 
 } // namespace
+
+std::vector<RoomPeerAddress> GetActiveRoomPeers() {
+    std::scoped_lock lock{g_active_peers_mutex};
+    return g_active_peers;
+}
 
 bool SendMatching2StunPing(const ContextObject& ctx) {
     if (!NpSignaling::Stubs::Matching2Enabled()) {
