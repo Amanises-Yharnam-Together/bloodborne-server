@@ -1106,6 +1106,23 @@ std::optional<std::string> AutoplayShotPath(std::string_view request, std::strin
 // The game's own kill (what an event's ForceCharacterDeath does): HP to 0, the dead flag
 // (+0x1E3 bit 0), then the death step (0x018BD9D0). `void (character)`.
 constexpr u64 KillCharacterOffset = 0x018BF9A0;
+constexpr u64 DeathStepOffset = 0x018BD9D0;
+// Boss-death tracer (Kaniel 2026-10-11: Father Gascoigne died in the host's world with nobody
+// hitting him, and a guest got "Prey Slaughtered"): the game sets a character's dead flag
+// (`or byte ptr [reg + 0x1E3], 1`) in three places, each once per death: the two deaths at 0 HP
+// (0x018BF760, 0x018CDE10, both then calling the death step) and its own kill (KillCharacter, an
+// event's ForceCharacterDeath). A hook on each logs the character and the game's call chain.
+enum class DeathRegister { Rbx, Rcx, R15 };
+struct DeathFlagSite {
+    u64 offset;
+    std::vector<u8> instruction;
+    DeathRegister character;
+    const char* name;
+};
+const std::vector<DeathFlagSite>& DeathFlagSites();
+// Only characters this big (bosses and the like); ordinary kills would flood the log.
+constexpr s32 DeathTraceMinMaxHp = 1500;
+bool TracesDeathOf(s32 max_hp);
 // A target: "nearest" (0), "self" (AutoplaySelf, the player), "marked" (AutoplayMarked, the one
 // the last mark command picked) or a character handle in hex.
 constexpr u32 AutoplaySelf = 0xFFFFFFFF;

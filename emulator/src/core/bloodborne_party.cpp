@@ -1872,6 +1872,25 @@ const std::vector<CodePatch>& QuietSummonBannerPatches() {
     return patches;
 }
 
+const std::vector<DeathFlagSite>& DeathFlagSites() {
+    static const std::vector<DeathFlagSite> sites{
+        {0x018BF941, {0x80, 0x8B, 0xE3, 0x01, 0x00, 0x00, 0x01}, DeathRegister::Rbx, "death"},
+        {0x018CE6C5,
+         {0x80, 0x89, 0xE3, 0x01, 0x00, 0x00, 0x01},
+         DeathRegister::Rcx,
+         "death in the character update"},
+        {0x018BFAD3,
+         {0x41, 0x80, 0x8F, 0xE3, 0x01, 0x00, 0x00, 0x01},
+         DeathRegister::R15,
+         "the game's kill"},
+    };
+    return sites;
+}
+
+bool TracesDeathOf(s32 max_hp) {
+    return max_hp >= DeathTraceMinMaxHp;
+}
+
 bool IsPartySession(bool party_configured, s32 matching_state) {
     return party_configured &&
            (matching_state == MatchingStateHosting || matching_state == MatchingStateSummonedGuest);

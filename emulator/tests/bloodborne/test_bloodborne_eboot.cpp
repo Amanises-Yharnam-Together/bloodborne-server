@@ -189,6 +189,18 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     EXPECT_EQ(DecodeNearJumpTarget(host_dead.offset, host_dead.patched), HostDeadEpilogueOffset);
 }
 
+// The boss-death tracer's sites are the game's dead-flag writes; the two deaths go straight on
+// to the death step.
+TEST_F(BloodborneEboot, TheDeathSitesSetTheDeadFlag) {
+    for (const DeathFlagSite& site : DeathFlagSites()) {
+        EXPECT_EQ(Bytes(site.offset, site.instruction.size()), site.instruction)
+            << std::hex << site.offset;
+    }
+    EXPECT_EQ(CallTarget(0x018BF94B), DeathStepOffset);
+    EXPECT_EQ(CallTarget(0x018CE6CF), DeathStepOffset);
+    EXPECT_EQ(Bytes(DeathStepOffset, FunctionPrologue.size()), FunctionPrologue);
+}
+
 // Party death: every IsNoDead caller in the table returns from a call to it, and the hook at its
 // exit finds the bytes it copies.
 TEST_F(BloodborneEboot, TheNoDeadCallersCallIsNoDead) {

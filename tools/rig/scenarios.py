@@ -432,6 +432,44 @@ SCENARIOS = {
         },
         "timeout": 720,
     },
+    "boss-putdown": {
+        "about": "the reverse of boss-refight (Kaniel 2026-10-11, Prey Slaughtered after a "
+                 "teleport): the host beat Father Gascoigne long ago, the guest has not; after "
+                 "the host's trip its world puts him down again, and the guest's own boss event "
+                 "must not take that for its kill (no banner, echoes, trophy or defeated flag)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 20", f"travel {HUNTERS_DREAM}",
+                     "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 60",
+                     f"expect-flag {GASCOIGNE_DEFEATED} 1", "expect-session 2"],
+            "guest": [START, f"set-flag {GASCOIGNE_DEFEATED} 0", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "godmode", f"expect-hp {GASCOIGNE} > 0", "wait-session 2 300", "wait 30",
+                      "wait-members 2 240", "wait 60", f"dump {GASCOIGNE}", "expect-session 2"],
+        },
+        "forbid": {
+            "host": SESSION_HOLDS,
+            "guest": SESSION_HOLDS + [r"sharing trophy 14 ", r"Bloodborne echoes: \+3200 "],
+        },
+        "timeout": 900,
+    },
+    "prey-replay": {
+        "about": "Kaniel 2026-10-11 (Prey Slaughtered), on the characters each game has now (no saves put back; copy the "
+                 "ones to test into rig/port/<role> first): the host waits in the Dream while the "
+                 "guest joins in place and runs its map alone, then comes back, and Father Gascoigne must stay alive",
+        "no_baseline": True,
+        "roles": {
+            "host": [START, "godmode", f"travel {HUNTERS_DREAM}", "wait-session 2 300", "wait 60",
+                     f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 60",
+                     f"expect-hp {GASCOIGNE} > 0", "expect-session 2"],
+            "guest": [START, "godmode", f"expect-flag {GASCOIGNE_DEFEATED} 0",
+                      "wait-session 2 300", "wait 60", "wait-members 2 240", "wait 60",
+                      f"expect-hp {GASCOIGNE} > 0", "expect-session 2"],
+        },
+        "forbid": {
+            "host": SESSION_HOLDS + [r"sharing trophy 14 "],
+            "guest": SESSION_HOLDS + [r"sharing trophy 14 ", r"Bloodborne echoes: \+3200 "],
+        },
+        "timeout": 900,
+    },
     "lamp-share": {
         "about": "a lamp the guest lights is lit in the host's world too",
         "roles": {
