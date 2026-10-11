@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <optional>
+#include <string>
 #include <atomic>
 
 namespace BbSettings {
@@ -168,6 +170,13 @@ int RenderPreset();
 bool ResolutionNeedsRestart();
 /// Writes the file (menu changes).
 void Save();
+
+/// bbport.ini lines the menu does not keep in Values: the controls runtime_pad.c and the icon step
+/// read (key.<input>, pad.<input>, mouse_*, button_icons). Line: the value in the file as Load read
+/// it, or as changed since; nullopt: no line. SetLine: the next Save replaces the line in place or
+/// appends it, or with nullopt removes it (the default applies again). Any thread.
+std::optional<std::string> Line(const std::string& key);
+void SetLine(const std::string& key, std::optional<std::string> value);
 
 /// The cap the present thread applies: the menu's with the unlocked frame rate (vblank above
 /// 120 Hz), none with the game's own fixed 30/60 timestep.

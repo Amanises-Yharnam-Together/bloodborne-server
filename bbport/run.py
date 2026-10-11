@@ -177,11 +177,29 @@ def main():
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game} (set BB_GAME_DIR).')
     original_game = game.resolve()
-    # The launcher's button icons (a generated common.tpf.dcx) are a layer under the mods; its note says
-    # why they are off when it cannot make them.
-    icons = ['--icons-layer', env['BB_ICONS_DIR']] if env.get('BB_ICONS_DIR') else []
-    if env.get('BB_ICONS_NOTE'):
-        print(env['BB_ICONS_NOTE'])
+    # The button icons (a generated common.tpf.dcx, scripts/button_icons.py) are a layer under the mods;
+    # the note says why they are off when they cannot be made. The launcher's Play decides them for its
+    # start. A start without it (the kit's PLAY.bat runs BLauncher --run) and a restart from the game's
+    # menu, where the icon style may have changed, decide here: the launcher's choice is taken out of the
+    # environment the game inherits, so its restart decides again. BB_ICONS=0: none (the rig).
+    icons_dir, icons_note = env.pop('BB_ICONS_DIR', None), env.pop('BB_ICONS_NOTE', None)
+    if icons_dir is None and icons_note is None and env.get('BB_ICONS', '1') != '0':
+        sys.path.insert(0, str(PORT / 'scripts'))
+        try:
+            import button_icons
+        except ImportError as error:  # nothing about the icons may stop the game from starting
+            decided = {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
+        else:
+            tool = probe.parent / 'bb-gpu-capabilities.exe'
+            decided = button_icons.environment(game, out, button_icons.read_ini(config),
+                                               env.get('BB_MODS_DIR', data / 'mods'),
+                                               env.get('BB_MODS_CONFIG', data / 'mods.json'),
+                                               env.get('BB_MODS_ENABLED', '1'), env.get('BB_GAMEPAD', ''),
+                                               lambda: button_icons.list_gamepads(tool))
+        icons_dir, icons_note = decided.get('BB_ICONS_DIR'), decided.get('BB_ICONS_NOTE')
+    icons = ['--icons-layer', icons_dir] if icons_dir else []
+    if icons_note:
+        print(icons_note)
     game = Path(run_script('mods.py', game, '--out', out,
                            '--mods-dir', env.get('BB_MODS_DIR', data / 'mods'),
                            '--config', env.get('BB_MODS_CONFIG', data / 'mods.json'),

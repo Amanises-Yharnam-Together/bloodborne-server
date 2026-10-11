@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -145,4 +146,35 @@ int main() {
     assert(BbSettings::HdrPeakNits[BbSettings::HdrPeakIndex(9000)] == 4000);
     assert(BbSettings::HdrPaperWhiteNits[BbSettings::HdrPaperWhiteIndex(203)] == 200);
     std::puts("PASS: window mode and HDR settings");
+
+    // Kaniel 2026-10-11: the controls in the game's menu. The lines it does not keep in Values
+    // (key.*, pad.*, mouse_*, button_icons: runtime_pad.c and the icon step read them) are read
+    // from the file, and Save replaces them in place, appends new ones and removes cleared ones
+    // (the default applies again).
+    char fifth[512];
+    std::snprintf(fifth, sizeof(fifth), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+    const int fd5 = mkstemp(fifth);
+    assert(fd5 >= 0);
+    const char ini5[] = "key.cross=X, Space\npad.circle=a\nmouse_sensitivity=1.50\nupscaler=fsr3\n";
+    assert(write(fd5, ini5, sizeof(ini5) - 1) == ssize_t(sizeof(ini5) - 1));
+    close(fd5);
+    setenv("BB_CONFIG", fifth, 1);
+    BbSettings::Load();
+    assert(BbSettings::Line("key.cross") == std::optional<std::string>("X, Space"));
+    assert(BbSettings::Line("mouse_sensitivity") == std::optional<std::string>("1.50"));
+    assert(!BbSettings::Line("key.circle"));
+    BbSettings::SetLine("key.cross", "Ctrl+F");
+    BbSettings::SetLine("pad.circle", std::nullopt);
+    BbSettings::SetLine("key.l1", "Mouse X1");
+    assert(BbSettings::Line("key.cross") == std::optional<std::string>("Ctrl+F") && "read back before the save");
+    assert(!BbSettings::Line("pad.circle"));
+    BbSettings::Save();
+    const std::string saved5 = Read(fifth);
+    assert(saved5.find("key.cross=Ctrl+F\nmouse_sensitivity=1.50\nupscaler=") == 0);
+    assert(saved5.find("pad.circle") == std::string::npos);
+    assert(saved5.find("key.l1=Mouse X1\n") != std::string::npos);
+    BbSettings::Load();
+    assert(BbSettings::Line("key.l1") == std::optional<std::string>("Mouse X1") && !BbSettings::Line("pad.circle"));
+    unlink(fifth);
+    std::puts("PASS: control lines read, changed and removed");
 }

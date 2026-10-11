@@ -13,6 +13,8 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <optional>
+#include <map>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -77,6 +79,12 @@ extern "C" const unsigned char bb_serif_ttf[];
 extern "C" const unsigned char bb_serif_ttf_end[];
 
 extern "C" void runtime_restart(void); // bb-probe (probe.c)
+// The controls (runtime_pad.c, declared in src/runtime.h): the Controls tab.
+extern "C" int runtime_pad_input_count(void);
+extern "C" const char* runtime_pad_input_name(int input);
+extern "C" int runtime_pad_input_takes_pad(int input);
+extern "C" void runtime_pad_binding_text(int input, int pad, char* out, size_t size);
+extern "C" void runtime_pad_reload_controls(void);
 
 namespace BbOverlay {
 
@@ -91,6 +99,18 @@ constexpr auto quit_hold = std::chrono::milliseconds(1500);
 std::chrono::steady_clock::time_point combo_since{};
 bool combo_held = false, combo_fired = false;
 std::atomic<bool> quit_open{false};
+// Controls tab: "press a key" for one input. The menu starts it; the window thread takes the next
+// key, mouse button, wheel step or gamepad button (CaptureEvent) and the menu writes it to
+// bbport.ini. Both sides hold imgui_mutex.
+struct Capture {
+    int input = -1; // waiting for a press for this input; -1 none
+    bool pad_ok = false; // the input takes gamepad buttons (the movement and camera keys do not)
+    std::chrono::steady_clock::time_point since{};
+    bool done = false; // a press came: kind ("key" or "pad") and name; an empty name unbinds
+    std::string kind, name;
+    SDL_Scancode modifier = SDL_SCANCODE_UNKNOWN; // a modifier key went down alone: bound if it comes up alone
+};
+Capture capture;
 bool dirty = false; // settings changed while open: saved on close
 float base_scale = 1.0f;
 ImFont* sans_font = nullptr;
@@ -131,6 +151,10 @@ void SetOpen(bool value) {
     if (!value && dirty) {
         dirty = false;
         BbSettings::Save();
+        runtime_pad_reload_controls(); // the mouse settings of the Controls tab
+    }
+    if (!value) {
+        capture = {};
     }
 }
 
@@ -437,11 +461,27 @@ void SliderRow(const char* id, const char* label, std::atomic<float>& value, flo
     }
 }
 
+/// The icon style and mouse camera this run started with (the menu cannot change either before
+/// its first frame): the icons are drawn into the game's textures and the camera hook installed
+/// at start.
+const std::optional<std::string>& StartupLine(const char* key) {
+    static std::map<std::string, std::optional<std::string>> startup;
+    const auto it = startup.find(key);
+    return it != startup.end() ? it->second : startup.emplace(key, BbSettings::Line(key)).first->second;
+}
+
+bool ControlsNeedRestart() {
+    const auto icons = BbSettings::Line("button_icons");
+    const bool camera_on = BbSettings::Line("mouse_camera").value_or("1") != "0";
+    return icons.value_or("auto") != StartupLine("button_icons").value_or("auto") ||
+           (camera_on && StartupLine("mouse_camera").value_or("1") == "0");
+}
+
 bool RestartNeeded() {
     auto& s = BbSettings::Get();
     bool restart = s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
                    s.live_resolution != s.startup_live_resolution ||
-                   BbSettings::ResolutionNeedsRestart();
+                   BbSettings::ResolutionNeedsRestart() || ControlsNeedRestart();
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         restart |= s.effects[e] != s.startup_effects[e];
     }
@@ -779,6 +819,189 @@ void AdvancedTab() {
 
 /// The save editor: the character's echoes, insight and attributes, and items given to it,
 /// changed in the running game (bbport_save_editor.h); the game saves them as usual.
+// Controls (Kaniel 2026-10-11): the bbport.ini lines runtime_pad.c reads (key.<input>,
+// pad.<input>, mouse_*) and the icon style the start-up step draws (button_icons). Bindings are
+// written at once and the runtime takes them at its next pad read; the mouse settings when the
+// menu closes; the icon style at the next start.
+const char* InputLabel(int input) {
+    static const char* const en[] = {
+        "Cross", "Circle", "Square", "Triangle", "L1", "R1", "L2", "R2", "L3", "R3", "Options",
+        "Touchpad, left half (gestures)", "Touchpad, right half (key items)", "D-pad up", "D-pad down",
+        "D-pad left", "D-pad right", "Move forward", "Move back", "Move left", "Move right", "Camera up",
+        "Camera down", "Camera left", "Camera right"};
+    static const char* const ru[] = {
+        "Крест", "Круг", "Квадрат", "Треугольник", "L1", "R1", "L2", "R2", "L3", "R3", "Options",
+        "Тачпад, левая половина (жесты)", "Тачпад, правая половина (личные вещи)", "Крестовина вверх",
+        "Крестовина вниз", "Крестовина влево", "Крестовина вправо", "Движение вперёд", "Движение назад",
+        "Движение влево", "Движение вправо", "Камера вверх", "Камера вниз", "Камера влево", "Камера вправо"};
+    static_assert(std::size(en) == std::size(ru));
+    if (runtime_pad_input_count() != int(std::size(en))) { // another runtime: its own names
+        const char* name = runtime_pad_input_name(input);
+        return name ? name : "?";
+    }
+    return input >= 0 && input < int(std::size(en)) ? T(en[input], ru[input]) : "?";
+}
+
+/// SDL's gamepad button names (pad.<input> lines) as the buttons read: PlayStation, then Xbox.
+std::string PadText(const std::string& names) {
+    static const std::pair<std::string_view, const char*> labels[] = {
+        {"a", "Cross (A)"}, {"b", "Circle (B)"}, {"x", "Square (X)"}, {"y", "Triangle (Y)"},
+        {"leftshoulder", "L1"}, {"rightshoulder", "R1"}, {"lefttrigger", "L2"}, {"righttrigger", "R2"},
+        {"leftstick", "L3"}, {"rightstick", "R3"}, {"start", "Options"}, {"back", "Share (Back)"},
+        {"guide", "PS"}, {"touchpad", "Touchpad"}, {"dpup", "D-pad up"}, {"dpdown", "D-pad down"},
+        {"dpleft", "D-pad left"}, {"dpright", "D-pad right"}};
+    std::string out;
+    size_t at = 0;
+    while (at < names.size()) {
+        size_t end = names.find(", ", at);
+        if (end == std::string::npos) {
+            end = names.size();
+        }
+        const std::string_view name{names.data() + at, end - at};
+        const auto label = std::find_if(std::begin(labels), std::end(labels),
+                                        [&](const auto& l) { return l.first == name; });
+        out += (out.empty() ? "" : ", ") + (label != std::end(labels) ? std::string(label->second) : std::string(name));
+        at = end + 2;
+    }
+    return out;
+}
+
+void SaveControls() {
+    BbSettings::Save();
+    runtime_pad_reload_controls();
+}
+
+float MouseSensitivity() {
+    const float v = float(std::atof(BbSettings::Line("mouse_sensitivity").value_or("1.00").c_str()));
+    return std::isfinite(v) ? std::clamp(v, 0.1f, 5.0f) : 1.0f;
+}
+
+void ControlsTab() {
+    static const char* const icon_values[] = {"auto", "playstation", "xbox", "keyboard"};
+    const std::string icons = BbSettings::Line("button_icons").value_or("auto");
+    int icon = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (icons == icon_values[i]) {
+            icon = i;
+        }
+    }
+    Choice("icons", T("Button icons", "Значки кнопок"), icon, 4,
+           [](int i) {
+               return i == 0   ? T("Automatic", "Автоматически")
+                      : i == 1 ? "PlayStation"
+                      : i == 2 ? "Xbox"
+                               : T("Keyboard and mouse", "Клавиатура и мышь");
+           },
+           [](int) { return true; },
+           T("The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic "
+             "follows the controller connected at start (Xbox icons for an Xbox or other controller, "
+             "PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.",
+             "Кнопки, которые игра показывает на экране. «Клавиатура и мышь» показывает назначенные ниже "
+             "клавиши. «Автоматически» — по контроллеру при запуске (Xbox для Xbox и прочих, PlayStation для "
+             "PlayStation, ваши клавиши без контроллера). Применяется после перезапуска."),
+           true, [](int i) {
+               BbSettings::SetLine("button_icons", std::string(icon_values[i]));
+               SaveControls();
+           });
+
+    const bool camera = BbSettings::Line("mouse_camera").value_or("1") != "0";
+    if (Row("mouse_camera", T("Mouse camera", "Камера мышью"), OnOff(camera),
+            T("The mouse turns the camera while the game window has focus; its buttons and wheel can be bound "
+              "below. Insert or Alt+Tab lets go of the mouse.",
+              "Мышь поворачивает камеру, пока окно игры в фокусе; её кнопки и колесо можно назначить ниже. "
+              "Insert или Alt+Tab освобождают мышь."),
+            true) != 0) {
+        BbSettings::SetLine("mouse_camera", std::string(camera ? "0" : "1"));
+        dirty = true;
+    }
+    {
+        const float sensitivity = MouseSensitivity();
+        char text[16];
+        std::snprintf(text, sizeof(text), "%.2f", sensitivity);
+        float drag = -1.0f;
+        const int step = Row("mouse_sensitivity", T("Mouse sensitivity", "Чувствительность мыши"), text,
+                             T("How far the camera turns for a mouse movement (1.00: as in most PC games).",
+                               "Насколько поворачивается камера при движении мыши (1.00 — как в большинстве игр на ПК)."),
+                             camera, (sensitivity - 0.1f) / (5.0f - 0.1f), &drag);
+        float next = sensitivity;
+        if (step != 0) {
+            next = std::clamp(std::round((sensitivity + step * 0.1f) * 10.0f) / 10.0f, 0.1f, 5.0f);
+        } else if (drag >= 0.0f) {
+            next = std::round((0.1f + drag * (5.0f - 0.1f)) * 100.0f) / 100.0f;
+        }
+        if (next != sensitivity) {
+            std::snprintf(text, sizeof(text), "%.2f", next);
+            BbSettings::SetLine("mouse_sensitivity", std::string(text));
+            dirty = true;
+        }
+    }
+    const bool invert = BbSettings::Line("mouse_invert_y").value_or("0") == "1";
+    if (Row("mouse_invert_y", T("Invert mouse Y", "Инверсия мыши по вертикали"), OnOff(invert), nullptr, camera) != 0) {
+        BbSettings::SetLine("mouse_invert_y", std::string(invert ? "0" : "1"));
+        dirty = true;
+    }
+
+    // A press that came for the input waiting for one, or the wait running out.
+    if (capture.input >= 0 && capture.done) {
+        const char* name = runtime_pad_input_name(capture.input);
+        if (name) {
+            BbSettings::SetLine(capture.kind + "." + name, capture.name);
+            SaveControls();
+        }
+        capture = {};
+    } else if (capture.input >= 0 && std::chrono::steady_clock::now() - capture.since > std::chrono::seconds(10)) {
+        capture = {};
+    }
+
+    ImGui::Spacing();
+    Note(T("Keyboard and mouse  |  gamepad", "Клавиатура и мышь  |  геймпад"), Dim());
+    const char* hint = T("Enter / Cross: assign. The next key, mouse button or wheel step replaces this input's "
+                         "keyboard binding, a gamepad button its gamepad one; hold Shift, Ctrl or Alt for a "
+                         "combination. Delete: no key. Esc or 10 s: cancel.",
+                         "Enter / Крест: назначить. Следующая клавиша, кнопка мыши или шаг колеса заменяет "
+                         "клавиатурное назначение, кнопка геймпада — геймпадное; Shift, Ctrl или Alt — для "
+                         "сочетания. Delete — без клавиши. Esc или 10 с — отмена.");
+    const char* waiting_pad = T("Press a key, mouse button or gamepad button...",
+                                "Нажмите клавишу, кнопку мыши или геймпада...");
+    const char* waiting_key = T("Press a key or mouse button...", "Нажмите клавишу или кнопку мыши...");
+    for (int i = 0; i < runtime_pad_input_count(); ++i) {
+        char keys[160], pads[160];
+        runtime_pad_binding_text(i, 0, keys, sizeof(keys));
+        std::string value = keys[0] ? keys : T("(none)", "(нет)");
+        if (runtime_pad_input_takes_pad(i)) {
+            runtime_pad_binding_text(i, 1, pads, sizeof(pads));
+            value += "  |  " + (pads[0] ? PadText(pads) : std::string("-"));
+        }
+        if (value.size() > 46) {
+            value = value.substr(0, 43) + "...";
+        }
+        const bool waiting = capture.input == i;
+        char id[32];
+        std::snprintf(id, sizeof(id), "bind_%d", i);
+        if (Row(id, InputLabel(i), waiting ? (capture.pad_ok ? waiting_pad : waiting_key) : value.c_str(), hint,
+                true) != 0 &&
+            capture.input < 0) {
+            capture = {};
+            capture.input = i;
+            capture.pad_ok = runtime_pad_input_takes_pad(i) != 0;
+            capture.since = std::chrono::steady_clock::now();
+        }
+    }
+    ImGui::Spacing();
+    if (Row("controls_reset", T("Reset the controls", "Сбросить управление"), nullptr,
+            T("Every key and gamepad button back to the defaults (the Dark Souls III keyboard layout).",
+              "Все клавиши и кнопки геймпада по умолчанию (раскладка Dark Souls III)."),
+            true) != 0) {
+        for (int i = 0; i < runtime_pad_input_count(); ++i) {
+            if (const char* name = runtime_pad_input_name(i)) {
+                BbSettings::SetLine(std::string("key.") + name, std::nullopt);
+                BbSettings::SetLine(std::string("pad.") + name, std::nullopt);
+            }
+        }
+        SaveControls();
+    }
+}
+
 void SaveTab() {
     static int category = 0, item_index = 0, quantity = 1;
     const auto character = BbSaveEditor::Read();
@@ -892,10 +1115,10 @@ void Menu() {
     const ImVec2 display = io.DisplaySize;
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 165));
 
-    static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Advanced", "Save"};
-    static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Дополнительно",
-                                   "Сохранение"};
-    constexpr int tabs = 5;
+    static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Controls", "Advanced", "Save"};
+    static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Управление",
+                                   "Дополнительно", "Сохранение"};
+    constexpr int tabs = 6;
     if (focus_request) {
         focus_request = false;
         state.focus_first = true;
@@ -1029,7 +1252,8 @@ void Menu() {
     case 0: DisplayTab(); break;
     case 1: UpscalerTab(); break;
     case 2: EffectsTab(); break;
-    case 3: AdvancedTab(); break;
+    case 3: ControlsTab(); break;
+    case 4: AdvancedTab(); break;
     default: SaveTab(); break;
     }
     if (RestartNeeded()) {
@@ -1729,10 +1953,102 @@ void UpdateTextInput(SDL_Window* window) {
     }
 }
 
+// The Controls tab waits for a press (capture.input): the next key, mouse button, wheel step or
+// gamepad button is its binding, in the names runtime_pad.c reads. True: the event was taken.
+bool CaptureEvent(const SDL_Event& event) {
+    if (capture.input < 0 || capture.done || !menu_open) {
+        return false;
+    }
+    const auto modifiers = [](SDL_Keymod mod) {
+        std::string text;
+        if (mod & SDL_KMOD_SHIFT) text += "Shift+";
+        if (mod & SDL_KMOD_CTRL) text += "Ctrl+";
+        if (mod & SDL_KMOD_ALT) text += "Alt+";
+        return text;
+    };
+    const auto bind = [](const char* kind, std::string name) {
+        capture.kind = kind;
+        capture.name = std::move(name);
+        capture.done = true;
+        return true;
+    };
+    switch (event.type) {
+    case SDL_EVENT_KEY_DOWN: {
+        if (event.key.repeat) {
+            return true;
+        }
+        const SDL_Scancode code = event.key.scancode;
+        if (event.key.key == SDLK_INSERT) {
+            capture = {};
+            return false; // the menu's own key closes it
+        }
+        if (code == SDL_SCANCODE_ESCAPE) {
+            capture = {};
+            return true;
+        }
+        if (code == SDL_SCANCODE_DELETE) {
+            return bind("key", "");
+        }
+        const bool is_modifier = code == SDL_SCANCODE_LSHIFT || code == SDL_SCANCODE_RSHIFT ||
+                                 code == SDL_SCANCODE_LCTRL || code == SDL_SCANCODE_RCTRL ||
+                                 code == SDL_SCANCODE_LALT || code == SDL_SCANCODE_RALT;
+        if (is_modifier) { // alone, it is bound when it comes up; with another key, a combination
+            capture.modifier = code;
+            return true;
+        }
+        return bind("key", modifiers(event.key.mod) + SDL_GetScancodeName(code));
+    }
+    case SDL_EVENT_KEY_UP:
+        if (capture.modifier != SDL_SCANCODE_UNKNOWN && event.key.scancode == capture.modifier) {
+            return bind("key", SDL_GetScancodeName(capture.modifier));
+        }
+        return true;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        static const char* const names[] = {"", "Mouse Left", "Mouse Middle", "Mouse Right", "Mouse X1", "Mouse X2"};
+        if (event.button.button < 1 || event.button.button > 5) {
+            return true;
+        }
+        return bind("key", modifiers(SDL_GetModState()) + names[event.button.button]);
+    }
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        return true;
+    case SDL_EVENT_MOUSE_WHEEL: {
+        const float y = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
+        if (y == 0.0f) {
+            return true;
+        }
+        return bind("key", modifiers(SDL_GetModState()) + (y > 0.0f ? "Wheel Up" : "Wheel Down"));
+    }
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
+        const char* name = SDL_GetGamepadStringForButton(SDL_GamepadButton(event.gbutton.button));
+        if (!capture.pad_ok || !name) {
+            return true; // the movement and camera keys are keyboard only
+        }
+        return bind("pad", name);
+    }
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        return true;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+        if ((event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || event.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
+            event.gaxis.value > 16000) {
+            if (!capture.pad_ok) {
+                return true;
+            }
+            return bind("pad", event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? "lefttrigger" : "righttrigger");
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
 bool HandleEvent(const SDL_Event& event) {
     std::scoped_lock lock{imgui_mutex};
     if (!initialized) {
         return false;
+    }
+    if (CaptureEvent(event)) {
+        return true;
     }
     ImGuiIO& io = ImGui::GetIO();
     const bool is_open = menu_open || quit_open;

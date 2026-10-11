@@ -146,6 +146,7 @@ class Port(Emulator):
             "BB_SHADNET_PASSWORD": PASSWORD,
             "BB_USER_NAME": ACCOUNTS[role],
             "BB_SHOT_TRIGGER": str(self.shot_request(role)),
+            "BB_ICONS": "0",  # the game's own button icons (run.py would draw them for a start without the launcher)
         }
 
     def missing(self) -> str | None:
