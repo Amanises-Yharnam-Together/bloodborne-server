@@ -545,6 +545,15 @@ bool CarriesToGuestWorld(s32 flag);
 // workshop's doors open, set by Central Yharnam's 12410900 for a live player only). A phantom in
 // the host's world never set them, so its own Dream stayed shut (Kaniel 2026-10-11).
 std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map);
+// The messengers' weapon lines: Dream event 12101000, started per slot 0-9, sets 12101000 + slot
+// once the player has that slot's badge. A broken patch of that event (2026-10-12) set them all,
+// so once per save slot, out of the Dream, they are cleared and the next Dream visit sets them
+// again from the player's own badges.
+std::span<const s32> ShopLineFlags();
+// A game thread that has not run the party tick for GameStallMs is stuck (a load ticks on).
+constexpr s64 GameStallMs = 5'000;
+bool GameThreadStalled(s64 now_ms, s64 last_tick_ms);
+bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 map);
 // Whether a load of the guest's world gets the kept world changes before its map items and
 // events: at home, and on a party trip (its own world loads while the session stays up).
 bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip);
@@ -1157,6 +1166,14 @@ bool LevelSyncsGuest(bool in_party_session, bool above_host_band);
 // back. The mark is set again while the record still holds echoes.
 bool RestoresBloodstainMark(bool party_guest, bool mark_before, bool mark_now, s32 echoes,
                             u32 block);
+// A load shows a player's own bloodstain only in its own world (0x017C243F tests GlobalState
+// +0x1592), so a guest joined in the host's world never saw its stain there (Kaniel 2026-10-11).
+// Its game shows it (0x01868A50, as that load does) once loaded, while it has a stain on the map
+// it stands on (`record_block`, the record's +0x3C) that is not shown (`shown`: the stain's
+// marker exists), up to GuestBloodstainTries times a visit.
+constexpr int GuestBloodstainTries = 3;
+bool ShowsGuestBloodstain(bool party_guest, bool in_session, bool loading, bool has_stain,
+                          s32 echoes, u32 record_block, u32 map, bool shown, int tries);
 // Friendly NPCs on a summoned guest's side: character creation (0x018E4FB6, 0x018D8934) turns an
 // NPC whose NpcParam has isChangeWanderGhost into a wandering ghost (type 4, the ghost model at
 // +0x10C), drawn see-through. A party guest sees them as the host does.
@@ -1196,6 +1213,15 @@ std::array<u8, 8> RetargetRipLoad(std::span<const u8, 8> original, u64 address, 
 // row entries (id, padding, data offset) at +0x40.
 bool IsParamOfType(std::span<const u8> param, std::string_view type);
 std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
+// An enemy's one-time drop: NpcParam +0x2C is its item lot, ItemLotParam +0x80 the flag a lot
+// that drops once sets (0: a random drop). A member's kill gives the others that lot while their
+// flag is off (Kaniel 2026-10-12: only the host got a Wandering Nightmare's shards).
+constexpr u64 NpcItemLotOffset = 0x2C;
+constexpr u64 ItemLotFlagOffset = 0x80;
+bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on);
+// A member's kill on this player's copy (hidden, or the game's kill near): only while the copy is
+// alive (`hp`, its HP now: 0 in its own death animation, before the death flags are set).
+bool AppliesMemberKill(bool member_killed, s32 hp);
 
 // Harder enemies (SHADPS4_BLOODBORNE_HARDER_ENEMIES=<hp>,<damage>,<poise>, e.g. "3,1.5,3"):
 // every NpcParam row's HP and poise and every AtkParam_Npc row's damage are multiplied once,

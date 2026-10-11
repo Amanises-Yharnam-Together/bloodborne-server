@@ -668,6 +668,21 @@ bool CarriesToGuestWorld(s32 flag) {
            !IsMapPickupFlag(flag);
 }
 
+bool GameThreadStalled(s64 now_ms, s64 last_tick_ms) {
+    return last_tick_ms > 0 && now_ms - last_tick_ms >= GameStallMs;
+}
+
+std::span<const s32> ShopLineFlags() {
+    static constexpr std::array<s32, 10> flags{12101000, 12101001, 12101002, 12101003, 12101004,
+                                               12101005, 12101006, 12101007, 12101008, 12101009};
+    return flags;
+}
+
+bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 map) {
+    constexpr u32 HuntersDream = 0x15000000;
+    return party_configured && slot >= 0 && !done_for_slot && map != 0 && map != HuntersDream;
+}
+
 std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map) {
     constexpr u32 HuntersDream = 0x15000000;
     if (!guest || !in_session || map == 0 || map == HuntersDream) {
@@ -1629,6 +1644,14 @@ std::vector<std::pair<s32, bool>> VisitKills::Forget() {
     return changes;
 }
 
+bool AppliesMemberKill(bool member_killed, s32 hp) {
+    return member_killed && hp > 0;
+}
+
+bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on) {
+    return in_session && member_kill && lot_flag > 0 && !flag_on;
+}
+
 bool SharesWithParty(bool party_configured, bool player_loaded) {
     return party_configured && player_loaded;
 }
@@ -1816,6 +1839,13 @@ bool SettingIsOn(const char* setting) {
 
 bool ShouldPlayGuestAsHost(bool switched_on, bool in_party_session, s32 character_type) {
     return switched_on && in_party_session && character_type == WhiteGhostCharacterType;
+}
+
+bool ShowsGuestBloodstain(bool party_guest, bool in_session, bool loading, bool has_stain,
+                          s32 echoes, u32 record_block, u32 map, bool shown, int tries) {
+    const bool same_map = map != 0 && (record_block >> 16) == (map >> 16);
+    return party_guest && in_session && !loading && has_stain && echoes > 0 && same_map && !shown &&
+           tries < GuestBloodstainTries;
 }
 
 bool RestoresBloodstainMark(bool party_guest, bool mark_before, bool mark_now, s32 echoes,

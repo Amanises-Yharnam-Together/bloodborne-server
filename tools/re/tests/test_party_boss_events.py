@@ -55,18 +55,26 @@ def boss_intro_event() -> list[tuple[int, int, bytes]]:
     ]
 
 
-def build_emevd(events: dict[int, list[tuple[int, int, bytes]]]) -> bytes:
+def build_emevd(events: dict[int, list[tuple[int, int, bytes]]],
+                parameters: dict[int, list[tuple[int, int, int, int]]] | None = None) -> bytes:
     """An emevd laid out like the game's: events, instructions, arguments, params, linked
-    files, strings."""
+    files, strings. `parameters`: per event, (instruction index, target byte, source byte,
+    length) entries."""
+    parameters = parameters or {}
     records, args = [], bytearray()
     entries = []
+    param_table = bytearray()
     for event, instructions in events.items():
-        entries.append((event, len(instructions), len(records) * 32))
+        own = parameters.get(event, [])
+        entries.append((event, len(instructions), len(records) * 32, len(own),
+                        len(param_table) if own else -1))
+        for entry in own:
+            param_table += struct.pack('<qqqii', *entry, 0)
         for bank, ident, payload in instructions:
             records.append((bank, ident, len(payload), len(args)))
             args += payload
             args += bytes(-len(args) % 4)
-    params = b'P' * 24
+    params = bytes(param_table) or b'P' * 24
     linked = struct.pack('<q', 0)
     strings = 'm24_01'.encode('utf-16-le') + bytes(4)
     event_offset = 144
@@ -78,10 +86,11 @@ def build_emevd(events: dict[int, list[tuple[int, int, bytes]]]) -> bytes:
     total = strings_offset + len(strings)
     out = bytearray(b'EVD\0' + struct.pack('<III', 0xFF00, 0xCC, total))
     out += struct.pack('<16q', len(entries), event_offset, len(records), instruction_offset,
-                       0, args_offset, 0, args_offset, 1, params_offset, 1, linked_offset,
-                       len(args), args_offset, len(strings), strings_offset)
-    for event, count, first in entries:
-        out += struct.pack('<qqqqqii', event, count, first, 0, -1, 0, 0)
+                       0, args_offset, 0, args_offset, max(len(param_table) // 32, 1),
+                       params_offset, 1, linked_offset, len(args), args_offset, len(strings),
+                       strings_offset)
+    for event, count, first, param_count, param_offset in entries:
+        out += struct.pack('<qqqqqii', event, count, first, param_count, param_offset, 0, 0)
     for bank, ident, length, offset in records:
         out += struct.pack('<iiqqq', bank, ident, length, offset, -1)
     return bytes(out + args + params + linked + strings)
@@ -235,3 +244,33 @@ class GuestsUseTheDreamShops(unittest.TestCase):
                                                 tool.LOCAL_EVENTS[self.DREAM])
         self.assertEqual(read_events(patched)[12101000][0], (2000, 2, bytes(4)))
         self.assertEqual(count, 1)
+
+
+class LocalEventsKeepTheirParameters(unittest.TestCase):
+    """Kaniel 2026-10-12: after the Dream patch the messengers sold weapons whose badges nobody
+    had. Event 12101000 is started per slot with arguments (2000:0) that its parameter entries
+    copy into instructions by index; the inserted 2000:2 moved every instruction one down, so the
+    item check (3:4, instruction 4) took nothing and the shop lines opened."""
+
+    def test_the_parameters_follow_their_instructions(self):
+        lines = [(1003, 2, struct.pack('<BBBxi', 0, 1, 0, 0)),
+                 (3, 4, struct.pack('<BBxxiB', 0, 3, 0, 1)),
+                 (2004, 26, struct.pack('<ii', 0, 1))]
+        original = build_emevd({12101000: lines},
+                               {12101000: [(0, 4, 0, 4), (1, 4, 4, 4), (2, 0, 8, 4)]})
+        patched, count = tool.make_events_local(original, {12101000})
+        self.assertEqual(count, 1)
+        self.assertEqual(parameters_of(patched, 12101000),
+                         [(1, 4, 0, 4), (2, 4, 4, 4), (3, 0, 8, 4)])
+        self.assertEqual(tool.make_events_local(patched, {12101000}), (patched, 0))
+
+
+def parameters_of(emevd: bytes, wanted: int) -> list[tuple[int, int, int, int]]:
+    fields = struct.unpack_from('<16q', emevd, 16)
+    for index in range(fields[0]):
+        event, _, _, count, offset, _, _ = struct.unpack_from('<qqqqqii', emevd,
+                                                              fields[1] + index * 48)
+        if event == wanted:
+            return [struct.unpack_from('<qqqi', emevd, fields[9] + offset + k * 32)[:4]
+                    for k in range(count)]
+    return []

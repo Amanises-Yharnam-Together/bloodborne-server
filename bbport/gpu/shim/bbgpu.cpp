@@ -4,6 +4,7 @@
 #include "bbport_gnm_hooks.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
+#include "../bbcoop.h"
 #include "bbport_settings.h"
 #include "game_profile.h"
 #include "bbport_copy.h"
@@ -295,6 +296,7 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             SDL_WaitEventTimeout(nullptr, 2); // wakes at once for input (the mouse camera)
         }
         LOG_INFO(Frontend, "Window closed by user");
+        bbcoop_window_closing();
         // The process ends here without destructors: caches that save at shutdown run now.
         Storage::RunShutdownHooks();
         std::fflush(stdout);

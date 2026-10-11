@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_write_watch.h"
@@ -1809,19 +1810,45 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
 
 // Diagnostics for guest bloodstains in the host's world (Phase 2): logs the local bloodstain
 // record, the spawned stain object and the world flags that gate them whenever they change.
+// The local player's own bloodstain: [[SprjEventMan +0x80] +8], the object the game's show/hide
+// (0x01868A50) takes when a load shows it (0x017C23EB-0x017C25DC) and on a join (0x0193A75A).
+// (Not FrpgNetMan +0xC68's: passed that, the show crashed krolebord's game, Kaniel 2026-10-11.)
+u64 OwnBloodstain() {
+    const u64 events = ReadValue<u64>(image_base + EventManPointerOffset, 0);
+    const u64 list = events >= 0x10000 ? ReadValue<u64>(events, 0x80) : 0;
+    return list >= 0x10000 ? ReadValue<u64>(list, 8) : 0;
+}
+
+// A stain object the show can take: readable, and its marker (+0x88) and effect (+0x98) either
+// absent or readable (the show frees them first).
+bool LooksLikeBloodstain(u64 stain) {
+    if (stain < 0x10000 || !HasMemoryAccess(stain, 0xC8, MemoryProt::CpuRead)) {
+        return false;
+    }
+    for (const u64 offset : {u64{0x88}, u64{0x98}}) {
+        const u64 part = ReadValue<u64>(stain, offset);
+        if (part != 0 && (part < 0x10000 || !HasMemoryAccess(part, 0x98, MemoryProt::CpuRead))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The stain's marker (+0x88) and effect (+0x98) are what 0x01868A50 makes when it shows the
+// stain (and frees when it hides it): a stain recorded but never shown has neither (Kaniel
+// 2026-10-11: no bloodstains in sight after the party wipe at the Tomb of Oedon).
 void LogBloodstainStateChanges() {
     static std::string last;
     const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
     const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
-    const u64 net = GetSummonManagerRoot();
-    const u64 stains = net >= 0x10000 ? ReadValue<u64>(net, 0xC68) : 0;
-    const u64 stain = stains >= 0x10000 ? ReadValue<u64>(stains, 0xC0) : 0;
+    const u64 stain = OwnBloodstain();
     const u64 global = GetGlobalState();
     const u64 player = GetLocalPlayer();
     const auto state =
         fmt::format("has_mark={} record_valid={} record_30={} record_38={} record_block={:#x} "
                     "record_pos=({}, {}, {}) stain={:#x} "
-                    "stain_hidden={} flag1592={} flag1770={} chr_type={}",
+                    "stain_hidden={} shown_marker={:#x} shown_effect={:#x} flag1592={} "
+                    "flag1770={} chr_type={}",
                     data >= 0x10000 ? ReadValue<u8>(data, 0x28) : 0xFF,
                     record >= 0x10000 ? ReadValue<u8>(record, 0x44) : 0xFF,
                     record >= 0x10000 ? ReadValue<s32>(record, 0x30) : 0,
@@ -1831,6 +1858,8 @@ void LogBloodstainStateChanges() {
                     record >= 0x10000 ? ReadValue<float>(record, 0x1C) : 0.0f,
                     record >= 0x10000 ? ReadValue<float>(record, 0x20) : 0.0f, stain,
                     stain >= 0x10000 ? ReadValue<u8>(stain, 0xC0) : 0xFF,
+                    stain >= 0x10000 ? ReadValue<u64>(stain, 0x88) : 0,
+                    stain >= 0x10000 ? ReadValue<u64>(stain, 0x98) : 0,
                     global >= 0x10000 ? ReadValue<u8>(global, 0x1592) : 0xFF,
                     global >= 0x10000 ? ReadValue<u8>(global, 0x1770) : 0xFF,
                     player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1);
@@ -1838,6 +1867,47 @@ void LogBloodstainStateChanges() {
         last = state;
         LOG_INFO(Debug, "Bloodborne bloodstain state map={:#x} {}", GetCurrentPackedMap(), state);
     }
+}
+
+constexpr u64 ShowBloodstainOffset = 0x01868A50;
+bool InPartySession();
+
+// See ShowsGuestBloodstain: a guest's own stain in the host's world.
+void ShowGuestBloodstain() {
+    static int tries = 0;
+    static u64 tried_player = 0;
+    static u32 tried_map = 0;
+    const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
+    const u64 global = GetGlobalState();
+    const u64 player = GetLocalPlayer();
+    const u32 map = GetCurrentPackedMap();
+    if (data < 0x10000 || record < 0x10000 || player < 0x10000) {
+        return;
+    }
+    if (player != tried_player || map != tried_map) {
+        tries = 0; // a load: a new visit
+        tried_player = player;
+        tried_map = map;
+    }
+    const u64 stain = OwnBloodstain();
+    const bool party_guest =
+        party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect;
+    const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
+    if (!LooksLikeBloodstain(stain) ||
+        !ShowsGuestBloodstain(party_guest, InPartySession(), loading,
+                              ReadValue<u8>(data, 0x28) != 0, ReadValue<s32>(record, 0x38),
+                              ReadValue<u32>(record, 0x3C), IsUsablePackedMap(map) ? map : 0,
+                              ReadValue<u64>(stain, 0x88) != 0, tries)) {
+        return;
+    }
+    ++tries;
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, bool, bool)>(image_base + ShowBloodstainOffset)(
+        stain, true, false);
+    LOG_INFO(Debug,
+             "Bloodborne party: showed the guest's own bloodstain ({} echoes) in the host's "
+             "world on map {:#x}: marker {:#x}",
+             ReadValue<s32>(record, 0x38), map, ReadValue<u64>(stain, 0x88));
 }
 
 // See RestoresBloodstainMark: a party guest keeps its lost echoes through a join.
@@ -3410,12 +3480,14 @@ s32 SessionPlayers();
 void WatchSummonJoin();
 
 void TickPartyController() {
+    NoteGameThreadTick();
     TickAutoplay();
     TickPartyTrip();
     TickPlayersOnThisMap();
     LogJoinTaskChanges();
     WatchSummonJoin();
     KeepGuestBloodstainMark();
+    ShowGuestBloodstain();
     LogBloodstainStateChanges();
     LogLocalEffectChanges();
     if (party_controller) {
@@ -6368,6 +6440,52 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                                const std::unordered_set<u32>& kill_hidden);
 
+// See GetsMemberKillDrop: the character's NpcParam row is [vtable +0x168 (character) +8], as
+// the respawn walk reads it (0x0190E433). The game's thread only.
+void GiveMemberKillDrop(u64 character, u32 handle) {
+    const u64 vtable = ReadValue<u64>(character, 0);
+    const u64 npc_of = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x168) : 0;
+    if (npc_of < 0x10000) {
+        return;
+    }
+    const u64 holder = reinterpret_cast<u64 PS4_SYSV_ABI (*)(u64)>(npc_of)(character);
+    const u64 npc = holder >= 0x10000 ? ReadValue<u64>(holder, 8) : 0;
+    if (npc < 0x10000 || !HasMemoryAccess(npc, NpcItemLotOffset + 4, MemoryProt::CpuRead)) {
+        return;
+    }
+    const s32 lot = ReadValue<s32>(npc, NpcItemLotOffset);
+    const u64 lots = lot > 0 ? FindLoadedParam("ITEMLOT_PARAM_ST") : 0;
+    if (lots == 0) {
+        return;
+    }
+    const u64 table_size = 0x40 + u64{ReadValue<u16>(lots, 0x0A)} * 24;
+    if (!HasMemoryAccess(lots, table_size, MemoryProt::CpuRead)) {
+        return;
+    }
+    const auto row = FindParamRow({reinterpret_cast<const u8*>(lots), table_size}, lot);
+    if (!row || !HasMemoryAccess(lots + *row, ItemLotFlagOffset + 4, MemoryProt::CpuRead)) {
+        return;
+    }
+    const s32 flag = ReadValue<s32>(lots + *row, ItemLotFlagOffset);
+    if (!GetsMemberKillDrop(InPartySession(), true, flag, flag > 0 && EventFlagOn(flag))) {
+        return;
+    }
+    const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
+    if (item_man < 0x10000) {
+        return;
+    }
+    giving_deferred_item_lot = true;
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, u32)>(image_base +
+                                                           AwardItemLotOffset)(item_man, lot, 0);
+    giving_deferred_item_lot = false;
+    if (!EventFlagOn(flag)) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, bool)>(
+            image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
+    }
+    LOG_INFO(Debug, "Bloodborne party: a member killed {:#x}; gave its drop, item lot {} (flag {})",
+             handle, lot, flag);
+}
+
 // A death respawn reset the map: this member's kills are taken back (VisitKills::Forget).
 std::atomic<bool> party_kills_reset{};
 
@@ -6478,6 +6596,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
         kills_to_post.insert(kills_to_post.end(), changes.begin(), changes.end());
         others = others_kills;
     }
+    // The other members' kills now (not this member's own, nor what lay dead in a save).
+    const std::unordered_set<u32> member_kills = others;
     // Its own kills too: a guest pulled into the host's world sees the host's copy alive.
     others.insert(visit_kills.Killed().begin(), visit_kills.Killed().end());
     // And its earlier visit's kills here that stood while another member stayed.
@@ -6522,7 +6642,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
         const u32 handle = characters[index].handle;
         const s32 hp = characters[index].hp;
         const auto it = hidden.find(character);
-        if (it == hidden.end() && hp > 0 && others.contains(handle) &&
+        if (it == hidden.end() && hp > 0 &&
+            AppliesMemberKill(others.contains(handle), CharacterHp(character)) &&
             ReadValue<u8>(character, 0x28) == 0 &&
             HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
             if (can_kill && !died_for_others.contains(handle) &&
@@ -6531,12 +6652,18 @@ void KeepEnemyDeathsInStep(bool sharing) {
                 using Kill = void PS4_SYSV_ABI (*)(u64 character);
                 reinterpret_cast<Kill>(image_base + KillCharacterOffset)(character);
                 died_for_others.insert(handle);
+                if (member_kills.contains(handle)) {
+                    GiveMemberKillDrop(character, handle);
+                }
                 ++newly_died;
                 continue;
             }
             WriteValue(character, 0x28, u8{1});
             hidden.emplace(character, handle);
             ++newly_hidden;
+            if (member_kills.contains(handle)) {
+                GiveMemberKillDrop(character, handle);
+            }
         } else if (it != hidden.end() && !others.contains(handle) &&
                    HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
             // The killer's visit ended: the enemy respawned for it, so it comes back here too.
@@ -6994,6 +7121,39 @@ void ResendOwnDataOnChange(bool in_session);
 void LogMemberDataChanges(bool in_session);
 u64 OwnGameData();
 
+// See RechecksShopLines: once per save slot, the messengers' weapon lines a broken event patch
+// opened are cleared; the next Dream visit opens them again for the player's own badges.
+void RecheckShopLinesOnce(u32 map) {
+    const int slot = character_slot.load();
+    const auto marker = Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+                        fmt::format("bloodborne_party_shoplines_slot{}.txt", slot);
+    static int checked_slot = -2;
+    static bool done = false;
+    if (slot != checked_slot) {
+        checked_slot = slot;
+        std::error_code error;
+        done = slot < 0 || std::filesystem::exists(marker, error);
+    }
+    if (!RechecksShopLines(party_controller.has_value(), slot, done, map) ||
+        GetLocalPlayer() < 0x10000) {
+        return;
+    }
+    done = true;
+    int cleared = 0;
+    for (const s32 flag : ShopLineFlags()) {
+        if (EventFlagOn(flag)) {
+            reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
+                image_base + PartyGhostSetEventFlagOffset)(0, flag, false);
+            ++cleared;
+        }
+    }
+    std::ofstream{marker} << "rechecked" << std::endl;
+    LOG_INFO(Debug,
+             "Bloodborne party: cleared {} messenger weapon lines in save slot {}; the next Dream "
+             "visit opens them for this character's badges",
+             cleared, slot);
+}
+
 void TickPlayersOnThisMap() {
     LogItemModuleChecks();
     LogItemButtonAndMapItems();
@@ -7034,6 +7194,7 @@ void TickPlayersOnThisMap() {
             LOG_INFO(Debug, "Bloodborne party: guest out in the world; set Dream flag {}", flag);
         }
     }
+    RecheckShopLinesOnce(IsUsablePackedMap(map) ? map : 0);
     static RecreateAfterJoin recreate_after_join;
     if (recreate_after_join.Tick(IsPartyGuestRole(), in_session,
                                  in_session ? OtherSessionMembers().size() : 0,

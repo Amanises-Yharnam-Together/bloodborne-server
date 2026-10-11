@@ -878,6 +878,92 @@ TEST(BloodborneGuestMenus, PartyGuestsAreNotClientsToTheMenus) {
     EXPECT_FALSE(MenuSeesAClient(false, false));
 }
 
+// Kaniel 2026-10-11: the party died at Father Gascoigne, everyone quit and came back, and only
+// the host found a bloodstain. A load shows a player's own stain only in its own world (0x017C243F
+// tests GlobalState +0x1592), and a guest joined back in the host's world, so its stain (the
+// record and its echoes, kept through the join) was never shown there. Its game shows it there.
+TEST(BloodborneGuestBloodstain, AGuestSeesItsStainInTheHostsWorld) {
+    constexpr u32 Ward = 0x18000000;
+    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, 4087, Ward, Ward, false, 0));
+    EXPECT_FALSE(ShowsGuestBloodstain(false, true, false, true, 4087, Ward, Ward, false, 0))
+        << "the host's own world shows its stain itself";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, false, false, true, 4087, Ward, Ward, false, 0))
+        << "out of a session the guest is in its own world";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, true, true, 4087, Ward, Ward, false, 0))
+        << "loading";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, false, 4087, Ward, Ward, false, 0))
+        << "no stain";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 4087, 0x18010000, Ward, false, 0))
+        << "the stain lies on another map";
+    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, 4087, 0x18000001, Ward, false, 0))
+        << "another block of the same map";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 4087, Ward, Ward, true, 0))
+        << "shown already";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 4087, Ward, Ward, false,
+                                      GuestBloodstainTries))
+        << "the game would not show it: no more tries this visit";
+}
+
+// Kaniel 2026-10-12: the party killed a Wandering Nightmare (NpcParam 118020, item lot 11800200,
+// drop flag 52300990) and only the host got its Blood Stone Shards. A guest's copy died by the
+// host's kill (hidden or the game's kill, no drop). A member's kill of an enemy whose item lot
+// drops once (a lot flag) gives the others that lot while their flag is off.
+TEST(BloodborneSharedKills, AMembersKillGivesTheOneTimeDrop) {
+    EXPECT_TRUE(GetsMemberKillDrop(true, true, 52300990, false));
+    EXPECT_FALSE(GetsMemberKillDrop(true, true, 52300990, true)) << "got it already";
+    EXPECT_FALSE(GetsMemberKillDrop(true, true, 0, false)) << "a random drop is each player's own";
+    EXPECT_FALSE(GetsMemberKillDrop(true, false, 52300990, false))
+        << "dead in the host's save, not killed by a member now";
+    EXPECT_FALSE(GetsMemberKillDrop(false, true, 52300990, false)) << "no session";
+}
+
+// Kaniel 2026-10-12: a broken Dream event patch opened the messengers' weapon lines (flags
+// 12101000-12101009) whatever badges the player had, and those flags stay in the save. Once per
+// save slot, out of the Dream, they are cleared; the next Dream visit opens the lines again for
+// the badges the player has.
+TEST(BloodborneDreamShop, ShopLinesAreRecheckedOncePerSlot) {
+    EXPECT_EQ(ShopLineFlags().size(), 10u);
+    EXPECT_EQ(ShopLineFlags().front(), 12101000);
+    EXPECT_EQ(ShopLineFlags().back(), 12101009);
+    constexpr u32 Ward = 0x18000000, Dream = 0x15000000;
+    EXPECT_TRUE(RechecksShopLines(true, 2, false, Ward));
+    EXPECT_FALSE(RechecksShopLines(true, 2, true, Ward)) << "done for this slot";
+    EXPECT_FALSE(RechecksShopLines(true, 2, false, Dream)) << "in the Dream the lines are live";
+    EXPECT_FALSE(RechecksShopLines(true, -1, false, Ward)) << "no character yet";
+    EXPECT_FALSE(RechecksShopLines(false, 2, false, Ward)) << "no party";
+    EXPECT_FALSE(RechecksShopLines(true, 2, false, 0)) << "loading";
+}
+
+// Kaniel 2026-10-12: the game stopped (no game-thread log for 30 s, the others' games dropped the
+// session) and he closed the window; nothing said where it hung. Closing a game whose thread has
+// not ticked for GameStallMs writes a freeze report.
+TEST(BloodborneFreezeReport, ClosingAStalledGameReportsTheFreeze) {
+    EXPECT_TRUE(GameThreadStalled(100'000, 100'000 - GameStallMs));
+    EXPECT_FALSE(GameThreadStalled(100'000, 100'000 - GameStallMs + 1)) << "ticking";
+    EXPECT_FALSE(GameThreadStalled(100'000, 0)) << "never ticked: the title screen, a load";
+}
+
+// Kaniel 2026-10-12: a guest went back for its bloodstain and it gave nothing. Its game had
+// GameDataMan's stain mark on with no echoes in the record (-1, picked up already), and the
+// guest's show drew that empty stain. The game shows a stain only with echoes (UpDateBloodMark
+// passes echoes >= 0).
+TEST(BloodborneGuestBloodstain, AStainWithoutEchoesIsNotShown) {
+    constexpr u32 Woods = 0x17000000;
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, -1, Woods, Woods, false, 0));
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 0, Woods, Woods, false, 0));
+    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, 5266, Woods, Woods, false, 0));
+}
+
+// Kaniel 2026-10-12: an Old Yharnam hunter died twice in a row, then its body and its drop were
+// gone. A member's kill reached the killer's own copy while that copy was in its death animation
+// (HP 0, the death flags not set yet), so it was killed again and hidden. A member's kill applies
+// only to a copy that is alive.
+TEST(BloodborneSharedKills, AMembersKillSkipsACopyAlreadyDying) {
+    EXPECT_TRUE(AppliesMemberKill(true, 430));
+    EXPECT_FALSE(AppliesMemberKill(true, 0)) << "dying here already";
+    EXPECT_FALSE(AppliesMemberKill(false, 430)) << "nobody killed it";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));

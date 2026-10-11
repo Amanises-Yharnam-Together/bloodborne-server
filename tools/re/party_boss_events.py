@@ -160,6 +160,7 @@ LOCAL_EVENTS = {
 }
 NETWORK_SYNC = (2000, 2)
 INSTRUCTION_SIZE = 32
+PARAMETER_SIZE = 32  # instruction index, target byte, source byte, length (q q q i i)
 # Header offset fields after the instruction table (DS3 layout): unknown, layers, params, linked
 # files, arguments, strings.
 SHIFTED_OFFSET_FIELDS = (5, 7, 9, 11, 13, 15)
@@ -201,6 +202,13 @@ def make_events_local(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
         if fields[field] >= instructions_end:
             fields[field] += delta
     struct.pack_into('<16q', out, 16, *fields)
+    # A started event's parameters copy its arguments into instructions by index: those follow
+    # their instructions one down (Kaniel 2026-10-12: 12101000's item check took nothing).
+    for event in events:
+        if event[0] in wanted and event[2] in targets:
+            for k in range(event[3]):
+                at = fields[9] + event[4] + k * PARAMETER_SIZE
+                struct.pack_into('<q', out, at, struct.unpack_from('<q', out, at)[0] + 1)
     struct.pack_into('<I', out, 0x0C, struct.unpack_from('<I', out, 0x0C)[0] + delta)
     return bytes(out), len(targets)
 
