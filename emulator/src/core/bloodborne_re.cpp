@@ -3583,6 +3583,49 @@ void InstallJoinAnywhere(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne join-anywhere patch: a party joins in any area");
 }
 
+void LogGameCallChainAt(const char* what, u64 rsp);
+
+// See DeathFlagSites: logs a big character's death and the game's call chain to it.
+void PS4_SYSV_ABI TraceCharacterDeath(u64 tag, GuestRegisterSnapshot* registers) {
+    const auto& sites = DeathFlagSites();
+    if (tag >= sites.size()) {
+        return;
+    }
+    const DeathFlagSite& site = sites[tag];
+    const u64 character = site.character == DeathRegister::Rbx   ? registers->rbx
+                          : site.character == DeathRegister::Rcx ? registers->rcx
+                                                                 : registers->r15;
+    const u64 modules = ReadValue<u64>(character, 0x3B0);
+    const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+    const s32 max_hp = data >= 0x10000 ? ReadValue<s32>(data, 0xFC) : 0;
+    if (!TracesDeathOf(max_hp)) {
+        return;
+    }
+    LOG_INFO(Debug,
+             "Bloodborne boss death: {:#x} ({}) hp {}/{} flags {:#x} map {:#x} in session {}",
+             ReadValue<u32>(character, 0x08), site.name, ReadValue<s32>(data, 0xF8), max_hp,
+             ReadValue<u64>(character, 0x1E0), GetCurrentPackedMap(), InPartySession());
+    LogGameCallChainAt("boss death", registers->rsp);
+}
+
+void InstallBossDeathTracer(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    const auto& sites = DeathFlagSites();
+    for (u64 index = 0; index < sites.size(); ++index) {
+        const DeathFlagSite& site = sites[index];
+        if (site.offset + site.instruction.size() > image_size ||
+            !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + site.offset),
+                                          site.instruction, index, TraceCharacterDeath)) {
+            LOG_ERROR(Debug, "Bloodborne boss-death tracer unavailable at {:#x}", site.offset);
+            return;
+        }
+    }
+    LOG_INFO(Debug, "Bloodborne boss-death tracer: big characters' deaths are logged with their "
+                    "call chain");
+}
+
 // See QuietSummonBannerPatches: a party's joins show one banner, not two.
 void InstallQuietSummonBanners(u64 base, u64 image_size) {
     const auto& patches = QuietSummonBannerPatches();
@@ -11261,6 +11304,7 @@ void InstallSeamlessCoopPatches() {
     InstallBossClearKeepsSession(base, image_size);
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
+    InstallBossDeathTracer(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
     InstallSeamlessTravel(base, image_size);
     InstallLampsAsCampfires(base, image_size);

@@ -132,3 +132,27 @@ TEST(BloodborneUiPolish, TheChimeBannerCallsBecomeNops) {
         EXPECT_EQ(patch.patched, (std::vector<u8>{0x0F, 0x1F, 0x44, 0x00, 0x00}));
     }
 }
+
+// The boss-death tracer (Kaniel 2026-10-11): every place the game sets a character's dead flag,
+// each with the register that holds the character there.
+TEST(BloodborneDeathTracer, SitesSetTheDeadFlag) {
+    const auto& sites = DeathFlagSites();
+    ASSERT_EQ(sites.size(), 3u);
+    for (const DeathFlagSite& site : sites) {
+        // `or byte ptr [reg + 0x1E3], 1`, with or without a REX prefix.
+        const std::size_t rex = site.instruction.size() == 8 ? 1 : 0;
+        ASSERT_EQ(site.instruction.size(), 7 + rex) << std::hex << site.offset;
+        EXPECT_EQ(site.instruction[rex], 0x80);
+        EXPECT_EQ(site.instruction[rex + 2], 0xE3);
+        EXPECT_EQ(site.instruction[rex + 3], 0x01);
+        EXPECT_EQ(site.instruction.back(), 0x01);
+    }
+}
+
+// Big characters only (bosses and the like): an ordinary kill would flood the log.
+TEST(BloodborneDeathTracer, TracesBigCharactersOnly) {
+    EXPECT_TRUE(TracesDeathOf(2031));
+    EXPECT_TRUE(TracesDeathOf(DeathTraceMinMaxHp));
+    EXPECT_FALSE(TracesDeathOf(DeathTraceMinMaxHp - 1));
+    EXPECT_FALSE(TracesDeathOf(200));
+}
