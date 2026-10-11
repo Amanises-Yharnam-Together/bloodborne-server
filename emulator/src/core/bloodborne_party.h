@@ -1173,7 +1173,7 @@ bool RestoresBloodstainMark(bool party_guest, bool mark_before, bool mark_now, s
 // marker exists), up to GuestBloodstainTries times a visit.
 constexpr int GuestBloodstainTries = 3;
 bool ShowsGuestBloodstain(bool party_guest, bool in_session, bool loading, bool has_stain,
-                          u32 record_block, u32 map, bool shown, int tries);
+                          s32 echoes, u32 record_block, u32 map, bool shown, int tries);
 // Friendly NPCs on a summoned guest's side: character creation (0x018E4FB6, 0x018D8934) turns an
 // NPC whose NpcParam has isChangeWanderGhost into a wandering ghost (type 4, the ghost model at
 // +0x10C), drawn see-through. A party guest sees them as the host does.
@@ -1219,6 +1219,9 @@ std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
 constexpr u64 NpcItemLotOffset = 0x2C;
 constexpr u64 ItemLotFlagOffset = 0x80;
 bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on);
+// A member's kill on this player's copy (hidden, or the game's kill near): only while the copy is
+// alive (`hp`, its HP now: 0 in its own death animation, before the death flags are set).
+bool AppliesMemberKill(bool member_killed, s32 hp);
 
 // Harder enemies (SHADPS4_BLOODBORNE_HARDER_ENEMIES=<hp>,<damage>,<poise>, e.g. "3,1.5,3"):
 // every NpcParam row's HP and poise and every AtkParam_Npc row's damage are multiplied once,

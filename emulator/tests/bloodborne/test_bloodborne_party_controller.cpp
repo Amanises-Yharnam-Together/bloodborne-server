@@ -884,22 +884,23 @@ TEST(BloodborneGuestMenus, PartyGuestsAreNotClientsToTheMenus) {
 // record and its echoes, kept through the join) was never shown there. Its game shows it there.
 TEST(BloodborneGuestBloodstain, AGuestSeesItsStainInTheHostsWorld) {
     constexpr u32 Ward = 0x18000000;
-    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, Ward, Ward, false, 0));
-    EXPECT_FALSE(ShowsGuestBloodstain(false, true, false, true, Ward, Ward, false, 0))
+    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, 4087, Ward, Ward, false, 0));
+    EXPECT_FALSE(ShowsGuestBloodstain(false, true, false, true, 4087, Ward, Ward, false, 0))
         << "the host's own world shows its stain itself";
-    EXPECT_FALSE(ShowsGuestBloodstain(true, false, false, true, Ward, Ward, false, 0))
+    EXPECT_FALSE(ShowsGuestBloodstain(true, false, false, true, 4087, Ward, Ward, false, 0))
         << "out of a session the guest is in its own world";
-    EXPECT_FALSE(ShowsGuestBloodstain(true, true, true, true, Ward, Ward, false, 0)) << "loading";
-    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, false, Ward, Ward, false, 0))
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, true, true, 4087, Ward, Ward, false, 0))
+        << "loading";
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, false, 4087, Ward, Ward, false, 0))
         << "no stain";
-    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 0x18010000, Ward, false, 0))
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 4087, 0x18010000, Ward, false, 0))
         << "the stain lies on another map";
-    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, 0x18000001, Ward, false, 0))
+    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, 4087, 0x18000001, Ward, false, 0))
         << "another block of the same map";
-    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, Ward, Ward, true, 0))
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 4087, Ward, Ward, true, 0))
         << "shown already";
-    EXPECT_FALSE(
-        ShowsGuestBloodstain(true, true, false, true, Ward, Ward, false, GuestBloodstainTries))
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 4087, Ward, Ward, false,
+                                      GuestBloodstainTries))
         << "the game would not show it: no more tries this visit";
 }
 
@@ -940,6 +941,27 @@ TEST(BloodborneFreezeReport, ClosingAStalledGameReportsTheFreeze) {
     EXPECT_TRUE(GameThreadStalled(100'000, 100'000 - GameStallMs));
     EXPECT_FALSE(GameThreadStalled(100'000, 100'000 - GameStallMs + 1)) << "ticking";
     EXPECT_FALSE(GameThreadStalled(100'000, 0)) << "never ticked: the title screen, a load";
+}
+
+// Kaniel 2026-10-12: a guest went back for its bloodstain and it gave nothing. Its game had
+// GameDataMan's stain mark on with no echoes in the record (-1, picked up already), and the
+// guest's show drew that empty stain. The game shows a stain only with echoes (UpDateBloodMark
+// passes echoes >= 0).
+TEST(BloodborneGuestBloodstain, AStainWithoutEchoesIsNotShown) {
+    constexpr u32 Woods = 0x17000000;
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, -1, Woods, Woods, false, 0));
+    EXPECT_FALSE(ShowsGuestBloodstain(true, true, false, true, 0, Woods, Woods, false, 0));
+    EXPECT_TRUE(ShowsGuestBloodstain(true, true, false, true, 5266, Woods, Woods, false, 0));
+}
+
+// Kaniel 2026-10-12: an Old Yharnam hunter died twice in a row, then its body and its drop were
+// gone. A member's kill reached the killer's own copy while that copy was in its death animation
+// (HP 0, the death flags not set yet), so it was killed again and hidden. A member's kill applies
+// only to a copy that is alive.
+TEST(BloodborneSharedKills, AMembersKillSkipsACopyAlreadyDying) {
+    EXPECT_TRUE(AppliesMemberKill(true, 430));
+    EXPECT_FALSE(AppliesMemberKill(true, 0)) << "dying here already";
+    EXPECT_FALSE(AppliesMemberKill(false, 430)) << "nobody killed it";
 }
 
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {

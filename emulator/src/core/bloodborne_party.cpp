@@ -1644,6 +1644,10 @@ std::vector<std::pair<s32, bool>> VisitKills::Forget() {
     return changes;
 }
 
+bool AppliesMemberKill(bool member_killed, s32 hp) {
+    return member_killed && hp > 0;
+}
+
 bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on) {
     return in_session && member_kill && lot_flag > 0 && !flag_on;
 }
@@ -1838,9 +1842,9 @@ bool ShouldPlayGuestAsHost(bool switched_on, bool in_party_session, s32 characte
 }
 
 bool ShowsGuestBloodstain(bool party_guest, bool in_session, bool loading, bool has_stain,
-                          u32 record_block, u32 map, bool shown, int tries) {
+                          s32 echoes, u32 record_block, u32 map, bool shown, int tries) {
     const bool same_map = map != 0 && (record_block >> 16) == (map >> 16);
-    return party_guest && in_session && !loading && has_stain && same_map && !shown &&
+    return party_guest && in_session && !loading && has_stain && echoes > 0 && same_map && !shown &&
            tries < GuestBloodstainTries;
 }
 

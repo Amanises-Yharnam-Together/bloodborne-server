@@ -1896,9 +1896,9 @@ void ShowGuestBloodstain() {
     const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
     if (!LooksLikeBloodstain(stain) ||
         !ShowsGuestBloodstain(party_guest, InPartySession(), loading,
-                              ReadValue<u8>(data, 0x28) != 0, ReadValue<u32>(record, 0x3C),
-                              IsUsablePackedMap(map) ? map : 0, ReadValue<u64>(stain, 0x88) != 0,
-                              tries)) {
+                              ReadValue<u8>(data, 0x28) != 0, ReadValue<s32>(record, 0x38),
+                              ReadValue<u32>(record, 0x3C), IsUsablePackedMap(map) ? map : 0,
+                              ReadValue<u64>(stain, 0x88) != 0, tries)) {
         return;
     }
     ++tries;
@@ -6642,7 +6642,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
         const u32 handle = characters[index].handle;
         const s32 hp = characters[index].hp;
         const auto it = hidden.find(character);
-        if (it == hidden.end() && hp > 0 && others.contains(handle) &&
+        if (it == hidden.end() && hp > 0 &&
+            AppliesMemberKill(others.contains(handle), CharacterHp(character)) &&
             ReadValue<u8>(character, 0x28) == 0 &&
             HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
             if (can_kill && !died_for_others.contains(handle) &&
