@@ -467,6 +467,58 @@ static void hook_install(void) {
 }
 #endif
 
+/* The in-game menu's view of the controls (runtime.h): each input's bbport.ini name, whether a
+ * gamepad binds it, its bindings as the key.<input>= / pad.<input>= lines write them, and a reload
+ * once the menu has written the file (Kaniel 2026-10-11: controls in the game's own menu). */
+static void menu_controls(void) {
+    char text[128];
+    remove("mouse-camera-test.ini");
+    SETENV("BB_CONFIG","mouse-camera-test.ini");
+    runtime_pad_reload_controls();
+    assert(runtime_pad_input_count()==IN_COUNT);
+    assert(!strcmp(runtime_pad_input_name(IN_CROSS),"cross") && !strcmp(runtime_pad_input_name(IN_LOOK_RIGHT),"look_right"));
+    assert(!runtime_pad_input_name(-1) && !runtime_pad_input_name(IN_COUNT));
+    assert(runtime_pad_input_takes_pad(IN_RIGHT) && !runtime_pad_input_takes_pad(IN_MOVE_UP));
+    /* The defaults, as the launcher's CONTROLS table writes them. */
+    runtime_pad_binding_text(IN_CROSS,0,text,sizeof text); assert(!strcmp(text,"E, Return"));
+    runtime_pad_binding_text(IN_R2,0,text,sizeof text); assert(!strcmp(text,"Shift+Mouse Left"));
+    runtime_pad_binding_text(IN_UP,0,text,sizeof text); assert(!strcmp(text,"Up, Wheel Up"));
+    runtime_pad_binding_text(IN_L2,0,text,sizeof text); assert(!strcmp(text,"Shift+Mouse Right, Left Ctrl"));
+    runtime_pad_binding_text(IN_L2,1,text,sizeof text); assert(!strcmp(text,"lefttrigger"));
+    runtime_pad_binding_text(IN_TOUCHPAD,1,text,sizeof text); assert(!strcmp(text,"back, touchpad"));
+    runtime_pad_binding_text(IN_MOVE_UP,1,text,sizeof text); assert(!strcmp(text,""));
+    /* A text that does not fit is cut, never overrun. */
+    char small[4];
+    runtime_pad_binding_text(IN_CROSS,0,small,sizeof small); assert(!strcmp(small,"E, "));
+    /* Every default reads back as the same binding (the menu writes what it shows). */
+    for (int i=0;i<IN_COUNT;++i)
+        for (int pad=0;pad<2;++pad) {
+            const Binding before=bindings[i];
+            runtime_pad_binding_text(i,pad,text,sizeof text);
+            char line[160];
+            snprintf(line,sizeof line,"%s.%s=%s\n",pad ? "pad" : "key",input_names[i],text);
+            if (pad && i>=IN_MOVE_UP) continue;
+            write_config("mouse-camera-test.ini",line);
+            runtime_pad_reload_controls();
+            runtime_pad_binding_text(i,pad,text,sizeof text); /* loads */
+            assert(!memcmp(&before,&bindings[i],sizeof before));
+        }
+    /* The menu writes the file, then asks for the reload: the next read takes it. */
+    write_config("mouse-camera-test.ini","key.cross=Ctrl+F\npad.cross=y\nmouse_sensitivity=2.5\n");
+    runtime_pad_reload_controls();
+    runtime_pad_binding_text(IN_CROSS,0,text,sizeof text); assert(!strcmp(text,"Ctrl+F"));
+    runtime_pad_binding_text(IN_CROSS,1,text,sizeof text); assert(!strcmp(text,"y"));
+    assert(kbm.sensitivity==2.5f);
+    /* An emptied line unbinds; no line is the default again. */
+    write_config("mouse-camera-test.ini","key.cross=\n");
+    runtime_pad_reload_controls();
+    runtime_pad_binding_text(IN_CROSS,0,text,sizeof text); assert(!strcmp(text,""));
+    remove("mouse-camera-test.ini");
+    runtime_pad_reload_controls();
+    runtime_pad_binding_text(IN_CROSS,0,text,sizeof text); assert(!strcmp(text,"E, Return"));
+    assert(kbm.sensitivity==1.0f);
+}
+
 int main(void) {
 #ifdef _WIN32
     /* A failed assert prints to stderr and aborts: no dialog on the desktop of whoever runs this. */
@@ -484,8 +536,9 @@ int main(void) {
     turn();
     hook_turn();
     hook_refusals();
+    menu_controls();
 #ifdef _WIN32
     hook_install();
 #endif
-    puts("PASS: mouse input names and modifiers, held buttons, wheel steps, mouse settings, Dark Souls III default layout, diagonal sprint stays continuous, stick fallback, camera turn, hook refusals, hook install (stub page not writable, data page not executable)");
+    puts("PASS: mouse input names and modifiers, held buttons, wheel steps, mouse settings, Dark Souls III default layout, diagonal sprint stays continuous, stick fallback, camera turn, hook refusals, hook install (stub page not writable, data page not executable), menu controls");
 }

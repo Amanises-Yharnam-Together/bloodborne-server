@@ -6,6 +6,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -32,6 +35,17 @@ const char* Path() {
 
 float Clamp(float v, float lo, float hi) {
     return std::clamp(v, lo, hi);
+}
+
+// Line / SetLine: the file's lines as Load read them, and the changes the next Save writes.
+std::mutex lines_mutex;
+std::map<std::string, std::string> file_lines;
+std::map<std::string, std::optional<std::string>> line_changes;
+
+std::string Trimmed(std::string text) {
+    text.erase(text.find_last_not_of(" \t") + 1);
+    text.erase(0, text.find_first_not_of(" \t"));
+    return text;
 }
 
 void Set(Values& v, const std::string& key, const std::string& value) {
@@ -163,6 +177,11 @@ void Load() {
     v.fps_limit = 0;
     v.window_mode = Windowed;
     v.dlss_model = 0;
+    {
+        std::scoped_lock lock{lines_mutex};
+        file_lines.clear();
+        line_changes.clear();
+    }
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
         while (std::fgets(line, sizeof(line), file)) {
@@ -171,6 +190,10 @@ void Load() {
             const auto eq = text.find('=');
             if (text.empty() || text[0] == '#' || eq == std::string::npos) {
                 continue;
+            }
+            {
+                std::scoped_lock lock{lines_mutex};
+                file_lines[Trimmed(text.substr(0, eq))] = Trimmed(text.substr(eq + 1));
             }
             Set(v, text.substr(0, eq), text.substr(eq + 1));
             file_fps_limit = file_fps_limit || text.substr(0, eq) == "fps_limit";
@@ -373,9 +396,15 @@ void Save() {
         put("menu_pos", fixed(v.menu_x, 4) + "," + fixed(v.menu_y, 4));
     }
 
+    std::map<std::string, std::optional<std::string>> changes;
+    {
+        std::scoped_lock lock{lines_mutex};
+        changes = line_changes;
+    }
     std::string out;
     bool had_lines = false;
     std::vector<bool> written(keys.size());
+    std::vector<std::string> changed_written;
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[512];
         while (std::fgets(line, sizeof(line), file)) {
@@ -394,6 +423,15 @@ void Save() {
                     written[size_t(it - keys.begin())] = true;
                     continue;
                 }
+                if (const auto change = changes.find(key); change != changes.end()) {
+                    if (change->second) { // the first line of a key gets the value, repeats go
+                        if (std::find(changed_written.begin(), changed_written.end(), key) == changed_written.end()) {
+                            out += key + "=" + *change->second + "\n";
+                            changed_written.push_back(key);
+                        }
+                    }
+                    continue;
+                }
             }
             out += text + "\n";
         }
@@ -405,6 +443,11 @@ void Save() {
     for (size_t k = 0; k < keys.size(); ++k) {
         if (!written[k]) {
             out += keys[k].first + "=" + keys[k].second + "\n";
+        }
+    }
+    for (const auto& [key, value] : changes) {
+        if (value && std::find(changed_written.begin(), changed_written.end(), key) == changed_written.end()) {
+            out += key + "=" + *value + "\n";
         }
     }
     // Replaced whole: a crash while writing leaves the old file.
@@ -421,7 +464,35 @@ void Save() {
 #endif
     if (!replaced) {
         std::printf("Settings: cannot write %s\n", Path());
+        return;
     }
+    std::scoped_lock lock{lines_mutex};
+    for (const auto& [key, value] : changes) {
+        if (value) {
+            file_lines[key] = *value;
+        } else {
+            file_lines.erase(key);
+        }
+        if (const auto now = line_changes.find(key); now != line_changes.end() && now->second == value) {
+            line_changes.erase(now); // unless it changed again meanwhile
+        }
+    }
+}
+
+std::optional<std::string> Line(const std::string& key) {
+    std::scoped_lock lock{lines_mutex};
+    if (const auto change = line_changes.find(key); change != line_changes.end()) {
+        return change->second;
+    }
+    if (const auto line = file_lines.find(key); line != file_lines.end()) {
+        return line->second;
+    }
+    return std::nullopt;
+}
+
+void SetLine(const std::string& key, std::optional<std::string> value) {
+    std::scoped_lock lock{lines_mutex};
+    line_changes[key] = std::move(value);
 }
 
 float PresetScale(int preset) {

@@ -686,7 +686,7 @@ class ButtonIconLaunchTests(unittest.TestCase):
 
     def test_run_py_passes_the_layer_to_the_mods_script(self):
         source = (ROOT / 'run.py').read_text(encoding='utf-8')
-        self.assertIn("'--icons-layer', env['BB_ICONS_DIR']", source)
+        self.assertIn("['--icons-layer', icons_dir]", source)
 
     def test_the_dropdown_texts_are_translated_everywhere(self):
         texts = ['Button icons', 'Keyboard and mouse', 'Xbox', 'Automatic (from the controller)',

@@ -890,33 +890,10 @@ def icons_environment(s, ini):
     holding a common.tpf.dcx generated from the player's own copy, see bbport_icons.py) and BB_ICONS_NOTE (a line for
     the log). The icon set is resolved now, from the controller connected: it stays until the next start. {} when the
     game keeps its own icons (PlayStation, or no game file to redraw)."""
-    choice = ini.get('button_icons', INI_DEFAULTS['button_icons'])
-    if choice not in [value for value, _text in bbport_controls.ICON_CHOICES]:
-        choice = bbport_controls.ICON_DEFAULT
-    game = Path(s['game_dir'])
-    if choice == 'playstation' or not (game / 'dvdroot_ps4' / 'menu' / 'common.tpf.dcx').is_file():
-        return {}
-    pads = list_gamepads() if choice == 'auto' else []
-    icon_set = bbport_controls.resolve_icon_set(choice, pads, str(s.get('gamepad', '')).strip())
-    if icon_set == 'playstation':
-        return {}
-    try:
-        import bbport_icons
-        import mods
-    except ImportError as error:  # a source tree without Pillow
-        return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
-    try:
-        note = mods.icons_note(mods.user_layers(game, s['mods_dir'] or DATA_DIR / 'mods', DATA_DIR / 'mods.json',
-                                                '1' if s['mods_enabled'] else '0'))
-        if note:
-            return {'BB_ICONS_NOTE': note}
-        folder, built, kept = bbport_icons.ensure_layer(game, DATA_DIR / 'out', icon_set, ini)
-    except Exception as error:  # nothing about the icons may stop the game from starting
-        return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
-    note = f'Button icons: {icon_set} ({"made" if built else "from the cache"})'
-    if kept:
-        note += f'; {kept} baked buttons kept their PlayStation art'
-    return {'BB_ICONS_DIR': str(folder), 'BB_ICONS_NOTE': note}
+    import button_icons  # scripts/: run.py decides with it too, on a start without the launcher
+    return button_icons.environment(s['game_dir'], DATA_DIR / 'out', ini, s['mods_dir'] or DATA_DIR / 'mods',
+                                    DATA_DIR / 'mods.json', '1' if s['mods_enabled'] else '0',
+                                    str(s.get('gamepad', '')), lambda: list_gamepads())
 
 
 def game_environment(s, frame_generation=None):

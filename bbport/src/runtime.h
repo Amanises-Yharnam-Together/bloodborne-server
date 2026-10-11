@@ -98,6 +98,16 @@ uintptr_t runtime_audio_resolve(const char *name);
 void runtime_audio_report(void);
 uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
+/* The controls for the in-game menu (runtime_pad.c): the inputs by number (0 .. count-1), their
+ * bbport.ini name (cross, move_up, ...), whether a gamepad button can be bound to them (the keyboard
+ * alone moves the sticks), their bindings as the text of a key.<input>= (pad 0) or pad.<input>=
+ * (pad 1) line (cut to fit `size`), and a reload of bbport.ini's controls once the menu has written
+ * it: the next pad read takes them. Any thread. */
+int runtime_pad_input_count(void);
+const char *runtime_pad_input_name(int input);
+int runtime_pad_input_takes_pad(int input);
+void runtime_pad_binding_text(int input, int pad, char *out, size_t size);
+void runtime_pad_reload_controls(void);
 /* The game image (set by probe.c) and the PC mouse camera (runtime_camhook.c): a hook in the game's
  * camera update that turns it by exact angles (radians, the game's pitch and yaw), taken once per
  * frame. install returns 0 and says why in *why when the hook cannot be installed. */

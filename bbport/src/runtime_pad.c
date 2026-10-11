@@ -393,6 +393,12 @@ static int pad_button_from_name(const char *name) {
     const SDL_GamepadButton b=SDL_GetGamepadButtonFromString(name);
     return b==SDL_GAMEPAD_BUTTON_INVALID ? -1 : (int)b;
 }
+/* The mouse inputs of key.<input>= lines. */
+static const struct { const char *name; uint8_t kind; int16_t code; } mouse_names[]={
+    {"Mouse Left",KIND_MOUSE,SDL_BUTTON_LEFT}, {"Mouse Right",KIND_MOUSE,SDL_BUTTON_RIGHT},
+    {"Mouse Middle",KIND_MOUSE,SDL_BUTTON_MIDDLE}, {"Mouse X1",KIND_MOUSE,SDL_BUTTON_X1},
+    {"Mouse X2",KIND_MOUSE,SDL_BUTTON_X2}, {"Wheel Up",KIND_WHEEL,1}, {"Wheel Down",KIND_WHEEL,-1},
+};
 /* One name of a key.<input>= line: [Shift+][Ctrl+][Alt+] and then a mouse input or an SDL key name. */
 static int parse_input(const char *s, KeyInput *in) {
     in->mods=0;
@@ -402,13 +408,9 @@ static int parse_input(const char *s, KeyInput *in) {
         else if (!SDL_strncasecmp(s,"alt+",4)) { in->mods|=BIND_ALT; s+=4; }
         else break;
     }
-    static const struct { const char *name; uint8_t kind; int16_t code; } mouse[]={
-        {"Mouse Left",KIND_MOUSE,SDL_BUTTON_LEFT}, {"Mouse Right",KIND_MOUSE,SDL_BUTTON_RIGHT},
-        {"Mouse Middle",KIND_MOUSE,SDL_BUTTON_MIDDLE}, {"Mouse X1",KIND_MOUSE,SDL_BUTTON_X1},
-        {"Mouse X2",KIND_MOUSE,SDL_BUTTON_X2}, {"Wheel Up",KIND_WHEEL,1}, {"Wheel Down",KIND_WHEEL,-1},
-    };
-    for (size_t i=0;i<sizeof(mouse)/sizeof(*mouse);++i)
-        if (!SDL_strcasecmp(s,mouse[i].name)) { in->kind=mouse[i].kind; in->code=mouse[i].code; return 1; }
+    const size_t mouse_count=sizeof(mouse_names)/sizeof(*mouse_names);
+    for (size_t i=0;i<mouse_count;++i)
+        if (!SDL_strcasecmp(s,mouse_names[i].name)) { in->kind=mouse_names[i].kind; in->code=mouse_names[i].code; return 1; }
     const SDL_Scancode code=SDL_GetScancodeFromName(s);
     if (code==SDL_SCANCODE_UNKNOWN) return 0;
     in->kind=KIND_KEY; in->code=(int16_t)code;
@@ -465,10 +467,48 @@ static void load_bindings(void) {
     }
     fclose(f);
 }
+/* Set by the in-game menu once it has written bbport.ini (runtime_pad_reload_controls). */
+static int reload_asked;
 static void ensure_bindings(void) {
+    if (__atomic_exchange_n(&reload_asked,0,__ATOMIC_ACQ_REL)) bindings_ready=0;
     if (bindings_ready) return;
     load_bindings();
     bindings_ready=1;
+}
+void runtime_pad_reload_controls(void) { __atomic_store_n(&reload_asked,1,__ATOMIC_RELEASE); }
+int runtime_pad_input_count(void) { return IN_COUNT; }
+const char *runtime_pad_input_name(int input) { return input>=0 && input<IN_COUNT ? input_names[input] : NULL; }
+int runtime_pad_input_takes_pad(int input) { return input>=0 && input<IN_MOVE_UP; }
+static void append_text(char *out, size_t size, size_t *length, const char *text) {
+    for (; text && *text && *length+1<size; ++text) out[(*length)++]=*text;
+    out[*length]=0;
+}
+/* The names parse_input and pad_button_from_name take, so the menu writes what it shows. */
+void runtime_pad_binding_text(int input, int pad, char *out, size_t size) {
+    if (!size) return;
+    out[0]=0;
+    if (input<0 || input>=IN_COUNT) return;
+    pthread_mutex_lock(&lock);
+    ensure_bindings();
+    const Binding *b=&bindings[input];
+    size_t length=0;
+    for (int i=0;i<(pad ? b->pad_count : b->key_count);++i) {
+        if (i) append_text(out,size,&length,", ");
+        if (pad) {
+            const int button=b->pad[i];
+            append_text(out,size,&length,button==PAD_LEFT_TRIGGER ? "lefttrigger" : button==PAD_RIGHT_TRIGGER ? "righttrigger"
+                                         : SDL_GetGamepadStringForButton((SDL_GamepadButton)button));
+            continue;
+        }
+        const KeyInput *in=&b->keys[i];
+        if (in->mods&BIND_SHIFT) append_text(out,size,&length,"Shift+");
+        if (in->mods&BIND_CTRL) append_text(out,size,&length,"Ctrl+");
+        if (in->mods&BIND_ALT) append_text(out,size,&length,"Alt+");
+        if (in->kind==KIND_KEY) { append_text(out,size,&length,SDL_GetScancodeName((SDL_Scancode)in->code)); continue; }
+        for (size_t m=0;m<sizeof(mouse_names)/sizeof(*mouse_names);++m)
+            if (mouse_names[m].kind==in->kind && mouse_names[m].code==in->code) append_text(out,size,&length,mouse_names[m].name);
+    }
+    pthread_mutex_unlock(&lock);
 }
 /* A mouse button or the wheel is bound to some input. */
 static int mouse_inputs_bound(void) {
@@ -584,6 +624,7 @@ static void mouse_turn(float dx, float dy, float *pitch, float *yaw) {
     *pitch=(float)(dy*k*(kbm.invert_y ? -1 : 1));
 }
 static void mouse_direct_turn(float dx, float dy) {
+    if (!kbm.mouse_camera) return; /* switched off in the menu after the hook was installed */
     float pitch, yaw;
     mouse_turn(dx,dy,&pitch,&yaw);
     runtime_camhook_turn(pitch,yaw);
