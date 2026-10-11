@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // bbport: scene HDR (vk_scene_hdr.h), step 2: per pixel, how much brighter than the SDR picture
-// a highlight is in the game's 16-bit scene. Near white the tonemap compresses and clips; there
-// the scene's luminance at the frame's mid-tone exposure is the highlight's real brightness.
-// Where the UI was drawn (the frame differs from its copy without UI) the gain stays 1.
+// a highlight gets. Two sources, the larger wins: the highlight expansion of the UI-free SDR
+// scene (hdr_highlight.glsl, the same curve the presenter uses without a gain map), and how much
+// brighter the game's 16-bit scene had it at the frame's mid-tone exposure (Bloodborne's scene
+// rarely holds much above SDR white, so this mostly adds to small lamps and flames). Where the UI
+// was drawn (the frame differs clearly from its copy without UI) the gain stays 1. The display
+// pass may apply the game's brightness curve, so small differences are not UI.
 // Output: r = gain over the SDR picture's linear color, g = UI coverage (debug).
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "hdr_highlight.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -19,7 +25,7 @@ layout(binding = 4, rg16f) uniform writeonly image2D gain;
 
 layout(push_constant) uniform Params {
     float headroom;    ///< peak / paper white
-    float strength;    ///< 1: the scene's brightness; 0: SDR; 2: twice as far (log)
+    float highlights;  ///< 0..1, hdr_highlights
     uint decode_srgb;
     uint has_hudless;  ///< 0: no UI copy this frame (no UI drawn), the display is UI-free
 };
@@ -49,9 +55,11 @@ void main() {
     // Compared gamma encoded, so a faint UI shadow over a dark scene counts as much as one over
     // a bright one.
     const vec3 diff = abs(pow(frame, vec3(1.0 / 2.2)) - pow(clean, vec3(1.0 / 2.2)));
-    const float ui = smoothstep(2.0 / 255.0, 6.0 / 255.0, max(max(diff.r, diff.g), diff.b));
-    if (valid < 0.5) {
-        imageStore(gain, pixel, vec4(1.0, ui, 0.0, 0.0));
+    const float ui = smoothstep(0.10, 0.25, max(max(diff.r, diff.g), diff.b));
+    const float ls = Luma(clean);
+    const float expand = HighlightGain(ls, headroom, highlights);
+    if (valid < 0.5 || highlights <= 0.0) {
+        imageStore(gain, pixel, vec4(mix(expand, 1.0, ui), ui, 0.0, 0.0));
         return;
     }
     // A small box filter: the scene is jittered and not anti-aliased yet at some presets.
@@ -64,11 +72,10 @@ void main() {
     if (isnan(lh) || isinf(lh)) {
         lh = 0.0;
     }
-    const float ls = Luma(clean);
     // Only toward white, where the tonemap's shoulder squeezes: the mid-tones keep the game's
     // grading exactly.
-    const float weight = smoothstep(0.25, 0.8, ls) * (1.0 - ui);
     const float g = clamp(lh / max(ls, 1e-4), 1.0, headroom);
-    const float value = min(exp(log(g) * strength * weight), headroom);
-    imageStore(gain, pixel, vec4(value, ui, 0.0, 0.0));
+    const float scene_gain = exp(log(g) * smoothstep(0.25, 0.8, ls));
+    const float value = min(max(expand, scene_gain), headroom);
+    imageStore(gain, pixel, vec4(mix(value, 1.0, ui), ui, 0.0, 0.0));
 }

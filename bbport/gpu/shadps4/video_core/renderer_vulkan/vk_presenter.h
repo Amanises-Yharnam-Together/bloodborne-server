@@ -143,6 +143,7 @@ private:
     HostPasses::PostProcessingPass::Settings pp_settings{};
     HostPasses::HdrOutputPass hdr_pass;
     bool last_display_hdr{false}; ///< UpdateHdrOutput: the display's HDR state last seen
+    u32 hdr_unsupported_presents{0}; ///< UpdateHdrOutput: presents since HDR became unavailable
     HostPasses::PostProcessingPass pp_pass;
     std::mutex passes_mutex; ///< bbport: the passes are recorded on the recording threads
     AmdGpu::Liverpool* liverpool;

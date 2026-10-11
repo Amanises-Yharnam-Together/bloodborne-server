@@ -129,11 +129,12 @@ struct Values {
     std::atomic<bool> hdr{false};
     std::atomic<int> hdr_peak_nits{1000};
     std::atomic<int> hdr_paper_white{200};
-    /// Highlight expansion 0..1: how far the brightest parts of the SDR frame reach toward the
-    /// peak brightness (0: the SDR picture at paper white only).
+    /// Highlight expansion 0..1 (host_shaders/hdr_highlight.glsl): 0.5 takes SDR white to the
+    /// peak brightness, higher values lower the knee (0: the SDR picture at paper white only).
     std::atomic<float> hdr_highlights{0.5f};
-    /// HDR highlights rebuilt from the game's 16-bit scene before its tonemap (vk_scene_hdr.h);
-    /// off: the SDR frame's highlights are stretched. hdr_highlights 0.5 is the scene as is.
+    /// HDR gain map per frame (vk_scene_hdr.h): the expansion leaves the game's HUD alone and
+    /// takes extra brightness from the 16-bit scene where it has more; off: the whole SDR frame
+    /// is expanded.
     std::atomic<bool> hdr_scene{true};
     /// Set by the renderer: the swapchain offers HDR10 and the display has HDR switched on.
     std::atomic<bool> hdr_supported{false};

@@ -26,7 +26,7 @@ struct ExposureParams {
 
 struct GainParams {
     float headroom;
-    float strength;
+    float highlights;
     u32 decode_srgb;
     u32 has_hudless;
 };
@@ -305,7 +305,7 @@ SceneHdr::Job SceneHdr::Prepare(u32 slot, vk::Format view_format, vk::Extent2D s
 }
 
 void SceneHdr::Record(vk::CommandBuffer cmdbuf, const Job& job, vk::ImageView display,
-                      float headroom, float strength) {
+                      float headroom, float highlights) {
     if (!job.valid) {
         return;
     }
@@ -382,7 +382,7 @@ void SceneHdr::Record(vk::CommandBuffer cmdbuf, const Job& job, vk::ImageView di
     gain_writes[3].pBufferInfo = &buffer;
     gain_writes[4].pImageInfo = &storage;
     const GainParams gain_params{.headroom = std::max(headroom, 1.0f),
-                                 .strength = std::clamp(strength, 0.0f, 2.0f),
+                                 .highlights = std::clamp(highlights, 0.0f, 1.0f),
                                  .decode_srgb = job.decode_srgb ? 1u : 0u,
                                  .has_hudless = job.hudless ? 1u : 0u};
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *gain_pipeline);

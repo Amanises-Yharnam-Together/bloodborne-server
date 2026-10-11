@@ -5,6 +5,9 @@
 // game's 16-bit scene had them, else the frame's own highlights are stretched toward the peak.
 
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "hdr_highlight.glsl"
 
 layout (location = 0) in vec2 uv;
 layout (location = 0) out vec4 color;
@@ -37,16 +40,9 @@ const mat3 Bt709ToBt2020 = mat3(0.627404, 0.069097, 0.016391,
                                 0.329283, 0.919540, 0.088013,
                                 0.043313, 0.011362, 0.895595);
 
-// Luminance above the knee goes up to peak / paper white times at full white; the hue stays.
 vec3 ExpandHighlights(vec3 linear) {
-    const float knee = 0.5; // linear; sRGB ~0.74
     const float luma = dot(linear, vec3(0.2126, 0.7152, 0.0722));
-    if (pc.highlights <= 0.0 || luma <= knee) {
-        return linear;
-    }
-    const float headroom = max(pc.peak / pc.paper_white, 1.0);
-    const float t = clamp((luma - knee) / (1.0 - knee), 0.0, 1.0);
-    return linear * mix(1.0, headroom, pc.highlights * t * t);
+    return linear * HighlightGain(luma, pc.peak / pc.paper_white, pc.highlights);
 }
 
 void main() {

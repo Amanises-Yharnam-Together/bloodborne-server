@@ -11,6 +11,8 @@
 //     frame's captures, Record() runs shaders/hdr_exposure.comp (the tonemap's mid-tone ratio)
 //     and shaders/hdr_gain.comp into the frame's gain image (RG16F, the display buffer's size);
 //   * at present: HdrOutputPass multiplies the frame's linear color by the gain.
+// The gain is the highlight expansion of the UI-free scene (host_shaders/hdr_highlight.glsl) or,
+// where larger, the 16-bit scene's own brightness over the SDR picture.
 //
 // Frames without captures (menus, movies, the title screen) have no gain; the presenter then
 // stretches the SDR highlights as without this class.
@@ -85,8 +87,9 @@ public:
     Job Prepare(u32 slot, vk::Format view_format, vk::Extent2D size);
     /// Records the two passes (any recording thread, after the frame's display buffer is in
     /// ShaderReadOnlyOptimal). The gain image ends in TransferSrcOptimal.
+    /// `highlights`: bbport.ini hdr_highlights (0..1).
     void Record(vk::CommandBuffer cmdbuf, const Job& job, vk::ImageView display, float headroom,
-                float strength);
+                float highlights);
 
     /// Present: slot's gain image (TransferSrcOptimal), when a valid Job wrote it.
     struct Gain {

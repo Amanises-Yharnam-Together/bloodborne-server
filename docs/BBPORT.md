@@ -83,18 +83,23 @@ the Insert menu (the launcher's Window card edits the same keys):
   presenter composes into an SDR image, draws the overlay into its own layer and encodes both into
   the swapchain (`host_passes/hdr_pass.h`, `host_shaders/hdr_output.frag`): SDR white at the paper
   white, highlights brightened toward the peak.
-- `hdr_scene=1` (default): the highlights come from the game's RGBA16F scene before its tonemap
-  (`vk_scene_hdr.h`). The upscaler hooks copy the scene color at the post-processing combine
-  (cs 0x9a9cf8a9) and the finished scene before the first Scaleform draw; per frame
-  `hdr_exposure.comp` measures the tonemap's mid-tone ratio (SDR / scene luminance, smoothed) and
-  `hdr_gain.comp` writes a gain map (RG16F, display buffer size): toward white, the scene's
-  luminance at that exposure over the SDR luminance, capped at peak / paper white, 1 where the UI
-  was drawn. The HDR encode multiplies the SDR frame's linear color by it, so the game's grading
-  and UI stay as in SDR. `hdr_highlights` 0.5 is the scene as rendered (0 SDR, 1 twice as far in
-  log). Frames without a scene (menus, movies) and `hdr_scene=0` stretch the SDR frame instead (an
-  inverse tonemap of the 8-bit frame). `BB_HDR_SCENE_TEST=1` makes the gain maps with SDR output
-  too; `BB_FRAME_DUMP_TRIGGER` then saves them as `hdr_gain_NNN_<w>x<h>.raw` (`tools/dump_view.py`
-  draws them). Background: /mnt/project-files/research/hdr-feasibility.md.
+- `hdr_highlights` (0..1, `host_shaders/hdr_highlight.glsl`): above a knee the SDR picture's
+  luminance is raised smoothly; 0.5 takes SDR white to the peak with the knee at 0.4 linear, higher
+  values lower the knee, 0 keeps the SDR picture.
+- `hdr_scene=1` (default): a gain map per frame (`vk_scene_hdr.h`). The upscaler hooks copy the
+  scene color at the post-processing combine (cs 0x9a9cf8a9) and the finished scene before the
+  first Scaleform draw; `hdr_exposure.comp` measures the tonemap's mid-tone ratio (SDR / scene
+  luminance, smoothed) and `hdr_gain.comp` writes the gain (RG16F, display buffer size): the
+  expansion of the UI-free scene, or the scene's luminance at that exposure over the SDR luminance
+  where larger, 1 where the UI was drawn (the frame differs clearly from the UI-free copy; small
+  differences come from the game's brightness curve in the display pass). Measured in the game
+  (2026-10-11): Bloodborne's 16-bit scene at the combine holds little above SDR white (scene / SDR
+  at the brightest 1% is 0.5-1.5, a few flame pixels more), so the expansion does most of the work.
+  Frames without a scene (menus, movies) and `hdr_scene=0` expand the whole SDR frame.
+  `BB_HDR_SCENE_TEST=1` makes the gain maps with SDR output too; `BB_FRAME_DUMP_TRIGGER` then saves
+  them as `hdr_gain_NNN_<w>x<h>.raw` (`tools/dump_view.py` draws them). HDR output stays on through
+  short drops of the display's HDR state (90 presents). Background:
+  /mnt/project-files/research/hdr-feasibility.md.
 
 ## Rig
 

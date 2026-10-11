@@ -269,8 +269,8 @@ void DefineTexts() {
     row(Hdr, "HDR", "HDR", "HDR10 output (shown when HDR is on for this display in Windows)",
         "Вывод HDR10 (виден, когда для этого монитора в Windows включён HDR)", toggle, Kind::List, true);
     row(HdrScene, "HDR scene highlights", "Света HDR из сцены",
-        "On: highlights as bright as the game's 16-bit scene. Off: the SDR picture stretched",
-        "Вкл: света как в 16-битной сцене игры. Выкл: растянутая SDR картинка", toggle, Kind::List,
+        "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched",
+        "Вкл: интерфейс не растягивается, огни по 16-битной сцене. Выкл: растягивается всё", toggle, Kind::List,
         true);
     {
         std::vector<u32> peaks, whites;
@@ -294,8 +294,8 @@ void DefineTexts() {
             Kind::Steps, true);
     }
     row(HdrHighlights, "HDR highlights", "Света HDR",
-        "0 none, 5 as bright as the scene (scene highlights), 10 brightest",
-        "0 нет, 5 как в сцене (света из сцены), 10 ярче всего", {}, Kind::Slider, true);
+        "0 none, 5 white reaches the peak, 10 more of the picture brightens",
+        "0 нет, 5 белый доходит до пика, 10 ярче большая часть картинки", {}, Kind::Slider, true);
 
     // bbport co-op: the frame rate limit (a list, last: it opens below itself) and the DLSS model.
     page("Frame rate", "Частота кадров", "Frame rate limit and DLSS model (bbport)",
