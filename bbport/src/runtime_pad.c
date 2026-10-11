@@ -1,23 +1,33 @@
-/* libScePad on SDL3 gamepads and the keyboard. SDL events are pumped by the window thread
- * (gpu/shim/window.cpp); here state is only sampled.
+/* libScePad on SDL3 gamepads, the keyboard and the mouse. SDL events are pumped by the window
+ * thread (gpu/shim/window.cpp); here state is only sampled.
  *
- * Keyboard layout (also with a gamepad connected: both drive the game):
- *   WASD left stick, arrow keys right stick, Space Cross, LShift Circle,
- *   E Square, Q Triangle, 1 L1, 3 R1, R L2, F R2, Z L3, C R3,
- *   Enter Options, Tab left touchpad, Backspace right touchpad,
- *   IJKL d-pad (I up, K down, J left, L right).
+ * Keyboard layout (also with a gamepad connected: both drive the game): the Dark Souls III layout of
+ * bind_defaults, e.g. WASD left stick, IJKL right stick, Space Circle, Esc Options, Tab or G left
+ * touchpad, Backspace right touchpad.
+ *
+ * Mouse (issue #5; the camera hook and the stick fallback follow Ryansousa10/bloodborne_windows_mouse_and_keyboard,
+ * commit c650c2e, GPL-2.0-or-later): while the game window has focus and the settings menu and the text
+ * dialog are closed, the window holds the mouse in relative mode (gpu/shim/window.cpp). Its motion turns the
+ * camera through a hook in the game's own camera code (runtime_camhook.c), by exact angles as PC games do;
+ * without the hook (another game version, not Windows) it acts as the right stick. Its buttons and wheel are
+ * inputs of key.<input>= lines, next to keys (see parse_input).
  *
  * Stick neutral: SDL exposes no way to read a pad's calibration and some clones report a
  * biased neutral (a Switch-style pad was seen returning both sticks at a constant ~ +/-16380).
  * The neutral of each axis is taken from a quiet window after the pad opens (SDL returns zero
  * until the first report arrives, so those samples are skipped) and subtracted when all four axes
- * are biased; otherwise (a genuine pad, perhaps opened with a stick held) the neutral is 0.
+ * are biased; otherwise (a genuine pad, perhaps opened with a stick held) the neutral is 0. Until
+ * it is decided the sticks read centred (a biased clone would read as deflected). A pad opened
+ * with a stick held past the bound is taken as genuine until it reconnects: recalibrating while a
+ * player holds a stick steady would be worse.
  *
  * Travel: such a clone also uses only part of SDL's -32768..32767 span (its neutral sits in the
  * middle of one half), so reading the axis as -128..127 would reach only half deflection and a
- * full push would never run. Each axis is instead scaled by its own travel: a biased axis starts
- * from its neutral's magnitude and is refined by the largest push seen per direction, so both
- * directions reach full deflection even when the two travels differ by a few percent (that
+ * full push would never run. Each axis is instead scaled by its own travel: each side of a biased
+ * axis' neutral starts from the neutral's magnitude, or the room SDL's range leaves on that side
+ * when that is less (a neutral near +20000 has about 12767 toward +32767), and is refined by the
+ * largest push seen per direction, so both directions reach full deflection even when the two
+ * travels differ by a few percent (that
  * difference is what makes one direction run and the other only walk). A genuine pad keeps the
  * plain -32768..32767 -> -128..127 read. The stick is then converted as shadPS4 does, with an
  * inner/outer dead zone (BB_PAD_DEADZONE, default 5; BB_PAD_DEADZONE_OUTER, default 127) mapping
@@ -27,6 +37,7 @@
 #include "runtime.h"
 #include "gpu/bbgpu.h"
 #include "gpu/bbcoop.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,26 +97,27 @@ static uint8_t connected_count;
 #define PAD_CAL_QUIET_SAMPLES 8
 #define PAD_CAL_TIMEOUT_US 3000000u    /* after this, an all-zero reading is accepted as the neutral */
 #define PAD_CAL_BIAS 8192              /* |neutral| past this: a biased neutral and a reduced travel */
+#define PAD_CAL_BIAS_MAX 22000         /* ...but a stick pushed to its stop (a full diagonal reads ~23170) is no neutral */
 #define PAD_CAL_REFINE 90              /* % of the base travel a push must reach to count as the full scale */
 static int cal_enabled=-1, pad_deadzone=-1, pad_deadzone_outer=-1, cal_manual;
 static int cal_have_center, cal_started, cal_quiet_count;
 static int cal_center[4], cal_prev[4], cal_manual_center[4];
-static int cal_base[4];                /* 0: normal pad; else |neutral| of a biased axis */
+static int cal_base[4][2];             /* travel toward -/+ of a biased axis; 0: normal pad */
 static int cal_max[4][2];              /* largest push seen per direction on a biased axis */
 static uint64_t cal_since;
 
 static uint64_t now_us(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (uint64_t)t.tv_sec*1000000u+(uint64_t)t.tv_nsec/1000u; }
 static uint8_t trigger(int16_t v) { int x=v>>7; return (uint8_t)(x<0 ? 0 : x>255 ? 255 : x); }
-static void cal_load(void) {
-    static int loaded;
-    if (loaded) return;
-    loaded=1;
+static void cal_read_env(void) {
     const char *v=getenv("BB_PAD_CENTER_CAL"); cal_enabled=!(v && *v=='0');
     /* Inner/outer dead zone, as shadPS4's analog_deadzone: [inner, outer] maps linearly to the
-     * full deflection, so an axis with a reduced travel (outer below 127) reaches full. */
+     * full deflection, so an axis with a reduced travel (outer below 127) reaches full. Both are
+     * held to the axis' range (inner 0..126, outer 0..127): an outer past 127 would leave every
+     * push short of full deflection. */
     v=getenv("BB_PAD_DEADZONE"); pad_deadzone=v && *v ? atoi(v) : 5;
     if (pad_deadzone<0) pad_deadzone=0; else if (pad_deadzone>126) pad_deadzone=126;
     v=getenv("BB_PAD_DEADZONE_OUTER"); pad_deadzone_outer=v && *v ? atoi(v) : 127;
+    if (pad_deadzone_outer>127) pad_deadzone_outer=127;
     if (pad_deadzone_outer<=pad_deadzone) pad_deadzone_outer=pad_deadzone<127 ? pad_deadzone+1 : 127;
     v=getenv("BB_PAD_CENTER");
     if (v && *v && sscanf(v,"%d,%d,%d,%d",&cal_manual_center[0],&cal_manual_center[1],
@@ -115,25 +127,40 @@ static void cal_load(void) {
                cal_manual_center[0],cal_manual_center[1],cal_manual_center[2],cal_manual_center[3]);
     }
 }
+static void cal_load(void) {
+    static int loaded;
+    if (loaded) return;
+    loaded=1;
+    cal_read_env();
+}
 static void cal_set_base(void) {
     int biased=0;
     for (int i=0;i<4;++i) {
-        const int a=abs(cal_center[i]);
-        cal_base[i]=a>=PAD_CAL_BIAS ? a : 0;   /* a biased axis spans one half of the int16 range */
+        const int c=cal_center[i], a=abs(c);
+        /* A biased axis spans |neutral| to each side, as far as SDL's range reaches: a neutral
+         * near an end of the range leaves little travel on that side. */
+        const int toward_minus=32768+c, toward_plus=32767-c;
+        const int on=a>=PAD_CAL_BIAS;
+        cal_base[i][0]=on ? (a<toward_minus ? a : toward_minus) : 0;
+        cal_base[i][1]=on ? (a<toward_plus ? a : toward_plus) : 0;
+        for (int dir=0;dir<2;++dir) if (on && cal_base[i][dir]<1) cal_base[i][dir]=1;
         cal_max[i][0]=cal_max[i][1]=0;
-        biased|=cal_base[i]!=0;
+        biased|=on;
     }
     if (biased)
-        printf("Runtime: pad travel (biased neutral, per-axis scaling): lx=%d ly=%d rx=%d ry=%d\n",
-               cal_base[0]?cal_base[0]:32768,cal_base[1]?cal_base[1]:32768,
-               cal_base[2]?cal_base[2]:32768,cal_base[3]?cal_base[3]:32768);
+        printf("Runtime: pad travel (biased neutral, per-side scaling, toward -/+): lx=%d/%d ly=%d/%d rx=%d/%d ry=%d/%d\n",
+               cal_base[0][0]?cal_base[0][0]:32768,cal_base[0][1]?cal_base[0][1]:32767,
+               cal_base[1][0]?cal_base[1][0]:32768,cal_base[1][1]?cal_base[1][1]:32767,
+               cal_base[2][0]?cal_base[2][0]:32768,cal_base[2][1]?cal_base[2][1]:32767,
+               cal_base[3][0]?cal_base[3][0]:32768,cal_base[3][1]?cal_base[3][1]:32767);
 }
-/* Full-scale travel of one direction. A biased axis starts from its neutral's magnitude and is
- * refined by the largest push seen (once that push is close to the base travel), so a direction
- * whose physical travel is a few percent shorter still reaches full deflection. */
+/* Full-scale travel of one direction. A biased axis starts from the room its neutral leaves on
+ * that side and is refined by the largest push seen (once that push is close to the base travel),
+ * so a direction whose physical travel is a few percent shorter still reaches full deflection. */
 static int cal_travel(int axis,int dir) {
-    const int base=cal_base[axis] ? cal_base[axis] : 32768;
-    return cal_base[axis] && cal_max[axis][dir]*100>=base*PAD_CAL_REFINE ? cal_max[axis][dir] : base;
+    const int base=cal_base[axis][dir];
+    if (!base) return 32768;
+    return cal_max[axis][dir]*100>=base*PAD_CAL_REFINE ? cal_max[axis][dir] : base;
 }
 static void cal_reset(void) {
     cal_load();
@@ -148,7 +175,7 @@ static void cal_reset(void) {
 static void cal_sample(const int16_t raw[4]) {
     if (cal_have_center) {
         for (int i=0;i<4;++i) {
-            if (!cal_base[i]) continue;
+            if (!cal_base[i][0]) continue;
             const int d=raw[i]-cal_center[i], dir=d>=0, travel=dir ? d : -d;
             if (travel>cal_max[i][dir]) cal_max[i][dir]=travel;
         }
@@ -163,11 +190,12 @@ static void cal_sample(const int16_t raw[4]) {
         if (++cal_quiet_count>=PAD_CAL_QUIET_SAMPLES) {
             /* Only the clone pattern (all four axes biased) is taken as the neutral: a genuine pad
              * opened with a stick held steady would otherwise keep that push as its neutral. */
-            int biased=0;
-            for (int i=0;i<4;++i) biased+=abs(raw[i])>=PAD_CAL_BIAS;
-            for (int i=0;i<4;++i) cal_center[i]=biased==4 ? raw[i] : 0;
+            int biased=0, pushed=0;
+            for (int i=0;i<4;++i) { biased+=abs(raw[i])>=PAD_CAL_BIAS; pushed+=abs(raw[i])>PAD_CAL_BIAS_MAX; }
+            const int clone=biased==4 && !pushed;
+            for (int i=0;i<4;++i) cal_center[i]=clone ? raw[i] : 0;
             cal_have_center=1;
-            if (biased==4)
+            if (clone)
                 printf("Runtime: pad neutral: lx=%d ly=%d rx=%d ry=%d\n",cal_center[0],cal_center[1],cal_center[2],cal_center[3]);
             else if (biased)
                 printf("Runtime: pad neutral 0 (%d of 4 axes off-center at open: a stick held, not a biased pad)\n",biased);
@@ -275,7 +303,18 @@ static void report_guest_heap(void) {
  * (right). Gamepad names as SDL's: a b x y back start leftstick rightstick leftshoulder
  * rightshoulder dpup dpdown dpleft dpright touchpad misc1 paddle1-4, plus lefttrigger and
  * righttrigger. The keyboard works next to a gamepad (the Steam Deck always has one): its buttons
- * add to the gamepad's, a held move/look key moves the stick all the way. */
+ * add to the gamepad's, a held move/look key moves the stick all the way.
+ *
+ * Each name in a key.<input>= line is a keyboard key (an SDL scancode name: "E", "Left Ctrl", "Space"),
+ * or a mouse input: "Mouse Left", "Mouse Right", "Mouse Middle", "Mouse X1", "Mouse X2" (held while the
+ * button is) or "Wheel Up", "Wheel Down" (a 60 ms press per step). Any of them may start with
+ * "Shift+", "Ctrl+" or "Alt+" (either side's key): then it counts only while that modifier is held, and a
+ * plain input yields to a combination on the same key or button that is held, so "Mouse Left" is R1
+ * alone and "Shift+Mouse Left" R2 alone. Other lines of the file: mouse_camera (1), mouse_sensitivity
+ * (1.0: 0.022 degrees a count, the scale of Source games), mouse_invert_y (0), mouse_no_auto_rotation
+ * (0; 1: while the camera hook is installed the game does not turn the camera by itself as the
+ * character walks. Off by default: the hook is installed for every player, and gamepad players
+ * keep the game's own camera). */
 enum {
     IN_CROSS, IN_CIRCLE, IN_SQUARE, IN_TRIANGLE, IN_L1, IN_R1, IN_L2, IN_R2, IN_L3, IN_R3,
     IN_OPTIONS, IN_TOUCHPAD, IN_TOUCHPAD_RIGHT, IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT,
@@ -293,22 +332,40 @@ static const uint32_t input_buttons[IN_COUNT]={
 };
 #define MAX_BIND 4
 enum { PAD_LEFT_TRIGGER=SDL_GAMEPAD_BUTTON_COUNT, PAD_RIGHT_TRIGGER }; /* triggers as buttons */
-typedef struct { int key_count, pad_count; SDL_Scancode keys[MAX_BIND]; int pad[MAX_BIND]; } Binding;
+/* A keyboard key, a mouse button or a wheel step, with the modifiers that must be held. */
+enum { KIND_KEY, KIND_MOUSE, KIND_WHEEL };
+enum { BIND_SHIFT=1, BIND_CTRL=2, BIND_ALT=4 };
+typedef struct { uint8_t kind, mods; int16_t code; } KeyInput; /* SDL scancode, SDL button, wheel step +1 up / -1 down */
+typedef struct { int key_count, pad_count; KeyInput keys[MAX_BIND]; int pad[MAX_BIND]; } Binding;
 static Binding bindings[IN_COUNT];
 static int bindings_ready;
+/* The mouse settings of bbport.ini (see the comment above). */
+typedef struct { int mouse_camera, invert_y, no_auto_rotation; float sensitivity; } MouseSettings;
+static const MouseSettings mouse_defaults={1,0,0,1.0f};
+static MouseSettings kbm={1,0,0,1.0f};
 
+/* The Dark Souls III layout of the reference (its docs/KEYBOARD_MOUSE.md, "Default keys"); the launcher's CONTROLS
+ * table (launcher/bbport_controls.py) is the same, and a test keeps them equal. The runtime has no walk input, so
+ * Left Alt (walk in Dark Souls III) is not bound. */
 static void bind_defaults(void) {
-    static const struct { int input; SDL_Scancode key; } keys[]={
-        {IN_CROSS,SDL_SCANCODE_SPACE}, {IN_CIRCLE,SDL_SCANCODE_LSHIFT}, {IN_SQUARE,SDL_SCANCODE_E},
-        {IN_TRIANGLE,SDL_SCANCODE_Q}, {IN_L1,SDL_SCANCODE_1}, {IN_R1,SDL_SCANCODE_3},
-        {IN_L2,SDL_SCANCODE_R}, {IN_R2,SDL_SCANCODE_F}, {IN_L3,SDL_SCANCODE_Z}, {IN_R3,SDL_SCANCODE_C},
-        {IN_OPTIONS,SDL_SCANCODE_RETURN}, {IN_TOUCHPAD,SDL_SCANCODE_TAB},
-        {IN_TOUCHPAD_RIGHT,SDL_SCANCODE_BACKSPACE},
-        {IN_UP,SDL_SCANCODE_I}, {IN_DOWN,SDL_SCANCODE_K}, {IN_LEFT,SDL_SCANCODE_J}, {IN_RIGHT,SDL_SCANCODE_L},
-        {IN_MOVE_UP,SDL_SCANCODE_W}, {IN_MOVE_DOWN,SDL_SCANCODE_S}, {IN_MOVE_LEFT,SDL_SCANCODE_A},
-        {IN_MOVE_RIGHT,SDL_SCANCODE_D}, {IN_LOOK_UP,SDL_SCANCODE_UP}, {IN_LOOK_DOWN,SDL_SCANCODE_DOWN},
-        {IN_LOOK_LEFT,SDL_SCANCODE_LEFT}, {IN_LOOK_RIGHT,SDL_SCANCODE_RIGHT},
+#define K(input,key) {input,KIND_KEY,0,SDL_SCANCODE_##key}
+#define M(input,mods,button) {input,KIND_MOUSE,mods,SDL_BUTTON_##button}
+#define W(input,mods,step) {input,KIND_WHEEL,mods,step}
+    static const struct { int input; uint8_t kind, mods; int16_t code; } keys[]={
+        K(IN_CROSS,E), K(IN_CROSS,RETURN), K(IN_CIRCLE,SPACE),
+        K(IN_SQUARE,R), K(IN_TRIANGLE,F),
+        M(IN_L1,0,RIGHT), M(IN_R1,0,LEFT),
+        M(IN_L2,BIND_SHIFT,RIGHT), K(IN_L2,LCTRL), M(IN_R2,BIND_SHIFT,LEFT),
+        K(IN_L3,C), K(IN_R3,Q), M(IN_R3,0,MIDDLE),
+        K(IN_OPTIONS,ESCAPE), K(IN_TOUCHPAD,TAB), K(IN_TOUCHPAD,G), K(IN_TOUCHPAD_RIGHT,BACKSPACE),
+        K(IN_UP,UP), W(IN_UP,0,1), K(IN_DOWN,DOWN), W(IN_DOWN,0,-1),
+        K(IN_LEFT,LEFT), W(IN_LEFT,BIND_SHIFT,-1), K(IN_RIGHT,RIGHT), W(IN_RIGHT,BIND_SHIFT,1),
+        K(IN_MOVE_UP,W), K(IN_MOVE_DOWN,S), K(IN_MOVE_LEFT,A), K(IN_MOVE_RIGHT,D),
+        K(IN_LOOK_UP,I), K(IN_LOOK_DOWN,K), K(IN_LOOK_LEFT,J), K(IN_LOOK_RIGHT,L),
     };
+#undef K
+#undef M
+#undef W
     static const struct { int input, button; } pads[]={
         {IN_CROSS,SDL_GAMEPAD_BUTTON_SOUTH}, {IN_CIRCLE,SDL_GAMEPAD_BUTTON_EAST},
         {IN_SQUARE,SDL_GAMEPAD_BUTTON_WEST}, {IN_TRIANGLE,SDL_GAMEPAD_BUTTON_NORTH},
@@ -322,8 +379,10 @@ static void bind_defaults(void) {
     };
     memset(bindings,0,sizeof bindings);
     for (size_t i=0;i<sizeof(keys)/sizeof(*keys);++i) {
-        Binding *b=&bindings[keys[i].input]; b->keys[b->key_count++]=keys[i].key;
+        Binding *b=&bindings[keys[i].input];
+        b->keys[b->key_count++]=(KeyInput){keys[i].kind,keys[i].mods,keys[i].code};
     }
+    kbm=mouse_defaults;
     for (size_t i=0;i<sizeof(pads)/sizeof(*pads);++i) {
         Binding *b=&bindings[pads[i].input]; b->pad[b->pad_count++]=pads[i].button;
     }
@@ -334,7 +393,40 @@ static int pad_button_from_name(const char *name) {
     const SDL_GamepadButton b=SDL_GetGamepadButtonFromString(name);
     return b==SDL_GAMEPAD_BUTTON_INVALID ? -1 : (int)b;
 }
-/* key.<input>= / pad.<input>= lines of the settings file. */
+/* One name of a key.<input>= line: [Shift+][Ctrl+][Alt+] and then a mouse input or an SDL key name. */
+static int parse_input(const char *s, KeyInput *in) {
+    in->mods=0;
+    for (;;) {
+        if (!SDL_strncasecmp(s,"shift+",6)) { in->mods|=BIND_SHIFT; s+=6; }
+        else if (!SDL_strncasecmp(s,"ctrl+",5)) { in->mods|=BIND_CTRL; s+=5; }
+        else if (!SDL_strncasecmp(s,"alt+",4)) { in->mods|=BIND_ALT; s+=4; }
+        else break;
+    }
+    static const struct { const char *name; uint8_t kind; int16_t code; } mouse[]={
+        {"Mouse Left",KIND_MOUSE,SDL_BUTTON_LEFT}, {"Mouse Right",KIND_MOUSE,SDL_BUTTON_RIGHT},
+        {"Mouse Middle",KIND_MOUSE,SDL_BUTTON_MIDDLE}, {"Mouse X1",KIND_MOUSE,SDL_BUTTON_X1},
+        {"Mouse X2",KIND_MOUSE,SDL_BUTTON_X2}, {"Wheel Up",KIND_WHEEL,1}, {"Wheel Down",KIND_WHEEL,-1},
+    };
+    for (size_t i=0;i<sizeof(mouse)/sizeof(*mouse);++i)
+        if (!SDL_strcasecmp(s,mouse[i].name)) { in->kind=mouse[i].kind; in->code=mouse[i].code; return 1; }
+    const SDL_Scancode code=SDL_GetScancodeFromName(s);
+    if (code==SDL_SCANCODE_UNKNOWN) return 0;
+    in->kind=KIND_KEY; in->code=(int16_t)code;
+    return 1;
+}
+/* NaN passes both comparisons, so a value that is not finite is the default (a NaN sensitivity corrupts the turn). */
+static float clamp_setting(float v, float low, float high, float fallback) {
+    return !isfinite(v) ? fallback : v<low ? low : v>high ? high : v;
+}
+/* mouse_camera / mouse_sensitivity / mouse_invert_y / mouse_no_auto_rotation. */
+static void load_mouse_setting(const char *key, const char *value) {
+    const float v=(float)atof(value);
+    if (!strcmp(key,"mouse_camera")) kbm.mouse_camera=v!=0;
+    else if (!strcmp(key,"mouse_sensitivity")) kbm.sensitivity=clamp_setting(v,0.01f,20.0f,mouse_defaults.sensitivity);
+    else if (!strcmp(key,"mouse_invert_y")) kbm.invert_y=v!=0;
+    else if (!strcmp(key,"mouse_no_auto_rotation")) kbm.no_auto_rotation=v!=0;
+}
+/* key.<input>= / pad.<input>= lines of the settings file, and the mouse_* settings. */
 static void load_bindings(void) {
     bind_defaults();
     const char *path=getenv("BB_CONFIG");
@@ -344,7 +436,12 @@ static void load_bindings(void) {
     while (fgets(line,sizeof line,f)) {
         const int keyboard=!strncmp(line,"key.",4), pad=!strncmp(line,"pad.",4);
         char *eq=strchr(line,'=');
-        if ((!keyboard && !pad) || !eq) continue;
+        if (!eq) continue;
+        if (!keyboard && !pad) {
+            *eq=0;
+            load_mouse_setting(line,eq+1);
+            continue;
+        }
         *eq=0;
         int input=-1;
         for (int i=0;i<IN_COUNT;++i) if (!strcmp(line+4,input_names[i])) input=i;
@@ -356,9 +453,9 @@ static void load_bindings(void) {
             for (char *end=name+strlen(name); end>name && end[-1]==' ';) *--end=0;
             if (!*name) continue;
             if (keyboard) {
-                const SDL_Scancode s=SDL_GetScancodeFromName(name);
-                if (s==SDL_SCANCODE_UNKNOWN) printf("Runtime: controls: unknown key \"%s\" for %s\n",name,line+4);
-                else if (b->key_count<MAX_BIND) b->keys[b->key_count++]=s;
+                KeyInput in;
+                if (!parse_input(name,&in)) printf("Runtime: controls: unknown key \"%s\" for %s\n",name,line+4);
+                else if (b->key_count<MAX_BIND) b->keys[b->key_count++]=in;
             } else {
                 const int button=pad_button_from_name(name);
                 if (button<0) printf("Runtime: controls: unknown gamepad button \"%s\" for %s\n",name,line+4);
@@ -368,9 +465,67 @@ static void load_bindings(void) {
     }
     fclose(f);
 }
-static int key_down(const bool *k, int input) {
-    for (int i=0;i<bindings[input].key_count;++i) if (k[bindings[input].keys[i]]) return 1;
+static void ensure_bindings(void) {
+    if (bindings_ready) return;
+    load_bindings();
+    bindings_ready=1;
+}
+/* A mouse button or the wheel is bound to some input. */
+static int mouse_inputs_bound(void) {
+    for (int a=0;a<IN_COUNT;++a) for (int i=0;i<bindings[a].key_count;++i)
+        if (bindings[a].keys[i].kind!=KIND_KEY) return 1;
     return 0;
+}
+
+/* The mouse buttons held or clicked since the last read (SDL_BUTTON_MASK), set by sample_host. */
+static uint32_t mouse_buttons;
+static int held_mods(const bool *k) {
+    if (!k) return 0;
+    return (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT] ? BIND_SHIFT : 0) |
+           (k[SDL_SCANCODE_LCTRL] || k[SDL_SCANCODE_RCTRL] ? BIND_CTRL : 0) |
+           (k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT] ? BIND_ALT : 0);
+}
+/* The input's modifiers are held and no held combination on the same key or button takes
+ * precedence over it: with Shift+Mouse Left bound, a click while Shift is down is not Mouse Left. */
+static int mods_match(const KeyInput *in, int mods) {
+    if ((in->mods & mods)!=in->mods) return 0;
+    for (int a=0;a<IN_COUNT;++a) for (int i=0;i<bindings[a].key_count;++i) {
+        const KeyInput *o=&bindings[a].keys[i];
+        if (o->kind==in->kind && o->code==in->code && o->mods!=in->mods &&
+            (o->mods & in->mods)==in->mods && (o->mods & mods)==o->mods) return 0;
+    }
+    return 1;
+}
+/* Wheel steps become short presses of their inputs, queued so that fast scrolling is not lost. */
+#define PULSE_ON_US 60000
+#define PULSE_GAP_US 50000
+#define PULSE_QUEUE 4
+static uint8_t pulse_queue[IN_COUNT];
+static uint64_t pulse_until[IN_COUNT];
+static void wheel_step(int direction, int mods) {
+    for (int a=0;a<IN_COUNT;++a) for (int i=0;i<bindings[a].key_count;++i) {
+        const KeyInput *in=&bindings[a].keys[i];
+        if (in->kind==KIND_WHEEL && in->code==direction && mods_match(in,mods)) {
+            if (pulse_queue[a]<PULSE_QUEUE) ++pulse_queue[a];
+            break;
+        }
+    }
+}
+static int pulse_held(int input, uint64_t now) {
+    if (now>=pulse_until[input] && pulse_queue[input]) {
+        --pulse_queue[input];
+        pulse_until[input]=now+PULSE_ON_US+PULSE_GAP_US;
+    }
+    return now+PULSE_GAP_US<pulse_until[input];
+}
+static int key_down(const bool *k, int input, uint64_t now) {
+    const int mods=held_mods(k);
+    for (int i=0;i<bindings[input].key_count;++i) {
+        const KeyInput *in=&bindings[input].keys[i];
+        if (in->kind==KIND_WHEEL || !mods_match(in,mods)) continue;
+        if (in->kind==KIND_KEY ? k && k[in->code] : (mouse_buttons & SDL_BUTTON_MASK(in->code))!=0) return 1;
+    }
+    return pulse_held(input,now);
 }
 /* The bound gamepad buttons' state; triggers as their analog value. */
 static int pad_value(SDL_Gamepad *g, int input) {
@@ -389,17 +544,106 @@ static int pad_value(SDL_Gamepad *g, int input) {
 static uint8_t key_axis(uint8_t value, int negative, int positive) {
     return negative || positive ? (uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0)) : value;
 }
+/* The left stick from the movement keys. Keys on both axes (a diagonal) put the stick on the circle a real
+ * stick travels, 45 degrees at 90 counts a side (127 * sqrt(1/2)), not in a corner of the square ((0,0) for W+A), 1.41
+ * times a full push: letting go of one key then dropped the push from 1.41 to 1.0 in one frame, which the
+ * game may read as the stick being let go (the sprint ends). Keys on one axis only, or opposing keys, and
+ * a gamepad's stick otherwise, keep key_axis. */
+#define DIAGONAL_COUNTS 90
+static void key_left_stick(PadData *d, int left, int right, int up, int down) {
+    if (left!=right && up!=down) {
+        d->left_x=(uint8_t)(128+(right ? DIAGONAL_COUNTS : -DIAGONAL_COUNTS));
+        d->left_y=(uint8_t)(128+(down ? DIAGONAL_COUNTS : -DIAGONAL_COUNTS));
+        return;
+    }
+    d->left_x=key_axis(d->left_x,left,right);
+    d->left_y=key_axis(d->left_y,up,down);
+}
 static void apply_keyboard(PadData *d, const bool *k) {
+    int held[IN_COUNT];
+    const uint64_t now=now_us();
+    for (int i=0;i<IN_COUNT;++i) held[i]=key_down(k,i,now);
     for (int i=IN_CROSS;i<=IN_RIGHT;++i)
-        if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && key_down(k,i)) d->buttons|=input_buttons[i];
-    if (key_down(k,IN_TOUCHPAD)) touch_click(d,0);
-    if (key_down(k,IN_TOUCHPAD_RIGHT)) touch_click(d,1);
-    if (key_down(k,IN_L2)) d->l2=255;
-    if (key_down(k,IN_R2)) d->r2=255;
-    d->left_x=key_axis(d->left_x,key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT));
-    d->left_y=key_axis(d->left_y,key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
-    d->right_x=key_axis(d->right_x,key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT));
-    d->right_y=key_axis(d->right_y,key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN));
+        if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && held[i]) d->buttons|=input_buttons[i];
+    if (held[IN_TOUCHPAD]) touch_click(d,0);
+    if (held[IN_TOUCHPAD_RIGHT]) touch_click(d,1);
+    if (held[IN_L2]) d->l2=255;
+    if (held[IN_R2]) d->r2=255;
+    key_left_stick(d,held[IN_MOVE_LEFT],held[IN_MOVE_RIGHT],held[IN_MOVE_UP],held[IN_MOVE_DOWN]);
+    d->right_x=key_axis(d->right_x,held[IN_LOOK_LEFT],held[IN_LOOK_RIGHT]);
+    d->right_y=key_axis(d->right_y,held[IN_LOOK_UP],held[IN_LOOK_DOWN]);
+}
+
+/* The mouse camera. With the hook (runtime_camhook.c) the window thread turns the camera at once,
+ * by 0.022 degrees a count x mouse_sensitivity (the scale of Source games, so their sensitivity
+ * carries over); the game's pitch grows looking down. */
+#define HOOK_RADIANS_PER_COUNT (0.022*3.14159265358979323846/180.0)
+static void mouse_turn(float dx, float dy, float *pitch, float *yaw) {
+    const double k=kbm.sensitivity*HOOK_RADIANS_PER_COUNT;
+    *yaw=(float)(dx*k);
+    *pitch=(float)(dy*k*(kbm.invert_y ? -1 : 1));
+}
+static void mouse_direct_turn(float dx, float dy) {
+    float pitch, yaw;
+    mouse_turn(dx,dy,&pitch,&yaw);
+    runtime_camhook_turn(pitch,yaw);
+}
+/* The stick fallback, when the camera hook cannot be installed (another game version, not
+ * Windows): the mouse as the right stick. The game turns the camera by the tilt, so the tilt
+ * follows the mouse speed (MOUSE_FULL_COUNTS_S counts a second at sensitivity 1 tilts it fully),
+ * averaged over MOUSE_SMOOTHING_MS because the game and the mouse sample at different rates
+ * and divided by the time between pad reads, so the frame rate does not change it. Tilts start
+ * at the game's deadzone (MOUSE_DEADZONE) so that the smallest motion still turns the camera. */
+#define MOUSE_FULL_COUNTS_S 500.0f
+#define MOUSE_SMOOTHING_MS 8.0f
+#define MOUSE_DEADZONE 0.25f
+typedef struct { float vx, vy; uint64_t last; } MouseStick; /* counts a second, smoothed; time of the last read */
+static uint8_t stick_byte(float v) {
+    const int x=128+(int)lroundf(v*(v<0 ? 128.0f : 127.0f));
+    return (uint8_t)(x<0 ? 0 : x>255 ? 255 : x);
+}
+static void mouse_stick_step(MouseStick *s, PadData *d, float dx, float dy, uint64_t now) {
+    float dt=s->last ? (float)(now-s->last)*1e-6f : 0.016f;
+    s->last=now;
+    dt=dt<0.0005f ? 0.0005f : dt>0.1f ? 0.1f : dt;
+    const float blend=1.0f-expf(-dt*1000.0f/MOUSE_SMOOTHING_MS);
+    s->vx+=(dx/dt-s->vx)*blend;
+    s->vy+=(dy/dt-s->vy)*blend;
+    const float sx=s->vx*kbm.sensitivity/MOUSE_FULL_COUNTS_S;
+    const float sy=s->vy*kbm.sensitivity/MOUSE_FULL_COUNTS_S*(kbm.invert_y ? -1.0f : 1.0f);
+    const float m=sqrtf(sx*sx+sy*sy);
+    if (m<0.02f) return;
+    const float tilt=MOUSE_DEADZONE+(1.0f-MOUSE_DEADZONE)*(m>1.0f ? 1.0f : m);
+    d->right_x=stick_byte(sx*tilt/m);
+    d->right_y=stick_byte(sy*tilt/m);
+}
+static void mouse_camera_start(void) {
+    if (!kbm.mouse_camera) { puts("Runtime: Mouse camera: off (mouse_camera=0)"); return; }
+    const char *why="";
+    if (runtime_camhook_install(kbm.no_auto_rotation,&why)) {
+        bbgpu_mouse_set_direct(mouse_direct_turn,runtime_camhook_drop);
+        puts("Runtime: Mouse camera: hook installed");
+    } else printf("Runtime: Mouse camera: stick fallback: %s\n",why);
+}
+/* What the window collected since the last read: the buttons, the wheel as short presses, and
+ * the motion that the stick fallback turns into tilt (the hook has had it from the window already). */
+static float mouse_dx, mouse_dy;
+static int mouse_captured;
+static void read_mouse(const bool *k) {
+    float wheel=0;
+    static float wheel_rest;
+    bbgpu_mouse_enable(kbm.mouse_camera || mouse_inputs_bound()); /* the window may open after the pad */
+    mouse_captured=bbgpu_mouse_take(&mouse_dx,&mouse_dy,&wheel,&mouse_buttons);
+    if (!mouse_captured) mouse_buttons=0;
+    wheel_rest=mouse_captured ? wheel_rest+wheel : 0;
+    const int mods=held_mods(k);
+    for (;wheel_rest>=1.0f;wheel_rest-=1.0f) wheel_step(1,mods);
+    for (;wheel_rest<=-1.0f;wheel_rest+=1.0f) wheel_step(-1,mods);
+}
+static void apply_mouse_stick(PadData *d, uint64_t now) {
+    static MouseStick stick;
+    if (mouse_captured && kbm.mouse_camera && !runtime_camhook_active()) mouse_stick_step(&stick,d,mouse_dx,mouse_dy,now);
+    else stick=(MouseStick){0}; /* the hook gets the motion from the window */
 }
 
 static void sample_host(PadData *d) {
@@ -410,7 +654,7 @@ static void sample_host(PadData *d) {
     d->connected=1; d->connected_count=connected_count ? connected_count : 1;
     d->timestamp=now_us();
     SDL_Gamepad *g=current_gamepad();
-    if (!bindings_ready) { load_bindings(); bindings_ready=1; }
+    ensure_bindings();
     if (bbgpu_overlay_captures_input()) return; /* settings menu open: neutral input */
     const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
     if (g) {
@@ -430,7 +674,7 @@ static void sample_host(PadData *d) {
         cal_sample(raw);
         uint8_t *axis_out[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};
         for (int i=0;i<4;++i)
-            *axis_out[i]=stick_axis(i,raw[i]); /* center 0 until the neutral is known */
+            *axis_out[i]=cal_have_center ? stick_axis(i,raw[i]) : 128; /* centred until the neutral is known */
         if (SDL_GetNumGamepadTouchpads(g)>0) {
             const int fingers=SDL_GetNumGamepadTouchpadFingers(g,0);
             for (int finger=0;finger<fingers && d->touch_count<2;++finger) {
@@ -446,7 +690,9 @@ static void sample_host(PadData *d) {
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
         if (touch_right) touch_click(d,1);
     }
+    read_mouse(k);
     if (k) apply_keyboard(d,k);
+    apply_mouse_stick(d,d->timestamp);
 }
 
 /* BB_PAD_FILE=<file>: scripted input for automated runs. The file holds whitespace-separated
@@ -633,7 +879,11 @@ static ABI int32_t pad_open(int32_t user, int32_t type, int32_t index, const voi
     int already=opened; opened=1;
     pthread_mutex_unlock(&lock);
     if (already) return ERR_ALREADY_OPENED;
-    puts("Runtime: pad opened for user 1 (SDL gamepad or keyboard)");
+    pthread_mutex_lock(&lock);
+    ensure_bindings();
+    pthread_mutex_unlock(&lock);
+    mouse_camera_start(); /* before the game's camera first runs */
+    puts("Runtime: pad opened for user 1 (SDL gamepad, keyboard and mouse)");
     return PAD_HANDLE;
 }
 static ABI int32_t pad_close(int32_t handle) {

@@ -13,6 +13,8 @@
 static int32_t guest_errno;
 int32_t *runtime_errno(void) { return &guest_errno; }
 int32_t runtime_guest_errno(int e) { return e; }
+void bbcoop_file_opened(const char *guest_path) { (void)guest_path; } /* co-op save slot: none here */
+void runtime_memory_note_write(uintptr_t address,uint64_t size) { (void)address; (void)size; }
 uintptr_t runtime_lookup(const RuntimeExport *table,size_t n,const char *name) {
     for (size_t i=0;i<n;++i) if (!strcmp(table[i].name,name)) return (uintptr_t)table[i].function;
     return 0;

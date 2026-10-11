@@ -17,6 +17,10 @@ import subprocess
 import sys
 
 PORT = Path(__file__).resolve().parent
+# Direct memory (BB_DMEM_MB, MiB) of a render size above 1080p, where patches.py also enlarges the
+# graphics heap ("Increased Graphics Heap Sizes").
+FULL_HD_PIXELS = 1920 * 1080
+HIGH_RESOLUTION_DMEM_MB = '9152'
 
 
 # Co-op: the community service that answers Bloodborne's own game-server requests
@@ -92,8 +96,11 @@ def run_script(name, *args, capture=False):
     script = ['--script'] if getattr(sys, 'frozen', False) else []
     command = [sys.executable, *script, str(PORT / 'scripts' / name), *map(str, args)]
     if capture:
+        # The script prints UTF-8 and this process reads UTF-8, not the Windows code page (a game
+        # folder or a user name with non-ASCII letters reaches the next step intact).
         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True,
-                                creationflags=no_console())
+                                encoding='utf-8', errors='replace', creationflags=no_console(),
+                                env={**os.environ, 'PYTHONIOENCODING': 'utf-8'})
         if result.returncode:
             sys.exit(result.returncode)
         return result.stdout
@@ -125,6 +132,12 @@ def ini_value(path, key):
     except OSError:
         pass
     return None
+
+
+def render_pixels(size):
+    """Pixels of a "WxH" render size (BB_RENDER_RES, as patches.py reads it), 0 when absent or malformed."""
+    match = re.fullmatch(r'\s*(\d+)\s*[xX]\s*(\d+)\s*', size or '')
+    return int(match.group(1)) * int(match.group(2)) if match else 0
 
 
 def find_executable(name):
@@ -164,10 +177,15 @@ def main():
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game} (set BB_GAME_DIR).')
     original_game = game.resolve()
+    # The launcher's button icons (a generated common.tpf.dcx) are a layer under the mods; its note says
+    # why they are off when it cannot make them.
+    icons = ['--icons-layer', env['BB_ICONS_DIR']] if env.get('BB_ICONS_DIR') else []
+    if env.get('BB_ICONS_NOTE'):
+        print(env['BB_ICONS_NOTE'])
     game = Path(run_script('mods.py', game, '--out', out,
                            '--mods-dir', env.get('BB_MODS_DIR', data / 'mods'),
                            '--config', env.get('BB_MODS_CONFIG', data / 'mods.json'),
-                           '--enabled', env.get('BB_MODS_ENABLED', '1'), capture=True).strip())
+                           '--enabled', env.get('BB_MODS_ENABLED', '1'), *icons, capture=True).strip())
     mod_view = game if game.resolve() != original_game else None
     try:
         run_script('prepare.py', game, '--out', out)
@@ -178,9 +196,9 @@ def main():
         # Patches exist for game version 01.09 only (patches.py applies none to others): other
         # versions keep the game's 30 FPS timing and change resolutions live.
         sys.path.insert(0, str(PORT / 'scripts'))
-        from patches import game_app_version
+        from patches import game_app_version, game_is_patched
         version = game_app_version(game)
-        patched = version in (None, '01.09') or bool(env.get('BB_FORCE_PATCHES'))
+        patched = game_is_patched(version, env)
         if not patched:
             print(f'Game version {version}: community patches need 01.09; 30 FPS, no effect patches')
         # Sizes chosen below for the previous launch are recomputed after an in-game restart.
@@ -200,16 +218,23 @@ def main():
             if live == 'auto':
                 caps = probe.parent / 'bb-gpu-capabilities.exe'
                 result = subprocess.run([str(caps), '--live-resolution'], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                        text=True, creationflags=no_console())
+                                        text=True, encoding='utf-8', errors='replace', creationflags=no_console())
                 live = result.stdout.strip() if result.returncode == 0 else '0'
             live = '1' if live == '1' or not patched else '0'
         if live == '1':
             print(f'Output {scaled_output}: live resolution changes (live_resolution=0: startup patch)')
         elif scaled_output:
             env.update(BB_RENDER_RES=scaled_render, BB_OUTPUT_RES=scaled_output, BB_AUTO_RENDER_RES='1')
-            env.setdefault('BB_DMEM_MB', '9152')
+            env.setdefault('BB_DMEM_MB', HIGH_RESOLUTION_DMEM_MB)
             print(f'Output {scaled_output}: scene {scaled_render}, direct memory {env["BB_DMEM_MB"]} MiB '
                   '(live_resolution=1: live changes)')
+        # An explicit render size (BB_RENDER_RES: the launcher, a test) skips the scaled path above,
+        # but patches.py still grows the graphics heap above 1080p: the direct memory has to follow,
+        # or the game stops at start (exit 139). A game without the patches keeps its memory.
+        pixels = render_pixels(env.get('BB_RENDER_RES'))
+        if patched and pixels > FULL_HD_PIXELS and not env.get('BB_DMEM_MB'):
+            env['BB_DMEM_MB'] = HIGH_RESOLUTION_DMEM_MB
+            print(f'Render {env["BB_RENDER_RES"]}: direct memory {env["BB_DMEM_MB"]} MiB')
         run_script('patches.py', '--out', out, '--fps', fps, '--extra', env.get('BB_PATCHES', ''),
                    '--settings', config, '--game-dir', game, '--render-res', env.get('BB_RENDER_RES', ''),
                    '--output-res', env.get('BB_OUTPUT_RES', ''),

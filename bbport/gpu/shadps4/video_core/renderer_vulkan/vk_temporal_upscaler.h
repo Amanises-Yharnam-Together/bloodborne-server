@@ -206,6 +206,8 @@ private:
                     bool hdr);
     /// bbport: XeSS selected and ready (libxess.dll, a GPU with DP4a).
     [[nodiscard]] bool UseXess() const;
+    /// The upscaler has no sharpening of its own: ExtraSharpen covers the menu's whole 0..2.
+    [[nodiscard]] bool FullRangeSharpen() const;
     /// Records XeSS into `cmdbuf` (output in General). `hdr`: linear scene color input.
     bool RecordXess(vk::CommandBuffer cmdbuf, const Xess::Resource& color,
                     const Xess::Resource& depth, u32 w, u32 h, u32 ow, u32 oh, bool hdr);
@@ -258,6 +260,8 @@ private:
     VideoCore::ImageId ldr_target{};
     VideoCore::ImageId ui_color{}, ui_depth{};
     bool ui_phase = false;         ///< from the upscale to the next display pass
+    const bool ui_trace_on = std::getenv("BB_UI_TRACE") != nullptr; ///< diagnostics
+    std::string ui_trace;
     bool display_redirect = false; ///< the display pass of an upscaled frame
     bool ui_read_barrier = false;
     VideoCore::UniqueImage ui_image;

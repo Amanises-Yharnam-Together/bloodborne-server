@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect an already plaintext PS4 SELF; prepare a native entry-point probe.
+"""Inspect an already plaintext PS4 SELF or ELF; prepare a native entry-point probe.
 
 No decryption, patches to source files, third-party modules or Python dependencies.
 Format references are linked in README.md. All offsets are checked before use.
@@ -27,7 +27,7 @@ def unpack(fmt, data, offset):
 
 
 def parse_elf(data):
-    """A plain ELF (some dumpers write the executable without the SELF wrapper)."""
+    """A plain ELF: some dumpers write the executable without the SELF wrapper (#49)."""
     header = unpack('<16sHHIQQQIHHHHHH', data, 0)
     if header[0][:7] != b'\x7fELF\x02\x01\x01' or header[2] != 62:
         raise ValueError("expected little-endian x86-64 ELF")
@@ -139,6 +139,14 @@ def inspect_libc(path):
                                              code_sha256=hashlib.sha256(code).hexdigest(),
                                              name='_ZNSt8ios_base4InitC1Ev')
     return evidence
+
+
+def replace_unencodable_output():
+    """A zh/ja/ko (or any non-UTF-8) console cannot encode the title's trademark sign (#55):
+    print a replacement character rather than stop."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(errors='replace')
 
 
 class GameCheckError(Exception):
@@ -266,8 +274,7 @@ def prepare(game, out):
                   resources=dict(resources), resource_bytes=total_bytes,
                   status='Prepared only; execution and Vulkan are tested separately.')
     (out / 'analysis.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    # A zh/ja/ko Windows console cannot encode the title's trademark sign (#55).
-    sys.stdout.reconfigure(errors='replace')
+    replace_unencodable_output()
     print(f"{report['sfo'].get('TITLE')} | entry={header[4]:#x} | image={size:,} bytes")
     print(f"{len(names)} imported symbols; {sum(counts.values()):,} relocations; {len(report['needed'])} required modules")
     if missing:
@@ -281,9 +288,7 @@ if __name__ == '__main__':
     parser.add_argument('game', type=Path)
     parser.add_argument('--out', type=Path, default=Path(__file__).resolve().parent.parent / 'out')
     args = parser.parse_args()
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, 'reconfigure'):
-            stream.reconfigure(errors='replace')  # the title has a ™; consoles in GBK etc.
+    replace_unencodable_output()
     try:
         prepare(args.game, args.out)
     except GameCheckError as error:

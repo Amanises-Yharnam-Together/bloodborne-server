@@ -37,6 +37,12 @@ import zipfile
 FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
+sys.path.insert(0, str(PORT_DIR / 'tools'))  # fetch_fsr4vk.py in a source tree; the frozen launcher bundles it
+try:
+    import fetch_fsr4vk  # noqa: E402
+    FETCH_FSR4VK_ERROR = ''
+except Exception as _error:  # a missing or broken helper turns off the FSR 4.1.1 download only
+    fetch_fsr4vk, FETCH_FSR4VK_ERROR = None, f'{type(_error).__name__}: {_error}'
 DATA_DIR = Path(os.environ.get('BB_DATA_DIR', PORT_DIR))
 # Co-op test build: its own settings, and no updates (a public release would replace it).
 # This repository's build carries the seamless co-op, which upstream releases don't.
@@ -49,12 +55,79 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # This build; GitHub release tags are windows-v<VERSION>.
 # Co-op: the community server that answers the game's own server requests.
 COMMUNITY_SERVER = 'https://thehuntersdream.com'
-VERSION = '1.6.16'
-RELEASES_API = 'https://api.github.com/repos/AdrianCsT/bloodborne_pc/releases/latest'
-RELEASES_PAGE = 'https://github.com/AdrianCsT/bloodborne_pc/releases/latest'
+VERSION = '1.7.1'
+# GitHub's /releases list leaves nothing out (pre-releases included); /releases/latest hides them.
+RELEASES_PER_PAGE = 100
+RELEASE_PAGES = 3  # newest first; more than 300 newer entries of other tags would be a repository gone wrong
+# By repository id, not owner/name: the id survives a rename of the owner, and whoever later takes an old
+# owner name (AdrianCsT was renamed to 0xCydral) cannot serve releases to this launcher.
+RELEASES_API = f'https://api.github.com/repositories/1409457490/releases?per_page={RELEASES_PER_PAGE}'
+RELEASES_PAGE = 'https://github.com/0xCydral/bloodborne_pc/releases/latest'
+PACKAGE_ASSET = 'bbport-windows.zip'  # a release can carry other zips too (the fsr4vk build and its source)
+TAG_PREFIX = 'windows-v'
+
+
+def version_tuple(text):
+    """A sort key for '1.6.16', '1.7.0-beta.1', 'windows-v1.7.0' or a game version such as '01.09': the
+    numbers, then 1 for a final release and 0 for a pre-release (so 1.7.0 is above 1.7.0-beta.2), then
+    the pre-release parts (beta.10 above beta.2, rc above beta)."""
+    match = re.match(r'\D*?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?', text or '')
+    numbers = tuple(int(part) for part in match.group(1).split('.')) if match else ()
+    numbers += (0,) * (4 - len(numbers))
+    parts = tuple((0, int(part), '') if part.isdigit() else (1, 0, part)
+                  for part in ((match and match.group(2)) or '').split('.') if part)
+    return numbers, 0 if parts else 1, parts
+
+
+def is_prerelease(version):
+    return version_tuple(version)[1] == 0
+
+
+def release_version(tag):
+    """'1.7.0-beta.1' from the tag 'windows-v1.7.0-beta.1'."""
+    return re.sub(r'^(?:windows-)?v', '', tag or '')
+
+
+def newest_release(releases, beta):
+    """(version, zip URL, page URL) of the newest release in RELEASES (GitHub's /releases list) that
+    this launcher may offer: stable ones, and pre-releases only when BETA. None when there is none.
+    Only windows-v<version> tags count; drafts never do."""
+    if not isinstance(releases, list):
+        raise ValueError('GitHub did not return a list of releases')
+    best = None
+    for release in releases:
+        tag = release.get('tag_name') if isinstance(release, dict) else None
+        if not isinstance(tag, str) or not tag.startswith(TAG_PREFIX) or release.get('draft'):
+            continue
+        version = release_version(tag)
+        if (release.get('prerelease') or is_prerelease(version)) and not beta:
+            continue
+        if best is None or version_tuple(version) > version_tuple(best[0]):
+            assets = release.get('assets')
+            package = next((asset for asset in assets if isinstance(asset, dict) and isinstance(asset.get('name'), str)
+                            and asset['name'].lower() == PACKAGE_ASSET), None) if isinstance(assets, list) else None
+            # no package, no URL: install_update then opens the release page instead of installing another zip
+            best = (version, package.get('browser_download_url') if package else None, release.get('html_url') or RELEASES_PAGE)
+    return best
+
+
+def fetch_update_release(beta=False):
+    """newest_release() of the releases GitHub lists now (raises OSError or ValueError on a failure).
+    The list holds every tag, newest first: it is read page by page until a page has a release this
+    launcher may offer, so a run of newer entries of other tags cannot hide it."""
+    for page in range(1, RELEASE_PAGES + 1):
+        request = urllib.request.Request(f'{RELEASES_API}&page={page}',
+                                         headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'bbport-launcher'})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            releases = json.load(response)
+        found = newest_release(releases, beta)
+        if found or len(releases) < RELEASES_PER_PAGE:
+            return found
+    return None
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'bbport-update'
-# Never copied over an installation by an update (the package does not hold them either).
-USER_FILES = ('user', 'out', 'mods', 'bbport.ini', 'mods.json', 'patches.json', 'last_run.log')
+# Never copied over an installation by an update (the package does not hold them either). fsr4vk is the
+# experimental FSR 4.1.1 download (fsr4vk_dir()).
+USER_FILES = ('user', 'out', 'mods', 'bbport.ini', 'mods.json', 'patches.json', 'last_run.log', 'fsr4vk')
 # ReShade (packaging/windows/package.sh): turned on per game run through the Vulkan loader's layer
 # variables, see game_environment().
 RESHADE_DIR = PORT_DIR / 'bin' / 'reshade'
@@ -113,6 +186,8 @@ def run_command():
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bbport_lang  # noqa: E402
+import bbport_controls  # noqa: E402
+import bbport_steam  # noqa: E402
 
 LANG = 'en'
 
@@ -151,7 +226,7 @@ EFFECTS = [
 ]
 EXTRAS = [
     ('skip_intro', ('Skip the intro logos and movie', 'Пропуск заставок при запуске'), False),
-    ('debug_camera', ('Free camera (hold Cross + L3; keyboard Space + Z)', 'Свободная камера (Cross + L3 / Space + Z)'), False),
+    ('debug_camera', ('Free camera (hold Cross + L3; keyboard E + C)', 'Свободная камера (Cross + L3 / E + C)'), False),
     ('debug_menu', ('Game debug menu (left touchpad / Tab; needs the debug fonts)',
                     'Debug menu (левый touchpad / Tab; нужны шрифты)'), False),
 ]
@@ -172,12 +247,31 @@ TWEAKS = [
     ('tweak_ragdoll', ('Dark Souls-style ragdoll physics (corpses fly further)',
                        'Физика тел как в Dark Souls (тела отлетают дальше)'), False),
 ]
-INI_FLAGS = {'sharpen', 'object_motion', 'frame_generation', 'show_fps', 'hdr', *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS)}
+INI_FLAGS = {'sharpen', 'object_motion', 'frame_generation', 'show_fps', 'hdr', 'mouse_camera', 'mouse_invert_y',
+             'mouse_no_auto_rotation', *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS)}
+INI_FLOATS = {'sharpness', 'mouse_sensitivity'}  # written with two decimals
 INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'frame_generation': '0', 'show_fps': '1',
                 'output_res': '1920x1080', 'model_lod': '0',
                 'live_resolution': 'auto', 'window_mode': 'windowed', 'hdr': '0',
+                'button_icons': bbport_controls.ICON_DEFAULT, **bbport_controls.MOUSE_DEFAULTS,
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS}}
+INI_FLOAT_RANGES = {'sharpness': (0.0, 2.0), 'mouse_sensitivity': bbport_controls.MOUSE_SENSITIVITY_RANGE}
+
+
+def ini_float(key, value):
+    """A saved float setting as a number: the default when it is not a finite number, else clamped to the range
+    the runtime accepts (nan passes both comparisons of a clamp)."""
+    try:
+        number = float(value)
+    except ValueError:
+        number = math.nan
+    if not math.isfinite(number):
+        return float(INI_DEFAULTS[key])
+    low, high = INI_FLOAT_RANGES[key]
+    return min(max(number, low), high)
+
+
 APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'), 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'player_name': '', 'fullscreen': False, 'hdr': False, 'present_mode': 'Mailbox',
@@ -187,12 +281,17 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'check_updates': True, 'ui_advanced': False, 'animations': True,
                 'addcont': '', 'pkg_dir': '', 'pkg_src': '', 'reshade': False, 'online': False, 'online_server': 'srv.shadps4.net:31313',
                 'online_webapi': '', 'online_npid': '', 'online_password': '', 'online_upnp': True,
-                'online_community': COMMUNITY_SERVER}
+                'online_community': COMMUNITY_SERVER,
+                'beta_versions': is_prerelease(VERSION),  # a beta user keeps getting betas unless they say no
+                'experimental': False, 'object_motion_amd': False, 'monitor': '',  # monitor: a name from --displays; '' is the primary
+                'gamepad': '', 'gamepad_name': ''}  # gamepad: a GUID from --gamepads (BB_GAMEPAD); '' takes the first one
+
+SIDE_BUTTONS = [(0x05, 'Mouse X1'), (0x06, 'Mouse X2')]  # virtual keys of the mouse's side buttons
 
 UPSCALERS = [('dlss', ('DLSS (NVIDIA GeForce RTX)',)),
              ('xess', ('XeSS (Intel, any recent GPU)', 'XeSS (Intel, любая современная видеокарта)')),
              ('fsr4', ('FSR 4 (best quality)', 'FSR 4 (лучшее качество)')),
-             ('fsr411', ('FSR 4.1.1 (needs fsr4_411 assets)', 'FSR 4.1.1 (нужны ассеты fsr4_411)')),
+             ('fsr411', ('FSR 4.1.1 (experimental)', 'FSR 4.1.1 (экспериментально)')),
              ('fsr3', ('FSR 3.1 (every GPU)', 'FSR 3.1 (любая видеокарта)')),
              ('taa', ('TAA (native resolution anti-aliasing)', 'TAA (нативное сглаживание)')),
              ('off', ('Off', 'Выключен'))]
@@ -358,6 +457,82 @@ def fsr4_missing():
     return [name for name in fsr4_files() if not (folder / name).is_file() or not (folder / name).stat().st_size]
 
 
+# FSR 4.1.1 on Windows (experimental): the game loads fsr4vk's DLL at run time (tools/fetch_fsr4vk.py
+# downloads it). It is not in the package; it lives in a folder of the install that updates keep.
+FSR4VK_FILES_REASON = 'FSR 4.1.1 files are not downloaded'  # also what bb-gpu-capabilities --upscalers says
+FSR4VK_OFF_REASON = 'switched off (BB_FSR4VK=0)'  # likewise: the tool obeys BB_FSR4VK, which says nothing of the PC
+FSR4VK_EXPERIMENTAL_REASON = 'turn on Experimental features in Advanced'
+
+
+def fsr4vk_dir():
+    return PORT_DIR / 'fsr4vk'
+
+
+def fsr4vk_shown(*more):
+    """fsr4vk_dir() (and what is below it) as the FSR 4.1.1 card shows it: 'fsr4vk\\LICENSES', relative to
+    the install; short_path() when the folder is elsewhere."""
+    path = fsr4vk_dir().joinpath(*more)
+    try:
+        return str(path.relative_to(PORT_DIR))
+    except ValueError:
+        return short_path(path)
+
+
+def fsr4vk_present():
+    """True when the provider DLL is in fsr4vk_dir(); the game and bb-gpu-capabilities check no more
+    than that (the download itself is verified by SHA-256)."""
+    return (fsr4vk_dir() / 'amd_fidelityfx_upscaler_vk.dll').is_file()
+
+
+FSR4VK_VERDICT = None  # (stamp of the pinned files, files_ok()): a 17.6 MB hash is not repeated for the same files
+
+
+def fsr4vk_stamp():
+    """Name, size and mtime of every pinned file; None when one is missing."""
+    stamp = []
+    for _member, name, _size, _sha in fetch_fsr4vk.FILES:
+        try:
+            info = (fsr4vk_dir() / name).stat()
+        except OSError:
+            return None
+        stamp.append((str(fsr4vk_dir() / name), info.st_size, info.st_mtime_ns))
+    return tuple(stamp)
+
+
+def fsr4vk_outdated(wait=True):
+    """True when the provider DLL is in fsr4vk_dir() but the folder is not the pinned build (the original
+    upstream DLL, which fails on AMD's driver; the game keeps using it). Hashes the files once per change;
+    with wait=False it returns None instead of hashing a stamp it has not seen. Hashing takes tens of ms."""
+    global FSR4VK_VERDICT
+    if fetch_fsr4vk is None or not fsr4vk_present():
+        return False
+    stamp = fsr4vk_stamp()
+    if stamp is None:
+        return True
+    if not FSR4VK_VERDICT or FSR4VK_VERDICT[0] != stamp:
+        if not wait:
+            return None
+        FSR4VK_VERDICT = (stamp, fetch_fsr4vk.files_ok(fsr4vk_dir()))
+    return not FSR4VK_VERDICT[1]
+
+
+def fsr4vk_download_problem():
+    """Why the download cannot run in this build ('' when it can): tools/fetch_fsr4vk.py did not import."""
+    return f'the download helper did not load ({FETCH_FSR4VK_ERROR})' if fetch_fsr4vk is None else ''
+
+
+def download_fsr4vk(progress=None):
+    """Downloads the pinned fsr4vk release into fsr4vk_dir(); progress(done, total) is optional. Returns
+    '' or the reason it failed. Run it off the window's thread."""
+    if fsr4vk_download_problem():
+        return fsr4vk_download_problem()
+    try:
+        fetch_fsr4vk.fetch(fsr4vk_dir(), progress)
+    except (fetch_fsr4vk.FetchError, OSError) as error:
+        return str(error)
+    return ''
+
+
 UPSCALER_LINE = re.compile(r'^UPSCALER (\w+) (supported|unsupported)(?:: (.*))?$')
 
 
@@ -372,9 +547,113 @@ def parse_upscaler_support(output):
     return support
 
 
-def upscaler_state(name, support, assets_missing):
+def gpu_tool():
+    """(bb-gpu-capabilities.exe, the environment to run it with): the packaged copy, else out/."""
+    exe = PORT_DIR / 'bin' / 'bb-gpu-capabilities.exe'
+    if not exe.is_file():
+        exe = PORT_DIR / 'out' / 'bb-gpu-capabilities.exe'
+    env = dict(os.environ)
+    env['BB_FSR4VK_DIR'] = str(fsr4vk_dir())  # where the check looks for the experimental FSR 4.1.1 files
+    env.pop('BB_FSR4VK', None)  # the check asks what the PC can run; the launcher's own switch decides the rest
+    if not (exe.parent / 'SDL3.dll').is_file():
+        clang64 = Path(os.environ.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
+        env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
+    return exe, env
+
+
+def parse_displays(output):
+    """The monitors of `bb-gpu-capabilities --displays`: one tab-separated line each (number from 1,
+    name, WxH, refresh Hz or 0, primary 1/0). Lines that do not fit are skipped."""
+    monitors = []
+    for line in output.splitlines():
+        fields = line.rstrip('\r\n').split('\t')
+        if len(fields) == 5 and fields[0].isdigit() and fields[3].isdigit() and fields[1].strip():
+            monitors.append({'number': int(fields[0]), 'name': fields[1].strip(), 'size': fields[2],
+                             'hz': int(fields[3]), 'primary': fields[4] == '1'})
+    return monitors
+
+
+def display_label(monitor):
+    """'2: DELL U2417H, 1920x1080, 60 Hz' (no Hz part when the refresh rate is unknown)."""
+    parts = [f"{monitor['number']}: {monitor['name']}", monitor['size']]
+    if monitor['hz']:
+        parts.append(f"{monitor['hz']} Hz")
+    return ', '.join(parts)
+
+
+_displays = None
+
+
+def connected_displays():
+    """The monitors the game would see, asked of bb-gpu-capabilities once per run ([] when it fails).
+    Run it off the window's thread."""
+    global _displays
+    if _displays is None:
+        _displays = []
+        exe, env = gpu_tool()
+        try:
+            result = subprocess.run([str(exe), '--displays'], capture_output=True, text=True, encoding='utf-8',
+                                    errors='replace', timeout=30, env=env, creationflags=NO_WINDOW)
+            if result.returncode == 0:
+                _displays = parse_displays(result.stdout)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return _displays
+
+
+def parse_gamepads(output):
+    """[(GUID, name)] from `bb-gpu-capabilities --gamepads`: one "GUID<TAB>name" line each; others are skipped."""
+    pads = []
+    for line in output.splitlines():
+        guid, tab, name = line.rstrip('\r\n').partition('\t')
+        if tab and guid.strip() and name.strip():
+            pads.append((guid.strip(), name.strip()))
+    return pads
+
+
+def list_gamepads():
+    """The gamepads the game would see (SDL asks, as the game does), or None when the tool cannot run.
+    Run it off the window's thread."""
+    exe, env = gpu_tool()
+    if not exe.is_file():
+        return None
+    try:
+        result = subprocess.run([str(exe), '--gamepads'], capture_output=True, text=True, encoding='utf-8',
+                                errors='replace', timeout=30, env=env, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return parse_gamepads(result.stdout) if result.returncode == 0 else None
+
+
+def gamepad_options(pads, saved, saved_name):
+    """[(value, text)] of the controller dropdown: Automatic first, the connected gamepads, and the saved
+    choice while it is not connected (it is used as soon as it connects)."""
+    options = [('', _('Automatic (first connected)', 'Авто (первый подключённый)'))] + list(pads)
+    if saved and saved not in [value for value, _text in options]:
+        options.append((saved, _('{} (not connected)', '{} (не подключён)').format(saved_name or saved)))
+    return options
+
+
+def fsr411_state(support, experimental, files_present):
+    """('ok' | 'no', reason) of the experimental FSR 4.1.1: a GPU that cannot run it keeps its own reason,
+    then it needs Experimental features, then the downloaded files (also when the check ran before them).
+    A verdict that only says the files are missing, or that BB_FSR4VK=0 switched it off, describes the
+    moment and environment of that check and not the GPU, so it is not held against it."""
+    verdict = (support or {}).get('fsr411')
+    if verdict and not verdict[0] and verdict[1] not in (FSR4VK_FILES_REASON, FSR4VK_OFF_REASON):
+        return 'no', verdict[1]
+    if not experimental:
+        return 'no', FSR4VK_EXPERIMENTAL_REASON
+    if not files_present:
+        return 'no', FSR4VK_FILES_REASON
+    return 'ok', ''
+
+
+def upscaler_state(name, support, assets_missing, experimental=False, fsr4vk_files=False):
     """('ok' | 'slow' | 'no', reason) of one upscaler. support is None until the GPU check has run (and
     when it could not): then only the missing FSR 4 assets are known."""
+    if name == 'fsr411':
+        return fsr411_state(support, experimental, fsr4vk_files)
     verdict = (support or {}).get(name)
     if verdict and not verdict[0]:
         return 'no', verdict[1]
@@ -386,11 +665,13 @@ def upscaler_state(name, support, assets_missing):
 
 
 UPSCALER_REASONS_RU = {
+    FSR4VK_FILES_REASON: 'файлы FSR 4.1.1 не скачаны',
+    FSR4VK_EXPERIMENTAL_REASON: 'включите «Экспериментальные функции» в «Дополнительно»',
     'download the FSR 4 assets in Graphics': 'скачайте ассеты FSR 4 на вкладке «Графика»',
     'may be slow on this GPU': 'на этой видеокарте может быть медленно',
     'the GPU or driver lacks the INT8 features FSR 4 needs': 'видеокарте или драйверу не хватает INT8, нужного FSR 4',
-    'needs VK_VALVE_shader_mixed_float_dot_product (Linux driver)':
-        'нужно VK_VALVE_shader_mixed_float_dot_product (драйвер Linux)',
+    'needs a Vulkan extension that no Windows driver is known to support yet':
+        'нужно расширение Vulkan, которое пока не поддерживает ни один известный драйвер Windows',
     'not an NVIDIA RTX GPU': 'не видеокарта NVIDIA RTX',
     'bbport_dlss.dll and nvngx_dlss.dll are not installed': 'bbport_dlss.dll и nvngx_dlss.dll не установлены',
     'this GPU or driver does not support DLSS (GeForce RTX needed)':
@@ -406,9 +687,33 @@ def reason_text(reason):
     return _(reason, UPSCALER_REASONS_RU.get(reason))
 
 
+def object_motion_hint(experimental):
+    """The note under 'Object motion vectors'. On AMD graphics cards the game keeps it off, unless
+    Experimental features (Advanced) is on and the player turns on the AMD switch below it."""
+    note = (_('(experimental) On AMD graphics cards it cost frame rate and drew some objects wrong with frame '
+              'generation, so it stays off there unless you turn on the switch below.',
+              '(экспериментально) На видеокартах AMD это снижало FPS и неправильно рисовало некоторые объекты с '
+              'генерацией кадров, поэтому там оно выключено, пока вы не включите переключатель ниже.') if experimental else
+            _('Off on AMD graphics cards: there it cost frame rate and drew some objects wrong with frame generation.',
+              'На видеокартах AMD выключено: там снижало FPS и неправильно рисовало некоторые объекты с генерацией кадров.'))
+    return _('Less ghosting on characters, cloth and weapons; costs about 10% FPS.',
+             'Меньше гостинга на персонажах и одежде; стоит около 10% FPS.') + ' ' + note
+
+
 def best_upscaler(support):
     """The upscaler a PC falls back to when the saved one cannot run: DLSS on an RTX GPU, else FSR 3.1."""
     return 'dlss' if (support or {}).get('dlss', (False, ''))[0] else 'fsr3'
+
+
+def upscaler_fallback(current, support, experimental, fsr4vk_files):
+    """(better, reason) when the saved upscaler cannot run on this PC, else None. Only what the GPU
+    check or the FSR 4.1.1 rules rule out counts: a missing FSR 4 download is left to the game."""
+    if current == 'fsr411':
+        state, reason = fsr411_state(support, experimental, fsr4vk_files)
+    else:
+        verdict = (support or {}).get(current)
+        state, reason = ('no', verdict[1]) if verdict and not verdict[0] else ('ok', '')
+    return (best_upscaler(support), reason) if state == 'no' else None
 
 
 def load_json(path, default):
@@ -446,20 +751,27 @@ def migrate_display_settings(ini, lines, app):
 
 
 def save_ini(values, lines):
-    """Rewrites the edited keys in place, appends missing ones, keeps comments and other keys."""
+    """Rewrites the edited keys in place, appends missing ones, keeps comments and other keys. A key
+    whose value is None is removed (a control back to its default)."""
     written, out = set(), []
     for line in lines:
         if '=' in line and not line.lstrip().startswith('#'):
             key = line.split('=', 1)[0].strip()
             if key in values:
-                out.append(f'{key}={values[key]}')
+                if values[key] is not None:
+                    out.append(f'{key}={values[key]}')
                 written.add(key)
                 continue
         out.append(line)
     if not lines:
         out.append('# bbport settings (in-game menu: Insert / L3+R3)')
-    out += [f'{key}={value}' for key, value in values.items() if key not in written]
+    out += [f'{key}={value}' for key, value in values.items() if key not in written and value is not None]
     ini_path().write_text('\n'.join(out) + '\n', encoding='utf-8')
+
+
+def ini_values(ini):
+    """What collect() saves: the launcher's own bbport.ini keys and the controls (key.* / pad.*)."""
+    return {**{key: ini[key] for key in INI_DEFAULTS}, **bbport_controls.ini_updates(ini)}
 
 
 def game_info(folder):
@@ -573,6 +885,40 @@ def set_reshade_preset(name):
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
+def icons_environment(s, ini):
+    """The environment entries of the button icons for one Play: BB_ICONS_DIR (a folder run.py puts under the mods,
+    holding a common.tpf.dcx generated from the player's own copy, see bbport_icons.py) and BB_ICONS_NOTE (a line for
+    the log). The icon set is resolved now, from the controller connected: it stays until the next start. {} when the
+    game keeps its own icons (PlayStation, or no game file to redraw)."""
+    choice = ini.get('button_icons', INI_DEFAULTS['button_icons'])
+    if choice not in [value for value, _text in bbport_controls.ICON_CHOICES]:
+        choice = bbport_controls.ICON_DEFAULT
+    game = Path(s['game_dir'])
+    if choice == 'playstation' or not (game / 'dvdroot_ps4' / 'menu' / 'common.tpf.dcx').is_file():
+        return {}
+    pads = list_gamepads() if choice == 'auto' else []
+    icon_set = bbport_controls.resolve_icon_set(choice, pads, str(s.get('gamepad', '')).strip())
+    if icon_set == 'playstation':
+        return {}
+    try:
+        import bbport_icons
+        import mods
+    except ImportError as error:  # a source tree without Pillow
+        return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
+    try:
+        note = mods.icons_note(mods.user_layers(game, s['mods_dir'] or DATA_DIR / 'mods', DATA_DIR / 'mods.json',
+                                                '1' if s['mods_enabled'] else '0'))
+        if note:
+            return {'BB_ICONS_NOTE': note}
+        folder, built, kept = bbport_icons.ensure_layer(game, DATA_DIR / 'out', icon_set, ini)
+    except Exception as error:  # nothing about the icons may stop the game from starting
+        return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
+    note = f'Button icons: {icon_set} ({"made" if built else "from the cache"})'
+    if kept:
+        note += f'; {kept} baked buttons kept their PlayStation art'
+    return {'BB_ICONS_DIR': str(folder), 'BB_ICONS_NOTE': note}
+
+
 def game_environment(s, frame_generation=None):
     """The environment of the game. Frame generation is read from bbport.ini unless the caller knows it."""
     ini = load_ini()[0]
@@ -589,6 +935,9 @@ def game_environment(s, frame_generation=None):
     env['BB_MODS_DIR'] = s['mods_dir'] or str(DATA_DIR / 'mods')
     env['BB_MODS_CONFIG'] = str(DATA_DIR / 'mods.json')
     env['BB_MODS_ENABLED'] = '1' if s['mods_enabled'] else '0'
+    env.pop('BB_ICONS_DIR', None)  # only this launch's choice counts, not one inherited from an earlier run
+    env.pop('BB_ICONS_NOTE', None)
+    env.update(icons_environment(s, ini))
     env['BB_PATCHES_DIR'] = s['patches_dir'] or str(DATA_DIR / 'patches')
     env['BB_PATCHES_CONFIG'] = str(DATA_DIR / 'patches.json')
     env['BB_LANGUAGE'] = s['language']
@@ -597,7 +946,11 @@ def game_environment(s, frame_generation=None):
     if str(s.get('addcont', '')).strip():
         env['BB_ADDCONT'] = str(s['addcont']).strip()
     # Window mode and HDR are bbport.ini keys (window_mode, hdr) the game reads itself.
+    if str(s.get('monitor', '')).strip():  # the game opens on the primary monitor when this one is gone
+        env['BB_DISPLAY'] = str(s['monitor']).strip()
     env['BB_PRESENT_MODE'] = s['present_mode']
+    if str(s.get('gamepad', '')).strip():  # runtime_pad.c takes this one of the connected gamepads (GUID or part of the name)
+        env['BB_GAMEPAD'] = str(s['gamepad']).strip()
     env['BB_FPS'] = s['fps_mode']
     cap = frame_cap_value(s.get('frame_cap', ''), frame_generation, display_refresh())
     if cap:
@@ -609,6 +962,20 @@ def game_environment(s, frame_generation=None):
                       ('vk_validation', 'BB_VK_VALIDATION')):
         if s[key]:
             env[name] = '1'
+    # The game forces object motion vectors off on AMD under Windows (they cost FPS and broke objects with
+    # frame generation) unless it is told otherwise; it reads this only on AMD, so the variable does nothing
+    # on other GPUs. The player asks for it with its own switch, which needs Experimental features: the
+    # Experimental switch alone, or a saved object_motion=1, never turns it on.
+    if s.get('experimental') and s.get('object_motion_amd') \
+            and ini.get('object_motion', INI_DEFAULTS['object_motion']) == '1':
+        env['BB_OBJECT_MOTION_AMD'] = '1'
+    # FSR 4.1.1 (fsr4vk) is experimental: its DLL sits in the install's fsr4vk folder and is loaded only
+    # while the switch is on.
+    env['BB_FSR4VK_DIR'] = str(fsr4vk_dir())
+    if not s.get('experimental'):
+        env['BB_FSR4VK'] = '0'
+    else:
+        env.pop('BB_FSR4VK', None)  # the switch decides: an inherited 0 would leave the dropdown on and the game off
     for item in str(s['extra_env']).split():
         if '=' in item:
             key, value = item.split('=', 1)
@@ -1766,7 +2133,8 @@ class Launcher:
         self.reshade_preset = tk.StringVar(value=get_reshade_preset() if reshade_ready() else '')
         self.reshade_started, self.reshade_refreshers = self.reshade_preset.get(), []
         self.process = self.job = None
-        self.downloading = False
+        self.downloading = self.downloading_fsr4vk = self.fsr4vk_hashing = self.rechecking = False
+        self.close_scheduled = False  # "Close the launcher when the game starts" is armed once per run
         self.installing, self.install_proc, self.install_cancel = False, None, threading.Event()
         self.install_card = self.install_hide = self.pkg_dialog = None
         self.output = queue.Queue()
@@ -1778,6 +2146,13 @@ class Launcher:
         self.ui_calls = queue.Queue()  # work for the Tk thread from helper threads
         self.mod_order, self.mod_vars, self.patch_vars = [], {}, {}
         self.cards, self.hot_card, self.measures = set(), None, {}
+        # Controls page: the row waiting for a key, the rows' widgets, the gamepads SDL listed (None: not asked; False:
+        # the list could not be read), and the message under the card.
+        self.capturing, self.control_rows, self.gamepads, self.listing_gamepads = None, {}, None, False
+        # A Shift, Ctrl or Alt pressed while an input waits: bound when it is let go, unless a mouse input comes
+        # first (then it is the combination's modifier); the side buttons held when the wait began.
+        self.pending_modifier, self.side_buttons_down, self.side_poll = None, set(), None
+        self.controls_message = None
         root.title('Bloodborne — bbport')
         root.configure(bg=BG)
         self.dpi = root.winfo_fpixels('1i') / 96.0
@@ -1883,8 +2258,8 @@ class Launcher:
                 value = self.ini.get(key, INI_DEFAULTS[key])
                 if key in INI_FLAGS:
                     v = tk.BooleanVar(value=value == '1')
-                elif key == 'sharpness':
-                    v = tk.DoubleVar(value=float(value or 0.5))
+                elif key in INI_FLOATS:
+                    v = tk.DoubleVar(value=ini_float(key, value))
                 else:
                     v = tk.StringVar(value=value)
             else:
@@ -1916,9 +2291,11 @@ class Launcher:
         return box
 
     def upscaler_states(self):
-        """{upscaler: (state, reason)} for the dropdown, from the GPU check and the FSR 4 assets."""
-        missing = bool(fsr4_missing())
-        return {value: upscaler_state(value, self.upscaler_support, missing) for value, _t in UPSCALERS}
+        """{upscaler: (state, reason)} for the dropdown, from the GPU check, the FSR 4 assets and, for
+        the experimental FSR 4.1.1, the Experimental features switch and its downloaded files."""
+        missing, experimental, files = bool(fsr4_missing()), bool(self.var('experimental', 'app').get()), fsr4vk_present()
+        return {value: upscaler_state(value, self.upscaler_support, missing, experimental, files)
+                for value, _t in UPSCALERS}
 
     def upscaler_choice(self, parent, width=None):
         """The Upscaler dropdown. What this PC cannot run reads 'FSR 4.1.1 (not available: reason)', is
@@ -1974,16 +2351,18 @@ class Launcher:
         return box
 
     def apply_upscaler_support(self):
-        """After the GPU check or the FSR 4 download: re-mark the dropdowns; a saved upscaler the GPU
-        cannot run becomes the best one that works (DLSS on an RTX GPU, else FSR 3.1), said once."""
+        """After the GPU check, the FSR 4 download, or a change of Experimental features: re-mark the
+        dropdowns; a saved upscaler this PC cannot run (the GPU, or FSR 4.1.1 without Experimental features
+        or its files) becomes the best one that works (DLSS on an RTX GPU, else FSR 3.1), said once."""
         current = self.var('upscaler', 'ini').get()
-        verdict = (self.upscaler_support or {}).get(current)
-        if verdict and not verdict[0]:
-            better = best_upscaler(self.upscaler_support)
+        fallback = upscaler_fallback(current, self.upscaler_support, bool(self.var('experimental', 'app').get()),
+                                     fsr4vk_present())
+        if fallback:
+            better, reason = fallback
             name = lambda value: _(*dict(UPSCALERS)[value]).split(' (')[0]
             self.upscaler_notice = _('⚠ {} is not available on this PC ({}). The upscaler is now {}.',
                                      '⚠ {} недоступен на этом ПК ({}). Теперь выбран {}.').format(
-                name(current), reason_text(verdict[1]), name(better))
+                name(current), reason_text(reason), name(better))
             self.var('upscaler', 'ini').set(better)
         for box in self.upscaler_boxes:
             box.refresh()
@@ -2092,6 +2471,11 @@ class Launcher:
         self.label(parent, text, 'small', MUTED, wraplength=self.px(680), justify='left').grid(
             row=self.next_row(parent), column=0, columnspan=2, sticky='w', pady=(self.px(top), 0))
 
+    def section(self, parent, title, top=18):
+        """A heading inside a card (the Online page's groups)."""
+        self.label(parent, title, 'body_bold').grid(row=self.next_row(parent), column=0, columnspan=2, sticky='w',
+                                                     pady=(self.px(top), self.px(2)))
+
     def folder(self, parent, key, title, prompt, hint=None, on_change=None):
         px = self.px
         var = self.var(key, 'app')
@@ -2168,7 +2552,8 @@ class Launcher:
         self.hero = Hero(self, root, self.hero_tall, self.hero_short)
         self.hero.canvas.pack(side='top', fill='x')
         self.tab_names = (('play', _('Play', 'Играть')), ('graphics', _('Graphics', 'Графика')),
-                          ('display', _('Display & FPS', 'Экран и FPS')), ('game', _('Game & effects', 'Игра и эффекты')),
+                          ('display', _('Display & FPS', 'Экран и FPS')), ('controls', _('Controls', 'Управление')),
+                          ('game', _('Game & effects', 'Игра и эффекты')),
                           ('cheats', _('Cheats', 'Читы')), ('mods', _('Mods & patches', 'Моды и патчи')),
                           ('advanced', _('Advanced', 'Дополнительно')), ('log', _('Log', 'Журнал')))
         self.tabbar = TabBar(self, root, self.tab_names, self.show)
@@ -2186,6 +2571,7 @@ class Launcher:
         self.build_play()
         self.build_graphics()
         self.build_display()
+        self.build_controls()
         self.build_game()
         self.build_cheats()
         self.build_online()
@@ -2251,6 +2637,7 @@ class Launcher:
         self.motion.tween('hero', ms, self.hero.h, target, self.hero.set_height, ease=ease_in_out)
 
     def show(self, name, animate=True):
+        self.stop_capture()
         old, new = self.pages.get(self.current_page), self.pages[name]
         changed = name != self.current_page
         self.current_page = name
@@ -2262,8 +2649,11 @@ class Launcher:
             self.motion.tween('slide', 260 if animate else 0, self.px(40), 0, lambda x: new.place_configure(x=int(x)))
         if name == 'mods':
             self.refresh_lists()
+        elif name == 'controls' and self.gamepads is None:
+            self.refresh_gamepads()
         elif name == 'graphics':
             self.refresh_fsr4()
+            self.refresh_fsr4vk()
             self.refresh_reshade()
         elif name == 'play':
             self.refresh_status()
@@ -2344,8 +2734,11 @@ class Launcher:
         for key in ('game', 'saves', 'gpu', 'fsr4', 'upscaler'):
             self.checks[key] = StatusLine(self, info)
             self.checks[key].frame.grid(row=self.next_row(info), column=0, columnspan=2, sticky='we', pady=(px(10), 0))
-        self.button(info, _('Open folder', 'Открыть папку'), lambda: self.open_path(self.var('user_dir', 'app').get(), 'user_dir')).grid(
-            row=self.next_row(info), column=0, columnspan=2, sticky='w', pady=(px(14), 0))
+        holder = tk.Frame(info, bg=CARD)
+        holder.grid(row=self.next_row(info), column=0, columnspan=2, sticky='w', pady=(px(14), 0))
+        self.button(holder, _('Open folder', 'Открыть папку'),
+                    lambda: self.open_path(self.var('user_dir', 'app').get(), 'user_dir')).pack(side='left')
+        self.button(holder, _('Add to Steam', 'Добавить в Steam'), self.add_to_steam).pack(side='left', padx=(px(8), 0))
         self.note(info, _("In the game: Insert or L3+R3\nopens the port's menu.", 'В игре: Insert или L3+R3\nоткрывает меню порта.'),
                   top=14)
         # Only shown after the saved upscaler was changed; hidden last so the rows below keep their place.
@@ -2380,7 +2773,7 @@ class Launcher:
         self.choice(holder, 'window_mode', 'ini', WINDOW_MODES, 30).pack(anchor='w')
         holder = self.cell(quick, 6, 0, '', span=2)
         row = self.switch(holder, self.var('frame_generation', 'ini'),
-                          _('Frame generation (FSR 3.1)', 'Генерация кадров (FSR 3.1)'))
+                          _('Frame generation', 'Генерация кадров'))
         row.pack(anchor='w')
         note = self.label(holder, '', 'small', MUTED, wraplength=px(420), justify='left')
         note.pack(anchor='w', padx=(px(54), 0), pady=(px(2), 0))
@@ -2444,13 +2837,24 @@ class Launcher:
         self.vars['sharpness'].trace_add('write', show)
         show()
         self.row(f, _('Sharpness', 'Сила резкости'), holder)
-        self.check(f, 'object_motion', 'ini', _('Object motion vectors', 'Векторы движения объектов'),
-                   _('Less ghosting on characters, cloth and weapons; costs about 10% FPS.',
-                     'Меньше гостинга на персонажах и одежде; стоит около 10% FPS.') + ' ' +
-                   _('Off on AMD graphics cards: there it cost frame rate and drew some objects wrong with frame generation.',
-                     'На видеокартах AMD выключено: там снижало FPS и неправильно рисовало некоторые объекты с генерацией кадров.'))
+        experimental = self.var('experimental', 'app')
+        motion_note = self.check(f, 'object_motion', 'ini', _('Object motion vectors', 'Векторы движения объектов'),
+                                 object_motion_hint(experimental.get()))[1]
+        experimental.trace_add('write', lambda *_a: motion_note.configure(text=object_motion_hint(experimental.get())))
+        # On AMD cards object motion is its own choice, usable only with Experimental features on.
+        amd_motion = self.check(f, 'object_motion_amd', 'app',
+                                _('Object motion vectors on AMD cards (experimental)',
+                                  'Векторы движения объектов на видеокартах AMD (экспериментально)'))[0]
+
+        def grey_amd_motion(*_args):
+            on = bool(experimental.get())
+            amd_motion.knob.set_enabled(on)
+            amd_motion.caption.configure(fg=TEXT if on else DIM)
+        experimental.trace_add('write', grey_amd_motion)
+        grey_amd_motion()
+        experimental.trace_add('write', lambda *_a: self.experimental_changed())  # FSR 4.1.1 needs it
         self.grey_with_upscaler(*self.check(
-            f, 'frame_generation', 'ini', _('Frame generation (FSR 3.1)', 'Генерация кадров (FSR 3.1)'),
+            f, 'frame_generation', 'ini', _('Frame generation', 'Генерация кадров'),
             _('Doubles the frame rate; adds a little input lag. Best with at least 60 FPS.',
               'Удваивает частоту кадров; добавляет немного задержки ввода. Лучше всего от 60 FPS.')))
         self.build_reshade(page)
@@ -2468,6 +2872,23 @@ class Launcher:
                        'about 30 MB, into the fsr4_shaders folder of the port.',
                        'С GitHub FireBurn/Q2RTX (собраны из MIT-исходников AMD FidelityFX), около 30 МБ, '
                        'в папку fsr4_shaders порта.'), top=10)
+        f = self.card(page, _('FSR 4.1.1 (experimental)', 'FSR 4.1.1 (экспериментально)'))
+        self.fsr4vk_label = self.label(f, '', wraplength=px(640), justify='left')
+        self.fsr4vk_label.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(px(10), 0))
+        holder = self.tk.Frame(f, bg=CARD)
+        holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(px(12), 0))
+        self.fsr4vk_button = self.button(holder, _('Download FSR 4.1.1 (about 14 MB)', 'Скачать FSR 4.1.1 (около 14 МБ)'),
+                                         self.start_fsr4vk_download, 'primary')
+        self.fsr4vk_button.pack(side='left')
+        self.fsr4vk_progress = Bar(self, holder, 280)
+        self.fsr4vk_progress.pack(side='left', padx=px(16))
+        self.note(f, _("Downloaded from this port's release on GitHub: fsr4vk v0.4.3 with a fix for AMD cards "
+                       '(GPL-3.0; the licenses and SOURCE.txt, which links the source, are in {}). '
+                       'It needs Experimental features in Advanced.',
+                       'Скачивается из релиза этого порта на GitHub: fsr4vk v0.4.3 с исправлением для карт AMD '
+                       '(GPL-3.0; лицензии и SOURCE.txt со ссылкой на исходники лежат в {}). '
+                       'Нужны «Экспериментальные функции» в «Дополнительно».').format(fsr4vk_shown()), top=10)
+        self.refresh_fsr4vk()
         f = self.card(page, _('Detail', 'Детализация'))
         self.row(f, _('Model detail (LOD)', 'Детализация моделей'), self.choice(f, 'model_lod', 'ini', LODS),
                  _('A game patch (game version 1.09).', 'Патч игры (версия 1.09).'))
@@ -2567,6 +2988,321 @@ class Launcher:
                      'brightness and highlights are set in the game (System menu, Screen; or Insert).',
                      'Работает, если HDR включён в Windows и монитор его поддерживает. Пиковая яркость, '
                      'яркость интерфейса и светов — в игре (System, Экран; или Insert).'))
+        # The Monitor row lives in a frame of its own (empty, so it takes no room, until a PC with several
+        # monitors is detected); apply_displays fills it once and only refreshes it on later GPU checks.
+        self.monitor_frame = self.tk.Frame(f, bg=CARD)
+        self.monitor_frame.grid(row=self.next_row(f), column=0, columnspan=2, sticky='we')
+        self.monitor_frame.columnconfigure(0, minsize=self.px(210))  # as the card's own columns
+        self.monitor_frame.columnconfigure(1, weight=1)
+        self.monitor_note = None
+
+    def build_controls(self):
+        """Controls (README: "Controls > Controller"): the gamepad the game uses (BB_GAMEPAD) and the keyboard keys
+        and gamepad buttons of every input, written as the key.* / pad.* lines of bbport.ini that runtime_pad.c reads."""
+        px, tk = self.px, self.tk
+        page = self.scrolled_page('controls', _('Controls', 'Управление'),
+                                  _('Applied when the game starts.', 'Применяется при запуске игры.'))
+        f = self.card(page, _('Controller', 'Контроллер'))
+        holder = tk.Frame(f, bg=CARD)
+        self.gamepad_box = self.ttk.Combobox(holder, state='readonly', width=48)
+        self.gamepad_box.pack(side='left')
+        self.gamepad_box.bind('<<ComboboxSelected>>', lambda _e: self.gamepad_picked())
+        self.button(holder, _('Refresh', 'Обновить'), self.refresh_gamepads).pack(side='left', padx=(px(8), 0))
+        r = self.next_row(f)
+        self.row(f, _('Controller', 'Контроллер'), holder)
+        self.gamepad_note = self.label(f, '', 'small', MUTED, wraplength=px(560), justify='left')
+        self.gamepad_note.grid(row=r + 1, column=1, sticky='w', pady=(px(4), 0))
+        self.gamepad_values = ['']  # the value of each entry of the dropdown
+        self.apply_gamepads(None)
+
+        f = self.card(page, _('Button icons', 'Значки кнопок'))
+        self.row(f, _('Button icons', 'Значки кнопок'), self.choice(f, 'button_icons', 'ini', bbport_controls.ICON_CHOICES))
+        self.note(f, _('The buttons the game shows on screen. Automatic follows the controller connected when the game '
+                       'starts: Xbox icons for an Xbox or other controller, PlayStation icons for a PlayStation one, '
+                       'your keys and mouse buttons when none is connected. Changing controllers in the game keeps '
+                       'the icons until the next start. A mod with its own menu/common.tpf.dcx keeps priority.',
+                       'Кнопки, которые игра показывает на экране. «Автоматически» следует за контроллером, '
+                       'подключённым при запуске игры: значки Xbox для контроллера Xbox или другого, значки '
+                       'PlayStation для контроллера PlayStation, ваши клавиши и кнопки мыши, если контроллера нет. '
+                       'Смена контроллера в игре сохраняет значки до следующего запуска. Мод со своим '
+                       'menu/common.tpf.dcx имеет приоритет.'), top=4)
+
+        f = self.card(page, _('Mouse', 'Мышь'))
+        self.check(f, 'mouse_camera', 'ini', _('Mouse controls the camera', 'Мышь управляет камерой'),
+                   _('While the game window has focus, the mouse turns the camera and its buttons and wheel can be '
+                     'bound below. Insert (the port menu) or Alt+Tab lets go of the mouse.',
+                     'Пока окно игры в фокусе, мышь поворачивает камеру, а её кнопки и колесо можно назначить ниже. '
+                     'Insert (меню порта) или Alt+Tab освобождают мышь.'))
+        holder = tk.Frame(f, bg=CARD)
+        Slider(self, holder, self.var('mouse_sensitivity', 'ini'), 0.1, 5.0, 300).pack(side='left')
+        value = self.label(holder, '', width=5)
+        value.pack(side='left', padx=px(10))
+        show = lambda *_a: value.configure(text=self.mouse_sensitivity_text())
+        self.vars['mouse_sensitivity'].trace_add('write', show)
+        show()
+        self.row(f, _('Mouse sensitivity', 'Чувствительность мыши'), holder)
+        self.check(f, 'mouse_invert_y', 'ini', _('Invert vertical look', 'Инвертировать вертикаль'))
+        self.check(f, 'mouse_no_auto_rotation', 'ini',
+                   _('Camera turns only by the mouse while walking', 'Камера поворачивается только мышью при ходьбе'),
+                   _('The game stops turning the camera by itself as the character walks. Leave it off to keep the '
+                     'gamepad camera as it was.',
+                     'Игра перестаёт сама поворачивать камеру при ходьбе. Оставьте выключенным, чтобы камера '
+                     'геймпада работала как раньше.'))
+
+        f = self.card(page, _('Button assignments', 'Назначение кнопок'))
+        self.controls_hint = _('Press Change, then a key, a mouse button or the wheel. Add gives the input a second '
+                               'one. Applied when the game starts.',
+                               'Нажмите «Изменить», затем клавишу, кнопку мыши или колесо. «Добавить» назначает входу '
+                               'второе. Применяется при запуске игры.')
+        self.controls_message = self.label(f, self.controls_hint, 'small', MUTED, wraplength=px(680), justify='left')
+        self.controls_message.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(px(8), 0))
+        self.controls_after = None
+        self.button(f, _('Dark Souls III layout', 'Раскладка Dark Souls III'), self.apply_ds3_layout).grid(
+            row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(px(12), 0))
+        self.note(f, _('Fills the keyboard and mouse bindings with the Dark Souls III layout: WASD to move, the mouse '
+                       'to look, left button R1, Shift + left button R2, right button L1, Left Ctrl L2, Space dodge, '
+                       'E interact. Gamepad bindings are not changed.',
+                       'Заполняет назначения клавиатуры и мыши раскладкой Dark Souls III: WASD — движение, мышь — '
+                       'камера, левая кнопка R1, Shift + левая кнопка R2, правая кнопка L1, левый Ctrl L2, пробел — '
+                       'уклонение, E — действие. Назначения геймпада не меняются.'), top=4)
+        grid = tk.Frame(f, bg=CARD)  # one grid for every row, so the columns line up
+        grid.grid(row=self.next_row(f), column=0, columnspan=2, sticky='we', pady=(px(4), 0))
+        self.label(grid, _('Keyboard', 'Клавиатура'), 'small', MUTED).grid(row=0, column=1, columnspan=3, sticky='w')
+        self.label(grid, _('Gamepad', 'Геймпад'), 'small', MUTED).grid(row=0, column=4, sticky='w', padx=(px(16), 0))
+        none_text = _('Not assigned', 'Не назначено')
+        for index, (name, russian, _keys, pad) in enumerate(bbport_controls.CONTROLS, 1):
+            top = (px(8), 0)
+            self.label(grid, _(bbport_controls.LABELS[name], russian), wraplength=px(190), justify='left').grid(
+                row=index, column=0, sticky='w', padx=(0, px(16)), pady=top)
+            row = self.control_rows[name] = {}
+            row['keys'] = self.label(grid, '', width=22, anchor='w')
+            row['keys'].grid(row=index, column=1, sticky='w', pady=top)
+            row['change'] = self.button(grid, _('Change', 'Изменить'), lambda n=name: self.start_capture(n, False))
+            row['change'].grid(row=index, column=2, padx=(px(8), 0), pady=top)
+            row['add'] = self.button(grid, _('Add', 'Добавить'), lambda n=name: self.start_capture(n, True))
+            row['add'].grid(row=index, column=3, padx=(px(8), 0), pady=top)
+            if pad is not None:  # the movement and camera keys have no gamepad side
+                row['pad'] = self.ttk.Combobox(grid, state='readonly', width=24)
+                row['pad'].grid(row=index, column=4, padx=(px(16), 0), pady=top)
+                row['pad'].bind('<<ComboboxSelected>>', lambda _e, n=name: self.pad_picked(n))
+            row['reset'] = self.button(grid, _('Reset', 'Сбросить'), lambda n=name: self.reset_control(n))
+            row['reset'].grid(row=index, column=5, padx=(px(16), 0), pady=top)
+            self.show_control(name)
+        self.button(f, _('Reset all', 'Сбросить всё'), self.reset_all_controls).grid(
+            row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(px(16), 0))
+        self.root.bind('<KeyPress>', self.control_key, add='+')
+        self.root.bind('<KeyRelease>', self.control_key_release, add='+')
+        self.root.bind('<ButtonPress>', self.control_mouse, add='+')
+        self.root.bind('<MouseWheel>', self.control_mouse, add='+')
+
+    def apply_gamepads(self, pads):
+        """The controller dropdown, from the gamepads SDL listed (None: not asked yet; False: the list could not be read)."""
+        self.gamepads = pads
+        saved, name = self.var('gamepad', 'app').get(), self.var('gamepad_name', 'app').get()
+        options = gamepad_options(pads or [], saved, name)
+        self.gamepad_values = [value for value, _text in options]
+        self.gamepad_box.configure(values=[text for _value, text in options])
+        self.gamepad_box.current(self.gamepad_values.index(saved) if saved in self.gamepad_values else 0)
+        self.gamepad_note.configure(text=_(
+            'The list of controllers could not be read; Automatic uses the first one.',
+            'Не удалось прочитать список контроллеров; «Авто» берёт первый.') if pads is False else _(
+            'The chosen controller is used as soon as it connects.',
+            'Выбранный контроллер используется, как только подключится.'))
+
+    def refresh_gamepads(self):
+        if self.listing_gamepads:
+            return
+        self.listing_gamepads = True
+
+        def work():
+            try:
+                pads = list_gamepads()
+            except Exception:  # whatever the tool raises, the flag must be cleared, or the list never refreshes
+                pads = None
+
+            def done():
+                self.listing_gamepads = False
+                self.apply_gamepads(False if pads is None else pads)
+            self.ui_calls.put(done)
+        threading.Thread(target=work, daemon=True).start()
+
+    def gamepad_picked(self):
+        value = self.gamepad_values[self.gamepad_box.current()]
+        name, previous = self.var('gamepad_name', 'app'), self.var('gamepad', 'app')
+        name.set(dict(self.gamepads or []).get(value) or (name.get() if value == previous.get() else ''))
+        previous.set(value)
+
+    def show_control(self, name):
+        """Shows what is in force for an input: the saved line or the default, with the default marked."""
+        row = self.control_rows[name]
+        parts = bbport_controls.current_binding(self.ini, 'key', name)
+        text = bbport_controls.join_binding(parts) or _('Not assigned', 'Не назначено')
+        custom = f'key.{name}' in self.ini
+        row['keys'].configure(text=text if custom else _('{} (default)', '{} (по умолчанию)').format(text),
+                              fg=TEXT if custom else MUTED)
+        if 'pad' in row:
+            value = bbport_controls.join_binding(bbport_controls.current_binding(self.ini, 'pad', name))
+            values = [''] + [button for button, _label in bbport_controls.PAD_BUTTONS]
+            if value not in values:  # several buttons, as the touchpad's Back + Touchpad
+                values.append(value)
+            row['pad_values'] = values
+            row['pad'].configure(values=[bbport_controls.pad_text(v) or _('Not assigned', 'Не назначено')
+                                         for v in values])
+            row['pad'].current(values.index(value))
+
+    def write_control(self, kind, name, parts):
+        """Sets key.<name> / pad.<name>; the default is no line at all."""
+        key = f'{kind}.{name}'
+        if parts == bbport_controls.split_binding(bbport_controls.default_binding(kind, name)):
+            self.ini.pop(key, None)
+        else:
+            self.ini[key] = bbport_controls.join_binding(parts)
+        self.show_control(name)
+
+    def pad_picked(self, name):
+        row = self.control_rows[name]
+        self.write_control('pad', name, bbport_controls.split_binding(row['pad_values'][row['pad'].current()]))
+
+    def reset_control(self, name):
+        self.stop_capture()
+        for kind in ('key', 'pad'):
+            self.ini.pop(f'{kind}.{name}', None)
+        self.show_control(name)
+
+    def reset_all_controls(self):
+        for name in self.control_rows:
+            self.reset_control(name)
+
+    def say_controls(self, text, color=MUTED):
+        """A message in place of the hint under the card; the hint is back after a few seconds."""
+        if self.controls_after:
+            self.root.after_cancel(self.controls_after)
+        self.controls_message.configure(text=text, fg=color)
+        self.controls_after = self.root.after(4000, lambda: self.controls_message.configure(
+            text=self.controls_hint, fg=MUTED))
+
+    def start_capture(self, name, add):
+        """Change / Add: the next key pressed is taken (the button turns into Cancel; pressing it again cancels)."""
+        again = self.capturing == (name, add)
+        self.stop_capture()
+        if again:
+            return
+        row = self.control_rows[name]
+        row['add' if add else 'change'].configure(text=_('Cancel', 'Отмена'))
+        row['keys'].configure(text=_('Press a key…', 'Нажмите клавишу…'), fg=GOLD)
+        self.capturing = (name, add)
+        self.pending_modifier = None
+        self.side_buttons_down = {button for vk, button in SIDE_BUTTONS if bbport_controls.windows_key_down(vk)}
+        self.say_controls(_('Press a key, a mouse button or the wheel; hold Shift, Ctrl or Alt first for a combination. '
+                            'For the left button, click the highlighted text.',
+                            'Нажмите клавишу, кнопку мыши или крутите колесо; для сочетания сначала зажмите Shift, '
+                            'Ctrl или Alt. Для левой кнопки щёлкните по выделенному тексту.'))
+        self.root.focus_set()  # the key goes to the window, not to a button that would act on Space
+        self.side_poll = self.root.after(50, self.poll_side_buttons)
+
+    def stop_capture(self):
+        if not self.capturing:
+            return
+        if self.side_poll:  # one poll chain per capture: a restart within 50 ms must not leave the old one running
+            self.root.after_cancel(self.side_poll)
+            self.side_poll = None
+        name, _add = self.capturing
+        self.capturing = self.pending_modifier = None
+        row = self.control_rows[name]
+        row['change'].configure(text=_('Change', 'Изменить'))
+        row['add'].configure(text=_('Add', 'Добавить'))
+        self.show_control(name)
+
+    def control_key(self, event):
+        """The key pressed while an input waits for one."""
+        if not self.capturing:
+            return None
+        name, add = self.capturing
+        key = bbport_controls.tk_key_to_sdl(event.keysym, event.keycode, bbport_controls.windows_scan,
+                                           bbport_controls.windows_key_down)
+        if key is None:
+            self.say_controls(_("Insert opens the port's menu in the game; choose another key.",
+                                'Insert открывает меню порта в игре; выберите другую клавишу.')
+                              if event.keysym == 'Insert' else
+                              _('That key cannot be used in the game. Press another one.',
+                                'Игра не может использовать эту клавишу. Нажмите другую.'), BAD)
+            return 'break'
+        if bbport_controls.is_modifier_keysym(event.keysym):
+            self.pending_modifier = key  # bound when let go; a mouse input first makes it the combination's modifier
+            return 'break'
+        self.assign_key(name, add, key)
+        return 'break'
+
+    def control_key_release(self, event):
+        """A Shift, Ctrl or Alt let go with nothing pressed meanwhile: that key is the binding."""
+        if self.capturing and self.pending_modifier and bbport_controls.is_modifier_keysym(event.keysym):
+            name, add = self.capturing
+            self.assign_key(name, add, self.pending_modifier)
+            return 'break'
+        return None
+
+    def control_mouse(self, event):
+        """A mouse button or wheel step while an input waits. The left button counts only when it hits the text of
+        the waiting row (it also presses the page's own buttons); the others and the wheel count anywhere."""
+        if not self.capturing:
+            return None
+        name, add = self.capturing
+        if event.type == self.tk.EventType.MouseWheel:
+            button = bbport_controls.wheel_to_sdl(event.delta)
+        else:
+            button = bbport_controls.mouse_button_to_sdl(event.num)
+            if button == 'Mouse Left' and event.widget is not self.control_rows[name]['keys']:
+                return None
+        if button is None:
+            return None
+        self.assign_key(name, add, bbport_controls.with_modifiers(
+            button, *bbport_controls.held_modifiers(bbport_controls.windows_key_down)))
+        return 'break'
+
+    def poll_side_buttons(self):
+        """Tk 8.6 reports no side buttons: while an input waits, the mouse's own state is read for them."""
+        if not self.capturing:
+            return
+        down = {button for vk, button in SIDE_BUTTONS if bbport_controls.windows_key_down(vk)}
+        pressed = down - self.side_buttons_down
+        self.side_buttons_down = down
+        if pressed and self.root.focus_displayof() is not None:
+            name, add = self.capturing
+            self.assign_key(name, add, bbport_controls.with_modifiers(
+                sorted(pressed)[0], *bbport_controls.held_modifiers(bbport_controls.windows_key_down)))
+            return
+        self.side_poll = self.root.after(50, self.poll_side_buttons)
+
+    def assign_key(self, name, add, key):
+        """Gives the waiting input the captured key, button or wheel step (Add keeps the ones it has)."""
+        parts = bbport_controls.current_binding(self.ini, 'key', name) if add else []
+        if key not in parts:
+            if len(parts) >= bbport_controls.MAX_BIND:
+                self.say_controls(_('At most {} keys per input.', 'Не больше {} клавиш на вход.').format(
+                    bbport_controls.MAX_BIND), BAD)
+            else:
+                self.write_control('key', name, parts + [key])
+        self.stop_capture()
+
+    def apply_ds3_layout(self):
+        """Dark Souls III layout: after a confirmation every keyboard and mouse binding is replaced, the gamepad's stay."""
+        self.stop_capture()
+        if not self.messagebox.askokcancel('Bloodborne', _(
+                'Replace your keyboard and mouse bindings with the Dark Souls III layout? Gamepad bindings are not '
+                'changed.', 'Заменить ваши назначения клавиатуры и мыши раскладкой Dark Souls III? Назначения '
+                'геймпада не изменятся.')):
+            return
+        self.ini = bbport_controls.apply_ds3(self.ini)
+        for name in self.control_rows:
+            self.show_control(name)
+        self.say_controls(_('Dark Souls III layout applied. Reset all brings the defaults back.',
+                            'Раскладка Dark Souls III применена. «Сбросить всё» возвращает стандартные назначения.'))
+
+    def mouse_sensitivity_text(self):
+        try:
+            return f'{self.vars["mouse_sensitivity"].get():.2f}'
+        except self.tk.TclError:
+            return ''
 
     def build_game(self):
         page = self.scrolled_page('game', _('Game & effects', 'Игра и эффекты'),
@@ -2705,6 +3441,9 @@ class Launcher:
         self.check(f, 'close_on_play', 'app', _('Close the launcher when the game starts', 'Закрывать лаунчер при запуске игры'))
         self.check(f, 'check_updates', 'app', _('Check for updates when the launcher opens',
                                                 'Проверять обновления при открытии лаунчера'))
+        self.check(f, 'beta_versions', 'app', _('Beta versions', 'Бета-версии'),
+                   _('Also offer beta releases when checking for updates. They are tested less than stable ones.',
+                     'Предлагать и бета-версии при проверке обновлений. Они проверены меньше, чем стабильные.'))
         self.check(f, 'animations', 'app', _('Animations', 'Анимации'))
         self.vars['animations'].trace_add('write', lambda *_a: self.animations_changed())
         holder = tk.Frame(f, bg=CARD)
@@ -2715,7 +3454,8 @@ class Launcher:
         holder = tk.Frame(f, bg=CARD)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(px(10), 0))
         self.button(holder, _('Check for updates', 'Проверить обновления'),
-                    lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start()
+                    lambda: threading.Thread(target=self.check_update, daemon=True,
+                                             args=(True, bool(self.var('beta_versions', 'app').get()))).start()
                     ).pack(side='left')
         self.label(holder, f'v{VERSION}', 'small', MUTED).pack(side='left', padx=px(12))
         holder = tk.Frame(f, bg=CARD)
@@ -2725,6 +3465,11 @@ class Launcher:
                              'Если игра показывает только чёрный экран, обычно это помогает.'), 'small', MUTED).pack(
             side='left', padx=px(12))
         f = self.card(page, _('Performance', 'Производительность'))
+        self.check(f, 'experimental', 'app', _('Experimental features', 'Экспериментальные функции'),
+                   _('Unlocks options that are still being tested and marked (experimental). For now: FSR 4.1.1, and '
+                     'object motion vectors on AMD graphics cards, which can lower the frame rate or draw some objects wrong.',
+                     'Открывает функции, которые ещё проверяются и помечены (экспериментально). Пока это FSR 4.1.1 и '
+                     'векторы движения объектов на видеокартах AMD: они могут снижать FPS или неправильно рисовать объекты.'))
         self.row(f, _('Two-stage GPU pipeline', 'Двухстадийный конвейер GPU'), self.choice(f, 'draw_pipe', 'app', DRAW_PIPE),
                  _('20–30% faster; switch it off if the game is unstable.', 'Быстрее на 20–30%; при нестабильности выключите.'))
         self.row(f, _('GPU readbacks', 'Чтение данных GPU'), self.choice(f, 'readbacks', 'app', READBACKS),
@@ -2827,22 +3572,23 @@ class Launcher:
         online = _('Online') if self.var('online', 'app').get() else _('Offline')
         return f'{_(*fps)}   ·   {upscaler}   ·   {output}   ·   {online}'
 
-    def detect_gpu(self):
-        exe = PORT_DIR / 'bin' / 'bb-gpu-capabilities.exe'
-        if not exe.is_file():
-            exe = PORT_DIR / 'out' / 'bb-gpu-capabilities.exe'
-        env = dict(os.environ)
-        if not (exe.parent / 'SDL3.dll').is_file():
-            clang64 = Path(os.environ.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
-            env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
-        text = _('• Graphics card: not checked', '• Видеокарта: не проверена')
+    def check_upscalers(self, tool=None):
+        """What each upscaler needs of this PC (bb-gpu-capabilities --upscalers); unknown (every upscaler
+        offered) when this fails. TOOL is gpu_tool()'s answer when the caller has it already. Run it off
+        the window's thread."""
+        exe, env = tool or gpu_tool()
         try:
-            # What each upscaler needs of this PC; unknown (every upscaler offered) when this fails.
             check = subprocess.run([str(exe), '--upscalers'], capture_output=True, text=True, timeout=30,
                                    env=env, creationflags=NO_WINDOW)
             self.upscaler_support = parse_upscaler_support(check.stdout) or None
         except (OSError, subprocess.TimeoutExpired):
             pass
+
+    def detect_gpu(self):
+        tool = gpu_tool()
+        exe, env = tool
+        text = _('• Graphics card: not checked', '• Видеокарта: не проверена')
+        self.check_upscalers(tool)
         try:
             result = subprocess.run([str(exe), '--live-resolution'], capture_output=True, text=True, timeout=30,
                                     env=env, creationflags=NO_WINDOW)
@@ -2857,6 +3603,32 @@ class Launcher:
         self.gpu_text, self.gpu_checking = text, False
         self.ui_calls.put(self.apply_upscaler_support)
         self.ui_calls.put(self.refresh_status)
+        connected_displays()  # asked here, off the window's thread; the picker is filled from the cache
+        self.ui_calls.put(self.apply_displays)
+
+    def apply_displays(self):
+        """The monitor picker of Display & FPS: shown only when the PC has more than one monitor."""
+        shown = connected_displays()
+        if len(shown) < 2:
+            return
+        saved = str(self.var('monitor', 'app').get())
+        names = [monitor['name'] for monitor in shown]
+        note = (_('The saved monitor "{}" is not connected; the primary monitor is used.',
+                  'Сохранённый монитор «{}» не подключён; используется основной.').format(saved)
+                if saved and saved not in names else None)
+        # The game takes the first monitor whose name contains the saved one: twins of one model share an entry.
+        options = [('', ('Primary monitor', 'Основной монитор'))] + [
+            (monitor['name'], (display_label(monitor),)) for index, monitor in enumerate(shown)
+            if monitor['name'] not in names[:index]]
+        hint = note or _('Which monitor the game opens on. The primary monitor is used when the chosen one is '
+                         'not connected.', 'На каком мониторе откроется игра. Если выбранный не подключён, '
+                         'используется основной.')
+        if self.monitor_note is not None:  # a later GPU check: the row is there, only its note can change
+            self.monitor_note.configure(text=hint)
+            return
+        self.row(self.monitor_frame, _('Monitor', 'Монитор'), self.choice(self.monitor_frame, 'monitor', 'app', options))
+        self.monitor_note = self.label(self.monitor_frame, hint, 'small', MUTED, wraplength=self.px(560), justify='left')
+        self.monitor_note.grid(row=1, column=1, sticky='w', pady=(self.px(4), 0))
 
     def refresh_fsr4(self):
         total, missing = len(fsr4_files()), len(fsr4_missing())
@@ -2893,6 +3665,94 @@ class Launcher:
                 self.refresh_status()
                 if error:
                     self.messagebox.showerror('FSR 4', _('Download failed: {}', 'Не удалось скачать: {}').format(error))
+            self.ui_calls.put(done)
+        threading.Thread(target=work, daemon=True).start()
+
+    def experimental_changed(self):
+        """The Experimental features switch moved: the dropdown and the FSR 4.1.1 card follow at once. When
+        it went on and the last GPU check said FSR 4.1.1 cannot run, that check is asked again in the
+        background (a verdict from another moment must not keep the entry gray until a restart)."""
+        self.apply_upscaler_support()
+        self.refresh_fsr4vk()
+        verdict = (self.upscaler_support or {}).get('fsr411')
+        if not (self.var('experimental', 'app').get() and verdict and not verdict[0]) or self.rechecking:
+            return
+        self.rechecking = True
+
+        def work():
+            try:
+                self.check_upscalers()
+            finally:
+                self.ui_calls.put(self.apply_upscaler_support)
+                self.rechecking = False  # after the apply is queued: a watcher never sees both down
+        threading.Thread(target=work, daemon=True).start()
+
+    def refresh_fsr4vk(self):
+        """The FSR 4.1.1 card: what is downloaded, and the button (only while Experimental features is on)."""
+        if not hasattr(self, 'fsr4vk_button'):  # the Graphics page builds the card; a switch can change before it exists
+            return
+        ready, problem = fsr4vk_present(), fsr4vk_download_problem()
+        outdated = fsr4vk_outdated(wait=False) if ready else False
+        if outdated is None:  # files not hashed yet: hash them off this thread, then draw the card again
+            outdated = False
+            if not self.fsr4vk_hashing:
+                self.fsr4vk_hashing = True
+
+                def hash_files():
+                    global FSR4VK_VERDICT
+                    try:
+                        fsr4vk_outdated()
+                    except Exception:  # files that cannot be read (a locked DLL): not outdated, and not hashed again
+                        FSR4VK_VERDICT = (fsr4vk_stamp(), True)
+                    finally:
+                        self.fsr4vk_hashing = False
+                        self.ui_calls.put(self.refresh_fsr4vk)
+                threading.Thread(target=hash_files, daemon=True).start()
+        self.fsr4vk_label.configure(text=_('An update is available that makes FSR 4.1.1 work on AMD cards. '
+                                           'The version in {} is used until you update.',
+                                           'Доступно обновление, с которым FSR 4.1.1 работает на картах AMD. '
+                                           'Пока вы не обновите, используется версия из {}.').format(fsr4vk_shown())
+                                    if outdated
+                                    else _('Installed in {}.', 'Установлено в {}.').format(fsr4vk_shown()) if ready
+                                    else _('The download is not available in this build: {}',
+                                           'В этой сборке скачивание недоступно: {}').format(problem) if problem
+                                    else _('Not downloaded.', 'Не скачано.'))
+        if not self.downloading_fsr4vk:
+            self.fsr4vk_progress.set(1.0 if ready and not outdated else 0.0)
+        usable = ((outdated or not ready) and not problem and not self.downloading_fsr4vk
+                  and bool(self.var('experimental', 'app').get()))
+        self.fsr4vk_button.configure(
+            text=_('Update FSR 4.1.1', 'Обновить FSR 4.1.1') if outdated
+            else _('Download FSR 4.1.1 (about 14 MB)', 'Скачать FSR 4.1.1 (около 14 МБ)'),
+            state='normal' if usable else 'disabled')
+
+    def start_fsr4vk_download(self):
+        """Downloads the fsr4vk files in the background, then re-runs the capability check so the
+        dropdown entry can be picked."""
+        if self.process and fsr4vk_present():  # an update: the running game has the old DLL loaded, and Windows refuses the swap
+            self.messagebox.showinfo('FSR 4.1.1', _('Close the game before updating.', 'Закройте игру перед обновлением.'))
+            return
+        self.downloading_fsr4vk = True
+        self.refresh_fsr4vk()
+
+        def progress(done, total):
+            if total > 0:  # a server that sends no length has nothing to show
+                self.ui_calls.put(lambda: self.fsr4vk_progress.set(done / total))
+
+        def work():
+            try:
+                error = download_fsr4vk(progress)
+                if not error:
+                    self.check_upscalers()
+            except Exception as failure:  # nothing may end this thread before done() is queued
+                error = f'{type(failure).__name__}: {failure}'
+
+            def done():
+                self.downloading_fsr4vk = False
+                self.refresh_fsr4vk()
+                self.apply_upscaler_support()
+                if error:
+                    self.messagebox.showerror('FSR 4.1.1', _('Download failed: {}', 'Не удалось скачать: {}').format(error))
             self.ui_calls.put(done)
         threading.Thread(target=work, daemon=True).start()
 
@@ -2958,12 +3818,12 @@ class Launcher:
                 value = APP_DEFAULTS.get(key, INI_DEFAULTS.get(key))
             if var.store == 'ini':
                 self.ini[key] = ('1' if value else '0') if key in INI_FLAGS else \
-                    f'{float(value):.2f}' if key == 'sharpness' else str(value)
+                    f'{float(value):.2f}' if key in INI_FLOATS else str(value)
             else:
                 self.app[key] = value
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.app, indent=2, ensure_ascii=False), encoding='utf-8')
-        save_ini({key: self.ini[key] for key in INI_DEFAULTS}, self.ini_lines)
+        save_ini(ini_values(self.ini), self.ini_lines)
         self.ini, self.ini_lines = load_ini()
         preset = self.reshade_preset.get()
         if reshade_ready() and preset and preset != self.reshade_started:  # not undoing a change made in the game
@@ -3006,42 +3866,42 @@ class Launcher:
             self.show('game' if self.var('ui_advanced', 'app').get() else 'play')
             return
         self.set_log('')
+        log_path = Path(self.app.get('user_dir') or DATA_DIR / 'user') / 'last_run.log'
         try:
-            self.process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(self.app),
-                                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                            stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+            self.process = start_game(run_command(), game_environment(self.app), log_path)
         except OSError as error:
             self.append(_('Could not start: {}', 'Не удалось запустить: {}').format(error) + '\n')
             self.status.configure(text=_('Could not start: {}', 'Не удалось запустить: {}').format(error), fg=BAD)
             self.process = None
             return
         self.job = GameJob(self.process)
-        threading.Thread(target=self.read_output, args=(self.process,), daemon=True).start()
+        threading.Thread(target=self.read_output, args=(self.process, self.job, log_path), daemon=True).start()
         self.set_running(True, preparing=True)
         self.status.configure(text=_('Preparing the game; it opens in its own window…',
                                      'Подготовка игры; она откроется в своём окне…'), fg=GOLD)
-        if self.app.get('close_on_play'):
-            self.root.after(5000, self.root.destroy)  # the game keeps running
 
-    def read_output(self, process):
-        # The same file the windowless start writes (play_without_window), so a crash report
-        # survives the launcher being closed and scripts (amd-motion-test) find it in one place.
+    def read_output(self, process, job, log_path):
+        # The game writes last_run.log itself (start_game), so a crash report survives the launcher
+        # being closed and scripts (amd-motion-test) find it in one place; this only follows the file.
+        code = -1
         try:
-            log_dir = Path(self.app.get('user_dir') or DATA_DIR / 'user')
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log = open(log_dir / 'last_run.log', 'w', encoding='utf-8', buffering=1)
-        except OSError:
-            log = None
-        for raw in iter(process.stdout.readline, b''):
-            text = raw.decode('utf-8', errors='replace')
-            if log:
-                log.write(text)
-            self.output.put(text)
-        code = process.wait()
-        if log:
-            log.write(f'\n-- the game exited (code {code}) --\n')
-            log.close()
-        self.output.put((code,))
+            if job is not None:  # game_over accepts no job; nothing before the finally may raise
+                job.say = self.output.put
+            try:
+                follow_log(log_path, lambda: game_over(process, job), self.output.put)
+            except OSError as error:  # the log cannot be read: say so, and still wait for the game to end
+                self.output.put('\n' + _('— could not follow the game log: {} —', '— не удалось читать журнал игры: {} —'
+                                         ).format(error) + '\n')
+                while not game_over(process, job):
+                    time.sleep(0.2)
+            code = process.wait()
+            try:
+                with open(log_path, 'a', encoding='utf-8') as log:
+                    log.write(f'\n-- the game exited (code {code}) --\n')
+            except OSError:
+                pass
+        finally:
+            self.output.put((code,))  # the window learns the game ended whatever went wrong above
 
     def drain_output(self):
         while not self.ui_calls.empty():
@@ -3057,9 +3917,12 @@ class Launcher:
                     self.set_running(False)
                     self.refresh_status()
                 else:
-                    if 'Entering original x86-64 code' in item:
+                    if game_is_up(item):  # mods, patches and shaders are prepared; the window exists
                         self.set_running(True)
                         self.status.configure(text=_('The game is running.', 'Игра запущена.'), fg=GOLD)
+                        if self.app.get('close_on_play') and not self.close_scheduled:  # both GAME_UP_LINES arrive
+                            self.close_scheduled = True
+                            self.root.after(CLOSE_AFTER_UP_MS, self.root.destroy)  # the game keeps running
                     elif 'restarting through run.py' in item:
                         self.set_running(True, preparing=True)
                         self.status.configure(text=_('Restarting with the new settings…', 'Перезапуск с новыми настройками…'), fg=GOLD)
@@ -3489,8 +4352,9 @@ class Launcher:
         self.refresh_status()
 
     # ---- updates -------------------------------------------------------------------------------
-    def check_update(self, manual=False):
-        """Helper thread: asks GitHub for the newest release and offers it when it is newer."""
+    def check_update(self, manual=False, beta=None):
+        """Helper thread: asks GitHub for the newest release (a pre-release only with the Beta versions
+        switch on; BETA is its value, read on the window's thread) and offers it when it is newer."""
         if COOP_TEST:  # a release would replace this build with one the other players don't run
             if manual:
                 self.ui_calls.put(lambda: self.messagebox.showinfo('Bloodborne', _(
@@ -3498,7 +4362,7 @@ class Launcher:
                     'Это тестовая сборка для кооператива: обновления приходят с комплектом, а не с GitHub.')))
             return
         try:
-            version, url, page = latest_release()
+            release = fetch_update_release(self.app.get('beta_versions', False) if beta is None else beta)
         except (OSError, ValueError, KeyError) as failure:
             if manual:
                 self.ui_calls.put(lambda error=failure: self.messagebox.showerror(
@@ -3506,8 +4370,8 @@ class Launcher:
             return
 
         def show():
-            if version_tuple(version) > version_tuple(VERSION):
-                self.offer_update(version, url, page)
+            if release and version_tuple(release[0]) > version_tuple(VERSION):
+                self.offer_update(*release)
             elif manual:
                 self.messagebox.showinfo('Bloodborne', _('You have the latest version ({}).',
                                                          'У вас последняя версия ({}).').format(VERSION))
@@ -3621,45 +4485,50 @@ class Launcher:
             self.messagebox.showerror('Bloodborne', result.stderr.decode(errors='replace')[:400])
 
     def add_to_steam(self):
-        """Bloodborne in the Steam library (a non-Steam game that starts Play Bloodborne.exe)."""
-        import bbport_steam
+        """Bloodborne in the Steam library: a non-Steam game that starts Bloodborne.exe (in a source
+        tree, this script with --play). Steam rewrites shortcuts.vdf as it exits, so nothing is written
+        while it runs; the player closes it and presses the button again."""
         steam = bbport_steam.steam_folder()
-        configs = bbport_steam.user_configs(steam) if steam else []
-        if not configs:
-            self.messagebox.showerror('Bloodborne', _('Steam was not found on this PC (or nobody has signed in to it yet).'))
+        if not steam or not bbport_steam.user_configs(steam):
+            self.messagebox.showerror('Bloodborne', _('Steam was not found on this PC, or nobody has signed in to it yet.',
+                                                      'Steam не найден на этом ПК или в нём ещё никто не входил.'))
+            return
+        running = bbport_steam.steam_running()
+        if running is None:  # not knowing is not a yes: a running Steam would undo what is written
+            self.messagebox.showerror('Bloodborne', _('Could not check whether Steam is running, so nothing was written. '
+                                                      'Close Steam completely and press Add to Steam again.',
+                                                      'Не удалось проверить, запущен ли Steam, поэтому ничего не записано. '
+                                                      'Закройте Steam полностью и нажмите «Добавить в Steam» снова.'))
+            return
+        if running:
+            self.messagebox.showerror('Bloodborne', _('Steam is running. Close Steam completely, also from its tray '
+                                                      'icon, and press Add to Steam again.',
+                                                      'Steam запущен. Закройте Steam полностью, в том числе в области '
+                                                      'уведомлений, и нажмите «Добавить в Steam» снова.'))
             return
         if FROZEN:
-            exe, options = PORT_DIR / 'Play Bloodborne.exe', ''
+            exe, options = PORT_DIR / 'Bloodborne.exe', ''
         else:
             pythonw = Path(sys.executable).with_name('pythonw.exe')
-            exe, options = (pythonw if pythonw.exists() else Path(sys.executable)), f'"{Path(__file__).resolve()}" --play'
-        self.collect()  # Play Bloodborne.exe starts the game with the saved settings
-        restart = False
-        if bbport_steam.steam_running():
-            if not self.messagebox.askyesno('Bloodborne', _('Steam has to close while the game is added; it starts '
-                                                            'again afterwards. Close Steam now?')):
-                return
-            subprocess.Popen([str(steam / 'steam.exe'), '-shutdown'], creationflags=NO_WINDOW)
-            for _i in range(60):
-                time.sleep(0.5)
-                if not bbport_steam.steam_running():
-                    break
-            else:
-                self.messagebox.showerror('Bloodborne', _('Steam did not close. Close it yourself and try again.'))
-                return
-            time.sleep(1)  # Steam writes its files as it exits
-            restart = True
-        try:
-            for config in configs:
-                bbport_steam.add_shortcut(config / 'shortcuts.vdf', 'Bloodborne', str(exe), str(PORT_DIR),
-                                          str(exe), options)
-        except (OSError, ValueError) as error:
-            self.messagebox.showerror('Bloodborne', _('Could not add the game to Steam: {}').format(error))
+            exe, options = pythonw if pythonw.exists() else Path(sys.executable), f'"{Path(__file__).resolve()}" --play'
+        self.collect()  # Bloodborne.exe starts the game with the saved settings
+        done, failed = bbport_steam.add_to_accounts(steam, 'Bloodborne', str(exe), str(PORT_DIR), str(exe), options)
+        if failed:
+            text = _('Could not add the game to Steam: {}', 'Не удалось добавить игру в Steam: {}').format(
+                '; '.join(f'{path}: {error}' for path, error in failed))
+            if done:  # the other accounts were written: say so, and where
+                text += '\n\n' + _('It was added or updated in: {}. An earlier shortcuts.vdf is kept as shortcuts.vdf.bak.',
+                                   'Добавлено или обновлено в: {}. Прежний shortcuts.vdf сохранён как shortcuts.vdf.bak.'
+                                   ).format('; '.join(str(path) for path, _result in done))
+            self.messagebox.showerror('Bloodborne', text)
             return
-        if restart:
-            os.startfile('steam://open/games')
-        self.messagebox.showinfo('Bloodborne', _('Bloodborne is in your Steam library. It starts with the settings '
-                                                 'saved in this launcher.'))
+        added = sum(result == 'added' for _path, result in done)
+        self.messagebox.showinfo('Bloodborne', _('Bloodborne is in your Steam library: {} added, {} updated (one shortcut per Steam '
+                             'account on this PC). It starts with the settings saved in this launcher. An existing '
+                             'shortcuts.vdf is kept as shortcuts.vdf.bak.',
+                             'Bloodborne в библиотеке Steam: добавлено {}, обновлено {} (по ярлыку на каждый аккаунт '
+                             'Steam на этом ПК). Игра запускается с настройками, сохранёнными в лаунчере. Прежний '
+                             'shortcuts.vdf сохранён как shortcuts.vdf.bak.').format(added, len(done) - added))
 
     def close(self):
         try:
@@ -3672,6 +4541,107 @@ class Launcher:
         self.root.destroy()
 
 
+# Lines of the game's output that say the window exists and the preparation (mods, patches,
+# shaders) is over. "Close the launcher when the game starts" waits for the first of them; a game that
+# never prints one (or exits first) leaves the launcher open, which is safer than closing it too early.
+GAME_UP_LINES = ('GPU: window and Vulkan presenter ready', 'Entering original x86-64 code')
+# The window line is printed as the game window is created, not when it is on screen and has the focus.
+# This pause keeps the launcher window from vanishing before the game window has taken over, and gives the
+# reader thread time to pass on the lines written just after it. A margin, not a measured value.
+CLOSE_AFTER_UP_MS = 1500
+
+
+def game_is_up(text):
+    return any(line in text for line in GAME_UP_LINES)
+
+
+def start_game(command, env, log_path):
+    """Starts the game with its output going straight to LOG_PATH (stdout and stderr). A pipe to the
+    launcher would break when the launcher closes: the preparation fails with Errno 22 on its next
+    message and the game's log is lost. A file keeps filling, in-game restarts included."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, 'wb') as log:
+        return subprocess.Popen(command, cwd=PORT_DIR, env=env, stdin=subprocess.DEVNULL, stdout=log,
+                                stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+
+
+def follow_log(path, finished, emit, interval=0.05, retries=5):
+    """Calls EMIT(text) for each complete line added to PATH, and for a last unfinished one, until
+    FINISHED() is true and the file is read to its end. A file that cannot be opened or read (antivirus
+    holding it, not created yet, removed) is retried with a growing pause, from where it stopped; after
+    RETRIES failures in a row the OSError is raised."""
+    pending, position, failures, log = b'', 0, 0, None
+    try:
+        while True:
+            over = finished()  # asked first: what was written before it returned is still read below
+            try:
+                if log is None:
+                    log = open(path, 'rb')
+                    log.seek(position)
+                data = log.read(1 << 16)
+                failures = 0
+            except OSError:
+                if log is not None:
+                    log.close()
+                    log = None
+                failures += 1
+                if failures > retries:
+                    raise
+                time.sleep(interval * 2 ** failures)
+                continue
+            position += len(data)
+            if data:
+                pending += data
+                cut = pending.rfind(b'\n') + 1
+                if cut:
+                    emit(pending[:cut].decode('utf-8', errors='replace'))
+                    pending = pending[cut:]
+            elif over:
+                if pending:
+                    emit(pending.decode('utf-8', errors='replace'))
+                return
+            else:
+                time.sleep(interval)
+    finally:
+        if log is not None:
+            log.close()
+
+
+FALLBACK_GRACE_S = 10  # how long the log is still followed after run.py ends, when no job object tells more
+
+
+def game_over(process, job):
+    """True when run.py and everything it started (the in-game restart's launch too) has ended.
+    Without a usable job object only run.py is known, and the in-game restart ends it while the new
+    launch goes on writing the log: then the end is reported FALLBACK_GRACE_S seconds after run.py's,
+    and job.say (when set) is told once that this fallback is in use."""
+    alive = job.running() if job else None
+    if alive is not None:
+        return not alive
+    if job is not None and not job.fallback_said:
+        job.fallback_said = True
+        if job.say:
+            job.say('\n' + _('— the launcher could not watch the game processes; after an in-game restart it may '
+                             'notice the end up to {} s late —',
+                             '— лаунчер не смог отслеживать процессы игры; после перезапуска из игры он может '
+                             'заметить завершение с задержкой до {} с —').format(FALLBACK_GRACE_S) + '\n')
+    if process.poll() is None:
+        return False
+    if job is None:
+        return True
+    if job.ended_at is None:
+        job.ended_at = time.monotonic()
+    return time.monotonic() - job.ended_at >= FALLBACK_GRACE_S
+
+
+class JobAccounting(ctypes.Structure):
+    """JOBOBJECT_BASIC_ACCOUNTING_INFORMATION."""
+    _fields_ = [('TotalUserTime', ctypes.c_int64), ('TotalKernelTime', ctypes.c_int64),
+                ('ThisPeriodTotalUserTime', ctypes.c_int64), ('ThisPeriodTotalKernelTime', ctypes.c_int64),
+                ('TotalPageFaultCount', ctypes.c_uint32), ('TotalProcesses', ctypes.c_uint32),
+                ('ActiveProcesses', ctypes.c_uint32), ('TotalTerminatedProcesses', ctypes.c_uint32)]
+
+
 class GameJob:
     """A Windows job holding run.py and everything it starts: bb-probe.exe and the launches made
     by the in-game restart (no longer descendants of the first process)."""
@@ -3680,8 +4650,22 @@ class GameJob:
         kernel32 = ctypes.windll.kernel32
         kernel32.CreateJobObjectW.restype = ctypes.c_void_p
         self.handle = kernel32.CreateJobObjectW(None, None)
+        self.assigned = False
+        self.say = None  # called with a line for the log when game_over has to do without the job
+        self.fallback_said, self.ended_at = False, None
         if self.handle:
-            kernel32.AssignProcessToJobObject(ctypes.c_void_p(self.handle), ctypes.c_void_p(int(process._handle)))
+            self.assigned = bool(kernel32.AssignProcessToJobObject(
+                ctypes.c_void_p(self.handle), ctypes.c_void_p(int(process._handle))))
+
+    def running(self):
+        """Whether a process of the job is alive; None when the job could not be used."""
+        if not (self.handle and self.assigned):
+            return None
+        info = JobAccounting()
+        if not ctypes.windll.kernel32.QueryInformationJobObject(ctypes.c_void_p(self.handle), 1,
+                                                                ctypes.byref(info), ctypes.sizeof(info), None):
+            return None
+        return info.ActiveProcesses > 0
 
     def terminate(self):
         if self.handle:
@@ -3711,22 +4695,6 @@ def play_without_window(settings):
             except (OSError, ValueError):
                 pass
         return process.wait()
-
-
-def version_tuple(text):
-    return tuple(int(number) for number in re.findall(r'\d+', text or ''))
-
-
-def latest_release():
-    """(version, zip URL, page URL) of the newest GitHub release."""
-    request = urllib.request.Request(RELEASES_API, headers={'Accept': 'application/vnd.github+json',
-                                                            'User-Agent': 'bbport-launcher'})
-    with urllib.request.urlopen(request, timeout=15) as response:
-        release = json.load(response)
-    version = '.'.join(re.findall(r'\d+', release['tag_name']))
-    url = next((asset['browser_download_url'] for asset in release.get('assets', [])
-                if asset.get('name', '').lower().endswith('.zip')), None)
-    return version, url, release.get('html_url') or RELEASES_PAGE
 
 
 def update_ignore(target):

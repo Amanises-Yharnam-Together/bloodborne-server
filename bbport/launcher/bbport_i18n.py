@@ -214,7 +214,7 @@ EN = {
     "Тени от динамических источников": "Dynamic light shadows",
     "Отражения SSR (не было в игре)": "SSR reflections (not in the original game)",
     "Пропуск заставок при запуске": "Skip the intro videos",
-    "Свободная камера (Cross + L3 / Space + Z)": "Free camera (Cross + L3 / Space + Z)",
+    "Свободная камера (Cross + L3 / E + C)": "Free camera (Cross + L3 / E + C)",
     "Debug menu (левый touchpad / Tab; нужны шрифты)": "Debug menu (left touchpad / Tab; needs fonts)",
     "Нужна папка adhoc из мода Nexus #253 (шрифты adhoc/font) — в dvdroot_ps4 игры или модом; без неё патч не применяется":
         "Needs the adhoc folder from Nexus mod #253 (fonts in adhoc/font), in the game's dvdroot_ps4 or as a mod; without it the patch is not applied",
@@ -440,7 +440,7 @@ PT_BR = {
     "Тени от динамических источников": "Sombras de luzes dinâmicas",
     "Отражения SSR (не было в игре)": "Reflexos SSR (não existiam no jogo original)",
     "Пропуск заставок при запуске": "Pular vídeos de introdução",
-    "Свободная камера (Cross + L3 / Space + Z)": "Câmera livre (Cross + L3 / Space + Z)",
+    "Свободная камера (Cross + L3 / E + C)": "Câmera livre (Cross + L3 / E + C)",
     "Debug menu (левый touchpad / Tab; нужны шрифты)": "Menu de depuração (touchpad esquerdo / Tab; requer fontes)",
     "Нужна папка adhoc из мода Nexus #253 (шрифты adhoc/font) — в dvdroot_ps4 игры или модом; без неё патч не применяется":
         "Requer a pasta adhoc do mod #253 do Nexus (fontes em adhoc/font), no dvdroot_ps4 do jogo ou como mod; sem ela o patch não é aplicado",

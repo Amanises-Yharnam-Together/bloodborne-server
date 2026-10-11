@@ -75,6 +75,8 @@ void runtime_file_configure(const char *app0, const char *user);
 int runtime_file_mount(const char *guest, const char *host);
 void runtime_file_unmount(const char *guest);
 int runtime_file_translate(const char *guest, char *out, size_t size);
+/* Replaces host file `to` with `from` in one step (a crash keeps one of them whole); 0 or a host errno. */
+int runtime_file_replace_host(const char *from, const char *to);
 int64_t runtime_file_open(const char *path, int flags, int mode);
 int64_t runtime_file_close(int fd);
 int64_t runtime_file_read(int fd, void *buffer, uint64_t size);
@@ -96,6 +98,15 @@ uintptr_t runtime_audio_resolve(const char *name);
 void runtime_audio_report(void);
 uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
+/* The game image (set by probe.c) and the PC mouse camera (runtime_camhook.c): a hook in the game's
+ * camera update that turns it by exact angles (radians, the game's pitch and yaw), taken once per
+ * frame. install returns 0 and says why in *why when the hook cannot be installed. */
+extern uintptr_t runtime_image_start;
+extern uint64_t runtime_image_size;
+int runtime_camhook_install(int no_auto_rotation, const char **why);
+int runtime_camhook_active(void);
+void runtime_camhook_turn(float pitch, float yaw);
+void runtime_camhook_drop(void);
 uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);

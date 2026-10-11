@@ -13,7 +13,9 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 EBOOT_BASE=0x400000
-# BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09).
+# BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09). Their patch lists
+# follow shadps4-emu/ps4_cheats PATCHES/Bloodborne.xml of 2026-10-02 (older lists missed timesteps:
+# messengers and loading screen pictures replayed their animations).
 # Above 60 FPS the sprint fix always goes with the frame rate patch: without it sprinting drops to
 # half speed (the game's wall detector measured distance per frame, a 30 FPS rule).
 FPS_PRESETS={'30':[],'60':['60 FPS++'],'90':['90 FPS++','Sprint Fix (High FPS)'],
@@ -60,14 +62,14 @@ INTEL_TONEMAP='Intel Black Tonemap Fix'
 
 def intel_cpu(cpuinfo='/proc/cpuinfo'):
     try:
-        with open(cpuinfo) as f:
+        with open(cpuinfo, encoding='utf-8', errors='replace') as f:
             return any(line.startswith('vendor_id') and 'GenuineIntel' in line for line in f)
     except OSError:
         return False
 
 
 # The title's PLAY ONLINE / PLAY OFFLINE dialog: the port has no PSN, the game goes straight to the
-# main menu offline. On by default (the launcher's switch); BB_SKIP_NETWORK_CHOICE=0 shows it.
+# main menu offline. On by default; BB_SKIP_NETWORK_CHOICE=0 (or false, no, off) shows it.
 # Seamless co-op plays online (SHADPS4_BLOODBORNE_SEAMLESS_COOP=1): the dialog stays.
 SKIP_NETWORK_CHOICE='Skip Online/Offline Choice'
 
@@ -75,7 +77,7 @@ SKIP_NETWORK_CHOICE='Skip Online/Offline Choice'
 def skip_network_choice(env=os.environ):
     if env.get('SHADPS4_BLOODBORNE_SEAMLESS_COOP')=='1':
         return False
-    return env.get('BB_SKIP_NETWORK_CHOICE','1')!='0'
+    return env.get('BB_SKIP_NETWORK_CHOICE','1').strip().lower() not in ('0','false','no','off')
 
 
 def intel_tonemap_fix(env=os.environ, cpuinfo='/proc/cpuinfo'):
@@ -84,6 +86,17 @@ def intel_tonemap_fix(env=os.environ, cpuinfo='/proc/cpuinfo'):
 
 # model_lod: -2 highest, 0 the game's, 1 lower, 2 lowest.
 MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 2 (Lowest)'}
+
+
+# The game version the patches are written for: byte writes at that version's addresses.
+APP_VERSION='01.09'
+
+
+def game_is_patched(version, env=os.environ, app_version=APP_VERSION):
+    """Whether the patches apply to a game of this APP_VER: its own, or an unreadable one (None)
+    that the game check reports on its own. BB_FORCE_PATCHES applies them to any version. Shared
+    by main() and run.sh (--print-patched)."""
+    return bool(env.get('BB_FORCE_PATCHES')) or not version or version==app_version
 
 
 def game_app_version(game):
@@ -179,7 +192,8 @@ UI_HEIGHT=0x0235855D-EBOOT_BASE
 def read_settings(path):
     settings={}
     if path.exists():
-        for line in path.read_text(encoding='utf-8').splitlines():
+        # UTF-8 whatever the Windows code page is (a BOM from Notepad is dropped).
+        for line in path.read_text(encoding='utf-8-sig', errors='replace').splitlines():
             key,sep,value=line.partition('=')
             if sep and not line.startswith('#'): settings[key.strip()]=value.strip()
     return settings
@@ -287,10 +301,12 @@ def compile_patches(xml, names, app_version, segments):
 
 
 # Third-party patch files (shadPS4/GoldHEN XML) in the data directory's patches/ folder.
-BLOODBORNE_IDS={'CUSA00207','CUSA00208','CUSA00900','CUSA01363','CUSA03173','CUSA03023'}
+# The retail releases (scripts/game_check.py SUPPORTED_TITLES): one 1.09 executable.
+BLOODBORNE_IDS={'CUSA00900','CUSA00207','CUSA00208','CUSA00299','CUSA01363',
+                'CUSA03179','CUSA03173','CUSA03014','CUSA03023'}
 
 
-def external_patches(directory, app_version='01.09', exclude=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml'):
+def external_patches(directory, app_version=APP_VERSION, exclude=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml'):
     """[(key, file, metadata)] of eboot patches for this version in directory/*.xml.
     key is "<file name>/<patch name>" (the launcher's selection, patches.json)."""
     found=[]
@@ -315,7 +331,7 @@ def external_selection(found, config):
     each file's isEnabled."""
     settings={}
     if config and Path(config).is_file():
-        settings=json.loads(Path(config).read_text(encoding='utf-8'))
+        settings=json.loads(Path(config).read_text(encoding='utf-8-sig'))
     enabled,disabled=set(settings.get('enabled',[])),set(settings.get('disabled',[]))
     return [(key,path,meta) for key,path,meta in found
             if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
@@ -348,7 +364,7 @@ def main():
     p.add_argument('--xml',type=Path,default=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml')
     p.add_argument('--fps',choices=sorted(FPS_PRESETS),default='uncap')
     p.add_argument('--extra',default='',help='additional patch names, separated by ";"')
-    p.add_argument('--app-version',default='01.09')
+    p.add_argument('--app-version',default=APP_VERSION)
     p.add_argument('--out',type=Path,default=Path(__file__).resolve().parent.parent/'out')
     p.add_argument('--settings',type=Path,default=Path(__file__).resolve().parent.parent/'bbport.ini')
     p.add_argument('--game-dir',type=Path,default=Path(os.environ.get('BB_GAME_DIR','../CUSA03173')))
@@ -357,7 +373,12 @@ def main():
     p.add_argument('--output-res',default='',help='output resolution WxH (the upscaler\'s; the UI stays 1920x1080)')
     p.add_argument('--print-scaled',action='store_true',
                    help='print "RENDER OUTPUT" (WxH) when bbport.ini selects an output other than 1080p')
+    p.add_argument('--print-patched',action='store_true',
+                   help='print "patched" or "unpatched" for the version of --game-dir (run.sh asks this)')
     a=p.parse_args()
+    if a.print_patched:
+        print('patched' if game_is_patched(game_app_version(a.game_dir),os.environ,a.app_version) else 'unpatched')
+        return
     if a.print_scaled:
         sizes=scaled_sizes(read_settings(a.settings))
         if sizes: print(f'{sizes[0][0]}x{sizes[0][1]} {sizes[1][0]}x{sizes[1][1]}')
@@ -374,7 +395,7 @@ def main():
     # The patches are byte writes at the addresses of one game version: on another version they
     # would corrupt code. Such a game runs unpatched (run.sh/run.py then choose 30 FPS).
     version=game_app_version(a.game_dir)
-    if version and version!=a.app_version and not os.environ.get('BB_FORCE_PATCHES'):
+    if not game_is_patched(version,os.environ,a.app_version):
         blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,0)
         (a.out/'patches.bin').write_bytes(blob)
         print(f'Patches: game version {version}, patches are for {a.app_version}: none applied '

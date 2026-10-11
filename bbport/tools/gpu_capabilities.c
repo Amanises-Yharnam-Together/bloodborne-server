@@ -1,11 +1,11 @@
 /* Check whether native-size depth/stencil images can be blitted to reduced
  * renderer targets. The renderer needs both directions for live presets.
  * --gamepads: the connected gamepads, "GUID<tab>name" per line (the launcher's controller list,
- * BB_GAMEPAD). --displays: the monitors, "name<tab>WxH<tab>primary (1 or 0)" per line in SDL's
- * order (the launcher's monitor list, BB_DISPLAY; issue #69). --read-input: one key or button for the
- * launcher's controls (below). --upscalers: one "UPSCALER <name> supported|unsupported: <reason>"
- * line per upscaler (below). --device: "vendorID<tab>name" of the GPU the game takes (run.sh:
- * memory model and driver workarounds by vendor and chip). */
+ * BB_GAMEPAD). --displays: the monitors in the numbering BB_DISPLAY uses (below; issue #69).
+ * --read-input: one key or button for the launcher's controls (below).
+ * --upscalers: one "UPSCALER <name> supported|unsupported: <reason>" line per upscaler (below).
+ * --device: "vendorID<tab>name" of the GPU the game takes (run.sh: memory model and driver
+ * workarounds by vendor and chip). */
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -95,6 +95,13 @@ static int list_gamepads(void) {
     return 0;
 }
 
+/* --displays: one line per monitor, in SDL's order, which is the number BB_DISPLAY takes
+ * (gpu/shim/window.cpp picks the game's window and fullscreen display the same way):
+ *   <number><TAB><name><TAB><width>x<height><TAB><refresh Hz><TAB><primary>
+ * number: 1, 2, ... (the line's position); name: SDL's, tabs and line breaks replaced by spaces;
+ * width x height: the desktop mode in pixels (0x0 when unknown); refresh Hz: whole Hz, rounded,
+ * 0 when unknown; primary: 1 for SDL's primary display, else 0. No monitor: no output, exit 0;
+ * SDL cannot start: a message on stderr, exit 1. */
 static int list_displays(void) {
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "displays: %s\n", SDL_GetError());
@@ -104,10 +111,17 @@ static int list_displays(void) {
     int count = 0;
     SDL_DisplayID *ids = SDL_GetDisplays(&count);
     for (int i = 0; ids && i < count; ++i) {
-        const char *name = SDL_GetDisplayName(ids[i]);
+        char name[256];
+        const char *sdl_name = SDL_GetDisplayName(ids[i]);
+        snprintf(name, sizeof name, "%s", sdl_name && *sdl_name ? sdl_name : "?");
+        for (char *p = name; *p; ++p) {
+            if (*p == '\t' || *p == '\n' || *p == '\r') {
+                *p = ' ';
+            }
+        }
         const SDL_DisplayMode *mode = SDL_GetDesktopDisplayMode(ids[i]);
-        printf("%s\t%dx%d\t%d\n", name && *name ? name : "?", mode ? mode->w : 0,
-               mode ? mode->h : 0, ids[i] == primary);
+        printf("%d\t%s\t%dx%d\t%d\t%d\n", i + 1, name, mode ? mode->w : 0, mode ? mode->h : 0,
+               mode ? (int)(mode->refresh_rate + 0.5f) : 0, ids[i] == primary);
     }
     SDL_free(ids);
     SDL_Quit();
@@ -116,7 +130,29 @@ static int list_displays(void) {
 
 /* --read-input key|pad: a small window; prints "key <SDL key name>" or "pad <SDL button name>"
  * (lefttrigger/righttrigger for the triggers) for the first key or gamepad button pressed, the
- * names bbport.ini's key.* and pad.* lines take. Escape, closing it or 15 s: nothing. */
+ * names bbport.ini's key.* and pad.* lines take. A mouse button or a wheel step in the window is a
+ * key too ("key Mouse Left", "key Wheel Up", see src/runtime_pad.c), with "Shift+", "Ctrl+" or
+ * "Alt+" in front while one of them is held: a modifier key is taken when it is let go, so that it
+ * can be pressed first for such a combination. Escape, closing it or 15 s: nothing. */
+static int is_modifier(SDL_Scancode code) {
+    return code == SDL_SCANCODE_LSHIFT || code == SDL_SCANCODE_RSHIFT || code == SDL_SCANCODE_LCTRL ||
+           code == SDL_SCANCODE_RCTRL || code == SDL_SCANCODE_LALT || code == SDL_SCANCODE_RALT;
+}
+static const char *mouse_button_name(int button) {
+    switch (button) {
+    case SDL_BUTTON_LEFT: return "Mouse Left";
+    case SDL_BUTTON_RIGHT: return "Mouse Right";
+    case SDL_BUTTON_MIDDLE: return "Mouse Middle";
+    case SDL_BUTTON_X1: return "Mouse X1";
+    case SDL_BUTTON_X2: return "Mouse X2";
+    default: return NULL;
+    }
+}
+static void print_mouse_input(const char *name) {
+    const SDL_Keymod mods = SDL_GetModState();
+    printf("key %s%s%s%s\n", mods & SDL_KMOD_SHIFT ? "Shift+" : "", mods & SDL_KMOD_CTRL ? "Ctrl+" : "",
+           mods & SDL_KMOD_ALT ? "Alt+" : "", name);
+}
 static int read_input(const char *kind) {
     const int want_key = strcmp(kind, "pad") != 0, want_pad = strcmp(kind, "key") != 0;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
@@ -139,6 +175,7 @@ static int read_input(const char *kind) {
     SDL_free(ids);
     const Uint64 end = SDL_GetTicks() + 15000;
     int done = 0;
+    SDL_Scancode pending_modifier = SDL_SCANCODE_UNKNOWN; // pressed, not yet let go
     while (!done && SDL_GetTicks() < end) {
         SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
         SDL_RenderClear(renderer);
@@ -159,8 +196,28 @@ static int read_input(const char *kind) {
             case SDL_EVENT_KEY_DOWN:
                 if (e.key.scancode == SDL_SCANCODE_ESCAPE) {
                     done = 1;
+                } else if (want_key && is_modifier(e.key.scancode)) {
+                    pending_modifier = e.key.scancode;
                 } else if (want_key) {
                     printf("key %s\n", SDL_GetScancodeName(e.key.scancode));
+                    done = 1;
+                }
+                break;
+            case SDL_EVENT_KEY_UP:
+                if (want_key && e.key.scancode == pending_modifier) {
+                    printf("key %s\n", SDL_GetScancodeName(pending_modifier));
+                    done = 1;
+                }
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (want_key && mouse_button_name(e.button.button)) {
+                    print_mouse_input(mouse_button_name(e.button.button));
+                    done = 1;
+                }
+                break;
+            case SDL_EVENT_MOUSE_WHEEL:
+                if (want_key && e.wheel.y != 0) {
+                    print_mouse_input((e.wheel.y > 0) == (e.wheel.direction == SDL_MOUSEWHEEL_NORMAL) ? "Wheel Up" : "Wheel Down");
                     done = 1;
                 }
                 break;
@@ -332,6 +389,61 @@ static void load_upscaler_dlls(Dlls *dlls, const char **list, uint32_t *count) {
     }
 }
 
+/* The fsr4vk provider runs FSR 4.1.1 where the replay cannot (no VK_VALVE_shader_mixed_float_dot_product):
+ * the device requirements vk_instance.cpp requests for it (provider/INTEGRATION-CONTRACT.md of fsr4vk) and
+ * its DLL in BB_FSR4VK_DIR or the fsr4vk folder next to this executable (vk_fsr4vk.cpp, tools/fetch_fsr4vk.py).
+ * The DLL name below repeats Fsr4Vk::LibraryName (gpu/shadps4/video_core/renderer_vulkan/vk_fsr4vk.h) and
+ * tools/fetch_fsr4vk.py; the feature list repeats the one in Instance::CreateDevice (vk_instance.cpp).
+ * Returns why it cannot run, or NULL. */
+static const char *fsr4vk_problem(VkPhysicalDevice device, const VkPhysicalDeviceFeatures *core,
+                                  const VkPhysicalDeviceVulkan12Features *vk12,
+                                  const VkPhysicalDeviceVulkan13Features *vk13, int derivatives_ok,
+                                  const VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT *mutable_type,
+                                  const VkPhysicalDeviceDescriptorBufferFeaturesEXT *buffer) {
+    static char reason[120];
+    const struct { const char *name; int ok; } features[] = {
+        {"shaderInt16", core->shaderInt16},
+        {"shaderStorageImageReadWithoutFormat", core->shaderStorageImageReadWithoutFormat},
+        {"shaderStorageImageWriteWithoutFormat", core->shaderStorageImageWriteWithoutFormat},
+        {"shaderFloat16", vk12->shaderFloat16},
+        {"shaderInt8", vk12->shaderInt8},
+        {"storageBuffer8BitAccess", vk12->storageBuffer8BitAccess},
+        {"runtimeDescriptorArray", vk12->runtimeDescriptorArray},
+        {"descriptorBindingVariableDescriptorCount", vk12->descriptorBindingVariableDescriptorCount},
+        {"bufferDeviceAddress", vk12->bufferDeviceAddress},
+        {"synchronization2", vk13->synchronization2},
+        {"shaderIntegerDotProduct", vk13->shaderIntegerDotProduct},
+        {"computeDerivativeGroupLinear", derivatives_ok},
+        {"mutableDescriptorType", mutable_type->mutableDescriptorType && has_extension(device, "VK_EXT_mutable_descriptor_type")},
+        {"descriptorBuffer", buffer->descriptorBuffer && has_extension(device, "VK_EXT_descriptor_buffer")},
+    };
+    for (size_t i = 0; i < sizeof features / sizeof features[0]; ++i) {
+        if (!features[i].ok) {
+            snprintf(reason, sizeof reason, "needs the Vulkan feature %s", features[i].name);
+            return reason;
+        }
+    }
+    const char *off = getenv("BB_FSR4VK");
+    if (off && off[0] == '0') return "switched off (BB_FSR4VK=0)";
+    wchar_t path[MAX_PATH + 64];
+    /* The wide environment, as Fsr4Vk::Directory does: this program has no UTF-8 manifest, so getenv would
+     * hand back the ANSI page and a folder with a non-ASCII name would read differently from the game's. */
+    const wchar_t *dir = _wgetenv(L"BB_FSR4VK_DIR");
+    if (dir && dir[0]) {
+        if (wcslen(dir) >= MAX_PATH) return "FSR 4.1.1 files are not downloaded";
+        wcscpy(path, dir);
+    } else {
+        DWORD length = GetModuleFileNameW(NULL, path, MAX_PATH);
+        if (!length || length >= MAX_PATH) return "FSR 4.1.1 files are not downloaded";
+        while (length && path[length - 1] != L'\\') --length;
+        path[length] = 0;
+        wcscat(path, L"fsr4vk");
+    }
+    wcscat(path, L"\\amd_fidelityfx_upscaler_vk.dll"); /* Fsr4Vk::LibraryName */
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return "FSR 4.1.1 files are not downloaded";
+    return NULL;
+}
+
 static void verdict_xess(const Dlls *dlls, VkInstance instance, VkPhysicalDevice device, int instance_ok,
                          UpscalerVerdict *v) {
     if (!dlls->xess) return fail(v, "libxess.dll is not installed");
@@ -410,8 +522,10 @@ static int upscalers_mode(void) {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &derivatives};
     VkPhysicalDeviceVulkan12Features vk12 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &vk13};
+    VkPhysicalDeviceDescriptorBufferFeaturesEXT descriptor_buffer = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT, .pNext = &vk12};
     VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT mutable_type = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_EXT, .pNext = &vk12};
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_EXT, .pNext = &descriptor_buffer};
     VkPhysicalDeviceFeatures2 features = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
                                           .pNext = &mutable_type};
     vkGetPhysicalDeviceFeatures2(device, &features);
@@ -441,10 +555,20 @@ static int upscalers_mode(void) {
         if (amd && (!matrix_ok || old_name))
             snprintf(fsr4.reason, sizeof fsr4.reason, "may be slow on this GPU");
     }
-    /* IsFsr411Supported: FSR 4 INT8 plus the Valve extension (Linux Mesa in practice). */
+    /* IsFsr411Available: FSR 4 INT8 plus VK_VALVE_shader_mixed_float_dot_product, which only Mesa
+     * exposes today, or (Windows) the fsr4vk provider: its device features and its downloaded DLL.
+     * The reason stays plain: the launcher shows it. */
     pass(&fsr411);
     if (!fsr4.ok) fail(&fsr411, "%s", fsr4.reason);
-    else if (!mixed_ok) fail(&fsr411, "needs VK_VALVE_shader_mixed_float_dot_product (Linux driver)");
+    else if (!mixed_ok) {
+#ifdef _WIN32
+        const char *problem = fsr4vk_problem(device, &features.features, &vk12, &vk13, derivatives_ok,
+                                             &mutable_type, &descriptor_buffer);
+        if (problem) fail(&fsr411, "%s", problem);
+#else
+        fail(&fsr411, "needs VK_VALVE_shader_mixed_float_dot_product, which this driver does not expose");
+#endif
+    }
 #ifdef _WIN32
     verdict_dlss(&dlls, &props, instance, device, instance_ok, &dlss);
     verdict_xess(&dlls, instance, device, instance_ok, &xess);

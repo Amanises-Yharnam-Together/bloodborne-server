@@ -675,6 +675,8 @@ int main(int argc, char **argv) {
     enum { COOP_CODE_BYTES=1024*1024 };
     unsigned char *coop_code=runtime_low_map(COOP_CODE_BYTES,PROT_READ|PROT_WRITE|PROT_EXEC);
     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
+    runtime_image_start = (uintptr_t)image;
+    runtime_image_size = size;
     fclose(f);
     if (!cpu_only) {
         char title[128]="Bloodborne", serial[16]="UNKNOWN", sfo[4096];

@@ -1,4 +1,5 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,13 +21,24 @@ namespace {
 // SDL's primary display. The monitors are logged so a report says which one was taken.
 SDL_DisplayID ChooseDisplay() {
     const SDL_DisplayID primary = SDL_GetPrimaryDisplay();
-    const char* wanted = std::getenv("BB_DISPLAY");
+    std::string wanted;
+    if (const char* value = std::getenv("BB_DISPLAY")) {
+        wanted = value;
+        while (!wanted.empty() && std::isspace(static_cast<unsigned char>(wanted.back()))) {
+            wanted.pop_back();
+        }
+        size_t first = 0;
+        while (first < wanted.size() && std::isspace(static_cast<unsigned char>(wanted[first]))) {
+            ++first;
+        }
+        wanted.erase(0, first);
+    }
     int count = 0;
     SDL_DisplayID* ids = SDL_GetDisplays(&count);
     SDL_DisplayID chosen = 0;
-    if (wanted && *wanted) {
+    if (!wanted.empty()) {
         char* end = nullptr;
-        const long number = std::strtol(wanted, &end, 10);
+        const long number = std::strtol(wanted.c_str(), &end, 10);
         if (end && *end == '\0') {
             if (number >= 1 && number <= count) {
                 chosen = ids[number - 1];
@@ -34,7 +46,7 @@ SDL_DisplayID ChooseDisplay() {
         } else {
             for (int i = 0; i < count && !chosen; ++i) {
                 const char* name = SDL_GetDisplayName(ids[i]);
-                if (name && SDL_strcasestr(name, wanted)) { // bbport: MinGW has no strcasestr
+                if (name && SDL_strcasestr(name, wanted.c_str())) { // bbport: MinGW has no strcasestr
                     chosen = ids[i];
                 }
             }
@@ -48,8 +60,9 @@ SDL_DisplayID ChooseDisplay() {
                     mode ? mode->h : 0, ids[i] == primary ? " (primary)" : "",
                     ids[i] == display ? " <- the game's (BB_DISPLAY)" : "");
     }
-    if (wanted && *wanted && !chosen) {
-        std::printf("Display: BB_DISPLAY=%s matches none, the primary one is used\n", wanted);
+    if (!wanted.empty() && !chosen) {
+        std::printf("Display: BB_DISPLAY=%s matches none, the primary one is used\n",
+                    wanted.c_str());
     }
     SDL_free(ids);
     return display;
@@ -80,9 +93,12 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
             want_w = ow;
             want_h = oh;
             SDL_Rect usable{};
-            maximize = SDL_GetDisplayUsableBounds(display, &usable) && (ow > usable.w || oh > usable.h);
+            // When the usable area cannot be read, maximize: the output size could be larger than the screen.
+            const bool known = SDL_GetDisplayUsableBounds(display, &usable);
+            maximize = !known || ow > usable.w || oh > usable.h;
             std::printf("Window: sized for the %dx%d output%s\n", ow, oh,
-                        maximize ? " (maximized: that size does not fit the screen)" : "");
+                        !known ? " (maximized: the size of the screen could not be read)"
+                        : maximize ? " (maximized: that size does not fit the screen)" : "");
         }
     }
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, want_w);
@@ -195,6 +211,42 @@ void WindowSDL::UpdateTextTitle() {
     BbOverlay::SetTextPrompt(text_active, text_prompt, text);
 }
 
+bool WindowSDL::TakeMouse(float& dx, float& dy, float& wheel, u32& buttons) {
+    std::scoped_lock lock{mouse_mutex};
+    dx = mouse_dx;
+    dy = mouse_dy;
+    wheel = mouse_wheel;
+    buttons = mouse_held | mouse_clicked; // a click shorter than a game frame still counts
+    mouse_dx = mouse_dy = mouse_wheel = 0.0f;
+    mouse_clicked = 0;
+    return mouse_captured.load(std::memory_order_relaxed);
+}
+
+// The mouse belongs to the game while it is enabled (runtime_pad.c), the window has focus and
+// neither the settings menu nor the text entry is shown; relative mode hides the cursor and
+// keeps it inside. Any change drops what was collected: the click that focused the window and
+// motion from before the capture are not the game's, nor is a turn the camera has not taken
+// when the mouse is let go.
+void WindowSDL::UpdateMouseCapture() {
+    const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    const bool want = mouse_enabled.load(std::memory_order_relaxed) && focused && !text_active &&
+                      !BbOverlay::CapturesInput();
+    if (want != SDL_GetWindowRelativeMouseMode(window)) {
+        SDL_SetWindowRelativeMouseMode(window, want);
+    }
+    if (want != mouse_captured.load(std::memory_order_relaxed)) {
+        {
+            std::scoped_lock lock{mouse_mutex};
+            mouse_dx = mouse_dy = mouse_wheel = 0.0f;
+            mouse_held = mouse_clicked = 0;
+            mouse_captured.store(want, std::memory_order_relaxed);
+        }
+        if (const auto drop = mouse_drop.load(std::memory_order_acquire)) {
+            drop();
+        }
+    }
+}
+
 bool WindowSDL::PollEvents() {
     {
         std::scoped_lock lock{text_mutex};
@@ -208,6 +260,9 @@ bool WindowSDL::PollEvents() {
     if (!text_active) {
         BbOverlay::UpdateTextInput(window);
     }
+    BbOverlay::Tick();
+    BbOverlay::TestTick();
+    UpdateMouseCapture();
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_MOUSE_MOTION) {
@@ -244,6 +299,36 @@ bool WindowSDL::PollEvents() {
             continue;
         }
         switch (event.type) {
+        case SDL_EVENT_MOUSE_MOTION:
+            if (mouse_captured.load(std::memory_order_relaxed)) {
+                if (const auto turn = mouse_turn.load(std::memory_order_acquire)) {
+                    turn(event.motion.xrel, event.motion.yrel);
+                    break;
+                }
+                std::scoped_lock lock{mouse_mutex};
+                mouse_dx += event.motion.xrel;
+                mouse_dy += event.motion.yrel;
+            }
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            if (mouse_captured.load(std::memory_order_relaxed)) {
+                std::scoped_lock lock{mouse_mutex};
+                const u32 mask = SDL_BUTTON_MASK(event.button.button);
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                    mouse_held |= mask;
+                    mouse_clicked |= mask;
+                } else {
+                    mouse_held &= ~mask;
+                }
+            }
+            break;
+        case SDL_EVENT_MOUSE_WHEEL:
+            if (mouse_captured.load(std::memory_order_relaxed)) {
+                std::scoped_lock lock{mouse_mutex};
+                mouse_wheel += event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
+            }
+            break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_RESIZED: {
             int w = 0, h = 0;
@@ -274,11 +359,13 @@ bool WindowSDL::PollEvents() {
 }
 
 // Issue #3: the OS cursor over the game. Hidden in fullscreen, and in a window after 3 s without
-// moving the mouse; always shown while the settings menu is open.
+// moving the mouse; always shown while the settings menu is open. Hidden too while the game holds
+// the mouse (relative mode).
 void WindowSDL::UpdateCursor() {
     const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
     const bool hide = !BbOverlay::MenuOpen() &&
-                      (fullscreen || SDL_GetTicks() - last_mouse_motion_ms > 3000);
+                      (fullscreen || mouse_captured.load(std::memory_order_relaxed) ||
+                       SDL_GetTicks() - last_mouse_motion_ms > 3000);
     if (hide != cursor_hidden) {
         cursor_hidden = hide;
         hide ? SDL_HideCursor() : SDL_ShowCursor();

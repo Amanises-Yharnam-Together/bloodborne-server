@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
+here=$PWD
 if [[ ${1:-} == --software ]]; then
     shift
     if [[ -z ${VK_DRIVER_FILES:-} ]]; then
@@ -120,6 +121,25 @@ elif [[ -n ${scaled_output:-} ]]; then
     export BB_RENDER_RES=$scaled_render BB_OUTPUT_RES=$scaled_output BB_AUTO_RENDER_RES=1
     export BB_DMEM_MB=${BB_DMEM_MB:-9152}
     echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB} MiB (live_resolution=1: live changes)"
+fi
+# Patches exist for one game version only. patches.py decides (game_is_patched: an unreadable
+# version counts as patched, BB_FORCE_PATCHES forces it); a failure to ask also counts as patched,
+# with a warning, so the memory rule below keeps its old behavior.
+game_is_patched() {
+    local answer
+    if ! answer=$("$PYTHON" "$here/scripts/patches.py" --print-patched --game-dir "$game"); then
+        echo "run.sh: could not read the version of $game (scripts/patches.py --print-patched failed); treating the game as patched" >&2
+        return 0
+    fi
+    [[ $answer == patched ]]
+}
+# An explicit render size above 1080p skips the scaled path above, but patches.py still grows the
+# graphics heap: the direct memory has to follow, or the game stops at start (exit 139). A game
+# without the patches keeps its memory.
+if [[ -z ${BB_DMEM_MB:-} && ${BB_RENDER_RES:-} =~ ^[[:space:]]*([0-9]+)[[:space:]]*[xX][[:space:]]*([0-9]+)[[:space:]]*$ ]] &&
+        (( 10#${BASH_REMATCH[1]} * 10#${BASH_REMATCH[2]} > 1920 * 1080 )) && game_is_patched; then
+    export BB_DMEM_MB=9152
+    echo "Render ${BB_RENDER_RES}: direct memory ${BB_DMEM_MB} MiB"
 fi
 "$PYTHON" scripts/patches.py --out "$out" --fps "$fps" --extra "${BB_PATCHES:-}" --settings "$BB_CONFIG" --game-dir "$game" --render-res "${BB_RENDER_RES:-}" --output-res "${BB_OUTPUT_RES:-}" \
     --patches-dir "${BB_PATCHES_DIR:-$data/patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}"

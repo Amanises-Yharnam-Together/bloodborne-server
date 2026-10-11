@@ -77,7 +77,7 @@ static size_t mounts_done, memory_writes;
  * (e.g. the player's weapon sounds) never play. It is set before the game reads the save.
  * BB_SOUND_HACK=0 leaves saves untouched. */
 static void bloodborne_sound_hack(void) {
-    static const char *const ids[]={"CUSA00207","CUSA00208","CUSA00299","CUSA00900","CUSA01363","CUSA03014","CUSA03023","CUSA03173"};
+    static const char *const ids[]={"CUSA00207","CUSA00208","CUSA00299","CUSA00900","CUSA01363","CUSA03014","CUSA03023","CUSA03173","CUSA03179"};
     const char *env=getenv("BB_SOUND_HACK");
     if (env && env[0]=='0') return;
     int bloodborne=0;
@@ -122,21 +122,14 @@ static int valid_name(const char *name, size_t max) {
     for (size_t i=0;i<n;++i) if (name[i]=='/' || name[i]=='\\' || (name[i]=='.' && (i==0 || name[i-1]=='.'))) return 0;
     return 1;
 }
-/* A whole file replaced in one rename (a crash mid-write keeps the old one). */
+/* A whole file replaced in one step (a crash mid-write keeps the old one). */
 static int write_atomic(const char *path, const void *data, size_t size) {
     char temp[760]; snprintf(temp,sizeof(temp),"%s.bbtmp",path);
     FILE *f=fopen(temp,"wb");
     if (!f) return -1;
     int ok=fwrite(data,1,size,f)==size && !fflush(f) && !fsync(fileno(f));
     ok=!fclose(f) && ok;
-#ifdef _WIN32
-    /* POSIX rename replaces an existing target; the CRT's fails. MoveFileEx replaces it in one
-     * step (the old file stays if it fails) and flushes the rename before it returns. */
-    if (ok && !MoveFileExA(temp,path,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) ok=0;
-    if (!ok) { unlink(temp); return -1; }
-#else
-    if (!ok || rename(temp,path)) { unlink(temp); return -1; }
-#endif
+    if (!ok || runtime_file_replace_host(temp,path)) { unlink(temp); return -1; }
     return 0;
 }
 static void write_param(const char *meta, const Param *p) {
