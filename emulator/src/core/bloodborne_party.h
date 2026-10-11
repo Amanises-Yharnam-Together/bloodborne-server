@@ -988,6 +988,44 @@ std::size_t MakeNpcAttacksHarder(std::span<u8> param, float damage);
 constexpr std::array<s32, 4> CoopBossHpEffects{7500, 7501, 7502, 7503};
 std::size_t RemoveCoopBossHpBonus(std::span<u8> sp_effect_param);
 
+// Multiplayer UI polish (Kaniel 2026-10-11), all at runtime for a configured party:
+// - The messages say Host and Guest. The game reads its text from MsgRepository (pointer at
+//   0x05540300; lookup 0x00F6F340: repository, 0, category, id -> UTF-16 text in the loaded
+//   message file, or null). The network banners look in category 0x65 first, then 30 (event
+//   text); the name plates show 30:107000 (host) and 30:107100 (guest), the ids the role table
+//   at 0x0553D750 (0x80 bytes per role, +0x28) gives them. Each replacement is written over the
+//   English original in the loaded file; any other text (another language) stays.
+constexpr u64 MsgRepositoryPointerOffset = 0x05540300;
+constexpr u64 MessageLookupOffset = 0x00F6F340;
+constexpr u32 EventTextCategory = 30;
+constexpr u32 EventTextOverrideCategory = 0x65;
+constexpr u32 InGameMenuCategory = 70;
+constexpr u32 DialogCategory = 78;
+constexpr u32 SpDialogCategory = 204;
+struct PolishedMessage {
+    u32 category;
+    s32 id;
+    std::u16string_view original;
+    std::u16string_view replacement; // never longer than the original
+};
+std::span<const PolishedMessage> PolishedMessages();
+// The text to write over `current` (message `id` of `category`), when `current` is still the
+// English original.
+std::optional<std::u16string_view> PolishedText(u32 category, s32 id, std::u16string_view current);
+// - No bell indicators: the co-op bells' resonance effects show a status icon by the HP bar
+//   (SpEffectParam iconId, +0x00: 9003 8801, 9004 8813, 9008 8802, 9009 8814). The icon goes;
+//   the effects, which the matching runs on, stay. Returns the rows changed.
+constexpr u64 SpEffectIconOffset = 0x00;
+constexpr std::array<s32, 4> CoopBellIconEffects{9003, 9004, 9008, 9009};
+std::size_t RemoveBellIcons(std::span<u8> sp_effect_param);
+// - No "Discovered the chime of a ..." banner right before the join's own banner: the summon's
+//   enter direction (CSEnterleaveDirectionStep) shows it with the network banner (0x01BFFE80,
+//   message id, 0) for the arriving member (STEP_C2H_Init_forSelfPrologue, 0x0196B4C9) and for
+//   the members it arrives to (STEP_C2H_Init_forOthersPrologue, 0x0196B9F4). Both calls become
+//   5-byte nops; neither caller uses the result.
+constexpr u64 ShowNetworkBannerOffset = 0x01BFFE80;
+const std::vector<CodePatch>& QuietSummonBannerPatches();
+
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
 // Resonant) once the world has been stable for a while.

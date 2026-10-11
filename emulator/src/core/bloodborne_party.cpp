@@ -1770,6 +1770,108 @@ std::size_t MakeNpcAttacksHarder(std::span<u8> param, float damage) {
     });
 }
 
+std::span<const PolishedMessage> PolishedMessages() {
+    static constexpr std::array<PolishedMessage, 26> messages{{
+        // Name plates.
+        {EventTextCategory, 107000, u"Beckoner", u"Host"},
+        {EventTextCategory, 107100, u"Cooperator", u"Guest"},
+        // Joins.
+        {EventTextCategory, 102001, u"The bell's resonance has beckoned <?joinName?>.",
+         u"<?joinName?> joined."},
+        {EventTextCategory, 102100, u"Entered the world of <?hostName?>,\nwho beckoned you here.",
+         u"Joined <?hostName?>."},
+        {EventTextCategory, 101001, u"Discovered the chime of a Small Resonant Bell.",
+         u"Found a guest."},
+        {EventTextCategory, 101100, u"Discovered the chime of a Beckoning Bell.", u"Found a host."},
+        // Searches.
+        {EventTextCategory, 100001, u"Searching for the chime of a Small Resonant Bell...",
+         u"Waiting for guests..."},
+        {EventTextCategory, 100100, u"Searching for the chime of a Beckoning Bell...",
+         u"Looking for a host..."},
+        {EventTextCategory, 100300,
+         u"Could not discover the chime of a Small Resonant Bell.\nNo insight was consumed.",
+         u"No guests found.\nNo Insight was used."},
+        {SpDialogCategory, 302200, u"Searching for the chime of a Beckoning Bell...",
+         u"Looking for a host..."},
+        // Deaths, bosses and doors.
+        {EventTextCategory, 103001, u"Cooperator <?deadName?> has died.",
+         u"Guest <?deadName?> has died."},
+        {EventTextCategory, 103101, u"Your beckoner has died.\nReturning to own world.",
+         u"Your host has died.\nReturning to own world."},
+        {EventTextCategory, 105100, u"Beckoner has challenged\n<?npcNameId@500000?>.",
+         u"Host has challenged\n<?npcNameId@500000?>."},
+        {EventTextCategory, 105199, u"The beckoner has begun the final battle.",
+         u"The host has begun the final battle."},
+        {EventTextCategory, 105299,
+         u"The beckoner has begun the final battle.\nReturning to own world.",
+         u"The host has begun the final battle.\nReturning to own world."},
+        {EventTextCategory, 106200,
+         u"Beckoner <?hostName?> has fallen.\nIt is time to bid farewell.",
+         u"Host <?hostName?> has fallen.\nIt is time to bid farewell."},
+        {EventTextCategory, 10010740, u"Only the beckoner can open this door.",
+         u"Only the host can open this door."},
+        {EventTextCategory, 10010741, u"Only the beckoner can operate this device.",
+         u"Only the host can operate this device."},
+        // Leaving.
+        {EventTextCategory, 20000400, u"Sent cooperator <?leaveName?> back\nto their own world.",
+         u"Sent guest <?leaveName?> home."},
+        {EventTextCategory, 20000401, u"Sent back to own world by\nbeckoner <?hostName?>.",
+         u"Sent home by host <?hostName?>."},
+        {EventTextCategory, 20000402, u"Cooperator <?leaveName?>\nreturned to their own world.",
+         u"Guest <?leaveName?> left."},
+        {EventTextCategory, 20000404, u"Cooperator <?leaveName?>\nreturned to their own world.",
+         u"Guest <?leaveName?> left."},
+        {EventTextCategory, 20000405, u"Cooperator <?leaveName?>\nreturned to their own world.",
+         u"Guest <?leaveName?> left."},
+        {InGameMenuCategory, 141000, u"Send Phantom home", u"Send Guest home"},
+        {DialogCategory, 18100, u"Send this phantom home?", u"Send this guest home?"},
+        {DialogCategory, 18101, u"No phantom to send home", u"No guest to send home"},
+    }};
+    return messages;
+}
+
+std::optional<std::u16string_view> PolishedText(u32 category, s32 id, std::u16string_view current) {
+    for (const PolishedMessage& message : PolishedMessages()) {
+        if (message.category == category && message.id == id && message.original == current) {
+            return message.replacement;
+        }
+    }
+    return std::nullopt;
+}
+
+std::size_t RemoveBellIcons(std::span<u8> sp_effect_param) {
+    if (!IsParamOfType(sp_effect_param, "SP_EFFECT_PARAM_ST")) {
+        return 0;
+    }
+    std::size_t changed = 0;
+    for (const s32 effect : CoopBellIconEffects) {
+        const auto row = FindParamRow(sp_effect_param, effect);
+        if (!row || *row > sp_effect_param.size() ||
+            sp_effect_param.size() - *row < SpEffectIconOffset + sizeof(s32)) {
+            continue;
+        }
+        s32 icon = 0;
+        std::memcpy(&icon, sp_effect_param.data() + *row + SpEffectIconOffset, sizeof(icon));
+        if (icon != -1) {
+            icon = -1;
+            std::memcpy(sp_effect_param.data() + *row + SpEffectIconOffset, &icon, sizeof(icon));
+            ++changed;
+        }
+    }
+    return changed;
+}
+
+const std::vector<CodePatch>& QuietSummonBannerPatches() {
+    static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
+    static const std::vector<CodePatch> patches{
+        // STEP_C2H_Init_forSelfPrologue: the arriving member's "Discovered the chime of a ...".
+        {0x0196B4C9, {0xE8, 0xB2, 0x49, 0x29, 0x00}, nop5},
+        // STEP_C2H_Init_forOthersPrologue: the same for the members it arrives to.
+        {0x0196B9F4, {0xE8, 0x87, 0x44, 0x29, 0x00}, nop5},
+    };
+    return patches;
+}
+
 bool IsPartySession(bool party_configured, s32 matching_state) {
     return party_configured &&
            (matching_state == MatchingStateHosting || matching_state == MatchingStateSummonedGuest);

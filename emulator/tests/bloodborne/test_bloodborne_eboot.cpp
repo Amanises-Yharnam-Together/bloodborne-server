@@ -116,6 +116,7 @@ TEST_F(BloodborneEboot, EveryPatchFindsTheGamesOwnBytes) {
         {"host death", &HostDeathKeepGuestsPatches()},
         {"boss clear", &BossClearKeepSessionPatches()},
         {"join anywhere", &JoinAnywherePatches()},
+        {"quiet summon banners", &QuietSummonBannerPatches()},
     };
     for (const auto& [name, patches] : tables) {
         for (const CodePatch& patch : *patches) {
@@ -178,6 +179,11 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     // The kill autoplay uses: the dead flag (`or byte ptr [r15 + 0x1E3], 1`) on its way out.
     EXPECT_EQ(Bytes(0x018BFAD3, 8),
               (std::vector<u8>{0x41, 0x80, 0x8F, 0xE3, 0x01, 0x00, 0x00, 0x01}));
+    // The network banner both chime calls go to (it takes the message id the summon picked).
+    EXPECT_EQ(Bytes(ShowNetworkBannerOffset, FunctionPrologue.size()), FunctionPrologue);
+    for (const CodePatch& patch : QuietSummonBannerPatches()) {
+        EXPECT_EQ(CallTarget(patch.offset), ShowNetworkBannerOffset) << std::hex << patch.offset;
+    }
     // Host death: the jump lands on the epilogue it names.
     const CodePatch& host_dead = HostDeathKeepGuestsPatches().front();
     EXPECT_EQ(DecodeNearJumpTarget(host_dead.offset, host_dead.patched), HostDeadEpilogueOffset);
