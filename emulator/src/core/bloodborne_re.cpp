@@ -4,6 +4,7 @@
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
+#include "core/bloodborne_re_internal.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -61,77 +62,12 @@
 namespace Core::Bloodborne {
 namespace {
 
-enum class TraceKind : u8 {
-    SosCondition,
-    SosValidityDispatch,
-    SosValidityCode,
-    SosEvent,
-    MatchingEvent,
-    MatchingSignal,
-    MatchingLeaveDecision,
-    SummonRequest,
-    SummonCandidate,
-    SummonSelection,
-    SummonBuild,
-    GetSosRequest,
-    GetSosArea,
-    GetSosInsert,
-    SosStatus,
-    SosMessenger,
-    ActionFlags,
-    UseItem,
-    UseItemExecution,
-    GoodsActionSubmit,
-    GoodsParamLookup,
-    BellAvailability,
-    ResponderBellAvailability,
-    NetworkAreaRegion,
-    MultiplayerInsert,
-    CrossMapGuestHandoff,
-    SosPlacement,
-    GlobalState,
-    ReceivedPlacementConditional,
-    ReceivedPlacementSet,
-    PlacementSelect,
-    WarpCommand,
-    CharacterWarp,
-    WarpResolved,
-    WarpLocalApply,
-    StageWarp,
-    RespawnPointWarp,
-    StageWarpDescriptor,
-    StageWarpAcknowledge,
-    StageWarpRespawnResolve,
-    StageWarpTransformResolve,
-    StageWarpPlacement,
-    SummonPoint,
-    MapReload,
-    HealingFountainRegistration,
-    HealingFountainAvailability,
-    ChairRespawnNotification,
-    WorldStateValidation,
-};
-
-struct TraceSite {
-    std::string_view name;
-    u64 offset;
-    TraceKind kind;
-    std::array<u8, 16> prologue;
-    u8 prologue_size;
-};
-
 struct NativeCallSignature {
     std::string_view name;
     u64 offset;
     std::array<u8, 16> prologue;
     u8 prologue_size;
 };
-
-constexpr std::array<u8, 16> StandardR15Prologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
-constexpr std::array<u8, 16> StandardR14Prologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x56};
-constexpr std::array<u8, 16> StandardRbxPrologue{0x55, 0x48, 0x89, 0xE5, 0x53};
-constexpr std::array<u8, 16> ReturnAndPadding{0xC3, 0x66, 0x66, 0x66, 0x66, 0x66,
-                                              0x66, 0x2E, 0x0F, 0x1F, 0x84};
 constexpr u64 GlobalStatePointerOffset = 0x05556678;
 constexpr u64 CandidateLocalStatePointerOffset = 0x0553E878;
 constexpr u64 SummonManagerRootPointerOffset = 0x0553B120; // FrpgNetMan
@@ -147,12 +83,6 @@ constexpr u64 RoleMetadataTableOffset = 0x0553D750;
 constexpr u64 SummonBuildRoleTableOffset = 0x0556E560;
 constexpr u64 RoleMetadataStride = 0x80;
 constexpr s32 RoleMetadataCount = 34;
-// The world teardown (0x019470F0), where it loads the session rules to decide whether to stop
-// matching (mov rbx,[rax]; cmp [rbx+0x84],3). No RIP-relative code, so it can be hooked.
-constexpr u64 WorldTeardownMatchingOffset = 0x0194716E;
-// PartyGhostDeath_1's `cmp byte ptr [r14+0xC], 0` (ClearBoss), right before the menu branch that
-// GhostDeathKeepSessionPatches turns into a plain jump: where a party guest revives instead.
-constexpr u64 GhostDeathReviveOffset = 0x01382354;
 // Event script bindings ReviveDeadPartyGuest calls.
 constexpr u64 IsWhiteGhostOffset = 0x01331D80;
 constexpr u64 RequestFullRecoverOffset = 0x01337550;
@@ -166,17 +96,6 @@ constexpr u64 ResolveRespawnPointOffset = 0x0154AFC0;
 constexpr u64 LoadedBlocksPointerOffset = 0x0553B148;
 // ChrResetAnimation(_, entity): sends the character's behaviour back to idle.
 constexpr u64 ChrResetAnimationOffset = 0x013370F0;
-// Native SoloPlayDeath_2: the local player's death respawn (bloodstain, warp to the last lamp).
-constexpr u64 SoloPlayDeathRespawnOffset = 0x01381DE0;
-
-constexpr u64 SummonBuildEntryOffset = 0x01874710;
-constexpr u64 SosStatusUpdateOffset = 0x01872360;
-constexpr u64 StageWarpDescriptorFinalizeOffset = 0x01944F23;
-constexpr u64 MultiPlayStageUidPolicyOffset = 0x0193C5DE;
-constexpr u64 MultiPlayStopRequestOffset = 0x01ED07A0;
-constexpr u64 MatchingStopTaskEnqueueOffset = 0x00C98070;
-constexpr u64 CrossMapGuestHandoffOffset = 0x01E4FF3A;
-constexpr u64 HealingFountainAvailabilityOffset = 0x012F836E;
 constexpr u64 CharacterWarpSetOrCopyFloorOffset = 0x018BBA70;
 constexpr auto BackgroundFloorCopyReturnOffsets = std::to_array<u64>({0x018BEE67, 0x018BEF34});
 constexpr u64 OnlineStatePointerOffset = 0x056C7048;
@@ -242,557 +161,38 @@ constexpr auto CrossMapNativeCalls = std::to_array<NativeCallSignature>({
      16},
 });
 
-constexpr auto Sites = std::to_array<TraceSite>({
-    {"IsValidSos.Update", 0x01308DC0, TraceKind::SosCondition, StandardR15Prologue, 6},
-    {"IsValidSos.NativeValidityDispatch",
-     0x01308DF9,
-     TraceKind::SosValidityDispatch,
-     {0x48, 0x8B, 0x03, 0x48, 0x89, 0xDF},
-     6},
-    {"IsValidSos.ValidityCode",
-     0x01308E20,
-     TraceKind::SosValidityCode,
-     {0x49, 0x63, 0xCF, 0x48, 0x69, 0xC9, 0x67, 0x66, 0x66, 0x66},
-     10},
-    {"IsValidSos.Condition", 0x013091B0, TraceKind::SosCondition, StandardR14Prologue, 6},
-    {"Condition.SelfSos", 0x0130B030, TraceKind::SosCondition, StandardR15Prologue, 6},
-    {"Condition.SOS", 0x0130C590, TraceKind::SosCondition, StandardR15Prologue, 6},
-    {"Condition.SosMenu", 0x0130CDE0, TraceKind::SosCondition, StandardR15Prologue, 6},
-
-    {"OnEvent.CallSOS.Dispatch",
-     0x01389A3B,
-     TraceKind::SosEvent,
-     {0xBE, 0xDA, 0x0F, 0x00, 0x00, 0xBA, 0x01, 0x00, 0x00, 0x00},
-     10},
-    {"OnEvent.CallBlackSOS.Dispatch",
-     0x01389A6B,
-     TraceKind::SosEvent,
-     {0xBE, 0xDA, 0x0F, 0x00, 0x00, 0xBA, 0x02, 0x00, 0x00, 0x00},
-     10},
-    {"OnEvent.CallDragonewtSOS.Dispatch",
-     0x01389A9B,
-     TraceKind::SosEvent,
-     {0xBE, 0xDA, 0x0F, 0x00, 0x00, 0xBA, 0x03, 0x00, 0x00, 0x00},
-     10},
-    {"Call.WhiteSos.Dispatch",
-     0x01389AE2,
-     TraceKind::SosEvent,
-     {0x31, 0xF6, 0xBA, 0xEA, 0x22, 0x02, 0x00},
-     7},
-    {"Call.BlackSos.Dispatch",
-     0x01389B22,
-     TraceKind::SosEvent,
-     {0x31, 0xF6, 0xBA, 0xEB, 0x22, 0x02, 0x00},
-     7},
-
-    {"OnMatchingCheck", 0x013808B0, TraceKind::MatchingEvent, StandardR15Prologue, 6},
-    {"OnMatchingError", 0x013809F0, TraceKind::MatchingEvent, StandardR15Prologue, 6},
-    {"OnSummonResult.Empty", 0x01384500, TraceKind::MatchingSignal, ReturnAndPadding, 16},
-    {"OnSummonResult.Move", 0x01384510, TraceKind::MatchingSignal, ReturnAndPadding, 16},
-    {"OnSummonResult.TimeOut", 0x01384520, TraceKind::MatchingSignal, ReturnAndPadding, 16},
-    {"OnSummonResult.OtherError", 0x01384530, TraceKind::MatchingEvent, StandardRbxPrologue, 5},
-    {"ForceSummonFail", 0x01384990, TraceKind::MatchingSignal, ReturnAndPadding, 16},
-    {"ForceSummonSuccess", 0x013849A0, TraceKind::MatchingEvent, StandardR15Prologue, 6},
-
-    {"CSMultiPlayMan.StageUidChanged.Policy",
-     MultiPlayStageUidPolicyOffset,
-     TraceKind::MatchingLeaveDecision,
-     {0x8B, 0x87, 0x24, 0x01, 0x00, 0x00},
-     6},
-    {"CSMultiPlayMan.StopRequest", MultiPlayStopRequestOffset, TraceKind::MatchingLeaveDecision,
-     StandardR15Prologue, 6},
-    {"Matching2.StopTask.Enqueue", MatchingStopTaskEnqueueOffset, TraceKind::MatchingLeaveDecision,
-     StandardR15Prologue, 6},
-    {"Matching2.LeaveRoom.Begin",
-     0x00CC5390,
-     TraceKind::MatchingLeaveDecision,
-     {0x55, 0x48, 0x89, 0xE5, 0x53, 0x50},
-     6},
-
-    {"CSRequestSummon.Init", 0x014B47C0, TraceKind::SummonRequest, StandardR15Prologue, 6},
-    {"CSRequestSummon.Update", 0x014B4890, TraceKind::SummonRequest, StandardRbxPrologue, 5},
-    {"CSRequestSummon.CheckWait", 0x014B48C0, TraceKind::SummonRequest, StandardR15Prologue, 6},
-    {"CSRequestSummon.CheckComplete",
-     0x014B4AE0,
-     TraceKind::SummonRequest,
-     {0xC7, 0x47, 0x54, 0xFF, 0xFF, 0xFF, 0xFF},
-     7},
-
-    {"SummonCandidate.Entry", 0x014BA980, TraceKind::SummonCandidate, StandardR15Prologue, 6},
-    {"SummonCandidate.Accepted",
-     0x014BAA5C,
-     TraceKind::SummonCandidate,
-     {0x48, 0x8B, 0x07, 0xBE, 0xF8, 0x00, 0x00, 0x00},
-     8},
-    {"SummonCandidate.Submit",
-     0x014BABCB,
-     TraceKind::SummonCandidate,
-     {0x48, 0x8B, 0xB3, 0xE8, 0x01, 0x00, 0x00},
-     7},
-    {"SummonCandidate.FilterCycle",
-     0x014B6F09,
-     TraceKind::SummonCandidate,
-     {0x41, 0x83, 0xFF, 0xFF, 0x4C, 0x89, 0xA4, 0x24, 0x88, 0x00, 0x00, 0x00},
-     12},
-    {"SummonCandidate.ManagerScan",
-     0x014B6F5D,
-     TraceKind::SummonCandidate,
-     {0x49, 0x8D, 0x7C, 0x24, 0x20},
-     5},
-    {"SummonCandidate.LocalIdentityPassed",
-     0x014B6F9D,
-     TraceKind::SummonCandidate,
-     {0x4C, 0x8B, 0x28, 0x4D, 0x85, 0xED},
-     6},
-    {"SummonCandidate.ManagerIdentityStatePassed",
-     0x014B6FE1,
-     TraceKind::SummonCandidate,
-     {0x48, 0x89, 0xCB, 0x4D, 0x89, 0xC6},
-     6},
-    {"SummonCandidate.ManagerIdentityPassed",
-     0x014B7070,
-     TraceKind::SummonCandidate,
-     {0x41, 0x83, 0xBD, 0xC0, 0x0A, 0x00, 0x00, 0x00},
-     8},
-    {"SummonCandidate.SessionGatePassed",
-     0x014B70FF,
-     TraceKind::SummonCandidate,
-     {0x41, 0xF6, 0x85, 0x14, 0x0B, 0x00, 0x00, 0x02},
-     8},
-    {"SummonCandidate.AreaGatePassed",
-     0x014B7150,
-     TraceKind::SummonCandidate,
-     {0x48, 0x89, 0xDF, 0x48, 0x8B, 0x84, 0x24, 0xA8, 0x00, 0x00, 0x00},
-     11},
-    {"SummonCandidate.NoPendingDuplicate",
-     0x014B71B2,
-     TraceKind::SummonCandidate,
-     {0x41, 0x0F, 0xB6, 0x84, 0x24, 0xED, 0x00, 0x00, 0x00},
-     9},
-    {"SummonCandidate.FreshnessPassed",
-     0x014B71F4,
-     TraceKind::SummonCandidate,
-     {0x48, 0x8B, 0x38, 0x48, 0x8B, 0x07},
-     6},
-    {"SummonCandidate.Inserted",
-     0x014B8E8D,
-     TraceKind::SummonCandidate,
-     {0x48, 0x8B, 0xB2, 0xE8, 0x01, 0x00, 0x00},
-     7},
-    {"SummonCandidate.PendingInserted",
-     0x014B750B,
-     TraceKind::SummonCandidate,
-     {0x0F, 0x1F, 0x44, 0x00, 0x00},
-     5},
-    {"SummonCandidate.ObserverResult",
-     0x014C0238,
-     TraceKind::SummonCandidate,
-     {0x45, 0x31, 0xFF, 0x84, 0xC0, 0x4D, 0x0F, 0x45, 0xFC},
-     9},
-
-    {"SummonSelection.Scan",
-     0x01873269,
-     TraceKind::SummonSelection,
-     {0x48, 0x8B, 0x80, 0xA8, 0x01, 0x00, 0x00},
-     7},
-    {"SummonSelection.Matched",
-     0x018732DD,
-     TraceKind::SummonSelection,
-     {0xC6, 0x46, 0x10, 0x01, 0x4C, 0x8B, 0x76, 0x08},
-     8},
-    {"SummonBuild.Entry", SummonBuildEntryOffset, TraceKind::SummonBuild, StandardR15Prologue, 6},
-    {"SummonBuild.RoleDelayPassed",
-     0x0187477A,
-     TraceKind::SummonBuild,
-     {0x49, 0x83, 0x7D, 0x00, 0x00},
-     5},
-    {"SummonBuild.SessionStatePassed",
-     0x0187481D,
-     TraceKind::SummonBuild,
-     {0x48, 0x8B, 0x18, 0x48, 0x85, 0xDB},
-     6},
-    {"SummonBuild.ControlAndWorldStatePassed",
-     0x01874B8F,
-     TraceKind::SummonBuild,
-     {0x48, 0x8B, 0x90, 0xF8, 0x16, 0x00, 0x00},
-     7},
-    {"SummonBuild.GlobalCapacityPassed",
-     0x01874BC7,
-     TraceKind::SummonBuild,
-     {0x4D, 0x89, 0xC7, 0x49, 0xC1, 0xE3, 0x07},
-     7},
-    {"SummonBuild.RoleCapacityPassed",
-     0x01874C94,
-     TraceKind::SummonBuild,
-     {0x43, 0x8B, 0x04, 0x1E, 0x83, 0xF8, 0x02},
-     7},
-    {"SummonBuild.RoleRules",
-     0x01874E5A,
-     TraceKind::SummonBuild,
-     {0x49, 0x89, 0xCD, 0x4F, 0x8D, 0x7C, 0x1E, 0x14},
-     8},
-    {"SummonBuild.Return",
-     0x018750F7,
-     TraceKind::SummonBuild,
-     {0x49, 0x8B, 0x06, 0x48, 0x3B, 0x45, 0xD0},
-     7},
-    {"SummonSelection.QueueInsert", 0x01875320, TraceKind::SummonSelection, StandardR15Prologue, 6},
-    {"SummonSelection.RequestQueued",
-     0x01873605,
-     TraceKind::SummonSelection,
-     {0x48, 0x8B, 0x83, 0xC0, 0x01, 0x00, 0x00},
-     7},
-    {"SummonSelection.RequestStart", 0x014BAEC0, TraceKind::SummonSelection, StandardR15Prologue,
-     6},
-    {"SummonSelection.HandleAllocated",
-     0x014BAFE3,
-     TraceKind::SummonSelection,
-     {0x49, 0x89, 0x84, 0x24, 0x38, 0x01, 0x00, 0x00},
-     8},
-
-    {"CSRequestGetSos.Init", 0x01E5FAF0, TraceKind::GetSosRequest, StandardR15Prologue, 6},
-    {"CSRequestGetSos.UpdateSeamless", 0x01E5FBF0, TraceKind::GetSosRequest, StandardR14Prologue,
-     6},
-    {"CSRequestGetSos.BuildRequest", 0x01E5FCE0, TraceKind::GetSosRequest, StandardR15Prologue, 6},
-    {"CSRequestGetSos.SelectedArea",
-     0x01E60270,
-     TraceKind::GetSosArea,
-     {0x8B, 0x02, 0x89, 0x85, 0xE8, 0xFE, 0xFF, 0xFF},
-     8},
-    {"CSRequestGetSos.InsertType", 0x01E5F970, TraceKind::GetSosInsert, StandardR15Prologue, 6},
-    {"SosStatus.Update", SosStatusUpdateOffset, TraceKind::SosStatus, StandardR15Prologue, 6},
-    {"SosStatus.NativeResult",
-     0x0187239E,
-     TraceKind::SosStatus,
-     {0x83, 0xBD, 0x64, 0xFF, 0xFF, 0xFF, 0x00},
-     7},
-
-    {"Messenger.SosSign.Init", 0x01CC9460, TraceKind::SosMessenger, StandardRbxPrologue, 5},
-    {"Messenger.SosSign.Wait", 0x01CC94B0, TraceKind::SosMessenger, StandardRbxPrologue, 5},
-    {"Messenger.SosSign.Finish", 0x01CC94E0, TraceKind::SosMessenger, StandardR15Prologue, 6},
-
-    {"ChrAction.Flags.Update",
-     0x01A0F910,
-     TraceKind::ActionFlags,
-     {0x48, 0x8B, 0x47, 0x10, 0x48, 0x8B, 0x4F, 0x18},
-     8},
-    {"ChrAction.UseItem.Pressed",
-     0x018F751C,
-     TraceKind::UseItem,
-     {0x49, 0x8B, 0x45, 0x00, 0x4C, 0x89, 0xEF},
-     7},
-    {"ChrAction.UseItem.Inventory",
-     0x018F7529,
-     TraceKind::UseItem,
-     {0x48, 0x8D, 0xB8, 0xD0, 0x01, 0x00, 0x00},
-     7},
-    {"ChrAction.UseItem.ResolvedGoods",
-     0x018F7535,
-     TraceKind::UseItem,
-     {0x41, 0x8B, 0x8D, 0x7C, 0x04, 0x00, 0x00},
-     7},
-    {"ChrAction.UseItem.NativeApply", 0x018F9720, TraceKind::UseItemExecution, StandardR15Prologue,
-     6},
-    {"ChrAction.UseItem.GoodsExecutor", 0x018C9160, TraceKind::UseItemExecution,
-     StandardR15Prologue, 6},
-    {"ChrAction.UseItem.GoodsExecutorResult",
-     0x018C9364,
-     TraceKind::UseItemExecution,
-     {0x48, 0x8B, 0x03, 0x48, 0x3B, 0x45, 0xD0},
-     7},
-    {"ChrAction.UseItem.ActionSubmit", 0x01FF0FA0, TraceKind::GoodsActionSubmit,
-     StandardR15Prologue, 6},
-    {"GameParam.Goods.Lookup", 0x01F1E3D0, TraceKind::GoodsParamLookup, StandardR15Prologue, 6},
-    {"Beckoning.Availability.Area",
-     0x0157F8BA,
-     TraceKind::BellAvailability,
-     {0x84, 0xC0, 0x48, 0x0F, 0x45, 0xD9},
-     6},
-    {"Beckoning.Availability.NativeResult",
-     0x0157F962,
-     TraceKind::BellAvailability,
-     {0x89, 0x85, 0x10, 0xFE, 0xFF, 0xFF},
-     6},
-    {"ResponderBell.Availability.Entry",
-     0x0157F686,
-     TraceKind::ResponderBellAvailability,
-     {0x41, 0x81, 0xFC, 0xCD, 0x00, 0x00, 0x00},
-     7},
-    {"ResponderBell.Availability.FinalResult",
-     0x015800D1,
-     TraceKind::ResponderBellAvailability,
-     {0x88, 0xC8, 0x48, 0x81, 0xC4, 0xE8, 0x01, 0x00, 0x00},
-     9},
-    {"Network.Area.RegionResult",
-     0x013DEAC8,
-     TraceKind::NetworkAreaRegion,
-     {0x45, 0x89, 0x7E, 0x44, 0xB0, 0x01},
-     6},
-
-    {"CSMultiPlayerIns.Init", 0x01E4FCF0, TraceKind::MultiplayerInsert, StandardRbxPrologue, 5},
-    {"CSMultiPlayerIns.StartNotifyWait", 0x01E4FD50, TraceKind::MultiplayerInsert,
-     StandardR15Prologue, 6},
-    {"CSMultiPlayerIns.StartWait", 0x01E4FF70, TraceKind::MultiplayerInsert, StandardR14Prologue,
-     6},
-    {"CSMultiPlayerIns.FirstSyncWait", 0x01E50090, TraceKind::MultiplayerInsert,
-     StandardR15Prologue, 6},
-    {"CSMultiPlayerIns.Create", 0x01E505E0, TraceKind::MultiplayerInsert, StandardR15Prologue, 6},
-    {"CSMultiPlayerIns.CreateWait", 0x01E50830, TraceKind::MultiplayerInsert, StandardRbxPrologue,
-     5},
-    {"CSMultiPlayerIns.Update",
-     0x01E50860,
-     TraceKind::MultiplayerInsert,
-     {0x83, 0xBF, 0xE8, 0x00, 0x00, 0x00, 0x00},
-     7},
-    {"CSMultiPlayerIns.WaitExit", 0x01E50880, TraceKind::MultiplayerInsert, StandardR15Prologue, 6},
-    {"CSMultiPlayerIns.Delete", 0x01E50A70, TraceKind::MultiplayerInsert, StandardR15Prologue, 6},
-    {"CSMultiPlayerIns.DeleteWait",
-     0x01E50D70,
-     TraceKind::MultiplayerInsert,
-     {0x8B, 0x87, 0xE8, 0x00, 0x00, 0x00, 0x00},
-     6},
-    {"CSMultiPlayerIns.PlacementCopy",
-     0x01E4FF1E,
-     TraceKind::GlobalState,
-     {0x89, 0x88, 0xC4, 0x14, 0x00, 0x00},
-     6},
-    {"CSMultiPlayerIns.CrossMapGuestHandoff",
-     CrossMapGuestHandoffOffset,
-     TraceKind::CrossMapGuestHandoff,
-     {0x48, 0x8D, 0x83, 0xED, 0x00, 0x00, 0x00},
-     7},
-
-    {"SetSosSignWarp",
-     0x0132E267,
-     TraceKind::GlobalState,
-     {0xC6, 0x80, 0x20, 0x15, 0x00, 0x00, 0x01},
-     7},
-    {"SetSummonedPos",
-     0x01332BB7,
-     TraceKind::GlobalState,
-     {0xC6, 0x40, 0x20, 0x01, 0xB0, 0x01, 0x00},
-     6},
-    {"SetSosSignPos.NativeCopy",
-     0x01333C43,
-     TraceKind::SosPlacement,
-     {0x89, 0x88, 0xC0, 0x14, 0x00, 0x00},
-     6},
-    {"SummonedPlacement.SelectMap",
-     0x01332C1B,
-     TraceKind::PlacementSelect,
-     {0x80, 0xB9, 0x20, 0x15, 0x00, 0x00, 0x00},
-     7},
-    {"SummonedPlacement.SelectedMap",
-     0x01332CD0,
-     TraceKind::PlacementSelect,
-     {0x89, 0x41, 0x0C, 0x48, 0x8B, 0x03},
-     6},
-    {"SummonedMapReload.Native", 0x0131E5C0, TraceKind::MapReload, StandardR15Prologue, 6},
-    {"SummonPoint.Resolve", 0x01582E70, TraceKind::SummonPoint, StandardR15Prologue, 6},
-    {"HealingFountain.Register.Native", 0x0133B030, TraceKind::HealingFountainRegistration,
-     StandardR15Prologue, 6},
-    {"WorldTeardown.MatchingDecision",
-     WorldTeardownMatchingOffset,
-     TraceKind::MatchingLeaveDecision,
-     {0x48, 0x8B, 0x18, 0x83, 0xBB, 0x84, 0x00, 0x00, 0x00, 0x03},
-     10},
-    {"SoloPlayDeath2.Respawn", SoloPlayDeathRespawnOffset, TraceKind::MatchingSignal,
-     StandardR15Prologue, 6},
-    {"PartyGhostDeath1.Revive",
-     GhostDeathReviveOffset,
-     TraceKind::MatchingSignal,
-     {0x41, 0x80, 0x7E, 0x0C, 0x00},
-     5},
-    {"HealingFountain.Availability.Host",
-     HealingFountainAvailabilityOffset,
-     TraceKind::HealingFountainAvailability,
-     {0x41, 0x80, 0x7D, 0x48, 0x00},
-     5},
-    {"ChairMessenger.RespawnPointNotify.Init", 0x01E5C6C0, TraceKind::ChairRespawnNotification,
-     StandardR15Prologue, 6},
-    {"ChairMessenger.RespawnPointNotify.Update", 0x01E5C890, TraceKind::ChairRespawnNotification,
-     StandardR15Prologue, 6},
-
-    {"ReceivedSummonPlacement.ConditionalSet",
-     0x0156E6E7,
-     TraceKind::ReceivedPlacementConditional,
-     {0x41, 0x80, 0xB8, 0x48, 0x16, 0x00, 0x00, 0x00},
-     8},
-    {"ReceivedSummonPlacement.Set",
-     0x0156E7A7,
-     TraceKind::ReceivedPlacementSet,
-     {0x8B, 0x12, 0x8B, 0x09, 0xC5, 0xF8, 0x28, 0x07},
-     8},
-
-    {"CharacterWarp.Area", 0x013CB3D0, TraceKind::CharacterWarp, StandardR15Prologue, 6},
-    {"CharacterWarp.Object", 0x013CB870, TraceKind::CharacterWarp, StandardR15Prologue, 6},
-    {"CharacterWarp.Character", 0x013CCBD0, TraceKind::CharacterWarp, StandardR15Prologue, 6},
-    {"CharacterWarp.SetOrCopyFloor", 0x018BBA70, TraceKind::CharacterWarp, StandardR15Prologue, 6},
-
-    {"Event.WarpNextStage",
-     0x0132E010,
-     TraceKind::StageWarp,
-     {0x55, 0x48, 0x89, 0xE5, 0xC1, 0xE6},
-     6},
-    {"Event.WarpNextStage_Bonfire",
-     0x0132E050,
-     TraceKind::StageWarp,
-     {0x55, 0x48, 0x89, 0xE5, 0x48, 0x63, 0xC6},
-     7},
-    {"Warp.RespawnPointParam", 0x013CDF30, TraceKind::RespawnPointWarp, StandardR15Prologue, 6},
-    {"Warp.StageTransition", 0x013CDE30, TraceKind::StageWarp, StandardR15Prologue, 6},
-    {"Warp.StageDescriptor",
-     0x01944D76,
-     TraceKind::StageWarpDescriptor,
-     {0x8B, 0x88, 0x3C, 0x15, 0x00, 0x00},
-     6},
-    {"Warp.StageDescriptor.Finalize",
-     StageWarpDescriptorFinalizeOffset,
-     TraceKind::StageWarpDescriptor,
-     {0xB8, 0x00, 0x00, 0x00, 0xFF},
-     5},
-    {"Warp.StageTransition.AcknowledgeCheck",
-     0x0194100A,
-     TraceKind::StageWarpAcknowledge,
-     {0x80, 0xBD, 0x68, 0xFE, 0xFF, 0xFF, 0x00},
-     7},
-    {"Warp.RespawnPoint.Resolve",
-     0x01938F65,
-     TraceKind::StageWarpRespawnResolve,
-     {0x41, 0x8B, 0x85, 0xA4, 0x00, 0x00, 0x00},
-     7},
-    {"Warp.RespawnTransform.Resolve",
-     0x0154AFC0,
-     TraceKind::StageWarpTransformResolve,
-     {0x55, 0x53, 0x83, 0xF9, 0xFF, 0x0F, 0x84, 0x9D, 0x00, 0x00, 0x00},
-     11},
-    {"Warp.RespawnPlacement.Apply", 0x01939C80, TraceKind::StageWarpPlacement, StandardR14Prologue,
-     6},
-
-    {"PlayerWarp.Dispatch.RemoteWarpPlayer.Result", 0x01FB2BE0, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Dispatch.RemoteResetPlayer.Result", 0x01FB2C60, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Dispatch.GetPlayerInfo.Result", 0x01FB2CE0, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Dispatch.RemoteWarpWorldPos.Result", 0x01FB2D60, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Dispatch.RemoteWarpMapStudioPos.Result", 0x01FB2DE0, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Dispatch.RemoteWarpPlayer.Void", 0x01FB2E60, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Dispatch.RemoteResetPlayer.Void", 0x01FB2EE0, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Dispatch.GetPlayerInfo.Void", 0x01FB2F60, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Dispatch.RemoteWarpWorldPos.Void", 0x01FB2FE0, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Dispatch.RemoteWarpMapStudioPos.Void", 0x01FB3060, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-
-    {"PlayerWarp.Executor.RemoteWarpPlayer", 0x0154D180, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Executor.RemoteResetPlayer", 0x0154D5E0, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Executor.GetPlayerInfo", 0x0154D7A0, TraceKind::WarpCommand, StandardR15Prologue,
-     6},
-    {"PlayerWarp.Executor.RemoteWarpWorldPos", 0x0154DC50, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.Executor.RemoteWarpMapStudioPos", 0x0154E0B0, TraceKind::WarpCommand,
-     StandardR15Prologue, 6},
-    {"PlayerWarp.NativeDispatch", 0x0154EA30, TraceKind::WarpResolved, StandardR15Prologue, 6},
-    {"PlayerWarp.LocalApply", 0x0154B110, TraceKind::WarpLocalApply, StandardR15Prologue, 6},
-
-    {"WorldStateValidation.018C5360.Result",
-     0x018C5365,
-     TraceKind::WorldStateValidation,
-     {0xBE, 0xFF, 0xFF, 0xFF, 0xFF},
-     5},
-    {"WorldStateValidation.018CF975.Result",
-     0x018CF97A,
-     TraceKind::WorldStateValidation,
-     {0x41, 0xBE, 0xFF, 0xFF, 0xFF, 0xFF},
-     6},
-    {"WorldStateValidation.0191A968.Return",
-     0x0191A980,
-     TraceKind::WorldStateValidation,
-     {0x48, 0x83, 0xC4, 0x18, 0x5B, 0x41, 0x5E, 0x41, 0x5F, 0x5D, 0xC3},
-     11},
-    {"WorldStateValidation.0191AA4C.Return",
-     0x0191AA71,
-     TraceKind::WorldStateValidation,
-     {0x48, 0x83, 0xC4, 0x18, 0x5B, 0x41, 0x5E, 0x41, 0x5F, 0x5D, 0xC3},
-     11},
-    {"WorldStateValidation.01AC6543.Return",
-     0x01AC6557,
-     TraceKind::WorldStateValidation,
-     {0x48, 0x83, 0xC4, 0x18, 0x5B, 0x41, 0x5E, 0x41, 0x5F, 0x5D, 0xC3},
-     11},
-    {"WorldStateValidation.01AC65F4.Return",
-     0x01AC661E,
-     TraceKind::WorldStateValidation,
-     {0x48, 0x83, 0xC4, 0x18, 0x5B, 0x41, 0x5E, 0x41, 0x5F, 0x5D, 0xC3},
-     11},
-    {"WorldStateValidation.01FEB60C.Result",
-     0x01FEB611,
-     TraceKind::WorldStateValidation,
-     {0x44, 0x89, 0xE1, 0x41, 0x88, 0xC4},
-     6},
-    {"WorldStateValidation.01FEBCFC.Result",
-     0x01FEBD01,
-     TraceKind::WorldStateValidation,
-     {0x44, 0x89, 0xE1, 0x41, 0x88, 0xC4},
-     6},
-    {"WorldStateValidation.01FEC37C.Result",
-     0x01FEC381,
-     TraceKind::WorldStateValidation,
-     {0x44, 0x89, 0xE1, 0x41, 0x88, 0xC4},
-     6},
-});
-
 std::array<std::atomic<u64>, Sites.size()> site_hits{};
 std::atomic<u64> event_sequence{};
 std::atomic<s32> observed_sos_area{-1};
 std::mutex capture_mutex;
 std::ofstream capture_file;
 std::filesystem::path capture_path;
+
+} // namespace
+
+namespace Coop {
+
 uintptr_t image_base{};
+
+} // namespace Coop
+
+namespace {
+
 bool installed{};
-bool negative_area_patch_installed{};
-bool area_flag_patch_installed{};
-bool responder_bell_area_patch_installed{};
-bool responder_bell_common_patch_installed{};
-bool active_bell_negative_area_patch_installed{};
-bool active_bell_area_flag_patch_installed{};
-bool responder_search_negative_area_patch_installed{};
-bool sos_status_area_patch_installed{};
-bool summon_candidate_area_patch_installed{};
-bool summon_build_area_patch_installed{};
-bool summon_build_world_state_patch_installed{};
-bool summon_build_negative_event_patch_installed{};
-bool stage_transition_keep_matching_patch_installed{};
-bool world_teardown_hook_installed{};
-bool ghost_death_revive_hook_installed{};
+
+} // namespace
+
+namespace Coop {
+
 bool seamless_travel_hooks_installed{};
 bool stop_request_hook_installed{};
-bool host_death_respawn_hook_installed{};
-bool summon_build_host_placement_hook_installed{};
-bool cross_map_guest_handoff_hook_installed{};
-bool summon_reload_state_hook_installed{};
-bool deferred_summon_reload_hook_installed{};
-bool healing_fountain_host_availability_hook_installed{};
+
+} // namespace Coop
+
+namespace {
+
 thread_local u64 responder_availability_frame{};
 thread_local s32 responder_availability_goods{-1};
-
-struct SummonPlacementDescriptor {
-    u32 packed_region{};
-    float x{};
-    float y{};
-    float z{};
-    float heading{};
-    s32 area{};
-};
-static_assert(sizeof(SummonPlacementDescriptor) == 0x18);
 
 struct HostPlacementRewriteRecord {
     std::string_view result{"not_attempted"};
@@ -905,109 +305,13 @@ struct HealingFountainAvailabilityRecord {
 
 thread_local HealingFountainAvailabilityRecord healing_fountain_availability{};
 
-bool EnvFlagEnabled(const char* name) {
-    const char* value = std::getenv(name);
-    return value != nullptr && value[0] != '\0' && std::string_view{value} != "0";
-}
+} // namespace
 
-std::string BytesToHex(std::span<const u8> bytes) {
-    std::ostringstream out;
-    out << std::hex << std::setfill('0');
-    for (const u8 byte : bytes) {
-        out << std::setw(2) << static_cast<u32>(byte);
-    }
-    return out.str();
-}
+namespace Coop {
 
 // What the co-op install did with each feature (see CoopFeatureReport), logged in one line at its
 // end.
 CoopFeatureReport coop_features;
-
-void LogCoopFeatures() {
-    if (coop_features.SkippedRequired().empty()) {
-        LOG_INFO(Debug, "{}", coop_features.Summary());
-    } else {
-        LOG_ERROR(Debug, "{}", coop_features.Summary());
-    }
-}
-
-std::span<const u8> EbootImage(u64 base, u64 image_size) {
-    return {reinterpret_cast<const u8*>(base), static_cast<size_t>(image_size)};
-}
-
-// Whether every site of `feature` holds the bytes the co-op site table has for it; if not, logs
-// the first that does not, with what the player loses, and reports the feature skipped.
-bool CoopSitesMatch(u64 base, u64 image_size, std::string_view feature,
-                    std::string_view consequence) {
-    const CoopSite* site = FirstMismatchedCoopSite(EbootImage(base, image_size), feature);
-    if (site == nullptr) {
-        return true;
-    }
-    const size_t size = HexBytes(site->original).size();
-    const auto actual = site->offset <= image_size && size <= image_size - site->offset
-                            ? EbootImage(base, image_size).subspan(site->offset, size)
-                            : std::span<const u8>{};
-    LOG_ERROR(Debug, "Bloodborne {} signature mismatch at {:#x} ({}): expected={} actual={}; {}",
-              feature, site->offset, site->name, site->original, BytesToHex(actual), consequence);
-    coop_features.Skipped(feature, fmt::format("signature mismatch at {:#x}", site->offset));
-    return false;
-}
-
-// The first site of `feature` the game does not hold as the table has it, as a reason.
-std::string FeatureMismatch(u64 base, u64 image_size, std::string_view feature) {
-    const CoopSite* site = FirstMismatchedCoopSite(EbootImage(base, image_size), feature);
-    return site != nullptr ? fmt::format("signature mismatch at {:#x}", site->offset)
-                           : std::string{"not found"};
-}
-
-// Why a hook at `offset` did not go in: the game's bytes there, or the hook itself.
-std::string SiteFailure(u64 base, u64 image_size, u64 offset) {
-    const std::span<const u8> image = EbootImage(base, image_size);
-    for (const CoopSite& site : CoopSites) {
-        const size_t size = HexBytes(site.original).size();
-        if (site.offset == offset && site.kind == CoopSiteKind::Hook &&
-            (offset > image.size() || size > image.size() - offset ||
-             !MatchesCoopSite(image.subspan(offset, size), site))) {
-            return fmt::format("signature mismatch at {:#x}", offset);
-        }
-    }
-    return fmt::format("hook failed at {:#x}", offset);
-}
-
-void WriteCoopPatches(u64 base, std::string_view feature) {
-    for (const CodePatch& patch : CoopPatchesOf(feature)) {
-        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
-                    patch.patched.size());
-    }
-}
-
-// The guest code hooks of co-op, each checked against the co-op site table first: the launcher
-// warns about game patches over the sites it lists, so a hook missing from it is a bug (logged,
-// and still installed).
-void CheckCoopHookRegistered(const void* address, std::span<const u8> bytes) {
-    const u64 offset = reinterpret_cast<u64>(address) - MemoryPatcher::g_eboot_address;
-    if (!IsRegisteredCoopHook(offset, bytes)) {
-        LOG_ERROR(Debug, "Bloodborne hook at {:#x} ({} bytes) is not in the co-op site table",
-                  offset, bytes.size());
-    }
-}
-
-bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestCodeHook hook) {
-    CheckCoopHookRegistered(address, bytes);
-    return InstallGuestCodeHook(address, bytes, tag, hook);
-}
-
-bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag,
-                     GuestFunctionOverride hook) {
-    CheckCoopHookRegistered(address, bytes);
-    return InstallGuestFunctionOverride(address, bytes, tag, hook);
-}
-
-bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag,
-                     GuestRegisterEditHook hook) {
-    CheckCoopHookRegistered(address, bytes);
-    return InstallGuestRegisterEditHook(address, bytes, tag, hook);
-}
 
 bool HasMemoryAccess(u64 address, size_t size, MemoryProt required) {
     if (size == 0 || address > std::numeric_limits<u64>::max() - size) {
@@ -1029,31 +333,9 @@ bool HasMemoryAccess(u64 address, size_t size, MemoryProt required) {
            address + size <= reinterpret_cast<u64>(mapping_end);
 }
 
-// The value at address + offset, or nothing when that memory is not readable (for reads where 0
-// means something, which ReadValue would give then).
-template <typename T>
-std::optional<T> TryRead(u64 address, size_t offset) {
-    T value{};
-    if (address > std::numeric_limits<u64>::max() - offset) {
-        return std::nullopt;
-    }
-    const u64 source = address + offset;
-    if (source > std::numeric_limits<u64>::max() - sizeof(value)) {
-        return std::nullopt;
-    }
+} // namespace Coop
 
-    if (!HasMemoryAccess(source, sizeof(value), MemoryProt::CpuRead)) {
-        return std::nullopt;
-    }
-
-    std::memcpy(&value, reinterpret_cast<const void*>(source), sizeof(value));
-    return value;
-}
-
-template <typename T>
-T ReadValue(u64 address, size_t offset) {
-    return TryRead<T>(address, offset).value_or(T{});
-}
+namespace {
 
 // A guarded call (`site`) refused an object that is there (see RefusedCallLog): logged once per
 // site and vtable seen, so a wrong pointer or a vtable list missing a class shows in the log.
@@ -1245,10 +527,18 @@ std::mutex place_mutex;
 PlaceTracker place_tracker;
 std::vector<std::function<void(const PlaceChange&)>> place_listeners;
 
+} // namespace
+
+namespace Coop {
+
 Place CurrentPlace() {
     std::scoped_lock lock{place_mutex};
     return place_tracker.Current();
 }
+
+} // namespace Coop
+
+namespace {
 
 // The committed map while the player stands in the world, else 0 (in a load, before the first
 // map read, in a cutscene): what the features that pause in loads read.
@@ -1913,6 +1203,10 @@ void ResumePreMatchCrossMapResponder() {
              record.target_map, record.target_area, record.attempts, record.native_result);
 }
 
+} // namespace
+
+namespace Coop {
+
 // Auto-rejoin for a configured party (SHADPS4_BLOODBORNE_PARTY + SHADPS4_BLOODBORNE_PARTY_ROLE).
 // Only ticked from the SOS-status hook on the game thread.
 std::optional<PartyController> party_controller;
@@ -1932,6 +1226,10 @@ void InitPartyController() {
     party_controller.emplace(role_name == "host" ? PartyRole::Host : PartyRole::Guest);
     LOG_INFO(Debug, "Bloodborne party auto-rejoin enabled as {}", role_name);
 }
+
+} // namespace Coop
+
+namespace {
 
 bool HostHasRoomForMore();
 
@@ -2032,7 +1330,6 @@ void LogBloodstainStateChanges() {
 }
 
 constexpr u64 ShowBloodstainOffset = 0x01868A50;
-bool InPartySession();
 
 // See ShowsGuestBloodstain: a guest's own stain in the host's world.
 void ShowGuestBloodstain() {
@@ -2145,12 +1442,13 @@ void LogLocalEffectChanges() {
     }
 }
 
+bool EventFlagOn(s32 flag);
+
 // Diagnostics for a guest that can move and attack but not use X after a boss kill: the states
 // a boss clear or a leave could leave behind, logged on change. The event manager's "returning"
 // state ([SprjEventMan+0x10]+8, see ReviveCalls::clear_return_state), the player's state flags
 // (+0x1E0..+0x1E7) and action state ([+0x3B0]+8: +0x1B4/+0x1B8), its character type (+0x78),
 // GlobalState +0x1520 (summon warp) and +0x1592 (pickups allowed), and the leave/death flags.
-bool EventFlagOn(s32 flag);
 void LogActionBlockingState() {
     static std::string last;
     static std::chrono::steady_clock::time_point checked{};
@@ -2370,12 +1668,20 @@ std::vector<MemberMap> map_board;
 std::string map_board_member;
 std::chrono::steady_clock::time_point map_board_time{};
 
+} // namespace
+
+namespace Coop {
+
 bool InPartySession() {
     const u64 multi_play = GetMatchingState();
     return party_controller.has_value() && multi_play >= 0x10000 &&
            HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead) &&
            IsPartySession(true, ReadValue<s32>(multi_play, 0x124));
 }
+
+} // namespace Coop
+
+namespace {
 
 s32 SessionPlayers() {
     const u64 global = GetGlobalState();
@@ -2702,6 +2008,10 @@ void LogEsdAnswers(bool party_guest) {
     }
 }
 
+} // namespace
+
+namespace Coop {
+
 // Both or neither: lamps that work in a session but still travel would take one player away.
 void InstallLampsAsCampfires(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -2796,6 +2106,10 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
     lamp_rest_hooks_installed = true;
     LOG_INFO(Debug, "Bloodborne lamps as campfires: a party rests at its lamps together");
 }
+
+} // namespace Coop
+
+namespace {
 
 // The co-op trace (see CoopTraceVersion): records from any thread go to a queue that a thread of
 // its own writes out, so the game never waits for the disk. Off with SHADPS4_BLOODBORNE_TRACE=0.
@@ -2894,6 +2208,10 @@ httplib::Result PostToBoard(httplib::Client& client, const std::string& endpoint
     return response;
 }
 
+} // namespace
+
+namespace Coop {
+
 // Now in the PC's local time, as the player reads it (file names).
 std::chrono::sys_seconds LocalTimeNow() {
     const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
@@ -2966,6 +2284,10 @@ void StartCoopTrace() {
     LOG_INFO(Debug, "Bloodborne co-op trace: {}{}*.txt (the newest {} kept)",
              Common::FS::PathToUTF8String(dir / ""), CoopTracePrefix, TraceFilesKept);
 }
+
+} // namespace Coop
+
+namespace {
 
 // Posts this member's rest about once a second while it rests (once more when it stands up) and
 // keeps the board the server answers with. Runs on its own thread; the game never waits for it.
@@ -3231,6 +2553,10 @@ void RunHpBoardClient(std::stop_token stop, std::string base_url, std::string pa
 }
 std::jthread hp_board_client;
 
+} // namespace
+
+namespace Coop {
+
 void StartRestBoardClient() {
     const char* party_setting = std::getenv("SHADPS4_BLOODBORNE_PARTY");
     const auto party = party_setting ? ParsePartySetting(party_setting) : std::nullopt;
@@ -3243,6 +2569,10 @@ void StartRestBoardClient() {
     rest_board_client = std::jthread(RunRestBoardClient, base_url, *party);
     hp_board_client = std::jthread(RunHpBoardClient, base_url, *party);
 }
+
+} // namespace Coop
+
+namespace {
 
 std::vector<LampRest> FreshRestBoard() {
     std::scoped_lock lock{rest_board_mutex};
@@ -3922,261 +3252,11 @@ void TickPartyController() {
     LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",
              party_controller->SearchEffectId(), CurrentPlace().map, result);
 }
-
-void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers);
-bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64 tag, const GuestRegisterSnapshot* registers);
-bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64 tag, const GuestRegisterSnapshot* registers);
-
-bool MatchesImage(u64 base, u64 image_size, const CodePatch& patch) {
-    return patch.offset <= image_size && patch.original.size() <= image_size - patch.offset &&
-           std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(base + patch.offset),
-                                                  patch.original.size()},
-                              patch.original);
-}
-
-// Deaths that keep the party: a dead guest revives in the host's world instead of being sent
-// home. Optional and all-or-nothing: the byte patches alone would leave the guest dead.
-void InstallGhostDeathRevive(u64 base, u64 image_size) {
-    const auto& patches = GhostDeathKeepSessionPatches();
-    for (const auto& patch : patches) {
-        if (!MatchesImage(base, image_size, patch)) {
-            LOG_ERROR(Debug,
-                      "Bloodborne ghost-death signature mismatch at {:#x}; deaths still send "
-                      "guests home",
-                      patch.offset);
-            coop_features.Skipped("ghost death",
-                                  fmt::format("signature mismatch at {:#x}", patch.offset));
-            return;
-        }
-    }
-    const auto site = std::ranges::find_if(
-        Sites, [](const TraceSite& site) { return site.offset == GhostDeathReviveOffset; });
-    if (site == Sites.end() ||
-        !InstallCoopHook(reinterpret_cast<void*>(base + GhostDeathReviveOffset),
-                         std::span<const u8>{site->prologue.data(), site->prologue_size},
-                         static_cast<size_t>(std::distance(Sites.begin(), site)), TraceEntry)) {
-        LOG_ERROR(Debug, "Failed to install Bloodborne ghost-death revive hook at {:#x}",
-                  GhostDeathReviveOffset);
-        coop_features.Skipped("ghost death", SiteFailure(base, image_size, GhostDeathReviveOffset));
-        return;
-    }
-    ghost_death_revive_hook_installed = true;
-    WriteCoopPatches(base, "ghost death");
-    coop_features.On("ghost death");
-    // Optional: without it the guest's stain is still dropped, it just can't pick it up.
-    if (CoopSitesMatch(base, image_size, "guest bloodstain",
-                       "a guest cannot pick up its own bloodstain")) {
-        WriteCoopPatches(base, "guest bloodstain");
-        coop_features.On("guest bloodstain");
-    }
-    LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests revive in the host's world");
-}
-
-// See NoEchoTheftPatches: no enemy steals a bloodstain, in or out of a party.
-void InstallNoEchoTheft(u64 base, u64 image_size) {
-    if (!CoopSitesMatch(base, image_size, "no echo theft", "enemies steal bloodstains")) {
-        return;
-    }
-    WriteCoopPatches(base, "no echo theft");
-    coop_features.On("no echo theft");
-    LOG_INFO(Debug, "Bloodborne no echo theft: enemies leave bloodstains where they are");
-}
-
-// A host death with a party revives the host like a guest (no world reload) and the guests skip
-// HostDead's warp home. All-or-nothing: guests that stay with a host that reloads its world
-// would be stranded.
-void InstallHostDeathKeepsGuests(u64 base, u64 image_size) {
-    if (!world_teardown_hook_installed) {
-        LOG_ERROR(Debug, "Bloodborne host-death patch unavailable; host deaths send guests home");
-        coop_features.Skipped("host death", "needs world teardown");
-        return;
-    }
-    if (!CoopSitesMatch(base, image_size, "host death", "host deaths send guests home")) {
-        return;
-    }
-    const auto site = std::ranges::find_if(
-        Sites, [](const TraceSite& site) { return site.offset == SoloPlayDeathRespawnOffset; });
-    if (site == Sites.end() ||
-        !InstallCoopHook(reinterpret_cast<void*>(base + SoloPlayDeathRespawnOffset),
-                         std::span<const u8>{site->prologue.data(), site->prologue_size},
-                         static_cast<size_t>(std::distance(Sites.begin(), site)),
-                         OverrideHostDeathRespawn)) {
-        LOG_ERROR(Debug, "Failed to install Bloodborne host-death respawn hook at {:#x}",
-                  SoloPlayDeathRespawnOffset);
-        coop_features.Skipped("host death",
-                              SiteFailure(base, image_size, SoloPlayDeathRespawnOffset));
-        return;
-    }
-    host_death_respawn_hook_installed = true;
-    WriteCoopPatches(base, "host death");
-    coop_features.On("host death");
-    LOG_INFO(Debug, "Bloodborne host-death patch: a host with a party revives without a reload");
-}
-
-// A boss kill keeps the party together: nobody leaves the session and the guest is not warped
-// home. All-or-nothing: half of it would leave a guest in a session its host already left.
-void InstallBossClearKeepsSession(u64 base, u64 image_size) {
-    if (!CoopSitesMatch(base, image_size, "boss clear", "boss kills end sessions")) {
-        return;
-    }
-    WriteCoopPatches(base, "boss clear");
-    coop_features.On("boss clear");
-    LOG_INFO(Debug, "Bloodborne boss-clear patch: a boss kill keeps the session");
-}
-
-// A party joins in any area, whatever the player's own world has opened (see JoinAnywherePatches).
-void InstallJoinAnywhere(u64 base, u64 image_size) {
-    if (!party_controller) {
-        return;
-    }
-    if (!CoopSitesMatch(base, image_size, "join anywhere", "closed areas stay closed")) {
-        return;
-    }
-    WriteCoopPatches(base, "join anywhere");
-    coop_features.On("join anywhere");
-    LOG_INFO(Debug, "Bloodborne join-anywhere patch: a party joins in any area");
-}
-
-void LogGameCallChainAt(const char* what, u64 rsp);
-
-// See DeathFlagSites: logs a big character's death and the game's call chain to it.
-void PS4_SYSV_ABI TraceCharacterDeath(u64 tag, GuestRegisterSnapshot* registers) {
-    const auto& sites = DeathFlagSites();
-    if (tag >= sites.size()) {
-        return;
-    }
-    const DeathFlagSite& site = sites[tag];
-    const u64 character = site.character == DeathRegister::Rbx   ? registers->rbx
-                          : site.character == DeathRegister::Rcx ? registers->rcx
-                                                                 : registers->r15;
-    const u64 modules = ReadValue<u64>(character, 0x3B0);
-    const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
-    const s32 max_hp = data >= 0x10000 ? ReadValue<s32>(data, 0xFC) : 0;
-    if (!TracesDeathOf(max_hp)) {
-        return;
-    }
-    LOG_INFO(Debug,
-             "Bloodborne boss death: {:#x} ({}) hp {}/{} flags {:#x} map {:#x} in session {}",
-             ReadValue<u32>(character, 0x08), site.name, ReadValue<s32>(data, 0xF8), max_hp,
-             ReadValue<u64>(character, 0x1E0), CurrentPlace().map, InPartySession());
-    LogGameCallChainAt("boss death", registers->rsp);
-}
-
-void InstallBossDeathTracer(u64 base, u64 image_size) {
-    if (!party_controller) {
-        return;
-    }
-    const auto& sites = DeathFlagSites();
-    for (u64 index = 0; index < sites.size(); ++index) {
-        const DeathFlagSite& site = sites[index];
-        if (site.offset + site.instruction.size() > image_size ||
-            !InstallCoopHook(reinterpret_cast<void*>(base + site.offset), site.instruction, index,
-                             TraceCharacterDeath)) {
-            LOG_ERROR(Debug, "Bloodborne boss-death tracer unavailable at {:#x}", site.offset);
-            coop_features.Skipped("boss death tracer", SiteFailure(base, image_size, site.offset));
-            return;
-        }
-    }
-    coop_features.On("boss death tracer");
-    LOG_INFO(Debug, "Bloodborne boss-death tracer: big characters' deaths are logged with their "
-                    "call chain");
-}
-
-// See SaveBackups: a thread of its own copies the saves a minute after the start, then every few
-// minutes, and keeps the newest few.
-void StartSaveBackups() {
-    const char* setting = std::getenv("SHADPS4_BLOODBORNE_SAVE_BACKUPS");
-    const auto backups = ParseSaveBackups(setting != nullptr ? setting : "");
-    if (!backups) {
-        LOG_INFO(Debug, "Bloodborne save backups are off");
-        return;
-    }
-    const std::filesystem::path user_dir = Common::FS::GetUserPath(Common::FS::PathType::UserDir);
-    std::thread([user_dir, backups = *backups] {
-        std::this_thread::sleep_for(std::chrono::minutes{1});
-        while (true) {
-            if (const auto made = BackUpSaves(user_dir, SaveBackupName(LocalTimeNow()))) {
-                LOG_INFO(Debug, "Bloodborne save backup: {} ({} older ones removed)",
-                         Common::FS::PathToUTF8String(*made),
-                         PruneSaveBackups(user_dir, backups.kept));
-            }
-            std::this_thread::sleep_for(backups.every);
-        }
-    }).detach();
-    LOG_INFO(Debug, "Bloodborne save backups: every {} min into {}, the newest {} kept",
-             backups->every.count(), Common::FS::PathToUTF8String(user_dir / SaveBackupsFolder),
-             backups->kept);
-}
-
-// See QuietSummonBannerPatches: a party's joins show one banner, not two.
-void InstallQuietSummonBanners(u64 base, u64 image_size) {
-    if (!party_controller) {
-        return;
-    }
-    if (!CoopSitesMatch(base, image_size, "quiet summon banners", "joins keep the chime banner")) {
-        return;
-    }
-    WriteCoopPatches(base, "quiet summon banners");
-    coop_features.On("quiet summon banners");
-    LOG_INFO(Debug, "Bloodborne summon banner patch: no chime banner before a join's own");
-}
-
-constexpr u64 LeaveLimitOffset = 0x0138A4A0;
-constexpr std::array<u8, 6> LeaveLimitPrologue{0x55, 0x48, 0x89, 0xE5, 0x53, 0x50};
 // The event system's "load wait" byte: SetLoadWait (0x013358F0) sets it, the leave handlers
 // (0x013840E0 and others) set it with 4047, and only its constructor (0x01339669) clears it.
 // Every event update copies it to SprjActionButtonMan +0x52 (0x0133A114): no action button.
 constexpr u64 LoadWaitOffset = 0x8D;
 constexpr u64 ActionButtonManPointerOffset = 0x05540048;
-
-void InstallGuestStaysWhenTheHostLeaves(u64 base, u64 image_size) {
-    if (!party_controller) {
-        return;
-    }
-    if (LeaveLimitOffset + LeaveLimitPrologue.size() > image_size ||
-        !InstallCoopHook(reinterpret_cast<void*>(base + LeaveLimitOffset), LeaveLimitPrologue, 0,
-                         StayWhenTheHostLeaves)) {
-        LOG_ERROR(Debug, "Bloodborne leave-limit hook unavailable; a guest whose host leaves "
-                         "goes home");
-        coop_features.Skipped("host leaves", SiteFailure(base, image_size, LeaveLimitOffset));
-        return;
-    }
-    coop_features.On("host leaves");
-    LOG_INFO(Debug, "Bloodborne party guests stay where they are when their host leaves");
-}
-
-// Faster sign posts for party joins. Optional: on a mismatch the game keeps its own timers.
-void PatchSignTimers(u64 base, u64 image_size) {
-    for (const auto& site : SignTimerSites) {
-        const auto expected = EncodeSignTimerStore(site.modrm, site.original_seconds);
-        if (site.offset > image_size || expected.size() > image_size - site.offset ||
-            !IsSignTimerStore(std::span<const u8>{reinterpret_cast<const u8*>(base + site.offset),
-                                                  expected.size()},
-                              site)) {
-            const u8* found = reinterpret_cast<const u8*>(base + site.offset);
-            LOG_ERROR(Debug,
-                      "Bloodborne sign timer signature mismatch at {:#x} (found {}); "
-                      "keeping the game's sign timers",
-                      site.offset,
-                      BytesToHex(std::span<const u8>{found, std::min<size_t>(expected.size(), 8)}));
-            coop_features.Skipped("sign timers",
-                                  fmt::format("signature mismatch at {:#x}", site.offset));
-            return;
-        }
-    }
-    for (const auto& site : SignTimerSites) {
-        const auto patched = EncodeSignTimerStore(site.modrm, site.patched_seconds);
-        std::memcpy(reinterpret_cast<void*>(base + site.offset), patched.data(), patched.size());
-    }
-    coop_features.On("sign timers");
-    LOG_INFO(Debug, "Bloodborne sign timers patched: first post after {} s, re-post every {} s",
-             FirstSignPostDelaySeconds, SignRepostSeconds);
-}
-
-// Seamless travel (see PartyTrip): the stage transition every trip goes through (lamps, the
-// Dream's headstones, the event warps), and LeaveSession, which 01.09 calls from several places
-// on the way (one is the stage change at 0x0193C689).
-constexpr u64 StageTransitionEntryOffset = 0x013CDE30;
 constexpr u64 LeaveSessionOffset = 0x015BED10;
 std::mutex party_trip_mutex;
 PartyTrip party_trip;
@@ -4194,8 +3274,6 @@ void ParkEnemyWatch();
 std::atomic<u64> party_trips_started{0}; // ends the visit of KeepEnemyDeathsInStep
 [[maybe_unused]] const bool party_trips_registered =
     RegisterLifecycleReset("kill visit", {Lifecycle::Trip}, [] { ++party_trips_started; });
-
-void LogGameCallChainAt(const char* what, u64 rsp);
 
 bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot* registers) {
     if (InPartySession()) {
@@ -4218,6 +3296,10 @@ bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot* registers) {
     return false;
 }
 
+} // namespace
+
+namespace Coop {
+
 // Every LeaveSession while a party trip is under way is skipped (the stage change's own call at
 // 0x0193C689 is only one of them), and logged with its caller.
 void LogGameCallChainAt(const char* what, u64 rsp) {
@@ -4234,6 +3316,10 @@ void LogGameCallChainAt(const char* what, u64 rsp) {
     LOG_INFO(Debug, "Bloodborne {} from the game:{}", what,
              FormatGameAddresses(words, image_base, MemoryPatcher::g_eboot_image_size, 24));
 }
+
+} // namespace Coop
+
+namespace {
 
 bool PS4_SYSV_ABI KeepSessionAfterTrip(u64, const GuestRegisterSnapshot* registers) {
     if (!PartyTripActive()) {
@@ -4928,6 +4014,10 @@ void PS4_SYSV_ABI KeepPartyGuestsLevel(u64, GuestRegisterSnapshot* registers) {
     }
 }
 
+} // namespace
+
+namespace Coop {
+
 void InstallNoLevelSyncInParty(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
@@ -4943,6 +4033,10 @@ void InstallNoLevelSyncInParty(u64 base, u64 image_size) {
     coop_features.On("level sync");
     LOG_INFO(Debug, "Bloodborne party guests keep their own level (no effect {})", LevelSyncEffect);
 }
+
+} // namespace Coop
+
+namespace {
 
 // Both NPC creation sites read the flag with `mov reg, [rax+0x145]` and test bit 7 right after.
 // Pointing rax at an all-zero stand-in row for that read keeps the NPC a live character.
@@ -4964,6 +4058,10 @@ void PS4_SYSV_ABI KeepNpcsSolidForPartyGuests(u64, GuestRegisterSnapshot* regist
     }
 }
 
+} // namespace
+
+namespace Coop {
+
 void InstallSolidNpcsInParty(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
@@ -4982,6 +4080,10 @@ void InstallSolidNpcsInParty(u64 base, u64 image_size) {
     coop_features.On("solid NPCs");
     LOG_INFO(Debug, "Bloodborne party guests see NPCs as the host does");
 }
+
+} // namespace Coop
+
+namespace {
 
 // Diagnostics for shared loot (RE trace only): the map item module (MapItemMan, 0x017D-0x017E)
 // asks "am I a summoned guest" (matching state 6) or "am I the host" (3) at these spots. Counting
@@ -5161,6 +4263,10 @@ void PS4_SYSV_ABI MenusTreatPartyGuestsAsHosts(u64, GuestRegisterSnapshot* regis
     }
 }
 
+} // namespace
+
+namespace Coop {
+
 void InstallSharedLoot(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
@@ -5248,6 +4354,10 @@ void InstallItemModuleDiagnostics(u64 base, u64 image_size) {
     }
 }
 
+} // namespace Coop
+
+namespace {
+
 void LogItemModuleChecks() {
     static std::array<u64, ItemModuleChecks.size()> logged{};
     static std::chrono::steady_clock::time_point last{};
@@ -5307,6 +4417,10 @@ void PS4_SYSV_ABI NoteItemButton(u64 tag, const GuestRegisterSnapshot* registers
     item_button_counts[tag].fetch_add(1, std::memory_order_relaxed);
 }
 
+} // namespace
+
+namespace Coop {
+
 // On in every co-op game (was SHADPS4_BLOODBORNE_RE_TRACE only): a host could not pick up
 // items after its guest's crash (friend run 2026-10-09) and the logs could not say where the
 // pickup stopped. Six counting hooks, logged with the map items when they change.
@@ -5332,6 +4446,10 @@ void InstallItemButtonDiagnostics(u64 base, u64 image_size) {
     }
     coop_features.On("item button diagnostics");
 }
+
+} // namespace Coop
+
+namespace {
 
 // The local player's position, where the map item search reads it
 // ([[[player+0x58]+8]+0x3B0]+0x68]+0x1E0).
@@ -6061,6 +5179,10 @@ void PS4_SYSV_ABI KeepLampLitAfterRegistration(u64, GuestRegisterSnapshot* regis
     }
 }
 
+} // namespace
+
+namespace Coop {
+
 void InstallLampsStayLitAtRegistration(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
@@ -6084,6 +5206,10 @@ void InstallLampsStayLitAtRegistration(u64 base, u64 image_size) {
     }
     coop_features.On("lamp registration");
 }
+
+} // namespace Coop
+
+namespace {
 
 // A party guest's boss item (see DefersItemLotAward): held at the award's entry and given
 // from the tick once the boss-clear sequence is over.
@@ -6185,6 +5311,10 @@ void PS4_SYSV_ABI KeepLocalEventsFromOthers(u64, GuestRegisterSnapshot* register
     }
 }
 
+} // namespace
+
+namespace Coop {
+
 void InstallKeepLocalFlags(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
@@ -6223,6 +5353,10 @@ void InstallDeferredBossItems(u64 base, u64 image_size) {
     }
     coop_features.On("boss items");
 }
+
+} // namespace Coop
+
+namespace {
 
 s64 SteadyMilliseconds() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -6665,6 +5799,10 @@ void PS4_SYSV_ABI NoteEffectHpChange(u64, const GuestRegisterSnapshot* registers
     }
 }
 
+} // namespace
+
+namespace Coop {
+
 void InstallOwnHitCount(u64 base, u64 image_size) {
     if (!party_controller || HitAppliedOffset + HitApplied.size() > image_size) {
         return;
@@ -6699,6 +5837,10 @@ void InstallOwnHitCount(u64 base, u64 image_size) {
         coop_features.On("effect hits");
     }
 }
+
+} // namespace Coop
+
+namespace {
 
 // Enemy HP straight from game to game (see DirectDamageType): the other games' frames, by sender,
 // read from the P2P transport on the game's thread. Only the room's peers are heard.
@@ -8070,6 +7212,10 @@ bool PS4_SYSV_ABI KeepMatchingDuringTrip(u64, const GuestRegisterSnapshot* regis
     return true;
 }
 
+} // namespace
+
+namespace Coop {
+
 void InstallSeamlessTravel(u64 base, u64 image_size) {
     if (!party_controller || LeaveSessionOffset + StandardR15Prologue.size() > image_size) {
         return;
@@ -8112,6 +7258,10 @@ void InstallSeamlessTravel(u64 base, u64 image_size) {
     }
     LOG_INFO(Debug, "Bloodborne seamless travel: a party member's trip keeps the session");
 }
+
+} // namespace Coop
+
+namespace {
 
 // A summoned guest leaving the host's world, or a host leaving its own (quit to title, death
 // respawn), ends the session like the unpatched game would; the keep-matching patch otherwise
@@ -8348,6 +7498,12 @@ void ReviveGuestAfterGhostDeath() {
              player >= 0x10000 ? ReadValue<u8>(player, 0x1E3) : 0xFF);
 }
 
+std::vector<u64> OtherSessionMembers();
+
+} // namespace
+
+namespace Coop {
+
 // Replaces native SoloPlayDeath_2 (bloodstain, then the reload at the lamp) for a host with a
 // session: it revives like a guest and the world is not reloaded.
 // OnLeave_Limit (event 4046), 5 s after a white phantom lost its host (the host left, travelled,
@@ -8355,7 +7511,6 @@ void ReviveGuestAfterGhostDeath() {
 // member skips it (SkipsLeaveLimit): a phantom while the session goes on (with nobody left, the
 // host crashed, it goes home, as a phantom never rings again), and a live player always: the
 // game ran it on a host whose guest died apart from it, and the warp took the host to the title.
-std::vector<u64> OtherSessionMembers();
 bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64, const GuestRegisterSnapshot* registers) {
     const u64 player = GetLocalPlayer();
     if (!party_controller || player < 0x10000 ||
@@ -8410,6 +7565,10 @@ bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64, const GuestRegisterSnapshot*) {
              matching_state);
     return true;
 }
+
+} // namespace Coop
+
+namespace {
 
 // The local player's data module ([[player +0x3B0] +0x20]: HP +0xF8, max HP +0xFC, flags +0x200).
 u64 PlayerDataModule(u64 player) {
@@ -8945,6 +8104,10 @@ void RunVitalsBoardClient(std::stop_token stop, std::string base_url, std::strin
     }
 }
 
+} // namespace
+
+namespace Coop {
+
 void StartVitalsBoardClient() {
     const char* party_setting = std::getenv("SHADPS4_BLOODBORNE_PARTY");
     const auto party = party_setting ? ParsePartySetting(party_setting) : std::nullopt;
@@ -8954,6 +8117,10 @@ void StartVitalsBoardClient() {
     }
     vitals_board_client = std::jthread(RunVitalsBoardClient, base_url, *party);
 }
+
+} // namespace Coop
+
+namespace {
 
 // The local player's side of party death, on the game thread.
 struct PartyDeathRun {
@@ -9235,6 +8402,10 @@ void TickPartyDeath() {
     SetPartyPanel(std::move(panel));
 }
 
+} // namespace
+
+namespace Coop {
+
 // Party death needs a party (SHADPS4_BLOODBORNE_PARTY) and the setting.
 void InstallPartyDeath(u64 base, u64 image_size) {
     if (!party_death_enabled || !party_controller) {
@@ -9253,7 +8424,9 @@ void InstallPartyDeath(u64 base, u64 image_size) {
                     "stands on its map (damage revives it, holding Circle gives up)");
 }
 
-bool InPartySession();
+} // namespace Coop
+
+namespace {
 
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers) {
     healing_fountain_availability = {};
@@ -10511,6 +9684,10 @@ void WriteWorldStateValidation(std::ostream& out, const TraceSite& site,
     out << '}';
 }
 
+} // namespace
+
+namespace Coop {
+
 void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
     if (tag >= Sites.size() || registers == nullptr) {
         return;
@@ -11061,39 +10238,9 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
     }
 }
 
-bool VerifySites() {
-    const auto image_size = MemoryPatcher::g_eboot_image_size;
-    for (const auto& site : Sites) {
-        if ((summon_build_host_placement_hook_installed && site.offset == SummonBuildEntryOffset) ||
-            (cross_map_guest_handoff_hook_installed && site.offset == CrossMapGuestHandoffOffset) ||
-            (summon_reload_state_hook_installed &&
-             site.offset == StageWarpDescriptorFinalizeOffset) ||
-            (deferred_summon_reload_hook_installed && site.offset == SosStatusUpdateOffset) ||
-            (healing_fountain_host_availability_hook_installed &&
-             site.offset == HealingFountainAvailabilityOffset) ||
-            (world_teardown_hook_installed && site.offset == WorldTeardownMatchingOffset) ||
-            (ghost_death_revive_hook_installed && site.offset == GhostDeathReviveOffset) ||
-            (host_death_respawn_hook_installed && site.offset == SoloPlayDeathRespawnOffset) ||
-            (seamless_travel_hooks_installed && site.offset == StageTransitionEntryOffset) ||
-            (stop_request_hook_installed && site.offset == MultiPlayStopRequestOffset)) {
-            continue;
-        }
-        const auto expected = std::span<const u8>{site.prologue.data(), site.prologue_size};
-        if (site.offset > image_size || expected.size() > image_size - site.offset) {
-            LOG_ERROR(Debug, "Bloodborne RE site {} lies outside the eboot image", site.name);
-            return false;
-        }
-        const auto actual = std::span<const u8>{
-            reinterpret_cast<const u8*>(image_base + site.offset), expected.size()};
-        if (!std::ranges::equal(actual, expected)) {
-            LOG_ERROR(Debug,
-                      "Bloodborne RE signature mismatch at {} ({:#x}): expected={} actual={}",
-                      site.name, site.offset, BytesToHex(expected), BytesToHex(actual));
-            return false;
-        }
-    }
-    return true;
-}
+} // namespace Coop
+
+namespace {
 
 // Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY=<script>, see ParseAutoplayScript): tests with no one at
 // the pad. The pad reader (AutoplayPad) presses Cross on the title screen until the player is in
@@ -12355,175 +11502,6 @@ void TraceMatching2LeaveRoom(std::uintptr_t return_address, std::uint64_t room_i
              "Bloodborne RE Matching2 leave room={} caller={:#x} offset={:#x} reload_phase={} "
              "current_map={:#x} requested_map={:#x}",
              room_id, return_address, caller_offset, reload_phase, current_map, requested_map);
-}
-
-void InstallSeamlessCoopPatches() {
-    if ((negative_area_patch_installed && area_flag_patch_installed &&
-         responder_bell_area_patch_installed && responder_bell_common_patch_installed &&
-         active_bell_negative_area_patch_installed && active_bell_area_flag_patch_installed &&
-         responder_search_negative_area_patch_installed && sos_status_area_patch_installed &&
-         summon_candidate_area_patch_installed && summon_build_area_patch_installed &&
-         summon_build_world_state_patch_installed && summon_build_negative_event_patch_installed &&
-         summon_build_host_placement_hook_installed && cross_map_guest_handoff_hook_installed &&
-         summon_reload_state_hook_installed && deferred_summon_reload_hook_installed &&
-         healing_fountain_host_availability_hook_installed) ||
-        !EnvFlagEnabled("SHADPS4_BLOODBORNE_SEAMLESS_COOP")) {
-        return;
-    }
-    if (MemoryPatcher::g_game_serial != "CUSA03173") {
-        return;
-    }
-
-    const auto* param_sfo = Common::Singleton<PSF>::Instance();
-    const std::string_view app_version = param_sfo->GetString("APP_VER").value_or("Unknown");
-    if (app_version != "01.09") {
-        LOG_ERROR(Debug,
-                  "Bloodborne seamless patches require CUSA03173 01.09; loaded version is {}",
-                  app_version);
-        return;
-    }
-
-    const auto base = MemoryPatcher::g_eboot_address;
-    const auto image_size = MemoryPatcher::g_eboot_image_size;
-    coop_features = {};
-    const auto summon_build_entry = std::ranges::find_if(
-        Sites, [](const TraceSite& site) { return site.offset == SummonBuildEntryOffset; });
-    const auto cross_map_guest_handoff = std::ranges::find_if(
-        Sites, [](const TraceSite& site) { return site.offset == CrossMapGuestHandoffOffset; });
-    const auto deferred_summon_reload = std::ranges::find_if(
-        Sites, [](const TraceSite& site) { return site.offset == SosStatusUpdateOffset; });
-    const auto summon_reload_state = std::ranges::find_if(Sites, [](const TraceSite& site) {
-        return site.offset == StageWarpDescriptorFinalizeOffset;
-    });
-    const auto healing_fountain_host_availability = std::ranges::find_if(
-        Sites, [](const auto& site) { return site.offset == HealingFountainAvailabilityOffset; });
-    const auto world_teardown = std::ranges::find_if(
-        Sites, [](const auto& site) { return site.offset == WorldTeardownMatchingOffset; });
-    if (summon_build_entry == Sites.end() || cross_map_guest_handoff == Sites.end() ||
-        deferred_summon_reload == Sites.end() || summon_reload_state == Sites.end() ||
-        healing_fountain_host_availability == Sites.end() || world_teardown == Sites.end()) {
-        LOG_ERROR(Debug, "Bloodborne seamless functional hook site is missing");
-        return;
-    }
-    if (base == 0) {
-        LOG_ERROR(Debug, "Bloodborne seamless patches lie outside the eboot image");
-        return;
-    }
-
-    // All of the core or none of it. Every site is checked before anything is written: its byte
-    // patches, its hooks and the game functions the cross-map summon calls (the co-op site table,
-    // bloodborne_patch_sites.h).
-    if (!CoopSitesMatch(base, image_size, "seamless core", "no seamless co-op")) {
-        LogCoopFeatures();
-        return;
-    }
-    image_base = base;
-    // Then the hooks; one that still fails (no room for its trampoline) takes the others out
-    // again, so the game is left as it was.
-    struct CoreHook {
-        u64 offset;
-        const TraceSite* site;
-        bool* installed;
-        std::string_view what;
-    };
-    const std::array<CoreHook, 5> core_hooks{{
-        {SummonBuildEntryOffset, &*summon_build_entry, &summon_build_host_placement_hook_installed,
-         "cross-map host-placement"},
-        {CrossMapGuestHandoffOffset, &*cross_map_guest_handoff,
-         &cross_map_guest_handoff_hook_installed, "cross-map guest-handoff"},
-        {StageWarpDescriptorFinalizeOffset, &*summon_reload_state,
-         &summon_reload_state_hook_installed, "summon-reload state"},
-        {SosStatusUpdateOffset, &*deferred_summon_reload, &deferred_summon_reload_hook_installed,
-         "deferred summon-reload"},
-        {HealingFountainAvailabilityOffset, &*healing_fountain_host_availability,
-         &healing_fountain_host_availability_hook_installed, "healing-fountain host-availability"},
-    }};
-    for (size_t index = 0; index < core_hooks.size(); ++index) {
-        const CoreHook& hook = core_hooks[index];
-        const auto expected =
-            std::span<const u8>{hook.site->prologue.data(), hook.site->prologue_size};
-        if (InstallCoopHook(reinterpret_cast<void*>(base + hook.offset), expected,
-                            static_cast<size_t>(hook.site - Sites.data()), TraceEntry)) {
-            *hook.installed = true;
-            continue;
-        }
-        LOG_ERROR(Debug, "Failed to install Bloodborne {} hook at {:#x}", hook.what, hook.offset);
-        for (size_t installed = 0; installed < index; ++installed) {
-            RemoveGuestCodeHook(reinterpret_cast<void*>(base + core_hooks[installed].offset));
-            *core_hooks[installed].installed = false;
-        }
-        coop_features.Skipped(
-            "seamless core",
-            fmt::format("{}; rolled back", SiteFailure(base, image_size, hook.offset)));
-        LogCoopFeatures();
-        return;
-    }
-    coop_features.On("seamless core");
-    InitPartyController();
-    // Optional: without it a guest quitting to the title stays in the room, but every other
-    // patch still applies.
-    const auto world_teardown_expected =
-        std::span<const u8>{world_teardown->prologue.data(), world_teardown->prologue_size};
-    world_teardown_hook_installed = InstallCoopHook(
-        reinterpret_cast<void*>(base + WorldTeardownMatchingOffset), world_teardown_expected,
-        static_cast<size_t>(std::distance(Sites.begin(), world_teardown)), TraceEntry);
-    if (!world_teardown_hook_installed) {
-        LOG_ERROR(Debug, "Failed to install Bloodborne world-teardown hook at {:#x}",
-                  WorldTeardownMatchingOffset);
-        coop_features.Skipped("world teardown",
-                              SiteFailure(base, image_size, WorldTeardownMatchingOffset));
-    } else {
-        coop_features.On("world teardown");
-    }
-
-    InstallGhostDeathRevive(base, image_size);
-    InstallNoEchoTheft(base, image_size);
-    InstallHostDeathKeepsGuests(base, image_size);
-    InstallBossClearKeepsSession(base, image_size);
-    InstallJoinAnywhere(base, image_size);
-    InstallQuietSummonBanners(base, image_size);
-    InstallBossDeathTracer(base, image_size);
-    InstallGuestStaysWhenTheHostLeaves(base, image_size);
-    InstallSeamlessTravel(base, image_size);
-    InstallLampsAsCampfires(base, image_size);
-    InstallNoLevelSyncInParty(base, image_size);
-    InstallSolidNpcsInParty(base, image_size);
-    InstallSharedLoot(base, image_size);
-    InstallLampsStayLitAtRegistration(base, image_size);
-    InstallDeferredBossItems(base, image_size);
-    InstallKeepLocalFlags(base, image_size);
-    InstallItemModuleDiagnostics(base, image_size);
-    InstallItemButtonDiagnostics(base, image_size);
-    InstallPartyDeath(base, image_size);
-    InstallOwnHitCount(base, image_size);
-    StartSaveBackups();
-    StartCoopTrace();
-    StartRestBoardClient();
-    StartVitalsBoardClient();
-    PatchSignTimers(base, image_size);
-
-    WriteCoopPatches(base, "seamless core");
-    negative_area_patch_installed = true;
-    area_flag_patch_installed = true;
-    responder_bell_area_patch_installed = true;
-    responder_bell_common_patch_installed = true;
-    active_bell_negative_area_patch_installed = true;
-    active_bell_area_flag_patch_installed = true;
-    responder_search_negative_area_patch_installed = true;
-    sos_status_area_patch_installed = true;
-    summon_candidate_area_patch_installed = true;
-    summon_build_area_patch_installed = true;
-    summon_build_world_state_patch_installed = true;
-    summon_build_negative_event_patch_installed = true;
-    stage_transition_keep_matching_patch_installed = true;
-    LOG_INFO(Debug,
-             "Bloodborne seamless patches enabled Beckoning, Small Resonant, and Sinister Bell "
-             "use, active search, cross-map candidate selection, and native summon construction "
-             "with host-placement transport, guest stage handoff, retained matching during "
-             "stage transitions, deferred native reload, and host lantern actions in negative "
-             "and area-complete SOS regions ({} byte patches, {} hooks)",
-             CoopPatchesOf("seamless core").size(), core_hooks.size());
-    LogCoopFeatures();
 }
 
 void SetBuildIdentity(std::string_view revision, u64 event_files) {
