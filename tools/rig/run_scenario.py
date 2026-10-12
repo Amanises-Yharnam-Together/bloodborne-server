@@ -176,6 +176,10 @@ def start_delay_proxies() -> list[latency.DelayProxy]:
     print(f"ping {PING[0]}-{PING[1]} ms between the games and to the servers")
     return proxies
 
+# --headless: the port draws nothing (its command processor still writes the game's labels, so
+# the game runs as with a GPU) and plays no sound.
+HEADLESS = {"BB_NULL_GPU": "1", "BB_AUDIO": "none"}
+
 DONE = re.compile(r"Bloodborne autoplay: done \((ok|failed)\)")
 IN_WORLD = "Bloodborne autoplay: in the world"
 STEP_FAILED = re.compile(r"Bloodborne autoplay: step .* FAILED: .*")
@@ -1201,6 +1205,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="make lanes 1..N-1 from the rig's folders (--engine port)")
     parser.add_argument("--lane", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--batch", type=pathlib.Path, help=argparse.SUPPRESS)
+    parser.add_argument("--headless", action="store_true",
+                        help="the port's games draw nothing and play no sound (BB_NULL_GPU=1, "
+                             "BB_AUDIO=none): nothing on the screen, no pictures")
     parser.add_argument("--ping", type=ping_setting, default=latency.DEFAULT_PING,
                         help="round trip in ms between the games and to the servers, \"80\" "
                              f"or \"50-100\" (default {latency.DEFAULT_PING}; 0 for none)")
@@ -1210,6 +1217,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     use_engine(args.engine)
+    if args.headless:
+        # The games take the rig's environment (game_environment).
+        os.environ.update(HEADLESS)
     use_ping(args.ping)
     use_lane(args.lane)
     runs_games = (args.play or args.scenarios or args.boot_check) and not args.lanes
