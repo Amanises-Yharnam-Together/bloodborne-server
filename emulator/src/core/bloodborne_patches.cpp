@@ -390,6 +390,18 @@ void StartSaveBackups() {
              backups->kept);
 }
 
+// The game frees a released Scaleform movie player 5 frames later (0x01F60620's delayed delete),
+// and the port's render thread can still have a draw of it queued then (New Game crashed on
+// GXRenderThread at eboot+0x1F591B0, Kaniel 2026-10-13): 60 frames.
+void InstallMoviePlayerDeleteDelay(u64 base, u64 image_size) {
+    if (!CoopSitesMatch(base, image_size, "movie player delete delay",
+                        "movie players are freed after 5 frames")) {
+        return;
+    }
+    WriteCoopPatches(base, "movie player delete delay");
+    coop_features.On("movie player delete delay");
+}
+
 // See QuietSummonBannerPatches: a party's joins show one banner, not two.
 void InstallQuietSummonBanners(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -606,6 +618,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallBossClearKeepsSession(base, image_size);
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
+    InstallMoviePlayerDeleteDelay(base, image_size);
     InstallShortSummonSlotHold(base, image_size);
     InstallBossDeathTracer(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
