@@ -4038,6 +4038,22 @@ u32 RealReviveHitDamage(u32 dealt, s32 attack_rating, bool heavy) {
     return std::max(dealt, ReviveHitDamage(attack_rating, heavy));
 }
 
+u32 ReviveHitScale::Count(u32 dealt, s32 attack_rating, bool heavy) {
+    if (attack_rating != baseline_rating) {
+        baseline = 0;
+        baseline_rating = attack_rating;
+    }
+    if (!heavy && dealt > 0 && (baseline == 0 || dealt < baseline)) {
+        baseline = dealt;
+    }
+    const u32 floor = RealReviveHitDamage(dealt, attack_rating, heavy);
+    if (baseline == 0) {
+        return floor;
+    }
+    const u64 scaled = u64{dealt} * static_cast<u64>(std::max(attack_rating, 1)) / u64{baseline};
+    return std::max(floor, static_cast<u32>(std::min<u64>(scaled, 0xFFFFFFFFu)));
+}
+
 float ReviveShare(u32 landed, u32 needed) {
     return needed == 0 ? 0.0f
                        : std::min(static_cast<float>(landed) / static_cast<float>(needed), 1.0f);

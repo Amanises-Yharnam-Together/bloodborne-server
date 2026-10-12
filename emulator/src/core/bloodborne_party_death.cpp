@@ -752,14 +752,16 @@ void CountRealReviveHits(PartyDeathRun& run, std::span<const DownedBody> bodies)
             continue;
         }
         const s32 rating = ReadAttackRatings(GetLocalPlayer()).Held();
-        const u32 counted = RealReviveHitDamage(damage, rating, party_attack_heavy.load());
+        const bool heavy = party_attack_heavy.load();
+        const u32 counted = run.revive_scale.Count(damage, rating, heavy);
         run.revive_hits.Hit(body->member.member, body->member.down, counted);
-        if (run.real_hits_logged < 16) {
+        if (run.real_hits_logged < 64) {
             ++run.real_hits_logged;
             LOG_INFO(Debug,
                      "Bloodborne party death: real revive hit on {} (down {}) for {} damage "
-                     "(dealt {}, attack rating {})",
-                     body->member.member, body->member.down, counted, damage, rating);
+                     "(dealt {}, attack rating {}, {})",
+                     body->member.member, body->member.down, counted, damage, rating,
+                     heavy ? "heavy" : "light");
         }
     }
 }

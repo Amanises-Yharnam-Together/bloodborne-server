@@ -2710,6 +2710,17 @@ u32 ReviveHitDamage(s32 attack_rating, bool heavy);
 // weapon's attack rating (ReviveHitDamage): the body's own defences cut a teammate's hit, and the
 // revive's damage is sized by attack ratings (rig 2026-10-12: bare fists dealt 2 to 3).
 u32 RealReviveHitDamage(u32 dealt, s32 attack_rating, bool heavy);
+// Real hits counted in proportion to the lightest light hit seen (its baseline): that one counts as
+// the attack rating, a hit dealing twice as much twice the rating, never less than
+// RealReviveHitDamage (Kaniel 2026-10-13: a charged R2 counted as an R1).
+class ReviveHitScale {
+public:
+    u32 Count(u32 dealt, s32 attack_rating, bool heavy);
+
+private:
+    u32 baseline = 0;        // the lightest light hit's damage, for `baseline_rating`
+    s32 baseline_rating = 0; // another weapon (another rating) starts a new baseline
+};
 // The share of a revive done, 0 to 1 (the panel's ring and text).
 float ReviveShare(u32 landed, u32 needed);
 // The HP a revived player gets up with: half its max, at least 1.

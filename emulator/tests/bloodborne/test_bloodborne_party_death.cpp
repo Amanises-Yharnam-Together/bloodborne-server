@@ -173,6 +173,22 @@ TEST(BloodbornePartyDeath, ARealHitCountsAtLeastTheAttackRating) {
     EXPECT_EQ(RealReviveHitDamage(0, 0, false), 1u);
 }
 
+// Kaniel 2026-10-13: against a downed body his R1 dealt about 77 and counted as his attack rating,
+// 94; an R2 or a charged one, hardly more. Each hit counts in proportion to the lightest one seen
+// (the body's defences cut all hits alike): the light hit counts as the rating, a hit that deals
+// twice as much counts twice the rating.
+TEST(BloodbornePartyDeath, AHeavierHitCountsForMore) {
+    ReviveHitScale scale;
+    EXPECT_EQ(scale.Count(77, 94, false), 94u) << "R1";
+    EXPECT_EQ(scale.Count(115, 94, true), 141u) << "R2: never under the heavy floor";
+    EXPECT_EQ(scale.Count(170, 94, true), 207u) << "a charged R2";
+    EXPECT_EQ(scale.Count(74, 94, false), 94u) << "a lighter R1 is the new baseline";
+    EXPECT_EQ(scale.Count(148, 94, false), 188u);
+    ReviveHitScale fresh;
+    EXPECT_EQ(fresh.Count(141, 94, true), 141u) << "no light hit seen yet: as before";
+    EXPECT_EQ(fresh.Count(3, 25, false), 25u) << "bare fists";
+}
+
 TEST(BloodbornePartyDeath, AHeavyAttackIsR2GoingDownWithoutR1) {
     EXPECT_TRUE(HeavyAttackPressed(0, PadR2));
     EXPECT_FALSE(HeavyAttackPressed(0, PadR1));
