@@ -302,6 +302,9 @@ void ShowGuestBloodstain();
 void KeepGuestBloodstainMark();
 
 void ObserveLocalAliveState();
+void LogOtherPlayersChanges();
+void LogLocalEffectChanges();
+void LogActionBlockingState();
 
 std::vector<s32> EffectsOf(u64 character);
 std::vector<s32> LocalEffects();
