@@ -98,6 +98,10 @@ bool InstallGuestFunctionOverride(void* address, std::span<const u8> expected_in
 bool InstallGuestRegisterEditHook(void* address, std::span<const u8> expected_instructions, u64 tag,
                                   GuestRegisterEditHook hook);
 
+/// Takes out a hook one of the installers above put at `address`: the game's instructions go
+/// back. For an install that has to be all or nothing, before the game runs the code.
+bool RemoveGuestCodeHook(void* address);
+
 /// Applies CPU patches that need to be done before beginning executions.
 void PrePatchInstructions(u64 segment_addr, u64 segment_size);
 

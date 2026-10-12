@@ -257,6 +257,18 @@ class DebugPatchTests(unittest.TestCase):
             (font / 'dbgfont14h.tpf').write_bytes(b'test')
             self.assertIn(menu, validate_patch_requirements(names, game))
 
+    def test_patches_that_cannot_go_together_are_one_table(self):
+        self.assertIn(('Restore Debug Camera', 'Enemy Control'),
+                      [(kept, dropped) for kept, dropped, _ in patches.EXCLUSIVE_PATCHES])
+        # The effect switches keep the first of a pair and drop the second.
+        names = effect_patches({'debug_camera': '1', 'cheat_enemy_control': '1'})
+        self.assertIn('Restore Debug Camera', names)
+        self.assertNotIn('Enemy Control', names)
+        for kept, dropped, _ in patches.EXCLUSIVE_PATCHES:
+            with self.subTest(pair=(kept, dropped)):
+                with self.assertRaisesRegex(ValueError, f'{kept} conflicts with {dropped}'):
+                    validate_patch_requirements([dropped, kept], Path('.'))
+
     def test_conflicting_enemy_control_patch_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'conflicts with Enemy Control'):
             validate_patch_requirements(['Enemy Control', 'Restore Debug Camera'], Path('.'))

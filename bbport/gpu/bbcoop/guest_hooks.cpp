@@ -32,8 +32,8 @@ struct HookModule {
     u8* start;
     u8* end;
     std::unique_ptr<Xbyak::CodeGenerator> trampolines;
-    /// Hooked instruction spans: first byte and length.
-    std::map<const u8*, size_t> patched;
+    /// Hooked instruction spans: first byte and the game's instructions there.
+    std::map<const u8*, std::vector<u8>> patched;
 };
 
 std::mutex modules_mutex;
@@ -54,8 +54,8 @@ bool OverlapsHook(const HookModule& module, const u8* begin, const u8* end) {
     if (next == module.patched.begin()) {
         return false;
     }
-    const auto& [start, size] = *std::prev(next);
-    return start + size > begin;
+    const auto& [start, original] = *std::prev(next);
+    return start + original.size() > begin;
 }
 
 #ifndef _WIN32
@@ -165,7 +165,8 @@ bool InstallGuestHook(void* address, std::span<const u8> expected_instructions, 
         LOG_ERROR(Core, "Could not write guest code hook at {}", fmt::ptr(code));
         return false;
     }
-    module->patched.emplace(code, expected_instructions.size());
+    module->patched.emplace(
+        code, std::vector<u8>(expected_instructions.begin(), expected_instructions.end()));
     return true;
 }
 
@@ -201,6 +202,22 @@ bool InstallGuestRegisterEditHook(void* address, std::span<const u8> expected_in
     // The trampoline already reloads every register (and the flags) from the snapshot.
     return InstallGuestHook(address, expected_instructions, tag,
                             reinterpret_cast<const void*>(hook), false);
+}
+
+bool RemoveGuestCodeHook(void* address) {
+    auto* code = static_cast<u8*>(address);
+    std::scoped_lock lock{modules_mutex};
+    auto* module = ContainingModule(code);
+    if (module == nullptr) {
+        return false;
+    }
+    const auto hook = module->patched.find(code);
+    if (hook == module->patched.end() || !WriteCode(code, hook->second)) {
+        return false;
+    }
+    // The trampoline stays where it is, unused.
+    module->patched.erase(hook);
+    return true;
 }
 
 } // namespace Core
