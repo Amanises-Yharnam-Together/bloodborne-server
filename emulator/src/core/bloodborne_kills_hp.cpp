@@ -752,13 +752,10 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
         }
         standing.push_back({handle, hp, max, hits});
     }
-    // The other games' frames straight over the P2P link first, then the board (the same reports,
-    // later).
-    std::vector<MemberMapState> others = direct_damage_inbox.Fresh(SteadyMilliseconds());
-    {
-        std::scoped_lock lock{enemy_hp_mutex};
-        others.insert(others.end(), others_enemy_hp.begin(), others_enemy_hp.end());
-    }
+    // The other members' reports: the world log's, or the direct frames and the HP board (see
+    // OthersEnemyHp).
+    const u64 source = (u64{enemy_hp_source & 0x7FFFFFFFu} << 32) | (visit & 0xFFFFFFFFu);
+    const std::vector<MemberMapState> others = OthersEnemyHp(source);
     // The other members' reports for this area (any block of it: one who joined in place stands
     // on another block, and the blocks give their enemies distinct handles).
     std::vector<EnemyHpReport> copies;
@@ -770,7 +767,6 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
         }
     }
     const std::vector<EnemyHpReport> reports = MergeEnemyHpReports(copies);
-    const u64 source = (u64{enemy_hp_source & 0x7FFFFFFFu} << 32) | (visit & 0xFFFFFFFFu);
     const bool forget_damage = party_hp_reset.exchange(false);
     if (forget_damage) {
         damage.ForgetDamageBefore(reports);
@@ -813,7 +809,7 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
             enemy_hp_wake.notify_all();
         }
         if (in_session) {
-            SendDirectDamage(local_enemy_hp, changed);
+            SendEnemyHp(local_enemy_hp, changed);
         }
     }
     // Diagnostics (rig hp-after-guest-trip: the host's hit reached a guest back from a trip only

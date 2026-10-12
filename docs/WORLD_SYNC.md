@@ -212,7 +212,34 @@ pickup. The map flags are the host's map bitmap, of which a guest's load takes t
 - **Trace:** `wlog-in` ops `propose-flags`, `map-state`, `map-state-snapshot`;
   `traces/world-log-flags.txt` is a checked-in case.
 
-Next: `HpFloor` (enemy HP agreed), the same way, with the HP board as the fallback copy.
+Built, step 4: enemy HP (2026-10-12, not rig-checked yet). What the HP board and the direct damage
+frames (0x30) carried: each member's report (`EnemyHpReport`: the damage its own hits did per enemy
+this visit, or in one world the host's HP, `HostHpReport`), by source (the member's tag and visit).
+
+- **Proposals:** a member sends its whole report to the host (frame 0x3B, `WorldLogHpProposal`) at
+  once when it changed and every 0.5 s, as it sent the direct frame. The host's own goes straight
+  in. The host logs only what changed: `HpSource` (the source and map the next entries are of),
+  `HpValue` (an enemy's damage or HP, and its max), `HpGone`, `HpSourceGone` (a new visit or a
+  restart made a new source). A report with no enemies is none.
+- **Every hit once:** the reports are cumulative per source, so `SharedDamage` takes each source's
+  damage once however often the same report comes (test `EachHitCountsOnceThroughTheLog`). A
+  guest's hit reaches another guest in two hops (to the host, then out) instead of one. A frame
+  from the host is read at once and the enemy step runs on the next frame, so the lag stays near
+  the direct frames' (rig hit3 to be checked).
+- **Wipes:** a new log has no HP. A member that hears the wiped log holds its reports until its own
+  wipe (`WorldLogWipeHold`, as for the kills), and the reports from before the reset go into
+  `SharedDamage::ForgetDamageBefore` as before.
+- **Snapshots:** the HP reports follow the map state (frame 0x3C, at most 100 enemies a part), and a
+  member takes a snapshot only once they are in. Every entry now carries a 32-bit value (13 bytes;
+  co-op protocol 5).
+- **Backup:** every member still posts its report to the HP board; a member whose log copy is not
+  fresh reads the direct frames and the board, as before. On the boards (the log off), everything is
+  as before.
+- **Trace:** `wlog-in` ops `propose-hp` and `hp-snapshot`; `traces/world-log-hp.txt` is a checked-in
+  case. The `hp-in` records are unchanged: their `reports` are what the log gave.
+
+Next: one compact host snapshot on the server in place of the polled boards, read only on a join,
+after a restart, or while a member's link to the host is down.
 
 ## Stage D: split `bloodborne_re.cpp`
 

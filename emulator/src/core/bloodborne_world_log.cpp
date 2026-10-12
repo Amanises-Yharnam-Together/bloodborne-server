@@ -46,6 +46,9 @@ std::optional<MemberMapState> log_map_state;
 std::atomic<bool> flags_on_log{false};
 WorldLogFlagOutbox flag_outbox; // this game's shared flag events, until taken
 s64 flags_sent_ms = 0;
+// Enemy HP (step 4): this game's report proposals, counted within its run.
+u32 hp_proposals_made = 0;
+s64 hp_sent_ms = 0;
 FlagEventOnce flag_once; // flag_board_mutex: an event from the log or the flag board, once
 WorldLogHost world_log_host;
 WorldLogMember world_log_member;
@@ -328,6 +331,36 @@ void LogMemberStep(const WorldLogMember::Step& step, u64 host_last) {
     }
 }
 
+void TakeHpProposal(const std::string& name, const WorldLogHpProposal& proposal, s64 now_ms) {
+    const WorldLogHost::Taken taken = world_log_host.ProposeHp(proposal);
+    if (taken.stale || !taken.entries.empty()) {
+        TraceLog("host", "propose-hp", EncodeWorldLogHpProposal(proposal));
+    }
+    if (!taken.entries.empty()) {
+        SendEntries(name, taken.entries, now_ms);
+    }
+}
+
+// A snapshot to the member that asked: the kills, then the shown characters, the map state and the
+// HP reports at the same seq (a member waits for them all).
+void SendSnapshot(const std::string& name, u32 addr, u16 port) {
+    for (const WorldLogSnapshot& part : world_log_host.Snapshot(name)) {
+        SendToPeer(EncodeCoopFrame(WorldLogSnapshotType, EncodeWorldLogSnapshot(part)), addr, port);
+    }
+    for (const WorldLogShownSnapshot& part : world_log_host.ShownSnapshot(name)) {
+        SendToPeer(EncodeCoopFrame(WorldLogShownSnapshotType, EncodeWorldLogShownSnapshot(part)),
+                   addr, port);
+    }
+    SendToPeer(
+        EncodeCoopFrame(WorldLogMapStateSnapshotType,
+                        EncodeWorldLogMapStateSnapshot(world_log_host.MapStateSnapshot(name))),
+        addr, port);
+    for (const WorldLogHpSnapshot& part : world_log_host.HpSnapshot(name)) {
+        SendToPeer(EncodeCoopFrame(WorldLogHpSnapshotType, EncodeWorldLogHpSnapshot(part)), addr,
+                   port);
+    }
+}
+
 void TakeFrameAsHost(u8 type, std::span<const u8> payload, u32 addr, u16 port, s64 now_ms) {
     const std::string name = LogMemberName();
     if (!world_log_host.Started() || name.empty()) {
@@ -345,21 +378,14 @@ void TakeFrameAsHost(u8 type, std::span<const u8> payload, u32 addr, u16 port, s
         }
         return;
     }
+    if (type == WorldLogHpProposeType) {
+        if (const auto hp = DecodeWorldLogHpProposal(payload)) {
+            TakeHpProposal(name, *hp, now_ms);
+        }
+        return;
+    }
     if (type == WorldLogSnapshotRequestType && DecodeWorldLogSnapshotRequest(payload)) {
-        for (const WorldLogSnapshot& part : world_log_host.Snapshot(name)) {
-            SendToPeer(EncodeCoopFrame(WorldLogSnapshotType, EncodeWorldLogSnapshot(part)), addr,
-                       port);
-        }
-        // The shown characters and the map state at the same seq: a member waits for them.
-        for (const WorldLogShownSnapshot& part : world_log_host.ShownSnapshot(name)) {
-            SendToPeer(
-                EncodeCoopFrame(WorldLogShownSnapshotType, EncodeWorldLogShownSnapshot(part)), addr,
-                port);
-        }
-        SendToPeer(
-            EncodeCoopFrame(WorldLogMapStateSnapshotType,
-                            EncodeWorldLogMapStateSnapshot(world_log_host.MapStateSnapshot(name))),
-            addr, port);
+        SendSnapshot(name, addr, port);
     }
 }
 
@@ -369,39 +395,32 @@ struct MemberTake {
     u64 host_last = 0;
     const char* op = "";
 };
+template <typename Part>
+std::optional<MemberTake> TakePart(const std::optional<Part>& part, s64 now_ms, const char* op) {
+    if (!part) {
+        return std::nullopt;
+    }
+    return MemberTake{world_log_member.Take(*part, now_ms), part->last, op};
+}
+
 std::optional<MemberTake> TakeAsMember(u8 type, std::span<const u8> payload, s64 now_ms) {
-    if (type == WorldLogEntriesType) {
-        const auto batch = DecodeWorldLogBatch(payload);
-        return batch ? std::optional{MemberTake{world_log_member.Take(*batch, now_ms), batch->last,
-                                                "entries"}}
-                     : std::nullopt;
+    switch (type) {
+    case WorldLogEntriesType:
+        return TakePart(DecodeWorldLogBatch(payload), now_ms, "entries");
+    case WorldLogSnapshotType:
+        return TakePart(DecodeWorldLogSnapshot(payload), now_ms, "snapshot");
+    case WorldLogShownSnapshotType:
+        return TakePart(DecodeWorldLogShownSnapshot(payload), now_ms, "shown-snapshot");
+    case WorldLogMapStateSnapshotType:
+        return TakePart(DecodeWorldLogMapStateSnapshot(payload), now_ms, "map-state-snapshot");
+    case WorldLogHpSnapshotType:
+        return TakePart(DecodeWorldLogHpSnapshot(payload), now_ms, "hp-snapshot");
+    default:
+        return std::nullopt;
     }
-    if (type == WorldLogSnapshotType) {
-        const auto part = DecodeWorldLogSnapshot(payload);
-        return part ? std::optional{MemberTake{world_log_member.Take(*part, now_ms), part->last,
-                                               "snapshot"}}
-                    : std::nullopt;
-    }
-    if (type == WorldLogShownSnapshotType) {
-        const auto part = DecodeWorldLogShownSnapshot(payload);
-        return part ? std::optional{MemberTake{world_log_member.Take(*part, now_ms), part->last,
-                                               "shown-snapshot"}}
-                    : std::nullopt;
-    }
-    if (type == WorldLogMapStateSnapshotType) {
-        const auto part = DecodeWorldLogMapStateSnapshot(payload);
-        return part ? std::optional{MemberTake{world_log_member.Take(*part, now_ms), part->last,
-                                               "map-state-snapshot"}}
-                    : std::nullopt;
-    }
-    return std::nullopt;
 }
 
 void TakeFrameAsMember(u8 type, std::span<const u8> payload, u32 addr, u16 port, s64 now_ms) {
-    if (!IsWorldLogFrameType(type) || type == WorldLogProposeType ||
-        type == WorldLogSnapshotRequestType) {
-        return;
-    }
     const auto taken = TakeAsMember(type, payload, now_ms);
     if (!taken) {
         return;
@@ -479,6 +498,57 @@ std::optional<MemberMapState> HostShownNow() {
     }
     std::scoped_lock lock{shown_board_mutex};
     return host_shown;
+}
+
+std::vector<MemberMapState> OthersEnemyHp(u64 own_source) {
+    const s64 now_ms = SteadyMilliseconds();
+    const bool hosting = !IsPartyGuestRole();
+    if (world_log_path.Active() && (hosting || world_log_member.Fresh(now_ms))) {
+        // The reports the host's log has (this member's own left out).
+        std::vector<MemberMapState> others;
+        for (const auto& [map, report] :
+             WorldLogHpReports(hosting ? world_log_host.Hp() : world_log_member.Hp())) {
+            if ((report.visit & ~HostHpReport) != own_source) {
+                others.push_back({map, EncodeEnemyHp(report.visit, report.enemies)});
+            }
+        }
+        return others;
+    }
+    // The board path, or a member whose copy is not fresh: the peers' direct frames, then the HP
+    // board (the same reports, later).
+    std::vector<MemberMapState> others = direct_damage_inbox.Fresh(now_ms);
+    std::scoped_lock lock{enemy_hp_mutex};
+    others.insert(others.end(), others_enemy_hp.begin(), others_enemy_hp.end());
+    return others;
+}
+
+void SendEnemyHp(const MemberMapState& mine, bool changed) {
+    if (!world_log_path.Active()) {
+        SendDirectDamage(mine, changed);
+        return;
+    }
+    const s64 now_ms = SteadyMilliseconds();
+    const std::string name = LogMemberName();
+    const auto report = mine.map != 0 ? DecodeEnemyHp(mine.bits) : std::nullopt;
+    if (!report || name.empty() || (!changed && now_ms - hp_sent_ms < WorldLogResendMs)) {
+        return;
+    }
+    hp_sent_ms = now_ms;
+    if (!IsPartyGuestRole()) {
+        if (world_log_host.Started()) {
+            TakeHpProposal(name,
+                           {name, world_log_host.Epoch(), world_log_run, ++hp_proposals_made,
+                            mine.map, *report},
+                           now_ms);
+        }
+        return;
+    }
+    if (wipe_hold.HoldsProposals(now_ms)) {
+        return; // its damage from before its own wipe must not stand (see WorldLogWipeHold)
+    }
+    const WorldLogHpProposal proposal{
+        name, world_log_member.Epoch(), world_log_run, ++hp_proposals_made, mine.map, *report};
+    SendToRoomPeers(EncodeCoopFrame(WorldLogHpProposeType, EncodeWorldLogHpProposal(proposal)));
 }
 
 bool TakeFlagsForTheLog(std::span<const std::pair<s32, bool>> shared) {

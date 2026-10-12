@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Only what changed in each report; the same report again logs nothing; a new visit's report
+# drops the old source; the wipe's log has no damage and drops the report made for the old log.
+wlog host start epoch 5a1a00000001
+wlog host appended seq 1 reset every map
+wlog host appended seq 2 hp of 1111000000000003 on 0x18010000
+wlog host appended seq 3 hp 0x10014066 49/450
+wlog host appended seq 4 hp of 2222000000000001 on 0x18010000
+wlog host appended seq 5 hp 0x1001400b 10/484
+wlog host appended seq 6 hp of 1111000000000003 on 0x18010000
+wlog host appended seq 7 hp 0x10014066 98/450
+wlog host appended seq 8 hp of 1111000000000003 gone
+wlog host appended seq 9 hp of 1111000000000004 on 0x18010000
+wlog host appended seq 10 hp 0x10014066 5/450
+life wipe
+wlog host start epoch 5a1a00000002 after a wipe
+wlog host appended seq 1 reset every map (a wipe)
+wlog host dropped a late HP report from 6775657374
+wlog member follows epoch 5a1a00000001
+wlog member applied seq 1 reset every map
+wlog member applied seq 2 hp of 1111000000000003 on 0x18010000
+wlog member applied seq 3 hp 0x10014066 49/450
+wlog member applied seq 4 hp of 2222000000000001 on 0x18010000
+wlog member applied seq 5 hp 0x1001400b 10/484
+wlog member applied seq 6 hp of 1111000000000003 on 0x18010000
+wlog member applied seq 7 hp 0x10014066 98/450
+wlog member follows epoch 5a1a00000002
+wlog member applied seq 1 reset every map

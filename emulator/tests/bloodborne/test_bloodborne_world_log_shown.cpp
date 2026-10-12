@@ -67,9 +67,9 @@ TEST(WorldLogShown, BitsAreTheShownBoards) {
     EXPECT_EQ(WorldLogShownCharacters(shown), (std::vector<CharacterShown>{Iosefka, Parked}));
 }
 
-// A protocol 2 member reads the shown entries as kinds it does not know (none of 0-2) and skips
-// them; the bits ride in the kind byte, so the entries frame keeps its layout.
-TEST(WorldLogShown, EntriesKeepTheFrameLayoutOlderMembersRead) {
+// The bits ride in the kind byte (0x10 | bits); every entry is 13 bytes (kind, map, subject,
+// value).
+TEST(WorldLogShown, EntriesReadBack) {
     const u64 epoch = WorldLogEpoch(7, 1);
     const WorldLogBatch batch =
         Batch(epoch, 5,
@@ -78,13 +78,12 @@ TEST(WorldLogShown, EntriesKeepTheFrameLayoutOlderMembersRead) {
     const std::vector<u8> payload = EncodeWorldLogBatch(batch);
     EXPECT_EQ(DecodeWorldLogBatch(payload), batch);
     const WorldLogBatch kills_only = Batch(epoch, 5, {Reset(1), Kill(2, Yharnam, 9)});
-    EXPECT_EQ(payload.size() - EncodeWorldLogBatch(kills_only).size(), 3u * 9)
-        << "9 bytes an entry, as in protocol 2";
-    // The kind bytes: name (1 + 4), epoch, last, count, first, then 9 bytes an entry.
+    EXPECT_EQ(payload.size() - EncodeWorldLogBatch(kills_only).size(), 3u * 13);
+    // The kind bytes: name (1 + 4), epoch, last, count, first, then 13 bytes an entry.
     const size_t first_entry = 1 + 4 + 8 + 8 + 1 + 8;
-    EXPECT_EQ(payload[first_entry + 9 * 1], 3);
-    EXPECT_EQ(payload[first_entry + 9 * 2], 0x17);
-    EXPECT_EQ(payload[first_entry + 9 * 3], 4);
+    EXPECT_EQ(payload[first_entry + 13 * 1], 3);
+    EXPECT_EQ(payload[first_entry + 13 * 2], 0x17);
+    EXPECT_EQ(payload[first_entry + 13 * 3], 4);
 }
 
 TEST(WorldLogShown, ASnapshotFrameReadsBackAndFitsTheLink) {
@@ -203,6 +202,7 @@ TEST(WorldLogShown, ASnapshotWaitsForTheShownParts) {
         WorldLogMember member;
         member.Take(Batch(epoch, 41, {Shown(41, Yharnam, Iosefka.handle, 2)}), 0);
         member.Take(WorldLogMapStateSnapshot{"host", epoch, 40, {}}, 5);
+        member.Take(WorldLogHpSnapshot{"host", epoch, 40, 0, 1, {}}, 5);
         const auto first = shown_first ? member.Take(shown, 10) : member.Take(kills, 10);
         EXPECT_FALSE(first.snapshot);
         EXPECT_TRUE(member.Kills().empty());
@@ -274,6 +274,9 @@ TEST(WorldLogShown, MembersConvergeOverABadLink) {
                         member.Take(part, now);
                     }
                     member.Take(host.MapStateSnapshot("h"), now);
+                    for (const auto& part : host.HpSnapshot("h")) {
+                        member.Take(part, now);
+                    }
                 }
             }
         }
@@ -287,6 +290,9 @@ TEST(WorldLogShown, MembersConvergeOverABadLink) {
                     member.Take(part, now);
                 }
                 member.Take(host.MapStateSnapshot("h"), now);
+                for (const auto& part : host.HpSnapshot("h")) {
+                    member.Take(part, now);
+                }
             }
             EXPECT_EQ(member.Shown(), host.Shown()) << "round " << round;
             EXPECT_TRUE(member.ShownKnown());

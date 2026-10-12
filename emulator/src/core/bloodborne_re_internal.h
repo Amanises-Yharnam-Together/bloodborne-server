@@ -669,6 +669,13 @@ void MapStateOnTheLog(u32 map, std::span<const u8> bits);
 // What a guest's load takes of the host's map flags: the log's copy while it is whole and fresh,
 // else the map state board's.
 std::optional<MemberMapState> HostMapStateNow();
+// Step 4. The other members' HP reports for SharedDamage (`own_source`: this member's): the log's
+// while it carries them (the host's own, a member's copy while fresh), else the peers' direct
+// frames and the HP board, as before.
+std::vector<MemberMapState> OthersEnemyHp(u64 own_source);
+// This member's HP report: to the host's log while it runs, else the direct frame (0x30) to every
+// peer. The HP board gets it as before (the backup).
+void SendEnemyHp(const MemberMapState& mine, bool changed);
 void SendDirectDamage(const MemberMapState& mine, bool changed);
 void SendPeerHello();
 void KeepEnemyDeathsInStep(bool sharing);

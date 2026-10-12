@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 # SPDX-License-Identifier: GPL-2.0-or-later
-# The snapshot waits for its shown characters and map state parts (the gap stays until
+# The snapshot waits for its shown characters, map state and HP parts (the gap stays until
 # they come), then the guest has all four; the host's load starts its characters over.
 world log path: log (1 peer has it)
 wlog member follows epoch 5a1800000001
@@ -8,6 +8,7 @@ wlog member applied seq 1 reset every map
 wlog member applied seq 2 shown map 0x18010000
 wlog member applied seq 3 shown 0x10014000 on 0x18010000 bits 2
 wlog member applied seq 4 shown 0x10014005 on 0x18010000 bits 1
+wlog member gap: has seq 4, host at 6
 wlog member gap: has seq 4, host at 6
 wlog member gap: has seq 4, host at 6
 wlog member gap: has seq 4, host at 6
