@@ -405,51 +405,59 @@ bool AutoplayWaitMemberVital(const AutoplayStep& step) {
 
 // travel <warp point> [<timeout>], and ensure-map's travel: the warp, then the player moved to
 // the lamp once the map is in, then done once it stands there.
+// The travel's start: the warp (as a guest's own lamp trip), and what to wait for.
+void BeginAutoplayTravel(const AutoplayStep& step, s32 point) {
+    const u64 global = GetGlobalState();
+    if (global < 0x10000) {
+        step.failure = "no game state";
+        return;
+    }
+    // A guest's own trip (TickGuestLampTrip), at the lamp when it is known.
+    const LampPoint* planned = StartTripToLamp(point);
+    // As a guest's own lamp trip in a session does; out of one it is the game's own travel,
+    // as a player's at a lamp.
+    if (IsPartyGuestRole() && InPartySession()) {
+        guest_trip_in_flight = true;
+    }
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.travel_map = PackedMapOfWarpPoint(point);
+    autoplay_run.travel_planned = planned;
+    autoplay_run.travel_fixed_at.reset();
+}
+
+// The travel's arrival: the warp alone leaves the player at (0, 0, 0), above the void, so to the
+// lamp, as a guest's trip does (guest_trip_fixup_at). The load put the save's last lamp back as
+// the respawn point, so the lamp travelled to goes in again first.
+void FixAutoplayTravelArrival(const AutoplayStep& step, s32 point) {
+    if (const u64 global = GetGlobalState(); global >= 0x10000) {
+        WriteValue(global, 0x1528, point);
+    }
+    const auto at = LocalPlayerPosition();
+    const LampPoint* planned = nullptr;
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        planned = autoplay_run.travel_planned;
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay: travel arrived at ({}, {}, {}) planned at the lamp={}",
+             at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f, at ? (*at)[2] : 0.0f, planned != nullptr);
+    if (ArrivalNeedsMove(planned, at)) {
+        MoveToRespawnPoint(true);
+    }
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.travel_fixed_at = step.elapsed;
+}
+
 bool AutoplayTravelTo(const AutoplayStep& step, bool ensure) {
     const s32 point = static_cast<s32>(step.Number(ensure ? 1 : 0, HuntersDreamWarpPoint));
     if (!step.begun) {
-        const u64 global = GetGlobalState();
-        if (global < 0x10000) {
-            step.failure = "no game state";
-            return false;
-        }
-        // A guest's own trip (TickGuestLampTrip), at the lamp when it is known.
-        const LampPoint* planned = StartTripToLamp(point);
-        // As a guest's own lamp trip in a session does; out of one it is the game's own travel,
-        // as a player's at a lamp.
-        if (IsPartyGuestRole() && InPartySession()) {
-            guest_trip_in_flight = true;
-        }
-        std::scoped_lock lock{autoplay_mutex};
-        autoplay_run.travel_map = PackedMapOfWarpPoint(point);
-        autoplay_run.travel_planned = planned;
-        autoplay_run.travel_fixed_at.reset();
+        BeginAutoplayTravel(step, point);
         return false;
     }
     // Raw, as all of the rig's checks (see AutoplayInWorld).
     const bool arrived = step.elapsed > 5.0 && AutoplayInWorld() && !PartyTripActive() &&
                          GetCurrentPackedMap() == autoplay_run.travel_map;
     if (arrived && !autoplay_run.travel_fixed_at) {
-        // The warp alone leaves the player at (0, 0, 0), above the void: to the lamp, as a
-        // guest's trip does (guest_trip_fixup_at). The load put the save's last lamp back as
-        // the respawn point, so the lamp travelled to goes in again first.
-        if (const u64 global = GetGlobalState(); global >= 0x10000) {
-            WriteValue(global, 0x1528, point);
-        }
-        const auto at = LocalPlayerPosition();
-        const LampPoint* planned = nullptr;
-        {
-            std::scoped_lock lock{autoplay_mutex};
-            planned = autoplay_run.travel_planned;
-        }
-        LOG_INFO(
-            Debug, "Bloodborne autoplay: travel arrived at ({}, {}, {}) planned at the lamp={}",
-            at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f, at ? (*at)[2] : 0.0f, planned != nullptr);
-        if (ArrivalNeedsMove(planned, at)) {
-            MoveToRespawnPoint(true);
-        }
-        std::scoped_lock lock{autoplay_mutex};
-        autoplay_run.travel_fixed_at = step.elapsed;
+        FixAutoplayTravelArrival(step, point);
         return false;
     }
     if (arrived && step.elapsed > *autoplay_run.travel_fixed_at + 2.0) {
@@ -1238,80 +1246,104 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
     return false;
 }
 
+// Godmode: the player's HP back to its max each tick while alive.
+void KeepAutoplayGodmode() {
+    if (!autoplay_godmode.load()) {
+        return;
+    }
+    if (const auto self = FindAutoplayCharacter(AutoplaySelf);
+        self && ReadValue<s32>(self->data, 0xF8) > 0 &&
+        HasMemoryAccess(self->data, 0x100, MemoryProt::CpuWrite)) {
+        WriteValue(self->data, 0xF8, ReadValue<s32>(self->data, 0xFC));
+    }
+}
+
+// The step to run this tick, or nothing (not in the world, a held press still on or just let go,
+// or the script over). autoplay_mutex held.
+struct AutoplayTurn {
+    AutoplayCommand command;
+    size_t index = 0;
+    size_t total = 0;
+    bool begun = false;
+    double elapsed = 0.0;
+};
+std::optional<AutoplayTurn> NextAutoplayTurn(std::chrono::steady_clock::time_point now) {
+    if (autoplay_run.phase != AutoplayRun::Phase::World) {
+        return std::nullopt;
+    }
+    if (autoplay_run.hold_until) {
+        if (now < *autoplay_run.hold_until) {
+            return std::nullopt;
+        }
+        autoplay_run.hold_until.reset();
+        autoplay_buttons.store(0);
+        autoplay_sticks.store(0x80808080);
+        LOG_INFO(Debug, "Bloodborne autoplay: step {}/{} {} ok", autoplay_run.next + 1,
+                 autoplay_run.script.size(), AutoplayText(autoplay_run.script[autoplay_run.next]));
+        ++autoplay_run.next;
+        autoplay_run.step_started = now;
+        autoplay_run.step_begun = false;
+        return std::nullopt;
+    }
+    if (autoplay_run.next >= autoplay_run.script.size() ||
+        autoplay_run.script[autoplay_run.next].verb == "done") {
+        autoplay_run.phase = AutoplayRun::Phase::Done;
+        LOG_INFO(Debug, "Bloodborne autoplay: done ({})", autoplay_run.failed ? "failed" : "ok");
+        return std::nullopt;
+    }
+    AutoplayTurn turn{autoplay_run.script[autoplay_run.next], autoplay_run.next,
+                      autoplay_run.script.size(), autoplay_run.step_begun,
+                      std::chrono::duration<double>(now - autoplay_run.step_started).count()};
+    autoplay_run.step_begun = true;
+    return turn;
+}
+
+// A step failed: on to the next chapter with keep-going, else the script is over.
+// autoplay_mutex held.
+void FailAutoplayStep(const AutoplayTurn& turn, const std::string& failure) {
+    LOG_ERROR(Debug, "Bloodborne autoplay: step {}/{} {} FAILED: {}", turn.index + 1, turn.total,
+              AutoplayText(turn.command), failure);
+    autoplay_buttons.store(0);
+    autoplay_sticks.store(0x80808080);
+    if (autoplay_run.keep_going) {
+        if (const auto next = NextAutoplayChapter(autoplay_run.script, turn.index)) {
+            // The rig lets the others past this chapter's syncs (they would wait in vain).
+            LOG_INFO(Debug, "Bloodborne autoplay: chapter {} given up", autoplay_run.chapter);
+            autoplay_run.failed = true;
+            autoplay_run.next = *next;
+            autoplay_run.step_started = std::chrono::steady_clock::now();
+            autoplay_run.step_begun = false;
+            return;
+        }
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
+    autoplay_run.phase = AutoplayRun::Phase::Done;
+}
+
 } // namespace
 
 namespace Coop {
 
 // From the party tick (the game thread), once the player is in the world.
 void TickAutoplay() {
-    if (autoplay_godmode.load()) {
-        if (const auto self = FindAutoplayCharacter(AutoplaySelf);
-            self && ReadValue<s32>(self->data, 0xF8) > 0 &&
-            HasMemoryAccess(self->data, 0x100, MemoryProt::CpuWrite)) {
-            WriteValue(self->data, 0xF8, ReadValue<s32>(self->data, 0xFC));
-        }
-    }
-    AutoplayCommand command;
-    size_t index = 0;
-    size_t total = 0;
-    bool begun = false;
-    double elapsed = 0.0;
+    KeepAutoplayGodmode();
     const auto now = std::chrono::steady_clock::now();
+    std::optional<AutoplayTurn> turn;
     {
         std::scoped_lock lock{autoplay_mutex};
-        if (autoplay_run.phase != AutoplayRun::Phase::World) {
-            return;
-        }
-        if (autoplay_run.hold_until) {
-            if (now < *autoplay_run.hold_until) {
-                return;
-            }
-            autoplay_run.hold_until.reset();
-            autoplay_buttons.store(0);
-            autoplay_sticks.store(0x80808080);
-            LOG_INFO(Debug, "Bloodborne autoplay: step {}/{} {} ok", autoplay_run.next + 1,
-                     autoplay_run.script.size(),
-                     AutoplayText(autoplay_run.script[autoplay_run.next]));
-            ++autoplay_run.next;
-            autoplay_run.step_started = now;
-            autoplay_run.step_begun = false;
-            return;
-        }
-        if (autoplay_run.next >= autoplay_run.script.size() ||
-            autoplay_run.script[autoplay_run.next].verb == "done") {
-            autoplay_run.phase = AutoplayRun::Phase::Done;
-            LOG_INFO(Debug, "Bloodborne autoplay: done ({})",
-                     autoplay_run.failed ? "failed" : "ok");
-            return;
-        }
-        command = autoplay_run.script[autoplay_run.next];
-        index = autoplay_run.next;
-        total = autoplay_run.script.size();
-        begun = autoplay_run.step_begun;
-        autoplay_run.step_begun = true;
-        elapsed = std::chrono::duration<double>(now - autoplay_run.step_started).count();
+        turn = NextAutoplayTurn(now);
     }
+    if (!turn) {
+        return;
+    }
+    const AutoplayCommand& command = turn->command;
+    const size_t index = turn->index;
+    const size_t total = turn->total;
     std::string failure;
-    const bool finished = RunAutoplayStep(command, begun, elapsed, failure);
+    const bool finished = RunAutoplayStep(command, turn->begun, turn->elapsed, failure);
     std::scoped_lock lock{autoplay_mutex};
     if (!failure.empty()) {
-        LOG_ERROR(Debug, "Bloodborne autoplay: step {}/{} {} FAILED: {}", index + 1, total,
-                  AutoplayText(command), failure);
-        autoplay_buttons.store(0);
-        autoplay_sticks.store(0x80808080);
-        if (autoplay_run.keep_going) {
-            if (const auto next = NextAutoplayChapter(autoplay_run.script, index)) {
-                // The rig lets the others past this chapter's syncs (they would wait in vain).
-                LOG_INFO(Debug, "Bloodborne autoplay: chapter {} given up", autoplay_run.chapter);
-                autoplay_run.failed = true;
-                autoplay_run.next = *next;
-                autoplay_run.step_started = std::chrono::steady_clock::now();
-                autoplay_run.step_begun = false;
-                return;
-            }
-        }
-        LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
-        autoplay_run.phase = AutoplayRun::Phase::Done;
+        FailAutoplayStep(*turn, failure);
         return;
     }
     if (finished && !autoplay_run.hold_until) {
