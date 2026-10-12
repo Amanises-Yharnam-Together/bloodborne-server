@@ -6,6 +6,7 @@
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "common/memory_patcher.h"
+#include "common/scm_rev.h"
 #include "common/sha1.h"
 #include "common/string_util.h"
 #include "core/aerolib/aerolib.h"
@@ -347,6 +348,8 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             MemoryPatcher::OnGameLoaded();
 #ifdef ARCH_X86_64
             Bloodborne::InstallCrashCatcher(base_virtual_addr, base_size);
+            // The build for the co-op hello; the event files' hash is the port's only.
+            Bloodborne::SetBuildIdentity(Common::g_scm_rev, 0);
             Bloodborne::InstallSeamlessCoopPatches();
             Bloodborne::InstallReverseEngineeringTrace();
 #endif

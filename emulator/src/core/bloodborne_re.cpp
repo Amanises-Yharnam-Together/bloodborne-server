@@ -1024,23 +1024,81 @@ bool HasMemoryAccess(u64 address, size_t size, MemoryProt required) {
            address + size <= reinterpret_cast<u64>(mapping_end);
 }
 
+// The value at address + offset, or nothing when that memory is not readable (for reads where 0
+// means something, which ReadValue would give then).
 template <typename T>
-T ReadValue(u64 address, size_t offset) {
+std::optional<T> TryRead(u64 address, size_t offset) {
     T value{};
     if (address > std::numeric_limits<u64>::max() - offset) {
-        return value;
+        return std::nullopt;
     }
     const u64 source = address + offset;
     if (source > std::numeric_limits<u64>::max() - sizeof(value)) {
-        return value;
+        return std::nullopt;
     }
 
     if (!HasMemoryAccess(source, sizeof(value), MemoryProt::CpuRead)) {
-        return value;
+        return std::nullopt;
     }
 
     std::memcpy(&value, reinterpret_cast<const void*>(source), sizeof(value));
     return value;
+}
+
+template <typename T>
+T ReadValue(u64 address, size_t offset) {
+    return TryRead<T>(address, offset).value_or(T{});
+}
+
+// A guarded call (`site`) refused an object that is there (see RefusedCallLog): logged once per
+// site and vtable seen, so a wrong pointer or a vtable list missing a class shows in the log.
+void LogRefusedCall(std::string_view site, u64 object) {
+    if (object < 0x10000) {
+        return; // no object: nothing to say
+    }
+    const u64 vtable = TryRead<u64>(object, 0).value_or(0);
+    static std::mutex mutex;
+    static RefusedCallLog logged;
+    {
+        std::scoped_lock lock{mutex};
+        if (!logged.FirstTime(site, vtable)) {
+            return;
+        }
+    }
+    LOG_WARNING(Debug, "Bloodborne refused a game call: {} got an object ({:#x}) with vtable {}",
+                site, object,
+                DescribeVtable(vtable, image_base, MemoryPatcher::g_eboot_image_size));
+}
+
+// Whether `object` is one of the game objects `vtables` names (see CharacterVtables): checked
+// before the game is called with it (`site`, for the log when it is not).
+bool HasVtable(u64 object, std::span<const u64> vtables, std::string_view site) {
+    const auto vtable = object >= 0x10000 ? TryRead<u64>(object, 0) : std::nullopt;
+    if (vtable.has_value() && IsGameVtable(*vtable, image_base, vtables)) {
+        return true;
+    }
+    LogRefusedCall(site, object);
+    return false;
+}
+
+bool HasVtable(u64 object, u64 vtable, std::string_view site) {
+    return HasVtable(object, std::span<const u64>{&vtable, 1}, site);
+}
+
+bool IsCharacter(u64 object, std::string_view site) {
+    return HasVtable(object, CharacterVtables, site);
+}
+
+// Whether the object's virtual at `slot` is the 01.09 function at `function` (e.g. the
+// character's AddSpEffect): before a call through it, or a direct call that stands for it.
+bool HasVirtual(u64 object, u64 slot, u64 function, std::string_view site) {
+    const u64 vtable = object >= 0x10000 ? TryRead<u64>(object, 0).value_or(0) : 0;
+    if (image_base != 0 && vtable >= 0x10000 &&
+        TryRead<u64>(vtable, slot) == std::optional<u64>{image_base + function}) {
+        return true;
+    }
+    LogRefusedCall(site, object);
+    return false;
 }
 
 template <typename T>
@@ -1661,14 +1719,8 @@ void ApplyPreMatchCrossMapGuestWarp() {
 // Starts the bell's summon search directly (see StartSummonSearch), only through the player's own
 // add-effect virtual, and only if it is the 01.09 function we verified at startup.
 bool StartPlayerSummonSearch(u64 player, s32 effect_id) {
-    if (image_base == 0 || player < 0x10000 ||
-        !HasMemoryAccess(player, sizeof(u64), MemoryProt::CpuRead)) {
-        return false;
-    }
-    const u64 vtable = ReadValue<u64>(player, 0);
-    if (vtable < 0x10000 ||
-        !HasMemoryAccess(vtable + CharacterAddSpEffectSlot, sizeof(u64), MemoryProt::CpuRead) ||
-        ReadValue<u64>(vtable, CharacterAddSpEffectSlot) != image_base + AddSpEffectOffset) {
+    if (!HasVirtual(player, CharacterAddSpEffectSlot, AddSpEffectOffset,
+                    "StartPlayerSummonSearch AddSpEffect")) {
         LOG_WARNING(Debug,
                     "Bloodborne summon search skipped: player {:#x} has no 01.09 "
                     "add-effect virtual",
@@ -1859,10 +1911,11 @@ u64 OwnBloodstain() {
     return list >= 0x10000 ? ReadValue<u64>(list, 8) : 0;
 }
 
-// A stain object the show can take: readable, and its marker (+0x88) and effect (+0x98) either
-// absent or readable (the show frees them first).
+// A stain object the show can take: the stain (its vtable), readable, and its marker (+0x88) and
+// effect (+0x98) either absent or readable (the show frees them first).
 bool LooksLikeBloodstain(u64 stain) {
-    if (stain < 0x10000 || !HasMemoryAccess(stain, 0xC8, MemoryProt::CpuRead)) {
+    if (!HasVtable(stain, BloodstainVtable, "ShowGuestBloodstain") ||
+        !HasMemoryAccess(stain, 0xC8, MemoryProt::CpuRead)) {
         return false;
     }
     for (const u64 offset : {u64{0x88}, u64{0x98}}) {
@@ -1933,7 +1986,7 @@ void ShowGuestBloodstain() {
     const u64 stain = OwnBloodstain();
     const bool party_guest =
         party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect;
-    const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
+    const bool loading = global < 0x10000 || TryRead<u8>(global, 0x08).value_or(1) != 0;
     if (!LooksLikeBloodstain(stain) ||
         !ShowsGuestBloodstain(party_guest, InPartySession(), loading,
                               ReadValue<u8>(data, 0x28) != 0, ReadValue<s32>(record, 0x38),
@@ -3172,7 +3225,8 @@ void HideCharactersAgain() {
         ForEachWorldCharacter(world, [&](u64 character) { current.insert(character); });
     }
     for (const u64 character : hidden_characters) {
-        if (current.contains(character) && !IsCharacterDisabled(character)) {
+        if (current.contains(character) && IsCharacter(character, "HideCharactersAgain") &&
+            !IsCharacterDisabled(character)) {
             reinterpret_cast<void PS4_SYSV_ABI (*)(u64, bool)>(
                 image_base + SetCharacterDisabledOffset)(character, true);
             ++hidden;
@@ -3193,7 +3247,7 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
         .request_full_recover =
             [] {
                 reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset)();
-                if (const u64 player = GetLocalPlayer(); player >= 0x10000) {
+                if (const u64 player = GetLocalPlayer(); IsCharacter(player, "BonfireRegene")) {
                     reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(
                         image_base + BonfireRegeneOffset)(player, 0);
                 }
@@ -5130,7 +5184,7 @@ constexpr auto GuestProgressHomeDelay = std::chrono::seconds{10};
 
 bool EventFlagOn(s32 flag) {
     const u64 manager = ReadValue<u64>(image_base + EventFlagManPointerOffset, 0);
-    if (manager < 0x10000) {
+    if (!HasVtable(manager, EventFlagManVtable, "EventFlagOn")) {
         return false;
     }
     using ReadBits = u32 PS4_SYSV_ABI (*)(u64 manager, s32 flag, u32 bits);
@@ -5228,13 +5282,62 @@ std::filesystem::path GuestOwnerFile() {
            fmt::format("bloodborne_party_owner_slot{}.txt", character_slot.load());
 }
 
-s32 CountSetFlags();
+std::optional<s32> CountSetFlags();
+std::filesystem::path GuestWorldFile();
+
+// The slot's kept lists are copied aside (name.bak-<local time>) before they are dropped, so a
+// wrong drop can be undone by hand; the newest 5 copies of each stay.
+void BackUpSlotLists() {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    const std::string stamp =
+        fmt::format("{:04}{:02}{:02}-{:02}{:02}{:02}", local.tm_year + 1900, local.tm_mon + 1,
+                    local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
+    for (const std::filesystem::path& file :
+         {GuestProgressFile(), GuestWorldFile(), GuestConfirmedFile()}) {
+        std::error_code error;
+        if (!std::filesystem::exists(file, error)) {
+            continue;
+        }
+        const std::string name = Common::FS::PathToUTF8String(file.filename());
+        std::filesystem::copy_file(file, file.parent_path() / SlotBackupName(name, stamp),
+                                   std::filesystem::copy_options::overwrite_existing, error);
+        if (error) {
+            LOG_WARNING(Debug, "Bloodborne party: could not copy {} aside: {}", name,
+                        error.message());
+            continue;
+        }
+        std::vector<std::string> names;
+        for (const auto& entry : std::filesystem::directory_iterator(file.parent_path(), error)) {
+            names.push_back(Common::FS::PathToUTF8String(entry.path().filename()));
+        }
+        for (const std::string& old : SlotBackupsToRemove(name, names, 5)) {
+            std::filesystem::remove(file.parent_path() / old, error);
+        }
+    }
+}
 
 // Before a load of the guest's own world sets its pickups: a slot whose confirmed pickups are
 // all missing, or whose world has far fewer event flags set than when it last loaded, holds a
 // new character, so the slot's kept lists are dropped (pickups first, as
 // SetGuestPickupsBeforeMapItems sets them right after).
 void ForgetSlotIfNewCharacter() {
+    // Read twice: a load changes the store on another thread, and a count from a partial or torn
+    // read decides nothing (a count of 0 read as a new character could wipe the kept pickups).
+    const std::optional<s32> settled = SettledFlagCount(CountSetFlags(), CountSetFlags());
+    if (!settled) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: the flag store of save slot {} did not read whole; its kept "
+                 "lists stay",
+                 character_slot.load());
+        return;
+    }
+    const s32 progress_now = *settled;
     const std::vector<s32> confirmed = ReadGuestConfirmed();
     const size_t set_now = static_cast<size_t>(std::ranges::count_if(confirmed, EventFlagOn));
     s32 progress_kept = 0;
@@ -5242,15 +5345,15 @@ void ForgetSlotIfNewCharacter() {
         std::ifstream file{GuestOwnerFile()};
         file >> progress_kept;
     }
-    const s32 progress_now = CountSetFlags();
     const bool other = IsOtherCharacter(progress_now, progress_kept);
-    if (progress_now > 0) {
+    {
         std::ofstream file{GuestOwnerFile(), std::ios::trunc};
         file << (other ? progress_now : std::max(progress_now, progress_kept)) << '\n';
     }
-    if (!IsNewCharacterInSlot(confirmed, set_now) && !other) {
+    if (!ForgetsSlotLists(progress_now, progress_kept, IsNewCharacterInSlot(confirmed, set_now))) {
         return;
     }
+    BackUpSlotLists();
     {
         std::scoped_lock lock{guest_picked_mutex};
         GuestPickedFlags().clear();
@@ -5261,7 +5364,7 @@ void ForgetSlotIfNewCharacter() {
     std::filesystem::remove(GuestConfirmedFile(), error);
     LOG_INFO(Debug,
              "Bloodborne party: new character in save slot {} ({} event flags set, {} kept); its "
-             "kept lists start clean",
+             "kept lists start clean (old ones copied aside as .bak files)",
              character_slot.load(), progress_now, progress_kept);
 }
 
@@ -5346,6 +5449,8 @@ struct FlagBlock {
 struct FlagStore {
     u32 flags_per_block = 0;
     std::vector<FlagBlock> blocks;
+    // Every node and block was read (none unmapped, the walk not cut short).
+    bool whole = false;
 };
 
 FlagStore ReadFlagStore() {
@@ -5367,10 +5472,23 @@ FlagStore ReadFlagStore() {
     const auto readable = [](u64 node) {
         return node >= 0x10000 && HasMemoryAccess(node, 0x38, MemoryProt::CpuRead);
     };
+    // A node that can't be read or a tree deeper than the walk keeps leaves the copy part done.
+    bool whole = true;
+    const auto inner = [&](u64 node) {
+        if (!readable(node)) {
+            whole = false;
+            return false;
+        }
+        return ReadValue<u8>(node, 0x19) == 0;
+    };
     std::vector<u64> stack;
     u64 node = readable(header) ? ReadValue<u64>(header, 0x08) : 0;
-    while ((readable(node) && ReadValue<u8>(node, 0x19) == 0) || !stack.empty()) {
-        while (readable(node) && ReadValue<u8>(node, 0x19) == 0 && stack.size() < 64) {
+    while (inner(node) || !stack.empty()) {
+        while (inner(node)) {
+            if (stack.size() >= 64) {
+                whole = false;
+                break;
+            }
             stack.push_back(node);
             node = ReadValue<u64>(node, 0x00);
         }
@@ -5387,12 +5505,16 @@ FlagStore ReadFlagStore() {
             FlagBlock block{ReadValue<u32>(node, 0x20), std::vector<u8>(block_bytes), bits};
             std::memcpy(block.bytes.data(), reinterpret_cast<const void*>(bits), block_bytes);
             store.blocks.push_back(std::move(block));
+        } else if (kind == 1 || kind == 2) {
+            whole = false;
         }
         if (store.blocks.size() > 20000) {
+            whole = false;
             break;
         }
         node = ReadValue<u64>(node, 0x10);
     }
+    store.whole = whole;
     return store;
 }
 
@@ -5735,7 +5857,7 @@ void GiveDeferredBossItems() {
     using AwardItemLot = void PS4_SYSV_ABI (*)(u64, s32, u32);
     for (const s32 lot : due) {
         const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
-        if (item_man < 0x10000) {
+        if (!HasVtable(item_man, MapItemManVtable, "held boss item lot")) {
             LOG_ERROR(Debug, "Bloodborne party: no item man for held boss item lot {}", lot);
             continue;
         }
@@ -6069,11 +6191,10 @@ bool HostAwayFromMyMap() {
 // the player's AddSouls (vtable +0x3D0, the call the kill reward makes, with its rates).
 void GrantPartyEchoes() {
     const u64 player = GetLocalPlayer();
-    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
-    const u64 add_souls = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x3D0) : 0;
-    if (add_souls != image_base + AddSoulsOffset) {
+    if (!HasVirtual(player, 0x3D0, AddSoulsOffset, "GrantPartyEchoes AddSouls")) {
         return;
     }
+    const u64 add_souls = image_base + AddSoulsOffset;
     std::vector<KillEchoes> pending;
     {
         std::scoped_lock lock{echo_board_mutex};
@@ -6316,6 +6437,29 @@ std::mutex direct_boards_mutex;
 DirectInbox<DirectVitals> direct_vitals_inbox;
 DirectInbox<DirectKills> direct_kills_inbox;
 
+// Which build each game runs (see PeerHelloType): this game's, from SetBuildIdentity; no hello
+// goes out before it is set.
+std::mutex peer_hello_mutex;
+std::optional<PeerHello> own_hello;
+PeerBuildCheck peer_build_check;
+
+void NotePeerHello(PeerHello theirs, u32 addr, u16 port) {
+    std::optional<std::string> warning;
+    {
+        std::scoped_lock lock{peer_hello_mutex};
+        if (!own_hello) {
+            return;
+        }
+        if (theirs.member.empty()) {
+            theirs.member = fmt::format("peer {:08x}:{}", addr, port);
+        }
+        warning = peer_build_check.Take(theirs, *own_hello);
+    }
+    if (warning) {
+        LOG_WARNING(Debug, "{}", *warning);
+    }
+}
+
 bool TakeDirectDamage() {
     std::array<u8, 1400> buffer{};
     std::optional<std::vector<Libraries::Np::NpMatching2::RoomPeerAddress>> peers;
@@ -6353,6 +6497,12 @@ bool TakeDirectDamage() {
                 std::scoped_lock lock{direct_boards_mutex};
                 direct_kills_inbox.Take(sender, std::move(*kills), now);
                 took = true;
+            }
+            continue;
+        }
+        if (frame->first == PeerHelloType) {
+            if (auto hello = DecodePeerHello(frame->second)) {
+                NotePeerHello(std::move(*hello), addr, port);
             }
             continue;
         }
@@ -6402,6 +6552,41 @@ void SendDirectDamage(const MemberMapState& mine, bool changed) {
         Libraries::Net::P2PCoopSendTo(frame.data(), static_cast<u32>(frame.size()), peer.addr,
                                       peer.port);
     }
+}
+
+// This game's hello to every room peer: every PeerHelloResendMs, and at once when a peer it has
+// not greeted joins the room's links (a new member, or one whose link came back).
+void SendPeerHello() {
+    static s64 checked_at = 0;
+    static s64 sent_at = 0;
+    static std::set<u64> greeted;
+    const s64 now = SteadyMilliseconds();
+    if (now - checked_at < DirectDamageResendMs) {
+        return;
+    }
+    checked_at = now;
+    PeerHello hello;
+    {
+        std::scoped_lock lock{peer_hello_mutex};
+        if (!own_hello) {
+            return;
+        }
+        hello = *own_hello;
+    }
+    const auto peers = Libraries::Np::NpMatching2::GetActiveRoomPeers();
+    std::set<u64> linked;
+    for (const auto& peer : peers) {
+        linked.insert((u64{peer.addr} << 16) | peer.port);
+    }
+    const bool new_peer =
+        std::ranges::any_of(linked, [&](u64 peer) { return !greeted.contains(peer); });
+    greeted = std::move(linked);
+    if (peers.empty() || (!new_peer && now - sent_at < PeerHelloResendMs)) {
+        return;
+    }
+    sent_at = now;
+    hello.member = BoardMemberName();
+    SendToRoomPeers(EncodeCoopFrame(PeerHelloType, EncodePeerHello(hello)));
 }
 
 // This game's tag on its HP reports (the upper half of EnemyHpReport.visit), so the others count
@@ -6570,6 +6755,9 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
 // See GetsMemberKillDrop: the character's NpcParam row is [vtable +0x168 (character) +8], as
 // the respawn walk reads it (0x0190E433). The game's thread only.
 void GiveMemberKillDrop(u64 character, u32 handle) {
+    if (!IsCharacter(character, "GiveMemberKillDrop")) {
+        return;
+    }
     const u64 vtable = ReadValue<u64>(character, 0);
     const u64 npc_of = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x168) : 0;
     if (npc_of < 0x10000) {
@@ -6598,7 +6786,7 @@ void GiveMemberKillDrop(u64 character, u32 handle) {
         return;
     }
     const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
-    if (item_man < 0x10000) {
+    if (!HasVtable(item_man, MapItemManVtable, "member kill drop item lot")) {
         return;
     }
     giving_deferred_item_lot = true;
@@ -6632,6 +6820,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     if (TakeDirectDamage()) {
         enemy_step_due.store(true);
     }
+    SendPeerHello();
     // Not while the world goes away: a trip's start posted the old map's characters as kills.
     if (!WatchesKills(sharing, PartyTripActive(), loading) ||
         (now - checked < HpBoardRound && !enemy_step_due.exchange(false))) {
@@ -6774,6 +6963,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
             ReadValue<u8>(character, 0x28) == 0 &&
             HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
             if (can_kill && !died_for_others.contains(handle) &&
+                IsCharacter(character, "member kill") &&
                 DiesInsteadOfHiding(me, CharacterPosition(character))) {
                 // Near this player: it dies as the game kills (no echoes), not vanishing.
                 using Kill = void PS4_SYSV_ABI (*)(u64 character);
@@ -6818,7 +7008,8 @@ constexpr std::array<u8, 8> SetCharacterDisabledPrologue{0x55, 0x48, 0x89, 0xE5,
 
 // The game's thread only.
 bool SetCharacterDisabled(u64 character, bool disabled) {
-    if (image_base == 0 || ReadValue<u64>(character, 0x18) < 0x10000 ||
+    if (!IsCharacter(character, "SetCharacterDisabled") ||
+        ReadValue<u64>(character, 0x18) < 0x10000 ||
         !std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(
                                                     image_base + SetCharacterDisabledOffset),
                                                 SetCharacterDisabledPrologue.size()},
@@ -7059,9 +7250,13 @@ size_t ApplyHostMapState() {
 // A party guest resumes where it left (see ResumePoint): its last map and position are kept in
 // user/bloodborne_party_resume_slotN.txt every few seconds; the first load after the game starts
 // goes back there (a trip to that map's first lamp if needed, then a move like a revive's).
-// How many event flags are set (the whole store): only adds up as a character plays.
-s32 CountSetFlags() {
+// How many event flags are set (the whole store): only adds up as a character plays. None when
+// the store did not read whole (see SettledFlagCount).
+std::optional<s32> CountSetFlags() {
     const FlagStore store = ReadFlagStore();
+    if (!store.whole || store.blocks.empty()) {
+        return std::nullopt;
+    }
     s32 count = 0;
     for (const FlagBlock& block : store.blocks) {
         for (const u8 byte : block.bytes) {
@@ -7080,7 +7275,7 @@ std::filesystem::path GuestResumeFile() {
 // turns to it shows in the snapshot's heading.
 void TeleportLocalPlayer(const LampPosition& at, float heading = 0.0f) {
     const u64 player = GetLocalPlayer();
-    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
+    const u64 vtable = IsCharacter(player, "TeleportLocalPlayer") ? ReadValue<u64>(player, 0) : 0;
     const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
     if (teleport < 0x10000) {
         return;
@@ -7153,7 +7348,8 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         std::ifstream file{GuestResumeFile()};
         const std::string text{std::istreambuf_iterator<char>{file}, {}};
         const auto point = in_session ? std::nullopt : ParseResumePoint(text);
-        own_progress = in_session ? 0 : CountSetFlags();
+        // An unknown count (0) is no other character (see IsOtherCharacter).
+        own_progress = in_session ? 0 : CountSetFlags().value_or(0);
         const ResumeStep step =
             point ? ChooseResumeStep(*point, map, *at, own_progress, loaded_map) : ResumeStep{};
         phase = Phase::Recording;
@@ -7197,7 +7393,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     last_saved = now;
     // The count of its own world: in a session the flag store is the host's.
     if (!in_session) {
-        own_progress = CountSetFlags();
+        own_progress = CountSetFlags().value_or(own_progress);
     }
     const ResumePoint point{map, *at, own_progress};
     if (ChooseResumeStep(saved, map, *at, point.progress).kind == ResumeStep::Kind::Stay &&
@@ -7231,10 +7427,7 @@ void GiveEncounterInsight(bool in_session) {
         return;
     }
     const u64 player = GetLocalPlayer();
-    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
-    if (vtable < 0x10000 ||
-        !HasMemoryAccess(vtable + CharacterAddSpEffectSlot, sizeof(u64), MemoryProt::CpuRead) ||
-        ReadValue<u64>(vtable, CharacterAddSpEffectSlot) != image_base + AddSpEffectOffset) {
+    if (!HasVirtual(player, CharacterAddSpEffectSlot, AddSpEffectOffset, "insight AddSpEffect")) {
         return;
     }
     reinterpret_cast<AddSpEffectFn>(image_base + AddSpEffectOffset)(
@@ -7635,7 +7828,7 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     }
     using Teleport = void PS4_SYSV_ABI (*)(u64 character, const float* position,
                                            const float* rotation, s32 mode);
-    const u64 vtable = ReadValue<u64>(player, 0);
+    const u64 vtable = IsCharacter(player, "revive teleport") ? ReadValue<u64>(player, 0) : 0;
     const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
     if (teleport < 0x10000) {
         return;
@@ -7829,7 +8022,7 @@ struct AttackRatings {
 };
 AttackRatings ReadAttackRatings(u64 player) {
     AttackRatings ratings;
-    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
+    const u64 vtable = IsCharacter(player, "ReadAttackRatings") ? ReadValue<u64>(player, 0) : 0;
     const u64 game_data_of = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x1C8) : 0;
     const u64 asm_data = player >= 0x10000 ? ReadValue<u64>(player, 0x4B8) : 0;
     if (game_data_of < 0x10000 || asm_data < 0x10000) {
@@ -8438,10 +8631,12 @@ void DieFromDown(PartyDeathRun& run, u64 player, u64 data, bool reset, std::stri
     run.downed.Died();
     party_death_reset.store(reset);
     static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
-    const bool killed = std::ranges::equal(
-        std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
-                            KillPrologue.size()},
-        KillPrologue);
+    const bool killed =
+        IsCharacter(player, "DieFromDown kill") &&
+        std::ranges::equal(
+            std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
+                                KillPrologue.size()},
+            KillPrologue);
     if (killed) {
         reinterpret_cast<void PS4_SYSV_ABI (*)(u64 character)>(image_base +
                                                                KillCharacterOffset)(player);
@@ -10869,7 +11064,7 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         // A kill goes through the game's own (writing 0 HP leaves a standing corpse); checked
         // against its prologue first.
         static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
-        if (verb == "kill" &&
+        if (verb == "kill" && IsCharacter(found->character, "autoplay kill") &&
             std::ranges::equal(
                 std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
                                     KillPrologue.size()},
@@ -11905,6 +12100,11 @@ void InstallSeamlessCoopPatches() {
              "and area-complete SOS regions ({} byte patches, {} hooks)",
              CoopPatchesOf("seamless core").size(), core_hooks.size());
     LogCoopFeatures();
+}
+
+void SetBuildIdentity(std::string_view revision, u64 event_files) {
+    std::scoped_lock lock{peer_hello_mutex};
+    own_hello = PeerHello{.revision = std::string{revision}, .event_files = event_files};
 }
 
 void NoteSaveFileOpened(std::string_view guest_path) {

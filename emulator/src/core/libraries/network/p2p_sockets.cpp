@@ -96,6 +96,24 @@ void CloseSocket(net_socket& socket) {
     socket = kInvalidSocket;
 }
 
+#ifdef _WIN32
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
+// Windows reports an ICMP "port unreachable" for an earlier send (a peer whose game has gone) as
+// WSAECONNRESET on the next receive of the same UDP socket: with a departed peer still in the
+// room every read after a send to it failed. Off: a lost peer is the silence checks' business.
+void DisableUdpConnectionReset(net_socket socket) {
+    BOOL report = FALSE;
+    DWORD returned = 0;
+    if (::WSAIoctl(socket, SIO_UDP_CONNRESET, &report, sizeof(report), nullptr, 0, &returned,
+                   nullptr, nullptr) != 0) {
+        LOG_WARNING(Lib_Net, "P2P transport: SIO_UDP_CONNRESET off failed error={}",
+                    LastSocketError());
+    }
+}
+#endif
+
 bool SetSocketNonBlocking(net_socket socket) {
 #ifdef _WIN32
     u_long enabled = 1;
@@ -172,6 +190,9 @@ public:
             LOG_ERROR(Lib_Net, "P2P transport socket() failed error={}", LastSocketError());
             return false;
         }
+#ifdef _WIN32
+        DisableUdpConnectionReset(host_socket);
+#endif
 
         int one = 1;
         (void)::setsockopt(host_socket, SOL_SOCKET, SO_REUSEADDR,
@@ -487,7 +508,13 @@ private:
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));
                     continue;
                 }
-                LOG_WARNING(Lib_Net, "P2P recvfrom failed error={}", error);
+                // The address the error came back from, when the system names it.
+                if (from.sin_family == AF_INET) {
+                    LOG_WARNING(Lib_Net, "P2P recvfrom failed error={} from {:#x}:{}", error,
+                                ntohl(from.sin_addr.s_addr), ntohs(from.sin_port));
+                } else {
+                    LOG_WARNING(Lib_Net, "P2P recvfrom failed error={}", error);
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 continue;
             }

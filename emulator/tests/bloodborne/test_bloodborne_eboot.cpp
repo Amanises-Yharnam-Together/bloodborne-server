@@ -265,3 +265,43 @@ TEST_F(BloodborneEboot, TheMemberDataRequestIsTheGamesOwn) {
     EXPECT_EQ(Bytes(0x0178B578, 4), (std::vector<u8>{0x80, 0x3C, 0x01, 0x1F}));
     EXPECT_EQ(MemberDataParts | 0x01, 0x1F);
 }
+
+namespace {
+// Target of a `lea reg, [rip + disp32]` (REX.W, or REX.WR for r8-r15) at `offset`, or 0.
+u64 LeaTarget(const std::vector<u8>& bytes, u64 offset) {
+    if (bytes.size() < 7 || (bytes[0] != 0x48 && bytes[0] != 0x4C) || bytes[1] != 0x8D ||
+        (bytes[2] & 0xC7) != 0x05) {
+        return 0;
+    }
+    s32 displacement{};
+    std::memcpy(&displacement, bytes.data() + 3, sizeof(displacement));
+    return offset + 7 + static_cast<s64>(displacement);
+}
+} // namespace
+
+// The vtables the co-op code checks objects against (see IsGameVtable) are what the classes'
+// constructors store: `lea rax, [rip + vtable]`, then `mov [object], rax`.
+TEST_F(BloodborneEboot, TheCheckedVtablesAreWhatTheConstructorsStore) {
+    const auto lea = [](u64 offset) { return LeaTarget(Bytes(offset, 7), offset); };
+    // Characters: one constructor each.
+    EXPECT_EQ(lea(0x018B9B03), CharacterVtables[0]);
+    EXPECT_EQ(lea(0x018E48C9), CharacterVtables[1]);
+    EXPECT_EQ(lea(0x018F176C), CharacterVtables[2]);
+    EXPECT_EQ(lea(0x01908094), CharacterVtables[3]);
+    // The own bloodstain: 0x01467A70 builds it (0x018675B0), puts it at [[SprjEventMan] +0x80]
+    // +8 and shows it with the function ShowGuestBloodstain calls.
+    EXPECT_EQ(CallTarget(0x01467AE0), 0x018675B0u);
+    EXPECT_EQ(lea(0x018675D2), BloodstainVtable);
+    EXPECT_EQ(Bytes(0x01467B05, 4), (std::vector<u8>{0x48, 0x89, 0x78, 0x08}));
+    EXPECT_EQ(JumpTarget(0x01467B19), 0x01868A50u);
+    // EventFlagMan: built by 0x013B5910 into [0x0553B100]; its flag store part (0x013CF0E0, the
+    // object itself) stores the vtable, and the flag read (0x013CFD80) takes that object.
+    EXPECT_EQ(lea(0x0156C879), 0x0553B100u);
+    EXPECT_EQ(CallTarget(0x0156C8A6), 0x013B5910u);
+    EXPECT_EQ(CallTarget(0x013B5946), 0x013CF0E0u);
+    EXPECT_EQ(lea(0x013CF104), EventFlagManVtable);
+    // MapItemMan: built by 0x017D2960 into [0x0553D6E0].
+    EXPECT_EQ(lea(0x01929318), 0x0553D6E0u);
+    EXPECT_EQ(CallTarget(0x0192934C), 0x017D2960u);
+    EXPECT_EQ(lea(0x017D2983), MapItemManVtable);
+}

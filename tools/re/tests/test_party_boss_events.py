@@ -213,10 +213,6 @@ class GuestsEarnInsight(unittest.TestCase):
         self.assertEqual((patched, count), (original, 0))
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class GuestsUseTheDreamShops(unittest.TestCase):
     """Kaniel 2026-10-11: guests could not use the insight shop, and often did not see the
     Hunter Chief Emblem (10,000 echoes) at the messengers. The insight messenger (m21_00 event
@@ -274,3 +270,7 @@ def parameters_of(emevd: bytes, wanted: int) -> list[tuple[int, int, int, int]]:
             return [struct.unpack_from('<qqqi', emevd, fields[9] + offset + k * 32)[:4]
                     for k in range(count)]
     return []
+
+
+if __name__ == '__main__':
+    unittest.main()

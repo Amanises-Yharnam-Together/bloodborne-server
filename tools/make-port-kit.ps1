@@ -18,8 +18,24 @@ if (-not $Servers) { $Servers = Join-Path $env:BB_ROOT "online-kit" }
 if (-not $Out) { $Out = Join-Path $env:BB_ROOT "port-kit" }
 $source = Join-Path $PSScriptRoot "port-kit"
 foreach ($need in "$Package\BLauncher.exe", "$Package\bin\bb-probe.exe", "$Servers\server\shadnet.exe",
-                  "$Servers\backend\bb_dummy_server.py", "$Servers\event-patch") {
+                  "$Servers\backend\bb_dummy_server.py", "$Servers\event-patch\manifest.json") {
     if (-not (Test-Path $need)) { throw "Missing $need" }
+}
+# The event files must be the ones tools\re\party_boss_events.py wrote and checked (its
+# manifest.json lists each with its hash), not an older or hand-edited copy.
+$events = Join-Path $Servers "event-patch"
+$manifest = Get-Content -Raw (Join-Path $events "manifest.json") | ConvertFrom-Json
+$listed = @($manifest.files.PSObject.Properties.Name)
+foreach ($file in Get-ChildItem -File $events -Filter *.emevd.dcx) {
+    if ($file.Name -notin $listed) { throw "$($file.FullName) is not in the event patch manifest" }
+}
+foreach ($name in $listed) {
+    $path = Join-Path $events $name
+    if (-not (Test-Path $path)) { throw "Missing $path (in the event patch manifest)" }
+    $hash = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant()
+    if ($hash -ne $manifest.files.$name.output_sha256) {
+        throw "$path is not the file the event patch manifest lists (sha256 $hash)"
+    }
 }
 
 # A fresh kit each time: what a player makes in theirs (user, game, settings.bat) is never here.

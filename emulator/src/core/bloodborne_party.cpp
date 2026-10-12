@@ -6,6 +6,7 @@
 #include <bit>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +17,7 @@
 
 #include <fmt/format.h>
 
+#include "core/bloodborne_flags.h"
 #include "core/bloodborne_party.h"
 
 namespace Core::Bloodborne {
@@ -355,15 +357,8 @@ bool IsSignTimerStore(std::span<const u8> bytes, const SignTimerSite& site) {
 }
 
 bool IsLampTravelFlag(s32 flag) {
-    // 7MMM01LL: map code MMM (241 = m24_01), lamp LL. Only the maps after the Hunter's Dream (210)
-    // up to the last ones (m36): the Dream has no lamp to travel from (the Doll's dialog sets
-    // 721001xx), and the flags of no map are the talks' own (Gilbert's talk sets 70000140, many
-    // NPCs 799001xx).
-    constexpr s32 HuntersDreamMapCode = 210;
-    constexpr s32 PastTheLastMapCode = 400;
-    const s32 map_code = flag / 10000 % 1000;
-    return flag >= 70000000 && flag < 80000000 && flag % 10000 / 100 == 1 &&
-           map_code > HuntersDreamMapCode && map_code < PastTheLastMapCode;
+    // 7MMM01LL: map code MMM (241 = m24_01), lamp LL (see FlagTable).
+    return RuleFor(flag).Has(FlagLampTrip);
 }
 
 bool LampRestsEnabled(const char* setting) {
@@ -719,7 +714,48 @@ bool IsOtherCharacter(s32 progress_now, s32 progress_kept) {
     // load clears some area flags (dozens to a few hundred: krolebord's restarts read 5800 set
     // against 5859 kept), so "far" is a quarter of what was kept.
     const s32 slack = std::max<s32>(20, progress_kept / 4);
-    return progress_kept > 0 && progress_now + slack < progress_kept;
+    // No world has 0 flags set: that is a store read mid-load, not a character.
+    return progress_kept > 0 && progress_now > 0 && progress_now + slack < progress_kept;
+}
+
+std::optional<s32> SettledFlagCount(std::optional<s32> first, std::optional<s32> second) {
+    if (!first || !second || *first <= 0 || *second <= 0) {
+        return std::nullopt;
+    }
+    // Two reads a moment apart differ by a few flags at most; more is a read torn by the load.
+    const s32 slack = std::max<s32>(20, std::max(*first, *second) / 100);
+    if (std::abs(*first - *second) > slack) {
+        return std::nullopt;
+    }
+    return std::max(*first, *second);
+}
+
+bool ForgetsSlotLists(std::optional<s32> progress_now, s32 progress_kept, bool new_in_slot) {
+    if (!progress_now || *progress_now <= 0) {
+        return false;
+    }
+    return new_in_slot || IsOtherCharacter(*progress_now, progress_kept);
+}
+
+std::string SlotBackupName(std::string_view file, std::string_view stamp) {
+    return fmt::format("{}.bak-{}", file, stamp);
+}
+
+std::vector<std::string> SlotBackupsToRemove(std::string_view file,
+                                             std::span<const std::string> names, size_t keep) {
+    const std::string prefix = SlotBackupName(file, "");
+    std::vector<std::string> backups;
+    for (const std::string& name : names) {
+        if (name.size() > prefix.size() && name.starts_with(prefix)) {
+            backups.push_back(name);
+        }
+    }
+    std::ranges::sort(backups);
+    if (backups.size() <= keep) {
+        return {};
+    }
+    backups.resize(backups.size() - keep);
+    return backups;
 }
 
 bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now) {
@@ -727,8 +763,7 @@ bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_n
 }
 
 bool IsMapPickupFlag(s32 flag) {
-    const bool chalice = flag >= 52900000 && flag < 53000000;
-    return flag >= 50000000 && flag < 54000000 && !chalice;
+    return RuleFor(flag).Has(FlagMapPickup);
 }
 
 std::string FormatFlagList(std::span<const s32> flags) {
@@ -777,13 +812,7 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 }
 
 bool CarriesToGuestWorld(s32 flag) {
-    const bool death_or_multiplayer = flag >= 4000 && flag < 5000;
-    const bool trip = IsLampTravelFlag(flag) || IsHeadstoneTravelFlag(flag);
-    const bool boss_fog = IsBossFogEntryFlag(flag) || IsBossFogEntryFlag(flag - 1);
-    // The bell's bookkeeping (common events 9181-9198), not progress.
-    const bool bell = flag >= 9180 && flag < 9200;
-    return flag > 0 && !death_or_multiplayer && !trip && !boss_fog && !bell &&
-           !IsMapPickupFlag(flag);
+    return RuleFor(flag).Has(FlagCarriesHome);
 }
 
 bool GameThreadStalled(s64 now_ms, s64 last_tick_ms) {
@@ -791,8 +820,7 @@ bool GameThreadStalled(s64 now_ms, s64 last_tick_ms) {
 }
 
 std::span<const s32> ShopLineFlags() {
-    static constexpr std::array<s32, 10> flags{12101000, 12101001, 12101002, 12101003, 12101004,
-                                               12101005, 12101006, 12101007, 12101008, 12101009};
+    static constexpr auto flags = FlagsWith<FlagShopLine>();
     return flags;
 }
 
@@ -806,7 +834,8 @@ std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map) {
     if (!guest || !in_session || map == 0 || map == HuntersDream) {
         return {};
     }
-    return {9401, 9403};
+    const auto flags = FlagsWith<FlagGuestSetsInWorld>();
+    return {flags.begin(), flags.end()};
 }
 
 std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp,
@@ -855,28 +884,12 @@ std::string FormatGameAddresses(std::span<const u64> words, u64 image_base, u64 
 }
 
 bool IsBossFogEntryFlag(s32 flag) {
-    // The flag each boss fog's host event sets and its phantom event waited for (found by
-    // party_boss_events.py's open_boss_fog_for_guests in the 01.09 map event files).
-    static constexpr std::array<s32, 21> Flags{
-        12104800, 12104850, 12204800, 12304700, 12304800, 12404800, 12414700,
-        12414800, 12424700, 12424800, 12504800, 12604800, 12604850, 12704800,
-        12804800, 13304800, 13404808, 13404858, 13504808, 13504858, 13604808,
-    };
-    return std::ranges::find(Flags, flag) != Flags.end();
+    return RuleFor(flag).Has(FlagBossFogEntry);
 }
 
 bool KeepsLocalFlag(bool party_configured, s32 flag) {
-    constexpr s32 FirstMessengerGift = 12101020;
-    constexpr s32 LastMessengerGift = 12101029;
-    constexpr s32 FirstMessengerPick = 72101000;
-    constexpr s32 LastMessengerPick = 72101099;
-    const bool gift = flag >= FirstMessengerGift && flag <= LastMessengerGift;
-    const bool pick = flag >= FirstMessengerPick && flag <= LastMessengerPick;
-    const bool found =
-        std::ranges::any_of(EncounterInsights(), [flag](const EncounterInsight& boss) {
-            return boss.once_flag == flag;
-        });
-    return party_configured && (gift || pick || found);
+    // The messengers' gifts and pick, each boss's "found" flag (see FlagTable).
+    return party_configured && RuleFor(flag).owner == FlagOwner::PerPlayer;
 }
 
 std::span<const EncounterInsight> EncounterInsights() {
@@ -950,8 +963,8 @@ std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
 }
 
 bool SharedWithParty(s32 flag) {
-    return LampOfActiveFlag(flag).has_value() || LampOfActiveFlag(flag - 1).has_value() ||
-           IsBossFogEntryFlag(flag);
+    // A lamp's active flags, a boss fog's "entered" flag (see FlagTable).
+    return RuleFor(flag).owner == FlagOwner::Shared;
 }
 
 std::optional<s32> LampOfActiveFlag(s32 flag) {
@@ -1135,10 +1148,7 @@ s32 MapFlagBase(u32 packed_map) {
 }
 
 bool TakesHostMapFlag(s32 flag) {
-    const s32 prefix = flag / MapFlagCount;
-    const bool map_flag = prefix >= 1200 && prefix < 1400;
-    const bool boss_fog = IsBossFogEntryFlag(flag) || IsBossFogEntryFlag(flag - 1);
-    return map_flag && !boss_fog && !IsMapPickupFlag(flag) && !KeepsLocalFlag(true, flag);
+    return RuleFor(flag).Has(FlagTakesHostMap);
 }
 
 std::string EncodeMapStateUpdate(std::string_view member, u32 map, std::span<const u8> bits) {
@@ -1979,6 +1989,25 @@ bool NpcTurnsIntoWanderGhost(bool in_party_session, bool param_says_wander_ghost
     return param_says_wander_ghost && !in_party_session;
 }
 
+bool IsGameVtable(u64 vtable, u64 image_base, std::span<const u64> vtables) {
+    return image_base != 0 && vtable >= image_base &&
+           std::ranges::find(vtables, vtable - image_base) != vtables.end();
+}
+
+bool RefusedCallLog::FirstTime(std::string_view site, u64 vtable) {
+    if (logged.size() >= MaxLogged) {
+        return false;
+    }
+    return logged.emplace(std::string{site}, vtable).second;
+}
+
+std::string DescribeVtable(u64 vtable, u64 image_base, u64 image_size) {
+    if (image_base != 0 && vtable >= image_base && vtable - image_base < image_size) {
+        return fmt::format("eboot+{:#x}", vtable - image_base);
+    }
+    return fmt::format("{:#x}", vtable);
+}
+
 const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn() {
     static const auto stand_in = [] {
         std::array<u8, GuestItemPickupAllowedOffset + 8> bytes{};
@@ -2022,7 +2051,7 @@ u32 PackedMapOfWarpPoint(s32 warp_point) {
 }
 
 bool IsHeadstoneTravelFlag(s32 flag) {
-    return flag >= 72102000 && flag < 72104000;
+    return RuleFor(flag).Has(FlagHeadstoneTrip);
 }
 
 s32 HeadstoneWarpPoint(s32 flag) {
@@ -3152,6 +3181,96 @@ std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload) {
         kills.handles.push_back(ReadLittleEndian<u32>(payload, start + index * 4));
     }
     return kills;
+}
+
+std::vector<u8> EncodePeerHello(const PeerHello& hello) {
+    std::vector<u8> payload{hello.protocol};
+    const size_t revision = std::min<size_t>(hello.revision.size(), 0xFF);
+    payload.push_back(static_cast<u8>(revision));
+    payload.insert(payload.end(), hello.revision.begin(), hello.revision.begin() + revision);
+    AppendLittleEndian(payload, hello.event_files);
+    const size_t member = std::min<size_t>(hello.member.size(), 0xFF);
+    payload.push_back(static_cast<u8>(member));
+    payload.insert(payload.end(), hello.member.begin(), hello.member.begin() + member);
+    return payload;
+}
+
+std::optional<PeerHello> DecodePeerHello(std::span<const u8> payload) {
+    if (payload.size() < 2 || payload.size() < 2u + payload[1] + 8u + 1u) {
+        return std::nullopt;
+    }
+    PeerHello hello{.protocol = payload[0]};
+    const size_t revision = payload[1];
+    hello.revision.assign(payload.begin() + 2, payload.begin() + 2 + revision);
+    hello.event_files = ReadLittleEndian<u64>(payload, 2 + revision);
+    const size_t member_at = 2 + revision + 8;
+    const size_t member = payload[member_at];
+    if (payload.size() < member_at + 1 + member) {
+        return std::nullopt;
+    }
+    hello.member.assign(payload.begin() + member_at + 1, payload.begin() + member_at + 1 + member);
+    return hello;
+}
+
+std::optional<std::string> PeerBuildCheck::Take(const PeerHello& theirs, const PeerHello& mine) {
+    // A game that could not read its event files (0) says nothing about them.
+    const bool events_differ =
+        theirs.event_files != 0 && mine.event_files != 0 && theirs.event_files != mine.event_files;
+    if (theirs.protocol == mine.protocol && theirs.revision == mine.revision && !events_differ) {
+        return std::nullopt;
+    }
+    if (!warned.emplace(theirs.member, theirs.protocol, theirs.revision, theirs.event_files)
+             .second) {
+        return std::nullopt;
+    }
+    std::string line = fmt::format("Co-op: {} runs build {}, this game runs {}",
+                                   theirs.member.empty() ? "a peer" : theirs.member,
+                                   theirs.revision.empty() ? "?" : theirs.revision,
+                                   mine.revision.empty() ? "?" : mine.revision);
+    if (theirs.protocol != mine.protocol) {
+        line += fmt::format(" (co-op protocol {}, this game's {})", theirs.protocol, mine.protocol);
+    }
+    if (events_differ) {
+        line += fmt::format("; event files {:016x}, this game's {:016x}", theirs.event_files,
+                            mine.event_files);
+    }
+    return line;
+}
+
+u64 EventFilesHash(const std::filesystem::path& folder) {
+    std::error_code error;
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator{folder, error}) {
+        const std::string name = entry.path().filename().string();
+        if (name.ends_with(".emevd.dcx")) {
+            files.push_back(entry.path());
+        }
+    }
+    if (files.empty()) {
+        return 0;
+    }
+    std::ranges::sort(files);
+    // FNV-1a over each file's name and bytes.
+    u64 hash = 0xcbf29ce484222325ull;
+    const auto mix = [&hash](std::span<const char> bytes) {
+        for (const char byte : bytes) {
+            hash = (hash ^ static_cast<u8>(byte)) * 0x100000001b3ull;
+        }
+    };
+    std::vector<char> chunk(1 << 16);
+    for (const auto& path : files) {
+        const std::string name = path.filename().string();
+        mix(name);
+        std::ifstream file{path, std::ios::binary};
+        if (!file) {
+            return 0;
+        }
+        while (file.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) ||
+               file.gcount() > 0) {
+            mix(std::span{chunk.data(), static_cast<size_t>(file.gcount())});
+        }
+    }
+    return hash != 0 ? hash : 1;
 }
 
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills) {

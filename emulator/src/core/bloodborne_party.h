@@ -14,6 +14,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_set>
 #include <vector>
 
@@ -564,6 +565,17 @@ bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_n
 // Whether the character loaded now is another one than the one a slot's lists were kept for
 // (`progress_kept`, its own world's set event flags then; 0 not known): far fewer set now.
 bool IsOtherCharacter(s32 progress_now, s32 progress_kept);
+// The set event flags of a load from two reads of the store a moment apart (each empty when it
+// missed part of the store): known only when both read the whole store and agree.
+std::optional<s32> SettledFlagCount(std::optional<s32> first, std::optional<s32> second);
+// Whether a load drops a slot's kept lists (`new_in_slot`: its confirmed pickups all missing):
+// never on an unknown count, since a wrong drop loses what the player looted.
+bool ForgetsSlotLists(std::optional<s32> progress_now, s32 progress_kept, bool new_in_slot);
+// A slot's kept files are copied aside before they are dropped, as `file`.bak-`stamp`; the copies
+// of `file` beyond the newest `keep` (stamps sort by time) are removed.
+std::string SlotBackupName(std::string_view file, std::string_view stamp);
+std::vector<std::string> SlotBackupsToRemove(std::string_view file,
+                                             std::span<const std::string> names, size_t keep);
 std::string FormatFlagList(std::span<const s32> flags);
 std::vector<s32> ParseFlagList(std::string_view text);
 // The event flag store (EventFlagMan [0x0553B100]): blocks of +0x1C flags each, kept in a map at
@@ -578,7 +590,8 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 // the changes it sees in a session (lamps, shortcuts, bosses, quest steps) are kept, latest
 // state per flag, in a file of "<flag> <0|1>" lines and set in the guest's own world once it is
 // home. A join reload's bulk change, the death/multiplayer (4xxx) flags and
-// the pickups (their own list) are left out.
+// the pickups (their own list) are left out. Which flags are kept, shared or each player's own:
+// FlagTable (bloodborne_flags.h, docs/FLAGS.md); the flag predicates here read it.
 bool CarriesToGuestWorld(s32 flag);
 // The Hunter's Dream flags a guest out in the world (any map but the Dream) in a session sets for
 // itself: 9401 (Central Yharnam reached: the Dream's first visit, its shop) and 9403 (the
@@ -942,6 +955,37 @@ struct DirectKills {
     std::vector<u32> handles;
     bool operator==(const DirectKills&) const = default;
 };
+// Which build each game runs (robustness review 2026-10-12): games on different builds shared a
+// party without a word, and the frames above carry no version. Every game sends its hello to the
+// room's peers every PeerHelloResendMs and at once to a new peer; a peer on another protocol,
+// build or set of event files is logged once. Builds before it drop the type: their decoders
+// take only the types they know.
+constexpr u8 PeerHelloType = 0x33;
+// Raised when a co-op frame's meaning changes.
+constexpr u8 CoopProtocolVersion = 1;
+constexpr s64 PeerHelloResendMs = 10'000;
+struct PeerHello {
+    u8 protocol = CoopProtocolVersion;
+    std::string revision; // the build's source revision ("-dirty": changes not in a commit)
+    u64 event_files = 0;  // a hash of the map event files the game reads, 0 when unknown
+    std::string member;   // the board's name for the member, "" before it has one
+    bool operator==(const PeerHello&) const = default;
+};
+// The payload: protocol, revision (u8 length first), event files (u64), member (u8 length
+// first). A decoder takes a longer payload (fields a later build added).
+std::vector<u8> EncodePeerHello(const PeerHello& hello);
+std::optional<PeerHello> DecodePeerHello(std::span<const u8> payload);
+class PeerBuildCheck {
+public:
+    // The warning line when a peer's hello differs from this game's, once per member and build.
+    std::optional<std::string> Take(const PeerHello& theirs, const PeerHello& mine);
+
+private:
+    std::set<std::tuple<std::string, u8, std::string, u64>> warned;
+};
+// A hash of the map event files (*.emevd.dcx) in `folder`, the game's dvdroot_ps4/event (the
+// co-op kit replaces some): names and bytes. 0 when there are none or one cannot be read.
+u64 EventFilesHash(const std::filesystem::path& folder);
 std::vector<u8> EncodeDirectKills(std::string_view member, std::span<const u32> handles);
 std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload);
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills);
@@ -1214,6 +1258,35 @@ bool RestoresBloodstainMark(bool party_guest, bool mark_before, bool mark_now, s
 constexpr int GuestBloodstainTries = 3;
 bool ShowsGuestBloodstain(bool party_guest, bool in_session, bool loading, bool has_stain,
                           s32 echoes, u32 record_block, u32 map, bool shown, int tries);
+// Game objects' vtables (01.09 eboot offsets, what each class's constructor stores). The co-op
+// code calls a game function with an object only when the object's vtable is one the function
+// takes (HasVtable), so a wrong or stale pointer is skipped instead of crashing the game
+// (2026-10-11: the bloodstain show given another object crashed two guests).
+// Characters: every vtable with the character's AddSpEffect (+0x3F0), teleport (+0x5F8) and
+// NpcParam (+0x168) virtuals. The last two are the players': their PlayerGameData virtual
+// (+0x1C8) returns +0x3C0, the others' return nothing.
+constexpr std::array<u64, 4> CharacterVtables{0x0538E2D0, 0x0538EBC0, 0x0538F310, 0x0538FA80};
+constexpr std::array<u64, 2> PlayerVtables{0x0538F310, 0x0538FA80};
+constexpr u64 EventFlagManVtable = 0x05320B60; // [0x0553B100], its flag store (0x013CF0E0)
+constexpr u64 MapItemManVtable = 0x0532D850;   // [0x0553D6E0], built by 0x017D2960
+constexpr u64 BloodstainVtable = 0x0532EA40;   // the own stain, built by 0x018675B0
+// Whether `vtable` (an address read from an object) is one of `vtables` (eboot offsets) in the
+// game loaded at `image_base`.
+bool IsGameVtable(u64 vtable, u64 image_base, std::span<const u64> vtables);
+// A refused call is logged (a wrong pointer, or a list above missing a class, which would
+// otherwise turn a feature off without a word), once per call site and vtable seen and at most
+// MaxLogged times in all, so it can never fill the log.
+class RefusedCallLog {
+public:
+    static constexpr std::size_t MaxLogged = 32;
+    // True the first time `site` refuses an object with `vtable`, while there is room.
+    bool FirstTime(std::string_view site, u64 vtable);
+
+private:
+    std::set<std::pair<std::string, u64>> logged;
+};
+// A seen vtable for the log: "eboot+0x..." inside the game's image, else the address.
+std::string DescribeVtable(u64 vtable, u64 image_base, u64 image_size);
 // Friendly NPCs on a summoned guest's side: character creation (0x018E4FB6, 0x018D8934) turns an
 // NPC whose NpcParam has isChangeWanderGhost into a wandering ghost (type 4, the ghost model at
 // +0x10C), drawn see-through. A party guest sees them as the host does.
