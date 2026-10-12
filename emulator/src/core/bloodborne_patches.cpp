@@ -490,87 +490,56 @@ bool VerifySites() {
 
 } // namespace Coop
 
-void InstallSeamlessCoopPatches() {
-    if ((negative_area_patch_installed && area_flag_patch_installed &&
-         responder_bell_area_patch_installed && responder_bell_common_patch_installed &&
-         active_bell_negative_area_patch_installed && active_bell_area_flag_patch_installed &&
-         responder_search_negative_area_patch_installed && sos_status_area_patch_installed &&
-         summon_candidate_area_patch_installed && summon_build_area_patch_installed &&
-         summon_build_world_state_patch_installed && summon_build_negative_event_patch_installed &&
-         summon_build_host_placement_hook_installed && cross_map_guest_handoff_hook_installed &&
-         summon_reload_state_hook_installed && deferred_summon_reload_hook_installed &&
-         healing_fountain_host_availability_hook_installed) ||
-        !EnvFlagEnabled("SHADPS4_BLOODBORNE_SEAMLESS_COOP")) {
-        return;
-    }
-    if (MemoryPatcher::g_game_serial != "CUSA03173") {
-        return;
-    }
+namespace {
 
+// Whether the seamless core is in already (its byte patches and its hooks).
+bool SeamlessCoreInstalled() {
+    return negative_area_patch_installed && area_flag_patch_installed &&
+           responder_bell_area_patch_installed && responder_bell_common_patch_installed &&
+           active_bell_negative_area_patch_installed && active_bell_area_flag_patch_installed &&
+           responder_search_negative_area_patch_installed && sos_status_area_patch_installed &&
+           summon_candidate_area_patch_installed && summon_build_area_patch_installed &&
+           summon_build_world_state_patch_installed &&
+           summon_build_negative_event_patch_installed &&
+           summon_build_host_placement_hook_installed && cross_map_guest_handoff_hook_installed &&
+           summon_reload_state_hook_installed && deferred_summon_reload_hook_installed &&
+           healing_fountain_host_availability_hook_installed;
+}
+
+// Whether this game is the one the seamless patches are for: Bloodborne CUSA03173 at 01.09.
+bool IsSeamlessCoopGame() {
+    if (MemoryPatcher::g_game_serial != "CUSA03173") {
+        return false;
+    }
     const auto* param_sfo = Common::Singleton<PSF>::Instance();
     const std::string_view app_version = param_sfo->GetString("APP_VER").value_or("Unknown");
     if (app_version != "01.09") {
         LOG_ERROR(Debug,
                   "Bloodborne seamless patches require CUSA03173 01.09; loaded version is {}",
                   app_version);
-        return;
+        return false;
     }
+    return true;
+}
 
-    const auto base = MemoryPatcher::g_eboot_address;
-    const auto image_size = MemoryPatcher::g_eboot_image_size;
-    coop_features = {};
-    const auto summon_build_entry = std::ranges::find_if(
-        Sites, [](const TraceSite& site) { return site.offset == SummonBuildEntryOffset; });
-    const auto cross_map_guest_handoff = std::ranges::find_if(
-        Sites, [](const TraceSite& site) { return site.offset == CrossMapGuestHandoffOffset; });
-    const auto deferred_summon_reload = std::ranges::find_if(
-        Sites, [](const TraceSite& site) { return site.offset == SosStatusUpdateOffset; });
-    const auto summon_reload_state = std::ranges::find_if(Sites, [](const TraceSite& site) {
-        return site.offset == StageWarpDescriptorFinalizeOffset;
-    });
-    const auto healing_fountain_host_availability = std::ranges::find_if(
-        Sites, [](const auto& site) { return site.offset == HealingFountainAvailabilityOffset; });
-    const auto world_teardown = std::ranges::find_if(
-        Sites, [](const auto& site) { return site.offset == WorldTeardownMatchingOffset; });
-    if (summon_build_entry == Sites.end() || cross_map_guest_handoff == Sites.end() ||
-        deferred_summon_reload == Sites.end() || summon_reload_state == Sites.end() ||
-        healing_fountain_host_availability == Sites.end() || world_teardown == Sites.end()) {
-        LOG_ERROR(Debug, "Bloodborne seamless functional hook site is missing");
-        return;
-    }
-    if (base == 0) {
-        LOG_ERROR(Debug, "Bloodborne seamless patches lie outside the eboot image");
-        return;
-    }
+// The RE tracer's site at `offset` (Sites), or null.
+const TraceSite* FindSite(u64 offset) {
+    const auto site =
+        std::ranges::find_if(Sites, [&](const TraceSite& site) { return site.offset == offset; });
+    return site == Sites.end() ? nullptr : &*site;
+}
 
-    // All of the core or none of it. Every site is checked before anything is written: its byte
-    // patches, its hooks and the game functions the cross-map summon calls (the co-op site table,
-    // bloodborne_patch_sites.h).
-    if (!CoopSitesMatch(base, image_size, "seamless core", "no seamless co-op")) {
-        LogCoopFeatures();
-        return;
-    }
-    image_base = base;
-    // Then the hooks; one that still fails (no room for its trampoline) takes the others out
-    // again, so the game is left as it was.
-    struct CoreHook {
-        u64 offset;
-        const TraceSite* site;
-        bool* installed;
-        std::string_view what;
-    };
-    const std::array<CoreHook, 5> core_hooks{{
-        {SummonBuildEntryOffset, &*summon_build_entry, &summon_build_host_placement_hook_installed,
-         "cross-map host-placement"},
-        {CrossMapGuestHandoffOffset, &*cross_map_guest_handoff,
-         &cross_map_guest_handoff_hook_installed, "cross-map guest-handoff"},
-        {StageWarpDescriptorFinalizeOffset, &*summon_reload_state,
-         &summon_reload_state_hook_installed, "summon-reload state"},
-        {SosStatusUpdateOffset, &*deferred_summon_reload, &deferred_summon_reload_hook_installed,
-         "deferred summon-reload"},
-        {HealingFountainAvailabilityOffset, &*healing_fountain_host_availability,
-         &healing_fountain_host_availability_hook_installed, "healing-fountain host-availability"},
-    }};
+// One of the seamless core's hooks: where, its site, its installed flag and its name for the log.
+struct CoreHook {
+    u64 offset;
+    const TraceSite* site;
+    bool* installed;
+    std::string_view what;
+};
+
+// The core's hooks, all or none: one that fails (no room for its trampoline) takes the others
+// out again, so the game is left as it was.
+bool InstallCoreHooks(u64 base, u64 image_size, std::span<const CoreHook> core_hooks) {
     for (size_t index = 0; index < core_hooks.size(); ++index) {
         const CoreHook& hook = core_hooks[index];
         const auto expected =
@@ -589,17 +558,19 @@ void InstallSeamlessCoopPatches() {
             "seamless core",
             fmt::format("{}; rolled back", SiteFailure(base, image_size, hook.offset)));
         LogCoopFeatures();
-        return;
+        return false;
     }
-    coop_features.On("seamless core");
-    InitPartyController();
-    // Optional: without it a guest quitting to the title stays in the room, but every other
-    // patch still applies.
+    return true;
+}
+
+// Optional: without it a guest quitting to the title stays in the room, but every other patch
+// still applies.
+void InstallWorldTeardownHook(u64 base, u64 image_size, const TraceSite& world_teardown) {
     const auto world_teardown_expected =
-        std::span<const u8>{world_teardown->prologue.data(), world_teardown->prologue_size};
+        std::span<const u8>{world_teardown.prologue.data(), world_teardown.prologue_size};
     world_teardown_hook_installed = InstallCoopHook(
         reinterpret_cast<void*>(base + WorldTeardownMatchingOffset), world_teardown_expected,
-        static_cast<size_t>(std::distance(Sites.begin(), world_teardown)), TraceEntry);
+        static_cast<size_t>(&world_teardown - Sites.data()), TraceEntry);
     if (!world_teardown_hook_installed) {
         LOG_ERROR(Debug, "Failed to install Bloodborne world-teardown hook at {:#x}",
                   WorldTeardownMatchingOffset);
@@ -608,7 +579,11 @@ void InstallSeamlessCoopPatches() {
     } else {
         coop_features.On("world teardown");
     }
+}
 
+// The features on top of the core, each on its own (see coop_features), and the services they
+// run.
+void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallGhostDeathRevive(base, image_size);
     InstallNoEchoTheft(base, image_size);
     InstallHostDeathKeepsGuests(base, image_size);
@@ -634,7 +609,10 @@ void InstallSeamlessCoopPatches() {
     StartRestBoardClient();
     StartVitalsBoardClient();
     PatchSignTimers(base, image_size);
+}
 
+// The core's byte patches, written.
+void WriteSeamlessCoreBytePatches(u64 base) {
     WriteCoopPatches(base, "seamless core");
     negative_area_patch_installed = true;
     area_flag_patch_installed = true;
@@ -649,6 +627,69 @@ void InstallSeamlessCoopPatches() {
     summon_build_world_state_patch_installed = true;
     summon_build_negative_event_patch_installed = true;
     stage_transition_keep_matching_patch_installed = true;
+}
+
+} // namespace
+
+void InstallSeamlessCoopPatches() {
+    if (SeamlessCoreInstalled() || !EnvFlagEnabled("SHADPS4_BLOODBORNE_SEAMLESS_COOP")) {
+        return;
+    }
+    if (!IsSeamlessCoopGame()) {
+        return;
+    }
+
+    const auto base = MemoryPatcher::g_eboot_address;
+    const auto image_size = MemoryPatcher::g_eboot_image_size;
+    coop_features = {};
+    const TraceSite* summon_build_entry = FindSite(SummonBuildEntryOffset);
+    const TraceSite* cross_map_guest_handoff = FindSite(CrossMapGuestHandoffOffset);
+    const TraceSite* deferred_summon_reload = FindSite(SosStatusUpdateOffset);
+    const TraceSite* summon_reload_state = FindSite(StageWarpDescriptorFinalizeOffset);
+    const TraceSite* healing_fountain_host_availability =
+        FindSite(HealingFountainAvailabilityOffset);
+    const TraceSite* world_teardown = FindSite(WorldTeardownMatchingOffset);
+    if (!summon_build_entry || !cross_map_guest_handoff || !deferred_summon_reload ||
+        !summon_reload_state || !healing_fountain_host_availability || !world_teardown) {
+        LOG_ERROR(Debug, "Bloodborne seamless functional hook site is missing");
+        return;
+    }
+    if (base == 0) {
+        LOG_ERROR(Debug, "Bloodborne seamless patches lie outside the eboot image");
+        return;
+    }
+
+    // All of the core or none of it. Every site is checked before anything is written: its byte
+    // patches, its hooks and the game functions the cross-map summon calls (the co-op site table,
+    // bloodborne_patch_sites.h).
+    if (!CoopSitesMatch(base, image_size, "seamless core", "no seamless co-op")) {
+        LogCoopFeatures();
+        return;
+    }
+    image_base = base;
+    // Then the hooks (InstallCoreHooks: all or none).
+    const std::array<CoreHook, 5> core_hooks{{
+        {SummonBuildEntryOffset, summon_build_entry, &summon_build_host_placement_hook_installed,
+         "cross-map host-placement"},
+        {CrossMapGuestHandoffOffset, cross_map_guest_handoff,
+         &cross_map_guest_handoff_hook_installed, "cross-map guest-handoff"},
+        {StageWarpDescriptorFinalizeOffset, summon_reload_state,
+         &summon_reload_state_hook_installed, "summon-reload state"},
+        {SosStatusUpdateOffset, deferred_summon_reload, &deferred_summon_reload_hook_installed,
+         "deferred summon-reload"},
+        {HealingFountainAvailabilityOffset, healing_fountain_host_availability,
+         &healing_fountain_host_availability_hook_installed, "healing-fountain host-availability"},
+    }};
+    if (!InstallCoreHooks(base, image_size, core_hooks)) {
+        return;
+    }
+    coop_features.On("seamless core");
+    InitPartyController();
+    InstallWorldTeardownHook(base, image_size, *world_teardown);
+
+    InstallCoopFeatures(base, image_size);
+
+    WriteSeamlessCoreBytePatches(base);
     LOG_INFO(Debug,
              "Bloodborne seamless patches enabled Beckoning, Small Resonant, and Sinister Bell "
              "use, active search, cross-map candidate selection, and native summon construction "
