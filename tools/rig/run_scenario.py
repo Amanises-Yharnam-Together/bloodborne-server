@@ -793,6 +793,13 @@ def role_text(run_dir: pathlib.Path, role: str, stages: int) -> str:
     return "\n".join(until_done(text) for text in texts + [read_log(role)])
 
 
+def failed_fatal_chapter(text: str, status: str, scenario: dict) -> bool:
+    """A suite game's script ended (failed) in a chapter the rest needs (the join): the suite
+    stops, and the game is not started again for its next stage."""
+    ended_in = list(chapter_sections(text))
+    return status == "failed" and bool(ended_in) and ended_in[-1] in scenario.get("fatal", [])
+
+
 def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None = None) -> bool:
     scenario = scenario or RUNNABLE[name]
     roles = list(scenario["roles"])
@@ -858,7 +865,9 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
             found = DONE.search(text)
             # A suite's game goes on to its next stage even after a failed chapter (keep-going):
             # its later chapters are judged on their own.
-            if found and (found.group(1) == "ok" or syncs) and stage[role] + 1 < len(stages[role]):
+            fatal = found is not None and failed_fatal_chapter(text, found.group(1), scenario)
+            if (found and (found.group(1) == "ok" or syncs) and not fatal
+                    and stage[role] + 1 < len(stages[role])):
                 stage[role] += 1
                 print(f"  {role} stage {stage[role]} done after {time.time() - started:.0f} s; "
                       "stopping its game and starting it again")
@@ -873,10 +882,9 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
             elif found:
                 done[role] = found.group(1)
                 print(f"  {role} done ({found.group(1)}) after {time.time() - started:.0f} s")
-                ended_in = list(chapter_sections(text))
-                if found.group(1) == "failed" and ended_in and ended_in[-1] in scenario.get(
-                        "fatal", []):
-                    print(f"  {role} failed {ended_in[-1]}, which the rest needs: stopping")
+                if fatal:
+                    print(f"  {role} failed {list(chapter_sections(text))[-1]}, which the rest "
+                          "needs: stopping")
                     fatal_failure = True
             elif reports := new_crashes(role, started):
                 crashed[role] = reports[0]
@@ -885,7 +893,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
                 # Gone without a crash report: it never got going (the memory ran out, say).
                 crashed[role] = boot_failure(read_log(role)) or "the game exited"
                 print(f"  {role} stopped after {time.time() - started:.0f} s: {crashed[role]}")
-        if crashed:
+        if crashed or fatal_failure:
             break  # the others wait for it in vain
         for name in syncs_to_release(syncs, reached, given_up, set(done), released):
             released.add(name)

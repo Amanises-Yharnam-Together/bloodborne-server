@@ -217,7 +217,7 @@ class SuiteTest(unittest.TestCase):
             commands = [command.split()[0] for script in suite_scripts(scenario).values()
                         for command in script]
             with self.subTest(suite=name):
-                self.assertEqual(settings.get("BB_FPS"), "uncap", "the kit's frame rate patches")
+                self.assertEqual(settings.get("BB_FPS"), "30", "uncapped: no third summon (join3-uncap)")
                 if any(verb in ("approach-downed", "revive-downed", "wait-vital",
                                 "wait-member-vital") for verb in commands):
                     self.assertEqual(settings.get("SHADPS4_BLOODBORNE_PARTY_DEATH"), "1")
@@ -623,6 +623,18 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("FAILED", sections["trip"])
         self.assertNotIn("FAILED", sections["wipe"])
         self.assertEqual(run_scenario.chapter_sections("no chapters"), {})
+
+    def test_a_failed_join_stops_the_suite_and_restarts_nobody(self):
+        # Rig 2026-10-12 smoke: the join timed out, and the guest's game was started again for
+        # its next stage anyway (its log of the failure set aside).
+        scenario = {"fatal": ["join"]}
+        log = ("Bloodborne autoplay: chapter join\nBloodborne autoplay: step 7/50 wait-session 3 "
+               "480 FAILED: timed out\nBloodborne autoplay: done (failed)\n")
+        self.assertTrue(run_scenario.failed_fatal_chapter(log, "failed", scenario))
+        self.assertFalse(run_scenario.failed_fatal_chapter(log, "ok", scenario))
+        later = log.replace("chapter join", "chapter join\nBloodborne autoplay: chapter trip")
+        self.assertFalse(run_scenario.failed_fatal_chapter(later, "failed", scenario))
+        self.assertFalse(run_scenario.failed_fatal_chapter("no chapters", "failed", scenario))
 
     def test_a_chapter_is_judged_like_a_scenario(self):
         spec = {"expect": {"host": [r"kill board gets 1 kills"]},
