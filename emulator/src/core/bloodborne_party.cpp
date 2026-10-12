@@ -3648,16 +3648,40 @@ bool TitlePressesCross(u64 ms) {
     return ms >= Period && ms % Period < Held;
 }
 
-std::optional<std::string> AutoplayShotPath(std::string_view request, std::string_view name) {
+namespace {
+// A file name a script gives (shot, sync): 1 to 40 letters, digits, '-' or '_'.
+bool IsPlainAutoplayName(std::string_view name) {
     const auto plain = [](char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
                c == '-' || c == '_';
     };
-    if (request.empty() || name.empty() || name.size() > 40 || !std::ranges::all_of(name, plain)) {
+    return !name.empty() && name.size() <= 40 && std::ranges::all_of(name, plain);
+}
+} // namespace
+
+std::optional<std::string> AutoplayShotPath(std::string_view request, std::string_view name) {
+    if (request.empty() || !IsPlainAutoplayName(name)) {
         return std::nullopt;
     }
     const std::filesystem::path shots = std::filesystem::path{request}.parent_path() / "shots";
     return (shots / (std::string{name} + ".png")).string();
+}
+
+std::optional<std::string> AutoplaySyncPath(std::string_view script, std::string_view name) {
+    if (script.empty() || !IsPlainAutoplayName(name)) {
+        return std::nullopt;
+    }
+    return (std::filesystem::path{script}.parent_path() / "sync" / std::string{name}).string();
+}
+
+std::optional<size_t> NextAutoplayChapter(const std::vector<AutoplayCommand>& script,
+                                          size_t failed) {
+    for (size_t at = failed + 1; at < script.size(); ++at) {
+        if (script[at].verb == "chapter") {
+            return at;
+        }
+    }
+    return std::nullopt;
 }
 
 std::optional<u32> ParseAutoplayTarget(std::string_view text) {

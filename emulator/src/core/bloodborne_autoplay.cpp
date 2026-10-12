@@ -85,6 +85,10 @@ struct AutoplayRun {
     s32 noted_max_hp = 0;             // note-max-hp: the player's max HP then
     u32 pickup_handle = 0;            // pickup: the map item it went for
     s32 hit_from_hp = 0;              // hit: the target's HP when it began
+    std::string script_path;          // sync: the go files are beside it (AutoplaySyncPath)
+    std::string chapter;              // the chapter the script is in (a rig suite's section)
+    bool keep_going = false;          // keep-going on: a failed step gives up only its chapter
+    bool failed = false;              // a step failed and the script went on: "done (failed)"
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -102,6 +106,7 @@ void LoadAutoplay() {
     const std::string text{std::istreambuf_iterator<char>{file}, {}};
     std::scoped_lock lock{autoplay_mutex};
     autoplay_run.script = ParseAutoplayScript(text);
+    autoplay_run.script_path = path;
     autoplay_run.phase = AutoplayRun::Phase::Title;
     autoplay_run.started = std::chrono::steady_clock::now();
     LOG_INFO(Debug, "Bloodborne autoplay: {} steps from {}", autoplay_run.script.size(), path);
@@ -808,6 +813,43 @@ bool AutoplaySnapshot(const AutoplayStep&) {
     return true;
 }
 
+// chapter <name>: a rig suite's next section; the rig judges each one on its own lines.
+bool AutoplayChapter(const AutoplayStep& step) {
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.chapter = std::string{step.Arg(0)};
+    LOG_INFO(Debug, "Bloodborne autoplay: chapter {}", step.Arg(0));
+    return true;
+}
+
+// keep-going <on|off>: on, a failed step gives up its chapter and the script goes on at the next
+// one (NextAutoplayChapter); off (a chapter the rest needs, as the join), it ends there.
+bool AutoplayKeepGoing(const AutoplayStep& step) {
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.keep_going = step.Arg(0) == "on";
+    return true;
+}
+
+// sync <name> [<timeout>]: wait until every game of the suite got here: the rig sees each one's
+// "reached" line and writes the go file (AutoplaySyncPath) for all of them at once.
+bool AutoplaySync(const AutoplayStep& step) {
+    std::string script;
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        script = autoplay_run.script_path;
+    }
+    const auto path = AutoplaySyncPath(script, step.Arg(0));
+    if (!path) {
+        step.failure = "no such sync name";
+        return false;
+    }
+    if (!step.begun) {
+        LOG_INFO(Debug, "Bloodborne autoplay: sync {} reached (t={:.1f})", step.Arg(0),
+                 SteadyMilliseconds() / 1000.0);
+    }
+    std::error_code error;
+    return std::filesystem::exists(*path, error) || step.WaitedOut(step.Number(1, 600));
+}
+
 bool AutoplayCensus(const AutoplayStep& step) {
     LogAutoplayCensus(static_cast<float>(step.Number(0, 60)));
     return true;
@@ -1137,6 +1179,9 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-session", AutoplayExpectSession},
     {"expect-others-near", AutoplayExpectOthersNear},
     {"expect-map", AutoplayExpectMap},
+    {"chapter", AutoplayChapter},
+    {"keep-going", AutoplayKeepGoing},
+    {"sync", AutoplaySync},
     {"done", AutoplayDone},
 });
 
@@ -1195,7 +1240,8 @@ void TickAutoplay() {
         if (autoplay_run.next >= autoplay_run.script.size() ||
             autoplay_run.script[autoplay_run.next].verb == "done") {
             autoplay_run.phase = AutoplayRun::Phase::Done;
-            LOG_INFO(Debug, "Bloodborne autoplay: done (ok)");
+            LOG_INFO(Debug, "Bloodborne autoplay: done ({})",
+                     autoplay_run.failed ? "failed" : "ok");
             return;
         }
         command = autoplay_run.script[autoplay_run.next];
@@ -1211,10 +1257,21 @@ void TickAutoplay() {
     if (!failure.empty()) {
         LOG_ERROR(Debug, "Bloodborne autoplay: step {}/{} {} FAILED: {}", index + 1, total,
                   AutoplayText(command), failure);
-        LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
-        autoplay_run.phase = AutoplayRun::Phase::Done;
         autoplay_buttons.store(0);
         autoplay_sticks.store(0x80808080);
+        if (autoplay_run.keep_going) {
+            if (const auto next = NextAutoplayChapter(autoplay_run.script, index)) {
+                // The rig lets the others past this chapter's syncs (they would wait in vain).
+                LOG_INFO(Debug, "Bloodborne autoplay: chapter {} given up", autoplay_run.chapter);
+                autoplay_run.failed = true;
+                autoplay_run.next = *next;
+                autoplay_run.step_started = std::chrono::steady_clock::now();
+                autoplay_run.step_begun = false;
+                return;
+            }
+        }
+        LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
+        autoplay_run.phase = AutoplayRun::Phase::Done;
         return;
     }
     if (finished && !autoplay_run.hold_until) {

@@ -16,6 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import engines  # noqa: E402
 import run_scenario  # noqa: E402
 import scenarios  # noqa: E402
+import suites  # noqa: E402
 
 # The game's autoplay verbs (AutoplayVerbs, bloodborne_autoplay.cpp; VerbsTest keeps them equal).
 VERBS = {
@@ -115,6 +116,129 @@ class ScenarioTest(unittest.TestCase):
 
     def test_an_attack_is_one_step_with_a_time_limit(self):
         self.assertEqual(scenarios.attack("marked"), ["attack marked 40"])
+
+
+SUITE_VERBS = VERBS | {"sync", "chapter", "keep-going"}
+PLAIN_NAME = r"^[A-Za-z0-9_-]{1,40}$"  # AutoplaySyncPath's
+
+
+def suite_scripts(scenario: dict) -> dict[str, list[str]]:
+    """Each game's commands of a compiled suite, its stages one after the other."""
+    return {role: sum(run_scenario.stages_of(script), [])
+            for role, script in scenario["roles"].items()}
+
+
+class SuiteTest(unittest.TestCase):
+    def test_every_command_is_one_the_game_runs(self):
+        for name, scenario in suites.SUITE_SCENARIOS.items():
+            for role, script in suite_scripts(scenario).items():
+                for command in script:
+                    words = command.split()
+                    with self.subTest(suite=name, role=role, command=command):
+                        self.assertIn(words[0], SUITE_VERBS)
+                        if words[0] == "press":
+                            self.assertIn(words[1], BUTTONS)
+                        if words[0] in ("wait-vital", "wait-member-vital"):
+                            self.assertIn(words[1], VITALS)
+                        if words[0] == "keep-going":
+                            self.assertIn(words[1], ("on", "off"))
+
+    def test_every_game_starts_where_the_baseline_is_and_marks_each_chapter(self):
+        for name, scenario in suites.SUITE_SCENARIOS.items():
+            chapters = [chapter["name"] for chapter in scenario["chapters"]]
+            for role, script in suite_scripts(scenario).items():
+                with self.subTest(suite=name, role=role):
+                    self.assertEqual(run_scenario.stages_of(scenario["roles"][role])[0][0],
+                                     scenarios.START)
+                    marked = list(dict.fromkeys(command.split()[1] for command in script
+                                                if command.startswith("chapter ")))
+                    self.assertEqual(marked, chapters)
+
+    def test_chapter_and_sync_names_are_plain_and_unique(self):
+        for name, suite in suites.SUITES.items():
+            chapters = [chapter["name"] for chapter in suite["chapters"]]
+            with self.subTest(suite=name):
+                self.assertEqual(len(chapters), len(set(chapters)))
+                for chapter in chapters:
+                    self.assertRegex(chapter, PLAIN_NAME)
+            for role, script in suite_scripts(suites.SUITE_SCENARIOS[name]).items():
+                syncs = [command.split()[1] for command in script if command.startswith("sync ")]
+                with self.subTest(suite=name, role=role):
+                    self.assertEqual(len(syncs), len(set(syncs)), "a game passes each once")
+                    for sync in syncs:
+                        self.assertRegex(sync, PLAIN_NAME)
+
+    def test_every_sync_has_two_games_and_they_meet_in_one_order(self):
+        # A sync waits for every game that has it: one only it has would wait for nobody, and two
+        # games passing two syncs in opposite orders would wait for each other forever.
+        for name, scenario in suites.SUITE_SCENARIOS.items():
+            scripts = suite_scripts(scenario)
+            order = {role: [command.split()[1] for command in script
+                            if command.startswith("sync ")] for role, script in scripts.items()}
+            for sync, spec in scenario["syncs"].items():
+                with self.subTest(suite=name, sync=sync):
+                    self.assertGreaterEqual(len(spec["roles"]), 2)
+                    self.assertEqual(sorted(spec["roles"]),
+                                     sorted(role for role in scripts if sync in order[role]))
+            for first in scripts:
+                for second in scripts:
+                    shared = [sync for sync in order[first] if sync in order[second]]
+                    with self.subTest(suite=name, games=(first, second)):
+                        self.assertEqual(shared, [sync for sync in order[second]
+                                                  if sync in order[first]])
+
+    def test_every_chapter_waits_for_every_game_first(self):
+        for name, scenario in suites.SUITE_SCENARIOS.items():
+            for chapter in scenario["chapters"]:
+                with self.subTest(suite=name, chapter=chapter["name"]):
+                    self.assertEqual(sorted(scenario["syncs"][chapter["name"]]["roles"]),
+                                     sorted(scenario["roles"]))
+
+    def test_checks_name_the_suites_games_and_compile(self):
+        for name, scenario in suites.SUITE_SCENARIOS.items():
+            for chapter in scenario["chapters"]:
+                with self.subTest(suite=name, chapter=chapter["name"]):
+                    for key in ("expect", "forbid"):
+                        self.assertTrue(set(chapter.get(key, {})) <= set(scenario["roles"]))
+                        for patterns in chapter.get(key, {}).values():
+                            for pattern in patterns:
+                                re.compile(pattern)
+                    for pattern in chapter.get("allow", []):
+                        re.compile(pattern)
+                    if "max_hp_lag" in chapter:
+                        self.assertIn("hp_sums_hits", chapter)
+
+    def test_suites_play_as_players_do_unless_they_test_without_party_death(self):
+        for name, scenario in suites.SUITE_SCENARIOS.items():
+            settings = scenario["settings"]
+            commands = [command.split()[0] for script in suite_scripts(scenario).values()
+                        for command in script]
+            with self.subTest(suite=name):
+                self.assertEqual(settings.get("BB_FPS"), "uncap", "the kit's frame rate patches")
+                if any(verb in ("approach-downed", "revive-downed", "wait-vital",
+                                "wait-member-vital") for verb in commands):
+                    self.assertEqual(settings.get("SHADPS4_BLOODBORNE_PARTY_DEATH"), "1")
+
+    def test_a_restart_starts_the_game_again_in_the_same_chapter(self):
+        suite = {"about": "x", "roles": ("host", "guest"), "chapters": [
+            suites.chapter("join", "j", {"host": ["wait 1"]}, fatal=True, setup=True),
+            suites.chapter("crash", "c", {"guest": ["sync c-ready", suites.RESTART, "wait 2"],
+                                          "host": ["sync c-ready"]}),
+            suites.chapter("trip", "t", {"host": ["wait 3"]}),
+        ]}
+        compiled = suites.compile_suite(suite)
+        self.assertEqual(compiled["roles"]["guest"], [
+            [scenarios.START, "chapter join", "keep-going off", "sync join",
+             "chapter crash", "keep-going on", "sync crash", "sync c-ready"],
+            ["chapter crash", "keep-going on", "wait 2", "chapter trip", "keep-going on",
+             "sync trip"]])
+        self.assertEqual(compiled["roles"]["host"][-3:], ["keep-going on", "sync trip", "wait 3"])
+        self.assertEqual(compiled["syncs"]["c-ready"], {"chapter": "crash",
+                                                        "roles": ["host", "guest"]})
+        self.assertEqual(compiled["fatal"], ["join"])
+        only = suites.compile_suite(suite, only=["trip"])
+        self.assertEqual([c["name"] for c in only["chapters"]], ["join", "trip"],
+                         "a chapter alone still gets its join")
 
 
 class RunnerTest(unittest.TestCase):
@@ -286,6 +410,71 @@ class RunnerTest(unittest.TestCase):
             texts["host"], low.format("0x1001400b", 280, 178, "145.0"),
             low.format("0x1001400b", 76, 178, "145.1")]))
         self.assertAlmostEqual(run_scenario.hp_board_lag(later, "0x1001400b"), 1.1 / 3)
+
+    def test_a_sync_is_let_go_once_every_game_in_it_reached_it(self):
+        log = ("[Debug] <Info> () x: Bloodborne autoplay: sync join reached (t=10.0)\n"
+               "[Debug] <Info> () x: Bloodborne autoplay: step 4/9 sync join ok (t=11.0)\n"
+               "[Debug] <Info> () x: Bloodborne autoplay: sync host-back reached (t=40.0)\r\n")
+        self.assertEqual(run_scenario.syncs_reached(log), {"join", "host-back"})
+        syncs = {"join": {"chapter": "join", "roles": ["host", "guest"]},
+                 "host-back": {"chapter": "trip", "roles": ["host", "guest"]},
+                 "trip-done": {"chapter": "trip", "roles": ["host", "guest"]}}
+        reached = {"host": {"join", "host-back"}, "guest": {"join"}}
+        self.assertEqual(run_scenario.syncs_to_release(syncs, reached, set(), set(), set()),
+                         ["join"])
+        self.assertEqual(run_scenario.syncs_to_release(syncs, reached, set(), set(), {"join"}),
+                         [], "once")
+        # The guest gave up the trip chapter (a failed step, keep-going on): the host is let past
+        # its syncs instead of waiting there in vain.
+        self.assertEqual(run_scenario.syncs_to_release(syncs, reached, {"trip"}, set(), {"join"}),
+                         ["host-back", "trip-done"])
+        # A game whose script ended (or crashed) never gets there either: the others go on as
+        # each reaches it.
+        self.assertEqual(run_scenario.syncs_to_release(syncs, reached, set(), {"guest"}, {"join"}),
+                         ["host-back"])
+        with tempfile.TemporaryDirectory() as folder:
+            role_dir = pathlib.Path(folder)
+            run_scenario.write_go_file(role_dir, "host-back")
+            self.assertTrue((role_dir / "sync" / "host-back").is_file())
+            run_scenario.clear_go_files(role_dir)
+            self.assertFalse((role_dir / "sync").exists(), "the next suite starts with none")
+
+    def test_a_suites_log_is_judged_chapter_by_chapter(self):
+        log = "\n".join([
+            "[Debug] <Info> () x: Bloodborne autoplay: step 1/9 ensure-map 0x18010000 ok",
+            "[Debug] <Info> () x: Bloodborne autoplay: chapter join",
+            "[Debug] <Info> () x: Bloodborne autoplay: step 3/9 chapter join ok (t=1.0)",
+            "joined",
+            "[Debug] <Info> () x: Bloodborne autoplay: chapter trip\r",
+            "tripped",
+            "[Debug] <Info> () x: Bloodborne autoplay: step 6/9 expect-session 2 FAILED: 1",
+            "[Debug] <Info> () x: Bloodborne autoplay: chapter trip given up",
+            "[Debug] <Info> () x: Bloodborne autoplay: chapter wipe",
+            "wiped",
+            "[Debug] <Info> () x: Bloodborne autoplay: chapter trip",  # back after a restart
+            "rejoined",
+        ])
+        sections = run_scenario.chapter_sections(log)
+        self.assertEqual(list(sections), ["join", "trip", "wipe"])
+        self.assertIn("joined", sections["join"])
+        self.assertNotIn("tripped", sections["join"])
+        self.assertIn("tripped", sections["trip"])
+        self.assertIn("rejoined", sections["trip"], "a restarted game's lines join its chapter")
+        self.assertIn("FAILED", sections["trip"])
+        self.assertNotIn("FAILED", sections["wipe"])
+        self.assertEqual(run_scenario.chapter_sections("no chapters"), {})
+
+    def test_a_chapter_is_judged_like_a_scenario(self):
+        spec = {"expect": {"host": [r"kill board gets 1 kills"]},
+                "forbid": {"guest": [r"sceNpMatching2LeaveRoom: called"]}}
+        texts = {"host": "Bloodborne party: kill board gets 1 kills", "guest": "fine"}
+        self.assertEqual(run_scenario.judge(spec, texts), [])
+        problems = run_scenario.judge(spec, {"host": "nothing", "guest":
+                                             "sceNpMatching2LeaveRoom: called\n"
+                                             "Bloodborne autoplay: step 2/3 hit x FAILED: no"})
+        self.assertTrue(any("expected, not seen" in p and p.startswith("host") for p in problems))
+        self.assertTrue(any("must not happen" in p and p.startswith("guest") for p in problems))
+        self.assertTrue(any("FAILED: no" in p for p in problems))
 
     def test_old_runs_go_newest_stay(self):
         with tempfile.TemporaryDirectory() as folder:

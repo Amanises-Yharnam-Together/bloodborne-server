@@ -130,3 +130,33 @@ TEST(BloodborneAutoplay, AShotGoesIntoTheShotsFolderBesideTheRequest) {
     EXPECT_EQ(AutoplayShotPath(request.string(), std::string(41, 'a')), std::nullopt);
     EXPECT_EQ(AutoplayShotPath("", "down"), std::nullopt) << "no request file, no picture";
 }
+
+// sync <name>: every game of a rig suite waits there until the rig sees all of them at it and
+// writes the go file <the script's folder>/sync/<name> (run_scenario.py).
+TEST(BloodborneAutoplay, ASyncWaitsForItsGoFileBesideTheScript) {
+    const std::filesystem::path script =
+        std::filesystem::path{"rig"} / "port" / "guest" / "autoplay.txt";
+    EXPECT_EQ(AutoplaySyncPath(script.string(), "host-back"),
+              (script.parent_path() / "sync" / "host-back").string());
+    EXPECT_EQ(AutoplaySyncPath(script.string(), "trips_2"),
+              (script.parent_path() / "sync" / "trips_2").string());
+    for (const char* name : {"", "a b", "../host", "a/b", "a\\b", "go!"}) {
+        EXPECT_EQ(AutoplaySyncPath(script.string(), name), std::nullopt) << name;
+    }
+    EXPECT_EQ(AutoplaySyncPath(script.string(), std::string(41, 'a')), std::nullopt);
+    EXPECT_EQ(AutoplaySyncPath("", "go"), std::nullopt) << "no script file, nothing to wait for";
+}
+
+// keep-going on: a step that fails gives up its chapter, not the whole suite; the script goes on
+// at the next chapter, or ends (failed) when none is left.
+TEST(BloodborneAutoplay, AFailedStepGoesOnAtTheNextChapter) {
+    const auto script = ParseAutoplayScript("keep-going on\nchapter join\nwait-session 2 300\n"
+                                            "chapter trip\ntravel 2102962\nsync back\n"
+                                            "chapter wipe\nrise 25\n");
+    EXPECT_EQ(NextAutoplayChapter(script, 2), std::optional<size_t>{3});
+    EXPECT_EQ(NextAutoplayChapter(script, 4), std::optional<size_t>{6}) << "past its syncs";
+    EXPECT_EQ(NextAutoplayChapter(script, 3), std::optional<size_t>{6})
+        << "a failed chapter step itself goes on at the next one";
+    EXPECT_EQ(NextAutoplayChapter(script, 7), std::nullopt) << "the last chapter";
+    EXPECT_EQ(NextAutoplayChapter({}, 0), std::nullopt);
+}
