@@ -14,6 +14,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_set>
 #include <vector>
 
@@ -902,6 +903,37 @@ struct DirectKills {
     std::vector<u32> handles;
     bool operator==(const DirectKills&) const = default;
 };
+// Which build each game runs (robustness review 2026-10-12): games on different builds shared a
+// party without a word, and the frames above carry no version. Every game sends its hello to the
+// room's peers every PeerHelloResendMs and at once to a new peer; a peer on another protocol,
+// build or set of event files is logged once. Builds before it drop the type: their decoders
+// take only the types they know.
+constexpr u8 PeerHelloType = 0x33;
+// Raised when a co-op frame's meaning changes.
+constexpr u8 CoopProtocolVersion = 1;
+constexpr s64 PeerHelloResendMs = 10'000;
+struct PeerHello {
+    u8 protocol = CoopProtocolVersion;
+    std::string revision; // the build's source revision ("-dirty": changes not in a commit)
+    u64 event_files = 0;  // a hash of the map event files the game reads, 0 when unknown
+    std::string member;   // the board's name for the member, "" before it has one
+    bool operator==(const PeerHello&) const = default;
+};
+// The payload: protocol, revision (u8 length first), event files (u64), member (u8 length
+// first). A decoder takes a longer payload (fields a later build added).
+std::vector<u8> EncodePeerHello(const PeerHello& hello);
+std::optional<PeerHello> DecodePeerHello(std::span<const u8> payload);
+class PeerBuildCheck {
+public:
+    // The warning line when a peer's hello differs from this game's, once per member and build.
+    std::optional<std::string> Take(const PeerHello& theirs, const PeerHello& mine);
+
+private:
+    std::set<std::tuple<std::string, u8, std::string, u64>> warned;
+};
+// A hash of the map event files (*.emevd.dcx) in `folder`, the game's dvdroot_ps4/event (the
+// co-op kit replaces some): names and bytes. 0 when there are none or one cannot be read.
+u64 EventFilesHash(const std::filesystem::path& folder);
 std::vector<u8> EncodeDirectKills(std::string_view member, std::span<const u32> handles);
 std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload);
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills);

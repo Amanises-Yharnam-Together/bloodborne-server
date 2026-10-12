@@ -23,6 +23,9 @@ void LogGameCallChain(const char* what);
 void TraceMatching2LeaveRoom(std::uintptr_t return_address, std::uint64_t room_id);
 void InstallSeamlessCoopPatches();
 void InstallReverseEngineeringTrace();
+// This build's revision and its event files' hash (EventFilesHash, 0 unknown), for the hello the
+// game sends its room peers (PeerHelloType). Before it is called no hello goes out.
+void SetBuildIdentity(std::string_view revision, std::uint64_t event_files);
 // Tells the party code which character save slot the game opened last.
 void NoteSaveFileOpened(std::string_view guest_path);
 // Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY): the buttons and sticks (lx, ly, rx, ry) it holds now;

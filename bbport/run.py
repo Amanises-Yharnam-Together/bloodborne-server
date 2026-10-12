@@ -225,6 +225,7 @@ def main():
                 env.pop(key, None)
         fps = env.get('BB_FPS', 'uncap') if patched else '30'
         fps = frame_mode(fps, ini_value(config, 'fps_limit'))
+        env['BB_FPS_PRESET'] = fps  # for the co-op log's header line (bbcoop/coop.cpp)
         scaled_render = scaled_output = None
         if not env.get('BB_RENDER_RES'):
             printed = run_script('patches.py', '--print-scaled', '--settings', config, capture=True).split()

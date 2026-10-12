@@ -3042,6 +3042,96 @@ std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload) {
     return kills;
 }
 
+std::vector<u8> EncodePeerHello(const PeerHello& hello) {
+    std::vector<u8> payload{hello.protocol};
+    const size_t revision = std::min<size_t>(hello.revision.size(), 0xFF);
+    payload.push_back(static_cast<u8>(revision));
+    payload.insert(payload.end(), hello.revision.begin(), hello.revision.begin() + revision);
+    AppendLittleEndian(payload, hello.event_files);
+    const size_t member = std::min<size_t>(hello.member.size(), 0xFF);
+    payload.push_back(static_cast<u8>(member));
+    payload.insert(payload.end(), hello.member.begin(), hello.member.begin() + member);
+    return payload;
+}
+
+std::optional<PeerHello> DecodePeerHello(std::span<const u8> payload) {
+    if (payload.size() < 2 || payload.size() < 2u + payload[1] + 8u + 1u) {
+        return std::nullopt;
+    }
+    PeerHello hello{.protocol = payload[0]};
+    const size_t revision = payload[1];
+    hello.revision.assign(payload.begin() + 2, payload.begin() + 2 + revision);
+    hello.event_files = ReadLittleEndian<u64>(payload, 2 + revision);
+    const size_t member_at = 2 + revision + 8;
+    const size_t member = payload[member_at];
+    if (payload.size() < member_at + 1 + member) {
+        return std::nullopt;
+    }
+    hello.member.assign(payload.begin() + member_at + 1, payload.begin() + member_at + 1 + member);
+    return hello;
+}
+
+std::optional<std::string> PeerBuildCheck::Take(const PeerHello& theirs, const PeerHello& mine) {
+    // A game that could not read its event files (0) says nothing about them.
+    const bool events_differ =
+        theirs.event_files != 0 && mine.event_files != 0 && theirs.event_files != mine.event_files;
+    if (theirs.protocol == mine.protocol && theirs.revision == mine.revision && !events_differ) {
+        return std::nullopt;
+    }
+    if (!warned.emplace(theirs.member, theirs.protocol, theirs.revision, theirs.event_files)
+             .second) {
+        return std::nullopt;
+    }
+    std::string line = fmt::format("Co-op: {} runs build {}, this game runs {}",
+                                   theirs.member.empty() ? "a peer" : theirs.member,
+                                   theirs.revision.empty() ? "?" : theirs.revision,
+                                   mine.revision.empty() ? "?" : mine.revision);
+    if (theirs.protocol != mine.protocol) {
+        line += fmt::format(" (co-op protocol {}, this game's {})", theirs.protocol, mine.protocol);
+    }
+    if (events_differ) {
+        line += fmt::format("; event files {:016x}, this game's {:016x}", theirs.event_files,
+                            mine.event_files);
+    }
+    return line;
+}
+
+u64 EventFilesHash(const std::filesystem::path& folder) {
+    std::error_code error;
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator{folder, error}) {
+        const std::string name = entry.path().filename().string();
+        if (name.ends_with(".emevd.dcx")) {
+            files.push_back(entry.path());
+        }
+    }
+    if (files.empty()) {
+        return 0;
+    }
+    std::ranges::sort(files);
+    // FNV-1a over each file's name and bytes.
+    u64 hash = 0xcbf29ce484222325ull;
+    const auto mix = [&hash](std::span<const char> bytes) {
+        for (const char byte : bytes) {
+            hash = (hash ^ static_cast<u8>(byte)) * 0x100000001b3ull;
+        }
+    };
+    std::vector<char> chunk(1 << 16);
+    for (const auto& path : files) {
+        const std::string name = path.filename().string();
+        mix(name);
+        std::ifstream file{path, std::ios::binary};
+        if (!file) {
+            return 0;
+        }
+        while (file.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) ||
+               file.gcount() > 0) {
+            mix(std::span{chunk.data(), static_cast<size_t>(file.gcount())});
+        }
+    }
+    return hash != 0 ? hash : 1;
+}
+
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills) {
     std::unordered_set<u32> handles;
     for (const DirectKills& member : kills) {
