@@ -960,6 +960,7 @@ if (ARCHITECTURE STREQUAL "x86_64")
              src/core/bloodborne_patches.cpp
              src/core/bloodborne_join.cpp
              src/core/bloodborne_travel.cpp
+             src/core/bloodborne_flags_store.cpp
              src/core/bloodborne_write_watch.cpp
              src/core/bloodborne_write_watch.h
              src/core/cpu_patches.cpp

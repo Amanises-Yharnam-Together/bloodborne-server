@@ -240,6 +240,8 @@ template <typename T>
 T ReadValue(u64 address, size_t offset) {
     return TryRead<T>(address, offset).value_or(T{});
 }
+bool HasVtable(u64 object, std::span<const u64> vtables, std::string_view site);
+bool HasVtable(u64 object, u64 vtable, std::string_view site);
 bool IsCharacter(u64 object, std::string_view site);
 bool HasVirtual(u64 object, u64 slot, u64 function, std::string_view site);
 
@@ -311,9 +313,17 @@ extern std::mutex rest_board_mutex;
 extern std::vector<LampRest> rest_board;
 extern std::chrono::steady_clock::time_point rest_board_time;
 extern std::atomic<u32> party_map_now;
+extern std::atomic<bool> trophy_board_active;
+extern std::mutex trophy_mutex;
+extern std::vector<s32> trophies_earned_in_party;
+void NoteGameTrophyUnlock(s32 trophy);
+void ReadTrophyBoard(std::span<const s32> board);
 void UnlockPartyTrophies(bool sharing);
+extern std::mutex flag_board_mutex;
 extern std::mutex map_state_mutex;
 extern std::optional<MemberMapState> host_map_state;
+extern std::vector<std::pair<s32, bool>> flags_to_set;
+void PostWorldChanges(const FlagChanges& changes);
 extern std::mutex map_board_mutex;
 extern std::vector<MemberMap> map_board;
 extern std::string map_board_member;
@@ -356,6 +366,13 @@ void ForEachWorldCharacter(u64 world, Visit&& visit) {
 }
 bool IsCharacterDisabled(u64 character);
 void TickLampRest();
+
+// Diagnostics for a guest alone on a map (the host elsewhere): its enemies lagged and took no
+// damage, the host runs them. For the 4 living characters nearest to the local player within
+// 40 m: handle, type +0x78, network update authority +0x1EC, state flags +0x1E0, and the
+// control block [+0x18] words +0x00..+0x3C, logged every 2 s on change to compare who runs an
+// enemy on the host, on a guest beside it and on a guest alone.
+void WatchEnemyHp(u64 hp_address, u32 handle);
 
 void TickPartyTrip();
 void LogJoinTaskChanges();
@@ -425,13 +442,17 @@ extern bool restore_search_pending;
 void RestoreSearchAfterTrip(bool in_session);
 void PlayGuestAsHost(bool in_session);
 void TurnOffMultiplayerWalls(bool in_session, u32 map);
+u64 FindLoadedParam(std::string_view type);
 void KeepGuestFullHp();
 void PolishMultiplayerUi();
 void InstallNoLevelSyncInParty(u64 base, u64 image_size);
 void InstallSolidNpcsInParty(u64 base, u64 image_size);
+
+void SetGuestPickupsBeforeMapItems();
 void InstallSharedLoot(u64 base, u64 image_size);
 void InstallItemModuleDiagnostics(u64 base, u64 image_size);
 void LogItemModuleChecks();
+constexpr u64 MapItemManPointerOffset = 0x0553D6E0;
 void InstallItemButtonDiagnostics(u64 base, u64 image_size);
 void LogItemButtonAndMapItems();
 extern std::atomic<int> character_slot;
@@ -439,11 +460,38 @@ extern std::atomic<int> character_slot;
 size_t SetGuestWorldChanges();
 
 std::optional<s32> CountSetFlags();
+
+// From the map item creation hook: before a load creates the guest's map items.
+size_t ApplyHostMapState();
+
+// A copy of the whole event flag store (see ChangedFlags): the manager's block map at +0x38 is a
+// tree (left +0x00, right +0x10, nil marker +0x19, block id +0x20); a block's bits are at
+// [node+0x30] (kind 2 at +0x28) or in the pool +0x28 at index [node+0x30] (kind 1), +0x20 bytes
+// each.
+struct FlagBlock {
+    u32 id = 0;
+    std::vector<u8> bytes;
+    u64 address = 0;
+};
+
+struct FlagStore {
+    u32 flags_per_block = 0;
+    std::vector<FlagBlock> blocks;
+    // Every node and block was read (none unmapped, the walk not cut short).
+    bool whole = false;
+};
+FlagStore ReadFlagStore();
 void LogWatchedWrites();
 void InstallLampsStayLitAtRegistration(u64 base, u64 image_size);
+
+// A party guest's boss item (see DefersItemLotAward): held at the award's entry and given
+// from the tick once the boss-clear sequence is over.
+constexpr u64 AwardItemLotOffset = 0x017DDC50;
+extern thread_local bool giving_deferred_item_lot;
 void GiveDeferredBossItems();
 void InstallKeepLocalFlags(u64 base, u64 image_size);
 void InstallDeferredBossItems(u64 base, u64 image_size);
+extern std::atomic<s64> world_changed_ms;
 void LogFlagChangesInSession(bool sharing);
 void KeepGuestProgress(bool in_session);
 void SetPartyWorldChanges(bool sharing);

@@ -206,6 +206,7 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_patches.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_join.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_travel.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_flags_store.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_crash_dump.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_write_watch.cpp ${BB_EMULATOR_SRC}/core/guest_hook.cpp
     ${BB_EMULATOR_SRC}/core/file_format/psf.cpp)
