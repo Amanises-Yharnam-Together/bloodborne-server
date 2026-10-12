@@ -1,0 +1,252 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include <algorithm>
+#include <cstdlib>
+#include <fstream>
+#include <limits>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <fmt/format.h>
+#include <gtest/gtest.h>
+
+#include "core/bloodborne_flags.h"
+#include "core/bloodborne_party.h"
+
+using namespace Core::Bloodborne;
+
+namespace {
+
+constexpr s32 MinSampled = std::numeric_limits<s32>::min() + 2; // flag - 1 stays in range
+constexpr s32 MaxFlag = std::numeric_limits<s32>::max();
+
+void AddAround(std::vector<s32>& sample, s64 flag, s64 reach = 2) {
+    for (s64 value = flag - reach; value <= flag + reach; ++value) {
+        if (value >= MinSampled && value <= MaxFlag) {
+            sample.push_back(static_cast<s32>(value));
+        }
+    }
+}
+
+void AddEvery(std::vector<s32>& sample, s64 from, s64 to, s64 stride) {
+    for (s64 value = from; value <= to; value += stride) {
+        AddAround(sample, value, 0);
+    }
+}
+
+// The flags the characterization looks at: every table row's edges, every flag number the
+// co-op code names, a sweep of the whole range and the map flag families, each flag of the
+// lamps' and boss fogs' windows of every map.
+std::vector<s32> FlagSample() {
+    std::vector<s32> sample;
+    for (const FlagRange& row : FlagTable) {
+        AddAround(sample, row.first);
+        AddAround(sample, row.last);
+    }
+    static constexpr s32 Named[]{
+        4000,     4047,     4050,     4063,     4999,     9000,     9180,     9181,     9198,
+        9199,     9200,     9300,     9337,     9345,     9348,     9350,     9400,     9401,
+        9402,     9403,     9404,     10007810, 12100000, 12101000, 12101009, 12101010, 12101020,
+        12101029, 12101030, 12107000, 12107810, 12110000, 12410900, 12414810, 12414811, 13998190,
+        50000000, 52900000, 53000000, 54000000, 70000000, 70000100, 70000140, 72100000, 72100100,
+        72101000, 72102000, 72104000, 72110000, 79900100,
+    };
+    for (const s32 flag : Named) {
+        AddAround(sample, flag);
+    }
+    for (const s32 flag : BossFogEntryFlags) {
+        AddAround(sample, flag);
+    }
+    for (const EncounterInsight& boss : EncounterInsights()) {
+        AddAround(sample, boss.kill_event);
+        AddAround(sample, boss.once_flag);
+    }
+    for (const s32 flag : ShopLineFlags()) {
+        AddAround(sample, flag);
+    }
+    AddAround(sample, MinSampled, 0);
+    AddAround(sample, MaxFlag, 0);
+    AddEvery(sample, -1000, MaxFlag, 9973);
+    AddEvery(sample, -100, 20000, 1);
+    AddEvery(sample, 12000000 - 100, 14000000 + 100, 101);
+    AddEvery(sample, 12100000, 12110000, 1);
+    AddEvery(sample, 49999000, 54001000, 97);
+    AddEvery(sample, 72100000, 72110000, 1);
+    AddEvery(sample, 79900000, 79901000, 1);
+    for (s64 block = 1190; block <= 1410; ++block) {
+        const s64 base = block * 10000;
+        AddEvery(sample, base + 4690, base + 4870, 1); // boss fogs
+        // The lamps' active flags: the first and last two lamps of every map, all of every tenth.
+        AddEvery(sample, base + 7800, base + 7835, 1);
+        AddEvery(sample, base + 8165, base + 8200, 1);
+        if (block % 10 == 0) {
+            AddEvery(sample, base + 7836, base + 8164, 1);
+        }
+    }
+    for (s64 map = 0; map < 1000; ++map) {
+        AddEvery(sample, 70000000 + map * 10000 + 90, 70000000 + map * 10000 + 210, 1); // lamps
+    }
+    for (s64 prefix = 1; prefix < 100; ++prefix) {
+        AddEvery(sample, prefix * 1000000, prefix * 1000000 + 20, 1); // xx000000 families
+    }
+    std::ranges::sort(sample);
+    const auto [end, last] = std::ranges::unique(sample);
+    sample.erase(end, last);
+    return sample;
+}
+
+// Every flag decision of the party code, one bit each.
+u32 Decisions(s32 flag) {
+    constexpr u32 SomeMap = 0x18000000;
+    const auto progress = GuestProgressFlags(true, true, SomeMap);
+    const auto shop = ShopLineFlags();
+    u32 bits = 0;
+    bits |= IsLampTravelFlag(flag) ? 1u << 0 : 0;
+    bits |= IsHeadstoneTravelFlag(flag) ? 1u << 1 : 0;
+    bits |= IsMapPickupFlag(flag) ? 1u << 2 : 0;
+    bits |= CarriesToGuestWorld(flag) ? 1u << 3 : 0;
+    bits |= IsBossFogEntryFlag(flag) ? 1u << 4 : 0;
+    bits |= KeepsLocalFlag(true, flag) ? 1u << 5 : 0;
+    bits |= KeepsLocalFlag(false, flag) ? 1u << 6 : 0;
+    bits |= TakesHostMapFlag(flag) ? 1u << 7 : 0;
+    bits |= SharedWithParty(flag) ? 1u << 8 : 0;
+    bits |= LampOfActiveFlag(flag).has_value() ? 1u << 9 : 0;
+    bits |= std::ranges::find(progress, flag) != progress.end() ? 1u << 10 : 0;
+    bits |= std::ranges::find(shop, flag) != shop.end() ? 1u << 11 : 0;
+    return bits;
+}
+
+// "<flag> <decisions>[ <lamp>]" at each sampled flag where the decisions (or the lamp of an
+// active flag) differ from the sampled flag before it.
+std::vector<std::string> DecisionChanges() {
+    std::vector<std::string> lines;
+    u32 previous_bits = ~0u;
+    s32 previous_lamp = -1;
+    for (const s32 flag : FlagSample()) {
+        const u32 bits = Decisions(flag);
+        const s32 lamp = LampOfActiveFlag(flag).value_or(0);
+        if (bits != previous_bits || lamp != previous_lamp) {
+            lines.push_back(lamp != 0 ? fmt::format("{} {:x} {}", flag, bits, lamp)
+                                      : fmt::format("{} {:x}", flag, bits));
+            previous_bits = bits;
+            previous_lamp = lamp;
+        }
+    }
+    return lines;
+}
+
+} // namespace
+
+// The flag rules before the flag table (2026-10-12), recorded from the hand-written predicates:
+// the table must decide every flag the same way. BLOODBORNE_FLAG_RULES_WRITE=1 writes the file
+// again (only for a deliberate rule change).
+TEST(BloodborneFlagRules, DecisionsMatchTheRecordedOnes) {
+    const std::vector<std::string> actual = DecisionChanges();
+    if (std::getenv("BLOODBORNE_FLAG_RULES_WRITE") != nullptr) {
+        std::ofstream file(BLOODBORNE_FLAG_RULES, std::ios::trunc | std::ios::binary);
+        // (Split so the license linter does not read these lines as this file's own.)
+        file << "# SPDX-"
+                "FileCopyrightText: Copyright 2026 shadPS4 Emulator Project\n"
+                "# SPDX-"
+                "License-Identifier: GPL-2.0-or-later\n"
+                "# <flag> <decision bits, hex>[ <lamp of an active flag>]: at each sampled flag "
+                "where they change (test_bloodborne_flag_rules.cpp)\n";
+        for (const std::string& line : actual) {
+            file << line << '\n';
+        }
+        GTEST_SKIP() << "wrote " << actual.size() << " lines to " << BLOODBORNE_FLAG_RULES;
+    }
+    std::ifstream file(BLOODBORNE_FLAG_RULES);
+    ASSERT_TRUE(file) << BLOODBORNE_FLAG_RULES;
+    std::vector<std::string> expected;
+    for (std::string line; std::getline(file, line);) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (!line.empty() && line.front() != '#') {
+            expected.push_back(line);
+        }
+    }
+    ASSERT_GT(expected.size(), 1000u);
+    const auto [mismatch, other] = std::ranges::mismatch(actual, expected);
+    EXPECT_TRUE(mismatch == actual.end() && other == expected.end())
+        << "first difference: actual \"" << (mismatch == actual.end() ? "end" : *mismatch)
+        << "\" expected \"" << (other == expected.end() ? "end" : *other) << "\"";
+}
+
+TEST(BloodborneFlagRules, PredicatesFollowTheTable) {
+    for (const s32 flag : FlagSample()) {
+        const FlagRule rule = RuleFor(flag);
+        ASSERT_EQ(IsLampTravelFlag(flag), rule.Has(FlagLampTrip)) << flag;
+        ASSERT_EQ(IsHeadstoneTravelFlag(flag), rule.Has(FlagHeadstoneTrip)) << flag;
+        ASSERT_EQ(IsMapPickupFlag(flag), rule.Has(FlagMapPickup)) << flag;
+        ASSERT_EQ(CarriesToGuestWorld(flag), rule.Has(FlagCarriesHome)) << flag;
+        ASSERT_EQ(IsBossFogEntryFlag(flag), rule.Has(FlagBossFogEntry)) << flag;
+        ASSERT_EQ(KeepsLocalFlag(true, flag), rule.owner == FlagOwner::PerPlayer) << flag;
+        ASSERT_FALSE(KeepsLocalFlag(false, flag)) << flag;
+        ASSERT_EQ(TakesHostMapFlag(flag), rule.Has(FlagTakesHostMap)) << flag;
+        ASSERT_EQ(SharedWithParty(flag), rule.owner == FlagOwner::Shared) << flag;
+    }
+}
+
+TEST(BloodborneFlagRules, RowsNestOrStayApart) {
+    for (size_t earlier = 0; earlier < FlagTable.size(); ++earlier) {
+        const FlagRange& inner = FlagTable[earlier];
+        ASSERT_LE(inner.first, inner.last) << inner.why;
+        for (size_t later = earlier + 1; later < FlagTable.size(); ++later) {
+            const FlagRange& outer = FlagTable[later];
+            const bool apart = inner.last < outer.first || outer.last < inner.first;
+            const bool nested = outer.first <= inner.first && inner.last <= outer.last &&
+                                (outer.first != inner.first || outer.last != inner.last);
+            EXPECT_TRUE(apart || nested)
+                << "row " << earlier << " (" << inner.first << "-" << inner.last << ") and row "
+                << later << " (" << outer.first << "-" << outer.last << ")";
+        }
+    }
+}
+
+TEST(BloodborneFlagRules, EveryRowDecidesSomeFlag) {
+    for (const FlagRange& row : FlagTable) {
+        bool decides = false;
+        for (s64 flag = row.first; flag <= row.last && !decides; ++flag) {
+            const s32 value = static_cast<s32>(flag);
+            decides = row.Contains(value) && RowFor(value) == &row;
+            if (flag - row.first > 100000) {
+                break;
+            }
+        }
+        EXPECT_TRUE(decides) << row.why;
+    }
+}
+
+TEST(BloodborneFlagRules, SessionFlagsAreNeitherKeptNorShared) {
+    for (const FlagRange& row : FlagTable) {
+        if (row.rule.owner == FlagOwner::Session) {
+            EXPECT_FALSE(row.rule.Has(FlagCarriesHome)) << row.why;
+            EXPECT_FALSE(row.rule.Has(FlagTakesHostMap)) << row.why;
+        }
+    }
+}
+
+TEST(BloodborneFlagRules, BossFoundFlagsArePerPlayer) {
+    std::set<s32> found;
+    for (const EncounterInsight& boss : EncounterInsights()) {
+        found.insert(boss.once_flag);
+        EXPECT_EQ(RuleFor(boss.once_flag).owner, FlagOwner::PerPlayer) << boss.once_flag;
+    }
+    for (s32 flag = 9300; flag < 9400; ++flag) {
+        EXPECT_EQ(RuleFor(flag).owner == FlagOwner::PerPlayer, found.contains(flag)) << flag;
+    }
+}
+
+TEST(BloodborneFlagRules, ListsComeFromTheTable) {
+    EXPECT_EQ(GuestProgressFlags(true, true, 0x18000000), (std::vector<s32>{9401, 9403}));
+    const auto shop = ShopLineFlags();
+    EXPECT_EQ(std::vector<s32>(shop.begin(), shop.end()),
+              (std::vector<s32>{12101000, 12101001, 12101002, 12101003, 12101004, 12101005,
+                                12101006, 12101007, 12101008, 12101009}));
+    const auto from_table = FlagsWith<FlagShopLine>();
+    EXPECT_TRUE(std::ranges::equal(from_table, shop));
+}
