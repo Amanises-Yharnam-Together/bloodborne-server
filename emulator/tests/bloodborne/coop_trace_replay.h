@@ -15,9 +15,10 @@ namespace Core::Bloodborne {
 
 // Replays a co-op trace (see CoopTraceVersion) through the pure sync classes: the recorded inputs
 // of the kill board (VisitKills), enemy HP (SharedDamage, LowerToHostHp), the shown board
-// (ShownLikeTheHost) and member kills (AppliesMemberKill), and the kill frames and kill board
-// answers the game took. Each record gives the decisions it led to, one line each. Game memory is
-// not replayed: what the game did with a decision is not in the trace.
+// (ShownLikeTheHost) and member kills (AppliesMemberKill), the kill frames and kill board
+// answers the game took, and the world log's inputs (WorldLogHost, WorldLogMember) and path.
+// Each record gives the decisions it led to, one line each. Game memory is not replayed: what the
+// game did with a decision is not in the trace.
 class CoopTraceReplay {
 public:
     std::vector<std::string> Feed(std::string_view line);
@@ -37,6 +38,11 @@ private:
     void KillApply(const TraceRecord& record, std::vector<std::string>& out);
     void FrameIn(const TraceRecord& record, std::vector<std::string>& out);
     void BoardIn(const TraceRecord& record, std::vector<std::string>& out);
+    void WorldLogIn(const TraceRecord& record, std::vector<std::string>& out);
+    void WorldLogHostIn(std::string_view op, std::span<const u8> payload,
+                        std::vector<std::string>& out);
+    void WorldLogMemberIn(std::string_view op, std::span<const u8> payload, s64 at,
+                          std::vector<std::string>& out);
 
     Inputs kills_in;
     Inputs hp_in;
@@ -49,6 +55,8 @@ private:
     PartyKills party_kills;
     std::set<u32> board_kills;
     std::map<std::string, std::vector<u32>> peer_kills;
+    WorldLogHost wlog_host;
+    WorldLogMember wlog_member;
 };
 
 } // namespace Core::Bloodborne

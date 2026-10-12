@@ -72,6 +72,7 @@ KillEchoLedger echo_ledger;
 std::mutex kill_board_mutex;
 std::vector<std::pair<s32, bool>> kills_to_post;
 std::unordered_set<u32> others_kills;
+bool kill_board_fresh_start = false;
 // World state per map (see MapFlagBase): the host's own snapshot waiting for the board thread,
 // and the latest one read back (on a guest).
 // Enemy HP kept in step (see EnemyHpReport): this member's hurt enemies and the others'.
@@ -1106,30 +1107,11 @@ void KeepEnemyDeathsInStep(bool sharing) {
         LOG_INFO(Debug, "Bloodborne party: kill board gets {} kills, {} back (visit {:#x}):{}",
                  kills, changes.size() - kills, visit, which);
     }
-    std::unordered_set<u32> others;
-    {
-        std::scoped_lock lock{kill_board_mutex};
-        kills_to_post.insert(kills_to_post.end(), changes.begin(), changes.end());
-        others = others_kills;
-    }
-    // The other members' kills now (not this member's own, nor what lay dead in a save).
-    const std::unordered_set<u32> member_kills = others;
-    // Its own kills too: a guest pulled into the host's world sees the host's copy alive.
-    others.insert(visit_kills.Killed().begin(), visit_kills.Killed().end());
-    // And its earlier visit's kills here that stood while another member stayed.
-    const std::vector<u32> held = visit_kills.Held(map);
-    others.insert(held.begin(), held.end());
-    // Straight over the P2P link: this member's standing kills out, the peers' in (the board
-    // brings the same a moment later, and to members who load in later).
-    if (InPartySession()) {
-        std::vector<u32> mine(visit_kills.Killed().begin(), visit_kills.Killed().end());
-        mine.insert(mine.end(), held.begin(), held.end());
-        SendDirectKills(mine, !changes.empty());
-        std::scoped_lock lock{direct_boards_mutex};
-        const std::unordered_set<u32> direct =
-            DirectKillHandles(direct_kills_inbox.Fresh(SteadyMilliseconds()));
-        others.insert(direct.begin(), direct.end());
-    }
+    // The other members' kills (the world log's or the kill board's; not what lay dead in a save),
+    // and with this member's own and held ones (see GatherPartyKills).
+    PartyKillsNow party = GatherPartyKills(visit_kills, map, changes);
+    std::unordered_set<u32>& others = party.all;
+    const std::unordered_set<u32>& member_kills = party.members;
     // And what is dead in the host's world, killed before the session too (its save): a guest
     // back from a trip runs its own world, where those were alive (Kaniel 2026-10-11).
     if (IsPartyGuestRole() && InPartySession()) {

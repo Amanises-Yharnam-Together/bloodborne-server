@@ -306,6 +306,56 @@ TEST(CoopTraceReplay, PlaceChangesAreShownAsTheGameLogsThem) {
               std::vector<std::string>{"place: unreadable record"});
 }
 
+// The world log's records (wlog-in, wlog-path) replay through WorldLogHost and WorldLogMember to
+// the decisions the game made live.
+TEST(CoopTraceReplay, WorldLogRecordsReplayToTheLiveDecisions) {
+    const u64 epoch = WorldLogEpoch(0x77, 1);
+    const auto record = [](s64 at, std::string_view role, std::string_view op,
+                           std::span<const u8> payload) {
+        return EncodeTraceRecord({at, "wlog-in", WorldLogTraceFields(role, op, payload)});
+    };
+    // The host's side: its start and two proposals, one of them late.
+    WorldLogHost host;
+    host.Start(epoch, false);
+    const WorldLogProposal kill{"6775657374", epoch, 5, 2, {{0x18010000, {0x10014066}}}};
+    const WorldLogProposal late{"6775657374", epoch, 5, 1, {}};
+    CoopTraceReplay replay;
+    std::vector<std::string> out;
+    const auto feed = [&](const std::string& line) {
+        for (std::string& decision : replay.Feed(line)) {
+            out.push_back(std::move(decision));
+        }
+    };
+    feed(EncodeTraceRecord({1, "wlog-path", {{"path", "log"}, {"why", "1 peer has it"}}}));
+    feed(record(2, "host", "start", EncodeWorldLogStart(epoch, false)));
+    feed(record(3, "host", "propose", EncodeWorldLogProposal(kill)));
+    feed(record(4, "host", "propose", EncodeWorldLogProposal(late)));
+    EXPECT_EQ(host.Propose(kill).entries.size(), 1u);
+    EXPECT_TRUE(host.Propose(late).stale);
+    // The member's side: a batch past a gap, then the snapshot that mends it.
+    const WorldLogBatch ahead{
+        "686f7374", epoch, 3, {{3, epoch, 0x18010000, WorldLogKind::Unkill, 0x10014066}}};
+    feed(record(5, "member", "entries", EncodeWorldLogBatch(ahead)));
+    feed(
+        record(6, "member", "snapshot",
+               EncodeWorldLogSnapshot({"686f7374", epoch, 2, 0, 1, {{0x18010000, {0x10014066}}}})));
+    feed(record(7, "member", "reset", {}));
+    feed(record(8, "member", "entries", std::vector<u8>{1, 2}));
+    EXPECT_EQ(out, (std::vector<std::string>{
+                       "world log path: log (1 peer has it)",
+                       "wlog host start epoch 7700000001",
+                       "wlog host appended seq 1 reset every map",
+                       "wlog host appended seq 2 kill 0x10014066 on 0x18010000",
+                       "wlog host dropped a late proposal from 6775657374",
+                       "wlog member follows epoch 7700000001",
+                       "wlog member gap: has seq 0, host at 3",
+                       "wlog member snapshot to seq 2",
+                       "wlog member applied seq 3 unkill 0x10014066 on 0x18010000",
+                       "wlog member reset",
+                       "wlog-in: unreadable member entries",
+                   }));
+}
+
 TEST(CoopTraceReplay, CheckedInTracesKeepTheirDecisions) {
     const fs::path dir{BLOODBORNE_TRACES};
     size_t traces = 0;

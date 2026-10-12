@@ -1192,18 +1192,24 @@ struct DirectKills {
 // build or set of event files is logged once. Builds before it drop the type: their decoders
 // take only the types they know.
 constexpr u8 PeerHelloType = 0x33;
-// Raised when a co-op frame's meaning changes.
-constexpr u8 CoopProtocolVersion = 1;
+// Raised when a co-op frame's meaning changes. 2: the world log's frames (WorldLogProposeType ...)
+// and the hello's features.
+constexpr u8 CoopProtocolVersion = 2;
 constexpr s64 PeerHelloResendMs = 10'000;
+// PeerHello::features: what this game takes part in. The world log only runs when every peer has
+// it (a game with SHADPS4_BLOODBORNE_WORLD_LOG=0 leaves it out).
+constexpr u8 WorldLogFeature = 0x01;
 struct PeerHello {
     u8 protocol = CoopProtocolVersion;
     std::string revision; // the build's source revision ("-dirty": changes not in a commit)
     u64 event_files = 0;  // a hash of the map event files the game reads, 0 when unknown
     std::string member;   // the board's name for the member, "" before it has one
+    u8 features = 0;      // bits (WorldLogFeature); 0 from a build before protocol 2
     bool operator==(const PeerHello&) const = default;
 };
 // The payload: protocol, revision (u8 length first), event files (u64), member (u8 length
-// first). A decoder takes a longer payload (fields a later build added).
+// first), features (u8, since protocol 2). A decoder takes a longer payload (fields a later build
+// added) and one without the features (a build before them).
 std::vector<u8> EncodePeerHello(const PeerHello& hello);
 std::optional<PeerHello> DecodePeerHello(std::span<const u8> payload);
 class PeerBuildCheck {
@@ -1220,6 +1226,246 @@ u64 EventFilesHash(const std::filesystem::path& folder);
 std::vector<u8> EncodeDirectKills(std::string_view member, std::span<const u32> handles);
 std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload);
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills);
+
+// The world log (docs/WORLD_SYNC.md, Stage C): one ordered list of world changes, kept by the
+// host and sent to every member over the P2P link, instead of a board per feature. Step 1 carries
+// the kills (the kill board's job before); shown state, flags and enemy HP come later.
+//
+// Members propose, the host orders: each member sends its standing kills, whole, to the host
+// (WorldLogProposal); the host keeps every member's set and appends an entry when the party's
+// union changes (the first member's kill of an enemy is a Kill, the last one's withdrawal an
+// Unkill, so two members' kills of one enemy are one entry). Entries carry a seq that only grows
+// within the host's log epoch; members apply them in seq order exactly once, and ask for a
+// snapshot (the union per map and the last seq) when they find a gap, join late or meet a new
+// epoch past its start. A new epoch (the host's new session, wipe or character) starts with a
+// Reset of every map. The kill board stays underneath as the fallback copy: the host posts the
+// union there.
+enum class WorldLogKind : u8 {
+    Reset = 0,  // every kill on `map` goes (map 0: on every map)
+    Kill = 1,   // `subject` (a character's handle) is dead on `map`
+    Unkill = 2, // `subject` is no longer
+    // Still to come, in this order: Shown, FlagSet, FlagClear, HpFloor. A member that meets a kind
+    // it does not know counts it as applied and does nothing.
+};
+struct WorldLogEntry {
+    u64 seq = 0;
+    u64 epoch = 0;
+    u32 map = 0;
+    WorldLogKind kind = WorldLogKind::Kill;
+    u32 subject = 0;
+    bool operator==(const WorldLogEntry&) const = default;
+};
+// "seq 3 kill 0x10014066 on 0x18000000"
+std::string FormatWorldLogEntry(const WorldLogEntry& entry);
+// Standing kills by map.
+using WorldLogKills = std::map<u32, std::set<u32>>;
+size_t WorldLogKillCount(const WorldLogKills& kills);
+std::unordered_set<u32> WorldLogHandles(const WorldLogKills& kills);
+// A log epoch is the host's run (its upper half, random per game start) and its count of logs
+// started in that run. A member follows any epoch of another run (the host's game restarted), and
+// within one run only a later one (a frame of an older log that came late is dropped).
+u64 WorldLogEpoch(u32 run, u32 count);
+bool WorldLogEpochFollows(u64 next, u64 current);
+
+// The frames (on the co-op channel, after the hello): older builds drop these types (their
+// decoders take only 0x30-0x33).
+constexpr u8 WorldLogProposeType = 0x34;         // member -> host: its standing kills
+constexpr u8 WorldLogEntriesType = 0x35;         // host -> members: entries, or a heartbeat
+constexpr u8 WorldLogSnapshotRequestType = 0x36; // member -> host
+constexpr u8 WorldLogSnapshotType = 0x37;        // host -> that member, in parts
+bool IsWorldLogFrameType(u8 type);
+// A member's proposal and the host's heartbeat go out at once on a change and again every
+// WorldLogResendMs; a member's log stands WorldLogLifeMs after the host's last frame (else the
+// kill board's copy is used); a snapshot is asked for at most every WorldLogSnapshotRetryMs.
+constexpr s64 WorldLogResendMs = 500;
+constexpr s64 WorldLogLifeMs = 3'000;
+constexpr s64 WorldLogSnapshotRetryMs = 1'000;
+// Kept small for the link's 1400-byte frames: entries per entries frame, handles per proposal or
+// snapshot part (a member's standing kills above it are cut, as the direct kills frame did).
+constexpr size_t WorldLogEntriesPerFrame = 100;
+constexpr size_t WorldLogHandlesPerFrame = 280;
+// Entries a member keeps past a gap until the snapshot comes.
+constexpr size_t WorldLogWaitingCap = 2'000;
+
+struct WorldLogProposal {
+    std::string member; // the board's name for the member
+    u64 epoch = 0;      // the host's log epoch this member follows, 0 before it heard one
+    u32 run = 0;        // this game's run: a restart is a new run (its old kills go)
+    u32 number = 0;     // counts up within a run: an older proposal that comes late is dropped
+    WorldLogKills kills;
+    bool operator==(const WorldLogProposal&) const = default;
+};
+struct WorldLogBatch {
+    std::string host; // the host's board name (its own kill board entries are the log's copy)
+    u64 epoch = 0;
+    u64 last = 0;                       // the host's last seq: no entries is a heartbeat
+    std::vector<WorldLogEntry> entries; // consecutive seqs, all of `epoch`
+    bool operator==(const WorldLogBatch&) const = default;
+};
+struct WorldLogSnapshotRequest {
+    std::string member;
+    u64 epoch = 0; // what the member has
+    u64 seq = 0;
+    bool operator==(const WorldLogSnapshotRequest&) const = default;
+};
+struct WorldLogSnapshot {
+    std::string host;
+    u64 epoch = 0;
+    u64 last = 0;
+    u8 part = 0;
+    u8 parts = 1;
+    WorldLogKills kills; // this part's share
+    bool operator==(const WorldLogSnapshot&) const = default;
+};
+std::vector<u8> EncodeWorldLogProposal(const WorldLogProposal& proposal);
+std::optional<WorldLogProposal> DecodeWorldLogProposal(std::span<const u8> payload);
+std::vector<u8> EncodeWorldLogBatch(const WorldLogBatch& batch);
+std::optional<WorldLogBatch> DecodeWorldLogBatch(std::span<const u8> payload);
+std::vector<u8> EncodeWorldLogSnapshotRequest(const WorldLogSnapshotRequest& request);
+std::optional<WorldLogSnapshotRequest> DecodeWorldLogSnapshotRequest(std::span<const u8> payload);
+std::vector<u8> EncodeWorldLogSnapshot(const WorldLogSnapshot& snapshot);
+std::optional<WorldLogSnapshot> DecodeWorldLogSnapshot(std::span<const u8> payload);
+// `entries` (consecutive) as batches of at most WorldLogEntriesPerFrame; one heartbeat for none.
+std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
+                                         std::span<const WorldLogEntry> entries);
+
+// The host's side: every member's standing kills and the log of the party's union.
+class WorldLogHost {
+public:
+    // A new log (a new epoch): a Reset of every map, then a Kill for each standing kill kept.
+    // `keep_members`: the members' sets stand (the host's wipe: the others' kills elsewhere stay,
+    // each member's own wipe takes back its own); else they go (a new session or character).
+    std::vector<WorldLogEntry> Start(u64 epoch, bool keep_members);
+    struct Taken {
+        bool stale = false; // dropped: an older one of the member's run, or another log epoch
+        std::vector<WorldLogEntry> entries;
+    };
+    // A member's (or the host's own) proposal. Its set replaces the member's last one.
+    Taken Propose(const WorldLogProposal& proposal);
+    bool Started() const {
+        return epoch != 0;
+    }
+    u64 Epoch() const {
+        return epoch;
+    }
+    u64 Last() const {
+        return last;
+    }
+    // The party's standing kills.
+    WorldLogKills Kills() const;
+    // The kills in parts of at most WorldLogHandlesPerFrame handles (one part when there are none).
+    std::vector<WorldLogSnapshot> Snapshot(std::string_view host) const;
+
+private:
+    struct Member {
+        u32 run = 0;
+        u32 number = 0;
+        WorldLogKills kills;
+    };
+    struct Standing {
+        u32 map = 0;
+        std::set<std::string> by;
+    };
+    WorldLogEntry Append(WorldLogKind kind, u32 map, u32 subject);
+    void Own(const std::string& member, u32 map, u32 handle, std::vector<WorldLogEntry>& entries);
+    void Disown(const std::string& member, u32 handle, std::vector<WorldLogEntry>& entries);
+
+    u64 epoch = 0;
+    u64 last = 0;
+    std::map<std::string, Member> members;
+    std::map<u32, Standing> standing; // handle -> its map and the members whose kill it is
+};
+
+// A member's side: the entries applied in seq order, exactly once.
+class WorldLogMember {
+public:
+    struct Step {
+        std::vector<WorldLogEntry> applied;
+        bool new_epoch = false; // the host's log started over (everything before is gone)
+        bool snapshot = false;  // a whole snapshot was applied
+        bool stale = false;     // an older log's frame: dropped
+        bool gap = false;       // entries are missing (a snapshot is due)
+    };
+    Step Take(const WorldLogBatch& batch, s64 now_ms);
+    Step Take(const WorldLogSnapshot& part, s64 now_ms);
+    // Whether to ask the host for a snapshot now (a gap, a late join, a new epoch past its start),
+    // at most every WorldLogSnapshotRetryMs; true marks it asked.
+    bool SnapshotDue(s64 now_ms);
+    // In step with the host (no gap) and heard from within WorldLogLifeMs.
+    bool Fresh(s64 now_ms) const;
+    // This member left the session or became another character: the log is forgotten.
+    void Reset();
+    u64 Epoch() const {
+        return epoch;
+    }
+    u64 Applied() const {
+        return applied;
+    }
+    const std::string& Host() const {
+        return host;
+    }
+    const WorldLogKills& Kills() const {
+        return kills;
+    }
+
+private:
+    bool Follow(u64 next_epoch, std::string_view next_host, s64 now_ms, Step& step);
+    void Drain(Step& step);
+    void Apply(const WorldLogEntry& entry);
+    bool Behind() const;
+
+    u64 epoch = 0;
+    u64 applied = 0;
+    u64 host_last = 0;
+    bool based = false; // has the log from its start or a snapshot
+    std::string host;
+    std::map<u64, WorldLogEntry> waiting; // past a gap
+    std::optional<s64> heard_ms;
+    std::optional<s64> asked_ms;
+    struct PartialSnapshot {
+        u64 last = 0;
+        u8 parts = 1;
+        std::map<u8, WorldLogKills> got;
+    };
+    std::optional<PartialSnapshot> partial;
+    WorldLogKills kills;
+};
+
+// Which path the kills take: the world log only while this game has it on and every room peer
+// said in its hello that it has it too; the kill board otherwise. A peer without a hello yet or no
+// peers at all keep the path WorldLogUnsureMs (a hello comes at once to a new peer, a link may
+// drop for a moment), then the board.
+constexpr s64 WorldLogUnsureMs = 5'000;
+// SHADPS4_BLOODBORNE_WORLD_LOG: on unless "0" or "off" (the kills keep to the kill board).
+bool WorldLogEnabled(const char* setting);
+struct WorldLogPeer {
+    std::string name; // for the log line
+    std::optional<PeerHello> hello;
+};
+class WorldLogPath {
+public:
+    // Whether the log is the path now.
+    bool Decide(bool enabled, std::span<const WorldLogPeer> peers, s64 now_ms);
+    bool Active() const {
+        return active;
+    }
+    const std::string& Why() const {
+        return why;
+    }
+    // The line to log at the first decision and when the path or its reason changed since the
+    // last call ("Co-op world log: ...").
+    std::optional<std::string> TakeChange();
+
+private:
+    bool decided = false;
+    bool active = false;
+    std::string why = "not decided";
+    std::optional<s64> unsure_since;
+    bool changed = false;
+};
+// A host's Start on a trace record: the epoch (u64) and keep_members (u8).
+std::vector<u8> EncodeWorldLogStart(u64 epoch, bool keep_members);
+std::optional<std::pair<u64, bool>> DecodeWorldLogStart(std::span<const u8> payload);
 // One report per source from copies of it (direct and the board): per enemy the most damage, or
 // for HP from one world (HostHpReport) the least HP; in the order the sources first come.
 std::vector<EnemyHpReport> MergeEnemyHpReports(std::span<const EnemyHpReport> reports);
@@ -1403,6 +1649,12 @@ public:
     void Apply(std::span<const KillChange> changes);
     bool Contains(u32 handle) const;
     std::unordered_set<u32> All() const;
+    // Every member's but `member`'s (the world log's host: its entries are the log's copy).
+    std::unordered_set<u32> AllExcept(std::string_view member) const;
+    // Drops what `member` posted (the board took back its kills: a post since FreshStart).
+    void Forget(std::string_view member) {
+        by_member.erase(std::string{member});
+    }
 
 private:
     std::map<std::string, std::set<u32>> by_member;
@@ -1462,6 +1714,9 @@ public:
     }
     // This member's held kills on `map` (hidden on its own copies there).
     std::vector<u32> Held(u32 map) const;
+    // All of this member's standing kills by map: this visit's (on the map it began on) and the
+    // held ones (what it proposes to the world log).
+    WorldLogKills Standing() const;
     // A death that resets the map (a party wipe): every kill of this member is taken back, the
     // held ones too, and the next visit starts with none.
     std::vector<std::pair<s32, bool>> Forget();
@@ -1834,10 +2089,14 @@ std::size_t PruneSaveBackups(const std::filesystem::path& user_dir, std::size_t 
 //   hp-in                SharedDamage's inputs, every round while they matter
 //   shown-in             ShownLikeTheHost's inputs, when they change
 //   kill-apply           the other members' kills this game would apply now (AppliesMemberKill)
+//   wlog-in              the world log's inputs that changed it (WorldLogTraceFields): the host's
+//                        starts and the proposals it took, a member's batches and snapshots
+//   wlog-path            the path the kills take: path (log or board) and why
 //   trace-dropped        lines lost to a full queue (TraceQueue)
 // An "-in" record leaves out what did not change since its kind's last record, and its lists
 // only name what came, changed or went (TraceListDelta). SHADPS4_BLOODBORNE_TRACE=0 turns it off.
-constexpr int CoopTraceVersion = 1;
+// 2: the world log's records.
+constexpr int CoopTraceVersion = 2;
 constexpr std::size_t TraceBodyCap = 8 * 1024;
 constexpr std::uintmax_t TraceFileCap = 50 * 1024 * 1024;
 constexpr std::size_t TraceFilesKept = 5;
@@ -1905,6 +2164,11 @@ private:
 // and since, and the cause.
 TraceSampler::Fields TracePlaceFields(const PlaceChange& change);
 std::optional<PlaceChange> ParsePlaceFields(const TraceRecord& record);
+// The world log's inputs on a "wlog-in" record: the role ("host" or "member"), what came ("start":
+// EncodeWorldLogStart, "propose": a proposal, "entries": a batch, "snapshot": a snapshot part,
+// "reset": nothing) and its payload, enough to replay WorldLogHost and WorldLogMember.
+TraceSampler::Fields WorldLogTraceFields(std::string_view role, std::string_view op,
+                                         std::span<const u8> payload);
 // The lines waiting for the trace's writer thread. Push never waits for the writer: a full queue
 // drops the line and counts it.
 class TraceQueue {

@@ -159,15 +159,20 @@ def trace_records(text: str):
 
 
 def summarize_trace(text: str) -> dict:
-    """Frames per direction and type, board posts and failures per endpoint, lines dropped, and
-    the gaps over SILENT_MS between one peer's frames."""
+    """Frames per direction and type, board posts and failures per endpoint, lines dropped, the
+    gaps over SILENT_MS between one peer's frames, and each change of the kills' path (the world
+    log or the kill board)."""
     frames: dict[str, int] = {}
     posts: dict[str, int] = {}
     failures: dict[str, int] = {}
     last_from: dict[str, int] = {}
     gaps = []
+    paths = []
     dropped = 0
     for at, kind, fields in trace_records(text):
+        if kind == "wlog-path":
+            why = fields.get("why", "?").replace("\\s", " ")
+            paths.append(f"{at} {fields.get('path', '?')} ({why})")
         if kind in ("p2p-in", "p2p-out"):
             if fields.get("from-peer") == "0":
                 continue  # not a room peer: the game drops it
@@ -188,7 +193,7 @@ def summarize_trace(text: str) -> dict:
         elif kind == "trace-dropped":
             dropped += int(fields.get("count", "0"))
     return {"frames": frames, "board posts": posts, "board failures": failures,
-            "dropped": dropped, "gaps": gaps}
+            "dropped": dropped, "gaps": gaps, "kills paths": paths}
 
 
 def print_trace_summary(trace: pathlib.Path) -> None:
@@ -203,6 +208,8 @@ def print_trace_summary(trace: pathlib.Path) -> None:
         print(f"    lines dropped (queue full): {summary['dropped']}")
     for gap in summary["gaps"]:
         print(f"    outage candidate: {gap}")
+    for path in summary["kills paths"]:
+        print(f"    kills path: {path}")
 
 
 def main(argv: list[str]) -> int:
