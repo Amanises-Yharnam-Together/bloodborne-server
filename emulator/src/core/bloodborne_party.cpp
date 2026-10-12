@@ -4503,7 +4503,7 @@ bool WorldLogEpochFollows(u64 next, u64 current) {
 }
 
 bool IsWorldLogFrameType(u8 type) {
-    return type >= WorldLogProposeType && type <= WorldLogHpSnapshotType;
+    return type >= WorldLogProposeType && type <= WorldLogFlagsSnapshotType;
 }
 
 bool WorldLogEnabled(const char* setting) {
@@ -5023,6 +5023,120 @@ std::optional<WorldLogHpSnapshot> DecodeWorldLogHpSnapshot(std::span<const u8> p
     return snapshot;
 }
 
+// The host's name, epoch, last seq, the count (u8), then each event: seq (u64), kind (u8), flag.
+std::vector<u8> EncodeWorldLogFlagsSnapshot(const WorldLogFlagsSnapshot& snapshot) {
+    std::vector<u8> payload;
+    AppendName(payload, snapshot.host);
+    AppendLittleEndian(payload, snapshot.epoch);
+    AppendLittleEndian(payload, snapshot.last);
+    const size_t count = std::min(snapshot.events.size(), WorldLogRecentFlags);
+    payload.push_back(static_cast<u8>(count));
+    for (size_t index = snapshot.events.size() - count; index < snapshot.events.size(); ++index) {
+        const WorldLogEntry& event = snapshot.events[index];
+        AppendLittleEndian(payload, event.seq);
+        payload.push_back(static_cast<u8>(event.kind));
+        AppendLittleEndian(payload, event.subject);
+    }
+    return payload;
+}
+
+std::optional<WorldLogFlagsSnapshot> DecodeWorldLogFlagsSnapshot(std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    auto host = reader.Name();
+    const auto epoch = reader.Next<u64>();
+    const auto last = reader.Next<u64>();
+    const auto count = reader.Next<u8>();
+    if (!host || !epoch || !last || !count) {
+        return std::nullopt;
+    }
+    WorldLogFlagsSnapshot snapshot{std::move(*host), *epoch, *last, {}};
+    for (u8 index = 0; index < *count; ++index) {
+        const auto seq = reader.Next<u64>();
+        const auto kind = reader.Next<u8>();
+        const auto flag = reader.Next<u32>();
+        if (!seq || !kind || !flag) {
+            return std::nullopt;
+        }
+        snapshot.events.push_back({*seq, *epoch, 0, static_cast<WorldLogKind>(*kind), *flag});
+    }
+    if (!reader.Done()) {
+        return std::nullopt;
+    }
+    return snapshot;
+}
+
+namespace {
+constexpr u8 WorldSnapshotVersion = 1;
+} // namespace
+
+std::vector<u8> EncodeWorldSnapshot(const WorldSnapshotFrames& frames) {
+    std::vector<u8> blob{WorldSnapshotVersion};
+    AppendLittleEndian(blob, static_cast<u16>(frames.size()));
+    for (const auto& [type, payload] : frames) {
+        blob.push_back(type);
+        AppendLittleEndian(blob, static_cast<u16>(payload.size()));
+        blob.insert(blob.end(), payload.begin(), payload.end());
+    }
+    return blob;
+}
+
+std::optional<WorldSnapshotFrames> DecodeWorldSnapshot(std::span<const u8> blob) {
+    if (blob.size() < 3 || blob[0] != WorldSnapshotVersion) {
+        return std::nullopt;
+    }
+    const size_t count = ReadLittleEndian<u16>(blob, 1);
+    WorldSnapshotFrames frames;
+    size_t at = 3;
+    while (at < blob.size()) {
+        if (at + 3 > blob.size()) {
+            return std::nullopt;
+        }
+        const u8 type = blob[at];
+        const size_t size = ReadLittleEndian<u16>(blob, at + 1);
+        at += 3;
+        if (at + size > blob.size()) {
+            return std::nullopt;
+        }
+        frames.emplace_back(type,
+                            std::vector<u8>(blob.begin() + static_cast<std::ptrdiff_t>(at),
+                                            blob.begin() + static_cast<std::ptrdiff_t>(at + size)));
+        at += size;
+    }
+    if (frames.size() != count) {
+        return std::nullopt; // cut short
+    }
+    return frames;
+}
+
+std::string EncodeWorldSnapshotUpdate(std::string_view member, std::span<const u8> blob) {
+    std::string body{member};
+    if (!blob.empty()) {
+        body += ' ' + TraceHex(blob);
+    }
+    return body;
+}
+
+std::optional<WorldSnapshotAnswer> ParseWorldSnapshotAnswer(std::string_view body) {
+    while (!body.empty() && (body.back() == '\n' || body.back() == '\r')) {
+        body.remove_suffix(1);
+    }
+    if (body.empty()) {
+        return WorldSnapshotAnswer{};
+    }
+    const size_t space = body.find(' ');
+    if (space == std::string_view::npos) {
+        return std::nullopt;
+    }
+    WorldSnapshotAnswer answer;
+    const auto [end, error] = std::from_chars(body.data(), body.data() + space, answer.age_ms);
+    auto blob = ParseTraceHex(body.substr(space + 1));
+    if (error != std::errc{} || end != body.data() + space || !blob) {
+        return std::nullopt;
+    }
+    answer.blob = std::move(*blob);
+    return answer;
+}
+
 std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
                                          std::span<const WorldLogEntry> entries) {
     std::vector<WorldLogBatch> batches;
@@ -5098,6 +5212,10 @@ WorldLogHost::Taken WorldLogHost::ProposeFlags(const WorldLogFlagProposal& propo
             taken.entries.push_back(
                 Append(event.on ? WorldLogKind::FlagSet : WorldLogKind::FlagClear, 0,
                        static_cast<u32>(event.flag)));
+            recent_flags.push_back(taken.entries.back());
+            if (recent_flags.size() > WorldLogRecentFlags) {
+                recent_flags.erase(recent_flags.begin());
+            }
         }
     }
     return taken;
@@ -5199,6 +5317,10 @@ WorldLogHost::Taken WorldLogHost::ProposeHp(const WorldLogHpProposal& proposal) 
     return taken;
 }
 
+WorldLogFlagsSnapshot WorldLogHost::FlagsSnapshot(std::string_view host) const {
+    return {std::string{host}, epoch, last, recent_flags};
+}
+
 std::vector<WorldLogHpSnapshot> WorldLogHost::HpSnapshot(std::string_view host) const {
     std::vector<WorldLogHpSnapshot> parts{{std::string{host}, epoch, last, 0, 1, {}}};
     size_t in_part = 0;
@@ -5277,6 +5399,7 @@ std::vector<WorldLogEntry> WorldLogHost::Start(u64 new_epoch, bool after_wipe) {
     }
     standing.clear();
     hp.clear(); // no damage from before it (a wipe respawned the map)
+    recent_flags.clear();
     std::vector<WorldLogEntry> entries{
         Append(WorldLogKind::Reset, 0, after_wipe ? WorldLogResetAfterWipe : 0)};
     AppendShown(entries); // the host's world as it is (not a kill: it stays the host's now)
@@ -5581,6 +5704,20 @@ WorldLogMember::PartialSnapshot& WorldLogMember::Pending(u64 last) {
     return *partial;
 }
 
+WorldLogMember::Step WorldLogMember::Take(const WorldLogFlagsSnapshot& part, s64 now_ms) {
+    Step step;
+    if (!Follow(part.epoch, part.host, now_ms, step)) {
+        return step;
+    }
+    host_last = std::max(host_last, part.last);
+    if (!based || part.last > applied) {
+        Pending(part.last).flags = part.events;
+        Complete(step);
+    }
+    step.gap = Behind();
+    return step;
+}
+
 WorldLogMember::Step WorldLogMember::Take(const WorldLogHpSnapshot& part, s64 now_ms) {
     Step step;
     if (!Follow(part.epoch, part.host, now_ms, step)) {
@@ -5628,15 +5765,25 @@ WorldLogShown JoinShownParts(const std::map<u8, WorldLogShown>& parts) {
 
 } // namespace
 
-// A snapshot is whole with every kills part, every shown part, its map state and every HP part.
+// A snapshot is whole with every kills part, every shown part, its map state, every HP part and
+// its recent flag events.
 void WorldLogMember::Complete(Step& step) {
     const PartialSnapshot& pending = *partial;
     const bool kills_whole = pending.parts && pending.got.size() >= *pending.parts;
     const bool shown_whole =
         pending.shown_parts && pending.shown_got.size() >= *pending.shown_parts;
     const bool hp_whole = pending.hp_parts && pending.hp_got.size() >= *pending.hp_parts;
-    if (!kills_whole || !shown_whole || !pending.map_state || !hp_whole) {
+    if (!kills_whole || !shown_whole || !pending.map_state || !hp_whole || !pending.flags) {
         return;
+    }
+    // The flag events it missed: after what it had applied of this log (none for a member that
+    // joins: it had none of it).
+    if (based) {
+        for (const WorldLogEntry& event : *pending.flags) {
+            if (event.seq > applied && event.seq <= pending.last) {
+                step.applied.push_back(event);
+            }
+        }
     }
     kills.clear();
     for (const auto& [index, share] : pending.got) {

@@ -673,9 +673,17 @@ std::optional<MemberMapState> HostMapStateNow();
 // while it carries them (the host's own, a member's copy while fresh), else the peers' direct
 // frames and the HP board, as before.
 std::vector<MemberMapState> OthersEnemyHp(u64 own_source);
-// This member's HP report: to the host's log while it runs, else the direct frame (0x30) to every
-// peer. The HP board gets it as before (the backup).
+// This member's HP report: the direct frame (0x30) to every peer, and to the host's log while it
+// runs.
 void SendEnemyHp(const MemberMapState& mine, bool changed);
+// The world snapshot (WorldSnapshotPostMs), for the board client's thread: whether the log carries
+// the kill, shown, flag, map state and HP boards' jobs now (they are not polled then); the host's
+// next blob to post; whether this member wants the server's copy (its own is not fresh); the one
+// read.
+bool WorldLogCarriesBoards();
+std::optional<std::vector<u8>> TakeWorldSnapshotToPost();
+bool WorldSnapshotWanted();
+void NoteWorldSnapshot(s64 age_ms, std::vector<u8> blob);
 void SendDirectDamage(const MemberMapState& mine, bool changed);
 void SendPeerHello();
 void KeepEnemyDeathsInStep(bool sharing);

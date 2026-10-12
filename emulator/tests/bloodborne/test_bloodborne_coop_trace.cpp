@@ -340,6 +340,8 @@ TEST(CoopTraceReplay, WorldLogRecordsReplayToTheLiveDecisions) {
                 EncodeWorldLogShownSnapshot({"686f7374", epoch, 2, 0, 1, {}})));
     feed(record(6, "member", "map-state-snapshot",
                 EncodeWorldLogMapStateSnapshot({"686f7374", epoch, 2, {}})));
+    feed(record(6, "member", "flags-snapshot",
+                EncodeWorldLogFlagsSnapshot({"686f7374", epoch, 2, {}})));
     feed(record(6, "member", "hp-snapshot",
                 EncodeWorldLogHpSnapshot({"686f7374", epoch, 2, 0, 1, {}})));
     feed(
@@ -355,6 +357,7 @@ TEST(CoopTraceReplay, WorldLogRecordsReplayToTheLiveDecisions) {
                        "wlog host dropped a late proposal from 6775657374",
                        "wlog member follows epoch 7700000001",
                        "wlog member gap: has seq 0, host at 3",
+                       "wlog member gap: has seq 0, host at 2",
                        "wlog member gap: has seq 0, host at 2",
                        "wlog member gap: has seq 0, host at 2",
                        "wlog member gap: has seq 0, host at 2",
@@ -388,6 +391,7 @@ TEST(CoopTraceReplay, WorldLogShownRecordsReplay) {
                 EncodeWorldLogShow(0x18000000, std::vector<CharacterShown>{iosefka})));
     feed(record(3, "member", "map-state-snapshot",
                 EncodeWorldLogMapStateSnapshot({"h", epoch, 3, {}})));
+    feed(record(3, "member", "flags-snapshot", EncodeWorldLogFlagsSnapshot({"h", epoch, 3, {}})));
     feed(record(3, "member", "hp-snapshot", EncodeWorldLogHpSnapshot({"h", epoch, 3, 0, 1, {}})));
     feed(record(4, "member", "snapshot", EncodeWorldLogSnapshot({"h", epoch, 3, 0, 1, {}})));
     feed(record(
@@ -400,6 +404,7 @@ TEST(CoopTraceReplay, WorldLogShownRecordsReplay) {
                        "wlog host appended seq 2 shown map 0x18000000",
                        "wlog host appended seq 3 shown 0x10014000 on 0x18000000 bits 2",
                        "wlog member follows epoch 7700000001",
+                       "wlog member gap: has seq 0, host at 3",
                        "wlog member gap: has seq 0, host at 3",
                        "wlog member gap: has seq 0, host at 3",
                        "wlog member gap: has seq 0, host at 3",

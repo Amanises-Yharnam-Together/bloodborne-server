@@ -122,6 +122,107 @@ void PostKillBoard(httplib::Client& client, const httplib::Headers& headers,
     others_kills = party_kills.All();
 }
 
+// The host posts its map's characters; a guest only reads (map 0).
+void PostShownBoard(httplib::Client& client, const httplib::Headers& headers,
+                    const std::string& member) {
+    MemberMapState mine;
+    {
+        std::scoped_lock lock{shown_board_mutex};
+        mine = local_shown;
+    }
+    const auto response = PostToBoard(client, "/bloodborne/party/shown", headers,
+                                      EncodeMapStateUpdate(member, mine.map, mine.bits));
+    if (response && response->status == 200) {
+        const auto states = ParseMapStateBoard(response->body);
+        std::scoped_lock lock{shown_board_mutex};
+        host_shown = states && !states->empty() ? std::optional{states->front()} : std::nullopt;
+    }
+}
+
+// The host's map state (see SnapshotHostMapState); a guest reads it.
+void PostMapStateBoard(httplib::Client& client, const httplib::Headers& headers,
+                       const std::string& member) {
+    MemberMapState mine;
+    {
+        std::scoped_lock lock{map_state_mutex};
+        mine = local_map_state;
+    }
+    const auto response = PostToBoard(client, "/bloodborne/party/mapstate", headers,
+                                      EncodeMapStateUpdate(member, mine.map, mine.bits));
+    if (const auto states =
+            response && response->status == 200 ? ParseMapStateBoard(response->body) : std::nullopt;
+        states && !states->empty()) {
+        std::scoped_lock lock{map_state_mutex};
+        host_map_state = states->front();
+    }
+}
+
+void PostEchoBoard(httplib::Client& client, const httplib::Headers& headers,
+                   const std::string& member, s64& since) {
+    std::vector<KillEchoes> echoes_out;
+    {
+        std::scoped_lock lock{echo_board_mutex};
+        echoes_out.swap(echoes_to_post);
+    }
+    const auto response = PostToBoard(client, "/bloodborne/party/echoes", headers,
+                                      EncodeEchoUpdate(member, since, echoes_out));
+    if (const auto echoes =
+            response && response->status == 200 ? ParseEchoBoard(response->body) : std::nullopt) {
+        since = echoes->latest;
+        std::scoped_lock lock{echo_board_mutex};
+        echo_ledger.Received(echoes->echoes, SteadyMilliseconds());
+    } else {
+        std::scoped_lock lock{echo_board_mutex};
+        echoes_to_post.insert(echoes_to_post.begin(), echoes_out.begin(), echoes_out.end());
+    }
+}
+
+// The lamps (FlagsToShare) this member saw lit, and the others'.
+void PostFlagBoard(httplib::Client& client, const httplib::Headers& headers,
+                   const std::string& member, s64& since) {
+    std::vector<std::pair<s32, bool>> outgoing;
+    {
+        std::scoped_lock lock{flag_board_mutex};
+        outgoing.swap(flags_to_post);
+    }
+    const auto response = PostToBoard(client, "/bloodborne/party/flags", headers,
+                                      EncodeFlagUpdate(member, since, outgoing));
+    const auto board =
+        response && response->status == 200 ? ParseFlagBoard(response->body) : std::nullopt;
+    std::scoped_lock lock{flag_board_mutex};
+    if (!board) {
+        flags_to_post.insert(flags_to_post.begin(), outgoing.begin(), outgoing.end());
+        return;
+    }
+    since = board->latest;
+    std::vector<std::pair<s32, bool>> changes = board->changes;
+    FilterBoardFlags(changes);
+    flags_to_set.insert(flags_to_set.end(), changes.begin(), changes.end());
+}
+
+// The world snapshot (POST /bloodborne/party/world): the host posts its log's state when the game
+// thread made a new one (every WorldSnapshotPostMs); a member reads it while its copy is not fresh
+// (a join, a restart, its link to the host down).
+void PostWorldSnapshot(httplib::Client& client, const httplib::Headers& headers,
+                       const std::string& member) {
+    if (const auto blob = TakeWorldSnapshotToPost()) {
+        PostToBoard(client, "/bloodborne/party/world", headers,
+                    EncodeWorldSnapshotUpdate(member, *blob));
+        return;
+    }
+    if (!WorldSnapshotWanted()) {
+        return;
+    }
+    const auto response = PostToBoard(client, "/bloodborne/party/world", headers,
+                                      EncodeWorldSnapshotUpdate(member, {}));
+    if (const auto answer = response && response->status == 200
+                                ? ParseWorldSnapshotAnswer(response->body)
+                                : std::nullopt;
+        answer && !answer->blob.empty()) {
+        NoteWorldSnapshot(answer->age_ms, std::move(answer->blob));
+    }
+}
+
 // Posts this member's rest about once a second while it rests (once more when it stands up) and
 // keeps the board the server answers with. Runs on its own thread; the game never waits for it.
 // The signed-in user's online id, or "" before shadNet's login.
@@ -196,61 +297,24 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 map_board_time = std::chrono::steady_clock::now();
             }
         }
-        {
-            // The host posts its map's characters; a guest only reads (map 0).
-            MemberMapState mine;
-            {
-                std::scoped_lock lock{shown_board_mutex};
-                mine = local_shown;
-            }
-            const auto shown_response =
-                PostToBoard(client, "/bloodborne/party/shown", headers,
-                            EncodeMapStateUpdate(member, mine.map, mine.bits));
-            if (shown_response && shown_response->status == 200) {
-                const auto states = ParseMapStateBoard(shown_response->body);
-                std::scoped_lock lock{shown_board_mutex};
-                host_shown =
-                    states && !states->empty() ? std::optional{states->front()} : std::nullopt;
-            }
+        // While the world log runs, the kills, shown characters, flags, map state and HP go over
+        // the link and the host's world snapshot replaces their boards (see PostWorldSnapshot).
+        const bool world_log = WorldLogCarriesBoards();
+        if (!world_log) {
+            PostShownBoard(client, headers, member);
         }
         // Kill echoes go both ways in and out of a session: a member on its own trip (a guest
         // in the Hunter's Dream) still gets the party's kills made apart.
         if (std::chrono::steady_clock::now() >= next_echo_post) {
-            MemberMapState mine;
-            {
-                std::scoped_lock lock{map_state_mutex};
-                mine = local_map_state;
+            if (!world_log) {
+                PostMapStateBoard(client, headers, member);
+                PostKillBoard(client, headers, member, kill_board_since);
             }
-            const auto map_state_response =
-                PostToBoard(client, "/bloodborne/party/mapstate", headers,
-                            EncodeMapStateUpdate(member, mine.map, mine.bits));
-            if (const auto states = map_state_response && map_state_response->status == 200
-                                        ? ParseMapStateBoard(map_state_response->body)
-                                        : std::nullopt;
-                states && !states->empty()) {
-                std::scoped_lock lock{map_state_mutex};
-                host_map_state = states->front();
-            }
-            PostKillBoard(client, headers, member, kill_board_since);
             next_echo_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
-            std::vector<KillEchoes> echoes_out;
-            {
-                std::scoped_lock lock{echo_board_mutex};
-                echoes_out.swap(echoes_to_post);
-            }
-            const auto echo_response =
-                PostToBoard(client, "/bloodborne/party/echoes", headers,
-                            EncodeEchoUpdate(member, echo_board_since, echoes_out));
-            if (const auto echoes = echo_response && echo_response->status == 200
-                                        ? ParseEchoBoard(echo_response->body)
-                                        : std::nullopt) {
-                echo_board_since = echoes->latest;
-                std::scoped_lock lock{echo_board_mutex};
-                echo_ledger.Received(echoes->echoes, SteadyMilliseconds());
-            } else {
-                std::scoped_lock lock{echo_board_mutex};
-                echoes_to_post.insert(echoes_to_post.begin(), echoes_out.begin(), echoes_out.end());
-            }
+            PostEchoBoard(client, headers, member, echo_board_since);
+        }
+        if (world_log) {
+            PostWorldSnapshot(client, headers, member);
         }
         if (trophy_board_active.load() && std::chrono::steady_clock::now() >= next_trophy_post) {
             next_trophy_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
@@ -266,28 +330,8 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                                           : std::nullopt) {
                 ReadTrophyBoard(*trophies);
             }
-            std::vector<std::pair<s32, bool>> outgoing;
-            {
-                std::scoped_lock lock{flag_board_mutex};
-                outgoing.swap(flags_to_post);
-            }
-            const auto flag_response =
-                PostToBoard(client, "/bloodborne/party/flags", headers,
-                            EncodeFlagUpdate(member, flag_board_since, outgoing));
-            const auto board = flag_response && flag_response->status == 200
-                                   ? ParseFlagBoard(flag_response->body)
-                                   : std::nullopt;
-            if (!board) {
-                std::scoped_lock lock{flag_board_mutex};
-                flags_to_post.insert(flags_to_post.begin(), outgoing.begin(), outgoing.end());
-            } else {
-                flag_board_since = board->latest;
-                if (!board->changes.empty()) {
-                    std::scoped_lock lock{flag_board_mutex};
-                    std::vector<std::pair<s32, bool>> changes = board->changes;
-                    FilterBoardFlags(changes);
-                    flags_to_set.insert(flags_to_set.end(), changes.begin(), changes.end());
-                }
+            if (!world_log) {
+                PostFlagBoard(client, headers, member, flag_board_since);
             }
         }
         // In a session every member reads the board (to join a rest nearby); outside one only
@@ -354,8 +398,8 @@ void RunHpBoardClient(std::stop_token stop, std::string base_url, std::string pa
             enemy_hp_changed = false;
             mine = local_enemy_hp;
         }
-        if (mine.map == 0) {
-            continue;
+        if (mine.map == 0 || WorldLogCarriesBoards()) {
+            continue; // the world log carries the HP (the world snapshot is its copy)
         }
         const auto hp_response = PostToBoard(client, "/bloodborne/party/hp", headers,
                                              EncodeMapStateUpdate(member, mine.map, mine.bits));

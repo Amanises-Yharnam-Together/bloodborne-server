@@ -48,6 +48,7 @@ void TakeOtherParts(WorldLogMember& member, u64 epoch, u64 last, s64 now_ms) {
     member.Take(WorldLogShownSnapshot{"host", epoch, last, 0, 1, {}}, now_ms);
     member.Take(WorldLogMapStateSnapshot{"host", epoch, last, {}}, now_ms);
     member.Take(WorldLogHpSnapshot{"host", epoch, last, 0, 1, {}}, now_ms);
+    member.Take(WorldLogFlagsSnapshot{"host", epoch, last, {}}, now_ms);
 }
 
 WorldLogBatch Batch(u64 epoch, u64 last, std::vector<WorldLogEntry> entries) {
@@ -112,7 +113,7 @@ TEST(WorldLogFrames, TypesFollowTheHelloAndOlderBuildsDropThem) {
         EXPECT_FALSE(IsWorldLogFrameType(type));
     }
     EXPECT_GE(CoopProtocolVersion, 2) << "the world log's frames are protocol 2";
-    EXPECT_EQ(CoopProtocolVersion, 5) << "enemy HP on the log is protocol 5";
+    EXPECT_EQ(CoopProtocolVersion, 6) << "the flag events part and the world snapshot: 6";
 }
 
 TEST(WorldLogFrames, AFullSetFitsTheLink) {

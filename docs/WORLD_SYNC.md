@@ -232,14 +232,33 @@ this visit, or in one world the host's HP, `HostHpReport`), by source (the membe
 - **Snapshots:** the HP reports follow the map state (frame 0x3C, at most 100 enemies a part), and a
   member takes a snapshot only once they are in. Every entry now carries a 32-bit value (13 bytes;
   co-op protocol 5).
-- **Backup:** every member still posts its report to the HP board; a member whose log copy is not
-  fresh reads the direct frames and the board, as before. On the boards (the log off), everything is
-  as before.
+- **Backup:** (step 4 as built) every member still posted its report to the HP board; the world
+  snapshot below replaced that. On the boards (the log off), everything is as before.
 - **Trace:** `wlog-in` ops `propose-hp` and `hp-snapshot`; `traces/world-log-hp.txt` is a checked-in
   case. The `hp-in` records are unchanged: their `reports` are what the log gave.
 
-Next: one compact host snapshot on the server in place of the polled boards, read only on a join,
-after a restart, or while a member's link to the host is down.
+Built: the world snapshot on the server (2026-10-12, not rig-checked yet; Kaniel approved). While
+the world log runs, the kill, shown, flag, map state and HP boards are not polled. The live sync
+goes only over the link, and the server keeps one copy of the host's world.
+
+- **The host** posts its log's state every 2 s to `POST /bloodborne/party/world` as one blob: the
+  same snapshot frames it sends a member that asks over the link (kills, shown characters, map
+  state, HP reports, recent flag events), each with its type and length.
+- **A member** reads it only while its own copy is not fresh: a join, a restart of its game or the
+  host's, or its link to the host down. It takes the frames as it takes them from the host. A copy
+  older than 30 s, or of another log of the same host run (an older one), is not taken.
+- **Flag events in snapshots:** a snapshot now ends with the log's last 64 flag events (frame 0x3D).
+  A member that missed some in a gap sets them; one that joins gets none of the earlier ones, as a
+  game's first flag board post got none. This replaces the flag board's copy.
+- **HP fast path:** every member still sends its report straight to the peers (0x30) as well as to
+  the host's log. The bars move on the first hop, and `MergeEnemyHpReports` takes the most damage
+  of the copies of one report (per member and visit), so nothing counts twice. A member waiting for
+  its own wipe sends neither.
+- **The boards** stay for games with the log off (alone, or `SHADPS4_BLOODBORNE_WORLD_LOG=0`); the
+  server keeps their code. The map, rest, echo, trophy and vitals boards and matchmaking are
+  unchanged.
+- Server: `PartyWorldSnapshotBoard` (the party's latest blob and its age), unit tests, and the
+  `world.*` messages in the contracts file. Co-op protocol 6.
 
 ## Stage D: split `bloodborne_re.cpp`
 

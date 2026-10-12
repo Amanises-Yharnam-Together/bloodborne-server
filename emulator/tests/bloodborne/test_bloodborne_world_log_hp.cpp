@@ -51,6 +51,7 @@ void TakeOtherParts(WorldLogMember& member, u64 epoch, u64 last, s64 now_ms) {
     member.Take(WorldLogSnapshot{"host", epoch, last, 0, 1, {}}, now_ms);
     member.Take(WorldLogShownSnapshot{"host", epoch, last, 0, 1, {}}, now_ms);
     member.Take(WorldLogMapStateSnapshot{"host", epoch, last, {}}, now_ms);
+    member.Take(WorldLogFlagsSnapshot{"host", epoch, last, {}}, now_ms);
 }
 
 } // namespace
@@ -293,6 +294,7 @@ TEST(WorldLogHp, MembersConvergeOverABadLink) {
             for (const auto& part : host.HpSnapshot("h")) {
                 member.Take(part, now);
             }
+            member.Take(host.FlagsSnapshot("h"), now);
         };
         for (int tick = 0; tick < 150; ++tick) {
             now += 100;

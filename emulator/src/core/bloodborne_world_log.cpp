@@ -49,6 +49,13 @@ s64 flags_sent_ms = 0;
 // Enemy HP (step 4): this game's report proposals, counted within its run.
 u32 hp_proposals_made = 0;
 s64 hp_sent_ms = 0;
+// The world snapshot on the server (see WorldSnapshotPostMs): the host's next blob to post, and a
+// member's wish for one and the one read (world_snapshot_mutex: the board client's thread).
+std::mutex world_snapshot_mutex;
+std::optional<std::vector<u8>> world_snapshot_out;
+std::optional<std::pair<s64, std::vector<u8>>> world_snapshot_in; // age ms, blob
+std::atomic<bool> world_snapshot_wanted{false};
+s64 world_snapshot_made_ms = 0;
 FlagEventOnce flag_once; // flag_board_mutex: an event from the log or the flag board, once
 WorldLogHost world_log_host;
 WorldLogMember world_log_member;
@@ -58,7 +65,6 @@ s64 proposal_sent_ms = 0;
 s64 entries_sent_ms = 0;
 WorldLogKills last_proposed;
 std::optional<std::pair<u32, u16>> log_host_peer; // where the host's frames come from
-std::unordered_set<u32> board_posted;             // the host's union as on the kill board
 
 // What the lifecycle asks of the log, taken on the next kill step: the host starts a new log with
 // no kills on its wipe (marked, see WorldLogWipeHold), a new session or character; a member
@@ -137,9 +143,9 @@ void TakeProposal(const std::string& name, const WorldLogProposal& proposal, s64
     }
 }
 
-// Flag events the log took: set in this member's world (each once, whichever copy comes first);
-// the host also posts them to the flag board, the copy for a member whose link is down.
-void ApplyFlagEntries(std::span<const WorldLogEntry> entries, bool board_copy, s64 now_ms) {
+// Flag events the log took (or a snapshot brought, those it missed): set in this member's world,
+// each once.
+void ApplyFlagEntries(std::span<const WorldLogEntry> entries, s64 now_ms) {
     std::scoped_lock lock{flag_board_mutex};
     for (const WorldLogEntry& entry : entries) {
         if (entry.kind != WorldLogKind::FlagSet && entry.kind != WorldLogKind::FlagClear) {
@@ -149,9 +155,6 @@ void ApplyFlagEntries(std::span<const WorldLogEntry> entries, bool board_copy, s
         const bool on = entry.kind == WorldLogKind::FlagSet;
         if (flag_once.First(flag, on, now_ms)) {
             flags_to_set.emplace_back(flag, on);
-        }
-        if (board_copy) {
-            flags_to_post.emplace_back(flag, on);
         }
     }
 }
@@ -163,9 +166,11 @@ void TakeFlagProposal(const std::string& name, const WorldLogFlagProposal& propo
     }
     if (!taken.entries.empty()) {
         SendEntries(name, taken.entries, now_ms);
-        ApplyFlagEntries(taken.entries, true, now_ms);
+        ApplyFlagEntries(taken.entries, now_ms);
     }
 }
+
+void MakeWorldSnapshot(const std::string& name, s64 now_ms); // below
 
 // The host: a new log when there is none or the lifecycle asked for one, its own kills as a
 // proposal of its own, and a heartbeat every WorldLogResendMs.
@@ -189,6 +194,7 @@ void RunHostLog(const std::string& name, const WorldLogKills& mine, s64 now_ms) 
     if (now_ms - entries_sent_ms >= WorldLogResendMs) {
         SendEntries(name, {}, now_ms);
     }
+    MakeWorldSnapshot(name, now_ms);
 }
 
 // A member: its standing kills to the host at once on a change and every WorldLogResendMs, and a
@@ -231,13 +237,12 @@ void RunMemberLog(const std::string& name, const WorldLogKills& mine, s64 now_ms
 }
 
 // The kills' path changed: the board takes back what this member posted (its next post asks since
-// FreshStart). Back on the board this member posts its standing kills again; on the log the host
-// posts the party's union there instead (see BoardKillsForTheLog).
+// FreshStart). Back on the board this member posts its standing kills again; on the log nobody
+// posts kills there (the world snapshot is the copy).
 void SwitchKillPath(bool log, const WorldLogKills& mine) {
     std::scoped_lock lock{kill_board_mutex};
     kill_board_fresh_start = true;
     kills_to_post.clear();
-    board_posted.clear();
     if (log) {
         return;
     }
@@ -266,38 +271,10 @@ bool DecideKillPath(const WorldLogKills& mine, s64 now_ms) {
     return log;
 }
 
-// On the log path, under kill_board_mutex: the other members' kills from the log, with the board's
-// for members outside it. The host posts the party's union to the board as its own (the fallback
-// copy for a member whose link is down or who joins); a member whose copy is not fresh takes the
-// board's whole.
-std::unordered_set<u32> BoardKillsForTheLog(const std::string& name, s64 now_ms) {
-    if (IsPartyGuestRole()) {
-        if (!world_log_member.Fresh(now_ms)) {
-            // Right after a wipe the host's entries on the board are from before it (it posts
-            // every 3 s): a member back from the wipe's load killed the respawned dog by them.
-            return wipe_hold.BoardStale(now_ms) ? party_kills.AllExcept(world_log_member.Host())
-                                                : party_kills.All();
-        }
-        std::unordered_set<u32> kills = WorldLogHandles(world_log_member.Kills());
-        const auto board = party_kills.AllExcept(world_log_member.Host());
-        kills.insert(board.begin(), board.end());
-        return kills;
-    }
-    std::unordered_set<u32> kills = WorldLogHandles(world_log_host.Kills());
-    for (const u32 handle : board_posted) {
-        if (!kills.contains(handle)) {
-            kills_to_post.emplace_back(static_cast<s32>(handle), false);
-        }
-    }
-    for (const u32 handle : kills) {
-        if (!board_posted.contains(handle)) {
-            kills_to_post.emplace_back(static_cast<s32>(handle), true);
-        }
-    }
-    board_posted = kills;
-    const auto board = party_kills.AllExcept(name);
-    kills.insert(board.begin(), board.end());
-    return kills;
+// On the log path: the party's kills from the log (a member's copy kept by the link, or by the
+// world snapshot while it is down). The kill board is not read then.
+std::unordered_set<u32> LogKills() {
+    return WorldLogHandles(IsPartyGuestRole() ? world_log_member.Kills() : world_log_host.Kills());
 }
 
 void LogMemberStart(const WorldLogMember::Step& step) {
@@ -341,24 +318,42 @@ void TakeHpProposal(const std::string& name, const WorldLogHpProposal& proposal,
     }
 }
 
-// A snapshot to the member that asked: the kills, then the shown characters, the map state and the
-// HP reports at the same seq (a member waits for them all).
-void SendSnapshot(const std::string& name, u32 addr, u16 port) {
+// A snapshot's frames: the kills, then the shown characters, the map state, the HP reports and the
+// recent flag events at the same seq (a member waits for them all). To a member that asks over the
+// link, and to the server as the world snapshot.
+WorldSnapshotFrames SnapshotFrames(const std::string& name) {
+    WorldSnapshotFrames frames;
     for (const WorldLogSnapshot& part : world_log_host.Snapshot(name)) {
-        SendToPeer(EncodeCoopFrame(WorldLogSnapshotType, EncodeWorldLogSnapshot(part)), addr, port);
+        frames.emplace_back(WorldLogSnapshotType, EncodeWorldLogSnapshot(part));
     }
     for (const WorldLogShownSnapshot& part : world_log_host.ShownSnapshot(name)) {
-        SendToPeer(EncodeCoopFrame(WorldLogShownSnapshotType, EncodeWorldLogShownSnapshot(part)),
-                   addr, port);
+        frames.emplace_back(WorldLogShownSnapshotType, EncodeWorldLogShownSnapshot(part));
     }
-    SendToPeer(
-        EncodeCoopFrame(WorldLogMapStateSnapshotType,
-                        EncodeWorldLogMapStateSnapshot(world_log_host.MapStateSnapshot(name))),
-        addr, port);
+    frames.emplace_back(WorldLogMapStateSnapshotType,
+                        EncodeWorldLogMapStateSnapshot(world_log_host.MapStateSnapshot(name)));
     for (const WorldLogHpSnapshot& part : world_log_host.HpSnapshot(name)) {
-        SendToPeer(EncodeCoopFrame(WorldLogHpSnapshotType, EncodeWorldLogHpSnapshot(part)), addr,
-                   port);
+        frames.emplace_back(WorldLogHpSnapshotType, EncodeWorldLogHpSnapshot(part));
     }
+    frames.emplace_back(WorldLogFlagsSnapshotType,
+                        EncodeWorldLogFlagsSnapshot(world_log_host.FlagsSnapshot(name)));
+    return frames;
+}
+
+void SendSnapshot(const std::string& name, u32 addr, u16 port) {
+    for (const auto& [type, payload] : SnapshotFrames(name)) {
+        SendToPeer(EncodeCoopFrame(type, payload), addr, port);
+    }
+}
+
+// The host: its log's state for the server every WorldSnapshotPostMs (the board client posts it).
+void MakeWorldSnapshot(const std::string& name, s64 now_ms) {
+    if (now_ms - world_snapshot_made_ms < WorldSnapshotPostMs) {
+        return;
+    }
+    world_snapshot_made_ms = now_ms;
+    std::vector<u8> blob = EncodeWorldSnapshot(SnapshotFrames(name));
+    std::scoped_lock lock{world_snapshot_mutex};
+    world_snapshot_out = std::move(blob);
 }
 
 void TakeFrameAsHost(u8 type, std::span<const u8> payload, u32 addr, u16 port, s64 now_ms) {
@@ -415,19 +410,23 @@ std::optional<MemberTake> TakeAsMember(u8 type, std::span<const u8> payload, s64
         return TakePart(DecodeWorldLogMapStateSnapshot(payload), now_ms, "map-state-snapshot");
     case WorldLogHpSnapshotType:
         return TakePart(DecodeWorldLogHpSnapshot(payload), now_ms, "hp-snapshot");
+    case WorldLogFlagsSnapshotType:
+        return TakePart(DecodeWorldLogFlagsSnapshot(payload), now_ms, "flags-snapshot");
     default:
         return std::nullopt;
     }
 }
 
-void TakeFrameAsMember(u8 type, std::span<const u8> payload, u32 addr, u16 port, s64 now_ms) {
+// `from`: the host's address on the link (none for the server's world snapshot).
+void TakeMemberFrame(u8 type, std::span<const u8> payload, s64 now_ms,
+                     std::optional<std::pair<u32, u16>> from) {
     const auto taken = TakeAsMember(type, payload, now_ms);
     if (!taken) {
         return;
     }
     const WorldLogMember::Step& step = taken->step;
-    if (!step.stale) {
-        log_host_peer = std::pair{addr, port};
+    if (!step.stale && from) {
+        log_host_peer = from;
     }
     if (StartsAfterAWipe(step.applied)) {
         wipe_hold.HostWiped(now_ms);
@@ -435,8 +434,41 @@ void TakeFrameAsMember(u8 type, std::span<const u8> payload, u32 addr, u16 port,
     if (step.stale || step.new_epoch || step.snapshot || step.gap || !step.applied.empty()) {
         TraceLog("member", taken->op, payload);
     }
-    ApplyFlagEntries(step.applied, false, now_ms);
+    ApplyFlagEntries(step.applied, now_ms);
     LogMemberStep(step, taken->host_last);
+}
+
+void TakeFrameAsMember(u8 type, std::span<const u8> payload, u32 addr, u16 port, s64 now_ms) {
+    TakeMemberFrame(type, payload, now_ms, std::pair{addr, port});
+}
+
+// A member: the world snapshot the board client read, taken as the host's snapshot frames are; only
+// a recent one, and only of the log this member follows (or any while it follows none: a join, a
+// restart), so an old copy never takes it back from a newer host. Asked for while its copy is not
+// fresh.
+void TakeWorldSnapshot(s64 now_ms) {
+    world_snapshot_wanted.store(!world_log_member.Fresh(now_ms));
+    std::optional<std::pair<s64, std::vector<u8>>> read;
+    {
+        std::scoped_lock lock{world_snapshot_mutex};
+        read.swap(world_snapshot_in);
+    }
+    const auto frames = read && read->first <= WorldSnapshotMaxAgeMs
+                            ? DecodeWorldSnapshot(read->second)
+                            : std::nullopt;
+    if (!frames || frames->empty() || frames->front().first != WorldLogSnapshotType) {
+        return;
+    }
+    const auto first = DecodeWorldLogSnapshot(frames->front().second);
+    const u64 epoch = world_log_member.Epoch();
+    if (!first || (epoch != 0 && (first->epoch >> 32) != (epoch >> 32))) {
+        return;
+    }
+    LOG_INFO(Debug, "Co-op world log: took the world snapshot from the server (log {:#x}, seq {})",
+             first->epoch, first->last);
+    for (const auto& [type, payload] : *frames) {
+        TakeMemberFrame(type, payload, now_ms, std::nullopt);
+    }
 }
 
 // The shared flags and the map state take the log with the kills. Leaving it, this game's events
@@ -450,11 +482,11 @@ void FollowFlagsPath(bool log, s64 now_ms) {
         }
         flag_outbox.Clear(); // its numbers go on: the host took them by number
     }
-    // What a guest's load takes of the host's map flags: the log's copy while it is whole and
-    // fresh.
+    // What a guest's load takes of the host's map flags: the log's copy (kept by the link, or by
+    // the world snapshot while it is down).
     std::optional<MemberMapState> copy;
-    if (log && IsPartyGuestRole() && world_log_member.Fresh(now_ms) &&
-        world_log_member.MapStateKnown() && world_log_member.MapState().map != 0) {
+    if (log && IsPartyGuestRole() && world_log_member.MapStateKnown() &&
+        world_log_member.MapState().map != 0) {
         copy = MemberMapState{world_log_member.MapState().map, world_log_member.MapState().bits};
     }
     std::scoped_lock lock{map_state_mutex};
@@ -491,9 +523,11 @@ void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters) {
 }
 
 std::optional<MemberMapState> HostShownNow() {
-    if (world_log_path.Active() && world_log_member.Fresh(SteadyMilliseconds()) &&
-        world_log_member.ShownKnown() && world_log_member.Shown().map != 0) {
+    if (world_log_path.Active()) {
         const WorldLogShown& shown = world_log_member.Shown();
+        if (!world_log_member.ShownKnown() || shown.map == 0) {
+            return std::nullopt;
+        }
         return MemberMapState{shown.map, EncodeShownCharacters(WorldLogShownCharacters(shown))};
     }
     std::scoped_lock lock{shown_board_mutex};
@@ -503,9 +537,12 @@ std::optional<MemberMapState> HostShownNow() {
 std::vector<MemberMapState> OthersEnemyHp(u64 own_source) {
     const s64 now_ms = SteadyMilliseconds();
     const bool hosting = !IsPartyGuestRole();
-    if (world_log_path.Active() && (hosting || world_log_member.Fresh(now_ms))) {
+    // The peers' direct frames first: on the log path the fast copy of the same reports (a hit
+    // moves the bars on the first hop; each report is cumulative per member and visit and
+    // MergeEnemyHpReports takes the most damage of its copies, so nothing counts twice).
+    std::vector<MemberMapState> others = direct_damage_inbox.Fresh(now_ms);
+    if (world_log_path.Active()) {
         // The reports the host's log has (this member's own left out).
-        std::vector<MemberMapState> others;
         for (const auto& [map, report] :
              WorldLogHpReports(hosting ? world_log_host.Hp() : world_log_member.Hp())) {
             if ((report.visit & ~HostHpReport) != own_source) {
@@ -514,20 +551,21 @@ std::vector<MemberMapState> OthersEnemyHp(u64 own_source) {
         }
         return others;
     }
-    // The board path, or a member whose copy is not fresh: the peers' direct frames, then the HP
-    // board (the same reports, later).
-    std::vector<MemberMapState> others = direct_damage_inbox.Fresh(now_ms);
+    // The board path: then the HP board (the same reports, later).
     std::scoped_lock lock{enemy_hp_mutex};
     others.insert(others.end(), others_enemy_hp.begin(), others_enemy_hp.end());
     return others;
 }
 
 void SendEnemyHp(const MemberMapState& mine, bool changed) {
+    const s64 now_ms = SteadyMilliseconds();
+    const bool held = IsPartyGuestRole() && wipe_hold.HoldsProposals(now_ms);
+    if (!held) {
+        SendDirectDamage(mine, changed); // the fast copy (see OthersEnemyHp)
+    }
     if (!world_log_path.Active()) {
-        SendDirectDamage(mine, changed);
         return;
     }
-    const s64 now_ms = SteadyMilliseconds();
     const std::string name = LogMemberName();
     const auto report = mine.map != 0 ? DecodeEnemyHp(mine.bits) : std::nullopt;
     if (!report || name.empty() || (!changed && now_ms - hp_sent_ms < WorldLogResendMs)) {
@@ -543,12 +581,30 @@ void SendEnemyHp(const MemberMapState& mine, bool changed) {
         }
         return;
     }
-    if (wipe_hold.HoldsProposals(now_ms)) {
+    if (held) {
         return; // its damage from before its own wipe must not stand (see WorldLogWipeHold)
     }
     const WorldLogHpProposal proposal{
         name, world_log_member.Epoch(), world_log_run, ++hp_proposals_made, mine.map, *report};
     SendToRoomPeers(EncodeCoopFrame(WorldLogHpProposeType, EncodeWorldLogHpProposal(proposal)));
+}
+
+bool WorldLogCarriesBoards() {
+    return flags_on_log.load();
+}
+
+std::optional<std::vector<u8>> TakeWorldSnapshotToPost() {
+    std::scoped_lock lock{world_snapshot_mutex};
+    return std::exchange(world_snapshot_out, std::nullopt);
+}
+
+bool WorldSnapshotWanted() {
+    return IsPartyGuestRole() && world_snapshot_wanted.load();
+}
+
+void NoteWorldSnapshot(s64 age_ms, std::vector<u8> blob) {
+    std::scoped_lock lock{world_snapshot_mutex};
+    world_snapshot_in = std::pair{age_ms, std::move(blob)};
 }
 
 bool TakeFlagsForTheLog(std::span<const std::pair<s32, bool>> shared) {
@@ -611,6 +667,7 @@ PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
     if (log && !name.empty()) {
         if (IsPartyGuestRole()) {
             RunMemberLog(name, mine, now_ms);
+            TakeWorldSnapshot(now_ms);
         } else {
             RunHostLog(name, mine, now_ms);
         }
@@ -621,7 +678,7 @@ PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
         if (!log) {
             kills_to_post.insert(kills_to_post.end(), changes.begin(), changes.end());
         }
-        party.members = log ? BoardKillsForTheLog(name, now_ms) : others_kills;
+        party.members = log ? LogKills() : others_kills;
     }
     // Its own kills too (a guest pulled into the host's world sees the host's copy alive), and its
     // earlier visit's kills here that stood while another member stayed.

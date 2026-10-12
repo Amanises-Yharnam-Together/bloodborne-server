@@ -1196,7 +1196,8 @@ constexpr u8 PeerHelloType = 0x33;
 // and the hello's features. 3: the shown characters on the world log. 4: the shared flags and the
 // host's map state on it (frames 0x39, 0x3A, the flag entries).
 // 5: enemy HP on it (frames 0x3B, 0x3C, the HP entries; every entry carries a value).
-constexpr u8 CoopProtocolVersion = 5;
+// 6: a snapshot ends with the recent flag events (frame 0x3D); the world snapshot on the server.
+constexpr u8 CoopProtocolVersion = 6;
 constexpr s64 PeerHelloResendMs = 10'000;
 // PeerHello::features: WorldLogFeature when this game runs the world log (it is not switched off,
 // SHADPS4_BLOODBORNE_WORLD_LOG=0). Every member runs one build (Kaniel 2026-10-12): a peer on
@@ -1410,6 +1411,10 @@ constexpr u8 WorldLogMapStateSnapshotType = 0x3A;
 constexpr u8 WorldLogHpProposeType = 0x3B;
 // host -> that member, after the map state: every HP report at the same seq, in parts
 constexpr u8 WorldLogHpSnapshotType = 0x3C;
+// host -> that member, last: the flag events of the log's last WorldLogRecentFlags (a member that
+// missed some in a gap sets them; one that joins gets none, as a game's first flag board post)
+constexpr u8 WorldLogFlagsSnapshotType = 0x3D;
+constexpr size_t WorldLogRecentFlags = 64;
 bool IsWorldLogFrameType(u8 type);
 // A member's proposal and the host's heartbeat go out at once on a change and again every
 // WorldLogResendMs; a member's log stands WorldLogLifeMs after the host's last frame (else the
@@ -1519,6 +1524,37 @@ struct WorldLogHpSnapshot {
 };
 std::vector<u8> EncodeWorldLogHpSnapshot(const WorldLogHpSnapshot& snapshot);
 std::optional<WorldLogHpSnapshot> DecodeWorldLogHpSnapshot(std::span<const u8> payload);
+struct WorldLogFlagsSnapshot {
+    std::string host;
+    u64 epoch = 0;
+    u64 last = 0;
+    std::vector<WorldLogEntry> events; // FlagSet / FlagClear entries, oldest first
+    bool operator==(const WorldLogFlagsSnapshot&) const = default;
+};
+std::vector<u8> EncodeWorldLogFlagsSnapshot(const WorldLogFlagsSnapshot& snapshot);
+std::optional<WorldLogFlagsSnapshot> DecodeWorldLogFlagsSnapshot(std::span<const u8> payload);
+
+// The world snapshot on the server (POST /bloodborne/party/world, Kaniel 2026-10-12): in place of
+// the polled per-feature boards while the world log runs, the host posts its whole log state every
+// WorldSnapshotPostMs as one blob, the same snapshot frames it sends a member that asks over the
+// link. A member reads it only when its copy is not fresh (a join, a restart, its link to the host
+// down) and takes the frames as it takes them from the host. The blob: a version byte, then each
+// frame as type (u8), length (u16), payload, after the frame count (u16).
+constexpr s64 WorldSnapshotPostMs = 2'000;
+// A server snapshot older than this is not taken (a party that went on without its host).
+constexpr s64 WorldSnapshotMaxAgeMs = 30'000;
+using WorldSnapshotFrames = std::vector<std::pair<u8, std::vector<u8>>>;
+std::vector<u8> EncodeWorldSnapshot(const WorldSnapshotFrames& frames);
+std::optional<WorldSnapshotFrames> DecodeWorldSnapshot(std::span<const u8> blob);
+// The board's messages: "<member> [<hex blob>]" (a post with the blob, or a read), and the answer
+// "<age ms> <hex blob>\n", or nothing when the party has no snapshot.
+std::string EncodeWorldSnapshotUpdate(std::string_view member, std::span<const u8> blob);
+struct WorldSnapshotAnswer {
+    s64 age_ms = 0;
+    std::vector<u8> blob; // empty: none
+    bool operator==(const WorldSnapshotAnswer&) const = default;
+};
+std::optional<WorldSnapshotAnswer> ParseWorldSnapshotAnswer(std::string_view body);
 // `entries` (consecutive) as batches of at most WorldLogEntriesPerFrame; one heartbeat for none.
 std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
                                          std::span<const WorldLogEntry> entries);
@@ -1587,6 +1623,8 @@ public:
     }
     // The HP reports in parts of at most WorldLogHpPerFrame enemies (one part when there are none).
     std::vector<WorldLogHpSnapshot> HpSnapshot(std::string_view host) const;
+    // The flag events of the log's last WorldLogRecentFlags entries.
+    WorldLogFlagsSnapshot FlagsSnapshot(std::string_view host) const;
 
 private:
     struct Member {
@@ -1624,6 +1662,7 @@ private:
     };
     std::map<std::string, HpSender> hp_senders;
     WorldLogHp hp;
+    std::vector<WorldLogEntry> recent_flags; // the last WorldLogRecentFlags flag entries
 };
 
 // A member's side: the entries applied in seq order, exactly once.
@@ -1643,6 +1682,9 @@ public:
     // sends all of them).
     Step Take(const WorldLogMapStateSnapshot& part, s64 now_ms);
     Step Take(const WorldLogHpSnapshot& part, s64 now_ms);
+    // The last part: a snapshot is whole with it. Its events after what this member had applied
+    // (in the same log) come out in Step::applied, the flag events it missed.
+    Step Take(const WorldLogFlagsSnapshot& part, s64 now_ms);
     // Every member's HP report (this member's own too), as the host has them.
     const WorldLogHp& Hp() const {
         return hp;
@@ -1708,6 +1750,7 @@ private:
         std::optional<WorldLogMapState> map_state;
         std::optional<u8> hp_parts;
         std::map<u8, WorldLogHp> hp_got;
+        std::optional<std::vector<WorldLogEntry>> flags;
     };
     void ApplyMapFlag(const WorldLogEntry& entry);
     void ApplyHp(const WorldLogEntry& entry);
