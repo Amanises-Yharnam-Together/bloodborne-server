@@ -1367,8 +1367,20 @@ void TickPlayersOnThisMap() {
     ResendOwnDataOnChange(in_session);
     LogMemberDataChanges(in_session);
     GiveEncounterInsight(in_session);
-    for (const s32 flag :
-         GuestProgressFlags(IsPartyGuestRole(), in_session, IsUsablePackedMap(map) ? map : 0)) {
+    // Whether this character has been to the Hunter's Dream: its own world has the first visit's
+    // flag, or it is there (the first visit's event runs for a guest too).
+    static int dream_slot = -2;
+    static bool dream_visited = false;
+    if (const int slot = character_slot.load(); slot != dream_slot) {
+        dream_slot = slot;
+        dream_visited = false;
+    }
+    constexpr u32 HuntersDream = 0x15000000;
+    if (!dream_visited && ((!in_session && EventFlagOn(9401)) || map == HuntersDream)) {
+        dream_visited = true;
+    }
+    for (const s32 flag : GuestProgressFlags(IsPartyGuestRole(), in_session,
+                                             IsUsablePackedMap(map) ? map : 0, dream_visited)) {
         if (!EventFlagOn(flag)) {
             // Set while in the session, so the guest's world keeps it (KeepWorldChanges).
             reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(

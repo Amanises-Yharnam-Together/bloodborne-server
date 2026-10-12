@@ -112,6 +112,17 @@ class GfxTests(unittest.TestCase):
         self.assertLess(tags.index(sprites[icon_char]), tags.index(places['CoopPartyIcon0']))
         self.assertEqual(hud_patch.patch_fe(patched, strip), patched, 'once')
 
+    def test_a_list_patched_before_the_icons_gets_them(self):
+        # Kaniel 2026-10-13: the HUD the mods showed was an older patch's (the list, no icons), and the
+        # list being there already stopped the icons being added: the party list had no icons.
+        strip = hud_patch.HUD_ICONS.read_bytes()
+        without = hud_patch.patch_fe(fe_movie())
+        self.assertNotIn(b'CoopPartyIcon0', without)
+        patched = hud_patch.patch_fe(without, strip)
+        self.assertEqual(patched.count(b'CoopPartyIcon'), len(hud_patch.PARTY_ICONS))
+        self.assertEqual(patched.count(b'CoopParty0'), 1, 'the list once')
+        self.assertEqual(hud_patch.patch_fe(patched, strip), patched, 'once')
+
     def test_the_matrix_and_rect_bits(self):
         self.assertEqual(hud_patch.matrix(None, 0, 0), bytes([0x02, 0x00]))  # no scale, no rotation, 1-bit moves
         self.assertEqual(hud_patch.rect(0, 0)[0] >> 3, 1)

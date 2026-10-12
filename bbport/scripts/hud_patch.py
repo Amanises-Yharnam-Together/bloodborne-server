@@ -348,6 +348,10 @@ def add_party_list(tags, strip=None):
     places = [tag for tag in tags[:first_frame] if tag.code in (PLACE_OBJECT2, PLACE_OBJECT3)]
     names = {place_parts(tag)[1] for tag in places}
     if names >= set(PARTY_LIST):
+        # Patched before (an older HUD patch a mod layer still holds): only the icons it may lack.
+        if strip is not None and not names >= set(PARTY_ICONS):
+            depth = max(place_depth(tag) for tag in places)
+            tags[first_frame:first_frame] = party_icon_tags(depth, strip)
         return
     prompt_sprite = next((place_parts(tag)[0] for tag in places if place_parts(tag)[1] == PROMPT_TAG), None)
     tag_sprite = next((place_parts(tag)[0] for tag in places if place_parts(tag)[1] == PARTY_TAG), None)

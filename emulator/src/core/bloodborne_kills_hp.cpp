@@ -575,6 +575,7 @@ void PS4_SYSV_ABI NoteHitApplied(u64, const GuestRegisterSnapshot* registers) {
     {
         std::scoped_lock lock{own_hits_mutex};
         own_damage.Hit(handle, attacker == player, taken);
+        own_damage.HitLeft(handle, CharacterHp(victim), SteadyMilliseconds());
     }
     if (attacker == player && taken > 0) {
         enemy_step_due.store(true);
@@ -985,14 +986,18 @@ bool IsUntouchedBoss(u64 character, s32 hp) {
 SeenCharacter SeeCharacter(u64 character) {
     // Only a real death is a kill: characters of a map being torn down read 0 HP too, and a guest
     // leaving for the Dream "killed" the dog for the host.
+    // A hit seen to leave it at 0 counts at once (SeenDead): the death bit comes after the reward.
     const s32 hp = CharacterHp(character);
-    const bool dead = IsRealDeath(ReadValue<u8>(character, 0x1E3));
     const u32 handle = ReadValue<u32>(character, 0x08);
     std::optional<bool> last_hit_mine;
+    std::optional<s64> zero_hit_ms;
     {
         std::scoped_lock lock{own_hits_mutex};
         last_hit_mine = own_damage.LastHitMine(handle);
+        zero_hit_ms = own_damage.ZeroHitMs(handle);
     }
+    const bool dead =
+        SeenDead(ReadValue<u8>(character, 0x1E3), hp, zero_hit_ms, SteadyMilliseconds());
     return {handle,
             dead ? 0 : std::max(hp, 1),
             character,
@@ -1348,6 +1353,9 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                             !IsBossSized(character)});
     }
     if (hosting) {
+        if (!PostsShownState(SteadyMilliseconds(), world_changed_ms.load())) {
+            return; // its story is still setting the map up (Iosefka shown, then hidden)
+        }
         ShowOnTheLog(map, mine);
         std::scoped_lock lock{shown_board_mutex};
         local_shown = MemberMapState{map, EncodeShownCharacters(mine)};

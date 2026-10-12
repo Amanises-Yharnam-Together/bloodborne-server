@@ -713,8 +713,10 @@ bool CarriesToGuestWorld(s32 flag);
 // The Hunter's Dream flags a guest out in the world (any map but the Dream) in a session sets for
 // itself: 9401 (Central Yharnam reached: the Dream's first visit, its shop) and 9403 (the
 // workshop's doors open, set by Central Yharnam's 12410900 for a live player only). A phantom in
-// the host's world never set them, so its own Dream stayed shut (Kaniel 2026-10-11).
-std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map);
+// the host's world never set them, so its own Dream stayed shut (Kaniel 2026-10-11). 9401 only once
+// this character has been to the Dream (`dream_visited`): before, it showed the clinic's lamp and
+// ended the first death's wake in the Dream (Lisara 2026-10-13).
+std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map, bool dream_visited);
 // The messengers' weapon lines: Dream event 12101000, started per slot 0-9, sets 12101000 + slot
 // once the player has that slot's badge. A broken patch of that event (2026-10-12) set them all,
 // so once per save slot, out of the Dream, they are cleared and the next Dream visit sets them
@@ -730,19 +732,23 @@ bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip);
 // True once per party trip: the first time it is asked while the trip is on.
 class OncePerTrip {
 public:
-    bool Take(bool on_trip) {
-        if (!on_trip) {
-            taken = false;
+    // `trip`: the trip's number (party_trips_started): one take per trip, even with no load
+    // outside a trip between two.
+    bool Take(bool on_trip, u64 trip) {
+        if (!on_trip || (taken && *taken == trip)) {
             return false;
         }
-        const bool first = !taken;
-        taken = true;
-        return first;
+        taken = trip;
+        return true;
     }
 
 private:
-    bool taken = false;
+    std::optional<u64> taken;
 };
+// Whether the host posts its characters' shown state (`world_changed_ms`: its world's last load):
+// once the load's story has run (ShownSettleMs).
+constexpr s64 ShownSettleMs = 8'000;
+bool PostsShownState(s64 now_ms, s64 world_changed_ms);
 // A lamp's "active" flag (10007810 + map * 10000 + lamp * 20, what the lamp talk scripts check)
 // to its lamp entity (map * 10000 + 1950 + lamp); the game clears the flag again for a character
 // whose lamp list ([0x0553B120]+0xC70) lacks the lamp.
@@ -1894,6 +1900,10 @@ public:
     void Effect(u32 handle, s32 taken);
     s64 Total(u32 handle) const;
     // Whether the last hit on it was this player's (nothing when no hit was seen).
+    // A hit's HP left (`hp`, at `now_ms`): one that leaves 0 is when the killing blow landed
+    // (SeenDead), until a later hit sees it up again.
+    void HitLeft(u32 handle, s32 hp, s64 now_ms);
+    std::optional<s64> ZeroHitMs(u32 handle) const;
     std::optional<bool> LastHitMine(u32 handle) const {
         const auto last = last_hit_mine.find(handle);
         return last != last_hit_mine.end() ? std::optional{last->second} : std::nullopt;
@@ -1905,6 +1915,7 @@ public:
 private:
     std::map<u32, s64> totals;
     std::map<u32, bool> last_hit_mine;
+    std::map<u32, s64> zero_hit_ms;
 };
 std::vector<EnemyWrite> LowerToHostHp(std::span<const EnemyCopy> mine,
                                       std::span<const EnemyHpReport> reports);
@@ -2060,6 +2071,12 @@ bool WatchesKills(bool sharing, bool trip_active, bool loading);
 // kill reward). Both are cleared when it comes back (0x018CC550). Not with bit 5: an enemy its
 // world puts down, dead in that save (0x26; cleared at 0x013320DF), is no kill made now.
 bool IsRealDeath(u8 death_flags);
+// A death the kill board counts: a real one (IsRealDeath), or 0 HP within ZeroHitCountsMs of a hit
+// that left it at 0 (`zero_hit_ms`, see OwnDamage::HitLeft): the game sets the death bit only after
+// the kill reward, 1-2.4 s later, and the other members' copies waited that long (Lisara
+// 2026-10-13). Never one its world put down (bit 5).
+constexpr s64 ZeroHitCountsMs = 5'000;
+bool SeenDead(u8 death_flags, s32 hp, std::optional<s64> zero_hit_ms, s64 now_ms);
 
 // A character as the kill board sees it: its handle, its HP (0 once really dead, see
 // IsRealDeath) and the object itself, which a world that loads makes anew.

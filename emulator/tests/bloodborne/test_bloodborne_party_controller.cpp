@@ -726,11 +726,24 @@ TEST(BloodborneGuestProgress, ATripLoadsTheSessionsWorldChangesToo) {
 // guest's headstone). The world changes go in once per trip, whatever the throttle.
 TEST(BloodborneGuestProgress, EachTripGetsTheWorldChangesOnce) {
     OncePerTrip once;
-    EXPECT_FALSE(once.Take(false));
-    EXPECT_TRUE(once.Take(true));
-    EXPECT_FALSE(once.Take(true)) << "same trip";
-    EXPECT_FALSE(once.Take(false));
-    EXPECT_TRUE(once.Take(true)) << "the next trip";
+    EXPECT_FALSE(once.Take(false, 0));
+    EXPECT_TRUE(once.Take(true, 1));
+    EXPECT_FALSE(once.Take(true, 1)) << "same trip";
+    EXPECT_FALSE(once.Take(false, 1));
+    EXPECT_TRUE(once.Take(true, 2)) << "the next trip";
+    // Lisara 2026-10-13: in a session every load is a trip, and the map-item hook that asks runs
+    // only in loads, so it never saw a "no trip" between two: trips 2 and 3 took no host state.
+    EXPECT_TRUE(once.Take(true, 3)) << "a trip right after a trip";
+    EXPECT_FALSE(once.Take(true, 3));
+}
+
+// Lisara 2026-10-13: Iosefka stood in the guest's Central Yharnam for 6 s after a trip. The host
+// posted its board the moment its own load ended, before its story hid her, and the guest showed
+// her again over its own story's hide. The host posts its characters once its world has settled.
+TEST(BloodborneShownBoard, TheHostPostsOnlyASettledWorld) {
+    EXPECT_FALSE(PostsShownState(10'000 + ShownSettleMs - 1, 10'000));
+    EXPECT_TRUE(PostsShownState(10'000 + ShownSettleMs, 10'000));
+    EXPECT_GE(ShownSettleMs, 6'000) << "the host's story took about 4 s";
 }
 
 // A party death wakes where the game says (GlobalState +0x1528): the events set it on a death
@@ -776,13 +789,19 @@ TEST(BloodborneSharedLoot, AMessengerGiftIsEachPlayersOwn) {
 TEST(BloodborneSharedProgression, AGuestOutInTheWorldOpensItsOwnDream) {
     constexpr u32 CentralYharnam = 0x18010000;
     constexpr u32 HuntersDream = 0x15000000;
-    EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam), (std::vector<s32>{9401, 9403}));
-    EXPECT_TRUE(GuestProgressFlags(true, true, HuntersDream).empty())
+    EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam, true), (std::vector<s32>{9401, 9403}));
+    EXPECT_TRUE(GuestProgressFlags(true, true, HuntersDream, true).empty())
         << "the Dream alone is no trip out";
-    EXPECT_TRUE(GuestProgressFlags(true, false, CentralYharnam).empty()) << "not in a session";
-    EXPECT_TRUE(GuestProgressFlags(false, true, CentralYharnam).empty()) << "the host's own";
-    EXPECT_TRUE(GuestProgressFlags(true, true, 0).empty()) << "loading";
-    for (const s32 flag : GuestProgressFlags(true, true, CentralYharnam)) {
+    EXPECT_TRUE(GuestProgressFlags(true, false, CentralYharnam, true).empty())
+        << "not in a session";
+    EXPECT_TRUE(GuestProgressFlags(false, true, CentralYharnam, true).empty()) << "the host's own";
+    EXPECT_TRUE(GuestProgressFlags(true, true, 0, true).empty()) << "loading";
+    // Lisara's new character (2026-10-13): 9401 set before its first death showed the clinic's
+    // lamp (common event 7000 waits for it) and ended the first-death event 9400 (end if 9401 on),
+    // so the death woke it at the clinic, not in the Dream. Only a guest whose own character has
+    // been to the Dream gets it.
+    EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam, false), (std::vector<s32>{9403}));
+    for (const s32 flag : GuestProgressFlags(true, true, CentralYharnam, true)) {
         EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
     }
 }
@@ -2519,6 +2538,26 @@ TEST(BloodborneSharedKills, AKillIsADeathTheGameMarked) {
     EXPECT_FALSE(IsRealDeath(0x00)) << "alive, or a map going away";
     EXPECT_FALSE(IsRealDeath(0x08)) << "bit 3 is something else (set and cleared at 0x018C2605)";
     EXPECT_FALSE(IsRealDeath(0xF2));
+}
+
+// Lisara 2026-10-13: an enemy the host killed stayed on the guest at its last HP for 1-2.4 s, the
+// time from the killing blow to the game's death bit (set after the kill reward). A hit seen to
+// leave it at 0 HP counts at once; 0 HP with no such hit (a map torn down) still does not, nor a
+// world's put-down (bit 5), nor a zero hit seconds old.
+TEST(BloodborneSharedKills, AHitToZeroIsAKillAtOnce) {
+    EXPECT_TRUE(SeenDead(0x00, 0, 1'000, 1'200)) << "hit to 0, no death bit yet";
+    EXPECT_FALSE(SeenDead(0x00, 0, std::nullopt, 1'200)) << "a map going away";
+    EXPECT_FALSE(SeenDead(0x20, 0, 1'000, 1'200)) << "put down by its world";
+    EXPECT_FALSE(SeenDead(0x00, 0, 1'000, 1'000 + ZeroHitCountsMs + 1)) << "an old zero hit";
+    EXPECT_FALSE(SeenDead(0x00, 12, 1'000, 1'200)) << "alive";
+    EXPECT_TRUE(SeenDead(0x04, 0, std::nullopt, 1'200)) << "the game's death bit";
+
+    OwnDamage damage;
+    EXPECT_EQ(damage.ZeroHitMs(0x10014087), std::nullopt);
+    damage.HitLeft(0x10014087, 0, 5'000);
+    EXPECT_EQ(damage.ZeroHitMs(0x10014087), std::optional<s64>{5'000});
+    damage.HitLeft(0x10014087, 30, 6'000);
+    EXPECT_EQ(damage.ZeroHitMs(0x10014087), std::nullopt) << "it came back up";
 }
 
 // The dog test again (2026-10-09, after a reboot): the host left for the Dream and the guest's own
