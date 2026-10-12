@@ -37,8 +37,10 @@ HUD_ICONS = Path(__file__).resolve().parent / 'party_hud_icons.bin'
 HUD_ICON_FRAMES = ('none', 'hunter', 'elsewhere', 'fallen') + tuple(f'downed {p}%' for p in range(0, 101, 10))
 # Where the list's tags stand on the HUD's 1920x1080 stage (PartyListPosition in bloodborne_party.cpp), and each
 # icon's centre from its tag, its size in pixels.
-LIST_X, LIST_Y, LIST_STEP = 204, 330, 95  # each bar starts where the player's HP bar does (x 107)
-ICON_FROM_TAG, ICON_SIZE = (-128, 1), 36  # centred on the tag's HP bar
+LIST_X, LIST_Y, LIST_STEP = 204, 330, 95  # each bar starts where the player's HP bar does (x 61)
+# The tag's HP bar starts 143 left of the tag and sits 15 below it (measured on a 1080p screenshot, 2026-10-12):
+# the icon goes 8 px left of the bar, centred on it.
+ICON_FROM_TAG, ICON_SIZE = (-170, 15), 36
 # Character ids for what the patch defines, above any the game's movies use.
 FIRST_NEW_ID = 50000
 

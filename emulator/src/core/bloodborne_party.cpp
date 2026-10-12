@@ -4045,7 +4045,7 @@ void WritePromptData(std::span<u8, HudPromptDataSize> data,
 
 std::pair<s32, s32> PartyListPosition(int index) {
     // hud_patch.py LIST_X/LIST_Y/LIST_STEP: each tag's HP bar starts where the player's own does
-    // (x 107 on the 1920 stage: the tag's bar starts 97 left of its position), its icon left of it.
+    // (x 61 on the 1920 stage: the tag's bar starts 143 left of its position), its icon left of it.
     return {204, 330 + 95 * index};
 }
 
