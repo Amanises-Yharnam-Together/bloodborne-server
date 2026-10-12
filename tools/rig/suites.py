@@ -34,6 +34,13 @@ from scenarios import (AWAY_FROM_LAMP, BLOODSTAIN_DROPPED, BLOODSTAIN_STOLEN,  #
                        attack, only_kill)
 
 RESTART = "<restart>"
+RESTART_WITH = "<restart with "
+
+
+def restart_with(saves: str) -> str:
+    """RESTART with other saves put in first (rig/saves/<saves>, as a scenario's "saves"): a
+    brand-new character, as a player who starts one."""
+    return f"{RESTART_WITH}{saves}>"
 
 # How players play (the robustness review, 2026-10-12): party death on and the kit's frame rate
 # patch set (Uncap FPS++ rewrote the sign timers' bytes and the rig, at 30 FPS, never saw it).
@@ -142,6 +149,33 @@ def trip_back(role: str, players: int, back: str) -> list[str]:
 
 PARTY3 = ("host", "guest", "guest2")
 PARTY2 = ("host", "guest")
+
+# Borders between two maps the rig crosses on foot (Kaniel 2026-10-12: the hardest bugs come where
+# two maps meet, crossed back and forth). Each comes from a player's log: its "Bloodborne map
+# change <from> -> <to> at (...); trail: x y z ..." line (LogMapChanges) is the path a player
+# walked over it, which glide replays. "lamp" is the warp point nearest the trail's start (the
+# players get there by lamp, then the short teleport to the trail's start). Empty until such a
+# line is in a log: no border chapter then.
+BORDERS: dict[str, dict] = {}
+BORDER_CROSSINGS = 3
+
+
+def border_crossings(name: str, border: dict) -> dict:
+    """Both players cross the border together and back, BORDER_CROSSINGS times; after each way
+    both are on the same map, and at the end the session holds and each sees the other."""
+    points = border["trail"].split()
+    back = " ".join(" ".join(points[at:at + 3]) for at in range(len(points) - 3, -1, -3))
+    start = " ".join(points[:3])
+    steps = [f"travel {border['lamp']}", "wait-members 2 300", f"sync {name}-there",
+             f"teleport {start}", "wait 3"]
+    for crossing in range(1, BORDER_CROSSINGS + 1):
+        steps += [f"glide {border['trail']}", f"sync {name}-{crossing}-over", "wait 5",
+                  f"expect-map {border['to']}", f"glide {back}", f"sync {name}-{crossing}-back",
+                  "wait 5", f"expect-map {border['from']}"]
+    steps += ["wait 10", "census 60", "expect-session 2", "expect-others-near 1 20"]
+    return chapter(f"border-{name}", f"both cross the {name} border {BORDER_CROSSINGS} times and "
+                                     "back: one map each time, nobody lost",
+                   {role: list(steps) for role in PARTY2}, forbid=holds(PARTY2))
 
 SUITES = {
     # Before every kit (the robustness review: 12 of the night's bugs came from untested kits).
@@ -464,6 +498,75 @@ SUITES = {
                     forbid={"host": SESSION_HOLDS,
                             "guest": SESSION_HOLDS + [r"party death: down \d+"]}),
             wipe(PARTY2),
+            chapter("stain-after-wipe", "after the wipe the guest's game dies and comes back: "
+                                        "in the host's world it sees its own bloodstain from "
+                                        "the wipe, with its echoes",
+                    {"guest": [RESTART, START, "godmode", "wait-session 2 480", "wait 20",
+                               "sync saw-back"],
+                     "host": ["sync saw-back"]},
+                    expect={"guest": [r"showed the guest's own bloodstain \([1-9]\d* echoes\)"]},
+                    allow=CRASH_CLEANUP),
+        ],
+    },
+    "edges": {
+        "about": "where two maps meet and games are mid-load (Kaniel 2026-10-12: fog borders "
+                 "crossed back and forth, teleports and cutscenes make the hardest bugs): every "
+                 "game agrees on the map, the kills and the enemy HP afterwards",
+        "roles": PARTY2,
+        "settings": AS_PLAYERS,
+        "join_within": 180,
+        "timeout": 2400,
+        "chapters": [
+            join(PARTY2),
+            chapter("travel-mid-load", "the host hurts an enemy, then goes to the Dream and back "
+                                       "while the guest's map reloads (a warp to its lamp): one "
+                                       "map, one HP, each sees the other",
+                    {"host": [f"hit {ENEMY} 30", "sync tml-go", f"travel {HUNTERS_DREAM}",
+                              "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
+                              "sync tml-back", "wait 15", "census 40",
+                              f"expect-map {CENTRAL_YHARNAM}", "expect-others-near 1 15",
+                              "expect-session 2"],
+                     "guest": ["sync tml-go", f"travel {CENTRAL_YHARNAM_LAMP}",
+                               "wait-members 2 300", "sync tml-back", "wait 15", "census 40",
+                               f"expect-map {CENTRAL_YHARNAM}", "expect-others-near 1 15",
+                               "expect-session 2"]},
+                    same_hp=ENEMY, forbid=holds(PARTY2)),
+            chapter("kill-mid-load", "the host kills an enemy and teleports away while the guest "
+                                     "is loading: the kill reaches the guest's world",
+                    {"host": ["sync kml-go", "wait 2", *attack(DOG), f"teleport {AWAY_FROM_LAMP}",
+                              "wait-members 2 240", "sync kml-back", "wait 15", "census 60"],
+                     "guest": ["sync kml-go", f"travel {CENTRAL_YHARNAM_LAMP}",
+                               "wait-members 2 300", "sync kml-back", "wait 15", "census 60",
+                               f"expect-hp {DOG} == 0"]},
+                    expect={"host": [r"kill board gets 1 kills"]},
+                    forbid={"host": only_kill(DOG)}),
+            chapter("both-travel", "both go to the Dream at the same moment and come back at the "
+                                   "same moment: the session holds and each sees the other",
+                    {role: ["sync bt-go", f"travel {HUNTERS_DREAM}", "sync bt-dream",
+                            f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 300",
+                            "sync bt-back", "wait 20", "expect-session 2",
+                            "expect-others-near 1 15"] for role in PARTY2},
+                    forbid=holds(PARTY2)),
+            chapter("outage", "the servers are out of reach for 20 s (players' links dropped for "
+                              "15-31 s, 2026-10-11): the session holds and the boards come back",
+                    {role: ["sync outage-go", "wait 30", "wait-members 2 120",
+                            "wait-member-vital up 60", "expect-session 2"] for role in PARTY2},
+                    outages={"outage-go": 20}),
+            chapter("cutscene", "Father Gascoigne dies in the host's world with the guest there: "
+                                "his death's time-of-day cutscene reloads the host's world (a "
+                                "trip), and both are back together after it. Whether this kill "
+                                "plays the cutscene again is to be confirmed on the first run",
+                    {"host": [f"set-flag {GASCOIGNE_DEFEATED} 0",
+                              f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
+                              "sync cs-ready", f"kill {GASCOIGNE}",
+                              f"wait-flag {GASCOIGNE_DEFEATED} 1 60", "wait 60",
+                              "wait-members 2 300", "sync cs-after", "wait 15",
+                              "expect-session 2", "expect-others-near 1 15"],
+                     "guest": ["sync cs-ready", "wait 60", "wait-members 2 300", "sync cs-after",
+                               "wait 15", "expect-session 2", "expect-others-near 1 15"]},
+                    expect={"host": [r"a world reload \(time of day\) is a trip"]},
+                    forbid=holds(PARTY2)),
+            *[border_crossings(name, border) for name, border in BORDERS.items()],
         ],
     },
     "crashes": {
@@ -606,6 +709,25 @@ SUITES = {
                                "wait-session 2 420", "sync ja-joined", "wait 30",
                                "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"]},
                     allow=CRASH_CLEANUP),
+            chapter("restart-keeps", "the guest's game starts again in the session: it is the "
+                                     "same character, so its kept pickups stay and nothing is "
+                                     "backed up (Kaniel 2026-10-11: krolebord's pickups wiped by "
+                                     "a restart; the review: never wipe on a bad read)",
+                    {"guest": [RESTART, START, "godmode", "wait-session 2 420", "wait 10",
+                               "sync rk-back", "expect-session 2"],
+                     "host": ["sync rk-back", "expect-session 2"]},
+                    forbid={"guest": [r"new character in save slot"]},
+                    files_absent={"guest": ["bloodborne_party_*.bak-*"]},
+                    allow=CRASH_CLEANUP),
+            chapter("new-character", "a guest on a brand-new character (rig/saves/new-character) "
+                                     "joins where it stands: its kept lists start clean once, "
+                                     "the old ones backed up first",
+                    {"guest": [restart_with("new-character"), "godmode", "wait-session 2 420",
+                               "wait 20", "expect-session 2", "sync nc-back"],
+                     "host": ["sync nc-back", "expect-session 2"]},
+                    expect={"guest": [r"new character in save slot"]},
+                    files_present={"guest": ["bloodborne_party_*.bak-*"]},
+                    allow=CRASH_CLEANUP),
         ],
     },
     "party3": {
@@ -691,16 +813,23 @@ def compile_suite(suite: dict, only: list[str] | None = None) -> dict:
     chapters = [c for c in suite["chapters"]
                 if only is None or c["name"] in only or c.get("setup")]
     stages: dict[str, list[list[str]]] = {role: [[START]] for role in roles}
+    stage_saves: dict[str, dict[int, str]] = {}
     syncs: dict[str, dict] = {}
+    outages: dict[str, float] = {}
     for c in chapters:
         keep_going = f"keep-going {'off' if c.get('fatal') else 'on'}"
         syncs[c["name"]] = {"chapter": c["name"], "roles": list(roles)}
+        outages.update(c.get("outages", {}))
         for role in roles:
             stages[role][-1] += [f"chapter {c['name']}", keep_going, f"sync {c['name']}"]
             for step in c["steps"].get(role, []):
-                if step == RESTART:
-                    # Started again: the same chapter, from the title screen.
+                if step == RESTART or step.startswith(RESTART_WITH):
+                    # Started again: the same chapter, from the title screen (with other saves
+                    # put in first for restart_with).
                     stages[role].append([f"chapter {c['name']}", keep_going])
+                    if step != RESTART:
+                        saves = step[len(RESTART_WITH):-1]
+                        stage_saves.setdefault(role, {})[len(stages[role]) - 1] = saves
                     continue
                 stages[role][-1].append(step)
                 if step.startswith("sync "):
@@ -708,7 +837,7 @@ def compile_suite(suite: dict, only: list[str] | None = None) -> dict:
                     syncs.setdefault(name, {"chapter": c["name"], "roles": []})
                     syncs[name]["roles"].append(role)
     checks = ("about", "expect", "forbid", "allow", "same_hp", "same_hp_census", "hp_sums_hits",
-              "max_hp_lag")
+              "max_hp_lag", "files_present", "files_absent")
     return {
         "about": suite["about"],
         "roles": {role: script if len(script) > 1 else script[0]
@@ -720,6 +849,8 @@ def compile_suite(suite: dict, only: list[str] | None = None) -> dict:
                       **{key: c[key] for key in checks if key in c}} for c in chapters],
         "fatal": [c["name"] for c in chapters if c.get("fatal")],
         "syncs": syncs,
+        "outages": outages,
+        "stage_saves": stage_saves,
         **({"saves": suite["saves"]} if "saves" in suite else {}),
     }
 

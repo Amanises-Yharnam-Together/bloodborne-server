@@ -1764,6 +1764,31 @@ std::optional<std::string> AutoplayShotPath(std::string_view request, std::strin
 // sync <name>: the go file the rig writes once every game of the suite reached that sync step:
 // <the script's folder>/sync/<name>. A name is 1 to 40 letters, digits, '-' or '_'.
 std::optional<std::string> AutoplaySyncPath(std::string_view script, std::string_view name);
+// Where the player was over the last few seconds, a point every half second (TickPartyController
+// notes it; logged when the map changes, for the rig to replay a border crossing with glide).
+class PositionTrail {
+public:
+    static constexpr size_t Kept = 20;
+    static constexpr u64 IntervalMs = 500;
+    void Note(u64 ms, const LampPosition& at);
+    const std::vector<LampPosition>& Points() const {
+        return points;
+    }
+    void Clear() {
+        points.clear();
+        last_ms.reset();
+    }
+
+private:
+    std::vector<LampPosition> points;
+    std::optional<u64> last_ms;
+};
+// A trail as glide's arguments: "x y z x y z ..." (one decimal).
+std::string FormatTrail(const std::vector<LampPosition>& points);
+// glide <x y z>...: where the player is `elapsed` seconds along `path` (from its first point) at
+// walking pace; nothing once it is at the end.
+constexpr float GlideMetersPerSecond = 4.0f;
+std::optional<LampPosition> GlidePoint(const std::vector<LampPosition>& path, double elapsed);
 // keep-going on: where a script goes on after its step at `failed` failed: the next "chapter"
 // command after it, nothing if none is left.
 std::optional<size_t> NextAutoplayChapter(const std::vector<AutoplayCommand>& script,

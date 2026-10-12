@@ -3674,6 +3674,43 @@ std::optional<std::string> AutoplaySyncPath(std::string_view script, std::string
     return (std::filesystem::path{script}.parent_path() / "sync" / std::string{name}).string();
 }
 
+void PositionTrail::Note(u64 ms, const LampPosition& at) {
+    if (last_ms && ms < *last_ms + IntervalMs) {
+        return;
+    }
+    last_ms = ms;
+    points.push_back(at);
+    if (points.size() > Kept) {
+        points.erase(points.begin());
+    }
+}
+
+std::string FormatTrail(const std::vector<LampPosition>& points) {
+    std::string text;
+    for (const LampPosition& point : points) {
+        text += fmt::format("{}{:.1f} {:.1f} {:.1f}", text.empty() ? "" : " ", point[0], point[1],
+                            point[2]);
+    }
+    return text;
+}
+
+std::optional<LampPosition> GlidePoint(const std::vector<LampPosition>& path, double elapsed) {
+    double left = elapsed * GlideMetersPerSecond;
+    for (size_t at = 1; at < path.size(); ++at) {
+        const LampPosition& from = path[at - 1];
+        const LampPosition& to = path[at];
+        const double length = std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+        if (left < length) {
+            const float part = static_cast<float>(left / length);
+            return LampPosition{from[0] + (to[0] - from[0]) * part,
+                                from[1] + (to[1] - from[1]) * part,
+                                from[2] + (to[2] - from[2]) * part};
+        }
+        left -= length;
+    }
+    return std::nullopt;
+}
+
 std::optional<size_t> NextAutoplayChapter(const std::vector<AutoplayCommand>& script,
                                           size_t failed) {
     for (size_t at = failed + 1; at < script.size(); ++at) {

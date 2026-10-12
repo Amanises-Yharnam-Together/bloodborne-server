@@ -89,6 +89,7 @@ struct AutoplayRun {
     std::string chapter;              // the chapter the script is in (a rig suite's section)
     bool keep_going = false;          // keep-going on: a failed step gives up only its chapter
     bool failed = false;              // a step failed and the script went on: "done (failed)"
+    LampPosition glide_from{};        // glide: where the player was when it began
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -1152,6 +1153,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"attack", AutoplayAttack},
     {"hit", AutoplayHit},
     {"teleport", AutoplayTeleport},
+    {"glide", AutoplayGlide},
     {"pickup", AutoplayPickup},
     {"rise", AutoplayRise},
     {"approach-downed", AutoplayApproachDowned},

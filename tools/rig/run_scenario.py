@@ -162,6 +162,10 @@ def configure_shadnet():
             config.write_text(wanted, encoding="utf-8", newline="")
 
 
+# The servers' delaying proxies of this run (a suite's outage holds them).
+PROXIES: list[latency.DelayProxy] = []
+
+
 def start_delay_proxies() -> list[latency.DelayProxy]:
     if not PING:
         return []
@@ -860,6 +864,10 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
                       "stopping its game and starting it again")
                 stop_game(processes[role])
                 keep_logs(run_dir, [role], f"-stage{stage[role]}")
+                # A suite's restart with other saves (a new character): put in before it starts.
+                if saves := scenario.get("stage_saves", {}).get(role, {}).get(stage[role]):
+                    restore_baseline(role, RIG / "saves" / saves / "savedata")
+                    print(f"  {role}: saves put back to {saves}")
                 processes[role] = launch(role, stages[role][stage[role]],
                                          settings=scenario.get("settings"))
             elif found:
@@ -881,6 +889,12 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
             break  # the others wait for it in vain
         for name in syncs_to_release(syncs, reached, given_up, set(done), released):
             released.add(name)
+            if seconds := scenario.get("outages", {}).get(name):
+                # Before the games go on: the outage starts as they do.
+                for proxy in PROXIES:
+                    proxy.outage(seconds)
+                print(f"  servers unreachable for {seconds} s" if PROXIES else
+                      "  no outage without a ping (--ping): the servers stay reachable")
             for role in syncs[name]["roles"]:
                 write_go_file(ENGINE.role_dir(role), name)
             print(f"  sync {name} after {time.time() - started:.0f} s")
@@ -916,7 +930,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
             if missing := [role for role, text in part.items() if text is None]:
                 problems = [f"{role}: never got to it" for role in missing]
             else:
-                problems = judge(chapter, part)
+                problems = judge(chapter, part) + file_problems(chapter, started)
             print(f"  {'ok  ' if not problems else 'FAIL'} {chapter['name']}"
                   f"{': ' + chapter['about'] if problems and chapter.get('about') else ''}")
             for problem in problems:
@@ -931,10 +945,33 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
     return passed
 
 
+# Lines no game of a suite may log (the robustness review's guards, 2026-10-12): a game call
+# refused as unsafe (#30), players on different builds (#29); check_party_log.py flags a
+# required co-op feature skipped (#32).
+NEVER_IN_A_SUITE = [re.compile(pattern) for pattern in (
+    r"Bloodborne refused a game call",
+    r"runs build \S+, this game runs",
+)]
 # Lines per second of a game's log (its step lines' t=) above which the log itself costs frames
 # (Kaniel 2026-10-11: a lamp line written 430,000 times took the game to 3 FPS).
 LOG_LINES_PER_SECOND = 200  # the rig's games log 15-30 a second
 STEP_TIME = re.compile(r"Bloodborne autoplay: step \d+/\d+ (\S+).* ok \(t=([\d.]+)\)")
+
+
+def file_problems(spec: dict, since: float) -> list[str]:
+    """A chapter's checks on the files a game wrote in its user folder during the run:
+    "files_present" / "files_absent", {role: [glob]} (a backup of the kept pickups for a new
+    character, none for a restart)."""
+    problems = []
+    for key, wanted in (("files_present", True), ("files_absent", False)):
+        for role, patterns in spec.get(key, {}).items():
+            for pattern in patterns:
+                written = [path for path in user_dir(role).glob(pattern)
+                           if path.stat().st_mtime >= since]
+                if bool(written) != wanted:
+                    problems.append(f"{role}: {'no' if wanted else 'a'} {pattern} written"
+                                    f"{': ' + written[0].name if written else ''}")
+    return problems
 
 
 def suite_problems(scenario: dict, texts: dict[str, str]) -> list[str]:
@@ -953,6 +990,8 @@ def suite_problems(scenario: dict, texts: dict[str, str]) -> list[str]:
                                 f"step (at most {limit} s)")
         problems += [f"{role}: co-op patch skipped: {line.strip()[:160]}"
                      for line in text.splitlines() if "signature mismatch" in line]
+        problems += [f"{role}: {line.strip()[:200]}" for line in text.splitlines()
+                     if any(pattern.search(line) for pattern in NEVER_IN_A_SUITE)]
         if len(steps) >= 2 and steps[-1][1] > steps[0][1]:
             rate = text.count("\n") / (steps[-1][1] - steps[0][1])
             if rate > LOG_LINES_PER_SECOND:
@@ -1164,6 +1203,7 @@ def main(argv: list[str]) -> int:
     use_lane(args.lane)
     runs_games = (args.play or args.scenarios or args.boot_check) and not args.lanes
     proxies = start_delay_proxies() if runs_games else []
+    PROXIES[:] = proxies
     try:
         return act(args)
     finally:

@@ -471,6 +471,32 @@ std::optional<LampPosition> CharacterPosition(u64 character) {
 std::optional<LampPosition> LocalPlayerPosition() {
     return CharacterPosition(GetLocalPlayer());
 }
+
+// Kaniel 2026-10-12: the hardest bugs come where two maps meet (a fog border crossed back and
+// forth, teleports, cutscenes). Each map change is logged with where the player was and the
+// path it came by (PositionTrail): the rig replays such a path with glide to cross it itself.
+void LogMapChanges() {
+    static u32 last_map = 0;
+    static PositionTrail trail;
+    const u32 map = GetCurrentPackedMap();
+    const auto at = LocalPlayerPosition();
+    if (at) {
+        trail.Note(static_cast<u64>(SteadyMilliseconds()), *at);
+    }
+    if (map == last_map) {
+        return;
+    }
+    if (last_map != 0 && map != 0 && at) {
+        LOG_INFO(Debug,
+                 "Bloodborne map change {:#x} -> {:#x} at ({:.1f}, {:.1f}, {:.1f}) trip={}; "
+                 "trail: {}",
+                 last_map, map, (*at)[0], (*at)[1], (*at)[2], PartyTripActive(),
+                 FormatTrail(trail.Points()));
+    }
+    last_map = map;
+    trail.Clear();
+}
+
 std::vector<OtherPlayer> OtherPlayers() {
     std::vector<OtherPlayer> players;
     const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
@@ -610,6 +636,7 @@ void TickPartyController() {
     KeepGuestBloodstainMark();
     ShowGuestBloodstain();
     LogBloodstainStateChanges();
+    LogMapChanges();
     LogLocalEffectChanges();
     if (party_controller) {
         LogActionBlockingState();

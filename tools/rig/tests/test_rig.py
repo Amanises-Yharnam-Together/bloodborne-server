@@ -5,6 +5,7 @@ otherwise only fail ten minutes into a run.
 
 Run: py -3.12 -m unittest discover -s tools\\rig\\tests
 """
+import os
 import pathlib
 import re
 import sys
@@ -120,7 +121,7 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual(scenarios.attack("marked"), ["attack marked 40"])
 
 
-SUITE_VERBS = VERBS | {"sync", "chapter", "keep-going"}
+SUITE_VERBS = VERBS | {"sync", "chapter", "keep-going", "glide"}
 PLAIN_NAME = r"^[A-Za-z0-9_-]{1,40}$"  # AutoplaySyncPath's
 
 
@@ -241,6 +242,56 @@ class SuiteTest(unittest.TestCase):
         only = suites.compile_suite(suite, only=["trip"])
         self.assertEqual([c["name"] for c in only["chapters"]], ["join", "trip"],
                          "a chapter alone still gets its join")
+
+
+class EdgeTest(unittest.TestCase):
+    def test_a_border_is_crossed_there_and_back_by_both(self):
+        border = {"lamp": 2412951, "from": "0x18010000", "to": "0x18000000",
+                  "trail": "1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0"}
+        crossing = suites.border_crossings("cy-ward", border)
+        steps = crossing["steps"]["host"]
+        self.assertEqual(steps, crossing["steps"]["guest"], "together")
+        glides = [step for step in steps if step.startswith("glide ")]
+        self.assertEqual(len(glides), 2 * suites.BORDER_CROSSINGS)
+        self.assertEqual(glides[0], "glide 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0")
+        self.assertEqual(glides[1], "glide 7.0 8.0 9.0 4.0 5.0 6.0 1.0 2.0 3.0", "the way back")
+        self.assertIn("teleport 1.0 2.0 3.0", steps)
+        self.assertEqual(steps.count("expect-map 0x18000000"), suites.BORDER_CROSSINGS)
+        suite = {"about": "x", "roles": ("host", "guest"),
+                 "chapters": [suites.join(("host", "guest")), crossing]}
+        compiled = suites.compile_suite(suite)
+        for role, script in suite_scripts(compiled).items():
+            self.assertTrue(all(command.split()[0] in SUITE_VERBS for command in script))
+            for command in script:
+                if command.startswith("glide "):
+                    self.assertEqual(len(command.split()[1:]) % 3, 0, "x y z points")
+
+    def test_a_restart_can_put_in_a_new_character_first(self):
+        suite = {"about": "x", "roles": ("host", "guest"), "chapters": [
+            suites.join(("host", "guest")),
+            suites.chapter("new", "n", {"guest": [suites.restart_with("new-character"), "wait 1",
+                                                  suites.RESTART, "wait 2"]}),
+        ]}
+        compiled = suites.compile_suite(suite)
+        self.assertEqual(len(compiled["roles"]["guest"]), 3, "two restarts")
+        self.assertEqual(compiled["stage_saves"], {"guest": {1: "new-character"}},
+                         "only the first restart puts other saves in")
+
+    def test_an_outage_starts_at_a_sync_of_its_chapter(self):
+        for name, scenario in suites.SUITE_SCENARIOS.items():
+            for sync in scenario["outages"]:
+                with self.subTest(suite=name, sync=sync):
+                    self.assertIn(sync, scenario["syncs"])
+            for role, saves in scenario["stage_saves"].items():
+                for stage, name_of_saves in saves.items():
+                    with self.subTest(suite=name, role=role):
+                        self.assertTrue(0 < stage < len(run_scenario.stages_of(
+                            scenario["roles"][role])))
+                        self.assertRegex(name_of_saves, PLAIN_NAME)
+            for chapter in scenario["chapters"]:
+                for key in ("files_present", "files_absent"):
+                    with self.subTest(suite=name, chapter=chapter["name"]):
+                        self.assertTrue(set(chapter.get(key, {})) <= set(scenario["roles"]))
 
 
 class LaneTest(unittest.TestCase):
@@ -584,6 +635,23 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(any("expected, not seen" in p and p.startswith("host") for p in problems))
         self.assertTrue(any("must not happen" in p and p.startswith("guest") for p in problems))
         self.assertTrue(any("FAILED: no" in p for p in problems))
+
+    def test_a_chapter_checks_the_files_a_game_wrote(self):
+        with tempfile.TemporaryDirectory() as folder:
+            user = pathlib.Path(folder)
+            old = user / "bloodborne_party_pickups_slot1.txt.bak-0900"
+            old.write_text("from an earlier run")
+            os.utime(old, (1000, 1000))
+            spec = {"files_absent": {"guest": ["bloodborne_party_*.bak-*"]},
+                    "files_present": {"host": ["bloodborne_party_*.bak-*"]}}
+            with unittest.mock.patch.object(run_scenario, "user_dir", lambda role: user):
+                problems = run_scenario.file_problems(spec, since=2000)
+                self.assertEqual(problems, ["host: no bloodborne_party_*.bak-* written"],
+                                 "an earlier run's backup is not this run's")
+                (user / "bloodborne_party_pickups_slot1.txt.bak-1000").write_text("new")
+                problems = run_scenario.file_problems(spec, since=2000)
+                self.assertEqual(len(problems), 1)
+                self.assertTrue(problems[0].startswith("guest: a bloodborne_party_*.bak-* written"))
 
     def test_old_runs_go_newest_stay(self):
         with tempfile.TemporaryDirectory() as folder:
