@@ -868,6 +868,52 @@ TEST(BloodborneGuestProgress, AFreshCharacterHasFarFewerFlagsThanTheOneBefore) {
     EXPECT_FALSE(IsOtherCharacter(5800, 5859));
     EXPECT_FALSE(IsOtherCharacter(5672, 5739));
     EXPECT_FALSE(IsOtherCharacter(5150, 5400)) << "a load can clear a few hundred";
+    // A store read mid-load counts nothing: no world has 0 flags set, so that is no character.
+    EXPECT_FALSE(IsOtherCharacter(0, 5859));
+}
+
+// The count is read twice a moment apart; a read that missed part of the store (the game
+// changing it on another thread, a node not mapped) gives none, and two reads far apart are a
+// torn read: the count is known only when both read the whole store and agree.
+TEST(BloodborneGuestProgress, AFlagCountIsKnownOnlyWhenTwoWholeReadsAgree) {
+    EXPECT_EQ(SettledFlagCount(5800, 5803), std::optional<s32>{5803});
+    EXPECT_EQ(SettledFlagCount(1200, 1201), std::optional<s32>{1201}) << "a new character";
+    EXPECT_EQ(SettledFlagCount(std::nullopt, 5800), std::nullopt);
+    EXPECT_EQ(SettledFlagCount(5800, std::nullopt), std::nullopt);
+    EXPECT_EQ(SettledFlagCount(0, 0), std::nullopt) << "an empty store";
+    EXPECT_EQ(SettledFlagCount(1200, 5800), std::nullopt) << "one read half done";
+}
+
+// A load drops a slot's kept lists (pickups, world changes) only on a known count: an unknown
+// one keeps them, since dropping them by mistake loses what the player looted.
+TEST(BloodborneGuestProgress, AnUnknownFlagCountNeverDropsTheKeptLists) {
+    EXPECT_FALSE(ForgetsSlotLists(std::nullopt, 5859, false));
+    EXPECT_FALSE(ForgetsSlotLists(std::nullopt, 5859, true))
+        << "confirmed pickups read as missing while the store can't be read";
+    EXPECT_TRUE(ForgetsSlotLists(1200, 5400, false)) << "a new character";
+    EXPECT_TRUE(ForgetsSlotLists(5800, 5859, true)) << "its confirmed pickups are all gone";
+    EXPECT_FALSE(ForgetsSlotLists(5800, 5859, false)) << "a restart";
+}
+
+// Before a slot's kept files are dropped they are copied aside, name.bak-<time>, and the
+// newest few copies of each file stay.
+TEST(BloodborneGuestProgress, DroppedListsAreCopiedAsideFirst) {
+    EXPECT_EQ(SlotBackupName("bloodborne_party_progress_slot2.txt", "20261012-024501"),
+              "bloodborne_party_progress_slot2.txt.bak-20261012-024501");
+    const std::vector<std::string> names{
+        "bloodborne_party_progress_slot2.txt.bak-20261012-010000",
+        "bloodborne_party_progress_slot2.txt.bak-20261011-230000",
+        "bloodborne_party_progress_slot2.txt",
+        "bloodborne_party_progress_slot2.txt.bak-20261012-020000",
+        "bloodborne_party_progress_slot3.txt.bak-20261001-000000",
+        "bloodborne_party_world_slot2.txt.bak-20261001-000000",
+        "bloodborne_party_progress_slot2.txt.bak-20261012-030000",
+    };
+    EXPECT_EQ(
+        SlotBackupsToRemove("bloodborne_party_progress_slot2.txt", names, 2),
+        (std::vector<std::string>{"bloodborne_party_progress_slot2.txt.bak-20261011-230000",
+                                  "bloodborne_party_progress_slot2.txt.bak-20261012-010000"}));
+    EXPECT_TRUE(SlotBackupsToRemove("bloodborne_party_progress_slot2.txt", names, 5).empty());
 }
 
 // The menu scripts' "am I a summoned client" answer (0x01A13FD1): a party guest's item dialog
