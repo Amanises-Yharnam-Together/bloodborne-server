@@ -681,6 +681,7 @@ std::vector<DownedBody> DownedBodies(std::span<const MemberVitals> board, std::s
 // attack presses so far and whether the last one was heavy (R2).
 std::atomic<u32> party_pad_buttons{};
 std::atomic<s64> party_lock_release_ms{-1}; // our last R3 letting go of a lock-on while down
+std::atomic<u32> party_down_dropped{0};     // buttons a down took from the pad (logged)
 std::atomic<u32> party_attack_presses{};
 std::atomic<bool> party_attack_heavy{};
 
@@ -1745,9 +1746,15 @@ void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& st
     }
     if (!party_death_down.load(std::memory_order_relaxed)) {
         party_lock_release_ms.store(-1, std::memory_order_relaxed);
+        party_down_dropped.store(0, std::memory_order_relaxed);
         return;
     }
     const PadInput kept = DownedPad({.buttons = buttons, .sticks = sticks, .l2 = l2, .r2 = r2});
+    // Each button a down takes, once (the rig checks Options and the rest do nothing).
+    const u32 dropped = buttons & ~kept.buttons;
+    if ((dropped & ~party_down_dropped.fetch_or(dropped, std::memory_order_relaxed)) != 0) {
+        LOG_INFO(Debug, "Bloodborne party death: down, the pad dropped buttons {:#x}", dropped);
+    }
     buttons = kept.buttons;
     // A lock-on held while down is let go (the HUD's cursor says it is held).
     const s64 now = SteadyMilliseconds();
@@ -1756,6 +1763,9 @@ void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& st
         ReleasesLockOn(ReadValue<s32>(image_base + HudFeDataOffset, HudLockCursorAt), now,
                        last >= 0 ? std::optional<s64>{last} : std::nullopt)) {
         buttons |= PadR3;
+        if (last < 0) {
+            LOG_INFO(Debug, "Bloodborne party death: down, letting go of a lock-on (R3)");
+        }
         party_lock_release_ms.store(now, std::memory_order_relaxed);
     }
     sticks = kept.sticks;
