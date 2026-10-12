@@ -322,6 +322,7 @@ void ReadTrophyBoard(std::span<const s32> board);
 void UnlockPartyTrophies(bool sharing);
 extern std::mutex flag_board_mutex;
 extern std::mutex echo_board_mutex;
+extern std::vector<KillEchoes> echoes_to_post;
 extern std::vector<KillEchoes> echoes_to_grant;
 extern std::mutex kill_board_mutex;
 extern std::vector<std::pair<s32, bool>> kills_to_post;
@@ -477,9 +478,44 @@ void PlayGuestAsHost(bool in_session);
 void TurnOffMultiplayerWalls(bool in_session, u32 map);
 u64 FindLoadedParam(std::string_view type);
 void KeepGuestFullHp();
+void MakeEnemiesHarder();
 void PolishMultiplayerUi();
 void InstallNoLevelSyncInParty(u64 base, u64 image_size);
 void InstallSolidNpcsInParty(u64 base, u64 image_size);
+
+// Diagnostics for shared loot (RE trace only): the map item module (MapItemMan, 0x017D-0x017E)
+// asks "am I a summoned guest" (matching state 6) or "am I the host" (3) at these spots. Counting
+// which run while a guest walks up to and picks up an item shows where the guest is held back.
+struct ItemModuleCheck {
+    u64 offset;
+    std::array<u8, 7> bytes;
+};
+constexpr std::array<u8, 7> GuestStateCheck{0x83, 0xB8, 0x24, 0x01, 0x00, 0x00, 0x06};
+constexpr std::array<u8, 7> GuestStateCheckRcx{0x83, 0xB9, 0x24, 0x01, 0x00, 0x00, 0x06};
+constexpr std::array<u8, 7> HostStateCheck{0x83, 0xB8, 0x24, 0x01, 0x00, 0x00, 0x03};
+
+constexpr auto ItemModuleChecks = std::to_array<ItemModuleCheck>({
+    {0x017D3759, GuestStateCheck},
+    {0x017D4F54, GuestStateCheck},
+    {0x017D5642, GuestStateCheck},
+    {0x017D6818, GuestStateCheck},
+    {0x017D6AD2, GuestStateCheck},
+    {0x017D83CB, GuestStateCheck},
+    {0x017D853B, GuestStateCheck},
+    {0x017D88BB, GuestStateCheck},
+    {0x017D9AA8, GuestStateCheckRcx},
+    {0x017D9E1C, GuestStateCheck},
+    {0x017D9EE0, GuestStateCheckRcx},
+    {0x017DD17C, GuestStateCheck},
+    {0x017DDCD9, GuestStateCheck},
+    {0x017DE5EC, GuestStateCheck},
+    {0x017DE738, GuestStateCheck},
+    {0x017DE79D, HostStateCheck},
+    {0x017DE8CB, GuestStateCheck},
+    {0x017DE925, HostStateCheck},
+});
+extern std::array<std::atomic<u64>, ItemModuleChecks.size()> item_module_check_hits;
+void PS4_SYSV_ABI CountItemModuleCheck(u64 tag, const GuestRegisterSnapshot*);
 
 void SetGuestPickupsBeforeMapItems();
 
