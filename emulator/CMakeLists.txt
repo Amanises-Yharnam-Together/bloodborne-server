@@ -951,6 +951,7 @@ set(CORE src/core/aerolib/stubs.cpp
 if (ARCHITECTURE STREQUAL "x86_64")
     set(CORE ${CORE}
              src/core/bloodborne_flags.h
+             src/core/bloodborne_lamp_points.h
              src/core/bloodborne_party.cpp
              src/core/bloodborne_party.h
              src/core/bloodborne_re.cpp

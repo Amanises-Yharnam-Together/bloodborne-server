@@ -5,6 +5,7 @@
 // bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h.
 
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_lamp_points.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
@@ -253,6 +254,8 @@ namespace {
 
 std::optional<std::chrono::steady_clock::time_point> guest_trip_fixup_at;
 std::optional<std::chrono::steady_clock::time_point> guest_lamp_touch_at;
+// The lamp the trip in flight was placed at (see ArrivalNeedsMove), if any.
+const LampPoint* guest_trip_planned{};
 
 } // namespace
 
@@ -269,9 +272,21 @@ void TickGuestLampTrip() {
     if (guest_trip_fixup_at && now >= *guest_trip_fixup_at) {
         guest_trip_fixup_at.reset();
         const auto at = LocalPlayerPosition();
-        LOG_INFO(Debug, "Bloodborne party guest trip: position after arrival known={} ({}, {}, {})",
-                 at.has_value(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f, at ? (*at)[2] : 0.0f);
-        MoveToRespawnPoint(true);
+        LOG_INFO(Debug,
+                 "Bloodborne party guest trip: position after arrival known={} ({}, {}, {}) "
+                 "planned at the lamp={}",
+                 at.has_value(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f, at ? (*at)[2] : 0.0f,
+                 guest_trip_planned != nullptr);
+        if (ArrivalNeedsMove(guest_trip_planned, at)) {
+            MoveToRespawnPoint(true);
+        }
+        // The summon warp byte the lamp's placement set is spent (the pre-match warp waits on it).
+        if (const u64 global = GetGlobalState();
+            guest_trip_planned && global >= 0x10000 && ReadValue<u8>(global, 0x1520) != 0) {
+            LOG_INFO(Debug, "Bloodborne party guest trip: summon warp byte still set; cleared");
+            WriteValue(global, 0x1520, u8{0});
+        }
+        guest_trip_planned = nullptr;
     }
     if (guest_lamp_touch_at && now >= *guest_lamp_touch_at) {
         guest_lamp_touch_at.reset();
@@ -281,21 +296,8 @@ void TickGuestLampTrip() {
     }
     if (guest_lamp_trip_at && now >= *guest_lamp_trip_at) {
         guest_lamp_trip_at.reset();
-        using WarpNextStageBonfire = void PS4_SYSV_ABI (*)(u64 unused, s32 warp_point);
-        // As the events do with SetPlayerRespawnPoint: the lamp a death respawns at. The summon
-        // warp byte (+0x1520, SetSosSignWarp) makes the placement selector use the summon
-        // placement instead (0x01332BC0); it must be clear for a trip to a lamp.
-        if (const u64 global = GetGlobalState(); global >= 0x10000) {
-            LOG_INFO(Debug, "Bloodborne party guest trip: summon warp byte was {}",
-                     ReadValue<u8>(global, 0x1520));
-            WriteValue(global, 0x1528, guest_trip_point);
-            WriteValue(global, 0x1520, u8{0});
-        }
-        reinterpret_cast<WarpNextStageBonfire>(image_base +
-                                               WarpNextStageBonfireOffset)(0, guest_trip_point);
+        guest_trip_planned = StartTripToLamp(guest_trip_point);
         guest_trip_in_flight = true;
-        LOG_INFO(Debug, "Bloodborne party guest warps to {} ({:#x})", guest_trip_point,
-                 PackedMapOfWarpPoint(guest_trip_point));
     }
 }
 

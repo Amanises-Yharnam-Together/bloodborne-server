@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include "core/bloodborne_lamp_points.h"
 #include "core/bloodborne_party.h"
 #include "core/libraries/np/np_signaling/np_signaling_reuse.h"
 
@@ -1266,6 +1267,41 @@ TEST(BloodbornePlacement, NothingMovesWithoutEveryCall) {
         EXPECT_FALSE(PlaceCharacter(calls, 0x20000, position.data(), rotation.data()));
         EXPECT_TRUE(placement_calls.empty());
     }
+}
+
+// Kaniel 2026-10-12: after a trip, textures were still loading on arrival. A guest's lamp trip
+// landed at the map's origin (rig: Cathedral Ward at 0, 0, 0) and was moved 270 m to its lamp a
+// second later, so the area that loaded first was the wrong one. The lamps' respawn points from
+// the map files let the trip land at the lamp.
+TEST(BloodborneLampPoints, ALampTripKnowsWhereTheLampIs) {
+    const LampPoint* ward = FindLampPoint(2412950); // Cathedral Ward, the rig's trip
+    ASSERT_NE(ward, nullptr);
+    EXPECT_EQ(ward->packed_map, 0x18010000u);
+    EXPECT_FLOAT_EQ(ward->x, -199.74f);
+    EXPECT_FLOAT_EQ(ward->y, -50.76f);
+    EXPECT_FLOAT_EQ(ward->z, 179.42f);
+    const LampPoint* dream = FindLampPoint(HuntersDreamWarpPoint);
+    ASSERT_NE(dream, nullptr);
+    EXPECT_FLOAT_EQ(dream->heading, -2.356f); // what the game's resolver gave the rig
+    EXPECT_EQ(FindLampPoint(0), nullptr);
+    EXPECT_EQ(FindLampPoint(2412999), nullptr);
+}
+
+// The trip's stage comes from the warp point (PackedMapOfWarpPoint); the point must be in it.
+TEST(BloodborneLampPoints, EveryPointIsOnTheMapItsWarpLoads) {
+    for (const LampPoint& point : LampPoints) {
+        EXPECT_EQ(PackedMapOfWarpPoint(point.warp_point), point.packed_map) << point.warp_point;
+        EXPECT_EQ(FindLampPoint(point.warp_point), &point);
+    }
+}
+
+TEST(BloodborneLampPoints, OnlyAnArrivalAwayFromTheLampIsMoved) {
+    const LampPoint* ward = FindLampPoint(2412950);
+    EXPECT_FALSE(ArrivalNeedsMove(ward, LampPosition{-199.7f, -50.7f, 179.4f}));
+    EXPECT_FALSE(ArrivalNeedsMove(ward, LampPosition{-198.0f, -50.0f, 180.5f}));
+    EXPECT_TRUE(ArrivalNeedsMove(ward, LampPosition{0.0f, 0.0f, 0.0f}));
+    EXPECT_TRUE(ArrivalNeedsMove(ward, std::nullopt));
+    EXPECT_TRUE(ArrivalNeedsMove(nullptr, LampPosition{-199.7f, -50.7f, 179.4f}));
 }
 
 // When the host dies, every guest runs HostDead (event 4000 param 1): for a white phantom it

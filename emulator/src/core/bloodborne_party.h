@@ -332,6 +332,17 @@ bool SettingIsOn(const char* setting);
 bool ShouldPlayGuestAsHost(bool switched_on, bool in_party_session, s32 character_type);
 
 using LampPosition = std::array<float, 3>;
+
+// A warp point's respawn point from the map files (bloodborne_lamp_points.h), or none.
+struct LampPoint;
+const LampPoint* FindLampPoint(s32 warp_point);
+// A party guest's trip lands where the game's lamp lookup puts a client: the map's origin, or the
+// map's default spot. Planned at a known lamp (the trip's summon placement), the area around the
+// lamp loads behind the loading screen; otherwise, and when it still lands elsewhere, the guest
+// is moved to the lamp after arrival (MoveToRespawnPoint), and the textures there load late.
+bool ArrivalNeedsMove(const LampPoint* planned, const std::optional<LampPosition>& at);
+constexpr float ArrivedAtLampMeters = 3.0f;
+
 struct LampRest;
 
 enum class LampUse { Rest, Travel };

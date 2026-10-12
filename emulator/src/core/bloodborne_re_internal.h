@@ -288,6 +288,10 @@ void ApplyCrossMapSummonGuestPlacement(const GuestRegisterSnapshot& registers);
 void ApplySummonReloadStateAtDescriptor(const GuestRegisterSnapshot& registers);
 void ApplyDeferredSummonReload();
 void ApplyPreMatchCrossMapGuestWarp();
+bool WarpGuestToLampPoint(const LampPoint& point);
+// A trip to a warp point (a guest's own, the rig's): at the lamp's own point when it is known
+// (returned), else the lamp lookup's trip.
+const LampPoint* StartTripToLamp(s32 warp_point);
 bool StartPlayerSummonSearch(u64 player, s32 effect_id);
 void ResumePreMatchCrossMapResponder();
 extern std::optional<PartyController> party_controller;
