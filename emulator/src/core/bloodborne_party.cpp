@@ -320,6 +320,20 @@ void ReviveInPlace(const GhostDeathCalls& calls, std::optional<s32> character_ty
 
 } // namespace
 
+bool PlaceCharacter(const PlacementCalls& calls, u64 character, const float* position,
+                    const float* rotation) {
+    if (!calls.teleport || !calls.snap_position || !calls.set_rotation || !calls.reset_follow ||
+        !calls.snap_camera) {
+        return false;
+    }
+    calls.teleport(character, position, rotation, 1);
+    calls.snap_position(character, position);
+    calls.set_rotation(character, rotation);
+    calls.reset_follow(character, true);
+    calls.snap_camera();
+    return true;
+}
+
 bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
     if (!HasReviveCalls(calls) || !calls.is_white_ghost || !calls.set_chr_type ||
         !calls.is_white_ghost()) {

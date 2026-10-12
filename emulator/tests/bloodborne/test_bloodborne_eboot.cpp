@@ -306,6 +306,32 @@ TEST_F(BloodborneEboot, TheCheckedVtablesAreWhatTheConstructorsStore) {
     EXPECT_EQ(lea(0x017D2983), MapItemManVtable);
 }
 
+// PlaceCharacter does what the game does when it puts the player at its lamp on a load: right
+// after the teleport (`call [rax + 0x5F8]`) the position snap and the follow reset. The CamReset
+// script binding (0x0132F5A0) calls the same two.
+TEST_F(BloodborneEboot, PlacementCallsWhatTheGamesLampPlacementCalls) {
+    EXPECT_EQ(Bytes(0x0154B2F2, 6), (std::vector<u8>{0xFF, 0x90, 0xF8, 0x05, 0x00, 0x00}));
+    EXPECT_EQ(CallTarget(0x0154B32A), SnapCharacterPositionOffset);
+    EXPECT_EQ(CallTarget(0x0154B3BD), ResetCharacterFollowOffset);
+    EXPECT_EQ(CallTarget(0x0132F605), SnapCharacterPositionOffset);
+    EXPECT_EQ(CallTarget(0x0132F612), ResetCharacterFollowOffset);
+    EXPECT_EQ(Bytes(SnapCharacterPositionOffset, 4), FunctionPrologue);
+    EXPECT_EQ(Bytes(ResetCharacterFollowOffset, 4), FunctionPrologue);
+}
+
+// The camera manager: the in-game step builds it (0x01435FC0) and keeps it in [[0x0553E860]
+// +0x2830] (`lea rcx, [rip + ..]; mov rcx, [rcx]; mov [rcx + 0x2830], rax`); a map's start sets
+// its snap byte (`mov byte [rdi + 0x80], 1`) and its update hands it to the cameras.
+TEST_F(BloodborneEboot, TheCameraSnapIsWhereTheGameKeepsIt) {
+    EXPECT_EQ(CallTarget(0x019379D9), 0x01435FC0u);
+    EXPECT_EQ(LeaTarget(Bytes(0x019379F8, 7), 0x019379F8), CameraManagerPointerOffset);
+    EXPECT_EQ(Bytes(0x01937A02, 7), (std::vector<u8>{0x48, 0x89, 0x81, 0x30, 0x28, 0x00, 0x00}));
+    EXPECT_EQ(ReadAt<u32>(Bytes(0x01937A05, 4), 0), CameraManagerField);
+    EXPECT_EQ(Bytes(0x01939C0E, 7), (std::vector<u8>{0xC6, 0x87, 0x80, 0x00, 0x00, 0x00, 0x01}));
+    EXPECT_EQ(Bytes(0x01436964, 7), (std::vector<u8>{0x80, 0xBB, 0x80, 0x00, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(CameraSnapByte, 0x80u);
+}
+
 // The summon manager's update (0x01872360) ages each summon in flight (`vaddss xmm0, xmm0,
 // [r12 + 4]` with the frame time at 0x0187291C) and lets it go once it is 55 s old, or 180 s
 // old (the two `vucomiss xmm0, [rip + disp32]`); the party's patch points both at a 15.0 among

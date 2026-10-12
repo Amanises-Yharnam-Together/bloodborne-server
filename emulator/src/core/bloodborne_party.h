@@ -250,6 +250,35 @@ bool ReviveDeadPartyGuest(const GhostDeathCalls& calls);
 bool ShouldReviveHostInPlace(s32 matching_state);
 void ReviveDeadPartyHost(const GhostDeathCalls& calls);
 
+// How the game puts the player at its lamp when a map loads (0x0154B2F2..0x0154B3BD): the
+// teleport (vtable +0x5F8, mode 1), then the position snap (0x018C16A0: the position and the one
+// before it, so nothing eases in from the old spot), the heading (transform +0x1D0) and the
+// follow reset (0x018BCF30). The CamReset script binding (0x0132F5A0) is those last calls too.
+// Our moves made only the teleport: the camera stayed where the player had been and flew to it
+// (a guest's trip arrives at the map's origin and is moved to the lamp a second later).
+// Those calls alone still left it flying in (Kaniel watching the rig): the camera's drawn
+// position follows its ideal one with a spring (see bbport's runtime_camhook.c) unless the
+// camera manager's snap byte is set, which the game sets as a map starts (0x01939C0E) and the
+// next camera update hands to each camera (0x01436964); last, the move sets it too.
+struct PlacementCalls {
+    void PS4_SYSV_ABI (*teleport)(u64 character, const float* position, const float* rotation,
+                                  s32 mode) = nullptr;
+    void PS4_SYSV_ABI (*snap_position)(u64 character, const float* position) = nullptr;
+    void (*set_rotation)(u64 character, const float* rotation) = nullptr; // ours: +0x1D0
+    void PS4_SYSV_ABI (*reset_follow)(u64 character, bool placed) = nullptr;
+    void (*snap_camera)() = nullptr; // ours: see CameraManagerPointerOffset
+};
+constexpr u64 SnapCharacterPositionOffset = 0x018C16A0;
+constexpr u64 ResetCharacterFollowOffset = 0x018BCF30;
+// The camera manager (built by 0x01435FC0, 0x1150 bytes) is at [[0x0553E860] +0x2830]; its byte
+// +0x80 snaps every camera to where it should be on the next update.
+constexpr u64 CameraManagerPointerOffset = 0x0553E860;
+constexpr u64 CameraManagerField = 0x2830;
+constexpr u64 CameraSnapByte = 0x80;
+// Returns whether it moved the character (every call is needed).
+bool PlaceCharacter(const PlacementCalls& calls, u64 character, const float* position,
+                    const float* rotation);
+
 // The sign poster's timers (seconds, a float at +0x28 of the sign object): 01.09 waits 5 s
 // before a new sign's first post and 30 s between re-posts, ignoring ss.info's interval.
 constexpr float FirstSignPostDelaySeconds = 0.0f;

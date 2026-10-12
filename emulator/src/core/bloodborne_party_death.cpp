@@ -323,15 +323,9 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     case DeathRespawn::MoveToPoint:
         break;
     }
-    using Teleport = void PS4_SYSV_ABI (*)(u64 character, const float* position,
-                                           const float* rotation, s32 mode);
-    const u64 vtable = IsCharacter(player, "revive teleport") ? ReadValue<u64>(player, 0) : 0;
-    const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
-    if (teleport < 0x10000) {
+    if (!PlaceLocalPlayer(position, rotation, "revive teleport")) {
         return;
     }
-    reinterpret_cast<Teleport>(teleport)(player, position.data(), rotation.data(), 1);
-    WriteValue(player, 0x1E1, static_cast<u8>(ReadValue<u8>(player, 0x1E1) | 2));
     LOG_INFO(Debug,
              "Bloodborne revive: moved to last lamp {} at ({}, {}, {}) rotation ({}, {}, {})",
              point, position[0], position[1], position[2], rotation[0], rotation[1], rotation[2]);
