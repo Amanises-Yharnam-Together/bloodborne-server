@@ -62,23 +62,11 @@
 namespace Core::Bloodborne {
 namespace {
 
-struct NativeCallSignature {
-    std::string_view name;
-    u64 offset;
-    std::array<u8, 16> prologue;
-    u8 prologue_size;
-};
 constexpr u64 GlobalStatePointerOffset = 0x05556678;
-constexpr u64 CandidateLocalStatePointerOffset = 0x0553E878;
-constexpr u64 SummonManagerRootPointerOffset = 0x0553B120; // FrpgNetMan
 // GameDataMan: +0x28 "has a bloodstain", +0x30 the bloodstain record UpDateBloodMark writes.
 constexpr u64 GameDataManPointerOffset = 0x0553B130;
 constexpr u64 EventManPointerOffset = 0x0553B108; // SprjEventMan
-// SetChrType(_, entity, type) event binding: sets +0x78 and refreshes the character (vtable 0x1A0).
-constexpr u64 SetChrTypeOffset = 0x01338DF0;
 constexpr u64 CurrentMapListPointerOffset = 0x0553B148;
-constexpr u64 MatchingStatePointerOffset = 0x05540290;
-constexpr u64 SummonSessionRulesPointerOffset = 0x0553D6D0;
 constexpr u64 RoleMetadataTableOffset = 0x0553D750;
 constexpr u64 SummonBuildRoleTableOffset = 0x0556E560;
 constexpr u64 RoleMetadataStride = 0x80;
@@ -99,73 +87,32 @@ constexpr u64 ChrResetAnimationOffset = 0x013370F0;
 constexpr u64 CharacterWarpSetOrCopyFloorOffset = 0x018BBA70;
 constexpr auto BackgroundFloorCopyReturnOffsets = std::to_array<u64>({0x018BEE67, 0x018BEF34});
 constexpr u64 OnlineStatePointerOffset = 0x056C7048;
-constexpr u64 SetForcedSummonMapOffset = 0x0156CF10;
-constexpr u64 SetForcedSummonPositionOffset = 0x0156CF20;
-constexpr u64 SetForcedSummonOrientationOffset = 0x0156CF40;
-constexpr u64 SetForcedSummonWarpOffset = 0x0156CF60;
-constexpr u64 SelectSummonedPlacementOffset = 0x01332BC0;
-constexpr u64 SummonedMapReloadOffset = 0x01336B90;
-constexpr u64 StageTransitionOffset = 0x013CDE30;
-constexpr u64 SetSummonReloadStateOffset = 0x0178D9A0;
-constexpr u64 AddSpEffectOffset = 0x018C6DB0;
-constexpr u64 CharacterAddSpEffectSlot = 0x3F0;
-constexpr u32 ResponderResumeStableObservations = 20;
-constexpr u32 ResponderResumeMaxAttempts = 2;
-constexpr auto ResponderResumeRetryDelay = std::chrono::seconds{15};
-
-constexpr auto CrossMapNativeCalls = std::to_array<NativeCallSignature>({
-    {"SetForcedSummonMap",
-     SetForcedSummonMapOffset,
-     {0x48, 0x8B, 0x05, 0x61, 0x97, 0xFE, 0x03, 0x8B, 0x0F, 0x89, 0x88, 0xF0, 0x14, 0x00, 0x00,
-      0xC3},
-     16},
-    {"SetForcedSummonPosition",
-     SetForcedSummonPositionOffset,
-     {0x48, 0x8B, 0x05, 0x51, 0x97, 0xFE, 0x03, 0xC5, 0xF8, 0x28, 0x07, 0xC5, 0xF8, 0x29, 0x80,
-      0x00},
-     16},
-    {"SetForcedSummonOrientation",
-     SetForcedSummonOrientationOffset,
-     {0x48, 0x8B, 0x05, 0x31, 0x97, 0xFE, 0x03, 0xC5, 0xF8, 0x28, 0x07, 0xC5, 0xF8, 0x29, 0x80,
-      0x10},
-     16},
-    {"SetForcedSummonWarp",
-     SetForcedSummonWarpOffset,
-     {0x48, 0x8B, 0x05, 0x11, 0x97, 0xFE, 0x03, 0xC6, 0x80, 0x20, 0x15, 0x00, 0x00, 0x01, 0xC3},
-     15},
-    {"SelectSummonedPlacement",
-     SelectSummonedPlacementOffset,
-     {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xEC, 0x18},
-     13},
-    {"SummonedMapReload",
-     SummonedMapReloadOffset,
-     {0x55, 0x48, 0x89, 0xE5, 0x48, 0x8D, 0x05, 0x2D, 0x45, 0x20, 0x04, 0x48, 0x83, 0x38, 0x00},
-     15},
-    {"StageTransition",
-     StageTransitionOffset,
-     {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x50},
-     14},
-    {"SetSummonReloadState",
-     SetSummonReloadStateOffset,
-     {0xC7, 0x87, 0x84, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xC3},
-     11},
-    {"MultiPlayStopRequest",
-     MultiPlayStopRequestOffset,
-     {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
-      0xEC},
-     16},
-    {"AddSpEffect",
-     AddSpEffectOffset,
-     {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
-      0xEC},
-     16},
-});
 
 std::array<std::atomic<u64>, Sites.size()> site_hits{};
+
+} // namespace
+
+namespace Coop {
+
 std::atomic<u64> event_sequence{};
+
+} // namespace Coop
+
+namespace {
+
 std::atomic<s32> observed_sos_area{-1};
+
+} // namespace
+
+namespace Coop {
+
 std::mutex capture_mutex;
 std::ofstream capture_file;
+
+} // namespace Coop
+
+namespace {
+
 std::filesystem::path capture_path;
 
 } // namespace
@@ -194,120 +141,21 @@ namespace {
 thread_local u64 responder_availability_frame{};
 thread_local s32 responder_availability_goods{-1};
 
-struct HostPlacementRewriteRecord {
-    std::string_view result{"not_attempted"};
-    u64 prepared{};
-    SummonPlacementDescriptor candidate{};
-    SummonPlacementDescriptor host{};
-};
-
-thread_local HostPlacementRewriteRecord host_placement_rewrite{};
-std::mutex seamless_placement_mutex;
-std::optional<SummonPlacementDescriptor> seamless_host_placement;
-std::optional<SummonPlacementDescriptor> seamless_received_host_placement;
-bool seamless_received_host_placement_consumed{};
-JoinPlacementLife seamless_received_host_placement_life;
-std::atomic<u32> pending_summon_reload_map{};
-std::atomic<u32> pending_summon_reload_state_map{};
-
-struct GuestPlacementHandoffRecord {
-    std::string_view result{"not_attempted"};
-    u64 object{};
-    u64 state{};
-    u32 current_map{};
-    u32 received_map{};
-    u32 selected_map{};
-    bool transported_host{};
-    bool placement_refreshed{};
-    bool select_result{};
-    bool summon_reload_armed{};
-    s32 transition_result{};
-};
-
-thread_local GuestPlacementHandoffRecord guest_placement_handoff{};
-
-struct SummonReloadStateRecord {
-    std::string_view result{"not_pending"};
-    u32 target_map{};
-    u32 descriptor_map{};
-    u64 reload_state{};
-    s32 state_before{};
-    s32 state_after{};
-    bool summon_reload_started{};
-    bool state_setter_used{};
-    bool placement_refreshed{};
-};
-
-thread_local SummonReloadStateRecord summon_reload_state{};
-
-struct DeferredSummonReloadRecord {
-    std::string_view result{"not_pending"};
-    u32 target_map{};
-    u32 current_map{};
-    bool summon_reload_started{};
-};
-
-thread_local DeferredSummonReloadRecord deferred_summon_reload{};
-
-struct PreMatchGuestWarpRecord {
-    std::string_view result{"not_pending"};
-    u64 state{};
-    u32 current_map{};
-    u32 target_map{};
-    u32 selected_map{};
-    s32 multi_play_state{-1};
-    bool placement_written{};
-    bool select_result{};
-    bool responder_resume_armed{};
-    s32 transition_result{};
-};
-
-thread_local PreMatchGuestWarpRecord pre_match_guest_warp{};
-
-struct PendingResponderResume {
-    u32 target_map{};
-    s32 target_area{};
-    u32 ready_observations{};
-    u32 attempts{};
-    bool dispatched{};
-    std::chrono::steady_clock::time_point dispatched_at{};
-};
-
-thread_local PendingResponderResume pending_responder_resume{};
-
-struct ResponderResumeRecord {
-    std::string_view result{"not_pending"};
-    u32 target_map{};
-    u32 current_map{};
-    s32 target_area{};
-    s32 current_area{};
-    u64 state{};
-    u64 multi_play{};
-    s32 multi_play_state{-1};
-    u64 matching_controller{};
-    u64 player{};
-    u32 ready_observations{};
-    u32 attempts{};
-    bool effect_active{};
-    bool native_result{};
-};
-
-thread_local ResponderResumeRecord responder_resume{};
-
-struct HealingFountainAvailabilityRecord {
-    std::string_view result{"not_attempted"};
-    u64 object{};
-    u64 player{};
-    bool blocked_before{};
-    bool host_effect{};
-    bool blocked_after{};
-};
-
-thread_local HealingFountainAvailabilityRecord healing_fountain_availability{};
-
 } // namespace
 
 namespace Coop {
+
+thread_local HostPlacementRewriteRecord host_placement_rewrite{};
+
+thread_local GuestPlacementHandoffRecord guest_placement_handoff{};
+
+thread_local SummonReloadStateRecord summon_reload_state{};
+
+thread_local DeferredSummonReloadRecord deferred_summon_reload{};
+
+thread_local PreMatchGuestWarpRecord pre_match_guest_warp{};
+
+thread_local HealingFountainAvailabilityRecord healing_fountain_availability{};
 
 // What the co-op install did with each feature (see CoopFeatureReport), logged in one line at its
 // end.
@@ -376,6 +224,10 @@ bool IsCharacter(u64 object, std::string_view site) {
     return HasVtable(object, CharacterVtables, site);
 }
 
+} // namespace
+
+namespace Coop {
+
 // Whether the object's virtual at `slot` is the 01.09 function at `function` (e.g. the
 // character's AddSpEffect): before a call through it, or a direct call that stands for it.
 bool HasVirtual(u64 object, u64 slot, u64 function, std::string_view site) {
@@ -386,20 +238,6 @@ bool HasVirtual(u64 object, u64 slot, u64 function, std::string_view site) {
     }
     LogRefusedCall(site, object);
     return false;
-}
-
-template <typename T>
-bool WriteValue(u64 address, size_t offset, const T& value) {
-    if (address > std::numeric_limits<u64>::max() - offset) {
-        return false;
-    }
-    const u64 destination = address + offset;
-    if (!HasMemoryAccess(destination, sizeof(value), MemoryProt::CpuWrite)) {
-        return false;
-    }
-
-    std::memcpy(reinterpret_cast<void*>(destination), &value, sizeof(value));
-    return true;
 }
 
 bool WriteTransportedSummonPlacement(u64 state, const SummonPlacementDescriptor& placement) {
@@ -423,15 +261,15 @@ bool IsSameSummonPlacement(const SummonPlacementDescriptor& left,
            left.area == right.area;
 }
 
-u64 GetSummonManagerRoot();
-u64 GetGlobalState();
-u64 GetMatchingState();
-
 u64 GetLocalPlayer() {
     const u64 local_state =
         image_base != 0 ? ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0) : 0;
     return local_state >= 0x10000 ? ReadValue<u64>(local_state, 0x60) : 0;
 }
+
+} // namespace Coop
+
+namespace {
 
 // The effect manager's node removal (player +0x1C8 manager, node, 1): what the bell's own
 // code calls to take off 9003/9004 (0x015069BA). It unlinks the node (+0x58 next, +0x60 prev).
@@ -464,6 +302,10 @@ bool EndPlayerEffect(u64 player, s32 effect_id) {
     }
     return false;
 }
+
+} // namespace
+
+namespace Coop {
 
 bool HasPlayerEffect(u64 player, s32 effect_id) {
     const u64 manager = player >= 0x10000 ? ReadValue<u64>(player, 0x1C8) : 0;
@@ -519,6 +361,10 @@ u32 GetCurrentPackedMap() {
     }
     return ReadValue<u32>(entry, sizeof(u64));
 }
+
+} // namespace Coop
+
+namespace {
 
 // Where this player is (see PlaceTracker): fed by TickPlace once per party tick, read by every
 // feature instead of GetCurrentPackedMap. Only the load-time hooks, the trip machinery and the
@@ -591,618 +437,6 @@ void OnLifecycle(Lifecycle event) {
              epoch, ran.empty() ? "nothing" : fmt::format("{}", fmt::join(ran, ", ")));
 }
 
-bool ReadLocalSummonPlacement(SummonPlacementDescriptor& placement, std::string_view& result) {
-    const u64 manager_root = GetSummonManagerRoot();
-    if (manager_root < 0x10000 ||
-        !HasMemoryAccess(manager_root, 0xA80 + sizeof(s32), MemoryProt::CpuRead)) {
-        result = "invalid_manager";
-        return false;
-    }
-
-    // Raw: the summon hooks run before the tick, while the join's load places the player.
-    placement.packed_region = GetCurrentPackedMap();
-    placement.area = ReadValue<s32>(manager_root, 0xA80);
-    if (!IsUsablePackedMap(placement.packed_region)) {
-        result = "invalid_map";
-        return false;
-    }
-
-    const u64 local_state = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
-    const u64 local_world = local_state >= 0x10000 ? ReadValue<u64>(local_state, 0x60) : 0;
-    const u64 character = local_world >= 0x10000 ? ReadValue<u64>(local_world, 0x58) : 0;
-    const u64 character_state = character >= 0x10000 ? ReadValue<u64>(character, 0x08) : 0;
-    const u64 character_model =
-        character_state >= 0x10000 ? ReadValue<u64>(character_state, 0x3B0) : 0;
-    const u64 transform = character_model >= 0x10000 ? ReadValue<u64>(character_model, 0x68) : 0;
-    if (transform < 0x10000 || !HasMemoryAccess(transform, 0x1EC, MemoryProt::CpuRead)) {
-        result = "invalid_transform";
-        return false;
-    }
-
-    placement.heading = ReadValue<float>(transform, 0x1D4);
-    placement.x = ReadValue<float>(transform, 0x1E0);
-    placement.y = ReadValue<float>(transform, 0x1E4);
-    placement.z = ReadValue<float>(transform, 0x1E8);
-    if (!std::isfinite(placement.x) || !std::isfinite(placement.y) || !std::isfinite(placement.z) ||
-        !std::isfinite(placement.heading)) {
-        result = "non_finite_transform";
-        return false;
-    }
-    result = "captured";
-    return true;
-}
-
-void RefreshSeamlessLocalPlacement() {
-    SummonPlacementDescriptor placement{};
-    std::string_view result;
-    if (!ReadLocalSummonPlacement(placement, result)) {
-        return;
-    }
-    std::scoped_lock lock{seamless_placement_mutex};
-    seamless_host_placement = placement;
-}
-
-void ApplyCrossMapSummonHostPlacement(const GuestRegisterSnapshot& registers) {
-    host_placement_rewrite = {};
-    host_placement_rewrite.result = "invalid_prepared";
-    host_placement_rewrite.prepared = registers.rsi;
-    {
-        std::scoped_lock lock{seamless_placement_mutex};
-        seamless_host_placement.reset();
-    }
-
-    const u64 prepared = registers.rsi;
-    if (prepared < 0x10000 ||
-        !HasMemoryAccess(prepared, 0x04 + sizeof(SummonPlacementDescriptor), MemoryProt::CpuRead)) {
-        return;
-    }
-    std::memcpy(&host_placement_rewrite.candidate, reinterpret_cast<const void*>(prepared + 0x04),
-                sizeof(SummonPlacementDescriptor));
-
-    auto& host = host_placement_rewrite.host;
-    if (!IsUsablePackedMap(host_placement_rewrite.candidate.packed_region)) {
-        host_placement_rewrite.result = "invalid_map";
-        return;
-    }
-    if (!ReadLocalSummonPlacement(host, host_placement_rewrite.result)) {
-        return;
-    }
-    if (host_placement_rewrite.candidate.packed_region == host.packed_region) {
-        host_placement_rewrite.result = "same_map";
-        return;
-    }
-
-    if (!WriteValue(prepared, 0x04, host)) {
-        host_placement_rewrite.result = "write_rejected";
-        return;
-    }
-    {
-        std::scoped_lock lock{seamless_placement_mutex};
-        seamless_host_placement = host;
-    }
-    host_placement_rewrite.result = "applied";
-}
-
-bool IsPartyGuestRole();
-
-void ApplyCrossMapSummonGuestPlacement(const GuestRegisterSnapshot& registers) {
-    guest_placement_handoff = {};
-    guest_placement_handoff.result = "invalid_object";
-    guest_placement_handoff.object = registers.rbx;
-
-    const u64 object = registers.rbx;
-    if (object < 0x10000 || !HasMemoryAccess(object, 0xEC, MemoryProt::CpuRead)) {
-        return;
-    }
-    if (ReadValue<u32>(object, 0xE8) != 0) {
-        guest_placement_handoff.result = "not_summoned_client";
-        return;
-    }
-
-    auto& record = guest_placement_handoff;
-    record.result = "invalid_state";
-    record.state = GetGlobalState();
-    const u64 state = record.state;
-    if (state < 0x10000 || !HasMemoryAccess(state, 0x1649, MemoryProt::CpuRead)) {
-        return;
-    }
-    if (ReadValue<u8>(state, 0x1648) == 0) {
-        record.result = "received_placement_not_ready";
-        return;
-    }
-
-    std::optional<SummonPlacementDescriptor> transported_host;
-    {
-        std::scoped_lock lock{seamless_placement_mutex};
-        transported_host = seamless_received_host_placement;
-    }
-    record.transported_host = transported_host.has_value();
-
-    record.current_map = GetCurrentPackedMap(); // raw: a summon hook, in the join's load
-    record.received_map = transported_host.has_value() ? transported_host->packed_region
-                                                       : ReadValue<u32>(state, 0x14C4);
-    const u32 transport_map = transported_host.has_value() ? transported_host->packed_region
-                                                           : ReadValue<u32>(state, 0x1644);
-    if (!IsUsablePackedMap(record.current_map) || !IsUsablePackedMap(record.received_map)) {
-        record.result = "invalid_map";
-        return;
-    }
-    if (record.received_map != transport_map) {
-        record.result = "placement_copy_pending";
-        return;
-    }
-    if (record.current_map == record.received_map) {
-        // A party guest joining in place: the summon reload uses the placement it was handed
-        // (the host's spot); its own goes there instead.
-        if (IsPartyGuestRole() && transported_host.has_value() &&
-            HasMemoryAccess(state, 0x14F0, MemoryProt::CpuWrite) &&
-            WriteTransportedSummonPlacement(state, *transported_host)) {
-            record.placement_refreshed = true;
-        }
-        record.result = "same_map";
-        return;
-    }
-    if (!HasMemoryAccess(state, 0x1521, MemoryProt::CpuWrite)) {
-        record.result = "state_not_writable";
-        return;
-    }
-    if (transported_host.has_value()) {
-        if (!WriteTransportedSummonPlacement(state, *transported_host)) {
-            record.result = "transport_write_rejected";
-            return;
-        }
-        record.placement_refreshed = true;
-    }
-    if (ReadValue<u8>(state, 0x08) != 0) {
-        record.result = "stage_transition_pending";
-        return;
-    }
-    if (ReadValue<u8>(state, 0x1520) != 0) {
-        record.result = "native_forced_warp_pending";
-        return;
-    }
-
-    for (size_t index = 0; index < 4; ++index) {
-        const float position = ReadValue<float>(state, 0x14D0 + index * sizeof(float));
-        const float orientation = ReadValue<float>(state, 0x14E0 + index * sizeof(float));
-        if (!std::isfinite(position) || !std::isfinite(orientation)) {
-            record.result = "non_finite_placement";
-            return;
-        }
-    }
-
-    const u64 image_size = MemoryPatcher::g_eboot_image_size;
-    if (image_base == 0 || std::ranges::any_of(CrossMapNativeCalls, [image_size](const auto& site) {
-            return site.offset >= image_size;
-        })) {
-        record.result = "native_call_out_of_range";
-        return;
-    }
-
-    using PlacementSetter = void PS4_SYSV_ABI (*)(const void* value);
-    using FlagSetter = void PS4_SYSV_ABI (*)();
-    using PlacementSelector = bool PS4_SYSV_ABI (*)(u64 context, s32 warp_info_id);
-    using StageTransition = s32 PS4_SYSV_ABI (*)();
-    const auto set_map = reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonMapOffset);
-    const auto set_position =
-        reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonPositionOffset);
-    const auto set_orientation =
-        reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonOrientationOffset);
-    const auto set_warp = reinterpret_cast<FlagSetter>(image_base + SetForcedSummonWarpOffset);
-    const auto select =
-        reinterpret_cast<PlacementSelector>(image_base + SelectSummonedPlacementOffset);
-    const auto transition = reinterpret_cast<StageTransition>(image_base + StageTransitionOffset);
-
-    set_position(reinterpret_cast<const void*>(state + 0x14D0));
-    set_orientation(reinterpret_cast<const void*>(state + 0x14E0));
-    set_map(reinterpret_cast<const void*>(state + 0x14C4));
-    set_warp();
-    record.select_result = select(0, -1);
-    record.selected_map = ReadValue<u32>(state, 0x0C);
-    if (!record.select_result || record.selected_map != record.received_map) {
-        record.result = "native_select_failed";
-        return;
-    }
-
-    pending_summon_reload_map.store(record.received_map, std::memory_order_release);
-    pending_summon_reload_state_map.store(record.received_map, std::memory_order_release);
-    record.summon_reload_armed = true;
-    record.transition_result = transition();
-    if (record.transition_result == 0) {
-        pending_summon_reload_map.store(0, std::memory_order_release);
-        pending_summon_reload_state_map.store(0, std::memory_order_release);
-        record.summon_reload_armed = false;
-        record.result = "stage_transition_failed";
-        return;
-    }
-    record.result = "applied";
-}
-
-void ApplySummonReloadStateAtDescriptor(const GuestRegisterSnapshot& registers) {
-    summon_reload_state = {};
-    auto& record = summon_reload_state;
-    record.target_map = pending_summon_reload_state_map.load(std::memory_order_acquire);
-    if (!IsUsablePackedMap(record.target_map)) {
-        return;
-    }
-
-    const u64 descriptor = registers.r9;
-    if (descriptor < 0x10000 || !HasMemoryAccess(descriptor, 0x0C, MemoryProt::CpuRead)) {
-        record.result = "invalid_descriptor";
-        return;
-    }
-    record.descriptor_map = ReadValue<u32>(descriptor, 0x08);
-    if (record.descriptor_map != record.target_map) {
-        record.result = "waiting_for_target_descriptor";
-        return;
-    }
-
-    u32 expected_map = record.target_map;
-    if (!pending_summon_reload_state_map.compare_exchange_strong(
-            expected_map, 0, std::memory_order_acq_rel, std::memory_order_acquire)) {
-        record.result = "already_dispatched";
-        return;
-    }
-
-    record.reload_state = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
-    if (record.reload_state < 0x10000 ||
-        !HasMemoryAccess(record.reload_state, 0x88, MemoryProt::CpuWrite)) {
-        pending_summon_reload_state_map.store(record.target_map, std::memory_order_release);
-        record.result = "invalid_reload_state";
-        return;
-    }
-
-    record.state_before = ReadValue<s32>(record.reload_state, 0x84);
-    u32 pending_reload_map = record.target_map;
-    const bool cleared_deferred_reload = pending_summon_reload_map.compare_exchange_strong(
-        pending_reload_map, 0, std::memory_order_acq_rel, std::memory_order_acquire);
-
-    using SummonedMapReload = void PS4_SYSV_ABI (*)();
-    const auto reload_summoned_map =
-        reinterpret_cast<SummonedMapReload>(image_base + SummonedMapReloadOffset);
-    reload_summoned_map();
-    record.summon_reload_started = true;
-    record.state_after = ReadValue<s32>(record.reload_state, 0x84);
-    if (record.state_after != 3) {
-        using SummonReloadStateSetter = void PS4_SYSV_ABI (*)(u64 state);
-        const auto set_reload_state =
-            reinterpret_cast<SummonReloadStateSetter>(image_base + SetSummonReloadStateOffset);
-        set_reload_state(record.reload_state);
-        record.state_setter_used = true;
-        record.state_after = ReadValue<s32>(record.reload_state, 0x84);
-    }
-    if (record.state_after != 3) {
-        pending_summon_reload_state_map.store(record.target_map, std::memory_order_release);
-        if (cleared_deferred_reload) {
-            pending_summon_reload_map.store(record.target_map, std::memory_order_release);
-        }
-        record.result = "state_transition_failed";
-        return;
-    }
-
-    std::optional<SummonPlacementDescriptor> transported_host;
-    {
-        std::scoped_lock lock{seamless_placement_mutex};
-        transported_host = seamless_received_host_placement;
-    }
-    const u64 placement_state = GetGlobalState();
-    if (transported_host.has_value() && transported_host->packed_region == record.target_map &&
-        placement_state >= 0x10000 &&
-        WriteTransportedSummonPlacement(placement_state, *transported_host)) {
-        using PlacementSetter = void PS4_SYSV_ABI (*)(const void* value);
-        const auto set_map =
-            reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonMapOffset);
-        const auto set_position =
-            reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonPositionOffset);
-        const auto set_orientation =
-            reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonOrientationOffset);
-        set_position(reinterpret_cast<const void*>(placement_state + 0x14D0));
-        set_orientation(reinterpret_cast<const void*>(placement_state + 0x14E0));
-        set_map(reinterpret_cast<const void*>(placement_state + 0x14C4));
-        record.placement_refreshed = true;
-    }
-    record.result = "applied";
-}
-
-void ApplyDeferredSummonReload() {
-    deferred_summon_reload = {};
-    auto& record = deferred_summon_reload;
-    record.target_map = pending_summon_reload_map.load(std::memory_order_acquire);
-    if (!IsUsablePackedMap(record.target_map)) {
-        return;
-    }
-
-    record.current_map = GetCurrentPackedMap(); // raw: runs before the tick, during the load
-    if (record.current_map != record.target_map) {
-        record.result = "waiting_for_target_map";
-        return;
-    }
-
-    const u64 state = GetGlobalState();
-    if (state < 0x10000 || !HasMemoryAccess(state, 0x1521, MemoryProt::CpuRead)) {
-        record.result = "invalid_state";
-        return;
-    }
-    if (ReadValue<u8>(state, 0x08) != 0 || ReadValue<u8>(state, 0x1520) != 0) {
-        record.result = "waiting_for_transition";
-        return;
-    }
-
-    u32 expected_map = record.target_map;
-    if (!pending_summon_reload_map.compare_exchange_strong(
-            expected_map, 0, std::memory_order_acq_rel, std::memory_order_acquire)) {
-        record.result = "already_dispatched";
-        return;
-    }
-    pending_summon_reload_state_map.store(0, std::memory_order_release);
-
-    using SummonedMapReload = void PS4_SYSV_ABI (*)();
-    const auto reload_summoned_map =
-        reinterpret_cast<SummonedMapReload>(image_base + SummonedMapReloadOffset);
-    reload_summoned_map();
-    record.summon_reload_started = true;
-    record.result = "applied";
-}
-
-void ApplyPreMatchCrossMapGuestWarp() {
-    pre_match_guest_warp = {};
-    auto& record = pre_match_guest_warp;
-
-    const u64 matching = GetMatchingState();
-    const bool matching_readable =
-        matching >= 0x10000 && HasMemoryAccess(matching, 0x128, MemoryProt::CpuRead);
-    const s32 matching_state = matching_readable ? ReadValue<s32>(matching, 0x124) : -1;
-    const u64 global = GetGlobalState();
-    const bool session_over =
-        matching_readable && matching_state == 0 && ReadValue<u64>(matching, 0x18) == 0 &&
-        global >= 0x10000 && HasMemoryAccess(global, 0x1521, MemoryProt::CpuRead) &&
-        ReadValue<u8>(global, 0x08) == 0 && ReadValue<u8>(global, 0x1520) == 0 &&
-        pending_summon_reload_map.load(std::memory_order_acquire) == 0 &&
-        pending_summon_reload_state_map.load(std::memory_order_acquire) == 0;
-    std::optional<SummonPlacementDescriptor> transported_host;
-    bool placement_consumed = false;
-    {
-        std::scoped_lock lock{seamless_placement_mutex};
-        if (seamless_received_host_placement.has_value() &&
-            seamless_received_host_placement_life.Spent(matching_state, session_over)) {
-            LOG_INFO(Debug, "Bloodborne party: the join's placement on map {:#x} is spent",
-                     seamless_received_host_placement->packed_region);
-            seamless_received_host_placement.reset();
-            seamless_received_host_placement_consumed = false;
-        }
-        transported_host = seamless_received_host_placement;
-        placement_consumed = seamless_received_host_placement_consumed;
-    }
-    if (!transported_host.has_value()) {
-        record.result = "no_placement";
-        return;
-    }
-    if (placement_consumed) {
-        record.result = "placement_consumed";
-        return;
-    }
-
-    record.current_map = GetCurrentPackedMap(); // raw: runs before the tick, during the load
-    record.target_map = transported_host->packed_region;
-    if (!IsUsablePackedMap(record.current_map) || !IsUsablePackedMap(record.target_map)) {
-        record.result = "invalid_map";
-        return;
-    }
-    if (record.current_map == record.target_map) {
-        record.result = "destination_reached";
-        return;
-    }
-
-    const u64 multi_play = ReadValue<u64>(image_base + MatchingStatePointerOffset, 0);
-    record.multi_play_state = multi_play >= 0x10000 ? ReadValue<s32>(multi_play, 0x124) : -1;
-    if (multi_play >= 0x10000 &&
-        (record.multi_play_state != 0 || ReadValue<u64>(multi_play, 0x18) != 0)) {
-        record.result = "matching_already_active";
-        return;
-    }
-
-    record.state = GetGlobalState();
-    const u64 state = record.state;
-    if (state < 0x10000 || !HasMemoryAccess(state, 0x1521, MemoryProt::CpuWrite)) {
-        record.result = "invalid_state";
-        return;
-    }
-    if (ReadValue<u8>(state, 0x08) != 0) {
-        record.result = "stage_transition_pending";
-        return;
-    }
-    if (ReadValue<u8>(state, 0x1520) != 0) {
-        record.result = "native_forced_warp_pending";
-        return;
-    }
-    if (pending_summon_reload_map.load(std::memory_order_acquire) != 0 ||
-        pending_summon_reload_state_map.load(std::memory_order_acquire) != 0) {
-        record.result = "summon_reload_pending";
-        return;
-    }
-    if (!WriteTransportedSummonPlacement(state, *transported_host)) {
-        record.result = "transport_write_rejected";
-        return;
-    }
-    record.placement_written = true;
-
-    using PlacementSetter = void PS4_SYSV_ABI (*)(const void* value);
-    using FlagSetter = void PS4_SYSV_ABI (*)();
-    using PlacementSelector = bool PS4_SYSV_ABI (*)(u64 context, s32 warp_info_id);
-    using StageTransition = s32 PS4_SYSV_ABI (*)();
-    const auto set_map = reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonMapOffset);
-    const auto set_position =
-        reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonPositionOffset);
-    const auto set_orientation =
-        reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonOrientationOffset);
-    const auto set_warp = reinterpret_cast<FlagSetter>(image_base + SetForcedSummonWarpOffset);
-    const auto select =
-        reinterpret_cast<PlacementSelector>(image_base + SelectSummonedPlacementOffset);
-    const auto transition = reinterpret_cast<StageTransition>(image_base + StageTransitionOffset);
-
-    set_position(reinterpret_cast<const void*>(state + 0x14D0));
-    set_orientation(reinterpret_cast<const void*>(state + 0x14E0));
-    set_map(reinterpret_cast<const void*>(state + 0x14C4));
-    set_warp();
-    record.select_result = select(0, -1);
-    record.selected_map = ReadValue<u32>(state, 0x0C);
-    if (!record.select_result || record.selected_map != record.target_map) {
-        record.result = "native_select_failed";
-        return;
-    }
-
-    record.transition_result = transition();
-    if (record.transition_result == 0) {
-        record.result = "stage_transition_failed";
-        return;
-    }
-    {
-        std::scoped_lock lock{seamless_placement_mutex};
-        if (seamless_received_host_placement.has_value() &&
-            IsSameSummonPlacement(*seamless_received_host_placement, *transported_host)) {
-            seamless_received_host_placement_consumed = true;
-        }
-    }
-    pending_responder_resume = {
-        .target_map = record.target_map,
-        .target_area = transported_host->area,
-    };
-    responder_resume = {};
-    responder_resume.result = "armed";
-    responder_resume.target_map = record.target_map;
-    responder_resume.target_area = transported_host->area;
-    record.responder_resume_armed = true;
-    record.result = "applied";
-}
-
-// Starts the bell's summon search directly (see StartSummonSearch), only through the player's own
-// add-effect virtual, and only if it is the 01.09 function we verified at startup.
-bool StartPlayerSummonSearch(u64 player, s32 effect_id) {
-    if (!HasVirtual(player, CharacterAddSpEffectSlot, AddSpEffectOffset,
-                    "StartPlayerSummonSearch AddSpEffect")) {
-        LOG_WARNING(Debug,
-                    "Bloodborne summon search skipped: player {:#x} has no 01.09 "
-                    "add-effect virtual",
-                    player);
-        return false;
-    }
-    return StartSummonSearch(player, effect_id,
-                             reinterpret_cast<AddSpEffectFn>(image_base + AddSpEffectOffset));
-}
-
-void ResumePreMatchCrossMapResponder() {
-    auto& pending = pending_responder_resume;
-    if (!IsUsablePackedMap(pending.target_map)) {
-        return;
-    }
-
-    responder_resume = {};
-    auto& record = responder_resume;
-    record.target_map = pending.target_map;
-    record.target_area = pending.target_area;
-    record.current_map = GetCurrentPackedMap(); // raw: runs before the tick, during the load
-    if (record.current_map != record.target_map) {
-        pending.ready_observations = 0;
-        record.result = "waiting_for_target_map";
-        return;
-    }
-
-    SummonPlacementDescriptor local{};
-    std::string_view placement_result;
-    if (!ReadLocalSummonPlacement(local, placement_result)) {
-        pending.ready_observations = 0;
-        record.result = placement_result;
-        return;
-    }
-    record.current_area = local.area;
-    if (record.current_area != record.target_area) {
-        pending.ready_observations = 0;
-        record.result = "waiting_for_target_area";
-        return;
-    }
-
-    record.state = GetGlobalState();
-    if (record.state < 0x10000 || !HasMemoryAccess(record.state, 0x1521, MemoryProt::CpuRead)) {
-        pending.ready_observations = 0;
-        record.result = "invalid_state";
-        return;
-    }
-    if (ReadValue<u8>(record.state, 0x08) != 0 || ReadValue<u8>(record.state, 0x1520) != 0) {
-        pending.ready_observations = 0;
-        record.result = "waiting_for_stage_transition";
-        return;
-    }
-
-    record.multi_play = GetMatchingState();
-    if (record.multi_play < 0x10000 ||
-        !HasMemoryAccess(record.multi_play, 0x128, MemoryProt::CpuRead)) {
-        pending.ready_observations = 0;
-        record.result = "invalid_matching_state";
-        return;
-    }
-    record.multi_play_state = ReadValue<s32>(record.multi_play, 0x124);
-    record.matching_controller = ReadValue<u64>(record.multi_play, 0x18);
-    if (record.multi_play_state != 0 || record.matching_controller != 0) {
-        pending.ready_observations = 0;
-        record.result = "waiting_for_matching_idle";
-        return;
-    }
-
-    record.player = GetLocalPlayer();
-    if (record.player < 0x10000 ||
-        !HasMemoryAccess(record.player, sizeof(u64), MemoryProt::CpuRead)) {
-        pending.ready_observations = 0;
-        record.result = "invalid_player";
-        return;
-    }
-    record.effect_active = HasPlayerEffect(record.player, SmallResonantBellEffect);
-    if (record.effect_active) {
-        record.ready_observations = pending.ready_observations;
-        record.attempts = pending.attempts;
-        record.result = "completed";
-        LOG_INFO(Debug,
-                 "Bloodborne seamless responder resumed at map={:#x} area={} after {} native "
-                 "attempt(s)",
-                 record.target_map, record.target_area, record.attempts);
-        pending = {};
-        return;
-    }
-
-    if (pending.dispatched) {
-        record.ready_observations = pending.ready_observations;
-        record.attempts = pending.attempts;
-        if (std::chrono::steady_clock::now() - pending.dispatched_at < ResponderResumeRetryDelay) {
-            record.result = "waiting_for_effect";
-            return;
-        }
-        if (pending.attempts >= ResponderResumeMaxAttempts) {
-            record.result = "effect_timeout";
-            return;
-        }
-        pending.dispatched = false;
-        pending.ready_observations = 0;
-    }
-
-    ++pending.ready_observations;
-    record.ready_observations = pending.ready_observations;
-    record.attempts = pending.attempts;
-    if (pending.ready_observations < ResponderResumeStableObservations) {
-        record.result = "waiting_for_destination_stability";
-        return;
-    }
-
-    record.native_result = StartPlayerSummonSearch(record.player, SmallResonantBellEffect);
-    ++pending.attempts;
-    pending.dispatched = true;
-    pending.dispatched_at = std::chrono::steady_clock::now();
-    record.attempts = pending.attempts;
-    record.result = record.native_result ? "native_dispatched" : "native_rejected";
-    LOG_INFO(Debug,
-             "Bloodborne seamless responder search dispatch map={:#x} area={} attempt={} "
-             "result={}",
-             record.target_map, record.target_area, record.attempts, record.native_result);
-}
-
 } // namespace
 
 namespace Coop {
@@ -1230,8 +464,6 @@ void InitPartyController() {
 } // namespace Coop
 
 namespace {
-
-bool HostHasRoomForMore();
 
 bool EventFlagOn(s32 flag);
 
@@ -1479,7 +711,9 @@ void LogActionBlockingState() {
     }
 }
 
-std::vector<s32> EffectsOf(u64 character);
+} // namespace
+
+namespace Coop {
 
 std::vector<s32> LocalEffects() {
     return EffectsOf(GetLocalPlayer());
@@ -1501,6 +735,10 @@ std::vector<s32> EffectsOf(u64 character) {
     }
     return effects;
 }
+
+} // namespace Coop
+
+namespace {
 
 // Lamps as campfires (see IsLampTravelFlag). Two register hooks in the talk scripts' native code
 // let a party in a session use its lamps, and turn the travel dialog's flag into a rest; the
@@ -1647,9 +885,29 @@ std::unordered_set<u32> others_kills;
 std::mutex enemy_hp_mutex;
 MemberMapState local_enemy_hp;
 std::vector<MemberMapState> others_enemy_hp;
+
+} // namespace
+
+namespace Coop {
+
 std::mutex map_state_mutex;
+
+} // namespace Coop
+
+namespace {
+
 MemberMapState local_map_state;
+
+} // namespace
+
+namespace Coop {
+
 std::optional<MemberMapState> host_map_state;
+
+} // namespace Coop
+
+namespace {
+
 // Characters hidden or shown as on the host (see CharacterShown): the host's own, waiting for the
 // board thread, and the host's latest read back (on a guest).
 std::mutex shown_board_mutex;
@@ -1663,14 +921,24 @@ void PostWorldChanges(const FlagChanges& changes) {
     flags_to_post.insert(flags_to_post.end(), shared.begin(), shared.end());
 }
 
+} // namespace
+
+namespace Coop {
+
 std::mutex map_board_mutex;
 std::vector<MemberMap> map_board;
+
+} // namespace Coop
+
+namespace {
+
 std::string map_board_member;
-std::chrono::steady_clock::time_point map_board_time{};
 
 } // namespace
 
 namespace Coop {
+
+std::chrono::steady_clock::time_point map_board_time{};
 
 bool InPartySession() {
     const u64 multi_play = GetMatchingState();
@@ -1679,15 +947,15 @@ bool InPartySession() {
            IsPartySession(true, ReadValue<s32>(multi_play, 0x124));
 }
 
-} // namespace Coop
-
-namespace {
-
 s32 SessionPlayers() {
     const u64 global = GetGlobalState();
     const u64 session = global >= 0x10000 ? ReadValue<u64>(global, SessionPlayersOffset) : 0;
     return session >= 0x10000 ? ReadValue<s32>(session, 0x14) : 0;
 }
+
+} // namespace Coop
+
+namespace {
 
 // A character's position, where the healing fountain update reads the player's ([+0x3B0]+0x68,
 // then +0x1E0).
@@ -3154,15 +2422,10 @@ void LogNearbyEnemyControl() {
 }
 
 void TickPartyTrip();
-void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
 
 void TickAutoplay();
 void TickPartyDeath();
-
-void ReopenClosedPartySession();
-s32 SessionPlayers();
-void WatchSummonJoin();
 bool PartyTripActive();
 s64 SteadyMilliseconds();
 
@@ -3266,8 +2529,15 @@ bool PartyTripActive() {
     return party_trip.Active(PartyTrip::Clock::now());
 }
 
-void SaveRemoteJoinTasks();
+} // namespace
+
+namespace Coop {
+
 std::vector<s32> effects_before_trip; // multiplayer effects to put back after the trip
+
+} // namespace Coop
+
+namespace {
 
 void ParkEnemyWatch();
 
@@ -3337,393 +2607,10 @@ bool PS4_SYSV_ABI KeepSessionAfterTrip(u64, const GuestRegisterSnapshot* registe
     return true;
 }
 
-// CSMultiPlayMan (0x05540230) keeps the join tasks in a vector at +0x10..+0x18 (see
-// ShouldRecreateAfterTrip). The task's SetStep virtual (vtable +0x28) requests the next step.
-constexpr u64 MultiPlayManPointerOffset = 0x05540230;
-
-template <typename Visit>
-void ForEachJoinTask(Visit&& visit) {
-    const u64 manager = ReadValue<u64>(image_base + MultiPlayManPointerOffset, 0);
-    if (manager < 0x10000 || !HasMemoryAccess(manager, 0x20, MemoryProt::CpuRead)) {
-        return;
-    }
-    const u64 begin = ReadValue<u64>(manager, 0x10);
-    const u64 end = ReadValue<u64>(manager, 0x18);
-    if (begin < 0x10000 || end <= begin || end - begin > 8 * 16 ||
-        !HasMemoryAccess(begin, end - begin, MemoryProt::CpuRead)) {
-        return;
-    }
-    for (u64 entry = begin; entry < end; entry += 8) {
-        const u64 task = ReadValue<u64>(entry, 0);
-        if (task >= 0x10000 && HasMemoryAccess(task, 0xF0, MemoryProt::CpuRead)) {
-            visit(task);
-        }
-    }
-}
-
-void LogJoinTaskChanges() {
-    static std::string last;
-    std::string tasks;
-    ForEachJoinTask([&](u64 task) {
-        tasks += fmt::format("[kind={} step={} next={} flags={:#x}] ", ReadValue<s32>(task, 0xE8),
-                             ReadValue<s32>(task, 0x50), ReadValue<s32>(task, 0x54),
-                             ReadValue<u8>(task, 0xED));
-    });
-    if (tasks != last) {
-        last = tasks;
-        LOG_INFO(Debug, "Bloodborne join tasks: {}", tasks.empty() ? "none" : tasks);
-    }
-}
-
-// What the game does when a member joins (0x0178C20C): allocate 0x100 bytes from the allocator
-// at 0x05540438 (vtable +0x58), construct the task (0x01E4F9F0: task, member id, kind) and add it
-// to CSMultiPlayMan +0x08 (0x01E55A70). Member ids are 0x20 bytes: SprjSessionManager
-// (0x05540290) lists the session's at +0xF8..+0x100 and holds the local one at +0xD0; the game
-// compares them with 0x00CA1C70.
-constexpr u64 SessionManagerPointerOffset = 0x05540290;
-
-// See ReopensClosedSession: a crashed friend was kicked on every rejoin (Kaniel 2026-10-09).
-void ReopenClosedPartySession() {
-    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
-    if (session < 0x10000 || !HasMemoryAccess(session, 0x128, MemoryProt::CpuRead)) {
-        return;
-    }
-    const u8 closing = ReadValue<u8>(session, SessionClosingOffset);
-    if (!ReopensClosedSession(party_controller.has_value(), ReadValue<s32>(session, 0x124),
-                              closing)) {
-        return;
-    }
-    WriteValue(session, SessionClosingOffset, u8{0});
-    LOG_INFO(Debug, "Bloodborne party: reopened the session the game had closed to joiners");
-}
-
-std::atomic<bool> summon_delivered{false};
-
-} // namespace
-
-void NoteSummonDelivered() {
-    summon_delivered.store(true, std::memory_order_release);
-}
-
-namespace {
-
-// See SummonJoinWatch: the guest's state when a summon has not become a join.
-void WatchSummonJoin() {
-    static SummonJoinWatch watch;
-    const auto now = SummonJoinWatch::Clock::now();
-    if (summon_delivered.exchange(false, std::memory_order_acq_rel)) {
-        watch.Delivered(now);
-    }
-    bool joining = SessionPlayers() > 1;
-    ForEachJoinTask([&](u64) { joining = true; });
-    if (!watch.Stalled(joining, now)) {
-        return;
-    }
-    const u64 player = GetLocalPlayer();
-    const u64 multi_play = GetMatchingState();
-    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
-    const bool session_readable =
-        session >= 0x10000 && HasMemoryAccess(session, 0x128, MemoryProt::CpuRead);
-    std::string effects;
-    for (const s32 effect : EffectsOf(player)) {
-        effects += fmt::format(" {}", effect);
-    }
-    LOG_WARNING(Debug,
-                "Bloodborne party: a summon came {} s ago and the game has not joined: map {:#x} "
-                "matching state {} session state {} closing {} players {} player flags {:#x} "
-                "effects{}",
-                std::chrono::duration_cast<std::chrono::seconds>(SummonJoinWatch::Patience).count(),
-                CurrentPlace().map,
-                multi_play >= 0x10000 && HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead)
-                    ? ReadValue<s32>(multi_play, 0x124)
-                    : -1,
-                session_readable ? ReadValue<s32>(session, 0x124) : -1,
-                session_readable ? ReadValue<u8>(session, SessionClosingOffset) : 0xFF,
-                SessionPlayers(), player >= 0x10000 ? ReadValue<u64>(player, 0x1E0) : 0,
-                effects.empty() ? std::string{" none"} : effects);
-}
-
-constexpr u64 TaskAllocatorPointerOffset = 0x05540438;
-constexpr u64 JoinTaskConstructOffset = 0x01E4F9F0;
-constexpr u64 JoinTaskListAddOffset = 0x01E55A70;
-constexpr u64 MemberIdEqualOffset = 0x00CA1C70;
-
-// The remote players' join state from before the trip: member id, slot (+0xEC) and flags (+0xED,
-// bit 0 = the member's data is synced). The rebuilt task needs both to create the character.
-// A member id (0x20 bytes) is a ref-counted identity pointer at +0 plus a lock at +8, so only the
-// pointer is kept: copying the lock and comparing through it hung the game.
-std::vector<SavedJoinTask> saved_join_tasks;
-
-// Merged at each trip's start (MergeSavedJoinTasks): a trip from a map a member was not on (the
-// Dream) keeps that member's slot from before.
-void SaveRemoteJoinTasks() {
-    std::vector<SavedJoinTask> found;
-    ForEachJoinTask([&](u64 task) {
-        const s32 kind = ReadValue<s32>(task, 0xE8);
-        if (kind != RemoteHostTask && kind != RemoteGuestTask && kind != LocalTaskKind(false)) {
-            return;
-        }
-        SavedJoinTask saved{};
-        saved.kind = kind;
-        saved.identity = ReadValue<u64>(task, 0xC8);
-        saved.slot = ReadValue<u8>(task, 0xEC);
-        saved.flags = ReadValue<u8>(task, 0xED);
-        saved.step = ReadValue<s32>(task, 0x50);
-        found.push_back(saved);
-    });
-    saved_join_tasks = MergeSavedJoinTasks(saved_join_tasks, found);
-    std::string which;
-    for (const SavedJoinTask& saved : saved_join_tasks) {
-        which += fmt::format(" [kind={} slot={} flags={:#x} step={}]", saved.kind, saved.slot,
-                             saved.flags, saved.step);
-    }
-    LOG_INFO(Debug, "Bloodborne party trip: {} remote join tasks saved ({} found):{}",
-             saved_join_tasks.size(), found.size(), which);
-}
-
-// Members rebuilt while their data had not come yet (see RebuildsFromSave): their tasks wait at
-// their saved step until the member stands in the world (the vitals board), then ask it for its
-// data (MemberDataWait, FinishWaitingJoins). A guest sends its data once, after its load: one that
-// finished loading while the host was away had sent it to a world that is gone (rig hp-together
-// 2026-10-10: host and guest never saw each other).
-std::map<u64, MemberDataWait> joins_waiting_for_data; // by member identity pointer
-
-void RecreateRemotePlayers(std::span<const u64> only) {
-    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
-    const u64 manager = ReadValue<u64>(image_base + MultiPlayManPointerOffset, 0);
-    if (session < 0x10000 || manager < 0x10000 ||
-        !HasMemoryAccess(session, 0x128, MemoryProt::CpuRead)) {
-        return;
-    }
-    using IdEqual = bool PS4_SYSV_ABI (*)(u64 a, u64 b);
-    const auto id_equal = reinterpret_cast<IdEqual>(image_base + MemberIdEqualOffset);
-    const bool hosting = ReadValue<s32>(session, 0x124) == MatchingStateHosting;
-    const u64 self = session + 0xD0;
-    const u64 begin = ReadValue<u64>(session, 0xF8);
-    const u64 end = ReadValue<u64>(session, 0x100);
-    LOG_INFO(Debug, "Bloodborne party trip: {} session members, hosting={}",
-             begin < end ? (end - begin) / 0x20 : 0, hosting);
-    if (begin < 0x10000 || end <= begin || end - begin > 0x20 * 8 ||
-        !HasMemoryAccess(begin, end - begin, MemoryProt::CpuRead)) {
-        return;
-    }
-    using SetStep = void PS4_SYSV_ABI (*)(u64 task, s32 step);
-    const auto set_step = [](u64 task, s32 step) {
-        reinterpret_cast<SetStep>(ReadValue<u64>(ReadValue<u64>(task, 0), 0x28))(task, step);
-    };
-    // What the game does when a member joins (see above), into the step that creates the
-    // character, with the slot and synced-data flag saved at the trip's start.
-    const auto rebuild = [&](u64 member_id, s32 kind, const SavedJoinTask* saved) {
-        const u64 allocator = ReadValue<u64>(image_base + TaskAllocatorPointerOffset, 0);
-        if (allocator < 0x10000) {
-            return;
-        }
-        using Allocate = u64 PS4_SYSV_ABI (*)(u64 allocator, u64 size, u64 alignment);
-        const u64 task = reinterpret_cast<Allocate>(
-            ReadValue<u64>(ReadValue<u64>(allocator, 0), 0x58))(allocator, 0x100, 8);
-        if (task < 0x10000) {
-            return;
-        }
-        using Construct = void PS4_SYSV_ABI (*)(u64 task, u64 member_id, s32 kind);
-        reinterpret_cast<Construct>(image_base + JoinTaskConstructOffset)(task, member_id, kind);
-        // A member still joining when the trip began: back at its step, waiting for its data.
-        const bool waiting = saved && !RebuildsFromSave(*saved);
-        if (saved) {
-            WriteValue(task, 0xEC, saved->slot);
-            WriteValue(task, 0xED, static_cast<u8>(waiting ? saved->flags : saved->flags | 1));
-        }
-        u64 holder = task;
-        using ListAdd = void PS4_SYSV_ABI (*)(u64 list, u64 entry);
-        reinterpret_cast<ListAdd>(image_base + JoinTaskListAddOffset)(
-            manager + 8, reinterpret_cast<u64>(&holder));
-        if (waiting) {
-            set_step(task, saved->step);
-            joins_waiting_for_data[ReadValue<u64>(member_id, 0)] = MemberDataWait{};
-        } else {
-            set_step(task, CreateCharacterStep);
-        }
-        LOG_INFO(Debug,
-                 "Bloodborne party trip: rebuilt the join task of a member kind={} task={:#x} "
-                 "slot known={}{}",
-                 kind, task, saved != nullptr,
-                 waiting ? fmt::format(" (it was still joining at step {}: waits for its data)",
-                                       saved->step)
-                         : "");
-    };
-    const auto task_for = [&](u64 member_id) {
-        u64 found = 0;
-        ForEachJoinTask([&](u64 task) {
-            if (!found && id_equal(task + 0xC8, member_id)) {
-                found = task;
-            }
-        });
-        return found;
-    };
-    for (u64 member = begin; member < end; member += 0x20) {
-        if (id_equal(member, self) ||
-            (!only.empty() && std::ranges::find(only, member) == only.end())) {
-            continue;
-        }
-        if (const u64 found = task_for(member)) {
-            const s32 kind = ReadValue<s32>(found, 0xE8);
-            if (ShouldRecreateAfterTrip(kind, ReadValue<s32>(found, 0x50))) {
-                set_step(found, CreateCharacterStep);
-                LOG_INFO(Debug, "Bloodborne party trip: re-creating remote player kind={}", kind);
-            }
-            continue;
-        }
-        const u64 identity = ReadValue<u64>(member, 0);
-        const s32 kind = RebuiltTaskKind(hosting, saved_join_tasks, identity);
-        // By identity, else the one remote player of that kind there was (two guests: no guess).
-        const auto picked = PickSavedJoinTask(saved_join_tasks, kind, identity);
-        rebuild(member, kind, picked ? &saved_join_tasks[*picked] : nullptr);
-    }
-    // On a guest its own task (kind 2) is the one that creates the host's character there.
-    if (!hosting && !task_for(self)) {
-        const auto saved = std::ranges::find_if(saved_join_tasks, [](const SavedJoinTask& entry) {
-            return entry.kind == LocalTaskKind(false);
-        });
-        rebuild(self, LocalTaskKind(false), saved != saved_join_tasks.end() ? &*saved : nullptr);
-    }
-}
-
-// The host's map from its own map state post (with two guests the other one may be elsewhere).
-std::optional<u32> HostMapFromItsPost() {
-    std::scoped_lock lock{map_state_mutex};
-    return host_map_state ? std::optional<u32>{host_map_state->map} : std::nullopt;
-}
-
 // After this member's trip the other players are re-created as they come to this map (creating a
 // player into a map it is not on makes its game leave the session), each once (see PlanRecreate).
 bool recreate_players_pending{};
 std::set<std::string> recreated_since_trip;
-
-// The session's members other than this one (SessionManager +0xF8..+0x100, 0x20 bytes each).
-std::vector<u64> OtherSessionMembers() {
-    std::vector<u64> members;
-    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
-    if (session < 0x10000 || !HasMemoryAccess(session, 0x128, MemoryProt::CpuRead)) {
-        return members;
-    }
-    using IdEqual = bool PS4_SYSV_ABI (*)(u64 a, u64 b);
-    const auto id_equal = reinterpret_cast<IdEqual>(image_base + MemberIdEqualOffset);
-    const u64 begin = ReadValue<u64>(session, 0xF8);
-    const u64 end = ReadValue<u64>(session, 0x100);
-    if (begin < 0x10000 || end <= begin || end - begin > 0x20 * 8 ||
-        !HasMemoryAccess(begin, end - begin, MemoryProt::CpuRead)) {
-        return members;
-    }
-    for (u64 member = begin; member < end; member += 0x20) {
-        if (!id_equal(member, session + 0xD0)) {
-            members.push_back(member);
-        }
-    }
-    return members;
-}
-
-// Hosting, fewer than three in the session, and a party member online that is not in it.
-bool HostHasRoomForMore() {
-    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
-    if (session < 0x10000 || !HasMemoryAccess(session, 0x128, MemoryProt::CpuRead) ||
-        ReadValue<s32>(session, 0x124) != MatchingStateHosting) {
-        return false;
-    }
-    const u64 begin = ReadValue<u64>(session, 0xF8);
-    const u64 end = ReadValue<u64>(session, 0x100);
-    const size_t in_session = begin >= 0x10000 && end > begin ? (end - begin) / 0x20 : 1;
-    std::scoped_lock lock{map_board_mutex};
-    if (std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}) {
-        return false;
-    }
-    return RoomForMore(true, in_session, map_board.size());
-}
-
-// The board name of a session member: its identity object (the member id's first pointer), or an
-// object it points to, holds its online id (see FindOnlineIdIn).
-std::optional<std::string> SessionMemberBoardName(u64 member,
-                                                  const std::vector<std::string>& online_ids) {
-    const auto scan = [&](u64 address, u64 size) -> std::optional<std::string> {
-        if (address < 0x10000 || !HasMemoryAccess(address, size, MemoryProt::CpuRead)) {
-            return std::nullopt;
-        }
-        return FindOnlineIdIn(std::span<const u8>{reinterpret_cast<const u8*>(address), size},
-                              online_ids);
-    };
-    // The objects the identity points at, two levels down (a guest found the host's name only
-    // deeper than a host found a guest's, rig 2026-10-09).
-    const auto pointers = [&](u64 address, u64 size) {
-        std::vector<u64> found;
-        for (u64 offset = 0; address >= 0x10000 && offset < size; offset += 8) {
-            if (!HasMemoryAccess(address + offset, 8, MemoryProt::CpuRead)) {
-                break;
-            }
-            const u64 value = ReadValue<u64>(address, offset);
-            if (value >= 0x10000 && HasMemoryAccess(value, 0x40, MemoryProt::CpuRead)) {
-                found.push_back(value);
-            }
-        }
-        return found;
-    };
-    const u64 identity = ReadValue<u64>(member, 0);
-    std::optional<std::string> found = scan(identity, 0x200);
-    for (const u64 first : found ? std::vector<u64>{} : pointers(identity, 0x100)) {
-        if ((found = scan(first, 0x100))) {
-            break;
-        }
-        for (const u64 second : pointers(first, 0x80)) {
-            if ((found = scan(second, 0x80))) {
-                break;
-            }
-        }
-        if (found) {
-            break;
-        }
-    }
-    if (!found) {
-        static std::unordered_set<u64> logged;
-        if (logged.insert(identity).second && logged.size() < 16 && identity >= 0x10000 &&
-            HasMemoryAccess(identity, 0x40, MemoryProt::CpuRead)) {
-            LOG_INFO(Debug, "Bloodborne party: no online id in session member {:#x}, identity {}",
-                     member,
-                     BytesToHex(std::span<const u8>{reinterpret_cast<const u8*>(identity), 0x40}));
-        }
-        return std::nullopt;
-    }
-    return BoardMemberOfOnlineId(*found);
-}
-
-// The bell's search effect is lost with the old stage; put it back once the new one is up.
-bool restore_search_pending{};
-
-void RestoreSearchAfterTrip(bool in_session) {
-    if (!restore_search_pending || !party_controller) {
-        return;
-    }
-    restore_search_pending = false;
-    const u64 player = GetLocalPlayer();
-    if (player < 0x10000 || !in_session) {
-        return;
-    }
-    for (const s32 effect : EffectsToRestoreAfterTrip(effects_before_trip, LocalEffects())) {
-        const bool result = StartPlayerSummonSearch(player, effect);
-        LOG_INFO(Debug, "Bloodborne party trip: put effect {} back result={}", effect, result);
-    }
-}
-
-// Experiment: SHADPS4_BLOODBORNE_GUEST_AS_HOST=1 makes a party guest a live player (SetChrType 0,
-// the event binding) for as long as it is in the session.
-const bool guest_as_host = SettingIsOn(std::getenv("SHADPS4_BLOODBORNE_GUEST_AS_HOST"));
-
-void PlayGuestAsHost(bool in_session) {
-    const u64 player = GetLocalPlayer();
-    if (player < 0x10000 || !HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) ||
-        !ShouldPlayGuestAsHost(guest_as_host, in_session, ReadValue<s32>(player, 0x78))) {
-        return;
-    }
-    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, s32)>(image_base + SetChrTypeOffset)(
-        0, LocalPlayerEntity, 0);
-    LOG_INFO(Debug, "Bloodborne guest-as-host experiment: the guest is a live player now");
-}
 
 void LogEsdAnswers(bool party_guest);
 
@@ -4629,11 +3516,19 @@ void SaveGuestProgress(std::span<const s32> flags) {
     file << FormatFlagList(flags);
 }
 
+} // namespace
+
+namespace Coop {
+
 // A party guest with a known character (whose kept progress can be read and written).
 bool IsPartyGuestRole() {
     return party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect &&
            character_slot.load() >= 0;
 }
+
+} // namespace Coop
+
+namespace {
 
 // Sets the guest's remembered pickups that are not set yet; returns how many it set.
 size_t SetGuestPickedFlags() {
@@ -5576,8 +4471,6 @@ bool SomeoneElsewhereInSession() {
     return std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{3} &&
            SomeoneElsewhere(map_board, map_board_member, map);
 }
-
-std::optional<u32> HostMapFromItsPost();
 
 // In a party session with the host away from this map (its own map state post, the party's map
 // board fresh); without the host's post yet, with no other member on this map.
@@ -7498,8 +6391,6 @@ void ReviveGuestAfterGhostDeath() {
              player >= 0x10000 ? ReadValue<u8>(player, 0x1E3) : 0xFF);
 }
 
-std::vector<u64> OtherSessionMembers();
-
 } // namespace
 
 namespace Coop {
@@ -8424,95 +7315,13 @@ void InstallPartyDeath(u64 base, u64 image_size) {
                     "stands on its map (damage revives it, holding Circle gives up)");
 }
 
-} // namespace Coop
-
-namespace {
-
-void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers) {
-    healing_fountain_availability = {};
-    auto& record = healing_fountain_availability;
-    record.result = "invalid_object";
-    record.object = registers.r13;
-    if (record.object < 0x10000 || !HasMemoryAccess(record.object, 0x4C, MemoryProt::CpuRead)) {
-        return;
-    }
-
-    record.blocked_before = ReadValue<u8>(record.object, 0x49) != 0;
-    record.blocked_after = record.blocked_before;
-    const bool missing = ReadValue<u8>(record.object, 0x4A) != 0;
-    if (!record.blocked_before && !missing) {
-        record.result = "already_allowed";
-        return;
-    }
-
-    record.player = GetLocalPlayer();
-    record.host_effect = HasPlayerEffect(record.player, 9001);
-    // A party session (either role, see InstallLampsAsCampfires) uses its lamps too, also one
-    // whose entity reads missing (see LampBytesToClear).
-    const LampUnblock clear =
-        LampBytesToClear(record.blocked_before, missing, record.host_effect, InPartySession());
-    if (clear == LampUnblock{}) {
-        record.result = "not_multiplayer_host";
-        return;
-    }
-    if (clear.missing) {
-        // Once per lamp: this runs for every lamp near the player many times a second, and the
-        // line filled the log by hundreds of thousands (Kaniel 2026-10-11: 3 FPS late in a run).
-        static std::set<s32> logged_lamps;
-        const s32 lamp = ReadValue<s32>(record.object, 0x20);
-        if (logged_lamps.insert(lamp).second) {
-            LOG_INFO(Debug, "Bloodborne lamp {} read its entity missing; cleared for the party",
-                     lamp);
-        }
-        WriteValue(record.object, 0x4A, u8{});
-    }
-    if (clear.blocked && !WriteValue(record.object, 0x49, u8{})) {
-        record.result = "write_rejected";
-        return;
-    }
-    record.blocked_after = false;
-    record.result = "applied";
-    // Diagnostics for lamps in a party session: the other availability bytes (+0x48 special map,
-    // +0x4A missing entity) and the lamp level (+0x28), once per lamp and change.
-    static std::mutex log_mutex;
-    static std::unordered_map<s32, std::string> logged;
-    const s32 entity = ReadValue<s32>(record.object, 0x20);
-    const std::string state =
-        fmt::format("special={} missing={} level={}", ReadValue<u8>(record.object, 0x48),
-                    ReadValue<u8>(record.object, 0x4A), ReadValue<s32>(record.object, 0x28));
-    std::scoped_lock lock{log_mutex};
-    if (logged[entity] != state) {
-        logged[entity] = state;
-        LOG_INFO(Debug, "Bloodborne lamp {} unlocked for the party: {}", entity, state);
-    }
-}
-
-u64 GetSummonManagerRoot() {
-    const u64 image_size = MemoryPatcher::g_eboot_image_size;
-    if (image_base == 0 || image_size < sizeof(u64) ||
-        SummonManagerRootPointerOffset > image_size - sizeof(u64)) {
-        return 0;
-    }
-    return ReadValue<u64>(image_base + SummonManagerRootPointerOffset, 0);
-}
-
-u64 GetSummonManager() {
-    const u64 root = GetSummonManagerRoot();
-    return root >= 0x10000 ? ReadValue<u64>(root, 0xC50) : 0;
-}
-
-u64 GetMatchingState() {
-    const u64 image_size = MemoryPatcher::g_eboot_image_size;
-    if (image_base == 0 || image_size < sizeof(u64) ||
-        MatchingStatePointerOffset > image_size - sizeof(u64)) {
-        return 0;
-    }
-    return ReadValue<u64>(image_base + MatchingStatePointerOffset, 0);
-}
-
 void WriteHex(std::ostream& out, u64 value) {
     out << "\"0x" << std::hex << value << std::dec << '\"';
 }
+
+} // namespace Coop
+
+namespace {
 
 void WriteRoleSelectionMask(std::ostream& out, std::string_view field, s32 role_code) {
     if (role_code < 0 || role_code >= RoleMetadataCount || image_base == 0) {
@@ -9632,6 +8441,10 @@ void WriteRespawnTransformResolve(std::ostream& out, const GuestRegisterSnapshot
     out << '}';
 }
 
+} // namespace
+
+namespace Coop {
+
 u64 GetGlobalState() {
     const u64 image_size = MemoryPatcher::g_eboot_image_size;
     if (image_base == 0 || image_size < sizeof(u64) ||
@@ -9640,6 +8453,10 @@ u64 GetGlobalState() {
     }
     return ReadValue<u64>(image_base + GlobalStatePointerOffset, 0);
 }
+
+} // namespace Coop
+
+namespace {
 
 void WriteWorldStateValidation(std::ostream& out, const TraceSite& site,
                                const GuestRegisterSnapshot& registers) {
@@ -11338,93 +10155,6 @@ bool ReadPartyPanel(PartyPanel& panel) {
     return !panel.members.empty() || panel.vital == Vital::Down;
 }
 
-std::optional<std::string> GetSeamlessHostPlacementHeader() {
-    std::optional<SummonPlacementDescriptor> placement;
-    {
-        std::scoped_lock lock{seamless_placement_mutex};
-        placement = seamless_host_placement;
-    }
-    if (!placement.has_value()) {
-        return std::nullopt;
-    }
-
-    std::ostringstream out;
-    out << "1," << std::hex << std::setfill('0') << std::setw(8) << placement->packed_region << ','
-        << std::setw(8) << std::bit_cast<u32>(placement->x) << ',' << std::setw(8)
-        << std::bit_cast<u32>(placement->y) << ',' << std::setw(8)
-        << std::bit_cast<u32>(placement->z) << ',' << std::setw(8)
-        << std::bit_cast<u32>(placement->heading) << ',' << std::dec << placement->area;
-    return out.str();
-}
-
-bool SetSeamlessHostPlacementHeader(std::string_view value) {
-    std::array<std::string_view, 7> fields{};
-    size_t begin = 0;
-    for (size_t field_index = 0; field_index < fields.size(); ++field_index) {
-        const size_t end = value.find(',', begin);
-        const bool final_field = field_index + 1 == fields.size();
-        if ((final_field && end != std::string_view::npos) ||
-            (!final_field && end == std::string_view::npos)) {
-            return false;
-        }
-        fields[field_index] =
-            value.substr(begin, end == std::string_view::npos ? value.size() - begin : end - begin);
-        begin = end == std::string_view::npos ? value.size() : end + 1;
-    }
-    if (fields[0] != "1") {
-        return false;
-    }
-
-    auto parse_u32 = [](std::string_view field, int base, u32& output) {
-        const auto [end, error] =
-            std::from_chars(field.data(), field.data() + field.size(), output, base);
-        return error == std::errc{} && end == field.data() + field.size();
-    };
-    SummonPlacementDescriptor placement{};
-    std::array<u32, 4> float_bits{};
-    if (!parse_u32(fields[1], 16, placement.packed_region) ||
-        !parse_u32(fields[2], 16, float_bits[0]) || !parse_u32(fields[3], 16, float_bits[1]) ||
-        !parse_u32(fields[4], 16, float_bits[2]) || !parse_u32(fields[5], 16, float_bits[3])) {
-        return false;
-    }
-    const auto [area_end, area_error] =
-        std::from_chars(fields[6].data(), fields[6].data() + fields[6].size(), placement.area, 10);
-    if (area_error != std::errc{} || area_end != fields[6].data() + fields[6].size()) {
-        return false;
-    }
-    placement.x = std::bit_cast<float>(float_bits[0]);
-    placement.y = std::bit_cast<float>(float_bits[1]);
-    placement.z = std::bit_cast<float>(float_bits[2]);
-    placement.heading = std::bit_cast<float>(float_bits[3]);
-    if (!IsUsablePackedMap(placement.packed_region) || !std::isfinite(placement.x) ||
-        !std::isfinite(placement.y) || !std::isfinite(placement.z) ||
-        !std::isfinite(placement.heading)) {
-        return false;
-    }
-
-    // A party guest joins where it is (Kaniel 2026-10-08: no teleport to the host on a join, the
-    // forked cross-map summon's leftover): its own map, position and heading replace the host's,
-    // so the pre-match warp and the summon reload keep it in place.
-    if (SummonPlacementDescriptor own{}; IsPartyGuestRole()) {
-        std::string_view own_result;
-        if (ReadLocalSummonPlacement(own, own_result)) {
-            LOG_INFO(Debug,
-                     "Bloodborne party: guest joins in place on map {:#x} ({}, {}, {}) instead of "
-                     "the host's map {:#x}",
-                     own.packed_region, own.x, own.y, own.z, placement.packed_region);
-            placement = own;
-        }
-    }
-    std::scoped_lock lock{seamless_placement_mutex};
-    if (!seamless_received_host_placement.has_value() ||
-        !IsSameSummonPlacement(*seamless_received_host_placement, placement)) {
-        seamless_received_host_placement_consumed = false;
-        seamless_received_host_placement_life.Received();
-    }
-    seamless_received_host_placement = placement;
-    return true;
-}
-
 void LogGameCallChain(const char* what) {
     if (image_base == 0) {
         return;
@@ -11441,67 +10171,6 @@ void LogGameCallChain(const char* what) {
     }
     LOG_INFO(Debug, "Bloodborne {} from the game:{}", what,
              FormatGameAddresses(words, image_base, MemoryPatcher::g_eboot_image_size, 24));
-}
-
-void ClearSeamlessHostPlacementHeader() {
-    std::scoped_lock lock{seamless_placement_mutex};
-    seamless_received_host_placement.reset();
-    seamless_received_host_placement_consumed = false;
-}
-
-void TraceMatching2LeaveRoom(std::uintptr_t return_address, std::uint64_t room_id) {
-    if (image_base == 0 || MemoryPatcher::g_game_serial != "CUSA03173") {
-        return;
-    }
-
-    const u64 caller_offset = return_address >= image_base && return_address - image_base <
-                                                                  MemoryPatcher::g_eboot_image_size
-                                  ? return_address - image_base
-                                  : 0;
-    const u64 reload_state = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
-    const s32 reload_phase = reload_state >= 0x10000 ? ReadValue<s32>(reload_state, 0x84) : -1;
-    const u64 global_state = GetGlobalState();
-    // Raw: a load-time hook, before the tick.
-    const u32 current_map = GetCurrentPackedMap();
-    const u32 requested_map = global_state >= 0x10000 ? ReadValue<u32>(global_state, 0x0C) : 0;
-    const u32 pending_reload = pending_summon_reload_map.load(std::memory_order_acquire);
-    const u32 pending_state = pending_summon_reload_state_map.load(std::memory_order_acquire);
-    const u64 sequence = event_sequence.fetch_add(1, std::memory_order_relaxed) + 1;
-    const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               std::chrono::system_clock::now().time_since_epoch())
-                               .count();
-
-    try {
-        std::scoped_lock lock{capture_mutex};
-        if (capture_file) {
-            capture_file << "{\"type\":\"matching2_leave_room\",\"seq\":" << sequence
-                         << ",\"time_ms\":" << timestamp << ",\"return_address\":";
-            WriteHex(capture_file, return_address);
-            capture_file << ",\"caller_offset\":";
-            WriteHex(capture_file, caller_offset);
-            capture_file << ",\"room_id\":" << room_id << ",\"reload_state\":";
-            WriteHex(capture_file, reload_state);
-            capture_file << ",\"reload_phase\":" << reload_phase << ",\"global_state\":";
-            WriteHex(capture_file, global_state);
-            capture_file << ",\"current_map\":";
-            WriteHex(capture_file, current_map);
-            capture_file << ",\"requested_map\":";
-            WriteHex(capture_file, requested_map);
-            capture_file << ",\"pending_reload_map\":";
-            WriteHex(capture_file, pending_reload);
-            capture_file << ",\"pending_state_map\":";
-            WriteHex(capture_file, pending_state);
-            capture_file << "}\n";
-            capture_file.flush();
-        }
-    } catch (...) {
-        // Diagnostics must never unwind into an NP library call.
-    }
-
-    LOG_INFO(Debug,
-             "Bloodborne RE Matching2 leave room={} caller={:#x} offset={:#x} reload_phase={} "
-             "current_map={:#x} requested_map={:#x}",
-             room_id, return_address, caller_offset, reload_phase, current_map, requested_map);
 }
 
 void SetBuildIdentity(std::string_view revision, u64 event_files) {

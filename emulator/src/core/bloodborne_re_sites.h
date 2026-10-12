@@ -80,6 +80,11 @@ constexpr std::array<u8, 16> StandardRbxPrologue{0x55, 0x48, 0x89, 0xE5, 0x53};
 
 constexpr std::array<u8, 16> ReturnAndPadding{0xC3, 0x66, 0x66, 0x66, 0x66, 0x66,
                                               0x66, 0x2E, 0x0F, 0x1F, 0x84};
+constexpr u64 CandidateLocalStatePointerOffset = 0x0553E878;
+
+// SetChrType(_, entity, type) event binding: sets +0x78 and refreshes the character (vtable 0x1A0).
+constexpr u64 SetChrTypeOffset = 0x01338DF0;
+constexpr u64 SummonSessionRulesPointerOffset = 0x0553D6D0;
 
 // The world teardown (0x019470F0), where it loads the session rules to decide whether to stop
 // matching (mov rbx,[rax]; cmp [rbx+0x84],3). No RIP-relative code, so it can be hooked.
@@ -100,6 +105,8 @@ constexpr u64 MultiPlayStopRequestOffset = 0x01ED07A0;
 constexpr u64 MatchingStopTaskEnqueueOffset = 0x00C98070;
 constexpr u64 CrossMapGuestHandoffOffset = 0x01E4FF3A;
 constexpr u64 HealingFountainAvailabilityOffset = 0x012F836E;
+constexpr u64 AddSpEffectOffset = 0x018C6DB0;
+constexpr u64 CharacterAddSpEffectSlot = 0x3F0;
 
 constexpr auto Sites = std::to_array<TraceSite>({
     {"IsValidSos.Update", 0x01308DC0, TraceKind::SosCondition, StandardR15Prologue, 6},
