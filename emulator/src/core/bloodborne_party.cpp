@@ -1903,6 +1903,25 @@ bool NpcTurnsIntoWanderGhost(bool in_party_session, bool param_says_wander_ghost
     return param_says_wander_ghost && !in_party_session;
 }
 
+bool IsGameVtable(u64 vtable, u64 image_base, std::span<const u64> vtables) {
+    return image_base != 0 && vtable >= image_base &&
+           std::ranges::find(vtables, vtable - image_base) != vtables.end();
+}
+
+bool RefusedCallLog::FirstTime(std::string_view site, u64 vtable) {
+    if (logged.size() >= MaxLogged) {
+        return false;
+    }
+    return logged.emplace(std::string{site}, vtable).second;
+}
+
+std::string DescribeVtable(u64 vtable, u64 image_base, u64 image_size) {
+    if (image_base != 0 && vtable >= image_base && vtable - image_base < image_size) {
+        return fmt::format("eboot+{:#x}", vtable - image_base);
+    }
+    return fmt::format("{:#x}", vtable);
+}
+
 const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn() {
     static const auto stand_in = [] {
         std::array<u8, GuestItemPickupAllowedOffset + 8> bytes{};

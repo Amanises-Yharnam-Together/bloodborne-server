@@ -2414,3 +2414,46 @@ TEST(BloodborneGuestResume, NotOnceTheGuestTravelledOn) {
     EXPECT_EQ(ChooseResumeStep(point, 0x18000000, ward, 900).kind, Kind::Travel)
         << "where it loaded not known: as before";
 }
+
+// The game is called with an object only when its vtable says it is the kind the function takes:
+// on 2026-10-11 the bloodstain show was given another object and two guests' games crashed.
+TEST(BloodborneGameObjects, AnObjectIsTheKindItsVtableSays) {
+    constexpr u64 Base = 0x8'0000'0000;
+    const std::array stain{BloodstainVtable};
+    EXPECT_TRUE(IsGameVtable(Base + BloodstainVtable, Base, stain));
+    EXPECT_FALSE(IsGameVtable(Base + MapItemManVtable, Base, stain)) << "another kind of object";
+    EXPECT_FALSE(IsGameVtable(0, Base, stain)) << "no vtable (unreadable or freed)";
+    EXPECT_FALSE(IsGameVtable(BloodstainVtable, Base, stain)) << "not in the game's image";
+    EXPECT_FALSE(IsGameVtable(Base + BloodstainVtable, 0, stain)) << "no game loaded";
+    for (const u64 vtable : CharacterVtables) {
+        EXPECT_TRUE(IsGameVtable(Base + vtable, Base, CharacterVtables)) << std::hex << vtable;
+    }
+    for (const u64 vtable : PlayerVtables) {
+        EXPECT_TRUE(IsGameVtable(Base + vtable, Base, CharacterVtables))
+            << "a player is a character " << std::hex << vtable;
+    }
+    EXPECT_FALSE(IsGameVtable(Base + EventFlagManVtable, Base, CharacterVtables));
+}
+
+// A refused game call is logged once per call site and vtable seen, and never more than
+// RefusedCallLog::MaxLogged times, so a wrong vtable list shows in the log without spamming it.
+TEST(BloodborneGameObjects, ARefusalIsLoggedOncePerSiteAndVtable) {
+    RefusedCallLog log;
+    EXPECT_TRUE(log.FirstTime("EventFlagOn", 0x8'0532'0000));
+    EXPECT_FALSE(log.FirstTime("EventFlagOn", 0x8'0532'0000)) << "the same pair again";
+    EXPECT_TRUE(log.FirstTime("EventFlagOn", 0x8'0533'0000)) << "another vtable";
+    EXPECT_TRUE(log.FirstTime("ShowGuestBloodstain", 0x8'0532'0000)) << "another call site";
+    for (u64 vtable = 1; vtable < 100; ++vtable) {
+        log.FirstTime("Kill", vtable);
+    }
+    EXPECT_FALSE(log.FirstTime("Teleport", 7)) << "capped";
+    EXPECT_FALSE(log.FirstTime("EventFlagOn", 0x8'0532'0000));
+}
+
+TEST(BloodborneGameObjects, ASeenVtableIsNamedByItsImageOffset) {
+    constexpr u64 Base = 0x8'0000'0000;
+    EXPECT_EQ(DescribeVtable(Base + EventFlagManVtable, Base, 0x6000000), "eboot+0x5320b60");
+    EXPECT_EQ(DescribeVtable(0x12'3456'7890, Base, 0x6000000), "0x1234567890")
+        << "outside the image";
+    EXPECT_EQ(DescribeVtable(0, Base, 0x6000000), "0x0");
+}
