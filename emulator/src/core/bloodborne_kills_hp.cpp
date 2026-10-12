@@ -64,9 +64,9 @@ namespace Core::Bloodborne {
 namespace Coop {
 
 // Kill echoes shared across maps (see SharesKillEchoes): the local kills made apart wait here
-// for the board thread, and the other members' wait for the game thread to add them.
+// for the board thread, and the other members' wait for the game thread to add those owed.
 std::mutex echo_board_mutex;
-std::vector<KillEchoes> echoes_to_grant;
+KillEchoLedger echo_ledger;
 // Enemy deaths kept in step across loads (see VisitKills): this member's kills and visit ends
 // wait for the board thread; the others' current kills (character handles) are hidden here.
 std::mutex kill_board_mutex;
@@ -392,15 +392,12 @@ void GrantPartyEchoes() {
     const u64 add_souls = image_base + AddSoulsOffset;
     std::vector<KillEchoes> pending;
     {
+        // Those the game paid this member itself are left out (see KillEchoLedger).
         std::scoped_lock lock{echo_board_mutex};
-        pending.swap(echoes_to_grant);
+        pending = echo_ledger.Due(SteadyMilliseconds());
     }
     using AddSouls = void PS4_SYSV_ABI (*)(u64 player, s32 amount, s32, bool rates);
-    const u32 map = CurrentPlace().map;
     for (const KillEchoes& kill : pending) {
-        if (!GrantsKillEchoes(kill.map, map)) {
-            continue; // made on this map: the game gave them already
-        }
         reinterpret_cast<AddSouls>(add_souls)(player, kill.amount, 0, true);
         LOG_INFO(Debug, "Bloodborne party: added {} echoes from a kill another member made apart",
                  kill.amount);

@@ -2006,8 +2006,37 @@ bool SharesKillEchoes(u64 caller_offset, bool posts) {
     return posts && (caller_offset == EnemyKillReward || caller_offset == BossKillReward);
 }
 
-bool GrantsKillEchoes(u32 kill_map, u32 my_map) {
-    return kill_map == 0 || kill_map != my_map;
+void KillEchoLedger::Paid(KillEchoes kill, s64 now_ms) {
+    paid.emplace_back(kill, now_ms);
+}
+
+void KillEchoLedger::Received(KillEchoes kill, s64 now_ms) {
+    received.emplace_back(kill, now_ms);
+}
+
+std::vector<KillEchoes> KillEchoLedger::Due(s64 now_ms) {
+    std::vector<KillEchoes> due;
+    std::vector<std::pair<KillEchoes, s64>> waiting;
+    for (const auto& [kill, read_ms] : received) {
+        const auto reward = std::ranges::find_if(paid, [&](const auto& entry) {
+            return entry.first.amount == kill.amount &&
+                   (kill.map == 0 || entry.first.map == kill.map) &&
+                   entry.second >= read_ms - PaidWindowMs &&
+                   entry.second <= read_ms + ReceivedGraceMs;
+        });
+        if (reward != paid.end()) {
+            paid.erase(reward); // the game paid this member: it was on the kill's map
+        } else if (now_ms - read_ms < ReceivedGraceMs) {
+            waiting.emplace_back(kill, read_ms);
+        } else {
+            due.push_back(kill);
+        }
+    }
+    received = std::move(waiting);
+    std::erase_if(paid, [&](const auto& entry) {
+        return entry.second < now_ms - PaidWindowMs - ReceivedGraceMs;
+    });
+    return due;
 }
 
 std::string EncodeEchoUpdate(std::string_view member, s64 since,

@@ -783,8 +783,33 @@ struct EchoBoardAnswer {
 // `posts`: a party member in the session is on another map (the game shares the echoes with the
 // ones on this map itself) and this member is the one here that posts them (PostsKillEchoes).
 bool SharesKillEchoes(u64 caller_offset, bool posts);
-// Whether a member on `my_map` adds the echoes of a kill made on `kill_map`.
-bool GrantsKillEchoes(u32 kill_map, u32 my_map);
+// The other members' kill echoes read from the board, and which of them this member is owed:
+// all but those the game paid it itself, being on the kill's map then (a kill reward of the same
+// echoes on that map, PaidWindowMs before the post was read up to ReceivedGraceMs after; each
+// reward pays one post). Rig smoke 2026-10-12 (run 151918): deciding by the map this member
+// stood on when the grant ran dropped the host's kill for the second guest, read mid-trip and
+// granted once it was back on the kill's map.
+class KillEchoLedger {
+public:
+    static constexpr s64 PaidWindowMs = 20'000;
+    // How long a post read waits for this game's own reward of the same kill.
+    static constexpr s64 ReceivedGraceMs = 2'000;
+    // The game gave this member a kill's echoes (its kill reward) on `kill.map`.
+    void Paid(KillEchoes kill, s64 now_ms);
+    // Another member's post of a kill's echoes, read from the board.
+    void Received(KillEchoes kill, s64 now_ms);
+    void Received(std::span<const KillEchoes> kills, s64 now_ms) {
+        for (const KillEchoes& kill : kills) {
+            Received(kill, now_ms);
+        }
+    }
+    // The posts now owed (to add once); those paid by the game are dropped, the newest wait.
+    std::vector<KillEchoes> Due(s64 now_ms);
+
+private:
+    std::vector<std::pair<KillEchoes, s64>> paid;
+    std::vector<std::pair<KillEchoes, s64>> received;
+};
 // Whether the party boards (lamps and boss fog flags, trophies) are read, posted and applied:
 // whenever a party is configured and the player is loaded, in a session or not.
 bool SharesWithParty(bool party_configured, bool player_loaded);
