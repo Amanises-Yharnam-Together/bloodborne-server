@@ -63,6 +63,11 @@ PROBLEMS = {
         re.compile(r"Device lost"),
     "a crash was caught": re.compile(r"crash: exception"),
 }
+# A game call skipped because its object's vtable was not the expected kind (HasVtable): fine
+# for a stale pointer, but a vtable list missing a class quietly turns a feature off.
+REFUSAL = re.compile(r"refused a game call")
+PROBLEMS["a guarded game call was refused (a wrong object, or a vtable list missing a class)"] = \
+    REFUSAL
 
 
 def check_boot(text: str) -> list[str]:
@@ -70,6 +75,8 @@ def check_boot(text: str) -> list[str]:
     failures = [f"missing: {name}" for name, marker in BOOT_MARKERS.items() if marker not in text]
     failures += [f"error: {line.strip()[:200]}" for line in text.splitlines()
                  if is_failure(line)]
+    failures += [f"refused: {line.strip()[:200]}" for line in text.splitlines()
+                 if REFUSAL.search(line)]
     return failures
 
 

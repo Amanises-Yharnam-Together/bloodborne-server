@@ -1174,6 +1174,35 @@ bool RestoresBloodstainMark(bool party_guest, bool mark_before, bool mark_now, s
 constexpr int GuestBloodstainTries = 3;
 bool ShowsGuestBloodstain(bool party_guest, bool in_session, bool loading, bool has_stain,
                           s32 echoes, u32 record_block, u32 map, bool shown, int tries);
+// Game objects' vtables (01.09 eboot offsets, what each class's constructor stores). The co-op
+// code calls a game function with an object only when the object's vtable is one the function
+// takes (HasVtable), so a wrong or stale pointer is skipped instead of crashing the game
+// (2026-10-11: the bloodstain show given another object crashed two guests).
+// Characters: every vtable with the character's AddSpEffect (+0x3F0), teleport (+0x5F8) and
+// NpcParam (+0x168) virtuals. The last two are the players': their PlayerGameData virtual
+// (+0x1C8) returns +0x3C0, the others' return nothing.
+constexpr std::array<u64, 4> CharacterVtables{0x0538E2D0, 0x0538EBC0, 0x0538F310, 0x0538FA80};
+constexpr std::array<u64, 2> PlayerVtables{0x0538F310, 0x0538FA80};
+constexpr u64 EventFlagManVtable = 0x05320B60; // [0x0553B100], its flag store (0x013CF0E0)
+constexpr u64 MapItemManVtable = 0x0532D850;   // [0x0553D6E0], built by 0x017D2960
+constexpr u64 BloodstainVtable = 0x0532EA40;   // the own stain, built by 0x018675B0
+// Whether `vtable` (an address read from an object) is one of `vtables` (eboot offsets) in the
+// game loaded at `image_base`.
+bool IsGameVtable(u64 vtable, u64 image_base, std::span<const u64> vtables);
+// A refused call is logged (a wrong pointer, or a list above missing a class, which would
+// otherwise turn a feature off without a word), once per call site and vtable seen and at most
+// MaxLogged times in all, so it can never fill the log.
+class RefusedCallLog {
+public:
+    static constexpr std::size_t MaxLogged = 32;
+    // True the first time `site` refuses an object with `vtable`, while there is room.
+    bool FirstTime(std::string_view site, u64 vtable);
+
+private:
+    std::set<std::pair<std::string, u64>> logged;
+};
+// A seen vtable for the log: "eboot+0x..." inside the game's image, else the address.
+std::string DescribeVtable(u64 vtable, u64 image_base, u64 image_size);
 // Friendly NPCs on a summoned guest's side: character creation (0x018E4FB6, 0x018D8934) turns an
 // NPC whose NpcParam has isChangeWanderGhost into a wandering ghost (type 4, the ghost model at
 // +0x10C), drawn see-through. A party guest sees them as the host does.

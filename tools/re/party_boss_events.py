@@ -29,7 +29,14 @@ gift event (the emulator also keeps their flags local, KeepsLocalFlag).
 
 Usage: py -3.12 party_boss_events.py <mods dvdroot_ps4\\event> <game event dir> [<update event dir>]
 (a file in a later directory replaces the same file in an earlier one, as the update does)
+
+Every output is checked against the game's file before anything is written (validate: only the
+intended instructions changed, every parameter still feeds the same instruction and byte), and
+manifest.json beside the outputs lists each file's input and output sha256 and its edits;
+make-port-kit.ps1 builds a kit only from files the manifest lists.
 """
+import hashlib
+import json
 import pathlib
 import struct
 import sys
@@ -52,14 +59,27 @@ def save_dcx(original: bytes, payload: bytes) -> bytes:
             original[0x24:0x4C] + packed)
 
 
-def patch_events(emevd: bytes) -> tuple[bytes, int]:
+class EventPatchError(Exception):
+    """A patch that cannot be made, or an output that moved something it was not meant to."""
+
+
+def note(edits: list | None, event: int, instruction: int, bank: int, ident: int, why: str):
+    """Records an instruction a patch changed (by its number in the game's event), for validate
+    and the manifest."""
+    if edits is not None:
+        edits.append({'event': event, 'action': 'change', 'instruction': instruction,
+                      'bank': bank, 'id': ident, 'why': why})
+
+
+def patch_events(emevd: bytes, edits: list | None = None) -> tuple[bytes, int]:
     data = bytearray(emevd)
     fields = struct.unpack_from('<16q', data, 16)
     event_count, event_offset, _, instruction_offset = fields[0], fields[1], fields[2], fields[3]
     args_offset = fields[13]
     patched = 0
     for index in range(event_count):
-        _, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data, event_offset + index * 48)
+        event, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data,
+                                                             event_offset + index * 48)
         instructions = [struct.unpack_from('<iiqqq', data, instruction_offset + first + k * 32)
                         for k in range(count)]
         if not any(bank == 2003 and ident == 12 for bank, ident, _, _, _ in instructions):
@@ -71,9 +91,12 @@ def patch_events(emevd: bytes) -> tuple[bytes, int]:
             if bank == 2003 and ident == 4:
                 struct.pack_into('<i', data, instruction_offset + first + number * 32 + 4,
                                  AWARD_ITEM_LOT_INCLUDING_CLIENTS)
+                note(edits, event, number, bank, AWARD_ITEM_LOT_INCLUDING_CLIENTS,
+                     'boss item for clients too')
                 patched += 1
             if bank == 1003 and ident == 105 and length >= 2 and data[at + 1] == 1:
                 data[at + 1] = NEVER
+                note(edits, event, number, bank, ident, 'client end never matches')
                 patched += 1
             # 4:3 "wait until the player (10000) is character type 0 (alive)" in the main
             # condition group blocks a white phantom forever. Moved into a condition group no
@@ -81,6 +104,7 @@ def patch_events(emevd: bytes) -> tuple[bytes, int]:
             if (bank == 4 and ident == 3 and length >= 12 and data[at] == MAIN_GROUP and
                     struct.unpack_from('<i', data, at + 4)[0] == LOCAL_PLAYER):
                 data[at] = UNUSED_GROUP
+                note(edits, event, number, bank, ident, 'alive check no longer waited on')
                 patched += 1
     return bytes(data), patched
 
@@ -96,7 +120,7 @@ INSIGHT_EVENT = 9350
 INITIALIZE_EVENT = (2000, 0)
 
 
-def let_guests_earn_insight(emevd: bytes) -> tuple[bytes, int]:
+def let_guests_earn_insight(emevd: bytes, edits: list | None = None) -> tuple[bytes, int]:
     """Every insight award (a boss found or killed, a place reached) is a map event starting
     common event 9350 with the points (2000:0). Some of those end for a client (1003:6 state 1)
     or unless the local player is alive (4:3 player 10000 type 0, in a group an END tests or in
@@ -109,27 +133,31 @@ def let_guests_earn_insight(emevd: bytes) -> tuple[bytes, int]:
     args_offset = fields[13]
     patched = 0
     for index in range(event_count):
-        _, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data, event_offset + index * 48)
+        event, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data,
+                                                             event_offset + index * 48)
         instructions = [struct.unpack_from('<iiqqq', data, instruction_offset + first + k * 32)
                         for k in range(count)]
         if not any((bank, ident) == INITIALIZE_EVENT and length >= 8 and
                    struct.unpack_from('<i', data, args_offset + offset + 4)[0] == INSIGHT_EVENT
                    for bank, ident, length, offset, _ in instructions):
             continue
-        for bank, ident, length, offset, _ in instructions:
+        for k, (bank, ident, length, offset, _) in enumerate(instructions):
             at = args_offset + offset
             if bank == 1003 and ident == 6 and length >= 2 and data[at + 1] == 1:
                 data[at + 1] = NEVER
+                note(edits, event, k, bank, ident, 'client end never matches')
                 patched += 1
             if (bank == 4 and ident == 3 and length >= 9 and data[at] != UNUSED_GROUP and
                     struct.unpack_from('<i', data, at + 4)[0] == LOCAL_PLAYER and
                     data[at + 8] == ALIVE):
                 data[at] = UNUSED_GROUP
+                note(edits, event, k, bank, ident, 'alive check no longer waited on')
                 patched += 1
     return bytes(data), patched
 
 
-def patch_client_events(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
+def patch_client_events(emevd: bytes, wanted: set[int],
+                        edits: list | None = None) -> tuple[bytes, int]:
     data = bytearray(emevd)
     fields = struct.unpack_from('<16q', data, 16)
     event_count, event_offset, _, instruction_offset = fields[0], fields[1], fields[2], fields[3]
@@ -147,6 +175,7 @@ def patch_client_events(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
             # 1003:6 "end the event by multiplayer state" (end type, state): state 1 is a client.
             if bank == 1003 and ident == 6 and length >= 2 and data[at + 1] == 1:
                 data[at + 1] = NEVER
+                note(edits, event, k, bank, ident, 'client end never matches')
                 patched += 1
     return bytes(data), patched
 
@@ -166,7 +195,8 @@ PARAMETER_SIZE = 32  # instruction index, target byte, source byte, length (q q 
 SHIFTED_OFFSET_FIELDS = (5, 7, 9, 11, 13, 15)
 
 
-def make_events_local(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
+def make_events_local(emevd: bytes, wanted: set[int],
+                      edits: list | None = None) -> tuple[bytes, int]:
     data = bytearray(emevd)
     fields = list(struct.unpack_from('<16q', data, 16))
     event_count, event_offset = fields[0], fields[1]
@@ -181,8 +211,10 @@ def make_events_local(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
     if not targets:
         return emevd, 0
     # The instruction's argument (4 bytes of 0) can share any aligned zero word of the table.
-    zero = next(at for at in range(0, args_size - 3, 4)
-                if data[args_offset + at:args_offset + at + 4] == bytes(4))
+    zero = next((at for at in range(0, args_size - 3, 4)
+                 if data[args_offset + at:args_offset + at + 4] == bytes(4)), None)
+    if zero is None:
+        raise EventPatchError('no 4 zero bytes in the argument table for 2000:2 0 to use')
     record = struct.pack('<iiqqq', NETWORK_SYNC[0], NETWORK_SYNC[1], 4, zero, -1)
     instructions_end = instruction_offset + instruction_count * INSTRUCTION_SIZE
     table = bytearray(data[instruction_offset:instructions_end])
@@ -192,6 +224,10 @@ def make_events_local(emevd: bytes, wanted: set[int]) -> tuple[bytes, int]:
         moved = sum(1 for first in targets if event[2] > first)
         if event[0] in wanted and event[2] in targets:
             event[1] += 1
+            if edits is not None:
+                edits.append({'event': event[0], 'action': 'insert', 'before': 0,
+                              'bank': NETWORK_SYNC[0], 'id': NETWORK_SYNC[1],
+                              'why': 'no network sync'})
         event[2] += moved * INSTRUCTION_SIZE
     delta = len(targets) * INSTRUCTION_SIZE
     out = data[:instruction_offset] + table + data[instructions_end:]
@@ -220,7 +256,7 @@ WHITE_PHANTOM = 1
 ARGS_ALIGNMENT = 16
 
 
-def open_boss_fog_for_guests(emevd: bytes) -> tuple[bytes, int]:
+def open_boss_fog_for_guests(emevd: bytes, edits: list | None = None) -> tuple[bytes, int]:
     """A white phantom's boss fog event (e.g. m24_01 12414731) waits for the host's "entered
     the fog" flag H (12414700), which the host's own fog event sets, and then sets H + 1. A
     party guest could therefore never enter first, and after a world reset it was stuck behind
@@ -239,12 +275,13 @@ def open_boss_fog_for_guests(emevd: bytes) -> tuple[bytes, int]:
     host_entered_flags = set()
 
     def read_event(index):
-        _, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data, event_offset + index * 48)
+        event, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data,
+                                                             event_offset + index * 48)
         at = [instruction_offset + first + k * INSTRUCTION_SIZE for k in range(count)]
         instructions = [struct.unpack_from('<iiqqq', data, place) for place in at]
         args = [bytes(data[args_offset + offset:args_offset + offset + length])
                 for _, _, length, offset, _ in instructions]
-        return at, instructions, args
+        return event, at, instructions, args
 
     def player_type_checks(instructions, args, player_type):
         return [k for k, (bank, ident, *_) in enumerate(instructions)
@@ -253,7 +290,7 @@ def open_boss_fog_for_guests(emevd: bytes) -> tuple[bytes, int]:
                 args[k][8] == player_type]
 
     for index in range(event_count):
-        at, instructions, args = read_event(index)
+        event, at, instructions, args = read_event(index)
         phantom = player_type_checks(instructions, args, WHITE_PHANTOM)
         button = any((bank, ident) == (3, 24) for bank, ident, *_ in instructions)
         if not (phantom and button):
@@ -272,14 +309,17 @@ def open_boss_fog_for_guests(emevd: bytes) -> tuple[bytes, int]:
         host_entered_flags.add(host_entered)
         for k in waits:
             data[args_offset + instructions[k][3]] = UNUSED_GROUP
+            note(edits, event, k, 3, 0, 'no longer waits for the host flag')
             patched += 1
         offset = fields[12] + len(new_args)
         new_args += struct.pack('<iiBxxx', host_entered, entered, 1)
         struct.pack_into('<iiqqq', data, at[sets[0]], *BATCH_SET_EVENT_FLAGS, 12, offset,
                          instructions[sets[0]][4])
+        note(edits, event, sets[0], *BATCH_SET_EVENT_FLAGS,
+             'a guest entering sets the host flag too')
         patched += 1
     for index in range(event_count):
-        at, instructions, args = read_event(index)
+        event, at, instructions, args = read_event(index)
         button = any((bank, ident) == (3, 24) for bank, ident, *_ in instructions)
         area = any((bank, ident) == (3, 2) for bank, ident, *_ in instructions)
         starts_boss = any((bank, ident) == SET_EVENT_FLAG and args[k][4] == 1 and
@@ -292,6 +332,7 @@ def open_boss_fog_for_guests(emevd: bytes) -> tuple[bytes, int]:
             for k, (bank, ident, length, offset, _) in enumerate(instructions):
                 if (bank, ident) == (1003, 5) and length >= 2 and args[k][1] == 1:
                     data[args_offset + offset + 1] = NEVER
+                    note(edits, event, k, bank, ident, 'client skip never matches')
                     patched += 1
             continue
         if button or not area or not starts_boss:
@@ -299,6 +340,7 @@ def open_boss_fog_for_guests(emevd: bytes) -> tuple[bytes, int]:
         for k in player_type_checks(instructions, args, ALIVE):
             if 0 < args[k][0] < UNUSED_GROUP:
                 data[args_offset + instructions[k][3]] = UNUSED_GROUP
+                note(edits, event, k, 4, 3, 'alive check no longer waited on')
                 patched += 1
     if not new_args:
         return bytes(data), patched
@@ -320,36 +362,246 @@ def already_local(data: bytes, instruction_offset: int, args_offset: int, event:
             data[args_offset + offset:args_offset + offset + 4] == bytes(4))
 
 
-def main() -> int:
-    target = pathlib.Path(sys.argv[1])
+HEADER_SIZE = 0x90
+EVENT_SIZE = 48
+# Header fields (count or byte length, offset, entry size) of each table; the unknown table is
+# always empty.
+SECTIONS = {'events': (0, 1, EVENT_SIZE), 'instructions': (2, 3, INSTRUCTION_SIZE),
+            'unknown table': (4, 5, 0), 'layers': (6, 7, 32), 'parameters': (8, 9, PARAMETER_SIZE),
+            'linked files': (10, 11, 8), 'arguments': (12, 13, 1), 'strings': (14, 15, 1)}
+MANIFEST = 'manifest.json'
+
+
+def parse(emevd: bytes) -> dict:
+    """Reads an event file's tables, checking every offset and count against the file."""
+    if emevd[:4] == b'DCX\0':
+        size = struct.unpack_from('>I', emevd, 0x1C)[0]
+        try:
+            emevd = load_dcx(emevd)
+        except zlib.error as error:
+            raise EventPatchError(f'the DCX does not unpack ({error})') from error
+        if size != len(emevd):
+            raise EventPatchError(f'the DCX says it holds {size} bytes, it holds {len(emevd)}')
+    if len(emevd) < HEADER_SIZE or emevd[:4] != b'EVD\0':
+        raise EventPatchError('not an event file')
+    size = struct.unpack_from('<I', emevd, 0x0C)[0]
+    if size != len(emevd):
+        raise EventPatchError(f'the header says the file size is {size}, it is {len(emevd)}')
+    fields = struct.unpack_from('<16q', emevd, 16)
+    for section, (count, offset, entry) in SECTIONS.items():
+        end = fields[offset] + fields[count] * entry
+        if fields[count] < 0 or fields[offset] < HEADER_SIZE or end > len(emevd):
+            raise EventPatchError(f'the {section} table ({fields[count]} at {fields[offset]}) is '
+                                  f'outside the file ({len(emevd)} bytes)')
+    if fields[4]:
+        raise EventPatchError(f'the unknown table has {fields[4]} entries')
+
+    def table(section: str) -> bytes:
+        count, offset, entry = SECTIONS[section]
+        return emevd[fields[offset]:fields[offset] + fields[count] * max(entry, 1)]
+
+    events = []
+    for index in range(fields[0]):
+        event, count, first, param_count, param_offset, rest, unknown = struct.unpack_from(
+            '<qqqqqii', emevd, fields[1] + index * EVENT_SIZE)
+        if (count < 0 or first < 0 or first % INSTRUCTION_SIZE or
+                first + count * INSTRUCTION_SIZE > fields[2] * INSTRUCTION_SIZE):
+            raise EventPatchError(f'event {event}: its {count} instructions at {first} are '
+                                  f'outside the instruction table')
+        instructions = []
+        for k in range(count):
+            bank, ident, length, offset, layer = struct.unpack_from(
+                '<iiqqq', emevd, fields[3] + first + k * INSTRUCTION_SIZE)
+            # An instruction without arguments has offset -1 (in the low 4 bytes).
+            if length < 0 or length and (offset < 0 or offset + length > fields[12]):
+                raise EventPatchError(f'event {event} instruction {k} ({bank}:{ident}): its '
+                                      f'{length} argument bytes at {offset} are outside the '
+                                      f'argument table')
+            # No layer is -1 (the game's files keep it in the low 4 bytes only).
+            if layer not in (-1, 0xFFFFFFFF) and not 0 <= layer < fields[6] * 32:
+                raise EventPatchError(f'event {event} instruction {k}: layer {layer} is outside '
+                                      f'the layer table')
+            instructions.append((bank, ident, length, layer,
+                                 emevd[fields[13] + offset:fields[13] + offset + length]))
+        parameters = []
+        if param_count:
+            if (param_count < 0 or param_offset < 0 or
+                    param_offset + param_count * PARAMETER_SIZE > fields[8] * PARAMETER_SIZE):
+                raise EventPatchError(f'event {event}: its {param_count} parameters at '
+                                      f'{param_offset} are outside the parameter table')
+            for j in range(param_count):
+                parameter = struct.unpack_from('<qqqii', emevd,
+                                               fields[9] + param_offset + j * PARAMETER_SIZE)
+                if not 0 <= parameter[0] < count:
+                    raise EventPatchError(f'event {event} parameter {j} names instruction '
+                                          f'{parameter[0]}, the event has {count}')
+                parameters.append(parameter)
+        events.append({'id': event, 'rest': (rest, unknown), 'instructions': instructions,
+                       'parameters': parameters})
+    return {'events': events, 'tables': {section: table(section) for section in
+                                         ('layers', 'linked files', 'strings')}}
+
+
+def name_of(instruction: tuple) -> str:
+    return f'{instruction[0]}:{instruction[1]}'
+
+
+def validate(original: bytes, patched: bytes, intended_edits: list, name: str = 'event file'):
+    """Checks a patched event file against the game's before it is written: it must parse with
+    every offset in bounds, and each event must be the game's except for the intended edits
+    (inserted instructions, changed instructions by their number in the game's event). A started
+    event's parameters copy its arguments into instructions by number and byte, so each must
+    still name the same instruction and byte (2026-10-12: an insert moved the shop event's badge
+    check away from its parameter and every weapon line opened). Raises EventPatchError."""
+
+    def fail(message: str):
+        raise EventPatchError(f'{name}: {message}')
+
+    try:
+        before, after = parse(original), parse(patched)
+    except EventPatchError as error:
+        fail(str(error))
+    for section, data in before['tables'].items():
+        if after['tables'][section] != data:
+            fail(f'the {section} changed (a header offset was not moved with the data)')
+    if [event['id'] for event in before['events']] != [event['id'] for event in after['events']]:
+        fail('the list of events changed')
+    by_id = {event['id']: (event, after['events'][index])
+             for index, event in enumerate(before['events'])}
+    inserts: dict[int, list] = {}
+    changes: dict[int, dict] = {}
+    for edit in intended_edits:
+        if edit['event'] not in by_id:
+            fail(f'an edit names event {edit["event"]}, which the file does not have')
+        count = len(by_id[edit['event']][0]['instructions'])
+        if edit['action'] == 'insert' and 0 <= edit['before'] <= count:
+            inserts.setdefault(edit['event'], []).append(edit)
+        elif edit['action'] == 'change' and 0 <= edit['instruction'] < count:
+            changes.setdefault(edit['event'], {})[edit['instruction']] = edit
+        else:
+            fail(f'event {edit["event"]}: edit {edit} names no instruction of the event')
+    for event_id, (old, new) in by_id.items():
+        where = f'event {event_id}'
+        own = sorted(inserts.get(event_id, []), key=lambda edit: edit['before'])
+        changed = changes.get(event_id, {})
+        old_list, new_list = old['instructions'], new['instructions']
+        if len(new_list) != len(old_list) + len(own):
+            fail(f'{where} has {len(new_list)} instructions, the game\'s has {len(old_list)} and '
+                 f'{len(own)} were to be inserted')
+        if new['rest'] != old['rest']:
+            fail(f'{where}: its restart behaviour changed')
+        # Where each of the game's instructions is now: one further down per insert above it.
+        moved = [k + sum(1 for edit in own if edit['before'] <= k) for k in range(len(old_list))]
+        for number, edit in enumerate(own):
+            inserted = new_list[edit['before'] + number]
+            if (inserted[0], inserted[1]) != (edit['bank'], edit['id']):
+                fail(f'{where}: instruction {edit["before"] + number} is {name_of(inserted)}, '
+                     f'the insert was {edit["bank"]}:{edit["id"]}')
+        for k, instruction in enumerate(old_list):
+            now = new_list[moved[k]]
+            label = f'{where} instruction {k} ({name_of(instruction)})'
+            if k in changed:
+                edit = changed[k]
+                if (now[0], now[1]) != (edit['bank'], edit['id']):
+                    fail(f'{label} became {name_of(now)}, the edit made it '
+                         f'{edit["bank"]}:{edit["id"]}')
+                continue
+            if now[:4] != instruction[:4]:
+                fail(f'{label} became {name_of(now)} ({now[2]} argument bytes, layer {now[3]}) '
+                     f'without an edit')
+            if now[4] != instruction[4]:
+                fail(f'{label}: its argument bytes changed without an edit '
+                     f'({instruction[4].hex()} -> {now[4].hex()})')
+        if len(new['parameters']) != len(old['parameters']):
+            fail(f'{where} has {len(new["parameters"])} parameters, the game\'s has '
+                 f'{len(old["parameters"])}')
+        wrong = []
+        for j, (parameter, now) in enumerate(zip(old['parameters'], new['parameters'])):
+            k, target, source, length, unknown = parameter
+            should = (moved[k], target, source, length, unknown)
+            if now != should:
+                wrong.append(f'parameter {j} (argument bytes {source}-{source + length - 1}) '
+                             f'now goes to instruction {now[0]} ({name_of(new_list[now[0]])}) '
+                             f'byte {now[1]}, it belongs to instruction {moved[k]} '
+                             f'({name_of(old_list[k])}, the game\'s instruction {k}) byte {target}')
+                continue
+            if k in changed:
+                # A started event copying its argument over the patched bytes would undo the
+                # patch, and over a rewritten instruction would corrupt it.
+                new_args, old_args = new_list[moved[k]][4], old_list[k][4]
+                rewritten = (new_list[moved[k]][:3] != old_list[k][:3] or
+                             any(new_args[at] != old_args[at]
+                                 for at in range(target, target + length)))
+                if rewritten:
+                    wrong.append(f'parameter {j} writes instruction {k} '
+                                 f'({name_of(old_list[k])}) byte {target}, which was patched')
+        if wrong:
+            fail(f'{where}: ' + '; '.join(wrong))
+
+
+def patch_file(name: str, original: bytes) -> tuple[bytes | None, list, dict]:
+    """Patches one event file (DCX): the output (None if nothing changed), the edits and the
+    counts per patch. The output is checked with validate."""
+    emevd = load_dcx(original)
+    edits: list = []
+    counts = {'boss event checks': 0, 'boss fog checks': 0, 'insight event checks': 0,
+              'client event ends': 0, 'local events': 0}
+    try:
+        if name.startswith('m'):
+            emevd, counts['boss event checks'] = patch_events(emevd, edits)
+            emevd, counts['boss fog checks'] = open_boss_fog_for_guests(emevd, edits)
+            emevd, counts['insight event checks'] = let_guests_earn_insight(emevd, edits)
+        if name in CLIENT_EVENTS:
+            emevd, counts['client event ends'] = patch_client_events(emevd, CLIENT_EVENTS[name],
+                                                                     edits)
+        # Last: validate names changed instructions by their number in the game's event, which
+        # only inserts move.
+        if name in LOCAL_EVENTS:
+            emevd, counts['local events'] = make_events_local(emevd, LOCAL_EVENTS[name], edits)
+    except EventPatchError as error:
+        raise EventPatchError(f'{name}: {error}') from error
+    if not any(counts.values()):
+        return None, [], counts
+    output = save_dcx(original, emevd)
+    validate(original, output, edits, name)
+    return output, edits, counts
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    target = pathlib.Path(argv[0])
     files: dict[str, pathlib.Path] = {}
-    for source in sys.argv[2:]:
+    for source in argv[1:]:
         for path in pathlib.Path(source).glob('*.emevd.dcx'):
             files[path.name] = path
-    target.mkdir(parents=True, exist_ok=True)
+    # Every file is patched and checked before any is written, so a bad patch leaves the
+    # folder as it was.
+    outputs = {}
+    manifest = {'tool': 'party_boss_events.py', 'files': {}}
     total = 0
     for name, path in sorted(files.items()):
         original = path.read_bytes()
-        emevd = load_dcx(original)
-        boss = client = fog = insight = 0
-        if name.startswith('m'):
-            emevd, boss = patch_events(emevd)
-            emevd, fog = open_boss_fog_for_guests(emevd)
-            emevd, insight = let_guests_earn_insight(emevd)
-        local = 0
-        if name in CLIENT_EVENTS:
-            emevd, client = patch_client_events(emevd, CLIENT_EVENTS[name])
-        if name in LOCAL_EVENTS:
-            emevd, local = make_events_local(emevd, LOCAL_EVENTS[name])
-        if boss or client or local or fog or insight:
-            (target / name).write_bytes(save_dcx(original, emevd))
-            print(f'{name}: {boss} boss event checks, {fog} boss fog checks, '
-                  f'{insight} insight event checks, {client} client event ends, '
-                  f'{local} local events')
-            total += boss + client + local + fog + insight
+        output, edits, counts = patch_file(name, original)
+        if output is None:
+            continue
+        outputs[name] = output
+        manifest['files'][name] = {'input_sha256': hashlib.sha256(original).hexdigest(),
+                                   'output_sha256': hashlib.sha256(output).hexdigest(),
+                                   'edits': edits}
+        print(f'{name}: ' + ', '.join(f'{count} {what}' for what, count in counts.items()))
+        total += sum(counts.values())
+    target.mkdir(parents=True, exist_ok=True)
+    for name, output in outputs.items():
+        (target / name).write_bytes(output)
+    (target / MANIFEST).write_text(json.dumps(manifest, indent=1) + '\n', encoding='utf-8',
+                                   newline='\n')
     print(f'total: {total}')
     return 0
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except EventPatchError as error:
+        print(f'error: {error}', file=sys.stderr)
+        sys.exit(1)

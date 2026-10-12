@@ -75,6 +75,16 @@ class SessionTest(unittest.TestCase):
         self.assertIn("left the session outside a trip", joined)
         self.assertIn("graphics device was lost", joined)
 
+    def test_flags_a_refused_game_call(self):
+        # A guarded call skipped because the object's vtable was not the expected kind: either a
+        # wrong pointer or a vtable list that misses a class (the feature quietly stops).
+        text = line("Bloodborne refused a game call: EventFlagOn got an object (0x812345678) "
+                    "with vtable eboot+0x5320b70", level="Warning")
+        _, problems = tool.summarize(text)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("refused", problems[0])
+        self.assertEqual(len(tool.check_boot(GOOD_BOOT + "\n" + text)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
