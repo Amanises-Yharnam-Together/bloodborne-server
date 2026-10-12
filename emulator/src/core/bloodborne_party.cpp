@@ -4416,6 +4416,17 @@ std::string FormatWorldLogEntry(const WorldLogEntry& entry) {
     case WorldLogKind::Shown:
         return fmt::format("seq {} shown {:#x} on {:#x} bits {:x}", entry.seq, entry.subject,
                            entry.map, entry.value);
+    case WorldLogKind::FlagSet:
+        return fmt::format("seq {} flag {} on", entry.seq, static_cast<s32>(entry.subject));
+    case WorldLogKind::FlagClear:
+        return fmt::format("seq {} flag {} off", entry.seq, static_cast<s32>(entry.subject));
+    case WorldLogKind::MapStateMap:
+        return fmt::format("seq {} map state of {:#x}", entry.seq, entry.map);
+    case WorldLogKind::MapFlagOn:
+    case WorldLogKind::MapFlagOff:
+        return fmt::format("seq {} map flag {} {}", entry.seq,
+                           MapFlagBase(entry.map) + static_cast<s32>(entry.subject),
+                           entry.kind == WorldLogKind::MapFlagOn ? "on" : "off");
     }
     return fmt::format("seq {} kind {} on {:#x}", entry.seq, static_cast<int>(entry.kind),
                        entry.map);
@@ -4470,7 +4481,7 @@ bool WorldLogEpochFollows(u64 next, u64 current) {
 }
 
 bool IsWorldLogFrameType(u8 type) {
-    return type >= WorldLogProposeType && type <= WorldLogShownSnapshotType;
+    return type >= WorldLogProposeType && type <= WorldLogMapStateSnapshotType;
 }
 
 bool WorldLogEnabled(const char* setting) {
@@ -4740,6 +4751,115 @@ std::optional<WorldLogShownSnapshot> DecodeWorldLogShownSnapshot(std::span<const
     return snapshot;
 }
 
+void WorldLogFlagOutbox::Add(std::span<const std::pair<s32, bool>> changes, s64 now_ms) {
+    for (const auto& [flag, on] : changes) {
+        sent.push_back({{++next, flag, on}, now_ms});
+        fresh = true;
+    }
+}
+
+std::vector<WorldLogFlagEvent> WorldLogFlagOutbox::Pending(s64 now_ms) {
+    std::erase_if(sent, [now_ms](const auto& entry) {
+        return now_ms - entry.second > WorldLogFlagResendWindowMs;
+    });
+    const size_t from =
+        sent.size() > WorldLogFlagEventsPerFrame ? sent.size() - WorldLogFlagEventsPerFrame : 0;
+    std::vector<WorldLogFlagEvent> events;
+    for (size_t index = from; index < sent.size(); ++index) {
+        events.push_back(sent[index].first);
+    }
+    return events;
+}
+
+bool FlagEventOnce::First(s32 flag, bool on, s64 now_ms) {
+    std::erase_if(seen, [now_ms](const auto& entry) {
+        return now_ms - entry.second >= WorldLogFlagRepeatMs;
+    });
+    return seen.try_emplace({flag, on}, now_ms).second;
+}
+
+// The host's name, epoch, last seq, the map, the bits' length (u16), the bits.
+std::vector<u8> EncodeWorldLogMapStateSnapshot(const WorldLogMapStateSnapshot& snapshot) {
+    std::vector<u8> payload;
+    AppendName(payload, snapshot.host);
+    AppendLittleEndian(payload, snapshot.epoch);
+    AppendLittleEndian(payload, snapshot.last);
+    AppendLittleEndian(payload, snapshot.state.map);
+    AppendLittleEndian(payload, static_cast<u16>(snapshot.state.bits.size()));
+    payload.insert(payload.end(), snapshot.state.bits.begin(), snapshot.state.bits.end());
+    return payload;
+}
+
+std::optional<WorldLogMapStateSnapshot> DecodeWorldLogMapStateSnapshot(
+    std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    auto host = reader.Name();
+    const auto epoch = reader.Next<u64>();
+    const auto last = reader.Next<u64>();
+    const auto map = reader.Next<u32>();
+    const auto size = reader.Next<u16>();
+    if (!host || !epoch || !last || !map || !size) {
+        return std::nullopt;
+    }
+    WorldLogMapStateSnapshot snapshot{std::move(*host), *epoch, *last, {*map, {}}};
+    for (u16 index = 0; index < *size; ++index) {
+        const auto byte = reader.Next<u8>();
+        if (!byte) {
+            return std::nullopt;
+        }
+        snapshot.state.bits.push_back(*byte);
+    }
+    if (!reader.Done()) {
+        return std::nullopt;
+    }
+    return snapshot;
+}
+
+// The member's name, epoch, run, the count (u8), then each event: number, flag, on (u8). At most
+// the newest WorldLogFlagEventsPerFrame.
+std::vector<u8> EncodeWorldLogFlagProposal(const WorldLogFlagProposal& proposal) {
+    std::vector<u8> payload;
+    AppendName(payload, proposal.member);
+    AppendLittleEndian(payload, proposal.epoch);
+    AppendLittleEndian(payload, proposal.run);
+    const size_t from = proposal.events.size() > WorldLogFlagEventsPerFrame
+                            ? proposal.events.size() - WorldLogFlagEventsPerFrame
+                            : 0;
+    payload.push_back(static_cast<u8>(proposal.events.size() - from));
+    for (size_t index = from; index < proposal.events.size(); ++index) {
+        const WorldLogFlagEvent& event = proposal.events[index];
+        AppendLittleEndian(payload, event.number);
+        AppendLittleEndian(payload, static_cast<u32>(event.flag));
+        payload.push_back(event.on ? 1 : 0);
+    }
+    return payload;
+}
+
+std::optional<WorldLogFlagProposal> DecodeWorldLogFlagProposal(std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    auto member = reader.Name();
+    const auto epoch = reader.Next<u64>();
+    const auto run = reader.Next<u32>();
+    const auto count = reader.Next<u8>();
+    if (!member || !epoch || !run || !count) {
+        return std::nullopt;
+    }
+    WorldLogFlagProposal proposal{std::move(*member), *epoch, *run, {}};
+    for (u8 index = 0; index < *count; ++index) {
+        const auto number = reader.Next<u32>();
+        const auto flag = reader.Next<u32>();
+        const auto on = reader.Next<u8>();
+        if (!number || !flag || !on || *on > 1) {
+            return std::nullopt;
+        }
+        proposal.events.push_back({*number, static_cast<s32>(*flag), *on == 1});
+    }
+    if (!reader.Done()) {
+        return std::nullopt;
+    }
+    return proposal;
+}
+
 std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
                                          std::span<const WorldLogEntry> entries) {
     std::vector<WorldLogBatch> batches;
@@ -4796,6 +4916,76 @@ std::vector<WorldLogEntry> WorldLogHost::Show(u32 map, std::span<const Character
     return entries;
 }
 
+WorldLogHost::Taken WorldLogHost::ProposeFlags(const WorldLogFlagProposal& proposal, s64 now_ms) {
+    Taken taken;
+    if (proposal.epoch != 0 && proposal.epoch != epoch) {
+        taken.stale = true;
+        return taken;
+    }
+    FlagSender& sender = flag_senders[proposal.member];
+    if (sender.run != proposal.run) {
+        sender = {proposal.run, 0};
+    }
+    for (const WorldLogFlagEvent& event : proposal.events) {
+        if (event.number <= sender.number) {
+            continue; // taken before (the frame repeats)
+        }
+        sender.number = event.number;
+        if (flag_events.First(event.flag, event.on, now_ms)) {
+            taken.entries.push_back(
+                Append(event.on ? WorldLogKind::FlagSet : WorldLogKind::FlagClear, 0,
+                       static_cast<u32>(event.flag)));
+        }
+    }
+    return taken;
+}
+
+namespace {
+
+bool MapBit(std::span<const u8> bits, s32 index) {
+    return (bits[index / 8] & (0x80 >> (index % 8))) != 0;
+}
+
+} // namespace
+
+void WorldLogHost::AppendMapState(std::vector<WorldLogEntry>& entries) {
+    if (map_state.map == 0) {
+        return;
+    }
+    entries.push_back(Append(WorldLogKind::MapStateMap, map_state.map, map_state.map));
+    for (s32 index = 0; index < MapFlagCount; ++index) {
+        if (MapBit(map_state.bits, index)) {
+            entries.push_back(
+                Append(WorldLogKind::MapFlagOn, map_state.map, static_cast<u32>(index)));
+        }
+    }
+}
+
+std::vector<WorldLogEntry> WorldLogHost::MapState(u32 map, std::span<const u8> bits) {
+    std::vector<WorldLogEntry> entries;
+    if (map == 0 || bits.size() * 8 < static_cast<size_t>(MapFlagCount)) {
+        return entries;
+    }
+    if (map != map_state.map) {
+        map_state = {map, std::vector<u8>(bits.begin(), bits.end())};
+        AppendMapState(entries);
+        return entries;
+    }
+    for (s32 index = 0; index < MapFlagCount; ++index) {
+        const bool on = MapBit(bits, index);
+        if (on != MapBit(map_state.bits, index)) {
+            entries.push_back(Append(on ? WorldLogKind::MapFlagOn : WorldLogKind::MapFlagOff, map,
+                                     static_cast<u32>(index)));
+        }
+    }
+    map_state.bits.assign(bits.begin(), bits.end());
+    return entries;
+}
+
+WorldLogMapStateSnapshot WorldLogHost::MapStateSnapshot(std::string_view host) const {
+    return {std::string{host}, epoch, last, map_state};
+}
+
 std::vector<WorldLogShownSnapshot> WorldLogHost::ShownSnapshot(std::string_view host) const {
     std::vector<WorldLogShownSnapshot> parts{
         {std::string{host}, epoch, last, 0, 1, {shown.map, {}}}};
@@ -4850,6 +5040,7 @@ std::vector<WorldLogEntry> WorldLogHost::Start(u64 new_epoch, bool after_wipe) {
     std::vector<WorldLogEntry> entries{
         Append(WorldLogKind::Reset, 0, after_wipe ? WorldLogResetAfterWipe : 0)};
     AppendShown(entries); // the host's world as it is (not a kill: it stays the host's now)
+    AppendMapState(entries);
     return entries;
 }
 
@@ -4945,6 +5136,8 @@ void WorldLogMember::Reset() {
     kills.clear();
     shown = {};
     shown_known = false;
+    map_state = {};
+    map_state_known = false;
 }
 
 bool WorldLogMember::Follow(u64 next_epoch, std::string_view next_host, s64 now_ms, Step& step) {
@@ -4977,6 +5170,9 @@ void WorldLogMember::Apply(const WorldLogEntry& entry) {
         if (entry.map == 0 || entry.map == shown.map) {
             shown = {};
         }
+        if (entry.map == 0 || entry.map == map_state.map) {
+            map_state = {};
+        }
         return;
     case WorldLogKind::Kill:
         kills[entry.map].insert(entry.subject);
@@ -5003,7 +5199,30 @@ void WorldLogMember::Apply(const WorldLogEntry& entry) {
             shown.bits.erase(entry.subject);
         }
         return;
+    case WorldLogKind::MapStateMap:
+    case WorldLogKind::MapFlagOn:
+    case WorldLogKind::MapFlagOff:
+        ApplyMapFlag(entry);
+        return;
+    case WorldLogKind::FlagSet:
+    case WorldLogKind::FlagClear:
+        return; // events: the caller sets them (Step::applied)
     }
+}
+
+void WorldLogMember::ApplyMapFlag(const WorldLogEntry& entry) {
+    if (entry.kind == WorldLogKind::MapStateMap) {
+        map_state = {entry.map, std::vector<u8>((MapFlagCount + 7) / 8)};
+        map_state_known = true; // every flag on follows
+        return;
+    }
+    if (entry.map != map_state.map || entry.subject >= static_cast<u32>(MapFlagCount)) {
+        return;
+    }
+    const u8 mask = static_cast<u8>(0x80 >> (entry.subject % 8));
+    u8& byte = map_state.bits[entry.subject / 8];
+    byte = entry.kind == WorldLogKind::MapFlagOn ? static_cast<u8>(byte | mask)
+                                                 : static_cast<u8>(byte & ~mask);
 }
 
 void WorldLogMember::Drain(Step& step) {
@@ -5082,14 +5301,43 @@ WorldLogMember::PartialSnapshot& WorldLogMember::Pending(u64 last) {
     return *partial;
 }
 
+WorldLogMember::Step WorldLogMember::Take(const WorldLogMapStateSnapshot& part, s64 now_ms) {
+    Step step;
+    if (!Follow(part.epoch, part.host, now_ms, step)) {
+        return step;
+    }
+    host_last = std::max(host_last, part.last);
+    if (!based || part.last > applied) {
+        Pending(part.last).map_state = part.state;
+        Complete(step);
+    }
+    step.gap = Behind();
+    return step;
+}
+
+namespace {
+
+// A snapshot's shown characters, from its parts.
+WorldLogShown JoinShownParts(const std::map<u8, WorldLogShown>& parts) {
+    WorldLogShown shown;
+    for (const auto& [index, share] : parts) {
+        shown.map = share.map;
+        shown.bits.insert(share.bits.begin(), share.bits.end());
+    }
+    return shown;
+}
+
+} // namespace
+
 // A snapshot is whole with every kills part and, from a host that sends them (or once they all
-// came), every shown part.
+// came), every shown part and its map state.
 void WorldLogMember::Complete(Step& step) {
     const PartialSnapshot& pending = *partial;
     const bool kills_whole = pending.parts && pending.got.size() >= *pending.parts;
     const bool shown_whole =
         pending.shown_parts && pending.shown_got.size() >= *pending.shown_parts;
-    if (!kills_whole || (expect_shown && !shown_whole)) {
+    const bool map_state_in = pending.map_state.has_value();
+    if (!kills_whole || (expect_shown && !shown_whole) || (expect_map_state && !map_state_in)) {
         return;
     }
     kills.clear();
@@ -5098,15 +5346,10 @@ void WorldLogMember::Complete(Step& step) {
             kills[map].insert(handles.begin(), handles.end());
         }
     }
-    shown = {};
-    for (const auto& [index, share] : pending.shown_got) {
-        shown.map = share.map;
-        shown.bits.insert(share.bits.begin(), share.bits.end());
-    }
+    shown = shown_whole ? JoinShownParts(pending.shown_got) : WorldLogShown{};
     shown_known = shown_whole;
-    if (!shown_whole) {
-        shown = {};
-    }
+    map_state = pending.map_state.value_or(WorldLogMapState{});
+    map_state_known = map_state_in;
     applied = pending.last;
     based = true;
     partial.reset();
@@ -5227,6 +5470,21 @@ std::optional<std::pair<u32, std::vector<CharacterShown>>> DecodeWorldLogShow(
         return std::nullopt;
     }
     return std::pair{ReadLittleEndian<u32>(payload, 0), std::move(*characters)};
+}
+
+std::vector<u8> EncodeWorldLogMapStateInput(u32 map, std::span<const u8> bits) {
+    std::vector<u8> payload;
+    AppendLittleEndian(payload, map);
+    payload.insert(payload.end(), bits.begin(), bits.end());
+    return payload;
+}
+
+std::optional<WorldLogMapState> DecodeWorldLogMapStateInput(std::span<const u8> payload) {
+    if (payload.size() < 4) {
+        return std::nullopt;
+    }
+    return WorldLogMapState{ReadLittleEndian<u32>(payload, 0),
+                            std::vector<u8>(payload.begin() + 4, payload.end())};
 }
 
 std::optional<DirectVitals> ParseVitalsUpdate(std::string_view line) {

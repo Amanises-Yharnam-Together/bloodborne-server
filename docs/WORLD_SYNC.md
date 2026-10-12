@@ -190,8 +190,34 @@ world 8, as on the shown board) go on the same log.
 - **Trace:** `wlog-in` ops `show` (the host's list when it changed the log), `shown-snapshot` and
   `expect-shown`; `wlog-path` with `what=shown`. `traces/world-log-shown.txt` is a checked-in case.
 
-Next: `FlagSet` / `FlagClear` and the map state (by `FlagTable`'s owners), then `HpFloor` (enemy
-HP agreed), each moving one board onto the log the same way, with the board as the fallback copy.
+Built, step 3: the shared flags and the host's map state (2026-10-12, not rig-checked yet). The
+log carries exactly what the flag boards carried, decided by the same code. The shared flags are
+`FlagsToShare` of each change that passed the bulk guard (`IsBulkFlagChange`): the flag table's
+`Shared` rows, a lamp's active flag and a boss fog's entry. Never the bell's session flags, a boss's
+"found" flag, the Dream doors, the badge lines, a headstone or lamp trip's request, or a map
+pickup. The map flags are the host's map bitmap, of which a guest's load takes the
+`TakesHostMapFlag` ones.
+
+- **Flag events** go from a member to the host in frame 0x39 (`WorldLogFlagProposal`). Each event is
+  numbered within its run, and the frame is resent for 10 s, so a lost frame costs nothing. The
+  host appends a `FlagSet` / `FlagClear` (one entry for one flag turned the same way within 10 s:
+  two members at one lamp), sets it in its own world and posts it to the flag board. Every member
+  sets it through the old queue (`flags_to_set`, applied while sharing). These are events, not
+  state: a snapshot does not carry them, as a game's first flag board post gets none of the earlier
+  ones. A member that lost an entry gets the flag board's copy, and an event counts once from either
+  copy within 10 s (`FlagEventOnce`).
+- **Map state:** `MapStateMap`, `MapFlagOn`, `MapFlagOff` entries from the host's 3 s snapshot
+  of its map (`SnapshotHostMapState`), only what changed; a new log repeats it. A snapshot answer
+  ends with the map state (frame 0x3A), and a member takes a snapshot only once it is in. A guest's
+  load and the host's map (`HostMapFromItsPost`) read `HostMapStateNow`: the log's copy while it is
+  fresh and whole, else the map state board's, which the host keeps posting.
+- **Path:** the flags take the log with the kills (every peer runs one build, Kaniel 2026-10-12).
+  `SHADPS4_BLOODBORNE_WORLD_LOG=0` keeps them on the boards. Leaving the log, the events not taken
+  yet go to the flag board.
+- **Trace:** `wlog-in` ops `propose-flags`, `map-state`, `map-state-snapshot`, `expect-map-state`;
+  `traces/world-log-flags.txt` is a checked-in case.
+
+Next: `HpFloor` (enemy HP agreed), the same way, with the HP board as the fallback copy.
 
 ## Stage D: split `bloodborne_re.cpp`
 

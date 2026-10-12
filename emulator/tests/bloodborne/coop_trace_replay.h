@@ -39,7 +39,7 @@ private:
     void FrameIn(const TraceRecord& record, std::vector<std::string>& out);
     void BoardIn(const TraceRecord& record, std::vector<std::string>& out);
     void WorldLogIn(const TraceRecord& record, std::vector<std::string>& out);
-    void WorldLogHostIn(std::string_view op, std::span<const u8> payload,
+    void WorldLogHostIn(std::string_view op, std::span<const u8> payload, s64 at,
                         std::vector<std::string>& out);
     void WorldLogMemberIn(std::string_view op, std::span<const u8> payload, s64 at,
                           std::vector<std::string>& out);

@@ -106,7 +106,7 @@ TEST(WorldLogFrames, TypesFollowTheHelloAndOlderBuildsDropThem) {
         EXPECT_FALSE(IsWorldLogFrameType(type));
     }
     EXPECT_GE(CoopProtocolVersion, 2) << "the world log's frames are protocol 2";
-    EXPECT_EQ(CoopProtocolVersion, 3) << "the shown characters on the log are protocol 3";
+    EXPECT_EQ(CoopProtocolVersion, 4) << "the flags and the map state on the log are protocol 4";
 }
 
 TEST(WorldLogFrames, AFullSetFitsTheLink) {

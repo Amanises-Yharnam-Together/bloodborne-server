@@ -437,8 +437,11 @@ std::mutex flag_board_mutex;
 std::vector<std::pair<s32, bool>> flags_to_post;
 
 void PostWorldChanges(const FlagChanges& changes) {
-    std::scoped_lock lock{flag_board_mutex};
     const auto shared = FlagsToShare(changes);
+    if (shared.empty() || TakeFlagsForTheLog(shared)) {
+        return;
+    }
+    std::scoped_lock lock{flag_board_mutex};
     flags_to_post.insert(flags_to_post.end(), shared.begin(), shared.end());
 }
 

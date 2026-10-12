@@ -284,8 +284,9 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 flag_board_since = board->latest;
                 if (!board->changes.empty()) {
                     std::scoped_lock lock{flag_board_mutex};
-                    flags_to_set.insert(flags_to_set.end(), board->changes.begin(),
-                                        board->changes.end());
+                    std::vector<std::pair<s32, bool>> changes = board->changes;
+                    FilterBoardFlags(changes);
+                    flags_to_set.insert(flags_to_set.end(), changes.begin(), changes.end());
                 }
             }
         }

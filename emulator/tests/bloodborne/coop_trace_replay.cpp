@@ -302,13 +302,13 @@ void CoopTraceReplay::WorldLogIn(const TraceRecord& record, std::vector<std::str
     if (!payload) {
         out.push_back(fmt::format("wlog-in: unreadable {} {}", role, op));
     } else if (role == "host") {
-        WorldLogHostIn(op, *payload, out);
+        WorldLogHostIn(op, *payload, record.utc_ms, out);
     } else {
         WorldLogMemberIn(op, *payload, record.utc_ms, out);
     }
 }
 
-void CoopTraceReplay::WorldLogHostIn(std::string_view op, std::span<const u8> payload,
+void CoopTraceReplay::WorldLogHostIn(std::string_view op, std::span<const u8> payload, s64 at,
                                      std::vector<std::string>& out) {
     std::vector<WorldLogEntry> entries;
     if (const auto start = op == "start" ? DecodeWorldLogStart(payload) : std::nullopt) {
@@ -325,6 +325,17 @@ void CoopTraceReplay::WorldLogHostIn(std::string_view op, std::span<const u8> pa
         entries = std::move(taken.entries);
     } else if (const auto show = op == "show" ? DecodeWorldLogShow(payload) : std::nullopt) {
         entries = wlog_host.Show(show->first, show->second);
+    } else if (const auto flags =
+                   op == "propose-flags" ? DecodeWorldLogFlagProposal(payload) : std::nullopt) {
+        WorldLogHost::Taken taken = wlog_host.ProposeFlags(*flags, at);
+        if (taken.stale) {
+            out.push_back(
+                fmt::format("wlog host dropped flags of another log from {}", flags->member));
+        }
+        entries = std::move(taken.entries);
+    } else if (const auto state =
+                   op == "map-state" ? DecodeWorldLogMapStateInput(payload) : std::nullopt) {
+        entries = wlog_host.MapState(state->map, state->bits);
     } else {
         out.push_back(fmt::format("wlog-in: unreadable host {}", op));
     }
@@ -340,6 +351,12 @@ void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> 
     if (op == "reset") {
         wlog_member.Reset();
         out.push_back("wlog member reset");
+        return;
+    }
+    if (op == "expect-map-state" && payload.size() == 1) {
+        wlog_member.ExpectMapState(payload[0] != 0);
+        out.push_back(payload[0] != 0 ? "wlog member expects map state snapshots"
+                                      : "wlog member expects no map state snapshots");
         return;
     }
     if (op == "expect-shown" && payload.size() == 1) {
@@ -359,6 +376,11 @@ void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> 
                    op == "shown-snapshot" ? DecodeWorldLogShownSnapshot(payload) : std::nullopt) {
         step = wlog_member.Take(*shown, at);
         host_last = shown->last;
+    } else if (const auto state = op == "map-state-snapshot"
+                                      ? DecodeWorldLogMapStateSnapshot(payload)
+                                      : std::nullopt) {
+        step = wlog_member.Take(*state, at);
+        host_last = state->last;
     } else {
         out.push_back(fmt::format("wlog-in: unreadable member {}", op));
         return;
@@ -374,6 +396,10 @@ void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> 
         if (wlog_member.ShownKnown()) {
             out.push_back(fmt::format("wlog member shown on {:#x}: {} characters",
                                       wlog_member.Shown().map, wlog_member.Shown().bits.size()));
+        }
+        if (wlog_member.MapStateKnown()) {
+            out.push_back(
+                fmt::format("wlog member map state of {:#x}", wlog_member.MapState().map));
         }
     }
     for (const WorldLogEntry& entry : step.applied) {
