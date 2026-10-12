@@ -6,6 +6,7 @@
 #include <bit>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +17,7 @@
 
 #include <fmt/format.h>
 
+#include "core/bloodborne_flags.h"
 #include "core/bloodborne_party.h"
 
 namespace Core::Bloodborne {
@@ -67,71 +69,193 @@ bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool 
     return in_session && reload_state != SummonReloadInProgress && !reload_pending;
 }
 
-const std::vector<CodePatch>& GhostDeathKeepSessionPatches() {
-    static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
-    static const std::vector<CodePatch> patches{
-        // PartyGhostDeath: SetEventFlag(4047, true) twice. 4047 marks a player on the way out;
-        // left set, it would also swallow a later "host left" for the revived guest.
-        {0x01381FE7, {0xE8, 0xB4, 0xC5, 0xFA, 0xFF}, nop5},
-        {0x01381FF6, {0xE8, 0xA5, 0xC5, 0xFA, 0xFF}, nop5},
-        // CustomLuaCallStart(4063, local player): the host's OnGameLeave drops us.
-        {0x0138201B, {0xE8, 0x20, 0xCD, 0xFA, 0xFF}, nop5},
-        // SetFlagInitState(2), the reset for the load into our own world.
-        {0x0138202F, {0xC7, 0x00, 0x02, 0x00, 0x00, 0x00}, {0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00}},
-        // PartyGhostDeath_1: skip MissionDeadFailed and OnRequestMenuEnd(PartyGhostDeath_2).
-        {PartyGhostDeathMenuBranchOffset, {0x75, 0x2C}, {0xEB, 0x2C}},
+std::vector<u8> HexBytes(std::string_view hex) {
+    std::vector<u8> bytes;
+    for (size_t at = 0; at + 1 < hex.size(); at += 3) {
+        u8 value = 0;
+        if (hex.substr(at, 2) != "??") {
+            std::from_chars(hex.data() + at, hex.data() + at + 2, value, 16);
+        }
+        bytes.push_back(value);
+    }
+    return bytes;
+}
+
+bool MatchesHexPattern(std::span<const u8> bytes, std::string_view pattern) {
+    const std::vector<u8> expected = HexBytes(pattern);
+    if (bytes.size() != expected.size()) {
+        return false;
+    }
+    for (size_t index = 0; index < expected.size(); ++index) {
+        if (pattern.substr(index * 3, 2) != "??" && bytes[index] != expected[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<std::string_view> AcceptedVariants(const CoopSite& site) {
+    std::vector<std::string_view> variants;
+    for (std::string_view rest = site.accepted; !rest.empty();) {
+        const size_t bar = rest.find('|');
+        variants.push_back(rest.substr(0, bar));
+        rest = bar == std::string_view::npos ? std::string_view{} : rest.substr(bar + 1);
+    }
+    return variants;
+}
+
+bool MatchesCoopSite(std::span<const u8> bytes, const CoopSite& site) {
+    return MatchesHexPattern(bytes, site.original) ||
+           std::ranges::any_of(AcceptedVariants(site), [bytes](std::string_view variant) {
+               return MatchesHexPattern(bytes, variant);
+           });
+}
+
+const CoopFeature* FindCoopFeature(std::string_view name) {
+    const auto found = std::ranges::find_if(
+        CoopFeatures, [name](const CoopFeature& feature) { return feature.name == name; });
+    return found == CoopFeatures.end() ? nullptr : &*found;
+}
+
+std::vector<CodePatch> CoopPatchesOf(std::string_view feature) {
+    std::vector<CodePatch> patches;
+    for (const CoopSite& site : CoopSites) {
+        if (site.feature == feature && site.kind == CoopSiteKind::Patch) {
+            patches.push_back({site.offset, HexBytes(site.original), HexBytes(site.patched)});
+        }
+    }
+    return patches;
+}
+
+const CoopSite* FirstMismatchedCoopSite(std::span<const u8> image, std::string_view feature) {
+    for (const CoopSite& site : CoopSites) {
+        if (site.feature != feature) {
+            continue;
+        }
+        const size_t size = HexBytes(site.original).size();
+        if (site.offset > image.size() || size > image.size() - site.offset ||
+            !MatchesCoopSite(image.subspan(site.offset, size), site)) {
+            return &site;
+        }
+    }
+    return nullptr;
+}
+
+bool IsRegisteredCoopHook(u64 offset, std::span<const u8> bytes) {
+    return std::ranges::any_of(CoopSites, [offset, bytes](const CoopSite& site) {
+        return site.kind == CoopSiteKind::Hook && site.offset == offset &&
+               std::ranges::equal(HexBytes(site.original), bytes);
+    });
+}
+
+std::string CoopSitesJson() {
+    const auto quoted = [](std::string_view text) {
+        std::string out = "\"";
+        for (const char c : text) {
+            if (c == '"' || c == '\\') {
+                out += '\\';
+            }
+            out += c;
+        }
+        return out + '"';
     };
+    std::string json = "{\n  \"generated_from\": \"emulator/src/core/bloodborne_patch_sites.h\",\n"
+                       "  \"features\": [\n";
+    for (size_t index = 0; index < CoopFeatures.size(); ++index) {
+        const CoopFeature& feature = CoopFeatures[index];
+        json += fmt::format("    {{\"name\": {}, \"required\": {}}}{}\n", quoted(feature.name),
+                            feature.required ? "true" : "false",
+                            index + 1 < CoopFeatures.size() ? "," : "");
+    }
+    json += "  ],\n  \"sites\": [\n";
+    for (size_t index = 0; index < CoopSites.size(); ++index) {
+        const CoopSite& site = CoopSites[index];
+        const char* kind = site.kind == CoopSiteKind::Patch  ? "patch"
+                           : site.kind == CoopSiteKind::Hook ? "hook"
+                                                             : "call";
+        std::string accepted;
+        for (const std::string_view variant : AcceptedVariants(site)) {
+            accepted += (accepted.empty() ? "" : ", ") + quoted(variant);
+        }
+        json += fmt::format("    {{\"name\": {}, \"feature\": {}, \"kind\": \"{}\", "
+                            "\"offset\": \"0x{:08X}\", \"original\": {}, \"patched\": {}, "
+                            "\"accepted\": [{}]}}{}\n",
+                            quoted(site.name), quoted(site.feature), kind, site.offset,
+                            quoted(site.original), quoted(site.patched), accepted,
+                            index + 1 < CoopSites.size() ? "," : "");
+    }
+    return json + "  ]\n}\n";
+}
+
+void CoopFeatureReport::Set(std::string_view feature, std::optional<std::string> skipped) {
+    const auto found = std::ranges::find_if(
+        results, [feature](const Result& result) { return result.feature == feature; });
+    if (found != results.end()) {
+        found->skipped = std::move(skipped);
+    } else {
+        results.push_back({std::string{feature}, std::move(skipped)});
+    }
+}
+
+void CoopFeatureReport::On(std::string_view feature) {
+    Set(feature, std::nullopt);
+}
+
+void CoopFeatureReport::Skipped(std::string_view feature, std::string reason) {
+    Set(feature, std::move(reason));
+}
+
+std::string CoopFeatureReport::Summary() const {
+    std::string skipped;
+    size_t on = 0;
+    for (const Result& result : results) {
+        if (!result.skipped) {
+            ++on;
+            continue;
+        }
+        skipped +=
+            fmt::format("{}{} [{}]", skipped.empty() ? "" : ", ", result.feature, *result.skipped);
+    }
+    std::string summary = fmt::format("Co-op features: {}/{} on", on, results.size());
+    if (!skipped.empty()) {
+        summary += fmt::format(" (skipped: {})", skipped);
+    }
+    return summary;
+}
+
+std::vector<std::string> CoopFeatureReport::SkippedRequired() const {
+    std::vector<std::string> required;
+    for (const Result& result : results) {
+        const CoopFeature* feature = FindCoopFeature(result.feature);
+        if (result.skipped && feature != nullptr && feature->required) {
+            required.push_back(result.feature);
+        }
+    }
+    return required;
+}
+
+const std::vector<CodePatch>& GhostDeathKeepSessionPatches() {
+    static const std::vector<CodePatch> patches = CoopPatchesOf("ghost death");
     return patches;
 }
 
 const std::vector<CodePatch>& GuestBloodstainPatches() {
-    static const std::vector<CodePatch> patches{
-        {0x0137EBC7, {0xB9, 0x30, 0x00, 0x00, 0x00}, {0xB9, 0x70, 0x00, 0x00, 0x00}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("guest bloodstain");
     return patches;
 }
 
 const std::vector<CodePatch>& NoEchoTheftPatches() {
-    // cmp byte [rax + 0xC0], 0 (stolen already); `je` to the steal -> nop nop (the return).
-    static const std::vector<CodePatch> patches{
-        {0x018E7613, {0x74, 0x09}, {0x90, 0x90}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("no echo theft");
     return patches;
 }
 
 const std::vector<CodePatch>& HostDeathKeepGuestsPatches() {
-    // `mov esi, 0xFCF` (start of the white phantom branch) -> `jmp HostDeadEpilogueOffset`.
-    static const std::vector<CodePatch> patches{
-        {0x013819C6, {0xBE, 0xCF, 0x0F, 0x00, 0x00}, {0xE9, 0x85, 0x00, 0x00, 0x00}},
-        // Character death step (0x018C49F0): skip removing the session's members from a dying
-        // host's world (`jne` -> `jmp` to the same target, then a nop).
-        {0x018C4D1D, {0x0F, 0x85, 0x97, 0x00, 0x00, 0x00}, {0xE9, 0x98, 0x00, 0x00, 0x00, 0x90}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("host death");
     return patches;
 }
 
 const std::vector<CodePatch>& BossClearKeepSessionPatches() {
-    static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
-    static const std::vector<CodePatch> patches{
-        // BlockClear2_2: CustomLuaCallStart(4063, local player), the white phantom's goodbye.
-        {0x013857AC, {0xE8, 0x8F, 0x95, 0xFA, 0xFF}, nop5},
-        // BlockClear2_2: OnKeyTime2(4050, "BlockClear2_3Leave"), LeaveSession for every member.
-        {0x01385877, {0xE8, 0x44, 0x59, 0xFA, 0xFF}, nop5},
-        // BlockClear2_3: clear 4047 and 4000 for white phantoms too (`jne` -> 2-byte nop).
-        {0x0138596D, {0x75, 0x1B}, {0x66, 0x90}},
-        // BlockClear2_3: skip the white phantom's reset and warp home (`jne` -> `jmp`).
-        {0x0138599C, {0x75, 0x46}, {0xEB, 0x46}},
-        // BlockClear2: the white phantom's SetLoadWait (event state +0x8D), which turns the
-        // action buttons off (SprjActionButtonMan +0x52) until the trip home it no longer takes.
-        {0x01384D03,
-         {0x41, 0xC6, 0x86, 0x8D, 0x00, 0x00, 0x00, 0x01},
-         {0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00}},
-        // SoloBlockClear (BlockClear2_1 outside a friends party, for a live player): return
-        // after the boss flags instead of StopRequest and the tail jump to LeaveSession.
-        {0x01385A4A,
-         {0x48, 0x8B, 0x05, 0x27, 0x0C, 0x1D, 0x04, 0x48, 0x8B, 0x98, 0xF8, 0x16, 0x00, 0x00},
-         {0x48, 0x83, 0xC4, 0x08, 0x5B, 0x41, 0x5E, 0x41, 0x5F, 0x5D, 0xC3, 0x0F, 0x1F, 0x00}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("boss clear");
     return patches;
 }
 
@@ -145,11 +269,7 @@ bool IsWorldReloadStopRequest(u64 caller_offset) {
 }
 
 const std::vector<CodePatch>& JoinAnywherePatches() {
-    static const std::vector<CodePatch> patches{
-        // `call EventFlagIsSet` -> `xor eax, eax` + a 3-byte nop; the `xor al, 1` after it
-        // then says the area is open.
-        {0x0191A8B5, {0xE8, 0x36, 0xF3, 0xA7, 0xFF}, {0x31, 0xC0, 0x0F, 0x1F, 0x00}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("join anywhere");
     return patches;
 }
 
@@ -237,15 +357,8 @@ bool IsSignTimerStore(std::span<const u8> bytes, const SignTimerSite& site) {
 }
 
 bool IsLampTravelFlag(s32 flag) {
-    // 7MMM01LL: map code MMM (241 = m24_01), lamp LL. Only the maps after the Hunter's Dream (210)
-    // up to the last ones (m36): the Dream has no lamp to travel from (the Doll's dialog sets
-    // 721001xx), and the flags of no map are the talks' own (Gilbert's talk sets 70000140, many
-    // NPCs 799001xx).
-    constexpr s32 HuntersDreamMapCode = 210;
-    constexpr s32 PastTheLastMapCode = 400;
-    const s32 map_code = flag / 10000 % 1000;
-    return flag >= 70000000 && flag < 80000000 && flag % 10000 / 100 == 1 &&
-           map_code > HuntersDreamMapCode && map_code < PastTheLastMapCode;
+    // 7MMM01LL: map code MMM (241 = m24_01), lamp LL (see FlagTable).
+    return RuleFor(flag).Has(FlagLampTrip);
 }
 
 bool LampRestsEnabled(const char* setting) {
@@ -601,7 +714,48 @@ bool IsOtherCharacter(s32 progress_now, s32 progress_kept) {
     // load clears some area flags (dozens to a few hundred: krolebord's restarts read 5800 set
     // against 5859 kept), so "far" is a quarter of what was kept.
     const s32 slack = std::max<s32>(20, progress_kept / 4);
-    return progress_kept > 0 && progress_now + slack < progress_kept;
+    // No world has 0 flags set: that is a store read mid-load, not a character.
+    return progress_kept > 0 && progress_now > 0 && progress_now + slack < progress_kept;
+}
+
+std::optional<s32> SettledFlagCount(std::optional<s32> first, std::optional<s32> second) {
+    if (!first || !second || *first <= 0 || *second <= 0) {
+        return std::nullopt;
+    }
+    // Two reads a moment apart differ by a few flags at most; more is a read torn by the load.
+    const s32 slack = std::max<s32>(20, std::max(*first, *second) / 100);
+    if (std::abs(*first - *second) > slack) {
+        return std::nullopt;
+    }
+    return std::max(*first, *second);
+}
+
+bool ForgetsSlotLists(std::optional<s32> progress_now, s32 progress_kept, bool new_in_slot) {
+    if (!progress_now || *progress_now <= 0) {
+        return false;
+    }
+    return new_in_slot || IsOtherCharacter(*progress_now, progress_kept);
+}
+
+std::string SlotBackupName(std::string_view file, std::string_view stamp) {
+    return fmt::format("{}.bak-{}", file, stamp);
+}
+
+std::vector<std::string> SlotBackupsToRemove(std::string_view file,
+                                             std::span<const std::string> names, size_t keep) {
+    const std::string prefix = SlotBackupName(file, "");
+    std::vector<std::string> backups;
+    for (const std::string& name : names) {
+        if (name.size() > prefix.size() && name.starts_with(prefix)) {
+            backups.push_back(name);
+        }
+    }
+    std::ranges::sort(backups);
+    if (backups.size() <= keep) {
+        return {};
+    }
+    backups.resize(backups.size() - keep);
+    return backups;
 }
 
 bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now) {
@@ -609,8 +763,7 @@ bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_n
 }
 
 bool IsMapPickupFlag(s32 flag) {
-    const bool chalice = flag >= 52900000 && flag < 53000000;
-    return flag >= 50000000 && flag < 54000000 && !chalice;
+    return RuleFor(flag).Has(FlagMapPickup);
 }
 
 std::string FormatFlagList(std::span<const s32> flags) {
@@ -659,13 +812,7 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 }
 
 bool CarriesToGuestWorld(s32 flag) {
-    const bool death_or_multiplayer = flag >= 4000 && flag < 5000;
-    const bool trip = IsLampTravelFlag(flag) || IsHeadstoneTravelFlag(flag);
-    const bool boss_fog = IsBossFogEntryFlag(flag) || IsBossFogEntryFlag(flag - 1);
-    // The bell's bookkeeping (common events 9181-9198), not progress.
-    const bool bell = flag >= 9180 && flag < 9200;
-    return flag > 0 && !death_or_multiplayer && !trip && !boss_fog && !bell &&
-           !IsMapPickupFlag(flag);
+    return RuleFor(flag).Has(FlagCarriesHome);
 }
 
 bool GameThreadStalled(s64 now_ms, s64 last_tick_ms) {
@@ -673,8 +820,7 @@ bool GameThreadStalled(s64 now_ms, s64 last_tick_ms) {
 }
 
 std::span<const s32> ShopLineFlags() {
-    static constexpr std::array<s32, 10> flags{12101000, 12101001, 12101002, 12101003, 12101004,
-                                               12101005, 12101006, 12101007, 12101008, 12101009};
+    static constexpr auto flags = FlagsWith<FlagShopLine>();
     return flags;
 }
 
@@ -688,7 +834,8 @@ std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map) {
     if (!guest || !in_session || map == 0 || map == HuntersDream) {
         return {};
     }
-    return {9401, 9403};
+    const auto flags = FlagsWith<FlagGuestSetsInWorld>();
+    return {flags.begin(), flags.end()};
 }
 
 std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp,
@@ -737,28 +884,12 @@ std::string FormatGameAddresses(std::span<const u64> words, u64 image_base, u64 
 }
 
 bool IsBossFogEntryFlag(s32 flag) {
-    // The flag each boss fog's host event sets and its phantom event waited for (found by
-    // party_boss_events.py's open_boss_fog_for_guests in the 01.09 map event files).
-    static constexpr std::array<s32, 21> Flags{
-        12104800, 12104850, 12204800, 12304700, 12304800, 12404800, 12414700,
-        12414800, 12424700, 12424800, 12504800, 12604800, 12604850, 12704800,
-        12804800, 13304800, 13404808, 13404858, 13504808, 13504858, 13604808,
-    };
-    return std::ranges::find(Flags, flag) != Flags.end();
+    return RuleFor(flag).Has(FlagBossFogEntry);
 }
 
 bool KeepsLocalFlag(bool party_configured, s32 flag) {
-    constexpr s32 FirstMessengerGift = 12101020;
-    constexpr s32 LastMessengerGift = 12101029;
-    constexpr s32 FirstMessengerPick = 72101000;
-    constexpr s32 LastMessengerPick = 72101099;
-    const bool gift = flag >= FirstMessengerGift && flag <= LastMessengerGift;
-    const bool pick = flag >= FirstMessengerPick && flag <= LastMessengerPick;
-    const bool found =
-        std::ranges::any_of(EncounterInsights(), [flag](const EncounterInsight& boss) {
-            return boss.once_flag == flag;
-        });
-    return party_configured && (gift || pick || found);
+    // The messengers' gifts and pick, each boss's "found" flag (see FlagTable).
+    return party_configured && RuleFor(flag).owner == FlagOwner::PerPlayer;
 }
 
 std::span<const EncounterInsight> EncounterInsights() {
@@ -832,8 +963,8 @@ std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
 }
 
 bool SharedWithParty(s32 flag) {
-    return LampOfActiveFlag(flag).has_value() || LampOfActiveFlag(flag - 1).has_value() ||
-           IsBossFogEntryFlag(flag);
+    // A lamp's active flags, a boss fog's "entered" flag (see FlagTable).
+    return RuleFor(flag).owner == FlagOwner::Shared;
 }
 
 std::optional<s32> LampOfActiveFlag(s32 flag) {
@@ -1017,10 +1148,7 @@ s32 MapFlagBase(u32 packed_map) {
 }
 
 bool TakesHostMapFlag(s32 flag) {
-    const s32 prefix = flag / MapFlagCount;
-    const bool map_flag = prefix >= 1200 && prefix < 1400;
-    const bool boss_fog = IsBossFogEntryFlag(flag) || IsBossFogEntryFlag(flag - 1);
-    return map_flag && !boss_fog && !IsMapPickupFlag(flag) && !KeepsLocalFlag(true, flag);
+    return RuleFor(flag).Has(FlagTakesHostMap);
 }
 
 std::string EncodeMapStateUpdate(std::string_view member, u32 map, std::span<const u8> bits) {
@@ -1861,6 +1989,25 @@ bool NpcTurnsIntoWanderGhost(bool in_party_session, bool param_says_wander_ghost
     return param_says_wander_ghost && !in_party_session;
 }
 
+bool IsGameVtable(u64 vtable, u64 image_base, std::span<const u64> vtables) {
+    return image_base != 0 && vtable >= image_base &&
+           std::ranges::find(vtables, vtable - image_base) != vtables.end();
+}
+
+bool RefusedCallLog::FirstTime(std::string_view site, u64 vtable) {
+    if (logged.size() >= MaxLogged) {
+        return false;
+    }
+    return logged.emplace(std::string{site}, vtable).second;
+}
+
+std::string DescribeVtable(u64 vtable, u64 image_base, u64 image_size) {
+    if (image_base != 0 && vtable >= image_base && vtable - image_base < image_size) {
+        return fmt::format("eboot+{:#x}", vtable - image_base);
+    }
+    return fmt::format("{:#x}", vtable);
+}
+
 const std::array<u8, GuestItemPickupAllowedOffset + 8>& SoloMapItemStandIn() {
     static const auto stand_in = [] {
         std::array<u8, GuestItemPickupAllowedOffset + 8> bytes{};
@@ -1904,7 +2051,7 @@ u32 PackedMapOfWarpPoint(s32 warp_point) {
 }
 
 bool IsHeadstoneTravelFlag(s32 flag) {
-    return flag >= 72102000 && flag < 72104000;
+    return RuleFor(flag).Has(FlagHeadstoneTrip);
 }
 
 s32 HeadstoneWarpPoint(s32 flag) {
@@ -2199,13 +2346,7 @@ std::size_t RemoveBellIcons(std::span<u8> sp_effect_param) {
 }
 
 const std::vector<CodePatch>& QuietSummonBannerPatches() {
-    static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
-    static const std::vector<CodePatch> patches{
-        // STEP_C2H_Init_forSelfPrologue: the arriving member's "Discovered the chime of a ...".
-        {0x0196B4C9, {0xE8, 0xB2, 0x49, 0x29, 0x00}, nop5},
-        // STEP_C2H_Init_forOthersPrologue: the same for the members it arrives to.
-        {0x0196B9F4, {0xE8, 0x87, 0x44, 0x29, 0x00}, nop5},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("quiet summon banners");
     return patches;
 }
 
@@ -3040,6 +3181,96 @@ std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload) {
         kills.handles.push_back(ReadLittleEndian<u32>(payload, start + index * 4));
     }
     return kills;
+}
+
+std::vector<u8> EncodePeerHello(const PeerHello& hello) {
+    std::vector<u8> payload{hello.protocol};
+    const size_t revision = std::min<size_t>(hello.revision.size(), 0xFF);
+    payload.push_back(static_cast<u8>(revision));
+    payload.insert(payload.end(), hello.revision.begin(), hello.revision.begin() + revision);
+    AppendLittleEndian(payload, hello.event_files);
+    const size_t member = std::min<size_t>(hello.member.size(), 0xFF);
+    payload.push_back(static_cast<u8>(member));
+    payload.insert(payload.end(), hello.member.begin(), hello.member.begin() + member);
+    return payload;
+}
+
+std::optional<PeerHello> DecodePeerHello(std::span<const u8> payload) {
+    if (payload.size() < 2 || payload.size() < 2u + payload[1] + 8u + 1u) {
+        return std::nullopt;
+    }
+    PeerHello hello{.protocol = payload[0]};
+    const size_t revision = payload[1];
+    hello.revision.assign(payload.begin() + 2, payload.begin() + 2 + revision);
+    hello.event_files = ReadLittleEndian<u64>(payload, 2 + revision);
+    const size_t member_at = 2 + revision + 8;
+    const size_t member = payload[member_at];
+    if (payload.size() < member_at + 1 + member) {
+        return std::nullopt;
+    }
+    hello.member.assign(payload.begin() + member_at + 1, payload.begin() + member_at + 1 + member);
+    return hello;
+}
+
+std::optional<std::string> PeerBuildCheck::Take(const PeerHello& theirs, const PeerHello& mine) {
+    // A game that could not read its event files (0) says nothing about them.
+    const bool events_differ =
+        theirs.event_files != 0 && mine.event_files != 0 && theirs.event_files != mine.event_files;
+    if (theirs.protocol == mine.protocol && theirs.revision == mine.revision && !events_differ) {
+        return std::nullopt;
+    }
+    if (!warned.emplace(theirs.member, theirs.protocol, theirs.revision, theirs.event_files)
+             .second) {
+        return std::nullopt;
+    }
+    std::string line = fmt::format("Co-op: {} runs build {}, this game runs {}",
+                                   theirs.member.empty() ? "a peer" : theirs.member,
+                                   theirs.revision.empty() ? "?" : theirs.revision,
+                                   mine.revision.empty() ? "?" : mine.revision);
+    if (theirs.protocol != mine.protocol) {
+        line += fmt::format(" (co-op protocol {}, this game's {})", theirs.protocol, mine.protocol);
+    }
+    if (events_differ) {
+        line += fmt::format("; event files {:016x}, this game's {:016x}", theirs.event_files,
+                            mine.event_files);
+    }
+    return line;
+}
+
+u64 EventFilesHash(const std::filesystem::path& folder) {
+    std::error_code error;
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator{folder, error}) {
+        const std::string name = entry.path().filename().string();
+        if (name.ends_with(".emevd.dcx")) {
+            files.push_back(entry.path());
+        }
+    }
+    if (files.empty()) {
+        return 0;
+    }
+    std::ranges::sort(files);
+    // FNV-1a over each file's name and bytes.
+    u64 hash = 0xcbf29ce484222325ull;
+    const auto mix = [&hash](std::span<const char> bytes) {
+        for (const char byte : bytes) {
+            hash = (hash ^ static_cast<u8>(byte)) * 0x100000001b3ull;
+        }
+    };
+    std::vector<char> chunk(1 << 16);
+    for (const auto& path : files) {
+        const std::string name = path.filename().string();
+        mix(name);
+        std::ifstream file{path, std::ios::binary};
+        if (!file) {
+            return 0;
+        }
+        while (file.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) ||
+               file.gcount() > 0) {
+            mix(std::span{chunk.data(), static_cast<size_t>(file.gcount())});
+        }
+    }
+    return hash != 0 ? hash : 1;
 }
 
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills) {

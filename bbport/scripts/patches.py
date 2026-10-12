@@ -150,11 +150,20 @@ def debug_menu_problem(game):
             f'in dvdroot_ps4 of the game folder or of a mod: missing {", ".join(missing)}{hint}')
 
 
+# Game patches that cannot go together: (kept, dropped, why). The effect switches keep the first
+# and drop the second with a message; a patch list naming both is refused. (Patches over the
+# co-op sites are the other kind of conflict: see coop_conflicts.)
+EXCLUSIVE_PATCHES=[
+    ('Restore Debug Camera','Enemy Control','it conflicts with the free camera: same buttons'),
+]
+
+
 def validate_patch_requirements(names, game):
     """The patches to apply: raises for conflicts; drops the debug menu (with a message) when its
     font files are missing, as the game crashes opening the menu without them."""
-    if 'Restore Debug Camera' in names and 'Enemy Control' in names:
-        raise ValueError('Restore Debug Camera conflicts with Enemy Control; enable only one')
+    for kept,dropped,_ in EXCLUSIVE_PATCHES:
+        if kept in names and dropped in names:
+            raise ValueError(f'{kept} conflicts with {dropped}; enable only one')
     if DEBUG_MENU in names:
         problem=debug_menu_problem(game)
         if problem:
@@ -173,10 +182,10 @@ def effect_patches(settings):
         if key not in settings: continue
         name=on if settings[key]=='1' else off
         if name: names.append(name)
-    # Enemy Control and the free camera use the same buttons: the free camera wins.
-    if 'Enemy Control' in names and 'Restore Debug Camera' in names:
-        names.remove('Enemy Control')
-        print('Patches: Enemy Control skipped (it conflicts with the free camera)')
+    for kept,dropped,why in EXCLUSIVE_PATCHES:
+        if kept in names and dropped in names:
+            names.remove(dropped)
+            print(f'Patches: {dropped} skipped ({why})')
     # Rally that never decays means nothing without Rally.
     if 'No Rally Decay' in names and 'Disable Rally (HP Regain)' in names:
         names.remove('No Rally Decay')
@@ -283,6 +292,11 @@ def encode(line):
 
 
 def compile_patches(xml, names, app_version, segments):
+    return [(offset,data) for _,offset,data in compile_named(xml,names,app_version,segments)]
+
+
+def compile_named(xml, names, app_version, segments):
+    """compile_patches with each write's patch name: [(name, offset, data)]."""
     found={}
     for meta in ET.parse(xml).getroot().iter('Metadata'):
         if meta.get('Name') in names and meta.get('AppVer')==app_version and meta.get('AppElf','eboot.bin')=='eboot.bin':
@@ -296,7 +310,7 @@ def compile_patches(xml, names, app_version, segments):
             data=encode(line)
             if not any(start<=offset and offset+len(data)<=end for start,end in segments):
                 raise ValueError(f'{name}: address {line.get("Address")} is outside the eboot')
-            writes.append((offset,data))
+            writes.append((name,offset,data))
     return writes
 
 
@@ -339,6 +353,11 @@ def external_selection(found, config):
 
 def compile_external(selected, segments):
     """Writes of the selected external patches; a patch with unsupported lines is skipped whole."""
+    return [(offset,data) for _,offset,data in compile_external_named(selected,segments)]
+
+
+def compile_external_named(selected, segments):
+    """compile_external with each write's patch key: [(key, offset, data)]."""
     writes=[]
     for key,_,meta in selected:
         try:
@@ -352,9 +371,66 @@ def compile_external(selected, segments):
         except ValueError as error:
             print(f'Patches: skipped {key}: {error}',file=sys.stderr)
             continue
-        writes+=ours
+        writes+=[(key,offset,data) for offset,data in ours]
         print(f'Patches: external {key} ({len(ours)} writes)')
     return writes
+
+
+# The co-op site table: every place in the eboot seamless co-op patches, hooks or calls
+# (emulator/src/core/bloodborne_patch_sites.h; its unit test writes this copy). The game patches
+# here are applied before co-op installs: one that writes over a co-op site makes co-op skip that
+# feature ("Uncap FPS++" once rewrote the sign timers and joins were slow for two days unnoticed).
+COOP_SITES=Path(__file__).resolve().parent.parent/'patches/coop-sites.json'
+
+
+def load_coop_sites(path=COOP_SITES):
+    """{'features': {name: required}, 'sites': [{name, feature, kind, offset, original, accepted}]}
+    with offsets as ints and the original bytes as bytes."""
+    table=json.loads(Path(path).read_text(encoding='utf-8'))
+    sites=[dict(site,offset=int(site['offset'],16),original=bytes.fromhex(site['original']))
+           for site in table['sites']]
+    return {'features':{f['name']:f['required'] for f in table['features']},'sites':sites}
+
+
+def matches_pattern(data, pattern):
+    """Whether DATA is the hex PATTERN ("C7 43 28 ?? ...", ?? for any byte)."""
+    pairs=pattern.split()
+    return len(data)==len(pairs) and all(p=='??' or int(p,16)==b for p,b in zip(pairs,data))
+
+
+def matches_coop_site(data, site):
+    return bytes(data)==site['original'] or any(matches_pattern(data,v) for v in site['accepted'])
+
+
+def coop_conflicts(named_writes, coop=None):
+    """[(patch, site name, offset, feature, required)] for every co-op site that the writes
+    [(patch, offset, data)] leave holding neither its original bytes nor a variant the table
+    accepts, once per patch that wrote over it."""
+    coop=coop or load_coop_sites()
+    conflicts=[]
+    for site in coop['sites']:
+        start,end=site['offset'],site['offset']+len(site['original'])
+        data=bytearray(site['original'])
+        writers=[]
+        for name,offset,value in named_writes:
+            if offset<end and start<offset+len(value):
+                first,last=max(offset,start),min(offset+len(value),end)
+                data[first-start:last-start]=value[first-offset:last-offset]
+                if name not in writers: writers.append(name)
+        if writers and not matches_coop_site(data,site):
+            required=coop['features'][site['feature']]
+            conflicts+=[(name,site['name'],start,site['feature'],required) for name in writers]
+    return conflicts
+
+
+def report_coop_conflicts(conflicts, out=sys.stderr):
+    """Says, loudly, which game patch breaks which co-op feature (the launcher shows this output
+    and keeps it in last_run.log)."""
+    for name,site,offset,feature,required in conflicts:
+        kind='required' if required else 'optional'
+        print(f'Patches: CO-OP CONFLICT: "{name}" writes over {site} at {offset+EBOOT_BASE:#x}, '
+              f'a site of co-op feature "{feature}" ({kind}); seamless co-op skips that feature. '
+              'Turn the patch off to play co-op with it.',file=out)
 
 
 def main():
@@ -409,23 +485,30 @@ def main():
         names.append(SKIP_NETWORK_CHOICE)
     names=validate_patch_requirements(names,a.game_dir)
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
-    writes=compile_patches(a.xml,names,a.app_version,segments)
+    named=compile_named(a.xml,names,a.app_version,segments)
     size=render_size(read_settings(a.settings),a.render_res) if a.render_res else None
     # The UI keeps the game's 1920x1080 coordinates even for a larger output: the port draws
     # it into the output-size image with a viewport scaled by output / 1920
     # (UiComposition::NativeViewport), so it is rasterized at the output resolution.
     ui=OUTPUT_SIZE
     if size:
-        writes+=resolution_writes(a.xml,size,a.app_version,segments,ui)
+        named+=[(RESOLUTION_TEMPLATE,offset,data)
+                for offset,data in resolution_writes(a.xml,size,a.app_version,segments,ui)]
         if size[0]*size[1]>OUTPUT_SIZE[0]*OUTPUT_SIZE[1]:
             heap='Increased Graphics Heap Sizes'
-            writes+=compile_patches(a.xml,[heap],a.app_version,segments)
+            named+=compile_named(a.xml,[heap],a.app_version,segments)
             names.append(heap)
         print(f'Patches: scene {size[0]}x{size[1]}; UI {ui[0]}x{ui[1]}')
     if a.patches_dir:
         # After the built-in ones: an external patch of the same bytes wins.
-        writes+=compile_external(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
-                                                    a.patches_config),segments)
+        named+=compile_external_named(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
+                                                         a.patches_config),segments)
+    try:
+        report_coop_conflicts(coop_conflicts(named))
+    except (OSError, ValueError, KeyError) as error:
+        # A missing or damaged table must not keep the game from starting.
+        print(f'Patches: co-op sites not checked ({error})',file=sys.stderr)
+    writes=[(offset,data) for _,offset,data in named]
     # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
     # relocated slots (60/90 FPS++ replace function pointers).
     blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,len(writes))

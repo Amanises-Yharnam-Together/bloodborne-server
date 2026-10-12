@@ -6,6 +6,16 @@ mechanic simpler or more reliable. No mixed parties (port and shadPS4 players ne
 leave/rejoin a session as a fix: everything is seamless. See docs/BBPORT.md for how the port and
 its co-op are wired, built, packaged and tested.
 
+## One table for the event flags (branch flag-table, 2026-10-12)
+
+- Whether an event flag is the host's, each player's own, shared by the party or only for the
+  session was decided by a dozen hand-written helpers; tonight's bugs (Insight twice, Dream doors,
+  the bell, a boss's "found" Insight) were each a flag in the wrong group. Now one table,
+  `FlagTable` / `RuleFor` in `emulator/src/core/bloodborne_flags.h`, holds every rule and the
+  helpers read it. Nothing decides differently: the old helpers' answers over ~0.5M flags are
+  recorded in `tests/bloodborne/flag_rules_expected.txt` and the table must match them. The table
+  in plain words: docs/FLAGS.md. A new flag rule is a new row there.
+
 ## Damage straight from game to game, and the stuck third summon (2026-10-11 evening)
 
 - **Direct damage over the P2P link.** Each game's HP board report also goes to every room peer

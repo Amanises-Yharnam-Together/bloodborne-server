@@ -7,7 +7,9 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <string>
 #ifdef _WIN32
@@ -87,6 +89,26 @@ extern "C" void bbcoop_install(unsigned char* image, uint64_t eboot_size, void* 
     MemoryPatcher::g_eboot_image_size = eboot_size;
     // The build, as the emulator logs it: the rig checks that every game runs the same one.
     LOG_INFO(Loader, "Run: Revision {}", BB_SCM_REV);
+    // What a log needs to compare two players' games, in one line: the build, the launcher's frame
+    // rate preset and extra patches (patches.py's names; the patches themselves are compiled
+    // into patches.bin), and the map event files the game reads (the kit's co-op ones over the
+    // game's). The build and the event files also go to the room's peers (PeerHello).
+    const u64 event_files = Core::Bloodborne::EventFilesHash(
+        std::filesystem::path{game_folder.empty() ? "." : game_folder} / "dvdroot_ps4" / "event");
+    Core::Bloodborne::SetBuildIdentity(BB_SCM_REV, event_files);
+    const auto environment = [](const char* name, const char* absent) {
+        const char* value = std::getenv(name);
+        return std::string{value != nullptr && *value != '\0' ? value : absent};
+    };
+    char started[32] = "?";
+    const std::time_t now = std::time(nullptr);
+    if (const std::tm* utc = std::gmtime(&now)) {
+        std::strftime(started, sizeof(started), "%Y-%m-%d %H:%M:%S", utc);
+    }
+    LOG_INFO(
+        Loader, "Co-op: started {} UTC, build {}, FPS preset {}, extra patches {}, event files {}",
+        started, BB_SCM_REV, environment("BB_FPS_PRESET", "?"), environment("BB_PATCHES", "none"),
+        event_files != 0 ? fmt::format("{:016x}", event_files) : std::string{"unread"});
     if (code != nullptr) {
         Core::RegisterPatchModule(image, eboot_size, code, code_size);
     }

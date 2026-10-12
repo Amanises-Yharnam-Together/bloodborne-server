@@ -592,6 +592,9 @@ struct PatchModule {
     /// Tracker for patched code locations.
     std::set<u8*> patched;
 
+    /// Guest code hooks: the game's instructions each one replaced.
+    std::map<u8*, std::vector<u8>> guest_hooks;
+
     /// Code generator for patching the module.
     Xbyak::CodeGenerator patch_gen;
 
@@ -2272,6 +2275,36 @@ static bool InstallGuestHook(void* address, std::span<const u8> expected_instruc
     }
 
     module->patched.insert(code);
+    module->guest_hooks.emplace(
+        code, std::vector<u8>(expected_instructions.begin(), expected_instructions.end()));
+    return true;
+}
+
+bool RemoveGuestCodeHook(void* address) {
+    auto* code = static_cast<u8*>(address);
+    auto* module = GetContainingModule(code);
+    if (module == nullptr) {
+        return false;
+    }
+    std::unique_lock lock{module->mutex};
+    const auto hook = module->guest_hooks.find(code);
+    if (hook == module->guest_hooks.end()) {
+        return false;
+    }
+    try {
+        auto& patch = module->patch_gen;
+        patch.reset();
+        patch.setSize(code - patch.getCode());
+        for (const u8 byte : hook->second) {
+            patch.db(byte);
+        }
+    } catch (const Xbyak::Error& error) {
+        LOG_ERROR(Core, "Could not remove guest code hook at {}: {}", fmt::ptr(code), error.what());
+        return false;
+    }
+    // The trampoline stays where it is, unused.
+    module->patched.erase(code);
+    module->guest_hooks.erase(hook);
     return true;
 }
 

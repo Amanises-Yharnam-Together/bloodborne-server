@@ -142,55 +142,7 @@ constexpr u64 RoleMetadataTableOffset = 0x0553D750;
 constexpr u64 SummonBuildRoleTableOffset = 0x0556E560;
 constexpr u64 RoleMetadataStride = 0x80;
 constexpr s32 RoleMetadataCount = 34;
-constexpr u64 BeckoningAreaComparisonOffset = 0x0157F8C8;
-constexpr std::array<u8, 6> BeckoningAreaComparison{0x0F, 0x87, 0x90, 0x00, 0x00, 0x00};
-constexpr std::array<u8, 6> BeckoningSignedAreaComparison{0x0F, 0x8F, 0x90, 0x00, 0x00, 0x00};
-constexpr u64 BeckoningAreaFlagResultOffset = 0x0157F960;
-constexpr std::array<u8, 2> BeckoningAreaFlagResult{0x34, 0x01};
-constexpr std::array<u8, 2> BeckoningAllowedAreaFlagResult{0x31, 0xC0};
-constexpr u64 ResponderBellAreaResultOffset = 0x0157F6D1;
-constexpr std::array<u8, 2> ResponderBellAreaResult{0x88, 0xC3};
-constexpr std::array<u8, 2> ResponderBellAllowedAreaResult{0xB1, 0x01};
-constexpr u64 ResponderBellCommonResultOffset = 0x0157F6D3;
-constexpr std::array<u8, 8> ResponderBellCommonResult{0x4C, 0x89, 0xF7, 0xE8,
-                                                      0xF5, 0x9F, 0x34, 0x00};
-constexpr std::array<u8, 8> ResponderBellAllowedCommonResult{0xE9, 0xE9, 0x09, 0x00,
-                                                             0x00, 0x90, 0x90, 0x90};
-constexpr u64 ActiveBellAreaComparisonOffset = 0x015068BB;
-constexpr std::array<u8, 2> ActiveBellAreaComparison{0x77, 0x4A};
-constexpr std::array<u8, 2> ActiveBellSignedAreaComparison{0x7F, 0x4A};
-constexpr u64 ActiveBellAreaFlagResultOffset = 0x015068FC;
-constexpr std::array<u8, 5> ActiveBellAreaFlagResult{0x88, 0xC3, 0x80, 0xF3, 0x01};
-constexpr std::array<u8, 5> ActiveBellAllowedAreaFlagResult{0xB3, 0x01, 0x90, 0x90, 0x90};
-constexpr u64 ResponderSearchAreaRangeResultOffset = 0x0191A8C3;
-constexpr std::array<u8, 6> ResponderSearchAreaRangeResult{0x18, 0xC9, 0x20, 0xC1, 0xEB, 0x02};
-constexpr std::array<u8, 6> ResponderSearchSignedAreaRangeResult{0x7D, 0x04, 0x88,
-                                                                 0xC1, 0xEB, 0x02};
-constexpr u64 SosStatusAreaRestrictionOffset = 0x018700D3;
-constexpr std::array<u8, 16> SosStatusAreaRestriction{
-    0x84, 0xC0, 0x41, 0xBD, 0xFF, 0xFF, 0xFF, 0xFF, 0x44, 0x0F, 0x44, 0xEB, 0x41, 0xC1, 0xED, 0x1F,
-};
-constexpr std::array<u8, 16> SosStatusAllowedArea{
-    0x45, 0x31, 0xED, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
-};
-constexpr u64 SummonCandidateAreaRestrictionOffset = 0x014B714A;
-constexpr std::array<u8, 6> SummonCandidateAreaRestriction{0x0F, 0x85, 0xC0, 0x03, 0x00, 0x00};
-constexpr std::array<u8, 6> SummonCandidateAllowedCrossMap{0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
-constexpr u64 SummonBuildAreaRestrictionOffset = 0x01874B79;
-constexpr std::array<u8, 2> SummonBuildAreaRestriction{0x74, 0x0D};
-constexpr std::array<u8, 2> SummonBuildAllowedCrossMap{0xEB, 0x0D};
-constexpr u64 SummonBuildWorldStateRestrictionOffset = 0x018749E8;
-constexpr std::array<u8, 6> SummonBuildWorldStateRestriction{
-    0x0F, 0x85, 0x48, 0x01, 0x00, 0x00,
-};
-constexpr std::array<u8, 6> SummonBuildAllowedWorldState{0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
-constexpr u64 SummonBuildNegativeEventRestrictionOffset = 0x018749F0;
-constexpr std::array<u8, 6> SummonBuildNegativeEventRestriction{
-    0x0F, 0x88, 0x40, 0x01, 0x00, 0x00,
-};
-constexpr std::array<u8, 6> SummonBuildAllowedNegativeEvent{0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
-constexpr u64 StageTransitionStopMatchingCallOffset = 0x019471B1;
-// Same world teardown (0x019470F0), where it loads the session rules to decide whether to stop
+// The world teardown (0x019470F0), where it loads the session rules to decide whether to stop
 // matching (mov rbx,[rax]; cmp [rbx+0x84],3). No RIP-relative code, so it can be hooked.
 constexpr u64 WorldTeardownMatchingOffset = 0x0194716E;
 // PartyGhostDeath_1's `cmp byte ptr [r14+0xC], 0` (ClearBoss), right before the menu branch that
@@ -212,8 +164,6 @@ constexpr u64 ChrResetAnimationOffset = 0x013370F0;
 // Native SoloPlayDeath_2: the local player's death respawn (bloodstain, warp to the last lamp).
 constexpr u64 SoloPlayDeathRespawnOffset = 0x01381DE0;
 
-constexpr std::array<u8, 5> StageTransitionStopMatchingCall{0xE8, 0xEA, 0x95, 0x58, 0x00};
-constexpr std::array<u8, 5> StageTransitionKeepMatchingCall{0xE8, 0xEA, 0x8E, 0x58, 0x00};
 constexpr u64 SummonBuildEntryOffset = 0x01874710;
 constexpr u64 SosStatusUpdateOffset = 0x01872360;
 constexpr u64 StageWarpDescriptorFinalizeOffset = 0x01944F23;
@@ -964,6 +914,96 @@ std::string BytesToHex(std::span<const u8> bytes) {
     return out.str();
 }
 
+// What the co-op install did with each feature (see CoopFeatureReport), logged in one line at its
+// end.
+CoopFeatureReport coop_features;
+
+void LogCoopFeatures() {
+    if (coop_features.SkippedRequired().empty()) {
+        LOG_INFO(Debug, "{}", coop_features.Summary());
+    } else {
+        LOG_ERROR(Debug, "{}", coop_features.Summary());
+    }
+}
+
+std::span<const u8> EbootImage(u64 base, u64 image_size) {
+    return {reinterpret_cast<const u8*>(base), static_cast<size_t>(image_size)};
+}
+
+// Whether every site of `feature` holds the bytes the co-op site table has for it; if not, logs
+// the first that does not, with what the player loses, and reports the feature skipped.
+bool CoopSitesMatch(u64 base, u64 image_size, std::string_view feature,
+                    std::string_view consequence) {
+    const CoopSite* site = FirstMismatchedCoopSite(EbootImage(base, image_size), feature);
+    if (site == nullptr) {
+        return true;
+    }
+    const size_t size = HexBytes(site->original).size();
+    const auto actual = site->offset <= image_size && size <= image_size - site->offset
+                            ? EbootImage(base, image_size).subspan(site->offset, size)
+                            : std::span<const u8>{};
+    LOG_ERROR(Debug, "Bloodborne {} signature mismatch at {:#x} ({}): expected={} actual={}; {}",
+              feature, site->offset, site->name, site->original, BytesToHex(actual), consequence);
+    coop_features.Skipped(feature, fmt::format("signature mismatch at {:#x}", site->offset));
+    return false;
+}
+
+// The first site of `feature` the game does not hold as the table has it, as a reason.
+std::string FeatureMismatch(u64 base, u64 image_size, std::string_view feature) {
+    const CoopSite* site = FirstMismatchedCoopSite(EbootImage(base, image_size), feature);
+    return site != nullptr ? fmt::format("signature mismatch at {:#x}", site->offset)
+                           : std::string{"not found"};
+}
+
+// Why a hook at `offset` did not go in: the game's bytes there, or the hook itself.
+std::string SiteFailure(u64 base, u64 image_size, u64 offset) {
+    const std::span<const u8> image = EbootImage(base, image_size);
+    for (const CoopSite& site : CoopSites) {
+        const size_t size = HexBytes(site.original).size();
+        if (site.offset == offset && site.kind == CoopSiteKind::Hook &&
+            (offset > image.size() || size > image.size() - offset ||
+             !MatchesCoopSite(image.subspan(offset, size), site))) {
+            return fmt::format("signature mismatch at {:#x}", offset);
+        }
+    }
+    return fmt::format("hook failed at {:#x}", offset);
+}
+
+void WriteCoopPatches(u64 base, std::string_view feature) {
+    for (const CodePatch& patch : CoopPatchesOf(feature)) {
+        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
+                    patch.patched.size());
+    }
+}
+
+// The guest code hooks of co-op, each checked against the co-op site table first: the launcher
+// warns about game patches over the sites it lists, so a hook missing from it is a bug (logged,
+// and still installed).
+void CheckCoopHookRegistered(const void* address, std::span<const u8> bytes) {
+    const u64 offset = reinterpret_cast<u64>(address) - MemoryPatcher::g_eboot_address;
+    if (!IsRegisteredCoopHook(offset, bytes)) {
+        LOG_ERROR(Debug, "Bloodborne hook at {:#x} ({} bytes) is not in the co-op site table",
+                  offset, bytes.size());
+    }
+}
+
+bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestCodeHook hook) {
+    CheckCoopHookRegistered(address, bytes);
+    return InstallGuestCodeHook(address, bytes, tag, hook);
+}
+
+bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag,
+                     GuestFunctionOverride hook) {
+    CheckCoopHookRegistered(address, bytes);
+    return InstallGuestFunctionOverride(address, bytes, tag, hook);
+}
+
+bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag,
+                     GuestRegisterEditHook hook) {
+    CheckCoopHookRegistered(address, bytes);
+    return InstallGuestRegisterEditHook(address, bytes, tag, hook);
+}
+
 bool HasMemoryAccess(u64 address, size_t size, MemoryProt required) {
     if (size == 0 || address > std::numeric_limits<u64>::max() - size) {
         return false;
@@ -984,23 +1024,81 @@ bool HasMemoryAccess(u64 address, size_t size, MemoryProt required) {
            address + size <= reinterpret_cast<u64>(mapping_end);
 }
 
+// The value at address + offset, or nothing when that memory is not readable (for reads where 0
+// means something, which ReadValue would give then).
 template <typename T>
-T ReadValue(u64 address, size_t offset) {
+std::optional<T> TryRead(u64 address, size_t offset) {
     T value{};
     if (address > std::numeric_limits<u64>::max() - offset) {
-        return value;
+        return std::nullopt;
     }
     const u64 source = address + offset;
     if (source > std::numeric_limits<u64>::max() - sizeof(value)) {
-        return value;
+        return std::nullopt;
     }
 
     if (!HasMemoryAccess(source, sizeof(value), MemoryProt::CpuRead)) {
-        return value;
+        return std::nullopt;
     }
 
     std::memcpy(&value, reinterpret_cast<const void*>(source), sizeof(value));
     return value;
+}
+
+template <typename T>
+T ReadValue(u64 address, size_t offset) {
+    return TryRead<T>(address, offset).value_or(T{});
+}
+
+// A guarded call (`site`) refused an object that is there (see RefusedCallLog): logged once per
+// site and vtable seen, so a wrong pointer or a vtable list missing a class shows in the log.
+void LogRefusedCall(std::string_view site, u64 object) {
+    if (object < 0x10000) {
+        return; // no object: nothing to say
+    }
+    const u64 vtable = TryRead<u64>(object, 0).value_or(0);
+    static std::mutex mutex;
+    static RefusedCallLog logged;
+    {
+        std::scoped_lock lock{mutex};
+        if (!logged.FirstTime(site, vtable)) {
+            return;
+        }
+    }
+    LOG_WARNING(Debug, "Bloodborne refused a game call: {} got an object ({:#x}) with vtable {}",
+                site, object,
+                DescribeVtable(vtable, image_base, MemoryPatcher::g_eboot_image_size));
+}
+
+// Whether `object` is one of the game objects `vtables` names (see CharacterVtables): checked
+// before the game is called with it (`site`, for the log when it is not).
+bool HasVtable(u64 object, std::span<const u64> vtables, std::string_view site) {
+    const auto vtable = object >= 0x10000 ? TryRead<u64>(object, 0) : std::nullopt;
+    if (vtable.has_value() && IsGameVtable(*vtable, image_base, vtables)) {
+        return true;
+    }
+    LogRefusedCall(site, object);
+    return false;
+}
+
+bool HasVtable(u64 object, u64 vtable, std::string_view site) {
+    return HasVtable(object, std::span<const u64>{&vtable, 1}, site);
+}
+
+bool IsCharacter(u64 object, std::string_view site) {
+    return HasVtable(object, CharacterVtables, site);
+}
+
+// Whether the object's virtual at `slot` is the 01.09 function at `function` (e.g. the
+// character's AddSpEffect): before a call through it, or a direct call that stands for it.
+bool HasVirtual(u64 object, u64 slot, u64 function, std::string_view site) {
+    const u64 vtable = object >= 0x10000 ? TryRead<u64>(object, 0).value_or(0) : 0;
+    if (image_base != 0 && vtable >= 0x10000 &&
+        TryRead<u64>(vtable, slot) == std::optional<u64>{image_base + function}) {
+        return true;
+    }
+    LogRefusedCall(site, object);
+    return false;
 }
 
 template <typename T>
@@ -1621,14 +1719,8 @@ void ApplyPreMatchCrossMapGuestWarp() {
 // Starts the bell's summon search directly (see StartSummonSearch), only through the player's own
 // add-effect virtual, and only if it is the 01.09 function we verified at startup.
 bool StartPlayerSummonSearch(u64 player, s32 effect_id) {
-    if (image_base == 0 || player < 0x10000 ||
-        !HasMemoryAccess(player, sizeof(u64), MemoryProt::CpuRead)) {
-        return false;
-    }
-    const u64 vtable = ReadValue<u64>(player, 0);
-    if (vtable < 0x10000 ||
-        !HasMemoryAccess(vtable + CharacterAddSpEffectSlot, sizeof(u64), MemoryProt::CpuRead) ||
-        ReadValue<u64>(vtable, CharacterAddSpEffectSlot) != image_base + AddSpEffectOffset) {
+    if (!HasVirtual(player, CharacterAddSpEffectSlot, AddSpEffectOffset,
+                    "StartPlayerSummonSearch AddSpEffect")) {
         LOG_WARNING(Debug,
                     "Bloodborne summon search skipped: player {:#x} has no 01.09 "
                     "add-effect virtual",
@@ -1819,10 +1911,11 @@ u64 OwnBloodstain() {
     return list >= 0x10000 ? ReadValue<u64>(list, 8) : 0;
 }
 
-// A stain object the show can take: readable, and its marker (+0x88) and effect (+0x98) either
-// absent or readable (the show frees them first).
+// A stain object the show can take: the stain (its vtable), readable, and its marker (+0x88) and
+// effect (+0x98) either absent or readable (the show frees them first).
 bool LooksLikeBloodstain(u64 stain) {
-    if (stain < 0x10000 || !HasMemoryAccess(stain, 0xC8, MemoryProt::CpuRead)) {
+    if (!HasVtable(stain, BloodstainVtable, "ShowGuestBloodstain") ||
+        !HasMemoryAccess(stain, 0xC8, MemoryProt::CpuRead)) {
         return false;
     }
     for (const u64 offset : {u64{0x88}, u64{0x98}}) {
@@ -1893,7 +1986,7 @@ void ShowGuestBloodstain() {
     const u64 stain = OwnBloodstain();
     const bool party_guest =
         party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect;
-    const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
+    const bool loading = global < 0x10000 || TryRead<u8>(global, 0x08).value_or(1) != 0;
     if (!LooksLikeBloodstain(stain) ||
         !ShowsGuestBloodstain(party_guest, InPartySession(), loading,
                               ReadValue<u8>(data, 0x28) != 0, ReadValue<s32>(record, 0x38),
@@ -2555,57 +2648,82 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
                      std::span<const u8>{StandardR15Prologue.data(), 6}) ||
         !starts_with(BonfireRegeneOffset, std::span<const u8>{StandardR15Prologue.data(), 6})) {
         LOG_ERROR(Debug, "Bloodborne rest functions not found; lamps stay locked in a session");
+        coop_features.Skipped("lamps", FeatureMismatch(base, image_size, "lamps"));
         return;
     }
     if (EsdIsMultiplayerResultOffset + EsdIsMultiplayerResult.size() > image_size ||
         TalkSetEventFlagRangeOffset + TalkSetEventFlagRange.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkSetEventFlagRangeOffset),
-                                      TalkSetEventFlagRange, 0, RestInsteadOfLampTravel)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + TalkSetEventFlagRangeOffset),
+                         TalkSetEventFlagRange, 0, RestInsteadOfLampTravel)) {
         LOG_ERROR(Debug, "Bloodborne lamp rest hook unavailable; lamps stay locked in a session");
+        coop_features.Skipped("lamps", SiteFailure(base, image_size, TalkSetEventFlagRangeOffset));
         return;
     }
-    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdIsMultiplayerResultOffset),
-                                      EsdIsMultiplayerResult, 0, LetPartyUseLamps)) {
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + EsdIsMultiplayerResultOffset),
+                         EsdIsMultiplayerResult, 0, LetPartyUseLamps)) {
         LOG_ERROR(Debug, "Bloodborne lamp multiplayer hook unavailable; lamps stay locked in a "
                          "session");
+        coop_features.Skipped("lamps", SiteFailure(base, image_size, EsdIsMultiplayerResultOffset));
         return;
     }
-    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EventRestartStateOffset),
-                                      EventRestartState, 0, SkipEventRestartForPartyRest)) {
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + EventRestartStateOffset), EventRestartState,
+                         0, SkipEventRestartForPartyRest)) {
         LOG_ERROR(Debug, "Bloodborne party rest would restart the event scripts; lamps stay "
                          "locked in a session");
+        coop_features.Skipped("lamps", SiteFailure(base, image_size, EventRestartStateOffset));
         return;
     }
     const u32 no_respawn = 0x2000000;
     std::memcpy(no_respawn_param.data() + 0x145, &no_respawn, sizeof(no_respawn));
     no_respawn_param_holder[1] = reinterpret_cast<u64>(no_respawn_param.data());
     for (const u64 offset : RespawnParamChecks) {
-        if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + offset), RespawnParamCheck,
-                                          0, RespawnOnlyTheDead)) {
+        if (!InstallCoopHook(reinterpret_cast<void*>(base + offset), RespawnParamCheck, 0,
+                             RespawnOnlyTheDead)) {
             LOG_ERROR(Debug, "Bloodborne party rest would respawn the living; lamps stay locked "
                              "in a session");
+            coop_features.Skipped("lamps", SiteFailure(base, image_size, offset));
             return;
         }
     }
-    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdFunctionIdOffset),
-                                      EsdFunctionId, 0, NoteEsdFunction) ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdFunctionResultOffset),
-                                      EsdFunctionResult, 0, NoteEsdAnswer) ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdDialogResultOffset),
-                                      EsdFunctionResult, 0, NoteEsdDialogAnswer) ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkCommandIdOffset),
-                                      TalkCommandId, 0, NoteTalkCommand)) {
+    coop_features.On("lamps");
+    struct TalkProbe {
+        u64 offset;
+        std::span<const u8> bytes;
+        GuestRegisterEditHook hook;
+    };
+    const std::array<TalkProbe, 4> probes{{
+        {EsdFunctionIdOffset, EsdFunctionId, NoteEsdFunction},
+        {EsdFunctionResultOffset, EsdFunctionResult, NoteEsdAnswer},
+        {EsdDialogResultOffset, EsdFunctionResult, NoteEsdDialogAnswer},
+        {TalkCommandIdOffset, TalkCommandId, NoteTalkCommand},
+    }};
+    const auto probe_failed = std::ranges::find_if(probes, [base](const TalkProbe& probe) {
+        return !InstallCoopHook(reinterpret_cast<void*>(base + probe.offset), probe.bytes, 0,
+                                probe.hook);
+    });
+    if (probe_failed != probes.end()) {
         LOG_ERROR(Debug, "Bloodborne talk diagnostics unavailable");
+        coop_features.Skipped("talk diagnostics",
+                              SiteFailure(base, image_size, probe_failed->offset));
+    } else {
+        coop_features.On("talk diagnostics");
     }
-    if (!InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + TalkPhantomCheckOffset),
-                                      TalkPhantomCheck, 0, LetPartyGuestsStartTalksLikeTheHost)) {
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + TalkPhantomCheckOffset), TalkPhantomCheck,
+                         0, LetPartyGuestsStartTalksLikeTheHost)) {
         LOG_ERROR(Debug, "Bloodborne talk phantom hook unavailable; party guests get no lamps");
+        coop_features.Skipped("talk phantom",
+                              SiteFailure(base, image_size, TalkPhantomCheckOffset));
+    } else {
+        coop_features.On("talk phantom");
     }
     host_like_talk[3] = reinterpret_cast<u64>(host_like_talker.data()); // +0x18
     if (EsdTalkerTypeOffset + EsdTalkerType.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + EsdTalkerTypeOffset),
-                                      EsdTalkerType, 0, LetPartyGuestsTalkLikeTheHost)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + EsdTalkerTypeOffset), EsdTalkerType, 0,
+                         LetPartyGuestsTalkLikeTheHost)) {
         LOG_ERROR(Debug, "Bloodborne talk hook unavailable; party guests get no lamp prompt");
+        coop_features.Skipped("talk host", SiteFailure(base, image_size, EsdTalkerTypeOffset));
+    } else {
+        coop_features.On("talk host");
     }
     lamp_rest_hooks_installed = true;
     LOG_INFO(Debug, "Bloodborne lamps as campfires: a party rests at its lamps together");
@@ -3107,7 +3225,8 @@ void HideCharactersAgain() {
         ForEachWorldCharacter(world, [&](u64 character) { current.insert(character); });
     }
     for (const u64 character : hidden_characters) {
-        if (current.contains(character) && !IsCharacterDisabled(character)) {
+        if (current.contains(character) && IsCharacter(character, "HideCharactersAgain") &&
+            !IsCharacterDisabled(character)) {
             reinterpret_cast<void PS4_SYSV_ABI (*)(u64, bool)>(
                 image_base + SetCharacterDisabledOffset)(character, true);
             ++hidden;
@@ -3128,7 +3247,7 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
         .request_full_recover =
             [] {
                 reinterpret_cast<bool PS4_SYSV_ABI (*)()>(image_base + RequestFullRecoverOffset)();
-                if (const u64 player = GetLocalPlayer(); player >= 0x10000) {
+                if (const u64 player = GetLocalPlayer(); IsCharacter(player, "BonfireRegene")) {
                     reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(
                         image_base + BonfireRegeneOffset)(player, 0);
                 }
@@ -3543,53 +3662,41 @@ void InstallGhostDeathRevive(u64 base, u64 image_size) {
                       "Bloodborne ghost-death signature mismatch at {:#x}; deaths still send "
                       "guests home",
                       patch.offset);
+            coop_features.Skipped("ghost death",
+                                  fmt::format("signature mismatch at {:#x}", patch.offset));
             return;
         }
     }
     const auto site = std::ranges::find_if(
         Sites, [](const TraceSite& site) { return site.offset == GhostDeathReviveOffset; });
     if (site == Sites.end() ||
-        !InstallGuestCodeHook(reinterpret_cast<void*>(base + GhostDeathReviveOffset),
-                              std::span<const u8>{site->prologue.data(), site->prologue_size},
-                              static_cast<size_t>(std::distance(Sites.begin(), site)),
-                              TraceEntry)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + GhostDeathReviveOffset),
+                         std::span<const u8>{site->prologue.data(), site->prologue_size},
+                         static_cast<size_t>(std::distance(Sites.begin(), site)), TraceEntry)) {
         LOG_ERROR(Debug, "Failed to install Bloodborne ghost-death revive hook at {:#x}",
                   GhostDeathReviveOffset);
+        coop_features.Skipped("ghost death", SiteFailure(base, image_size, GhostDeathReviveOffset));
         return;
     }
     ghost_death_revive_hook_installed = true;
-    for (const auto& patch : patches) {
-        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
-                    patch.patched.size());
-    }
+    WriteCoopPatches(base, "ghost death");
+    coop_features.On("ghost death");
     // Optional: without it the guest's stain is still dropped, it just can't pick it up.
-    const auto& stain_patches = GuestBloodstainPatches();
-    if (std::ranges::all_of(stain_patches, [&](const CodePatch& patch) {
-            return MatchesImage(base, image_size, patch);
-        })) {
-        for (const auto& patch : stain_patches) {
-            std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
-                        patch.patched.size());
-        }
-    } else {
-        LOG_ERROR(Debug, "Bloodborne guest bloodstain pickup patch signature mismatch");
+    if (CoopSitesMatch(base, image_size, "guest bloodstain",
+                       "a guest cannot pick up its own bloodstain")) {
+        WriteCoopPatches(base, "guest bloodstain");
+        coop_features.On("guest bloodstain");
     }
     LOG_INFO(Debug, "Bloodborne ghost-death patch: party guests revive in the host's world");
 }
 
 // See NoEchoTheftPatches: no enemy steals a bloodstain, in or out of a party.
 void InstallNoEchoTheft(u64 base, u64 image_size) {
-    const auto& patches = NoEchoTheftPatches();
-    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
-            return MatchesImage(base, image_size, patch);
-        })) {
-        LOG_ERROR(Debug, "Bloodborne no-echo-theft patch signature mismatch");
+    if (!CoopSitesMatch(base, image_size, "no echo theft", "enemies steal bloodstains")) {
         return;
     }
-    for (const auto& patch : patches) {
-        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
-                    patch.patched.size());
-    }
+    WriteCoopPatches(base, "no echo theft");
+    coop_features.On("no echo theft");
     LOG_INFO(Debug, "Bloodborne no echo theft: enemies leave bloodstains where they are");
 }
 
@@ -3597,66 +3704,54 @@ void InstallNoEchoTheft(u64 base, u64 image_size) {
 // HostDead's warp home. All-or-nothing: guests that stay with a host that reloads its world
 // would be stranded.
 void InstallHostDeathKeepsGuests(u64 base, u64 image_size) {
-    const auto& patches = HostDeathKeepGuestsPatches();
-    if (!world_teardown_hook_installed ||
-        !std::ranges::all_of(patches, [&](const CodePatch& patch) {
-            return MatchesImage(base, image_size, patch);
-        })) {
+    if (!world_teardown_hook_installed) {
         LOG_ERROR(Debug, "Bloodborne host-death patch unavailable; host deaths send guests home");
+        coop_features.Skipped("host death", "needs world teardown");
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "host death", "host deaths send guests home")) {
         return;
     }
     const auto site = std::ranges::find_if(
         Sites, [](const TraceSite& site) { return site.offset == SoloPlayDeathRespawnOffset; });
     if (site == Sites.end() ||
-        !InstallGuestFunctionOverride(
-            reinterpret_cast<void*>(base + SoloPlayDeathRespawnOffset),
-            std::span<const u8>{site->prologue.data(), site->prologue_size},
-            static_cast<size_t>(std::distance(Sites.begin(), site)), OverrideHostDeathRespawn)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + SoloPlayDeathRespawnOffset),
+                         std::span<const u8>{site->prologue.data(), site->prologue_size},
+                         static_cast<size_t>(std::distance(Sites.begin(), site)),
+                         OverrideHostDeathRespawn)) {
         LOG_ERROR(Debug, "Failed to install Bloodborne host-death respawn hook at {:#x}",
                   SoloPlayDeathRespawnOffset);
+        coop_features.Skipped("host death",
+                              SiteFailure(base, image_size, SoloPlayDeathRespawnOffset));
         return;
     }
     host_death_respawn_hook_installed = true;
-    for (const auto& patch : patches) {
-        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
-                    patch.patched.size());
-    }
+    WriteCoopPatches(base, "host death");
+    coop_features.On("host death");
     LOG_INFO(Debug, "Bloodborne host-death patch: a host with a party revives without a reload");
 }
 
 // A boss kill keeps the party together: nobody leaves the session and the guest is not warped
 // home. All-or-nothing: half of it would leave a guest in a session its host already left.
 void InstallBossClearKeepsSession(u64 base, u64 image_size) {
-    const auto& patches = BossClearKeepSessionPatches();
-    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
-            return MatchesImage(base, image_size, patch);
-        })) {
-        LOG_ERROR(Debug, "Bloodborne boss-clear patch signature mismatch; boss kills end sessions");
+    if (!CoopSitesMatch(base, image_size, "boss clear", "boss kills end sessions")) {
         return;
     }
-    for (const auto& patch : patches) {
-        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
-                    patch.patched.size());
-    }
+    WriteCoopPatches(base, "boss clear");
+    coop_features.On("boss clear");
     LOG_INFO(Debug, "Bloodborne boss-clear patch: a boss kill keeps the session");
 }
 
 // A party joins in any area, whatever the player's own world has opened (see JoinAnywherePatches).
 void InstallJoinAnywhere(u64 base, u64 image_size) {
-    const auto& patches = JoinAnywherePatches();
     if (!party_controller) {
         return;
     }
-    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
-            return MatchesImage(base, image_size, patch);
-        })) {
-        LOG_ERROR(Debug, "Bloodborne join-anywhere patch unavailable; closed areas stay closed");
+    if (!CoopSitesMatch(base, image_size, "join anywhere", "closed areas stay closed")) {
         return;
     }
-    for (const auto& patch : patches) {
-        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
-                    patch.patched.size());
-    }
+    WriteCoopPatches(base, "join anywhere");
+    coop_features.On("join anywhere");
     LOG_INFO(Debug, "Bloodborne join-anywhere patch: a party joins in any area");
 }
 
@@ -3693,12 +3788,14 @@ void InstallBossDeathTracer(u64 base, u64 image_size) {
     for (u64 index = 0; index < sites.size(); ++index) {
         const DeathFlagSite& site = sites[index];
         if (site.offset + site.instruction.size() > image_size ||
-            !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + site.offset),
-                                          site.instruction, index, TraceCharacterDeath)) {
+            !InstallCoopHook(reinterpret_cast<void*>(base + site.offset), site.instruction, index,
+                             TraceCharacterDeath)) {
             LOG_ERROR(Debug, "Bloodborne boss-death tracer unavailable at {:#x}", site.offset);
+            coop_features.Skipped("boss death tracer", SiteFailure(base, image_size, site.offset));
             return;
         }
     }
+    coop_features.On("boss death tracer");
     LOG_INFO(Debug, "Bloodborne boss-death tracer: big characters' deaths are logged with their "
                     "call chain");
 }
@@ -3745,21 +3842,14 @@ void StartSaveBackups() {
 
 // See QuietSummonBannerPatches: a party's joins show one banner, not two.
 void InstallQuietSummonBanners(u64 base, u64 image_size) {
-    const auto& patches = QuietSummonBannerPatches();
     if (!party_controller) {
         return;
     }
-    if (!std::ranges::all_of(patches, [&](const CodePatch& patch) {
-            return MatchesImage(base, image_size, patch);
-        })) {
-        LOG_ERROR(Debug, "Bloodborne summon banner patch signature mismatch; joins keep the "
-                         "chime banner");
+    if (!CoopSitesMatch(base, image_size, "quiet summon banners", "joins keep the chime banner")) {
         return;
     }
-    for (const auto& patch : patches) {
-        std::memcpy(reinterpret_cast<void*>(base + patch.offset), patch.patched.data(),
-                    patch.patched.size());
-    }
+    WriteCoopPatches(base, "quiet summon banners");
+    coop_features.On("quiet summon banners");
     LOG_INFO(Debug, "Bloodborne summon banner patch: no chime banner before a join's own");
 }
 
@@ -3772,13 +3862,18 @@ constexpr u64 LoadWaitOffset = 0x8D;
 constexpr u64 ActionButtonManPointerOffset = 0x05540048;
 
 void InstallGuestStaysWhenTheHostLeaves(u64 base, u64 image_size) {
-    if (!party_controller || LeaveLimitOffset + LeaveLimitPrologue.size() > image_size ||
-        !InstallGuestFunctionOverride(reinterpret_cast<void*>(base + LeaveLimitOffset),
-                                      LeaveLimitPrologue, 0, StayWhenTheHostLeaves)) {
-        LOG_ERROR(Debug, "Bloodborne leave-limit hook unavailable; a guest whose host leaves "
-                         "goes home");
+    if (!party_controller) {
         return;
     }
+    if (LeaveLimitOffset + LeaveLimitPrologue.size() > image_size ||
+        !InstallCoopHook(reinterpret_cast<void*>(base + LeaveLimitOffset), LeaveLimitPrologue, 0,
+                         StayWhenTheHostLeaves)) {
+        LOG_ERROR(Debug, "Bloodborne leave-limit hook unavailable; a guest whose host leaves "
+                         "goes home");
+        coop_features.Skipped("host leaves", SiteFailure(base, image_size, LeaveLimitOffset));
+        return;
+    }
+    coop_features.On("host leaves");
     LOG_INFO(Debug, "Bloodborne party guests stay where they are when their host leaves");
 }
 
@@ -3796,6 +3891,8 @@ void PatchSignTimers(u64 base, u64 image_size) {
                       "keeping the game's sign timers",
                       site.offset,
                       BytesToHex(std::span<const u8>{found, std::min<size_t>(expected.size(), 8)}));
+            coop_features.Skipped("sign timers",
+                                  fmt::format("signature mismatch at {:#x}", site.offset));
             return;
         }
     }
@@ -3803,6 +3900,7 @@ void PatchSignTimers(u64 base, u64 image_size) {
         const auto patched = EncodeSignTimerStore(site.modrm, site.patched_seconds);
         std::memcpy(reinterpret_cast<void*>(base + site.offset), patched.data(), patched.size());
     }
+    coop_features.On("sign timers");
     LOG_INFO(Debug, "Bloodborne sign timers patched: first post after {} s, re-post every {} s",
              FirstSignPostDelaySeconds, SignRepostSeconds);
 }
@@ -4564,12 +4662,14 @@ void InstallNoLevelSyncInParty(u64 base, u64 image_size) {
         return;
     }
     if (LevelSyncDecisionOffset + LevelSyncDecision.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + LevelSyncDecisionOffset),
-                                      LevelSyncDecision, 0, KeepPartyGuestsLevel)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + LevelSyncDecisionOffset), LevelSyncDecision,
+                         0, KeepPartyGuestsLevel)) {
         LOG_ERROR(Debug, "Bloodborne level sync hook unavailable; party guests are synced to the "
                          "host's level");
+        coop_features.Skipped("level sync", SiteFailure(base, image_size, LevelSyncDecisionOffset));
         return;
     }
+    coop_features.On("level sync");
     LOG_INFO(Debug, "Bloodborne party guests keep their own level (no effect {})", LevelSyncEffect);
 }
 
@@ -4597,15 +4697,18 @@ void InstallSolidNpcsInParty(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
     }
-    if (NpcWanderCheckOffset + NpcWanderCheck.size() > image_size ||
-        NpcWanderTypeCheckOffset + NpcWanderTypeCheck.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + NpcWanderCheckOffset),
-                                      NpcWanderCheck, 0, KeepNpcsSolidForPartyGuests) ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + NpcWanderTypeCheckOffset),
-                                      NpcWanderTypeCheck, 0, KeepNpcsSolidForPartyGuests)) {
-        LOG_ERROR(Debug, "Bloodborne NPC hooks unavailable; party guests see NPCs as ghosts");
-        return;
+    for (const auto& [offset, bytes] :
+         {std::pair<u64, std::span<const u8>>{NpcWanderCheckOffset, NpcWanderCheck},
+          std::pair<u64, std::span<const u8>>{NpcWanderTypeCheckOffset, NpcWanderTypeCheck}}) {
+        if (offset + bytes.size() > image_size ||
+            !InstallCoopHook(reinterpret_cast<void*>(base + offset), bytes, 0,
+                             KeepNpcsSolidForPartyGuests)) {
+            LOG_ERROR(Debug, "Bloodborne NPC hooks unavailable; party guests see NPCs as ghosts");
+            coop_features.Skipped("solid NPCs", SiteFailure(base, image_size, offset));
+            return;
+        }
     }
+    coop_features.On("solid NPCs");
     LOG_INFO(Debug, "Bloodborne party guests see NPCs as the host does");
 }
 
@@ -4751,6 +4854,8 @@ void GiveGuestsFullEchoes(u64 base, u64 image_size) {
             !std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(base + offset), 8},
                                 GuestEchoRateLoadBytes[index])) {
             LOG_ERROR(Debug, "Bloodborne guest echo rate not found at {:#x}", offset);
+            coop_features.Skipped("full echoes",
+                                  fmt::format("signature mismatch at {:#x}", offset));
             return;
         }
     }
@@ -4760,11 +4865,15 @@ void GiveGuestsFullEchoes(u64 base, u64 image_size) {
             RetargetRipLoad(GuestEchoRateLoadBytes[index], offset, FullEchoRateOffset);
         std::memcpy(reinterpret_cast<void*>(base + offset), patched.data(), patched.size());
     }
+    coop_features.On("full echoes");
     LOG_INFO(Debug, "Bloodborne party guests get full echoes from kills");
     if (AddSoulsOffset + AddSoulsPrologue.size() > image_size ||
-        !InstallGuestCodeHook(reinterpret_cast<void*>(base + AddSoulsOffset), AddSoulsPrologue, 0,
-                              NoteAddSouls)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + AddSoulsOffset), AddSoulsPrologue, 0,
+                         NoteAddSouls)) {
         LOG_ERROR(Debug, "Bloodborne echo diagnostics unavailable");
+        coop_features.Skipped("echo diagnostics", SiteFailure(base, image_size, AddSoulsOffset));
+    } else {
+        coop_features.On("echo diagnostics");
     }
 }
 
@@ -4787,35 +4896,62 @@ void InstallSharedLoot(u64 base, u64 image_size) {
     }
     GiveGuestsFullEchoes(base, image_size);
     if (MenuClientConditionOffset + MenuClientCondition.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + MenuClientConditionOffset),
-                                      MenuClientCondition, 0, MenusTreatPartyGuestsAsHosts)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + MenuClientConditionOffset),
+                         MenuClientCondition, 0, MenusTreatPartyGuestsAsHosts)) {
         LOG_ERROR(Debug, "Bloodborne menu client hook unavailable");
+        coop_features.Skipped("menu client",
+                              SiteFailure(base, image_size, MenuClientConditionOffset));
+    } else {
+        coop_features.On("menu client");
     }
     if (MapItemPacketHeaderOffset + MapItemPacketHeader.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + MapItemPacketHeaderOffset),
-                                      MapItemPacketHeader, 0, IgnorePartyMapItemSync)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + MapItemPacketHeaderOffset),
+                         MapItemPacketHeader, 0, IgnorePartyMapItemSync)) {
         LOG_ERROR(Debug, "Bloodborne map item sync hook unavailable; the host's sync clears the "
                          "guest's map items");
+        coop_features.Skipped("map item sync",
+                              SiteFailure(base, image_size, MapItemPacketHeaderOffset));
+    } else {
+        coop_features.On("map item sync");
     }
+    struct LootHook {
+        u64 offset;
+        std::span<const u8> bytes;
+        GuestRegisterEditHook edit;
+    };
+    const std::array<LootHook, 5> loot_hooks{{
+        {MapItemCreateStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest},
+        {MapItemCreateSessionCheckOffset, MapItemCreateSessionCheck, CreateMapItemsInJoinedSession},
+        {MapItemHandleStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest},
+        {MapItemTakeStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest},
+        {MapItemHandleSessionCheckOffset, MapItemHandleSessionCheck,
+         GiveMapItemsAHandleInJoinedSession},
+    }};
     const auto hook = [base, image_size](u64 offset, std::span<const u8> bytes,
                                          GuestRegisterEditHook edit) {
         return offset + bytes.size() <= image_size &&
-               InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + offset), bytes, 0, edit);
+               InstallCoopHook(reinterpret_cast<void*>(base + offset), bytes, 0, edit);
     };
-    if (!hook(MapItemCreateStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest) ||
-        !hook(MapItemCreateSessionCheckOffset, MapItemCreateSessionCheck,
-              CreateMapItemsInJoinedSession) ||
-        !hook(MapItemHandleStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest) ||
-        !hook(MapItemTakeStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest) ||
-        !hook(MapItemHandleSessionCheckOffset, MapItemHandleSessionCheck,
-              GiveMapItemsAHandleInJoinedSession)) {
+    const auto loot_failed = std::ranges::find_if(loot_hooks, [&hook](const LootHook& loot) {
+        return !hook(loot.offset, loot.bytes, loot.edit);
+    });
+    if (loot_failed != loot_hooks.end()) {
         LOG_ERROR(Debug, "Bloodborne map item hooks unavailable; party guests see no map items");
+        coop_features.Skipped("shared loot", SiteFailure(base, image_size, loot_failed->offset));
         return;
     }
+    coop_features.On("shared loot");
+    std::optional<u64> pickup_failed;
     for (const u64 offset : MapItemPickupChecks) {
         if (!hook(offset, MapItemPickupCheck, LetPartyGuestPickUpMapItems)) {
             LOG_ERROR(Debug, "Bloodborne map item pickup hook unavailable at {:#x}", offset);
+            pickup_failed = pickup_failed.value_or(offset);
         }
+    }
+    if (pickup_failed) {
+        coop_features.Skipped("map item pickup", SiteFailure(base, image_size, *pickup_failed));
+    } else {
+        coop_features.On("map item pickup");
     }
     LOG_INFO(Debug, "Bloodborne party guests see and pick up their own map items");
 }
@@ -4824,13 +4960,20 @@ void InstallItemModuleDiagnostics(u64 base, u64 image_size) {
     if (!party_controller || !EnvFlagEnabled("SHADPS4_BLOODBORNE_RE_TRACE")) {
         return;
     }
+    std::optional<u64> failed;
     for (size_t index = 0; index < ItemModuleChecks.size(); ++index) {
         const ItemModuleCheck& check = ItemModuleChecks[index];
         if (check.offset + check.bytes.size() > image_size ||
-            !InstallGuestCodeHook(reinterpret_cast<void*>(base + check.offset), check.bytes, index,
-                                  CountItemModuleCheck)) {
+            !InstallCoopHook(reinterpret_cast<void*>(base + check.offset), check.bytes, index,
+                             CountItemModuleCheck)) {
             LOG_ERROR(Debug, "Bloodborne item diagnostics: no hook at {:#x}", check.offset);
+            failed = failed.value_or(check.offset);
         }
+    }
+    if (failed) {
+        coop_features.Skipped("item diagnostics", SiteFailure(base, image_size, *failed));
+    } else {
+        coop_features.On("item diagnostics");
     }
 }
 
@@ -4896,22 +5039,27 @@ void PS4_SYSV_ABI NoteItemButton(u64 tag, const GuestRegisterSnapshot* registers
 // On in every co-op game (was SHADPS4_BLOODBORNE_RE_TRACE only): a host could not pick up
 // items after its guest's crash (friend run 2026-10-09) and the logs could not say where the
 // pickup stopped. Six counting hooks, logged with the map items when they change.
-void InstallItemButtonDiagnostics(u64 base) {
+void InstallItemButtonDiagnostics(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
     }
-    const auto probe = [base](u64 offset, std::span<const u8> bytes, u64 tag) {
-        return InstallGuestCodeHook(reinterpret_cast<void*>(base + offset), bytes, tag,
-                                    NoteItemButton);
-    };
-    if (!probe(ItemButtonUpdateOffset, ItemButtonUpdate, 0) ||
-        !probe(ItemButtonFoundOffset, ItemButtonFound, 1) ||
-        !probe(ItemButtonNotBusyOffset, ItemButtonPlayerLoad, 2) ||
-        !probe(ItemButtonPressedOffset, ItemButtonPlayerLoad, 3) ||
-        !probe(MapItemSearchExaminedOffset, MapItemSearchExamined, 4) ||
-        !probe(MapItemSearchInRangeOffset, MapItemSearchInRange, 5)) {
-        LOG_ERROR(Debug, "Bloodborne item button diagnostics unavailable");
+    const std::array<std::pair<u64, std::span<const u8>>, 6> probes{{
+        {ItemButtonUpdateOffset, ItemButtonUpdate},
+        {ItemButtonFoundOffset, ItemButtonFound},
+        {ItemButtonNotBusyOffset, ItemButtonPlayerLoad},
+        {ItemButtonPressedOffset, ItemButtonPlayerLoad},
+        {MapItemSearchExaminedOffset, MapItemSearchExamined},
+        {MapItemSearchInRangeOffset, MapItemSearchInRange},
+    }};
+    for (u64 tag = 0; tag < probes.size(); ++tag) {
+        const auto& [offset, bytes] = probes[tag];
+        if (!InstallCoopHook(reinterpret_cast<void*>(base + offset), bytes, tag, NoteItemButton)) {
+            LOG_ERROR(Debug, "Bloodborne item button diagnostics unavailable");
+            coop_features.Skipped("item button diagnostics", SiteFailure(base, image_size, offset));
+            return;
+        }
     }
+    coop_features.On("item button diagnostics");
 }
 
 // The local player's position, where the map item search reads it
@@ -5036,7 +5184,7 @@ constexpr auto GuestProgressHomeDelay = std::chrono::seconds{10};
 
 bool EventFlagOn(s32 flag) {
     const u64 manager = ReadValue<u64>(image_base + EventFlagManPointerOffset, 0);
-    if (manager < 0x10000) {
+    if (!HasVtable(manager, EventFlagManVtable, "EventFlagOn")) {
         return false;
     }
     using ReadBits = u32 PS4_SYSV_ABI (*)(u64 manager, s32 flag, u32 bits);
@@ -5134,13 +5282,62 @@ std::filesystem::path GuestOwnerFile() {
            fmt::format("bloodborne_party_owner_slot{}.txt", character_slot.load());
 }
 
-s32 CountSetFlags();
+std::optional<s32> CountSetFlags();
+std::filesystem::path GuestWorldFile();
+
+// The slot's kept lists are copied aside (name.bak-<local time>) before they are dropped, so a
+// wrong drop can be undone by hand; the newest 5 copies of each stay.
+void BackUpSlotLists() {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    const std::string stamp =
+        fmt::format("{:04}{:02}{:02}-{:02}{:02}{:02}", local.tm_year + 1900, local.tm_mon + 1,
+                    local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
+    for (const std::filesystem::path& file :
+         {GuestProgressFile(), GuestWorldFile(), GuestConfirmedFile()}) {
+        std::error_code error;
+        if (!std::filesystem::exists(file, error)) {
+            continue;
+        }
+        const std::string name = Common::FS::PathToUTF8String(file.filename());
+        std::filesystem::copy_file(file, file.parent_path() / SlotBackupName(name, stamp),
+                                   std::filesystem::copy_options::overwrite_existing, error);
+        if (error) {
+            LOG_WARNING(Debug, "Bloodborne party: could not copy {} aside: {}", name,
+                        error.message());
+            continue;
+        }
+        std::vector<std::string> names;
+        for (const auto& entry : std::filesystem::directory_iterator(file.parent_path(), error)) {
+            names.push_back(Common::FS::PathToUTF8String(entry.path().filename()));
+        }
+        for (const std::string& old : SlotBackupsToRemove(name, names, 5)) {
+            std::filesystem::remove(file.parent_path() / old, error);
+        }
+    }
+}
 
 // Before a load of the guest's own world sets its pickups: a slot whose confirmed pickups are
 // all missing, or whose world has far fewer event flags set than when it last loaded, holds a
 // new character, so the slot's kept lists are dropped (pickups first, as
 // SetGuestPickupsBeforeMapItems sets them right after).
 void ForgetSlotIfNewCharacter() {
+    // Read twice: a load changes the store on another thread, and a count from a partial or torn
+    // read decides nothing (a count of 0 read as a new character could wipe the kept pickups).
+    const std::optional<s32> settled = SettledFlagCount(CountSetFlags(), CountSetFlags());
+    if (!settled) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: the flag store of save slot {} did not read whole; its kept "
+                 "lists stay",
+                 character_slot.load());
+        return;
+    }
+    const s32 progress_now = *settled;
     const std::vector<s32> confirmed = ReadGuestConfirmed();
     const size_t set_now = static_cast<size_t>(std::ranges::count_if(confirmed, EventFlagOn));
     s32 progress_kept = 0;
@@ -5148,15 +5345,15 @@ void ForgetSlotIfNewCharacter() {
         std::ifstream file{GuestOwnerFile()};
         file >> progress_kept;
     }
-    const s32 progress_now = CountSetFlags();
     const bool other = IsOtherCharacter(progress_now, progress_kept);
-    if (progress_now > 0) {
+    {
         std::ofstream file{GuestOwnerFile(), std::ios::trunc};
         file << (other ? progress_now : std::max(progress_now, progress_kept)) << '\n';
     }
-    if (!IsNewCharacterInSlot(confirmed, set_now) && !other) {
+    if (!ForgetsSlotLists(progress_now, progress_kept, IsNewCharacterInSlot(confirmed, set_now))) {
         return;
     }
+    BackUpSlotLists();
     {
         std::scoped_lock lock{guest_picked_mutex};
         GuestPickedFlags().clear();
@@ -5167,7 +5364,7 @@ void ForgetSlotIfNewCharacter() {
     std::filesystem::remove(GuestConfirmedFile(), error);
     LOG_INFO(Debug,
              "Bloodborne party: new character in save slot {} ({} event flags set, {} kept); its "
-             "kept lists start clean",
+             "kept lists start clean (old ones copied aside as .bak files)",
              character_slot.load(), progress_now, progress_kept);
 }
 
@@ -5252,6 +5449,8 @@ struct FlagBlock {
 struct FlagStore {
     u32 flags_per_block = 0;
     std::vector<FlagBlock> blocks;
+    // Every node and block was read (none unmapped, the walk not cut short).
+    bool whole = false;
 };
 
 FlagStore ReadFlagStore() {
@@ -5273,10 +5472,23 @@ FlagStore ReadFlagStore() {
     const auto readable = [](u64 node) {
         return node >= 0x10000 && HasMemoryAccess(node, 0x38, MemoryProt::CpuRead);
     };
+    // A node that can't be read or a tree deeper than the walk keeps leaves the copy part done.
+    bool whole = true;
+    const auto inner = [&](u64 node) {
+        if (!readable(node)) {
+            whole = false;
+            return false;
+        }
+        return ReadValue<u8>(node, 0x19) == 0;
+    };
     std::vector<u64> stack;
     u64 node = readable(header) ? ReadValue<u64>(header, 0x08) : 0;
-    while ((readable(node) && ReadValue<u8>(node, 0x19) == 0) || !stack.empty()) {
-        while (readable(node) && ReadValue<u8>(node, 0x19) == 0 && stack.size() < 64) {
+    while (inner(node) || !stack.empty()) {
+        while (inner(node)) {
+            if (stack.size() >= 64) {
+                whole = false;
+                break;
+            }
             stack.push_back(node);
             node = ReadValue<u64>(node, 0x00);
         }
@@ -5293,12 +5505,16 @@ FlagStore ReadFlagStore() {
             FlagBlock block{ReadValue<u32>(node, 0x20), std::vector<u8>(block_bytes), bits};
             std::memcpy(block.bytes.data(), reinterpret_cast<const void*>(bits), block_bytes);
             store.blocks.push_back(std::move(block));
+        } else if (kind == 1 || kind == 2) {
+            whole = false;
         }
         if (store.blocks.size() > 20000) {
+            whole = false;
             break;
         }
         node = ReadValue<u64>(node, 0x10);
     }
+    store.whole = whole;
     return store;
 }
 
@@ -5577,13 +5793,23 @@ void InstallLampsStayLitAtRegistration(u64 base, u64 image_size) {
         return;
     }
     if (LampRegistrationEndOffset + LampRegistrationEnd.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + LampRegistrationStartOffset),
-                                      LampRegistrationStart, 0, NoteLampFlagsBeforeRegistration) ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + LampRegistrationEndOffset),
-                                      LampRegistrationEnd, 0, KeepLampLitAfterRegistration)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + LampRegistrationStartOffset),
+                         LampRegistrationStart, 0, NoteLampFlagsBeforeRegistration)) {
         LOG_ERROR(Debug, "Bloodborne lamp registration hooks unavailable; a lamp a guest lit "
                          "stays unlit for the host");
+        coop_features.Skipped("lamp registration",
+                              SiteFailure(base, image_size, LampRegistrationStartOffset));
+        return;
     }
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + LampRegistrationEndOffset),
+                         LampRegistrationEnd, 0, KeepLampLitAfterRegistration)) {
+        LOG_ERROR(Debug, "Bloodborne lamp registration hooks unavailable; a lamp a guest lit "
+                         "stays unlit for the host");
+        coop_features.Skipped("lamp registration",
+                              SiteFailure(base, image_size, LampRegistrationEndOffset));
+        return;
+    }
+    coop_features.On("lamp registration");
 }
 
 // A party guest's boss item (see DefersItemLotAward): held at the award's entry and given
@@ -5631,7 +5857,7 @@ void GiveDeferredBossItems() {
     using AwardItemLot = void PS4_SYSV_ABI (*)(u64, s32, u32);
     for (const s32 lot : due) {
         const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
-        if (item_man < 0x10000) {
+        if (!HasVtable(item_man, MapItemManVtable, "held boss item lot")) {
             LOG_ERROR(Debug, "Bloodborne party: no item man for held boss item lot {}", lot);
             continue;
         }
@@ -5690,15 +5916,23 @@ void InstallKeepLocalFlags(u64 base, u64 image_size) {
     if (!party_controller) {
         return;
     }
+    std::optional<std::string> failed;
     if (RemoteSetFlagOffset + RemoteSetFlag.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + RemoteSetFlagOffset),
-                                      RemoteSetFlag, 0, KeepLocalFlagsFromOthers)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + RemoteSetFlagOffset), RemoteSetFlag, 0,
+                         KeepLocalFlagsFromOthers)) {
         LOG_ERROR(Debug, "Bloodborne remote flag hook unavailable; messenger gifts are shared");
+        failed = SiteFailure(base, image_size, RemoteSetFlagOffset);
     }
     if (RemoteEndEventOffset + RemoteEndEvent.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + RemoteEndEventOffset),
-                                      RemoteEndEvent, 0, KeepLocalEventsFromOthers)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + RemoteEndEventOffset), RemoteEndEvent, 0,
+                         KeepLocalEventsFromOthers)) {
         LOG_ERROR(Debug, "Bloodborne remote event hook unavailable; messenger gifts are shared");
+        failed = failed.value_or(SiteFailure(base, image_size, RemoteEndEventOffset));
+    }
+    if (failed) {
+        coop_features.Skipped("keep local flags", *failed);
+    } else {
+        coop_features.On("keep local flags");
     }
 }
 
@@ -5707,11 +5941,14 @@ void InstallDeferredBossItems(u64 base, u64 image_size) {
         return;
     }
     if (AwardItemLotOffset + AwardItemLotPrologue.size() > image_size ||
-        !InstallGuestFunctionOverride(reinterpret_cast<void*>(base + AwardItemLotOffset),
-                                      AwardItemLotPrologue, 0, HoldGuestBossItem)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + AwardItemLotOffset), AwardItemLotPrologue,
+                         0, HoldGuestBossItem)) {
         LOG_ERROR(Debug, "Bloodborne boss item hook unavailable; a guest's boss item dialog "
                          "may leave it stuck");
+        coop_features.Skipped("boss items", SiteFailure(base, image_size, AwardItemLotOffset));
+        return;
     }
+    coop_features.On("boss items");
 }
 
 s64 SteadyMilliseconds() {
@@ -5954,11 +6191,10 @@ bool HostAwayFromMyMap() {
 // the player's AddSouls (vtable +0x3D0, the call the kill reward makes, with its rates).
 void GrantPartyEchoes() {
     const u64 player = GetLocalPlayer();
-    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
-    const u64 add_souls = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x3D0) : 0;
-    if (add_souls != image_base + AddSoulsOffset) {
+    if (!HasVirtual(player, 0x3D0, AddSoulsOffset, "GrantPartyEchoes AddSouls")) {
         return;
     }
+    const u64 add_souls = image_base + AddSoulsOffset;
     std::vector<KillEchoes> pending;
     {
         std::scoped_lock lock{echo_board_mutex};
@@ -6160,22 +6396,34 @@ void InstallOwnHitCount(u64 base, u64 image_size) {
     if (!party_controller || HitAppliedOffset + HitApplied.size() > image_size) {
         return;
     }
-    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + HitOffset), HitPrologue, 0,
-                              NoteHitStart) ||
-        !InstallGuestCodeHook(reinterpret_cast<void*>(base + HitAppliedOffset), HitApplied, 0,
-                              NoteHitApplied)) {
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + HitOffset), HitPrologue, 0, NoteHitStart)) {
         LOG_ERROR(Debug, "Bloodborne hit hooks unavailable; shared enemy damage counts every drop");
+        coop_features.Skipped("own hits", SiteFailure(base, image_size, HitOffset));
+        return;
+    }
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + HitAppliedOffset), HitApplied, 0,
+                         NoteHitApplied)) {
+        LOG_ERROR(Debug, "Bloodborne hit hooks unavailable; shared enemy damage counts every drop");
+        coop_features.Skipped("own hits", SiteFailure(base, image_size, HitAppliedOffset));
         return;
     }
     hit_hooks_installed = true;
+    coop_features.On("own hits");
+    std::optional<u64> failed;
     for (const u64 offset : EffectHpChangeOffsets) {
-        if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + offset), EffectHpChange, 0,
-                                  NoteEffectHpChange)) {
+        if (!InstallCoopHook(reinterpret_cast<void*>(base + offset), EffectHpChange, 0,
+                             NoteEffectHpChange)) {
             LOG_ERROR(Debug,
                       "Bloodborne status effect HP hook unavailable at {:#x}; poison is not "
                       "shared",
                       offset);
+            failed = failed.value_or(offset);
         }
+    }
+    if (failed) {
+        coop_features.Skipped("effect hits", SiteFailure(base, image_size, *failed));
+    } else {
+        coop_features.On("effect hits");
     }
 }
 
@@ -6188,6 +6436,29 @@ DirectDamageInbox direct_damage_inbox;
 std::mutex direct_boards_mutex;
 DirectInbox<DirectVitals> direct_vitals_inbox;
 DirectInbox<DirectKills> direct_kills_inbox;
+
+// Which build each game runs (see PeerHelloType): this game's, from SetBuildIdentity; no hello
+// goes out before it is set.
+std::mutex peer_hello_mutex;
+std::optional<PeerHello> own_hello;
+PeerBuildCheck peer_build_check;
+
+void NotePeerHello(PeerHello theirs, u32 addr, u16 port) {
+    std::optional<std::string> warning;
+    {
+        std::scoped_lock lock{peer_hello_mutex};
+        if (!own_hello) {
+            return;
+        }
+        if (theirs.member.empty()) {
+            theirs.member = fmt::format("peer {:08x}:{}", addr, port);
+        }
+        warning = peer_build_check.Take(theirs, *own_hello);
+    }
+    if (warning) {
+        LOG_WARNING(Debug, "{}", *warning);
+    }
+}
 
 bool TakeDirectDamage() {
     std::array<u8, 1400> buffer{};
@@ -6226,6 +6497,12 @@ bool TakeDirectDamage() {
                 std::scoped_lock lock{direct_boards_mutex};
                 direct_kills_inbox.Take(sender, std::move(*kills), now);
                 took = true;
+            }
+            continue;
+        }
+        if (frame->first == PeerHelloType) {
+            if (auto hello = DecodePeerHello(frame->second)) {
+                NotePeerHello(std::move(*hello), addr, port);
             }
             continue;
         }
@@ -6275,6 +6552,41 @@ void SendDirectDamage(const MemberMapState& mine, bool changed) {
         Libraries::Net::P2PCoopSendTo(frame.data(), static_cast<u32>(frame.size()), peer.addr,
                                       peer.port);
     }
+}
+
+// This game's hello to every room peer: every PeerHelloResendMs, and at once when a peer it has
+// not greeted joins the room's links (a new member, or one whose link came back).
+void SendPeerHello() {
+    static s64 checked_at = 0;
+    static s64 sent_at = 0;
+    static std::set<u64> greeted;
+    const s64 now = SteadyMilliseconds();
+    if (now - checked_at < DirectDamageResendMs) {
+        return;
+    }
+    checked_at = now;
+    PeerHello hello;
+    {
+        std::scoped_lock lock{peer_hello_mutex};
+        if (!own_hello) {
+            return;
+        }
+        hello = *own_hello;
+    }
+    const auto peers = Libraries::Np::NpMatching2::GetActiveRoomPeers();
+    std::set<u64> linked;
+    for (const auto& peer : peers) {
+        linked.insert((u64{peer.addr} << 16) | peer.port);
+    }
+    const bool new_peer =
+        std::ranges::any_of(linked, [&](u64 peer) { return !greeted.contains(peer); });
+    greeted = std::move(linked);
+    if (peers.empty() || (!new_peer && now - sent_at < PeerHelloResendMs)) {
+        return;
+    }
+    sent_at = now;
+    hello.member = BoardMemberName();
+    SendToRoomPeers(EncodeCoopFrame(PeerHelloType, EncodePeerHello(hello)));
 }
 
 // This game's tag on its HP reports (the upper half of EnemyHpReport.visit), so the others count
@@ -6443,6 +6755,9 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
 // See GetsMemberKillDrop: the character's NpcParam row is [vtable +0x168 (character) +8], as
 // the respawn walk reads it (0x0190E433). The game's thread only.
 void GiveMemberKillDrop(u64 character, u32 handle) {
+    if (!IsCharacter(character, "GiveMemberKillDrop")) {
+        return;
+    }
     const u64 vtable = ReadValue<u64>(character, 0);
     const u64 npc_of = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x168) : 0;
     if (npc_of < 0x10000) {
@@ -6471,7 +6786,7 @@ void GiveMemberKillDrop(u64 character, u32 handle) {
         return;
     }
     const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
-    if (item_man < 0x10000) {
+    if (!HasVtable(item_man, MapItemManVtable, "member kill drop item lot")) {
         return;
     }
     giving_deferred_item_lot = true;
@@ -6505,6 +6820,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     if (TakeDirectDamage()) {
         enemy_step_due.store(true);
     }
+    SendPeerHello();
     // Not while the world goes away: a trip's start posted the old map's characters as kills.
     if (!WatchesKills(sharing, PartyTripActive(), loading) ||
         (now - checked < HpBoardRound && !enemy_step_due.exchange(false))) {
@@ -6647,6 +6963,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
             ReadValue<u8>(character, 0x28) == 0 &&
             HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
             if (can_kill && !died_for_others.contains(handle) &&
+                IsCharacter(character, "member kill") &&
                 DiesInsteadOfHiding(me, CharacterPosition(character))) {
                 // Near this player: it dies as the game kills (no echoes), not vanishing.
                 using Kill = void PS4_SYSV_ABI (*)(u64 character);
@@ -6691,7 +7008,8 @@ constexpr std::array<u8, 8> SetCharacterDisabledPrologue{0x55, 0x48, 0x89, 0xE5,
 
 // The game's thread only.
 bool SetCharacterDisabled(u64 character, bool disabled) {
-    if (image_base == 0 || ReadValue<u64>(character, 0x18) < 0x10000 ||
+    if (!IsCharacter(character, "SetCharacterDisabled") ||
+        ReadValue<u64>(character, 0x18) < 0x10000 ||
         !std::ranges::equal(std::span<const u8>{reinterpret_cast<const u8*>(
                                                     image_base + SetCharacterDisabledOffset),
                                                 SetCharacterDisabledPrologue.size()},
@@ -6932,9 +7250,13 @@ size_t ApplyHostMapState() {
 // A party guest resumes where it left (see ResumePoint): its last map and position are kept in
 // user/bloodborne_party_resume_slotN.txt every few seconds; the first load after the game starts
 // goes back there (a trip to that map's first lamp if needed, then a move like a revive's).
-// How many event flags are set (the whole store): only adds up as a character plays.
-s32 CountSetFlags() {
+// How many event flags are set (the whole store): only adds up as a character plays. None when
+// the store did not read whole (see SettledFlagCount).
+std::optional<s32> CountSetFlags() {
     const FlagStore store = ReadFlagStore();
+    if (!store.whole || store.blocks.empty()) {
+        return std::nullopt;
+    }
     s32 count = 0;
     for (const FlagBlock& block : store.blocks) {
         for (const u8 byte : block.bytes) {
@@ -6953,7 +7275,7 @@ std::filesystem::path GuestResumeFile() {
 // turns to it shows in the snapshot's heading.
 void TeleportLocalPlayer(const LampPosition& at, float heading = 0.0f) {
     const u64 player = GetLocalPlayer();
-    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
+    const u64 vtable = IsCharacter(player, "TeleportLocalPlayer") ? ReadValue<u64>(player, 0) : 0;
     const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
     if (teleport < 0x10000) {
         return;
@@ -7026,7 +7348,8 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         std::ifstream file{GuestResumeFile()};
         const std::string text{std::istreambuf_iterator<char>{file}, {}};
         const auto point = in_session ? std::nullopt : ParseResumePoint(text);
-        own_progress = in_session ? 0 : CountSetFlags();
+        // An unknown count (0) is no other character (see IsOtherCharacter).
+        own_progress = in_session ? 0 : CountSetFlags().value_or(0);
         const ResumeStep step =
             point ? ChooseResumeStep(*point, map, *at, own_progress, loaded_map) : ResumeStep{};
         phase = Phase::Recording;
@@ -7070,7 +7393,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     last_saved = now;
     // The count of its own world: in a session the flag store is the host's.
     if (!in_session) {
-        own_progress = CountSetFlags();
+        own_progress = CountSetFlags().value_or(own_progress);
     }
     const ResumePoint point{map, *at, own_progress};
     if (ChooseResumeStep(saved, map, *at, point.progress).kind == ResumeStep::Kind::Stay &&
@@ -7104,10 +7427,7 @@ void GiveEncounterInsight(bool in_session) {
         return;
     }
     const u64 player = GetLocalPlayer();
-    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
-    if (vtable < 0x10000 ||
-        !HasMemoryAccess(vtable + CharacterAddSpEffectSlot, sizeof(u64), MemoryProt::CpuRead) ||
-        ReadValue<u64>(vtable, CharacterAddSpEffectSlot) != image_base + AddSpEffectOffset) {
+    if (!HasVirtual(player, CharacterAddSpEffectSlot, AddSpEffectOffset, "insight AddSpEffect")) {
         return;
     }
     reinterpret_cast<AddSpEffectFn>(image_base + AddSpEffectOffset)(
@@ -7338,28 +7658,44 @@ bool PS4_SYSV_ABI KeepMatchingDuringTrip(u64, const GuestRegisterSnapshot* regis
 }
 
 void InstallSeamlessTravel(u64 base, u64 image_size) {
-    if (!party_controller || !world_teardown_hook_installed ||
-        LeaveSessionOffset + StandardR15Prologue.size() > image_size) {
+    if (!party_controller || LeaveSessionOffset + StandardR15Prologue.size() > image_size) {
+        return;
+    }
+    if (!world_teardown_hook_installed) {
+        coop_features.Skipped("seamless travel", "needs world teardown");
         return;
     }
     const std::span<const u8> prologue{StandardR15Prologue.data(), 6};
-    if (!InstallGuestFunctionOverride(reinterpret_cast<void*>(base + LeaveSessionOffset), prologue,
-                                      0, KeepSessionAfterTrip) ||
-        !InstallGuestFunctionOverride(reinterpret_cast<void*>(base + StageTransitionEntryOffset),
-                                      prologue, 0, RecordPartyTrip)) {
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + LeaveSessionOffset), prologue, 0,
+                         KeepSessionAfterTrip)) {
         LOG_ERROR(Debug, "Bloodborne seamless travel hooks unavailable; a trip ends the session");
+        coop_features.Skipped("seamless travel", SiteFailure(base, image_size, LeaveSessionOffset));
+        return;
+    }
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + StageTransitionEntryOffset), prologue, 0,
+                         RecordPartyTrip)) {
+        LOG_ERROR(Debug, "Bloodborne seamless travel hooks unavailable; a trip ends the session");
+        coop_features.Skipped("seamless travel",
+                              SiteFailure(base, image_size, StageTransitionEntryOffset));
         return;
     }
     seamless_travel_hooks_installed = true;
-    if (!InstallGuestFunctionOverride(reinterpret_cast<void*>(base + MultiPlayStopRequestOffset),
-                                      prologue, 0, KeepMatchingDuringTrip)) {
+    coop_features.On("seamless travel");
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + MultiPlayStopRequestOffset), prologue, 0,
+                         KeepMatchingDuringTrip)) {
         LOG_ERROR(Debug, "Bloodborne StopRequest hook unavailable; a guest's trip leaves the room");
+        coop_features.Skipped("stop request",
+                              SiteFailure(base, image_size, MultiPlayStopRequestOffset));
     } else {
         stop_request_hook_installed = true;
+        coop_features.On("stop request");
     }
-    if (!InstallGuestFunctionOverride(reinterpret_cast<void*>(base + MemberLeaveOffset), prologue,
-                                      0, LogMemberLeave)) {
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + MemberLeaveOffset), prologue, 0,
+                         LogMemberLeave)) {
         LOG_ERROR(Debug, "Bloodborne member-leave log unavailable");
+        coop_features.Skipped("member leave log", SiteFailure(base, image_size, MemberLeaveOffset));
+    } else {
+        coop_features.On("member leave log");
     }
     LOG_INFO(Debug, "Bloodborne seamless travel: a party member's trip keeps the session");
 }
@@ -7492,7 +7828,7 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     }
     using Teleport = void PS4_SYSV_ABI (*)(u64 character, const float* position,
                                            const float* rotation, s32 mode);
-    const u64 vtable = ReadValue<u64>(player, 0);
+    const u64 vtable = IsCharacter(player, "revive teleport") ? ReadValue<u64>(player, 0) : 0;
     const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
     if (teleport < 0x10000) {
         return;
@@ -7686,7 +8022,7 @@ struct AttackRatings {
 };
 AttackRatings ReadAttackRatings(u64 player) {
     AttackRatings ratings;
-    const u64 vtable = player >= 0x10000 ? ReadValue<u64>(player, 0) : 0;
+    const u64 vtable = IsCharacter(player, "ReadAttackRatings") ? ReadValue<u64>(player, 0) : 0;
     const u64 game_data_of = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x1C8) : 0;
     const u64 asm_data = player >= 0x10000 ? ReadValue<u64>(player, 0x4B8) : 0;
     if (game_data_of < 0x10000 || asm_data < 0x10000) {
@@ -8295,10 +8631,12 @@ void DieFromDown(PartyDeathRun& run, u64 player, u64 data, bool reset, std::stri
     run.downed.Died();
     party_death_reset.store(reset);
     static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
-    const bool killed = std::ranges::equal(
-        std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
-                            KillPrologue.size()},
-        KillPrologue);
+    const bool killed =
+        IsCharacter(player, "DieFromDown kill") &&
+        std::ranges::equal(
+            std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
+                                KillPrologue.size()},
+            KillPrologue);
     if (killed) {
         reinterpret_cast<void PS4_SYSV_ABI (*)(u64 character)>(image_base +
                                                                KillCharacterOffset)(player);
@@ -8491,12 +8829,14 @@ void InstallPartyDeath(u64 base, u64 image_size) {
         return;
     }
     if (IsNoDeadExitOffset + IsNoDeadExit.size() > image_size ||
-        !InstallGuestRegisterEditHook(reinterpret_cast<void*>(base + IsNoDeadExitOffset),
-                                      IsNoDeadExit, 0, KeepPartyMemberUp)) {
+        !InstallCoopHook(reinterpret_cast<void*>(base + IsNoDeadExitOffset), IsNoDeadExit, 0,
+                         KeepPartyMemberUp)) {
         LOG_ERROR(Debug, "Bloodborne party death hook unavailable; deaths stay as they are");
+        coop_features.Skipped("party death", SiteFailure(base, image_size, IsNoDeadExitOffset));
         return;
     }
     party_death_hook_installed = true;
+    coop_features.On("party death");
     LOG_INFO(Debug, "Bloodborne party death: a lethal hit puts a party member down while another "
                     "stands on its map (damage revives it, holding Circle gives up)");
 }
@@ -10724,7 +11064,7 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         // A kill goes through the game's own (writing 0 HP leaves a standing corpse); checked
         // against its prologue first.
         static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
-        if (verb == "kill" &&
+        if (verb == "kill" && IsCharacter(found->character, "autoplay kill") &&
             std::ranges::equal(
                 std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
                                     KillPrologue.size()},
@@ -11622,6 +11962,7 @@ void InstallSeamlessCoopPatches() {
 
     const auto base = MemoryPatcher::g_eboot_address;
     const auto image_size = MemoryPatcher::g_eboot_image_size;
+    coop_features = {};
     const auto summon_build_entry = std::ranges::find_if(
         Sites, [](const TraceSite& site) { return site.offset == SummonBuildEntryOffset; });
     const auto cross_map_guest_handoff = std::ranges::find_if(
@@ -11641,369 +11982,75 @@ void InstallSeamlessCoopPatches() {
         LOG_ERROR(Debug, "Bloodborne seamless functional hook site is missing");
         return;
     }
-    const auto summon_build_entry_expected =
-        std::span<const u8>{summon_build_entry->prologue.data(), summon_build_entry->prologue_size};
-    const auto cross_map_guest_handoff_expected = std::span<const u8>{
-        cross_map_guest_handoff->prologue.data(), cross_map_guest_handoff->prologue_size};
-    const auto deferred_summon_reload_expected = std::span<const u8>{
-        deferred_summon_reload->prologue.data(), deferred_summon_reload->prologue_size};
-    const auto summon_reload_state_expected = std::span<const u8>{
-        summon_reload_state->prologue.data(), summon_reload_state->prologue_size};
-    const auto healing_fountain_host_availability_expected =
-        std::span<const u8>{healing_fountain_host_availability->prologue.data(),
-                            healing_fountain_host_availability->prologue_size};
-    if (base == 0 || BeckoningAreaComparisonOffset > image_size ||
-        BeckoningAreaComparison.size() > image_size - BeckoningAreaComparisonOffset ||
-        BeckoningAreaFlagResultOffset > image_size ||
-        BeckoningAreaFlagResult.size() > image_size - BeckoningAreaFlagResultOffset ||
-        ResponderBellAreaResultOffset > image_size ||
-        ResponderBellAreaResult.size() > image_size - ResponderBellAreaResultOffset ||
-        ResponderBellCommonResultOffset > image_size ||
-        ResponderBellCommonResult.size() > image_size - ResponderBellCommonResultOffset ||
-        ActiveBellAreaComparisonOffset > image_size ||
-        ActiveBellAreaComparison.size() > image_size - ActiveBellAreaComparisonOffset ||
-        ActiveBellAreaFlagResultOffset > image_size ||
-        ActiveBellAreaFlagResult.size() > image_size - ActiveBellAreaFlagResultOffset ||
-        ResponderSearchAreaRangeResultOffset > image_size ||
-        ResponderSearchAreaRangeResult.size() > image_size - ResponderSearchAreaRangeResultOffset ||
-        SosStatusAreaRestrictionOffset > image_size ||
-        SosStatusAreaRestriction.size() > image_size - SosStatusAreaRestrictionOffset ||
-        SummonCandidateAreaRestrictionOffset > image_size ||
-        SummonCandidateAreaRestriction.size() > image_size - SummonCandidateAreaRestrictionOffset ||
-        SummonBuildAreaRestrictionOffset > image_size ||
-        SummonBuildAreaRestriction.size() > image_size - SummonBuildAreaRestrictionOffset ||
-        SummonBuildWorldStateRestrictionOffset > image_size ||
-        SummonBuildWorldStateRestriction.size() >
-            image_size - SummonBuildWorldStateRestrictionOffset ||
-        SummonBuildNegativeEventRestrictionOffset > image_size ||
-        SummonBuildNegativeEventRestriction.size() >
-            image_size - SummonBuildNegativeEventRestrictionOffset ||
-        StageTransitionStopMatchingCallOffset > image_size ||
-        StageTransitionStopMatchingCall.size() >
-            image_size - StageTransitionStopMatchingCallOffset ||
-        SummonBuildEntryOffset > image_size ||
-        summon_build_entry_expected.size() > image_size - SummonBuildEntryOffset ||
-        CrossMapGuestHandoffOffset > image_size ||
-        cross_map_guest_handoff_expected.size() > image_size - CrossMapGuestHandoffOffset ||
-        SosStatusUpdateOffset > image_size ||
-        deferred_summon_reload_expected.size() > image_size - SosStatusUpdateOffset ||
-        StageWarpDescriptorFinalizeOffset > image_size ||
-        summon_reload_state_expected.size() > image_size - StageWarpDescriptorFinalizeOffset ||
-        HealingFountainAvailabilityOffset > image_size ||
-        healing_fountain_host_availability_expected.size() >
-            image_size - HealingFountainAvailabilityOffset ||
-        std::ranges::any_of(CrossMapNativeCalls, [image_size](const auto& site) {
-            return site.offset > image_size || site.prologue_size > image_size - site.offset;
-        })) {
+    if (base == 0) {
         LOG_ERROR(Debug, "Bloodborne seamless patches lie outside the eboot image");
         return;
     }
 
-    auto* area_comparison = reinterpret_cast<u8*>(base + BeckoningAreaComparisonOffset);
-    const auto actual_area_comparison =
-        std::span<const u8>{area_comparison, BeckoningAreaComparison.size()};
-    if (!std::ranges::equal(actual_area_comparison, BeckoningAreaComparison)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne Beckoning area signature mismatch at {:#x}: expected={} actual={}",
-                  BeckoningAreaComparisonOffset, BytesToHex(BeckoningAreaComparison),
-                  BytesToHex(actual_area_comparison));
+    // All of the core or none of it. Every site is checked before anything is written: its byte
+    // patches, its hooks and the game functions the cross-map summon calls (the co-op site table,
+    // bloodborne_patch_sites.h).
+    if (!CoopSitesMatch(base, image_size, "seamless core", "no seamless co-op")) {
+        LogCoopFeatures();
         return;
-    }
-
-    auto* area_flag_result = reinterpret_cast<u8*>(base + BeckoningAreaFlagResultOffset);
-    const auto actual_area_flag_result =
-        std::span<const u8>{area_flag_result, BeckoningAreaFlagResult.size()};
-    if (!std::ranges::equal(actual_area_flag_result, BeckoningAreaFlagResult)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne Beckoning area-flag signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  BeckoningAreaFlagResultOffset, BytesToHex(BeckoningAreaFlagResult),
-                  BytesToHex(actual_area_flag_result));
-        return;
-    }
-
-    auto* responder_bell_area_result = reinterpret_cast<u8*>(base + ResponderBellAreaResultOffset);
-    const auto actual_responder_bell_area_result =
-        std::span<const u8>{responder_bell_area_result, ResponderBellAreaResult.size()};
-    if (!std::ranges::equal(actual_responder_bell_area_result, ResponderBellAreaResult)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne responder Bell area signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  ResponderBellAreaResultOffset, BytesToHex(ResponderBellAreaResult),
-                  BytesToHex(actual_responder_bell_area_result));
-        return;
-    }
-
-    auto* responder_bell_common_result =
-        reinterpret_cast<u8*>(base + ResponderBellCommonResultOffset);
-    const auto actual_responder_bell_common_result =
-        std::span<const u8>{responder_bell_common_result, ResponderBellCommonResult.size()};
-    if (!std::ranges::equal(actual_responder_bell_common_result, ResponderBellCommonResult)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne responder Bell common signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  ResponderBellCommonResultOffset, BytesToHex(ResponderBellCommonResult),
-                  BytesToHex(actual_responder_bell_common_result));
-        return;
-    }
-
-    auto* active_bell_area_comparison =
-        reinterpret_cast<u8*>(base + ActiveBellAreaComparisonOffset);
-    const auto actual_active_bell_area_comparison =
-        std::span<const u8>{active_bell_area_comparison, ActiveBellAreaComparison.size()};
-    if (!std::ranges::equal(actual_active_bell_area_comparison, ActiveBellAreaComparison)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne active Bell area signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  ActiveBellAreaComparisonOffset, BytesToHex(ActiveBellAreaComparison),
-                  BytesToHex(actual_active_bell_area_comparison));
-        return;
-    }
-
-    auto* active_bell_area_flag_result =
-        reinterpret_cast<u8*>(base + ActiveBellAreaFlagResultOffset);
-    const auto actual_active_bell_area_flag_result =
-        std::span<const u8>{active_bell_area_flag_result, ActiveBellAreaFlagResult.size()};
-    if (!std::ranges::equal(actual_active_bell_area_flag_result, ActiveBellAreaFlagResult)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne active Bell area-flag signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  ActiveBellAreaFlagResultOffset, BytesToHex(ActiveBellAreaFlagResult),
-                  BytesToHex(actual_active_bell_area_flag_result));
-        return;
-    }
-
-    auto* responder_search_area_range_result =
-        reinterpret_cast<u8*>(base + ResponderSearchAreaRangeResultOffset);
-    const auto actual_responder_search_area_range_result = std::span<const u8>{
-        responder_search_area_range_result, ResponderSearchAreaRangeResult.size()};
-    if (!std::ranges::equal(actual_responder_search_area_range_result,
-                            ResponderSearchAreaRangeResult)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne responder-search area-range signature mismatch at {:#x}: "
-                  "expected={} actual={}",
-                  ResponderSearchAreaRangeResultOffset, BytesToHex(ResponderSearchAreaRangeResult),
-                  BytesToHex(actual_responder_search_area_range_result));
-        return;
-    }
-
-    auto* sos_status_area_restriction =
-        reinterpret_cast<u8*>(base + SosStatusAreaRestrictionOffset);
-    const auto actual_sos_status_area_restriction =
-        std::span<const u8>{sos_status_area_restriction, SosStatusAreaRestriction.size()};
-    if (!std::ranges::equal(actual_sos_status_area_restriction, SosStatusAreaRestriction)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne SOS-status area signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  SosStatusAreaRestrictionOffset, BytesToHex(SosStatusAreaRestriction),
-                  BytesToHex(actual_sos_status_area_restriction));
-        return;
-    }
-
-    auto* summon_candidate_area_restriction =
-        reinterpret_cast<u8*>(base + SummonCandidateAreaRestrictionOffset);
-    const auto actual_summon_candidate_area_restriction = std::span<const u8>{
-        summon_candidate_area_restriction, SummonCandidateAreaRestriction.size()};
-    if (!std::ranges::equal(actual_summon_candidate_area_restriction,
-                            SummonCandidateAreaRestriction)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne summon-candidate area signature mismatch at {:#x}: "
-                  "expected={} actual={}",
-                  SummonCandidateAreaRestrictionOffset, BytesToHex(SummonCandidateAreaRestriction),
-                  BytesToHex(actual_summon_candidate_area_restriction));
-        return;
-    }
-
-    auto* summon_build_area_restriction =
-        reinterpret_cast<u8*>(base + SummonBuildAreaRestrictionOffset);
-    const auto actual_summon_build_area_restriction =
-        std::span<const u8>{summon_build_area_restriction, SummonBuildAreaRestriction.size()};
-    if (!std::ranges::equal(actual_summon_build_area_restriction, SummonBuildAreaRestriction)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne summon-builder area signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  SummonBuildAreaRestrictionOffset, BytesToHex(SummonBuildAreaRestriction),
-                  BytesToHex(actual_summon_build_area_restriction));
-        return;
-    }
-
-    auto* summon_build_world_state_restriction =
-        reinterpret_cast<u8*>(base + SummonBuildWorldStateRestrictionOffset);
-    const auto actual_summon_build_world_state_restriction = std::span<const u8>{
-        summon_build_world_state_restriction, SummonBuildWorldStateRestriction.size()};
-    if (!std::ranges::equal(actual_summon_build_world_state_restriction,
-                            SummonBuildWorldStateRestriction)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne summon-builder world-state signature mismatch at {:#x}: "
-                  "expected={} actual={}",
-                  SummonBuildWorldStateRestrictionOffset,
-                  BytesToHex(SummonBuildWorldStateRestriction),
-                  BytesToHex(actual_summon_build_world_state_restriction));
-        return;
-    }
-
-    auto* summon_build_negative_event_restriction =
-        reinterpret_cast<u8*>(base + SummonBuildNegativeEventRestrictionOffset);
-    const auto actual_summon_build_negative_event_restriction = std::span<const u8>{
-        summon_build_negative_event_restriction, SummonBuildNegativeEventRestriction.size()};
-    if (!std::ranges::equal(actual_summon_build_negative_event_restriction,
-                            SummonBuildNegativeEventRestriction)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne summon-builder negative-event signature mismatch at {:#x}: "
-                  "expected={} actual={}",
-                  SummonBuildNegativeEventRestrictionOffset,
-                  BytesToHex(SummonBuildNegativeEventRestriction),
-                  BytesToHex(actual_summon_build_negative_event_restriction));
-        return;
-    }
-
-    auto* stage_transition_stop_matching_call =
-        reinterpret_cast<u8*>(base + StageTransitionStopMatchingCallOffset);
-    const auto actual_stage_transition_stop_matching_call = std::span<const u8>{
-        stage_transition_stop_matching_call, StageTransitionStopMatchingCall.size()};
-    if (!std::ranges::equal(actual_stage_transition_stop_matching_call,
-                            StageTransitionStopMatchingCall)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne stage-transition matching-stop signature mismatch at {:#x}: "
-                  "expected={} actual={}",
-                  StageTransitionStopMatchingCallOffset,
-                  BytesToHex(StageTransitionStopMatchingCall),
-                  BytesToHex(actual_stage_transition_stop_matching_call));
-        return;
-    }
-
-    const auto actual_summon_build_entry =
-        std::span<const u8>{reinterpret_cast<const u8*>(base + SummonBuildEntryOffset),
-                            summon_build_entry_expected.size()};
-    if (!std::ranges::equal(actual_summon_build_entry, summon_build_entry_expected)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne SummonBuild entry signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  SummonBuildEntryOffset, BytesToHex(summon_build_entry_expected),
-                  BytesToHex(actual_summon_build_entry));
-        return;
-    }
-    const auto actual_cross_map_guest_handoff =
-        std::span<const u8>{reinterpret_cast<const u8*>(base + CrossMapGuestHandoffOffset),
-                            cross_map_guest_handoff_expected.size()};
-    if (!std::ranges::equal(actual_cross_map_guest_handoff, cross_map_guest_handoff_expected)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne cross-map guest-handoff signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  CrossMapGuestHandoffOffset, BytesToHex(cross_map_guest_handoff_expected),
-                  BytesToHex(actual_cross_map_guest_handoff));
-        return;
-    }
-    const auto actual_deferred_summon_reload =
-        std::span<const u8>{reinterpret_cast<const u8*>(base + SosStatusUpdateOffset),
-                            deferred_summon_reload_expected.size()};
-    if (!std::ranges::equal(actual_deferred_summon_reload, deferred_summon_reload_expected)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne deferred summon-reload signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  SosStatusUpdateOffset, BytesToHex(deferred_summon_reload_expected),
-                  BytesToHex(actual_deferred_summon_reload));
-        return;
-    }
-    const auto actual_summon_reload_state =
-        std::span<const u8>{reinterpret_cast<const u8*>(base + StageWarpDescriptorFinalizeOffset),
-                            summon_reload_state_expected.size()};
-    if (!std::ranges::equal(actual_summon_reload_state, summon_reload_state_expected)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne summon-reload state signature mismatch at {:#x}: expected={} "
-                  "actual={}",
-                  StageWarpDescriptorFinalizeOffset, BytesToHex(summon_reload_state_expected),
-                  BytesToHex(actual_summon_reload_state));
-        return;
-    }
-    const auto actual_healing_fountain_host_availability =
-        std::span<const u8>{reinterpret_cast<const u8*>(base + HealingFountainAvailabilityOffset),
-                            healing_fountain_host_availability_expected.size()};
-    if (!std::ranges::equal(actual_healing_fountain_host_availability,
-                            healing_fountain_host_availability_expected)) {
-        LOG_ERROR(Debug,
-                  "Bloodborne healing-fountain host-availability signature mismatch at {:#x}: "
-                  "expected={} actual={}",
-                  HealingFountainAvailabilityOffset,
-                  BytesToHex(healing_fountain_host_availability_expected),
-                  BytesToHex(actual_healing_fountain_host_availability));
-        return;
-    }
-    for (const auto& site : CrossMapNativeCalls) {
-        const auto expected = std::span<const u8>{site.prologue.data(), site.prologue_size};
-        const auto actual =
-            std::span<const u8>{reinterpret_cast<const u8*>(base + site.offset), expected.size()};
-        if (!std::ranges::equal(actual, expected)) {
-            LOG_ERROR(Debug,
-                      "Bloodborne cross-map native call {} signature mismatch at {:#x}: "
-                      "expected={} actual={}",
-                      site.name, site.offset, BytesToHex(expected), BytesToHex(actual));
-            return;
-        }
     }
     image_base = base;
-    const size_t summon_build_entry_index =
-        static_cast<size_t>(std::distance(Sites.begin(), summon_build_entry));
-    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + SummonBuildEntryOffset),
-                              summon_build_entry_expected, summon_build_entry_index, TraceEntry)) {
-        LOG_ERROR(Debug, "Failed to install Bloodborne cross-map host-placement hook at {:#x}",
-                  SummonBuildEntryOffset);
+    // Then the hooks; one that still fails (no room for its trampoline) takes the others out
+    // again, so the game is left as it was.
+    struct CoreHook {
+        u64 offset;
+        const TraceSite* site;
+        bool* installed;
+        std::string_view what;
+    };
+    const std::array<CoreHook, 5> core_hooks{{
+        {SummonBuildEntryOffset, &*summon_build_entry, &summon_build_host_placement_hook_installed,
+         "cross-map host-placement"},
+        {CrossMapGuestHandoffOffset, &*cross_map_guest_handoff,
+         &cross_map_guest_handoff_hook_installed, "cross-map guest-handoff"},
+        {StageWarpDescriptorFinalizeOffset, &*summon_reload_state,
+         &summon_reload_state_hook_installed, "summon-reload state"},
+        {SosStatusUpdateOffset, &*deferred_summon_reload, &deferred_summon_reload_hook_installed,
+         "deferred summon-reload"},
+        {HealingFountainAvailabilityOffset, &*healing_fountain_host_availability,
+         &healing_fountain_host_availability_hook_installed, "healing-fountain host-availability"},
+    }};
+    for (size_t index = 0; index < core_hooks.size(); ++index) {
+        const CoreHook& hook = core_hooks[index];
+        const auto expected =
+            std::span<const u8>{hook.site->prologue.data(), hook.site->prologue_size};
+        if (InstallCoopHook(reinterpret_cast<void*>(base + hook.offset), expected,
+                            static_cast<size_t>(hook.site - Sites.data()), TraceEntry)) {
+            *hook.installed = true;
+            continue;
+        }
+        LOG_ERROR(Debug, "Failed to install Bloodborne {} hook at {:#x}", hook.what, hook.offset);
+        for (size_t installed = 0; installed < index; ++installed) {
+            RemoveGuestCodeHook(reinterpret_cast<void*>(base + core_hooks[installed].offset));
+            *core_hooks[installed].installed = false;
+        }
+        coop_features.Skipped(
+            "seamless core",
+            fmt::format("{}; rolled back", SiteFailure(base, image_size, hook.offset)));
+        LogCoopFeatures();
         return;
     }
-    summon_build_host_placement_hook_installed = true;
-    const size_t cross_map_guest_handoff_index =
-        static_cast<size_t>(std::distance(Sites.begin(), cross_map_guest_handoff));
-    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + CrossMapGuestHandoffOffset),
-                              cross_map_guest_handoff_expected, cross_map_guest_handoff_index,
-                              TraceEntry)) {
-        LOG_ERROR(Debug, "Failed to install Bloodborne cross-map guest-handoff hook at {:#x}",
-                  CrossMapGuestHandoffOffset);
-        return;
-    }
-    cross_map_guest_handoff_hook_installed = true;
-    const size_t summon_reload_state_index =
-        static_cast<size_t>(std::distance(Sites.begin(), summon_reload_state));
-    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + StageWarpDescriptorFinalizeOffset),
-                              summon_reload_state_expected, summon_reload_state_index,
-                              TraceEntry)) {
-        LOG_ERROR(Debug, "Failed to install Bloodborne summon-reload state hook at {:#x}",
-                  StageWarpDescriptorFinalizeOffset);
-        return;
-    }
-    summon_reload_state_hook_installed = true;
-    const size_t deferred_summon_reload_index =
-        static_cast<size_t>(std::distance(Sites.begin(), deferred_summon_reload));
-    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + SosStatusUpdateOffset),
-                              deferred_summon_reload_expected, deferred_summon_reload_index,
-                              TraceEntry)) {
-        LOG_ERROR(Debug, "Failed to install Bloodborne deferred summon-reload hook at {:#x}",
-                  SosStatusUpdateOffset);
-        return;
-    }
-    deferred_summon_reload_hook_installed = true;
+    coop_features.On("seamless core");
     InitPartyController();
-    const size_t healing_fountain_host_availability_index =
-        static_cast<size_t>(std::distance(Sites.begin(), healing_fountain_host_availability));
-    if (!InstallGuestCodeHook(reinterpret_cast<void*>(base + HealingFountainAvailabilityOffset),
-                              healing_fountain_host_availability_expected,
-                              healing_fountain_host_availability_index, TraceEntry)) {
-        LOG_ERROR(Debug,
-                  "Failed to install Bloodborne healing-fountain host-availability hook at "
-                  "{:#x}",
-                  HealingFountainAvailabilityOffset);
-        return;
-    }
-    healing_fountain_host_availability_hook_installed = true;
     // Optional: without it a guest quitting to the title stays in the room, but every other
     // patch still applies.
     const auto world_teardown_expected =
         std::span<const u8>{world_teardown->prologue.data(), world_teardown->prologue_size};
-    world_teardown_hook_installed = InstallGuestCodeHook(
+    world_teardown_hook_installed = InstallCoopHook(
         reinterpret_cast<void*>(base + WorldTeardownMatchingOffset), world_teardown_expected,
         static_cast<size_t>(std::distance(Sites.begin(), world_teardown)), TraceEntry);
     if (!world_teardown_hook_installed) {
         LOG_ERROR(Debug, "Failed to install Bloodborne world-teardown hook at {:#x}",
                   WorldTeardownMatchingOffset);
+        coop_features.Skipped("world teardown",
+                              SiteFailure(base, image_size, WorldTeardownMatchingOffset));
+    } else {
+        coop_features.On("world teardown");
     }
 
     InstallGhostDeathRevive(base, image_size);
@@ -12023,7 +12070,7 @@ void InstallSeamlessCoopPatches() {
     InstallDeferredBossItems(base, image_size);
     InstallKeepLocalFlags(base, image_size);
     InstallItemModuleDiagnostics(base, image_size);
-    InstallItemButtonDiagnostics(base);
+    InstallItemButtonDiagnostics(base, image_size);
     InstallPartyDeath(base, image_size);
     InstallOwnHitCount(base, image_size);
     StartSaveBackups();
@@ -12031,32 +12078,7 @@ void InstallSeamlessCoopPatches() {
     StartVitalsBoardClient();
     PatchSignTimers(base, image_size);
 
-    std::memcpy(area_comparison, BeckoningSignedAreaComparison.data(),
-                BeckoningSignedAreaComparison.size());
-    std::memcpy(area_flag_result, BeckoningAllowedAreaFlagResult.data(),
-                BeckoningAllowedAreaFlagResult.size());
-    std::memcpy(responder_bell_area_result, ResponderBellAllowedAreaResult.data(),
-                ResponderBellAllowedAreaResult.size());
-    std::memcpy(responder_bell_common_result, ResponderBellAllowedCommonResult.data(),
-                ResponderBellAllowedCommonResult.size());
-    std::memcpy(active_bell_area_comparison, ActiveBellSignedAreaComparison.data(),
-                ActiveBellSignedAreaComparison.size());
-    std::memcpy(active_bell_area_flag_result, ActiveBellAllowedAreaFlagResult.data(),
-                ActiveBellAllowedAreaFlagResult.size());
-    std::memcpy(responder_search_area_range_result, ResponderSearchSignedAreaRangeResult.data(),
-                ResponderSearchSignedAreaRangeResult.size());
-    std::memcpy(sos_status_area_restriction, SosStatusAllowedArea.data(),
-                SosStatusAllowedArea.size());
-    std::memcpy(summon_candidate_area_restriction, SummonCandidateAllowedCrossMap.data(),
-                SummonCandidateAllowedCrossMap.size());
-    std::memcpy(summon_build_area_restriction, SummonBuildAllowedCrossMap.data(),
-                SummonBuildAllowedCrossMap.size());
-    std::memcpy(summon_build_world_state_restriction, SummonBuildAllowedWorldState.data(),
-                SummonBuildAllowedWorldState.size());
-    std::memcpy(summon_build_negative_event_restriction, SummonBuildAllowedNegativeEvent.data(),
-                SummonBuildAllowedNegativeEvent.size());
-    std::memcpy(stage_transition_stop_matching_call, StageTransitionKeepMatchingCall.data(),
-                StageTransitionKeepMatchingCall.size());
+    WriteCoopPatches(base, "seamless core");
     negative_area_patch_installed = true;
     area_flag_patch_installed = true;
     responder_bell_area_patch_installed = true;
@@ -12075,18 +12097,14 @@ void InstallSeamlessCoopPatches() {
              "use, active search, cross-map candidate selection, and native summon construction "
              "with host-placement transport, guest stage handoff, retained matching during "
              "stage transitions, deferred native reload, and host lantern actions in negative "
-             "and area-complete SOS regions at "
-             "{:#x}/{:#x}/{:#x}/{:#x}/{:#x}/{:#x}/{:#x}/{:#x}/{:#x}/{:#x}/{:#x}/{:#x}/{:#x}/"
-             "{:#x}/{:#x}/{:#x}/{:#x}/{:#x}",
-             BeckoningAreaComparisonOffset, BeckoningAreaFlagResultOffset,
-             ResponderBellAreaResultOffset, ResponderBellCommonResultOffset,
-             ActiveBellAreaComparisonOffset, ActiveBellAreaFlagResultOffset,
-             ResponderSearchAreaRangeResultOffset, SosStatusAreaRestrictionOffset,
-             SummonCandidateAreaRestrictionOffset, SummonBuildAreaRestrictionOffset,
-             SummonBuildWorldStateRestrictionOffset, SummonBuildNegativeEventRestrictionOffset,
-             StageTransitionStopMatchingCallOffset, SummonBuildEntryOffset,
-             CrossMapGuestHandoffOffset, SosStatusUpdateOffset, SetSummonReloadStateOffset,
-             HealingFountainAvailabilityOffset);
+             "and area-complete SOS regions ({} byte patches, {} hooks)",
+             CoopPatchesOf("seamless core").size(), core_hooks.size());
+    LogCoopFeatures();
+}
+
+void SetBuildIdentity(std::string_view revision, u64 event_files) {
+    std::scoped_lock lock{peer_hello_mutex};
+    own_hello = PeerHello{.revision = std::string{revision}, .event_files = event_files};
 }
 
 void NoteSaveFileOpened(std::string_view guest_path) {

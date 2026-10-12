@@ -3,6 +3,8 @@
 
 #include <array>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -868,6 +870,52 @@ TEST(BloodborneGuestProgress, AFreshCharacterHasFarFewerFlagsThanTheOneBefore) {
     EXPECT_FALSE(IsOtherCharacter(5800, 5859));
     EXPECT_FALSE(IsOtherCharacter(5672, 5739));
     EXPECT_FALSE(IsOtherCharacter(5150, 5400)) << "a load can clear a few hundred";
+    // A store read mid-load counts nothing: no world has 0 flags set, so that is no character.
+    EXPECT_FALSE(IsOtherCharacter(0, 5859));
+}
+
+// The count is read twice a moment apart; a read that missed part of the store (the game
+// changing it on another thread, a node not mapped) gives none, and two reads far apart are a
+// torn read: the count is known only when both read the whole store and agree.
+TEST(BloodborneGuestProgress, AFlagCountIsKnownOnlyWhenTwoWholeReadsAgree) {
+    EXPECT_EQ(SettledFlagCount(5800, 5803), std::optional<s32>{5803});
+    EXPECT_EQ(SettledFlagCount(1200, 1201), std::optional<s32>{1201}) << "a new character";
+    EXPECT_EQ(SettledFlagCount(std::nullopt, 5800), std::nullopt);
+    EXPECT_EQ(SettledFlagCount(5800, std::nullopt), std::nullopt);
+    EXPECT_EQ(SettledFlagCount(0, 0), std::nullopt) << "an empty store";
+    EXPECT_EQ(SettledFlagCount(1200, 5800), std::nullopt) << "one read half done";
+}
+
+// A load drops a slot's kept lists (pickups, world changes) only on a known count: an unknown
+// one keeps them, since dropping them by mistake loses what the player looted.
+TEST(BloodborneGuestProgress, AnUnknownFlagCountNeverDropsTheKeptLists) {
+    EXPECT_FALSE(ForgetsSlotLists(std::nullopt, 5859, false));
+    EXPECT_FALSE(ForgetsSlotLists(std::nullopt, 5859, true))
+        << "confirmed pickups read as missing while the store can't be read";
+    EXPECT_TRUE(ForgetsSlotLists(1200, 5400, false)) << "a new character";
+    EXPECT_TRUE(ForgetsSlotLists(5800, 5859, true)) << "its confirmed pickups are all gone";
+    EXPECT_FALSE(ForgetsSlotLists(5800, 5859, false)) << "a restart";
+}
+
+// Before a slot's kept files are dropped they are copied aside, name.bak-<time>, and the
+// newest few copies of each file stay.
+TEST(BloodborneGuestProgress, DroppedListsAreCopiedAsideFirst) {
+    EXPECT_EQ(SlotBackupName("bloodborne_party_progress_slot2.txt", "20261012-024501"),
+              "bloodborne_party_progress_slot2.txt.bak-20261012-024501");
+    const std::vector<std::string> names{
+        "bloodborne_party_progress_slot2.txt.bak-20261012-010000",
+        "bloodborne_party_progress_slot2.txt.bak-20261011-230000",
+        "bloodborne_party_progress_slot2.txt",
+        "bloodborne_party_progress_slot2.txt.bak-20261012-020000",
+        "bloodborne_party_progress_slot3.txt.bak-20261001-000000",
+        "bloodborne_party_world_slot2.txt.bak-20261001-000000",
+        "bloodborne_party_progress_slot2.txt.bak-20261012-030000",
+    };
+    EXPECT_EQ(
+        SlotBackupsToRemove("bloodborne_party_progress_slot2.txt", names, 2),
+        (std::vector<std::string>{"bloodborne_party_progress_slot2.txt.bak-20261011-230000",
+                                  "bloodborne_party_progress_slot2.txt.bak-20261012-010000"}));
+    EXPECT_TRUE(SlotBackupsToRemove("bloodborne_party_progress_slot2.txt", names, 5).empty());
 }
 
 // The menu scripts' "am I a summoned client" answer (0x01A13FD1): a party guest's item dialog
@@ -2082,6 +2130,103 @@ TEST(BloodborneDirectBoards, AMembersKillsTravelWhole) {
         << "both went quiet";
 }
 
+// Robustness review 2026-10-12: two games on different builds share a party without a word. Each
+// game's hello (PeerHelloType on the same link) names its co-op protocol, build and event files.
+TEST(BloodbornePeerHello, AHelloReadsBack) {
+    const PeerHello hello{.protocol = CoopProtocolVersion,
+                          .revision = "c01b49d3a1b2-dirty",
+                          .event_files = 0x0123456789abcdefull,
+                          .member = "6b616e69656c"};
+    const std::vector<u8> payload = EncodePeerHello(hello);
+    EXPECT_EQ(DecodePeerHello(payload), hello);
+    const auto frame = DecodeCoopFrame(EncodeCoopFrame(PeerHelloType, payload));
+    ASSERT_TRUE(frame);
+    EXPECT_EQ(frame->first, PeerHelloType);
+    EXPECT_TRUE(IsCoopFrameType(PeerHelloType));
+    EXPECT_NE(PeerHelloType, DirectDamageType);
+    EXPECT_NE(PeerHelloType, DirectVitalsType);
+    EXPECT_NE(PeerHelloType, DirectKillsType);
+
+    std::vector<u8> longer = payload;
+    longer.push_back(7);
+    EXPECT_EQ(DecodePeerHello(longer), hello) << "a later build may add fields at the end";
+    for (size_t size = 0; size < payload.size(); ++size) {
+        EXPECT_FALSE(DecodePeerHello(std::span{payload}.first(size))) << "cut at " << size;
+    }
+    std::vector<u8> overlong = payload;
+    overlong[1] = 0xFF; // the revision's length runs past the end
+    EXPECT_FALSE(DecodePeerHello(overlong));
+}
+
+// One warning line per member and build: the peer's hello comes every few seconds.
+TEST(BloodbornePeerHello, ADifferentBuildIsReportedOncePerPeer) {
+    const PeerHello mine{.protocol = CoopProtocolVersion,
+                         .revision = "c01b49d3",
+                         .event_files = 0x1111,
+                         .member = "6b616e69656c"};
+    PeerBuildCheck check;
+    PeerHello same = mine;
+    same.member = "4c69";
+    EXPECT_FALSE(check.Take(same, mine)) << "the same build";
+
+    PeerHello older = same;
+    older.revision = "7f3343f0";
+    const auto warning = check.Take(older, mine);
+    ASSERT_TRUE(warning);
+    EXPECT_EQ(*warning, "Co-op: 4c69 runs build 7f3343f0, this game runs c01b49d3");
+    EXPECT_FALSE(check.Take(older, mine)) << "said once";
+
+    PeerHello other = older;
+    other.member = "6c6f7265";
+    EXPECT_TRUE(check.Take(other, mine)) << "another peer on that build";
+    PeerHello newer = older;
+    newer.revision = "0c772ac9";
+    EXPECT_TRUE(check.Take(newer, mine)) << "the peer restarted on another build";
+
+    PeerHello protocol = same;
+    protocol.member = "70";
+    protocol.protocol = CoopProtocolVersion + 1;
+    const auto protocol_warning = check.Take(protocol, mine);
+    ASSERT_TRUE(protocol_warning);
+    EXPECT_NE(protocol_warning->find("co-op protocol 2"), std::string::npos) << *protocol_warning;
+
+    PeerHello events = same;
+    events.member = "71";
+    events.event_files = 0x2222;
+    const auto events_warning = check.Take(events, mine);
+    ASSERT_TRUE(events_warning);
+    EXPECT_NE(events_warning->find("event files 0000000000002222"), std::string::npos)
+        << *events_warning;
+    PeerHello unknown = same;
+    unknown.member = "72";
+    unknown.event_files = 0;
+    EXPECT_FALSE(check.Take(unknown, mine)) << "a game that could not read its event files";
+}
+
+// The event files a game reads go into its hello: a party on different co-op event files sees
+// different worlds (boss fogs, NPCs).
+TEST(BloodbornePeerHello, EventFilesHashFollowsTheirBytes) {
+    const auto folder = std::filesystem::temp_directory_path() / "bb_event_files_hash_test";
+    std::filesystem::remove_all(folder);
+    std::filesystem::create_directories(folder);
+    EXPECT_EQ(EventFilesHash(folder), 0u) << "no event files";
+    EXPECT_EQ(EventFilesHash(folder / "absent"), 0u);
+    const auto write = [&](const char* name, std::string_view bytes) {
+        std::ofstream{folder / name, std::ios::binary} << bytes;
+    };
+    write("m21_00_00_00.emevd.dcx", "first");
+    write("m24_01_00_00.emevd.dcx", "second");
+    write("m21_00_00_00.emeld.dcx", "names only");
+    const u64 hash = EventFilesHash(folder);
+    EXPECT_NE(hash, 0u);
+    EXPECT_EQ(EventFilesHash(folder), hash) << "the same files";
+    write("m21_00_00_00.emeld.dcx", "other names");
+    EXPECT_EQ(EventFilesHash(folder), hash) << "only the event scripts count";
+    write("m24_01_00_00.emevd.dcx", "changed");
+    EXPECT_NE(EventFilesHash(folder), hash);
+    std::filesystem::remove_all(folder);
+}
+
 TEST(BloodborneSharedEnemyHp, InOneWorldAGuestTakesTheHostsNpcHp) {
     const std::vector<EnemyCopy> guest{{0x10010038, 910, 910}, {0x1001001f, 100, 123}};
     const std::vector<EnemyHpReport> host{
@@ -2268,4 +2413,47 @@ TEST(BloodborneGuestResume, NotOnceTheGuestTravelledOn) {
         << "loaded in the Ward: back to the point";
     EXPECT_EQ(ChooseResumeStep(point, 0x18000000, ward, 900).kind, Kind::Travel)
         << "where it loaded not known: as before";
+}
+
+// The game is called with an object only when its vtable says it is the kind the function takes:
+// on 2026-10-11 the bloodstain show was given another object and two guests' games crashed.
+TEST(BloodborneGameObjects, AnObjectIsTheKindItsVtableSays) {
+    constexpr u64 Base = 0x8'0000'0000;
+    const std::array stain{BloodstainVtable};
+    EXPECT_TRUE(IsGameVtable(Base + BloodstainVtable, Base, stain));
+    EXPECT_FALSE(IsGameVtable(Base + MapItemManVtable, Base, stain)) << "another kind of object";
+    EXPECT_FALSE(IsGameVtable(0, Base, stain)) << "no vtable (unreadable or freed)";
+    EXPECT_FALSE(IsGameVtable(BloodstainVtable, Base, stain)) << "not in the game's image";
+    EXPECT_FALSE(IsGameVtable(Base + BloodstainVtable, 0, stain)) << "no game loaded";
+    for (const u64 vtable : CharacterVtables) {
+        EXPECT_TRUE(IsGameVtable(Base + vtable, Base, CharacterVtables)) << std::hex << vtable;
+    }
+    for (const u64 vtable : PlayerVtables) {
+        EXPECT_TRUE(IsGameVtable(Base + vtable, Base, CharacterVtables))
+            << "a player is a character " << std::hex << vtable;
+    }
+    EXPECT_FALSE(IsGameVtable(Base + EventFlagManVtable, Base, CharacterVtables));
+}
+
+// A refused game call is logged once per call site and vtable seen, and never more than
+// RefusedCallLog::MaxLogged times, so a wrong vtable list shows in the log without spamming it.
+TEST(BloodborneGameObjects, ARefusalIsLoggedOncePerSiteAndVtable) {
+    RefusedCallLog log;
+    EXPECT_TRUE(log.FirstTime("EventFlagOn", 0x8'0532'0000));
+    EXPECT_FALSE(log.FirstTime("EventFlagOn", 0x8'0532'0000)) << "the same pair again";
+    EXPECT_TRUE(log.FirstTime("EventFlagOn", 0x8'0533'0000)) << "another vtable";
+    EXPECT_TRUE(log.FirstTime("ShowGuestBloodstain", 0x8'0532'0000)) << "another call site";
+    for (u64 vtable = 1; vtable < 100; ++vtable) {
+        log.FirstTime("Kill", vtable);
+    }
+    EXPECT_FALSE(log.FirstTime("Teleport", 7)) << "capped";
+    EXPECT_FALSE(log.FirstTime("EventFlagOn", 0x8'0532'0000));
+}
+
+TEST(BloodborneGameObjects, ASeenVtableIsNamedByItsImageOffset) {
+    constexpr u64 Base = 0x8'0000'0000;
+    EXPECT_EQ(DescribeVtable(Base + EventFlagManVtable, Base, 0x6000000), "eboot+0x5320b60");
+    EXPECT_EQ(DescribeVtable(0x12'3456'7890, Base, 0x6000000), "0x1234567890")
+        << "outside the image";
+    EXPECT_EQ(DescribeVtable(0, Base, 0x6000000), "0x0");
 }

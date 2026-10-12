@@ -170,6 +170,20 @@ int main() {
     CHECK(reinterpret_cast<Function2>(f.answer)(7, 0) == 0);
     CHECK(reinterpret_cast<Function2>(f.answer)(8, 0) == 42);
 
+    // A hook taken out again (an all-or-nothing install that failed half way) puts the game's
+    // instructions back, read-execute as they were, and the site can be hooked again.
+    CHECK(Core::RemoveGuestCodeHook(f.add));
+    CHECK(std::memcmp(f.add, add_bytes.data(), add_bytes.size()) == 0);
+    CHECK(!IsWritable(f.add));
+    const int calls_before = calls;
+    CHECK(reinterpret_cast<Function2>(f.add)(3, 4) == 7);
+    CHECK(calls == calls_before);
+    CHECK(!Core::RemoveGuestCodeHook(f.add)); // no hook there any more
+    CHECK(!Core::RemoveGuestCodeHook(f.relative));
+    CHECK(Core::InstallGuestCodeHook(f.add, add_bytes, 0x1234, Observe));
+    CHECK(reinterpret_cast<Function2>(f.add)(3, 4) == 7);
+    CHECK(calls == calls_before + 1);
+
     // Instructions that do not match, or that cannot run from a trampoline, are refused and left
     // as they were.
     std::array<u8, 7> wrong = relative_bytes;

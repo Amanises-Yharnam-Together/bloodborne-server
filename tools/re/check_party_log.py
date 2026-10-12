@@ -8,6 +8,7 @@
 Exit code 1 when a check fails (boot) or a known problem shows up (session).
 """
 import argparse
+import json
 import pathlib
 import re
 import sys
@@ -28,7 +29,35 @@ BOOT_MARKERS = {
     "shared loot": "Bloodborne party guests see and pick up their own map items",
     "sign timers": "Bloodborne sign timers patched",
     "seamless patches": "Bloodborne seamless patches enabled",
+    "feature summary": "Co-op features: ",
 }
+
+# The co-op install's one summary line ("Co-op features: N/M on (skipped: <feature> [<reason>],
+# ...)") and which features are required, from the co-op site table
+# (emulator/src/core/bloodborne_patch_sites.h, written out for the launcher). A required feature
+# skipped (a game patch over its bytes, a hook that did not go in) fails the log.
+COOP_SITES = pathlib.Path(__file__).resolve().parents[2] / "bbport" / "patches" / "coop-sites.json"
+FEATURES = re.compile(r"Co-op features: \d+/\d+ on(?: \(skipped: (.*)\))?\s*$")
+SKIPPED = re.compile(r"(?:^|, )(.+?) \[(.*?)\]")
+
+
+def required_features(path: pathlib.Path = COOP_SITES) -> set[str]:
+    table = json.loads(path.read_text(encoding="utf-8"))
+    return {feature["name"] for feature in table["features"] if feature["required"]}
+
+
+def skipped_features(text: str) -> list[tuple[str, str]]:
+    """(feature, reason) skipped at the last co-op install in the log."""
+    summaries = [found for found in map(FEATURES.search, text.splitlines()) if found]
+    if not summaries or summaries[-1].group(1) is None:
+        return []
+    return SKIPPED.findall(summaries[-1].group(1))
+
+
+def skipped_required(text: str) -> list[str]:
+    required = required_features()
+    return [f"required co-op feature skipped: {name} [{reason}]"
+            for name, reason in skipped_features(text) if name in required]
 
 # An error from the co-op code, or anything critical. The reverse-engineering trace
 # (SHADPS4_BLOODBORNE_RE_TRACE=1) is diagnostics only: its hooks that do not go in are warnings
@@ -63,13 +92,21 @@ PROBLEMS = {
         re.compile(r"Device lost"),
     "a crash was caught": re.compile(r"crash: exception"),
 }
+# A game call skipped because its object's vtable was not the expected kind (HasVtable): fine
+# for a stale pointer, but a vtable list missing a class quietly turns a feature off.
+REFUSAL = re.compile(r"refused a game call")
+PROBLEMS["a guarded game call was refused (a wrong object, or a vtable list missing a class)"] = \
+    REFUSAL
 
 
 def check_boot(text: str) -> list[str]:
     """The co-op parts missing from a boot log, and the co-op errors in it."""
     failures = [f"missing: {name}" for name, marker in BOOT_MARKERS.items() if marker not in text]
+    failures += skipped_required(text)
     failures += [f"error: {line.strip()[:200]}" for line in text.splitlines()
                  if is_failure(line)]
+    failures += [f"refused: {line.strip()[:200]}" for line in text.splitlines()
+                 if REFUSAL.search(line)]
     return failures
 
 
@@ -88,6 +125,7 @@ def summarize(text: str) -> tuple[dict[str, int], list[str]]:
         hits = [line for line in lines if pattern.search(line)]
         if hits:
             problems.append(f"{name}: {len(hits)}x, e.g. {hits[0].strip()[:160]}")
+    problems += skipped_required(text)
     problems += [f"co-op error: {line.strip()[:200]}" for line in lines if is_failure(line)]
     return counts, problems
 
