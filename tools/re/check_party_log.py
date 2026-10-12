@@ -4,6 +4,8 @@
 
   check_party_log.py --boot <log>     every co-op patch and hook went in, nothing failed
   check_party_log.py <log> [<log>...] a play session's summary and the known problems in it
+  check_party_log.py --trace <log>    also the co-op traces next to the log (coop-trace-*.txt):
+                                      frames per type, board failures, peers silent over 5 s
 
 Exit code 1 when a check fails (boot) or a known problem shows up (session).
 """
@@ -135,9 +137,79 @@ def revision(text: str) -> str:
     return found.group(1)[:12] if found else "unknown"
 
 
+# The co-op trace (docs/WORLD_SYNC.md, Stage B): "<UTC ms> <kind> <key>=<value> ..." per line.
+TRACE_GLOB = "coop-trace-*.txt"
+# A peer whose frames stop this long (each one sends every 0.5 s) is an outage candidate.
+SILENT_MS = 5_000
+
+
+def traces_next_to(log: pathlib.Path) -> list[pathlib.Path]:
+    """The co-op traces in the log's folder, oldest first (their names start with the time)."""
+    return sorted(log.parent.glob(TRACE_GLOB))
+
+
+def trace_records(text: str):
+    """(UTC ms, kind, fields) per readable line; the values are left escaped."""
+    for raw in text.splitlines():
+        tokens = raw.split()
+        if len(tokens) < 2 or not tokens[0].isdigit():
+            continue
+        fields = dict(token.split("=", 1) for token in tokens[2:] if "=" in token)
+        yield int(tokens[0]), tokens[1], fields
+
+
+def summarize_trace(text: str) -> dict:
+    """Frames per direction and type, board posts and failures per endpoint, lines dropped, and
+    the gaps over SILENT_MS between one peer's frames."""
+    frames: dict[str, int] = {}
+    posts: dict[str, int] = {}
+    failures: dict[str, int] = {}
+    last_from: dict[str, int] = {}
+    gaps = []
+    dropped = 0
+    for at, kind, fields in trace_records(text):
+        if kind in ("p2p-in", "p2p-out"):
+            if fields.get("from-peer") == "0":
+                continue  # not a room peer: the game drops it
+            key = f"{kind} {fields.get('type', '?')}"
+            frames[key] = frames.get(key, 0) + 1
+            if kind == "p2p-in":
+                peer = fields.get("peer", "?")
+                if peer in last_from and at - last_from[peer] > SILENT_MS:
+                    gaps.append(f"peer {peer} silent {(at - last_from[peer]) / 1000:.1f} s "
+                                f"until {at}")
+                last_from[peer] = at
+        elif kind == "board-out":
+            endpoint = fields.get("endpoint", "?")
+            posts[endpoint] = posts.get(endpoint, 0) + 1
+        elif kind == "board-in" and ("error" in fields or fields.get("status") != "200"):
+            endpoint = fields.get("endpoint", "?")
+            failures[endpoint] = failures.get(endpoint, 0) + 1
+        elif kind == "trace-dropped":
+            dropped += int(fields.get("count", "0"))
+    return {"frames": frames, "board posts": posts, "board failures": failures,
+            "dropped": dropped, "gaps": gaps}
+
+
+def print_trace_summary(trace: pathlib.Path) -> None:
+    summary = summarize_trace(trace.read_text(encoding="utf-8", errors="replace"))
+    print(f"  trace {trace.name}")
+    for key, count in sorted(summary["frames"].items()):
+        print(f"    {key}: {count}")
+    for endpoint, count in sorted(summary["board posts"].items()):
+        failed = summary["board failures"].get(endpoint, 0)
+        print(f"    {endpoint}: {count} posts, {failed} failed")
+    if summary["dropped"]:
+        print(f"    lines dropped (queue full): {summary['dropped']}")
+    for gap in summary["gaps"]:
+        print(f"    outage candidate: {gap}")
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--boot", action="store_true", help="check a boot log")
+    parser.add_argument("--trace", action="store_true",
+                        help="also summarize the co-op traces next to each log")
     parser.add_argument("logs", nargs="+", type=pathlib.Path)
     args = parser.parse_args(argv)
     status = 0
@@ -158,6 +230,9 @@ def main(argv: list[str]) -> int:
             print(f"  {name}: {count}")
         for problem in problems:
             print(f"  PROBLEM {problem}")
+        if args.trace:
+            for trace in traces_next_to(log):
+                print_trace_summary(trace)
         status |= 1 if problems else 0
     return status
 

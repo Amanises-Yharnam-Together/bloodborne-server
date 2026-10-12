@@ -77,6 +77,30 @@ player is.
   sessions as regression cases. Game memory itself is not replayed. This covers the sync
   decisions, which are where most desyncs start.
 
+Built (2026-10-12). Every co-op game writes `user/log/coop-trace-<yyyymmdd-hhmmss>-<process>.txt`.
+A file holds at most 50 MB, then a new one starts, and the newest 5 are kept. A writer thread
+writes the lines. A full queue drops lines and counts them (a `trace-dropped` record). It is on
+by default; `SHADPS4_BLOODBORNE_TRACE=0` turns it off. The record kinds are listed at
+`CoopTraceVersion` in `bloodborne_party.h`. A board body is cut at 8 KB, and a body that
+repeats the endpoint's last one is written as `same=1`. The `-in` records hold the inputs of
+`VisitKills`, `SharedDamage`/`LowerToHostHp`, `ShownLikeTheHost` and `AppliesMemberKill`; a
+key that is left out is unchanged. Each `OnLifecycle` event is a `life` record with its session
+epoch, and each change of place a `place` record.
+
+- **Read a player's trace:** `check_party_log.py --trace <their shad_log.txt>` summarizes the
+  traces next to the log: frames per type, board failures, and peers silent for more than 5 s
+  (outage candidates).
+- **Replay one:** set `BLOODBORNE_REPLAY_TRACE=<trace>` and run
+  `shadps4_bloodborne_test --gtest_filter=CoopTraceReplay.ReplaysTheTraceNamedInTheEnvironment`.
+  It prints each decision after its record's time.
+- **Cut one into a test:** copy the lines around the bug into
+  `emulator/tests/bloodborne/traces/<name>.txt`. The first record of each `-in` kind must carry
+  all of its keys, with whole lists (`chars==...`, `alive==...`). Each new file starts that way;
+  for a cut from the middle, fill in the first record from the earlier ones. Keep the `life`
+  and `p2p-in` lines in between, and add `#` lines that say what it shows. Replay it as above, check the
+  decisions, and save them as `<name>.expected`. `CoopTraceReplay.CheckedInTracesKeepTheirDecisions`
+  then keeps them.
+
 ## Stage C: world log over the direct link
 
 - **Log entry:** `{seq, epoch, map, kind, payload}`. Kinds: `Kill`, `Unkill` (reset),

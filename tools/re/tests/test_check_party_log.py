@@ -4,8 +4,11 @@
 
 Run: py -3.12 -m unittest discover -s tools\\re\\tests
 """
+import contextlib
+import io
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -116,6 +119,66 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("refused", problems[0])
         self.assertEqual(len(tool.check_boot(GOOD_BOOT + "\n" + text)), 1)
+
+
+TRACE = "\n".join([
+    "1760000000000 trace version=1 role=host process=7",
+    "1760000000100 p2p-in type=30 peer=0a000002:3658 from-peer=1 payload=00",
+    "1760000000600 p2p-in type=30 peer=0a000002:3658 from-peer=1 payload=00",
+    "1760000000700 p2p-out type=32 peer=0a000002:3658 payload=00",
+    "1760000001000 p2p-in type=31 peer=0a000003:3658 from-peer=1 payload=00",
+    "1760000001200 p2p-in type=30 peer=0b000009:1 from-peer=0 payload=00",
+    "1760000001300 board-out endpoint=/bloodborne/party/hp size=2 body=ab",
+    "1760000001400 board-in endpoint=/bloodborne/party/hp status=200 same=1",
+    "1760000002000 board-in endpoint=/bloodborne/party/hp error=Connection",
+    "1760000002100 trace-dropped count=12",
+    # 0a000002 goes quiet for 7.4 s (an outage candidate); 0a000003 for 4 s (not one).
+    "1760000005000 p2p-in type=31 peer=0a000003:3658 from-peer=1 payload=00",
+    "1760000008000 p2p-in type=30 peer=0a000002:3658 from-peer=1 payload=00",
+])
+
+
+class TraceTest(unittest.TestCase):
+    def test_counts_the_frames_and_posts(self):
+        summary = tool.summarize_trace(TRACE)
+        self.assertEqual(summary["frames"], {"p2p-in 30": 3, "p2p-in 31": 2, "p2p-out 32": 1})
+        self.assertEqual(summary["board posts"], {"/bloodborne/party/hp": 1})
+        self.assertEqual(summary["board failures"], {"/bloodborne/party/hp": 1})
+        self.assertEqual(summary["dropped"], 12)
+
+    def test_finds_the_peers_long_silences(self):
+        gaps = tool.summarize_trace(TRACE)["gaps"]
+        self.assertEqual(len(gaps), 1)
+        self.assertIn("0a000002:3658", gaps[0])
+        self.assertIn("7.4 s", gaps[0])
+
+    def test_finds_the_traces_next_to_a_log(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = pathlib.Path(temp)
+            (folder / "shad_log.txt").write_text("log")
+            (folder / "coop-trace-20261012-100000-7.txt").write_text(TRACE)
+            (folder / "coop-trace-20261012-090000-7.txt").write_text(TRACE)
+            (folder / "other.txt").write_text("x")
+            self.assertEqual([path.name for path in tool.traces_next_to(folder / "shad_log.txt")],
+                             ["coop-trace-20261012-090000-7.txt",
+                              "coop-trace-20261012-100000-7.txt"])
+
+    def test_main_summarizes_the_traces_when_asked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = pathlib.Path(temp)
+            log = folder / "shad_log.txt"
+            log.write_text(line("Bloodborne party trip started map=0x18010000"))
+            (folder / "coop-trace-20261012-100000-7.txt").write_text(TRACE)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                tool.main([str(log)])
+            self.assertNotIn("coop-trace", out.getvalue())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                tool.main(["--trace", str(log)])
+            self.assertIn("coop-trace-20261012-100000-7.txt", out.getvalue())
+            self.assertIn("p2p-in 30: 3", out.getvalue())
+            self.assertIn("silent", out.getvalue())
 
 
 if __name__ == "__main__":

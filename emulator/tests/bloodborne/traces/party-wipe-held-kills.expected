@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+kill posted 0x10014066
+life trip
+kills held on map 0x21010000: 0x10014066
+life wipe
+kill withdrawn 0x10014066
+no kills held on map 0x21010000
