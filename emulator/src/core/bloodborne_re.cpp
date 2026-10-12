@@ -1238,6 +1238,69 @@ u32 GetCurrentPackedMap() {
     return ReadValue<u32>(entry, sizeof(u64));
 }
 
+// Where this player is (see PlaceTracker): fed by TickPlace once per party tick, read by every
+// feature instead of GetCurrentPackedMap. Only the load-time hooks, the trip machinery and the
+// rig read the game's map themselves.
+std::mutex place_mutex;
+PlaceTracker place_tracker;
+std::vector<std::function<void(const PlaceChange&)>> place_listeners;
+
+Place CurrentPlace() {
+    std::scoped_lock lock{place_mutex};
+    return place_tracker.Current();
+}
+
+// The committed map while the player stands in the world, else 0 (in a load, before the first
+// map read, in a cutscene): what the features that pause in loads read.
+u32 PlayingMap() {
+    const Place place = CurrentPlace();
+    return place.state == PlaceState::Playing ? place.map : 0;
+}
+
+// `listener` runs on the game's thread after each change of place, outside the tracker's lock.
+bool OnPlaceChange(std::function<void(const PlaceChange&)> listener) {
+    std::scoped_lock lock{place_mutex};
+    place_listeners.push_back(std::move(listener));
+    return true;
+}
+
+// One line per change of place.
+[[maybe_unused]] const bool place_log_listening = OnPlaceChange(
+    [](const PlaceChange& change) { LOG_INFO(Debug, "{}", FormatPlaceChange(change)); });
+
+// The co-op trace's records (see CoopTraceVersion).
+void TraceLife(const char* event, TraceSampler::Fields more = {});
+void Trace(std::string kind, TraceSampler::Fields fields);
+
+// Each change of place into the co-op trace.
+[[maybe_unused]] const bool place_trace_listening =
+    OnPlaceChange([](const PlaceChange& change) { Trace("place", TracePlaceFields(change)); });
+
+// The resets of what lives for a visit or a session (see LifecycleResets): each container
+// registers its own next to it with RegisterLifecycleReset.
+std::mutex lifecycle_mutex;
+LifecycleResets lifecycle_resets;
+
+bool RegisterLifecycleReset(std::string name, std::initializer_list<Lifecycle> events,
+                            std::function<void()> reset) {
+    std::scoped_lock lock{lifecycle_mutex};
+    lifecycle_resets.Register(std::move(name), events, std::move(reset));
+    return true;
+}
+
+void OnLifecycle(Lifecycle event) {
+    std::vector<std::string> ran;
+    u64 epoch = 0;
+    {
+        std::scoped_lock lock{lifecycle_mutex};
+        ran = lifecycle_resets.Dispatch(event);
+        epoch = lifecycle_resets.Epoch();
+    }
+    TraceLife(std::string{LifecycleName(event)}.c_str(), {{"epoch", std::to_string(epoch)}});
+    LOG_INFO(Debug, "Co-op lifecycle: {}, session epoch {} (reset: {})", LifecycleName(event),
+             epoch, ran.empty() ? "nothing" : fmt::format("{}", fmt::join(ran, ", ")));
+}
+
 bool ReadLocalSummonPlacement(SummonPlacementDescriptor& placement, std::string_view& result) {
     const u64 manager_root = GetSummonManagerRoot();
     if (manager_root < 0x10000 ||
@@ -1246,6 +1309,7 @@ bool ReadLocalSummonPlacement(SummonPlacementDescriptor& placement, std::string_
         return false;
     }
 
+    // Raw: the summon hooks run before the tick, while the join's load places the player.
     placement.packed_region = GetCurrentPackedMap();
     placement.area = ReadValue<s32>(manager_root, 0xA80);
     if (!IsUsablePackedMap(placement.packed_region)) {
@@ -1364,7 +1428,7 @@ void ApplyCrossMapSummonGuestPlacement(const GuestRegisterSnapshot& registers) {
     }
     record.transported_host = transported_host.has_value();
 
-    record.current_map = GetCurrentPackedMap();
+    record.current_map = GetCurrentPackedMap(); // raw: a summon hook, in the join's load
     record.received_map = transported_host.has_value() ? transported_host->packed_region
                                                        : ReadValue<u32>(state, 0x14C4);
     const u32 transport_map = transported_host.has_value() ? transported_host->packed_region
@@ -1558,7 +1622,7 @@ void ApplyDeferredSummonReload() {
         return;
     }
 
-    record.current_map = GetCurrentPackedMap();
+    record.current_map = GetCurrentPackedMap(); // raw: runs before the tick, during the load
     if (record.current_map != record.target_map) {
         record.result = "waiting_for_target_map";
         return;
@@ -1628,7 +1692,7 @@ void ApplyPreMatchCrossMapGuestWarp() {
         return;
     }
 
-    record.current_map = GetCurrentPackedMap();
+    record.current_map = GetCurrentPackedMap(); // raw: runs before the tick, during the load
     record.target_map = transported_host->packed_region;
     if (!IsUsablePackedMap(record.current_map) || !IsUsablePackedMap(record.target_map)) {
         record.result = "invalid_map";
@@ -1746,7 +1810,7 @@ void ResumePreMatchCrossMapResponder() {
     auto& record = responder_resume;
     record.target_map = pending.target_map;
     record.target_area = pending.target_area;
-    record.current_map = GetCurrentPackedMap();
+    record.current_map = GetCurrentPackedMap(); // raw: runs before the tick, during the load
     if (record.current_map != record.target_map) {
         pending.ready_observations = 0;
         record.result = "waiting_for_target_map";
@@ -1877,7 +1941,7 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
     PartyObservation observation{};
     observation.player_valid =
         player >= 0x10000 && HasMemoryAccess(player, sizeof(u64), MemoryProt::CpuRead);
-    observation.map_usable = IsUsablePackedMap(GetCurrentPackedMap());
+    observation.map_usable = PlayingMap() != 0;
 
     const u64 state = GetGlobalState();
     observation.stage_transition =
@@ -1963,7 +2027,7 @@ void LogBloodstainStateChanges() {
                     player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1);
     if (state != last) {
         last = state;
-        LOG_INFO(Debug, "Bloodborne bloodstain state map={:#x} {}", GetCurrentPackedMap(), state);
+        LOG_INFO(Debug, "Bloodborne bloodstain state map={:#x} {}", CurrentPlace().map, state);
     }
 }
 
@@ -1973,20 +2037,19 @@ bool InPartySession();
 // See ShowsGuestBloodstain: a guest's own stain in the host's world.
 void ShowGuestBloodstain() {
     static int tries = 0;
-    static u64 tried_player = 0;
-    static u32 tried_map = 0;
+    static u64 tried_visit = 0;
     const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
     const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
     const u64 global = GetGlobalState();
     const u64 player = GetLocalPlayer();
-    const u32 map = GetCurrentPackedMap();
+    const Place place = CurrentPlace();
+    const u32 map = place.state == PlaceState::Playing ? place.map : 0;
     if (data < 0x10000 || record < 0x10000 || player < 0x10000) {
         return;
     }
-    if (player != tried_player || map != tried_map) {
+    if (place.visit != tried_visit) {
         tries = 0; // a load: a new visit
-        tried_player = player;
-        tried_map = map;
+        tried_visit = place.visit;
     }
     const u64 stain = OwnBloodstain();
     const bool party_guest =
@@ -2380,7 +2443,7 @@ std::vector<OtherPlayer> OtherPlayers() {
 // session; see RespawnsAtPartyRest).
 std::mutex seen_alive_mutex;
 std::unordered_set<u64> seen_alive;
-u32 seen_alive_map = 0;
+u64 seen_alive_visit = 0; // see Place::visit: a reload of the same map makes new characters
 
 bool WasAliveThisVisit(u64 character) {
     std::scoped_lock lock{seen_alive_mutex};
@@ -2757,7 +2820,7 @@ void Trace(std::string kind, TraceSampler::Fields fields) {
     }
 }
 
-void TraceLife(const char* event, TraceSampler::Fields more = {}) {
+void TraceLife(const char* event, TraceSampler::Fields more) {
     more.insert(more.begin(), std::pair<std::string, std::string>{"event", event});
     Trace("life", std::move(more));
 }
@@ -2829,15 +2892,6 @@ httplib::Result PostToBoard(httplib::Client& client, const std::string& endpoint
         }
     }
     return response;
-}
-
-// The party session starting or ending for this game.
-void TraceSession(bool in_session) {
-    static bool traced = false;
-    if (in_session != traced) {
-        traced = in_session;
-        TraceLife(in_session ? "session-on" : "session-off");
-    }
 }
 
 // Now in the PC's local time, as the player reads it (file names).
@@ -3372,7 +3426,7 @@ void LogCharacterChanges() {
 u32 hidden_characters_map = 0;
 
 void RememberHiddenCharacters(u64 world) {
-    if (const u32 map = GetCurrentPackedMap(); map != hidden_characters_map) {
+    if (const u32 map = CurrentPlace().map; map != hidden_characters_map) {
         hidden_characters.clear();
         hidden_characters_map = map;
     }
@@ -3484,9 +3538,9 @@ void SampleLivingCharacters() {
     }
     next = now + std::chrono::seconds{1};
     std::scoped_lock lock{seen_alive_mutex};
-    if (const u32 map = GetCurrentPackedMap(); map != seen_alive_map) {
+    if (const u64 visit = CurrentPlace().visit; visit != seen_alive_visit) {
         seen_alive.clear();
-        seen_alive_map = map;
+        seen_alive_visit = visit;
     }
     ForEachWorldCharacter(world, [](u64 character) {
         if (CharacterHp(character) > 0) {
@@ -3551,7 +3605,7 @@ void TickLampRest() {
 // is remembered without the effect and scaled when it has the effect but not the max HP. Its
 // HP fields, entity and co-op effects are logged on change.
 std::unordered_map<u64, s32> unscaled_boss_max;
-u32 unscaled_boss_map = 0;
+u64 unscaled_boss_visit = 0; // see Place::visit: by character object, which a reload makes anew
 
 bool EnemiesAreHarder();
 
@@ -3571,9 +3625,9 @@ void KeepBossHpInStep() {
     if (world < 0x10000) {
         return;
     }
-    if (const u32 map = GetCurrentPackedMap(); map != unscaled_boss_map) {
+    if (const u64 visit = CurrentPlace().visit; visit != unscaled_boss_visit) {
         unscaled_boss_max.clear();
-        unscaled_boss_map = map;
+        unscaled_boss_visit = visit;
     }
     // Entity ids, as the lookup 0x0191A440 finds them: WorldChrMan +0x90 tables at +0x98, each
     // with +0xE0 sorted (entity id, block << 14 | slot) pairs at +0xE8; the character is
@@ -3764,7 +3818,7 @@ void LogNearbyEnemyControl() {
     }
     if (text != last) {
         last = text;
-        LOG_INFO(Debug, "Bloodborne nearby enemies (map {:#x}):{}", GetCurrentPackedMap(),
+        LOG_INFO(Debug, "Bloodborne nearby enemies (map {:#x}):{}", CurrentPlace().map,
                  text.empty() ? " none" : text);
     }
 }
@@ -3779,9 +3833,55 @@ void TickPartyDeath();
 void ReopenClosedPartySession();
 s32 SessionPlayers();
 void WatchSummonJoin();
+bool PartyTripActive();
+s64 SteadyMilliseconds();
+
+// The tracker's reading for this tick (the only raw map read besides the load-time hooks, the
+// trip machinery and the rig), first in the tick so every feature after it sees this tick's
+// place. Before TickPartyTrip: the tick that ends a trip still reads it as one (a lamp trip).
+void TickPlace() {
+    const u64 global = GetGlobalState();
+    const u64 player = GetLocalPlayer();
+    const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
+    const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+    const bool trip = PartyTripActive();
+    const PlaceReading reading{
+        .now_ms = SteadyMilliseconds(),
+        .map = GetCurrentPackedMap(),
+        .player = player >= 0x10000 ? player : 0,
+        .at = LocalPlayerPosition(),
+        .loading = global < 0x10000 || TryRead<u8>(global, 0x08).value_or(1) != 0,
+        .trip = trip,
+        .dead = data >= 0x10000 && ReadValue<s32>(data, 0xF8) <= 0,
+    };
+    std::optional<PlaceChange> change;
+    std::vector<std::function<void(const PlaceChange&)>> listeners;
+    {
+        std::scoped_lock lock{place_mutex};
+        change = place_tracker.Update(reading);
+        if (change) {
+            listeners = place_listeners;
+        }
+    }
+    if (change) {
+        for (const auto& listener : listeners) {
+            listener(*change);
+        }
+    }
+    // Into and out of a party session (not during a trip: seamless travel keeps the session
+    // through the world's teardown).
+    static bool was_in_session = false;
+    if (!trip) {
+        if (const bool in_session = InPartySession(); in_session != was_in_session) {
+            was_in_session = in_session;
+            OnLifecycle(in_session ? Lifecycle::Join : Lifecycle::Leave);
+        }
+    }
+}
 
 void TickPartyController() {
     NoteGameThreadTick();
+    TickPlace();
     TickAutoplay();
     TickPartyTrip();
     TickPlayersOnThisMap();
@@ -3820,7 +3920,7 @@ void TickPartyController() {
     }
     const bool result = StartPlayerSummonSearch(player, party_controller->SearchEffectId());
     LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",
-             party_controller->SearchEffectId(), GetCurrentPackedMap(), result);
+             party_controller->SearchEffectId(), CurrentPlace().map, result);
 }
 
 void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers);
@@ -3958,7 +4058,7 @@ void PS4_SYSV_ABI TraceCharacterDeath(u64 tag, GuestRegisterSnapshot* registers)
     LOG_INFO(Debug,
              "Bloodborne boss death: {:#x} ({}) hp {}/{} flags {:#x} map {:#x} in session {}",
              ReadValue<u32>(character, 0x08), site.name, ReadValue<s32>(data, 0xF8), max_hp,
-             ReadValue<u64>(character, 0x1E0), GetCurrentPackedMap(), InPartySession());
+             ReadValue<u64>(character, 0x1E0), CurrentPlace().map, InPartySession());
     LogGameCallChainAt("boss death", registers->rsp);
 }
 
@@ -4092,21 +4192,23 @@ std::vector<s32> effects_before_trip; // multiplayer effects to put back after t
 void ParkEnemyWatch();
 
 std::atomic<u64> party_trips_started{0}; // ends the visit of KeepEnemyDeathsInStep
+[[maybe_unused]] const bool party_trips_registered =
+    RegisterLifecycleReset("kill visit", {Lifecycle::Trip}, [] { ++party_trips_started; });
 
 void LogGameCallChainAt(const char* what, u64 rsp);
 
 bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot* registers) {
     if (InPartySession()) {
-        ++party_trips_started;
-        TraceLife("trip", {{"map", fmt::format("{:x}", GetCurrentPackedMap())}});
+        OnLifecycle(Lifecycle::Trip);
         {
             std::scoped_lock lock{party_trip_mutex};
+            // Raw: the trip machinery compares the game's own stage (PartyTrip::ObserveStage).
             party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap(), GetLocalPlayer());
         }
         SaveRemoteJoinTasks();
         effects_before_trip = LocalEffects();
         ParkEnemyWatch();
-        LOG_INFO(Debug, "Bloodborne party trip started map={:#x}", GetCurrentPackedMap());
+        LOG_INFO(Debug, "Bloodborne party trip started map={:#x}", CurrentPlace().map);
         // Who moves the player (a lamp, a death, a time-of-day cutscene, or something else: the
         // rig's host left for the title when its guest's game died apart from it).
         if (registers != nullptr) {
@@ -4145,7 +4247,7 @@ bool PS4_SYSV_ABI KeepSessionAfterTrip(u64, const GuestRegisterSnapshot* registe
     }
     const u64 caller = ReadValue<u64>(registers->rsp, 0);
     LOG_INFO(Debug, "Bloodborne party trip: skipped LeaveSession from {:#x} map={:#x}",
-             caller >= image_base ? caller - image_base : caller, GetCurrentPackedMap());
+             caller >= image_base ? caller - image_base : caller, CurrentPlace().map);
     return true;
 }
 
@@ -4245,7 +4347,7 @@ void WatchSummonJoin() {
                 "matching state {} session state {} closing {} players {} player flags {:#x} "
                 "effects{}",
                 std::chrono::duration_cast<std::chrono::seconds>(SummonJoinWatch::Patience).count(),
-                GetCurrentPackedMap(),
+                CurrentPlace().map,
                 multi_play >= 0x10000 && HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead)
                     ? ReadValue<s32>(multi_play, 0x124)
                     : -1,
@@ -5012,7 +5114,7 @@ void PS4_SYSV_ABI NoteAddSouls(u64, const GuestRegisterSnapshot* registers) {
     if (amount > 0 && caller >= image_base &&
         SharesKillEchoes(caller - image_base, SomeoneElsewhereInSession())) {
         std::scoped_lock lock{echo_board_mutex};
-        echoes_to_post.push_back(KillEchoes{amount, GetCurrentPackedMap()});
+        echoes_to_post.push_back(KillEchoes{amount, CurrentPlace().map});
     }
 }
 
@@ -5522,7 +5624,7 @@ void ForgetSlotIfNewCharacter() {
     if (!ForgetsSlotLists(progress_now, progress_kept, IsNewCharacterInSlot(confirmed, set_now))) {
         return;
     }
-    TraceLife("new-character", {{"slot", std::to_string(character_slot.load())}});
+    TraceLife("slot-lists-forgotten", {{"slot", std::to_string(character_slot.load())}});
     BackUpSlotLists();
     {
         std::scoped_lock lock{guest_picked_mutex};
@@ -5568,6 +5670,7 @@ void SetGuestPickupsBeforeMapItems() {
     // A trip loads the guest's own world: its world changes go in once per trip, before the
     // throttle below (which skipped a Hunter's Dream load right after a pass on the old map).
     if (trip_load.Take(PartyTripActive())) {
+        // Raw, as ApplyHostMapState reads it: the map this load is creating.
         LOG_INFO(Debug, "Bloodborne party: took {} flags of the host's state for map {:#x}",
                  ApplyHostMapState(), GetCurrentPackedMap());
         LOG_INFO(Debug,
@@ -6331,7 +6434,7 @@ std::unordered_map<u64, u64> lone_guest_character; // word address -> its charac
 // In a party session with another member on another map (the party's map board, fresh): the
 // game shares a kill's echoes only with the members on the killer's map.
 bool SomeoneElsewhereInSession() {
-    const u32 map = GetCurrentPackedMap();
+    const u32 map = PlayingMap();
     if (!InPartySession() || !IsUsablePackedMap(map)) {
         return false;
     }
@@ -6345,7 +6448,7 @@ std::optional<u32> HostMapFromItsPost();
 // In a party session with the host away from this map (its own map state post, the party's map
 // board fresh); without the host's post yet, with no other member on this map.
 bool HostAwayFromMyMap() {
-    const u32 map = GetCurrentPackedMap();
+    const u32 map = PlayingMap();
     if (!InPartySession() || !IsUsablePackedMap(map)) {
         return false;
     }
@@ -6371,7 +6474,7 @@ void GrantPartyEchoes() {
         pending.swap(echoes_to_grant);
     }
     using AddSouls = void PS4_SYSV_ABI (*)(u64 player, s32 amount, s32, bool rates);
-    const u32 map = GetCurrentPackedMap();
+    const u32 map = CurrentPlace().map;
     for (const KillEchoes& kill : pending) {
         if (!GrantsKillEchoes(kill.map, map)) {
             continue; // made on this map: the game gave them already
@@ -6818,6 +6921,8 @@ const u32 enemy_hp_source = [] {
 // A death respawn reset the map: the damage the others reported on the world before it is left
 // behind (SharedDamage::ForgetDamageBefore).
 std::atomic<bool> party_hp_reset{};
+[[maybe_unused]] const bool party_hp_reset_registered =
+    RegisterLifecycleReset("enemy hp", {Lifecycle::Wipe}, [] { party_hp_reset.store(true); });
 
 void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     struct Copy {
@@ -7076,6 +7181,8 @@ void TraceMemberKills(std::span<const SeenCharacter> characters, std::span<const
 
 // A death respawn reset the map: this member's kills are taken back (VisitKills::Forget).
 std::atomic<bool> party_kills_reset{};
+[[maybe_unused]] const bool party_kills_reset_registered =
+    RegisterLifecycleReset("kills", {Lifecycle::Wipe}, [] { party_kills_reset.store(true); });
 
 // Enemy deaths kept in step across loads: this member's kills during its visit go to the
 // party's kill board (VisitKills), and its copies of the enemies another member killed during
@@ -7102,7 +7209,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     checked = now;
     const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
     const u64 player = GetLocalPlayer();
-    const u32 map = GetCurrentPackedMap();
+    const u32 map = PlayingMap();
     if (world < 0x10000 || !IsUsablePackedMap(map)) {
         return;
     }
@@ -7496,7 +7603,7 @@ void SnapshotHostMapState(bool sharing) {
         return;
     }
     last = now;
-    const u32 map = GetCurrentPackedMap();
+    const u32 map = PlayingMap();
     if (!IsUsablePackedMap(map)) {
         return;
     }
@@ -7529,6 +7636,7 @@ size_t ApplyHostMapState() {
         std::scoped_lock lock{map_state_mutex};
         state = host_map_state;
     }
+    // Raw: called from the map item creation hook, in the load, before the tracker has the map.
     const u32 map = GetCurrentPackedMap();
     if (!state || state->map != map || state->bits.size() * 8 < MapFlagCount) {
         return 0;
@@ -7614,6 +7722,8 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     }
     const u64 global = GetGlobalState();
     const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
+    // Raw: the point saved pairs it with the position read now (the committed map lags a border
+    // crossing, and a lamp trip to the wrong map would end in the void).
     const u32 map = GetCurrentPackedMap();
     const auto at = LocalPlayerPosition();
     const auto now = std::chrono::steady_clock::now();
@@ -7781,7 +7891,6 @@ void TickPlayersOnThisMap() {
     KeepGuestFullHp();
     PolishMultiplayerUi();
     const bool in_session = InPartySession();
-    TraceSession(in_session);
     // The boards go both ways in and out of a session (a guest on its own trip is out of one).
     const bool sharing = SharesWithParty(party_controller.has_value(), GetLocalPlayer() >= 0x10000);
     UnlockPartyTrophies(sharing);
@@ -7793,13 +7902,14 @@ void TickPlayersOnThisMap() {
     ResumeWhereTheGuestLeft(in_session);
     LogWatchedWrites();
     GiveDeferredBossItems();
+    // Raw: the walls of a map just walked into go at once, not after the border's steady time.
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
     PlayGuestAsHost(in_session);
     TickGuestLampTrip();
     LogEsdAnswers(in_session && party_controller &&
                   party_controller->SearchEffectId() == SmallResonantBellEffect);
     RestoreSearchAfterTrip(in_session);
-    const u32 map = GetCurrentPackedMap();
+    const u32 map = PlayingMap();
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
     ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
     GrantPartyEchoes();
@@ -7894,6 +8004,7 @@ void TickPartyTrip() {
     std::scoped_lock lock{party_trip_mutex};
     const auto now = PartyTrip::Clock::now();
     const bool was_active = party_trip.Active(now);
+    // Raw, here and in the arrival line: the trip machinery is one of the tracker's inputs.
     party_trip.ObserveStage(GetCurrentPackedMap(), ReadValue<u8>(state, 0x08) != 0,
                             GetLocalPlayer());
     if (was_active && !party_trip.Active(now)) {
@@ -7933,7 +8044,7 @@ bool PS4_SYSV_ABI LogMemberLeave(u64, const GuestRegisterSnapshot* registers) {
                       ReadValue<u64>(registers->rsi, 0) == ReadValue<u64>(session, 0xD0);
     LOG_INFO(Debug, "Bloodborne member leave from {:#x} self={} trip={} map={:#x}",
              caller >= image_base ? caller - image_base : caller, self, PartyTripActive(),
-             GetCurrentPackedMap());
+             CurrentPlace().map);
     return false;
 }
 
@@ -8096,9 +8207,7 @@ std::atomic<bool> party_death_reset{};
 void MoveToRespawnPoint(bool arriving_from_trip) {
     const bool reset = !arriving_from_trip && party_death_reset.exchange(false);
     if (reset) {
-        TraceLife("wipe");
-        party_kills_reset.store(true);
-        party_hp_reset.store(true);
+        OnLifecycle(Lifecycle::Wipe); // kills and enemy HP, see their RegisterLifecycleReset
     }
     const u64 global = GetGlobalState();
     const s32 point = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
@@ -8280,7 +8389,7 @@ bool PS4_SYSV_ABI StayWhenTheHostLeaves(u64, const GuestRegisterSnapshot* regist
     LOG_INFO(Debug,
              "Bloodborne party member (type {}) lost a member; staying where it is map={:#x} "
              "load wait {} (action buttons {}) cleared",
-             type, GetCurrentPackedMap(), load_wait,
+             type, CurrentPlace().map, load_wait,
              buttons >= 0x10000 ? ReadValue<u8>(buttons, 0x52) : -1);
     return true;
 }
@@ -8624,7 +8733,7 @@ void FinishWaitingJoins(bool in_session) {
     }
     const VitalsView view = ReadVitalsBoard();
     const bool here = view.Fresh() && !view.member.empty() &&
-                      SomeoneElseStands(view.board.members, view.member, GetCurrentPackedMap());
+                      SomeoneElseStands(view.board.members, view.member, PlayingMap());
     const s64 now = SteadyMilliseconds();
     const u64 net = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
     using SetStep = void PS4_SYSV_ABI (*)(u64 task, s32 step);
@@ -8888,7 +8997,7 @@ void GoDown(PartyDeathRun& run, u64 data, s64 now_ms) {
     LOG_INFO(Debug,
              "Bloodborne party death: down {} on map {:#x}, {} damage to get up (max HP {}, "
              "pose {} played={})",
-             down, GetCurrentPackedMap(), run.downed.DamageNeeded(), ReadValue<s32>(data, 0xFC),
+             down, CurrentPlace().map, run.downed.DamageNeeded(), ReadValue<s32>(data, 0xFC),
              downed_animation, posed);
 }
 
@@ -8958,7 +9067,7 @@ void TickPartyDeath() {
         const u64 data = PlayerDataModule(GetLocalPlayer());
         if (data >= 0x10000 && HasMemoryAccess(data, 0x100, MemoryProt::CpuRead)) {
             const bool in_session = InPartySession();
-            PostVitals(MemberVitals{.map = in_session ? GetCurrentPackedMap() : 0,
+            PostVitals(MemberVitals{.map = in_session ? PlayingMap() : 0,
                                     .vital = in_session ? Vital::Up : Vital::Off,
                                     .hp = ReadValue<s32>(data, 0xF8),
                                     .max = ReadValue<s32>(data, 0xFC),
@@ -8977,7 +9086,7 @@ void TickPartyDeath() {
     }
     const s64 now = SteadyMilliseconds();
     const bool in_session = InPartySession();
-    const u32 map = GetCurrentPackedMap();
+    const u32 map = PlayingMap();
     const VitalsView view = ReadVitalsBoard();
     const std::span<const MemberVitals> board =
         view.Fresh() ? std::span<const MemberVitals>{view.board.members}
@@ -10162,7 +10271,7 @@ void WriteStageWarp(std::ostream& out, const TraceSite& site,
     }
     const u64 player = GetLocalPlayer();
     out << ",\"current_map\":";
-    WriteHex(out, GetCurrentPackedMap());
+    WriteHex(out, GetCurrentPackedMap()); // raw: the RE trace records the game's own memory
     out << ",\"player\":";
     WriteHex(out, player);
     out << ",\"host_effect_9001\":" << (HasPlayerEffect(player, 9001) ? "true" : "false");
@@ -10592,7 +10701,7 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
             capture_file << ",\"reload_phase\":"
                          << (reload_state >= 0x10000 ? ReadValue<s32>(reload_state, 0x84) : -1);
             capture_file << ",\"current_map\":";
-            WriteHex(capture_file, GetCurrentPackedMap());
+            WriteHex(capture_file, GetCurrentPackedMap()); // raw: the game's own memory
             if (multi_play_site && object >= 0x10000 &&
                 HasMemoryAccess(object, 0x288, MemoryProt::CpuRead)) {
                 const u64 matching_controller = ReadValue<u64>(object, 0x18);
@@ -11029,6 +11138,9 @@ void LoadAutoplay() {
     LOG_INFO(Debug, "Bloodborne autoplay: {} steps from {}", autoplay_run.script.size(), path);
 }
 
+// The rig's checks and reports read the game's own map (GetCurrentPackedMap), not the place
+// tracker: they test the game, the tracker included; only comparisons with a board's maps use
+// the tracker's, as the boards do.
 bool AutoplayInWorld() {
     const u64 global = GetGlobalState();
     return GetLocalPlayer() >= 0x10000 && IsUsablePackedMap(GetCurrentPackedMap()) &&
@@ -11047,7 +11159,7 @@ size_t AutoplaySessionMembers() {
 }
 
 size_t AutoplayMembersOnMyMap() {
-    const u32 map = GetCurrentPackedMap();
+    const u32 map = PlayingMap();
     std::scoped_lock lock{map_board_mutex};
     if (std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}) {
         return 0;
@@ -11150,6 +11262,7 @@ void LogAutoplaySnapshot() {
         enemies += " [" + close_by[index].second + "]";
     }
     const auto self = FindAutoplayCharacter(AutoplaySelf);
+    // Raw, as all of the rig's checks (see AutoplayInWorld).
     LOG_INFO(Debug,
              "Bloodborne autoplay snapshot: map {:#x} at ({:.1f}, {:.1f}, {:.1f}) heading {:.2f} "
              "hp {}/{} session {} members on map {} in party session {} nearby:{}",
@@ -11216,6 +11329,7 @@ void LogAutoplayCensus(float meters) {
         }
     });
     std::ranges::sort(close_by);
+    // Raw, as all of the rig's checks (see AutoplayInWorld).
     LOG_INFO(Debug,
              "Bloodborne autoplay census: map {:#x}, {} characters within {:.0f} m of "
              "({:.1f}, {:.1f}, {:.1f})",
@@ -11272,6 +11386,7 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
     }
     if (verb == "wait-map") {
         const auto map = ParseAutoplayTarget(arg(0));
+        // Raw, as all of the rig's checks (see AutoplayInWorld).
         return (map && AutoplayInWorld() && GetCurrentPackedMap() == *map) ||
                waited_out(number(1, 180));
     }
@@ -11303,6 +11418,7 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         }
         // Already there, unless falling through the void (a save made after a bad warp).
         const auto at = LocalPlayerPosition();
+        // Raw, as all of the rig's checks (see AutoplayInWorld).
         if (GetCurrentPackedMap() == *map && at && (*at)[1] > -500.0f) {
             return true;
         }
@@ -11331,6 +11447,7 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
             autoplay_run.travel_fixed_at.reset();
             return false;
         }
+        // Raw, as all of the rig's checks (see AutoplayInWorld).
         const bool arrived = elapsed > 5.0 && AutoplayInWorld() && !PartyTripActive() &&
                              GetCurrentPackedMap() == autoplay_run.travel_map;
         if (arrived && !autoplay_run.travel_fixed_at) {
@@ -11576,7 +11693,7 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         std::optional<LampPosition> nearest;
         for (const MemberVitals& member : view.board.members) {
             if (me && view.Fresh() && member.member != view.member && member.vital == Vital::Down &&
-                member.map == GetCurrentPackedMap() &&
+                member.map == PlayingMap() &&
                 (!nearest || distance(member.at) < distance(*nearest))) {
                 nearest = member.at;
             }
@@ -11596,7 +11713,7 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
         std::optional<LampPosition> downed;
         for (const MemberVitals& member : view.board.members) {
             if (view.Fresh() && member.member != view.member && member.vital == Vital::Down &&
-                member.map == GetCurrentPackedMap()) {
+                member.map == PlayingMap()) {
                 downed = member.at;
             }
         }
@@ -11927,6 +12044,7 @@ bool RunAutoplayStep(const AutoplayCommand& command, bool begun, double elapsed,
     }
     if (verb == "expect-map") {
         const auto map = ParseAutoplayTarget(arg(0));
+        // Raw, as all of the rig's checks (see AutoplayInWorld).
         if (!map || GetCurrentPackedMap() != *map) {
             failure = fmt::format("on map {:#x}", GetCurrentPackedMap());
             return false;
@@ -12021,6 +12139,7 @@ void TickAutoplayTitle() {
         autoplay_run.step_started = now;
         autoplay_run.step_begun = false;
         autoplay_buttons.store(0);
+        // Raw, as all of the rig's checks (see AutoplayInWorld).
         LOG_INFO(Debug, "Bloodborne autoplay: in the world on map {:#x}", GetCurrentPackedMap());
         return;
     }
@@ -12195,6 +12314,7 @@ void TraceMatching2LeaveRoom(std::uintptr_t return_address, std::uint64_t room_i
     const u64 reload_state = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
     const s32 reload_phase = reload_state >= 0x10000 ? ReadValue<s32>(reload_state, 0x84) : -1;
     const u64 global_state = GetGlobalState();
+    // Raw: a load-time hook, before the tick.
     const u32 current_map = GetCurrentPackedMap();
     const u32 requested_map = global_state >= 0x10000 ? ReadValue<u32>(global_state, 0x0C) : 0;
     const u32 pending_reload = pending_summon_reload_map.load(std::memory_order_acquire);
@@ -12416,6 +12536,7 @@ void NoteSaveFileOpened(std::string_view guest_path) {
         MakeEnemiesHarder();
         if (character_slot.exchange(*slot) != *slot) {
             LOG_INFO(Debug, "Bloodborne party: character save slot {}", *slot);
+            OnLifecycle(Lifecycle::NewCharacter);
         }
     }
 }

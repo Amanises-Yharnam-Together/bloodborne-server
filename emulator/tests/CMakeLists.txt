@@ -357,6 +357,7 @@ add_executable(shadps4_bloodborne_test
     bloodborne/test_bloodborne_ui_polish.cpp
     bloodborne/test_bloodborne_save_backups.cpp
     bloodborne/test_bloodborne_flag_rules.cpp
+    bloodborne/test_bloodborne_place.cpp
     bloodborne/test_bloodborne_coop_trace.cpp
     bloodborne/coop_trace_replay.cpp
 )

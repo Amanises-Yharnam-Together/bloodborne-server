@@ -82,7 +82,10 @@ std::vector<std::string> CoopTraceReplay::Feed(std::string_view line) {
         }
         return out;
     }
-    if (record->kind == "life") {
+    if (record->kind == "place") {
+        const auto change = ParsePlaceFields(*record);
+        out.push_back(change ? FormatPlaceChange(*change) : "place: unreadable record");
+    } else if (record->kind == "life") {
         out.push_back(fmt::format("life {}", record->Field("event").value_or("?")));
     } else if (record->kind == "kills-in") {
         Kills(*record, out);

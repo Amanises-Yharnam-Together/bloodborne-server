@@ -265,6 +265,35 @@ TEST(CoopTraceReplay, RecordedInputsReplayToTheLiveDecisions) {
     EXPECT_EQ(replayed, live_decisions);
 }
 
+TEST(CoopTrace, PlaceChangesRoundTrip) {
+    const PlaceChange change{{PlaceState::Playing, 0x21010000, 3, 1000},
+                             {PlaceState::Playing, 0x21000000, 4, 2500},
+                             PlaceCause::Border};
+    const TraceRecord record{1760000000000, "place", TracePlaceFields(change)};
+    EXPECT_EQ(EncodeTraceRecord(record),
+              "1760000000000 place from-state=Playing from-map=21010000 from-visit=3 "
+              "from-since=1000 to-state=Playing to-map=21000000 to-visit=4 to-since=2500 "
+              "cause=Border");
+    EXPECT_EQ(ParsePlaceFields(*ParseTraceRecord(EncodeTraceRecord(record))), change);
+    TraceRecord broken = record;
+    broken.fields.back().second = "Flying";
+    EXPECT_EQ(ParsePlaceFields(broken), std::nullopt);
+    broken = record;
+    broken.fields.front().second = "Asleep";
+    EXPECT_EQ(ParsePlaceFields(broken), std::nullopt);
+}
+
+TEST(CoopTraceReplay, PlaceChangesAreShownAsTheGameLogsThem) {
+    const PlaceChange change{{PlaceState::Loading, 0x15000000, 2, 100},
+                             {PlaceState::Playing, 0x15000000, 2, 900},
+                             PlaceCause::Load};
+    CoopTraceReplay replay;
+    EXPECT_EQ(replay.Feed(EncodeTraceRecord({1, "place", TracePlaceFields(change)})),
+              std::vector<std::string>{FormatPlaceChange(change)});
+    EXPECT_EQ(replay.Feed("2 place cause=Load"),
+              std::vector<std::string>{"place: unreadable record"});
+}
+
 TEST(CoopTraceReplay, CheckedInTracesKeepTheirDecisions) {
     const fs::path dir{BLOODBORNE_TRACES};
     size_t traces = 0;
