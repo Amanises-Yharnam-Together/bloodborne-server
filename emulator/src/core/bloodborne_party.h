@@ -3111,15 +3111,18 @@ struct PadInput {
     u8 l2 = 0;
     u8 r2 = 0;
 };
-constexpr u32 PadCross = 0x4000;
-constexpr u32 PadDpad = 0x10 | 0x20 | 0x40 | 0x80;
-// What a downed player's pad keeps: Options (the menu) and the camera stick; with the menu open
-// (`menu`), also the D-pad and Cross that work it. The left stick, attacks, items and Circle (the
-// roll; holding it gives up) stay off, so the menu is left with Options.
-PadInput DownedPad(const PadInput& pad, bool menu);
-// Whether the menu is open while down: Options going down opens or closes it (from closed when the
-// player went down).
-bool DownedMenuOpen(bool open, u32 before, u32 now);
+constexpr u32 PadR3 = 0x4;
+// What a downed player's pad keeps: the camera stick only. No menu or inventory (Options), no
+// lock-on (R3), no move, attack, roll, item or heal (Kaniel 2026-10-13); Circle still gives up
+// (read before this).
+PadInput DownedPad(const PadInput& pad);
+// The HUD's lock-on cursor (FeData +0x14F8, fed at 0x01BFE559-0x01BFE59C each frame): -1 hidden,
+// 0 on a locked-on target, 1 on another mark. A downed player's held lock-on is let go with an R3
+// press of ours (the game's own toggle), at most one every LockOnReleaseGapMs while the cursor
+// still shows.
+constexpr u64 HudLockCursorAt = 0x14F8;
+constexpr s64 LockOnReleaseGapMs = 600;
+bool ReleasesLockOn(s32 cursor, s64 now_ms, std::optional<s64> last_press_ms);
 // R1 or R2 going down between two reads of the pad: an attack, which may be a revive hit.
 bool AttackPressed(u32 before, u32 now);
 // R2 going down without R1: a heavy attack (ReviveHitDamage).

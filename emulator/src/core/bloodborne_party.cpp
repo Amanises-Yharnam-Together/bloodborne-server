@@ -6259,14 +6259,12 @@ std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, st
     return nearest;
 }
 
-PadInput DownedPad(const PadInput& pad, bool menu) {
-    const u32 kept = menu ? PadOptions | PadDpad | PadCross : PadOptions;
-    return PadInput{.buttons = pad.buttons & kept,
-                    .sticks = {128, 128, pad.sticks[2], pad.sticks[3]}};
+PadInput DownedPad(const PadInput& pad) {
+    return PadInput{.sticks = {128, 128, pad.sticks[2], pad.sticks[3]}};
 }
 
-bool DownedMenuOpen(bool open, u32 before, u32 now) {
-    return (now & ~before & PadOptions) != 0 ? !open : open;
+bool ReleasesLockOn(s32 cursor, s64 now_ms, std::optional<s64> last_press_ms) {
+    return cursor == 0 && (!last_press_ms || now_ms - *last_press_ms >= LockOnReleaseGapMs);
 }
 
 bool AttackPressed(u32 before, u32 now) {
