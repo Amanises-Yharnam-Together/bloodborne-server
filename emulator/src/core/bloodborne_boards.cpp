@@ -357,6 +357,7 @@ void RunHpBoardClient(std::stop_token stop, std::string base_url, std::string pa
     }
 }
 std::jthread hp_board_client;
+void StopBoardClientsAtExit();
 
 } // namespace
 
@@ -373,6 +374,7 @@ void StartRestBoardClient() {
     Libraries::Np::NpTrophy::SetTrophyUnlockObserver(NoteGameTrophyUnlock);
     rest_board_client = std::jthread(RunRestBoardClient, base_url, *party);
     hp_board_client = std::jthread(RunHpBoardClient, base_url, *party);
+    StopBoardClientsAtExit();
 }
 
 // Which build each game runs (see PeerHelloType): this game's, from SetBuildIdentity; no hello
@@ -882,6 +884,30 @@ void RunVitalsBoardClient(std::stop_token stop, std::string base_url, std::strin
     }
 }
 
+// The board clients use state that lives in the other co-op files (flags, kills, HP, the trace
+// queue), and the order the files' statics are destroyed in at exit() is not defined across
+// files. So they are stopped and joined before any static destructor runs: by an atexit handler
+// registered once the first client starts, after all static initialization (handlers registered
+// later run earlier). The window's close ends the process with _Exit and runs neither; the port's
+// guest exit() and STOP paths run both.
+void StopBoardClientsAtExit() {
+    static std::once_flag registered;
+    std::call_once(registered, [] {
+        std::atexit([] {
+            for (std::jthread* client :
+                 {&rest_board_client, &hp_board_client, &vitals_board_client}) {
+                client->request_stop();
+            }
+            for (std::jthread* client :
+                 {&rest_board_client, &hp_board_client, &vitals_board_client}) {
+                if (client->joinable()) {
+                    client->join();
+                }
+            }
+        });
+    });
+}
+
 } // namespace
 
 namespace Coop {
@@ -894,6 +920,7 @@ void StartVitalsBoardClient() {
         return;
     }
     vitals_board_client = std::jthread(RunVitalsBoardClient, base_url, *party);
+    StopBoardClientsAtExit();
 }
 
 } // namespace Coop

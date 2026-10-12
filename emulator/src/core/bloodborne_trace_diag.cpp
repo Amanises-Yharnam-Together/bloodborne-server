@@ -154,8 +154,10 @@ namespace {
 
 // The co-op trace (see CoopTraceVersion): records from any thread go to a queue that a thread of
 // its own writes out, so the game never waits for the disk. Off with SHADPS4_BLOODBORNE_TRACE=0.
+// The queue is never destroyed: at exit() the writer (detached) still waits on it and any
+// file's thread may still trace, while the files' statics go in no defined order.
 std::atomic<bool> coop_trace_on{false};
-TraceQueue coop_trace_queue{TraceQueueCap};
+TraceQueue& coop_trace_queue = *new TraceQueue{TraceQueueCap};
 
 s64 UtcMilliseconds() {
     using namespace std::chrono;
