@@ -1412,10 +1412,12 @@ public:
     const std::string& Why() const {
         return why;
     }
-    // The line to log when the path changed since the last call ("Co-op world log: ...").
+    // The line to log at the first decision and when the path or its reason changed since the
+    // last call ("Co-op world log: ...").
     std::optional<std::string> TakeChange();
 
 private:
+    bool decided = false;
     bool active = false;
     std::string why = "not decided";
     std::optional<s64> unsure_since;

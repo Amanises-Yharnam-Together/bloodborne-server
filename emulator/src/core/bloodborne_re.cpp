@@ -655,7 +655,9 @@ void TickPartyController() {
 
 void SetBuildIdentity(std::string_view revision, u64 event_files) {
     std::scoped_lock lock{peer_hello_mutex};
-    own_hello = PeerHello{.revision = std::string{revision}, .event_files = event_files};
+    own_hello = PeerHello{.revision = std::string{revision},
+                          .event_files = event_files,
+                          .features = WorldLogSwitchOn() ? WorldLogFeature : u8{0}};
 }
 
 void NoteSaveFileOpened(std::string_view guest_path) {

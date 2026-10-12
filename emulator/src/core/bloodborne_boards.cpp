@@ -63,10 +63,14 @@
 #include <httplib.h>
 
 namespace Core::Bloodborne {
+namespace Coop {
+
+PartyKills party_kills; // kill_board_mutex
+
+} // namespace Coop
 namespace {
 
 std::jthread rest_board_client;
-PartyKills party_kills; // the other members' standing kills, by member
 
 // A post to one of the party's boards, traced (the request before it goes, the answer after).
 httplib::Result PostToBoard(httplib::Client& client, const std::string& endpoint,
@@ -84,6 +88,38 @@ httplib::Result PostToBoard(httplib::Client& client, const std::string& endpoint
         }
     }
     return response;
+}
+
+// This member's kill changes to the kill board (in the flag board's format) and the standing kills
+// it answers with. A post after the kills changed path (kill_board_fresh_start) asks since
+// FreshStart, so the board takes back what this member posted before; failed changes wait for the
+// next post.
+void PostKillBoard(httplib::Client& client, const httplib::Headers& headers,
+                   const std::string& member, s64& since) {
+    std::vector<std::pair<s32, bool>> kills_out;
+    bool fresh = false;
+    {
+        std::scoped_lock lock{kill_board_mutex};
+        kills_out.swap(kills_to_post);
+        fresh = std::exchange(kill_board_fresh_start, false);
+    }
+    const s64 asked = fresh ? std::numeric_limits<s64>::max() : since;
+    const auto response = PostToBoard(client, "/bloodborne/party/kills", headers,
+                                      EncodeFlagUpdate(member, asked, kills_out));
+    const auto kills =
+        response && response->status == 200 ? ParseKillBoard(response->body) : std::nullopt;
+    std::scoped_lock lock{kill_board_mutex};
+    if (!kills) {
+        kills_to_post.insert(kills_to_post.begin(), kills_out.begin(), kills_out.end());
+        kill_board_fresh_start = kill_board_fresh_start || fresh;
+        return;
+    }
+    since = kills->latest;
+    if (asked == std::numeric_limits<s64>::max()) {
+        party_kills.Forget(member); // taken back; what this post added is not in the answer
+    }
+    party_kills.Apply(kills->changes);
+    others_kills = party_kills.All();
 }
 
 // Posts this member's rest about once a second while it rests (once more when it stands up) and
@@ -195,25 +231,7 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 std::scoped_lock lock{map_state_mutex};
                 host_map_state = states->front();
             }
-            std::vector<std::pair<s32, bool>> kills_out;
-            {
-                std::scoped_lock lock{kill_board_mutex};
-                kills_out.swap(kills_to_post);
-            }
-            const auto kill_response =
-                PostToBoard(client, "/bloodborne/party/kills", headers,
-                            EncodeFlagUpdate(member, kill_board_since, kills_out));
-            if (const auto kills = kill_response && kill_response->status == 200
-                                       ? ParseKillBoard(kill_response->body)
-                                       : std::nullopt) {
-                kill_board_since = kills->latest;
-                std::scoped_lock lock{kill_board_mutex};
-                party_kills.Apply(kills->changes);
-                others_kills = party_kills.All();
-            } else {
-                std::scoped_lock lock{kill_board_mutex};
-                kills_to_post.insert(kills_to_post.begin(), kills_out.begin(), kills_out.end());
-            }
+            PostKillBoard(client, headers, member, kill_board_since);
             next_echo_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
             std::vector<KillEchoes> echoes_out;
             {
@@ -388,6 +406,7 @@ namespace {
 PeerBuildCheck peer_build_check;
 
 void NotePeerHello(PeerHello theirs, u32 addr, u16 port) {
+    NoteWorldLogHello((u64{addr} << 16) | port, theirs);
     std::optional<std::string> warning;
     {
         std::scoped_lock lock{peer_hello_mutex};
@@ -402,6 +421,48 @@ void NotePeerHello(PeerHello theirs, u32 addr, u16 port) {
     if (warning) {
         LOG_WARNING(Debug, "{}", *warning);
     }
+}
+
+} // namespace
+
+namespace {
+
+// One co-op frame from a room peer (`bytes` whole, `payload` after the type); whether it brought
+// what the enemy step uses (HP, kills, the world log), so that step runs on the next frame.
+bool TakeCoopFrame(u8 type, std::span<const u8> payload, std::span<const u8> bytes, u32 addr,
+                   u16 port) {
+    const u64 sender = (u64{addr} << 16) | port;
+    const s64 now = SteadyMilliseconds();
+    if (type == DirectVitalsType) {
+        if (auto vitals = ParseVitalsUpdate(std::string(payload.begin(), payload.end()))) {
+            std::scoped_lock lock{direct_boards_mutex};
+            direct_vitals_inbox.Take(sender, std::move(*vitals), now);
+        }
+        return false;
+    }
+    if (type == DirectKillsType) {
+        auto kills = DecodeDirectKills(payload);
+        if (kills) {
+            std::scoped_lock lock{direct_boards_mutex};
+            direct_kills_inbox.Take(sender, std::move(*kills), now);
+        }
+        return kills.has_value();
+    }
+    if (type == PeerHelloType) {
+        if (auto hello = DecodePeerHello(payload)) {
+            NotePeerHello(std::move(*hello), addr, port);
+        }
+        return false;
+    }
+    if (IsWorldLogFrameType(type)) {
+        TakeWorldLogFrame(type, payload, addr, port);
+        return true;
+    }
+    auto state = DecodeDirectDamage(bytes);
+    if (state) {
+        direct_damage_inbox.Take(sender, std::move(*state), now);
+    }
+    return state.has_value();
 }
 
 } // namespace
@@ -428,55 +489,31 @@ bool TakeDirectDamage() {
         const std::span<const u8> bytes{buffer.data(), static_cast<size_t>(size)};
         const auto frame = DecodeCoopFrame(bytes);
         TraceFrame("p2p-in", bytes, addr, port, from_peer);
-        if (!from_peer || !frame) {
-            continue;
+        if (from_peer && frame) {
+            took = TakeCoopFrame(frame->first, frame->second, bytes, addr, port) || took;
         }
-        const u64 sender = (u64{addr} << 16) | port;
-        const s64 now = SteadyMilliseconds();
-        if (frame->first == DirectVitalsType) {
-            const std::string line(frame->second.begin(), frame->second.end());
-            if (auto vitals = ParseVitalsUpdate(line)) {
-                std::scoped_lock lock{direct_boards_mutex};
-                direct_vitals_inbox.Take(sender, std::move(*vitals), now);
-            }
-            continue;
-        }
-        if (frame->first == DirectKillsType) {
-            if (auto kills = DecodeDirectKills(frame->second)) {
-                std::scoped_lock lock{direct_boards_mutex};
-                direct_kills_inbox.Take(sender, std::move(*kills), now);
-                took = true;
-            }
-            continue;
-        }
-        if (frame->first == PeerHelloType) {
-            if (auto hello = DecodePeerHello(frame->second)) {
-                NotePeerHello(std::move(*hello), addr, port);
-            }
-            continue;
-        }
-        auto state = DecodeDirectDamage(bytes);
-        if (!state) {
-            continue;
-        }
-        direct_damage_inbox.Take(sender, std::move(*state), now);
-        took = true;
     }
     return took;
 }
 
 } // namespace Coop
 
-namespace {
+namespace Coop {
 
-// A co-op frame to every room peer.
 void SendToRoomPeers(const std::vector<u8>& frame) {
     for (const auto& peer : Libraries::Np::NpMatching2::GetActiveRoomPeers()) {
-        Libraries::Net::P2PCoopSendTo(frame.data(), static_cast<u32>(frame.size()), peer.addr,
-                                      peer.port);
-        TraceFrame("p2p-out", frame, peer.addr, peer.port);
+        SendToPeer(frame, peer.addr, peer.port);
     }
 }
+
+void SendToPeer(const std::vector<u8>& frame, u32 addr, u16 port) {
+    Libraries::Net::P2PCoopSendTo(frame.data(), static_cast<u32>(frame.size()), addr, port);
+    TraceFrame("p2p-out", frame, addr, port);
+}
+
+} // namespace Coop
+
+namespace {
 
 std::string BoardMemberName();
 

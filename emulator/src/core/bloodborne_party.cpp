@@ -4689,6 +4689,7 @@ PeerVerdict JudgePeers(std::span<const WorldLogPeer> peers) {
 bool WorldLogPath::Decide(bool enabled, std::span<const WorldLogPeer> peers, s64 now_ms) {
     const PeerVerdict verdict =
         enabled ? JudgePeers(peers) : PeerVerdict{std::string{"switched off here"}, {}};
+    const std::string before = why;
     bool next = true;
     if (verdict.no) {
         next = false;
@@ -4704,7 +4705,8 @@ bool WorldLogPath::Decide(bool enabled, std::span<const WorldLogPeer> peers, s64
         unsure_since.reset();
         why = peers.size() == 1 ? "1 peer has it" : fmt::format("{} peers have it", peers.size());
     }
-    changed = changed || next != active;
+    changed = changed || !decided || next != active || why != before;
+    decided = true;
     active = next;
     return active;
 }

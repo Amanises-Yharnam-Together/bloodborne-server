@@ -544,6 +544,22 @@ TEST(WorldLogPath, AnUnsurePeerKeepsThePathForAWhile) {
     EXPECT_FALSE(fresh.Decide(true, Peers{{"d", std::nullopt}}, 0));
 }
 
+// The path in use is logged at the first decision, and again when it or its reason changes (a
+// mixed party stays on the board but says why).
+TEST(WorldLogPath, TheFirstDecisionAndEachNewReasonAreLogged) {
+    PeerHello older{.member = "c", .features = WorldLogFeature};
+    older.protocol = 1;
+    WorldLogPath path;
+    path.Decide(true, Peers{}, 0);
+    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, kills go through the kill board (no "
+                                 "peers)");
+    path.Decide(true, Peers{{"c", older}}, 10);
+    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, kills go through the kill board (c runs "
+                                 "co-op protocol 1)");
+    path.Decide(true, Peers{{"c", older}}, 20);
+    EXPECT_FALSE(path.TakeChange());
+}
+
 TEST(VisitKillsStanding, ThisVisitsAndTheHeldOnesByMap) {
     VisitKills kills;
     const u64 yharnam_visit = (u64{Yharnam} << 32) | 1;

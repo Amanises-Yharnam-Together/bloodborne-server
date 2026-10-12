@@ -341,6 +341,11 @@ extern KillEchoLedger echo_ledger;
 extern std::mutex kill_board_mutex;
 extern std::vector<std::pair<s32, bool>> kills_to_post;
 extern std::unordered_set<u32> others_kills;
+// The kill board's standing kills by member, as the board client last read them.
+extern PartyKills party_kills;
+// The next kill board post asks for nothing older than now (since FreshStart), so the board takes
+// back this member's posted kills first: the kills changed path (see WorldLogPath).
+extern bool kill_board_fresh_start;
 extern std::mutex enemy_hp_mutex;
 extern MemberMapState local_enemy_hp;
 extern std::vector<MemberMapState> others_enemy_hp;
@@ -622,7 +627,26 @@ extern DirectInbox<DirectKills> direct_kills_inbox;
 extern std::mutex peer_hello_mutex;
 extern std::optional<PeerHello> own_hello;
 bool TakeDirectDamage();
+// A co-op frame to every room peer, or to one (both traced).
+void SendToRoomPeers(const std::vector<u8>& frame);
+void SendToPeer(const std::vector<u8>& frame, u32 addr, u16 port);
 void SendDirectKills(std::span<const u32> kills, bool changed);
+// The world log's runtime (bloodborne_world_log.cpp, docs/WORLD_SYNC.md Stage C).
+// SHADPS4_BLOODBORNE_WORLD_LOG (this game's hello says so: WorldLogFeature).
+bool WorldLogSwitchOn();
+// A peer's hello, by sender ((addr << 16) | port): which peers have the log.
+void NoteWorldLogHello(u64 sender, const PeerHello& hello);
+// A world log frame from a room peer (game thread).
+void TakeWorldLogFrame(u8 type, std::span<const u8> payload, u32 addr, u16 port);
+// The kill step's view of the party's kills: `members` the other members' (the log's or the kill
+// board's), `all` with this member's own and held ones and, on the board path, the peers' direct
+// frames. Decides the path, runs the log (or posts `changes` to the board) on the way.
+struct PartyKillsNow {
+    std::unordered_set<u32> all;
+    std::unordered_set<u32> members;
+};
+PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
+                               std::span<const std::pair<s32, bool>> changes);
 void SendDirectDamage(const MemberMapState& mine, bool changed);
 void SendPeerHello();
 void KeepEnemyDeathsInStep(bool sharing);
