@@ -493,7 +493,11 @@ constexpr u64 SessionManagerPointerOffset = 0x05540290;
 constexpr u64 MemberIdEqualOffset = 0x00CA1C70;
 extern std::vector<SavedJoinTask> saved_join_tasks;
 extern std::map<u64, MemberDataWait> joins_waiting_for_data;
-void RecreateRemotePlayers(std::span<const u64> only);
+// `build_missing`: build a task for a member that has none (after a trip, whose load emptied the
+// list). Not after a join: a member without a task there is one whose join the game is still
+// making, and the game's own join (0x0178C1E3) makes no task for a member that already has one,
+// so one built there first (as kind 0, rig smoke 2026-10-12) kept that guest invisible.
+void RecreateRemotePlayers(std::span<const u64> only, bool build_missing);
 std::optional<u32> HostMapFromItsPost();
 std::vector<u64> OtherSessionMembers();
 

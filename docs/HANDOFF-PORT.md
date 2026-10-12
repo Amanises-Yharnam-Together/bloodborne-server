@@ -160,6 +160,18 @@ in the host's world, its loot on the ground.
   "Beckoner" name plate and no body. Saved tasks now keep their step, and a member still joining is
   rebuilt as the game's own fresh join (`RebuildsFromSave`). Not yet rig-confirmed (Kaniel stopped
   the rig): rerun hp-after-host-trip with the ping and look at the guest on the host's screen.
+- **First guest misses the second guest (3 players)** (rig smoke 2026-10-12 on 40ea3277, first
+  guest's expect-others-near 2 failed after the host's trip): the first guest's game makes no
+  join task for a guest that joins after it; our re-create after that join (`RecreateAfterJoin`)
+  built one with no saved tasks yet, and `RebuiltTaskKind` then guessed "the host" (kind 0). Step
+  4 (0x01E50090) creates only kinds 1 and 2 (`dec eax; cmp eax,1; ja` skips the creation), so
+  the second guest never got a body there; the wrong kind was then saved and rebuilt at every trip.
+  The flag 0x40 (+0xED = 0x4c) was only a symptom: the constructor (0x01E4F9F0) keeps bits 6-7 of
+  the allocation (`and 0xc0`) and no join code sets or tests them. Now the live join list counts
+  too (the host's live kind 0 task makes the new member a guest, kind 1) and rebuilt tasks drop
+  bits 6-7 (`RebuiltTaskFlags`). Confirm with rig smoke (or join3/trip3): the first guest's
+  "rebuilt the join task of a member kind=1" after the second guest joins, and its
+  expect-others-near 2 in the trip chapter.
 - Kit 2026-10-10 17:11: C:\bb\port-kit-sync.zip (servers from C:\bb\out\sync-kit-servers = online-kit
   + the new shadNet). The host's HOST bat runs ..\SeamlessCoop\server\shadnet.exe when it is there:
   that copy needs the new shadnet.exe too.

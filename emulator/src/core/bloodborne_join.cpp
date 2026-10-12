@@ -907,7 +907,8 @@ std::vector<SavedJoinTask> saved_join_tasks;
 
 // Merged at each trip's start (MergeSavedJoinTasks): a trip from a map a member was not on (the
 // Dream) keeps that member's slot from before.
-void SaveRemoteJoinTasks() {
+// The join list now, as saved tasks (remote players and a guest's own task).
+static std::vector<SavedJoinTask> CurrentJoinTasks() {
     std::vector<SavedJoinTask> found;
     ForEachJoinTask([&](u64 task) {
         const s32 kind = ReadValue<s32>(task, 0xE8);
@@ -922,6 +923,11 @@ void SaveRemoteJoinTasks() {
         saved.step = ReadValue<s32>(task, 0x50);
         found.push_back(saved);
     });
+    return found;
+}
+
+void SaveRemoteJoinTasks() {
+    const std::vector<SavedJoinTask> found = CurrentJoinTasks();
     saved_join_tasks = MergeSavedJoinTasks(saved_join_tasks, found);
     std::string which;
     for (const SavedJoinTask& saved : saved_join_tasks) {
@@ -939,7 +945,52 @@ void SaveRemoteJoinTasks() {
 // 2026-10-10: host and guest never saw each other).
 std::map<u64, MemberDataWait> joins_waiting_for_data; // by member identity pointer
 
-void RecreateRemotePlayers(std::span<const u64> only) {
+static void SetJoinTaskStep(u64 task, s32 step) {
+    using SetStep = void PS4_SYSV_ABI (*)(u64 task, s32 step);
+    reinterpret_cast<SetStep>(ReadValue<u64>(ReadValue<u64>(task, 0), 0x28))(task, step);
+}
+
+// What the game does when a member joins (see above), into the step that creates the character,
+// with the slot and synced-data flag saved at the trip's start.
+static void RebuildJoinTask(u64 manager, u64 member_id, s32 kind, const SavedJoinTask* saved) {
+    const u64 allocator = ReadValue<u64>(image_base + TaskAllocatorPointerOffset, 0);
+    if (allocator < 0x10000) {
+        return;
+    }
+    using Allocate = u64 PS4_SYSV_ABI (*)(u64 allocator, u64 size, u64 alignment);
+    const u64 task = reinterpret_cast<Allocate>(ReadValue<u64>(ReadValue<u64>(allocator, 0), 0x58))(
+        allocator, 0x100, 8);
+    if (task < 0x10000) {
+        return;
+    }
+    using Construct = void PS4_SYSV_ABI (*)(u64 task, u64 member_id, s32 kind);
+    reinterpret_cast<Construct>(image_base + JoinTaskConstructOffset)(task, member_id, kind);
+    // A member still joining when the trip began: back at its step, waiting for its data.
+    const bool waiting = saved && !RebuildsFromSave(*saved);
+    if (saved) {
+        WriteValue(task, 0xEC, saved->slot);
+    }
+    WriteValue(task, 0xED, RebuiltTaskFlags(ReadValue<u8>(task, 0xED), saved, waiting));
+    u64 holder = task;
+    using ListAdd = void PS4_SYSV_ABI (*)(u64 list, u64 entry);
+    reinterpret_cast<ListAdd>(image_base + JoinTaskListAddOffset)(manager + 8,
+                                                                  reinterpret_cast<u64>(&holder));
+    if (waiting) {
+        SetJoinTaskStep(task, saved->step);
+        joins_waiting_for_data[ReadValue<u64>(member_id, 0)] = MemberDataWait{};
+    } else {
+        SetJoinTaskStep(task, CreateCharacterStep);
+    }
+    LOG_INFO(
+        Debug,
+        "Bloodborne party trip: rebuilt the join task of a member kind={} task={:#x} "
+        "slot known={} flags={:#x}{}",
+        kind, task, saved != nullptr, ReadValue<u8>(task, 0xED),
+        waiting ? fmt::format(" (it was still joining at step {}: waits for its data)", saved->step)
+                : "");
+}
+
+void RecreateRemotePlayers(std::span<const u64> only, bool build_missing) {
     const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
     const u64 manager = ReadValue<u64>(image_base + MultiPlayManPointerOffset, 0);
     if (session < 0x10000 || manager < 0x10000 ||
@@ -958,48 +1009,9 @@ void RecreateRemotePlayers(std::span<const u64> only) {
         !HasMemoryAccess(begin, end - begin, MemoryProt::CpuRead)) {
         return;
     }
-    using SetStep = void PS4_SYSV_ABI (*)(u64 task, s32 step);
-    const auto set_step = [](u64 task, s32 step) {
-        reinterpret_cast<SetStep>(ReadValue<u64>(ReadValue<u64>(task, 0), 0x28))(task, step);
-    };
-    // What the game does when a member joins (see above), into the step that creates the
-    // character, with the slot and synced-data flag saved at the trip's start.
-    const auto rebuild = [&](u64 member_id, s32 kind, const SavedJoinTask* saved) {
-        const u64 allocator = ReadValue<u64>(image_base + TaskAllocatorPointerOffset, 0);
-        if (allocator < 0x10000) {
-            return;
-        }
-        using Allocate = u64 PS4_SYSV_ABI (*)(u64 allocator, u64 size, u64 alignment);
-        const u64 task = reinterpret_cast<Allocate>(
-            ReadValue<u64>(ReadValue<u64>(allocator, 0), 0x58))(allocator, 0x100, 8);
-        if (task < 0x10000) {
-            return;
-        }
-        using Construct = void PS4_SYSV_ABI (*)(u64 task, u64 member_id, s32 kind);
-        reinterpret_cast<Construct>(image_base + JoinTaskConstructOffset)(task, member_id, kind);
-        // A member still joining when the trip began: back at its step, waiting for its data.
-        const bool waiting = saved && !RebuildsFromSave(*saved);
-        if (saved) {
-            WriteValue(task, 0xEC, saved->slot);
-            WriteValue(task, 0xED, static_cast<u8>(waiting ? saved->flags : saved->flags | 1));
-        }
-        u64 holder = task;
-        using ListAdd = void PS4_SYSV_ABI (*)(u64 list, u64 entry);
-        reinterpret_cast<ListAdd>(image_base + JoinTaskListAddOffset)(
-            manager + 8, reinterpret_cast<u64>(&holder));
-        if (waiting) {
-            set_step(task, saved->step);
-            joins_waiting_for_data[ReadValue<u64>(member_id, 0)] = MemberDataWait{};
-        } else {
-            set_step(task, CreateCharacterStep);
-        }
-        LOG_INFO(Debug,
-                 "Bloodborne party trip: rebuilt the join task of a member kind={} task={:#x} "
-                 "slot known={}{}",
-                 kind, task, saved != nullptr,
-                 waiting ? fmt::format(" (it was still joining at step {}: waits for its data)",
-                                       saved->step)
-                         : "");
+    const auto set_step = SetJoinTaskStep;
+    const auto rebuild = [manager](u64 member_id, s32 kind, const SavedJoinTask* saved) {
+        RebuildJoinTask(manager, member_id, kind, saved);
     };
     const auto task_for = [&](u64 member_id) {
         u64 found = 0;
@@ -1023,14 +1035,21 @@ void RecreateRemotePlayers(std::span<const u64> only) {
             }
             continue;
         }
+        if (!build_missing) {
+            LOG_INFO(Debug, "Bloodborne party: a member with no join task yet is left to the "
+                            "game's own join");
+            continue;
+        }
         const u64 identity = ReadValue<u64>(member, 0);
-        const s32 kind = RebuiltTaskKind(hosting, saved_join_tasks, identity);
+        // The live tasks too: a guest re-creating the others when a second guest joins has no
+        // saved tasks yet, only the host's live one (see RebuiltTaskKind).
+        const s32 kind = RebuiltTaskKind(hosting, saved_join_tasks, CurrentJoinTasks(), identity);
         // By identity, else the one remote player of that kind there was (two guests: no guess).
         const auto picked = PickSavedJoinTask(saved_join_tasks, kind, identity);
         rebuild(member, kind, picked ? &saved_join_tasks[*picked] : nullptr);
     }
     // On a guest its own task (kind 2) is the one that creates the host's character there.
-    if (!hosting && !task_for(self)) {
+    if (build_missing && !hosting && !task_for(self)) {
         const auto saved = std::ranges::find_if(saved_join_tasks, [](const SavedJoinTask& entry) {
             return entry.kind == LocalTaskKind(false);
         });

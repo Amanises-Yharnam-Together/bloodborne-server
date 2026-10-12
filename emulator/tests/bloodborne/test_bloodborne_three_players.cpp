@@ -414,13 +414,54 @@ TEST(BloodborneThreePlayers, AGuestRebuildsTheOtherGuestAsAGuest) {
         {RemoteGuestTask, 0xB0, 1, 0xC},
         {LocalTaskKind(false), 0xC0, 2, 0xC},
     };
-    EXPECT_EQ(RebuiltTaskKind(false, saved, 0xA0), RemoteHostTask) << "the host";
-    EXPECT_EQ(RebuiltTaskKind(false, saved, 0xB0), RemoteGuestTask) << "the other guest";
-    EXPECT_EQ(RebuiltTaskKind(true, saved, 0xB0), RemoteGuestTask) << "the host's guests";
+    const std::vector<SavedJoinTask> none;
+    EXPECT_EQ(RebuiltTaskKind(false, saved, none, 0xA0), RemoteHostTask) << "the host";
+    EXPECT_EQ(RebuiltTaskKind(false, saved, none, 0xB0), RemoteGuestTask) << "the other guest";
+    EXPECT_EQ(RebuiltTaskKind(true, saved, none, 0xB0), RemoteGuestTask) << "the host's guests";
     // Not saved (it joined during the trip): a guest when the host is someone else.
-    EXPECT_EQ(RebuiltTaskKind(false, saved, 0xD0), RemoteGuestTask);
-    EXPECT_EQ(RebuiltTaskKind(false, std::vector<SavedJoinTask>{}, 0xD0), RemoteHostTask)
+    EXPECT_EQ(RebuiltTaskKind(false, saved, none, 0xD0), RemoteGuestTask);
+    EXPECT_EQ(RebuiltTaskKind(false, none, none, 0xD0), RemoteHostTask)
         << "nothing known: the one other member of a two-player party is the host";
+}
+
+TEST(BloodborneThreePlayers, AGuestBuildsANewGuestAsAGuestFromItsLiveTasks) {
+    // Rig smoke 2026-10-12 (40ea3277): the second guest joined, the first guest's game made no
+    // task for it, and the re-create after the join built it, with no saved tasks yet, as the
+    // remote host (kind 0). Step 4 (0x01E50090) only creates kinds 1 and 2, so the first guest
+    // never saw it ("1 alive within 15 m"). The live host task says the host is someone else.
+    const std::vector<SavedJoinTask> none;
+    const std::vector<SavedJoinTask> live{
+        {RemoteHostTask, 0xA0, 7, 0x4},
+        {LocalTaskKind(false), 0xC0, 0, 0xC},
+    };
+    EXPECT_EQ(RebuiltTaskKind(false, none, live, 0xB0), RemoteGuestTask) << "the new guest";
+    EXPECT_EQ(RebuiltTaskKind(false, none, live, 0xA0), RemoteHostTask) << "the host";
+    EXPECT_EQ(RebuiltTaskKind(true, none, live, 0xB0), RemoteGuestTask) << "on the host";
+    // A wrong saved kind (the bug above, saved at the next trip) loses to the live host task.
+    const std::vector<SavedJoinTask> stale{{RemoteHostTask, 0xB0, 7, 0x4D}};
+    EXPECT_EQ(RebuiltTaskKind(false, stale, live, 0xB0), RemoteGuestTask);
+    // Nothing live (a trip's rebuild): the saved kinds, as before.
+    EXPECT_EQ(RebuiltTaskKind(false, stale, none, 0xB0), RemoteHostTask);
+    EXPECT_EQ(RebuiltTaskKind(false, none, none, 0xB0), RemoteHostTask);
+}
+
+TEST(BloodborneThreePlayers, AJoinsReCreateLeavesANewMemberToTheGamesJoin) {
+    // The game's join (0x0178C1E3) makes no task for a member that has one; the first guest's
+    // re-create after the second guest joined had built one first (rig smoke 2026-10-12).
+    EXPECT_TRUE(RecreateIsForAJoin(false, false)) << "nothing pending: the join's";
+    EXPECT_TRUE(RecreateIsForAJoin(true, true)) << "a join's still pending";
+    EXPECT_FALSE(RecreateIsForAJoin(true, false)) << "a trip's still pending builds what is gone";
+}
+
+TEST(BloodborneThreePlayers, ARebuiltTaskDropsTheAllocatorsHighFlagBits) {
+    // The constructor (0x01E4F9F0) keeps +0xED bits 6-7 (`and 0xc0`) of the allocation and no
+    // join code sets or tests them: the 0x40 seen on rebuilt tasks (0x4c) is leftover memory.
+    EXPECT_EQ(RebuiltTaskFlags(0x40, nullptr, false), 0x00);
+    EXPECT_EQ(RebuiltTaskFlags(0x44, nullptr, false), 0x04);
+    const SavedJoinTask synced{RemoteGuestTask, 0xB0, 7, 0x4C, 6};
+    EXPECT_EQ(RebuiltTaskFlags(0xC0, &synced, false), 0x0D) << "synced, without bit 6";
+    const SavedJoinTask joining{RemoteGuestTask, 0xB0, 7, 0x44, 3};
+    EXPECT_EQ(RebuiltTaskFlags(0x00, &joining, true), 0x04) << "still waiting for its data";
 }
 
 TEST(BloodborneThreePlayers, AMemberAwayDuringATripKeepsItsSavedSlot) {

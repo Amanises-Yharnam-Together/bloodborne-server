@@ -1045,6 +1045,8 @@ bool PS4_SYSV_ABI KeepSessionAfterTrip(u64, const GuestRegisterSnapshot* registe
 // After this member's trip the other players are re-created as they come to this map (creating a
 // player into a map it is not on makes its game leave the session), each once (see PlanRecreate).
 bool recreate_players_pending{};
+// Pending for RecreateAfterJoin, not a trip: members with no task are left to the game's join.
+bool recreate_pending_after_join{};
 std::set<std::string> recreated_since_trip;
 
 void LogEsdAnswers(bool party_guest);
@@ -1316,11 +1318,14 @@ void TickPlayersOnThisMap() {
                                  in_session ? OtherSessionMembers().size() : 0,
                                  SteadyMilliseconds())) {
         LOG_INFO(Debug, "Bloodborne party: joined where another guest is; re-creating the others");
+        recreate_pending_after_join =
+            RecreateIsForAJoin(recreate_players_pending, recreate_pending_after_join);
         recreate_players_pending = true;
         recreated_since_trip.clear();
     }
     if (!in_session) {
         recreate_players_pending = false;
+        recreate_pending_after_join = false;
         recreated_since_trip.clear();
         saved_join_tasks.clear();
         return;
@@ -1371,7 +1376,7 @@ void TickPlayersOnThisMap() {
         }
         LOG_INFO(Debug, "Bloodborne party trip: re-creating{} on map {:#x} ({} of {} members)", who,
                  map, now.size(), members.size());
-        RecreateRemotePlayers(now);
+        RecreateRemotePlayers(now, !recreate_pending_after_join);
     }
     if (plan.done) {
         recreate_players_pending = false;
@@ -1397,6 +1402,7 @@ void TickPartyTrip() {
                  GetCurrentPackedMap(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f,
                  at ? (*at)[2] : 0.0f, ReadValue<s32>(state, 0x1528));
         recreate_players_pending = true;
+        recreate_pending_after_join = false;
         recreated_since_trip.clear();
         restore_search_pending = true;
         if (IsPartyGuestRole()) {
