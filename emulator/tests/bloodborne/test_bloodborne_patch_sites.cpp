@@ -168,6 +168,19 @@ TEST(CoopSites, TheEchoRatePatchesAreTheRetargetedLoads) {
     }
 }
 
+TEST(CoopSites, TheSummonSlotHoldsAreRetargetedCompares) {
+    const auto sites = SitesOf("summon slot hold");
+    ASSERT_EQ(sites.size(), 2u);
+    for (const CoopSite* site : sites) {
+        const auto original = HexBytes(site->original);
+        ASSERT_EQ(original.size(), 8u);
+        const auto patched = RetargetRipLoad(std::span<const u8, 8>{original.data(), 8},
+                                             site->offset, PartySummonSlotHoldConstant);
+        EXPECT_EQ(HexBytes(site->patched), std::vector<u8>(patched.begin(), patched.end()))
+            << site->name;
+    }
+}
+
 // The hook sites whose bytes live in bloodborne_party.h are the table's.
 TEST(CoopSites, ThePartyHeaderHooksAreRegistered) {
     for (const DeathFlagSite& site : DeathFlagSites()) {

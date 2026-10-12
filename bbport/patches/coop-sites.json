@@ -35,7 +35,8 @@
     {"name": "party death", "required": false},
     {"name": "own hits", "required": false},
     {"name": "effect hits", "required": false},
-    {"name": "sign timers", "required": true}
+    {"name": "sign timers", "required": true},
+    {"name": "summon slot hold", "required": false}
   ],
   "sites": [
     {"name": "Beckoning area comparison", "feature": "seamless core", "kind": "patch", "offset": "0x0157F8C8", "original": "0F 87 90 00 00 00", "patched": "0F 8F 90 00 00 00", "accepted": []},
@@ -162,6 +163,8 @@
     {"name": "first sign post delay", "feature": "sign timers", "kind": "patch", "offset": "0x018A9264", "original": "C7 47 28 00 00 A0 40", "patched": "C7 47 28 00 00 00 00", "accepted": ["C7 47 28 ?? ?? ?? ??"]},
     {"name": "first sign post delay 2", "feature": "sign timers", "kind": "patch", "offset": "0x018A9324", "original": "C7 47 28 00 00 A0 40", "patched": "C7 47 28 00 00 00 00", "accepted": ["C7 47 28 ?? ?? ?? ??"]},
     {"name": "sign re-post time", "feature": "sign timers", "kind": "patch", "offset": "0x018A9757", "original": "C7 43 28 00 00 F0 41", "patched": "C7 43 28 00 00 80 3F", "accepted": ["C7 43 28 ?? ?? ?? ??"]},
-    {"name": "sign re-post time 2", "feature": "sign timers", "kind": "patch", "offset": "0x018A988F", "original": "C7 43 28 00 00 F0 41", "patched": "C7 43 28 00 00 80 3F", "accepted": ["C7 43 28 ?? ?? ?? ??"]}
+    {"name": "sign re-post time 2", "feature": "sign timers", "kind": "patch", "offset": "0x018A988F", "original": "C7 43 28 00 00 F0 41", "patched": "C7 43 28 00 00 80 3F", "accepted": ["C7 43 28 ?? ?? ?? ??"]},
+    {"name": "summon slot hold", "feature": "summon slot hold", "kind": "patch", "offset": "0x018729D9", "original": "C5 F8 2E 05 77 50 0B 03", "patched": "C5 F8 2E 05 E3 4E 0B 03", "accepted": []},
+    {"name": "summon slot hold 2", "feature": "summon slot hold", "kind": "patch", "offset": "0x018729ED", "original": "C5 F8 2E 05 67 50 0B 03", "patched": "C5 F8 2E 05 CF 4E 0B 03", "accepted": []}
   ]
 }

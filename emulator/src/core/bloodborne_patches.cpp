@@ -403,6 +403,22 @@ void InstallQuietSummonBanners(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne summon banner patch: no chime banner before a join's own");
 }
 
+// See PartySummonSlotHoldConstant: a joined guest's summon stops holding a slot after 15 s, so
+// the host searches for the next member at once instead of 180 s later.
+void InstallShortSummonSlotHold(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "summon slot hold",
+                        "a third member waits up to 180 s to join")) {
+        return;
+    }
+    WriteCoopPatches(base, "summon slot hold");
+    coop_features.On("summon slot hold");
+    LOG_INFO(Debug, "Bloodborne summon slot patch: a summon in flight holds its slot for {} s",
+             PartySummonSlotHoldSeconds);
+}
+
 constexpr u64 LeaveLimitOffset = 0x0138A4A0;
 constexpr std::array<u8, 6> LeaveLimitPrologue{0x55, 0x48, 0x89, 0xE5, 0x53, 0x50};
 
@@ -590,6 +606,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallBossClearKeepsSession(base, image_size);
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
+    InstallShortSummonSlotHold(base, image_size);
     InstallBossDeathTracer(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
     InstallSeamlessTravel(base, image_size);

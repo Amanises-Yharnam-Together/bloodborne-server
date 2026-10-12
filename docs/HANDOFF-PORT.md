@@ -6,6 +6,25 @@ mechanic simpler or more reliable. No mixed parties (port and shadPS4 players ne
 leave/rejoin a session as a fix: everything is seamless. See docs/BBPORT.md for how the port and
 its co-op are wired, built, packaged and tested.
 
+## The third member's 180 s wait (branch host-search-cooldown, 2026-10-12)
+
+- At 30 FPS the host's searches (/summon_messenger/get) stopped once the second member was in and
+  came back exactly 180 s after its claim (rig 20261012-160310, -131858); uncapped, the next
+  claim came 55 s after the first (-130950, -130040). Re-ringing the bell did not help.
+- Cause: each claimed sign leaves an entry in the summon manager's list at +0x1C0 (updated by
+  0x01872360) that takes a summon slot (0x018796C0 counts it next to the session's members)
+  until the game sees the summoned player arrive through its own path, which a party join never
+  shows it. The entry ages by the frame time (+4) and goes once 55 s old, or 180 s old while its
+  +0x0C is set (`vucomiss` at 0x018729D9 / 0x018729ED). Until then the host starts no new
+  summon while an entry is pending (0x01876092, the uncapped runs: searching, not claiming),
+  and with the first guest counted twice its coop slots can read full (SosStatus 0x0186FE40),
+  so it does not even search (0x018723FA, the 30 FPS runs).
+- Fix (optional feature "summon slot hold", a configured party only): both compares read a 15.0
+  among the game's constants (0x049278C4) instead. Rig check: join3 at 30 FPS, the host keeps
+  posting searches every 5 s after the first claim and the third guest is claimed within ~20 s.
+  Removing an entry may show the game's own summon notice (message 140050/140058, 0x01872AD2);
+  it did so at 180 s before, if at all.
+
 ## One table for the event flags (branch flag-table, 2026-10-12)
 
 - Whether an event flag is the host's, each player's own, shared by the party or only for the

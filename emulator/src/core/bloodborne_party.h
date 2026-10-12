@@ -1534,8 +1534,18 @@ bool MenuSeesAClient(bool party_configured, bool summoned_client);
 // in a configured party every such packet reads as empty and each player's items stay its own.
 constexpr u32 MapItemPacketChannel = 0x2C;
 u32 MapItemPacketHeaderSeen(u32 header, bool party_configured);
-// An 8-byte `vmovss xmm, [rip+disp32]` at `address` changed to load from `target` instead.
+// An 8-byte VEX instruction reading [rip+disp32] (`vmovss`, `vmulss`, `vucomiss`) at `address`
+// changed to read from `target` instead.
 std::array<u8, 8> RetargetRipLoad(std::span<const u8, 8> original, u64 address, u64 target);
+// A host's summon in flight (an entry of the summon manager's list at +0x1C0, one per claimed
+// sign) takes a summon slot until the game sees the summoned player arrive, which a party join
+// never shows it: the summon manager's update (0x01872360) lets the entry go only once it is
+// 55 s old (180 s while its +0x0C is set, as at 30 FPS). Until then the first guest fills a
+// second slot and the host's game stops searching (SosStatus 0x0186FE40), so a third member
+// waited 180 s (rig 2026-10-12). In a configured party both times read this 15.0 among the
+// game's constants instead (feature "summon slot hold", RetargetRipLoad).
+constexpr u64 PartySummonSlotHoldConstant = 0x049278C4;
+constexpr float PartySummonSlotHoldSeconds = 15.0f;
 // A loaded PARAM file: the type name at +0x0C, the row count (u16) at +0x0A and sorted 24-byte
 // row entries (id, padding, data offset) at +0x40.
 bool IsParamOfType(std::span<const u8> param, std::string_view type);
