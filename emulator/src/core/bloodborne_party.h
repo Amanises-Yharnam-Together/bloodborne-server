@@ -6,9 +6,11 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <span>
@@ -1508,6 +1510,107 @@ std::optional<std::filesystem::path> BackUpSaves(const std::filesystem::path& us
                                                  std::string_view name);
 // Deletes all but the newest `kept` backups; returns how many went.
 std::size_t PruneSaveBackups(const std::filesystem::path& user_dir, std::size_t kept);
+
+// The co-op trace (docs/WORLD_SYNC.md, Stage B): every co-op game writes
+// user/log/coop-trace-<local time>-<process>.txt, one record per line, "<UTC ms> <kind>
+// <key>=<value> ...", each value escaped (TraceEscape) so a line has no spaces or line ends of
+// its own. The kinds:
+//   trace                the file's first line: version, role, process
+//   p2p-out, p2p-in      a co-op frame: type, peer (address:port), payload (hex); in: from-peer
+//   board-out, board-in  a board post and its answer: endpoint, status, size, body (at most
+//                        TraceBodyCap of it; "same=1" and no body when it is the endpoint's last)
+//   life                 event: wipe, trip, session-on, session-off, sent-home, new-character
+//   kills-in             VisitKills's inputs, when they change
+//   hp-in                SharedDamage's inputs, every round while they matter
+//   shown-in             ShownLikeTheHost's inputs, when they change
+//   kill-apply           the other members' kills this game would apply now (AppliesMemberKill)
+//   trace-dropped        lines lost to a full queue (TraceQueue)
+// An "-in" record leaves out what did not change since its kind's last record, and its lists
+// only name what came, changed or went (TraceListDelta). SHADPS4_BLOODBORNE_TRACE=0 turns it off.
+constexpr int CoopTraceVersion = 1;
+constexpr std::size_t TraceBodyCap = 8 * 1024;
+constexpr std::uintmax_t TraceFileCap = 50 * 1024 * 1024;
+constexpr std::size_t TraceFilesKept = 5;
+constexpr std::size_t TraceQueueCap = 20'000; // lines
+constexpr const char* CoopTracePrefix = "coop-trace-";
+bool CoopTraceEnabled(const char* setting);
+struct TraceRecord {
+    s64 utc_ms = 0;
+    std::string kind;
+    std::vector<std::pair<std::string, std::string>> fields; // unescaped, in order
+    std::optional<std::string> Field(std::string_view key) const;
+    bool operator==(const TraceRecord&) const = default;
+};
+std::string TraceEscape(std::string_view text);
+std::optional<std::string> TraceUnescape(std::string_view text);
+std::string EncodeTraceRecord(const TraceRecord& record);
+std::optional<TraceRecord> ParseTraceRecord(std::string_view line);
+// A board body on a record: its size and at most `cap` bytes of it (cut when body is shorter).
+void AddTraceBody(TraceRecord& record, std::string_view body, std::size_t cap = TraceBodyCap);
+std::string TraceHex(std::span<const u8> bytes);
+std::optional<std::vector<u8>> ParseTraceHex(std::string_view hex);
+// Handles as "a,b,c" (hex), and back.
+std::string TraceHandles(std::span<const u32> handles);
+std::optional<std::vector<u32>> ParseTraceHandles(std::string_view text);
+// List entries, each "<key>:<rest>" (the key in hex): a character as VisitKills sees it (alive or
+// not, which is all it reads of the HP), and a copy as SharedDamage sees it ("-" for no own hits).
+std::string TraceToken(const SeenCharacter& character);
+std::optional<SeenCharacter> ParseSeenToken(std::string_view token);
+std::string TraceToken(const EnemyCopy& copy);
+std::optional<EnemyCopy> ParseCopyToken(std::string_view token);
+// Another member's HP report: "<source>:<handle>/<hp>/<max>+..." (hex source and handles).
+std::string TraceToken(const EnemyHpReport& report);
+std::optional<EnemyHpReport> ParseReportToken(std::string_view token);
+// A list sampled on change: what came or changed ("<token>") and what went ("-<key>"), comma
+// separated, "" for no change; after a Reset the whole list ("=<token>,..."). Apply rebuilds it.
+class TraceListDelta {
+public:
+    std::string Next(std::span<const std::string> tokens);
+    void Reset() {
+        whole = true;
+        last.clear();
+    }
+
+private:
+    bool whole = true;
+    std::vector<std::string> last;
+};
+bool ApplyTraceListDelta(std::vector<std::string>& list, std::string_view delta);
+// An "-in" record's fields sampled on change: the values that changed since the last call, and
+// the lists' deltas that are not empty. A new trace file (`file`) starts everything whole again.
+class TraceSampler {
+public:
+    using Fields = std::vector<std::pair<std::string, std::string>>;
+    Fields Changes(u32 file, const Fields& values,
+                   const std::vector<std::pair<std::string, std::vector<std::string>>>& lists);
+
+private:
+    std::optional<u32> file;
+    std::map<std::string, std::string> last;
+    std::map<std::string, TraceListDelta> deltas;
+};
+// The lines waiting for the trace's writer thread. Push never waits for the writer: a full queue
+// drops the line and counts it.
+class TraceQueue {
+public:
+    explicit TraceQueue(std::size_t capacity) : capacity{capacity} {}
+    bool Push(std::string line);
+    // Waits up to `wait` for a line, then takes every waiting one.
+    std::vector<std::string> Take(std::chrono::milliseconds wait);
+    // How many were dropped since the last call.
+    u64 TakeDropped();
+
+private:
+    std::size_t capacity;
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::vector<std::string> lines;
+    u64 dropped = 0;
+};
+// "coop-trace-<yyyymmdd-hhmmss>-<process>.txt", named in local time like the save backups.
+std::string CoopTraceFileName(std::chrono::sys_seconds local_when, u32 process);
+// Deletes all but the newest `kept` traces in `log_dir`; returns how many went.
+std::size_t PruneCoopTraces(const std::filesystem::path& log_dir, std::size_t kept);
 
 // Boss-death tracer (Kaniel 2026-10-11: Father Gascoigne died in the host's world with nobody
 // hitting him, and a guest got "Prey Slaughtered"): the game sets a character's dead flag

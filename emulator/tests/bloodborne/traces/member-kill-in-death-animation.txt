@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+# A member's kill arriving while this guest's copy plays its own death animation (HP 0, death
+# flags not set yet) is not applied again (AppliesMemberKill); the copy's death is this guest's
+# own kill, posted once.
+1760000000000 trace version=1 role=guest process=2
+1760000000100 kills-in visit=2101000000000001 others=21010000 chars==10014066:1:a000:0
+1760000000200 p2p-in type=32 peer=0a000001:3658 from-peer=1 payload=04686f7374010066400110
+1760000000200 kill-apply cands=10014066:0
+1760000000300 kills-in chars=10014066:0:a000:0
+1760000000400 kill-apply cands=

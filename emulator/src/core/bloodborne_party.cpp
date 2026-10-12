@@ -13,6 +13,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <fmt/format.h>
@@ -2493,6 +2494,456 @@ std::size_t PruneSaveBackups(const fs::path& user_dir, std::size_t kept) {
     std::error_code error;
     for (std::size_t index = 0; index + kept < backups.size(); ++index) {
         if (fs::remove_all(backups[index], error) > 0) {
+            ++removed;
+        }
+    }
+    return removed;
+}
+
+bool CoopTraceEnabled(const char* setting) {
+    if (setting == nullptr) {
+        return true;
+    }
+    const std::string_view value{setting};
+    return value != "0" && value != "off";
+}
+
+std::optional<std::string> TraceRecord::Field(std::string_view key) const {
+    for (const auto& [name, value] : fields) {
+        if (name == key) {
+            return value;
+        }
+    }
+    return std::nullopt;
+}
+
+namespace {
+
+int TraceHexDigit(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+template <typename T>
+std::optional<T> ParseTraceNumber(std::string_view text, int base) {
+    T value{};
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, base);
+    if (text.empty() || error != std::errc{} || end != text.data() + text.size()) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+std::vector<std::string_view> SplitTrace(std::string_view text, char separator) {
+    std::vector<std::string_view> parts;
+    while (true) {
+        const size_t end = text.find(separator);
+        parts.push_back(text.substr(0, end));
+        if (end == std::string_view::npos) {
+            return parts;
+        }
+        text.remove_prefix(end + 1);
+    }
+}
+
+std::string_view TraceKeyOf(std::string_view token) {
+    return token.substr(0, token.find(':'));
+}
+
+} // namespace
+
+std::string TraceEscape(std::string_view text) {
+    std::string escaped;
+    escaped.reserve(text.size());
+    for (const char c : text) {
+        const auto byte = static_cast<u8>(c);
+        if (c == '\\') {
+            escaped += "\\\\";
+        } else if (c == ' ') {
+            escaped += "\\s";
+        } else if (c == '\n') {
+            escaped += "\\n";
+        } else if (c == '\r') {
+            escaped += "\\r";
+        } else if (c == '\t') {
+            escaped += "\\t";
+        } else if (byte < 0x20 || byte >= 0x7F) {
+            escaped += fmt::format("\\x{:02x}", byte);
+        } else {
+            escaped += c;
+        }
+    }
+    return escaped;
+}
+
+std::optional<std::string> TraceUnescape(std::string_view text) {
+    std::string plain;
+    plain.reserve(text.size());
+    for (size_t index = 0; index < text.size(); ++index) {
+        if (text[index] != '\\') {
+            plain += text[index];
+            continue;
+        }
+        if (++index >= text.size()) {
+            return std::nullopt;
+        }
+        switch (text[index]) {
+        case '\\':
+            plain += '\\';
+            break;
+        case 's':
+            plain += ' ';
+            break;
+        case 'n':
+            plain += '\n';
+            break;
+        case 'r':
+            plain += '\r';
+            break;
+        case 't':
+            plain += '\t';
+            break;
+        case 'x': {
+            if (index + 2 >= text.size()) {
+                return std::nullopt;
+            }
+            const int high = TraceHexDigit(text[index + 1]);
+            const int low = TraceHexDigit(text[index + 2]);
+            if (high < 0 || low < 0) {
+                return std::nullopt;
+            }
+            plain += static_cast<char>(high * 16 + low);
+            index += 2;
+            break;
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+    return plain;
+}
+
+std::string EncodeTraceRecord(const TraceRecord& record) {
+    std::string line = fmt::format("{} {}", record.utc_ms, record.kind);
+    for (const auto& [key, value] : record.fields) {
+        line += ' ';
+        line += key;
+        line += '=';
+        line += TraceEscape(value);
+    }
+    return line;
+}
+
+std::optional<TraceRecord> ParseTraceRecord(std::string_view line) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+        line.remove_suffix(1);
+    }
+    std::vector<std::string_view> tokens;
+    for (const std::string_view token : SplitTrace(line, ' ')) {
+        if (!token.empty()) {
+            tokens.push_back(token);
+        }
+    }
+    if (tokens.size() < 2) {
+        return std::nullopt;
+    }
+    const auto utc_ms = ParseTraceNumber<s64>(tokens[0], 10);
+    if (!utc_ms) {
+        return std::nullopt;
+    }
+    TraceRecord record{*utc_ms, std::string{tokens[1]}, {}};
+    for (size_t index = 2; index < tokens.size(); ++index) {
+        const size_t equals = tokens[index].find('=');
+        if (equals == std::string_view::npos || equals == 0) {
+            return std::nullopt;
+        }
+        auto value = TraceUnescape(tokens[index].substr(equals + 1));
+        if (!value) {
+            return std::nullopt;
+        }
+        record.fields.emplace_back(std::string{tokens[index].substr(0, equals)}, std::move(*value));
+    }
+    return record;
+}
+
+void AddTraceBody(TraceRecord& record, std::string_view body, std::size_t cap) {
+    record.fields.emplace_back("size", std::to_string(body.size()));
+    record.fields.emplace_back("body", std::string{body.substr(0, cap)});
+}
+
+std::string TraceHex(std::span<const u8> bytes) {
+    static constexpr char Digits[] = "0123456789abcdef";
+    std::string hex;
+    hex.reserve(bytes.size() * 2);
+    for (const u8 byte : bytes) {
+        hex += Digits[byte >> 4];
+        hex += Digits[byte & 0xF];
+    }
+    return hex;
+}
+
+std::optional<std::vector<u8>> ParseTraceHex(std::string_view hex) {
+    if (hex.size() % 2 != 0) {
+        return std::nullopt;
+    }
+    std::vector<u8> bytes;
+    bytes.reserve(hex.size() / 2);
+    for (size_t index = 0; index < hex.size(); index += 2) {
+        const int high = TraceHexDigit(hex[index]);
+        const int low = TraceHexDigit(hex[index + 1]);
+        if (high < 0 || low < 0) {
+            return std::nullopt;
+        }
+        bytes.push_back(static_cast<u8>(high * 16 + low));
+    }
+    return bytes;
+}
+
+std::string TraceHandles(std::span<const u32> handles) {
+    std::string text;
+    for (const u32 handle : handles) {
+        text += fmt::format("{}{:x}", text.empty() ? "" : ",", handle);
+    }
+    return text;
+}
+
+std::optional<std::vector<u32>> ParseTraceHandles(std::string_view text) {
+    std::vector<u32> handles;
+    if (text.empty()) {
+        return handles;
+    }
+    for (const std::string_view part : SplitTrace(text, ',')) {
+        const auto handle = ParseTraceNumber<u32>(part, 16);
+        if (!handle) {
+            return std::nullopt;
+        }
+        handles.push_back(*handle);
+    }
+    return handles;
+}
+
+std::string TraceToken(const SeenCharacter& character) {
+    return fmt::format("{:x}:{}:{:x}:{}", character.handle, character.hp > 0 ? 1 : 0,
+                       character.instance, character.settling ? 1 : 0);
+}
+
+std::optional<SeenCharacter> ParseSeenToken(std::string_view token) {
+    const auto parts = SplitTrace(token, ':');
+    if (parts.size() != 4) {
+        return std::nullopt;
+    }
+    const auto handle = ParseTraceNumber<u32>(parts[0], 16);
+    const auto alive = ParseTraceNumber<int>(parts[1], 10);
+    const auto instance = ParseTraceNumber<u64>(parts[2], 16);
+    const auto settling = ParseTraceNumber<int>(parts[3], 10);
+    if (!handle || !alive || !instance || !settling || *alive > 1 || *settling > 1) {
+        return std::nullopt;
+    }
+    return SeenCharacter{*handle, *alive, *instance, *settling == 1};
+}
+
+std::string TraceToken(const EnemyCopy& copy) {
+    return fmt::format("{:x}:{}:{}:{}", copy.handle, copy.hp, copy.max,
+                       copy.own_hits ? std::to_string(*copy.own_hits) : std::string{"-"});
+}
+
+std::optional<EnemyCopy> ParseCopyToken(std::string_view token) {
+    const auto parts = SplitTrace(token, ':');
+    if (parts.size() != 4) {
+        return std::nullopt;
+    }
+    const auto handle = ParseTraceNumber<u32>(parts[0], 16);
+    const auto hp = ParseTraceNumber<s32>(parts[1], 10);
+    const auto max = ParseTraceNumber<s32>(parts[2], 10);
+    const auto own = parts[3] == "-" ? std::nullopt : ParseTraceNumber<s64>(parts[3], 10);
+    if (!handle || !hp || !max || (parts[3] != "-" && !own)) {
+        return std::nullopt;
+    }
+    return EnemyCopy{*handle, *hp, *max, own};
+}
+
+std::string TraceToken(const EnemyHpReport& report) {
+    std::string token = fmt::format("{:x}:", report.visit);
+    for (size_t index = 0; index < report.enemies.size(); ++index) {
+        const EnemyHp& enemy = report.enemies[index];
+        token +=
+            fmt::format("{}{:x}/{}/{}", index == 0 ? "" : "+", enemy.handle, enemy.hp, enemy.max);
+    }
+    return token;
+}
+
+std::optional<EnemyHpReport> ParseReportToken(std::string_view token) {
+    const size_t colon = token.find(':');
+    if (colon == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const auto source = ParseTraceNumber<u64>(token.substr(0, colon), 16);
+    if (!source) {
+        return std::nullopt;
+    }
+    EnemyHpReport report{*source, {}};
+    const std::string_view enemies = token.substr(colon + 1);
+    if (enemies.empty()) {
+        return report;
+    }
+    for (const std::string_view enemy : SplitTrace(enemies, '+')) {
+        const auto parts = SplitTrace(enemy, '/');
+        const auto handle = parts.size() == 3 ? ParseTraceNumber<u32>(parts[0], 16) : std::nullopt;
+        const auto hp = parts.size() == 3 ? ParseTraceNumber<s32>(parts[1], 10) : std::nullopt;
+        const auto max = parts.size() == 3 ? ParseTraceNumber<s32>(parts[2], 10) : std::nullopt;
+        if (!handle || !hp || !max) {
+            return std::nullopt;
+        }
+        report.enemies.push_back({*handle, *hp, *max});
+    }
+    return report;
+}
+
+std::string TraceListDelta::Next(std::span<const std::string> tokens) {
+    std::string delta;
+    const auto add = [&delta](std::string_view part) {
+        if (!delta.empty() && delta != "=") {
+            delta += ',';
+        }
+        delta += part;
+    };
+    if (whole) {
+        whole = false;
+        delta = "=";
+        for (const std::string& token : tokens) {
+            add(token);
+        }
+    } else {
+        std::map<std::string, std::string, std::less<>> before;
+        for (const std::string& token : last) {
+            before.emplace(TraceKeyOf(token), token);
+        }
+        std::set<std::string, std::less<>> keys;
+        for (const std::string& token : tokens) {
+            keys.emplace(TraceKeyOf(token));
+            const auto it = before.find(TraceKeyOf(token));
+            if (it == before.end() || it->second != token) {
+                add(token);
+            }
+        }
+        for (const std::string& token : last) {
+            if (!keys.contains(TraceKeyOf(token))) {
+                add(fmt::format("-{}", TraceKeyOf(token)));
+            }
+        }
+    }
+    last.assign(tokens.begin(), tokens.end());
+    return delta;
+}
+
+bool ApplyTraceListDelta(std::vector<std::string>& list, std::string_view delta) {
+    if (delta.starts_with('=')) {
+        list.clear();
+        delta.remove_prefix(1);
+    }
+    if (delta.empty()) {
+        return true;
+    }
+    for (const std::string_view part : SplitTrace(delta, ',')) {
+        if (part.starts_with('-')) {
+            std::erase_if(list, [key = part.substr(1)](const std::string& token) {
+                return TraceKeyOf(token) == key;
+            });
+            continue;
+        }
+        if (part.find(':') == std::string_view::npos) {
+            return false;
+        }
+        const auto it = std::ranges::find_if(
+            list, [key = TraceKeyOf(part)](const std::string& t) { return TraceKeyOf(t) == key; });
+        if (it != list.end()) {
+            *it = std::string{part};
+        } else {
+            list.emplace_back(part);
+        }
+    }
+    return true;
+}
+
+TraceSampler::Fields TraceSampler::Changes(
+    u32 file_now, const Fields& values,
+    const std::vector<std::pair<std::string, std::vector<std::string>>>& lists) {
+    if (file != file_now) {
+        file = file_now;
+        last.clear();
+        for (auto& [key, delta] : deltas) {
+            delta.Reset();
+        }
+    }
+    Fields changes;
+    for (const auto& [key, value] : values) {
+        auto [it, added] = last.try_emplace(key, value);
+        if (added || it->second != value) {
+            it->second = value;
+            changes.emplace_back(key, value);
+        }
+    }
+    for (const auto& [key, tokens] : lists) {
+        if (std::string delta = deltas[key].Next(tokens); !delta.empty()) {
+            changes.emplace_back(key, std::move(delta));
+        }
+    }
+    return changes;
+}
+
+bool TraceQueue::Push(std::string line) {
+    {
+        std::scoped_lock lock{mutex};
+        if (lines.size() >= capacity) {
+            ++dropped;
+            return false;
+        }
+        lines.push_back(std::move(line));
+    }
+    ready.notify_one();
+    return true;
+}
+
+std::vector<std::string> TraceQueue::Take(std::chrono::milliseconds wait) {
+    std::unique_lock lock{mutex};
+    ready.wait_for(lock, wait, [this] { return !lines.empty(); });
+    std::vector<std::string> taken;
+    taken.swap(lines);
+    return taken;
+}
+
+u64 TraceQueue::TakeDropped() {
+    std::scoped_lock lock{mutex};
+    return std::exchange(dropped, 0);
+}
+
+std::string CoopTraceFileName(std::chrono::sys_seconds local_when, u32 process) {
+    return fmt::format("{}{}-{}.txt", CoopTracePrefix, SaveBackupName(local_when), process);
+}
+
+std::size_t PruneCoopTraces(const fs::path& log_dir, std::size_t kept) {
+    const std::string_view prefix{CoopTracePrefix};
+    std::vector<fs::path> traces;
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(log_dir, error)) {
+        const std::string name = entry.path().filename().string();
+        if (entry.is_regular_file(error) && name.starts_with(prefix) && name.ends_with(".txt") &&
+            name.size() > prefix.size() + 15 && IsSaveBackupName(name.substr(prefix.size(), 15))) {
+            traces.push_back(entry.path());
+        }
+    }
+    std::ranges::sort(traces);
+    std::size_t removed = 0;
+    for (std::size_t index = 0; index + kept < traces.size(); ++index) {
+        if (fs::remove(traces[index], error)) {
             ++removed;
         }
     }

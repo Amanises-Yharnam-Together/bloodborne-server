@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+# A guest's hits counted once on the host's copy (worlds apart, SharedDamage): the guest's first
+# hit (49) comes through the game before its report, and its report pays for it; its second hit's
+# report comes first and is written, and the game's copy of that hit is given back. The copy ends
+# at 450 - 49 - 49.
+1760000000000 trace version=1 role=host process=1
+1760000000100 hp-in now=1000 visit=2101000000000001 mode=apart alive==10014066:450:450:0 reports==
+1760000000200 hp-in now=1100 alive=10014066:401:450:0
+1760000000300 hp-in now=1200 reports=5555000100000001:10014066/49/450
+1760000000400 hp-in now=1300 reports=5555000100000001:10014066/98/450
+1760000000500 hp-in now=1400 alive=10014066:303:450:0
+1760000000600 hp-in now=1500 alive=10014066:352:450:0

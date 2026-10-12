@@ -34,6 +34,11 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <fmt/ranges.h>
 #include "common/logging/log.h"
@@ -2729,6 +2734,185 @@ void InstallLampsAsCampfires(u64 base, u64 image_size) {
     LOG_INFO(Debug, "Bloodborne lamps as campfires: a party rests at its lamps together");
 }
 
+// The co-op trace (see CoopTraceVersion): records from any thread go to a queue that a thread of
+// its own writes out, so the game never waits for the disk. Off with SHADPS4_BLOODBORNE_TRACE=0.
+std::atomic<bool> coop_trace_on{false};
+// Bumped with each new trace file: the "-in" records start whole again in it (see TraceSampler).
+std::atomic<u32> coop_trace_file{0};
+TraceQueue coop_trace_queue{TraceQueueCap};
+
+s64 UtcMilliseconds() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+bool CoopTraceOn() {
+    return coop_trace_on.load(std::memory_order_relaxed);
+}
+
+void Trace(std::string kind, TraceSampler::Fields fields) {
+    if (CoopTraceOn()) {
+        coop_trace_queue.Push(
+            EncodeTraceRecord({UtcMilliseconds(), std::move(kind), std::move(fields)}));
+    }
+}
+
+void TraceLife(const char* event, TraceSampler::Fields more = {}) {
+    more.insert(more.begin(), std::pair<std::string, std::string>{"event", event});
+    Trace("life", std::move(more));
+}
+
+// A co-op frame sent or taken (see DecodeCoopFrame); `from_peer` for one taken: whether it came
+// from a room peer (only those are used).
+void TraceFrame(const char* kind, std::span<const u8> frame, u32 addr, u16 port,
+                std::optional<bool> from_peer = std::nullopt) {
+    if (!CoopTraceOn()) {
+        return;
+    }
+    const auto decoded = DecodeCoopFrame(frame);
+    if (!decoded) {
+        return;
+    }
+    TraceSampler::Fields fields{{"type", fmt::format("{:02x}", decoded->first)},
+                                {"peer", fmt::format("{:08x}:{}", addr, port)}};
+    if (from_peer) {
+        fields.emplace_back("from-peer", *from_peer ? "1" : "0");
+    }
+    fields.emplace_back("payload", TraceHex(decoded->second));
+    Trace(kind, std::move(fields));
+}
+
+// A board post and its answer. A body the same as the endpoint's last one in this file is only
+// noted ("same"): the HP board posts every 100 ms.
+void TraceBoard(const char* kind, const std::string& endpoint, std::optional<int> status,
+                std::string_view body) {
+    static std::mutex mutex;
+    static std::map<std::string, size_t> last_body; // kind and endpoint -> the last body's hash
+    static u32 last_file = 0;
+    const size_t hash = std::hash<std::string_view>{}(body);
+    bool same = false;
+    {
+        std::scoped_lock lock{mutex};
+        if (const u32 file = coop_trace_file.load(); file != last_file) {
+            last_file = file;
+            last_body.clear();
+        }
+        const auto [it, added] = last_body.try_emplace(fmt::format("{} {}", kind, endpoint), hash);
+        same = !added && it->second == hash;
+        it->second = hash;
+    }
+    TraceRecord record{0, kind, {{"endpoint", endpoint}}};
+    if (status) {
+        record.fields.emplace_back("status", std::to_string(*status));
+    }
+    if (same) {
+        record.fields.emplace_back("same", "1");
+    } else {
+        AddTraceBody(record, body);
+    }
+    Trace(std::move(record.kind), std::move(record.fields));
+}
+
+// A post to one of the party's boards, traced (the request before it goes, the answer after).
+httplib::Result PostToBoard(httplib::Client& client, const std::string& endpoint,
+                            const httplib::Headers& headers, const std::string& body) {
+    if (CoopTraceOn()) {
+        TraceBoard("board-out", endpoint, std::nullopt, body);
+    }
+    auto response = client.Post(endpoint, headers, body, "text/plain");
+    if (CoopTraceOn()) {
+        if (response) {
+            TraceBoard("board-in", endpoint, response->status, response->body);
+        } else {
+            Trace("board-in",
+                  {{"endpoint", endpoint}, {"error", httplib::to_string(response.error())}});
+        }
+    }
+    return response;
+}
+
+// The party session starting or ending for this game.
+void TraceSession(bool in_session) {
+    static bool traced = false;
+    if (in_session != traced) {
+        traced = in_session;
+        TraceLife(in_session ? "session-on" : "session-off");
+    }
+}
+
+// Now in the PC's local time, as the player reads it (file names).
+std::chrono::sys_seconds LocalTimeNow() {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    using namespace std::chrono;
+    return sys_days{year{local.tm_year + 1900} / static_cast<unsigned>(local.tm_mon + 1) /
+                    static_cast<unsigned>(local.tm_mday)} +
+           hours{local.tm_hour} + minutes{local.tm_min} + seconds{local.tm_sec};
+}
+
+// The trace's writer: a new file at the start and whenever one reaches TraceFileCap, the newest
+// TraceFilesKept kept. Lines are flushed every quarter second, so a crash loses little.
+void StartCoopTrace() {
+    if (!CoopTraceEnabled(std::getenv("SHADPS4_BLOODBORNE_TRACE"))) {
+        LOG_INFO(Debug, "Bloodborne co-op trace is off");
+        return;
+    }
+    const std::filesystem::path dir = Common::FS::GetUserPath(Common::FS::PathType::LogDir);
+#ifdef _WIN32
+    const u32 process = static_cast<u32>(_getpid());
+#else
+    const u32 process = static_cast<u32>(getpid());
+#endif
+    const char* role = std::getenv("SHADPS4_BLOODBORNE_PARTY_ROLE");
+    coop_trace_on = true;
+    std::thread([dir, process, role = std::string{role != nullptr ? role : ""}] {
+        std::ofstream file;
+        std::uintmax_t written = 0;
+        const auto open = [&] {
+            file.close();
+            std::error_code error;
+            std::filesystem::create_directories(dir, error);
+            file.open(dir / CoopTraceFileName(LocalTimeNow(), process),
+                      std::ios::binary | std::ios::trunc);
+            ++coop_trace_file;
+            PruneCoopTraces(dir, TraceFilesKept);
+            const std::string header =
+                EncodeTraceRecord({UtcMilliseconds(),
+                                   "trace",
+                                   {{"version", std::to_string(CoopTraceVersion)},
+                                    {"role", role},
+                                    {"process", std::to_string(process)}}});
+            file << header << '\n';
+            written = header.size() + 1;
+        };
+        open();
+        while (true) {
+            std::vector<std::string> lines = coop_trace_queue.Take(std::chrono::milliseconds{250});
+            if (const u64 dropped = coop_trace_queue.TakeDropped(); dropped > 0) {
+                lines.push_back(EncodeTraceRecord(
+                    {UtcMilliseconds(), "trace-dropped", {{"count", std::to_string(dropped)}}}));
+            }
+            for (const std::string& line : lines) {
+                file << line << '\n';
+                written += line.size() + 1;
+            }
+            if (!lines.empty()) {
+                file.flush();
+            }
+            if (written >= TraceFileCap) {
+                open();
+            }
+        }
+    }).detach();
+    LOG_INFO(Debug, "Bloodborne co-op trace: {}{}*.txt (the newest {} kept)",
+             Common::FS::PathToUTF8String(dir / ""), CoopTracePrefix, TraceFilesKept);
+}
+
 // Posts this member's rest about once a second while it rests (once more when it stands up) and
 // keeps the board the server answers with. Runs on its own thread; the game never waits for it.
 // The signed-in user's online id, or "" before shadNet's login.
@@ -2792,8 +2976,8 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
             wait.wait_for(lock, stop, std::chrono::seconds{1}, [] { return false; });
         }
         if (const u32 map = party_map_now.load(); map != 0) {
-            const auto map_response = client.Post("/bloodborne/party/map", headers,
-                                                  EncodeMapUpdate(member, map), "text/plain");
+            const auto map_response =
+                PostToBoard(client, "/bloodborne/party/map", headers, EncodeMapUpdate(member, map));
             if (const auto maps = map_response && map_response->status == 200
                                       ? ParseMapBoard(map_response->body)
                                       : std::nullopt) {
@@ -2811,8 +2995,8 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 mine = local_shown;
             }
             const auto shown_response =
-                client.Post("/bloodborne/party/shown", headers,
-                            EncodeMapStateUpdate(member, mine.map, mine.bits), "text/plain");
+                PostToBoard(client, "/bloodborne/party/shown", headers,
+                            EncodeMapStateUpdate(member, mine.map, mine.bits));
             if (shown_response && shown_response->status == 200) {
                 const auto states = ParseMapStateBoard(shown_response->body);
                 std::scoped_lock lock{shown_board_mutex};
@@ -2829,8 +3013,8 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 mine = local_map_state;
             }
             const auto map_state_response =
-                client.Post("/bloodborne/party/mapstate", headers,
-                            EncodeMapStateUpdate(member, mine.map, mine.bits), "text/plain");
+                PostToBoard(client, "/bloodborne/party/mapstate", headers,
+                            EncodeMapStateUpdate(member, mine.map, mine.bits));
             if (const auto states = map_state_response && map_state_response->status == 200
                                         ? ParseMapStateBoard(map_state_response->body)
                                         : std::nullopt;
@@ -2844,8 +3028,8 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 kills_out.swap(kills_to_post);
             }
             const auto kill_response =
-                client.Post("/bloodborne/party/kills", headers,
-                            EncodeFlagUpdate(member, kill_board_since, kills_out), "text/plain");
+                PostToBoard(client, "/bloodborne/party/kills", headers,
+                            EncodeFlagUpdate(member, kill_board_since, kills_out));
             if (const auto kills = kill_response && kill_response->status == 200
                                        ? ParseKillBoard(kill_response->body)
                                        : std::nullopt) {
@@ -2864,8 +3048,8 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 echoes_out.swap(echoes_to_post);
             }
             const auto echo_response =
-                client.Post("/bloodborne/party/echoes", headers,
-                            EncodeEchoUpdate(member, echo_board_since, echoes_out), "text/plain");
+                PostToBoard(client, "/bloodborne/party/echoes", headers,
+                            EncodeEchoUpdate(member, echo_board_since, echoes_out));
             if (const auto echoes = echo_response && echo_response->status == 200
                                         ? ParseEchoBoard(echo_response->body)
                                         : std::nullopt) {
@@ -2885,9 +3069,8 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 std::scoped_lock lock{trophy_mutex};
                 earned = trophies_earned_in_party;
             }
-            const auto trophy_response =
-                client.Post("/bloodborne/party/trophy", headers, EncodeTrophyUpdate(member, earned),
-                            "text/plain");
+            const auto trophy_response = PostToBoard(client, "/bloodborne/party/trophy", headers,
+                                                     EncodeTrophyUpdate(member, earned));
             if (const auto trophies = trophy_response && trophy_response->status == 200
                                           ? ParseTrophyBoard(trophy_response->body)
                                           : std::nullopt) {
@@ -2899,8 +3082,8 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                 outgoing.swap(flags_to_post);
             }
             const auto flag_response =
-                client.Post("/bloodborne/party/flags", headers,
-                            EncodeFlagUpdate(member, flag_board_since, outgoing), "text/plain");
+                PostToBoard(client, "/bloodborne/party/flags", headers,
+                            EncodeFlagUpdate(member, flag_board_since, outgoing));
             const auto board = flag_response && flag_response->status == 200
                                    ? ParseFlagBoard(flag_response->body)
                                    : std::nullopt;
@@ -2928,8 +3111,8 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
             std::scoped_lock lock{rest_board_position_mutex};
             at = rest_board_position;
         }
-        const auto response = client.Post("/bloodborne/party/rest", headers,
-                                          EncodeLampRestUpdate(member, lamp, at), "text/plain");
+        const auto response = PostToBoard(client, "/bloodborne/party/rest", headers,
+                                          EncodeLampRestUpdate(member, lamp, at));
         const auto board =
             response && response->status == 200 ? ParseLampRestBoard(response->body) : std::nullopt;
         if (!board) {
@@ -2975,9 +3158,8 @@ void RunHpBoardClient(std::stop_token stop, std::string base_url, std::string pa
         if (mine.map == 0) {
             continue;
         }
-        const auto hp_response =
-            client.Post("/bloodborne/party/hp", headers,
-                        EncodeMapStateUpdate(member, mine.map, mine.bits), "text/plain");
+        const auto hp_response = PostToBoard(client, "/bloodborne/party/hp", headers,
+                                             EncodeMapStateUpdate(member, mine.map, mine.bits));
         if (const auto states = hp_response && hp_response->status == 200
                                     ? ParseMapStateBoard(hp_response->body)
                                     : std::nullopt) {
@@ -3813,21 +3995,7 @@ void StartSaveBackups() {
     std::thread([user_dir, backups = *backups] {
         std::this_thread::sleep_for(std::chrono::minutes{1});
         while (true) {
-            // Named in the PC's local time, as the player reads it.
-            const std::time_t now =
-                std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-            std::tm local{};
-#ifdef _WIN32
-            localtime_s(&local, &now);
-#else
-            localtime_r(&now, &local);
-#endif
-            using namespace std::chrono;
-            const sys_seconds when =
-                sys_days{year{local.tm_year + 1900} / static_cast<unsigned>(local.tm_mon + 1) /
-                         static_cast<unsigned>(local.tm_mday)} +
-                hours{local.tm_hour} + minutes{local.tm_min} + seconds{local.tm_sec};
-            if (const auto made = BackUpSaves(user_dir, SaveBackupName(when))) {
+            if (const auto made = BackUpSaves(user_dir, SaveBackupName(LocalTimeNow()))) {
                 LOG_INFO(Debug, "Bloodborne save backup: {} ({} older ones removed)",
                          Common::FS::PathToUTF8String(*made),
                          PruneSaveBackups(user_dir, backups.kept));
@@ -3930,6 +4098,7 @@ void LogGameCallChainAt(const char* what, u64 rsp);
 bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot* registers) {
     if (InPartySession()) {
         ++party_trips_started;
+        TraceLife("trip", {{"map", fmt::format("{:x}", GetCurrentPackedMap())}});
         {
             std::scoped_lock lock{party_trip_mutex};
             party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap(), GetLocalPlayer());
@@ -5353,6 +5522,7 @@ void ForgetSlotIfNewCharacter() {
     if (!ForgetsSlotLists(progress_now, progress_kept, IsNewCharacterInSlot(confirmed, set_now))) {
         return;
     }
+    TraceLife("new-character", {{"slot", std::to_string(character_slot.load())}});
     BackUpSlotLists();
     {
         std::scoped_lock lock{guest_picked_mutex};
@@ -6479,6 +6649,7 @@ bool TakeDirectDamage() {
             *peers, [&](const auto& peer) { return peer.addr == addr && peer.port == port; });
         const std::span<const u8> bytes{buffer.data(), static_cast<size_t>(size)};
         const auto frame = DecodeCoopFrame(bytes);
+        TraceFrame("p2p-in", bytes, addr, port, from_peer);
         if (!from_peer || !frame) {
             continue;
         }
@@ -6521,6 +6692,7 @@ void SendToRoomPeers(const std::vector<u8>& frame) {
     for (const auto& peer : Libraries::Np::NpMatching2::GetActiveRoomPeers()) {
         Libraries::Net::P2PCoopSendTo(frame.data(), static_cast<u32>(frame.size()), peer.addr,
                                       peer.port);
+        TraceFrame("p2p-out", frame, peer.addr, peer.port);
     }
 }
 
@@ -6551,6 +6723,7 @@ void SendDirectDamage(const MemberMapState& mine, bool changed) {
     for (const auto& peer : Libraries::Np::NpMatching2::GetActiveRoomPeers()) {
         Libraries::Net::P2PCoopSendTo(frame.data(), static_cast<u32>(frame.size()), peer.addr,
                                       peer.port);
+        TraceFrame("p2p-out", frame, peer.addr, peer.port);
     }
 }
 
@@ -6580,6 +6753,17 @@ void SendPeerHello() {
     }
     const bool new_peer =
         std::ranges::any_of(linked, [&](u64 peer) { return !greeted.contains(peer); });
+    for (const u64 peer : linked) {
+        if (!greeted.contains(peer)) {
+            TraceLife("peer-join", {{"peer", fmt::format("{:08x}:{}", peer >> 16, peer & 0xFFFF)}});
+        }
+    }
+    for (const u64 peer : greeted) {
+        if (!linked.contains(peer)) {
+            TraceLife("peer-leave",
+                      {{"peer", fmt::format("{:08x}:{}", peer >> 16, peer & 0xFFFF)}});
+        }
+    }
     greeted = std::move(linked);
     if (peers.empty() || (!new_peer && now - sent_at < PeerHelloResendMs)) {
         return;
@@ -6587,6 +6771,38 @@ void SendPeerHello() {
     sent_at = now;
     hello.member = BoardMemberName();
     SendToRoomPeers(EncodeCoopFrame(PeerHelloType, EncodePeerHello(hello)));
+}
+
+// SharedDamage's inputs for the trace (hp-in): every round while the worlds are apart or a guest
+// follows the host's HP, else only when they change.
+void TraceHpInputs(u64 visit, std::string_view mode, bool forget, std::span<const EnemyCopy> alive,
+                   std::span<const EnemyHpReport> reports, s64 now_ms) {
+    if (!CoopTraceOn()) {
+        return;
+    }
+    static TraceSampler sampler;
+    std::vector<std::string> copies;
+    copies.reserve(alive.size());
+    for (const EnemyCopy& copy : alive) {
+        copies.push_back(TraceToken(copy));
+    }
+    std::vector<std::string> others;
+    for (const EnemyHpReport& report : reports) {
+        others.push_back(TraceToken(report));
+    }
+    auto fields =
+        sampler.Changes(coop_trace_file.load(),
+                        {{"visit", fmt::format("{:x}", visit)}, {"mode", std::string{mode}}},
+                        {{"alive", std::move(copies)}, {"reports", std::move(others)}});
+    if (fields.empty() && !forget && mode != "apart" && mode != "one-guest") {
+        return;
+    }
+    fields.insert(fields.begin(),
+                  std::pair<std::string, std::string>{"now", std::to_string(now_ms)});
+    if (forget) {
+        fields.emplace_back("forget", "1");
+    }
+    Trace("hp-in", std::move(fields));
 }
 
 // This game's tag on its HP reports (the upper half of EnemyHpReport.visit), so the others count
@@ -6658,10 +6874,17 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     }
     const std::vector<EnemyHpReport> reports = MergeEnemyHpReports(copies);
     const u64 source = (u64{enemy_hp_source & 0x7FFFFFFFu} << 32) | (visit & 0xFFFFFFFFu);
-    if (party_hp_reset.exchange(false)) {
+    const bool forget_damage = party_hp_reset.exchange(false);
+    if (forget_damage) {
         damage.ForgetDamageBefore(reports);
     }
-    SharedDamage::Step step = damage.Update(visit, active, standing, reports, SteadyMilliseconds());
+    const s64 now_ms = SteadyMilliseconds();
+    TraceHpInputs(visit,
+                  !in_session ? "off"
+                  : active    ? "apart"
+                              : (IsPartyGuestRole() ? "one-guest" : "one-host"),
+                  forget_damage, standing, reports, now_ms);
+    SharedDamage::Step step = damage.Update(visit, active, standing, reports, now_ms);
     // In one world: the host posts its hurt characters' HP (NPCs: the game does not send theirs),
     // a guest lowers its copies to it (see LowerToHostHp).
     const bool one_world = in_session && !active;
@@ -6801,6 +7024,56 @@ void GiveMemberKillDrop(u64 character, u32 handle) {
              handle, lot, flag);
 }
 
+// VisitKills's inputs for the trace (kills-in), when they change.
+void TraceKillsInputs(u64 visit, bool forget, std::span<const SeenCharacter> characters,
+                      std::span<const u32> others_maps) {
+    if (!CoopTraceOn()) {
+        return;
+    }
+    static TraceSampler sampler;
+    std::vector<std::string> tokens;
+    tokens.reserve(characters.size());
+    for (const SeenCharacter& character : characters) {
+        tokens.push_back(TraceToken(character));
+    }
+    auto fields = sampler.Changes(
+        coop_trace_file.load(),
+        {{"visit", fmt::format("{:x}", visit)}, {"others", TraceHandles(others_maps)}},
+        {{"chars", std::move(tokens)}});
+    if (forget) {
+        fields.emplace_back("forget", "1");
+    }
+    if (!fields.empty()) {
+        Trace("kills-in", std::move(fields));
+    }
+}
+
+// The kills this game would apply on its copies now (KeepEnemyDeathsInStep), each with its HP
+// now (0 in its own death animation), for the trace (kill-apply), when they change.
+void TraceMemberKills(std::span<const SeenCharacter> characters, std::span<const u64> pointers,
+                      const std::unordered_map<u64, u32>& hidden,
+                      const std::unordered_set<u32>& others,
+                      const std::unordered_set<u32>& died_for_others) {
+    if (!CoopTraceOn()) {
+        return;
+    }
+    static TraceSampler sampler;
+    std::string candidates;
+    for (size_t index = 0; index < pointers.size(); ++index) {
+        const u32 handle = characters[index].handle;
+        if (characters[index].hp > 0 && others.contains(handle) &&
+            !hidden.contains(pointers[index]) && !died_for_others.contains(handle) &&
+            ReadValue<u8>(pointers[index], 0x28) == 0) {
+            candidates += fmt::format("{}{:x}:{}", candidates.empty() ? "" : ",", handle,
+                                      CharacterHp(pointers[index]));
+        }
+    }
+    if (auto fields = sampler.Changes(coop_trace_file.load(), {{"cands", candidates}}, {});
+        !fields.empty()) {
+        Trace("kill-apply", std::move(fields));
+    }
+}
+
 // A death respawn reset the map: this member's kills are taken back (VisitKills::Forget).
 std::atomic<bool> party_kills_reset{};
 
@@ -6880,8 +7153,9 @@ void KeepEnemyDeathsInStep(bool sharing) {
         died_for_others.clear();
         died_visit = visit;
     }
-    auto changes = party_kills_reset.exchange(false) ? visit_kills.Forget()
-                                                     : std::vector<std::pair<s32, bool>>{};
+    const bool forget_kills = party_kills_reset.exchange(false);
+    TraceKillsInputs(visit, forget_kills, characters, others_maps);
+    auto changes = forget_kills ? visit_kills.Forget() : std::vector<std::pair<s32, bool>>{};
     const auto observed = visit_kills.Observe(visit, characters, others_maps);
     changes.insert(changes.end(), observed.begin(), observed.end());
     std::erase_if(changes, [](const std::pair<s32, bool>& change) {
@@ -6945,6 +7219,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
             }
         }
     }
+    TraceMemberKills(characters, pointers, hidden, others, died_for_others);
     size_t newly_hidden = 0;
     size_t newly_died = 0;
     const auto me = LocalPlayerPosition();
@@ -7118,6 +7393,30 @@ bool IsBossSized(u64 character) {
     return data >= 0x10000 && ReadValue<s32>(data, 0xFC) >= DeathTraceMinMaxHp;
 }
 
+// ShownLikeTheHost's inputs for the trace (shown-in), when they change.
+void TraceShownInputs(std::span<const CharacterShown> host, std::span<const CharacterShown> mine,
+                      const std::unordered_set<u32>& kill_hidden,
+                      const std::unordered_set<u32>& hidden_here) {
+    if (!CoopTraceOn()) {
+        return;
+    }
+    static TraceSampler sampler;
+    const auto sorted = [](const std::unordered_set<u32>& handles) {
+        std::vector<u32> list(handles.begin(), handles.end());
+        std::ranges::sort(list);
+        return TraceHandles(list);
+    };
+    if (auto fields = sampler.Changes(coop_trace_file.load(),
+                                      {{"host", TraceHex(EncodeShownCharacters(host))},
+                                       {"mine", TraceHex(EncodeShownCharacters(mine))},
+                                       {"kill", sorted(kill_hidden)},
+                                       {"here", sorted(hidden_here)}},
+                                      {});
+        !fields.empty()) {
+        Trace("shown-in", std::move(fields));
+    }
+}
+
 // Every character of the map hidden or shown as the host's world has it (see CharacterShown):
 // the host posts its own, a guest in the session on the host's map follows them.
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
@@ -7158,6 +7457,7 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
         return;
     }
     const std::vector<CharacterShown> hosts = host_near.Fill(map, *posted);
+    TraceShownInputs(hosts, mine, kill_hidden, hidden_here);
     size_t hid = 0;
     size_t showed = 0;
     std::string which;
@@ -7327,6 +7627,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         phase = Phase::WaitForLoad;
         loaded_map = 0;
         LOG_INFO(Debug, "Bloodborne party: guest sent home; it will resume at its last point");
+        TraceLife("sent-home");
     }
     const bool ready = !loading && IsUsablePackedMap(map) && at && character_slot.load() >= 0;
     if (!ready) {
@@ -7480,6 +7781,7 @@ void TickPlayersOnThisMap() {
     KeepGuestFullHp();
     PolishMultiplayerUi();
     const bool in_session = InPartySession();
+    TraceSession(in_session);
     // The boards go both ways in and out of a session (a guest on its own trip is out of one).
     const bool sharing = SharesWithParty(party_controller.has_value(), GetLocalPlayer() >= 0x10000);
     UnlockPartyTrophies(sharing);
@@ -7794,6 +8096,7 @@ std::atomic<bool> party_death_reset{};
 void MoveToRespawnPoint(bool arriving_from_trip) {
     const bool reset = !arriving_from_trip && party_death_reset.exchange(false);
     if (reset) {
+        TraceLife("wipe");
         party_kills_reset.store(true);
         party_hp_reset.store(true);
     }
@@ -8510,8 +8813,8 @@ void RunVitalsBoardClient(std::stop_token stop, std::string base_url, std::strin
         }
         mine.member = member;
         last_post = std::chrono::steady_clock::now();
-        const auto response = client.Post("/bloodborne/party/vitals", headers,
-                                          EncodeVitalsUpdate(mine, hits), "text/plain");
+        const auto response = PostToBoard(client, "/bloodborne/party/vitals", headers,
+                                          EncodeVitalsUpdate(mine, hits));
         const auto board =
             response && response->status == 200 ? ParseVitalsBoard(response->body) : std::nullopt;
         if (!board) {
@@ -12074,6 +12377,7 @@ void InstallSeamlessCoopPatches() {
     InstallPartyDeath(base, image_size);
     InstallOwnHitCount(base, image_size);
     StartSaveBackups();
+    StartCoopTrace();
     StartRestBoardClient();
     StartVitalsBoardClient();
     PatchSignTimers(base, image_size);

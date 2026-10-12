@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+# A party wipe takes back kills held for a member still on the map (VisitKills::Forget).
+# The host kills 0x10014066 in Central Yharnam (0x21010000), trips to the Dream while a guest
+# stays there (the kill is held, not withdrawn), then the party wipes.
+1760000000000 trace version=1 role=host process=1
+1760000000100 kills-in visit=2101000000000001 others=21010000 chars==10014066:1:a000:0,10014067:1:a100:0
+1760000000200 kills-in chars=10014066:0:a000:0
+1760000000300 life event=trip map=21010000
+1760000000400 kills-in visit=1500000000000002 chars==
+1760000000500 life event=wipe
+1760000000600 kills-in forget=1
