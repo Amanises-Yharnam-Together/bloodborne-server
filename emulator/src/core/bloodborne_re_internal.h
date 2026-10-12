@@ -275,6 +275,7 @@ u32 PlayingMap();
 
 // The co-op trace's records (see CoopTraceVersion).
 void TraceLife(const char* event, TraceSampler::Fields more = {});
+void Trace(std::string kind, TraceSampler::Fields fields);
 
 bool RegisterLifecycleReset(std::string name, std::initializer_list<Lifecycle> events,
                             std::function<void()> reset);
@@ -320,8 +321,20 @@ void NoteGameTrophyUnlock(s32 trophy);
 void ReadTrophyBoard(std::span<const s32> board);
 void UnlockPartyTrophies(bool sharing);
 extern std::mutex flag_board_mutex;
+extern std::mutex echo_board_mutex;
+extern std::vector<KillEchoes> echoes_to_grant;
+extern std::mutex kill_board_mutex;
+extern std::vector<std::pair<s32, bool>> kills_to_post;
+extern std::unordered_set<u32> others_kills;
+extern std::mutex enemy_hp_mutex;
+extern MemberMapState local_enemy_hp;
+extern std::vector<MemberMapState> others_enemy_hp;
 extern std::mutex map_state_mutex;
+extern MemberMapState local_map_state;
 extern std::optional<MemberMapState> host_map_state;
+extern std::mutex shown_board_mutex;
+extern MemberMapState local_shown;
+extern std::optional<MemberMapState> host_shown;
 extern std::vector<std::pair<s32, bool>> flags_to_set;
 void PostWorldChanges(const FlagChanges& changes);
 extern std::mutex map_board_mutex;
@@ -329,17 +342,33 @@ extern std::vector<MemberMap> map_board;
 extern std::string map_board_member;
 extern std::chrono::steady_clock::time_point map_board_time;
 s32 SessionPlayers();
+std::optional<LampPosition> CharacterPosition(u64 character);
 std::optional<LampPosition> LocalPlayerPosition();
 
 s32 CharacterHp(u64 character);
+
+// The other players' characters in this world (WorldChrMan +0x30 count, +0x38 entries of 0x38
+// bytes; the local player is one of them), with HP (+0x128 of their data) and position.
+struct OtherPlayer {
+    u64 character = 0;
+    s32 type = 0;
+    s32 hp = 0;
+    u8 dead_flags = 0;
+    std::optional<LampPosition> at;
+};
+std::vector<OtherPlayer> OtherPlayers();
 extern s32 guest_trip_point;
 extern bool guest_trip_in_flight;
 void MoveToRespawnPoint(bool arriving_from_trip);
 extern std::optional<std::chrono::steady_clock::time_point> guest_lamp_trip_at;
 constexpr u64 WarpNextStageBonfireOffset = 0x0132E050;
 void InstallLampsAsCampfires(u64 base, u64 image_size);
+extern std::atomic<u32> coop_trace_file;
+bool CoopTraceOn();
 std::chrono::sys_seconds LocalTimeNow();
 void StartCoopTrace();
+extern std::condition_variable_any enemy_hp_wake;
+extern bool enemy_hp_changed;
 void StartRestBoardClient();
 
 // Characters hidden before a party rest (see KeepDisabledAfterRespawn). WorldChrMan's blocks are
@@ -367,12 +396,16 @@ void ForEachWorldCharacter(u64 world, Visit&& visit) {
 bool IsCharacterDisabled(u64 character);
 void TickLampRest();
 
+bool EnemiesAreHarder();
+void KeepBossHpInStep();
+
 // Diagnostics for a guest alone on a map (the host elsewhere): its enemies lagged and took no
 // damage, the host runs them. For the 4 living characters nearest to the local player within
 // 40 m: handle, type +0x78, network update authority +0x1EC, state flags +0x1E0, and the
 // control block [+0x18] words +0x00..+0x3C, logged every 2 s on change to compare who runs an
 // enemy on the host, on a guest beside it and on a guest alone.
 void WatchEnemyHp(u64 hp_address, u32 handle);
+void LogNearbyEnemyControl();
 
 void TickPartyTrip();
 void LogJoinTaskChanges();
@@ -449,6 +482,11 @@ void InstallNoLevelSyncInParty(u64 base, u64 image_size);
 void InstallSolidNpcsInParty(u64 base, u64 image_size);
 
 void SetGuestPickupsBeforeMapItems();
+
+// Diagnostics: who adds echoes (AddSouls 0x018FC600(player, amount, _, apply rates)).
+constexpr u64 AddSoulsOffset = 0x018FC600;
+
+bool SomeoneElsewhereInSession();
 void InstallSharedLoot(u64 base, u64 image_size);
 void InstallItemModuleDiagnostics(u64 base, u64 image_size);
 void LogItemModuleChecks();
@@ -497,7 +535,16 @@ void KeepGuestProgress(bool in_session);
 void SetPartyWorldChanges(bool sharing);
 void GrantPartyEchoes();
 void ClaimEnemiesWhenAlone(bool in_session, u32 map);
+extern std::mutex own_hits_mutex;
+extern OwnDamage own_damage;
 void InstallOwnHitCount(u64 base, u64 image_size);
+extern DirectDamageInbox direct_damage_inbox;
+extern std::mutex direct_boards_mutex;
+extern DirectInbox<DirectKills> direct_kills_inbox;
+bool TakeDirectDamage();
+void SendDirectKills(std::span<const u32> kills, bool changed);
+void SendDirectDamage(const MemberMapState& mine, bool changed);
+void SendPeerHello();
 void KeepEnemyDeathsInStep(bool sharing);
 void SnapshotHostMapState(bool sharing);
 void TeleportLocalPlayer(const LampPosition& at, float heading = 0.0f);
