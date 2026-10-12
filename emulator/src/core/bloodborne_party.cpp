@@ -1686,6 +1686,17 @@ void OwnDamage::Hit(u32 handle, bool mine, s32 taken) {
     }
 }
 
+void OwnDamage::Hit(u32 handle, HitBy by, s32 taken) {
+    if (by != HitBy::Nobody) {
+        Hit(handle, by == HitBy::Me, taken);
+        return;
+    }
+    const auto last = last_hit_mine.find(handle);
+    if (taken > 0 && (last == last_hit_mine.end() || last->second)) {
+        totals[handle] += taken;
+    }
+}
+
 void OwnDamage::Effect(u32 handle, s32 taken) {
     const auto last = last_hit_mine.find(handle);
     if (taken > 0 && last != last_hit_mine.end() && last->second) {
@@ -2130,6 +2141,11 @@ bool KilledByAnother(bool hooks, std::optional<bool> last_hit_mine, bool hosting
 
 bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on) {
     return in_session && member_kill && lot_flag > 0 && !flag_on;
+}
+
+bool GetsKillDrop(bool in_session, bool member_kill, bool own_kill_as_guest, s32 lot_flag,
+                  bool flag_on) {
+    return in_session && (member_kill || own_kill_as_guest) && lot_flag > 0 && !flag_on;
 }
 
 bool SharesWithParty(bool party_configured, bool player_loaded) {

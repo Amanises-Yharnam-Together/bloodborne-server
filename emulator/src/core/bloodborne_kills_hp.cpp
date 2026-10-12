@@ -572,12 +572,15 @@ void PS4_SYSV_ABI NoteHitApplied(u64, const GuestRegisterSnapshot* registers) {
         return;
     }
     const u32 handle = ReadValue<u32>(victim, 0x08);
+    // A thrown item's hit names no character (Kaniel's fire bomb 2026-10-13: attacker handle 0).
+    const bool named = attacker >= 0x10000 && ReadValue<u32>(attacker, 0x08) != 0;
+    const HitBy by = attacker == player ? HitBy::Me : (named ? HitBy::OtherPlayer : HitBy::Nobody);
     {
         std::scoped_lock lock{own_hits_mutex};
-        own_damage.Hit(handle, attacker == player, taken);
+        own_damage.Hit(handle, by, taken);
         own_damage.HitLeft(handle, CharacterHp(victim), SteadyMilliseconds());
     }
-    if (attacker == player && taken > 0) {
+    if (by != HitBy::OtherPlayer && taken > 0) {
         enemy_step_due.store(true);
     }
     if (taken <= 0) {
@@ -597,10 +600,12 @@ void PS4_SYSV_ABI NoteHitApplied(u64, const GuestRegisterSnapshot* registers) {
     std::atomic<u32>& logged =
         attacker == player ? logged_own : (by_player ? logged_players : logged_others);
     if (logged.fetch_add(1) < 20) {
-        LOG_INFO(Debug, "Bloodborne party: hit on {:#x} by {} {:#x}: {} -> {} (t={:.1f})", handle,
-                 attacker == player ? "this player" : (by_player ? "another player" : "other"),
-                 attacker >= 0x10000 ? ReadValue<u32>(attacker, 0x08) : 0, before, before - taken,
-                 SteadyMilliseconds() / 1000.0);
+        // The attacker's address last (the rig reads the rest).
+        LOG_INFO(
+            Debug, "Bloodborne party: hit on {:#x} by {} {:#x}: {} -> {} (t={:.1f}) attacker {:#x}",
+            handle, attacker == player ? "this player" : (by_player ? "another player" : "other"),
+            attacker >= 0x10000 ? ReadValue<u32>(attacker, 0x08) : 0, before, before - taken,
+            SteadyMilliseconds() / 1000.0, attacker);
     }
 }
 
@@ -874,9 +879,9 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                                const std::unordered_set<u32>& kill_hidden);
 
-// See GetsMemberKillDrop: the character's NpcParam row is [vtable +0x168 (character) +8], as
-// the respawn walk reads it (0x0190E433). The game's thread only.
-void GiveMemberKillDrop(u64 character, u32 handle) {
+// See GetsKillDrop: the character's NpcParam row is [vtable +0x168 (character) +8], as the
+// respawn walk reads it (0x0190E433). `own`: this guest's own kill. The game's thread only.
+void GiveMemberKillDrop(u64 character, u32 handle, bool own = false) {
     if (!IsCharacter(character, "GiveMemberKillDrop")) {
         return;
     }
@@ -904,7 +909,8 @@ void GiveMemberKillDrop(u64 character, u32 handle) {
         return;
     }
     const s32 flag = ReadValue<s32>(lots + *row, ItemLotFlagOffset);
-    if (!GetsMemberKillDrop(InPartySession(), true, flag, flag > 0 && EventFlagOn(flag))) {
+    if (!GetsKillDrop(InPartySession(), !own, own && IsPartyGuestRole(), flag,
+                      flag > 0 && EventFlagOn(flag))) {
         return;
     }
     const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
@@ -919,8 +925,8 @@ void GiveMemberKillDrop(u64 character, u32 handle) {
         reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, bool)>(
             image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
     }
-    LOG_INFO(Debug, "Bloodborne party: a member killed {:#x}; gave its drop, item lot {} (flag {})",
-             handle, lot, flag);
+    LOG_INFO(Debug, "Bloodborne party: {} {:#x}; gave its drop, item lot {} (flag {})",
+             own ? "this guest killed" : "a member killed", handle, lot, flag);
 }
 
 // VisitKills's inputs for the trace (kills-in), when they change.
@@ -1095,6 +1101,20 @@ void KeepEnemyDeathsInStep(bool sharing) {
         return change.second && died_for_others.contains(static_cast<u32>(change.first));
     });
     ShareEnemyHp(map, visit, pointers);
+    // A guest's own kill: its game makes no one-time drop (Lisara's hag, 2026-10-13).
+    if (IsPartyGuestRole() && InPartySession()) {
+        for (const auto& [handle, killed] : observed) {
+            if (!killed || died_for_others.contains(static_cast<u32>(handle))) {
+                continue;
+            }
+            const auto at =
+                std::ranges::find(characters, static_cast<u32>(handle), &SeenCharacter::handle);
+            if (at != characters.end()) {
+                GiveMemberKillDrop(pointers[at - characters.begin()], static_cast<u32>(handle),
+                                   true);
+            }
+        }
+    }
     if (!changes.empty()) {
         const auto kills = std::ranges::count_if(changes, [](const auto& c) { return c.second; });
         // Which ones, with their death flags (+0x1E3) and HP now: a kill that is not one shows

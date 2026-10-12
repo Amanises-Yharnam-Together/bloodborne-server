@@ -986,6 +986,18 @@ TEST(BloodborneSharedKills, AMembersKillGivesTheOneTimeDrop) {
     EXPECT_FALSE(GetsMemberKillDrop(false, true, 52300990, false)) << "no session";
 }
 
+// Kaniel 2026-10-13: Lisara killed a hag by the Cathedral Ward lamp (item lot 22010, flag
+// 50000600): the host's copy dropped the item, the guest's game made no drop at all. A guest's own
+// kill gives it the one-time drop too; a host's own kill drops by the game.
+TEST(BloodborneSharedKills, AGuestsOwnKillGivesTheOneTimeDrop) {
+    EXPECT_TRUE(GetsKillDrop(true, false, true, 50000600, false));
+    EXPECT_FALSE(GetsKillDrop(true, false, true, 50000600, true)) << "got it already";
+    EXPECT_FALSE(GetsKillDrop(true, false, true, 0, false)) << "a random drop is the world's own";
+    EXPECT_FALSE(GetsKillDrop(true, false, false, 50000600, false)) << "the host's own kill";
+    EXPECT_FALSE(GetsKillDrop(false, false, true, 50000600, false)) << "no session";
+    EXPECT_TRUE(GetsKillDrop(true, true, false, 50000600, false)) << "a member's kill, as before";
+}
+
 // Kaniel 2026-10-12: a broken Dream event patch opened the messengers' weapon lines (flags
 // 12101000-12101009) whatever badges the player had, and those flags stay in the save. Once per
 // save slot, out of the Dream, they are cleared; the next Dream visit opens the lines again for
@@ -2111,6 +2123,23 @@ TEST(BloodborneSharedEnemyHp, PoisonIsTheLastHittersDamage) {
     own.Effect(0x10014066, -3);
     EXPECT_EQ(own.Total(0x10014066), 66) << "nothing takes HP back";
     EXPECT_EQ(own.All().size(), 1u);
+}
+
+// Kaniel 2026-10-13: his fire bomb took 781 off an enemy and Lisara's bar never moved. The game's
+// hit had no attacker (a thrown item's hit), so it was no one's: counted as nobody's damage, it
+// was never posted. A hit with no attacker is this member's, unless another player hit it last.
+TEST(BloodborneSharedEnemyHp, AHitWithNoAttackerIsThisMembers) {
+    OwnDamage own;
+    own.Hit(0x10014099, HitBy::Nobody, 781);
+    EXPECT_EQ(own.Total(0x10014099), 781) << "never hit before: the fire bomb";
+    own.Hit(0x10014099, HitBy::Me, 20);
+    own.Hit(0x10014099, HitBy::Nobody, 30);
+    EXPECT_EQ(own.Total(0x10014099), 831) << "after this member's own hit";
+    own.Hit(0x10014099, HitBy::OtherPlayer, 50);
+    own.Hit(0x10014099, HitBy::Nobody, 30);
+    EXPECT_EQ(own.Total(0x10014099), 831) << "after another player's hit: theirs";
+    EXPECT_EQ(own.LastHitMine(0x10014099), std::optional<bool>{false})
+        << "a hit with no attacker says nothing about who hit last";
 }
 
 // Rig 2026-10-11, damage straight over the P2P link: the guest's report reached the host 0.1 s
