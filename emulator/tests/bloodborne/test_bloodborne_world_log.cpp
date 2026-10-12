@@ -42,7 +42,12 @@ WorldLogEntry Reset(u64 seq, u32 map = 0) {
     return {seq, 0, map, WorldLogKind::Reset, 0};
 }
 
-using Peers = std::vector<WorldLogPeer>;
+// A snapshot's other parts (empty shown characters and map state at `last`): a member takes a
+// snapshot once they are all in.
+void TakeOtherParts(WorldLogMember& member, u64 epoch, u64 last, s64 now_ms) {
+    member.Take(WorldLogShownSnapshot{"host", epoch, last, 0, 1, {}}, now_ms);
+    member.Take(WorldLogMapStateSnapshot{"host", epoch, last, {}}, now_ms);
+}
 
 WorldLogBatch Batch(u64 epoch, u64 last, std::vector<WorldLogEntry> entries) {
     return {"host", epoch, last, Entries(epoch, std::move(entries))};
@@ -106,7 +111,7 @@ TEST(WorldLogFrames, TypesFollowTheHelloAndOlderBuildsDropThem) {
         EXPECT_FALSE(IsWorldLogFrameType(type));
     }
     EXPECT_GE(CoopProtocolVersion, 2) << "the world log's frames are protocol 2";
-    EXPECT_EQ(CoopProtocolVersion, 3) << "the shown characters on the log are protocol 3";
+    EXPECT_EQ(CoopProtocolVersion, 4) << "the flags and the map state on the log are protocol 4";
 }
 
 TEST(WorldLogFrames, AFullSetFitsTheLink) {
@@ -376,6 +381,7 @@ TEST(WorldLogMember, AGapAsksForASnapshotThatMendsIt) {
     EXPECT_FALSE(member.SnapshotDue(100 + WorldLogSnapshotRetryMs - 1)) << "asked already";
     EXPECT_TRUE(member.SnapshotDue(100 + WorldLogSnapshotRetryMs)) << "asked again";
     // The snapshot is of seq 4; the waiting 5 goes on top.
+    TakeOtherParts(member, epoch, 4, 2'000);
     const auto mended = member.Take(
         WorldLogSnapshot{"host", epoch, 4, 0, 1, {{Yharnam, {0x10, 0x11}}, {Ward, {0x12}}}}, 2'000);
     EXPECT_TRUE(mended.snapshot);
@@ -412,6 +418,8 @@ TEST(WorldLogMember, ALateJoinerStartsFromASnapshotInParts) {
         member.Take(WorldLogSnapshot{"host", epoch, 40, 1, 2, {{Ward, {0x2}}}}, 20).snapshot)
         << "one part of two";
     EXPECT_TRUE(member.Kills().empty());
+    TakeOtherParts(member, epoch, 40, 25);
+    EXPECT_TRUE(member.Kills().empty()) << "a kills part still missing";
     const auto whole = member.Take(WorldLogSnapshot{"host", epoch, 40, 0, 2, {{Ward, {0x1}}}}, 30);
     EXPECT_TRUE(whole.snapshot);
     EXPECT_EQ(whole.applied, Entries(epoch, {Kill(41, Ward, 0x50)}));
@@ -527,6 +535,7 @@ TEST(WorldLogMember, MembersConvergeOverABadLink) {
                     for (const WorldLogSnapshot& part : host.Snapshot("h")) {
                         member.Take(part, now);
                     }
+                    TakeOtherParts(member, host.Epoch(), host.Last(), now);
                 }
             }
         }
@@ -539,6 +548,7 @@ TEST(WorldLogMember, MembersConvergeOverABadLink) {
                 for (const WorldLogSnapshot& part : host.Snapshot("h")) {
                     member.Take(part, now);
                 }
+                TakeOtherParts(member, host.Epoch(), host.Last(), now);
             }
             WorldLogKills expected = host.Kills();
             EXPECT_EQ(member.Kills(), expected) << "round " << round;
@@ -556,78 +566,49 @@ TEST(WorldLogPath, OnUnlessSwitchedOff) {
     EXPECT_FALSE(WorldLogEnabled("off"));
 }
 
-TEST(WorldLogPath, OnlyWhenEveryPeerHasIt) {
-    const PeerHello with{.member = "a", .features = WorldLogFeature};
-    const PeerHello off{.member = "b", .features = 0};
-    PeerHello older{.member = "c", .features = WorldLogFeature};
-    older.protocol = 1;
+// One build for everyone: a peer with the world log switched off is an error the hello check
+// reports, once.
+TEST(BloodbornePeerHello, AWorldLogSwitchedOffIsReported) {
+    const PeerHello mine{.revision = "abc", .member = "6b61", .features = WorldLogFeature};
+    PeerHello off = mine;
+    off.member = "4c69";
+    off.features = 0;
+    PeerBuildCheck check;
+    EXPECT_FALSE(check.Take(mine, mine));
+    EXPECT_EQ(check.Take(off, mine),
+              "Co-op: 4c69 runs build abc, this game runs abc; world log off, this game's on");
+    EXPECT_FALSE(check.Take(off, mine)) << "said once";
+}
+
+// Every member runs one build (Kaniel 2026-10-12): the log while it is on and the room has peers.
+TEST(WorldLogPath, OnWithPeersUnlessSwitchedOff) {
     WorldLogPath path;
-    EXPECT_FALSE(path.Decide(true, Peers{}, 0)) << "no peers: the board";
-    const std::vector<WorldLogPeer> both{{"a", with}, {"b", with}};
-    EXPECT_TRUE(path.Decide(true, both, 0));
-    auto line = path.TakeChange();
-    ASSERT_TRUE(line);
-    EXPECT_EQ(*line, "Co-op world log: on, kills go through the host's log (2 peers have it)");
+    EXPECT_FALSE(path.Decide(true, 0, 0)) << "alone: the boards";
+    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, the kills, shown characters and flags go "
+                                 "through the boards (no peers)");
+    EXPECT_TRUE(path.Decide(true, 2, 10));
+    EXPECT_EQ(path.TakeChange(), "Co-op world log: on, the kills, shown characters and flags go "
+                                 "through the host's log (2 peers)");
     EXPECT_FALSE(path.TakeChange()) << "once per change";
-    EXPECT_TRUE(path.Decide(true, both, 100));
+    EXPECT_TRUE(path.Decide(true, 2, 20));
     EXPECT_FALSE(path.TakeChange());
-
-    EXPECT_FALSE(path.Decide(true, Peers{{"a", with}, {"b", off}}, 200));
-    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, kills go through the kill board (b has it "
-                                 "switched off)");
-    EXPECT_TRUE(path.Decide(true, both, 300));
-    EXPECT_FALSE(path.Decide(true, Peers{{"a", with}, {"c", older}}, 400));
-    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, kills go through the kill board (c runs "
-                                 "co-op protocol 1)");
-    EXPECT_TRUE(path.Decide(true, both, 500));
-    EXPECT_FALSE(path.Decide(false, both, 600));
-    path.TakeChange();
-    EXPECT_FALSE(path.Decide(false, both, 700));
-    EXPECT_FALSE(path.TakeChange());
+    EXPECT_FALSE(path.Decide(false, 2, 30));
+    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, the kills, shown characters and flags go "
+                                 "through the boards (switched off here)");
 }
 
-TEST(WorldLogPath, AnUnsurePeerKeepsThePathForAWhile) {
-    const PeerHello with{.member = "a", .features = WorldLogFeature};
+TEST(WorldLogPath, AMomentWithoutPeersKeepsTheLog) {
     WorldLogPath path;
-    EXPECT_TRUE(path.Decide(true, Peers{{"a", with}}, 0));
+    EXPECT_TRUE(path.Decide(true, 1, 0));
     path.TakeChange();
-    // A third member's link came up; its hello is on the way.
-    const std::vector<WorldLogPeer> new_peer{{"a", with}, {"d", std::nullopt}};
-    EXPECT_TRUE(path.Decide(true, new_peer, 1'000));
-    EXPECT_TRUE(path.Decide(true, new_peer, 1'000 + WorldLogUnsureMs - 1));
+    EXPECT_TRUE(path.Decide(true, 0, 1'000)) << "a link dropped, or a load";
+    EXPECT_TRUE(path.Decide(true, 0, 1'000 + WorldLogUnsureMs - 1));
     EXPECT_FALSE(path.TakeChange());
-    EXPECT_FALSE(path.Decide(true, new_peer, 1'000 + WorldLogUnsureMs));
-    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, kills go through the kill board (no hello "
-                                 "from d)");
-    // Its hello came: on again at once.
-    EXPECT_TRUE(path.Decide(true, Peers{{"a", with}, {"d", with}}, 7'000));
-    path.TakeChange();
-    // Every link dropped for a moment: the log stays, then the board.
-    EXPECT_TRUE(path.Decide(true, Peers{}, 8'000));
-    EXPECT_TRUE(path.Decide(true, Peers{{"a", with}}, 9'000));
-    EXPECT_TRUE(path.Decide(true, Peers{}, 10'000));
-    EXPECT_FALSE(path.Decide(true, Peers{}, 10'000 + WorldLogUnsureMs));
-    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, kills go through the kill board (no "
-                                 "peers)");
-    // Not decided yet and unsure: the board.
-    WorldLogPath fresh;
-    EXPECT_FALSE(fresh.Decide(true, Peers{{"d", std::nullopt}}, 0));
-}
-
-// The path in use is logged at the first decision, and again when it or its reason changes (a
-// mixed party stays on the board but says why).
-TEST(WorldLogPath, TheFirstDecisionAndEachNewReasonAreLogged) {
-    PeerHello older{.member = "c", .features = WorldLogFeature};
-    older.protocol = 1;
-    WorldLogPath path;
-    path.Decide(true, Peers{}, 0);
-    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, kills go through the kill board (no "
-                                 "peers)");
-    path.Decide(true, Peers{{"c", older}}, 10);
-    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, kills go through the kill board (c runs "
-                                 "co-op protocol 1)");
-    path.Decide(true, Peers{{"c", older}}, 20);
-    EXPECT_FALSE(path.TakeChange());
+    EXPECT_TRUE(path.Decide(true, 1, 3'000)) << "back";
+    EXPECT_TRUE(path.Decide(true, 0, 4'000));
+    EXPECT_FALSE(path.Decide(true, 0, 4'000 + WorldLogUnsureMs));
+    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, the kills, shown characters and flags go "
+                                 "through the boards (no peers)");
 }
 
 TEST(VisitKillsStanding, ThisVisitsAndTheHeldOnesByMap) {

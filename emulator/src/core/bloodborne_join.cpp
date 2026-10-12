@@ -1124,8 +1124,8 @@ void RecreateRemotePlayers(std::span<const u64> only, bool build_missing) {
 
 // The host's map from its own map state post (with two guests the other one may be elsewhere).
 std::optional<u32> HostMapFromItsPost() {
-    std::scoped_lock lock{map_state_mutex};
-    return host_map_state ? std::optional<u32>{host_map_state->map} : std::nullopt;
+    const std::optional<MemberMapState> state = HostMapStateNow();
+    return state ? std::optional<u32>{state->map} : std::nullopt;
 }
 
 // The session's members other than this one (SessionManager +0xF8..+0x100, 0x20 bytes each).

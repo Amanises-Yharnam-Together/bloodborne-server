@@ -194,16 +194,15 @@ TEST(WorldLogShown, AMemberFollowsTheEntries) {
     EXPECT_FALSE(member.ShownKnown());
 }
 
-// A snapshot from a host that sends the shown characters is whole only with their parts too, in
-// either order.
+// A snapshot is whole only with the shown characters' parts too, in either order.
 TEST(WorldLogShown, ASnapshotWaitsForTheShownParts) {
     const u64 epoch = WorldLogEpoch(7, 3);
     const WorldLogSnapshot kills{"host", epoch, 40, 0, 1, {{Yharnam, {0x9}}}};
     const WorldLogShownSnapshot shown{"host", epoch, 40, 0, 1, {Yharnam, {{Parked.handle, 7}}}};
     for (const bool shown_first : {false, true}) {
         WorldLogMember member;
-        member.ExpectShown(true);
         member.Take(Batch(epoch, 41, {Shown(41, Yharnam, Iosefka.handle, 2)}), 0);
+        member.Take(WorldLogMapStateSnapshot{"host", epoch, 40, {}}, 5);
         const auto first = shown_first ? member.Take(shown, 10) : member.Take(kills, 10);
         EXPECT_FALSE(first.snapshot);
         EXPECT_TRUE(member.Kills().empty());
@@ -218,26 +217,12 @@ TEST(WorldLogShown, ASnapshotWaitsForTheShownParts) {
     }
 }
 
-// A protocol 2 host sends no shown parts: its snapshot is whole with the kills, and the member's
-// shown characters are not the host's until a ShownMap.
-TEST(WorldLogShown, WithoutShownPartsTheShownStateIsUnknown) {
-    const u64 epoch = WorldLogEpoch(7, 3);
-    WorldLogMember member;
-    member.Take(Batch(epoch, 40, {}), 0);
-    EXPECT_TRUE(member.Take(WorldLogSnapshot{"host", epoch, 40, 0, 1, {}}, 10).snapshot);
-    EXPECT_FALSE(member.ShownKnown());
-    // A ShownMap makes them the host's again.
-    EXPECT_TRUE(member.Take(Batch(epoch, 41, {ShownMap(41, Ward)}), 20).applied.size() == 1);
-    EXPECT_TRUE(member.ShownKnown());
-}
-
 TEST(WorldLogShown, MembersConvergeOverABadLink) {
     std::mt19937 random{1012};
     for (int round = 0; round < 20; ++round) {
         WorldLogHost host;
         std::vector<WorldLogMember> members(2);
         for (WorldLogMember& member : members) {
-            member.ExpectShown(true);
         }
         u64 epoch = WorldLogEpoch(9, 1);
         std::deque<std::pair<size_t, WorldLogBatch>> link;
@@ -288,6 +273,7 @@ TEST(WorldLogShown, MembersConvergeOverABadLink) {
                     for (const auto& part : host.ShownSnapshot("h")) {
                         member.Take(part, now);
                     }
+                    member.Take(host.MapStateSnapshot("h"), now);
                 }
             }
         }
@@ -300,31 +286,12 @@ TEST(WorldLogShown, MembersConvergeOverABadLink) {
                 for (const auto& part : host.ShownSnapshot("h")) {
                     member.Take(part, now);
                 }
+                member.Take(host.MapStateSnapshot("h"), now);
             }
             EXPECT_EQ(member.Shown(), host.Shown()) << "round " << round;
             EXPECT_TRUE(member.ShownKnown());
         }
     }
-}
-
-TEST(WorldLogShown, ThePathNeedsEveryPeersShownBit) {
-    const PeerHello both{.member = "a", .features = WorldLogFeature | WorldLogShownFeature};
-    const PeerHello kills_only{.member = "b", .features = WorldLogFeature};
-    const PeerHello off{.member = "c", .features = 0};
-    WorldLogPath path{"shown characters", "the shown board", WorldLogShownFeature};
-    using Peers = std::vector<WorldLogPeer>;
-    EXPECT_TRUE(path.Decide(true, Peers{{"a", both}}, 0));
-    EXPECT_EQ(path.TakeChange(),
-              "Co-op world log: on, shown characters go through the host's log (1 peer has it)");
-    EXPECT_FALSE(path.Decide(true, Peers{{"a", both}, {"b", kills_only}}, 10));
-    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, shown characters go through the shown "
-                                 "board (b runs a build without it)");
-    EXPECT_FALSE(path.Decide(true, Peers{{"c", off}}, 20));
-    EXPECT_EQ(path.TakeChange(), "Co-op world log: off, shown characters go through the shown "
-                                 "board (c has it switched off)");
-    // The kills' path takes that protocol 2 peer.
-    WorldLogPath kills;
-    EXPECT_TRUE(kills.Decide(true, Peers{{"a", both}, {"b", kills_only}}, 0));
 }
 
 TEST(WorldLogShown, AShowReadsBackFromItsTraceRecord) {

@@ -437,8 +437,11 @@ std::mutex flag_board_mutex;
 std::vector<std::pair<s32, bool>> flags_to_post;
 
 void PostWorldChanges(const FlagChanges& changes) {
-    std::scoped_lock lock{flag_board_mutex};
     const auto shared = FlagsToShare(changes);
+    if (shared.empty() || TakeFlagsForTheLog(shared)) {
+        return;
+    }
+    std::scoped_lock lock{flag_board_mutex};
     flags_to_post.insert(flags_to_post.end(), shared.begin(), shared.end());
 }
 
@@ -684,9 +687,7 @@ void SetBuildIdentity(std::string_view revision, u64 event_files) {
     std::scoped_lock lock{peer_hello_mutex};
     own_hello = PeerHello{.revision = std::string{revision},
                           .event_files = event_files,
-                          .features = WorldLogSwitchOn()
-                                          ? static_cast<u8>(WorldLogFeature | WorldLogShownFeature)
-                                          : u8{0}};
+                          .features = WorldLogSwitchOn() ? WorldLogFeature : u8{0}};
 }
 
 void NoteSaveFileOpened(std::string_view guest_path) {

@@ -1193,15 +1193,15 @@ struct DirectKills {
 // take only the types they know.
 constexpr u8 PeerHelloType = 0x33;
 // Raised when a co-op frame's meaning changes. 2: the world log's frames (WorldLogProposeType ...)
-// and the hello's features. 3: the shown characters on the world log (WorldLogShownFeature).
-constexpr u8 CoopProtocolVersion = 3;
+// and the hello's features. 3: the shown characters on the world log. 4: the shared flags and the
+// host's map state on it (frames 0x39, 0x3A, the flag entries).
+constexpr u8 CoopProtocolVersion = 4;
 constexpr s64 PeerHelloResendMs = 10'000;
-// PeerHello::features: what this game takes part in. The world log only carries a board's job when
-// every peer has its bit (a game with SHADPS4_BLOODBORNE_WORLD_LOG=0 leaves them all out): the
-// kills since protocol 2, the shown characters since 3 (a protocol 2 game keeps the kills on the
-// log and the shown characters on their board).
+// PeerHello::features: WorldLogFeature when this game runs the world log (it is not switched off,
+// SHADPS4_BLOODBORNE_WORLD_LOG=0). Every member runs one build (Kaniel 2026-10-12): a peer on
+// another build or with the log switched off is an error the hello check logs (PeerBuildCheck),
+// not a path of its own.
 constexpr u8 WorldLogFeature = 0x01;
-constexpr u8 WorldLogShownFeature = 0x02;
 struct PeerHello {
     u8 protocol = CoopProtocolVersion;
     std::string revision; // the build's source revision ("-dirty": changes not in a commit)
@@ -1221,7 +1221,7 @@ public:
     std::optional<std::string> Take(const PeerHello& theirs, const PeerHello& mine);
 
 private:
-    std::set<std::tuple<std::string, u8, std::string, u64>> warned;
+    std::set<std::tuple<std::string, u8, std::string, u64, u8>> warned;
 };
 // A hash of the map event files (*.emevd.dcx) in `folder`, the game's dvdroot_ps4/event (the
 // co-op kit replaces some): names and bytes. 0 when there are none or one cannot be read.
@@ -1278,7 +1278,19 @@ enum class WorldLogKind : u8 {
     Unshown = 4,  // `subject` is no longer in the host's world on `map`
     // `subject` on `map` has `value` (ShownBits) in the host's world; on the link 0x10 | value.
     Shown = 0x10,
-    // Still to come: FlagSet, FlagClear, HpFloor.
+    // Step 3 (the flag boards' job): a shared flag (FlagsToShare: a lamp lit, a boss fog entered)
+    // turned on or off in a member's world, `subject` the flag; every member sets it. Events, not
+    // state: a snapshot does not carry them (a member that joins later gets none of the earlier
+    // ones, as a game's first flag board post gets none), the flag board's copy covers a gap.
+    FlagSet = 5,
+    FlagClear = 6,
+    // The host's map state (the map state board's job): its flags on `map` are from now on all
+    // off but the MapFlagOn ones that follow; MapFlagOn / MapFlagOff: flag MapFlagBase(map) +
+    // `subject` turned on / off. A guest loading that map takes the TakesHostMapFlag ones.
+    MapStateMap = 7,
+    MapFlagOn = 8,
+    MapFlagOff = 9,
+    // Still to come: HpFloor.
 };
 struct WorldLogEntry {
     u64 seq = 0;
@@ -1302,6 +1314,64 @@ struct WorldLogShown {
     bool operator==(const WorldLogShown&) const = default;
 };
 std::vector<CharacterShown> WorldLogShownCharacters(const WorldLogShown& shown);
+// The host's map state: its map and the MapFlagCount flags from MapFlagBase(map), MSB first (as on
+// the map state board, MemberMapState::bits). Empty bits for map 0.
+struct WorldLogMapState {
+    u32 map = 0;
+    std::vector<u8> bits;
+    bool operator==(const WorldLogMapState&) const = default;
+};
+// A member's shared flag events to the host (frame WorldLogFlagsProposeType): each with a number
+// that counts up within the member's run, resent for WorldLogFlagResendWindowMs so a lost frame
+// costs nothing; the host takes each number once.
+struct WorldLogFlagEvent {
+    u32 number = 0;
+    s32 flag = 0;
+    bool on = true;
+    bool operator==(const WorldLogFlagEvent&) const = default;
+};
+struct WorldLogFlagProposal {
+    std::string member;
+    u64 epoch = 0; // the host's log this member follows, 0 before it heard one
+    u32 run = 0;
+    std::vector<WorldLogFlagEvent> events;
+    bool operator==(const WorldLogFlagProposal&) const = default;
+};
+constexpr s64 WorldLogFlagResendWindowMs = 10'000;
+constexpr size_t WorldLogFlagEventsPerFrame = 64;
+// The same flag turned the same way again this soon is the same event (two members lit one lamp;
+// the log's and the flag board's copies of one event).
+constexpr s64 WorldLogFlagRepeatMs = 10'000;
+// A member's events waiting to be taken: numbered as they come, sent until they are
+// WorldLogFlagResendWindowMs old (the newest WorldLogFlagEventsPerFrame).
+class WorldLogFlagOutbox {
+public:
+    void Add(std::span<const std::pair<s32, bool>> changes, s64 now_ms);
+    std::vector<WorldLogFlagEvent> Pending(s64 now_ms);
+    // Whether something came since the last call (it goes out at once).
+    bool TakeNew() {
+        return std::exchange(fresh, false);
+    }
+    // The events went another way (the flag board): none waits any more.
+    void Clear() {
+        sent.clear();
+        fresh = false;
+    }
+
+private:
+    u32 next = 0;
+    std::vector<std::pair<WorldLogFlagEvent, s64>> sent;
+    bool fresh = false;
+};
+// One flag event from either copy (the log's entries, the flag board's answers): true the first
+// time (flag, on) is seen within WorldLogFlagRepeatMs, and it is remembered.
+class FlagEventOnce {
+public:
+    bool First(s32 flag, bool on, s64 now_ms);
+
+private:
+    std::map<std::pair<s32, bool>, s64> seen;
+};
 // Standing kills by map.
 using WorldLogKills = std::map<u32, std::set<u32>>;
 size_t WorldLogKillCount(const WorldLogKills& kills);
@@ -1321,6 +1391,10 @@ constexpr u8 WorldLogSnapshotType = 0x37;        // host -> that member, in part
 // host -> that member, after the kills' parts: the shown characters at the same seq (protocol 2
 // builds drop it, as they drop any type they do not know)
 constexpr u8 WorldLogShownSnapshotType = 0x38;
+// member -> host: its shared flag events (WorldLogFlagProposal; protocol 3 builds drop it)
+constexpr u8 WorldLogFlagsProposeType = 0x39;
+// host -> that member, after the shown parts: the host's map state at the same seq
+constexpr u8 WorldLogMapStateSnapshotType = 0x3A;
 bool IsWorldLogFrameType(u8 type);
 // A member's proposal and the host's heartbeat go out at once on a change and again every
 // WorldLogResendMs; a member's log stands WorldLogLifeMs after the host's last frame (else the
@@ -1386,6 +1460,17 @@ struct WorldLogShownSnapshot {
 };
 std::vector<u8> EncodeWorldLogShownSnapshot(const WorldLogShownSnapshot& snapshot);
 std::optional<WorldLogShownSnapshot> DecodeWorldLogShownSnapshot(std::span<const u8> payload);
+struct WorldLogMapStateSnapshot {
+    std::string host;
+    u64 epoch = 0;
+    u64 last = 0;
+    WorldLogMapState state; // one part: the bitmap fits a frame
+    bool operator==(const WorldLogMapStateSnapshot&) const = default;
+};
+std::vector<u8> EncodeWorldLogMapStateSnapshot(const WorldLogMapStateSnapshot& snapshot);
+std::optional<WorldLogMapStateSnapshot> DecodeWorldLogMapStateSnapshot(std::span<const u8> payload);
+std::vector<u8> EncodeWorldLogFlagProposal(const WorldLogFlagProposal& proposal);
+std::optional<WorldLogFlagProposal> DecodeWorldLogFlagProposal(std::span<const u8> payload);
 // `entries` (consecutive) as batches of at most WorldLogEntriesPerFrame; one heartbeat for none.
 std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
                                          std::span<const WorldLogEntry> entries);
@@ -1432,12 +1517,30 @@ public:
     // The shown characters in parts of at most WorldLogShownPerFrame (one part when there are
     // none), at the same seq as Snapshot.
     std::vector<WorldLogShownSnapshot> ShownSnapshot(std::string_view host) const;
+    // A member's (or the host's own) shared flag events: an entry for each new one (by number
+    // within its run), but none for a flag turned the same way within WorldLogFlagRepeatMs.
+    Taken ProposeFlags(const WorldLogFlagProposal& proposal, s64 now_ms);
+    // The host's map state now (its map's flags): the entries that bring the log's copy to it
+    // (another map: a MapStateMap, then each flag on).
+    std::vector<WorldLogEntry> MapState(u32 map, std::span<const u8> bits);
+    // The flags left the log (their path went back to the boards).
+    void ForgetMapState() {
+        map_state = {};
+    }
+    const WorldLogMapState& MapStateNow() const {
+        return map_state;
+    }
+    WorldLogMapStateSnapshot MapStateSnapshot(std::string_view host) const;
 
 private:
     struct Member {
         u32 run = 0;
         u32 number = 0;
         WorldLogKills kills;
+    };
+    struct FlagSender {
+        u32 run = 0;
+        u32 number = 0; // the last event taken
     };
     struct Standing {
         u32 map = 0;
@@ -1447,12 +1550,16 @@ private:
     void Own(const std::string& member, u32 map, u32 handle, std::vector<WorldLogEntry>& entries);
     void Disown(const std::string& member, u32 handle, std::vector<WorldLogEntry>& entries);
     void AppendShown(std::vector<WorldLogEntry>& entries);
+    void AppendMapState(std::vector<WorldLogEntry>& entries);
 
     u64 epoch = 0;
     u64 last = 0;
     std::map<std::string, Member> members;
     std::map<u32, Standing> standing; // handle -> its map and the members whose kill it is
     WorldLogShown shown;
+    std::map<std::string, FlagSender> flag_senders;
+    FlagEventOnce flag_events;
+    WorldLogMapState map_state;
 };
 
 // A member's side: the entries applied in seq order, exactly once.
@@ -1468,13 +1575,15 @@ public:
     Step Take(const WorldLogBatch& batch, s64 now_ms);
     Step Take(const WorldLogSnapshot& part, s64 now_ms);
     Step Take(const WorldLogShownSnapshot& part, s64 now_ms);
-    // Whether the host sends the shown characters' snapshot parts (its hello has
-    // WorldLogShownFeature): a snapshot is whole only with them too.
-    void ExpectShown(bool expected) {
-        expect_shown = expected;
+    // A snapshot is whole with its kills, shown characters and map state parts (one build: the host
+    // sends all of them).
+    Step Take(const WorldLogMapStateSnapshot& part, s64 now_ms);
+    const WorldLogMapState& MapState() const {
+        return map_state;
     }
-    bool ExpectsShown() const {
-        return expect_shown;
+    // Whether MapState is the host's (as ShownKnown).
+    bool MapStateKnown() const {
+        return map_state_known;
     }
     // Whether to ask the host for a snapshot now (a gap, a late join, a new epoch past its start),
     // at most every WorldLogSnapshotRetryMs; true marks it asked.
@@ -1527,34 +1636,28 @@ private:
         std::map<u8, WorldLogKills> got;
         std::optional<u8> shown_parts;
         std::map<u8, WorldLogShown> shown_got;
+        std::optional<WorldLogMapState> map_state;
     };
+    void ApplyMapFlag(const WorldLogEntry& entry);
     std::optional<PartialSnapshot> partial;
     WorldLogKills kills;
     WorldLogShown shown;
     bool shown_known = false;
-    bool expect_shown = false;
+    WorldLogMapState map_state;
+    bool map_state_known = false;
 };
 
-// Which path the kills take: the world log only while this game has it on and every room peer
-// said in its hello that it has it too; the kill board otherwise. A peer without a hello yet or no
-// peers at all keep the path WorldLogUnsureMs (a hello comes at once to a new peer, a link may
-// drop for a moment), then the board.
+// Whether the kills, the shown characters and the shared flags go through the world log: while
+// this game has it on and is linked to the room's peers; the boards otherwise (alone, or with the
+// log switched off). Every peer runs this build. A moment without peers (a link that drops, a load)
+// keeps the log WorldLogUnsureMs, then the boards.
 constexpr s64 WorldLogUnsureMs = 5'000;
-// SHADPS4_BLOODBORNE_WORLD_LOG: on unless "0" or "off" (the kills keep to the kill board).
+// SHADPS4_BLOODBORNE_WORLD_LOG: on unless "0" or "off" (everything keeps to the boards).
 bool WorldLogEnabled(const char* setting);
-struct WorldLogPeer {
-    std::string name; // for the log line
-    std::optional<PeerHello> hello;
-};
 class WorldLogPath {
 public:
-    // What takes the path (for the log line), the board it falls back to, and the hello's feature
-    // bit every peer must have.
-    explicit WorldLogPath(std::string what = "kills", std::string board = "the kill board",
-                          u8 feature = WorldLogFeature)
-        : what{std::move(what)}, board{std::move(board)}, feature{feature} {}
-    // Whether the log is the path now.
-    bool Decide(bool enabled, std::span<const WorldLogPeer> peers, s64 now_ms);
+    // Whether the log is the path now, with `peers` room peers linked.
+    bool Decide(bool enabled, size_t peers, s64 now_ms);
     bool Active() const {
         return active;
     }
@@ -1566,9 +1669,6 @@ public:
     std::optional<std::string> TakeChange();
 
 private:
-    std::string what;
-    std::string board;
-    u8 feature = WorldLogFeature;
     bool decided = false;
     bool active = false;
     std::string why = "not decided";
@@ -1607,6 +1707,9 @@ private:
 std::optional<std::pair<u64, bool>> DecodeWorldLogStart(std::span<const u8> payload);
 // A host's Show on a trace record: the map (u32) and the characters (EncodeShownCharacters).
 std::vector<u8> EncodeWorldLogShow(u32 map, std::span<const CharacterShown> characters);
+// A host's MapState on a trace record: the map (u32) and the bits.
+std::vector<u8> EncodeWorldLogMapStateInput(u32 map, std::span<const u8> bits);
+std::optional<WorldLogMapState> DecodeWorldLogMapStateInput(std::span<const u8> payload);
 std::optional<std::pair<u32, std::vector<CharacterShown>>> DecodeWorldLogShow(
     std::span<const u8> payload);
 // One report per source from copies of it (direct and the board): per enemy the most damage, or

@@ -1427,6 +1427,7 @@ void SnapshotHostMapState(bool sharing) {
             }
         }
     }
+    MapStateOnTheLog(map, bits);
     std::scoped_lock lock{map_state_mutex};
     local_map_state = MemberMapState{map, std::move(bits)};
 }
@@ -1434,11 +1435,7 @@ void SnapshotHostMapState(bool sharing) {
 // On a guest loading the host's map: its flags in that map's range become the host's
 // (TakesHostMapFlag), before the map's events start.
 size_t ApplyHostMapState() {
-    std::optional<MemberMapState> state;
-    {
-        std::scoped_lock lock{map_state_mutex};
-        state = host_map_state;
-    }
+    const std::optional<MemberMapState> state = HostMapStateNow();
     // Raw: called from the map item creation hook, in the load, before the tracker has the map.
     const u32 map = GetCurrentPackedMap();
     if (!state || state->map != map || state->bits.size() * 8 < MapFlagCount) {

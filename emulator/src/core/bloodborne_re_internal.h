@@ -638,8 +638,6 @@ void SendDirectKills(std::span<const u32> kills, bool changed);
 // The world log's runtime (bloodborne_world_log.cpp, docs/WORLD_SYNC.md Stage C).
 // SHADPS4_BLOODBORNE_WORLD_LOG (this game's hello says so: WorldLogFeature).
 bool WorldLogSwitchOn();
-// A peer's hello, by sender ((addr << 16) | port): which peers have the log.
-void NoteWorldLogHello(u64 sender, const PeerHello& hello);
 // A world log frame from a room peer (game thread).
 void TakeWorldLogFrame(u8 type, std::span<const u8> payload, u32 addr, u16 port);
 // The kill step's view of the party's kills: `members` the other members' (the log's or the kill
@@ -660,6 +658,17 @@ void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters);
 // What a guest follows of the host's characters: the log's copy while the shown characters take
 // it and the copy is fresh and whole, else the shown board's.
 std::optional<MemberMapState> HostShownNow();
+// Step 3. A change's shared flags (FlagsToShare) to the log: true when the log takes them (else
+// they go to the flag board as before).
+bool TakeFlagsForTheLog(std::span<const std::pair<s32, bool>> shared);
+// The flag board's changes, under flag_board_mutex: while the log carries the flags, the ones the
+// log brought already (or brings later) count once (FlagEventOnce).
+void FilterBoardFlags(std::vector<std::pair<s32, bool>>& changes);
+// The host's map state (see SnapshotHostMapState) to the log while it carries the flags.
+void MapStateOnTheLog(u32 map, std::span<const u8> bits);
+// What a guest's load takes of the host's map flags: the log's copy while it is whole and fresh,
+// else the map state board's.
+std::optional<MemberMapState> HostMapStateNow();
 void SendDirectDamage(const MemberMapState& mine, bool changed);
 void SendPeerHello();
 void KeepEnemyDeathsInStep(bool sharing);

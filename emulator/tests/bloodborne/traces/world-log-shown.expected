@@ -1,10 +1,8 @@
 # SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 # SPDX-License-Identifier: GPL-2.0-or-later
-# The kills' snapshot waits for the shown characters' part (the gap stays until it comes), then
-# the guest has all four; the host's load starts its characters over on the Ward.
+# The snapshot waits for its shown characters and map state parts (the gap stays until
+# they come), then the guest has all four; the host's load starts its characters over.
 world log path: log (1 peer has it)
-world log path (shown): log (1 peer has it)
-wlog member expects shown snapshots
 wlog member follows epoch 5a1800000001
 wlog member applied seq 1 reset every map
 wlog member applied seq 2 shown map 0x18010000
@@ -12,9 +10,10 @@ wlog member applied seq 3 shown 0x10014000 on 0x18010000 bits 2
 wlog member applied seq 4 shown 0x10014005 on 0x18010000 bits 1
 wlog member gap: has seq 4, host at 6
 wlog member gap: has seq 4, host at 6
+wlog member gap: has seq 4, host at 6
 wlog member snapshot to seq 6
 wlog member shown on 0x18010000: 4 characters
+wlog member map state of 0x0
 wlog member applied seq 7 unshown 0x10014005 on 0x18010000
 wlog member applied seq 8 shown map 0x18000000
 wlog member applied seq 9 shown 0x10010075 on 0x18000000 bits 0
-world log path (shown): board (b runs a build without it)
