@@ -3,6 +3,8 @@
 
 #include <array>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -2126,6 +2128,103 @@ TEST(BloodborneDirectBoards, AMembersKillsTravelWhole) {
         << "its visit ended: the enemies came back for it";
     EXPECT_TRUE(DirectKillHandles(inbox.Fresh(1'100 + DirectDamageLifeMs + 1)).empty())
         << "both went quiet";
+}
+
+// Robustness review 2026-10-12: two games on different builds share a party without a word. Each
+// game's hello (PeerHelloType on the same link) names its co-op protocol, build and event files.
+TEST(BloodbornePeerHello, AHelloReadsBack) {
+    const PeerHello hello{.protocol = CoopProtocolVersion,
+                          .revision = "c01b49d3a1b2-dirty",
+                          .event_files = 0x0123456789abcdefull,
+                          .member = "6b616e69656c"};
+    const std::vector<u8> payload = EncodePeerHello(hello);
+    EXPECT_EQ(DecodePeerHello(payload), hello);
+    const auto frame = DecodeCoopFrame(EncodeCoopFrame(PeerHelloType, payload));
+    ASSERT_TRUE(frame);
+    EXPECT_EQ(frame->first, PeerHelloType);
+    EXPECT_TRUE(IsCoopFrameType(PeerHelloType));
+    EXPECT_NE(PeerHelloType, DirectDamageType);
+    EXPECT_NE(PeerHelloType, DirectVitalsType);
+    EXPECT_NE(PeerHelloType, DirectKillsType);
+
+    std::vector<u8> longer = payload;
+    longer.push_back(7);
+    EXPECT_EQ(DecodePeerHello(longer), hello) << "a later build may add fields at the end";
+    for (size_t size = 0; size < payload.size(); ++size) {
+        EXPECT_FALSE(DecodePeerHello(std::span{payload}.first(size))) << "cut at " << size;
+    }
+    std::vector<u8> overlong = payload;
+    overlong[1] = 0xFF; // the revision's length runs past the end
+    EXPECT_FALSE(DecodePeerHello(overlong));
+}
+
+// One warning line per member and build: the peer's hello comes every few seconds.
+TEST(BloodbornePeerHello, ADifferentBuildIsReportedOncePerPeer) {
+    const PeerHello mine{.protocol = CoopProtocolVersion,
+                         .revision = "c01b49d3",
+                         .event_files = 0x1111,
+                         .member = "6b616e69656c"};
+    PeerBuildCheck check;
+    PeerHello same = mine;
+    same.member = "4c69";
+    EXPECT_FALSE(check.Take(same, mine)) << "the same build";
+
+    PeerHello older = same;
+    older.revision = "7f3343f0";
+    const auto warning = check.Take(older, mine);
+    ASSERT_TRUE(warning);
+    EXPECT_EQ(*warning, "Co-op: 4c69 runs build 7f3343f0, this game runs c01b49d3");
+    EXPECT_FALSE(check.Take(older, mine)) << "said once";
+
+    PeerHello other = older;
+    other.member = "6c6f7265";
+    EXPECT_TRUE(check.Take(other, mine)) << "another peer on that build";
+    PeerHello newer = older;
+    newer.revision = "0c772ac9";
+    EXPECT_TRUE(check.Take(newer, mine)) << "the peer restarted on another build";
+
+    PeerHello protocol = same;
+    protocol.member = "70";
+    protocol.protocol = CoopProtocolVersion + 1;
+    const auto protocol_warning = check.Take(protocol, mine);
+    ASSERT_TRUE(protocol_warning);
+    EXPECT_NE(protocol_warning->find("co-op protocol 2"), std::string::npos) << *protocol_warning;
+
+    PeerHello events = same;
+    events.member = "71";
+    events.event_files = 0x2222;
+    const auto events_warning = check.Take(events, mine);
+    ASSERT_TRUE(events_warning);
+    EXPECT_NE(events_warning->find("event files 0000000000002222"), std::string::npos)
+        << *events_warning;
+    PeerHello unknown = same;
+    unknown.member = "72";
+    unknown.event_files = 0;
+    EXPECT_FALSE(check.Take(unknown, mine)) << "a game that could not read its event files";
+}
+
+// The event files a game reads go into its hello: a party on different co-op event files sees
+// different worlds (boss fogs, NPCs).
+TEST(BloodbornePeerHello, EventFilesHashFollowsTheirBytes) {
+    const auto folder = std::filesystem::temp_directory_path() / "bb_event_files_hash_test";
+    std::filesystem::remove_all(folder);
+    std::filesystem::create_directories(folder);
+    EXPECT_EQ(EventFilesHash(folder), 0u) << "no event files";
+    EXPECT_EQ(EventFilesHash(folder / "absent"), 0u);
+    const auto write = [&](const char* name, std::string_view bytes) {
+        std::ofstream{folder / name, std::ios::binary} << bytes;
+    };
+    write("m21_00_00_00.emevd.dcx", "first");
+    write("m24_01_00_00.emevd.dcx", "second");
+    write("m21_00_00_00.emeld.dcx", "names only");
+    const u64 hash = EventFilesHash(folder);
+    EXPECT_NE(hash, 0u);
+    EXPECT_EQ(EventFilesHash(folder), hash) << "the same files";
+    write("m21_00_00_00.emeld.dcx", "other names");
+    EXPECT_EQ(EventFilesHash(folder), hash) << "only the event scripts count";
+    write("m24_01_00_00.emevd.dcx", "changed");
+    EXPECT_NE(EventFilesHash(folder), hash);
+    std::filesystem::remove_all(folder);
 }
 
 TEST(BloodborneSharedEnemyHp, InOneWorldAGuestTakesTheHostsNpcHp) {

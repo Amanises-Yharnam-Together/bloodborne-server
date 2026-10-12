@@ -6257,6 +6257,29 @@ std::mutex direct_boards_mutex;
 DirectInbox<DirectVitals> direct_vitals_inbox;
 DirectInbox<DirectKills> direct_kills_inbox;
 
+// Which build each game runs (see PeerHelloType): this game's, from SetBuildIdentity; no hello
+// goes out before it is set.
+std::mutex peer_hello_mutex;
+std::optional<PeerHello> own_hello;
+PeerBuildCheck peer_build_check;
+
+void NotePeerHello(PeerHello theirs, u32 addr, u16 port) {
+    std::optional<std::string> warning;
+    {
+        std::scoped_lock lock{peer_hello_mutex};
+        if (!own_hello) {
+            return;
+        }
+        if (theirs.member.empty()) {
+            theirs.member = fmt::format("peer {:08x}:{}", addr, port);
+        }
+        warning = peer_build_check.Take(theirs, *own_hello);
+    }
+    if (warning) {
+        LOG_WARNING(Debug, "{}", *warning);
+    }
+}
+
 bool TakeDirectDamage() {
     std::array<u8, 1400> buffer{};
     std::optional<std::vector<Libraries::Np::NpMatching2::RoomPeerAddress>> peers;
@@ -6294,6 +6317,12 @@ bool TakeDirectDamage() {
                 std::scoped_lock lock{direct_boards_mutex};
                 direct_kills_inbox.Take(sender, std::move(*kills), now);
                 took = true;
+            }
+            continue;
+        }
+        if (frame->first == PeerHelloType) {
+            if (auto hello = DecodePeerHello(frame->second)) {
+                NotePeerHello(std::move(*hello), addr, port);
             }
             continue;
         }
@@ -6343,6 +6372,41 @@ void SendDirectDamage(const MemberMapState& mine, bool changed) {
         Libraries::Net::P2PCoopSendTo(frame.data(), static_cast<u32>(frame.size()), peer.addr,
                                       peer.port);
     }
+}
+
+// This game's hello to every room peer: every PeerHelloResendMs, and at once when a peer it has
+// not greeted joins the room's links (a new member, or one whose link came back).
+void SendPeerHello() {
+    static s64 checked_at = 0;
+    static s64 sent_at = 0;
+    static std::set<u64> greeted;
+    const s64 now = SteadyMilliseconds();
+    if (now - checked_at < DirectDamageResendMs) {
+        return;
+    }
+    checked_at = now;
+    PeerHello hello;
+    {
+        std::scoped_lock lock{peer_hello_mutex};
+        if (!own_hello) {
+            return;
+        }
+        hello = *own_hello;
+    }
+    const auto peers = Libraries::Np::NpMatching2::GetActiveRoomPeers();
+    std::set<u64> linked;
+    for (const auto& peer : peers) {
+        linked.insert((u64{peer.addr} << 16) | peer.port);
+    }
+    const bool new_peer =
+        std::ranges::any_of(linked, [&](u64 peer) { return !greeted.contains(peer); });
+    greeted = std::move(linked);
+    if (peers.empty() || (!new_peer && now - sent_at < PeerHelloResendMs)) {
+        return;
+    }
+    sent_at = now;
+    hello.member = BoardMemberName();
+    SendToRoomPeers(EncodeCoopFrame(PeerHelloType, EncodePeerHello(hello)));
 }
 
 // This game's tag on its HP reports (the upper half of EnemyHpReport.visit), so the others count
@@ -6573,6 +6637,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     if (TakeDirectDamage()) {
         enemy_step_due.store(true);
     }
+    SendPeerHello();
     // Not while the world goes away: a trip's start posted the old map's characters as kills.
     if (!WatchesKills(sharing, PartyTripActive(), loading) ||
         (now - checked < HpBoardRound && !enemy_step_due.exchange(false))) {
@@ -12160,6 +12225,11 @@ void InstallSeamlessCoopPatches() {
              StageTransitionStopMatchingCallOffset, SummonBuildEntryOffset,
              CrossMapGuestHandoffOffset, SosStatusUpdateOffset, SetSummonReloadStateOffset,
              HealingFountainAvailabilityOffset);
+}
+
+void SetBuildIdentity(std::string_view revision, u64 event_files) {
+    std::scoped_lock lock{peer_hello_mutex};
+    own_hello = PeerHello{.revision = std::string{revision}, .event_files = event_files};
 }
 
 void NoteSaveFileOpened(std::string_view guest_path) {
