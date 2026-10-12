@@ -117,7 +117,7 @@ epoch, and each change of place a `place` record.
 - **Migration:** one board at a time, each its own PR with the old path kept behind a switch
   until rig-checked. Order: kills, shown, flags/mapstate, HP.
 
-Built, step 1: the kills (2026-10-12, not rig-checked yet). The pure logic is in
+Built, step 1: the kills (2026-10-12, PR #46, rig-checked and merged). The pure logic is in
 `bloodborne_party.{h,cpp}` (`WorldLogHost`, `WorldLogMember`, `WorldLogPath`, the frames) and the
 runtime in `bloodborne_world_log.cpp`.
 
@@ -163,9 +163,35 @@ runtime in `bloodborne_world_log.cpp`.
   batches and snapshots that changed its copy, its resets) and `wlog-path`. The replay runs them
   through the same classes; `traces/world-log-kills.txt` is a checked-in case.
 
-Next: `Shown` (the shown board: enable, park and dead bits per character), then `FlagSet` /
-`FlagClear` and the map state (by `FlagTable`'s owners), then `HpFloor` (enemy HP agreed), each
-moving one board onto the log the same way, with the board as the fallback copy.
+Built, step 2: the shown characters (2026-10-12, not rig-checked yet). The host's map and each of
+its characters' `CharacterShown` bits (hidden 1, switched off 2, far from the host 4, dead in its
+world 8, as on the shown board) go on the same log.
+
+- **Entries:** `ShownMap` (the host's characters are of this map from now on; its load starts
+  them over), `Shown` (a character's bits, sent as kind byte `0x10 | bits`, so the entries frame
+  keeps its 9-byte layout) and `Unshown` (the character left the host's world). The host logs only
+  what changed since its last `Show`, from the same list it posts to the shown board each kill step;
+  a new log repeats them after the kills.
+- **Snapshots:** the host answers a snapshot request with the kills' parts (0x37) and then the shown
+  characters' parts (0x38, at most 240 a part). A member whose host's hello has the shown bit takes
+  a snapshot only once both are in, so its copy of the characters never misses entries; from a
+  step 1 host it takes the kills alone and its characters stay unknown until a `ShownMap`.
+- **What a guest follows:** the log's copy when it is fresh and whole and the host's map is known,
+  turned into the same list the board gave (`HostShownNow`); else the shown board's, which the host
+  keeps posting. Everything after that is unchanged: `HostNearStates` (a window NPC keeps what the
+  host's world had while the host was near), the far-away parking bit, the switches
+  (`SwitchedLikeTheHost`: Iosefka's copy by her door) and the host's dead bit for guests apart.
+- **The path:** a second hello bit (`WorldLogShownFeature`, co-op protocol 3). The shown characters
+  take the log only while the kills do and every peer has that bit; a step 1 build in the party
+  keeps the kills on the log and the shown characters on the board (`Co-op world log: off, shown
+  characters go through the shown board (<peer> runs a build without it)`).
+  `SHADPS4_BLOODBORNE_WORLD_LOG=0` clears both bits. Step 1 builds skip the new entry kinds and drop
+  frame 0x38.
+- **Trace:** `wlog-in` ops `show` (the host's list when it changed the log), `shown-snapshot` and
+  `expect-shown`; `wlog-path` with `what=shown`. `traces/world-log-shown.txt` is a checked-in case.
+
+Next: `FlagSet` / `FlagClear` and the map state (by `FlagTable`'s owners), then `HpFloor` (enemy
+HP agreed), each moving one board onto the log the same way, with the board as the fallback copy.
 
 ## Stage D: split `bloodborne_re.cpp`
 

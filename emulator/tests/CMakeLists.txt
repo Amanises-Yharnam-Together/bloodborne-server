@@ -360,6 +360,7 @@ add_executable(shadps4_bloodborne_test
     bloodborne/test_bloodborne_place.cpp
     bloodborne/test_bloodborne_coop_trace.cpp
     bloodborne/test_bloodborne_world_log.cpp
+    bloodborne/test_bloodborne_world_log_shown.cpp
     bloodborne/coop_trace_replay.cpp
 )
 target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src)

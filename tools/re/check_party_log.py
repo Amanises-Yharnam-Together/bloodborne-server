@@ -172,7 +172,8 @@ def summarize_trace(text: str) -> dict:
     for at, kind, fields in trace_records(text):
         if kind == "wlog-path":
             why = fields.get("why", "?").replace("\\s", " ")
-            paths.append(f"{at} {fields.get('path', '?')} ({why})")
+            what = f"{fields['what']} " if "what" in fields else ""
+            paths.append(f"{at} {what}{fields.get('path', '?')} ({why})")
         if kind in ("p2p-in", "p2p-out"):
             if fields.get("from-peer") == "0":
                 continue  # not a room peer: the game drops it

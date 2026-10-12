@@ -654,6 +654,12 @@ struct PartyKillsNow {
 PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
                                std::span<const std::pair<s32, bool>> changes, bool forgot,
                                const std::unordered_set<u32>& not_mine);
+// The host's characters on its map (step 2): to the log while the shown characters take it (the
+// shown board gets them as before, the fallback copy).
+void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters);
+// What a guest follows of the host's characters: the log's copy while the shown characters take
+// it and the copy is fresh and whole, else the shown board's.
+std::optional<MemberMapState> HostShownNow();
 void SendDirectDamage(const MemberMapState& mine, bool changed);
 void SendPeerHello();
 void KeepEnemyDeathsInStep(bool sharing);

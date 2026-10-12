@@ -155,6 +155,11 @@ class TraceTest(unittest.TestCase):
                          ["1760000000000 board (no peers)", "1760000003000 log (1 peer has it)"])
         self.assertEqual(tool.summarize_trace(TRACE)["kills paths"], [])
 
+    def test_names_the_shown_characters_path_too(self):
+        trace = "1760000003000 wlog-path what=shown path=board why=b\\sruns\\sa\\sbuild\\swithout\\sit"
+        self.assertEqual(tool.summarize_trace(trace)["kills paths"],
+                         ["1760000003000 shown board (b runs a build without it)"])
+
     def test_finds_the_peers_long_silences(self):
         gaps = tool.summarize_trace(TRACE)["gaps"]
         self.assertEqual(len(gaps), 1)
