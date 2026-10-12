@@ -294,10 +294,15 @@ extern std::optional<PartyController> party_controller;
 void InitPartyController();
 
 bool HostHasRoomForMore();
+// When the game last posted a summon search (NoteSummonSearchPosted), if ever.
+std::optional<std::chrono::steady_clock::time_point> LastSummonSearchPost();
 
 bool EventFlagOn(s32 flag);
 void LogBloodstainStateChanges();
 bool InPartySession();
+// In the session and in its world (see SessionArrival): a summoned guest only once it arrived.
+// Party death counts and posts this member as in the party only then.
+bool InSessionWorld();
 void ShowGuestBloodstain();
 void KeepGuestBloodstainMark();
 

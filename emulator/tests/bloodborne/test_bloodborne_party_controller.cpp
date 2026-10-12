@@ -2021,6 +2021,24 @@ TEST(BloodborneDirectDamage, ASendersLastFrameStandsUntilItGoesQuiet) {
     EXPECT_GE(DirectDamageLifeMs, 4 * DirectDamageResendMs);
 }
 
+// A member that left the session (MemberLeft): its last frames go at once instead of standing
+// for DirectDamageLifeMs (its last "up" counted it as standing), the remaining peers' stay.
+TEST(BloodborneDirectDamage, AMemberThatLeftLosesItsFramesAtOnce) {
+    DirectDamageInbox damage;
+    damage.Take(1, {0x16000000, {1}}, 1'000);
+    damage.Take(2, {0x16000000, {2}}, 1'000);
+    damage.KeepOnly(std::vector<u64>{2});
+    EXPECT_EQ(damage.Fresh(1'100), (std::vector<MemberMapState>{{0x16000000, {2}}}));
+
+    DirectInbox<DirectKills> kills;
+    kills.Take(1, DirectKills{"6b", {0x10014068}}, 1'000);
+    kills.Take(2, DirectKills{"4c", {0x10014075}}, 1'000);
+    kills.KeepOnly(std::vector<u64>{2});
+    EXPECT_EQ(DirectKillHandles(kills.Fresh(1'100)), (std::unordered_set<u32>{0x10014075}));
+    kills.KeepOnly({});
+    EXPECT_TRUE(kills.Fresh(1'100).empty()) << "no peers left";
+}
+
 // The same member's report comes both ways (directly and over the board, which lags): per enemy
 // the most damage (its counts only grow) or, for HP from one world, the least HP.
 TEST(BloodborneDirectDamage, TheNewerOfTwoCopiesOfAReportWins) {

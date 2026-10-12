@@ -845,6 +845,10 @@ bool ApplyBloodborneSeamlessRoute(SendRequestPlan& plan) {
             plan.headers.emplace_back(BloodborneHostPlacementHeader, *placement);
         }
     }
+    if (IsBloodborneSummonSearchPath(plan.path)) {
+        // The party's stale bell check: the game is still searching.
+        Core::Bloodborne::NoteSummonSearchPosted();
+    }
 
     LOG_INFO(Lib_Http, "Bloodborne seamless route active: {}://{}:{}{} -> {}://{}:{}{}", old_scheme,
              old_host, old_port, plan.path, plan.scheme, plan.host, plan.port, plan.path);

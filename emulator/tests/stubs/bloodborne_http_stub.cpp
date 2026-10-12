@@ -26,6 +26,8 @@ void ClearSeamlessHostPlacementHeader() {
 
 void NoteSummonDelivered() {}
 
+void NoteSummonSearchPosted() {}
+
 } // namespace Core::Bloodborne
 
 namespace Core::Debugger {

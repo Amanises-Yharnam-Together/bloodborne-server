@@ -823,12 +823,31 @@ void ReopenClosedPartySession() {
 namespace {
 
 std::atomic<bool> summon_delivered{false};
+// When the game last posted a summon search (steady clock ticks), 0 for never.
+std::atomic<std::chrono::steady_clock::rep> last_summon_search{0};
 
 } // namespace
 
 void NoteSummonDelivered() {
     summon_delivered.store(true, std::memory_order_release);
 }
+
+void NoteSummonSearchPosted() {
+    last_summon_search.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                             std::memory_order_relaxed);
+}
+
+namespace Coop {
+
+std::optional<std::chrono::steady_clock::time_point> LastSummonSearchPost() {
+    const auto ticks = last_summon_search.load(std::memory_order_relaxed);
+    if (ticks == 0) {
+        return std::nullopt;
+    }
+    return std::chrono::steady_clock::time_point{std::chrono::steady_clock::duration{ticks}};
+}
+
+} // namespace Coop
 
 namespace Coop {
 

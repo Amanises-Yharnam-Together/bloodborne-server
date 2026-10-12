@@ -69,17 +69,23 @@ TEST(BloodborneThreePlayers, TheHostRingsAgainForTheSecondGuest) {
 
 // On the port the bell's effect stayed on after the first guest arrived while the game had
 // stopped searching (rig join3 2026-10-09: the second guest's sign was never taken). A host with
-// room whose bell has been on for RetryDelay rings again.
+// room whose bell is on and whose game has posted no search for StaleSearchAfter ends the bell
+// (EndSearch), and rings again once the effect is off.
 TEST(BloodborneThreePlayers, TheHostRingsAgainWhenItsBellOutlastsTheSearch) {
     PartyController host(PartyRole::Host);
     PartyObservation ringing = HostingWithOneGuest();
     ringing.search_effect_active = true;
     EXPECT_EQ(TickUntilDecision(host, ringing), PartyAction::Wait) << "just rung";
     EXPECT_EQ(host.Tick(ringing, T0 + std::chrono::seconds{10}), PartyAction::Wait);
-    EXPECT_EQ(host.Tick(ringing, T0 + PartyController::RetryDelay), PartyAction::StartSearch);
-    EXPECT_EQ(host.Tick(ringing, T0 + PartyController::RetryDelay + std::chrono::seconds{1}),
+    EXPECT_EQ(host.Tick(ringing, T0 + PartyController::StaleSearchAfter), PartyAction::EndSearch);
+    EXPECT_EQ(host.Tick(ringing, T0 + PartyController::StaleSearchAfter + std::chrono::seconds{1}),
               PartyAction::Wait)
-        << "then again only after another RetryDelay";
+        << "the effect is still on: waits for it to go";
+    PartyObservation ended = ringing;
+    ended.search_effect_active = false;
+    EXPECT_EQ(host.Tick(ended, T0 + PartyController::StaleSearchAfter + std::chrono::seconds{2}),
+              PartyAction::StartSearch)
+        << "rung again on a later tick, once the effect is off";
 
     PartyController full(PartyRole::Host);
     PartyObservation everyone_in = ringing;
@@ -87,6 +93,55 @@ TEST(BloodborneThreePlayers, TheHostRingsAgainWhenItsBellOutlastsTheSearch) {
     EXPECT_EQ(full.Tick(everyone_in, T0), PartyAction::Wait);
     EXPECT_EQ(full.Tick(everyone_in, T0 + PartyController::RetryDelay * 2), PartyAction::Wait)
         << "a full session never rings";
+}
+
+// Rig join3 at 30 FPS (2026-10-12, run 131858): the host's game was still searching (a
+// /summon_messenger/get every 5 s) when the bell had been on for RetryDelay; ending the effect
+// and ringing in the same tick stopped the game's search for 2m45s, and the third guest waited.
+// A bell is stale only while the game posts no search.
+TEST(BloodborneThreePlayers, ABellWhoseSearchStillPostsIsNeverRungAgain) {
+    PartyController host(PartyRole::Host);
+    PartyObservation ringing = HostingWithOneGuest();
+    ringing.search_effect_active = true;
+    EXPECT_EQ(host.Tick(ringing, T0), PartyAction::Wait);
+    for (auto at = T0; at < T0 + std::chrono::minutes{3}; at += std::chrono::seconds{1}) {
+        // The game's searches, every SummonSearchInterval.
+        ringing.last_search_post = T0 + (at - T0) / PartyController::SummonSearchInterval *
+                                            PartyController::SummonSearchInterval;
+        ASSERT_EQ(host.Tick(ringing, at), PartyAction::Wait)
+            << std::chrono::duration_cast<std::chrono::seconds>(at - T0).count() << " s";
+    }
+    // The game stops searching: stale StaleSearchAfter after its last search.
+    const auto last = T0 + std::chrono::minutes{3};
+    ringing.last_search_post = last;
+    EXPECT_EQ(
+        host.Tick(ringing, last + PartyController::StaleSearchAfter - std::chrono::seconds{1}),
+        PartyAction::Wait);
+    EXPECT_EQ(host.Tick(ringing, last + PartyController::StaleSearchAfter), PartyAction::EndSearch);
+}
+
+// Ending the bell and ringing are on different ticks: the game starts a search when the effect
+// goes on, so it has to be seen off first. An effect that stays on is ended again after
+// RetryDelay; a guest arriving meanwhile (no room) cancels the ring.
+TEST(BloodborneThreePlayers, AStaleBellIsEndedBeforeItRingsAgain) {
+    PartyController host(PartyRole::Host);
+    PartyObservation ringing = HostingWithOneGuest();
+    ringing.search_effect_active = true;
+    ASSERT_EQ(host.Tick(ringing, T0), PartyAction::Wait);
+    const auto stale = T0 + PartyController::StaleSearchAfter;
+    ASSERT_EQ(host.Tick(ringing, stale), PartyAction::EndSearch);
+    EXPECT_EQ(host.Tick(ringing, stale + PartyController::RetryDelay - std::chrono::seconds{1}),
+              PartyAction::Wait);
+    EXPECT_EQ(host.Tick(ringing, stale + PartyController::RetryDelay), PartyAction::EndSearch)
+        << "the effect did not go: end it again";
+
+    PartyController joined(PartyRole::Host);
+    ASSERT_EQ(joined.Tick(ringing, T0), PartyAction::Wait);
+    ASSERT_EQ(joined.Tick(ringing, stale), PartyAction::EndSearch);
+    PartyObservation full = ringing;
+    full.room_for_more = false;
+    full.search_effect_active = false;
+    EXPECT_EQ(TickUntilDecision(joined, full), PartyAction::Wait) << "nobody left to ring for";
 }
 
 // Kaniel 2026-10-09: the re-ring fired right after a boss kill, a player started joining during

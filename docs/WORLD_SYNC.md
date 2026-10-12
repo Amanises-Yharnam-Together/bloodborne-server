@@ -57,7 +57,9 @@ player is.
   anything from an older visit of that member on that map. Today's reset flags
   (`party_kills_reset`, `party_hp_reset`, …) become one dispatcher, `OnLifecycle(Wipe | Trip |
   Leave | NewCharacter)`, where every per-visit container registers its reset.
-  Built so far: the dispatcher (`LifecycleResets`, with `Join` for a new session) and the epoch.
+  Built so far: the dispatcher (`LifecycleResets`, with `Join` for a new session, and
+  `MemberLeft` for another member leaving a session that goes on, which keeps the epoch: the
+  session member list shrinking for 1 s, `MemberDepartures`) and the epoch.
   The stamps are not: older builds read a damage frame (0x30) as whole 12-byte enemy entries
   (added bytes fail it or read as an enemy) and take a kills frame (0x32) only at its exact
   length, so fields added there break them.

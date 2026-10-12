@@ -481,6 +481,21 @@ void SendToRoomPeers(const std::vector<u8>& frame) {
 
 std::string BoardMemberName();
 
+// Another member left the session (MemberLeft): the frames of the senders no longer linked go at
+// once (a dead game's last vitals line counted it as standing for DirectDamageLifeMs); the
+// remaining members' stay.
+[[maybe_unused]] const bool member_frames_reset_registered =
+    RegisterLifecycleReset("frames of members gone", {Lifecycle::MemberLeft}, [] {
+        std::vector<u64> linked;
+        for (const auto& peer : Libraries::Np::NpMatching2::GetActiveRoomPeers()) {
+            linked.push_back((u64{peer.addr} << 16) | peer.port);
+        }
+        direct_damage_inbox.KeepOnly(linked);
+        std::scoped_lock lock{direct_boards_mutex};
+        direct_vitals_inbox.KeepOnly(linked);
+        direct_kills_inbox.KeepOnly(linked);
+    });
+
 } // namespace
 
 namespace Coop {
