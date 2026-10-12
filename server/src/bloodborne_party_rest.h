@@ -318,4 +318,40 @@ private:
     QHash<QByteArray, Party> m_parties;
 };
 
+// The party's world snapshot (POST /bloodborne/party/world): while the world log runs, the host
+// posts its whole log state every few seconds as one blob ("<member> <hex>"), in place of the
+// polled kill, shown, flag, map state and HP boards; a member reads it ("<member>") only on a join,
+// after a restart or while its link to the host is down. The answer is "<age ms> <hex>\n", or
+// nothing before a post.
+struct WorldSnapshotUpdate {
+    QByteArray member;
+    QByteArray snapshot; // lowercase hex; empty: only reading
+};
+std::optional<WorldSnapshotUpdate> ParseWorldSnapshotUpdate(const QByteArray& body);
+
+struct WorldSnapshot {
+    QByteArray snapshot;
+    qint64 ageMs = 0;
+};
+QByteArray FormatWorldSnapshot(const std::optional<WorldSnapshot>& snapshot);
+
+class PartyWorldSnapshotBoard {
+public:
+    static constexpr qsizetype MaxSnapshotHex = 256 * 1024;
+
+    // Keeps the posted snapshot (the party's latest, whoever posted it) and returns it, with its
+    // age at `nowMs`.
+    std::optional<WorldSnapshot> Update(const QByteArray& party, const QByteArray& member,
+                                        const QByteArray& snapshot, qint64 nowMs);
+
+private:
+    struct Entry {
+        QByteArray snapshot;
+        qint64 postedAtMs = 0;
+    };
+
+    QMutex m_mutex;
+    QHash<QByteArray, Entry> m_parties;
+};
+
 } // namespace Bloodborne

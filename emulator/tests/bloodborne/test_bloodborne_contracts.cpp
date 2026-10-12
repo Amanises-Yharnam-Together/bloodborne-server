@@ -57,7 +57,7 @@ protected:
         if (messages.empty()) {
             GTEST_SKIP() << "no contracts file at " << BLOODBORNE_CONTRACTS;
         }
-        ASSERT_EQ(messages.size(), 18u);
+        ASSERT_EQ(messages.size(), 21u);
     }
     const std::string& Message(const std::string& name) const {
         return messages.at(name);
@@ -110,6 +110,14 @@ TEST_F(BloodborneContracts, KillBoard) {
     EXPECT_EQ(ParseKillBoard(Message("kills.answer")),
               (std::optional<KillBoardAnswer>{
                   KillBoardAnswer{9, {{268517532, true, Kaniel}, {268517532, false, Lisara}}}}));
+}
+
+TEST_F(BloodborneContracts, WorldSnapshot) {
+    const std::vector<u8> blob{0x01, 0xab};
+    EXPECT_EQ(EncodeWorldSnapshotUpdate(Kaniel, blob), Message("world.update"));
+    EXPECT_EQ(EncodeWorldSnapshotUpdate(Kaniel, {}), Message("world.read"));
+    EXPECT_EQ(ParseWorldSnapshotAnswer(Message("world.answer")),
+              (std::optional<WorldSnapshotAnswer>{WorldSnapshotAnswer{1500, blob}}));
 }
 
 TEST_F(BloodborneContracts, MapStateAndHpBoards) {

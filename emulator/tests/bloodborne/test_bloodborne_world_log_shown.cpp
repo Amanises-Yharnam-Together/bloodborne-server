@@ -203,6 +203,7 @@ TEST(WorldLogShown, ASnapshotWaitsForTheShownParts) {
         member.Take(Batch(epoch, 41, {Shown(41, Yharnam, Iosefka.handle, 2)}), 0);
         member.Take(WorldLogMapStateSnapshot{"host", epoch, 40, {}}, 5);
         member.Take(WorldLogHpSnapshot{"host", epoch, 40, 0, 1, {}}, 5);
+        member.Take(WorldLogFlagsSnapshot{"host", epoch, 40, {}}, 5);
         const auto first = shown_first ? member.Take(shown, 10) : member.Take(kills, 10);
         EXPECT_FALSE(first.snapshot);
         EXPECT_TRUE(member.Kills().empty());
@@ -277,6 +278,7 @@ TEST(WorldLogShown, MembersConvergeOverABadLink) {
                     for (const auto& part : host.HpSnapshot("h")) {
                         member.Take(part, now);
                     }
+                    member.Take(host.FlagsSnapshot("h"), now);
                 }
             }
         }
@@ -293,6 +295,7 @@ TEST(WorldLogShown, MembersConvergeOverABadLink) {
                 for (const auto& part : host.HpSnapshot("h")) {
                     member.Take(part, now);
                 }
+                member.Take(host.FlagsSnapshot("h"), now);
             }
             EXPECT_EQ(member.Shown(), host.Shown()) << "round " << round;
             EXPECT_TRUE(member.ShownKnown());

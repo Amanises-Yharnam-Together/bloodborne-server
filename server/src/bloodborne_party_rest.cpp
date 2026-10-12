@@ -524,4 +524,49 @@ VitalsBoardAnswer PartyVitalsBoard::Update(const QByteArray& party, const Vitals
     return answer;
 }
 
+std::optional<WorldSnapshotUpdate> ParseWorldSnapshotUpdate(const QByteArray& body) {
+    const QList<QByteArray> parts = body.trimmed().split(' ');
+    if (parts.isEmpty() || parts.size() > 2 || !IsMemberName(parts[0])) {
+        return std::nullopt;
+    }
+    WorldSnapshotUpdate update{parts[0], {}};
+    if (parts.size() == 2) {
+        const QByteArray& hex = parts[1];
+        if (hex.isEmpty() || hex.size() % 2 != 0 ||
+            hex.size() > PartyWorldSnapshotBoard::MaxSnapshotHex ||
+            !std::all_of(hex.begin(), hex.end(),
+                         [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) {
+            return std::nullopt;
+        }
+        update.snapshot = hex;
+    }
+    return update;
+}
+
+QByteArray FormatWorldSnapshot(const std::optional<WorldSnapshot>& snapshot) {
+    if (!snapshot) {
+        return {};
+    }
+    return QByteArray::number(snapshot->ageMs) + ' ' + snapshot->snapshot + '\n';
+}
+
+std::optional<WorldSnapshot> PartyWorldSnapshotBoard::Update(const QByteArray& party,
+                                                             const QByteArray& member,
+                                                             const QByteArray& snapshot,
+                                                             qint64 nowMs) {
+    Q_UNUSED(member);
+    if (party.isEmpty()) {
+        return std::nullopt;
+    }
+    QMutexLocker lock(&m_mutex);
+    if (!snapshot.isEmpty()) {
+        m_parties[party] = Entry{snapshot, nowMs};
+    }
+    const auto entry = m_parties.constFind(party);
+    if (entry == m_parties.constEnd()) {
+        return std::nullopt;
+    }
+    return WorldSnapshot{entry->snapshot, nowMs - entry->postedAtMs};
+}
+
 } // namespace Bloodborne

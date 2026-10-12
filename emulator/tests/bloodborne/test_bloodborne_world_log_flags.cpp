@@ -226,6 +226,7 @@ TEST(WorldLogFlags, ASnapshotWaitsForTheMapState) {
         member.Take(WorldLogShownSnapshot{"host", epoch, 20, 0, 1, {Yharnam, {}}}, 20);
     EXPECT_FALSE(shown.snapshot) << "the map state is not in yet";
     member.Take(WorldLogHpSnapshot{"host", epoch, 20, 0, 1, {}}, 25);
+    member.Take(WorldLogFlagsSnapshot{"host", epoch, 20, {}}, 26);
     const auto whole =
         member.Take(WorldLogMapStateSnapshot{"host", epoch, 20, {Yharnam, MapBits({5})}}, 30);
     EXPECT_TRUE(whole.snapshot);
@@ -266,6 +267,7 @@ TEST(WorldLogFlags, MembersConvergeOnTheMapStateOverABadLink) {
             for (const auto& part : host.HpSnapshot("h")) {
                 member.Take(part, now);
             }
+            member.Take(host.FlagsSnapshot("h"), now);
         };
         for (int tick = 0; tick < 120; ++tick) {
             now += 100;

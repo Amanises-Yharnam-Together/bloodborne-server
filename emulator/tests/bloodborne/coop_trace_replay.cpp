@@ -371,6 +371,10 @@ void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> 
                    op == "shown-snapshot" ? DecodeWorldLogShownSnapshot(payload) : std::nullopt) {
         step = wlog_member.Take(*shown, at);
         host_last = shown->last;
+    } else if (const auto flags =
+                   op == "flags-snapshot" ? DecodeWorldLogFlagsSnapshot(payload) : std::nullopt) {
+        step = wlog_member.Take(*flags, at);
+        host_last = flags->last;
     } else if (const auto hp =
                    op == "hp-snapshot" ? DecodeWorldLogHpSnapshot(payload) : std::nullopt) {
         step = wlog_member.Take(*hp, at);

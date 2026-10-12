@@ -368,6 +368,24 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                                               QHttpServerResponse::StatusCode::Ok};
                });
 
+    // The party's world snapshot (see PartyWorldSnapshotBoard): the host's whole world log state
+    // every few seconds while the log runs, read by a member only on a join, after a restart or
+    // while its link to the host is down. It replaces polling the kill, shown, flag, map state and
+    // HP boards then (they stay for games with the log off).
+    auto worldBoard = std::make_shared<Bloodborne::PartyWorldSnapshotBoard>();
+    http.route("/bloodborne/party/world", QHttpServerRequest::Method::Post,
+               [worldBoard](const QHttpServerRequest& request) -> QHttpServerResponse {
+                   const auto update = Bloodborne::ParseWorldSnapshotUpdate(request.body());
+                   if (!update) {
+                       return InvalidRequest(QStringLiteral("Invalid party world snapshot"));
+                   }
+                   const QByteArray answer = Bloodborne::FormatWorldSnapshot(
+                       worldBoard->Update(Party(request), update->member, update->snapshot,
+                                          QDateTime::currentMSecsSinceEpoch()));
+                   return QHttpServerResponse{"text/plain", answer,
+                                              QHttpServerResponse::StatusCode::Ok};
+               });
+
     // Characters hidden or shown as on the host: the host posts every character of its map with
     // its event disable byte (the map state board's format, emulator EncodeShownCharacters) about
     // every second, guests post map 0 and read it, and hide or show their copies the same (story

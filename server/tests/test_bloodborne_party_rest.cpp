@@ -452,5 +452,34 @@ int main() {
   }
 
   std::cout << "bloodborne party rest: ok\n";
+  // The world snapshot (POST /bloodborne/party/world): the host posts "<member>
+  // <hex>", a member reads with "<member>" and gets "<age ms> <hex>" back, or
+  // nothing before a post.
+  {
+    using Bloodborne::PartyWorldSnapshotBoard;
+    const auto post = Bloodborne::ParseWorldSnapshotUpdate("4b61 01ab");
+    CHECK(post && post->member == "4b61" && post->snapshot == "01ab");
+    const auto read = Bloodborne::ParseWorldSnapshotUpdate("4c69");
+    CHECK(read && read->member == "4c69" && read->snapshot.isEmpty());
+    CHECK(!Bloodborne::ParseWorldSnapshotUpdate("4b61 01a"));
+    CHECK(!Bloodborne::ParseWorldSnapshotUpdate("4b61 01AG"));
+    CHECK(!Bloodborne::ParseWorldSnapshotUpdate("4b61 01 ab"));
+    CHECK(!Bloodborne::ParseWorldSnapshotUpdate(
+        "4b61 " +
+        QByteArray(PartyWorldSnapshotBoard::MaxSnapshotHex + 2, 'a')));
+    PartyWorldSnapshotBoard board;
+    CHECK(!board.Update(Party, "4c69", {}, 1000));
+    CHECK(Bloodborne::FormatWorldSnapshot(std::nullopt).isEmpty());
+    board.Update(Party, "4b61", "01ab", 1000);
+    const auto snapshot = board.Update(Party, "4c69", {}, 2500);
+    CHECK(snapshot && snapshot->snapshot == "01ab" && snapshot->ageMs == 1500);
+    CHECK(Bloodborne::FormatWorldSnapshot(snapshot) ==
+          QByteArray("1500 01ab") + '\n');
+    board.Update(Party, "4b61", "02cd", 3000);
+    CHECK(board.Update(Party, "4c69", {}, 3000)->snapshot == "02cd");
+    CHECK(!board.Update("rig:other", "4c69", {}, 3000));
+    CHECK(!board.Update({}, "4b61", "01ab", 3000));
+  }
+
   return 0;
 }

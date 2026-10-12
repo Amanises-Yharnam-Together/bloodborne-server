@@ -62,7 +62,7 @@ std::map<std::string, QByteArray> ReadContracts(const char *path) {
 
 int main() {
   const auto messages = ReadContracts(BLOODBORNE_CONTRACTS);
-  CHECK(messages.size() == 18);
+  CHECK(messages.size() == 21);
   const auto message = [&](const char *name) { return messages.at(name); };
 
   {
@@ -138,5 +138,16 @@ int main() {
   }
 
   std::cout << "bloodborne party contracts: ok\n";
+  {
+    const auto post =
+        Bloodborne::ParseWorldSnapshotUpdate(message("world.update"));
+    CHECK(post && post->member == Kaniel && post->snapshot == "01ab");
+    const auto read =
+        Bloodborne::ParseWorldSnapshotUpdate(message("world.read"));
+    CHECK(read && read->member == Kaniel && read->snapshot.isEmpty());
+    CHECK(Bloodborne::FormatWorldSnapshot(Bloodborne::WorldSnapshot{
+              "01ab", 1500}) == message("world.answer"));
+  }
+
   return 0;
 }
