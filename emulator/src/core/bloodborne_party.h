@@ -715,8 +715,11 @@ bool CarriesToGuestWorld(s32 flag);
 // workshop's doors open, set by Central Yharnam's 12410900 for a live player only). A phantom in
 // the host's world never set them, so its own Dream stayed shut (Kaniel 2026-10-11). 9401 only once
 // this character has been to the Dream (`dream_visited`): before, it showed the clinic's lamp and
-// ended the first death's wake in the Dream (Lisara 2026-10-13).
-std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map, bool dream_visited);
+// ended the first death's wake in the Dream (Lisara 2026-10-13). 9403 only once the session's world
+// has 12410900 (`workshop_opened`: the party walked past where it opens the workshop), not on
+// joining.
+std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map, bool dream_visited,
+                                    bool workshop_opened);
 // The messengers' weapon lines: Dream event 12101000, started per slot 0-9, sets 12101000 + slot
 // once the player has that slot's badge. A broken patch of that event (2026-10-12) set them all,
 // so once per save slot, out of the Dream, they are cleared and the next Dream visit sets them

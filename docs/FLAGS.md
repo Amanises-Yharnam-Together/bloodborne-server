@@ -30,8 +30,8 @@ Every flag not in the table is **Host, carried home** (quest steps, NPCs, the Dr
 | 4000-4999 | Session | | death and multiplayer bookkeeping (4000 a boss fight on, 4047 a player on the way out) |
 | 9180-9199 | Session | | the bell's bookkeeping (common events 9181-9198); carried home it gave Insight again |
 | 9300-9307, 9336, 9338-9344, 9346-9348 | Per player | carried home | a boss's "found" flag: each player gets the Insight for finding a boss (`EncounterInsights`) |
-| 9401 | Host | carried home; a guest out in the world sets it itself | Central Yharnam reached: the Dream's first visit and its shop |
-| 9403 | Host | carried home; a guest out in the world sets it itself | the workshop's doors open (only set for a live player) |
+| 9401 | Host | carried home; a guest out in the world sets it itself once its own character has been to the Dream | Central Yharnam reached: the Dream's first visit and its shop (set early, it showed the clinic's lamp and kept a first death from waking in the Dream) |
+| 9403 | Host | carried home; a guest out in the world sets it itself once the session's world has 12410900 | the workshop's doors open (only set for a live player) |
 | 12101000-12101009 | Per player | carried home; cleared once per save slot | the messengers' weapon lines: each player's follow its own hunter badges, as in the base game (a broken patch once set them all) |
 | 12101020-12101029 | Per player | carried home | the Dream messengers' gifts: what one player got is not given to the other |
 | 21 boss fog "host entered" flags (12414700 Gascoigne, ...) | Shared | | a guest's fog event sets it to start the boss; holds for one map visit |

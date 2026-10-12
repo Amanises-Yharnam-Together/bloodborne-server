@@ -100,7 +100,7 @@ std::vector<s32> FlagSample() {
 // Every flag decision of the party code, one bit each.
 u32 Decisions(s32 flag) {
     constexpr u32 SomeMap = 0x18000000;
-    const auto progress = GuestProgressFlags(true, true, SomeMap, true);
+    const auto progress = GuestProgressFlags(true, true, SomeMap, true, true);
     const auto shop = ShopLineFlags();
     u32 bits = 0;
     bits |= IsLampTravelFlag(flag) ? 1u << 0 : 0;
@@ -254,7 +254,8 @@ TEST(BloodborneFlagRules, WeaponLinesFollowEachPlayersOwnBadges) {
 }
 
 TEST(BloodborneFlagRules, ListsComeFromTheTable) {
-    EXPECT_EQ(GuestProgressFlags(true, true, 0x18000000, true), (std::vector<s32>{9401, 9403}));
+    EXPECT_EQ(GuestProgressFlags(true, true, 0x18000000, true, true),
+              (std::vector<s32>{9401, 9403}));
     const auto shop = ShopLineFlags();
     EXPECT_EQ(std::vector<s32>(shop.begin(), shop.end()),
               (std::vector<s32>{12101000, 12101001, 12101002, 12101003, 12101004, 12101005,

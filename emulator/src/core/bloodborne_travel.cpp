@@ -1379,8 +1379,9 @@ void TickPlayersOnThisMap() {
     if (!dream_visited && ((!in_session && EventFlagOn(9401)) || map == HuntersDream)) {
         dream_visited = true;
     }
-    for (const s32 flag : GuestProgressFlags(IsPartyGuestRole(), in_session,
-                                             IsUsablePackedMap(map) ? map : 0, dream_visited)) {
+    for (const s32 flag :
+         GuestProgressFlags(IsPartyGuestRole(), in_session, IsUsablePackedMap(map) ? map : 0,
+                            dream_visited, in_session && EventFlagOn(12410900))) {
         if (!EventFlagOn(flag)) {
             // Set while in the session, so the guest's world keeps it (KeepWorldChanges).
             reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
