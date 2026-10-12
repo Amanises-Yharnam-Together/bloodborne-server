@@ -371,19 +371,29 @@ class LaneTest(unittest.TestCase):
     def test_runs_go_to_free_lanes_never_more_at_once_than_lanes(self):
         running, most, order = set(), [0], []
         lock = threading.Lock()
+        # Lane 1 starts once lane 0 has taken "long", which holds its lane until the other three
+        # are done: the same order however slow the machine is.
+        long_taken, short_ones_done = threading.Event(), threading.Event()
 
         def runner(lane, name):
             with lock:
                 running.add(lane)
                 most[0] = max(most[0], len(running))
                 order.append((lane, name))
-            time.sleep(0.05 if name != "long" else 0.2)
+            if name == "long":
+                long_taken.set()
+                short_ones_done.wait(10)
+            else:
+                time.sleep(0.05)
             with lock:
                 running.discard(lane)
+                if name == "bad":
+                    short_ones_done.set()
             return name != "bad"
 
         names = ["long", "a", "b", "bad", "c"]
-        results = run_scenario.run_in_lanes(names, 2, runner, stagger=0)
+        results = run_scenario.run_in_lanes(names, 2, runner, stagger=1,
+                                            sleep=lambda seconds: seconds and long_taken.wait(10))
         self.assertEqual(results, {"long": True, "a": True, "b": True, "bad": False, "c": True})
         self.assertEqual(most[0], 2)
         self.assertEqual(order[0][1], "long", "the first name first")
