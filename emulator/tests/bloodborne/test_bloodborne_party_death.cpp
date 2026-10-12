@@ -819,37 +819,30 @@ TEST(BloodbornePartyDeath, AWipeBringsBackWhatTheMembersSaveLeftDead) {
                                         {.hp = 0, .max_hp = 484, .death_flags = 0x06}, true));
 }
 
-// A downed player keeps the menu (Options) and the camera: it can't move, attack, roll, heal or
-// switch items until it is up.
-TEST(BloodbornePartyDeath, ADownedPlayerOnlyKeepsTheMenuAndTheCamera) {
-    EXPECT_EQ(PadCross, AutoplayButton("cross"));
-    EXPECT_EQ(PadDpad, AutoplayButton("up") | AutoplayButton("right") | AutoplayButton("down") |
-                           AutoplayButton("left"));
-    const PadInput pad{.buttons = PadOptions | PadR1 | PadCircle | AutoplayButton("up") |
-                                  AutoplayButton("square"),
+// A downed player keeps only the camera: no menu or inventory, lock-on, move, attack, roll, heal or
+// item switch until it is up.
+TEST(BloodbornePartyDeath, ADownedPlayerOnlyKeepsTheCamera) {
+    EXPECT_EQ(PadR3, AutoplayButton("r3"));
+    const PadInput pad{.buttons = PadOptions | PadR1 | PadCircle | PadR3 | AutoplayButton("up") |
+                                  AutoplayButton("cross") | AutoplayButton("square"),
                        .sticks = {20, 240, 60, 200},
                        .l2 = 255,
                        .r2 = 128};
-    const PadInput kept = DownedPad(pad, false);
-    EXPECT_EQ(kept.buttons, PadOptions);
+    const PadInput kept = DownedPad(pad);
+    EXPECT_EQ(kept.buttons, 0u);
     EXPECT_EQ(kept.sticks, (std::array<u8, 4>{128, 128, 60, 200}));
     EXPECT_EQ(kept.l2, 0);
     EXPECT_EQ(kept.r2, 0);
 }
 
-// With the menu open while down, the D-pad and Cross work it; still no move, attack or roll.
-TEST(BloodbornePartyDeath, ADownedPlayerCanUseTheMenu) {
-    const PadInput pad{.buttons = PadCross | PadR1 | PadCircle | AutoplayButton("up") |
-                                  AutoplayButton("square"),
-                       .sticks = {20, 240, 60, 200}};
-    const PadInput kept = DownedPad(pad, true);
-    EXPECT_EQ(kept.buttons, PadCross | AutoplayButton("up"));
-    EXPECT_EQ(kept.sticks, (std::array<u8, 4>{128, 128, 60, 200}));
-    // Options opens it and closes it again; holding it changes nothing.
-    EXPECT_TRUE(DownedMenuOpen(false, 0, PadOptions));
-    EXPECT_TRUE(DownedMenuOpen(true, PadOptions, PadOptions));
-    EXPECT_FALSE(DownedMenuOpen(true, 0, PadOptions | PadCross));
-    EXPECT_FALSE(DownedMenuOpen(false, 0, PadCross));
+// A lock-on held while down is let go: an R3 press while the HUD's cursor is on a locked target,
+// not again until the game has had time to drop it.
+TEST(BloodbornePartyDeath, ADownedPlayerLetsGoOfItsLockOn) {
+    EXPECT_TRUE(ReleasesLockOn(0, 1'000, std::nullopt));
+    EXPECT_FALSE(ReleasesLockOn(-1, 1'000, std::nullopt)) << "not locked on";
+    EXPECT_FALSE(ReleasesLockOn(1, 1'000, std::nullopt)) << "another mark, not a lock-on";
+    EXPECT_FALSE(ReleasesLockOn(0, 1'000 + LockOnReleaseGapMs - 1, 1'000)) << "just pressed";
+    EXPECT_TRUE(ReleasesLockOn(0, 1'000 + LockOnReleaseGapMs, 1'000)) << "still held";
 }
 
 TEST(BloodbornePartyDeath, AnAttackIsR1OrR2GoingDown) {

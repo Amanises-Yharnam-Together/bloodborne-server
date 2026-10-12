@@ -263,6 +263,16 @@ TEST_F(BloodborneEboot, TheKneelWaitsOnThePlayAnimationsOwnCheck) {
               (std::vector<u8>{0x80, 0xBA, 0x84, 0x03, 0x00, 0x00, 0x00}));
 }
 
+// The HUD's lock-on cursor state in FeData: -1 (hidden) when nothing is locked on, 0 when the
+// lock-on mark is shown (`cmp cl, 1; sbb ecx, ecx; mov [rax + 0x14F8], ecx`), read by the tick.
+TEST_F(BloodborneEboot, TheLockOnCursorIsFeDatas) {
+    EXPECT_EQ(Bytes(0x01BFE559, 11),
+              (std::vector<u8>{0x80, 0xF9, 0x01, 0x19, 0xC9, 0x89, 0x88, 0xF8, 0x14, 0x00, 0x00}));
+    EXPECT_EQ(Bytes(0x01BFE59C, 10),
+              (std::vector<u8>{0xC7, 0x80, 0xF8, 0x14, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF}));
+    EXPECT_EQ(HudLockCursorAt, 0x14F8u);
+}
+
 // The HUD's constructor, at its only call, is the HUD the tick runs (rdi there, r15 in the tick).
 TEST_F(BloodborneEboot, TheHudConstructorHookIsTheHudsConstructor) {
     EXPECT_EQ(Bytes(HudConstructOffset, HudConstructPrologue.size()),

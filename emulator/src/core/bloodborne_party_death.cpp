@@ -680,7 +680,7 @@ std::vector<DownedBody> DownedBodies(std::span<const MemberVitals> board, std::s
 // What the pad reader saw (FilterPartyDeathPad): the buttons held before the downed filter, the
 // attack presses so far and whether the last one was heavy (R2).
 std::atomic<u32> party_pad_buttons{};
-std::atomic<bool> party_downed_menu{}; // the menu opened while down (DownedMenuOpen)
+std::atomic<s64> party_lock_release_ms{-1}; // our last R3 letting go of a lock-on while down
 std::atomic<u32> party_attack_presses{};
 std::atomic<bool> party_attack_heavy{};
 
@@ -1742,15 +1742,20 @@ void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& st
         party_attack_presses.fetch_add(1, std::memory_order_relaxed);
     }
     if (!party_death_down.load(std::memory_order_relaxed)) {
-        party_downed_menu.store(false, std::memory_order_relaxed);
+        party_lock_release_ms.store(-1, std::memory_order_relaxed);
         return;
     }
-    const bool menu =
-        DownedMenuOpen(party_downed_menu.load(std::memory_order_relaxed), before, buttons);
-    party_downed_menu.store(menu, std::memory_order_relaxed);
-    const PadInput kept =
-        DownedPad({.buttons = buttons, .sticks = sticks, .l2 = l2, .r2 = r2}, menu);
+    const PadInput kept = DownedPad({.buttons = buttons, .sticks = sticks, .l2 = l2, .r2 = r2});
     buttons = kept.buttons;
+    // A lock-on held while down is let go (the HUD's cursor says it is held).
+    const s64 now = SteadyMilliseconds();
+    const s64 last = party_lock_release_ms.load(std::memory_order_relaxed);
+    if (image_base != 0 &&
+        ReleasesLockOn(ReadValue<s32>(image_base + HudFeDataOffset, HudLockCursorAt), now,
+                       last >= 0 ? std::optional<s64>{last} : std::nullopt)) {
+        buttons |= PadR3;
+        party_lock_release_ms.store(now, std::memory_order_relaxed);
+    }
     sticks = kept.sticks;
     l2 = kept.l2;
     r2 = kept.r2;
