@@ -2445,6 +2445,7 @@ constexpr u64 HudTagDataSize = 0xA8;
 constexpr int HudRemoteTagCount = 7;
 constexpr u64 HudTagNameAt = 0x60;      // TagData: the player's name (a game HUD string)
 constexpr u64 HudTagRoleLineAt = 0x250; // tag: Post/Value, the blue role line ("Co-operator")
+constexpr u64 HudTagNameLineAt = 0x300; // tag: Name/Value, the blue name
 // An element of a tag (a 0x58-byte wrapper): its GFx::Value's object interface at +0x38, type at
 // +0x40 (& 0x8F nonzero when it is set) and data at +0x48; the interface's vtable slot 0x130 is
 // SetText(data, UTF-8 text, html).
@@ -2464,6 +2465,103 @@ std::string GameHudString(std::span<const u8, GameHudStringSize> raw,
 std::optional<std::string> NameplateRoleLine(const struct PartyPanel& panel, std::string_view name);
 // Which remote player's tag (0 to 6) a TagData address is, from FeData's address.
 std::optional<int> RemoteTagIndex(u64 tag_data, u64 fe_data);
+
+// The native party list: the party HUD's CoopParty0-2 (bbport/scripts/hud_patch.py, three more of
+// the tag sprite RemotePCTag0 shows), made and updated with the HUD's own tag code: the child
+// lookup (0x01ADB220: out PathRef, parent, printf format, ...), the tag constructor (0x01B58E40:
+// tag of HudTagSize bytes, PathRef, 0, 0) and the tag update with its TagData and the frame time.
+// Where the HUD tick has updated its own tags (0x01BF8A50, `mov rdi, [r15 + 0xF8]`: r15 the HUD,
+// the frame time at [rbp - 0x6C8]) the list's are updated.
+constexpr u64 HudChildLookupOffset = 0x01ADB220;
+constexpr u64 HudTagConstructorOffset = 0x01B58E40;
+constexpr u64 HudTagUpdateOffset = 0x01B59E20;
+// An element's SetVisible (0x01ACB760: element, shown), the element wrapper's vtable slot 1; a tag
+// starts with such a wrapper of its whole sprite.
+constexpr u64 HudSetVisibleOffset = 0x01ACB760;
+constexpr u64 HudTagSize = 0x6E0;
+constexpr u64 HudPathRefSize = 0x60;
+// A PathRef's value (Scaleform's GFx::Value, at +0x30: list links, the object interface at +0x40,
+// the type at +0x48, the object at +0x50). One that holds a HUD object (type bit 0x40) is linked
+// into the HUD movie's value list until the interface's release (vtable slot 3: interface, value,
+// object) unlinks it, as the game does after each tag it makes (0x01BF528B). The movie's
+// destructor (0x0001DEE0) releases every value still linked (0x0001E304), so a linked value's
+// storage must outlive the HUD (rig wipe3 2026-10-12: the icons' PathRefs were left linked on the
+// stack, and a guest's world teardown crashed there on a dead one, eboot+0x1E312).
+constexpr u64 HudPathRefValueAt = 0x30;
+constexpr u64 HudPathRefInterfaceAt = 0x40;
+constexpr u64 HudPathRefTypeAt = 0x48;
+constexpr u64 HudPathRefObjectAt = 0x50;
+constexpr u32 HudValueLinkedBit = 0x40;
+enum class HudValueKeep {
+    Drop,          // nothing linked: the storage may go
+    Release,       // linked: release it before the storage goes
+    KeepForTheHud, // linked and kept: storage that outlives the HUD, never freed
+};
+HudValueKeep HudValueFate(u32 type, bool kept_for_the_hud);
+constexpr u64 HudTicksTagsDoneOffset = 0x01BF8A50;
+constexpr std::array<u8, 7> HudTicksTagsDone{0x49, 0x8B, 0xBF, 0xF8, 0x00, 0x00, 0x00};
+constexpr s64 HudFrameTimeFrameOffset = -0x6C8;
+constexpr int PartyListSize = 3;
+struct PartyListEntry {
+    bool visible = false;
+    s32 hp = 0;
+    s32 max = 1;
+    std::string role; // html, the game's role line
+    std::string name;
+    std::string name_line; // the name as shown, in white html (written over the tag's own)
+    u32 icon = 1;          // its icon's frame (PartyListIcon...)
+};
+// The icon sprite's frames beside each tag (CoopPartyIcon0-2, our drawings: hud_patch.py
+// HUD_ICON_FRAMES), 1-based as GotoAndStop takes them: none, the hunter, the lantern (another map),
+// the headstone, then the downed drop with its ring red to 0%, 10%, ... 100%.
+constexpr u32 PartyListIconNone = 1;
+constexpr u32 PartyListIconHunter = 2;
+constexpr u32 PartyListIconElsewhere = 3;
+constexpr u32 PartyListIconFallen = 4;
+constexpr u32 PartyListIconDowned0 = 5;
+constexpr u32 PartyListIconFrames = PartyListIconDowned0 + 10;
+// The icon objects' value (a PathRef's) and the object interface's GotoAndPlay(data, frame, stop)
+// slot.
+constexpr u64 HudGotoFrameSlot = 0x158;
+// The party HUD's prompt (CoopPrompt, a clone of the game's interact prompt ActionButtonTop):
+// made and updated as the HUD makes its own (alloc HudPromptSize, constructor 0x01B56E60 with the
+// PathRef, update 0x01B57460 with its data and the frame time). Its data: +0 shown, +1 a second
+// line, +2 the game's own (Cross) button shown, the text from +0x08 (a game HUD string of
+// GameHudStringFullSize); FeData +0x13B0 is the game's prompt's.
+constexpr u64 HudPromptConstructorOffset = 0x01B56E60;
+constexpr u64 HudPromptUpdateOffset = 0x01B57460;
+constexpr u64 HudPromptSize = 0x1A8;
+constexpr u64 HudPromptDataSize = 0x40;
+constexpr u64 HudPromptTextAt = 0x08;
+constexpr u64 HudFeDataPromptAt = 0x13B0;
+// Party death's prompt: hold the dodge button to give up while down, strike (R1) to revive a downed
+// member in reach. `input` is the pad input whose glyph goes before it (runtime_pad.c's order).
+struct PartyPrompt {
+    bool shown = false;
+    std::string text;
+    int input = 0;
+    bool operator==(const PartyPrompt&) const = default;
+};
+constexpr int PromptInputCircle = 1;
+constexpr int PromptInputR1 = 5;
+PartyPrompt PartyPromptFor(const struct PartyPanel& panel);
+// The prompt's data for the game's update; `text` is the address of its UTF-16 words, `game` the
+// game's own prompt data (its string's allocator).
+void WritePromptData(std::span<u8, HudPromptDataSize> data,
+                     std::span<const u8, HudPromptDataSize> game, const PartyPrompt& prompt,
+                     u64 text, size_t length);
+
+// The list's tags for the panel's first members: HP while up, the revive while down (of 100).
+std::array<PartyListEntry, PartyListSize> PartyListEntries(const struct PartyPanel& panel);
+// Where a tag goes on the HUD's 1920x1080 stage (its HP bar's left end).
+std::pair<s32, s32> PartyListPosition(int index);
+// The TagData the tag update takes for an entry; `role` and `name` are the addresses of its UTF-16
+// strings (kept by the caller, at most 63 characters each). A game HUD string is 0x38 bytes: the
+// tag update copies it with the allocator at +0x28 (and a flag at +0x30), so each string starts as
+// the one in `game` (a TagData of the game's own, RemotePCTag0's).
+constexpr size_t GameHudStringFullSize = 0x38;
+void WriteTagData(std::span<u8, HudTagDataSize> data, std::span<const u8, HudTagDataSize> game,
+                  const PartyListEntry& entry, s32 x, s32 y, u64 role, u64 name);
 
 // The local player's side of party death. Times are steady milliseconds.
 class DownedState {

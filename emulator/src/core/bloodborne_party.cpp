@@ -3981,6 +3981,97 @@ std::optional<std::string> NameplateRoleLine(const PartyPanel& panel, std::strin
     return std::nullopt;
 }
 
+namespace {
+std::string RoleLine(std::string_view color, std::string_view text) {
+    return fmt::format("<font color=\"#{}\">{}</font>", color, text);
+}
+} // namespace
+
+std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& panel) {
+    std::array<PartyListEntry, PartyListSize> entries{};
+    for (size_t i = 0; i < entries.size() && i < panel.members.size(); ++i) {
+        const PanelMember& member = panel.members[i];
+        PartyListEntry& entry = entries[i];
+        entry.visible = true;
+        // No role line: the icon says the state; the name goes on white after the tag's update
+        // (name_line), since the game's own name text took html badly (rig 2026-10-12: a hang).
+        entry.name = member.name.empty() ? member.member : member.name;
+        entry.name_line = RoleLine("ece8df", entry.name);
+        entry.max = std::max(member.max, 1);
+        entry.hp = std::clamp(member.hp, 0, entry.max);
+        entry.icon = PartyListIconHunter;
+        if (member.vital == Vital::Down) {
+            const long percent = std::lround(ReviveShare(member.landed, member.needed) * 100.0f);
+            entry.hp = static_cast<s32>(std::max(percent, 1L));
+            entry.max = 100;
+            entry.icon = PartyListIconDowned0 + static_cast<u32>((percent + 5) / 10);
+        } else if (member.vital == Vital::Dead) {
+            entry.hp = 0;
+            entry.icon = PartyListIconFallen;
+        } else if (!member.here) {
+            entry.icon = PartyListIconElsewhere;
+        }
+    }
+    return entries;
+}
+
+PartyPrompt PartyPromptFor(const PartyPanel& panel) {
+    if (panel.vital == Vital::Down) {
+        return PartyPrompt{.shown = true, .text = "Hold to give up", .input = PromptInputCircle};
+    }
+    if (panel.revive_target >= 0 && panel.revive_target < static_cast<s32>(panel.members.size())) {
+        const PanelMember& member = panel.members[static_cast<size_t>(panel.revive_target)];
+        return PartyPrompt{.shown = true,
+                           .text = fmt::format("Strike to revive {}",
+                                               member.name.empty() ? member.member : member.name),
+                           .input = PromptInputR1};
+    }
+    return {};
+}
+
+void WritePromptData(std::span<u8, HudPromptDataSize> data,
+                     std::span<const u8, HudPromptDataSize> game, const PartyPrompt& prompt,
+                     u64 text, size_t length) {
+    std::ranges::fill(data, u8{0});
+    std::memcpy(data.data() + HudPromptTextAt, game.data() + HudPromptTextAt,
+                GameHudStringFullSize);
+    data[0] = prompt.shown ? 1 : 0;
+    const auto put = [&](size_t at, u64 value) { std::memcpy(data.data() + at, &value, 8); };
+    put(HudPromptTextAt + 0x08, text);
+    put(HudPromptTextAt + 0x18, std::min<u64>(length, 63));
+    put(HudPromptTextAt + 0x20, 63);
+}
+
+std::pair<s32, s32> PartyListPosition(int index) {
+    // hud_patch.py LIST_X/LIST_Y/LIST_STEP: each tag's HP bar starts where the player's own does
+    // (x 107 on the 1920 stage: the tag's bar starts 97 left of its position), its icon left of it.
+    return {204, 330 + 95 * index};
+}
+
+void WriteTagData(std::span<u8, HudTagDataSize> data, std::span<const u8, HudTagDataSize> game,
+                  const PartyListEntry& entry, s32 x, s32 y, u64 role, u64 name) {
+    std::ranges::fill(data, u8{0});
+    for (const size_t at : {size_t{0x28}, size_t{HudTagNameAt}}) {
+        std::memcpy(data.data() + at, game.data() + at, GameHudStringFullSize);
+    }
+    const auto put = [&](size_t at, auto value) {
+        std::memcpy(data.data() + at, &value, sizeof(value));
+    };
+    data[0] = entry.visible ? 1 : 0;
+    data[1] = 1;
+    put(0x04, x);
+    put(0x08, y);
+    put(0x0C, entry.hp);
+    put(0x14, entry.max);
+    const auto string = [&](size_t at, u64 chars, size_t length) {
+        put(at + 0x08, chars);
+        put(at + 0x18, static_cast<u64>(length));
+        put(at + 0x20, u64{63});
+    };
+    string(0x28, role, std::min<size_t>(entry.role.size(), 63));
+    string(HudTagNameAt, name, std::min<size_t>(entry.name.size(), 63));
+}
+
 std::optional<int> RemoteTagIndex(u64 tag_data, u64 fe_data) {
     const u64 first = fe_data + HudRemoteTagsAt;
     if (tag_data < first || (tag_data - first) % HudTagDataSize != 0) {
@@ -3988,6 +4079,13 @@ std::optional<int> RemoteTagIndex(u64 tag_data, u64 fe_data) {
     }
     const u64 index = (tag_data - first) / HudTagDataSize;
     return index < HudRemoteTagCount ? std::optional<int>{static_cast<int>(index)} : std::nullopt;
+}
+
+HudValueKeep HudValueFate(u32 type, bool kept_for_the_hud) {
+    if ((type & HudValueLinkedBit) == 0) {
+        return HudValueKeep::Drop;
+    }
+    return kept_for_the_hud ? HudValueKeep::KeepForTheHud : HudValueKeep::Release;
 }
 
 s32 DownedHp(s32 max, u32 landed, u32 needed) {

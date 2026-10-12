@@ -55,6 +55,8 @@ typedef struct bbcoop_panel {
     int vital; /* this player's */
     uint32_t landed, needed;
     float give_up; /* the give-up hold, 0 to 1 */
+    int native_list; /* the game's HUD shows the party list (the party HUD's CoopParty tags) */
+    int native_prompt; /* the game's HUD shows the prompt (CoopPrompt): the overlay draws its glyph only */
 } bbcoop_panel;
 /* Fills `panel`; 0 when there is nothing to draw (party death off, no party session, nobody else
  * on the vitals board and this player not down). */

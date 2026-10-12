@@ -51,6 +51,12 @@ inline float DownRingY(const Rect& game, float scale) {
     return std::round(game.y + game.h * 0.64f - (DownBarBelow + DownBarHeight) * scale);
 }
 
+/// The party HUD's prompt (CoopPrompt, hud_patch.py PROMPT_AT): its button glyph's centre and size on
+/// the HUD's 1920x1080 stage, where the game's own prompt has its button.
+inline constexpr float PromptGlyphStageX = 952.6f - 276.45f + 16.0f;
+inline constexpr float PromptGlyphStageY = 808.0f - 11.5f + 16.0f;
+inline constexpr float PromptGlyphStageSize = 32.0f;
+
 /// The prompt to strike a downed member: low in the middle, as the game's own prompts.
 inline float RevivePromptY(const Rect& game) {
     return std::round(game.y + game.h * 0.74f);
