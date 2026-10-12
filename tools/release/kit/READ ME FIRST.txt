@@ -1,0 +1,94 @@
+BLOODBORNE SEAMLESS CO-OP (BLOODBORNE PC, THE NATIVE PORT)
+==========================================================
+
+Seamless co-op for Bloodborne, in the spirit of Elden Ring Seamless Co-op: two or three players
+share one world, join each other without bells or Insight, keep playing together through lamp
+trips, deaths and boss fights, and progress is shared. The game runs natively on Windows (the
+Bloodborne PC port), not in an emulator.
+
+NO GAME FILES ARE INCLUDED. You need your own copy of Bloodborne for PlayStation 4, version
+1.09: a decrypted dump of the game folder (the one with eboot.bin, sce_sys and dvdroot_ps4)
+with the 1.09 update, or the PS4 .pkg files of the game and the update.
+
+EVERYONE IN A PARTY USES THIS SAME RELEASE. Mixing releases, or mixing with other co-op kits or
+shadPS4, is not supported.
+
+YOU NEED
+  - Windows 10 (1903 or later) or 11, 64-bit, and a Vulkan 1.3 graphics card with a current
+    driver. Nothing else: Python and the libraries are inside this folder.
+  - Bloodborne 1.09 (see above). Tested with CUSA03173 (the European Game of the Year edition);
+    every player in a party should use the same edition.
+  - A way for the guests to reach the host's PC: the same VPN (Radmin VPN, Tailscale, ZeroTier)
+    or the host's public IP with ports forwarded (TCP 31313, 31315, 20443 and UDP 31314 to the
+    host, plus the P2P UDP port if you fix one in SETUP).
+
+ONLY HAVE .PKG FILES?
+  Open BLauncher.exe in this folder, press "Install from PKG...", pick the game .pkg and the
+  v1.09 update .pkg and press Install. It extracts the game into the "game" folder here (15 to 30
+  minutes). Then close the launcher and run "1 - SETUP": it finds that folder by itself.
+
+STEPS (everyone)
+  1. Unzip this folder anywhere with about 1 GB free (an NTFS drive is best; the game itself is
+     never copied, only linked).
+  2. Right-click "FIREWALL - Allow (run as admin)" and run it as administrator.
+  3. Run "1 - SETUP" and answer:
+       Game folder             the folder with eboot.bin (Enter takes the one it found)
+       1.09 update folder      only asked when the game folder is not 1.09 yet
+       host or guest           one player is the host, the others are guests
+       Host IP                 the host's VPN or public IP (the host types their own)
+       Account name/password   pick them; the host registers them on the host's server
+       Party                   name:secret, exactly the same for every player
+       P2P UDP port            Enter (auto) unless you forward a port
+       Frame rate              Enter (60)
+       Harder enemies          Enter (off), or HP,damage,poise multipliers like 3,1.5,3
+       Party death             Enter (yes), the same for every player
+       Saves                   Enter for a new character, or a folder with your saves
+     SETUP makes the co-op map event files from your own game and checks them against the ones
+     this release was tested with. Run it again any time to change an answer (Enter keeps it).
+  4. Wait for the host to say the servers are up. Optional check: open
+     http://HOST-IP:20443/status in a browser; it should say "ok": true.
+  5. Run "2 - PLAY", load your character, and wait. You are pulled into the host's world after a
+     few seconds; no bells needed. The first start takes longer (it prepares the game and builds
+     its shader cache).
+
+STEPS (host, in addition)
+  - Run "HOST - Start Servers" before playing and leave the shadnet window open. It starts the
+    co-op server (shadnet: accounts, matchmaking, party boards) and the game's backend (sign-in
+    and online check, log in user\log\backend.txt). "HOST - Stop Servers" stops both.
+  - With the servers running, register every player's account (yours too) with
+    "HOST - Register Account", using the names and passwords they typed in SETUP.
+
+SAVES
+  The saves live in user\savedata in this folder. SETUP copies saves only when you give it a
+  folder, and only the first time; to copy again, delete user\savedata and run SETUP.
+
+PARTY DEATH (AS IN ELDEN RING NIGHTREIGN)
+  On unless you answered "no" in SETUP; every player should answer the same.
+  - A killing blow puts you down at 1 HP instead of killing you while a partner stands on the
+    same map. Enemies leave you alone while you are down.
+  - A partner revives you by striking you (R1 or R2 right next to you). Each strike counts their
+    weapon's attack rating: they must deal your max HP the first time, twice that the next, four
+    times after that (this starts over after 3 minutes without going down, or at a lamp).
+  - Hold Circle for 3 seconds to give up: you die as before and wake at your lamp.
+  - When everyone on a map is down, everyone there dies, drops their echoes and wakes at their
+    own last lamp with the map reset.
+
+CONTROLS AND SETTINGS
+  - Insert (or L3+R3 on a gamepad) opens the port's menu in the game: resolution, upscaler (FSR,
+    DLSS on RTX cards, XeSS), effects, controls. "Apply and restart" keeps co-op on.
+  - Always start with "2 - PLAY". BLauncher.exe and Bloodborne.exe are the port's own launcher
+    and quick start: starting the game from them plays WITHOUT co-op. The launcher does not
+    update itself here; a new version comes as a new release.
+
+UPDATING
+  Unzip the new release over this folder (overwrite) and run "1 - SETUP" again (Enter keeps
+  every answer). Your saves, settings and shader cache stay.
+
+PROBLEMS
+  - Black screen at start: delete user\shader and start again.
+  - Logs for a bug report: user\log\shad_log.txt and console.txt (and the .prev ones from the
+    start before), the host's user\log\backend.txt.
+  - Report issues at https://github.com/lKaniel/bloodborne-server/issues
+
+This project is not affiliated with Sony Interactive Entertainment or FromSoftware. CREDITS.txt
+lists the projects it is built on and their licenses (licenses folder).

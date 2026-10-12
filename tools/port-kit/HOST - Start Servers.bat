@@ -2,7 +2,8 @@
 title Start co-op servers
 rem HOST ONLY. Starts shadnet (accounts, matchmaking, summons; ports 31313-31315)
 rem and the local backend (game login and online check; port 20443).
-rem Leave both windows open while you play. Running it again starts only what is missing.
+rem Leave the shadnet window open while you play. Running it again starts only what is
+rem missing; "HOST - Stop Servers" stops both.
 set "KIT=%~dp0"
 cd /d "%KIT%"
 if not exist "%KIT%settings.bat" (
@@ -30,17 +31,6 @@ if not "%SERVERKIT%"=="%KIT%" (
     )
 )
 
-set "PY=py -3"
-where py >nul 2>nul
-if errorlevel 1 set "PY=python"
-%PY% --version >nul 2>nul
-if errorlevel 1 (
-    echo Python was not found. Install it from https://www.python.org/downloads/
-    echo and tick "Add python.exe to PATH" during setup.
-    pause
-    exit /b 1
-)
-
 tasklist /fi "imagename eq shadnet.exe" | find /i "shadnet.exe" >nul
 if errorlevel 1 (
     cd /d "%SERVERKIT%server"
@@ -53,9 +43,12 @@ if errorlevel 1 (
 
 netstat -ano | find ":20443 " | find "LISTENING" >nul
 if errorlevel 1 (
+    rem The backend is a Python script that BLauncher.exe runs, so no Python is needed. Its
+    rem output goes to user\log\backend.txt; "HOST - Stop Servers" stops it.
+    if not exist "%KIT%user\log" mkdir "%KIT%user\log"
     cd /d "%SERVERKIT%backend"
-    start "co-op backend" %PY% "%SERVERKIT%backend\bb_dummy_server.py" --address %HOSTIP% --port 20443 --shadnet-webapi http://%HOSTIP%:31315
-    echo Started the backend for %HOSTIP%.
+    start "co-op backend" /min cmd /c ""%KIT%BLauncher.exe" --script "%SERVERKIT%backend\bb_dummy_server.py" --address %HOSTIP% --port 20443 --shadnet-webapi http://%HOSTIP%:31315 >"%KIT%user\log\backend.txt" 2>&1"
+    echo Started the backend for %HOSTIP%, log in user\log\backend.txt.
 ) else (
     echo The backend is already running.
 )

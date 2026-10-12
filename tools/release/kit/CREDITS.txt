@@ -1,0 +1,62 @@
+CREDITS AND LICENSES
+====================
+
+Bloodborne Seamless Co-op (https://github.com/lKaniel/bloodborne-server) is free software under
+the GNU General Public License, version 2 or later (licenses\GPL-2.0-or-later.txt). It is built
+on the work of the projects below; each keeps its own license. No game files are included, and
+this project is not affiliated with Sony Interactive Entertainment or FromSoftware.
+
+THE PROJECTS THIS IS FORKED FROM
+  shadPS4                  https://github.com/shadps4-emu/shadPS4 (GPL-2.0-or-later)
+                           The PS4 emulator. Its renderer and shader recompiler draw the game in
+                           the port; its network and NP libraries carry the online play.
+  shadp2p by Wozzardman    https://github.com/Wozzardman/shadp2p (GPL-2.0-or-later)
+                           shadPS4 with peer-to-peer networking and Bloodborne online play. The
+                           seamless co-op code started here (emulator\ in the repository).
+  shadnet-p2p by Wozzardman  https://github.com/Wozzardman/shadnet-p2p (GPL-2.0-or-later)
+                           The shadNet server (accounts, matchmaking, signaling) with P2P
+                           support, by the shadPS4 team and Wozzardman. Our co-op server
+                           (server\shadnet.exe) is this with the Bloodborne summon broker and the
+                           party boards added.
+  Bloodborne PC by deadinside28  https://github.com/deadinside28/bloodborne_pc (GPL-2.0-or-later)
+                           The native port: the game's own code runs on your CPU, with shadPS4's
+                           renderer. Releases 0.4, 0.5 and 0.51 are merged in.
+  Windows port by Supermedo  https://github.com/Supermedo/bloodborne_pc (GPL-2.0-or-later)
+                           The port on Windows, the launcher in 13 languages, DLSS, FSR 3.1/4.
+  AdrianCsT (now 0xCydral)  https://github.com/0xCydral/bloodborne_pc (GPL-2.0-or-later)
+                           Windows releases 1.6 and 1.7: the redesigned launcher, Install from
+                           PKG, frame generation, XeSS, ReShade, the mouse camera and many fixes.
+  The local backend        backend\bb_dummy_server.py started as the "LocalServer" stand-in for
+                           the game's online services that came with the Bloodborne PC Online
+                           community package; extended here for co-op.
+
+  Inspired by Elden Ring Seamless Co-op (LukeYui) and the party death of Elden Ring Nightreign.
+  No code from either.
+
+GAME PATCHES
+  The community patches for 1.09 (60 FPS and more, resolution, effects; patches\Bloodborne.xml)
+  are by Kyo, Lance McDonald, auser1337, illusion, emoose and other community members.
+
+BUNDLED COMPONENTS (licenses in the licenses folder)
+  Intel XeSS 2.0.2 (XeSS SDK 3.0.2)  bin\libxess.dll, Intel's license
+  NVIDIA DLSS (nvngx_dlss.dll)        NVIDIA's DLSS license; bbport_dlss.dll is adapted from
+                                      IFreemz/shadPS4-Bloodborne-DLSS-FSR (MIT)
+  AMD FidelityFX SDK (FSR 3.1, FSR 4) MIT, with FireBurn's FSR-Vulkan port (MIT)
+  PkgTool (maxton/LibOrbisPkg v0.2)   LGPL-3.0, unmodified, bin\pkgtool
+  ReShade 6.8.0 (crosire)             BSD-3-Clause, unmodified, bin\reshade; effects by CeeJay.dk
+                                      (SweetFX, MIT), AMD (FidelityFX CAS, MIT) and
+                                      haasn/JPulowski (Deband, MIT)
+  Qt 6.8 (The Qt Company)             LGPL-3.0, the unmodified Qt DLLs next to server\shadnet.exe
+                                      (licenses\Qt-LGPL-3.0-only.txt, Qt-GPL-3.0-only.txt);
+                                      sources at https://download.qt.io/archive/qt/
+  Built into the game:                LibAtrac9 (MIT), Dear ImGui (MIT), sirit, half, magic_enum
+                                      (MIT), miniz (MIT), xbyak (BSD-3-Clause), SDL3 (zlib),
+                                      FFmpeg (LGPL), Vulkan Memory Allocator (MIT), glslang,
+                                      SPIRV-Tools, fmt, Boost, robin-map, xxHash, Zydis, protobuf,
+                                      abseil, OpenSSL, miniupnpc, zlib, wepoll, cpp-httplib,
+                                      nlohmann-json, DejaVu fonts; built with MSYS2 CLANG64 (LLVM)
+  The launcher                        frozen with PyInstaller (Python, PSF license); icon drawn
+                                      with Pillow
+
+The source code of everything here, and of the exact build in this release (VERSION.txt names
+the commit), is at https://github.com/lKaniel/bloodborne-server.

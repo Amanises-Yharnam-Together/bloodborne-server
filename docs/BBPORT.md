@@ -66,7 +66,21 @@ folder: `SeamlessCoopPort\` and the "... Port Co-op" launchers beside it.
 - `2 - PLAY.bat` sets the same co-op variables as the shadPS4 kit plus the port's `BB_*` ones and
   runs `BLauncher.exe --run` (run.py). Logs: `user\log\shad_log.txt` and `console.txt`.
 - The HOST scripts start the shadPS4 kit's servers when it is beside this one (its accounts).
+  The backend runs inside `BLauncher.exe --script` (package.sh freezes the standard modules it
+  needs), so the host needs no Python; its log is `user\log\backend.txt`, and
+  `HOST - Stop Servers` stops it and shadnet.
 - Port and shadPS4 players in one party are not tested yet: everyone uses the same kit.
+
+## Public release
+
+`tools\make-release.ps1 -Version x.y.z [-Publish]` (see the README) makes the zip for GitHub's
+releases page: the same package and kit scripts, but for players who have nothing but their own
+game. Its own files are in `tools\release\kit`: `tools\setup.ps1` takes a game folder (or finds
+the one the launcher's Install from PKG made in `game\`), merges a separate 1.09 update folder
+over it as links in `coop-game\CUSA03173`, and makes the co-op event files from the player's own
+event files (`tools\party_boss_events.py` inside `BLauncher.exe`), comparing them with the hashes
+in `event-reference.json`. `tools\release\check_release.py` refuses a release with game files,
+saves, logs or settings in it.
 
 ## Window mode and HDR output
 
