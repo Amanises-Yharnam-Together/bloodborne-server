@@ -1218,6 +1218,177 @@ u64 VisitTracker::Update(u32 new_map, u64 new_player, bool in_session, u64 new_t
     return (u64{map} << 32) | generation;
 }
 
+std::optional<PlaceChange> PlaceTracker::Update(const PlaceReading& reading) {
+    const bool known_map = reading.map != 0 && reading.map != 0xFFFFFFFFu;
+    trip_seen = trip_seen || reading.trip;
+    if (reading.player != 0 && reading.dead) {
+        death_seen = true;
+    }
+    if (reading.loading || reading.player == 0) {
+        pending.reset();
+        last_at.reset();
+        jumped_ms.reset();
+        if (place.state == PlaceState::Loading) {
+            return std::nullopt;
+        }
+        return Move(PlaceState::Loading, place.map, false, LoadCause(), reading.now_ms);
+    }
+    // Another character object: the world was rebuilt between two ticks (a reload the ticks did
+    // not see). VisitTracker has always ended a visit there too.
+    if (player != 0 && reading.player != player) {
+        arrival_due = true;
+    }
+    player = reading.player;
+    if (reading.at && last_at &&
+        std::hypot((*reading.at)[0] - (*last_at)[0], (*reading.at)[1] - (*last_at)[1],
+                   (*reading.at)[2] - (*last_at)[2]) > TeleportMeters) {
+        jumped_ms = reading.now_ms;
+    }
+    if (reading.at) {
+        last_at = reading.at;
+    }
+    if (!known_map) {
+        return std::nullopt; // a failed read keeps the place, and a pending crossing
+    }
+    if (place.state == PlaceState::Unknown || place.state == PlaceState::Loading || arrival_due) {
+        const PlaceCause cause = LoadCause();
+        arrival_due = false;
+        trip_seen = false;
+        death_seen = false;
+        pending.reset();
+        jumped_ms.reset();
+        return Move(PlaceState::Playing, reading.map, true, cause, reading.now_ms);
+    }
+    if (place.state == PlaceState::Cutscene) {
+        if (reading.cutscene) {
+            return std::nullopt; // what the map reads while a cutscene plays is not followed
+        }
+        return Move(PlaceState::Playing, place.map, false, PlaceCause::CutsceneEnd, reading.now_ms);
+    }
+    // Playing. Up again without a load (a party death revive): the next load is no death reload.
+    if (!reading.dead) {
+        death_seen = false;
+    }
+    if (reading.cutscene) {
+        pending.reset();
+        return Move(PlaceState::Cutscene, place.map, false, PlaceCause::Cutscene, reading.now_ms);
+    }
+    if (reading.map == place.map) {
+        pending.reset(); // back before the crossing committed
+        return std::nullopt;
+    }
+    if (jumped_ms && reading.now_ms - *jumped_ms <= TeleportWindowMs) {
+        pending.reset();
+        jumped_ms.reset();
+        return Move(PlaceState::Playing, reading.map, true, PlaceCause::Teleport, reading.now_ms);
+    }
+    if (!pending || pending->first != reading.map) {
+        pending = std::pair{reading.map, reading.now_ms};
+        return std::nullopt;
+    }
+    if (reading.now_ms - pending->second < BorderSteadyMs) {
+        return std::nullopt;
+    }
+    pending.reset();
+    return Move(PlaceState::Playing, reading.map, true, PlaceCause::Border, reading.now_ms);
+}
+
+std::optional<PlaceChange> PlaceTracker::Move(PlaceState state, u32 map, bool arrival,
+                                              PlaceCause cause, s64 now_ms) {
+    PlaceChange change{.from = place, .cause = cause};
+    place.state = state;
+    place.map = map;
+    place.visit += arrival ? 1 : 0;
+    place.since_ms = now_ms;
+    change.to = place;
+    return change;
+}
+
+// A death and its reload come before a trip: a party wipe's respawn travels to the lamp.
+PlaceCause PlaceTracker::LoadCause() const {
+    return death_seen ? PlaceCause::DeathReload : trip_seen ? PlaceCause::Lamp : PlaceCause::Load;
+}
+
+std::string_view PlaceStateName(PlaceState state) {
+    switch (state) {
+    case PlaceState::Unknown:
+        return "Unknown";
+    case PlaceState::Loading:
+        return "Loading";
+    case PlaceState::Cutscene:
+        return "Cutscene";
+    case PlaceState::Playing:
+        return "Playing";
+    }
+    return "?";
+}
+
+std::string_view PlaceCauseName(PlaceCause cause) {
+    switch (cause) {
+    case PlaceCause::Load:
+        return "Load";
+    case PlaceCause::Border:
+        return "Border";
+    case PlaceCause::Lamp:
+        return "Lamp";
+    case PlaceCause::Teleport:
+        return "Teleport";
+    case PlaceCause::DeathReload:
+        return "DeathReload";
+    case PlaceCause::Cutscene:
+        return "Cutscene";
+    case PlaceCause::CutsceneEnd:
+        return "CutsceneEnd";
+    }
+    return "?";
+}
+
+std::string FormatPlaceChange(const PlaceChange& change) {
+    return fmt::format("Co-op place: {} -> {} map {:#x} visit {} ({})",
+                       PlaceStateName(change.from.state), PlaceStateName(change.to.state),
+                       change.to.map, change.to.visit, PlaceCauseName(change.cause));
+}
+
+std::string_view LifecycleName(Lifecycle event) {
+    switch (event) {
+    case Lifecycle::Wipe:
+        return "wipe";
+    case Lifecycle::Trip:
+        return "trip";
+    case Lifecycle::Leave:
+        return "leave";
+    case Lifecycle::Join:
+        return "join";
+    case Lifecycle::NewCharacter:
+        return "new character";
+    }
+    return "?";
+}
+
+void LifecycleResets::Register(std::string name, std::initializer_list<Lifecycle> events,
+                               std::function<void()> reset) {
+    u32 bits = 0;
+    for (const Lifecycle event : events) {
+        bits |= 1u << static_cast<u32>(event);
+    }
+    entries.push_back(Entry{std::move(name), bits, std::move(reset)});
+}
+
+std::vector<std::string> LifecycleResets::Dispatch(Lifecycle event) {
+    // A trip keeps the session (seamless travel); everything else here starts a new one.
+    if (event != Lifecycle::Trip) {
+        ++epoch;
+    }
+    std::vector<std::string> ran;
+    for (const Entry& entry : entries) {
+        if ((entry.events & (1u << static_cast<u32>(event))) != 0) {
+            entry.reset();
+            ran.push_back(entry.name);
+        }
+    }
+    return ran;
+}
+
 namespace {
 template <typename T>
 void AppendLittleEndian(std::vector<u8>& bytes, T value) {
