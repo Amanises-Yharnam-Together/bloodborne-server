@@ -927,13 +927,19 @@ bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 
     return party_configured && slot >= 0 && !done_for_slot && map != 0 && map != HuntersDream;
 }
 
-std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map) {
+std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map, bool dream_visited) {
     constexpr u32 HuntersDream = 0x15000000;
+    constexpr s32 DreamFirstVisit = 9401;
     if (!guest || !in_session || map == 0 || map == HuntersDream) {
         return {};
     }
-    const auto flags = FlagsWith<FlagGuestSetsInWorld>();
-    return {flags.begin(), flags.end()};
+    std::vector<s32> flags;
+    for (const s32 flag : FlagsWith<FlagGuestSetsInWorld>()) {
+        if (flag != DreamFirstVisit || dream_visited) {
+            flags.push_back(flag);
+        }
+    }
+    return flags;
 }
 
 std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp,
@@ -1995,6 +2001,28 @@ bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner
         std::chrono::duration_cast<std::chrono::milliseconds>(EnemyOwnerChangeSettles).count();
     return now_ms - world_changed_ms < settle ||
            (owner_changed_ms && now_ms - *owner_changed_ms < settle);
+}
+
+bool SeenDead(u8 death_flags, s32 hp, std::optional<s64> zero_hit_ms, s64 now_ms) {
+    constexpr u8 PutDownByTheWorld = 0x20;
+    if (IsRealDeath(death_flags)) {
+        return true;
+    }
+    return hp <= 0 && (death_flags & PutDownByTheWorld) == 0 && zero_hit_ms &&
+           now_ms - *zero_hit_ms <= ZeroHitCountsMs;
+}
+
+void OwnDamage::HitLeft(u32 handle, s32 hp, s64 now_ms) {
+    if (hp <= 0) {
+        zero_hit_ms[handle] = now_ms;
+    } else {
+        zero_hit_ms.erase(handle);
+    }
+}
+
+std::optional<s64> OwnDamage::ZeroHitMs(u32 handle) const {
+    const auto hit = zero_hit_ms.find(handle);
+    return hit != zero_hit_ms.end() ? std::optional{hit->second} : std::nullopt;
 }
 
 bool IsRealDeath(u8 death_flags) {
@@ -6154,6 +6182,10 @@ bool PartyListOutdated(u64 hud, u64 generation, u64 list_hud, u64 list_generatio
 
 bool SkipsHitReaction(bool down, u64 victim, u64 local_player) {
     return down && victim != 0 && victim == local_player;
+}
+
+bool PostsShownState(s64 now_ms, s64 world_changed_ms) {
+    return now_ms - world_changed_ms >= ShownSettleMs;
 }
 
 void ReviveHits::Hit(std::string_view target, u32 down, u32 damage) {

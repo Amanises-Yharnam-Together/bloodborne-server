@@ -311,6 +311,14 @@ bool OnPlaceChange(std::function<void(const PlaceChange&)> listener) {
 [[maybe_unused]] const bool place_log_listening = OnPlaceChange(
     [](const PlaceChange& change) { LOG_INFO(Debug, "{}", FormatPlaceChange(change)); });
 
+// A load's end changes the world: its characters settle (deaths now are no kills, the shown board
+// waits for its story, see PostsShownState).
+[[maybe_unused]] const bool place_world_listening = OnPlaceChange([](const PlaceChange& change) {
+    if (change.from.state == PlaceState::Loading && change.to.state == PlaceState::Playing) {
+        world_changed_ms.store(SteadyMilliseconds());
+    }
+});
+
 // Each change of place into the co-op trace.
 [[maybe_unused]] const bool place_trace_listening =
     OnPlaceChange([](const PlaceChange& change) { Trace("place", TracePlaceFields(change)); });

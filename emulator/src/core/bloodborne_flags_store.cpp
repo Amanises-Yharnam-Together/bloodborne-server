@@ -389,7 +389,7 @@ void SetGuestPickupsBeforeMapItems() {
     }
     // A trip loads the guest's own world: its world changes go in once per trip, before the
     // throttle below (which skipped a Hunter's Dream load right after a pass on the old map).
-    if (trip_load.Take(PartyTripActive())) {
+    if (trip_load.Take(PartyTripActive(), party_trips_started.load())) {
         // Raw, as ApplyHostMapState reads it: the map this load is creating.
         LOG_INFO(Debug, "Bloodborne party: took {} flags of the host's state for map {:#x}",
                  ApplyHostMapState(), GetCurrentPackedMap());
