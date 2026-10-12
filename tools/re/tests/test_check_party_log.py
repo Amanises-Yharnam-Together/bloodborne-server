@@ -44,6 +44,38 @@ class BootTest(unittest.TestCase):
         self.assertEqual(tool.check_boot(text), [])
         self.assertEqual(len(tool.trace_warnings(text)), 1)
 
+    def test_a_skipped_required_feature_fails(self):
+        text = GOOD_BOOT + "\n" + line(
+            "Co-op features: 33/35 on (skipped: sign timers [signature mismatch at 0x18a9757], "
+            "item button diagnostics [hook failed at 0x12fd8cd])")
+        self.assertEqual(tool.skipped_features(text),
+                         [("sign timers", "signature mismatch at 0x18a9757"),
+                          ("item button diagnostics", "hook failed at 0x12fd8cd")])
+        self.assertEqual(tool.check_boot(text), [
+            "required co-op feature skipped: sign timers [signature mismatch at 0x18a9757]"])
+
+    def test_a_skipped_optional_feature_passes(self):
+        text = GOOD_BOOT + "\n" + line(
+            "Co-op features: 34/35 on (skipped: item button diagnostics [hook failed at "
+            "0x12fd8cd])")
+        self.assertEqual(tool.check_boot(text), [])
+        text = GOOD_BOOT + "\n" + line("Co-op features: 35/35 on")
+        self.assertEqual(tool.skipped_features(text), [])
+        self.assertEqual(tool.check_boot(text), [])
+
+    def test_the_required_features_come_from_the_co_op_site_table(self):
+        required = tool.required_features()
+        self.assertIn("seamless core", required)
+        self.assertIn("sign timers", required)
+        self.assertNotIn("item button diagnostics", required)
+
+    def test_a_session_log_with_a_skipped_required_feature_is_a_problem(self):
+        text = line("Co-op features: 0/1 on (skipped: seamless core [hook failed at 0x12f836e; "
+                    "rolled back])")
+        _, problems = tool.summarize(text)
+        self.assertIn("required co-op feature skipped: seamless core [hook failed at 0x12f836e; "
+                      "rolled back]", problems)
+
     def test_other_errors_are_not_co_op_failures(self):
         text = GOOD_BOOT + "\n[Common.Filesystem] <Error> (SLSession) io_file.cpp:202 Open: " \
                            "Failed to open the file"

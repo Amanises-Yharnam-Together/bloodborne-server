@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "common/types.h"
+#include "core/bloodborne_patch_sites.h"
 
 namespace Core::Bloodborne {
 
@@ -84,6 +85,45 @@ struct CodePatch {
     std::vector<u8> original;
     std::vector<u8> patched;
 };
+
+// The co-op site table (bloodborne_patch_sites.h) at work.
+// "0F 87 ??" -> {0x0F, 0x87, 0x00}.
+std::vector<u8> HexBytes(std::string_view hex);
+// Same length, and equal but where the pattern says "??".
+bool MatchesHexPattern(std::span<const u8> bytes, std::string_view pattern);
+std::vector<std::string_view> AcceptedVariants(const CoopSite& site);
+// The site's original bytes, or a variant it accepts.
+bool MatchesCoopSite(std::span<const u8> bytes, const CoopSite& site);
+const CoopFeature* FindCoopFeature(std::string_view name);
+// The byte patches of a feature, in table order.
+std::vector<CodePatch> CoopPatchesOf(std::string_view feature);
+// The first site of `feature` that `image` (the eboot image, from offset 0) does not hold as the
+// table has it; null when every site matches.
+const CoopSite* FirstMismatchedCoopSite(std::span<const u8> image, std::string_view feature);
+// Whether a hook over `bytes` at `offset` is in the table.
+bool IsRegisteredCoopHook(u64 offset, std::span<const u8> bytes);
+// The table as bbport/patches/coop-sites.json holds it.
+std::string CoopSitesJson();
+
+// What the co-op install did with each feature, for one summary line in the log
+// (tools/re/check_party_log.py fails a log that skipped a required one).
+class CoopFeatureReport {
+public:
+    void On(std::string_view feature);
+    void Skipped(std::string_view feature, std::string reason);
+    // "Co-op features: N/M on (skipped: <feature> [<reason>], ...)", in install order.
+    std::string Summary() const;
+    std::vector<std::string> SkippedRequired() const;
+
+private:
+    struct Result {
+        std::string feature;
+        std::optional<std::string> skipped;
+    };
+    void Set(std::string_view feature, std::optional<std::string> skipped);
+    std::vector<Result> results;
+};
+
 const std::vector<CodePatch>& GhostDeathKeepSessionPatches();
 
 // Target of a `call rel32` at `offset`, or 0 if the bytes are not one.

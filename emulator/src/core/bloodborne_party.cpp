@@ -67,71 +67,193 @@ bool ShouldEndSessionOnWorldTeardown(s32 matching_state, s32 reload_state, bool 
     return in_session && reload_state != SummonReloadInProgress && !reload_pending;
 }
 
-const std::vector<CodePatch>& GhostDeathKeepSessionPatches() {
-    static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
-    static const std::vector<CodePatch> patches{
-        // PartyGhostDeath: SetEventFlag(4047, true) twice. 4047 marks a player on the way out;
-        // left set, it would also swallow a later "host left" for the revived guest.
-        {0x01381FE7, {0xE8, 0xB4, 0xC5, 0xFA, 0xFF}, nop5},
-        {0x01381FF6, {0xE8, 0xA5, 0xC5, 0xFA, 0xFF}, nop5},
-        // CustomLuaCallStart(4063, local player): the host's OnGameLeave drops us.
-        {0x0138201B, {0xE8, 0x20, 0xCD, 0xFA, 0xFF}, nop5},
-        // SetFlagInitState(2), the reset for the load into our own world.
-        {0x0138202F, {0xC7, 0x00, 0x02, 0x00, 0x00, 0x00}, {0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00}},
-        // PartyGhostDeath_1: skip MissionDeadFailed and OnRequestMenuEnd(PartyGhostDeath_2).
-        {PartyGhostDeathMenuBranchOffset, {0x75, 0x2C}, {0xEB, 0x2C}},
+std::vector<u8> HexBytes(std::string_view hex) {
+    std::vector<u8> bytes;
+    for (size_t at = 0; at + 1 < hex.size(); at += 3) {
+        u8 value = 0;
+        if (hex.substr(at, 2) != "??") {
+            std::from_chars(hex.data() + at, hex.data() + at + 2, value, 16);
+        }
+        bytes.push_back(value);
+    }
+    return bytes;
+}
+
+bool MatchesHexPattern(std::span<const u8> bytes, std::string_view pattern) {
+    const std::vector<u8> expected = HexBytes(pattern);
+    if (bytes.size() != expected.size()) {
+        return false;
+    }
+    for (size_t index = 0; index < expected.size(); ++index) {
+        if (pattern.substr(index * 3, 2) != "??" && bytes[index] != expected[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<std::string_view> AcceptedVariants(const CoopSite& site) {
+    std::vector<std::string_view> variants;
+    for (std::string_view rest = site.accepted; !rest.empty();) {
+        const size_t bar = rest.find('|');
+        variants.push_back(rest.substr(0, bar));
+        rest = bar == std::string_view::npos ? std::string_view{} : rest.substr(bar + 1);
+    }
+    return variants;
+}
+
+bool MatchesCoopSite(std::span<const u8> bytes, const CoopSite& site) {
+    return MatchesHexPattern(bytes, site.original) ||
+           std::ranges::any_of(AcceptedVariants(site), [bytes](std::string_view variant) {
+               return MatchesHexPattern(bytes, variant);
+           });
+}
+
+const CoopFeature* FindCoopFeature(std::string_view name) {
+    const auto found = std::ranges::find_if(
+        CoopFeatures, [name](const CoopFeature& feature) { return feature.name == name; });
+    return found == CoopFeatures.end() ? nullptr : &*found;
+}
+
+std::vector<CodePatch> CoopPatchesOf(std::string_view feature) {
+    std::vector<CodePatch> patches;
+    for (const CoopSite& site : CoopSites) {
+        if (site.feature == feature && site.kind == CoopSiteKind::Patch) {
+            patches.push_back({site.offset, HexBytes(site.original), HexBytes(site.patched)});
+        }
+    }
+    return patches;
+}
+
+const CoopSite* FirstMismatchedCoopSite(std::span<const u8> image, std::string_view feature) {
+    for (const CoopSite& site : CoopSites) {
+        if (site.feature != feature) {
+            continue;
+        }
+        const size_t size = HexBytes(site.original).size();
+        if (site.offset > image.size() || size > image.size() - site.offset ||
+            !MatchesCoopSite(image.subspan(site.offset, size), site)) {
+            return &site;
+        }
+    }
+    return nullptr;
+}
+
+bool IsRegisteredCoopHook(u64 offset, std::span<const u8> bytes) {
+    return std::ranges::any_of(CoopSites, [offset, bytes](const CoopSite& site) {
+        return site.kind == CoopSiteKind::Hook && site.offset == offset &&
+               std::ranges::equal(HexBytes(site.original), bytes);
+    });
+}
+
+std::string CoopSitesJson() {
+    const auto quoted = [](std::string_view text) {
+        std::string out = "\"";
+        for (const char c : text) {
+            if (c == '"' || c == '\\') {
+                out += '\\';
+            }
+            out += c;
+        }
+        return out + '"';
     };
+    std::string json = "{\n  \"generated_from\": \"emulator/src/core/bloodborne_patch_sites.h\",\n"
+                       "  \"features\": [\n";
+    for (size_t index = 0; index < CoopFeatures.size(); ++index) {
+        const CoopFeature& feature = CoopFeatures[index];
+        json += fmt::format("    {{\"name\": {}, \"required\": {}}}{}\n", quoted(feature.name),
+                            feature.required ? "true" : "false",
+                            index + 1 < CoopFeatures.size() ? "," : "");
+    }
+    json += "  ],\n  \"sites\": [\n";
+    for (size_t index = 0; index < CoopSites.size(); ++index) {
+        const CoopSite& site = CoopSites[index];
+        const char* kind = site.kind == CoopSiteKind::Patch  ? "patch"
+                           : site.kind == CoopSiteKind::Hook ? "hook"
+                                                             : "call";
+        std::string accepted;
+        for (const std::string_view variant : AcceptedVariants(site)) {
+            accepted += (accepted.empty() ? "" : ", ") + quoted(variant);
+        }
+        json += fmt::format("    {{\"name\": {}, \"feature\": {}, \"kind\": \"{}\", "
+                            "\"offset\": \"0x{:08X}\", \"original\": {}, \"patched\": {}, "
+                            "\"accepted\": [{}]}}{}\n",
+                            quoted(site.name), quoted(site.feature), kind, site.offset,
+                            quoted(site.original), quoted(site.patched), accepted,
+                            index + 1 < CoopSites.size() ? "," : "");
+    }
+    return json + "  ]\n}\n";
+}
+
+void CoopFeatureReport::Set(std::string_view feature, std::optional<std::string> skipped) {
+    const auto found = std::ranges::find_if(
+        results, [feature](const Result& result) { return result.feature == feature; });
+    if (found != results.end()) {
+        found->skipped = std::move(skipped);
+    } else {
+        results.push_back({std::string{feature}, std::move(skipped)});
+    }
+}
+
+void CoopFeatureReport::On(std::string_view feature) {
+    Set(feature, std::nullopt);
+}
+
+void CoopFeatureReport::Skipped(std::string_view feature, std::string reason) {
+    Set(feature, std::move(reason));
+}
+
+std::string CoopFeatureReport::Summary() const {
+    std::string skipped;
+    size_t on = 0;
+    for (const Result& result : results) {
+        if (!result.skipped) {
+            ++on;
+            continue;
+        }
+        skipped +=
+            fmt::format("{}{} [{}]", skipped.empty() ? "" : ", ", result.feature, *result.skipped);
+    }
+    std::string summary = fmt::format("Co-op features: {}/{} on", on, results.size());
+    if (!skipped.empty()) {
+        summary += fmt::format(" (skipped: {})", skipped);
+    }
+    return summary;
+}
+
+std::vector<std::string> CoopFeatureReport::SkippedRequired() const {
+    std::vector<std::string> required;
+    for (const Result& result : results) {
+        const CoopFeature* feature = FindCoopFeature(result.feature);
+        if (result.skipped && feature != nullptr && feature->required) {
+            required.push_back(result.feature);
+        }
+    }
+    return required;
+}
+
+const std::vector<CodePatch>& GhostDeathKeepSessionPatches() {
+    static const std::vector<CodePatch> patches = CoopPatchesOf("ghost death");
     return patches;
 }
 
 const std::vector<CodePatch>& GuestBloodstainPatches() {
-    static const std::vector<CodePatch> patches{
-        {0x0137EBC7, {0xB9, 0x30, 0x00, 0x00, 0x00}, {0xB9, 0x70, 0x00, 0x00, 0x00}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("guest bloodstain");
     return patches;
 }
 
 const std::vector<CodePatch>& NoEchoTheftPatches() {
-    // cmp byte [rax + 0xC0], 0 (stolen already); `je` to the steal -> nop nop (the return).
-    static const std::vector<CodePatch> patches{
-        {0x018E7613, {0x74, 0x09}, {0x90, 0x90}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("no echo theft");
     return patches;
 }
 
 const std::vector<CodePatch>& HostDeathKeepGuestsPatches() {
-    // `mov esi, 0xFCF` (start of the white phantom branch) -> `jmp HostDeadEpilogueOffset`.
-    static const std::vector<CodePatch> patches{
-        {0x013819C6, {0xBE, 0xCF, 0x0F, 0x00, 0x00}, {0xE9, 0x85, 0x00, 0x00, 0x00}},
-        // Character death step (0x018C49F0): skip removing the session's members from a dying
-        // host's world (`jne` -> `jmp` to the same target, then a nop).
-        {0x018C4D1D, {0x0F, 0x85, 0x97, 0x00, 0x00, 0x00}, {0xE9, 0x98, 0x00, 0x00, 0x00, 0x90}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("host death");
     return patches;
 }
 
 const std::vector<CodePatch>& BossClearKeepSessionPatches() {
-    static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
-    static const std::vector<CodePatch> patches{
-        // BlockClear2_2: CustomLuaCallStart(4063, local player), the white phantom's goodbye.
-        {0x013857AC, {0xE8, 0x8F, 0x95, 0xFA, 0xFF}, nop5},
-        // BlockClear2_2: OnKeyTime2(4050, "BlockClear2_3Leave"), LeaveSession for every member.
-        {0x01385877, {0xE8, 0x44, 0x59, 0xFA, 0xFF}, nop5},
-        // BlockClear2_3: clear 4047 and 4000 for white phantoms too (`jne` -> 2-byte nop).
-        {0x0138596D, {0x75, 0x1B}, {0x66, 0x90}},
-        // BlockClear2_3: skip the white phantom's reset and warp home (`jne` -> `jmp`).
-        {0x0138599C, {0x75, 0x46}, {0xEB, 0x46}},
-        // BlockClear2: the white phantom's SetLoadWait (event state +0x8D), which turns the
-        // action buttons off (SprjActionButtonMan +0x52) until the trip home it no longer takes.
-        {0x01384D03,
-         {0x41, 0xC6, 0x86, 0x8D, 0x00, 0x00, 0x00, 0x01},
-         {0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00}},
-        // SoloBlockClear (BlockClear2_1 outside a friends party, for a live player): return
-        // after the boss flags instead of StopRequest and the tail jump to LeaveSession.
-        {0x01385A4A,
-         {0x48, 0x8B, 0x05, 0x27, 0x0C, 0x1D, 0x04, 0x48, 0x8B, 0x98, 0xF8, 0x16, 0x00, 0x00},
-         {0x48, 0x83, 0xC4, 0x08, 0x5B, 0x41, 0x5E, 0x41, 0x5F, 0x5D, 0xC3, 0x0F, 0x1F, 0x00}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("boss clear");
     return patches;
 }
 
@@ -145,11 +267,7 @@ bool IsWorldReloadStopRequest(u64 caller_offset) {
 }
 
 const std::vector<CodePatch>& JoinAnywherePatches() {
-    static const std::vector<CodePatch> patches{
-        // `call EventFlagIsSet` -> `xor eax, eax` + a 3-byte nop; the `xor al, 1` after it
-        // then says the area is open.
-        {0x0191A8B5, {0xE8, 0x36, 0xF3, 0xA7, 0xFF}, {0x31, 0xC0, 0x0F, 0x1F, 0x00}},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("join anywhere");
     return patches;
 }
 
@@ -2199,13 +2317,7 @@ std::size_t RemoveBellIcons(std::span<u8> sp_effect_param) {
 }
 
 const std::vector<CodePatch>& QuietSummonBannerPatches() {
-    static const std::vector<u8> nop5{0x0F, 0x1F, 0x44, 0x00, 0x00};
-    static const std::vector<CodePatch> patches{
-        // STEP_C2H_Init_forSelfPrologue: the arriving member's "Discovered the chime of a ...".
-        {0x0196B4C9, {0xE8, 0xB2, 0x49, 0x29, 0x00}, nop5},
-        // STEP_C2H_Init_forOthersPrologue: the same for the members it arrives to.
-        {0x0196B9F4, {0xE8, 0x87, 0x44, 0x29, 0x00}, nop5},
-    };
+    static const std::vector<CodePatch> patches = CoopPatchesOf("quiet summon banners");
     return patches;
 }
 

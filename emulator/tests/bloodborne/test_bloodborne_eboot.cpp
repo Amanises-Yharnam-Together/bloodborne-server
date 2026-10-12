@@ -126,6 +126,16 @@ TEST_F(BloodborneEboot, EveryPatchFindsTheGamesOwnBytes) {
     }
 }
 
+// The co-op site table (bloodborne_patch_sites.h): every site holds its original bytes in the
+// game as it ships (the default game patches are checked by bbport/tests/test_coop_sites.py).
+TEST_F(BloodborneEboot, EveryCoopSiteHoldsItsOriginalBytes) {
+    for (const CoopSite& site : CoopSites) {
+        const auto original = HexBytes(site.original);
+        EXPECT_EQ(Bytes(site.offset, original.size()), original)
+            << site.feature << ": " << site.name << " at " << std::hex << site.offset;
+    }
+}
+
 // The joiner kick of a closing session tests SessionManager +0x118 (ReopensClosedSession):
 // cmp byte [r12 + 0x118], 0 at 0x01ED121E.
 TEST_F(BloodborneEboot, TheClosingSessionKickTestsTheFlagWeClear) {
