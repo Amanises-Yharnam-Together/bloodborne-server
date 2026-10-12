@@ -49,17 +49,19 @@ std::map<u64, PeerHello> peer_hellos;             // by sender
 std::optional<std::pair<u32, u16>> log_host_peer; // where the host's frames come from
 std::unordered_set<u32> board_posted;             // the host's union as on the kill board
 
-// What the lifecycle asks of the log, taken on the next kill step: the host's wipe starts a new
-// log that keeps the members' kills; a new session or character one without them, and a member
-// forgets its copy.
-enum class LogRestart : int { None, KeepMembers, Clear };
+// What the lifecycle asks of the log, taken on the next kill step: the host starts a new log with
+// no kills on its wipe (marked, see WorldLogWipeHold), a new session or character; a member
+// forgets its copy on a new session or character.
+enum class LogRestart : int { None, Wipe, Clear };
 std::atomic<int> host_restart{static_cast<int>(LogRestart::None)};
 std::atomic<bool> member_reset{false};
+// When this member last heard the host's wiped log and ran its own wipe (game thread).
+WorldLogWipeHold wipe_hold;
 
 [[maybe_unused]] const bool world_log_wipe_registered =
     RegisterLifecycleReset("world log (wipe)", {Lifecycle::Wipe}, [] {
         int none = static_cast<int>(LogRestart::None);
-        host_restart.compare_exchange_strong(none, static_cast<int>(LogRestart::KeepMembers));
+        host_restart.compare_exchange_strong(none, static_cast<int>(LogRestart::Wipe));
     });
 [[maybe_unused]] const bool world_log_session_registered = RegisterLifecycleReset(
     "world log", {Lifecycle::Join, Lifecycle::Leave, Lifecycle::NewCharacter}, [] {
@@ -115,12 +117,12 @@ void RunHostLog(const std::string& name, const WorldLogKills& mine, s64 now_ms) 
     const auto restart =
         static_cast<LogRestart>(host_restart.exchange(static_cast<int>(LogRestart::None)));
     if (!world_log_host.Started() || restart != LogRestart::None) {
-        const bool keep = world_log_host.Started() && restart == LogRestart::KeepMembers;
+        const bool wipe = world_log_host.Started() && restart == LogRestart::Wipe;
         const u64 epoch = WorldLogEpoch(world_log_run, ++world_logs_started);
-        TraceLog("host", "start", EncodeWorldLogStart(epoch, keep));
-        LOG_INFO(Debug, "Co-op world log: the host starts log {:#x} ({})", epoch,
-                 keep ? "a wipe: the members' kills stay" : "a new session");
-        SendEntries(name, world_log_host.Start(epoch, keep), now_ms);
+        TraceLog("host", "start", EncodeWorldLogStart(epoch, wipe));
+        LOG_INFO(Debug, "Co-op world log: the host starts log {:#x} ({}, no kills stand)", epoch,
+                 wipe ? "a wipe" : "a new session");
+        SendEntries(name, world_log_host.Start(epoch, wipe), now_ms);
     }
     TakeProposal(name, {name, world_log_host.Epoch(), world_log_run, ++proposals_made, mine},
                  now_ms);
@@ -132,7 +134,15 @@ void RunHostLog(const std::string& name, const WorldLogKills& mine, s64 now_ms) 
 // A member: its standing kills to the host at once on a change and every WorldLogResendMs, and a
 // snapshot request when its copy fell behind.
 void RunMemberLog(const std::string& name, const WorldLogKills& mine, s64 now_ms) {
-    if (mine != last_proposed || now_ms - proposal_sent_ms >= WorldLogResendMs) {
+    static bool held = false;
+    if (const bool holds = wipe_hold.HoldsProposals(now_ms); holds != held) {
+        held = holds;
+        LOG_INFO(Debug, "Co-op world log: {}",
+                 held ? "the host's log started over after a wipe; this member's kills wait for "
+                        "its own wipe"
+                      : "proposing this member's kills again");
+    }
+    if (!held && (mine != last_proposed || now_ms - proposal_sent_ms >= WorldLogResendMs)) {
         last_proposed = mine;
         proposal_sent_ms = now_ms;
         const WorldLogProposal proposal{name, world_log_member.Epoch(), world_log_run,
@@ -198,7 +208,10 @@ bool DecideKillPath(const WorldLogKills& mine, s64 now_ms) {
 std::unordered_set<u32> BoardKillsForTheLog(const std::string& name, s64 now_ms) {
     if (IsPartyGuestRole()) {
         if (!world_log_member.Fresh(now_ms)) {
-            return party_kills.All();
+            // Right after a wipe the host's entries on the board are from before it (it posts
+            // every 3 s): a member back from the wipe's load killed the respawned dog by them.
+            return wipe_hold.BoardStale(now_ms) ? party_kills.AllExcept(world_log_member.Host())
+                                                : party_kills.All();
         }
         std::unordered_set<u32> kills = WorldLogHandles(world_log_member.Kills());
         const auto board = party_kills.AllExcept(world_log_member.Host());
@@ -283,6 +296,9 @@ void TakeFrameAsMember(u8 type, std::span<const u8> payload, u32 addr, u16 port,
     if (!step.stale) {
         log_host_peer = std::pair{addr, port};
     }
+    if (StartsAfterAWipe(step.applied)) {
+        wipe_hold.HostWiped(now_ms);
+    }
     if (step.stale || step.new_epoch || step.snapshot || step.gap || !step.applied.empty()) {
         TraceLog("member", type == WorldLogEntriesType ? "entries" : "snapshot", payload);
     }
@@ -311,9 +327,19 @@ void TakeWorldLogFrame(u8 type, std::span<const u8> payload, u32 addr, u16 port)
 }
 
 PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
-                               std::span<const std::pair<s32, bool>> changes) {
+                               std::span<const std::pair<s32, bool>> changes, bool forgot,
+                               const std::unordered_set<u32>& not_mine) {
     const s64 now_ms = SteadyMilliseconds();
-    const WorldLogKills mine = visit_kills.Standing();
+    if (forgot) {
+        wipe_hold.OwnWipe(now_ms);
+    }
+    // What this member proposes: its standing kills, but not another member's kill that died here
+    // by the game's kill (it counted as this member's own in its visit).
+    WorldLogKills mine = visit_kills.Standing();
+    for (auto& [on_map, handles] : mine) {
+        std::erase_if(handles, [&](u32 handle) { return not_mine.contains(handle); });
+    }
+    std::erase_if(mine, [](const auto& entry) { return entry.second.empty(); });
     if (member_reset.exchange(false) && IsPartyGuestRole()) {
         world_log_member.Reset();
         log_host_peer.reset();

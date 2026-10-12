@@ -210,27 +210,96 @@ TEST(WorldLogHost, ARestartedMembersOldKillsGo) {
                                                  Kill(6, Ward, 0x20)}));
 }
 
-// The host's wipe (Start keeping the members): the log starts over with a Reset and the kills the
-// others still stand on; a new session forgets them.
-TEST(WorldLogHost, ANewEpochStartsWithAResetAndTheStandingKills) {
+// A party wipe respawns the map for everyone (rig smoke 2026-10-12, run 191219: the kept sets
+// stood the host's own kill of 0x1001400b again at seq 2): the new log has no kills at all, nor
+// does a new session's.
+TEST(WorldLogHost, ANewEpochStartsWithAResetAndNoKills) {
     WorldLogHost host;
     const u64 first = WorldLogEpoch(7, 1);
     host.Start(first, false);
     host.Propose(Proposal("guest", first, 5, 1, {{Dream, {0x30}}}));
     host.Propose(Proposal("host", first, 6, 1, {{Yharnam, {0x10}}}));
     const u64 wipe = WorldLogEpoch(7, 2);
-    EXPECT_EQ(host.Start(wipe, true),
-              Entries(wipe, {Reset(1), Kill(2, Dream, 0x30), Kill(3, Yharnam, 0x10)}));
-    // The host's own wipe took back its kills; the guest elsewhere keeps its own.
-    EXPECT_EQ(host.Propose(Proposal("host", wipe, 6, 2, {})).entries,
-              Entries(wipe, {Unkill(4, Yharnam, 0x10)}));
+    WorldLogEntry reset = Reset(1);
+    reset.subject = WorldLogResetAfterWipe;
+    EXPECT_EQ(host.Start(wipe, true), Entries(wipe, {reset}));
+    EXPECT_TRUE(host.Kills().empty());
+    EXPECT_TRUE(StartsAfterAWipe(Entries(wipe, {reset})));
+    EXPECT_FALSE(StartsAfterAWipe(Entries(wipe, {Reset(1)})));
+    // The host's own set after its wipe: nothing.
+    EXPECT_TRUE(host.Propose(Proposal("host", wipe, 6, 2, {})).entries.empty());
     EXPECT_TRUE(host.Propose(Proposal("guest", first, 5, 2, {{Dream, {0x30}}})).stale)
         << "made before the guest heard of the wipe";
+    // A kill made after the wipe stands.
+    EXPECT_EQ(host.Propose(Proposal("guest", wipe, 5, 3, {{Yharnam, {0x11}}})).entries,
+              Entries(wipe, {Kill(2, Yharnam, 0x11)}));
     const u64 session = WorldLogEpoch(7, 3);
     EXPECT_EQ(host.Start(session, false), Entries(session, {Reset(1)}));
     EXPECT_TRUE(host.Kills().empty());
-    EXPECT_FALSE(host.Propose(Proposal("guest", 0, 5, 3, {{Dream, {0x30}}})).stale)
+    EXPECT_FALSE(host.Propose(Proposal("guest", 0, 5, 4, {{Dream, {0x30}}})).stale)
         << "a member that has not heard of the new log yet";
+}
+
+TEST(WorldLogWipe, AMemberProposesAgainOnlyAfterItsOwnWipe) {
+    WorldLogWipeHold hold;
+    EXPECT_FALSE(hold.HoldsProposals(0));
+    EXPECT_FALSE(hold.BoardStale(0));
+    // The host's wiped log came first: hold until this member's own wipe.
+    hold.HostWiped(1'000);
+    EXPECT_TRUE(hold.HoldsProposals(1'100));
+    EXPECT_TRUE(hold.BoardStale(1'100));
+    hold.OwnWipe(1'300);
+    EXPECT_FALSE(hold.HoldsProposals(1'300));
+    EXPECT_TRUE(hold.BoardStale(1'300 + WorldLogWipeGraceMs - 1));
+    EXPECT_FALSE(hold.BoardStale(1'300 + WorldLogWipeGraceMs));
+    // Its own wipe first, then the host's log: nothing held.
+    WorldLogWipeHold first;
+    first.OwnWipe(500);
+    first.HostWiped(900);
+    EXPECT_FALSE(first.HoldsProposals(900));
+    // A member elsewhere (no wipe of its own): held for the grace time only.
+    WorldLogWipeHold elsewhere;
+    elsewhere.OwnWipe(0);
+    elsewhere.HostWiped(100'000);
+    EXPECT_TRUE(elsewhere.HoldsProposals(100'000 + WorldLogWipeGraceMs - 1));
+    EXPECT_FALSE(elsewhere.HoldsProposals(100'000 + WorldLogWipeGraceMs));
+}
+
+// Rig smoke 2026-10-12, run 191219, in order: the host killed 0x1001400b; the party wiped; the
+// host's new log stood it again from the kept sets (seq 2) and took it back (seq 3); after the
+// wipe's trip a member's proposal stood it a third time (seq 4) and every game showed it dead.
+TEST(WorldLogWipe, AWipeLeavesNoKillStanding) {
+    constexpr u32 Dog = 0x1001400b;
+    WorldLogHost host;
+    WorldLogMember guest;
+    WorldLogWipeHold guest_hold;
+    const u64 first = WorldLogEpoch(0x3237, 1);
+    host.Start(first, false);
+    guest.Take(BatchWorldLog("h", first, host.Last(), std::vector{Reset(1)})[0], 0);
+    // The host's kill; a guest that applied it near and counted it as its own too.
+    const auto killed = host.Propose(Proposal("host", first, 6, 1, {{Yharnam, {Dog}}})).entries;
+    guest.Take(BatchWorldLog("h", first, host.Last(), killed)[0], 100);
+    host.Propose(Proposal("guest", first, 5, 1, {{Yharnam, {Dog}}}));
+    // The wipe on the host: its kill step forgets its own kills, then the new log starts.
+    host.Propose(Proposal("host", first, 6, 2, {}));
+    const u64 wiped = WorldLogEpoch(0x3237, 2);
+    const auto started = host.Start(wiped, true);
+    EXPECT_EQ(started.size(), 1u) << "a Reset alone: no kill stands again";
+    // The guest's last proposal before it heard of the new log: another log's, dropped.
+    EXPECT_TRUE(host.Propose(Proposal("guest", first, 5, 2, {{Yharnam, {Dog}}})).stale);
+    // The guest follows the new log before its own wipe ran: it holds its proposals.
+    const auto step = guest.Take(BatchWorldLog("h", wiped, host.Last(), started)[0], 1'000);
+    EXPECT_TRUE(StartsAfterAWipe(step.applied));
+    guest_hold.HostWiped(1'000);
+    EXPECT_TRUE(guest_hold.HoldsProposals(1'050)) << "its set still has the dog";
+    // Its wipe: the kills forgotten, then proposals again (nothing to stand).
+    guest_hold.OwnWipe(1'100);
+    EXPECT_FALSE(guest_hold.HoldsProposals(1'100));
+    EXPECT_TRUE(host.Propose(Proposal("guest", wiped, 5, 3, {})).entries.empty());
+    // The trip after the wipe: still nothing.
+    EXPECT_TRUE(host.Propose(Proposal("guest", wiped, 5, 4, {})).entries.empty());
+    EXPECT_TRUE(host.Kills().empty());
+    EXPECT_TRUE(guest.Kills().empty());
 }
 
 TEST(WorldLogHost, ASnapshotHoldsEveryKillInParts) {
