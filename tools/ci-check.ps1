@@ -1,11 +1,15 @@
 ﻿# Local mirror of the upstream CI checks, per component of the monorepo.
 # Usage: ci-check.ps1 -Component emulator|server|backend|tools|bbport [-All] [-SkipBuild] [-Src <dir>]
+#                    [-CompileDb <dir>]
 #   default lints only files changed vs. trunk(); -All lints every source file like a branch push.
+#   -CompileDb (emulator): also tools\re\code_health.py --check on the co-op sources, with the
+#   compile_commands.json in <dir> (the port's: bbport\out after `ninja -C out/gpu -t compdb`).
 param(
     [Parameter(Mandatory)][ValidateSet("emulator", "server", "backend", "tools", "bbport")][string]$Component,
     [switch]$All,
     [switch]$SkipBuild,
-    [string]$Src
+    [string]$Src,
+    [string]$CompileDb
 )
 $ErrorActionPreference = "Continue"
 . "$PSScriptRoot\env.ps1"
@@ -102,6 +106,14 @@ Pop-Location
 & $reuse --root $lintDir lint -q
 if ($LASTEXITCODE -ne 0) { $failed += "reuse"; & $reuse --root $lintDir lint --lines | Select-Object -First 25 }
 else { Write-Host "reuse: ok" }
+
+# 3b. code health (optional, needs a compile database): no new function over cognitive 25,
+#     nesting 4 or 120 lines, and no function over them getting worse than its baseline.
+if ($Component -eq "emulator" -and $CompileDb) {
+    py -3.12 "$PSScriptRoot\re\code_health.py" -p $CompileDb --root (Split-Path $Src -Parent) `
+        --check --worst 0 2>&1 | Select-Object -Last 12
+    if ($LASTEXITCODE -ne 0) { $failed += "code-health" }
+}
 
 # 4. build + tests
 if (-not $SkipBuild) {
