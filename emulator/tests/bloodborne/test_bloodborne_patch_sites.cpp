@@ -192,6 +192,12 @@ TEST(CoopSites, ThePartyHeaderHooksAreRegistered) {
         EXPECT_TRUE(IsRegisteredCoopHook(offset, EffectHpChange));
     }
     EXPECT_TRUE(IsRegisteredCoopHook(IsNoDeadExitOffset, IsNoDeadExit));
+    // The party HUD's and the downed player's hooks (Lisara's log 2026-10-12: three "not in the
+    // co-op site table" errors, so the launcher could not warn about a game patch over them).
+    EXPECT_TRUE(IsRegisteredCoopHook(HudTagUpdateExitOffset, HudTagUpdateExit));
+    EXPECT_TRUE(IsRegisteredCoopHook(HudTicksTagsDoneOffset, HudTicksTagsDone));
+    EXPECT_TRUE(IsRegisteredCoopHook(HitDamageStoredOffset, HitDamageStored));
+    EXPECT_TRUE(IsRegisteredCoopHook(HitReactionOffset, HitReactionPrologue));
     EXPECT_TRUE(IsRegisteredCoopHook(PartyGhostDeathMenuBranchOffset - 5,
                                      std::vector<u8>{0x41, 0x80, 0x7E, 0x0C, 0x00}));
     // Other bytes, another length or an offset that is no hook are not.
