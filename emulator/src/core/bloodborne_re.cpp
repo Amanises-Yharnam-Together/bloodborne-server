@@ -628,6 +628,15 @@ bool InSessionWorld() {
 
 namespace Coop {
 
+CoopTimeMeter coop_time{30'000};
+
+void ReportCoopTime(s64 now_ms) {
+    // A warning, so the port's console shows it beside its Perf lines.
+    if (const auto line = coop_time.Report(now_ms)) {
+        LOG_WARNING(Debug, "Co-op time: {}", *line);
+    }
+}
+
 void TickPartyController() {
     NoteGameThreadTick();
     TickPlace();
@@ -648,7 +657,15 @@ void TickPartyController() {
     }
     LogOtherPlayersChanges();
     ObserveLocalAliveState();
-    TickPartyDeath();
+    {
+        const auto started = std::chrono::steady_clock::now();
+        TickPartyDeath();
+        coop_time.Add("party death",
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - started)
+                          .count(),
+                      SteadyMilliseconds());
+    }
     TickLampRest();
     if (!party_controller) {
         return;

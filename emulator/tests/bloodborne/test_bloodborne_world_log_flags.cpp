@@ -234,6 +234,23 @@ TEST(WorldLogFlags, ASnapshotWaitsForTheMapState) {
     EXPECT_EQ(member.MapState(), (WorldLogMapState{Yharnam, MapBits({5})}));
 }
 
+// Review 2026-10-12: a member that joins mid-log holds the live events it hears while it waits
+// for the snapshot; the lamp lit in that time is set once the snapshot is in, not dropped with
+// the entries the snapshot covers (on the log path nothing else would set it).
+TEST(WorldLogFlags, ASnapshotKeepsTheEventsHeardWhileWaiting) {
+    const u64 epoch = WorldLogEpoch(7, 3);
+    WorldLogMember member;
+    const auto heard = member.Take(Batch(epoch, 21, {Entry(21, WorldLogKind::FlagSet, 0, 78)}), 0);
+    EXPECT_TRUE(heard.applied.empty()) << "not based yet";
+    member.Take(WorldLogSnapshot{"host", epoch, 22, 0, 1, {}}, 10);
+    member.Take(WorldLogShownSnapshot{"host", epoch, 22, 0, 1, {Yharnam, {}}}, 20);
+    member.Take(WorldLogHpSnapshot{"host", epoch, 22, 0, 1, {}}, 25);
+    member.Take(WorldLogFlagsSnapshot{"host", epoch, 22, {}}, 26);
+    const auto whole = member.Take(WorldLogMapStateSnapshot{"host", epoch, 22, {}}, 30);
+    ASSERT_TRUE(whole.snapshot);
+    EXPECT_EQ(whole.applied, Entries(epoch, {Entry(21, WorldLogKind::FlagSet, 0, 78)}));
+}
+
 TEST(WorldLogFlags, MembersConvergeOnTheMapStateOverABadLink) {
     std::mt19937 random{4};
     for (int round = 0; round < 20; ++round) {
@@ -307,4 +324,29 @@ TEST(WorldLogFlags, AMapStateReadsBackFromItsTraceRecord) {
     const auto payload = EncodeWorldLogMapStateInput(Ward, MapBits({2}));
     EXPECT_EQ(DecodeWorldLogMapStateInput(payload), (WorldLogMapState{Ward, MapBits({2})}));
     EXPECT_FALSE(DecodeWorldLogMapStateInput(std::span{payload}.first(3)));
+}
+
+// Review 2026-10-12: the after-wipe mark came only with the Reset entry; a member that took the
+// new log from a snapshot (the Reset's frame lost, or the server's world snapshot) proposed its
+// pre-wipe kills into it. The flags part says whether the log started at a wipe.
+TEST(WorldLogFlags, ASnapshotSaysTheLogStartedAtAWipe) {
+    WorldLogHost host;
+    const u64 epoch = WorldLogEpoch(7, 4);
+    host.Start(epoch, true);
+    const auto flags =
+        DecodeWorldLogFlagsSnapshot(EncodeWorldLogFlagsSnapshot(host.FlagsSnapshot("host")));
+    ASSERT_TRUE(flags);
+    EXPECT_TRUE(flags->after_wipe);
+    WorldLogMember member;
+    member.Take(WorldLogSnapshot{"host", epoch, flags->last, 0, 1, {}}, 10);
+    member.Take(WorldLogShownSnapshot{"host", epoch, flags->last, 0, 1, {Yharnam, {}}}, 20);
+    member.Take(WorldLogHpSnapshot{"host", epoch, flags->last, 0, 1, {}}, 25);
+    member.Take(WorldLogMapStateSnapshot{"host", epoch, flags->last, {}}, 26);
+    const auto whole = member.Take(*flags, 30);
+    ASSERT_TRUE(whole.snapshot);
+    EXPECT_TRUE(whole.after_wipe);
+
+    WorldLogHost fresh;
+    fresh.Start(WorldLogEpoch(7, 5), false);
+    EXPECT_FALSE(fresh.FlagsSnapshot("host").after_wipe);
 }

@@ -801,6 +801,54 @@ std::string SlotFileName(std::string_view list, int slot) {
     return fmt::format("bloodborne_party_{}_slot{}.txt", list, slot);
 }
 
+void CoopTimeMeter::Add(std::string_view section, s64 ns, s64 now_ms) {
+    std::scoped_lock lock{mutex};
+    if (!since_ms) {
+        since_ms = now_ms;
+    }
+    auto it = std::ranges::find(sections, section, &Section::name);
+    if (it == sections.end()) {
+        it = sections.insert(sections.end(), Section{std::string{section}});
+    }
+    it->total_ns += ns;
+    it->max_ns = std::max(it->max_ns, ns);
+    ++it->calls;
+}
+
+std::optional<std::string> CoopTimeMeter::Report(s64 now_ms) {
+    std::scoped_lock lock{mutex};
+    if (!since_ms || now_ms - *since_ms < period_ms) {
+        return std::nullopt;
+    }
+    std::string line;
+    for (const Section& section : sections) {
+        line += fmt::format("{}{} avg {:.2f} ms max {:.2f} ms ({} calls)", line.empty() ? "" : ", ",
+                            section.name,
+                            static_cast<double>(section.total_ns) / 1e6 /
+                                static_cast<double>(std::max<u64>(section.calls, 1)),
+                            static_cast<double>(section.max_ns) / 1e6, section.calls);
+    }
+    line += fmt::format(" over {} s", (now_ms - *since_ms) / 1000);
+    since_ms.reset();
+    sections.clear();
+    return line;
+}
+
+OwnRestore RestoresOwnCharacters(std::span<const u32> own,
+                                 const std::unordered_set<u32>& hidden_here,
+                                 const std::unordered_set<u32>& switched_off) {
+    OwnRestore restore;
+    for (const u32 handle : own) {
+        if (hidden_here.contains(handle)) {
+            restore.show.push_back(handle);
+        }
+        if (switched_off.contains(handle)) {
+            restore.switch_on.push_back(handle);
+        }
+    }
+    return restore;
+}
+
 bool FollowsTheHostsShown(s32 entity) {
     // m21_00: the right- and left-hand weapon givers and their weapon displays (12101020/21
     // hide them once their gift is taken), the note and the multiplayer items givers.
@@ -5039,6 +5087,7 @@ std::vector<u8> EncodeWorldLogFlagsSnapshot(const WorldLogFlagsSnapshot& snapsho
     AppendName(payload, snapshot.host);
     AppendLittleEndian(payload, snapshot.epoch);
     AppendLittleEndian(payload, snapshot.last);
+    payload.push_back(snapshot.after_wipe ? 1 : 0);
     const size_t count = std::min(snapshot.events.size(), WorldLogRecentFlags);
     payload.push_back(static_cast<u8>(count));
     for (size_t index = snapshot.events.size() - count; index < snapshot.events.size(); ++index) {
@@ -5055,11 +5104,12 @@ std::optional<WorldLogFlagsSnapshot> DecodeWorldLogFlagsSnapshot(std::span<const
     auto host = reader.Name();
     const auto epoch = reader.Next<u64>();
     const auto last = reader.Next<u64>();
+    const auto after_wipe = reader.Next<u8>();
     const auto count = reader.Next<u8>();
-    if (!host || !epoch || !last || !count) {
+    if (!host || !epoch || !last || !after_wipe || *after_wipe > 1 || !count) {
         return std::nullopt;
     }
-    WorldLogFlagsSnapshot snapshot{std::move(*host), *epoch, *last, {}};
+    WorldLogFlagsSnapshot snapshot{std::move(*host), *epoch, *last, {}, *after_wipe == 1};
     for (u8 index = 0; index < *count; ++index) {
         const auto seq = reader.Next<u64>();
         const auto kind = reader.Next<u8>();
@@ -5328,7 +5378,7 @@ WorldLogHost::Taken WorldLogHost::ProposeHp(const WorldLogHpProposal& proposal) 
 }
 
 WorldLogFlagsSnapshot WorldLogHost::FlagsSnapshot(std::string_view host) const {
-    return {std::string{host}, epoch, last, recent_flags};
+    return {std::string{host}, epoch, last, recent_flags, started_after_wipe};
 }
 
 std::vector<WorldLogHpSnapshot> WorldLogHost::HpSnapshot(std::string_view host) const {
@@ -5410,6 +5460,7 @@ std::vector<WorldLogEntry> WorldLogHost::Start(u64 new_epoch, bool after_wipe) {
     standing.clear();
     hp.clear(); // no damage from before it (a wipe respawned the map)
     recent_flags.clear();
+    started_after_wipe = after_wipe;
     std::vector<WorldLogEntry> entries{
         Append(WorldLogKind::Reset, 0, after_wipe ? WorldLogResetAfterWipe : 0)};
     AppendShown(entries); // the host's world as it is (not a kill: it stays the host's now)
@@ -5721,7 +5772,9 @@ WorldLogMember::Step WorldLogMember::Take(const WorldLogFlagsSnapshot& part, s64
     }
     host_last = std::max(host_last, part.last);
     if (!based || part.last > applied) {
-        Pending(part.last).flags = part.events;
+        PartialSnapshot& pending = Pending(part.last);
+        pending.flags = part.events;
+        pending.after_wipe = part.after_wipe;
         Complete(step);
     }
     step.gap = Behind();
@@ -5794,6 +5847,17 @@ void WorldLogMember::Complete(Step& step) {
                 step.applied.push_back(event);
             }
         }
+    } else {
+        // A member that joins: the events it heard live while it waited (Drain drops the entries
+        // the snapshot covers, and on the log path nothing else sets them).
+        for (const auto& [seq, event] : waiting) {
+            if (seq <= pending.last &&
+                (event.kind == WorldLogKind::FlagSet || event.kind == WorldLogKind::FlagClear)) {
+                step.applied.push_back(event);
+            }
+        }
+        // Based on a log that started at a wipe without its Reset entry (see WorldLogWipeHold).
+        step.after_wipe = pending.after_wipe;
     }
     kills.clear();
     for (const auto& [index, share] : pending.got) {
@@ -6148,7 +6212,7 @@ bool HeavyAttackPressed(u32 before, u32 now) {
     return (now & ~before & PadR2) != 0 && (now & PadR1) == 0;
 }
 
-DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms) {
+DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms, bool in_session) {
     if (wiped) {
         return DownEnd::Wipe;
     }
@@ -6157,6 +6221,9 @@ DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms) {
     }
     if (revived) {
         return DownEnd::Revive;
+    }
+    if (!in_session) {
+        return DownEnd::SessionLost;
     }
     return board_age_ms >= BoardLostMs ? DownEnd::BoardLost : DownEnd::None;
 }

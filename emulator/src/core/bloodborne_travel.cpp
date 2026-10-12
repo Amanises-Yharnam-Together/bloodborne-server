@@ -1151,8 +1151,17 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     static ResumePoint saved;
     static s32 own_progress = 0;
     static u32 loaded_map = 0; // where the load the resume is for put the guest
+    static int for_slot = -1;
     if (!IsPartyGuestRole()) {
         return;
+    }
+    // Another character (back to the title, another slot): its own load, its own point.
+    if (const int slot = character_slot.load(); slot != for_slot) {
+        for_slot = slot;
+        phase = Phase::WaitForLoad;
+        stable_since.reset();
+        saved = {};
+        loaded_map = 0;
     }
     const u64 global = GetGlobalState();
     const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
@@ -1330,7 +1339,15 @@ void TickPlayersOnThisMap() {
     SetPartyWorldChanges(sharing);
     KeepGuestProgress(in_session);
     LogFlagChangesInSession(sharing);
-    KeepEnemyDeathsInStep(sharing);
+    {
+        const auto started = std::chrono::steady_clock::now();
+        KeepEnemyDeathsInStep(sharing);
+        coop_time.Add("enemy step",
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - started)
+                          .count(),
+                      SteadyMilliseconds());
+    }
     SnapshotHostMapState(sharing);
     ResumeWhereTheGuestLeft(in_session);
     LogWatchedWrites();

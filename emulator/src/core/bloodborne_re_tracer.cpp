@@ -1300,11 +1300,19 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
         ApplySummonReloadStateAtDescriptor(*registers);
     }
     if (deferred_summon_reload_hook_installed && site.offset == SosStatusUpdateOffset) {
+        const auto started = std::chrono::steady_clock::now();
         RefreshSeamlessLocalPlacement();
         ApplyPreMatchCrossMapGuestWarp();
         ApplyDeferredSummonReload();
         ResumePreMatchCrossMapResponder();
         TickPartyController();
+        const s64 now_ms = SteadyMilliseconds();
+        coop_time.Add("co-op tick",
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - started)
+                          .count(),
+                      now_ms);
+        ReportCoopTime(now_ms);
     }
     if (healing_fountain_host_availability_hook_installed &&
         site.offset == HealingFountainAvailabilityOffset) {
