@@ -146,6 +146,15 @@ class TraceTest(unittest.TestCase):
         self.assertEqual(summary["board failures"], {"/bloodborne/party/hp": 1})
         self.assertEqual(summary["dropped"], 12)
 
+    def test_names_the_kills_path_as_it_changes(self):
+        trace = "\n".join([
+            "1760000000000 wlog-path path=board why=no\\speers",
+            "1760000003000 wlog-path path=log why=1\\speer\\shas\\sit",
+        ])
+        self.assertEqual(tool.summarize_trace(trace)["kills paths"],
+                         ["1760000000000 board (no peers)", "1760000003000 log (1 peer has it)"])
+        self.assertEqual(tool.summarize_trace(TRACE)["kills paths"], [])
+
     def test_finds_the_peers_long_silences(self):
         gaps = tool.summarize_trace(TRACE)["gaps"]
         self.assertEqual(len(gaps), 1)

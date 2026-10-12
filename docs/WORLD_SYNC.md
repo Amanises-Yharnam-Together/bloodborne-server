@@ -117,6 +117,46 @@ epoch, and each change of place a `place` record.
 - **Migration:** one board at a time, each its own PR with the old path kept behind a switch
   until rig-checked. Order: kills, shown, flags/mapstate, HP.
 
+Built, step 1: the kills (2026-10-12, not rig-checked yet). The pure logic is in
+`bloodborne_party.{h,cpp}` (`WorldLogHost`, `WorldLogMember`, `WorldLogPath`, the frames) and the
+runtime in `bloodborne_world_log.cpp`.
+
+- **Proposals are whole sets.** Each member sends its standing kills (`VisitKills::Standing`: this
+  visit's and the held ones, by map) to the host at once on a change and every 0.5 s (frame 0x34,
+  `WorldLogProposal`, with its run and a number that only grows, so a late frame and a restarted
+  game's old kills are told apart). The host keeps every member's set and appends an entry when
+  the party's union changes: a `Kill` for an enemy's first killer, an `Unkill` when its last one
+  takes it back. Two members' kills of one enemy are one entry; who proposes a kill is still
+  decided as before (the killer only, PR #40). A member that left keeps its kills standing, as on
+  the board.
+- **Entries** go to every peer in batches of at most 100 (frame 0x35, also the heartbeat every
+  0.5 s with the host's last seq). Members apply them in seq order exactly once; a gap, a late join
+  or a new epoch past its start asks for a snapshot (0x36), which the host answers in parts of at
+  most 280 kills (0x37). A member's copy stands 3 s after the host's last frame; otherwise it reads
+  the kill board.
+- **Epochs:** `(host run << 32) | logs started`. The host starts a new log (a `Reset` of every map,
+  then the standing kills) on its wipe, keeping the members' sets, and on a join, leave or new
+  character without them. A member forgets its copy on its own join, leave or new character and
+  follows a newer epoch (or another host run); an older log's frames are dropped.
+- **The path:** the hello carries a features byte (co-op protocol 2), and the log runs only while
+  every room peer has it on (`SHADPS4_BLOODBORNE_WORLD_LOG=0` turns it off). A peer whose hello
+  has not come, or no peers at all, keep the path 5 s, then the board. Builds before protocol 2
+  drop the new frame types. The path in use is logged once per change (`Co-op world log: on, ...`
+  / `off, ... (<why>)`). On the board path everything is as before (the board and the direct kills
+  frame 0x32).
+- **The board underneath:** on a change of path a member's next kill post asks since FreshStart,
+  so shadNet takes back what it posted. On the log path members post no kills; the host posts the
+  party's union as its own, the copy for a member whose link is down or who joins. A member reads
+  the log plus the board's other entries (members out of the room), or the whole board when its
+  copy is not fresh. The server is unchanged.
+- **Trace:** `wlog-in` (the host's starts and the proposals that changed its log, a member's
+  batches and snapshots that changed its copy, its resets) and `wlog-path`. The replay runs them
+  through the same classes; `traces/world-log-kills.txt` is a checked-in case.
+
+Next: `Shown` (the shown board: enable, park and dead bits per character), then `FlagSet` /
+`FlagClear` and the map state (by `FlagTable`'s owners), then `HpFloor` (enemy HP agreed), each
+moving one board onto the log the same way, with the board as the fallback copy.
+
 ## Stage D: split `bloodborne_re.cpp`
 
 The split is a move of code only, with no behaviour changes, checked against the clang-tidy
