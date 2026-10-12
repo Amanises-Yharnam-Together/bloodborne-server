@@ -2676,6 +2676,8 @@ constexpr u64 HudSetTextUtf8Slot = 0x130;
 // A game HUD string (UTF-16): the characters at +0x08, in place while the capacity (+0x20) is
 // below 8, else behind the pointer there.
 constexpr size_t GameHudStringSize = 0x28;
+// A whole game HUD string: its allocator at +0x28 (the tag and prompt updates copy through it).
+constexpr size_t GameHudStringFullSize = 0x38;
 // Its characters as ASCII ('?' for the others), at most 64; `read(address, count)` reads count
 // UTF-16 characters from guest memory for a string kept out of place.
 std::string GameHudString(std::span<const u8, GameHudStringSize> raw,
@@ -2765,10 +2767,11 @@ struct PartyPrompt {
 constexpr int PromptInputCircle = 1;
 constexpr int PromptInputR1 = 5;
 PartyPrompt PartyPromptFor(const struct PartyPanel& panel);
-// The prompt's data for the game's update; `text` is the address of its UTF-16 words, `game` the
-// game's own prompt data (its string's allocator).
+// The prompt's data for the game's update; `text` is the address of its UTF-16 words, `string` a
+// game HUD string to take the allocator from (a nameplate's: the game's own prompt data has none
+// until the game shows a prompt itself).
 void WritePromptData(std::span<u8, HudPromptDataSize> data,
-                     std::span<const u8, HudPromptDataSize> game, const PartyPrompt& prompt,
+                     std::span<const u8, GameHudStringFullSize> string, const PartyPrompt& prompt,
                      u64 text, size_t length);
 
 // The list's tags for the panel's first members: HP while up, the revive while down (of 100).
@@ -2779,7 +2782,6 @@ std::pair<s32, s32> PartyListPosition(int index);
 // strings (kept by the caller, at most 63 characters each). A game HUD string is 0x38 bytes: the
 // tag update copies it with the allocator at +0x28 (and a flag at +0x30), so each string starts as
 // the one in `game` (a TagData of the game's own, RemotePCTag0's).
-constexpr size_t GameHudStringFullSize = 0x38;
 void WriteTagData(std::span<u8, HudTagDataSize> data, std::span<const u8, HudTagDataSize> game,
                   const PartyListEntry& entry, s32 x, s32 y, u64 role, u64 name);
 

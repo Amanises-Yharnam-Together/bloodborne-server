@@ -289,11 +289,12 @@ TEST(BloodbornePartyHud, ThePromptSaysWhatTheButtonDoes) {
 }
 
 TEST(BloodbornePartyHud, WritesTheGamesPromptData) {
-    std::array<u8, HudPromptDataSize> data{}, game{};
+    std::array<u8, HudPromptDataSize> data{};
+    std::array<u8, GameHudStringFullSize> string{};
     data.fill(0xCC);
     const u64 allocator = 0x7777'0000;
-    std::memcpy(game.data() + 0x08 + 0x28, &allocator, 8);
-    WritePromptData(data, game, PartyPrompt{true, "x", 1}, 0x1111'0000, 15);
+    std::memcpy(string.data() + 0x28, &allocator, 8);
+    WritePromptData(data, string, PartyPrompt{true, "x", 1}, 0x1111'0000, 15);
     u64 value = 0;
     EXPECT_EQ(data[0], 1);
     EXPECT_EQ(data[1], 0) << "one line";
