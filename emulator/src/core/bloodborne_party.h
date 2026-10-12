@@ -550,7 +550,8 @@ FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> bef
 // the changes it sees in a session (lamps, shortcuts, bosses, quest steps) are kept, latest
 // state per flag, in a file of "<flag> <0|1>" lines and set in the guest's own world once it is
 // home. A join reload's bulk change, the death/multiplayer (4xxx) flags and
-// the pickups (their own list) are left out.
+// the pickups (their own list) are left out. Which flags are kept, shared or each player's own:
+// FlagTable (bloodborne_flags.h, docs/FLAGS.md); the flag predicates here read it.
 bool CarriesToGuestWorld(s32 flag);
 // The Hunter's Dream flags a guest out in the world (any map but the Dream) in a session sets for
 // itself: 9401 (Central Yharnam reached: the Dream's first visit, its shop) and 9403 (the
