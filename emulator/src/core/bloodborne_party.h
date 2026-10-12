@@ -524,6 +524,17 @@ bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_n
 // Whether the character loaded now is another one than the one a slot's lists were kept for
 // (`progress_kept`, its own world's set event flags then; 0 not known): far fewer set now.
 bool IsOtherCharacter(s32 progress_now, s32 progress_kept);
+// The set event flags of a load from two reads of the store a moment apart (each empty when it
+// missed part of the store): known only when both read the whole store and agree.
+std::optional<s32> SettledFlagCount(std::optional<s32> first, std::optional<s32> second);
+// Whether a load drops a slot's kept lists (`new_in_slot`: its confirmed pickups all missing):
+// never on an unknown count, since a wrong drop loses what the player looted.
+bool ForgetsSlotLists(std::optional<s32> progress_now, s32 progress_kept, bool new_in_slot);
+// A slot's kept files are copied aside before they are dropped, as `file`.bak-`stamp`; the copies
+// of `file` beyond the newest `keep` (stamps sort by time) are removed.
+std::string SlotBackupName(std::string_view file, std::string_view stamp);
+std::vector<std::string> SlotBackupsToRemove(std::string_view file,
+                                             std::span<const std::string> names, size_t keep);
 std::string FormatFlagList(std::span<const s32> flags);
 std::vector<s32> ParseFlagList(std::string_view text);
 // The event flag store (EventFlagMan [0x0553B100]): blocks of +0x1C flags each, kept in a map at

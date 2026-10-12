@@ -5134,13 +5134,62 @@ std::filesystem::path GuestOwnerFile() {
            fmt::format("bloodborne_party_owner_slot{}.txt", character_slot.load());
 }
 
-s32 CountSetFlags();
+std::optional<s32> CountSetFlags();
+std::filesystem::path GuestWorldFile();
+
+// The slot's kept lists are copied aside (name.bak-<local time>) before they are dropped, so a
+// wrong drop can be undone by hand; the newest 5 copies of each stay.
+void BackUpSlotLists() {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    const std::string stamp =
+        fmt::format("{:04}{:02}{:02}-{:02}{:02}{:02}", local.tm_year + 1900, local.tm_mon + 1,
+                    local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
+    for (const std::filesystem::path& file :
+         {GuestProgressFile(), GuestWorldFile(), GuestConfirmedFile()}) {
+        std::error_code error;
+        if (!std::filesystem::exists(file, error)) {
+            continue;
+        }
+        const std::string name = Common::FS::PathToUTF8String(file.filename());
+        std::filesystem::copy_file(file, file.parent_path() / SlotBackupName(name, stamp),
+                                   std::filesystem::copy_options::overwrite_existing, error);
+        if (error) {
+            LOG_WARNING(Debug, "Bloodborne party: could not copy {} aside: {}", name,
+                        error.message());
+            continue;
+        }
+        std::vector<std::string> names;
+        for (const auto& entry : std::filesystem::directory_iterator(file.parent_path(), error)) {
+            names.push_back(Common::FS::PathToUTF8String(entry.path().filename()));
+        }
+        for (const std::string& old : SlotBackupsToRemove(name, names, 5)) {
+            std::filesystem::remove(file.parent_path() / old, error);
+        }
+    }
+}
 
 // Before a load of the guest's own world sets its pickups: a slot whose confirmed pickups are
 // all missing, or whose world has far fewer event flags set than when it last loaded, holds a
 // new character, so the slot's kept lists are dropped (pickups first, as
 // SetGuestPickupsBeforeMapItems sets them right after).
 void ForgetSlotIfNewCharacter() {
+    // Read twice: a load changes the store on another thread, and a count from a partial or torn
+    // read decides nothing (a count of 0 read as a new character could wipe the kept pickups).
+    const std::optional<s32> settled = SettledFlagCount(CountSetFlags(), CountSetFlags());
+    if (!settled) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: the flag store of save slot {} did not read whole; its kept "
+                 "lists stay",
+                 character_slot.load());
+        return;
+    }
+    const s32 progress_now = *settled;
     const std::vector<s32> confirmed = ReadGuestConfirmed();
     const size_t set_now = static_cast<size_t>(std::ranges::count_if(confirmed, EventFlagOn));
     s32 progress_kept = 0;
@@ -5148,15 +5197,15 @@ void ForgetSlotIfNewCharacter() {
         std::ifstream file{GuestOwnerFile()};
         file >> progress_kept;
     }
-    const s32 progress_now = CountSetFlags();
     const bool other = IsOtherCharacter(progress_now, progress_kept);
-    if (progress_now > 0) {
+    {
         std::ofstream file{GuestOwnerFile(), std::ios::trunc};
         file << (other ? progress_now : std::max(progress_now, progress_kept)) << '\n';
     }
-    if (!IsNewCharacterInSlot(confirmed, set_now) && !other) {
+    if (!ForgetsSlotLists(progress_now, progress_kept, IsNewCharacterInSlot(confirmed, set_now))) {
         return;
     }
+    BackUpSlotLists();
     {
         std::scoped_lock lock{guest_picked_mutex};
         GuestPickedFlags().clear();
@@ -5167,7 +5216,7 @@ void ForgetSlotIfNewCharacter() {
     std::filesystem::remove(GuestConfirmedFile(), error);
     LOG_INFO(Debug,
              "Bloodborne party: new character in save slot {} ({} event flags set, {} kept); its "
-             "kept lists start clean",
+             "kept lists start clean (old ones copied aside as .bak files)",
              character_slot.load(), progress_now, progress_kept);
 }
 
@@ -5252,6 +5301,8 @@ struct FlagBlock {
 struct FlagStore {
     u32 flags_per_block = 0;
     std::vector<FlagBlock> blocks;
+    // Every node and block was read (none unmapped, the walk not cut short).
+    bool whole = false;
 };
 
 FlagStore ReadFlagStore() {
@@ -5273,10 +5324,23 @@ FlagStore ReadFlagStore() {
     const auto readable = [](u64 node) {
         return node >= 0x10000 && HasMemoryAccess(node, 0x38, MemoryProt::CpuRead);
     };
+    // A node that can't be read or a tree deeper than the walk keeps leaves the copy part done.
+    bool whole = true;
+    const auto inner = [&](u64 node) {
+        if (!readable(node)) {
+            whole = false;
+            return false;
+        }
+        return ReadValue<u8>(node, 0x19) == 0;
+    };
     std::vector<u64> stack;
     u64 node = readable(header) ? ReadValue<u64>(header, 0x08) : 0;
-    while ((readable(node) && ReadValue<u8>(node, 0x19) == 0) || !stack.empty()) {
-        while (readable(node) && ReadValue<u8>(node, 0x19) == 0 && stack.size() < 64) {
+    while (inner(node) || !stack.empty()) {
+        while (inner(node)) {
+            if (stack.size() >= 64) {
+                whole = false;
+                break;
+            }
             stack.push_back(node);
             node = ReadValue<u64>(node, 0x00);
         }
@@ -5293,12 +5357,16 @@ FlagStore ReadFlagStore() {
             FlagBlock block{ReadValue<u32>(node, 0x20), std::vector<u8>(block_bytes), bits};
             std::memcpy(block.bytes.data(), reinterpret_cast<const void*>(bits), block_bytes);
             store.blocks.push_back(std::move(block));
+        } else if (kind == 1 || kind == 2) {
+            whole = false;
         }
         if (store.blocks.size() > 20000) {
+            whole = false;
             break;
         }
         node = ReadValue<u64>(node, 0x10);
     }
+    store.whole = whole;
     return store;
 }
 
@@ -6932,9 +7000,13 @@ size_t ApplyHostMapState() {
 // A party guest resumes where it left (see ResumePoint): its last map and position are kept in
 // user/bloodborne_party_resume_slotN.txt every few seconds; the first load after the game starts
 // goes back there (a trip to that map's first lamp if needed, then a move like a revive's).
-// How many event flags are set (the whole store): only adds up as a character plays.
-s32 CountSetFlags() {
+// How many event flags are set (the whole store): only adds up as a character plays. None when
+// the store did not read whole (see SettledFlagCount).
+std::optional<s32> CountSetFlags() {
     const FlagStore store = ReadFlagStore();
+    if (!store.whole || store.blocks.empty()) {
+        return std::nullopt;
+    }
     s32 count = 0;
     for (const FlagBlock& block : store.blocks) {
         for (const u8 byte : block.bytes) {
@@ -7026,7 +7098,8 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         std::ifstream file{GuestResumeFile()};
         const std::string text{std::istreambuf_iterator<char>{file}, {}};
         const auto point = in_session ? std::nullopt : ParseResumePoint(text);
-        own_progress = in_session ? 0 : CountSetFlags();
+        // An unknown count (0) is no other character (see IsOtherCharacter).
+        own_progress = in_session ? 0 : CountSetFlags().value_or(0);
         const ResumeStep step =
             point ? ChooseResumeStep(*point, map, *at, own_progress, loaded_map) : ResumeStep{};
         phase = Phase::Recording;
@@ -7070,7 +7143,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     last_saved = now;
     // The count of its own world: in a session the flag store is the host's.
     if (!in_session) {
-        own_progress = CountSetFlags();
+        own_progress = CountSetFlags().value_or(own_progress);
     }
     const ResumePoint point{map, *at, own_progress};
     if (ChooseResumeStep(saved, map, *at, point.progress).kind == ResumeStep::Kind::Stay &&

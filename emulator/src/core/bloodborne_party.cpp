@@ -6,6 +6,7 @@
 #include <bit>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -601,7 +602,48 @@ bool IsOtherCharacter(s32 progress_now, s32 progress_kept) {
     // load clears some area flags (dozens to a few hundred: krolebord's restarts read 5800 set
     // against 5859 kept), so "far" is a quarter of what was kept.
     const s32 slack = std::max<s32>(20, progress_kept / 4);
-    return progress_kept > 0 && progress_now + slack < progress_kept;
+    // No world has 0 flags set: that is a store read mid-load, not a character.
+    return progress_kept > 0 && progress_now > 0 && progress_now + slack < progress_kept;
+}
+
+std::optional<s32> SettledFlagCount(std::optional<s32> first, std::optional<s32> second) {
+    if (!first || !second || *first <= 0 || *second <= 0) {
+        return std::nullopt;
+    }
+    // Two reads a moment apart differ by a few flags at most; more is a read torn by the load.
+    const s32 slack = std::max<s32>(20, std::max(*first, *second) / 100);
+    if (std::abs(*first - *second) > slack) {
+        return std::nullopt;
+    }
+    return std::max(*first, *second);
+}
+
+bool ForgetsSlotLists(std::optional<s32> progress_now, s32 progress_kept, bool new_in_slot) {
+    if (!progress_now || *progress_now <= 0) {
+        return false;
+    }
+    return new_in_slot || IsOtherCharacter(*progress_now, progress_kept);
+}
+
+std::string SlotBackupName(std::string_view file, std::string_view stamp) {
+    return fmt::format("{}.bak-{}", file, stamp);
+}
+
+std::vector<std::string> SlotBackupsToRemove(std::string_view file,
+                                             std::span<const std::string> names, size_t keep) {
+    const std::string prefix = SlotBackupName(file, "");
+    std::vector<std::string> backups;
+    for (const std::string& name : names) {
+        if (name.size() > prefix.size() && name.starts_with(prefix)) {
+            backups.push_back(name);
+        }
+    }
+    std::ranges::sort(backups);
+    if (backups.size() <= keep) {
+        return {};
+    }
+    backups.resize(backups.size() - keep);
+    return backups;
 }
 
 bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now) {
