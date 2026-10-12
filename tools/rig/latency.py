@@ -68,6 +68,12 @@ class DelayProxy:
         self.stopping = threading.Event()
         self.sockets: list[socket.socket] = []
         self.lock = threading.Lock()
+        self.held_until = 0.0  # an outage (outage()): nothing passes before this (monotonic)
+
+    def outage(self, seconds: float):
+        """Nothing gets through for `seconds` (players' links dropped for 15-31 s): what is sent
+        meanwhile arrives after it, in order, as TCP sends it again."""
+        self.held_until = time.monotonic() + seconds
 
     def start(self):
         threading.Thread(target=self.accept_all, daemon=True).start()
@@ -124,7 +130,7 @@ class DelayProxy:
                     while not queue:
                         ready.wait()
                     due, data = queue.pop(0)
-                wait = due - time.monotonic()
+                wait = max(due, self.held_until) - time.monotonic()
                 if wait > 0:
                     time.sleep(wait)
                 if not data:  # the other side closed: so does this one, after what came before

@@ -86,6 +86,23 @@ class ProxyTest(unittest.TestCase):
         finally:
             proxy.stop()
 
+    def test_an_outage_holds_everything_until_it_is_over(self):
+        # Players' Radmin links dropped for 15-31 s (2026-10-11): nothing gets through then, and
+        # what was sent arrives after (TCP sends it again), in order.
+        proxy = latency.DelayProxy(0, self.target, (1, 2))
+        proxy.start()
+        try:
+            with socket.create_connection(("127.0.0.1", proxy.port), timeout=5) as client:
+                client.sendall(b"before")
+                self.assertEqual(client.recv(4096), b"before")
+                proxy.outage(0.5)
+                started = time.perf_counter()
+                client.sendall(b"during")
+                self.assertEqual(client.recv(4096), b"during")
+                self.assertGreaterEqual(time.perf_counter() - started, 0.45)
+        finally:
+            proxy.stop()
+
     def test_a_stopped_proxy_lets_go_of_its_port(self):
         proxy = latency.DelayProxy(0, self.target, (1, 2))
         proxy.start()

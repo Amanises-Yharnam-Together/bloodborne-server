@@ -85,6 +85,11 @@ struct AutoplayRun {
     s32 noted_max_hp = 0;             // note-max-hp: the player's max HP then
     u32 pickup_handle = 0;            // pickup: the map item it went for
     s32 hit_from_hp = 0;              // hit: the target's HP when it began
+    std::string script_path;          // sync: the go files are beside it (AutoplaySyncPath)
+    std::string chapter;              // the chapter the script is in (a rig suite's section)
+    bool keep_going = false;          // keep-going on: a failed step gives up only its chapter
+    bool failed = false;              // a step failed and the script went on: "done (failed)"
+    LampPosition glide_from{};        // glide: where the player was when it began
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -102,6 +107,7 @@ void LoadAutoplay() {
     const std::string text{std::istreambuf_iterator<char>{file}, {}};
     std::scoped_lock lock{autoplay_mutex};
     autoplay_run.script = ParseAutoplayScript(text);
+    autoplay_run.script_path = path;
     autoplay_run.phase = AutoplayRun::Phase::Title;
     autoplay_run.started = std::chrono::steady_clock::now();
     LOG_INFO(Debug, "Bloodborne autoplay: {} steps from {}", autoplay_run.script.size(), path);
@@ -643,6 +649,44 @@ bool AutoplayTeleport(const AutoplayStep& step) {
     return true;
 }
 
+// glide <x y z>...: from where the player is along those points at walking pace, by small
+// teleports facing the way it goes (a far teleport drops it through the floor): a path a "map
+// change" log line gave (its trail), to cross a border between two maps.
+bool AutoplayGlide(const AutoplayStep& step) {
+    const auto& args = step.command.args;
+    if (args.empty() || args.size() % 3 != 0) {
+        step.failure = "glide takes x y z points";
+        return false;
+    }
+    if (!step.begun) {
+        const auto at = LocalPlayerPosition();
+        if (!at) {
+            step.failure = "no player";
+            return false;
+        }
+        std::scoped_lock lock{autoplay_mutex};
+        autoplay_run.glide_from = *at;
+    }
+    std::vector<LampPosition> path;
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        path.push_back(autoplay_run.glide_from);
+    }
+    for (size_t at = 0; at < args.size(); at += 3) {
+        path.push_back({static_cast<float>(step.Number(at, 0)),
+                        static_cast<float>(step.Number(at + 1, 0)),
+                        static_cast<float>(step.Number(at + 2, 0))});
+    }
+    const auto point = GlidePoint(path, step.elapsed);
+    const LampPosition to = point.value_or(path.back());
+    const LampPosition ahead = GlidePoint(path, step.elapsed + 0.25).value_or(path.back());
+    const float dx = ahead[0] - to[0];
+    const float dz = ahead[2] - to[2];
+    // A heading h faces (-sin h, cos h).
+    TeleportLocalPlayer(to, dx == 0.0f && dz == 0.0f ? 0.0f : std::atan2(-dx, dz));
+    return !point.has_value();
+}
+
 // pickup [<meters>] [<timeout>]: onto the nearest usable map item within reach (30 m), then
 // X for 0.3 s of every 1.5 s until the item leaves the usable list: a real pickup through the
 // item button (the host could not pick up items in the Forbidden Woods, 2026-10-09).
@@ -806,6 +850,43 @@ bool AutoplayGodmode(const AutoplayStep& step) {
 bool AutoplaySnapshot(const AutoplayStep&) {
     LogAutoplaySnapshot();
     return true;
+}
+
+// chapter <name>: a rig suite's next section; the rig judges each one on its own lines.
+bool AutoplayChapter(const AutoplayStep& step) {
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.chapter = std::string{step.Arg(0)};
+    LOG_INFO(Debug, "Bloodborne autoplay: chapter {}", step.Arg(0));
+    return true;
+}
+
+// keep-going <on|off>: on, a failed step gives up its chapter and the script goes on at the next
+// one (NextAutoplayChapter); off (a chapter the rest needs, as the join), it ends there.
+bool AutoplayKeepGoing(const AutoplayStep& step) {
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.keep_going = step.Arg(0) == "on";
+    return true;
+}
+
+// sync <name> [<timeout>]: wait until every game of the suite got here: the rig sees each one's
+// "reached" line and writes the go file (AutoplaySyncPath) for all of them at once.
+bool AutoplaySync(const AutoplayStep& step) {
+    std::string script;
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        script = autoplay_run.script_path;
+    }
+    const auto path = AutoplaySyncPath(script, step.Arg(0));
+    if (!path) {
+        step.failure = "no such sync name";
+        return false;
+    }
+    if (!step.begun) {
+        LOG_INFO(Debug, "Bloodborne autoplay: sync {} reached (t={:.1f})", step.Arg(0),
+                 SteadyMilliseconds() / 1000.0);
+    }
+    std::error_code error;
+    return std::filesystem::exists(*path, error) || step.WaitedOut(step.Number(1, 600));
 }
 
 bool AutoplayCensus(const AutoplayStep& step) {
@@ -1110,6 +1191,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"attack", AutoplayAttack},
     {"hit", AutoplayHit},
     {"teleport", AutoplayTeleport},
+    {"glide", AutoplayGlide},
     {"pickup", AutoplayPickup},
     {"rise", AutoplayRise},
     {"approach-downed", AutoplayApproachDowned},
@@ -1137,6 +1219,9 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-session", AutoplayExpectSession},
     {"expect-others-near", AutoplayExpectOthersNear},
     {"expect-map", AutoplayExpectMap},
+    {"chapter", AutoplayChapter},
+    {"keep-going", AutoplayKeepGoing},
+    {"sync", AutoplaySync},
     {"done", AutoplayDone},
 });
 
@@ -1195,7 +1280,8 @@ void TickAutoplay() {
         if (autoplay_run.next >= autoplay_run.script.size() ||
             autoplay_run.script[autoplay_run.next].verb == "done") {
             autoplay_run.phase = AutoplayRun::Phase::Done;
-            LOG_INFO(Debug, "Bloodborne autoplay: done (ok)");
+            LOG_INFO(Debug, "Bloodborne autoplay: done ({})",
+                     autoplay_run.failed ? "failed" : "ok");
             return;
         }
         command = autoplay_run.script[autoplay_run.next];
@@ -1211,10 +1297,21 @@ void TickAutoplay() {
     if (!failure.empty()) {
         LOG_ERROR(Debug, "Bloodborne autoplay: step {}/{} {} FAILED: {}", index + 1, total,
                   AutoplayText(command), failure);
-        LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
-        autoplay_run.phase = AutoplayRun::Phase::Done;
         autoplay_buttons.store(0);
         autoplay_sticks.store(0x80808080);
+        if (autoplay_run.keep_going) {
+            if (const auto next = NextAutoplayChapter(autoplay_run.script, index)) {
+                // The rig lets the others past this chapter's syncs (they would wait in vain).
+                LOG_INFO(Debug, "Bloodborne autoplay: chapter {} given up", autoplay_run.chapter);
+                autoplay_run.failed = true;
+                autoplay_run.next = *next;
+                autoplay_run.step_started = std::chrono::steady_clock::now();
+                autoplay_run.step_begun = false;
+                return;
+            }
+        }
+        LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
+        autoplay_run.phase = AutoplayRun::Phase::Done;
         return;
     }
     if (finished && !autoplay_run.hold_until) {

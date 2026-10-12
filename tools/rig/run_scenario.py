@@ -10,10 +10,18 @@ expected lines there, and no known problem (check_party_log.py). Each run's game
 stay in rig/runs/<when>/<scenario>/ (the last RUNS_KEPT batches).
 
   py -3.12 tools/rig/run_scenario.py <scenario> [<scenario>...] [--keep-servers] [--list]
+  py -3.12 tools/rig/run_scenario.py --engine port smoke   (a suite: suites.py)
+  py -3.12 tools/rig/run_scenario.py --engine port trips --chapter dog   (one of its chapters)
+  py -3.12 tools/rig/run_scenario.py --engine port --setup-lanes 3   (once: lanes 1 and 2)
+  py -3.12 tools/rig/run_scenario.py --engine port --lanes 3 smoke trips together ...
   py -3.12 tools/rig/run_scenario.py --save-baseline
   py -3.12 tools/rig/run_scenario.py --add-guest2   (a third game for parties of three)
   py -3.12 tools/rig/run_scenario.py --boot-check host [--seconds 40]   (tools/smoke-boot.ps1)
   py -3.12 tools/rig/run_scenario.py --engine port --play down-revive   (games to play by hand)
+
+A suite (suites.py) runs many chapters in one session from one boot: its games wait for each
+other at sync steps (the runner writes each go file once every game in it got there) and each
+chapter is judged on its own lines of the logs.
 
 Every scenario starts from the same saves: --save-baseline keeps each role's save and party files
 (rig/<role>/baseline) and every run puts them back first, so one test's progress (a boss killed,
@@ -36,6 +44,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -48,6 +57,10 @@ import engines  # noqa: E402
 import latency  # noqa: E402
 from engines import BACKEND_PORT, BB_ROOT, SHADNET_PORT, WEBAPI_PORT  # noqa: E402
 from scenarios import SCENARIOS, START  # noqa: E402
+from suites import SUITE_SCENARIOS, SUITES, compile_suite  # noqa: E402
+
+# What the runner runs by name: the scenarios and the suites (suites.py), one kind of thing.
+RUNNABLE = {**SCENARIOS, **SUITE_SCENARIOS}
 
 RIG = BB_ROOT / "rig"
 RUNS = RIG / "runs"
@@ -63,6 +76,33 @@ ROLES = {
 
 # The build the games run: the emulator unless --engine says otherwise.
 ENGINE = engines.ENGINES["emulator"]
+
+# The lane this process plays in (--lane, engines.use_lane): 0 is the rig as it always was;
+# lane n has its own servers (rig/lanes/<n>), ports and the port's game folders, so several runs
+# go side by side (--lanes). A lane's games are the ones this process started (LAUNCHED): it
+# stops only those, never another lane's.
+LANE = 0
+LAUNCHED: list[subprocess.Popen] = []
+# Each lane's P2P ports this far after the last's (the roles' own differ by 1).
+LANE_P2P_STEP = 10
+
+
+def use_lane(lane: int):
+    global LANE, SHADNET_PORT, WEBAPI_PORT, BACKEND_PORT
+    engines.use_lane(lane)
+    LANE = lane
+    SHADNET_PORT, WEBAPI_PORT, BACKEND_PORT = (engines.SHADNET_PORT, engines.WEBAPI_PORT,
+                                               engines.BACKEND_PORT)
+
+
+def lane_dir(lane: int | None = None) -> pathlib.Path:
+    """Where a lane's servers live: rig/ itself for lane 0."""
+    lane = LANE if lane is None else lane
+    return RIG if lane == 0 else RIG / "lanes" / str(lane)
+
+
+def p2p_port(role: str) -> int:
+    return ROLES[role]["port"] + LANE * LANE_P2P_STEP
 
 
 def use_engine(name: str):
@@ -100,18 +140,30 @@ def matching_udp_port() -> int:
     return server_port(SHADNET_PORT) + 1
 
 
+def with_setting(config: str, key: str, value: int) -> str:
+    """shadnet.cfg's text with `key` set to `value`."""
+    return re.sub(rf"(?m)^{key}=\d+$", f"{key}={value}", config)
+
+
 def with_matching_udp_port(config: str, port: int) -> str:
     """shadnet.cfg's text with its MatchingUdpPort set to `port`."""
-    return re.sub(r"(?m)^MatchingUdpPort=\d+$", f"MatchingUdpPort={port}", config)
+    return with_setting(config, "MatchingUdpPort", port)
 
 
 def configure_shadnet():
-    config = RIG / "server" / "shadnet.cfg"
+    """The lane's shadNet on the lane's ports (lane 0's are the ones it always had)."""
+    config = lane_dir() / "server" / "shadnet.cfg"
     if config.is_file():
         text = config.read_text(encoding="utf-8")
         wanted = with_matching_udp_port(text, matching_udp_port())
+        wanted = with_setting(wanted, "UnsecuredPort", SHADNET_PORT)
+        wanted = with_setting(wanted, "WebApiPort", WEBAPI_PORT)
         if wanted != text:
             config.write_text(wanted, encoding="utf-8", newline="")
+
+
+# The servers' delaying proxies of this run (a suite's outage holds them).
+PROXIES: list[latency.DelayProxy] = []
 
 
 def start_delay_proxies() -> list[latency.DelayProxy]:
@@ -127,6 +179,86 @@ def start_delay_proxies() -> list[latency.DelayProxy]:
 DONE = re.compile(r"Bloodborne autoplay: done \((ok|failed)\)")
 IN_WORLD = "Bloodborne autoplay: in the world"
 STEP_FAILED = re.compile(r"Bloodborne autoplay: step .* FAILED: .*")
+# A suite (suites.py): its games mark each chapter, wait for each other at syncs, and with
+# keep-going on give up a chapter whose step failed (bloodborne_re.cpp).
+SYNC_REACHED = re.compile(r"Bloodborne autoplay: sync (\S+) reached")
+CHAPTER = re.compile(r"Bloodborne autoplay: chapter (\S+)[ \t\r]*$", re.M)
+CHAPTER_GIVEN_UP = re.compile(r"Bloodborne autoplay: chapter (\S*) given up")
+
+
+def syncs_reached(text: str) -> set[str]:
+    return set(SYNC_REACHED.findall(text))
+
+
+def syncs_to_release(syncs: dict[str, dict], reached: dict[str, set[str]], given_up: set[str],
+                     finished: set[str], released: set[str]) -> list[str]:
+    """The syncs to let go now, in the suite's order: every game in one reached it (a game whose
+    script ended or crashed never will), or a game gave up its chapter (the others would wait in
+    vain)."""
+    return [name for name, sync in syncs.items()
+            if name not in released and (
+                sync["chapter"] in given_up or
+                all(role in finished or name in reached.get(role, set())
+                    for role in sync["roles"]))]
+
+
+def sync_dir(role_dir: pathlib.Path) -> pathlib.Path:
+    """Where the games look for their go files (AutoplaySyncPath: beside autoplay.txt)."""
+    return role_dir / "sync"
+
+
+def write_go_file(role_dir: pathlib.Path, name: str):
+    folder = sync_dir(role_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_text("go\n", encoding="utf-8")
+
+
+def clear_go_files(role_dir: pathlib.Path):
+    shutil.rmtree(sync_dir(role_dir), ignore_errors=True)
+
+
+def chapter_sections(text: str) -> dict[str, str]:
+    """A suite game's log by chapter, in the order they began: each chapter's lines up to the
+    next chapter's mark (a game restarted in a chapter marks it again: its lines join it)."""
+    marks = list(CHAPTER.finditer(text))
+    sections: dict[str, str] = {}
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
+        sections[mark.group(1)] = sections.get(mark.group(1), "") + text[mark.start():end]
+    return sections
+
+
+def judge(spec: dict, texts: dict[str, str]) -> list[str]:
+    """What is wrong in the roles' logs by a scenario's (or a suite chapter's) checks: failed
+    steps, expected lines missing, forbidden lines seen, the shared enemy's HP and hits, and the
+    known problems (check_party_log.py) it does not allow. Each problem starts with its role."""
+    problems = []
+    if handle := spec.get("same_hp"):
+        for index in [*spec.get("same_hp_census", []), -1]:
+            where = "last census" if index < 0 else f"census {index + 1}"
+            if problem := same_hp_problem(texts, handle, index):
+                problems.append(f"all: {where}: {problem}")
+    if handle := spec.get("hp_sums_hits"):
+        if problem := hits_sum_problem(texts, handle):
+            problems.append(f"all: {problem}")
+    if limit := spec.get("max_hp_lag"):
+        lag = hp_board_lag(texts, spec["hp_sums_hits"])
+        if lag is None or lag > limit:
+            problems.append(f"all: {spec['hp_sums_hits']} reached the other games' bars in "
+                            f"{'?' if lag is None else f'{lag:.2f}'} s (at most {limit} s)")
+    for role, text in texts.items():
+        problems += [f"{role}: {failed}" for failed in STEP_FAILED.findall(text)]
+        for pattern in spec.get("expect", {}).get(role, []):
+            if not re.search(pattern, text):
+                problems.append(f"{role}: expected, not seen: {pattern}")
+        for pattern in spec.get("forbid", {}).get(role, []):
+            if found := re.search(pattern, text):
+                problems.append(f"{role}: must not happen, seen: {found.group(0)[:160]}")
+        _, known = check_party_log.summarize(text)
+        allowed = spec.get("allow", [])
+        problems += [f"{role}: PROBLEM {problem}" for problem in known
+                     if not any(re.search(pattern, problem) for pattern in allowed)]
+    return problems
 
 
 def port_open(port: int) -> bool:
@@ -168,6 +300,9 @@ def stop_games():
     stay open until then). A window close first: a game stopped hard leaves some of its memory
     with the GPU driver until Windows restarts (0.2-0.4 GB a game, measured), which over a day of
     runs left no room for three games. A game that does not close in 15 s is stopped."""
+    if LANE:
+        stop_lane_games()
+        return
     for pid in games()[0]:
         subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True)
     deadline = time.time() + 15
@@ -178,6 +313,20 @@ def stop_games():
     deadline = time.time() + 20
     while time.time() < deadline and games()[0]:
         time.sleep(0.5)
+
+
+def stop_lane_games():
+    """A lane's games: the ones this process started (the port's launcher and the game under
+    it), a window close first as stop_games does."""
+    running = [game for game in LAUNCHED if game.poll() is None]
+    for game in running:
+        subprocess.run(["taskkill", "/T", "/PID", str(game.pid)], capture_output=True)
+    deadline = time.time() + 15
+    while time.time() < deadline and any(game.poll() is None for game in running):
+        time.sleep(0.5)
+    for game in running:
+        stop_game(game)
+    LAUNCHED.clear()
 
 
 def listening_pids(netstat: str, port: int) -> set[int]:
@@ -218,15 +367,95 @@ def start_servers(log_dir: pathlib.Path | None = None):
     """The rig's shadNet and backend, the ones not up yet, their output in log_dir."""
     if not port_open(SHADNET_PORT):
         configure_shadnet()
-        start_server([str(RIG / "server" / "shadnet.exe")], RIG / "server",
+        start_server([str(lane_dir() / "server" / "shadnet.exe")], lane_dir() / "server",
                      log_dir / "shadnet.log" if log_dir else None)
     if not port_open(BACKEND_PORT):
         start_server([sys.executable, "bb_dummy_server.py", "--address", "127.0.0.1", "--port",
-                      str(BACKEND_PORT), "--shadnet-webapi", "http://127.0.0.1:32315"],
-                     RIG / "backend", log_dir / "backend.log" if log_dir else None)
+                      str(BACKEND_PORT), "--shadnet-webapi", f"http://127.0.0.1:{WEBAPI_PORT}"],
+                     lane_dir() / "backend", log_dir / "backend.log" if log_dir else None)
     deadline = time.time() + 30
     while time.time() < deadline and not (port_open(SHADNET_PORT) and port_open(BACKEND_PORT)):
         time.sleep(0.5)
+
+
+# What a lane's copy of the rig leaves out: the port's prepared game image (run.py makes it again,
+# hundreds of GB of links), logs, pictures, sync files, save backups and old server binaries.
+LANE_SKIPPED = shutil.ignore_patterns("out", "log", "captures", "shots", "sync", "save-backups",
+                                      "*.bak", "*.err", "*.log", "*.out", "*-before-*", "trace*")
+
+
+def setup_lane(lane: int) -> list[pathlib.Path]:
+    """Lane `lane`'s own copy of the rig: its servers (rig/lanes/<n>/server and backend, the
+    same accounts) and each role's port folder (saves, baseline, settings), from lane 0's. What
+    exists stays as it is. The folders made."""
+    made = []
+    for name in ("server", "backend"):
+        source, target = lane_dir(0) / name, lane_dir(lane) / name
+        if source.is_dir() and not target.exists():
+            shutil.copytree(source, target, ignore=LANE_SKIPPED)
+            made.append(target)
+    for role in ROLES:
+        source, target = ENGINE.role_dir(role, 0), ENGINE.role_dir(role, lane)
+        if source.is_dir() and not target.exists():
+            shutil.copytree(source, target, ignore=LANE_SKIPPED)
+            (target / "user" / "log").mkdir(parents=True, exist_ok=True)
+            made.append(target)
+    return made
+
+
+# --lanes: a lane starts its first run this long after the one before (their games load at once
+# otherwise, and their logins and joins meet on one PC at the same moment).
+LANE_STAGGER = 45
+
+
+def run_in_lanes(names: list[str], lanes: int, runner, stagger: float = LANE_STAGGER,
+                 sleep=time.sleep) -> dict[str, bool]:
+    """Runs `names` across lanes 0..lanes-1, each lane one run at a time and taking the next name
+    as it finishes (the longest first, as given). runner(lane, name) -> passed."""
+    pending = list(names)
+    lock = threading.Lock()
+    results: dict[str, bool] = {}
+
+    def lane_worker(lane: int):
+        sleep(lane * stagger)
+        while True:
+            with lock:
+                if not pending:
+                    return
+                name = pending.pop(0)
+            passed = runner(lane, name)
+            with lock:
+                results[name] = passed
+
+    workers = [threading.Thread(target=lane_worker, args=(lane,)) for lane in range(lanes)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    return {name: results.get(name, False) for name in names}
+
+
+def lane_command(lane: int, name: str, batch: pathlib.Path) -> list[str]:
+    """This runner again, for one run in one lane, into the batch's folder."""
+    ping = "0" if PING is None else f"{PING[0]}-{PING[1]}"
+    return [sys.executable, "-u", str(pathlib.Path(__file__).resolve()), "--engine", ENGINE.name,
+            "--lane", str(lane), "--batch", str(batch), "--ping", ping, name]
+
+
+def run_lanes(names: list[str], lanes: int, batch: pathlib.Path) -> dict[str, bool]:
+    """--lanes: each run in its own process and lane, its output in <batch>/lane-<n>-<name>.txt."""
+    batch.mkdir(parents=True, exist_ok=True)
+
+    def runner(lane: int, name: str) -> bool:
+        output = batch / f"lane-{lane}-{name}.txt"
+        print(f"lane {lane}: {name} (output in {output})", flush=True)
+        with open(output, "wb") as out:
+            code = subprocess.run(lane_command(lane, name, batch), stdout=out,
+                                  stderr=subprocess.STDOUT).returncode
+        print(f"lane {lane}: {name} {'passed' if code == 0 else 'FAILED'}", flush=True)
+        return code == 0
+
+    return run_in_lanes(names, lanes, runner)
 
 
 def prune_runs(runs: pathlib.Path, kept: int):
@@ -325,7 +554,7 @@ def add_guest2():
 
 def server_is_current() -> bool:
     """Whether the rig's shadNet has the newest party boards (/bloodborne/party/shown)."""
-    request = urllib.request.Request("http://127.0.0.1:32315/bloodborne/party/shown",
+    request = urllib.request.Request(f"http://127.0.0.1:{WEBAPI_PORT}/bloodborne/party/shown",
                                      data=b"probe 0",
                                      headers={"X-ShadPS4-Bloodborne-Party": "probe:probe"})
     try:
@@ -374,7 +603,7 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     env = dict(os.environ)
     env.update({
         "SHADPS4_BLOODBORNE_SEAMLESS_COOP": "1",
-        "SHADPS4_P2P_PORT": str(ROLES[role]["port"]),
+        "SHADPS4_P2P_PORT": str(p2p_port(role)),
         "SHADPS4_BLOODBORNE_PARTY": party,
         "SHADPS4_BLOODBORNE_PARTY_ROLE": ROLES[role]["role"],
         "SHADPS4_BLOODBORNE_RE_TRACE": "1",
@@ -383,8 +612,8 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     if script is not None:
         env["SHADPS4_BLOODBORNE_AUTOPLAY"] = str(script)
     env.update(SCENARIO_SETTINGS)
-    env.update(settings or {})
     env.update(ENGINE.environment(role))
+    env.update(settings or {})  # over the engine's own (a suite plays at the kit's frame rate)
     env.pop("SHADPS4_P2P_DELAY_MS", None)
     if PING:
         env["SHADPS4_P2P_DELAY_MS"] = latency.game_setting(PING)
@@ -431,16 +660,20 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters",
     ENGINE.prepare(role, backend_port=server_port(BACKEND_PORT))
     env = game_environment(role, script_path, party, settings)
     if ENGINE.name == "emulator":
-        return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
+        game = subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 **background_window_options())
+        LAUNCHED.append(game)
+        return game
     console = console_path(role)
     set_aside(console)
     console.parent.mkdir(parents=True, exist_ok=True)
     with open(console, "wb") as output:  # the game keeps its own handle
-        return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
+        game = subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
                                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                                 **background_window_options())
+    LAUNCHED.append(game)
+    return game
 
 
 def stop_game(game: subprocess.Popen):
@@ -560,8 +793,15 @@ def role_text(run_dir: pathlib.Path, role: str, stages: int) -> str:
     return "\n".join(until_done(text) for text in texts + [read_log(role)])
 
 
-def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
-    scenario = SCENARIOS[name]
+def failed_fatal_chapter(text: str, status: str, scenario: dict) -> bool:
+    """A suite game's script ended (failed) in a chapter the rest needs (the join): the suite
+    stops, and the game is not started again for its next stage."""
+    ended_in = list(chapter_sections(text))
+    return status == "failed" and bool(ended_in) and ended_in[-1] in scenario.get("fatal", [])
+
+
+def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None = None) -> bool:
+    scenario = scenario or RUNNABLE[name]
     roles = list(scenario["roles"])
     run_dir = batch / (name if attempt == 1 else f"{name}-{attempt}")
     print(f"== {name}: {scenario.get('about', '')}")
@@ -597,8 +837,13 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
     deadline = started + scenario.get("timeout", 600)
     stages = {role: stages_of(scenario["roles"][role]) for role in roles}
     stage = {role: 0 for role in roles}
+    syncs = scenario.get("syncs", {})
+    reached: dict[str, set[str]] = {role: set() for role in roles}
+    given_up: set[str] = set()
+    released: set[str] = set()
     processes = {}
     for role in roles:
+        clear_go_files(ENGINE.role_dir(role))
         processes[role] = launch(role, stages[role][0], settings=scenario.get("settings"))
         print(f"  started {role}")
         # The next game once this one is in the world, where loading side by side is slow.
@@ -608,22 +853,39 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
             time.sleep(2)
     done = {}
     crashed = {}
-    while time.time() < deadline and len(done) + len(crashed) < len(roles):
+    fatal_failure = False
+    while (time.time() < deadline and len(done) + len(crashed) < len(roles)
+           and not fatal_failure):
         for role in roles:
             if role in done or role in crashed:
                 continue
-            found = DONE.search(read_log(role))
-            if found and found.group(1) == "ok" and stage[role] + 1 < len(stages[role]):
+            text = read_log(role)
+            reached[role] |= syncs_reached(text)
+            given_up |= set(CHAPTER_GIVEN_UP.findall(text))
+            found = DONE.search(text)
+            # A suite's game goes on to its next stage even after a failed chapter (keep-going):
+            # its later chapters are judged on their own.
+            fatal = found is not None and failed_fatal_chapter(text, found.group(1), scenario)
+            if (found and (found.group(1) == "ok" or syncs) and not fatal
+                    and stage[role] + 1 < len(stages[role])):
                 stage[role] += 1
                 print(f"  {role} stage {stage[role]} done after {time.time() - started:.0f} s; "
                       "stopping its game and starting it again")
                 stop_game(processes[role])
                 keep_logs(run_dir, [role], f"-stage{stage[role]}")
+                # A suite's restart with other saves (a new character): put in before it starts.
+                if saves := scenario.get("stage_saves", {}).get(role, {}).get(stage[role]):
+                    restore_baseline(role, RIG / "saves" / saves / "savedata")
+                    print(f"  {role}: saves put back to {saves}")
                 processes[role] = launch(role, stages[role][stage[role]],
                                          settings=scenario.get("settings"))
             elif found:
                 done[role] = found.group(1)
                 print(f"  {role} done ({found.group(1)}) after {time.time() - started:.0f} s")
+                if fatal:
+                    print(f"  {role} failed {list(chapter_sections(text))[-1]}, which the rest "
+                          "needs: stopping")
+                    fatal_failure = True
             elif reports := new_crashes(role, started):
                 crashed[role] = reports[0]
                 print(f"  {role} crashed after {time.time() - started:.0f} s: {reports[0]}")
@@ -631,9 +893,20 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
                 # Gone without a crash report: it never got going (the memory ran out, say).
                 crashed[role] = boot_failure(read_log(role)) or "the game exited"
                 print(f"  {role} stopped after {time.time() - started:.0f} s: {crashed[role]}")
-        if crashed:
+        if crashed or fatal_failure:
             break  # the others wait for it in vain
-        time.sleep(2)
+        for name in syncs_to_release(syncs, reached, given_up, set(done), released):
+            released.add(name)
+            if seconds := scenario.get("outages", {}).get(name):
+                # Before the games go on: the outage starts as they do.
+                for proxy in PROXIES:
+                    proxy.outage(seconds)
+                print(f"  servers unreachable for {seconds} s" if PROXIES else
+                      "  no outage without a ping (--ping): the servers stay reachable")
+            for role in syncs[name]["roles"]:
+                write_go_file(ENGINE.role_dir(role), name)
+            print(f"  sync {name} after {time.time() - started:.0f} s")
+        time.sleep(1 if syncs else 2)
     stop_games()
     keep_logs(run_dir, roles)
     keep_shots(run_dir, roles)
@@ -642,62 +915,97 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1) -> bool:
         if attempt == 1:
             print("  a game crashed; running the scenario once more")
             time.sleep(30)  # what a dead game held goes back to Windows
-            return run(name, batch, attempt + 1)
+            return run(name, batch, attempt + 1, scenario)
         print("  FAILED: a game crashed again")
         return False
 
+    texts = {role: role_text(run_dir, role, stage[role] + 1) for role in roles}
     passed = True
-    if handle := scenario.get("same_hp"):
-        texts = {role: role_text(run_dir, role, stage[role] + 1) for role in roles}
-        for index in [*scenario.get("same_hp_census", []), -1]:
-            where = "last census" if index < 0 else f"census {index + 1}"
-            if problem := same_hp_problem(texts, handle, index):
-                print(f"    {where}: {problem}")
-                passed = False
+    for role in roles:
+        status = done.get(role, "timed out")
+        print(f"  {role}: {status} (build {check_party_log.revision(texts[role])})")
+        # A suite's chapters carry their own verdicts; a game that never finished fails it.
+        if status != "ok" and not (scenario.get("chapters") and status == "failed"):
+            passed = False
+    for problem in suite_problems(scenario, texts):
+        print(f"    {problem}")
+        passed = False
+    if chapters := scenario.get("chapters"):
+        sections = {role: chapter_sections(text) for role, text in texts.items()}
+        for chapter in chapters:
+            # Every game that has a part in the chapter, judged on that part of its log.
+            part = {role: sections[role].get(chapter["name"]) for role in chapter["roles"]}
+            if missing := [role for role, text in part.items() if text is None]:
+                problems = [f"{role}: never got to it" for role in missing]
             else:
-                print(f"    {where}: {handle} one HP in every game ("
-                      f"{', '.join(str(last_census_hp(t, handle, index)) for t in texts.values())})")
-    if handle := scenario.get("hp_sums_hits"):
-        texts = {role: role_text(run_dir, role, stage[role] + 1) for role in roles}
-        if problem := hits_sum_problem(texts, handle):
+                problems = judge(chapter, part) + file_problems(chapter, started)
+            print(f"  {'ok  ' if not problems else 'FAIL'} {chapter['name']}"
+                  f"{': ' + chapter['about'] if problems and chapter.get('about') else ''}")
+            for problem in problems:
+                print(f"    {problem}")
+            passed = passed and not problems
+    else:
+        for problem in judge(scenario, texts):
             print(f"    {problem}")
             passed = False
-        else:
-            hits = sum(hit_damage(text, handle) for text in texts.values())
-            print(f"    {handle} took each hit once ({hits} in all)")
-    if limit := scenario.get("max_hp_lag"):
-        handle = scenario["hp_sums_hits"]
-        texts = {role: role_text(run_dir, role, stage[role] + 1) for role in roles}
-        lag = hp_board_lag(texts, handle)
-        print(f"    {handle}: a hit reached the other games' bars within "
-              f"{'?' if lag is None else f'{lag:.2f}'} s (at most {limit} s)")
-        if lag is None or lag > limit:
-            passed = False
-    for role in roles:
-        text = role_text(run_dir, role, stage[role] + 1)
-        status = done.get(role, "timed out")
-        print(f"  {role}: {status} (build {check_party_log.revision(text)})")
-        if status != "ok":
-            passed = False
-        for failed in STEP_FAILED.findall(text):
-            print(f"    {failed}")
-        for pattern in scenario.get("expect", {}).get(role, []):
-            if not re.search(pattern, text):
-                print(f"    expected, not seen: {pattern}")
-                passed = False
-        for pattern in scenario.get("forbid", {}).get(role, []):
-            if found := re.search(pattern, text):
-                print(f"    must not happen, seen: {found.group(0)[:160]}")
-                passed = False
-        _, problems = check_party_log.summarize(text)
-        allowed = scenario.get("allow", [])
-        for problem in problems:
-            if not any(re.search(pattern, problem) for pattern in allowed):
-                print(f"    PROBLEM {problem}")
-                passed = False
     print(f"  {'PASSED' if passed else 'FAILED'} in {time.time() - started:.0f} s (logs in "
           f"{run_dir})")
     return passed
+
+
+# Lines no game of a suite may log (the robustness review's guards, 2026-10-12): a game call
+# refused as unsafe (#30), players on different builds (#29); check_party_log.py flags a
+# required co-op feature skipped (#32).
+NEVER_IN_A_SUITE = [re.compile(pattern) for pattern in (
+    r"Bloodborne refused a game call",
+    r"runs build \S+, this game runs",
+)]
+# Lines per second of a game's log (its step lines' t=) above which the log itself costs frames
+# (Kaniel 2026-10-11: a lamp line written 430,000 times took the game to 3 FPS).
+LOG_LINES_PER_SECOND = 200  # the rig's games log 15-30 a second
+STEP_TIME = re.compile(r"Bloodborne autoplay: step \d+/\d+ (\S+).* ok \(t=([\d.]+)\)")
+
+
+def file_problems(spec: dict, since: float) -> list[str]:
+    """A chapter's checks on the files a game wrote in its user folder during the run:
+    "files_present" / "files_absent", {role: [glob]} (a backup of the kept pickups for a new
+    character, none for a restart)."""
+    problems = []
+    for key, wanted in (("files_present", True), ("files_absent", False)):
+        for role, patterns in spec.get(key, {}).items():
+            for pattern in patterns:
+                written = [path for path in user_dir(role).glob(pattern)
+                           if path.stat().st_mtime >= since]
+                if bool(written) != wanted:
+                    problems.append(f"{role}: {'no' if wanted else 'a'} {pattern} written"
+                                    f"{': ' + written[0].name if written else ''}")
+    return problems
+
+
+def suite_problems(scenario: dict, texts: dict[str, str]) -> list[str]:
+    """A suite's checks on every game's whole log: the join within its time (slow joins were the
+    first sign of the sign-timer patch skipped), no co-op patch skipped, and a log that does not
+    flood."""
+    if not scenario.get("chapters"):
+        return []
+    problems = []
+    for role, text in texts.items():
+        steps = [(verb, float(at)) for verb, at in STEP_TIME.findall(text)]
+        if limit := scenario.get("join_within"):
+            joined = next((at for verb, at in steps if verb == "wait-session"), None)
+            if steps and joined is not None and joined - steps[0][1] > limit:
+                problems.append(f"{role}: joined {joined - steps[0][1]:.0f} s after its first "
+                                f"step (at most {limit} s)")
+        problems += [f"{role}: co-op patch skipped: {line.strip()[:160]}"
+                     for line in text.splitlines() if "signature mismatch" in line]
+        problems += [f"{role}: {line.strip()[:200]}" for line in text.splitlines()
+                     if any(pattern.search(line) for pattern in NEVER_IN_A_SUITE)]
+        if len(steps) >= 2 and steps[-1][1] > steps[0][1]:
+            rate = text.count("\n") / (steps[-1][1] - steps[0][1])
+            if rate > LOG_LINES_PER_SECOND:
+                problems.append(f"{role}: log writes {rate:.0f} lines/s "
+                                f"(at most {LOG_LINES_PER_SECOND})")
+    return problems
 
 
 def last_census_hp(text: str, handle: str, index: int = -1) -> tuple[int, int] | None:
@@ -751,21 +1059,24 @@ def hits_sum_problem(texts: dict[str, str], handle: str) -> str | None:
 
 def hp_board_lag(texts: dict[str, str], handle: str) -> float | None:
     """The average time (s, on the rig's one clock) from a role's own hit on the character to
-    the lowering of it by that hit's damage (3 HP either way, within 5 s) in each other role, or
-    None if none was lowered. A game the hit reached through the game itself lowers nothing."""
+    the lowering of it by that hit in each other role (from the HP the hit started at, by its
+    damage, 3 HP either way, within 5 s), or None if none was lowered. A game the hit reached
+    through the game itself lowers nothing; another member's later hit of the same damage
+    starts from a lower HP, so its lowering is not this hit's (rig hit3 2026-10-12)."""
     pattern = re.escape(handle)
-    hits = {role: [(int(a) - int(b), float(t)) for a, b, t in re.findall(
+    hits = {role: [(int(a), int(a) - int(b), float(t)) for a, b, t in re.findall(
         rf"hit on {pattern} by this player \S+: (-?\d+) -> (-?\d+) \(t=([\d.]+)\)", text)]
         for role, text in texts.items()}
-    lowered = {role: [(int(a) - int(b), float(t)) for a, b, t in re.findall(
+    lowered = {role: [(int(a), int(a) - int(b), float(t)) for a, b, t in re.findall(
         rf"damage on map \S+: (?:\S+ \S+ )*?{pattern} (-?\d+)->(-?\d+)[^\n]*\(t=([\d.]+)\)",
         text)] for role, text in texts.items()}
     lags = []
     for role, own in hits.items():
-        for damage, at in own:
+        for start, damage, at in own:
             for other, seen in lowered.items():
-                matching = [t for drop, t in seen
-                            if drop > 0 and abs(drop - damage) <= 3 and 0 <= t - at <= 5]
+                matching = [t for before, drop, t in seen
+                            if drop > 0 and abs(drop - damage) <= 3 and abs(before - start) <= 3
+                            and 0 <= t - at <= 5]
                 if other != role and matching:
                     lags.append(min(matching) - at)
     return sum(lags) / len(lags) if lags else None
@@ -782,7 +1093,7 @@ def play(name: str, title: bool = False) -> int:
     """--play <scenario>: its games with its settings, left to the person at the PC once they are
     in the world together (with --title: at the title screen, no autoplay at all). The servers
     stay up until every game is closed."""
-    scenario = SCENARIOS[name]
+    scenario = RUNNABLE[name]
     roles = list(scenario["roles"])
     run_dir = RUNS / time.strftime("%Y%m%d-%H%M%S") / f"play-{name}"
     if missing := ENGINE.missing():
@@ -862,7 +1173,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("scenarios", nargs="*")
     parser.add_argument("--keep-servers", action="store_true",
                         help="leave the rig's servers running afterwards")
-    parser.add_argument("--list", action="store_true", help="list the scenarios")
+    parser.add_argument("--list", action="store_true", help="list the scenarios and suites")
+    parser.add_argument("--chapter", action="append", metavar="NAME",
+                        help="with one suite: run only this chapter (again for more), and the "
+                             "setup chapters it needs")
     parser.add_argument("--save-baseline", action="store_true",
                         help="keep every role's saves as the start of later runs")
     parser.add_argument("--add-guest2", action="store_true",
@@ -880,6 +1194,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "once they are in the world together")
     parser.add_argument("--title", action="store_true",
                         help="with --play: leave the games at the title screen, no autoplay")
+    parser.add_argument("--lanes", type=int, metavar="N",
+                        help="run the scenarios and suites N at a time, each in its own lane "
+                             "(own servers, ports and game folders: --setup-lanes first)")
+    parser.add_argument("--setup-lanes", type=int, metavar="N",
+                        help="make lanes 1..N-1 from the rig's folders (--engine port)")
+    parser.add_argument("--lane", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--batch", type=pathlib.Path, help=argparse.SUPPRESS)
     parser.add_argument("--ping", type=ping_setting, default=latency.DEFAULT_PING,
                         help="round trip in ms between the games and to the servers, \"80\" "
                              f"or \"50-100\" (default {latency.DEFAULT_PING}; 0 for none)")
@@ -890,7 +1211,10 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     use_engine(args.engine)
     use_ping(args.ping)
-    proxies = start_delay_proxies() if args.play or args.scenarios or args.boot_check else []
+    use_lane(args.lane)
+    runs_games = (args.play or args.scenarios or args.boot_check) and not args.lanes
+    proxies = start_delay_proxies() if runs_games else []
+    PROXIES[:] = proxies
     try:
         return act(args)
     finally:
@@ -913,12 +1237,25 @@ def act(args: argparse.Namespace) -> int:
     if args.boot_check:
         return boot_check(args.boot_check, args.seconds)
     if args.play:
-        if args.play not in SCENARIOS:
+        if args.play not in RUNNABLE:
             print(f"No such scenario: {args.play} (--list shows them)")
             return 2
         return play(args.play, title=args.title)
     if args.add_guest2:
         add_guest2()
+        return 0
+    if args.setup_lanes or args.lanes or args.lane:
+        if ENGINE.name != "port":
+            print("Lanes are the port's (--engine port): the emulator needs 12.5 GB a game.")
+            return 2
+        if max(args.setup_lanes or 0, args.lanes or 0, args.lane + 1) > 9:
+            print("At most 9 lanes (the tenth's ports would meet lane 0's ping proxies).")
+            return 2
+    if args.setup_lanes:
+        for lane in range(1, args.setup_lanes):
+            made = setup_lane(lane)
+            print(f"lane {lane}: made {', '.join(str(path) for path in made)}" if made else
+                  f"lane {lane}: there already")
         return 0
     if args.save_baseline:
         if games_running():
@@ -932,18 +1269,43 @@ def act(args: argparse.Namespace) -> int:
     if args.list or not args.scenarios:
         for name, scenario in SCENARIOS.items():
             print(f"{name}: {scenario.get('about', '')} ({', '.join(scenario['roles'])})")
+        for name, scenario in SUITE_SCENARIOS.items():
+            print(f"suite {name}: {scenario['about']} ({', '.join(scenario['roles'])}): "
+                  f"{', '.join(chapter['name'] for chapter in scenario['chapters'])}")
         return 0
-    if games_running():
+    # Another lane's games are the rig's own: only a game someone plays stops a lane's run.
+    if games()[1] if LANE or args.lanes else games_running():
         print("A game is running; not starting the rig.")
         return 2
-    unknown = [name for name in args.scenarios if name not in SCENARIOS]
+    unknown = [name for name in args.scenarios if name not in RUNNABLE]
     if unknown:
         print(f"No such scenario: {', '.join(unknown)} (--list shows them)")
         return 2
-    batch = RUNS / time.strftime("%Y%m%d-%H%M%S")
-    prune_runs(RUNS, RUNS_KEPT - 1)
+    chosen = {}
+    if args.chapter:
+        if len(args.scenarios) != 1 or args.scenarios[0] not in SUITES:
+            print("--chapter needs one suite")
+            return 2
+        suite = SUITES[args.scenarios[0]]
+        if missing := set(args.chapter) - {chapter["name"] for chapter in suite["chapters"]}:
+            print(f"No such chapter in {args.scenarios[0]}: {', '.join(sorted(missing))}")
+            return 2
+        chosen[args.scenarios[0]] = compile_suite(suite, only=args.chapter)
+    if args.lanes:
+        if missing := [lane for lane in range(1, args.lanes) if not lane_dir(lane).is_dir()]:
+            print(f"No lane {', '.join(map(str, missing))} yet: --engine port --setup-lanes "
+                  f"{args.lanes} makes them.")
+            return 2
+        batch = RUNS / time.strftime("%Y%m%d-%H%M%S")
+        prune_runs(RUNS, RUNS_KEPT - 1)
+        results = run_lanes(args.scenarios, args.lanes, batch)
+        print("\n".join(f"{'ok  ' if ok else 'FAIL'} {name}" for name, ok in results.items()))
+        return 0 if all(results.values()) else 1
+    batch = args.batch or RUNS / time.strftime("%Y%m%d-%H%M%S")
+    if not args.batch:  # a lane's run: --lanes keeps the batches
+        prune_runs(RUNS, RUNS_KEPT - 1)
     try:
-        results = {name: run(name, batch) for name in args.scenarios}
+        results = {name: run(name, batch, scenario=chosen.get(name)) for name in args.scenarios}
     finally:
         stop_games()
         if not args.keep_servers:
