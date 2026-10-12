@@ -100,16 +100,25 @@ def map_reset(roles, name: str = "everyone-leaves") -> dict:
                    steps, forbid=holds(roles))
 
 
+WIPE_SPOT = {"host": "-199.74 -50.56 182.42", "guest": "-196.74 -50.56 179.42",
+             "guest2": "-202.74 -50.56 179.42"}
+
+
 def wipe(roles, name: str = "wipe") -> dict:
     """Party death's wipe, last in its suite (the map reloads): every guest goes down, then the
     host falls with nobody standing; all die, wake at their lamps with the map reset (Kaniel
     2026-10-11: after the wipe 16 enemies stayed hidden and the mob showed three HPs), each with
     its own bloodstain and no enemy taking it."""
     players = len(roles)
-    steps = {"host": ["godmode off", f"sync {name}-guests-down", *LETHAL_FALL,
+    # Each falls on its own spot a few metres from the lamp, so nobody lands on another member's
+    # body (rig 2026-10-12: a body under the fall took its damage and guest2 never went down; the
+    # same spread as wipe3).
+    spread = {role: [f"teleport {WIPE_SPOT[role]}", "wait 2"] if role in WIPE_SPOT else []
+              for role in roles}
+    steps = {"host": ["godmode off", f"sync {name}-guests-down", *spread["host"], *LETHAL_FALL,
                       "wait-vital dead 30", "wait-vital up 150"]}
     for guest in roles[1:]:
-        steps[guest] = ["godmode off", *LETHAL_FALL, "wait-vital down 30",
+        steps[guest] = ["godmode off", *spread[guest], *LETHAL_FALL, "wait-vital down 30",
                         f"sync {name}-guests-down", "wait-vital dead 90", "wait-vital up 150"]
     for role in roles:
         steps[role] += [f"wait-members {players} 300", f"sync {name}-woken", "wait 15",
