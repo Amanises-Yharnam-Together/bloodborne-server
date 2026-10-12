@@ -742,6 +742,9 @@ struct PartyDeathRun {
     std::optional<s64> grace_until;
     u8 grace_flags = 0;
     u32 real_hits_logged = 0;
+    // The kneel not asked for yet in this down (TakesAnimationRequest), and when the down began.
+    bool kneel_waiting = false;
+    s64 down_since = 0;
     // Since when a down has been out of the party session (a few seconds of it end the down).
     std::optional<s64> down_out_of_session_since;
 };

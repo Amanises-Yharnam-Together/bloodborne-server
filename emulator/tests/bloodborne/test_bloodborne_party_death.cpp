@@ -6,6 +6,7 @@
 // wiped. The rules here are plain functions; the hooks that use them are in the emulator.
 
 #include <array>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -118,6 +119,31 @@ TEST(BloodbornePartyDeath, OnlyADownedMemberChangesTheNameplates) {
     EXPECT_FALSE(PanelHasDowned(panel));
     panel.members.push_back(PanelMember{.member = "b", .vital = Vital::Down});
     EXPECT_TRUE(PanelHasDowned(panel));
+}
+
+// The kneel waits for the player to take an animation request (the game drops one otherwise), and
+// for the lethal hit's reaction to pass.
+TEST(BloodbornePartyDeath, TheKneelWaitsUntilThePlayerTakesIt) {
+    std::map<u64, u64> memory{{0x10000 + 0x3B0, 0x20000}, {0x20000 + 0x58, 0x30000},
+                              {0x30000 + 0x08, 0x40000},  {0x40000 + 0x3B0, 0x50000},
+                              {0x50000 + 0x30, 0x60000},  {0x60000 + 0x384, 1}};
+    const auto read = [&](u64 address, size_t) {
+        const auto value = memory.find(address);
+        return value == memory.end() ? u64{0} : value->second;
+    };
+    EXPECT_TRUE(TakesAnimationRequest(0x10000, read));
+    memory[0x60000 + 0x384] = 0;
+    EXPECT_FALSE(TakesAnimationRequest(0x10000, read)) << "in the middle of the hit";
+    memory[0x60000 + 0x384] = 0x100; // only its byte counts
+    EXPECT_FALSE(TakesAnimationRequest(0x10000, read));
+    memory.erase(0x40000 + 0x3B0);
+    EXPECT_FALSE(TakesAnimationRequest(0x10000, read)) << "a broken path";
+    EXPECT_FALSE(TakesAnimationRequest(0, read)) << "no player";
+
+    EXPECT_TRUE(KneelsNow(true, DownedKneelDelayMs, true));
+    EXPECT_FALSE(KneelsNow(true, DownedKneelDelayMs - 1, true)) << "the hit's reaction";
+    EXPECT_FALSE(KneelsNow(true, 5'000, false)) << "not taking requests yet";
+    EXPECT_FALSE(KneelsNow(false, 5'000, true)) << "already asked for";
 }
 
 // A new HUD gets its own list, also when it is made where the old one was (its tags and icons died
