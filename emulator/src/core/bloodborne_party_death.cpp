@@ -271,6 +271,49 @@ std::atomic<bool> party_death_down{};
 std::atomic<u32> party_death_catches{};
 // The next death respawn resets the map (see DeathResetsMap).
 std::atomic<bool> party_death_reset{};
+// This player's GlobalState +0x1528 from before a death (party death tick, while it is up), to
+// tell a special death by (see PartyRespawnPoint). Another character starts over.
+std::mutex own_point_mutex;
+ReturnPointBeforeDeath own_point_before_death;
+[[maybe_unused]] const bool own_point_registered =
+    RegisterLifecycleReset("return point before death", {Lifecycle::NewCharacter}, [] {
+        std::scoped_lock lock{own_point_mutex};
+        own_point_before_death.Reset();
+    });
+// The point a guest's party death travels to when it is not the guest's own (+0x1528): that
+// trip's arrival (MoveToRespawnPoint(true)) resolves it too, as the load put the save's lamp back
+// in +0x1528 (see FixAutoplayTravelArrival).
+std::optional<s32> party_death_trip_point;
+
+// The point this member's real death wakes it at: a guest in a party session wakes at the host's
+// point unless its death set a special one (PartyRespawnPoint). Not written to +0x1528: the
+// respawn below resolves (or travels to) the point it is given, and a trip's load puts the save's
+// lamp back there anyway.
+s32 PartyDeathPoint(s32 own_point) {
+    if (!IsPartyGuestRole() || !InPartySession()) {
+        return own_point;
+    }
+    const std::optional<s32> host_point = HostReturnPointNow();
+    std::optional<s32> before;
+    {
+        std::scoped_lock lock{own_point_mutex};
+        before = own_point_before_death.Point();
+    }
+    const s32 point = PartyRespawnPoint(true, own_point, before, host_point);
+    if (host_point && point == *host_point) {
+        LOG_INFO(Debug, "Bloodborne revive: respawn at the host's point {} (own {})", point,
+                 own_point);
+    } else if (host_point) {
+        LOG_INFO(Debug,
+                 "Bloodborne revive: respawn at the own special point {} (the host's {}, before "
+                 "the death {})",
+                 point, *host_point, before.value_or(-1));
+    } else {
+        LOG_INFO(Debug, "Bloodborne revive: the host's point is not known; respawn at own {}",
+                 point);
+    }
+    return point;
+}
 
 } // namespace
 
@@ -285,13 +328,22 @@ namespace Coop {
 // A point on another map (see ChooseDeathRespawn: the first death's Hunter's Dream, a
 // kidnapping's Gaol, a lamp elsewhere) is a trip there, as a guest's lamp trip is. So is a death
 // that resets the map (party death's wipe), wherever the lamp is.
+// A guest in a party session wakes at the host's point instead, unless its death was special (see
+// PartyDeathPoint): the party wakes together.
 void MoveToRespawnPoint(bool arriving_from_trip) {
     const bool reset = !arriving_from_trip && party_death_reset.exchange(false);
     if (reset) {
         OnLifecycle(Lifecycle::Wipe); // kills and enemy HP, see their RegisterLifecycleReset
     }
     const u64 global = GetGlobalState();
-    const s32 point = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
+    const s32 own_point = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
+    s32 point = own_point;
+    if (!arriving_from_trip) {
+        party_death_trip_point.reset();
+        point = PartyDeathPoint(own_point);
+    } else if (party_death_trip_point && *party_death_trip_point == guest_trip_point) {
+        point = *std::exchange(party_death_trip_point, std::nullopt); // that death's trip
+    }
     const u64 blocks = ReadValue<u64>(image_base + LoadedBlocksPointerOffset, 0);
     const u64 player = GetLocalPlayer();
     if (blocks < 0x10000 || player < 0x10000) {
@@ -314,6 +366,9 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
         return;
     case DeathRespawn::Travel:
         guest_trip_point = point;
+        if (point != own_point) {
+            party_death_trip_point = point;
+        }
         // Right away: getting up where the player fell first looked like a second respawn.
         guest_lamp_trip_at = std::chrono::steady_clock::now() + std::chrono::milliseconds{200};
         LOG_INFO(Debug,
@@ -1333,6 +1388,13 @@ void TickPartyDeath() {
             LOG_INFO(Debug, "Bloodborne party death: up again after a real death");
         }
         break;
+    }
+    // Up (not down, not dead): its point now is the one from before any next death.
+    if (const u64 global = GetGlobalState();
+        tick.alive && global >= 0x10000 &&
+        (run.downed.Current() == Vital::Up || run.downed.Current() == Vital::Off)) {
+        std::scoped_lock lock{own_point_mutex};
+        own_point_before_death.Sample(ReadValue<s32>(global, 0x1528), tick.now);
     }
 
     ForgetTargetsOnDowned(run, tick);

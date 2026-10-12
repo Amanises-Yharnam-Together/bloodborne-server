@@ -144,6 +144,29 @@ TEST(WorldLogShown, TheHostLogsWhatChangedOnItsMap) {
               Entries(wipe, {ShownMap(4, Ward), Shown(5, Ward, Iosefka.handle, 2)}));
 }
 
+// Rig smoke 2026-10-13: the host's log started over at the wipe while its own copy of 0x1001400b
+// still lay dead (its wipe trip had not loaded the map yet); the new log showed it dead, and the
+// second guest, back from its own wipe trip, killed its respawned copy as "dead in the host's
+// world". A wipe respawns the map: the new log shows nothing dead.
+TEST(WorldLogShown, AWipesLogShowsNothingDead) {
+    WorldLogHost host;
+    host.Start(WorldLogEpoch(7, 1), false);
+    host.Show(Yharnam, std::vector{WindowNpc, DeadOne});
+    const u64 wipe = WorldLogEpoch(7, 2);
+    WorldLogEntry reset = Reset(1);
+    reset.subject = WorldLogResetAfterWipe;
+    EXPECT_EQ(host.Start(wipe, true),
+              Entries(wipe, {reset, ShownMap(2, Yharnam), Shown(3, Yharnam, WindowNpc.handle, 1),
+                             Shown(4, Yharnam, DeadOne.handle, 0)}));
+    EXPECT_EQ(host.Shown(), (WorldLogShown{Yharnam, {{WindowNpc.handle, 1}, {DeadOne.handle, 0}}}));
+    // A new session's log keeps what is dead in the host's world (its save).
+    host.Show(Yharnam, std::vector{WindowNpc, DeadOne});
+    const u64 session = WorldLogEpoch(8, 1);
+    EXPECT_EQ(host.Start(session, false), Entries(session, {Reset(1), ShownMap(2, Yharnam),
+                                                            Shown(3, Yharnam, WindowNpc.handle, 1),
+                                                            Shown(4, Yharnam, DeadOne.handle, 8)}));
+}
+
 TEST(WorldLogShown, TheHostsSnapshotIsInParts) {
     WorldLogHost host;
     host.Start(WorldLogEpoch(7, 1), false);

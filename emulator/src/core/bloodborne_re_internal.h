@@ -669,6 +669,10 @@ void MapStateOnTheLog(u32 map, std::span<const u8> bits);
 // What a guest's load takes of the host's map flags: the log's copy while it is whole and fresh,
 // else the map state board's.
 std::optional<MemberMapState> HostMapStateNow();
+// A guest's copy of the host's return point (GlobalState +0x1528, see PartyRespawnPoint): the last
+// one the log brought in this session, kept through the host's new logs (a wipe starts one just as
+// the guest's death respawn wants it). None out of a session or before the log brought one.
+std::optional<s32> HostReturnPointNow();
 // Step 4. The other members' HP reports for SharedDamage (`own_source`: this member's): the log's
 // while it carries them (the host's own, a member's copy while fresh), else the peers' direct
 // frames and the HP board, as before.

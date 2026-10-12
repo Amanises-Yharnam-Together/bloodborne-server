@@ -983,13 +983,23 @@ namespace {
 [[maybe_unused]] const bool party_trips_registered =
     RegisterLifecycleReset("kill visit", {Lifecycle::Trip}, [] { ++party_trips_started; });
 
-bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot* registers) {
+// `world_reload`: the world load's StopRequest, a trip only once its load shows (see
+// PartyTrip::StartWorldReload); its lifecycle trip waits for that (a border's flips with no load
+// must not end the kill visit).
+void StartPartyTrip(const GuestRegisterSnapshot* registers, bool world_reload) {
     if (InPartySession()) {
-        OnLifecycle(Lifecycle::Trip);
+        if (!world_reload) {
+            OnLifecycle(Lifecycle::Trip);
+        }
         {
             std::scoped_lock lock{party_trip_mutex};
             // Raw: the trip machinery compares the game's own stage (PartyTrip::ObserveStage).
-            party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap(), GetLocalPlayer());
+            if (world_reload) {
+                party_trip.StartWorldReload(PartyTrip::Clock::now(), GetCurrentPackedMap(),
+                                            GetLocalPlayer());
+            } else {
+                party_trip.Start(PartyTrip::Clock::now(), GetCurrentPackedMap(), GetLocalPlayer());
+            }
         }
         SaveRemoteJoinTasks();
         effects_before_trip = LocalEffects();
@@ -1001,6 +1011,10 @@ bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot* registers) {
             LogGameCallChainAt("party trip", registers->rsp);
         }
     }
+}
+
+bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot* registers) {
+    StartPartyTrip(registers, false);
     return false;
 }
 
@@ -1030,6 +1044,14 @@ void LogGameCallChainAt(const char* what, u64 rsp) {
 namespace {
 
 bool PS4_SYSV_ABI KeepSessionAfterTrip(u64, const GuestRegisterSnapshot* registers) {
+    const u64 return_address = ReadValue<u64>(registers->rsp, 0);
+    if (!PartyTripActive() && InPartySession() && return_address >= image_base &&
+        IsWorldReloadLeaveSession(return_address - image_base)) {
+        // The world load's leave with no StopRequest before it (a guest at the Cathedral Ward
+        // border, rig 2026-10-13): the same reload as KeepMatchingDuringTrip's.
+        StartPartyTrip(registers, true);
+        LOG_INFO(Debug, "Bloodborne party: a world reload's leave is a trip once it loads");
+    }
     if (!PartyTripActive()) {
         // Diagnostics: a session that broke right after a boss kill (host to the title screen,
         // a lone guest dropped after lighting the lamp): who leaves. Every world load calls it,
@@ -1473,7 +1495,17 @@ void TickPartyTrip() {
     // Raw, here and in the arrival line: the trip machinery is one of the tracker's inputs.
     party_trip.ObserveStage(GetCurrentPackedMap(), ReadValue<u8>(state, 0x08) != 0,
                             GetLocalPlayer());
+    if (party_trip.DropIfNoLoad(now)) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: the world reload loaded nothing (map {:#x}): no trip, the "
+                 "session kept",
+                 GetCurrentPackedMap());
+        return;
+    }
     if (was_active && !party_trip.Active(now)) {
+        if (party_trip.WorldReload()) {
+            OnLifecycle(Lifecycle::Trip); // held back until it loaded (StartPartyTrip)
+        }
         const auto at = LocalPlayerPosition();
         LOG_INFO(Debug, "Bloodborne party trip: arrived map={:#x} at=({}, {}, {}) lamp={}",
                  GetCurrentPackedMap(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f,
@@ -1529,9 +1561,10 @@ bool PS4_SYSV_ABI KeepMatchingDuringTrip(u64, const GuestRegisterSnapshot* regis
     const u64 return_address = ReadValue<u64>(registers->rsp, 0);
     if (return_address >= image_base &&
         StartsTripOnWorldReload(return_address - image_base, PartyTripActive(), InPartySession())) {
-        // A time-of-day cutscene's reload: a trip, so the session and its LeaveSession are kept.
-        RecordPartyTrip(0, registers);
-        LOG_INFO(Debug, "Bloodborne party: a world reload (time of day) is a trip");
+        // A time-of-day cutscene's reload: a trip, so the session and its LeaveSession are kept;
+        // one with no load (a border, Kaniel 2026-10-13) only keeps the session.
+        StartPartyTrip(registers, true);
+        LOG_INFO(Debug, "Bloodborne party: a world reload (time of day) is a trip once it loads");
     }
     if (!PartyTripActive()) {
         if (party_controller && InPartySession()) {

@@ -192,7 +192,13 @@ void CoopTraceReplay::Hp(const TraceRecord& record, std::vector<std::string>& ou
         damage.ForgetDamageBefore(reports);
         out.push_back("hp: damage reported before the reset is left behind");
     }
-    SharedDamage::Step step = damage.Update(visit, mode == "apart", alive, reports, now);
+    // The role matters at a switch between one world and worlds apart, which passes through a
+    // one-world mode that names it.
+    if (mode == "one-guest" || mode == "one-host") {
+        hp_role = mode == "one-guest" ? PartyRole::Guest : PartyRole::Host;
+    }
+    SharedDamage::Step step =
+        damage.Update(mode == "off" ? 0 : visit, mode == "apart", alive, reports, now, hp_role);
     if (mode == "one-guest") {
         step.writes = LowerToHostHp(alive, reports);
     }
@@ -336,6 +342,9 @@ void CoopTraceReplay::WorldLogHostIn(std::string_view op, std::span<const u8> pa
     } else if (const auto state =
                    op == "map-state" ? DecodeWorldLogMapStateInput(payload) : std::nullopt) {
         entries = wlog_host.MapState(state->map, state->bits);
+    } else if (const auto point =
+                   op == "return-point" ? DecodeWorldLogReturnPointInput(payload) : std::nullopt) {
+        entries = wlog_host.ReturnPoint(point->point, point->map);
     } else if (const auto hp =
                    op == "propose-hp" ? DecodeWorldLogHpProposal(payload) : std::nullopt) {
         WorldLogHost::Taken taken = wlog_host.ProposeHp(*hp);

@@ -271,6 +271,11 @@ bool IsWorldReloadStopRequest(u64 caller_offset) {
     return caller_offset == WorldLoadStopRequestReturn;
 }
 
+bool IsWorldReloadLeaveSession(u64 caller_offset) {
+    constexpr u64 WorldLoadLeaveSessionReturn = 0x0193C68E;
+    return caller_offset == WorldLoadLeaveSessionReturn;
+}
+
 const std::vector<CodePatch>& JoinAnywherePatches() {
     static const std::vector<CodePatch> patches = CoopPatchesOf("join anywhere");
     return patches;
@@ -1063,6 +1068,32 @@ bool WipeTripRespawnsOnArrival(bool reset, DeathRespawn respawn) {
     return reset && respawn == DeathRespawn::Travel;
 }
 
+s32 PartyRespawnPoint(bool guest, s32 own_point, std::optional<s32> own_point_alive,
+                      std::optional<s32> host_point) {
+    if (!guest || !host_point || *host_point <= 0 || !own_point_alive) {
+        return own_point;
+    }
+    if (own_point != *own_point_alive) {
+        return own_point; // the death set it: the Dream, the Gaol
+    }
+    return *host_point;
+}
+
+void ReturnPointBeforeDeath::Sample(s32 point, s64 now_ms) {
+    if (!settled || point == *settled) {
+        settled = point;
+        changed.reset();
+        return;
+    }
+    if (!changed || changed->first != point) {
+        changed = std::pair{point, now_ms};
+    }
+    if (now_ms - changed->second >= ReturnPointSettleMs) {
+        settled = point;
+        changed.reset();
+    }
+}
+
 std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
     std::vector<std::pair<s32, bool>> shared;
     for (const s32 flag : changes.set) {
@@ -1557,19 +1588,29 @@ void SharedDamage::ForgetDamageBefore(std::span<const EnemyHpReport> others) {
 
 SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
                                         std::span<const EnemyCopy> alive,
-                                        std::span<const EnemyHpReport> others, s64 now_ms) {
-    if (new_visit != visit || now_active != active) {
-        tracks.clear();
+                                        std::span<const EnemyHpReport> others, s64 now_ms,
+                                        PartyRole role) {
+    // A new visit starts over. A switch between one world and worlds apart starts the others'
+    // damage over (their posts restart: a guest's counts do, below) but not the host's counts:
+    // its copies are the one world's, and what they lost there is its damage apart (rig
+    // 20261013-011544: cleared here, the host's 284 damage in one world counted as none apart
+    // while its one-world HP report went, and the guest's fresh copy stayed at full HP).
+    const bool new_visit_now = new_visit != visit;
+    const bool switched = !new_visit_now && now_active != active;
+    if (new_visit_now || switched) {
         written.clear();
         written_by.clear();
         held_since.clear();
-        visit = new_visit;
-        active = now_active;
     }
+    // A guest's drop in one world is the host's HP (the game's sync, LowerToHostHp) and its own
+    // hits that reached the host by the game: the host posts all of it, so the guest counts from
+    // where its copies stand.
+    if (new_visit_now || (switched && role == PartyRole::Guest)) {
+        tracks.clear();
+    }
+    visit = new_visit;
+    active = now_active;
     Step step;
-    if (!active) {
-        return step;
-    }
     for (const EnemyCopy& copy : alive) {
         if (copy.hp <= 0 || copy.max <= 0) {
             continue;
@@ -1579,6 +1620,14 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
             track->second.hits_before = copy.own_hits.value_or(0);
         }
         Track& seen = track->second;
+        if (switched && copy.own_hits) {
+            if (active) {
+                // Apart now: the guest's hits the game sent in one world become the host's.
+                seen.hits_before -= seen.unclaimed;
+            }
+            seen.unclaimed = 0;
+            seen.last_own = 0; // the last read's unclaimed drop while in one world
+        }
         // This member's own damage: what its own hits took off (counted by the game's hit
         // function), or else everything the board did not write.
         const s32 hits = copy.own_hits ? static_cast<s32>(*copy.own_hits - seen.hits_before) : 0;
@@ -1591,6 +1640,19 @@ SharedDamage::Step SharedDamage::Update(u64 new_visit, bool now_active,
             sent = 0;
         }
         const s32 own = copy.own_hits ? hits : sent;
+        if (!active) {
+            // One world (or no session): nothing is posted or written; the counts go on (see
+            // the switch above). Counted hit by hit, the drop the host's hits did not take is
+            // kept, two reads agreeing, as the debounce below does with `own`.
+            if (copy.own_hits) {
+                const s32 unclaimed = std::max(sent - seen.paid, 0);
+                seen.unclaimed = std::min(unclaimed, seen.last_own);
+                seen.last_own = unclaimed;
+            } else {
+                seen.last_own = own;
+            }
+            continue;
+        }
         if (!copy.own_hits) {
             sent = 0; // not told apart: all of it is this member's
         }
@@ -2317,6 +2379,11 @@ std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body) {
         return std::nullopt;
     }
     return answer;
+}
+
+bool EndsStaleSessionEffect(PartyRole role, bool in_session, std::span<const s32> effects) {
+    return role == PartyRole::Guest && !in_session &&
+           std::ranges::find(effects, SessionEffect) != effects.end();
 }
 
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before,
@@ -4570,6 +4637,9 @@ std::string FormatWorldLogEntry(const WorldLogEntry& entry) {
         return fmt::format("seq {} hp {:#x} gone", entry.seq, entry.subject);
     case WorldLogKind::HpSourceGone:
         return fmt::format("seq {} hp of {:x}{:08x} gone", entry.seq, entry.subject, entry.value);
+    case WorldLogKind::ReturnPoint:
+        return fmt::format("seq {} return point {} on {:#x}", entry.seq,
+                           static_cast<s32>(entry.subject), entry.map);
     case WorldLogKind::MapFlagOn:
     case WorldLogKind::MapFlagOff:
         return fmt::format("seq {} map flag {} {}", entry.seq,
@@ -4928,7 +4998,8 @@ bool FlagEventOnce::First(s32 flag, bool on, s64 now_ms) {
     return seen.try_emplace({flag, on}, now_ms).second;
 }
 
-// The host's name, epoch, last seq, the map, the bits' length (u16), the bits.
+// The host's name, epoch, last seq, the map, the bits' length (u16), the bits, then the host's
+// return point (s32) and its map (since protocol 8).
 std::vector<u8> EncodeWorldLogMapStateSnapshot(const WorldLogMapStateSnapshot& snapshot) {
     std::vector<u8> payload;
     AppendName(payload, snapshot.host);
@@ -4937,6 +5008,8 @@ std::vector<u8> EncodeWorldLogMapStateSnapshot(const WorldLogMapStateSnapshot& s
     AppendLittleEndian(payload, snapshot.state.map);
     AppendLittleEndian(payload, static_cast<u16>(snapshot.state.bits.size()));
     payload.insert(payload.end(), snapshot.state.bits.begin(), snapshot.state.bits.end());
+    AppendLittleEndian(payload, static_cast<u32>(snapshot.return_point.point));
+    AppendLittleEndian(payload, snapshot.return_point.map);
     return payload;
 }
 
@@ -4959,9 +5032,12 @@ std::optional<WorldLogMapStateSnapshot> DecodeWorldLogMapStateSnapshot(
         }
         snapshot.state.bits.push_back(*byte);
     }
-    if (!reader.Done()) {
+    const auto point = reader.Next<u32>();
+    const auto point_map = reader.Next<u32>();
+    if (!point || !point_map || !reader.Done()) {
         return std::nullopt;
     }
+    snapshot.return_point = {static_cast<s32>(*point), *point_map};
     return snapshot;
 }
 
@@ -5472,7 +5548,17 @@ std::vector<WorldLogHpSnapshot> WorldLogHost::HpSnapshot(std::string_view host) 
 }
 
 WorldLogMapStateSnapshot WorldLogHost::MapStateSnapshot(std::string_view host) const {
-    return {std::string{host}, epoch, last, map_state};
+    return {std::string{host}, epoch, last, map_state, return_point};
+}
+
+std::vector<WorldLogEntry> WorldLogHost::ReturnPoint(s32 point, u32 map) {
+    std::vector<WorldLogEntry> entries;
+    if (point <= 0 || (point == return_point.point && map == return_point.map)) {
+        return entries;
+    }
+    return_point = {point, map};
+    entries.push_back(Append(WorldLogKind::ReturnPoint, map, static_cast<u32>(point)));
+    return entries;
 }
 
 std::vector<WorldLogShownSnapshot> WorldLogHost::ShownSnapshot(std::string_view host) const {
@@ -5529,10 +5615,22 @@ std::vector<WorldLogEntry> WorldLogHost::Start(u64 new_epoch, bool after_wipe) {
     hp.clear(); // no damage from before it (a wipe respawned the map)
     recent_flags.clear();
     started_after_wipe = after_wipe;
+    if (after_wipe) {
+        // A wipe respawns the map; what the host's world still shows dead is from before its
+        // own wipe trip loaded it (rig smoke 2026-10-13), not a death the members should copy.
+        for (auto& [handle, bits] : shown.bits) {
+            bits = static_cast<u8>(bits & ~ShownBits({0, false, false, false, true}));
+        }
+    }
     std::vector<WorldLogEntry> entries{
         Append(WorldLogKind::Reset, 0, after_wipe ? WorldLogResetAfterWipe : 0)};
     AppendShown(entries); // the host's world as it is (not a kill: it stays the host's now)
     AppendMapState(entries);
+    if (return_point.point > 0) {
+        // The host's point stands through a new log (a wipe): a member on it needs it.
+        entries.push_back(Append(WorldLogKind::ReturnPoint, return_point.map,
+                                 static_cast<u32>(return_point.point)));
+    }
     return entries;
 }
 
@@ -5630,6 +5728,7 @@ void WorldLogMember::Reset() {
     shown_known = false;
     map_state = {};
     map_state_known = false;
+    return_point = {};
     hp.clear();
     hp_source = 0;
 }
@@ -5709,6 +5808,9 @@ void WorldLogMember::Apply(const WorldLogEntry& entry) {
     case WorldLogKind::HpGone:
     case WorldLogKind::HpSourceGone:
         ApplyHp(entry);
+        return;
+    case WorldLogKind::ReturnPoint:
+        return_point = {static_cast<s32>(entry.subject), entry.map};
         return;
     }
 }
@@ -5875,7 +5977,9 @@ WorldLogMember::Step WorldLogMember::Take(const WorldLogMapStateSnapshot& part, 
     }
     host_last = std::max(host_last, part.last);
     if (!based || part.last > applied) {
-        Pending(part.last).map_state = part.state;
+        PartialSnapshot& pending = Pending(part.last);
+        pending.map_state = part.state;
+        pending.return_point = part.return_point;
         Complete(step);
     }
     step.gap = Behind();
@@ -5937,6 +6041,7 @@ void WorldLogMember::Complete(Step& step) {
     shown_known = true;
     map_state = *pending.map_state;
     map_state_known = true;
+    return_point = pending.return_point;
     hp.clear();
     for (const auto& [index, share] : pending.hp_got) {
         for (const auto& [source, report] : share) {
@@ -6048,6 +6153,21 @@ std::optional<WorldLogMapState> DecodeWorldLogMapStateInput(std::span<const u8> 
     }
     return WorldLogMapState{ReadLittleEndian<u32>(payload, 0),
                             std::vector<u8>(payload.begin() + 4, payload.end())};
+}
+
+std::vector<u8> EncodeWorldLogReturnPointInput(const WorldLogReturnPoint& point) {
+    std::vector<u8> payload;
+    AppendLittleEndian(payload, static_cast<u32>(point.point));
+    AppendLittleEndian(payload, point.map);
+    return payload;
+}
+
+std::optional<WorldLogReturnPoint> DecodeWorldLogReturnPointInput(std::span<const u8> payload) {
+    if (payload.size() != 8) {
+        return std::nullopt;
+    }
+    return WorldLogReturnPoint{static_cast<s32>(ReadLittleEndian<u32>(payload, 0)),
+                               ReadLittleEndian<u32>(payload, 4)};
 }
 
 std::optional<DirectVitals> ParseVitalsUpdate(std::string_view line) {

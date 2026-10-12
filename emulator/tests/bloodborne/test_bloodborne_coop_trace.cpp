@@ -415,6 +415,31 @@ TEST(CoopTraceReplay, WorldLogShownRecordsReplay) {
                    }));
 }
 
+// The host's return point on the log (protocol 8): its input replays to the same entry.
+TEST(CoopTraceReplay, WorldLogReturnPointRecordsReplay) {
+    const u64 epoch = WorldLogEpoch(0x77, 1);
+    const auto record = [](s64 at, std::string_view role, std::string_view op,
+                           std::span<const u8> payload) {
+        return EncodeTraceRecord({at, "wlog-in", WorldLogTraceFields(role, op, payload)});
+    };
+    CoopTraceReplay replay;
+    std::vector<std::string> out;
+    for (const std::string& line :
+         {record(1, "host", "start", EncodeWorldLogStart(epoch, false)),
+          record(2, "host", "return-point", EncodeWorldLogReturnPointInput({2412951, 0x18010000})),
+          record(3, "host", "return-point", std::vector<u8>{1, 2, 3})}) {
+        for (std::string& decision : replay.Feed(line)) {
+            out.push_back(std::move(decision));
+        }
+    }
+    EXPECT_EQ(out, (std::vector<std::string>{
+                       "wlog host start epoch 7700000001",
+                       "wlog host appended seq 1 reset every map",
+                       "wlog host appended seq 2 return point 2412951 on 0x18010000",
+                       "wlog-in: unreadable host return-point",
+                   }));
+}
+
 TEST(CoopTraceReplay, CheckedInTracesKeepTheirDecisions) {
     const fs::path dir{BLOODBORNE_TRACES};
     size_t traces = 0;

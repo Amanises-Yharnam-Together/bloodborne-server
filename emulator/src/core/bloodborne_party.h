@@ -32,6 +32,11 @@ enum class PartyRole { Host, Guest };
 // EndSearch: end the role's search effect (a stale bell, see PartyController::Tick); the search
 // starts again on a later tick, once the effect is seen off.
 enum class PartyAction { Wait, StartSearch, EndSearch };
+// The session effect (9001) a party member carries while in a session. Rig 2026-10-13: a guest
+// that had travelled (a live player) kept it after its host's game died, as no leave limit ran,
+// and with it on, its bell never posted a sign; a guest out of its session takes it off first.
+constexpr s32 SessionEffect = 9001;
+bool EndsStaleSessionEffect(PartyRole role, bool in_session, std::span<const s32> effects);
 
 // The special effects a rung bell leaves on the player. While one is active the game's SOS
 // status (0x0186FE40) reports the player as searching, so adding the effect is the whole bell.
@@ -230,6 +235,9 @@ const std::vector<CodePatch>& JoinAnywherePatches();
 // warps the player, e.g. Gascoigne's 24000020) calls StopRequest (returning to 0x0193C65C) and
 // LeaveSession for a member of a session. In a party it is a trip like a lamp's.
 bool IsWorldReloadStopRequest(u64 caller_offset);
+// The same load's LeaveSession (0x0193C689, returning to 0x0193C68E): a guest's game calls only
+// this one at the Cathedral Ward border (rig 2026-10-13).
+bool IsWorldReloadLeaveSession(u64 caller_offset);
 // A lamp object's availability bytes (+0x49 blocked in multiplayer, +0x4A its entity missing)
 // that a party member's lamp has cleared. After the host's time-of-day reload (Cathedral Ward
 // door, 2026-10-10) a guest's lamp read "entity missing" until it travelled, so it stayed unusable.
@@ -469,11 +477,22 @@ class PartyTrip {
 public:
     using Clock = std::chrono::steady_clock;
     static constexpr Clock::duration Timeout = std::chrono::seconds{90};
+    // How long a world reload's trip waits for its load to show (see StartWorldReload).
+    static constexpr Clock::duration NoLoadGrace = std::chrono::seconds{5};
 
     void Start(Clock::time_point now, u32 from_stage, u64 from_player) {
         started = now;
         from = from_stage;
         player = from_player;
+        needs_load = false;
+        loaded = false;
+    }
+    // The world load's own StopRequest (0x0193C65C, a time-of-day reload): a trip only once a load
+    // shows (loading, no player, or a new one). At a border it came with no load, the map read
+    // flipping between the two (Kaniel 2026-10-13): no arrival then, and DropIfNoLoad ends it.
+    void StartWorldReload(Clock::time_point now, u32 from_stage, u64 from_player) {
+        Start(now, from_stage, from_player);
+        needs_load = true;
     }
     void Finish() {
         started.reset();
@@ -482,10 +501,30 @@ public:
     // character, from the party tick. Over on a new stage, or after a reload of the same one (a
     // new character).
     void ObserveStage(u32 stage, bool loading, u64 current_player) {
-        if (started && !loading && current_player != 0 &&
-            (stage != from || current_player != player)) {
+        if (!started) {
+            return;
+        }
+        if (loading || current_player == 0 || current_player != player) {
+            loaded = true;
+        }
+        if (needs_load && !loaded) {
+            return;
+        }
+        if (!loading && current_player != 0 && (stage != from || current_player != player)) {
             Finish();
         }
+    }
+    // Whether the last trip started was a world reload's.
+    bool WorldReload() const {
+        return needs_load;
+    }
+    // A world reload's trip with no load NoLoadGrace after it began: ended, no arrival. True once.
+    bool DropIfNoLoad(Clock::time_point now) {
+        if (!started || !needs_load || loaded || now - *started < NoLoadGrace) {
+            return false;
+        }
+        Finish();
+        return true;
     }
     bool Active(Clock::time_point now) const {
         return started && now - *started < Timeout;
@@ -495,6 +534,8 @@ private:
     std::optional<Clock::time_point> started;
     u32 from = 0;
     u64 player = 0;
+    bool needs_load = false;
+    bool loaded = false;
 };
 
 // Join tasks (CSMultiPlayerIns, one per session player, in CSMultiPlayMan's list): the kind at
@@ -820,6 +861,38 @@ DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_f
 // Whether the trip of this death respawn checks, once arrived, for enemies the member's own save
 // left dead (see LeftDeadByItsSave): the trip of a death that resets the map.
 bool WipeTripRespawnsOnArrival(bool reset, DeathRespawn respawn);
+// The point a party death wakes this member at (Kaniel 2026-10-13, after a playtest wipe woke the
+// host in the Hunter's Dream and the guest at its own Central Yharnam lamp): a guest wakes where
+// the host does (host_point: the host's GlobalState +0x1528, from the world log), so the party
+// wakes together. But a guest's special death keeps its own point: one that changed its point at
+// the death (own_point, now, against own_point_alive, the one that stood before it; see
+// ReturnPointBeforeDeath): its first death (the Dream), a kidnapping (the Gaol). The host, a
+// guest without the host's point, or one never seen up (nothing to tell a special death by) keep
+// their own.
+s32 PartyRespawnPoint(bool guest, s32 own_point, std::optional<s32> own_point_alive,
+                      std::optional<s32> host_point);
+// How long a guest's point must stand while it is up to be its point from before a death: the
+// game may set a death's point while the player still stands (a kidnapping's grab), and that one
+// is the death's. A lamp rested at just before a death counts as special (its own point), as
+// before this rule.
+constexpr s64 ReturnPointSettleMs = 10'000;
+class ReturnPointBeforeDeath {
+public:
+    // The point (GlobalState +0x1528) on a tick while the player is up (not down, not dead).
+    void Sample(s32 point, s64 now_ms);
+    // The last point that stood ReturnPointSettleMs (the first one seen stands at once).
+    std::optional<s32> Point() const {
+        return settled;
+    }
+    void Reset() {
+        settled.reset();
+        changed.reset();
+    }
+
+private:
+    std::optional<s32> settled;
+    std::optional<std::pair<s32, s64>> changed; // a newer point and when it was first seen
+};
 // A flag every party member gets when another one sees it set (see PartyFlagBoard): a lamp's
 // active flags (LampOfActiveFlag and the one after), which the game does not sync itself, and
 // a boss fog's "entered" flag, which a guest's (unsynced) fog event sets to start the boss.
@@ -1111,12 +1184,18 @@ public:
         std::vector<EnemyHp> post;      // this member's own damage, to post
         std::vector<EnemyWrite> writes; // the HP to write on this member's copies
     };
-    // `active`: in the session with worlds apart (else nothing is posted or written, and the
-    // counts start over when it is next active).
+    // `active`: in the session with worlds apart (else one world or no session: nothing is posted
+    // or written, but the host's copies are still counted, see `role`).
     // `now_ms`: the clock for holding the damage of a member whose hits the game also sends (see
     // SharedDamageHoldMs); 0 holds nothing.
+    // `role`: across a switch between one world and worlds apart (rig 20261013-011544, joins,
+    // hp-across-blocks) the host's copies are the one world's, so their drop there (its own hits
+    // and the guest's, which the game sent) is the host's damage once apart. A guest's drop in one
+    // world is not its own: its copies took the host's HP (the game's sync, LowerToHostHp) and its
+    // hits reached the host by the game, so its counts start over at a switch.
     Step Update(u64 visit, bool active, std::span<const EnemyCopy> alive,
-                std::span<const EnemyHpReport> others, s64 now_ms = 0);
+                std::span<const EnemyHpReport> others, s64 now_ms = 0,
+                PartyRole role = PartyRole::Host);
     // A death reset the map: the damage in `others` (reported before the reset, on the world that
     // was) is not taken from now on; the members' reports after their own reloads are.
     void ForgetDamageBefore(std::span<const EnemyHpReport> others);
@@ -1128,6 +1207,9 @@ private:
         s32 last_own = 0;    // the previous read's own damage: posted is the lower of the two
         s64 hits_before = 0; // EnemyCopy::own_hits when first seen this visit
         s32 paid = 0;        // what the game sent of the others' damage that their posts used up
+        // The host in one world, counted hit by hit: the drop its own hits did not take (the
+        // guest's hits the game sent), two reads agreeing; its own once the worlds go apart.
+        s32 unclaimed = 0;
     };
     u64 visit = 0;
     bool active = false;
@@ -1237,7 +1319,9 @@ constexpr u8 PeerHelloType = 0x33;
 // host's map state on it (frames 0x39, 0x3A, the flag entries).
 // 5: enemy HP on it (frames 0x3B, 0x3C, the HP entries; every entry carries a value).
 // 6: a snapshot ends with the recent flag events (frame 0x3D); the world snapshot on the server.
-constexpr u8 CoopProtocolVersion = 7;
+// 7: the flags part's after-wipe byte. 8: the host's return point (the ReturnPoint entry, and the
+// map state part ends with it).
+constexpr u8 CoopProtocolVersion = 8;
 constexpr s64 PeerHelloResendMs = 10'000;
 // PeerHello::features: WorldLogFeature when this game runs the world log (it is not switched off,
 // SHADPS4_BLOODBORNE_WORLD_LOG=0). Every member runs one build (Kaniel 2026-10-12): a peer on
@@ -1342,6 +1426,11 @@ enum class WorldLogKind : u8 {
     HpValue = 11,
     HpGone = 12,
     HpSourceGone = 13,
+    // The host's return point (GlobalState +0x1528, where its death respawn wakes it) is `subject`
+    // from now on, on `map` (PackedMapOfWarpPoint, 0 when not known): a guest's party death wakes
+    // there too (see PartyRespawnPoint). A new log starts with it; a snapshot's map state part
+    // carries it.
+    ReturnPoint = 14,
 };
 struct WorldLogEntry {
     u64 seq = 0;
@@ -1371,6 +1460,12 @@ struct WorldLogMapState {
     u32 map = 0;
     std::vector<u8> bits;
     bool operator==(const WorldLogMapState&) const = default;
+};
+// The host's return point (WorldLogKind::ReturnPoint): point 0 when none is known.
+struct WorldLogReturnPoint {
+    s32 point = 0;
+    u32 map = 0;
+    bool operator==(const WorldLogReturnPoint&) const = default;
 };
 // A member's shared flag events to the host (frame WorldLogFlagsProposeType): each with a number
 // that counts up within the member's run, resent for WorldLogFlagResendWindowMs so a lost frame
@@ -1526,7 +1621,8 @@ struct WorldLogMapStateSnapshot {
     std::string host;
     u64 epoch = 0;
     u64 last = 0;
-    WorldLogMapState state; // one part: the bitmap fits a frame
+    WorldLogMapState state;           // one part: the bitmap fits a frame
+    WorldLogReturnPoint return_point; // the host's, at the same seq
     bool operator==(const WorldLogMapStateSnapshot&) const = default;
 };
 std::vector<u8> EncodeWorldLogMapStateSnapshot(const WorldLogMapStateSnapshot& snapshot);
@@ -1655,7 +1751,14 @@ public:
     const WorldLogMapState& MapStateNow() const {
         return map_state;
     }
+    // The map state part carries the return point too.
     WorldLogMapStateSnapshot MapStateSnapshot(std::string_view host) const;
+    // The host's return point now (GlobalState +0x1528 and its map): an entry when it changed. A
+    // point that cannot be read (0 or below, a load) leaves the last one standing.
+    std::vector<WorldLogEntry> ReturnPoint(s32 point, u32 map);
+    const WorldLogReturnPoint& ReturnPointNow() const {
+        return return_point;
+    }
     // A member's (or the host's own) HP report, whole: the entries for what changed (a new source
     // of the member's first: its old one goes).
     Taken ProposeHp(const WorldLogHpProposal& proposal);
@@ -1705,6 +1808,7 @@ private:
     WorldLogHp hp;
     std::vector<WorldLogEntry> recent_flags; // the last WorldLogRecentFlags flag entries
     bool started_after_wipe = false;         // Start's `after_wipe`, for the snapshots
+    WorldLogReturnPoint return_point;
 };
 
 // A member's side: the entries applied in seq order, exactly once.
@@ -1739,6 +1843,10 @@ public:
     // Whether MapState is the host's (as ShownKnown).
     bool MapStateKnown() const {
         return map_state_known;
+    }
+    // The host's return point (point 0: not known yet).
+    const WorldLogReturnPoint& HostReturnPoint() const {
+        return return_point;
     }
     // Whether to ask the host for a snapshot now (a gap, a late join, a new epoch past its start),
     // at most every WorldLogSnapshotRetryMs; true marks it asked.
@@ -1792,6 +1900,7 @@ private:
         std::optional<u8> shown_parts;
         std::map<u8, WorldLogShown> shown_got;
         std::optional<WorldLogMapState> map_state;
+        WorldLogReturnPoint return_point; // with map_state
         std::optional<u8> hp_parts;
         std::map<u8, WorldLogHp> hp_got;
         std::optional<std::vector<WorldLogEntry>> flags;
@@ -1805,6 +1914,7 @@ private:
     bool shown_known = false;
     WorldLogMapState map_state;
     bool map_state_known = false;
+    WorldLogReturnPoint return_point;
     WorldLogHp hp;
     u64 hp_source = 0; // the source the HP entries are of (HpSource)
 };
@@ -1872,6 +1982,9 @@ std::vector<u8> EncodeWorldLogShow(u32 map, std::span<const CharacterShown> char
 // A host's MapState on a trace record: the map (u32) and the bits.
 std::vector<u8> EncodeWorldLogMapStateInput(u32 map, std::span<const u8> bits);
 std::optional<WorldLogMapState> DecodeWorldLogMapStateInput(std::span<const u8> payload);
+// A host's ReturnPoint on a trace record: the point (s32) and its map (u32).
+std::vector<u8> EncodeWorldLogReturnPointInput(const WorldLogReturnPoint& point);
+std::optional<WorldLogReturnPoint> DecodeWorldLogReturnPointInput(std::span<const u8> payload);
 std::optional<std::pair<u32, std::vector<CharacterShown>>> DecodeWorldLogShow(
     std::span<const u8> payload);
 // One report per source from copies of it (direct and the board): per enemy the most damage, or
@@ -2117,6 +2230,30 @@ constexpr auto EnemyOwnerChangeSettles = std::chrono::seconds{5};
 // into the host's world, or a guest starting or ending its run of the map's enemies) or of its
 // own takeover or hand-back (`owner_changed_ms`).
 bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner_changed_ms);
+// The world a lone guest's enemy claims (ClaimEnemiesWhenAlone) were made in: its map and the
+// local player's character. A load makes a new character, also on the same map (a join, a
+// respawn), and the claimed words go with the old world's memory (rig 2026-10-13: the hand-back
+// wrote into freed memory and the game crashed at 0x15913d8 on the next reload).
+class ClaimedWorld {
+public:
+    // Whether (map, player) is another world than the last one seen; a player of 0 (loading)
+    // changes nothing.
+    bool NewWorld(u32 map_now, u64 player_now) {
+        const bool other_map = !seen || map_now != map;
+        const bool other_player = player_now != 0 && player != 0 && player_now != player;
+        seen = true;
+        map = map_now;
+        if (player_now != 0) {
+            player = player_now;
+        }
+        return other_map || other_player;
+    }
+
+private:
+    bool seen = false;
+    u32 map = 0;
+    u64 player = 0;
+};
 
 class VisitKills {
 public:

@@ -65,6 +65,10 @@ s64 proposal_sent_ms = 0;
 s64 entries_sent_ms = 0;
 WorldLogKills last_proposed;
 std::optional<std::pair<u32, u16>> log_host_peer; // where the host's frames come from
+// A guest's copy of the host's return point (0: none), see HostReturnPointNow. Kept apart from
+// world_log_member: a new log (the host's wipe) forgets the member's copy until its first entries
+// or a snapshot bring it again, which is when the guest's wipe respawn asks for it.
+std::atomic<s32> host_return_point{0};
 
 // What the lifecycle asks of the log, taken on the next kill step: the host starts a new log with
 // no kills on its wipe (marked, see WorldLogWipeHold), a new session or character; a member
@@ -172,6 +176,23 @@ void TakeFlagProposal(const std::string& name, const WorldLogFlagProposal& propo
 
 void MakeWorldSnapshot(const std::string& name, s64 now_ms); // below
 
+// The host's return point (GlobalState +0x1528, where its death respawn wakes it) to the log when
+// it changed: a guest's party death wakes there too (PartyRespawnPoint; playtest 2026-10-13, a wipe
+// woke the host in the Dream and the guest at its own Central Yharnam lamp).
+void ShareReturnPoint(const std::string& name, s64 now_ms) {
+    const u64 global = GetGlobalState();
+    if (global < 0x10000) {
+        return;
+    }
+    const s32 point = ReadValue<s32>(global, 0x1528);
+    const WorldLogReturnPoint now{point, point > 0 ? PackedMapOfWarpPoint(point) : 0};
+    const std::vector<WorldLogEntry> entries = world_log_host.ReturnPoint(now.point, now.map);
+    if (!entries.empty()) {
+        TraceLog("host", "return-point", EncodeWorldLogReturnPointInput(now));
+        SendEntries(name, entries, now_ms);
+    }
+}
+
 // The host: a new log when there is none or the lifecycle asked for one, its own kills as a
 // proposal of its own, and a heartbeat every WorldLogResendMs.
 void RunHostLog(const std::string& name, const WorldLogKills& mine, s64 now_ms) {
@@ -187,6 +208,7 @@ void RunHostLog(const std::string& name, const WorldLogKills& mine, s64 now_ms) 
     }
     TakeProposal(name, {name, world_log_host.Epoch(), world_log_run, ++proposals_made, mine},
                  now_ms);
+    ShareReturnPoint(name, now_ms);
     if (auto events = flag_outbox.Pending(now_ms); !events.empty()) {
         TakeFlagProposal(name, {name, world_log_host.Epoch(), world_log_run, std::move(events)},
                          now_ms);
@@ -436,6 +458,11 @@ void TakeMemberFrame(u8 type, std::span<const u8> payload, s64 now_ms,
     }
     ApplyFlagEntries(step.applied, now_ms);
     LogMemberStep(step, taken->host_last);
+    if (const s32 point = world_log_member.HostReturnPoint().point;
+        point > 0 && host_return_point.exchange(point) != point) {
+        LOG_INFO(Debug, "Co-op world log: the host's return point is {} (map {:#x})", point,
+                 world_log_member.HostReturnPoint().map);
+    }
 }
 
 void TakeFrameAsMember(u8 type, std::span<const u8> payload, u32 addr, u16 port, s64 now_ms) {
@@ -642,6 +669,14 @@ std::optional<MemberMapState> HostMapStateNow() {
     return log_map_state ? log_map_state : host_map_state;
 }
 
+std::optional<s32> HostReturnPointNow() {
+    const s32 point = host_return_point.load();
+    if (point <= 0 || !IsPartyGuestRole() || !InPartySession()) {
+        return std::nullopt;
+    }
+    return point;
+}
+
 PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
                                std::span<const std::pair<s32, bool>> changes, bool forgot,
                                const std::unordered_set<u32>& not_mine) {
@@ -656,10 +691,13 @@ PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
         std::erase_if(handles, [&](u32 handle) { return not_mine.contains(handle); });
     }
     std::erase_if(mine, [](const auto& entry) { return entry.second.empty(); });
-    if (member_reset.exchange(false) && IsPartyGuestRole()) {
-        world_log_member.Reset();
-        log_host_peer.reset();
-        TraceLog("member", "reset", {});
+    if (member_reset.exchange(false)) {
+        host_return_point.store(0); // another session or character: another host
+        if (IsPartyGuestRole()) {
+            world_log_member.Reset();
+            log_host_peer.reset();
+            TraceLog("member", "reset", {});
+        }
     }
     const bool log = DecideKillPath(mine, now_ms);
     FollowFlagsPath(log, now_ms);

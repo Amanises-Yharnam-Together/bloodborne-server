@@ -30,6 +30,7 @@ VERBS = {
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
     "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
+    "return-point",
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
@@ -299,6 +300,17 @@ class LaneTest(unittest.TestCase):
     def tearDown(self):
         run_scenario.use_lane(0)
 
+    def test_lane_zero_of_a_batch_stops_only_its_own_games(self):
+        # Rig 2026-10-13: lane 0's end of smoke closed lane 1's games (together ran again).
+        run_scenario.use_lane(0)
+        self.assertFalse(run_scenario.IN_LANES, "the rig on its own stops every rig game")
+        run_scenario.use_lane(0, True)
+        self.assertTrue(run_scenario.IN_LANES)
+        run_scenario.use_lane(1)
+        self.assertTrue(run_scenario.IN_LANES)
+        self.assertEqual(run_scenario.lane_command(0, "smoke", run_scenario.RIG)[5:9],
+                         ["--lane", "0", "--batch", str(run_scenario.RIG)])
+
     def test_a_lane_has_its_own_ports_and_folders(self):
         run_scenario.use_lane(0)
         self.assertEqual((run_scenario.SHADNET_PORT, run_scenario.WEBAPI_PORT,
@@ -443,6 +455,12 @@ class RunnerTest(unittest.TestCase):
                 self.assertTrue(run_scenario.restore_baseline("host"))
                 self.assertTrue((user / "savedata" / "old").is_file())
                 self.assertEqual((user / "bloodborne_party_1.txt").read_text(), "old")
+                # A suite's restart with a new character keeps the old one's party files (rig
+                # 2026-10-13: the new-character check had nothing to tell apart).
+                (user / "bloodborne_party_1.txt").write_text("played")
+                self.assertTrue(run_scenario.restore_baseline("host", other, keep_party_files=True))
+                self.assertTrue((user / "savedata" / "fresh").is_file())
+                self.assertEqual((user / "bloodborne_party_1.txt").read_text(), "played")
 
 
     NETSTAT = "\n".join([

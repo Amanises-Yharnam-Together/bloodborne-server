@@ -470,8 +470,11 @@ s32 PS4_SYSV_ABI sceNpSignalingDeactivateConnection(OrbisNpSignalingContextId ct
             return ORBIS_NP_SIGNALING_ERROR_CONN_NOT_FOUND;
         }
 
-        LOG_INFO(Lib_NpSignaling, "t={} ctxId={} connId={} peer='{}' status={}", NowMs(), ctxId,
-                 connId, OnlineIdToString(it->second.online_id), it->second.status);
+        // The caller: which of the game's four (0xcc0dcb queue, 0xcd870d/0xcda16b teardown,
+        // 0xcd8f32 the per-peer state machine) gave up (the rig's stalled joins, 2026-10-13).
+        LOG_INFO(Lib_NpSignaling, "t={} ctxId={} connId={} peer='{}' status={} caller={}", NowMs(),
+                 ctxId, connId, OnlineIdToString(it->second.online_id), it->second.status,
+                 fmt::ptr(__builtin_return_address(0)));
     }
     DeactivateConnectionFaithful(connId);
     return ORBIS_OK;

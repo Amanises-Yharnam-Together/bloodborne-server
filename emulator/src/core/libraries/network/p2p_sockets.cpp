@@ -34,6 +34,38 @@ namespace Libraries::Net {
 
 namespace {
 
+// Rig 2026-10-13: about 1 join in 4 stalls, the game giving up its per-peer handshake (state
+// machine 0xcd8bb0) 5.4 s after signaling came up; the first game packets of the run are logged
+// (size, first byte, time) to see which hello or ack never went or never came.
+std::atomic<u32> join_packets_logged{0};
+constexpr u32 JoinPacketsLogged = 3000;
+// A stalled join's guest received the host's 271-byte message and never acted on it: the long
+// ones have a budget of their own, and every line shows the first bytes.
+constexpr size_t LongPacket = 200;
+
+std::atomic<u32> long_packets_logged{0};
+
+bool LogsPacket(size_t size) {
+    if (size >= LongPacket) {
+        return long_packets_logged.fetch_add(1) < JoinPacketsLogged;
+    }
+    return join_packets_logged.fetch_add(1) < JoinPacketsLogged;
+}
+
+std::string HeadHex(const u8* data, size_t size) {
+    std::string text;
+    for (size_t index = 0; index < std::min<size_t>(size, 48); ++index) {
+        text += fmt::format("{:02x}", data[index]);
+    }
+    return text;
+}
+
+s64 P2PNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
 constexpr u16 kSignalingVPortNbo = 0xffff;
 constexpr size_t kVPortHeaderSize = 4;
 constexpr size_t kMaxUdpPayload = 65507;
@@ -315,6 +347,10 @@ public:
 
         game_sockets.emplace(vport, socket);
         *actual_vport_nbo = vport;
+        LOG_INFO(Lib_Net, "P2P socket bound to vport {} t={}", ntohs(vport),
+                 std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now().time_since_epoch())
+                     .count());
         return true;
     }
 
@@ -543,7 +579,21 @@ private:
             std::lock_guard lock(registry_mutex);
             const auto it = game_sockets.find(dest_vport_nbo);
             if (it == game_sockets.end() || it->second == nullptr) {
-                LOG_TRACE(Lib_Net, "P2P RX no socket for dst_vport={}", ntohs(dest_vport_nbo));
+                // Rig 2026-10-13: about 1 join in 4 stalls, the guest's game giving up its
+                // connection 5.4 s after signaling came up with no game traffic in between; a
+                // one-shot hello dropped here, before the game bound its port, would do that. The
+                // first drops are logged to tell.
+                static std::atomic<u32> dropped{0};
+                if (dropped.fetch_add(1) < 200) {
+                    LOG_INFO(Lib_Net,
+                             "P2P RX dropped, no socket for dst_vport={} (src_vport={}, {} bytes, "
+                             "first byte {:#x}) t={}",
+                             ntohs(dest_vport_nbo), ntohs(source_vport_nbo), payload_size,
+                             payload_size > 0 ? static_cast<u8>(payload[0]) : 0,
+                             std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count());
+                }
                 continue;
             }
 
@@ -888,6 +938,11 @@ int P2PSocket::SendPacket(const void* msg, u32 len, int flags, const OrbisNetSoc
         return FailWith(ORBIS_NET_EHOSTUNREACH);
     }
 
+    if (LogsPacket(len)) {
+        LOG_INFO(Lib_Net, "P2P TX {} bytes vport {} -> {} dst={:#x}:{} t={} {}", len,
+                 ntohs(local_addr.sin_vport), ntohs(target.sin_vport), target.sin_addr,
+                 ntohs(target.sin_port), P2PNowMs(), HeadHex(static_cast<const u8*>(msg), len));
+    }
     LOG_TRACE(Lib_Net, "P2P TX {} bytes vport {} -> {} dst={:#x}:{}", len,
               ntohs(local_addr.sin_vport), ntohs(target.sin_vport), target.sin_addr,
               ntohs(target.sin_port));
@@ -1070,6 +1125,12 @@ void P2PSocket::EnqueuePacket(P2PDatagram packet) {
     }
 
     const bool was_empty = receive_queue.empty();
+    if (LogsPacket(packet.payload.size())) {
+        LOG_INFO(Lib_Net, "P2P RX {} bytes vport {} <- {} src={:#x}:{} t={} {}",
+                 packet.payload.size(), ntohs(local_addr.sin_vport), ntohs(packet.source_vport),
+                 packet.source_addr, ntohs(packet.source_port), P2PNowMs(),
+                 HeadHex(packet.payload.data(), packet.payload.size()));
+    }
     LOG_TRACE(Lib_Net, "P2P RX {} bytes vport {} <- {} src={:#x}:{}", packet.payload.size(),
               ntohs(local_addr.sin_vport), ntohs(packet.source_vport), packet.source_addr,
               ntohs(packet.source_port));

@@ -861,6 +861,20 @@ bool AutoplaySetFlag(const AutoplayStep& step) {
     return true;
 }
 
+// return-point <point>: the lamp a death respawns this player at (GlobalState +0x1528, what a
+// lamp rest stores): members with other lamps without the trips there (a wipe's respawn, Kaniel
+// 2026-10-13: everyone wakes where the host does).
+bool AutoplayReturnPoint(const AutoplayStep& step) {
+    const u64 global = GetGlobalState();
+    if (global < 0x10000 || !HasMemoryAccess(global + 0x1528, 4, MemoryProt::CpuWrite)) {
+        step.failure = "no global state";
+        return false;
+    }
+    WriteValue(global, 0x1528, static_cast<s32>(step.Number(0, 0)));
+    LOG_INFO(Debug, "Bloodborne autoplay: return point {}", ReadValue<s32>(global, 0x1528));
+    return true;
+}
+
 // expect-flag <flag> [<0|1>], wait-flag <flag> [<0|1>] [<timeout>].
 bool AutoplayExpectOrWaitFlag(const AutoplayStep& step) {
     const bool on = EventFlagOn(static_cast<s32>(step.Number(0, 0)));
@@ -1233,6 +1247,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"press", AutoplayPressOrStick},
     {"stick", AutoplayPressOrStick},
     {"set-flag", AutoplaySetFlag},
+    {"return-point", AutoplayReturnPoint},
     {"expect-flag", AutoplayExpectOrWaitFlag},
     {"wait-flag", AutoplayExpectOrWaitFlag},
     {"godmode", AutoplayGodmode},

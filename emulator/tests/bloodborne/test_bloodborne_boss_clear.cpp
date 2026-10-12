@@ -100,4 +100,13 @@ TEST(BloodborneTimeOfDay, ATimeOfDayReloadIsATrip) {
     EXPECT_FALSE(IsWorldReloadStopRequest(0x019471B6)) << "the world teardown";
 }
 
+// Rig 2026-10-13 (border-tomb, as Kaniel's walk into Cathedral Ward after Gascoigne): a guest's
+// game called only the world load's LeaveSession (returning to 0x0193C68E), 14 times; the same
+// world reload as the host's StopRequest, so the same trip once it loads.
+TEST(BloodborneTimeOfDay, AGuestsWorldReloadLeaveIsTheSameReload) {
+    EXPECT_TRUE(IsWorldReloadLeaveSession(0x0193C68E));
+    EXPECT_FALSE(IsWorldReloadLeaveSession(0x0193C65C)) << "the StopRequest's return";
+    EXPECT_FALSE(IsWorldReloadLeaveSession(0x01385AC6)) << "the boss clear's tail jump";
+}
+
 } // namespace
