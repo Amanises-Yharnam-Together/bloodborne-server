@@ -326,6 +326,7 @@ void NoteGameTrophyUnlock(s32 trophy);
 void ReadTrophyBoard(std::span<const s32> board);
 void UnlockPartyTrophies(bool sharing);
 extern std::mutex flag_board_mutex;
+extern std::vector<std::pair<s32, bool>> flags_to_post;
 extern std::mutex echo_board_mutex;
 extern std::vector<KillEchoes> echoes_to_post;
 extern std::vector<KillEchoes> echoes_to_grant;
@@ -371,6 +372,12 @@ constexpr u64 WarpNextStageBonfireOffset = 0x0132E050;
 void InstallLampsAsCampfires(u64 base, u64 image_size);
 extern std::atomic<u32> coop_trace_file;
 bool CoopTraceOn();
+
+void TraceFrame(const char* kind, std::span<const u8> frame, u32 addr, u16 port,
+                std::optional<bool> from_peer = std::nullopt);
+
+void TraceBoard(const char* kind, const std::string& endpoint, std::optional<int> status,
+                std::string_view body);
 std::chrono::sys_seconds LocalTimeNow();
 void StartCoopTrace();
 extern std::condition_variable_any enemy_hp_wake;
@@ -584,6 +591,8 @@ extern DirectDamageInbox direct_damage_inbox;
 extern std::mutex direct_boards_mutex;
 extern DirectInbox<DirectVitals> direct_vitals_inbox;
 extern DirectInbox<DirectKills> direct_kills_inbox;
+extern std::mutex peer_hello_mutex;
+extern std::optional<PeerHello> own_hello;
 bool TakeDirectDamage();
 void SendDirectKills(std::span<const u32> kills, bool changed);
 void SendDirectDamage(const MemberMapState& mine, bool changed);
@@ -596,6 +605,7 @@ std::optional<float> LocalPlayerHeading();
 void FinishWaitingJoins(bool in_session);
 void ResendOwnDataOnChange(bool in_session);
 void LogMemberDataChanges(bool in_session);
+u64 OwnGameData();
 void InstallSeamlessTravel(u64 base, u64 image_size);
 void EndSessionOnWorldTeardown();
 void ReviveGuestAfterGhostDeath();

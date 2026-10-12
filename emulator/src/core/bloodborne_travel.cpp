@@ -146,6 +146,10 @@ std::mutex rest_board_mutex;
 std::vector<LampRest> rest_board;
 std::chrono::steady_clock::time_point rest_board_time{};
 
+// Seamless travel: the map this member is on while in a party session (0 otherwise), posted to
+// the party's map board by the same client thread, and the board it read back.
+std::atomic<u32> party_map_now{};
+
 } // namespace Coop
 
 namespace {

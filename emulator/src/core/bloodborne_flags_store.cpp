@@ -128,6 +128,16 @@ namespace {
 // it saw lit to the party's flag board and sets the other members' ones.
 std::atomic<bool> party_host_role{};
 
+} // namespace
+
+namespace Coop {
+
+std::vector<std::pair<s32, bool>> flags_to_set;
+
+} // namespace Coop
+
+namespace {
+
 // A guest's progress in the host's world (see IsMapPickupFlag): the event flags it set there are
 // kept in a file and set again once it has been home for a while, so its next save has them.
 // EventFlagMan [0x0553B100]; 0x013CFD80(manager, flag, bits) reads a flag (the

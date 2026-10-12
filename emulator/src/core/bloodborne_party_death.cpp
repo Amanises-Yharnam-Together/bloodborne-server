@@ -221,6 +221,16 @@ namespace {
 constexpr u64 LoadWaitOffset = 0x8D;
 constexpr u64 ActionButtonManPointerOffset = 0x05540048;
 
+} // namespace
+
+namespace Coop {
+
+DirectInbox<DirectVitals> direct_vitals_inbox;
+
+} // namespace Coop
+
+namespace {
+
 // UpDateBloodMark (native 0x013D2910) takes the stain position from the player only while
 // GlobalState +0x1592 is set, which it is in the player's own world. In the host's world it
 // copies a stored position instead (+0x1500, where the guest was summoned from), so the stain

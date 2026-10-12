@@ -61,6 +61,12 @@
 #include "core/memory.h"
 
 namespace Core::Bloodborne {
+namespace Coop {
+
+std::vector<KillEchoes> echoes_to_post;
+
+} // namespace Coop
+
 namespace {
 
 // The multiplayer walls (MultiplayerWallsOn) turned off in a party session the way the event
