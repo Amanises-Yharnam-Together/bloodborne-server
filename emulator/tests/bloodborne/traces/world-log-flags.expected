@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Each flag event once; the map state as it changes. The guest's snapshot waits for its map state
-# part (the lost fog event is the flag board's to bring).
+# Each flag event once; the map state as it changes. The guest's snapshot waits for its map
+# state part (the lost fog event is the flag board's to bring).
 wlog host start epoch 5a1900000001
 wlog host appended seq 1 reset every map
 wlog host appended seq 2 flag 12414700 on
@@ -10,8 +10,6 @@ wlog host appended seq 4 map state of 0x18010000
 wlog host appended seq 5 map flag 12410003 on
 wlog host appended seq 6 map flag 12410900 on
 wlog host appended seq 7 map flag 12410003 off
-wlog member expects shown snapshots
-wlog member expects map state snapshots
 wlog member follows epoch 5a1900000001
 wlog member applied seq 1 reset every map
 wlog member gap: has seq 1, host at 3

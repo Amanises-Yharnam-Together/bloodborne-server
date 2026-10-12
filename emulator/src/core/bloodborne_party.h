@@ -1193,16 +1193,15 @@ struct DirectKills {
 // take only the types they know.
 constexpr u8 PeerHelloType = 0x33;
 // Raised when a co-op frame's meaning changes. 2: the world log's frames (WorldLogProposeType ...)
-// and the hello's features. 3: the shown characters on the world log (WorldLogShownFeature).
-// 4: the shared flags and the host's map state on it (frames 0x39, 0x3A, the flag entries).
+// and the hello's features. 3: the shown characters on the world log. 4: the shared flags and the
+// host's map state on it (frames 0x39, 0x3A, the flag entries).
 constexpr u8 CoopProtocolVersion = 4;
 constexpr s64 PeerHelloResendMs = 10'000;
-// PeerHello::features: what this game takes part in. The world log only carries a board's job when
-// every peer has its bit (a game with SHADPS4_BLOODBORNE_WORLD_LOG=0 leaves them all out): the
-// kills since protocol 2, the shown characters since 3 (a protocol 2 game keeps the kills on the
-// log and the shown characters on their board).
+// PeerHello::features: WorldLogFeature when this game runs the world log (it is not switched off,
+// SHADPS4_BLOODBORNE_WORLD_LOG=0). Every member runs one build (Kaniel 2026-10-12): a peer on
+// another build or with the log switched off is an error the hello check logs (PeerBuildCheck),
+// not a path of its own.
 constexpr u8 WorldLogFeature = 0x01;
-constexpr u8 WorldLogShownFeature = 0x02;
 struct PeerHello {
     u8 protocol = CoopProtocolVersion;
     std::string revision; // the build's source revision ("-dirty": changes not in a commit)
@@ -1222,7 +1221,7 @@ public:
     std::optional<std::string> Take(const PeerHello& theirs, const PeerHello& mine);
 
 private:
-    std::set<std::tuple<std::string, u8, std::string, u64>> warned;
+    std::set<std::tuple<std::string, u8, std::string, u64, u8>> warned;
 };
 // A hash of the map event files (*.emevd.dcx) in `folder`, the game's dvdroot_ps4/event (the
 // co-op kit replaces some): names and bytes. 0 when there are none or one cannot be read.
@@ -1576,22 +1575,9 @@ public:
     Step Take(const WorldLogBatch& batch, s64 now_ms);
     Step Take(const WorldLogSnapshot& part, s64 now_ms);
     Step Take(const WorldLogShownSnapshot& part, s64 now_ms);
+    // A snapshot is whole with its kills, shown characters and map state parts (one build: the host
+    // sends all of them).
     Step Take(const WorldLogMapStateSnapshot& part, s64 now_ms);
-    // Whether the host sends the shown characters' snapshot parts (its hello has
-    // WorldLogShownFeature): a snapshot is whole only with them too.
-    void ExpectShown(bool expected) {
-        expect_shown = expected;
-    }
-    bool ExpectsShown() const {
-        return expect_shown;
-    }
-    // The same for the map state.
-    void ExpectMapState(bool expected) {
-        expect_map_state = expected;
-    }
-    bool ExpectsMapState() const {
-        return expect_map_state;
-    }
     const WorldLogMapState& MapState() const {
         return map_state;
     }
@@ -1657,32 +1643,21 @@ private:
     WorldLogKills kills;
     WorldLogShown shown;
     bool shown_known = false;
-    bool expect_shown = false;
     WorldLogMapState map_state;
     bool map_state_known = false;
-    bool expect_map_state = false;
 };
 
-// Which path the kills take: the world log only while this game has it on and every room peer
-// said in its hello that it has it too; the kill board otherwise. A peer without a hello yet or no
-// peers at all keep the path WorldLogUnsureMs (a hello comes at once to a new peer, a link may
-// drop for a moment), then the board.
+// Whether the kills, the shown characters and the shared flags go through the world log: while
+// this game has it on and is linked to the room's peers; the boards otherwise (alone, or with the
+// log switched off). Every peer runs this build. A moment without peers (a link that drops, a load)
+// keeps the log WorldLogUnsureMs, then the boards.
 constexpr s64 WorldLogUnsureMs = 5'000;
-// SHADPS4_BLOODBORNE_WORLD_LOG: on unless "0" or "off" (the kills keep to the kill board).
+// SHADPS4_BLOODBORNE_WORLD_LOG: on unless "0" or "off" (everything keeps to the boards).
 bool WorldLogEnabled(const char* setting);
-struct WorldLogPeer {
-    std::string name; // for the log line
-    std::optional<PeerHello> hello;
-};
 class WorldLogPath {
 public:
-    // What takes the path (for the log line), the board it falls back to, and the hello's feature
-    // bit every peer must have.
-    explicit WorldLogPath(std::string what = "kills", std::string board = "the kill board",
-                          u8 feature = WorldLogFeature)
-        : what{std::move(what)}, board{std::move(board)}, feature{feature} {}
-    // Whether the log is the path now.
-    bool Decide(bool enabled, std::span<const WorldLogPeer> peers, s64 now_ms);
+    // Whether the log is the path now, with `peers` room peers linked.
+    bool Decide(bool enabled, size_t peers, s64 now_ms);
     bool Active() const {
         return active;
     }
@@ -1694,9 +1669,6 @@ public:
     std::optional<std::string> TakeChange();
 
 private:
-    std::string what;
-    std::string board;
-    u8 feature = WorldLogFeature;
     bool decided = false;
     bool active = false;
     std::string why = "not decided";

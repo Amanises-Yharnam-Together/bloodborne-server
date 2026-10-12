@@ -353,18 +353,6 @@ void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> 
         out.push_back("wlog member reset");
         return;
     }
-    if (op == "expect-map-state" && payload.size() == 1) {
-        wlog_member.ExpectMapState(payload[0] != 0);
-        out.push_back(payload[0] != 0 ? "wlog member expects map state snapshots"
-                                      : "wlog member expects no map state snapshots");
-        return;
-    }
-    if (op == "expect-shown" && payload.size() == 1) {
-        wlog_member.ExpectShown(payload[0] != 0);
-        out.push_back(payload[0] != 0 ? "wlog member expects shown snapshots"
-                                      : "wlog member expects no shown snapshots");
-        return;
-    }
     if (const auto batch = op == "entries" ? DecodeWorldLogBatch(payload) : std::nullopt) {
         step = wlog_member.Take(*batch, at);
         host_last = batch->last;

@@ -220,8 +220,6 @@ TEST(WorldLogFlags, AMemberKeepsTheHostsMapState) {
 TEST(WorldLogFlags, ASnapshotWaitsForTheMapState) {
     const u64 epoch = WorldLogEpoch(7, 3);
     WorldLogMember member;
-    member.ExpectShown(true);
-    member.ExpectMapState(true);
     member.Take(Batch(epoch, 20, {}), 0);
     member.Take(WorldLogSnapshot{"host", epoch, 20, 0, 1, {}}, 10);
     const auto shown =
@@ -232,13 +230,6 @@ TEST(WorldLogFlags, ASnapshotWaitsForTheMapState) {
     EXPECT_TRUE(whole.snapshot);
     EXPECT_TRUE(member.MapStateKnown());
     EXPECT_EQ(member.MapState(), (WorldLogMapState{Yharnam, MapBits({5})}));
-    // From a step 2 host (no map state parts): known only from a MapStateMap.
-    WorldLogMember older;
-    older.ExpectShown(true);
-    older.Take(Batch(epoch, 20, {}), 0);
-    older.Take(WorldLogSnapshot{"host", epoch, 20, 0, 1, {}}, 10);
-    EXPECT_TRUE(older.Take(WorldLogShownSnapshot{"host", epoch, 20, 0, 1, {}}, 20).snapshot);
-    EXPECT_FALSE(older.MapStateKnown());
 }
 
 TEST(WorldLogFlags, MembersConvergeOnTheMapStateOverABadLink) {
@@ -247,8 +238,6 @@ TEST(WorldLogFlags, MembersConvergeOnTheMapStateOverABadLink) {
         WorldLogHost host;
         std::vector<WorldLogMember> members(2);
         for (WorldLogMember& member : members) {
-            member.ExpectShown(true);
-            member.ExpectMapState(true);
         }
         std::deque<std::pair<size_t, WorldLogBatch>> link;
         const auto send = [&](const std::vector<WorldLogEntry>& entries) {

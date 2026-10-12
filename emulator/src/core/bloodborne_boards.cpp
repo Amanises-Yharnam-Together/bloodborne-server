@@ -407,7 +407,6 @@ namespace {
 PeerBuildCheck peer_build_check;
 
 void NotePeerHello(PeerHello theirs, u32 addr, u16 port) {
-    NoteWorldLogHello((u64{addr} << 16) | port, theirs);
     std::optional<std::string> warning;
     {
         std::scoped_lock lock{peer_hello_mutex};

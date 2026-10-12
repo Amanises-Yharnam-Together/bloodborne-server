@@ -638,8 +638,6 @@ void SendDirectKills(std::span<const u32> kills, bool changed);
 // The world log's runtime (bloodborne_world_log.cpp, docs/WORLD_SYNC.md Stage C).
 // SHADPS4_BLOODBORNE_WORLD_LOG (this game's hello says so: WorldLogFeature).
 bool WorldLogSwitchOn();
-// A peer's hello, by sender ((addr << 16) | port): which peers have the log.
-void NoteWorldLogHello(u64 sender, const PeerHello& hello);
 // A world log frame from a room peer (game thread).
 void TakeWorldLogFrame(u8 type, std::span<const u8> payload, u32 addr, u16 port);
 // The kill step's view of the party's kills: `members` the other members' (the log's or the kill

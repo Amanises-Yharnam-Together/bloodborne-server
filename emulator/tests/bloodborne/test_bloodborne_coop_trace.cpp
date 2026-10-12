@@ -336,6 +336,10 @@ TEST(CoopTraceReplay, WorldLogRecordsReplayToTheLiveDecisions) {
     const WorldLogBatch ahead{
         "686f7374", epoch, 3, {{3, epoch, 0x18010000, WorldLogKind::Unkill, 0x10014066}}};
     feed(record(5, "member", "entries", EncodeWorldLogBatch(ahead)));
+    feed(record(6, "member", "shown-snapshot",
+                EncodeWorldLogShownSnapshot({"686f7374", epoch, 2, 0, 1, {}})));
+    feed(record(6, "member", "map-state-snapshot",
+                EncodeWorldLogMapStateSnapshot({"686f7374", epoch, 2, {}})));
     feed(
         record(6, "member", "snapshot",
                EncodeWorldLogSnapshot({"686f7374", epoch, 2, 0, 1, {{0x18010000, {0x10014066}}}})));
@@ -349,7 +353,11 @@ TEST(CoopTraceReplay, WorldLogRecordsReplayToTheLiveDecisions) {
                        "wlog host dropped a late proposal from 6775657374",
                        "wlog member follows epoch 7700000001",
                        "wlog member gap: has seq 0, host at 3",
+                       "wlog member gap: has seq 0, host at 2",
+                       "wlog member gap: has seq 0, host at 2",
                        "wlog member snapshot to seq 2",
+                       "wlog member shown on 0x0: 0 characters",
+                       "wlog member map state of 0x0",
                        "wlog member applied seq 3 unkill 0x10014066 on 0x18010000",
                        "wlog member reset",
                        "wlog-in: unreadable member entries",
@@ -375,7 +383,8 @@ TEST(CoopTraceReplay, WorldLogShownRecordsReplay) {
     feed(record(1, "host", "start", EncodeWorldLogStart(epoch, false)));
     feed(record(2, "host", "show",
                 EncodeWorldLogShow(0x18000000, std::vector<CharacterShown>{iosefka})));
-    feed(record(3, "member", "expect-shown", std::vector<u8>{1}));
+    feed(record(3, "member", "map-state-snapshot",
+                EncodeWorldLogMapStateSnapshot({"h", epoch, 3, {}})));
     feed(record(4, "member", "snapshot", EncodeWorldLogSnapshot({"h", epoch, 3, 0, 1, {}})));
     feed(record(
         5, "member", "shown-snapshot",
@@ -386,11 +395,12 @@ TEST(CoopTraceReplay, WorldLogShownRecordsReplay) {
                        "wlog host appended seq 1 reset every map",
                        "wlog host appended seq 2 shown map 0x18000000",
                        "wlog host appended seq 3 shown 0x10014000 on 0x18000000 bits 2",
-                       "wlog member expects shown snapshots",
                        "wlog member follows epoch 7700000001",
+                       "wlog member gap: has seq 0, host at 3",
                        "wlog member gap: has seq 0, host at 3",
                        "wlog member snapshot to seq 3",
                        "wlog member shown on 0x18000000: 1 characters",
+                       "wlog member map state of 0x0",
                        "wlog-in: unreadable member show",
                    }));
 }

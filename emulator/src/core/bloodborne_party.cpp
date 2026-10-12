@@ -4333,10 +4333,14 @@ std::optional<std::string> PeerBuildCheck::Take(const PeerHello& theirs, const P
     // A game that could not read its event files (0) says nothing about them.
     const bool events_differ =
         theirs.event_files != 0 && mine.event_files != 0 && theirs.event_files != mine.event_files;
-    if (theirs.protocol == mine.protocol && theirs.revision == mine.revision && !events_differ) {
+    const bool features_differ = theirs.features != mine.features;
+    if (theirs.protocol == mine.protocol && theirs.revision == mine.revision && !events_differ &&
+        !features_differ) {
         return std::nullopt;
     }
-    if (!warned.emplace(theirs.member, theirs.protocol, theirs.revision, theirs.event_files)
+    if (!warned
+             .emplace(theirs.member, theirs.protocol, theirs.revision, theirs.event_files,
+                      theirs.features)
              .second) {
         return std::nullopt;
     }
@@ -4350,6 +4354,13 @@ std::optional<std::string> PeerBuildCheck::Take(const PeerHello& theirs, const P
     if (events_differ) {
         line += fmt::format("; event files {:016x}, this game's {:016x}", theirs.event_files,
                             mine.event_files);
+    }
+    if (features_differ) {
+        // One build for everyone: the world log on in one game and off in another splits the
+        // party between the log and the boards.
+        line += fmt::format("; world log {}, this game's {}",
+                            (theirs.features & WorldLogFeature) != 0 ? "on" : "off",
+                            (mine.features & WorldLogFeature) != 0 ? "on" : "off");
     }
     return line;
 }
@@ -5329,15 +5340,13 @@ WorldLogShown JoinShownParts(const std::map<u8, WorldLogShown>& parts) {
 
 } // namespace
 
-// A snapshot is whole with every kills part and, from a host that sends them (or once they all
-// came), every shown part and its map state.
+// A snapshot is whole with every kills part, every shown part and its map state.
 void WorldLogMember::Complete(Step& step) {
     const PartialSnapshot& pending = *partial;
     const bool kills_whole = pending.parts && pending.got.size() >= *pending.parts;
     const bool shown_whole =
         pending.shown_parts && pending.shown_got.size() >= *pending.shown_parts;
-    const bool map_state_in = pending.map_state.has_value();
-    if (!kills_whole || (expect_shown && !shown_whole) || (expect_map_state && !map_state_in)) {
+    if (!kills_whole || !shown_whole || !pending.map_state) {
         return;
     }
     kills.clear();
@@ -5346,10 +5355,10 @@ void WorldLogMember::Complete(Step& step) {
             kills[map].insert(handles.begin(), handles.end());
         }
     }
-    shown = shown_whole ? JoinShownParts(pending.shown_got) : WorldLogShown{};
-    shown_known = shown_whole;
-    map_state = pending.map_state.value_or(WorldLogMapState{});
-    map_state_known = map_state_in;
+    shown = JoinShownParts(pending.shown_got);
+    shown_known = true;
+    map_state = *pending.map_state;
+    map_state_known = true;
     applied = pending.last;
     based = true;
     partial.reset();
@@ -5369,56 +5378,21 @@ bool WorldLogMember::Fresh(s64 now_ms) const {
     return !Behind() && heard_ms && now_ms - *heard_ms <= WorldLogLifeMs;
 }
 
-namespace {
-
-// What the peers' hellos say: a definite no (a peer without the log), or unsure (no peers, or a
-// peer's hello not here yet).
-struct PeerVerdict {
-    std::optional<std::string> no;
-    std::optional<std::string> unsure;
-};
-PeerVerdict JudgePeers(std::span<const WorldLogPeer> peers, u8 feature) {
-    PeerVerdict verdict;
-    if (peers.empty()) {
-        verdict.unsure = "no peers";
-    }
-    for (const WorldLogPeer& peer : peers) {
-        if (!peer.hello) {
-            verdict.unsure = verdict.unsure.value_or("no hello from " + peer.name);
-        } else if (peer.hello->protocol < 2) {
-            verdict.no = fmt::format("{} runs co-op protocol {}", peer.name, peer.hello->protocol);
-            return verdict;
-        } else if ((peer.hello->features & feature) == 0) {
-            // A peer with the log on but not this bit runs an earlier step's build.
-            verdict.no = (peer.hello->features & WorldLogFeature) != 0
-                             ? peer.name + " runs a build without it"
-                             : peer.name + " has it switched off";
-            return verdict;
-        }
-    }
-    return verdict;
-}
-
-} // namespace
-
-bool WorldLogPath::Decide(bool enabled, std::span<const WorldLogPeer> peers, s64 now_ms) {
-    const PeerVerdict verdict =
-        enabled ? JudgePeers(peers, feature) : PeerVerdict{std::string{"switched off here"}, {}};
+bool WorldLogPath::Decide(bool enabled, size_t peers, s64 now_ms) {
     const std::string before = why;
-    bool next = true;
-    if (verdict.no) {
-        next = false;
-        why = *verdict.no;
+    bool next = enabled && peers > 0;
+    if (!enabled) {
+        why = "switched off here";
         unsure_since.reset();
-    } else if (verdict.unsure) {
+    } else if (peers == 0) {
         unsure_since = unsure_since.value_or(now_ms);
-        if (!active || now_ms - *unsure_since >= WorldLogUnsureMs) {
-            next = false;
-            why = *verdict.unsure;
+        next = active && now_ms - *unsure_since < WorldLogUnsureMs;
+        if (!next) {
+            why = "no peers";
         }
     } else {
         unsure_since.reset();
-        why = peers.size() == 1 ? "1 peer has it" : fmt::format("{} peers have it", peers.size());
+        why = peers == 1 ? "1 peer" : fmt::format("{} peers", peers);
     }
     changed = changed || !decided || next != active || why != before;
     decided = true;
@@ -5431,8 +5405,12 @@ std::optional<std::string> WorldLogPath::TakeChange() {
         return std::nullopt;
     }
     changed = false;
-    return active ? fmt::format("Co-op world log: on, {} go through the host's log ({})", what, why)
-                  : fmt::format("Co-op world log: off, {} go through {} ({})", what, board, why);
+    return active ? fmt::format("Co-op world log: on, the kills, shown characters and flags go "
+                                "through the host's log ({})",
+                                why)
+                  : fmt::format("Co-op world log: off, the kills, shown characters and flags go "
+                                "through the boards ({})",
+                                why);
 }
 
 std::vector<u8> EncodeWorldLogStart(u64 epoch, bool after_wipe) {

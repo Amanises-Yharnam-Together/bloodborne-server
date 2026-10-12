@@ -148,12 +148,13 @@ runtime in `bloodborne_world_log.cpp`.
   forgotten its kills, or 15 s went by (`WorldLogWipeHold`; a member elsewhere has no wipe). For
   15 s after either wipe it leaves out the host's entries of the kill board. A member never
   proposes the kills it applied for another member (`died_for_others`).
-- **The path:** the hello carries a features byte (co-op protocol 2), and the log runs only while
-  every room peer has it on (`SHADPS4_BLOODBORNE_WORLD_LOG=0` turns it off). A peer whose hello
-  has not come, or no peers at all, keep the path 5 s, then the board. Builds before protocol 2
-  drop the new frame types. The path in use is logged once per change (`Co-op world log: on, ...`
-  / `off, ... (<why>)`). On the board path everything is as before (the board and the direct kills
-  frame 0x32).
+- **The path:** every member runs one build (Kaniel 2026-10-12; no mixed builds). The log runs
+  while this game has it on (`SHADPS4_BLOODBORNE_WORLD_LOG=0` turns it off) and is linked to the
+  room's peers; a moment without peers (a dropped link, a load) keeps it 5 s, then the boards. The
+  path in use is logged once per change (`Co-op world log: on, ...` / `off, ... (<why>)`). A peer on
+  another build, or with the log switched off, is an error the hello check logs (`Co-op: <peer>
+  runs build ...; world log off, this game's on`), not a path of its own. On the boards everything
+  is as before (the kill board and the direct kills frame 0x32).
 - **The board underneath:** on a change of path a member's next kill post asks since FreshStart,
   so shadNet takes back what it posted. On the log path members post no kills; the host posts the
   party's union as its own, the copy for a member whose link is down or who joins. A member reads
@@ -172,23 +173,17 @@ world 8, as on the shown board) go on the same log.
   keeps its 9-byte layout) and `Unshown` (the character left the host's world). The host logs only
   what changed since its last `Show`, from the same list it posts to the shown board each kill step;
   a new log repeats them after the kills.
-- **Snapshots:** the host answers a snapshot request with the kills' parts (0x37) and then the shown
-  characters' parts (0x38, at most 240 a part). A member whose host's hello has the shown bit takes
-  a snapshot only once both are in, so its copy of the characters never misses entries; from a
-  step 1 host it takes the kills alone and its characters stay unknown until a `ShownMap`.
+- **Snapshots:** the host answers a snapshot request with the kills' parts (0x37), then the shown
+  characters' parts (0x38, at most 240 a part) and the map state (0x3A, step 3). A member takes a
+  snapshot only once all are in, so its copy of the characters never misses entries.
 - **What a guest follows:** the log's copy when it is fresh and whole and the host's map is known,
   turned into the same list the board gave (`HostShownNow`); else the shown board's, which the host
   keeps posting. Everything after that is unchanged: `HostNearStates` (a window NPC keeps what the
   host's world had while the host was near), the far-away parking bit, the switches
   (`SwitchedLikeTheHost`: Iosefka's copy by her door) and the host's dead bit for guests apart.
-- **The path:** a second hello bit (`WorldLogShownFeature`, co-op protocol 3). The shown characters
-  take the log only while the kills do and every peer has that bit; a step 1 build in the party
-  keeps the kills on the log and the shown characters on the board (`Co-op world log: off, shown
-  characters go through the shown board (<peer> runs a build without it)`).
-  `SHADPS4_BLOODBORNE_WORLD_LOG=0` clears both bits. Step 1 builds skip the new entry kinds and drop
-  frame 0x38.
-- **Trace:** `wlog-in` ops `show` (the host's list when it changed the log), `shown-snapshot` and
-  `expect-shown`; `wlog-path` with `what=shown`. `traces/world-log-shown.txt` is a checked-in case.
+- **The path:** the kills' (one build: no hello bit of its own; co-op protocol 3).
+- **Trace:** `wlog-in` ops `show` (the host's list when it changed the log) and `shown-snapshot`.
+  `traces/world-log-shown.txt` is a checked-in case.
 
 Built, step 3: the shared flags and the host's map state (2026-10-12, not rig-checked yet). The
 log carries exactly what the flag boards carried, decided by the same code. The shared flags are
@@ -214,7 +209,7 @@ pickup. The map flags are the host's map bitmap, of which a guest's load takes t
 - **Path:** the flags take the log with the kills (every peer runs one build, Kaniel 2026-10-12).
   `SHADPS4_BLOODBORNE_WORLD_LOG=0` keeps them on the boards. Leaving the log, the events not taken
   yet go to the flag board.
-- **Trace:** `wlog-in` ops `propose-flags`, `map-state`, `map-state-snapshot`, `expect-map-state`;
+- **Trace:** `wlog-in` ops `propose-flags`, `map-state`, `map-state-snapshot`;
   `traces/world-log-flags.txt` is a checked-in case.
 
 Next: `HpFloor` (enemy HP agreed), the same way, with the HP board as the fallback copy.
