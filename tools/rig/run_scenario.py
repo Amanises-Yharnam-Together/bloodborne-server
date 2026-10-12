@@ -1059,21 +1059,24 @@ def hits_sum_problem(texts: dict[str, str], handle: str) -> str | None:
 
 def hp_board_lag(texts: dict[str, str], handle: str) -> float | None:
     """The average time (s, on the rig's one clock) from a role's own hit on the character to
-    the lowering of it by that hit's damage (3 HP either way, within 5 s) in each other role, or
-    None if none was lowered. A game the hit reached through the game itself lowers nothing."""
+    the lowering of it by that hit in each other role (from the HP the hit started at, by its
+    damage, 3 HP either way, within 5 s), or None if none was lowered. A game the hit reached
+    through the game itself lowers nothing; another member's later hit of the same damage
+    starts from a lower HP, so its lowering is not this hit's (rig hit3 2026-10-12)."""
     pattern = re.escape(handle)
-    hits = {role: [(int(a) - int(b), float(t)) for a, b, t in re.findall(
+    hits = {role: [(int(a), int(a) - int(b), float(t)) for a, b, t in re.findall(
         rf"hit on {pattern} by this player \S+: (-?\d+) -> (-?\d+) \(t=([\d.]+)\)", text)]
         for role, text in texts.items()}
-    lowered = {role: [(int(a) - int(b), float(t)) for a, b, t in re.findall(
+    lowered = {role: [(int(a), int(a) - int(b), float(t)) for a, b, t in re.findall(
         rf"damage on map \S+: (?:\S+ \S+ )*?{pattern} (-?\d+)->(-?\d+)[^\n]*\(t=([\d.]+)\)",
         text)] for role, text in texts.items()}
     lags = []
     for role, own in hits.items():
-        for damage, at in own:
+        for start, damage, at in own:
             for other, seen in lowered.items():
-                matching = [t for drop, t in seen
-                            if drop > 0 and abs(drop - damage) <= 3 and 0 <= t - at <= 5]
+                matching = [t for before, drop, t in seen
+                            if drop > 0 and abs(drop - damage) <= 3 and abs(before - start) <= 3
+                            and 0 <= t - at <= 5]
                 if other != role and matching:
                     lags.append(min(matching) - at)
     return sum(lags) / len(lags) if lags else None

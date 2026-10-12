@@ -571,6 +571,16 @@ class RunnerTest(unittest.TestCase):
             texts["host"], low.format("0x1001400b", 280, 178, "145.0"),
             low.format("0x1001400b", 76, 178, "145.1")]))
         self.assertAlmostEqual(run_scenario.hp_board_lag(later, "0x1001400b"), 1.1 / 3)
+        # Rig hit3 2026-10-12 (bdba0cd1, "0.65 s"): the guest's hit reached the host through the
+        # game (no lowering); guest2's hit of the same damage 3.4 s later lowered the host's copy,
+        # and that lowering is guest2's, not the guest's: it starts from the HP the hit left.
+        hits = {
+            "guest": hit.format("0x1001400b", 382, 280, "110.0"),
+            "guest2": "\n".join([low.format("0x1001400b", 382, 280, "110.1"),
+                                 hit.format("0x1001400b", 280, 178, "113.4")]),
+            "host": low.format("0x1001400b", 280, 178, "113.5"),
+        }
+        self.assertAlmostEqual(run_scenario.hp_board_lag(hits, "0x1001400b"), 0.1)
 
     def test_a_sync_is_let_go_once_every_game_in_it_reached_it(self):
         log = ("[Debug] <Info> () x: Bloodborne autoplay: sync join reached (t=10.0)\n"
