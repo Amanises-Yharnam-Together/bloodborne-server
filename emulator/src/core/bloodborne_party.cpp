@@ -4031,11 +4031,10 @@ PartyPrompt PartyPromptFor(const PartyPanel& panel) {
 }
 
 void WritePromptData(std::span<u8, HudPromptDataSize> data,
-                     std::span<const u8, HudPromptDataSize> game, const PartyPrompt& prompt,
+                     std::span<const u8, GameHudStringFullSize> string, const PartyPrompt& prompt,
                      u64 text, size_t length) {
     std::ranges::fill(data, u8{0});
-    std::memcpy(data.data() + HudPromptTextAt, game.data() + HudPromptTextAt,
-                GameHudStringFullSize);
+    std::memcpy(data.data() + HudPromptTextAt, string.data(), GameHudStringFullSize);
     data[0] = prompt.shown ? 1 : 0;
     const auto put = [&](size_t at, u64 value) { std::memcpy(data.data() + at, &value, 8); };
     put(HudPromptTextAt + 0x08, text);

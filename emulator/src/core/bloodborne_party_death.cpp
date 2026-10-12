@@ -1453,6 +1453,8 @@ void MakeCoopPrompt(u64 hud) {
                                                                                 0, 0);
         native_list.prompt = prompt;
     }
+    LOG_INFO(Debug, "Bloodborne party HUD: the party prompt is the HUD's own: {}",
+             native_list.prompt != nullptr ? "yes" : "no (no CoopPrompt)");
     // The prompt holds its own value.
     ReleaseLookedUpValue(path.data(), type);
 }
@@ -1477,18 +1479,21 @@ void UpdatePartyPrompt(const PartyPanel& panel, float frame_time) {
     if (native_list.prompt == nullptr) {
         return;
     }
-    std::array<u8, HudPromptDataSize> game{};
-    std::memcpy(game.data(),
-                reinterpret_cast<const void*>(image_base + HudFeDataOffset + HudFeDataPromptAt),
-                game.size());
+    // The allocator of a nameplate's role line (RemotePCTag0's): the game's own prompt data has
+    // none until the game shows a prompt itself (Kaniel 2026-10-12: the prompt never showed).
+    std::array<u8, GameHudStringFullSize> string{};
+    std::memcpy(
+        string.data(),
+        reinterpret_cast<const void*>(image_base + HudFeDataOffset + HudRemoteTagsAt + 0x28),
+        string.size());
     u64 allocator = 0;
-    std::memcpy(&allocator, game.data() + HudPromptTextAt + 0x28, 8);
+    std::memcpy(&allocator, string.data() + 0x28, 8);
     if (allocator < 0x10000) {
         return;
     }
     const PartyPrompt prompt = PartyPromptFor(panel);
     PutUtf16(native_list.prompt_text, prompt.text);
-    WritePromptData(native_list.prompt_data, game, prompt,
+    WritePromptData(native_list.prompt_data, string, prompt,
                     reinterpret_cast<u64>(native_list.prompt_text.data()), prompt.text.size());
     reinterpret_cast<void PS4_SYSV_ABI (*)(u8*, u8*, float)>(image_base + HudPromptUpdateOffset)(
         native_list.prompt, native_list.prompt_data.data(), frame_time);
