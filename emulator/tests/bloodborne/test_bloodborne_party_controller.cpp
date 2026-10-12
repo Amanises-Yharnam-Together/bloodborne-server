@@ -2586,6 +2586,31 @@ TEST(BloodborneGuestResume, AGuestResumesWhereItLeft) {
         << "a new character in the slot";
 }
 
+// Lisara's new character (2026-10-12) started in Central Yharnam: slot 5 still had the old
+// character's resume point, and its event flag count was too close to tell them apart. Once the
+// slot is found to hold another character (ForgetsSlotLists), its resume point goes with the
+// kept lists.
+TEST(BloodborneGuestResume, ANewCharacterForgetsTheSlotsResumePoint) {
+    EXPECT_EQ(SlotFileName("resume", 5), "bloodborne_party_resume_slot5.txt");
+    EXPECT_EQ(SlotFileName("progress", 0), "bloodborne_party_progress_slot0.txt");
+    for (const std::string_view list : {"progress", "world", "confirmed", "resume"}) {
+        EXPECT_NE(std::ranges::find(CharacterSlotFiles, list), CharacterSlotFiles.end()) << list;
+    }
+}
+
+// The Dream messengers' gifts are each player's own (12101020-29, KeepsLocalFlag): the host's
+// story hides its messengers once it took its gifts (2004:29), and a guest copying that hid its
+// own before it took them (Lisara 2026-10-12). Their entity ids (m21_00 MSB: the right- and
+// left-hand weapon givers and their weapon displays, the note and the multiplayer items).
+TEST(BloodborneShownBoard, TheDreamMessengersAreEachPlayersOwn) {
+    for (const s32 entity : {2100215, 2100216, 2100220, 2100221, 2100230, 2100231}) {
+        EXPECT_FALSE(FollowsTheHostsShown(entity)) << entity;
+    }
+    EXPECT_TRUE(FollowsTheHostsShown(2100700)) << "the Doll";
+    EXPECT_TRUE(FollowsTheHostsShown(-1)) << "no entity id";
+    EXPECT_TRUE(FollowsTheHostsShown(2410000));
+}
+
 // The point is about where the game loaded the guest: a guest that travels on (a lamp, a trip)
 // before it is settled there has chosen where to be. The rig's guest went to the Cathedral Ward
 // right after loading, and the resume took it back to Central Yharnam, away from its host.

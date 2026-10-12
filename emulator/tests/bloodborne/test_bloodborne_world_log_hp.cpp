@@ -132,6 +132,23 @@ TEST(WorldLogHp, TheHostLogsWhatChangedInEachReport) {
     EXPECT_EQ(host.Hp().size(), 1u);
 }
 
+// Lisara's run (2026-10-12): the host's dog at 438 of 1093 reached the guest as 182 (438 - 256),
+// and its copy flipped between the two all fight. HP and a source's visit go on the log whole.
+TEST(WorldLogHp, TheHostLogsWholeValues) {
+    WorldLogHost host;
+    const u64 epoch = WorldLogEpoch(7, 1);
+    host.Start(epoch, false);
+    const u64 source = HostHpReport | 0x2ECE'20BD'0000'0101; // a visit past 255
+    const auto taken = host.ProposeHp(Hp("h", epoch, 1, source, {{Dog, 438, 1093}}));
+    EXPECT_EQ(taken.entries, Entries(epoch, {Source(2, source), Value(3, Dog, 438, 1093)}));
+    std::vector<WorldLogEntry> log = Entries(epoch, {Entry(1, WorldLogKind::Reset, 0, 0)});
+    log.insert(log.end(), taken.entries.begin(), taken.entries.end());
+    WorldLogMember member;
+    member.Take(BatchWorldLog("host", epoch, 3, log)[0], 0);
+    EXPECT_EQ(WorldLogHpReports(member.Hp()), (std::vector<std::pair<u32, EnemyHpReport>>{
+                                                  {Yharnam, {source, {{Dog, 438, 1093}}}}}));
+}
+
 // No stale pre-wipe damage: a new log (a wipe, a new session) starts with no HP at all.
 TEST(WorldLogHp, ANewLogHasNoHp) {
     WorldLogHost host;

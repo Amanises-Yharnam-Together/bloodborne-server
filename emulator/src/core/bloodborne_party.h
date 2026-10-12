@@ -648,6 +648,13 @@ std::optional<int> CharacterSlotOfSavePath(std::string_view path);
 // Pickups once confirmed set in the character's own world never clear again, so a load of a
 // slot where none of them is set holds a new character, and the slot's kept lists are dropped.
 bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now);
+// A save slot's file of its character's (user/bloodborne_party_<list>_slot<N>.txt).
+std::string SlotFileName(std::string_view list, int slot);
+// The slot's files of its character, dropped (copied aside first) when another character is found
+// in the slot (ForgetsSlotLists): its pickups, world changes, confirmed pickups and where it
+// resumes (Lisara 2026-10-12: a new character resumed at the old one's spot).
+inline constexpr std::array<std::string_view, 4> CharacterSlotFiles{"progress", "world",
+                                                                    "confirmed", "resume"};
 // Whether the character loaded now is another one than the one a slot's lists were kept for
 // (`progress_kept`, its own world's set event flags then; 0 not known): far fewer set now.
 bool IsOtherCharacter(s32 progress_now, s32 progress_kept);
@@ -1640,7 +1647,7 @@ private:
         u32 map = 0;
         std::set<std::string> by;
     };
-    WorldLogEntry Append(WorldLogKind kind, u32 map, u32 subject, u8 value = 0);
+    WorldLogEntry Append(WorldLogKind kind, u32 map, u32 subject, u32 value = 0);
     void Own(const std::string& member, u32 map, u32 handle, std::vector<WorldLogEntry>& entries);
     void Disown(const std::string& member, u32 handle, std::vector<WorldLogEntry>& entries);
     void AppendShown(std::vector<WorldLogEntry>& entries);
@@ -1881,6 +1888,10 @@ std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max);
 // area reports (their posts, in the map state board's format), or nothing.
 std::optional<s32> LowestSharedHp(u32 handle, s32 hp, s32 max, u32 map,
                                   std::span<const MemberMapState> others);
+// Whether a guest's copy of a character follows the host's shown board (hidden, switched off):
+// not the Dream messengers that give each player its own gifts (their events and flags are each
+// player's, see KeepsLocalFlag); `entity` -1 when the character has none.
+bool FollowsTheHostsShown(s32 entity);
 
 // A character's death flags (+0x1E3) say it is dead in its world: killed (bits 0 and 2, see
 // IsRealDeath) or dead in the save and put down at load (0x26).

@@ -196,7 +196,7 @@ namespace {
 
 std::filesystem::path GuestProgressFile() {
     return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
-           fmt::format("bloodborne_party_progress_slot{}.txt", character_slot.load());
+           SlotFileName("progress", character_slot.load());
 }
 
 // Every pickup flag the guest set in a party session, kept for good: its own world gets them
@@ -253,7 +253,7 @@ void ForgetGuestWorldChanges();
 // Pickups confirmed set in the character's own world (see IsNewCharacterInSlot), per slot.
 std::filesystem::path GuestConfirmedFile() {
     return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
-           fmt::format("bloodborne_party_confirmed_slot{}.txt", character_slot.load());
+           SlotFileName("confirmed", character_slot.load());
 }
 
 std::vector<s32> ReadGuestConfirmed() {
@@ -283,8 +283,9 @@ void BackUpSlotLists() {
     const std::string stamp =
         fmt::format("{:04}{:02}{:02}-{:02}{:02}{:02}", local.tm_year + 1900, local.tm_mon + 1,
                     local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
-    for (const std::filesystem::path& file :
-         {GuestProgressFile(), GuestWorldFile(), GuestConfirmedFile()}) {
+    for (const std::string_view list : CharacterSlotFiles) {
+        const std::filesystem::path file = Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+                                           SlotFileName(list, character_slot.load());
         std::error_code error;
         if (!std::filesystem::exists(file, error)) {
             continue;
@@ -348,9 +349,13 @@ void ForgetSlotIfNewCharacter() {
     ForgetGuestWorldChanges();
     std::error_code error;
     std::filesystem::remove(GuestConfirmedFile(), error);
+    // And where the old character resumes (read once the load settles, after this).
+    std::filesystem::remove(Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+                                SlotFileName("resume", character_slot.load()),
+                            error);
     LOG_INFO(Debug,
              "Bloodborne party: new character in save slot {} ({} event flags set, {} kept); its "
-             "kept lists start clean (old ones copied aside as .bak files)",
+             "kept lists and resume point start clean (old ones copied aside as .bak files)",
              character_slot.load(), progress_now, progress_kept);
 }
 
@@ -501,7 +506,7 @@ int guest_world_slot = -1;
 
 std::filesystem::path GuestWorldFile() {
     return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
-           fmt::format("bloodborne_party_world_slot{}.txt", character_slot.load());
+           SlotFileName("world", character_slot.load());
 }
 
 std::map<s32, bool>& GuestWorldChanges() {

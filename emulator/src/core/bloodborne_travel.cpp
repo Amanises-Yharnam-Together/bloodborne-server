@@ -1058,7 +1058,7 @@ void TickGuestLampTrip();
 
 std::filesystem::path GuestResumeFile() {
     return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
-           fmt::format("bloodborne_party_resume_slot{}.txt", character_slot.load());
+           SlotFileName("resume", character_slot.load());
 }
 
 } // namespace

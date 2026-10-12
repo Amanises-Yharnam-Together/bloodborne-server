@@ -797,6 +797,17 @@ std::vector<std::string> SlotBackupsToRemove(std::string_view file,
     return backups;
 }
 
+std::string SlotFileName(std::string_view list, int slot) {
+    return fmt::format("bloodborne_party_{}_slot{}.txt", list, slot);
+}
+
+bool FollowsTheHostsShown(s32 entity) {
+    // m21_00: the right- and left-hand weapon givers and their weapon displays (12101020/21
+    // hide them once their gift is taken), the note and the multiplayer items givers.
+    constexpr std::array DreamMessengers{2100215, 2100216, 2100220, 2100221, 2100230, 2100231};
+    return std::ranges::find(DreamMessengers, entity) == DreamMessengers.end();
+}
+
 bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_now) {
     return !confirmed.empty() && confirmed_set_now == 0;
 }
@@ -5152,7 +5163,7 @@ std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 l
     return batches;
 }
 
-WorldLogEntry WorldLogHost::Append(WorldLogKind kind, u32 map, u32 subject, u8 value) {
+WorldLogEntry WorldLogHost::Append(WorldLogKind kind, u32 map, u32 subject, u32 value) {
     return {++last, epoch, map, kind, subject, value};
 }
 
