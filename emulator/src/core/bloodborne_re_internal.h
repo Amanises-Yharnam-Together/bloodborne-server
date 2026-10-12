@@ -605,6 +605,8 @@ void LogFlagChangesInSession(bool sharing);
 void KeepGuestProgress(bool in_session);
 void SetPartyWorldChanges(bool sharing);
 void GrantPartyEchoes();
+// Whether this guest hid or switched off the character to match the host (game thread).
+bool ChangedLikeTheHost(u32 handle);
 void ClaimEnemiesWhenAlone(bool in_session, u32 map);
 extern std::mutex own_hits_mutex;
 extern OwnDamage own_damage;

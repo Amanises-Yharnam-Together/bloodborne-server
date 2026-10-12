@@ -1948,14 +1948,14 @@ std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
         }
         it = held.erase(it);
     }
-    for (const auto& [handle, now, instance, settling, untouched_boss] : characters) {
+    for (const auto& [handle, now, instance, settling, untouched_boss, others_kill] : characters) {
         const auto [it, added] = seen.try_emplace(handle, Seen{now, instance, untouched_boss});
         // The same object seen alive, now dead: a world that loaded brings new objects, some
         // dead already (in a save that killed them for good), and one that settles after a
         // takeover puts such ones down where they stand. Nor a boss-sized one last seen
-        // untouched (see SeenCharacter::untouched_boss).
-        if (!added && !settling && it->second.instance == instance && it->second.hp > 0 &&
-            !it->second.untouched_boss && now <= 0 &&
+        // untouched (see SeenCharacter::untouched_boss), nor another member's kill.
+        if (!added && !settling && !others_kill && it->second.instance == instance &&
+            it->second.hp > 0 && !it->second.untouched_boss && now <= 0 &&
             std::ranges::find(killed, handle) == killed.end()) {
             killed.push_back(handle);
             changes.emplace_back(static_cast<s32>(handle), true);
@@ -1990,6 +1990,13 @@ std::vector<std::pair<s32, bool>> VisitKills::Forget() {
 
 bool AppliesMemberKill(bool member_killed, s32 hp) {
     return member_killed && hp > 0;
+}
+
+bool KilledByAnother(bool hooks, std::optional<bool> last_hit_mine, bool hosting) {
+    if (!hooks) {
+        return false;
+    }
+    return last_hit_mine ? !*last_hit_mine : !hosting;
 }
 
 bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on) {
@@ -2974,24 +2981,28 @@ std::optional<std::vector<u32>> ParseTraceHandles(std::string_view text) {
 }
 
 std::string TraceToken(const SeenCharacter& character) {
+    const int flags = (character.untouched_boss ? 1 : 0) | (character.others_kill ? 2 : 0);
     return fmt::format("{:x}:{}:{:x}:{}{}", character.handle, character.hp > 0 ? 1 : 0,
                        character.instance, character.settling ? 1 : 0,
-                       character.untouched_boss ? ":1" : "");
+                       flags != 0 ? fmt::format(":{}", flags) : std::string{});
 }
 
 std::optional<SeenCharacter> ParseSeenToken(std::string_view token) {
     const auto parts = SplitTrace(token, ':');
-    if (parts.size() != 4 && !(parts.size() == 5 && parts[4] == "1")) {
+    if (parts.size() != 4 && parts.size() != 5) {
         return std::nullopt;
     }
     const auto handle = ParseTraceNumber<u32>(parts[0], 16);
     const auto alive = ParseTraceNumber<int>(parts[1], 10);
     const auto instance = ParseTraceNumber<u64>(parts[2], 16);
     const auto settling = ParseTraceNumber<int>(parts[3], 10);
-    if (!handle || !alive || !instance || !settling || *alive > 1 || *settling > 1) {
+    const auto flags = parts.size() == 5 ? ParseTraceNumber<int>(parts[4], 10) : std::optional{0};
+    if (!handle || !alive || !instance || !settling || !flags || *alive > 1 || *settling > 1 ||
+        *flags < 0 || *flags > 3 || (parts.size() == 5 && *flags == 0)) {
         return std::nullopt;
     }
-    return SeenCharacter{*handle, *alive, *instance, *settling == 1, parts.size() == 5};
+    return SeenCharacter{*handle,           *alive,           *instance, *settling == 1,
+                         (*flags & 1) != 0, (*flags & 2) != 0};
 }
 
 std::string TraceToken(const EnemyCopy& copy) {
@@ -3342,7 +3353,7 @@ bool LeftDeadByItsSave(const RespawnCandidate& character) {
     // Bits 0 and 2: killed (IsRealDeath); bit 1 comes with either; bit 5: put down by its world.
     constexpr u8 DeathMarks = 0x27;
     return character.hp <= 0 && character.max_hp > 0 && (character.death_flags & DeathMarks) == 0 &&
-           !character.disabled && !character.hidden;
+           ((!character.disabled && !character.hidden) || character.changed_by_party);
 }
 
 bool RespawnsInWorldRespawn(WorldRespawnKind kind, const RespawnCandidate& character,

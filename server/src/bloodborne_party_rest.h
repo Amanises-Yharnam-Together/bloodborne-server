@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <limits>
 #include <optional>
 
 #include <QByteArray>
@@ -135,6 +136,12 @@ public:
     // changes after `since`, oldest first.
     FlagBoardAnswer Update(const QByteArray& party, const QByteArray& member, qint64 since,
                            const QList<FlagChange>& changes);
+    // The `since` of a game's first post (it asks for nothing older than now).
+    static constexpr qint64 FreshStart = std::numeric_limits<qint64>::max();
+    // Takes back the member's standing changes ("<flag>:0" for each still on), as its own
+    // posts would: on the kill board a game that starts afresh (a restart under the same
+    // member name, rig smoke 2026-10-12) never knew its old kills to take them back.
+    void WithdrawMember(const QByteArray& party, const QByteArray& member);
 
 private:
     struct Entry {

@@ -453,6 +453,11 @@ TEST(BloodbornePartyDeath, AWipeBringsBackWhatTheMembersSaveLeftDead) {
     // Switched off or hidden by the story: left as the scripts have it.
     EXPECT_FALSE(LeftDeadByItsSave({.hp = 0, .max_hp = 143, .disabled = true}));
     EXPECT_FALSE(LeftDeadByItsSave({.hp = 0, .max_hp = 143, .hidden = true}));
+    // Rig smoke 2026-10-12 (run 153353): the restarted guest had hidden 0x1001400b "as the host
+    // has them" (hid and switched it off) just before the check, so it was skipped. Changed by
+    // the party, not the story: it is still the save's dead.
+    EXPECT_TRUE(LeftDeadByItsSave(
+        {.hp = 0, .max_hp = 484, .disabled = true, .hidden = true, .changed_by_party = true}));
     // A party rest is unchanged: what the party killed during this visit, nothing from the save.
     EXPECT_FALSE(RespawnsInWorldRespawn(WorldRespawnKind::PartyRest, save_dead, false));
     EXPECT_TRUE(RespawnsInWorldRespawn(WorldRespawnKind::PartyRest,

@@ -979,6 +979,26 @@ bool IsUntouchedBoss(u64 character, s32 hp) {
     return IsBossSized(character) && data >= 0x10000 && hp >= ReadValue<s32>(data, 0xFC);
 }
 
+// A character as VisitKills sees it now.
+SeenCharacter SeeCharacter(u64 character) {
+    // Only a real death is a kill: characters of a map being torn down read 0 HP too, and a guest
+    // leaving for the Dream "killed" the dog for the host.
+    const s32 hp = CharacterHp(character);
+    const bool dead = IsRealDeath(ReadValue<u8>(character, 0x1E3));
+    const u32 handle = ReadValue<u32>(character, 0x08);
+    std::optional<bool> last_hit_mine;
+    {
+        std::scoped_lock lock{own_hits_mutex};
+        last_hit_mine = own_damage.LastHitMine(handle);
+    }
+    return {handle,
+            dead ? 0 : std::max(hp, 1),
+            character,
+            false,
+            IsUntouchedBoss(character, hp),
+            KilledByAnother(hit_hooks_installed, last_hit_mine, !IsPartyGuestRole())};
+}
+
 // A death respawn reset the map: this member's kills are taken back (VisitKills::Forget).
 std::atomic<bool> party_kills_reset{};
 [[maybe_unused]] const bool party_kills_reset_registered =
@@ -1027,12 +1047,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     std::vector<u64> pointers;
     ForEachWorldCharacter(world, [&](u64 character) {
         if (character != player) {
-            // Only a real death is a kill: characters of a map being torn down read 0 HP too,
-            // and a guest leaving for the Dream "killed" the dog for the host.
-            const s32 hp = CharacterHp(character);
-            const bool dead = IsRealDeath(ReadValue<u8>(character, 0x1E3));
-            characters.push_back({ReadValue<u32>(character, 0x08), dead ? 0 : std::max(hp, 1),
-                                  character, false, IsUntouchedBoss(character, hp)});
+            characters.push_back(SeeCharacter(character));
             pointers.push_back(character);
         }
     });
@@ -1465,6 +1480,10 @@ size_t ApplyHostMapState() {
         }
     }
     return changed;
+}
+
+bool ChangedLikeTheHost(u32 handle) {
+    return guest_hidden_here.contains(handle) || guest_switched_off.contains(handle);
 }
 
 } // namespace Coop

@@ -1404,6 +1404,27 @@ TEST(BloodborneSharedKills, ABossSizedEnemyHitToDeathIsAKill) {
               (Changes{{0x10024050, true}}));
 }
 
+// Rig smoke 2026-10-12 (run 153353): the host killed 0x1001400b; the first guest's copy in the
+// same world died of that hit 2 ms after the host's kill frame came, and the guest posted it as
+// its own kill too. A death whose last hit was another player's is that player's kill.
+TEST(BloodborneSharedKills, ADeathByAnotherPlayersHitIsTheirKill) {
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    const std::vector<SeenCharacter> alive{{0x1001400b, 278, 0xB000}, {0x10014009, 364, 0x9000}};
+    EXPECT_EQ(kills.Observe(1, alive), Changes{});
+    const std::vector<SeenCharacter> dead{{0x1001400b, 0, 0xB000, false, false, true},
+                                          {0x10014009, 0, 0x9000, false, false, false}};
+    EXPECT_EQ(kills.Observe(1, dead), (Changes{{0x10014009, true}})) << "only its own kill";
+
+    // Who killed it, from the last hit on it (hit hooks in): this player's, another's, or none
+    // (the world: the host's kill, a guest's copy follows it).
+    EXPECT_TRUE(KilledByAnother(true, false, false));
+    EXPECT_FALSE(KilledByAnother(true, true, false));
+    EXPECT_FALSE(KilledByAnother(true, std::nullopt, true)) << "the world's kill: the host's";
+    EXPECT_TRUE(KilledByAnother(true, std::nullopt, false));
+    EXPECT_FALSE(KilledByAnother(false, false, false)) << "no hit hooks: as before";
+}
+
 // Kaniel 2026-10-11: the host and Lisara went to the Dream and back while krolebord stayed in
 // Central Yharnam, and half of it was alive again: the host's trip took its 82 kills back. While
 // another member stays on the map, a visit's kills stand (held), hidden for this member too
