@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+life peer-join
+life join
+Co-op place: Playing -> Playing map 0x18010000 visit 2 (Load)
+life peer-join
+life trip
+Co-op place: Playing -> Loading map 0x18010000 visit 2 (Lamp)
+Co-op place: Loading -> Playing map 0x18010000 visit 3 (Lamp)
+Co-op place: Playing -> Playing map 0x15000000 visit 4 (Lamp)
+life trip
+Co-op place: Playing -> Loading map 0x15000000 visit 4 (Lamp)
+Co-op place: Loading -> Playing map 0x15000000 visit 5 (Lamp)
+Co-op place: Playing -> Playing map 0x18010000 visit 6 (Lamp)
+kill posted 0x1001400b

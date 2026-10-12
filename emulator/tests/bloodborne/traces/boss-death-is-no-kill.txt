@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Rig smoke 2026-10-12, run 143240, the first guest (main 9eba4bcd), cut to three characters.
+# Father Gascoigne (0x1001409c/0x1001409e), dead in the guest's save, is put down by its world
+# 5.9 s after the join's load, past the 5 s it settles: the guest posted him as its kill, the
+# others hid his body, and the second guest's kill-apart check counted 3 hidden instead of 1.
+# The trace has no untouched-boss mark (the 5th field of a chars token, newer builds write it):
+# it is added to Gascoigne's tokens while he stands at full HP (2031/2031 in hp-in, boss-sized).
+# The host's kill of 0x1001400b beside this guest is posted at the end (its game's kill, the
+# member kill, is dropped later in the game's own step).
+1791808505660 life event=peer-join peer=0100007f:37065
+1791808505960 life event=join epoch=3
+1791808512826 place from-state=Playing from-map=18010000 from-visit=1 from-since=86506872 to-state=Playing to-map=18010000 to-visit=2 to-since=86528905 cause=Load
+1791808512829 kills-in visit=1801000000000001 others=18010000,18010000 chars==1001400b:1:1022ebbef0:1,1001409c:1:1023e562b0:1:1,1001409e:1:1013d1f030:1:1
+1791808517927 kills-in chars=1001400b:1:1022ebbef0:0,1001409c:1:1023e562b0:0:1,1001409e:1:1013d1f030:0:1
+# Settled; Gascoigne goes down (dead flags 0x7) 0.8 s later.
+1791808518763 kills-in chars=1001409c:0:1023e562b0:0,1001409e:0:1013d1f030:0
+1791808518895 kills-in chars=1001400b:1:1022ebbef0:1,1001409c:1:1023e562b0:1:1,1001409e:1:1013d1f030:1:1
+1791808523027 life event=peer-join peer=0100007f:37577
+1791808523894 kills-in chars=1001400b:1:1022ebbef0:0,1001409c:1:1023e562b0:0:1,1001409e:1:1013d1f030:0:1
+1791808539996 kills-in others=18010000,15000000
+1791808544161 kills-in chars=1001400b:1:1022ebbef0:1,1001409c:1:1023e562b0:1:1,1001409e:1:1013d1f030:1:1
+1791808549027 kills-in chars=1001400b:1:1022ebbef0:0,1001409c:1:1023e562b0:0:1,1001409e:1:1013d1f030:0:1
+1791808551694 kills-in others=18010000,18010000
+1791808554828 kills-in chars=1001400b:1:1022ebbef0:1
+1791808555794 kills-in chars=1001409c:1:1023e562b0:1:1,1001409e:1:1013d1f030:1:1
+1791808560727 kills-in chars=1001400b:1:1022ebbef0:0,1001409c:1:1023e562b0:0:1,1001409e:1:1013d1f030:0:1
+# The trip to the Dream and back (the kill-apart chapter); nothing of Gascoigne's to hold.
+1791808576227 life event=trip epoch=3
+1791808576260 place from-state=Playing from-map=18010000 from-visit=2 from-since=86528905 to-state=Loading to-map=18010000 to-visit=2 to-since=86592339 cause=Lamp
+1791808576793 place from-state=Loading from-map=18010000 from-visit=2 from-since=86592339 to-state=Playing to-map=18010000 to-visit=3 to-since=86592871 cause=Lamp
+1791808578127 place from-state=Playing from-map=18010000 from-visit=3 from-since=86592871 to-state=Playing to-map=15000000 to-visit=4 to-since=86594205 cause=Lamp
+1791808578128 kills-in visit=1500000000000002 chars=-1001400b,-1001409c,-1001409e
+1791808579026 kills-in others=15000000,18010000
+1791808588260 life event=trip epoch=3
+1791808588293 place from-state=Playing from-map=15000000 from-visit=4 from-since=86594205 to-state=Loading to-map=15000000 to-visit=4 to-since=86604372 cause=Lamp
+1791808588826 place from-state=Loading from-map=15000000 from-visit=4 from-since=86604372 to-state=Playing to-map=15000000 to-visit=5 to-since=86604905 cause=Lamp
+1791808590192 place from-state=Playing from-map=15000000 from-visit=5 from-since=86604905 to-state=Playing to-map=18010000 to-visit=6 to-since=86606271 cause=Lamp
+1791808590194 kills-in visit=1801000000000003 chars=1001400b:1:1023bf6100:1,1001409c:1:1012b69610:1:1,1001409e:1:1012b6e190:1:1
+1791808592428 kills-in others=18010000,18010000
+1791808595227 kills-in chars=1001400b:1:1023bf6100:0,1001409c:1:1012b69610:0:1,1001409e:1:1012b6e190:0:1
+1791808623795 kills-in others=15000000,18010000
+# The host kills 0x1001400b beside this guest.
+1791808630528 kills-in chars=1001400b:0:1023bf6100:0

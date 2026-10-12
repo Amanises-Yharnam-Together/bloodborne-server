@@ -808,6 +808,11 @@ void ResendOwnDataOnChange(bool in_session) {
 
 // Hands the client this member's vitals: posted at once when more than its position changed.
 void PostVitals(const MemberVitals& mine, std::vector<ReviveHitTotal> hits) {
+    // On change only (the rig checks SessionArrival by it).
+    static VitalsPostLog post_log;
+    if (const auto line = post_log.Next(mine.vital, mine.map)) {
+        LOG_INFO(Debug, "Bloodborne party vitals: {}", *line);
+    }
     std::scoped_lock lock{vitals_mutex};
     MemberVitals moved = vitals_mine;
     moved.at = mine.at;

@@ -544,6 +544,13 @@ bool SomeoneElsewhere(std::span<const MemberMap> board, std::string_view self, u
         board, [&](const MemberMap& entry) { return entry.member != self && entry.map != map; });
 }
 
+bool PostsKillEchoes(std::span<const MemberMap> board, std::string_view self, u32 map) {
+    return SomeoneElsewhere(board, self, map) &&
+           std::ranges::none_of(board, [&](const MemberMap& entry) {
+               return entry.member != self && entry.map == map && entry.member < self;
+           });
+}
+
 bool RoomForMore(bool hosting, size_t in_session, size_t party_online) {
     constexpr size_t MaxPlayers = 3; // the host and two cooperators
     return hosting && in_session < MaxPlayers && party_online > in_session;
@@ -1937,17 +1944,19 @@ std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
         }
         it = held.erase(it);
     }
-    for (const auto& [handle, now, instance, settling] : characters) {
-        const auto [it, added] = seen.try_emplace(handle, Seen{now, instance});
+    for (const auto& [handle, now, instance, settling, untouched_boss] : characters) {
+        const auto [it, added] = seen.try_emplace(handle, Seen{now, instance, untouched_boss});
         // The same object seen alive, now dead: a world that loaded brings new objects, some
         // dead already (in a save that killed them for good), and one that settles after a
-        // takeover puts such ones down where they stand.
+        // takeover puts such ones down where they stand. Nor a boss-sized one last seen
+        // untouched (see SeenCharacter::untouched_boss).
         if (!added && !settling && it->second.instance == instance && it->second.hp > 0 &&
-            now <= 0 && std::ranges::find(killed, handle) == killed.end()) {
+            !it->second.untouched_boss && now <= 0 &&
+            std::ranges::find(killed, handle) == killed.end()) {
             killed.push_back(handle);
             changes.emplace_back(static_cast<s32>(handle), true);
         }
-        it->second = {now, instance};
+        it->second = {now, instance, untouched_boss};
     }
     return changes;
 }
@@ -1987,11 +1996,10 @@ bool SharesWithParty(bool party_configured, bool player_loaded) {
     return party_configured && player_loaded;
 }
 
-bool SharesKillEchoes(u64 caller_offset, bool someone_elsewhere) {
+bool SharesKillEchoes(u64 caller_offset, bool posts) {
     constexpr u64 EnemyKillReward = 0x018FC99B;
     constexpr u64 BossKillReward = 0x01385263;
-    return someone_elsewhere &&
-           (caller_offset == EnemyKillReward || caller_offset == BossKillReward);
+    return posts && (caller_offset == EnemyKillReward || caller_offset == BossKillReward);
 }
 
 bool GrantsKillEchoes(u32 kill_map, u32 my_map) {
@@ -2933,13 +2941,14 @@ std::optional<std::vector<u32>> ParseTraceHandles(std::string_view text) {
 }
 
 std::string TraceToken(const SeenCharacter& character) {
-    return fmt::format("{:x}:{}:{:x}:{}", character.handle, character.hp > 0 ? 1 : 0,
-                       character.instance, character.settling ? 1 : 0);
+    return fmt::format("{:x}:{}:{:x}:{}{}", character.handle, character.hp > 0 ? 1 : 0,
+                       character.instance, character.settling ? 1 : 0,
+                       character.untouched_boss ? ":1" : "");
 }
 
 std::optional<SeenCharacter> ParseSeenToken(std::string_view token) {
     const auto parts = SplitTrace(token, ':');
-    if (parts.size() != 4) {
+    if (parts.size() != 4 && !(parts.size() == 5 && parts[4] == "1")) {
         return std::nullopt;
     }
     const auto handle = ParseTraceNumber<u32>(parts[0], 16);
@@ -2949,7 +2958,7 @@ std::optional<SeenCharacter> ParseSeenToken(std::string_view token) {
     if (!handle || !alive || !instance || !settling || *alive > 1 || *settling > 1) {
         return std::nullopt;
     }
-    return SeenCharacter{*handle, *alive, *instance, *settling == 1};
+    return SeenCharacter{*handle, *alive, *instance, *settling == 1, parts.size() == 5};
 }
 
 std::string TraceToken(const EnemyCopy& copy) {
@@ -3695,6 +3704,19 @@ std::optional<Vital> ParseVital(std::string_view name) {
         }
     }
     return std::nullopt;
+}
+
+std::optional<std::string> VitalsPostLog::Next(Vital vital, u32 map) {
+    const std::pair now{vital, map};
+    if (last == now) {
+        return std::nullopt;
+    }
+    std::string line = fmt::format("posting {} (map {:#x})", VitalName(vital), map);
+    if (last) {
+        line += fmt::format(", was {} (map {:#x})", VitalName(last->first), last->second);
+    }
+    last = now;
+    return line;
 }
 
 u32 ReviveDamageNeeded(u32 downs, s32 max) {

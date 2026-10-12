@@ -347,15 +347,16 @@ std::unordered_map<u64, u64> lone_guest_character; // word address -> its charac
 namespace Coop {
 
 // In a party session with another member on another map (the party's map board, fresh): the
-// game shares a kill's echoes only with the members on the killer's map.
-bool SomeoneElsewhereInSession() {
+// game shares a kill's echoes only with the members on the killer's map, and one of those posts
+// them (PostsKillEchoes).
+bool PostsKillEchoesInSession() {
     const u32 map = PlayingMap();
     if (!InPartySession() || !IsUsablePackedMap(map)) {
         return false;
     }
     std::scoped_lock lock{map_board_mutex};
     return std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{3} &&
-           SomeoneElsewhere(map_board, map_board_member, map);
+           PostsKillEchoes(map_board, map_board_member, map);
 }
 
 } // namespace Coop
@@ -972,6 +973,15 @@ void TraceMemberKills(std::span<const SeenCharacter> characters, std::span<const
     }
 }
 
+bool IsBossSized(u64 character); // below, with the characters shown like the host
+
+// A boss-sized character at its full HP (`hp`, read now): see SeenCharacter::untouched_boss.
+bool IsUntouchedBoss(u64 character, s32 hp) {
+    const u64 modules = ReadValue<u64>(character, 0x3B0);
+    const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+    return IsBossSized(character) && data >= 0x10000 && hp >= ReadValue<s32>(data, 0xFC);
+}
+
 // A death respawn reset the map: this member's kills are taken back (VisitKills::Forget).
 std::atomic<bool> party_kills_reset{};
 [[maybe_unused]] const bool party_kills_reset_registered =
@@ -1024,8 +1034,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
             // and a guest leaving for the Dream "killed" the dog for the host.
             const s32 hp = CharacterHp(character);
             const bool dead = IsRealDeath(ReadValue<u8>(character, 0x1E3));
-            characters.push_back(
-                {ReadValue<u32>(character, 0x08), dead ? 0 : std::max(hp, 1), character});
+            characters.push_back({ReadValue<u32>(character, 0x08), dead ? 0 : std::max(hp, 1),
+                                  character, false, IsUntouchedBoss(character, hp)});
             pointers.push_back(character);
         }
     });

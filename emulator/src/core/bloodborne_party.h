@@ -550,6 +550,11 @@ bool HostAway(std::optional<u32> host_map, std::span<const MemberMap> board, std
               u32 map);
 // Another member is on another map (kill echoes go to the board then).
 bool SomeoneElsewhere(std::span<const MemberMap> board, std::string_view self, u32 map);
+// Whether this member posts the kill echoes it gets on `map` to the echo board: someone is
+// elsewhere, and no other member on `map` comes before it by board name. The game gives a kill's
+// echoes to every member on the killer's map, so each of them would post the same kill (rig
+// smoke 2026-10-12: the second guest in the Dream got the host's +995 twice).
+bool PostsKillEchoes(std::span<const MemberMap> board, std::string_view self, u32 map);
 // The host rings again: hosting, fewer than three in the session, a party member online outside.
 bool RoomForMore(bool hosting, size_t in_session, size_t party_online);
 
@@ -751,9 +756,9 @@ struct EchoBoardAnswer {
     std::vector<KillEchoes> echoes;
     bool operator==(const EchoBoardAnswer&) const = default;
 };
-// `someone_elsewhere`: a party member in the session is on another map (the game shares the
-// echoes with the ones on this map itself).
-bool SharesKillEchoes(u64 caller_offset, bool someone_elsewhere);
+// `posts`: a party member in the session is on another map (the game shares the echoes with the
+// ones on this map itself) and this member is the one here that posts them (PostsKillEchoes).
+bool SharesKillEchoes(u64 caller_offset, bool posts);
 // Whether a member on `my_map` adds the echoes of a kill made on `kill_map`.
 bool GrantsKillEchoes(u32 kill_map, u32 my_map);
 // Whether the party boards (lamps and boss fog flags, trophies) are read, posted and applied:
@@ -1307,6 +1312,12 @@ struct SeenCharacter {
     s32 hp = 0;
     u64 instance = 0;
     bool settling = false; // just taken over or handed back (see EnemyOwnerChangeSettles)
+    // Boss-sized (max HP of DeathTraceMinMaxHp or more) and at its full HP in this read. Its
+    // death right after such a read (no damage seen between: no hit of anyone's, as the HP board
+    // writes the others' damage on this copy too) is its world putting it down, not a kill (rig
+    // smoke 2026-10-12: Gascoigne, dead in the guests' saves, went down at full HP after the
+    // settling time and was posted). A boss-sized enemy hurt before it died stays a kill.
+    bool untouched_boss = false;
 };
 
 // How long a character's death is only seen, not posted, after this member took it over or
@@ -1341,6 +1352,7 @@ private:
     struct Seen {
         s32 hp = 0;
         u64 instance = 0;
+        bool untouched_boss = false; // see SeenCharacter
     };
     u64 current = 0;
     std::map<u32, Seen> seen;
@@ -1691,7 +1703,8 @@ std::optional<std::vector<u8>> ParseTraceHex(std::string_view hex);
 std::string TraceHandles(std::span<const u32> handles);
 std::optional<std::vector<u32>> ParseTraceHandles(std::string_view text);
 // List entries, each "<key>:<rest>" (the key in hex): a character as VisitKills sees it (alive or
-// not, which is all it reads of the HP), and a copy as SharedDamage sees it ("-" for no own hits).
+// not, which is all it reads of the HP; a 5th field "1" for an untouched boss-sized one, left out
+// otherwise), and a copy as SharedDamage sees it ("-" for no own hits).
 std::string TraceToken(const SeenCharacter& character);
 std::optional<SeenCharacter> ParseSeenToken(std::string_view token);
 std::string TraceToken(const EnemyCopy& copy);
@@ -1832,6 +1845,16 @@ bool KeepsPlayerAlive(NoDeadCheck check, bool armed, bool down, bool answer);
 enum class Vital : u8 { Off, Up, Down, Dead };
 std::string_view VitalName(Vital vital);
 std::optional<Vital> ParseVital(std::string_view name);
+// What this member posts on the vitals board, for the log on change only (the rig checks
+// SessionArrival by it: a summoned guest goes from "off" to "up" once it arrived).
+class VitalsPostLog {
+public:
+    // The line to log, or nothing when the vital and the map are the ones last logged.
+    std::optional<std::string> Next(Vital vital, u32 map);
+
+private:
+    std::optional<std::pair<Vital, u32>> last;
+};
 
 // Revive damage a downed player needs: its max HP the first time it goes down, twice that the
 // second, four times from the third (DownedState forgets old downs); at least 1.
