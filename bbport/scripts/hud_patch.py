@@ -20,6 +20,9 @@ import struct
 
 FE = 'dvdroot_ps4/menu/fe.gfx'
 LAYER = 'party HUD'
+# Part of the generated file's name: a patcher that patches differently makes its file anew (the old
+# one is not reused). Bump it with every change to what patch_fe writes.
+PATCH_VERSION = b'party-hud 2'
 DRAW_BANNER = 'Fe_fla._TextEffect_Draw_195'
 DRAW_FIELD = 'StaticText_522007'
 DOWNED_FIELD = 'CoopDownedText'
@@ -443,7 +446,7 @@ def with_party_hud(game, layers, out):
     try:
         data = source.read_bytes()
         strip = HUD_ICONS.read_bytes() if HUD_ICONS.is_file() else None
-        digest = hashlib.sha256(data + (strip or b'')).hexdigest()[:16]
+        digest = hashlib.sha256(PATCH_VERSION + data + (strip or b'')).hexdigest()[:16]
         folder = Path(out) / 'party-hud' / digest
         target = folder / FE
         if not target.is_file():

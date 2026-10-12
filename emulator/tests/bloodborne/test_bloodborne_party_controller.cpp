@@ -789,19 +789,27 @@ TEST(BloodborneSharedLoot, AMessengerGiftIsEachPlayersOwn) {
 TEST(BloodborneSharedProgression, AGuestOutInTheWorldOpensItsOwnDream) {
     constexpr u32 CentralYharnam = 0x18010000;
     constexpr u32 HuntersDream = 0x15000000;
-    EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam, true), (std::vector<s32>{9401, 9403}));
-    EXPECT_TRUE(GuestProgressFlags(true, true, HuntersDream, true).empty())
+    EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam, true, true),
+              (std::vector<s32>{9401, 9403}));
+    EXPECT_TRUE(GuestProgressFlags(true, true, HuntersDream, true, true).empty())
         << "the Dream alone is no trip out";
-    EXPECT_TRUE(GuestProgressFlags(true, false, CentralYharnam, true).empty())
+    EXPECT_TRUE(GuestProgressFlags(true, false, CentralYharnam, true, true).empty())
         << "not in a session";
-    EXPECT_TRUE(GuestProgressFlags(false, true, CentralYharnam, true).empty()) << "the host's own";
-    EXPECT_TRUE(GuestProgressFlags(true, true, 0, true).empty()) << "loading";
+    EXPECT_TRUE(GuestProgressFlags(false, true, CentralYharnam, true, true).empty())
+        << "the host's own";
+    EXPECT_TRUE(GuestProgressFlags(true, true, 0, true, true).empty()) << "loading";
     // Lisara's new character (2026-10-13): 9401 set before its first death showed the clinic's
     // lamp (common event 7000 waits for it) and ended the first-death event 9400 (end if 9401 on),
     // so the death woke it at the clinic, not in the Dream. Only a guest whose own character has
     // been to the Dream gets it.
-    EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam, false), (std::vector<s32>{9403}));
-    for (const s32 flag : GuestProgressFlags(true, true, CentralYharnam, true)) {
+    EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam, false, true),
+              (std::vector<s32>{9403}));
+    // Lisara 2026-10-13: her new character's workshop in the Dream stood open. 9403 is what
+    // Central Yharnam's event 12410900 sets for a live player walking by: only once the session's
+    // world has that flag (the party walked there).
+    EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam, true, false),
+              (std::vector<s32>{9401}));
+    for (const s32 flag : GuestProgressFlags(true, true, CentralYharnam, true, true)) {
         EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
     }
 }

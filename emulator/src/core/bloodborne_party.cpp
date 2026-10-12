@@ -927,15 +927,18 @@ bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 
     return party_configured && slot >= 0 && !done_for_slot && map != 0 && map != HuntersDream;
 }
 
-std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map, bool dream_visited) {
+std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map, bool dream_visited,
+                                    bool workshop_opened) {
     constexpr u32 HuntersDream = 0x15000000;
     constexpr s32 DreamFirstVisit = 9401;
+    constexpr s32 WorkshopOpen = 9403;
     if (!guest || !in_session || map == 0 || map == HuntersDream) {
         return {};
     }
     std::vector<s32> flags;
     for (const s32 flag : FlagsWith<FlagGuestSetsInWorld>()) {
-        if (flag != DreamFirstVisit || dream_visited) {
+        if ((flag != DreamFirstVisit || dream_visited) &&
+            (flag != WorkshopOpen || workshop_opened)) {
             flags.push_back(flag);
         }
     }

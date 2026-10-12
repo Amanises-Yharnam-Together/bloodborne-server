@@ -212,6 +212,21 @@ class LayerTests(unittest.TestCase):
         self.assertEqual(len(generated), 1)
         self.assertEqual(layers[0][1], generated[0].parents[2])
 
+    def test_a_hud_an_older_patcher_made_is_made_again(self):
+        # Kaniel 2026-10-13: the icons fix changed nothing in his game. The file made by the patcher
+        # before it was still there under the same name (the HUD and the icons had not changed), and
+        # was used as it was.
+        import hashlib
+        data = (self.game / self.FE).read_bytes()
+        strip = hud_patch.HUD_ICONS.read_bytes()
+        old = self.out / 'party-hud' / hashlib.sha256(data + strip).hexdigest()[:16] / self.FE
+        old.parent.mkdir(parents=True)
+        old.write_bytes(hud_patch.patch_fe(data))  # the list without its icons
+        layers, _ = hud_patch.with_party_hud(self.game, [], self.out)
+        made = layers[0][1] / self.FE
+        self.assertNotEqual(made, old)
+        self.assertEqual(made.read_bytes().count(b'CoopPartyIcon'), len(hud_patch.PARTY_ICONS))
+
     def test_the_mods_script_takes_the_party_hud(self):
         import subprocess, sys
         result = subprocess.run([sys.executable, str(ROOT / 'scripts/mods.py'), str(self.game), '--out',
