@@ -547,10 +547,16 @@ void PS4_SYSV_ABI NoteAddSouls(u64, const GuestRegisterSnapshot* registers) {
     const s32 amount = static_cast<s32>(registers->rsi);
     LOG_INFO(Debug, "Bloodborne echoes: +{} (rates {}) from {:#x}", amount, registers->rcx & 0xFF,
              caller >= image_base ? caller - image_base : caller);
-    if (amount > 0 && caller >= image_base &&
-        SharesKillEchoes(caller - image_base, PostsKillEchoesInSession())) {
-        std::scoped_lock lock{echo_board_mutex};
-        echoes_to_post.push_back(KillEchoes{amount, CurrentPlace().map});
+    // A kill reward: the game paid this member (a post of the same kill is not owed here).
+    if (amount <= 0 || caller < image_base || !SharesKillEchoes(caller - image_base, true)) {
+        return;
+    }
+    const KillEchoes kill{amount, CurrentPlace().map};
+    const bool posts = PostsKillEchoesInSession();
+    std::scoped_lock lock{echo_board_mutex};
+    echo_ledger.Paid(kill, SteadyMilliseconds());
+    if (posts) {
+        echoes_to_post.push_back(kill);
     }
 }
 

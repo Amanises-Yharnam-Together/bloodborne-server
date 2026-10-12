@@ -228,8 +228,7 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
                                         : std::nullopt) {
                 echo_board_since = echoes->latest;
                 std::scoped_lock lock{echo_board_mutex};
-                echoes_to_grant.insert(echoes_to_grant.end(), echoes->echoes.begin(),
-                                       echoes->echoes.end());
+                echo_ledger.Received(echoes->echoes, SteadyMilliseconds());
             } else {
                 std::scoped_lock lock{echo_board_mutex};
                 echoes_to_post.insert(echoes_to_post.begin(), echoes_out.begin(), echoes_out.end());

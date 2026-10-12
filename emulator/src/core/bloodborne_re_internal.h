@@ -337,7 +337,7 @@ extern std::mutex flag_board_mutex;
 extern std::vector<std::pair<s32, bool>> flags_to_post;
 extern std::mutex echo_board_mutex;
 extern std::vector<KillEchoes> echoes_to_post;
-extern std::vector<KillEchoes> echoes_to_grant;
+extern KillEchoLedger echo_ledger;
 extern std::mutex kill_board_mutex;
 extern std::vector<std::pair<s32, bool>> kills_to_post;
 extern std::unordered_set<u32> others_kills;
@@ -609,6 +609,8 @@ void LogFlagChangesInSession(bool sharing);
 void KeepGuestProgress(bool in_session);
 void SetPartyWorldChanges(bool sharing);
 void GrantPartyEchoes();
+// Whether this guest hid or switched off the character to match the host (game thread).
+bool ChangedLikeTheHost(u32 handle);
 void ClaimEnemiesWhenAlone(bool in_session, u32 map);
 extern std::mutex own_hits_mutex;
 extern OwnDamage own_damage;

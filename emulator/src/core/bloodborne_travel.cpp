@@ -197,6 +197,7 @@ RespawnCandidate ReadRespawnCandidate(u64 character) {
         .death_flags = ReadValue<u8>(character, 0x1E3),
         .disabled = IsCharacterDisabled(character),
         .hidden = ReadValue<u8>(character, 0x28) != 0,
+        .changed_by_party = ChangedLikeTheHost(ReadValue<u32>(character, 0x08)),
     };
 }
 

@@ -235,6 +235,33 @@ FlagBoardAnswer PartyFlagBoard::Update(const QByteArray& party, const QByteArray
     return answer;
 }
 
+void PartyFlagBoard::WithdrawMember(const QByteArray& party, const QByteArray& member) {
+    if (party.isEmpty()) {
+        return;
+    }
+    QMutexLocker lock(&m_mutex);
+    Party& board = m_parties[party];
+    QList<qint32> order;
+    QHash<qint32, bool> standing;
+    for (const Entry& entry : board.entries) {
+        if (entry.member != member) {
+            continue;
+        }
+        if (!standing.contains(entry.change.flag)) {
+            order.append(entry.change.flag);
+        }
+        standing[entry.change.flag] = entry.change.on;
+    }
+    for (const qint32 flag : order) {
+        if (standing.value(flag)) {
+            board.entries.append(Entry{++board.latest, member, FlagChange{flag, false}});
+        }
+    }
+    while (board.entries.size() > MaxChanges) {
+        board.entries.removeFirst();
+    }
+}
+
 std::optional<EchoUpdate> ParseEchoUpdate(const QByteArray& body) {
     const QList<QByteArray> parts = body.trimmed().split(' ');
     if (parts.size() < 2 || !IsMemberName(parts[0])) {

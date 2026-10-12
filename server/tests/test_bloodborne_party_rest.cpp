@@ -248,6 +248,32 @@ int main() {
               "268517532 0 guestB" + newline);
   }
 
+  // Rig smoke 2026-10-12 (run 153353): a guest's game restarted under the same
+  // member name. Its kills from before stood on the board (its new game never
+  // knew them to take back), and after the party's wipe the others hid the
+  // respawned enemy. A game's first post (since FreshStart) takes back the
+  // member's standing kills.
+  {
+    using Bloodborne::FlagChange;
+    using Bloodborne::PartyFlagBoard;
+    PartyFlagBoard board;
+    const QByteArray newline(1, 10);
+    board.Update(Party, "guest", 0,
+                 {FlagChange{268517387, true}, FlagChange{268517388, true},
+                  FlagChange{268517388, false}});
+    board.Update(Party, "host", 0, {FlagChange{268517389, true}});
+    const auto host = board.Update(Party, "host", 4, {});
+    CHECK(host.latest == 4 && host.changes.isEmpty());
+    board.WithdrawMember(Party, "guest");
+    CHECK(Bloodborne::FormatKillBoard(board.Update(Party, "host", 4, {})) ==
+          "5" + newline + "268517387 0 guest" + newline);
+    board.WithdrawMember(Party, "guest"); // nothing standing any more
+    CHECK(board.Update(Party, "host", 5, {}).changes.isEmpty());
+    board.WithdrawMember({}, "guest");
+    CHECK(Bloodborne::ParseFlagUpdate("guest 9223372036854775807")->since ==
+          PartyFlagBoard::FreshStart);
+  }
+
   // World state per map: the host posts "<member> <map> <hex flag bits>" for
   // the map it is on (killed-for-good enemies, doors, shortcuts) and every
   // member reads back the others' latest

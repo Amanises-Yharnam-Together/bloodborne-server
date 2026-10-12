@@ -254,7 +254,7 @@ TEST(BloodborneThreePlayers, TheHostIsHereWhateverTheOtherGuestDoes) {
 
 // The game shares a kill's echoes with the members on the killer's map; the board covers the
 // rest. A kill's echoes go to the board whenever someone is elsewhere, with the kill's map, and
-// only members on another map add them.
+// only members the game did not pay add them (see KillEchoLedger).
 TEST(BloodborneThreePlayers, KillEchoesReachOnlyTheMembersElsewhere) {
     EXPECT_TRUE(SharesKillEchoes(0x018FC99B, true)) << "someone elsewhere";
     EXPECT_FALSE(SharesKillEchoes(0x018FC99B, false)) << "everyone here: the game shares them";
@@ -263,9 +263,46 @@ TEST(BloodborneThreePlayers, KillEchoesReachOnlyTheMembersElsewhere) {
     EXPECT_EQ(ParseEchoBoard("5\n120 402718720\n4000\n"),
               (std::optional<EchoBoardAnswer>{EchoBoardAnswer{5, kills}}));
     EXPECT_EQ(ParseEchoBoard("5\n120 x\n"), std::nullopt);
-    EXPECT_TRUE(GrantsKillEchoes(0x18010000, 0x15000000));
-    EXPECT_FALSE(GrantsKillEchoes(0x18010000, 0x18010000)) << "the game gave them already";
-    EXPECT_TRUE(GrantsKillEchoes(0, 0x18010000)) << "an old post without a map";
+}
+
+// Rig smoke 2026-10-12 (run 151918): the host killed an enemy beside the first guest while the
+// second was in the Dream; the guest posted the +995 at 342049 and the second guest read it at
+// 345662, mid-trip back. Its grant ran once it stood on the kill's map again (345821), which the
+// old rule (the kill's map is not mine now) took for "the game paid it": 0 echoes. A member is
+// owed a posted kill unless the game paid it the same echoes on that map around then.
+TEST(BloodborneThreePlayers, PostedEchoesAreOwedUnlessTheGamePaidThem) {
+    constexpr u32 Yharnam = 0x18010000;
+    constexpr u32 Dream = 0x15000000;
+    using Kills = std::vector<KillEchoes>;
+    KillEchoLedger guest2;
+    guest2.Received({995, Yharnam}, 345'662);
+    EXPECT_EQ(guest2.Due(345'700), Kills{}) << "a moment for the game's own reward";
+    EXPECT_EQ(guest2.Due(345'900), Kills{}) << "back on the kill's map: still owed";
+    EXPECT_EQ(guest2.Due(347'700), (Kills{{995, Yharnam}}));
+    EXPECT_EQ(guest2.Due(347'800), Kills{}) << "once";
+
+    KillEchoLedger host; // beside the first guest: the game paid it
+    host.Paid({995, Yharnam}, 341'900);
+    host.Received({995, Yharnam}, 344'087);
+    EXPECT_EQ(host.Due(344'100), Kills{});
+    EXPECT_EQ(host.Due(350'000), Kills{}) << "paid, not owed later";
+
+    KillEchoLedger two_kills; // one reward pays one post
+    two_kills.Paid({995, Yharnam}, 400'000);
+    two_kills.Received({995, Yharnam}, 402'000);
+    two_kills.Received({995, Yharnam}, 402'000);
+    EXPECT_EQ(two_kills.Due(405'000), (Kills{{995, Yharnam}}));
+
+    KillEchoLedger elsewhere; // an old reward, or one on another map, pays nothing
+    elsewhere.Paid({995, Yharnam}, 0);
+    elsewhere.Paid({995, Dream}, 59'000);
+    elsewhere.Received({995, Yharnam}, 60'000);
+    EXPECT_EQ(elsewhere.Due(63'000), (Kills{{995, Yharnam}}));
+
+    KillEchoLedger old_post; // a post without a map: any map's reward pays it
+    old_post.Paid({995, Yharnam}, 10'000);
+    old_post.Received({995, 0}, 12'000);
+    EXPECT_EQ(old_post.Due(15'000), Kills{});
 }
 
 // Rig smoke 2026-10-12 (run 143240): the host killed an enemy beside the first guest while the

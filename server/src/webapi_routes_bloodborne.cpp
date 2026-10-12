@@ -324,6 +324,11 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                 qInfo().noquote() << "Bloodborne party kills from" << update->member << ":"
                                   << update->changes.size() << "changes";
             }
+            // A game's first post: its kills from an earlier run of the game go (a restart
+            // under the same member name never knew them to take them back).
+            if (update->since == Bloodborne::PartyFlagBoard::FreshStart) {
+                killBoard->WithdrawMember(Party(request), update->member);
+            }
             const QByteArray board = Bloodborne::FormatKillBoard(
                 killBoard->Update(Party(request), update->member, update->since, update->changes));
             return QHttpServerResponse{"text/plain", board, QHttpServerResponse::StatusCode::Ok};

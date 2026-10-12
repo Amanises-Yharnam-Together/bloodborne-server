@@ -64,9 +64,9 @@ namespace Core::Bloodborne {
 namespace Coop {
 
 // Kill echoes shared across maps (see SharesKillEchoes): the local kills made apart wait here
-// for the board thread, and the other members' wait for the game thread to add them.
+// for the board thread, and the other members' wait for the game thread to add those owed.
 std::mutex echo_board_mutex;
-std::vector<KillEchoes> echoes_to_grant;
+KillEchoLedger echo_ledger;
 // Enemy deaths kept in step across loads (see VisitKills): this member's kills and visit ends
 // wait for the board thread; the others' current kills (character handles) are hidden here.
 std::mutex kill_board_mutex;
@@ -392,15 +392,12 @@ void GrantPartyEchoes() {
     const u64 add_souls = image_base + AddSoulsOffset;
     std::vector<KillEchoes> pending;
     {
+        // Those the game paid this member itself are left out (see KillEchoLedger).
         std::scoped_lock lock{echo_board_mutex};
-        pending.swap(echoes_to_grant);
+        pending = echo_ledger.Due(SteadyMilliseconds());
     }
     using AddSouls = void PS4_SYSV_ABI (*)(u64 player, s32 amount, s32, bool rates);
-    const u32 map = CurrentPlace().map;
     for (const KillEchoes& kill : pending) {
-        if (!GrantsKillEchoes(kill.map, map)) {
-            continue; // made on this map: the game gave them already
-        }
         reinterpret_cast<AddSouls>(add_souls)(player, kill.amount, 0, true);
         LOG_INFO(Debug, "Bloodborne party: added {} echoes from a kill another member made apart",
                  kill.amount);
@@ -982,6 +979,26 @@ bool IsUntouchedBoss(u64 character, s32 hp) {
     return IsBossSized(character) && data >= 0x10000 && hp >= ReadValue<s32>(data, 0xFC);
 }
 
+// A character as VisitKills sees it now.
+SeenCharacter SeeCharacter(u64 character) {
+    // Only a real death is a kill: characters of a map being torn down read 0 HP too, and a guest
+    // leaving for the Dream "killed" the dog for the host.
+    const s32 hp = CharacterHp(character);
+    const bool dead = IsRealDeath(ReadValue<u8>(character, 0x1E3));
+    const u32 handle = ReadValue<u32>(character, 0x08);
+    std::optional<bool> last_hit_mine;
+    {
+        std::scoped_lock lock{own_hits_mutex};
+        last_hit_mine = own_damage.LastHitMine(handle);
+    }
+    return {handle,
+            dead ? 0 : std::max(hp, 1),
+            character,
+            false,
+            IsUntouchedBoss(character, hp),
+            KilledByAnother(hit_hooks_installed, last_hit_mine, !IsPartyGuestRole())};
+}
+
 // A death respawn reset the map: this member's kills are taken back (VisitKills::Forget).
 std::atomic<bool> party_kills_reset{};
 [[maybe_unused]] const bool party_kills_reset_registered =
@@ -1030,12 +1047,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     std::vector<u64> pointers;
     ForEachWorldCharacter(world, [&](u64 character) {
         if (character != player) {
-            // Only a real death is a kill: characters of a map being torn down read 0 HP too,
-            // and a guest leaving for the Dream "killed" the dog for the host.
-            const s32 hp = CharacterHp(character);
-            const bool dead = IsRealDeath(ReadValue<u8>(character, 0x1E3));
-            characters.push_back({ReadValue<u32>(character, 0x08), dead ? 0 : std::max(hp, 1),
-                                  character, false, IsUntouchedBoss(character, hp)});
+            characters.push_back(SeeCharacter(character));
             pointers.push_back(character);
         }
     });
@@ -1468,6 +1480,10 @@ size_t ApplyHostMapState() {
         }
     }
     return changed;
+}
+
+bool ChangedLikeTheHost(u32 handle) {
+    return guest_hidden_here.contains(handle) || guest_switched_off.contains(handle);
 }
 
 } // namespace Coop
