@@ -288,6 +288,10 @@ void ApplyCrossMapSummonGuestPlacement(const GuestRegisterSnapshot& registers);
 void ApplySummonReloadStateAtDescriptor(const GuestRegisterSnapshot& registers);
 void ApplyDeferredSummonReload();
 void ApplyPreMatchCrossMapGuestWarp();
+bool WarpGuestToLampPoint(const LampPoint& point);
+// A trip to a warp point (a guest's own, the rig's): at the lamp's own point when it is known
+// (returned), else the lamp lookup's trip.
+const LampPoint* StartTripToLamp(s32 warp_point);
 bool StartPlayerSummonSearch(u64 player, s32 effect_id);
 void ResumePreMatchCrossMapResponder();
 extern std::optional<PartyController> party_controller;
@@ -652,6 +656,12 @@ void SendPeerHello();
 void KeepEnemyDeathsInStep(bool sharing);
 void SnapshotHostMapState(bool sharing);
 void TeleportLocalPlayer(const LampPosition& at, float heading = 0.0f);
+// Has every camera jump to where it should be on its next update (see PlacementCalls).
+void SnapCamera();
+// Moves the local player the way the game places it at a lamp (see PlaceCharacter); `what` names
+// the caller in the character check's log.
+bool PlaceLocalPlayer(const std::array<float, 4>& position, const std::array<float, 4>& rotation,
+                      const char* what);
 std::optional<float> LocalPlayerHeading();
 
 void FinishWaitingJoins(bool in_session);

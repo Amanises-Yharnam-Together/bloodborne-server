@@ -5,6 +5,7 @@
 // bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h.
 
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_lamp_points.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
@@ -659,6 +660,70 @@ void ApplyPreMatchCrossMapGuestWarp() {
     responder_resume.target_area = transported_host->area;
     record.responder_resume_armed = true;
     record.result = "applied";
+}
+
+// See ArrivalNeedsMove: the pre-match warp's calls with the lamp's own point as the placement, so
+// the stage loads around the lamp. Returns whether the trip started.
+bool WarpGuestToLampPoint(const LampPoint& point) {
+    const u64 state = GetGlobalState();
+    const u64 image_size = MemoryPatcher::g_eboot_image_size;
+    if (state < 0x10000 || !HasMemoryAccess(state, 0x1530, MemoryProt::CpuWrite) ||
+        ReadValue<u8>(state, 0x08) != 0 || image_base == 0 ||
+        std::ranges::any_of(
+            CrossMapNativeCalls,
+            [image_size](const auto& site) { return site.offset >= image_size; })) {
+        return false;
+    }
+    const SummonPlacementDescriptor placement{
+        .packed_region = point.packed_map,
+        .x = point.x,
+        .y = point.y,
+        .z = point.z,
+        .heading = point.heading,
+    };
+    if (!WriteTransportedSummonPlacement(state, placement)) {
+        return false;
+    }
+    using PlacementSetter = void PS4_SYSV_ABI (*)(const void* value);
+    using FlagSetter = void PS4_SYSV_ABI (*)();
+    using PlacementSelector = bool PS4_SYSV_ABI (*)(u64 context, s32 warp_info_id);
+    using StageTransition = s32 PS4_SYSV_ABI (*)();
+    reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonPositionOffset)(
+        reinterpret_cast<const void*>(state + 0x14D0));
+    reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonOrientationOffset)(
+        reinterpret_cast<const void*>(state + 0x14E0));
+    reinterpret_cast<PlacementSetter>(image_base + SetForcedSummonMapOffset)(
+        reinterpret_cast<const void*>(state + 0x14C4));
+    reinterpret_cast<FlagSetter>(image_base + SetForcedSummonWarpOffset)();
+    const bool selected =
+        reinterpret_cast<PlacementSelector>(image_base + SelectSummonedPlacementOffset)(0, -1);
+    if (!selected || ReadValue<u32>(state, 0x0C) != point.packed_map) {
+        WriteValue(state, 0x1520, u8{0}); // the lamp lookup's trip instead
+        return false;
+    }
+    return reinterpret_cast<StageTransition>(image_base + StageTransitionOffset)() != 0;
+}
+
+const LampPoint* StartTripToLamp(s32 warp_point) {
+    // As the events do with SetPlayerRespawnPoint: the lamp a death respawns at. The summon warp
+    // byte (+0x1520, SetSosSignWarp) makes the placement selector use the summon placement
+    // (0x01332BC0): clear for the lamp lookup's trip, set by WarpGuestToLampPoint.
+    if (const u64 global = GetGlobalState(); global >= 0x10000) {
+        LOG_INFO(Debug, "Bloodborne party guest trip: summon warp byte was {}",
+                 ReadValue<u8>(global, 0x1520));
+        WriteValue(global, 0x1528, warp_point);
+        WriteValue(global, 0x1520, u8{0});
+    }
+    const LampPoint* lamp = FindLampPoint(warp_point);
+    if (lamp == nullptr || !WarpGuestToLampPoint(*lamp)) {
+        lamp = nullptr;
+        using WarpNextStageBonfire = void PS4_SYSV_ABI (*)(u64 unused, s32 warp_point);
+        reinterpret_cast<WarpNextStageBonfire>(image_base + WarpNextStageBonfireOffset)(0,
+                                                                                        warp_point);
+    }
+    LOG_INFO(Debug, "Bloodborne party guest warps to {} ({:#x}) placed at the lamp={}", warp_point,
+             PackedMapOfWarpPoint(warp_point), lamp != nullptr);
+    return lamp;
 }
 
 // Starts the bell's summon search directly (see StartSummonSearch), only through the player's own

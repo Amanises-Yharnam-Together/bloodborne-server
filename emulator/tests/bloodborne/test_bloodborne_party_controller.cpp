@@ -11,6 +11,7 @@
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 
+#include "core/bloodborne_lamp_points.h"
 #include "core/bloodborne_party.h"
 #include "core/libraries/np/np_signaling/np_signaling_reuse.h"
 
@@ -1192,6 +1193,116 @@ TEST(BloodborneGhostDeath, LeavesEveryoneElseAlone) {
     missing.chr_reset_animation = nullptr;
     EXPECT_FALSE(ReviveDeadPartyGuest(missing));
     EXPECT_TRUE(revive_calls.empty());
+}
+
+namespace {
+
+std::vector<std::string> placement_calls;
+
+std::string Vector(const float* value) {
+    return std::to_string(static_cast<int>(value[0])) + "," +
+           std::to_string(static_cast<int>(value[1])) + "," +
+           std::to_string(static_cast<int>(value[2]));
+}
+void PS4_SYSV_ABI FakeTeleport(u64 character, const float* position, const float* rotation,
+                               s32 mode) {
+    placement_calls.push_back("Teleport " + std::to_string(character) + " " + Vector(position) +
+                              " " + Vector(rotation) + " mode " + std::to_string(mode));
+}
+void PS4_SYSV_ABI FakeSnapPosition(u64 character, const float* position) {
+    placement_calls.push_back("SnapPosition " + std::to_string(character) + " " + Vector(position));
+}
+void FakeSetRotation(u64 character, const float* rotation) {
+    placement_calls.push_back("SetRotation " + std::to_string(character) + " " + Vector(rotation));
+}
+void PS4_SYSV_ABI FakeResetFollow(u64 character, bool placed) {
+    placement_calls.push_back("ResetFollow " + std::to_string(character) +
+                              (placed ? " placed" : ""));
+}
+void FakeSnapCamera() {
+    placement_calls.push_back("SnapCamera");
+}
+
+constexpr PlacementCalls FakePlacement{
+    .teleport = FakeTeleport,
+    .snap_position = FakeSnapPosition,
+    .set_rotation = FakeSetRotation,
+    .reset_follow = FakeResetFollow,
+    .snap_camera = FakeSnapCamera,
+};
+
+} // namespace
+
+// Kaniel 2026-10-12: after every trip the camera flew in from a random spot to the player. A
+// guest's trip arrives at the map's origin and is moved to its lamp a second later; the move was
+// only the teleport, so the camera stayed behind and eased over. The game's own placement at a
+// lamp snaps the position (and the one before it) and resets the follow right after it. Kaniel
+// still saw it fly in with those: the camera itself eases in unless the camera manager snaps it,
+// as the game has it do when a map starts.
+TEST(BloodbornePlacement, AMoveSnapsLikeTheGamesOwnPlacement) {
+    placement_calls.clear();
+    alignas(16) const std::array<float, 4> position{-199.0f, -50.0f, 179.0f, 1.0f};
+    alignas(16) const std::array<float, 4> rotation{0.0f, 2.0f, 0.0f, 0.0f};
+    EXPECT_TRUE(PlaceCharacter(FakePlacement, 0x20000, position.data(), rotation.data()));
+    EXPECT_EQ(placement_calls, (std::vector<std::string>{
+                                   "Teleport 131072 -199,-50,179 0,2,0 mode 1",
+                                   "SnapPosition 131072 -199,-50,179",
+                                   "SetRotation 131072 0,2,0",
+                                   "ResetFollow 131072 placed",
+                                   "SnapCamera",
+                               }));
+}
+
+TEST(BloodbornePlacement, NothingMovesWithoutEveryCall) {
+    alignas(16) const std::array<float, 4> position{1.0f, 2.0f, 3.0f, 1.0f};
+    alignas(16) const std::array<float, 4> rotation{};
+    std::array<PlacementCalls, 5> missing;
+    missing.fill(FakePlacement);
+    missing[0].teleport = nullptr;
+    missing[1].snap_position = nullptr;
+    missing[2].set_rotation = nullptr;
+    missing[3].reset_follow = nullptr;
+    missing[4].snap_camera = nullptr;
+    for (const PlacementCalls& calls : missing) {
+        placement_calls.clear();
+        EXPECT_FALSE(PlaceCharacter(calls, 0x20000, position.data(), rotation.data()));
+        EXPECT_TRUE(placement_calls.empty());
+    }
+}
+
+// Kaniel 2026-10-12: after a trip, textures were still loading on arrival. A guest's lamp trip
+// landed at the map's origin (rig: Cathedral Ward at 0, 0, 0) and was moved 270 m to its lamp a
+// second later, so the area that loaded first was the wrong one. The lamps' respawn points from
+// the map files let the trip land at the lamp.
+TEST(BloodborneLampPoints, ALampTripKnowsWhereTheLampIs) {
+    const LampPoint* ward = FindLampPoint(2412950); // Cathedral Ward, the rig's trip
+    ASSERT_NE(ward, nullptr);
+    EXPECT_EQ(ward->packed_map, 0x18010000u);
+    EXPECT_FLOAT_EQ(ward->x, -199.74f);
+    EXPECT_FLOAT_EQ(ward->y, -50.76f);
+    EXPECT_FLOAT_EQ(ward->z, 179.42f);
+    const LampPoint* dream = FindLampPoint(HuntersDreamWarpPoint);
+    ASSERT_NE(dream, nullptr);
+    EXPECT_FLOAT_EQ(dream->heading, -2.356f); // what the game's resolver gave the rig
+    EXPECT_EQ(FindLampPoint(0), nullptr);
+    EXPECT_EQ(FindLampPoint(2412999), nullptr);
+}
+
+// The trip's stage comes from the warp point (PackedMapOfWarpPoint); the point must be in it.
+TEST(BloodborneLampPoints, EveryPointIsOnTheMapItsWarpLoads) {
+    for (const LampPoint& point : LampPoints) {
+        EXPECT_EQ(PackedMapOfWarpPoint(point.warp_point), point.packed_map) << point.warp_point;
+        EXPECT_EQ(FindLampPoint(point.warp_point), &point);
+    }
+}
+
+TEST(BloodborneLampPoints, OnlyAnArrivalAwayFromTheLampIsMoved) {
+    const LampPoint* ward = FindLampPoint(2412950);
+    EXPECT_FALSE(ArrivalNeedsMove(ward, LampPosition{-199.7f, -50.7f, 179.4f}));
+    EXPECT_FALSE(ArrivalNeedsMove(ward, LampPosition{-198.0f, -50.0f, 180.5f}));
+    EXPECT_TRUE(ArrivalNeedsMove(ward, LampPosition{0.0f, 0.0f, 0.0f}));
+    EXPECT_TRUE(ArrivalNeedsMove(ward, std::nullopt));
+    EXPECT_TRUE(ArrivalNeedsMove(nullptr, LampPosition{-199.7f, -50.7f, 179.4f}));
 }
 
 // When the host dies, every guest runs HostDead (event 4000 param 1): for a white phantom it

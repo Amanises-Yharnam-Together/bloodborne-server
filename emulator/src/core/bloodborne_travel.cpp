@@ -5,6 +5,7 @@
 // bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h.
 
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_lamp_points.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
@@ -253,6 +254,8 @@ namespace {
 
 std::optional<std::chrono::steady_clock::time_point> guest_trip_fixup_at;
 std::optional<std::chrono::steady_clock::time_point> guest_lamp_touch_at;
+// The lamp the trip in flight was placed at (see ArrivalNeedsMove), if any.
+const LampPoint* guest_trip_planned{};
 
 } // namespace
 
@@ -269,9 +272,21 @@ void TickGuestLampTrip() {
     if (guest_trip_fixup_at && now >= *guest_trip_fixup_at) {
         guest_trip_fixup_at.reset();
         const auto at = LocalPlayerPosition();
-        LOG_INFO(Debug, "Bloodborne party guest trip: position after arrival known={} ({}, {}, {})",
-                 at.has_value(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f, at ? (*at)[2] : 0.0f);
-        MoveToRespawnPoint(true);
+        LOG_INFO(Debug,
+                 "Bloodborne party guest trip: position after arrival known={} ({}, {}, {}) "
+                 "planned at the lamp={}",
+                 at.has_value(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f, at ? (*at)[2] : 0.0f,
+                 guest_trip_planned != nullptr);
+        if (ArrivalNeedsMove(guest_trip_planned, at)) {
+            MoveToRespawnPoint(true);
+        }
+        // The summon warp byte the lamp's placement set is spent (the pre-match warp waits on it).
+        if (const u64 global = GetGlobalState();
+            guest_trip_planned && global >= 0x10000 && ReadValue<u8>(global, 0x1520) != 0) {
+            LOG_INFO(Debug, "Bloodborne party guest trip: summon warp byte still set; cleared");
+            WriteValue(global, 0x1520, u8{0});
+        }
+        guest_trip_planned = nullptr;
     }
     if (guest_lamp_touch_at && now >= *guest_lamp_touch_at) {
         guest_lamp_touch_at.reset();
@@ -281,21 +296,8 @@ void TickGuestLampTrip() {
     }
     if (guest_lamp_trip_at && now >= *guest_lamp_trip_at) {
         guest_lamp_trip_at.reset();
-        using WarpNextStageBonfire = void PS4_SYSV_ABI (*)(u64 unused, s32 warp_point);
-        // As the events do with SetPlayerRespawnPoint: the lamp a death respawns at. The summon
-        // warp byte (+0x1520, SetSosSignWarp) makes the placement selector use the summon
-        // placement instead (0x01332BC0); it must be clear for a trip to a lamp.
-        if (const u64 global = GetGlobalState(); global >= 0x10000) {
-            LOG_INFO(Debug, "Bloodborne party guest trip: summon warp byte was {}",
-                     ReadValue<u8>(global, 0x1520));
-            WriteValue(global, 0x1528, guest_trip_point);
-            WriteValue(global, 0x1520, u8{0});
-        }
-        reinterpret_cast<WarpNextStageBonfire>(image_base +
-                                               WarpNextStageBonfireOffset)(0, guest_trip_point);
+        guest_trip_planned = StartTripToLamp(guest_trip_point);
         guest_trip_in_flight = true;
-        LOG_INFO(Debug, "Bloodborne party guest warps to {} ({:#x})", guest_trip_point,
-                 PackedMapOfWarpPoint(guest_trip_point));
     }
 }
 
@@ -1066,18 +1068,62 @@ namespace Coop {
 // `heading` (radians about the vertical axis) goes in as the rotation's y; whether the player
 // turns to it shows in the snapshot's heading.
 void TeleportLocalPlayer(const LampPosition& at, float heading) {
+    PlaceLocalPlayer({at[0], at[1], at[2], 1.0f}, {0.0f, heading, 0.0f, 0.0f},
+                     "TeleportLocalPlayer");
+}
+
+} // namespace Coop
+
+namespace {
+
+// See PlacementCalls.
+void SetCharacterRotation(u64 character, const float* rotation) {
+    const u64 modules = ReadValue<u64>(character, 0x3B0);
+    const u64 transform = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+    if (transform >= 0x10000 && HasMemoryAccess(transform, 0x1E0, MemoryProt::CpuWrite)) {
+        for (size_t index = 0; index < 4; ++index) {
+            WriteValue(transform, 0x1D0 + index * sizeof(float), rotation[index]);
+        }
+    }
+}
+
+} // namespace
+
+namespace Coop {
+
+void SnapCamera() {
+    const u64 holder = ReadValue<u64>(image_base + CameraManagerPointerOffset, 0);
+    const u64 cameras = holder >= 0x10000 ? ReadValue<u64>(holder, CameraManagerField) : 0;
+    if (cameras >= 0x10000 && HasMemoryAccess(cameras, CameraSnapByte + 1, MemoryProt::CpuWrite)) {
+        WriteValue(cameras, CameraSnapByte, u8{1});
+    }
+}
+
+bool PlaceLocalPlayer(const std::array<float, 4>& position, const std::array<float, 4>& rotation,
+                      const char* what) {
     const u64 player = GetLocalPlayer();
-    const u64 vtable = IsCharacter(player, "TeleportLocalPlayer") ? ReadValue<u64>(player, 0) : 0;
+    const u64 vtable = IsCharacter(player, what) ? ReadValue<u64>(player, 0) : 0;
     const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
     if (teleport < 0x10000) {
-        return;
+        return false;
     }
-    alignas(16) std::array<float, 4> position{at[0], at[1], at[2], 1.0f};
-    alignas(16) std::array<float, 4> rotation{0.0f, heading, 0.0f, 0.0f};
-    using Teleport = void PS4_SYSV_ABI (*)(u64 character, const float* position,
-                                           const float* rotation, s32 mode);
-    reinterpret_cast<Teleport>(teleport)(player, position.data(), rotation.data(), 1);
+    using Teleport = void PS4_SYSV_ABI (*)(u64, const float*, const float*, s32);
+    using SnapPosition = void PS4_SYSV_ABI (*)(u64, const float*);
+    using ResetFollow = void PS4_SYSV_ABI (*)(u64, bool);
+    const PlacementCalls calls{
+        .teleport = reinterpret_cast<Teleport>(teleport),
+        .snap_position = reinterpret_cast<SnapPosition>(image_base + SnapCharacterPositionOffset),
+        .set_rotation = SetCharacterRotation,
+        .reset_follow = reinterpret_cast<ResetFollow>(image_base + ResetCharacterFollowOffset),
+        .snap_camera = SnapCamera,
+    };
+    alignas(16) const std::array<float, 4> at = position;
+    alignas(16) const std::array<float, 4> turn = rotation;
+    if (!PlaceCharacter(calls, player, at.data(), turn.data())) {
+        return false;
+    }
     WriteValue(player, 0x1E1, static_cast<u8>(ReadValue<u8>(player, 0x1E1) | 2));
+    return true;
 }
 
 // The local player's heading (transform +0x1D4, as the summon placement reads it), radians. A
@@ -1402,6 +1448,9 @@ void TickPartyTrip() {
         LOG_INFO(Debug, "Bloodborne party trip: arrived map={:#x} at=({}, {}, {}) lamp={}",
                  GetCurrentPackedMap(), at ? (*at)[0] : 0.0f, at ? (*at)[1] : 0.0f,
                  at ? (*at)[2] : 0.0f, ReadValue<s32>(state, 0x1528));
+        // Kaniel saw the camera fly in after every trip, the host's too: the snap the map's start
+        // asked for can come before the player stands where the trip put it.
+        SnapCamera();
         recreate_players_pending = true;
         recreate_pending_after_join = false;
         recreated_since_trip.clear();

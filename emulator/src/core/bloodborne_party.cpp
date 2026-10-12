@@ -19,6 +19,7 @@
 #include <fmt/format.h>
 
 #include "core/bloodborne_flags.h"
+#include "core/bloodborne_lamp_points.h"
 #include "core/bloodborne_party.h"
 
 namespace Core::Bloodborne {
@@ -319,6 +320,35 @@ void ReviveInPlace(const GhostDeathCalls& calls, std::optional<s32> character_ty
 }
 
 } // namespace
+
+const LampPoint* FindLampPoint(s32 warp_point) {
+    const auto found = std::ranges::lower_bound(LampPoints, warp_point, {}, &LampPoint::warp_point);
+    return found != LampPoints.end() && found->warp_point == warp_point ? &*found : nullptr;
+}
+
+bool ArrivalNeedsMove(const LampPoint* planned, const std::optional<LampPosition>& at) {
+    if (planned == nullptr || !at) {
+        return true;
+    }
+    const float dx = (*at)[0] - planned->x;
+    const float dy = (*at)[1] - planned->y;
+    const float dz = (*at)[2] - planned->z;
+    return dx * dx + dy * dy + dz * dz > ArrivedAtLampMeters * ArrivedAtLampMeters;
+}
+
+bool PlaceCharacter(const PlacementCalls& calls, u64 character, const float* position,
+                    const float* rotation) {
+    if (!calls.teleport || !calls.snap_position || !calls.set_rotation || !calls.reset_follow ||
+        !calls.snap_camera) {
+        return false;
+    }
+    calls.teleport(character, position, rotation, 1);
+    calls.snap_position(character, position);
+    calls.set_rotation(character, rotation);
+    calls.reset_follow(character, true);
+    calls.snap_camera();
+    return true;
+}
 
 bool ReviveDeadPartyGuest(const GhostDeathCalls& calls) {
     if (!HasReviveCalls(calls) || !calls.is_white_ghost || !calls.set_chr_type ||
