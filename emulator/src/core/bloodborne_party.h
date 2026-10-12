@@ -811,6 +811,95 @@ private:
     u32 generation = 0;
 };
 
+// Where this player is (docs/WORLD_SYNC.md, stage A): fed one reading per game tick, it is the
+// only thing that decides the map and the visit. 53 places read the map themselves and got 0 at
+// a fog border, in a load or a cutscene, so features briefly disagreed (a border walk withdrew 72
+// kills, the Ward/Yharnam time-of-day reload ping-pong).
+enum class PlaceState : u8 { Unknown, Loading, Cutscene, Playing };
+enum class PlaceCause : u8 { Load, Border, Lamp, Teleport, DeathReload, Cutscene, CutsceneEnd };
+struct Place {
+    PlaceState state = PlaceState::Unknown;
+    u32 map = 0;      // the last committed map: once one is read it never turns 0 again
+    u64 visit = 0;    // committed arrivals (loads, border crossings, teleports): only grows
+    s64 since_ms = 0; // when the place last changed
+    bool operator==(const Place&) const = default;
+};
+struct PlaceReading {
+    s64 now_ms = 0;
+    u32 map = 0;    // the game's map now, 0 when it does not read
+    u64 player = 0; // the local player's character, 0 while there is none
+    std::optional<LampPosition> at;
+    bool loading = false;  // the game's loading flag (GlobalState +0x08)
+    bool trip = false;     // a party trip (lamp, headstone, event warp) is under way
+    bool cutscene = false; // a cutscene plays (no game signal found yet: always false)
+    bool dead = false;     // the local player's HP is 0
+};
+struct PlaceChange {
+    Place from;
+    Place to;
+    PlaceCause cause = PlaceCause::Load;
+    bool operator==(const PlaceChange&) const = default;
+};
+class PlaceTracker {
+public:
+    // A map change without a load (a walk across a fog border) commits once the new map has read
+    // the same for this long; going back before cancels it.
+    static constexpr s64 BorderSteadyMs = 1'500;
+    // A map change within TeleportWindowMs of a move this far in one tick is a teleport (an event
+    // warp without a load screen), committed at once.
+    static constexpr float TeleportMeters = 50.0f;
+    static constexpr s64 TeleportWindowMs = 1'000;
+
+    std::optional<PlaceChange> Update(const PlaceReading& reading);
+    const Place& Current() const {
+        return place;
+    }
+
+private:
+    std::optional<PlaceChange> Move(PlaceState state, u32 map, bool arrival, PlaceCause cause,
+                                    s64 now_ms);
+    PlaceCause LoadCause() const;
+
+    Place place;
+    u64 player = 0;
+    std::optional<LampPosition> last_at;
+    std::optional<s64> jumped_ms;
+    std::optional<std::pair<u32, s64>> pending; // a border crossing: the new map, read since
+    bool arrival_due = false; // a new player character: the world loaded between two ticks
+    bool trip_seen = false;
+    bool death_seen = false;
+};
+std::string_view PlaceStateName(PlaceState state);
+std::string_view PlaceCauseName(PlaceCause cause);
+// "Co-op place: <from> -> <to> map <hex> visit N (<cause>)"
+std::string FormatPlaceChange(const PlaceChange& change);
+
+// What ends the state that lives for a visit or a session (docs/WORLD_SYNC.md): each container
+// registers its reset for the events that end it, and one dispatch runs them, instead of a reset
+// flag per feature. A wipe, a leave, a join and a new character also start a new session epoch.
+enum class Lifecycle : u8 { Wipe, Trip, Leave, Join, NewCharacter };
+std::string_view LifecycleName(Lifecycle event);
+class LifecycleResets {
+public:
+    void Register(std::string name, std::initializer_list<Lifecycle> events,
+                  std::function<void()> reset);
+    // Runs the resets registered for `event`, in the order they were registered, and returns
+    // their names.
+    std::vector<std::string> Dispatch(Lifecycle event);
+    u64 Epoch() const {
+        return epoch;
+    }
+
+private:
+    struct Entry {
+        std::string name;
+        u32 events = 0; // bit per Lifecycle
+        std::function<void()> reset;
+    };
+    std::vector<Entry> entries;
+    u64 epoch = 1; // 0 stays free for "unknown"
+};
+
 // Enemy HP kept in step (POST /bloodborne/party/hp, the map state board's format): each member
 // posts the enemies it has hurt during its visit, as (handle, HP, max HP), and every member
 // shows the lowest share of HP left. Since seamless travel each member runs its own copy of a
