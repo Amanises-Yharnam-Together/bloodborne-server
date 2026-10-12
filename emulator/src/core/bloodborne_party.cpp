@@ -6052,6 +6052,10 @@ bool ReviveHits::Press(std::string_view target, u32 down, u32 damage, s64 now_ms
     return true;
 }
 
+bool SkipsHitReaction(bool down, u64 victim, u64 local_player) {
+    return down && victim != 0 && victim == local_player;
+}
+
 void ReviveHits::Hit(std::string_view target, u32 down, u32 damage) {
     if (damage == 0) {
         return;

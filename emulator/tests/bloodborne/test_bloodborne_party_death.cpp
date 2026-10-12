@@ -111,6 +111,15 @@ TEST(BloodbornePartyDeath, AReviveHitDealsTheWeaponsAttackRating) {
     EXPECT_EQ(ReviveHitDamage(-5, true), 1u);
 }
 
+// While down the local player is neither pushed nor made to flinch by hits; anyone else is, and
+// so is the player once up.
+TEST(BloodbornePartyDeath, ADownedPlayerTakesNoHitReaction) {
+    EXPECT_TRUE(SkipsHitReaction(true, 0x1000, 0x1000));
+    EXPECT_FALSE(SkipsHitReaction(false, 0x1000, 0x1000)) << "up again";
+    EXPECT_FALSE(SkipsHitReaction(true, 0x2000, 0x1000)) << "another character";
+    EXPECT_FALSE(SkipsHitReaction(true, 0, 0)) << "no local player yet";
+}
+
 // A real hit counts what it dealt, but never less than the weapon's attack rating.
 TEST(BloodbornePartyDeath, ARealHitCountsAtLeastTheAttackRating) {
     EXPECT_EQ(RealReviveHitDamage(373, 300, false), 373u);

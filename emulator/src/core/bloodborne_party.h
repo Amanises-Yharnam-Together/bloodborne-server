@@ -2640,6 +2640,11 @@ float ReviveShare(u32 landed, u32 needed);
 s32 RevivedHp(s32 max);
 // How long a revived player takes no damage (the party's last swings, rig 2026-10-12).
 constexpr s64 ReviveGraceMs = 2'000;
+// The player's kneel (c0000 a00: stand to kneel 2 s; the behaviour goes on to the held kneel
+// 101261 by itself, Event101260_to_Event101261) and its stand-up (2 s), the poses of a downed
+// player (the game's own events play them on the player, m25_00_00_00).
+constexpr s32 DownedKneelAnimation = 101260;
+constexpr s32 DownedStandAnimation = 101262;
 // The HP a downed player shows while it is struck back up: 1, rising with the share of the revive
 // done to just under its max (the revive sets the real HP), so the game's own HP bar and the
 // nameplate bar the others see over it (RemotePCTag, fed by the synced HP) fill with the revive.
@@ -2987,6 +2992,16 @@ private:
 constexpr u64 HitDamageStoredOffset = 0x01A2BCA3;
 constexpr std::array<u8, 6> HitDamageStored{0x89, 0x81, 0x2C, 0x02, 0x00, 0x00};
 constexpr s64 HitAttackerFrameOffset = -0x318;
+// The hit's knockback and reaction dispatcher (0x01A2E570, called twice from the hit 0x01A2A770):
+// rdi the victim's damage module (+0x08 the victim), rsi the attacker, rdx the hit. It pushes the
+// victim (its knockback module) and requests its flinch, stagger or grab reaction (damage module
+// vtable +0xC0); the hit's damage, effects and poise are applied elsewhere. Skipped for the local
+// player while it is down: party members' revive strikes (and enemies) no longer push it about or
+// make it flinch (Kaniel 2026-10-12: infinite poise while down).
+constexpr u64 HitReactionOffset = 0x01A2E570;
+constexpr std::array<u8, 8> HitReactionPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
+// Whether a hit on `victim` skips its push and reaction: the local player's own body while down.
+bool SkipsHitReaction(bool down, u64 victim, u64 local_player);
 std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, std::string_view self,
                                          u32 map, const LampPosition& me);
 

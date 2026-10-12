@@ -777,6 +777,14 @@ void StrikeDownedBodies(PartyDeathRun& run, std::span<const MemberVitals> board,
     CountRealReviveHits(run, bodies);
 }
 
+// The hit's push and reaction (HitReactionOffset): none for the local player while it is down.
+bool PS4_SYSV_ABI SkipDownedHitReaction(u64, const GuestRegisterSnapshot* registers) {
+    if (!party_death_down.load(std::memory_order_relaxed) || registers->rdi < 0x10000) {
+        return false;
+    }
+    return SkipsHitReaction(true, ReadValue<u64>(registers->rdi, 0x08), GetLocalPlayer());
+}
+
 // The fall damage step (0x01A35C33) takes a fall into the void as a fixed lethal height while
 // [[character +0x58] +0x38] +0x48 bit 1 is set. Such a fall stays a real death: nobody could
 // reach the player down there.
@@ -833,11 +841,12 @@ void PS4_SYSV_ABI KeepPartyMemberUp(u64, GuestRegisterSnapshot* registers) {
     }
 }
 
-// SHADPS4_BLOODBORNE_DOWNED_ANIMATION: an animation a downed player plays (none by default; for
-// trying poses that lie down), undone by ChrResetAnimation when it gets up.
+// The animation a downed player plays: the kneel (DownedKneelAnimation; Kaniel 2026-10-12), which
+// the player's behaviour holds by itself; SHADPS4_BLOODBORNE_DOWNED_ANIMATION picks another (0:
+// none). Getting up plays its stand-up (DownedStandAnimation), or for another pose resets.
 const s32 downed_animation = [] {
     const char* setting = std::getenv("SHADPS4_BLOODBORNE_DOWNED_ANIMATION");
-    s32 animation = 0;
+    s32 animation = DownedKneelAnimation;
     if (setting != nullptr) {
         std::from_chars(setting, setting + std::strlen(setting), animation);
     }
@@ -1025,12 +1034,18 @@ void GetUp(PartyDeathRun& run, u64 data, s64 now_ms) {
     const s32 hp = RevivedHp(ReadValue<s32>(data, 0xFC));
     WriteValue(data, 0xF8, hp);
     run.downed.GetUp(now_ms);
-    if (downed_animation > 0) {
+    bool stood = false;
+    if (downed_animation == DownedKneelAnimation) {
+        using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
+        stood = reinterpret_cast<ForcePlayAnimation>(image_base + ForcePlayAnimationOffset)(
+            0, LocalPlayerEntity, DownedStandAnimation);
+    }
+    if (downed_animation > 0 && !stood) {
         reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(image_base + ChrResetAnimationOffset)(
             0, LocalPlayerEntity);
     }
-    LOG_INFO(Debug, "Bloodborne party death: revived from down {} with {} HP", run.downed.DownId(),
-             hp);
+    LOG_INFO(Debug, "Bloodborne party death: revived from down {} with {} HP (stood up {})",
+             run.downed.DownId(), hp, stood);
 }
 
 // A real death from the down (a wipe, giving up, shadNet gone): the game's own kill, then the
@@ -1623,6 +1638,14 @@ void InstallPartyDeath(u64 base, u64 image_size) {
     party_death_hook_installed = true;
     coop_features.On("party death");
     InstallPartyNameplates(base, image_size);
+    if (HitReactionOffset + HitReactionPrologue.size() <= image_size &&
+        InstallCoopHook(reinterpret_cast<void*>(base + HitReactionOffset), HitReactionPrologue, 0,
+                        SkipDownedHitReaction)) {
+        coop_features.On("no hit reaction while down");
+    } else {
+        coop_features.Skipped("no hit reaction while down",
+                              SiteFailure(base, image_size, HitReactionOffset));
+    }
     const char* hits = std::getenv("SHADPS4_BLOODBORNE_REVIVE_HITS");
     if (hits != nullptr && std::string_view{hits} == "presses") {
         coop_features.Skipped("real revive hits", "SHADPS4_BLOODBORNE_REVIVE_HITS=presses");
