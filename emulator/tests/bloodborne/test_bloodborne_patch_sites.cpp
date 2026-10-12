@@ -251,7 +251,9 @@ TEST(CoopSites, MatchTheCommittedJson) {
     }
     std::ifstream file(BLOODBORNE_COOP_SITES, std::ios::binary);
     ASSERT_TRUE(file) << BLOODBORNE_COOP_SITES;
-    const std::string committed{std::istreambuf_iterator<char>{file}, {}};
+    std::string committed{std::istreambuf_iterator<char>{file}, {}};
+    // A Windows checkout may turn the file's line ends into CRLF (jj eol-conversion).
+    std::erase(committed, '\r');
     EXPECT_EQ(committed, json) << "run this test with BB_WRITE_COOP_SITES=1 to update "
                                << BLOODBORNE_COOP_SITES;
 }
