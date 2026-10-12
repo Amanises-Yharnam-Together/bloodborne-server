@@ -246,6 +246,23 @@ TEST_F(BloodborneEboot, HudValuesAreReleasedAsTheGameDoes) {
                          0x53, 0x20, 0x48, 0x8B, 0x07, 0x48, 0x89, 0xDE, 0xFF, 0x50, 0x18}));
 }
 
+// The play-animation's check that the character takes the request: its module path and flag.
+TEST_F(BloodborneEboot, TheKneelWaitsOnThePlayAnimationsOwnCheck) {
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset, AnimationRequestCheck.size()),
+              std::vector<u8>(AnimationRequestCheck.begin(), AnimationRequestCheck.end()));
+    // mov rax,[rax+0x58]; mov rcx,[rax+8]; mov rdx,[rcx+0x3B0]; mov rdx,[rdx+0x30]; test; je;
+    // cmp byte [rdx+0x384],0
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 7, 4), (std::vector<u8>{0x48, 0x8B, 0x40, 0x58}));
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 11, 4),
+              (std::vector<u8>{0x48, 0x8B, 0x48, 0x08}));
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 15, 7),
+              (std::vector<u8>{0x48, 0x8B, 0x91, 0xB0, 0x03, 0x00, 0x00}));
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 22, 4),
+              (std::vector<u8>{0x48, 0x8B, 0x52, 0x30}));
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 31, 7),
+              (std::vector<u8>{0x80, 0xBA, 0x84, 0x03, 0x00, 0x00, 0x00}));
+}
+
 // The HUD's constructor, at its only call, is the HUD the tick runs (rdi there, r15 in the tick).
 TEST_F(BloodborneEboot, TheHudConstructorHookIsTheHudsConstructor) {
     EXPECT_EQ(Bytes(HudConstructOffset, HudConstructPrologue.size()),

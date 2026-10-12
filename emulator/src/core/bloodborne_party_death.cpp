@@ -993,22 +993,43 @@ void GoDown(PartyDeathRun& run, u64 data, s64 now_ms) {
     SetPlayerFlag(PlayerHideFlagOffset, 1);
     SetPlayerFlag(PlayerSilenceFlagOffset, 1);
     ShowDownedBanner();
-    bool posed = false;
-    if (downed_animation > 0) {
-        using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
-        posed = reinterpret_cast<ForcePlayAnimation>(image_base + ForcePlayAnimationOffset)(
-            0, LocalPlayerEntity, downed_animation);
-    }
+    // The pose waits until the player takes it (KeepDown).
+    run.kneel_waiting = downed_animation > 0;
+    run.down_since = now_ms;
     LOG_INFO(Debug,
              "Bloodborne party death: down {} on map {:#x}, {} damage to get up (max HP {}, "
-             "pose {} played={})",
+             "pose {})",
              down, CurrentPlace().map, run.downed.DamageNeeded(), ReadValue<s32>(data, 0xFC),
-             downed_animation, posed);
+             downed_animation);
+}
+
+// Guest memory for TakesAnimationRequest: 0 where it can't be read.
+u64 ReadGuest(u64 address, size_t size) {
+    if (address < 0x10000 || !HasMemoryAccess(address, size, MemoryProt::CpuRead)) {
+        return 0;
+    }
+    return size == 1 ? ReadValue<u8>(address, 0) : ReadValue<u64>(address, 0);
+}
+
+// The downed pose, once the player takes an animation request (not in the lethal hit's middle).
+void PoseWhenReady(PartyDeathRun& run, s64 now_ms) {
+    const s64 down_for = now_ms - run.down_since;
+    if (!run.kneel_waiting ||
+        !KneelsNow(true, down_for, TakesAnimationRequest(GetLocalPlayer(), ReadGuest))) {
+        return;
+    }
+    run.kneel_waiting = false;
+    using ForcePlayAnimation = void PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
+    reinterpret_cast<ForcePlayAnimation>(image_base + ForcePlayAnimationOffset)(
+        0, LocalPlayerEntity, downed_animation);
+    LOG_INFO(Debug, "Bloodborne party death: pose {} asked for {} ms into down {}",
+             downed_animation, down_for, run.downed.DownId());
 }
 
 // Each tick while down: no damage, the revive's progress as HP (DownedHp), unseen and unheard
 // (the game may undo any of them).
-void KeepDown(PartyDeathRun& run, u64 data) {
+void KeepDown(PartyDeathRun& run, u64 data, s64 now_ms) {
+    PoseWhenReady(run, now_ms);
     const u8 flags = ReadValue<u8>(data, 0x200);
     if ((flags & DownedNoDamageFlags) != DownedNoDamageFlags) {
         run.flags_added |= DownedNoDamageFlags & static_cast<u8>(~flags);
@@ -1040,10 +1061,13 @@ void GetUp(PartyDeathRun& run, u64 data, s64 now_ms) {
     const s32 hp = RevivedHp(ReadValue<s32>(data, 0xFC));
     WriteValue(data, 0xF8, hp);
     run.downed.GetUp(now_ms);
-    bool stood = false;
-    if (downed_animation == DownedKneelAnimation) {
-        using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
-        stood = reinterpret_cast<ForcePlayAnimation>(image_base + ForcePlayAnimationOffset)(
+    // The stand-up only from the kneel, and only when the player takes it (else it is dropped).
+    const bool knelt = downed_animation == DownedKneelAnimation && !run.kneel_waiting;
+    const bool stood = knelt && TakesAnimationRequest(GetLocalPlayer(), ReadGuest);
+    run.kneel_waiting = false;
+    if (stood) {
+        using ForcePlayAnimation = void PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
+        reinterpret_cast<ForcePlayAnimation>(image_base + ForcePlayAnimationOffset)(
             0, LocalPlayerEntity, DownedStandAnimation);
     }
     if (downed_animation > 0 && !stood) {
@@ -1167,7 +1191,7 @@ void TickDown(PartyDeathRun& run, const DeathTick& tick) {
     }
     const bool revived = run.downed.Damage(damage, tick.now);
     run.downed.Tick(tick.now);
-    KeepDown(run, tick.data);
+    KeepDown(run, tick.data, tick.now);
     // Out of the session for a moment is a load or a matching hiccup; for longer, nobody is left to
     // revive this player (the host quit or crashed, a kick).
     if (tick.in_session) {

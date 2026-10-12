@@ -1732,6 +1732,32 @@ std::string FirstBinding(int input, int pad) {
 
 /// The button glyph for `input` with its left edge and middle at `at`, `height` tall: the icon set's
 /// own (PlayStation shapes, Xbox letters, or the bound key on a key cap). Returns its width.
+/// A shoulder button's or trigger's label in the player's icon set; null for any other button.
+const char* ShoulderLabel(const std::string& pad) {
+    if (pad.find("shoulder") == std::string::npos && pad.find("trigger") == std::string::npos) {
+        return nullptr;
+    }
+    const bool right = pad.rfind("right", 0) == 0, trigger = pad.find("trigger") != std::string::npos;
+    return IconSet() == 'x' ? (right ? (trigger ? "RT" : "RB") : (trigger ? "LT" : "LB"))
+                            : (right ? (trigger ? "R2" : "R1") : (trigger ? "L2" : "L1"));
+}
+
+/// How wide ButtonGlyph draws `input` at `height`: a key or a shoulder button's label may be wider
+/// than the round face buttons.
+float ButtonGlyphWidth(int input, float height) {
+    if (IconSet() == 'k') {
+        const std::string key = FirstBinding(input, 0);
+        const char* label = key.empty() ? "?" : key.c_str();
+        return std::max(sans_font->CalcTextSizeA(height * 0.62f, FLT_MAX, 0.0f, label).x + height * 0.5f,
+                        height);
+    }
+    const std::string pad = FirstBinding(input, 1);
+    if (const char* label = ShoulderLabel(pad)) {
+        return sans_font->CalcTextSizeA(height * 0.6f, FLT_MAX, 0.0f, label).x + height * 0.6f;
+    }
+    return height;
+}
+
 float ButtonGlyph(ImDrawList* draw, int input, ImVec2 at, float height, float alpha) {
     const char set = IconSet();
     const float r = height * 0.5f;
@@ -1751,11 +1777,7 @@ float ButtonGlyph(ImDrawList* draw, int input, ImVec2 at, float height, float al
     }
     const std::string pad = FirstBinding(input, 1);
     const ImVec2 centre(at.x + r, at.y);
-    const bool shoulder = pad.find("shoulder") != std::string::npos || pad.find("trigger") != std::string::npos;
-    if (shoulder) {
-        const bool right = pad.rfind("right", 0) == 0, trigger = pad.find("trigger") != std::string::npos;
-        const char* label = set == 'x' ? (right ? (trigger ? "RT" : "RB") : (trigger ? "LT" : "LB"))
-                                       : (right ? (trigger ? "R2" : "R1") : (trigger ? "L2" : "L1"));
+    if (const char* label = ShoulderLabel(pad)) {
         const float size = height * 0.6f;
         const float w = sans_font->CalcTextSizeA(size, FLT_MAX, 0.0f, label).x + height * 0.6f;
         draw->AddRectFilled(ImVec2(at.x, at.y - r), ImVec2(at.x + w, at.y + r), ground, r);
@@ -2017,8 +2039,8 @@ void PromptGlyph(ImDrawList* draw) {
     const float sx = game.w / 1920.0f, sy = game.h / 1080.0f;
     const float size = PromptGlyphStageSize * sy;
     const int input = panel.vital == BBCOOP_VITAL_DOWN ? InputCircle : InputR1;
-    ButtonGlyph(draw, input,
-                ImVec2(game.x + PromptGlyphStageX * sx - size * 0.5f, game.y + PromptGlyphStageY * sy),
+    const float right = game.x + PromptGlyphStageRight * sx;
+    ButtonGlyph(draw, input, ImVec2(right - ButtonGlyphWidth(input, size), game.y + PromptGlyphStageY * sy),
                 size, 1.0f);
 }
 

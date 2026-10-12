@@ -6132,6 +6132,22 @@ bool ReviveHits::Press(std::string_view target, u32 down, u32 damage, s64 now_ms
     return true;
 }
 
+bool TakesAnimationRequest(u64 character,
+                           const std::function<u64(u64 address, size_t size)>& read) {
+    u64 at = character;
+    for (const u64 offset : AnimationRequestPath) {
+        if (at < 0x10000) {
+            return false;
+        }
+        at = read(at + offset, 8);
+    }
+    return at >= 0x10000 && (read(at + AnimationRequestFlagAt, 1) & 0xFF) != 0;
+}
+
+bool KneelsNow(bool waiting, s64 down_for_ms, bool takes_request) {
+    return waiting && down_for_ms >= DownedKneelDelayMs && takes_request;
+}
+
 bool PartyListOutdated(u64 hud, u64 generation, u64 list_hud, u64 list_generation) {
     return hud != list_hud || generation != list_generation;
 }

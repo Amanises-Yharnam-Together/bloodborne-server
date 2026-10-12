@@ -2695,6 +2695,23 @@ constexpr s64 ReviveGraceMs = 2'000;
 // player (the game's own events play them on the player, m25_00_00_00).
 constexpr s32 DownedKneelAnimation = 101260;
 constexpr s32 DownedStandAnimation = 101262;
+// The game's play-animation for a character (0x013CBFD0, ForcePlayAnimation's): it writes the
+// request only while the character takes one (0x013CC132-0x013CC158: character +0x3B0 its
+// modules, +0x58 a module whose +0x08 is a character, that one's +0x3B0, +0x30, byte +0x384 set);
+// otherwise the request is dropped, and its return value says nothing. The down comes in the
+// middle of the lethal hit, when it is clear (Kaniel 2026-10-13: no kneel), so the kneel waits for
+// it, and for the hit's own reaction to pass (DownedKneelDelayMs).
+constexpr u64 AnimationPlayOffset = 0x013CBFD0;
+constexpr u64 AnimationRequestCheckOffset = 0x013CC132;
+constexpr std::array<u8, 7> AnimationRequestCheck{0x48, 0x8B, 0x80, 0xB0, 0x03, 0x00, 0x00};
+constexpr std::array<u64, 5> AnimationRequestPath{0x3B0, 0x58, 0x08, 0x3B0, 0x30};
+constexpr u64 AnimationRequestFlagAt = 0x384;
+constexpr s64 DownedKneelDelayMs = 400;
+// Whether `character` takes an animation request now, reading guest memory with `read` (0 for an
+// address it can't read).
+bool TakesAnimationRequest(u64 character, const std::function<u64(u64 address, size_t size)>& read);
+// Whether a downed player still waiting for its kneel asks for it now.
+bool KneelsNow(bool waiting, s64 down_for_ms, bool takes_request);
 // The HP a downed player shows while it is struck back up: 1, rising with the share of the revive
 // done to just under its max (the revive sets the real HP), so the game's own HP bar and the
 // nameplate bar the others see over it (RemotePCTag, fed by the synced HP) fill with the revive.
