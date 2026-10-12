@@ -56,6 +56,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"boss clear", true},
     {"join anywhere", true},
     {"quiet summon banners", false},
+    {"movie player delete delay", false},
     {"boss death tracer", false},
     {"host leaves", true},
     {"seamless travel", true},
@@ -227,6 +228,11 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // STEP_C2H_Init_forOthersPrologue: the same for the members it arrives to.
     {"chime banner for others", "quiet summon banners", CoopSiteKind::Patch, 0x0196B9F4,
      "E8 87 44 29 00", "0F 1F 44 00 00"},
+
+    // A released Scaleform movie player is freed 60 frames later, not 5: GXRenderThread still drew
+    // one the game had freed (New Game, Kaniel 2026-10-13, eboot+0x1F591B0).
+    {"movie player free delay", "movie player delete delay", CoopSiteKind::Patch, 0x01F60837,
+     "B9 05 00 00 00", "B9 3C 00 00 00"},
 
     // The hooks below are described where they are installed (bloodborne_*.cpp).
     {"death flag", "boss death tracer", CoopSiteKind::Hook, 0x018BF941, "80 8B E3 01 00 00 01"},

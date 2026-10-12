@@ -136,6 +136,18 @@ TEST(CoopSites, ThePatchListsComeFromTheTable) {
     EXPECT_EQ(CoopPatchesOf("seamless core").size(), 13u);
 }
 
+// Kaniel 2026-10-13: New Game crashed on GXRenderThread (eboot+0x1F591B0) drawing a Scaleform
+// movie player that was already freed: the game frees a released player after 5 frames
+// (FD4DeleyDeleteManager, `mov ecx, 5` before 0x00F5D2B0), and the port's render thread fell
+// further behind than that. 60 frames.
+TEST(CoopSites, AReleasedMoviePlayerOutlivesItsQueuedDraws) {
+    const auto patches = CoopPatchesOf("movie player delete delay");
+    ASSERT_EQ(patches.size(), 1u);
+    EXPECT_EQ(patches[0].offset, 0x01F60837u);
+    EXPECT_EQ(patches[0].original, HexBytes("B9 05 00 00 00"));
+    EXPECT_EQ(patches[0].patched, HexBytes("B9 3C 00 00 00"));
+}
+
 TEST(CoopSites, TheSignTimersAreTheTables) {
     const auto sites = SitesOf("sign timers");
     ASSERT_EQ(sites.size(), SignTimerSites.size());
