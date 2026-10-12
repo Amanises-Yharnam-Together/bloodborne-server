@@ -305,3 +305,35 @@ TEST_F(BloodborneEboot, TheCheckedVtablesAreWhatTheConstructorsStore) {
     EXPECT_EQ(CallTarget(0x0192934C), 0x017D2960u);
     EXPECT_EQ(lea(0x017D2983), MapItemManVtable);
 }
+
+// The summon manager's update (0x01872360) ages each summon in flight (`vaddss xmm0, xmm0,
+// [r12 + 4]` with the frame time at 0x0187291C) and lets it go once it is 55 s old, or 180 s
+// old (the two `vucomiss xmm0, [rip + disp32]`); the party's patch points both at a 15.0 among
+// the game's constants.
+TEST_F(BloodborneEboot, TheSummonSlotHoldsReadTheGamesTimes) {
+    const auto float_at = [](u64 offset) {
+        const auto bytes = Bytes(offset, sizeof(float));
+        float value = 0.0f;
+        if (bytes.size() == sizeof(float)) {
+            std::memcpy(&value, bytes.data(), sizeof(value));
+        }
+        return value;
+    };
+    EXPECT_EQ(Bytes(0x0187291C, 7), (std::vector<u8>{0xC4, 0xC1, 0x7A, 0x58, 0x44, 0x24, 0x04}));
+    std::vector<float> holds;
+    for (const CoopSite& site : CoopSites) {
+        if (site.feature != "summon slot hold") {
+            continue;
+        }
+        const auto bytes = Bytes(site.offset, 8);
+        ASSERT_EQ(bytes.size(), 8u);
+        EXPECT_EQ(std::vector<u8>(bytes.begin(), bytes.begin() + 4),
+                  (std::vector<u8>{0xC5, 0xF8, 0x2E, 0x05}))
+            << site.name;
+        s32 displacement{};
+        std::memcpy(&displacement, bytes.data() + 4, sizeof(displacement));
+        holds.push_back(float_at(site.offset + 8 + static_cast<s64>(displacement)));
+    }
+    EXPECT_EQ(holds, (std::vector<float>{55.0f, 180.0f}));
+    EXPECT_EQ(float_at(PartySummonSlotHoldConstant), PartySummonSlotHoldSeconds);
+}

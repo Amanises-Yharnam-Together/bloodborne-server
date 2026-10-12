@@ -82,6 +82,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"own hits", false},
     {"effect hits", false},
     {"sign timers", true},
+    {"summon slot hold", false},
 });
 
 inline constexpr auto CoopSites = std::to_array<CoopSite>({
@@ -372,6 +373,14 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "C7 43 28 00 00 80 3F", "C7 43 28 ?? ?? ?? ??"},
     {"sign re-post time 2", "sign timers", CoopSiteKind::Patch, 0x018A988F, "C7 43 28 00 00 F0 41",
      "C7 43 28 00 00 80 3F", "C7 43 28 ?? ?? ?? ??"},
+
+    // How long a host's summon in flight holds a summon slot (PartySummonSlotHoldConstant): the
+    // summon manager's `vucomiss xmm0, [rip+disp32]` against its 55 s and 180 s, pointed at a
+    // 15.0 (RetargetRipLoad).
+    {"summon slot hold", "summon slot hold", CoopSiteKind::Patch, 0x018729D9,
+     "C5 F8 2E 05 77 50 0B 03", "C5 F8 2E 05 E3 4E 0B 03"},
+    {"summon slot hold 2", "summon slot hold", CoopSiteKind::Patch, 0x018729ED,
+     "C5 F8 2E 05 67 50 0B 03", "C5 F8 2E 05 CF 4E 0B 03"},
 });
 
 } // namespace Core::Bloodborne
