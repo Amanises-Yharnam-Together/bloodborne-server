@@ -426,6 +426,44 @@ TEST(BloodbornePartyDeath, AResetDeathReloadsAtTheLamp) {
     EXPECT_EQ(ChooseDeathRespawn(2412951, false, true, true), DeathRespawn::StayPut);
 }
 
+// Only the trip of a death that resets the map asks for the save's dead to come back on arrival.
+TEST(BloodbornePartyDeath, OnlyAWipeTripRespawnsTheSavesDead) {
+    EXPECT_TRUE(WipeTripRespawnsOnArrival(true, DeathRespawn::Travel));
+    EXPECT_FALSE(WipeTripRespawnsOnArrival(false, DeathRespawn::Travel)); // a lamp elsewhere
+    EXPECT_FALSE(WipeTripRespawnsOnArrival(true, DeathRespawn::StayPut));
+    EXPECT_FALSE(WipeTripRespawnsOnArrival(false, DeathRespawn::MoveToPoint));
+}
+
+// Rig smoke 2026-10-12: a guest whose game restarted mid-session loaded its own save, where enemy
+// 0x1001400b had died; the wipe's trip took it home from the host's world and the enemy stayed at
+// 0 HP with no death mark (+0x1E3 0), while the host's and the other guest's copies came back.
+TEST(BloodbornePartyDeath, AWipeBringsBackWhatTheMembersSaveLeftDead) {
+    const RespawnCandidate save_dead{.hp = 0, .max_hp = 484};
+    EXPECT_TRUE(LeftDeadByItsSave(save_dead));
+    EXPECT_TRUE(RespawnsInWorldRespawn(WorldRespawnKind::AfterWipe, save_dead, false));
+    // Alive, or with no HP to restore: nothing to bring back.
+    EXPECT_FALSE(LeftDeadByItsSave({.hp = 484, .max_hp = 484}));
+    EXPECT_FALSE(LeftDeadByItsSave({.hp = 0, .max_hp = 0}));
+    // Put down by its world (a boss beaten before the session, Father Gascoigne's 0x26) or killed
+    // now (0x6 by damage, 0x1 by an event's kill): the scripts and the kill board own those.
+    for (const u8 flags : {u8{0x26}, u8{0x20}, u8{0x06}, u8{0x04}, u8{0x02}, u8{0x01}}) {
+        EXPECT_FALSE(LeftDeadByItsSave({.hp = 0, .max_hp = 3645, .death_flags = flags}))
+            << static_cast<int>(flags);
+    }
+    // Switched off or hidden by the story: left as the scripts have it.
+    EXPECT_FALSE(LeftDeadByItsSave({.hp = 0, .max_hp = 143, .disabled = true}));
+    EXPECT_FALSE(LeftDeadByItsSave({.hp = 0, .max_hp = 143, .hidden = true}));
+    // A party rest is unchanged: what the party killed during this visit, nothing from the save.
+    EXPECT_FALSE(RespawnsInWorldRespawn(WorldRespawnKind::PartyRest, save_dead, false));
+    EXPECT_TRUE(RespawnsInWorldRespawn(WorldRespawnKind::PartyRest,
+                                       {.hp = 0, .max_hp = 484, .death_flags = 0x06}, true));
+    EXPECT_FALSE(
+        RespawnsInWorldRespawn(WorldRespawnKind::PartyRest, {.hp = 70, .max_hp = 70}, true));
+    // The wipe's respawn leaves this visit's kills alone (the wipe's reload brought those back).
+    EXPECT_FALSE(RespawnsInWorldRespawn(WorldRespawnKind::AfterWipe,
+                                        {.hp = 0, .max_hp = 484, .death_flags = 0x06}, true));
+}
+
 // A downed player keeps the menu (Options) and the camera: it can't move, attack, roll, heal or
 // switch items until it is up.
 TEST(BloodbornePartyDeath, ADownedPlayerOnlyKeepsTheMenuAndTheCamera) {

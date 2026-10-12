@@ -960,6 +960,10 @@ DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_f
     return arriving_from_trip ? DeathRespawn::StayPut : DeathRespawn::Travel;
 }
 
+bool WipeTripRespawnsOnArrival(bool reset, DeathRespawn respawn) {
+    return reset && respawn == DeathRespawn::Travel;
+}
+
 std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
     std::vector<std::pair<s32, bool>> shared;
     for (const s32 flag : changes.set) {
@@ -3303,6 +3307,24 @@ u64 RestoreScriptFlagsAfterRespawn(u64 flags_before, u64 flags_after, s32 hp_bef
 
 bool RespawnsAtPartyRest(s32 hp, bool alive_this_visit) {
     return hp <= 0 && alive_this_visit;
+}
+
+bool LeftDeadByItsSave(const RespawnCandidate& character) {
+    // Bits 0 and 2: killed (IsRealDeath); bit 1 comes with either; bit 5: put down by its world.
+    constexpr u8 DeathMarks = 0x27;
+    return character.hp <= 0 && character.max_hp > 0 && (character.death_flags & DeathMarks) == 0 &&
+           !character.disabled && !character.hidden;
+}
+
+bool RespawnsInWorldRespawn(WorldRespawnKind kind, const RespawnCandidate& character,
+                            bool alive_this_visit) {
+    switch (kind) {
+    case WorldRespawnKind::PartyRest:
+        return RespawnsAtPartyRest(character.hp, alive_this_visit);
+    case WorldRespawnKind::AfterWipe:
+        return LeftDeadByItsSave(character);
+    }
+    return false;
 }
 
 bool KeepDisabledAfterRespawn(bool disabled_before, s32 hp_before) {
