@@ -311,7 +311,7 @@ void CoopTraceReplay::WorldLogHostIn(std::string_view op, std::span<const u8> pa
     std::vector<WorldLogEntry> entries;
     if (const auto start = op == "start" ? DecodeWorldLogStart(payload) : std::nullopt) {
         out.push_back(fmt::format("wlog host start epoch {:x}{}", start->first,
-                                  start->second ? " keeping the members' kills" : ""));
+                                  start->second ? " after a wipe" : ""));
         entries = wlog_host.Start(start->first, start->second);
     } else if (const auto proposal =
                    op == "propose" ? DecodeWorldLogProposal(payload) : std::nullopt) {

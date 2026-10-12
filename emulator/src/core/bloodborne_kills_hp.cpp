@@ -1109,7 +1109,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
     }
     // The other members' kills (the world log's or the kill board's; not what lay dead in a save),
     // and with this member's own and held ones (see GatherPartyKills).
-    PartyKillsNow party = GatherPartyKills(visit_kills, map, changes);
+    PartyKillsNow party =
+        GatherPartyKills(visit_kills, map, changes, forget_kills, died_for_others);
     std::unordered_set<u32>& others = party.all;
     const std::unordered_set<u32>& member_kills = party.members;
     // And what is dead in the host's world, killed before the session too (its save): a guest

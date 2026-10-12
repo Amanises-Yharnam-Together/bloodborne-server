@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Rig smoke 2026-10-12 (run 191219), the host's side rebuilt from the games' logs: the host
+# killed the dog 0x1001400b; a guest applied it near and counted it as its own too; the
+# party wiped. The host's new log must start with no kills, and the guest's proposals from
+# before its own wipe must not stand the dog again (before the fix: seq 2 and seq 4 did).
+1760300000000 trace version=2 role=host process=4545
+1760300000100 wlog-in role=host op=start payload=0100000083fa373200
+1760300003204 wlog-in role=host op=propose payload=10373236393637356636383666373337340100000083fa3732110000000100000001000000011801000b400110
+1760300003900 wlog-in role=host op=propose payload=1437323639363735663637373536353733373433320100000083fa3732220000000100000001000000011801000b400110
+1760300005486 life event=wipe epoch=4
+# the host's kill step forgets its kills, then starts the new log
+1760300005509 wlog-in role=host op=propose payload=10373236393637356636383666373337340100000083fa373211000000020000000000
+1760300005510 wlog-in role=host op=start payload=0200000083fa373201
+# the guest's last proposal before it heard of the new log
+1760300005600 wlog-in role=host op=propose payload=1437323639363735663637373536353733373433320100000083fa3732220000000200000001000000011801000b400110
+# after its own wipe and the wipe's trip
+1760300007000 wlog-in role=host op=propose payload=1437323639363735663637373536353733373433320200000083fa373222000000030000000000
+1760300010000 wlog-in role=host op=propose payload=10373236393637356636383666373337340200000083fa373211000000030000000000

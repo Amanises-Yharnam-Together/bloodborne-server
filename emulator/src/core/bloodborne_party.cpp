@@ -4244,8 +4244,10 @@ std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills) {
 std::string FormatWorldLogEntry(const WorldLogEntry& entry) {
     switch (entry.kind) {
     case WorldLogKind::Reset:
-        return entry.map == 0 ? fmt::format("seq {} reset every map", entry.seq)
-                              : fmt::format("seq {} reset {:#x}", entry.seq, entry.map);
+        return entry.map == 0
+                   ? fmt::format("seq {} reset every map{}", entry.seq,
+                                 entry.subject == WorldLogResetAfterWipe ? " (a wipe)" : "")
+                   : fmt::format("seq {} reset {:#x}", entry.seq, entry.map);
     case WorldLogKind::Kill:
         return fmt::format("seq {} kill {:#x} on {:#x}", entry.seq, entry.subject, entry.map);
     case WorldLogKind::Unkill:
@@ -4544,20 +4546,37 @@ void WorldLogHost::Disown(const std::string& member, u32 handle,
     }
 }
 
-std::vector<WorldLogEntry> WorldLogHost::Start(u64 new_epoch, bool keep_members) {
+std::vector<WorldLogEntry> WorldLogHost::Start(u64 new_epoch, bool after_wipe) {
     epoch = new_epoch;
     last = 0;
-    if (!keep_members) {
-        members.clear();
-        standing.clear();
+    // Every member's set goes: a member's next proposal for this log brings what stands now (its
+    // run and numbers stay, so a late one of the old run is still dropped).
+    for (auto& [name, member] : members) {
+        member.kills.clear();
     }
-    std::vector<WorldLogEntry> entries{Append(WorldLogKind::Reset, 0, 0)};
-    for (const auto& [map, handles] : Kills()) {
-        for (const u32 handle : handles) {
-            entries.push_back(Append(WorldLogKind::Kill, map, handle));
-        }
+    standing.clear();
+    return {Append(WorldLogKind::Reset, 0, after_wipe ? WorldLogResetAfterWipe : 0)};
+}
+
+bool StartsAfterAWipe(std::span<const WorldLogEntry> applied) {
+    return std::ranges::any_of(applied, [](const WorldLogEntry& entry) {
+        return entry.kind == WorldLogKind::Reset && entry.map == 0 &&
+               entry.subject == WorldLogResetAfterWipe;
+    });
+}
+
+bool WorldLogWipeHold::HoldsProposals(s64 now_ms) const {
+    if (!host_wiped_ms || now_ms - *host_wiped_ms >= WorldLogWipeGraceMs) {
+        return false;
     }
-    return entries;
+    return !own_wipe_ms || *own_wipe_ms < *host_wiped_ms - WorldLogWipeGraceMs;
+}
+
+bool WorldLogWipeHold::BoardStale(s64 now_ms) const {
+    const auto recent = [now_ms](std::optional<s64> at) {
+        return at && now_ms - *at < WorldLogWipeGraceMs;
+    };
+    return recent(own_wipe_ms) || recent(host_wiped_ms);
 }
 
 WorldLogHost::Taken WorldLogHost::Propose(const WorldLogProposal& proposal) {
@@ -4811,10 +4830,10 @@ std::optional<std::string> WorldLogPath::TakeChange() {
                   : fmt::format("Co-op world log: off, kills go through the kill board ({})", why);
 }
 
-std::vector<u8> EncodeWorldLogStart(u64 epoch, bool keep_members) {
+std::vector<u8> EncodeWorldLogStart(u64 epoch, bool after_wipe) {
     std::vector<u8> payload;
     AppendLittleEndian(payload, epoch);
-    payload.push_back(keep_members ? 1 : 0);
+    payload.push_back(after_wipe ? 1 : 0);
     return payload;
 }
 

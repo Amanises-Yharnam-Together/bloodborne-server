@@ -649,8 +649,11 @@ struct PartyKillsNow {
     std::unordered_set<u32> all;
     std::unordered_set<u32> members;
 };
+// `forgot`: this kill step took back this member's kills for its own wipe; `not_mine`: kills of
+// other members that died here by the game's kill, not proposed as this member's.
 PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
-                               std::span<const std::pair<s32, bool>> changes);
+                               std::span<const std::pair<s32, bool>> changes, bool forgot,
+                               const std::unordered_set<u32>& not_mine);
 void SendDirectDamage(const MemberMapState& mine, bool changed);
 void SendPeerHello();
 void KeepEnemyDeathsInStep(bool sharing);

@@ -134,10 +134,20 @@ runtime in `bloodborne_world_log.cpp`.
   or a new epoch past its start asks for a snapshot (0x36), which the host answers in parts of at
   most 280 kills (0x37). A member's copy stands 3 s after the host's last frame; otherwise it reads
   the kill board.
-- **Epochs:** `(host run << 32) | logs started`. The host starts a new log (a `Reset` of every map,
-  then the standing kills) on its wipe, keeping the members' sets, and on a join, leave or new
-  character without them. A member forgets its copy on its own join, leave or new character and
-  follows a newer epoch (or another host run); an older log's frames are dropped.
+- **Epochs:** `(host run << 32) | logs started`. The host starts a new log (a `Reset` of every map
+  and no kills at all) on its wipe, a join, a leave or a new character. A member forgets its copy on
+  its own join, leave or new character and follows a newer epoch (or another host run); an older
+  log's frames, and proposals made for one, are dropped.
+- **Wipes** (fixed after rig smoke 2026-10-12, run 191219: the dog stood dead in all three games
+  after the party wipe): the first version kept the members' sets in the wiped log, so the host's
+  own pre-wipe kill stood again at once, and a guest's proposal stood it a third time after the
+  wipe's trip. That guest had applied the host's kill near (the game's kill, `died_for_others`), and
+  the kill counted as its own in its visit; it read the kill board's pre-wipe copy while its log
+  was not fresh. Now the wiped log starts with no kills and its `Reset` says so
+  (`WorldLogResetAfterWipe`). A member that hears it proposes nothing until its own wipe has
+  forgotten its kills, or 15 s went by (`WorldLogWipeHold`; a member elsewhere has no wipe). For
+  15 s after either wipe it leaves out the host's entries of the kill board. A member never
+  proposes the kills it applied for another member (`died_for_others`).
 - **The path:** the hello carries a features byte (co-op protocol 2), and the log runs only while
   every room peer has it on (`SHADPS4_BLOODBORNE_WORLD_LOG=0` turns it off). A peer whose hello
   has not come, or no peers at all, keep the path 5 s, then the board. Builds before protocol 2

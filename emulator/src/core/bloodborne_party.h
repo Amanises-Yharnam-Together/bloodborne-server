@@ -1332,10 +1332,12 @@ std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 l
 // The host's side: every member's standing kills and the log of the party's union.
 class WorldLogHost {
 public:
-    // A new log (a new epoch): a Reset of every map, then a Kill for each standing kill kept.
-    // `keep_members`: the members' sets stand (the host's wipe: the others' kills elsewhere stay,
-    // each member's own wipe takes back its own); else they go (a new session or character).
-    std::vector<WorldLogEntry> Start(u64 epoch, bool keep_members);
+    // A new log (a new epoch): a Reset of every map and no kills, the members' sets gone (a new
+    // session or character, or a party wipe, which respawns the map for everyone: rig smoke
+    // 2026-10-12, run 191219, the kept sets stood the host's own kill again). `after_wipe` marks
+    // the Reset (WorldLogResetAfterWipe): a member proposes again only after its own wipe (see
+    // WorldLogWipeHold).
+    std::vector<WorldLogEntry> Start(u64 epoch, bool after_wipe);
     struct Taken {
         bool stale = false; // dropped: an older one of the member's run, or another log epoch
         std::vector<WorldLogEntry> entries;
@@ -1463,8 +1465,35 @@ private:
     std::optional<s64> unsure_since;
     bool changed = false;
 };
-// A host's Start on a trace record: the epoch (u64) and keep_members (u8).
-std::vector<u8> EncodeWorldLogStart(u64 epoch, bool keep_members);
+// A host's Start on a trace record: the epoch (u64) and after_wipe (u8).
+std::vector<u8> EncodeWorldLogStart(u64 epoch, bool after_wipe);
+// A Reset entry's subject when the host's log started over after a party wipe (older members read
+// a Reset as before).
+constexpr u32 WorldLogResetAfterWipe = 1;
+// Whether `applied` holds the Reset of a log started after a wipe.
+bool StartsAfterAWipe(std::span<const WorldLogEntry> applied);
+// A member's proposals around a party wipe: the host's new log has no kills, and a member's set
+// from before its own wipe (still standing until its kill step forgets it, or a kill applied from
+// a stale copy in between) must not stand them again. From the host's wiped log on, a member
+// proposes nothing until its own wipe has run (or had run within WorldLogWipeGraceMs before), or
+// WorldLogWipeGraceMs went by (it was elsewhere: no wipe for it); and for WorldLogWipeGraceMs after
+// either wipe the kill board's host entries (posted before it) are not taken.
+constexpr s64 WorldLogWipeGraceMs = 15'000;
+class WorldLogWipeHold {
+public:
+    void HostWiped(s64 now_ms) {
+        host_wiped_ms = now_ms;
+    }
+    void OwnWipe(s64 now_ms) {
+        own_wipe_ms = now_ms;
+    }
+    bool HoldsProposals(s64 now_ms) const;
+    bool BoardStale(s64 now_ms) const;
+
+private:
+    std::optional<s64> host_wiped_ms;
+    std::optional<s64> own_wipe_ms;
+};
 std::optional<std::pair<u64, bool>> DecodeWorldLogStart(std::span<const u8> payload);
 // One report per source from copies of it (direct and the board): per enemy the most damage, or
 // for HP from one world (HostHpReport) the least HP; in the order the sources first come.
