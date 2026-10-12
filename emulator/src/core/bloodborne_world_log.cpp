@@ -38,6 +38,10 @@ const u32 world_log_run = [] {
 }();
 
 WorldLogPath world_log_path;
+// The shown characters (step 2) take the log only with the kills, and only while every peer has
+// WorldLogShownFeature (a step 1 build keeps them on the shown board).
+WorldLogPath shown_path{"shown characters", "the shown board", WorldLogShownFeature};
+bool shown_on_log = false;
 WorldLogHost world_log_host;
 WorldLogMember world_log_member;
 u32 world_logs_started = 0;
@@ -88,6 +92,21 @@ std::string EntriesText(std::span<const WorldLogEntry> entries) {
     return entries.size() > 8 ? fmt::format("{}, ... ({} in all)", text, entries.size()) : text;
 }
 
+// Entries for the log: each kill entry; the shown characters' (which change as the host walks)
+// as a count, on at most 400 lines a game.
+std::optional<std::string> LoggedEntries(std::span<const WorldLogEntry> entries) {
+    std::vector<WorldLogEntry> kills;
+    std::ranges::copy_if(entries, std::back_inserter(kills), [](const WorldLogEntry& entry) {
+        return entry.kind != WorldLogKind::Shown && entry.kind != WorldLogKind::Unshown;
+    });
+    static u32 shown_lines = 0;
+    const size_t shown = entries.size() - kills.size();
+    if (kills.empty() && (shown == 0 || ++shown_lines > 400)) {
+        return std::nullopt;
+    }
+    return EntriesText(kills) + (shown > 0 ? fmt::format(" ({} shown changes)", shown) : "");
+}
+
 // The host's entries (or a heartbeat for none) to every room peer.
 void SendEntries(const std::string& name, std::span<const WorldLogEntry> entries, s64 now_ms) {
     for (const WorldLogBatch& batch :
@@ -95,9 +114,9 @@ void SendEntries(const std::string& name, std::span<const WorldLogEntry> entries
         SendToRoomPeers(EncodeCoopFrame(WorldLogEntriesType, EncodeWorldLogBatch(batch)));
     }
     entries_sent_ms = now_ms;
-    if (!entries.empty()) {
+    if (const auto text = LoggedEntries(entries)) {
         LOG_INFO(Debug, "Co-op world log: the host's log {:#x} took {}", world_log_host.Epoch(),
-                 EntriesText(entries));
+                 *text);
     }
 }
 
@@ -178,6 +197,22 @@ void SwitchKillPath(bool log, const WorldLogKills& mine) {
     }
 }
 
+// The shown characters' path: on the log only with the kills. Back on the board, the host's log
+// stops carrying them (its next Show on the log starts with a ShownMap).
+void DecideShownPath(std::span<const WorldLogPeer> peers, bool kills_on_log, s64 now_ms) {
+    const bool log = shown_path.Decide(world_log_switch, peers, now_ms) && kills_on_log;
+    if (const auto line = shown_path.TakeChange()) {
+        LOG_INFO(Debug, "{}", *line);
+        Trace("wlog-path", {{"what", "shown"},
+                            {"path", shown_path.Active() ? "log" : "board"},
+                            {"why", shown_path.Why()}});
+    }
+    if (!log && shown_on_log) {
+        world_log_host.ForgetShown();
+    }
+    shown_on_log = log;
+}
+
 // Which path the kills take now (see WorldLogPath), from the room peers' hellos.
 bool DecideKillPath(const WorldLogKills& mine, s64 now_ms) {
     std::vector<WorldLogPeer> peers;
@@ -198,6 +233,7 @@ bool DecideKillPath(const WorldLogKills& mine, s64 now_ms) {
     if (log != was) {
         SwitchKillPath(log, mine);
     }
+    DecideShownPath(peers, log, now_ms);
     return log;
 }
 
@@ -241,16 +277,22 @@ void LogMemberStart(const WorldLogMember::Step& step) {
                  world_log_member.Epoch());
     }
     if (step.snapshot) {
-        LOG_INFO(Debug, "Co-op world log: took the host's snapshot to seq {} ({} kills)",
-                 world_log_member.Applied(), WorldLogKillCount(world_log_member.Kills()));
+        LOG_INFO(Debug,
+                 "Co-op world log: took the host's snapshot to seq {} ({} kills, shown "
+                 "characters {})",
+                 world_log_member.Applied(), WorldLogKillCount(world_log_member.Kills()),
+                 world_log_member.ShownKnown()
+                     ? fmt::format("{} on {:#x}", world_log_member.Shown().bits.size(),
+                                   world_log_member.Shown().map)
+                     : "not in it");
     }
 }
 
 void LogMemberStep(const WorldLogMember::Step& step, u64 host_last) {
     static bool behind = false;
     LogMemberStart(step);
-    if (!step.applied.empty()) {
-        LOG_INFO(Debug, "Co-op world log: applied {}", EntriesText(step.applied));
+    if (const auto text = LoggedEntries(step.applied)) {
+        LOG_INFO(Debug, "Co-op world log: applied {}", *text);
     }
     if (step.gap != behind && !step.stale) {
         behind = step.gap;
@@ -276,23 +318,66 @@ void TakeFrameAsHost(u8 type, std::span<const u8> payload, u32 addr, u16 port, s
             SendToPeer(EncodeCoopFrame(WorldLogSnapshotType, EncodeWorldLogSnapshot(part)), addr,
                        port);
         }
+        // The shown characters at the same seq, always (empty while they are on the board): a
+        // member of this build waits for them (WorldLogMember::ExpectShown).
+        for (const WorldLogShownSnapshot& part : world_log_host.ShownSnapshot(name)) {
+            SendToPeer(
+                EncodeCoopFrame(WorldLogShownSnapshotType, EncodeWorldLogShownSnapshot(part)), addr,
+                port);
+        }
+    }
+}
+
+// A frame the member's log takes: the step, the host's last seq, and the trace's name for it.
+struct MemberTake {
+    WorldLogMember::Step step;
+    u64 host_last = 0;
+    const char* op = "";
+};
+std::optional<MemberTake> TakeAsMember(u8 type, std::span<const u8> payload, s64 now_ms) {
+    if (type == WorldLogEntriesType) {
+        const auto batch = DecodeWorldLogBatch(payload);
+        return batch ? std::optional{MemberTake{world_log_member.Take(*batch, now_ms), batch->last,
+                                                "entries"}}
+                     : std::nullopt;
+    }
+    if (type == WorldLogSnapshotType) {
+        const auto part = DecodeWorldLogSnapshot(payload);
+        return part ? std::optional{MemberTake{world_log_member.Take(*part, now_ms), part->last,
+                                               "snapshot"}}
+                    : std::nullopt;
+    }
+    if (type == WorldLogShownSnapshotType) {
+        const auto part = DecodeWorldLogShownSnapshot(payload);
+        return part ? std::optional{MemberTake{world_log_member.Take(*part, now_ms), part->last,
+                                               "shown-snapshot"}}
+                    : std::nullopt;
+    }
+    return std::nullopt;
+}
+
+// Whether the host's snapshots carry the shown characters: its hello has WorldLogShownFeature.
+void ExpectShownFrom(u32 addr, u16 port) {
+    const auto hello = peer_hellos.find((u64{addr} << 16) | port);
+    const bool expected =
+        hello != peer_hellos.end() && (hello->second.features & WorldLogShownFeature) != 0;
+    if (expected != world_log_member.ExpectsShown()) {
+        world_log_member.ExpectShown(expected);
+        TraceLog("member", "expect-shown", std::vector<u8>{static_cast<u8>(expected ? 1 : 0)});
     }
 }
 
 void TakeFrameAsMember(u8 type, std::span<const u8> payload, u32 addr, u16 port, s64 now_ms) {
-    WorldLogMember::Step step;
-    u64 host_last = 0;
-    if (const auto batch =
-            type == WorldLogEntriesType ? DecodeWorldLogBatch(payload) : std::nullopt) {
-        step = world_log_member.Take(*batch, now_ms);
-        host_last = batch->last;
-    } else if (const auto part =
-                   type == WorldLogSnapshotType ? DecodeWorldLogSnapshot(payload) : std::nullopt) {
-        step = world_log_member.Take(*part, now_ms);
-        host_last = part->last;
-    } else {
+    if (!IsWorldLogFrameType(type) || type == WorldLogProposeType ||
+        type == WorldLogSnapshotRequestType) {
         return;
     }
+    ExpectShownFrom(addr, port);
+    const auto taken = TakeAsMember(type, payload, now_ms);
+    if (!taken) {
+        return;
+    }
+    const WorldLogMember::Step& step = taken->step;
     if (!step.stale) {
         log_host_peer = std::pair{addr, port};
     }
@@ -300,9 +385,9 @@ void TakeFrameAsMember(u8 type, std::span<const u8> payload, u32 addr, u16 port,
         wipe_hold.HostWiped(now_ms);
     }
     if (step.stale || step.new_epoch || step.snapshot || step.gap || !step.applied.empty()) {
-        TraceLog("member", type == WorldLogEntriesType ? "entries" : "snapshot", payload);
+        TraceLog("member", taken->op, payload);
     }
-    LogMemberStep(step, host_last);
+    LogMemberStep(step, taken->host_last);
 }
 
 } // namespace
@@ -324,6 +409,28 @@ void TakeWorldLogFrame(u8 type, std::span<const u8> payload, u32 addr, u16 port)
     } else {
         TakeFrameAsHost(type, payload, addr, port, now_ms);
     }
+}
+
+void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters) {
+    const std::string name = LogMemberName();
+    if (!shown_on_log || !world_log_host.Started() || name.empty() || map == 0) {
+        return;
+    }
+    const std::vector<WorldLogEntry> entries = world_log_host.Show(map, characters);
+    if (!entries.empty()) {
+        TraceLog("host", "show", EncodeWorldLogShow(map, characters));
+        SendEntries(name, entries, SteadyMilliseconds());
+    }
+}
+
+std::optional<MemberMapState> HostShownNow() {
+    if (shown_on_log && world_log_member.Fresh(SteadyMilliseconds()) &&
+        world_log_member.ShownKnown() && world_log_member.Shown().map != 0) {
+        const WorldLogShown& shown = world_log_member.Shown();
+        return MemberMapState{shown.map, EncodeShownCharacters(WorldLogShownCharacters(shown))};
+    }
+    std::scoped_lock lock{shown_board_mutex};
+    return host_shown;
 }
 
 PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,

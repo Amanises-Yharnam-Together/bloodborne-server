@@ -1116,11 +1116,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     // And what is dead in the host's world, killed before the session too (its save): a guest
     // back from a trip runs its own world, where those were alive (Kaniel 2026-10-11).
     if (IsPartyGuestRole() && InPartySession()) {
-        std::optional<MemberMapState> host;
-        {
-            std::scoped_lock lock{shown_board_mutex};
-            host = host_shown;
-        }
+        const std::optional<MemberMapState> host = HostShownNow();
         if (host && host->map == map) {
             if (const auto hosts = DecodeShownCharacters(host->bits)) {
                 const auto dead = DeadInTheHostsWorld(*hosts);
@@ -1348,15 +1344,12 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                             !IsBossSized(character)});
     }
     if (hosting) {
+        ShowOnTheLog(map, mine);
         std::scoped_lock lock{shown_board_mutex};
         local_shown = MemberMapState{map, EncodeShownCharacters(mine)};
         return;
     }
-    std::optional<MemberMapState> host;
-    {
-        std::scoped_lock lock{shown_board_mutex};
-        host = host_shown;
-    }
+    const std::optional<MemberMapState> host = HostShownNow();
     // What the host's world had near the host stands once it moves away (see HostNearStates).
     static HostNearStates host_near;
     if (!InPartySession()) {
