@@ -12,6 +12,7 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -4433,6 +4434,16 @@ std::string FormatWorldLogEntry(const WorldLogEntry& entry) {
         return fmt::format("seq {} flag {} off", entry.seq, static_cast<s32>(entry.subject));
     case WorldLogKind::MapStateMap:
         return fmt::format("seq {} map state of {:#x}", entry.seq, entry.map);
+    case WorldLogKind::HpSource:
+        return fmt::format("seq {} hp of {:x}{:08x} on {:#x}", entry.seq, entry.subject,
+                           entry.value, entry.map);
+    case WorldLogKind::HpValue:
+        return fmt::format("seq {} hp {:#x} {}/{}", entry.seq, entry.subject,
+                           static_cast<s32>(entry.value), static_cast<s32>(entry.map));
+    case WorldLogKind::HpGone:
+        return fmt::format("seq {} hp {:#x} gone", entry.seq, entry.subject);
+    case WorldLogKind::HpSourceGone:
+        return fmt::format("seq {} hp of {:x}{:08x} gone", entry.seq, entry.subject, entry.value);
     case WorldLogKind::MapFlagOn:
     case WorldLogKind::MapFlagOff:
         return fmt::format("seq {} map flag {} {}", entry.seq,
@@ -4492,7 +4503,7 @@ bool WorldLogEpochFollows(u64 next, u64 current) {
 }
 
 bool IsWorldLogFrameType(u8 type) {
-    return type >= WorldLogProposeType && type <= WorldLogMapStateSnapshotType;
+    return type >= WorldLogProposeType && type <= WorldLogHpSnapshotType;
 }
 
 bool WorldLogEnabled(const char* setting) {
@@ -4617,7 +4628,7 @@ std::optional<WorldLogProposal> DecodeWorldLogProposal(std::span<const u8> paylo
 }
 
 // The host's name, epoch, last seq, the entry count (u8) and the first entry's seq (u64), then
-// each entry: kind (u8; a Shown's bits in its low half, see WorldLogKind), map, subject.
+// each entry: kind (u8; a Shown's bits in its low half, see WorldLogKind), map, subject, value.
 std::vector<u8> EncodeWorldLogBatch(const WorldLogBatch& batch) {
     std::vector<u8> payload;
     AppendName(payload, batch.host);
@@ -4633,6 +4644,7 @@ std::vector<u8> EncodeWorldLogBatch(const WorldLogBatch& batch) {
                               : static_cast<u8>(entry.kind));
         AppendLittleEndian(payload, entry.map);
         AppendLittleEndian(payload, entry.subject);
+        AppendLittleEndian(payload, entry.value);
     }
     return payload;
 }
@@ -4653,13 +4665,14 @@ std::optional<WorldLogBatch> DecodeWorldLogBatch(std::span<const u8> payload) {
         const auto kind = reader.Next<u8>();
         const auto map = reader.Next<u32>();
         const auto subject = reader.Next<u32>();
-        if (!kind || !map || !subject) {
+        const auto value = reader.Next<u32>();
+        if (!kind || !map || !subject || !value) {
             return std::nullopt;
         }
         const bool shown = (*kind & 0xF0) == static_cast<u8>(WorldLogKind::Shown);
         batch.entries.push_back({*first + index, *epoch, *map,
                                  shown ? WorldLogKind::Shown : static_cast<WorldLogKind>(*kind),
-                                 *subject, shown ? static_cast<u8>(*kind & 0x0F) : u8{0}});
+                                 *subject, shown ? u32{*kind & 0x0Fu} : *value});
     }
     if (!reader.Done()) {
         return std::nullopt;
@@ -4871,6 +4884,145 @@ std::optional<WorldLogFlagProposal> DecodeWorldLogFlagProposal(std::span<const u
     return proposal;
 }
 
+std::vector<std::pair<u32, EnemyHpReport>> WorldLogHpReports(const WorldLogHp& hp) {
+    std::vector<std::pair<u32, EnemyHpReport>> reports;
+    for (const auto& [source, report] : hp) {
+        EnemyHpReport out{source, {}};
+        for (const auto& [handle, value] : report.enemies) {
+            out.enemies.push_back({handle, value.first, value.second});
+        }
+        reports.emplace_back(report.map, std::move(out));
+    }
+    return reports;
+}
+
+namespace {
+
+// u16 count, then each enemy: handle, value, max.
+template <typename Enemies>
+void AppendHpEnemies(std::vector<u8>& payload, const Enemies& enemies, size_t count) {
+    AppendLittleEndian(payload, static_cast<u16>(count));
+    size_t written = 0;
+    for (const auto& enemy : enemies) {
+        if (written++ == count) {
+            break;
+        }
+        if constexpr (std::is_same_v<std::decay_t<decltype(enemy)>, EnemyHp>) {
+            AppendLittleEndian(payload, enemy.handle);
+            AppendLittleEndian(payload, static_cast<u32>(enemy.hp));
+            AppendLittleEndian(payload, static_cast<u32>(enemy.max));
+        } else {
+            AppendLittleEndian(payload, enemy.first);
+            AppendLittleEndian(payload, static_cast<u32>(enemy.second.first));
+            AppendLittleEndian(payload, static_cast<u32>(enemy.second.second));
+        }
+    }
+}
+
+std::optional<std::vector<EnemyHp>> ReadHpEnemies(PayloadReader& reader) {
+    const auto count = reader.Next<u16>();
+    if (!count) {
+        return std::nullopt;
+    }
+    std::vector<EnemyHp> enemies;
+    for (u16 index = 0; index < *count; ++index) {
+        const auto handle = reader.Next<u32>();
+        const auto value = reader.Next<u32>();
+        const auto max = reader.Next<u32>();
+        if (!handle || !value || !max) {
+            return std::nullopt;
+        }
+        enemies.push_back({*handle, static_cast<s32>(*value), static_cast<s32>(*max)});
+    }
+    return enemies;
+}
+
+} // namespace
+
+// The member's name, epoch, run, number, map, source (u64), then the enemies (at most
+// WorldLogHpPerFrame).
+std::vector<u8> EncodeWorldLogHpProposal(const WorldLogHpProposal& proposal) {
+    std::vector<u8> payload;
+    AppendName(payload, proposal.member);
+    AppendLittleEndian(payload, proposal.epoch);
+    AppendLittleEndian(payload, proposal.run);
+    AppendLittleEndian(payload, proposal.number);
+    AppendLittleEndian(payload, proposal.map);
+    AppendLittleEndian(payload, proposal.report.visit);
+    AppendHpEnemies(payload, proposal.report.enemies,
+                    std::min(proposal.report.enemies.size(), WorldLogHpPerFrame));
+    return payload;
+}
+
+std::optional<WorldLogHpProposal> DecodeWorldLogHpProposal(std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    auto member = reader.Name();
+    const auto epoch = reader.Next<u64>();
+    const auto run = reader.Next<u32>();
+    const auto number = reader.Next<u32>();
+    const auto map = reader.Next<u32>();
+    const auto source = reader.Next<u64>();
+    auto enemies = ReadHpEnemies(reader);
+    if (!member || !epoch || !run || !number || !map || !source || !enemies || !reader.Done()) {
+        return std::nullopt;
+    }
+    return WorldLogHpProposal{std::move(*member),
+                              *epoch,
+                              *run,
+                              *number,
+                              *map,
+                              EnemyHpReport{*source, std::move(*enemies)}};
+}
+
+// The host's name, epoch, last seq, part, parts, the sources (u16), then each: source (u64), map,
+// the enemies.
+std::vector<u8> EncodeWorldLogHpSnapshot(const WorldLogHpSnapshot& snapshot) {
+    std::vector<u8> payload;
+    AppendName(payload, snapshot.host);
+    AppendLittleEndian(payload, snapshot.epoch);
+    AppendLittleEndian(payload, snapshot.last);
+    payload.push_back(snapshot.part);
+    payload.push_back(snapshot.parts);
+    AppendLittleEndian(payload, static_cast<u16>(snapshot.hp.size()));
+    for (const auto& [source, report] : snapshot.hp) {
+        AppendLittleEndian(payload, source);
+        AppendLittleEndian(payload, report.map);
+        AppendHpEnemies(payload, report.enemies, report.enemies.size());
+    }
+    return payload;
+}
+
+std::optional<WorldLogHpSnapshot> DecodeWorldLogHpSnapshot(std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    auto host = reader.Name();
+    const auto epoch = reader.Next<u64>();
+    const auto last = reader.Next<u64>();
+    const auto part = reader.Next<u8>();
+    const auto parts = reader.Next<u8>();
+    const auto sources = reader.Next<u16>();
+    if (!host || !epoch || !last || !part || !parts || *part >= *parts || !sources) {
+        return std::nullopt;
+    }
+    WorldLogHpSnapshot snapshot{std::move(*host), *epoch, *last, *part, *parts, {}};
+    for (u16 index = 0; index < *sources; ++index) {
+        const auto source = reader.Next<u64>();
+        const auto map = reader.Next<u32>();
+        const auto enemies = ReadHpEnemies(reader);
+        if (!source || !map || !enemies) {
+            return std::nullopt;
+        }
+        WorldLogHpReport& report = snapshot.hp[*source];
+        report.map = *map;
+        for (const EnemyHp& enemy : *enemies) {
+            report.enemies[enemy.handle] = {enemy.hp, enemy.max};
+        }
+    }
+    if (!reader.Done()) {
+        return std::nullopt;
+    }
+    return snapshot;
+}
+
 std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
                                          std::span<const WorldLogEntry> entries) {
     std::vector<WorldLogBatch> batches;
@@ -4993,6 +5145,82 @@ std::vector<WorldLogEntry> WorldLogHost::MapState(u32 map, std::span<const u8> b
     return entries;
 }
 
+void WorldLogHost::DropHpSource(u64 source, std::vector<WorldLogEntry>& entries) {
+    if (hp.erase(source) > 0) {
+        entries.push_back(Append(WorldLogKind::HpSourceGone, 0, static_cast<u32>(source >> 32),
+                                 static_cast<u32>(source)));
+    }
+}
+
+WorldLogHost::Taken WorldLogHost::ProposeHp(const WorldLogHpProposal& proposal) {
+    Taken taken;
+    HpSender& sender = hp_senders[proposal.member];
+    const bool late = sender.run == proposal.run && proposal.number <= sender.number;
+    if (late || (proposal.epoch != 0 && proposal.epoch != epoch)) {
+        taken.stale = true;
+        return taken;
+    }
+    const u64 source = proposal.report.visit;
+    if (sender.source != 0 && sender.source != source) {
+        DropHpSource(sender.source, taken.entries);
+    }
+    sender = {proposal.run, proposal.number, source};
+    std::map<u32, std::pair<s32, s32>> now;
+    for (const EnemyHp& enemy : proposal.report.enemies) {
+        now[enemy.handle] = {enemy.hp, enemy.max};
+    }
+    const auto known = hp.find(source);
+    const WorldLogHpReport before = known != hp.end() ? known->second : WorldLogHpReport{};
+    std::vector<WorldLogEntry> changes;
+    for (const auto& [handle, value] : before.enemies) {
+        if (!now.contains(handle)) {
+            changes.push_back({0, 0, 0, WorldLogKind::HpGone, handle});
+        }
+    }
+    for (const auto& [handle, value] : now) {
+        const auto old = before.enemies.find(handle);
+        if (old == before.enemies.end() || old->second != value) {
+            changes.push_back({0, 0, static_cast<u32>(value.second), WorldLogKind::HpValue, handle,
+                               static_cast<u32>(value.first)});
+        }
+    }
+    if (!changes.empty() || (known != hp.end() && before.map != proposal.map)) {
+        taken.entries.push_back(Append(WorldLogKind::HpSource, proposal.map,
+                                       static_cast<u32>(source >> 32), static_cast<u32>(source)));
+        for (const WorldLogEntry& change : changes) {
+            taken.entries.push_back(Append(change.kind, change.map, change.subject, change.value));
+        }
+    }
+    if (now.empty()) {
+        hp.erase(source);
+    } else {
+        hp[source] = {proposal.map, std::move(now)};
+    }
+    return taken;
+}
+
+std::vector<WorldLogHpSnapshot> WorldLogHost::HpSnapshot(std::string_view host) const {
+    std::vector<WorldLogHpSnapshot> parts{{std::string{host}, epoch, last, 0, 1, {}}};
+    size_t in_part = 0;
+    for (const auto& [source, report] : hp) {
+        for (const auto& [handle, value] : report.enemies) {
+            if (in_part == WorldLogHpPerFrame && parts.size() < 0xFF) {
+                parts.push_back(
+                    {std::string{host}, epoch, last, static_cast<u8>(parts.size()), 1, {}});
+                in_part = 0;
+            }
+            WorldLogHpReport& share = parts.back().hp[source];
+            share.map = report.map;
+            share.enemies[handle] = value;
+            ++in_part;
+        }
+    }
+    for (WorldLogHpSnapshot& part : parts) {
+        part.parts = static_cast<u8>(parts.size());
+    }
+    return parts;
+}
+
 WorldLogMapStateSnapshot WorldLogHost::MapStateSnapshot(std::string_view host) const {
     return {std::string{host}, epoch, last, map_state};
 }
@@ -5048,6 +5276,7 @@ std::vector<WorldLogEntry> WorldLogHost::Start(u64 new_epoch, bool after_wipe) {
         member.kills.clear();
     }
     standing.clear();
+    hp.clear(); // no damage from before it (a wipe respawned the map)
     std::vector<WorldLogEntry> entries{
         Append(WorldLogKind::Reset, 0, after_wipe ? WorldLogResetAfterWipe : 0)};
     AppendShown(entries); // the host's world as it is (not a kill: it stays the host's now)
@@ -5149,6 +5378,8 @@ void WorldLogMember::Reset() {
     shown_known = false;
     map_state = {};
     map_state_known = false;
+    hp.clear();
+    hp_source = 0;
 }
 
 bool WorldLogMember::Follow(u64 next_epoch, std::string_view next_host, s64 now_ms, Step& step) {
@@ -5184,6 +5415,9 @@ void WorldLogMember::Apply(const WorldLogEntry& entry) {
         if (entry.map == 0 || entry.map == map_state.map) {
             map_state = {};
         }
+        if (entry.map == 0) {
+            hp.clear();
+        }
         return;
     case WorldLogKind::Kill:
         kills[entry.map].insert(entry.subject);
@@ -5218,6 +5452,41 @@ void WorldLogMember::Apply(const WorldLogEntry& entry) {
     case WorldLogKind::FlagSet:
     case WorldLogKind::FlagClear:
         return; // events: the caller sets them (Step::applied)
+    case WorldLogKind::HpSource:
+    case WorldLogKind::HpValue:
+    case WorldLogKind::HpGone:
+    case WorldLogKind::HpSourceGone:
+        ApplyHp(entry);
+        return;
+    }
+}
+
+void WorldLogMember::ApplyHp(const WorldLogEntry& entry) {
+    const u64 source = (u64{entry.subject} << 32) | entry.value;
+    switch (entry.kind) {
+    case WorldLogKind::HpSource:
+        hp_source = source;
+        hp[source].map = entry.map;
+        return;
+    case WorldLogKind::HpValue:
+        hp[hp_source].enemies[entry.subject] = {static_cast<s32>(entry.value),
+                                                static_cast<s32>(entry.map)};
+        return;
+    case WorldLogKind::HpGone:
+        if (const auto report = hp.find(hp_source); report != hp.end()) {
+            report->second.enemies.erase(entry.subject);
+        }
+        break;
+    case WorldLogKind::HpSourceGone:
+        hp.erase(source);
+        return;
+    default:
+        return;
+    }
+    // A report with no enemies is none (as the host keeps them).
+    if (const auto report = hp.find(hp_source);
+        report != hp.end() && report->second.enemies.empty()) {
+        hp.erase(report);
     }
 }
 
@@ -5312,6 +5581,25 @@ WorldLogMember::PartialSnapshot& WorldLogMember::Pending(u64 last) {
     return *partial;
 }
 
+WorldLogMember::Step WorldLogMember::Take(const WorldLogHpSnapshot& part, s64 now_ms) {
+    Step step;
+    if (!Follow(part.epoch, part.host, now_ms, step)) {
+        return step;
+    }
+    host_last = std::max(host_last, part.last);
+    if (!based || part.last > applied) {
+        PartialSnapshot& pending = Pending(part.last);
+        if (pending.hp_parts != part.parts) {
+            pending.hp_got.clear();
+        }
+        pending.hp_parts = part.parts;
+        pending.hp_got[part.part] = part.hp;
+        Complete(step);
+    }
+    step.gap = Behind();
+    return step;
+}
+
 WorldLogMember::Step WorldLogMember::Take(const WorldLogMapStateSnapshot& part, s64 now_ms) {
     Step step;
     if (!Follow(part.epoch, part.host, now_ms, step)) {
@@ -5340,13 +5628,14 @@ WorldLogShown JoinShownParts(const std::map<u8, WorldLogShown>& parts) {
 
 } // namespace
 
-// A snapshot is whole with every kills part, every shown part and its map state.
+// A snapshot is whole with every kills part, every shown part, its map state and every HP part.
 void WorldLogMember::Complete(Step& step) {
     const PartialSnapshot& pending = *partial;
     const bool kills_whole = pending.parts && pending.got.size() >= *pending.parts;
     const bool shown_whole =
         pending.shown_parts && pending.shown_got.size() >= *pending.shown_parts;
-    if (!kills_whole || !shown_whole || !pending.map_state) {
+    const bool hp_whole = pending.hp_parts && pending.hp_got.size() >= *pending.hp_parts;
+    if (!kills_whole || !shown_whole || !pending.map_state || !hp_whole) {
         return;
     }
     kills.clear();
@@ -5359,6 +5648,13 @@ void WorldLogMember::Complete(Step& step) {
     shown_known = true;
     map_state = *pending.map_state;
     map_state_known = true;
+    hp.clear();
+    for (const auto& [index, share] : pending.hp_got) {
+        for (const auto& [source, report] : share) {
+            hp[source].map = report.map;
+            hp[source].enemies.insert(report.enemies.begin(), report.enemies.end());
+        }
+    }
     applied = pending.last;
     based = true;
     partial.reset();

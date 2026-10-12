@@ -336,6 +336,13 @@ void CoopTraceReplay::WorldLogHostIn(std::string_view op, std::span<const u8> pa
     } else if (const auto state =
                    op == "map-state" ? DecodeWorldLogMapStateInput(payload) : std::nullopt) {
         entries = wlog_host.MapState(state->map, state->bits);
+    } else if (const auto hp =
+                   op == "propose-hp" ? DecodeWorldLogHpProposal(payload) : std::nullopt) {
+        WorldLogHost::Taken taken = wlog_host.ProposeHp(*hp);
+        if (taken.stale) {
+            out.push_back(fmt::format("wlog host dropped a late HP report from {}", hp->member));
+        }
+        entries = std::move(taken.entries);
     } else {
         out.push_back(fmt::format("wlog-in: unreadable host {}", op));
     }
@@ -364,6 +371,10 @@ void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> 
                    op == "shown-snapshot" ? DecodeWorldLogShownSnapshot(payload) : std::nullopt) {
         step = wlog_member.Take(*shown, at);
         host_last = shown->last;
+    } else if (const auto hp =
+                   op == "hp-snapshot" ? DecodeWorldLogHpSnapshot(payload) : std::nullopt) {
+        step = wlog_member.Take(*hp, at);
+        host_last = hp->last;
     } else if (const auto state = op == "map-state-snapshot"
                                       ? DecodeWorldLogMapStateSnapshot(payload)
                                       : std::nullopt) {

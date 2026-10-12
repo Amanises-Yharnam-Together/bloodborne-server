@@ -47,6 +47,7 @@ WorldLogEntry Reset(u64 seq, u32 map = 0) {
 void TakeOtherParts(WorldLogMember& member, u64 epoch, u64 last, s64 now_ms) {
     member.Take(WorldLogShownSnapshot{"host", epoch, last, 0, 1, {}}, now_ms);
     member.Take(WorldLogMapStateSnapshot{"host", epoch, last, {}}, now_ms);
+    member.Take(WorldLogHpSnapshot{"host", epoch, last, 0, 1, {}}, now_ms);
 }
 
 WorldLogBatch Batch(u64 epoch, u64 last, std::vector<WorldLogEntry> entries) {
@@ -111,7 +112,7 @@ TEST(WorldLogFrames, TypesFollowTheHelloAndOlderBuildsDropThem) {
         EXPECT_FALSE(IsWorldLogFrameType(type));
     }
     EXPECT_GE(CoopProtocolVersion, 2) << "the world log's frames are protocol 2";
-    EXPECT_EQ(CoopProtocolVersion, 4) << "the flags and the map state on the log are protocol 4";
+    EXPECT_EQ(CoopProtocolVersion, 5) << "enemy HP on the log is protocol 5";
 }
 
 TEST(WorldLogFrames, AFullSetFitsTheLink) {

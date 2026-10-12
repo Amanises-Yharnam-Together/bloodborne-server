@@ -1195,7 +1195,8 @@ constexpr u8 PeerHelloType = 0x33;
 // Raised when a co-op frame's meaning changes. 2: the world log's frames (WorldLogProposeType ...)
 // and the hello's features. 3: the shown characters on the world log. 4: the shared flags and the
 // host's map state on it (frames 0x39, 0x3A, the flag entries).
-constexpr u8 CoopProtocolVersion = 4;
+// 5: enemy HP on it (frames 0x3B, 0x3C, the HP entries; every entry carries a value).
+constexpr u8 CoopProtocolVersion = 5;
 constexpr s64 PeerHelloResendMs = 10'000;
 // PeerHello::features: WorldLogFeature when this game runs the world log (it is not switched off,
 // SHADPS4_BLOODBORNE_WORLD_LOG=0). Every member runs one build (Kaniel 2026-10-12): a peer on
@@ -1290,7 +1291,16 @@ enum class WorldLogKind : u8 {
     MapStateMap = 7,
     MapFlagOn = 8,
     MapFlagOff = 9,
-    // Still to come: HpFloor.
+    // Step 4 (the HP board's and the direct damage frames' job): each member's HP report
+    // (EnemyHpReport: its damage per enemy this visit, or the host's HP in one world), by source.
+    // HpSource: the entries after it are of source `subject` << 32 | `value` on `map`; HpValue:
+    // `subject` (a handle) has `value` (damage or HP) of max `map`; HpGone: `subject` is no longer
+    // in that report; HpSourceGone: source `subject` << 32 | `value` went (a new visit, a member's
+    // restart).
+    HpSource = 10,
+    HpValue = 11,
+    HpGone = 12,
+    HpSourceGone = 13,
 };
 struct WorldLogEntry {
     u64 seq = 0;
@@ -1298,7 +1308,7 @@ struct WorldLogEntry {
     u32 map = 0;
     WorldLogKind kind = WorldLogKind::Kill;
     u32 subject = 0;
-    u8 value = 0; // Shown: the bits
+    u32 value = 0; // Shown: the bits; HP entries: see WorldLogKind
     bool operator==(const WorldLogEntry&) const = default;
 };
 // "seq 3 kill 0x10014066 on 0x18000000"
@@ -1395,6 +1405,11 @@ constexpr u8 WorldLogShownSnapshotType = 0x38;
 constexpr u8 WorldLogFlagsProposeType = 0x39;
 // host -> that member, after the shown parts: the host's map state at the same seq
 constexpr u8 WorldLogMapStateSnapshotType = 0x3A;
+// member -> host: its HP report (WorldLogHpProposal), at once on a change and every
+// WorldLogResendMs
+constexpr u8 WorldLogHpProposeType = 0x3B;
+// host -> that member, after the map state: every HP report at the same seq, in parts
+constexpr u8 WorldLogHpSnapshotType = 0x3C;
 bool IsWorldLogFrameType(u8 type);
 // A member's proposal and the host's heartbeat go out at once on a change and again every
 // WorldLogResendMs; a member's log stands WorldLogLifeMs after the host's last frame (else the
@@ -1404,7 +1419,9 @@ constexpr s64 WorldLogLifeMs = 3'000;
 constexpr s64 WorldLogSnapshotRetryMs = 1'000;
 // Kept small for the link's 1400-byte frames: entries per entries frame, handles per proposal or
 // snapshot part (a member's standing kills above it are cut, as the direct kills frame did).
-constexpr size_t WorldLogEntriesPerFrame = 100;
+constexpr size_t WorldLogEntriesPerFrame = 100; // 13 bytes each
+// Enemies per HP proposal or HP snapshot part (12 bytes each).
+constexpr size_t WorldLogHpPerFrame = 100;
 constexpr size_t WorldLogHandlesPerFrame = 280;
 // Characters per shown snapshot part (5 bytes each).
 constexpr size_t WorldLogShownPerFrame = 240;
@@ -1471,6 +1488,37 @@ std::vector<u8> EncodeWorldLogMapStateSnapshot(const WorldLogMapStateSnapshot& s
 std::optional<WorldLogMapStateSnapshot> DecodeWorldLogMapStateSnapshot(std::span<const u8> payload);
 std::vector<u8> EncodeWorldLogFlagProposal(const WorldLogFlagProposal& proposal);
 std::optional<WorldLogFlagProposal> DecodeWorldLogFlagProposal(std::span<const u8> payload);
+// A member's HP report as the host keeps it: the report's map and each enemy's (value, max).
+struct WorldLogHpReport {
+    u32 map = 0;
+    std::map<u32, std::pair<s32, s32>> enemies;
+    bool operator==(const WorldLogHpReport&) const = default;
+};
+using WorldLogHp = std::map<u64, WorldLogHpReport>; // by source (EnemyHpReport::visit)
+// The reports as SharedDamage takes them, with their maps.
+std::vector<std::pair<u32, EnemyHpReport>> WorldLogHpReports(const WorldLogHp& hp);
+struct WorldLogHpProposal {
+    std::string member;
+    u64 epoch = 0; // the host's log this member follows, 0 before it heard one
+    u32 run = 0;
+    u32 number = 0; // counts up within the run: a late one is dropped
+    u32 map = 0;
+    EnemyHpReport report; // at most WorldLogHpPerFrame enemies
+    bool operator==(const WorldLogHpProposal&) const = default;
+};
+std::vector<u8> EncodeWorldLogHpProposal(const WorldLogHpProposal& proposal);
+std::optional<WorldLogHpProposal> DecodeWorldLogHpProposal(std::span<const u8> payload);
+struct WorldLogHpSnapshot {
+    std::string host;
+    u64 epoch = 0;
+    u64 last = 0;
+    u8 part = 0;
+    u8 parts = 1;
+    WorldLogHp hp; // this part's share (a source may span parts)
+    bool operator==(const WorldLogHpSnapshot&) const = default;
+};
+std::vector<u8> EncodeWorldLogHpSnapshot(const WorldLogHpSnapshot& snapshot);
+std::optional<WorldLogHpSnapshot> DecodeWorldLogHpSnapshot(std::span<const u8> payload);
 // `entries` (consecutive) as batches of at most WorldLogEntriesPerFrame; one heartbeat for none.
 std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
                                          std::span<const WorldLogEntry> entries);
@@ -1531,6 +1579,14 @@ public:
         return map_state;
     }
     WorldLogMapStateSnapshot MapStateSnapshot(std::string_view host) const;
+    // A member's (or the host's own) HP report, whole: the entries for what changed (a new source
+    // of the member's first: its old one goes).
+    Taken ProposeHp(const WorldLogHpProposal& proposal);
+    const WorldLogHp& Hp() const {
+        return hp;
+    }
+    // The HP reports in parts of at most WorldLogHpPerFrame enemies (one part when there are none).
+    std::vector<WorldLogHpSnapshot> HpSnapshot(std::string_view host) const;
 
 private:
     struct Member {
@@ -1551,6 +1607,7 @@ private:
     void Disown(const std::string& member, u32 handle, std::vector<WorldLogEntry>& entries);
     void AppendShown(std::vector<WorldLogEntry>& entries);
     void AppendMapState(std::vector<WorldLogEntry>& entries);
+    void DropHpSource(u64 source, std::vector<WorldLogEntry>& entries);
 
     u64 epoch = 0;
     u64 last = 0;
@@ -1560,6 +1617,13 @@ private:
     std::map<std::string, FlagSender> flag_senders;
     FlagEventOnce flag_events;
     WorldLogMapState map_state;
+    struct HpSender {
+        u32 run = 0;
+        u32 number = 0;
+        u64 source = 0;
+    };
+    std::map<std::string, HpSender> hp_senders;
+    WorldLogHp hp;
 };
 
 // A member's side: the entries applied in seq order, exactly once.
@@ -1578,6 +1642,11 @@ public:
     // A snapshot is whole with its kills, shown characters and map state parts (one build: the host
     // sends all of them).
     Step Take(const WorldLogMapStateSnapshot& part, s64 now_ms);
+    Step Take(const WorldLogHpSnapshot& part, s64 now_ms);
+    // Every member's HP report (this member's own too), as the host has them.
+    const WorldLogHp& Hp() const {
+        return hp;
+    }
     const WorldLogMapState& MapState() const {
         return map_state;
     }
@@ -1637,14 +1706,19 @@ private:
         std::optional<u8> shown_parts;
         std::map<u8, WorldLogShown> shown_got;
         std::optional<WorldLogMapState> map_state;
+        std::optional<u8> hp_parts;
+        std::map<u8, WorldLogHp> hp_got;
     };
     void ApplyMapFlag(const WorldLogEntry& entry);
+    void ApplyHp(const WorldLogEntry& entry);
     std::optional<PartialSnapshot> partial;
     WorldLogKills kills;
     WorldLogShown shown;
     bool shown_known = false;
     WorldLogMapState map_state;
     bool map_state_known = false;
+    WorldLogHp hp;
+    u64 hp_source = 0; // the source the HP entries are of (HpSource)
 };
 
 // Whether the kills, the shown characters and the shared flags go through the world log: while
