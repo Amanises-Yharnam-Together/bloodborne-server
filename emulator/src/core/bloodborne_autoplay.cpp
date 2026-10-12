@@ -649,6 +649,44 @@ bool AutoplayTeleport(const AutoplayStep& step) {
     return true;
 }
 
+// glide <x y z>...: from where the player is along those points at walking pace, by small
+// teleports facing the way it goes (a far teleport drops it through the floor): a path a "map
+// change" log line gave (its trail), to cross a border between two maps.
+bool AutoplayGlide(const AutoplayStep& step) {
+    const auto& args = step.command.args;
+    if (args.empty() || args.size() % 3 != 0) {
+        step.failure = "glide takes x y z points";
+        return false;
+    }
+    if (!step.begun) {
+        const auto at = LocalPlayerPosition();
+        if (!at) {
+            step.failure = "no player";
+            return false;
+        }
+        std::scoped_lock lock{autoplay_mutex};
+        autoplay_run.glide_from = *at;
+    }
+    std::vector<LampPosition> path;
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        path.push_back(autoplay_run.glide_from);
+    }
+    for (size_t at = 0; at < args.size(); at += 3) {
+        path.push_back({static_cast<float>(step.Number(at, 0)),
+                        static_cast<float>(step.Number(at + 1, 0)),
+                        static_cast<float>(step.Number(at + 2, 0))});
+    }
+    const auto point = GlidePoint(path, step.elapsed);
+    const LampPosition to = point.value_or(path.back());
+    const LampPosition ahead = GlidePoint(path, step.elapsed + 0.25).value_or(path.back());
+    const float dx = ahead[0] - to[0];
+    const float dz = ahead[2] - to[2];
+    // A heading h faces (-sin h, cos h).
+    TeleportLocalPlayer(to, dx == 0.0f && dz == 0.0f ? 0.0f : std::atan2(-dx, dz));
+    return !point.has_value();
+}
+
 // pickup [<meters>] [<timeout>]: onto the nearest usable map item within reach (30 m), then
 // X for 0.3 s of every 1.5 s until the item leaves the usable list: a real pickup through the
 // item button (the host could not pick up items in the Forbidden Woods, 2026-10-09).
