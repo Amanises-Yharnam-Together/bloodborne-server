@@ -312,7 +312,7 @@ TEST(BloodbornePartyHud, ThePartyListStacksUnderTheQuickItems) {
     const auto [x2, y2] = PartyListPosition(2);
     EXPECT_EQ(x0, x1);
     EXPECT_EQ(x1, x2);
-    EXPECT_EQ(x0 - 97, 107) << "the bar starts under the player's HP bar (hud_patch.py)";
+    EXPECT_EQ(x0 - 143, 61) << "the bar starts under the player's HP bar (hud_patch.py)";
     EXPECT_GE(y0 - 70, 240) << "the role line clears the game's quick items (1080p stage)";
     EXPECT_EQ(y1 - y0, y2 - y1);
     EXPECT_GE(y1 - y0, 90) << "each tag's role line clears the bar above";
