@@ -701,7 +701,8 @@ SCENARIOS = {
         },
         "expect": {
             "host": [r"re-creating rig_guest on map 0x18010000 \(1 of 2 members\)",
-                     r"re-creating rig_guest2 on map 0x18010000"],
+                     # Since PR #41 both may be named in one line ("rig_guest rig_guest2").
+                     r"re-creating (?:\S+ )*rig_guest2 (?:\S+ )*on map 0x18010000"],
         },
         "timeout": 1200,
     },
