@@ -246,6 +246,13 @@ TEST_F(BloodborneEboot, HudValuesAreReleasedAsTheGameDoes) {
                          0x53, 0x20, 0x48, 0x8B, 0x07, 0x48, 0x89, 0xDE, 0xFF, 0x50, 0x18}));
 }
 
+// The HUD's constructor, at its only call, is the HUD the tick runs (rdi there, r15 in the tick).
+TEST_F(BloodborneEboot, TheHudConstructorHookIsTheHudsConstructor) {
+    EXPECT_EQ(Bytes(HudConstructOffset, HudConstructPrologue.size()),
+              std::vector<u8>(HudConstructPrologue.begin(), HudConstructPrologue.end()));
+    EXPECT_EQ(CallTarget(0x01F62B53), HudConstructOffset);
+}
+
 // The downed player's infinite poise: the hit's knockback and reaction dispatcher, called from the
 // hit at both its places.
 TEST_F(BloodborneEboot, TheHitReactionHookIsTheKnockbackDispatcher) {

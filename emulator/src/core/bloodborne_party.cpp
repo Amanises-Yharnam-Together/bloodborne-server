@@ -4027,6 +4027,11 @@ std::string GameHudString(std::span<const u8, GameHudStringSize> raw,
     return text;
 }
 
+bool PanelHasDowned(const PartyPanel& panel) {
+    return std::ranges::any_of(
+        panel.members, [](const PanelMember& member) { return member.vital == Vital::Down; });
+}
+
 std::optional<std::string> NameplateRoleLine(const PartyPanel& panel, std::string_view name) {
     if (name.empty()) {
         return std::nullopt;
@@ -6127,6 +6132,10 @@ bool ReviveHits::Press(std::string_view target, u32 down, u32 damage, s64 now_ms
     return true;
 }
 
+bool PartyListOutdated(u64 hud, u64 generation, u64 list_hud, u64 list_generation) {
+    return hud != list_hud || generation != list_generation;
+}
+
 bool SkipsHitReaction(bool down, u64 victim, u64 local_player) {
     return down && victim != 0 && victim == local_player;
 }
@@ -6172,7 +6181,10 @@ std::vector<CopyTeam> DownedTeams::Tick(const std::vector<CopyTeam>& downed,
     return writes;
 }
 
-std::vector<ReviveHitTotal> ReviveHits::Totals(std::span<const MemberVitals> board) {
+std::vector<ReviveHitTotal> ReviveHits::Totals(std::span<const MemberVitals> board, bool fresh) {
+    if (!fresh) {
+        return totals;
+    }
     std::erase_if(totals, [&](const ReviveHitTotal& total) {
         return std::ranges::none_of(board, [&](const MemberVitals& member) {
             return member.member == total.target && member.vital == Vital::Down &&
@@ -6199,9 +6211,14 @@ std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, st
     return nearest;
 }
 
-PadInput DownedPad(const PadInput& pad) {
-    return PadInput{.buttons = pad.buttons & PadOptions,
+PadInput DownedPad(const PadInput& pad, bool menu) {
+    const u32 kept = menu ? PadOptions | PadDpad | PadCross : PadOptions;
+    return PadInput{.buttons = pad.buttons & kept,
                     .sticks = {128, 128, pad.sticks[2], pad.sticks[3]}};
+}
+
+bool DownedMenuOpen(bool open, u32 before, u32 now) {
+    return (now & ~before & PadOptions) != 0 ? !open : open;
 }
 
 bool AttackPressed(u32 before, u32 now) {

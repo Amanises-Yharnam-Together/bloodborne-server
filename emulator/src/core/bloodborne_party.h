@@ -2737,6 +2737,8 @@ constexpr size_t GameHudStringFullSize = 0x38;
 // UTF-16 characters from guest memory for a string kept out of place.
 std::string GameHudString(std::span<const u8, GameHudStringSize> raw,
                           const std::function<std::vector<char16_t>(u64, size_t)>& read);
+// Whether any member on the panel is down (only then does a nameplate say anything of ours).
+bool PanelHasDowned(const struct PartyPanel& panel);
 // The role line of the nameplate over `name` (an online id, or a board name without one): its
 // revive, in red html, while that member is down; nothing for anyone else (the game's line stays).
 std::optional<std::string> NameplateRoleLine(const struct PartyPanel& panel, std::string_view name);
@@ -2775,6 +2777,14 @@ enum class HudValueKeep {
     KeepForTheHud, // linked and kept: storage that outlives the HUD, never freed
 };
 HudValueKeep HudValueFate(u32 type, bool kept_for_the_hud);
+// The HUD's constructor (rdi the HUD, as r15 in its tick; its only call 0x01F62B53, on a fresh
+// 0x980-byte object). A new HUD may be made where an old one was, so the party list goes by the
+// HUDs made, not by the address.
+constexpr u64 HudConstructOffset = 0x01BF41C0;
+constexpr std::array<u8, 8> HudConstructPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
+// Whether the list made in `list_hud` (the `list_generation`th HUD made) is the wrong one for
+// `hud`, the `generation`th HUD made: a new HUD, even at the same address, makes its own.
+bool PartyListOutdated(u64 hud, u64 generation, u64 list_hud, u64 list_generation);
 constexpr u64 HudTicksTagsDoneOffset = 0x01BF8A50;
 constexpr std::array<u8, 7> HudTicksTagsDone{0x49, 0x8B, 0xBF, 0xF8, 0x00, 0x00, 0x00};
 constexpr s64 HudFrameTimeFrameOffset = -0x6C8;
@@ -3000,7 +3010,8 @@ public:
     // A real hit on `target`'s body (down `down`) that dealt `damage` (DownedTeams makes it one).
     void Hit(std::string_view target, u32 down, u32 damage);
     // The totals to post: the damage on downs still current on the board (the rest is dropped).
-    std::vector<ReviveHitTotal> Totals(std::span<const MemberVitals> board);
+    // A board that is not `fresh` (a hiccup) says nothing about the downs: all are kept.
+    std::vector<ReviveHitTotal> Totals(std::span<const MemberVitals> board, bool fresh = true);
 
 private:
     std::vector<ReviveHitTotal> totals;
@@ -3066,8 +3077,15 @@ struct PadInput {
     u8 l2 = 0;
     u8 r2 = 0;
 };
-// What a downed player's pad keeps: Options (the menu) and the camera stick.
-PadInput DownedPad(const PadInput& pad);
+constexpr u32 PadCross = 0x4000;
+constexpr u32 PadDpad = 0x10 | 0x20 | 0x40 | 0x80;
+// What a downed player's pad keeps: Options (the menu) and the camera stick; with the menu open
+// (`menu`), also the D-pad and Cross that work it. The left stick, attacks, items and Circle (the
+// roll; holding it gives up) stay off, so the menu is left with Options.
+PadInput DownedPad(const PadInput& pad, bool menu);
+// Whether the menu is open while down: Options going down opens or closes it (from closed when the
+// player went down).
+bool DownedMenuOpen(bool open, u32 before, u32 now);
 // R1 or R2 going down between two reads of the pad: an attack, which may be a revive hit.
 bool AttackPressed(u32 before, u32 now);
 // R2 going down without R1: a heavy attack (ReviveHitDamage).

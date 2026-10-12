@@ -111,6 +111,25 @@ TEST(BloodbornePartyDeath, AReviveHitDealsTheWeaponsAttackRating) {
     EXPECT_EQ(ReviveHitDamage(-5, true), 1u);
 }
 
+// The nameplates only change while a member is down.
+TEST(BloodbornePartyDeath, OnlyADownedMemberChangesTheNameplates) {
+    PartyPanel panel;
+    panel.members = {PanelMember{.member = "a", .vital = Vital::Up}};
+    EXPECT_FALSE(PanelHasDowned(panel));
+    panel.members.push_back(PanelMember{.member = "b", .vital = Vital::Down});
+    EXPECT_TRUE(PanelHasDowned(panel));
+}
+
+// A new HUD gets its own list, also when it is made where the old one was (its tags and icons died
+// with the old one).
+TEST(BloodbornePartyDeath, ANewHudGetsANewPartyList) {
+    EXPECT_FALSE(PartyListOutdated(0x1000, 2, 0x1000, 2));
+    EXPECT_TRUE(PartyListOutdated(0x2000, 2, 0x1000, 2)) << "another address";
+    EXPECT_TRUE(PartyListOutdated(0x1000, 3, 0x1000, 2)) << "made again at the same address";
+    EXPECT_TRUE(PartyListOutdated(0x1000, 0, 0, 0))
+        << "the first HUD, without the constructor hook";
+}
+
 // While down the local player is neither pushed nor made to flinch by hits; anyone else is, and
 // so is the player once up.
 TEST(BloodbornePartyDeath, ADownedPlayerTakesNoHitReaction) {
@@ -550,6 +569,10 @@ TEST(BloodbornePartyDeath, CountsAttackPressesAsReviveHits) {
     // A down that ended (revived, or a new one) is dropped.
     const std::vector<MemberVitals> later{Member(Lisara, CentralYharnam, Vital::Up, 4),
                                           Member(Third, CentralYharnam, Vital::Down, 3)};
+    // A board gone stale for a moment (no lines) drops nothing: the strikes still count after it.
+    EXPECT_EQ(hits.Totals({}, false),
+              (std::vector<ReviveHitTotal>{{Lisara, 4, 750}, {Third, 2, 300}}));
+    EXPECT_EQ(hits.Totals(board), (std::vector<ReviveHitTotal>{{Lisara, 4, 750}, {Third, 2, 300}}));
     EXPECT_TRUE(hits.Totals(later).empty());
     EXPECT_TRUE(hits.Press(Third, 3, 300, ReviveHits::GapMs * 3));
     EXPECT_EQ(hits.Totals(later), (std::vector<ReviveHitTotal>{{Third, 3, 300}}));
@@ -773,16 +796,34 @@ TEST(BloodbornePartyDeath, AWipeBringsBackWhatTheMembersSaveLeftDead) {
 // A downed player keeps the menu (Options) and the camera: it can't move, attack, roll, heal or
 // switch items until it is up.
 TEST(BloodbornePartyDeath, ADownedPlayerOnlyKeepsTheMenuAndTheCamera) {
+    EXPECT_EQ(PadCross, AutoplayButton("cross"));
+    EXPECT_EQ(PadDpad, AutoplayButton("up") | AutoplayButton("right") | AutoplayButton("down") |
+                           AutoplayButton("left"));
     const PadInput pad{.buttons = PadOptions | PadR1 | PadCircle | AutoplayButton("up") |
                                   AutoplayButton("square"),
                        .sticks = {20, 240, 60, 200},
                        .l2 = 255,
                        .r2 = 128};
-    const PadInput kept = DownedPad(pad);
+    const PadInput kept = DownedPad(pad, false);
     EXPECT_EQ(kept.buttons, PadOptions);
     EXPECT_EQ(kept.sticks, (std::array<u8, 4>{128, 128, 60, 200}));
     EXPECT_EQ(kept.l2, 0);
     EXPECT_EQ(kept.r2, 0);
+}
+
+// With the menu open while down, the D-pad and Cross work it; still no move, attack or roll.
+TEST(BloodbornePartyDeath, ADownedPlayerCanUseTheMenu) {
+    const PadInput pad{.buttons = PadCross | PadR1 | PadCircle | AutoplayButton("up") |
+                                  AutoplayButton("square"),
+                       .sticks = {20, 240, 60, 200}};
+    const PadInput kept = DownedPad(pad, true);
+    EXPECT_EQ(kept.buttons, PadCross | AutoplayButton("up"));
+    EXPECT_EQ(kept.sticks, (std::array<u8, 4>{128, 128, 60, 200}));
+    // Options opens it and closes it again; holding it changes nothing.
+    EXPECT_TRUE(DownedMenuOpen(false, 0, PadOptions));
+    EXPECT_TRUE(DownedMenuOpen(true, PadOptions, PadOptions));
+    EXPECT_FALSE(DownedMenuOpen(true, 0, PadOptions | PadCross));
+    EXPECT_FALSE(DownedMenuOpen(false, 0, PadCross));
 }
 
 TEST(BloodbornePartyDeath, AnAttackIsR1OrR2GoingDown) {

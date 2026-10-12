@@ -680,6 +680,7 @@ std::vector<DownedBody> DownedBodies(std::span<const MemberVitals> board, std::s
 // What the pad reader saw (FilterPartyDeathPad): the buttons held before the downed filter, the
 // attack presses so far and whether the last one was heavy (R2).
 std::atomic<u32> party_pad_buttons{};
+std::atomic<bool> party_downed_menu{}; // the menu opened while down (DownedMenuOpen)
 std::atomic<u32> party_attack_presses{};
 std::atomic<bool> party_attack_heavy{};
 
@@ -868,8 +869,13 @@ namespace {
 std::mutex panel_mutex;
 PartyPanel panel_now;
 
+// Whether a member on the party panel is down: the nameplates' hook (ten tags a frame) does nothing
+// else while none is.
+std::atomic<bool> panel_has_downed{};
+
 void SetPartyPanel(PartyPanel panel) {
     std::scoped_lock lock{panel_mutex};
+    panel_has_downed.store(PanelHasDowned(panel), std::memory_order_relaxed);
     panel_now = std::move(panel);
 }
 
@@ -1231,7 +1237,7 @@ void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
             .needed = run.downed.DamageNeeded(),
             .at = at.value_or(LampPosition{}),
         },
-        run.revive_hits.Totals(tick.board));
+        run.revive_hits.Totals(tick.board, tick.view.Fresh()));
 
     const Vital vital = run.downed.Current();
     PartyPanel panel = tick.in_session ? BuildPartyPanel(tick.board, tick.view.member, tick.map,
@@ -1331,6 +1337,12 @@ std::string NameplateName(u64 tag_data) {
 
 // Each nameplate name seen once, in the log (the rig checks that the names are the members').
 void NoteNameplate(int index, const std::string& name) {
+    // The HUD's thread calls this for each tag every frame: the same name as last time is no news.
+    static std::array<std::string, 16> last;
+    if (index < 0 || static_cast<size_t>(index) >= last.size() || last[index] == name) {
+        return;
+    }
+    last[index] = name;
     static std::mutex mutex;
     static std::unordered_set<std::string> seen;
     std::scoped_lock lock{mutex};
@@ -1359,12 +1371,15 @@ void SetElementText(u64 element, const std::string& html) {
 void PS4_SYSV_ABI WriteNameplateRoleLine(u64, const GuestRegisterSnapshot* registers) {
     const u64 tag = registers->r14, data = registers->r13;
     const auto index = RemoteTagIndex(data, image_base + HudFeDataOffset);
-    PartyPanel panel;
-    if (!index || !ReadPartyPanel(panel)) {
+    if (!index) {
         return;
     }
     const std::string name = NameplateName(data);
     NoteNameplate(*index, name);
+    PartyPanel panel;
+    if (!panel_has_downed.load(std::memory_order_relaxed) || !ReadPartyPanel(panel)) {
+        return;
+    }
     if (const auto line = NameplateRoleLine(panel, name)) {
         SetElementText(tag + HudTagRoleLineAt, *line);
     }
@@ -1374,7 +1389,8 @@ void PS4_SYSV_ABI WriteNameplateRoleLine(u64, const GuestRegisterSnapshot* regis
 #ifdef BLOODBORNE_PARTY_HUD
 // The native party list (the party HUD's CoopParty0-2), kept by the HUD's own thread.
 struct NativePartyList {
-    u64 hud = 0; // the HUD the tags were made in
+    u64 hud = 0;        // the HUD the tags were made in
+    u64 generation = 0; // which HUD made (hud_generation) that was
     bool ready = false;
     std::array<u8*, PartyListSize> tags{};
     std::array<std::array<u8, HudTagDataSize>, PartyListSize> data{};
@@ -1390,6 +1406,12 @@ struct NativePartyList {
 };
 std::atomic<s64> native_prompt_shown_ms{-1'000'000};
 NativePartyList native_list;
+std::atomic<u64> hud_generation{};
+
+// The HUD's constructor (HudConstructOffset): one more HUD made.
+void PS4_SYSV_ABI CountHudMade(u64, const GuestRegisterSnapshot*) {
+    hud_generation.fetch_add(1, std::memory_order_relaxed);
+}
 std::atomic<s64> native_list_shown_ms{-1'000'000};
 
 void PutUtf16(std::array<char16_t, 64>& out, const std::string& text) {
@@ -1549,8 +1571,9 @@ void PS4_SYSV_ABI UpdatePartyList(u64, const GuestRegisterSnapshot* registers) {
     if (hud < 0x10000) {
         return;
     }
-    if (hud != native_list.hud) {
-        native_list = NativePartyList{.hud = hud};
+    const u64 generation = hud_generation.load(std::memory_order_relaxed);
+    if (PartyListOutdated(hud, generation, native_list.hud, native_list.generation)) {
+        native_list = NativePartyList{.hud = hud, .generation = generation};
         native_list.ready = MakePartyListTags(hud);
     }
     if (!native_list.ready) {
@@ -1618,6 +1641,13 @@ void InstallPartyNameplates(u64 base, u64 image_size) {
         return;
     }
     coop_features.On("party nameplates");
+    // Without it a new HUD is told by its address only.
+    if (HudConstructOffset + HudConstructPrologue.size() > image_size ||
+        !InstallCoopHook(reinterpret_cast<void*>(base + HudConstructOffset), HudConstructPrologue,
+                         0, CountHudMade)) {
+        LOG_WARNING(Debug, "Bloodborne party HUD: no hook on the HUD's constructor ({})",
+                    SiteFailure(base, image_size, HudConstructOffset));
+    }
     if (HudTicksTagsDoneOffset + HudTicksTagsDone.size() > image_size ||
         !InstallCoopHook(reinterpret_cast<void*>(base + HudTicksTagsDoneOffset), HudTicksTagsDone,
                          0, UpdatePartyList)) {
@@ -1688,9 +1718,14 @@ void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& st
         party_attack_presses.fetch_add(1, std::memory_order_relaxed);
     }
     if (!party_death_down.load(std::memory_order_relaxed)) {
+        party_downed_menu.store(false, std::memory_order_relaxed);
         return;
     }
-    const PadInput kept = DownedPad({.buttons = buttons, .sticks = sticks, .l2 = l2, .r2 = r2});
+    const bool menu =
+        DownedMenuOpen(party_downed_menu.load(std::memory_order_relaxed), before, buttons);
+    party_downed_menu.store(menu, std::memory_order_relaxed);
+    const PadInput kept =
+        DownedPad({.buttons = buttons, .sticks = sticks, .l2 = l2, .r2 = r2}, menu);
     buttons = kept.buttons;
     sticks = kept.sticks;
     l2 = kept.l2;
