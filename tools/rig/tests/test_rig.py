@@ -29,6 +29,7 @@ VERBS = {
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
     "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
+    "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
@@ -121,7 +122,7 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual(scenarios.attack("marked"), ["attack marked 40"])
 
 
-SUITE_VERBS = VERBS | {"sync", "chapter", "keep-going", "glide"}
+SUITE_VERBS = VERBS
 PLAIN_NAME = r"^[A-Za-z0-9_-]{1,40}$"  # AutoplaySyncPath's
 
 
