@@ -338,6 +338,21 @@ TEST(BloodbornePartyDeath, ASummonedGuestStandsOnlyOnceItArrived) {
         << "a join with no load counts after a while";
 }
 
+// The rig checks SessionArrival by what each game posts: its vitals are logged when the vital or
+// the map changes ("off" to "up" once a summoned guest arrived), not on every post.
+TEST(BloodbornePartyDeath, VitalsPostsAreLoggedOnChange) {
+    VitalsPostLog log;
+    EXPECT_EQ(log.Next(Vital::Off, 0), "posting off (map 0x0)") << "the first post";
+    EXPECT_EQ(log.Next(Vital::Off, 0), std::nullopt) << "the same again";
+    EXPECT_EQ(log.Next(Vital::Up, CentralYharnam),
+              "posting up (map 0x18010000), was off (map 0x0)");
+    EXPECT_EQ(log.Next(Vital::Up, CentralYharnam), std::nullopt);
+    EXPECT_EQ(log.Next(Vital::Down, CentralYharnam),
+              "posting down (map 0x18010000), was up (map 0x18010000)");
+    EXPECT_EQ(log.Next(Vital::Down, 0x15000000),
+              "posting down (map 0x15000000), was down (map 0x18010000)");
+}
+
 TEST(BloodbornePartyDeath, EncodesTheVitalsUpdate) {
     MemberVitals self = Member(Kaniel, CentralYharnam, Vital::Down, 7, {-12.5f, 3.0f, 40.25f});
     self.hp = 1;

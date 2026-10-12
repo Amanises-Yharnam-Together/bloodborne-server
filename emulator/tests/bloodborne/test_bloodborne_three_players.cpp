@@ -268,6 +268,25 @@ TEST(BloodborneThreePlayers, KillEchoesReachOnlyTheMembersElsewhere) {
     EXPECT_TRUE(GrantsKillEchoes(0, 0x18010000)) << "an old post without a map";
 }
 
+// Rig smoke 2026-10-12 (run 143240): the host killed an enemy beside the first guest while the
+// second was in the Dream. The game gave both of them the kill's echoes, both posted them, and
+// the second guest got +995 twice. Of the members on the killer's map only the first by board
+// name posts; with nobody elsewhere nobody does.
+TEST(BloodborneThreePlayers, OneMemberOnTheKillersMapPostsItsEchoes) {
+    constexpr u32 Yharnam = 0x18010000;
+    constexpr u32 Dream = 0x15000000;
+    const std::vector<MemberMap> board{
+        {"rig_host", Yharnam}, {"rig_guest", Yharnam}, {"rig_guest2", Dream}};
+    EXPECT_TRUE(PostsKillEchoes(board, "rig_guest", Yharnam));
+    EXPECT_FALSE(PostsKillEchoes(board, "rig_host", Yharnam)) << "the guest beside it posts";
+    EXPECT_TRUE(PostsKillEchoes(board, "rig_guest2", Dream)) << "alone on its map";
+    const std::vector<MemberMap> together{{"rig_host", Yharnam}, {"rig_guest", Yharnam}};
+    EXPECT_FALSE(PostsKillEchoes(together, "rig_guest", Yharnam)) << "the game shares them";
+    const std::vector<MemberMap> host_alone{
+        {"rig_host", Yharnam}, {"rig_guest", Dream}, {"rig_guest2", Dream}};
+    EXPECT_TRUE(PostsKillEchoes(host_alone, "rig_host", Yharnam));
+}
+
 // The kill board names its posters: one member's visit ending takes back only its own kill.
 TEST(BloodborneThreePlayers, AKillStandsUntilEveryKillerTakesItBack) {
     EXPECT_EQ(ParseKillBoard("4\n268517532 1 guestA\n268517532 1 guestB\n7 0\n"),

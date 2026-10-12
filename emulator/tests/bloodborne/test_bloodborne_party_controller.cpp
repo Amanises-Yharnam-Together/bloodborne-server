@@ -1373,6 +1373,37 @@ TEST(BloodborneSharedKills, AMembersKillsLastForItsVisit) {
     EXPECT_EQ(fresh.Observe(3, one_dead), Changes{});
 }
 
+// Rig smoke 2026-10-12 (run 143240): Father Gascoigne (0x1001409c/0x1001409e), dead in the
+// guests' saves, was put down by their worlds 5.7 s after the join's load, past the settling
+// time, and both guests posted him; every other game then hid his body, and the second guest
+// hid 3 enemies where the host had killed 1. He went down at full HP: a boss-sized character
+// dying with no damage seen before is its world putting it down, not a kill. Big ordinary
+// enemies (late game, co-op scaled) hit to death still are.
+TEST(BloodborneSharedKills, ABossSizedPutDownIsNoKill) {
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    const std::vector<SeenCharacter> alive{{0x1001409c, 2031, 0xA000, false, true},
+                                           {0x1001400b, 484, 0xB000}};
+    EXPECT_EQ(kills.Observe(1, alive), Changes{});
+    const std::vector<SeenCharacter> both_dead{{0x1001409c, 0, 0xA000, false, false},
+                                               {0x1001400b, 0, 0xB000}};
+    EXPECT_EQ(kills.Observe(1, both_dead), (Changes{{0x1001400b, true}}))
+        << "the ordinary enemy only";
+    EXPECT_EQ(kills.Killed(), (std::vector<u32>{0x1001400b}));
+}
+
+TEST(BloodborneSharedKills, ABossSizedEnemyHitToDeathIsAKill) {
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{0x10024050, 1800, 0xC000, false, true}}),
+              Changes{});
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{0x10024050, 900, 0xC000, false, false}}),
+              Changes{})
+        << "hurt";
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{0x10024050, 0, 0xC000, false, false}}),
+              (Changes{{0x10024050, true}}));
+}
+
 // Kaniel 2026-10-11: the host and Lisara went to the Dream and back while krolebord stayed in
 // Central Yharnam, and half of it was alive again: the host's trip took its 82 kills back. While
 // another member stays on the map, a visit's kills stand (held), hidden for this member too

@@ -546,7 +546,7 @@ void SetGuestPickupsBeforeMapItems();
 // Diagnostics: who adds echoes (AddSouls 0x018FC600(player, amount, _, apply rates)).
 constexpr u64 AddSoulsOffset = 0x018FC600;
 
-bool SomeoneElsewhereInSession();
+bool PostsKillEchoesInSession();
 void InstallSharedLoot(u64 base, u64 image_size);
 void InstallItemModuleDiagnostics(u64 base, u64 image_size);
 void LogItemModuleChecks();

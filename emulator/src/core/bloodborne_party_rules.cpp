@@ -548,7 +548,7 @@ void PS4_SYSV_ABI NoteAddSouls(u64, const GuestRegisterSnapshot* registers) {
     LOG_INFO(Debug, "Bloodborne echoes: +{} (rates {}) from {:#x}", amount, registers->rcx & 0xFF,
              caller >= image_base ? caller - image_base : caller);
     if (amount > 0 && caller >= image_base &&
-        SharesKillEchoes(caller - image_base, SomeoneElsewhereInSession())) {
+        SharesKillEchoes(caller - image_base, PostsKillEchoesInSession())) {
         std::scoped_lock lock{echo_board_mutex};
         echoes_to_post.push_back(KillEchoes{amount, CurrentPlace().map});
     }

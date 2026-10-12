@@ -125,6 +125,11 @@ TEST(CoopTrace, HexHandlesAndTokensRoundTrip) {
     EXPECT_TRUE(back->settling);
     EXPECT_EQ(ParseSeenToken("10014066:0:a000:0")->hp, 0);
     EXPECT_EQ(ParseSeenToken("10014066:0:a000"), std::nullopt);
+    EXPECT_FALSE(back->untouched_boss);
+    const SeenCharacter boss{0x1001409c, 2031, 0xA000, false, true};
+    EXPECT_EQ(TraceToken(boss), "1001409c:1:a000:0:1") << "the boss mark only when set";
+    EXPECT_TRUE(ParseSeenToken("1001409c:1:a000:0:1")->untouched_boss);
+    EXPECT_EQ(ParseSeenToken("1001409c:1:a000:0:2"), std::nullopt);
 
     const EnemyCopy copy{0x10014066, 401, 450, 49};
     EXPECT_EQ(TraceToken(copy), "10014066:401:450:49");
