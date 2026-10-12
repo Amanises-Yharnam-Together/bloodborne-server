@@ -1970,6 +1970,17 @@ std::vector<u32> VisitKills::Held(u32 map) const {
     return it != held.end() ? it->second : std::vector<u32>{};
 }
 
+WorldLogKills VisitKills::Standing() const {
+    WorldLogKills kills;
+    for (const auto& [map, handles] : held) {
+        kills[map].insert(handles.begin(), handles.end());
+    }
+    if (!killed.empty()) {
+        kills[static_cast<u32>(current >> 32)].insert(killed.begin(), killed.end());
+    }
+    return kills;
+}
+
 std::vector<std::pair<s32, bool>> VisitKills::Forget() {
     std::vector<std::pair<s32, bool>> changes;
     for (const u32 handle : killed) {
@@ -2112,6 +2123,16 @@ std::unordered_set<u32> PartyKills::All() const {
     std::unordered_set<u32> all;
     for (const auto& [member, handles] : by_member) {
         all.insert(handles.begin(), handles.end());
+    }
+    return all;
+}
+
+std::unordered_set<u32> PartyKills::AllExcept(std::string_view member) const {
+    std::unordered_set<u32> all;
+    for (const auto& [name, handles] : by_member) {
+        if (name != member) {
+            all.insert(handles.begin(), handles.end());
+        }
     }
     return all;
 }
@@ -3189,6 +3210,11 @@ TraceSampler::Fields TracePlaceFields(const PlaceChange& change) {
     return fields;
 }
 
+TraceSampler::Fields WorldLogTraceFields(std::string_view role, std::string_view op,
+                                         std::span<const u8> payload) {
+    return {{"role", std::string{role}}, {"op", std::string{op}}, {"payload", TraceHex(payload)}};
+}
+
 std::optional<PlaceChange> ParsePlaceFields(const TraceRecord& record) {
     const auto state_of = [](std::string_view name) -> std::optional<PlaceState> {
         for (const PlaceState state : {PlaceState::Unknown, PlaceState::Loading,
@@ -4031,6 +4057,7 @@ std::vector<u8> EncodePeerHello(const PeerHello& hello) {
     const size_t member = std::min<size_t>(hello.member.size(), 0xFF);
     payload.push_back(static_cast<u8>(member));
     payload.insert(payload.end(), hello.member.begin(), hello.member.begin() + member);
+    payload.push_back(hello.features);
     return payload;
 }
 
@@ -4048,6 +4075,9 @@ std::optional<PeerHello> DecodePeerHello(std::span<const u8> payload) {
         return std::nullopt;
     }
     hello.member.assign(payload.begin() + member_at + 1, payload.begin() + member_at + 1 + member);
+    if (const size_t features_at = member_at + 1 + member; payload.size() > features_at) {
+        hello.features = payload[features_at];
+    }
     return hello;
 }
 
@@ -4118,6 +4148,591 @@ std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills) {
         handles.insert(member.handles.begin(), member.handles.end());
     }
     return handles;
+}
+
+std::string FormatWorldLogEntry(const WorldLogEntry& entry) {
+    switch (entry.kind) {
+    case WorldLogKind::Reset:
+        return entry.map == 0 ? fmt::format("seq {} reset every map", entry.seq)
+                              : fmt::format("seq {} reset {:#x}", entry.seq, entry.map);
+    case WorldLogKind::Kill:
+        return fmt::format("seq {} kill {:#x} on {:#x}", entry.seq, entry.subject, entry.map);
+    case WorldLogKind::Unkill:
+        return fmt::format("seq {} unkill {:#x} on {:#x}", entry.seq, entry.subject, entry.map);
+    }
+    return fmt::format("seq {} kind {} on {:#x}", entry.seq, static_cast<int>(entry.kind),
+                       entry.map);
+}
+
+size_t WorldLogKillCount(const WorldLogKills& kills) {
+    size_t count = 0;
+    for (const auto& [map, handles] : kills) {
+        count += handles.size();
+    }
+    return count;
+}
+
+std::unordered_set<u32> WorldLogHandles(const WorldLogKills& kills) {
+    std::unordered_set<u32> handles;
+    for (const auto& [map, on_map] : kills) {
+        handles.insert(on_map.begin(), on_map.end());
+    }
+    return handles;
+}
+
+u64 WorldLogEpoch(u32 run, u32 count) {
+    return (u64{run} << 32) | count;
+}
+
+bool WorldLogEpochFollows(u64 next, u64 current) {
+    if (next == 0) {
+        return false;
+    }
+    if (current == 0 || (next >> 32) != (current >> 32)) {
+        return true;
+    }
+    return static_cast<u32>(next) > static_cast<u32>(current);
+}
+
+bool IsWorldLogFrameType(u8 type) {
+    return type >= WorldLogProposeType && type <= WorldLogSnapshotType;
+}
+
+bool WorldLogEnabled(const char* setting) {
+    const std::string_view value = setting != nullptr ? setting : "";
+    return value != "0" && value != "off";
+}
+
+namespace {
+
+// Reads a world log payload front to back; a read past the end fails it.
+class PayloadReader {
+public:
+    explicit PayloadReader(std::span<const u8> bytes) : bytes{bytes} {}
+    template <typename T>
+    std::optional<T> Next() {
+        if (failed || at + sizeof(T) > bytes.size()) {
+            failed = true;
+            return std::nullopt;
+        }
+        const T value = ReadLittleEndian<T>(bytes, at);
+        at += sizeof(T);
+        return value;
+    }
+    std::optional<std::string> Name() {
+        const auto size = Next<u8>();
+        if (!size || at + *size > bytes.size()) {
+            failed = true;
+            return std::nullopt;
+        }
+        std::string name(bytes.begin() + at, bytes.begin() + at + *size);
+        at += *size;
+        return name;
+    }
+    // Everything read, and nothing left over.
+    bool Done() const {
+        return !failed && at == bytes.size();
+    }
+
+private:
+    std::span<const u8> bytes;
+    size_t at = 0;
+    bool failed = false;
+};
+
+void AppendName(std::vector<u8>& payload, std::string_view name) {
+    const size_t size = std::min<size_t>(name.size(), 0xFF);
+    payload.push_back(static_cast<u8>(size));
+    payload.insert(payload.end(), name.begin(), name.begin() + size);
+}
+
+// u16 maps, then per map: u32 map, u16 count, the handles (u32). At most WorldLogHandlesPerFrame
+// handles in all.
+void AppendKills(std::vector<u8>& payload, const WorldLogKills& kills) {
+    std::vector<std::pair<u32, std::vector<u32>>> kept;
+    size_t room = WorldLogHandlesPerFrame;
+    for (const auto& [map, handles] : kills) {
+        const auto end =
+            std::next(handles.begin(), static_cast<std::ptrdiff_t>(std::min(room, handles.size())));
+        std::vector<u32> some(handles.begin(), end);
+        room -= some.size();
+        if (!some.empty()) {
+            kept.emplace_back(map, std::move(some));
+        }
+    }
+    AppendLittleEndian(payload, static_cast<u16>(kept.size()));
+    for (const auto& [map, handles] : kept) {
+        AppendLittleEndian(payload, map);
+        AppendLittleEndian(payload, static_cast<u16>(handles.size()));
+        for (const u32 handle : handles) {
+            AppendLittleEndian(payload, handle);
+        }
+    }
+}
+
+std::optional<WorldLogKills> ReadKills(PayloadReader& reader) {
+    const auto maps = reader.Next<u16>();
+    if (!maps) {
+        return std::nullopt;
+    }
+    WorldLogKills kills;
+    for (u16 index = 0; index < *maps; ++index) {
+        const auto map = reader.Next<u32>();
+        const auto count = reader.Next<u16>();
+        if (!map || !count || *count == 0) {
+            return std::nullopt;
+        }
+        std::set<u32>& handles = kills[*map];
+        for (u16 at = 0; at < *count; ++at) {
+            const auto handle = reader.Next<u32>();
+            if (!handle) {
+                return std::nullopt;
+            }
+            handles.insert(*handle);
+        }
+    }
+    return kills;
+}
+
+} // namespace
+
+std::vector<u8> EncodeWorldLogProposal(const WorldLogProposal& proposal) {
+    std::vector<u8> payload;
+    AppendName(payload, proposal.member);
+    AppendLittleEndian(payload, proposal.epoch);
+    AppendLittleEndian(payload, proposal.run);
+    AppendLittleEndian(payload, proposal.number);
+    AppendKills(payload, proposal.kills);
+    return payload;
+}
+
+std::optional<WorldLogProposal> DecodeWorldLogProposal(std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    auto member = reader.Name();
+    const auto epoch = reader.Next<u64>();
+    const auto run = reader.Next<u32>();
+    const auto number = reader.Next<u32>();
+    auto kills = ReadKills(reader);
+    if (!member || !epoch || !run || !number || !kills || !reader.Done()) {
+        return std::nullopt;
+    }
+    return WorldLogProposal{std::move(*member), *epoch, *run, *number, std::move(*kills)};
+}
+
+// The host's name, epoch, last seq, the entry count (u8) and the first entry's seq (u64), then
+// each entry: kind (u8), map, subject.
+std::vector<u8> EncodeWorldLogBatch(const WorldLogBatch& batch) {
+    std::vector<u8> payload;
+    AppendName(payload, batch.host);
+    AppendLittleEndian(payload, batch.epoch);
+    AppendLittleEndian(payload, batch.last);
+    const size_t count = std::min<size_t>(batch.entries.size(), 0xFF);
+    payload.push_back(static_cast<u8>(count));
+    AppendLittleEndian(payload, count > 0 ? batch.entries.front().seq : batch.last + 1);
+    for (size_t index = 0; index < count; ++index) {
+        const WorldLogEntry& entry = batch.entries[index];
+        payload.push_back(static_cast<u8>(entry.kind));
+        AppendLittleEndian(payload, entry.map);
+        AppendLittleEndian(payload, entry.subject);
+    }
+    return payload;
+}
+
+std::optional<WorldLogBatch> DecodeWorldLogBatch(std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    auto host = reader.Name();
+    const auto epoch = reader.Next<u64>();
+    const auto last = reader.Next<u64>();
+    const auto count = reader.Next<u8>();
+    const auto first = reader.Next<u64>();
+    if (!host || !epoch || !last || !count || !first ||
+        (*count > 0 && (*first == 0 || *first + *count - 1 > *last))) {
+        return std::nullopt;
+    }
+    WorldLogBatch batch{std::move(*host), *epoch, *last, {}};
+    for (u8 index = 0; index < *count; ++index) {
+        const auto kind = reader.Next<u8>();
+        const auto map = reader.Next<u32>();
+        const auto subject = reader.Next<u32>();
+        if (!kind || !map || !subject) {
+            return std::nullopt;
+        }
+        batch.entries.push_back(
+            {*first + index, *epoch, *map, static_cast<WorldLogKind>(*kind), *subject});
+    }
+    if (!reader.Done()) {
+        return std::nullopt;
+    }
+    return batch;
+}
+
+std::vector<u8> EncodeWorldLogSnapshotRequest(const WorldLogSnapshotRequest& request) {
+    std::vector<u8> payload;
+    AppendName(payload, request.member);
+    AppendLittleEndian(payload, request.epoch);
+    AppendLittleEndian(payload, request.seq);
+    return payload;
+}
+
+std::optional<WorldLogSnapshotRequest> DecodeWorldLogSnapshotRequest(std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    auto member = reader.Name();
+    const auto epoch = reader.Next<u64>();
+    const auto seq = reader.Next<u64>();
+    if (!member || !epoch || !seq || !reader.Done()) {
+        return std::nullopt;
+    }
+    return WorldLogSnapshotRequest{std::move(*member), *epoch, *seq};
+}
+
+std::vector<u8> EncodeWorldLogSnapshot(const WorldLogSnapshot& snapshot) {
+    std::vector<u8> payload;
+    AppendName(payload, snapshot.host);
+    AppendLittleEndian(payload, snapshot.epoch);
+    AppendLittleEndian(payload, snapshot.last);
+    payload.push_back(snapshot.part);
+    payload.push_back(snapshot.parts);
+    AppendKills(payload, snapshot.kills);
+    return payload;
+}
+
+std::optional<WorldLogSnapshot> DecodeWorldLogSnapshot(std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    auto host = reader.Name();
+    const auto epoch = reader.Next<u64>();
+    const auto last = reader.Next<u64>();
+    const auto part = reader.Next<u8>();
+    const auto parts = reader.Next<u8>();
+    auto kills = ReadKills(reader);
+    if (!host || !epoch || !last || !part || !parts || *part >= *parts || !kills ||
+        !reader.Done()) {
+        return std::nullopt;
+    }
+    return WorldLogSnapshot{std::move(*host), *epoch, *last, *part, *parts, std::move(*kills)};
+}
+
+std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
+                                         std::span<const WorldLogEntry> entries) {
+    std::vector<WorldLogBatch> batches;
+    for (size_t at = 0; at < entries.size(); at += WorldLogEntriesPerFrame) {
+        const size_t count = std::min(WorldLogEntriesPerFrame, entries.size() - at);
+        const auto from = entries.begin() + static_cast<std::ptrdiff_t>(at);
+        batches.push_back(
+            {std::string{host}, epoch, last,
+             std::vector<WorldLogEntry>(from, from + static_cast<std::ptrdiff_t>(count))});
+    }
+    if (batches.empty()) {
+        batches.push_back({std::string{host}, epoch, last, {}});
+    }
+    return batches;
+}
+
+WorldLogEntry WorldLogHost::Append(WorldLogKind kind, u32 map, u32 subject) {
+    return {++last, epoch, map, kind, subject};
+}
+
+void WorldLogHost::Own(const std::string& member, u32 map, u32 handle,
+                       std::vector<WorldLogEntry>& entries) {
+    const auto [it, added] = standing.try_emplace(handle, Standing{map, {}});
+    it->second.by.insert(member);
+    if (added) {
+        entries.push_back(Append(WorldLogKind::Kill, map, handle));
+    }
+}
+
+void WorldLogHost::Disown(const std::string& member, u32 handle,
+                          std::vector<WorldLogEntry>& entries) {
+    const auto it = standing.find(handle);
+    if (it == standing.end()) {
+        return;
+    }
+    it->second.by.erase(member);
+    if (it->second.by.empty()) {
+        entries.push_back(Append(WorldLogKind::Unkill, it->second.map, handle));
+        standing.erase(it);
+    }
+}
+
+std::vector<WorldLogEntry> WorldLogHost::Start(u64 new_epoch, bool keep_members) {
+    epoch = new_epoch;
+    last = 0;
+    if (!keep_members) {
+        members.clear();
+        standing.clear();
+    }
+    std::vector<WorldLogEntry> entries{Append(WorldLogKind::Reset, 0, 0)};
+    for (const auto& [map, handles] : Kills()) {
+        for (const u32 handle : handles) {
+            entries.push_back(Append(WorldLogKind::Kill, map, handle));
+        }
+    }
+    return entries;
+}
+
+WorldLogHost::Taken WorldLogHost::Propose(const WorldLogProposal& proposal) {
+    Taken taken;
+    const auto known = members.find(proposal.member);
+    const bool late = known != members.end() && known->second.run == proposal.run &&
+                      proposal.number <= known->second.number;
+    if (late || (proposal.epoch != 0 && proposal.epoch != epoch)) {
+        taken.stale = true;
+        return taken;
+    }
+    Member& member = members[proposal.member];
+    const std::unordered_set<u32> before = WorldLogHandles(member.kills);
+    const std::unordered_set<u32> after = WorldLogHandles(proposal.kills);
+    for (const auto& [map, handles] : member.kills) {
+        for (const u32 handle : handles) {
+            if (!after.contains(handle)) {
+                Disown(proposal.member, handle, taken.entries);
+            }
+        }
+    }
+    for (const auto& [map, handles] : proposal.kills) {
+        for (const u32 handle : handles) {
+            if (!before.contains(handle)) {
+                Own(proposal.member, map, handle, taken.entries);
+            }
+        }
+    }
+    member = Member{proposal.run, proposal.number, proposal.kills};
+    return taken;
+}
+
+WorldLogKills WorldLogHost::Kills() const {
+    WorldLogKills kills;
+    for (const auto& [handle, kill] : standing) {
+        kills[kill.map].insert(handle);
+    }
+    return kills;
+}
+
+std::vector<WorldLogSnapshot> WorldLogHost::Snapshot(std::string_view host) const {
+    std::vector<WorldLogSnapshot> parts{{std::string{host}, epoch, last, 0, 1, {}}};
+    size_t in_part = 0;
+    for (const auto& [map, handles] : Kills()) {
+        for (const u32 handle : handles) {
+            if (in_part == WorldLogHandlesPerFrame && parts.size() < 0xFF) {
+                parts.push_back(
+                    {std::string{host}, epoch, last, static_cast<u8>(parts.size()), 1, {}});
+                in_part = 0;
+            }
+            parts.back().kills[map].insert(handle);
+            ++in_part;
+        }
+    }
+    for (WorldLogSnapshot& part : parts) {
+        part.parts = static_cast<u8>(parts.size());
+    }
+    return parts;
+}
+
+void WorldLogMember::Reset() {
+    epoch = 0;
+    applied = 0;
+    host_last = 0;
+    based = false;
+    host.clear();
+    waiting.clear();
+    heard_ms.reset();
+    asked_ms.reset();
+    partial.reset();
+    kills.clear();
+}
+
+bool WorldLogMember::Follow(u64 next_epoch, std::string_view next_host, s64 now_ms, Step& step) {
+    if (next_epoch != epoch) {
+        if (!WorldLogEpochFollows(next_epoch, epoch)) {
+            step.stale = true;
+            return false;
+        }
+        Reset();
+        epoch = next_epoch;
+        step.new_epoch = true;
+    }
+    host = next_host;
+    heard_ms = now_ms;
+    return true;
+}
+
+bool WorldLogMember::Behind() const {
+    return !based || !waiting.empty() || host_last > applied;
+}
+
+void WorldLogMember::Apply(const WorldLogEntry& entry) {
+    switch (entry.kind) {
+    case WorldLogKind::Reset:
+        if (entry.map == 0) {
+            kills.clear();
+        } else {
+            kills.erase(entry.map);
+        }
+        return;
+    case WorldLogKind::Kill:
+        kills[entry.map].insert(entry.subject);
+        return;
+    case WorldLogKind::Unkill:
+        if (const auto on_map = kills.find(entry.map); on_map != kills.end()) {
+            on_map->second.erase(entry.subject);
+            if (on_map->second.empty()) {
+                kills.erase(on_map);
+            }
+        }
+        return;
+    }
+}
+
+void WorldLogMember::Drain(Step& step) {
+    std::erase_if(waiting, [this](const auto& entry) { return entry.first <= applied; });
+    while (based && !waiting.empty() && waiting.begin()->first == applied + 1) {
+        Apply(waiting.begin()->second);
+        step.applied.push_back(waiting.begin()->second);
+        applied = waiting.begin()->first;
+        waiting.erase(waiting.begin());
+    }
+}
+
+WorldLogMember::Step WorldLogMember::Take(const WorldLogBatch& batch, s64 now_ms) {
+    Step step;
+    if (!Follow(batch.epoch, batch.host, now_ms, step)) {
+        return step;
+    }
+    host_last = std::max(host_last, batch.last);
+    for (const WorldLogEntry& entry : batch.entries) {
+        if (entry.seq > applied && waiting.size() < WorldLogWaitingCap) {
+            waiting.emplace(entry.seq, entry);
+        }
+    }
+    // A log from its start needs no snapshot.
+    if (!based && applied == 0 && !waiting.empty() && waiting.begin()->first == 1) {
+        based = true;
+    }
+    Drain(step);
+    step.gap = Behind();
+    return step;
+}
+
+WorldLogMember::Step WorldLogMember::Take(const WorldLogSnapshot& part, s64 now_ms) {
+    Step step;
+    if (!Follow(part.epoch, part.host, now_ms, step)) {
+        return step;
+    }
+    host_last = std::max(host_last, part.last);
+    if (based && part.last <= applied) {
+        step.gap = Behind();
+        return step;
+    }
+    if (!partial || partial->last != part.last || partial->parts != part.parts) {
+        partial = PartialSnapshot{part.last, part.parts, {}};
+    }
+    partial->got[part.part] = part.kills;
+    if (partial->got.size() < partial->parts) {
+        step.gap = Behind();
+        return step;
+    }
+    kills.clear();
+    for (const auto& [index, share] : partial->got) {
+        for (const auto& [map, handles] : share) {
+            kills[map].insert(handles.begin(), handles.end());
+        }
+    }
+    applied = partial->last;
+    based = true;
+    partial.reset();
+    step.snapshot = true;
+    Drain(step);
+    step.gap = Behind();
+    return step;
+}
+
+bool WorldLogMember::SnapshotDue(s64 now_ms) {
+    if (!heard_ms || !Behind() || (asked_ms && now_ms - *asked_ms < WorldLogSnapshotRetryMs)) {
+        return false;
+    }
+    asked_ms = now_ms;
+    return true;
+}
+
+bool WorldLogMember::Fresh(s64 now_ms) const {
+    return !Behind() && heard_ms && now_ms - *heard_ms <= WorldLogLifeMs;
+}
+
+namespace {
+
+// What the peers' hellos say: a definite no (a peer without the log), or unsure (no peers, or a
+// peer's hello not here yet).
+struct PeerVerdict {
+    std::optional<std::string> no;
+    std::optional<std::string> unsure;
+};
+PeerVerdict JudgePeers(std::span<const WorldLogPeer> peers) {
+    PeerVerdict verdict;
+    if (peers.empty()) {
+        verdict.unsure = "no peers";
+    }
+    for (const WorldLogPeer& peer : peers) {
+        if (!peer.hello) {
+            verdict.unsure = verdict.unsure.value_or("no hello from " + peer.name);
+        } else if (peer.hello->protocol < 2) {
+            verdict.no = fmt::format("{} runs co-op protocol {}", peer.name, peer.hello->protocol);
+            return verdict;
+        } else if ((peer.hello->features & WorldLogFeature) == 0) {
+            verdict.no = peer.name + " has it switched off";
+            return verdict;
+        }
+    }
+    return verdict;
+}
+
+} // namespace
+
+bool WorldLogPath::Decide(bool enabled, std::span<const WorldLogPeer> peers, s64 now_ms) {
+    const PeerVerdict verdict =
+        enabled ? JudgePeers(peers) : PeerVerdict{std::string{"switched off here"}, {}};
+    bool next = true;
+    if (verdict.no) {
+        next = false;
+        why = *verdict.no;
+        unsure_since.reset();
+    } else if (verdict.unsure) {
+        unsure_since = unsure_since.value_or(now_ms);
+        if (!active || now_ms - *unsure_since >= WorldLogUnsureMs) {
+            next = false;
+            why = *verdict.unsure;
+        }
+    } else {
+        unsure_since.reset();
+        why = peers.size() == 1 ? "1 peer has it" : fmt::format("{} peers have it", peers.size());
+    }
+    changed = changed || next != active;
+    active = next;
+    return active;
+}
+
+std::optional<std::string> WorldLogPath::TakeChange() {
+    if (!changed) {
+        return std::nullopt;
+    }
+    changed = false;
+    return active ? fmt::format("Co-op world log: on, kills go through the host's log ({})", why)
+                  : fmt::format("Co-op world log: off, kills go through the kill board ({})", why);
+}
+
+std::vector<u8> EncodeWorldLogStart(u64 epoch, bool keep_members) {
+    std::vector<u8> payload;
+    AppendLittleEndian(payload, epoch);
+    payload.push_back(keep_members ? 1 : 0);
+    return payload;
+}
+
+std::optional<std::pair<u64, bool>> DecodeWorldLogStart(std::span<const u8> payload) {
+    PayloadReader reader{payload};
+    const auto epoch = reader.Next<u64>();
+    const auto keep = reader.Next<u8>();
+    if (!epoch || !keep || *keep > 1 || !reader.Done()) {
+        return std::nullopt;
+    }
+    return std::pair{*epoch, *keep == 1};
 }
 
 std::optional<DirectVitals> ParseVitalsUpdate(std::string_view line) {

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include <fmt/format.h>
 #include <gtest/gtest.h>
 
 #include "core/bloodborne_party.h"
@@ -2220,7 +2221,9 @@ TEST(BloodbornePeerHello, AHelloReadsBack) {
     std::vector<u8> longer = payload;
     longer.push_back(7);
     EXPECT_EQ(DecodePeerHello(longer), hello) << "a later build may add fields at the end";
-    for (size_t size = 0; size < payload.size(); ++size) {
+    // Without its last byte (the features) it is a protocol 1 hello: see
+    // AHelloAdvertisesTheWorldLog.
+    for (size_t size = 0; size + 1 < payload.size(); ++size) {
         EXPECT_FALSE(DecodePeerHello(std::span{payload}.first(size))) << "cut at " << size;
     }
     std::vector<u8> overlong = payload;
@@ -2258,7 +2261,9 @@ TEST(BloodbornePeerHello, ADifferentBuildIsReportedOncePerPeer) {
     protocol.protocol = CoopProtocolVersion + 1;
     const auto protocol_warning = check.Take(protocol, mine);
     ASSERT_TRUE(protocol_warning);
-    EXPECT_NE(protocol_warning->find("co-op protocol 2"), std::string::npos) << *protocol_warning;
+    EXPECT_NE(protocol_warning->find(fmt::format("co-op protocol {}", CoopProtocolVersion + 1)),
+              std::string::npos)
+        << *protocol_warning;
 
     PeerHello events = same;
     events.member = "71";

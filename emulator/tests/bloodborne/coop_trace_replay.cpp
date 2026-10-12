@@ -99,6 +99,11 @@ std::vector<std::string> CoopTraceReplay::Feed(std::string_view line) {
         FrameIn(*record, out);
     } else if (record->kind == "board-in") {
         BoardIn(*record, out);
+    } else if (record->kind == "wlog-in") {
+        WorldLogIn(*record, out);
+    } else if (record->kind == "wlog-path") {
+        out.push_back(fmt::format("world log path: {} ({})", record->Field("path").value_or("?"),
+                                  record->Field("why").value_or("?")));
     } else if (record->kind == "trace-dropped") {
         out.push_back(fmt::format("trace dropped {} lines", record->Field("count").value_or("?")));
     }
@@ -283,6 +288,82 @@ void CoopTraceReplay::BoardIn(const TraceRecord& record, std::vector<std::string
             fmt::format("board kills: {}",
                         now.empty() ? "none" : Handles(std::vector<u32>(now.begin(), now.end()))));
         board_kills = std::move(now);
+    }
+}
+
+// The world log's inputs (WorldLogTraceFields): the host's starts and proposals, a member's
+// batches, snapshots and resets.
+void CoopTraceReplay::WorldLogIn(const TraceRecord& record, std::vector<std::string>& out) {
+    const std::string role = record.Field("role").value_or("");
+    const std::string op = record.Field("op").value_or("");
+    const auto payload = ParseTraceHex(record.Field("payload").value_or(""));
+    if (!payload) {
+        out.push_back(fmt::format("wlog-in: unreadable {} {}", role, op));
+    } else if (role == "host") {
+        WorldLogHostIn(op, *payload, out);
+    } else {
+        WorldLogMemberIn(op, *payload, record.utc_ms, out);
+    }
+}
+
+void CoopTraceReplay::WorldLogHostIn(std::string_view op, std::span<const u8> payload,
+                                     std::vector<std::string>& out) {
+    std::vector<WorldLogEntry> entries;
+    if (const auto start = op == "start" ? DecodeWorldLogStart(payload) : std::nullopt) {
+        out.push_back(fmt::format("wlog host start epoch {:x}{}", start->first,
+                                  start->second ? " keeping the members' kills" : ""));
+        entries = wlog_host.Start(start->first, start->second);
+    } else if (const auto proposal =
+                   op == "propose" ? DecodeWorldLogProposal(payload) : std::nullopt) {
+        WorldLogHost::Taken taken = wlog_host.Propose(*proposal);
+        if (taken.stale) {
+            out.push_back(
+                fmt::format("wlog host dropped a late proposal from {}", proposal->member));
+        }
+        entries = std::move(taken.entries);
+    } else {
+        out.push_back(fmt::format("wlog-in: unreadable host {}", op));
+    }
+    for (const WorldLogEntry& entry : entries) {
+        out.push_back("wlog host appended " + FormatWorldLogEntry(entry));
+    }
+}
+
+void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> payload, s64 at,
+                                       std::vector<std::string>& out) {
+    WorldLogMember::Step step;
+    u64 host_last = 0;
+    if (op == "reset") {
+        wlog_member.Reset();
+        out.push_back("wlog member reset");
+        return;
+    }
+    if (const auto batch = op == "entries" ? DecodeWorldLogBatch(payload) : std::nullopt) {
+        step = wlog_member.Take(*batch, at);
+        host_last = batch->last;
+    } else if (const auto part =
+                   op == "snapshot" ? DecodeWorldLogSnapshot(payload) : std::nullopt) {
+        step = wlog_member.Take(*part, at);
+        host_last = part->last;
+    } else {
+        out.push_back(fmt::format("wlog-in: unreadable member {}", op));
+        return;
+    }
+    if (step.stale) {
+        out.push_back("wlog member dropped an older log's frame");
+    }
+    if (step.new_epoch) {
+        out.push_back(fmt::format("wlog member follows epoch {:x}", wlog_member.Epoch()));
+    }
+    if (step.snapshot) {
+        out.push_back(fmt::format("wlog member snapshot to seq {}", host_last));
+    }
+    for (const WorldLogEntry& entry : step.applied) {
+        out.push_back("wlog member applied " + FormatWorldLogEntry(entry));
+    }
+    if (step.gap) {
+        out.push_back(fmt::format("wlog member gap: has seq {}, host at {}", wlog_member.Applied(),
+                                  host_last));
     }
 }
 

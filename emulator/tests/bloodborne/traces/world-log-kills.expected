@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The guest follows the host's log, mends the lost seq 3 with a snapshot (seq 4 is in it), starts
+# over at the wipe's new epoch, drops the old log's late frame and forgets the log when it leaves.
+world log path: log (1 peer has it)
+wlog member follows epoch 5a1700000001
+wlog member applied seq 1 reset every map
+wlog member applied seq 2 kill 0x10014066 on 0x18010000
+wlog member gap: has seq 2, host at 4
+wlog member snapshot to seq 4
+life wipe
+wlog member follows epoch 5a1700000002
+wlog member applied seq 1 reset every map
+wlog member applied seq 2 kill 0x1001400a on 0x18010000
+wlog member dropped an older log's frame
+wlog member applied seq 3 unkill 0x1001400a on 0x18010000
+life leave
+wlog member reset
+world log path: board (no peers)
