@@ -710,16 +710,9 @@ void PS4_SYSV_ABI RecordReviveHit(u64, const GuestRegisterSnapshot* registers) {
     }
 }
 
-// Each tick: the downed bodies here take the invaders' team (DownedTeams) and give it back once up;
-// the hits the local player landed on them count for their revive.
-void StrikeDownedBodies(PartyDeathRun& run, std::span<const MemberVitals> board,
-                        std::string_view self, u32 map, bool in_session) {
-    if (!real_hits_installed.load(std::memory_order_relaxed)) {
-        return;
-    }
-    const std::vector<OtherPlayer> players = OtherPlayers();
-    const std::vector<DownedBody> bodies =
-        in_session ? DownedBodies(board, self, map, players) : std::vector<DownedBody>{};
+// The downed bodies here take the invaders' team (DownedTeams) and give it back once up.
+void SetDownedTeams(PartyDeathRun& run, std::span<const DownedBody> bodies,
+                    std::span<const OtherPlayer> players) {
     std::vector<CopyTeam> downed, present;
     for (const DownedBody& body : bodies) {
         downed.push_back(
@@ -739,6 +732,10 @@ void StrikeDownedBodies(PartyDeathRun& run, std::span<const MemberVitals> board,
             }
         }
     }
+}
+
+// The hits the local player landed on the downed bodies (RecordReviveHit) count for their revive.
+void CountRealReviveHits(PartyDeathRun& run, std::span<const DownedBody> bodies) {
     std::vector<std::pair<u32, u32>> hits;
     {
         std::scoped_lock lock{real_hits_mutex};
@@ -764,6 +761,20 @@ void StrikeDownedBodies(PartyDeathRun& run, std::span<const MemberVitals> board,
                      body->member.member, body->member.down, counted, damage, rating);
         }
     }
+}
+
+// Each tick: the downed bodies here take the invaders' team (DownedTeams) and give it back once up;
+// the hits the local player landed on them count for their revive.
+void StrikeDownedBodies(PartyDeathRun& run, std::span<const MemberVitals> board,
+                        std::string_view self, u32 map, bool in_session) {
+    if (!real_hits_installed.load(std::memory_order_relaxed)) {
+        return;
+    }
+    const std::vector<OtherPlayer> players = OtherPlayers();
+    const std::vector<DownedBody> bodies =
+        in_session ? DownedBodies(board, self, map, players) : std::vector<DownedBody>{};
+    SetDownedTeams(run, bodies, players);
+    CountRealReviveHits(run, bodies);
 }
 
 // The fall damage step (0x01A35C33) takes a fall into the void as a fixed lethal height while
@@ -1045,156 +1056,126 @@ void DieFromDown(PartyDeathRun& run, u64 player, u64 data, bool reset, std::stri
              run.downed.DownId(), reset, killed);
 }
 
-} // namespace
+// One party death tick's view of the world (see TickPartyDeath).
+struct DeathTick {
+    u64 player = 0;
+    u64 data = 0;
+    s64 now = 0;
+    bool in_session = false;
+    u32 map = 0;
+    VitalsView view;
+    std::span<const MemberVitals> board;
+    bool armed = false;
+    bool alive = false;
+};
 
-namespace Coop {
+// Without party death the vitals board still says who stands on which map: a host back from a trip
+// asks a member that was still joining for its data only once it stands here (FinishWaitingJoins;
+// rig 2026-10-11, party death off: the guest stayed unseen).
+void PostVitalsWithoutPartyDeath() {
+    const u64 data = PlayerDataModule(GetLocalPlayer());
+    if (data >= 0x10000 && HasMemoryAccess(data, 0x100, MemoryProt::CpuRead)) {
+        const bool in_session = InPartyHere();
+        PostVitals(MemberVitals{.map = in_session ? PlayingMap() : 0,
+                                .vital = in_session ? Vital::Up : Vital::Off,
+                                .hp = ReadValue<s32>(data, 0xF8),
+                                .max = ReadValue<s32>(data, 0xFC),
+                                .at = LocalPlayerPosition().value_or(LampPosition{})},
+                   {});
+    }
+}
 
-void TickPartyDeath() {
-    if (!party_death_hook_installed) {
-        // Without party death the vitals board still says who stands on which map: a host back
-        // from a trip asks a member that was still joining for its data only once it stands here
-        // (FinishWaitingJoins; rig 2026-10-11, party death off: the guest stayed unseen).
-        const u64 data = PlayerDataModule(GetLocalPlayer());
-        if (data >= 0x10000 && HasMemoryAccess(data, 0x100, MemoryProt::CpuRead)) {
-            const bool in_session = InPartyHere();
-            PostVitals(MemberVitals{.map = in_session ? PlayingMap() : 0,
-                                    .vital = in_session ? Vital::Up : Vital::Off,
-                                    .hp = ReadValue<s32>(data, 0xF8),
-                                    .max = ReadValue<s32>(data, 0xFC),
-                                    .at = LocalPlayerPosition().value_or(LampPosition{})},
-                       {});
-        }
+// Standing (or not in party death): a caught lethal hit puts the player down, a death is real, and
+// an attack near a downed member is a revive hit.
+void TickStanding(PartyDeathRun& run, const DeathTick& tick) {
+    const u32 catches = party_death_catches.load();
+    const bool caught = catches != run.seen_catches;
+    run.seen_catches = catches;
+    if (caught && tick.alive) {
+        GoDown(run, tick.data, tick.now);
         return;
     }
-    auto& run = party_death_run;
-    const u64 player = GetLocalPlayer();
-    const u64 data = PlayerDataModule(player);
-    if (data < 0x10000 || !HasMemoryAccess(data, 0x204, MemoryProt::CpuWrite)) {
-        party_death_data.store(0);
-        SetPartyPanel({});
-        return; // loading
+    if (!tick.alive) {
+        // A real death: one of the game's kills, or a lethal hit with nobody else standing.
+        run.downed.Died();
+        party_death_reset.store(tick.in_session && DeathResetsMap(false, tick.armed));
+        LOG_INFO(Debug, "Bloodborne party death: died for real on map {:#x} (reset={})", tick.map,
+                 party_death_reset.load());
+        return;
     }
-    const s64 now = SteadyMilliseconds();
-    const bool in_session = InPartyHere();
-    const u32 map = PlayingMap();
-    const VitalsView view = ReadVitalsBoard();
-    const std::span<const MemberVitals> board =
-        view.Fresh() ? std::span<const MemberVitals>{view.board.members}
-                     : std::span<const MemberVitals>{};
-    const bool armed =
-        in_session && !view.member.empty() && SomeoneElseStands(board, view.member, map);
-    party_death_armed.store(armed);
-    party_death_data.store(in_session || run.downed.Current() == Vital::Down ? data : 0);
-    bool alive = false;
-    ReadLocalAliveState(player, alive);
-    if (const u32 uses = lamp_uses.load(); uses != run.seen_lamp_uses) {
-        run.seen_lamp_uses = uses;
-        run.downed.ClearPenalty();
+    const u32 attacks = party_attack_presses.load();
+    const bool attacked =
+        attacks != run.seen_attacks && !real_hits_installed.load(std::memory_order_relaxed);
+    run.seen_attacks = attacks;
+    const auto at = LocalPlayerPosition();
+    const auto target = attacked && tick.in_session && at
+                            ? ReviveTarget(tick.board, tick.view.member, tick.map, *at)
+                            : std::nullopt;
+    const AttackRatings ratings = target ? ReadAttackRatings(tick.player) : AttackRatings{};
+    const s32 rating = ratings.Held();
+    const bool heavy = party_attack_heavy.load();
+    const u32 damage = ReviveHitDamage(rating, heavy);
+    if (target && run.revive_hits.Press(target->member, target->down, damage, tick.now)) {
+        LOG_INFO(Debug,
+                 "Bloodborne party death: revive hit on {} (down {}) for {} damage (attack "
+                 "rating {}, heavy={}; ratings {} weapons {} right hand {})",
+                 target->member, target->down, damage, rating, heavy, fmt::join(ratings.slots, " "),
+                 fmt::join(ratings.weapons, " "), ratings.right_hand);
     }
+}
 
-    if (run.grace_until && (now >= *run.grace_until || run.downed.Current() != Vital::Up)) {
-        WriteValue(data, 0x200, static_cast<u8>(ReadValue<u8>(data, 0x200) & ~run.grace_flags));
-        run.grace_until.reset();
-        run.grace_flags = 0;
+// Down: killed anyway, or the end of the down (revived, a wipe, giving up, the board gone quiet).
+void TickDown(PartyDeathRun& run, const DeathTick& tick) {
+    if (!tick.alive) {
+        // Killed anyway (a fall into the void, an event's kill).
+        EndDown(run, tick.data);
+        run.downed.Died();
+        party_death_reset.store(tick.in_session && DeathResetsMap(false, tick.armed));
+        LOG_INFO(Debug, "Bloodborne party death: killed while down {} (reset={})",
+                 run.downed.DownId(), party_death_reset.load());
+        return;
     }
-
-    switch (run.downed.Current()) {
-    case Vital::Off:
-    case Vital::Up: {
-        const u32 catches = party_death_catches.load();
-        const bool caught = catches != run.seen_catches;
-        run.seen_catches = catches;
-        if (caught && alive) {
-            GoDown(run, data, now);
-            break;
+    const auto wipe = tick.view.Fresh() ? WipeFor(tick.view.board, tick.view.member) : std::nullopt;
+    const bool wiped = wipe && *wipe != run.handled_wipe;
+    const bool gave_up = run.give_up.Tick((party_pad_buttons.load() & PadCircle) != 0, tick.now);
+    u32 damage = 0;
+    for (const MemberVitals& entry : tick.board) {
+        if (entry.member == tick.view.member && entry.down == run.downed.DownId()) {
+            damage = entry.revive_damage;
         }
-        if (!alive) {
-            // A real death: one of the game's kills, or a lethal hit with nobody else standing.
-            run.downed.Died();
-            party_death_reset.store(in_session && DeathResetsMap(false, armed));
-            LOG_INFO(Debug, "Bloodborne party death: died for real on map {:#x} (reset={})", map,
-                     party_death_reset.load());
-            break;
-        }
-        const u32 attacks = party_attack_presses.load();
-        const bool attacked =
-            attacks != run.seen_attacks && !real_hits_installed.load(std::memory_order_relaxed);
-        run.seen_attacks = attacks;
-        const auto at = LocalPlayerPosition();
-        const auto target = attacked && in_session && at
-                                ? ReviveTarget(board, view.member, map, *at)
-                                : std::nullopt;
-        const AttackRatings ratings = target ? ReadAttackRatings(player) : AttackRatings{};
-        const s32 rating = ratings.Held();
-        const bool heavy = party_attack_heavy.load();
-        const u32 damage = ReviveHitDamage(rating, heavy);
-        if (target && run.revive_hits.Press(target->member, target->down, damage, now)) {
-            LOG_INFO(Debug,
-                     "Bloodborne party death: revive hit on {} (down {}) for {} damage (attack "
-                     "rating {}, heavy={}; ratings {} weapons {} right hand {})",
-                     target->member, target->down, damage, rating, heavy,
-                     fmt::join(ratings.slots, " "), fmt::join(ratings.weapons, " "),
-                     ratings.right_hand);
-        }
+    }
+    const bool revived = run.downed.Damage(damage, tick.now);
+    run.downed.Tick(tick.now);
+    KeepDown(run, tick.data);
+    switch (EndOfDown(wiped, gave_up, revived, tick.view.age_ms)) {
+    case DownEnd::None:
+        break;
+    case DownEnd::Revive:
+        GetUp(run, tick.data, tick.now);
+        break;
+    case DownEnd::Wipe:
+        run.handled_wipe = *wipe;
+        DieFromDown(run, tick.player, tick.data, true, fmt::format("wipe {}", *wipe));
+        break;
+    case DownEnd::GiveUp:
+        DieFromDown(run, tick.player, tick.data,
+                    tick.in_session && DeathResetsMap(false, tick.armed), "giving up");
+        break;
+    case DownEnd::BoardLost:
+        DieFromDown(run, tick.player, tick.data, tick.in_session, "the vitals board going quiet");
         break;
     }
-    case Vital::Down: {
-        if (!alive) {
-            // Killed anyway (a fall into the void, an event's kill).
-            EndDown(run, data);
-            run.downed.Died();
-            party_death_reset.store(in_session && DeathResetsMap(false, armed));
-            LOG_INFO(Debug, "Bloodborne party death: killed while down {} (reset={})",
-                     run.downed.DownId(), party_death_reset.load());
-            break;
-        }
-        const auto wipe = view.Fresh() ? WipeFor(view.board, view.member) : std::nullopt;
-        const bool wiped = wipe && *wipe != run.handled_wipe;
-        const bool gave_up = run.give_up.Tick((party_pad_buttons.load() & PadCircle) != 0, now);
-        u32 damage = 0;
-        for (const MemberVitals& entry : board) {
-            if (entry.member == view.member && entry.down == run.downed.DownId()) {
-                damage = entry.revive_damage;
-            }
-        }
-        const bool revived = run.downed.Damage(damage, now);
-        run.downed.Tick(now);
-        KeepDown(run, data);
-        switch (EndOfDown(wiped, gave_up, revived, view.age_ms)) {
-        case DownEnd::None:
-            break;
-        case DownEnd::Revive:
-            GetUp(run, data, now);
-            break;
-        case DownEnd::Wipe:
-            run.handled_wipe = *wipe;
-            DieFromDown(run, player, data, true, fmt::format("wipe {}", *wipe));
-            break;
-        case DownEnd::GiveUp:
-            DieFromDown(run, player, data, in_session && DeathResetsMap(false, armed), "giving up");
-            break;
-        case DownEnd::BoardLost:
-            DieFromDown(run, player, data, in_session, "the vitals board going quiet");
-            break;
-        }
-        break;
-    }
-    case Vital::Dead:
-        if (alive) {
-            run.downed.Alive(now);
-            party_death_reset.store(false);
-            LOG_INFO(Debug, "Bloodborne party death: up again after a real death");
-        }
-        break;
-    }
+}
 
-    // Enemies forget the downed players here (this one and the others), every tick while any is
-    // down: an enemy that sees a downed guest again (Hide is the local player's only) would take it
-    // as a target again.
+// Enemies forget the downed players here (this one and the others), every tick while any is down:
+// an enemy that sees a downed guest again (Hide is the local player's only) would take it as a
+// target again.
+void ForgetTargetsOnDowned(PartyDeathRun& run, const DeathTick& tick) {
     const std::vector<LampPosition> others_down =
-        in_session ? OthersDownOnMap(board, view.member, map) : std::vector<LampPosition>{};
+        tick.in_session ? OthersDownOnMap(tick.board, tick.view.member, tick.map)
+                        : std::vector<LampPosition>{};
     const std::vector<u32> downed_handles =
-        DownedPlayerHandles(player, run.downed.Current() == Vital::Down, others_down);
+        DownedPlayerHandles(tick.player, run.downed.Current() == Vital::Down, others_down);
     if (const u32 forgotten = ForgetDownedTargets(downed_handles); forgotten > 0) {
         if (run.targets_forgotten == 0) {
             LOG_INFO(Debug,
@@ -1206,32 +1187,96 @@ void TickPartyDeath() {
     } else if (downed_handles.empty()) {
         run.targets_forgotten = 0;
     }
+}
 
-    StrikeDownedBodies(run, board, view.member, map, in_session);
-
+// This member's vitals to the board and the party panel.
+void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
     const auto at = LocalPlayerPosition();
     PostVitals(
         MemberVitals{
-            .map = in_session ? map : 0,
-            .vital = in_session ? run.downed.Current() : Vital::Off,
-            .hp = ReadValue<s32>(data, 0xF8),
-            .max = ReadValue<s32>(data, 0xFC),
+            .map = tick.in_session ? tick.map : 0,
+            .vital = tick.in_session ? run.downed.Current() : Vital::Off,
+            .hp = ReadValue<s32>(tick.data, 0xF8),
+            .max = ReadValue<s32>(tick.data, 0xFC),
             .down = run.downed.DownId(),
             .landed = run.downed.DamageLanded(),
             .needed = run.downed.DamageNeeded(),
             .at = at.value_or(LampPosition{}),
         },
-        run.revive_hits.Totals(board));
+        run.revive_hits.Totals(tick.board));
 
     const Vital vital = run.downed.Current();
-    PartyPanel panel = in_session ? BuildPartyPanel(board, view.member, map,
-                                                    vital == Vital::Up ? at : std::nullopt)
-                                  : PartyPanel{};
-    panel.vital = in_session ? vital : Vital::Off;
+    PartyPanel panel = tick.in_session ? BuildPartyPanel(tick.board, tick.view.member, tick.map,
+                                                         vital == Vital::Up ? at : std::nullopt)
+                                       : PartyPanel{};
+    panel.vital = tick.in_session ? vital : Vital::Off;
     panel.landed = run.downed.DamageLanded();
     panel.needed = run.downed.DamageNeeded();
-    panel.give_up = vital == Vital::Down ? run.give_up.Progress(now) : 0.0f;
+    panel.give_up = vital == Vital::Down ? run.give_up.Progress(tick.now) : 0.0f;
     SetPartyPanel(std::move(panel));
+}
+
+} // namespace
+
+namespace Coop {
+
+void TickPartyDeath() {
+    if (!party_death_hook_installed) {
+        PostVitalsWithoutPartyDeath();
+        return;
+    }
+    auto& run = party_death_run;
+    DeathTick tick;
+    tick.player = GetLocalPlayer();
+    tick.data = PlayerDataModule(tick.player);
+    if (tick.data < 0x10000 || !HasMemoryAccess(tick.data, 0x204, MemoryProt::CpuWrite)) {
+        party_death_data.store(0);
+        SetPartyPanel({});
+        return; // loading
+    }
+    tick.now = SteadyMilliseconds();
+    tick.in_session = InPartyHere();
+    tick.map = PlayingMap();
+    tick.view = ReadVitalsBoard();
+    tick.board = tick.view.Fresh() ? std::span<const MemberVitals>{tick.view.board.members}
+                                   : std::span<const MemberVitals>{};
+    tick.armed = tick.in_session && !tick.view.member.empty() &&
+                 SomeoneElseStands(tick.board, tick.view.member, tick.map);
+    party_death_armed.store(tick.armed);
+    party_death_data.store(tick.in_session || run.downed.Current() == Vital::Down ? tick.data : 0);
+    ReadLocalAliveState(tick.player, tick.alive);
+    if (const u32 uses = lamp_uses.load(); uses != run.seen_lamp_uses) {
+        run.seen_lamp_uses = uses;
+        run.downed.ClearPenalty();
+    }
+
+    if (run.grace_until && (tick.now >= *run.grace_until || run.downed.Current() != Vital::Up)) {
+        WriteValue(tick.data, 0x200,
+                   static_cast<u8>(ReadValue<u8>(tick.data, 0x200) & ~run.grace_flags));
+        run.grace_until.reset();
+        run.grace_flags = 0;
+    }
+
+    switch (run.downed.Current()) {
+    case Vital::Off:
+    case Vital::Up:
+        TickStanding(run, tick);
+        break;
+    case Vital::Down:
+        TickDown(run, tick);
+        break;
+    case Vital::Dead:
+        if (tick.alive) {
+            run.downed.Alive(tick.now);
+            party_death_reset.store(false);
+            LOG_INFO(Debug, "Bloodborne party death: up again after a real death");
+        }
+        break;
+    }
+
+    ForgetTargetsOnDowned(run, tick);
+    StrikeDownedBodies(run, tick.board, tick.view.member, tick.map, tick.in_session);
+    PostVitalsAndPanel(run, tick);
 }
 
 } // namespace Coop
@@ -1327,16 +1372,30 @@ void PutUtf16(std::array<char16_t, 64>& out, const std::string& text) {
     out[length] = 0;
 }
 
-// Makes the list's tags in this HUD as its own init makes RemotePCTag0-6: false when the HUD has no
-// CoopParty tags (not the party HUD's), and the overlay keeps drawing the list.
-bool MakePartyListTags(u64 hud) {
-    using Lookup = void PS4_SYSV_ABI (*)(void* out, u64 parent, const char* format, ...);
-    using Construct = void PS4_SYSV_ABI (*)(void* tag, void* path, s32, s32);
-    using Release = void PS4_SYSV_ABI (*)(u64 object, void* value, u64 data);
+using HudLookup = void PS4_SYSV_ABI (*)(void* out, u64 parent, const char* format, ...);
+using HudConstruct = void PS4_SYSV_ABI (*)(void* tag, void* path, s32, s32);
+using HudRelease = void PS4_SYSV_ABI (*)(u64 object, void* value, u64 data);
+
+// A looked-up value the made element holds its own copy of: released before the stack goes, as the
+// game's own init does (see HudValueFate).
+void ReleaseLookedUpValue(u8* path, u32 type) {
+    if (HudValueFate(type, false) != HudValueKeep::Release) {
+        return;
+    }
+    u64 object = 0, data = 0;
+    std::memcpy(&object, path + HudPathRefInterfaceAt, sizeof(object));
+    std::memcpy(&data, path + HudPathRefObjectAt, sizeof(data));
+    reinterpret_cast<HudRelease>(ReadValue<u64>(ReadValue<u64>(object, 0), 0x18))(
+        object, path + HudPathRefValueAt, data);
+}
+
+// The list's tags (CoopParty0-2), as the HUD's own init makes RemotePCTag0-6; false when the HUD
+// has none.
+bool MakeCoopPartyTags(u64 hud) {
     for (int i = 0; i < PartyListSize; ++i) {
         alignas(16) std::array<u8, HudPathRefSize> path{};
-        reinterpret_cast<Lookup>(image_base + HudChildLookupOffset)(path.data(), hud, "CoopParty%d",
-                                                                    i);
+        reinterpret_cast<HudLookup>(image_base + HudChildLookupOffset)(path.data(), hud,
+                                                                       "CoopParty%d", i);
         u32 type = 0;
         std::memcpy(&type, path.data() + HudPathRefTypeAt, sizeof(type));
         if ((type & 0x8F) == 0) {
@@ -1347,25 +1406,24 @@ bool MakePartyListTags(u64 hud) {
             return false;
         }
         auto* tag = new (std::align_val_t{16}) u8[HudTagSize]{};
-        reinterpret_cast<Construct>(image_base + HudTagConstructorOffset)(tag, path.data(), 0, 0);
+        reinterpret_cast<HudConstruct>(image_base + HudTagConstructorOffset)(tag, path.data(), 0,
+                                                                             0);
         native_list.tags[i] = tag;
-        // The tag holds its own value; this one is released before the stack goes, as the game's
-        // own init does (see HudValueFate).
-        if (HudValueFate(type, false) == HudValueKeep::Release) {
-            u64 object = 0, data = 0;
-            std::memcpy(&object, path.data() + HudPathRefInterfaceAt, sizeof(object));
-            std::memcpy(&data, path.data() + HudPathRefObjectAt, sizeof(data));
-            reinterpret_cast<Release>(ReadValue<u64>(ReadValue<u64>(object, 0), 0x18))(
-                object, path.data() + HudPathRefValueAt, data);
-        }
+        // The tag holds its own value.
+        ReleaseLookedUpValue(path.data(), type);
     }
+    return true;
+}
+
+// The icons (CoopPartyIcon0-2): their values stay referenced while the HUD lasts, so they live on
+// the heap and are never freed: the HUD's destructor releases them there (a stack PathRef left a
+// dead value in the HUD's list, rig wipe3 2026-10-12). One per icon per HUD, as the tags. None
+// without them all.
+void FindCoopPartyIcons(u64 hud) {
     for (int i = 0; i < PartyListSize; ++i) {
-        // The icon's value stays referenced while the HUD lasts, so it lives on the heap and is
-        // never freed: the HUD's destructor releases it there (a stack PathRef left a dead value
-        // in the HUD's list, rig wipe3 2026-10-12). One per icon per HUD, as the tags.
         auto* path = new (std::align_val_t{16}) u8[HudPathRefSize]{};
-        reinterpret_cast<Lookup>(image_base + HudChildLookupOffset)(path, hud, "CoopPartyIcon%d",
-                                                                    i);
+        reinterpret_cast<HudLookup>(image_base + HudChildLookupOffset)(path, hud, "CoopPartyIcon%d",
+                                                                       i);
         u32 type = 0;
         std::memcpy(&type, path + HudPathRefTypeAt, sizeof(type));
         const bool found = (type & 0x8F) != 0;
@@ -1378,29 +1436,35 @@ bool MakePartyListTags(u64 hud) {
         }
         if (!found) {
             native_list.icons = {};
-            break;
+            return;
         }
     }
-    {
-        alignas(16) std::array<u8, HudPathRefSize> path{};
-        reinterpret_cast<Lookup>(image_base + HudChildLookupOffset)(path.data(), hud, "CoopPrompt");
-        u32 type = 0;
-        std::memcpy(&type, path.data() + HudPathRefTypeAt, sizeof(type));
-        if ((type & 0x8F) != 0) {
-            auto* prompt = new (std::align_val_t{16}) u8[HudPromptSize]{};
-            reinterpret_cast<Construct>(image_base + HudPromptConstructorOffset)(prompt,
-                                                                                 path.data(), 0, 0);
-            native_list.prompt = prompt;
-        }
-        // The prompt holds its own value: this one is released before the stack goes.
-        if (HudValueFate(type, false) == HudValueKeep::Release) {
-            u64 object = 0, data = 0;
-            std::memcpy(&object, path.data() + HudPathRefInterfaceAt, sizeof(object));
-            std::memcpy(&data, path.data() + HudPathRefObjectAt, sizeof(data));
-            reinterpret_cast<Release>(ReadValue<u64>(ReadValue<u64>(object, 0), 0x18))(
-                object, path.data() + HudPathRefValueAt, data);
-        }
+}
+
+// The interact prompt (CoopPrompt), when the HUD has one.
+void MakeCoopPrompt(u64 hud) {
+    alignas(16) std::array<u8, HudPathRefSize> path{};
+    reinterpret_cast<HudLookup>(image_base + HudChildLookupOffset)(path.data(), hud, "CoopPrompt");
+    u32 type = 0;
+    std::memcpy(&type, path.data() + HudPathRefTypeAt, sizeof(type));
+    if ((type & 0x8F) != 0) {
+        auto* prompt = new (std::align_val_t{16}) u8[HudPromptSize]{};
+        reinterpret_cast<HudConstruct>(image_base + HudPromptConstructorOffset)(prompt, path.data(),
+                                                                                0, 0);
+        native_list.prompt = prompt;
     }
+    // The prompt holds its own value.
+    ReleaseLookedUpValue(path.data(), type);
+}
+
+// Makes the list's tags in this HUD as its own init makes RemotePCTag0-6: false when the HUD has no
+// CoopParty tags (not the party HUD's), and the overlay keeps drawing the list.
+bool MakePartyListTags(u64 hud) {
+    if (!MakeCoopPartyTags(hud)) {
+        return false;
+    }
+    FindCoopPartyIcons(hud);
+    MakeCoopPrompt(hud);
     LOG_INFO(Debug,
              "Bloodborne party HUD: the party list is the HUD's own ({} tags, icons {}; their "
              "values kept on the heap)",
