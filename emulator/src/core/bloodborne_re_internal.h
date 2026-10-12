@@ -423,6 +423,8 @@ void LogNearbyEnemyControl();
 void TickPartyTrip();
 void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
+
+void TickAutoplay();
 void TickPartyDeath();
 
 void ReopenClosedPartySession();
@@ -540,7 +542,15 @@ void InstallSharedLoot(u64 base, u64 image_size);
 void InstallItemModuleDiagnostics(u64 base, u64 image_size);
 void LogItemModuleChecks();
 constexpr u64 MapItemManPointerOffset = 0x0553D6E0;
+extern std::array<std::atomic<u64>, 6> item_button_counts;
 void InstallItemButtonDiagnostics(u64 base, u64 image_size);
+std::optional<std::array<float, 3>> MapItemSearchPlayerPosition();
+
+struct MapItemSpot {
+    u32 handle;
+    std::array<float, 3> at;
+};
+std::vector<std::pair<float, MapItemSpot>> UsableMapItemsNear(const std::array<float, 3>& from);
 void LogItemButtonAndMapItems();
 extern std::atomic<int> character_slot;
 
