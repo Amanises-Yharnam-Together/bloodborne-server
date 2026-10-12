@@ -92,6 +92,10 @@ BLOODSTAIN_DROPPED = (r"bloodstain state map=0x18010000 has_mark=1 record_valid=
                       r"record_30=-?\d+ record_38=\d+ record_block=0x18010000")
 BLOODSTAIN_STOLEN = r"bloodstain state .* stain_hidden=1"
 LETHAL_FALL = ["hurt self 1", "rise 25"]
+# wipe3 spreads the three a few metres from the lamp before each falls, so nobody lands on another
+# member's body (the UI thread, 2026-10-12: a body under the fall took its damage).
+WIPE3_SPOT = {"host": "-199.74 -50.56 182.42", "guest": "-196.74 -50.56 179.42",
+              "guest2": "-202.74 -50.56 179.42"}
 # A first down takes three hits (R1 beside the downed member), at least 0.4 s apart. Each R1
 # lunges the hitter on, out of reach (2.5 m) after one, so it steps back beside it before each.
 # Revive hits until the downed member is up: how many depends on the striker's weapon (party death
@@ -1241,14 +1245,16 @@ SCENARIOS = {
         "settings": PARTY_DEATH,
         "roles": {
             "host": [START, "wait-session 3 480", "wait-member-vital down 180", "wait 25",
-                     "shot sees-both-down", *LETHAL_FALL, "wait-vital dead 30",
-                     "wait-vital up 150", "wait-members 3 300", "wait 15", "snapshot",
-                     "expect-session 3"],
-            "guest": [START, "wait-session 3 480", "wait 20", *LETHAL_FALL, "wait-vital down 30",
-                      "wait-vital dead 90", "wait-vital up 150", "wait-members 3 300", "wait 15",
-                      "snapshot", "expect-session 3"],
+                     "shot sees-both-down", f"teleport {WIPE3_SPOT['host']}", "wait 2",
+                     *LETHAL_FALL, "wait-vital dead 30", "wait-vital up 150",
+                     "wait-members 3 300", "wait 15", "snapshot", "expect-session 3"],
+            "guest": [START, "wait-session 3 480", "wait 20", f"teleport {WIPE3_SPOT['guest']}",
+                      "wait 2", *LETHAL_FALL, "wait-vital down 30", "wait-vital dead 90",
+                      "wait-vital up 150", "wait-members 3 300", "wait 15", "snapshot",
+                      "expect-session 3"],
             "guest2": [START, "wait-session 3 480", "wait-member-vital down 180", "wait 5",
-                       *LETHAL_FALL, "wait-vital down 30", "wait-vital dead 90",
+                       f"teleport {WIPE3_SPOT['guest2']}", "wait 2", *LETHAL_FALL,
+                       "wait-vital down 30", "wait-vital dead 90",
                        "wait-vital up 150", "wait-members 3 300", "wait 15", "snapshot",
                        "expect-session 3"],
         },
