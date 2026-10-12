@@ -1,0 +1,292 @@
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: warning: function 'Observe' exceeds recommended size/complexity thresholds [readability-function-size]
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |          ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 4 lines including whitespace and comments (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 3 statements (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 1 branches (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 2 parameters (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:55: note: nesting level 1 starts here (threshold 0)
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |                                                       ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: warning: function 'Observe' has cognitive complexity of 1 (threshold 0) [readability-function-cognitive-complexity]
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |          ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: warning: function 'Observe' exceeds recommended size/complexity thresholds [readability-function-size]
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |          ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:165:20: note: nesting level 2 starts here (threshold 1)
+  165 |         if (alive) {
+      |                    ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: warning: function 'Observe' exceeds recommended size/complexity thresholds [readability-function-size]
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |          ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 4 lines including whitespace and comments (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 3 statements (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 1 branches (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 2 parameters (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:55: note: nesting level 1 starts here (threshold 0)
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |                                                       ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: warning: function 'Observe' has cognitive complexity of 1 (threshold 0) [readability-function-cognitive-complexity]
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |          ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: warning: function 'Observe' exceeds recommended size/complexity thresholds [readability-function-size]
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |          ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:165:20: note: nesting level 2 starts here (threshold 1)
+  165 |         if (alive) {
+      |                    ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: warning: function 'Observe' exceeds recommended size/complexity thresholds [readability-function-size]
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |          ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 4 lines including whitespace and comments (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 3 statements (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 1 branches (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: note: 2 parameters (threshold 0)
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:55: note: nesting level 1 starts here (threshold 0)
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |                                                       ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: warning: function 'Observe' has cognitive complexity of 1 (threshold 0) [readability-function-cognitive-complexity]
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |          ^
+/repo/emulator/src/core/bloodborne_re.cpp:1269:5: warning: lambda has cognitive complexity of 3 (threshold 0) [readability-function-cognitive-complexity]
+ 1269 |     [](const PlaceChange& change) { LOG_INFO(Debug, "{}", FormatPlaceChange(change)); });
+      |     ^
+/repo/emulator/src/core/bloodborne_re.cpp:1291:6: warning: function 'OnLifecycle' exceeds recommended size/complexity thresholds [readability-function-size]
+ 1291 | void OnLifecycle(Lifecycle event) {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:1291:6: note: 11 lines including whitespace and comments (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:1291:6: note: 11 statements (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:1291:6: note: 2 branches (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:1291:6: note: 1 parameters (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:1291:35: note: nesting level 1 starts here (threshold 0)
+ 1291 | void OnLifecycle(Lifecycle event) {
+      |                                   ^
+/repo/emulator/src/core/bloodborne_re.cpp:1291:6: warning: function 'OnLifecycle' has cognitive complexity of 6 (threshold 0) [readability-function-cognitive-complexity]
+ 1291 | void OnLifecycle(Lifecycle event) {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: warning: function 'MakeEnemiesHarder' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4788 | void MakeEnemiesHarder() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: note: 63 lines including whitespace and comments (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: note: 62 statements (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: note: 15 branches (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:4788:26: note: nesting level 1 starts here (threshold 0)
+ 4788 | void MakeEnemiesHarder() {
+      |                          ^
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: warning: function 'MakeEnemiesHarder' has cognitive complexity of 65 (threshold 0) [readability-function-cognitive-complexity]
+ 4788 | void MakeEnemiesHarder() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: warning: function 'PolishMultiplayerUi' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4900 | void PolishMultiplayerUi() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: note: 17 lines including whitespace and comments (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: note: 28 statements (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: note: 9 branches (threshold 0)
+/repo/emulator/src/core/bloodborne_re.cpp:4900:28: note: nesting level 1 starts here (threshold 0)
+ 4900 | void PolishMultiplayerUi() {
+      |                            ^
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: warning: function 'PolishMultiplayerUi' has cognitive complexity of 23 (threshold 0) [readability-function-cognitive-complexity]
+ 4900 | void PolishMultiplayerUi() {
+      |      ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:164:10: warning: function 'Observe' exceeds recommended size/complexity thresholds [readability-function-size]
+  164 |     void Observe(bool alive, const AliveState& state) {
+      |          ^
+/repo/bbport/gpu/../../emulator/src/core/bloodborne_party.h:165:20: note: nesting level 2 starts here (threshold 1)
+  165 |         if (alive) {
+      |                    ^
+/repo/emulator/src/core/bloodborne_re.cpp:1291:6: warning: function 'OnLifecycle' exceeds recommended size/complexity thresholds [readability-function-size]
+ 1291 | void OnLifecycle(Lifecycle event) {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:1294:5: note: nesting level 2 starts here (threshold 1)
+ 1294 |     {
+      |     ^
+/repo/emulator/src/core/bloodborne_re.cpp:1300:5: note: nesting level 2 starts here (threshold 1)
+ 1300 |     LOG_INFO(Debug, "Co-op lifecycle: {}, session epoch {} (reset: {})", LifecycleName(event),
+      |     ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:34:8: note: expanded from macro 'LOG_GENERIC'
+   34 |     do {                                                                                           \
+      |        ^
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: warning: function 'MakeEnemiesHarder' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4788 | void MakeEnemiesHarder() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4789:26: note: nesting level 2 starts here (threshold 1)
+ 4789 |     if (!harder_enemies) {
+      |                          ^
+/repo/emulator/src/core/bloodborne_re.cpp:4799:47: note: nesting level 2 starts here (threshold 1)
+ 4799 |     if (now - last < std::chrono::seconds{1}) {
+      |                                               ^
+/repo/emulator/src/core/bloodborne_re.cpp:4806:76: note: nesting level 2 starts here (threshold 1)
+ 4806 |     const u64 attacks = FindLoadedParamWhere("ATK_PARAM_ST", [](u64 param) {
+      |                                                                            ^
+/repo/emulator/src/core/bloodborne_re.cpp:4813:86: note: nesting level 2 starts here (threshold 1)
+ 4813 |     if (const auto table = npc != 0 ? WritableParam(npc, NpcRowSize) : std::nullopt) {
+      |                                                                                      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4827:94: note: nesting level 2 starts here (threshold 1)
+ 4827 |     if (const auto table = attacks != 0 ? WritableParam(attacks, AtkRowSize) : std::nullopt) {
+      |                                                                                              ^
+/repo/emulator/src/core/bloodborne_re.cpp:4841:82: note: nesting level 2 starts here (threshold 1)
+ 4841 |     if (const u64 effects = FindLoadedParam("SP_EFFECT_PARAM_ST"); effects != 0) {
+      |                                                                                  ^
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: warning: function 'PolishMultiplayerUi' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4900 | void PolishMultiplayerUi() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4903:68: note: nesting level 2 starts here (threshold 1)
+ 4903 |     if (!party_controller || now - last < std::chrono::seconds{1}) {
+      |                                                                    ^
+/repo/emulator/src/core/bloodborne_re.cpp:4907:71: note: nesting level 2 starts here (threshold 1)
+ 4907 |     if (const std::size_t messages = PolishMessages(); messages != 0) {
+      |                                                                       ^
+/repo/emulator/src/core/bloodborne_re.cpp:4910:82: note: nesting level 2 starts here (threshold 1)
+ 4910 |     if (const u64 effects = FindLoadedParam("SP_EFFECT_PARAM_ST"); effects != 0) {
+      |                                                                                  ^
+/repo/emulator/src/core/bloodborne_re.cpp:1291:6: warning: function 'OnLifecycle' exceeds recommended size/complexity thresholds [readability-function-size]
+ 1291 | void OnLifecycle(Lifecycle event) {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:1300:5: note: nesting level 3 starts here (threshold 2)
+ 1300 |     LOG_INFO(Debug, "Co-op lifecycle: {}, session epoch {} (reset: {})", LifecycleName(event),
+      |     ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:35:48: note: expanded from macro 'LOG_GENERIC'
+   35 |         if (Common::Log::ShouldLog(log_level)) {                                                   \
+      |                                                ^
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: warning: function 'MakeEnemiesHarder' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4788 | void MakeEnemiesHarder() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4815:85: note: nesting level 3 starts here (threshold 2)
+ 4815 |             HarderEnemiesMarker(*table, NpcHpOffset, NpcPoiseOffset) != npc_marker) {
+      |                                                                                     ^
+/repo/emulator/src/core/bloodborne_re.cpp:4829:77: note: nesting level 3 starts here (threshold 2)
+ 4829 |             HarderEnemiesMarker(*table, AtkPhysOffset, 0) != attack_marker) {
+      |                                                                             ^
+/repo/emulator/src/core/bloodborne_re.cpp:4842:63: note: nesting level 3 starts here (threshold 2)
+ 4842 |         if (const auto table = WritableParam(effects, 0x210)) {
+      |                                                               ^
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: warning: function 'PolishMultiplayerUi' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4900 | void PolishMultiplayerUi() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4908:9: note: nesting level 3 starts here (threshold 2)
+ 4908 |         LOG_INFO(Debug, "Bloodborne party UI: {} messages now say Host and Guest", messages);
+      |         ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:34:8: note: expanded from macro 'LOG_GENERIC'
+   34 |     do {                                                                                           \
+      |        ^
+/repo/emulator/src/core/bloodborne_re.cpp:4911:63: note: nesting level 3 starts here (threshold 2)
+ 4911 |         if (const auto table = WritableParam(effects, 0x210)) {
+      |                                                               ^
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: warning: function 'MakeEnemiesHarder' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4788 | void MakeEnemiesHarder() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4819:13: note: nesting level 4 starts here (threshold 3)
+ 4819 |             LOG_INFO(Debug,
+      |             ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:34:8: note: expanded from macro 'LOG_GENERIC'
+   34 |     do {                                                                                           \
+      |        ^
+/repo/emulator/src/core/bloodborne_re.cpp:4833:13: note: nesting level 4 starts here (threshold 3)
+ 4833 |             LOG_INFO(Debug,
+      |             ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:34:8: note: expanded from macro 'LOG_GENERIC'
+   34 |     do {                                                                                           \
+      |        ^
+/repo/emulator/src/core/bloodborne_re.cpp:4843:84: note: nesting level 4 starts here (threshold 3)
+ 4843 |             if (const std::size_t rows = RemoveCoopBossHpBonus(*table); rows != 0) {
+      |                                                                                    ^
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: warning: function 'PolishMultiplayerUi' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4900 | void PolishMultiplayerUi() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4908:9: note: nesting level 4 starts here (threshold 3)
+ 4908 |         LOG_INFO(Debug, "Bloodborne party UI: {} messages now say Host and Guest", messages);
+      |         ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:35:48: note: expanded from macro 'LOG_GENERIC'
+   35 |         if (Common::Log::ShouldLog(log_level)) {                                                   \
+      |                                                ^
+/repo/emulator/src/core/bloodborne_re.cpp:4912:78: note: nesting level 4 starts here (threshold 3)
+ 4912 |             if (const std::size_t rows = RemoveBellIcons(*table); rows != 0) {
+      |                                                                              ^
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: warning: function 'MakeEnemiesHarder' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4788 | void MakeEnemiesHarder() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4819:13: note: nesting level 5 starts here (threshold 4)
+ 4819 |             LOG_INFO(Debug,
+      |             ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:35:48: note: expanded from macro 'LOG_GENERIC'
+   35 |         if (Common::Log::ShouldLog(log_level)) {                                                   \
+      |                                                ^
+/repo/emulator/src/core/bloodborne_re.cpp:4833:13: note: nesting level 5 starts here (threshold 4)
+ 4833 |             LOG_INFO(Debug,
+      |             ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:35:48: note: expanded from macro 'LOG_GENERIC'
+   35 |         if (Common::Log::ShouldLog(log_level)) {                                                   \
+      |                                                ^
+/repo/emulator/src/core/bloodborne_re.cpp:4844:17: note: nesting level 5 starts here (threshold 4)
+ 4844 |                 LOG_INFO(Debug,
+      |                 ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:34:8: note: expanded from macro 'LOG_GENERIC'
+   34 |     do {                                                                                           \
+      |        ^
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: warning: function 'PolishMultiplayerUi' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4900 | void PolishMultiplayerUi() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4913:17: note: nesting level 5 starts here (threshold 4)
+ 4913 |                 LOG_INFO(Debug, "Bloodborne party UI: no bell icons ({} SpEffect rows)", rows);
+      |                 ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:34:8: note: expanded from macro 'LOG_GENERIC'
+   34 |     do {                                                                                           \
+      |        ^
+/repo/emulator/src/core/bloodborne_re.cpp:4788:6: warning: function 'MakeEnemiesHarder' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4788 | void MakeEnemiesHarder() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4844:17: note: nesting level 6 starts here (threshold 5)
+ 4844 |                 LOG_INFO(Debug,
+      |                 ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:35:48: note: expanded from macro 'LOG_GENERIC'
+   35 |         if (Common::Log::ShouldLog(log_level)) {                                                   \
+      |                                                ^
+/repo/emulator/src/core/bloodborne_re.cpp:4900:6: warning: function 'PolishMultiplayerUi' exceeds recommended size/complexity thresholds [readability-function-size]
+ 4900 | void PolishMultiplayerUi() {
+      |      ^
+/repo/emulator/src/core/bloodborne_re.cpp:4913:17: note: nesting level 6 starts here (threshold 5)
+ 4913 |                 LOG_INFO(Debug, "Bloodborne party UI: no bell icons ({} SpEffect rows)", rows);
+      |                 ^
+/repo/bbport/gpu/shim/common/logging/log.h:42:34: note: expanded from macro 'LOG_INFO'
+   42 | #define LOG_INFO(log_class, ...) LOG_GENERIC(Common::Log::Class::log_class, spdlog::level::info, __VA_ARGS__)
+      |                                  ^
+/repo/bbport/gpu/shim/common/logging/log.h:35:48: note: expanded from macro 'LOG_GENERIC'
+   35 |         if (Common::Log::ShouldLog(log_level)) {                                                   \
+      |                                                ^
+/repo/emulator/src/core/bloodborne_re.cpp:4806:62: warning: lambda has cognitive complexity of 1 (threshold 0) [readability-function-cognitive-complexity]
+ 4806 |     const u64 attacks = FindLoadedParamWhere("ATK_PARAM_ST", [](u64 param) {
+      |                                                              ^

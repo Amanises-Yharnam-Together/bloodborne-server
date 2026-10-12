@@ -7,7 +7,7 @@ must show ("expect"), the lines it must not show ("forbid") and the known proble
 Every run starts from the baseline saves (run_scenario.py --save-baseline): every game at the first
 Central Yharnam lamp. Every script starts with START (travel there unless already there).
 
-Commands (see RunAutoplayStep in bloodborne_re.cpp): wait <s>, wait-session <n> [<timeout>],
+Commands (see AutoplayVerbs in bloodborne_autoplay.cpp): wait <s>, wait-session <n> [<timeout>],
 wait-members <n> [<timeout>] (party members on this map), wait-map <map> [<timeout>],
 travel <warp point> [<timeout>], ensure-map <map> <warp point> [<timeout>] (travel unless
 there already), hurt <nearest|handle> <hp>, kill <nearest|self|handle>,

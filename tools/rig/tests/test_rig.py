@@ -17,7 +17,7 @@ import engines  # noqa: E402
 import run_scenario  # noqa: E402
 import scenarios  # noqa: E402
 
-# RunAutoplayStep's commands (bloodborne_re.cpp).
+# The game's autoplay verbs (AutoplayVerbs, bloodborne_autoplay.cpp; VerbsTest keeps them equal).
 VERBS = {
     "wait", "wait-session", "wait-members", "wait-map", "travel", "ensure-map", "hurt", "kill",
     "mark", "approach", "attack", "teleport", "press", "stick", "set-flag", "expect-flag",
@@ -29,6 +29,18 @@ VERBS = {
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
            "l1", "r1", "l2", "r2", "l3", "r3"}
+
+
+AUTOPLAY = (pathlib.Path(__file__).resolve().parents[3] / "emulator" / "src" / "core" /
+            "bloodborne_autoplay.cpp")
+
+
+class VerbsTest(unittest.TestCase):
+    def test_the_verbs_are_the_games(self):
+        text = AUTOPLAY.read_text(encoding="utf-8")
+        table = text[text.index("AutoplayVerbs ="):]
+        table = table[:table.index("});")]
+        self.assertEqual(set(re.findall(r'\{"([a-z-]+)", Autoplay\w+\}', table)), VERBS)
 
 
 class ScenarioTest(unittest.TestCase):

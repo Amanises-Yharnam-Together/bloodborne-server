@@ -203,6 +203,17 @@ list(FILTER BBNET_SOURCES EXCLUDE REGEX
 file(GLOB BBCOOP_SOURCES CONFIGURE_DEPENDS bbcoop/*.cpp)
 set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_re.cpp ${BB_EMULATOR_SRC}/core/bloodborne_party.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_patches.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_join.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_travel.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_flags_store.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_kills_hp.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_party_rules.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_party_death.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_boards.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_autoplay.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_trace_diag.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_re_tracer.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_crash_dump.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_write_watch.cpp ${BB_EMULATOR_SRC}/core/guest_hook.cpp
     ${BB_EMULATOR_SRC}/core/file_format/psf.cpp)

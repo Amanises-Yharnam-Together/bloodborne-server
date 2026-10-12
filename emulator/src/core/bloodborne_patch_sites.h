@@ -223,7 +223,7 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"chime banner for others", "quiet summon banners", CoopSiteKind::Patch, 0x0196B9F4,
      "E8 87 44 29 00", "0F 1F 44 00 00"},
 
-    // The hooks below are described where they are installed (bloodborne_re.cpp).
+    // The hooks below are described where they are installed (bloodborne_*.cpp).
     {"death flag", "boss death tracer", CoopSiteKind::Hook, 0x018BF941, "80 8B E3 01 00 00 01"},
     {"death flag in the character update", "boss death tracer", CoopSiteKind::Hook, 0x018CE6C5,
      "80 89 E3 01 00 00 01"},

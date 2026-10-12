@@ -4,7 +4,7 @@ Seamless co-op for Bloodborne (CUSA03173, patch 01.09) on shadPS4, modeled on El
 
 | Folder | Upstream (subtree, full history) | Role |
 |---|---|---|
-| `emulator/` | [Wozzardman/shadp2p](https://github.com/Wozzardman/shadp2p) | shadPS4 with Bloodborne P2P and the native game hooks (`src/core/bloodborne_re.cpp`) |
+| `emulator/` | [Wozzardman/shadp2p](https://github.com/Wozzardman/shadp2p) | shadPS4 with Bloodborne P2P and the native game hooks (`src/core/bloodborne_*.cpp`) |
 | `server/` | [Wozzardman/shadnet-p2p](https://github.com/Wozzardman/shadnet-p2p) | accounts, matchmaking, signaling, WebAPI and the Bloodborne summon broker |
 | `docs/` | | [plan and milestones](docs/SEAMLESS_COOP_PLAN.md) |
 | `tools/` | | Windows build, local CI and test-rig scripts |

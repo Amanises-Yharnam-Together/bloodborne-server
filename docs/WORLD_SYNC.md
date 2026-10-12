@@ -131,3 +131,13 @@ lines). The main seams:
 - diagnostics and tracers
 
 `RunAutoplayStep` (703 lines, complexity 464) becomes a table of verbs.
+
+Done (2026-10-12): `bloodborne_re.cpp` keeps the core (memory reads, place, lifecycle, the
+party tick) and the rest is in `bloodborne_patches`, `_join`, `_travel`, `_flags_store`,
+`_kills_hp`, `_party_rules`, `_party_death`, `_boards`, `_autoplay`, `_trace_diag` and
+`_re_tracer.cpp`. What one file uses from another is declared in `bloodborne_re_internal.h`
+(namespace `Coop`); the RE trace sites and shared eboot offsets are in `bloodborne_re_sites.h`;
+everything else keeps its file's anonymous namespace. `tools/re/code_health.py` measures every
+function (cognitive complexity, lines, nesting) and `--check` (ci-check.ps1 `-CompileDb`) keeps
+new code under cognitive 25, nesting 4 and 120 lines, and old code from getting worse than
+`tools/re/code_health_baseline.json`.
