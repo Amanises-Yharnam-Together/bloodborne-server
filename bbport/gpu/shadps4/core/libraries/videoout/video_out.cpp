@@ -351,7 +351,11 @@ s32 sceVideoOutSubmitEopFlip(s32 handle, u32 buf_id, u32 mode, s64 flip_arg, voi
     Platform::IrqC::Instance()->RegisterOnce(
         Platform::InterruptId::GfxFlip, [=](Platform::InterruptId irq) {
             ASSERT_MSG(irq == Platform::InterruptId::GfxFlip, "An unexpected IRQ occured");
-            ASSERT_MSG(port->buffer_labels[buf_id] == 1, "Out of order flip IRQ");
+            // bbport: with nothing drawn (BB_NULL_GPU) the game runs frames ahead of the flips:
+            // the flip of the frame before may already have reset this buffer's label.
+            if (!EmulatorSettings.IsNullGPU()) {
+                ASSERT_MSG(port->buffer_labels[buf_id] == 1, "Out of order flip IRQ");
+            }
             const auto result = driver->SubmitFlip(port, buf_id, flip_arg, true);
             ASSERT_MSG(result, "EOP flip submission failed");
         });

@@ -561,6 +561,37 @@ void RunDmaData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     }
 }
 
+// bbport: BB_NULL_GPU=1 (no rasterizer, nothing drawn: headless rig games): the guest memory
+// writes of DMA_DATA and COPY_DATA done here on the CPU, in stream order. The game waits on
+// labels written this way (its frame's buffer label: "Out of order flip IRQ" without them). GDS
+// lives on the GPU only: those are skipped.
+bool NullGpuToMemory(DmaDataDst dst) {
+    return dst == DmaDataDst::Memory || dst == DmaDataDst::MemoryUsingL2;
+}
+
+void NullGpuDmaData(const PM4DmaData& dma) {
+    if (!NullGpuToMemory(dma.dst_sel)) {
+        return;
+    }
+    auto* dst = reinterpret_cast<u8*>(dma.DstAddress<VAddr>());
+    const u32 bytes = dma.NumBytes();
+    if (dma.src_sel == DmaDataSrc::Data) {
+        for (u32 at = 0; at + sizeof(u32) <= bytes; at += sizeof(u32)) {
+            std::memcpy(dst + at, &dma.data, sizeof(u32));
+        }
+    } else if (dma.src_sel == DmaDataSrc::Memory || dma.src_sel == DmaDataSrc::MemoryUsingL2) {
+        std::memmove(dst, reinterpret_cast<const u8*>(dma.SrcAddress<VAddr>()), bytes);
+    }
+}
+
+void NullGpuCopyData(VAddr dst, std::optional<u64> value, VAddr src, u32 bytes) {
+    if (value) {
+        std::memcpy(reinterpret_cast<void*>(dst), &*value, bytes);
+    } else {
+        std::memmove(reinterpret_cast<void*>(dst), reinterpret_cast<const void*>(src), bytes);
+    }
+}
+
 // bbport: a ZPASS_DONE event (the game's occlusion query) for the recording thread.
 struct ZpassEvent {
     VAddr address;
@@ -1935,9 +1966,12 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     BbFreeCheck::NoteFenceDecoded(reinterpret_cast<u64>(event_eos->Address()),
                                                   event_eos->DataDWord(), header, dcb.data(), seq);
                 }
-                if (rasterizer &&
-                    rasterizer->RunInOrder(&RunEventWriteEos, event_eos, sizeof(*event_eos),
-                                           BbToggle::PipelinedTasks, false)) {
+                if (!rasterizer) {
+                    // BB_NULL_GPU: the end-of-shader label at once (the game waits on it).
+                    event_eos->SignalFence(&WriteEosLabel);
+                } else if (rasterizer->RunInOrder(&RunEventWriteEos, event_eos,
+                                                  sizeof(*event_eos), BbToggle::PipelinedTasks,
+                                                  false)) {
                     NotePendingFences(*event_eos);
                 }
                 break;
@@ -1963,7 +1997,11 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             }
             case PM4ItOpcode::DmaData: {
                 const auto* dma_data = reinterpret_cast<const PM4DmaData*>(header);
-                if (dma_data->dst_addr_lo == 0x3022C || !rasterizer) {
+                if (dma_data->dst_addr_lo == 0x3022C) {
+                    break;
+                }
+                if (!rasterizer) {
+                    NullGpuDmaData(*dma_data);
                     break;
                 }
                 // bbport: what the copy reads on the recording thread is known here: a later
@@ -2058,6 +2096,11 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 }
                 const bool handled_source =
                     value || from_memory || src == CopyDataSrc::Gds;
+                if (!rasterizer && to_memory && (value || from_memory)) {
+                    NullGpuCopyData(copy_data->DstAddress<VAddr>(), value,
+                                    from_memory ? copy_data->SrcAddress<VAddr>() : 0, num_bytes);
+                    break;
+                }
                 if (!rasterizer || !handled_source ||
                     !(to_memory || dst == CopyDataDst::Gds)) {
                     static bool warned = false;
@@ -2414,7 +2457,11 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
         case PM4ItOpcode::DmaData: {
             const auto* dma_data = reinterpret_cast<const PM4DmaData*>(header);
-            if (dma_data->dst_addr_lo == 0x3022C || !rasterizer) {
+            if (dma_data->dst_addr_lo == 0x3022C) {
+                break;
+            }
+            if (!rasterizer) {
+                NullGpuDmaData(*dma_data);
                 break;
             }
             ASSERT(dma_data->command.das == 0);
