@@ -523,10 +523,20 @@ s32 RemoteTaskKind(bool hosting);
 // room is made again. A party host's session is reopened instead.
 constexpr u64 SessionClosingOffset = 0x118;
 bool ReopensClosedSession(bool party, s32 matching_state, u8 closing);
-// The kind of a join task rebuilt after a trip for the member with `identity`: on the host every
-// other member is a remote guest; on a guest the member's own saved kind (the host 0, another
-// guest 1), else a guest when the saved tasks name another member as the host, else the host.
-s32 RebuiltTaskKind(bool hosting, std::span<const SavedJoinTask> saved, u64 identity);
+// The kind of a join task rebuilt for the member with `identity` (after a trip, or a guest's
+// re-create when another guest joins): on the host every other member is a remote guest; on a
+// guest the kind the live tasks (`live`, the join list now) or else the saved ones give it, else
+// a guest when they name another member as the host, else the host. A live host task wins: a
+// guest whose game made no task for a new guest built it as a second host (kind 0), and step 4
+// never creates a kind 0 character on a guest (its own kind 2 task creates the host there), so
+// the new guest stayed invisible to it (rig smoke 2026-10-12).
+s32 RebuiltTaskKind(bool hosting, std::span<const SavedJoinTask> saved,
+                    std::span<const SavedJoinTask> live, u64 identity);
+// The +0xED flags of a rebuilt task: the saved ones (with the synced bit unless the member is
+// still `waiting` for its data), else what the constructor left. Bits 6-7 are not the task's: the
+// constructor (0x01E4F9F0, `and 0xc0`) keeps them from the allocation and no join code uses them.
+constexpr u8 JoinTaskFlagBits = 0x3F;
+u8 RebuiltTaskFlags(u8 constructed, const SavedJoinTask* saved, bool waiting);
 s32 LocalTaskKind(bool hosting);
 bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_active);
 // The bell effects (9000/9003, 9005/9006) in `before` that are missing from `after`, in order.
@@ -1254,6 +1264,10 @@ std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown>
 // still loaded and off (`mine`). Characters by a map border stay loaded across it.
 std::vector<CharacterSwitch> UndoneOnMapChange(const std::unordered_set<u32>& switched_off,
                                                std::span<const CharacterSwitch> mine);
+// Whether a re-create that RecreateAfterJoin asks for is a join's (members with no task yet are
+// left to the game's own join, see RecreateRemotePlayers) rather than a trip's still pending
+// (`pending` and not `for_join`), which keeps building the tasks the trip's load threw away.
+bool RecreateIsForAJoin(bool pending, bool for_join);
 // A guest joining a session another guest is already in re-creates the other players once, as
 // after a trip (Kaniel 2026-10-11: Lisara joined after krolebord and did not see him until both
 // went to the Dream and back). Tick says when: a guest, SettleMs after its join, seeing two or

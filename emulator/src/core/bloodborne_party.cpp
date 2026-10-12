@@ -2155,9 +2155,31 @@ s32 RemoteTaskKind(bool hosting) {
     return hosting ? RemoteGuestTask : RemoteHostTask;
 }
 
-s32 RebuiltTaskKind(bool hosting, std::span<const SavedJoinTask> saved, u64 identity) {
+bool RecreateIsForAJoin(bool pending, bool for_join) {
+    return !pending || for_join;
+}
+
+u8 RebuiltTaskFlags(u8 constructed, const SavedJoinTask* saved, bool waiting) {
+    if (!saved) {
+        return constructed & JoinTaskFlagBits;
+    }
+    return (waiting ? saved->flags : static_cast<u8>(saved->flags | 1)) & JoinTaskFlagBits;
+}
+
+s32 RebuiltTaskKind(bool hosting, std::span<const SavedJoinTask> saved,
+                    std::span<const SavedJoinTask> live, u64 identity) {
     if (hosting) {
         return RemoteGuestTask;
+    }
+    for (const SavedJoinTask& task : live) {
+        if ((task.kind == RemoteHostTask || task.kind == RemoteGuestTask) &&
+            task.identity == identity) {
+            return task.kind;
+        }
+    }
+    const auto is_host = [](const SavedJoinTask& task) { return task.kind == RemoteHostTask; };
+    if (std::ranges::any_of(live, is_host)) {
+        return RemoteGuestTask; // a session has one host
     }
     bool host_elsewhere = false;
     for (const SavedJoinTask& task : saved) {
