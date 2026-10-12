@@ -236,6 +236,11 @@ SUITES = {
                                "sync rejoin-back", "expect-session 3"],
                      "host": ["sync rejoin-back", "wait 10", "expect-session 3"],
                      "guest2": ["sync rejoin-back", "wait 10", "expect-session 3"]},
+                    # PR #37: the others note the member gone, and the guest counts as standing
+                    # only once it is in the session's world again (a wipe waited for it).
+                    expect={"host": [r"Co-op lifecycle: member left"],
+                            "guest2": [r"Co-op lifecycle: member left"],
+                            "guest": [r"Bloodborne party: in the session's world"]},
                     forbid={"guest": [r"new character in save slot"]},
                     allow=CRASH_CLEANUP),
             wipe(PARTY3),
