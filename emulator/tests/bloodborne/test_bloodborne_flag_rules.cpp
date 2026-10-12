@@ -241,6 +241,18 @@ TEST(BloodborneFlagRules, BossFoundFlagsArePerPlayer) {
     }
 }
 
+// Kaniel 2026-10-12: the messengers' weapon lines follow each player's own hunter badges, as in
+// the base game. The Dream's 12101000 runs in each player's own game (no network sync) and reads
+// that player's items, so a guest keeps its own lines and never takes or carries the host's.
+TEST(BloodborneFlagRules, WeaponLinesFollowEachPlayersOwnBadges) {
+    for (const s32 flag : ShopLineFlags()) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::PerPlayer) << flag;
+        EXPECT_TRUE(KeepsLocalFlag(true, flag)) << flag;
+        EXPECT_FALSE(TakesHostMapFlag(flag)) << flag;
+        EXPECT_FALSE(SharedWithParty(flag)) << flag;
+    }
+}
+
 TEST(BloodborneFlagRules, ListsComeFromTheTable) {
     EXPECT_EQ(GuestProgressFlags(true, true, 0x18000000), (std::vector<s32>{9401, 9403}));
     const auto shop = ShopLineFlags();

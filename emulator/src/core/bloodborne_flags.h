@@ -120,9 +120,10 @@ inline constexpr std::array FirstRows{
     Range(9403, 9403, FlagOwner::Host, FlagCarriesHome | FlagGuestSetsInWorld,
           "the workshop's doors open (Central Yharnam's 12410900 sets it for a live player "
           "only): set by a guest out in the world for itself"),
-    Range(12101000, 12101009, FlagOwner::Host, FlagCarriesHome | FlagTakesHostMap | FlagShopLine,
+    Range(12101000, 12101009, FlagOwner::PerPlayer, FlagCarriesHome | FlagShopLine,
           "the messengers' weapon lines (Dream event 12101000, slot 0-9 once the player has its "
-          "badge): cleared once per save slot after a broken patch set them all"),
+          "badge; run in each player's own game): each player's follow its own badges; cleared "
+          "once per save slot after a broken patch set them all"),
     Range(12101020, 12101029, FlagOwner::PerPlayer, FlagCarriesHome,
           "the Dream messengers' gift events and flags: what one player received is not given "
           "to the other"),
