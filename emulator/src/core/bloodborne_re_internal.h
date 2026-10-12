@@ -296,7 +296,12 @@ void InitPartyController();
 bool HostHasRoomForMore();
 
 bool EventFlagOn(s32 flag);
+void LogBloodstainStateChanges();
 bool InPartySession();
+void ShowGuestBloodstain();
+void KeepGuestBloodstainMark();
+
+void ObserveLocalAliveState();
 
 std::vector<s32> EffectsOf(u64 character);
 std::vector<s32> LocalEffects();
@@ -411,6 +416,7 @@ void LogNearbyEnemyControl();
 void TickPartyTrip();
 void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
+void TickPartyDeath();
 
 void ReopenClosedPartySession();
 void WatchSummonJoin();
@@ -576,6 +582,7 @@ extern OwnDamage own_damage;
 void InstallOwnHitCount(u64 base, u64 image_size);
 extern DirectDamageInbox direct_damage_inbox;
 extern std::mutex direct_boards_mutex;
+extern DirectInbox<DirectVitals> direct_vitals_inbox;
 extern DirectInbox<DirectKills> direct_kills_inbox;
 bool TakeDirectDamage();
 void SendDirectKills(std::span<const u32> kills, bool changed);
@@ -591,7 +598,41 @@ void ResendOwnDataOnChange(bool in_session);
 void LogMemberDataChanges(bool in_session);
 void InstallSeamlessTravel(u64 base, u64 image_size);
 void EndSessionOnWorldTeardown();
+void ReviveGuestAfterGhostDeath();
+extern std::mutex vitals_mutex;
+extern VitalsBoard vitals_board;
+extern std::string vitals_member;
+extern std::optional<std::chrono::steady_clock::time_point> vitals_heard_at;
+
+struct VitalsView {
+    VitalsBoard board;
+    std::string member;
+    s64 age_ms = std::numeric_limits<s64>::max();
+
+    bool Fresh() const {
+        return age_ms <= 3'000;
+    }
+};
+VitalsView ReadVitalsBoard();
+void PostVitals(const MemberVitals& mine, std::vector<ReviveHitTotal> hits);
 void StartVitalsBoardClient();
+
+// The local player's side of party death, on the game thread.
+struct PartyDeathRun {
+    // Down ids start somewhere new each run, so the party's hits on an old down never count.
+    DownedState downed{static_cast<u32>(std::random_device{}() % 0x40000000U) + 1};
+    HoldToConfirm give_up{GiveUpHoldMs};
+    ReviveHits revive_hits;
+    u32 seen_catches = 0;
+    u32 seen_attacks = 0;
+    u32 seen_lamp_uses = 0;
+    u32 handled_wipe = 0;
+    u8 flags_added = 0;
+    u8 hide_before = 0;
+    u8 silence_before = 0;
+    u32 targets_forgotten = 0; // since the last log line
+};
+extern PartyDeathRun party_death_run;
 void InstallPartyDeath(u64 base, u64 image_size);
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers);
 u64 GetSummonManager();

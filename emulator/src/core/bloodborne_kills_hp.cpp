@@ -641,6 +641,10 @@ void InstallOwnHitCount(u64 base, u64 image_size) {
 // Enemy HP straight from game to game (see DirectDamageType): the other games' frames, by sender,
 // read from the P2P transport on the game's thread. Only the room's peers are heard.
 DirectDamageInbox direct_damage_inbox;
+
+// The other games' party death vitals and standing kills over the same link (see
+// DirectVitalsType): read with the damage, used over the boards' copies.
+std::mutex direct_boards_mutex;
 DirectInbox<DirectKills> direct_kills_inbox;
 
 } // namespace Coop

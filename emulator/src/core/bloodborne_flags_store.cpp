@@ -63,6 +63,10 @@
 namespace Core::Bloodborne {
 namespace Coop {
 
+// Auto-rejoin for a configured party (SHADPS4_BLOODBORNE_PARTY + SHADPS4_BLOODBORNE_PARTY_ROLE).
+// Only ticked from the SOS-status hook on the game thread.
+std::optional<PartyController> party_controller;
+
 // Shared trophies: what the game unlocked itself while in a party session (posted to the
 // party's trophy board), every id this member has dealt with, and the other members' unlocks
 // waiting for the game thread to apply.

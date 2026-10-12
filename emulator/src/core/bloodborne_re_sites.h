@@ -82,6 +82,10 @@ constexpr std::array<u8, 16> ReturnAndPadding{0xC3, 0x66, 0x66, 0x66, 0x66, 0x66
                                               0x66, 0x2E, 0x0F, 0x1F, 0x84};
 constexpr u64 CandidateLocalStatePointerOffset = 0x0553E878;
 
+// GameDataMan: +0x28 "has a bloodstain", +0x30 the bloodstain record UpDateBloodMark writes.
+constexpr u64 GameDataManPointerOffset = 0x0553B130;
+constexpr u64 EventManPointerOffset = 0x0553B108; // SprjEventMan
+
 // SetChrType(_, entity, type) event binding: sets +0x78 and refreshes the character (vtable 0x1A0).
 constexpr u64 SetChrTypeOffset = 0x01338DF0;
 constexpr u64 SummonSessionRulesPointerOffset = 0x0553D6D0;
