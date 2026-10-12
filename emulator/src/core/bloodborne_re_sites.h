@@ -93,6 +93,7 @@ constexpr u64 WorldTeardownMatchingOffset = 0x0194716E;
 // PartyGhostDeath_1's `cmp byte ptr [r14+0xC], 0` (ClearBoss), right before the menu branch that
 // GhostDeathKeepSessionPatches turns into a plain jump: where a party guest revives instead.
 constexpr u64 GhostDeathReviveOffset = 0x01382354;
+constexpr u64 RequestFullRecoverOffset = 0x01337550;
 
 // Native SoloPlayDeath_2: the local player's death respawn (bloodstain, warp to the last lamp).
 constexpr u64 SoloPlayDeathRespawnOffset = 0x01381DE0;

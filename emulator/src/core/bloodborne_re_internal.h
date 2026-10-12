@@ -240,6 +240,7 @@ template <typename T>
 T ReadValue(u64 address, size_t offset) {
     return TryRead<T>(address, offset).value_or(T{});
 }
+bool IsCharacter(u64 object, std::string_view site);
 bool HasVirtual(u64 object, u64 slot, u64 function, std::string_view site);
 
 template <typename T>
@@ -268,6 +269,14 @@ u64 GetLocalPlayer();
 bool HasPlayerEffect(u64 player, s32 effect_id);
 u32 GetCurrentPackedMap();
 Place CurrentPlace();
+u32 PlayingMap();
+
+// The co-op trace's records (see CoopTraceVersion).
+void TraceLife(const char* event, TraceSampler::Fields more = {});
+
+bool RegisterLifecycleReset(std::string name, std::initializer_list<Lifecycle> events,
+                            std::function<void()> reset);
+void OnLifecycle(Lifecycle event);
 void RefreshSeamlessLocalPlacement();
 void ApplyCrossMapSummonHostPlacement(const GuestRegisterSnapshot& registers);
 
@@ -282,24 +291,80 @@ extern std::optional<PartyController> party_controller;
 void InitPartyController();
 
 bool HostHasRoomForMore();
+
+bool EventFlagOn(s32 flag);
 bool InPartySession();
 
 std::vector<s32> EffectsOf(u64 character);
 std::vector<s32> LocalEffects();
+
+// ForcePlayAnimation(_, entity, animation) event binding, and the lamp touch common event 7200
+// plays before it warps (Lua_Warp's 7725 does nothing on the player).
+constexpr u64 ForcePlayAnimationOffset = 0x0132E290;
+extern bool lamp_rest_hooks_installed;
+extern std::atomic<u32> lamp_uses;
+extern std::atomic<bool> rest_board_active;
+extern std::atomic<s32> rest_board_lamp;
+extern std::mutex rest_board_position_mutex;
+extern std::optional<LampPosition> rest_board_position;
+extern std::mutex rest_board_mutex;
+extern std::vector<LampRest> rest_board;
+extern std::chrono::steady_clock::time_point rest_board_time;
+extern std::atomic<u32> party_map_now;
+void UnlockPartyTrophies(bool sharing);
 extern std::mutex map_state_mutex;
 extern std::optional<MemberMapState> host_map_state;
 extern std::mutex map_board_mutex;
 extern std::vector<MemberMap> map_board;
+extern std::string map_board_member;
 extern std::chrono::steady_clock::time_point map_board_time;
 s32 SessionPlayers();
+std::optional<LampPosition> LocalPlayerPosition();
+
+s32 CharacterHp(u64 character);
+extern s32 guest_trip_point;
+extern bool guest_trip_in_flight;
+void MoveToRespawnPoint(bool arriving_from_trip);
+extern std::optional<std::chrono::steady_clock::time_point> guest_lamp_trip_at;
+constexpr u64 WarpNextStageBonfireOffset = 0x0132E050;
 void InstallLampsAsCampfires(u64 base, u64 image_size);
 std::chrono::sys_seconds LocalTimeNow();
 void StartCoopTrace();
 void StartRestBoardClient();
+
+// Characters hidden before a party rest (see KeepDisabledAfterRespawn). WorldChrMan's blocks are
+// +0x20 (count) / +0x28 (0x160 bytes each); a block's characters +0xB8 / +0xC0 (0x38 bytes each,
+// the character first), the same walk as the respawn (0x01915330). A character's explicit
+// disable is [+0x18]+0x20 bit 0, set by 0x018C6390 (the SetDisable binding's call).
+constexpr u64 SetCharacterDisabledOffset = 0x018C6390;
+
+template <typename Visit>
+void ForEachWorldCharacter(u64 world, Visit&& visit) {
+    const s32 blocks = ReadValue<s32>(world, 0x20);
+    const u64 block_array = ReadValue<u64>(world, 0x28);
+    for (s32 block = 0; block_array >= 0x10000 && block < std::min(blocks, 64); ++block) {
+        const u64 entry = block_array + static_cast<u64>(block) * 0x160;
+        const s32 count = ReadValue<s32>(entry, 0xB8);
+        const u64 characters = ReadValue<u64>(entry, 0xC0);
+        for (s32 index = 0; characters >= 0x10000 && index < std::min(count, 1024); ++index) {
+            const u64 character = ReadValue<u64>(characters + static_cast<u64>(index) * 0x38, 0);
+            if (character >= 0x10000 && HasMemoryAccess(character, 0x3B8, MemoryProt::CpuRead)) {
+                visit(character);
+            }
+        }
+    }
+}
+bool IsCharacterDisabled(u64 character);
+void TickLampRest();
+
+void TickPartyTrip();
 void LogJoinTaskChanges();
+void TickPlayersOnThisMap();
 
 void ReopenClosedPartySession();
 void WatchSummonJoin();
+bool PartyTripActive();
+s64 SteadyMilliseconds();
 
 void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers);
 bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64 tag, const GuestRegisterSnapshot* registers);
@@ -313,6 +378,9 @@ void LogGameCallChainAt(const char* what, u64 rsp);
 constexpr u64 StageTransitionEntryOffset = 0x013CDE30;
 void SaveRemoteJoinTasks();
 extern std::vector<s32> effects_before_trip;
+
+void ParkEnemyWatch();
+extern std::atomic<u64> party_trips_started;
 
 // CSMultiPlayMan (0x05540230) keeps the join tasks in a vector at +0x10..+0x18 (see
 // ShouldRecreateAfterTrip). The task's SetStep virtual (vtable +0x28) requests the next step.
@@ -356,16 +424,42 @@ std::optional<std::string> SessionMemberBoardName(u64 member,
 extern bool restore_search_pending;
 void RestoreSearchAfterTrip(bool in_session);
 void PlayGuestAsHost(bool in_session);
+void TurnOffMultiplayerWalls(bool in_session, u32 map);
+void KeepGuestFullHp();
+void PolishMultiplayerUi();
 void InstallNoLevelSyncInParty(u64 base, u64 image_size);
 void InstallSolidNpcsInParty(u64 base, u64 image_size);
 void InstallSharedLoot(u64 base, u64 image_size);
 void InstallItemModuleDiagnostics(u64 base, u64 image_size);
+void LogItemModuleChecks();
 void InstallItemButtonDiagnostics(u64 base, u64 image_size);
+void LogItemButtonAndMapItems();
+extern std::atomic<int> character_slot;
+
+size_t SetGuestWorldChanges();
+
+std::optional<s32> CountSetFlags();
+void LogWatchedWrites();
 void InstallLampsStayLitAtRegistration(u64 base, u64 image_size);
+void GiveDeferredBossItems();
 void InstallKeepLocalFlags(u64 base, u64 image_size);
 void InstallDeferredBossItems(u64 base, u64 image_size);
+void LogFlagChangesInSession(bool sharing);
+void KeepGuestProgress(bool in_session);
+void SetPartyWorldChanges(bool sharing);
+void GrantPartyEchoes();
+void ClaimEnemiesWhenAlone(bool in_session, u32 map);
 void InstallOwnHitCount(u64 base, u64 image_size);
+void KeepEnemyDeathsInStep(bool sharing);
+void SnapshotHostMapState(bool sharing);
+void TeleportLocalPlayer(const LampPosition& at, float heading = 0.0f);
+std::optional<float> LocalPlayerHeading();
+
+void FinishWaitingJoins(bool in_session);
+void ResendOwnDataOnChange(bool in_session);
+void LogMemberDataChanges(bool in_session);
 void InstallSeamlessTravel(u64 base, u64 image_size);
+void EndSessionOnWorldTeardown();
 void StartVitalsBoardClient();
 void InstallPartyDeath(u64 base, u64 image_size);
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers);

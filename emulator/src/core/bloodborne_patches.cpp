@@ -78,6 +78,8 @@ bool summon_build_negative_event_patch_installed{};
 bool stage_transition_keep_matching_patch_installed{};
 bool world_teardown_hook_installed{};
 bool ghost_death_revive_hook_installed{};
+bool seamless_travel_hooks_installed{};
+bool stop_request_hook_installed{};
 bool host_death_respawn_hook_installed{};
 bool summon_build_host_placement_hook_installed{};
 bool cross_map_guest_handoff_hook_installed{};
@@ -98,6 +100,10 @@ std::string BytesToHex(std::span<const u8> bytes) {
     }
     return out.str();
 }
+
+// What the co-op install did with each feature (see CoopFeatureReport), logged in one line at its
+// end.
+CoopFeatureReport coop_features;
 
 } // namespace Coop
 
