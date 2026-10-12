@@ -742,6 +742,7 @@ struct PartyDeathRun {
     std::optional<s64> grace_until;
     u8 grace_flags = 0;
     u32 real_hits_logged = 0;
+    ReviveHitScale revive_scale; // see ReviveHitScale
     // The kneel not asked for yet in this down (TakesAnimationRequest), and when the down began.
     bool kneel_waiting = false;
     s64 down_since = 0;
