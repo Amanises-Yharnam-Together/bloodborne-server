@@ -246,6 +246,15 @@ TEST_F(BloodborneEboot, HudValuesAreReleasedAsTheGameDoes) {
                          0x53, 0x20, 0x48, 0x8B, 0x07, 0x48, 0x89, 0xDE, 0xFF, 0x50, 0x18}));
 }
 
+// The downed player's infinite poise: the hit's knockback and reaction dispatcher, called from the
+// hit at both its places.
+TEST_F(BloodborneEboot, TheHitReactionHookIsTheKnockbackDispatcher) {
+    EXPECT_EQ(Bytes(HitReactionOffset, HitReactionPrologue.size()),
+              std::vector<u8>(HitReactionPrologue.begin(), HitReactionPrologue.end()));
+    EXPECT_EQ(CallTarget(0x01A2CECB), HitReactionOffset);
+    EXPECT_EQ(CallTarget(0x01A2E236), HitReactionOffset);
+}
+
 // The calls the patches and hooks are about are where the comments say.
 TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     // Ghost death: SetEventFlag(4047) twice, then CustomLuaCallStart(4063).
