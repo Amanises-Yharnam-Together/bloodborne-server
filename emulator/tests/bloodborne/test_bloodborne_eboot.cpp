@@ -192,6 +192,60 @@ TEST_F(BloodborneEboot, TheReviveHitHookIsWhereTheHitsDamageIsStored) {
     EXPECT_EQ(CharacterTeamOffset, 0x88u);
 }
 
+// The native party list: the HUD tick after its tags (`mov rdi, [r15 + 0xF8]`, r15 the HUD, the
+// frame time at [rbp - 0x6C8]) builds its tags as the HUD's own init does (child lookup, then the
+// tag constructor) and updates them with the tag update.
+TEST_F(BloodborneEboot, ThePartyListUsesTheHudsOwnTagCode) {
+    EXPECT_EQ(Bytes(HudTicksTagsDoneOffset, HudTicksTagsDone.size()),
+              std::vector<u8>(HudTicksTagsDone.begin(), HudTicksTagsDone.end()));
+    EXPECT_EQ(CallTarget(HudTicksTagsDoneOffset - 5), HudTagUpdateOffset)
+        << "the last tag's update";
+    // vmovss xmm0, [rbp - 0x6C8] right before it: the frame time.
+    EXPECT_EQ(Bytes(0x01BF8A43, 8),
+              (std::vector<u8>{0xC5, 0xFA, 0x10, 0x85, 0x38, 0xF9, 0xFF, 0xFF}));
+    EXPECT_EQ(CallTarget(0x01BF5261), HudChildLookupOffset) << "RemotePCTag%d";
+    EXPECT_EQ(CallTarget(0x01BF5270), HudTagConstructorOffset);
+    for (const u64 offset :
+         {HudChildLookupOffset, HudTagConstructorOffset, HudTagUpdateOffset, HudSetVisibleOffset}) {
+        EXPECT_EQ(Bytes(offset, FunctionPrologue.size()), FunctionPrologue) << std::hex << offset;
+    }
+    // The prompt: built as the HUD's init builds ActionButtonTop (0x1A8 bytes, its constructor),
+    // updated where the HUD tick updates it.
+    EXPECT_EQ(Bytes(0x01BF56C4, 5), (std::vector<u8>{0xBE, 0xA8, 0x01, 0x00, 0x00}));
+    EXPECT_EQ(CallTarget(0x01BF5711), HudPromptConstructorOffset);
+    EXPECT_EQ(CallTarget(0x01BF8A6B), HudPromptUpdateOffset);
+    // The tag's allocation: 0x6E0 bytes.
+    EXPECT_EQ(Bytes(0x01BF522D, 5), (std::vector<u8>{0xBE, 0xE0, 0x06, 0x00, 0x00}));
+    EXPECT_EQ(HudTagSize, 0x6E0u);
+}
+
+// A PathRef's value is released where the comments say: the game's HUD init releases its stack
+// PathRef after each tag ([rbp - 0x518]: type +0x48, interface +0x40, object +0x50, the value at
+// +0x30, the interface's slot 3), and the HUD movie's destructor releases every value still in
+// its list the same way (rig wipe3 2026-10-12: a dead one crashed at 0x0001E312).
+TEST_F(BloodborneEboot, HudValuesAreReleasedAsTheGameDoes) {
+    // test byte [rbp - 0x4D0], 0x40; je; mov rdi, [rbp - 0x4D8]; mov rdx, [rbp - 0x4C8];
+    // mov rax, [rdi]; lea rsi, [rbp - 0x4E8]; call [rax + 0x18]
+    EXPECT_EQ(
+        Bytes(0x01BF528B, 36),
+        (std::vector<u8>{0xF6, 0x85, 0x30, 0xFB, 0xFF, 0xFF, 0x40, 0x74, 0x26, 0x48, 0x8B, 0xBD,
+                         0x28, 0xFB, 0xFF, 0xFF, 0x48, 0x8B, 0x95, 0x38, 0xFB, 0xFF, 0xFF, 0x48,
+                         0x8B, 0x07, 0x48, 0x8D, 0xB5, 0x18, 0xFB, 0xFF, 0xFF, 0xFF, 0x50, 0x18}));
+    constexpr s32 PathRefAt = -0x518;
+    EXPECT_EQ(PathRefAt + static_cast<s32>(HudPathRefTypeAt), -0x4D0);
+    EXPECT_EQ(PathRefAt + static_cast<s32>(HudPathRefInterfaceAt), -0x4D8);
+    EXPECT_EQ(PathRefAt + static_cast<s32>(HudPathRefObjectAt), -0x4C8);
+    EXPECT_EQ(PathRefAt + static_cast<s32>(HudPathRefValueAt), -0x4E8);
+    EXPECT_EQ(HudValueLinkedBit, 0x40u);
+    // The movie's destructor, over its list's nodes (rbx, a value): test byte [rbx + 0x18], 0x40;
+    // je; mov rdi, [rbx + 0x10]; mov rdx, [rbx + 0x20]; mov rax, [rdi]; mov rsi, rbx;
+    // call [rax + 0x18].
+    EXPECT_EQ(
+        Bytes(0x0001E304, 23),
+        (std::vector<u8>{0xF6, 0x43, 0x18, 0x40, 0x74, 0xE6, 0x48, 0x8B, 0x7B, 0x10, 0x48, 0x8B,
+                         0x53, 0x20, 0x48, 0x8B, 0x07, 0x48, 0x89, 0xDE, 0xFF, 0x50, 0x18}));
+}
+
 // The calls the patches and hooks are about are where the comments say.
 TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     // Ghost death: SetEventFlag(4047) twice, then CustomLuaCallStart(4063).

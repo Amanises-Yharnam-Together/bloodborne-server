@@ -27,6 +27,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <random>
 #include <span>
@@ -1265,6 +1266,21 @@ void NoteNameplate(int index, const std::string& name) {
     }
 }
 
+// An element's text as html, with its own SetText (the object interface's UTF-8 one).
+void SetElementText(u64 element, const std::string& html) {
+    if (!HasMemoryAccess(element, 0x50, MemoryProt::CpuRead) ||
+        (ReadValue<u32>(element, HudElementTypeAt) & 0x8F) == 0) {
+        return;
+    }
+    const u64 object = ReadValue<u64>(element, HudElementInterfaceAt);
+    const u64 vtable = object >= 0x10000 ? ReadValue<u64>(object, 0) : 0;
+    const u64 set_text = vtable >= 0x10000 ? ReadValue<u64>(vtable, HudSetTextUtf8Slot) : 0;
+    if (set_text >= 0x10000) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64, u64, const char*, bool)>(set_text)(
+            object, ReadValue<u64>(element, HudElementDataAt), html.c_str(), true);
+    }
+}
+
 // The HUD tag update's exit (HudTagUpdateExit): over a downed member's nameplate the role line says
 // its revive, in the tag's own text field (the game writes it again every frame).
 void PS4_SYSV_ABI WriteNameplateRoleLine(u64, const GuestRegisterSnapshot* registers) {
@@ -1276,21 +1292,218 @@ void PS4_SYSV_ABI WriteNameplateRoleLine(u64, const GuestRegisterSnapshot* regis
     }
     const std::string name = NameplateName(data);
     NoteNameplate(*index, name);
-    const auto line = NameplateRoleLine(panel, name);
-    const u64 element = tag + HudTagRoleLineAt;
-    if (!line || !HasMemoryAccess(element, 0x50, MemoryProt::CpuRead) ||
-        (ReadValue<u32>(element, HudElementTypeAt) & 0x8F) == 0) {
-        return;
+    if (const auto line = NameplateRoleLine(panel, name)) {
+        SetElementText(tag + HudTagRoleLineAt, *line);
     }
-    const u64 object = ReadValue<u64>(element, HudElementInterfaceAt);
-    const u64 vtable = object >= 0x10000 ? ReadValue<u64>(object, 0) : 0;
-    const u64 set_text = vtable >= 0x10000 ? ReadValue<u64>(vtable, HudSetTextUtf8Slot) : 0;
-    if (set_text < 0x10000) {
-        return;
-    }
-    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, u64, const char*, bool)>(set_text)(
-        object, ReadValue<u64>(element, HudElementDataAt), line->c_str(), true);
 }
+#endif
+
+#ifdef BLOODBORNE_PARTY_HUD
+// The native party list (the party HUD's CoopParty0-2), kept by the HUD's own thread.
+struct NativePartyList {
+    u64 hud = 0; // the HUD the tags were made in
+    bool ready = false;
+    std::array<u8*, PartyListSize> tags{};
+    std::array<std::array<u8, HudTagDataSize>, PartyListSize> data{};
+    std::array<std::array<char16_t, 64>, PartyListSize> roles{}, names{};
+    // CoopPartyIcon0-2's values (object interface, data), kept for the HUD's life; none without
+    // them (a party HUD made without the icon strip).
+    std::array<std::pair<u64, u64>, PartyListSize> icons{};
+    std::array<u32, PartyListSize> icon_frames{};
+    // CoopPrompt: the game's interact prompt widget made for it; null without it.
+    u8* prompt = nullptr;
+    std::array<u8, HudPromptDataSize> prompt_data{};
+    std::array<char16_t, 64> prompt_text{};
+};
+std::atomic<s64> native_prompt_shown_ms{-1'000'000};
+NativePartyList native_list;
+std::atomic<s64> native_list_shown_ms{-1'000'000};
+
+void PutUtf16(std::array<char16_t, 64>& out, const std::string& text) {
+    const size_t length = std::min<size_t>(text.size(), out.size() - 1);
+    for (size_t i = 0; i < length; ++i) {
+        out[i] = static_cast<unsigned char>(text[i]);
+    }
+    out[length] = 0;
+}
+
+// Makes the list's tags in this HUD as its own init makes RemotePCTag0-6: false when the HUD has no
+// CoopParty tags (not the party HUD's), and the overlay keeps drawing the list.
+bool MakePartyListTags(u64 hud) {
+    using Lookup = void PS4_SYSV_ABI (*)(void* out, u64 parent, const char* format, ...);
+    using Construct = void PS4_SYSV_ABI (*)(void* tag, void* path, s32, s32);
+    using Release = void PS4_SYSV_ABI (*)(u64 object, void* value, u64 data);
+    for (int i = 0; i < PartyListSize; ++i) {
+        alignas(16) std::array<u8, HudPathRefSize> path{};
+        reinterpret_cast<Lookup>(image_base + HudChildLookupOffset)(path.data(), hud, "CoopParty%d",
+                                                                    i);
+        u32 type = 0;
+        std::memcpy(&type, path.data() + HudPathRefTypeAt, sizeof(type));
+        if ((type & 0x8F) == 0) {
+            LOG_INFO(Debug,
+                     "Bloodborne party HUD: no CoopParty{} in the HUD; the overlay keeps "
+                     "the party list",
+                     i);
+            return false;
+        }
+        auto* tag = new (std::align_val_t{16}) u8[HudTagSize]{};
+        reinterpret_cast<Construct>(image_base + HudTagConstructorOffset)(tag, path.data(), 0, 0);
+        native_list.tags[i] = tag;
+        // The tag holds its own value; this one is released before the stack goes, as the game's
+        // own init does (see HudValueFate).
+        if (HudValueFate(type, false) == HudValueKeep::Release) {
+            u64 object = 0, data = 0;
+            std::memcpy(&object, path.data() + HudPathRefInterfaceAt, sizeof(object));
+            std::memcpy(&data, path.data() + HudPathRefObjectAt, sizeof(data));
+            reinterpret_cast<Release>(ReadValue<u64>(ReadValue<u64>(object, 0), 0x18))(
+                object, path.data() + HudPathRefValueAt, data);
+        }
+    }
+    for (int i = 0; i < PartyListSize; ++i) {
+        // The icon's value stays referenced while the HUD lasts, so it lives on the heap and is
+        // never freed: the HUD's destructor releases it there (a stack PathRef left a dead value
+        // in the HUD's list, rig wipe3 2026-10-12). One per icon per HUD, as the tags.
+        auto* path = new (std::align_val_t{16}) u8[HudPathRefSize]{};
+        reinterpret_cast<Lookup>(image_base + HudChildLookupOffset)(path, hud, "CoopPartyIcon%d",
+                                                                    i);
+        u32 type = 0;
+        std::memcpy(&type, path + HudPathRefTypeAt, sizeof(type));
+        const bool found = (type & 0x8F) != 0;
+        if (found) {
+            std::memcpy(&native_list.icons[i].first, path + HudPathRefInterfaceAt, 8);
+            std::memcpy(&native_list.icons[i].second, path + HudPathRefObjectAt, 8);
+        }
+        if (HudValueFate(type, found) == HudValueKeep::Drop) {
+            ::operator delete[](path, std::align_val_t{16});
+        }
+        if (!found) {
+            native_list.icons = {};
+            break;
+        }
+    }
+    {
+        alignas(16) std::array<u8, HudPathRefSize> path{};
+        reinterpret_cast<Lookup>(image_base + HudChildLookupOffset)(path.data(), hud, "CoopPrompt");
+        u32 type = 0;
+        std::memcpy(&type, path.data() + HudPathRefTypeAt, sizeof(type));
+        if ((type & 0x8F) != 0) {
+            auto* prompt = new (std::align_val_t{16}) u8[HudPromptSize]{};
+            reinterpret_cast<Construct>(image_base + HudPromptConstructorOffset)(prompt,
+                                                                                 path.data(), 0, 0);
+            native_list.prompt = prompt;
+        }
+        // The prompt holds its own value: this one is released before the stack goes.
+        if (HudValueFate(type, false) == HudValueKeep::Release) {
+            u64 object = 0, data = 0;
+            std::memcpy(&object, path.data() + HudPathRefInterfaceAt, sizeof(object));
+            std::memcpy(&data, path.data() + HudPathRefObjectAt, sizeof(data));
+            reinterpret_cast<Release>(ReadValue<u64>(ReadValue<u64>(object, 0), 0x18))(
+                object, path.data() + HudPathRefValueAt, data);
+        }
+    }
+    LOG_INFO(Debug,
+             "Bloodborne party HUD: the party list is the HUD's own ({} tags, icons {}; their "
+             "values kept on the heap)",
+             PartyListSize, native_list.icons[0].first != 0 ? "too" : "none");
+    return true;
+}
+
+// The party prompt (CoopPrompt), as the game updates its own interact prompt, its words ours.
+void UpdatePartyPrompt(const PartyPanel& panel, float frame_time) {
+    if (native_list.prompt == nullptr) {
+        return;
+    }
+    std::array<u8, HudPromptDataSize> game{};
+    std::memcpy(game.data(),
+                reinterpret_cast<const void*>(image_base + HudFeDataOffset + HudFeDataPromptAt),
+                game.size());
+    u64 allocator = 0;
+    std::memcpy(&allocator, game.data() + HudPromptTextAt + 0x28, 8);
+    if (allocator < 0x10000) {
+        return;
+    }
+    const PartyPrompt prompt = PartyPromptFor(panel);
+    PutUtf16(native_list.prompt_text, prompt.text);
+    WritePromptData(native_list.prompt_data, game, prompt,
+                    reinterpret_cast<u64>(native_list.prompt_text.data()), prompt.text.size());
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u8*, u8*, float)>(image_base + HudPromptUpdateOffset)(
+        native_list.prompt, native_list.prompt_data.data(), frame_time);
+    if (prompt.shown) {
+        native_prompt_shown_ms.store(SteadyMilliseconds(), std::memory_order_relaxed);
+    }
+}
+
+// CoopPartyIcon<index> stops at `frame` (the sprite would play through its frames otherwise).
+void ShowPartyIcon(int index, u32 frame) {
+    const auto [object, value] = native_list.icons[index];
+    if (object < 0x10000 || frame == native_list.icon_frames[index]) {
+        return;
+    }
+    native_list.icon_frames[index] = frame;
+    const u64 goto_frame = ReadValue<u64>(ReadValue<u64>(object, 0), HudGotoFrameSlot);
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, u64, u32, bool)>(goto_frame)(object, value, frame,
+                                                                             true);
+}
+
+// Where the HUD tick has updated its own tags (HudTicksTagsDone): the list's tags, from the panel.
+// A new HUD (after a load) gets new tags; the old HUD's are left as they are.
+void PS4_SYSV_ABI UpdatePartyList(u64, const GuestRegisterSnapshot* registers) {
+    const u64 hud = registers->r15;
+    if (hud < 0x10000) {
+        return;
+    }
+    if (hud != native_list.hud) {
+        native_list = NativePartyList{.hud = hud};
+        native_list.ready = MakePartyListTags(hud);
+    }
+    if (!native_list.ready) {
+        return;
+    }
+    const float frame_time = ReadValue<float>(registers->rbp + HudFrameTimeFrameOffset, 0);
+    // The game's own TagData (RemotePCTag0's): its strings' allocators for ours.
+    const u64 game_data = image_base + HudFeDataOffset + HudRemoteTagsAt;
+    std::array<u8, HudTagDataSize> game{};
+    std::memcpy(game.data(), reinterpret_cast<const void*>(game_data), game.size());
+    u64 role_allocator = 0, name_allocator = 0;
+    std::memcpy(&role_allocator, game.data() + 0x28 + 0x28, 8);
+    std::memcpy(&name_allocator, game.data() + HudTagNameAt + 0x28, 8);
+    if (role_allocator < 0x10000 || name_allocator < 0x10000) {
+        // The game's strings are not made yet: the tags stay hidden (they start shown, with the
+        // sprite's own placeholder words).
+        for (int i = 0; i < PartyListSize; ++i) {
+            reinterpret_cast<void PS4_SYSV_ABI (*)(u8*, bool)>(image_base + HudSetVisibleOffset)(
+                native_list.tags[i], false);
+            ShowPartyIcon(i, PartyListIconNone);
+        }
+        return;
+    }
+    PartyPanel panel;
+    ReadPartyPanel(panel);
+    const auto entries = PartyListEntries(panel);
+    using Update = void PS4_SYSV_ABI (*)(u8* tag, u8* data, float frame_time);
+    bool shown = false;
+    for (int i = 0; i < PartyListSize; ++i) {
+        PutUtf16(native_list.roles[i], entries[i].role);
+        PutUtf16(native_list.names[i], entries[i].name);
+        const auto [x, y] = PartyListPosition(i);
+        WriteTagData(native_list.data[i], game, entries[i], x, y,
+                     reinterpret_cast<u64>(native_list.roles[i].data()),
+                     reinterpret_cast<u64>(native_list.names[i].data()));
+        reinterpret_cast<Update>(image_base + HudTagUpdateOffset)(
+            native_list.tags[i], native_list.data[i].data(), frame_time);
+        if (entries[i].visible) {
+            SetElementText(reinterpret_cast<u64>(native_list.tags[i]) + HudTagNameLineAt,
+                           entries[i].name_line);
+        }
+        ShowPartyIcon(i, entries[i].visible ? entries[i].icon : PartyListIconNone);
+        shown = shown || entries[i].visible;
+    }
+    if (shown) {
+        native_list_shown_ms.store(SteadyMilliseconds(), std::memory_order_relaxed);
+    }
+    UpdatePartyPrompt(panel, frame_time);
+}
+
 #endif
 
 // The party HUD's nameplates (the port's, BB_PARTY_HUD not 0): a downed member's says its revive.
@@ -1308,6 +1521,14 @@ void InstallPartyNameplates(u64 base, u64 image_size) {
         return;
     }
     coop_features.On("party nameplates");
+    if (HudTicksTagsDoneOffset + HudTicksTagsDone.size() > image_size ||
+        !InstallCoopHook(reinterpret_cast<void*>(base + HudTicksTagsDoneOffset), HudTicksTagsDone,
+                         0, UpdatePartyList)) {
+        coop_features.Skipped("party list in the HUD",
+                              SiteFailure(base, image_size, HudTicksTagsDoneOffset));
+        return;
+    }
+    coop_features.On("party list in the HUD");
 #else
     (void)base;
     (void)image_size;
@@ -1369,6 +1590,22 @@ void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& st
     sticks = kept.sticks;
     l2 = kept.l2;
     r2 = kept.r2;
+}
+
+bool NativePartyListShown() {
+#ifdef BLOODBORNE_PARTY_HUD
+    return SteadyMilliseconds() - native_list_shown_ms.load(std::memory_order_relaxed) < 500;
+#else
+    return false;
+#endif
+}
+
+bool NativePartyPromptShown() {
+#ifdef BLOODBORNE_PARTY_HUD
+    return SteadyMilliseconds() - native_prompt_shown_ms.load(std::memory_order_relaxed) < 500;
+#else
+    return false;
+#endif
 }
 
 bool ReadPartyPanel(PartyPanel& panel) {
