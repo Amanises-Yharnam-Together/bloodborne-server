@@ -28,9 +28,10 @@ fi
 out/pyenv/Scripts/python.exe -c 'import PyInstaller, PIL' 2>/dev/null ||
     out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow
 # The scripts run inside BLauncher.exe (--script): the standard modules they import come along.
+# The co-op kit runs its backend (backend/bb_dummy_server.py) and its event patcher this way too.
 hidden=()
 for module in argparse base64 collections hashlib json re shutil struct tempfile xml.etree.ElementTree \
-              urllib.request ctypes.wintypes; do
+              urllib.request ctypes.wintypes binascii datetime http.server secrets sqlite3 uuid zlib; do
     hidden+=(--hidden-import "$module")
 done
 out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level WARN --windowed \
