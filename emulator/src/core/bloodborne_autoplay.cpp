@@ -769,10 +769,16 @@ bool AutoplayApproachDowned(const AutoplayStep& step) {
     return true;
 }
 
-// revive-downed [<timeout>]: strikes the nearest downed party member on this map until nobody
-// is down (how many hits depends on the weapon): from each side in turn, turned to it, as
-// `attack` does (AttackStanceFor), since only a swing that lands counts for its revive.
+// revive-downed [<timeout>] [r1|r2]: strikes the nearest downed party member on this map until
+// nobody is down (how many hits depends on the weapon): from each side in turn, turned to it, as
+// `attack` does (AttackStanceFor), since only a swing that lands counts for its revive. With r2
+// the swings are heavy ones (Kaniel 2026-10-12: R2 revived no faster than R1).
 bool AutoplayReviveDowned(const AutoplayStep& step) {
+    const std::string_view swing = step.Arg(1).empty() ? "r1" : step.Arg(1);
+    if (swing != "r1" && swing != "r2") {
+        step.failure = "revive-downed swings r1 or r2";
+        return false;
+    }
     if (!step.begun) {
         autoplay_run.attack_placed.reset();
     }
@@ -815,7 +821,7 @@ bool AutoplayReviveDowned(const AutoplayStep& step) {
                             HeadingTowards(stance.x, stance.z, (*downed)[0], (*downed)[2]));
         autoplay_run.attack_placed = cycle;
     }
-    autoplay_buttons.store(AttackHoldsR1(step.elapsed) ? AutoplayButton("r1") : 0);
+    autoplay_buttons.store(AttackHoldsR1(step.elapsed) ? AutoplayButton(swing) : 0);
     if (step.elapsed > step.Number(0, 60)) {
         autoplay_buttons.store(0);
         step.failure = fmt::format("still down after {:.0f} s of revive hits", step.elapsed);

@@ -23,8 +23,8 @@ expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
 expect-others-near <n> <meters> (n other players alive that close), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
 Party death (the scenario's "settings" switch it on): rise <metres> (straight up, to fall),
-approach-downed (beside the nearest downed member on the map), revive-downed [<timeout>] (R1
-on the downed member until nobody on the map is down), wait-vital <up|down|dead>
+approach-downed (beside the nearest downed member on the map), revive-downed [<timeout>]
+[r1|r2] (R1, or R2, on the downed member until nobody on the map is down), wait-vital <up|down|dead>
 [<timeout>] (this player's state), wait-member-vital <up|down|dead> [<timeout>] (another
 member's, on the vitals board). shot <name>: the port's picture of its next frame, overlays and
 all (the party HUD), kept in the run's folder as <role>-<name>.png; the emulator skips it.
