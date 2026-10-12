@@ -61,6 +61,12 @@
 #include "core/memory.h"
 
 namespace Core::Bloodborne {
+namespace Coop {
+
+uintptr_t image_base{};
+
+} // namespace Coop
+
 namespace {
 
 // Lamps as campfires (see IsLampTravelFlag). Two register hooks in the talk scripts' native code

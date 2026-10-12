@@ -434,6 +434,7 @@ void ReopenClosedPartySession();
 void WatchSummonJoin();
 bool PartyTripActive();
 s64 SteadyMilliseconds();
+void TickPartyController();
 
 void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers);
 bool PS4_SYSV_ABI OverrideHostDeathRespawn(u64 tag, const GuestRegisterSnapshot* registers);

@@ -130,6 +130,20 @@ constexpr auto CrossMapNativeCalls = std::to_array<NativeCallSignature>({
       0xEC},
      16},
 });
+
+} // namespace
+
+namespace Coop {
+
+std::atomic<u64> event_sequence{};
+std::mutex capture_mutex;
+
+thread_local HostPlacementRewriteRecord host_placement_rewrite{};
+
+} // namespace Coop
+
+namespace {
+
 std::mutex seamless_placement_mutex;
 std::optional<SummonPlacementDescriptor> seamless_host_placement;
 std::optional<SummonPlacementDescriptor> seamless_received_host_placement;
@@ -143,9 +157,19 @@ namespace Coop {
 std::atomic<u32> pending_summon_reload_map{};
 std::atomic<u32> pending_summon_reload_state_map{};
 
+thread_local GuestPlacementHandoffRecord guest_placement_handoff{};
+
+thread_local SummonReloadStateRecord summon_reload_state{};
+
+thread_local DeferredSummonReloadRecord deferred_summon_reload{};
+
+thread_local PreMatchGuestWarpRecord pre_match_guest_warp{};
+
 thread_local PendingResponderResume pending_responder_resume{};
 
 thread_local ResponderResumeRecord responder_resume{};
+
+thread_local HealingFountainAvailabilityRecord healing_fountain_availability{};
 
 } // namespace Coop
 
