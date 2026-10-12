@@ -302,7 +302,12 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     const bool in_loaded_block =
         point > 0 && reinterpret_cast<Resolve>(image_base + ResolveRespawnPointOffset)(
                          blocks, position.data(), rotation.data(), point);
-    switch (ChooseDeathRespawn(point, in_loaded_block, arriving_from_trip, reset)) {
+    const DeathRespawn respawn =
+        ChooseDeathRespawn(point, in_loaded_block, arriving_from_trip, reset);
+    if (WipeTripRespawnsOnArrival(reset, respawn)) {
+        wipe_trip_respawn_pending.store(true); // see RespawnWhatTheSaveLeftDead
+    }
+    switch (respawn) {
     case DeathRespawn::StayPut:
         LOG_INFO(Debug, "Bloodborne revive: respawn point {} not reachable; staying put", point);
         return;

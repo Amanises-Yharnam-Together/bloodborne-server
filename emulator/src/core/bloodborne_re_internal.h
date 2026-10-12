@@ -374,6 +374,9 @@ struct OtherPlayer {
 std::vector<OtherPlayer> OtherPlayers();
 extern s32 guest_trip_point;
 extern bool guest_trip_in_flight;
+// A party wipe's trip is under way: its arrival checks for what the save left dead (see
+// WipeTripRespawnsOnArrival).
+extern std::atomic<bool> wipe_trip_respawn_pending;
 void MoveToRespawnPoint(bool arriving_from_trip);
 extern std::optional<std::chrono::steady_clock::time_point> guest_lamp_trip_at;
 constexpr u64 WarpNextStageBonfireOffset = 0x0132E050;

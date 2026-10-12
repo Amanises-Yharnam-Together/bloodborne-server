@@ -370,6 +370,27 @@ bool KeepDisabledAfterRespawn(bool disabled_before, s32 hp_before);
 // A party rest respawns only what was killed during this visit to the map: living characters,
 // and characters the scripts keep dead from the start, are left out of the bonfire respawn.
 bool RespawnsAtPartyRest(s32 hp, bool alive_this_visit);
+// A character as the bonfire respawn's walk finds it (see RespawnsInWorldRespawn).
+struct RespawnCandidate {
+    s32 hp = 0;
+    s32 max_hp = 0;
+    u8 death_flags = 0;    // +0x1E3: see IsRealDeath (bits 0, 2) and IsDeadInItsWorld (0x26)
+    bool disabled = false; // [+0x18]+0x20 bit 0 (see KeepDisabledAfterRespawn)
+    bool hidden = false;   // +0x28, hidden by the story (see CharacterShown)
+};
+// Dead in this member's own save from before the session: at 0 HP with no death mark at all
+// (bits 0-2 and 5 of +0x1E3 clear), not switched off or hidden by the story. A game that loads
+// its save (or a phantom's trip back home, which restores its world as it was) brings such an
+// enemy in at 0 HP, neither dead nor alive; only a death or rest reload brings it back.
+// Bosses beaten before the session and story deaths are put down by their world (0x26).
+bool LeftDeadByItsSave(const RespawnCandidate& character);
+// Which bonfire respawn (WorldChrMan +0xA6C) runs: a party rest, or the one after a party wipe's
+// trip, which brings back what the member's save left dead (a party wipe resets the map for
+// every member, as a solo death does; Kaniel). The wipe's own reload brought this visit's kills
+// back already.
+enum class WorldRespawnKind : u8 { PartyRest, AfterWipe };
+bool RespawnsInWorldRespawn(WorldRespawnKind kind, const RespawnCandidate& character,
+                            bool alive_this_visit);
 // The same for the character state flags (+0x1E0) the scripts set and the respawn clears.
 constexpr u64 ScriptCharacterFlags = 0x4000 | 0x20000 | 0x40000000;
 u64 RestoreScriptFlagsAfterRespawn(u64 flags_before, u64 flags_after, s32 hp_before);
@@ -703,6 +724,9 @@ std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u1
 enum class DeathRespawn { StayPut, MoveToPoint, Travel };
 DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip,
                                 bool reset);
+// Whether the trip of this death respawn checks, once arrived, for enemies the member's own save
+// left dead (see LeftDeadByItsSave): the trip of a death that resets the map.
+bool WipeTripRespawnsOnArrival(bool reset, DeathRespawn respawn);
 // A flag every party member gets when another one sees it set (see PartyFlagBoard): a lamp's
 // active flags (LampOfActiveFlag and the one after), which the game does not sync itself, and
 // a boss fog's "entered" flag, which a guest's (unsynced) fog event sets to start the boss.

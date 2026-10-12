@@ -132,6 +132,13 @@ party session (party configured and matching state 3 or 6) only:
   the NPC param loads `0x0190E445`/`0x0190E572` hand living ones a stand-in param with the skip
   bit +0x145 & 0x2000000); disabled-alive characters ([+0x18]+0x20 bit 0, set by `0x018C6390`)
   are disabled again; state flags 0x4000/0x20000/0x40000000 of live characters are put back.
+- **After a party wipe** the same respawn (rests on or off) runs 5 s after the wipe's trip
+  arrives, for characters the member's own save left dead: 0 HP, no death mark (+0x1E3 & 0x27
+  clear), not disabled or hidden (`LeftDeadByItsSave`). Rig smoke 2026-10-12: a guest restarted
+  mid-session loaded its save with 0x1001400b dead, joined as a phantom, and the wipe's trip home
+  (`WarpNextStageBonfire` -> stage request `0x013CDE30`, as in SoloPlayDeath_2 `0x01381DE0`)
+  brought its world back as the save had it; host and guest2's reloads respawned theirs. Log:
+  `party wipe: N characters left dead by this member's save ... respawning=`.
 - New hook API: `InstallGuestRegisterEditHook` (cpu_patches): the trampoline already reloads
   registers from the snapshot, so a hook can change them.
 - `py -3.12 tools\re\esdump.py <talkesdbnd.dcx> [esd]` dumps talk scripts (states, conditions,

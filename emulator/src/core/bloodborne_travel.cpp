@@ -117,6 +117,21 @@ constexpr std::array<u8, 7> RespawnParamCheck{0x48, 0x8B, 0x40, 0x08, 0x48, 0x85
 alignas(16) std::array<u8, 0x150> no_respawn_param{};
 alignas(16) std::array<u64, 2> no_respawn_param_holder{};
 std::atomic<bool> party_rest_respawn_running{};
+// Which respawn runs (see RespawnsInWorldRespawn): a party rest, or the one after a wipe's trip.
+std::atomic<WorldRespawnKind> world_respawn_kind{WorldRespawnKind::PartyRest};
+
+// A wipe's trip loads the map again, which brings back what died since this world was loaded,
+// as a solo death does: the host's and the other guests' copies of an enemy the party killed came
+// back at full HP. Not what this member's own save left dead when its world came from that save:
+// rig smoke 2026-10-12, a guest whose game restarted mid-session loaded its save with 0x1001400b
+// dead, joined as a phantom in the host's world, and the wipe's trip (WarpNextStageBonfire, the
+// same stage request 0x013CDE30 as the solo death's reload in SoloPlayDeath_2 0x01381DE0) took it
+// home: its world came back as the save had it, 0x1001400b at 0 HP with no death mark (+0x1E3 0).
+// So a few seconds after a wipe's trip arrives (bosses beaten in the save are put down by then,
+// 0x26), the bonfire respawn brings back exactly those (LeftDeadByItsSave), with the event
+// restart skipped as for a party rest. Nothing to bring back: nothing happens.
+constexpr auto WipeRespawnAfterArrival = std::chrono::seconds{5};
+std::optional<std::chrono::steady_clock::time_point> wipe_respawn_at;
 
 std::mutex lamp_rest_mutex;
 LampRestState lamp_rest;
@@ -171,9 +186,24 @@ bool WasAliveThisVisit(u64 character) {
     return seen_alive.contains(character);
 }
 
+// The character's HP (+0xF8) and max HP (+0xFC) of its data module ([[+0x3B0]+0x20]), death flags
+// (+0x1E3), explicit disable and story hide byte (+0x28).
+RespawnCandidate ReadRespawnCandidate(u64 character) {
+    const u64 modules = ReadValue<u64>(character, 0x3B0);
+    const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+    return RespawnCandidate{
+        .hp = data >= 0x10000 ? ReadValue<s32>(data, 0xF8) : 0,
+        .max_hp = data >= 0x10000 ? ReadValue<s32>(data, 0xFC) : 0,
+        .death_flags = ReadValue<u8>(character, 0x1E3),
+        .disabled = IsCharacterDisabled(character),
+        .hidden = ReadValue<u8>(character, 0x28) != 0,
+    };
+}
+
 void PS4_SYSV_ABI RespawnOnlyTheDead(u64, GuestRegisterSnapshot* registers) {
     if (!party_rest_respawn_running.load() || registers->rax < 0x10000 ||
-        RespawnsAtPartyRest(CharacterHp(registers->rbx), WasAliveThisVisit(registers->rbx))) {
+        RespawnsInWorldRespawn(world_respawn_kind.load(), ReadRespawnCandidate(registers->rbx),
+                               WasAliveThisVisit(registers->rbx))) {
         return;
     }
     registers->rax = reinterpret_cast<u64>(no_respawn_param_holder.data());
@@ -766,6 +796,7 @@ void RefreshWorldAtLamp(s32 lamp, s32 players) {
                 respawn_before =
                     world >= 0x10000 ? ReadValue<s32>(world, WorldRespawnStateOffset) : -1;
                 if (respawn_before == 0) {
+                    world_respawn_kind.store(WorldRespawnKind::PartyRest);
                     RememberHiddenCharacters(world);
                     party_rest_respawn_pending.store(true);
                     party_rest_respawn_running.store(true);
@@ -813,20 +844,76 @@ void SampleLivingCharacters() {
     });
 }
 
+// See WipeRespawnAfterArrival. The log line names what the save left dead on every member after
+// a wipe's trip (none on a member whose own reload brought everything back).
+void RespawnWhatTheSaveLeftDead() {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (!InPartySession() || world < 0x10000) {
+        LOG_INFO(Debug, "Bloodborne party wipe: no respawn check (party session={}, world={})",
+                 InPartySession(), world >= 0x10000);
+        return;
+    }
+    std::string which;
+    s32 count = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (LeftDeadByItsSave(ReadRespawnCandidate(character))) {
+            ++count;
+            which += fmt::format(" {:#x}", ReadValue<u32>(character, 0x08));
+        }
+    });
+    const s32 state = ReadValue<s32>(world, WorldRespawnStateOffset);
+    const bool respawn = count > 0 && state == 0;
+    LOG_INFO(Debug,
+             "Bloodborne party wipe: {} characters left dead by this member's save on map {:#x}:{} "
+             "(world respawn state {}, respawning={})",
+             count, CurrentPlace().map, which, state, respawn);
+    if (!respawn) {
+        return;
+    }
+    world_respawn_kind.store(WorldRespawnKind::AfterWipe);
+    RememberHiddenCharacters(world);
+    party_rest_respawn_pending.store(true);
+    party_rest_respawn_running.store(true);
+    WriteValue(world, WorldRespawnStateOffset, s32{1});
+}
+
+// The bonfire respawn's own steps, with party rests on or off (the respawn hooks are installed
+// either way): a wipe's respawn when due, and putting back what a respawn re-enabled once it ends.
+void TickWorldRespawn() {
+    const auto now = std::chrono::steady_clock::now();
+    if (wipe_respawn_at && now >= *wipe_respawn_at) {
+        wipe_respawn_at.reset();
+        RespawnWhatTheSaveLeftDead();
+    }
+    LogWorldRespawnChanges();
+    if (compare_activation_at && now >= *compare_activation_at) {
+        compare_activation_at.reset();
+        LogCharactersActivatedByRest();
+    }
+}
+
+// On a trip's arrival: a wipe's trip checks for what the save left dead a little later.
+void ScheduleWipeRespawn() {
+    if (wipe_trip_respawn_pending.exchange(false)) {
+        wipe_respawn_at = std::chrono::steady_clock::now() + WipeRespawnAfterArrival;
+    }
+}
+
 } // namespace
 
 namespace Coop {
 
+std::atomic<bool> wipe_trip_respawn_pending{};
+
 void TickLampRest() {
-    if (!lamp_rest_hooks_installed || !lamp_rests_enabled) {
+    if (!lamp_rest_hooks_installed) {
+        return;
+    }
+    TickWorldRespawn();
+    if (!lamp_rests_enabled) {
         return;
     }
     SampleLivingCharacters();
-    LogWorldRespawnChanges();
-    if (compare_activation_at && std::chrono::steady_clock::now() >= *compare_activation_at) {
-        compare_activation_at.reset();
-        LogCharactersActivatedByRest();
-    }
     if (lamp_touch_animation_at && std::chrono::steady_clock::now() >= *lamp_touch_animation_at) {
         lamp_touch_animation_at.reset();
         using ForcePlayAnimation = bool PS4_SYSV_ABI (*)(u64 unused, s32 entity, s32 animation);
@@ -1323,6 +1410,7 @@ void TickPartyTrip() {
             guest_trip_in_flight = false;
             guest_trip_fixup_at = std::chrono::steady_clock::now() + std::chrono::seconds{1};
         }
+        ScheduleWipeRespawn();
     }
 }
 
