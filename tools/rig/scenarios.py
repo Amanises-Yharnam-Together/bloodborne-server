@@ -670,6 +670,20 @@ SCENARIOS = {
         },
         "timeout": 900,
     },
+    "join3-uncap": {
+        "about": "join3 at the kit's frame rate (Uncap FPS++): rig 2026-10-12, the host saw the "
+                 "second guest's sign and never claimed it (3 runs of 3; at 30 FPS it joined)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait 10", "snapshot",
+                     "expect-session 3"],
+            "guest": [START, "godmode", "wait-session 3 480", "wait 10", "snapshot",
+                      "expect-session 3"],
+            "guest2": [START, "godmode", "wait-session 3 480", "wait 10", "snapshot",
+                       "expect-session 3"],
+        },
+        "settings": {"BB_FPS": "uncap"},
+        "timeout": 900,
+    },
     "trip3": {
         "about": "a party of three apart (everyone sees both others at the end): the second guest waits in the Dream while the host "
                  "goes there and back; the host re-creates only the guest on its map, then the "
@@ -687,7 +701,8 @@ SCENARIOS = {
         },
         "expect": {
             "host": [r"re-creating rig_guest on map 0x18010000 \(1 of 2 members\)",
-                     r"re-creating rig_guest2 on map 0x18010000"],
+                     # Since PR #41 both may be named in one line ("rig_guest rig_guest2").
+                     r"re-creating (?:\S+ )*rig_guest2 (?:\S+ )*on map 0x18010000"],
         },
         "timeout": 1200,
     },
