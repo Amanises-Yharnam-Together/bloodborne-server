@@ -29,7 +29,9 @@ namespace Core::Bloodborne {
 std::optional<std::string> ParsePartySetting(std::string_view setting);
 
 enum class PartyRole { Host, Guest };
-enum class PartyAction { Wait, StartSearch };
+// EndSearch: end the role's search effect (a stale bell, see PartyController::Tick); the search
+// starts again on a later tick, once the effect is seen off.
+enum class PartyAction { Wait, StartSearch, EndSearch };
 
 // The special effects a rung bell leaves on the player. While one is active the game's SOS
 // status (0x0186FE40) reports the player as searching, so adding the effect is the whole bell.
@@ -63,6 +65,9 @@ struct PartyObservation {
     // A boss fight or its clear sequence runs (event flags 4000 / 4047): a player joining then is
     // kicked by the game, which ends the session.
     bool boss_sequence = false;
+    // When the game last posted a summon search (/summon_messenger/get, every
+    // PartyController::SummonSearchInterval while it searches), if ever.
+    std::optional<std::chrono::steady_clock::time_point> last_search_post;
 };
 
 // CSMultiPlayMan session state (+0x124) as seen in the rig, and the summon-reload marker the
@@ -879,8 +884,24 @@ std::string FormatPlaceChange(const PlaceChange& change);
 // What ends the state that lives for a visit or a session (docs/WORLD_SYNC.md): each container
 // registers its reset for the events that end it, and one dispatch runs them, instead of a reset
 // flag per feature. A wipe, a leave, a join and a new character also start a new session epoch.
-enum class Lifecycle : u8 { Wipe, Trip, Leave, Join, NewCharacter };
+// Leave is this member's own; MemberLeft is another member leaving a session that goes on (its
+// game died or it went home: rig 2026-10-12, the others ran no lifecycle), and keeps the epoch.
+enum class Lifecycle : u8 { Wipe, Trip, Leave, Join, NewCharacter, MemberLeft };
 std::string_view LifecycleName(Lifecycle event);
+// Other members leaving the session while this one stays: the other session members are counted
+// each tick, and a drop that holds for SettleMs is a departure per member gone. Not counted while
+// `steady` is false (a load or a trip, when the list is rebuilt) or out of the session (a drop
+// that comes with this member's own Leave); a rise is taken at once.
+class MemberDepartures {
+public:
+    static constexpr s64 SettleMs = 1'000;
+    // How many members left (once per departure).
+    size_t Tick(bool in_session, bool steady, size_t others, s64 now_ms);
+
+private:
+    size_t known = 0;
+    std::optional<s64> fewer_since;
+};
 class LifecycleResets {
 public:
     void Register(std::string name, std::initializer_list<Lifecycle> events,
@@ -998,6 +1019,12 @@ public:
     void Take(u64 sender, MemberMapState state, s64 now_ms);
     // The fresh frames, newest first.
     std::vector<MemberMapState> Fresh(s64 now_ms);
+    // Drops every sender but `senders` (a member left: its frames go at once).
+    void KeepOnly(std::span<const u64> senders) {
+        std::erase_if(by_sender, [&](const auto& entry) {
+            return std::ranges::find(senders, entry.first) == senders.end();
+        });
+    }
 
 private:
     struct Received {
@@ -1036,6 +1063,12 @@ public:
             values.push_back(std::move(value));
         }
         return values;
+    }
+    // Drops every sender but `senders` (a member left: its frames go at once).
+    void KeepOnly(std::span<const u64> senders) {
+        std::erase_if(by_sender, [&](const auto& entry) {
+            return std::ranges::find(senders, entry.first) == senders.end();
+        });
     }
 
 private:
@@ -1540,6 +1573,12 @@ public:
     using Clock = std::chrono::steady_clock;
     static constexpr u32 StableTicksBeforeSearch = 20;
     static constexpr Clock::duration RetryDelay = std::chrono::seconds{15};
+    // A searching game posts /summon_messenger/get every 5 s (shadNet, rig 2026-10-12: 5.0 to
+    // 6.6 s apart at 30 FPS). A bell is stale when neither it went on nor the game searched for
+    // two of those and a frame hitch's slack: one late or lost post never ends a search.
+    static constexpr Clock::duration SummonSearchInterval = std::chrono::seconds{5};
+    static constexpr Clock::duration StaleSearchAfter =
+        2 * SummonSearchInterval + std::chrono::seconds{2};
 
     explicit PartyController(PartyRole role) : role{role} {}
 
@@ -1549,11 +1588,18 @@ public:
     PartyAction Tick(const PartyObservation& observation, Clock::time_point now);
 
 private:
+    // The stale bell (see Tick) for a host with room: what to do, or nothing to leave it to the
+    // usual search rules.
+    std::optional<PartyAction> RingAgain(const PartyObservation& observation,
+                                         Clock::time_point now);
+
     PartyRole role;
     u32 stable_ticks = 0;
     std::optional<Clock::time_point> last_search;
     /// Since when a hosting bell with room for more has been on (see Tick).
     std::optional<Clock::time_point> ringing_since;
+    /// When a stale bell was ended (EndSearch); it rings again once the effect is off.
+    std::optional<Clock::time_point> ending_since;
 };
 
 // Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY=<script file>), for tests with no one at the pad: the
@@ -1608,8 +1654,9 @@ std::size_t PruneSaveBackups(const std::filesystem::path& user_dir, std::size_t 
 //   p2p-out, p2p-in      a co-op frame: type, peer (address:port), payload (hex); in: from-peer
 //   board-out, board-in  a board post and its answer: endpoint, status, size, body (at most
 //                        TraceBodyCap of it; "same=1" and no body when it is the endpoint's last)
-//   life                 event: each OnLifecycle (wipe, trip, leave, join, new character) with its
-//                        session epoch; sent-home, slot-lists-forgotten, peer-join, peer-leave
+//   life                 event: each OnLifecycle (wipe, trip, leave, join, new character, member
+//                        left) with its session epoch; sent-home, slot-lists-forgotten,
+//                        peer-join, peer-leave
 //   place                a change of place (PlaceTracker): from, to and the cause
 //   kills-in             VisitKills's inputs, when they change
 //   hp-in                SharedDamage's inputs, every round while they matter
@@ -1919,6 +1966,30 @@ std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self);
 // Whether another member stands on `map` (a usable map): a lethal hit then puts this player down
 // instead of wiping the map at once.
 bool SomeoneElseStands(std::span<const MemberVitals> board, std::string_view self, u32 map);
+// Only the members of this member's session count (rig 2026-10-12, run 132915: a line from a
+// member out of it kept a downed party from its wipe): the board's lines of `self` and of the
+// `session`'s other members (board names), all of them while the session's names are unknown.
+std::vector<MemberVitals> OnlySessionMembers(
+    std::span<const MemberVitals> board, std::string_view self,
+    const std::optional<std::vector<std::string>>& session);
+// The other session members' board names, when every one of them was found.
+std::optional<std::vector<std::string>> SessionBoardNames(
+    const std::vector<std::optional<std::string>>& found);
+// Whether this member is in the session's world, where it stands for party death (same run: a
+// guest summoned while the others were going down posted "up" from its own world, on the host's
+// map id, through its 7 s summon load, and the host's lethal hit took it as standing). A host is
+// there at once; a summoned guest (`summoned`, matching state 6) once a load ends after its join
+// (a new `visit`, `playing`), or LimitMs after the join if none comes. Kept through trips (not
+// ticked during one).
+class SessionArrival {
+public:
+    static constexpr s64 LimitMs = 30'000;
+    bool Tick(bool in_session, bool summoned, u64 visit, bool playing, s64 now_ms);
+
+private:
+    std::optional<std::pair<u64, s64>> joined; // the visit and the time of the join
+    bool arrived = false;
+};
 
 // This player's revive hits: an attack press (R1 or R2 going down) deals its damage
 // (ReviveHitDamage) to the nearest downed member within Reach on its map (ReviveTarget), at most

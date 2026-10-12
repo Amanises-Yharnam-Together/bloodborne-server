@@ -393,6 +393,7 @@ PartyObservation ObserveParty(u64 player, s32 search_effect) {
     observation.white_phantom = observation.player_valid &&
                                 HasMemoryAccess(player, 0x7C, MemoryProt::CpuRead) &&
                                 ReadValue<s32>(player, 0x78) == WhiteGhostCharacterType;
+    observation.last_search_post = LastSummonSearchPost();
     return observation;
 }
 
@@ -513,6 +514,35 @@ s32 CharacterHp(u64 character) {
 
 namespace {
 
+// See InSessionWorld.
+std::atomic<bool> in_session_world{false};
+
+// After the session's Join and Leave (this member's own), from the same tick: whether this member
+// is in the session's world yet (SessionArrival, kept through trips), and the other members
+// leaving the session while it stays (MemberDepartures), a MemberLeft each.
+void TickSessionMembers(bool in_session, bool trip, bool loading, s64 now_ms) {
+    if (!trip) {
+        static SessionArrival arrival;
+        const Place place = CurrentPlace();
+        const u64 multi_play = GetMatchingState();
+        const bool summoned = multi_play >= 0x10000 &&
+                              HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead) &&
+                              ReadValue<s32>(multi_play, 0x124) == MatchingStateSummonedGuest;
+        const bool arrived = arrival.Tick(in_session, summoned, place.visit,
+                                          place.state == PlaceState::Playing, now_ms);
+        if (arrived != in_session_world.exchange(arrived, std::memory_order_relaxed)) {
+            LOG_INFO(Debug, "Bloodborne party: {} the session's world (map {:#x} visit {})",
+                     arrived ? "in" : "out of", place.map, place.visit);
+        }
+    }
+    static MemberDepartures departures;
+    const size_t left = departures.Tick(in_session, !trip && !loading,
+                                        in_session ? OtherSessionMembers().size() : 0, now_ms);
+    for (size_t index = 0; index < left; ++index) {
+        OnLifecycle(Lifecycle::MemberLeft);
+    }
+}
+
 // The tracker's reading for this tick (the only raw map read besides the load-time hooks, the
 // trip machinery and the rig), first in the tick so every feature after it sees this tick's
 // place. Before TickPartyTrip: the tick that ends a trip still reads it as one (a lamp trip).
@@ -554,9 +584,18 @@ void TickPlace() {
             OnLifecycle(in_session ? Lifecycle::Join : Lifecycle::Leave);
         }
     }
+    TickSessionMembers(was_in_session, trip, reading.loading, reading.now_ms);
 }
 
 } // namespace
+
+namespace Coop {
+
+bool InSessionWorld() {
+    return in_session_world.load(std::memory_order_relaxed);
+}
+
+} // namespace Coop
 
 namespace Coop {
 
@@ -587,17 +626,25 @@ void TickPartyController() {
     ReopenClosedPartySession();
     const u64 player = GetLocalPlayer();
     const PartyObservation observation = ObserveParty(player, party_controller->SearchEffectId());
-    if (party_controller->Tick(observation, PartyController::Clock::now()) !=
-        PartyAction::StartSearch) {
+    const PartyAction action = party_controller->Tick(observation, PartyController::Clock::now());
+    if (action == PartyAction::EndSearch) {
+        // A bell that outlasted its search (see PartyController::RingAgain): the game starts a
+        // search only when the effect goes on, so the old one comes off first; the controller
+        // rings again on a later tick, once it is off.
+        const bool ended = EndPlayerEffect(player, party_controller->SearchEffectId());
+        LOG_INFO(Debug,
+                 "Bloodborne party: ended the host's stale bell effect {} to ring again (ended={}, "
+                 "last search posted {} ms ago)",
+                 party_controller->SearchEffectId(), ended,
+                 observation.last_search_post
+                     ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                           PartyController::Clock::now() - *observation.last_search_post)
+                           .count()
+                     : -1);
         return;
     }
-    // A bell that outlasted its search (see PartyController::Tick): the game starts a search only
-    // when the effect goes on, so the old one comes off first.
-    const bool ended = observation.search_effect_active &&
-                       EndPlayerEffect(player, party_controller->SearchEffectId());
-    if (ended) {
-        LOG_INFO(Debug, "Bloodborne party: ended the host's stale bell effect {} to ring again",
-                 party_controller->SearchEffectId());
+    if (action != PartyAction::StartSearch) {
+        return;
     }
     const bool result = StartPlayerSummonSearch(player, party_controller->SearchEffectId());
     LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",

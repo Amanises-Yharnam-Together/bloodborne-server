@@ -291,6 +291,53 @@ TEST(BloodbornePartyDeath, GoesDownOnlyWithSomeoneElseStandingOnTheMap) {
     EXPECT_FALSE(SomeoneElseStands({}, Kaniel, CentralYharnam));
 }
 
+// Rig 2026-10-12 (run 132915, Kaniel: "the third player just didn't die"): only the members in
+// this member's session count. A line from a member out of it (its game restarted, back in its
+// own world on the same map; or one that left, until its line expires) is dropped before
+// anything reads the board. The session's names unknown (one not found): nothing is dropped.
+TEST(BloodbornePartyDeath, OnlyTheSessionsMembersCount) {
+    const std::vector<MemberVitals> board{Member(Kaniel, CentralYharnam, Vital::Down, 1),
+                                          Member(Lisara, CentralYharnam, Vital::Down, 2),
+                                          Member(Third, CentralYharnam, Vital::Up)};
+    const auto session = OnlySessionMembers(board, Kaniel, std::vector<std::string>{Lisara});
+    EXPECT_EQ(session, (std::vector<MemberVitals>{board[0], board[1]})) << "self stays";
+    EXPECT_FALSE(SomeoneElseStands(session, Kaniel, CentralYharnam)) << "a wipe";
+    EXPECT_FALSE(SomeoneElseStands(session, Lisara, CentralYharnam));
+    EXPECT_EQ(OnlySessionMembers(board, Kaniel, std::nullopt), board);
+    EXPECT_EQ(OnlySessionMembers(board, Kaniel, std::vector<std::string>{}),
+              (std::vector<MemberVitals>{board[0]}))
+        << "alone in the session";
+
+    EXPECT_EQ(SessionBoardNames({std::optional<std::string>{Lisara}, std::optional{Third}}),
+              (std::vector<std::string>{Lisara, Third}));
+    EXPECT_EQ(SessionBoardNames({std::optional<std::string>{Lisara}, std::nullopt}), std::nullopt);
+    EXPECT_EQ(SessionBoardNames({}), std::vector<std::string>{});
+}
+
+// The same run: the guest whose game restarted was summoned while the others were going down. It
+// posted "up" from its own world for the 7 s of its summon load (matching state 6 already, map
+// 0x18010000 like the host's), and the host's lethal hit counted it as standing: down, no wipe.
+// A member is in the session's world (and posts its vitals) once it arrived: a host at once, a
+// summoned guest once a load ends after its join, or ArrivalLimitMs after it whatever happens.
+TEST(BloodbornePartyDeath, ASummonedGuestStandsOnlyOnceItArrived) {
+    SessionArrival guest;
+    EXPECT_FALSE(guest.Tick(false, false, 3, true, 0)) << "out of the session";
+    EXPECT_FALSE(guest.Tick(true, true, 3, true, 1'000)) << "joined: still in its own world";
+    EXPECT_FALSE(guest.Tick(true, true, 3, false, 3'000)) << "its summon load";
+    EXPECT_TRUE(guest.Tick(true, true, 4, true, 7'900)) << "arrived in the host's world";
+    EXPECT_TRUE(guest.Tick(true, true, 5, false, 20'000)) << "a trip later: still in the session";
+    EXPECT_FALSE(guest.Tick(false, false, 5, true, 30'000)) << "left";
+
+    SessionArrival host;
+    EXPECT_TRUE(host.Tick(true, false, 3, true, 0)) << "a host is in its own world";
+
+    SessionArrival stuck;
+    EXPECT_FALSE(stuck.Tick(true, true, 3, true, 0));
+    EXPECT_FALSE(stuck.Tick(true, true, 3, true, SessionArrival::LimitMs - 1));
+    EXPECT_TRUE(stuck.Tick(true, true, 3, true, SessionArrival::LimitMs))
+        << "a join with no load counts after a while";
+}
+
 TEST(BloodbornePartyDeath, EncodesTheVitalsUpdate) {
     MemberVitals self = Member(Kaniel, CentralYharnam, Vital::Down, 7, {-12.5f, 3.0f, 40.25f});
     self.hp = 1;

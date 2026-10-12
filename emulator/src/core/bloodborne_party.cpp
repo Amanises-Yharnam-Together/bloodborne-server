@@ -1362,8 +1362,38 @@ std::string_view LifecycleName(Lifecycle event) {
         return "join";
     case Lifecycle::NewCharacter:
         return "new character";
+    case Lifecycle::MemberLeft:
+        return "member left";
     }
     return "?";
+}
+
+size_t MemberDepartures::Tick(bool in_session, bool steady, size_t others, s64 now_ms) {
+    if (!in_session) {
+        known = 0;
+        fewer_since.reset();
+        return 0;
+    }
+    if (others >= known) {
+        known = others;
+        fewer_since.reset();
+        return 0;
+    }
+    if (!steady) {
+        fewer_since.reset();
+        return 0;
+    }
+    if (!fewer_since) {
+        fewer_since = now_ms;
+        return 0;
+    }
+    if (now_ms - *fewer_since < SettleMs) {
+        return 0;
+    }
+    const size_t left = known - others;
+    known = others;
+    fewer_since.reset();
+    return left;
 }
 
 void LifecycleResets::Register(std::string name, std::initializer_list<Lifecycle> events,
@@ -1376,8 +1406,9 @@ void LifecycleResets::Register(std::string name, std::initializer_list<Lifecycle
 }
 
 std::vector<std::string> LifecycleResets::Dispatch(Lifecycle event) {
-    // A trip keeps the session (seamless travel); everything else here starts a new one.
-    if (event != Lifecycle::Trip) {
+    // A trip keeps the session (seamless travel), and so does another member leaving it;
+    // everything else here starts a new one.
+    if (event != Lifecycle::Trip && event != Lifecycle::MemberLeft) {
         ++epoch;
     }
     std::vector<std::string> ran;
@@ -3361,31 +3392,62 @@ bool SkipsLeaveLimit(s32 character_type, size_t other_members) {
     return character_type != WhiteGhostCharacterType || other_members > 0;
 }
 
+// A host with room whose bell stays on: on the port the effect outlasted the game's search after
+// the first guest arrived (rig join3 2026-10-09), so a bell the game no longer searches with is
+// rung again until the session is full. Stale only when the game posted no search for
+// StaleSearchAfter (rig join3 at 30 FPS 2026-10-12: ringing again every RetryDelay ended searches
+// that still ran, and the game posted none for 2m45s). The effect is ended first and the search
+// started on a later tick, once it is off: the game starts a search when the effect goes on.
+std::optional<PartyAction> PartyController::RingAgain(const PartyObservation& observation,
+                                                      Clock::time_point now) {
+    if (role != PartyRole::Host || !observation.room_for_more || observation.white_phantom) {
+        ringing_since.reset();
+        ending_since.reset();
+        return std::nullopt;
+    }
+    if (ending_since) {
+        if (!observation.search_effect_active) {
+            ending_since.reset();
+            ringing_since.reset();
+            stable_ticks = 0;
+            last_search = now;
+            return PartyAction::StartSearch;
+        }
+        if (now - *ending_since < RetryDelay) {
+            return PartyAction::Wait;
+        }
+        ending_since = now; // the effect did not go: end it again
+        return PartyAction::EndSearch;
+    }
+    if (!observation.search_effect_active) {
+        ringing_since.reset();
+        return std::nullopt;
+    }
+    if (!ringing_since) {
+        ringing_since = now;
+    }
+    const Clock::time_point heard = observation.last_search_post
+                                        ? std::max(*ringing_since, *observation.last_search_post)
+                                        : *ringing_since;
+    if (now - heard < StaleSearchAfter) {
+        return PartyAction::Wait;
+    }
+    ending_since = now;
+    return PartyAction::EndSearch;
+}
+
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {
     if (!observation.player_valid || !observation.map_usable || observation.stage_transition ||
         observation.boss_sequence) {
         stable_ticks = 0;
+        ending_since.reset();
         return PartyAction::Wait;
     }
     const bool may_search =
         observation.matching_idle || (role == PartyRole::Host && observation.room_for_more);
-    // A host with room whose bell stays on: on the port the effect outlasted the game's search
-    // after the first guest arrived (rig join3 2026-10-09), so the bell rings again every
-    // RetryDelay until the session is full.
-    if (may_search && role == PartyRole::Host && observation.room_for_more &&
-        observation.search_effect_active && !observation.white_phantom) {
-        if (!ringing_since) {
-            ringing_since = now;
-            return PartyAction::Wait;
-        }
-        if (now - *ringing_since < RetryDelay) {
-            return PartyAction::Wait;
-        }
-        ringing_since = now;
-        last_search = now;
-        return PartyAction::StartSearch;
+    if (const auto action = RingAgain(observation, now)) {
+        return *action;
     }
-    ringing_since.reset();
     if (!may_search || observation.search_effect_active || observation.white_phantom) {
         // In (or joining) a session, or our search already took: the next time we are back home
         // alone is a fresh start, so forget the old cooldown.
@@ -4039,6 +4101,46 @@ bool SomeoneElseStands(std::span<const MemberVitals> board, std::string_view sel
     return map != 0 && std::ranges::any_of(board, [&](const MemberVitals& member) {
                return member.member != self && member.map == map && member.vital == Vital::Up;
            });
+}
+
+std::vector<MemberVitals> OnlySessionMembers(
+    std::span<const MemberVitals> board, std::string_view self,
+    const std::optional<std::vector<std::string>>& session) {
+    std::vector<MemberVitals> kept;
+    for (const MemberVitals& member : board) {
+        if (!session || member.member == self || std::ranges::contains(*session, member.member)) {
+            kept.push_back(member);
+        }
+    }
+    return kept;
+}
+
+std::optional<std::vector<std::string>> SessionBoardNames(
+    const std::vector<std::optional<std::string>>& found) {
+    std::vector<std::string> names;
+    for (const auto& name : found) {
+        if (!name) {
+            return std::nullopt;
+        }
+        names.push_back(*name);
+    }
+    return names;
+}
+
+bool SessionArrival::Tick(bool in_session, bool summoned, u64 visit, bool playing, s64 now_ms) {
+    if (!in_session) {
+        joined.reset();
+        arrived = false;
+        return false;
+    }
+    if (!joined) {
+        joined = std::pair{visit, now_ms};
+        arrived = !summoned;
+    }
+    if (!arrived) {
+        arrived = (playing && visit != joined->first) || now_ms - joined->second >= LimitMs;
+    }
+    return arrived;
 }
 
 bool ReviveHits::Press(std::string_view target, u32 down, u32 damage, s64 now_ms) {

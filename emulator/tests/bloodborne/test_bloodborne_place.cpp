@@ -341,4 +341,58 @@ TEST(BloodborneLifecycle, NamesTheEvents) {
     EXPECT_EQ(LifecycleName(Lifecycle::Leave), "leave");
     EXPECT_EQ(LifecycleName(Lifecycle::Join), "join");
     EXPECT_EQ(LifecycleName(Lifecycle::NewCharacter), "new character");
+    EXPECT_EQ(LifecycleName(Lifecycle::MemberLeft), "member left");
+}
+
+// Rig 2026-10-12 (run 131858): a guest's game died in a party of three; the host and the other
+// guest only traced the link going (peer-leave) and ran no lifecycle. Another member leaving is
+// MemberLeft: the session goes on for the rest, so it keeps the epoch (the remaining members'
+// frames and posts stay good), and only resets registered for it run (not a Leave's: that one
+// is this member's own).
+TEST(BloodborneLifecycle, AnotherMemberLeavingKeepsTheSession) {
+    LifecycleResets resets;
+    std::vector<std::string> ran;
+    resets.Register("kills", {Lifecycle::Wipe, Lifecycle::Leave}, [&] { ran.push_back("kills"); });
+    resets.Register("frames", {Lifecycle::MemberLeft}, [&] { ran.push_back("frames"); });
+    const u64 epoch = resets.Epoch();
+    EXPECT_EQ(resets.Dispatch(Lifecycle::MemberLeft), (std::vector<std::string>{"frames"}));
+    EXPECT_EQ(resets.Epoch(), epoch);
+    EXPECT_EQ(resets.Dispatch(Lifecycle::Leave), (std::vector<std::string>{"kills"}));
+    EXPECT_EQ(resets.Epoch(), epoch + 1);
+}
+
+// The other session members are counted each tick; a drop that holds for SettleMs is one
+// departure per member gone, while this member stays in the session and is not loading.
+TEST(BloodborneLifecycle, CountsTheMembersThatLeftTheSession) {
+    MemberDepartures departures;
+    EXPECT_EQ(departures.Tick(true, true, 2, 0), 0u) << "a party of three";
+    EXPECT_EQ(departures.Tick(true, true, 1, 100), 0u) << "one gone: not settled yet";
+    EXPECT_EQ(departures.Tick(true, true, 1, 100 + MemberDepartures::SettleMs - 1), 0u);
+    EXPECT_EQ(departures.Tick(true, true, 1, 100 + MemberDepartures::SettleMs), 1u);
+    EXPECT_EQ(departures.Tick(true, true, 1, 5'000), 0u) << "once per departure";
+    EXPECT_EQ(departures.Tick(true, true, 2, 6'000), 0u) << "it came back";
+    EXPECT_EQ(departures.Tick(true, true, 0, 7'000), 0u);
+    EXPECT_EQ(departures.Tick(true, true, 0, 7'000 + MemberDepartures::SettleMs), 2u)
+        << "both guests gone at once";
+}
+
+TEST(BloodborneLifecycle, AMissedReadOrOurOwnLeaveIsNoDeparture) {
+    MemberDepartures blip;
+    blip.Tick(true, true, 2, 0);
+    EXPECT_EQ(blip.Tick(true, true, 0, 100), 0u) << "an unreadable list for a moment";
+    EXPECT_EQ(blip.Tick(true, true, 2, 200), 0u);
+    EXPECT_EQ(blip.Tick(true, true, 2, 100 + MemberDepartures::SettleMs), 0u);
+
+    MemberDepartures loading;
+    loading.Tick(true, true, 2, 0);
+    EXPECT_EQ(loading.Tick(true, false, 0, 100), 0u) << "a load or a trip rebuilds the list";
+    EXPECT_EQ(loading.Tick(true, false, 0, 100 + MemberDepartures::SettleMs), 0u);
+    EXPECT_EQ(loading.Tick(true, true, 2, 5'000), 0u) << "everyone is back after it";
+
+    MemberDepartures own;
+    own.Tick(true, true, 2, 0);
+    EXPECT_EQ(own.Tick(true, true, 0, 100), 0u);
+    EXPECT_EQ(own.Tick(false, true, 0, 200), 0u) << "we left: that is our own Leave";
+    EXPECT_EQ(own.Tick(false, true, 0, 100 + MemberDepartures::SettleMs), 0u);
+    EXPECT_EQ(own.Tick(true, true, 1, 9'000), 0u) << "a new session";
 }

@@ -734,6 +734,43 @@ void SetPartyPanel(PartyPanel panel) {
     panel_now = std::move(panel);
 }
 
+// Party death's "in the session": only in the session's world. A guest still on its way (its
+// summon load) posts "off" and dies as a solo player there (SessionArrival).
+bool InPartyHere() {
+    return InPartySession() && InSessionWorld();
+}
+
+// The other session members' board names (SessionBoardNames), read again every second, nothing
+// out of a session or while one of them is not found: the lines of members out of this session
+// are dropped from the board (OnlySessionMembers).
+std::optional<std::vector<std::string>> SessionNames(std::span<const MemberVitals> board,
+                                                     std::string_view self) {
+    static s64 read_at = std::numeric_limits<s64>::min();
+    static std::optional<std::vector<std::string>> names;
+    const s64 now = SteadyMilliseconds();
+    if (read_at != std::numeric_limits<s64>::min() && now - read_at < 1'000) {
+        return names;
+    }
+    read_at = now;
+    names.reset();
+    if (!InPartySession()) {
+        return names;
+    }
+    std::vector<std::string> online_ids;
+    for (const MemberVitals& member : board) {
+        if (std::string id = OnlineIdOfBoardMember(member.member);
+            member.member != self && !id.empty()) {
+            online_ids.push_back(std::move(id));
+        }
+    }
+    std::vector<std::optional<std::string>> found;
+    for (const u64 member : OtherSessionMembers()) {
+        found.push_back(SessionMemberBoardName(member, online_ids));
+    }
+    names = SessionBoardNames(found);
+    return names;
+}
+
 } // namespace
 
 namespace Coop {
@@ -759,6 +796,8 @@ VitalsView ReadVitalsBoard() {
         view.board = MergeDirectVitals(view.board, direct);
         view.age_ms = std::min<s64>(view.age_ms, 0);
     }
+    view.board.members = OnlySessionMembers(view.board.members, view.member,
+                                            SessionNames(view.board.members, view.member));
     return view;
 }
 PartyDeathRun party_death_run;
@@ -865,7 +904,7 @@ void TickPartyDeath() {
         // (FinishWaitingJoins; rig 2026-10-11, party death off: the guest stayed unseen).
         const u64 data = PlayerDataModule(GetLocalPlayer());
         if (data >= 0x10000 && HasMemoryAccess(data, 0x100, MemoryProt::CpuRead)) {
-            const bool in_session = InPartySession();
+            const bool in_session = InPartyHere();
             PostVitals(MemberVitals{.map = in_session ? PlayingMap() : 0,
                                     .vital = in_session ? Vital::Up : Vital::Off,
                                     .hp = ReadValue<s32>(data, 0xF8),
@@ -884,7 +923,7 @@ void TickPartyDeath() {
         return; // loading
     }
     const s64 now = SteadyMilliseconds();
-    const bool in_session = InPartySession();
+    const bool in_session = InPartyHere();
     const u32 map = PlayingMap();
     const VitalsView view = ReadVitalsBoard();
     const std::span<const MemberVitals> board =
