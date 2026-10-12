@@ -1375,6 +1375,30 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                 }
             }
         }
+        // One hidden or switched off to match the host before it was known as this player's own
+        // (a reload of the map, the entity table filled a moment later) comes back.
+        std::vector<u32> own_handles;
+        std::vector<u64> own_pointers;
+        for (const u64 character : characters) {
+            if (own_characters.contains(character)) {
+                own_handles.push_back(ReadValue<u32>(character, 0x08));
+                own_pointers.push_back(character);
+            }
+        }
+        const OwnRestore restore =
+            RestoresOwnCharacters(own_handles, guest_hidden_here, guest_switched_off);
+        for (size_t index = 0; index < own_handles.size(); ++index) {
+            const u32 handle = own_handles[index];
+            if (std::ranges::find(restore.show, handle) != restore.show.end() &&
+                HasMemoryAccess(own_pointers[index], 0x29, MemoryProt::CpuWrite)) {
+                WriteValue(own_pointers[index], 0x28, u8{0});
+                guest_hidden_here.erase(handle);
+            }
+            if (std::ranges::find(restore.switch_on, handle) != restore.switch_on.end() &&
+                SetCharacterDisabled(own_pointers[index], false)) {
+                guest_switched_off.erase(handle);
+            }
+        }
     }
     if (!own_characters.empty()) {
         std::vector<u64> following;

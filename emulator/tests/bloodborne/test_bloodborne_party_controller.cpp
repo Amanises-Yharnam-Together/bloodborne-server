@@ -2611,6 +2611,18 @@ TEST(BloodborneShownBoard, TheDreamMessengersAreEachPlayersOwn) {
     EXPECT_TRUE(FollowsTheHostsShown(2410000));
 }
 
+// Review 2026-10-12: a messenger the guest hid or switched off before it was known as its own (a
+// reload of the Dream, the entity table filled a moment later) is shown and switched on again
+// once it is, and leaves the lists; nothing else would undo it until a map change.
+TEST(BloodborneShownBoard, AnOwnCharacterHiddenBeforeItWasKnownComesBack) {
+    const std::unordered_set<u32> hidden_here{0x10000016, 0x10000040};
+    const std::unordered_set<u32> switched_off{0x10000017, 0x10000041};
+    const std::vector<u32> own{0x10000016, 0x10000017, 0x1000001d};
+    const OwnRestore restore = RestoresOwnCharacters(own, hidden_here, switched_off);
+    EXPECT_EQ(restore.show, std::vector<u32>{0x10000016});
+    EXPECT_EQ(restore.switch_on, std::vector<u32>{0x10000017});
+}
+
 // The point is about where the game loaded the guest: a guest that travels on (a lamp, a trip)
 // before it is settled there has chosen where to be. The rig's guest went to the Cathedral Ward
 // right after loading, and the resume took it back to Central Yharnam, away from its host.

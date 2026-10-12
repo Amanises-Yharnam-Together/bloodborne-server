@@ -808,6 +808,15 @@ TEST(BloodbornePartyDeath, EndsADownByWipeGiveUpReviveOrALostBoard) {
     EXPECT_EQ(EndOfDown(false, false, false, BoardLostMs), DownEnd::BoardLost);
 }
 
+// Review 2026-10-12: a session that ends under a downed player (the host quits or crashes, a
+// kick) left it kneeling with no banner or give-up prompt, the board still fresh with its own
+// "off" posts. Out of the session nobody can revive it: it dies as a solo player would.
+TEST(BloodbornePartyDeath, ADownEndsWithTheSession) {
+    EXPECT_EQ(EndOfDown(false, false, false, 0, false), DownEnd::SessionLost);
+    EXPECT_EQ(EndOfDown(false, true, false, 0, false), DownEnd::GiveUp);
+    EXPECT_EQ(EndOfDown(false, false, false, 0, true), DownEnd::None);
+}
+
 // Circle held from before the down (a sprint) gives up only once it is let go and held again.
 TEST(BloodbornePartyDeath, AHoldFromBeforeTheDownDoesNotGiveUp) {
     HoldToConfirm hold{GiveUpHoldMs};

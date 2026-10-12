@@ -115,6 +115,30 @@ std::string CoopSitesJson();
 
 // What the co-op install did with each feature, for one summary line in the log
 // (tools/re/check_party_log.py fails a log that skipped a required one).
+// Time spent in co-op work on the game's threads (Lisara's FPS drop, 2026-10-12): each section's
+// calls, summed and the longest, reported once `period_ms` after the first one measured, then
+// counted again from nothing. Thread-safe (the HUD's hooks run on another thread).
+class CoopTimeMeter {
+public:
+    explicit CoopTimeMeter(s64 period_ms) : period_ms{period_ms} {}
+    void Add(std::string_view section, s64 ns, s64 now_ms);
+    // "<section> avg <ms> ms max <ms> ms (<n> calls), ... over <s> s", in the order the sections
+    // came first; nothing before the period is over.
+    std::optional<std::string> Report(s64 now_ms);
+
+private:
+    struct Section {
+        std::string name;
+        s64 total_ns = 0;
+        s64 max_ns = 0;
+        u64 calls = 0;
+    };
+    s64 period_ms;
+    std::mutex mutex;
+    std::optional<s64> since_ms;
+    std::vector<Section> sections;
+};
+
 class CoopFeatureReport {
 public:
     void On(std::string_view feature);
@@ -1204,7 +1228,7 @@ constexpr u8 PeerHelloType = 0x33;
 // host's map state on it (frames 0x39, 0x3A, the flag entries).
 // 5: enemy HP on it (frames 0x3B, 0x3C, the HP entries; every entry carries a value).
 // 6: a snapshot ends with the recent flag events (frame 0x3D); the world snapshot on the server.
-constexpr u8 CoopProtocolVersion = 6;
+constexpr u8 CoopProtocolVersion = 7;
 constexpr s64 PeerHelloResendMs = 10'000;
 // PeerHello::features: WorldLogFeature when this game runs the world log (it is not switched off,
 // SHADPS4_BLOODBORNE_WORLD_LOG=0). Every member runs one build (Kaniel 2026-10-12): a peer on
@@ -1536,6 +1560,7 @@ struct WorldLogFlagsSnapshot {
     u64 epoch = 0;
     u64 last = 0;
     std::vector<WorldLogEntry> events; // FlagSet / FlagClear entries, oldest first
+    bool after_wipe = false; // the log started at a wipe (its Reset's WorldLogResetAfterWipe)
     bool operator==(const WorldLogFlagsSnapshot&) const = default;
 };
 std::vector<u8> EncodeWorldLogFlagsSnapshot(const WorldLogFlagsSnapshot& snapshot);
@@ -1670,6 +1695,7 @@ private:
     std::map<std::string, HpSender> hp_senders;
     WorldLogHp hp;
     std::vector<WorldLogEntry> recent_flags; // the last WorldLogRecentFlags flag entries
+    bool started_after_wipe = false;         // Start's `after_wipe`, for the snapshots
 };
 
 // A member's side: the entries applied in seq order, exactly once.
@@ -1681,6 +1707,8 @@ public:
         bool snapshot = false;  // a whole snapshot was applied
         bool stale = false;     // an older log's frame: dropped
         bool gap = false;       // entries are missing (a snapshot is due)
+        // A snapshot based this member on a log that started at a wipe (see WorldLogWipeHold).
+        bool after_wipe = false;
     };
     Step Take(const WorldLogBatch& batch, s64 now_ms);
     Step Take(const WorldLogSnapshot& part, s64 now_ms);
@@ -1758,6 +1786,7 @@ private:
         std::optional<u8> hp_parts;
         std::map<u8, WorldLogHp> hp_got;
         std::optional<std::vector<WorldLogEntry>> flags;
+        bool after_wipe = false; // the flags part's WorldLogFlagsSnapshot::after_wipe
     };
     void ApplyMapFlag(const WorldLogEntry& entry);
     void ApplyHp(const WorldLogEntry& entry);
@@ -1892,6 +1921,16 @@ std::optional<s32> LowestSharedHp(u32 handle, s32 hp, s32 max, u32 map,
 // not the Dream messengers that give each player its own gifts (their events and flags are each
 // player's, see KeepsLocalFlag); `entity` -1 when the character has none.
 bool FollowsTheHostsShown(s32 entity);
+// Of a guest's own characters (`own`, see FollowsTheHostsShown), those it hid (`hidden_here`) or
+// switched off (`switched_off`) to match the host before they were known as its own: to show and
+// to switch on again.
+struct OwnRestore {
+    std::vector<u32> show;
+    std::vector<u32> switch_on;
+};
+OwnRestore RestoresOwnCharacters(std::span<const u32> own,
+                                 const std::unordered_set<u32>& hidden_here,
+                                 const std::unordered_set<u32>& switched_off);
 
 // A character's death flags (+0x1E3) say it is dead in its world: killed (bits 0 and 2, see
 // IsRealDeath) or dead in the save and put down at load (0x26).
@@ -3037,9 +3076,11 @@ bool HeavyAttackPressed(u32 before, u32 now);
 // What ends a down (checked in this order): a wipe of its map, the give-up hold, the party's
 // revive hits, or a vitals board unheard of for BoardLostMs (shadNet gone: nobody stays down for
 // good). Every end but a revive is a real death.
-enum class DownEnd { None, Wipe, GiveUp, Revive, BoardLost };
+enum class DownEnd { None, Wipe, GiveUp, Revive, BoardLost, SessionLost };
 constexpr s64 BoardLostMs = 10'000;
-DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms);
+// Out of the session this long, a down ends (DownEnd::SessionLost).
+constexpr s64 DownSessionLostMs = 3'000;
+DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms, bool in_session = true);
 // Whether a real death in a party session resets its map (see ChooseDeathRespawn): a wipe, or a
 // death with nobody else standing on the map (a wipe of one), as a solo death would.
 bool DeathResetsMap(bool wiped, bool someone_else_stands);

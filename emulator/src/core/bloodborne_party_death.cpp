@@ -1162,7 +1162,16 @@ void TickDown(PartyDeathRun& run, const DeathTick& tick) {
     const bool revived = run.downed.Damage(damage, tick.now);
     run.downed.Tick(tick.now);
     KeepDown(run, tick.data);
-    switch (EndOfDown(wiped, gave_up, revived, tick.view.age_ms)) {
+    // Out of the session for a moment is a load or a matching hiccup; for longer, nobody is left to
+    // revive this player (the host quit or crashed, a kick).
+    if (tick.in_session) {
+        run.down_out_of_session_since.reset();
+    } else if (!run.down_out_of_session_since) {
+        run.down_out_of_session_since = tick.now;
+    }
+    const bool session_gone = run.down_out_of_session_since &&
+                              tick.now - *run.down_out_of_session_since >= DownSessionLostMs;
+    switch (EndOfDown(wiped, gave_up, revived, tick.view.age_ms, !session_gone)) {
     case DownEnd::None:
         break;
     case DownEnd::Revive:
@@ -1178,6 +1187,10 @@ void TickDown(PartyDeathRun& run, const DeathTick& tick) {
         break;
     case DownEnd::BoardLost:
         DieFromDown(run, tick.player, tick.data, tick.in_session, "the vitals board going quiet");
+        break;
+    case DownEnd::SessionLost:
+        run.down_out_of_session_since.reset();
+        DieFromDown(run, tick.player, tick.data, false, "the party session ending");
         break;
     }
 }

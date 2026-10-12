@@ -428,7 +428,7 @@ void TakeMemberFrame(u8 type, std::span<const u8> payload, s64 now_ms,
     if (!step.stale && from) {
         log_host_peer = from;
     }
-    if (StartsAfterAWipe(step.applied)) {
+    if (StartsAfterAWipe(step.applied) || step.after_wipe) {
         wipe_hold.HostWiped(now_ms);
     }
     if (step.stale || step.new_epoch || step.snapshot || step.gap || !step.applied.empty()) {

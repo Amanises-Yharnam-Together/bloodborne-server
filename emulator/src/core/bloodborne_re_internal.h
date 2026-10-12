@@ -742,8 +742,13 @@ struct PartyDeathRun {
     std::optional<s64> grace_until;
     u8 grace_flags = 0;
     u32 real_hits_logged = 0;
+    // Since when a down has been out of the party session (a few seconds of it end the down).
+    std::optional<s64> down_out_of_session_since;
 };
 extern PartyDeathRun party_death_run;
+// Co-op work on the game's threads, logged next to the port's Perf lines (see CoopTimeMeter).
+extern CoopTimeMeter coop_time;
+void ReportCoopTime(s64 now_ms);
 void InstallPartyDeath(u64 base, u64 image_size);
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers);
 u64 GetSummonManager();
