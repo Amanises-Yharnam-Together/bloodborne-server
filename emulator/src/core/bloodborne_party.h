@@ -1894,9 +1894,14 @@ constexpr u64 SetHpOffset = 0x01A0D470;
 
 // What this member's own hits took off each enemy, by handle (see EnemyCopy::own_hits), with the
 // HP ticks of status effects (poison) on enemies whose last hit was its own.
+// Who the game's hit names as its attacker: this player, another player's character, or nobody (a
+// thrown item's or a trap's hit).
+enum class HitBy { Me, OtherPlayer, Nobody };
 class OwnDamage {
 public:
     void Hit(u32 handle, bool mine, s32 taken);
+    // A hit with no attacker counts as this player's, unless another player hit it last.
+    void Hit(u32 handle, HitBy by, s32 taken);
     void Effect(u32 handle, s32 taken);
     s64 Total(u32 handle) const;
     // Whether the last hit on it was this player's (nothing when no hit was seen).
@@ -2261,6 +2266,10 @@ std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
 constexpr u64 NpcItemLotOffset = 0x2C;
 constexpr u64 ItemLotFlagOffset = 0x80;
 bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on);
+// And a guest's own kill (`own_kill_as_guest`): its game makes no one-time drop (Lisara's hag,
+// 2026-10-13).
+bool GetsKillDrop(bool in_session, bool member_kill, bool own_kill_as_guest, s32 lot_flag,
+                  bool flag_on);
 // A member's kill on this player's copy (hidden, or the game's kill near): only while the copy is
 // alive (`hp`, its HP now: 0 in its own death animation, before the death flags are set).
 bool AppliesMemberKill(bool member_killed, s32 hp);
