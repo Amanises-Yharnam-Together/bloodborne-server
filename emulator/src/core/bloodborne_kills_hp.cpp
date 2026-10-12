@@ -108,6 +108,32 @@ namespace {
 std::unordered_map<u64, s32> unscaled_boss_max;
 u64 unscaled_boss_visit = 0; // see Place::visit: by character object, which a reload makes anew
 
+// Entity ids by character object, as the lookup 0x0191A440 finds them: WorldChrMan +0x90 tables
+// at +0x98, each with +0xE0 sorted (entity id, block << 14 | slot) pairs at +0xE8; the character
+// is [[+0x28] + block * 0x160 + 0xC0] + slot * 0x38.
+std::unordered_map<u64, s32> CharacterEntityIds(u64 world) {
+    std::unordered_map<u64, s32> entities;
+    const s32 tables = std::min(ReadValue<s32>(world, 0x90), 16);
+    const u64 blocks = ReadValue<u64>(world, 0x28);
+    for (s32 table = 0; table < tables && blocks >= 0x10000; ++table) {
+        const u64 entries = ReadValue<u64>(world, 0x98 + 8 * table);
+        const s32 count = entries >= 0x10000 ? std::min(ReadValue<s32>(entries, 0xE0), 4096) : 0;
+        const u64 pairs = count > 0 ? ReadValue<u64>(entries, 0xE8) : 0;
+        for (s32 index = 0; index < count && pairs >= 0x10000; ++index) {
+            const s32 entity = ReadValue<s32>(pairs, 8 * index);
+            const s32 packed = ReadValue<s32>(pairs, 8 * index + 4);
+            if (packed < 0 || ((packed >> 14) & 0x3F) >= ReadValue<s32>(world, 0x20)) {
+                continue;
+            }
+            const u64 slots = ReadValue<u64>(blocks + ((packed >> 14) & 0x3F) * 0x160, 0xC0);
+            if (slots >= 0x10000) {
+                entities[ReadValue<u64>(slots + (packed & 0x3FFF) * 0x38, 0)] = entity;
+            }
+        }
+    }
+    return entities;
+}
+
 } // namespace
 
 namespace Coop {
@@ -132,28 +158,7 @@ void KeepBossHpInStep() {
         unscaled_boss_max.clear();
         unscaled_boss_visit = visit;
     }
-    // Entity ids, as the lookup 0x0191A440 finds them: WorldChrMan +0x90 tables at +0x98, each
-    // with +0xE0 sorted (entity id, block << 14 | slot) pairs at +0xE8; the character is
-    // [[+0x28] + block * 0x160 + 0xC0] + slot * 0x38.
-    std::unordered_map<u64, s32> entities;
-    const s32 tables = std::min(ReadValue<s32>(world, 0x90), 16);
-    const u64 blocks = ReadValue<u64>(world, 0x28);
-    for (s32 table = 0; table < tables && blocks >= 0x10000; ++table) {
-        const u64 entries = ReadValue<u64>(world, 0x98 + 8 * table);
-        const s32 count = entries >= 0x10000 ? std::min(ReadValue<s32>(entries, 0xE0), 4096) : 0;
-        const u64 pairs = count > 0 ? ReadValue<u64>(entries, 0xE8) : 0;
-        for (s32 index = 0; index < count && pairs >= 0x10000; ++index) {
-            const s32 entity = ReadValue<s32>(pairs, 8 * index);
-            const s32 packed = ReadValue<s32>(pairs, 8 * index + 4);
-            if (packed < 0 || ((packed >> 14) & 0x3F) >= ReadValue<s32>(world, 0x20)) {
-                continue;
-            }
-            const u64 slots = ReadValue<u64>(blocks + ((packed >> 14) & 0x3F) * 0x160, 0xC0);
-            if (slots >= 0x10000) {
-                entities[ReadValue<u64>(slots + (packed & 0x3FFF) * 0x38, 0)] = entity;
-            }
-        }
-    }
+    const std::unordered_map<u64, s32> entities = CharacterEntityIds(world);
     std::string text;
     ForEachWorldCharacter(world, [&](u64 character) {
         const u64 modules = ReadValue<u64>(character, 0x3B0);
@@ -1322,12 +1327,15 @@ void TraceShownInputs(std::span<const CharacterShown> host, std::span<const Char
     }
 }
 
+void ShowFollowingTheHost(u32 map, std::span<const u64> characters,
+                          std::span<const CharacterShown> mine,
+                          const std::unordered_set<u32>& kill_hidden);
+
 // Every character of the map hidden or shown as the host's world has it (see CharacterShown):
 // the host posts its own, a guest in the session on the host's map follows them.
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                                const std::unordered_set<u32>& kill_hidden) {
     UndoGuestChangesOnMapChange(map, characters);
-    auto& hidden_here = guest_hidden_here;
     const bool hosting = !IsPartyGuestRole();
     const auto host_at = hosting ? LocalPlayerPosition() : std::nullopt;
     std::vector<CharacterShown> mine;
@@ -1345,6 +1353,51 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
         local_shown = MemberMapState{map, EncodeShownCharacters(mine)};
         return;
     }
+    // Each player's own characters (FollowsTheHostsShown) stay as this member's game has them.
+    static std::unordered_set<u64> own_characters;
+    static std::chrono::steady_clock::time_point own_checked{};
+    static u32 own_map = 0;
+    static size_t own_count = 0;
+    // Again as soon as the map or its characters change, before anything is hidden (a load makes
+    // new characters).
+    if (const auto now = std::chrono::steady_clock::now();
+        map != own_map || characters.size() != own_count ||
+        now - own_checked >= std::chrono::seconds{2}) {
+        own_checked = now;
+        own_map = map;
+        own_count = characters.size();
+        own_characters.clear();
+        const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+        if (world >= 0x10000) {
+            for (const auto& [character, entity] : CharacterEntityIds(world)) {
+                if (!FollowsTheHostsShown(entity)) {
+                    own_characters.insert(character);
+                }
+            }
+        }
+    }
+    if (!own_characters.empty()) {
+        std::vector<u64> following;
+        std::vector<CharacterShown> following_shown;
+        for (size_t index = 0; index < characters.size(); ++index) {
+            if (!own_characters.contains(characters[index])) {
+                following.push_back(characters[index]);
+                following_shown.push_back(mine[index]);
+            }
+        }
+        if (following.size() != characters.size()) {
+            ShowFollowingTheHost(map, following, following_shown, kill_hidden);
+            return;
+        }
+    }
+    ShowFollowingTheHost(map, characters, mine, kill_hidden);
+}
+
+// ShowCharactersLikeTheHost for the characters that follow the host's.
+void ShowFollowingTheHost(u32 map, std::span<const u64> characters,
+                          std::span<const CharacterShown> mine,
+                          const std::unordered_set<u32>& kill_hidden) {
+    auto& hidden_here = guest_hidden_here;
     const std::optional<MemberMapState> host = HostShownNow();
     // What the host's world had near the host stands once it moves away (see HostNearStates).
     static HostNearStates host_near;
