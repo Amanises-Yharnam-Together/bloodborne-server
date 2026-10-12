@@ -105,7 +105,8 @@ TEST(WorldLogFrames, TypesFollowTheHelloAndOlderBuildsDropThem) {
     for (const u8 type : {DirectDamageType, DirectVitalsType, DirectKillsType, PeerHelloType}) {
         EXPECT_FALSE(IsWorldLogFrameType(type));
     }
-    EXPECT_EQ(CoopProtocolVersion, 2) << "the world log's frames are protocol 2";
+    EXPECT_GE(CoopProtocolVersion, 2) << "the world log's frames are protocol 2";
+    EXPECT_EQ(CoopProtocolVersion, 3) << "the shown characters on the log are protocol 3";
 }
 
 TEST(WorldLogFrames, AFullSetFitsTheLink) {

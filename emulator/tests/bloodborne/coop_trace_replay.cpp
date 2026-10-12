@@ -102,7 +102,9 @@ std::vector<std::string> CoopTraceReplay::Feed(std::string_view line) {
     } else if (record->kind == "wlog-in") {
         WorldLogIn(*record, out);
     } else if (record->kind == "wlog-path") {
-        out.push_back(fmt::format("world log path: {} ({})", record->Field("path").value_or("?"),
+        const auto what = record->Field("what");
+        out.push_back(fmt::format("world log path{}: {} ({})", what ? " (" + *what + ")" : "",
+                                  record->Field("path").value_or("?"),
                                   record->Field("why").value_or("?")));
     } else if (record->kind == "trace-dropped") {
         out.push_back(fmt::format("trace dropped {} lines", record->Field("count").value_or("?")));
@@ -321,6 +323,8 @@ void CoopTraceReplay::WorldLogHostIn(std::string_view op, std::span<const u8> pa
                 fmt::format("wlog host dropped a late proposal from {}", proposal->member));
         }
         entries = std::move(taken.entries);
+    } else if (const auto show = op == "show" ? DecodeWorldLogShow(payload) : std::nullopt) {
+        entries = wlog_host.Show(show->first, show->second);
     } else {
         out.push_back(fmt::format("wlog-in: unreadable host {}", op));
     }
@@ -338,6 +342,12 @@ void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> 
         out.push_back("wlog member reset");
         return;
     }
+    if (op == "expect-shown" && payload.size() == 1) {
+        wlog_member.ExpectShown(payload[0] != 0);
+        out.push_back(payload[0] != 0 ? "wlog member expects shown snapshots"
+                                      : "wlog member expects no shown snapshots");
+        return;
+    }
     if (const auto batch = op == "entries" ? DecodeWorldLogBatch(payload) : std::nullopt) {
         step = wlog_member.Take(*batch, at);
         host_last = batch->last;
@@ -345,6 +355,10 @@ void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> 
                    op == "snapshot" ? DecodeWorldLogSnapshot(payload) : std::nullopt) {
         step = wlog_member.Take(*part, at);
         host_last = part->last;
+    } else if (const auto shown =
+                   op == "shown-snapshot" ? DecodeWorldLogShownSnapshot(payload) : std::nullopt) {
+        step = wlog_member.Take(*shown, at);
+        host_last = shown->last;
     } else {
         out.push_back(fmt::format("wlog-in: unreadable member {}", op));
         return;
@@ -357,6 +371,10 @@ void CoopTraceReplay::WorldLogMemberIn(std::string_view op, std::span<const u8> 
     }
     if (step.snapshot) {
         out.push_back(fmt::format("wlog member snapshot to seq {}", host_last));
+        if (wlog_member.ShownKnown()) {
+            out.push_back(fmt::format("wlog member shown on {:#x}: {} characters",
+                                      wlog_member.Shown().map, wlog_member.Shown().bits.size()));
+        }
     }
     for (const WorldLogEntry& entry : step.applied) {
         out.push_back("wlog member applied " + FormatWorldLogEntry(entry));

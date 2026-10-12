@@ -356,6 +356,45 @@ TEST(CoopTraceReplay, WorldLogRecordsReplayToTheLiveDecisions) {
                    }));
 }
 
+// The shown characters on the world log (step 2): the host's Show, and a member's snapshot that
+// waits for its shown parts.
+TEST(CoopTraceReplay, WorldLogShownRecordsReplay) {
+    const u64 epoch = WorldLogEpoch(0x77, 1);
+    const auto record = [](s64 at, std::string_view role, std::string_view op,
+                           std::span<const u8> payload) {
+        return EncodeTraceRecord({at, "wlog-in", WorldLogTraceFields(role, op, payload)});
+    };
+    const CharacterShown iosefka{0x10014000, false, true, false, false};
+    CoopTraceReplay replay;
+    std::vector<std::string> out;
+    const auto feed = [&](const std::string& line) {
+        for (std::string& decision : replay.Feed(line)) {
+            out.push_back(std::move(decision));
+        }
+    };
+    feed(record(1, "host", "start", EncodeWorldLogStart(epoch, false)));
+    feed(record(2, "host", "show",
+                EncodeWorldLogShow(0x18000000, std::vector<CharacterShown>{iosefka})));
+    feed(record(3, "member", "expect-shown", std::vector<u8>{1}));
+    feed(record(4, "member", "snapshot", EncodeWorldLogSnapshot({"h", epoch, 3, 0, 1, {}})));
+    feed(record(
+        5, "member", "shown-snapshot",
+        EncodeWorldLogShownSnapshot({"h", epoch, 3, 0, 1, {0x18000000, {{0x10014000, 2}}}})));
+    feed(record(6, "member", "show", {}));
+    EXPECT_EQ(out, (std::vector<std::string>{
+                       "wlog host start epoch 7700000001",
+                       "wlog host appended seq 1 reset every map",
+                       "wlog host appended seq 2 shown map 0x18000000",
+                       "wlog host appended seq 3 shown 0x10014000 on 0x18000000 bits 2",
+                       "wlog member expects shown snapshots",
+                       "wlog member follows epoch 7700000001",
+                       "wlog member gap: has seq 0, host at 3",
+                       "wlog member snapshot to seq 3",
+                       "wlog member shown on 0x18000000: 1 characters",
+                       "wlog-in: unreadable member show",
+                   }));
+}
+
 TEST(CoopTraceReplay, CheckedInTracesKeepTheirDecisions) {
     const fs::path dir{BLOODBORNE_TRACES};
     size_t traces = 0;

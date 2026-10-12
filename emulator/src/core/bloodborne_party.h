@@ -1193,12 +1193,15 @@ struct DirectKills {
 // take only the types they know.
 constexpr u8 PeerHelloType = 0x33;
 // Raised when a co-op frame's meaning changes. 2: the world log's frames (WorldLogProposeType ...)
-// and the hello's features.
-constexpr u8 CoopProtocolVersion = 2;
+// and the hello's features. 3: the shown characters on the world log (WorldLogShownFeature).
+constexpr u8 CoopProtocolVersion = 3;
 constexpr s64 PeerHelloResendMs = 10'000;
-// PeerHello::features: what this game takes part in. The world log only runs when every peer has
-// it (a game with SHADPS4_BLOODBORNE_WORLD_LOG=0 leaves it out).
+// PeerHello::features: what this game takes part in. The world log only carries a board's job when
+// every peer has its bit (a game with SHADPS4_BLOODBORNE_WORLD_LOG=0 leaves them all out): the
+// kills since protocol 2, the shown characters since 3 (a protocol 2 game keeps the kills on the
+// log and the shown characters on their board).
 constexpr u8 WorldLogFeature = 0x01;
+constexpr u8 WorldLogShownFeature = 0x02;
 struct PeerHello {
     u8 protocol = CoopProtocolVersion;
     std::string revision; // the build's source revision ("-dirty": changes not in a commit)
@@ -1227,6 +1230,27 @@ std::vector<u8> EncodeDirectKills(std::string_view member, std::span<const u32> 
 std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload);
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills);
 
+// Characters hidden or shown as the host's world has them (POST /bloodborne/party/shown, the map
+// state board's format): the host posts every character of its map with its event disable byte
+// (+0x28, "hidden by the story"), and a guest on that map in the session sets its copies the
+// same. A guest's world, rebuilt as the host's client when it joins, does not run the events
+// that hide story NPCs (Iosefka at her clinic door, the Doll), so it showed them.
+struct CharacterShown {
+    u32 handle = 0;
+    bool hidden = false;
+    // Its enable switch off (2004:5; the byte's bit 1): the host's story switches some story
+    // NPCs off instead (the copy of Iosefka by her door, 0x10014000, on new characters).
+    bool disabled = false;
+    // Farther than FarFromHostMetres from the host (bit 2). The host's events park characters far
+    // from its player (+0x28 and the switch: the woods' enemies by the Cathedral Ward border), so
+    // a guest elsewhere does not follow those (Kaniel's friend, 2026-10-11: an empty forest).
+    bool distant = false;
+    // Dead in the host's world (bit 3; IsDeadInItsWorld), killed now or dead in its save. Guests
+    // whose worlds are apart take these as killed (DeadInTheHostsWorld).
+    bool dead = false;
+    bool operator==(const CharacterShown&) const = default;
+};
+
 // The world log (docs/WORLD_SYNC.md, Stage C): one ordered list of world changes, kept by the
 // host and sent to every member over the P2P link, instead of a board per feature. Step 1 carries
 // the kills (the kill board's job before); shown state, flags and enemy HP come later.
@@ -1240,12 +1264,21 @@ std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills);
 // epoch past its start. A new epoch (the host's new session, wipe or character) starts with a
 // Reset of every map. The kill board stays underneath as the fallback copy: the host posts the
 // union there.
+//
+// Step 2 carries the shown characters (the shown board's job before): the host's map and each of
+// its characters' CharacterShown bits, as entries when they change (ShownMap, Shown, Unshown),
+// and in a snapshot of their own (WorldLogShownSnapshotType). A guest follows them as it followed
+// the board's copy. A member that meets a kind it does not know counts it as applied and does
+// nothing, so a protocol 2 member skips the shown entries.
 enum class WorldLogKind : u8 {
-    Reset = 0,  // every kill on `map` goes (map 0: on every map)
-    Kill = 1,   // `subject` (a character's handle) is dead on `map`
-    Unkill = 2, // `subject` is no longer
-    // Still to come, in this order: Shown, FlagSet, FlagClear, HpFloor. A member that meets a kind
-    // it does not know counts it as applied and does nothing.
+    Reset = 0,    // every kill on `map` goes (map 0: on every map), and the shown state there
+    Kill = 1,     // `subject` (a character's handle) is dead on `map`
+    Unkill = 2,   // `subject` is no longer
+    ShownMap = 3, // the host's shown characters are of `map` from now on (none known yet)
+    Unshown = 4,  // `subject` is no longer in the host's world on `map`
+    // `subject` on `map` has `value` (ShownBits) in the host's world; on the link 0x10 | value.
+    Shown = 0x10,
+    // Still to come: FlagSet, FlagClear, HpFloor.
 };
 struct WorldLogEntry {
     u64 seq = 0;
@@ -1253,10 +1286,22 @@ struct WorldLogEntry {
     u32 map = 0;
     WorldLogKind kind = WorldLogKind::Kill;
     u32 subject = 0;
+    u8 value = 0; // Shown: the bits
     bool operator==(const WorldLogEntry&) const = default;
 };
 // "seq 3 kill 0x10014066 on 0x18000000"
 std::string FormatWorldLogEntry(const WorldLogEntry& entry);
+// A character's CharacterShown bits (hidden 1, disabled 2, distant 4, dead 8, as on the shown
+// board) and back.
+u8 ShownBits(const CharacterShown& character);
+CharacterShown ShownFromBits(u32 handle, u8 bits);
+// The host's shown characters: its map and each character's bits.
+struct WorldLogShown {
+    u32 map = 0;
+    std::map<u32, u8> bits;
+    bool operator==(const WorldLogShown&) const = default;
+};
+std::vector<CharacterShown> WorldLogShownCharacters(const WorldLogShown& shown);
 // Standing kills by map.
 using WorldLogKills = std::map<u32, std::set<u32>>;
 size_t WorldLogKillCount(const WorldLogKills& kills);
@@ -1273,6 +1318,9 @@ constexpr u8 WorldLogProposeType = 0x34;         // member -> host: its standing
 constexpr u8 WorldLogEntriesType = 0x35;         // host -> members: entries, or a heartbeat
 constexpr u8 WorldLogSnapshotRequestType = 0x36; // member -> host
 constexpr u8 WorldLogSnapshotType = 0x37;        // host -> that member, in parts
+// host -> that member, after the kills' parts: the shown characters at the same seq (protocol 2
+// builds drop it, as they drop any type they do not know)
+constexpr u8 WorldLogShownSnapshotType = 0x38;
 bool IsWorldLogFrameType(u8 type);
 // A member's proposal and the host's heartbeat go out at once on a change and again every
 // WorldLogResendMs; a member's log stands WorldLogLifeMs after the host's last frame (else the
@@ -1284,6 +1332,8 @@ constexpr s64 WorldLogSnapshotRetryMs = 1'000;
 // snapshot part (a member's standing kills above it are cut, as the direct kills frame did).
 constexpr size_t WorldLogEntriesPerFrame = 100;
 constexpr size_t WorldLogHandlesPerFrame = 280;
+// Characters per shown snapshot part (5 bytes each).
+constexpr size_t WorldLogShownPerFrame = 240;
 // Entries a member keeps past a gap until the snapshot comes.
 constexpr size_t WorldLogWaitingCap = 2'000;
 
@@ -1325,6 +1375,17 @@ std::vector<u8> EncodeWorldLogSnapshotRequest(const WorldLogSnapshotRequest& req
 std::optional<WorldLogSnapshotRequest> DecodeWorldLogSnapshotRequest(std::span<const u8> payload);
 std::vector<u8> EncodeWorldLogSnapshot(const WorldLogSnapshot& snapshot);
 std::optional<WorldLogSnapshot> DecodeWorldLogSnapshot(std::span<const u8> payload);
+struct WorldLogShownSnapshot {
+    std::string host;
+    u64 epoch = 0;
+    u64 last = 0;
+    u8 part = 0;
+    u8 parts = 1;
+    WorldLogShown shown; // the map, and this part's share of the characters
+    bool operator==(const WorldLogShownSnapshot&) const = default;
+};
+std::vector<u8> EncodeWorldLogShownSnapshot(const WorldLogShownSnapshot& snapshot);
+std::optional<WorldLogShownSnapshot> DecodeWorldLogShownSnapshot(std::span<const u8> payload);
 // `entries` (consecutive) as batches of at most WorldLogEntriesPerFrame; one heartbeat for none.
 std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
                                          std::span<const WorldLogEntry> entries);
@@ -1357,6 +1418,20 @@ public:
     WorldLogKills Kills() const;
     // The kills in parts of at most WorldLogHandlesPerFrame handles (one part when there are none).
     std::vector<WorldLogSnapshot> Snapshot(std::string_view host) const;
+    // The host's characters on its map now: the entries that bring the log's copy to them (on
+    // another map a ShownMap first, then each character).
+    std::vector<WorldLogEntry> Show(u32 map, std::span<const CharacterShown> characters);
+    // The shown characters left the log (its path went back to the board): the next Show starts
+    // with a ShownMap.
+    void ForgetShown() {
+        shown = {};
+    }
+    const WorldLogShown& Shown() const {
+        return shown;
+    }
+    // The shown characters in parts of at most WorldLogShownPerFrame (one part when there are
+    // none), at the same seq as Snapshot.
+    std::vector<WorldLogShownSnapshot> ShownSnapshot(std::string_view host) const;
 
 private:
     struct Member {
@@ -1368,14 +1443,16 @@ private:
         u32 map = 0;
         std::set<std::string> by;
     };
-    WorldLogEntry Append(WorldLogKind kind, u32 map, u32 subject);
+    WorldLogEntry Append(WorldLogKind kind, u32 map, u32 subject, u8 value = 0);
     void Own(const std::string& member, u32 map, u32 handle, std::vector<WorldLogEntry>& entries);
     void Disown(const std::string& member, u32 handle, std::vector<WorldLogEntry>& entries);
+    void AppendShown(std::vector<WorldLogEntry>& entries);
 
     u64 epoch = 0;
     u64 last = 0;
     std::map<std::string, Member> members;
     std::map<u32, Standing> standing; // handle -> its map and the members whose kill it is
+    WorldLogShown shown;
 };
 
 // A member's side: the entries applied in seq order, exactly once.
@@ -1390,6 +1467,15 @@ public:
     };
     Step Take(const WorldLogBatch& batch, s64 now_ms);
     Step Take(const WorldLogSnapshot& part, s64 now_ms);
+    Step Take(const WorldLogShownSnapshot& part, s64 now_ms);
+    // Whether the host sends the shown characters' snapshot parts (its hello has
+    // WorldLogShownFeature): a snapshot is whole only with them too.
+    void ExpectShown(bool expected) {
+        expect_shown = expected;
+    }
+    bool ExpectsShown() const {
+        return expect_shown;
+    }
     // Whether to ask the host for a snapshot now (a gap, a late join, a new epoch past its start),
     // at most every WorldLogSnapshotRetryMs; true marks it asked.
     bool SnapshotDue(s64 now_ms);
@@ -1409,12 +1495,23 @@ public:
     const WorldLogKills& Kills() const {
         return kills;
     }
+    const WorldLogShown& Shown() const {
+        return shown;
+    }
+    // Whether Shown is the host's: the log seen from its start or from a ShownMap, or the last
+    // snapshot had the shown characters too.
+    bool ShownKnown() const {
+        return shown_known;
+    }
 
 private:
     bool Follow(u64 next_epoch, std::string_view next_host, s64 now_ms, Step& step);
     void Drain(Step& step);
     void Apply(const WorldLogEntry& entry);
     bool Behind() const;
+    struct PartialSnapshot;
+    PartialSnapshot& Pending(u64 last);
+    void Complete(Step& step);
 
     u64 epoch = 0;
     u64 applied = 0;
@@ -1426,11 +1523,16 @@ private:
     std::optional<s64> asked_ms;
     struct PartialSnapshot {
         u64 last = 0;
-        u8 parts = 1;
+        std::optional<u8> parts;
         std::map<u8, WorldLogKills> got;
+        std::optional<u8> shown_parts;
+        std::map<u8, WorldLogShown> shown_got;
     };
     std::optional<PartialSnapshot> partial;
     WorldLogKills kills;
+    WorldLogShown shown;
+    bool shown_known = false;
+    bool expect_shown = false;
 };
 
 // Which path the kills take: the world log only while this game has it on and every room peer
@@ -1446,6 +1548,11 @@ struct WorldLogPeer {
 };
 class WorldLogPath {
 public:
+    // What takes the path (for the log line), the board it falls back to, and the hello's feature
+    // bit every peer must have.
+    explicit WorldLogPath(std::string what = "kills", std::string board = "the kill board",
+                          u8 feature = WorldLogFeature)
+        : what{std::move(what)}, board{std::move(board)}, feature{feature} {}
     // Whether the log is the path now.
     bool Decide(bool enabled, std::span<const WorldLogPeer> peers, s64 now_ms);
     bool Active() const {
@@ -1459,6 +1566,9 @@ public:
     std::optional<std::string> TakeChange();
 
 private:
+    std::string what;
+    std::string board;
+    u8 feature = WorldLogFeature;
     bool decided = false;
     bool active = false;
     std::string why = "not decided";
@@ -1495,6 +1605,10 @@ private:
     std::optional<s64> own_wipe_ms;
 };
 std::optional<std::pair<u64, bool>> DecodeWorldLogStart(std::span<const u8> payload);
+// A host's Show on a trace record: the map (u32) and the characters (EncodeShownCharacters).
+std::vector<u8> EncodeWorldLogShow(u32 map, std::span<const CharacterShown> characters);
+std::optional<std::pair<u32, std::vector<CharacterShown>>> DecodeWorldLogShow(
+    std::span<const u8> payload);
 // One report per source from copies of it (direct and the board): per enemy the most damage, or
 // for HP from one world (HostHpReport) the least HP; in the order the sources first come.
 std::vector<EnemyHpReport> MergeEnemyHpReports(std::span<const EnemyHpReport> reports);
@@ -1548,26 +1662,6 @@ std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max);
 std::optional<s32> LowestSharedHp(u32 handle, s32 hp, s32 max, u32 map,
                                   std::span<const MemberMapState> others);
 
-// Characters hidden or shown as the host's world has them (POST /bloodborne/party/shown, the map
-// state board's format): the host posts every character of its map with its event disable byte
-// (+0x28, "hidden by the story"), and a guest on that map in the session sets its copies the
-// same. A guest's world, rebuilt as the host's client when it joins, does not run the events
-// that hide story NPCs (Iosefka at her clinic door, the Doll), so it showed them.
-struct CharacterShown {
-    u32 handle = 0;
-    bool hidden = false;
-    // Its enable switch off (2004:5; the byte's bit 1): the host's story switches some story
-    // NPCs off instead (the copy of Iosefka by her door, 0x10014000, on new characters).
-    bool disabled = false;
-    // Farther than FarFromHostMetres from the host (bit 2). The host's events park characters far
-    // from its player (+0x28 and the switch: the woods' enemies by the Cathedral Ward border), so
-    // a guest elsewhere does not follow those (Kaniel's friend, 2026-10-11: an empty forest).
-    bool distant = false;
-    // Dead in the host's world (bit 3; IsDeadInItsWorld), killed now or dead in its save. Guests
-    // whose worlds are apart take these as killed (DeadInTheHostsWorld).
-    bool dead = false;
-    bool operator==(const CharacterShown&) const = default;
-};
 // A character's death flags (+0x1E3) say it is dead in its world: killed (bits 0 and 2, see
 // IsRealDeath) or dead in the save and put down at load (0x26).
 bool IsDeadInItsWorld(u8 death_flags);
