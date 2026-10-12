@@ -9,6 +9,8 @@ import pathlib
 import re
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import unittest.mock
 
@@ -239,6 +241,113 @@ class SuiteTest(unittest.TestCase):
         only = suites.compile_suite(suite, only=["trip"])
         self.assertEqual([c["name"] for c in only["chapters"]], ["join", "trip"],
                          "a chapter alone still gets its join")
+
+
+class LaneTest(unittest.TestCase):
+    def tearDown(self):
+        run_scenario.use_lane(0)
+
+    def test_a_lane_has_its_own_ports_and_folders(self):
+        run_scenario.use_lane(0)
+        self.assertEqual((run_scenario.SHADNET_PORT, run_scenario.WEBAPI_PORT,
+                          run_scenario.BACKEND_PORT), (32313, 32315, 20453), "the rig as it was")
+        self.assertEqual(run_scenario.p2p_port("guest"), 51601)
+        self.assertEqual(run_scenario.lane_dir(), run_scenario.RIG)
+        port = engines.ENGINES["port"]
+        self.assertEqual(port.role_dir("guest"), port.rig / "port" / "guest")
+        run_scenario.use_lane(2)
+        self.assertEqual((run_scenario.SHADNET_PORT, run_scenario.WEBAPI_PORT,
+                          run_scenario.BACKEND_PORT), (32513, 32515, 20653))
+        self.assertEqual(port.environment("host")["BB_SHADNET_SERVER"], "127.0.0.1:32513")
+        self.assertEqual(run_scenario.p2p_port("guest"), 51621)
+        self.assertEqual(run_scenario.lane_dir(), run_scenario.RIG / "lanes" / "2")
+        self.assertEqual(port.role_dir("guest"), port.rig / "port" / "lanes" / "2" / "guest")
+        self.assertEqual(port.role_dir("guest", 0), port.rig / "port" / "guest")
+        # No two lanes (of up to ten) share a port, with a ping (its proxies) or without.
+        lanes_ports = []
+        for lane in range(10):
+            run_scenario.use_lane(lane)
+            ports = set()
+            for ping in (None, (50, 100)):
+                run_scenario.use_ping(ping)
+                ports |= {*run_scenario.delayed_ports(), run_scenario.matching_udp_port(),
+                          run_scenario.SHADNET_PORT, run_scenario.WEBAPI_PORT,
+                          run_scenario.BACKEND_PORT, *map(run_scenario.p2p_port, run_scenario.ROLES)}
+            run_scenario.use_ping(None)
+            lanes_ports.append(ports)
+        for one in range(10):
+            for other in range(one + 1, 10):
+                self.assertFalse(lanes_ports[one] & lanes_ports[other], (one, other))
+
+    def test_a_lanes_shadnet_listens_on_its_ports(self):
+        config = "[General]\nUnsecuredPort=32313\nMatchingUdpPort=33314\nWebApiPort=32315\n"
+        changed = run_scenario.with_setting(run_scenario.with_setting(config, "UnsecuredPort",
+                                                                      32413), "WebApiPort", 32415)
+        self.assertIn("UnsecuredPort=32413\n", changed)
+        self.assertIn("WebApiPort=32415\n", changed)
+        self.assertIn("MatchingUdpPort=33314\n", changed)
+
+    def test_a_lane_is_a_copy_of_the_rig_without_its_game_image_and_logs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            port = engines.Port(root)
+            (root / "rig" / "server" / "db").mkdir(parents=True)
+            (root / "rig" / "server" / "db" / "accounts.db").write_text("rig_host")
+            (root / "rig" / "server" / "shadnet.exe").write_text("exe")
+            (root / "rig" / "server" / "shadnet.exe.pre-party.bak").write_text("old")
+            (root / "rig" / "backend").mkdir()
+            (root / "rig" / "backend" / "bb_dummy_server.py").write_text("py")
+            host = port.role_dir("host", 0)
+            (host / "out" / "eboot").mkdir(parents=True)
+            (host / "baseline" / "savedata").mkdir(parents=True)
+            (host / "user" / "log").mkdir(parents=True)
+            (host / "user" / "log" / "shad_log.txt").write_text("old log")
+            with unittest.mock.patch.object(run_scenario, "ENGINE", port), \
+                    unittest.mock.patch.object(run_scenario, "RIG", root / "rig"):
+                made = run_scenario.setup_lane(1)
+                lane = root / "rig" / "lanes" / "1"
+                self.assertTrue((lane / "server" / "db" / "accounts.db").is_file(), "accounts")
+                self.assertTrue((lane / "backend" / "bb_dummy_server.py").is_file())
+                self.assertFalse((lane / "server" / "shadnet.exe.pre-party.bak").exists())
+                lane_host = port.role_dir("host", 1)
+                self.assertTrue((lane_host / "baseline" / "savedata").is_dir())
+                self.assertFalse((lane_host / "out").exists(), "run.py makes the image again")
+                self.assertEqual(list((lane_host / "user" / "log").iterdir()), [])
+                self.assertEqual(len(made), 3)
+                self.assertEqual(run_scenario.setup_lane(1), [], "made once")
+
+    def test_runs_go_to_free_lanes_never_more_at_once_than_lanes(self):
+        running, most, order = set(), [0], []
+        lock = threading.Lock()
+
+        def runner(lane, name):
+            with lock:
+                running.add(lane)
+                most[0] = max(most[0], len(running))
+                order.append((lane, name))
+            time.sleep(0.05 if name != "long" else 0.2)
+            with lock:
+                running.discard(lane)
+            return name != "bad"
+
+        names = ["long", "a", "b", "bad", "c"]
+        results = run_scenario.run_in_lanes(names, 2, runner, stagger=0)
+        self.assertEqual(results, {"long": True, "a": True, "b": True, "bad": False, "c": True})
+        self.assertEqual(most[0], 2)
+        self.assertEqual(order[0][1], "long", "the first name first")
+        self.assertEqual({lane for lane, _ in order}, {0, 1})
+        self.assertTrue(all(lane == 1 for lane, name in order if name in ("a", "b", "bad")),
+                        "the other lane takes the rest while the long one runs")
+
+    def test_a_lanes_run_is_this_runner_again_in_that_lane(self):
+        run_scenario.use_ping((50, 100))
+        try:
+            command = run_scenario.lane_command(2, "smoke", pathlib.Path("runs/b"))
+        finally:
+            run_scenario.use_ping(None)
+        self.assertEqual(command[-9:], ["--engine", run_scenario.ENGINE.name, "--lane", "2",
+                                        "--batch", str(pathlib.Path("runs/b")), "--ping",
+                                        "50-100", "smoke"])
 
 
 class RunnerTest(unittest.TestCase):

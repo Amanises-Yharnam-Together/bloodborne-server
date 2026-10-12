@@ -23,6 +23,20 @@ ACCOUNTS = {"host": "rig_host", "guest": "rig_guest", "guest2": "rig_guest2"}
 PASSWORD = "rig"
 # Every build's game process, the rig's own and anyone else's (a player's copy).
 GAME_PROCESSES = ("shadPS4.exe", "bb-probe.exe")
+# A lane (run_scenario.py --lanes): one of several rig runs side by side, each with its own
+# servers and ports (LANE_PORT_STEP apart) and the port's own game folders (rig/port/lanes/<n>).
+# Lane 0 is the rig as it always was.
+LANE_PORT_STEP = 100
+LANE = 0
+
+
+def use_lane(lane: int):
+    """This process plays in `lane`: its servers' ports and the port's role folders."""
+    global LANE, SHADNET_PORT, WEBAPI_PORT, BACKEND_PORT
+    LANE = lane
+    SHADNET_PORT = 32313 + lane * LANE_PORT_STEP
+    WEBAPI_PORT = SHADNET_PORT + 2
+    BACKEND_PORT = 20453 + lane * LANE_PORT_STEP
 
 # The port's settings on the rig (bbport.ini, read by the port and its scripts): as low as the
 # emulator rig's (rig-lowspec.ps1), so two or three games fit on one PC. Kept when present: a
@@ -118,8 +132,11 @@ class Port(Emulator):
         self.game_dir = self.rig / "port" / "game" / "CUSA03173"
         self.mods = self.rig / "game" / "CUSA03173-mods"  # Potatoborne (rig-lowspec.ps1)
 
-    def role_dir(self, role: str) -> pathlib.Path:
-        return self.rig / "port" / role
+    def role_dir(self, role: str, lane: int | None = None) -> pathlib.Path:
+        lane = LANE if lane is None else lane
+        if lane == 0:
+            return self.rig / "port" / role
+        return self.rig / "port" / "lanes" / str(lane) / role
 
     def saves(self, role: str) -> pathlib.Path:
         return self.user_dir(role) / "savedata"

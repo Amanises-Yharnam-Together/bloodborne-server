@@ -12,6 +12,8 @@ stay in rig/runs/<when>/<scenario>/ (the last RUNS_KEPT batches).
   py -3.12 tools/rig/run_scenario.py <scenario> [<scenario>...] [--keep-servers] [--list]
   py -3.12 tools/rig/run_scenario.py --engine port smoke   (a suite: suites.py)
   py -3.12 tools/rig/run_scenario.py --engine port trips --chapter dog   (one of its chapters)
+  py -3.12 tools/rig/run_scenario.py --engine port --setup-lanes 3   (once: lanes 1 and 2)
+  py -3.12 tools/rig/run_scenario.py --engine port --lanes 3 smoke trips together ...
   py -3.12 tools/rig/run_scenario.py --save-baseline
   py -3.12 tools/rig/run_scenario.py --add-guest2   (a third game for parties of three)
   py -3.12 tools/rig/run_scenario.py --boot-check host [--seconds 40]   (tools/smoke-boot.ps1)
@@ -42,6 +44,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -73,6 +76,33 @@ ROLES = {
 
 # The build the games run: the emulator unless --engine says otherwise.
 ENGINE = engines.ENGINES["emulator"]
+
+# The lane this process plays in (--lane, engines.use_lane): 0 is the rig as it always was;
+# lane n has its own servers (rig/lanes/<n>), ports and the port's game folders, so several runs
+# go side by side (--lanes). A lane's games are the ones this process started (LAUNCHED): it
+# stops only those, never another lane's.
+LANE = 0
+LAUNCHED: list[subprocess.Popen] = []
+# Each lane's P2P ports this far after the last's (the roles' own differ by 1).
+LANE_P2P_STEP = 10
+
+
+def use_lane(lane: int):
+    global LANE, SHADNET_PORT, WEBAPI_PORT, BACKEND_PORT
+    engines.use_lane(lane)
+    LANE = lane
+    SHADNET_PORT, WEBAPI_PORT, BACKEND_PORT = (engines.SHADNET_PORT, engines.WEBAPI_PORT,
+                                               engines.BACKEND_PORT)
+
+
+def lane_dir(lane: int | None = None) -> pathlib.Path:
+    """Where a lane's servers live: rig/ itself for lane 0."""
+    lane = LANE if lane is None else lane
+    return RIG if lane == 0 else RIG / "lanes" / str(lane)
+
+
+def p2p_port(role: str) -> int:
+    return ROLES[role]["port"] + LANE * LANE_P2P_STEP
 
 
 def use_engine(name: str):
@@ -110,16 +140,24 @@ def matching_udp_port() -> int:
     return server_port(SHADNET_PORT) + 1
 
 
+def with_setting(config: str, key: str, value: int) -> str:
+    """shadnet.cfg's text with `key` set to `value`."""
+    return re.sub(rf"(?m)^{key}=\d+$", f"{key}={value}", config)
+
+
 def with_matching_udp_port(config: str, port: int) -> str:
     """shadnet.cfg's text with its MatchingUdpPort set to `port`."""
-    return re.sub(r"(?m)^MatchingUdpPort=\d+$", f"MatchingUdpPort={port}", config)
+    return with_setting(config, "MatchingUdpPort", port)
 
 
 def configure_shadnet():
-    config = RIG / "server" / "shadnet.cfg"
+    """The lane's shadNet on the lane's ports (lane 0's are the ones it always had)."""
+    config = lane_dir() / "server" / "shadnet.cfg"
     if config.is_file():
         text = config.read_text(encoding="utf-8")
         wanted = with_matching_udp_port(text, matching_udp_port())
+        wanted = with_setting(wanted, "UnsecuredPort", SHADNET_PORT)
+        wanted = with_setting(wanted, "WebApiPort", WEBAPI_PORT)
         if wanted != text:
             config.write_text(wanted, encoding="utf-8", newline="")
 
@@ -258,6 +296,9 @@ def stop_games():
     stay open until then). A window close first: a game stopped hard leaves some of its memory
     with the GPU driver until Windows restarts (0.2-0.4 GB a game, measured), which over a day of
     runs left no room for three games. A game that does not close in 15 s is stopped."""
+    if LANE:
+        stop_lane_games()
+        return
     for pid in games()[0]:
         subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True)
     deadline = time.time() + 15
@@ -268,6 +309,20 @@ def stop_games():
     deadline = time.time() + 20
     while time.time() < deadline and games()[0]:
         time.sleep(0.5)
+
+
+def stop_lane_games():
+    """A lane's games: the ones this process started (the port's launcher and the game under
+    it), a window close first as stop_games does."""
+    running = [game for game in LAUNCHED if game.poll() is None]
+    for game in running:
+        subprocess.run(["taskkill", "/T", "/PID", str(game.pid)], capture_output=True)
+    deadline = time.time() + 15
+    while time.time() < deadline and any(game.poll() is None for game in running):
+        time.sleep(0.5)
+    for game in running:
+        stop_game(game)
+    LAUNCHED.clear()
 
 
 def listening_pids(netstat: str, port: int) -> set[int]:
@@ -308,15 +363,95 @@ def start_servers(log_dir: pathlib.Path | None = None):
     """The rig's shadNet and backend, the ones not up yet, their output in log_dir."""
     if not port_open(SHADNET_PORT):
         configure_shadnet()
-        start_server([str(RIG / "server" / "shadnet.exe")], RIG / "server",
+        start_server([str(lane_dir() / "server" / "shadnet.exe")], lane_dir() / "server",
                      log_dir / "shadnet.log" if log_dir else None)
     if not port_open(BACKEND_PORT):
         start_server([sys.executable, "bb_dummy_server.py", "--address", "127.0.0.1", "--port",
-                      str(BACKEND_PORT), "--shadnet-webapi", "http://127.0.0.1:32315"],
-                     RIG / "backend", log_dir / "backend.log" if log_dir else None)
+                      str(BACKEND_PORT), "--shadnet-webapi", f"http://127.0.0.1:{WEBAPI_PORT}"],
+                     lane_dir() / "backend", log_dir / "backend.log" if log_dir else None)
     deadline = time.time() + 30
     while time.time() < deadline and not (port_open(SHADNET_PORT) and port_open(BACKEND_PORT)):
         time.sleep(0.5)
+
+
+# What a lane's copy of the rig leaves out: the port's prepared game image (run.py makes it again,
+# hundreds of GB of links), logs, pictures, sync files, save backups and old server binaries.
+LANE_SKIPPED = shutil.ignore_patterns("out", "log", "captures", "shots", "sync", "save-backups",
+                                      "*.bak", "*.err", "*.log", "*.out", "*-before-*", "trace*")
+
+
+def setup_lane(lane: int) -> list[pathlib.Path]:
+    """Lane `lane`'s own copy of the rig: its servers (rig/lanes/<n>/server and backend, the
+    same accounts) and each role's port folder (saves, baseline, settings), from lane 0's. What
+    exists stays as it is. The folders made."""
+    made = []
+    for name in ("server", "backend"):
+        source, target = lane_dir(0) / name, lane_dir(lane) / name
+        if source.is_dir() and not target.exists():
+            shutil.copytree(source, target, ignore=LANE_SKIPPED)
+            made.append(target)
+    for role in ROLES:
+        source, target = ENGINE.role_dir(role, 0), ENGINE.role_dir(role, lane)
+        if source.is_dir() and not target.exists():
+            shutil.copytree(source, target, ignore=LANE_SKIPPED)
+            (target / "user" / "log").mkdir(parents=True, exist_ok=True)
+            made.append(target)
+    return made
+
+
+# --lanes: a lane starts its first run this long after the one before (their games load at once
+# otherwise, and their logins and joins meet on one PC at the same moment).
+LANE_STAGGER = 45
+
+
+def run_in_lanes(names: list[str], lanes: int, runner, stagger: float = LANE_STAGGER,
+                 sleep=time.sleep) -> dict[str, bool]:
+    """Runs `names` across lanes 0..lanes-1, each lane one run at a time and taking the next name
+    as it finishes (the longest first, as given). runner(lane, name) -> passed."""
+    pending = list(names)
+    lock = threading.Lock()
+    results: dict[str, bool] = {}
+
+    def lane_worker(lane: int):
+        sleep(lane * stagger)
+        while True:
+            with lock:
+                if not pending:
+                    return
+                name = pending.pop(0)
+            passed = runner(lane, name)
+            with lock:
+                results[name] = passed
+
+    workers = [threading.Thread(target=lane_worker, args=(lane,)) for lane in range(lanes)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    return {name: results.get(name, False) for name in names}
+
+
+def lane_command(lane: int, name: str, batch: pathlib.Path) -> list[str]:
+    """This runner again, for one run in one lane, into the batch's folder."""
+    ping = "0" if PING is None else f"{PING[0]}-{PING[1]}"
+    return [sys.executable, "-u", str(pathlib.Path(__file__).resolve()), "--engine", ENGINE.name,
+            "--lane", str(lane), "--batch", str(batch), "--ping", ping, name]
+
+
+def run_lanes(names: list[str], lanes: int, batch: pathlib.Path) -> dict[str, bool]:
+    """--lanes: each run in its own process and lane, its output in <batch>/lane-<n>-<name>.txt."""
+    batch.mkdir(parents=True, exist_ok=True)
+
+    def runner(lane: int, name: str) -> bool:
+        output = batch / f"lane-{lane}-{name}.txt"
+        print(f"lane {lane}: {name} (output in {output})", flush=True)
+        with open(output, "wb") as out:
+            code = subprocess.run(lane_command(lane, name, batch), stdout=out,
+                                  stderr=subprocess.STDOUT).returncode
+        print(f"lane {lane}: {name} {'passed' if code == 0 else 'FAILED'}", flush=True)
+        return code == 0
+
+    return run_in_lanes(names, lanes, runner)
 
 
 def prune_runs(runs: pathlib.Path, kept: int):
@@ -415,7 +550,7 @@ def add_guest2():
 
 def server_is_current() -> bool:
     """Whether the rig's shadNet has the newest party boards (/bloodborne/party/shown)."""
-    request = urllib.request.Request("http://127.0.0.1:32315/bloodborne/party/shown",
+    request = urllib.request.Request(f"http://127.0.0.1:{WEBAPI_PORT}/bloodborne/party/shown",
                                      data=b"probe 0",
                                      headers={"X-ShadPS4-Bloodborne-Party": "probe:probe"})
     try:
@@ -464,7 +599,7 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     env = dict(os.environ)
     env.update({
         "SHADPS4_BLOODBORNE_SEAMLESS_COOP": "1",
-        "SHADPS4_P2P_PORT": str(ROLES[role]["port"]),
+        "SHADPS4_P2P_PORT": str(p2p_port(role)),
         "SHADPS4_BLOODBORNE_PARTY": party,
         "SHADPS4_BLOODBORNE_PARTY_ROLE": ROLES[role]["role"],
         "SHADPS4_BLOODBORNE_RE_TRACE": "1",
@@ -521,16 +656,20 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters",
     ENGINE.prepare(role, backend_port=server_port(BACKEND_PORT))
     env = game_environment(role, script_path, party, settings)
     if ENGINE.name == "emulator":
-        return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
+        game = subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 **background_window_options())
+        LAUNCHED.append(game)
+        return game
     console = console_path(role)
     set_aside(console)
     console.parent.mkdir(parents=True, exist_ok=True)
     with open(console, "wb") as output:  # the game keeps its own handle
-        return subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
+        game = subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,
                                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                                 **background_window_options())
+    LAUNCHED.append(game)
+    return game
 
 
 def stop_game(game: subprocess.Popen):
@@ -1005,6 +1144,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "once they are in the world together")
     parser.add_argument("--title", action="store_true",
                         help="with --play: leave the games at the title screen, no autoplay")
+    parser.add_argument("--lanes", type=int, metavar="N",
+                        help="run the scenarios and suites N at a time, each in its own lane "
+                             "(own servers, ports and game folders: --setup-lanes first)")
+    parser.add_argument("--setup-lanes", type=int, metavar="N",
+                        help="make lanes 1..N-1 from the rig's folders (--engine port)")
+    parser.add_argument("--lane", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--batch", type=pathlib.Path, help=argparse.SUPPRESS)
     parser.add_argument("--ping", type=ping_setting, default=latency.DEFAULT_PING,
                         help="round trip in ms between the games and to the servers, \"80\" "
                              f"or \"50-100\" (default {latency.DEFAULT_PING}; 0 for none)")
@@ -1015,7 +1161,9 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     use_engine(args.engine)
     use_ping(args.ping)
-    proxies = start_delay_proxies() if args.play or args.scenarios or args.boot_check else []
+    use_lane(args.lane)
+    runs_games = (args.play or args.scenarios or args.boot_check) and not args.lanes
+    proxies = start_delay_proxies() if runs_games else []
     try:
         return act(args)
     finally:
@@ -1045,6 +1193,19 @@ def act(args: argparse.Namespace) -> int:
     if args.add_guest2:
         add_guest2()
         return 0
+    if args.setup_lanes or args.lanes or args.lane:
+        if ENGINE.name != "port":
+            print("Lanes are the port's (--engine port): the emulator needs 12.5 GB a game.")
+            return 2
+        if max(args.setup_lanes or 0, args.lanes or 0, args.lane + 1) > 9:
+            print("At most 9 lanes (the tenth's ports would meet lane 0's ping proxies).")
+            return 2
+    if args.setup_lanes:
+        for lane in range(1, args.setup_lanes):
+            made = setup_lane(lane)
+            print(f"lane {lane}: made {', '.join(str(path) for path in made)}" if made else
+                  f"lane {lane}: there already")
+        return 0
     if args.save_baseline:
         if games_running():
             print("A game is running; its saves may be half written.")
@@ -1061,7 +1222,8 @@ def act(args: argparse.Namespace) -> int:
             print(f"suite {name}: {scenario['about']} ({', '.join(scenario['roles'])}): "
                   f"{', '.join(chapter['name'] for chapter in scenario['chapters'])}")
         return 0
-    if games_running():
+    # Another lane's games are the rig's own: only a game someone plays stops a lane's run.
+    if games()[1] if LANE or args.lanes else games_running():
         print("A game is running; not starting the rig.")
         return 2
     unknown = [name for name in args.scenarios if name not in RUNNABLE]
@@ -1078,8 +1240,19 @@ def act(args: argparse.Namespace) -> int:
             print(f"No such chapter in {args.scenarios[0]}: {', '.join(sorted(missing))}")
             return 2
         chosen[args.scenarios[0]] = compile_suite(suite, only=args.chapter)
-    batch = RUNS / time.strftime("%Y%m%d-%H%M%S")
-    prune_runs(RUNS, RUNS_KEPT - 1)
+    if args.lanes:
+        if missing := [lane for lane in range(1, args.lanes) if not lane_dir(lane).is_dir()]:
+            print(f"No lane {', '.join(map(str, missing))} yet: --engine port --setup-lanes "
+                  f"{args.lanes} makes them.")
+            return 2
+        batch = RUNS / time.strftime("%Y%m%d-%H%M%S")
+        prune_runs(RUNS, RUNS_KEPT - 1)
+        results = run_lanes(args.scenarios, args.lanes, batch)
+        print("\n".join(f"{'ok  ' if ok else 'FAIL'} {name}" for name, ok in results.items()))
+        return 0 if all(results.values()) else 1
+    batch = args.batch or RUNS / time.strftime("%Y%m%d-%H%M%S")
+    if not args.batch:  # a lane's run: --lanes keeps the batches
+        prune_runs(RUNS, RUNS_KEPT - 1)
     try:
         results = {name: run(name, batch, scenario=chosen.get(name)) for name in args.scenarios}
     finally:
