@@ -175,6 +175,14 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
 1. **Channel policy table.** One table at the choke point, `{channel -> pass | same-map only | ours
    | drop}`, read on send and receive; retires the scattered hooks it covers (map item header, the
    0x27 kick, 0x2F corrections). Rig: the full suite.
+   **Built 2026-10-13** behind `SHADPS4_BLOODBORNE_CHANNEL_TABLE=1` (port only, off by default):
+   `ChannelPolicy` / `NativeChannelPolicy` in `bloodborne_party.h`, hooks on the send's entry
+   0x017894E0 (Ours/Drop answer "not sent") and on both receive paths' channel checks in
+   0x01790C20 (0x01790C73 unreliable, 0x01790DDE reliable: a dropped packet gets channel 0x44 and
+   the game's own `ja` frees it). SameMap is decided by the receiver, from the sender's map on the
+   map board (unknown or loading: passed), so the transport still carries every packet. It replaces
+   the map item header hook; the 0x27 kick and 0x2F corrections had no packet hook of their own
+   (the boss clear patches stay: they also stop the host's own leave), so the table now drops them.
 2. **One UDP link to the server.** The socket, our reliability layer, `Hello`/`Ping`, and the game's
    packets relayed by the server instead of going P2P (the game still forms its rooms; only the
    bytes take the new path). Rig: join x25 (the join stall), host-crash, crash-rejoin, wipe3, the

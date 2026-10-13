@@ -206,6 +206,8 @@ extern thread_local HealingFountainAvailabilityRecord healing_fountain_availabil
 bool EnvFlagEnabled(const char* name);
 std::string BytesToHex(std::span<const u8> bytes);
 extern CoopFeatureReport coop_features;
+// The channel table is on (see ChannelPolicy): it drops the map item packets itself.
+extern bool channel_table_installed;
 std::string FeatureMismatch(u64 base, u64 image_size, std::string_view feature);
 std::string SiteFailure(u64 base, u64 image_size, u64 offset);
 bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestCodeHook hook);

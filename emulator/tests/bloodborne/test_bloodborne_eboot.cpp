@@ -136,6 +136,21 @@ TEST_F(BloodborneEboot, EveryCoopSiteHoldsItsOriginalBytes) {
     }
 }
 
+// The channel table drops a received packet by giving it a channel past 0x43: both receive paths
+// of 0x01790C20 test `cmp ..., 0x43` right after its hook and take the game's own drop branch
+// (`ja`), which frees the packet (reliable, 0x01790E31) or returns false (unreliable, 0x01790F2E).
+TEST_F(BloodborneEboot, TheChannelChecksJumpToTheGamesOwnDrop) {
+    EXPECT_EQ(Bytes(UnreliableChannelCheckOffset + UnreliableChannelCheck.size(), 6),
+              (std::vector<u8>{0x0F, 0x87, 0xAF, 0x02, 0x00, 0x00})); // ja 0x01790F2E
+    EXPECT_EQ(Bytes(ReliableChannelCheckOffset + ReliableChannelCheck.size(), 2),
+              (std::vector<u8>{0x77, 0x49})); // ja 0x01790E31
+    // The reliable check reads the channel the hook rewrites: movsxd rax, [rbx + 0x64].
+    EXPECT_EQ(Bytes(ReliableChannelCheckOffset, 4), (std::vector<u8>{0x48, 0x63, 0x43, 0x64}));
+    // The send's prologue, where the table answers "not sent" (0) for a dropped channel.
+    EXPECT_EQ(Bytes(PacketSendOffset, PacketSendPrologue.size()),
+              std::vector<u8>(PacketSendPrologue.begin(), PacketSendPrologue.end()));
+}
+
 // The joiner kick of a closing session tests SessionManager +0x118 (ReopensClosedSession):
 // cmp byte [r12 + 0x118], 0 at 0x01ED121E.
 TEST_F(BloodborneEboot, TheClosingSessionKickTestsTheFlagWeClear) {

@@ -59,6 +59,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"movie player delete delay", false},
     {"boss death tracer", false},
     {"native packet trace", false},
+    {"channel table", false},
     {"host leaves", true},
     {"seamless travel", true},
     {"stop request", true},
@@ -247,6 +248,12 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "48 8B 4B 30 48 8B 3C C1"},
     {"unreliable packet queued", "native packet trace", CoopSiteKind::Hook, 0x01790FCA,
      "48 8D 75 C8 4C 89 EF"},
+    // The channel table (InstallChannelTable): the send, and both receive paths' channel checks.
+    {"packet send", "channel table", CoopSiteKind::Hook, 0x017894E0, "55 48 89 E5 41 57"},
+    {"reliable channel check", "channel table", CoopSiteKind::Hook, 0x01790DDE,
+     "48 63 43 64 48 83 F8 43"},
+    {"unreliable channel check", "channel table", CoopSiteKind::Hook, 0x01790C73,
+     "49 89 D6 83 F8 43"},
 
     {"leave limit", "host leaves", CoopSiteKind::Hook, 0x0138A4A0, "55 48 89 E5 53 50"},
 

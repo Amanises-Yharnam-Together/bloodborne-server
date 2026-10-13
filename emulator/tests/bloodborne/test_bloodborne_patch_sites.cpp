@@ -218,6 +218,10 @@ TEST(CoopSites, ThePartyHeaderHooksAreRegistered) {
     EXPECT_TRUE(IsRegisteredCoopHook(PacketSendTraceOffset, PacketSendTrace));
     EXPECT_TRUE(IsRegisteredCoopHook(ReliablePacketQueuedOffset, ReliablePacketQueued));
     EXPECT_TRUE(IsRegisteredCoopHook(UnreliablePacketQueuedOffset, UnreliablePacketQueued));
+    // The channel table's send and receive decisions (phase 1).
+    EXPECT_TRUE(IsRegisteredCoopHook(PacketSendOffset, PacketSendPrologue));
+    EXPECT_TRUE(IsRegisteredCoopHook(ReliableChannelCheckOffset, ReliableChannelCheck));
+    EXPECT_TRUE(IsRegisteredCoopHook(UnreliableChannelCheckOffset, UnreliableChannelCheck));
     // Other bytes, another length or an offset that is no hook are not.
     EXPECT_FALSE(IsRegisteredCoopHook(HitOffset, std::span{HitPrologue}.first(6)));
     EXPECT_FALSE(IsRegisteredCoopHook(HitOffset + 1, HitPrologue));
