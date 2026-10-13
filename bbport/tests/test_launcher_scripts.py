@@ -3,7 +3,7 @@ its own folder, as python does, not copies frozen into the launcher. The release
 frozen hud_patch (mods is imported for the mod list); run_path left the scripts folder off sys.path, so
 mods.py's `import hud_patch` took the frozen one, which looked for party_hud_icons.bin in the
 launcher's own folder and patched the HUD without the party list's icons and portraits (Kaniel
-2026-10-13: no portrait left of krolebord's health bar)."""
+2026-10-13: no portrait left of a teammate's health bar)."""
 import sys
 import tempfile
 import textwrap
