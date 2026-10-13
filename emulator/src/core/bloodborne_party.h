@@ -3287,6 +3287,27 @@ struct DownedMember {
     std::string member;
     u32 down = 0;
 };
+// Swings at a downed body whose hit never lands, counted as the attack presses were before real
+// hits: a body that others saw kneel took no hits at all (playtest 2026-10-13, Lisara had to give
+// up), so a swing near a downed member (ReviveTarget) waits WaitMs for its hit, and counts its
+// press damage when none landed on that member's body (a charged R2 lands within it).
+class RevivePressFallback {
+public:
+    static constexpr s64 WaitMs = 1'500;
+    struct Swing {
+        DownedMember target;
+        u32 damage = 0;
+        s64 at = 0;
+    };
+    void Swung(DownedMember target, u32 damage, s64 now_ms);
+    // A real hit on `member`'s body (down `down`): the swings at it waiting are its own.
+    void Landed(std::string_view member, u32 down);
+    // The swings whose hit never landed, to count now (each once).
+    std::vector<Swing> Due(s64 now_ms);
+
+private:
+    std::vector<Swing> waiting;
+};
 
 // Real revive hits. A character's team is ChrIns +0x88; the game's relation tables
 // ([my team][other's]: hit an enemy 0x04731560, hit a friend 0x04731960, hostile 0x05127B90)

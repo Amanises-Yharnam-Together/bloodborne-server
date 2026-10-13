@@ -6318,6 +6318,28 @@ bool SessionArrival::Tick(bool in_session, bool summoned, u64 visit, bool playin
     return arrived;
 }
 
+void RevivePressFallback::Swung(DownedMember target, u32 damage, s64 now_ms) {
+    waiting.push_back(Swing{std::move(target), damage, now_ms});
+}
+
+void RevivePressFallback::Landed(std::string_view member, u32 down) {
+    std::erase_if(waiting, [&](const Swing& swing) {
+        return swing.target.member == member && swing.target.down == down;
+    });
+}
+
+std::vector<RevivePressFallback::Swing> RevivePressFallback::Due(s64 now_ms) {
+    std::vector<Swing> due;
+    std::erase_if(waiting, [&](const Swing& swing) {
+        if (now_ms - swing.at < WaitMs) {
+            return false;
+        }
+        due.push_back(swing);
+        return true;
+    });
+    return due;
+}
+
 bool ReviveHits::Press(std::string_view target, u32 down, u32 damage, s64 now_ms) {
     if (last_press && now_ms - *last_press < GapMs) {
         return false;
