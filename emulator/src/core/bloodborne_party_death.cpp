@@ -667,72 +667,45 @@ u32 ForgetDownedTargets(std::span<const u32> handles) {
     return forgotten;
 }
 
-// The handles of the downed players in this world: the local player while `down`, and each other
-// member the board has down on this map (the other player character nearest to where it posted).
-std::vector<u32> DownedPlayerHandles(u64 player, bool down,
-                                     std::span<const LampPosition> others_down) {
-    std::vector<u32> handles;
-    if (down && player >= 0x10000) {
-        handles.push_back(ReadValue<u32>(player, 0x08));
-    }
-    if (others_down.empty()) {
-        return handles;
-    }
-    const std::vector<OtherPlayer> players = OtherPlayers();
-    for (const LampPosition& at : others_down) {
-        const OtherPlayer* nearest = nullptr;
-        float nearest_distance = 4.0f;
-        for (const OtherPlayer& other : players) {
-            const float distance = other.at
-                                       ? std::hypot((*other.at)[0] - at[0], (*other.at)[1] - at[1],
-                                                    (*other.at)[2] - at[2])
-                                       : nearest_distance + 1.0f;
-            if (distance <= nearest_distance) {
-                nearest_distance = distance;
-                nearest = &other;
-            }
-        }
-        if (nearest != nullptr) {
-            handles.push_back(ReadValue<u32>(nearest->character, 0x08));
-        }
-    }
-    return handles;
-}
-
-// A downed member's body in this world: the other player character nearest to where it posted
-// (within 4 m), as DownedPlayerHandles finds them.
+// A downed member's body in this world (DownedBodyPicker: the one nearest where it posted, kept
+// for the down while the reviver stands over it).
 struct DownedBody {
     DownedMember member;
     u64 character = 0;
     u32 handle = 0;
 };
-std::vector<DownedBody> DownedBodies(std::span<const MemberVitals> board, std::string_view self,
-                                     u32 map, std::span<const OtherPlayer> players) {
+std::vector<DownedBody> DownedBodies(DownedBodyPicker& picker, std::span<const MemberVitals> board,
+                                     std::string_view self, u32 map,
+                                     std::span<const OtherPlayer> players) {
+    std::vector<BodyPosition> positions;
+    for (const OtherPlayer& other : players) {
+        if (other.at) {
+            positions.push_back(BodyPosition{ReadValue<u32>(other.character, 0x08), *other.at});
+        }
+    }
     std::vector<DownedBody> bodies;
-    for (const MemberVitals& entry : board) {
-        if (map == 0 || entry.member == self || entry.map != map || entry.vital != Vital::Down) {
-            continue;
-        }
-        const OtherPlayer* nearest = nullptr;
-        float nearest_distance = 4.0f;
-        for (const OtherPlayer& other : players) {
-            if (!other.at) {
-                continue;
-            }
-            const float distance =
-                std::hypot((*other.at)[0] - entry.at[0], (*other.at)[1] - entry.at[1],
-                           (*other.at)[2] - entry.at[2]);
-            if (distance <= nearest_distance) {
-                nearest_distance = distance;
-                nearest = &other;
-            }
-        }
-        if (nearest != nullptr) {
-            bodies.push_back(DownedBody{DownedMember{entry.member, entry.down}, nearest->character,
-                                        ReadValue<u32>(nearest->character, 0x08)});
+    for (const DownedBodyPick& pick : picker.Pick(board, self, map, positions)) {
+        const auto other = std::ranges::find_if(players, [&](const OtherPlayer& player) {
+            return ReadValue<u32>(player.character, 0x08) == pick.handle;
+        });
+        if (other != players.end()) {
+            bodies.push_back(DownedBody{pick.member, other->character, pick.handle});
         }
     }
     return bodies;
+}
+
+// The handles of the downed players in this world: the local player while `down`, and the other
+// downed members' bodies.
+std::vector<u32> DownedPlayerHandles(u64 player, bool down, std::span<const DownedBody> others) {
+    std::vector<u32> handles;
+    if (down && player >= 0x10000) {
+        handles.push_back(ReadValue<u32>(player, 0x08));
+    }
+    for (const DownedBody& body : others) {
+        handles.push_back(body.handle);
+    }
+    return handles;
 }
 
 // What the pad reader saw (FilterPartyDeathPad): the buttons held before the downed filter, the
@@ -834,7 +807,8 @@ void StrikeDownedBodies(PartyDeathRun& run, std::span<const MemberVitals> board,
     }
     const std::vector<OtherPlayer> players = OtherPlayers();
     const std::vector<DownedBody> bodies =
-        in_session ? DownedBodies(board, self, map, players) : std::vector<DownedBody>{};
+        in_session ? DownedBodies(run.downed_bodies, board, self, map, players)
+                   : std::vector<DownedBody>{};
     SetDownedTeams(run, bodies, players);
     CountRealReviveHits(run, bodies);
 }
@@ -1290,9 +1264,10 @@ void TickDown(PartyDeathRun& run, const DeathTick& tick) {
 // an enemy that sees a downed guest again (Hide is the local player's only) would take it as a
 // target again.
 void ForgetTargetsOnDowned(PartyDeathRun& run, const DeathTick& tick) {
-    const std::vector<LampPosition> others_down =
-        tick.in_session ? OthersDownOnMap(tick.board, tick.view.member, tick.map)
-                        : std::vector<LampPosition>{};
+    const std::vector<DownedBody> others_down =
+        tick.in_session ? DownedBodies(run.downed_bodies, tick.board, tick.view.member, tick.map,
+                                       OtherPlayers())
+                        : std::vector<DownedBody>{};
     const std::vector<u32> downed_handles =
         DownedPlayerHandles(tick.player, run.downed.Current() == Vital::Down, others_down);
     if (const u32 forgotten = ForgetDownedTargets(downed_handles); forgotten > 0) {

@@ -124,10 +124,11 @@ class GfxTests(unittest.TestCase):
             self.assertEqual(bar_start - (cx + hud_patch.ICON_SIZE / 2), hud_patch.ICON_PAD, 'the padding')
 
     def test_each_portrait_is_centred_on_its_whole_block_left_of_the_bar(self):
-        # Kaniel 2026-10-13: the member's portrait 1.5-2x the icon, centred vertically on the whole
-        # block (the name over the HP bar), left of the bar with the icon's padding.
-        self.assertGreaterEqual(hud_patch.PORTRAIT_SIZE, 1.5 * hud_patch.ICON_SIZE)
-        self.assertLessEqual(hud_patch.PORTRAIT_SIZE, 2 * hud_patch.ICON_SIZE)
+        # Kaniel 2026-10-13: the member's portrait centred vertically on the whole block (the name over
+        # the HP bar), left of the bar with the icon's padding; after the 3-player playtest 1.5-2x
+        # smaller than the first one (64 px).
+        self.assertGreaterEqual(hud_patch.PORTRAIT_SIZE, 64 / 2)
+        self.assertLessEqual(hud_patch.PORTRAIT_SIZE, 64 / 1.5)
         bar_start = hud_patch.LIST_X + hud_patch.BAR_FROM_TAG[0]
         for index in range(len(hud_patch.PARTY_FACES)):
             cx, cy = hud_patch.portrait_centre(index)
@@ -190,7 +191,8 @@ class GfxTests(unittest.TestCase):
         self.assertEqual(party_icons_atlas.HUD_COUNT, len(hud_patch.HUD_ICON_FRAMES) + 1)
 
     def test_the_badge_sits_on_the_frames_top_right(self):
-        self.assertTrue(20 <= hud_patch.BADGE_SIZE <= 24)
+        # Smaller with the portrait, still big enough to read a downed member's revive.
+        self.assertTrue(14 <= hud_patch.BADGE_SIZE <= 18)
         for index in range(len(hud_patch.PARTY_BADGES)):
             px, py = hud_patch.portrait_centre(index)
             bx, by = hud_patch.badge_centre(index)

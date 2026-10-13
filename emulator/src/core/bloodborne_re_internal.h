@@ -794,8 +794,9 @@ struct PartyDeathRun {
     u8 flags_added = 0;
     u8 hide_before = 0;
     u8 silence_before = 0;
-    u32 targets_forgotten = 0; // since the last log line
-    DownedTeams downed_teams;  // the downed members' bodies here, struck back up
+    u32 targets_forgotten = 0;      // since the last log line
+    DownedTeams downed_teams;       // the downed members' bodies here, struck back up
+    DownedBodyPicker downed_bodies; // which body here is each downed member's
     // After a revive the player takes no damage for ReviveGraceMs: the party's last swings, still
     // landing on its body as the invaders' team on their screens, would put it straight down again.
     std::optional<s64> grace_until;
