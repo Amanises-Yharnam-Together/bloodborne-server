@@ -210,6 +210,7 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_kills_hp.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_party_rules.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_party_death.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_portrait.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_boards.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_world_log.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_autoplay.cpp
@@ -464,6 +465,10 @@ target_include_directories(party-icons-test PRIVATE ..)
 target_compile_definitions(party-icons-test PRIVATE
     BB_PARTY_ICONS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/art/party_icons.bin")
 target_link_libraries(party-icons-test PRIVATE miniz::miniz)
+# bbport co-op: the party portraits' textures (shim/bbport_portraits.h): placeholders by colour, mips.
+add_executable(portraits-test EXCLUDE_FROM_ALL ../tests/test_portraits.cpp shim/bbport_portraits.cpp)
+target_compile_options(portraits-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(portraits-test PRIVATE ..)
 add_executable(game-art-test EXCLUDE_FROM_ALL ../tests/test_game_art.cpp shim/bbport_game_art.cpp)
 target_compile_options(game-art-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(game-art-test PRIVATE ..)

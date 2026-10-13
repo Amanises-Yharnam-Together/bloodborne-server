@@ -12,7 +12,13 @@ The party list is three more of the game's own nameplate tags (the sprite Remote
 top level as CoopParty0-2: party death fills and places them each frame through the game's own tag code
 (bloodborne_party_death.cpp), so the list has the game's font, bars and fades and sits under its menus. Left of
 each sits CoopPartyIcon0-2, a sprite whose frames are our own icon drawings (scripts/party_hud_icons.bin, made by
-party_icons_atlas.py; HUD_ICON_FRAMES): party death shows the member's with GotoAndStop."""
+party_icons_atlas.py; HUD_ICON_FRAMES): party death shows the member's with GotoAndStop.
+
+A member whose portrait came (its face as its own game renders it on the status page, sent to the party) shows
+it in CoopPartyFace0-2 instead, left of the whole block, with the icon as a small badge on its top right corner
+(CoopPartyBadge0-2, the icon sprite again). Each face is a sprite of two frames (nothing, then a square of a
+bitmap of its own): the bitmap is one placeholder colour (portrait_magic), by which the port's texture cache
+knows the slot's texture and puts the member's picture in its place (bbport_portraits.h)."""
 import hashlib
 import zlib
 from pathlib import Path
@@ -22,7 +28,7 @@ FE = 'dvdroot_ps4/menu/fe.gfx'
 LAYER = 'party HUD'
 # Part of the generated file's name: a patcher that patches differently makes its file anew (the old
 # one is not reused). Bump it with every change to what patch_fe writes.
-PATCH_VERSION = b'party-hud 4'
+PATCH_VERSION = b'party-hud 5'
 DRAW_BANNER = 'Fe_fla._TextEffect_Draw_195'
 DRAW_FIELD = 'StaticText_522007'
 DOWNED_FIELD = 'CoopDownedText'
@@ -46,12 +52,42 @@ LIST_X, LIST_Y, LIST_STEP = 204, 330, 95  # each bar starts where the player's H
 # The icon (its size in pixels) goes ICON_PAD px left of the bar, centred on it.
 BAR_FROM_TAG = (-95, -0.5)
 ICON_SIZE, ICON_PAD = 36, 18
+# The member block (its name over the HP bar), from the bar's middle (the same 1080p screenshot): the name's top
+# and the bar's bottom.
+NAME_TOP_FROM_BAR, BAR_BOTTOM_FROM_BAR = -34.5, 4.5
+# The portraits (Kaniel 2026-10-13: 1.5-2x the icon, centred on the whole block, the icon a small badge at its
+# top right corner): their size on the stage, their bitmaps' side (the port's PortraitSide) and the badge's size;
+# the badge's centre is BADGE_INSET px inside the corner.
+PARTY_FACES = ('CoopPartyFace0', 'CoopPartyFace1', 'CoopPartyFace2')
+PARTY_BADGES = ('CoopPartyBadge0', 'CoopPartyBadge1', 'CoopPartyBadge2')
+PORTRAIT_SIZE, PORTRAIT_PIXELS = 64, 64
+BADGE_SIZE, BADGE_INSET = 22, 5
+FIRST_FACE_ID = 50100  # after the icons' ids
+
+
+def portrait_magic(slot):
+    """(r, g, b, a) of slot's placeholder bitmap: red and blue alike, so the same in RGBA and BGRA
+    (bbport_portraits.h PlaceholderSlot)."""
+    return (0x3D, 0xC0 + slot, 0x3D, 0xFF)
 
 
 def icon_centre(index):
     """The centre of CoopPartyIcon<index> on the stage."""
     return (LIST_X + BAR_FROM_TAG[0] - ICON_PAD - ICON_SIZE / 2,
             LIST_Y + LIST_STEP * index + BAR_FROM_TAG[1])
+
+
+def portrait_centre(index):
+    """The centre of CoopPartyFace<index> on the stage: left of the bar as the icon, on the whole block."""
+    bar_y = LIST_Y + LIST_STEP * index + BAR_FROM_TAG[1]
+    return (LIST_X + BAR_FROM_TAG[0] - ICON_PAD - PORTRAIT_SIZE / 2,
+            bar_y + (NAME_TOP_FROM_BAR + BAR_BOTTOM_FROM_BAR) / 2)
+
+
+def badge_centre(index):
+    """The centre of CoopPartyBadge<index>: on the portrait's top right corner, a little inside."""
+    x, y = portrait_centre(index)
+    return x + PORTRAIT_SIZE / 2 - BADGE_INSET, y - PORTRAIT_SIZE / 2 + BADGE_INSET
 # Character ids for what the patch defines, above any the game's movies use.
 FIRST_NEW_ID = 50000
 
@@ -282,18 +318,18 @@ def read_strip(data):
     return count, icons
 
 
-def bitmap(char, rgba):
-    """DefineBitsLossless2: 128x128 premultiplied ARGB."""
+def bitmap(char, rgba, pixels=128):
+    """DefineBitsLossless2: `pixels` square, premultiplied ARGB."""
     argb = bytearray(len(rgba))
     for i in range(0, len(rgba), 4):
         r, g, b, a = rgba[i:i + 4]
         argb[i:i + 4] = bytes((a, r * a // 255, g * a // 255, b * a // 255))
-    return Tag(36, struct.pack('<HBHH', char, 5, 128, 128) + zlib.compress(bytes(argb), 9), True)
+    return Tag(36, struct.pack('<HBHH', char, 5, pixels, pixels) + zlib.compress(bytes(argb), 9), True)
 
 
-def bitmap_square(char, bitmap_char):
-    """DefineShape: a 128-pixel square filled with the bitmap (clipped), its top left at the origin."""
-    side = 128 * 20
+def bitmap_square(char, bitmap_char, pixels=128):
+    """DefineShape: a `pixels`-pixel square filled with the bitmap (clipped), its top left at the origin."""
+    side = pixels * 20
     fill = bytes([1, 0x41]) + struct.pack('<H', bitmap_char) + matrix(20.0, 0, 0)
     bits = BitWriter()
     bits.put(1, 4)  # fill index bits
@@ -309,6 +345,12 @@ def bitmap_square(char, bitmap_char):
         bits.put(dy if dx == 0 else dx, n, True)
     bits.put(0, 6)  # end of shape
     return Tag(2, struct.pack('<H', char) + rect(side, side) + fill + b'\0' + bits.data(), False)
+
+
+def shape_bitmap(shape):
+    """The bitmap a bitmap_square shape is filled with."""
+    offset = 2 + rect_size(shape.body, 2)
+    return struct.unpack_from('<H', shape.body, offset + 2)[0]
 
 
 def place(char, depth, name=None, place_matrix=None, replace=False):
@@ -348,21 +390,58 @@ def party_icon_tags(depth, strip):
     return tags
 
 
+def portrait_tags(depth, icon_char):
+    """The tags that define the portrait slots and place CoopPartyFace0-2 and, over them, CoopPartyBadge0-2 (the
+    icon sprite `icon_char`, small), from `depth` up."""
+    tags, faces, char = [], [], FIRST_FACE_ID
+    for slot in range(len(PARTY_FACES)):
+        tags += [bitmap(char, bytes(portrait_magic(slot)) * PORTRAIT_PIXELS ** 2, PORTRAIT_PIXELS),
+                 bitmap_square(char + 1, char, PORTRAIT_PIXELS), icon_sprite(char + 2, [char + 1])]
+        faces.append(char + 2)
+        char += 3
+    scale = PORTRAIT_SIZE / PORTRAIT_PIXELS
+    for index, (name, face) in enumerate(zip(PARTY_FACES, faces)):
+        depth += 2
+        cx, cy = portrait_centre(index)
+        tags.append(place(face, depth, name, matrix(scale, round((cx - PORTRAIT_SIZE / 2) * 20),
+                                                    round((cy - PORTRAIT_SIZE / 2) * 20))))
+    for index, name in enumerate(PARTY_BADGES):
+        depth += 2
+        cx, cy = badge_centre(index)
+        tags.append(place(icon_char, depth, name, matrix(BADGE_SIZE / 128, round((cx - BADGE_SIZE / 2) * 20),
+                                                         round((cy - BADGE_SIZE / 2) * 20))))
+    return tags
+
+
+def placed_icon_sprite(tags):
+    """The icon sprite CoopPartyIcon0 shows, among these tags."""
+    return next(place_parts(tag)[0] for tag in tags
+                if tag.code in (PLACE_OBJECT2, PLACE_OBJECT3) and place_parts(tag)[1] == PARTY_ICONS[0])
+
+
 def place_depth(tag):
     return struct.unpack_from('<H', tag.body, 2 if tag.code == PLACE_OBJECT3 else 1)[0]
 
 
-def add_party_list(tags, strip=None):
-    """Places CoopParty0-2 (the tag sprite RemotePCTag0 shows) and, with the icon strip, CoopPartyIcon0-2 at the
-    top level, above everything, in its first frame; nothing when they are there already."""
+def add_party_list(tags, strip=None, portraits=True):
+    """Places CoopParty0-2 (the tag sprite RemotePCTag0 shows) and, with the icon strip, CoopPartyIcon0-2 and the
+    portraits (CoopPartyFace0-2 and CoopPartyBadge0-2; not with `portraits` false) at the top level, above
+    everything, in its first frame; nothing when they are there already."""
     first_frame = next(i for i, tag in enumerate(tags) if tag.code == SHOW_FRAME)
     places = [tag for tag in tags[:first_frame] if tag.code in (PLACE_OBJECT2, PLACE_OBJECT3)]
     names = {place_parts(tag)[1] for tag in places}
     if names >= set(PARTY_LIST):
-        # Patched before (an older HUD patch a mod layer still holds): only the icons it may lack.
-        if strip is not None and not names >= set(PARTY_ICONS):
-            depth = max(place_depth(tag) for tag in places)
-            tags[first_frame:first_frame] = party_icon_tags(depth, strip)
+        # Patched before (an older HUD patch a mod layer still holds): only the icons and portraits it may lack.
+        if strip is None:
+            return
+        depth = max(place_depth(tag) for tag in places)
+        added = []
+        if not names >= set(PARTY_ICONS):
+            added += party_icon_tags(depth, strip)
+            depth += 2 * len(PARTY_ICONS)
+        if portraits and not names >= set(PARTY_FACES):
+            added += portrait_tags(depth, placed_icon_sprite(places + added))
+        tags[first_frame:first_frame] = added
         return
     prompt_sprite = next((place_parts(tag)[0] for tag in places if place_parts(tag)[1] == PROMPT_TAG), None)
     tag_sprite = next((place_parts(tag)[0] for tag in places if place_parts(tag)[1] == PARTY_TAG), None)
@@ -378,15 +457,18 @@ def add_party_list(tags, strip=None):
     if strip is not None:
         added += party_icon_tags(depth, strip)
         depth += 2 * len(PARTY_ICONS)
+        if portraits:
+            added += portrait_tags(depth, placed_icon_sprite(added))
+            depth += 2 * (len(PARTY_FACES) + len(PARTY_BADGES))
     if prompt_sprite is not None:
         added.append(place(prompt_sprite, depth + 2, PROMPT,
                            matrix(None, round(PROMPT_AT[0] * 20), round(PROMPT_AT[1] * 20))))
     tags[first_frame:first_frame] = added
 
 
-def patch_fe(data, strip=None):
+def patch_fe(data, strip=None, portraits=True):
     """The game's HUD movie with the downed banner in place of the Draw banner and the party list (see the
-    module's note); `strip` is the list's icons (party_hud_icons.bin), none without it."""
+    module's note); `strip` is the list's icons (party_hud_icons.bin), none without it (and no portraits)."""
     header, tags = read_movie(data)
     defined = {struct.unpack_from('<H', tag.body)[0]: tag for tag in tags if tag.code in (SPRITE, EDIT_TEXT)}
     banner = None
@@ -431,7 +513,7 @@ def patch_fe(data, strip=None):
         body = text.body[:start] + html + text.body[end:]
         c0, c1 = parts['color']
         text.body = body[:c0] + bytes.fromhex(DOWNED_COLOR) + b'\xff' + body[c1:]
-    add_party_list(tags, strip)
+    add_party_list(tags, strip, portraits)
     return write_movie((header, tags))
 
 

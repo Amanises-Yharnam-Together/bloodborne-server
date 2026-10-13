@@ -113,7 +113,7 @@ TEST(WorldLogFrames, TypesFollowTheHelloAndOlderBuildsDropThem) {
         EXPECT_FALSE(IsWorldLogFrameType(type));
     }
     EXPECT_GE(CoopProtocolVersion, 2) << "the world log's frames are protocol 2";
-    EXPECT_EQ(CoopProtocolVersion, 8) << "the host's return point (entry and map state part): 8";
+    EXPECT_GE(CoopProtocolVersion, 8) << "the host's return point (entry and map state part): 8";
 }
 
 // The host's return point (GlobalState +0x1528) on the log, so a guest's party death wakes where

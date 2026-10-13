@@ -6,6 +6,8 @@
 #include "bbport_toggles.h"
 #include "bbport_free_check.h"
 #include "bbport_memory_hash.h"
+#include "bbport_portraits.h"
+#include "../bbcoop.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
@@ -181,6 +183,109 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
                 runtime.GetStagingPool().FreeDeferred(download);
             });
     }
+}
+
+bool TextureCache::RefreshPortraitSlot(Image& image) {
+    const auto format = image.info.pixel_format;
+    const bool rgba = format == vk::Format::eR8G8B8A8Unorm || format == vk::Format::eR8G8B8A8Srgb;
+    const bool bgra = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
+    if (image.info.size.width != u32(BbPortraits::Side) ||
+        image.info.size.height != u32(BbPortraits::Side) || image.info.resources.layers != 1 ||
+        (!rgba && !bgra) || image.info.guest_address == 0) {
+        image.portrait_slot = -1;
+        return false;
+    }
+    std::vector<u8> level0(BbPortraits::MipOffset(1));
+    runtime_memory_read_backing(image.info.guest_address + image.info.mips_layout[0].offset,
+                                level0.data(), level0.size());
+    const int slot = BbPortraits::PlaceholderSlot(level0);
+    image.portrait_slot = slot;
+    if (slot < 0) {
+        return false;
+    }
+    std::vector<u8> picture(level0.size());
+    u32 version = 0;
+    const bool shown = bbcoop_portrait_slot(slot, picture.data(), picture.size(), &version) != 0;
+    image.portrait_version = version;
+    const int levels = int(image.info.resources.levels);
+    const auto chain = BbPortraits::MipChain(
+        shown ? std::span<const u8>{picture} : std::span<const u8>{}, bgra, levels);
+    const auto staging =
+        runtime.GetStagingPool().Request(chain.size(), MemoryType::HostUncached, 16);
+    std::memcpy(staging.mapped, chain.data(), chain.size());
+    staging.Flush();
+    boost::container::small_vector<vk::BufferImageCopy, 14> copies;
+    for (int m = 0; m < levels; ++m) {
+        const u32 side = std::max(u32(BbPortraits::Side) >> m, 1u);
+        copies.push_back({
+            .bufferOffset = staging.offset + BbPortraits::MipOffset(m),
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource{.aspectMask = vk::ImageAspectFlagBits::eColor,
+                              .mipLevel = u32(m),
+                              .baseArrayLayer = 0,
+                              .layerCount = 1},
+            .imageOffset = {0, 0, 0},
+            .imageExtent = {side, side, 1},
+        });
+    }
+    scheduler.EndRendering();
+    runtime.UploadImage(&image, staging.buffer, copies);
+    image.flags &= ~ImageFlagBits::Dirty;
+    LOG_INFO(Render_Vulkan,
+             "Party portraits: slot {} texture {:#x} ({}, {} levels) shows {} (version {})", slot,
+             image.info.guest_address, vk::to_string(format), levels,
+             shown ? "the member's picture" : "nothing", version);
+    return true;
+}
+
+void TextureCache::NotePortraitTexture(Image& image) {
+    const auto format = image.info.pixel_format;
+    if (image.info.size.width == BbPortraits::ModelWidth &&
+        image.info.size.height == BbPortraits::ModelHeight &&
+        (format == vk::Format::eR8G8B8A8Srgb || format == vk::Format::eB8G8R8A8Srgb) &&
+        True(image.flags & ImageFlagBits::GpuModified)) {
+        CaptureStatusModel(image, format == vk::Format::eB8G8R8A8Srgb);
+    }
+}
+
+void TextureCache::CaptureStatusModel(Image& image, bool bgra) {
+    // One read back every half second while the page shows its model (the party code keeps the
+    // last one of a showing).
+    static std::atomic<s64> captured_at{0};
+    const s64 now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
+    s64 last = captured_at.load(std::memory_order_relaxed);
+    if (now - last < 500 || !captured_at.compare_exchange_strong(last, now)) {
+        return;
+    }
+    const u32 width = image.info.size.width, height = image.info.size.height;
+    const u32 size = width * height * 4;
+    const auto download = runtime.GetStagingPool().Request(size, MemoryType::HostCached, 16, true);
+    const vk::BufferImageCopy copy = {
+        .bufferOffset = download.offset,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                             .mipLevel = 0,
+                             .baseArrayLayer = 0,
+                             .layerCount = 1},
+        .imageOffset = {0, 0, 0},
+        .imageExtent = {width, height, 1},
+    };
+    runtime.DownloadImage(&image, download.buffer, std::span{&copy, 1});
+    scheduler.DeferPriorityOperation([this, download, size, width, height, bgra] {
+        download.Invalidate();
+        std::vector<u8> rgba(download.mapped, download.mapped + size);
+        if (bgra) {
+            for (size_t at = 0; at < rgba.size(); at += 4) {
+                std::swap(rgba[at], rgba[at + 2]);
+            }
+        }
+        bbcoop_portrait_model(rgba.data(), int(width), int(height));
+        runtime.GetStagingPool().FreeDeferred(download);
+    });
 }
 
 /// bbport: the guest memory a MaybeCpuDirty check compares, the same at marking and at
@@ -789,8 +894,17 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, Vi
             downloads_queued.store(true, std::memory_order_release);
         }
     }
+    // bbport co-op: a portrait slot whose picture changed is uploaded again.
+    if (image.portrait_slot >= 0 &&
+        bbcoop_portrait_version(image.portrait_slot) != image.portrait_version) {
+        std::scoped_lock lock{mutex};
+        image.flags |= ImageFlagBits::CpuDirty;
+    }
     if (refresh) {
         UpdateImage(image_id);
+    }
+    if (desc.type != BindingType::Storage) {
+        NotePortraitTexture(image);
     }
     if (memo && !BbToggle::Disabled(BbToggle::TextureViewMemo)) {
         if (memo->image_id == image_id && memo->backing == image.backing && memo->view_id) {
@@ -896,6 +1010,10 @@ void TextureCache::RefreshImage(Image& image) {
             return;
         }
         image.hash = hash;
+    }
+
+    if (RefreshPortraitSlot(image)) {
+        return;
     }
 
     const u32 num_layers = image.info.resources.layers;

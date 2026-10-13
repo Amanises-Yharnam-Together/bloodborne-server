@@ -6,6 +6,7 @@
 
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
+#include "core/bloodborne_portrait.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
 #include "core/bloodborne_write_watch.h"
@@ -471,6 +472,28 @@ void NotePeerHello(PeerHello theirs, u32 addr, u16 port) {
 
 namespace {
 
+// Party portraits (bloodborne_portrait.h): the members' (from their frames, on the game thread) and
+// the status page's captures (from the port's texture cache).
+std::mutex portraits_mutex;
+PartyPortraits party_portraits; // portraits_mutex
+FaceCapture face_capture;       // portraits_mutex
+PortraitAssembler portrait_assembler;
+
+void TakePortraitPart(std::span<const u8> payload) {
+    const auto part = DecodePortraitPart(payload);
+    if (!part) {
+        return;
+    }
+    auto pixels = portrait_assembler.Take(*part);
+    if (!pixels) {
+        return;
+    }
+    LOG_INFO(Debug, "Bloodborne party portraits: {}'s portrait came ({:08x})", part->member,
+             part->id);
+    std::scoped_lock lock{portraits_mutex};
+    party_portraits.Take(part->member, std::move(*pixels));
+}
+
 // One co-op frame from a room peer (`bytes` whole, `payload` after the type); whether it brought
 // what the enemy step uses (HP, kills, the world log), so that step runs on the next frame.
 bool TakeCoopFrame(u8 type, std::span<const u8> payload, std::span<const u8> bytes, u32 addr,
@@ -491,6 +514,10 @@ bool TakeCoopFrame(u8 type, std::span<const u8> payload, std::span<const u8> byt
             direct_kills_inbox.Take(sender, std::move(*kills), now);
         }
         return kills.has_value();
+    }
+    if (type == PortraitPartType) {
+        TakePortraitPart(payload);
+        return false;
     }
     if (type == PeerHelloType) {
         if (auto hello = DecodePeerHello(payload)) {
@@ -653,6 +680,99 @@ void SendPeerHello() {
     sent_at = now;
     hello.member = BoardMemberName();
     SendToRoomPeers(EncodeCoopFrame(PeerHelloType, EncodePeerHello(hello)));
+}
+
+} // namespace Coop
+
+namespace {
+
+// The character's face data (PlayerGameData +0x4AC, 0xF0 bytes, as channel 8 sends it): its
+// portrait is kept on disk by it. Nothing before the character is loaded.
+std::optional<u64> OwnFaceFingerprint() {
+    const u64 data = Coop::OwnGameData();
+    if (data < 0x10000 || !HasMemoryAccess(data + 0x4AC, 0xF0, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    u64 hash = 0xCBF29CE484222325ull;
+    bool any = false;
+    for (u64 index = 0; index < 0xF0; ++index) {
+        const u8 byte = ReadValue<u8>(data, 0x4AC + index);
+        any = any || byte != 0;
+        hash = (hash ^ byte) * 0x100000001B3ull;
+    }
+    return any ? std::optional<u64>{hash} : std::nullopt;
+}
+
+} // namespace
+
+namespace Coop {
+
+// This character's portrait: the status page's last capture (kept on disk by its face), else the
+// one kept for its face; to every room peer at once when it changed or a peer came, and again now
+// and then (PortraitSender).
+void TickPortraits() {
+    static s64 ticked_at = 0;
+    static std::optional<u64> own_face;
+    static std::optional<PortraitPixels> own;
+    static PortraitSender sender;
+    static std::pair<u32, size_t> logged{};
+    const s64 now = SteadyMilliseconds();
+    if (now - ticked_at < 250) {
+        return;
+    }
+    ticked_at = now;
+    const auto face = OwnFaceFingerprint();
+    std::optional<PortraitPixels> settled;
+    {
+        std::scoped_lock lock{portraits_mutex};
+        settled = face_capture.Settled(now);
+    }
+    const auto dir = Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "portraits";
+    if (face && face != own_face) {
+        own_face = face;
+        own = LoadPortrait(PortraitCachePath(dir, *face));
+        if (own) {
+            LOG_INFO(Debug, "Bloodborne party portraits: the character's portrait from {}",
+                     PortraitCachePath(dir, *face).string());
+        }
+    }
+    if (settled) {
+        own = std::move(settled);
+        const bool kept = face && SavePortrait(PortraitCachePath(dir, *face), *own);
+        LOG_INFO(Debug,
+                 "Bloodborne party portraits: took the character's portrait from the status page "
+                 "({:08x}; {})",
+                 PortraitId(*own),
+                 kept ? PortraitCachePath(dir, *face).string() : std::string{"not kept: no face"});
+    }
+    const std::string member = BoardMemberName();
+    if (!own || member.empty()) {
+        return;
+    }
+    std::vector<u64> peers;
+    for (const auto& peer : Libraries::Np::NpMatching2::GetActiveRoomPeers()) {
+        peers.push_back((u64{peer.addr} << 16) | peer.port);
+    }
+    std::ranges::sort(peers);
+    const u32 id = PortraitId(*own);
+    if (!sender.Due(id, peers, now)) {
+        return;
+    }
+    for (const auto& part : SplitPortrait(member, *own)) {
+        SendToRoomPeers(EncodeCoopFrame(PortraitPartType, EncodePortraitPart(part)));
+    }
+    if (logged != std::pair{id, peers.size()}) {
+        logged = {id, peers.size()};
+        LOG_INFO(Debug,
+                 "Bloodborne party portraits: sent the character's portrait ({:08x}) to {} "
+                 "peer(s) as {}",
+                 id, peers.size(), member);
+    }
+}
+
+bool ShowPartyPortrait(int slot, std::string_view member) {
+    std::scoped_lock lock{portraits_mutex};
+    return party_portraits.Show(slot, member);
 }
 
 // The vitals board (see RunVitalsBoardClient): what the game thread posts and what the client
@@ -1024,5 +1144,30 @@ void StartVitalsBoardClient() {
 }
 
 } // namespace Coop
+
+void NoteStatusModel(std::span<const u8> rgba, int width, int height) {
+    auto portrait = PortraitFromModel(rgba, width, height);
+    if (!portrait) {
+        return;
+    }
+    std::scoped_lock lock{portraits_mutex};
+    face_capture.Take(std::move(*portrait), SteadyMilliseconds());
+}
+
+bool ReadPortraitSlot(int slot, std::span<u8> rgba, u32& version) {
+    std::scoped_lock lock{portraits_mutex};
+    version = party_portraits.Version(slot);
+    const auto pixels = party_portraits.Pixels(slot);
+    if (!pixels || rgba.size() < pixels->size()) {
+        return false;
+    }
+    std::ranges::copy(*pixels, rgba.begin());
+    return true;
+}
+
+u32 PortraitSlotVersion(int slot) {
+    std::scoped_lock lock{portraits_mutex};
+    return party_portraits.Version(slot);
+}
 
 } // namespace Core::Bloodborne

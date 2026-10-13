@@ -68,6 +68,16 @@ float bbcoop_revive_share(uint32_t landed, uint32_t needed);
  * "dvdroot_ps4/menu/common.tpf.dcx"; 0 before the game is installed or when `out` is too small. */
 int bbcoop_game_file(const char *relative, char *out, size_t size);
 
+/* Party portraits (the co-op code's bloodborne_portrait.h). The texture cache read back the status
+ * page's model (its render target, `width` x `height` RGBA rows): this character's portrait once
+ * the page closes. */
+void bbcoop_portrait_model(const uint8_t *rgba, int width, int height);
+/* The party list's portrait slot `slot` (0-2, the party HUD's CoopPartyFace): its version, which
+ * changes whenever its picture does; with the picture (64x64 RGBA into `rgba`, `size` bytes) 1, 0
+ * when it shows none. */
+uint32_t bbcoop_portrait_version(int slot);
+int bbcoop_portrait_slot(int slot, uint8_t *rgba, size_t size, uint32_t *version);
+
 /* The game opens a file (its guest path): the party code notes the character's save slot. */
 void bbcoop_file_opened(const char *guest_path);
 

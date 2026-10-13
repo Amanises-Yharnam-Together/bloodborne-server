@@ -100,6 +100,11 @@ WIPE3_SPOT = {"host": "-199.74 -50.56 182.42", "guest": "-196.74 -50.56 179.42",
 # lunges the hitter on, out of reach (2.5 m) after one, so it steps back beside it before each.
 # Revive hits until the downed member is up: how many depends on the striker's weapon (party death
 # takes its attack rating in damage).
+# The status page (its face is the player's portrait): Circle closes what the start shows (an item's
+# text), Options opens the menu on Inventory, Right goes to Status, Cross opens it.
+OPEN_STATUS = ["wait 5", "press circle 200", "wait 2", "press options 200", "wait 3",
+               "press right 200", "wait 2", "press cross 200", "wait 4"]
+CLOSE_MENU = ["press circle 200", "wait 2", "press circle 200", "wait 3"]
 REVIVE_HITS = ["revive-downed 150"]  # real hits: an unarmed rig hunter needs about 24 landed punches
 
 
@@ -1128,6 +1133,41 @@ SCENARIOS = {
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party guest died"]},
         "timeout": 600,
+    },
+    "portrait": {
+        "about": "party portraits: each player opens its status page (its face is taken from it), "
+                 "then they join; each party list shows the other's face with its icon as a badge (the "
+                 "downed drop once the guest falls)",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, *OPEN_STATUS, "shot status", *CLOSE_MENU, "godmode",
+                     "wait-session 2 300", "wait 15", "shot party", "wait-member-vital down 120",
+                     "wait 2", "shot sees-down", "snapshot", "expect-session 2"],
+            "guest": [START, *OPEN_STATUS, "shot status", *CLOSE_MENU, "wait-session 2 300",
+                      "wait 15", "shot party", *LETHAL_FALL, "wait-vital down 30", "wait 2",
+                      "shot down", "snapshot", "expect-session 2"],
+        },
+        "expect": {
+            "host": [r"party portraits: took the character's portrait from the status page",
+                     r"party portraits: 7269675f6775657374's portrait came",  # rig_guest
+                     r"Party portraits: slot 0 texture 0x[0-9a-f]+ .* shows the member's picture"],
+            "guest": [r"party portraits: took the character's portrait from the status page",
+                      r"party portraits: 7269675f686f7374's portrait came",  # rig_host
+                      r"Party portraits: slot 0 texture 0x[0-9a-f]+ .* shows the member's picture"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "portrait-dressed": {
+        "about": "party portraits on a dressed character (Kaniel 2026-10-13: are clothes on the portrait?): "
+                 "Kaniel's guest character, in the starting Black Hood and Foreign Garb, opens its "
+                 "status page (Square shows its face and model) and its portrait is taken from the "
+                 "model: head and shoulders, hood and collar",
+        "saves": "kaniel-1011-guest",
+        "roles": {"host": [START, "shot world-before", *OPEN_STATUS, "press square 200", "wait 3",
+                           "shot status-model", *CLOSE_MENU, "wait 5", "shot world"]},
+        "expect": {"host": [r"party portraits: took the character's portrait from the status page"]},
+        "timeout": 300,
     },
     "give-up": {
         "about": "party death: the downed guest holds Circle and dies as a party member dies "

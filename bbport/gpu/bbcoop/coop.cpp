@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -188,6 +187,27 @@ extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
 
 extern "C" float bbcoop_revive_share(uint32_t landed, uint32_t needed) {
     return Core::Bloodborne::ReviveShare(landed, needed);
+}
+
+extern "C" void bbcoop_portrait_model(const uint8_t* rgba, int width, int height) {
+    if (rgba == nullptr || width <= 0 || height <= 0) {
+        return;
+    }
+    Core::Bloodborne::NoteStatusModel(
+        std::span<const uint8_t>{rgba, std::size_t(width) * std::size_t(height) * 4}, width, height);
+}
+
+extern "C" uint32_t bbcoop_portrait_version(int slot) {
+    return Core::Bloodborne::PortraitSlotVersion(slot);
+}
+
+extern "C" int bbcoop_portrait_slot(int slot, uint8_t* rgba, size_t size, uint32_t* version) {
+    uint32_t seen = 0;
+    const bool shown = Core::Bloodborne::ReadPortraitSlot(slot, std::span<uint8_t>{rgba, size}, seen);
+    if (version != nullptr) {
+        *version = seen;
+    }
+    return shown ? 1 : 0;
 }
 
 extern "C" void bbcoop_file_opened(const char* guest_path) {

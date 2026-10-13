@@ -690,6 +690,11 @@ bool WorldSnapshotWanted();
 void NoteWorldSnapshot(s64 age_ms, std::vector<u8> blob);
 void SendDirectDamage(const MemberMapState& mine, bool changed);
 void SendPeerHello();
+// Party portraits (bloodborne_portrait.h): this character's own (the status page's capture, else
+// the one kept for its face) to the room's peers; the list slot `slot` shows `member` (its board
+// name, "" nobody): whether that is a portrait.
+void TickPortraits();
+bool ShowPartyPortrait(int slot, std::string_view member);
 void KeepEnemyDeathsInStep(bool sharing);
 void SnapshotHostMapState(bool sharing);
 void TeleportLocalPlayer(const LampPosition& at, float heading = 0.0f);

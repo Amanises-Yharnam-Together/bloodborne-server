@@ -195,6 +195,10 @@ public:
     boost::container::static_vector<u64, 16> mip_hashes{};
     u64 lru_id{};
     u64 hash{};
+    /// bbport co-op: the party portrait slot whose placeholder this is (bbport_portraits.h), -1
+    /// none, and the slot's version its contents show.
+    s32 portrait_slot = -1;
+    u32 portrait_version = 0;
 
 private:
     static Common::IncrementalIdProvider<u64> global_image_uid;

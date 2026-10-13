@@ -6,6 +6,7 @@
 
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
+#include "core/bloodborne_portrait.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
 #include "core/bloodborne_write_watch.h"
@@ -1485,9 +1486,11 @@ struct NativePartyList {
     std::array<std::array<u8, HudTagDataSize>, PartyListSize> data{};
     std::array<std::array<char16_t, 64>, PartyListSize> roles{}, names{};
     // CoopPartyIcon0-2's values (object interface, data), kept for the HUD's life; none without
-    // them (a party HUD made without the icon strip).
-    std::array<std::pair<u64, u64>, PartyListSize> icons{};
-    std::array<u32, PartyListSize> icon_frames{};
+    // them (a party HUD made without the icon strip). The same for the portraits (CoopPartyFace0-2)
+    // and their badges (CoopPartyBadge0-2), none in a HUD made before them.
+    using Sprites = std::array<std::pair<u64, u64>, PartyListSize>;
+    Sprites icons{}, faces{}, badges{};
+    std::array<u32, PartyListSize> icon_frames{}, face_frames{}, badge_frames{};
     // CoopPrompt: the game's interact prompt widget made for it; null without it.
     u8* prompt = nullptr;
     std::array<u8, HudPromptDataSize> prompt_data{};
@@ -1554,29 +1557,38 @@ bool MakeCoopPartyTags(u64 hud) {
     return true;
 }
 
-// The icons (CoopPartyIcon0-2): their values stay referenced while the HUD lasts, so they live on
-// the heap and are never freed: the HUD's destructor releases them there (a stack PathRef left a
-// dead value in the HUD's list, rig wipe3 2026-10-12). One per icon per HUD, as the tags. None
-// without them all.
-void FindCoopPartyIcons(u64 hud) {
+// The list's sprites (CoopPartyIcon0-2, CoopPartyFace0-2, CoopPartyBadge0-2, by `format`): their
+// values stay referenced while the HUD lasts, so they live on the heap and are never freed: the
+// HUD's destructor releases them there (a stack PathRef left a dead value in the HUD's list, rig
+// wipe3 2026-10-12). One per sprite per HUD, as the tags. None without them all.
+void FindListSprites(u64 hud, const char* format, NativePartyList::Sprites& sprites) {
     for (int i = 0; i < PartyListSize; ++i) {
         auto* path = new (std::align_val_t{16}) u8[HudPathRefSize]{};
-        reinterpret_cast<HudLookup>(image_base + HudChildLookupOffset)(path, hud, "CoopPartyIcon%d",
-                                                                       i);
+        reinterpret_cast<HudLookup>(image_base + HudChildLookupOffset)(path, hud, format, i);
         u32 type = 0;
         std::memcpy(&type, path + HudPathRefTypeAt, sizeof(type));
         const bool found = (type & 0x8F) != 0;
         if (found) {
-            std::memcpy(&native_list.icons[i].first, path + HudPathRefInterfaceAt, 8);
-            std::memcpy(&native_list.icons[i].second, path + HudPathRefObjectAt, 8);
+            std::memcpy(&sprites[i].first, path + HudPathRefInterfaceAt, 8);
+            std::memcpy(&sprites[i].second, path + HudPathRefObjectAt, 8);
         }
         if (HudValueFate(type, found) == HudValueKeep::Drop) {
             ::operator delete[](path, std::align_val_t{16});
         }
         if (!found) {
-            native_list.icons = {};
+            sprites = {};
             return;
         }
+    }
+}
+
+void FindCoopPartyIcons(u64 hud) {
+    FindListSprites(hud, "CoopPartyIcon%d", native_list.icons);
+    FindListSprites(hud, "CoopPartyFace%d", native_list.faces);
+    FindListSprites(hud, "CoopPartyBadge%d", native_list.badges);
+    if (native_list.faces[0].first == 0 || native_list.badges[0].first == 0) {
+        native_list.faces = {};
+        native_list.badges = {};
     }
 }
 
@@ -1607,9 +1619,10 @@ bool MakePartyListTags(u64 hud) {
     FindCoopPartyIcons(hud);
     MakeCoopPrompt(hud);
     LOG_INFO(Debug,
-             "Bloodborne party HUD: the party list is the HUD's own ({} tags, icons {}; their "
-             "values kept on the heap)",
-             PartyListSize, native_list.icons[0].first != 0 ? "too" : "none");
+             "Bloodborne party HUD: the party list is the HUD's own ({} tags, icons {}, portraits "
+             "{}; their values kept on the heap)",
+             PartyListSize, native_list.icons[0].first != 0 ? "too" : "none",
+             native_list.faces[0].first != 0 ? "too" : "none");
     return true;
 }
 
@@ -1641,16 +1654,24 @@ void UpdatePartyPrompt(const PartyPanel& panel, float frame_time) {
     }
 }
 
-// CoopPartyIcon<index> stops at `frame` (the sprite would play through its frames otherwise).
-void ShowPartyIcon(int index, u32 frame) {
-    const auto [object, value] = native_list.icons[index];
-    if (object < 0x10000 || frame == native_list.icon_frames[index]) {
+// A list sprite stops at `frame` (the sprite would play through its frames otherwise).
+void ShowListSprite(const NativePartyList::Sprites& sprites, std::array<u32, PartyListSize>& frames,
+                    int index, u32 frame) {
+    const auto [object, value] = sprites[index];
+    if (object < 0x10000 || frame == frames[index]) {
         return;
     }
-    native_list.icon_frames[index] = frame;
+    frames[index] = frame;
     const u64 goto_frame = ReadValue<u64>(ReadValue<u64>(object, 0), HudGotoFrameSlot);
     reinterpret_cast<void PS4_SYSV_ABI (*)(u64, u64, u32, bool)>(goto_frame)(object, value, frame,
                                                                              true);
+}
+
+// The list slot's icon, portrait and badge (PartyListArtFor).
+void ShowListArt(int index, const PartyListArt& art) {
+    ShowListSprite(native_list.icons, native_list.icon_frames, index, art.icon);
+    ShowListSprite(native_list.faces, native_list.face_frames, index, art.face);
+    ShowListSprite(native_list.badges, native_list.badge_frames, index, art.badge);
 }
 
 // Where the HUD tick has updated its own tags (HudTicksTagsDone): the list's tags, from the panel.
@@ -1682,7 +1703,7 @@ void PS4_SYSV_ABI UpdatePartyList(u64, const GuestRegisterSnapshot* registers) {
         for (int i = 0; i < PartyListSize; ++i) {
             reinterpret_cast<void PS4_SYSV_ABI (*)(u8*, bool)>(image_base + HudSetVisibleOffset)(
                 native_list.tags[i], false);
-            ShowPartyIcon(i, PartyListIconNone);
+            ShowListArt(i, PartyListArt{});
         }
         return;
     }
@@ -1704,7 +1725,12 @@ void PS4_SYSV_ABI UpdatePartyList(u64, const GuestRegisterSnapshot* registers) {
             SetElementText(reinterpret_cast<u64>(native_list.tags[i]) + HudTagNameLineAt,
                            entries[i].name_line);
         }
-        ShowPartyIcon(i, entries[i].visible ? entries[i].icon : PartyListIconNone);
+        // A member's portrait, when it came and the HUD has the slots for it
+        // (bloodborne_portrait.h).
+        const bool has_faces = native_list.faces[0].first != 0;
+        const bool portrait = Coop::ShowPartyPortrait(
+            i, has_faces && entries[i].visible ? std::string_view{entries[i].member} : "");
+        ShowListArt(i, PartyListArtFor(entries[i], has_faces && portrait));
         shown = shown || entries[i].visible;
     }
     if (shown) {
