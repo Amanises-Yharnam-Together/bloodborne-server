@@ -489,12 +489,23 @@ TEST(BloodbornePartyDeath, ASwingWhoseHitNeverLandsCountsAsAPress) {
 
     // The hit landed: the swing is not counted again.
     fallback.Swung({"a", 4}, 90, 20'000);
-    fallback.Landed("a", 4);
+    EXPECT_FALSE(fallback.Landed("a", 4, 20'400)) << "the hit counts, as its own";
     EXPECT_TRUE(fallback.Due(30'000).empty());
     // A hit on another member's body leaves this swing waiting.
     fallback.Swung({"a", 4}, 90, 40'000);
-    fallback.Landed("b", 4);
+    EXPECT_FALSE(fallback.Landed("b", 4, 40'100));
     EXPECT_EQ(fallback.Due(50'000).size(), 1u);
+    // A hit that lands after its swing was counted (a long swing: rig down-kneel 2026-10-14, each
+    // swing counted twice) is that swing's: the caller does not count it again. Once.
+    fallback.Swung({"a", 4}, 90, 60'000);
+    ASSERT_EQ(fallback.Due(60'000 + RevivePressFallback::WaitMs).size(), 1u);
+    EXPECT_TRUE(fallback.Landed("a", 4, 60'000 + RevivePressFallback::WaitMs + 500));
+    EXPECT_FALSE(fallback.Landed("a", 4, 60'000 + RevivePressFallback::WaitMs + 600));
+    // Too late to be that swing's: a hit of its own.
+    fallback.Swung({"a", 4}, 90, 70'000);
+    ASSERT_EQ(fallback.Due(70'000 + RevivePressFallback::WaitMs).size(), 1u);
+    EXPECT_FALSE(fallback.Landed(
+        "a", 4, 70'000 + RevivePressFallback::WaitMs + RevivePressFallback::LateMs + 1));
 }
 
 // On the others' screens a downed member's body takes the invaders' team (Hostile, 21) so they can

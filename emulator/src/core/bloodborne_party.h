@@ -2198,6 +2198,14 @@ bool IsRealDeath(u8 death_flags);
 // 2026-10-13). Never one its world put down (bit 5).
 constexpr s64 ZeroHitCountsMs = 5'000;
 bool SeenDead(u8 death_flags, s32 hp, std::optional<s64> zero_hit_ms, s64 now_ms);
+// Whether a copy another member killed (`killed_by_member`), at 0 HP here since `zero_since_ms`
+// without the game's death (no IsRealDeath bit), gets the game's kill now: after StuckDeathMs.
+// Father Gascoigne's copy on a guest sat at 0 HP after the guest's own last hit (death flags 0x40)
+// and his fight never ended there, so the lamp beside his arena answered with his talk (playtest
+// 2026-10-13). Never one its world put down (bit 5).
+constexpr s64 StuckDeathMs = 3'000;
+bool FinishesStuckDeath(bool killed_by_member, s32 hp, u8 death_flags,
+                        std::optional<s64> zero_since_ms, s64 now_ms);
 
 // A character as the kill board sees it: its handle, its HP (0 once really dead, see
 // IsRealDeath) and the object itself, which a world that loads makes anew.
@@ -3294,19 +3302,24 @@ struct DownedMember {
 class RevivePressFallback {
 public:
     static constexpr s64 WaitMs = 1'500;
+    // A hit that lands up to LateMs after its swing was counted is that swing's (Landed).
+    static constexpr s64 LateMs = 2'000;
     struct Swing {
         DownedMember target;
         u32 damage = 0;
         s64 at = 0;
     };
     void Swung(DownedMember target, u32 damage, s64 now_ms);
-    // A real hit on `member`'s body (down `down`): the swings at it waiting are its own.
-    void Landed(std::string_view member, u32 down);
+    // A real hit on `member`'s body (down `down`) at `now_ms`: the swings at it waiting are its
+    // own. True when it belongs to a swing already counted (Due): the caller then counts it not
+    // again.
+    bool Landed(std::string_view member, u32 down, s64 now_ms);
     // The swings whose hit never landed, to count now (each once).
     std::vector<Swing> Due(s64 now_ms);
 
 private:
     std::vector<Swing> waiting;
+    std::vector<Swing> counted; // at: when it was counted
 };
 
 // Real revive hits. A character's team is ChrIns +0x88; the game's relation tables

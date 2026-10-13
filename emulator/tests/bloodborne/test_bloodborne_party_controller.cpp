@@ -2750,6 +2750,20 @@ TEST(BloodborneSharedKills, AKillIsADeathTheGameMarked) {
     EXPECT_FALSE(IsRealDeath(0xF2));
 }
 
+// Playtest 2026-10-13: Father Gascoigne's copy on a guest sat at 0 HP without the game's death
+// (its death flags 0x40) after the guest's own last hit, so the boss never ended there and his lamp
+// and talk stayed as in the fight. A member's kill of a copy stuck at 0 HP for StuckDeathMs gets
+// the game's kill; not a real death already, not one its world put down, not before the time.
+TEST(BloodborneSharedKills, AMemberKillStuckAtZeroHpGetsTheGamesKill) {
+    EXPECT_TRUE(FinishesStuckDeath(true, 0, 0x40, 1'000, 1'000 + StuckDeathMs));
+    EXPECT_FALSE(FinishesStuckDeath(true, 0, 0x40, 1'000, 1'000 + StuckDeathMs - 1)) << "too soon";
+    EXPECT_FALSE(FinishesStuckDeath(false, 0, 0x40, 1'000, 9'000)) << "nobody killed it";
+    EXPECT_FALSE(FinishesStuckDeath(true, 5, 0x00, 1'000, 9'000)) << "alive";
+    EXPECT_FALSE(FinishesStuckDeath(true, 0, 0x05, 1'000, 9'000)) << "the game's death came";
+    EXPECT_FALSE(FinishesStuckDeath(true, 0, 0x20, 1'000, 9'000)) << "put down by its world";
+    EXPECT_FALSE(FinishesStuckDeath(true, 0, 0x40, std::nullopt, 9'000));
+}
+
 // Ada 2026-10-13: an enemy the host killed stayed on the guest at its last HP for 1-2.4 s, the
 // time from the killing blow to the game's death bit (set after the kill reward). A hit seen to
 // leave it at 0 HP counts at once; 0 HP with no such hit (a map torn down) still does not, nor a
