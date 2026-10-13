@@ -157,9 +157,7 @@ $harder = Ask "Harder enemies: HP,damage,poise multipliers (off for the normal g
 Write-Host ""
 Write-Host "  Party death, as in Elden Ring Nightreign: a killing blow puts you down instead of killing"
 Write-Host "  you while a partner stands on your map; they revive you by striking you (R1/R2, their"
-Write-Host "  weapon's damage counts), and you can hold Circle to give up. On unless you answer no;"
-Write-Host "  every player should answer the same."
-$partyDeath = Ask "Party death (yes/no)" $(if ($saved["PARTYDEATH"] -eq "0") { "no" } else { "yes" }) $isYesNo "Type yes or no."
+Write-Host "  weapon's damage counts), and you can hold Circle to give up. Always on."
 
 # --- saves ---------------------------------------------------------------------------------------
 # The port keeps saves in user\savedata\1\<title>\. Copied once, only when asked: later progress
@@ -321,7 +319,6 @@ $lines = @(
     "set `"P2PPORT=$p2pPort`"",
     "set `"FPS=$fps`"",
     "set `"HARDER=$harder`"",
-    "set `"PARTYDEATH=$(if ($partyDeath -eq "yes") { "1" } else { "0" })`"",
     "set `"GAMEDIR=$gameDir`""
 )
 [IO.File]::WriteAllLines($settingsPath, $lines, (New-Object Text.ASCIIEncoding))
@@ -329,7 +326,7 @@ $lines = @(
 Write-Host ""
 Write-Host "  Done." -ForegroundColor Green
 Write-Host "    game $title $($merged['APP_VER']) ($game$(if ($update -ne 'none') { " + $update" }))"
-Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS, party death $partyDeath, harder enemies $harder"
+Write-Host "    role $role, host $hostIp, account $npid, party $party, P2P UDP $p2pPort, $fps FPS, harder enemies $harder"
 Write-Host "    shadnet ${hostIp}:31313, WebAPI ${hostIp}:31315, backend ${hostIp}:20443"
 if ($role -eq "host") {
     Write-Host ""

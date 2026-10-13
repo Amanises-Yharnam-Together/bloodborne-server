@@ -31,7 +31,7 @@ void bbcoop_window_closing(void);
  * sticks (lx, ly, rx, ry; 128 is centred) it holds now; 0 when it is off. */
 int bbcoop_autoplay_pad(uint32_t *buttons, uint8_t sticks[4]);
 
-/* Party death (on in the port unless SHADPS4_BLOODBORNE_PARTY_DEATH=0): sees what the game will
+/* Party death (always on in the port): sees what the game will
  * read from the pad (the give-up hold, attacks that revive a downed member) and, while the player
  * is down, lets go of all but Options and the camera stick. */
 void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2);

@@ -41,7 +41,6 @@ STEPS (everyone)
        P2P UDP port            Enter (auto) unless you forward a port
        Frame rate              Enter (60)
        Harder enemies          Enter (off), or HP,damage,poise multipliers like 3,1.5,3
-       Party death             Enter (yes), the same for every player
        Saves                   Enter for a new character, or a folder with your saves
      SETUP makes the co-op map event files from your own game and checks them against the ones
      this release was tested with. Run it again any time to change an answer (Enter keeps it).
@@ -63,7 +62,7 @@ SAVES
   folder, and only the first time; to copy again, delete user\savedata and run SETUP.
 
 PARTY DEATH (AS IN ELDEN RING NIGHTREIGN)
-  On unless you answered "no" in SETUP; every player should answer the same.
+  Always on.
   - A killing blow puts you down at 1 HP instead of killing you while a partner stands on the
     same map. Enemies leave you alone while you are down.
   - A partner revives you by striking you (R1 or R2 right next to you). Each strike counts their

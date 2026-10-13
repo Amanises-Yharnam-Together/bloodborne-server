@@ -84,6 +84,21 @@ class ScenarioTest(unittest.TestCase):
                 self.assertEqual(
                     scenario.get("settings", {}).get("SHADPS4_BLOODBORNE_PARTY_DEATH") == "1", uses)
 
+    def test_nothing_plays_without_party_death_or_dies_by_the_games_own_kill(self):
+        # Party death is always on in the port (Kaniel 2026-10-13): a player dies by going down and
+        # giving up, by a wipe or alone on its map, never by the game's own kill of itself.
+        plays = [(name, scenario.get("settings", {}),
+                  [command for script in scenario["roles"].values()
+                   for command in sum(run_scenario.stages_of(script), [])])
+                 for name, scenario in scenarios.SCENARIOS.items()]
+        plays += [(name, scenario["settings"],
+                   [command for script in suite_scripts(scenario).values() for command in script])
+                  for name, scenario in suites.SUITE_SCENARIOS.items()]
+        for name, settings, commands in plays:
+            with self.subTest(play=name):
+                self.assertNotEqual(settings.get("SHADPS4_BLOODBORNE_PARTY_DEATH"), "0")
+                self.assertNotIn("kill self", commands)
+
     def test_every_role_is_a_rig_game(self):
         for name, scenario in scenarios.SCENARIOS.items():
             with self.subTest(scenario=name):
