@@ -168,4 +168,84 @@ bbcoop::VitalsBoard PartyBoards::VitalsMessage() const {
     return board;
 }
 
+bool EnemyOwners::Place(const std::string& member, std::uint32_t map, std::int64_t now_ms,
+                        bool host) {
+    const std::uint32_t area = AreaOf(map);
+    if (area == 0) {
+        return members.erase(member) > 0 && Settle();
+    }
+    Presence& presence = members[member];
+    if (presence.area != area || presence.heard_ms == 0) {
+        presence.area = area;
+        presence.since_ms = now_ms;
+    }
+    presence.heard_ms = now_ms;
+    presence.host = host;
+    return Settle();
+}
+
+bool EnemyOwners::Expire(std::int64_t now_ms) {
+    if (std::erase_if(members, [now_ms](const auto& entry) {
+            return now_ms - entry.second.heard_ms > SilentMs;
+        }) == 0) {
+        return false;
+    }
+    return Settle();
+}
+
+bool EnemyOwners::Forget(const std::string& member) {
+    return members.erase(member) > 0 && Settle();
+}
+
+std::string EnemyOwners::OwnerOf(std::uint32_t map) const {
+    const auto owner = owners.find(AreaOf(map));
+    return owner != owners.end() ? owner->second.member : std::string{};
+}
+
+bbcoop::EnemyOwners EnemyOwners::Message() const {
+    bbcoop::EnemyOwners message;
+    for (const auto& [area, owner] : owners) {
+        bbcoop::EnemyOwner* out = message.add_owners();
+        out->set_map(area);
+        out->set_member(owner.member);
+        out->set_epoch(owner.epoch);
+    }
+    return message;
+}
+
+bool EnemyOwners::Settle() {
+    bool changed =
+        std::erase_if(owners, [this](const auto& entry) {
+            const auto member = members.find(entry.second.member);
+            if (member == members.end() || member->second.area != entry.first) {
+                return true;
+            }
+            // The session's host takes the area back.
+            return !member->second.host && std::ranges::any_of(members, [&](const auto& other) {
+                return other.second.host && other.second.area == entry.first;
+            });
+        }) > 0;
+    for (const auto& [name, presence] : members) {
+        auto owner = owners.find(presence.area);
+        if (owner == owners.end()) {
+            // The member there longest (the map's order breaks a tie).
+            const Presence* first = &presence;
+            const std::string* first_name = &name;
+            for (const auto& [other, there] : members) {
+                if (there.area == presence.area && first->host) {
+                    break;
+                }
+                if (there.area == presence.area &&
+                    (there.host || there.since_ms < first->since_ms)) {
+                    first = &there;
+                    first_name = &other;
+                }
+            }
+            owners[presence.area] = Owner{*first_name, ++epoch};
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 } // namespace BloodborneWorld

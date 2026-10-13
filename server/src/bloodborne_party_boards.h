@@ -76,4 +76,51 @@ private:
     std::uint32_t last_wipe = 0;
 };
 
+// Phase 4 (docs/SERVER_COOP_PLAN.md): one game runs each occupied map's enemies: the session's
+// host while it is there (the game is built around the host running them: a host that followed
+// a guest put its own ownership words back every frame, rig 2026-10-14), else the member that
+// got there first (its committed map: the game's place tracker holds a border crossing for its
+// steady time, MemberMap). It is handed on when that member leaves the area, loads (map 0) or
+// goes silent, to the member there longest; every change counts the epoch up.
+class EnemyOwners {
+public:
+    // A member whose map was not heard of for this long is gone (its game sends it every second).
+    static constexpr std::int64_t SilentMs = 2'500;
+    // What an owner runs: one map (a block). The blocks of an area are loaded together, but the
+    // game wakes a block's enemies only near a player in that world (rig 2026-10-14: a guest in
+    // Cathedral Ward following the host in Central Yharnam saw them stand still).
+    static constexpr std::uint32_t AreaOf(std::uint32_t map) {
+        return map;
+    }
+
+    // A member's map now (0: loading or not in the world); `host`: it hosts the session. True
+    // when an owner changed.
+    bool Place(const std::string& member, std::uint32_t map, std::int64_t now_ms,
+               bool host = false);
+    // Members gone silent leave their areas.
+    bool Expire(std::int64_t now_ms);
+    // A member's own events took it out (its leave).
+    bool Forget(const std::string& member);
+    // The owner of the area of `map`, or "" when nobody runs it.
+    std::string OwnerOf(std::uint32_t map) const;
+    bbcoop::EnemyOwners Message() const;
+
+private:
+    struct Presence {
+        std::uint32_t area = 0;
+        std::int64_t since_ms = 0; // on this area since
+        std::int64_t heard_ms = 0;
+        bool host = false;
+    };
+    struct Owner {
+        std::string member;
+        std::uint64_t epoch = 0;
+    };
+    bool Settle();
+
+    std::map<std::string, Presence> members;
+    std::map<std::uint32_t, Owner> owners;
+    std::uint64_t epoch = 0;
+};
+
 } // namespace BloodborneWorld

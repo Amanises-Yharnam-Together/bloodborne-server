@@ -17,7 +17,7 @@ option optimize_for = LITE_RUNTIME;
 // Raised when a message's meaning changes; a game and the server on different ones are refused.
 enum Protocol {
     PROTOCOL_NONE = 0;
-    PROTOCOL_CURRENT = 1;
+    PROTOCOL_CURRENT = 2; // 2: phase 4's enemy owners
 }
 
 // game -> server: the first message of the stream, and again whenever the stream starts over (the
@@ -28,6 +28,9 @@ message Hello {
     string member = 3; // the member's board name (its online id in hex)
     uint32 run = 4;    // the game's run: a restart is a new run
     bool host = 5;     // it hosts the session: its world's state is the party's (shown, map state)
+    // It runs phase 4's enemy owners (SHADPS4_BLOODBORNE_ENEMY_OWNER): on an area another member
+    // owns, its new kills and its HP reports do not count.
+    bool enemy_owner = 6;
 }
 
 // server -> game: the answer to a hello.
@@ -116,6 +119,18 @@ message HpProposal {
 // game -> server: the map the member is on (0 while loading).
 message MemberMap {
     uint32 map = 1;
+}
+// Phase 4: who runs each occupied map's enemies (server -> game): the session's host while it is
+// on the map, else the member there first (its committed map, see MemberMap), handed on when it
+// leaves, loads or goes silent; the epoch counts up with every change. Sent to the party on a
+// change and to a member with every answer to its map.
+message EnemyOwner {
+    uint32 map = 1;
+    string member = 2;
+    uint64 epoch = 3;
+}
+message EnemyOwners {
+    repeated EnemyOwner owners = 1;
 }
 message MapBoard {
     message Entry {
@@ -279,6 +294,7 @@ message Envelope {
         Vitals vitals = 19;
         VitalsBoard vitals_board = 20;
         Portrait portrait = 21;
+        EnemyOwners enemy_owners = 22;
     }
 }
 
