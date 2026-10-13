@@ -797,13 +797,13 @@ TEST(BloodborneGuestProgress, EachTripGetsTheWorldChangesOnce) {
     EXPECT_FALSE(once.Take(true, 1)) << "same trip";
     EXPECT_FALSE(once.Take(false, 1));
     EXPECT_TRUE(once.Take(true, 2)) << "the next trip";
-    // Lisara 2026-10-13: in a session every load is a trip, and the map-item hook that asks runs
+    // Ada 2026-10-13: in a session every load is a trip, and the map-item hook that asks runs
     // only in loads, so it never saw a "no trip" between two: trips 2 and 3 took no host state.
     EXPECT_TRUE(once.Take(true, 3)) << "a trip right after a trip";
     EXPECT_FALSE(once.Take(true, 3));
 }
 
-// Lisara 2026-10-13: Iosefka stood in the guest's Central Yharnam for 6 s after a trip. The host
+// Ada 2026-10-13: Iosefka stood in the guest's Central Yharnam for 6 s after a trip. The host
 // posted its board the moment its own load ended, before its story hid her, and the guest showed
 // her again over its own story's hide. The host posts its characters once its world has settled.
 TEST(BloodborneShownBoard, TheHostPostsOnlyASettledWorld) {
@@ -909,7 +909,7 @@ TEST(BloodborneSharedLoot, AMessengerGiftIsEachPlayersOwn) {
     EXPECT_FALSE(KeepsLocalFlag(true, 72101100));
 }
 
-// Kaniel 2026-10-11: in her own Hunter's Dream Lisara found the workshop shut. Its doors open with
+// Kaniel 2026-10-11: in her own Hunter's Dream Ada found the workshop shut. Its doors open with
 // flag 9403, which Central Yharnam's event 12410900 sets for a live player walking by; she went
 // that way only as a phantom in the host's world. A guest out in the world in a session has been
 // there, so it sets the Dream's flags for itself, and its world keeps them.
@@ -925,13 +925,13 @@ TEST(BloodborneSharedProgression, AGuestOutInTheWorldOpensItsOwnDream) {
     EXPECT_TRUE(GuestProgressFlags(false, true, CentralYharnam, true, true).empty())
         << "the host's own";
     EXPECT_TRUE(GuestProgressFlags(true, true, 0, true, true).empty()) << "loading";
-    // Lisara's new character (2026-10-13): 9401 set before its first death showed the clinic's
+    // Ada's new character (2026-10-13): 9401 set before its first death showed the clinic's
     // lamp (common event 7000 waits for it) and ended the first-death event 9400 (end if 9401 on),
     // so the death woke it at the clinic, not in the Dream. Only a guest whose own character has
     // been to the Dream gets it.
     EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam, false, true),
               (std::vector<s32>{9403}));
-    // Lisara 2026-10-13: her new character's workshop in the Dream stood open. 9403 is what
+    // Ada 2026-10-13: her new character's workshop in the Dream stood open. 9403 is what
     // Central Yharnam's event 12410900 sets for a live player walking by: only once the session's
     // world has that flag (the party walked there).
     EXPECT_EQ(GuestProgressFlags(true, true, CentralYharnam, true, false),
@@ -1020,7 +1020,7 @@ TEST(BloodborneGuestProgress, AFreshCharacterHasFarFewerFlagsThanTheOneBefore) {
     EXPECT_FALSE(IsOtherCharacter(5390, 5400)) << "a few flags cleared by events";
     EXPECT_FALSE(IsOtherCharacter(6000, 5400)) << "played on";
     EXPECT_FALSE(IsOtherCharacter(1200, 0)) << "nothing kept: no character to compare with";
-    // krolebord 2026-10-11: every restart read as a new character (5800 set against 5859 kept,
+    // Brom 2026-10-11: every restart read as a new character (5800 set against 5859 kept,
     // 5672 against 5739: a load clears a few dozen area flags), the kept pickups were dropped
     // and he could loot the same items again.
     EXPECT_FALSE(IsOtherCharacter(5800, 5859));
@@ -1121,7 +1121,7 @@ TEST(BloodborneSharedKills, AMembersKillGivesTheOneTimeDrop) {
     EXPECT_FALSE(GetsMemberKillDrop(false, true, 52300990, false)) << "no session";
 }
 
-// Kaniel 2026-10-13: Lisara killed a hag by the Cathedral Ward lamp (item lot 22010, flag
+// Kaniel 2026-10-13: Ada killed a hag by the Cathedral Ward lamp (item lot 22010, flag
 // 50000600): the host's copy dropped the item, the guest's game made no drop at all. A guest's own
 // kill gives it the one-time drop too; a host's own kill drops by the game.
 TEST(BloodborneSharedKills, AGuestsOwnKillGivesTheOneTimeDrop) {
@@ -1200,7 +1200,7 @@ TEST(BloodborneSignTimers, PostsTheFirstSignAtOnceAndRepostsEverySecond) {
 
 // The bundled "Uncap FPS++" game patch takes the re-post stores for frame timers and writes 60 s
 // into them (0x01CA975A and 0x01CA9892 in its addresses): the sign then went up once a minute, a
-// host's claim found the guest's game long past its 5 s, and krolebord's join took many bells.
+// host's claim found the guest's game long past its 5 s, and Brom's join took many bells.
 TEST(BloodborneSignTimers, TakesTheStoresWhateverTimeAGamePatchWroteInThem) {
     const SignTimerSite& repost = SignTimerSites[2];
     const auto game = EncodeSignTimerStore(repost.modrm, repost.original_seconds);
@@ -1703,7 +1703,7 @@ TEST(BloodborneSharedKills, ADeathByAnotherPlayersHitIsTheirKill) {
     EXPECT_FALSE(KilledByAnother(false, false, false)) << "no hit hooks: as before";
 }
 
-// Kaniel 2026-10-11: the host and Lisara went to the Dream and back while krolebord stayed in
+// Kaniel 2026-10-11: the host and Ada went to the Dream and back while Brom stayed in
 // Central Yharnam, and half of it was alive again: the host's trip took its 82 kills back. While
 // another member stays on the map, a visit's kills stand (held), hidden for this member too
 // when it comes back; they go back once nobody of the party is on that map.
@@ -1714,19 +1714,18 @@ TEST(BloodborneSharedKills, KillsStandWhileSomeoneStaysOnTheMap) {
     using Changes = std::vector<std::pair<s32, bool>>;
     const std::vector<SeenCharacter> alive{{0x10014085, 300}, {0x10014088, 250}};
     const std::vector<SeenCharacter> one_dead{{0x10014085, 0}, {0x10014088, 250}};
-    const std::vector<u32> krolebord_here{Yharnam};
+    const std::vector<u32> Brom_here{Yharnam};
     VisitKills kills;
-    kills.Observe(visit(Yharnam, 1), alive, krolebord_here);
-    EXPECT_EQ(kills.Observe(visit(Yharnam, 1), one_dead, krolebord_here),
-              (Changes{{0x10014085, true}}));
-    EXPECT_EQ(kills.Observe(visit(Dream, 2), {}, krolebord_here), Changes{})
-        << "krolebord stayed: the kill stands";
+    kills.Observe(visit(Yharnam, 1), alive, Brom_here);
+    EXPECT_EQ(kills.Observe(visit(Yharnam, 1), one_dead, Brom_here), (Changes{{0x10014085, true}}));
+    EXPECT_EQ(kills.Observe(visit(Dream, 2), {}, Brom_here), Changes{})
+        << "Brom stayed: the kill stands";
     EXPECT_EQ(kills.Held(Yharnam), (std::vector<u32>{0x10014085}));
-    EXPECT_EQ(kills.Observe(visit(Yharnam, 3), alive, krolebord_here), Changes{})
+    EXPECT_EQ(kills.Observe(visit(Yharnam, 3), alive, Brom_here), Changes{})
         << "back: the respawned copy is hidden, nothing posted";
     EXPECT_EQ(kills.Held(Yharnam), (std::vector<u32>{0x10014085}));
     EXPECT_EQ(kills.Observe(visit(Yharnam, 3), alive, {}), Changes{})
-        << "krolebord left, but this member is there";
+        << "Brom left, but this member is there";
     EXPECT_EQ(kills.Observe(visit(Dream, 4), {}, {}), (Changes{{0x10014085, false}}))
         << "nobody left on the map: the enemies respawn for everyone";
     EXPECT_TRUE(kills.Held(Yharnam).empty());
@@ -2094,7 +2093,7 @@ TEST(BloodborneHiddenCharacters, DeadMeansKilledOrPutDownInTheSave) {
     EXPECT_FALSE(IsDeadInItsWorld(0x20));
 }
 
-// Kaniel 2026-10-11: Lisara joined a session krolebord was already in and did not see him; after
+// Kaniel 2026-10-11: Ada joined a session Brom was already in and did not see him; after
 // both went to the Dream and back (where the other players are re-created) they saw each other.
 // A guest that joins where another guest already is re-creates the others once, as after a trip.
 TEST(BloodbornePartyController, AGuestJoiningAnotherGuestRecreatesThemOnce) {
@@ -2260,7 +2259,7 @@ TEST(BloodborneSharedEnemyHp, PoisonIsTheLastHittersDamage) {
     EXPECT_EQ(own.All().size(), 1u);
 }
 
-// Kaniel 2026-10-13: his fire bomb took 781 off an enemy and Lisara's bar never moved. The game's
+// Kaniel 2026-10-13: his fire bomb took 781 off an enemy and Ada's bar never moved. The game's
 // hit had no attacker (a thrown item's hit), so it was no one's: counted as nobody's damage, it
 // was never posted. A hit with no attacker is this member's, unless another player hit it last.
 TEST(BloodborneSharedEnemyHp, AHitWithNoAttackerIsThisMembers) {
@@ -2429,7 +2428,7 @@ TEST(BloodborneDirectBoards, AVitalsUpdateReadsBack) {
                             .landed = 25,
                             .needed = 1900,
                             .at = {-199.5f, -50.75f, 179.25f}};
-    const std::vector<ReviveHitTotal> hits{{"4c6973617261", 574863293, 75}};
+    const std::vector<ReviveHitTotal> hits{{"416461", 574863293, 75}};
     const auto back = ParseVitalsUpdate(EncodeVitalsUpdate(self, hits));
     ASSERT_TRUE(back);
     EXPECT_EQ(back->self, self);
@@ -2751,7 +2750,7 @@ TEST(BloodborneSharedKills, AKillIsADeathTheGameMarked) {
     EXPECT_FALSE(IsRealDeath(0xF2));
 }
 
-// Lisara 2026-10-13: an enemy the host killed stayed on the guest at its last HP for 1-2.4 s, the
+// Ada 2026-10-13: an enemy the host killed stayed on the guest at its last HP for 1-2.4 s, the
 // time from the killing blow to the game's death bit (set after the kill reward). A hit seen to
 // leave it at 0 HP counts at once; 0 HP with no such hit (a map torn down) still does not, nor a
 // world's put-down (bit 5), nor a zero hit seconds old.
@@ -2836,7 +2835,7 @@ TEST(BloodborneGuestResume, AGuestResumesWhereItLeft) {
         << "a new character in the slot";
 }
 
-// Lisara's new character (2026-10-12) started in Central Yharnam: slot 5 still had the old
+// Ada's new character (2026-10-12) started in Central Yharnam: slot 5 still had the old
 // character's resume point, and its event flag count was too close to tell them apart. Once the
 // slot is found to hold another character (ForgetsSlotLists), its resume point goes with the
 // kept lists.
@@ -2850,7 +2849,7 @@ TEST(BloodborneGuestResume, ANewCharacterForgetsTheSlotsResumePoint) {
 
 // The Dream messengers' gifts are each player's own (12101020-29, KeepsLocalFlag): the host's
 // story hides its messengers once it took its gifts (2004:29), and a guest copying that hid its
-// own before it took them (Lisara 2026-10-12). Their entity ids (m21_00 MSB: the right- and
+// own before it took them (Ada 2026-10-12). Their entity ids (m21_00 MSB: the right- and
 // left-hand weapon givers and their weapon displays, the note and the multiplayer items).
 TEST(BloodborneShownBoard, TheDreamMessengersAreEachPlayersOwn) {
     for (const s32 entity : {2100215, 2100216, 2100220, 2100221, 2100230, 2100231}) {
