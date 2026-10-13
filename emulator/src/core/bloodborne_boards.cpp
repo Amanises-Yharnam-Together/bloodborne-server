@@ -226,6 +226,10 @@ void PostWorldSnapshot(httplib::Client& client, const httplib::Headers& headers,
 
 // Posts this member's rest about once a second while it rests (once more when it stands up) and
 // keeps the board the server answers with. Runs on its own thread; the game never waits for it.
+} // namespace
+
+namespace Coop {
+
 // The signed-in user's online id, or "" before shadNet's login.
 std::string LocalOnlineId() {
     int user_id = -1;
@@ -239,6 +243,10 @@ std::string LocalOnlineId() {
     const auto online_id = np.GetOnlineId(user_id);
     return std::string{online_id.data, strnlen(online_id.data, sizeof(online_id.data))};
 }
+
+} // namespace Coop
+
+namespace {
 
 // The boards know a member by its online id (hex, see BoardMemberOfOnlineId): a party of three
 // tells its session members apart by it. Random if shadNet never signs in.

@@ -202,6 +202,25 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
    crash-rejoin-hp): every frame of the failed join, the host's 271-byte one included, reached
    the guest through the server and was acked, and the guest's game never called JoinRoom; the
    stall is in the game's matching/join, not in signaling or UDP.
+   **2b built 2026-10-13**, on with the server link (`SHADPS4_BLOODBORNE_GAME_PACKETS=native`
+   keeps the game's own transport under it): the game's packets leave at the transport send
+   under NetSync's send and its resend (0x00C8F0A0, a hook that answers "sent") and travel in our
+   frames (SHAD 0x40, `bloodborne_game_link.h`): per member and class, reliable ones (channels 7
+   and up) with seq/ack/resend (150 ms) and in-order delivery, unreliable ones never resent and
+   the newest per channel wins; an instance number per run restarts both streams when a member's
+   game restarts (a restarted game ignores frames meant for its predecessor and answers at once;
+   an idle link sends an empty frame every second). The receiver hands them to the member's queues
+   from the link's own thread, as the game's receive does from its network thread, with the game's
+   own fill 0x01790C20 (it locks the queues), so the channel table's receive checks still run. A
+   first version delivered from a hook on NetSync's per-frame update (0x01789B60) and saw 5 join
+   stalls in about 28 joins (none in about 60 on P2P and 2a); without a per-frame hook, none in 21
+   joins and 4 crash-rejoins. The SprjSessionManager timer +0x2E0/+0x2F0 turned out to count only a stuck resend
+   backlog (180 s), and the resend queue fills only when the transport send fails, so answering
+   "sent" keeps both quiet: OnIrregularLeaveSession can no longer fire from them. Liveness and
+   counters per member in the log and on the co-op trace ("glink"). A packet for a member whose
+   address is not known yet goes the game's own way (a handful per join). Hooks can now choose the
+   result of a skipped function (`InstallGuestFunctionResult`). Not done: the server applying the
+   channel table (frames batch packets, and the server never reads them).
 3. **The world log moves into the server.** The host side (`WorldLogHost`) runs in shadNet, stores
    to disk, and serves snapshots per map; members propose to the server. Kills, shown, flags, map
    state and HP go over it; then the HTTP boards (/bloodborne/party/*) and their pollers are removed.

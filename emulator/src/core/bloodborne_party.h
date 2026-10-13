@@ -2914,6 +2914,24 @@ constexpr std::array<u8, 8> ReliableChannelCheck{0x48, 0x63, 0x43, 0x64, 0x48, 0
 constexpr u64 UnreliableChannelCheckOffset = 0x01790C73;
 constexpr std::array<u8, 6> UnreliableChannelCheck{0x49, 0x89, 0xD6, 0x83, 0xF8, 0x43};
 
+// The game's packets in our frames (docs/SERVER_COOP_PLAN.md phase 2b, bloodborne_game_link.h,
+// see InstallGamePacketLink). The transport send under NetSync's send and its resend
+// (0x00C8F0A0: rdi the session, esi reliable, rdx the member id, rcx the packet {u32 channel,
+// u32 size, payload}, r8d its size; it answers true for "sent"): a packet our link takes is
+// "sent", so the game's resend queue and its 180 s backlog timer (SprjSessionManager +0x2E0 /
+// +0x2F0, raised only by a backlog) stay empty. The packets our link took go to the member's
+// queues from the link's own thread, as the game's receive (0x0178D510, on its network thread)
+// does: the member's peer found in the net sync's list ([0x0553D6D0] +0x28: nodes {next, prev,
+// peer}, the peer's member id at +0x08), then the game's own fill 0x01790C20(peer, reliable,
+// bytes, size), which locks the queues itself. Not from a hook on NetSync's per-frame update:
+// a hook on a per-frame path made joins stall before (the talk position hook, 2026-10-10), and
+// with one there 4 of about 25 joins stalled on the rig.
+constexpr u64 TransportSendOffset = 0x00C8F0A0;
+constexpr u64 MemberQueuesFillOffset = 0x01790C20;
+constexpr std::array<u8, 6> GamePacketLinkPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+// A packet for a member the game has no queues for yet (it is still joining) waits this long.
+constexpr s64 HeldForUnknownMemberMs = 10'000;
+
 // Boss-death tracer (Kaniel 2026-10-11: Father Gascoigne died in the host's world with nobody
 // hitting him, and a guest got "Prey Slaughtered"): the game sets a character's dead flag
 // (`or byte ptr [reg + 0x1E3], 1`) in three places, each once per death: the two deaths at 0 HP

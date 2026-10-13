@@ -214,6 +214,8 @@ bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestCod
 
 bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestFunctionOverride hook);
 
+bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestFunctionResult hook);
+
 bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestRegisterEditHook hook);
 bool HasMemoryAccess(u64 address, size_t size, MemoryProt required);
 
@@ -639,6 +641,8 @@ bool TakeDirectDamage();
 // A co-op frame to every room peer, or to one (both traced).
 void SendToRoomPeers(const std::vector<u8>& frame);
 void SendToPeer(const std::vector<u8>& frame, u32 addr, u16 port);
+// The signed-in user's online id, or "" before shadNet's login.
+std::string LocalOnlineId();
 void SendDirectKills(std::span<const u32> kills, bool changed);
 // The world log's runtime (bloodborne_world_log.cpp, docs/WORLD_SYNC.md Stage C).
 // SHADPS4_BLOODBORNE_WORLD_LOG (this game's hello says so: WorldLogFeature).
