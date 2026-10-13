@@ -112,6 +112,17 @@ class GfxTests(unittest.TestCase):
         self.assertLess(tags.index(sprites[icon_char]), tags.index(places['CoopPartyIcon0']))
         self.assertEqual(hud_patch.patch_fe(patched, strip), patched, 'once')
 
+    def test_each_icon_sits_just_left_of_its_bar_centred_on_it(self):
+        # Kaniel 2026-10-13 (rig screenshot): the icon stood 75 px left of the bar and 17 px below it. Measured on
+        # a 1080p screenshot of the rig: the tag's HP bar starts at x 109 and runs at y 329.5 for the first tag.
+        bar_start = hud_patch.LIST_X + hud_patch.BAR_FROM_TAG[0]
+        self.assertEqual(bar_start, 109)
+        for index in range(len(hud_patch.PARTY_ICONS)):
+            cx, cy = hud_patch.icon_centre(index)
+            bar_y = hud_patch.LIST_Y + hud_patch.LIST_STEP * index + hud_patch.BAR_FROM_TAG[1]
+            self.assertAlmostEqual(cy, bar_y, delta=1, msg='centred on the bar')
+            self.assertEqual(bar_start - (cx + hud_patch.ICON_SIZE / 2), hud_patch.ICON_PAD, 'the padding')
+
     def test_a_list_patched_before_the_icons_gets_them(self):
         # Kaniel 2026-10-13: the HUD the mods showed was an older patch's (the list, no icons), and the
         # list being there already stopped the icons being added: the party list had no icons.

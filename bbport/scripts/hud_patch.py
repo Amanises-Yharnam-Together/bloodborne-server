@@ -22,7 +22,7 @@ FE = 'dvdroot_ps4/menu/fe.gfx'
 LAYER = 'party HUD'
 # Part of the generated file's name: a patcher that patches differently makes its file anew (the old
 # one is not reused). Bump it with every change to what patch_fe writes.
-PATCH_VERSION = b'party-hud 2'
+PATCH_VERSION = b'party-hud 4'
 DRAW_BANNER = 'Fe_fla._TextEffect_Draw_195'
 DRAW_FIELD = 'StaticText_522007'
 DOWNED_FIELD = 'CoopDownedText'
@@ -38,12 +38,20 @@ PROMPT_TAG, PROMPT, PROMPT_AT = 'ActionButtonTop', 'CoopPrompt', (952.6, 808.0)
 HUD_ICONS = Path(__file__).resolve().parent / 'party_hud_icons.bin'
 # The icon sprite's frames (1-based, as GotoAndStop takes them; PartyListIconFrame in bloodborne_party.cpp).
 HUD_ICON_FRAMES = ('none', 'hunter', 'elsewhere', 'fallen') + tuple(f'downed {p}%' for p in range(0, 101, 10))
-# Where the list's tags stand on the HUD's 1920x1080 stage (PartyListPosition in bloodborne_party.cpp), and each
-# icon's centre from its tag, its size in pixels.
+# Where the list's tags stand on the HUD's 1920x1080 stage (PartyListPosition in bloodborne_party.cpp).
 LIST_X, LIST_Y, LIST_STEP = 204, 330, 95  # each bar starts where the player's HP bar does (x 61)
-# The tag's HP bar starts 143 left of the tag and sits 15 below it (measured on a 1080p screenshot, 2026-10-12):
-# the icon goes 8 px left of the bar, centred on it.
-ICON_FROM_TAG, ICON_SIZE = (-170, 15), 36
+# Where a tag's HP bar starts and its middle runs, from the tag (measured on a 1080p rig screenshot, 2026-10-13:
+# x 109, y 329.5 for the first tag; the 2026-10-12 measure put the icon 75 px left of it and 17 px below, Kaniel;
+# 8 px of padding then looked too tight to him).
+# The icon (its size in pixels) goes ICON_PAD px left of the bar, centred on it.
+BAR_FROM_TAG = (-95, -0.5)
+ICON_SIZE, ICON_PAD = 36, 18
+
+
+def icon_centre(index):
+    """The centre of CoopPartyIcon<index> on the stage."""
+    return (LIST_X + BAR_FROM_TAG[0] - ICON_PAD - ICON_SIZE / 2,
+            LIST_Y + LIST_STEP * index + BAR_FROM_TAG[1])
 # Character ids for what the patch defines, above any the game's movies use.
 FIRST_NEW_ID = 50000
 
@@ -334,9 +342,9 @@ def party_icon_tags(depth, strip):
     scale = ICON_SIZE / 128
     for index, name in enumerate(PARTY_ICONS):
         depth += 2
-        cx = LIST_X + ICON_FROM_TAG[0]
-        cy = LIST_Y + LIST_STEP * index + ICON_FROM_TAG[1]
-        tags.append(place(char, depth, name, matrix(scale, (cx - ICON_SIZE // 2) * 20, (cy - ICON_SIZE // 2) * 20)))
+        cx, cy = icon_centre(index)
+        tags.append(place(char, depth, name, matrix(scale, round((cx - ICON_SIZE / 2) * 20),
+                                                    round((cy - ICON_SIZE / 2) * 20))))
     return tags
 
 
