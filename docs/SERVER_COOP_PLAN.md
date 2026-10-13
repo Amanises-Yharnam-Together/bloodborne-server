@@ -207,6 +207,24 @@ enemies. Phase 4's owner-per-map protocol takes it without changes.
 Phases 0-1 are low risk; 2 and 5 are the large ones. The world keeps working at every step: each
 phase replaces one path while the old one stays behind its switch until the rig passes.
 
+## Tracked from main (merged into server-coop)
+
+Main keeps getting fixes while the phases run; what each merge brings that a phase must carry:
+
+- **2026-10-13 (#82, #84): NPC gifts for guests.** `NpcGifts` (bloodborne_party.h) lists every
+  talk gift's trigger flag, lot and what its event does after the gift (ClearTrigger, KeepTrigger,
+  SetDoneFlag); a guest's own talk (hook 0x0204232E) is given the lot later on the game's thread.
+  - Phase 5 (team worlds): those trigger and done flags are the **character's** in the flag split
+    (gifts are per player), so a team world never carries them; take the list from `NpcGifts`.
+  - Phase 1/2: talks run on the event channels (0x0E, 0x31, same map only); add rig `iosefka-gift`
+    to the regression runs.
+  - Not covered on main yet (docs/HANDOFF.md): Valtr's helm, Simon's bowblade, Queenly Flesh, the
+    Doll's ornament.
+- **2026-10-13 (#85): portraits without the status page.** The status model is drawn off-screen and
+  read back by the port; portraits still travel as our frame 0x3E (PortraitPartType).
+  - Phase 2: 0x3E is relayed like every co-op frame; add rig `portrait-auto` to the regression runs.
+  - Phase 3: becomes the `Portrait` protobuf message.
+
 ## Risks
 
 - **The game's join state machine** (NetSync 1 -> 2 -> 3 -> 4, ch 7/0x19/0x42/0x10/0x11) must see
