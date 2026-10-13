@@ -835,6 +835,24 @@ TEST(BloodborneFlagTracer, TheTracedFlagComesFromTheSetting) {
 // The game's "set this event flag" message from the other player (0x017C0570) copied the
 // Hunter's Dream messengers' "gift given" flags, so one pick took the other's gift. In a party
 // those stay as they are locally.
+// NPC gifts are common event 9100, started per gift with its talk's trigger flag and item lot
+// (common.emevd event 0); it ends unless the local player is alive, so a party guest's own talk
+// set the trigger and got nothing (Kaniel 2026-10-13: Iosefka's blood vials). A guest's talk
+// setting a trigger gets that gift (the host's own event gives the host its own).
+TEST(BloodborneSharedLoot, AGuestsOwnTalkGivesItsNpcGift) {
+    EXPECT_EQ(NpcGiftLot(72410310), std::optional<s32>{23000}) << "Iosefka's blood vials";
+    EXPECT_EQ(NpcGiftLot(72410359), std::optional<s32>{24060});
+    EXPECT_EQ(NpcGiftLot(72400398), std::optional<s32>{32020});
+    EXPECT_EQ(NpcGiftLot(72400489), std::optional<s32>{28000});
+    EXPECT_EQ(NpcGiftLot(9043), std::optional<s32>{17010});
+    EXPECT_EQ(NpcGiftLot(72410300), std::nullopt) << "her talk's story, no gift";
+    EXPECT_EQ(NpcGiftLot(0), std::nullopt);
+    EXPECT_TRUE(GivesGuestNpcGift(true, true, 72410310));
+    EXPECT_FALSE(GivesGuestNpcGift(true, false, 72410310)) << "the host's event gives its own";
+    EXPECT_FALSE(GivesGuestNpcGift(false, true, 72410310)) << "alone, the game's event gives it";
+    EXPECT_FALSE(GivesGuestNpcGift(true, true, 72410300));
+}
+
 TEST(BloodborneSharedLoot, AMessengerGiftIsEachPlayersOwn) {
     EXPECT_TRUE(KeepsLocalFlag(true, 12101020));
     EXPECT_TRUE(KeepsLocalFlag(true, 12101029));
