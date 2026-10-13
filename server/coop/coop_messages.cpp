@@ -111,7 +111,7 @@ void PutHp(const WorldLogHp& hp, google::protobuf::RepeatedPtrField<bbcoop::HpRe
     }
 }
 
-WorldLogHp HpOf(const google::protobuf::RepeatedPtrField<bbcoop::HpReport>& reports) {
+WorldLogHp ReportsOf(const google::protobuf::RepeatedPtrField<bbcoop::HpReport>& reports) {
     WorldLogHp hp;
     for (const bbcoop::HpReport& message : reports) {
         WorldLogHpReport& report = hp[message.source()];
@@ -151,6 +151,72 @@ std::string StringOf(std::span<const u8> bytes) {
 
 } // namespace
 
+bbcoop::ShownReport ToMessage(u32 map, std::span<const CharacterShown> characters) {
+    bbcoop::ShownReport message;
+    message.set_map(map);
+    for (const CharacterShown& character : characters) {
+        bbcoop::ShownCharacter* shown = message.add_characters();
+        shown->set_handle(character.handle);
+        shown->set_bits(ShownBits(character));
+    }
+    return message;
+}
+
+std::vector<CharacterShown> CharactersOf(const bbcoop::ShownReport& message) {
+    std::vector<CharacterShown> characters;
+    characters.reserve(static_cast<size_t>(message.characters_size()));
+    for (const bbcoop::ShownCharacter& shown : message.characters()) {
+        characters.push_back(ShownFromBits(shown.handle(), static_cast<u8>(shown.bits())));
+    }
+    return characters;
+}
+
+bbcoop::FlagProposal ToMessage(const WorldLogFlagProposal& proposal) {
+    bbcoop::FlagProposal message;
+    message.set_epoch(proposal.epoch);
+    message.set_run(proposal.run);
+    for (const WorldLogFlagEvent& event : proposal.events) {
+        bbcoop::FlagEvent* out = message.add_events();
+        out->set_number(event.number);
+        out->set_flag(event.flag);
+        out->set_on(event.on);
+    }
+    return message;
+}
+
+WorldLogFlagProposal FlagsOf(const bbcoop::FlagProposal& message, std::string member) {
+    WorldLogFlagProposal proposal{std::move(member), message.epoch(), message.run(), {}};
+    for (const bbcoop::FlagEvent& event : message.events()) {
+        proposal.events.push_back({event.number(), event.flag(), event.on()});
+    }
+    return proposal;
+}
+
+bbcoop::HpProposal ToMessage(const WorldLogHpProposal& proposal) {
+    bbcoop::HpProposal message;
+    message.set_epoch(proposal.epoch);
+    message.set_run(proposal.run);
+    message.set_number(proposal.number);
+    message.set_map(proposal.map);
+    message.set_source(proposal.report.visit);
+    for (const EnemyHp& enemy : proposal.report.enemies) {
+        bbcoop::HpEnemy* out = message.add_enemies();
+        out->set_handle(enemy.handle);
+        out->set_value(enemy.hp);
+        out->set_max(enemy.max);
+    }
+    return message;
+}
+
+WorldLogHpProposal HpOf(const bbcoop::HpProposal& message, std::string member) {
+    WorldLogHpProposal proposal{std::move(member), message.epoch(), message.run(),
+                                message.number(),  message.map(),   {message.source(), {}}};
+    for (const bbcoop::HpEnemy& enemy : message.enemies()) {
+        proposal.report.enemies.push_back({enemy.handle(), enemy.value(), enemy.max()});
+    }
+    return proposal;
+}
+
 bbcoop::Snapshot SnapshotOf(const WorldLogHost& host) {
     bbcoop::Snapshot message;
     message.set_epoch(host.Epoch());
@@ -183,7 +249,7 @@ SnapshotParts PartsOf(const bbcoop::Snapshot& snapshot) {
                        last,
                        {snapshot.map_state_map(), BytesOf(snapshot.map_state_bits())},
                        {snapshot.return_point(), snapshot.return_point_map()}};
-    parts.hp = {host, epoch, last, 0, 1, HpOf(snapshot.hp())};
+    parts.hp = {host, epoch, last, 0, 1, ReportsOf(snapshot.hp())};
     parts.flags = {host, epoch, last, {}, snapshot.after_wipe()};
     for (const bbcoop::Entry& entry : snapshot.recent_flags()) {
         parts.flags.events.push_back(EntryOf(entry, epoch));
@@ -266,7 +332,7 @@ WorldLogHost::State StateOf(const bbcoop::StoredHost& message) {
     for (const bbcoop::StoredSender& stored : message.hp_senders()) {
         state.hp_senders[stored.name()] = {stored.run(), stored.number(), stored.source()};
     }
-    state.hp = HpOf(message.hp());
+    state.hp = ReportsOf(message.hp());
     for (const bbcoop::Entry& entry : message.recent_flags()) {
         state.recent_flags.push_back(EntryOf(entry, message.epoch()));
     }

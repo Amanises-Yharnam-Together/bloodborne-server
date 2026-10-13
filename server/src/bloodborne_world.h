@@ -113,6 +113,7 @@ private:
         QString party; // PartyFolderName, empty before its hello
         std::string name;
         quint32 run = 0;
+        bool host = false; // hosts the session (its hello says): its characters and map state count
     };
 
     PartyWorld& WorldFor(const QString& name, qint64 now_ms, Result& result);
@@ -124,6 +125,10 @@ private:
     void Journal(PartyWorld& world, bbcoop::JournalRecord record, qint64 now_ms);
     void Compact(PartyWorld& world, qint64 now_ms);
     void Replay(PartyWorld& world, const bbcoop::JournalRecord& record);
+    // The host's reports and every member's flags and HP (phase 3b): taken into the log, journaled
+    // and the entries sent.
+    void TakeWorld(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                   qint64 now_ms, Result& result);
     void SendTo(Member& member, const bbcoop::Envelope& envelope, qint64 now_ms);
     void SendEntries(PartyWorld& world, const std::vector<BloodborneCoop::WorldLogEntry>& entries,
                      qint64 now_ms);

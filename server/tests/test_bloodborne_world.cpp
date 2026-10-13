@@ -4,6 +4,7 @@
 // through the reliable stream as the real ones do (coop/coop_stream.h,
 // coop/world_log.h WorldLogMember), the store on disk across a restart of the
 // service, and the lifecycle rules.
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -56,6 +57,43 @@ struct Game {
     envelope.mutable_hello()->set_party(party.toStdString());
     envelope.mutable_hello()->set_member(name);
     envelope.mutable_hello()->set_run(run);
+    envelope.mutable_hello()->set_host(name == "host");
+    Send(envelope, now_ms);
+  }
+  void Show(u32 map, const std::vector<CharacterShown> &characters,
+            qint64 now_ms) {
+    bbcoop::Envelope envelope;
+    *envelope.mutable_shown() = ToMessage(map, characters);
+    Send(envelope, now_ms);
+  }
+  void MapState(u32 map, const std::vector<u8> &bits, qint64 now_ms) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_map_state()->set_map(map);
+    envelope.mutable_map_state()->set_bits(
+        std::string(bits.begin(), bits.end()));
+    Send(envelope, now_ms);
+  }
+  void ReturnPoint(s32 point, u32 map, qint64 now_ms) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_return_point()->set_point(point);
+    envelope.mutable_return_point()->set_map(map);
+    Send(envelope, now_ms);
+  }
+  void Flags(std::vector<WorldLogFlagEvent> events, qint64 now_ms) {
+    bbcoop::Envelope envelope;
+    *envelope.mutable_flags() = ToMessage(
+        WorldLogFlagProposal{name, member.Epoch(), run, std::move(events)});
+    Send(envelope, now_ms);
+  }
+  void Hp(u64 source, std::vector<EnemyHp> enemies, qint64 now_ms) {
+    bbcoop::Envelope envelope;
+    *envelope.mutable_hp() =
+        ToMessage(WorldLogHpProposal{name,
+                                     member.Epoch(),
+                                     run,
+                                     ++number,
+                                     0x18010000,
+                                     {source, std::move(enemies)}});
     Send(envelope, now_ms);
   }
   void Propose(const WorldLogKills &kills, qint64 now_ms) {
@@ -447,6 +485,74 @@ int ALostDatagramIsSentAgain() {
   return 0;
 }
 
+bool FlagApplied(const Game &game, s32 flag, bool on) {
+  return std::ranges::any_of(game.applied, [&](const WorldLogEntry &entry) {
+    return entry.kind ==
+               (on ? WorldLogKind::FlagSet : WorldLogKind::FlagClear) &&
+           static_cast<s32>(entry.subject) == flag;
+  });
+}
+
+std::vector<u8> MapBits(size_t lit) {
+  std::vector<u8> bits((MapFlagCount + 7) / 8);
+  bits[lit / 8] = static_cast<u8>(0x80 >> (lit % 8));
+  return bits;
+}
+
+int TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember() {
+  QTemporaryDir dir;
+  qint64 now = 1'000'000;
+  const std::vector<CharacterShown> characters{
+      {0x10014000, false, true, false, false}, // in handle order, as the log
+      {0x10014005, true, false, false, false}};
+  {
+    Service service{dir.path()};
+    Game host{1000, "host", 11};
+    Game guest{1001, "guest", 12};
+    host.Hello(now);
+    guest.Hello(now);
+    Pump(service, {&host, &guest}, now);
+    host.Show(0x18010000, characters, now);
+    host.MapState(0x18010000, MapBits(13), now);
+    host.ReturnPoint(2412950, 0x18010000, now);
+    // A guest's world is not the party's: its characters and map state count
+    // for nothing.
+    guest.Show(0x18010000, {{0x10014005, false, false, false, false}}, now);
+    guest.MapState(0x18010000, MapBits(2), now);
+    guest.Flags({{1, 2412950, true}}, now);
+    guest.Hp(0x1111000000000003, {{0x10014066, 49, 450}}, now);
+    Pump(service, {&host, &guest}, now);
+    CHECK(guest.member.ShownKnown());
+    CHECK(WorldLogShownCharacters(guest.member.Shown()) == characters);
+    CHECK(guest.member.MapState() ==
+          (WorldLogMapState{0x18010000, MapBits(13)}));
+    CHECK(guest.member.HostReturnPoint() ==
+          (WorldLogReturnPoint{2412950, 0x18010000}));
+    CHECK(FlagApplied(host, 2412950, true));
+    CHECK(FlagApplied(guest, 2412950, true));
+    CHECK(host.member.Hp().contains(0x1111000000000003));
+    // The same event again (a resend) is no new entry.
+    const size_t applied = host.applied.size();
+    guest.Flags({{1, 2412950, true}}, now + 100);
+    Pump(service, {&host, &guest}, now + 100);
+    CHECK(host.applied.size() == applied);
+  }
+  // The world comes back from the disk with all of it: a game after the restart
+  // takes it whole.
+  Service service{dir.path()};
+  service.Load(now + 1000);
+  Game late{1002, "late", 13};
+  late.Hello(now + 1000);
+  Pump(service, {&late}, now + 1000);
+  CHECK(late.snapshots >= 1);
+  CHECK(WorldLogShownCharacters(late.member.Shown()) == characters);
+  CHECK(late.member.MapState() == (WorldLogMapState{0x18010000, MapBits(13)}));
+  CHECK(late.member.HostReturnPoint() ==
+        (WorldLogReturnPoint{2412950, 0x18010000}));
+  CHECK(late.member.Hp().contains(0x1111000000000003));
+  return 0;
+}
+
 } // namespace
 
 int main() {
@@ -465,6 +571,8 @@ int main() {
       {"TheServerRestartingMidSessionLosesNothing",
        TheServerRestartingMidSessionLosesNothing},
       {"ALostDatagramIsSentAgain", ALostDatagramIsSentAgain},
+      {"TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember",
+       TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {

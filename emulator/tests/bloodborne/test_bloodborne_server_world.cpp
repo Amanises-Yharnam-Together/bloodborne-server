@@ -200,3 +200,30 @@ TEST(ServerWorld, ADroppedMemberTakesItsKillsAndHpOut) {
     }));
     EXPECT_TRUE(host.Drop("nobody").empty());
 }
+
+TEST(ServerWorld, TheHostsReportsFlagsAndHpReadBack) {
+    const std::vector<CharacterShown> characters{{0x10014000, false, true, false, false},
+                                                 {0x10014005, true, false, true, true}};
+    bbcoop::ShownReport shown;
+    ASSERT_TRUE(shown.ParseFromString(ToMessage(Yharnam, characters).SerializeAsString()));
+    EXPECT_EQ(shown.map(), Yharnam);
+    EXPECT_EQ(CharactersOf(shown), characters);
+
+    const WorldLogFlagProposal flags{"spoofed", 7, 3, {{1, 2412950, true}, {2, -5, false}}};
+    bbcoop::FlagProposal flag_message;
+    ASSERT_TRUE(flag_message.ParseFromString(ToMessage(flags).SerializeAsString()));
+    const WorldLogFlagProposal flags_read = FlagsOf(flag_message, "real");
+    EXPECT_EQ(flags_read.member, "real");
+    EXPECT_EQ(flags_read.epoch, flags.epoch);
+    EXPECT_EQ(flags_read.run, flags.run);
+    EXPECT_EQ(flags_read.events, flags.events);
+
+    const WorldLogHpProposal hp{
+        "spoofed", 7, 3, 9, Yharnam, {HostHpReport | 0x22, {{0x10014066, -1, 450}, {5, 40, 50}}}};
+    bbcoop::HpProposal hp_message;
+    ASSERT_TRUE(hp_message.ParseFromString(ToMessage(hp).SerializeAsString()));
+    WorldLogHpProposal hp_read = HpOf(hp_message, "real");
+    EXPECT_EQ(hp_read.member, "real");
+    hp_read.member = hp.member;
+    EXPECT_EQ(hp_read, hp);
+}

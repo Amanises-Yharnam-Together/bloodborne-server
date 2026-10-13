@@ -36,6 +36,14 @@ WorldLogEntry EntryOf(const bbcoop::Entry& message, u64 epoch);
 bbcoop::Entries ToMessage(u64 epoch, u64 last, std::span<const WorldLogEntry> entries);
 WorldLogBatch BatchOf(const bbcoop::Entries& message);
 
+// The host's characters, flags, map state, return point and HP (phase 3b).
+bbcoop::ShownReport ToMessage(u32 map, std::span<const CharacterShown> characters);
+std::vector<CharacterShown> CharactersOf(const bbcoop::ShownReport& message);
+bbcoop::FlagProposal ToMessage(const WorldLogFlagProposal& proposal);
+WorldLogFlagProposal FlagsOf(const bbcoop::FlagProposal& message, std::string member);
+bbcoop::HpProposal ToMessage(const WorldLogHpProposal& proposal);
+WorldLogHpProposal HpOf(const bbcoop::HpProposal& message, std::string member);
+
 // The party's world at the log's last seq, and back as the parts a member takes (in this order:
 // the kills, the shown characters, the map state, the HP reports, the recent flags last).
 bbcoop::Snapshot SnapshotOf(const WorldLogHost& host);
