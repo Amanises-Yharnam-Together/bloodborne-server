@@ -214,6 +214,33 @@ Write-Utf8 (Join-Path $release "VERSION.txt") (@(
 ) -join "`r`n")
 
 # --- 4. check and zip --------------------------------------------------------------------------
+# The scripts must run inside the release's BLauncher.exe as they would with python: mods.py's
+# hud_patch is the one in scripts\ and finds its icon strip (a frozen copy patched the HUD without
+# the party list's icons and portraits, Kaniel 2026-10-13).
+Step "Launcher scripts"
+$probeDir = Join-Path $stage "launcher-probe"
+New-Item -ItemType Directory -Force $probeDir | Out-Null
+# Beside mods.py, as mods.py imports it (and removed again before the release check).
+$probe = Join-Path $release "scripts\launcher_probe.py"
+$probeOut = Join-Path $probeDir "probe.txt"
+Write-Utf8 $probe (@(
+    "import pathlib",
+    "import hud_patch",
+    "pathlib.Path(r'$probeOut').write_text(f'{pathlib.Path(hud_patch.__file__).resolve()}|{hud_patch.HUD_ICONS.is_file()}', encoding='utf-8')"
+) -join "`n")
+$run = Start-Process -FilePath (Join-Path $release "BLauncher.exe") -Wait -PassThru -NoNewWindow `
+    -ArgumentList @("--script", "`"$probe`"") `
+    -RedirectStandardOutput (Join-Path $probeDir "out.txt") -RedirectStandardError (Join-Path $probeDir "err.txt")
+Remove-Item -Force $probe
+$answer = if (Test-Path $probeOut) { (Get-Content -Raw $probeOut).Trim() } else { "" }
+$expected = (Join-Path $release "scripts\hud_patch.py")
+if ($run.ExitCode -ne 0 -or $answer -ne "$((Resolve-Path $expected).Path)|True") {
+    Get-Content (Join-Path $probeDir "err.txt") -ErrorAction SilentlyContinue | Select-Object -Last 10
+    throw "BLauncher.exe runs the HUD patch from '$answer', not scripts\hud_patch.py with its icon strip"
+}
+Remove-Item -Recurse -Force $probeDir
+Write-Host "  BLauncher.exe --script: hud_patch from scripts\, icon strip found"
+
 Step "Check"
 $checkPython = (& (Join-Path $msys "usr\bin\cygpath.exe") -w $env:WINPYTHON).Trim()
 & $checkPython -I (Join-Path $PSScriptRoot "release\check_release.py") $release
