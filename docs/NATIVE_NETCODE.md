@@ -3,7 +3,8 @@
 Research for Kaniel, 2026-10-13: how the game's native multiplayer works (summons, session, players,
 HP and damage, enemies, world state), compared with our co-op layer, and a phased plan for a mod that
 takes the game's networking over. Static RE of the 1.09 eboot (image base 0, the same addresses our
-co-op code uses). Nothing here is rig-verified yet; guesses are marked. The per-channel detail is in
+co-op code uses). The phase 0 packet trace (below) checked it on the rig; guesses are marked.
+The per-channel detail is in
 `docs/native-netcode/` (characters.md, world.md, session.md).
 
 Tooling: morluto/rea was installed (WSL, Ghidra 12.1.4) but auto mode refused to run it, so the work
@@ -81,15 +82,75 @@ and unreliable player/enemy channels are dropped on receive: the join handshake 
 | Hits on players | 0x14 | attacker to victim's game | whole hit replayed by the victim |
 | Forced animations | 0x24, 0x25 | any | 0x25 asks a player's game to play an anim (grabs) |
 | Throws (visceral) | 0x12, 0x37, 0x30 | any | throw start/pair/events |
-| Enemies | 4 (pos, owner), 5 (HP, host), 0x15 (guest hit to host), 0x16/0x17 (near lists), 0x29 (catch-up), 0x36 (join anims), 0x3D/0x41 (state records, any), 0x34 (unknown) | host-centred | NetWorldChrSync at WorldChrMan+0xA40, body 0x018ECEB0 |
+| Enemies | 4 (pos, owner), 5 (HP, host), 0x15 (guest hit to host), 0x16/0x17 (near lists), 0x29 (catch-up), 0x36 (join anims), 0x3D (AI goal records), 0x41 (per hit), 0x34 (hand-over block) | host-centred; 0x04/0x34/0x3D/0x41 from anyone | NetWorldChrSync at WorldChrMan+0xA40, body 0x018ECEB0 |
 | Events/flags | 0x0E (Lua calls), 0x0F (CompleteEvent flag on), 0x31 (EMEVD instance target/value) | any to all | 0x31 is how a remote player's trigger (fog, lever event) runs everywhere |
 | Objects | 0x2D (act + actor), 0x2E (enable), 0x2F (host's state, guest forced after 10 s), 0x2A (breaks), 0x2B (object anims) | any / host | |
 | Projectiles | 0x3E (new bullets), 0x40 (bullet updates, guess), 0x3F (join snapshot) | any / host | |
 | Items | 0x2C (map items), 0x39 (counter 0..99 transfer, guess Insight) | | 0x2C already neutralised by us |
 | Session/misc | 0x27 (boss thanks kick), 0x32/0x33 (join/leave announcements), 0x22 (dialog vote), 0x38 (shared timer, unknown) | mostly host | |
 
-Unknown still: the 0x60-byte enemy state record (0x29/0x3D), the 0x14 record (0x41), ch 0x34's
-payload, ch 0x43's meaning, the ch 7 receive site, where OnP2PTimeOut is raised.
+Unknown before the phase 0 trace: the 0x60-byte enemy state record (0x29/0x3D), the 0x14 record
+(0x41), ch 0x34's payload, ch 0x43's meaning. The trace (next section) settles all but 0x43. Still
+unknown: the ch 7 receive site, where OnP2PTimeOut is raised.
+
+## Phase 0 trace: what the game really sends (rig, 2026-10-13)
+
+The packet trace (`SHADPS4_BLOODBORNE_PACKET_TRACE=1`, or `full` for every payload) puts each game
+packet on the co-op trace as a `net-out` / `net-in` record: channel, size, the other member's online
+id, this game's map, NetSync state and matching state, and the payload of the channels below that
+were unknown. Hooks: the send at 0x0178970D (after its checks, as the packet goes to the transport;
+the to-host send 0x01789A40 tail-jumps into it), the receive queue pushes at 0x01790E0E (reliable,
+once reassembled) and 0x01790FCA (unreliable). `tools/re/packet_summary.py <traces> [--payloads CH]`
+prints a per-channel table. Rig runs on the port (headless, lane 2): join, trip, boss-kill, hit3,
+all passed with the trace on; hit3 wrote ~3.5 MB per game in 4 min and dropped no lines.
+
+**Confirmed:** one send and one receive point see every packet; channels 0-6 unreliable, the rest
+reliable; the join handshake is exactly 7, 0x19, 0x10 (236 B), 0x11 (148 B), 0x3F, 0x42 from the
+host at NetSync state 1 on the guest, then character data (8, 0x0A-0x0D, 0x13, 0x3B, 0x3C, 0x43)
+at states 3-4; player state on ch 6 (75-96 B, ~11/s per peer at the rig's frame rate); enemy HP on
+ch 5 (80 B, host only, ~7-14/s); guest hits on enemies go to the host on 0x15 (12 B, guests only).
+The peer is addressed by its online id (the identity's SceNpId at +0x36 reads as `rig_guest`).
+
+Per-channel traffic, host of hit3 (3 players, 235 s, worlds apart after trips):
+
+| Ch | Out | In | Size | Note |
+|---|---|---|---|---|
+| 0x04 | 1181 | 1484 | 96 | enemy positions: guests send them too (each runs its own copies) |
+| 0x05 | 3289 | 0 | 80 | enemy HP, host only |
+| 0x06 | 2592 | 2439 | 75-96 | player state |
+| 0x13 | 405 | 382 | 8 | |
+| 0x16 / 0x17 | 0 / 127 | 77 / 0 | 4-120 | near lists: guests send 0x16, the host 0x17 |
+| 0x29 | 362 | 0 | 108 | join catch-up, see below |
+| 0x31 | 554 | 662 | 24 | EMEVD instance sync, the busiest reliable channel |
+| 0x34 | 0 | 58 | 100 | see below |
+| 0x3D | 20 | 95 | 100-900 | see below |
+| 0x41 | 6 | 9 | 24 | see below |
+| 0x43 | 13 | 13 | 144 | after every load |
+
+**Settled:**
+- **0x29 is a join catch-up, not a stream.** Right after the host's 0x10 the host sends one packet
+  per enemy per frame (181 in Central Yharnam, ids 0x2800-0x28B4, 33 ms apart, ~6 s), then never
+  again (exactly 181 in every run; 362 in hit3 = one per joining guest). Payload: 8 B packed
+  position/rotation relative to the map origin (0x0178FA90), the 0x60 record, u16 at +0x68 = the
+  enemy's [chr+0x90] (low 11 bits = index, the rest is the 0x28 block).
+- **The 0x60 record is the enemy's AI goal state.** 8 B header, then 8 slots of {s32, s32} (ids
+  like 100, 98, 99, 75, 112, empty slots -1), then a vtable pointer (0x053AF180, a static
+  container's; the record is a raw copy of a C++ object, so its pointers are only valid because
+  every game runs the same eboot) and a few bytes. Uninitialised bytes copied with it carry text
+  such as "GOAL", "ULT_" (GOAL_RESULT, the AI scripts' names). Same record on 0x29 and 0x3D.
+- **0x3D and 0x34 are an enemy hand-over.** After the host left for the Dream in `trip`, the guest
+  left alone on the map sent, 1.2 s after the host arrived, a burst of 0x34 (one 100 B packet per
+  enemy: u32 chr id + 3 x 0x20 B, the chr +0x218..+0x277 block) and 0x3D (n x {u32 chr id, 0x60
+  record}), the game's own "I run these enemies now" with each enemy's AI state. In hit3 they also
+  flow guest to guest. They are not host-only.
+- **0x41 goes with hits.** {u32 chr id, u32 0, f32 (0.9-1.4), u32 0, u32 2, u16 sequence | 0x8800}
+  sent by the hitting player to everyone, a cleared record ({0, 0, 0xFFFF}) before it; one per hit
+  on 0x1001400B in hit3. Guess: the enemy's hit reaction (stagger) timer.
+
+**Still open:** 0x43 (0x90 B, PlayerIns +0x470: two arrays of three s32, mostly -1; the guest's
+second array held 0x1A54 = 6740 after a load) is exchanged after every load both ways; its meaning
+is not settled. Channels 0x14, 0x26, 0x27, 0x39, 0x2A/0x2B/0x2D/0x2F, 0x3E/0x40 did not appear in
+these scenarios (no player hits, no thrown items, the boss kill is the game's own kill).
 
 ## How it compares with our layer
 
@@ -170,7 +231,8 @@ Each goes in `bloodborne_patch_sites.h` with its byte check, as today.
   limit, kill and HP boards) do part of this; the plan retires them one at a time behind switches,
   rig-checked, so nothing regresses silently.
 - **One build for all** (protocol bump on the SHAD hello); no mixed builds.
-- **Static RE only.** Every finding should be confirmed with the phase 0 trace before code relies on it.
+- **Static RE plus one trace.** The phase 0 trace confirmed the channel map in 4 rig scenarios; channels
+  that did not appear there (player hits, items, objects, bullets) are still static RE only.
 
 ## Phased order
 

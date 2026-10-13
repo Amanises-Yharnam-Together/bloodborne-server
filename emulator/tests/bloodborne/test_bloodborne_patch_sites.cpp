@@ -214,6 +214,10 @@ TEST(CoopSites, ThePartyHeaderHooksAreRegistered) {
     EXPECT_TRUE(IsRegisteredCoopHook(HitReactionOffset, HitReactionPrologue));
     EXPECT_TRUE(IsRegisteredCoopHook(PartyGhostDeathMenuBranchOffset - 5,
                                      std::vector<u8>{0x41, 0x80, 0x7E, 0x0C, 0x00}));
+    // The game's packets, traced at its send and at its receive queues (phase 0).
+    EXPECT_TRUE(IsRegisteredCoopHook(PacketSendTraceOffset, PacketSendTrace));
+    EXPECT_TRUE(IsRegisteredCoopHook(ReliablePacketQueuedOffset, ReliablePacketQueued));
+    EXPECT_TRUE(IsRegisteredCoopHook(UnreliablePacketQueuedOffset, UnreliablePacketQueued));
     // Other bytes, another length or an offset that is no hook are not.
     EXPECT_FALSE(IsRegisteredCoopHook(HitOffset, std::span{HitPrologue}.first(6)));
     EXPECT_FALSE(IsRegisteredCoopHook(HitOffset + 1, HitPrologue));

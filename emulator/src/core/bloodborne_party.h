@@ -2652,10 +2652,12 @@ std::size_t PruneSaveBackups(const std::filesystem::path& user_dir, std::size_t 
 //                        starts and the proposals it took, a member's batches and snapshots
 //   wlog-path            the path the kills take: path (log or board) and why
 //   trace-dropped        lines lost to a full queue (TraceQueue)
+//   net-out, net-in      a game packet sent or queued for this game, only with
+//                        SHADPS4_BLOODBORNE_PACKET_TRACE on (see PacketTraceMode)
 // An "-in" record leaves out what did not change since its kind's last record, and its lists
 // only name what came, changed or went (TraceListDelta). SHADPS4_BLOODBORNE_TRACE=0 turns it off.
-// 2: the world log's records.
-constexpr int CoopTraceVersion = 2;
+// 2: the world log's records. 3: the game's packets.
+constexpr int CoopTraceVersion = 3;
 constexpr std::size_t TraceBodyCap = 8 * 1024;
 constexpr std::uintmax_t TraceFileCap = 50 * 1024 * 1024;
 constexpr std::size_t TraceFilesKept = 5;
@@ -2750,6 +2752,58 @@ private:
 std::string CoopTraceFileName(std::chrono::sys_seconds local_when, u32 process);
 // Deletes all but the newest `kept` traces in `log_dir`; returns how many went.
 std::size_t PruneCoopTraces(const std::filesystem::path& log_dir, std::size_t kept);
+
+// The game's own packets on the co-op trace (docs/SERVER_COOP_PLAN.md phase 0, no change to what
+// the game does): every packet the game sends (0x017894E0, once it has passed its checks) and
+// every one it queues for a member as it arrives (0x01790C20), on "net-out" / "net-in" records.
+// A packet is {u32 channel, u32 size, payload}, channels 0..0x43, 0..6 unreliable.
+// SHADPS4_BLOODBORNE_PACKET_TRACE: off unless "1"/"on" (the payloads of the channels not yet
+// understood) or "full" (every payload); NativePayloadTraceCap bytes of a payload at most.
+enum class PacketTraceMode : u8 { Off, On, Full };
+PacketTraceMode ParsePacketTraceMode(const char* setting);
+constexpr u32 NativeChannelCount = 0x44;
+constexpr u32 NativePacketMaxBytes = 0x6400; // header and payload
+constexpr std::size_t NativePayloadTraceCap = 512;
+constexpr bool IsReliableNativeChannel(u32 channel) {
+    return channel > 6;
+}
+// The channels whose payloads docs/NATIVE_NETCODE.md does not explain yet: the 0x60-byte enemy
+// state record (0x29, 0x3D), the 0x14-byte one (0x41), 0x34 and 0x43.
+bool NativePayloadUnknown(u32 channel);
+// How many of a payload's `size` bytes a record carries in `mode`.
+std::size_t TracedPayloadBytes(PacketTraceMode mode, u32 channel, std::size_t size);
+struct NativePacketView {
+    u32 channel = 0;
+    std::span<const u8> payload;
+};
+// A packet as the game builds it, or nothing for a short or bad one.
+std::optional<NativePacketView> DecodeNativePacket(std::span<const u8> bytes);
+// A member's online id where the game keeps it (a SceNpId's handle: up to 16 letters, digits, '-'
+// or '_', at least 3, NUL after), or nothing.
+std::optional<std::string> NpOnlineIdAt(std::span<const u8> bytes);
+struct NativePacketRecord {
+    bool sent = false;
+    u32 channel = 0;
+    u32 size = 0;            // the whole payload's, whatever part of it `payload` holds
+    std::string peer;        // the other member: online id, else its identity's address
+    u32 map = 0;             // this game's map (packed)
+    s32 sync_state = -1;     // NetSync +0x84 (4 in the world)
+    s32 matching_state = -1; // SprjSessionManager +0x124 (3 host, 6 guest)
+    std::vector<u8> payload;
+    bool operator==(const NativePacketRecord&) const = default;
+};
+const char* NativePacketTraceKind(bool sent); // "net-out" / "net-in"
+TraceSampler::Fields NativePacketFields(const NativePacketRecord& packet);
+std::optional<NativePacketRecord> ParseNativePacketRecord(const TraceRecord& record);
+// The hooks (see InstallNativePacketTrace): the send's `mov r12, [rbp - 0xA0]` as it hands the
+// packet to the transport, and the receive's queue pushes, reliable (`mov rcx, [rbx + 0x30];
+// mov rdi, [rcx + rax*8]`) and unreliable (`lea rsi, [rbp - 0x38]; mov rdi, r13`).
+constexpr u64 PacketSendTraceOffset = 0x0178970D;
+constexpr std::array<u8, 7> PacketSendTrace{0x4C, 0x8B, 0xA5, 0x60, 0xFF, 0xFF, 0xFF};
+constexpr u64 ReliablePacketQueuedOffset = 0x01790E0E;
+constexpr std::array<u8, 8> ReliablePacketQueued{0x48, 0x8B, 0x4B, 0x30, 0x48, 0x8B, 0x3C, 0xC1};
+constexpr u64 UnreliablePacketQueuedOffset = 0x01790FCA;
+constexpr std::array<u8, 7> UnreliablePacketQueued{0x48, 0x8D, 0x75, 0xC8, 0x4C, 0x89, 0xEF};
 
 // Boss-death tracer (Kaniel 2026-10-11: Father Gascoigne died in the host's world with nobody
 // hitting him, and a guest got "Prey Slaughtered"): the game sets a character's dead flag

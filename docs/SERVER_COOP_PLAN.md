@@ -170,6 +170,8 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
 0. **Trace.** Hook send/receive, write every game packet (channel, size, member, place, NetSync
    state) to the coop trace; no behavior change. Rig: join, trip, hit3, boss-kill. Settles the
    unknown channels (0x34, 0x43, the 0x60/0x14 enemy records) and measures traffic per channel.
+   **Done 2026-10-13** (SHADPS4_BLOODBORNE_PACKET_TRACE, results in NATIVE_NETCODE.md "Phase 0
+   trace"): all settled but 0x43.
 1. **Channel policy table.** One table at the choke point, `{channel -> pass | same-map only | ours
    | drop}`, read on send and receive; retires the scattered hooks it covers (map item header, the
    0x27 kick, 0x2F corrections). Rig: the full suite.

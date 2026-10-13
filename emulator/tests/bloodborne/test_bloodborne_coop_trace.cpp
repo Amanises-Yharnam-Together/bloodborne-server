@@ -470,3 +470,98 @@ TEST(CoopTraceReplay, ReplaysTheTraceNamedInTheEnvironment) {
         std::cout << decision << '\n';
     }
 }
+
+TEST(NativePacketTrace, OffUnlessAskedFor) {
+    EXPECT_EQ(ParsePacketTraceMode(nullptr), PacketTraceMode::Off);
+    EXPECT_EQ(ParsePacketTraceMode(""), PacketTraceMode::Off);
+    EXPECT_EQ(ParsePacketTraceMode("0"), PacketTraceMode::Off);
+    EXPECT_EQ(ParsePacketTraceMode("off"), PacketTraceMode::Off);
+    EXPECT_EQ(ParsePacketTraceMode("1"), PacketTraceMode::On);
+    EXPECT_EQ(ParsePacketTraceMode("on"), PacketTraceMode::On);
+    EXPECT_EQ(ParsePacketTraceMode("full"), PacketTraceMode::Full);
+    EXPECT_EQ(ParsePacketTraceMode("loud"), PacketTraceMode::Off);
+}
+
+TEST(NativePacketTrace, OnlyTheUnknownChannelsCarryPayloadsUnlessFull) {
+    for (const u32 channel : {0x29u, 0x34u, 0x3Du, 0x41u, 0x43u}) {
+        EXPECT_TRUE(NativePayloadUnknown(channel)) << channel;
+        EXPECT_EQ(TracedPayloadBytes(PacketTraceMode::On, channel, 0x64), 0x64u);
+    }
+    for (const u32 channel : {0x04u, 0x06u, 0x10u, 0x14u, 0x15u, 0x42u}) {
+        EXPECT_FALSE(NativePayloadUnknown(channel)) << channel;
+        EXPECT_EQ(TracedPayloadBytes(PacketTraceMode::On, channel, 0x64), 0u);
+        EXPECT_EQ(TracedPayloadBytes(PacketTraceMode::Full, channel, 0x64), 0x64u);
+    }
+    EXPECT_EQ(TracedPayloadBytes(PacketTraceMode::Full, 0x11, 0x6000), NativePayloadTraceCap);
+    EXPECT_EQ(TracedPayloadBytes(PacketTraceMode::On, 0x34, 0x6000), NativePayloadTraceCap);
+    EXPECT_EQ(TracedPayloadBytes(PacketTraceMode::Off, 0x34, 0x64), 0u);
+    EXPECT_TRUE(IsReliableNativeChannel(7));
+    EXPECT_FALSE(IsReliableNativeChannel(6));
+}
+
+TEST(NativePacketTrace, PacketsDecodeOnlyWhole) {
+    const std::vector<u8> packet{0x15, 0, 0, 0, 3, 0, 0, 0, 0xAA, 0xBB, 0xCC};
+    const auto decoded = DecodeNativePacket(packet);
+    ASSERT_TRUE(decoded);
+    EXPECT_EQ(decoded->channel, 0x15u);
+    EXPECT_EQ(std::vector<u8>(decoded->payload.begin(), decoded->payload.end()),
+              (std::vector<u8>{0xAA, 0xBB, 0xCC}));
+    // Short of its payload, short of a header, or a channel the game does not have.
+    EXPECT_FALSE(DecodeNativePacket(std::span<const u8>{packet}.first(10)));
+    EXPECT_FALSE(DecodeNativePacket(std::span<const u8>{packet}.first(7)));
+    std::vector<u8> bad = packet;
+    bad[0] = 0x44;
+    EXPECT_FALSE(DecodeNativePacket(bad));
+    // A size past the game's buffer.
+    bad = packet;
+    bad[5] = 0x64;
+    EXPECT_FALSE(DecodeNativePacket(bad));
+}
+
+TEST(NativePacketTrace, OnlineIdsAreWholeNames) {
+    const auto bytes = [](std::string_view text) {
+        return std::vector<u8>(text.begin(), text.end());
+    };
+    EXPECT_EQ(NpOnlineIdAt(bytes(std::string{"rig-host_1\0\0\0garbage", 21})),
+              std::optional<std::string>{"rig-host_1"});
+    EXPECT_EQ(NpOnlineIdAt(bytes(std::string{"ab\0", 3})), std::nullopt);       // too short
+    EXPECT_EQ(NpOnlineIdAt(bytes("abcdefghijklmnopq")), std::nullopt);          // no NUL
+    EXPECT_EQ(NpOnlineIdAt(bytes(std::string{"bad name\0", 9})), std::nullopt); // a space
+    EXPECT_EQ(NpOnlineIdAt(bytes(std::string{"abcdefghijklmnop\0", 17})),
+              std::optional<std::string>{"abcdefghijklmnop"});
+    EXPECT_EQ(NpOnlineIdAt({}), std::nullopt);
+}
+
+TEST(NativePacketTrace, RecordsRoundTrip) {
+    const NativePacketRecord packet{false,      0x34, 0x20, "rig-guest",
+                                    0x18000000, 4,    6,    std::vector<u8>{0x01, 0xFE}};
+    const TraceRecord record{1760000000000, NativePacketTraceKind(packet.sent),
+                             NativePacketFields(packet)};
+    EXPECT_EQ(EncodeTraceRecord(record),
+              "1760000000000 net-in ch=34 size=32 peer=rig-guest map=18000000 sync=4 match=6 "
+              "payload=01fe");
+    EXPECT_EQ(ParseNativePacketRecord(*ParseTraceRecord(EncodeTraceRecord(record))), packet);
+    // No payload, no field; a sent one.
+    NativePacketRecord quiet = packet;
+    quiet.sent = true;
+    quiet.payload.clear();
+    const TraceRecord out{1, NativePacketTraceKind(true), NativePacketFields(quiet)};
+    EXPECT_EQ(EncodeTraceRecord(out),
+              "1 net-out ch=34 size=32 peer=rig-guest map=18000000 sync=4 match=6");
+    EXPECT_EQ(ParseNativePacketRecord(out), quiet);
+    TraceRecord broken = record;
+    broken.fields.front().second = "zz";
+    EXPECT_EQ(ParseNativePacketRecord(broken), std::nullopt);
+    broken = record;
+    broken.kind = "place";
+    EXPECT_EQ(ParseNativePacketRecord(broken), std::nullopt);
+}
+
+TEST(CoopTraceReplay, NativePacketsMakeNoDecisions) {
+    CoopTraceReplay replay;
+    EXPECT_TRUE(replay
+                    .FeedAll("1 net-out ch=06 size=120 peer=rig-guest map=18000000 sync=4 "
+                             "match=3\n2 net-in ch=34 size=2 peer=rig-guest map=18000000 sync=4 "
+                             "match=3 payload=0102\n")
+                    .empty());
+}
