@@ -58,6 +58,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"quiet summon banners", false},
     {"movie player delete delay", false},
     {"boss death tracer", false},
+    {"native packet trace", false},
     {"host leaves", true},
     {"seamless travel", true},
     {"stop request", true},
@@ -240,6 +241,12 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "80 89 E3 01 00 00 01"},
     {"death flag of the game's kill", "boss death tracer", CoopSiteKind::Hook, 0x018BFAD3,
      "41 80 8F E3 01 00 00 01"},
+
+    {"packet sent", "native packet trace", CoopSiteKind::Hook, 0x0178970D, "4C 8B A5 60 FF FF FF"},
+    {"reliable packet queued", "native packet trace", CoopSiteKind::Hook, 0x01790E0E,
+     "48 8B 4B 30 48 8B 3C C1"},
+    {"unreliable packet queued", "native packet trace", CoopSiteKind::Hook, 0x01790FCA,
+     "48 8D 75 C8 4C 89 EF"},
 
     {"leave limit", "host leaves", CoopSiteKind::Hook, 0x0138A4A0, "55 48 89 E5 53 50"},
 

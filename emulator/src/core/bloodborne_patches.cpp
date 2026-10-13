@@ -364,6 +364,93 @@ void InstallBossDeathTracer(u64 base, u64 image_size) {
                     "call chain");
 }
 
+// See PacketTraceMode: the game's own packets on the co-op trace, nothing changed.
+PacketTraceMode packet_trace_mode = PacketTraceMode::Off;
+
+// A member as the trace names it: its online id where its identity keeps it (the SceNpId, +0x36),
+// else the identity's address. Looked up once per identity.
+std::string TracedPeer(u64 identity) {
+    static std::mutex mutex;
+    static std::unordered_map<u64, std::string> names;
+    std::scoped_lock lock{mutex};
+    const auto [it, added] = names.try_emplace(identity);
+    if (added) {
+        std::optional<std::string> id;
+        if (identity >= 0x10000 && HasMemoryAccess(identity + 0x36, 17, MemoryProt::CpuRead)) {
+            id = NpOnlineIdAt({reinterpret_cast<const u8*>(identity + 0x36), 17});
+        }
+        it->second = id.value_or(fmt::format("{:x}", identity));
+    }
+    return it->second;
+}
+
+void TraceNativePacket(bool sent, u32 channel, u64 member_id, u64 payload, u32 size) {
+    NativePacketRecord record{sent, channel, size, TracedPeer(ReadValue<u64>(member_id, 0)),
+                              GetCurrentPackedMap()};
+    const u64 net_sync = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
+    const u64 session = GetMatchingState();
+    record.sync_state = net_sync >= 0x10000 ? ReadValue<s32>(net_sync, 0x84) : -1;
+    record.matching_state = session >= 0x10000 ? ReadValue<s32>(session, MatchingStateOffset) : -1;
+    const std::size_t shown = TracedPayloadBytes(packet_trace_mode, channel, size);
+    if (shown > 0 && payload >= 0x10000 && HasMemoryAccess(payload, shown, MemoryProt::CpuRead)) {
+        const auto* bytes = reinterpret_cast<const u8*>(payload);
+        record.payload.assign(bytes, bytes + shown);
+    }
+    Trace(NativePacketTraceKind(sent), NativePacketFields(record));
+}
+
+// 0x0178970D in the send (0x017894E0), after its checks, as it hands the packet to the
+// transport: rcx the packet (the static buffer 0x055640F0), rdx the member id.
+void PS4_SYSV_ABI TracePacketSent(u64, const GuestRegisterSnapshot* registers) {
+    const u64 packet = registers->rcx;
+    if (packet < 0x10000 || !HasMemoryAccess(packet, 8, MemoryProt::CpuRead)) {
+        return;
+    }
+    const u32 size = ReadValue<u32>(packet, 4);
+    TraceNativePacket(true, ReadValue<u32>(packet, 0), registers->rdx, packet + 8, size);
+}
+
+// A whole packet queued for its member (0x01790C20, rbx the member's queues, their member id at
+// +0x08): reliable ones (0x01790E0E) once reassembled, channel rax, the node {u32 size, payload*}
+// at +0x68; unreliable ones (0x01790FCA) channel [rbp - 0x40], node [rbp - 0x38].
+void PS4_SYSV_ABI TracePacketReceived(u64 tag, const GuestRegisterSnapshot* registers) {
+    const bool reliable = tag == 0;
+    const u64 queues = registers->rbx;
+    const u32 channel =
+        reliable ? static_cast<u32>(registers->rax) : ReadValue<u32>(registers->rbp - 0x40, 0);
+    const u64 node =
+        reliable ? ReadValue<u64>(queues, 0x68) : ReadValue<u64>(registers->rbp - 0x38, 0);
+    if (node < 0x10000) {
+        return;
+    }
+    TraceNativePacket(false, channel, queues + 0x08, ReadValue<u64>(node, 0x08),
+                      ReadValue<u32>(node, 0x00));
+}
+
+void InstallNativePacketTrace(u64 base, u64 image_size) {
+    packet_trace_mode = ParsePacketTraceMode(std::getenv("SHADPS4_BLOODBORNE_PACKET_TRACE"));
+    if (packet_trace_mode == PacketTraceMode::Off || !CoopTraceOn()) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "native packet trace", "game packets are not traced")) {
+        return;
+    }
+    const bool installed =
+        InstallCoopHook(reinterpret_cast<void*>(base + PacketSendTraceOffset), PacketSendTrace, 0,
+                        TracePacketSent) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + ReliablePacketQueuedOffset),
+                        ReliablePacketQueued, 0, TracePacketReceived) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + UnreliablePacketQueuedOffset),
+                        UnreliablePacketQueued, 1, TracePacketReceived);
+    if (!installed) {
+        coop_features.Skipped("native packet trace", "a hook did not go in");
+        return;
+    }
+    coop_features.On("native packet trace");
+    LOG_INFO(Debug, "Bloodborne native packet trace: on ({})",
+             packet_trace_mode == PacketTraceMode::Full ? "every payload" : "unknown payloads");
+}
+
 // See SaveBackups: a thread of its own copies the saves a minute after the start, then every few
 // minutes, and keeps the newest few.
 void StartSaveBackups() {
@@ -636,6 +723,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallOwnHitCount(base, image_size);
     StartSaveBackups();
     StartCoopTrace();
+    InstallNativePacketTrace(base, image_size);
     StartRestBoardClient();
     StartVitalsBoardClient();
     PatchSignTimers(base, image_size);

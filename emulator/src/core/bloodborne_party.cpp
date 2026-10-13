@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
@@ -3504,6 +3505,98 @@ std::size_t PruneCoopTraces(const fs::path& log_dir, std::size_t kept) {
         }
     }
     return removed;
+}
+
+PacketTraceMode ParsePacketTraceMode(const char* setting) {
+    const std::string_view value{setting != nullptr ? setting : ""};
+    if (value == "1" || value == "on") {
+        return PacketTraceMode::On;
+    }
+    return value == "full" ? PacketTraceMode::Full : PacketTraceMode::Off;
+}
+
+bool NativePayloadUnknown(u32 channel) {
+    return channel == 0x29 || channel == 0x34 || channel == 0x3D || channel == 0x41 ||
+           channel == 0x43;
+}
+
+std::size_t TracedPayloadBytes(PacketTraceMode mode, u32 channel, std::size_t size) {
+    const bool shown = mode == PacketTraceMode::Full ||
+                       (mode == PacketTraceMode::On && NativePayloadUnknown(channel));
+    return shown ? std::min(size, NativePayloadTraceCap) : 0;
+}
+
+std::optional<NativePacketView> DecodeNativePacket(std::span<const u8> bytes) {
+    if (bytes.size() < 8) {
+        return std::nullopt;
+    }
+    u32 channel = 0;
+    u32 size = 0;
+    std::memcpy(&channel, bytes.data(), 4);
+    std::memcpy(&size, bytes.data() + 4, 4);
+    if (channel >= NativeChannelCount || size > NativePacketMaxBytes - 8 ||
+        bytes.size() < 8 + static_cast<std::size_t>(size)) {
+        return std::nullopt;
+    }
+    return NativePacketView{channel, bytes.subspan(8, size)};
+}
+
+std::optional<std::string> NpOnlineIdAt(std::span<const u8> bytes) {
+    std::string id;
+    for (const u8 byte : bytes.first(std::min<std::size_t>(bytes.size(), 17))) {
+        if (byte == 0) {
+            return id.size() >= 3 ? std::optional{id} : std::nullopt;
+        }
+        if (!std::isalnum(byte) && byte != '-' && byte != '_') {
+            return std::nullopt;
+        }
+        id += static_cast<char>(byte);
+    }
+    return std::nullopt;
+}
+
+const char* NativePacketTraceKind(bool sent) {
+    return sent ? "net-out" : "net-in";
+}
+
+TraceSampler::Fields NativePacketFields(const NativePacketRecord& packet) {
+    TraceSampler::Fields fields{{"ch", fmt::format("{:02x}", packet.channel)},
+                                {"size", std::to_string(packet.size)},
+                                {"peer", packet.peer},
+                                {"map", fmt::format("{:x}", packet.map)},
+                                {"sync", std::to_string(packet.sync_state)},
+                                {"match", std::to_string(packet.matching_state)}};
+    if (!packet.payload.empty()) {
+        fields.emplace_back("payload", TraceHex(packet.payload));
+    }
+    return fields;
+}
+
+std::optional<NativePacketRecord> ParseNativePacketRecord(const TraceRecord& record) {
+    if (record.kind != NativePacketTraceKind(true) && record.kind != NativePacketTraceKind(false)) {
+        return std::nullopt;
+    }
+    const auto field = [&](const char* name) { return record.Field(name).value_or(""); };
+    const auto channel = ParseTraceNumber<u32>(field("ch"), 16);
+    const auto size = ParseTraceNumber<u32>(field("size"), 10);
+    const auto map = ParseTraceNumber<u32>(field("map"), 16);
+    const auto sync = ParseTraceNumber<s32>(field("sync"), 10);
+    const auto match = ParseTraceNumber<s32>(field("match"), 10);
+    const auto payload = record.Field("payload")
+                             ? ParseTraceHex(field("payload"))
+                             : std::optional<std::vector<u8>>{std::vector<u8>{}};
+    if (!channel || *channel >= NativeChannelCount || !size || !map || !sync || !match ||
+        !payload) {
+        return std::nullopt;
+    }
+    return NativePacketRecord{record.kind == NativePacketTraceKind(true),
+                              *channel,
+                              *size,
+                              field("peer"),
+                              *map,
+                              *sync,
+                              *match,
+                              *payload};
 }
 
 const std::vector<DeathFlagSite>& DeathFlagSites() {
