@@ -311,7 +311,7 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
     }
     // An NPC's gift (common event 9100 ends for a phantom): the guest's own talk earns it.
     if (GivesGuestNpcGift(InPartySession(), guest, flag)) {
-        QueueGuestNpcGift(flag, *NpcGiftLot(flag));
+        QueueGuestNpcGift(*NpcGiftFor(flag));
     }
     // Event 12107000 ends for a client: a party guest's headstone trip is ours to make. Not gated
     // on the white-phantom type: in the host's Dream that check stopped the trip (the type is

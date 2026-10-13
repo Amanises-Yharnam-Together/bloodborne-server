@@ -2376,21 +2376,72 @@ bool GuestHandlesMapItemsAlone(bool party_configured);
 constexpr u64 ClientItemLotAwardReturn = 0x0132E4B5;
 constexpr auto DeferredBossItemDelay = std::chrono::seconds{8};
 bool DefersItemLotAward(bool party_configured, bool summoned_guest, u64 return_offset);
-// NPC gifts: common event 9100 (common.emevd event 0 starts it per gift with its talk's trigger
-// flag and the item lot) waits for the trigger, clears it and awards the lot, but ends unless the
-// local player is alive, so never for a party guest. A guest's own talk setting a trigger
-// (talk command 11) gets that lot from us instead, and the trigger is cleared as the event would.
+// NPC gifts: events that wait for an NPC talk's trigger flag and award an item lot, but end
+// unless the local player is alive, so never for a party guest (common.emevd 9100 and 9040,
+// started per gift by its event 0 with (trigger, lot); the maps' own gift events). A guest's own
+// talk setting a trigger (talk command 11) gets that lot from us instead, and then what the event
+// does once it has given it (Kaniel 2026-10-13: each player its own talk and gift, every NPC).
+enum class NpcGiftAfter : u8 {
+    ClearTrigger, // gives again whenever the talk sets it (9100, Adeline's 13501940)
+    KeepTrigger,  // once: the trigger stays on and ends the event (9040, 12700906, 13600943)
+    SetDoneFlag,  // once: the event ends on its own flag (event id, or id + slot)
+};
 struct NpcGift {
     s32 trigger;
     s32 lot;
+    NpcGiftAfter after;
+    s32 done_flag = 0; // SetDoneFlag's
 };
-inline constexpr std::array<NpcGift, 5> NpcGifts{{
-    {72410359, 24060},
-    {72410310, 23000}, // Iosefka's blood vials (Central Yharnam, her clinic door)
-    {72400398, 32020},
-    {72400489, 28000},
-    {9043, 17010},
-}};
+inline constexpr std::array NpcGifts{
+    // common event 9100
+    NpcGift{72410359, 24060, NpcGiftAfter::ClearTrigger}, // Blue Elixir (Central Yharnam)
+    NpcGift{72410310, 23000, NpcGiftAfter::ClearTrigger}, // Iosefka's Blood Vial
+    NpcGift{72400398, 32020, NpcGiftAfter::ClearTrigger}, // Blood of Adella
+    NpcGift{72400489, 28000, NpcGiftAfter::ClearTrigger}, // Blood of Arianna
+    NpcGift{9043, 17010, NpcGiftAfter::ClearTrigger},     // Queenly Flesh (set by an event)
+    // common event 9040
+    NpcGift{9042, 17000, NpcGiftAfter::KeepTrigger}, // Annalise's rune
+    NpcGift{9045, 22000, NpcGiftAfter::KeepTrigger}, // Pebble
+    NpcGift{9046, 23000, NpcGiftAfter::KeepTrigger},
+    NpcGift{9047, 24000, NpcGiftAfter::KeepTrigger}, // Numbing Mist ...
+    NpcGift{9048, 24010, NpcGiftAfter::KeepTrigger},
+    NpcGift{9049, 24020, NpcGiftAfter::KeepTrigger},
+    NpcGift{9050, 24030, NpcGiftAfter::KeepTrigger},
+    NpcGift{9051, 24040, NpcGiftAfter::KeepTrigger}, // Beast Blood Pellet
+    NpcGift{9052, 24050, NpcGiftAfter::KeepTrigger}, // Lead Elixir
+    NpcGift{9054, 26000, NpcGiftAfter::KeepTrigger}, // Sedative ...
+    NpcGift{9055, 26010, NpcGiftAfter::KeepTrigger},
+    NpcGift{9056, 26020, NpcGiftAfter::KeepTrigger},
+    NpcGift{9057, 26030, NpcGiftAfter::KeepTrigger},
+    NpcGift{9058, 27000, NpcGiftAfter::KeepTrigger}, // Pungent Blood Cocktail
+    NpcGift{9059, 27010, NpcGiftAfter::KeepTrigger}, // Beast Blood Pellet ...
+    NpcGift{9060, 27020, NpcGiftAfter::KeepTrigger},
+    NpcGift{9061, 27030, NpcGiftAfter::KeepTrigger},
+    NpcGift{9062, 27040, NpcGiftAfter::KeepTrigger},
+    NpcGift{9063, 27050, NpcGiftAfter::KeepTrigger},
+    NpcGift{9064, 27060, NpcGiftAfter::KeepTrigger},
+    NpcGift{9066, 29000, NpcGiftAfter::KeepTrigger}, // Gilbert's Flamesprayer
+    NpcGift{9067, 30000, NpcGiftAfter::KeepTrigger}, // the little girl's Tiny Music Box
+    NpcGift{9069, 32000, NpcGiftAfter::KeepTrigger}, // Madman's Knowledge
+    NpcGift{9071, 33000, NpcGiftAfter::KeepTrigger}, // Djura's Powder Keg Hunter Badge
+    NpcGift{9072, 34000, NpcGiftAfter::KeepTrigger}, // Fire Paper
+    NpcGift{9073, 34010, NpcGiftAfter::KeepTrigger}, // Wheel Hunter Badge
+    NpcGift{9074, 35000, NpcGiftAfter::KeepTrigger}, // Eileen's Bold Hunter's Mark
+    NpcGift{9075, 35010, NpcGiftAfter::KeepTrigger}, // Eileen's rune
+    NpcGift{9076, 39000, NpcGiftAfter::KeepTrigger}, // Tonsil Stone
+    NpcGift{9077, 39010, NpcGiftAfter::KeepTrigger}, // a rune (Nightmare Frontier)
+    // the maps' gift events
+    NpcGift{72100112, 14000, NpcGiftAfter::SetDoneFlag, 12100123}, // the Doll's Tear Stone
+    NpcGift{72400441, 37000, NpcGiftAfter::SetDoneFlag, 12400403}, // Madman's Knowledge
+    NpcGift{72700321, 43120, NpcGiftAfter::KeepTrigger},           // Valtr's rune
+    NpcGift{72700322, 43130, NpcGiftAfter::KeepTrigger},           // Valtr's League Staff
+    NpcGift{73400424, 43211, NpcGiftAfter::SetDoneFlag, 13400980}, // Holy Moonlight Sword
+    NpcGift{73500321, 43010, NpcGiftAfter::SetDoneFlag, 13501921}, // Balcony Key
+    NpcGift{73500322, 43020, NpcGiftAfter::SetDoneFlag, 13501922}, // a rune (Research Hall)
+    NpcGift{73500320, 43000, NpcGiftAfter::ClearTrigger},          // Blood of Adeline
+    NpcGift{73600300, 43600, NpcGiftAfter::KeepTrigger},           // Accursed Brew
+};
+std::optional<NpcGift> NpcGiftFor(s32 trigger);
 std::optional<s32> NpcGiftLot(s32 trigger);
 bool GivesGuestNpcGift(bool in_party_session, bool summoned_guest, s32 flag);
 // Held this long after the talk sets the trigger, as for the boss items: the gift's dialog comes
