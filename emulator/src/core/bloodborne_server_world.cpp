@@ -6,7 +6,8 @@
 // party's world log, not the host's game. Every member, the host too, proposes to it and follows
 // its log as a WorldLogMember (server/coop/world_log.h): the kills (3a; the kill board is not used
 // then), the host's characters, map state and return point, every member's shared flags and HP
-// reports (3b; the host's own log is not run then).
+// reports (3b; the host's own log is not run then), and what the HTTP boards carried: maps, rests,
+// trophies, kill echoes, vitals and portraits (3c; the boards are not used then).
 //
 // The messages (server/coop/coop.proto) go in the server link's Coop datagrams, in their reliable
 // stream (server/coop/coop_stream.h). A thread of its own runs the stream (receives, resends,
@@ -76,8 +77,102 @@ void Queue(bbcoop::Envelope envelope) {
     outbox.push_back(std::move(envelope));
 }
 
+// The boards (3c): taken on the stream's thread as they come (not on the kill step's).
+bool IsBoard(const bbcoop::Envelope& envelope) {
+    switch (envelope.body_case()) {
+    case bbcoop::Envelope::kMapBoard:
+    case bbcoop::Envelope::kRestBoard:
+    case bbcoop::Envelope::kTrophies:
+    case bbcoop::Envelope::kEchoes:
+    case bbcoop::Envelope::kVitalsBoard:
+    case bbcoop::Envelope::kPortrait:
+        return true;
+    default:
+        return false;
+    }
+}
+
+LampPosition PositionOf(const bbcoop::Position& at) {
+    return {at.x(), at.y(), at.z()};
+}
+
+void PutPosition(const LampPosition& at, bbcoop::Position* out) {
+    out->set_x(at[0]);
+    out->set_y(at[1]);
+    out->set_z(at[2]);
+}
+
+void TakeBoard(const bbcoop::Envelope& envelope) {
+    switch (envelope.body_case()) {
+    case bbcoop::Envelope::kMapBoard: {
+        std::vector<MemberMap> maps;
+        for (const auto& entry : envelope.map_board().members()) {
+            maps.push_back({entry.member(), entry.map()});
+        }
+        TakeServerMapBoard(std::move(maps));
+        return;
+    }
+    case bbcoop::Envelope::kRestBoard: {
+        std::vector<LampRest> rests;
+        for (const auto& entry : envelope.rest_board().rests()) {
+            rests.push_back(
+                {entry.member(), entry.lamp(),
+                 entry.has_at() ? std::optional{PositionOf(entry.at())} : std::nullopt});
+        }
+        TakeServerRestBoard(std::move(rests));
+        return;
+    }
+    case bbcoop::Envelope::kTrophies: {
+        const std::vector<s32> ids(envelope.trophies().ids().begin(),
+                                   envelope.trophies().ids().end());
+        ReadTrophyBoard(ids);
+        return;
+    }
+    case bbcoop::Envelope::kEchoes: {
+        std::vector<KillEchoes> echoes;
+        for (const auto& kill : envelope.echoes().kills()) {
+            echoes.push_back({kill.echoes(), kill.map()});
+        }
+        TakeServerEchoes(std::move(echoes));
+        return;
+    }
+    case bbcoop::Envelope::kVitalsBoard: {
+        VitalsBoard board;
+        for (const auto& entry : envelope.vitals_board().members()) {
+            const bbcoop::Vitals& vitals = entry.vitals();
+            board.members.push_back(
+                MemberVitals{.member = entry.member(),
+                             .map = vitals.map(),
+                             .vital = static_cast<Vital>(std::min<u32>(vitals.vital(), 3)),
+                             .hp = vitals.hp(),
+                             .max = vitals.max(),
+                             .down = vitals.down(),
+                             .landed = vitals.landed(),
+                             .needed = vitals.needed(),
+                             .at = PositionOf(vitals.at()),
+                             .revive_damage = entry.revive_damage()});
+        }
+        for (const auto& wipe : envelope.vitals_board().wipes()) {
+            board.wipes.push_back(
+                {wipe.id(), wipe.map(), {wipe.members().begin(), wipe.members().end()}});
+        }
+        TakeServerVitals(std::move(board));
+        return;
+    }
+    case bbcoop::Envelope::kPortrait: {
+        const std::string& pixels = envelope.portrait().pixels();
+        TakeServerPortrait(envelope.portrait().member(), envelope.portrait().id(),
+                           std::vector<u8>(pixels.begin(), pixels.end()));
+        return;
+    }
+    default:
+        return;
+    }
+}
+
 void StreamTick(s64 now_ms) {
     std::vector<std::vector<u8>> received;
+    std::vector<bbcoop::Envelope> boards;
     std::array<u8, 4096> buffer{};
     for (int count = 0; count < 512; ++count) {
         const int size =
@@ -94,7 +189,11 @@ void StreamTick(s64 now_ms) {
         for (const std::vector<u8>& body : received) {
             for (const std::vector<u8>& message : stream->Receive(body, now_ms)) {
                 if (auto envelope = DecodeEnvelope(message)) {
-                    inbox.push_back(std::move(*envelope));
+                    if (IsBoard(*envelope)) {
+                        boards.push_back(std::move(*envelope));
+                    } else {
+                        inbox.push_back(std::move(*envelope));
+                    }
                 }
             }
         }
@@ -119,6 +218,9 @@ void StreamTick(s64 now_ms) {
             outbox.clear();
         }
         out = stream->Flush(now_ms);
+    }
+    for (const bbcoop::Envelope& board : boards) {
+        TakeBoard(board);
     }
     if (restarted) {
         LOG_WARNING(Debug, "Co-op server world: shadNet started over (or lost this game): "
@@ -446,6 +548,72 @@ std::optional<WorldLogMapState> ServerMapState() {
 WorldLogHp ServerHp() {
     std::scoped_lock lock{member_mutex};
     return member.Hp();
+}
+
+void StartServerWorld() {
+    if (server_world_switch) {
+        StartThread();
+    }
+}
+
+void SendServerMap(u32 map) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_map()->set_map(map);
+    Queue(std::move(envelope));
+}
+
+void SendServerRest(s32 lamp, const std::optional<LampPosition>& at) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_rest()->set_lamp(lamp);
+    if (at) {
+        PutPosition(*at, envelope.mutable_rest()->mutable_at());
+    }
+    Queue(std::move(envelope));
+}
+
+void SendServerTrophies(std::span<const s32> trophies) {
+    bbcoop::Envelope envelope;
+    for (const s32 trophy : trophies) {
+        envelope.mutable_trophies()->add_ids(trophy);
+    }
+    Queue(std::move(envelope));
+}
+
+void SendServerEchoes(std::span<const KillEchoes> echoes) {
+    bbcoop::Envelope envelope;
+    for (const KillEchoes& kill : echoes) {
+        bbcoop::EchoKill* out = envelope.mutable_echoes()->add_kills();
+        out->set_echoes(kill.amount);
+        out->set_map(kill.map);
+    }
+    Queue(std::move(envelope));
+}
+
+void SendServerVitals(const MemberVitals& mine, std::span<const ReviveHitTotal> hits) {
+    bbcoop::Envelope envelope;
+    bbcoop::Vitals& vitals = *envelope.mutable_vitals();
+    vitals.set_map(mine.map);
+    vitals.set_vital(static_cast<u32>(mine.vital));
+    vitals.set_hp(mine.hp);
+    vitals.set_max(mine.max);
+    vitals.set_down(mine.down);
+    vitals.set_landed(mine.landed);
+    vitals.set_needed(mine.needed);
+    PutPosition(mine.at, vitals.mutable_at());
+    for (const ReviveHitTotal& hit : hits) {
+        bbcoop::ReviveHit* out = vitals.add_hits();
+        out->set_target(hit.target);
+        out->set_down(hit.down);
+        out->set_damage(hit.damage);
+    }
+    Queue(std::move(envelope));
+}
+
+void SendServerPortrait(u32 id, std::span<const u8> pixels) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_portrait()->set_id(id);
+    envelope.mutable_portrait()->set_pixels(std::string(pixels.begin(), pixels.end()));
+    Queue(std::move(envelope));
 }
 
 } // namespace Coop

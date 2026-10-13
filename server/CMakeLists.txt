@@ -102,6 +102,8 @@ set(SOURCES
     # The parties' worlds (co-op phase 3)
     src/bloodborne_world.h
     src/bloodborne_world.cpp
+    src/bloodborne_party_boards.h
+    src/bloodborne_party_boards.cpp
     ${COOP_SOURCES}
     # WebAPI HTTP/JSON listener
     src/webapi_server.h
@@ -230,6 +232,7 @@ if(BUILD_TESTING)
     add_executable(test_bloodborne_world EXCLUDE_FROM_ALL
         tests/test_bloodborne_world.cpp
         src/bloodborne_world.cpp
+        src/bloodborne_party_boards.cpp
         src/server_link.cpp
         ${COOP_SOURCES}
     )

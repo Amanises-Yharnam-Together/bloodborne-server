@@ -686,6 +686,22 @@ void HpToServer(u32 map, const EnemyHpReport& report, bool changed);
 std::optional<WorldLogShown> ServerShown();
 std::optional<WorldLogMapState> ServerMapState();
 WorldLogHp ServerHp();
+// Step 3c, what the HTTP boards carried: the stream (its thread) runs without a kill step too.
+void StartServerWorld();
+// This member's part of each board (bloodborne_boards.cpp's rounds send them).
+void SendServerMap(u32 map);
+void SendServerRest(s32 lamp, const std::optional<LampPosition>& at);
+void SendServerTrophies(std::span<const s32> trophies);
+void SendServerEchoes(std::span<const KillEchoes> echoes);
+void SendServerVitals(const MemberVitals& mine, std::span<const ReviveHitTotal> hits);
+// The portrait's pixels as its parts carry them (SplitPortrait), or none.
+void SendServerPortrait(u32 id, std::span<const u8> pixels);
+// The boards as the server sends them, taken on the stream's thread (bloodborne_boards.cpp).
+void TakeServerMapBoard(std::vector<MemberMap> maps);
+void TakeServerRestBoard(std::vector<LampRest> rests);
+void TakeServerEchoes(std::vector<KillEchoes> echoes);
+void TakeServerVitals(VitalsBoard board);
+void TakeServerPortrait(const std::string& member, u32 id, std::vector<u8> pixels);
 // The host's characters on its map (step 2): to the log while the shown characters take it (the
 // shown board gets them as before, the fallback copy).
 void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters);

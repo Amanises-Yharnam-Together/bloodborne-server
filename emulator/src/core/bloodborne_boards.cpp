@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // The party boards' clients (rest, HP, vitals) and the direct P2P frames. Split from
-// bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h.
+// bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h. With the party's
+// world on the server (phase 3c) the boards go over its stream instead (RunServerBoards).
 
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
@@ -446,6 +447,9 @@ void StartRestBoardClient() {
         return;
     }
     Libraries::Np::NpTrophy::SetTrophyUnlockObserver(NoteGameTrophyUnlock);
+    if (ServerWorldOn()) {
+        return; // the boards go over the server's world (StartVitalsBoardClient starts them)
+    }
     rest_board_client = std::jthread(RunRestBoardClient, base_url, *party);
     hp_board_client = std::jthread(RunHpBoardClient, base_url, *party);
     StopBoardClientsAtExit();
@@ -513,6 +517,28 @@ void TakePortraitPart(std::span<const u8> payload) {
     std::scoped_lock lock{portraits_mutex};
     party_portraits.Take(part->member, std::move(*pixels));
 }
+
+} // namespace
+
+namespace Coop {
+
+void TakeServerPortrait(const std::string& member, u32 id, std::vector<u8> pixels) {
+    if (pixels.empty()) {
+        TakePortraitPart(EncodePortraitNone(member));
+        return;
+    }
+    const u8 parts = static_cast<u8>((pixels.size() + PortraitPartBytes - 1) / PortraitPartBytes);
+    for (u8 part = 0; part < parts; ++part) {
+        const size_t at = size_t{part} * PortraitPartBytes;
+        const size_t size = std::min(PortraitPartBytes, pixels.size() - at);
+        TakePortraitPart(EncodePortraitPart(
+            {member, id, part, parts, {pixels.begin() + at, pixels.begin() + at + size}}));
+    }
+}
+
+} // namespace Coop
+
+namespace {
 
 // One co-op frame from a room peer (`bytes` whole, `payload` after the type); whether it brought
 // what the enemy step uses (HP, kills, the world log), so that step runs on the next frame.
@@ -941,7 +967,16 @@ void TickPortraits() {
     if (!sender.Due(id, peers, now)) {
         return;
     }
-    if (own) {
+    if (ServerWorldOn()) {
+        // The server keeps it for the party's games, the ones that come later too.
+        std::vector<u8> pixels;
+        if (own) {
+            for (const auto& part : SplitPortrait(member, *own)) {
+                pixels.insert(pixels.end(), part.bytes.begin(), part.bytes.end());
+            }
+        }
+        SendServerPortrait(id, pixels);
+    } else if (own) {
         for (const auto& part : SplitPortrait(member, *own)) {
             SendToRoomPeers(EncodeCoopFrame(PortraitPartType, EncodePortraitPart(part)));
         }
@@ -1289,6 +1324,102 @@ void RunVitalsBoardClient(std::stop_token stop, std::string base_url, std::strin
     }
 }
 
+// The boards over the party's world on the server (phase 3c): this member's map every second, its
+// rest while it rests (and once when it stands up), its kill echoes and the party's trophies every
+// three seconds, and its vitals as the vitals client posted them (soon after a change, four times
+// a second while someone is down, else every second). The server sends the boards back as they
+// change (TakeServer*).
+void RunServerBoards(std::stop_token stop) {
+    const std::string member = FindBoardMember(stop);
+    {
+        std::scoped_lock lock{vitals_mutex};
+        vitals_member = member;
+    }
+    LOG_INFO(Debug, "Bloodborne party boards on the server's world as member {}", member);
+    StartServerWorld();
+    using Clock = std::chrono::steady_clock;
+    auto next_second = Clock::now();
+    auto next_echoes = Clock::now();
+    auto next_vitals = Clock::now();
+    auto rounded_at = Clock::now();
+    s32 posted_rest = NotResting;
+    bool posted_on = false;
+    while (!stop.stop_requested()) {
+        bool someone_down = false;
+        MemberVitals mine;
+        std::vector<ReviveHitTotal> hits;
+        bool vitals_due = false;
+        {
+            std::unique_lock lock{vitals_mutex};
+            // At least 100 ms apart, then until a change or the next round is due.
+            vitals_wake.wait_until(lock, stop, rounded_at + std::chrono::milliseconds{100},
+                                   [] { return false; });
+            vitals_wake.wait_until(lock, stop, std::min(next_vitals, next_second),
+                                   [] { return vitals_changed; });
+            rounded_at = Clock::now();
+            someone_down = std::ranges::any_of(vitals_board.members, [](const MemberVitals& other) {
+                return other.vital == Vital::Down;
+            });
+            vitals_due = vitals_changed || Clock::now() >= next_vitals;
+            if (vitals_due) {
+                vitals_changed = false;
+                mine = vitals_mine;
+                hits = vitals_hits;
+            }
+        }
+        if (stop.stop_requested()) {
+            break;
+        }
+        const auto now = Clock::now();
+        if (vitals_due) {
+            next_vitals = now + std::chrono::milliseconds{someone_down ? 250 : 1'000};
+            if (mine.vital != Vital::Off || posted_on) {
+                SendServerVitals(mine, hits);
+                posted_on = mine.vital != Vital::Off;
+            }
+        }
+        if (now < next_second) {
+            continue;
+        }
+        next_second = now + std::chrono::seconds{1};
+        if (const u32 map = party_map_now.load(); map != 0) {
+            SendServerMap(map);
+        }
+        const bool active = rest_board_active.load();
+        const s32 lamp = active ? rest_board_lamp.load() : NotResting;
+        if (active || posted_rest != NotResting) {
+            std::optional<LampPosition> at;
+            {
+                std::scoped_lock lock{rest_board_position_mutex};
+                at = rest_board_position;
+            }
+            SendServerRest(lamp, at);
+            posted_rest = lamp;
+        }
+        if (now < next_echoes) {
+            continue;
+        }
+        next_echoes = now + std::chrono::seconds{3};
+        std::vector<KillEchoes> echoes;
+        {
+            std::scoped_lock lock{echo_board_mutex};
+            echoes.swap(echoes_to_post);
+        }
+        if (!echoes.empty()) {
+            SendServerEchoes(echoes);
+        }
+        if (trophy_board_active.load()) {
+            std::vector<s32> earned;
+            {
+                std::scoped_lock lock{trophy_mutex};
+                earned = trophies_earned_in_party;
+            }
+            SendServerTrophies(earned);
+        }
+    }
+}
+std::jthread server_boards_client;
+
 // The board clients use state that lives in the other co-op files (flags, kills, HP, the trace
 // queue), and the order the files' statics are destroyed in at exit() is not defined across
 // files. So they are stopped and joined before any static destructor runs: by an atexit handler
@@ -1299,12 +1430,12 @@ void StopBoardClientsAtExit() {
     static std::once_flag registered;
     std::call_once(registered, [] {
         std::atexit([] {
-            for (std::jthread* client :
-                 {&rest_board_client, &hp_board_client, &vitals_board_client}) {
+            for (std::jthread* client : {&rest_board_client, &hp_board_client, &vitals_board_client,
+                                         &server_boards_client}) {
                 client->request_stop();
             }
-            for (std::jthread* client :
-                 {&rest_board_client, &hp_board_client, &vitals_board_client}) {
+            for (std::jthread* client : {&rest_board_client, &hp_board_client, &vitals_board_client,
+                                         &server_boards_client}) {
                 if (client->joinable()) {
                     client->join();
                 }
@@ -1324,8 +1455,42 @@ void StartVitalsBoardClient() {
     if (!party_controller || !party || !EmulatorSettings.IsShadNetEnabled() || base_url.empty()) {
         return;
     }
-    vitals_board_client = std::jthread(RunVitalsBoardClient, base_url, *party);
+    if (ServerWorldOn()) {
+        // Every board goes over the server's world (one client for all of them).
+        server_boards_client = std::jthread(RunServerBoards);
+    } else {
+        vitals_board_client = std::jthread(RunVitalsBoardClient, base_url, *party);
+    }
     StopBoardClientsAtExit();
+}
+
+void TakeServerMapBoard(std::vector<MemberMap> maps) {
+    std::string member;
+    {
+        std::scoped_lock lock{vitals_mutex};
+        member = vitals_member;
+    }
+    std::scoped_lock lock{map_board_mutex};
+    map_board = std::move(maps);
+    map_board_member = std::move(member);
+    map_board_time = std::chrono::steady_clock::now();
+}
+
+void TakeServerRestBoard(std::vector<LampRest> rests) {
+    std::scoped_lock lock{rest_board_mutex};
+    rest_board = std::move(rests);
+    rest_board_time = std::chrono::steady_clock::now();
+}
+
+void TakeServerEchoes(std::vector<KillEchoes> echoes) {
+    std::scoped_lock lock{echo_board_mutex};
+    echo_ledger.Received(echoes, SteadyMilliseconds());
+}
+
+void TakeServerVitals(VitalsBoard board) {
+    std::scoped_lock lock{vitals_mutex};
+    vitals_board = std::move(board);
+    vitals_heard_at = std::chrono::steady_clock::now();
 }
 
 } // namespace Coop

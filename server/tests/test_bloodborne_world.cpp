@@ -109,7 +109,21 @@ struct Game {
     Send(envelope, now_ms);
   }
   void Take(const bbcoop::Envelope &envelope, qint64 now_ms) {
-    if (envelope.has_welcome()) {
+    if (envelope.has_map_board()) {
+      map_board = envelope.map_board();
+    } else if (envelope.has_rest_board()) {
+      rest_board = envelope.rest_board();
+    } else if (envelope.has_trophies()) {
+      trophies = envelope.trophies();
+    } else if (envelope.has_vitals_board()) {
+      vitals_board = envelope.vitals_board();
+    } else if (envelope.has_echoes()) {
+      for (const bbcoop::EchoKill &kill : envelope.echoes().kills()) {
+        echoes.push_back(kill.echoes());
+      }
+    } else if (envelope.has_portrait()) {
+      portraits[envelope.portrait().member()] = envelope.portrait();
+    } else if (envelope.has_welcome()) {
       welcome = envelope.welcome();
     } else if (envelope.has_entries()) {
       const auto step = member.Take(BatchOf(envelope.entries()), now_ms);
@@ -132,6 +146,12 @@ struct Game {
   std::optional<bbcoop::Welcome> welcome;
   std::vector<WorldLogEntry> applied;
   int snapshots = 0;
+  bbcoop::MapBoard map_board;
+  bbcoop::RestBoard rest_board;
+  bbcoop::Trophies trophies;
+  bbcoop::VitalsBoard vitals_board;
+  std::vector<s32> echoes;
+  std::map<std::string, bbcoop::Portrait> portraits;
   u32 run = 0x1001;
   u32 number = 0;
   bool online = true; // false: its datagrams are lost
@@ -553,6 +573,162 @@ int TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember() {
   return 0;
 }
 
+bbcoop::Envelope VitalsOf(u32 map, u32 vital, u32 down = 0,
+                          std::vector<bbcoop::ReviveHit> hits = {}) {
+  bbcoop::Envelope envelope;
+  bbcoop::Vitals &vitals = *envelope.mutable_vitals();
+  vitals.set_map(map);
+  vitals.set_vital(vital);
+  vitals.set_down(down);
+  for (const bbcoop::ReviveHit &hit : hits) {
+    *vitals.add_hits() = hit;
+  }
+  return envelope;
+}
+
+const bbcoop::VitalsBoard::Member *VitalsFor(const Game &game,
+                                             const std::string &member) {
+  for (const auto &entry : game.vitals_board.members()) {
+    if (entry.member() == member) {
+      return &entry;
+    }
+  }
+  return nullptr;
+}
+
+int TheBoardsGoToEveryMember() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+
+  // Maps: every member's, to everyone.
+  bbcoop::Envelope map;
+  map.mutable_map()->set_map(0x18010000);
+  host.Send(map, now);
+  map.mutable_map()->set_map(0x18000000);
+  guest.Send(map, now);
+  // A rest with its place.
+  bbcoop::Envelope rest;
+  rest.mutable_rest()->set_lamp(2412950);
+  rest.mutable_rest()->mutable_at()->set_x(-215.5f);
+  guest.Send(rest, now);
+  // Trophies: the party's union.
+  bbcoop::Envelope trophies;
+  trophies.mutable_trophies()->add_ids(5);
+  trophies.mutable_trophies()->add_ids(500); // no such trophy
+  host.Send(trophies, now);
+  trophies.mutable_trophies()->set_ids(0, 7);
+  guest.Send(trophies, now);
+  // Echoes: to the others only, once.
+  bbcoop::Envelope echoes;
+  bbcoop::EchoKill *kill = echoes.mutable_echoes()->add_kills();
+  kill->set_echoes(120);
+  kill->set_map(0x18000000);
+  guest.Send(echoes, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(host.map_board.members_size() == 2);
+  CHECK(guest.map_board.members_size() == 2);
+  CHECK(host.rest_board.rests_size() == 1);
+  CHECK(host.rest_board.rests(0).member() == "guest");
+  CHECK(host.rest_board.rests(0).lamp() == 2412950);
+  CHECK(host.rest_board.rests(0).at().x() == -215.5f);
+  CHECK(host.trophies.ids_size() == 2);
+  CHECK(host.trophies.ids(0) == 5 && host.trophies.ids(1) == 7);
+  CHECK(host.echoes == std::vector<s32>{120});
+  CHECK(guest.echoes.empty());
+
+  // Standing up takes the rest off; a member not heard of goes from the boards.
+  rest.mutable_rest()->set_lamp(0);
+  guest.Send(rest, now + 100);
+  Pump(service, {&host, &guest}, now + 100);
+  CHECK(host.rest_board.rests_size() == 0);
+  map.mutable_map()->set_map(0x18010000);
+  host.Send(map, now + 4000);
+  Pump(service, {&host, &guest}, now + 4000);
+  Pump(service, {&host, &guest}, now + 6000);
+  CHECK(host.map_board.members_size() == 1);
+  CHECK(host.map_board.members(0).member() == "host");
+
+  // A game that comes later gets the boards as they are.
+  Game late{1002, "late", 13};
+  late.Hello(now + 6100);
+  Pump(service, {&host, &guest, &late}, now + 6100);
+  CHECK(late.trophies.ids_size() == 2);
+  CHECK(late.map_board.members_size() == 1);
+  return 0;
+}
+
+int ThePartyIsWipedWhenNobodyOnTheMapStands() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  constexpr u32 Up = 1;
+  constexpr u32 Down = 2;
+  host.Send(VitalsOf(0x18010000, Up), now);
+  guest.Send(VitalsOf(0x18010000, Down, 4), now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(host.vitals_board.members_size() == 2);
+  CHECK(host.vitals_board.wipes_size() == 0);
+  // The host's revive hits count on the guest's down.
+  bbcoop::ReviveHit hit;
+  hit.set_target("guest");
+  hit.set_down(4);
+  hit.set_damage(90);
+  host.Send(VitalsOf(0x18010000, Up, 0, {hit}), now + 100);
+  Pump(service, {&host, &guest}, now + 100);
+  const auto *downed = VitalsFor(guest, "guest");
+  CHECK(downed != nullptr && downed->revive_damage() == 90);
+  CHECK(VitalsFor(guest, "host")->vitals().hits_size() == 0);
+  // Both down on the map: one wipe, for both.
+  host.Send(VitalsOf(0x18010000, Down, 9), now + 200);
+  Pump(service, {&host, &guest}, now + 200);
+  CHECK(guest.vitals_board.wipes_size() == 1);
+  CHECK(guest.vitals_board.wipes(0).members_size() == 2);
+  guest.Send(VitalsOf(0x18010000, Down, 4), now + 300);
+  Pump(service, {&host, &guest}, now + 300);
+  CHECK(guest.vitals_board.wipes_size() == 1); // not again
+  // It goes after a while.
+  host.Send(VitalsOf(0x18010000, Up), now + 21'000);
+  guest.Send(VitalsOf(0x18010000, Up), now + 21'000);
+  Pump(service, {&host, &guest}, now + 21'000);
+  CHECK(guest.vitals_board.wipes_size() == 0);
+  return 0;
+}
+
+int APortraitGoesToTheOthersAndToLaterMembers() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope portrait;
+  portrait.mutable_portrait()->set_member("spoofed");
+  portrait.mutable_portrait()->set_id(0xabcd);
+  portrait.mutable_portrait()->set_pixels(std::string(8192, 'p'));
+  host.Send(portrait, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.portraits.contains("host"));
+  CHECK(guest.portraits.at("host").pixels().size() == 8192);
+  CHECK(!guest.portraits.contains("spoofed"));
+  CHECK(host.portraits.empty());
+  Game late{1002, "late", 13};
+  late.Hello(now + 10);
+  Pump(service, {&host, &guest, &late}, now + 10);
+  CHECK(late.portraits.contains("host"));
+  CHECK(late.portraits.at("host").id() == 0xabcd);
+  return 0;
+}
+
 } // namespace
 
 int main() {
@@ -573,6 +749,11 @@ int main() {
       {"ALostDatagramIsSentAgain", ALostDatagramIsSentAgain},
       {"TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember",
        TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember},
+      {"TheBoardsGoToEveryMember", TheBoardsGoToEveryMember},
+      {"ThePartyIsWipedWhenNobodyOnTheMapStands",
+       ThePartyIsWipedWhenNobodyOnTheMapStands},
+      {"APortraitGoesToTheOthersAndToLaterMembers",
+       APortraitGoesToTheOthersAndToLaterMembers},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {
