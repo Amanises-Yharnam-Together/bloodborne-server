@@ -351,6 +351,19 @@ class LaneTest(unittest.TestCase):
         self.assertIn("WebApiPort=32415\n", changed)
         self.assertIn("MatchingUdpPort=33314\n", changed)
 
+    def test_a_lanes_shadnet_answers_the_games_services_on_the_lanes_backend_port(self):
+        config = "[General]\nUnsecuredPort=32313\nWebApiPort=32315\n"
+        changed = run_scenario.with_backend(config, True)
+        self.assertIn("BloodborneBackend=true\n", changed)
+        self.assertIn(f"BackendPort={run_scenario.BACKEND_PORT}\n", changed)
+        self.assertIn("BackendAddress=127.0.0.1\n", changed)
+        self.assertTrue(changed.startswith("[General]\n"))
+        # Set again (shadnet writes its defaults into the file): replaced, not added twice.
+        again = run_scenario.with_backend(changed.replace("=true", "=false"), True)
+        self.assertEqual(again.count("BloodborneBackend="), 1)
+        self.assertIn("BloodborneBackend=true\n", again)
+        self.assertIn("BloodborneBackend=false\n", run_scenario.with_backend(config, False))
+
     def test_a_lane_is_a_copy_of_the_rig_without_its_game_image_and_logs(self):
         with tempfile.TemporaryDirectory() as folder:
             root = pathlib.Path(folder)

@@ -43,7 +43,10 @@ if ($Component -eq "bbport") {
 }
 
 if ($Component -eq "backend") {
-    # Python stand-in for the retail backend: no upstream CI, just its service tests.
+    # Python stand-in for the retail backend: no upstream CI, just its service tests. With a
+    # built shadnet, test_parity also checks shadnet's own backend answers the same.
+    $shadnet = Join-Path $env:BB_ROOT "out\server\shadnet.exe"
+    if (-not $env:SHADNET_EXE -and (Test-Path $shadnet)) { $env:SHADNET_EXE = $shadnet }
     py -3.12 -m unittest discover -s tests 2>&1 | Select-Object -Last 4
     if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: backend tests"; exit 1 }
     Write-Host "CI CHECK PASSED"

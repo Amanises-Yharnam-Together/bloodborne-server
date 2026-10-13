@@ -109,8 +109,9 @@ European Game of the Year edition) at 1.09; all players in a party should use th
   (`tools/re/party_boss_events.py`, which checks that only the intended instructions changed);
   the release only carries their expected hashes.
 - **Self-hosted services.** `server/` is a shadNet server with the Bloodborne summon broker and
-  party boards added. `backend/` answers the game's own online requests, so the game goes online
-  without the official or community servers.
+  party boards added. The game's own online requests (JSON over HTTP, as the PS4 game sends them)
+  are answered by shadnet itself (`BloodborneBackend`, on by default) or the Python `backend/`, so
+  the game goes online without the official or community servers.
 
 More detail: [docs/BBPORT.md](docs/BBPORT.md) (the port and its co-op wiring),
 [docs/SEAMLESS_COOP_PLAN.md](docs/SEAMLESS_COOP_PLAN.md) (the original plan),

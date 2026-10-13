@@ -199,7 +199,35 @@ unset SHADNET_BLOODBORNE_SEAMLESS_COOP
 Setting the configuration to `false` does not override an environment variable
 that is still set to `1`.
 
-### Experimental seamless co-op
+### The game's own online services (BloodborneBackend)
+
+Bloodborne also talks to Sony's `ss4.scej-network.jp:20443` for its online check (`ss.info`),
+login, messages, bloodstains, wandering ghosts, lantern counts and chalice dungeons, as JSON over
+HTTP. `backend/bb_dummy_server.py` answers those; shadNet can answer them itself, the same way
+byte for byte (`backend/tests/test_parity.py`), so the host runs one program:
+
+```ini
+BloodborneBackend=true
+BackendPort=20443
+; the address the players reach this PC on (else the address each game connected to);
+; the environment variable SHADNET_BACKEND_ADDRESS takes precedence
+BackendAddress=
+; notice.txt, broadcast.txt and login_message.txt are read from here
+BackendFolder=../backend
+; a SQLite file to keep players' messages, bloodstains, ghosts, lanterns and chalice
+; dungeons in (the Python server's --store file reads unchanged); empty keeps the world empty
+BackendStore=
+; also show players their own: deaths, ghosts, lanterns or all (messages always)
+BackendShowOwn=
+BackendGhostTtlMinutes=30
+BackendLanternTtlMinutes=10
+BackendTombCap=100
+; seconds between summon sign posts and searches, and the co-op guard timers (retail 30-60)
+BackendSummonPoll=5
+```
+
+It is on by default; `BloodborneBackend=false` leaves port 20443 to the Python server. The ss.info template is built in from `backend/ss_info_template.xml`.
+
 
 Seamless mode lets the broker match bells from different maps and carries the
 host's placement to the guest so the client can move the guest before the normal
