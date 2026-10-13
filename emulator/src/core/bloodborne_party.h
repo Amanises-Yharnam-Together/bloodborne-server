@@ -1320,8 +1320,8 @@ constexpr u8 PeerHelloType = 0x33;
 // 5: enemy HP on it (frames 0x3B, 0x3C, the HP entries; every entry carries a value).
 // 6: a snapshot ends with the recent flag events (frame 0x3D); the world snapshot on the server.
 // 7: the flags part's after-wipe byte. 8: the host's return point (the ReturnPoint entry, and the
-// map state part ends with it).
-constexpr u8 CoopProtocolVersion = 8;
+// map state part ends with it). 9: the members' portraits (PortraitPartType, 0x3E).
+constexpr u8 CoopProtocolVersion = 9;
 constexpr s64 PeerHelloResendMs = 10'000;
 // PeerHello::features: WorldLogFeature when this game runs the world log (it is not switched off,
 // SHADPS4_BLOODBORNE_WORLD_LOG=0). Every member runs one build (Kaniel 2026-10-12): a peer on
@@ -2990,6 +2990,7 @@ struct PartyListEntry {
     std::string role; // html, the game's role line
     std::string name;
     std::string name_line; // the name as shown, in white html (written over the tag's own)
+    std::string member;    // its board name (whose portrait the slot shows)
     u32 icon = 1;          // its icon's frame (PartyListIcon...)
 };
 // The icon sprite's frames beside each tag (CoopPartyIcon0-2, our drawings: hud_patch.py

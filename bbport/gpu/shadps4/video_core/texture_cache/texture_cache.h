@@ -356,6 +356,12 @@ private:
 
     /// Copies image memory back to CPU.
     void DownloadImageMemory(ImageId image_id, bool sync = false);
+    /// bbport co-op: party portraits (bbport_portraits.h). A placeholder slot's texture gets the
+    /// member's picture instead of its guest memory (true: uploaded); a slot whose picture changed
+    /// is refreshed; the status page's model is read back for this player's own portrait.
+    bool RefreshPortraitSlot(Image& image);
+    void NotePortraitTexture(Image& image);
+    void CaptureStatusModel(Image& image, bool bgra);
 
     /// Thread function for copying downloaded images out to CPU memory.
     void DownloadedImagesThread(const std::stop_token& token);

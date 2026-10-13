@@ -4191,6 +4191,7 @@ std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& pan
         // No role line: the icon says the state; the name goes on white after the tag's update
         // (name_line), since the game's own name text took html badly (rig 2026-10-12: a hang).
         entry.name = member.name.empty() ? member.member : member.name;
+        entry.member = member.member;
         entry.name_line = RoleLine("ece8df", entry.name);
         entry.max = std::max(member.max, 1);
         entry.hp = std::clamp(member.hp, 0, entry.max);

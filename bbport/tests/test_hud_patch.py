@@ -99,7 +99,7 @@ class GfxTests(unittest.TestCase):
         self.assertEqual(hud_patch.write_movie(hud_patch.read_movie(patched)), patched)
         _, tags = hud_patch.read_movie(patched)
         bitmaps = [t for t in tags if t.code == 36]
-        self.assertEqual(len(bitmaps), len(hud_patch.HUD_ICON_FRAMES) - 1)
+        self.assertEqual(len(bitmaps), len(hud_patch.HUD_ICON_FRAMES) - 1 + len(hud_patch.PARTY_FACES))
         sprites = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == hud_patch.SPRITE}
         first_frame = next(i for i, t in enumerate(tags) if t.code == hud_patch.SHOW_FRAME)
         places = {hud_patch.place_parts(t)[1]: t for t in tags[:first_frame] if t.code == hud_patch.PLACE_OBJECT2}
@@ -122,6 +122,84 @@ class GfxTests(unittest.TestCase):
             bar_y = hud_patch.LIST_Y + hud_patch.LIST_STEP * index + hud_patch.BAR_FROM_TAG[1]
             self.assertAlmostEqual(cy, bar_y, delta=1, msg='centred on the bar')
             self.assertEqual(bar_start - (cx + hud_patch.ICON_SIZE / 2), hud_patch.ICON_PAD, 'the padding')
+
+    def test_each_portrait_is_centred_on_its_whole_block_left_of_the_bar(self):
+        # Kaniel 2026-10-13: the member's portrait 1.5-2x the icon, centred vertically on the whole
+        # block (the name over the HP bar), left of the bar with the icon's padding.
+        self.assertGreaterEqual(hud_patch.PORTRAIT_SIZE, 1.5 * hud_patch.ICON_SIZE)
+        self.assertLessEqual(hud_patch.PORTRAIT_SIZE, 2 * hud_patch.ICON_SIZE)
+        bar_start = hud_patch.LIST_X + hud_patch.BAR_FROM_TAG[0]
+        for index in range(len(hud_patch.PARTY_FACES)):
+            cx, cy = hud_patch.portrait_centre(index)
+            bar_y = hud_patch.LIST_Y + hud_patch.LIST_STEP * index + hud_patch.BAR_FROM_TAG[1]
+            # The block on a 1080p rig screenshot (2026-10-13): the name's top 34.5 px over the bar's
+            # middle, the bar's bottom 4.5 px under it.
+            self.assertAlmostEqual(cy, bar_y + (-34.5 + 4.5) / 2, delta=0.5, msg='centred on the block')
+            self.assertEqual(bar_start - (cx + hud_patch.PORTRAIT_SIZE / 2), hud_patch.ICON_PAD, 'the padding')
+            self.assertGreater(cx - hud_patch.PORTRAIT_SIZE / 2, 0, 'on the stage')
+
+    def test_the_badge_sits_on_the_portraits_top_right_corner(self):
+        self.assertTrue(20 <= hud_patch.BADGE_SIZE <= 24)
+        for index in range(len(hud_patch.PARTY_BADGES)):
+            px, py = hud_patch.portrait_centre(index)
+            bx, by = hud_patch.badge_centre(index)
+            right, top = px + hud_patch.PORTRAIT_SIZE / 2, py - hud_patch.PORTRAIT_SIZE / 2
+            # On the corner: the badge covers it, its centre a little inside.
+            self.assertTrue(bx - hud_patch.BADGE_SIZE / 2 < right < bx + hud_patch.BADGE_SIZE / 2)
+            self.assertTrue(by - hud_patch.BADGE_SIZE / 2 < top < by + hud_patch.BADGE_SIZE / 2)
+            self.assertLessEqual(bx, right)
+            self.assertGreaterEqual(by, top)
+
+    def test_the_portraits_are_placeholder_bitmaps_the_port_fills(self):
+        # Each slot's sprite: nothing, then a square of its own bitmap, all one colour (the port's
+        # texture cache knows the slot by it and puts the member's picture in its place).
+        strip = hud_patch.HUD_ICONS.read_bytes()
+        patched = hud_patch.patch_fe(fe_movie(), strip)
+        self.assertEqual(hud_patch.write_movie(hud_patch.read_movie(patched)), patched)
+        _, tags = hud_patch.read_movie(patched)
+        first_frame = next(i for i, t in enumerate(tags) if t.code == hud_patch.SHOW_FRAME)
+        places = {hud_patch.place_parts(t)[1]: t for t in tags[:first_frame] if t.code == hud_patch.PLACE_OBJECT2}
+        sprites = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == hud_patch.SPRITE}
+        shapes = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == 2}
+        bitmaps = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == 36}
+        import zlib
+        for slot, name in enumerate(hud_patch.PARTY_FACES):
+            sprite = sprites[hud_patch.place_parts(places[name])[0]]
+            self.assertEqual(struct.unpack_from('<H', sprite.body, 2)[0], 2, 'nothing, then the picture')
+            shape = shapes[hud_patch.place_parts(next(t for t in sprite.children if t.code == 26))[0]]
+            bitmap = bitmaps[hud_patch.shape_bitmap(shape)]
+            char, form, width, height = struct.unpack_from('<HBHH', bitmap.body)
+            self.assertEqual((form, width, height), (5, hud_patch.PORTRAIT_PIXELS, hud_patch.PORTRAIT_PIXELS))
+            argb = zlib.decompress(bitmap.body[7:])
+            a, r, g, b = hud_patch.portrait_magic(slot)[3], *hud_patch.portrait_magic(slot)[:3]
+            self.assertEqual(argb, bytes((a, r, g, b)) * hud_patch.PORTRAIT_PIXELS ** 2)
+            self.assertEqual(r, b, 'the same in RGBA and BGRA')
+            self.assertEqual(a, 0xFF)
+        self.assertEqual(len({hud_patch.portrait_magic(slot) for slot in range(3)}), 3)
+        # The badges: the icon sprite again, small, above the portraits.
+        icon_char = hud_patch.place_parts(places['CoopPartyIcon0'])[0]
+        for face, badge in zip(hud_patch.PARTY_FACES, hud_patch.PARTY_BADGES):
+            self.assertEqual(hud_patch.place_parts(places[badge])[0], icon_char)
+            self.assertGreater(hud_patch.place_depth(places[badge]), hud_patch.place_depth(places[face]))
+        depths = [hud_patch.place_depth(t) for t in places.values()]
+        self.assertEqual(len(depths), len(set(depths)), 'a depth each')
+        defined = [struct.unpack_from('<H', t.body)[0] for t in tags if t.code in (2, 36, hud_patch.SPRITE)]
+        self.assertEqual(len(defined), len(set(defined)))
+        self.assertEqual(hud_patch.patch_fe(patched, strip), patched, 'once')
+
+    def test_a_list_patched_with_icons_before_the_portraits_gets_them(self):
+        strip = hud_patch.HUD_ICONS.read_bytes()
+        old = hud_patch.patch_fe(fe_movie(), strip, portraits=False)
+        self.assertIn(b'CoopPartyIcon0', old)
+        self.assertNotIn(b'CoopPartyFace0', old)
+        patched = hud_patch.patch_fe(old, strip)
+        for name in hud_patch.PARTY_FACES + hud_patch.PARTY_BADGES:
+            self.assertEqual(patched.count(name.encode() + b'\0'), 1)
+        self.assertEqual(patched.count(b'CoopPartyIcon0'), 1)
+        self.assertEqual(hud_patch.patch_fe(patched, strip), patched, 'once')
+
+    def test_the_portraits_make_a_new_patch_version(self):
+        self.assertNotIn(hud_patch.PATCH_VERSION, (b'party-hud 4', b'party-hud 3'))
 
     def test_a_list_patched_before_the_icons_gets_them(self):
         # Kaniel 2026-10-13: the HUD the mods showed was an older patch's (the list, no icons), and the

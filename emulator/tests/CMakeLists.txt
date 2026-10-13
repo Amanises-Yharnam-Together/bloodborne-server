@@ -341,7 +341,9 @@ gtest_discover_tests(shadps4_http_test
 
 add_executable(shadps4_bloodborne_test
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_party.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/bloodborne_portrait.cpp
     bloodborne/test_bloodborne_party.cpp
+    bloodborne/test_bloodborne_portrait.cpp
     bloodborne/test_bloodborne_party_controller.cpp
     bloodborne/test_bloodborne_lamp_rest.cpp
     bloodborne/test_bloodborne_boss_clear.cpp

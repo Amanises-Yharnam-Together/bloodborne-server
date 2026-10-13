@@ -1062,6 +1062,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
         enemy_step_due.store(true);
     }
     SendPeerHello();
+    TickPortraits();
     // Not while the world goes away: a trip's start posted the old map's characters as kills.
     if (!WatchesKills(sharing, PartyTripActive(), loading) ||
         (now - checked < HpBoardRound && !enemy_step_due.exchange(false))) {

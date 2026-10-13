@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -47,5 +48,12 @@ bool NativePartyListShown();
 // The party HUD's prompt (CoopPrompt) showed party death's prompt within the last half second (the
 // overlay then draws only its button glyph).
 bool NativePartyPromptShown();
+// Party portraits (bloodborne_portrait.h). The status page's model (its render target's RGBA
+// rows) as the port's texture cache read it back: this character's portrait once the page closes.
+void NoteStatusModel(std::span<const std::uint8_t> rgba, int width, int height);
+// The party list slot's picture (PortraitBytes into `rgba`; false when it shows none) and its
+// version, which changes whenever the picture does.
+bool ReadPortraitSlot(int slot, std::span<std::uint8_t> rgba, std::uint32_t& version);
+std::uint32_t PortraitSlotVersion(int slot);
 
 } // namespace Core::Bloodborne
