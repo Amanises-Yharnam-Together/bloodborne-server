@@ -621,9 +621,11 @@ void InstallSharedLoot(u64 base, u64 image_size) {
     } else {
         coop_features.On("menu client");
     }
-    if (MapItemPacketHeaderOffset + MapItemPacketHeader.size() > image_size ||
-        !InstallCoopHook(reinterpret_cast<void*>(base + MapItemPacketHeaderOffset),
-                         MapItemPacketHeader, 0, IgnorePartyMapItemSync)) {
+    if (channel_table_installed) {
+        coop_features.Skipped("map item sync", "the channel table drops map item packets");
+    } else if (MapItemPacketHeaderOffset + MapItemPacketHeader.size() > image_size ||
+               !InstallCoopHook(reinterpret_cast<void*>(base + MapItemPacketHeaderOffset),
+                                MapItemPacketHeader, 0, IgnorePartyMapItemSync)) {
         LOG_ERROR(Debug, "Bloodborne map item sync hook unavailable; the host's sync clears the "
                          "guest's map items");
         coop_features.Skipped("map item sync",

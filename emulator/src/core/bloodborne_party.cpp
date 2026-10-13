@@ -3599,6 +3599,78 @@ std::optional<NativePacketRecord> ParseNativePacketRecord(const TraceRecord& rec
                               *payload};
 }
 
+ChannelPolicy NativeChannelPolicy(u32 channel) {
+    switch (channel) {
+    case 0x04: // enemy positions
+    case 0x05: // enemy HP
+    case 0x06: // player state
+    case 0x0E: // Lua event calls
+    case 0x0F: // CompleteEvent flags
+    case 0x12: // throws
+    case 0x14: // hits on players
+    case 0x15: // a guest's hit on an enemy
+    case 0x16:
+    case 0x17: // enemy near lists
+    case 0x24:
+    case 0x25: // forced animations
+    case 0x29: // enemy join catch-up
+    case 0x2A: // breaks
+    case 0x2B: // object animations
+    case 0x2D: // object acts
+    case 0x2E: // object enable
+    case 0x30: // throw events
+    case 0x31: // EMEVD instance sync
+    case 0x34: // enemy hand-over block
+    case 0x36: // enemy join animations
+    case 0x37: // throw pair
+    case 0x3D: // enemy AI goal records
+    case 0x3E: // new bullets
+    case 0x40: // bullet updates
+    case 0x41: // enemy per-hit record
+        return ChannelPolicy::SameMap;
+    case 0x2C: // map items
+    case 0x2F: // the host's object state correction
+        return ChannelPolicy::Ours;
+    case 0x27: // the boss "thanks" kick
+        return ChannelPolicy::Drop;
+    default:
+        return ChannelPolicy::Pass;
+    }
+}
+
+std::string_view ChannelPolicyName(ChannelPolicy policy) {
+    switch (policy) {
+    case ChannelPolicy::SameMap:
+        return "same map";
+    case ChannelPolicy::Ours:
+        return "ours";
+    case ChannelPolicy::Drop:
+        return "drop";
+    case ChannelPolicy::Pass:
+        break;
+    }
+    return "pass";
+}
+
+bool ChannelTableEnabled(const char* setting) {
+    const std::string_view value{setting != nullptr ? setting : ""};
+    return value == "1" || value == "on";
+}
+
+bool KeepsNativePacket(u32 channel, PacketWay way, u32 own_map, std::optional<u32> peer_map) {
+    switch (NativeChannelPolicy(channel)) {
+    case ChannelPolicy::Pass:
+        return true;
+    case ChannelPolicy::Ours:
+    case ChannelPolicy::Drop:
+        return false;
+    case ChannelPolicy::SameMap:
+        break;
+    }
+    return way == PacketWay::Out || own_map == 0 || peer_map.value_or(0) == 0 ||
+           *peer_map == own_map;
+}
+
 const std::vector<DeathFlagSite>& DeathFlagSites() {
     static const std::vector<DeathFlagSite> sites{
         {0x018BF941, {0x80, 0x8B, 0xE3, 0x01, 0x00, 0x00, 0x01}, DeathRegister::Rbx, "death"},

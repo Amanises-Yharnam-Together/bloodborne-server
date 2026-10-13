@@ -86,6 +86,7 @@ bool cross_map_guest_handoff_hook_installed{};
 bool summon_reload_state_hook_installed{};
 bool deferred_summon_reload_hook_installed{};
 bool healing_fountain_host_availability_hook_installed{};
+bool channel_table_installed{};
 
 bool EnvFlagEnabled(const char* name) {
     const char* value = std::getenv(name);
@@ -451,6 +452,116 @@ void InstallNativePacketTrace(u64 base, u64 image_size) {
              packet_trace_mode == PacketTraceMode::Full ? "every payload" : "unknown payloads");
 }
 
+// See ChannelPolicy: the game's packets decided per channel at the send and at both receive paths.
+// Members are found on the map board by their online id; a board this old knows no map.
+constexpr auto ChannelTableBoardAge = std::chrono::seconds{5};
+
+// The map board's map of a member (`member_id` the game's {identity*, lock}), or nothing.
+std::optional<u32> BoardMapOf(u64 member_id) {
+    const u64 identity = member_id >= 0x10000 ? ReadValue<u64>(member_id, 0) : 0;
+    if (identity < 0x10000 || !HasMemoryAccess(identity + 0x36, 17, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    const auto online_id = NpOnlineIdAt({reinterpret_cast<const u8*>(identity + 0x36), 17});
+    if (!online_id) {
+        return std::nullopt;
+    }
+    const std::string member = BoardMemberOfOnlineId(*online_id);
+    std::scoped_lock lock{map_board_mutex};
+    if (std::chrono::steady_clock::now() - map_board_time > ChannelTableBoardAge) {
+        return std::nullopt;
+    }
+    const auto entry = std::ranges::find(map_board, member, &MemberMap::member);
+    return entry != map_board.end() ? std::optional{entry->map} : std::nullopt;
+}
+
+// Whether the game keeps a packet; a dropped one is logged once per channel and way, and put on
+// the co-op trace ("net-drop") while the packet trace runs.
+bool KeepsPacket(u32 channel, PacketWay way, u64 member_id) {
+    if (channel >= NativeChannelCount) {
+        return true;
+    }
+    const ChannelPolicy policy = NativeChannelPolicy(channel);
+    if (policy == ChannelPolicy::Pass) {
+        return true;
+    }
+    const u32 own_map = PlayingMap();
+    const std::optional<u32> peer_map =
+        policy == ChannelPolicy::SameMap ? BoardMapOf(member_id) : std::nullopt;
+    if (KeepsNativePacket(channel, way, own_map, peer_map)) {
+        return true;
+    }
+    static std::array<std::array<std::atomic<bool>, NativeChannelCount>, 2> logged{};
+    if (!logged[static_cast<size_t>(way)][channel].exchange(true)) {
+        LOG_INFO(Debug, "Bloodborne channel table: first {} packet on channel {:#x} dropped ({})",
+                 way == PacketWay::Out ? "sent" : "received", channel, ChannelPolicyName(policy));
+    }
+    if (packet_trace_mode != PacketTraceMode::Off) {
+        Trace("net-drop", {{"ch", fmt::format("{:02x}", channel)},
+                           {"way", way == PacketWay::Out ? "out" : "in"},
+                           {"policy", std::string{ChannelPolicyName(policy)}},
+                           {"map", fmt::format("{:x}", own_map)},
+                           {"peer-map", peer_map ? fmt::format("{:x}", *peer_map) : "-"}});
+    }
+    return false;
+}
+
+// The send's entry (0x017894E0: rdi the net sync, rsi the member id, edx the channel): true
+// returns 0, "not sent", as the game's own checks do.
+bool PS4_SYSV_ABI DecidePacketSend(u64, const GuestRegisterSnapshot* registers) {
+    return !KeepsPacket(static_cast<u32>(registers->rdx), PacketWay::Out, registers->rsi);
+}
+
+// The receive's channel checks in 0x01790C20 (r8 / rbx the member's queues, their member id at
+// +0x08): reliable (tag 0) before `movsxd rax, [rbx + 0x64]`, so the channel is rewritten there;
+// unreliable (tag 1) after `mov eax, [rdx]`, so eax is. DroppedNativeChannel makes the game's own
+// `cmp ..., 0x43; ja` drop it.
+void PS4_SYSV_ABI DecidePacketReceived(u64 tag, GuestRegisterSnapshot* registers) {
+    if (tag == 0) {
+        const u64 queues = registers->rbx;
+        const u32 channel = ReadValue<u32>(queues, 0x64);
+        if (!KeepsPacket(channel, PacketWay::In, queues + 0x08)) {
+            WriteValue(queues, 0x64, DroppedNativeChannel);
+        }
+        return;
+    }
+    const u32 channel = static_cast<u32>(registers->rax);
+    if (!KeepsPacket(channel, PacketWay::In, registers->r8 + 0x08)) {
+        registers->rax = DroppedNativeChannel;
+    }
+}
+
+void InstallChannelTable(u64 base, u64 image_size) {
+#ifdef BLOODBORNE_NATIVE_PORT
+    const bool wanted = party_controller.has_value() &&
+                        ChannelTableEnabled(std::getenv("SHADPS4_BLOODBORNE_CHANNEL_TABLE"));
+#else
+    // The port only (docs/SERVER_COOP_PLAN.md); shadPS4 keeps the old path.
+    const bool wanted = false;
+#endif
+    if (!wanted) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "channel table", "packets keep the old path")) {
+        return;
+    }
+    const bool installed =
+        InstallCoopHook(reinterpret_cast<void*>(base + PacketSendOffset), PacketSendPrologue, 0,
+                        DecidePacketSend) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + ReliableChannelCheckOffset),
+                        ReliableChannelCheck, 0, DecidePacketReceived) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + UnreliableChannelCheckOffset),
+                        UnreliableChannelCheck, 1, DecidePacketReceived);
+    if (!installed) {
+        coop_features.Skipped("channel table", "a hook did not go in");
+        return;
+    }
+    channel_table_installed = true;
+    coop_features.On("channel table");
+    LOG_INFO(Debug, "Bloodborne channel table: on (map items, the host's door corrections and the "
+                    "boss kick dropped; players, enemies, events and objects only on one map)");
+}
+
 // See SaveBackups: a thread of its own copies the saves a minute after the start, then every few
 // minutes, and keeps the newest few.
 void StartSaveBackups() {
@@ -713,6 +824,8 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallLampsAsCampfires(base, image_size);
     InstallNoLevelSyncInParty(base, image_size);
     InstallSolidNpcsInParty(base, image_size);
+    // Before the shared loot: the table takes over its map item packets.
+    InstallChannelTable(base, image_size);
     InstallSharedLoot(base, image_size);
     InstallLampsStayLitAtRegistration(base, image_size);
     InstallDeferredBossItems(base, image_size);

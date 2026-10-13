@@ -236,6 +236,8 @@ target_link_libraries(bbnet PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(bbnet PRIVATE BLOODBORNE_PARTY_DEATH_ALWAYS=1)
 # The port's HUD is patched at its start (scripts/hud_patch.py): party death shows its downed banner.
 target_compile_definitions(bbnet PRIVATE BLOODBORNE_PARTY_HUD=1)
+# Co-op on our own networking (docs/SERVER_COOP_PLAN.md) is built for the port only.
+target_compile_definitions(bbnet PRIVATE BLOODBORNE_NATIVE_PORT=1)
 # HTTPS (the community game server only speaks TLS) and gzip replies in cpp-httplib.
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
