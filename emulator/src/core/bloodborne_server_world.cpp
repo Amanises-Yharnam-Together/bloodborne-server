@@ -48,6 +48,15 @@ const bool server_world_switch = [] {
 #endif
 }();
 
+// Phase 4's enemy owners (see EnemyRole): SHADPS4_BLOODBORNE_ENEMY_OWNER=1 with the server world.
+const bool enemy_owner_switch =
+    server_world_switch && EnemyOwnerEnabled(std::getenv("SHADPS4_BLOODBORNE_ENEMY_OWNER"));
+
+// The server's enemy owners as last heard (the stream's thread writes, any thread reads).
+std::mutex owners_mutex;
+std::vector<EnemyOwnerEntry> server_owners;
+s64 owners_heard_ms = 0;
+
 const u32 run = [] {
     std::random_device random;
     return static_cast<u32>(random()) | 1u;
@@ -58,6 +67,8 @@ std::mutex stream_mutex;
 std::optional<CoopStream> stream;
 std::deque<bbcoop::Envelope> inbox;
 std::deque<bbcoop::Envelope> outbox;
+// Something for the kill step came (see TakeServerWorldNews).
+std::atomic<bool> inbox_news{false};
 std::string hello_party;
 std::string hello_member;
 bool hello_due = true;
@@ -82,6 +93,7 @@ bool IsBoard(const bbcoop::Envelope& envelope) {
     case bbcoop::Envelope::kEchoes:
     case bbcoop::Envelope::kVitalsBoard:
     case bbcoop::Envelope::kPortrait:
+    case bbcoop::Envelope::kEnemyOwners:
         return true;
     default:
         return false;
@@ -161,6 +173,16 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
                            std::vector<u8>(pixels.begin(), pixels.end()));
         return;
     }
+    case bbcoop::Envelope::kEnemyOwners: {
+        std::vector<EnemyOwnerEntry> owners;
+        for (const bbcoop::EnemyOwner& owner : envelope.enemy_owners().owners()) {
+            owners.push_back({owner.map(), owner.member(), owner.epoch()});
+        }
+        std::scoped_lock lock{owners_mutex};
+        server_owners = std::move(owners);
+        owners_heard_ms = SteadyMilliseconds();
+        return;
+    }
     default:
         return;
     }
@@ -189,6 +211,7 @@ void StreamTick(s64 now_ms) {
                         boards.push_back(std::move(*envelope));
                     } else {
                         inbox.push_back(std::move(*envelope));
+                        inbox_news.store(true);
                     }
                 }
             }
@@ -205,6 +228,7 @@ void StreamTick(s64 now_ms) {
             hello.mutable_hello()->set_member(hello_member);
             hello.mutable_hello()->set_run(run);
             hello.mutable_hello()->set_host(!IsPartyGuestRole());
+            hello.mutable_hello()->set_enemy_owner(enemy_owner_switch);
             stream->Send(EncodeEnvelope(hello), now_ms);
         }
         if (!hello_due) {
@@ -410,6 +434,22 @@ namespace Coop {
 
 bool ServerWorldOn() {
     return server_world_switch;
+}
+
+bool EnemyOwnerOn() {
+    return enemy_owner_switch;
+}
+
+bool TakeServerWorldNews() {
+    return enemy_owner_switch && inbox_news.exchange(false);
+}
+
+std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms) {
+    std::scoped_lock lock{owners_mutex};
+    if (owners_heard_ms == 0 || now_ms - owners_heard_ms > EnemyOwnersFreshMs) {
+        return {};
+    }
+    return server_owners;
 }
 
 ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms) {

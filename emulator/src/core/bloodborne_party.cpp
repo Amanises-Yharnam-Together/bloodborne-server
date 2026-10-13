@@ -3600,6 +3600,121 @@ std::string_view ChannelPolicyName(ChannelPolicy policy) {
     return "pass";
 }
 
+bool EnemyOwnerEnabled(const char* setting) {
+    return ChannelTableEnabled(setting);
+}
+
+const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32 map) {
+    const u32 area = EnemyOwnerArea(map);
+    if (area == 0) {
+        return nullptr;
+    }
+    const auto owner = std::ranges::find(owners, area, &EnemyOwnerEntry::area);
+    return owner != owners.end() ? &*owner : nullptr;
+}
+
+EnemyRole EnemyRoleOn(std::span<const EnemyOwnerEntry> owners, std::string_view self, u32 map) {
+    const EnemyOwnerEntry* owner = EnemyOwnerOf(owners, map);
+    if (owner == nullptr || self.empty() || owner->member.empty()) {
+        return EnemyRole::Unknown;
+    }
+    return owner->member == self ? EnemyRole::Owner : EnemyRole::Follower;
+}
+
+std::optional<s32> EnemySyncState(EnemyRole role, s32 state) {
+    if (state != MatchingStateHosting && state != MatchingStateSummonedGuest) {
+        return std::nullopt;
+    }
+    const s32 wanted = role == EnemyRole::Owner      ? MatchingStateHosting
+                       : role == EnemyRole::Follower ? MatchingStateSummonedGuest
+                                                     : state;
+    return wanted != state ? std::optional{wanted} : std::nullopt;
+}
+
+std::optional<s32> EnemyHitState(EnemyRole role, s32 state) {
+    if (role == EnemyRole::Follower && state == MatchingStateHosting) {
+        return MatchingStateSummonedGuest;
+    }
+    return std::nullopt;
+}
+
+std::optional<u16> EnemyOwnershipWord(EnemyRole role) {
+    switch (role) {
+    case EnemyRole::Owner:
+        return u16{0};
+    case EnemyRole::Follower:
+        return u16{0xFFFF};
+    case EnemyRole::Unknown:
+        break;
+    }
+    return std::nullopt;
+}
+
+namespace {
+
+// Positions, HP, catch-up and join animations: what only the enemies' runner sends.
+bool IsOwnersEnemyChannel(u32 channel) {
+    return channel == 0x04 || channel == 0x05 || channel == 0x29 || channel == 0x36;
+}
+
+} // namespace
+
+EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role) {
+    if (channel == 0x16 || channel == 0x17) {
+        return EnemyPacketFate::Drop;
+    }
+    if (channel == 0x15) {
+        return role == EnemyRole::Owner      ? EnemyPacketFate::Drop
+               : role == EnemyRole::Follower ? EnemyPacketFate::ToOwner
+                                             : EnemyPacketFate::Keep;
+    }
+    if (IsOwnersEnemyChannel(channel) && role == EnemyRole::Follower) {
+        return EnemyPacketFate::Drop;
+    }
+    return EnemyPacketFate::Keep;
+}
+
+bool KeepsEnemyPacketIn(u32 channel, EnemyRole role, bool from_owner) {
+    if (channel == 0x16 || channel == 0x17) {
+        return false;
+    }
+    if (channel == 0x15) {
+        return role != EnemyRole::Follower;
+    }
+    if (IsOwnersEnemyChannel(channel)) {
+        return role == EnemyRole::Unknown || (role == EnemyRole::Follower && from_owner);
+    }
+    return true;
+}
+
+std::optional<std::string> EnemyRoleLog::Change(EnemyRole role, u32 map,
+                                                const EnemyOwnerEntry* owner) {
+    std::string line;
+    switch (role) {
+    case EnemyRole::Owner:
+        line = fmt::format("enemy owner: this game runs map {:#x}'s enemies (epoch {})",
+                           EnemyOwnerArea(map), owner != nullptr ? owner->epoch : 0);
+        break;
+    case EnemyRole::Follower:
+        line = fmt::format("enemy owner: this game follows {} on map {:#x} (epoch {})",
+                           owner != nullptr ? owner->member : std::string{"?"}, EnemyOwnerArea(map),
+                           owner != nullptr ? owner->epoch : 0);
+        break;
+    case EnemyRole::Unknown:
+        line = "enemy owner: none (the game's own way)";
+        break;
+    }
+    if (!last && role == EnemyRole::Unknown) {
+        last = line;
+        return std::nullopt; // the start: nothing changed
+    }
+    if (last == line) {
+        return std::nullopt;
+    }
+    last = line;
+    return line;
+}
+
 bool ChannelTableEnabled(const char* setting) {
     const std::string_view value{setting != nullptr ? setting : ""};
     return value == "1" || value == "on";

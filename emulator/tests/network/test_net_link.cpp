@@ -58,11 +58,11 @@ TEST(NetLink, EncodesTheContractsDatagrams) {
     EXPECT_EQ(EncodeData(Loopback, Port1234, GameFrame), datagrams.at("data"));
     EXPECT_EQ(Encode(Kind::Ping, Ping{7, 1000}), datagrams.at("ping"));
     EXPECT_EQ(Encode(Kind::Pong, Ping{7, 1000}), datagrams.at("pong"));
-    EXPECT_EQ(Encode(Member{MemberState::Quiet, 3500, Loopback, Port1234, "Lisara"}),
+    EXPECT_EQ(Encode(Member{MemberState::Quiet, 3500, Loopback, Port1234, "Ada"}),
               datagrams.at("member.quiet"));
-    EXPECT_EQ(Encode(Member{MemberState::Back, 4200, Loopback, Port1234, "Lisara"}),
+    EXPECT_EQ(Encode(Member{MemberState::Back, 4200, Loopback, Port1234, "Ada"}),
               datagrams.at("member.back"));
-    EXPECT_EQ(Encode(Member{MemberState::Gone, 60000, Loopback, Port1234, "Lisara"}),
+    EXPECT_EQ(Encode(Member{MemberState::Gone, 60000, Loopback, Port1234, "Ada"}),
               datagrams.at("member.gone"));
 }
 
@@ -99,7 +99,7 @@ TEST(NetLink, DecodesTheContractsDatagrams) {
     EXPECT_EQ(quiet->gap_ms, 3500u);
     EXPECT_EQ(quiet->addr_nbo, Loopback);
     EXPECT_EQ(quiet->port_nbo, Port1234);
-    EXPECT_EQ(quiet->online_id, "Lisara");
+    EXPECT_EQ(quiet->online_id, "Ada");
     EXPECT_EQ(DecodeMember(datagrams.at("member.gone"))->state, MemberState::Gone);
 }
 

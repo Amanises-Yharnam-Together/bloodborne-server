@@ -2282,6 +2282,89 @@ constexpr std::array<u8, 8> ReliableChannelCheck{0x48, 0x63, 0x43, 0x64, 0x48, 0
 constexpr u64 UnreliableChannelCheckOffset = 0x01790C73;
 constexpr std::array<u8, 6> UnreliableChannelCheck{0x49, 0x89, 0xD6, 0x83, 0xF8, 0x43};
 
+// Phase 4 (docs/SERVER_COOP_PLAN.md): one game runs each occupied map's enemies, the one shadNet
+// names (bbcoop::EnemyOwners: the session's host while it is there, else the member there first,
+// handed on when it leaves, loads or goes silent); the others follow it.
+// SHADPS4_BLOODBORNE_ENEMY_OWNER=1 (port only, with the server world; it turns the channel table
+// on) until the rig passes. The game is host-centred: the host runs every enemy (ownership words at
+// WorldChrMan +0xA40 >= 0), sends their HP (ch 5, only at state +0x124 == 3) and applies the
+// guests' hits (ch 0x15, sent to the host); a guest applies the host's HP (only at state 6, read
+// from the host's member). The owner's game is made to act as that host for the enemies, a
+// follower's as a guest:
+//   ownership words  owner 0 (AI), follower 0xFFFF (the network controller follows the owner)
+//   HP sends         the state checks read 3 on the owner, 6 on a follower (EnemySyncState), and
+//                    a follower reads ch 5 from the owner's member, not the host's
+//   hits             a follower's 0x15 goes to the owner (our link), the owner's own is dropped
+//                    (its hit applied already); a host that follows sends its hits as a guest
+//                    does (EnemyHitState)
+//   packets          only the owner sends positions, HP, catch-up and join animations (4, 5,
+//                    0x29, 0x36) and a follower takes them from the owner only; the game's own
+//                    hand-out of enemies (0x16 near lists, 0x17 the host's answer) is dropped
+// The AI records (0x3D), per-hit records (0x41) and the hand-over block (0x34) go as they are: the
+// game sends 0x34 + 0x3D itself when a character changes hands (phase 0 trace).
+struct EnemyOwnerEntry {
+    u32 area = 0; // EnemyOwnerArea
+    std::string member;
+    u64 epoch = 0;
+    bool operator==(const EnemyOwnerEntry&) const = default;
+};
+// What an owner runs: one map (a block, as shadNet's EnemyOwners::AreaOf). The blocks of an area
+// are loaded together, but the game wakes a block's enemies only near a player in that world.
+constexpr u32 EnemyOwnerArea(u32 map) {
+    return map;
+}
+// The server answers every map (sent each second) with its owners: older ones are stale.
+constexpr s64 EnemyOwnersFreshMs = 3'000;
+// A new owner's copies take the log's HP (the last owner's reports) for this long.
+constexpr s64 EnemyOwnerTakeoverMs = 5'000;
+enum class EnemyRole : u8 { Unknown, Owner, Follower };
+bool EnemyOwnerEnabled(const char* setting);
+const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32 map);
+// This member's role on `map`: Unknown (the game's own way) out of the world (map 0), without a
+// name, or when nobody runs the area.
+EnemyRole EnemyRoleOn(std::span<const EnemyOwnerEntry> owners, std::string_view self, u32 map);
+// The session state a host-only check of the HP sync sees instead of `state` (3 hosting, 6 a
+// guest), or nothing to change.
+std::optional<s32> EnemySyncState(EnemyRole role, s32 state);
+// The state the hit on an enemy (0x01A29E40) sees instead: a host that follows sends its hits.
+std::optional<s32> EnemyHitState(EnemyRole role, s32 state);
+std::optional<u16> EnemyOwnershipWord(EnemyRole role);
+enum class EnemyPacketFate : u8 { Keep, Drop, ToOwner };
+EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role);
+// `from_owner`: the sender is the area's owner.
+bool KeepsEnemyPacketIn(u32 channel, EnemyRole role, bool from_owner);
+// One line per change of this member's role (or of the owner it follows).
+class EnemyRoleLog {
+public:
+    std::optional<std::string> Change(EnemyRole role, u32 map, const EnemyOwnerEntry* owner);
+
+private:
+    std::optional<std::string> last;
+};
+// The hooks (see InstallEnemyOwner), each with the instructions it copies:
+//   0x018EF26C the HP round's `mov rbx, [rbp - 0xF8]` between its `cmp [rax + 0x124], 3` and the
+//              jne: the zero flag is the owner's
+//   0x018EF578 the dirty HP send's `mov eax, [rdi + 0x124]` (then cmp 3: send, else cmp 6:
+//              receive): rdi points at a stand-in with the role's state for that read, put back
+//              at 0x018EF587 (`cmp byte [rbx + 0x664], 0`, the send branch) and 0x018EF684
+//              (`mov r12, rbx; test rdi, rdi`, the receive branch)
+//   0x01789495 the receive from the host's `add rbx, 0xD0` (0x017893E0, channel in r12d): rbx
+//              moved so the member read is the owner's
+//   0x01A2A102 the hit's `mov ecx, [rax + 0x124]` after the attacker is the local player: rax
+//              points at a stand-in (rax is overwritten before its next use)
+constexpr u64 EnemyHpRoundCheckOffset = 0x018EF26C;
+constexpr std::array<u8, 7> EnemyHpRoundCheck{0x48, 0x8B, 0x9D, 0x08, 0xFF, 0xFF, 0xFF};
+constexpr u64 EnemyHpStateReadOffset = 0x018EF578;
+constexpr std::array<u8, 6> EnemyHpStateRead{0x8B, 0x87, 0x24, 0x01, 0x00, 0x00};
+constexpr u64 EnemyHpSendBranchOffset = 0x018EF587;
+constexpr std::array<u8, 7> EnemyHpSendBranch{0x80, 0xBB, 0x64, 0x06, 0x00, 0x00, 0x00};
+constexpr u64 EnemyHpReceiveBranchOffset = 0x018EF684;
+constexpr std::array<u8, 6> EnemyHpReceiveBranch{0x49, 0x89, 0xDC, 0x48, 0x85, 0xFF};
+constexpr u64 ReceiveFromHostMemberOffset = 0x01789495;
+constexpr std::array<u8, 7> ReceiveFromHostMember{0x48, 0x81, 0xC3, 0xD0, 0x00, 0x00, 0x00};
+constexpr u64 EnemyHitStateReadOffset = 0x01A2A102;
+constexpr std::array<u8, 6> EnemyHitStateRead{0x8B, 0x88, 0x24, 0x01, 0x00, 0x00};
+
 // The game's packets in our frames (docs/SERVER_COOP_PLAN.md phase 2b, bloodborne_game_link.h,
 // see InstallGamePacketLink). The transport send under NetSync's send and its resend
 // (0x00C8F0A0: rdi the session, esi reliable, rdx the member id, rcx the packet {u32 channel,

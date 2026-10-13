@@ -263,6 +263,30 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
 4. **Enemy ownership from the server.** One owner per map (the first member there, handed on when it
    leaves); game enemy channels gated by it; own-hit counting, SharedDamage and the HP board retired.
    Rig: hit3, guest-hit-once, hp-together, lone-guest, dog.
+   **Built 2026-10-14** behind `SHADPS4_BLOODBORNE_ENEMY_OWNER=1` (port only, with the server
+   world; it turns the channel table on): shadNet names one owner per occupied **map** (a block,
+   not an area: the game wakes a block's enemies only near a player in that world, so a guest in
+   Cathedral Ward following the host in Central Yharnam saw them stand still), `EnemyOwners`
+   {map, member, epoch} in the Coop stream, sent on a change and with every answer to a member's
+   map (games now send map 0 in a load). The owner is the session's host while it is on the map
+   (a host that followed a guest put its own ownership words back every frame), else the member
+   there first; a load, a move away or 2.5 s of silence hands it on to the member there longest.
+   For games that run the owners (hello `enemy_owner`), shadNet takes new kills and HP reports on
+   a map only from its owner (kills made there before stand; a map nobody runs takes anyone's).
+   The game (`EnemyRole`, bloodborne_party.h): owner words 0 / follower 0xFFFF (a host that owns
+   keeps the game's own); the HP sync's host-only checks read 3 on the owner and 6 on a follower
+   (hooks 0x018EF26C, 0x018EF578/0x018EF587/0x018EF684); a follower reads ch 5 from the owner's
+   member (0x01789495 in the receive from the host); a follower's 0x15 goes to the owner over our
+   link, the owner's own is dropped; ch 4/5/0x29/0x36 only from and to the owner, 0x16/0x17
+   dropped; the owner reports its hurt enemies to the log as it reads them (at once when another
+   member's hit arrives), a new owner's copies take the log's HP for 5 s and a follower's always
+   (the game applies the owner's ch 5 only in one world, not after a trip; lower only, so a
+   follower's own hit counts once), on the next frame after the server's entries come; nobody
+   sends the direct damage frames. hit3: the others' bars 0.15 s behind a hit. The owner logs its frames and sends per second
+   every 10 s. Not as planned: the server does not filter the game's packets (the reliable ones
+   travel in our seq'd frames, so dropping one there breaks the stream); the receiver gates them.
+   0x34/0x3D/0x41 pass as they are (the game sends its own hand-over when the words change).
+   Rig: owner-leaves, owner-crash, border-fight (new) and the list above.
 5. **Team lobby in the game's menus.** Server teams and presence, the title menu item and dialogs,
    Start, and the join from the team (session events and rooms from the server's session; join
    snapshots from the world log). Rig: new verbs for the lobby, join, join3, join-apart, resume.
