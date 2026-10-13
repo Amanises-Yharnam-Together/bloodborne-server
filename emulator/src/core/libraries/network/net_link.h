@@ -1,0 +1,386 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#pragma once
+
+#include <algorithm>
+#include <cstring>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "common/types.h"
+
+// The server link (docs/SERVER_COOP_PLAN.md phase 2): every game keeps one UDP link to shadNet
+// and sends everything it would send to a peer through it; nothing goes game to game. The link
+// runs on the P2P transport's own socket, to shadNet's matching UDP port (the STUN ping's), so the
+// address shadNet records for a game there is the one the other games already know it by: the
+// server forwards a frame to the game at its destination and names the sender by that address, and
+// the games, signaling and NP emulation see the same addresses as before.
+//
+// A datagram: the signaling vport header (0xffff, 0xffff), "SHLK", the kind, its body. Numbers
+// are little-endian; addresses and ports as sockaddr_in holds them (network byte order).
+// server/tests/contracts/server_link_frames.txt has one of each; shadNet's server_link.h reads
+// and writes the same.
+namespace Libraries::Net::Link {
+
+constexpr u8 LinkVersion = 1;
+enum class Kind : u8 {
+    Hello = 1,   // game -> server: link version, online id, build
+    Welcome = 2, // server -> game: accepted, or refused with the reason (another build)
+    Data = 3,    // a frame for the peer at addr:port (game -> server), from it (server -> game)
+    Ping = 4,    // game -> server, once a second
+    Pong = 5,    // server -> game: the ping back
+    Member = 6,  // server -> game: another member's link went quiet, came back or is gone
+};
+struct Hello {
+    u8 version = LinkVersion;
+    std::string online_id;
+    // Which game this is: every member and the server run one build (the game's 0x60 record
+    // carries a raw vtable pointer, so another eboot cannot even read the packets).
+    std::string build;
+};
+struct Welcome {
+    bool accepted = false;
+    std::string text;
+};
+struct Data {
+    u32 addr_nbo = 0;
+    u16 port_nbo = 0;
+    std::span<const u8> frame; // the vport header and the payload, as P2P sent them
+};
+struct Ping {
+    u32 seq = 0;
+    u64 sent_ms = 0;
+};
+enum class MemberState : u8 { Quiet = 0, Back = 1, Gone = 2 };
+struct Member {
+    MemberState state = MemberState::Quiet;
+    u32 gap_ms = 0; // how long nothing came from it
+    u32 addr_nbo = 0;
+    u16 port_nbo = 0;
+    std::string online_id;
+};
+struct ServerEndpoint {
+    u32 addr_nbo = 0;
+    u16 port_nbo = 0;
+};
+
+constexpr size_t HeaderSize = 4 + 4 + 1; // vports, "SHLK", kind
+constexpr size_t DataHeaderSize = HeaderSize + 4 + 2;
+
+namespace Detail {
+
+inline std::vector<u8> Start(Kind kind) {
+    return {0xff, 0xff, 0xff, 0xff, 'S', 'H', 'L', 'K', static_cast<u8>(kind)};
+}
+
+template <typename T>
+void Put(std::vector<u8>& out, T value) {
+    for (size_t index = 0; index < sizeof(T); ++index) {
+        out.push_back(static_cast<u8>(static_cast<u64>(value) >> (8 * index)));
+    }
+}
+
+inline void PutRaw(std::vector<u8>& out, const void* data, size_t size) {
+    const auto* bytes = static_cast<const u8*>(data);
+    out.insert(out.end(), bytes, bytes + size);
+}
+
+inline void PutText(std::vector<u8>& out, std::string_view text) {
+    const size_t size = std::min<size_t>(text.size(), 0xFF);
+    out.push_back(static_cast<u8>(size));
+    PutRaw(out, text.data(), size);
+}
+
+// Reads a body from its start; every read fails once the bytes run out.
+class Reader {
+public:
+    explicit Reader(std::span<const u8> bytes) : bytes{bytes} {}
+
+    template <typename T>
+    bool Get(T& value) {
+        if (bytes.size() - at < sizeof(T)) {
+            return false;
+        }
+        u64 read = 0;
+        for (size_t index = 0; index < sizeof(T); ++index) {
+            read |= u64{bytes[at + index]} << (8 * index);
+        }
+        value = static_cast<T>(read);
+        at += sizeof(T);
+        return true;
+    }
+
+    bool GetRaw(void* out, size_t size) {
+        if (bytes.size() - at < size) {
+            return false;
+        }
+        std::memcpy(out, bytes.data() + at, size);
+        at += size;
+        return true;
+    }
+
+    bool GetText(std::string& text) {
+        u8 size = 0;
+        if (!Get(size) || bytes.size() - at < size) {
+            return false;
+        }
+        text.assign(reinterpret_cast<const char*>(bytes.data() + at), size);
+        at += size;
+        return true;
+    }
+
+    std::span<const u8> Rest() const {
+        return bytes.subspan(at);
+    }
+
+private:
+    std::span<const u8> bytes;
+    size_t at = 0;
+};
+
+// The body of a datagram of `kind`, or nothing.
+inline std::optional<Reader> Body(std::span<const u8> datagram, Kind kind) {
+    if (datagram.size() < HeaderSize || datagram[8] != static_cast<u8>(kind)) {
+        return std::nullopt;
+    }
+    static constexpr u8 head[8] = {0xff, 0xff, 0xff, 0xff, 'S', 'H', 'L', 'K'};
+    if (std::memcmp(datagram.data(), head, sizeof(head)) != 0) {
+        return std::nullopt;
+    }
+    return Reader{datagram.subspan(HeaderSize)};
+}
+
+} // namespace Detail
+
+// The kind of a link datagram, or nothing for anything else (signaling, the STUN ping, SHAD).
+inline std::optional<Kind> KindOf(std::span<const u8> datagram) {
+    if (datagram.size() < HeaderSize) {
+        return std::nullopt;
+    }
+    const u8 kind = datagram[8];
+    if (kind < static_cast<u8>(Kind::Hello) || kind > static_cast<u8>(Kind::Member)) {
+        return std::nullopt;
+    }
+    if (!Detail::Body(datagram, static_cast<Kind>(kind))) {
+        return std::nullopt;
+    }
+    return static_cast<Kind>(kind);
+}
+
+inline std::vector<u8> Encode(const Hello& hello) {
+    auto out = Detail::Start(Kind::Hello);
+    out.push_back(hello.version);
+    Detail::PutText(out, hello.online_id);
+    Detail::PutText(out, hello.build);
+    return out;
+}
+
+inline std::vector<u8> Encode(const Welcome& welcome) {
+    auto out = Detail::Start(Kind::Welcome);
+    out.push_back(welcome.accepted ? 1 : 0);
+    Detail::PutText(out, welcome.text);
+    return out;
+}
+
+inline std::vector<u8> EncodeData(u32 addr_nbo, u16 port_nbo, std::span<const u8> frame) {
+    auto out = Detail::Start(Kind::Data);
+    out.reserve(DataHeaderSize + frame.size());
+    Detail::PutRaw(out, &addr_nbo, sizeof(addr_nbo));
+    Detail::PutRaw(out, &port_nbo, sizeof(port_nbo));
+    out.insert(out.end(), frame.begin(), frame.end());
+    return out;
+}
+
+inline std::vector<u8> Encode(Kind kind, const Ping& ping) {
+    auto out = Detail::Start(kind);
+    Detail::Put(out, ping.seq);
+    Detail::Put(out, ping.sent_ms);
+    return out;
+}
+
+inline std::vector<u8> Encode(const Member& member) {
+    auto out = Detail::Start(Kind::Member);
+    out.push_back(static_cast<u8>(member.state));
+    Detail::Put(out, member.gap_ms);
+    Detail::PutRaw(out, &member.addr_nbo, sizeof(member.addr_nbo));
+    Detail::PutRaw(out, &member.port_nbo, sizeof(member.port_nbo));
+    Detail::PutText(out, member.online_id);
+    return out;
+}
+
+inline std::optional<Hello> DecodeHello(std::span<const u8> datagram) {
+    auto body = Detail::Body(datagram, Kind::Hello);
+    Hello hello;
+    if (!body || !body->Get(hello.version) || !body->GetText(hello.online_id) ||
+        !body->GetText(hello.build)) {
+        return std::nullopt;
+    }
+    return hello;
+}
+
+inline std::optional<Welcome> DecodeWelcome(std::span<const u8> datagram) {
+    auto body = Detail::Body(datagram, Kind::Welcome);
+    u8 accepted = 0;
+    Welcome welcome;
+    if (!body || !body->Get(accepted) || !body->GetText(welcome.text)) {
+        return std::nullopt;
+    }
+    welcome.accepted = accepted != 0;
+    return welcome;
+}
+
+inline std::optional<Data> DecodeData(std::span<const u8> datagram) {
+    auto body = Detail::Body(datagram, Kind::Data);
+    Data data;
+    if (!body || !body->GetRaw(&data.addr_nbo, sizeof(data.addr_nbo)) ||
+        !body->GetRaw(&data.port_nbo, sizeof(data.port_nbo))) {
+        return std::nullopt;
+    }
+    data.frame = body->Rest();
+    return data;
+}
+
+inline std::optional<Ping> DecodePing(Kind kind, std::span<const u8> datagram) {
+    auto body = Detail::Body(datagram, kind);
+    Ping ping;
+    if (!body || !body->Get(ping.seq) || !body->Get(ping.sent_ms)) {
+        return std::nullopt;
+    }
+    return ping;
+}
+
+inline std::optional<Member> DecodeMember(std::span<const u8> datagram) {
+    auto body = Detail::Body(datagram, Kind::Member);
+    u8 state = 0;
+    Member member;
+    if (!body || !body->Get(state) || state > static_cast<u8>(MemberState::Gone) ||
+        !body->Get(member.gap_ms) || !body->GetRaw(&member.addr_nbo, sizeof(member.addr_nbo)) ||
+        !body->GetRaw(&member.port_nbo, sizeof(member.port_nbo)) ||
+        !body->GetText(member.online_id)) {
+        return std::nullopt;
+    }
+    member.state = static_cast<MemberState>(state);
+    return member;
+}
+
+// Whether a frame for addr:port goes through the server: everything but what is for the server
+// itself (the STUN ping), once the server is known.
+inline bool RoutesThroughServer(const ServerEndpoint& server, u32 addr_nbo, u16 port_nbo) {
+    if (server.addr_nbo == 0 || server.port_nbo == 0) {
+        return false;
+    }
+    return addr_nbo != server.addr_nbo || port_nbo != server.port_nbo;
+}
+
+// The link to the server going quiet (no pong for quiet_ms) or answering again.
+struct LinkChange {
+    bool quiet = false;
+    s64 gap_ms = 0; // since the last pong (or the first ping, when none came)
+};
+// Round trips over the last summary's time.
+struct PingSummary {
+    u32 pings = 0;
+    u32 pongs = 0;
+    s64 min_ms = 0;
+    s64 avg_ms = 0;
+    s64 max_ms = 0;
+};
+// The game's side of the link's liveness: a ping a second, the round trip of each pong, an
+// outage when the server stops answering (each reported once), and a summary every 10 s.
+class PingMeter {
+public:
+    explicit PingMeter(s64 interval_ms = 1000, s64 quiet_ms = 3000, s64 summary_ms = 10'000)
+        : interval_ms{interval_ms}, quiet_ms{quiet_ms}, summary_ms{summary_ms} {}
+
+    // The next ping, when one is due.
+    std::optional<Ping> Due(s64 now_ms) {
+        if (sent_any && now_ms - last_sent_ms < interval_ms) {
+            return std::nullopt;
+        }
+        if (!sent_any) {
+            first_sent_ms = now_ms;
+            summary_from_ms = now_ms;
+        }
+        sent_any = true;
+        last_sent_ms = now_ms;
+        ++pings;
+        return Ping{next_seq++, static_cast<u64>(now_ms)};
+    }
+
+    // A pong: its round trip counted, and the link back when it was reported quiet.
+    std::optional<LinkChange> Pong(const Ping& pong, s64 now_ms) {
+        if (!sent_any || pong.seq >= next_seq || static_cast<s64>(pong.sent_ms) > now_ms) {
+            return std::nullopt; // not a ping of ours
+        }
+        const s64 rtt = now_ms - static_cast<s64>(pong.sent_ms);
+        min_ms = pongs == 0 ? rtt : std::min(min_ms, rtt);
+        max_ms = pongs == 0 ? rtt : std::max(max_ms, rtt);
+        total_ms += rtt;
+        ++pongs;
+        std::optional<LinkChange> change;
+        if (reported) {
+            reported = false;
+            change = LinkChange{false, now_ms - Heard()};
+        }
+        last_pong_ms = now_ms;
+        answered = true;
+        return change;
+    }
+
+    // The link newly quiet: pings going out and no pong for longer than quiet_ms.
+    std::optional<LinkChange> Check(s64 now_ms) {
+        if (!sent_any || reported) {
+            return std::nullopt;
+        }
+        const s64 gap = now_ms - Heard();
+        if (gap <= quiet_ms) {
+            return std::nullopt;
+        }
+        reported = true;
+        return LinkChange{true, gap};
+    }
+
+    // The round trips since the last summary, every summary_ms.
+    std::optional<PingSummary> TakeSummary(s64 now_ms) {
+        if (!sent_any || now_ms - summary_from_ms < summary_ms) {
+            return std::nullopt;
+        }
+        PingSummary summary{pings, pongs, min_ms, pongs == 0 ? 0 : total_ms / pongs, max_ms};
+        summary_from_ms = now_ms;
+        pings = pongs = 0;
+        min_ms = max_ms = total_ms = 0;
+        return summary;
+    }
+
+    bool Quiet() const {
+        return reported;
+    }
+
+private:
+    s64 Heard() const {
+        return answered ? last_pong_ms : first_sent_ms;
+    }
+
+    s64 interval_ms;
+    s64 quiet_ms;
+    s64 summary_ms;
+    u32 next_seq = 0;
+    bool sent_any = false;
+    bool answered = false;
+    bool reported = false;
+    s64 first_sent_ms = 0;
+    s64 last_sent_ms = 0;
+    s64 last_pong_ms = 0;
+    s64 summary_from_ms = 0;
+    u32 pings = 0;
+    u32 pongs = 0;
+    s64 min_ms = 0;
+    s64 max_ms = 0;
+    s64 total_ms = 0;
+};
+
+} // namespace Libraries::Net::Link

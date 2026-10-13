@@ -50,6 +50,7 @@
 #include "core/debugger.h"
 #include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
+#include "core/libraries/network/server_link.h"
 #include "core/libraries/network/sockets.h"
 #include "core/libraries/np/np_handler.h"
 #include "core/libraries/np/np_matching2/np_matching2_signaling.h"
@@ -745,10 +746,18 @@ void TickPartyController() {
 } // namespace Coop
 
 void SetBuildIdentity(std::string_view revision, u64 event_files) {
-    std::scoped_lock lock{peer_hello_mutex};
-    own_hello = PeerHello{.revision = std::string{revision},
-                          .event_files = event_files,
-                          .features = WorldLogSwitchOn() ? WorldLogFeature : u8{0}};
+    {
+        std::scoped_lock lock{peer_hello_mutex};
+        own_hello = PeerHello{.revision = std::string{revision},
+                              .event_files = event_files,
+                              .features = WorldLogSwitchOn() ? WorldLogFeature : u8{0}};
+    }
+    // The server link's hello: shadNet takes one build only (see PeerHello).
+    Libraries::Net::SetServerLinkBuild(
+        fmt::format("{} events {:x} protocol {}", revision, event_files, CoopProtocolVersion));
+    Libraries::Net::SetServerLinkObserver([](std::string_view event, std::string_view detail) {
+        Trace("link", {{"event", std::string{event}}, {"detail", std::string{detail}}});
+    });
 }
 
 void NoteSaveFileOpened(std::string_view guest_path) {

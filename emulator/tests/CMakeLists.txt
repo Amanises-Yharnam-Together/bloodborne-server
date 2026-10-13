@@ -279,6 +279,7 @@ set(HTTP_TEST_SOURCES
     network/test_http_lifecycle.cpp
     network/test_net_delay.cpp
     network/test_net_silence.cpp
+    network/test_net_link.cpp
 )
 
 add_executable(shadps4_http_test ${HTTP_TEST_SOURCES})
@@ -291,6 +292,9 @@ target_include_directories(shadps4_http_test PRIVATE
 )
 target_compile_features(shadps4_http_test PRIVATE cxx_std_23)
 target_compile_definitions(shadps4_http_test PRIVATE BOOST_ASIO_STANDALONE)
+# The server link's datagrams, shared with shadNet's tests (see test_net_link.cpp).
+target_compile_definitions(shadps4_http_test PRIVATE
+    BLOODBORNE_SERVER_LINK_CONTRACTS="${CMAKE_SOURCE_DIR}/../server/tests/contracts/server_link_frames.txt")
 
 target_link_libraries(shadps4_http_test PRIVATE
     GTest::gtest_main

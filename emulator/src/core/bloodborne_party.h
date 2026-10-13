@@ -2725,6 +2725,9 @@ std::size_t PruneSaveBackups(const std::filesystem::path& user_dir, std::size_t 
 //   trace-dropped        lines lost to a full queue (TraceQueue)
 //   net-out, net-in      a game packet sent or queued for this game, only with
 //                        SHADPS4_BLOODBORNE_PACKET_TRACE on (see PacketTraceMode)
+//   link                 the server link's events (SHADPS4_BLOODBORNE_SERVER_LINK, net_link.h):
+//                        event (welcome, refused, quiet, back, member-quiet/-back/-gone, rtt)
+//                        and detail
 // An "-in" record leaves out what did not change since its kind's last record, and its lists
 // only name what came, changed or went (TraceListDelta). SHADPS4_BLOODBORNE_TRACE=0 turns it off.
 // 2: the world log's records. 3: the game's packets.

@@ -187,6 +187,21 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
    packets relayed by the server instead of going P2P (the game still forms its rooms; only the
    bytes take the new path). Rig: join x25 (the join stall), host-crash, crash-rejoin, wipe3, the
    ping rig (50-100 ms).
+   **2a built 2026-10-13** behind `SHADPS4_BLOODBORNE_SERVER_LINK=1` (port only, off by default):
+   the P2P transport (p2p_sockets.cpp) sends every frame for a peer to shadNet's matching UDP port
+   (the STUN pings' socket) wrapped as a link datagram (`net_link.h`, shadNet `server_link.h`,
+   one of each in server/tests/contracts/server_link_frames.txt); shadNet forwards it to the game
+   at that address and names the sender by the address its STUN pings come from, which is the
+   address the peers already know it by. So signaling, NP emulation and the game see the same
+   peers, and no virtual addresses are needed. `Hello` (link version, online id, build; shadNet
+   takes one build at a time and refuses others), `Ping`/`Pong` once a second (round trip and
+   outages in the game's log and on the co-op trace, "link" records), per-member liveness on
+   shadNet (quiet after 3 s, gone after 60 s, told to the other members), the first 20 frames
+   between each pair and counters every 10 s in shadNet's log. `SHADPS4_P2P_DELAY_MS` still holds
+   every send. Rig: join 25/25 through the server. The join stall still happens (once in
+   crash-rejoin-hp): every frame of the failed join, the host's 271-byte one included, reached
+   the guest through the server and was acked, and the guest's game never called JoinRoom; the
+   stall is in the game's matching/join, not in signaling or UDP.
 3. **The world log moves into the server.** The host side (`WorldLogHost`) runs in shadNet, stores
    to disk, and serves snapshots per map; members propose to the server. Kills, shown, flags, map
    state and HP go over it; then the HTTP boards (/bloodborne/party/*) and their pollers are removed.

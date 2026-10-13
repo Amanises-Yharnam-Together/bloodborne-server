@@ -68,6 +68,9 @@ set(SOURCES
     src/cmd_matching.cpp
     src/stun_server.h
     src/stun_server.cpp
+    # The games' one link to the server (co-op phase 2)
+    src/server_link.h
+    src/server_link.cpp
     # WebAPI HTTP/JSON listener
     src/webapi_server.h
     src/webapi_server.cpp
@@ -180,6 +183,16 @@ if(BUILD_TESTING)
     target_include_directories(test_bloodborne_backend_json PRIVATE src)
     target_link_libraries(test_bloodborne_backend_json PRIVATE Qt6::Core)
     add_test(NAME bloodborne_backend_json COMMAND test_bloodborne_backend_json)
+
+    add_executable(test_server_link EXCLUDE_FROM_ALL
+        tests/test_server_link.cpp
+        src/server_link.cpp
+    )
+    target_include_directories(test_server_link PRIVATE src)
+    target_link_libraries(test_server_link PRIVATE Qt6::Core)
+    target_compile_definitions(test_server_link PRIVATE
+        BLOODBORNE_SERVER_LINK_CONTRACTS="${CMAKE_CURRENT_SOURCE_DIR}/tests/contracts/server_link_frames.txt")
+    add_test(NAME server_link COMMAND test_server_link)
 
     # The backend in shadnet against backend/bb_dummy_server.py: the same requests, the same
     # answers (needs Python 3).
