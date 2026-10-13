@@ -99,7 +99,7 @@ class GfxTests(unittest.TestCase):
         self.assertEqual(hud_patch.write_movie(hud_patch.read_movie(patched)), patched)
         _, tags = hud_patch.read_movie(patched)
         bitmaps = [t for t in tags if t.code == 36]
-        self.assertEqual(len(bitmaps), len(hud_patch.HUD_ICON_FRAMES) - 1 + len(hud_patch.PARTY_FACES))
+        self.assertEqual(len(bitmaps), len(hud_patch.HUD_ICON_FRAMES) - 1 + len(hud_patch.PARTY_FACES) + 1)
         sprites = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == hud_patch.SPRITE}
         first_frame = next(i for i, t in enumerate(tags) if t.code == hud_patch.SHOW_FRAME)
         places = {hud_patch.place_parts(t)[1]: t for t in tags[:first_frame] if t.code == hud_patch.PLACE_OBJECT2}
@@ -135,20 +135,74 @@ class GfxTests(unittest.TestCase):
             # The block on a 1080p rig screenshot (2026-10-13): the name's top 34.5 px over the bar's
             # middle, the bar's bottom 4.5 px under it.
             self.assertAlmostEqual(cy, bar_y + (-34.5 + 4.5) / 2, delta=0.5, msg='centred on the block')
-            self.assertEqual(bar_start - (cx + hud_patch.PORTRAIT_SIZE / 2), hud_patch.ICON_PAD, 'the padding')
-            self.assertGreater(cx - hud_patch.PORTRAIT_SIZE / 2, 0, 'on the stage')
+            # The padding from the portrait's frame (Kaniel 2026-10-13: a round portrait in a frame).
+            self.assertEqual(bar_start - (cx + hud_patch.FRAME_SIZE / 2), hud_patch.ICON_PAD, 'the padding')
+            self.assertGreater(cx - hud_patch.FRAME_SIZE / 2, 0, 'on the stage')
 
-    def test_the_badge_sits_on_the_portraits_top_right_corner(self):
+    def test_the_frame_rings_the_portrait(self):
+        # Kaniel 2026-10-13: a round portrait in a Bloodborne frame, drawn larger than it shows (crisp when
+        # scaled), a few pixels round the picture, shown with it (a second layer of the face sprite's picture
+        # frame).
+        self.assertGreaterEqual(hud_patch.FRAME_PIXELS, 2 * hud_patch.PORTRAIT_PIXELS)
+        self.assertTrue(hud_patch.PORTRAIT_SIZE + 8 <= hud_patch.FRAME_SIZE <= hud_patch.PORTRAIT_SIZE + 16)
+        strip = hud_patch.HUD_ICONS.read_bytes()
+        _, tags = hud_patch.read_movie(hud_patch.patch_fe(fe_movie(), strip))
+        first_frame = next(i for i, t in enumerate(tags) if t.code == hud_patch.SHOW_FRAME)
+        places = {hud_patch.place_parts(t)[1]: t for t in tags[:first_frame] if t.code == hud_patch.PLACE_OBJECT2}
+        sprites = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == hud_patch.SPRITE}
+        shapes = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == 2}
+        bitmaps = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == 36}
+        frame_shapes = set()
+        for index, name in enumerate(hud_patch.PARTY_FACES):
+            face = places[name]
+            scale, tx, ty = hud_patch.place_matrix(face)
+            scale = scale or 1
+            sprite = sprites[hud_patch.place_parts(face)[0]]
+            inner = [t for t in sprite.children if t.code == hud_patch.PLACE_OBJECT2]
+            self.assertEqual([hud_patch.place_depth(t) for t in inner], [1, 2], 'the picture, the frame over it')
+            # The frame: concentric with the portrait on the stage, FRAME_SIZE across.
+            frame_scale, fx, fy = hud_patch.place_matrix(inner[1])
+            size = hud_patch.FRAME_PIXELS * frame_scale * scale
+            self.assertAlmostEqual(size, hud_patch.FRAME_SIZE, delta=0.01)
+            centre = ((tx + fx * scale) / 20 + size / 2, (ty + fy * scale) / 20 + size / 2)
+            for got, want in zip(centre, hud_patch.portrait_centre(index)):
+                self.assertAlmostEqual(got, want, delta=0.1)
+            frame_shapes.add(hud_patch.place_parts(inner[1])[0])
+        self.assertEqual(len(frame_shapes), 1, 'one frame drawing for the three')
+        bitmap = bitmaps[hud_patch.shape_bitmap(shapes[frame_shapes.pop()])]
+        _, form, width, height = struct.unpack_from('<HBHH', bitmap.body)
+        self.assertEqual((form, width, height), (5, hud_patch.FRAME_PIXELS, hud_patch.FRAME_PIXELS))
+        import zlib
+        argb = zlib.decompress(bitmap.body[7:])
+
+        def alpha(x, y):
+            return argb[(y * width + x) * 4]
+        half = width // 2
+        self.assertEqual(alpha(half, half), 0, 'the portrait shows through')
+        self.assertEqual(alpha(2, 2), 0, 'round: its corners clear')
+        # The ring just round the picture (64 px of 76 across) is drawn.
+        ring = half * hud_patch.PORTRAIT_SIZE / hud_patch.FRAME_SIZE
+        self.assertTrue(any(alpha(half, round(half + ring + d)) > 0xC0 for d in range(-1, 4)))
+        # Drawn with the icons (gpu/art/party_icons.svg's h-frame), last in the HUD strip.
+        import party_icons_atlas
+        svg = party_icons_atlas.hud_strip_svg(party_icons_atlas.SVG.read_text(encoding='utf-8'))
+        self.assertIn('href="#h-frame" x="%d"' % (128 * len(hud_patch.HUD_ICON_FRAMES)), svg)
+        self.assertEqual(party_icons_atlas.HUD_COUNT, len(hud_patch.HUD_ICON_FRAMES) + 1)
+
+    def test_the_badge_sits_on_the_frames_top_right(self):
         self.assertTrue(20 <= hud_patch.BADGE_SIZE <= 24)
         for index in range(len(hud_patch.PARTY_BADGES)):
             px, py = hud_patch.portrait_centre(index)
             bx, by = hud_patch.badge_centre(index)
-            right, top = px + hud_patch.PORTRAIT_SIZE / 2, py - hud_patch.PORTRAIT_SIZE / 2
-            # On the corner: the badge covers it, its centre a little inside.
-            self.assertTrue(bx - hud_patch.BADGE_SIZE / 2 < right < bx + hud_patch.BADGE_SIZE / 2)
-            self.assertTrue(by - hud_patch.BADGE_SIZE / 2 < top < by + hud_patch.BADGE_SIZE / 2)
-            self.assertLessEqual(bx, right)
-            self.assertGreaterEqual(by, top)
+            # Up and right of the portrait's centre, on the diagonal, over the ring a little.
+            self.assertGreater(bx, px)
+            self.assertLess(by, py)
+            self.assertAlmostEqual(bx - px, py - by, delta=0.01)
+            distance = ((bx - px) ** 2 + (by - py) ** 2) ** 0.5
+            self.assertLess(distance - hud_patch.BADGE_SIZE / 2, hud_patch.FRAME_SIZE / 2, 'over the ring')
+            self.assertGreater(distance, hud_patch.FRAME_SIZE / 2 - 2, 'mostly outside it')
+            self.assertGreater(distance - hud_patch.BADGE_SIZE / 2, hud_patch.PORTRAIT_SIZE / 2 - 4,
+                               'the face uncovered')
 
     def test_the_portraits_are_placeholder_bitmaps_the_port_fills(self):
         # Each slot's sprite: nothing, then a square of its own bitmap, all one colour (the port's
@@ -199,7 +253,7 @@ class GfxTests(unittest.TestCase):
         self.assertEqual(hud_patch.patch_fe(patched, strip), patched, 'once')
 
     def test_the_portraits_make_a_new_patch_version(self):
-        self.assertNotIn(hud_patch.PATCH_VERSION, (b'party-hud 4', b'party-hud 3'))
+        self.assertNotIn(hud_patch.PATCH_VERSION, (b'party-hud 5', b'party-hud 4', b'party-hud 3'))
 
     def test_a_list_patched_before_the_icons_gets_them(self):
         # Kaniel 2026-10-13: the HUD the mods showed was an older patch's (the list, no icons), and the
