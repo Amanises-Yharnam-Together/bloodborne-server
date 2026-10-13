@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QLoggingCategory>
+#include "bloodborne_backend_server.h"
 #include "config.h"
 #include "server.h"
 #include "webapi_server.h"
@@ -24,8 +25,9 @@ int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
     app.setApplicationName("shadnet");
 
-    // Set working directory to executable location
-    QDir::setCurrent(QCoreApplication::applicationDirPath());
+    // Set working directory to executable location (SHADNET_HOME: another folder, for tests)
+    const QString home = qEnvironmentVariable("SHADNET_HOME");
+    QDir::setCurrent(home.isEmpty() ? QCoreApplication::applicationDirPath() : home);
 
     qInfo() << "ShadNet Qt server version" << versionString;
 
@@ -43,6 +45,13 @@ int main(int argc, char* argv[]) {
     WebApiServer webapi;
     if (!webapi.Start(&config, "db/shadnet.db", &server.Shared())) {
         qWarning() << "WebApiServer failed to start; continuing without WebAPI";
+    }
+
+    // The game's own online services (BloodborneBackend=true). When it cannot start, the kits'
+    // Python backend can take its port instead.
+    BloodborneBackendServer backend;
+    if (config.GetBackend().enabled && !backend.Start(&config)) {
+        qWarning() << "Backend failed to start; continuing without it";
     }
 
     return app.exec();

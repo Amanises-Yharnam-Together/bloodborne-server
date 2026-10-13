@@ -149,6 +149,29 @@ def with_setting(config: str, key: str, value: int) -> str:
     return re.sub(rf"(?m)^{key}=\d+$", f"{key}={value}", config)
 
 
+def with_value(config: str, key: str, value) -> str:
+    """shadnet.cfg's text with `key` set to `value`, added under [General] when it is missing."""
+    line = f"{key}={value}"
+    if re.search(rf"(?m)^{key}=", config):
+        return re.sub(rf"(?m)^{key}=.*$", lambda _: line, config)
+    if re.search(r"(?m)^\[General\]$", config):
+        return re.sub(r"(?m)^\[General\]$", lambda _: "[General]\n" + line, config, count=1)
+    return f"[General]\n{line}\n" + config
+
+
+# The game's online services (ss.info, login, messages): shadnet answers them itself
+# (BloodborneBackend). BB_PYTHON_BACKEND=1 runs backend/bb_dummy_server.py for them as before.
+def builtin_backend() -> bool:
+    return os.environ.get("BB_PYTHON_BACKEND") != "1"
+
+
+def with_backend(config: str, builtin: bool) -> str:
+    """shadnet.cfg's text with its own backend on the lane's backend port, or off."""
+    config = with_value(config, "BloodborneBackend", "true" if builtin else "false")
+    config = with_value(config, "BackendPort", BACKEND_PORT)
+    return with_value(config, "BackendAddress", "127.0.0.1")
+
+
 def with_matching_udp_port(config: str, port: int) -> str:
     """shadnet.cfg's text with its MatchingUdpPort set to `port`."""
     return with_setting(config, "MatchingUdpPort", port)
@@ -162,6 +185,7 @@ def configure_shadnet():
         wanted = with_matching_udp_port(text, matching_udp_port())
         wanted = with_setting(wanted, "UnsecuredPort", SHADNET_PORT)
         wanted = with_setting(wanted, "WebApiPort", WEBAPI_PORT)
+        wanted = with_backend(wanted, builtin_backend())
         if wanted != text:
             config.write_text(wanted, encoding="utf-8", newline="")
 
@@ -377,6 +401,11 @@ def start_servers(log_dir: pathlib.Path | None = None):
         configure_shadnet()
         start_server([str(lane_dir() / "server" / "shadnet.exe")], lane_dir() / "server",
                      log_dir / "shadnet.log" if log_dir else None)
+        # shadnet's own backend takes the backend port; the Python one only when it did not.
+        wanted = [SHADNET_PORT] + ([BACKEND_PORT] if builtin_backend() else [])
+        deadline = time.time() + 15
+        while time.time() < deadline and not all(map(port_open, wanted)):
+            time.sleep(0.25)
     if not port_open(BACKEND_PORT):
         start_server([sys.executable, "bb_dummy_server.py", "--address", "127.0.0.1", "--port",
                       str(BACKEND_PORT), "--shadnet-webapi", f"http://127.0.0.1:{WEBAPI_PORT}"],

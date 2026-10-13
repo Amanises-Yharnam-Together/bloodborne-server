@@ -11,6 +11,10 @@ of you runs, so going online only depends on your own PCs.
 Co-op is unaffected. Bell summoning already runs through your own shadNet, and
 once two players are connected the gameplay itself is direct PC to PC.
 
+shadNet can now answer all of this itself (BloodborneBackend=true in
+server\shadnet.cfg, the release kit's default). Then this Python server is not
+needed; "HOST - Start Servers" starts it only when nothing answers port 20443.
+
 
 TWO WAYS TO RUN IT
 ------------------

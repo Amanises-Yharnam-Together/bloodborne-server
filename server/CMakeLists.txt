@@ -88,12 +88,32 @@ set(SOURCES
     src/webapi_routes_bloodborne.h
     src/webapi_routes_bloodborne.cpp
     src/webapi_routes_common.h
+    # The game's own online services (backend/bb_dummy_server.py's job)
+    src/bloodborne_backend_json.h
+    src/bloodborne_backend_json.cpp
+    src/bloodborne_backend.h
+    src/bloodborne_backend.cpp
+    src/bloodborne_backend_server.h
+    src/bloodborne_backend_server.cpp
     # Read-only stats HTTP/JSON listener
     src/stats_server.h
     src/stats_server.cpp
 )
 
 add_executable(shadnet ${SOURCES})
+
+# The ss.info template the game's online check reads; the Python backend reads the same file.
+set(BLOODBORNE_SS_INFO_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/../backend/ss_info_template.xml"
+    CACHE FILEPATH "backend/ss_info_template.xml, built into shadnet")
+if(NOT EXISTS "${BLOODBORNE_SS_INFO_TEMPLATE}")
+    message(FATAL_ERROR "No ss.info template at ${BLOODBORNE_SS_INFO_TEMPLATE}")
+endif()
+get_filename_component(BLOODBORNE_SS_INFO_DIR "${BLOODBORNE_SS_INFO_TEMPLATE}" DIRECTORY)
+qt_add_resources(shadnet bloodborne_backend
+    PREFIX "/backend"
+    BASE "${BLOODBORNE_SS_INFO_DIR}"
+    FILES "${BLOODBORNE_SS_INFO_TEMPLATE}"
+)
 
 target_include_directories(shadnet PRIVATE
     src
@@ -152,6 +172,25 @@ if(BUILD_TESTING)
     target_include_directories(test_bloodborne_party_fuzz PRIVATE src)
     target_link_libraries(test_bloodborne_party_fuzz PRIVATE Qt6::Core)
     add_test(NAME bloodborne_party_fuzz COMMAND test_bloodborne_party_fuzz)
+
+    add_executable(test_bloodborne_backend_json EXCLUDE_FROM_ALL
+        tests/test_bloodborne_backend_json.cpp
+        src/bloodborne_backend_json.cpp
+    )
+    target_include_directories(test_bloodborne_backend_json PRIVATE src)
+    target_link_libraries(test_bloodborne_backend_json PRIVATE Qt6::Core)
+    add_test(NAME bloodborne_backend_json COMMAND test_bloodborne_backend_json)
+
+    # The backend in shadnet against backend/bb_dummy_server.py: the same requests, the same
+    # answers (needs Python 3).
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME bloodborne_backend_parity
+            COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_parity
+            WORKING_DIRECTORY "${BLOODBORNE_SS_INFO_DIR}/tests")
+        set_tests_properties(bloodborne_backend_parity PROPERTIES
+            ENVIRONMENT "SHADNET_EXE=$<TARGET_FILE:shadnet>")
+    endif()
 
     add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
         tests/bloodborne_matching_guest_probe.cpp
