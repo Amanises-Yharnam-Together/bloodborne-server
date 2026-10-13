@@ -1196,6 +1196,25 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
+    "portrait-auto": {
+        "about": "each player's portrait without the status page (Kaniel 2026-10-13: 'ideally "
+                 "yes'): no kept portraits, the players never open a menu; each game draws its "
+                 "character's status model off-screen and the other's party list shows it",
+        "no_portraits": True,
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 20", "shot party", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 20", "shot party", "snapshot",
+                      "expect-session 2"],
+        },
+        "expect": {role: [r"party portraits: off-screen model drawn; reading it back",
+                          r"party portraits: took the character's portrait",
+                          r"Party portraits: slot 0 texture 0x[0-9a-f]+ .* shows the member's "
+                          r"picture"]
+                   for role in ("host", "guest")},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
     "portrait-dressed": {
         "about": "party portraits on a dressed character (Kaniel 2026-10-13: are clothes on the portrait?): "
                  "Kaniel's guest character, in the starting Black Hood and Foreign Garb, opens its "

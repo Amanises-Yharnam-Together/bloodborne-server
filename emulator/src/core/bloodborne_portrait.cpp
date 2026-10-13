@@ -405,4 +405,25 @@ PartyListArt PartyListArtFor(const PartyListEntry& entry, bool portrait) {
     return PartyListArt{.icon = entry.icon, .badge = PartyListIconNone, .face = PortraitFrameNone};
 }
 
+OffscreenAction NextOffscreenAction(OffscreenState state, bool wanted, bool in_world, bool drawn,
+                                    bool captured, s64 in_state_ms, s64 since_build_ms) {
+    switch (state) {
+    case OffscreenState::Idle:
+        return wanted && in_world && since_build_ms >= OffscreenRetryMs ? OffscreenAction::Build
+                                                                        : OffscreenAction::Wait;
+    case OffscreenState::Building:
+        if (drawn) {
+            return OffscreenAction::ReadBack;
+        }
+        return !in_world || in_state_ms > OffscreenDrawTimeoutMs ? OffscreenAction::Close
+                                                                 : OffscreenAction::Wait;
+    case OffscreenState::Drawn:
+        return captured || !in_world || in_state_ms > OffscreenReadBackMs ? OffscreenAction::Close
+                                                                          : OffscreenAction::Wait;
+    case OffscreenState::Closing:
+        return in_state_ms >= OffscreenCloseMs ? OffscreenAction::Destroy : OffscreenAction::Wait;
+    }
+    return OffscreenAction::Wait;
+}
+
 } // namespace Core::Bloodborne

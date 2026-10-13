@@ -728,6 +728,140 @@ std::optional<std::array<s32, 4>> OwnOutfit() {
     return outfit;
 }
 
+#ifdef BLOODBORNE_PARTY_HUD
+// The status page's body renderer (CSMenuAsmModelRend, vtable 0x53A4F00) built off-screen, so a
+// character has its portrait without opening the status page (Kaniel 2026-10-13). It is a task of
+// its own: its constructor registers it, and it steps (Init .. Wait_Setup, the parts' load, then
+// Init_Play, Wait_Play: drawn into its target every frame) by itself. The status window
+// (0x1B35810) only fills its request and destroys it (0x1B35A40); so do we. Index 5 is
+// RankingBody: 560x768 with the status body's camera, a target of its own.
+constexpr u64 MenuHeapPointerOffset = 0x05540418;
+constexpr u64 BodyRendererConstructorOffset = 0x01DB1190;
+constexpr u64 BodyRendererSetArmourOffset = 0x01DB1B90;
+constexpr u64 OwnerHeapOffset = 0x0207B720;
+constexpr u64 GameDataManPointerOffset = 0x0553B130;
+constexpr s32 RankingBodyIndex = 5;
+constexpr u64 BodyRendererSize = 0x8A0;
+struct OffscreenModel {
+    OffscreenState state = OffscreenState::Idle;
+    u64 renderer = 0;
+    s64 since = 0;
+    s64 built_at = -1'000'000;
+    s32 logged_step = -2;
+};
+OffscreenModel offscreen;
+std::atomic<bool> offscreen_wanted{false};
+
+u64 PlayerGameDataNow() {
+    const u64 man = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    return man >= 0x10000 ? ReadValue<u64>(man, 8) : 0;
+}
+
+// Allocates and fills the renderer's request as the status window does (0x1B35963): the face
+// (PlayerGameData +0x4AC, 0xF0 bytes) at +0x568, the gender (+0xCA) at +0x658, the armour (its
+// ChrAsm, PlayerGameData +0x240) through 0x1DB1B90, no frames to wait (+0x7F0), the request
+// (+0x660).
+u64 BuildOffscreenModel() {
+    const u64 data = PlayerGameDataNow();
+    const u64 heap = ReadValue<u64>(image_base + MenuHeapPointerOffset, 0);
+    if (data < 0x10000 || heap < 0x10000 ||
+        !HasMemoryAccess(data + 0x4AC, 0xF0, MemoryProt::CpuRead)) {
+        return 0;
+    }
+    const u64 allocate = ReadValue<u64>(ReadValue<u64>(heap, 0), 0x58);
+    const u64 renderer = reinterpret_cast<u64 PS4_SYSV_ABI (*)(u64, u64, u64)>(allocate)(
+        heap, BodyRendererSize, 0x10);
+    if (renderer < 0x10000) {
+        return 0;
+    }
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(image_base + BodyRendererConstructorOffset)(
+        renderer, RankingBodyIndex);
+    std::memcpy(reinterpret_cast<void*>(renderer + 0x568),
+                reinterpret_cast<const void*>(data + 0x4AC), 0xF0);
+    WriteValue<u8>(renderer, 0x658, ReadValue<u8>(data, 0xCA));
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, u64)>(image_base + BodyRendererSetArmourOffset)(
+        renderer, data + 0x240);
+    WriteValue<s32>(renderer, 0x7F0, 0);
+    WriteValue<u8>(renderer, 0x660, 1);
+    return renderer;
+}
+
+// Wait_Play (6) with the parts loaded (+0x662) and its target in the draw list (+0xC8 +0x58).
+bool OffscreenModelDrawn(u64 renderer) {
+    const u64 target = ReadValue<u64>(renderer, 0xC8);
+    return ReadValue<s32>(renderer, 0x50) == 6 && ReadValue<u8>(renderer, 0x662) != 0 &&
+           target >= 0x10000 && ReadValue<u8>(target, 0x58) == 1;
+}
+
+void DestroyOffscreenModel(u64 renderer) {
+    const u64 heap =
+        reinterpret_cast<u64 PS4_SYSV_ABI (*)(u64)>(image_base + OwnerHeapOffset)(renderer);
+    const u64 vtable = ReadValue<u64>(renderer, 0);
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64)>(ReadValue<u64>(vtable, 0x08))(renderer);
+    if (heap >= 0x10000) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64, u64)>(
+            ReadValue<u64>(ReadValue<u64>(heap, 0), 0x70))(heap, renderer);
+    }
+}
+
+// One step of the off-screen portrait (TickPortraits, every 250 ms on the game's thread; see
+// NextOffscreenAction).
+void TickOffscreenPortrait(bool wanted, bool captured, s64 now) {
+    OffscreenModel& m = offscreen;
+    const u64 global = GetGlobalState();
+    const bool in_world =
+        global >= 0x10000 && ReadValue<u8>(global, 0x08) == 0 && GetLocalPlayer() >= 0x10000;
+    if (m.renderer != 0) {
+        const s32 step = ReadValue<s32>(m.renderer, 0x50);
+        if (step != m.logged_step) {
+            m.logged_step = step;
+            LOG_INFO(Debug, "Bloodborne party portraits: off-screen model step {} after {} ms",
+                     step, now - m.since);
+        }
+    }
+    const bool drawn = m.renderer != 0 && OffscreenModelDrawn(m.renderer);
+    switch (NextOffscreenAction(m.state, wanted, in_world, drawn, captured, now - m.since,
+                                now - m.built_at)) {
+    case OffscreenAction::Wait:
+        return;
+    case OffscreenAction::Build:
+        m.built_at = now;
+        m.since = now;
+        m.logged_step = -2;
+        m.renderer = BuildOffscreenModel();
+        LOG_INFO(Debug, "Bloodborne party portraits: off-screen model {:#x} built (RankingBody)",
+                 m.renderer);
+        if (m.renderer != 0) {
+            m.state = OffscreenState::Building;
+        }
+        return;
+    case OffscreenAction::ReadBack:
+        m.state = OffscreenState::Drawn;
+        m.since = now;
+        offscreen_wanted.store(true);
+        LOG_INFO(Debug, "Bloodborne party portraits: off-screen model drawn; reading it back");
+        return;
+    case OffscreenAction::Close:
+        if (m.state == OffscreenState::Building) {
+            LOG_INFO(Debug, "Bloodborne party portraits: off-screen model not drawn in time");
+        }
+        offscreen_wanted.store(false);
+        WriteValue<u8>(m.renderer, 0x661, 1);
+        m.state = OffscreenState::Closing;
+        m.since = now;
+        return;
+    case OffscreenAction::Destroy:
+        offscreen_wanted.store(false);
+        DestroyOffscreenModel(m.renderer);
+        LOG_INFO(Debug, "Bloodborne party portraits: off-screen model {:#x} destroyed", m.renderer);
+        m.state = OffscreenState::Idle;
+        m.renderer = 0;
+        return;
+    }
+}
+
+#endif
+
 } // namespace
 
 namespace Coop {
@@ -766,6 +900,11 @@ void TickPortraits() {
                  own ? "the character's portrait from " + PortraitCachePath(dir, *key).string()
                      : std::string{"no portrait yet (the status page takes it)"});
     }
+#ifdef BLOODBORNE_PARTY_HUD
+    // No portrait for this character and outfit yet: the status page's model, drawn off-screen
+    // (the port's texture cache reads it back).
+    TickOffscreenPortrait(key.has_value() && !own && !settled, settled.has_value(), now);
+#endif
     if (settled) {
         own = std::move(settled);
         const bool kept = key && SavePortrait(PortraitCachePath(dir, *key), *own);
@@ -1176,6 +1315,10 @@ void StartVitalsBoardClient() {
 }
 
 } // namespace Coop
+
+bool OffscreenPortraitWanted() {
+    return offscreen_wanted.load(std::memory_order_relaxed);
+}
 
 void NoteStatusModel(std::span<const u8> rgba, int width, int height) {
     auto portrait = PortraitFromModel(rgba, width, height);

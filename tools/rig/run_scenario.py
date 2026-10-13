@@ -623,6 +623,15 @@ def read_log(role: str) -> str:
         return ""
 
 
+def forget_portraits(role: str) -> bool:
+    """A role's kept party portraits (user/portraits) gone, for a scenario about taking them."""
+    folder = user_dir(role) / "portraits"
+    if not folder.is_dir():
+        return False
+    shutil.rmtree(folder)
+    return True
+
+
 def stages_of(script: list) -> list[list[str]]:
     """A role's scripts in turn: one script, or a list of them (the game is stopped once a stage
     is done, as a crash or a quit would, and started again with the next)."""
@@ -862,6 +871,8 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
         if not scenario.get("no_baseline") and restore_baseline(role, saves_from):
             print(f"  {role}: saves put back to "
                   f"{saves_from.parent.name if saves_from else 'the baseline'}")
+        if scenario.get("no_portraits") and forget_portraits(role):
+            print(f"  {role}: kept portraits removed")
     keep_shots(run_dir / "earlier", roles)  # an aborted run's, apart from this one's
     need = ENGINE.commit_gb * len(roles)
     free = free_commit_gb()
