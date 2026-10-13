@@ -162,7 +162,14 @@ std::string Service::Who(const Member& member) const {
 
 Service::Result Service::Load(qint64 now_ms) {
     Result result;
+    const auto loaded = [&] {
+        result.log.append(QStringLiteral("party worlds: %1, %2 loaded")
+                              .arg(folder.isEmpty() ? QStringLiteral("kept in memory only")
+                                                    : QStringLiteral("kept in ") + folder)
+                              .arg(worlds.size()));
+    };
     if (folder.isEmpty()) {
+        loaded();
         return result;
     }
     const QDir dir{folder};
@@ -199,6 +206,7 @@ Service::Result Service::Load(qint64 now_ms) {
             Compact(world, now_ms);
         }
     }
+    loaded();
     return result;
 }
 
@@ -474,7 +482,7 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     case bbcoop::Envelope::kEchoes:
     case bbcoop::Envelope::kVitals:
     case bbcoop::Envelope::kPortrait:
-        TakeBoard(member, world, envelope, now_ms);
+        TakeBoard(member, world, envelope, now_ms, result);
         break;
     case bbcoop::Envelope::kSnapshotRequest: {
         bbcoop::Envelope snapshot;
@@ -569,20 +577,55 @@ void Service::TakeWorld(Member& member, PartyWorld& world, const bbcoop::Envelop
 }
 
 void Service::TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
-                        qint64 now_ms) {
+                        qint64 now_ms, Result& result) {
+    // A member's part changes its board for everyone; else the board goes back to the member
+    // alone (as the HTTP boards answered every post): its copy stays fresh.
+    const auto answer = [&](unsigned changed, unsigned board) {
+        if (changed != PartyBoards::None) {
+            SendBoards(world, changed, now_ms);
+        } else {
+            SendBoards(world, board, now_ms, &member);
+        }
+    };
     switch (envelope.body_case()) {
     case bbcoop::Envelope::kMap:
-        SendBoards(world, world.boards.Map(member.name, envelope.map().map(), now_ms), now_ms);
+        answer(world.boards.Map(member.name, envelope.map().map(), now_ms), PartyBoards::Maps);
         return;
     case bbcoop::Envelope::kRest:
-        SendBoards(world, world.boards.Rest(member.name, envelope.rest(), now_ms), now_ms);
+        answer(world.boards.Rest(member.name, envelope.rest(), now_ms), PartyBoards::Rests);
         return;
     case bbcoop::Envelope::kTrophies:
-        SendBoards(world, world.boards.Trophies(envelope.trophies()), now_ms);
+        answer(world.boards.Trophies(envelope.trophies()), PartyBoards::TrophyBoard);
         return;
-    case bbcoop::Envelope::kVitals:
-        SendBoards(world, world.boards.Vitals(member.name, envelope.vitals(), now_ms), now_ms);
+    case bbcoop::Envelope::kVitals: {
+        answer(world.boards.Vitals(member.name, envelope.vitals(), now_ms),
+               PartyBoards::VitalsBoard);
+        // Logged when someone's state or the wipes change, not for every HP change.
+        static constexpr const char* Vitals[] = {"off", "up", "down", "dead"};
+        const bbcoop::VitalsBoard board = world.boards.VitalsMessage();
+        QStringList parts;
+        for (const auto& entry : board.members()) {
+            parts.append(QStringLiteral("%1 %2 %3")
+                             .arg(QString::fromStdString(entry.member()))
+                             .arg(Vitals[std::min<u32>(entry.vitals().vital(), 3)])
+                             .arg(Hex(entry.vitals().map())));
+        }
+        for (const auto& wipe : board.wipes()) {
+            QStringList members;
+            for (const std::string& name : wipe.members()) {
+                members.append(QString::fromStdString(name));
+            }
+            parts.append(QStringLiteral("wipe %1 of %2 (%3)")
+                             .arg(wipe.id())
+                             .arg(Hex(wipe.map()), members.join(' ')));
+        }
+        const QString logged = parts.join(QStringLiteral(", "));
+        if (logged != world.vitals_logged) {
+            world.vitals_logged = logged;
+            result.log.append(QStringLiteral("party world %1: vitals: %2").arg(world.name, logged));
+        }
         return;
+    }
     case bbcoop::Envelope::kEchoes:
         // Each kill's echoes to every other member once (the stream delivers them once).
         if (envelope.echoes().kills_size() > 0) {

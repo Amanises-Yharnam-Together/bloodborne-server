@@ -110,6 +110,7 @@ private:
         // member's last portrait.
         PartyBoards boards;
         std::map<std::string, bbcoop::Portrait> portraits;
+        QString vitals_logged; // the members' states and the wipes, as last logged
     };
     struct Member {
         explicit Member(quint32 instance) : stream{"shadnet", instance} {}
@@ -136,7 +137,7 @@ private:
                    qint64 now_ms, Result& result);
     // The boards' messages (phase 3c), and the changed boards to the party.
     void TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
-                   qint64 now_ms);
+                   qint64 now_ms, Result& result);
     void SendBoards(PartyWorld& world, unsigned changed, qint64 now_ms, Member* only = nullptr);
     void SendToOthers(PartyWorld& world, const Member& from, const bbcoop::Envelope& envelope,
                       qint64 now_ms);

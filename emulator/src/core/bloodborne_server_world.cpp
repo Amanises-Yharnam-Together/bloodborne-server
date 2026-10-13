@@ -39,14 +39,10 @@ constexpr s64 ReportResendMs = 5'000;
 
 const bool server_world_switch = [] {
 #ifdef BLOODBORNE_NATIVE_PORT
+    // On with the server link (phase 3c: the boards went with it), unless switched off ("0", a
+    // test of the host's own log: no boards then).
     const char* env = std::getenv("SHADPS4_BLOODBORNE_SERVER_WORLD");
-    const bool on = env != nullptr && std::string_view{env} == "1";
-    if (on && !Libraries::Net::ServerLinkSwitchOn()) {
-        LOG_ERROR(Debug, "Co-op server world: SHADPS4_BLOODBORNE_SERVER_WORLD needs "
-                         "SHADPS4_BLOODBORNE_SERVER_LINK=1; the host's game keeps the world");
-        return false;
-    }
-    return on;
+    return Libraries::Net::ServerLinkSwitchOn() && (env == nullptr || std::string_view{env} != "0");
 #else
     return false; // the port only (docs/SERVER_COOP_PLAN.md)
 #endif

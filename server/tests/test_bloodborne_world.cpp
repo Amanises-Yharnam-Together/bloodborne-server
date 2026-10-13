@@ -9,6 +9,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <random>
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -703,6 +704,85 @@ int ThePartyIsWipedWhenNobodyOnTheMapStands() {
   return 0;
 }
 
+// Whatever a client sends (the HTTP boards' parsers had a fuzz test; the
+// stream's frames and our messages have this one): random bytes, random frames
+// and messages with random fields never crash the service, and a member that
+// behaves still follows the log after them.
+int WhateverAGameSendsTheServiceKeepsWorking() {
+  Service service{{}};
+  std::mt19937 random{20261013};
+  const auto bytes = [&](size_t size) {
+    std::vector<u8> out(size);
+    for (u8 &byte : out) {
+      byte = static_cast<u8>(random());
+    }
+    return out;
+  };
+  qint64 now = 1'000'000;
+  for (int round = 0; round < 3000; ++round) {
+    const ServerLink::Endpoint from{0x7F000001,
+                                    static_cast<quint16>(2000 + round % 7)};
+    std::vector<u8> body;
+    switch (round % 3) {
+    case 0:
+      body = bytes(random() % 300);
+      break;
+    case 1: {
+      // A well-formed frame with random chunks in it.
+      GameFrame frame{"fuzz", 77, 0, 0, {}};
+      for (u32 entry = 0; entry < random() % 4; ++entry) {
+        frame.entries.push_back(
+            {PacketClass::Reliable, entry, bytes(random() % 200)});
+      }
+      body = EncodeGameFrame(frame);
+      break;
+    }
+    default: {
+      // A hello, then a well-formed message of a random kind with random
+      // fields.
+      CoopStream stream{"fuzz", static_cast<u32>(round + 1)};
+      bbcoop::Envelope hello;
+      hello.mutable_hello()->set_protocol(CoopProtocol);
+      hello.mutable_hello()->set_party("fuzz:party");
+      hello.mutable_hello()->set_member("f" + std::to_string(round % 5));
+      hello.mutable_hello()->set_host(round % 2 == 0);
+      stream.Send(EncodeEnvelope(hello), now);
+      std::vector<u8> message = bytes(random() % 120);
+      if (!message.empty()) {
+        message[0] =
+            static_cast<u8>(((random() % 21 + 1) << 3) | 2); // a field's tag
+      }
+      stream.Send(message, now);
+      for (const std::vector<u8> &frame_body : stream.Flush(now)) {
+        service.Receive(
+            from, "fuzz",
+            QByteArray(reinterpret_cast<const char *>(frame_body.data()),
+                       static_cast<qsizetype>(frame_body.size())),
+            now);
+      }
+      continue;
+    }
+    }
+    service.Receive(from, "fuzz",
+                    QByteArray(reinterpret_cast<const char *>(body.data()),
+                               static_cast<qsizetype>(body.size())),
+                    now);
+    if (round % 100 == 0) {
+      now += 700;
+      service.Tick(now);
+    }
+  }
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  host.Propose({{0x18000000, {42}}}, now + 10);
+  Pump(service, {&host, &guest}, now + 10);
+  CHECK(Killed(guest, 42));
+  return 0;
+}
+
 int APortraitGoesToTheOthersAndToLaterMembers() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -754,6 +834,8 @@ int main() {
        ThePartyIsWipedWhenNobodyOnTheMapStands},
       {"APortraitGoesToTheOthersAndToLaterMembers",
        APortraitGoesToTheOthersAndToLaterMembers},
+      {"WhateverAGameSendsTheServiceKeepsWorking",
+       WhateverAGameSendsTheServiceKeepsWorking},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {
