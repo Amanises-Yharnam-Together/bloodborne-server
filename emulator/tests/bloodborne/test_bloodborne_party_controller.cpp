@@ -853,6 +853,49 @@ TEST(BloodborneSharedLoot, AGuestsOwnTalkGivesItsNpcGift) {
     EXPECT_FALSE(GivesGuestNpcGift(true, true, 72410300));
 }
 
+// Kaniel 2026-10-13: "I hope this will work with all npc's". Every event that awards an item lot
+// once an NPC's talk sets its trigger and ends unless the local player is alive (common 9100 and
+// 9040, the maps' gift events) is in the table, with what the event does once it has given it.
+TEST(BloodborneSharedLoot, EveryNpcTalkGiftReachesAGuest) {
+    const auto gift = [](s32 trigger) { return NpcGiftFor(trigger); };
+    // Common event 9100: gives again whenever the talk sets the trigger; clears it.
+    ASSERT_TRUE(gift(72410310));
+    EXPECT_EQ(gift(72410310)->after, NpcGiftAfter::ClearTrigger);
+    // Common event 9040: once; its trigger stays on and ends the event (Gilbert's Flamesprayer,
+    // Djura's Powder Keg Hunter Badge, Eileen's Bold Hunter's Mark, the little girl's music box).
+    for (const auto [trigger, lot] :
+         {std::pair{9066, 29000}, std::pair{9071, 33000}, std::pair{9074, 35000},
+          std::pair{9067, 30000}, std::pair{9042, 17000}, std::pair{9077, 39010}}) {
+        ASSERT_TRUE(gift(trigger)) << trigger;
+        EXPECT_EQ(gift(trigger)->lot, lot) << trigger;
+        EXPECT_EQ(gift(trigger)->after, NpcGiftAfter::KeepTrigger) << trigger;
+    }
+    // Map events that end once their own flag is on (the event id, or id + slot): the guest's
+    // flag is set, else its own world's event gives the gift again at home.
+    ASSERT_TRUE(gift(72400441));
+    EXPECT_EQ(gift(72400441)->lot, 37000);
+    EXPECT_EQ(gift(72400441)->after, NpcGiftAfter::SetDoneFlag);
+    EXPECT_EQ(gift(72400441)->done_flag, 12400403);
+    ASSERT_TRUE(gift(72100112)) << "the Doll's Tear Stone";
+    EXPECT_EQ(gift(72100112)->done_flag, 12100123);
+    ASSERT_TRUE(gift(73500322));
+    EXPECT_EQ(gift(73500322)->done_flag, 13501922) << "event 13501920, slot 2";
+    EXPECT_EQ(gift(73400424)->done_flag, 13400980) << "event 13400980, slot 0";
+    // Map events like 9040 and like 9100.
+    EXPECT_EQ(gift(72700321)->after, NpcGiftAfter::KeepTrigger);
+    EXPECT_EQ(gift(73600300)->after, NpcGiftAfter::KeepTrigger);
+    EXPECT_EQ(gift(73500320)->after, NpcGiftAfter::ClearTrigger) << "Adeline's blood";
+    // Not gifts, or not decided by a talk (an NPC's death, Queenly Flesh's own event).
+    EXPECT_FALSE(gift(72410300));
+    EXPECT_FALSE(gift(1790));
+    EXPECT_FALSE(gift(73400430)) << "Simon's bowblade waits on his death too";
+    for (const NpcGift& each : NpcGifts) {
+        EXPECT_EQ(std::ranges::count(NpcGifts, each.trigger, &NpcGift::trigger), 1) << each.trigger;
+        EXPECT_GT(each.lot, 0);
+        EXPECT_EQ(each.after == NpcGiftAfter::SetDoneFlag, each.done_flag != 0) << each.trigger;
+    }
+}
+
 TEST(BloodborneSharedLoot, AMessengerGiftIsEachPlayersOwn) {
     EXPECT_TRUE(KeepsLocalFlag(true, 12101020));
     EXPECT_TRUE(KeepsLocalFlag(true, 12101029));
