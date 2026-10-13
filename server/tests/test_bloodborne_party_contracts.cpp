@@ -27,7 +27,7 @@ bool Check(bool condition, const char *expression, int line) {
   } while (false)
 
 const QByteArray Kaniel = "4b616e69656c";
-const QByteArray Lisara = "4c6973617261";
+const QByteArray Ada = "416461";
 constexpr quint32 CentralYharnam = 0x18010000;
 constexpr quint32 HuntersDream = 0x15000000;
 
@@ -69,7 +69,7 @@ int main() {
     const auto update = Bloodborne::ParseMapUpdate(message("map.update"));
     CHECK(update && update->member == Kaniel && update->map == CentralYharnam);
     CHECK(Bloodborne::FormatMapBoard(
-              {{Kaniel, CentralYharnam}, {Lisara, HuntersDream}}) ==
+              {{Kaniel, CentralYharnam}, {Ada, HuntersDream}}) ==
           message("map.answer"));
   }
   {
@@ -77,7 +77,7 @@ int main() {
     CHECK(update && update->member == Kaniel && update->lamp == 72410100 &&
           update->at == "-12.5 3 40.25");
     CHECK(Bloodborne::FormatRestBoard(
-              {{Kaniel, 72410100, "-12.5 3 40.25"}, {Lisara, 72410100, {}}}) ==
+              {{Kaniel, 72410100, "-12.5 3 40.25"}, {Ada, 72410100, {}}}) ==
           message("rest.answer"));
   }
   {
@@ -101,7 +101,7 @@ int main() {
           update->changes.size() == 1);
     CHECK(update->changes[0].flag == 268517532 && update->changes[0].on);
     Bloodborne::FlagBoardAnswer answer{
-        9, {{268517532, true}, {268517532, false}}, {Kaniel, Lisara}};
+        9, {{268517532, true}, {268517532, false}}, {Kaniel, Ada}};
     CHECK(Bloodborne::FormatKillBoard(answer) == message("kills.answer"));
   }
   for (const char *board : {"mapstate", "hp"}) {
@@ -127,13 +127,13 @@ int main() {
           update->self.map == CentralYharnam && update->self.vital == "up");
     CHECK(update->self.hp == 1200 && update->self.max == 1520 &&
           update->self.at == "-12.5 3 40.25");
-    CHECK(update->hits.size() == 1 && update->hits[0].target == Lisara &&
+    CHECK(update->hits.size() == 1 && update->hits[0].target == Ada &&
           update->hits[0].down == 4 && update->hits[0].hits == 2);
     Bloodborne::VitalsBoardAnswer answer;
     answer.members.append(update->self);
     answer.members.append(
-        {Lisara, CentralYharnam, "down", 1, 1380, 4, 2, 3, "-11 3 41", 2});
-    answer.wipes.append({1, HuntersDream, {Kaniel, Lisara}});
+        {Ada, CentralYharnam, "down", 1, 1380, 4, 2, 3, "-11 3 41", 2});
+    answer.wipes.append({1, HuntersDream, {Kaniel, Ada}});
     CHECK(Bloodborne::FormatVitalsBoard(answer) == message("vitals.answer"));
   }
 

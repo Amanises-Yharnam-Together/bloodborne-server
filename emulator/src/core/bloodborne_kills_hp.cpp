@@ -1126,7 +1126,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
         return change.second && died_for_others.contains(static_cast<u32>(change.first));
     });
     ShareEnemyHp(map, visit, pointers);
-    // A guest's own kill: its game makes no one-time drop (Lisara's hag, 2026-10-13).
+    // A guest's own kill: its game makes no one-time drop (Ada's hag, 2026-10-13).
     if (IsPartyGuestRole() && InPartySession()) {
         for (const auto& [handle, killed] : observed) {
             if (!killed || died_for_others.contains(static_cast<u32>(handle))) {

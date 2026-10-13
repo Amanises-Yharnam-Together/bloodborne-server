@@ -97,7 +97,7 @@ std::vector<u8> RandomBytes(std::mt19937& random, size_t max_size) {
 
 TEST(BloodborneFuzz, NoParserCrashesOnRandomInput) {
     std::mt19937 random{2026};
-    const std::vector<std::string> candidates{"Kaniel", "Lisara", "a"};
+    const std::vector<std::string> candidates{"Kaniel", "Ada", "a"};
     for (int round = 0; round < Rounds; ++round) {
         const std::string text = RandomText(random);
         // Only that they return; what they return is checked by the round trips below.
