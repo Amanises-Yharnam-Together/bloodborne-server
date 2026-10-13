@@ -495,6 +495,62 @@ TEST(BloodbornePartyDeath, ADownedBodyTakesTheInvadersTeamUntilItIsUp) {
     EXPECT_EQ(teams.Tick({{10, 6}}, {{10, 6}}), std::vector<CopyTeam>{});
 }
 
+// Which body is a downed member's: with three players the reviver stands over the body, nearer to
+// where the downed member posted than its own body (pushed off by the killing hit). The nearest
+// body flipped between the two each tick, so the downed one went back to its own team and the
+// punches passed through it (playtest 2026-10-13, rig down-revive3 since 2026-10-12): the body
+// picked for a down is kept while it is still there, and the others claim their own bodies first.
+TEST(BloodbornePartyDeath, KeepsTheDownedBodyItPickedWhileTheReviverStandsOverIt) {
+    DownedBodyPicker picker;
+    std::vector<MemberVitals> board{
+        MemberVitals{.member = "down", .map = 7, .vital = Vital::Down, .down = 3, .at = {0, 0, 0}},
+        MemberVitals{.member = "reviver", .map = 7, .vital = Vital::Up, .at = {6, 0, 0}},
+        MemberVitals{.member = "me", .map = 7, .vital = Vital::Up, .at = {3, 0, 0}}};
+    const auto handles = [](const std::vector<DownedBodyPick>& picks) {
+        std::vector<std::pair<std::string, u32>> out;
+        for (const DownedBodyPick& pick : picks) {
+            out.emplace_back(pick.member.member, pick.handle);
+        }
+        return out;
+    };
+    using Picks = std::vector<std::pair<std::string, u32>>;
+    // Just down: its body is where it posted.
+    EXPECT_EQ(handles(picker.Pick(board, "me", 7, {{{1, {0, 0, 0}}, {2, {6, 0, 0}}}})),
+              (Picks{{"down", 1}}));
+    // The reviver comes over and strikes: its body is now the nearer one to the posted spot.
+    for (int tick = 0; tick < 3; ++tick) {
+        EXPECT_EQ(handles(picker.Pick(board, "me", 7, {{{1, {1.5f, 0, 0}}, {2, {0.5f, 0, 0}}}})),
+                  (Picks{{"down", 1}}))
+            << tick;
+    }
+    // A new down of the same member picks again.
+    board[0].down = 4;
+    EXPECT_EQ(handles(picker.Pick(board, "me", 7, {{{1, {0.2f, 0, 0}}, {2, {6, 0, 0}}}})),
+              (Picks{{"down", 1}}));
+    // Up again: nothing picked.
+    board[0].vital = Vital::Up;
+    EXPECT_EQ(handles(picker.Pick(board, "me", 7, {{{1, {0.2f, 0, 0}}, {2, {6, 0, 0}}}})), Picks{});
+}
+
+// Downed with the reviver already next to it: the reviver's own body is the one nearest where the
+// reviver posted, so the downed member gets the other one; none within reach, no body.
+TEST(BloodbornePartyDeath, TheOtherMembersClaimTheirOwnBodiesFirst) {
+    DownedBodyPicker picker;
+    const std::vector<MemberVitals> board{
+        MemberVitals{.member = "down", .map = 7, .vital = Vital::Down, .down = 3, .at = {0, 0, 0}},
+        MemberVitals{.member = "reviver", .map = 7, .vital = Vital::Up, .at = {0.3f, 0, 0}},
+        MemberVitals{.member = "elsewhere", .map = 8, .vital = Vital::Up, .at = {0, 0, 0}}};
+    const auto picks = picker.Pick(board, "me", 7, {{{1, {0.6f, 0, 0}}, {2, {0.3f, 0, 0}}}});
+    ASSERT_EQ(picks.size(), 1u);
+    EXPECT_EQ(picks[0].member.member, "down");
+    EXPECT_EQ(picks[0].member.down, 3u);
+    EXPECT_EQ(picks[0].handle, 1u);
+
+    DownedBodyPicker far;
+    EXPECT_TRUE(far.Pick(board, "me", 7, {{{1, {5, 0, 0}}, {2, {0.3f, 0, 0}}}}).empty());
+    EXPECT_TRUE(far.Pick(board, "me", 0, {{{1, {0, 0, 0}}}}).empty()) << "no map";
+}
+
 TEST(BloodbornePartyDeath, GoesDownWithANewDownEachTime) {
     DownedState state{100};
     EXPECT_EQ(state.Current(), Vital::Up);

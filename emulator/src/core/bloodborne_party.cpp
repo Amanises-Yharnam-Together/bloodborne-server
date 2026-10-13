@@ -6403,6 +6403,80 @@ std::vector<CopyTeam> DownedTeams::Tick(const std::vector<CopyTeam>& downed,
     return writes;
 }
 
+std::vector<DownedBodyPick> DownedBodyPicker::Pick(std::span<const MemberVitals> board,
+                                                   std::string_view self, u32 map,
+                                                   std::span<const BodyPosition> bodies) {
+    const auto distance = [](const LampPosition& a, const LampPosition& b) {
+        return std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    };
+    std::vector<const MemberVitals*> downed, standing;
+    for (const MemberVitals& entry : board) {
+        if (map == 0 || entry.member == self || entry.map != map) {
+            continue;
+        }
+        if (entry.vital == Vital::Down) {
+            downed.push_back(&entry);
+        } else if (entry.vital != Vital::Off) {
+            standing.push_back(&entry);
+        }
+    }
+    std::vector<DownedBodyPick> picks;
+    std::vector<u32> taken;
+    // The body picked for the same down, still here and within reach of the spot.
+    std::vector<const MemberVitals*> unpicked;
+    for (const MemberVitals* entry : downed) {
+        const auto old = std::ranges::find_if(kept, [&](const DownedBodyPick& pick) {
+            return pick.member.member == entry->member && pick.member.down == entry->down;
+        });
+        const auto body = old != kept.end()
+                              ? std::ranges::find(bodies, old->handle, &BodyPosition::handle)
+                              : bodies.end();
+        if (body != bodies.end() && distance(body->at, entry->at) <= Reach &&
+            !std::ranges::contains(taken, body->handle)) {
+            picks.push_back(*old);
+            taken.push_back(body->handle);
+        } else {
+            unpicked.push_back(entry);
+        }
+    }
+    // New picks: the nearest member and body pairs first, the members standing up claiming theirs.
+    struct Pair {
+        float distance;
+        const MemberVitals* member;
+        u32 handle;
+    };
+    std::vector<Pair> pairs;
+    for (const BodyPosition& body : bodies) {
+        if (std::ranges::contains(taken, body.handle)) {
+            continue;
+        }
+        for (const MemberVitals* entry : unpicked) {
+            if (const float d = distance(body.at, entry->at); d <= Reach) {
+                pairs.push_back(Pair{d, entry, body.handle});
+            }
+        }
+        for (const MemberVitals* entry : standing) {
+            pairs.push_back(Pair{distance(body.at, entry->at), entry, body.handle});
+        }
+    }
+    std::ranges::stable_sort(pairs, {}, &Pair::distance);
+    std::vector<const MemberVitals*> matched;
+    for (const Pair& pair : pairs) {
+        if (std::ranges::contains(matched, pair.member) ||
+            std::ranges::contains(taken, pair.handle)) {
+            continue;
+        }
+        matched.push_back(pair.member);
+        taken.push_back(pair.handle);
+        if (pair.member->vital == Vital::Down) {
+            picks.push_back(
+                DownedBodyPick{DownedMember{pair.member->member, pair.member->down}, pair.handle});
+        }
+    }
+    kept = picks;
+    return picks;
+}
+
 std::vector<ReviveHitTotal> ReviveHits::Totals(std::span<const MemberVitals> board, bool fresh) {
     if (!fresh) {
         return totals;
