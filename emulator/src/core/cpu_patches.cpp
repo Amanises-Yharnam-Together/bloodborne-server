@@ -2222,7 +2222,7 @@ void RegisterPatchModule(void* module_ptr, u64 module_size, void* trampoline_are
 }
 
 static bool InstallGuestHook(void* address, std::span<const u8> expected_instructions, u64 tag,
-                             const void* hook, bool can_return) {
+                             const void* hook, GuestHookReturn returns) {
     constexpr size_t NearJumpBytes = 5;
 
     auto* code = static_cast<u8*>(address);
@@ -2253,7 +2253,7 @@ static bool InstallGuestHook(void* address, std::span<const u8> expected_instruc
     const size_t trampoline_offset = trampoline.getSize();
     const auto* trampoline_start = trampoline.getCurr();
     try {
-        EmitGuestHookTrampoline(trampoline, code, expected_instructions, tag, hook, can_return);
+        EmitGuestHookTrampoline(trampoline, code, expected_instructions, tag, hook, returns);
     } catch (const Xbyak::Error& error) {
         trampoline.setSize(trampoline_offset);
         HandleTrampolineError(module, error);
@@ -2311,20 +2311,26 @@ bool RemoveGuestCodeHook(void* address) {
 bool InstallGuestCodeHook(void* address, std::span<const u8> expected_instructions, u64 tag,
                           GuestCodeHook hook) {
     return InstallGuestHook(address, expected_instructions, tag,
-                            reinterpret_cast<const void*>(hook), false);
+                            reinterpret_cast<const void*>(hook), GuestHookReturn::No);
 }
 
 bool InstallGuestFunctionOverride(void* address, std::span<const u8> expected_instructions, u64 tag,
                                   GuestFunctionOverride hook) {
     return InstallGuestHook(address, expected_instructions, tag,
-                            reinterpret_cast<const void*>(hook), true);
+                            reinterpret_cast<const void*>(hook), GuestHookReturn::Zero);
+}
+
+bool InstallGuestFunctionResult(void* address, std::span<const u8> expected_instructions, u64 tag,
+                                GuestFunctionResult hook) {
+    return InstallGuestHook(address, expected_instructions, tag,
+                            reinterpret_cast<const void*>(hook), GuestHookReturn::Rax);
 }
 
 bool InstallGuestRegisterEditHook(void* address, std::span<const u8> expected_instructions, u64 tag,
                                   GuestRegisterEditHook hook) {
     // The trampoline already reloads every register (and the flags) from the snapshot.
     return InstallGuestHook(address, expected_instructions, tag,
-                            reinterpret_cast<const void*>(hook), false);
+                            reinterpret_cast<const void*>(hook), GuestHookReturn::No);
 }
 
 void PrePatchInstructions(u64 segment_addr, u64 segment_size) {

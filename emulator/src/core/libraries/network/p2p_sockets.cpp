@@ -93,6 +93,8 @@ enum class InternalChannel {
     Matching2,
     // Seamless co-op's own frames between the games ("SHAD" type 0x30: enemy damage).
     Coop,
+    // The game's own packets in our frames ("SHAD" type 0x40, bloodborne_game_link.h).
+    GamePackets,
 };
 
 struct QueuedPacket {
@@ -536,6 +538,8 @@ private:
             return matching2_queue;
         case InternalChannel::Coop:
             return coop_queue;
+        case InternalChannel::GamePackets:
+            return game_packets_queue;
         }
         return signaling_queue;
     }
@@ -550,6 +554,9 @@ private:
             }
             if ((payload[4] & 0xF0) == 0x30) { // co-op: 0x30 damage, 0x31 vitals, 0x32 kills
                 return InternalChannel::Coop;
+            }
+            if (payload[4] == 0x40) {
+                return InternalChannel::GamePackets;
             }
         }
         // STUN echo (6 bytes) and generic signaling 0x05/0x06/0x07 land here.
@@ -567,6 +574,10 @@ private:
         auto& queue = QueueFor(channel);
         // Nobody may read the co-op queue (no party): keep only the newest frames.
         if (channel == InternalChannel::Coop && queue.size() >= 256) {
+            queue.pop_front();
+        }
+        // Read every few milliseconds while a party plays; a run without one keeps the newest.
+        if (channel == InternalChannel::GamePackets && queue.size() >= 4096) {
             queue.pop_front();
         }
         queue.push_back(std::move(packet));
@@ -903,6 +914,7 @@ private:
     std::deque<QueuedPacket> control_queue;
     std::deque<QueuedPacket> matching2_queue;
     std::deque<QueuedPacket> coop_queue;
+    std::deque<QueuedPacket> game_packets_queue;
 };
 
 int ReadIntegerOption(const void* optval, u32 optlen, int* out) {
@@ -1468,6 +1480,11 @@ int P2PCoopSendTo(const void* data, u32 len, u32 dest_addr, u16 dest_port) {
         return -1; // no session has started the transport
     }
     return P2PTransport::Instance().SendInternal(data, len, dest_addr, dest_port);
+}
+
+int P2PGamePacketsRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {
+    return P2PTransport::Instance().ReceiveInternal(InternalChannel::GamePackets, buf, len,
+                                                    from_addr, from_port);
 }
 
 int P2PCoopRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {

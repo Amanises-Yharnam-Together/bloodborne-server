@@ -60,6 +60,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"boss death tracer", false},
     {"native packet trace", false},
     {"channel table", false},
+    {"game packet link", false},
     {"host leaves", true},
     {"seamless travel", true},
     {"stop request", true},
@@ -254,6 +255,9 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "48 63 43 64 48 83 F8 43"},
     {"unreliable channel check", "channel table", CoopSiteKind::Hook, 0x01790C73,
      "49 89 D6 83 F8 43"},
+    // The game's packets in our frames (InstallGamePacketLink): the transport send (the member
+    // queues' fill 0x01790C20 is called, not hooked).
+    {"transport send", "game packet link", CoopSiteKind::Hook, 0x00C8F0A0, "55 48 89 E5 41 57"},
 
     {"leave limit", "host leaves", CoopSiteKind::Hook, 0x0138A4A0, "55 48 89 E5 53 50"},
 
