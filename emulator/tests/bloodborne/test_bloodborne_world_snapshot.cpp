@@ -189,3 +189,28 @@ TEST(WorldSnapshot, AMemberTakesTheHostsWorldFromTheServer) {
     EXPECT_EQ(member.Hp(), host.Hp());
     EXPECT_TRUE(member.Fresh(0));
 }
+
+// A member that joins after the host's return point changed gets it from the snapshot (the map
+// state part carries it), over the link or from the server.
+TEST(WorldSnapshot, ASnapshotCarriesTheHostsReturnPoint) {
+    const WorldLogMapStateSnapshot part{"686f7374", WorldLogEpoch(7, 2), 9, {}, {2412951, Yharnam}};
+    const auto payload = EncodeWorldLogMapStateSnapshot(part);
+    EXPECT_EQ(DecodeWorldLogMapStateSnapshot(payload), part);
+    for (size_t size = 0; size < payload.size(); ++size) {
+        EXPECT_FALSE(DecodeWorldLogMapStateSnapshot(std::span{payload}.first(size))) << size;
+    }
+
+    WorldLogHost host;
+    const u64 epoch = WorldLogEpoch(7, 1);
+    host.Start(epoch, false);
+    host.ReturnPoint(2412951, Yharnam);
+    host.Propose({"g", epoch, 5, 1, {{Yharnam, {0x10}}}});
+    EXPECT_EQ(host.MapStateSnapshot("h").return_point, (WorldLogReturnPoint{2412951, Yharnam}));
+    WorldLogMember late;
+    late.Take(BatchWorldLog("h", epoch, host.Last(), {})[0], 0);
+    const auto frames = DecodeWorldSnapshot(EncodeWorldSnapshot(HostFrames(host)));
+    ASSERT_TRUE(frames);
+    TakeFrames(late, *frames, 10);
+    EXPECT_TRUE(late.Fresh(10));
+    EXPECT_EQ(late.HostReturnPoint(), (WorldLogReturnPoint{2412951, Yharnam}));
+}

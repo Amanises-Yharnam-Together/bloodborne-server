@@ -82,15 +82,19 @@ ENGINE = engines.ENGINES["emulator"]
 # go side by side (--lanes). A lane's games are the ones this process started (LAUNCHED): it
 # stops only those, never another lane's.
 LANE = 0
+# Whether this process is one lane of a --lanes batch, lane 0 too (rig 2026-10-13: lane 0's end of
+# a run closed the other lanes' games, which then ran again as crashed).
+IN_LANES = False
 LAUNCHED: list[subprocess.Popen] = []
 # Each lane's P2P ports this far after the last's (the roles' own differ by 1).
 LANE_P2P_STEP = 10
 
 
-def use_lane(lane: int):
-    global LANE, SHADNET_PORT, WEBAPI_PORT, BACKEND_PORT
+def use_lane(lane: int, in_lanes: bool = False):
+    global LANE, IN_LANES, SHADNET_PORT, WEBAPI_PORT, BACKEND_PORT
     engines.use_lane(lane)
     LANE = lane
+    IN_LANES = in_lanes or lane != 0
     SHADNET_PORT, WEBAPI_PORT, BACKEND_PORT = (engines.SHADNET_PORT, engines.WEBAPI_PORT,
                                                engines.BACKEND_PORT)
 
@@ -304,7 +308,7 @@ def stop_games():
     stay open until then). A window close first: a game stopped hard leaves some of its memory
     with the GPU driver until Windows restarts (0.2-0.4 GB a game, measured), which over a day of
     runs left no room for three games. A game that does not close in 15 s is stopped."""
-    if LANE:
+    if IN_LANES:
         stop_lane_games()
         return
     for pid in games()[0]:
@@ -484,9 +488,12 @@ def save_baseline(role: str, engine: engines.Emulator | None = None):
         shutil.copy2(party_file, baseline / party_file.name)
 
 
-def restore_baseline(role: str, saves_from: pathlib.Path | None = None) -> bool:
+def restore_baseline(role: str, saves_from: pathlib.Path | None = None,
+                     keep_party_files: bool = False) -> bool:
     """The role's baseline saves and party files put back; with `saves_from` (a scenario's
-    "saves", under rig/saves), that savedata instead and no party files: a new character."""
+    "saves", under rig/saves), that savedata instead and no party files: a new character. With
+    `keep_party_files` (a suite's restart with other saves) the party files stay as they are: a
+    player making a new character in the same install keeps the old one's."""
     baseline = ENGINE.role_dir(role) / "baseline"
     source = saves_from if saves_from is not None else baseline / "savedata"
     if not source.is_dir():
@@ -494,6 +501,8 @@ def restore_baseline(role: str, saves_from: pathlib.Path | None = None) -> bool:
     saves = ENGINE.saves(role)
     shutil.rmtree(saves, ignore_errors=True)
     shutil.copytree(source, saves)
+    if keep_party_files:
+        return True
     for party_file in user_dir(role).glob("bloodborne_party_*.txt"):
         party_file.unlink()
     for party_file in baseline.glob("bloodborne_party_*.txt") if saves_from is None else []:
@@ -879,7 +888,10 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
                 keep_logs(run_dir, [role], f"-stage{stage[role]}")
                 # A suite's restart with other saves (a new character): put in before it starts.
                 if saves := scenario.get("stage_saves", {}).get(role, {}).get(stage[role]):
-                    restore_baseline(role, RIG / "saves" / saves / "savedata")
+                    # Rig 2026-10-13: dropping the party files left the new-character check
+                    # nothing to tell apart (no kept lists, no backups).
+                    restore_baseline(role, RIG / "saves" / saves / "savedata",
+                                     keep_party_files=True)
                     print(f"  {role}: saves put back to {saves}")
                 processes[role] = launch(role, stages[role][stage[role]],
                                          settings=scenario.get("settings"))
@@ -899,17 +911,17 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
                 print(f"  {role} stopped after {time.time() - started:.0f} s: {crashed[role]}")
         if crashed or fatal_failure:
             break  # the others wait for it in vain
-        for name in syncs_to_release(syncs, reached, given_up, set(done), released):
-            released.add(name)
-            if seconds := scenario.get("outages", {}).get(name):
+        for sync in syncs_to_release(syncs, reached, given_up, set(done), released):
+            released.add(sync)
+            if seconds := scenario.get("outages", {}).get(sync):
                 # Before the games go on: the outage starts as they do.
                 for proxy in PROXIES:
                     proxy.outage(seconds)
                 print(f"  servers unreachable for {seconds} s" if PROXIES else
                       "  no outage without a ping (--ping): the servers stay reachable")
-            for role in syncs[name]["roles"]:
-                write_go_file(ENGINE.role_dir(role), name)
-            print(f"  sync {name} after {time.time() - started:.0f} s")
+            for role in syncs[sync]["roles"]:
+                write_go_file(ENGINE.role_dir(role), sync)
+            print(f"  sync {sync} after {time.time() - started:.0f} s")
         time.sleep(1 if syncs else 2)
     stop_games()
     keep_logs(run_dir, roles)
@@ -1221,7 +1233,7 @@ def main(argv: list[str]) -> int:
         # The games take the rig's environment (game_environment).
         os.environ.update(HEADLESS)
     use_ping(args.ping)
-    use_lane(args.lane)
+    use_lane(args.lane, args.batch is not None)
     runs_games = (args.play or args.scenarios or args.boot_check) and not args.lanes
     proxies = start_delay_proxies() if runs_games else []
     PROXIES[:] = proxies
@@ -1284,7 +1296,7 @@ def act(args: argparse.Namespace) -> int:
                   f"{', '.join(chapter['name'] for chapter in scenario['chapters'])}")
         return 0
     # Another lane's games are the rig's own: only a game someone plays stops a lane's run.
-    if games()[1] if LANE or args.lanes else games_running():
+    if games()[1] if IN_LANES or args.lanes else games_running():
         print("A game is running; not starting the rig.")
         return 2
     unknown = [name for name in args.scenarios if name not in RUNNABLE]

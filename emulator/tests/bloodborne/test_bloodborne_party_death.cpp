@@ -792,6 +792,60 @@ TEST(BloodbornePartyDeath, AResetDeathReloadsAtTheLamp) {
     EXPECT_EQ(ChooseDeathRespawn(2412951, false, true, true), DeathRespawn::StayPut);
 }
 
+// Playtest 2026-10-13: a wipe sent the host to the Hunter's Dream (2102962) and the guest to its
+// own Central Yharnam lamp (2412959); another left them 113 m apart. Kaniel: a party death wakes
+// everyone where the host wakes, but a guest's special death (its first one: the Dream; a
+// kidnapping: the Gaol), which changed its own point at the death, keeps that point.
+TEST(BloodbornePartyDeath, AGuestWakesWhereTheHostWakesUnlessItsDeathWasSpecial) {
+    constexpr s32 HostLamp = 2412951;
+    constexpr s32 GuestLamp = 2412959;
+    constexpr s32 Gaol = 2402900;
+    // The usual death: the guest's point stood before it; the host's lamp wins.
+    EXPECT_EQ(PartyRespawnPoint(true, GuestLamp, GuestLamp, HostLamp), HostLamp);
+    // The host's own death: always its own.
+    EXPECT_EQ(PartyRespawnPoint(false, HostLamp, HostLamp, GuestLamp), HostLamp);
+    // No host point known (no log, a host without one): the guest's own.
+    EXPECT_EQ(PartyRespawnPoint(true, GuestLamp, GuestLamp, std::nullopt), GuestLamp);
+    EXPECT_EQ(PartyRespawnPoint(true, GuestLamp, GuestLamp, 0), GuestLamp);
+    EXPECT_EQ(PartyRespawnPoint(true, GuestLamp, GuestLamp, -1), GuestLamp);
+    // The death set a special point: the guest's first death, a kidnapping.
+    EXPECT_EQ(PartyRespawnPoint(true, HuntersDreamWarpPoint, GuestLamp, HostLamp),
+              HuntersDreamWarpPoint);
+    EXPECT_EQ(PartyRespawnPoint(true, Gaol, GuestLamp, HostLamp), Gaol);
+    // Never seen alive (no point from before the death): its own, as before.
+    EXPECT_EQ(PartyRespawnPoint(true, GuestLamp, std::nullopt, HostLamp), GuestLamp);
+    // A guest with no point of its own follows the host.
+    EXPECT_EQ(PartyRespawnPoint(true, -1, -1, HostLamp), HostLamp);
+    // The host's point may be special (its first death: the Dream): the party goes along.
+    EXPECT_EQ(PartyRespawnPoint(true, GuestLamp, GuestLamp, HuntersDreamWarpPoint),
+              HuntersDreamWarpPoint);
+}
+
+// The guest's point from before a death: a point that stood ReturnPointSettleMs while it was up. A
+// point the game set just before the death (a kidnapping's grab sets the Gaol while the player
+// still stands) is the death's, not the one before it.
+TEST(BloodbornePartyDeath, ThePointBeforeADeathIsOneThatStood) {
+    ReturnPointBeforeDeath before;
+    EXPECT_EQ(before.Point(), std::nullopt) << "never seen up";
+    before.Sample(2412959, 1'000);
+    EXPECT_EQ(before.Point(), std::optional<s32>{2412959}) << "the first point stands at once";
+    before.Sample(2402900, 2'000); // the grab
+    before.Sample(2402900, 2'000 + ReturnPointSettleMs - 1);
+    EXPECT_EQ(before.Point(), std::optional<s32>{2412959});
+    before.Sample(2402900, 2'000 + ReturnPointSettleMs);
+    EXPECT_EQ(before.Point(), std::optional<s32>{2402900}) << "a lamp rested at stands in time";
+    // A point that came and went never stood.
+    before.Sample(2412951, 20'000);
+    before.Sample(2402900, 21'000);
+    before.Sample(2402900, 21'000 + ReturnPointSettleMs - 1);
+    EXPECT_EQ(before.Point(), std::optional<s32>{2402900});
+    before.Sample(2412951, 40'000);
+    before.Sample(2412951, 40'000 + ReturnPointSettleMs - 1);
+    EXPECT_EQ(before.Point(), std::optional<s32>{2402900}) << "the clock starts at its change";
+    before.Reset();
+    EXPECT_EQ(before.Point(), std::nullopt);
+}
+
 // Only the trip of a death that resets the map asks for the save's dead to come back on arrival.
 TEST(BloodbornePartyDeath, OnlyAWipeTripRespawnsTheSavesDead) {
     EXPECT_TRUE(WipeTripRespawnsOnArrival(true, DeathRespawn::Travel));

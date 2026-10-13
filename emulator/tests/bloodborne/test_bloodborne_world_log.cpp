@@ -113,7 +113,53 @@ TEST(WorldLogFrames, TypesFollowTheHelloAndOlderBuildsDropThem) {
         EXPECT_FALSE(IsWorldLogFrameType(type));
     }
     EXPECT_GE(CoopProtocolVersion, 2) << "the world log's frames are protocol 2";
-    EXPECT_EQ(CoopProtocolVersion, 7) << "the flags part's after-wipe byte: 7";
+    EXPECT_EQ(CoopProtocolVersion, 8) << "the host's return point (entry and map state part): 8";
+}
+
+// The host's return point (GlobalState +0x1528) on the log, so a guest's party death wakes where
+// the host's does (playtest 2026-10-13: a wipe woke them on different maps): an entry when it
+// changes, read back from the link, kept by the member.
+TEST(WorldLogReturnPoint, TheHostsPointGoesOnTheLogWhenItChanges) {
+    constexpr s32 HostLamp = 2412951;
+    WorldLogHost host;
+    const u64 epoch = WorldLogEpoch(7, 1);
+    WorldLogMember member;
+    const auto relay = [&](const std::vector<WorldLogEntry>& entries) {
+        for (const auto& batch : BatchWorldLog("host", host.Epoch(), host.Last(), entries)) {
+            const auto decoded = DecodeWorldLogBatch(EncodeWorldLogBatch(batch));
+            ASSERT_TRUE(decoded);
+            EXPECT_EQ(*decoded, batch);
+            member.Take(*decoded, 0);
+        }
+    };
+    relay(host.Start(epoch, false));
+    EXPECT_EQ(member.HostReturnPoint(), WorldLogReturnPoint{}) << "none known yet";
+    const auto first = host.ReturnPoint(HostLamp, Yharnam);
+    EXPECT_EQ(first, Entries(epoch, {{2, 0, Yharnam, WorldLogKind::ReturnPoint, u32{HostLamp}}}));
+    relay(first);
+    EXPECT_EQ(member.HostReturnPoint(), (WorldLogReturnPoint{HostLamp, Yharnam}));
+    EXPECT_TRUE(host.ReturnPoint(HostLamp, Yharnam).empty()) << "unchanged: no entry";
+    EXPECT_TRUE(host.ReturnPoint(0, 0).empty()) << "none read (a load): the last one stands";
+    EXPECT_TRUE(host.ReturnPoint(-1, 0).empty());
+    relay(host.ReturnPoint(HuntersDreamWarpPoint, Dream));
+    EXPECT_EQ(member.HostReturnPoint(), (WorldLogReturnPoint{HuntersDreamWarpPoint, Dream}));
+    EXPECT_EQ(host.ReturnPointNow(), (WorldLogReturnPoint{HuntersDreamWarpPoint, Dream}));
+    EXPECT_EQ(FormatWorldLogEntry({9, 0, Dream, WorldLogKind::ReturnPoint, 2102962}),
+              "seq 9 return point 2102962 on 0x15000000");
+    // A new log (a wipe) starts with the point again, so a member on it has it.
+    const auto wipe = host.Start(WorldLogEpoch(7, 2), true);
+    ASSERT_FALSE(wipe.empty());
+    EXPECT_EQ(wipe.back().kind, WorldLogKind::ReturnPoint);
+    EXPECT_EQ(wipe.back().subject, u32{HuntersDreamWarpPoint});
+    relay(wipe);
+    EXPECT_EQ(member.HostReturnPoint(), (WorldLogReturnPoint{HuntersDreamWarpPoint, Dream}));
+    member.Reset();
+    EXPECT_EQ(member.HostReturnPoint(), WorldLogReturnPoint{}) << "out of the session: forgotten";
+    // The host's input on a trace record, for the replay.
+    const WorldLogReturnPoint input{HostLamp, Yharnam};
+    const auto payload = EncodeWorldLogReturnPointInput(input);
+    EXPECT_EQ(DecodeWorldLogReturnPointInput(payload), input);
+    EXPECT_FALSE(DecodeWorldLogReturnPointInput(std::span{payload}.first(7)));
 }
 
 TEST(WorldLogFrames, AFullSetFitsTheLink) {

@@ -287,6 +287,72 @@ TEST(BloodbornePartyTrip, EndsOnceThePlayerIsOnTheNewStage) {
     EXPECT_FALSE(trip.Active(T0 + 3s));
 }
 
+// Kaniel 2026-10-13: after Father Gascoigne, the walk from Central Yharnam into Cathedral Ward
+// called the world load's StopRequest (0x0193C65C) three times in 70 ms while the map flipped
+// back and forth, with no load at all. Each flip ended the "trip" as an arrival and re-created
+// the guest (its join task stuck in the create step: the host lost sight of it), and each
+// StopRequest started another. A world reload's trip ends only after a load, and is dropped when
+// none comes.
+TEST(BloodbornePartyTrip, AWorldReloadWithNoLoadIsNoTrip) {
+    constexpr u32 CentralYharnam = 0x18010000;
+    constexpr u32 CathedralWard = 0x18000000;
+    PartyTrip trip;
+    trip.StartWorldReload(T0, CentralYharnam, 0x1000);
+    trip.ObserveStage(CathedralWard, false, 0x1000);
+    trip.ObserveStage(CentralYharnam, false, 0x1000);
+    trip.ObserveStage(CathedralWard, false, 0x1000);
+    EXPECT_TRUE(trip.Active(T0 + 1s)) << "a map flip is no arrival: the next StopRequest is kept";
+    EXPECT_FALSE(trip.DropIfNoLoad(T0 + 1s));
+    EXPECT_TRUE(trip.DropIfNoLoad(T0 + PartyTrip::NoLoadGrace)) << "dropped, no arrival";
+    EXPECT_FALSE(trip.Active(T0 + PartyTrip::NoLoadGrace));
+    EXPECT_FALSE(trip.DropIfNoLoad(T0 + PartyTrip::NoLoadGrace + 1s)) << "once";
+}
+
+// The time-of-day cutscene's reload (Gascoigne's 24000020, the Ward door) loads: a trip as before.
+TEST(BloodbornePartyTrip, AWorldReloadThatLoadsArrives) {
+    constexpr u32 CentralYharnam = 0x18010000;
+    PartyTrip trip;
+    trip.StartWorldReload(T0, CentralYharnam, 0x1000);
+    trip.ObserveStage(CentralYharnam, true, 0);
+    EXPECT_FALSE(trip.DropIfNoLoad(T0 + PartyTrip::NoLoadGrace)) << "it loaded";
+    EXPECT_TRUE(trip.Active(T0 + PartyTrip::NoLoadGrace));
+    trip.ObserveStage(CentralYharnam, false, 0x2000);
+    EXPECT_FALSE(trip.Active(T0 + PartyTrip::NoLoadGrace + 1s)) << "arrived: a new character";
+    // A lamp's trip is never dropped for want of a load seen (the party tick stops while loading).
+    trip.Start(T0, CentralYharnam, 0x1000);
+    EXPECT_FALSE(trip.DropIfNoLoad(T0 + PartyTrip::NoLoadGrace));
+    EXPECT_TRUE(trip.Active(T0 + PartyTrip::NoLoadGrace));
+}
+
+// Rig 2026-10-13 (crashes): a guest alone took over 302 enemies in its own world, then the join
+// reloaded the same map (0x18000000) and the claims, kept by map only, outlived their world: the
+// hand-back wrote the old ownership words into freed memory (a heap pointer read ffff0010...), and
+// the next same-map reload crashed in the game at 0x15913d8. A new player character is a new
+// world.
+TEST(BloodborneLoneGuest, ClaimsEndWithTheirWorld) {
+    constexpr u32 CathedralWard = 0x18000000;
+    constexpr u32 CentralYharnam = 0x18010000;
+    ClaimedWorld world;
+    EXPECT_TRUE(world.NewWorld(CathedralWard, 0x1000)) << "the first";
+    EXPECT_FALSE(world.NewWorld(CathedralWard, 0x1000));
+    EXPECT_FALSE(world.NewWorld(CathedralWard, 0)) << "loading: no player yet";
+    EXPECT_TRUE(world.NewWorld(CathedralWard, 0x2000)) << "the same map loaded again";
+    EXPECT_FALSE(world.NewWorld(CathedralWard, 0x2000));
+    EXPECT_TRUE(world.NewWorld(CentralYharnam, 0x2000)) << "a border: another map";
+}
+
+// Rig 2026-10-13 (crashes, host-crash): the host's game died while a guest that had travelled (a
+// live player, type 0) was with it; no leave limit ran, the session effect 9001 stayed on the
+// guest, and with it on, its bell (9005) never posted a sign: 420 s and no join. A guest out of
+// its session takes 9001 off before it rings.
+TEST(BloodbornePartyController, AGuestOutOfItsSessionDropsTheSessionEffect) {
+    const std::vector<s32> stale{6300, 9006, 40, 9001};
+    EXPECT_TRUE(EndsStaleSessionEffect(PartyRole::Guest, false, stale));
+    EXPECT_FALSE(EndsStaleSessionEffect(PartyRole::Guest, true, stale)) << "still in it";
+    EXPECT_FALSE(EndsStaleSessionEffect(PartyRole::Host, false, stale)) << "the host's own";
+    EXPECT_FALSE(EndsStaleSessionEffect(PartyRole::Guest, false, std::vector<s32>{6300, 9005}));
+}
+
 // A trip reloads the traveller's world, which destroys the other players' characters, while
 // their join tasks (CSMultiPlayerIns) stay in the in-session step. Sending a remote player's task
 // back to the step that creates its character brings it back on the new stage.
@@ -2551,6 +2617,53 @@ TEST(BloodborneSharedEnemyHp, ASessionWithOneWorldSharesNothing) {
     EXPECT_TRUE(
         copy.Update(2, true, std::vector<EnemyCopy>{{0x10014066, 500, 500}}, {}).post.empty())
         << "a new visit starts over";
+}
+
+// Rig run 20261013-011544 (joins, hp-across-blocks): in one world the host hurt 0x1001400b
+// 484 -> 200; the guest then lamp-travelled to the host's map and the worlds went apart. The host
+// counted its damage from 200 (its counts started over at the switch) while its one-world HP
+// report went away, so the guest's fresh copy stayed at 484. The host's copy is the one world's:
+// all of its drop there (its own hits and the guest's, which the game sent) is posted once apart.
+TEST(BloodborneSharedEnemyHp, TheHostsOneWorldDamageCarriesIntoWorldsApart) {
+    constexpr u32 Wolf = 0x1001400b;
+    const auto at = [](s32 hp) { return std::vector<EnemyCopy>{{Wolf, hp, 484}}; };
+    SharedDamage host;
+    EXPECT_TRUE(host.Update(1, false, at(484), {}).post.empty());
+    const auto one_world = host.Update(1, false, at(200), {});
+    EXPECT_TRUE(one_world.post.empty() && one_world.writes.empty()) << "one world: nothing";
+    EXPECT_EQ(host.Update(1, true, at(200), {}).post, (std::vector<EnemyHp>{{Wolf, 284, 484}}));
+    EXPECT_EQ(host.Update(1, true, at(200), {}).post, (std::vector<EnemyHp>{{Wolf, 284, 484}}));
+
+    // Counted hit by hit: the guest's hits the game sent in one world count as the host's too
+    // (the guest starts over apart and never posts them).
+    const auto hit = [](s32 hp, s64 hits) { return std::vector<EnemyCopy>{{Wolf, hp, 484, hits}}; };
+    SharedDamage counted;
+    counted.Update(1, false, hit(484, 0), {});
+    counted.Update(1, false, hit(300, 100), {}); // 100 by the host, 84 by the guest
+    counted.Update(1, false, hit(300, 100), {});
+    EXPECT_EQ(counted.Update(1, true, hit(300, 100), {}).post,
+              (std::vector<EnemyHp>{{Wolf, 184, 484}}));
+    EXPECT_EQ(counted.Update(1, true, hit(250, 150), {}).post,
+              (std::vector<EnemyHp>{{Wolf, 234, 484}}))
+        << "and its hits apart on top";
+}
+
+// The guest's side of that switch: its copy took the host's HP in one world (the game's sync or
+// LowerToHostHp), and its own hits there reached the host by the game. None of that is its damage
+// apart: the host posts it.
+TEST(BloodborneSharedEnemyHp, AGuestsOneWorldDropIsNotItsDamageApart) {
+    constexpr u32 Wolf = 0x1001400b;
+    const auto at = [](s32 hp) { return std::vector<EnemyCopy>{{Wolf, hp, 484}}; };
+    SharedDamage guest;
+    guest.Update(1, false, at(484), {}, 0, PartyRole::Guest);
+    guest.Update(1, false, at(200), {}, 0, PartyRole::Guest);
+    guest.Update(1, false, at(200), {}, 0, PartyRole::Guest);
+    EXPECT_TRUE(guest.Update(1, true, at(200), {}, 0, PartyRole::Guest).post.empty());
+    EXPECT_TRUE(guest.Update(1, true, at(200), {}, 0, PartyRole::Guest).post.empty());
+    guest.Update(1, true, at(150), {}, 0, PartyRole::Guest);
+    EXPECT_EQ(guest.Update(1, true, at(150), {}, 0, PartyRole::Guest).post,
+              (std::vector<EnemyHp>{{Wolf, 50, 484}}))
+        << "its hits apart are its own";
 }
 
 // Rig test 2026-10-09 ("apart"): a guest's trip out of the host's map posted 2 kills at its

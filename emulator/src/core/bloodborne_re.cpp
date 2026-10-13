@@ -701,6 +701,42 @@ void TickPartyController() {
     if (action != PartyAction::StartSearch) {
         return;
     }
+    if (EndsStaleSessionEffect(IsPartyGuestRole() ? PartyRole::Guest : PartyRole::Host,
+                               InPartySession(), LocalEffects())) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: a guest out of its session ended the session effect {} "
+                 "to ring (ended={})",
+                 SessionEffect, EndPlayerEffect(player, SessionEffect));
+        return; // the bell on a later tick, as RingAgain does
+    }
+    {
+        // Rig 2026-10-13 (crashes, host-crash): a guest whose host's game died rang with no
+        // sign ever posted, while every fresh player's ring posts one. The state the sign may
+        // wait on, per ring, to tell the two apart.
+        const u64 global = GetGlobalState();
+        const u64 multi_play = GetMatchingState();
+        const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+        const bool global_ok =
+            global >= 0x10000 && HasMemoryAccess(global, 0x1580, MemoryProt::CpuRead);
+        const bool multi_ok =
+            multi_play >= 0x10000 && HasMemoryAccess(multi_play, 0x128, MemoryProt::CpuRead);
+        const bool session_ok =
+            session >= 0x10000 && HasMemoryAccess(session, 0x128, MemoryProt::CpuRead);
+        LOG_INFO(Debug,
+                 "Bloodborne party ring state: type {} player +0x52C {:#x} global +0x08 {:#x} "
+                 "+0x1520 {:#x} +0x1547 {:#x} +0x1578 {:#x} matching +0x18 {:#x} +0x124 {} "
+                 "session +0x124 {} closing {}",
+                 player >= 0x10000 ? ReadValue<s32>(player, 0x78) : -1,
+                 player >= 0x10000 ? ReadValue<u8>(player, 0x52C) : 0,
+                 global_ok ? ReadValue<u8>(global, 0x08) : 0xFF,
+                 global_ok ? ReadValue<u32>(global, 0x1520) : 0,
+                 global_ok ? ReadValue<u8>(global, 0x1547) : 0xFF,
+                 global_ok ? ReadValue<u32>(global, 0x1578) : 0,
+                 multi_ok ? ReadValue<u64>(multi_play, 0x18) : 0,
+                 multi_ok ? ReadValue<s32>(multi_play, 0x124) : -1,
+                 session_ok ? ReadValue<s32>(session, 0x124) : -1,
+                 session_ok ? ReadValue<u8>(session, SessionClosingOffset) : 0xFF);
+    }
     const bool result = StartPlayerSummonSearch(player, party_controller->SearchEffectId());
     LOG_INFO(Debug, "Bloodborne party auto-rejoin started search effect={} map={:#x} result={}",
              party_controller->SearchEffectId(), CurrentPlace().map, result);

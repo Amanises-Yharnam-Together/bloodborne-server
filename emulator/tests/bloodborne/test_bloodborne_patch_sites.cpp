@@ -208,6 +208,8 @@ TEST(CoopSites, ThePartyHeaderHooksAreRegistered) {
     // co-op site table" errors, so the launcher could not warn about a game patch over them).
     EXPECT_TRUE(IsRegisteredCoopHook(HudTagUpdateExitOffset, HudTagUpdateExit));
     EXPECT_TRUE(IsRegisteredCoopHook(HudTicksTagsDoneOffset, HudTicksTagsDone));
+    // Its constructor too (every log of 2026-10-13: 0x1bf41c0 not in the table).
+    EXPECT_TRUE(IsRegisteredCoopHook(HudConstructOffset, HudConstructPrologue));
     EXPECT_TRUE(IsRegisteredCoopHook(HitDamageStoredOffset, HitDamageStored));
     EXPECT_TRUE(IsRegisteredCoopHook(HitReactionOffset, HitReactionPrologue));
     EXPECT_TRUE(IsRegisteredCoopHook(PartyGhostDeathMenuBranchOffset - 5,

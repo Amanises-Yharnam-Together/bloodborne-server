@@ -51,6 +51,7 @@ private:
     std::set<u32> visit_maps;
     std::map<u32, std::vector<u32>> held;
     SharedDamage damage;
+    PartyRole hp_role = PartyRole::Host; // the last one-world mode's
     std::vector<EnemyHp> posted;
     PartyKills party_kills;
     std::set<u32> board_kills;

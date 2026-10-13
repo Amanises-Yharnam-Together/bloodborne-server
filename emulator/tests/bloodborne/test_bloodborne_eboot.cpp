@@ -304,6 +304,7 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     EXPECT_EQ(CallTarget(0x0193C657), MultiPlayStopRequest);
     EXPECT_TRUE(IsWorldReloadStopRequest(0x0193C657 + 5));
     EXPECT_EQ(CallTarget(0x0193C689), LeaveSession);
+    EXPECT_TRUE(IsWorldReloadLeaveSession(0x0193C689 + 5));
     // The co-op area check: the flag read, then `xor al, 1`.
     EXPECT_EQ(CallTarget(0x0191A8B5), EventFlagIsSetOffset);
     EXPECT_EQ(Bytes(0x0191A8BA, 2), (std::vector<u8>{0x34, 0x01}));

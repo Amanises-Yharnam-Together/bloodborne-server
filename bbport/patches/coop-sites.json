@@ -170,6 +170,7 @@
     {"name": "hit reaction", "feature": "no hit reaction while down", "kind": "hook", "offset": "0x01A2E570", "original": "55 48 89 E5 41 57 41 56", "patched": "", "accepted": []},
     {"name": "HUD tag update exit", "feature": "party nameplates", "kind": "hook", "offset": "0x01B5A3AE", "original": "48 81 C4 C8 00 00 00", "patched": "", "accepted": []},
     {"name": "HUD tags done", "feature": "party list in the HUD", "kind": "hook", "offset": "0x01BF8A50", "original": "49 8B BF F8 00 00 00", "patched": "", "accepted": []},
+    {"name": "HUD constructor", "feature": "party list in the HUD", "kind": "hook", "offset": "0x01BF41C0", "original": "55 48 89 E5 41 57 41 56", "patched": "", "accepted": []},
     {"name": "first sign post delay", "feature": "sign timers", "kind": "patch", "offset": "0x018A9264", "original": "C7 47 28 00 00 A0 40", "patched": "C7 47 28 00 00 00 00", "accepted": ["C7 47 28 ?? ?? ?? ??"]},
     {"name": "first sign post delay 2", "feature": "sign timers", "kind": "patch", "offset": "0x018A9324", "original": "C7 47 28 00 00 A0 40", "patched": "C7 47 28 00 00 00 00", "accepted": ["C7 47 28 ?? ?? ?? ??"]},
     {"name": "sign re-post time", "feature": "sign timers", "kind": "patch", "offset": "0x018A9757", "original": "C7 43 28 00 00 F0 41", "patched": "C7 43 28 00 00 80 3F", "accepted": ["C7 43 28 ?? ?? ?? ??"]},

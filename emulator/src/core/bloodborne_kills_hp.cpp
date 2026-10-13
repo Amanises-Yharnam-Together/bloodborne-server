@@ -423,12 +423,15 @@ std::unordered_map<u64, s64> enemy_owner_changed_ms;
 namespace Coop {
 
 void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
-    static u32 claimed_map = 0;
-    if (map != claimed_map) {
-        lone_guest_ownership.clear(); // the old map's characters are gone
+    static ClaimedWorld claimed_world;
+    if (claimed_world.NewWorld(map, GetLocalPlayer())) {
+        if (!lone_guest_ownership.empty()) {
+            LOG_INFO(Debug, "Bloodborne party: {} enemy claims ended with their world",
+                     lone_guest_ownership.size());
+        }
+        lone_guest_ownership.clear(); // the old world's characters are gone
         lone_guest_character.clear();
         enemy_owner_changed_ms.clear();
-        claimed_map = map;
     }
     // Not only alone: two guests on a map the host is not on both run its enemies, each in its
     // own copy of the map (the kill and HP boards keep them in step).
@@ -441,9 +444,21 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
         world_changed_ms.store(SteadyMilliseconds());
     }
     if (!alone) {
+        // Only the words of characters this world still has (memory freed with a world reads as
+        // writable all the same).
+        std::unordered_set<u64> live_words;
+        if (!lone_guest_ownership.empty()) {
+            const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+            if (world >= 0x10000) {
+                ForEachWorldCharacter(world, [&](u64 character) {
+                    live_words.insert(OwnershipWordAddress(world, character));
+                });
+            }
+        }
         size_t handed_back = 0;
         for (const auto& [word, original] : lone_guest_ownership) {
-            if (HasMemoryAccess(word, 2, MemoryProt::CpuWrite) && ReadValue<u16>(word, 0) == 0) {
+            if (live_words.contains(word) && HasMemoryAccess(word, 2, MemoryProt::CpuWrite) &&
+                ReadValue<u16>(word, 0) == 0) {
                 WriteValue(word, 0, original);
                 ++handed_back;
             }
@@ -726,6 +741,11 @@ const u32 enemy_hp_source = [] {
 std::atomic<bool> party_hp_reset{};
 [[maybe_unused]] const bool party_hp_reset_registered =
     RegisterLifecycleReset("enemy hp", {Lifecycle::Wipe}, [] { party_hp_reset.store(true); });
+// A wipe changes the world as a load does: until the wipe's trip has loaded the map again, the
+// host's dead copies are from before it (rig smoke 2026-10-13), so it shows nothing new for a
+// while (PostsShownState) and the load starts that wait again.
+[[maybe_unused]] const bool shown_wipe_registered = RegisterLifecycleReset(
+    "shown state", {Lifecycle::Wipe}, [] { world_changed_ms.store(SteadyMilliseconds()); });
 
 void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     struct Copy {
@@ -788,7 +808,11 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
                   : active    ? "apart"
                               : (IsPartyGuestRole() ? "one-guest" : "one-host"),
                   forget_damage, standing, reports, now_ms);
-    SharedDamage::Step step = damage.Update(visit, active, standing, reports, now_ms);
+    // Out of a session the counts are this player's alone: visit 0 starts them over at the
+    // session (one world's drop carries into worlds apart, a solo player's does not).
+    SharedDamage::Step step =
+        damage.Update(in_session ? visit : 0, active, standing, reports, now_ms,
+                      IsPartyGuestRole() ? PartyRole::Guest : PartyRole::Host);
     // In one world: the host posts its hurt characters' HP (NPCs: the game does not send theirs),
     // a guest lowers its copies to it (see LowerToHostHp).
     const bool one_world = in_session && !active;

@@ -372,7 +372,7 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"status effect SetHp 2", "effect hits", CoopSiteKind::Hook, 0x01A2FBF9,
      "31 D2 31 C9 4C 89 E7"},
     // Party death (HitDamageStored, HitReactionPrologue) and the port's party HUD
-    // (HudTagUpdateExit, HudTicksTagsDone).
+    // (HudTagUpdateExit, HudTicksTagsDone, HudConstruct).
     {"hit damage stored", "real revive hits", CoopSiteKind::Hook, 0x01A2BCA3, "89 81 2C 02 00 00"},
     {"hit reaction", "no hit reaction while down", CoopSiteKind::Hook, 0x01A2E570,
      "55 48 89 E5 41 57 41 56"},
@@ -380,6 +380,8 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "48 81 C4 C8 00 00 00"},
     {"HUD tags done", "party list in the HUD", CoopSiteKind::Hook, 0x01BF8A50,
      "49 8B BF F8 00 00 00"},
+    {"HUD constructor", "party list in the HUD", CoopSiteKind::Hook, 0x01BF41C0,
+     "55 48 89 E5 41 57 41 56"},
 
     // The sign poster's timers (SignTimerSites): `mov dword ptr [<reg> + 0x28], <seconds>`. Game
     // patches rewrite the re-post time (the bundled "Uncap FPS++" writes 60 s), and the store is
