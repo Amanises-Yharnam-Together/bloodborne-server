@@ -1,21 +1,22 @@
-# Builds a public release of Bloodborne seamless co-op for the native port (Bloodborne PC): one zip
-# for the GitHub releases page that a player unzips anywhere and uses with nothing but their own
-# copy of the game (a dumped game folder with the 1.09 update, or the .pkg files, which the
-# launcher installs). Optionally publishes it as a draft GitHub release.
+# Builds a public release of Bloodborne seamless co-op for the native port (Bloodborne PC):
+# one setup .exe for the GitHub releases page (Inno Setup) that installs it for the player, who then
+# plays from BLauncher.exe with nothing but their own copy of the game (a dumped game folder with
+# the 1.09 update, or the .pkg files, which the launcher installs). No bat files: the launcher sets
+# co-op up and starts it (launcher\bbport_coop.py; Kaniel 2026-10-13). Optionally publishes it as
+# a draft GitHub release.
 #
 #   1. builds the port (bbport\build.sh) and packages it (bbport\packaging\windows\package.sh:
 #      BLauncher.exe, the game's executables and DLLs, PkgTool, ReShade, XeSS, DLSS when built)
 #   2. builds the co-op server (tools\build-server.ps1) with its Qt DLLs (windeployqt) and the
 #      account tool (server\clientsample)
-#   3. assembles BloodborneSeamlessCoop\: the package, the kit's scripts (tools\port-kit, without
-#      the Bloodborne.PC.Online launchers), the release's own setup and texts (tools\release\kit),
+#   3. assembles BloodborneSeamlessCoop\: the package, the release's texts (tools\release\kit),
 #      the server, the backend and the event patcher (tools\re\party_boss_events.py). The co-op
-#      event files are made by each player's setup from their own game: the release holds only
+#      event files are made by each player's launcher from their own game: the release holds only
 #      their expected hashes (event-reference.json, from -GameDir)
-#   4. checks it (tools\release\check_release.py: everything there, no game or player files),
-#      zips it, and writes the SHA-256
+#   4. checks it (tools\release\check_release.py: everything there, no game or player files, no
+#      bat files), builds the setup .exe from it (tools\release\setup.iss) and writes its SHA-256
 #   5. with -Publish: creates a draft release v<Version> on GitHub at the build's commit with the
-#      zip attached (gh when installed, else the REST API with GITHUB_TOKEN or git's credential)
+#      setup attached (gh when installed, else the REST API with GITHUB_TOKEN or git's credential)
 #
 # Usage: make-release.ps1 -Version 0.1.0 [-Out <dir>] [-GameDir <game event source>]
 #            [-SkipPortBuild] [-SkipServerBuild] [-AllowDirty] [-Publish [-Prerelease]] [-Repo owner/name]
@@ -26,11 +27,13 @@
 #                   <BB_ROOT>\out\release-clientsample
 #   -DlssSdk        a checkout of github.com/NVIDIA/DLSS: builds the DLSS bridge first (else the
 #                   release has DLSS only when bbport\out already holds bbport_dlss.dll)
+#   -Iscc           Inno Setup 6's ISCC.exe (default: its per-user or Program Files install)
 param(
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$')][string]$Version,
     [string]$Out,
     [string]$GameDir,
     [string]$DlssSdk,
+    [string]$Iscc,
     [switch]$SkipPortBuild,
     [switch]$SkipServerBuild,
     [switch]$AllowDirty,
@@ -45,7 +48,7 @@ $bbport = Join-Path $root "bbport"
 if (-not $Out) { $Out = Join-Path $env:BB_ROOT "release" }
 $name = "BloodborneSeamlessCoop"
 $tag = "v$Version"
-$zipName = "$name-$tag-windows.zip"
+$setupName = "$name-$tag-setup.exe"
 function Step([string]$Text) { Write-Host ""; Write-Host "== $Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding $false)) }
 
@@ -139,19 +142,12 @@ New-Item -ItemType Directory -Force $release | Out-Null
 robocopy $package $release /E /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "copying the port's package failed" }
 
-# The kit's and the release's own files. cmd needs CRLF in batch files (labels and goto break on
-# LF), and players read the text files in Notepad. The kit's root\ launchers belong to the
-# Bloodborne.PC.Online layout, and its setup and READ ME are replaced by the release's.
+# The release's own files (its READ ME, credits, licenses, shadnet.cfg): players read the text files
+# in Notepad, so CRLF. The kit's bat files are not part of it: the launcher does their work.
 function Copy-Crlf([string]$From, [string]$To) {
     $text = [IO.File]::ReadAllText($From) -replace "`r`n", "`n" -replace "`n", "`r`n"
     New-Item -ItemType Directory -Force (Split-Path -Parent $To) | Out-Null
     [IO.File]::WriteAllText($To, $text, (New-Object Text.UTF8Encoding $false))
-}
-$kitSource = Join-Path $PSScriptRoot "port-kit"
-foreach ($file in Get-ChildItem -Recurse -File $kitSource) {
-    $relative = $file.FullName.Substring($kitSource.Length + 1)
-    if ($relative -like "root\*" -or $relative -in @("READ ME FIRST.txt", "tools\setup.ps1")) { continue }
-    Copy-Crlf $file.FullName (Join-Path $release $relative)
 }
 $releaseSource = Join-Path $PSScriptRoot "release\kit"
 foreach ($file in Get-ChildItem -Recurse -File $releaseSource) {
@@ -160,6 +156,7 @@ foreach ($file in Get-ChildItem -Recurse -File $releaseSource) {
     if ($file.Extension -in ".txt", ".bat", ".ps1", ".cfg") { Copy-Crlf $file.FullName $target }
     else { New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null; Copy-Item $file.FullName $target }
 }
+New-Item -ItemType Directory -Force (Join-Path $release "tools") | Out-Null
 Copy-Item (Join-Path $root "tools\re\party_boss_events.py") (Join-Path $release "tools\") -Force
 Copy-Item (Join-Path $root "emulator\LICENSES\GPL-2.0-or-later.txt") (Join-Path $release "licenses\") -Force
 
@@ -213,7 +210,7 @@ Write-Utf8 (Join-Path $release "VERSION.txt") (@(
     "Source: https://github.com/$Repo"
 ) -join "`r`n")
 
-# --- 4. check and zip --------------------------------------------------------------------------
+# --- 4. check and setup -------------------------------------------------------------------------
 # The scripts must run inside the release's BLauncher.exe as they would with python: mods.py's
 # hud_patch is the one in scripts\ and finds its icon strip (a frozen copy patched the HUD without
 # the party list's icons and portraits, Kaniel 2026-10-13).
@@ -246,14 +243,20 @@ $checkPython = (& (Join-Path $msys "usr\bin\cygpath.exe") -w $env:WINPYTHON).Tri
 & $checkPython -I (Join-Path $PSScriptRoot "release\check_release.py") $release
 if ($LASTEXITCODE -ne 0) { throw "the release check failed" }
 
-Step "Zip"
-$zip = Join-Path $Out $zipName
-if (Test-Path $zip) { Remove-Item -Force $zip }
-& $checkPython -I (Join-Path $bbport "packaging\windows\make_zip.py") $stage $name $zip
-if ($LASTEXITCODE -ne 0) { throw "zipping failed" }
-$sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
-Write-Utf8 "$zip.sha256" "$sha *$zipName`n"
-Write-Host "  $zip ($([math]::Round((Get-Item $zip).Length / 1MB)) MB, sha256 $sha)"
+Step "Setup"
+if (-not $Iscc) {
+    $Iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if (-not $Iscc -or -not (Test-Path $Iscc)) { throw "No Inno Setup 6 (ISCC.exe): winget install JRSoftware.InnoSetup, or pass -Iscc" }
+$setup = Join-Path $Out $setupName
+if (Test-Path $setup) { Remove-Item -Force $setup }
+& $Iscc /Q "/DAppVersion=$Version" "/DSourceDir=$release" "/DOutputDir=$Out" `
+    "/DIconFile=$(Join-Path $bbport 'launcher\bloodborne.ico')" (Join-Path $PSScriptRoot "release\setup.iss")
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $setup)) { throw "Inno Setup failed ($LASTEXITCODE)" }
+$sha = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant()
+Write-Utf8 "$setup.sha256" "$sha *$setupName`n"
+Write-Host "  $setup ($([math]::Round((Get-Item $setup).Length / 1MB)) MB, sha256 $sha)"
 
 # --- 5. publish --------------------------------------------------------------------------------
 if (-not $Publish) { Write-Host ""; Write-Host "Release built (not published: pass -Publish for a draft on GitHub)."; exit 0 }
@@ -263,19 +266,20 @@ Seamless co-op for Bloodborne on Bloodborne PC (the native Windows port).
 
 **No game files are included.** You need your own Bloodborne 1.09 (a dumped game folder with the 1.09 update, or the PS4 .pkg files, which the included launcher installs).
 
-1. Download ``$zipName`` and unzip it anywhere.
-2. Open ``READ ME FIRST.txt`` and follow it: run ``1 - SETUP``, the host runs ``HOST - Start Servers``, everyone runs ``2 - PLAY``.
+1. Download ``$setupName`` and run it (it installs for your Windows user; keep "Create a desktop shortcut" ticked).
+2. Open **Bloodborne Seamless Co-op**. It finds your game; fill in the Co-op card: host or guest, the host's IP, an account, the party.
+3. Press **PLAY**. The host's co-op server starts by itself; Windows asks once to let co-op through its firewall.
 
-Everyone in a party must use this same release.
+Everyone in a party must use this same release. Co-op always runs at 60 FPS.
 
-Built from $commit. SHA-256 of the zip: ``$sha``
+Built from $commit. SHA-256 of the setup: ``$sha``
 "@
 if (Get-Command gh -ErrorAction SilentlyContinue) {
     $notesFile = Join-Path $Out "notes.md"
     Write-Utf8 $notesFile $notes
     $flags = @("--draft", "--target", $commit, "--title", "Bloodborne Seamless Co-op $tag", "--notes-file", $notesFile)
     if ($Prerelease) { $flags += "--prerelease" }
-    gh release create $tag $zip "$zip.sha256" --repo $Repo @flags
+    gh release create $tag $setup "$setup.sha256" --repo $Repo @flags
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
 } else {
     $token = $env:GITHUB_TOKEN
@@ -289,7 +293,7 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
                draft = $true; prerelease = [bool]$Prerelease } | ConvertTo-Json
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $created = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Repo/releases" -Headers $headers -Body $body -ContentType "application/json"
-    foreach ($asset in @(@{ Path = $zip; Type = "application/zip" }, @{ Path = "$zip.sha256"; Type = "text/plain" })) {
+    foreach ($asset in @(@{ Path = $setup; Type = "application/octet-stream" }, @{ Path = "$setup.sha256"; Type = "text/plain" })) {
         $assetName = [Uri]::EscapeDataString((Split-Path -Leaf $asset.Path))
         Invoke-RestMethod -Method Post -Uri "https://uploads.github.com/repos/$Repo/releases/$($created.id)/assets?name=$assetName" `
             -Headers $headers -InFile $asset.Path -ContentType $asset.Type -TimeoutSec 3600 | Out-Null

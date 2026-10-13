@@ -192,8 +192,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bbport_lang  # noqa: E402
 import bbport_controls  # noqa: E402
 import bbport_steam  # noqa: E402
+import bbport_coop  # noqa: E402
 
 LANG = 'en'
+
+# The seamless co-op release (BLauncher.exe with the co-op files beside it, or BB_COOP_INSTALL=1): the
+# Play page sets co-op up and PLAY starts it, always at the game's fixed 60 FPS (bbport_coop; it took
+# over the release's bat files, Kaniel 2026-10-13).
+COOP_INSTALL = os.environ.get('BB_COOP_INSTALL') == '1' or (PORT_DIR / 'event-reference.json').is_file()
+HARDER_CHOICES = [('off', ('Off (the normal game)', 'Выключено (обычная игра)')),
+                  (bbport_coop.HARDER_ON, ('Harder: enemy HP ×3, damage ×1.5, poise ×3',
+                                           'Сложнее: HP врагов ×3, урон ×1.5, стойкость ×3'))]
+ROLES = [('guest', ('Guest (joins the host)', 'Гость (присоединяется к хосту)')),
+         ('host', ('Host (runs the co-op server)', 'Хост (запускает сервер)'))]
+
+
+def coop_release_version():
+    """The co-op release's version from VERSION.txt (make-release.ps1 writes it), else ''."""
+    try:
+        first = (PORT_DIR / 'VERSION.txt').read_text(encoding='utf-8').splitlines()[0]
+    except (OSError, IndexError):
+        return ''
+    match = re.search(r'v(\d+\.\d+\.\d+\S*)', first)
+    return match.group(1) if match else ''
 
 
 WARN = '  ⚠'  # marks a risky choice; the text before it is translated as usual
@@ -2134,7 +2155,7 @@ class Launcher:
         # first (then it is the combination's modifier); the side buttons held when the wait began.
         self.pending_modifier, self.side_buttons_down, self.side_poll = None, set(), None
         self.controls_message = None
-        root.title('Bloodborne — bbport')
+        root.title('Bloodborne Seamless Co-op' if COOP_INSTALL else 'Bloodborne — bbport')
         root.configure(bg=BG)
         self.dpi = root.winfo_fpixels('1i') / 96.0
         self.motion = Motion(root, tk.TclError, os.environ.get('BB_LAUNCHER_ANIMATIONS', '1') != '0'
@@ -2543,7 +2564,10 @@ class Launcher:
         self.toggle = ModeToggle(self, self.hero.canvas, (_('Simple', 'Простой'), _('Advanced', 'Дополнительно')),
                                  self.set_mode)
         self.toggle.place(relx=1.0, x=-px(24), y=px(20), anchor='ne')
-        self.hero.set_texts(_('native port · Windows', 'нативный порт · Windows') + f'  ·  v{VERSION}', '')
+        if COOP_INSTALL:
+            self.hero.set_texts(_('Seamless Co-op', 'Бесшовный кооператив') + f'  ·  v{coop_release_version() or VERSION}', '')
+        else:
+            self.hero.set_texts(_('native port · Windows', 'нативный порт · Windows') + f'  ·  v{VERSION}', '')
         if self.motion.enabled:
             self.hero.set_reveal(0.0)
         self.update_box = None
@@ -2703,13 +2727,332 @@ class Launcher:
             self.label(holder, title, 'small', MUTED).pack(anchor='w', pady=(0, px(4)))
         return holder
 
+    # --- seamless co-op (the release: COOP_INSTALL) ---------------------------------------------
+
+    def lock_frame_rate(self, box):
+        """Co-op plays at the game's fixed 60 FPS (a host above 60 made the guests see everyone freeze
+        and fly, Kaniel 2026-10-13): the frame rate choices show it and cannot change."""
+        if COOP_INSTALL:
+            self.var('fps_mode', 'app').set('60')
+            self.var('frame_cap', 'app').set('')
+            box.configure(state='disabled')
+        return box
+
+    def build_coop(self, page):
+        """The Co-op card on the Play page: what 1 - SETUP asked, and the host's server."""
+        tk, ttk, px = self.tk, self.ttk, self.px
+        self.coop = bbport_coop.load_settings(PORT_DIR)
+        self.coop_busy = self.coop_searching = False
+        card = self.card(page, _('Co-op', 'Кооператив'), grid={'row': 0, 'column': 0, 'columnspan': 2,
+                                                              'padx': px(32), 'pady': (px(24), 0)})
+        card.columnconfigure(0, weight=1, uniform='coop', minsize=0)
+        card.columnconfigure(1, weight=1, uniform='coop', minsize=0)
+        self.coop_vars = {}
+
+        def var(key, value=None):
+            v = tk.StringVar(value=self.coop.get(key, '') if value is None else value)
+            v.trace_add('write', lambda *_a: self.coop_changed())
+            self.coop_vars[key] = v
+            return v
+
+        cell = self.cell(card, 1, 0, _('Your Bloodborne folder (version 1.09, or with the 1.09 update next to it)',
+                                       'Папка Bloodborne (версия 1.09 или с обновлением 1.09 рядом)'), span=2)
+        holder = tk.Frame(cell, bg=CARD)
+        holder.pack(fill='x')
+        ttk.Entry(holder, textvariable=var('game'), width=40).pack(side='left', fill='x', expand=True)
+        self.button(holder, _('Browse…', 'Обзор…'), self.coop_browse).pack(side='left', padx=(px(8), 0))
+        self.button(holder, _('Find it for me', 'Найти автоматически'),
+                    lambda: self.coop_search(None)).pack(side='left', padx=(px(8), 0))
+        self.pkg_button(holder).pack(side='left', padx=(px(8), 0))
+        self.coop_game_line = StatusLine(self, cell)
+        self.coop_game_line.frame.pack(fill='x', pady=(px(6), 0))
+        self.coop_game_line.text.configure(wraplength=px(900))
+
+        def combo(cell, key, options):
+            values = [v for v, _t in options]
+            box = ttk.Combobox(cell, values=[_(*t) for _v, t in options], state='readonly', width=34)
+            box.current(values.index(self.coop.get(key)) if self.coop.get(key) in values else 0)
+            v = var(key, values[box.current()])
+            box.bind('<<ComboboxSelected>>', lambda _e: v.set(values[box.current()]))
+            box.pack(fill='x')
+            return box
+
+        combo(self.cell(card, 2, 0, _('You are', 'Вы')), 'role', ROLES)
+        ttk.Entry(self.cell(card, 2, 1, _("Host's IP address (VPN or public; the host types their own)",
+                                          'IP хоста (VPN или внешний; хост вводит свой)')),
+                  textvariable=var('host_ip')).pack(fill='x')
+        ttk.Entry(self.cell(card, 3, 0, _('Your account name (3-16 letters or digits)',
+                                          'Имя аккаунта (3-16 букв или цифр)')),
+                  textvariable=var('account')).pack(fill='x')
+        ttk.Entry(self.cell(card, 3, 1, _('Your account password', 'Пароль аккаунта')),
+                  textvariable=var('password'), show='•').pack(fill='x')
+        ttk.Entry(self.cell(card, 4, 0, _('Party name (the same for every player)',
+                                          'Название группы (одинаковое у всех)')),
+                  textvariable=var('party_name')).pack(fill='x')
+        ttk.Entry(self.cell(card, 4, 1, _('Party password (the same for every player)',
+                                          'Пароль группы (одинаковый у всех)')),
+                  textvariable=var('party_secret')).pack(fill='x')
+        combo(self.cell(card, 5, 0, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
+              'harder', HARDER_CHOICES)
+        holder = self.cell(card, 5, 1, ' ')
+        self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
+                    self.coop_import_saves).pack(anchor='w')
+        # The host's server: it starts by itself with PLAY; these are for a host who only hosts.
+        self.coop_host = self.cell(card, 6, 0, _('Host: the co-op server (it starts by itself with PLAY)',
+                                                 'Хост: сервер кооператива (запускается сам с ИГРАТЬ)'), span=2)
+        holder = tk.Frame(self.coop_host, bg=CARD)
+        holder.pack(fill='x')
+        self.button(holder, _('Start server', 'Запустить сервер'), self.coop_start_servers).pack(side='left')
+        self.button(holder, _('Stop server', 'Остановить сервер'),
+                    self.coop_stop_servers).pack(side='left', padx=(px(8), 0))
+        self.coop_server_line = self.label(holder, '', 'small', MUTED)
+        self.coop_server_line.pack(side='left', padx=(px(14), 0))
+        self.note(card, _("Everyone in a party uses this same release. Your account is made on the host's server the "
+                          'first time you press PLAY. Windows asks once to let co-op through its firewall.',
+                          'Все в группе используют один и тот же релиз. Аккаунт создаётся на сервере хоста при первом '
+                          'нажатии ИГРАТЬ. Windows один раз спросит разрешение для брандмауэра.'), top=14)
+        self.coop_changed()
+        if not bbport_coop.find_game_folder(self.coop.get('game') or '.'):
+            self.coop_search(None, quiet=True)
+
+    def coop_changed(self):
+        if not hasattr(self, 'coop_host'):
+            return
+        for key, v in self.coop_vars.items():
+            self.coop[key] = v.get().strip()
+        try:
+            bbport_coop.save_settings(PORT_DIR, self.coop)
+        except OSError:
+            pass
+        if self.coop.get('role') == 'host':
+            self.coop_host.grid()
+        else:
+            self.coop_host.grid_remove()
+        if not self.coop_searching:
+            self.coop_show_game()
+        if hasattr(self, 'checks'):
+            self.refresh_status()
+            self.refresh_hero()
+
+    def coop_game_info(self):
+        """(title, version) of the co-op card's game as co-op runs it: 01.09 when the update is next to it."""
+        game = bbport_coop.find_game_folder(self.coop.get('game') or '.') if getattr(self, 'coop', None) else None
+        if not game:
+            return None
+        title, version = bbport_coop.game_version(game) or ('CUSA03173', '?')
+        if version != bbport_coop.GAME_VERSION and bbport_coop.update_folder(game):
+            version = bbport_coop.GAME_VERSION
+        return title, version
+
+    def coop_show_game(self):
+        folder = self.coop.get('game', '')
+        game = bbport_coop.find_game_folder(folder) if folder else None
+        if not game:
+            self.coop_game_line.set('⚠ ' + (_('No game there: Browse, Find it for me, or Install from PKG.',
+                                               'Игры там нет: Обзор, Найти автоматически или Установить из PKG.')
+                                             if folder else _('Choose your Bloodborne folder.',
+                                                              'Выберите папку Bloodborne.')))
+            return
+        title, version = bbport_coop.game_version(game) or ('?', '?')
+        if version == bbport_coop.GAME_VERSION:
+            self.coop_game_line.set('✓ ' + _('{} · version {} · {}', '{} · версия {} · {}').format(title, version, game))
+        elif bbport_coop.update_folder(game):
+            self.coop_game_line.set('✓ ' + _('{} · version {} with the 1.09 update next to it · {}',
+                                             '{} · версия {} с обновлением 1.09 рядом · {}').format(title, version, game))
+        else:
+            self.coop_game_line.set('✗ ' + _('{} · version {}: co-op needs 1.09. Put the update folder next to the game '
+                                             '({}-patch), or install both from your .pkg files.',
+                                             '{} · версия {}: нужна 1.09. Положите папку обновления рядом ({}-patch) '
+                                             'или установите обе из .pkg.').format(title, version, title))
+
+    def coop_browse(self):
+        chosen = self.filedialog.askdirectory(title=_('Choose your Bloodborne folder', 'Выберите папку Bloodborne'),
+                                              initialdir=self.coop.get('game') or str(PORT_DIR))
+        if not chosen:
+            return
+        found = bbport_coop.find_game_folder(chosen)
+        if found:
+            self.coop_vars['game'].set(str(found))
+        else:
+            self.coop_search(chosen)
+
+    def coop_search(self, near, quiet=False):
+        """Looks for the game in the background: near a folder the player picked first, then around the
+        install, in the usual folders and on the drives."""
+        self.coop_game_line.set(_('Looking for Bloodborne on this PC…', 'Поиск Bloodborne на этом ПК…'), busy=True)
+        self.coop_searching = True
+
+        def work():
+            found = bbport_coop.search_game(PORT_DIR, near=near)
+
+            def done():
+                self.coop_searching = False
+                if found:
+                    self.coop_vars['game'].set(str(found))
+                    return
+                self.coop_show_game()
+                if not quiet:
+                    self.coop_game_line.set('⚠ ' + _('Bloodborne was not found. Choose the folder with eboot.bin, or '
+                                                     'install the game from your .pkg files.',
+                                                     'Bloodborne не найдена. Выберите папку с eboot.bin или '
+                                                     'установите игру из .pkg.'))
+            self.ui_calls.put(done)
+        threading.Thread(target=work, daemon=True).start()
+
+    def coop_import_saves(self):
+        chosen = self.filedialog.askdirectory(title=_('Choose the folder with your saves',
+                                                      'Выберите папку с сохранениями'))
+        if not chosen:
+            return
+        try:
+            copied = bbport_coop.import_saves(PORT_DIR, chosen)
+        except OSError as error:
+            self.messagebox.showerror('Bloodborne', str(error))
+            return
+        if copied:
+            self.messagebox.showinfo('Bloodborne', _('Copied your saves from {}.',
+                                                     'Сохранения скопированы из {}.').format(copied))
+        else:
+            self.messagebox.showwarning('Bloodborne', _("No saves there: choose a folder holding a CUSA... folder of "
+                                                        "saves, a shadPS4 'user' folder or an older co-op folder.",
+                                                        'Сохранений нет: выберите папку с папкой CUSA..., папку '
+                                                        "shadPS4 'user' или старую папку кооператива."))
+
+    def coop_say(self, text, color=GOLD):
+        self.ui_calls.put(lambda: self.status.configure(text=text, fg=color))
+
+    def coop_start_servers(self):
+        if not bbport_coop.valid_ip(self.coop.get('host_ip', '')):
+            self.messagebox.showerror('Bloodborne', _("Type the host's IP address first (yours, as the guests reach you).",
+                                                      'Сначала введите IP хоста (ваш, по которому вас видят гости).'))
+            return
+        self.coop_server_line.configure(text=_('Starting…', 'Запуск…'), fg=MUTED)
+        host_ip = self.coop['host_ip']
+
+        def work():
+            self.coop_firewall()
+            said = bbport_coop.start_servers(PORT_DIR, host_ip)
+            running = bbport_coop.servers_running()
+            text = (_('Running', 'Работает') if running else _('Not running', 'Не работает')) + (
+                '  ·  ' + ' '.join(said) if said else '')
+            self.ui_calls.put(lambda: self.coop_server_line.configure(text=text, fg=OK if running else BAD))
+        threading.Thread(target=work, daemon=True).start()
+
+    def coop_stop_servers(self):
+        def work():
+            stopped = bbport_coop.stop_servers(PORT_DIR)
+            self.ui_calls.put(lambda: self.coop_server_line.configure(
+                text=_('Stopped ({})', 'Остановлен ({})').format(stopped), fg=MUTED))
+        threading.Thread(target=work, daemon=True).start()
+
+    def coop_firewall(self):
+        """This install's firewall rules, asking Windows for them (one UAC prompt) when they are missing."""
+        host = self.coop.get('role') == 'host'
+        if bbport_coop.firewall_ready(PORT_DIR, host):
+            return True
+        self.coop_say(_('Windows asks to let co-op through its firewall…', 'Windows спрашивает разрешение брандмауэра…'))
+        if not bbport_coop.allow_through_firewall(PORT_DIR, host):
+            return False
+        for _i in range(20):
+            time.sleep(0.5)
+            if bbport_coop.firewall_ready(PORT_DIR, host):
+                return True
+        return False
+
+    def play_coop(self):
+        if self.coop_busy:
+            return
+        self.coop_changed()
+        names = {'game': _('your Bloodborne folder', 'папку Bloodborne'),
+                 'host_ip': _("the host's IP address", 'IP хоста'),
+                 'account': _('an account name (3-16 letters, digits, _ or -)', 'имя аккаунта (3-16 букв, цифр, _ или -)'),
+                 'password': _('a password (letters, digits, _ or -)', 'пароль (буквы, цифры, _ или -)'),
+                 'party_name': _('a party name (letters, digits, _ or -)', 'название группы (буквы, цифры, _ или -)'),
+                 'party_secret': _('a party password (letters, digits, _ or -)', 'пароль группы (буквы, цифры, _ или -)')}
+        missing = bbport_coop.missing(self.coop)
+        if missing:
+            self.messagebox.showerror('Bloodborne', _('Fill in {} on the Co-op card.',
+                                                      'Заполните {} в карточке «Кооператив».')
+                                      .format(', '.join(names[key] for key in missing)))
+            self.show('play')
+            return
+        self.collect()
+        self.coop_busy = True
+        self.play_button.configure(state='disabled')
+        self.set_running(False, preparing=True)
+        threading.Thread(target=self.coop_prepare_and_play, args=(dict(self.coop),), daemon=True).start()
+
+    def coop_prepare_and_play(self, settings):
+        """Off the window's thread: the host's server, the account, the firewall and the game folder;
+        then the game starts on the window's thread."""
+        failed, note, root = None, '', None
+        try:
+            if settings['role'] == 'host' and not bbport_coop.servers_running():
+                self.coop_say(_('Starting the co-op server…', 'Запуск сервера кооператива…'))
+                self.coop_firewall()
+                bbport_coop.start_servers(PORT_DIR, settings['host_ip'])
+            else:
+                self.coop_firewall()
+            self.coop_say(_("Signing in on the host's server…", 'Вход на сервер хоста…'))
+            ok, output = bbport_coop.register(PORT_DIR, settings['host_ip'], settings['account'], settings['password'])
+            if not ok:
+                raise RuntimeError(_("Could not reach the host's server at {}. Is the host's server running, and are "
+                                     'you on the same VPN?\n\n{}',
+                                     'Нет связи с сервером хоста {}. Запущен ли сервер у хоста и в одной ли вы '
+                                     'VPN?\n\n{}').format(settings['host_ip'], output.strip()[-400:]))
+            root = bbport_coop.view_root(PORT_DIR)
+            if bbport_coop.needs_prepare(PORT_DIR, settings):
+                root, note = bbport_coop.prepare(PORT_DIR, settings, say=lambda text: self.coop_say(_(text)))
+                settings['prepared'] = bbport_coop.prepared_key(settings)
+                self.coop['prepared'] = settings['prepared']
+                bbport_coop.save_settings(PORT_DIR, self.coop)
+            else:
+                bbport_coop.copy_events(PORT_DIR, root)
+            user = PORT_DIR / 'user'
+            user.mkdir(parents=True, exist_ok=True)
+            (user / 'host_overrides.custom.json').write_text(bbport_coop.host_overrides(settings['host_ip']),
+                                                              encoding='utf-8')
+        except (RuntimeError, OSError, ValueError) as error:
+            failed = str(error)
+        self.ui_calls.put(lambda: self.coop_start_game(settings, root, failed, note))
+
+    def coop_start_game(self, settings, root, failed, note):
+        self.coop_busy = False
+        self.play_button.configure(state='normal')
+        if failed:
+            self.set_running(False)
+            self.status.configure(text=_('Co-op could not start.', 'Кооператив не запустился.'), fg=BAD)
+            self.messagebox.showerror('Bloodborne', failed)
+            return
+        log_path = bbport_coop.rotate_logs(PORT_DIR)
+        env = bbport_coop.game_environment(game_environment(self.app), settings, PORT_DIR, root)
+        self.set_log('')
+        if note:
+            self.append(note + '\n')
+        try:
+            self.process = start_game(run_command(), env, log_path)
+        except OSError as error:
+            self.set_running(False)
+            self.status.configure(text=_('Could not start: {}', 'Не удалось запустить: {}').format(error), fg=BAD)
+            self.process = None
+            return
+        self.job = GameJob(self.process)
+        threading.Thread(target=self.read_output, args=(self.process, self.job, log_path), daemon=True).start()
+        self.set_running(True, preparing=True)
+        self.status.configure(text=_('Preparing the game; it opens in its own window…',
+                                     'Подготовка игры; она откроется в своём окне…'), fg=GOLD)
+
     def build_play(self):
         tk, px = self.tk, self.px
         page = self.scrolled_page('play', None, None)
         page.bind('<Configure>', lambda _e: self.schedule_fit(), add='+')
         page.columnconfigure(0, weight=2, uniform='play', minsize=px(300))
         page.columnconfigure(1, weight=3, uniform='play')
-        info = self.card(page, _('Ready check', 'Проверка'), grid={'row': 0, 'column': 0, 'padx': (px(32), px(8)),
+        top = 0
+        if COOP_INSTALL:
+            self.build_coop(page)
+            top = 1
+        info = self.card(page, _('Ready check', 'Проверка'), grid={'row': top, 'column': 0, 'padx': (px(32), px(8)),
                                                                    'pady': px(24)})
         self.checks = {}
         for key in ('game', 'saves', 'gpu', 'fsr4', 'upscaler'):
@@ -2724,28 +3067,34 @@ class Launcher:
                   top=14)
         # Only shown after the saved upscaler was changed; hidden last so the rows below keep their place.
         self.checks['upscaler'].frame.grid_remove()
-        quick = self.card(page, _('Quick settings', 'Основное'), grid={'row': 0, 'column': 1, 'padx': (px(8), px(32)),
+        quick = self.card(page, _('Quick settings', 'Основное'), grid={'row': top, 'column': 1, 'padx': (px(8), px(32)),
                                                                        'pady': px(24)})
         quick.columnconfigure(0, weight=1, uniform='quick', minsize=0)
         quick.columnconfigure(1, weight=1, uniform='quick', minsize=0)
         r = 1
-        cell = self.cell(quick, r, 0, _('Game folder', 'Папка игры'), span=2)
-        var = self.var('game_dir', 'app')
-        holder = tk.Frame(cell, bg=CARD)
-        holder.pack(fill='x')
-        self.ttk.Entry(holder, textvariable=var, width=30).pack(side='left', fill='x', expand=True)
-        self.button(holder, _('Browse…', 'Обзор…'), lambda: self.browse_game(var)).pack(side='left', padx=(px(8), 0))
-        self.pkg_button(cell).pack(anchor='w', pady=(px(8), 0))
+        if not COOP_INSTALL:  # co-op: the game folder is the co-op card's
+            cell = self.cell(quick, r, 0, _('Game folder', 'Папка игры'), span=2)
+            var = self.var('game_dir', 'app')
+            holder = tk.Frame(cell, bg=CARD)
+            holder.pack(fill='x')
+            self.ttk.Entry(holder, textvariable=var, width=30).pack(side='left', fill='x', expand=True)
+            self.button(holder, _('Browse…', 'Обзор…'), lambda: self.browse_game(var)).pack(side='left',
+                                                                                         padx=(px(8), 0))
+            self.pkg_button(cell).pack(anchor='w', pady=(px(8), 0))
         for r, pairs in enumerate((((_('Output', 'Разрешение'), 'output_res', 'ini', OUTPUTS),
-                                    (_('Frame rate', 'Частота кадров'), 'fps_mode', 'app', FPS_MODES)),
+                                    (_('Frame rate (60 in co-op)', 'Частота кадров (60 в кооперативе)') if COOP_INSTALL
+                                     else _('Frame rate', 'Частота кадров'), 'fps_mode', 'app', FPS_MODES)),
                                    ((_('Upscaler', 'Апскейлер'), 'upscaler', 'ini', UPSCALERS),
                                     (_('Preset', 'Пресет'), 'preset', 'ini', PRESETS)),
                                    ((_('Game language', 'Язык игры'), 'language', 'app', LANGUAGES),
                                     (_('Launcher language', 'Язык лаунчера'), 'ui_language', 'app', UI_LANGUAGES))), 2):
             for column, (title, key, store, options) in enumerate(pairs):
                 holder = self.cell(quick, r, column, title)
-                (self.upscaler_choice(holder, 16) if key == 'upscaler' else
-                 self.choice(holder, key, store, options, 16)).pack(fill='x')
+                box = (self.upscaler_choice(holder, 16) if key == 'upscaler' else
+                       self.choice(holder, key, store, options, 16))
+                box.pack(fill='x')
+                if key == 'fps_mode':
+                    self.lock_frame_rate(box)
         if reshade_ready():
             self.reshade_box(self.cell(quick, 5, 0, _('ReShade look', 'Стиль ReShade')), simple=True).pack(fill='x')
             holder = self.cell(quick, 5, 1, ' ')
@@ -2781,8 +3130,10 @@ class Launcher:
     def refresh_hero(self):
         """Cover art, game line and the cache of both for the selected game folder."""
         folder = Path(self.var('game_dir', 'app').get() or '.')
+        if COOP_INSTALL:
+            folder = bbport_coop.find_game_folder(self.coop.get('game') or '.') or Path('.')
         self.hero.set_art(folder / 'sce_sys' / 'pic1.png')
-        info = game_info(folder)
+        info = self.coop_game_info() if COOP_INSTALL else game_info(folder)
         self.hero.canvas.itemconfigure(self.hero.info, text=(
             _('CUSA03173 · game version {}', 'CUSA03173 · версия игры {}').format(info[1]) if info
             else _('Game folder not set', 'Папка игры не выбрана')))
@@ -2933,13 +3284,13 @@ class Launcher:
                                   _('Applied when the game starts.', 'Применяется при запуске игры.'))
         f = self.card(page, _('Frame rate', 'Частота кадров'))
         self.version_warning(f)
-        self.row(f, _('Frame rate', 'Режим'), self.choice(f, 'fps_mode', 'app', FPS_MODES),
+        self.row(f, _('Frame rate', 'Режим'), self.lock_frame_rate(self.choice(f, 'fps_mode', 'app', FPS_MODES)),
                  _("Community patches for game version 1.09. Unlocked makes the game use the real frame time. "
                    'Other game versions always run at 30 FPS (the patches would corrupt them).',
                    'Патчи сообщества для версии 1.09. «Без ограничения» — игра использует реальное время кадра. '
                    'Другие версии всегда работают в 30 FPS.'))
         holder = self.tk.Frame(f, bg=CARD)
-        self.choice(holder, 'frame_cap', 'app', FRAME_CAPS, 30).pack(anchor='w')
+        self.lock_frame_rate(self.choice(holder, 'frame_cap', 'app', FRAME_CAPS, 30)).pack(anchor='w')
         hint = self.label(holder, '', 'small', MUTED, wraplength=self.px(560), justify='left')
         hint.pack(anchor='w', pady=(self.px(6), 0))
         generation, cap = self.var('frame_generation', 'ini'), self.var('frame_cap', 'app')
@@ -3511,9 +3862,11 @@ class Launcher:
         self.refresh_status()
 
     def refresh_status(self):
-        info = game_info(self.var('game_dir', 'app').get())
+        info = self.coop_game_info() if COOP_INSTALL else game_info(self.var('game_dir', 'app').get())
         if not info:
-            game = _('✗ No eboot.bin in the game folder (Game & effects)', '✗ В папке игры нет eboot.bin («Игра и эффекты»)')
+            game = (_('✗ Choose your Bloodborne folder on the Co-op card', '✗ Выберите папку Bloodborne в карточке «Кооператив»')
+                    if COOP_INSTALL else
+                    _('✗ No eboot.bin in the game folder (Game & effects)', '✗ В папке игры нет eboot.bin («Игра и эффекты»)'))
         elif info[1] == PATCH_VERSION:
             game = _('✓ Game version {}: every patch available', '✓ Версия игры {}: доступны все патчи').format(info[1])
         else:
@@ -3545,12 +3898,12 @@ class Launcher:
 
     def summary(self):
         fps = dict(FPS_MODES).get(self.var('fps_mode', 'app').get(), ('?',))
-        info = game_info(self.var('game_dir', 'app').get())
+        info = self.coop_game_info() if COOP_INSTALL else game_info(self.var('game_dir', 'app').get())
         if info and info[1] != PATCH_VERSION:
             fps = ('30 FPS',)
         upscaler = dict(UPSCALERS).get(self.var('upscaler', 'ini').get(), ('?',))[0].split(' (')[0]
         output = self.var('output_res', 'ini').get().replace('x', ' × ')
-        online = _('Online') if self.var('online', 'app').get() else _('Offline')
+        online = _('Co-op') if COOP_INSTALL else _('Online') if self.var('online', 'app').get() else _('Offline')
         return f'{_(*fps)}   ·   {upscaler}   ·   {output}   ·   {online}'
 
     def check_upscalers(self, tool=None):
@@ -3825,6 +4178,9 @@ class Launcher:
     # ---- game process ------------------------------------------------------------------------
     def play(self):
         if self.process or self.installing:
+            return
+        if COOP_INSTALL:
+            self.play_coop()
             return
         online, npid = self.var('online', 'app'), self.var('online_npid', 'app')
         if not online.get() and npid.get().strip():
@@ -4725,6 +5081,17 @@ def main():
     args = sys.argv[1:]
     if args and args[0] in ('--run', '--script'):
         sys.exit(run_role(args))
+    if args[:1] == ['--coop-uninstall']:
+        # The uninstaller: the game view goes as links, never the game behind them; the host's
+        # servers stop.
+        for root in {PORT_DIR / 'coop-game', bbport_coop.view_root(PORT_DIR)}:
+            for name in ('CUSA03173', 'CUSA03173-mods'):
+                try:
+                    bbport_coop.remove_view(root / name)
+                except OSError:
+                    pass
+        bbport_coop.stop_servers(PORT_DIR)
+        sys.exit(0)
     settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
     LANG = settings.get('ui_language') or windows_language()
     if args[:1] == ['--install-update'] and len(args) == 3:
