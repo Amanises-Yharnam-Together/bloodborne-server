@@ -240,6 +240,26 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
    (`bloodborne_server_world.cpp`, its own thread); the kill board is not posted. The rest (shown,
    flags, map state, HP) stays on the host's log for 3b. Rig: `server-restart` (shadNet restarts
    mid-session, the first kill stands and a second one comes through), kill-apart, dog.
+   **3b built 2026-10-13**: the host's log no longer runs with the server world. The session host
+   reports its characters (shown bits), its map's state and its return point (`ShownReport`,
+   `MapStateReport`, `ReturnPointReport`; a guest's count for nothing: its hello says who hosts),
+   every member its shared flag events (`FlagProposal`, the FlagTable's FlagsToShare only: per
+   player NPC gift flags never go) and its HP report (`HpProposal`); shadNet orders them into the
+   party's log, journals them and puts them in its snapshots. The direct damage frames stay as the
+   fast copy (phase 4 retires them). Rig: story-hidden, lamp-share, hp-apart, hit3, iosefka-gift,
+   echoes-apart.
+   **3c built 2026-10-13**: the HTTP boards are gone. Each member sends its own part of them over
+   the stream (`MemberMap`, `Rest`, `Trophies`, `Echoes`, `Vitals`, `Portrait`: the portrait whole
+   in one message instead of frame 0x3E's parts) and shadNet sends the party the whole board when
+   it changes (`bloodborne_party_boards.h`: the HTTP boards' rules, a map's wipe declared once,
+   a part not heard of for 5 s dropped, each member's last portrait kept for the ones that come
+   later). Deleted: the board clients in `bloodborne_boards.cpp`, the `/bloodborne/party/*` routes
+   (the summon routes stay: the game's own HTTP), `bloodborne_party_rest.{h,cpp}` and the boards'
+   contract file with its tests on both sides (a fuzz test of the world service replaces the
+   boards' one). With them the server link and the server world are on by default in the port
+   (`=0` switches either off, for tests; there are no boards then). The shadPS4 emulator has no
+   server link, so it has no boards any more. Rig: down-revive, wipe, lamp-share, echoes-apart,
+   give-up, down-revive3, join3, kill-apart.
 4. **Enemy ownership from the server.** One owner per map (the first member there, handed on when it
    leaves); game enemy channels gated by it; own-hit counting, SharedDamage and the HP board retired.
    Rig: hit3, guest-hit-once, hp-together, lone-guest, dog.

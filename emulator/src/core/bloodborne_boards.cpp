@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // The party boards' clients (rest, HP, vitals) and the direct P2P frames. Split from
-// bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h.
+// bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h. With the party's
+// world on the server (phase 3c) the boards go over its stream instead (RunServerBoards).
 
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
@@ -61,172 +62,13 @@
 #include "core/libraries/system/userservice.h"
 #include "core/memory.h"
 
-#include <httplib.h>
-
 namespace Core::Bloodborne {
 namespace Coop {
 
 PartyKills party_kills; // kill_board_mutex
 
 } // namespace Coop
-namespace {
-
-std::jthread rest_board_client;
-
-// A post to one of the party's boards, traced (the request before it goes, the answer after).
-httplib::Result PostToBoard(httplib::Client& client, const std::string& endpoint,
-                            const httplib::Headers& headers, const std::string& body) {
-    if (CoopTraceOn()) {
-        TraceBoard("board-out", endpoint, std::nullopt, body);
-    }
-    auto response = client.Post(endpoint, headers, body, "text/plain");
-    if (CoopTraceOn()) {
-        if (response) {
-            TraceBoard("board-in", endpoint, response->status, response->body);
-        } else {
-            Trace("board-in",
-                  {{"endpoint", endpoint}, {"error", httplib::to_string(response.error())}});
-        }
-    }
-    return response;
-}
-
-// This member's kill changes to the kill board (in the flag board's format) and the standing kills
-// it answers with. A post after the kills changed path (kill_board_fresh_start) asks since
-// FreshStart, so the board takes back what this member posted before; failed changes wait for the
-// next post.
-void PostKillBoard(httplib::Client& client, const httplib::Headers& headers,
-                   const std::string& member, s64& since) {
-    std::vector<std::pair<s32, bool>> kills_out;
-    bool fresh = false;
-    {
-        std::scoped_lock lock{kill_board_mutex};
-        kills_out.swap(kills_to_post);
-        fresh = std::exchange(kill_board_fresh_start, false);
-    }
-    const s64 asked = fresh ? std::numeric_limits<s64>::max() : since;
-    const auto response = PostToBoard(client, "/bloodborne/party/kills", headers,
-                                      EncodeFlagUpdate(member, asked, kills_out));
-    const auto kills =
-        response && response->status == 200 ? ParseKillBoard(response->body) : std::nullopt;
-    std::scoped_lock lock{kill_board_mutex};
-    if (!kills) {
-        kills_to_post.insert(kills_to_post.begin(), kills_out.begin(), kills_out.end());
-        kill_board_fresh_start = kill_board_fresh_start || fresh;
-        return;
-    }
-    since = kills->latest;
-    if (asked == std::numeric_limits<s64>::max()) {
-        party_kills.Forget(member); // taken back; what this post added is not in the answer
-    }
-    party_kills.Apply(kills->changes);
-    others_kills = party_kills.All();
-}
-
-// The host posts its map's characters; a guest only reads (map 0).
-void PostShownBoard(httplib::Client& client, const httplib::Headers& headers,
-                    const std::string& member) {
-    MemberMapState mine;
-    {
-        std::scoped_lock lock{shown_board_mutex};
-        mine = local_shown;
-    }
-    const auto response = PostToBoard(client, "/bloodborne/party/shown", headers,
-                                      EncodeMapStateUpdate(member, mine.map, mine.bits));
-    if (response && response->status == 200) {
-        const auto states = ParseMapStateBoard(response->body);
-        std::scoped_lock lock{shown_board_mutex};
-        host_shown = states && !states->empty() ? std::optional{states->front()} : std::nullopt;
-    }
-}
-
-// The host's map state (see SnapshotHostMapState); a guest reads it.
-void PostMapStateBoard(httplib::Client& client, const httplib::Headers& headers,
-                       const std::string& member) {
-    MemberMapState mine;
-    {
-        std::scoped_lock lock{map_state_mutex};
-        mine = local_map_state;
-    }
-    const auto response = PostToBoard(client, "/bloodborne/party/mapstate", headers,
-                                      EncodeMapStateUpdate(member, mine.map, mine.bits));
-    if (const auto states =
-            response && response->status == 200 ? ParseMapStateBoard(response->body) : std::nullopt;
-        states && !states->empty()) {
-        std::scoped_lock lock{map_state_mutex};
-        host_map_state = states->front();
-    }
-}
-
-void PostEchoBoard(httplib::Client& client, const httplib::Headers& headers,
-                   const std::string& member, s64& since) {
-    std::vector<KillEchoes> echoes_out;
-    {
-        std::scoped_lock lock{echo_board_mutex};
-        echoes_out.swap(echoes_to_post);
-    }
-    const auto response = PostToBoard(client, "/bloodborne/party/echoes", headers,
-                                      EncodeEchoUpdate(member, since, echoes_out));
-    if (const auto echoes =
-            response && response->status == 200 ? ParseEchoBoard(response->body) : std::nullopt) {
-        since = echoes->latest;
-        std::scoped_lock lock{echo_board_mutex};
-        echo_ledger.Received(echoes->echoes, SteadyMilliseconds());
-    } else {
-        std::scoped_lock lock{echo_board_mutex};
-        echoes_to_post.insert(echoes_to_post.begin(), echoes_out.begin(), echoes_out.end());
-    }
-}
-
-// The lamps (FlagsToShare) this member saw lit, and the others'.
-void PostFlagBoard(httplib::Client& client, const httplib::Headers& headers,
-                   const std::string& member, s64& since) {
-    std::vector<std::pair<s32, bool>> outgoing;
-    {
-        std::scoped_lock lock{flag_board_mutex};
-        outgoing.swap(flags_to_post);
-    }
-    const auto response = PostToBoard(client, "/bloodborne/party/flags", headers,
-                                      EncodeFlagUpdate(member, since, outgoing));
-    const auto board =
-        response && response->status == 200 ? ParseFlagBoard(response->body) : std::nullopt;
-    std::scoped_lock lock{flag_board_mutex};
-    if (!board) {
-        flags_to_post.insert(flags_to_post.begin(), outgoing.begin(), outgoing.end());
-        return;
-    }
-    since = board->latest;
-    std::vector<std::pair<s32, bool>> changes = board->changes;
-    FilterBoardFlags(changes);
-    flags_to_set.insert(flags_to_set.end(), changes.begin(), changes.end());
-}
-
-// The world snapshot (POST /bloodborne/party/world): the host posts its log's state when the game
-// thread made a new one (every WorldSnapshotPostMs); a member reads it while its copy is not fresh
-// (a join, a restart, its link to the host down).
-void PostWorldSnapshot(httplib::Client& client, const httplib::Headers& headers,
-                       const std::string& member) {
-    if (const auto blob = TakeWorldSnapshotToPost()) {
-        PostToBoard(client, "/bloodborne/party/world", headers,
-                    EncodeWorldSnapshotUpdate(member, *blob));
-        return;
-    }
-    if (!WorldSnapshotWanted()) {
-        return;
-    }
-    const auto response = PostToBoard(client, "/bloodborne/party/world", headers,
-                                      EncodeWorldSnapshotUpdate(member, {}));
-    if (const auto answer = response && response->status == 200
-                                ? ParseWorldSnapshotAnswer(response->body)
-                                : std::nullopt;
-        answer && !answer->blob.empty()) {
-        NoteWorldSnapshot(answer->age_ms, std::move(answer->blob));
-    }
-}
-
-// Posts this member's rest about once a second while it rests (once more when it stands up) and
-// keeps the board the server answers with. Runs on its own thread; the game never waits for it.
-} // namespace
+namespace {} // namespace
 
 namespace Coop {
 
@@ -270,115 +112,6 @@ std::string FindBoardMember(std::stop_token stop) {
     return member;
 }
 
-void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string party) {
-    const std::string member = FindBoardMember(stop);
-    httplib::Client client(base_url);
-    client.set_connection_timeout(std::chrono::seconds{1});
-    client.set_read_timeout(std::chrono::seconds{2});
-    const httplib::Headers headers{{"X-ShadPS4-Bloodborne-Party", party}};
-    LOG_INFO(Debug, "Bloodborne party rest board client for {} as member {}", base_url, member);
-
-    std::mutex wait_mutex;
-    std::condition_variable_any wait;
-    s32 posted = NotResting;
-    bool failing = false;
-    auto next_trophy_post = std::chrono::steady_clock::now();
-    auto next_echo_post = std::chrono::steady_clock::now();
-    // The first post asks for nothing older than now: the board's history belongs to whatever
-    // characters played before (a new character must not get it).
-    s64 flag_board_since = std::numeric_limits<s64>::max();
-    s64 echo_board_since = std::numeric_limits<s64>::max();
-    s64 kill_board_since = std::numeric_limits<s64>::max();
-    while (!stop.stop_requested()) {
-        {
-            std::unique_lock lock{wait_mutex};
-            wait.wait_for(lock, stop, std::chrono::seconds{1}, [] { return false; });
-        }
-        if (const u32 map = party_map_now.load(); map != 0) {
-            const auto map_response =
-                PostToBoard(client, "/bloodborne/party/map", headers, EncodeMapUpdate(member, map));
-            if (const auto maps = map_response && map_response->status == 200
-                                      ? ParseMapBoard(map_response->body)
-                                      : std::nullopt) {
-                std::scoped_lock lock{map_board_mutex};
-                map_board = *maps;
-                map_board_member = member;
-                map_board_time = std::chrono::steady_clock::now();
-            }
-        }
-        // While the world log runs, the kills, shown characters, flags, map state and HP go over
-        // the link and the host's world snapshot replaces their boards (see PostWorldSnapshot).
-        const bool world_log = WorldLogCarriesBoards();
-        if (!world_log) {
-            PostShownBoard(client, headers, member);
-        }
-        // Kill echoes go both ways in and out of a session: a member on its own trip (a guest
-        // in the Hunter's Dream) still gets the party's kills made apart.
-        if (std::chrono::steady_clock::now() >= next_echo_post) {
-            if (!world_log) {
-                PostMapStateBoard(client, headers, member);
-            }
-            // The party's world on the server carries the kills (phase 3).
-            if (!world_log && !ServerWorldOn()) {
-                PostKillBoard(client, headers, member, kill_board_since);
-            }
-            next_echo_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
-            PostEchoBoard(client, headers, member, echo_board_since);
-        }
-        if (world_log) {
-            PostWorldSnapshot(client, headers, member);
-        }
-        if (trophy_board_active.load() && std::chrono::steady_clock::now() >= next_trophy_post) {
-            next_trophy_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
-            std::vector<s32> earned;
-            {
-                std::scoped_lock lock{trophy_mutex};
-                earned = trophies_earned_in_party;
-            }
-            const auto trophy_response = PostToBoard(client, "/bloodborne/party/trophy", headers,
-                                                     EncodeTrophyUpdate(member, earned));
-            if (const auto trophies = trophy_response && trophy_response->status == 200
-                                          ? ParseTrophyBoard(trophy_response->body)
-                                          : std::nullopt) {
-                ReadTrophyBoard(*trophies);
-            }
-            if (!world_log) {
-                PostFlagBoard(client, headers, member, flag_board_since);
-            }
-        }
-        // In a session every member reads the board (to join a rest nearby); outside one only
-        // a member that still has a rest on it posts, to take it off.
-        const bool active = rest_board_active.load();
-        const s32 lamp = active ? rest_board_lamp.load() : NotResting;
-        if (!active && posted == NotResting) {
-            continue;
-        }
-        std::optional<LampPosition> at;
-        {
-            std::scoped_lock lock{rest_board_position_mutex};
-            at = rest_board_position;
-        }
-        const auto response = PostToBoard(client, "/bloodborne/party/rest", headers,
-                                          EncodeLampRestUpdate(member, lamp, at));
-        const auto board =
-            response && response->status == 200 ? ParseLampRestBoard(response->body) : std::nullopt;
-        if (!board) {
-            if (!failing) {
-                LOG_WARNING(Debug, "Bloodborne party rest board unreachable ({})",
-                            response ? std::to_string(response->status)
-                                     : httplib::to_string(response.error()));
-            }
-            failing = true;
-            continue;
-        }
-        failing = false;
-        posted = lamp;
-        std::scoped_lock lock{rest_board_mutex};
-        rest_board = *board;
-        rest_board_time = std::chrono::steady_clock::now();
-    }
-}
-
 } // namespace
 
 namespace Coop {
@@ -394,43 +127,6 @@ bool enemy_hp_changed = false; // enemy_hp_mutex
 
 namespace {
 
-void RunHpBoardClient(std::stop_token stop, std::string base_url, std::string party) {
-    const std::string member = FindBoardMember(stop);
-    httplib::Client client(base_url);
-    client.set_keep_alive(true);
-    client.set_connection_timeout(std::chrono::seconds{1});
-    client.set_read_timeout(std::chrono::seconds{1});
-    const httplib::Headers headers{{"X-ShadPS4-Bloodborne-Party", party}};
-    while (!stop.stop_requested()) {
-        MemberMapState mine;
-        {
-            std::unique_lock lock{enemy_hp_mutex};
-            enemy_hp_wake.wait_for(lock, stop, HpBoardWait(enemy_hp_changed),
-                                   [] { return enemy_hp_changed; });
-            enemy_hp_changed = false;
-            mine = local_enemy_hp;
-        }
-        if (mine.map == 0 || WorldLogCarriesBoards()) {
-            continue; // the world log carries the HP (the world snapshot is its copy)
-        }
-        const auto hp_response = PostToBoard(client, "/bloodborne/party/hp", headers,
-                                             EncodeMapStateUpdate(member, mine.map, mine.bits));
-        if (const auto states = hp_response && hp_response->status == 200
-                                    ? ParseMapStateBoard(hp_response->body)
-                                    : std::nullopt) {
-            std::scoped_lock lock{enemy_hp_mutex};
-            others_enemy_hp = *states;
-        } else {
-            static auto last_logged = std::chrono::steady_clock::time_point{};
-            if (std::chrono::steady_clock::now() - last_logged > std::chrono::seconds{10}) {
-                last_logged = std::chrono::steady_clock::now();
-                LOG_INFO(Debug, "Bloodborne party: HP board post failed (status {})",
-                         hp_response ? hp_response->status : -1);
-            }
-        }
-    }
-}
-std::jthread hp_board_client;
 void StopBoardClientsAtExit();
 
 } // namespace
@@ -445,10 +141,8 @@ void StartRestBoardClient() {
         base_url.empty()) {
         return;
     }
+    // The boards go over the server's world (StartVitalsBoardClient starts them).
     Libraries::Np::NpTrophy::SetTrophyUnlockObserver(NoteGameTrophyUnlock);
-    rest_board_client = std::jthread(RunRestBoardClient, base_url, *party);
-    hp_board_client = std::jthread(RunHpBoardClient, base_url, *party);
-    StopBoardClientsAtExit();
 }
 
 // Which build each game runs (see PeerHelloType): this game's, from SetBuildIdentity; no hello
@@ -513,6 +207,28 @@ void TakePortraitPart(std::span<const u8> payload) {
     std::scoped_lock lock{portraits_mutex};
     party_portraits.Take(part->member, std::move(*pixels));
 }
+
+} // namespace
+
+namespace Coop {
+
+void TakeServerPortrait(const std::string& member, u32 id, std::vector<u8> pixels) {
+    if (pixels.empty()) {
+        TakePortraitPart(EncodePortraitNone(member));
+        return;
+    }
+    const u8 parts = static_cast<u8>((pixels.size() + PortraitPartBytes - 1) / PortraitPartBytes);
+    for (u8 part = 0; part < parts; ++part) {
+        const size_t at = size_t{part} * PortraitPartBytes;
+        const size_t size = std::min(PortraitPartBytes, pixels.size() - at);
+        TakePortraitPart(EncodePortraitPart(
+            {member, id, part, parts, {pixels.begin() + at, pixels.begin() + at + size}}));
+    }
+}
+
+} // namespace Coop
+
+namespace {
 
 // One co-op frame from a room peer (`bytes` whole, `payload` after the type); whether it brought
 // what the enemy step uses (HP, kills, the world log), so that step runs on the next frame.
@@ -941,7 +657,16 @@ void TickPortraits() {
     if (!sender.Due(id, peers, now)) {
         return;
     }
-    if (own) {
+    if (ServerWorldOn()) {
+        // The server keeps it for the party's games, the ones that come later too.
+        std::vector<u8> pixels;
+        if (own) {
+            for (const auto& part : SplitPortrait(member, *own)) {
+                pixels.insert(pixels.end(), part.bytes.begin(), part.bytes.end());
+            }
+        }
+        SendServerPortrait(id, pixels);
+    } else if (own) {
         for (const auto& part : SplitPortrait(member, *own)) {
             SendToRoomPeers(EncodeCoopFrame(PortraitPartType, EncodePortraitPart(part)));
         }
@@ -982,8 +707,6 @@ std::string vitals_member;
 } // namespace Coop
 
 namespace {
-
-std::jthread vitals_board_client;
 
 std::string BoardMemberName() {
     std::scoped_lock lock{vitals_mutex};
@@ -1227,67 +950,101 @@ void PostVitals(const MemberVitals& mine, std::vector<ReviveHitTotal> hits) {
 
 namespace {
 
-// Posts this member's vitals to the party's vitals board on shadNet and keeps its answer: once a
-// second, four times a second while anyone in the party is down (revive progress), and soon after
-// a change. Out of a session it posts "off" once, then waits.
-void RunVitalsBoardClient(std::stop_token stop, std::string base_url, std::string party) {
+// The boards over the party's world on the server (phase 3c): this member's map every second, its
+// rest while it rests (and once when it stands up), its kill echoes and the party's trophies every
+// three seconds, and its vitals as the vitals client posted them (soon after a change, four times
+// a second while someone is down, else every second). The server sends the boards back as they
+// change (TakeServer*).
+void RunServerBoards(std::stop_token stop) {
     const std::string member = FindBoardMember(stop);
     {
         std::scoped_lock lock{vitals_mutex};
         vitals_member = member;
     }
-    httplib::Client client(base_url);
-    client.set_connection_timeout(std::chrono::seconds{1});
-    client.set_read_timeout(std::chrono::seconds{2});
-    const httplib::Headers headers{{"X-ShadPS4-Bloodborne-Party", party}};
-    LOG_INFO(Debug, "Bloodborne party vitals board client for {} as member {}", base_url, member);
-
+    LOG_INFO(Debug, "Bloodborne party boards on the server's world as member {}", member);
+    StartServerWorld();
+    using Clock = std::chrono::steady_clock;
+    auto next_second = Clock::now();
+    auto next_echoes = Clock::now();
+    auto next_vitals = Clock::now();
+    auto rounded_at = Clock::now();
+    s32 posted_rest = NotResting;
     bool posted_on = false;
-    bool failing = false;
-    bool someone_down = false;
-    auto last_post = std::chrono::steady_clock::now();
     while (!stop.stop_requested()) {
+        bool someone_down = false;
         MemberVitals mine;
         std::vector<ReviveHitTotal> hits;
+        bool vitals_due = false;
         {
             std::unique_lock lock{vitals_mutex};
-            vitals_wake.wait_until(lock, stop, last_post + std::chrono::milliseconds{100},
+            // At least 100 ms apart, then until a change or the next round is due.
+            vitals_wake.wait_until(lock, stop, rounded_at + std::chrono::milliseconds{100},
                                    [] { return false; });
-            vitals_wake.wait_until(
-                lock, stop, last_post + std::chrono::milliseconds{someone_down ? 250 : 1'000},
-                [] { return vitals_changed; });
-            vitals_changed = false;
-            mine = vitals_mine;
-            hits = vitals_hits;
-        }
-        if (stop.stop_requested() || (mine.vital == Vital::Off && !posted_on)) {
-            last_post = std::chrono::steady_clock::now();
-            continue;
-        }
-        mine.member = member;
-        last_post = std::chrono::steady_clock::now();
-        const auto response = PostToBoard(client, "/bloodborne/party/vitals", headers,
-                                          EncodeVitalsUpdate(mine, hits));
-        const auto board =
-            response && response->status == 200 ? ParseVitalsBoard(response->body) : std::nullopt;
-        if (!board) {
-            if (!failing) {
-                LOG_WARNING(Debug, "Bloodborne party vitals board unreachable ({})",
-                            response ? std::to_string(response->status)
-                                     : httplib::to_string(response.error()));
+            vitals_wake.wait_until(lock, stop, std::min(next_vitals, next_second),
+                                   [] { return vitals_changed; });
+            rounded_at = Clock::now();
+            someone_down = std::ranges::any_of(vitals_board.members, [](const MemberVitals& other) {
+                return other.vital == Vital::Down;
+            });
+            vitals_due = vitals_changed || Clock::now() >= next_vitals;
+            if (vitals_due) {
+                vitals_changed = false;
+                mine = vitals_mine;
+                hits = vitals_hits;
             }
-            failing = true;
+        }
+        if (stop.stop_requested()) {
+            break;
+        }
+        const auto now = Clock::now();
+        if (vitals_due) {
+            next_vitals = now + std::chrono::milliseconds{someone_down ? 250 : 1'000};
+            if (mine.vital != Vital::Off || posted_on) {
+                SendServerVitals(mine, hits);
+                posted_on = mine.vital != Vital::Off;
+            }
+        }
+        if (now < next_second) {
             continue;
         }
-        failing = false;
-        posted_on = mine.vital != Vital::Off;
-        someone_down = std::ranges::any_of(
-            board->members, [](const MemberVitals& other) { return other.vital == Vital::Down; });
-        std::scoped_lock lock{vitals_mutex};
-        vitals_board = *board;
-        vitals_heard_at = std::chrono::steady_clock::now();
+        next_second = now + std::chrono::seconds{1};
+        if (const u32 map = party_map_now.load(); map != 0) {
+            SendServerMap(map);
+        }
+        const bool active = rest_board_active.load();
+        const s32 lamp = active ? rest_board_lamp.load() : NotResting;
+        if (active || posted_rest != NotResting) {
+            std::optional<LampPosition> at;
+            {
+                std::scoped_lock lock{rest_board_position_mutex};
+                at = rest_board_position;
+            }
+            SendServerRest(lamp, at);
+            posted_rest = lamp;
+        }
+        if (now < next_echoes) {
+            continue;
+        }
+        next_echoes = now + std::chrono::seconds{3};
+        std::vector<KillEchoes> echoes;
+        {
+            std::scoped_lock lock{echo_board_mutex};
+            echoes.swap(echoes_to_post);
+        }
+        if (!echoes.empty()) {
+            SendServerEchoes(echoes);
+        }
+        if (trophy_board_active.load()) {
+            std::vector<s32> earned;
+            {
+                std::scoped_lock lock{trophy_mutex};
+                earned = trophies_earned_in_party;
+            }
+            SendServerTrophies(earned);
+        }
     }
 }
+std::jthread server_boards_client;
 
 // The board clients use state that lives in the other co-op files (flags, kills, HP, the trace
 // queue), and the order the files' statics are destroyed in at exit() is not defined across
@@ -1299,15 +1056,9 @@ void StopBoardClientsAtExit() {
     static std::once_flag registered;
     std::call_once(registered, [] {
         std::atexit([] {
-            for (std::jthread* client :
-                 {&rest_board_client, &hp_board_client, &vitals_board_client}) {
-                client->request_stop();
-            }
-            for (std::jthread* client :
-                 {&rest_board_client, &hp_board_client, &vitals_board_client}) {
-                if (client->joinable()) {
-                    client->join();
-                }
+            server_boards_client.request_stop();
+            if (server_boards_client.joinable()) {
+                server_boards_client.join();
             }
         });
     });
@@ -1324,8 +1075,44 @@ void StartVitalsBoardClient() {
     if (!party_controller || !party || !EmulatorSettings.IsShadNetEnabled() || base_url.empty()) {
         return;
     }
-    vitals_board_client = std::jthread(RunVitalsBoardClient, base_url, *party);
+    // Every board goes over the party's world on the server (one client for all of them); there are
+    // no boards without it (the HTTP boards went with phase 3c).
+    if (!ServerWorldOn()) {
+        LOG_WARNING(Debug, "Bloodborne party boards: none (no party world on the server: the "
+                           "server link is off)");
+        return;
+    }
+    server_boards_client = std::jthread(RunServerBoards);
     StopBoardClientsAtExit();
+}
+
+void TakeServerMapBoard(std::vector<MemberMap> maps) {
+    std::string member;
+    {
+        std::scoped_lock lock{vitals_mutex};
+        member = vitals_member;
+    }
+    std::scoped_lock lock{map_board_mutex};
+    map_board = std::move(maps);
+    map_board_member = std::move(member);
+    map_board_time = std::chrono::steady_clock::now();
+}
+
+void TakeServerRestBoard(std::vector<LampRest> rests) {
+    std::scoped_lock lock{rest_board_mutex};
+    rest_board = std::move(rests);
+    rest_board_time = std::chrono::steady_clock::now();
+}
+
+void TakeServerEchoes(std::vector<KillEchoes> echoes) {
+    std::scoped_lock lock{echo_board_mutex};
+    echo_ledger.Received(echoes, SteadyMilliseconds());
+}
+
+void TakeServerVitals(VitalsBoard board) {
+    std::scoped_lock lock{vitals_mutex};
+    vitals_board = std::move(board);
+    vitals_heard_at = std::chrono::steady_clock::now();
 }
 
 } // namespace Coop

@@ -369,7 +369,6 @@ add_executable(shadps4_bloodborne_test
     bloodborne/test_bloodborne_three_players.cpp
     bloodborne/test_bloodborne_eboot.cpp
     bloodborne/test_bloodborne_patch_sites.cpp
-    bloodborne/test_bloodborne_contracts.cpp
     bloodborne/test_bloodborne_fuzz.cpp
     bloodborne/test_bloodborne_autoplay.cpp
     bloodborne/test_bloodborne_harder_enemies.cpp
@@ -392,10 +391,8 @@ add_executable(shadps4_bloodborne_test
 )
 target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/../server
     "${COOP_TEST_PROTO_OUT}")
-# The party boards' messages, shared with shadNet's tests (see test_bloodborne_contracts.cpp),
-# and the flag decisions recorded before the flag table (see test_bloodborne_flag_rules.cpp).
+# The flag decisions recorded before the flag table (see test_bloodborne_flag_rules.cpp).
 target_compile_definitions(shadps4_bloodborne_test PRIVATE
-    BLOODBORNE_CONTRACTS="${CMAKE_SOURCE_DIR}/../server/tests/contracts/bloodborne_party_boards.txt"
     # The co-op site table as the launcher reads it (see test_bloodborne_patch_sites.cpp).
     BLOODBORNE_COOP_SITES="${CMAKE_SOURCE_DIR}/../bbport/patches/coop-sites.json"
     BLOODBORNE_FLAG_RULES="${CMAKE_CURRENT_SOURCE_DIR}/bloodborne/flag_rules_expected.txt"

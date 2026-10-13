@@ -102,6 +102,8 @@ set(SOURCES
     # The parties' worlds (co-op phase 3)
     src/bloodborne_world.h
     src/bloodborne_world.cpp
+    src/bloodborne_party_boards.h
+    src/bloodborne_party_boards.cpp
     ${COOP_SOURCES}
     # WebAPI HTTP/JSON listener
     src/webapi_server.h
@@ -118,8 +120,6 @@ set(SOURCES
     src/webapi_routes_session.cpp
     src/bloodborne_summon_broker.h
     src/bloodborne_summon_broker.cpp
-    src/bloodborne_party_rest.h
-    src/bloodborne_party_rest.cpp
     src/webapi_routes_bloodborne.h
     src/webapi_routes_bloodborne.cpp
     src/webapi_routes_common.h
@@ -183,32 +183,6 @@ if(BUILD_TESTING)
     target_link_libraries(test_bloodborne_summon_party PRIVATE Qt6::Core)
     add_test(NAME bloodborne_summon_party COMMAND test_bloodborne_summon_party)
 
-    add_executable(test_bloodborne_party_rest EXCLUDE_FROM_ALL
-        tests/test_bloodborne_party_rest.cpp
-        src/bloodborne_party_rest.cpp
-    )
-    target_include_directories(test_bloodborne_party_rest PRIVATE src)
-    target_link_libraries(test_bloodborne_party_rest PRIVATE Qt6::Core)
-    add_test(NAME bloodborne_party_rest COMMAND test_bloodborne_party_rest)
-
-    add_executable(test_bloodborne_party_contracts EXCLUDE_FROM_ALL
-        tests/test_bloodborne_party_contracts.cpp
-        src/bloodborne_party_rest.cpp
-    )
-    target_include_directories(test_bloodborne_party_contracts PRIVATE src)
-    target_link_libraries(test_bloodborne_party_contracts PRIVATE Qt6::Core)
-    target_compile_definitions(test_bloodborne_party_contracts PRIVATE
-        BLOODBORNE_CONTRACTS="${CMAKE_CURRENT_SOURCE_DIR}/tests/contracts/bloodborne_party_boards.txt")
-    add_test(NAME bloodborne_party_contracts COMMAND test_bloodborne_party_contracts)
-
-    add_executable(test_bloodborne_party_fuzz EXCLUDE_FROM_ALL
-        tests/test_bloodborne_party_fuzz.cpp
-        src/bloodborne_party_rest.cpp
-    )
-    target_include_directories(test_bloodborne_party_fuzz PRIVATE src)
-    target_link_libraries(test_bloodborne_party_fuzz PRIVATE Qt6::Core)
-    add_test(NAME bloodborne_party_fuzz COMMAND test_bloodborne_party_fuzz)
-
     add_executable(test_bloodborne_backend_json EXCLUDE_FROM_ALL
         tests/test_bloodborne_backend_json.cpp
         src/bloodborne_backend_json.cpp
@@ -230,6 +204,7 @@ if(BUILD_TESTING)
     add_executable(test_bloodborne_world EXCLUDE_FROM_ALL
         tests/test_bloodborne_world.cpp
         src/bloodborne_world.cpp
+        src/bloodborne_party_boards.cpp
         src/server_link.cpp
         ${COOP_SOURCES}
     )
@@ -273,7 +248,6 @@ add_custom_command(TARGET shadnet POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/scoreboards.cfg"
         "$<TARGET_FILE_DIR:shadnet>/scoreboards.cfg"
 )
-
 
 install(TARGETS shadnet RUNTIME DESTINATION bin)
 install(FILES worlds.cfg scoreboards.cfg DESTINATION bin)

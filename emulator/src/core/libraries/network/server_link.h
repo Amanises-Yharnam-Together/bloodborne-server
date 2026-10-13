@@ -8,8 +8,9 @@
 
 #include "common/types.h"
 
-// The server link (net_link.h): with SHADPS4_BLOODBORNE_SERVER_LINK=1 (the port only, off until
-// the rig passes it) every frame the P2P transport sends to a peer goes through shadNet.
+// The server link (net_link.h): in the port (on unless SHADPS4_BLOODBORNE_SERVER_LINK=0) every
+// frame the P2P transport sends to a peer goes through shadNet, and the party's world and boards
+// live there (phase 3).
 namespace Libraries::Net {
 
 bool ServerLinkSwitchOn();

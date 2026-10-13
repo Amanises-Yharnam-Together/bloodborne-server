@@ -1436,9 +1436,10 @@ void P2PSocket::EnqueuePacket(P2PDatagram packet) {
 
 bool ServerLinkSwitchOn() {
 #ifdef BLOODBORNE_NATIVE_PORT
+    // On unless switched off ("0"): the party's world and boards live on the server (phase 3c).
     static const bool on = [] {
         const char* env = std::getenv("SHADPS4_BLOODBORNE_SERVER_LINK");
-        return env != nullptr && std::string_view{env} == "1";
+        return env == nullptr || std::string_view{env} != "0";
     }();
     return on;
 #else

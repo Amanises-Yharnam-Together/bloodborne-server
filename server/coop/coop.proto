@@ -109,6 +109,98 @@ message HpProposal {
     repeated HpEnemy enemies = 6;
 }
 
+// Phase 3c: what the HTTP boards (/bloodborne/party/*) carried. A member sends its own part
+// (when it changes, and again now and then: the server forgets a part not heard of for a few
+// seconds) and the server sends every member of the party the whole board when it changes.
+
+// game -> server: the map the member is on (0 while loading).
+message MemberMap {
+    uint32 map = 1;
+}
+message MapBoard {
+    message Entry {
+        string member = 1;
+        uint32 map = 2;
+    }
+    repeated Entry members = 1;
+}
+
+message Position {
+    float x = 1;
+    float y = 2;
+    float z = 3;
+}
+
+// game -> server: the lamp the member rests at (0: not resting) and where.
+message Rest {
+    sint32 lamp = 1;
+    Position at = 2;
+}
+message RestBoard {
+    message Entry {
+        string member = 1;
+        sint32 lamp = 2;
+        Position at = 3;
+    }
+    repeated Entry rests = 1;
+}
+
+// game -> server: the trophies the member unlocked in the party; the board is the party's union.
+message Trophies {
+    repeated int32 ids = 1;
+}
+
+// Kill echoes shared across maps: a member's kill rewards made with no other member on its map
+// (game -> server), each sent on to the party's other members once (server -> game).
+message EchoKill {
+    sint32 echoes = 1;
+    uint32 map = 2;
+}
+message Echoes {
+    repeated EchoKill kills = 1;
+}
+
+// Party death: the member's vitals (game -> server), and the party's with the wipes the server
+// declared (server -> game; a map's party is wiped when nobody there stands any more).
+message ReviveHit {
+    string target = 1;
+    uint32 down = 2;
+    uint32 damage = 3;
+}
+message Vitals {
+    uint32 map = 1;
+    uint32 vital = 2; // Vital: 0 off, 1 up, 2 down, 3 dead
+    sint32 hp = 3;
+    sint32 max = 4;
+    uint32 down = 5;
+    uint32 landed = 6;
+    uint32 needed = 7;
+    Position at = 8;
+    repeated ReviveHit hits = 9;
+}
+message VitalsBoard {
+    message Member {
+        string member = 1;
+        Vitals vitals = 2; // without its hits
+        uint32 revive_damage = 3;
+    }
+    message Wipe {
+        uint32 id = 1;
+        uint32 map = 2;
+        repeated string members = 3;
+    }
+    repeated Member members = 1;
+    repeated Wipe wipes = 2;
+}
+
+// A member's portrait (bloodborne_portrait.h), RGB565, or none (no pixels); the server keeps each
+// member's last one for the members that come later.
+message Portrait {
+    string member = 1; // server -> game: whose
+    uint32 id = 2;
+    bytes pixels = 3;
+}
+
 // One world log entry (WorldLogEntry; kind is WorldLogKind).
 message Entry {
     uint64 seq = 1;
@@ -178,6 +270,15 @@ message Envelope {
         MapStateReport map_state = 10;
         ReturnPointReport return_point = 11;
         HpProposal hp = 12;
+        MemberMap map = 13;
+        MapBoard map_board = 14;
+        Rest rest = 15;
+        RestBoard rest_board = 16;
+        Trophies trophies = 17;
+        Echoes echoes = 18;
+        Vitals vitals = 19;
+        VitalsBoard vitals_board = 20;
+        Portrait portrait = 21;
     }
 }
 

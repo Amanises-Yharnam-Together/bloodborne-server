@@ -594,8 +594,18 @@ def add_guest2():
     stop_servers()
 
 
-def server_is_current() -> bool:
-    """Whether the rig's shadNet has the newest party boards (/bloodborne/party/shown)."""
+def server_is_current(log_dir: pathlib.Path | None = None) -> bool:
+    """Whether the rig's shadNet is a current one: it keeps the parties' worlds (phase 3: its log
+    says so at its start, "party worlds: ..."), or, for a run of an older game build, it has the
+    newest HTTP boards (/bloodborne/party/shown)."""
+    if log_dir is not None:
+        log = log_dir / "shadnet.log"
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if log.is_file() and "party worlds:" in log.read_text(encoding="utf-8",
+                                                                  errors="replace"):
+                return True
+            time.sleep(0.5)
     request = urllib.request.Request(f"http://127.0.0.1:{WEBAPI_PORT}/bloodborne/party/shown",
                                      data=b"probe 0",
                                      headers={"X-ShadPS4-Bloodborne-Party": "probe:probe"})
@@ -884,8 +894,8 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
     # Every run starts with no party worlds on the server (shadNet keeps them on disk: phase 3).
     shutil.rmtree(lane_dir() / "server" / "bloodborne_worlds", ignore_errors=True)
     start_servers(run_dir)
-    if not server_is_current():
-        print("  The rig's shadNet is too old (no /bloodborne/party/shown): copy "
+    if not server_is_current(run_dir):
+        print("  The rig's shadNet is too old (it keeps no party worlds): copy "
               rf"{BB_ROOT}\out\server\shadnet.exe into {RIG}\server.")
         return False
     started = time.time()
@@ -1182,8 +1192,8 @@ def play(name: str, title: bool = False) -> int:
         return 2
     stop_servers()
     start_servers(run_dir)
-    if not server_is_current():
-        print(rf"The rig's shadNet is too old (no /bloodborne/party/shown): copy "
+    if not server_is_current(run_dir):
+        print(rf"The rig's shadNet is too old (it keeps no party worlds): copy "
               rf"{BB_ROOT}\out\server\shadnet.exe into {RIG}\server.")
         stop_servers()
         return 2

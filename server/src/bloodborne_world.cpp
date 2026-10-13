@@ -162,7 +162,14 @@ std::string Service::Who(const Member& member) const {
 
 Service::Result Service::Load(qint64 now_ms) {
     Result result;
+    const auto loaded = [&] {
+        result.log.append(QStringLiteral("party worlds: %1, %2 loaded")
+                              .arg(folder.isEmpty() ? QStringLiteral("kept in memory only")
+                                                    : QStringLiteral("kept in ") + folder)
+                              .arg(worlds.size()));
+    };
     if (folder.isEmpty()) {
+        loaded();
         return result;
     }
     const QDir dir{folder};
@@ -199,6 +206,7 @@ Service::Result Service::Load(qint64 now_ms) {
             Compact(world, now_ms);
         }
     }
+    loaded();
     return result;
 }
 
@@ -354,6 +362,18 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     bbcoop::Envelope snapshot;
     *snapshot.mutable_snapshot() = SnapshotOf(world.host);
     SendTo(member, snapshot, now_ms);
+    // The boards as they are, and the others' portraits.
+    SendBoards(world,
+               PartyBoards::Maps | PartyBoards::Rests | PartyBoards::TrophyBoard |
+                   PartyBoards::VitalsBoard,
+               now_ms, &member);
+    for (const auto& [name, portrait] : world.portraits) {
+        if (name != member.name) {
+            bbcoop::Envelope envelope;
+            *envelope.mutable_portrait() = portrait;
+            SendTo(member, envelope, now_ms);
+        }
+    }
     result.log.append(QStringLiteral("party world %1: %2 (run %3) follows log %4 at seq %5")
                           .arg(world.name, QString::fromStdString(member.name))
                           .arg(Hex(member.run), Hex(world.host.Epoch()))
@@ -388,6 +408,9 @@ void Service::OnLifecycle(Member& member, const bbcoop::Lifecycle& lifecycle, qi
         }
         const std::vector<WorldLogEntry> entries = world.host.Drop(member.name);
         world.proposed.erase(member.name);
+        if (lifecycle.event() == bbcoop::Lifecycle::LEAVE) {
+            SendBoards(world, world.boards.Forget(member.name), now_ms);
+        }
         bbcoop::JournalRecord record;
         record.mutable_drop()->set_member(member.name);
         Journal(world, std::move(record), now_ms);
@@ -452,6 +475,14 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     case bbcoop::Envelope::kReturnPoint:
     case bbcoop::Envelope::kHp:
         TakeWorld(member, world, envelope, now_ms, result);
+        break;
+    case bbcoop::Envelope::kMap:
+    case bbcoop::Envelope::kRest:
+    case bbcoop::Envelope::kTrophies:
+    case bbcoop::Envelope::kEchoes:
+    case bbcoop::Envelope::kVitals:
+    case bbcoop::Envelope::kPortrait:
+        TakeBoard(member, world, envelope, now_ms, result);
         break;
     case bbcoop::Envelope::kSnapshotRequest: {
         bbcoop::Envelope snapshot;
@@ -545,6 +576,110 @@ void Service::TakeWorld(Member& member, PartyWorld& world, const bbcoop::Envelop
     }
 }
 
+void Service::TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                        qint64 now_ms, Result& result) {
+    // A member's part changes its board for everyone; else the board goes back to the member
+    // alone (as the HTTP boards answered every post): its copy stays fresh.
+    const auto answer = [&](unsigned changed, unsigned board) {
+        if (changed != PartyBoards::None) {
+            SendBoards(world, changed, now_ms);
+        } else {
+            SendBoards(world, board, now_ms, &member);
+        }
+    };
+    switch (envelope.body_case()) {
+    case bbcoop::Envelope::kMap:
+        answer(world.boards.Map(member.name, envelope.map().map(), now_ms), PartyBoards::Maps);
+        return;
+    case bbcoop::Envelope::kRest:
+        answer(world.boards.Rest(member.name, envelope.rest(), now_ms), PartyBoards::Rests);
+        return;
+    case bbcoop::Envelope::kTrophies:
+        answer(world.boards.Trophies(envelope.trophies()), PartyBoards::TrophyBoard);
+        return;
+    case bbcoop::Envelope::kVitals: {
+        answer(world.boards.Vitals(member.name, envelope.vitals(), now_ms),
+               PartyBoards::VitalsBoard);
+        // Logged when someone's state or the wipes change, not for every HP change.
+        static constexpr const char* Vitals[] = {"off", "up", "down", "dead"};
+        const bbcoop::VitalsBoard board = world.boards.VitalsMessage();
+        QStringList parts;
+        for (const auto& entry : board.members()) {
+            parts.append(QStringLiteral("%1 %2 %3")
+                             .arg(QString::fromStdString(entry.member()))
+                             .arg(Vitals[std::min<u32>(entry.vitals().vital(), 3)])
+                             .arg(Hex(entry.vitals().map())));
+        }
+        for (const auto& wipe : board.wipes()) {
+            QStringList members;
+            for (const std::string& name : wipe.members()) {
+                members.append(QString::fromStdString(name));
+            }
+            parts.append(QStringLiteral("wipe %1 of %2 (%3)")
+                             .arg(wipe.id())
+                             .arg(Hex(wipe.map()), members.join(' ')));
+        }
+        const QString logged = parts.join(QStringLiteral(", "));
+        if (logged != world.vitals_logged) {
+            world.vitals_logged = logged;
+            result.log.append(QStringLiteral("party world %1: vitals: %2").arg(world.name, logged));
+        }
+        return;
+    }
+    case bbcoop::Envelope::kEchoes:
+        // Each kill's echoes to every other member once (the stream delivers them once).
+        if (envelope.echoes().kills_size() > 0) {
+            SendToOthers(world, member, envelope, now_ms);
+        }
+        return;
+    case bbcoop::Envelope::kPortrait: {
+        bbcoop::Envelope relayed = envelope;
+        relayed.mutable_portrait()->set_member(member.name);
+        world.portraits[member.name] = relayed.portrait();
+        SendToOthers(world, member, relayed, now_ms);
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+void Service::SendBoards(PartyWorld& world, unsigned changed, qint64 now_ms, Member* only) {
+    std::vector<bbcoop::Envelope> boards;
+    if ((changed & PartyBoards::Maps) != 0) {
+        *boards.emplace_back().mutable_map_board() = world.boards.MapMessage();
+    }
+    if ((changed & PartyBoards::Rests) != 0) {
+        *boards.emplace_back().mutable_rest_board() = world.boards.RestMessage();
+    }
+    if ((changed & PartyBoards::TrophyBoard) != 0) {
+        *boards.emplace_back().mutable_trophies() = world.boards.TrophyMessage();
+    }
+    if ((changed & PartyBoards::VitalsBoard) != 0) {
+        *boards.emplace_back().mutable_vitals_board() = world.boards.VitalsMessage();
+    }
+    for (const bbcoop::Envelope& board : boards) {
+        if (only != nullptr) {
+            SendTo(*only, board, now_ms);
+            continue;
+        }
+        for (auto& [key, member] : members) {
+            if (member.party == world.name) {
+                SendTo(member, board, now_ms);
+            }
+        }
+    }
+}
+
+void Service::SendToOthers(PartyWorld& world, const Member& from, const bbcoop::Envelope& envelope,
+                           qint64 now_ms) {
+    for (auto& [key, member] : members) {
+        if (member.party == world.name && &member != &from) {
+            SendTo(member, envelope, now_ms);
+        }
+    }
+}
+
 Service::Result Service::Receive(const ServerLink::Endpoint& from, const QByteArray& online_id,
                                  const QByteArray& body, qint64 now_ms) {
     Result result;
@@ -590,6 +725,7 @@ Service::Result Service::Tick(qint64 now_ms) {
         if (now_ms - world.heartbeat_ms >= heartbeat_ms) {
             SendEntries(world, {}, now_ms);
         }
+        SendBoards(world, world.boards.Expire(now_ms), now_ms);
     }
     Flush(now_ms, result);
     return result;

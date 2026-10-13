@@ -24,6 +24,7 @@
 #include <QString>
 #include <QStringList>
 
+#include "bloodborne_party_boards.h"
 #include "coop.pb.h"
 #include "coop/coop_stream.h"
 #include "coop/world_log.h"
@@ -105,6 +106,11 @@ private:
         qint64 heartbeat_ms = 0;
         // Each member's last kills taken into the log: a proposal that changes them is journaled.
         std::map<std::string, BloodborneCoop::WorldLogKills> proposed;
+        // Phase 3c: the boards (in memory only: they are about the games running now) and each
+        // member's last portrait.
+        PartyBoards boards;
+        std::map<std::string, bbcoop::Portrait> portraits;
+        QString vitals_logged; // the members' states and the wipes, as last logged
     };
     struct Member {
         explicit Member(quint32 instance) : stream{"shadnet", instance} {}
@@ -129,6 +135,12 @@ private:
     // and the entries sent.
     void TakeWorld(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
                    qint64 now_ms, Result& result);
+    // The boards' messages (phase 3c), and the changed boards to the party.
+    void TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                   qint64 now_ms, Result& result);
+    void SendBoards(PartyWorld& world, unsigned changed, qint64 now_ms, Member* only = nullptr);
+    void SendToOthers(PartyWorld& world, const Member& from, const bbcoop::Envelope& envelope,
+                      qint64 now_ms);
     void SendTo(Member& member, const bbcoop::Envelope& envelope, qint64 now_ms);
     void SendEntries(PartyWorld& world, const std::vector<BloodborneCoop::WorldLogEntry>& entries,
                      qint64 now_ms);
