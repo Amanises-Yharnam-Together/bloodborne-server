@@ -119,15 +119,21 @@ def party_hud_args(env):
     return [] if env.get('BB_PARTY_HUD', '1') == '0' else ['--party-hud']
 
 
-def frame_mode(requested, fps_limit):
+def frame_mode(requested, fps_limit, online=False):
     """The frame rate mode to launch with: the unlocked one when the game menu set an FPS limit
     (bbport.ini fps_limit; the fixed 60 FPS timestep cannot go above 60), else the one asked for.
-    The 30 FPS mode stays as it is."""
+    The 30 FPS mode stays as it is. Online play runs at the fixed 60 FPS: a host above 60
+    (Kaniel 2026-10-13, uncapped at 100-200 FPS) made the guests see everyone freeze and fly and
+    their hits land late."""
+    if requested == '30':
+        return requested
+    if online:
+        return '60'
     try:
         limit = int(fps_limit or 0)
     except ValueError:
         limit = 0
-    return 'uncap' if limit > 0 and requested != '30' else requested
+    return 'uncap' if limit > 0 else requested
 
 
 def ini_value(path, key):
@@ -241,7 +247,10 @@ def main():
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
                 env.pop(key, None)
         fps = env.get('BB_FPS', 'uncap') if patched else '30'
-        fps = frame_mode(fps, ini_value(config, 'fps_limit'))
+        asked = fps
+        fps = frame_mode(fps, ini_value(config, 'fps_limit'), online=env.get('BB_ONLINE') == '1')
+        if fps != asked and env.get('BB_ONLINE') == '1':
+            print(f'Co-op: online play runs at 60 FPS (FPS mode {asked} is for playing offline)')
         env['BB_FPS_PRESET'] = fps  # for the co-op log's header line (bbcoop/coop.cpp)
         scaled_render = scaled_output = None
         if not env.get('BB_RENDER_RES'):

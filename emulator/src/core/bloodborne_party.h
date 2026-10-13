@@ -2790,6 +2790,30 @@ public:
 private:
     std::vector<CopyTeam> saved; // each taken body's own team
 };
+// Another player's body in this world and where it stands.
+struct BodyPosition {
+    u32 handle = 0;
+    LampPosition at{};
+};
+struct DownedBodyPick {
+    DownedMember member;
+    u32 handle = 0;
+};
+// Which body here is each downed member's on this map. A downed member posts where it went down,
+// and its body is then the one nearest that spot; but the killing hit can push it off, and a
+// reviver striking it stands nearer. With three players the nearest body flipped between the two,
+// the downed one went back to its own team and the punches passed through it (playtest
+// 2026-10-13). So a body picked for a down is kept while it stays within Reach of the spot, and
+// a new pick lets the members standing up claim the bodies nearest where they posted first.
+class DownedBodyPicker {
+public:
+    static constexpr float Reach = 4.0f;
+    std::vector<DownedBodyPick> Pick(std::span<const MemberVitals> board, std::string_view self,
+                                     u32 map, std::span<const BodyPosition> bodies);
+
+private:
+    std::vector<DownedBodyPick> kept;
+};
 // The game's hit, where its final damage is stored (`mov [rcx + 0x22C], eax`, 0x01A2A770's): rcx
 // the hit record, eax the damage, r14 the victim's damage module (+0x08 the victim), [rbp - 0x318]
 // the attacker (null for none). Before any HP changes, and also for a hit on a remote player (whose

@@ -26,5 +26,17 @@ class FrameModeTests(unittest.TestCase):
         self.assertEqual(run.frame_mode('30', '240'), '30')
 
 
+    def test_online_play_runs_at_60(self):
+        # Kaniel 2026-10-13: hosting uncapped (100-200 FPS) made the guests see everyone freeze and
+        # fly and their hits land late; the host at 60 fixed it. Online, the high frame rate modes
+        # and an FPS limit give the fixed 60 FPS mode; 30 stays.
+        self.assertEqual(run.frame_mode('uncap', None, online=True), '60')
+        self.assertEqual(run.frame_mode('90', None, online=True), '60')
+        self.assertEqual(run.frame_mode('60', '240', online=True), '60')
+        self.assertEqual(run.frame_mode('60', None, online=True), '60')
+        self.assertEqual(run.frame_mode('30', '240', online=True), '30')
+        self.assertEqual(run.frame_mode('uncap', None, online=False), 'uncap')
+
+
 if __name__ == '__main__':
     unittest.main()
