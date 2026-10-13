@@ -87,6 +87,29 @@ void bbcoop_file_opened(const char *guest_path);
 /* The game unlocked a trophy itself; party members get it too. */
 void bbcoop_trophy_unlocked(int32_t trophy_id);
 
+/* Trading between party members (the co-op code's bloodborne_trade.h, with
+ * SHADPS4_BLOODBORNE_TRADE=1): what the port's trade menus (shim/bbport_trade_menu.cpp) need. An
+ * item is a kind (1 Blood Echoes with id 0, 2 goods by EquipParamGoods id); texts are UTF-8 and
+ * `size` bytes at most. Calls from the game's thread. */
+int bbcoop_trade_on(void);
+int bbcoop_trade_tradeable(uint32_t kind, uint32_t id);
+uint32_t bbcoop_trade_held(uint32_t kind, uint32_t id);
+/* The quantity picker's line for giving the item to the nearest member on this map; 0 when
+ * nobody is there to give to. */
+int bbcoop_trade_give_question(uint32_t kind, uint32_t id, char *text, size_t size);
+/* Offers `count` of the item to the nearest member (taken out at once): 1 when sent. */
+int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count);
+/* The oldest offer to this player waiting for an answer: its id and question; 0 when none. */
+int bbcoop_trade_ask(uint64_t *id, char *text, size_t size);
+/* Whether offer `id` still waits for this player's answer. */
+int bbcoop_trade_ask_open(uint64_t id);
+/* Accepting takes what was asked for out first: 1 when it was a yes that went. */
+int bbcoop_trade_answer(uint64_t id, int accept);
+/* The next notice to show, skipping those with nothing to say; 0 when none. */
+int bbcoop_trade_notice(char *text, size_t size);
+/* The menus' tick: the co-op code runs it on the game's thread with its trades. */
+void bbcoop_trade_set_ui_tick(void (*tick)(void));
+
 #ifdef __cplusplus
 }
 #endif

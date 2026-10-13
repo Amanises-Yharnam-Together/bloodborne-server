@@ -73,6 +73,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"solid NPCs", false},
     {"full echoes", false},
     {"echo diagnostics", false},
+    {"trading", false},
     {"menu client", false},
     {"map item sync", false},
     {"shared loot", false},
@@ -400,6 +401,11 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "49 8B BF F8 00 00 00"},
     {"HUD constructor", "party list in the HUD", CoopSiteKind::Hook, 0x01BF41C0,
      "55 48 89 E5 41 57 41 56"},
+
+    // Trading (bloodborne_trade.cpp): the inventory's find and count change, and the pickup's give.
+    {"InventoryFind", "trading", CoopSiteKind::Call, 0x014D9F60, "8B 06 83 F8 FF 0F 84 A6"},
+    {"InventoryChangeCount", "trading", CoopSiteKind::Call, 0x014D0BE0, "55 48 89 E5 41 57 41 56"},
+    {"GiveItems", "trading", CoopSiteKind::Call, 0x017D89F0, "55 48 89 E5 41 57 41 56"},
 
     // The sign poster's timers (SignTimerSites): `mov dword ptr [<reg> + 0x28], <seconds>`. Game
     // patches rewrite the re-post time (the bundled "Uncap FPS++" writes 60 s), and the store is

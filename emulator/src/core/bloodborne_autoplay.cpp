@@ -8,6 +8,7 @@
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -1220,6 +1221,145 @@ bool AutoplayDone(const AutoplayStep&) {
     return true;
 }
 
+// Trading (bloodborne_trade.cpp). Items: echoes, vials, bullets.
+std::optional<TradeItem> ParseTradeItem(std::string_view name, std::string_view count) {
+    u32 value = 0;
+    if (std::from_chars(count.data(), count.data() + count.size(), value).ec != std::errc{}) {
+        return std::nullopt;
+    }
+    if (name == "echoes") {
+        return TradeItem{BloodborneCoop::TradeItemKind::Echoes, 0, value};
+    }
+    if (name == "vials") {
+        return TradeItem{BloodborneCoop::TradeItemKind::Goods, BloodborneCoop::BloodVialGoods,
+                         value};
+    }
+    if (name == "bullets") {
+        return TradeItem{BloodborneCoop::TradeItemKind::Goods,
+                         BloodborneCoop::QuicksilverBulletGoods, value};
+    }
+    return std::nullopt;
+}
+
+// trade-give <item> <count>: adds the items as a trade's grant does (the popup and all): a test's
+// stock.
+bool AutoplayTradeGive(const AutoplayStep& step) {
+    const auto item = ParseTradeItem(step.Arg(0), step.Arg(1));
+    if (!item) {
+        step.failure = "no such item";
+        return false;
+    }
+    AddTradeItems(std::span{&*item, 1});
+    return true;
+}
+
+// trade-stock <item> <count>: the player holds exactly that many (the rest taken out, or what is
+// missing added): a test's start.
+bool AutoplayTradeStock(const AutoplayStep& step) {
+    const auto item = ParseTradeItem(step.Arg(0), step.Arg(1));
+    if (!item) {
+        step.failure = "no such item";
+        return false;
+    }
+    const u32 held = TradeHeld(*item);
+    TradeItem change = *item;
+    if (held > item->count) {
+        change.count = held - item->count;
+        TakeTradeItems(std::span{&change, 1});
+    } else if (held < item->count) {
+        change.count = item->count - held;
+        AddTradeItems(std::span{&change, 1});
+    }
+    return true;
+}
+
+// trade-offer <item> <count>... [for <item> <count>...] [<timeout>]: an offer to the first other
+// member on this map, once there is one and trades are on.
+bool AutoplayTradeOffer(const AutoplayStep& step) {
+    TradeItems give;
+    TradeItems want;
+    bool wanting = false;
+    double timeout = 60;
+    for (size_t index = 0; index < step.command.args.size();) {
+        const std::string_view word = step.Arg(index);
+        if (word == "for") {
+            wanting = true;
+            ++index;
+            continue;
+        }
+        const auto item = ParseTradeItem(word, step.Arg(index + 1));
+        if (!item) {
+            timeout = step.Number(index, timeout);
+            ++index;
+            continue;
+        }
+        (wanting ? want : give).push_back(*item);
+        index += 2;
+    }
+    const std::vector<std::string> partners = TradePartners();
+    if (!TradesOn() || partners.empty()) {
+        return step.WaitedOut(timeout);
+    }
+    switch (OfferTrade(partners.front(), give, want)) {
+    case TradeOfferResult::Sent:
+        return true;
+    case TradeOfferResult::NotEnough:
+        step.failure = "not enough to offer";
+        return false;
+    default:
+        step.failure = "not an offer";
+        return false;
+    }
+}
+
+// trade-answer <yes|no> [<timeout>]: answers the oldest offer to this member once there is one.
+bool AutoplayTradeAnswer(const AutoplayStep& step) {
+    const auto ask = FrontTradeAsk();
+    if (!ask) {
+        return step.WaitedOut(step.Number(1, 60));
+    }
+    const bool yes = step.Arg(0) == "yes";
+    if (AnswerTrade(ask->id(), yes) != yes) {
+        step.failure = "could not accept";
+        return false;
+    }
+    return true;
+}
+
+// expect-held <item> <count> [<timeout>]: what the player holds of it, within the time given.
+bool AutoplayExpectHeld(const AutoplayStep& step) {
+    const auto item = ParseTradeItem(step.Arg(0), step.Arg(1));
+    if (!item) {
+        step.failure = "no such item";
+        return false;
+    }
+    const u32 held = TradeHeld(*item);
+    if (held == item->count) {
+        return true;
+    }
+    if (step.elapsed > step.Number(2, 0)) {
+        step.failure = fmt::format("holds {}, not {}", held, item->count);
+    }
+    return false;
+}
+
+// wait-trade <accepted|declined|expired|refused|received|returned> [<timeout>]: until this run saw
+// such a trade notice.
+bool AutoplayWaitTrade(const AutoplayStep& step) {
+    using Kind = TradeClient::Notice::Kind;
+    static constexpr std::pair<std::string_view, Kind> Kinds[]{
+        {"accepted", Kind::Accepted}, {"declined", Kind::Declined}, {"expired", Kind::Expired},
+        {"refused", Kind::Refused},   {"received", Kind::Received}, {"returned", Kind::Returned},
+    };
+    const auto found =
+        std::ranges::find(Kinds, step.Arg(0), &std::pair<std::string_view, Kind>::first);
+    if (found == std::end(Kinds)) {
+        step.failure = "no such notice";
+        return false;
+    }
+    return TradeNoticesSeen(found->second) > 0 || step.WaitedOut(step.Number(1, 60));
+}
+
 // The script's verbs (tools/rig/tests/test_rig.py keeps the same list for the scenarios).
 using AutoplayVerb = bool (*)(const AutoplayStep& step);
 constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, AutoplayVerb>>({
@@ -1272,6 +1412,12 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"keep-going", AutoplayKeepGoing},
     {"sync", AutoplaySync},
     {"done", AutoplayDone},
+    {"trade-give", AutoplayTradeGive},
+    {"trade-stock", AutoplayTradeStock},
+    {"trade-offer", AutoplayTradeOffer},
+    {"trade-answer", AutoplayTradeAnswer},
+    {"expect-held", AutoplayExpectHeld},
+    {"wait-trade", AutoplayWaitTrade},
 });
 
 // Runs one script command for this tick: true once it is done, `failure` set if it failed.

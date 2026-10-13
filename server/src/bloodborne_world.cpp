@@ -22,6 +22,7 @@ constexpr quint32 StoreVersion = 1;
 constexpr int Backups = 3;
 const QString WorldFile = QStringLiteral("world.pb");
 const QString JournalFile = QStringLiteral("journal.pb");
+const QString TradesFile = QStringLiteral("trades.pb");
 
 std::optional<bbcoop::StoredWorld> ReadWorld(const QString& path) {
     QFile file{path};
@@ -147,6 +148,29 @@ bool WorldStore::Compact(const bbcoop::StoredWorld& world) {
     return !journal.exists() || journal.resize(0);
 }
 
+std::optional<bbcoop::StoredTrades> WorldStore::LoadTrades() const {
+    QFile file{QDir{folder}.filePath(TradesFile)};
+    if (!file.open(QIODevice::ReadOnly)) {
+        return std::nullopt;
+    }
+    const QByteArray bytes = file.readAll();
+    bbcoop::StoredTrades trades;
+    if (!trades.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size()))) {
+        return std::nullopt;
+    }
+    return trades;
+}
+
+bool WorldStore::SaveTrades(const bbcoop::StoredTrades& trades) {
+    QDir{}.mkpath(folder);
+    QSaveFile file{QDir{folder}.filePath(TradesFile)};
+    if (!file.open(QIODevice::WriteOnly)) {
+        return false;
+    }
+    file.write(Serialized(trades));
+    return file.commit();
+}
+
 Service::Service(QString folder, qint64 heartbeat_ms, int compact_records, qint64 compact_ms)
     : folder{std::move(folder)}, heartbeat_ms{heartbeat_ms}, compact_records{compact_records},
       compact_ms{compact_ms} {}
@@ -193,6 +217,13 @@ Service::Result Service::Load(qint64 now_ms) {
         for (const bbcoop::JournalRecord& record : loaded->journal) {
             Replay(world, record);
             world.records = std::max<quint64>(world.records, record.number() + 1);
+        }
+        if (const auto trades = store->LoadTrades()) {
+            world.trades.Restore(*trades, now_ms);
+            result.log.append(QStringLiteral("party world %1: %2 open trades, %3 grants owed")
+                                  .arg(name)
+                                  .arg(world.trades.OpenTrades())
+                                  .arg(world.trades.PendingGrants()));
         }
         world.store = std::move(store);
         world.compacted_ms = now_ms;
@@ -356,6 +387,7 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     member.host = hello.host();
     PartyWorld& world = WorldFor(member.party, now_ms, result);
     welcome.set_accepted(true);
+    welcome.set_trades(true);
     welcome.set_epoch(world.host.Epoch());
     welcome.set_last(world.host.Last());
     SendTo(member, answer, now_ms);
@@ -374,6 +406,8 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
             SendTo(member, envelope, now_ms);
         }
     }
+    // What its trades owe it: grants not yet added, offers waiting for its answer.
+    Deliver(world, world.trades.Resume(member.name, now_ms), now_ms, result);
     result.log.append(QStringLiteral("party world %1: %2 (run %3) follows log %4 at seq %5")
                           .arg(world.name, QString::fromStdString(member.name))
                           .arg(Hex(member.run), Hex(world.host.Epoch()))
@@ -483,6 +517,12 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     case bbcoop::Envelope::kVitals:
     case bbcoop::Envelope::kPortrait:
         TakeBoard(member, world, envelope, now_ms, result);
+        break;
+    case bbcoop::Envelope::kTradeOffer:
+    case bbcoop::Envelope::kTradeAnswer:
+    case bbcoop::Envelope::kTradeCancel:
+    case bbcoop::Envelope::kTradeGranted:
+        TakeTrade(member, world, envelope, now_ms, result);
         break;
     case bbcoop::Envelope::kSnapshotRequest: {
         bbcoop::Envelope snapshot;
@@ -671,6 +711,53 @@ void Service::SendBoards(PartyWorld& world, unsigned changed, qint64 now_ms, Mem
     }
 }
 
+void Service::TakeTrade(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                        qint64 now_ms, Result& result) {
+    switch (envelope.body_case()) {
+    case bbcoop::Envelope::kTradeOffer: {
+        std::set<std::string> online;
+        for (const auto& [key, other] : members) {
+            if (other.party == world.name) {
+                online.insert(other.name);
+            }
+        }
+        Deliver(world, world.trades.Offer(member.name, envelope.trade_offer(), online, now_ms),
+                now_ms, result);
+        return;
+    }
+    case bbcoop::Envelope::kTradeAnswer:
+        Deliver(world, world.trades.Answer(member.name, envelope.trade_answer()), now_ms, result);
+        return;
+    case bbcoop::Envelope::kTradeCancel:
+        Deliver(world, world.trades.Cancel(member.name, envelope.trade_cancel().id()), now_ms,
+                result);
+        return;
+    case bbcoop::Envelope::kTradeGranted:
+        Deliver(world, world.trades.Granted(member.name, envelope.trade_granted().id()), now_ms,
+                result);
+        return;
+    default:
+        return;
+    }
+}
+
+void Service::Deliver(PartyWorld& world, TradeDesk::Result trades, qint64 now_ms, Result& result) {
+    for (const TradeDesk::Send& send : trades.sends) {
+        for (auto& [key, member] : members) {
+            if (member.party == world.name && member.name == send.to) {
+                SendTo(member, send.envelope, now_ms);
+            }
+        }
+    }
+    for (const std::string& line : trades.log) {
+        result.log.append(
+            QStringLiteral("party world %1: %2").arg(world.name, QString::fromStdString(line)));
+    }
+    if (trades.changed && world.store) {
+        world.store->SaveTrades(world.trades.Stored());
+    }
+}
+
 void Service::SendToOthers(PartyWorld& world, const Member& from, const bbcoop::Envelope& envelope,
                            qint64 now_ms) {
     for (auto& [key, member] : members) {
@@ -726,6 +813,7 @@ Service::Result Service::Tick(qint64 now_ms) {
             SendEntries(world, {}, now_ms);
         }
         SendBoards(world, world.boards.Expire(now_ms), now_ms);
+        Deliver(world, world.trades.Expire(now_ms), now_ms, result);
     }
     Flush(now_ms, result);
     return result;

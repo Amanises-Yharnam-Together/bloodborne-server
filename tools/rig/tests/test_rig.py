@@ -31,6 +31,7 @@ VERBS = {
     "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
     "return-point",
+    "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",

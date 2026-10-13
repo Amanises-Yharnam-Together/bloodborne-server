@@ -15,6 +15,7 @@
 // step). No hook on the game's per-frame network update (phase 2: a hook there stalled joins).
 
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_trade.h"
 
 #include <deque>
 #include <mutex>
@@ -185,7 +186,9 @@ void StreamTick(s64 now_ms) {
         for (const std::vector<u8>& body : received) {
             for (const std::vector<u8>& message : stream->Receive(body, now_ms)) {
                 if (auto envelope = DecodeEnvelope(message)) {
-                    if (IsBoard(*envelope)) {
+                    if (envelope->body_case() >= bbcoop::Envelope::kTradeOffer) {
+                        TakeServerTrade(std::move(*envelope));
+                    } else if (IsBoard(*envelope)) {
                         boards.push_back(std::move(*envelope));
                     } else {
                         inbox.push_back(std::move(*envelope));
@@ -337,6 +340,7 @@ Taken TakeInbox(s64 now_ms) {
     for (const bbcoop::Envelope& envelope : taken) {
         if (envelope.has_welcome()) {
             const bbcoop::Welcome& welcome = envelope.welcome();
+            TakeServerTradeWelcome(welcome.accepted() && welcome.trades());
             if (welcome.accepted()) {
                 LOG_INFO(Debug,
                          "Co-op server world: shadNet took this member (log {:#x} at seq {})",
@@ -544,6 +548,10 @@ std::optional<WorldLogMapState> ServerMapState() {
 WorldLogHp ServerHp() {
     std::scoped_lock lock{member_mutex};
     return member.Hp();
+}
+
+void QueueServerWorld(bbcoop::Envelope envelope) {
+    Queue(std::move(envelope));
 }
 
 void StartServerWorld() {
