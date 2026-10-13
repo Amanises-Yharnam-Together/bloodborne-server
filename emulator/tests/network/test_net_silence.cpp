@@ -47,7 +47,7 @@ TEST(NetSilence, OthersStillTalkingAreNotReported) {
     EXPECT_EQ(quiet[0].peer, 1u);
 }
 
-// Lisara's log, 2026-10-11: the matching server's port on the host's address sends every 3-4 s,
+// Ada's log, 2026-10-11: the matching server's port on the host's address sends every 3-4 s,
 // and "nothing from" came for it every few seconds. A peer is quiet only against its own pace.
 // One packet is no pace yet: a peer is reported once it has talked twice.
 TEST(NetSilence, ASlowPeerIsQuietOnlyAgainstItsOwnPace) {

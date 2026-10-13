@@ -174,7 +174,7 @@ TEST(BloodborneThreePlayers, APartyHostsSessionNeverStaysClosedToJoiners) {
 // Session members are game objects; the boards know members by online id. The member's identity
 // object holds its online id, NUL-terminated.
 TEST(BloodborneThreePlayers, ASessionMemberIsFoundByItsOnlineId) {
-    const std::vector<std::string> candidates{"Lisara", "Kaniel", "Kan"};
+    const std::vector<std::string> candidates{"Ada", "Kaniel", "Kan"};
     std::vector<u8> identity(64, 0);
     const auto name = Bytes("Kaniel");
     std::copy(name.begin(), name.end(), identity.begin() + 0x10);
@@ -184,7 +184,7 @@ TEST(BloodborneThreePlayers, ASessionMemberIsFoundByItsOnlineId) {
     EXPECT_EQ(FindOnlineIdIn(none, candidates), std::nullopt);
     std::vector<u8> both(96, 0);
     std::copy(name.begin(), name.end(), both.begin() + 0x10);
-    const auto other = Bytes("Lisara");
+    const auto other = Bytes("Ada");
     std::copy(other.begin(), other.end(), both.begin() + 0x40);
     EXPECT_EQ(FindOnlineIdIn(both, candidates), std::nullopt) << "ambiguous";
     std::vector<u8> glued(64, 0);
@@ -211,8 +211,8 @@ TEST(BloodborneThreePlayers, OnlyTheMembersOnThisMapAreReCreated) {
     const std::vector<MemberMap> later{
         {"me", 0x18010000}, {"guestA", 0x18010000}, {"guestB", 0x18010000}};
     plan = PlanRecreate(members, later, "me", 0x18010000, handled);
-    // Kaniel 2026-10-11: Lisara came back from the Dream before the host and re-created
-    // krolebord, who had stayed; once the host arrived she no longer saw krolebord. When the
+    // Kaniel 2026-10-11: Ada came back from the Dream before the host and re-created
+    // Brom, who had stayed; once the host arrived she no longer saw Brom. When the
     // host's copy is made the one made before it is lost, so a later arrival re-creates everyone
     // on this map again (as when all arrive together, which worked).
     EXPECT_EQ(plan.now, (std::vector<size_t>{0, 1}));

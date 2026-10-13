@@ -355,7 +355,7 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
 ## Friend test (Kaniel hosting, a friend as guest, SeamlessCoop kit, 2026-10-07 evening)
 The kit's shadps4.exe and event files match the rig (phase3-travel). Host logs:
 `C:\Bloodborne.PC.Online - Copy\SeamlessCoop\user\log`; the guest's (friend's) logs are copied
-to `C:\Users\vitsh\Downloads\Telegram Desktop\log\log`.
+to the log folder of the shared download.
 - **Guest stuck without X after Gascoigne.** The guest's log shows the kill (+3200 from
   0x01385263; flags 2410 2412 4000 4047 ... set, 4000/4047 cleared later) but no item award at
   all, so the boss-clear sequence itself blocks X, not the item dialog (the 8 s item hold is

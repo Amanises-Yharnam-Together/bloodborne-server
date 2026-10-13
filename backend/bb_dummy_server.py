@@ -900,7 +900,7 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--address", required=True,
-                    help="this machine's address as the game sees it, e.g. 26.235.253.56")
+                    help="this machine's address as the game sees it, e.g. 26.12.34.56")
     ap.add_argument("--port", type=int, default=20443)
     ap.add_argument("--shadnet-webapi", default=None,
                     help="shadNet WebAPI for summon traffic (default: http://<address>:31315)")

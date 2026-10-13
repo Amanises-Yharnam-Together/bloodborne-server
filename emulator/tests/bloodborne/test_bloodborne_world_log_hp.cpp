@@ -132,7 +132,7 @@ TEST(WorldLogHp, TheHostLogsWhatChangedInEachReport) {
     EXPECT_EQ(host.Hp().size(), 1u);
 }
 
-// Lisara's run (2026-10-12): the host's dog at 438 of 1093 reached the guest as 182 (438 - 256),
+// Ada's run (2026-10-12): the host's dog at 438 of 1093 reached the guest as 182 (438 - 256),
 // and its copy flipped between the two all fight. HP and a source's visit go on the log whole.
 TEST(WorldLogHp, TheHostLogsWholeValues) {
     WorldLogHost host;

@@ -556,7 +556,7 @@ RecreatePlan PlanRecreate(std::span<const std::optional<std::string>> members,
         }
     }
     // A later arrival re-creates everyone here again: making its copy lost the one made before
-    // (Kaniel 2026-10-11: Lisara no longer saw krolebord once the host arrived after her).
+    // (Kaniel 2026-10-11: Ada no longer saw Brom once the host arrived after her).
     if (someone_new) {
         plan.now = std::move(here);
     }
@@ -756,7 +756,7 @@ bool SummonJoinWatch::Stalled(bool joining, Clock::time_point now) {
 
 bool IsOtherCharacter(s32 progress_now, s32 progress_kept) {
     // Event flags mostly add up as a character plays; far fewer set means another character. A
-    // load clears some area flags (dozens to a few hundred: krolebord's restarts read 5800 set
+    // load clears some area flags (dozens to a few hundred: Brom's restarts read 5800 set
     // against 5859 kept), so "far" is a quarter of what was kept.
     const s32 slack = std::max<s32>(20, progress_kept / 4);
     // No world has 0 flags set: that is a store read mid-load, not a character.

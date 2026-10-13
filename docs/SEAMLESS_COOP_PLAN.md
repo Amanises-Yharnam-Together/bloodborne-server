@@ -44,7 +44,7 @@ The selected build's `bloodborne_re.cpp` installs native hooks on 01.09 when
 - RE tracing and summon capture (`SHADPS4_BLOODBORNE_RE_TRACE`, `SHADPS4_CAPTURE_BLOODBORNE_SUMMON`)
 - `/summon_messenger/*` WebAPI routed to shadNet (create/get/delete seen in the log)
 
-Network shape today: shadNet on the host (`26.235.253.56:31313/31315`, a Radmin/VPN style address), game P2P over UDP directly between PCs, LocalServer on `:20443`.
+Network shape today: shadNet on the host (`26.12.34.56:31313/31315`, a Radmin/VPN style address), game P2P over UDP directly between PCs, LocalServer on `:20443`.
 
 ### Things that look off
 

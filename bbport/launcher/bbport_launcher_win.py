@@ -168,6 +168,10 @@ def run_role(argv):
     else:
         path = str(PORT_DIR / 'run.py')
         sys.argv = [path, *argv[1:]]
+    # The script's own folder first, as python puts it: its sibling modules (mods.py's hud_patch)
+    # are the files next to it, not the copies frozen into this launcher, which look for their
+    # data files (party_hud_icons.bin) in the launcher's folder (Kaniel 2026-10-13: no portraits).
+    sys.path.insert(0, str(Path(path).resolve().parent))
     try:
         runpy.run_path(path, run_name='__main__')
     except SystemExit as stop:

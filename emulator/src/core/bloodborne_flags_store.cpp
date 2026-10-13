@@ -443,7 +443,7 @@ FlagStore ReadFlagStore() {
         header < 0x10000) {
         return store;
     }
-    // The game changes the tree while this walks it (a load on another thread: Lisara's crash,
+    // The game changes the tree while this walks it (a load on another thread: Ada's crash,
     // 2026-10-11, a node pointing past a thread's stack), so every node is checked first.
     const auto readable = [](u64 node) {
         return node >= 0x10000 && HasMemoryAccess(node, 0x38, MemoryProt::CpuRead);

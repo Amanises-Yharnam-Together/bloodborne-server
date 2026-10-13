@@ -126,7 +126,7 @@ std::string CoopSitesJson();
 
 // What the co-op install did with each feature, for one summary line in the log
 // (tools/re/check_party_log.py fails a log that skipped a required one).
-// Time spent in co-op work on the game's threads (Lisara's FPS drop, 2026-10-12): each section's
+// Time spent in co-op work on the game's threads (Ada's FPS drop, 2026-10-12): each section's
 // calls, summed and the longest, reported once `period_ms` after the first one measured, then
 // counted again from nothing. Thread-safe (the HUD's hooks run on another thread).
 class CoopTimeMeter {
@@ -723,7 +723,7 @@ bool IsNewCharacterInSlot(std::span<const s32> confirmed, size_t confirmed_set_n
 std::string SlotFileName(std::string_view list, int slot);
 // The slot's files of its character, dropped (copied aside first) when another character is found
 // in the slot (ForgetsSlotLists): its pickups, world changes, confirmed pickups and where it
-// resumes (Lisara 2026-10-12: a new character resumed at the old one's spot).
+// resumes (Ada 2026-10-12: a new character resumed at the old one's spot).
 inline constexpr std::array<std::string_view, 4> CharacterSlotFiles{"progress", "world",
                                                                     "confirmed", "resume"};
 // Whether the character loaded now is another one than the one a slot's lists were kept for
@@ -762,7 +762,7 @@ bool CarriesToGuestWorld(s32 flag);
 // workshop's doors open, set by Central Yharnam's 12410900 for a live player only). A phantom in
 // the host's world never set them, so its own Dream stayed shut (Kaniel 2026-10-11). 9401 only once
 // this character has been to the Dream (`dream_visited`): before, it showed the clinic's lamp and
-// ended the first death's wake in the Dream (Lisara 2026-10-13). 9403 only once the session's world
+// ended the first death's wake in the Dream (Ada 2026-10-13). 9403 only once the session's world
 // has 12410900 (`workshop_opened`: the party walked past where it opens the workshop), not on
 // joining.
 std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map, bool dream_visited,
@@ -1481,7 +1481,7 @@ std::vector<CharacterSwitch> UndoneOnMapChange(const std::unordered_set<u32>& sw
 // (`pending` and not `for_join`), which keeps building the tasks the trip's load threw away.
 bool RecreateIsForAJoin(bool pending, bool for_join);
 // A guest joining a session another guest is already in re-creates the other players once, as
-// after a trip (Kaniel 2026-10-11: Lisara joined after krolebord and did not see him until both
+// after a trip (Kaniel 2026-10-11: Ada joined after Brom and did not see him until both
 // went to the Dream and back). Tick says when: a guest, SettleMs after its join, seeing two or
 // more other members within WindowMs of it.
 class RecreateAfterJoin {
@@ -1562,7 +1562,7 @@ bool WatchesKills(bool sharing, bool trip_active, bool loading);
 bool IsRealDeath(u8 death_flags);
 // A death the kill board counts: a real one (IsRealDeath), or 0 HP within ZeroHitCountsMs of a hit
 // that left it at 0 (`zero_hit_ms`, see OwnDamage::HitLeft): the game sets the death bit only after
-// the kill reward, 1-2.4 s later, and the other members' copies waited that long (Lisara
+// the kill reward, 1-2.4 s later, and the other members' copies waited that long (Ada
 // 2026-10-13). Never one its world put down (bit 5).
 constexpr s64 ZeroHitCountsMs = 5'000;
 bool SeenDead(u8 death_flags, s32 hp, std::optional<s64> zero_hit_ms, s64 now_ms);
@@ -1629,7 +1629,7 @@ public:
     // is on that visit's map (the high 32 bits of the visit, see VisitTracker): they are held
     // instead of taken back, and taken back once neither this member nor another is on that map
     // (Kaniel 2026-10-11: the host's trip to the Dream respawned half of Central Yharnam while
-    // krolebord was still there).
+    // Brom was still there).
     std::vector<std::pair<s32, bool>> Observe(u64 visit, std::span<const SeenCharacter> characters,
                                               std::span<const u32> others_maps = {});
     const std::vector<u32>& Killed() const {
@@ -1845,7 +1845,7 @@ std::optional<u64> FindParamRow(std::span<const u8> param, s32 id);
 constexpr u64 NpcItemLotOffset = 0x2C;
 constexpr u64 ItemLotFlagOffset = 0x80;
 bool GetsMemberKillDrop(bool in_session, bool member_kill, s32 lot_flag, bool flag_on);
-// And a guest's own kill (`own_kill_as_guest`): its game makes no one-time drop (Lisara's hag,
+// And a guest's own kill (`own_kill_as_guest`): its game makes no one-time drop (Ada's hag,
 // 2026-10-13).
 bool GetsKillDrop(bool in_session, bool member_kill, bool own_kill_as_guest, s32 lot_flag,
                   bool flag_on);
