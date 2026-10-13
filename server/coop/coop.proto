@@ -27,6 +27,7 @@ message Hello {
     string party = 2;  // SHADPS4_BLOODBORNE_PARTY, "<name>:<secret>"
     string member = 3; // the member's board name (its online id in hex)
     uint32 run = 4;    // the game's run: a restart is a new run
+    bool host = 5;     // it hosts the session: its world's state is the party's (shown, map state)
 }
 
 // server -> game: the answer to a hello.
@@ -64,6 +65,48 @@ message KillProposal {
     uint32 run = 2;
     uint32 number = 3; // counts up within the run: a late one is dropped
     repeated MapKills kills = 4;
+}
+
+// game -> server, from the session's host: its characters on its map (CharacterShown bits), whole,
+// when they change (WorldLogHost::Show).
+message ShownReport {
+    uint32 map = 1;
+    repeated ShownCharacter characters = 2;
+}
+
+// game -> server: the member's shared flag events (FlagsToShare: a lamp lit, a fog entered), each
+// numbered within its run and sent until taken (WorldLogFlagProposal).
+message FlagEvent {
+    uint32 number = 1;
+    sint32 flag = 2;
+    bool on = 3;
+}
+message FlagProposal {
+    uint64 epoch = 1;
+    uint32 run = 2;
+    repeated FlagEvent events = 3;
+}
+
+// game -> server, from the session's host: its map's state (MapFlagCount flags from MapFlagBase,
+// MSB first) when it changes, and its return point (GlobalState +0x1528).
+message MapStateReport {
+    uint32 map = 1;
+    bytes bits = 2;
+}
+message ReturnPointReport {
+    sint32 point = 1;
+    uint32 map = 2;
+}
+
+// game -> server: the member's HP report, whole (WorldLogHpProposal: its damage per enemy this
+// visit, or the host's HP in one world).
+message HpProposal {
+    uint64 epoch = 1;
+    uint32 run = 2;
+    uint32 number = 3;
+    uint32 map = 4;
+    uint64 source = 5;
+    repeated HpEnemy enemies = 6;
 }
 
 // One world log entry (WorldLogEntry; kind is WorldLogKind).
@@ -130,6 +173,11 @@ message Envelope {
         Entries entries = 5;
         SnapshotRequest snapshot_request = 6;
         Snapshot snapshot = 7;
+        ShownReport shown = 8;
+        FlagProposal flags = 9;
+        MapStateReport map_state = 10;
+        ReturnPointReport return_point = 11;
+        HpProposal hp = 12;
     }
 }
 
@@ -197,6 +245,11 @@ message JournalRecord {
         Start start = 3;
         Propose propose = 4;
         Drop drop = 5;
+        ShownReport shown = 6;
+        Flags flags = 7;
+        MapStateReport map_state = 8;
+        ReturnPointReport return_point = 9;
+        Hp hp = 10;
     }
     message Start {
         uint64 epoch = 1;
@@ -209,5 +262,13 @@ message JournalRecord {
     }
     message Drop {
         string member = 1;
+    }
+    message Flags {
+        string member = 1;
+        FlagProposal flags = 2;
+    }
+    message Hp {
+        string member = 1;
+        HpProposal hp = 2;
     }
 }

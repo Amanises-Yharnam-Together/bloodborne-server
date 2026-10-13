@@ -670,8 +670,22 @@ struct ServerWorldKills {
     std::unordered_set<u32> kills;
     bool host_wiped = false; // the party's log started over after a wipe (see WorldLogWipeHold)
     bool fresh = false;      // in step with the server's log
+    std::vector<WorldLogEntry> applied; // what came in this step (the flag events among them)
+    WorldLogReturnPoint return_point;   // the host's, as the log has it
 };
 ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms);
+// Step 3b: the host's characters on its map, its map's state and its return point, whole (sent on
+// a change); any member's shared flag events and HP report.
+void ShowToServer(u32 map, std::span<const CharacterShown> characters);
+void MapStateToServer(u32 map, std::span<const u8> bits);
+void ReturnPointToServer(s32 point, u32 map);
+void FlagsToServer(std::span<const std::pair<s32, bool>> shared);
+void HpToServer(u32 map, const EnemyHpReport& report, bool changed);
+// The party's log as this member has it: the host's characters and map state (none until known),
+// every member's HP reports.
+std::optional<WorldLogShown> ServerShown();
+std::optional<WorldLogMapState> ServerMapState();
+WorldLogHp ServerHp();
 // The host's characters on its map (step 2): to the log while the shown characters take it (the
 // shown board gets them as before, the fallback copy).
 void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters);

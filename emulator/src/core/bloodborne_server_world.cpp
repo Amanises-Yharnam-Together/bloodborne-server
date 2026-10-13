@@ -4,8 +4,9 @@
 // The party's world on the server (docs/SERVER_COOP_PLAN.md phase 3): with
 // SHADPS4_BLOODBORNE_SERVER_WORLD=1 (the port only, and with the server link) shadNet keeps the
 // party's world log, not the host's game. Every member, the host too, proposes to it and follows
-// its log as a WorldLogMember (server/coop/world_log.h). Step 3a: the kills (the kill board is not
-// used then).
+// its log as a WorldLogMember (server/coop/world_log.h): the kills (3a; the kill board is not used
+// then), the host's characters, map state and return point, every member's shared flags and HP
+// reports (3b; the host's own log is not run then).
 //
 // The messages (server/coop/coop.proto) go in the server link's Coop datagrams, in their reliable
 // stream (server/coop/coop_stream.h). A thread of its own runs the stream (receives, resends,
@@ -30,9 +31,10 @@ namespace Core::Bloodborne {
 namespace {
 
 constexpr s64 StreamTickMs = 20;
-// A member's standing kills go again this often while they stay the same (a restart of the
-// server drops what was in flight).
+// A member's standing kills and the host's reports go again this often while they stay the same (a
+// restart of the server drops what was in flight; the same again changes nothing there).
 constexpr s64 KillsResendMs = 2'000;
+constexpr s64 ReportResendMs = 5'000;
 
 const bool server_world_switch = [] {
 #ifdef BLOODBORNE_NATIVE_PORT
@@ -107,6 +109,7 @@ void StreamTick(s64 now_ms) {
             hello.mutable_hello()->set_party(hello_party);
             hello.mutable_hello()->set_member(hello_member);
             hello.mutable_hello()->set_run(run);
+            hello.mutable_hello()->set_host(!IsPartyGuestRole());
             stream->Send(EncodeEnvelope(hello), now_ms);
         }
         if (!hello_due) {
@@ -143,7 +146,8 @@ void StartThread() {
     });
 }
 
-// The game thread's copy of the party's log.
+// This member's copy of the party's log (the game thread, and the copies others read).
+std::mutex member_mutex;
 WorldLogMember member;
 std::atomic<bool> member_reset{false};
 WorldLogKills last_proposed;
@@ -214,17 +218,22 @@ void LogStep(const WorldLogMember::Step& step, std::string_view what) {
     }
 }
 
-// What came from the server, on the game thread: whether the party's log started over after a
-// wipe in it.
-bool TakeInbox(s64 now_ms) {
+struct Taken {
+    bool after_wipe = false; // the party's log started over after a wipe in it
+    std::vector<WorldLogEntry> applied;
+};
+
+// What came from the server, on the game thread (member_mutex held).
+Taken TakeInbox(s64 now_ms) {
     std::deque<bbcoop::Envelope> taken;
     {
         std::scoped_lock lock{stream_mutex};
         taken.swap(inbox);
     }
-    bool after_wipe = false;
+    Taken result;
     const auto took = [&](const WorldLogMember::Step& step, std::string_view what) {
-        after_wipe = after_wipe || step.after_wipe || StartsAfterAWipe(step.applied);
+        result.after_wipe = result.after_wipe || step.after_wipe || StartsAfterAWipe(step.applied);
+        result.applied.insert(result.applied.end(), step.applied.begin(), step.applied.end());
         LogStep(step, what);
     };
     for (const bbcoop::Envelope& envelope : taken) {
@@ -251,7 +260,50 @@ bool TakeInbox(s64 now_ms) {
             took(member.Take(parts.flags, now_ms), "snapshot");
         }
     }
-    return after_wipe;
+    return result;
+}
+
+// The host's last reports, sent again on a change or after ReportResendMs.
+template <typename T>
+struct LastReport {
+    std::optional<T> value;
+    s64 sent_ms = 0;
+    bool Due(const T& now, s64 now_ms) {
+        if (value == now && now_ms - sent_ms < ReportResendMs) {
+            return false;
+        }
+        value = now;
+        sent_ms = now_ms;
+        return true;
+    }
+};
+std::mutex reports_mutex;
+LastReport<std::pair<u32, std::vector<CharacterShown>>> last_shown;
+LastReport<std::pair<u32, std::vector<u8>>> last_map_state;
+LastReport<WorldLogReturnPoint> last_return_point;
+WorldLogFlagOutbox flag_outbox;
+s64 flags_sent_ms = 0;
+u32 hp_proposals = 0;
+s64 hp_sent_ms = 0;
+
+// The member's flag events (any thread queues them, the kill step sends them; member_mutex held).
+void SendFlags(s64 now_ms) {
+    std::vector<WorldLogFlagEvent> events;
+    {
+        std::scoped_lock lock{reports_mutex};
+        if (!flag_outbox.TakeNew() && now_ms - flags_sent_ms < WorldLogResendMs) {
+            return;
+        }
+        events = flag_outbox.Pending(now_ms);
+        if (events.empty()) {
+            return;
+        }
+        flags_sent_ms = now_ms;
+    }
+    bbcoop::Envelope envelope;
+    *envelope.mutable_flags() =
+        ToMessage(WorldLogFlagProposal{{}, member.Epoch(), run, std::move(events)});
+    Queue(std::move(envelope));
 }
 
 } // namespace
@@ -264,6 +316,7 @@ bool ServerWorldOn() {
 
 ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms) {
     StartThread();
+    std::scoped_lock member_lock{member_mutex};
     {
         std::scoped_lock lock{stream_mutex};
         hello_party = PartyKey();
@@ -276,7 +329,12 @@ ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 no
         proposed_ms = 0;
     }
     ServerWorldKills world;
-    world.host_wiped = TakeInbox(now_ms);
+    Taken taken = TakeInbox(now_ms);
+    world.host_wiped = taken.after_wipe;
+    world.applied = std::move(taken.applied);
+    if (propose) {
+        SendFlags(now_ms);
+    }
     if (propose && (mine != last_proposed || now_ms - proposed_ms >= KillsResendMs)) {
         last_proposed = mine;
         proposed_ms = now_ms;
@@ -297,7 +355,97 @@ ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 no
     }
     world.kills = WorldLogHandles(member.Kills());
     world.fresh = member.Fresh(now_ms);
+    world.return_point = member.HostReturnPoint();
     return world;
+}
+
+void ShowToServer(u32 map, std::span<const CharacterShown> characters) {
+    const s64 now_ms = SteadyMilliseconds();
+    {
+        std::scoped_lock lock{reports_mutex};
+        if (!last_shown.Due({map, {characters.begin(), characters.end()}}, now_ms)) {
+            return;
+        }
+    }
+    bbcoop::Envelope envelope;
+    *envelope.mutable_shown() = ToMessage(map, characters);
+    Queue(std::move(envelope));
+}
+
+void MapStateToServer(u32 map, std::span<const u8> bits) {
+    const s64 now_ms = SteadyMilliseconds();
+    {
+        std::scoped_lock lock{reports_mutex};
+        if (!last_map_state.Due({map, {bits.begin(), bits.end()}}, now_ms)) {
+            return;
+        }
+    }
+    bbcoop::Envelope envelope;
+    envelope.mutable_map_state()->set_map(map);
+    envelope.mutable_map_state()->set_bits(std::string(bits.begin(), bits.end()));
+    Queue(std::move(envelope));
+}
+
+void ReturnPointToServer(s32 point, u32 map) {
+    if (point <= 0) {
+        return; // a load: the last one stands
+    }
+    {
+        std::scoped_lock lock{reports_mutex};
+        if (!last_return_point.Due({point, map}, SteadyMilliseconds())) {
+            return;
+        }
+    }
+    bbcoop::Envelope envelope;
+    envelope.mutable_return_point()->set_point(point);
+    envelope.mutable_return_point()->set_map(map);
+    Queue(std::move(envelope));
+}
+
+void FlagsToServer(std::span<const std::pair<s32, bool>> shared) {
+    std::scoped_lock lock{reports_mutex};
+    flag_outbox.Add(shared, SteadyMilliseconds());
+}
+
+void HpToServer(u32 map, const EnemyHpReport& report, bool changed) {
+    const s64 now_ms = SteadyMilliseconds();
+    u64 epoch = 0;
+    {
+        std::scoped_lock lock{member_mutex};
+        epoch = member.Epoch();
+    }
+    {
+        std::scoped_lock lock{reports_mutex};
+        if (!changed && now_ms - hp_sent_ms < WorldLogResendMs) {
+            return;
+        }
+        hp_sent_ms = now_ms;
+    }
+    bbcoop::Envelope envelope;
+    *envelope.mutable_hp() =
+        ToMessage(WorldLogHpProposal{{}, epoch, run, ++hp_proposals, map, report});
+    Queue(std::move(envelope));
+}
+
+std::optional<WorldLogShown> ServerShown() {
+    std::scoped_lock lock{member_mutex};
+    if (!member.ShownKnown()) {
+        return std::nullopt;
+    }
+    return member.Shown();
+}
+
+std::optional<WorldLogMapState> ServerMapState() {
+    std::scoped_lock lock{member_mutex};
+    if (!member.MapStateKnown()) {
+        return std::nullopt;
+    }
+    return member.MapState();
+}
+
+WorldLogHp ServerHp() {
+    std::scoped_lock lock{member_mutex};
+    return member.Hp();
 }
 
 } // namespace Coop

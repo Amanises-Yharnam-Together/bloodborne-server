@@ -224,6 +224,24 @@ void Service::Replay(PartyWorld& world, const bbcoop::JournalRecord& record) {
         world.host.Drop(record.drop().member());
         world.proposed.erase(record.drop().member());
         break;
+    case bbcoop::JournalRecord::kShown:
+        world.host.Show(record.shown().map(), CharactersOf(record.shown()));
+        break;
+    case bbcoop::JournalRecord::kFlags:
+        world.host.ProposeFlags(FlagsOf(record.flags().flags(), record.flags().member()),
+                                record.at_ms());
+        break;
+    case bbcoop::JournalRecord::kMapState: {
+        const std::string& bits = record.map_state().bits();
+        world.host.MapState(record.map_state().map(), std::vector<u8>(bits.begin(), bits.end()));
+        break;
+    }
+    case bbcoop::JournalRecord::kReturnPoint:
+        world.host.ReturnPoint(record.return_point().point(), record.return_point().map());
+        break;
+    case bbcoop::JournalRecord::kHp:
+        world.host.ProposeHp(HpOf(record.hp().hp(), record.hp().member()));
+        break;
     default:
         break;
     }
@@ -327,6 +345,7 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     member.party = PartyFolderName(party);
     member.name = hello.member();
     member.run = hello.run();
+    member.host = hello.host();
     PartyWorld& world = WorldFor(member.party, now_ms, result);
     welcome.set_accepted(true);
     welcome.set_epoch(world.host.Epoch());
@@ -427,6 +446,13 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
         }
         break;
     }
+    case bbcoop::Envelope::kShown:
+    case bbcoop::Envelope::kFlags:
+    case bbcoop::Envelope::kMapState:
+    case bbcoop::Envelope::kReturnPoint:
+    case bbcoop::Envelope::kHp:
+        TakeWorld(member, world, envelope, now_ms, result);
+        break;
     case bbcoop::Envelope::kSnapshotRequest: {
         bbcoop::Envelope snapshot;
         *snapshot.mutable_snapshot() = SnapshotOf(world.host);
@@ -435,6 +461,87 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     }
     default:
         break; // the games' messages only
+    }
+}
+
+void Service::TakeWorld(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                        qint64 now_ms, Result& result) {
+    bbcoop::JournalRecord record;
+    std::vector<WorldLogEntry> entries;
+    bool changed = false;
+    switch (envelope.body_case()) {
+    case bbcoop::Envelope::kShown:
+        if (!member.host) {
+            return; // only the host's world is the party's (a guest's follows it)
+        }
+        entries = world.host.Show(envelope.shown().map(), CharactersOf(envelope.shown()));
+        *record.mutable_shown() = envelope.shown();
+        changed = !entries.empty();
+        break;
+    case bbcoop::Envelope::kMapState: {
+        if (!member.host) {
+            return;
+        }
+        const std::string& bits = envelope.map_state().bits();
+        entries = world.host.MapState(envelope.map_state().map(),
+                                      std::vector<u8>(bits.begin(), bits.end()));
+        *record.mutable_map_state() = envelope.map_state();
+        changed = !entries.empty();
+        break;
+    }
+    case bbcoop::Envelope::kReturnPoint:
+        if (!member.host) {
+            return;
+        }
+        entries =
+            world.host.ReturnPoint(envelope.return_point().point(), envelope.return_point().map());
+        *record.mutable_return_point() = envelope.return_point();
+        changed = !entries.empty();
+        break;
+    case bbcoop::Envelope::kFlags: {
+        const WorldLogHost::Taken taken =
+            world.host.ProposeFlags(FlagsOf(envelope.flags(), member.name), now_ms);
+        if (taken.stale) {
+            return;
+        }
+        entries = taken.entries;
+        record.mutable_flags()->set_member(member.name);
+        *record.mutable_flags()->mutable_flags() = envelope.flags();
+        // Resends of events taken already change nothing (a restart that loses a repeat's number
+        // takes the repeat again: a flag set twice).
+        changed = !entries.empty();
+        if (!entries.empty()) {
+            QStringList flags;
+            for (const WorldLogEntry& entry : entries) {
+                flags.append(QStringLiteral("%1 %2")
+                                 .arg(static_cast<qint32>(entry.subject))
+                                 .arg(entry.kind == WorldLogKind::FlagSet ? "on" : "off"));
+            }
+            result.log.append(QStringLiteral("party world %1: %2's flags: %3")
+                                  .arg(world.name, QString::fromStdString(member.name),
+                                       flags.join(QStringLiteral(", "))));
+        }
+        break;
+    }
+    case bbcoop::Envelope::kHp: {
+        const WorldLogHost::Taken taken = world.host.ProposeHp(HpOf(envelope.hp(), member.name));
+        if (taken.stale) {
+            return;
+        }
+        entries = taken.entries;
+        record.mutable_hp()->set_member(member.name);
+        *record.mutable_hp()->mutable_hp() = envelope.hp();
+        changed = !entries.empty();
+        break;
+    }
+    default:
+        return;
+    }
+    if (changed) {
+        Journal(world, std::move(record), now_ms);
+    }
+    if (!entries.empty()) {
+        SendEntries(world, entries, now_ms);
     }
 }
 
