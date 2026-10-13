@@ -65,6 +65,48 @@ PortraitPixels Gradient(u8 seed) {
     return pixels;
 }
 
+// Kaniel 2026-10-13 ("ideally yes"): a character's portrait without opening the status page. The
+// status page's model is built off-screen while the character and outfit have none.
+TEST(BloodbornePortrait, TheOffscreenModelIsBuiltOnlyWhenNoPortraitAndInTheWorld) {
+    using enum OffscreenState;
+    EXPECT_EQ(NextOffscreenAction(Idle, true, true, false, false, 0, OffscreenRetryMs),
+              OffscreenAction::Build);
+    EXPECT_EQ(NextOffscreenAction(Idle, false, true, false, false, 0, OffscreenRetryMs),
+              OffscreenAction::Wait)
+        << "it has a portrait";
+    EXPECT_EQ(NextOffscreenAction(Idle, true, false, false, false, 0, OffscreenRetryMs),
+              OffscreenAction::Wait)
+        << "loading, or no player";
+    EXPECT_EQ(NextOffscreenAction(Idle, true, true, false, false, 0, OffscreenRetryMs - 1),
+              OffscreenAction::Wait)
+        << "the last build's capture is still settling";
+}
+
+TEST(BloodbornePortrait, TheOffscreenModelIsReadBackOnceDrawnThenDestroyed) {
+    using enum OffscreenState;
+    EXPECT_EQ(NextOffscreenAction(Building, true, true, false, false, 100, 0),
+              OffscreenAction::Wait);
+    EXPECT_EQ(NextOffscreenAction(Building, true, true, true, false, 100, 0),
+              OffscreenAction::ReadBack);
+    EXPECT_EQ(
+        NextOffscreenAction(Building, true, true, false, false, OffscreenDrawTimeoutMs + 1, 0),
+        OffscreenAction::Close)
+        << "never drawn: given up";
+    EXPECT_EQ(NextOffscreenAction(Building, true, false, false, false, 100, 0),
+              OffscreenAction::Close)
+        << "a load came";
+    EXPECT_EQ(NextOffscreenAction(Drawn, true, true, true, false, 500, 0), OffscreenAction::Wait);
+    EXPECT_EQ(NextOffscreenAction(Drawn, true, true, true, true, 500, 0), OffscreenAction::Close)
+        << "the capture settled";
+    EXPECT_EQ(NextOffscreenAction(Drawn, true, true, true, false, OffscreenReadBackMs + 1, 0),
+              OffscreenAction::Close);
+    EXPECT_EQ(NextOffscreenAction(Closing, true, true, false, false, OffscreenCloseMs - 1, 0),
+              OffscreenAction::Wait)
+        << "a frame to leave the draw list";
+    EXPECT_EQ(NextOffscreenAction(Closing, true, true, false, false, OffscreenCloseMs, 0),
+              OffscreenAction::Destroy);
+}
+
 } // namespace
 
 TEST(BloodbornePortrait, TheHeadAndShouldersAreCroppedScaledAndPutOnTheBackdrop) {

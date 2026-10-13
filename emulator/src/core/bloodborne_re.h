@@ -51,6 +51,9 @@ bool NativePartyPromptShown();
 // Party portraits (bloodborne_portrait.h). The status page's model (its render target's RGBA
 // rows) as the port's texture cache read it back: this character's portrait once the page closes.
 void NoteStatusModel(std::span<const std::uint8_t> rgba, int width, int height);
+// The off-screen body renderer has drawn this character (TickPortraits): the port reads its
+// 560x768 target back when it is drawn, not only when the status page samples it.
+bool OffscreenPortraitWanted();
 // The party list slot's picture (PortraitBytes into `rgba`; false when it shows none) and its
 // version, which changes whenever the picture does.
 bool ReadPortraitSlot(int slot, std::span<std::uint8_t> rgba, std::uint32_t& version);

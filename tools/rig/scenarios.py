@@ -58,6 +58,12 @@ IOSEFKA_VIEWS = [("south", -200.0, 206.8, 0.0), ("north", -200.0, 212.8, 3.1416)
 IOSEFKA_WAIT = "-200.0 -40.5 218.0 0.0"
 
 
+# At her clinic's door, facing it (south), where Kaniel talked to her (2026-10-13): Cross goes
+# through her talk (the first gives her blood vials, item lot 23000).
+IOSEFKA_DOOR = "-200.0 -40.5 208.4 3.1416"
+TALK_THROUGH = [step for _ in range(12) for step in ("press cross 200", "wait 2")]
+
+
 def IOSEFKA_LOOK(role: str) -> list[str]:
     """3 m south of Iosefka, a little to the side (the player's back hides what is straight
     ahead), a picture facing her."""
@@ -248,6 +254,24 @@ SCENARIOS = {
                  "own new characters (2026-10-10, copies in rig/saves/kaniel-1010-<role>)",
         "no_baseline": True,
         "roles": None,  # iosefka-new's, set below
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "iosefka-gift": {
+        "about": "each player gets its own gift from an NPC (Kaniel 2026-10-13: the host got "
+                 "Iosefka's blood vials, the guest who talked to her too got nothing): the host "
+                 "talks to Iosefka at her door, then the guest does, and each is given the vials",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 15",
+                     f"teleport {IOSEFKA_DOOR}", "wait 3", "shot host-door", *TALK_THROUGH, "wait 5", "snapshot", f"teleport {IOSEFKA_WAIT}", "wait 90",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                      "wait 75", f"teleport {IOSEFKA_DOOR}", "wait 3", "shot guest-door",
+                      "press cross 200", "wait 2", "shot guest-talk-1", *TALK_THROUGH, "wait 5",
+                      "snapshot", "expect-session 2"],
+        },
+        "expect": {"host": [r"item lot 23000 awarded from"],
+                   "guest": [r"gave the guest its NPC gift, item lot 23000 \(trigger 72410310\)"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
@@ -1169,6 +1193,25 @@ SCENARIOS = {
                       r"party portraits: 7269675f686f7374's portrait came",  # rig_host
                       r"Party portraits: slot 0 texture 0x[0-9a-f]+ .* shows the member's picture"],
         },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "portrait-auto": {
+        "about": "each player's portrait without the status page (Kaniel 2026-10-13: 'ideally "
+                 "yes'): no kept portraits, the players never open a menu; each game draws its "
+                 "character's status model off-screen and the other's party list shows it",
+        "no_portraits": True,
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 20", "shot party", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 20", "shot party", "snapshot",
+                      "expect-session 2"],
+        },
+        "expect": {role: [r"party portraits: off-screen model drawn; reading it back",
+                          r"party portraits: took the character's portrait",
+                          r"Party portraits: slot 0 texture 0x[0-9a-f]+ .* shows the member's "
+                          r"picture"]
+                   for role in ("host", "guest")},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },

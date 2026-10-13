@@ -934,6 +934,10 @@ ImageView& TextureCache::FindRenderTarget(ImageId image_id, const ImageDesc& des
     }
     image.usage.render_target = 1u;
     UpdateImage(image_id);
+    // bbport: the off-screen status model (the party portrait) is read back as it is drawn.
+    if (bbcoop_portrait_offscreen_wanted() != 0) {
+        NotePortraitTexture(image);
+    }
 
     // Register meta data for this color buffer
     if (desc.info.meta_info.cmask_addr) {

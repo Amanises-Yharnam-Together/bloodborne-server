@@ -145,6 +145,50 @@ party session (party configured and matching state 3 or 6) only:
   commands). Bloodborne Enhanced's decompiled talk/event scripts (github
   colorsolid/bloodborne-enhanced) are a good map; its Reawaken is a real reload.
 
+## NPC gifts for party guests (2026-10-13)
+
+Kaniel: each player gets its own gift from its own talk, with every NPC. A guest runs an NPC's talk
+script as the host would, so a gift the talk script gives itself already reaches it; a gift that an
+event gives after the talk sets a trigger flag did not: those events end unless the local player is
+alive (4:3 player 10000 type 0), and a party guest is a phantom. The emulator now gives a guest's
+own talk's gift itself (`NpcGifts`, `GivesGuestNpcGift`, `QueueGuestNpcGift`), then does what the
+event does once it has given it: clear the trigger (repeatable gifts), keep it (once by the
+trigger), or set the event's own flag (once by the event id or id + slot), so the guest's own world
+does not give it again at home. The host's own events give the host its own, unchanged.
+
+| NPC (map) | Item | Path | Trigger -> lot | Guest before / after |
+|---|---|---|---|---|
+| Iosefka (m24_01) | Iosefka's Blood Vial | common 9100 | 72410310 -> 23000 | no / yes (#82, rig iosefka-gift) |
+| Central Yharnam NPC (m24_01, t241314) | Blue Elixir | common 9100 | 72410359 -> 24060 | no / yes |
+| Cathedral Ward window NPCs (m24_00) | Blood of Adella; Blood of Arianna | common 9100 | 72400398 -> 32020; 72400489 -> 28000 | no / yes |
+| Queenly Flesh (m25 event 12500020) | Queenly Flesh | common 9100 | 9043 -> 17010 | no / no (set by an event that ends for a client, not a talk) |
+| Annalise (m25) | rune | common 9040 | 9042 -> 17000 | no / yes |
+| Yharnam window NPCs (m24_00, m24_01, m27) | Pebble, Numbing Mist, Beast Blood Pellet, Lead Elixir, Sedative, Pungent Blood Cocktail | common 9040 | 9045, 9047-9052, 9054-9064 -> 22000-27060 | no / yes |
+| Gilbert (m24_01) | Flamesprayer | common 9040 | 9066 -> 29000 | no / yes (unit test; a rig guest talking at his window (guest-talk-gilbert's spot) with Cross only does not reach the gift's dialogue branch, so not rig-tested) |
+| Little girl (m24_01) | Tiny Music Box | common 9040 | 9067 -> 30000 | no / yes |
+| Sobbing NPC (m28) | Madman's Knowledge | common 9040 | 9069 -> 32000 | no / yes |
+| Djura (m23) | Powder Keg Hunter Badge | common 9040 | 9071 -> 33000 | no / yes |
+| Alfred (m24_00) | Fire Paper; Wheel Hunter Badge | common 9040 | 9072 -> 34000; 9073 -> 34010 | no / yes |
+| Eileen (m24_00, m24_01) | Bold Hunter's Mark; rune | common 9040 | 9074 -> 35000; 9075 -> 35010 | no / yes |
+| (unused slots) | Iosefka's Blood Vial; Tonsil Stone | common 9040 | 9046 -> 23000; 9076 -> 39000 | no setter found |
+| Nightmare Frontier NPC (m32) | rune | common 9040 | 9077 -> 39010 | no / yes |
+| The Doll (m21) | Tear Stone (for the Small Hair Ornament) | m21 12100123 | 72100112 -> 14000 | no / yes (the ornament stays with the guest: no item removal yet) |
+| Cathedral Ward NPC (m24_00) | Madman's Knowledge | m24_00 12400403 | 72400441 -> 37000 | no / yes |
+| Valtr (m27) | rune; League Staff | m27 12700906 | 72700321 -> 43120; 72700322 -> 43130 | no / yes |
+| Hunter's Nightmare NPC (m34) | Holy Moonlight Sword | m34 13400980 | 73400424 -> 43211 | no / yes |
+| Research Hall (m35) | Balcony Key; rune; Blood of Adeline | m35 13501920, 13501940 | 73500321 -> 43010; 73500322 -> 43020; 73500320 -> 43000 | no / yes |
+| Fishing Hamlet (m36) | Accursed Brew | m36 13600943 | 73600300 -> 43600 | no / yes |
+| Valtr (m27) | One-eyed Iron Helm | m27 12700908 (also his death flag 1790) | 72700330 -> 43110 | no / no |
+| Simon (m34, m35, m36) | Simon's Bowblade | 13400953, 13500953, 13600954 (also his death flags 1710-1713) | 73400430/31, 73500630, 73600530 -> 43200-43220 | no / no |
+| Micolash (m26) | Mensis Cage | m26 12601850 (a boss kill event) | 72600301 -> 21000 | unknown (check the boss event patch) |
+| Many window NPCs; Blood Vial and Blood of Adella givers | Tonsil Stone, Blood Vial, Blood of Adella; gestures | the talk script itself (c1_52 adds, c1_65 the popup, c1_66 a gesture) | none | yes (runs in the guest's own game; not rig-tested) |
+| Hunter's Dream messengers | Notebook, bells, Eye of a Blood-drunk Hunter | m21 12101022-28 (made local) | 12101023-29 -> 10000-10050 | yes (earlier fix) |
+
+Open: the death-flag events (Valtr's helm, Simon's bowblade) wait on 1003:101 checks not decoded
+yet; Queenly Flesh's trigger comes from an event that ends for a client; the Doll's exchange keeps
+the ornament on a guest. Shops, repair, upgrade and storage already run in each player's own game.
+Inventory scripts: the session scratchpad's inv/ (talk scripts' item commands, every 2003:4 award).
+
 ## Next (user-approved order)
 1. Rest of Phase 3 (travel together, boss kill doesn't dismiss), then Phase 4 (shared progress,
    guests as full players: loot, full HP/vials, their own save progress; they stay white

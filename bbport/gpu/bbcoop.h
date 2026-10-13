@@ -76,6 +76,9 @@ void bbcoop_portrait_model(const uint8_t *rgba, int width, int height);
  * changes whenever its picture does; with the picture (64x64 RGBA into `rgba`, `size` bytes) 1, 0
  * when it shows none. */
 uint32_t bbcoop_portrait_version(int slot);
+/* The off-screen status model is drawn (TickPortraits): read the 560x768 model target back as it
+ * is drawn into, not only when the status page samples it. */
+int bbcoop_portrait_offscreen_wanted(void);
 int bbcoop_portrait_slot(int slot, uint8_t *rgba, size_t size, uint32_t *version);
 
 /* The game opens a file (its guest path): the party code notes the character's save slot. */
