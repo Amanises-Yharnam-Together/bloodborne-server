@@ -42,7 +42,7 @@ expect rough edges and keep backups of your saves.
   same health bar, and a kill is a kill for everyone. NPCs, doors, lamps, shortcuts and boss kills
   follow the host's world, and what a guest unlocks is kept in their own world too. Each player
   keeps their own pickups, echoes and Insight.
-- **Party death** (from Elden Ring Nightreign, optional): a killing blow puts you down instead of
+- **Party death** (from Elden Ring Nightreign, always on): a killing blow puts you down instead of
   killing you while a partner stands on your map. They revive you by striking you; when everyone
   on a map is down, the party wipes and wakes at its lamps.
 - **No stolen bloodstains.** Your echoes stay where you died until you pick them up.

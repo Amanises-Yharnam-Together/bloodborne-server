@@ -257,11 +257,13 @@ bool PS4_SYSV_ABI UpdateGuestBloodMark() {
 // local player at 1 HP where a lethal hit would kill it while it is armed (another member stands
 // on its map) or down; the party tick (TickPartyDeath) puts it down, gets it up, lets it give up
 // and wipes it; the vitals board client (RunVitalsBoardClient) tells the party.
-#ifndef BLOODBORNE_PARTY_DEATH_DEFAULT
-#define BLOODBORNE_PARTY_DEATH_DEFAULT 0 // the port's build defines it as 1
+#ifdef BLOODBORNE_PARTY_DEATH_ALWAYS
+// The port: always on, no setting (Kaniel 2026-10-13); its HUD's party list needs it.
+const bool party_death_enabled = true;
+#else
+const bool party_death_enabled =
+    PartyDeathEnabled(std::getenv("SHADPS4_BLOODBORNE_PARTY_DEATH"), false);
 #endif
-const bool party_death_enabled = PartyDeathEnabled(std::getenv("SHADPS4_BLOODBORNE_PARTY_DEATH"),
-                                                   BLOODBORNE_PARTY_DEATH_DEFAULT != 0);
 bool party_death_hook_installed{};
 // What the game thread tells the hook: the local player's data module while party death is live
 // (0 otherwise: the hook leaves everyone alone), and whether a lethal hit puts it down.

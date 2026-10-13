@@ -105,6 +105,14 @@ its co-op are wired, built, packaged and tested.
 
 ## Backlog (Kaniel 2026-10-10)
 
+- **A guest's lethal hit just after its join may not put it down** (rig guest-death, 2026-10-13,
+  party death always on). The guest's 1 HP and 25 m rise came 10 s after the session formed, as it
+  took the host's world state ("106 flags changed at once (a load)"): it never went down
+  (`wait-vital down` timed out), and its real death (reset=false, so armed by then) was logged only
+  after the script had failed. Arming (`TickPartyDeath`) needs the player in the party here, a
+  fresh vitals board and another member standing on this map. Next: log the armed state, the
+  board's age and `InPartyHere` at each lethal catch in that window. The rig's deaths wait 15 s
+  after the join, as give-up and down-revive do.
 - **Guest unseen after a host's early trip.** A host that travels (lamp, Dream) while a guest is
   still loading in (its join task on the host at step 3, the guest's data not synced, flags 0x4)
   never gets that guest's character data: the data comes once, by slot, and is gone with the

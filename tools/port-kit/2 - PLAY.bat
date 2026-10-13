@@ -48,9 +48,8 @@ rem Harder enemies: HP,damage,poise multipliers for every enemy and boss (1 - SE
 if "%HARDER%"=="" set "HARDER=3,1.5,3"
 set "SHADPS4_BLOODBORNE_HARDER_ENEMIES="
 if /i not "%HARDER%"=="off" set "SHADPS4_BLOODBORNE_HARDER_ENEMIES=%HARDER%"
-rem Party death (Nightreign style): on unless SETUP turned it off.
-if "%PARTYDEATH%"=="" set "PARTYDEATH=1"
-set "SHADPS4_BLOODBORNE_PARTY_DEATH=%PARTYDEATH%"
+rem Party death (Nightreign style) is always on in the port: no setting.
+set "SHADPS4_BLOODBORNE_PARTY_DEATH="
 
 if not exist "%KIT%user\log" mkdir "%KIT%user\log"
 if exist "%KIT%user\log\shad_log.txt" copy /y "%KIT%user\log\shad_log.txt" "%KIT%user\log\shad_log.prev.txt" >nul

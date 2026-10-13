@@ -28,9 +28,9 @@ need, the join).
 from scenarios import (AWAY_FROM_LAMP, BLOODSTAIN_DROPPED, BLOODSTAIN_STOLEN,  # noqa: F401
                        CATHEDRAL_WARD, CATHEDRAL_WARD_LAMP, CENTRAL_YHARNAM, CENTRAL_YHARNAM_LAMP,
                        CLERIC_BEAST, CLERIC_BEAST_DEFEATED, CLINIC, CRASH_CLEANUP, DOG, ENEMY,
-                       FORBIDDEN_WOODS_LAMP_LIT, GASCOIGNE, GASCOIGNE_DEFEATED, HUNTERS_DREAM,
-                       LETHAL_FALL, LEVEL_SYNC, OTHER_MAP_FLAG, PARTY_DEATH, REVIVE_HITS,
-                       SESSION_HOLDS, START, STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_NPC,
+                       FORBIDDEN_WOODS_LAMP_LIT, GASCOIGNE, GASCOIGNE_DEFEATED, GIVE_UP,
+                       HUNTERS_DREAM, LETHAL_FALL, LEVEL_SYNC, OTHER_MAP_FLAG, PARTY_DEATH,
+                       REVIVE_HITS, SESSION_HOLDS, START, STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_NPC,
                        attack, only_kill)
 
 DREAM = "0x15000000"  # the Hunter's Dream's map (HUNTERS_DREAM is its lamp)
@@ -55,7 +55,6 @@ def restart_with(saves: str) -> str:
 # join3-uncap keeps that case), and Kaniel chose 30 FPS for the suites until it is fixed.
 AS_PLAYERS = {**PARTY_DEATH, "BB_FPS": "30"}
 # Without party death: a death is the game's own (a guest gets up at its lamp in the session).
-NO_PARTY_DEATH = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "0", "BB_FPS": "30"}
 
 DOG_MAX_HP = 364
 # An enemy no chapter before these hurts, awake by the first lamp (179 HP, 30 m away). The dog is
@@ -690,25 +689,28 @@ SUITES = {
     },
     "crashes": {
         "about": "games that die and come back (one at a time, the other stays up), and deaths "
-                 "without party death",
+                 "by giving up",
         "roles": PARTY2,
-        "settings": NO_PARTY_DEATH,
+        "settings": AS_PLAYERS,
         "join_within": 180,
         "timeout": 3000,
         "chapters": [
             join(PARTY2),
-            chapter("deaths", "without party death: the host dies and gets up without a reload, "
-                              "then the guest dies away from the lamp, gets up at it and the host "
-                              "sees it there",
-                    {"host": ["godmode off", "kill self", "wait 30", "godmode",
-                              "sync host-dead-done", "wait-members 2 120", "sync guest-up",
-                              "wait 10", "expect-others-near 1 12", "expect-session 2"],
+            chapter("deaths", "the host goes down and gives up and gets up without a reload, then "
+                              "the guest does away from the lamp, gets up at it and the host sees "
+                              "it there",
+                    {"host": ["godmode off", *GIVE_UP, "wait 30", "godmode",
+                              "sync host-dead-done", "wait-member-vital down 120",
+                              "wait-members 2 120", "sync guest-up", "wait 10",
+                              "expect-others-near 1 12", "expect-session 2"],
                      "guest": ["sync host-dead-done", f"teleport {AWAY_FROM_LAMP}", "wait 5",
-                               "godmode off", "kill self", "wait 40", "godmode",
+                               "godmode off", *GIVE_UP, "wait 40", "godmode",
                                "wait-members 2 120", "sync guest-up", "wait 10",
                                "expect-others-near 1 12", "expect-session 2"]},
-                    expect={"host": [r"live player died in a party session"],
-                            "guest": [r"party guest died; revived"]},
+                    expect={"host": [r"party death: giving up ends down \d+; dies \(reset=false",
+                                     r"live player died in a party session"],
+                            "guest": [r"party death: giving up ends down \d+; dies \(reset=false",
+                                      r"party guest died; revived"]},
                     forbid=holds(PARTY2)),
             chapter("lamp", "the guest lights a lamp in the session (both worlds lit)",
                     {"host": [f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 0", "sync lamp-lit",
@@ -859,7 +861,7 @@ SUITES = {
                                          "death, PR #68), then takes the headstone back and the "
                                          "session holds (Lisara 2026-10-12: the headstone after a "
                                          "death trip ended it; still open)",
-                    {"guest": ["godmode off", "kill self", "wait-vital dead 30",
+                    {"guest": ["godmode off", *GIVE_UP,
                                f"wait-map {DREAM} 180", "wait 10",
                                f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 300", "godmode",
                                "sync fdd-back", "wait 10", "expect-session 2"],

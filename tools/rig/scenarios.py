@@ -92,6 +92,9 @@ BLOODSTAIN_DROPPED = (r"bloodstain state map=0x18010000 has_mark=1 record_valid=
                       r"record_30=-?\d+ record_38=\d+ record_block=0x18010000")
 BLOODSTAIN_STOLEN = r"bloodstain state .* stain_hidden=1"
 LETHAL_FALL = ["hurt self 1", "rise 25"]
+# A real death while a partner stands on the map, as a player has one (party death is always on in
+# the port, Kaniel 2026-10-13): the lethal fall puts it down and it gives up (Circle held 3 s).
+GIVE_UP = [*LETHAL_FALL, "wait-vital down 30", "wait 2", "press circle 3600", "wait-vital dead 15"]
 # wipe3 spreads the three a few metres from the lamp before each falls, so nobody lands on another
 # member's body (the UI thread, 2026-10-12: a body under the fall took its damage).
 WIPE3_SPOT = {"host": "-199.74 -50.56 182.42", "guest": "-196.74 -50.56 179.42",
@@ -569,26 +572,32 @@ SCENARIOS = {
         "timeout": 600,
     },
     "host-death": {
-        "about": "the host dies; it gets up without a reload and the session holds",
+        "about": "the host dies (goes down and gives up); it gets up without a reload and the "
+                 "session holds",
+        "settings": PARTY_DEATH,
         "roles": {
-            "host": [START, "wait-session 2 300", "wait 10", "kill self", "wait 40", "snapshot",
+            "host": [START, "wait-session 2 300", "wait 15", *GIVE_UP, "wait 40", "snapshot",
                      "expect-session 2"],
-            "guest": [START, "godmode", "wait-session 2 300", "wait 70", "snapshot",
-                      "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
+                      "wait 60", "snapshot", "expect-session 2"],
         },
-        "expect": {"host": [r"live player died in a party session"]},
+        "expect": {"host": [r"party death: giving up ends down \d+; dies \(reset=false",
+                            r"live player died in a party session"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
     "guest-death": {
-        "about": "the guest dies in the host's world; it gets up there and the session holds",
+        "about": "the guest dies (goes down and gives up) in the host's world; it gets up there "
+                 "and the session holds",
+        "settings": PARTY_DEATH,
         "roles": {
-            "host": [START, "godmode", "wait-session 2 300", "wait 70", "snapshot",
-                     "expect-session 2"],
-            "guest": [START, "wait-session 2 300", "wait 10", "kill self", "wait 40", "snapshot",
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
+                     "wait 60", "snapshot", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", *GIVE_UP, "wait 40", "snapshot",
                       "expect-session 2"],
         },
-        "expect": {"guest": [r"party guest died; revived"]},
+        "expect": {"guest": [r"party death: giving up ends down \d+; dies \(reset=false",
+                             r"party guest died; revived"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
@@ -1035,13 +1044,16 @@ SCENARIOS = {
         "timeout": 900,
     },
     "guest-death-seen": {
-        "about": "the guest dies away from the lamp in the host's world and gets up at the lamp; "
-                 "the host sees it there alive (friend run 2026-10-09: invisible after respawning)",
+        "about": "the guest dies (goes down and gives up) away from the lamp in the host's world "
+                 "and gets up at the lamp; the host sees it there alive (friend run 2026-10-09: "
+                 "invisible after respawning)",
+        "settings": PARTY_DEATH,
         "roles": {
-            "host": [START, "godmode", "wait-session 2 300", "wait 90", "wait-members 2 120",
-                     "wait 10", "snapshot", "expect-others-near 1 12", "expect-session 2"],
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
+                     "wait 60", "wait-members 2 120", "wait 10", "snapshot",
+                     "expect-others-near 1 12", "expect-session 2"],
             "guest": [START, "wait-session 2 300", "wait 10", f"teleport {AWAY_FROM_LAMP}",
-                      "wait 5", "kill self", "wait 50", "wait-members 2 120", "snapshot",
+                      "wait 5", *GIVE_UP, "wait 50", "wait-members 2 120", "snapshot",
                       "expect-others-near 1 12", "expect-session 2"],
         },
         "expect": {"guest": [r"party guest died; revived"]},
@@ -1099,16 +1111,18 @@ SCENARIOS = {
         "timeout": 1500,
     },
     "host-death-boss": {
-        "about": "the host dies in the middle of the Cleric Beast fight; it gets up without a "
-                 "reload, the session holds and the boss is still there",
+        "about": "the host dies (goes down and gives up) in the middle of the Cleric Beast fight; "
+                 "it gets up without a reload, the session holds and the boss is still there",
+        "settings": PARTY_DEATH,
         "roles": {
             "host": [START, "wait-session 2 300", "wait 15", f"hurt {CLERIC_BEAST} 1500",
-                     "wait 5", "kill self", "wait 40", "snapshot", f"expect-hp {CLERIC_BEAST} > 0",
+                     "wait 5", *GIVE_UP, "wait 40", "snapshot", f"expect-hp {CLERIC_BEAST} > 0",
                      f"expect-flag {CLERIC_BEAST_DEFEATED} 0", "expect-session 2"],
-            "guest": [START, "godmode", "wait-session 2 300", "wait 80", "snapshot",
-                      "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
+                      "wait 60", "snapshot", "expect-session 2"],
         },
-        "expect": {"host": [r"live player died in a party session"]},
+        "expect": {"host": [r"party death: giving up ends down \d+; dies \(reset=false",
+                            r"live player died in a party session"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },

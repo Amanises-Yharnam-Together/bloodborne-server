@@ -33,7 +33,6 @@ STEPS (guest)
        Party                         exactly what the host tells you
        P2P UDP port                  Enter (auto)
        Frame rate                    Enter (60)
-       Party death                   Enter (yes), the same as the host
   4. Wait for the host to say the servers are up. Optional check: open
      http://HOST-IP:20443/status in a browser; it should say "ok": true.
   5. Run "LAUNCH - Port Co-op", load your character, and wait. You are pulled into
@@ -55,7 +54,7 @@ SAVES
   To copy them again, delete SeamlessCoopPort\user\savedata and run SETUP.
 
 PARTY DEATH (AS IN ELDEN RING NIGHTREIGN)
-  On unless you answered "no" in SETUP; both players should answer the same.
+  Always on.
   - A killing blow puts you down at 1 HP instead of killing you while your partner
     stands on the same map. Enemies leave you alone while you are down.
   - Your partner revives you by striking you: walk up and press R1 or R2 right next to

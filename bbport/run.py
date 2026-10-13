@@ -112,6 +112,13 @@ def run_script(name, *args, capture=False):
     return None
 
 
+def party_hud_args(env):
+    """mods.py's party HUD option (scripts/hud_patch.py: the HUD the mods show, with party death's downed banner
+    and party list, over them). Party death is always on in the port and drives the list, so the HUD is patched
+    whatever an old kit's SHADPS4_BLOODBORNE_PARTY_DEATH says; BB_PARTY_HUD=0 keeps the game's HUD as it is."""
+    return [] if env.get('BB_PARTY_HUD', '1') == '0' else ['--party-hud']
+
+
 def frame_mode(requested, fps_limit):
     """The frame rate mode to launch with: the unlocked one when the game menu set an FPS limit
     (bbport.ini fps_limit; the fixed 60 FPS timestep cannot go above 60), else the one asked for.
@@ -209,13 +216,10 @@ def main():
             lambda: button_icons.list_gamepads(probe.parent / 'bb-gpu-capabilities.exe'))
     except Exception:  # nothing about the icons may stop the game from starting
         env['BB_ICONS_SET'] = 'playstation'
-    # The party HUD (scripts/hud_patch.py): the HUD the mods show, with party death's downed banner, over them.
-    # BB_PARTY_HUD=0 keeps the game's HUD as it is.
-    party_hud = ['--party-hud'] if env.get('BB_PARTY_HUD', '1') != '0' else []
     game = Path(run_script('mods.py', game, '--out', out,
                            '--mods-dir', env.get('BB_MODS_DIR', data / 'mods'),
                            '--config', env.get('BB_MODS_CONFIG', data / 'mods.json'),
-                           '--enabled', env.get('BB_MODS_ENABLED', '1'), *icons, *party_hud,
+                           '--enabled', env.get('BB_MODS_ENABLED', '1'), *icons, *party_hud_args(env),
                            capture=True).strip())
     mod_view = game if game.resolve() != original_game else None
     try:

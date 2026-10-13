@@ -220,10 +220,11 @@ class RunnerTest(unittest.TestCase):
         party_death = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"}
         env = run_scenario.game_environment("host", None, "rig:x", party_death)
         self.assertEqual(env["SHADPS4_BLOODBORNE_PARTY_DEATH"], "1")
-        with unittest.mock.patch.dict(os.environ, party_death):
+        with unittest.mock.patch.dict(os.environ, {"SHADPS4_BLOODBORNE_PARTY_DEATH": "0"}):
             env = run_scenario.game_environment("host", None, "rig:x")
-        # Off unless the scenario asks (the games' default is on), never from the PC's settings.
-        self.assertEqual(env["SHADPS4_BLOODBORNE_PARTY_DEATH"], "0")
+        # Never from the PC's settings, and never switched off: the port's party death is always on
+        # (Kaniel 2026-10-13), the emulator keeps its own default.
+        self.assertNotIn("SHADPS4_BLOODBORNE_PARTY_DEATH", env)
 
     def test_a_ping_delays_the_games_traffic_both_to_each_other_and_to_the_servers(self):
         run_scenario.use_engine("port")

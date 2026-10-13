@@ -629,11 +629,10 @@ def stages_of(script: list) -> list[list[str]]:
     return script if script and isinstance(script[0], list) else [script]
 
 
-# Settings a scenario switches on for its games ("settings"), and what they are otherwise (party
-# death is on in the games by default; scenarios that don't ask for it run without; the save
-# backups too); never taken from the PC's own.
+# Settings a scenario switches on for its games ("settings"), and what they are otherwise (the save
+# backups off); never taken from the PC's own. Party death is always on in the port (Kaniel
+# 2026-10-13); the emulator's is its own default unless a scenario switches it on.
 SCENARIO_SETTINGS = {
-    "SHADPS4_BLOODBORNE_PARTY_DEATH": "0",
     "SHADPS4_BLOODBORNE_SAVE_BACKUPS": "off",
 }
 
@@ -653,6 +652,7 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     env.pop("SHADPS4_BLOODBORNE_AUTOPLAY", None)
     if script is not None:
         env["SHADPS4_BLOODBORNE_AUTOPLAY"] = str(script)
+    env.pop("SHADPS4_BLOODBORNE_PARTY_DEATH", None)
     env.update(SCENARIO_SETTINGS)
     env.update(ENGINE.environment(role))
     env.update(settings or {})  # over the engine's own (a suite plays at the kit's frame rate)

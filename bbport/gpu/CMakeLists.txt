@@ -231,8 +231,9 @@ add_dependencies(bbnet bbcoop_revision)
 target_include_directories(bbnet PRIVATE shim shadps4 . "${SHADNET_PROTO_OUT}" ${SHADER_INCLUDE}
     third_party/imgui third_party/httplib third_party/xbyak ${BB_EMULATOR_SRC})
 target_link_libraries(bbnet PRIVATE nlohmann_json::nlohmann_json)
-# Party death is on by default in the port (it has the party HUD); the emulator's stays off.
-target_compile_definitions(bbnet PRIVATE BLOODBORNE_PARTY_DEATH_DEFAULT=1)
+# Party death is always on in the port (it has the party HUD; no setting turns it off); the
+# emulator's stays a setting, off by default.
+target_compile_definitions(bbnet PRIVATE BLOODBORNE_PARTY_DEATH_ALWAYS=1)
 # The port's HUD is patched at its start (scripts/hud_patch.py): party death shows its downed banner.
 target_compile_definitions(bbnet PRIVATE BLOODBORNE_PARTY_HUD=1)
 # HTTPS (the community game server only speaks TLS) and gzip replies in cpp-httplib.
