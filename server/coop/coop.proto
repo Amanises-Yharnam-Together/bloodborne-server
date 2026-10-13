@@ -1,0 +1,213 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadNet Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+// Our messages between the games and shadNet (docs/SERVER_COOP_PLAN.md, "The protocol"): one file
+// for both sides. They travel on the server link (kind Coop) in its reliable stream
+// (coop/coop_stream.h), in order and exactly once; the game's own packets keep their raw frames.
+//
+// Phase 3: the party's world lives on the server. Every member proposes what it sees (its standing
+// kills, ...), shadNet orders it into the party's world log (coop/world_log.h, WorldLogHost),
+// stores it, and sends every member the entries and, when it asks, a snapshot.
+syntax = "proto3";
+
+package bbcoop;
+
+option optimize_for = LITE_RUNTIME;
+
+// Raised when a message's meaning changes; a game and the server on different ones are refused.
+enum Protocol {
+    PROTOCOL_NONE = 0;
+    PROTOCOL_CURRENT = 1;
+}
+
+// game -> server: the first message of the stream, and again whenever the stream starts over (the
+// game or the server restarted).
+message Hello {
+    uint32 protocol = 1;
+    string party = 2;  // SHADPS4_BLOODBORNE_PARTY, "<name>:<secret>"
+    string member = 3; // the member's board name (its online id in hex)
+    uint32 run = 4;    // the game's run: a restart is a new run
+}
+
+// server -> game: the answer to a hello.
+message Welcome {
+    bool accepted = 1;
+    string text = 2;  // why not
+    uint64 epoch = 3; // the party's log now
+    uint64 last = 4;
+}
+
+// game -> server: a session event of this member (Lifecycle in bloodborne_party.h). A wipe starts
+// the party's log over (once for the party); the session's host joining, leaving or becoming
+// another character starts it over too (a new session); another member's own events only take its
+// share out.
+message Lifecycle {
+    enum Event {
+        NONE = 0;
+        WIPE = 1;
+        JOIN = 2;
+        LEAVE = 3;
+        NEW_CHARACTER = 4;
+    }
+    Event event = 1;
+    bool host = 2; // the member hosts the session
+}
+
+message MapKills {
+    uint32 map = 1;
+    repeated uint32 handles = 2;
+}
+
+// game -> server: the member's standing kills, whole (WorldLogProposal).
+message KillProposal {
+    uint64 epoch = 1; // the log the member follows, 0 before it heard one
+    uint32 run = 2;
+    uint32 number = 3; // counts up within the run: a late one is dropped
+    repeated MapKills kills = 4;
+}
+
+// One world log entry (WorldLogEntry; kind is WorldLogKind).
+message Entry {
+    uint64 seq = 1;
+    uint32 map = 2;
+    uint32 kind = 3;
+    uint32 subject = 4;
+    uint32 value = 5;
+}
+
+// server -> game: entries in seq order, or a heartbeat (none) with the last seq.
+message Entries {
+    uint64 epoch = 1;
+    uint64 last = 2;
+    repeated Entry entries = 3;
+}
+
+// game -> server: what the member has; the answer is a Snapshot.
+message SnapshotRequest {
+    uint64 epoch = 1;
+    uint64 seq = 2;
+}
+
+message ShownCharacter {
+    uint32 handle = 1;
+    uint32 bits = 2; // ShownBits
+}
+
+message HpEnemy {
+    uint32 handle = 1;
+    sint32 value = 2;
+    sint32 max = 3;
+}
+
+message HpReport {
+    uint64 source = 1;
+    uint32 map = 2;
+    repeated HpEnemy enemies = 3;
+}
+
+// server -> game: the party's world at `last`, every part of it at once.
+message Snapshot {
+    uint64 epoch = 1;
+    uint64 last = 2;
+    repeated MapKills kills = 3;
+    uint32 shown_map = 4;
+    repeated ShownCharacter shown = 5;
+    uint32 map_state_map = 6;
+    bytes map_state_bits = 7;
+    sint32 return_point = 8;
+    uint32 return_point_map = 9;
+    repeated HpReport hp = 10;
+    repeated Entry recent_flags = 11;
+    bool after_wipe = 12;
+}
+
+message Envelope {
+    oneof body {
+        Hello hello = 1;
+        Welcome welcome = 2;
+        Lifecycle lifecycle = 3;
+        KillProposal kills = 4;
+        Entries entries = 5;
+        SnapshotRequest snapshot_request = 6;
+        Snapshot snapshot = 7;
+    }
+}
+
+// shadNet's world store (server/src/bloodborne_world_store.h): a party's world as it keeps it on
+// disk, and the journal of what changed it since.
+message StoredMember {
+    string name = 1;
+    uint32 run = 2;
+    uint32 number = 3;
+    repeated MapKills kills = 4;
+}
+
+message StoredStanding {
+    uint32 handle = 1;
+    uint32 map = 2;
+    repeated string by = 3;
+}
+
+message StoredSender {
+    string name = 1;
+    uint32 run = 2;
+    uint32 number = 3;
+    uint64 source = 4;
+}
+
+message StoredFlagSeen {
+    sint32 flag = 1;
+    bool on = 2;
+    int64 at_ms = 3;
+}
+
+message StoredHost {
+    uint64 epoch = 1;
+    uint64 last = 2;
+    repeated StoredMember members = 3;
+    repeated StoredStanding standing = 4;
+    uint32 shown_map = 5;
+    repeated ShownCharacter shown = 6;
+    repeated StoredSender flag_senders = 7;
+    repeated StoredFlagSeen flag_events = 8;
+    uint32 map_state_map = 9;
+    bytes map_state_bits = 10;
+    repeated StoredSender hp_senders = 11;
+    repeated HpReport hp = 12;
+    repeated Entry recent_flags = 13;
+    bool started_after_wipe = 14;
+    sint32 return_point = 15;
+    uint32 return_point_map = 16;
+}
+
+message StoredWorld {
+    uint32 version = 1;
+    uint32 world = 2; // the world's id: the upper half of its log epochs
+    uint32 logs = 3;  // logs started
+    int64 last_wipe_ms = 4;
+    uint64 journal_from = 5; // the first journal record not in it
+    StoredHost host = 6;
+}
+
+// One change to a party's world, as the journal keeps it (replayed on top of StoredWorld).
+message JournalRecord {
+    uint64 number = 1;
+    int64 at_ms = 2;
+    oneof change {
+        Start start = 3;
+        Propose propose = 4;
+        Drop drop = 5;
+    }
+    message Start {
+        uint64 epoch = 1;
+        bool after_wipe = 2;
+        uint32 logs = 3;
+    }
+    message Propose {
+        string member = 1;
+        KillProposal kills = 2;
+    }
+    message Drop {
+        string member = 1;
+    }
+}

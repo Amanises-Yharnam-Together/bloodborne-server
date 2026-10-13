@@ -36,6 +36,9 @@ enum class Kind : quint8 {
     Ping = 4,
     Pong = 5,
     Member = 6,
+    // Our messages (coop/coop.proto) between a game and shadNet itself, in the link's reliable
+    // stream (coop/coop_stream.h): the body is one stream frame. Phase 3: the party's world.
+    Coop = 7,
 };
 enum class MemberState : quint8 { Quiet = 0, Back = 1, Gone = 2 };
 
@@ -81,11 +84,13 @@ QByteArray Encode(const Welcome& welcome);
 QByteArray Encode(const Data& data);
 QByteArray Encode(Kind kind, const Ping& ping);
 QByteArray Encode(const Member& member);
+QByteArray EncodeCoop(const QByteArray& body);
 std::optional<Hello> DecodeHello(const QByteArray& datagram);
 std::optional<Welcome> DecodeWelcome(const QByteArray& datagram);
 std::optional<Data> DecodeData(const QByteArray& datagram);
 std::optional<Ping> DecodePing(Kind kind, const QByteArray& datagram);
 std::optional<Member> DecodeMember(const QByteArray& datagram);
+std::optional<QByteArray> DecodeCoop(const QByteArray& datagram);
 
 // The links of the games on this server, without sockets or clocks: the socket
 // hands it each datagram and calls Tick now and then; it says what to send and
@@ -96,9 +101,17 @@ public:
         Endpoint to;
         QByteArray datagram;
     };
+    // A Coop datagram's body for the party's world (bloodborne_world.h), from a linked game.
+    struct Coop {
+        Endpoint from;
+        QByteArray online_id;
+        QByteArray body;
+    };
     struct Result {
         QList<Send> sends;
         QStringList log;
+        QList<Coop> coop;
+        QList<Endpoint> gone; // links forgotten
     };
 
     explicit Hub(qint64 quiet_ms = 3000, qint64 gone_ms = 60000, qint64 stats_ms = 10000,

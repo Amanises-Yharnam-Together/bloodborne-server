@@ -881,6 +881,8 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
               f"{need} GB needed (close something big, or give Windows a bigger page file)")
         return False
     stop_servers()
+    # Every run starts with no party worlds on the server (shadNet keeps them on disk: phase 3).
+    shutil.rmtree(lane_dir() / "server" / "bloodborne_worlds", ignore_errors=True)
     start_servers(run_dir)
     if not server_is_current():
         print("  The rig's shadNet is too old (no /bloodborne/party/shown): copy "
@@ -953,6 +955,12 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
             break  # the others wait for it in vain
         for sync in syncs_to_release(syncs, reached, given_up, set(done), released):
             released.add(sync)
+            if sync in scenario.get("server_restarts", []):
+                # shadNet stops and starts again while the games play on (its world store keeps
+                # the party's world: phase 3); its new log goes beside the first one.
+                stop_servers()
+                start_servers(run_dir / f"restart-{sync}")
+                print(f"  servers restarted at {sync}")
             if seconds := scenario.get("outages", {}).get(sync):
                 # Before the games go on: the outage starts as they do.
                 for proxy in PROXIES:

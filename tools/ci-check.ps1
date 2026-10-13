@@ -57,16 +57,17 @@ if ($Component -eq "backend") {
 $fmtVersion = & $clangFormat --version
 if ($fmtVersion -notmatch "version 19\.") { Write-Host "wrong clang-format: $fmtVersion"; exit 2 }
 if ($All) {
-    $files = Get-ChildItem src -Recurse -Include *.cpp, *.h | ForEach-Object { $_.FullName }
+    $files = Get-ChildItem src, coop -Recurse -Include *.cpp, *.h -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
 } else {
     # jj prints paths relative to the cwd, so ask from the repo root (emulator/src/...) and keep
     # this component's sources.
     $repoRoot = Split-Path $Src -Parent
     Push-Location $repoRoot
-    $changed = jj diff --name-only -r "trunk()..@" 2>$null
+    # --from/--to: the trees, so a branch that merged trunk in (a gap in trunk()..@) works too.
+    $changed = jj diff --name-only --from "trunk()" --to "@" 2>$null
     Pop-Location
     $files = @($changed |
-        Where-Object { $_ -match "^$Component[\\/](src|tests)[\\/].*\.(cpp|h)$" } |
+        Where-Object { $_ -match "^$Component[\\/](src|tests|coop)[\\/].*\.(cpp|h)$" } |
         ForEach-Object { Join-Path $repoRoot $_ } |
         Where-Object { Test-Path $_ })
 }

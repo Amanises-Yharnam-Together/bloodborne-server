@@ -52,6 +52,11 @@ public:
         QReadLocker lk(&m_lock);
         return m_statsPort;
     }
+    // Where the parties' worlds are kept (bloodborne_world.h): one folder per party.
+    QString GetBloodborneWorldPath() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWorldPath;
+    }
     QString GetStatsPath() const {
         QReadLocker lk(&m_lock);
         return m_statsPath;
@@ -131,6 +136,7 @@ private:
     BackendConfig m_backend;
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
+    QString m_bloodborneWorldPath = "bloodborne_worlds";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute
     bool m_emailValidated = false;
     QStringList m_adminsList;

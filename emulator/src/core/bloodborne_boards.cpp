@@ -317,6 +317,9 @@ void RunRestBoardClient(std::stop_token stop, std::string base_url, std::string 
         if (std::chrono::steady_clock::now() >= next_echo_post) {
             if (!world_log) {
                 PostMapStateBoard(client, headers, member);
+            }
+            // The party's world on the server carries the kills (phase 3).
+            if (!world_log && !ServerWorldOn()) {
                 PostKillBoard(client, headers, member, kill_board_since);
             }
             next_echo_post = std::chrono::steady_clock::now() + std::chrono::seconds{3};
@@ -736,6 +739,10 @@ std::optional<std::array<s32, 4>> OwnOutfit() {
     return outfit;
 }
 
+// Whether the off-screen model is wanted now (OffscreenPortraitWanted; the emulator, without the
+// party HUD, never wants it).
+std::atomic<bool> offscreen_wanted{false};
+
 #ifdef BLOODBORNE_PARTY_HUD
 // The status page's body renderer (CSMenuAsmModelRend, vtable 0x53A4F00) built off-screen, so a
 // character has its portrait without opening the status page (Kaniel 2026-10-13). It is a task of
@@ -758,7 +765,6 @@ struct OffscreenModel {
     s32 logged_step = -2;
 };
 OffscreenModel offscreen;
-std::atomic<bool> offscreen_wanted{false};
 
 u64 PlayerGameDataNow() {
     const u64 man = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);

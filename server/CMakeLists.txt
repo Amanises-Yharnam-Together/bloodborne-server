@@ -3,7 +3,8 @@ project(shadnet VERSION 1.0.0 LANGUAGES CXX)
 
 include(CTest)
 
-set(CMAKE_CXX_STANDARD 17)
+# C++20: the co-op code shared with the game (coop/) needs it.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
@@ -40,6 +41,33 @@ add_custom_command(
     VERBATIM
 )
 
+# Our co-op messages (coop/coop.proto), shared with the game; with the world log (coop/), which the
+# game compiles too.
+add_custom_command(
+    OUTPUT
+        "${PROTO_OUT}/coop.pb.cc"
+        "${PROTO_OUT}/coop.pb.h"
+    COMMAND $<TARGET_FILE:protoc>
+        "--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/coop"
+        "--cpp_out=${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/coop/coop.proto"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/coop/coop.proto"
+        protoc
+    COMMENT "Generating the co-op protobuf sources"
+    VERBATIM
+)
+set(COOP_SOURCES
+    coop/coop_types.h
+    coop/world_log.h
+    coop/world_log.cpp
+    coop/game_link.h
+    coop/coop_stream.h
+    coop/coop_messages.h
+    coop/coop_messages.cpp
+    "${PROTO_OUT}/coop.pb.cc"
+)
+
 set(SOURCES
     src/main.cpp
     src/config.cpp
@@ -71,6 +99,10 @@ set(SOURCES
     # The games' one link to the server (co-op phase 2)
     src/server_link.h
     src/server_link.cpp
+    # The parties' worlds (co-op phase 3)
+    src/bloodborne_world.h
+    src/bloodborne_world.cpp
+    ${COOP_SOURCES}
     # WebAPI HTTP/JSON listener
     src/webapi_server.h
     src/webapi_server.cpp
@@ -120,6 +152,7 @@ qt_add_resources(shadnet bloodborne_backend
 
 target_include_directories(shadnet PRIVATE
     src
+    "${CMAKE_CURRENT_SOURCE_DIR}"
     "${PROTO_OUT}"                                    
     "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
 )
@@ -193,6 +226,21 @@ if(BUILD_TESTING)
     target_compile_definitions(test_server_link PRIVATE
         BLOODBORNE_SERVER_LINK_CONTRACTS="${CMAKE_CURRENT_SOURCE_DIR}/tests/contracts/server_link_frames.txt")
     add_test(NAME server_link COMMAND test_server_link)
+
+    add_executable(test_bloodborne_world EXCLUDE_FROM_ALL
+        tests/test_bloodborne_world.cpp
+        src/bloodborne_world.cpp
+        src/server_link.cpp
+        ${COOP_SOURCES}
+    )
+    target_include_directories(test_bloodborne_world PRIVATE
+        src
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(test_bloodborne_world PRIVATE Qt6::Core libprotobuf)
+    add_test(NAME bloodborne_world COMMAND test_bloodborne_world)
 
     # The backend in shadnet against backend/bb_dummy_server.py: the same requests, the same
     # answers (needs Python 3).

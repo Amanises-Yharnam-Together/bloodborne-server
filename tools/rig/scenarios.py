@@ -76,6 +76,8 @@ def IOSEFKA_LOOK(role: str) -> list[str]:
 # host's was lowered to that before the join.
 DOG = "0x10014009"
 WARD_NPC = "0x10010075"  # the NPC sitting by the Oedon Chapel lamp (999 HP)
+# Another ordinary enemy near the first lamp (suites.FRESH_ENEMY: real hits land on it).
+SECOND_ENEMY = "0x1001402e"
 CLINIC = "0x10014000"  # 573 HP, by Iosefka's door 32 m from the first lamp, 10 m up
 OTHER_MAP_FLAG = 12700131
 THIS_MAP_FLAG = 12410999
@@ -196,6 +198,36 @@ SCENARIOS = {
         },
         "forbid": {"host": only_kill(ENEMY)},
         "timeout": 720,
+    },
+    "server-restart": {
+        "about": "phase 3, the party's world on the server (run with SHADPS4_BLOODBORNE_SERVER_WORLD"
+                 "=1): the host kills an enemy while the guest is in the Dream, shadNet restarts "
+                 "mid-session, the host kills another; the guest coming back finds both dead (a "
+                 "server that lost the world would start a new one, and the first kill with it)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 25", *attack(ENEMY),
+                     "wait 5", "sync killed", "wait 20", *attack(SECOND_ENEMY), "wait 5",
+                     "sync killed2", "wait-members 2 240", "wait 20", "snapshot"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                      "sync killed", "sync killed2", "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait-members 2 240", "wait 25", "snapshot"],
+        },
+        "syncs": {"killed": {"chapter": "server-restart", "roles": ["host", "guest"]},
+                  "killed2": {"chapter": "server-restart", "roles": ["host", "guest"]}},
+        "server_restarts": ["killed"],
+        "expect": {
+            "host": [r"Co-op server world: applied .*kill 0x1001400b",
+                     r"Co-op server world: shadNet started over",
+                     rf"Co-op server world: applied .*kill {SECOND_ENEMY}"],
+            "guest": [r"Co-op server world: shadNet started over",
+                      rf"Co-op server world: applied .*kill {SECOND_ENEMY}",
+                      r"(?:hid 2 enemies a member killed on map 0x18010000, 0 near died|"
+                      r"hid 1 enemies a member killed on map 0x18010000, 1 near died|"
+                      r"hid 0 enemies a member killed on map 0x18010000, 2 near died)"],
+        },
+        "forbid": {"guest": [r"Co-op server world: following the party's log 0x[0-9a-f]+0{7}3\b",
+                             r"Co-op server world: shadNet refused"]},
+        "timeout": 900,
     },
     "dog": {
         "about": "Kaniel's dog: the guest kills an enemy while the host is in the Dream; the host "
