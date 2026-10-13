@@ -31,10 +31,11 @@ GAME_SERVER = 'https://ss4.scej-network.jp:20443'
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 DETACHED = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
 
-# The answers, as 1 - SETUP asked them (FPS is gone: co-op is always the fixed 60 FPS mode).
+# The answers, as 1 - SETUP asked them (FPS is gone: co-op is always the fixed 60 FPS mode; the party is
+# its password alone, Kaniel 2026-10-13: the party name went).
 DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account': '', 'password': '',
-            'party_name': 'hunters', 'party_secret': '', 'p2p_port': 'auto', 'harder': 'off',
-            'prepared': ''}
+            'party_secret': '', 'p2p_port': 'auto', 'harder': 'off', 'prepared': ''}
+PARTY_NAME = 'party'  # the party's name on the server: every party there is told apart by its password
 HARDER_ON = '3,1.5,3'  # the kit's harder enemies: HP, damage and poise multipliers
 
 
@@ -66,7 +67,7 @@ def valid_harder(value):
 def missing(settings):
     """The answers still to give (or wrong), in the window's order."""
     checks = (('game', lambda v: bool(v)), ('host_ip', valid_ip), ('account', valid_name),
-              ('password', valid_secret), ('party_name', valid_secret), ('party_secret', valid_secret))
+              ('password', valid_secret), ('party_secret', valid_secret))
     return [key for key, ok in checks if not ok(str(settings.get(key, '')))]
 
 
@@ -81,14 +82,13 @@ def from_settings_bat(path):
         match = re.fullmatch(r'set "([A-Z0-9_]+)=(.*)"', line.strip())
         if match:
             values[match.group(1)] = match.group(2)
-    party_name, _, party_secret = values.get('PARTY', '').partition(':')
+    _party_name, _, party_secret = values.get('PARTY', '').partition(':')
     settings = dict(DEFAULTS)
     settings.update({'game': values.get('GAME', ''),
                      'update': '' if values.get('UPDATE', 'none') == 'none' else values['UPDATE'],
                      'role': values.get('ROLE', 'guest') if values.get('ROLE') in ('host', 'guest') else 'guest',
                      'host_ip': values.get('HOSTIP', ''), 'account': values.get('NPID', ''),
-                     'password': values.get('PASS', ''), 'party_name': party_name or DEFAULTS['party_name'],
-                     'party_secret': party_secret, 'p2p_port': values.get('P2PPORT', 'auto') or 'auto',
+                     'password': values.get('PASS', ''), 'party_secret': party_secret, 'p2p_port': values.get('P2PPORT', 'auto') or 'auto',
                      'harder': values.get('HARDER', 'off') or 'off'})
     return settings
 
@@ -492,7 +492,7 @@ def game_environment(env, settings, install, root):
         'BB_SHADNET_NPID': settings['account'], 'BB_SHADNET_PASSWORD': settings['password'],
         'BB_USER_NAME': settings['account'],
         'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1',
-        'SHADPS4_BLOODBORNE_PARTY': f'{settings["party_name"]}:{settings["party_secret"]}',
+        'SHADPS4_BLOODBORNE_PARTY': f'{PARTY_NAME}:{settings["party_secret"]}',
         'SHADPS4_BLOODBORNE_PARTY_ROLE': settings['role'],
         'SHADPS4_BLOODBORNE_RE_TRACE': '0',
     })

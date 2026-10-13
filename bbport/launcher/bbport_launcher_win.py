@@ -2786,15 +2786,13 @@ class Launcher:
                   textvariable=var('account')).pack(fill='x')
         ttk.Entry(self.cell(card, 3, 1, _('Your account password', 'Пароль аккаунта')),
                   textvariable=var('password'), show='•').pack(fill='x')
-        ttk.Entry(self.cell(card, 4, 0, _('Party name (the same for every player)',
-                                          'Название группы (одинаковое у всех)')),
-                  textvariable=var('party_name')).pack(fill='x')
-        ttk.Entry(self.cell(card, 4, 1, _('Party password (the same for every player)',
+        # The party is its password alone (Kaniel 2026-10-13: no party name).
+        ttk.Entry(self.cell(card, 4, 0, _('Party password (the same for every player)',
                                           'Пароль группы (одинаковый у всех)')),
                   textvariable=var('party_secret')).pack(fill='x')
-        combo(self.cell(card, 5, 0, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
+        combo(self.cell(card, 4, 1, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
               'harder', HARDER_CHOICES)
-        holder = self.cell(card, 5, 1, ' ')
+        holder = self.cell(card, 5, 0, '', span=2)
         self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
                     self.coop_import_saves).pack(anchor='w')
         # The host's server: it starts by itself with PLAY; these are for a host who only hosts.
@@ -2967,7 +2965,6 @@ class Launcher:
                  'host_ip': _("the host's IP address", 'IP хоста'),
                  'account': _('an account name (3-16 letters, digits, _ or -)', 'имя аккаунта (3-16 букв, цифр, _ или -)'),
                  'password': _('a password (letters, digits, _ or -)', 'пароль (буквы, цифры, _ или -)'),
-                 'party_name': _('a party name (letters, digits, _ or -)', 'название группы (буквы, цифры, _ или -)'),
                  'party_secret': _('a party password (letters, digits, _ or -)', 'пароль группы (буквы, цифры, _ или -)')}
         missing = bbport_coop.missing(self.coop)
         if missing:
