@@ -21,5 +21,12 @@ void SetServerLinkBuild(std::string build);
 // "member-gone", "rtt") for the co-op trace.
 using ServerLinkObserver = void (*)(std::string_view event, std::string_view detail);
 void SetServerLinkObserver(ServerLinkObserver observer);
+// Our messages with shadNet itself (the link's Coop kind, phase 3): one stream frame's body each
+// way. Send is false while there is no link (no server known, the transport not started); Receive
+// gives one body (its size, -1 when none waits).
+bool ServerCoopSend(const void* body, u32 len);
+int ServerCoopReceive(void* body, u32 len);
+// Whether the server took this game's hello (it may restart: then false until it does again).
+bool ServerLinkWelcomed();
 
 } // namespace Libraries::Net

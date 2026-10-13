@@ -95,6 +95,8 @@ enum class InternalChannel {
     Coop,
     // The game's own packets in our frames ("SHAD" type 0x40, bloodborne_game_link.h).
     GamePackets,
+    // Our messages with the server itself (the link's Coop kind: the party's world).
+    ServerCoop,
 };
 
 struct QueuedPacket {
@@ -459,6 +461,23 @@ public:
         link_build = std::move(build);
     }
 
+    bool SendToServer(std::span<const u8> body) {
+        const Link::ServerEndpoint server = LinkServer();
+        if (server.addr_nbo == 0 || server.port_nbo == 0 || !IsReady()) {
+            return false;
+        }
+        sockaddr_in dest{};
+        dest.sin_family = AF_INET;
+        dest.sin_addr.s_addr = server.addr_nbo;
+        dest.sin_port = server.port_nbo;
+        return Transmit(dest, Link::EncodeCoop(body));
+    }
+
+    bool LinkWelcomed() {
+        std::lock_guard lock(link_mutex);
+        return link_welcomed;
+    }
+
     void SetLinkObserver(ServerLinkObserver observer) {
         link_observer.store(observer);
     }
@@ -540,6 +559,8 @@ private:
             return coop_queue;
         case InternalChannel::GamePackets:
             return game_packets_queue;
+        case InternalChannel::ServerCoop:
+            return server_coop_queue;
         }
         return signaling_queue;
     }
@@ -577,7 +598,8 @@ private:
             queue.pop_front();
         }
         // Read every few milliseconds while a party plays; a run without one keeps the newest.
-        if (channel == InternalChannel::GamePackets && queue.size() >= 4096) {
+        if ((channel == InternalChannel::GamePackets || channel == InternalChannel::ServerCoop) &&
+            queue.size() >= 4096) {
             queue.pop_front();
         }
         queue.push_back(std::move(packet));
@@ -730,6 +752,13 @@ private:
         case Link::Kind::Member:
             if (const auto member = Link::DecodeMember(datagram)) {
                 OnMember(*member);
+            }
+            return;
+        case Link::Kind::Coop:
+            if (const auto body = Link::DecodeCoop(datagram)) {
+                const Link::ServerEndpoint server = LinkServer();
+                PushInternal(InternalChannel::ServerCoop, server.addr_nbo, server.port_nbo,
+                             body->data(), body->size());
             }
             return;
         default:
@@ -915,6 +944,7 @@ private:
     std::deque<QueuedPacket> matching2_queue;
     std::deque<QueuedPacket> coop_queue;
     std::deque<QueuedPacket> game_packets_queue;
+    std::deque<QueuedPacket> server_coop_queue;
 };
 
 int ReadIntegerOption(const void* optval, u32 optlen, int* out) {
@@ -1429,6 +1459,22 @@ void SetServerLinkBuild(std::string build) {
 
 void SetServerLinkObserver(ServerLinkObserver observer) {
     P2PTransport::Instance().SetLinkObserver(observer);
+}
+
+bool ServerCoopSend(const void* body, u32 len) {
+    return ServerLinkSwitchOn() &&
+           P2PTransport::Instance().SendToServer({static_cast<const u8*>(body), len});
+}
+
+int ServerCoopReceive(void* body, u32 len) {
+    u32 addr = 0;
+    u16 port = 0;
+    return P2PTransport::Instance().ReceiveInternal(InternalChannel::ServerCoop, body, len, &addr,
+                                                    &port);
+}
+
+bool ServerLinkWelcomed() {
+    return ServerLinkSwitchOn() && P2PTransport::Instance().LinkWelcomed();
 }
 
 u16 GetP2PConfiguredPort() {

@@ -64,6 +64,7 @@ void ConfigManager::Parse(const QString& path) {
     m_backend.summonPoll = str("BackendSummonPoll", "5").toInt();
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
+    m_bloodborneWorldPath = str("BloodborneWorldPath", "bloodborne_worlds");
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();
     m_emailValidated = boolean("EmailValidated", false);
     m_adminsList = strList("AdminsList");

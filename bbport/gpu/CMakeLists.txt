@@ -187,11 +187,18 @@ if (NOT Protobuf_FOUND)
 endif()
 set(SHADNET_PROTO_OUT "${CMAKE_CURRENT_BINARY_DIR}/shadnet_proto_gen")
 file(MAKE_DIRECTORY "${SHADNET_PROTO_OUT}")
+# shadNet's own files, one copy for both sides: its messages, and ours with it (the co-op world).
+set(BB_SERVER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../server)
 add_custom_command(
     OUTPUT "${SHADNET_PROTO_OUT}/shadnet.pb.cc" "${SHADNET_PROTO_OUT}/shadnet.pb.h"
-    COMMAND protobuf::protoc "--proto_path=${BB_EMULATOR_SRC}/shadnet"
-            "--cpp_out=${SHADNET_PROTO_OUT}" "${BB_EMULATOR_SRC}/shadnet/shadnet.proto"
-    DEPENDS "${BB_EMULATOR_SRC}/shadnet/shadnet.proto")
+    COMMAND protobuf::protoc "--proto_path=${BB_SERVER_SRC}/src"
+            "--cpp_out=${SHADNET_PROTO_OUT}" "${BB_SERVER_SRC}/src/shadnet.proto"
+    DEPENDS "${BB_SERVER_SRC}/src/shadnet.proto")
+add_custom_command(
+    OUTPUT "${SHADNET_PROTO_OUT}/coop.pb.cc" "${SHADNET_PROTO_OUT}/coop.pb.h"
+    COMMAND protobuf::protoc "--proto_path=${BB_SERVER_SRC}/coop"
+            "--cpp_out=${SHADNET_PROTO_OUT}" "${BB_SERVER_SRC}/coop/coop.proto"
+    DEPENDS "${BB_SERVER_SRC}/coop/coop.proto")
 file(GLOB_RECURSE BBNET_SOURCES CONFIGURE_DEPENDS ${BB_EMULATOR_SRC}/core/libraries/network/*.cpp
     ${BB_EMULATOR_SRC}/core/libraries/np/*.cpp ${BB_EMULATOR_SRC}/shadnet/*.cpp)
 # Trophies and the system dialogs stay in the C runtime; their shadPS4 versions need the
@@ -213,6 +220,8 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_portrait.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_boards.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_world_log.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_server_world.cpp
+    ${BB_SERVER_SRC}/coop/world_log.cpp ${BB_SERVER_SRC}/coop/coop_messages.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_autoplay.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_trace_diag.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_re_tracer.cpp
@@ -225,11 +234,13 @@ add_custom_target(bbcoop_revision
             -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/bbcoop/revision.cmake
     BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/include/bbcoop_revision.h)
 find_package(nlohmann_json CONFIG REQUIRED)
-add_library(bbnet STATIC ${BBNET_SOURCES} "${SHADNET_PROTO_OUT}/shadnet.pb.cc" bbnet/bbnet_glue.cpp
+add_library(bbnet STATIC ${BBNET_SOURCES} "${SHADNET_PROTO_OUT}/shadnet.pb.cc"
+    "${SHADNET_PROTO_OUT}/coop.pb.cc" bbnet/bbnet_glue.cpp
     ${BBCOOP_SOURCES})
 add_dependencies(bbnet bbcoop_revision)
 target_include_directories(bbnet PRIVATE shim shadps4 . "${SHADNET_PROTO_OUT}" ${SHADER_INCLUDE}
-    third_party/imgui third_party/httplib third_party/xbyak ${BB_EMULATOR_SRC})
+    third_party/imgui third_party/httplib third_party/xbyak ${BB_EMULATOR_SRC}
+    ${BB_SERVER_SRC})
 target_link_libraries(bbnet PRIVATE nlohmann_json::nlohmann_json)
 # Party death is always on in the port (it has the party HUD; no setting turns it off); the
 # emulator's stays a setting, off by default.

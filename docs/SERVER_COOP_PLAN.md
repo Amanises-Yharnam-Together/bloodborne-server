@@ -225,6 +225,21 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
    to disk, and serves snapshots per map; members propose to the server. Kills, shown, flags, map
    state and HP go over it; then the HTTP boards (/bloodborne/party/*) and their pollers are removed.
    Protobuf messages from here on. Rig: kill-apart, hp-apart, lamp-share, echoes-apart, host-crash.
+   **3a built 2026-10-13** behind `SHADPS4_BLOODBORNE_SERVER_WORLD=1` (port only, needs
+   `SHADPS4_BLOODBORNE_SERVER_LINK=1`; off by default): the world log's logic and frames moved into
+   `server/coop/` (`world_log.h`, the game link's `game_link.h`), which the emulator, the port and
+   shadNet all compile; `server/coop/coop.proto` is the one file for our messages (and shadNet's
+   `shadnet.proto` is now one copy too: the games build theirs from `server/src`). The messages
+   travel in the link's new `Coop` kind, in a reliable stream of their own (`coop_stream.h`: the
+   game link's reliable class, messages chunked). shadNet (`bloodborne_world.h`) keeps one world
+   per party key (on disk by its hash, `BloodborneWorldPath`): `world.pb` written whole with
+   `QSaveFile`, three backups, and a journal of the changes since, loaded at its start. Its epochs
+   are the world's id and its count of logs; a wipe starts a log once per party (15 s), the
+   session host's join, leave or new character starts one, a guest's take its share out. Every
+   game (the host too) proposes its standing kills and follows the server's log
+   (`bloodborne_server_world.cpp`, its own thread); the kill board is not posted. The rest (shown,
+   flags, map state, HP) stays on the host's log for 3b. Rig: `server-restart` (shadNet restarts
+   mid-session, the first kill stands and a second one comes through), kill-apart, dog.
 4. **Enemy ownership from the server.** One owner per map (the first member there, handed on when it
    leaves); game enemy channels gated by it; own-hit counting, SharedDamage and the HP board retired.
    Rig: hit3, guest-hit-once, hp-together, lone-guest, dog.

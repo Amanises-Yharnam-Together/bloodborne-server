@@ -34,6 +34,9 @@ enum class Kind : u8 {
     Ping = 4,    // game -> server, once a second
     Pong = 5,    // server -> game: the ping back
     Member = 6,  // server -> game: another member's link went quiet, came back or is gone
+    // Both ways: our messages (server/coop/coop.proto) between the game and shadNet itself, one
+    // frame of their reliable stream (server/coop/coop_stream.h). Phase 3: the party's world.
+    Coop = 7,
 };
 struct Hello {
     u8 version = LinkVersion;
@@ -162,7 +165,7 @@ inline std::optional<Kind> KindOf(std::span<const u8> datagram) {
         return std::nullopt;
     }
     const u8 kind = datagram[8];
-    if (kind < static_cast<u8>(Kind::Hello) || kind > static_cast<u8>(Kind::Member)) {
+    if (kind < static_cast<u8>(Kind::Hello) || kind > static_cast<u8>(Kind::Coop)) {
         return std::nullopt;
     }
     if (!Detail::Body(datagram, static_cast<Kind>(kind))) {
@@ -210,6 +213,20 @@ inline std::vector<u8> Encode(const Member& member) {
     Detail::PutRaw(out, &member.port_nbo, sizeof(member.port_nbo));
     Detail::PutText(out, member.online_id);
     return out;
+}
+
+inline std::vector<u8> EncodeCoop(std::span<const u8> body) {
+    auto out = Detail::Start(Kind::Coop);
+    out.insert(out.end(), body.begin(), body.end());
+    return out;
+}
+
+inline std::optional<std::span<const u8>> DecodeCoop(std::span<const u8> datagram) {
+    auto body = Detail::Body(datagram, Kind::Coop);
+    if (!body) {
+        return std::nullopt;
+    }
+    return body->Rest();
 }
 
 inline std::optional<Hello> DecodeHello(std::span<const u8> datagram) {

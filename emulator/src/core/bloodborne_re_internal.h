@@ -661,6 +661,17 @@ struct PartyKillsNow {
 PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
                                std::span<const std::pair<s32, bool>> changes, bool forgot,
                                const std::unordered_set<u32>& not_mine);
+// The party's world on the server (bloodborne_server_world.cpp, docs/SERVER_COOP_PLAN.md phase
+// 3): SHADPS4_BLOODBORNE_SERVER_WORLD=1 with the server link, the port only.
+bool ServerWorldOn();
+// The kill step (game thread): this member's standing kills to shadNet (`propose`: in the session
+// and not held by a wipe), and the party's kills as the server's log has them.
+struct ServerWorldKills {
+    std::unordered_set<u32> kills;
+    bool host_wiped = false; // the party's log started over after a wipe (see WorldLogWipeHold)
+    bool fresh = false;      // in step with the server's log
+};
+ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms);
 // The host's characters on its map (step 2): to the log while the shown characters take it (the
 // shown board gets them as before, the fallback copy).
 void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters);

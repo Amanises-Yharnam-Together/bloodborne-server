@@ -699,19 +699,33 @@ PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
             TraceLog("member", "reset", {});
         }
     }
-    const bool log = DecideKillPath(mine, now_ms);
+    // With the party's world on the server the kills go there, not to the host's log or the kill
+    // board (the host's log keeps the rest for now: phase 3a).
+    const bool server = ServerWorldOn();
+    const WorldLogKills& to_the_log = server ? WorldLogKills{} : mine;
+    const bool log = DecideKillPath(to_the_log, now_ms);
     FollowFlagsPath(log, now_ms);
     const std::string name = LogMemberName();
     if (log && !name.empty()) {
         if (IsPartyGuestRole()) {
-            RunMemberLog(name, mine, now_ms);
+            RunMemberLog(name, to_the_log, now_ms);
             TakeWorldSnapshot(now_ms);
         } else {
-            RunHostLog(name, mine, now_ms);
+            RunHostLog(name, to_the_log, now_ms);
         }
     }
     PartyKillsNow party;
-    {
+    if (server) {
+        const bool in_session = InPartySession();
+        const ServerWorldKills world =
+            TickServerWorld(mine, in_session && !wipe_hold.HoldsProposals(now_ms), now_ms);
+        if (world.host_wiped) {
+            wipe_hold.HostWiped(now_ms);
+        }
+        if (in_session) {
+            party.members = world.kills;
+        }
+    } else {
         std::scoped_lock lock{kill_board_mutex};
         if (!log) {
             kills_to_post.insert(kills_to_post.end(), changes.begin(), changes.end());
@@ -726,7 +740,7 @@ PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
     party.all.insert(held.begin(), held.end());
     // On the board path, straight over the P2P link: this member's standing kills out, the peers'
     // in (the board brings the same a moment later, and to members who load in later).
-    if (!log && InPartySession()) {
+    if (!server && !log && InPartySession()) {
         std::vector<u32> standing(visit_kills.Killed().begin(), visit_kills.Killed().end());
         standing.insert(standing.end(), held.begin(), held.end());
         SendDirectKills(standing, !changes.empty());

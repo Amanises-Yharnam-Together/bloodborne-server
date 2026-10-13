@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <QDateTime>
 #include <QDebug>
 #include <QtEndian>
 #include "stream_extractor.h"
@@ -31,11 +32,17 @@ static QByteArray StripVportHeader(const QByteArray& data) {
 
 StunServer::StunServer(SharedState* shared, QObject* parent)
     : QObject(parent), m_socket(new QUdpSocket(this)), m_shared(shared),
-      m_linkTimer(new QTimer(this)) {
+      m_linkTimer(new QTimer(this)),
+      m_world(shared->config ? shared->config->GetBloodborneWorldPath() : QString{}),
+      m_worldTimer(new QTimer(this)) {
     connect(m_socket, &QUdpSocket::readyRead, this, &StunServer::OnReadyRead);
     connect(m_linkTimer, &QTimer::timeout, this, &StunServer::OnLinkTick);
+    connect(m_worldTimer, &QTimer::timeout, this, &StunServer::OnWorldTick);
     m_clock.start();
     m_linkTimer->start(500);
+    // The worlds' clock is the wall clock: their journals keep it across restarts.
+    Apply(m_world.Load(QDateTime::currentMSecsSinceEpoch()));
+    m_worldTimer->start(50);
 }
 
 bool StunServer::Start(const QHostAddress& addr, uint16_t port) {
@@ -130,9 +137,26 @@ void StunServer::OnLinkTick() {
     Apply(m_link.Tick(m_clock.elapsed()));
 }
 
+void StunServer::OnWorldTick() {
+    Apply(m_world.Tick(QDateTime::currentMSecsSinceEpoch()));
+}
+
 void StunServer::Apply(const ServerLink::Hub::Result& result) {
     for (const auto& send : result.sends)
         m_socket->writeDatagram(send.datagram, QHostAddress(send.to.ipv4), send.to.port);
+    for (const auto& line : result.log)
+        qInfo().noquote() << line;
+    for (const auto& gone : result.gone)
+        m_world.Forget(gone);
+    for (const auto& coop : result.coop)
+        Apply(m_world.Receive(coop.from, coop.online_id, coop.body,
+                              QDateTime::currentMSecsSinceEpoch()));
+}
+
+void StunServer::Apply(const BloodborneWorld::Service::Result& result) {
+    for (const auto& send : result.sends)
+        m_socket->writeDatagram(ServerLink::EncodeCoop(send.body), QHostAddress(send.to.ipv4),
+                                send.to.port);
     for (const auto& line : result.log)
         qInfo().noquote() << line;
 }

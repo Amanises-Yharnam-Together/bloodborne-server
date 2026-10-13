@@ -122,7 +122,7 @@ std::optional<Kind> KindOf(const QByteArray& datagram) {
         return std::nullopt;
     }
     const quint8 kind = static_cast<quint8>(datagram[8]);
-    if (kind < static_cast<quint8>(Kind::Hello) || kind > static_cast<quint8>(Kind::Member) ||
+    if (kind < static_cast<quint8>(Kind::Hello) || kind > static_cast<quint8>(Kind::Coop) ||
         !Body(datagram, static_cast<Kind>(kind))) {
         return std::nullopt;
     }
@@ -166,6 +166,10 @@ QByteArray Encode(const Member& member) {
     PutEndpoint(out, member.endpoint);
     PutText(out, member.online_id);
     return out;
+}
+
+QByteArray EncodeCoop(const QByteArray& body) {
+    return Start(Kind::Coop) + body;
 }
 
 std::optional<Hello> DecodeHello(const QByteArray& datagram) {
@@ -221,6 +225,14 @@ std::optional<Member> DecodeMember(const QByteArray& datagram) {
     return member;
 }
 
+std::optional<QByteArray> DecodeCoop(const QByteArray& datagram) {
+    auto body = Body(datagram, Kind::Coop);
+    if (!body) {
+        return std::nullopt;
+    }
+    return body->Rest();
+}
+
 Hub::Hub(qint64 quiet_ms, qint64 gone_ms, qint64 stats_ms, int pair_lines)
     : quiet_ms{quiet_ms}, gone_ms{gone_ms}, stats_ms{stats_ms}, pair_lines{pair_lines} {}
 
@@ -262,6 +274,11 @@ Hub::Result Hub::Receive(const Endpoint& from, const QByteArray& datagram, qint6
         if (const auto ping = DecodePing(Kind::Ping, datagram)) {
             ++link.pings;
             result.sends.append({from, Encode(Kind::Pong, *ping)});
+        }
+        break;
+    case Kind::Coop:
+        if (auto body = DecodeCoop(datagram)) {
+            result.coop.append({from, link.online_id, std::move(*body)});
         }
         break;
     default:
@@ -386,6 +403,7 @@ Hub::Result Hub::Tick(qint64 now_ms) {
                               .arg(now_ms - link.last_heard_ms)
                               .arg(members.size()));
         TellOthers(link, MemberState::Gone, now_ms - link.last_heard_ms, result);
+        result.gone.append(link.endpoint);
         for (auto it = pair_frames.begin(); it != pair_frames.end();) {
             it = it.key().first == key || it.key().second == key ? pair_frames.erase(it)
                                                                  : std::next(it);
