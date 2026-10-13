@@ -2376,6 +2376,26 @@ bool GuestHandlesMapItemsAlone(bool party_configured);
 constexpr u64 ClientItemLotAwardReturn = 0x0132E4B5;
 constexpr auto DeferredBossItemDelay = std::chrono::seconds{8};
 bool DefersItemLotAward(bool party_configured, bool summoned_guest, u64 return_offset);
+// NPC gifts: common event 9100 (common.emevd event 0 starts it per gift with its talk's trigger
+// flag and the item lot) waits for the trigger, clears it and awards the lot, but ends unless the
+// local player is alive, so never for a party guest. A guest's own talk setting a trigger
+// (talk command 11) gets that lot from us instead, and the trigger is cleared as the event would.
+struct NpcGift {
+    s32 trigger;
+    s32 lot;
+};
+inline constexpr std::array<NpcGift, 5> NpcGifts{{
+    {72410359, 24060},
+    {72410310, 23000}, // Iosefka's blood vials (Central Yharnam, her clinic door)
+    {72400398, 32020},
+    {72400489, 28000},
+    {9043, 17010},
+}};
+std::optional<s32> NpcGiftLot(s32 trigger);
+bool GivesGuestNpcGift(bool in_party_session, bool summoned_guest, s32 flag);
+// Held this long after the talk sets the trigger, as for the boss items: the gift's dialog comes
+// once the talk has moved on.
+constexpr auto NpcGiftDelay = std::chrono::seconds{2};
 // The menu scripts' "am I a summoned client" condition (0x01A13FD1, matching state 6 or a
 // joined session): with a party configured the answer is "no", like the item dialog's host.
 bool MenuSeesAClient(bool party_configured, bool summoned_client);

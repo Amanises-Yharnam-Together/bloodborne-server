@@ -105,6 +105,14 @@ its co-op are wired, built, packaged and tested.
 
 ## Backlog (Kaniel 2026-10-10)
 
+- **Progress-flag item awards for party guests** (common event 9040, 2026-10-13). common.emevd
+  event 0 starts 9040 per slot with (flag 9042-9077, item lot 17000-39010): it ends if the flag
+  is already on, ends unless the local player is alive (as 9100, the NPC gifts, did), waits for
+  the flag and awards the lot. A party guest never runs it. What sets those 90xx flags (bosses,
+  story steps) and whether each guest should get the item is not known yet; the NPC gift fix
+  (GivesGuestNpcGift) covers event 9100's talk triggers only. Do not patch 9100/9040 in the event
+  files with per-player trigger flags: the kept-flag write raced the event's own clear and the
+  host was given the gift about 20 times, then crashed (rig iosefka-gift, 2026-10-13).
 - **A guest's lethal hit just after its join may not put it down** (rig guest-death, 2026-10-13,
   party death always on). The guest's 1 HP and 25 m rise came 10 s after the session formed, as it
   took the host's world state ("106 flags changed at once (a load)"): it never went down

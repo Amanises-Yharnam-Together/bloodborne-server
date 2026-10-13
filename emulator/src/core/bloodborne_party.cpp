@@ -2521,6 +2521,19 @@ bool DefersItemLotAward(bool party_configured, bool summoned_guest, u64 return_o
     return party_configured && summoned_guest && return_offset == ClientItemLotAwardReturn;
 }
 
+std::optional<s32> NpcGiftLot(s32 trigger) {
+    for (const NpcGift& gift : NpcGifts) {
+        if (gift.trigger == trigger) {
+            return gift.lot;
+        }
+    }
+    return std::nullopt;
+}
+
+bool GivesGuestNpcGift(bool in_party_session, bool summoned_guest, s32 flag) {
+    return in_party_session && summoned_guest && NpcGiftLot(flag).has_value();
+}
+
 bool MenuSeesAClient(bool party_configured, bool summoned_client) {
     return summoned_client && !party_configured;
 }

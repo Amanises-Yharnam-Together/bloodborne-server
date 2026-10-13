@@ -836,6 +836,12 @@ constexpr std::array<u8, 10> AwardItemLotPrologue{0x55, 0x48, 0x89, 0xE5, 0x41,
                                                   0x57, 0x41, 0x56, 0x41, 0x55};
 std::mutex deferred_item_lots_mutex;
 std::vector<std::pair<s32, std::chrono::steady_clock::time_point>> deferred_item_lots;
+struct HeldNpcGift {
+    s32 trigger;
+    s32 lot;
+    std::chrono::steady_clock::time_point due;
+};
+std::vector<HeldNpcGift> held_npc_gifts; // under deferred_item_lots_mutex
 
 } // namespace
 
@@ -847,11 +853,40 @@ thread_local bool giving_deferred_item_lot = false;
 
 namespace {
 
+// An item lot's getItemFlagId (ItemLotParam +0x80); 0 when the lot is not loaded.
+s32 ItemLotFlag(s32 lot) {
+    const u64 lots = lot > 0 ? FindLoadedParam("ITEMLOT_PARAM_ST") : 0;
+    if (lots == 0) {
+        return 0;
+    }
+    const u64 table_size = 0x40 + u64{ReadValue<u16>(lots, 0x0A)} * 24;
+    if (!HasMemoryAccess(lots, table_size, MemoryProt::CpuRead)) {
+        return 0;
+    }
+    const auto row = FindParamRow({reinterpret_cast<const u8*>(lots), table_size}, lot);
+    if (!row || !HasMemoryAccess(lots + *row, ItemLotFlagOffset + 4, MemoryProt::CpuRead)) {
+        return 0;
+    }
+    return ReadValue<s32>(lots + *row, ItemLotFlagOffset);
+}
+
 bool PS4_SYSV_ABI HoldGuestBossItem(u64, const GuestRegisterSnapshot* registers) {
     if (giving_deferred_item_lot) {
         return false;
     }
     const u64 caller = ReadValue<u64>(registers->rsp, 0);
+    // Every award, who made it and its lot's flag (NPC gifts, 2026-10-13: common event 9100's
+    // is eboot+0x17c180b).
+    {
+        const s32 lot = static_cast<s32>(registers->rsi);
+        const s32 flag = ItemLotFlag(lot);
+        LOG_INFO(Debug,
+                 "Bloodborne party: item lot {} awarded from eboot+{:#x} (callers eboot+{:#x} "
+                 "eboot+{:#x}), its flag {} {}",
+                 lot, caller - image_base, ReadValue<u64>(registers->rsp, 8) - image_base,
+                 ReadValue<u64>(registers->rsp, 16) - image_base, flag,
+                 flag > 0 && EventFlagOn(flag) ? "on" : "off");
+    }
     if (!DefersItemLotAward(party_controller.has_value(), IsPartyGuestRole(),
                             caller - image_base)) {
         return false;
@@ -871,6 +906,50 @@ bool PS4_SYSV_ABI HoldGuestBossItem(u64, const GuestRegisterSnapshot* registers)
 
 namespace Coop {
 
+void QueueGuestNpcGift(s32 trigger, s32 lot) {
+    {
+        std::scoped_lock lock{deferred_item_lots_mutex};
+        if (std::ranges::any_of(held_npc_gifts,
+                                [&](const HeldNpcGift& held) { return held.trigger == trigger; })) {
+            return; // the talk set it again before the gift was given
+        }
+        held_npc_gifts.push_back({trigger, lot, std::chrono::steady_clock::now() + NpcGiftDelay});
+    }
+    LOG_INFO(Debug, "Bloodborne party: the guest's talk set NPC gift trigger {}: item lot {} next",
+             trigger, lot);
+}
+
+// The held NPC gifts that are due: each given once, its trigger cleared as event 9100 clears it
+// (else the guest's own world's event would give it again at home).
+void GiveDueNpcGifts(std::chrono::steady_clock::time_point now) {
+    std::vector<HeldNpcGift> due;
+    {
+        std::scoped_lock lock{deferred_item_lots_mutex};
+        std::erase_if(held_npc_gifts, [&](const HeldNpcGift& held) {
+            if (now < held.due) {
+                return false;
+            }
+            due.push_back(held);
+            return true;
+        });
+    }
+    using AwardItemLot = void PS4_SYSV_ABI (*)(u64, s32, u32);
+    for (const HeldNpcGift& gift : due) {
+        const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
+        if (!HasVtable(item_man, MapItemManVtable, "NPC gift item lot")) {
+            LOG_ERROR(Debug, "Bloodborne party: no item man for NPC gift item lot {}", gift.lot);
+            continue;
+        }
+        giving_deferred_item_lot = true;
+        reinterpret_cast<AwardItemLot>(image_base + AwardItemLotOffset)(item_man, gift.lot, 0);
+        giving_deferred_item_lot = false;
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, bool)>(
+            image_base + PartyGhostSetEventFlagOffset)(0, gift.trigger, false);
+        LOG_INFO(Debug, "Bloodborne party: gave the guest its NPC gift, item lot {} (trigger {})",
+                 gift.lot, gift.trigger);
+    }
+}
+
 void GiveDeferredBossItems() {
     std::vector<s32> due;
     {
@@ -884,6 +963,7 @@ void GiveDeferredBossItems() {
             return true;
         });
     }
+    GiveDueNpcGifts(std::chrono::steady_clock::now());
     using AwardItemLot = void PS4_SYSV_ABI (*)(u64, s32, u32);
     for (const s32 lot : due) {
         const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
