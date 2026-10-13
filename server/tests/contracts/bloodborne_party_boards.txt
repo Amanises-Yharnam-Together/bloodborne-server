@@ -4,18 +4,18 @@
 # one side that the other does not follow fails one of them.
 #
 # One message per line: <name><TAB><text>. In the text, \n stands for a newline. The values are:
-#   members  4b616e69656c ("Kaniel") and 4c6973617261 ("Lisara"), online ids in hex
+#   members  4b616e69656c ("Kaniel") and 416461 ("Ada"), online ids in hex
 #   maps     0x18010000 (402718720, Central Yharnam) and 0x15000000 (the Hunter's Dream)
 map.update	4b616e69656c 18010000
-map.answer	4b616e69656c 18010000\n4c6973617261 15000000\n
+map.answer	4b616e69656c 18010000\n416461 15000000\n
 rest.update	4b616e69656c 72410100 -12.5 3 40.25
-rest.answer	4b616e69656c 72410100 -12.5 3 40.25\n4c6973617261 72410100\n
+rest.answer	4b616e69656c 72410100 -12.5 3 40.25\n416461 72410100\n
 trophy.update	4b616e69656c 3 12
 trophy.answer	3\n12\n
 flags.update	4b616e69656c 0 12417830:1 7116:0
 flags.answer	3\n12417830 1\n7116 0\n
 kills.update	4b616e69656c 7 268517532:1
-kills.answer	9\n268517532 1 4b616e69656c\n268517532 0 4c6973617261\n
+kills.answer	9\n268517532 1 4b616e69656c\n268517532 0 416461\n
 mapstate.update	4b616e69656c 402718720 00ff10
 mapstate.answer	402718720 00ff10\n
 hp.update	4b616e69656c 402718720 03000000000000009c4001103b060000ef070000
@@ -25,5 +25,5 @@ echoes.answer	5\n120 402718720\n4000\n
 world.update	4b616e69656c 01ab
 world.read	4b616e69656c
 world.answer	1500 01ab\n
-vitals.update	4b616e69656c 18010000 up 1200 1520 0 0 0 -12.5 3 40.25 4c6973617261:4:2
-vitals.answer	4b616e69656c 18010000 up 1200 1520 0 0 0 -12.5 3 40.25 0\n4c6973617261 18010000 down 1 1380 4 2 3 -11 3 41 2\nwipe 1 15000000 4b616e69656c 4c6973617261\n
+vitals.update	4b616e69656c 18010000 up 1200 1520 0 0 0 -12.5 3 40.25 416461:4:2
+vitals.answer	4b616e69656c 18010000 up 1200 1520 0 0 0 -12.5 3 40.25 0\n416461 18010000 down 1 1380 4 2 3 -11 3 41 2\nwipe 1 15000000 4b616e69656c 416461\n

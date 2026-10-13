@@ -20,7 +20,7 @@ using namespace Core::Bloodborne;
 namespace {
 
 const std::string Kaniel = "4b616e69656c";
-const std::string Lisara = "4c6973617261";
+const std::string Ada = "416461";
 const std::string Third = "7468697264";
 constexpr u32 CentralYharnam = 0x18010000;
 constexpr u32 HuntersDream = 0x15000000;
@@ -600,21 +600,21 @@ TEST(BloodbornePartyDeath, GivesUpOnlyAfterAFullHold) {
 
 TEST(BloodbornePartyDeath, CountsAttackPressesAsReviveHits) {
     ReviveHits hits;
-    EXPECT_TRUE(hits.Press(Lisara, 4, 300, 0));
+    EXPECT_TRUE(hits.Press(Ada, 4, 300, 0));
     // Faster than an attack: one swing.
-    EXPECT_FALSE(hits.Press(Lisara, 4, 300, ReviveHits::GapMs - 1));
-    EXPECT_TRUE(hits.Press(Lisara, 4, 450, ReviveHits::GapMs));
+    EXPECT_FALSE(hits.Press(Ada, 4, 300, ReviveHits::GapMs - 1));
+    EXPECT_TRUE(hits.Press(Ada, 4, 450, ReviveHits::GapMs));
     EXPECT_TRUE(hits.Press(Third, 2, 300, ReviveHits::GapMs * 2));
-    const std::vector<MemberVitals> board{Member(Lisara, CentralYharnam, Vital::Down, 4),
+    const std::vector<MemberVitals> board{Member(Ada, CentralYharnam, Vital::Down, 4),
                                           Member(Third, CentralYharnam, Vital::Down, 2)};
-    EXPECT_EQ(hits.Totals(board), (std::vector<ReviveHitTotal>{{Lisara, 4, 750}, {Third, 2, 300}}));
+    EXPECT_EQ(hits.Totals(board), (std::vector<ReviveHitTotal>{{Ada, 4, 750}, {Third, 2, 300}}));
     // A down that ended (revived, or a new one) is dropped.
-    const std::vector<MemberVitals> later{Member(Lisara, CentralYharnam, Vital::Up, 4),
+    const std::vector<MemberVitals> later{Member(Ada, CentralYharnam, Vital::Up, 4),
                                           Member(Third, CentralYharnam, Vital::Down, 3)};
     // A board gone stale for a moment (no lines) drops nothing: the strikes still count after it.
     EXPECT_EQ(hits.Totals({}, false),
-              (std::vector<ReviveHitTotal>{{Lisara, 4, 750}, {Third, 2, 300}}));
-    EXPECT_EQ(hits.Totals(board), (std::vector<ReviveHitTotal>{{Lisara, 4, 750}, {Third, 2, 300}}));
+              (std::vector<ReviveHitTotal>{{Ada, 4, 750}, {Third, 2, 300}}));
+    EXPECT_EQ(hits.Totals(board), (std::vector<ReviveHitTotal>{{Ada, 4, 750}, {Third, 2, 300}}));
     EXPECT_TRUE(hits.Totals(later).empty());
     EXPECT_TRUE(hits.Press(Third, 3, 300, ReviveHits::GapMs * 3));
     EXPECT_EQ(hits.Totals(later), (std::vector<ReviveHitTotal>{{Third, 3, 300}}));
@@ -623,7 +623,7 @@ TEST(BloodbornePartyDeath, CountsAttackPressesAsReviveHits) {
 TEST(BloodbornePartyDeath, RevivesTheNearestDownedMemberInReach) {
     const std::vector<MemberVitals> board{
         Member(Kaniel, CentralYharnam, Vital::Up, 0, {0.0f, 0.0f, 0.0f}),
-        Member(Lisara, CentralYharnam, Vital::Down, 4, {2.0f, 0.0f, 0.0f}),
+        Member(Ada, CentralYharnam, Vital::Down, 4, {2.0f, 0.0f, 0.0f}),
         Member(Third, CentralYharnam, Vital::Down, 2, {1.0f, 0.5f, 0.0f}),
     };
     const LampPosition me{0.0f, 0.0f, 0.0f};
@@ -635,7 +635,7 @@ TEST(BloodbornePartyDeath, RevivesTheNearestDownedMemberInReach) {
     EXPECT_FALSE(ReviveTarget(board, Kaniel, CentralYharnam, LampPosition{10.0f, 0.0f, 0.0f}));
     EXPECT_FALSE(ReviveTarget(board, Kaniel, HuntersDream, me));
     const std::vector<MemberVitals> standing{
-        Member(Lisara, CentralYharnam, Vital::Up, 4, {1.0f, 0.0f, 0.0f})};
+        Member(Ada, CentralYharnam, Vital::Up, 4, {1.0f, 0.0f, 0.0f})};
     EXPECT_FALSE(ReviveTarget(standing, Kaniel, CentralYharnam, me));
     const std::vector<MemberVitals> self{
         Member(Kaniel, CentralYharnam, Vital::Down, 4, {0.0f, 0.0f, 0.0f})};
@@ -643,17 +643,17 @@ TEST(BloodbornePartyDeath, RevivesTheNearestDownedMemberInReach) {
 }
 
 TEST(BloodbornePartyDeath, GoesDownOnlyWithSomeoneElseStandingOnTheMap) {
-    EXPECT_TRUE(SomeoneElseStands(std::vector{Member(Lisara, CentralYharnam, Vital::Up)}, Kaniel,
+    EXPECT_TRUE(SomeoneElseStands(std::vector{Member(Ada, CentralYharnam, Vital::Up)}, Kaniel,
                                   CentralYharnam));
-    EXPECT_FALSE(SomeoneElseStands(std::vector{Member(Lisara, CentralYharnam, Vital::Down, 1)},
-                                   Kaniel, CentralYharnam));
-    EXPECT_FALSE(SomeoneElseStands(std::vector{Member(Lisara, HuntersDream, Vital::Up)}, Kaniel,
+    EXPECT_FALSE(SomeoneElseStands(std::vector{Member(Ada, CentralYharnam, Vital::Down, 1)}, Kaniel,
+                                   CentralYharnam));
+    EXPECT_FALSE(SomeoneElseStands(std::vector{Member(Ada, HuntersDream, Vital::Up)}, Kaniel,
                                    CentralYharnam));
     EXPECT_FALSE(SomeoneElseStands(std::vector{Member(Kaniel, CentralYharnam, Vital::Up)}, Kaniel,
                                    CentralYharnam));
-    EXPECT_FALSE(SomeoneElseStands(std::vector{Member(Lisara, CentralYharnam, Vital::Off)}, Kaniel,
+    EXPECT_FALSE(SomeoneElseStands(std::vector{Member(Ada, CentralYharnam, Vital::Off)}, Kaniel,
                                    CentralYharnam));
-    EXPECT_FALSE(SomeoneElseStands(std::vector{Member(Lisara, 0, Vital::Up)}, Kaniel, 0));
+    EXPECT_FALSE(SomeoneElseStands(std::vector{Member(Ada, 0, Vital::Up)}, Kaniel, 0));
     EXPECT_FALSE(SomeoneElseStands({}, Kaniel, CentralYharnam));
 }
 
@@ -663,20 +663,20 @@ TEST(BloodbornePartyDeath, GoesDownOnlyWithSomeoneElseStandingOnTheMap) {
 // anything reads the board. The session's names unknown (one not found): nothing is dropped.
 TEST(BloodbornePartyDeath, OnlyTheSessionsMembersCount) {
     const std::vector<MemberVitals> board{Member(Kaniel, CentralYharnam, Vital::Down, 1),
-                                          Member(Lisara, CentralYharnam, Vital::Down, 2),
+                                          Member(Ada, CentralYharnam, Vital::Down, 2),
                                           Member(Third, CentralYharnam, Vital::Up)};
-    const auto session = OnlySessionMembers(board, Kaniel, std::vector<std::string>{Lisara});
+    const auto session = OnlySessionMembers(board, Kaniel, std::vector<std::string>{Ada});
     EXPECT_EQ(session, (std::vector<MemberVitals>{board[0], board[1]})) << "self stays";
     EXPECT_FALSE(SomeoneElseStands(session, Kaniel, CentralYharnam)) << "a wipe";
-    EXPECT_FALSE(SomeoneElseStands(session, Lisara, CentralYharnam));
+    EXPECT_FALSE(SomeoneElseStands(session, Ada, CentralYharnam));
     EXPECT_EQ(OnlySessionMembers(board, Kaniel, std::nullopt), board);
     EXPECT_EQ(OnlySessionMembers(board, Kaniel, std::vector<std::string>{}),
               (std::vector<MemberVitals>{board[0]}))
         << "alone in the session";
 
-    EXPECT_EQ(SessionBoardNames({std::optional<std::string>{Lisara}, std::optional{Third}}),
-              (std::vector<std::string>{Lisara, Third}));
-    EXPECT_EQ(SessionBoardNames({std::optional<std::string>{Lisara}, std::nullopt}), std::nullopt);
+    EXPECT_EQ(SessionBoardNames({std::optional<std::string>{Ada}, std::optional{Third}}),
+              (std::vector<std::string>{Ada, Third}));
+    EXPECT_EQ(SessionBoardNames({std::optional<std::string>{Ada}, std::nullopt}), std::nullopt);
     EXPECT_EQ(SessionBoardNames({}), std::vector<std::string>{});
 }
 
@@ -727,38 +727,37 @@ TEST(BloodbornePartyDeath, EncodesTheVitalsUpdate) {
     self.needed = 1520;
     EXPECT_EQ(EncodeVitalsUpdate(self, {}),
               "4b616e69656c 18010000 down 1 1520 7 300 1520 -12.5 3 40.25");
-    const std::vector<ReviveHitTotal> hits{{Lisara, 4, 620}, {Third, 9, 1}};
+    const std::vector<ReviveHitTotal> hits{{Ada, 4, 620}, {Third, 9, 1}};
     EXPECT_EQ(EncodeVitalsUpdate(self, hits),
-              "4b616e69656c 18010000 down 1 1520 7 300 1520 -12.5 3 40.25 4c6973617261:4:620 "
+              "4b616e69656c 18010000 down 1 1520 7 300 1520 -12.5 3 40.25 416461:4:620 "
               "7468697264:9:1");
 }
 
 TEST(BloodbornePartyDeath, ParsesTheVitalsBoard) {
-    const auto board =
-        ParseVitalsBoard("4b616e69656c 18010000 up 1200 1520 0 0 0 -12.5 3 40.25 0\n"
-                         "4c6973617261 18010000 down 1 1380 4 620 1380 -11 3 41 620\n"
-                         "wipe 5 15000000 4b616e69656c 7468697264\n");
+    const auto board = ParseVitalsBoard("4b616e69656c 18010000 up 1200 1520 0 0 0 -12.5 3 40.25 0\n"
+                                        "416461 18010000 down 1 1380 4 620 1380 -11 3 41 620\n"
+                                        "wipe 5 15000000 4b616e69656c 7468697264\n");
     ASSERT_TRUE(board);
     ASSERT_EQ(board->members.size(), 2u);
     EXPECT_EQ(board->members[0].member, Kaniel);
     EXPECT_EQ(board->members[0].vital, Vital::Up);
     EXPECT_EQ(board->members[0].hp, 1200);
     EXPECT_EQ(board->members[0].at, (LampPosition{-12.5f, 3.0f, 40.25f}));
-    const MemberVitals& lisara = board->members[1];
-    EXPECT_EQ(lisara.member, Lisara);
-    EXPECT_EQ(lisara.map, CentralYharnam);
-    EXPECT_EQ(lisara.vital, Vital::Down);
-    EXPECT_EQ(lisara.max, 1380);
-    EXPECT_EQ(lisara.down, 4u);
-    EXPECT_EQ(lisara.landed, 620u);
-    EXPECT_EQ(lisara.needed, 1380u);
-    EXPECT_EQ(lisara.revive_damage, 620u);
+    const MemberVitals& ada = board->members[1];
+    EXPECT_EQ(ada.member, Ada);
+    EXPECT_EQ(ada.map, CentralYharnam);
+    EXPECT_EQ(ada.vital, Vital::Down);
+    EXPECT_EQ(ada.max, 1380);
+    EXPECT_EQ(ada.down, 4u);
+    EXPECT_EQ(ada.landed, 620u);
+    EXPECT_EQ(ada.needed, 1380u);
+    EXPECT_EQ(ada.revive_damage, 620u);
     ASSERT_EQ(board->wipes.size(), 1u);
     EXPECT_EQ(board->wipes[0].id, 5u);
     EXPECT_EQ(board->wipes[0].map, HuntersDream);
     EXPECT_EQ(board->wipes[0].members, (std::vector<std::string>{Kaniel, Third}));
     EXPECT_EQ(WipeFor(*board, Kaniel), std::optional<u32>{5});
-    EXPECT_EQ(WipeFor(*board, Lisara), std::nullopt);
+    EXPECT_EQ(WipeFor(*board, Ada), std::nullopt);
 
     EXPECT_TRUE(ParseVitalsBoard(""));
     EXPECT_FALSE(ParseVitalsBoard("4b616e69656c 18010000 sleeping 1 1 0 0 0 0 0 0 0\n"));
@@ -969,18 +968,18 @@ TEST(BloodbornePartyDeath, AHoldFromBeforeTheDownDoesNotGiveUp) {
 // The port's party panel lists the other members playing party death in the board's order, by
 // their online ids, and points at the downed one an attack would revive now.
 TEST(BloodbornePartyDeath, ListsTheOthersOnThePartyPanel) {
-    MemberVitals lisara = Member(Lisara, CentralYharnam, Vital::Down, 4, {1.0f, 0.0f, 0.0f});
-    lisara.landed = 2;
-    lisara.needed = 3;
+    MemberVitals ada = Member(Ada, CentralYharnam, Vital::Down, 4, {1.0f, 0.0f, 0.0f});
+    ada.landed = 2;
+    ada.needed = 3;
     const std::vector<MemberVitals> board{
-        Member(Kaniel, CentralYharnam, Vital::Up),    lisara,
+        Member(Kaniel, CentralYharnam, Vital::Up),    ada,
         Member(Third, HuntersDream, Vital::Up),       Member("00ff", CentralYharnam, Vital::Dead),
         Member("6f6666", CentralYharnam, Vital::Off),
     };
     const PartyPanel panel = BuildPartyPanel(board, Kaniel, CentralYharnam, LampPosition{});
     ASSERT_EQ(panel.members.size(), 3u);
-    EXPECT_EQ(panel.members[0], (PanelMember{.member = Lisara,
-                                             .name = "Lisara",
+    EXPECT_EQ(panel.members[0], (PanelMember{.member = Ada,
+                                             .name = "Ada",
                                              .vital = Vital::Down,
                                              .here = true,
                                              .hp = 1,
@@ -1018,7 +1017,7 @@ TEST(BloodbornePartyDeath, EnemiesForgetADownedPlayersTargetNode) {
 TEST(BloodbornePartyDeath, FindsTheOthersDownOnThisMap) {
     const std::vector<MemberVitals> board{
         Member(Kaniel, CentralYharnam, Vital::Down, 1, {1.0f, 2.0f, 3.0f}),
-        Member(Lisara, CentralYharnam, Vital::Down, 4, {4.0f, 5.0f, 6.0f}),
+        Member(Ada, CentralYharnam, Vital::Down, 4, {4.0f, 5.0f, 6.0f}),
         Member(Third, HuntersDream, Vital::Down, 2, {7.0f, 8.0f, 9.0f}),
         Member("00ff", CentralYharnam, Vital::Up, 0, {0.0f, 0.0f, 0.0f}),
         Member("6f6666", 0, Vital::Down, 3, {0.0f, 0.0f, 0.0f}), // loading

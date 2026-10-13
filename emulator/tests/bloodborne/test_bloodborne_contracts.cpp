@@ -20,7 +20,7 @@ using namespace Core::Bloodborne;
 namespace {
 
 const std::string Kaniel = "4b616e69656c";
-const std::string Lisara = "4c6973617261";
+const std::string Ada = "416461";
 constexpr u32 CentralYharnam = 0x18010000;
 constexpr u32 HuntersDream = 0x15000000;
 
@@ -74,7 +74,7 @@ TEST_F(BloodborneContracts, MapBoard) {
     ASSERT_EQ(board->size(), 2u);
     EXPECT_EQ((*board)[0].member, Kaniel);
     EXPECT_EQ((*board)[0].map, CentralYharnam);
-    EXPECT_EQ((*board)[1].member, Lisara);
+    EXPECT_EQ((*board)[1].member, Ada);
     EXPECT_EQ((*board)[1].map, HuntersDream);
 }
 
@@ -87,7 +87,7 @@ TEST_F(BloodborneContracts, RestBoard) {
     EXPECT_EQ((*board)[0].member, Kaniel);
     EXPECT_EQ((*board)[0].lamp, 72410100);
     EXPECT_EQ((*board)[0].at, (std::optional<LampPosition>{LampPosition{-12.5f, 3.0f, 40.25f}}));
-    EXPECT_EQ((*board)[1].member, Lisara);
+    EXPECT_EQ((*board)[1].member, Ada);
     EXPECT_EQ((*board)[1].at, std::nullopt);
 }
 
@@ -109,7 +109,7 @@ TEST_F(BloodborneContracts, KillBoard) {
     EXPECT_EQ(EncodeFlagUpdate(Kaniel, 7, kill), Message("kills.update"));
     EXPECT_EQ(ParseKillBoard(Message("kills.answer")),
               (std::optional<KillBoardAnswer>{
-                  KillBoardAnswer{9, {{268517532, true, Kaniel}, {268517532, false, Lisara}}}}));
+                  KillBoardAnswer{9, {{268517532, true, Kaniel}, {268517532, false, Ada}}}}));
 }
 
 TEST_F(BloodborneContracts, WorldSnapshot) {
@@ -150,19 +150,19 @@ TEST_F(BloodborneContracts, VitalsBoard) {
                             .hp = 1200,
                             .max = 1520,
                             .at = {-12.5f, 3.0f, 40.25f}};
-    const std::vector<ReviveHitTotal> hits{{Lisara, 4, 2}};
+    const std::vector<ReviveHitTotal> hits{{Ada, 4, 2}};
     EXPECT_EQ(EncodeVitalsUpdate(self, hits), Message("vitals.update"));
-    const MemberVitals lisara{.member = Lisara,
-                              .map = CentralYharnam,
-                              .vital = Vital::Down,
-                              .hp = 1,
-                              .max = 1380,
-                              .down = 4,
-                              .landed = 2,
-                              .needed = 3,
-                              .at = {-11.0f, 3.0f, 41.0f},
-                              .revive_damage = 2};
+    const MemberVitals ada{.member = Ada,
+                           .map = CentralYharnam,
+                           .vital = Vital::Down,
+                           .hp = 1,
+                           .max = 1380,
+                           .down = 4,
+                           .landed = 2,
+                           .needed = 3,
+                           .at = {-11.0f, 3.0f, 41.0f},
+                           .revive_damage = 2};
     EXPECT_EQ(ParseVitalsBoard(Message("vitals.answer")),
               (std::optional<VitalsBoard>{
-                  VitalsBoard{{self, lisara}, {PartyWipe{1, HuntersDream, {Kaniel, Lisara}}}}}));
+                  VitalsBoard{{self, ada}, {PartyWipe{1, HuntersDream, {Kaniel, Ada}}}}}));
 }

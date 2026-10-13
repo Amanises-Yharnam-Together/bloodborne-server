@@ -36,7 +36,7 @@ from scenarios import (AWAY_FROM_LAMP, BLOODSTAIN_DROPPED, BLOODSTAIN_STOLEN,  #
 DREAM = "0x15000000"  # the Hunter's Dream's map (HUNTERS_DREAM is its lamp)
 # The party list's icons came (Kaniel 2026-10-12: no team icons; the log said "icons none").
 PARTY_LIST_ICONS = r"party list is the HUD's own \(\d+ tags, icons (?!none)"
-# A Dream gift messenger the guest's game switched off as the host has it (Lisara 2026-10-12: no
+# A Dream gift messenger the guest's game switched off as the host has it (Ada 2026-10-12: no
 # gifts after his first death; the host had taken its own, its messengers gone).
 HOSTS_MESSENGERS = (r"characters switched like the host has them on map 0x15000000 \(off, \+on\):"
                     r".* 0x1000000[0-3]\b")
@@ -195,7 +195,7 @@ PARTY2 = ("host", "guest")
 BORDERS: dict[str, dict] = {
     # Kaniel 2026-10-13 00:12 (kaniel-20261013b:9830), after Father Gascoigne died: the map
     # flipped back and forth 3 times on this walk, each flip a "time of day" world reload taken
-    # for a trip; the last trip never ended, and Lisara's game left the session from 0x193c68e.
+    # for a trip; the last trip never ended, and Ada's game left the session from 0x193c68e.
     "tomb": {"from": CENTRAL_YHARNAM, "to": CATHEDRAL_WARD, "lamp": 2412953,
              "trail": "20.2 -17.3 103.1 23.3 -17.4 102.0 26.4 -17.3 102.2 29.6 -17.4 103.4 "
                       "32.7 -17.3 102.9 33.6 -17.4 102.6 35.1 -17.4 102.0 38.0 -16.1 100.4 "
@@ -276,7 +276,7 @@ SUITES = {
                     forbid=holds(PARTY3)),
             chapter("rejoin", "the guest's game dies and comes back: it joins again, the party is "
                               "three again, and its kept pickups survive the restart (Kaniel "
-                              "2026-10-11: krolebord's pickups wiped by a restart)",
+                              "2026-10-11: Brom's pickups wiped by a restart)",
                     {"guest": [RESTART, START, "godmode", "wait-session 3 480", "wait 10",
                                "sync rejoin-back", "expect-session 3"],
                      "host": ["sync rejoin-back", "wait 10", "expect-session 3"],
@@ -835,7 +835,7 @@ SUITES = {
                     allow=CRASH_CLEANUP),
             chapter("restart-keeps", "the guest's game starts again in the session: it is the "
                                      "same character, so its kept pickups stay and nothing is "
-                                     "backed up (Kaniel 2026-10-11: krolebord's pickups wiped by "
+                                     "backed up (Kaniel 2026-10-11: Brom's pickups wiped by "
                                      "a restart; the review: never wipe on a bad read)",
                     {"guest": [RESTART, START, "godmode", "wait-session 2 420", "wait 10",
                                "sync rk-back", "expect-session 2"],
@@ -859,7 +859,7 @@ SUITES = {
             chapter("first-death-dream", "the new character dies for the first time in the "
                                          "session: it wakes in the Hunter's Dream (its own first "
                                          "death, PR #68), then takes the headstone back and the "
-                                         "session holds (Lisara 2026-10-12: the headstone after a "
+                                         "session holds (Ada 2026-10-12: the headstone after a "
                                          "death trip ended it; still open)",
                     {"guest": ["godmode off", *GIVE_UP,
                                f"wait-map {DREAM} 180", "wait 10",

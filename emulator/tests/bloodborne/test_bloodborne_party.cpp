@@ -44,7 +44,7 @@ TEST(BloodborneParty, RejectsOversizedValues) {
     EXPECT_TRUE(ParsePartySetting(std::string(126, 'a') + ":b"));
 }
 
-// Lisara's FPS drop (2026-10-12): the co-op work on the game's threads is measured and logged next
+// Ada's FPS drop (2026-10-12): the co-op work on the game's threads is measured and logged next
 // to the port's Perf lines, once per period, per section: the average and the longest call.
 TEST(BloodborneCoopTime, ReportsEachSectionOncePerPeriod) {
     CoopTimeMeter meter{30'000};

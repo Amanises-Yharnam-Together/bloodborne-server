@@ -204,7 +204,7 @@ TEST(CoopSites, ThePartyHeaderHooksAreRegistered) {
         EXPECT_TRUE(IsRegisteredCoopHook(offset, EffectHpChange));
     }
     EXPECT_TRUE(IsRegisteredCoopHook(IsNoDeadExitOffset, IsNoDeadExit));
-    // The party HUD's and the downed player's hooks (Lisara's log 2026-10-12: three "not in the
+    // The party HUD's and the downed player's hooks (Ada's log 2026-10-12: three "not in the
     // co-op site table" errors, so the launcher could not warn about a game patch over them).
     EXPECT_TRUE(IsRegisteredCoopHook(HudTagUpdateExitOffset, HudTagUpdateExit));
     EXPECT_TRUE(IsRegisteredCoopHook(HudTicksTagsDoneOffset, HudTicksTagsDone));

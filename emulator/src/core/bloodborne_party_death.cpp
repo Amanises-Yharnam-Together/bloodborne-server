@@ -82,7 +82,7 @@ constexpr u64 ChrResetAnimationOffset = 0x013370F0;
 // record, the spawned stain object and the world flags that gate them whenever they change.
 // The local player's own bloodstain: [[SprjEventMan +0x80] +8], the object the game's show/hide
 // (0x01868A50) takes when a load shows it (0x017C23EB-0x017C25DC) and on a join (0x0193A75A).
-// (Not FrpgNetMan +0xC68's: passed that, the show crashed krolebord's game, Kaniel 2026-10-11.)
+// (Not FrpgNetMan +0xC68's: passed that, the show crashed Brom's game, Kaniel 2026-10-11.)
 u64 OwnBloodstain() {
     const u64 events = ReadValue<u64>(image_base + EventManPointerOffset, 0);
     const u64 list = events >= 0x10000 ? ReadValue<u64>(events, 0x80) : 0;
