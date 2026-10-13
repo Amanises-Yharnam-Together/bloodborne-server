@@ -186,4 +186,20 @@ struct PartyListArt {
 };
 PartyListArt PartyListArtFor(const PartyListEntry& entry, bool portrait);
 
+// The off-screen portrait (TickPortraits, the port only): while this character and outfit have no
+// portrait, the status page's body renderer is built off-screen (index 5, RankingBody), read back
+// once it has drawn the character and destroyed once the capture settled.
+enum class OffscreenState : u8 { Idle, Building, Drawn, Closing };
+enum class OffscreenAction : u8 { Wait, Build, ReadBack, Close, Destroy };
+// A build at most this often (its capture settles 1.5 s after the read back ends), the time it may
+// take to draw (a first load of the armour from disk), the read back's length and the close's.
+constexpr s64 OffscreenRetryMs = 15000;
+constexpr s64 OffscreenDrawTimeoutMs = 20000;
+constexpr s64 OffscreenReadBackMs = 2000;
+constexpr s64 OffscreenCloseMs = 250;
+// `in_world`: a local player and no load; `in_state_ms`: since the state began; `since_build_ms`:
+// since the last build.
+OffscreenAction NextOffscreenAction(OffscreenState state, bool wanted, bool in_world, bool drawn,
+                                    bool captured, s64 in_state_ms, s64 since_build_ms);
+
 } // namespace Core::Bloodborne

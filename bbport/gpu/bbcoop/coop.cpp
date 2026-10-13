@@ -197,6 +197,10 @@ extern "C" void bbcoop_portrait_model(const uint8_t* rgba, int width, int height
         std::span<const uint8_t>{rgba, std::size_t(width) * std::size_t(height) * 4}, width, height);
 }
 
+extern "C" int bbcoop_portrait_offscreen_wanted(void) {
+    return Core::Bloodborne::OffscreenPortraitWanted() ? 1 : 0;
+}
+
 extern "C" uint32_t bbcoop_portrait_version(int slot) {
     return Core::Bloodborne::PortraitSlotVersion(slot);
 }
