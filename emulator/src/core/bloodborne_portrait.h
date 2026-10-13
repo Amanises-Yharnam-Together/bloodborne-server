@@ -52,6 +52,10 @@ std::optional<PortraitCrop> HeadAndShoulders(std::span<const u8> rgba, int width
 // The portrait of a model target's pixels (RGBA rows, `width` x `height`); nothing for another
 // target or one with too little of a character on it yet.
 std::optional<PortraitPixels> PortraitFromModel(std::span<const u8> rgba, int width, int height);
+// The portrait as the party list shows it, in the round (Kaniel 2026-10-13: a circle in a
+// Bloodborne frame, hud_patch.py's): clear outside its inscribed circle, its edge smoothed,
+// premultiplied as the HUD's bitmaps are. Nothing for anything but a portrait.
+PortraitPixels CircularPortrait(const PortraitPixels& pixels);
 
 // A portrait on the co-op link: RGB565 in PortraitPartCount parts of PortraitPartBytes, each
 // naming the member (its board name) and the picture (PortraitId). CoopFrameMax is the link's
@@ -67,12 +71,19 @@ struct PortraitPart {
     u8 parts = 0;
     std::vector<u8> bytes;
     bool operator==(const PortraitPart&) const = default;
+    // The member has no picture any more (see EncodePortraitNone).
+    bool None() const {
+        return parts == 0;
+    }
 };
 u32 PortraitId(std::span<const u8> pixels);
 std::vector<PortraitPart> SplitPortrait(std::string_view member, const PortraitPixels& pixels);
 // The payload: member (u8 length first), id (u32), part, parts, then PortraitPartBytes.
 std::vector<u8> EncodePortraitPart(const PortraitPart& part);
 std::optional<PortraitPart> DecodePortraitPart(std::span<const u8> payload);
+// The member has no picture any more (its outfit changed and the status page has not shown it
+// yet): the member, id 0, part 0 of 0 and no bytes.
+std::vector<u8> EncodePortraitNone(std::string_view member);
 // A member's parts until its picture is whole. The parts of a member's PicturesKept latest
 // pictures are kept apart (a late part of the one before is no loss); an older one's go.
 class PortraitAssembler {
@@ -100,6 +111,8 @@ class PartyPortraits {
 public:
     void Take(std::string member, PortraitPixels pixels);
     bool Has(std::string_view member) const;
+    // The member has no picture any more.
+    void Forget(std::string_view member);
     // The slot shows `member` ("" for nobody): whether it shows a portrait.
     bool Show(int slot, std::string_view member);
     u32 Version(int slot) const;
@@ -132,7 +145,8 @@ private:
 };
 
 // When this game sends its portrait (`id`, 0 for none) to its room peers (sorted): at once when it
-// changed or a peer came, and again every ResendMs (a lost part).
+// changed or a peer came, and again every ResendMs (a lost part). None is sent as a picture is
+// once a picture was (the peers forget it), never before.
 class PortraitSender {
 public:
     static constexpr s64 ResendMs = 15'000;
@@ -140,12 +154,22 @@ public:
 
 private:
     u32 sent_id = 0;
+    bool sent_any = false;
     std::vector<u64> sent_peers;
     s64 sent_at = 0;
 };
 
-// The character's portrait on disk (user/portraits/<face fingerprint>.rgba, PortraitBytes).
-std::filesystem::path PortraitCachePath(const std::filesystem::path& dir, u64 fingerprint);
+// The character's portrait on disk (user/portraits/<face>-<outfit>.<format>.rgba, PortraitBytes):
+// by its face data and the armour it wears (head, body, arms, legs ids), and the capture's format
+// (PortraitCaptureFormat; bump it when captures change): a picture of another outfit, or one an
+// older build took, is never loaded (Kaniel 2026-10-13: #77's first build's bald heads were).
+constexpr std::string_view PortraitCaptureFormat = "m2";
+struct PortraitKey {
+    u64 face = 0;
+    std::array<s32, 4> outfit{};
+    bool operator==(const PortraitKey&) const = default;
+};
+std::filesystem::path PortraitCachePath(const std::filesystem::path& dir, const PortraitKey& key);
 bool SavePortrait(const std::filesystem::path& path, const PortraitPixels& pixels);
 std::optional<PortraitPixels> LoadPortrait(const std::filesystem::path& path);
 

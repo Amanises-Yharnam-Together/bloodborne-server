@@ -484,6 +484,15 @@ void TakePortraitPart(std::span<const u8> payload) {
     if (!part) {
         return;
     }
+    if (part->None()) {
+        std::scoped_lock lock{portraits_mutex};
+        if (party_portraits.Has(part->member)) {
+            LOG_INFO(Debug, "Bloodborne party portraits: {} has no portrait any more",
+                     part->member);
+            party_portraits.Forget(part->member);
+        }
+        return;
+    }
     auto pixels = portrait_assembler.Take(*part);
     if (!pixels) {
         return;
@@ -703,6 +712,22 @@ std::optional<u64> OwnFaceFingerprint() {
     return any ? std::optional<u64>{hash} : std::nullopt;
 }
 
+// The armour the character wears (the status page's model shows it): PlayerGameData's ChrAsm
+// (+0x240) +0x84, +0x88, +0x8C and +0x90, the head, body, arms and legs ids (the rig's 2026-10-13
+// dump of Kaniel's guest in the Foreign set: 230000, 231000, 232000, 233000; the weapons at
+// +0x64..+0x70 before them). Nothing before the character is loaded.
+std::optional<std::array<s32, 4>> OwnOutfit() {
+    const u64 data = Coop::OwnGameData();
+    if (data < 0x10000 || !HasMemoryAccess(data + 0x240 + 0x84, 0x10, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    std::array<s32, 4> outfit{};
+    for (u64 piece = 0; piece < outfit.size(); ++piece) {
+        outfit[piece] = ReadValue<s32>(data, 0x240 + 0x84 + piece * 4);
+    }
+    return outfit;
+}
+
 } // namespace
 
 namespace Coop {
@@ -712,7 +737,7 @@ namespace Coop {
 // and then (PortraitSender).
 void TickPortraits() {
     static s64 ticked_at = 0;
-    static std::optional<u64> own_face;
+    static std::optional<PortraitKey> own_key;
     static std::optional<PortraitPixels> own;
     static PortraitSender sender;
     static std::pair<u32, size_t> logged{};
@@ -722,31 +747,36 @@ void TickPortraits() {
     }
     ticked_at = now;
     const auto face = OwnFaceFingerprint();
+    const auto outfit = face ? OwnOutfit() : std::nullopt;
+    const auto key = outfit
+                         ? std::optional<PortraitKey>{PortraitKey{.face = *face, .outfit = *outfit}}
+                         : std::nullopt;
     std::optional<PortraitPixels> settled;
     {
         std::scoped_lock lock{portraits_mutex};
         settled = face_capture.Settled(now);
     }
     const auto dir = Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "portraits";
-    if (face && face != own_face) {
-        own_face = face;
-        own = LoadPortrait(PortraitCachePath(dir, *face));
-        if (own) {
-            LOG_INFO(Debug, "Bloodborne party portraits: the character's portrait from {}",
-                     PortraitCachePath(dir, *face).string());
-        }
+    if (key && key != own_key) {
+        // Another character or outfit: its own picture, else none until the status page shows it.
+        own_key = key;
+        own = LoadPortrait(PortraitCachePath(dir, *key));
+        LOG_INFO(Debug, "Bloodborne party portraits: outfit {}/{}/{}/{}: {}", key->outfit[0],
+                 key->outfit[1], key->outfit[2], key->outfit[3],
+                 own ? "the character's portrait from " + PortraitCachePath(dir, *key).string()
+                     : std::string{"no portrait yet (the status page takes it)"});
     }
     if (settled) {
         own = std::move(settled);
-        const bool kept = face && SavePortrait(PortraitCachePath(dir, *face), *own);
+        const bool kept = key && SavePortrait(PortraitCachePath(dir, *key), *own);
         LOG_INFO(Debug,
                  "Bloodborne party portraits: took the character's portrait from the status page "
                  "({:08x}; {})",
                  PortraitId(*own),
-                 kept ? PortraitCachePath(dir, *face).string() : std::string{"not kept: no face"});
+                 kept ? PortraitCachePath(dir, *key).string() : std::string{"not kept: no face"});
     }
     const std::string member = BoardMemberName();
-    if (!own || member.empty()) {
+    if (member.empty()) {
         return;
     }
     std::vector<u64> peers;
@@ -754,19 +784,21 @@ void TickPortraits() {
         peers.push_back((u64{peer.addr} << 16) | peer.port);
     }
     std::ranges::sort(peers);
-    const u32 id = PortraitId(*own);
+    const u32 id = own ? PortraitId(*own) : 0;
     if (!sender.Due(id, peers, now)) {
         return;
     }
-    for (const auto& part : SplitPortrait(member, *own)) {
-        SendToRoomPeers(EncodeCoopFrame(PortraitPartType, EncodePortraitPart(part)));
+    if (own) {
+        for (const auto& part : SplitPortrait(member, *own)) {
+            SendToRoomPeers(EncodeCoopFrame(PortraitPartType, EncodePortraitPart(part)));
+        }
+    } else {
+        SendToRoomPeers(EncodeCoopFrame(PortraitPartType, EncodePortraitNone(member)));
     }
     if (logged != std::pair{id, peers.size()}) {
         logged = {id, peers.size()};
-        LOG_INFO(Debug,
-                 "Bloodborne party portraits: sent the character's portrait ({:08x}) to {} "
-                 "peer(s) as {}",
-                 id, peers.size(), member);
+        LOG_INFO(Debug, "Bloodborne party portraits: sent {} ({:08x}) to {} peer(s) as {}",
+                 own ? "the character's portrait" : "no portrait", id, peers.size(), member);
     }
 }
 
@@ -1161,7 +1193,7 @@ bool ReadPortraitSlot(int slot, std::span<u8> rgba, u32& version) {
     if (!pixels || rgba.size() < pixels->size()) {
         return false;
     }
-    std::ranges::copy(*pixels, rgba.begin());
+    std::ranges::copy(CircularPortrait(*pixels), rgba.begin());
     return true;
 }
 

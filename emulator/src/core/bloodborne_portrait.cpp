@@ -125,6 +125,35 @@ std::optional<PortraitPixels> PortraitFromModel(std::span<const u8> rgba, int wi
     return out;
 }
 
+PortraitPixels CircularPortrait(const PortraitPixels& pixels) {
+    if (pixels.size() != PortraitBytes) {
+        return {};
+    }
+    // Each pixel's share of the circle, from Samples x Samples points in it.
+    constexpr float Radius = PortraitSide / 2.0f;
+    PortraitPixels out(PortraitBytes);
+    for (int y = 0; y < PortraitSide; ++y) {
+        for (int x = 0; x < PortraitSide; ++x) {
+            int inside = 0;
+            for (int sy = 0; sy < Samples; ++sy) {
+                for (int sx = 0; sx < Samples; ++sx) {
+                    const float dx = float(x) + (float(sx) + 0.5f) / Samples - Radius;
+                    const float dy = float(y) + (float(sy) + 0.5f) / Samples - Radius;
+                    inside += dx * dx + dy * dy <= Radius * Radius ? 1 : 0;
+                }
+            }
+            const size_t at = (size_t(y) * PortraitSide + size_t(x)) * 4;
+            const u32 alpha =
+                (u32{pixels[at + 3]} * u32(inside) + Samples * Samples / 2) / (Samples * Samples);
+            for (int c = 0; c < 3; ++c) {
+                out[at + c] = static_cast<u8>((pixels[at + c] * alpha + 127) / 255);
+            }
+            out[at + 3] = static_cast<u8>(alpha);
+        }
+    }
+    return out;
+}
+
 u32 PortraitId(std::span<const u8> pixels) {
     u32 hash = 0x811C9DC5u;
     for (const u8 byte : pixels) {
@@ -169,12 +198,26 @@ std::vector<u8> EncodePortraitPart(const PortraitPart& part) {
     return payload;
 }
 
+std::vector<u8> EncodePortraitNone(std::string_view member) {
+    return EncodePortraitPart(PortraitPart{.member = std::string{member.substr(0, 0xFF)}});
+}
+
 std::optional<PortraitPart> DecodePortraitPart(std::span<const u8> payload) {
     if (payload.empty()) {
         return std::nullopt;
     }
     const size_t name = payload[0];
-    if (payload.size() != 1 + name + 4 + 2 + PortraitPartBytes) {
+    const size_t head = 1 + name + 4 + 2;
+    if (payload.size() == head) {
+        // None: id 0, part 0 of 0.
+        PortraitPart none;
+        none.member.assign(payload.begin() + 1,
+                           payload.begin() + 1 + static_cast<std::ptrdiff_t>(name));
+        const bool zero = std::all_of(payload.begin() + static_cast<std::ptrdiff_t>(1 + name),
+                                      payload.end(), [](u8 byte) { return byte == 0; });
+        return zero ? std::optional<PortraitPart>{std::move(none)} : std::nullopt;
+    }
+    if (payload.size() != head + PortraitPartBytes) {
         return std::nullopt;
     }
     PortraitPart part;
@@ -236,6 +279,12 @@ bool PartyPortraits::Has(std::string_view member) const {
     return by_member.contains(member);
 }
 
+void PartyPortraits::Forget(std::string_view member) {
+    if (const auto found = by_member.find(member); found != by_member.end()) {
+        by_member.erase(found);
+    }
+}
+
 bool PartyPortraits::Show(int slot, std::string_view member) {
     if (slot < 0 || slot >= PortraitSlotCount) {
         return false;
@@ -286,7 +335,7 @@ std::optional<PortraitPixels> FaceCapture::Settled(s64 now_ms) {
 }
 
 bool PortraitSender::Due(u32 id, std::span<const u64> peers, s64 now_ms) {
-    if (id == 0 || peers.empty()) {
+    if ((id == 0 && !sent_any) || peers.empty()) {
         sent_peers.assign(peers.begin(), peers.end());
         return false;
     }
@@ -298,11 +347,18 @@ bool PortraitSender::Due(u32 id, std::span<const u64> peers, s64 now_ms) {
     }
     sent_id = id;
     sent_at = now_ms;
+    sent_any = true;
     return true;
 }
 
-std::filesystem::path PortraitCachePath(const std::filesystem::path& dir, u64 fingerprint) {
-    return dir / fmt::format("{:016x}.rgba", fingerprint);
+std::filesystem::path PortraitCachePath(const std::filesystem::path& dir, const PortraitKey& key) {
+    u64 outfit = 0xCBF29CE484222325ull;
+    for (const s32 piece : key.outfit) {
+        for (int shift = 0; shift < 32; shift += 8) {
+            outfit = (outfit ^ ((u32(piece) >> shift) & 0xFF)) * 0x100000001B3ull;
+        }
+    }
+    return dir / fmt::format("{:016x}-{:016x}.{}.rgba", key.face, outfit, PortraitCaptureFormat);
 }
 
 bool SavePortrait(const std::filesystem::path& path, const PortraitPixels& pixels) {

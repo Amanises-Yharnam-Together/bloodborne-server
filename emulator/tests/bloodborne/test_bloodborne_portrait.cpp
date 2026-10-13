@@ -270,9 +270,11 @@ TEST(BloodbornePortrait, ThePortraitIsSentOnChangeToNewPeersAndNowAndThen) {
 TEST(BloodbornePortrait, ThePortraitIsKeptOnDiskByTheFace) {
     const auto dir = std::filesystem::temp_directory_path() / "bb-portrait-test";
     std::filesystem::remove_all(dir);
-    const auto path = PortraitCachePath(dir, 0x0123456789ABCDEFull);
-    EXPECT_EQ(path.filename().string(), "0123456789abcdef.rgba");
-    EXPECT_NE(path, PortraitCachePath(dir, 1));
+    const PortraitKey key{.face = 0x0123456789ABCDEFull,
+                          .outfit = {210000, 210100, 210200, 210300}};
+    const auto path = PortraitCachePath(dir, key);
+    EXPECT_EQ(path.filename().string().rfind("0123456789abcdef-", 0), 0u);
+    EXPECT_NE(path, PortraitCachePath(dir, PortraitKey{.face = 1, .outfit = key.outfit}));
     EXPECT_FALSE(LoadPortrait(path).has_value());
     EXPECT_TRUE(SavePortrait(path, Gradient(4)));
     EXPECT_EQ(LoadPortrait(path), Gradient(4));
@@ -281,6 +283,89 @@ TEST(BloodbornePortrait, ThePortraitIsKeptOnDiskByTheFace) {
     std::filesystem::resize_file(path, 100);
     EXPECT_FALSE(LoadPortrait(path).has_value());
     std::filesystem::remove_all(dir);
+}
+
+TEST(BloodbornePortrait, AnOldOrOutdatedPictureIsNeverLoaded) {
+    // Kaniel 2026-10-13: his party list showed a bald head. The cache held the first build's
+    // picture (the status page's face target: no hood, no collar) under the face alone, and the
+    // new build loaded it. The name holds the capture's format and the outfit worn: an older
+    // capture, or one of another outfit, is never the portrait.
+    const auto dir = std::filesystem::temp_directory_path() / "bb-portrait-test";
+    const PortraitKey key{.face = 0x0123456789ABCDEFull,
+                          .outfit = {210000, 210100, 210200, 210300}};
+    const auto name = PortraitCachePath(dir, key).filename().string();
+    EXPECT_NE(name, "0123456789abcdef.rgba") << "#77's first build's name";
+    EXPECT_NE(name.find(std::string{PortraitCaptureFormat}), std::string::npos);
+    EXPECT_EQ(PortraitCaptureFormat, "m2") << "the model capture (head, hood and collar)";
+    for (size_t piece = 0; piece < key.outfit.size(); ++piece) {
+        PortraitKey other = key;
+        other.outfit[piece] += 100;
+        EXPECT_NE(PortraitCachePath(dir, other), PortraitCachePath(dir, key)) << piece;
+    }
+    EXPECT_EQ(PortraitCachePath(dir, key), PortraitCachePath(dir, PortraitKey{key}));
+}
+
+TEST(BloodbornePortrait, AMemberWithoutAPictureAnyMoreSaysSoAndTheListForgetsIt) {
+    // A changed outfit has no picture until the status page shows it: the others stop showing the
+    // old one (the member's icon shows again).
+    const auto none = DecodePortraitPart(EncodePortraitNone("rig_guest"));
+    ASSERT_TRUE(none.has_value());
+    EXPECT_TRUE(none->None());
+    EXPECT_EQ(none->member, "rig_guest");
+    EXPECT_LE(EncodeCoopFrame(PortraitPartType, EncodePortraitNone(std::string(300, 'x'))).size(),
+              CoopFrameMax);
+    EXPECT_FALSE(SplitPortrait("rig_guest", Gradient(1))[0].None());
+    PortraitAssembler assembler;
+    EXPECT_FALSE(assembler.Take(*none).has_value());
+    PartyPortraits portraits;
+    portraits.Take("rig_guest", Gradient(1));
+    EXPECT_TRUE(portraits.Show(0, "rig_guest"));
+    const u32 shown = portraits.Version(0);
+    portraits.Forget("rig_guest");
+    EXPECT_FALSE(portraits.Has("rig_guest"));
+    EXPECT_FALSE(portraits.Show(0, "rig_guest"));
+    EXPECT_NE(portraits.Version(0), shown);
+    EXPECT_FALSE(portraits.Pixels(0).has_value());
+}
+
+TEST(BloodbornePortrait, NoPictureAnyMoreIsSentAsAPictureIs) {
+    PortraitSender sender;
+    const std::vector<u64> one{1}, two{1, 2};
+    EXPECT_FALSE(sender.Due(0, one, 0)) << "nothing sent before: nothing to take back";
+    EXPECT_TRUE(sender.Due(5, one, 10));
+    EXPECT_TRUE(sender.Due(0, one, 20)) << "the picture gone";
+    EXPECT_FALSE(sender.Due(0, one, 30));
+    EXPECT_TRUE(sender.Due(0, two, 40)) << "a new peer";
+    EXPECT_TRUE(sender.Due(0, two, 40 + PortraitSender::ResendMs)) << "now and then (lost)";
+    EXPECT_TRUE(sender.Due(5, two, 50 + PortraitSender::ResendMs)) << "a picture again";
+}
+
+TEST(BloodbornePortrait, TheListShowsThePortraitInACircle) {
+    // Kaniel 2026-10-13: a round portrait in a Bloodborne frame. Outside the circle the picture is
+    // clear (premultiplied: no colour either), inside it is as it was, its edge smoothed.
+    const auto pixels = Gradient(9);
+    const auto round = CircularPortrait(pixels);
+    ASSERT_EQ(round.size(), PortraitBytes);
+    for (const auto& [x, y] : {std::pair{0, 0}, {63, 0}, {0, 63}, {63, 63}, {5, 5}, {58, 6}}) {
+        EXPECT_EQ(At(round, x, y), (std::array<u8, 4>{0, 0, 0, 0})) << x << "," << y;
+    }
+    for (const auto& [x, y] : {std::pair{32, 32}, {31, 3}, {3, 31}, {50, 50}, {20, 55}}) {
+        EXPECT_EQ(At(round, x, y), At(pixels, x, y)) << x << "," << y;
+    }
+    int edge = 0;
+    for (int y = 0; y < PortraitSide; ++y) {
+        for (int x = 0; x < PortraitSide; ++x) {
+            const auto pixel = At(round, x, y);
+            EXPECT_EQ(pixel[3], At(round, PortraitSide - 1 - x, y)[3]);
+            EXPECT_EQ(pixel[3], At(round, x, PortraitSide - 1 - y)[3]);
+            for (int c = 0; c < 3; ++c) {
+                EXPECT_LE(pixel[c], pixel[3]) << "premultiplied";
+            }
+            edge += pixel[3] > 0 && pixel[3] < 0xFF ? 1 : 0;
+        }
+    }
+    EXPECT_GT(edge, 100) << "a smooth edge";
+    EXPECT_TRUE(CircularPortrait(PortraitPixels(10)).empty()) << "not a portrait";
 }
 
 TEST(BloodbornePortrait, AMemberWithAPortraitShowsItWithTheIconAsItsBadge) {

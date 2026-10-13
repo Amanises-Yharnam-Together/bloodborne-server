@@ -19,9 +19,9 @@ ATLAS = PORT / 'gpu/art/party_icons.bin'
 HUD_STRIP = PORT / 'scripts/party_hud_icons.bin'
 ICON, COUNT = 128, 7
 # The HUD strip's frames (hud_patch.HUD_ICON_FRAMES): none, hunter, elsewhere, fallen, then the downed drop with its
-# ring filled red to 0%, 10%, ... 100%.
+# ring filled red to 0%, 10%, ... 100%; last the portraits' frame (h-frame, hud_patch.FRAME_PIXELS).
 DOWNED_STEPS = 11
-HUD_COUNT = 4 + DOWNED_STEPS
+HUD_COUNT = 4 + DOWNED_STEPS + 1
 BROWSERS = (r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
             r'C:\Program Files\Google\Chrome\Application\chrome.exe', 'chromium', 'google-chrome')
 
@@ -33,7 +33,8 @@ def encode(width, height, rgba, count=COUNT):
 
 
 def hud_strip_svg(svg_text):
-    """The HUD strip as an SVG: the atlas drawing's symbols, placed as hud_patch.HUD_ICON_FRAMES lists them."""
+    """The HUD strip as an SVG: the atlas drawing's symbols, placed as hud_patch.HUD_ICON_FRAMES lists them, then
+    the portrait frame."""
     defs = svg_text[svg_text.index('<defs>'):svg_text.index('</defs>') + len('</defs>')]
     uses = ['<use href="#h-hunter" x="128" width="128" height="128"/>',
             '<use href="#h-lantern" x="256" width="128" height="128"/>',
@@ -46,6 +47,7 @@ def hud_strip_svg(svg_text):
         if share:
             uses.append(f'<circle cx="{x + 64}" cy="64" r="52" fill="none" stroke="#d0281e" stroke-width="7" '
                         f'stroke-dasharray="{share:.1f} 400" transform="rotate(-90 {x + 64} 64)"/>')
+    uses.append(f'<use href="#h-frame" x="{128 * (4 + DOWNED_STEPS)}" width="128" height="128"/>')
     width = ICON * HUD_COUNT
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} 128" width="{width}" height="128">'
             + defs + ''.join(uses) + '</svg>')
