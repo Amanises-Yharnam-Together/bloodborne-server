@@ -1,7 +1,7 @@
 """The backend built into shadnet against bb_dummy_server.py: the same requests, the same bytes back.
 
-shadnet answers the game's online services itself when BloodborneBackend=true. Nothing may change
-for the game, so every service, with and without a content store, is sent to both servers and the
+shadnet answers the game's online services itself (BloodborneBackend, on by default). Nothing
+may change for the game, so every service, with and without a content store, is sent to both servers and the
 answers are compared byte for byte (status, Content-Type, sp-res-kind and body). Only what is
 random or the clock's is masked: the login SessionId, chalice glyphs and their dates, and a
 CheckTime the server stamps itself. A content store written by either server is then read by the
@@ -57,7 +57,7 @@ class Server:
     """One backend: the Python script or shadnet, with the same options."""
 
     def __init__(self, kind, workdir, store=None, show_own="", tomb_cap=100, summon_poll=5,
-                 address=None):
+                 address=None, flag="true"):
         self.kind = kind
         self.port = free_port()
         self.workdir = workdir
@@ -91,7 +91,7 @@ class Server:
                 "WebApiPort": self.webapi_port,
                 "StatsEnabled": "false",
                 "BloodborneSeamlessCoop": "true",
-                "BloodborneBackend": "true",
+                "BloodborneBackend": flag,
                 "BackendPort": self.port,
                 "BackendFolder": files,
                 "BackendStore": store or "",
@@ -102,6 +102,8 @@ class Server:
             with open(os.path.join(workdir, "shadnet.cfg"), "w", encoding="utf-8") as f:
                 f.write("[General]\n")
                 for key, value in config.items():
+                    if value is None:
+                        continue
                     f.write("{}={}\n".format(key, str(value).replace("\\", "/")))
             for name in ("worlds.cfg", "scoreboards.cfg"):
                 source = os.path.join(os.path.dirname(SHADNET), name)
@@ -346,6 +348,13 @@ class ParityTest(unittest.TestCase):
         shadnet = self.start("shadnet", "sn", store=os.path.join(self.tmp, "sn.db"), show_own="all",
                              summon_poll=12)
         self.compare(python, shadnet)
+
+    def test_on_without_the_setting(self):
+        # An install's shadnet.cfg from before the setting: shadnet answers the services too.
+        shadnet = self.start("shadnet", "sn", flag=None)
+        self.assertEqual(shadnet.send("GET", "/status")[0], 200)
+        with open(os.path.join(shadnet.workdir, "shadnet.cfg"), encoding="utf-8") as f:
+            self.assertIn("BloodborneBackend=true", f.read())
 
     def test_the_hosts_address_is_the_one_given(self):
         # Port forwarding: the host's LAN address is not the one the guests reach, so the kit

@@ -11,7 +11,7 @@
 
 // The game's own online services inside shadNet (bloodborne_backend_server.h).
 struct BackendConfig {
-    bool enabled = false;
+    bool enabled = true;
     quint16 port = 20443;
     QString address;                               // empty: the address each game connects to
     QString folder = QStringLiteral("../backend"); // notice.txt, broadcast.txt, login_message.txt

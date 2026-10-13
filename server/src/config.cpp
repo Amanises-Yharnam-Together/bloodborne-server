@@ -52,7 +52,7 @@ void ConfigManager::Parse(const QString& path) {
     m_statsEnabled = boolean("StatsEnabled", true);
     m_matching2Enabled = boolean("Matching2Enabled", true);
     m_bloodborneSeamlessCoop = boolean("BloodborneSeamlessCoop", false);
-    m_backend.enabled = boolean("BloodborneBackend", false);
+    m_backend.enabled = boolean("BloodborneBackend", true);
     m_backend.port = str("BackendPort", "20443").toUShort();
     m_backend.address = str("BackendAddress", "").trimmed();
     m_backend.folder = str("BackendFolder", "../backend");

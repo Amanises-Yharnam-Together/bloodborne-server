@@ -47,8 +47,8 @@ int main(int argc, char* argv[]) {
         qWarning() << "WebApiServer failed to start; continuing without WebAPI";
     }
 
-    // The game's own online services (BloodborneBackend=true). When it cannot start, the kits'
-    // Python backend can take its port instead.
+    // The game's own online services (on unless BloodborneBackend=false). When it cannot start, the
+    // kits' Python backend can take its port instead.
     BloodborneBackendServer backend;
     if (config.GetBackend().enabled && !backend.Start(&config)) {
         qWarning() << "Backend failed to start; continuing without it";

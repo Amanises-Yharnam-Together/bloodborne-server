@@ -226,7 +226,7 @@ BackendTombCap=100
 BackendSummonPoll=5
 ```
 
-It is off by default. The ss.info template is built in from `backend/ss_info_template.xml`.
+It is on by default; `BloodborneBackend=false` leaves port 20443 to the Python server. The ss.info template is built in from `backend/ss_info_template.xml`.
 
 
 Seamless mode lets the broker match bells from different maps and carries the

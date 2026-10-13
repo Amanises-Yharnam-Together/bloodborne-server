@@ -1,8 +1,8 @@
 @echo off
 title Start co-op servers
 rem HOST ONLY. Starts shadnet (accounts, matchmaking, summons; ports 31313-31315)
-rem and the local backend (game login and online check; port 20443). A shadnet with
-rem BloodborneBackend=true in server\shadnet.cfg answers the backend's port itself; the
+rem and the local backend (game login and online check; port 20443). shadnet answers the
+rem backend's port itself unless server\shadnet.cfg says BloodborneBackend=false; the
 rem Python backend starts only when nothing does.
 rem Leave the shadnet window open while you play. Running it again starts only what is
 rem missing; "HOST - Stop Servers" stops both.
@@ -42,8 +42,8 @@ if errorlevel 1 (
     start "co-op shadnet" "%SERVERKIT%server\shadnet.exe"
     echo Started shadnet.
     rem Give its own backend a moment to take port 20443 before the Python one is tried.
-    findstr /i /x /c:"BloodborneBackend=true" "%SERVERKIT%server\shadnet.cfg" >nul 2>nul
-    if not errorlevel 1 call :wait_backend
+    findstr /i /x /c:"BloodborneBackend=false" "%SERVERKIT%server\shadnet.cfg" >nul 2>nul
+    if errorlevel 1 call :wait_backend
 ) else (
     echo shadnet is already running. If it is the test rig or the old
     echo "SERVER - Host P2P" rather than this one, close it and run this again.
@@ -58,7 +58,7 @@ if errorlevel 1 (
     start "co-op backend" /min cmd /c ""%KIT%BLauncher.exe" --script "%SERVERKIT%backend\bb_dummy_server.py" --address %HOSTIP% --port 20443 --shadnet-webapi http://%HOSTIP%:31315 >"%KIT%user\log\backend.txt" 2>&1"
     echo Started the backend for %HOSTIP%, log in user\log\backend.txt.
 ) else (
-    echo The backend is running ^(in shadnet when BloodborneBackend=true^).
+    echo The backend is running ^(in shadnet unless BloodborneBackend=false^).
 )
 
 echo.

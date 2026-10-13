@@ -12,8 +12,8 @@
 #include "config.h"
 
 // The game's own online services on their own port (BackendPort, 20443), where the game reaches
-// them through host_overrides.json. Started when BloodborneBackend=true in shadnet.cfg; until
-// then the kits run backend/bb_dummy_server.py on that port as before.
+// them through host_overrides.json. On unless BloodborneBackend=false in shadnet.cfg; then (or
+// when it cannot start) the kits run backend/bb_dummy_server.py on that port instead.
 class BloodborneBackendServer : public QObject {
     Q_OBJECT
 public:
