@@ -9,6 +9,9 @@
 #include <cstring>
 #include <deque>
 #include <limits>
+#include <span>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -25,8 +28,10 @@
 #include "common/singleton.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/network/net_delay.h"
+#include "core/libraries/network/net_link.h"
 #include "core/libraries/network/net_silence.h"
 #include "core/libraries/network/net_util.h"
+#include "core/libraries/network/server_link.h"
 #include "net.h"
 #include "net_error.h"
 
@@ -67,6 +72,11 @@ s64 P2PNowMs() {
 }
 
 constexpr u16 kSignalingVPortNbo = 0xffff;
+// The server link's housekeeping (hello, ping, outage checks) runs this often on the receive
+// thread; a refused hello is said again this often (a hello lost on the way is said every second).
+constexpr s64 LinkTickMs = 100;
+constexpr s64 HelloRetryMs = 1000;
+constexpr s64 RefusedHelloRetryMs = 10'000;
 constexpr size_t kVPortHeaderSize = 4;
 constexpr size_t kMaxUdpPayload = 65507;
 constexpr size_t kMaxP2PPayload = kMaxUdpPayload - kVPortHeaderSize;
@@ -386,30 +396,69 @@ public:
         dest.sin_addr.s_addr = dest_addr_nbo;
         dest.sin_port = dest_port_nbo;
 
+        // The server link: the frame goes to shadNet, which hands it to the peer.
+        if (const auto server = LinkServer();
+            Link::RoutesThroughServer(server, dest_addr_nbo, dest_port_nbo)) {
+            framed = Link::EncodeData(dest_addr_nbo, dest_port_nbo, framed);
+            dest.sin_addr.s_addr = server.addr_nbo;
+            dest.sin_port = server.port_nbo;
+        }
+        return Transmit(dest, std::move(framed)) ? static_cast<int>(len) : -1;
+#endif
+    }
+
+    // Sends a datagram as it is, after the test ping's delay when there is one.
+    bool Transmit(const sockaddr_in& dest, std::vector<u8> datagram) {
+#if !defined(__linux__) && !defined(_WIN32)
+        return false;
+#else
         if (delay_line) {
             {
                 std::lock_guard lock(delay_mutex);
                 delayed.push_back(
-                    {delay_line->DueAt(DelayLine::Clock::now()), dest, std::move(framed)});
+                    {delay_line->DueAt(DelayLine::Clock::now()), dest, std::move(datagram)});
             }
             delay_ready.notify_one();
-            return static_cast<int>(len);
+            return true;
         }
 
-        const auto rc = ::sendto(host_socket, reinterpret_cast<const char*>(framed.data()),
-                                 static_cast<int>(framed.size()), 0,
+        const auto rc = ::sendto(host_socket, reinterpret_cast<const char*>(datagram.data()),
+                                 static_cast<int>(datagram.size()), 0,
                                  reinterpret_cast<const sockaddr*>(&dest), sizeof(dest));
         if (rc < 0) {
             LOG_DEBUG(Lib_Net, "P2P sendto failed error={} dst={:#x}:{}", LastSocketError(),
-                      dest_addr_nbo, ntohs(dest_port_nbo));
-            return -1;
+                      dest.sin_addr.s_addr, ntohs(dest.sin_port));
+            return false;
         }
-        if (static_cast<size_t>(rc) != framed.size()) {
-            LOG_WARNING(Lib_Net, "P2P short UDP send: {} of {} bytes", rc, framed.size());
-            return -1;
+        if (static_cast<size_t>(rc) != datagram.size()) {
+            LOG_WARNING(Lib_Net, "P2P short UDP send: {} of {} bytes", rc, datagram.size());
+            return false;
         }
-        return static_cast<int>(len);
+        return true;
 #endif
+    }
+
+    void ConfigureLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id) {
+        {
+            std::lock_guard lock(link_mutex);
+            link_server = {server_addr_nbo, server_port_nbo};
+            link_online_id = std::move(online_id);
+            link_welcomed = false;
+            link_hello_ms.reset();
+        }
+        LOG_INFO(Lib_Net,
+                 "Server link: every frame for a peer goes through the server at {:#x}:{} "
+                 "(SHADPS4_BLOODBORNE_SERVER_LINK)",
+                 ntohl(server_addr_nbo), ntohs(server_port_nbo));
+    }
+
+    void SetLinkBuild(std::string build) {
+        std::lock_guard lock(link_mutex);
+        link_build = std::move(build);
+    }
+
+    void SetLinkObserver(ServerLinkObserver observer) {
+        link_observer.store(observer);
     }
 
     int SendInternal(const void* data, u32 len, u32 dest_addr_nbo, u16 dest_port_nbo) {
@@ -527,6 +576,7 @@ private:
 #if defined(__linux__) || defined(_WIN32)
         std::vector<u8> buffer(65536);
         while (running.load(std::memory_order_acquire)) {
+            LinkHousekeeping();
             sockaddr_in from{};
             socklen_t from_len = sizeof(from);
 #ifdef _WIN32
@@ -559,52 +609,230 @@ private:
                 LOG_DEBUG(Lib_Net, "P2P dropping too-short UDP frame size={}", rc);
                 continue;
             }
-            NoteSilence((u64{from.sin_addr.s_addr} << 16) | from.sin_port);
-
-            u16 source_vport_nbo = 0;
-            u16 dest_vport_nbo = 0;
-            std::memcpy(&source_vport_nbo, buffer.data(), sizeof(source_vport_nbo));
-            std::memcpy(&dest_vport_nbo, buffer.data() + sizeof(source_vport_nbo),
-                        sizeof(dest_vport_nbo));
-
-            const u8* payload = buffer.data() + kVPortHeaderSize;
-            const size_t payload_size = static_cast<size_t>(rc) - kVPortHeaderSize;
-
-            if (dest_vport_nbo == kSignalingVPortNbo) {
-                PushInternal(ClassifyInternal(payload, payload_size), from.sin_addr.s_addr,
-                             from.sin_port, payload, payload_size);
-                continue;
-            }
-
-            std::lock_guard lock(registry_mutex);
-            const auto it = game_sockets.find(dest_vport_nbo);
-            if (it == game_sockets.end() || it->second == nullptr) {
-                // Rig 2026-10-13: about 1 join in 4 stalls, the guest's game giving up its
-                // connection 5.4 s after signaling came up with no game traffic in between; a
-                // one-shot hello dropped here, before the game bound its port, would do that. The
-                // first drops are logged to tell.
-                static std::atomic<u32> dropped{0};
-                if (dropped.fetch_add(1) < 200) {
-                    LOG_INFO(Lib_Net,
-                             "P2P RX dropped, no socket for dst_vport={} (src_vport={}, {} bytes, "
-                             "first byte {:#x}) t={}",
-                             ntohs(dest_vport_nbo), ntohs(source_vport_nbo), payload_size,
-                             payload_size > 0 ? static_cast<u8>(payload[0]) : 0,
-                             std::chrono::duration_cast<std::chrono::milliseconds>(
-                                 std::chrono::steady_clock::now().time_since_epoch())
-                                 .count());
+            const std::span<const u8> datagram{buffer.data(), static_cast<size_t>(rc)};
+            if (const auto server = LinkServer();
+                server.addr_nbo == from.sin_addr.s_addr && server.port_nbo == from.sin_port) {
+                if (const auto kind = Link::KindOf(datagram)) {
+                    OnLinkDatagram(*kind, datagram);
+                    continue;
                 }
-                continue;
             }
-
-            P2PDatagram packet{};
-            packet.source_addr = from.sin_addr.s_addr;
-            packet.source_port = from.sin_port;
-            packet.source_vport = source_vport_nbo;
-            packet.payload.assign(payload, payload + payload_size);
-            it->second->EnqueuePacket(std::move(packet));
+            Deliver(from.sin_addr.s_addr, from.sin_port, datagram);
         }
 #endif
+    }
+
+    // A frame from addr:port (straight from the peer, or relayed by the server): signaling to
+    // its queues, a game packet to the socket bound to its vport.
+    void Deliver(u32 from_addr_nbo, u16 from_port_nbo, std::span<const u8> frame) {
+        if (frame.size() < kVPortHeaderSize) {
+            return;
+        }
+        NoteSilence((u64{from_addr_nbo} << 16) | from_port_nbo);
+        u16 source_vport_nbo = 0;
+        u16 dest_vport_nbo = 0;
+        std::memcpy(&source_vport_nbo, frame.data(), sizeof(source_vport_nbo));
+        std::memcpy(&dest_vport_nbo, frame.data() + sizeof(source_vport_nbo),
+                    sizeof(dest_vport_nbo));
+
+        const u8* payload = frame.data() + kVPortHeaderSize;
+        const size_t payload_size = frame.size() - kVPortHeaderSize;
+
+        if (dest_vport_nbo == kSignalingVPortNbo) {
+            PushInternal(ClassifyInternal(payload, payload_size), from_addr_nbo, from_port_nbo,
+                         payload, payload_size);
+            return;
+        }
+
+        std::lock_guard lock(registry_mutex);
+        const auto it = game_sockets.find(dest_vport_nbo);
+        if (it == game_sockets.end() || it->second == nullptr) {
+            // Rig 2026-10-13: about 1 join in 4 stalls, the guest's game giving up its
+            // connection 5.4 s after signaling came up with no game traffic in between; a
+            // one-shot hello dropped here, before the game bound its port, would do that. The
+            // first drops are logged to tell.
+            static std::atomic<u32> dropped{0};
+            if (dropped.fetch_add(1) < 200) {
+                LOG_INFO(Lib_Net,
+                         "P2P RX dropped, no socket for dst_vport={} (src_vport={}, {} bytes, "
+                         "first byte {:#x}) t={}",
+                         ntohs(dest_vport_nbo), ntohs(source_vport_nbo), payload_size,
+                         payload_size > 0 ? static_cast<u8>(payload[0]) : 0,
+                         std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count());
+            }
+            return;
+        }
+
+        P2PDatagram packet{};
+        packet.source_addr = from_addr_nbo;
+        packet.source_port = from_port_nbo;
+        packet.source_vport = source_vport_nbo;
+        packet.payload.assign(payload, payload + payload_size);
+        it->second->EnqueuePacket(std::move(packet));
+    }
+
+    Link::ServerEndpoint LinkServer() {
+        if (!ServerLinkSwitchOn()) {
+            return {};
+        }
+        std::lock_guard lock(link_mutex);
+        return link_server;
+    }
+
+    void TellLinkObserver(std::string_view event, const std::string& detail) {
+        if (const auto observer = link_observer.load()) {
+            observer(event, detail);
+        }
+    }
+
+    // A datagram from the server's link: a relayed frame, the hello's answer, a pong, news of
+    // another member's link.
+    void OnLinkDatagram(Link::Kind kind, std::span<const u8> datagram) {
+        const s64 now_ms = P2PNowMs();
+        switch (kind) {
+        case Link::Kind::Data:
+            if (const auto data = Link::DecodeData(datagram)) {
+                Deliver(data->addr_nbo, data->port_nbo, data->frame);
+            }
+            return;
+        case Link::Kind::Welcome:
+            if (const auto welcome = Link::DecodeWelcome(datagram)) {
+                OnWelcome(*welcome);
+            }
+            return;
+        case Link::Kind::Pong:
+            if (const auto pong = Link::DecodePing(Link::Kind::Pong, datagram)) {
+                std::optional<Link::LinkChange> back;
+                {
+                    std::lock_guard lock(link_mutex);
+                    back = ping_meter.Pong(*pong, now_ms);
+                }
+                if (back) {
+                    LOG_INFO(Lib_Net, "Server link: the server answers again after {} ms",
+                             back->gap_ms);
+                    TellLinkObserver("back", fmt::format("gap_ms={}", back->gap_ms));
+                }
+            }
+            return;
+        case Link::Kind::Member:
+            if (const auto member = Link::DecodeMember(datagram)) {
+                OnMember(*member);
+            }
+            return;
+        default:
+            return;
+        }
+    }
+
+    void OnWelcome(const Link::Welcome& welcome) {
+        bool first = false;
+        bool repeated = false;
+        {
+            std::lock_guard lock(link_mutex);
+            if (welcome.accepted) {
+                first = !link_welcomed;
+                link_welcomed = true;
+                link_refusal.clear();
+            } else {
+                repeated = link_refusal == welcome.text;
+                link_refusal = welcome.text;
+            }
+        }
+        if (welcome.accepted) {
+            if (first) {
+                LOG_INFO(Lib_Net, "Server link: the server took this game's hello");
+                TellLinkObserver("welcome", "");
+            }
+        } else if (!repeated) {
+            LOG_ERROR(Lib_Net, "Server link: the server refused this game: {}", welcome.text);
+            TellLinkObserver("refused", welcome.text);
+        }
+    }
+
+    void OnMember(const Link::Member& member) {
+        const u32 addr = ntohl(member.addr_nbo);
+        const u16 port = ntohs(member.port_nbo);
+        const char* event = "member-quiet";
+        switch (member.state) {
+        case Link::MemberState::Quiet:
+            LOG_WARNING(Lib_Net, "Server link: nothing from {} ({:#x}:{}) for {} ms",
+                        member.online_id, addr, port, member.gap_ms);
+            break;
+        case Link::MemberState::Back:
+            event = "member-back";
+            LOG_INFO(Lib_Net, "Server link: {} ({:#x}:{}) heard again after {} ms",
+                     member.online_id, addr, port, member.gap_ms);
+            break;
+        case Link::MemberState::Gone:
+            event = "member-gone";
+            LOG_WARNING(Lib_Net, "Server link: {} ({:#x}:{}) gone, nothing for {} ms",
+                        member.online_id, addr, port, member.gap_ms);
+            break;
+        }
+        TellLinkObserver(event, fmt::format("member={} peer={:#x}:{} gap_ms={}", member.online_id,
+                                            addr, port, member.gap_ms));
+    }
+
+    // The link's hello (until the server takes it), its ping, and the outage and round trip
+    // lines. On the receive thread, every LinkTickMs.
+    void LinkHousekeeping() {
+        if (!ServerLinkSwitchOn()) {
+            return;
+        }
+        const s64 now_ms = P2PNowMs();
+        if (now_ms - link_tick_ms < LinkTickMs) {
+            return;
+        }
+        link_tick_ms = now_ms;
+        std::vector<std::vector<u8>> datagrams;
+        Link::ServerEndpoint server;
+        std::optional<Link::LinkChange> quiet;
+        std::optional<Link::PingSummary> summary;
+        {
+            std::lock_guard lock(link_mutex);
+            server = link_server;
+            if (server.addr_nbo == 0 || server.port_nbo == 0) {
+                return;
+            }
+            const s64 retry_ms = link_refusal.empty() ? HelloRetryMs : RefusedHelloRetryMs;
+            if (!link_welcomed && (!link_hello_ms || now_ms - *link_hello_ms >= retry_ms)) {
+                link_hello_ms = now_ms;
+                datagrams.push_back(
+                    Link::Encode(Link::Hello{.online_id = link_online_id, .build = link_build}));
+            }
+            if (const auto ping = ping_meter.Due(now_ms)) {
+                datagrams.push_back(Link::Encode(Link::Kind::Ping, *ping));
+            }
+            quiet = ping_meter.Check(now_ms);
+            if (quiet) {
+                // The server may have restarted and forgotten this game: say hello again.
+                link_welcomed = false;
+            }
+            summary = ping_meter.TakeSummary(now_ms);
+        }
+        sockaddr_in dest{};
+        dest.sin_family = AF_INET;
+        dest.sin_addr.s_addr = server.addr_nbo;
+        dest.sin_port = server.port_nbo;
+        for (auto& datagram : datagrams) {
+            Transmit(dest, std::move(datagram));
+        }
+        if (quiet) {
+            LOG_WARNING(Lib_Net, "Server link: no answer from the server for {} ms", quiet->gap_ms);
+            TellLinkObserver("quiet", fmt::format("gap_ms={}", quiet->gap_ms));
+        }
+        if (summary) {
+            LOG_INFO(Lib_Net,
+                     "Server link: round trip {}/{}/{} ms (min/avg/max), {} of {} pings "
+                     "answered",
+                     summary->min_ms, summary->avg_ms, summary->max_ms, summary->pongs,
+                     summary->pings);
+            TellLinkObserver("rtt", fmt::format("min_ms={} avg_ms={} max_ms={} pongs={} pings={}",
+                                                summary->min_ms, summary->avg_ms, summary->max_ms,
+                                                summary->pongs, summary->pings));
+        }
     }
 
     // The test ping (SHADPS4_P2P_DELAY_MS): packets wait their turn here, sent by DelayMain.
@@ -653,6 +881,18 @@ private:
     std::mutex registry_mutex;
     std::unordered_map<u16, P2PSocket*> game_sockets;
     u16 next_ephemeral_vport{30000};
+
+    // The server link (net_link.h); link_tick_ms only on the receive thread.
+    std::mutex link_mutex;
+    Link::ServerEndpoint link_server;
+    std::string link_online_id;
+    std::string link_build;
+    bool link_welcomed{false};
+    std::string link_refusal;
+    std::optional<s64> link_hello_ms;
+    Link::PingMeter ping_meter;
+    s64 link_tick_ms{0};
+    std::atomic<ServerLinkObserver> link_observer{nullptr};
 
     std::mutex silence_mutex;
     PeerSilence silence{3000};
@@ -1150,6 +1390,33 @@ void P2PSocket::EnqueuePacket(P2PDatagram packet) {
     }
 #endif
     receive_cv.notify_all();
+}
+
+bool ServerLinkSwitchOn() {
+#ifdef BLOODBORNE_NATIVE_PORT
+    static const bool on = [] {
+        const char* env = std::getenv("SHADPS4_BLOODBORNE_SERVER_LINK");
+        return env != nullptr && std::string_view{env} == "1";
+    }();
+    return on;
+#else
+    return false; // the port only (docs/SERVER_COOP_PLAN.md)
+#endif
+}
+
+void ConfigureServerLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id) {
+    if (!ServerLinkSwitchOn() || server_addr_nbo == 0 || server_port_nbo == 0) {
+        return;
+    }
+    P2PTransport::Instance().ConfigureLink(server_addr_nbo, server_port_nbo, std::move(online_id));
+}
+
+void SetServerLinkBuild(std::string build) {
+    P2PTransport::Instance().SetLinkBuild(std::move(build));
+}
+
+void SetServerLinkObserver(ServerLinkObserver observer) {
+    P2PTransport::Instance().SetLinkObserver(observer);
 }
 
 u16 GetP2PConfiguredPort() {

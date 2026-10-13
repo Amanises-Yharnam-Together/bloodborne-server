@@ -1,0 +1,148 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadNet Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+// The server link (docs/SERVER_COOP_PLAN.md phase 2): every game keeps one UDP
+// link to shadNet, on the matching UDP port its STUN pings come to, and sends
+// through it what it would send to another game. shadNet forwards each frame to
+// the game at the frame's destination, naming the sender by the address its
+// STUN pings come from, which is the address the other games know it by: the
+// games see the same peers as over P2P, and nothing goes game to game.
+//
+// The datagrams (the emulator's net_link.h writes and reads the same; one of
+// each in tests/contracts/server_link_frames.txt): the signaling vport header
+// (ffff ffff), "SHLK", the kind, its body. Numbers little-endian, addresses and
+// ports in network byte order.
+//
+// shadNet never reads a frame: it checks who sent it and where it goes. It
+// knows each game's link from its pings (once a second) and tells the others
+// when one goes quiet, comes back or is gone, and logs enough to say whether a
+// stalled join's packets went through (the first frames between each pair, and
+// counters per member).
+#pragma once
+
+#include <optional>
+#include <QByteArray>
+#include <QHash>
+#include <QList>
+#include <QString>
+#include <QStringList>
+
+namespace ServerLink {
+
+constexpr quint8 LinkVersion = 1;
+enum class Kind : quint8 {
+    Hello = 1,
+    Welcome = 2,
+    Data = 3,
+    Ping = 4,
+    Pong = 5,
+    Member = 6,
+};
+enum class MemberState : quint8 { Quiet = 0, Back = 1, Gone = 2 };
+
+// An IPv4 address and a port, both in host byte order.
+struct Endpoint {
+    quint32 ipv4 = 0;
+    quint16 port = 0;
+    quint64 Key() const {
+        return (quint64{ipv4} << 16) | port;
+    }
+    QString Text() const;
+    bool operator==(const Endpoint&) const = default;
+};
+
+struct Hello {
+    quint8 version = LinkVersion;
+    QByteArray online_id;
+    QByteArray build;
+};
+struct Welcome {
+    bool accepted = false;
+    QByteArray text;
+};
+struct Data {
+    Endpoint peer; // where it goes (from a game), where it came from (to a game)
+    QByteArray frame;
+};
+struct Ping {
+    quint32 seq = 0;
+    quint64 sent_ms = 0;
+};
+struct Member {
+    MemberState state = MemberState::Quiet;
+    quint32 gap_ms = 0;
+    Endpoint endpoint;
+    QByteArray online_id;
+};
+
+// The kind of a link datagram, or nothing for anything else (the STUN ping).
+std::optional<Kind> KindOf(const QByteArray& datagram);
+QByteArray Encode(const Hello& hello);
+QByteArray Encode(const Welcome& welcome);
+QByteArray Encode(const Data& data);
+QByteArray Encode(Kind kind, const Ping& ping);
+QByteArray Encode(const Member& member);
+std::optional<Hello> DecodeHello(const QByteArray& datagram);
+std::optional<Welcome> DecodeWelcome(const QByteArray& datagram);
+std::optional<Data> DecodeData(const QByteArray& datagram);
+std::optional<Ping> DecodePing(Kind kind, const QByteArray& datagram);
+std::optional<Member> DecodeMember(const QByteArray& datagram);
+
+// The links of the games on this server, without sockets or clocks: the socket
+// hands it each datagram and calls Tick now and then; it says what to send and
+// what to log.
+class Hub {
+public:
+    struct Send {
+        Endpoint to;
+        QByteArray datagram;
+    };
+    struct Result {
+        QList<Send> sends;
+        QStringList log;
+    };
+
+    explicit Hub(qint64 quiet_ms = 3000, qint64 gone_ms = 60000, qint64 stats_ms = 10000,
+                 int pair_lines = 20);
+
+    Result Receive(const Endpoint& from, const QByteArray& datagram, qint64 now_ms);
+    // Links newly quiet (told to the others), gone (forgotten) and the counters.
+    Result Tick(qint64 now_ms);
+
+    int Members() const {
+        return static_cast<int>(members.size());
+    }
+    // The build every game here runs, empty while none is linked.
+    QByteArray Build() const;
+
+private:
+    struct Link {
+        Endpoint endpoint;
+        QByteArray online_id;
+        QByteArray build;
+        qint64 last_heard_ms = 0;
+        bool quiet = false;
+        quint64 frames_in = 0;
+        quint64 bytes_in = 0;
+        quint64 frames_out = 0;
+        quint64 bytes_out = 0;
+        quint32 pings = 0;
+    };
+
+    void OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_ms, Result& result);
+    void OnData(Link& sender, const QByteArray& datagram, Result& result);
+    void Heard(Link& link, qint64 now_ms, Result& result);
+    void TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result& result);
+    QString Name(const Link& link) const;
+
+    qint64 quiet_ms;
+    qint64 gone_ms;
+    qint64 stats_ms;
+    int pair_lines;
+    bool stats_started = false;
+    qint64 stats_at_ms = 0;
+    QHash<quint64, Link> members;
+    QHash<QPair<quint64, quint64>, quint64> pair_frames;
+    quint64 dropped = 0;
+};
+
+} // namespace ServerLink

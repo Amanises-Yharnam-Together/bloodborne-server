@@ -30,8 +30,12 @@ static QByteArray StripVportHeader(const QByteArray& data) {
 }
 
 StunServer::StunServer(SharedState* shared, QObject* parent)
-    : QObject(parent), m_socket(new QUdpSocket(this)), m_shared(shared) {
+    : QObject(parent), m_socket(new QUdpSocket(this)), m_shared(shared),
+      m_linkTimer(new QTimer(this)) {
     connect(m_socket, &QUdpSocket::readyRead, this, &StunServer::OnReadyRead);
+    connect(m_linkTimer, &QTimer::timeout, this, &StunServer::OnLinkTick);
+    m_clock.start();
+    m_linkTimer->start(500);
 }
 
 bool StunServer::Start(const QHostAddress& addr, uint16_t port) {
@@ -54,6 +58,11 @@ void StunServer::OnReadyRead() {
 
         if (raw.isEmpty())
             continue;
+
+        if (ServerLink::KindOf(raw)) {
+            HandleLink(raw, sender, senderPort);
+            continue;
+        }
 
         // Strip signaling vport header
         QByteArray data = StripVportHeader(raw);
@@ -106,4 +115,24 @@ void StunServer::HandleStunPing(const QByteArray& data, const QHostAddress& send
     response.append(reinterpret_cast<const char*>(&ipNet), 4);
     response.append(reinterpret_cast<const char*>(&portNet), 2);
     m_socket->writeDatagram(FrameSignaling(response), sender, senderPort);
+}
+
+void StunServer::HandleLink(const QByteArray& datagram, const QHostAddress& sender,
+                            uint16_t senderPort) {
+    bool ipv4 = false;
+    const quint32 address = sender.toIPv4Address(&ipv4);
+    if (!ipv4)
+        return;
+    Apply(m_link.Receive({address, senderPort}, datagram, m_clock.elapsed()));
+}
+
+void StunServer::OnLinkTick() {
+    Apply(m_link.Tick(m_clock.elapsed()));
+}
+
+void StunServer::Apply(const ServerLink::Hub::Result& result) {
+    for (const auto& send : result.sends)
+        m_socket->writeDatagram(send.datagram, QHostAddress(send.to.ipv4), send.to.port);
+    for (const auto& line : result.log)
+        qInfo().noquote() << line;
 }

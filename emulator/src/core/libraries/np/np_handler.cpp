@@ -11,6 +11,7 @@
 #include "core/emulator_settings.h"
 #include "core/libraries/invitation_dialog/invitation_dialog.h"
 #include "core/libraries/network/net_upnp.h"
+#include "core/libraries/network/server_link.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_manager.h"
 #include "core/libraries/np/np_matching2/np_matching2_mm.h"
@@ -286,6 +287,9 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
     }
 
     NpMatching2::SetMmShadNetClient(client, host, port);
+    // SHADPS4_BLOODBORNE_SERVER_LINK: the peers' frames through shadNet's matching UDP port.
+    Net::ConfigureServerLink(NpMatching2::GetMmServerAddr(), NpMatching2::GetMmServerUdpPort(),
+                             npid);
 
     // Build OrbisNpId
     {

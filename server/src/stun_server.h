@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#include <QElapsedTimer>
 #include <QHostAddress>
 #include <QObject>
+#include <QTimer>
 #include <QUdpSocket>
 #include "client_session.h"
+#include "server_link.h"
 
 class StunServer : public QObject {
     Q_OBJECT
@@ -14,10 +17,17 @@ public:
 
 private slots:
     void OnReadyRead();
+    void OnLinkTick();
 
 private:
     void HandleStunPing(const QByteArray& data, const QHostAddress& sender, uint16_t senderPort);
+    // The games' link (co-op phase 2, server_link.h): relayed frames, hellos, pings.
+    void HandleLink(const QByteArray& datagram, const QHostAddress& sender, uint16_t senderPort);
+    void Apply(const ServerLink::Hub::Result& result);
 
     QUdpSocket* m_socket;
     SharedState* m_shared;
+    ServerLink::Hub m_link;
+    QTimer* m_linkTimer;
+    QElapsedTimer m_clock;
 };
