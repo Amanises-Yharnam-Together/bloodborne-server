@@ -28,6 +28,7 @@
 #include "coop.pb.h"
 #include "coop/coop_stream.h"
 #include "coop/team_lobby.h"
+#include "coop/trade.h"
 #include "coop/world_log.h"
 #include "server_link.h"
 
@@ -51,6 +52,9 @@ public:
     bool Append(const bbcoop::JournalRecord& record);
     // The world written whole (the old one to the backups) and the journal emptied.
     bool Compact(const bbcoop::StoredWorld& world);
+    // The party's trades (trades.pb, coop/trade.h), written whole on every change.
+    std::optional<bbcoop::StoredTrades> LoadTrades() const;
+    bool SaveTrades(const bbcoop::StoredTrades& trades);
     const QString& Folder() const {
         return folder;
     }
@@ -120,6 +124,8 @@ private:
         EnemyOwners owners;
         QString owners_logged;
         QString vitals_logged; // the members' states and the wipes, as last logged
+        // Its trades (coop/trade.h): the offers held and the grants owed.
+        BloodborneCoop::TradeDesk trades;
     };
     struct Member {
         explicit Member(quint32 instance) : stream{"shadnet", instance} {}
@@ -157,6 +163,11 @@ private:
     // Whether `member` may decide the enemies of `map` (phase 4): a game without the owners, or
     // on an area nobody or itself runs.
     bool Decides(const PartyWorld& world, const Member& member, u32 map) const;
+    // A member's trade messages, and what the desk says to send and store.
+    void TakeTrade(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                   qint64 now_ms, Result& result);
+    void Deliver(PartyWorld& world, BloodborneCoop::TradeDesk::Result trades, qint64 now_ms,
+                 Result& result);
     void SendToOthers(PartyWorld& world, const Member& from, const bbcoop::Envelope& envelope,
                       qint64 now_ms);
     void SendTo(Member& member, const bbcoop::Envelope& envelope, qint64 now_ms);

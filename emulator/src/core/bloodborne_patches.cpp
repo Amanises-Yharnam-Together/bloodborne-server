@@ -9,6 +9,7 @@
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -1212,6 +1213,16 @@ void InstallGuestsHitNpcs(u64 base, u64 image_size) {
     coop_features.On("guests hit NPCs");
 }
 
+// Trading (bloodborne_trade.cpp, SHADPS4_BLOODBORNE_TRADE=1): the game functions it calls to take
+// items out of the inventory and put them in.
+void InstallTrading(u64 base, u64 image_size) {
+    if (!TradeSwitchOn() || !CoopSitesMatch(base, image_size, "trading", "no trading")) {
+        return;
+    }
+    EnableTrading();
+    coop_features.On("trading");
+}
+
 // See QuietSummonBannerPatches: a party's joins show one banner, not two.
 void InstallQuietSummonBanners(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -1450,6 +1461,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallItemButtonDiagnostics(base, image_size);
     InstallPartyDeath(base, image_size);
     InstallOwnHitCount(base, image_size);
+    InstallTrading(base, image_size);
     StartSaveBackups();
     StartCoopTrace();
     InstallNativePacketTrace(base, image_size);

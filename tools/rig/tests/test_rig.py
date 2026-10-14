@@ -33,6 +33,7 @@ VERBS = {
     "return-point",
     "team-create", "team-invite", "team-accept", "team-wait",  # the lobby's, on the title
     "title-press", "title-wait", "title-shot",
+    "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",

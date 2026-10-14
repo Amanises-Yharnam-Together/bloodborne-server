@@ -21,6 +21,7 @@
 
 #include "bloodborne_world.h"
 #include "coop/coop_messages.h"
+#include "coop/trade.h"
 
 using namespace BloodborneCoop;
 using BloodborneWorld::Service;
@@ -173,6 +174,14 @@ struct Game {
     } else if (envelope.has_enemy_owners()) {
       owners = envelope.enemy_owners();
       ++owner_messages;
+    } else if (IsTradeMessage(envelope)) {
+      TradeClient::Taken taken = trades.Take(envelope);
+      for (TradeItems &items : taken.add) {
+        added.push_back(std::move(items));
+      }
+      for (const bbcoop::Envelope &reply : taken.replies) {
+        Send(reply, now_ms);
+      }
     } else if (envelope.has_welcome()) {
       welcome = envelope.welcome();
     } else if (envelope.has_entries()) {
@@ -208,6 +217,8 @@ struct Game {
   int lobby_states = 0;
   std::vector<bbcoop::TeamStart> starts;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
+  TradeClient trades;
+  std::vector<TradeItems> added; // what its trades added
   u32 run = 0x1001;
   u32 number = 0;
   bool online = true; // false: its datagrams are lost
@@ -1003,6 +1014,60 @@ int OnlyTheOwnersKillsAndHpCount() {
   return 0;
 }
 
+int ATradeGoesThroughTheServerAndOutlivesItsRestart() {
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  const TradeItem vials{TradeItemKind::Goods, BloodVialGoods, 3};
+  const TradeItem echoes{TradeItemKind::Echoes, 0, 100};
+  qint64 now = 1'000'000;
+  auto service = std::make_unique<Service>(folder.path());
+  service->Load(now);
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(*service, {&host, &guest}, now);
+  CHECK(host.welcome && host.welcome->trades());
+
+  // The host offers three vials for a hundred echoes, then its game goes.
+  host.Send(host.trades.Offer("guest", "Guest", "Host", {vials}, {echoes}),
+            now);
+  Pump(*service, {&host, &guest}, now);
+  CHECK(guest.trades.Asked().size() == 1);
+  CHECK(guest.trades.Asked().front().from_name() == "Host");
+  host.online = false;
+  guest.Send(
+      guest.trades.Answer(guest.trades.Asked().front().id(), true, {echoes}),
+      now + 10);
+  Pump(*service, {&host, &guest}, now + 10);
+  CHECK(guest.added.size() == 1 && guest.added.front() == TradeItems{vials});
+
+  // The server restarts; the host's part waits on disk for its next game.
+  service = std::make_unique<Service>(folder.path());
+  service->Load(now + 20);
+  Game host_again{1002, "host", 21};
+  host_again.run = 0x2002;
+  host_again.Hello(now + 20);
+  Game guest_again{1003, "guest", 22};
+  guest_again.run = 0x2003;
+  guest_again.Hello(now + 20);
+  Pump(*service, {&host_again, &guest_again}, now + 20);
+  CHECK(host_again.added.size() == 1 &&
+        host_again.added.front() == TradeItems{echoes});
+  CHECK(guest_again.added.empty()); // the guest's grant was taken already
+
+  // An offer nobody answers comes back to the giver.
+  guest_again.Send(
+      guest_again.trades.Offer("host", "Host", "Guest", {vials}, {}), now + 30);
+  Pump(*service, {&host_again, &guest_again}, now + 30);
+  CHECK(host_again.trades.Asked().size() == 1);
+  Pump(*service, {&host_again, &guest_again}, now + 30 + TradeExpiryMs);
+  CHECK(host_again.trades.Asked().empty());
+  CHECK(guest_again.added.size() == 1 &&
+        guest_again.added.front() == TradeItems{vials});
+  return 0;
+}
+
 } // namespace
 
 // Phase 5: the lobby on the service. Players sign in before any party, form a
@@ -1096,6 +1161,8 @@ int main() {
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},
       {"ATeamFormsAndStartsThroughTheService",
        ATeamFormsAndStartsThroughTheService},
+      {"ATradeGoesThroughTheServerAndOutlivesItsRestart",
+       ATradeGoesThroughTheServerAndOutlivesItsRestart},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {

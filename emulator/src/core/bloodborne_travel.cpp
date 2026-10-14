@@ -9,6 +9,7 @@
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -1409,6 +1410,7 @@ void TickPlayersOnThisMap() {
         ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
     }
     GrantPartyEchoes();
+    TickTrades();
     FinishWaitingJoins(in_session);
     ResendOwnDataOnChange(in_session);
     LogMemberDataChanges(in_session);

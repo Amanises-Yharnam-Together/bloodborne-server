@@ -39,6 +39,7 @@ message Welcome {
     string text = 2;  // why not
     uint64 epoch = 3; // the party's log now
     uint64 last = 4;
+    bool trades = 5; // it keeps trades (coop/trade.h): the game may offer
 }
 
 // game -> server: a session event of this member (Lifecycle in bloodborne_party.h). A wipe starts
@@ -216,6 +217,77 @@ message Portrait {
     bytes pixels = 3;
 }
 
+// Trading (coop/trade.h): a member offers another member goods (and may ask for some back); the
+// server holds what was offered until the other member answers, then hands each side its part, or
+// the offer back to the giver (declined, expired, withdrawn, refused). The giver's game takes what
+// it offers out of its inventory before it sends the offer; the other's takes what it gives back
+// before it accepts. Every hand-over is a grant, kept on the server (and on disk) until the
+// member's game says it added it.
+message TradeItem {
+    uint32 kind = 1;  // TradeItemKind: 1 Blood Echoes, 2 goods
+    uint32 id = 2;    // the goods' EquipParamGoods id (0 for echoes)
+    uint32 count = 3;
+}
+
+// game -> server: an offer to another member, its items already taken out.
+message TradeOffer {
+    uint32 number = 1; // counts up within the game's run
+    string to = 2;     // the other member's board name
+    string from_name = 3; // the giver's character name, shown to the other
+    repeated TradeItem give = 4;
+    repeated TradeItem want = 5;
+    string to_name = 6; // the other member's character name, for the giver's notices
+}
+
+// server -> the giver: what became of its offer.
+message TradeStatus {
+    uint32 number = 1;
+    uint64 id = 2;
+    uint32 state = 3; // TradeState
+    string text = 4;  // why it was refused
+}
+
+// server -> the other member: an offer to answer before `expires_in_ms`.
+message TradeAsk {
+    uint64 id = 1;
+    string from = 2;
+    string from_name = 3;
+    repeated TradeItem give = 4;
+    repeated TradeItem want = 5;
+    uint32 expires_in_ms = 6;
+}
+
+// game -> server: the other member's answer; with an accept, what it took out of its inventory
+// (what was asked of it), given back if the offer is gone by then.
+message TradeAnswer {
+    uint64 id = 1;
+    bool accept = 2;
+    repeated TradeItem taken = 3;
+}
+
+// game -> server, from the giver: the offer withdrawn while unanswered.
+message TradeCancel {
+    uint64 id = 1;
+}
+
+// server -> the other member: the offer is no longer open (its question goes away).
+message TradeClosed {
+    uint64 id = 1;
+}
+
+// server -> game: items to add, and game -> server (TradeGranted) once they are added.
+message TradeGrant {
+    uint64 id = 1; // the grant's own id
+    uint64 trade = 2;
+    string from = 3;
+    string from_name = 4;
+    repeated TradeItem items = 5;
+    uint32 reason = 6; // TradeGrantReason: 0 received, 1 returned
+}
+message TradeGranted {
+    uint64 id = 1;
+}
+
 // One world log entry (WorldLogEntry; kind is WorldLogKind).
 message Entry {
     uint64 seq = 1;
@@ -299,6 +371,14 @@ message Envelope {
         TeamRequest team_request = 24;
         LobbyState lobby_state = 25;
         TeamStart team_start = 26;
+        TradeOffer trade_offer = 27;
+        TradeStatus trade_status = 28;
+        TradeAsk trade_ask = 29;
+        TradeAnswer trade_answer = 30;
+        TradeCancel trade_cancel = 31;
+        TradeClosed trade_closed = 32;
+        TradeGrant trade_grant = 33;
+        TradeGranted trade_granted = 34;
     }
 }
 
@@ -488,4 +568,26 @@ message JournalRecord {
         string member = 1;
         HpProposal hp = 2;
     }
+}
+
+// A party's trades as shadNet keeps them on disk (trades.pb, written whole on every change).
+message StoredTrade {
+    uint64 id = 1;
+    string from = 2;
+    string from_name = 3;
+    string to = 4;
+    uint32 number = 5;
+    repeated TradeItem give = 6;
+    repeated TradeItem want = 7;
+    int64 expires_ms = 8; // on the server's clock: an open trade read back gets a fresh time
+    string to_name = 9;
+}
+message StoredGrant {
+    string member = 1; // whose
+    TradeGrant grant = 2;
+}
+message StoredTrades {
+    uint64 next_id = 1;
+    repeated StoredTrade open = 2;
+    repeated StoredGrant grants = 3;
 }

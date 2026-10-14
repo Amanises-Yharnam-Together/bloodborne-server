@@ -244,6 +244,81 @@ SCENARIOS = {
         "forbid": {"host": only_kill(ENEMY)},
         "timeout": 720,
     },
+    "trade": {
+        "about": "trading on the server (SHADPS4_BLOODBORNE_TRADE=1, the port with the server world): "
+                 "the host gives the guest 4 Blood Vials, swaps 3000 Blood Echoes for 5 Quicksilver "
+                 "Bullets, then offers 2 vials the guest declines (they come back)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10",
+                     "trade-stock vials 10", "trade-stock bullets 0", "trade-stock echoes 5000",
+                     "wait 5",
+                     "trade-offer vials 4 120", "expect-held vials 6", "wait-trade accepted 120",
+                     "trade-offer echoes 3000 for bullets 5 60", "expect-held echoes 2000",
+                     "expect-held bullets 5 60",
+                     "trade-offer vials 2 60", "expect-held vials 4", "wait-trade declined 120",
+                     "expect-held vials 6 30", "wait-trade returned 10"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10",
+                      "trade-stock vials 0", "trade-stock bullets 10", "trade-stock echoes 0",
+                      "trade-answer yes 180", "expect-held vials 4 30", "wait-trade received 10",
+                      "trade-answer yes 120", "expect-held echoes 3000 30", "expect-held bullets 5",
+                      "trade-answer no 120", "wait 10", "expect-held vials 4"],
+        },
+        "expect": {
+            "host": [r"Bloodborne trade: offered .* 4 Blood Vials",
+                     r"Bloodborne trade: added 5 Quicksilver Bullets",
+                     r"Bloodborne trade: added 2 Blood Vials"],
+            "guest": [r"Bloodborne trade: added 4 Blood Vials",
+                      r"Bloodborne trade: added 3,000 Blood Echoes",
+                      r"Bloodborne trade: declined offer"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    "trade-menus": {
+        "about": "trading's menus (drawn, with SHADPS4_BLOODBORNE_TRADE=1): the guest answers the "
+                 "host's offer in the game's yes/no box and the host sees the game's box saying it "
+                 "was accepted; then the host gives 2 vials through the inventory's Give row and the "
+                 "game's quantity picker, and 2,000 Blood Echoes through Give Blood Echoes; the "
+                 "guest accepts both",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10",
+                     "trade-stock vials 10", "trade-stock bullets 10", "trade-stock echoes 2000",
+                     "wait 5", "trade-offer vials 4 120", "wait-trade accepted 120", "wait 3",
+                     "shot host-notice", "press cross", "wait 2",
+                     # Blood Vial (the first row) -> Give -> 2 in the picker.
+                     "press options", "wait 2", "press cross", "wait 2", "shot host-inventory",
+                     "press cross", "wait 2", "press down", "wait 1", "press down", "wait 1",
+                     "shot host-commands-give", "press cross", "wait 2", "shot host-quantity",
+                     "press up", "wait 1", "press left", "wait 1", "shot host-quantity-2",
+                     "press cross", "wait 2",
+                     "expect-held vials 4", "shot host-offered",
+                     # Blood Vial -> Give Blood Echoes -> the picker's top (all of them).
+                     "press cross", "wait 2", "press down", "wait 1", "press down", "wait 1",
+                     "press down", "wait 1", "press cross", "wait 2", "shot host-echoes",
+                     "press down", "wait 1", "press left", "wait 1", "shot host-echoes-max",
+                     "press cross", "wait 2",
+                     "expect-held echoes 0",
+                     "press circle", "wait 1", "press circle", "wait 1", "press circle",
+                     "wait 1", "press circle", "wait 40", "shot host-end"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10",
+                      "trade-stock vials 0", "trade-stock echoes 0", "wait 40",
+                      "shot guest-ask", "press left", "wait 1", "shot guest-ask-yes", "press cross",
+                      "wait 3", "shot guest-received", "press cross", "expect-held vials 4 30",
+                      "wait 30", "shot guest-ask-2", "press left", "wait 1", "press cross",
+                      "wait 3", "shot guest-received-2", "expect-held vials 6 30",
+                      "wait 10", "shot guest-ask-3", "press left", "wait 1", "press cross",
+                      "wait 3", "shot guest-received-3", "expect-held echoes 2000 30"],
+        },
+        "expect": {
+            "host": [r"Bloodborne trade: offered .* 4 Blood Vials",
+                     r"Bloodborne trade: offered .* 2 Blood Vials",
+                     r"Bloodborne trade: offered .* 2,000 Blood Echoes"],
+            "guest": [r"Bloodborne trade: accepted offer", r"Bloodborne trade: added 4 Blood Vials",
+                      r"Bloodborne trade: added 2,000 Blood Echoes"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 900,
+    },
     "server-restart": {
         "about": "phase 3, the party's world on the server (run with SHADPS4_BLOODBORNE_SERVER_WORLD"
                  "=1): the host kills an enemy while the guest is in the Dream, shadNet restarts "

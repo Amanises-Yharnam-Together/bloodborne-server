@@ -21,6 +21,7 @@
 
 #include "../bbcoop.h"
 #include "bbport_settings.h"
+#include "bbport_trade_menu.h"
 
 namespace BbGameMenu {
 namespace {
@@ -151,6 +152,12 @@ bool RussianMenu() {
                ? BbSettings::Get().menu_language == BbSettings::MenuLanguage::Russian
                : game == GameLanguage::Russian;
 }
+
+// Texts the trade menus change while the game runs (SetDynamicText): ids from DynamicIdBase, one
+// per slot, set and looked up on the game's thread.
+constexpr u32 DynamicIdBase = LobbyIdBase + LobbyIdCount;
+constexpr int DynamicSlots = 8;
+std::u16string dynamic_texts[DynamicSlots];
 
 // ---- The port's values the game's rows edit (ints: the list rows bind ints). ----
 enum Field : int {
@@ -762,6 +769,9 @@ GAME_ABI const char16_t* LookupHook(void* repository, u32 table, u32 category, u
     if (id >= LobbyIdBase && id < LobbyIdBase + LobbyIdCount) {
         return TextOf(id);
     }
+    if (id >= DynamicIdBase && id < DynamicIdBase + DynamicSlots) {
+        return dynamic_texts[id - DynamicIdBase].c_str();
+    }
     if (id >= IdBase && id < IdBase + texts.size()) {
         // BB_GAME_MENU_TRACE=1: how often the game asks for our texts (per 2 s).
         static const bool count = [] {
@@ -900,6 +910,28 @@ u8* MapNear(unsigned char* image, u64 image_size, std::size_t size) {
 
 } // namespace
 
+std::uint64_t ImageBase() {
+    return image_base;
+}
+
+std::uint32_t AddGameText(const char* english, const char* russian) {
+    return AddText(english, russian);
+}
+
+std::uint32_t SetDynamicText(int slot, const char* utf8) {
+    slot = std::clamp(slot, 0, DynamicSlots - 1);
+    dynamic_texts[slot] = Utf16(utf8);
+    return DynamicIdBase + u32(slot);
+}
+
+void DestroyGameText(unsigned char* text) {
+    DestroyText(text);
+}
+
+void DestroyGameFunction(unsigned char* function) {
+    DestroyFunction(function);
+}
+
 void PatchImage(unsigned char* image, std::uint64_t size) {
     if (const char* env = std::getenv("BB_GAME_MENU"); env && env[0] == '0') {
         return;
@@ -941,6 +973,10 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
                reinterpret_cast<void*>(&LookupHook), reinterpret_cast<void**>(&lookup_original), cursor) &&
         Detour(image, AddPageItem, AddPageItemPrologue, sizeof(AddPageItemPrologue),
                reinterpret_cast<void*>(&AddHook), reinterpret_cast<void**>(&add_original), cursor);
+    // Trading's menus (their texts go through the lookup hook too).
+    if (ok) {
+        BbTradeMenu::PatchImage(image, size, cursor);
+    }
 #ifdef _WIN32
     DWORD old_protect = 0;
     VirtualProtect(stubs, page, PAGE_EXECUTE_READ, &old_protect);
