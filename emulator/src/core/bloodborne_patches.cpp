@@ -835,6 +835,38 @@ void PS4_SYSV_ABI SetEnemyHitState(u64, GuestRegisterSnapshot* registers) {
     }
 }
 
+// Phase 5 (bloodborne_team.h): the title's load waits for the team's Start (state 6 skipped while
+// HoldTitleLoadForTeam says so), and the title menu tells the lobby the player is back.
+bool PS4_SYSV_ABI HoldTitleLoad(u64, const GuestRegisterSnapshot*) {
+    const u64 game = GetGlobalState();
+    const s32 slot = game >= 0x10000 ? ReadValue<s32>(game, TitleLoadSlotOffset) : -1;
+    return HoldTitleLoadForTeam(slot < 0 ? 0u : static_cast<u32>(slot));
+}
+
+void PS4_SYSV_ABI NoteTitleMenu(u64, const GuestRegisterSnapshot*) {
+    TeamBackAtTitle();
+}
+
+void InstallTeamLobby(u64 base, u64 image_size) {
+    if (!TeamModeOn()) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "team lobby", "loads do not wait for the team")) {
+        return;
+    }
+    const bool installed =
+        InstallCoopHook(reinterpret_cast<void*>(base + TitleLoadStateOffset), TitleStatePrologue,
+                        0, GuestFunctionOverride{HoldTitleLoad}) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + TitleMenuStateOffset), TitleStatePrologue,
+                        0, GuestCodeHook{NoteTitleMenu});
+    if (!installed) {
+        coop_features.Skipped("team lobby", "a hook did not go in");
+        return;
+    }
+    coop_features.On("team lobby");
+    LOG_INFO(Debug, "Bloodborne team lobby: a save's load waits for the team's Start");
+}
+
 void InstallEnemyOwner(u64 base, u64 image_size) {
     if (!EnemyOwnerOn()) {
         return;
@@ -1409,6 +1441,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallChannelTable(base, image_size);
     InstallGamePacketLink(base, image_size);
     InstallEnemyOwner(base, image_size);
+    InstallTeamLobby(base, image_size);
     InstallSharedLoot(base, image_size);
     InstallLampsStayLitAtRegistration(base, image_size);
     InstallDeferredBossItems(base, image_size);

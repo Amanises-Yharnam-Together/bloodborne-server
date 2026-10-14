@@ -1229,6 +1229,12 @@ bool AutoplayDone(const AutoplayStep&) {
     return true;
 }
 
+// The lobby's verbs (team-*) run on the title screen (TickAutoplayTitle); in the world they are
+// over already.
+bool AutoplayTeamVerb(const AutoplayStep&) {
+    return true;
+}
+
 // The script's verbs (tools/rig/tests/test_rig.py keeps the same list for the scenarios).
 using AutoplayVerb = bool (*)(const AutoplayStep& step);
 constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, AutoplayVerb>>({
@@ -1280,6 +1286,10 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"chapter", AutoplayChapter},
     {"keep-going", AutoplayKeepGoing},
     {"sync", AutoplaySync},
+    {"team-create", AutoplayTeamVerb},
+    {"team-invite", AutoplayTeamVerb},
+    {"team-accept", AutoplayTeamVerb},
+    {"team-wait", AutoplayTeamVerb},
     {"done", AutoplayDone},
 });
 
@@ -1423,6 +1433,42 @@ void TickAutoplayTitle() {
         autoplay_buttons.store(0);
         // Raw, as all of the rig's checks (see AutoplayInWorld).
         LOG_INFO(Debug, "Bloodborne autoplay: in the world on map {:#x}", GetCurrentPackedMap());
+        return;
+    }
+    // The script's first steps may be the lobby's (team-*): they run here, before the title's
+    // Cross (twice a second: they wait on the server's answers).
+    if (autoplay_run.next < autoplay_run.script.size() &&
+        Coop::IsTeamTitleVerb(autoplay_run.script[autoplay_run.next].verb)) {
+        autoplay_buttons.store(0);
+        static std::chrono::steady_clock::time_point last_team_step{};
+        if (now - last_team_step < std::chrono::milliseconds{500}) {
+            return;
+        }
+        last_team_step = now;
+        const AutoplayCommand& command = autoplay_run.script[autoplay_run.next];
+        if (!autoplay_run.step_begun) {
+            autoplay_run.step_started = now; // the title's steps time from their own start
+        }
+        const double elapsed =
+            std::chrono::duration<double>(now - autoplay_run.step_started).count();
+        std::string failure;
+        const bool finished =
+            Coop::RunTeamTitleVerb(command, autoplay_run.step_begun, elapsed, failure);
+        autoplay_run.step_begun = true;
+        if (!failure.empty()) {
+            LOG_ERROR(Debug, "Bloodborne autoplay: step {}/{} {} FAILED: {}",
+                      autoplay_run.next + 1, autoplay_run.script.size(), AutoplayText(command),
+                      failure);
+            LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
+            autoplay_run.phase = AutoplayRun::Phase::Done;
+        } else if (finished) {
+            LOG_INFO(Debug, "Bloodborne autoplay: step {}/{} {} ok (t={:.1f})",
+                     autoplay_run.next + 1, autoplay_run.script.size(), AutoplayText(command),
+                     SteadyMilliseconds() / 1000.0);
+            ++autoplay_run.next;
+            autoplay_run.step_started = now;
+            autoplay_run.step_begun = false;
+        }
         return;
     }
     const auto ms =

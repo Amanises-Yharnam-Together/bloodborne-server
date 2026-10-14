@@ -2303,6 +2303,17 @@ constexpr std::array<u8, 8> ReliableChannelCheck{0x48, 0x63, 0x43, 0x64, 0x48, 0
 constexpr u64 UnreliableChannelCheckOffset = 0x01790C73;
 constexpr std::array<u8, 6> UnreliableChannelCheck{0x49, 0x89, 0xD6, 0x83, 0xF8, 0x43};
 
+// Phase 5, the team lobby (bloodborne_team.h): TitleStep's states (table filled at its start; the
+// step's state index at +0x0C, each state's function called every frame until it moves the index
+// on). State 6 (0x0195B480) loads the save in GameMan +0x1490 (it copies it to the profile's
+// +0x7D0 first) and moves on at once: skipped, the step stays in state 6 and asks again next
+// frame, which holds the load for the team. State 2 (0x0195AE80) runs the title menu: the player
+// is back at the title.
+constexpr u64 TitleLoadStateOffset = 0x0195B480;
+constexpr u64 TitleMenuStateOffset = 0x0195AE80;
+constexpr std::array<u8, 6> TitleStatePrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+constexpr u64 TitleLoadSlotOffset = 0x1490; // GameMan's (GlobalState's) save slot to load
+
 // Phase 4 (docs/SERVER_COOP_PLAN.md): one game runs each occupied map's enemies, the one shadNet
 // names (bbcoop::EnemyOwners: the session's host while it is there, else the member there first,
 // handed on when it leaves, loads or goes silent); the others follow it.

@@ -26,6 +26,7 @@
 #include "common/logging/log.h"
 #include "coop/coop_messages.h"
 #include "coop/coop_stream.h"
+#include "core/bloodborne_team.h"
 #include "core/libraries/network/server_link.h"
 
 namespace Core::Bloodborne {
@@ -74,9 +75,74 @@ std::string hello_member;
 bool hello_due = true;
 std::once_flag thread_started;
 
+// Phase 5: the team lobby (bloodborne_team.h). The lobby's messages go on the same stream, before
+// any party hello; the party is the team's from its Start.
+const bool team_switch =
+    server_world_switch && TeamModeEnabled(std::getenv("SHADPS4_BLOODBORNE_TEAMS"));
+std::mutex team_mutex;
+TeamGate team_gate;
+std::string team_party;      // the team's party key once its Start let this game's load go
+std::string lobby_member;    // this player in the lobby (its board name), once known
+std::string lobby_name;      // its online id
+bool lobby_playing = false;  // in a world (the load went)
+bool lobby_hello_due = true; // stream restarts and changes of lobby_playing
+std::deque<bbcoop::Envelope> lobby_outbox;
+
 std::string PartyKey() {
+    if (team_switch) {
+        std::scoped_lock lock{team_mutex};
+        return team_party;
+    }
     const char* setting = std::getenv("SHADPS4_BLOODBORNE_PARTY");
     return setting != nullptr ? ParsePartySetting(setting).value_or("") : "";
+}
+
+void QueueLobby(bbcoop::Envelope envelope) {
+    std::scoped_lock lock{team_mutex};
+    lobby_outbox.push_back(std::move(envelope));
+}
+
+// On the stream's thread, as they come.
+bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
+    if (envelope.has_lobby_state()) {
+        std::scoped_lock lock{team_mutex};
+        team_gate.TakeLobby(envelope.lobby_state());
+        if (!envelope.lobby_state().notice().empty()) {
+            LOG_WARNING(Debug, "Co-op team lobby: the server refused: {}",
+                        envelope.lobby_state().notice());
+        }
+        return true;
+    }
+    if (envelope.has_team_start()) {
+        const bbcoop::TeamStart& start = envelope.team_start();
+        LOG_INFO(Debug, "Co-op team lobby: team {} starts (party {}, host {}, slot {})",
+                 start.team(), start.party(), start.host(), start.slot());
+        std::scoped_lock lock{team_mutex};
+        team_gate.TakeStart(start);
+        return true;
+    }
+    return false;
+}
+
+// The lobby's hello when due, and its requests: on the stream's thread, stream_mutex held.
+void SendLobby(s64 now_ms) {
+    std::scoped_lock lock{team_mutex};
+    if (!team_switch || lobby_member.empty()) {
+        return;
+    }
+    if (lobby_hello_due) {
+        lobby_hello_due = false;
+        bbcoop::Envelope hello;
+        hello.mutable_lobby_hello()->set_protocol(CoopProtocol);
+        hello.mutable_lobby_hello()->set_member(lobby_member);
+        hello.mutable_lobby_hello()->set_name(lobby_name);
+        hello.mutable_lobby_hello()->set_playing(lobby_playing);
+        stream->Send(EncodeEnvelope(hello), now_ms);
+    }
+    for (const bbcoop::Envelope& envelope : lobby_outbox) {
+        stream->Send(EncodeEnvelope(envelope), now_ms);
+    }
+    lobby_outbox.clear();
 }
 
 void Queue(bbcoop::Envelope envelope) {
@@ -207,6 +273,9 @@ void StreamTick(s64 now_ms) {
         for (const std::vector<u8>& body : received) {
             for (const std::vector<u8>& message : stream->Receive(body, now_ms)) {
                 if (auto envelope = DecodeEnvelope(message)) {
+                    if (TakeLobbyMessage(*envelope)) {
+                        continue;
+                    }
                     if (IsBoard(*envelope)) {
                         boards.push_back(std::move(*envelope));
                     } else {
@@ -219,7 +288,10 @@ void StreamTick(s64 now_ms) {
         if (stream->TakeRestarted()) {
             restarted = true;
             hello_due = true;
+            std::scoped_lock team_lock{team_mutex};
+            lobby_hello_due = true;
         }
+        SendLobby(now_ms);
         if (hello_due && !hello_party.empty() && !hello_member.empty()) {
             hello_due = false;
             bbcoop::Envelope hello;
@@ -650,6 +722,172 @@ void SendServerPortrait(u32 id, std::span<const u8> pixels) {
     envelope.mutable_portrait()->set_id(id);
     envelope.mutable_portrait()->set_pixels(std::string(pixels.begin(), pixels.end()));
     Queue(std::move(envelope));
+}
+
+bool TeamModeOn() {
+    return team_switch;
+}
+
+void StartTeamLobby() {
+    if (!team_switch) {
+        return;
+    }
+    std::thread{[] {
+        // The online id comes once the game signed in (a few seconds into the start).
+        std::string online_id;
+        for (int attempt = 0; attempt < 600 && online_id.empty(); ++attempt) {
+            online_id = LocalOnlineId();
+            if (online_id.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds{500});
+            }
+        }
+        if (online_id.empty()) {
+            LOG_ERROR(Debug, "Co-op team lobby: no online id: not signed in to the lobby");
+            return;
+        }
+        const std::string member = BoardMemberOfOnlineId(online_id);
+        {
+            std::scoped_lock lock{team_mutex};
+            lobby_member = member;
+            lobby_name = online_id;
+            lobby_hello_due = true;
+        }
+        StartThread();
+        LOG_INFO(Debug, "Co-op team lobby: signing in as {} ({})", online_id, member);
+    }}.detach();
+}
+
+bool HoldTitleLoadForTeam(u32 slot) {
+    if (!team_switch) {
+        return false;
+    }
+    TeamGate::Decision decision;
+    std::string me;
+    {
+        std::scoped_lock lock{team_mutex};
+        me = lobby_member;
+        const bool first = !team_gate.Holding();
+        decision = team_gate.Tick(me, slot, {}, SteadyMilliseconds());
+        for (bbcoop::TeamRequest& request : decision.requests) {
+            bbcoop::Envelope envelope;
+            *envelope.mutable_team_request() = std::move(request);
+            lobby_outbox.push_back(std::move(envelope));
+        }
+        if (first) {
+            LOG_INFO(Debug, "Co-op team lobby: the title loads slot {} ({})", slot,
+                     !team_gate.Lobby()              ? "no word from the lobby yet"
+                     : team_gate.Lobby()->has_team() ? "asking the team"
+                                                     : "not in a team: alone");
+        }
+        if (decision.step == TeamGate::Step::Hold) {
+            return true;
+        }
+        lobby_playing = true;
+        lobby_hello_due = true;
+        if (decision.start) {
+            team_party = decision.start->party();
+        }
+    }
+    if (decision.start && party_controller) {
+        const bool host = decision.start->host() == me;
+        party_controller->Assign(host ? PartyRole::Host : PartyRole::Guest);
+        LOG_INFO(Debug, "Co-op team lobby: the save plays in team {} as its {}",
+                 decision.start->team(), host ? "host" : "guest");
+    } else {
+        LOG_INFO(Debug, "Co-op team lobby: the save plays alone");
+    }
+    return false;
+}
+
+void TeamBackAtTitle() {
+    if (!team_switch) {
+        return;
+    }
+    std::scoped_lock lock{team_mutex};
+    if (lobby_playing || team_gate.Holding()) {
+        team_gate.Reset();
+        lobby_playing = false;
+        lobby_hello_due = true;
+    }
+}
+
+std::optional<bbcoop::LobbyState> TeamLobbyState() {
+    std::scoped_lock lock{team_mutex};
+    return team_gate.Lobby();
+}
+
+std::string TeamLobbyMember() {
+    std::scoped_lock lock{team_mutex};
+    return lobby_member;
+}
+
+void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id) {
+    bbcoop::Envelope envelope;
+    bbcoop::TeamRequest& request = *envelope.mutable_team_request();
+    request.set_action(action);
+    if (action == bbcoop::TeamRequest::ACCEPT || action == bbcoop::TeamRequest::DECLINE) {
+        request.set_team(id);
+    } else {
+        request.set_member(id);
+    }
+    LOG_INFO(Debug, "Co-op team lobby: the menu asks {} {}", bbcoop::TeamRequest::Action_Name(action),
+             id);
+    QueueLobby(std::move(envelope));
+}
+
+bool IsTeamTitleVerb(std::string_view verb) {
+    return verb.starts_with("team-");
+}
+
+bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed,
+                      std::string& failure) {
+    constexpr double TimeoutSeconds = 180.0;
+    std::optional<bbcoop::LobbyState> lobby;
+    {
+        std::scoped_lock lock{team_mutex};
+        lobby = team_gate.Lobby();
+    }
+    const auto request = [](bbcoop::TeamRequest::Action action, std::string member = {},
+                            std::string team = {}) {
+        bbcoop::Envelope envelope;
+        envelope.mutable_team_request()->set_action(action);
+        envelope.mutable_team_request()->set_member(std::move(member));
+        envelope.mutable_team_request()->set_team(std::move(team));
+        QueueLobby(std::move(envelope));
+    };
+    bool done = false;
+    if (command.verb == "team-create") {
+        // Once the lobby answered: create, then wait for the team in the state.
+        done = lobby && lobby->has_team();
+        if (lobby && !lobby->has_team() && (!begun || elapsed > 5.0)) {
+            request(bbcoop::TeamRequest::CREATE);
+        }
+    } else if (command.verb == "team-invite" && command.args.size() == 1) {
+        const std::string member = BoardMemberOfOnlineId(command.args[0]);
+        if (lobby && lobby->has_team()) {
+            for (const bbcoop::LobbyPlayer& player : lobby->players()) {
+                if (player.member() == member) {
+                    request(bbcoop::TeamRequest::INVITE, member);
+                    done = true;
+                }
+            }
+        }
+    } else if (command.verb == "team-accept") {
+        done = lobby && lobby->has_team();
+        if (!done && lobby && lobby->invites_size() > 0) {
+            request(bbcoop::TeamRequest::ACCEPT, {}, lobby->invites(0).team());
+        }
+    } else if (command.verb == "team-wait" && command.args.size() == 1) {
+        done = lobby && lobby->has_team() &&
+               lobby->team().members_size() >= std::atoi(command.args[0].c_str());
+    } else {
+        failure = "unknown team verb";
+        return false;
+    }
+    if (!done && elapsed > TimeoutSeconds) {
+        failure = "timed out in the lobby";
+    }
+    return done;
 }
 
 } // namespace Coop

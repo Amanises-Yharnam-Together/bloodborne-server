@@ -137,8 +137,8 @@ void StartRestBoardClient() {
     const char* party_setting = std::getenv("SHADPS4_BLOODBORNE_PARTY");
     const auto party = party_setting ? ParsePartySetting(party_setting) : std::nullopt;
     const std::string base_url = EmulatorSettings.GetShadNetWebApiServer();
-    if (!lamp_rest_hooks_installed || !party || !EmulatorSettings.IsShadNetEnabled() ||
-        base_url.empty()) {
+    if (!lamp_rest_hooks_installed || (!party && !TeamModeOn()) ||
+        !EmulatorSettings.IsShadNetEnabled() || base_url.empty()) {
         return;
     }
     // The boards go over the server's world (StartVitalsBoardClient starts them).
@@ -1073,7 +1073,8 @@ void StartVitalsBoardClient() {
     const char* party_setting = std::getenv("SHADPS4_BLOODBORNE_PARTY");
     const auto party = party_setting ? ParsePartySetting(party_setting) : std::nullopt;
     const std::string base_url = EmulatorSettings.GetShadNetWebApiServer();
-    if (!party_controller || !party || !EmulatorSettings.IsShadNetEnabled() || base_url.empty()) {
+    if (!party_controller || (!party && !TeamModeOn()) || !EmulatorSettings.IsShadNetEnabled() ||
+        base_url.empty()) {
         return;
     }
     // Every board goes over the party's world on the server (one client for all of them); there are

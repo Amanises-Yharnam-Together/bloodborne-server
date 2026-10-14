@@ -12,6 +12,7 @@
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_write_watch.h"
+#include "coop.pb.h"
 
 #include <algorithm>
 #include <array>
@@ -708,6 +709,25 @@ std::optional<WorldLogMapState> ServerMapState();
 WorldLogHp ServerHp();
 // Step 3c, what the HTTP boards carried: the stream (its thread) runs without a kill step too.
 void StartServerWorld();
+// Phase 5, the team lobby (bloodborne_team.h): SHADPS4_BLOODBORNE_TEAMS=1 with the server world.
+// The party is the team's: its key and this game's role come with the team's Start.
+bool TeamModeOn();
+// At the game's start: signs in to the server's lobby once the game has its online id.
+void StartTeamLobby();
+// The title loads the save in `slot` (TitleStep's load state, the game thread): true holds the load
+// a frame more (waiting for the team's Start); false lets it go, the team's party set if any.
+bool HoldTitleLoadForTeam(u32 slot);
+// The title menu is up again: the next load asks the team again.
+void TeamBackAtTitle();
+// The rig's lobby verbs (team-*), run on the title screen: true once done, `failure` if failed.
+bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed,
+                      std::string& failure);
+bool IsTeamTitleVerb(std::string_view verb);
+// The lobby as the server last sent it, for the game's menu (none before its answer), and this
+// player's lobby name; a request from the menu.
+std::optional<bbcoop::LobbyState> TeamLobbyState();
+std::string TeamLobbyMember();
+void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id);
 // This member's part of each board (bloodborne_boards.cpp's rounds send them).
 void SendServerMap(u32 map);
 void SendServerRest(s32 lamp, const std::optional<LampPosition>& at);

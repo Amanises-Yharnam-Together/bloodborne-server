@@ -87,6 +87,34 @@ void bbcoop_file_opened(const char *guest_path);
 /* The game unlocked a trophy itself; party members get it too. */
 void bbcoop_trophy_unlocked(int32_t trophy_id);
 
+/* Phase 5, the team lobby (SHADPS4_BLOODBORNE_TEAMS=1), for the game's own menu
+ * (bbport_game_menu.cpp's Co-op Team page). Names are UTF-8; `id` is what a request names (a
+ * player's lobby member, a team's id). */
+enum { BBCOOP_LOBBY_TEAM = 4, BBCOOP_LOBBY_PLAYERS = 16, BBCOOP_LOBBY_INVITES = 8 };
+enum { BBCOOP_LOBBY_OFFLINE, BBCOOP_LOBBY_TITLE, BBCOOP_LOBBY_PLAYING };
+typedef struct bbcoop_lobby_entry {
+    char name[40];
+    char id[40];
+    int state; /* BBCOOP_LOBBY_*: a player's or a member's */
+    int ready; /* a member's */
+} bbcoop_lobby_entry;
+typedef struct bbcoop_lobby {
+    int signed_in; /* the server answered */
+    int in_team, leader, started;
+    int member_count, player_count, invite_count;
+    bbcoop_lobby_entry members[BBCOOP_LOBBY_TEAM];       /* the leader first */
+    bbcoop_lobby_entry players[BBCOOP_LOBBY_PLAYERS];    /* others signed in, not in this team */
+    bbcoop_lobby_entry invites[BBCOOP_LOBBY_INVITES];    /* name: who invited, id: the team */
+    char notice[96];                                      /* the server's last refusal */
+} bbcoop_lobby;
+/* Fills `lobby`; 0 when the team lobby is off. */
+int bbcoop_lobby_view(bbcoop_lobby *lobby);
+/* The menu's requests (TeamRequest actions): create, leave, invite a player (`id`), accept or
+ * decline an invite (`id`: its team), remove a member (`id`). */
+enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
+       BBCOOP_TEAM_DECLINE = 4, BBCOOP_TEAM_LEAVE = 5, BBCOOP_TEAM_REMOVE = 6 };
+void bbcoop_lobby_request(int action, const char *id);
+
 #ifdef __cplusplus
 }
 #endif

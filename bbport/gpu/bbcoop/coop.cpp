@@ -23,6 +23,7 @@
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
+#include "core/bloodborne_re_internal.h"
 #include "core/cpu_patches.h"
 #include "core/file_format/psf.h"
 #include "core/libraries/np/np_trophy.h"
@@ -212,6 +213,86 @@ extern "C" int bbcoop_portrait_slot(int slot, uint8_t* rgba, size_t size, uint32
         *version = seen;
     }
     return shown ? 1 : 0;
+}
+
+namespace {
+
+void CopyName(char* out, size_t size, const std::string& text) {
+    const size_t n = std::min(size - 1, text.size());
+    std::memcpy(out, text.data(), n);
+    out[n] = '\0';
+}
+
+int LobbyStateOf(bbcoop::LobbyPlayer::State state) {
+    return state == bbcoop::LobbyPlayer::PLAYING ? BBCOOP_LOBBY_PLAYING
+           : state == bbcoop::LobbyPlayer::TITLE ? BBCOOP_LOBBY_TITLE
+                                                 : BBCOOP_LOBBY_OFFLINE;
+}
+
+} // namespace
+
+extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
+    namespace Coop = Core::Bloodborne::Coop;
+    *lobby = {};
+    if (!Coop::TeamModeOn()) {
+        return 0;
+    }
+    const auto state = Coop::TeamLobbyState();
+    if (!state) {
+        return 1;
+    }
+    const std::string me = Coop::TeamLobbyMember();
+    lobby->signed_in = 1;
+    CopyName(lobby->notice, sizeof(lobby->notice), state->notice());
+    if (state->has_team()) {
+        const bbcoop::Team& team = state->team();
+        lobby->in_team = 1;
+        lobby->leader = team.leader() == me;
+        lobby->started = team.started();
+        // The leader first.
+        std::vector<const bbcoop::TeamMember*> members;
+        for (const bbcoop::TeamMember& m : team.members()) {
+            if (m.member() == team.leader()) {
+                members.insert(members.begin(), &m);
+            } else {
+                members.push_back(&m);
+            }
+        }
+        for (const bbcoop::TeamMember* m : members) {
+            if (lobby->member_count == BBCOOP_LOBBY_TEAM) {
+                break;
+            }
+            bbcoop_lobby_entry& out = lobby->members[lobby->member_count++];
+            CopyName(out.name, sizeof(out.name), m->name());
+            CopyName(out.id, sizeof(out.id), m->member());
+            out.state = LobbyStateOf(m->state());
+            out.ready = m->ready();
+        }
+    }
+    for (const bbcoop::LobbyPlayer& player : state->players()) {
+        const bool mine = state->has_team() && player.team() == state->team().id();
+        if (mine || lobby->player_count == BBCOOP_LOBBY_PLAYERS) {
+            continue;
+        }
+        bbcoop_lobby_entry& out = lobby->players[lobby->player_count++];
+        CopyName(out.name, sizeof(out.name), player.name());
+        CopyName(out.id, sizeof(out.id), player.member());
+        out.state = LobbyStateOf(player.state());
+    }
+    for (const bbcoop::TeamInvite& invite : state->invites()) {
+        if (lobby->invite_count == BBCOOP_LOBBY_INVITES) {
+            break;
+        }
+        bbcoop_lobby_entry& out = lobby->invites[lobby->invite_count++];
+        CopyName(out.name, sizeof(out.name), invite.from_name());
+        CopyName(out.id, sizeof(out.id), invite.team());
+    }
+    return 1;
+}
+
+extern "C" void bbcoop_lobby_request(int action, const char* id) {
+    Core::Bloodborne::Coop::TeamLobbyRequest(static_cast<bbcoop::TeamRequest::Action>(action),
+                                             id ? id : "");
 }
 
 extern "C" void bbcoop_file_opened(const char* guest_path) {

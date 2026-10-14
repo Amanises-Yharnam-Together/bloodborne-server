@@ -792,6 +792,45 @@ SCENARIOS = {
         "allow": CRASH_CLEANUP,
         "timeout": 1080,
     },
+    # Phase 5: the team lobby. The party is no setting: on the title the host creates a team and
+    # invites, the guests accept; each one's Continue is its Ready, the host's is the team's Start.
+    "team-join": {
+        "about": "a team from the lobby: the host creates it and invites the guest, both press "
+                 "Continue and play in one session (no party setting)",
+        "roles": {
+            "host": ["team-create", "team-invite rig_guest", "team-wait 2", START,
+                     "wait-session 2 300", "wait 10", "snapshot", "expect-session 2"],
+            "guest": ["team-accept", START, "wait-session 2 300", "wait 10", "snapshot",
+                      "expect-session 2"],
+        },
+        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
+        "expect": {
+            "host": [r"Co-op team lobby: the save plays in team \w+ as its host",
+                     r"team lobby: a save's load waits for the team's Start"],
+            "guest": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    "team-join3": {
+        "about": "a team of three from the lobby: the host invites both guests",
+        "roles": {
+            "host": ["team-create", "team-invite rig_guest", "team-invite rig_guest2",
+                     "team-wait 3", START, "godmode", "wait-session 3 480", "wait 10",
+                     "snapshot", "expect-session 3"],
+            "guest": ["team-accept", START, "godmode", "wait-session 3 480", "wait 10",
+                      "snapshot", "expect-session 3"],
+            "guest2": ["team-accept", START, "godmode", "wait-session 3 480", "wait 10",
+                       "snapshot", "expect-session 3"],
+        },
+        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
+        "expect": {
+            "host": [r"Co-op team lobby: the save plays in team \w+ as its host"],
+            "guest": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
+            "guest2": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
+        },
+        "timeout": 900,
+    },
     "join3": {
         "about": "a party of three: both guests join the host (one bell summons both)",
         "roles": {
