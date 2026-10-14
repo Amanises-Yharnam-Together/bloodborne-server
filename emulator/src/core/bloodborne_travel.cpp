@@ -425,7 +425,22 @@ void PS4_SYSV_ABI NoteEsdFunction(u64, GuestRegisterSnapshot* registers) {
     esd_function_asked = static_cast<s32>(registers->rax);
 }
 
+// ESD function 26 (`movzx eax, byte [r15 + 0x30]`, a flag of the talk) answered 1 for a party
+// guest, and the lamp scripts take their prompt only on 0 (with f14, f19, f27 and f31): a guest
+// could use no lamp (playtest 2026-10-13, rig guest-lamp-rest). A party guest in its session gets
+// the host's 0.
+constexpr s32 EsdTalkFlag30 = 26;
+
 void PS4_SYSV_ABI NoteEsdAnswer(u64, GuestRegisterSnapshot* registers) {
+    if (esd_function_asked == EsdTalkFlag30 && (registers->rax & 0xFF) != 0 &&
+        lamp_rest_hooks_installed && IsPartyGuestRole() && InPartySession()) {
+        static std::atomic<bool> logged{};
+        if (!logged.exchange(true)) {
+            LOG_INFO(Debug, "Bloodborne party guest talk: ESD function 26 answered 1; 0 as the "
+                            "host's");
+        }
+        registers->rax &= ~u64{0xFF};
+    }
     if (!esd_answers_wanted.load(std::memory_order_relaxed)) {
         return;
     }
@@ -1389,7 +1404,11 @@ void TickPlayersOnThisMap() {
     RestoreSearchAfterTrip(in_session);
     const u32 map = PlayingMap();
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
-    ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
+    if (EnemyOwnerOn()) {
+        TickEnemyOwner(in_session, IsUsablePackedMap(map) ? map : 0);
+    } else {
+        ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
+    }
     GrantPartyEchoes();
     TickTrades();
     FinishWaitingJoins(in_session);

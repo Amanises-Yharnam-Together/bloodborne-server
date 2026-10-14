@@ -138,6 +138,22 @@ std::string TradeNoticeText(const TradeClient::Notice& notice) {
     return {};
 }
 
+bool IsTradeMessage(const bbcoop::Envelope& envelope) {
+    switch (envelope.body_case()) {
+    case bbcoop::Envelope::kTradeOffer:
+    case bbcoop::Envelope::kTradeStatus:
+    case bbcoop::Envelope::kTradeAsk:
+    case bbcoop::Envelope::kTradeAnswer:
+    case bbcoop::Envelope::kTradeCancel:
+    case bbcoop::Envelope::kTradeClosed:
+    case bbcoop::Envelope::kTradeGrant:
+    case bbcoop::Envelope::kTradeGranted:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // TradeDesk
 
 void TradeDesk::Grant(Result& result, const std::string& member, u64 trade, const std::string& from,

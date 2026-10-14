@@ -173,7 +173,7 @@ void Fill(const BbSettings::Values& s, int* values) {
     values[Sharpness] =
         s.sharpen ? std::clamp(int(std::lround(s.sharpness / SharpnessStep)), 1, SharpnessSteps - 1) : 0;
     values[ShowFps] = s.show_fps;
-    values[FpsLimit] = BbSettings::FpsLimitIndex(s.fps_limit);
+    values[FpsLimit] = BbSettings::FrameRateLocked() ? 0 : BbSettings::FpsLimitIndex(s.fps_limit);
     values[DlssModel] = BbSettings::DlssModelIndex(s.dlss_model);
     values[WindowModeField] = std::clamp(s.window_mode.load(), 0, BbSettings::WindowModeCount - 1);
     values[Hdr] = s.hdr;
@@ -313,7 +313,13 @@ void DefineTexts() {
         {AddText("Default", "По умолчанию"), AddText("K", "K"), AddText("L", "L"), AddText("M", "M"),
          AddText("J", "J")},
         Kind::Steps);
-    {
+    if (BbSettings::FrameRateLocked()) {
+        // Co-op: the game's fixed 60 FPS, one choice that cannot change (Apply keeps the limit).
+        row(FpsLimit, "FPS limit", "Лимит FPS",
+            "Co-op plays at the game's fixed 60 FPS, the same for every player",
+            "Кооператив идёт на собственных 60 FPS игры, одинаково у всех игроков",
+            {AddText("60 (co-op)", "60 (кооператив)")});
+    } else {
         std::vector<u32> limits;
         for (int i = 0; i < BbSettings::FpsLimitCount; ++i) {
             const int fps = BbSettings::FpsLimits[i];
@@ -784,7 +790,9 @@ void Poll() {
         s.sharpness = std::clamp(values[Sharpness], 0, SharpnessSteps - 1) * SharpnessStep;
     }
     s.show_fps = values[ShowFps] != 0;
-    s.fps_limit = BbSettings::FpsLimits[std::clamp(values[FpsLimit], 0, BbSettings::FpsLimitCount - 1)];
+    if (!BbSettings::FrameRateLocked()) {
+        s.fps_limit = BbSettings::FpsLimits[std::clamp(values[FpsLimit], 0, BbSettings::FpsLimitCount - 1)];
+    }
     s.dlss_model = BbSettings::DlssModels[std::clamp(values[DlssModel], 0, BbSettings::DlssModelCount - 1)];
     s.window_mode = std::clamp(values[WindowModeField], 0, BbSettings::WindowModeCount - 1);
     s.hdr = values[Hdr] != 0;

@@ -61,6 +61,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"native packet trace", false},
     {"channel table", false},
     {"game packet link", false},
+    {"enemy owner", false},
     {"host leaves", true},
     {"seamless travel", true},
     {"stop request", true},
@@ -71,6 +72,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"talk host", false},
     {"level sync", false},
     {"solid NPCs", false},
+    {"guests hit NPCs", false},
     {"full echoes", false},
     {"echo diagnostics", false},
     {"trading", false},
@@ -259,6 +261,15 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // The game's packets in our frames (InstallGamePacketLink): the transport send (the member
     // queues' fill 0x01790C20 is called, not hooked).
     {"transport send", "game packet link", CoopSiteKind::Hook, 0x00C8F0A0, "55 48 89 E5 41 57"},
+    // Phase 4's enemy owners (InstallEnemyOwner, see EnemyRole): the HP sync's host-only checks,
+    // the receive from the host and the hit on an enemy.
+    {"enemy HP round check", "enemy owner", CoopSiteKind::Hook, 0x018EF26C, "48 8B 9D 08 FF FF FF"},
+    {"enemy HP state read", "enemy owner", CoopSiteKind::Hook, 0x018EF578, "8B 87 24 01 00 00"},
+    {"enemy HP send branch", "enemy owner", CoopSiteKind::Hook, 0x018EF587, "80 BB 64 06 00 00 00"},
+    {"enemy HP receive branch", "enemy owner", CoopSiteKind::Hook, 0x018EF684, "49 89 DC 48 85 FF"},
+    {"receive from host member", "enemy owner", CoopSiteKind::Hook, 0x01789495,
+     "48 81 C3 D0 00 00 00"},
+    {"enemy hit state read", "enemy owner", CoopSiteKind::Hook, 0x01A2A102, "8B 88 24 01 00 00"},
 
     {"leave limit", "host leaves", CoopSiteKind::Hook, 0x0138A4A0, "55 48 89 E5 53 50"},
 
@@ -289,6 +300,20 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
 
     {"level sync decision", "level sync", CoopSiteKind::Hook, 0x01507DB5,
      "41 0F B6 46 2C 0F B6 CB"},
+    // The team relation tables ([attacker's team][victim's], 32 x 32 bytes: hit as an enemy
+    // 0x04731560, hit as a friend 0x04731960; lock-on's 0x05127B90 is made at run time and left
+    // alone, a swing hits without it): a co-op guest (team 20) could
+    // not hit what the host (19) can, the friendly NPCs (teams 8, 9, 12, 26-28): the hag by the
+    // Cathedral Ward lamp took no hits from guests (playtest 2026-10-13, rig ward-npc). Row 20
+    // takes row 19's entries there.
+    {"guest hits NPCs as enemies", "guests hit NPCs", CoopSiteKind::Patch, 0x047317E8,
+     "00 00 00 00 00", "01 01 00 00 01"},
+    {"guest hits NPCs as enemies 26-28", "guests hit NPCs", CoopSiteKind::Patch, 0x047317FA,
+     "00 00 00", "01 01 01"},
+    {"guest hits NPCs as friends", "guests hit NPCs", CoopSiteKind::Patch, 0x04731BE8,
+     "00 00 00 00 00", "01 00 00 00 01"},
+    {"guest hits NPCs as friends 26-28", "guests hit NPCs", CoopSiteKind::Patch, 0x04731BFA,
+     "00 00 00", "01 00 01"},
     {"NPC wander check", "solid NPCs", CoopSiteKind::Hook, 0x018E4FB6,
      "8B 88 45 01 00 00 F6 C1 80"},
     {"NPC wander type check", "solid NPCs", CoopSiteKind::Hook, 0x018D8934,

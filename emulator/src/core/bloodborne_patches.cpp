@@ -467,17 +467,22 @@ void InstallNativePacketTrace(u64 base, u64 image_size) {
 // Members are found on the map board by their online id; a board this old knows no map.
 constexpr auto ChannelTableBoardAge = std::chrono::seconds{5};
 
-// The map board's map of a member (`member_id` the game's {identity*, lock}), or nothing.
-std::optional<u32> BoardMapOf(u64 member_id) {
+// A member's name on the boards (`member_id` the game's {identity*, lock}), or "".
+std::string BoardMemberOfMemberId(u64 member_id) {
     const u64 identity = member_id >= 0x10000 ? ReadValue<u64>(member_id, 0) : 0;
     if (identity < 0x10000 || !HasMemoryAccess(identity + 0x36, 17, MemoryProt::CpuRead)) {
-        return std::nullopt;
+        return {};
     }
     const auto online_id = NpOnlineIdAt({reinterpret_cast<const u8*>(identity + 0x36), 17});
-    if (!online_id) {
+    return online_id ? BoardMemberOfOnlineId(*online_id) : std::string{};
+}
+
+// The map board's map of a member (`member_id` the game's {identity*, lock}), or nothing.
+std::optional<u32> BoardMapOf(u64 member_id) {
+    const std::string member = BoardMemberOfMemberId(member_id);
+    if (member.empty()) {
         return std::nullopt;
     }
-    const std::string member = BoardMemberOfOnlineId(*online_id);
     std::scoped_lock lock{map_board_mutex};
     if (std::chrono::steady_clock::now() - map_board_time > ChannelTableBoardAge) {
         return std::nullopt;
@@ -486,11 +491,42 @@ std::optional<u32> BoardMapOf(u64 member_id) {
     return entry != map_board.end() ? std::optional{entry->map} : std::nullopt;
 }
 
+// Phase 4's enemy owners are on (see InstallEnemyOwner).
+bool enemy_owner_installed = false;
+
+// An enemy packet the owners drop: logged once per channel and way.
+void LogEnemyPacketDropped(u32 channel, PacketWay way, EnemyRole role) {
+    static std::array<std::array<std::atomic<bool>, NativeChannelCount>, 2> logged{};
+    if (channel < NativeChannelCount && !logged[static_cast<size_t>(way)][channel].exchange(true)) {
+        LOG_INFO(Debug, "Bloodborne enemy owner: first {} packet on channel {:#x} dropped ({})",
+                 way == PacketWay::Out ? "sent" : "received", channel,
+                 role == EnemyRole::Owner      ? "this game runs the area"
+                 : role == EnemyRole::Follower ? "not from the area's owner"
+                                               : "the game's own hand-out");
+    }
+}
+
 // Whether the game keeps a packet; a dropped one is logged once per channel and way, and put on
 // the co-op trace ("net-drop") while the packet trace runs.
 bool KeepsPacket(u32 channel, PacketWay way, u64 member_id) {
     if (channel >= NativeChannelCount) {
         return true;
+    }
+    if (enemy_owner_installed && way == PacketWay::In) {
+        // A follower takes the enemies from the area's owner only (see KeepsEnemyPacketIn).
+        const EnemyRole role = CurrentEnemyRole();
+        bool from_owner = false;
+        if (role == EnemyRole::Follower) {
+            const std::string owner = CurrentEnemyOwner();
+            from_owner = !owner.empty() && BoardMemberOfMemberId(member_id) == owner;
+        }
+        if (!KeepsEnemyPacketIn(channel, role, from_owner)) {
+            LogEnemyPacketDropped(channel, way, role);
+            return false;
+        }
+        if (channel == 0x15 && role == EnemyRole::Owner) {
+            ForceEnemySteps();
+        }
     }
     const ChannelPolicy policy = NativeChannelPolicy(channel);
     if (policy == ChannelPolicy::Pass) {
@@ -517,10 +553,33 @@ bool KeepsPacket(u32 channel, PacketWay way, u64 member_id) {
     return false;
 }
 
-// The send's entry (0x017894E0: rdi the net sync, rsi the member id, edx the channel): true
-// returns 0, "not sent", as the game's own checks do.
+bool SendHitToOwner(const GuestRegisterSnapshot* registers); // below, with the game link
+
+// The send's entry (0x017894E0: rdi the net sync, rsi the member id, edx the channel, rcx the
+// payload, r8d its size): true returns 0, "not sent", as the game's own checks do.
 bool PS4_SYSV_ABI DecidePacketSend(u64, const GuestRegisterSnapshot* registers) {
-    return !KeepsPacket(static_cast<u32>(registers->rdx), PacketWay::Out, registers->rsi);
+    const u32 channel = static_cast<u32>(registers->rdx);
+    if (enemy_owner_installed) {
+        const EnemyRole role = CurrentEnemyRole();
+        switch (EnemyPacketOut(channel, role)) {
+        case EnemyPacketFate::ToOwner:
+            if (SendHitToOwner(registers)) {
+                CountEnemyPacketSent(channel);
+                return true;
+            }
+            break; // no link to the owner: the game's own way
+        case EnemyPacketFate::Drop:
+            LogEnemyPacketDropped(channel, PacketWay::Out, role);
+            return true;
+        case EnemyPacketFate::Keep:
+            break;
+        }
+    }
+    const bool dropped = !KeepsPacket(channel, PacketWay::Out, registers->rsi);
+    if (!dropped) {
+        CountEnemyPacketSent(channel);
+    }
+    return dropped;
 }
 
 // The receive's channel checks in 0x01790C20 (r8 / rbx the member's queues, their member id at
@@ -544,8 +603,10 @@ void PS4_SYSV_ABI DecidePacketReceived(u64 tag, GuestRegisterSnapshot* registers
 
 void InstallChannelTable(u64 base, u64 image_size) {
 #ifdef BLOODBORNE_NATIVE_PORT
-    const bool wanted = party_controller.has_value() &&
-                        ChannelTableEnabled(std::getenv("SHADPS4_BLOODBORNE_CHANNEL_TABLE"));
+    // Phase 4's enemy owners decide at the table's hooks too.
+    const bool wanted =
+        party_controller.has_value() &&
+        (ChannelTableEnabled(std::getenv("SHADPS4_BLOODBORNE_CHANNEL_TABLE")) || EnemyOwnerOn());
 #else
     // The port only (docs/SERVER_COOP_PLAN.md); shadPS4 keeps the old path.
     const bool wanted = false;
@@ -659,6 +720,162 @@ bool PS4_SYSV_ABI TakeGamePacket(u64, GuestRegisterSnapshot* registers) {
     }
     registers->rax = 1;
     return true;
+}
+
+// A follower's hit on an enemy (ch 0x15, 12 bytes {chr id, damage, poise}) to the area's owner,
+// through our link (the game sends it to the session's host): true when it went.
+bool SendHitToOwner(const GuestRegisterSnapshot* registers) {
+    const std::string owner = CurrentEnemyOwner();
+    const u64 payload = registers->rcx;
+    const u32 size = static_cast<u32>(registers->r8);
+    if (owner.empty() || payload < 0x10000 || size == 0 || size > 0x100 ||
+        !HasMemoryAccess(payload, size, MemoryProt::CpuRead)) {
+        return false;
+    }
+    std::vector<u8> packet(8 + size);
+    const u32 channel = static_cast<u32>(registers->rdx);
+    std::memcpy(packet.data(), &channel, 4);
+    std::memcpy(packet.data() + 4, &size, 4);
+    std::memcpy(packet.data() + 8, reinterpret_cast<const void*>(payload), size);
+    std::scoped_lock lock{game_link.mutex};
+    if (game_link.self.empty()) {
+        return false;
+    }
+    for (const auto& [member, address] : game_link.addresses) {
+        if (BoardMemberOfOnlineId(member) == owner) {
+            // Reliable, as the game sends channels above 6.
+            GameLinkPeerOf(member).Send(PacketClass::Reliable, packet, GameLinkNowMs());
+            ++game_link.sent;
+            static std::atomic<u32> logged{0};
+            if (logged.fetch_add(1) < 10) {
+                LOG_INFO(Debug, "Bloodborne enemy owner: a hit on {:#x} went to the owner {}",
+                         ReadValue<u32>(payload, 0), owner);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+// Phase 4's hooks (see EnemyRole and the offsets beside it). Stand-ins of SprjSessionManager for
+// one read of its state (+0x124): the host's and a guest's.
+struct SessionStateStandIn {
+    alignas(16) std::array<u8, 0x130> bytes{};
+    explicit SessionStateStandIn(s32 state) {
+        std::memcpy(bytes.data() + MatchingStateOffset, &state, sizeof(state));
+    }
+    u64 Address() const {
+        return reinterpret_cast<u64>(bytes.data());
+    }
+};
+const SessionStateStandIn hosting_stand_in{MatchingStateHosting};
+const SessionStateStandIn guest_stand_in{MatchingStateSummonedGuest};
+
+u64 StandInFor(s32 state) {
+    return state == MatchingStateHosting ? hosting_stand_in.Address() : guest_stand_in.Address();
+}
+
+// The game's thread runs the HP sync: the session manager the stand-in replaced, put back on the
+// branch taken.
+thread_local u64 enemy_hp_session = 0;
+
+void PS4_SYSV_ABI SetEnemyHpRoundState(u64, GuestRegisterSnapshot* registers) {
+    const s32 state = ReadValue<s32>(registers->rax, MatchingStateOffset);
+    if (const auto wanted = EnemySyncState(CurrentEnemyRole(), state)) {
+        constexpr u64 ZeroFlag = u64{1} << 6;
+        registers->rflags = *wanted == MatchingStateHosting ? (registers->rflags | ZeroFlag)
+                                                            : (registers->rflags & ~ZeroFlag);
+    }
+}
+
+void PS4_SYSV_ABI SetEnemyHpSendState(u64, GuestRegisterSnapshot* registers) {
+    enemy_hp_session = 0;
+    const s32 state = ReadValue<s32>(registers->rdi, MatchingStateOffset);
+    if (const auto wanted = EnemySyncState(CurrentEnemyRole(), state)) {
+        enemy_hp_session = registers->rdi;
+        registers->rdi = StandInFor(*wanted);
+    }
+}
+
+void PS4_SYSV_ABI RestoreEnemyHpSession(u64, GuestRegisterSnapshot* registers) {
+    if (enemy_hp_session != 0) {
+        registers->rdi = enemy_hp_session;
+        enemy_hp_session = 0;
+    }
+}
+
+// The receive from the host (0x017893E0) of the enemies' HP (ch 5, r12d): a follower reads the
+// owner's member instead (the session's members at [+0xF8, +0x100), 0x20 each; rbx is the session
+// manager before `add rbx, 0xD0`).
+void PS4_SYSV_ABI ReceiveHpFromOwner(u64, GuestRegisterSnapshot* registers) {
+    if (static_cast<u32>(registers->r12) != 0x05 || CurrentEnemyRole() != EnemyRole::Follower) {
+        return;
+    }
+    const std::string owner = CurrentEnemyOwner();
+    const u64 session = registers->rbx;
+    if (owner.empty() || session < 0x10000) {
+        return;
+    }
+    const u64 first = ReadValue<u64>(session, 0xF8);
+    const u64 end = ReadValue<u64>(session, 0x100);
+    if (first < 0x10000 || end < first || end - first > 0x20 * 8) {
+        return;
+    }
+    for (u64 entry = first; entry < end; entry += 0x20) {
+        if (BoardMemberOfMemberId(entry) == owner) {
+            registers->rbx = entry - 0xD0;
+            return;
+        }
+    }
+}
+
+void PS4_SYSV_ABI SetEnemyHitState(u64, GuestRegisterSnapshot* registers) {
+    const s32 state = ReadValue<s32>(registers->rax, MatchingStateOffset);
+    if (const auto wanted = EnemyHitState(CurrentEnemyRole(), state)) {
+        registers->rax = StandInFor(*wanted);
+    }
+}
+
+void InstallEnemyOwner(u64 base, u64 image_size) {
+    if (!EnemyOwnerOn()) {
+        return;
+    }
+    if (!channel_table_installed) {
+        coop_features.Skipped("enemy owner", "the channel table is off");
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "enemy owner", "enemies keep the old path")) {
+        return;
+    }
+    struct Hook {
+        u64 offset;
+        std::span<const u8> bytes;
+        GuestRegisterEditHook hook;
+    };
+    const std::array<Hook, 6> hooks{{
+        {EnemyHpRoundCheckOffset, EnemyHpRoundCheck, SetEnemyHpRoundState},
+        {EnemyHpStateReadOffset, EnemyHpStateRead, SetEnemyHpSendState},
+        {EnemyHpSendBranchOffset, EnemyHpSendBranch, RestoreEnemyHpSession},
+        {EnemyHpReceiveBranchOffset, EnemyHpReceiveBranch, RestoreEnemyHpSession},
+        {ReceiveFromHostMemberOffset, ReceiveFromHostMember, ReceiveHpFromOwner},
+        {EnemyHitStateReadOffset, EnemyHitStateRead, SetEnemyHitState},
+    }};
+    // All or none: a stand-in nobody puts back would break the game.
+    for (size_t installed = 0; installed < hooks.size(); ++installed) {
+        if (!InstallCoopHook(reinterpret_cast<void*>(base + hooks[installed].offset),
+                             hooks[installed].bytes, installed, hooks[installed].hook)) {
+            for (size_t undo = 0; undo < installed; ++undo) {
+                RemoveGuestCodeHook(reinterpret_cast<void*>(base + hooks[undo].offset));
+            }
+            coop_features.Skipped("enemy owner",
+                                  SiteFailure(base, image_size, hooks[installed].offset));
+            return;
+        }
+    }
+    enemy_owner_installed = true;
+    coop_features.On("enemy owner");
+    LOG_INFO(Debug, "Bloodborne enemy owner: on (the server's owner of each area runs its "
+                    "enemies, the others follow it)");
 }
 
 // The peer (its queues) of a member in NetSync's list, or 0.
@@ -952,6 +1169,18 @@ void InstallMoviePlayerDeleteDelay(u64 base, u64 image_size) {
     coop_features.On("movie player delete delay");
 }
 
+// A co-op guest hits the friendly NPCs as the host does (see the "guests hit NPCs" sites).
+void InstallGuestsHitNpcs(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "guests hit NPCs", "guests cannot hit NPCs")) {
+        return;
+    }
+    WriteCoopPatches(base, "guests hit NPCs");
+    coop_features.On("guests hit NPCs");
+}
+
 // Trading (bloodborne_trade.cpp, SHADPS4_BLOODBORNE_TRADE=1): the game functions it calls to take
 // items out of the inventory and put them in.
 void InstallTrading(u64 base, u64 image_size) {
@@ -1178,6 +1407,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallBossClearKeepsSession(base, image_size);
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
+    InstallGuestsHitNpcs(base, image_size);
     InstallMoviePlayerDeleteDelay(base, image_size);
     InstallShortSummonSlotHold(base, image_size);
     InstallBossDeathTracer(base, image_size);
@@ -1189,6 +1419,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     // Before the shared loot: the table takes over its map item packets.
     InstallChannelTable(base, image_size);
     InstallGamePacketLink(base, image_size);
+    InstallEnemyOwner(base, image_size);
     InstallSharedLoot(base, image_size);
     InstallLampsStayLitAtRegistration(base, image_size);
     InstallDeferredBossItems(base, image_size);

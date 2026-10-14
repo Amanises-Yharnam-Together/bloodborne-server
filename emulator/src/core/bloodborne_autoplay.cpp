@@ -803,16 +803,25 @@ bool AutoplayReviveDowned(const AutoplayStep& step) {
         return true;
     }
     // The body itself (the other player nearest to where the board has it), not the board's
-    // position, which lags: swings aimed at it missed (rig 2026-10-12, one hit in 7 s).
+    // position, which lags: swings aimed at it missed (rig 2026-10-12, one hit in 7 s). A body
+    // with the downed team (DownedTeams::Hostile) comes first: in a party of three the nearest
+    // was the host standing by, and the swings circled it (rig down-revive3 2026-10-14).
+    const LampPosition posted = *downed;
     float nearest = 4.0f;
+    bool nearest_downed = false;
     for (const OtherPlayer& other : OtherPlayers()) {
-        if (other.at) {
-            const float d =
-                std::hypot((*other.at)[0] - (*downed)[0], (*other.at)[2] - (*downed)[2]);
-            if (d < nearest) {
-                nearest = d;
-                downed = *other.at;
-            }
+        if (!other.at ||
+            !HasMemoryAccess(other.character, CharacterTeamOffset + 4, MemoryProt::CpuRead)) {
+            continue;
+        }
+        const bool is_downed =
+            ReadValue<s32>(other.character, CharacterTeamOffset) == DownedTeams::Hostile;
+        const float d = std::hypot((*other.at)[0] - posted[0], (*other.at)[2] - posted[2]);
+        if (d < 4.0f &&
+            ((is_downed && !nearest_downed) || (is_downed == nearest_downed && d < nearest))) {
+            nearest = d;
+            nearest_downed = is_downed;
+            downed = *other.at;
         }
     }
     const u32 cycle = AttackCycleAt(step.elapsed);

@@ -95,6 +95,9 @@ std::string TradeAskText(const std::string& from_name, std::span<const TradeItem
                          std::span<const TradeItem> want);
 std::string TradeGiveQuestion(const TradeItem& item, const std::string& to_name);
 
+// Whether a message is one of trading's (coop.proto's Trade*).
+bool IsTradeMessage(const bbcoop::Envelope& envelope);
+
 // The server's side: a party's trades.
 class TradeDesk {
 public:

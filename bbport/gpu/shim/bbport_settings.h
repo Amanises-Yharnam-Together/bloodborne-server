@@ -183,6 +183,11 @@ void SetLine(const std::string& key, std::optional<std::string> value);
 int EffectiveFrameLimit(int fps_limit, bool uncapped_vblank);
 /// The FPS limit row's choice for a cap: the largest choice not above it.
 int FpsLimitIndex(int limit);
+/// Whether the frame rate is locked to the fixed 60 FPS mode: online (co-op) play, BB_ONLINE
+/// `online` "1" (run.py launches it at 60; a host above 60 made the guests see everyone freeze
+/// and fly). The menus' FPS limit rows are then disabled and no limit applies.
+bool FrameRateLocked(const char* online);
+bool FrameRateLocked();
 /// The DLSS model row's choice for a preset value, 0 (NVIDIA's default) if not offered.
 int DlssModelIndex(int preset);
 /// The HDR rows' choices for a brightness: the nearest offered value.

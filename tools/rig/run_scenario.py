@@ -1142,7 +1142,9 @@ def hp_board_lag(texts: dict[str, str], handle: str) -> float | None:
         rf"hit on {pattern} by this player \S+: (-?\d+) -> (-?\d+) \(t=([\d.]+)\)", text)]
         for role, text in texts.items()}
     lowered = {role: [(int(a), int(a) - int(b), float(t)) for a, b, t in re.findall(
-        rf"damage on map \S+: (?:\S+ \S+ )*?{pattern} (-?\d+)->(-?\d+)[^\n]*\(t=([\d.]+)\)",
+        # The HP board's lowering, or phase 4's follower taking the owner's HP from the log.
+        rf"(?:damage|HP from the log: \d+ enemies) on map \S+: (?:\S+ \S+ )*?{pattern} "
+        rf"(-?\d+)->(-?\d+)[^\n]*\(t=([\d.]+)\)",
         text)] for role, text in texts.items()}
     lags = []
     for role, own in hits.items():

@@ -620,13 +620,18 @@ void DisplayTab() {
                return static_cast<const char*>(text);
            },
            [](int) { return true; },
-           T("Highest frame rate. A limit unlocks the game's frame rate from the next start "
-             "(the 60 FPS mode is the game's own fixed 60); then it changes at once. Off keeps "
-             "the launcher's mode.",
-             "Предел частоты кадров. С лимитом частота кадров игры разблокируется со следующего "
-             "запуска (режим 60 FPS — собственные 60 игры); дальше меняется сразу. Выкл "
-             "оставляет режим лаунчера."),
-           true, [&](int i) { Store(s.fps_limit, BbSettings::FpsLimits[i], true); });
+           BbSettings::FrameRateLocked()
+               ? T("Co-op plays at the game's fixed 60 FPS: every player sends and takes the "
+                   "same number of updates, or the others freeze and fly.",
+                   "Кооператив идёт на собственных 60 FPS игры: все игроки шлют и принимают "
+                   "одинаково обновлений, иначе остальные замирают и летают.")
+               : T("Highest frame rate. A limit unlocks the game's frame rate from the next start "
+                   "(the 60 FPS mode is the game's own fixed 60); then it changes at once. Off "
+                   "keeps the launcher's mode.",
+                   "Предел частоты кадров. С лимитом частота кадров игры разблокируется со "
+                   "следующего запуска (режим 60 FPS — собственные 60 игры); дальше меняется "
+                   "сразу. Выкл оставляет режим лаунчера."),
+           !BbSettings::FrameRateLocked(), [&](int i) { Store(s.fps_limit, BbSettings::FpsLimits[i], true); });
     static const char* languages[] = {"English", "Русский"};
     Choice("language", "Language", s.menu_language == BbSettings::MenuLanguage::Russian ? 1 : 0, 2,
            [](int i) { return languages[i]; }, [](int) { return true; },

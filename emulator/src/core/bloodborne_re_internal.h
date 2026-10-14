@@ -628,6 +628,26 @@ void GrantPartyEchoes();
 // Whether this guest hid or switched off the character to match the host (game thread).
 bool ChangedLikeTheHost(u32 handle);
 void ClaimEnemiesWhenAlone(bool in_session, u32 map);
+// Phase 4 (see EnemyRole): with SHADPS4_BLOODBORNE_ENEMY_OWNER=1 the server's owner of this
+// member's area decides who runs its enemies, instead of ClaimEnemiesWhenAlone.
+bool EnemyOwnerOn();
+// With the owners on: whether the server sent the kill step something since the last call (the
+// owner's HP, kills), so it runs at once.
+bool TakeServerWorldNews();
+// The server's owners, or none when not heard of for EnemyOwnersFreshMs.
+std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms);
+// Once per party tick: this member's role on its map, the ownership words of its characters and
+// the owner's frame and send rates in the log.
+void TickEnemyOwner(bool in_session, u32 map);
+// This member's role and the owner it follows (its board name), as the last tick found them: for
+// the hooks (any thread).
+EnemyRole CurrentEnemyRole();
+std::string CurrentEnemyOwner();
+// The owner got another member's hit (0x15): the enemy step runs on the next frames, so the HP
+// it takes goes to the log at once.
+void ForceEnemySteps();
+// A game packet this member sent on `channel` (the send's entry): counted for the owner's rates.
+void CountEnemyPacketSent(u32 channel);
 extern std::mutex own_hits_mutex;
 extern OwnDamage own_damage;
 void InstallOwnHitCount(u64 base, u64 image_size);
@@ -794,9 +814,10 @@ struct PartyDeathRun {
     u8 flags_added = 0;
     u8 hide_before = 0;
     u8 silence_before = 0;
-    u32 targets_forgotten = 0;      // since the last log line
-    DownedTeams downed_teams;       // the downed members' bodies here, struck back up
-    DownedBodyPicker downed_bodies; // which body here is each downed member's
+    u32 targets_forgotten = 0;          // since the last log line
+    DownedTeams downed_teams;           // the downed members' bodies here, struck back up
+    DownedBodyPicker downed_bodies;     // which body here is each downed member's
+    RevivePressFallback press_fallback; // swings at a downed body whose hit never landed
     // After a revive the player takes no damage for ReviveGraceMs: the party's last swings, still
     // landing on its body as the invaders' team on their screens, would put it straight down again.
     std::optional<s64> grace_until;

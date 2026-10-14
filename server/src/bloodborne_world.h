@@ -114,6 +114,9 @@ private:
         // member's last portrait.
         PartyBoards boards;
         std::map<std::string, bbcoop::Portrait> portraits;
+        // Phase 4: who runs each area's enemies, and what was logged of it.
+        EnemyOwners owners;
+        QString owners_logged;
         QString vitals_logged; // the members' states and the wipes, as last logged
         // Its trades (coop/trade.h): the offers held and the grants owed.
         BloodborneCoop::TradeDesk trades;
@@ -126,6 +129,9 @@ private:
         std::string name;
         quint32 run = 0;
         bool host = false; // hosts the session (its hello says): its characters and map state count
+        // Runs phase 4's enemy owners (its hello says): on an area another member owns its new
+        // kills and its HP reports do not count.
+        bool enemy_owner = false;
     };
 
     PartyWorld& WorldFor(const QString& name, qint64 now_ms, Result& result);
@@ -145,6 +151,11 @@ private:
     void TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
                    qint64 now_ms, Result& result);
     void SendBoards(PartyWorld& world, unsigned changed, qint64 now_ms, Member* only = nullptr);
+    // The enemy owners to the party (or `only`), logged when they changed.
+    void SendOwners(PartyWorld& world, qint64 now_ms, Result& result, Member* only = nullptr);
+    // Whether `member` may decide the enemies of `map` (phase 4): a game without the owners, or
+    // on an area nobody or itself runs.
+    bool Decides(const PartyWorld& world, const Member& member, u32 map) const;
     // A member's trade messages, and what the desk says to send and store.
     void TakeTrade(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
                    qint64 now_ms, Result& result);

@@ -1008,7 +1008,8 @@ void RunServerBoards(std::stop_token stop) {
             continue;
         }
         next_second = now + std::chrono::seconds{1};
-        if (const u32 map = party_map_now.load(); map != 0) {
+        // With phase 4's owners a load (0) goes too: the area is handed on at once.
+        if (const u32 map = party_map_now.load(); map != 0 || EnemyOwnerOn()) {
             SendServerMap(map);
         }
         const bool active = rest_board_active.load();

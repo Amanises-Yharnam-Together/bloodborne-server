@@ -2032,6 +2032,14 @@ std::optional<s64> OwnDamage::ZeroHitMs(u32 handle) const {
     return hit != zero_hit_ms.end() ? std::optional{hit->second} : std::nullopt;
 }
 
+bool FinishesStuckDeath(bool killed_by_member, s32 hp, u8 death_flags,
+                        std::optional<s64> zero_since_ms, s64 now_ms) {
+    constexpr u8 PutDownByTheWorld = 0x20;
+    return killed_by_member && hp <= 0 && !IsRealDeath(death_flags) &&
+           (death_flags & PutDownByTheWorld) == 0 && zero_since_ms &&
+           now_ms - *zero_since_ms >= StuckDeathMs;
+}
+
 bool IsRealDeath(u8 death_flags) {
     constexpr u8 PutDownByTheWorld = 0x20;
     return (death_flags & 0x05) != 0 && (death_flags & PutDownByTheWorld) == 0;
@@ -3600,6 +3608,121 @@ std::string_view ChannelPolicyName(ChannelPolicy policy) {
     return "pass";
 }
 
+bool EnemyOwnerEnabled(const char* setting) {
+    return ChannelTableEnabled(setting);
+}
+
+const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32 map) {
+    const u32 area = EnemyOwnerArea(map);
+    if (area == 0) {
+        return nullptr;
+    }
+    const auto owner = std::ranges::find(owners, area, &EnemyOwnerEntry::area);
+    return owner != owners.end() ? &*owner : nullptr;
+}
+
+EnemyRole EnemyRoleOn(std::span<const EnemyOwnerEntry> owners, std::string_view self, u32 map) {
+    const EnemyOwnerEntry* owner = EnemyOwnerOf(owners, map);
+    if (owner == nullptr || self.empty() || owner->member.empty()) {
+        return EnemyRole::Unknown;
+    }
+    return owner->member == self ? EnemyRole::Owner : EnemyRole::Follower;
+}
+
+std::optional<s32> EnemySyncState(EnemyRole role, s32 state) {
+    if (state != MatchingStateHosting && state != MatchingStateSummonedGuest) {
+        return std::nullopt;
+    }
+    const s32 wanted = role == EnemyRole::Owner      ? MatchingStateHosting
+                       : role == EnemyRole::Follower ? MatchingStateSummonedGuest
+                                                     : state;
+    return wanted != state ? std::optional{wanted} : std::nullopt;
+}
+
+std::optional<s32> EnemyHitState(EnemyRole role, s32 state) {
+    if (role == EnemyRole::Follower && state == MatchingStateHosting) {
+        return MatchingStateSummonedGuest;
+    }
+    return std::nullopt;
+}
+
+std::optional<u16> EnemyOwnershipWord(EnemyRole role) {
+    switch (role) {
+    case EnemyRole::Owner:
+        return u16{0};
+    case EnemyRole::Follower:
+        return u16{0xFFFF};
+    case EnemyRole::Unknown:
+        break;
+    }
+    return std::nullopt;
+}
+
+namespace {
+
+// Positions, HP, catch-up and join animations: what only the enemies' runner sends.
+bool IsOwnersEnemyChannel(u32 channel) {
+    return channel == 0x04 || channel == 0x05 || channel == 0x29 || channel == 0x36;
+}
+
+} // namespace
+
+EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role) {
+    if (channel == 0x16 || channel == 0x17) {
+        return EnemyPacketFate::Drop;
+    }
+    if (channel == 0x15) {
+        return role == EnemyRole::Owner      ? EnemyPacketFate::Drop
+               : role == EnemyRole::Follower ? EnemyPacketFate::ToOwner
+                                             : EnemyPacketFate::Keep;
+    }
+    if (IsOwnersEnemyChannel(channel) && role == EnemyRole::Follower) {
+        return EnemyPacketFate::Drop;
+    }
+    return EnemyPacketFate::Keep;
+}
+
+bool KeepsEnemyPacketIn(u32 channel, EnemyRole role, bool from_owner) {
+    if (channel == 0x16 || channel == 0x17) {
+        return false;
+    }
+    if (channel == 0x15) {
+        return role != EnemyRole::Follower;
+    }
+    if (IsOwnersEnemyChannel(channel)) {
+        return role == EnemyRole::Unknown || (role == EnemyRole::Follower && from_owner);
+    }
+    return true;
+}
+
+std::optional<std::string> EnemyRoleLog::Change(EnemyRole role, u32 map,
+                                                const EnemyOwnerEntry* owner) {
+    std::string line;
+    switch (role) {
+    case EnemyRole::Owner:
+        line = fmt::format("enemy owner: this game runs map {:#x}'s enemies (epoch {})",
+                           EnemyOwnerArea(map), owner != nullptr ? owner->epoch : 0);
+        break;
+    case EnemyRole::Follower:
+        line = fmt::format("enemy owner: this game follows {} on map {:#x} (epoch {})",
+                           owner != nullptr ? owner->member : std::string{"?"}, EnemyOwnerArea(map),
+                           owner != nullptr ? owner->epoch : 0);
+        break;
+    case EnemyRole::Unknown:
+        line = "enemy owner: none (the game's own way)";
+        break;
+    }
+    if (!last && role == EnemyRole::Unknown) {
+        last = line;
+        return std::nullopt; // the start: nothing changed
+    }
+    if (last == line) {
+        return std::nullopt;
+    }
+    last = line;
+    return line;
+}
+
 bool ChannelTableEnabled(const char* setting) {
     const std::string_view value{setting != nullptr ? setting : ""};
     return value == "1" || value == "on";
@@ -4963,6 +5086,37 @@ bool SessionArrival::Tick(bool in_session, bool summoned, u64 visit, bool playin
         arrived = (playing && visit != joined->first) || now_ms - joined->second >= LimitMs;
     }
     return arrived;
+}
+
+void RevivePressFallback::Swung(DownedMember target, u32 damage, s64 now_ms) {
+    waiting.push_back(Swing{std::move(target), damage, now_ms});
+}
+
+bool RevivePressFallback::Landed(std::string_view member, u32 down, s64 now_ms) {
+    const auto at = [&](const Swing& swing) {
+        return swing.target.member == member && swing.target.down == down;
+    };
+    std::erase_if(waiting, at);
+    std::erase_if(counted, [&](const Swing& swing) { return now_ms - swing.at > LateMs; });
+    const auto late = std::ranges::find_if(counted, at);
+    if (late == counted.end()) {
+        return false;
+    }
+    counted.erase(late);
+    return true;
+}
+
+std::vector<RevivePressFallback::Swing> RevivePressFallback::Due(s64 now_ms) {
+    std::vector<Swing> due;
+    std::erase_if(waiting, [&](const Swing& swing) {
+        if (now_ms - swing.at < WaitMs) {
+            return false;
+        }
+        due.push_back(swing);
+        counted.push_back(Swing{swing.target, swing.damage, now_ms});
+        return true;
+    });
+    return due;
 }
 
 bool ReviveHits::Press(std::string_view target, u32 down, u32 damage, s64 now_ms) {
