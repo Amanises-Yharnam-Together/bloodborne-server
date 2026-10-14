@@ -242,6 +242,7 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
         return 1;
     }
     const std::string me = Coop::TeamLobbyMember();
+    CopyName(lobby->me, sizeof(lobby->me), me);
     lobby->signed_in = 1;
     CopyName(lobby->notice, sizeof(lobby->notice), state->notice());
     if (state->has_team()) {
@@ -288,6 +289,19 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
         CopyName(out.id, sizeof(out.id), invite.team());
     }
     return 1;
+}
+
+static_assert(BBCOOP_TEAM_GO_READY == int(Core::Bloodborne::TeamGate::Choice::Ready) &&
+              BBCOOP_TEAM_GO_UNREADY == int(Core::Bloodborne::TeamGate::Choice::Unready) &&
+              BBCOOP_TEAM_GO_START == int(Core::Bloodborne::TeamGate::Choice::Start) &&
+              BBCOOP_TEAM_GO_ALONE == int(Core::Bloodborne::TeamGate::Choice::Alone));
+
+extern "C" int bbcoop_team_screen(void) {
+    return Core::Bloodborne::Coop::TeamScreenUp() ? 1 : 0;
+}
+
+extern "C" void bbcoop_team_choose(int what) {
+    Core::Bloodborne::Coop::TeamChoose(static_cast<Core::Bloodborne::TeamGate::Choice>(what));
 }
 
 extern "C" void bbcoop_lobby_request(int action, const char* id) {

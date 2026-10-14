@@ -317,6 +317,19 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
    - A save loaded alone (not in a team, or after a team's session) rings nothing and plays no
      team's world (the controller waits again); the party's hooks stay in until the game restarts.
    - The pop-up lists draw over the rows below them.
+   - **The team screen** (Kaniel 2026-10-14: "if you click continue or new game you instead sent
+     to it", a modern team lobby in the game's style; built after the page above): Continue, Load
+     Game or New Game now open it while the load is held, and nothing loads by itself any more
+     (`TeamGate::Choose`). Drawn by the port's overlay (`bbport_overlay.cpp` `Team::Screen`, the
+     menu's colours and ornaments, the game's serif): four hunters' places (emblem, name, state:
+     choosing, ready, in the hunt, away; the leader marked), the hunters online with Invite, the
+     invitations with Join and Decline, and Create / Leave the team, Ready / Not ready (a member)
+     or Begin the hunt (the leader: its Ready and the Start), Play alone. It takes the pad and the
+     keyboard (the arrows / d-pad move over the buttons, Cross / Enter presses, the mouse works);
+     Insert and L3 + R3 still open the settings. Rig: `team-screen` (shows it), `team-ready`,
+     `team-start`, `team-alone` press its buttons once it is up (the title's Cross until then);
+     scenario `team-screen` (drawn, pictures). Placeholder emblems, no portraits yet (the game has
+     drawn no character at the title).
 
    **5b built 2026-10-14** (with the team lobby): a team's world is its event flags that are the
    world's (FlagOwner Host and Shared in the flag table; a character's own flags, NPC gifts among

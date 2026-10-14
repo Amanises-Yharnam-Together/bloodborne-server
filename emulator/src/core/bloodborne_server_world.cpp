@@ -104,6 +104,9 @@ bool personal_world_due = false;
 WorldFlags team_world_reported;
 s64 team_world_reported_ms = 0;
 constexpr s64 TeamWorldReportMs = 10'000;
+// A load held for the team's world after the Start gives up waiting after this long.
+constexpr s64 TeamWorldWaitMs = 10'000;
+s64 team_world_wait_ms = 0;
 
 std::string PartyKey() {
     if (team_switch) {
@@ -133,6 +136,9 @@ bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
     if (envelope.has_team_world()) {
         std::scoped_lock lock{team_mutex};
         team_world = envelope.team_world();
+        if (!team_world->exists() && team_world_due) {
+            team_world_taken = true; // nothing to take: the host's save makes it
+        }
         LOG_INFO(Debug, "Co-op team world: the server's has {} ({} flags on, version {})",
                  team_world->exists() ? "a world" : "no world yet", team_world->on_size(),
                  team_world->version());
@@ -563,7 +569,9 @@ ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 no
         }
         hello_party = party;
         std::scoped_lock vitals{vitals_mutex};
-        hello_member = vitals_member;
+        if (!vitals_member.empty()) {
+            hello_member = vitals_member;
+        }
     }
     if (member_reset.exchange(false)) {
         member.Reset();
@@ -800,30 +808,68 @@ bool HoldTitleLoadForTeam(u32 slot) {
     }
     TeamGate::Decision decision;
     std::string me;
+    bool new_party = false;
+    bool hold_for_world = false;
     {
         std::scoped_lock lock{team_mutex};
         me = lobby_member;
         const bool first = !team_gate.Holding();
-        decision = team_gate.Tick(me, slot, {}, SteadyMilliseconds());
-        for (bbcoop::TeamRequest& request : decision.requests) {
-            bbcoop::Envelope envelope;
-            *envelope.mutable_team_request() = std::move(request);
-            lobby_outbox.push_back(std::move(envelope));
-        }
+        decision = team_gate.Tick(me, slot, SteadyMilliseconds());
         if (first) {
-            LOG_INFO(Debug, "Co-op team lobby: the title loads slot {} ({})", slot,
+            LOG_INFO(Debug,
+                     "Co-op team lobby: the title loads slot {}: the team screen decides "
+                     "({})",
+                     slot,
                      !team_gate.Lobby()              ? "no word from the lobby yet"
-                     : team_gate.Lobby()->has_team() ? "asking the team"
-                                                     : "not in a team: alone");
+                     : team_gate.Lobby()->has_team() ? "in a team"
+                                                     : "not in a team");
         }
         if (decision.step == TeamGate::Step::Hold) {
             return true;
         }
+        if (decision.start && team_party != decision.start->party()) {
+            // The team's party from its Start: the party's hello goes now, and the load waits
+            // for the team's world (TeamWorldWaitMs at most) so the save takes it as it loads.
+            team_party = decision.start->party();
+            team_world.reset();
+            team_world_wait_ms = SteadyMilliseconds();
+            new_party = true;
+        }
+        hold_for_world = decision.start && !team_world &&
+                         SteadyMilliseconds() - team_world_wait_ms < TeamWorldWaitMs;
+    }
+    if (new_party) {
+        const bool host = decision.start->host() == me;
+        if (party_controller) {
+            party_controller->Assign(host ? PartyRole::Host : PartyRole::Guest); // before the hello
+        }
+        std::scoped_lock lock{stream_mutex};
+        if (hello_party != decision.start->party()) {
+            hello_party = decision.start->party();
+            hello_due = true;
+        }
+        if (hello_member.empty()) {
+            hello_member = me; // the board name (the kill step sets it in the world)
+        }
+    }
+    if (hold_for_world) {
+        return true;
+    }
+    {
+        std::scoped_lock lock{team_mutex};
+        if (!team_world && decision.start) {
+            LOG_WARNING(Debug,
+                        "Co-op team world: no word of the team's world in {} ms: the save "
+                        "loads without it",
+                        TeamWorldWaitMs);
+        }
         lobby_playing = true;
         lobby_hello_due = true;
         // A save alone after a team's plays no team's world.
-        team_party = decision.start ? decision.start->party() : std::string{};
-        team_world.reset();
+        if (!decision.start) {
+            team_party.clear();
+            team_world.reset();
+        }
         team_world_due = decision.start.has_value();
         team_world_taken = false;
         team_world_blocks.clear();
@@ -831,15 +877,6 @@ bool HoldTitleLoadForTeam(u32 slot) {
         personal_world_due = !decision.start.has_value();
         team_world_reported = {};
         team_world_reported_ms = 0;
-    }
-    if (decision.start) {
-        // The party's hello now, not at the first kill step: the team's world comes back while
-        // the save loads.
-        std::scoped_lock lock{stream_mutex};
-        if (hello_party != decision.start->party()) {
-            hello_party = decision.start->party();
-            hello_due = true;
-        }
     }
     if (decision.start && party_controller) {
         const bool host = decision.start->host() == me;
@@ -853,6 +890,29 @@ bool HoldTitleLoadForTeam(u32 slot) {
         LOG_INFO(Debug, "Co-op team lobby: the save plays alone");
     }
     return false;
+}
+
+bool TeamScreenUp() {
+    if (!team_switch) {
+        return false;
+    }
+    std::scoped_lock lock{team_mutex};
+    return team_gate.Holding() && !lobby_playing;
+}
+
+void TeamChoose(TeamGate::Choice choice) {
+    std::scoped_lock lock{team_mutex};
+    if (!team_gate.Holding() || lobby_playing) {
+        return;
+    }
+    static constexpr std::array<const char*, 4> Names{"ready", "not ready", "start", "alone"};
+    LOG_INFO(Debug, "Co-op team lobby: the team screen chose {}",
+             Names[static_cast<size_t>(choice)]);
+    for (bbcoop::TeamRequest& request : team_gate.Choose(choice, lobby_member)) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_team_request() = std::move(request);
+        lobby_outbox.push_back(std::move(envelope));
+    }
 }
 
 void TeamBackAtTitle() {
@@ -1104,6 +1164,11 @@ void TickTeamWorld(s64 now_ms) {
              world.on.size());
 }
 
+bool IsTeamScreenVerb(std::string_view verb) {
+    return verb == "team-screen" || verb == "team-ready" || verb == "team-start" ||
+           verb == "team-alone";
+}
+
 bool IsTeamTitleVerb(std::string_view verb) {
     return verb.starts_with("team-");
 }
@@ -1146,6 +1211,16 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
         if (!done && lobby && lobby->invites_size() > 0) {
             request(bbcoop::TeamRequest::ACCEPT, {}, lobby->invites(0).team());
         }
+    } else if (IsTeamScreenVerb(command.verb)) {
+        if (!TeamScreenUp()) {
+            return false; // the title's Cross first (TickAutoplayTitle presses it)
+        }
+        if (command.verb != "team-screen") {
+            TeamChoose(command.verb == "team-ready"   ? TeamGate::Choice::Ready
+                       : command.verb == "team-start" ? TeamGate::Choice::Start
+                                                      : TeamGate::Choice::Alone);
+        }
+        done = true;
     } else if (command.verb == "team-leave") {
         done = lobby && !lobby->has_team();
         if (lobby && lobby->has_team() && (!begun || elapsed > 5.0)) {

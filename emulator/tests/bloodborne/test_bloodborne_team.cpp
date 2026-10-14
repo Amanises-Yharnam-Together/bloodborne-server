@@ -38,64 +38,69 @@ TEST(TeamMode, Setting) {
     EXPECT_FALSE(TeamModeEnabled(""));
 }
 
-TEST(TeamGate, NotInATeamLoadsAlone) {
+// The team screen decides: nothing loads until its player plays alone or the team starts.
+TEST(TeamGate, NothingLoadsUntilTheScreenSaysSo) {
     TeamGate gate;
+    EXPECT_EQ(gate.Tick("me", 0, 1000).step, TeamGate::Step::Hold); // no word from the lobby
     gate.TakeLobby({});
-    const TeamGate::Decision decision = gate.Tick("me", 0, "Hunter", 1000);
+    const TeamGate::Decision decision = gate.Tick("me", 0, 600'000);
+    EXPECT_EQ(decision.step, TeamGate::Step::Hold); // not in a team: create, accept or alone
+    EXPECT_TRUE(gate.Holding());
+}
+
+TEST(TeamGate, PlayAloneLoadsAlone) {
+    TeamGate gate;
+    gate.TakeLobby(InTeam("leader"));
+    gate.Tick("me", 1, 1000);
+    EXPECT_TRUE(gate.Choose(TeamGate::Choice::Alone, "me").empty());
+    const TeamGate::Decision decision = gate.Tick("me", 1, 1100);
     EXPECT_EQ(decision.step, TeamGate::Step::Load);
-    EXPECT_TRUE(decision.requests.empty());
     EXPECT_FALSE(decision.start);
 }
 
-TEST(TeamGate, NoWordFromTheLobbyWaitsThenLoadsAlone) {
-    TeamGate gate;
-    EXPECT_EQ(gate.Tick("me", 0, "Hunter", 1000).step, TeamGate::Step::Hold);
-    EXPECT_EQ(gate.Tick("me", 0, "Hunter", 1000 + TeamGate::NoLobbyLoadsAfterMs - 1).step,
-              TeamGate::Step::Hold);
-    EXPECT_EQ(gate.Tick("me", 0, "Hunter", 1000 + TeamGate::NoLobbyLoadsAfterMs).step,
-              TeamGate::Step::Load);
-}
-
-TEST(TeamGate, AMembersLoadIsItsReadyAndWaitsForTheStart) {
+TEST(TeamGate, ReadyAsksWithTheSlotAndWaitsForTheStart) {
     TeamGate gate;
     gate.TakeLobby(InTeam("leader"));
-    TeamGate::Decision decision = gate.Tick("me", 2, "Hunter", 1000);
-    EXPECT_EQ(decision.step, TeamGate::Step::Hold);
-    ASSERT_EQ(decision.requests.size(), 1u);
-    EXPECT_EQ(decision.requests[0].action(), bbcoop::TeamRequest::READY);
-    EXPECT_EQ(decision.requests[0].slot(), 2u);
-    EXPECT_EQ(decision.requests[0].character(), "Hunter");
-    // Asked once; it waits as long as it takes (the leader decides when).
-    decision = gate.Tick("me", 2, "Hunter", 60'000);
-    EXPECT_EQ(decision.step, TeamGate::Step::Hold);
-    EXPECT_TRUE(decision.requests.empty());
+    EXPECT_EQ(gate.Tick("me", 2, 1000).step, TeamGate::Step::Hold);
+    const auto requests = gate.Choose(TeamGate::Choice::Ready, "me");
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_EQ(requests[0].action(), bbcoop::TeamRequest::READY);
+    EXPECT_EQ(requests[0].slot(), 2u);
+    EXPECT_EQ(gate.Tick("me", 2, 60'000).step, TeamGate::Step::Hold);
     gate.TakeStart(StartOf("leader", 2));
-    decision = gate.Tick("me", 2, "Hunter", 61'000);
+    const TeamGate::Decision decision = gate.Tick("me", 2, 61'000);
     EXPECT_EQ(decision.step, TeamGate::Step::Load);
     ASSERT_TRUE(decision.start);
     EXPECT_EQ(decision.start->party(), "team:t1");
 }
 
-TEST(TeamGate, TheLeadersLoadStartsTheTeam) {
+TEST(TeamGate, TheLeadersStartIsItsReadyAndTheTeamsStart) {
     TeamGate gate;
     gate.TakeLobby(InTeam("me"));
-    const TeamGate::Decision decision = gate.Tick("me", 0, "Hunter", 1000);
-    EXPECT_EQ(decision.step, TeamGate::Step::Hold);
-    ASSERT_EQ(decision.requests.size(), 2u);
-    EXPECT_EQ(decision.requests[0].action(), bbcoop::TeamRequest::READY);
-    EXPECT_EQ(decision.requests[1].action(), bbcoop::TeamRequest::START);
+    gate.Tick("me", 0, 1000);
+    const auto requests = gate.Choose(TeamGate::Choice::Start, "me");
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[0].action(), bbcoop::TeamRequest::READY);
+    EXPECT_EQ(requests[1].action(), bbcoop::TeamRequest::START);
+    // A member's Start is only its Ready (the leader starts).
+    TeamGate member;
+    member.TakeLobby(InTeam("leader"));
+    member.Tick("me", 0, 1000);
+    EXPECT_EQ(member.Choose(TeamGate::Choice::Start, "me").size(), 1u);
+    EXPECT_EQ(member.Choose(TeamGate::Choice::Unready, "me")[0].action(),
+              bbcoop::TeamRequest::UNREADY);
 }
 
-TEST(TeamGate, AStartFromAnEarlierLoadDoesNotCount) {
+TEST(TeamGate, AnEarlierLoadsChoicesDoNotCount) {
     TeamGate gate;
     gate.TakeLobby(InTeam("leader"));
+    gate.Tick("me", 0, 1000);
+    gate.Choose(TeamGate::Choice::Alone, "me");
     gate.TakeStart(StartOf("leader", 0));
     // Back at the title: the next load asks again.
     gate.Reset();
     EXPECT_FALSE(gate.Holding());
-    const TeamGate::Decision decision = gate.Tick("me", 0, "Hunter", 1000);
-    EXPECT_EQ(decision.step, TeamGate::Step::Hold);
-    EXPECT_EQ(decision.requests.size(), 1u);
+    EXPECT_EQ(gate.Tick("me", 0, 2000).step, TeamGate::Step::Hold);
 }
 
 TEST(PartyControllerTeam, AWaitingControllerRingsNothingUntilItsRoleComes) {

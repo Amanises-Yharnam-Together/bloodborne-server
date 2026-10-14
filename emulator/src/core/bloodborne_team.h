@@ -26,13 +26,13 @@ bool TeamModeEnabled(const char* setting);
 class TeamGate {
 public:
     enum class Step { Load, Hold };
+    // The team screen's buttons (bbport_overlay.cpp): this character ready or not, the leader's
+    // Start (a member's is its Ready), or this save plays alone.
+    enum class Choice { Ready, Unready, Start, Alone };
     struct Decision {
         Step step = Step::Load;
-        std::vector<bbcoop::TeamRequest> requests; // to send now
-        std::optional<bbcoop::TeamStart> start;    // with Load: the team the save plays in
+        std::optional<bbcoop::TeamStart> start; // with Load: the team the save plays in
     };
-    // A load held this long with no word from the lobby (no server) goes ahead alone.
-    static constexpr s64 NoLobbyLoadsAfterMs = 5000;
 
     void TakeLobby(const bbcoop::LobbyState& state) {
         lobby = state;
@@ -40,9 +40,12 @@ public:
     void TakeStart(const bbcoop::TeamStart& start) {
         started = start;
     }
-    // Every frame the title wants to load the save in `slot` (its character `character`).
-    Decision Tick(const std::string& me, u32 slot, const std::string& character, s64 now_ms);
-    // Back at the title: the next load asks the team again.
+    // Every frame the title wants to load the save in `slot`: held until the team starts or the
+    // player plays alone.
+    Decision Tick(const std::string& me, u32 slot, s64 now_ms);
+    // A button of the screen: the requests to send.
+    std::vector<bbcoop::TeamRequest> Choose(Choice choice, const std::string& me);
+    // Back at the title: the next load asks again.
     void Reset();
 
     const std::optional<bbcoop::LobbyState>& Lobby() const {
@@ -56,7 +59,8 @@ private:
     std::optional<bbcoop::LobbyState> lobby;
     std::optional<bbcoop::TeamStart> started;
     std::optional<s64> holding_since;
-    bool asked = false;
+    u32 slot = 0;
+    bool alone = false;
 };
 
 // Phase 5b: a team's world (bbcoop::TeamWorld). The world's part of the event flags (FlagOwner

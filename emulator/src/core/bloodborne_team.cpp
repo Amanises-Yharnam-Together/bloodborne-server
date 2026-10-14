@@ -19,44 +19,50 @@ bool TeamModeEnabled(const char* setting) {
     return value == "1" || value == "on";
 }
 
-TeamGate::Decision TeamGate::Tick(const std::string& me, u32 slot, const std::string& character,
-                                  s64 now_ms) {
+TeamGate::Decision TeamGate::Tick(const std::string& me, u32 slot_now, s64 now_ms) {
+    (void)me;
     Decision decision;
     if (!holding_since) {
         holding_since = now_ms;
     }
-    if (started) {
+    slot = slot_now;
+    if (started && !alone) {
         decision.start = started;
         return decision;
     }
-    if (!lobby) {
-        if (now_ms - *holding_since >= NoLobbyLoadsAfterMs) {
-            return decision; // no server: the save plays alone
-        }
-        decision.step = Step::Hold;
-        return decision;
-    }
-    if (!lobby->has_team()) {
-        return decision;
-    }
-    decision.step = Step::Hold;
-    if (!asked) {
-        asked = true;
-        bbcoop::TeamRequest& ready = decision.requests.emplace_back();
-        ready.set_action(bbcoop::TeamRequest::READY);
-        ready.set_slot(slot);
-        ready.set_character(character);
-        if (lobby->team().leader() == me) {
-            decision.requests.emplace_back().set_action(bbcoop::TeamRequest::START);
-        }
+    if (!alone) {
+        decision.step = Step::Hold; // the team screen is up: the player decides
     }
     return decision;
+}
+
+std::vector<bbcoop::TeamRequest> TeamGate::Choose(Choice choice, const std::string& me) {
+    std::vector<bbcoop::TeamRequest> requests;
+    switch (choice) {
+    case Choice::Alone:
+        alone = true;
+        break;
+    case Choice::Unready:
+        requests.emplace_back().set_action(bbcoop::TeamRequest::UNREADY);
+        break;
+    case Choice::Ready:
+    case Choice::Start: {
+        bbcoop::TeamRequest& ready = requests.emplace_back();
+        ready.set_action(bbcoop::TeamRequest::READY);
+        ready.set_slot(slot);
+        if (choice == Choice::Start && lobby && lobby->has_team() && lobby->team().leader() == me) {
+            requests.emplace_back().set_action(bbcoop::TeamRequest::START);
+        }
+        break;
+    }
+    }
+    return requests;
 }
 
 void TeamGate::Reset() {
     started.reset();
     holding_since.reset();
-    asked = false;
+    alone = false;
 }
 
 bool IsWorldFlag(s32 flag) {

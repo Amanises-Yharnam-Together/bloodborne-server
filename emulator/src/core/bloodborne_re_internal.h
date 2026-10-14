@@ -12,6 +12,7 @@
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
+#include "core/bloodborne_team.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -719,6 +720,12 @@ void StartTeamLobby();
 bool HoldTitleLoadForTeam(u32 slot);
 // The title menu is up again: the next load asks the team again.
 void TeamBackAtTitle();
+// The team screen (bbport_overlay.cpp) is up: the title's load is held for it. Its buttons.
+bool TeamScreenUp();
+void TeamChoose(TeamGate::Choice choice);
+// The rig's screen verbs (team-ready, team-start, team-alone) want the title's Cross until the
+// screen is up.
+bool IsTeamScreenVerb(std::string_view verb);
 // The rig's lobby verbs (team-*), run on the title screen: true once done, `failure` if failed.
 bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed,
                       std::string& failure);
