@@ -55,8 +55,11 @@ class AnswersTests(unittest.TestCase):
         self.assertFalse(coop.valid_harder('3,1.5'))
 
     def test_missing_answers_are_named(self):
+        # One party password, no party name (Kaniel 2026-10-13: just the password field).
+        self.assertNotIn('party_name', coop.DEFAULTS)
         settings = dict(coop.DEFAULTS, game='', role='guest', host_ip='', account='Lisara', password='', party_secret='s')
         self.assertEqual(coop.missing(settings), ['game', 'host_ip', 'password'])
+        self.assertEqual(coop.missing(dict(settings, party_secret='')), ['game', 'host_ip', 'password', 'party_secret'])
         settings.update(game='G', host_ip='26.1.2.3', password='x')
         self.assertEqual(coop.missing(settings), [])
 
@@ -72,7 +75,7 @@ class AnswersTests(unittest.TestCase):
         self.assertEqual(settings['update'], '')
         self.assertEqual((settings['role'], settings['host_ip'], settings['account'], settings['password']),
                          ('host', '26.1.2.3', 'kaniel', 'pw'))
-        self.assertEqual((settings['party_name'], settings['party_secret']), ('hunters', 'secret'))
+        self.assertEqual(settings['party_secret'], 'secret')
         self.assertEqual(settings['harder'], '3,1.5,3')
 
     def test_settings_are_kept_in_the_user_folder(self):
@@ -151,7 +154,7 @@ class PlayTests(unittest.TestCase):
     def test_the_game_starts_as_2_play_started_it(self):
         install = Path('C:/Co-op')
         settings = dict(coop.DEFAULTS, role='guest', host_ip='26.1.2.3', account='Lisara', password='pw',
-                        party_name='hunters', party_secret='s', harder='3,1.5,3')
+                        party_secret='s', harder='3,1.5,3')
         env = coop.game_environment({'BB_FPS': 'uncap', 'BB_FPS_LIMIT': '240', 'KEEP': '1'}, settings, install,
                                     Path('C:/Co-op/coop-game'))
         self.assertEqual(env['KEEP'], '1')
@@ -164,7 +167,7 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(env['BB_SHADNET_WEBAPI'], 'http://26.1.2.3:31315')
         self.assertEqual((env['BB_SHADNET_NPID'], env['BB_SHADNET_PASSWORD']), ('Lisara', 'pw'))
         self.assertEqual(env['SHADPS4_BLOODBORNE_SEAMLESS_COOP'], '1')
-        self.assertEqual(env['SHADPS4_BLOODBORNE_PARTY'], 'hunters:s')
+        self.assertEqual(env['SHADPS4_BLOODBORNE_PARTY'], 'party:s')
         self.assertEqual(env['SHADPS4_BLOODBORNE_PARTY_ROLE'], 'guest')
         self.assertEqual(env['SHADPS4_BLOODBORNE_HARDER_ENEMIES'], '3,1.5,3')
         self.assertNotIn('SHADPS4_P2P_PORT', env)

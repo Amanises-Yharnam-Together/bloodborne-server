@@ -786,6 +786,10 @@ void CountRealReviveHits(PartyDeathRun& run, std::span<const DownedBody> bodies)
         const s32 rating = ReadAttackRatings(GetLocalPlayer()).Held();
         const bool heavy = party_attack_heavy.load();
         const u32 counted = run.revive_scale.Count(damage, rating, heavy);
+        if (run.press_fallback.Landed(body->member.member, body->member.down,
+                                      SteadyMilliseconds())) {
+            continue; // its swing already counted (RevivePressFallback)
+        }
         run.revive_hits.Hit(body->member.member, body->member.down, counted);
         if (run.real_hits_logged < 64) {
             ++run.real_hits_logged;
@@ -1165,6 +1169,21 @@ void PostVitalsWithoutPartyDeath() {
     }
 }
 
+// The downed member whose body (as this game shows it, see DownedBodyPicker) stands within reach
+// of this player, for a swing the board's positions put out of reach.
+std::optional<DownedMember> SwingTargetByBody(PartyDeathRun& run, const DeathTick& tick,
+                                              const LampPosition& me) {
+    for (const DownedBody& body :
+         DownedBodies(run.downed_bodies, tick.board, tick.view.member, tick.map, OtherPlayers())) {
+        const auto pos = CharacterPosition(body.character);
+        if (pos && std::hypot((*pos)[0] - me[0], (*pos)[1] - me[1], (*pos)[2] - me[2]) <=
+                       ReviveHits::Reach) {
+            return body.member;
+        }
+    }
+    return std::nullopt;
+}
+
 // Standing (or not in party death): a caught lethal hit puts the player down, a death is real, and
 // an attack near a downed member is a revive hit.
 void TickStanding(PartyDeathRun& run, const DeathTick& tick) {
@@ -1184,18 +1203,44 @@ void TickStanding(PartyDeathRun& run, const DeathTick& tick) {
         return;
     }
     const u32 attacks = party_attack_presses.load();
-    const bool attacked =
-        attacks != run.seen_attacks && !real_hits_installed.load(std::memory_order_relaxed);
+    const bool attacked = attacks != run.seen_attacks;
     run.seen_attacks = attacks;
+    const bool real_hits = real_hits_installed.load(std::memory_order_relaxed);
+    // Real hits: a swing near a downed member counts as a press only when its hit never lands on
+    // the body (RevivePressFallback: a kneeling body took none, playtest 2026-10-13).
+    for (const RevivePressFallback::Swing& swing : run.press_fallback.Due(tick.now)) {
+        if (run.revive_hits.Press(swing.target.member, swing.target.down, swing.damage, tick.now)) {
+            LOG_INFO(Debug,
+                     "Bloodborne party death: revive swing at {} (down {}) counted for {} damage: "
+                     "its hit did not land on the body",
+                     swing.target.member, swing.target.down, swing.damage);
+        }
+    }
     const auto at = LocalPlayerPosition();
-    const auto target = attacked && tick.in_session && at
-                            ? ReviveTarget(tick.board, tick.view.member, tick.map, *at)
-                            : std::nullopt;
+    auto target = attacked && tick.in_session && at
+                      ? ReviveTarget(tick.board, tick.view.member, tick.map, *at)
+                      : std::nullopt;
+    if (!target && real_hits && attacked && tick.in_session && at) {
+        // The body as this game shows it can stand away from where its player posted (a remote
+        // player's position lags; rig down-revive3 2026-10-14: one swing of many counted).
+        target = SwingTargetByBody(run, tick, *at);
+        static u32 missed_logged = 0;
+        if (!target && missed_logged < 20 &&
+            OthersDownOnMap(tick.board, tick.view.member, tick.map).size()) {
+            ++missed_logged;
+            LOG_INFO(Debug,
+                     "Bloodborne party death: a swing at ({:.1f}, {:.1f}, {:.1f}) reached no "
+                     "downed body",
+                     (*at)[0], (*at)[1], (*at)[2]);
+        }
+    }
     const AttackRatings ratings = target ? ReadAttackRatings(tick.player) : AttackRatings{};
     const s32 rating = ratings.Held();
     const bool heavy = party_attack_heavy.load();
     const u32 damage = ReviveHitDamage(rating, heavy);
-    if (target && run.revive_hits.Press(target->member, target->down, damage, tick.now)) {
+    if (target && real_hits) {
+        run.press_fallback.Swung(*target, damage, tick.now);
+    } else if (target && run.revive_hits.Press(target->member, target->down, damage, tick.now)) {
         LOG_INFO(Debug,
                  "Bloodborne party death: revive hit on {} (down {}) for {} damage (attack "
                  "rating {}, heavy={}; ratings {} weapons {} right hand {})",

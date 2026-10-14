@@ -2101,6 +2101,14 @@ std::optional<s64> OwnDamage::ZeroHitMs(u32 handle) const {
     return hit != zero_hit_ms.end() ? std::optional{hit->second} : std::nullopt;
 }
 
+bool FinishesStuckDeath(bool killed_by_member, s32 hp, u8 death_flags,
+                        std::optional<s64> zero_since_ms, s64 now_ms) {
+    constexpr u8 PutDownByTheWorld = 0x20;
+    return killed_by_member && hp <= 0 && !IsRealDeath(death_flags) &&
+           (death_flags & PutDownByTheWorld) == 0 && zero_since_ms &&
+           now_ms - *zero_since_ms >= StuckDeathMs;
+}
+
 bool IsRealDeath(u8 death_flags) {
     constexpr u8 PutDownByTheWorld = 0x20;
     return (death_flags & 0x05) != 0 && (death_flags & PutDownByTheWorld) == 0;
@@ -6316,6 +6324,37 @@ bool SessionArrival::Tick(bool in_session, bool summoned, u64 visit, bool playin
         arrived = (playing && visit != joined->first) || now_ms - joined->second >= LimitMs;
     }
     return arrived;
+}
+
+void RevivePressFallback::Swung(DownedMember target, u32 damage, s64 now_ms) {
+    waiting.push_back(Swing{std::move(target), damage, now_ms});
+}
+
+bool RevivePressFallback::Landed(std::string_view member, u32 down, s64 now_ms) {
+    const auto at = [&](const Swing& swing) {
+        return swing.target.member == member && swing.target.down == down;
+    };
+    std::erase_if(waiting, at);
+    std::erase_if(counted, [&](const Swing& swing) { return now_ms - swing.at > LateMs; });
+    const auto late = std::ranges::find_if(counted, at);
+    if (late == counted.end()) {
+        return false;
+    }
+    counted.erase(late);
+    return true;
+}
+
+std::vector<RevivePressFallback::Swing> RevivePressFallback::Due(s64 now_ms) {
+    std::vector<Swing> due;
+    std::erase_if(waiting, [&](const Swing& swing) {
+        if (now_ms - swing.at < WaitMs) {
+            return false;
+        }
+        due.push_back(swing);
+        counted.push_back(Swing{swing.target, swing.damage, now_ms});
+        return true;
+    });
+    return due;
 }
 
 bool ReviveHits::Press(std::string_view target, u32 down, u32 damage, s64 now_ms) {
