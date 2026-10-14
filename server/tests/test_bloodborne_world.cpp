@@ -132,8 +132,31 @@ struct Game {
     envelope.mutable_lifecycle()->set_host(host);
     Send(envelope, now_ms);
   }
+  void LobbyHello(bool playing, qint64 now_ms) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_lobby_hello()->set_protocol(CoopProtocol);
+    envelope.mutable_lobby_hello()->set_member(name);
+    envelope.mutable_lobby_hello()->set_name("Player " + name);
+    envelope.mutable_lobby_hello()->set_playing(playing);
+    Send(envelope, now_ms);
+  }
+  void Team(bbcoop::TeamRequest::Action action, qint64 now_ms,
+            std::string other = {}, std::string team = {}, u32 slot = 0) {
+    bbcoop::Envelope envelope;
+    bbcoop::TeamRequest &request = *envelope.mutable_team_request();
+    request.set_action(action);
+    request.set_member(other);
+    request.set_team(team);
+    request.set_slot(slot);
+    Send(envelope, now_ms);
+  }
   void Take(const bbcoop::Envelope &envelope, qint64 now_ms) {
-    if (envelope.has_map_board()) {
+    if (envelope.has_lobby_state()) {
+      lobby = envelope.lobby_state();
+      ++lobby_states;
+    } else if (envelope.has_team_start()) {
+      starts.push_back(envelope.team_start());
+    } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
       rest_board = envelope.rest_board();
@@ -181,6 +204,9 @@ struct Game {
   std::map<std::string, bbcoop::Portrait> portraits;
   bbcoop::EnemyOwners owners;
   int owner_messages = 0;
+  bbcoop::LobbyState lobby;
+  int lobby_states = 0;
+  std::vector<bbcoop::TeamStart> starts;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   u32 run = 0x1001;
   u32 number = 0;
@@ -979,6 +1005,66 @@ int OnlyTheOwnersKillsAndHpCount() {
 
 } // namespace
 
+// Phase 5: the lobby on the service. Players sign in before any party, form a
+// team, ready up and start; the team outlives the server.
+int ATeamFormsAndStartsThroughTheService() {
+  QTemporaryDir dir;
+  CHECK(dir.isValid());
+  qint64 now = 1'000'000;
+  std::string team;
+  {
+    Service service{dir.path()};
+    Game a{1000, "aa", 11};
+    Game b{1001, "bb", 12};
+    a.LobbyHello(false, now);
+    b.LobbyHello(false, now);
+    Pump(service, {&a, &b}, now);
+    CHECK(a.lobby.players_size() == 1 && a.lobby.players(0).name() == "Player bb");
+    a.Team(bbcoop::TeamRequest::CREATE, now);
+    Pump(service, {&a, &b}, now);
+    CHECK(a.lobby.has_team() && a.lobby.team().leader() == "aa");
+    team = a.lobby.team().id();
+    a.Team(bbcoop::TeamRequest::INVITE, now, "bb");
+    Pump(service, {&a, &b}, now);
+    CHECK(b.lobby.invites_size() == 1 && b.lobby.invites(0).team() == team);
+    b.Team(bbcoop::TeamRequest::ACCEPT, now, {}, team);
+    Pump(service, {&a, &b}, now);
+    CHECK(a.lobby.team().members_size() == 2);
+    // A refused request comes back with a notice to that player only.
+    const int a_states = a.lobby_states;
+    b.Team(bbcoop::TeamRequest::START, now);
+    Pump(service, {&a, &b}, now);
+    CHECK(!b.lobby.notice().empty());
+    CHECK(a.lobby_states == a_states);
+    a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 3);
+    b.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1);
+    a.Team(bbcoop::TeamRequest::START, now);
+    Pump(service, {&a, &b}, now);
+    CHECK(a.starts.size() == 1 && b.starts.size() == 1);
+    CHECK(b.starts[0].party() == "team:" + team && b.starts[0].host() == "aa");
+    CHECK(b.starts[0].slot() == 1);
+    // The team's party hello plays its world like any party's.
+    a.Hello(now, QByteArray::fromStdString(b.starts[0].party()));
+    Pump(service, {&a, &b}, now);
+    CHECK(a.welcome && a.welcome->accepted());
+    // b's game goes away: offline in a's lobby.
+    b.online = false;
+    service.Forget(b.endpoint);
+    now += 2000;
+    Pump(service, {&a}, now);
+    CHECK(a.lobby.team().members(1).state() == bbcoop::LobbyPlayer::OFFLINE);
+  }
+  // A new server: the team is still there for its members.
+  Service service{dir.path()};
+  service.Load(now);
+  Game b{1001, "bb", 22};
+  b.LobbyHello(false, now);
+  Pump(service, {&b}, now);
+  CHECK(b.lobby.has_team() && b.lobby.team().id() == team);
+  CHECK(b.lobby.team().members_size() == 2);
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
@@ -1007,6 +1093,8 @@ int main() {
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},
+      {"ATeamFormsAndStartsThroughTheService",
+       ATeamFormsAndStartsThroughTheService},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {

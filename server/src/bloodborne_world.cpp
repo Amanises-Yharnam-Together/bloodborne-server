@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bloodborne_world.h"
 
+#include <algorithm>
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -149,7 +151,10 @@ bool WorldStore::Compact(const bbcoop::StoredWorld& world) {
 
 Service::Service(QString folder, qint64 heartbeat_ms, int compact_records, qint64 compact_ms)
     : folder{std::move(folder)}, heartbeat_ms{heartbeat_ms}, compact_records{compact_records},
-      compact_ms{compact_ms} {}
+      compact_ms{compact_ms}, lobby{[] {
+          return QStringLiteral("%1").arg(QRandomGenerator::global()->generate64(), 16, 16,
+                                          QLatin1Char('0')).toStdString();
+      }} {}
 
 const WorldLogHost* Service::World(const QByteArray& party) const {
     const auto found = worlds.find(PartyFolderName(party));
@@ -172,6 +177,7 @@ Service::Result Service::Load(qint64 now_ms) {
         loaded();
         return result;
     }
+    LoadTeams(result);
     const QDir dir{folder};
     for (const QString& name : dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
         auto store = std::make_unique<WorldStore>(dir.filePath(name));
@@ -436,6 +442,14 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
                    Result& result) {
     if (envelope.has_hello()) {
         OnHello(member, envelope.hello(), now_ms, result);
+        return;
+    }
+    if (envelope.has_lobby_hello()) {
+        OnLobbyHello(member, envelope.lobby_hello(), now_ms, result);
+        return;
+    }
+    if (envelope.has_team_request()) {
+        OnTeamRequest(member, envelope.team_request(), now_ms, result);
         return;
     }
     if (member.party.isEmpty()) {
@@ -790,6 +804,9 @@ void Service::Flush(qint64 now_ms, Result& result) {
 
 Service::Result Service::Tick(qint64 now_ms) {
     Result result;
+    if (lobby_changed) {
+        SendLobby(now_ms);
+    }
     for (auto& [name, world] : worlds) {
         if (world.records > world.journal_from && now_ms - world.compacted_ms >= compact_ms) {
             Compact(world, now_ms);
@@ -807,8 +824,136 @@ Service::Result Service::Tick(qint64 now_ms) {
 }
 
 void Service::Forget(const ServerLink::Endpoint& link) {
+    const auto found = members.find(link.Key());
+    if (found != members.end() && !found->second.lobby.empty()) {
+        const std::string name = found->second.lobby;
+        const bool elsewhere = std::any_of(members.begin(), members.end(), [&](const auto& m) {
+            return m.first != link.Key() && m.second.lobby == name;
+        });
+        if (!elsewhere) {
+            lobby.Leave(name);
+            lobby_changed = true;
+        }
+    }
     members.erase(link.Key());
     endpoints.erase(link.Key());
+}
+
+namespace {
+const QString TeamsFile = QStringLiteral("teams.pb");
+} // namespace
+
+void Service::OnLobbyHello(Member& member, const bbcoop::LobbyHello& hello, qint64 now_ms,
+                           Result& result) {
+    if (hello.protocol() != CoopProtocol || hello.member().empty()) {
+        bbcoop::Envelope answer;
+        answer.mutable_lobby_state()->set_notice(
+            hello.member().empty() ? "no member name"
+                                   : "co-op protocol " + std::to_string(hello.protocol()) +
+                                         ", this server speaks " + std::to_string(CoopProtocol));
+        SendTo(member, answer, now_ms);
+        result.log.append(QStringLiteral("team lobby: refused %1: %2")
+                              .arg(QString::fromStdString(Who(member)),
+                                   QString::fromStdString(answer.lobby_state().notice())));
+        return;
+    }
+    const bool arrived = member.lobby.empty();
+    member.lobby = hello.member();
+    if (arrived) {
+        result.log.append(QStringLiteral("team lobby: %1 (%2) signed in")
+                              .arg(QString::fromStdString(hello.member()),
+                                   QString::fromStdString(hello.name())));
+    }
+    Settle(lobby.Arrive(hello.member(), hello.name(), hello.playing()), now_ms, result);
+    if (arrived) {
+        // Its state even when nothing changed for the others.
+        bbcoop::Envelope envelope;
+        *envelope.mutable_lobby_state() = lobby.StateFor(member.lobby);
+        SendTo(member, envelope, now_ms);
+    }
+}
+
+void Service::OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, qint64 now_ms,
+                            Result& result) {
+    if (member.lobby.empty()) {
+        return; // nothing before its lobby hello
+    }
+    const TeamLobby::Outcome outcome = lobby.Request(member.lobby, request);
+    result.log.append(
+        QStringLiteral("team lobby: %1 %2%3")
+            .arg(QString::fromStdString(member.lobby),
+                 QString::fromStdString(bbcoop::TeamRequest::Action_Name(request.action())))
+            .arg(outcome.notice.empty()
+                     ? QString{}
+                     : QStringLiteral(": refused, ") + QString::fromStdString(outcome.notice)));
+    if (!outcome.notice.empty()) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_lobby_state() = lobby.StateFor(member.lobby);
+        envelope.mutable_lobby_state()->set_notice(outcome.notice);
+        SendTo(member, envelope, now_ms);
+    }
+    if (outcome.changed) {
+        StoreTeams(result);
+    }
+    Settle(outcome, now_ms, result);
+}
+
+void Service::Settle(const TeamLobby::Outcome& outcome, qint64 now_ms, Result& result) {
+    if (outcome.changed) {
+        SendLobby(now_ms);
+    }
+    for (const std::string& name : outcome.starts) {
+        const bbcoop::TeamStart start = lobby.StartFor(name);
+        result.log.append(QStringLiteral("team lobby: %1 starts in team %2 (slot %3, host %4)")
+                              .arg(QString::fromStdString(name), QString::fromStdString(start.team()))
+                              .arg(start.slot())
+                              .arg(QString::fromStdString(start.host())));
+        for (auto& [key, member] : members) {
+            if (member.lobby == name) {
+                bbcoop::Envelope envelope;
+                *envelope.mutable_team_start() = start;
+                SendTo(member, envelope, now_ms);
+            }
+        }
+    }
+}
+
+void Service::SendLobby(qint64 now_ms) {
+    lobby_changed = false;
+    for (auto& [key, member] : members) {
+        if (!member.lobby.empty()) {
+            bbcoop::Envelope envelope;
+            *envelope.mutable_lobby_state() = lobby.StateFor(member.lobby);
+            SendTo(member, envelope, now_ms);
+        }
+    }
+}
+
+void Service::StoreTeams(Result& result) {
+    if (folder.isEmpty()) {
+        return;
+    }
+    QDir{}.mkpath(folder);
+    QSaveFile file{QDir{folder}.filePath(TeamsFile)};
+    if (!file.open(QIODevice::WriteOnly) || file.write(Serialized(lobby.Store())) < 0 ||
+        !file.commit()) {
+        result.log.append(QStringLiteral("team lobby: could not write %1").arg(file.fileName()));
+    }
+}
+
+void Service::LoadTeams(Result& result) {
+    QFile file{QDir{folder}.filePath(TeamsFile)};
+    if (!file.open(QIODevice::ReadOnly)) {
+        return;
+    }
+    const QByteArray bytes = file.readAll();
+    bbcoop::StoredTeams stored;
+    if (!stored.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size()))) {
+        result.log.append(QStringLiteral("team lobby: %1 does not read").arg(file.fileName()));
+        return;
+    }
+    lobby.Restore(stored);
+    result.log.append(QStringLiteral("team lobby: %1 teams loaded").arg(stored.teams_size()));
 }
 
 } // namespace BloodborneWorld
