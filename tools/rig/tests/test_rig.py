@@ -31,6 +31,8 @@ VERBS = {
     "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
     "return-point",
+    "team-create", "team-invite", "team-accept", "team-wait",  # the lobby's, on the title
+    "title-press", "title-wait", "title-shot",
     "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
 }
 VITALS = {"up", "down", "dead"}
@@ -124,7 +126,10 @@ class ScenarioTest(unittest.TestCase):
                 continue
             for role, script in scenario["roles"].items():
                 with self.subTest(scenario=name, role=role):
-                    self.assertEqual(run_scenario.stages_of(script)[0][0], scenarios.START)
+                    first = run_scenario.stages_of(script)[0]
+                    # The lobby's and the title's steps (team-*, title-*) run before the world.
+                    first = [step for step in first if not step.startswith(("team-", "title-"))]
+                    self.assertEqual(first[0], scenarios.START)
 
     def test_only_the_kill_made_is_posted(self):
         [pattern] = scenarios.only_kill("0x1001400b")

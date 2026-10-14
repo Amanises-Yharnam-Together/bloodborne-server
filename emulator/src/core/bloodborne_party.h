@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -1981,10 +1982,25 @@ public:
     static constexpr Clock::duration StaleSearchAfter =
         2 * SummonSearchInterval + std::chrono::seconds{2};
 
-    explicit PartyController(PartyRole role) : role{role} {}
+    // `waiting`: the team lobby (phase 5) says the role later (Assign); until then it rings
+    // nothing.
+    explicit PartyController(PartyRole role, bool waiting = false) : role{role}, waiting{waiting} {}
 
     s32 SearchEffectId() const {
-        return role == PartyRole::Host ? BeckoningBellEffect : SmallResonantBellEffect;
+        return role.load() == PartyRole::Host ? BeckoningBellEffect : SmallResonantBellEffect;
+    }
+    bool Waiting() const {
+        return waiting.load();
+    }
+    // The team's Start: this game hosts the team's sessions or joins them.
+    void Assign(PartyRole assigned) {
+        role.store(assigned);
+        waiting.store(false);
+    }
+    // A save played alone after a team's (the title again): it rings nothing until a team's
+    // Start assigns a role again.
+    void Wait() {
+        waiting.store(true);
     }
     PartyAction Tick(const PartyObservation& observation, Clock::time_point now);
 
@@ -1994,7 +2010,8 @@ private:
     std::optional<PartyAction> RingAgain(const PartyObservation& observation,
                                          Clock::time_point now);
 
-    PartyRole role;
+    std::atomic<PartyRole> role;
+    std::atomic<bool> waiting;
     u32 stable_ticks = 0;
     std::optional<Clock::time_point> last_search;
     /// Since when a hosting bell with room for more has been on (see Tick).
@@ -2289,6 +2306,17 @@ constexpr u64 ReliableChannelCheckOffset = 0x01790DDE;
 constexpr std::array<u8, 8> ReliableChannelCheck{0x48, 0x63, 0x43, 0x64, 0x48, 0x83, 0xF8, 0x43};
 constexpr u64 UnreliableChannelCheckOffset = 0x01790C73;
 constexpr std::array<u8, 6> UnreliableChannelCheck{0x49, 0x89, 0xD6, 0x83, 0xF8, 0x43};
+
+// Phase 5, the team lobby (bloodborne_team.h): TitleStep's states (table filled at its start; the
+// step's state index at +0x0C, each state's function called every frame until it moves the index
+// on). State 6 (0x0195B480) loads the save in GameMan +0x1490 (it copies it to the profile's
+// +0x7D0 first) and moves on at once: skipped, the step stays in state 6 and asks again next
+// frame, which holds the load for the team. State 2 (0x0195AE80) runs the title menu: the player
+// is back at the title.
+constexpr u64 TitleLoadStateOffset = 0x0195B480;
+constexpr u64 TitleMenuStateOffset = 0x0195AE80;
+constexpr std::array<u8, 6> TitleStatePrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+constexpr u64 TitleLoadSlotOffset = 0x1490; // GameMan's (GlobalState's) save slot to load
 
 // Phase 4 (docs/SERVER_COOP_PLAN.md): one game runs each occupied map's enemies, the one shadNet
 // names (bbcoop::EnemyOwners: the session's host while it is there, else the member there first,

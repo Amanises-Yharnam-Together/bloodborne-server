@@ -3996,6 +3996,9 @@ std::optional<PartyAction> PartyController::RingAgain(const PartyObservation& ob
 }
 
 PartyAction PartyController::Tick(const PartyObservation& observation, Clock::time_point now) {
+    if (waiting.load()) {
+        return PartyAction::Wait;
+    }
     if (!observation.player_valid || !observation.map_usable || observation.stage_transition ||
         observation.boss_sequence) {
         stable_ticks = 0;

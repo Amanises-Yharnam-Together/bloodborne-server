@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "../bbcoop.h"
 #include "bbport_settings.h"
 #include "bbport_trade_menu.h"
 
@@ -117,7 +118,26 @@ u32 AddText(const char* english, const char* russian) {
 enum class GameLanguage { Unknown, English, Russian };
 std::atomic<GameLanguage> game_language{GameLanguage::Unknown};
 
+// The team lobby page's texts (names, states), made each time it opens: ids from LobbyIdBase,
+// taken in turn (the game looks them up on its menu thread, which also builds the page).
+constexpr u32 LobbyIdBase = IdBase + 0x8000;
+constexpr u32 LobbyIdCount = 256;
+std::u16string lobby_texts[LobbyIdCount];
+u32 lobby_next_text = 0;
+
+bool RussianMenu();
+
+/// A lobby text: `english` or `russian` as the game's language is.
+u32 LobbyText(const std::string& english, const std::string& russian) {
+    const u32 slot = lobby_next_text++ % LobbyIdCount;
+    lobby_texts[slot] = Utf16((RussianMenu() ? russian : english).c_str());
+    return LobbyIdBase + slot;
+}
+
 const char16_t* TextOf(u32 id) {
+    if (id >= LobbyIdBase && id < LobbyIdBase + LobbyIdCount) {
+        return lobby_texts[id - LobbyIdBase].c_str();
+    }
     const Text& t = texts[id - IdBase];
     const GameLanguage game = game_language.load();
     const bool russian = game == GameLanguage::Unknown
@@ -126,9 +146,16 @@ const char16_t* TextOf(u32 id) {
     return russian ? t.russian.c_str() : t.english.c_str();
 }
 
+bool RussianMenu() {
+    const GameLanguage game = game_language.load();
+    return game == GameLanguage::Unknown
+               ? BbSettings::Get().menu_language == BbSettings::MenuLanguage::Russian
+               : game == GameLanguage::Russian;
+}
+
 // Texts the trade menus change while the game runs (SetDynamicText): ids from DynamicIdBase, one
 // per slot, set and looked up on the game's thread.
-constexpr u32 DynamicIdBase = 0x7f8000;
+constexpr u32 DynamicIdBase = LobbyIdBase + LobbyIdCount;
 constexpr int DynamicSlots = 8;
 std::u16string dynamic_texts[DynamicSlots];
 
@@ -530,6 +557,207 @@ void* const factories[MaxPages] = {
     reinterpret_cast<void*>(&PageFactory<4>), reinterpret_cast<void*>(&PageFactory<5>),
     reinterpret_cast<void*>(&PageFactory<6>), reinterpret_cast<void*>(&PageFactory<7>)};
 
+// ---- Phase 5: the team lobby page (bbcoop_lobby_view), its rows made each time it opens. ----
+// Each row is a list whose first value says how things are; choosing another value is a request
+// (create, leave, invite, accept, decline, remove), sent at once (PollLobby), and the row goes back
+// to its first value. The team as it is then shows the next time the page opens.
+enum LobbyField { LobbyTeamRow, LobbyInviteRow, LobbyInvitesRow, LobbyMembersRow, LobbyRemoveRow,
+                  LobbyStartRow, LobbyFieldCount };
+struct LobbyChoice {
+    int action = 0; // BBCOOP_TEAM_*, 0: nothing
+    std::string id;
+};
+int lobby_values[LobbyFieldCount];
+const int lobby_defaults[LobbyFieldCount] = {};
+std::vector<LobbyChoice> lobby_choices[LobbyFieldCount];
+std::atomic<bool> lobby_open{false};
+u32 lobby_page_name = 0, lobby_page_help = 0;
+
+const char* StateText(const bbcoop_lobby_entry& e, bool member, bool russian) {
+    if (e.state == BBCOOP_LOBBY_PLAYING) {
+        return russian ? "играет" : "playing";
+    }
+    if (e.state == BBCOOP_LOBBY_OFFLINE) {
+        return russian ? "не в сети" : "offline";
+    }
+    if (member && e.ready) {
+        return russian ? "готов" : "ready";
+    }
+    return russian ? "в главном меню" : "at the title";
+}
+
+/// One list row: `values` its choices' texts, bound to lobby_values[field].
+void AddLobbyRow(void* page, LobbyField field, u32 name, u32 help, const std::vector<u32>& values) {
+    using Push = void (GAME_ABI *)(void*, void*);
+    using AddRow = void (GAME_ABI *)(void*, void*, int*, void*, const int*);
+    using Make = void* (GAME_ABI *)(void*, u32, u32);
+    alignas(16) u8 pair[2 * TextSize] = {};
+    MakeTexts(pair, name, help);
+    u8* list = static_cast<u8*>(AlignedAlloc(ListSize));
+    std::memset(list, 0, ListSize);
+    for (std::size_t i = 0; i < values.size() && i < 32; ++i) {
+        alignas(16) u8 value[ValueSize] = {};
+        *reinterpret_cast<u32*>(value) = u32(i);
+        Game<Make>(MakeText)(value + 8, TextName, values[i]);
+        Game<Push>(ListPush)(list, value);
+        DestroyText(value + 8);
+    }
+    lobby_values[field] = 0;
+    Game<AddRow>(ListRow)(page, pair, &lobby_values[field], list, &lobby_defaults[field]);
+    DestroyValues(list, ListCountOffset);
+    AlignedFree(list);
+    DestroyTexts(pair);
+}
+
+GAME_ABI void LobbyRows(void* page, void*) {
+    bbcoop_lobby lobby;
+    if (!bbcoop_lobby_view(&lobby)) {
+        return;
+    }
+    const bool ru = RussianMenu();
+    const auto T = [](const std::string& en, const std::string& ru_text) { return LobbyText(en, ru_text); };
+    for (auto& choices : lobby_choices) {
+        choices.clear();
+    }
+    const auto row = [&](LobbyField field, u32 name, u32 help,
+                         std::vector<std::pair<u32, LobbyChoice>> values) {
+        std::vector<u32> ids;
+        for (auto& [text, choice] : values) {
+            ids.push_back(text);
+            lobby_choices[field].push_back(std::move(choice));
+        }
+        AddLobbyRow(page, field, name, help, ids);
+    };
+    const std::string count = std::to_string(lobby.member_count);
+
+    // 1. The team: how it is, and create or leave.
+    std::vector<std::pair<u32, LobbyChoice>> team;
+    if (!lobby.signed_in) {
+        team.push_back({T("Connecting to the server...", "Подключение к серверу..."), {}});
+    } else if (!lobby.in_team) {
+        team.push_back({T("Not in a team", "Не в команде"), {}});
+        team.push_back({T("Create a team", "Создать команду"), {BBCOOP_TEAM_CREATE, {}}});
+    } else {
+        const std::string leader = lobby.members[0].name;
+        team.push_back({T(leader + "'s team, " + count + " of 4" + (lobby.started ? ", playing" : ""),
+                          "Команда " + leader + ", " + count + " из 4" + (lobby.started ? ", в игре" : "")),
+                        {}});
+        team.push_back({T("Leave the team", "Покинуть команду"), {BBCOOP_TEAM_LEAVE, {}}});
+    }
+    row(LobbyTeamRow, T("Team", "Команда"),
+        T("Create a team or leave yours (the page shows it when it opens again)",
+          "Создать команду или покинуть свою (изменения видны при следующем открытии)"),
+        std::move(team));
+
+    // 2. Invite a player signed in to the server.
+    std::vector<std::pair<u32, LobbyChoice>> invite;
+    const std::string online = std::to_string(lobby.player_count);
+    invite.push_back({T("Players online: " + online, "Игроков в сети: " + online), {}});
+    if (lobby.in_team && lobby.member_count < 4) {
+        for (int i = 0; i < lobby.player_count; ++i) {
+            const bbcoop_lobby_entry& p = lobby.players[i];
+            invite.push_back({T(std::string{"Invite "} + p.name, std::string{"Пригласить "} + p.name),
+                              {BBCOOP_TEAM_INVITE, p.id}});
+        }
+    }
+    row(LobbyInviteRow, T("Invite", "Пригласить"),
+        T("Invite a player who is online into your team (up to 4)",
+          "Пригласить игрока в сети в свою команду (до 4)"),
+        std::move(invite));
+
+    // 3. Invitations to other teams.
+    std::vector<std::pair<u32, LobbyChoice>> invites;
+    const std::string invited = std::to_string(lobby.invite_count);
+    invites.push_back({lobby.invite_count == 0 ? T("No invitations", "Приглашений нет")
+                                               : T("Invitations: " + invited, "Приглашений: " + invited),
+                       {}});
+    for (int i = 0; i < lobby.invite_count; ++i) {
+        const bbcoop_lobby_entry& inv = lobby.invites[i];
+        invites.push_back({T(std::string{"Join "} + inv.name + "'s team",
+                             std::string{"Вступить в команду "} + inv.name),
+                           {BBCOOP_TEAM_ACCEPT, inv.id}});
+        invites.push_back({T(std::string{"Decline "} + inv.name, std::string{"Отклонить "} + inv.name),
+                           {BBCOOP_TEAM_DECLINE, inv.id}});
+    }
+    row(LobbyInvitesRow, T("Invitations", "Приглашения"),
+        T("Join a team you were invited to (leave yours first)",
+          "Вступить в команду, куда вас пригласили (сначала покиньте свою)"),
+        std::move(invites));
+
+    // 4. The members and how each is.
+    std::vector<std::pair<u32, LobbyChoice>> members;
+    if (!lobby.in_team) {
+        members.push_back({T("Nobody yet", "Пока никого"), {}});
+    }
+    for (int i = 0; i < lobby.member_count; ++i) {
+        const bbcoop_lobby_entry& m = lobby.members[i];
+        const std::string lead = i == 0 ? (ru ? ", лидер" : ", leader") : "";
+        const std::string text = std::string{m.name} + lead + ": " + StateText(m, true, ru);
+        members.push_back({T(text, text), {}});
+    }
+    row(LobbyMembersRow, T("Members", "Участники"),
+        T("The team's members: the leader hosts the team's sessions",
+          "Участники команды: лидер принимает их в своём мире"),
+        std::move(members));
+
+    // 5. The leader removes a member.
+    std::vector<std::pair<u32, LobbyChoice>> remove;
+    remove.push_back({T(lobby.leader ? "Choose a member" : "Only the leader removes",
+                        lobby.leader ? "Выберите участника" : "Удаляет только лидер"),
+                      {}});
+    if (lobby.leader) {
+        for (int i = 1; i < lobby.member_count; ++i) {
+            const bbcoop_lobby_entry& m = lobby.members[i];
+            remove.push_back({T(std::string{"Remove "} + m.name, std::string{"Удалить "} + m.name),
+                              {BBCOOP_TEAM_REMOVE, m.id}});
+        }
+    }
+    row(LobbyRemoveRow, T("Remove", "Удалить"),
+        T("Take a member out of the team", "Убрать участника из команды"), std::move(remove));
+
+    // 6. How the team starts.
+    std::vector<std::pair<u32, LobbyChoice>> start;
+    start.push_back({lobby.leader ? T("Continue starts the team", "«Продолжить» запускает команду")
+                                  : T("Continue waits for the leader", "«Продолжить» ждёт лидера"),
+                     {}});
+    row(LobbyStartRow, T("Start", "Старт"),
+        T("Pick your character with Continue or Load Game: the leader's starts everyone ready",
+          "Выберите персонажа через «Продолжить» или «Загрузить»: лидер запускает всех готовых"),
+        std::move(start));
+    lobby_open = true;
+}
+
+GAME_ABI void* LobbyContent(void* a, void* b) {
+    using Open = void* (GAME_ABI *)(void*, void*, const char*, void*, u64, u64);
+    title_override = nullptr;
+    return Game<Open>(OpenPage)(a, b, Game<const char*>(ControlsLayout),
+                                reinterpret_cast<void*>(&LobbyRows), 0, 0);
+}
+GAME_ABI void* LobbyPageFactory(void* out, void* arg) {
+    return Factory(out, arg, reinterpret_cast<void*>(&LobbyContent), TextOf(lobby_page_name));
+}
+
+/// The page's choices made since the last frame: each one's request, and the row back to its
+/// first value.
+void PollLobby() {
+    if (!lobby_open) {
+        return;
+    }
+    for (int f = 0; f < LobbyFieldCount; ++f) {
+        const int value = lobby_values[f];
+        if (value <= 0) {
+            continue;
+        }
+        lobby_values[f] = 0;
+        if (std::size_t(value) < lobby_choices[f].size()) {
+            const LobbyChoice& choice = lobby_choices[f][std::size_t(value)];
+            if (choice.action != 0) {
+                bbcoop_lobby_request(choice.action, choice.id.c_str());
+            }
+        }
+    }
+}
+
 // ---- Hooks ----
 using LookupFn = const char16_t* (GAME_ABI *)(void*, u32, u32, u32);
 using AddFn = void* (GAME_ABI *)(void*, void*, void*, void*);
@@ -538,6 +766,9 @@ AddFn add_original = nullptr;
 std::atomic<const void*> screen_sound_text{nullptr};
 
 GAME_ABI const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
+    if (id >= LobbyIdBase && id < LobbyIdBase + LobbyIdCount) {
+        return TextOf(id);
+    }
     if (id >= DynamicIdBase && id < DynamicIdBase + DynamicSlots) {
         return dynamic_texts[id - DynamicIdBase].c_str();
     }
@@ -605,6 +836,10 @@ GAME_ABI void* AddHook(void* menu, void* pair, void* function, void* out) {
     void* result = add_original(menu, pair, function, out);
     const void* screen_sound = screen_sound_text.load();
     if (screen_sound && *reinterpret_cast<const void* const*>(pair) == screen_sound) {
+        bbcoop_lobby lobby;
+        if (bbcoop_lobby_view(&lobby)) {
+            AddItem(menu, lobby_page_name, lobby_page_help, reinterpret_cast<void*>(&LobbyPageFactory));
+        }
         for (std::size_t i = 0; i < pages.size() && i < MaxPages; ++i) {
             AddItem(menu, pages[i].name, pages[i].help, factories[i]);
         }
@@ -713,6 +948,9 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
         return;
     }
     DefineTexts();
+    lobby_page_name = AddText("Co-op Team", "Кооп-команда");
+    lobby_page_help = AddText("Form a team with the players on your server (bbport co-op)",
+                              "Собрать команду с игроками на вашем сервере (кооператив bbport)");
     for (const Page& p : pages) {
         for (const Row& r : p.rows) {
             byte_field[r.field] = r.kind != Kind::List;
@@ -752,6 +990,7 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
 
 
 void Poll() {
+    PollLobby();
     if (!values_valid) {
         return;
     }

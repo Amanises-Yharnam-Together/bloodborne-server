@@ -27,6 +27,7 @@
 #include "bloodborne_party_boards.h"
 #include "coop.pb.h"
 #include "coop/coop_stream.h"
+#include "coop/team_lobby.h"
 #include "coop/trade.h"
 #include "coop/world_log.h"
 #include "server_link.h"
@@ -90,6 +91,11 @@ public:
     // A link went (its game is gone).
     void Forget(const ServerLink::Endpoint& link);
 
+    // The team lobby (phase 5), for the tests and the log.
+    const BloodborneCoop::TeamLobby& Lobby() const {
+        return lobby;
+    }
+
     // For the tests and the log.
     const BloodborneCoop::WorldLogHost* World(const QByteArray& party) const;
     int Parties() const {
@@ -132,6 +138,7 @@ private:
         // Runs phase 4's enemy owners (its hello says): on an area another member owns its new
         // kills and its HP reports do not count.
         bool enemy_owner = false;
+        std::string lobby; // its name in the team lobby, empty before its lobby hello
     };
 
     PartyWorld& WorldFor(const QString& name, qint64 now_ms, Result& result);
@@ -168,6 +175,16 @@ private:
                      qint64 now_ms);
     void Flush(qint64 now_ms, Result& result);
     std::string Who(const Member& member) const;
+    // The team lobby (phase 5): a player's sign-in and requests; every signed-in player's state
+    // after a change, a TeamStart to those the outcome starts, the teams to disk.
+    void OnLobbyHello(Member& member, const bbcoop::LobbyHello& hello, qint64 now_ms,
+                      Result& result);
+    void OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, qint64 now_ms,
+                       Result& result);
+    void Settle(const BloodborneCoop::TeamLobby::Outcome& outcome, qint64 now_ms, Result& result);
+    void SendLobby(qint64 now_ms);
+    void StoreTeams(Result& result);
+    void LoadTeams(Result& result);
 
     QString folder;
     qint64 heartbeat_ms;
@@ -176,6 +193,8 @@ private:
     std::map<QString, PartyWorld> worlds;
     std::map<quint64, Member> members; // by link (Endpoint::Key)
     std::map<quint64, ServerLink::Endpoint> endpoints;
+    BloodborneCoop::TeamLobby lobby;
+    bool lobby_changed = false; // a player's game went: states to send at the next tick
 };
 
 } // namespace BloodborneWorld

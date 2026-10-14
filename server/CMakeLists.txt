@@ -65,6 +65,8 @@ set(COOP_SOURCES
     coop/coop_stream.h
     coop/coop_messages.h
     coop/coop_messages.cpp
+    coop/team_lobby.h
+    coop/team_lobby.cpp
     coop/trade.h
     coop/trade.cpp
     "${PROTO_OUT}/coop.pb.cc"
@@ -218,6 +220,18 @@ if(BUILD_TESTING)
     )
     target_link_libraries(test_bloodborne_world PRIVATE Qt6::Core libprotobuf)
     add_test(NAME bloodborne_world COMMAND test_bloodborne_world)
+
+    add_executable(test_team_lobby EXCLUDE_FROM_ALL
+        tests/test_team_lobby.cpp
+        ${COOP_SOURCES}
+    )
+    target_include_directories(test_team_lobby PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(test_team_lobby PRIVATE libprotobuf)
+    add_test(NAME team_lobby COMMAND test_team_lobby)
 
     add_executable(test_bloodborne_trade EXCLUDE_FROM_ALL
         tests/test_bloodborne_trade.cpp

@@ -17,7 +17,7 @@ option optimize_for = LITE_RUNTIME;
 // Raised when a message's meaning changes; a game and the server on different ones are refused.
 enum Protocol {
     PROTOCOL_NONE = 0;
-    PROTOCOL_CURRENT = 2; // 2: phase 4's enemy owners
+    PROTOCOL_CURRENT = 3; // 2: phase 4's enemy owners; 3: phase 5's teams
 }
 
 // game -> server: the first message of the stream, and again whenever the stream starts over (the
@@ -367,15 +367,104 @@ message Envelope {
         VitalsBoard vitals_board = 20;
         Portrait portrait = 21;
         EnemyOwners enemy_owners = 22;
-        TradeOffer trade_offer = 23;
-        TradeStatus trade_status = 24;
-        TradeAsk trade_ask = 25;
-        TradeAnswer trade_answer = 26;
-        TradeCancel trade_cancel = 27;
-        TradeClosed trade_closed = 28;
-        TradeGrant trade_grant = 29;
-        TradeGranted trade_granted = 30;
+        LobbyHello lobby_hello = 23;
+        TeamRequest team_request = 24;
+        LobbyState lobby_state = 25;
+        TeamStart team_start = 26;
+        TradeOffer trade_offer = 27;
+        TradeStatus trade_status = 28;
+        TradeAsk trade_ask = 29;
+        TradeAnswer trade_answer = 30;
+        TradeCancel trade_cancel = 31;
+        TradeClosed trade_closed = 32;
+        TradeGrant trade_grant = 33;
+        TradeGranted trade_granted = 34;
     }
+}
+
+// Phase 5: the team lobby (docs/SERVER_COOP_PLAN.md, "The team lobby"). A game signs in to the
+// lobby when its link comes up, before any party: the teams are the server's, kept on its disk,
+// and a team's party key (TeamStart.party) is what the game's party hello carries from then on.
+
+// game -> server: the player, at the title or playing; sent again when that changes.
+message LobbyHello {
+    uint32 protocol = 1;
+    string member = 2; // its board name (the online id in hex)
+    string name = 3;   // the online id, as players see it
+    bool playing = 4;  // in a world (a save loaded), not at the title
+}
+
+// game -> server: what the player did in the lobby. The answer is the LobbyState (with a notice
+// when the server refused it).
+message TeamRequest {
+    enum Action {
+        NONE = 0;
+        CREATE = 1;  // a new team, the player its leader
+        INVITE = 2;  // `member` to the player's team
+        ACCEPT = 3;  // the invite to `team`
+        DECLINE = 4; // the invite to `team`
+        LEAVE = 5;   // the player's team
+        REMOVE = 6;  // `member` from the team (the leader only)
+        READY = 7;   // with the character in `slot` (`character`: its name)
+        UNREADY = 8;
+        START = 9; // the leader: every ready member's game loads its save
+    }
+    Action action = 1;
+    string member = 2;
+    string team = 3;
+    uint32 slot = 4;
+    string character = 5;
+}
+
+message LobbyPlayer {
+    enum State {
+        OFFLINE = 0;
+        TITLE = 1;
+        PLAYING = 2;
+    }
+    string member = 1;
+    string name = 2;
+    State state = 3;
+    string team = 4; // the team it is in, if any
+}
+
+message TeamMember {
+    string member = 1;
+    string name = 2;
+    LobbyPlayer.State state = 3;
+    bool ready = 4;
+    uint32 slot = 5;
+    string character = 6;
+}
+
+message Team {
+    string id = 1;
+    string leader = 2; // hosts the team's sessions
+    repeated TeamMember members = 3;
+    bool started = 4; // the leader pressed Start and a member still plays
+}
+
+message TeamInvite {
+    string team = 1;
+    string from = 2;
+    string from_name = 3;
+}
+
+// server -> game: the player's lobby, whole, whenever anything in it changes.
+message LobbyState {
+    Team team = 1; // none: not in a team
+    repeated TeamInvite invites = 2;
+    repeated LobbyPlayer players = 3; // everyone else signed in to the lobby
+    string notice = 4;                // why the player's last request was refused
+}
+
+// server -> game: load your save and play the team's world. To every ready member at Start, and
+// to a member that readies while the team plays.
+message TeamStart {
+    string team = 1;
+    string party = 2; // the party key for the party hello ("team:<id>")
+    string host = 3;  // the member that hosts the sessions (the leader)
+    uint32 slot = 4;  // the save slot the member readied with
 }
 
 // shadNet's world store (server/src/bloodborne_world_store.h): a party's world as it keeps it on
@@ -432,6 +521,17 @@ message StoredWorld {
     int64 last_wipe_ms = 4;
     uint64 journal_from = 5; // the first journal record not in it
     StoredHost host = 6;
+}
+
+// shadNet's teams on disk (teams.pb, beside the worlds).
+message StoredInvite {
+    string to = 1;
+    TeamInvite invite = 2;
+}
+message StoredTeams {
+    uint32 version = 1;
+    repeated Team teams = 2; // members as OFFLINE, not started
+    repeated StoredInvite invites = 3;
 }
 
 // One change to a party's world, as the journal keeps it (replayed on top of StoredWorld).
