@@ -59,4 +59,34 @@ struct GaugeArt {
 };
 std::optional<GaugeArt> LoadGaugeArt(std::span<const std::uint8_t> common_tpf_dcx);
 
+// Kaniel 2026-10-14: the team screens drawn with the game's own menu art and font, read at
+// runtime from the player's game files like the gauge (nothing of it is shipped).
+
+// One BC1 block to 4x4 RGBA pixels (row by row): two RGB565 colours, 2-bit indices; the
+// three-colour mode (first <= second) has transparent black at index 3.
+std::array<std::uint8_t, 64> DecodeBc1Block(std::span<const std::uint8_t, 8> block);
+
+struct Image {
+    int width = 0, height = 0;
+    std::vector<std::uint8_t> rgba;
+};
+
+// A .tpf.dcx, inflated once: pieces of its BC7 (98) and BC1 (71) textures as RGBA.
+class TpfFile {
+public:
+    static std::optional<TpfFile> Read(std::span<const std::uint8_t> tpf_dcx);
+    // `rect` of texture `name` (all of it when `rect` is empty); nothing when the texture is not
+    // there, not BC7 or BC1, or `rect` is not inside it.
+    std::optional<Image> Piece(std::string_view name, const PixelRect& rect = {}) const;
+
+private:
+    std::vector<std::uint8_t> tpf;
+    std::vector<TpfTexture> textures;
+};
+
+// The game's menu font (menu/<language>/font.gfx: a Scaleform file whose DefineFont3 holds the
+// glyph outlines, quadratic like TrueType's) as a TrueType font the overlay can load; nothing
+// when the file is not one.
+std::optional<std::vector<std::uint8_t>> TtfFromGfxFont(std::span<const std::uint8_t> gfx);
+
 } // namespace BbGameArt
