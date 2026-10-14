@@ -366,4 +366,44 @@ TEST(TeamGate, TheHuntBeginsOnlyWhenEveryoneIsReady) {
     EXPECT_FALSE(TeamCanBegin(bbcoop::LobbyState{}, "a")) << "no team";
 }
 
+// Kaniel 2026-10-15: between two guests, one guest's actions played on the other's own character
+// (a pick-up's gesture, a backstab's teleport): both joined with the same player slot (7), so each
+// took the other's packets as its own. Each guest joins with its own: 7 for the first, then down.
+TEST(TeamGate, EachGuestJoinsWithItsOwnPlayerSlot) {
+    bbcoop::LobbyState lobby = InTeam("a");
+    for (const char* member : {"a", "b", "c", "d"}) {
+        lobby.mutable_team()->add_members()->set_member(member);
+    }
+    EXPECT_EQ(TeamGuestSign(lobby, "b"), 7u);
+    EXPECT_EQ(TeamGuestSign(lobby, "c"), 6u);
+    EXPECT_EQ(TeamGuestSign(lobby, "d"), 5u);
+    EXPECT_EQ(TeamGuestSign(lobby, "x"), 7u) << "not in the team: the game's own";
+    EXPECT_EQ(TeamGuestSign(bbcoop::LobbyState{}, "b"), 7u);
+}
+
+// Kaniel 2026-10-15: Lisara back in after a drop still had the loading bars on top: they waited
+// for a member that had gone (offline) or stayed at the title. The screen shows the members coming.
+TEST(TeamLoad, ShowsOnlyTheMembersComing) {
+    bbcoop::LobbyState lobby = InTeam("a");
+    const auto add = [&](const char* member, bool ready, bbcoop::LobbyPlayer::State state) {
+        bbcoop::TeamMember& m = *lobby.mutable_team()->add_members();
+        m.set_member(member);
+        m.set_name(std::string("Name ") + member);
+        m.set_ready(ready);
+        m.set_state(state);
+    };
+    add("a", true, bbcoop::LobbyPlayer::PLAYING);
+    add("b", true, bbcoop::LobbyPlayer::TITLE);   // ready: on its way in
+    add("c", false, bbcoop::LobbyPlayer::TITLE);  // at the title, not coming
+    add("d", true, bbcoop::LobbyPlayer::OFFLINE); // gone
+    const auto members = TeamLoadMembers(lobby, "c");
+    ASSERT_EQ(members.size(), 3u) << "this game's own place always shows";
+    EXPECT_EQ(members[0].first, "a");
+    EXPECT_EQ(members[1].first, "b");
+    EXPECT_EQ(members[2].first, "c");
+    EXPECT_EQ(members[1].second, "Name b");
+    EXPECT_EQ(TeamLoadMembers(lobby, "a").size(), 2u);
+    EXPECT_TRUE(TeamLoadMembers(bbcoop::LobbyState{}, "a").empty());
+}
+
 } // namespace

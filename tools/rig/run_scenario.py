@@ -294,6 +294,16 @@ def judge(spec: dict, texts: dict[str, str]) -> list[str]:
             problems.append(f"{role}: {handle} stood still beside it "
                             f"({'no census' if len(places) < 2 else places[0]} -> "
                             f"{places[-1] if places else ''})")
+    # "stays": the role's own character stays within that many metres between its first and last
+    # census (Kaniel 2026-10-15: one guest's backstab dragged the other guest to the enemy).
+    for role, metres in spec.get("stays", {}).items():
+        places = [(float(x), float(z)) for x, z in re.findall(
+            r"autoplay census: map 0x[0-9a-f]+, \d+ characters within [\d.]+ m of "
+            r"\((-?[\d.]+), -?[\d.]+, (-?[\d.]+)\)", texts.get(role, ""))]
+        if len(places) < 2 or math.dist(places[0], places[-1]) > metres:
+            problems.append(f"{role}: its own character moved without it "
+                            f"({'no census' if len(places) < 2 else places[0]} -> "
+                            f"{places[-1] if places else ''})")
     for role, text in texts.items():
         problems += [f"{role}: {failed}" for failed in STEP_FAILED.findall(text)]
         for pattern in spec.get("expect", {}).get(role, []):

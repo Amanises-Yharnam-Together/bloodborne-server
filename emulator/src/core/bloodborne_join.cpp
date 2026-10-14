@@ -991,6 +991,21 @@ static std::vector<SavedJoinTask> CurrentJoinTasks() {
     return found;
 }
 
+// Diagnostic (Kaniel 2026-10-15: between two guests, one's actions played on the other's own
+// character): the join list (kind, slot, flags, step) whenever it changes.
+void LogJoinTasksOnChange() {
+    std::string which;
+    for (const SavedJoinTask& task : CurrentJoinTasks()) {
+        which += fmt::format(" [kind={} slot={} flags={:#x} step={} identity={:#x}]", task.kind,
+                             task.slot, task.flags, task.step, task.identity);
+    }
+    static std::string last;
+    if (which != last) {
+        last = which;
+        LOG_INFO(Debug, "Bloodborne join tasks:{}", which.empty() ? " none" : which);
+    }
+}
+
 void SaveRemoteJoinTasks() {
     const std::vector<SavedJoinTask> found = CurrentJoinTasks();
     saved_join_tasks = MergeSavedJoinTasks(saved_join_tasks, found);

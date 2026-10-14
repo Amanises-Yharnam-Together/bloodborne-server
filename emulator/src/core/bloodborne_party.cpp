@@ -3670,6 +3670,14 @@ std::optional<s32> EnemyHitState(EnemyRole role, s32 state) {
     return std::nullopt;
 }
 
+std::optional<s32> EnemyHitState(EnemyRole role, s32 state, bool runs_victim) {
+    if (role == EnemyRole::Follower && runs_victim) {
+        return state == MatchingStateHosting ? std::nullopt
+                                             : std::optional<s32>{MatchingStateHosting};
+    }
+    return EnemyHitState(role, state);
+}
+
 std::optional<u16> EnemyOwnershipWord(EnemyRole role) {
     switch (role) {
     case EnemyRole::Owner:
@@ -3717,6 +3725,12 @@ bool KeepsEnemyPacketIn(u32 channel, EnemyRole role, bool from_owner) {
     }
     if (IsOwnersEnemyChannel(channel)) {
         return role == EnemyRole::Unknown || (role == EnemyRole::Follower && from_owner);
+    }
+    // Positions: a follower's copies follow the owner's only (krolebord 2026-10-15: a guest that
+    // had just joined crashed in the game's character update while it took the other guests'
+    // positions too); the owner takes those of the enemies a guest runs for it.
+    if (channel == 0x04 && role == EnemyRole::Follower) {
+        return from_owner;
     }
     return true;
 }

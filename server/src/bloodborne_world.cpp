@@ -529,8 +529,9 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
                 continue;
             }
             refused += std::erase_if(handles, [&](u32 handle) {
-                return before == world.proposed.end() || !before->second.contains(map) ||
-                       !before->second.at(map).contains(handle);
+                return !DecidesEnemy(world, member, map, handle) &&
+                       (before == world.proposed.end() || !before->second.contains(map) ||
+                        !before->second.at(map).contains(handle));
             });
         }
         std::erase_if(proposal.kills, [](const auto& entry) { return entry.second.empty(); });
@@ -572,6 +573,16 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
         TakeTeamWorld(member, world, envelope.team_world(), now_ms, result);
         break;
     case bbcoop::Envelope::kEnemiesLetGo: {
+        const bbcoop::EnemiesLetGo& let_go = envelope.enemies_let_go();
+        if (Decides(world, member, let_go.map())) {
+            auto& runners = world.runners[let_go.map()];
+            runners.clear();
+            for (int i = 0; i < let_go.handles_size() && i < let_go.runners_size(); ++i) {
+                if (!let_go.runners(i).empty()) {
+                    runners[let_go.handles(i)] = let_go.runners(i);
+                }
+            }
+        }
         bbcoop::Envelope relayed = envelope;
         relayed.mutable_enemies_let_go()->set_member(member.name);
         SendToOthers(world, member, relayed, now_ms);
@@ -698,10 +709,22 @@ void Service::TakeWorld(Member& member, PartyWorld& world, const bbcoop::Envelop
         break;
     }
     case bbcoop::Envelope::kHp: {
-        if (!Decides(world, member, envelope.hp().map())) {
-            return; // another member runs that area: its HP is the owner's to report
+        // Another member runs that area: its HP is the owner's to report, but for the enemies the
+        // owner named this guest to run (Kaniel 2026-10-15).
+        bbcoop::HpProposal hp = envelope.hp();
+        if (!Decides(world, member, hp.map())) {
+            auto* enemies = hp.mutable_enemies();
+            enemies->erase(std::remove_if(enemies->begin(), enemies->end(),
+                                          [&](const bbcoop::HpEnemy& enemy) {
+                                              return !DecidesEnemy(world, member, hp.map(),
+                                                                   enemy.handle());
+                                          }),
+                           enemies->end());
+            if (enemies->empty()) {
+                return;
+            }
         }
-        const WorldLogHost::Taken taken = world.host.ProposeHp(HpOf(envelope.hp(), member.name));
+        const WorldLogHost::Taken taken = world.host.ProposeHp(HpOf(hp, member.name));
         if (taken.stale) {
             return;
         }
@@ -857,6 +880,19 @@ bool Service::Decides(const PartyWorld& world, const Member& member, u32 map) co
     }
     const std::string owner = world.owners.OwnerOf(map);
     return owner.empty() || owner == member.name;
+}
+
+bool Service::DecidesEnemy(const PartyWorld& world, const Member& member, u32 map,
+                           u32 handle) const {
+    if (Decides(world, member, map)) {
+        return true;
+    }
+    const auto on_map = world.runners.find(map);
+    if (on_map == world.runners.end()) {
+        return false;
+    }
+    const auto runner = on_map->second.find(handle);
+    return runner != on_map->second.end() && runner->second == member.name;
 }
 
 void Service::TakeTrade(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,

@@ -25,6 +25,15 @@ namespace Core::Bloodborne {
 // and ready, or the team started already.
 bool TeamCanBegin(const bbcoop::LobbyState& lobby, const std::string& me);
 
+// Kaniel 2026-10-15: the player slot a guest joins the host's session with (GameMan +0x16F4), its
+// own in the team: 7 for the first guest (the summon sign's), 6 for the second, 5 for the third.
+u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me);
+
+// The members the team loading screen shows (member, name), the leader first: this game and those
+// coming (ready, not offline); not one gone or staying at the title (Kaniel 2026-10-15).
+std::vector<std::pair<std::string, std::string>> TeamLoadMembers(const bbcoop::LobbyState& lobby,
+                                                                 const std::string& me);
+
 class TeamGate {
 public:
     enum class Step { Load, Hold };

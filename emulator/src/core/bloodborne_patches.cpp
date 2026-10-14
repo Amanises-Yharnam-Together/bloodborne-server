@@ -831,7 +831,16 @@ void PS4_SYSV_ABI ReceiveHpFromOwner(u64, GuestRegisterSnapshot* registers) {
 
 void PS4_SYSV_ABI SetEnemyHitState(u64, GuestRegisterSnapshot* registers) {
     const s32 state = ReadValue<s32>(registers->rax, MatchingStateOffset);
-    if (const auto wanted = EnemyHitState(CurrentEnemyRole(), state)) {
+    // The victim: r12 is the hit's target (its character at +0x08).
+    const u64 victim = registers->r12 >= 0x10000 ? ReadValue<u64>(registers->r12, 0x08) : 0;
+    const u32 handle = victim >= 0x10000 ? ReadValue<u32>(victim, 0x08) : 0;
+    const bool runs = handle != 0 && ThisFollowerRuns(handle);
+    static u32 logged = 0;
+    if (runs && ++logged <= 20) {
+        LOG_INFO(Debug, "Bloodborne enemy owner: this follower's hit on {:#x}, an enemy it runs, "
+                        "lands here", handle);
+    }
+    if (const auto wanted = EnemyHitState(CurrentEnemyRole(), state, runs)) {
         registers->rax = StandInFor(*wanted);
     }
 }

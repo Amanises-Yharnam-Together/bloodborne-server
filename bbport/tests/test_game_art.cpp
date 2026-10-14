@@ -360,6 +360,17 @@ int ConvertRealFiles(const char* game, const char* out) {
         }
         std::fclose(f);
     }
+    // The button icon and a row's scroll, raw RGBA, to check the BC7 decoder against a reference.
+    const auto common = TpfFile::Read(read(root + "common.tpf.dcx"));
+    for (const auto& [name, file] : {std::pair{"KG_Cancel", "kg_cancel.rgba"}, std::pair{"MENU_Common_00001", "common1.rgba"}}) {
+        const auto piece = common ? common->Piece(name) : std::nullopt;
+        if (piece) {
+            if (FILE* f = std::fopen((std::string(out) + "/" + file).c_str(), "wb")) {
+                std::fwrite(piece->rgba.data(), 1, piece->rgba.size(), f);
+                std::fclose(f);
+            }
+        }
+    }
     std::printf("wrote bbmenu.ttf (%zu bytes) and title.ppm (%dx%d)\n", ttf->size(), art->width,
                 art->height);
     return 0;

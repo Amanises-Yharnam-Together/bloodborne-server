@@ -437,6 +437,9 @@ void KeepBossHpInStep();
 // enemy on the host, on a guest beside it and on a guest alone.
 void WatchEnemyHp(u64 hp_address, u32 handle);
 void LogNearbyEnemyControl();
+void LogJoinTasksOnChange();
+// Whether this follower runs the enemy `handle` (the owner let it go and named it).
+bool ThisFollowerRuns(u32 handle);
 
 void TickPartyTrip();
 void LogJoinTaskChanges();

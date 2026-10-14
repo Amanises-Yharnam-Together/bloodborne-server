@@ -527,6 +527,26 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
+    # Kaniel 2026-10-15: the guest's hits on an enemy it ran came late, and the enemy went back to
+    # full HP once the host came near. The guest's hits land at once; the host's copy takes them.
+    "guest-hits-host-comes": {
+        "about": "the guest hits the enemy it runs twice with the host far away, then the host "
+                 "comes beside it: both games show the same HP, less the guest's hits",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 50", f"teleport {GUEST_ALONE_SPOT}", "wait 25", "census 40",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 15",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 8", f"hit {ENEMY} 30", "wait 1",
+                      f"hit {ENEMY} 30", "wait 45", "census 40", "expect-session 2"],
+        },
+        "same_hp": ENEMY,
+        "hp_sums_hits": ENEMY,
+        "expect": {"guest": [r"hit on 0x1001400b by this player",
+                             r"this follower's hit on 0x1001400b, an enemy it runs, lands here"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
     # Its control: the host beside the guest, the same enemy comes for them.
     "guest-mobs-host-near": {
         "about": "guest-alone-mobs with the host beside the guest: the enemy comes for them",
@@ -1047,6 +1067,22 @@ SCENARIOS = {
             "guest2": [START, "godmode", "wait-session 3 480", "wait 10", "snapshot",
                        "expect-session 3"],
         },
+        "timeout": 900,
+    },
+    # Kaniel 2026-10-15: between two guests, one guest's actions played on the other guest's own
+    # character (a pick-up's gesture, a backstab's teleport, levers). The second guest stands
+    # still; its census shows where its own character is before and after the first one acts.
+    "guest-acts-for-two": {
+        "about": "a party of three: the first guest picks up an item and attacks an enemy while "
+                 "the second guest stands still; the second guest's own character stays put",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait 70", "expect-session 3"],
+            "guest": [START, "godmode", "wait-session 3 480", "wait 15", "pickup 60", "wait 5",
+                      *attack(ENEMY), "wait 10", "expect-session 3"],
+            "guest2": [START, "godmode", "wait-session 3 480", "wait 10", "census 5", "wait 20",
+                       "census 5", "wait 25", "census 5", "expect-session 3"],
+        },
+        "stays": {"guest2": 3.0},
         "timeout": 900,
     },
     "join3-uncap": {

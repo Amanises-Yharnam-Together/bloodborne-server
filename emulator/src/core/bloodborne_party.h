@@ -2369,6 +2369,9 @@ EnemyRole EnemyRoleOn(std::span<const EnemyOwnerEntry> owners, std::string_view 
 std::optional<s32> EnemySyncState(EnemyRole role, s32 state);
 // The state the hit on an enemy (0x01A29E40) sees instead: a host that follows sends its hits.
 std::optional<s32> EnemyHitState(EnemyRole role, s32 state);
+// `runs_victim`: this follower runs the enemy hit (the owner let it go): its hit lands here
+// at once, as the host's (Kaniel 2026-10-15).
+std::optional<s32> EnemyHitState(EnemyRole role, s32 state, bool runs_victim);
 std::optional<u16> EnemyOwnershipWord(EnemyRole role);
 enum class EnemyPacketFate : u8 { Keep, Drop, ToOwner };
 EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role);

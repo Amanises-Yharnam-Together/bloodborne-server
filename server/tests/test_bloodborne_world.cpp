@@ -1020,6 +1020,55 @@ int TheEnemiesTheOwnerLetGoReachTheOthers() {
   return 0;
 }
 
+// Kaniel 2026-10-15: with the host far away a guest runs an enemy the host let go; its hits went
+// to the host's sleeping copy and the HP came back late or not at all. The guest the owner named
+// reports that enemy's HP (and its kill) itself; the server takes them from that guest only.
+int TheGuestThatRunsAnEnemyReportsItsHp() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  const std::vector<Game *> games{&host, &guest, &other};
+  qint64 now = 1'000'000;
+  for (Game *game : games) {
+    game->Hello(now);
+  }
+  Pump(service, games, now);
+  host.Map(0x18010000, now);
+  Pump(service, games, now);
+  guest.Map(0x18010000, now + 100);
+  other.Map(0x18010000, now + 100);
+  Pump(service, games, now + 100);
+  CHECK(guest.OwnerOf(0x18010000) == "host");
+  // The host lets 0x1001400b go to the guest, 0x1001400c to nobody.
+  bbcoop::Envelope let_go;
+  let_go.mutable_enemies_let_go()->set_map(0x18010000);
+  let_go.mutable_enemies_let_go()->add_handles(0x1001400b);
+  let_go.mutable_enemies_let_go()->add_runners("guest");
+  let_go.mutable_enemies_let_go()->add_handles(0x1001400c);
+  let_go.mutable_enemies_let_go()->add_runners("");
+  host.Send(let_go, now + 200);
+  Pump(service, games, now + 200);
+  // Only the runner's report of its own enemy counts.
+  guest.Hp(0x2222000000000001, {{0x1001400c, 100, 484}}, now + 300);
+  other.Hp(0x3333000000000001, {{0x1001400b, 50, 484}}, now + 300);
+  Pump(service, games, now + 300);
+  CHECK(!host.member.Hp().contains(0x2222000000000001));
+  CHECK(!host.member.Hp().contains(0x3333000000000001));
+  guest.Hp(0x2222000000000001, {{0x1001400b, 300, 484}}, now + 400);
+  Pump(service, games, now + 400);
+  CHECK(host.member.Hp().contains(0x2222000000000001));
+  CHECK(other.member.Hp().contains(0x2222000000000001));
+  // And its kill of that enemy.
+  guest.Propose({{0x18010000, {0x1001400b}}}, now + 500);
+  Pump(service, games, now + 500);
+  CHECK(Killed(host, 0x1001400b));
+  other.Propose({{0x18010000, {0x1001400c}}}, now + 600);
+  Pump(service, games, now + 600);
+  CHECK(!Killed(host, 0x1001400c));
+  return 0;
+}
+
 int TheFirstMemberOnAnAreaRunsItsEnemies() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -1367,6 +1416,7 @@ int main() {
       {"AHostsSessionGoesWithItsGame", AHostsSessionGoesWithItsGame},
       {"EachMembersLoadReachesTheOthers", EachMembersLoadReachesTheOthers},
       {"TheEnemiesTheOwnerLetGoReachTheOthers", TheEnemiesTheOwnerLetGoReachTheOthers},
+      {"TheGuestThatRunsAnEnemyReportsItsHp", TheGuestThatRunsAnEnemyReportsItsHp},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},

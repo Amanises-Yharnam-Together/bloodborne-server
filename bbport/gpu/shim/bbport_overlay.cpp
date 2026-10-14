@@ -3045,7 +3045,8 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     info.Device = instance.GetDevice();
     info.QueueFamily = instance.GetGraphicsQueueFamilyIndex();
     info.Queue = instance.GetGraphicsQueue();
-    info.DescriptorPoolSize = 16;
+    // One set per texture: the font atlas, the party art and icons, the team screens' menu art (18).
+    info.DescriptorPoolSize = 64;
     info.MinImageCount = std::max(image_count, 2u);
     info.ImageCount = std::max(image_count, 2u);
     info.UseDynamicRendering = true;

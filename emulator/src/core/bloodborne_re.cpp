@@ -670,6 +670,7 @@ void TickPartyController() {
         LogActionBlockingState();
         KeepBossHpInStep();
         LogNearbyEnemyControl();
+        LogJoinTasksOnChange();
     }
     LogOtherPlayersChanges();
     ObserveLocalAliveState();

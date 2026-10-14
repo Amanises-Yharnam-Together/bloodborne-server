@@ -989,12 +989,9 @@ void UpdateTeamLoad() {
                                    : bbcoop::LoadProgress::JOINING,
                            now_ms);
         said = team_load.ToSend(now_ms);
-        std::vector<std::pair<std::string, std::string>> members;
-        if (const auto& lobby = team_gate.Lobby(); lobby && lobby->has_team()) {
-            for (const bbcoop::TeamMember& member : lobby->team().members()) {
-                members.emplace_back(member.member(), member.name());
-            }
-        }
+        const auto& lobby = team_gate.Lobby();
+        const auto members = lobby ? TeamLoadMembers(*lobby, lobby_member)
+                                   : std::vector<std::pair<std::string, std::string>>{};
         view = team_load.Tick(members, lobby_member, now_ms);
     }
     if (said) {
@@ -1126,8 +1123,18 @@ bool TickTeamJoin(bool ready) {
         break;
     case TeamJoin::Action::Join: {
         const std::string& join = session->join();
+        // Each guest's own player slot (two guests on one slot took each other's moves as their
+        // own: Kaniel 2026-10-15).
+        u32 sign = session->sign();
+        {
+            std::scoped_lock lock{team_mutex};
+            if (const auto lobby = team_gate.Lobby()) {
+                sign = TeamGuestSign(*lobby, lobby_member);
+            }
+        }
+        LOG_INFO(Debug, "Co-op team join: joining with player slot {}", sign);
         JoinTeamSession({reinterpret_cast<const u8*>(join.data()), join.size()}, session->kind(),
-                        session->sign());
+                        sign);
         break;
     }
     }

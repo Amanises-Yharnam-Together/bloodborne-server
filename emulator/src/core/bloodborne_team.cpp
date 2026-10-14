@@ -12,6 +12,38 @@
 
 namespace Core::Bloodborne {
 
+u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me) {
+    constexpr u32 FirstGuestSign = 7;
+    if (!lobby.has_team()) {
+        return FirstGuestSign;
+    }
+    u32 guest = 0;
+    for (const bbcoop::TeamMember& m : lobby.team().members()) {
+        if (m.member() == lobby.team().leader()) {
+            continue;
+        }
+        if (m.member() == me) {
+            return FirstGuestSign - guest;
+        }
+        ++guest;
+    }
+    return FirstGuestSign;
+}
+
+std::vector<std::pair<std::string, std::string>> TeamLoadMembers(const bbcoop::LobbyState& lobby,
+                                                                 const std::string& me) {
+    std::vector<std::pair<std::string, std::string>> members;
+    if (!lobby.has_team()) {
+        return members;
+    }
+    for (const bbcoop::TeamMember& m : lobby.team().members()) {
+        if (m.member() == me || (m.ready() && m.state() != bbcoop::LobbyPlayer::OFFLINE)) {
+            members.emplace_back(m.member(), m.name());
+        }
+    }
+    return members;
+}
+
 bool TeamCanBegin(const bbcoop::LobbyState& lobby, const std::string& me) {
     if (!lobby.has_team()) {
         return false;

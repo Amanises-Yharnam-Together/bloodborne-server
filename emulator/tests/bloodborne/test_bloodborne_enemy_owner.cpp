@@ -120,7 +120,13 @@ TEST(EnemyOwner, AFollowerTakesTheEnemiesFromTheOwnerOnly) {
     EXPECT_TRUE(KeepsEnemyPacketIn(0x15, EnemyRole::Unknown, false));
     EXPECT_FALSE(KeepsEnemyPacketIn(0x16, EnemyRole::Owner, false));
     EXPECT_FALSE(KeepsEnemyPacketIn(0x17, EnemyRole::Follower, true));
-    for (const u32 channel : {0x04u, 0x3Du, 0x41u, 0x34u, 0x06u}) {
+    // Positions: the owner takes them from anyone (the guest that runs an enemy it let go); a
+    // follower from the owner only (krolebord 2026-10-15: a guest that had just joined crashed in
+    // the game's character update while it took the other guests' positions too).
+    EXPECT_TRUE(KeepsEnemyPacketIn(0x04, EnemyRole::Owner, false));
+    EXPECT_TRUE(KeepsEnemyPacketIn(0x04, EnemyRole::Follower, true));
+    EXPECT_FALSE(KeepsEnemyPacketIn(0x04, EnemyRole::Follower, false));
+    for (const u32 channel : {0x3Du, 0x41u, 0x34u, 0x06u}) {
         EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, false)) << channel;
         EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Owner, false)) << channel;
     }
@@ -173,4 +179,16 @@ TEST(EnemyOwner, TheOwnerNamesTheNearestGuestToRunAnEnemyItLetGo) {
                        std::vector<MemberVitals>{GuestAt("a", RunnerReachMetres + 1.0f)},
                        CentralYharnam),
               "");
+}
+
+// Kaniel 2026-10-15: a guest's hits on an enemy it runs went to the host's sleeping copy and came
+// back late or not at all. On an enemy this follower runs, its own hits land at once, as the host's.
+TEST(EnemyOwner, AGuestsHitOnAnEnemyItRunsLandsAtOnce) {
+    constexpr s32 Hosting = MatchingStateHosting;
+    constexpr s32 Guest = MatchingStateSummonedGuest;
+    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Guest, true), std::optional<s32>{Hosting});
+    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Hosting, true), std::nullopt);
+    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Guest, false), std::nullopt);
+    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Hosting, false), std::optional<s32>{Guest});
+    EXPECT_EQ(EnemyHitState(EnemyRole::Owner, Hosting, false), std::nullopt);
 }
