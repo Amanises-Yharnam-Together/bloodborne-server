@@ -44,6 +44,7 @@ WARD_ENEMY = "0x10010019"  # 211 HP, 7 m from the Cathedral Ward lamp (the neare
 CLERIC_BEAST = "0x1001409f"  # entity 2410800; its death runs event 12411700
 CLERIC_BEAST_DEFEATED = 2411  # set by event 12411700 after Handle Boss Defeat
 GASCOIGNE = "0x1001409c"  # entity 2410810 (his beast form: 0x1001409e, 2410811)
+GASCOIGNE_BEAST = "0x1001409e"
 # Event 12411800's own flag: on, the map's load puts Gascoigne down (Force Character Death);
 # off, he waits for the fight. Both rig saves have him beaten.
 GASCOIGNE_DEFEATED = 12411800
@@ -62,6 +63,33 @@ IOSEFKA_WAIT = "-200.0 -40.5 218.0 0.0"
 # through her talk (the first gives her blood vials, item lot 23000).
 IOSEFKA_DOOR = "-200.0 -40.5 208.4 3.1416"
 TALK_THROUGH = [step for _ in range(12) for step in ("press cross 200", "wait 2")]
+
+
+# The Cathedral Ward lamp (Oedon Chapel): its talk character (0x10010075) stands at
+# (16.15, -8.90, 103.47) turned to 30 degrees in m24_00's MSB ("warp chair, start point"), 1.5 m
+# from where a trip there puts a player (17.58 -9.5 102.65, bloodborne_lamp_points.h). Neither
+# player got a prompt from that side (rig 2026-10-14), so the use tries its front: 0.7 and 1 m
+# straight ahead of it and 0.8 m at 45 degrees either side, facing it (a talk that opens is
+# closed again).
+WARD_LAMP_SPOTS = ("16.50 -9.5 104.08 -2.62", "16.65 -9.5 104.34 -2.62", "16.92 -9.5 103.68 -1.83",
+                   "15.94 -9.5 104.24 2.88")
+
+
+# The way from the Ward lamp through the gate to Central Yharnam (a guest's trail, playtest
+# 2026-10-13: the maps meet at about 31 -9 95).
+WARD_TO_YHARNAM = ("21.1 -9.5 100.6 23.1 -9.5 101.5 24.0 -9.5 99.7 25.6 -9.1 98.4 27.3 -9.1 96.9 "
+                   "30.7 -8.9 94.9 32.6 -9.7 94.1 34.4 -10.6 92.7 36.0 -11.2 92.6")
+YHARNAM_TO_WARD = ("34.4 -10.6 92.7 32.6 -9.7 94.1 30.7 -8.9 94.9 27.3 -9.1 96.9 25.6 -9.1 98.4 "
+                   "24.0 -9.5 99.7 23.1 -9.5 101.5 21.1 -9.5 100.6 18.8 -9.5 102.3")
+
+
+def USE_WARD_LAMP(role: str) -> list[str]:
+    steps = []
+    for index, spot in enumerate(WARD_LAMP_SPOTS):
+        steps += [f"teleport {spot}", "wait 2", f"shot {role}-lamp-{index}",
+                  "press cross 200", "wait 5", f"shot {role}-pressed-{index}", "press circle 200",
+                  "wait 3", "press circle 200", "wait 3"]
+    return steps
 
 
 def IOSEFKA_LOOK(role: str) -> list[str]:
@@ -409,7 +437,8 @@ SCENARIOS = {
                      "expect-session 2"],
             "guest": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
                       "wait-session 2 420", "wait 25", "census 60",
-                      f"expect-hp {WARD_NPC} <= 600", f"hit {WARD_NPC} 20", "wait 8",
+                      f"expect-hp {WARD_NPC} <= 600", "peek self 88", f"peek {WARD_NPC} 88",
+                      f"hit {WARD_NPC} 20", "wait 8",
                       "census 60", "wait 20", "census 60", "expect-session 2"],
         },
         "same_hp": WARD_NPC,
@@ -508,6 +537,26 @@ SCENARIOS = {
             "guest": SESSION_HOLDS,
         },
         "timeout": 720,
+    },
+    "gascoigne-together": {
+        "about": "neither player has beaten Father Gascoigne; the guest hurts him in the session and "
+                 "the host kills his beast form: afterwards both worlds have him down and no fight "
+                 "left (playtest 2026-10-13: a guest's world kept his first form alive at 1 HP, and "
+                 "the lamp by his arena answered with his talk)",
+        "roles": {
+            "host": [START, f"set-flag {GASCOIGNE_DEFEATED} 0", f"travel {CENTRAL_YHARNAM_LAMP}",
+                     "godmode", "wait-session 2 300", "wait 40", f"dump {GASCOIGNE}",
+                     f"dump {GASCOIGNE_BEAST}", f"kill {GASCOIGNE_BEAST}",
+                     f"wait-flag {GASCOIGNE_DEFEATED} 1 60", "wait 30", f"dump {GASCOIGNE}",
+                     f"dump {GASCOIGNE_BEAST}", "snapshot", "expect-session 2"],
+            "guest": [START, f"set-flag {GASCOIGNE_DEFEATED} 0", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "godmode", "wait-session 2 300", "wait 20", f"hurt {GASCOIGNE} 3000",
+                      f"hurt {GASCOIGNE_BEAST} 3000", f"wait-flag {GASCOIGNE_DEFEATED} 1 120",
+                      "wait 30", f"dump {GASCOIGNE}", f"dump {GASCOIGNE_BEAST}", "census 80",
+                      "snapshot", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 900,
     },
     "save-backups": {
         "about": "the saves are backed up by themselves (Kaniel 2026-10-11): with a backup every "
@@ -820,6 +869,46 @@ SCENARIOS = {
                       "expect-session 2"],
         },
         "timeout": 600,
+    },
+    "guest-lamp-rest": {
+        "about": "a guest in the session uses the Cathedral Ward lamp (Oedon Chapel) with X and rests "
+                 "there with the party (playtest 2026-10-13: guests could not use lamps in the Ward "
+                 "or after Father Gascoigne); the host first, as the control",
+        "roles": {
+            "host": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                     "wait-session 2 420", "wait 5", *USE_WARD_LAMP("host"), "wait 200", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                      "wait-session 2 420", "wait 160", *USE_WARD_LAMP("guest"), "snapshot",
+                      "expect-session 2"],
+        },
+        # The lamp's script (m24_00 t240000, states 1-4) takes X only while ESD functions 14, 19,
+        # 26, 27 and 31 answer 0; 26 answered 1 for a guest. The rig's X at the lamp brings no
+        # prompt even for the host (2026-10-14, 18 aims from both sides), so the check is the
+        # guest's answers: 26 answers 0 as the host's, never 1.
+        "expect": {"guest": [r"guest talk answers: .*\bf26=0x", r"\bf14=0x.*\bf19=0x"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"\bf26=1x"]},
+        "timeout": 1000,
+    },
+    "ward-door": {
+        "about": "the guest walks out of Cathedral Ward to Central Yharnam and back three times "
+                 "(playtest 2026-10-13: after going back and forth through that door the guests "
+                 "could not use the Ward lamp or hurt the NPC by it), then uses the Ward lamp",
+        "roles": {
+            "host": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                     "wait-session 2 420", "wait 420", "census 60", "snapshot", "expect-session 2"],
+            "guest": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                      "wait-session 2 420", "wait 15",
+                      *[step for _ in range(3) for step in (
+                          f"glide {WARD_TO_YHARNAM}", "wait 12", f"glide {YHARNAM_TO_WARD}",
+                          "wait 12")],
+                      f"expect-map {CATHEDRAL_WARD}", *USE_WARD_LAMP("guest"), "census 60",
+                      "snapshot", "expect-session 2"],
+        },
+        "expect": {"guest": [r"map change 0x18000000 -> 0x18010000",
+                             r"guest talk answers: .*\bf26=0x"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"\bf26=1x"]},
+        "timeout": 1100,
     },
     "pickup": {
         "about": "host and guest each pick up a map item with X in a session (the host could not "
@@ -1270,8 +1359,30 @@ SCENARIOS = {
                       "expect-session 2"],
         },
         "expect": {
-            "host": [r"party death: (real )?revive hit on"],
+            "host": [r"party death: ((real )?revive hit on|revive swing at)"],
             "guest": [r"party death: down \d+ on map 0x18010000",
+                      r"party death: revived from down"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party guest died"]},
+        "timeout": 600,
+    },
+    "down-kneel": {
+        "about": "party death: the guest goes down and kneels while nobody strikes it for 12 s "
+                 "(playtest 2026-10-13: the others saw Lisara kneel and no strike landed, so he had "
+                 "to give up); then the host strikes it and it gets up",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
+                     "wait 12", "shot sees-kneel", "approach-downed", "wait 2", *REVIVE_HITS,
+                     "wait-member-vital up 30", "wait 3", "shot after-revive", "wait 2", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", *LETHAL_FALL, "wait-vital down 30",
+                      "wait 2", "shot down", "wait-vital up 120", "wait 3", "snapshot",
+                      "expect-hp self > 1", "expect-session 2"],
+        },
+        "expect": {
+            "host": [r"party death: (real revive hit on|revive swing at)"],
+            "guest": [r"party death: down \d+ on map 0x18010000", r"party death: pose \d+ asked",
                       r"party death: revived from down"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party guest died"]},
@@ -1406,7 +1517,7 @@ SCENARIOS = {
                       "wait 3", "snapshot", "expect-hp self > 1", "expect-session 2"],
         },
         "expect": {
-            "host": [r"party death: (real )?revive hit on"],
+            "host": [r"party death: ((real )?revive hit on|revive swing at)"],
             "guest": [r"party death: down \d+ on map 0x18010000",
                       r"party death: enemies forgot \d+ target\(s\) on downed players "
                       r"\(self down=true",
@@ -1421,8 +1532,10 @@ SCENARIOS = {
                  "not the host, revives it",
         "settings": PARTY_DEATH,
         "roles": {
-            "host": [START, "godmode", "wait-session 3 480", "wait-member-vital down 180",
-                     "wait 2", "shot sees-down", "wait 38", "snapshot", "expect-session 3"],
+            # The host only watches: with the downed body's swings counted the revive can be over
+            # in seconds, before its board shows the down (rig 2026-10-14).
+            "host": [START, "godmode", "wait-session 3 480", "wait 60", "snapshot",
+                     "expect-session 3"],
             "guest": [START, "wait-session 3 480", "wait 20", *LETHAL_FALL, "wait-vital down 30",
                       "wait 2", "shot down", "wait 1", "expect-hp self == 1", "wait-vital up 90",
                       "wait 3", "shot after-revive", "snapshot", "expect-hp self > 1",
@@ -1434,9 +1547,9 @@ SCENARIOS = {
         "expect": {
             "guest": [r"party death: down \d+ on map 0x18010000",
                       r"party death: revived from down"],
-            "guest2": [r"party death: (real )?revive hit on"],
+            "guest2": [r"party death: ((real )?revive hit on|revive swing at)"],
         },
-        "forbid": {"host": SESSION_HOLDS + [r"party death: (real )?revive hit on"],
+        "forbid": {"host": SESSION_HOLDS + [r"party death: ((real )?revive hit on|revive swing at)"],
                    "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
         "timeout": 900,
     },

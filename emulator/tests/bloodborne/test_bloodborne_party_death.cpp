@@ -472,6 +472,42 @@ TEST(BloodbornePartyDeath, CountsRealHitsOnTheBodyAsReviveDamage) {
     EXPECT_EQ(hits.Totals(board), (std::vector<ReviveHitTotal>{{"a", 5, 50}, {"b", 2, 300}}));
 }
 
+// A swing at a downed body whose hit never lands still counts, as a press did before real hits:
+// a kneeling body others see kneel took no hits at all (playtest 2026-10-13, Lisara had to give
+// up). A swing whose hit lands counts once, as that hit.
+TEST(BloodbornePartyDeath, ASwingWhoseHitNeverLandsCountsAsAPress) {
+    RevivePressFallback fallback;
+    fallback.Swung({"a", 4}, 90, 1'000);
+    EXPECT_TRUE(fallback.Due(1'000 + RevivePressFallback::WaitMs - 1).empty())
+        << "its hit may come yet";
+    const auto due = fallback.Due(1'000 + RevivePressFallback::WaitMs);
+    ASSERT_EQ(due.size(), 1u);
+    EXPECT_EQ(due[0].target.member, "a");
+    EXPECT_EQ(due[0].target.down, 4u);
+    EXPECT_EQ(due[0].damage, 90u);
+    EXPECT_TRUE(fallback.Due(10'000).empty()) << "counted once";
+
+    // The hit landed: the swing is not counted again.
+    fallback.Swung({"a", 4}, 90, 20'000);
+    EXPECT_FALSE(fallback.Landed("a", 4, 20'400)) << "the hit counts, as its own";
+    EXPECT_TRUE(fallback.Due(30'000).empty());
+    // A hit on another member's body leaves this swing waiting.
+    fallback.Swung({"a", 4}, 90, 40'000);
+    EXPECT_FALSE(fallback.Landed("b", 4, 40'100));
+    EXPECT_EQ(fallback.Due(50'000).size(), 1u);
+    // A hit that lands after its swing was counted (a long swing: rig down-kneel 2026-10-14, each
+    // swing counted twice) is that swing's: the caller does not count it again. Once.
+    fallback.Swung({"a", 4}, 90, 60'000);
+    ASSERT_EQ(fallback.Due(60'000 + RevivePressFallback::WaitMs).size(), 1u);
+    EXPECT_TRUE(fallback.Landed("a", 4, 60'000 + RevivePressFallback::WaitMs + 500));
+    EXPECT_FALSE(fallback.Landed("a", 4, 60'000 + RevivePressFallback::WaitMs + 600));
+    // Too late to be that swing's: a hit of its own.
+    fallback.Swung({"a", 4}, 90, 70'000);
+    ASSERT_EQ(fallback.Due(70'000 + RevivePressFallback::WaitMs).size(), 1u);
+    EXPECT_FALSE(fallback.Landed(
+        "a", 4, 70'000 + RevivePressFallback::WaitMs + RevivePressFallback::LateMs + 1));
+}
+
 // On the others' screens a downed member's body takes the invaders' team (Hostile, 21) so they can
 // lock on to it and strike it; its own team comes back once it is up, and a copy that left is
 // forgotten.

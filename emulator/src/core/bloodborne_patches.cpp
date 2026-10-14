@@ -1168,6 +1168,18 @@ void InstallMoviePlayerDeleteDelay(u64 base, u64 image_size) {
     coop_features.On("movie player delete delay");
 }
 
+// A co-op guest hits the friendly NPCs as the host does (see the "guests hit NPCs" sites).
+void InstallGuestsHitNpcs(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "guests hit NPCs", "guests cannot hit NPCs")) {
+        return;
+    }
+    WriteCoopPatches(base, "guests hit NPCs");
+    coop_features.On("guests hit NPCs");
+}
+
 // See QuietSummonBannerPatches: a party's joins show one banner, not two.
 void InstallQuietSummonBanners(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -1384,6 +1396,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallBossClearKeepsSession(base, image_size);
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
+    InstallGuestsHitNpcs(base, image_size);
     InstallMoviePlayerDeleteDelay(base, image_size);
     InstallShortSummonSlotHold(base, image_size);
     InstallBossDeathTracer(base, image_size);

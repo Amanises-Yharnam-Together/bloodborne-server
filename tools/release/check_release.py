@@ -5,8 +5,9 @@
 A public release must hold everything a player needs besides their own copy of the game, and
 nothing from the game itself or from a player's install: no game files (eboot.bin, param.sfo,
 the .dcx archives, event files, system modules), no saves, logs, settings or server databases.
-The co-op event files are made from each player's own game by tools\\setup.ps1; the release
-carries only their expected hashes (event-reference.json).
+The co-op event files are made from each player's own game by the launcher (bbport_coop.py); the
+release carries only their expected hashes (event-reference.json). It is installed by one setup
+.exe and played from BLauncher.exe, with no bat files (Kaniel 2026-10-13).
 
 Usage: check_release.py <release folder>      exit code 1 with the problems listed
 """
@@ -17,14 +18,8 @@ import sys
 REQUIRED = (
     "BLauncher.exe",
     "bin/bb-probe.exe",
-    "1 - SETUP.bat",
-    "2 - PLAY.bat",
-    "FIREWALL - Allow (run as admin).bat",
-    "HOST - Start Servers.bat",
-    "HOST - Register Account.bat",
     "READ ME FIRST.txt",
     "VERSION.txt",
-    "tools/setup.ps1",
     "tools/party_boss_events.py",
     "server/shadnet.exe",
     "server/shadnet.cfg",
@@ -56,7 +51,9 @@ def check(root: pathlib.Path) -> list[str]:
         relative = path.relative_to(root).as_posix()
         name = path.name.lower()
         folders = {part.lower() for part in path.relative_to(root).parts[:-1]}
-        if name in GAME_NAMES or name.endswith(GAME_SUFFIXES) or folders & GAME_FOLDERS:
+        if name.endswith((".bat", ".cmd")):
+            problems.append(f"a bat file in the release (the launcher does their work): {relative}")
+        elif name in GAME_NAMES or name.endswith(GAME_SUFFIXES) or folders & GAME_FOLDERS:
             problems.append(f"game file in the release: {relative}")
         elif name in PLAYER_NAMES or name.endswith(PLAYER_SUFFIXES) or folders & PLAYER_FOLDERS:
             problems.append(f"player or test data in the release: {relative}")
