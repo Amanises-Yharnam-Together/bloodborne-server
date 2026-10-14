@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The team lobby's rules (coop/team_lobby.h): teams, invites, Ready and Start, and the store.
+// The team lobby's rules (coop/team_lobby.h): teams, invites, Ready and Start,
+// and the store.
 #include <iostream>
 #include <string>
 
@@ -64,8 +65,10 @@ int TeamFormsByInvite() {
   CHECK(lobby.TeamOf("b") == lobby.TeamOf("a"));
   CHECK(lobby.StateFor("b").invites_size() == 0);
   CHECK(lobby.StateFor("a").team().members_size() == 2);
-  // An accepted invite cannot be used twice; accepting a made-up one is refused.
-  CHECK(!lobby.Request("b", Request(Action::ACCEPT, {}, "nope")).notice.empty());
+  // An accepted invite cannot be used twice; accepting a made-up one is
+  // refused.
+  CHECK(
+      !lobby.Request("b", Request(Action::ACCEPT, {}, "nope")).notice.empty());
   return 0;
 }
 
@@ -108,20 +111,24 @@ int ReadyAndStart() {
   CHECK(start.starts.size() == 2);
   CHECK(lobby.TeamOf("a")->started());
   const bbcoop::TeamStart go = lobby.StartFor("a");
-  CHECK(go.party() == TeamLobby::PartyOf(team) && go.host() == "a" && go.slot() == 2);
+  CHECK(go.party() == TeamLobby::PartyOf(team) && go.host() == "a" &&
+        go.slot() == 2);
   CHECK(lobby.StartFor("b").slot() == 0 && lobby.StartFor("b").host() == "a");
   // c readies later and goes at once (joins the team as it plays).
-  const TeamLobby::Outcome late = lobby.Request("c", Request(Action::READY, {}, {}, 1));
+  const TeamLobby::Outcome late =
+      lobby.Request("c", Request(Action::READY, {}, {}, 1));
   CHECK(late.starts.size() == 1 && late.starts[0] == "c");
   // Playing shows; when nobody plays any more, the team is not started.
   lobby.Arrive("a", "Kaniel", true);
-  CHECK(lobby.StateFor("b").team().members(0).state() == bbcoop::LobbyPlayer::PLAYING);
+  CHECK(lobby.StateFor("b").team().members(0).state() ==
+        bbcoop::LobbyPlayer::PLAYING);
   lobby.Arrive("a", "Kaniel", false);
   CHECK(!lobby.TeamOf("a")->started());
   // A member gone from the server: offline in its team, still a member.
   lobby.Leave("c");
   CHECK(lobby.TeamOf("a")->members_size() == 3);
-  CHECK(lobby.StateFor("a").team().members(2).state() == bbcoop::LobbyPlayer::OFFLINE);
+  CHECK(lobby.StateFor("a").team().members(2).state() ==
+        bbcoop::LobbyPlayer::OFFLINE);
   return 0;
 }
 
@@ -137,12 +144,13 @@ int StartedTeamKeepsGoingWhileOnePlays() {
   lobby.Request("a", Request(Action::START));
   lobby.Arrive("a", "Kaniel", true);
   lobby.Arrive("b", "Ada", true);
-  // The host's game crashes: b still plays, the team stays started, and the host's Continue
-  // (ready again) goes at once.
+  // The host's game crashes: b still plays, the team stays started, and the
+  // host's Continue (ready again) goes at once.
   lobby.Leave("a");
   CHECK(lobby.TeamOf("b")->started());
   lobby.Arrive("a", "Kaniel", false);
-  const TeamLobby::Outcome again = lobby.Request("a", Request(Action::READY, {}, {}, 0));
+  const TeamLobby::Outcome again =
+      lobby.Request("a", Request(Action::READY, {}, {}, 0));
   CHECK(again.starts.size() == 1 && again.starts[0] == "a");
   return 0;
 }
@@ -167,7 +175,8 @@ int LeaveAndRemove() {
   // The leader leaves: the next member leads.
   CHECK(lobby.Request("a", Request(Action::LEAVE)).changed);
   CHECK(lobby.TeamOf("b")->leader() == "b");
-  // The last one leaves: the team is gone (its world stays on the server's disk).
+  // The last one leaves: the team is gone (its world stays on the server's
+  // disk).
   lobby.Request("b", Request(Action::LEAVE));
   CHECK(lobby.TeamOf("b") == nullptr);
   CHECK(lobby.Store().teams_size() == 0);
@@ -175,7 +184,9 @@ int LeaveAndRemove() {
   lobby.Request("a", Request(Action::CREATE));
   lobby.Request("b", Request(Action::CREATE));
   lobby.Request("a", Request(Action::INVITE, "b"));
-  CHECK(!lobby.Request("b", Request(Action::ACCEPT, {}, lobby.TeamOf("a")->id())).notice.empty());
+  CHECK(
+      !lobby.Request("b", Request(Action::ACCEPT, {}, lobby.TeamOf("a")->id()))
+           .notice.empty());
   // A declined invite is gone.
   lobby.Request("b", Request(Action::DECLINE, {}, lobby.TeamOf("a")->id()));
   CHECK(lobby.StateFor("b").invites_size() == 0);

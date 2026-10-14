@@ -1984,8 +1984,7 @@ public:
 
     // `waiting`: the team lobby (phase 5) says the role later (Assign); until then it rings
     // nothing.
-    explicit PartyController(PartyRole role, bool waiting = false)
-        : role{role}, waiting{waiting} {}
+    explicit PartyController(PartyRole role, bool waiting = false) : role{role}, waiting{waiting} {}
 
     s32 SearchEffectId() const {
         return role.load() == PartyRole::Host ? BeckoningBellEffect : SmallResonantBellEffect;

@@ -1229,8 +1229,9 @@ bool AutoplayDone(const AutoplayStep&) {
     return true;
 }
 
-// The lobby's verbs (team-*) run on the title screen (TickAutoplayTitle); in the world they are
-// over already.
+// The lobby's verbs (team-*) and the title's (title-press <button> [ms], title-wait <seconds>,
+// title-shot <name>: the menus before the world) run on the title screen (TickAutoplayTitle); in
+// the world they are over already.
 bool AutoplayTeamVerb(const AutoplayStep&) {
     return true;
 }
@@ -1290,6 +1291,9 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"team-invite", AutoplayTeamVerb},
     {"team-accept", AutoplayTeamVerb},
     {"team-wait", AutoplayTeamVerb},
+    {"title-press", AutoplayTeamVerb},
+    {"title-wait", AutoplayTeamVerb},
+    {"title-shot", AutoplayTeamVerb},
     {"done", AutoplayDone},
 });
 
@@ -1438,13 +1442,8 @@ void TickAutoplayTitle() {
     // The script's first steps may be the lobby's (team-*): they run here, before the title's
     // Cross (twice a second: they wait on the server's answers).
     if (autoplay_run.next < autoplay_run.script.size() &&
-        Coop::IsTeamTitleVerb(autoplay_run.script[autoplay_run.next].verb)) {
-        autoplay_buttons.store(0);
-        static std::chrono::steady_clock::time_point last_team_step{};
-        if (now - last_team_step < std::chrono::milliseconds{500}) {
-            return;
-        }
-        last_team_step = now;
+        (Coop::IsTeamTitleVerb(autoplay_run.script[autoplay_run.next].verb) ||
+         autoplay_run.script[autoplay_run.next].verb.starts_with("title-"))) {
         const AutoplayCommand& command = autoplay_run.script[autoplay_run.next];
         if (!autoplay_run.step_begun) {
             autoplay_run.step_started = now; // the title's steps time from their own start
@@ -1452,13 +1451,37 @@ void TickAutoplayTitle() {
         const double elapsed =
             std::chrono::duration<double>(now - autoplay_run.step_started).count();
         std::string failure;
-        const bool finished =
-            Coop::RunTeamTitleVerb(command, autoplay_run.step_begun, elapsed, failure);
+        bool finished = false;
+        if (command.verb == "title-press") {
+            // The button held for its time (150 ms), then let go for as long.
+            const u32 button = AutoplayButton(command.args.empty() ? "" : command.args[0]);
+            const double held =
+                (command.args.size() > 1 ? std::atof(command.args[1].c_str()) : 150.0) / 1000.0;
+            if (button == 0) {
+                failure = "no such button";
+            }
+            autoplay_buttons.store(elapsed < held ? button : 0);
+            finished = elapsed >= 2 * held;
+        } else if (command.verb == "title-wait") {
+            autoplay_buttons.store(0);
+            finished = elapsed >= (command.args.empty() ? 1.0 : std::atof(command.args[0].c_str()));
+        } else if (command.verb == "title-shot") {
+            autoplay_buttons.store(0);
+            const AutoplayCommand shot{"shot", command.args};
+            finished = AutoplayShot(AutoplayStep{shot, autoplay_run.step_begun, elapsed, failure});
+        } else {
+            autoplay_buttons.store(0);
+            static std::chrono::steady_clock::time_point last_team_step{};
+            if (now - last_team_step < std::chrono::milliseconds{500}) {
+                return;
+            }
+            last_team_step = now;
+            finished = Coop::RunTeamTitleVerb(command, autoplay_run.step_begun, elapsed, failure);
+        }
         autoplay_run.step_begun = true;
         if (!failure.empty()) {
-            LOG_ERROR(Debug, "Bloodborne autoplay: step {}/{} {} FAILED: {}",
-                      autoplay_run.next + 1, autoplay_run.script.size(), AutoplayText(command),
-                      failure);
+            LOG_ERROR(Debug, "Bloodborne autoplay: step {}/{} {} FAILED: {}", autoplay_run.next + 1,
+                      autoplay_run.script.size(), AutoplayText(command), failure);
             LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
             autoplay_run.phase = AutoplayRun::Phase::Done;
         } else if (finished) {

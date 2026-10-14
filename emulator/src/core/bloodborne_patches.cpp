@@ -855,10 +855,10 @@ void InstallTeamLobby(u64 base, u64 image_size) {
         return;
     }
     const bool installed =
-        InstallCoopHook(reinterpret_cast<void*>(base + TitleLoadStateOffset), TitleStatePrologue,
-                        0, GuestFunctionOverride{HoldTitleLoad}) &&
-        InstallCoopHook(reinterpret_cast<void*>(base + TitleMenuStateOffset), TitleStatePrologue,
-                        0, GuestCodeHook{NoteTitleMenu});
+        InstallCoopHook(reinterpret_cast<void*>(base + TitleLoadStateOffset), TitleStatePrologue, 0,
+                        GuestFunctionOverride{HoldTitleLoad}) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + TitleMenuStateOffset), TitleStatePrologue, 0,
+                        GuestCodeHook{NoteTitleMenu});
     if (!installed) {
         coop_features.Skipped("team lobby", "a hook did not go in");
         return;

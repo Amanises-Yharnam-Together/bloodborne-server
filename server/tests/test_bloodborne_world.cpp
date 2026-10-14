@@ -1019,7 +1019,8 @@ int ATeamFormsAndStartsThroughTheService() {
     a.LobbyHello(false, now);
     b.LobbyHello(false, now);
     Pump(service, {&a, &b}, now);
-    CHECK(a.lobby.players_size() == 1 && a.lobby.players(0).name() == "Player bb");
+    CHECK(a.lobby.players_size() == 1 &&
+          a.lobby.players(0).name() == "Player bb");
     a.Team(bbcoop::TeamRequest::CREATE, now);
     Pump(service, {&a, &b}, now);
     CHECK(a.lobby.has_team() && a.lobby.team().leader() == "aa");

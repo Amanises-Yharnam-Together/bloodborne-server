@@ -32,6 +32,7 @@ VERBS = {
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
     "return-point",
     "team-create", "team-invite", "team-accept", "team-wait",  # the lobby's, on the title
+    "title-press", "title-wait", "title-shot",
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
@@ -125,8 +126,8 @@ class ScenarioTest(unittest.TestCase):
             for role, script in scenario["roles"].items():
                 with self.subTest(scenario=name, role=role):
                     first = run_scenario.stages_of(script)[0]
-                    # The lobby's steps (team-*) run on the title, before the world's first.
-                    first = [step for step in first if not step.startswith("team-")]
+                    # The lobby's and the title's steps (team-*, title-*) run before the world.
+                    first = [step for step in first if not step.startswith(("team-", "title-"))]
                     self.assertEqual(first[0], scenarios.START)
 
     def test_only_the_kill_made_is_posted(self):

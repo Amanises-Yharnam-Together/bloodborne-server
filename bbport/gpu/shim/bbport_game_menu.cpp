@@ -638,14 +638,14 @@ GAME_ABI void LobbyRows(void* page, void*) {
         team.push_back({T("Leave the team", "Покинуть команду"), {BBCOOP_TEAM_LEAVE, {}}});
     }
     row(LobbyTeamRow, T("Team", "Команда"),
-        T("Create a team or leave yours (choose, the page shows it when it opens again)",
+        T("Create a team or leave yours (the page shows it when it opens again)",
           "Создать команду или покинуть свою (изменения видны при следующем открытии)"),
         std::move(team));
 
     // 2. Invite a player signed in to the server.
     std::vector<std::pair<u32, LobbyChoice>> invite;
     const std::string online = std::to_string(lobby.player_count);
-    invite.push_back({T(online + " players online", "Игроков в сети: " + online), {}});
+    invite.push_back({T("Players online: " + online, "Игроков в сети: " + online), {}});
     if (lobby.in_team && lobby.member_count < 4) {
         for (int i = 0; i < lobby.player_count; ++i) {
             const bbcoop_lobby_entry& p = lobby.players[i];
@@ -662,7 +662,7 @@ GAME_ABI void LobbyRows(void* page, void*) {
     std::vector<std::pair<u32, LobbyChoice>> invites;
     const std::string invited = std::to_string(lobby.invite_count);
     invites.push_back({lobby.invite_count == 0 ? T("No invitations", "Приглашений нет")
-                                               : T(invited + " invitations", "Приглашений: " + invited),
+                                               : T("Invitations: " + invited, "Приглашений: " + invited),
                        {}});
     for (int i = 0; i < lobby.invite_count; ++i) {
         const bbcoop_lobby_entry& inv = lobby.invites[i];

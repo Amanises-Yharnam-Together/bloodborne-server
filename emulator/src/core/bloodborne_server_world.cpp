@@ -830,8 +830,8 @@ void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id)
     } else {
         request.set_member(id);
     }
-    LOG_INFO(Debug, "Co-op team lobby: the menu asks {} {}", bbcoop::TeamRequest::Action_Name(action),
-             id);
+    LOG_INFO(Debug, "Co-op team lobby: the menu asks {} {}",
+             bbcoop::TeamRequest::Action_Name(action), id);
     QueueLobby(std::move(envelope));
 }
 

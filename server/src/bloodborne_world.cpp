@@ -152,8 +152,9 @@ bool WorldStore::Compact(const bbcoop::StoredWorld& world) {
 Service::Service(QString folder, qint64 heartbeat_ms, int compact_records, qint64 compact_ms)
     : folder{std::move(folder)}, heartbeat_ms{heartbeat_ms}, compact_records{compact_records},
       compact_ms{compact_ms}, lobby{[] {
-          return QStringLiteral("%1").arg(QRandomGenerator::global()->generate64(), 16, 16,
-                                          QLatin1Char('0')).toStdString();
+          return QStringLiteral("%1")
+              .arg(QRandomGenerator::global()->generate64(), 16, 16, QLatin1Char('0'))
+              .toStdString();
       }} {}
 
 const WorldLogHost* Service::World(const QByteArray& party) const {
@@ -860,9 +861,9 @@ void Service::OnLobbyHello(Member& member, const bbcoop::LobbyHello& hello, qint
     const bool arrived = member.lobby.empty();
     member.lobby = hello.member();
     if (arrived) {
-        result.log.append(QStringLiteral("team lobby: %1 (%2) signed in")
-                              .arg(QString::fromStdString(hello.member()),
-                                   QString::fromStdString(hello.name())));
+        result.log.append(
+            QStringLiteral("team lobby: %1 (%2) signed in")
+                .arg(QString::fromStdString(hello.member()), QString::fromStdString(hello.name())));
     }
     Settle(lobby.Arrive(hello.member(), hello.name(), hello.playing()), now_ms, result);
     if (arrived) {
@@ -904,10 +905,11 @@ void Service::Settle(const TeamLobby::Outcome& outcome, qint64 now_ms, Result& r
     }
     for (const std::string& name : outcome.starts) {
         const bbcoop::TeamStart start = lobby.StartFor(name);
-        result.log.append(QStringLiteral("team lobby: %1 starts in team %2 (slot %3, host %4)")
-                              .arg(QString::fromStdString(name), QString::fromStdString(start.team()))
-                              .arg(start.slot())
-                              .arg(QString::fromStdString(start.host())));
+        result.log.append(
+            QStringLiteral("team lobby: %1 starts in team %2 (slot %3, host %4)")
+                .arg(QString::fromStdString(name), QString::fromStdString(start.team()))
+                .arg(start.slot())
+                .arg(QString::fromStdString(start.host())));
         for (auto& [key, member] : members) {
             if (member.lobby == name) {
                 bbcoop::Envelope envelope;

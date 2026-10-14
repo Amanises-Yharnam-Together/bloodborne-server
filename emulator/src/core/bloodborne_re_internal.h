@@ -8,11 +8,11 @@
 
 #pragma once
 
+#include "coop.pb.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_write_watch.h"
-#include "coop.pb.h"
 
 #include <algorithm>
 #include <array>

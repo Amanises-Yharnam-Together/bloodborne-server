@@ -12,8 +12,8 @@
 #include <string>
 #include <vector>
 
-#include "coop.pb.h"
 #include "common/types.h"
+#include "coop.pb.h"
 
 namespace Core::Bloodborne {
 

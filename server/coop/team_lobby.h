@@ -26,9 +26,9 @@ public:
     explicit TeamLobby(std::function<std::string()> make_id);
 
     struct Outcome {
-        bool changed = false;                 // send everyone their state again
-        std::string notice;                   // why the request was refused (to the requester)
-        std::vector<std::string> starts;      // members to send a TeamStart now
+        bool changed = false;            // send everyone their state again
+        std::string notice;              // why the request was refused (to the requester)
+        std::vector<std::string> starts; // members to send a TeamStart now
     };
 
     // A player signed in (or said it now plays / is back at the title).

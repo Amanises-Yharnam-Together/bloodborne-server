@@ -63,9 +63,10 @@ bbcoop::LobbyPlayer::State TeamLobby::StateOf(const std::string& member) const {
 
 void TeamLobby::RemoveFrom(bbcoop::Team& team, const std::string& member) {
     auto* members = team.mutable_members();
-    members->erase(std::remove_if(members->begin(), members->end(),
-                                  [&](const bbcoop::TeamMember& m) { return m.member() == member; }),
-                   members->end());
+    members->erase(
+        std::remove_if(members->begin(), members->end(),
+                       [&](const bbcoop::TeamMember& m) { return m.member() == member; }),
+        members->end());
     if (team.leader() == member && !members->empty()) {
         team.set_leader(members->begin()->member());
     }
@@ -178,9 +179,8 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
     case Action::ACCEPT:
     case Action::DECLINE: {
         auto& list = invites[member];
-        const auto invite = std::find_if(list.begin(), list.end(), [&](const auto& i) {
-            return i.team() == request.team();
-        });
+        const auto invite = std::find_if(list.begin(), list.end(),
+                                         [&](const auto& i) { return i.team() == request.team(); });
         if (invite == list.end()) {
             return refuse("no such invite");
         }

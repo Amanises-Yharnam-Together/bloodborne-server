@@ -111,6 +111,15 @@ OTHER_MAP_FLAG = 12700131
 THIS_MAP_FLAG = 12410999
 FORBIDDEN_WOODS_LAMP_LIT = 12707810  # a lamp neither rig character has lit (see LampOfActiveFlag)
 START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
+# The title menu (Continue, Load Game, New Game, System, ...) to the System menu's Co-op Team
+# page (Controls, Environment, Co-op Team, ...), and back from the page to Continue (the title's
+# own Cross then loads).
+TITLE_TO_TEAM_PAGE = ["title-press down", "title-press down", "title-press down",
+                      "title-press cross", "title-wait 2", "title-press down", "title-press down",
+                      "title-wait 1", "title-shot system", "title-press cross", "title-wait 3"]
+TEAM_PAGE_TO_CONTINUE = ["title-press circle", "title-wait 2", "title-press circle",
+                         "title-wait 2", "title-press up", "title-press up", "title-press up",
+                         "title-wait 1", "title-shot back-at-continue"]
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
 # The session must hold: a game that leaves the room (LeaveRoom) broke it.
 SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
@@ -810,6 +819,43 @@ SCENARIOS = {
             "guest": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    # The lobby's page in the game's own System menu (run it drawn, for pictures): the host
+    # creates a team and invites the guest from the page, the guest accepts from its page, both
+    # see the team and start it with Continue.
+    "team-menu": {
+        "about": "the Co-op Team page in the title's System menu: invite and accept there, then "
+                 "the team plays (run drawn: pictures of each step)",
+        "roles": {
+            "host": ["title-wait 6", "title-press cross", "title-wait 4", "title-shot title",
+                     "team-create", *TITLE_TO_TEAM_PAGE, "title-shot team-page",
+                     "title-press down", "title-wait 1", "title-shot invite-row",
+                     "title-press cross", "title-wait 1", "title-shot invite-list",
+                     "title-press down", "title-wait 1", "title-press cross", "title-wait 1",
+                     "title-shot invite-chosen",
+                     "title-wait 25", "title-press circle", "title-wait 2", "title-press cross",
+                     "title-wait 3", "title-shot team-page-2", "title-press down",
+                     "title-press down", "title-press down", "title-wait 1",
+                     "title-shot members-row", *TEAM_PAGE_TO_CONTINUE, START, "wait-session 2 300",
+                     "wait 10", "snapshot", "expect-session 2"],
+            "guest": ["title-wait 6", "title-press cross", "title-wait 4", "title-wait 20",
+                      *TITLE_TO_TEAM_PAGE, "title-shot guest-page", "title-press down",
+                      "title-press down", "title-wait 1", "title-shot invitations-row",
+                      "title-press cross", "title-wait 1", "title-shot invitations-list",
+                      "title-press down", "title-wait 1", "title-press cross", "title-wait 1",
+                      "title-shot invitation-chosen",
+                      "title-wait 5", "title-press circle", "title-wait 2", "title-press cross",
+                      "title-wait 3", "title-shot guest-page-2", *TEAM_PAGE_TO_CONTINUE, START,
+                      "wait-session 2 300", "wait 10", "snapshot", "expect-session 2"],
+        },
+        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
+        "expect": {
+            "host": [r"Co-op team lobby: the menu asks INVITE",
+                     r"Co-op team lobby: the save plays in team \w+ as its host"],
+            "guest": [r"Co-op team lobby: the menu asks ACCEPT",
+                      r"Co-op team lobby: the save plays in team \w+ as its guest"],
+        },
         "timeout": 600,
     },
     "team-join3": {
