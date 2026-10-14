@@ -1213,8 +1213,8 @@ void InstallGuestsHitNpcs(u64 base, u64 image_size) {
     coop_features.On("guests hit NPCs");
 }
 
-// Trading (bloodborne_trade.cpp, SHADPS4_BLOODBORNE_TRADE=1): the game functions it calls to take
-// items out of the inventory and put them in.
+// Trading (bloodborne_trade.cpp, the port with the server world): the game functions it calls to
+// take items out of the inventory and put them in.
 void InstallTrading(u64 base, u64 image_size) {
     if (!TradeSwitchOn() || !CoopSitesMatch(base, image_size, "trading", "no trading")) {
         return;

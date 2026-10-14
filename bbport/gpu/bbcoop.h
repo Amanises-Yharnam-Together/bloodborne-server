@@ -116,7 +116,7 @@ enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
 void bbcoop_lobby_request(int action, const char *id);
 
 /* Trading between party members (the co-op code's bloodborne_trade.h, with
- * SHADPS4_BLOODBORNE_TRADE=1): what the port's trade menus (shim/bbport_trade_menu.cpp) need. An
+ * always on in the port with the server world): what the port's trade menus (shim/bbport_trade_menu.cpp) need. An
  * item is a kind (1 Blood Echoes with id 0, 2 goods by EquipParamGoods id); texts are UTF-8 and
  * `size` bytes at most. Calls from the game's thread. */
 int bbcoop_trade_on(void);

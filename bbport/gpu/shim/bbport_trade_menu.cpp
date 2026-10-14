@@ -20,7 +20,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -63,8 +62,8 @@ constexpr u32 MaxGoods = 99, MaxEchoes = 999'999'999;
 
 const u8 ItemCommandsCall[] = {0xE8, 0x01, 0x91, 0x04, 0x00};
 // The inventory's row filter (functor call 0x01BD8150(self, item record) -> keep) leaves out Blood
-// Vials, Quicksilver Bullets and Blood Bullets (goods 1000, 900, 901), shown on the HUD only. With
-// trading on it keeps them: their rows carry the Give commands (and the game's own Use/Discard).
+// Vials, Quicksilver Bullets and Blood Bullets (goods 1000, 900, 901), shown on the HUD only. The port
+// keeps them: their rows carry the Give commands (and the game's own Use/Discard).
 constexpr u64 InventoryRowFilter = 0x01BD8150;
 const u8 InventoryRowFilterPrologue[] = {0x55, 0x48, 0x89, 0xE5, 0x53, 0x50, 0x48, 0x89};
 const u8 KeepEveryRow[] = {0xB0, 0x01, 0xC3}; // mov al, 1; ret
@@ -325,9 +324,6 @@ void TickCall() {
 
 bool PatchImage(unsigned char* image_start, std::uint64_t size, std::uint8_t*& stubs) {
     image = reinterpret_cast<u64>(image_start);
-    if (const char* trade = std::getenv("SHADPS4_BLOODBORNE_TRADE"); !trade || trade[0] != '1') {
-        return false; // the game's menus as they are
-    }
     if (InventoryRowFilter + sizeof InventoryRowFilterPrologue > size ||
         std::memcmp(image_start + InventoryRowFilter, InventoryRowFilterPrologue,
                     sizeof InventoryRowFilterPrologue) != 0 ||
