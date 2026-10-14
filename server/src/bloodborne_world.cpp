@@ -389,6 +389,7 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
         return;
     }
     member.party = PartyFolderName(party);
+    const bool team = party.startsWith("team:");
     member.name = hello.member();
     member.run = hello.run();
     member.host = hello.host();
@@ -417,6 +418,10 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     SendOwners(world, now_ms, result, &member);
     // What its trades owe it: grants not yet added, offers waiting for its answer.
     Deliver(world, world.trades.Resume(member.name, now_ms), now_ms, result);
+    world.team = world.team || team;
+    if (world.team) {
+        SendTeamWorld(world, member, now_ms);
+    }
     result.log.append(QStringLiteral("party world %1: %2 (run %3) follows log %4 at seq %5")
                           .arg(world.name, QString::fromStdString(member.name))
                           .arg(Hex(member.run), Hex(world.host.Epoch()))
@@ -545,6 +550,9 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
         }
         break;
     }
+    case bbcoop::Envelope::kTeamWorld:
+        TakeTeamWorld(member, world, envelope.team_world(), now_ms, result);
+        break;
     case bbcoop::Envelope::kShown:
     case bbcoop::Envelope::kFlags:
     case bbcoop::Envelope::kMapState:
@@ -930,7 +938,77 @@ void Service::Forget(const ServerLink::Endpoint& link) {
 
 namespace {
 const QString TeamsFile = QStringLiteral("teams.pb");
+const QString TeamWorldFile = QStringLiteral("team_world.pb");
 } // namespace
+
+const std::optional<bbcoop::TeamWorld>& Service::TeamWorldOf(PartyWorld& world) {
+    if (!world.team_world_read) {
+        world.team_world_read = true;
+        if (!folder.isEmpty()) {
+            QFile file{QDir{QDir{folder}.filePath(world.name)}.filePath(TeamWorldFile)};
+            if (file.open(QIODevice::ReadOnly)) {
+                const QByteArray bytes = file.readAll();
+                bbcoop::TeamWorld stored;
+                if (stored.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size()))) {
+                    world.team_world = std::move(stored);
+                }
+            }
+        }
+    }
+    return world.team_world;
+}
+
+void Service::SendTeamWorld(PartyWorld& world, Member& member, qint64 now_ms) {
+    bbcoop::Envelope envelope;
+    if (const auto& team_world = TeamWorldOf(world)) {
+        *envelope.mutable_team_world() = *team_world;
+        envelope.mutable_team_world()->set_exists(true);
+    } else {
+        envelope.mutable_team_world()->set_exists(false);
+    }
+    SendTo(member, envelope, now_ms);
+}
+
+void Service::TakeTeamWorld(Member& member, PartyWorld& world, const bbcoop::TeamWorld& report,
+                            qint64 now_ms, Result& result) {
+    if (!world.team || !member.host) {
+        return; // only the team's host's world is the team's
+    }
+    const auto& before = TeamWorldOf(world);
+    if (before &&
+        std::equal(before->on().begin(), before->on().end(), report.on().begin(),
+                   report.on().end()) &&
+        std::equal(before->blocks().begin(), before->blocks().end(), report.blocks().begin(),
+                   report.blocks().end())) {
+        return; // the same world
+    }
+    bbcoop::TeamWorld taken;
+    *taken.mutable_on() = report.on();
+    std::sort(taken.mutable_on()->begin(), taken.mutable_on()->end());
+    *taken.mutable_blocks() = report.blocks();
+    taken.set_exists(true);
+    taken.set_version((before ? before->version() : 0) + 1);
+    world.team_world = taken;
+    if (!folder.isEmpty()) {
+        const QString path = QDir{folder}.filePath(world.name);
+        QDir{}.mkpath(path);
+        QSaveFile file{QDir{path}.filePath(TeamWorldFile)};
+        if (!file.open(QIODevice::WriteOnly) || file.write(Serialized(taken)) < 0 ||
+            !file.commit()) {
+            result.log.append(QStringLiteral("team world %1: could not write %2")
+                                  .arg(world.name, file.fileName()));
+        }
+    }
+    result.log.append(QStringLiteral("team world %1: %2's world taken (%3 flags on, version %4)")
+                          .arg(world.name, QString::fromStdString(member.name))
+                          .arg(taken.on_size())
+                          .arg(taken.version()));
+    for (auto& [key, other] : members) {
+        if (other.party == world.name) {
+            SendTeamWorld(world, other, now_ms);
+        }
+    }
+}
 
 void Service::OnLobbyHello(Member& member, const bbcoop::LobbyHello& hello, qint64 now_ms,
                            Result& result) {

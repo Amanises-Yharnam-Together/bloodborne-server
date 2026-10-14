@@ -157,6 +157,9 @@ struct Game {
       ++lobby_states;
     } else if (envelope.has_team_start()) {
       starts.push_back(envelope.team_start());
+    } else if (envelope.has_team_world()) {
+      team_world = envelope.team_world();
+      ++team_worlds;
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -216,6 +219,8 @@ struct Game {
   bbcoop::LobbyState lobby;
   int lobby_states = 0;
   std::vector<bbcoop::TeamStart> starts;
+  std::optional<bbcoop::TeamWorld> team_world;
+  int team_worlds = 0;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -1131,6 +1136,66 @@ int ATeamFormsAndStartsThroughTheService() {
   return 0;
 }
 
+// Phase 5b: a team's world. Its host's game reports it whole; the server keeps
+// it on disk and every member gets it after its hello and when it changes; a
+// guest's report counts for nothing, and an ordinary party has none.
+int ATeamsWorldComesFromItsHostAndOutlivesTheServer() {
+  QTemporaryDir dir;
+  CHECK(dir.isValid());
+  const QByteArray team = "team:00ff00ff00ff00ff";
+  qint64 now = 1'000'000;
+  const auto report = [](Game &game, std::vector<s32> on, qint64 at) {
+    bbcoop::Envelope envelope;
+    for (const s32 flag : on) {
+      envelope.mutable_team_world()->add_on(flag);
+    }
+    envelope.mutable_team_world()->add_blocks(1);
+    game.Send(envelope, at);
+  };
+  {
+    Service service{dir.path()};
+    Game host{1000, "host", 11};
+    Game guest{1001, "guest", 12};
+    host.Hello(now, team);
+    guest.Hello(now, team);
+    Pump(service, {&host, &guest}, now);
+    // No world yet: the members hear so.
+    CHECK(guest.team_world && !guest.team_world->exists());
+    CHECK(host.team_world && !host.team_world->exists());
+    // A guest's report is no team world.
+    report(guest, {7}, now);
+    Pump(service, {&host, &guest}, now);
+    CHECK(!host.team_world->exists());
+    // The host's is: every member gets it.
+    now += 100;
+    report(host, {1000, 1001, 12401800}, now);
+    Pump(service, {&host, &guest}, now);
+    CHECK(guest.team_world && guest.team_world->exists());
+    CHECK(guest.team_world->on_size() == 3 &&
+          guest.team_world->on(2) == 12401800);
+    CHECK(guest.team_world->version() == 1);
+    // The same again changes nothing (no new version).
+    const int heard = guest.team_worlds;
+    report(host, {1000, 1001, 12401800}, now);
+    Pump(service, {&host, &guest}, now);
+    CHECK(guest.team_worlds == heard);
+    // An ordinary party has no team world.
+    Game other{1002, "other", 13};
+    other.Hello(now);
+    Pump(service, {&other}, now);
+    CHECK(!other.team_world);
+  }
+  // A new server: the world is on disk.
+  Service service{dir.path()};
+  service.Load(now);
+  Game guest{1001, "guest", 22};
+  guest.Hello(now, team);
+  Pump(service, {&guest}, now);
+  CHECK(guest.team_world && guest.team_world->exists());
+  CHECK(guest.team_world->on_size() == 3 && guest.team_world->version() == 1);
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
@@ -1163,6 +1228,8 @@ int main() {
        ATeamFormsAndStartsThroughTheService},
       {"ATradeGoesThroughTheServerAndOutlivesItsRestart",
        ATradeGoesThroughTheServerAndOutlivesItsRestart},
+      {"ATeamsWorldComesFromItsHostAndOutlivesTheServer",
+       ATeamsWorldComesFromItsHostAndOutlivesTheServer},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {

@@ -723,6 +723,10 @@ void TeamBackAtTitle();
 bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed,
                       std::string& failure);
 bool IsTeamTitleVerb(std::string_view verb);
+// Phase 5b: the team's world goes into the save as it loads (before its map items), or the save's
+// own world comes back when it plays alone; the team's host reports its world now and then.
+void ApplyTeamWorldOnLoad();
+void TickTeamWorld(s64 now_ms);
 // The lobby as the server last sent it, for the game's menu (none before its answer), and this
 // player's lobby name; a request from the menu.
 std::optional<bbcoop::LobbyState> TeamLobbyState();

@@ -114,6 +114,8 @@ START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
 # The title menu (Continue, Load Game, New Game, System, ...) to the System menu's Co-op Team
 # page (Controls, Environment, Co-op Team, ...), and back from the page to Continue (the title's
 # own Cross then loads).
+# Phase 5b: a world flag of Central Yharnam's block no event uses (the rig's saves have it off).
+TEAM_WORLD_FLAG = 12410999
 TITLE_TO_TEAM_PAGE = ["title-press down", "title-press down", "title-press down",
                       "title-press cross", "title-wait 2", "title-press down", "title-press down",
                       "title-wait 1", "title-shot system", "title-press cross", "title-wait 3"]
@@ -932,6 +934,33 @@ SCENARIOS = {
                       r"Co-op team lobby: the save plays in team \w+ as its guest"],
         },
         "timeout": 600,
+    },
+    # Phase 5b: the team's world. A world flag no save has (TEAM_WORLD_FLAG, Central Yharnam's
+    # block, unused) set by the host in the team's first session is in the team's world; the
+    # guest's save takes it at its next team load, and loses it again when it plays alone (its own
+    # world back).
+    "team-world": {
+        "about": "the team's world: the host's save makes it, the guest's save takes it in the "
+                 "next session, and the guest alone has its own world back",
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", START,
+                      "wait-session 2 300", f"set-flag {TEAM_WORLD_FLAG} 1", "wait 15", "done"],
+                     [START, "wait-session 2 300", f"expect-flag {TEAM_WORLD_FLAG} 1", "wait 60",
+                      "done"]],
+            "guest": [["team-accept", START, "wait-session 2 300",
+                       f"expect-flag {TEAM_WORLD_FLAG} 0", "wait 45", "done"],
+                      [START, "wait-session 2 300", f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+                      ["team-leave", START, "wait 10", f"expect-flag {TEAM_WORLD_FLAG} 0"]],
+        },
+        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
+        "expect": {
+            "host": [r"Co-op team world: this host's world to the server"],
+            "guest": [r"Co-op team world: the team's world is in this save",
+                      r"Co-op team world: slot \d+'s own world kept aside",
+                      r"Co-op team world: slot \d+ plays alone: its own world is back"],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
     },
     "team-join3": {
         "about": "a team of three from the lobby: the host invites both guests",

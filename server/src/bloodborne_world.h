@@ -126,6 +126,11 @@ private:
         QString vitals_logged; // the members' states and the wipes, as last logged
         // Its trades (coop/trade.h): the offers held and the grants owed.
         BloodborneCoop::TradeDesk trades;
+        // Phase 5b: a team's world (its party key is a team's), from its host's reports; read
+        // from team_world.pb when the party first comes.
+        bool team = false;
+        std::optional<bbcoop::TeamWorld> team_world;
+        bool team_world_read = false;
     };
     struct Member {
         explicit Member(quint32 instance) : stream{"shadnet", instance} {}
@@ -184,6 +189,11 @@ private:
     void Settle(const BloodborneCoop::TeamLobby::Outcome& outcome, qint64 now_ms, Result& result);
     void SendLobby(qint64 now_ms);
     void StoreTeams(Result& result);
+    // Phase 5b: the team's world, read from its folder once; a host's report taken.
+    const std::optional<bbcoop::TeamWorld>& TeamWorldOf(PartyWorld& world);
+    void TakeTeamWorld(Member& member, PartyWorld& world, const bbcoop::TeamWorld& report,
+                       qint64 now_ms, Result& result);
+    void SendTeamWorld(PartyWorld& world, Member& member, qint64 now_ms);
     void LoadTeams(Result& result);
 
     QString folder;

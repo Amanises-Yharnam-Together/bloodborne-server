@@ -21,10 +21,12 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <thread>
 
 #include <fmt/format.h>
 #include "common/logging/log.h"
+#include "common/path_util.h"
 #include "coop/coop_messages.h"
 #include "coop/coop_stream.h"
 #include "core/bloodborne_team.h"
@@ -88,6 +90,20 @@ std::string lobby_name;      // its online id
 bool lobby_playing = false;  // in a world (the load went)
 bool lobby_hello_due = true; // stream restarts and changes of lobby_playing
 std::deque<bbcoop::Envelope> lobby_outbox;
+// Phase 5b: the team's world as the server last sent it (none before), and what this game does
+// with it: a save playing in a team takes it as its loads bring each flag block (team_world_due;
+// a block once, team_world_blocks: the area's own changes stay), the team's host reports its own
+// once its save took the team's (team_host, team_world_taken), a save loaded alone takes its own
+// world back (personal_world_due).
+std::optional<bbcoop::TeamWorld> team_world;
+bool team_world_due = false;
+bool team_world_taken = false;
+std::set<u32> team_world_blocks;
+bool team_host = false;
+bool personal_world_due = false;
+WorldFlags team_world_reported;
+s64 team_world_reported_ms = 0;
+constexpr s64 TeamWorldReportMs = 10'000;
 
 std::string PartyKey() {
     if (team_switch) {
@@ -112,6 +128,14 @@ bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
             LOG_WARNING(Debug, "Co-op team lobby: the server refused: {}",
                         envelope.lobby_state().notice());
         }
+        return true;
+    }
+    if (envelope.has_team_world()) {
+        std::scoped_lock lock{team_mutex};
+        team_world = envelope.team_world();
+        LOG_INFO(Debug, "Co-op team world: the server's has {} ({} flags on, version {})",
+                 team_world->exists() ? "a world" : "no world yet", team_world->on_size(),
+                 team_world->version());
         return true;
     }
     if (envelope.has_team_start()) {
@@ -546,6 +570,7 @@ ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 no
         last_proposed.clear();
         proposed_ms = 0;
     }
+    TickTeamWorld(now_ms);
     ServerWorldKills world;
     Taken taken = TakeInbox(now_ms);
     world.host_wiped = taken.after_wipe;
@@ -798,6 +823,23 @@ bool HoldTitleLoadForTeam(u32 slot) {
         lobby_hello_due = true;
         // A save alone after a team's plays no team's world.
         team_party = decision.start ? decision.start->party() : std::string{};
+        team_world.reset();
+        team_world_due = decision.start.has_value();
+        team_world_taken = false;
+        team_world_blocks.clear();
+        team_host = decision.start && decision.start->host() == me;
+        personal_world_due = !decision.start.has_value();
+        team_world_reported = {};
+        team_world_reported_ms = 0;
+    }
+    if (decision.start) {
+        // The party's hello now, not at the first kill step: the team's world comes back while
+        // the save loads.
+        std::scoped_lock lock{stream_mutex};
+        if (hello_party != decision.start->party()) {
+            hello_party = decision.start->party();
+            hello_due = true;
+        }
     }
     if (decision.start && party_controller) {
         const bool host = decision.start->host() == me;
@@ -849,6 +891,219 @@ void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id)
     QueueLobby(std::move(envelope));
 }
 
+namespace {
+
+std::filesystem::path PersonalWorldFile(int slot) {
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+           SlotFileName("personal_world", slot);
+}
+
+std::string ReadWholeFile(const std::filesystem::path& path) {
+    std::ifstream file{path, std::ios::binary};
+    return std::string{std::istreambuf_iterator<char>{file}, {}};
+}
+
+// Written whole beside it, then moved over it: a crash leaves the old file or the new one.
+void WriteWholeFile(const std::filesystem::path& path, const std::string& text) {
+    std::filesystem::path partial = path;
+    partial += ".part";
+    {
+        std::ofstream file{partial, std::ios::binary | std::ios::trunc};
+        file << text;
+    }
+    std::error_code error;
+    std::filesystem::rename(partial, path, error);
+    if (error) {
+        LOG_ERROR(Debug, "Co-op team world: could not write {}: {}", path.string(),
+                  error.message());
+    }
+}
+
+struct WorldStore {
+    FlagStore store;
+    std::vector<FlagBlockBits> blocks;
+};
+std::optional<WorldStore> ReadWorldStore() {
+    WorldStore world{ReadFlagStore(), {}};
+    if (!world.store.whole || world.store.flags_per_block == 0 || world.store.blocks.empty()) {
+        return std::nullopt;
+    }
+    for (const FlagBlock& block : world.store.blocks) {
+        world.blocks.push_back({block.id, block.bytes});
+    }
+    return world;
+}
+
+// Sets the store's world flags to `target`'s: how many changed.
+size_t SetWorldFlags(const WorldStore& world, const WorldFlags& target) {
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    const auto changes = WorldFlagChanges(world.store.flags_per_block, world.blocks, target);
+    for (const auto& [flag, on] : changes) {
+        reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, on);
+    }
+    return changes.size();
+}
+
+} // namespace
+
+void ApplyTeamWorldOnLoad() {
+    if (!team_switch) {
+        return;
+    }
+    std::optional<bbcoop::TeamWorld> world;
+    bool due = false;
+    bool personal = false;
+    {
+        std::scoped_lock lock{team_mutex};
+        due = team_world_due && team_world.has_value();
+        personal = personal_world_due;
+        if (due) {
+            world = team_world;
+        }
+        if (team_world_due && !team_world) {
+            static s64 warned_ms = 0;
+            if (SteadyMilliseconds() - warned_ms > 5'000) {
+                warned_ms = SteadyMilliseconds();
+                LOG_WARNING(Debug, "Co-op team world: the map loads before the server's world "
+                                   "came; it goes in at the next load");
+            }
+        }
+    }
+    const int slot = character_slot.load();
+    if (personal && slot >= 0) {
+        // Alone again: this save's own world back where a team's was in it, block by block as
+        // the loads bring them; the file keeps the blocks still to come.
+        const std::string text = ReadWholeFile(PersonalWorldFile(slot));
+        std::scoped_lock lock{team_mutex};
+        if (text.empty()) {
+            personal_world_due = false;
+            return;
+        }
+        auto own = ParseWorldFlags(text);
+        std::optional<WorldStore> store = ReadWorldStore();
+        if (!own || !store) {
+            LOG_WARNING(Debug, "Co-op team world: slot {}'s own world {}", slot,
+                        own ? "waits (the flags are not readable now)" : "does not read: left");
+            personal_world_due = own.has_value();
+            return;
+        }
+        std::erase_if(store->blocks, [&](const FlagBlockBits& block) {
+            return !std::binary_search(own->blocks.begin(), own->blocks.end(), block.id);
+        });
+        if (store->blocks.empty()) {
+            return;
+        }
+        const size_t changed = SetWorldFlags(*store, *own);
+        const u32 per_block = store->store.flags_per_block;
+        for (const FlagBlockBits& block : store->blocks) {
+            std::erase(own->blocks, block.id);
+            std::erase_if(own->on, [&](s32 flag) { return u32(flag) / per_block == block.id; });
+        }
+        if (own->blocks.empty()) {
+            std::error_code error;
+            std::filesystem::remove(PersonalWorldFile(slot), error);
+            personal_world_due = false;
+        } else {
+            WriteWholeFile(PersonalWorldFile(slot), FormatWorldFlags(*own));
+        }
+        LOG_INFO(Debug,
+                 "Co-op team world: slot {} plays alone: its own world is back in {} "
+                 "blocks ({} flags changed, {} blocks to come)",
+                 slot, store->blocks.size(), changed, own->blocks.size());
+        return;
+    }
+    if (!due) {
+        return;
+    }
+    std::optional<WorldStore> store = ReadWorldStore();
+    if (!store || slot < 0) {
+        return; // the next call (the flags readable, the slot known)
+    }
+    std::scoped_lock lock{team_mutex};
+    if (!world->exists()) {
+        if (!team_world_taken) {
+            LOG_INFO(Debug, "Co-op team world: the team has no world yet: {}",
+                     team_host ? "this save's makes it" : "the host's save makes it");
+        }
+        team_world_taken = true;
+        return;
+    }
+    const WorldFlags target = WorldFlagsOf(*world);
+    // The blocks this load brings that the team's world covers and no earlier load took.
+    std::erase_if(store->blocks, [&](const FlagBlockBits& block) {
+        return team_world_blocks.contains(block.id) ||
+               !std::binary_search(target.blocks.begin(), target.blocks.end(), block.id);
+    });
+    if (store->blocks.empty()) {
+        return;
+    }
+    // This save's own world aside first, block by block as the loads bring them: a block the file
+    // has already (a save that held a team's before) keeps what the file says.
+    {
+        WorldFlags own =
+            ParseWorldFlags(ReadWholeFile(PersonalWorldFile(slot))).value_or(WorldFlags{});
+        std::vector<FlagBlockBits> new_blocks;
+        for (const FlagBlockBits& block : store->blocks) {
+            if (!std::binary_search(own.blocks.begin(), own.blocks.end(), block.id)) {
+                new_blocks.push_back(block);
+            }
+        }
+        if (!new_blocks.empty()) {
+            const WorldFlags added = CaptureWorldFlags(store->store.flags_per_block, new_blocks);
+            own.blocks.insert(own.blocks.end(), added.blocks.begin(), added.blocks.end());
+            own.on.insert(own.on.end(), added.on.begin(), added.on.end());
+            std::sort(own.blocks.begin(), own.blocks.end());
+            std::sort(own.on.begin(), own.on.end());
+            WriteWholeFile(PersonalWorldFile(slot), FormatWorldFlags(own));
+            LOG_INFO(Debug,
+                     "Co-op team world: slot {}'s own world kept aside ({} more blocks, {} "
+                     "flags on in all)",
+                     slot, added.blocks.size(), own.on.size());
+        }
+    }
+    const size_t changed = SetWorldFlags(*store, target);
+    for (const FlagBlockBits& block : store->blocks) {
+        team_world_blocks.insert(block.id);
+    }
+    team_world_taken = true;
+    LOG_INFO(Debug,
+             "Co-op team world: the team's world is in this save: {} blocks, {} flags "
+             "changed (version {})",
+             store->blocks.size(), changed, world->version());
+}
+
+void TickTeamWorld(s64 now_ms) {
+    if (!team_switch) {
+        return;
+    }
+    {
+        std::scoped_lock lock{team_mutex};
+        if (!team_host || team_party.empty() || !team_world_taken || !team_world ||
+            now_ms - team_world_reported_ms < TeamWorldReportMs) {
+            return;
+        }
+        team_world_reported_ms = now_ms;
+    }
+    const auto store = ReadWorldStore();
+    if (!store) {
+        return;
+    }
+    WorldFlags world = CaptureWorldFlags(store->store.flags_per_block, store->blocks);
+    {
+        std::scoped_lock lock{team_mutex};
+        if (world == team_world_reported) {
+            return;
+        }
+        team_world_reported = world;
+    }
+    bbcoop::Envelope envelope;
+    envelope.mutable_team_world()->mutable_on()->Add(world.on.begin(), world.on.end());
+    envelope.mutable_team_world()->mutable_blocks()->Add(world.blocks.begin(), world.blocks.end());
+    Queue(std::move(envelope));
+    LOG_INFO(Debug, "Co-op team world: this host's world to the server ({} flags on)",
+             world.on.size());
+}
+
 bool IsTeamTitleVerb(std::string_view verb) {
     return verb.starts_with("team-");
 }
@@ -890,6 +1145,11 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
         done = lobby && lobby->has_team();
         if (!done && lobby && lobby->invites_size() > 0) {
             request(bbcoop::TeamRequest::ACCEPT, {}, lobby->invites(0).team());
+        }
+    } else if (command.verb == "team-leave") {
+        done = lobby && !lobby->has_team();
+        if (lobby && lobby->has_team() && (!begun || elapsed > 5.0)) {
+            request(bbcoop::TeamRequest::LEAVE);
         }
     } else if (command.verb == "team-wait" && command.args.size() == 1) {
         done = lobby && lobby->has_team() &&

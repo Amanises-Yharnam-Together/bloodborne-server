@@ -9,7 +9,10 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "common/types.h"
@@ -55,5 +58,31 @@ private:
     std::optional<s64> holding_since;
     bool asked = false;
 };
+
+// Phase 5b: a team's world (bbcoop::TeamWorld). The world's part of the event flags (FlagOwner
+// Host and Shared, docs/FLAGS.md; a character's own flags are never in it): the ones on, in the
+// flag blocks the store had. The team's host reports its own; every member's save takes the team's
+// as it loads, its own kept aside (a file per save slot) until it plays alone again.
+struct WorldFlags {
+    std::vector<s32> on;     // sorted
+    std::vector<u32> blocks; // sorted
+    bool operator==(const WorldFlags&) const = default;
+};
+bool IsWorldFlag(s32 flag);
+// One block of the event flag store: flag = id * flags_per_block + byte * 8 + bit (MSB first).
+struct FlagBlockBits {
+    u32 id = 0;
+    std::span<const u8> bytes;
+};
+WorldFlags CaptureWorldFlags(u32 flags_per_block, std::span<const FlagBlockBits> blocks);
+// What to set so the store's world flags are `target`'s, in the blocks both have (a block the
+// target does not cover keeps its flags): each flag and its value, in order.
+std::vector<std::pair<s32, bool>> WorldFlagChanges(u32 flags_per_block,
+                                                   std::span<const FlagBlockBits> blocks,
+                                                   const WorldFlags& target);
+// The personal world kept aside, as its file has it ("blocks" then "on", a number a line).
+std::string FormatWorldFlags(const WorldFlags& world);
+std::optional<WorldFlags> ParseWorldFlags(std::string_view text);
+WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& world);
 
 } // namespace Core::Bloodborne

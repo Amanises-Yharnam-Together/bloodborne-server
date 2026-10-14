@@ -316,8 +316,31 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
      `team-join3`, `team-menu` (drawn: invite and accept through the pages, with pictures).
    - A save loaded alone (not in a team, or after a team's session) rings nothing and plays no
      team's world (the controller waits again); the party's hooks stay in until the game restarts.
-   - Not yet: a team world from the leader's save and the personal world kept aside (5b); the
-     pop-up lists draw over the rows below them.
+   - The pop-up lists draw over the rows below them.
+
+   **5b built 2026-10-14** (with the team lobby): a team's world is its event flags that are the
+   world's (FlagOwner Host and Shared in the flag table; a character's own flags, NPC gifts among
+   them, never go in), `TeamWorld` {on flags, blocks, version}.
+   - **Made by the host.** A team with no world yet takes its host's: the host's game reports
+     its world flags every 10 s when they changed (`TickTeamWorld`), and the server keeps the
+     latest whole in `team_world.pb` in the team's world folder, sent to every member after its
+     party hello (sent at the load's release, so it comes back while the save loads) and when it
+     changes. Only the team's host's report counts. So the team's world starts from the leader's
+     save, and the team's progress is what the host's world has (the guests' shared flags reach
+     it the way phase 3 has them).
+   - **Taken by every save as it loads** (`ApplyTeamWorldOnLoad`, from the map items' creation
+     hook, before the map's events): each flag block the load brings that the team's world
+     covers and no earlier load this session took gets the team's values (only the flags that
+     differ are set, with the game's SetEventFlag); later loads leave a taken block alone, so the
+     session's own changes stay.
+   - **The save's own world aside.** Before a block takes the team's values, its world flags go
+     to `user\bloodborne_party_personal_world_slot<N>.txt` (blocks already in the file keep what it
+     says: a save that played a team before). A save loaded alone gets them back block by block
+     as its loads bring them, and the file goes when all are back.
+   - Rig: `team-world` (host's flag in the team's world, the guest's save takes it in the next
+     session and loses it again alone), title verb `team-leave`.
+   - Not yet: the NG cycle per team (the leader's own), chalice dungeons, several teams per save
+     share the one file of the save's own world (it is the save's world from before any team).
 6. **Clean up.** Remove signs/bell auto-ringing for teams, the signaling handshake, the P2P vport
    transport, superseded patch sites and boards; update the kit, README and release tooling.
 
