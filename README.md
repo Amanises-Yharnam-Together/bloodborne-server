@@ -34,8 +34,8 @@ expect rough edges and keep backups of your saves.
 
 - **Teams, no bells.** Continue, Load Game or New Game opens the team screen: make a team of up to
   four from the hunters online, Ready, and the leader begins the hunt. Every game loads its own
-  save and the team is in one world a few seconds later, wherever each of you stands: no bells,
-  no signs, no summoning.
+  save, the loading screen stays up until the team is together, and you are in one world where
+  each of you stands: no bells (the bell items are gone from the game), no signs, no summoning.
 - **The team's world.** The team keeps one world on the server, started from the leader's save;
   each save's own world is kept aside and comes back when it plays alone.
 - **Stay together.** Nobody is sent home: lamp trips, the Hunter's Dream, deaths, boss kills and

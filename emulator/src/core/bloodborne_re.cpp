@@ -691,6 +691,20 @@ void TickPartyController() {
     const PartyObservation observation = ObserveParty(player, party_controller->SearchEffectId());
     const PartyAction action = party_controller->Tick(observation, PartyController::Clock::now());
     // Phase 6: a team opens and joins its host's session itself, no bell and no signs.
+    if (TeamModeOn() && !InPartySession()) {
+        // Why a team's game out of its session does not open or join one (every 10 s).
+        static s64 said_ms = 0;
+        if (const s64 now_ms = SteadyMilliseconds(); now_ms - said_ms >= 10'000) {
+            said_ms = now_ms;
+            LOG_INFO(Debug,
+                     "Co-op team join: out of a session: action {} player {} map {} transition {} "
+                     "boss {} idle {} effect {} phantom {} waiting {}",
+                     static_cast<int>(action), observation.player_valid, observation.map_usable,
+                     observation.stage_transition, observation.boss_sequence,
+                     observation.matching_idle, observation.search_effect_active,
+                     observation.white_phantom, party_controller->Waiting());
+        }
+    }
     if (TickTeamJoin(action == PartyAction::StartSearch)) {
         return;
     }

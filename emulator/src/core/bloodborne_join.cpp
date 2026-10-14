@@ -1508,7 +1508,10 @@ constexpr u64 JoinParamFreeOffset = 0x00C90520;  // param
 constexpr u64 SummonedNoticeOffset = 0x01FF58B0; // after a guest's join (the summon manager's)
 constexpr u64 StreamWriterVtableOffset = 0x053B2C80;
 constexpr u64 StreamReaderVtableOffset = 0x053B2BE0;
-constexpr float SummonSessionSeconds = 55.0F;
+// The session's search time (a summon's: 55 s). Over with nobody summoned, the game ends the
+// search with "No guests found" (event text 100300, Kaniel 2026-10-14): a team's session waits
+// for its members as long as it is open.
+constexpr float SummonSessionSeconds = 24.0F * 3600.0F;
 constexpr size_t JoinParamSize = 0x1A8; // the summon manager's frame holds it at rbp-0x1A8
 constexpr size_t JoinDataCapacity = 0x200;
 

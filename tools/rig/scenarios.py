@@ -57,6 +57,8 @@ IOSEFKA_VIEWS = [("south", -200.0, 206.8, 0.0), ("north", -200.0, 212.8, 3.1416)
                  ("west", -203.0, 209.8, -1.5708), ("east", -197.0, 209.8, 1.5708)]
 # Up the hallway north of her: out of the other player's pictures.
 IOSEFKA_WAIT = "-200.0 -40.5 218.0 0.0"
+# 7 m from ENEMY (-216.7, 178.1), on the lamp's side: close enough for it to notice a player.
+GUEST_ALONE_SPOT = "-210.0 -54.5 181.0"
 
 
 # At her clinic's door, facing it (south), where Kaniel talked to her (2026-10-13): Cross goes
@@ -457,6 +459,36 @@ SCENARIOS = {
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 480,
+    },
+    # Kaniel 2026-10-14: with the host far away on the same map, the enemies beside a guest stood
+    # still and did not attack (the host's game runs the map's enemies, and woke only its own).
+    "guest-alone-mobs": {
+        "about": "the host far away on the same map (by Iosefka's door), the guest walks up to an "
+                 "enemy alone: it comes for the guest (moves) and hits it",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 75", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", f"census 40",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 3", "census 40", "wait 25",
+                      "census 40", "expect-session 2"],
+        },
+        "moves": {"guest": ENEMY},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    # Its control: the host beside the guest, the same enemy comes for them.
+    "guest-mobs-host-near": {
+        "about": "guest-alone-mobs with the host beside the guest: the enemy comes for them",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 18",
+                     f"teleport {GUEST_ALONE_SPOT}", "wait 40", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", f"census 40",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 3", "census 40", "wait 25",
+                      "census 40", "expect-session 2"],
+        },
+        "moves": {"guest": ENEMY},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
     },
     "hp-together": {
         "about": "both players hit one enemy in one world (after the join), then the host goes "

@@ -679,6 +679,17 @@ class RunnerTest(unittest.TestCase):
         }
         self.assertAlmostEqual(run_scenario.hp_board_lag(hits, "0x1001400b"), 0.1)
 
+    def test_an_enemy_that_comes_for_a_player_moves_between_its_censuses(self):
+        # Kaniel 2026-10-14: with the host far away, the enemies beside a guest stood still.
+        census = ("[Debug] <Info> () x: Bloodborne autoplay census: 0x1001400b hp 484/484 dead 0x0 "
+                  "hidden 0 disabled 0 at {} m ({}, -54.7, {}) backread 0/0 draw 0x0")
+        still = "\n".join([census.format(6.0, -216.7, 178.1), census.format(6.0, -216.6, 178.1)])
+        moved = "\n".join([census.format(6.0, -216.7, 178.1), census.format(1.0, -212.0, 180.0)])
+        spec = {"moves": {"guest": "0x1001400b"}}
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest": still}) if "stood" in p])
+        self.assertFalse([p for p in run_scenario.judge(spec, {"guest": moved}) if "stood" in p])
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest": ""}) if "stood" in p])
+
     def test_a_lag_at_the_limit_passes(self):
         # Rig hit3 2026-10-14: 0.15 s on the games' clock came out as 0.1500000000014552 s, over a
         # 0.15 s limit by the float sums alone.

@@ -117,6 +117,9 @@ enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
 void bbcoop_lobby_request(int action, const char *id);
 /* The title holds a save's load for the team: the team screen is up (bbport_overlay.cpp). */
 int bbcoop_team_screen(void);
+/* A team's guest loads and joins its host's session: the loading screen stays up (Kaniel
+ * 2026-10-14: no game shown until it is in the team's session). */
+int bbcoop_join_screen(void);
 /* Its buttons: this character ready, not ready, the leader's start (a member's: ready), alone. */
 enum { BBCOOP_TEAM_GO_READY = 0, BBCOOP_TEAM_GO_UNREADY = 1, BBCOOP_TEAM_GO_START = 2,
        BBCOOP_TEAM_GO_ALONE = 3 };

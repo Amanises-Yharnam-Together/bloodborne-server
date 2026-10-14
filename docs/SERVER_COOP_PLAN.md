@@ -366,6 +366,21 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
      sends the join data a summon would send (`TeamSession`, coop protocol 4); the server relays
      it; each guest joins with the game's own JoinSession in place. Rig: join, join3, team-join3,
      trip pass with no `/summon_messenger` request at all; join x25 for the stalls.
+   - **One loading screen** (Kaniel: "load directly to the game", "hold the loading screen
+     until it joins"): a guest joins in its world after its save loads, and the port holds a
+     loading screen of its own (`JoinScreen`, input held, 45 s at most) from the end of that load
+     through the join and the game's summon reload until it stands in the session's world. Tried
+     and dropped: skipping the summon reload (the join's start event 0x01317780 skipped, the join
+     finished with 0x0178D9C0): the guest's own join task then stays at step 2 and the host takes
+     none of its hits (rig hp-together). Not from the title: the game's session layer needs a world.
+   - **Rejoin after a crash or a quit** (Kaniel 2026-10-14): the team stays started on the server;
+     a restarted game's Continue and Ready load it into the team's session. A restarted host's
+     old session closes on the server (its new run's hello); a guest left alone clears flag 4047
+     ("a player on the way out", `LeavingFlag`) and, a white phantom with no session, is a player
+     again (`PhantomHome`). Rig: crash-apart, host-crash-apart, team-world.
+   - **No bell items** (Kaniel 2026-10-14): Beckoning Bell 200, Small Resonant Bell 205,
+     Sinister Resonant Bell 225 and Old Hunter Bell 4312 leave the inventory in the port's co-op
+     (checked every 3 s in the world); the Choir Bell (2050, a hunter tool) stays.
    - **Launcher:** no party name/password or role; "host" only says which PC runs the server.
      The team is made on the team screen. The System menu's Co-op Team page is gone.
    - **Rig:** the runner makes every scenario's team on the title (`team_prelude`), so every
@@ -380,6 +395,11 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
      boards live in the server world (phase 3c). Patch sites: none removed; the ones the new
      paths replaced already skip themselves on the port (map item sync), and the bell's are
      shadPS4's.
+
+Backlog (Kaniel 2026-10-14): faster guest loading. A guest's join costs the summon reload (up to
+about 15 s on the rig) on top of its own load. Joining in place without it (tried in phase 6,
+PR #111) saves most of that, once the host's task for the guest gets past the step that waits for
+the guest's data and the guest's own join task finishes without the reload.
 
 Later, not planned now (Kaniel 2026-10-13): a headless world host, the port running on the server
 without rendering, one copy per occupied map with a hidden anchor character, owning that map's

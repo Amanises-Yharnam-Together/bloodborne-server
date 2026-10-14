@@ -105,6 +105,8 @@ s64 team_world_wait_ms = 0;
 // opened (each one's number).
 std::optional<bbcoop::TeamSession> team_session;
 TeamJoin team_join;
+JoinScreen join_screen;                  // team_mutex
+std::atomic<bool> join_screen_up{false}; // the game's thread writes, the present thread reads
 u64 team_sessions_opened = 0;
 // What the summon packet carries before the join data (0x01873754): GameMan +0x16F0 and +0x16F4
 // on the guest, the same for every co-operator (rig 2026-10-14: 0xFFFFFFFF and 7).
@@ -894,6 +896,10 @@ bool HoldTitleLoadForTeam(u32 slot) {
     if (decision.start && party_controller) {
         const bool host = decision.start->host() == me;
         party_controller->Assign(host ? PartyRole::Host : PartyRole::Guest);
+        if (!host) {
+            std::scoped_lock lock{team_mutex};
+            join_screen.Loading(SteadyMilliseconds());
+        }
         LOG_INFO(Debug, "Co-op team lobby: the save plays in team {} as its {}",
                  decision.start->team(), host ? "host" : "guest");
     } else {
@@ -903,6 +909,26 @@ bool HoldTitleLoadForTeam(u32 slot) {
         LOG_INFO(Debug, "Co-op team lobby: the save plays alone");
     }
     return false;
+}
+
+bool JoinScreenUp() {
+    return join_screen_up.load(std::memory_order_relaxed);
+}
+
+// The game's thread (TickTeamJoin): whether the port holds its loading screen. The present thread
+// only reads the answer (it read the game's memory itself once and crashed: rig 2026-10-14).
+void UpdateJoinScreen() {
+    // In the session's world: after the summon reload (the guest's arrival, InSessionWorld).
+    const bool in_session = InPartySession() && InSessionWorld();
+    bool up = false;
+    {
+        std::scoped_lock lock{team_mutex};
+        up = join_screen.Up(in_session, SteadyMilliseconds());
+    }
+    // While the game loads its own loading screen shows; ours holds it after, until the join.
+    const u64 global = GetGlobalState();
+    const bool loading = global < 0x10000 || TryRead<u8>(global, 0x08).value_or(1) != 0;
+    join_screen_up.store(up && !loading, std::memory_order_relaxed);
 }
 
 bool TeamScreenUp() {
@@ -939,12 +965,15 @@ void TeamBackAtTitle() {
         lobby_hello_due = true;
     }
     team_session.reset();
+    join_screen = {};
+    join_screen_up.store(false, std::memory_order_relaxed);
 }
 
 bool TickTeamJoin(bool ready) {
     if (!team_switch) {
         return false;
     }
+    UpdateJoinScreen();
     const u64 manager = GetMatchingState();
     if (manager < 0x10000 || !HasMemoryAccess(manager, 0x128, MemoryProt::CpuRead)) {
         return true;
@@ -958,6 +987,30 @@ bool TickTeamJoin(bool ready) {
     }
     if (!in_team) {
         return true; // alone: no session to open or join
+    }
+    static LeavingFlag leaving;
+    if (leaving.Clear(EventFlagOn(LeavingFlag::Flag), InPartySession(), SteadyMilliseconds())) {
+        using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+        reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, LeavingFlag::Flag,
+                                                                             false);
+        LOG_INFO(Debug,
+                 "Co-op team join: flag {} (a player on the way out) cleared: this game "
+                 "stands alone in its world",
+                 LeavingFlag::Flag);
+    }
+    // A team's guest is in its own world in a session too (joined in place): once that session is
+    // over it is a player again, not a white phantom (the summon's way home, a reload, did that;
+    // rig 2026-10-14: a save loaded as a phantom and never joined again). Only well after the
+    // session (matching idle for PhantomHomeMs): while it joins, the game makes it a phantom first.
+    static PhantomHome home;
+    const u64 player = GetLocalPlayer();
+    const bool phantom = player >= 0x10000 && HasMemoryAccess(player, 0x7C, MemoryProt::CpuWrite) &&
+                         ReadValue<s32>(player, 0x78) == WhiteGhostCharacterType;
+    if (home.Due(phantom, !InPartySession() && ReadValue<s32>(manager, 0x124) == 0,
+                 SteadyMilliseconds())) {
+        WriteValue(player, 0x78, s32{0});
+        LOG_INFO(Debug, "Co-op team join: a white phantom out of a session in its own world: a "
+                        "player again");
     }
     const TeamJoin::Frame frame{
         .host = !IsPartyGuestRole(),

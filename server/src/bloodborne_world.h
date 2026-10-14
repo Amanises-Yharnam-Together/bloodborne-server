@@ -122,6 +122,7 @@ private:
         std::map<std::string, bbcoop::Portrait> portraits;
         // Phase 6: the host's open game session, for its guests to join (none: closed).
         std::optional<bbcoop::TeamSession> session;
+        u32 session_run = 0; // the host game's run that opened it
         // Phase 4: who runs each area's enemies, and what was logged of it.
         EnemyOwners owners;
         QString owners_logged;
@@ -166,6 +167,8 @@ private:
                    qint64 now_ms, Result& result);
     void SendBoards(PartyWorld& world, unsigned changed, qint64 now_ms, Member* only = nullptr);
     // The enemy owners to the party (or `only`), logged when they changed.
+    // The host's session closed (its game gone or started again): the others hear it.
+    void CloseSession(PartyWorld& world, qint64 now_ms, Result& result);
     void SendOwners(PartyWorld& world, qint64 now_ms, Result& result, Member* only = nullptr);
     // Whether `member` may decide the enemies of `map` (phase 4): a game without the owners, or
     // on an area nobody or itself runs.

@@ -395,6 +395,10 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     member.host = hello.host();
     member.enemy_owner = hello.enemy_owner();
     PartyWorld& world = WorldFor(member.party, now_ms, result);
+    // The host's game started again: the session its last run opened is gone with it.
+    if (world.session && world.session->host() == member.name && world.session_run != member.run) {
+        CloseSession(world, now_ms, result);
+    }
     welcome.set_accepted(true);
     welcome.set_trades(true);
     welcome.set_epoch(world.host.Epoch());
@@ -570,6 +574,7 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
             world.session.reset();
         } else {
             world.session = relayed.team_session();
+            world.session_run = member.run;
         }
         result.log.append(QStringLiteral("party world %1: %2's session %3 %4")
                               .arg(world.name, QString::fromStdString(member.name))
@@ -945,6 +950,21 @@ Service::Result Service::Tick(qint64 now_ms) {
     }
     Flush(now_ms, result);
     return result;
+}
+
+void Service::CloseSession(PartyWorld& world, qint64 now_ms, Result& result) {
+    bbcoop::Envelope closed;
+    closed.mutable_team_session()->set_host(world.session->host());
+    closed.mutable_team_session()->set_session(world.session->session());
+    result.log.append(QStringLiteral("party world %1: %2's session %3 closed with its game")
+                          .arg(world.name, QString::fromStdString(world.session->host()))
+                          .arg(world.session->session()));
+    world.session.reset();
+    for (auto& [key, member] : members) {
+        if (member.party == world.name && member.name != closed.team_session().host()) {
+            SendTo(member, closed, now_ms);
+        }
+    }
 }
 
 void Service::Forget(const ServerLink::Endpoint& link) {

@@ -300,6 +300,10 @@ extern "C" int bbcoop_team_screen(void) {
     return Core::Bloodborne::Coop::TeamScreenUp() ? 1 : 0;
 }
 
+extern "C" int bbcoop_join_screen(void) {
+    return Core::Bloodborne::Coop::JoinScreenUp() ? 1 : 0;
+}
+
 extern "C" void bbcoop_team_choose(int what) {
     Core::Bloodborne::Coop::TeamChoose(static_cast<Core::Bloodborne::TeamGate::Choice>(what));
 }

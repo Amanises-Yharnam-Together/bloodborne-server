@@ -242,4 +242,60 @@ TEST(TeamJoin, AGuestJoinsTheHostsSessionWhenReadyAndAlone) {
     EXPECT_EQ(join.Tick(GuestFrame(MatchingStateHosting, true, true)), TeamJoin::Action::None);
 }
 
+// Kaniel 2026-10-14: "hold the loading screen until it joins". A guest's screen stays dark from its
+// team load until it is in the host's session (or a while: a host that never comes).
+TEST(JoinScreen, StaysUpFromTheLoadUntilTheSession) {
+    JoinScreen screen;
+    EXPECT_FALSE(screen.Up(false, 1000)) << "no team load yet";
+    screen.Loading(1000);
+    EXPECT_TRUE(screen.Up(false, 1000));
+    EXPECT_TRUE(screen.Up(false, 20'000));
+    EXPECT_FALSE(screen.Up(true, 21'000)) << "in the session";
+    EXPECT_FALSE(screen.Up(false, 22'000)) << "once over, it stays over";
+}
+
+TEST(JoinScreen, GivesUpOnAHostThatNeverComes) {
+    JoinScreen screen;
+    screen.Loading(0);
+    EXPECT_TRUE(screen.Up(false, JoinScreen::LimitMs - 1));
+    EXPECT_FALSE(screen.Up(false, JoinScreen::LimitMs));
+    EXPECT_FALSE(screen.Up(false, JoinScreen::LimitMs + 1));
+}
+
+// Kaniel 2026-10-14: no bell items in the game (the team joins without them). The four co-op bells
+// (item names from the game's item.msgbnd: 200, 205, 225, 4312), never the Choir Bell (a hunter
+// tool that heals, 2050).
+TEST(BellItems, TheCoopBellsAndNothingElse) {
+    for (const u32 bell : {200u, 205u, 225u, 4312u}) {
+        EXPECT_TRUE(IsBellGoods(bell)) << bell;
+    }
+    for (const u32 other : {2050u, 111u, 201u, 1000u}) {
+        EXPECT_FALSE(IsBellGoods(other)) << other;
+    }
+    EXPECT_EQ(BellGoods.size(), 4u);
+}
+
+// Rig 2026-10-14 (host-crash-apart, team-world): the host's game gone, the guest's game set 4047
+// ("a player on the way out") and, with no summon reload to clear it, never joined again.
+TEST(LeavingFlag, ClearedOnceAGuestStandsAloneAWhile) {
+    LeavingFlag leaving;
+    EXPECT_FALSE(leaving.Clear(true, true, 0)) << "in the session: the game's own";
+    EXPECT_FALSE(leaving.Clear(true, false, 1000));
+    EXPECT_FALSE(leaving.Clear(true, false, 1000 + LeavingFlag::ClearAfterMs - 1));
+    EXPECT_TRUE(leaving.Clear(true, false, 1000 + LeavingFlag::ClearAfterMs));
+    EXPECT_FALSE(leaving.Clear(false, false, 9000)) << "off: nothing to clear";
+    EXPECT_FALSE(leaving.Clear(true, false, 10'000)) << "on again: its own wait again";
+}
+
+TEST(PhantomHome, APhantomAloneAWhileIsAPlayerAgainNeverWhileItJoins) {
+    PhantomHome home;
+    EXPECT_FALSE(home.Due(true, false, 0)) << "in a session (or joining): the game's phantom";
+    EXPECT_FALSE(home.Due(true, true, 1000));
+    EXPECT_FALSE(home.Due(true, false, 2000)) << "a join: the wait starts over";
+    EXPECT_FALSE(home.Due(true, true, 3000));
+    EXPECT_FALSE(home.Due(true, true, 3000 + PhantomHome::ReturnAfterMs - 1));
+    EXPECT_TRUE(home.Due(true, true, 3000 + PhantomHome::ReturnAfterMs));
+    EXPECT_FALSE(home.Due(false, true, 20'000)) << "a player already";
+}
+
 } // namespace

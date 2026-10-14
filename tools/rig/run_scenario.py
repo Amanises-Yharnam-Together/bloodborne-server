@@ -37,6 +37,7 @@ emulator, in rig/port/<role> (engines.py); --engine port --setup makes those fol
 emulator rig's (its game with the update, each role's baseline saves and party files).
 """
 import argparse
+import math
 import os
 import pathlib
 import re
@@ -260,6 +261,10 @@ def chapter_sections(text: str) -> dict[str, str]:
     return sections
 
 
+# How far (m, on the ground) an enemy that comes for a player moves between two censuses.
+EnemyMovesM = 1.5
+
+
 def judge(spec: dict, texts: dict[str, str]) -> list[str]:
     """What is wrong in the roles' logs by a scenario's (or a suite chapter's) checks: failed
     steps, expected lines missing, forbidden lines seen, the shared enemy's HP and hits, and the
@@ -279,6 +284,16 @@ def judge(spec: dict, texts: dict[str, str]) -> list[str]:
         if lag is None or round(lag, 3) > limit:
             problems.append(f"all: {spec['hp_sums_hits']} reached the other games' bars in "
                             f"{'?' if lag is None else f'{lag:.2f}'} s (at most {limit} s)")
+    # "moves": an enemy that comes for the role's player moves between its first and last census
+    # there (Kaniel 2026-10-14: beside a guest whose host was far away, the enemies stood still).
+    for role, handle in spec.get("moves", {}).items():
+        places = [(float(x), float(z)) for x, z in re.findall(
+            rf"autoplay census: {re.escape(handle)} hp .* at [\d.]+ m \((-?[\d.]+), -?[\d.]+, "
+            rf"(-?[\d.]+)\)", texts.get(role, ""))]
+        if len(places) < 2 or math.dist(places[0], places[-1]) < EnemyMovesM:
+            problems.append(f"{role}: {handle} stood still beside it "
+                            f"({'no census' if len(places) < 2 else places[0]} -> "
+                            f"{places[-1] if places else ''})")
     for role, text in texts.items():
         problems += [f"{role}: {failed}" for failed in STEP_FAILED.findall(text)]
         for pattern in spec.get("expect", {}).get(role, []):

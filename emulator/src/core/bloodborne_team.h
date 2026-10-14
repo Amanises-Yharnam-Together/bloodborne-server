@@ -8,6 +8,7 @@
 // is the team's Start.
 #pragma once
 
+#include <array>
 #include <optional>
 #include <span>
 #include <string>
@@ -104,6 +105,96 @@ public:
 
 private:
     bool published = false; // the host said its open session
+};
+
+// Kaniel 2026-10-14: the loading screen held until the join is done. A guest's load in a team
+// (Loading) keeps a dark screen up (the port's overlay) until the game is in its host's session,
+// or LimitMs at most (a host that never opens one).
+class JoinScreen {
+public:
+    static constexpr s64 LimitMs = 45'000;
+    void Loading(s64 now_ms) {
+        since_ms = now_ms;
+    }
+    bool Up(bool in_session, s64 now_ms) {
+        if (!since_ms) {
+            return false;
+        }
+        if (in_session || now_ms - *since_ms >= LimitMs) {
+            since_ms.reset();
+            return false;
+        }
+        return true;
+    }
+
+private:
+    std::optional<s64> since_ms;
+};
+
+// Kaniel 2026-10-14: the bell items are out of the port's game (the team joins without them):
+// Beckoning Bell 200, Small Resonant Bell 205, Sinister Resonant Bell 225, Old Hunter Bell 4312
+// (EquipParamGoods ids, names from item.msgbnd). The Choir Bell (2050) is a hunter tool and stays.
+inline constexpr std::array<u32, 4> BellGoods{200, 205, 225, 4312};
+constexpr bool IsBellGoods(u32 goods) {
+    for (const u32 bell : BellGoods) {
+        if (bell == goods) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Event flag 4047 ("a player on the way out", docs/FLAGS.md): set when a session ends under a
+// player; a summoned guest's reload home cleared it. A team's guest stays in its world (no reload),
+// so once it stands out of a session with the flag on for ClearAfterMs, it is cleared: the party
+// controller waits while it is on, and the guest would never join its host again.
+class LeavingFlag {
+public:
+    static constexpr s32 Flag = 4047;
+    static constexpr s64 ClearAfterMs = 5'000;
+    bool Clear(bool flag_on, bool in_session, s64 now_ms) {
+        if (!flag_on || in_session) {
+            since_ms.reset();
+            return false;
+        }
+        if (!since_ms) {
+            since_ms = now_ms;
+        }
+        if (now_ms - *since_ms < ClearAfterMs) {
+            return false;
+        }
+        since_ms.reset();
+        return true;
+    }
+
+private:
+    std::optional<s64> since_ms;
+};
+
+// A team's guest stays in its world (no reload home), so a white phantom whose session is over is
+// made a player again, once it has stood alone (no session, matching idle) for ReturnAfterMs: a
+// join makes it a phantom first, while the session is not yet the game's (rig 2026-10-14: a guest
+// made a player too early could not be revived).
+class PhantomHome {
+public:
+    static constexpr s64 ReturnAfterMs = 5'000;
+    bool Due(bool phantom, bool alone, s64 now_ms) {
+        if (!phantom || !alone) {
+            since_ms.reset();
+            return false;
+        }
+        if (!since_ms) {
+            since_ms = now_ms;
+        }
+        if (now_ms - *since_ms < ReturnAfterMs) {
+            return false;
+        }
+        since_ms.reset();
+        return true;
+    }
+
+private:
+    std::optional<s64> since_ms;
 };
 
 } // namespace Core::Bloodborne

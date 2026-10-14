@@ -932,6 +932,36 @@ int TheHostsSessionReachesItsGuestsToJoin() {
   return 0;
 }
 
+// Rig 2026-10-14 (team-world): a host whose game died left its session on the
+// server, and the guests joined a room that was gone. A new run of the host, or
+// the host's link gone, closes it.
+int AHostsSessionGoesWithItsGame() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope open;
+  open.mutable_team_session()->set_join("NXRV");
+  open.mutable_team_session()->set_session(1);
+  host.Send(open, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.session.has_value() && !guest.session->join().empty());
+  // The host's game starts again (a crash, a quit): its old session is no more.
+  Game host_again{1003, "host", 21};
+  host_again.run = 0x2002;
+  host_again.Hello(now + 10);
+  Pump(service, {&host_again, &guest}, now + 10);
+  CHECK(guest.session.has_value() && guest.session->join().empty());
+  Game late{1002, "late", 13};
+  late.Hello(now + 20);
+  Pump(service, {&host_again, &guest, &late}, now + 20);
+  CHECK(!late.session.has_value());
+  return 0;
+}
+
 int TheFirstMemberOnAnAreaRunsItsEnemies() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -1275,6 +1305,7 @@ int main() {
        WhateverAGameSendsTheServiceKeepsWorking},
       {"TheHostsSessionReachesItsGuestsToJoin",
        TheHostsSessionReachesItsGuestsToJoin},
+      {"AHostsSessionGoesWithItsGame", AHostsSessionGoesWithItsGame},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},

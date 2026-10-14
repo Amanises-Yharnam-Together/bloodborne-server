@@ -1819,6 +1819,24 @@ void Screen() {
 
 } // namespace Team
 
+// The loading screen held over the guest's world until it is in its team's session (see
+// bbcoop_join_screen): black, as the game's own, with a line in the menu's serif.
+namespace Joining {
+bool open = false; // present thread: as Visible() read it last
+
+void Screen() {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
+    const char* text = Team::T("Joining the hunt...", "Присоединение к охоте...");
+    const float size = ImGui::GetFontSize() * 1.2f;
+    const ImVec2 extent = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    draw->AddText(ImGui::GetFont(), size,
+                  ImVec2(display.x - extent.x - display.x * 0.05f, display.y - extent.y - display.y * 0.06f),
+                  IM_COL32(200, 190, 170, 255), text);
+}
+} // namespace Joining
+
 // Party death (bbcoop.h): the other members down the left side, under the game's own bars, after
 // Elden Ring Nightreign's party list; whom an attack would revive; this player's own down in the
 // middle of the screen. Drawn shapes in the menu's colours; the HP bars are the game's own, from
@@ -2712,12 +2730,13 @@ bool Visible() {
     const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
     const bool was_team = Team::open;
     Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
+    Joining::open = initialized && bbcoop_join_screen() != 0;
     if (Team::open && !was_team) {
         SyncMousePos();
         Team::focus.fresh = true;
     }
     return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party ||
-                           Team::open);
+                           Team::open || Joining::open);
 }
 
 bool MenuOpen() {
@@ -2726,7 +2745,7 @@ bool MenuOpen() {
 
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
-    return menu_open || quit_open || prompt_active || Team::open;
+    return menu_open || quit_open || prompt_active || Team::open || Joining::open;
 }
 
 void Tick() {
@@ -2842,6 +2861,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     }
     if (Team::open && !menu_open) {
         Team::Screen();
+    }
+    if (Joining::open && !menu_open) {
+        Joining::Screen();
     }
     if (menu_open) {
         Menu();
