@@ -21,6 +21,10 @@
 
 namespace Core::Bloodborne {
 
+// Kaniel 2026-10-14: whether the team's leader (`me`) may begin the hunt: every other member online
+// and ready, or the team started already.
+bool TeamCanBegin(const bbcoop::LobbyState& lobby, const std::string& me);
+
 class TeamGate {
 public:
     enum class Step { Load, Hold };

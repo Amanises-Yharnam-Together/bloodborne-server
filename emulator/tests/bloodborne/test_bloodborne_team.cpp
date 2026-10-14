@@ -343,4 +343,27 @@ TEST(TeamLoad, SaysItsOwnProgressWhenItChanges) {
     EXPECT_GE(joining->percent(), TeamLoad::LoadedPercent);
 }
 
+// Kaniel 2026-10-14: the hunt begins only once every member is ready (online and Ready); a started
+// team's leader back from a crash goes in at once.
+TEST(TeamGate, TheHuntBeginsOnlyWhenEveryoneIsReady) {
+    bbcoop::LobbyState lobby = InTeam("a");
+    const auto add = [&](const std::string& member, bool ready, bbcoop::LobbyPlayer::State state) {
+        bbcoop::TeamMember& m = *lobby.mutable_team()->add_members();
+        m.set_member(member);
+        m.set_ready(ready);
+        m.set_state(state);
+    };
+    add("a", false, bbcoop::LobbyPlayer::TITLE);
+    add("b", true, bbcoop::LobbyPlayer::TITLE);
+    add("c", false, bbcoop::LobbyPlayer::TITLE);
+    EXPECT_FALSE(TeamCanBegin(lobby, "a")) << "c is not ready";
+    lobby.mutable_team()->mutable_members(2)->set_ready(true);
+    EXPECT_TRUE(TeamCanBegin(lobby, "a")) << "the leader's own Ready comes with its Begin";
+    lobby.mutable_team()->mutable_members(2)->set_state(bbcoop::LobbyPlayer::OFFLINE);
+    EXPECT_FALSE(TeamCanBegin(lobby, "a")) << "c went offline";
+    lobby.mutable_team()->set_started(true);
+    EXPECT_TRUE(TeamCanBegin(lobby, "a")) << "the team plays already";
+    EXPECT_FALSE(TeamCanBegin(bbcoop::LobbyState{}, "a")) << "no team";
+}
+
 } // namespace

@@ -383,6 +383,7 @@ message Envelope {
         TeamWorld team_world = 35;
         TeamSession team_session = 36;
         LoadProgress load_progress = 37;
+        EnemiesLetGo enemies_let_go = 38;
     }
 }
 
@@ -638,4 +639,17 @@ message LoadProgress {
     Stage stage = 1;
     uint32 percent = 2; // 0..100, the game's own estimate
     string member = 3;  // server -> game: whose
+}
+
+// Kaniel 2026-10-14: one game runs each enemy. The owner of a map (EnemyOwners) says which of its
+// map's enemies its game let go (none by its player: the game's own ownership word 0xFFFF), on a
+// change and every second; the server sends it to the others (`member` set). The guest it names
+// for one runs it until the owner's game takes it back.
+message EnemiesLetGo {
+    uint32 map = 1;
+    repeated uint32 handles = 2; // the characters' handles (+0x08)
+    string member = 3;           // server -> game: whose
+    // Beside each handle, the guest (member) the owner chose to run it (the nearest on the map,
+    // kept until another is clearly nearer), or empty: nobody (one decides, so never two).
+    repeated string runners = 4;
 }

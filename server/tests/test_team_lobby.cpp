@@ -105,16 +105,23 @@ int ReadyAndStart() {
   CHECK(!lobby.Request("a", Request(Action::START)).notice.empty());
   lobby.Request("a", Request(Action::READY, {}, {}, 2));
   lobby.Request("b", Request(Action::READY, {}, {}, 0));
+  // Kaniel 2026-10-14: the hunt begins only once every member is ready (c is
+  // not yet).
+  const TeamLobby::Outcome early = lobby.Request("a", Request(Action::START));
+  CHECK(!early.notice.empty() && early.starts.empty());
+  CHECK(!lobby.TeamOf("a")->started());
+  lobby.Request("c", Request(Action::READY, {}, {}, 1));
   const TeamLobby::Outcome start = lobby.Request("a", Request(Action::START));
   CHECK(start.notice.empty() && start.changed);
-  // The ready ones go; c, not ready, does not.
-  CHECK(start.starts.size() == 2);
+  CHECK(start.starts.size() == 3);
   CHECK(lobby.TeamOf("a")->started());
   const bbcoop::TeamStart go = lobby.StartFor("a");
   CHECK(go.party() == TeamLobby::PartyOf(team) && go.host() == "a" &&
         go.slot() == 2);
   CHECK(lobby.StartFor("b").slot() == 0 && lobby.StartFor("b").host() == "a");
-  // c readies later and goes at once (joins the team as it plays).
+  // c back at the title readies again and goes at once (joins the team as it
+  // plays).
+  lobby.Request("c", Request(Action::UNREADY));
   const TeamLobby::Outcome late =
       lobby.Request("c", Request(Action::READY, {}, {}, 1));
   CHECK(late.starts.size() == 1 && late.starts[0] == "c");

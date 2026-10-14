@@ -2338,8 +2338,9 @@ constexpr u64 TitleLoadSlotOffset = 0x1490; // GameMan's (GlobalState's) save sl
 //   hits             a follower's 0x15 goes to the owner (our link), the owner's own is dropped
 //                    (its hit applied already); a host that follows sends its hits as a guest
 //                    does (EnemyHitState)
-//   packets          only the owner sends positions, HP, catch-up and join animations (4, 5,
-//                    0x29, 0x36) and a follower takes them from the owner only; the game's own
+//   packets          only the owner sends HP, catch-up and join animations (5, 0x29, 0x36)
+//                    and a follower takes them from the owner only; positions (4) come from
+//                    whichever game runs the enemy (see FollowerRunsEnemy); the game's own
 //                    hand-out of enemies (0x16 near lists, 0x17 the host's answer) is dropped
 // The AI records (0x3D), per-hit records (0x41) and the hand-over block (0x34) go as they are: the
 // game sends 0x34 + 0x3D itself when a character changes hands (phase 0 trace).
@@ -2404,6 +2405,23 @@ constexpr u64 ReceiveFromHostMemberOffset = 0x01789495;
 constexpr std::array<u8, 7> ReceiveFromHostMember{0x48, 0x81, 0xC3, 0xD0, 0x00, 0x00, 0x00};
 constexpr u64 EnemyHitStateReadOffset = 0x01A2A102;
 constexpr std::array<u8, 6> EnemyHitStateRead{0x8B, 0x88, 0x24, 0x01, 0x00, 0x00};
+// Kaniel 2026-10-14: the host far away on the same map, an enemy by a guest stood still and woke
+// only when the host came near. A game animates and runs only the enemies by its own player
+// (WorldChrMan's activation pass 0x019192A0 and the draw groups), and the host's own game hands an
+// enemy away from its player to the network (word 0xFFFF) for a guest's near list to claim, which
+// phase 4 drops. The owner says which enemies its game let go (bbcoop::EnemiesLetGo); the guest
+// nearest such an enemy, awake by its player, runs it (word 0); the owner still takes its hits
+// (0x15) and sends its HP. One game runs each enemy (Kaniel: never two at once).
+constexpr s32 EnemyAwake = 4; // [control +0x14] after the activation pass
+// The owner names the guest that runs each enemy it let go: the nearest up on its map within
+// RunnerReachMetres (by the vitals board's positions), kept until another is this much nearer.
+constexpr float NearestGuestLeadMetres = 3.0f;
+constexpr float RunnerReachMetres = 60.0f;
+constexpr s64 EnemiesLetGoFreshMs = 3'000;
+constexpr s64 EnemiesLetGoEveryMs = 1'000;
+// `current` the guest that runs it now (empty: none); `guests` the board without the owner.
+std::string RunnerOf(const std::string& current, const LampPosition& enemy,
+                     std::span<const struct MemberVitals> guests, u32 map);
 
 // The game's packets in our frames (docs/SERVER_COOP_PLAN.md phase 2b, bloodborne_game_link.h,
 // see InstallGamePacketLink). The transport send under NetSync's send and its resend

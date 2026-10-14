@@ -54,6 +54,8 @@ constexpr bool enemy_owner_switch = server_world_switch;
 std::mutex owners_mutex;
 std::vector<EnemyOwnerEntry> server_owners;
 s64 owners_heard_ms = 0;
+// The enemies the owners' games let go (bbcoop::EnemiesLetGo), as last heard from each.
+std::map<std::string, std::pair<bbcoop::EnemiesLetGo, s64>> heard_let_go;
 
 const u32 run = [] {
     std::random_device random;
@@ -212,6 +214,7 @@ bool IsBoard(const bbcoop::Envelope& envelope) {
     case bbcoop::Envelope::kVitalsBoard:
     case bbcoop::Envelope::kPortrait:
     case bbcoop::Envelope::kEnemyOwners:
+    case bbcoop::Envelope::kEnemiesLetGo:
         return true;
     default:
         return false;
@@ -299,6 +302,18 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
         std::scoped_lock lock{owners_mutex};
         server_owners = std::move(owners);
         owners_heard_ms = SteadyMilliseconds();
+        return;
+    }
+    case bbcoop::Envelope::kEnemiesLetGo: {
+        std::scoped_lock lock{owners_mutex};
+        const bbcoop::EnemiesLetGo& let_go = envelope.enemies_let_go();
+        auto& [heard, heard_ms] = heard_let_go[let_go.member()];
+        if (heard.handles_size() != let_go.handles_size() || heard.map() != let_go.map()) {
+            LOG_INFO(Debug, "Bloodborne party: {} let go {} enemies on map {:#x}", let_go.member(),
+                     let_go.handles_size(), let_go.map());
+        }
+        heard = let_go;
+        heard_ms = SteadyMilliseconds();
         return;
     }
     default:
@@ -577,6 +592,33 @@ std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms) {
         return {};
     }
     return server_owners;
+}
+
+std::optional<std::unordered_map<u32, std::string>> EnemiesLetGoBy(const std::string& member,
+                                                                   u32 map, s64 now_ms) {
+    std::scoped_lock lock{owners_mutex};
+    const auto heard = heard_let_go.find(member);
+    if (heard == heard_let_go.end() || heard->second.first.map() != map ||
+        now_ms - heard->second.second > EnemiesLetGoFreshMs) {
+        return std::nullopt;
+    }
+    const bbcoop::EnemiesLetGo& let_go = heard->second.first;
+    std::unordered_map<u32, std::string> runners;
+    for (int index = 0; index < let_go.handles_size(); ++index) {
+        runners[let_go.handles(index)] =
+            index < let_go.runners_size() ? let_go.runners(index) : std::string{};
+    }
+    return runners;
+}
+
+void SendEnemiesLetGo(u32 map, const std::map<u32, std::string>& runners) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_enemies_let_go()->set_map(map);
+    for (const auto& [handle, runner] : runners) {
+        envelope.mutable_enemies_let_go()->add_handles(handle);
+        envelope.mutable_enemies_let_go()->add_runners(runner);
+    }
+    Queue(std::move(envelope));
 }
 
 ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms) {
@@ -1342,9 +1384,11 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
                       std::string& failure) {
     constexpr double TimeoutSeconds = 180.0;
     std::optional<bbcoop::LobbyState> lobby;
+    std::string me;
     {
         std::scoped_lock lock{team_mutex};
         lobby = team_gate.Lobby();
+        me = lobby_member;
     }
     const auto request = [](bbcoop::TeamRequest::Action action, std::string member = {},
                             std::string team = {}) {
@@ -1379,6 +1423,13 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
     } else if (IsTeamScreenVerb(command.verb)) {
         if (!TeamScreenUp()) {
             return false; // the title's Cross first (TickAutoplayTitle presses it)
+        }
+        // The hunt begins only once every member is ready (the lobby refuses it before).
+        if (command.verb == "team-start" && !(lobby && TeamCanBegin(*lobby, me))) {
+            if (elapsed > TimeoutSeconds) {
+                failure = "not every member got ready";
+            }
+            return false;
         }
         if (command.verb != "team-screen") {
             TeamChoose(command.verb == "team-ready"   ? TeamGate::Choice::Ready

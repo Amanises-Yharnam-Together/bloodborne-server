@@ -12,6 +12,19 @@
 
 namespace Core::Bloodborne {
 
+bool TeamCanBegin(const bbcoop::LobbyState& lobby, const std::string& me) {
+    if (!lobby.has_team()) {
+        return false;
+    }
+    if (lobby.team().started()) {
+        return true;
+    }
+    return std::ranges::all_of(lobby.team().members(), [&](const bbcoop::TeamMember& m) {
+        return m.member() == me ||
+               (m.ready() && m.state() != bbcoop::LobbyPlayer::OFFLINE);
+    });
+}
+
 TeamGate::Decision TeamGate::Tick(const std::string& me, u32 slot_now, s64 now_ms) {
     (void)me;
     Decision decision;

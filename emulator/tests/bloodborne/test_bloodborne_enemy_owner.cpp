@@ -81,8 +81,8 @@ TEST(EnemyOwner, TheOwnerRunsTheAiAFollowerTheNetworkController) {
 }
 
 TEST(EnemyOwner, OnlyTheOwnerSendsTheEnemiesAndAFollowersHitGoesToIt) {
-    // Positions, HP, catch-up and join animations: the owner's alone.
-    for (const u32 channel : {0x04u, 0x05u, 0x29u, 0x36u}) {
+    // HP, catch-up and join animations: the owner's alone.
+    for (const u32 channel : {0x05u, 0x29u, 0x36u}) {
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Owner), EnemyPacketFate::Keep) << channel;
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Follower), EnemyPacketFate::Drop) << channel;
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Unknown), EnemyPacketFate::Keep) << channel;
@@ -97,15 +97,17 @@ TEST(EnemyOwner, OnlyTheOwnerSendsTheEnemiesAndAFollowersHitGoesToIt) {
         EXPECT_EQ(EnemyPacketOut(0x16, role), EnemyPacketFate::Drop);
         EXPECT_EQ(EnemyPacketOut(0x17, role), EnemyPacketFate::Drop);
     }
-    // The AI records, the hand-over block, per-hit records and everything else: as they are.
-    for (const u32 channel : {0x3Du, 0x41u, 0x34u, 0x06u, 0x14u, 0x24u, 0x26u}) {
+    // Positions (each game sends those of the enemies it runs: a follower runs those by it while
+    // the owner is far, see FollowerRunsEnemy), the AI records, the hand-over block, per-hit
+    // records and everything else: as they are.
+    for (const u32 channel : {0x04u, 0x3Du, 0x41u, 0x34u, 0x06u, 0x14u, 0x24u, 0x26u}) {
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Follower), EnemyPacketFate::Keep) << channel;
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Owner), EnemyPacketFate::Keep) << channel;
     }
 }
 
 TEST(EnemyOwner, AFollowerTakesTheEnemiesFromTheOwnerOnly) {
-    for (const u32 channel : {0x04u, 0x05u, 0x29u, 0x36u}) {
+    for (const u32 channel : {0x05u, 0x29u, 0x36u}) {
         EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, true)) << channel;
         EXPECT_FALSE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, false)) << channel;
         // The owner runs them itself.
@@ -118,7 +120,7 @@ TEST(EnemyOwner, AFollowerTakesTheEnemiesFromTheOwnerOnly) {
     EXPECT_TRUE(KeepsEnemyPacketIn(0x15, EnemyRole::Unknown, false));
     EXPECT_FALSE(KeepsEnemyPacketIn(0x16, EnemyRole::Owner, false));
     EXPECT_FALSE(KeepsEnemyPacketIn(0x17, EnemyRole::Follower, true));
-    for (const u32 channel : {0x3Du, 0x41u, 0x34u, 0x06u}) {
+    for (const u32 channel : {0x04u, 0x3Du, 0x41u, 0x34u, 0x06u}) {
         EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, false)) << channel;
         EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Owner, false)) << channel;
     }
@@ -138,4 +140,37 @@ TEST(EnemyOwner, ARoleChangeIsLoggedOnce) {
                   "enemy owner: this game follows bb02 on map 0x18010000 (epoch 5)"});
     EXPECT_EQ(log.Change(EnemyRole::Unknown, 0, nullptr),
               std::optional<std::string>{"enemy owner: none (the game's own way)"});
+}
+
+// Kaniel 2026-10-14: the host far away, an enemy by a guest stood still and woke only when the
+// host came near; and never two games running one enemy (nor none: two guests about as near both
+// left it, rig guests-pair-mobs). The owner names the one guest that runs each enemy it let go.
+MemberVitals GuestAt(const std::string& member, float x, Vital vital = Vital::Up,
+                     u32 map = CentralYharnam) {
+    return MemberVitals{.member = member, .map = map, .vital = vital, .at = {x, 0.0f, 0.0f}};
+}
+
+TEST(EnemyOwner, TheOwnerNamesTheNearestGuestToRunAnEnemyItLetGo) {
+    const LampPosition enemy{0.0f, 0.0f, 0.0f};
+    const std::vector<MemberVitals> a_near{GuestAt("a", 5.0f), GuestAt("b", 20.0f)};
+    EXPECT_EQ(RunnerOf("", enemy, a_near, CentralYharnam), "a");
+    // Kept until another is clearly nearer, then handed on.
+    const std::vector<MemberVitals> b_slightly{GuestAt("a", 6.0f), GuestAt("b", 4.0f)};
+    EXPECT_EQ(RunnerOf("a", enemy, b_slightly, CentralYharnam), "a");
+    const std::vector<MemberVitals> b_clearly{GuestAt("a", 9.0f), GuestAt("b", 4.0f)};
+    EXPECT_EQ(RunnerOf("a", enemy, b_clearly, CentralYharnam), "b");
+    // As near as each other, with nobody running it yet: still one of them.
+    const std::vector<MemberVitals> tie{GuestAt("a", 5.0f), GuestAt("b", 5.0f)};
+    EXPECT_FALSE(RunnerOf("", enemy, tie, CentralYharnam).empty());
+    // Only a guest up, on the map, within reach.
+    EXPECT_EQ(RunnerOf("", enemy, std::vector<MemberVitals>{GuestAt("a", 5.0f, Vital::Down)},
+                       CentralYharnam),
+              "");
+    EXPECT_EQ(RunnerOf("", enemy, std::vector<MemberVitals>{GuestAt("a", 5.0f, Vital::Up, 0x18000000)},
+                       CentralYharnam),
+              "");
+    EXPECT_EQ(RunnerOf("a", enemy,
+                       std::vector<MemberVitals>{GuestAt("a", RunnerReachMetres + 1.0f)},
+                       CentralYharnam),
+              "");
 }

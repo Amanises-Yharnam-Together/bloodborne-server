@@ -165,6 +165,8 @@ struct Game {
       ++sessions;
     } else if (envelope.has_load_progress()) {
       loads[envelope.load_progress().member()] = envelope.load_progress();
+    } else if (envelope.has_enemies_let_go()) {
+      let_go = envelope.enemies_let_go();
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -229,6 +231,7 @@ struct Game {
   std::optional<bbcoop::TeamSession> session;
   int sessions = 0;
   std::map<std::string, bbcoop::LoadProgress> loads;
+  std::optional<bbcoop::EnemiesLetGo> let_go;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -994,6 +997,29 @@ int EachMembersLoadReachesTheOthers() {
   return 0;
 }
 
+// Kaniel 2026-10-14: the enemies the owner's game let go reach the others under its name.
+int TheEnemiesTheOwnerLetGoReachTheOthers() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope let_go;
+  let_go.mutable_enemies_let_go()->set_map(0x18010000);
+  let_go.mutable_enemies_let_go()->add_handles(0x1001400b);
+  let_go.mutable_enemies_let_go()->set_member("spoofed");
+  host.Send(let_go, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.let_go.has_value());
+  CHECK(guest.let_go->member() == "host");
+  CHECK(guest.let_go->map() == 0x18010000u);
+  CHECK(guest.let_go->handles_size() == 1 && guest.let_go->handles(0) == 0x1001400bu);
+  CHECK(!host.let_go.has_value());
+  return 0;
+}
+
 int TheFirstMemberOnAnAreaRunsItsEnemies() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -1223,6 +1249,7 @@ int ATeamFormsAndStartsThroughTheService() {
     CHECK(a.lobby_states == a_states);
     a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 3);
     b.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1);
+    Pump(service, {&a, &b}, now); // every member ready before the Start
     a.Team(bbcoop::TeamRequest::START, now);
     Pump(service, {&a, &b}, now);
     CHECK(a.starts.size() == 1 && b.starts.size() == 1);
@@ -1339,6 +1366,7 @@ int main() {
        TheHostsSessionReachesItsGuestsToJoin},
       {"AHostsSessionGoesWithItsGame", AHostsSessionGoesWithItsGame},
       {"EachMembersLoadReachesTheOthers", EachMembersLoadReachesTheOthers},
+      {"TheEnemiesTheOwnerLetGoReachTheOthers", TheEnemiesTheOwnerLetGoReachTheOthers},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},

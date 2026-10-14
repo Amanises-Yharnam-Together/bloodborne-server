@@ -571,6 +571,12 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     case bbcoop::Envelope::kTeamWorld:
         TakeTeamWorld(member, world, envelope.team_world(), now_ms, result);
         break;
+    case bbcoop::Envelope::kEnemiesLetGo: {
+        bbcoop::Envelope relayed = envelope;
+        relayed.mutable_enemies_let_go()->set_member(member.name);
+        SendToOthers(world, member, relayed, now_ms);
+        break;
+    }
     case bbcoop::Envelope::kLoadProgress: {
         bbcoop::Envelope relayed = envelope;
         relayed.mutable_load_progress()->set_member(member.name);

@@ -630,6 +630,12 @@ bool EnemyOwnerOn();
 bool TakeServerWorldNews();
 // The server's owners, or none when not heard of for EnemyOwnersFreshMs.
 std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms);
+// The enemies (handle -> the guest named to run it, or empty) the owner `member` let go on `map`,
+// as last heard (none when not fresh), and this owner's own list to the others (Kaniel
+// 2026-10-14: one game runs each enemy).
+std::optional<std::unordered_map<u32, std::string>> EnemiesLetGoBy(const std::string& member,
+                                                                   u32 map, s64 now_ms);
+void SendEnemiesLetGo(u32 map, const std::map<u32, std::string>& runners);
 // Once per party tick: this member's role on its map, the ownership words of its characters and
 // the owner's frame and send rates in the log.
 void TickEnemyOwner(bool in_session, u32 map);

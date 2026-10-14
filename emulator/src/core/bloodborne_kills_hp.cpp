@@ -590,16 +590,72 @@ void TickEnemyOwner(bool in_session, u32 map) {
     const std::optional<u16> wanted = EnemyOwnershipWord(role);
     const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
     const u64 player = GetLocalPlayer();
-    // The session's host runs its map's enemies the game's own way: its game puts its own words
-    // back every frame (rig 2026-10-14), and there is nothing to change.
-    if (!wanted || world < 0x10000 || (role == EnemyRole::Owner && !IsPartyGuestRole())) {
-        return;
-    }
     std::unordered_set<u64> players;
     for (const OtherPlayer& other : OtherPlayers()) {
         players.insert(other.character);
     }
+    // The session's host runs its map's enemies the game's own way: its game puts its own words
+    // back every frame (rig 2026-10-14). It says which it let go (word 0xFFFF: none by its
+    // player), for the nearest guest to run (Kaniel 2026-10-14).
+    if (wanted && world >= 0x10000 && role == EnemyRole::Owner && !IsPartyGuestRole()) {
+        // The guests up on this map, where the vitals board last put them.
+        std::vector<MemberVitals> guests;
+        {
+            std::scoped_lock lock{vitals_mutex};
+            for (const MemberVitals& member : vitals_board.members) {
+                if (member.member != self) {
+                    guests.push_back(member);
+                }
+            }
+        }
+        // handle -> the guest running it (one decides: never two, Kaniel 2026-10-14)
+        static std::map<u32, std::string> runners;
+        std::map<u32, std::string> now_runners;
+        ForEachWorldCharacter(world, [&](u64 character) {
+            if (character == player || players.contains(character) ||
+                CharacterHp(character) <= 0) {
+                return;
+            }
+            const u64 word = OwnershipWordAddress(world, character);
+            const u64 modules = ReadValue<u64>(character, 0x3B0);
+            const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+            if (word == 0 || physics < 0x10000 || static_cast<s16>(ReadValue<u16>(word, 0)) >= 0) {
+                return;
+            }
+            const u32 handle = ReadValue<u32>(character, 0x08);
+            const LampPosition at{ReadValue<float>(physics, 0x1E0), ReadValue<float>(physics, 0x1E4),
+                                  ReadValue<float>(physics, 0x1E8)};
+            const auto before = runners.find(handle);
+            now_runners[handle] =
+                RunnerOf(before != runners.end() ? before->second : std::string{}, at, guests, map);
+        });
+        static s64 said_ms = 0;
+        if ((now_runners != runners && now_ms - said_ms >= 250) ||
+            now_ms - said_ms >= EnemiesLetGoEveryMs) {
+            const auto running = [](const std::map<u32, std::string>& list) {
+                return std::ranges::count_if(list, [](const auto& e) { return !e.second.empty(); });
+            };
+            if (running(now_runners) != running(runners) || now_runners.size() != runners.size()) {
+                LOG_INFO(Debug,
+                         "Bloodborne party: enemy owner: lets go {} enemies on map {:#x}, {} run "
+                         "by guests",
+                         now_runners.size(), map, running(now_runners));
+            }
+            said_ms = now_ms;
+            SendEnemiesLetGo(map, now_runners);
+        }
+        runners = std::move(now_runners);
+        return;
+    }
+    if (!wanted || world < 0x10000) {
+        return;
+    }
+    const std::optional<std::unordered_map<u32, std::string>> let_go =
+        role == EnemyRole::Follower && owner != nullptr
+            ? EnemiesLetGoBy(owner->member, map, now_ms)
+            : std::nullopt;
     size_t changed = 0;
+    size_t claimed = 0;
     ForEachWorldCharacter(world, [&](u64 character) {
         if (character == player || players.contains(character) || CharacterHp(character) <= 0) {
             return;
@@ -610,13 +666,43 @@ void TickEnemyOwner(bool in_session, u32 map) {
         }
         // A word already on the wanted side keeps its value (the game's own >= 0 ones too).
         const bool runs = static_cast<s16>(ReadValue<u16>(word, 0)) >= 0;
-        if (runs == (role == EnemyRole::Owner)) {
+        bool should_run = role == EnemyRole::Owner;
+        if (role == EnemyRole::Follower) {
+            // Kaniel 2026-10-14: an enemy the owner let go and named this guest for runs here
+            // (by its player: awake in this world).
+            const u64 control = ReadValue<u64>(character, 0x18);
+            const bool awake = control >= 0x10000 && ReadValue<s32>(control, 0x14) == EnemyAwake;
+            const auto named = let_go ? let_go->find(ReadValue<u32>(character, 0x08))
+                                      : std::unordered_map<u32, std::string>::const_iterator{};
+            should_run = let_go && named != let_go->end() && named->second == self && awake;
+            claimed += should_run ? 1 : 0;
+        }
+        if (runs == should_run) {
             return;
         }
-        WriteValue(word, 0, *wanted);
+        WriteValue(word, 0, should_run ? u16{0} : *wanted);
         enemy_owner_changed_ms[character] = now_ms;
         ++changed;
+        if (role == EnemyRole::Follower) {
+            static u32 logged_hands = 0;
+            if (++logged_hands <= 200) {
+                LOG_INFO(Debug, "Bloodborne party: enemy owner: this follower {} {:#x} (t={:.1f})",
+                         should_run ? "runs" : "hands back", ReadValue<u32>(character, 0x08),
+                         now_ms / 1000.0);
+            }
+        }
     });
+    static size_t last_claimed = 0;
+    static u32 claimed_logged = 0;
+    if (claimed != last_claimed && claimed_logged < 60) {
+        last_claimed = claimed;
+        ++claimed_logged;
+        LOG_INFO(Debug,
+                 "Bloodborne party: enemy owner: this follower runs {} enemies the owner let go "
+                 "({} let go) (t={:.1f})",
+                 claimed, let_go ? fmt::format("{}", let_go->size()) : std::string{"none heard"},
+                 now_ms / 1000.0);
+    }
     static u32 logged = 0;
     if (changed > 0 && ++logged <= 60) {
         LOG_INFO(Debug, "Bloodborne party: enemy owner: {} {} enemies on map {:#x} (t={:.1f})",

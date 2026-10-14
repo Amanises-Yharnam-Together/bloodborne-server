@@ -59,6 +59,7 @@ IOSEFKA_VIEWS = [("south", -200.0, 206.8, 0.0), ("north", -200.0, 212.8, 3.1416)
 IOSEFKA_WAIT = "-200.0 -40.5 218.0 0.0"
 # 7 m from ENEMY (-216.7, 178.1), on the lamp's side: close enough for it to notice a player.
 GUEST_ALONE_SPOT = "-210.0 -54.5 181.0"
+GUEST_PAIR_SPOT = "-213.0 -54.5 184.0"  # 3-4 m from GUEST_ALONE_SPOT
 
 
 # At her clinic's door, facing it (south), where Kaniel talked to her (2026-10-13): Cross goes
@@ -471,6 +472,56 @@ SCENARIOS = {
             "guest": [START, "wait-session 2 300", "wait 15", f"census 40",
                       f"teleport {GUEST_ALONE_SPOT}", "wait 3", "census 40", "wait 25",
                       "census 40", "expect-session 2"],
+        },
+        "moves": {"guest": ENEMY},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    # Kaniel 2026-10-14: the guest's game runs an enemy by it while the host is far; its hits
+    # still meet the host's HP (the owner applies them and sends the HP back).
+    "guest-alone-hits": {
+        "about": "the host far away on the same map, the guest hits the enemy it runs twice: "
+                 "both games end at max HP less the guest's hits",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 75", "census 60", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 15",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 8", f"hit {ENEMY} 30", "wait 1",
+                      f"hit {ENEMY} 30", "wait 15", "census 40", "expect-session 2"],
+        },
+        "same_hp": ENEMY,
+        "hp_sums_hits": ENEMY,
+        "expect": {"guest": [r"hit on 0x1001400b by this player"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    # Kaniel 2026-10-14: never two games running one enemy. Two guests by it, the host far: the
+    # nearer guest runs it (the logs say who runs which, and when).
+    "guests-pair-mobs": {
+        "about": "the host far away on the same map, both guests by one enemy: it comes for them, "
+                 "run by one guest's game at a time",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 80", "expect-session 3"],
+            "guest": [START, "wait-session 3 300", "wait 15", f"teleport {GUEST_ALONE_SPOT}",
+                      "wait 3", "census 40", "wait 25", "census 40", "expect-session 3"],
+            "guest2": [START, "wait-session 3 300", "wait 15", f"teleport {GUEST_PAIR_SPOT}",
+                       "wait 3", "census 40", "wait 25", "census 40", "expect-session 3"],
+        },
+        "moves": {"guest": ENEMY},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    # The host comes back to the enemy the guest runs: its game takes it back, and it goes on.
+    "guest-mobs-host-comes": {
+        "about": "the guest runs an enemy with the host far away, then the host comes beside it: "
+                 "the host's game takes it back and it keeps fighting",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 40", f"teleport {GUEST_ALONE_SPOT}", "wait 40", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 15",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 3", "census 40", "wait 25",
+                      "census 40", "wait 30", "census 40", "expect-session 2"],
         },
         "moves": {"guest": ENEMY},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
