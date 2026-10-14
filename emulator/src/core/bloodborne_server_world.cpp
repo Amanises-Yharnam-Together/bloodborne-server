@@ -105,8 +105,10 @@ s64 team_world_wait_ms = 0;
 // opened (each one's number).
 std::optional<bbcoop::TeamSession> team_session;
 TeamJoin team_join;
-JoinScreen join_screen;                  // team_mutex
-std::atomic<bool> join_screen_up{false}; // the game's thread writes, the present thread reads
+TeamLoad team_load; // team_mutex
+// The team loading screen as the game's thread last made it (the present thread draws it).
+std::mutex team_load_view_mutex;
+TeamLoad::View team_load_view;
 u64 team_sessions_opened = 0;
 // What the summon packet carries before the join data (0x01873754): GameMan +0x16F0 and +0x16F4
 // on the guest, the same for every co-operator (rig 2026-10-14: 0xFFFFFFFF and 7).
@@ -147,6 +149,11 @@ bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
         LOG_INFO(Debug, "Co-op team world: the server's has {} ({} flags on, version {})",
                  team_world->exists() ? "a world" : "no world yet", team_world->on_size(),
                  team_world->version());
+        return true;
+    }
+    if (envelope.has_load_progress()) {
+        std::scoped_lock lock{team_mutex};
+        team_load.Take(envelope.load_progress(), SteadyMilliseconds());
         return true;
     }
     if (envelope.has_team_session()) {
@@ -896,9 +903,9 @@ bool HoldTitleLoadForTeam(u32 slot) {
     if (decision.start && party_controller) {
         const bool host = decision.start->host() == me;
         party_controller->Assign(host ? PartyRole::Host : PartyRole::Guest);
-        if (!host) {
+        {
             std::scoped_lock lock{team_mutex};
-            join_screen.Loading(SteadyMilliseconds());
+            team_load.Start(SteadyMilliseconds());
         }
         LOG_INFO(Debug, "Co-op team lobby: the save plays in team {} as its {}",
                  decision.start->team(), host ? "host" : "guest");
@@ -911,24 +918,50 @@ bool HoldTitleLoadForTeam(u32 slot) {
     return false;
 }
 
-bool JoinScreenUp() {
-    return join_screen_up.load(std::memory_order_relaxed);
+TeamLoad::View TeamLoadView() {
+    std::scoped_lock lock{team_load_view_mutex};
+    return team_load_view;
 }
 
-// The game's thread (TickTeamJoin): whether the port holds its loading screen. The present thread
-// only reads the answer (it read the game's memory itself once and crashed: rig 2026-10-14).
-void UpdateJoinScreen() {
-    // In the session's world: after the summon reload (the guest's arrival, InSessionWorld).
-    const bool in_session = InPartySession() && InSessionWorld();
-    bool up = false;
-    {
-        std::scoped_lock lock{team_mutex};
-        up = join_screen.Up(in_session, SteadyMilliseconds());
-    }
-    // While the game loads its own loading screen shows; ours holds it after, until the join.
+// The game's thread (TickTeamJoin): this game's stage of the team's load, said to the others, and
+// the screen as it stands. The present thread only reads the view (it read the game's memory
+// itself once and crashed: rig 2026-10-14).
+void UpdateTeamLoad() {
+    const s64 now_ms = SteadyMilliseconds();
     const u64 global = GetGlobalState();
     const bool loading = global < 0x10000 || TryRead<u8>(global, 0x08).value_or(1) != 0;
-    join_screen_up.store(up && !loading, std::memory_order_relaxed);
+    const u64 manager = GetMatchingState();
+    const s32 matching = manager >= 0x10000 && HasMemoryAccess(manager, 0x128, MemoryProt::CpuRead)
+                             ? ReadValue<s32>(manager, 0x124)
+                             : 0;
+    // The host is in once its session is open, a guest once it stands in the session's world
+    // (after the summon reload).
+    const bool in = IsPartyGuestRole() ? InPartySession() && InSessionWorld()
+                                       : matching == MatchingStateHosting;
+    std::optional<bbcoop::LoadProgress> said;
+    TeamLoad::View view;
+    {
+        std::scoped_lock lock{team_mutex};
+        team_load.SetStage(loading ? bbcoop::LoadProgress::LOADING
+                           : in    ? bbcoop::LoadProgress::READY
+                                   : bbcoop::LoadProgress::JOINING,
+                           now_ms);
+        said = team_load.ToSend(now_ms);
+        std::vector<std::pair<std::string, std::string>> members;
+        if (const auto& lobby = team_gate.Lobby(); lobby && lobby->has_team()) {
+            for (const bbcoop::TeamMember& member : lobby->team().members()) {
+                members.emplace_back(member.member(), member.name());
+            }
+        }
+        view = team_load.Tick(members, lobby_member, now_ms);
+    }
+    if (said) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_load_progress() = *said;
+        Queue(std::move(envelope));
+    }
+    std::scoped_lock lock{team_load_view_mutex};
+    team_load_view = std::move(view);
 }
 
 bool TeamScreenUp() {
@@ -965,15 +998,18 @@ void TeamBackAtTitle() {
         lobby_hello_due = true;
     }
     team_session.reset();
-    join_screen = {};
-    join_screen_up.store(false, std::memory_order_relaxed);
+    team_load = {};
+    {
+        std::scoped_lock view_lock{team_load_view_mutex};
+        team_load_view = {};
+    }
 }
 
 bool TickTeamJoin(bool ready) {
     if (!team_switch) {
         return false;
     }
-    UpdateJoinScreen();
+    UpdateTeamLoad();
     const u64 manager = GetMatchingState();
     if (manager < 0x10000 || !HasMemoryAccess(manager, 0x128, MemoryProt::CpuRead)) {
         return true;

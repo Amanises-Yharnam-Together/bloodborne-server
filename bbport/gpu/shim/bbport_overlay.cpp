@@ -1819,21 +1819,75 @@ void Screen() {
 
 } // namespace Team
 
-// The loading screen held over the guest's world until it is in its team's session (see
-// bbcoop_join_screen): black, as the game's own, with a line in the menu's serif.
+// Kaniel 2026-10-14: the team loading screen, as in League of Legends but in Bloodborne's colours:
+// each hunter's name, its stage and a bar, over the whole screen until every member is in the
+// team's session (bbcoop_team_load_view); the hunt opens for everyone at once.
 namespace Joining {
 bool open = false; // present thread: as Visible() read it last
+bbcoop_team_load load{};
 
 void Screen() {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImDrawList* draw = ImGui::GetForegroundDrawList();
-    draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
-    const char* text = Team::T("Joining the hunt...", "Присоединение к охоте...");
-    const float size = ImGui::GetFontSize() * 1.2f;
-    const ImVec2 extent = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
-    draw->AddText(ImGui::GetFont(), size,
-                  ImVec2(display.x - extent.x - display.x * 0.05f, display.y - extent.y - display.y * 0.06f),
-                  IM_COL32(200, 190, 170, 255), text);
+    draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(6, 5, 4, 255));
+    const ImU32 gold = IM_COL32(200, 176, 120, 255);
+    const ImU32 dim = IM_COL32(140, 128, 110, 255);
+    ImFont* font = ImGui::GetFont();
+    const float unit = display.y / 40.0f;
+    const auto centred = [&](const char* text, float size, float y, ImU32 colour) {
+        const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+        draw->AddText(font, size, ImVec2((display.x - extent.x) * 0.5f, y), colour, text);
+    };
+    centred(Team::T("The Hunt Begins", "Охота начинается"), unit * 1.6f, display.y * 0.16f, gold);
+    // Ornament lines above and below, as the game's menus have them.
+    const float left = display.x * 0.18f, right = display.x * 0.82f;
+    draw->AddLine(ImVec2(left, display.y * 0.24f), ImVec2(right, display.y * 0.24f), dim, 1.0f);
+    const float card_w = (right - left) / 4.0f;
+    const int count = std::clamp(load.count, 1, 4);
+    const float start = (display.x - card_w * count) * 0.5f;
+    for (int i = 0; i < load.count && i < 4; ++i) {
+        const bbcoop_team_load_row& row = load.rows[i];
+        const float x0 = start + card_w * i + unit * 0.5f;
+        const float x1 = start + card_w * (i + 1) - unit * 0.5f;
+        const float y0 = display.y * 0.30f, y1 = display.y * 0.72f;
+        draw->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(20, 17, 14, 255), 2.0f);
+        draw->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), row.self ? gold : dim, 2.0f, 0,
+                      row.self ? 2.0f : 1.0f);
+        // The hunter's emblem: a diamond, filled once it is in.
+        const ImVec2 c((x0 + x1) * 0.5f, y0 + (y1 - y0) * 0.30f);
+        const float r = unit * 2.2f;
+        const ImVec2 diamond[4] = {ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r),
+                                   ImVec2(c.x - r, c.y)};
+        if (row.stage == BBCOOP_LOAD_READY) {
+            draw->AddConvexPolyFilled(diamond, 4, IM_COL32(120, 30, 24, 255));
+        }
+        draw->AddPolyline(diamond, 4, gold, ImDrawFlags_Closed, 1.5f);
+        const ImVec2 name_size = font->CalcTextSizeA(unit * 1.1f, FLT_MAX, 0.0f, row.name);
+        draw->AddText(font, unit * 1.1f, ImVec2((x0 + x1 - name_size.x) * 0.5f, y0 + (y1 - y0) * 0.55f),
+                      gold, row.name);
+        const char* stage = row.stage == BBCOOP_LOAD_READY     ? Team::T("Ready", "Готов")
+                            : row.stage == BBCOOP_LOAD_JOINING ? Team::T("Joining...", "Присоединяется...")
+                            : row.stage == BBCOOP_LOAD_LOADING ? Team::T("Loading...", "Загрузка...")
+                                                               : Team::T("Waiting", "Ожидание");
+        const ImVec2 stage_size = font->CalcTextSizeA(unit * 0.85f, FLT_MAX, 0.0f, stage);
+        draw->AddText(font, unit * 0.85f,
+                      ImVec2((x0 + x1 - stage_size.x) * 0.5f, y0 + (y1 - y0) * 0.68f), dim, stage);
+        // The bar and its percentage.
+        const float bx0 = x0 + unit, bx1 = x1 - unit, by = y0 + (y1 - y0) * 0.84f;
+        draw->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + unit * 0.45f), IM_COL32(40, 34, 28, 255));
+        const float filled = bx0 + (bx1 - bx0) * std::clamp(row.percent, 0, 100) / 100.0f;
+        draw->AddRectFilled(ImVec2(bx0, by), ImVec2(filled, by + unit * 0.45f),
+                            row.stage == BBCOOP_LOAD_READY ? IM_COL32(150, 40, 30, 255) : gold);
+        char percent[8];
+        std::snprintf(percent, sizeof(percent), "%d%%", std::clamp(row.percent, 0, 100));
+        const ImVec2 percent_size = font->CalcTextSizeA(unit * 0.8f, FLT_MAX, 0.0f, percent);
+        draw->AddText(font, unit * 0.8f, ImVec2((x0 + x1 - percent_size.x) * 0.5f, by + unit * 0.7f),
+                      dim, percent);
+    }
+    draw->AddLine(ImVec2(left, display.y * 0.78f), ImVec2(right, display.y * 0.78f), dim, 1.0f);
+    centred(Team::T("The hunt opens for everyone once all hunters are ready",
+                    "Охота начнётся, когда все охотники будут готовы"),
+            unit * 0.8f, display.y * 0.82f, dim);
 }
 } // namespace Joining
 
@@ -2730,7 +2784,7 @@ bool Visible() {
     const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
     const bool was_team = Team::open;
     Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
-    Joining::open = initialized && bbcoop_join_screen() != 0;
+    Joining::open = initialized && bbcoop_team_load_view(&Joining::load) != 0;
     if (Team::open && !was_team) {
         SyncMousePos();
         Team::focus.fresh = true;

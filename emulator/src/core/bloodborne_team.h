@@ -107,30 +107,6 @@ private:
     bool published = false; // the host said its open session
 };
 
-// Kaniel 2026-10-14: the loading screen held until the join is done. A guest's load in a team
-// (Loading) keeps a dark screen up (the port's overlay) until the game is in its host's session,
-// or LimitMs at most (a host that never opens one).
-class JoinScreen {
-public:
-    static constexpr s64 LimitMs = 45'000;
-    void Loading(s64 now_ms) {
-        since_ms = now_ms;
-    }
-    bool Up(bool in_session, s64 now_ms) {
-        if (!since_ms) {
-            return false;
-        }
-        if (in_session || now_ms - *since_ms >= LimitMs) {
-            since_ms.reset();
-            return false;
-        }
-        return true;
-    }
-
-private:
-    std::optional<s64> since_ms;
-};
-
 // Kaniel 2026-10-14: the bell items are out of the port's game (the team joins without them):
 // Beckoning Bell 200, Small Resonant Bell 205, Sinister Resonant Bell 225, Old Hunter Bell 4312
 // (EquipParamGoods ids, names from item.msgbnd). The Choir Bell (2050) is a hunter tool and stays.
@@ -195,6 +171,52 @@ public:
 
 private:
     std::optional<s64> since_ms;
+};
+
+// Kaniel 2026-10-14: the team loading screen, as in League of Legends. From the team's Start every
+// member's game shows each hunter with a bar (bbcoop::LoadProgress through the server) and holds
+// until all of them are in the team's session (or LimitMs), so the hunt opens for everyone at once.
+class TeamLoad {
+public:
+    using Stage = bbcoop::LoadProgress::Stage;
+    static constexpr s64 LimitMs = 90'000;
+    // A save's load fills its bar to LoadedPercent over about this long (the game says nothing of
+    // its own progress); joining and ready take it on to 100.
+    static constexpr s64 LoadingGuessMs = 20'000;
+    static constexpr u32 LoadedPercent = 70;
+    struct Row {
+        std::string member;
+        std::string name;
+        Stage stage = bbcoop::LoadProgress::WAITING;
+        u32 percent = 0;
+        bool self = false;
+    };
+    struct View {
+        bool up = false;
+        std::vector<Row> rows;
+    };
+
+    void Start(s64 now_ms);
+    void SetStage(Stage stage, s64 now_ms);
+    void Take(const bbcoop::LoadProgress& other, s64 now_ms);
+    // `members`: the team's (member, name), the leader first.
+    View Tick(std::span<const std::pair<std::string, std::string>> members, const std::string& me,
+              s64 now_ms);
+    // This game's progress to send, when it changed.
+    std::optional<bbcoop::LoadProgress> ToSend(s64 now_ms);
+
+private:
+    struct Heard {
+        bbcoop::LoadProgress load;
+        s64 at_ms = 0;
+    };
+    u32 OwnPercent(s64 now_ms) const;
+    std::optional<s64> started_ms;
+    Stage own = bbcoop::LoadProgress::WAITING;
+    s64 own_since_ms = 0;
+    bool open = false;
+    std::optional<std::pair<Stage, u32>> sent;
+    std::vector<std::pair<std::string, Heard>> others;
 };
 
 } // namespace Core::Bloodborne

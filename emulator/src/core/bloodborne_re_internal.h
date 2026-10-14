@@ -727,7 +727,7 @@ void TeamBackAtTitle();
 // The team screen (bbport_overlay.cpp) is up: the title's load is held for it. Its buttons.
 bool TeamScreenUp();
 // A team's guest is loading or joining its host's session: the port holds a loading screen.
-bool JoinScreenUp();
+TeamLoad::View TeamLoadView();
 void TeamChoose(TeamGate::Choice choice);
 // The rig's screen verbs (team-ready, team-start, team-alone) want the title's Cross until the
 // screen is up.

@@ -163,6 +163,8 @@ struct Game {
     } else if (envelope.has_team_session()) {
       session = envelope.team_session();
       ++sessions;
+    } else if (envelope.has_load_progress()) {
+      loads[envelope.load_progress().member()] = envelope.load_progress();
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -226,6 +228,7 @@ struct Game {
   int team_worlds = 0;
   std::optional<bbcoop::TeamSession> session;
   int sessions = 0;
+  std::map<std::string, bbcoop::LoadProgress> loads;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -962,6 +965,35 @@ int AHostsSessionGoesWithItsGame() {
   return 0;
 }
 
+// Kaniel 2026-10-14: the team loading screen. Each member's load reaches the
+// others, under its own name, and a member that says hello later gets the
+// others' as they are.
+int EachMembersLoadReachesTheOthers() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope load;
+  load.mutable_load_progress()->set_stage(bbcoop::LoadProgress::JOINING);
+  load.mutable_load_progress()->set_percent(70);
+  load.mutable_load_progress()->set_member("spoofed");
+  guest.Send(load, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(host.loads.contains("guest"));
+  CHECK(host.loads.at("guest").percent() == 70);
+  CHECK(host.loads.at("guest").stage() == bbcoop::LoadProgress::JOINING);
+  CHECK(!host.loads.contains("spoofed"));
+  CHECK(guest.loads.empty());
+  Game late{1002, "late", 13};
+  late.Hello(now + 10);
+  Pump(service, {&host, &guest, &late}, now + 10);
+  CHECK(late.loads.contains("guest") && late.loads.at("guest").percent() == 70);
+  return 0;
+}
+
 int TheFirstMemberOnAnAreaRunsItsEnemies() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -1306,6 +1338,7 @@ int main() {
       {"TheHostsSessionReachesItsGuestsToJoin",
        TheHostsSessionReachesItsGuestsToJoin},
       {"AHostsSessionGoesWithItsGame", AHostsSessionGoesWithItsGame},
+      {"EachMembersLoadReachesTheOthers", EachMembersLoadReachesTheOthers},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},

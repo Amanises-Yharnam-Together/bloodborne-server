@@ -122,6 +122,8 @@ private:
         std::map<std::string, bbcoop::Portrait> portraits;
         // Phase 6: the host's open game session, for its guests to join (none: closed).
         std::optional<bbcoop::TeamSession> session;
+        // Each member's load (the team loading screen), by member name.
+        std::map<std::string, bbcoop::LoadProgress> loads;
         u32 session_run = 0; // the host game's run that opened it
         // Phase 4: who runs each area's enemies, and what was logged of it.
         EnemyOwners owners;

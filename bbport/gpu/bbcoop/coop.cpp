@@ -300,8 +300,23 @@ extern "C" int bbcoop_team_screen(void) {
     return Core::Bloodborne::Coop::TeamScreenUp() ? 1 : 0;
 }
 
-extern "C" int bbcoop_join_screen(void) {
-    return Core::Bloodborne::Coop::JoinScreenUp() ? 1 : 0;
+extern "C" int bbcoop_team_load_view(bbcoop_team_load* view) {
+    const Core::Bloodborne::TeamLoad::View load = Core::Bloodborne::Coop::TeamLoadView();
+    if (!load.up || view == nullptr) {
+        return 0;
+    }
+    *view = {};
+    for (const auto& row : load.rows) {
+        if (view->count >= 4) {
+            break;
+        }
+        bbcoop_team_load_row& out = view->rows[view->count++];
+        std::snprintf(out.name, sizeof(out.name), "%s", row.name.c_str());
+        out.stage = static_cast<int>(row.stage);
+        out.percent = static_cast<int>(row.percent);
+        out.self = row.self ? 1 : 0;
+    }
+    return 1;
 }
 
 extern "C" void bbcoop_team_choose(int what) {

@@ -382,6 +382,7 @@ message Envelope {
         TradeGranted trade_granted = 34;
         TeamWorld team_world = 35;
         TeamSession team_session = 36;
+        LoadProgress load_progress = 37;
     }
 }
 
@@ -621,4 +622,20 @@ message TeamSession {
     uint32 sign = 3;     // for GameMan +0x16F4 (the sign's type, 7)
     uint64 session = 4;  // the host's count of the sessions it opened
     string host = 5;     // server -> game: the host's member name
+}
+
+// Kaniel 2026-10-14: a team loading screen as in League of Legends. Each member's game says where
+// its load is (game -> server) when it changes; the server sends it to the team's other members
+// after their hello and as it changes (server -> game, `member` set). Every game holds its screen
+// until all members are in the team's session, so the hunt opens for everyone at once.
+message LoadProgress {
+    enum Stage {
+        WAITING = 0;  // not loading (at the title, or playing alone)
+        LOADING = 1;  // the save's load, since `started_ms` ago on its own clock (for the bar)
+        JOINING = 2;  // in its world, joining the host's session
+        READY = 3;    // in the team's session (the host: its session open)
+    }
+    Stage stage = 1;
+    uint32 percent = 2; // 0..100, the game's own estimate
+    string member = 3;  // server -> game: whose
 }

@@ -242,28 +242,6 @@ TEST(TeamJoin, AGuestJoinsTheHostsSessionWhenReadyAndAlone) {
     EXPECT_EQ(join.Tick(GuestFrame(MatchingStateHosting, true, true)), TeamJoin::Action::None);
 }
 
-// Kaniel 2026-10-14: "hold the loading screen until it joins". A guest's screen stays dark from its
-// team load until it is in the host's session (or a while: a host that never comes).
-TEST(JoinScreen, StaysUpFromTheLoadUntilTheSession) {
-    JoinScreen screen;
-    EXPECT_FALSE(screen.Up(false, 1000)) << "no team load yet";
-    screen.Loading(1000);
-    EXPECT_TRUE(screen.Up(false, 1000));
-    EXPECT_TRUE(screen.Up(false, 20'000));
-    EXPECT_FALSE(screen.Up(true, 21'000)) << "in the session";
-    EXPECT_FALSE(screen.Up(false, 22'000)) << "once over, it stays over";
-}
-
-TEST(JoinScreen, GivesUpOnAHostThatNeverComes) {
-    JoinScreen screen;
-    screen.Loading(0);
-    EXPECT_TRUE(screen.Up(false, JoinScreen::LimitMs - 1));
-    EXPECT_FALSE(screen.Up(false, JoinScreen::LimitMs));
-    EXPECT_FALSE(screen.Up(false, JoinScreen::LimitMs + 1));
-}
-
-// Kaniel 2026-10-14: no bell items in the game (the team joins without them). The four co-op bells
-// (item names from the game's item.msgbnd: 200, 205, 225, 4312), never the Choir Bell (a hunter
 // tool that heals, 2050).
 TEST(BellItems, TheCoopBellsAndNothingElse) {
     for (const u32 bell : {200u, 205u, 225u, 4312u}) {
@@ -296,6 +274,73 @@ TEST(PhantomHome, APhantomAloneAWhileIsAPlayerAgainNeverWhileItJoins) {
     EXPECT_FALSE(home.Due(true, true, 3000 + PhantomHome::ReturnAfterMs - 1));
     EXPECT_TRUE(home.Due(true, true, 3000 + PhantomHome::ReturnAfterMs));
     EXPECT_FALSE(home.Due(false, true, 20'000)) << "a player already";
+}
+
+// Kaniel 2026-10-14: a team loading screen as in League of Legends: each hunter's progress, and
+// the hunt opens for everyone at once.
+using LoadStage = bbcoop::LoadProgress::Stage;
+bbcoop::LoadProgress OtherLoad(const std::string& member, LoadStage stage, u32 percent) {
+    bbcoop::LoadProgress load;
+    load.set_member(member);
+    load.set_stage(stage);
+    load.set_percent(percent);
+    return load;
+}
+const std::vector<std::pair<std::string, std::string>> Team2{{"h", "Host"}, {"g", "Guest"}};
+
+TEST(TeamLoad, NotUpBeforeTheTeamsLoad) {
+    TeamLoad load;
+    EXPECT_FALSE(load.Tick(Team2, "g", 0).up);
+}
+
+TEST(TeamLoad, ShowsEveryHunterAndHoldsUntilAllAreIn) {
+    TeamLoad load;
+    load.Start(1000);
+    auto view = load.Tick(Team2, "g", 1000);
+    ASSERT_TRUE(view.up);
+    ASSERT_EQ(view.rows.size(), 2u);
+    EXPECT_EQ(view.rows[0].name, "Host");
+    EXPECT_EQ(view.rows[1].name, "Guest");
+    EXPECT_TRUE(view.rows[1].self);
+    EXPECT_EQ(view.rows[1].stage, bbcoop::LoadProgress::LOADING);
+    EXPECT_EQ(view.rows[0].stage, bbcoop::LoadProgress::WAITING)
+        << "nothing heard from the host yet";
+    // The own bar grows while it loads, never past the load's share.
+    EXPECT_GT(load.Tick(Team2, "g", 1000 + TeamLoad::LoadingGuessMs / 2).rows[1].percent, 0u);
+    EXPECT_LE(load.Tick(Team2, "g", 1000 + 3 * TeamLoad::LoadingGuessMs).rows[1].percent,
+              TeamLoad::LoadedPercent);
+    load.Take(OtherLoad("h", bbcoop::LoadProgress::READY, 100), 2000);
+    load.SetStage(bbcoop::LoadProgress::JOINING, 3000);
+    view = load.Tick(Team2, "g", 3000);
+    EXPECT_TRUE(view.up);
+    EXPECT_EQ(view.rows[0].percent, 100u);
+    load.SetStage(bbcoop::LoadProgress::READY, 4000);
+    EXPECT_FALSE(load.Tick(Team2, "g", 4000).up) << "everyone in: it opens";
+    EXPECT_FALSE(load.Tick(Team2, "g", 5000).up) << "and stays open";
+}
+
+TEST(TeamLoad, OpensAnywayWhenSomeoneNeverComes) {
+    TeamLoad load;
+    load.Start(0);
+    load.SetStage(bbcoop::LoadProgress::READY, 100);
+    EXPECT_TRUE(load.Tick(Team2, "h", 100).up) << "the guest is still loading";
+    EXPECT_TRUE(load.Tick(Team2, "h", TeamLoad::LimitMs - 1).up);
+    EXPECT_FALSE(load.Tick(Team2, "h", TeamLoad::LimitMs).up);
+}
+
+TEST(TeamLoad, SaysItsOwnProgressWhenItChanges) {
+    TeamLoad load;
+    EXPECT_FALSE(load.ToSend(0).has_value()) << "not loading";
+    load.Start(0);
+    const auto first = load.ToSend(0);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first->stage(), bbcoop::LoadProgress::LOADING);
+    EXPECT_FALSE(load.ToSend(100).has_value()) << "nothing new";
+    load.SetStage(bbcoop::LoadProgress::JOINING, 200);
+    const auto joining = load.ToSend(200);
+    ASSERT_TRUE(joining.has_value());
+    EXPECT_EQ(joining->stage(), bbcoop::LoadProgress::JOINING);
+    EXPECT_GE(joining->percent(), TeamLoad::LoadedPercent);
 }
 
 } // namespace

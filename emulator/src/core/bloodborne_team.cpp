@@ -216,4 +216,108 @@ TeamJoin::Action TeamJoin::Tick(const Frame& frame) {
     return frame.ready && frame.matching_state == 0 ? Action::CreateSession : Action::None;
 }
 
+void TeamLoad::Start(s64 now_ms) {
+    started_ms = now_ms;
+    own = bbcoop::LoadProgress::LOADING;
+    own_since_ms = now_ms;
+    open = false;
+    sent.reset();
+}
+
+void TeamLoad::SetStage(TeamLoad::Stage stage, s64 now_ms) {
+    if (stage != own) {
+        own = stage;
+        own_since_ms = now_ms;
+    }
+}
+
+void TeamLoad::Take(const bbcoop::LoadProgress& other, s64 now_ms) {
+    for (auto& [member, heard] : others) {
+        if (member == other.member()) {
+            heard = {other, now_ms};
+            return;
+        }
+    }
+    others.emplace_back(other.member(), Heard{other, now_ms});
+}
+
+namespace {
+
+// A loading bar's share of the load: LoadedPercent over LoadingGuessMs, never quite all of it.
+u32 LoadingPercent(s64 elapsed_ms) {
+    const s64 share = std::clamp<s64>(elapsed_ms, 0, TeamLoad::LoadingGuessMs);
+    return static_cast<u32>(5 + (TeamLoad::LoadedPercent - 10) * share / TeamLoad::LoadingGuessMs);
+}
+
+} // namespace
+
+u32 TeamLoad::OwnPercent(s64 now_ms) const {
+    switch (own) {
+    case bbcoop::LoadProgress::LOADING:
+        return LoadingPercent(now_ms - own_since_ms);
+    case bbcoop::LoadProgress::JOINING:
+        return TeamLoad::LoadedPercent +
+               static_cast<u32>(std::clamp<s64>((now_ms - own_since_ms) / 500, 0, 25));
+    case bbcoop::LoadProgress::READY:
+        return 100;
+    default:
+        return 0;
+    }
+}
+
+TeamLoad::View TeamLoad::Tick(std::span<const std::pair<std::string, std::string>> members,
+                              const std::string& me, s64 now_ms) {
+    View view;
+    if (!started_ms || open) {
+        return view;
+    }
+    bool all_ready = true;
+    for (const auto& [member, name] : members) {
+        Row row{.member = member, .name = name, .self = member == me};
+        if (row.self) {
+            row.stage = own;
+            row.percent = OwnPercent(now_ms);
+        } else {
+            for (const auto& [who, heard] : others) {
+                if (who == member) {
+                    row.stage = heard.load.stage();
+                    row.percent = heard.load.percent();
+                    // Between its messages a load's bar goes on growing here too.
+                    if (row.stage == bbcoop::LoadProgress::LOADING) {
+                        row.percent =
+                            std::max(row.percent, std::min(TeamLoad::LoadedPercent - 5,
+                                                           LoadingPercent(now_ms - heard.at_ms) +
+                                                               row.percent - 5));
+                    }
+                }
+            }
+        }
+        all_ready = all_ready && row.stage == bbcoop::LoadProgress::READY;
+        view.rows.push_back(std::move(row));
+    }
+    if (all_ready || now_ms - *started_ms >= LimitMs) {
+        open = true;
+        view.rows.clear();
+        return view;
+    }
+    view.up = true;
+    return view;
+}
+
+std::optional<bbcoop::LoadProgress> TeamLoad::ToSend(s64 now_ms) {
+    if (!started_ms) {
+        return std::nullopt;
+    }
+    const u32 percent = OwnPercent(now_ms);
+    // On a stage's change, and every 10 points of a bar.
+    if (sent && sent->first == own && percent < sent->second + 10) {
+        return std::nullopt;
+    }
+    sent = std::pair{own, percent};
+    bbcoop::LoadProgress load;
+    load.set_stage(own);
+    load.set_percent(percent);
+    return load;
+}
+
 } // namespace Core::Bloodborne

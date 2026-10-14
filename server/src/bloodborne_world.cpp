@@ -420,6 +420,14 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
         }
     }
     SendOwners(world, now_ms, result, &member);
+    // The others' loads (the team loading screen).
+    for (const auto& [name, load] : world.loads) {
+        if (name != member.name) {
+            bbcoop::Envelope envelope;
+            *envelope.mutable_load_progress() = load;
+            SendTo(member, envelope, now_ms);
+        }
+    }
     // The host's open session: a guest joins it once it stands in its world.
     if (world.session && world.session->host() != member.name) {
         bbcoop::Envelope envelope;
@@ -563,6 +571,13 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     case bbcoop::Envelope::kTeamWorld:
         TakeTeamWorld(member, world, envelope.team_world(), now_ms, result);
         break;
+    case bbcoop::Envelope::kLoadProgress: {
+        bbcoop::Envelope relayed = envelope;
+        relayed.mutable_load_progress()->set_member(member.name);
+        world.loads[member.name] = relayed.load_progress();
+        SendToOthers(world, member, relayed, now_ms);
+        break;
+    }
     case bbcoop::Envelope::kTeamSession: {
         // Only the host's session is the team's to join (a guest's says nothing).
         if (!member.host) {
