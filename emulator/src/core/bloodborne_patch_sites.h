@@ -62,6 +62,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"channel table", false},
     {"game packet link", false},
     {"enemy owner", false},
+    {"team lobby", false},
     {"host leaves", true},
     {"seamless travel", true},
     {"stop request", true},
@@ -269,6 +270,9 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"receive from host member", "enemy owner", CoopSiteKind::Hook, 0x01789495,
      "48 81 C3 D0 00 00 00"},
     {"enemy hit state read", "enemy owner", CoopSiteKind::Hook, 0x01A2A102, "8B 88 24 01 00 00"},
+    // Phase 5: the title's save load held for the team, and the title menu seen again.
+    {"title load state", "team lobby", CoopSiteKind::Hook, 0x0195B480, "55 48 89 E5 41 57"},
+    {"title menu state", "team lobby", CoopSiteKind::Hook, 0x0195AE80, "55 48 89 E5 41 57"},
 
     {"leave limit", "host leaves", CoopSiteKind::Hook, 0x0138A4A0, "55 48 89 E5 53 50"},
 

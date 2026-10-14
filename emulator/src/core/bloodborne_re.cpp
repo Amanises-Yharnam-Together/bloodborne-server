@@ -354,6 +354,13 @@ void OnLifecycle(Lifecycle event) {
 }
 
 void InitPartyController() {
+    if (TeamModeOn()) {
+        // Phase 5: the team's Start says the party and the role (HoldTitleLoadForTeam).
+        party_controller.emplace(PartyRole::Host, true);
+        LOG_INFO(Debug, "Bloodborne party: the team lobby decides the party (team mode)");
+        StartTeamLobby();
+        return;
+    }
     const char* party = std::getenv("SHADPS4_BLOODBORNE_PARTY");
     const char* role = std::getenv("SHADPS4_BLOODBORNE_PARTY_ROLE");
     if (party == nullptr || !ParsePartySetting(party)) {
