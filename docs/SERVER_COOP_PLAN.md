@@ -290,6 +290,34 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
 5. **Team lobby in the game's menus.** Server teams and presence, the title menu item and dialogs,
    Start, and the join from the team (session events and rooms from the server's session; join
    snapshots from the world log). Rig: new verbs for the lobby, join, join3, join-apart, resume.
+   **5a + 5c built 2026-10-14** behind `SHADPS4_BLOODBORNE_TEAMS=1` (port, with the server world;
+   the party settings are not read then):
+   - **Server** (`server/coop/team_lobby.h`, in shadNet's world service): players sign in with a
+     `LobbyHello` on the Coop stream before any party hello; teams of up to 4 with a leader,
+     invites, Ready (with the save slot), Start; every signed-in player gets its `LobbyState`
+     after any change, a refused request comes back with a notice. The teams and invites are kept
+     in `teams.pb` beside the worlds (they outlive the server); a team is started while one of
+     its members plays, and a member that readies then goes at once (a crash and Continue rejoin).
+     A team's party key is `team:<id>`, so its world is the server world of phase 3.
+   - **Game** (`bloodborne_team.h`, `bloodborne_server_world.cpp`): the party controller waits
+     for its role. TitleStep's load state (0x0195B480, called every frame until it moves on) is
+     skipped while the team decides: a member's Continue or Load Game is its Ready, the leader's
+     its Ready and the team's Start; the Start sets the party key and the role (**the leader
+     hosts**, not the first to load: one fixed host per team, as the party roles were). Not in a
+     team, or no word from the lobby in 5 s: the save loads alone. The join under it is still the
+     automatic bell and signs of the party (phase 6 replaces it).
+   - **Native page** (`bbport_game_menu.cpp`, `bbcoop_lobby_view`): a Co-op Team page in the
+     System menu, also on the title: Team (create / leave), Invite (players online), Invitations
+     (join / decline), Members (leader, ready, playing, at the title, offline), Remove (leader),
+     Start (how Continue starts the team). Each row is the game's own pop-up list; a choice is a
+     request at once, and the page shows the result when it opens again.
+   - Rig: title verbs `team-create`, `team-invite <online id>`, `team-accept`, `team-wait <n>`,
+     `title-press <button> [ms]`, `title-wait <s>`, `title-shot <name>`; scenarios `team-join`,
+     `team-join3`, `team-menu` (drawn: invite and accept through the pages, with pictures).
+   - A save loaded alone (not in a team, or after a team's session) rings nothing and plays no
+     team's world (the controller waits again); the party's hooks stay in until the game restarts.
+   - Not yet: a team world from the leader's save and the personal world kept aside (5b); the
+     pop-up lists draw over the rows below them.
 6. **Clean up.** Remove signs/bell auto-ringing for teams, the signaling handshake, the P2P vport
    transport, superseded patch sites and boards; update the kit, README and release tooling.
 

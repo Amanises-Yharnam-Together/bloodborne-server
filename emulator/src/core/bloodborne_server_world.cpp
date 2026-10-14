@@ -529,7 +529,11 @@ ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 no
     std::scoped_lock member_lock{member_mutex};
     {
         std::scoped_lock lock{stream_mutex};
-        hello_party = PartyKey();
+        const std::string party = PartyKey();
+        if (party != hello_party && !hello_party.empty()) {
+            hello_due = true; // another team's world (phase 5): a new hello
+        }
+        hello_party = party;
         std::scoped_lock vitals{vitals_mutex};
         hello_member = vitals_member;
     }
@@ -784,9 +788,8 @@ bool HoldTitleLoadForTeam(u32 slot) {
         }
         lobby_playing = true;
         lobby_hello_due = true;
-        if (decision.start) {
-            team_party = decision.start->party();
-        }
+        // A save alone after a team's plays no team's world.
+        team_party = decision.start ? decision.start->party() : std::string{};
     }
     if (decision.start && party_controller) {
         const bool host = decision.start->host() == me;
@@ -794,6 +797,9 @@ bool HoldTitleLoadForTeam(u32 slot) {
         LOG_INFO(Debug, "Co-op team lobby: the save plays in team {} as its {}",
                  decision.start->team(), host ? "host" : "guest");
     } else {
+        if (party_controller) {
+            party_controller->Wait();
+        }
         LOG_INFO(Debug, "Co-op team lobby: the save plays alone");
     }
     return false;

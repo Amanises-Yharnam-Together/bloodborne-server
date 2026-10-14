@@ -1997,6 +1997,11 @@ public:
         role.store(assigned);
         waiting.store(false);
     }
+    // A save played alone after a team's (the title again): it rings nothing until a team's
+    // Start assigns a role again.
+    void Wait() {
+        waiting.store(true);
+    }
     PartyAction Tick(const PartyObservation& observation, Clock::time_point now);
 
 private:

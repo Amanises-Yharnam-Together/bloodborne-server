@@ -118,6 +118,13 @@ TEST(PartyControllerTeam, AWaitingControllerRingsNothingUntilItsRoleComes) {
         now += std::chrono::milliseconds{33};
     }
     EXPECT_EQ(action, PartyAction::StartSearch);
+    // A save alone after the team's: nothing rings again.
+    controller.Wait();
+    EXPECT_TRUE(controller.Waiting());
+    for (int i = 0; i < 100; ++i) {
+        EXPECT_EQ(controller.Tick(idle, now), PartyAction::Wait);
+        now += std::chrono::milliseconds{33};
+    }
 }
 
 } // namespace
