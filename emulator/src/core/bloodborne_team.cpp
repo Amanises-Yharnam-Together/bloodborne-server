@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "core/bloodborne_flags.h"
+#include "core/bloodborne_party.h"
 
 namespace Core::Bloodborne {
 
@@ -194,6 +195,25 @@ WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& message) {
     std::sort(world.on.begin(), world.on.end());
     std::sort(world.blocks.begin(), world.blocks.end());
     return world;
+}
+
+TeamJoin::Action TeamJoin::Tick(const Frame& frame) {
+    if (!frame.host) {
+        return frame.ready && frame.matching_state == 0 && frame.session_known ? Action::Join
+                                                                               : Action::None;
+    }
+    if (frame.matching_state == MatchingStateHosting) {
+        if (published) {
+            return Action::None; // the server keeps it for the guests still out
+        }
+        published = true;
+        return Action::Publish;
+    }
+    if (published) {
+        published = false;
+        return Action::PublishClosed;
+    }
+    return frame.ready && frame.matching_state == 0 ? Action::CreateSession : Action::None;
 }
 
 } // namespace Core::Bloodborne

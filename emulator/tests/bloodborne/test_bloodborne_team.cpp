@@ -197,4 +197,49 @@ TEST(TeamWorld, ThePersonalWorldFileRoundTripsAndACutOneIsNone) {
     EXPECT_FALSE(ParseWorldFlags("blocks\n1\non\nx\nend\n"));
 }
 
+// Phase 6: the team join without signs or a bell. The host opens its session once it stands in
+// its world and says so once (the server keeps it for its guests); a guest joins the session the
+// server sent when it stands alone in its world.
+TeamJoin::Frame HostFrame(s32 matching_state, bool ready) {
+    return {.host = true, .matching_state = matching_state, .ready = ready};
+}
+TeamJoin::Frame GuestFrame(s32 matching_state, bool ready, bool session_known) {
+    return {.host = false,
+            .matching_state = matching_state,
+            .ready = ready,
+            .session_known = session_known};
+}
+
+TEST(TeamJoin, TheHostOpensItsSessionWhenReadyAndAlone) {
+    TeamJoin join;
+    EXPECT_EQ(join.Tick(HostFrame(0, false)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(HostFrame(0, true)), TeamJoin::Action::CreateSession);
+    // Opening (the game's own states on the way): nothing more until it hosts.
+    EXPECT_EQ(join.Tick(HostFrame(1, true)), TeamJoin::Action::None);
+}
+
+TEST(TeamJoin, TheHostSaysItsSessionOnceAndThatItClosed) {
+    TeamJoin join;
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, false)), TeamJoin::Action::Publish);
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, false)), TeamJoin::Action::None);
+    // A member still out of the session (the controller's room for more): the server has it.
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, true)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(HostFrame(0, false)), TeamJoin::Action::PublishClosed);
+    EXPECT_EQ(join.Tick(HostFrame(0, false)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(HostFrame(0, true)), TeamJoin::Action::CreateSession);
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, false)), TeamJoin::Action::Publish);
+}
+
+TEST(TeamJoin, AGuestJoinsTheHostsSessionWhenReadyAndAlone) {
+    TeamJoin join;
+    EXPECT_EQ(join.Tick(GuestFrame(0, true, false)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(GuestFrame(0, false, true)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(GuestFrame(0, true, true)), TeamJoin::Action::Join);
+    // Joining or in the session: nothing.
+    EXPECT_EQ(join.Tick(GuestFrame(MatchingStateSummonedGuest, true, true)),
+              TeamJoin::Action::None);
+    // A guest never opens a session or says one.
+    EXPECT_EQ(join.Tick(GuestFrame(MatchingStateHosting, true, true)), TeamJoin::Action::None);
+}
+
 } // namespace

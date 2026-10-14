@@ -93,6 +93,7 @@ bool summon_reload_state_hook_installed{};
 bool deferred_summon_reload_hook_installed{};
 bool healing_fountain_host_availability_hook_installed{};
 bool channel_table_installed{};
+bool team_join_ready{};
 
 bool EnvFlagEnabled(const char* name) {
     const char* value = std::getenv(name);
@@ -865,6 +866,11 @@ void InstallTeamLobby(u64 base, u64 image_size) {
     }
     coop_features.On("team lobby");
     LOG_INFO(Debug, "Bloodborne team lobby: a save's load waits for the team's Start");
+    // Phase 6: the team joins its host's session without signs or a bell.
+    if (CoopSitesMatch(base, image_size, "team join", "the team cannot join its host")) {
+        team_join_ready = true;
+        coop_features.On("team join");
+    }
 }
 
 void InstallEnemyOwner(u64 base, u64 image_size) {

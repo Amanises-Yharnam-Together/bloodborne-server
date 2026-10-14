@@ -210,6 +210,8 @@ std::string BytesToHex(std::span<const u8> bytes);
 extern CoopFeatureReport coop_features;
 // The channel table is on (see ChannelPolicy): it drops the map item packets itself.
 extern bool channel_table_installed;
+// Phase 6: the team join's game functions are where the table has them (InstallTeamLobby).
+extern bool team_join_ready;
 std::string FeatureMismatch(u64 base, u64 image_size, std::string_view feature);
 std::string SiteFailure(u64 base, u64 image_size, u64 offset);
 bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestCodeHook hook);
@@ -713,6 +715,18 @@ void StartServerWorld();
 // Phase 5, the team lobby (bloodborne_team.h): always in the port, with the server world.
 // The party is the team's: its key and this game's role come with the team's Start.
 bool TeamModeOn();
+// Phase 6 (bloodborne_join.cpp, see TeamJoin): the host opens its game session as a summon
+// does; its join data (the summon packet's, without the sign's two words); a guest joins from it
+// in place. Game thread.
+bool OpenTeamSession();
+std::optional<std::vector<u8>> TeamSessionJoinData();
+bool JoinTeamSession(std::span<const u8> join, u32 kind, u32 sign);
+// Each party controller tick in team mode (bloodborne_server_world.cpp): opens, announces or
+// joins the team's session (`ready`: the controller's go, where it would ring the bell).
+// False when not in team mode (the bell and signs then).
+bool TickTeamJoin(bool ready);
+// The placement a guest's join keeps (its own spot), as a claim's header hands it.
+void ReceiveSeamlessPlacement(const SummonPlacementDescriptor& placement);
 // At the game's start: signs in to the server's lobby once the game has its online id.
 void StartTeamLobby();
 // The title loads the save in `slot` (TitleStep's load state, the game thread): true holds the load

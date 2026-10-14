@@ -86,4 +86,24 @@ std::string FormatWorldFlags(const WorldFlags& world);
 std::optional<WorldFlags> ParseWorldFlags(std::string_view text);
 WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& world);
 
+// Phase 6: the team join without signs or a bell (docs/native-netcode/session.md, "Team join").
+// The team's host opens its game session itself (NetSync CreateSession) once it stands in its
+// world, and sends the session's join data (the game's own: what a summon sends its guest) to the
+// server (bbcoop::TeamSession); every guest's game joins that session (NetSync JoinSession) when it
+// stands alone in its world. TeamJoin says each frame what this game does.
+class TeamJoin {
+public:
+    enum class Action { None, CreateSession, Publish, PublishClosed, Join };
+    struct Frame {
+        bool host = false;
+        s32 matching_state = 0; // the session manager's +0x124: 0 alone, 3 hosting, 6 a guest
+        bool ready = false;     // the party controller's go (in the world, settled, retry spaced)
+        bool session_known = false; // a guest: the server sent its host's open session
+    };
+    Action Tick(const Frame& frame);
+
+private:
+    bool published = false; // the host said its open session
+};
+
 } // namespace Core::Bloodborne

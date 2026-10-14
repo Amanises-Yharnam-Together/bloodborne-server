@@ -160,6 +160,9 @@ struct Game {
     } else if (envelope.has_team_world()) {
       team_world = envelope.team_world();
       ++team_worlds;
+    } else if (envelope.has_team_session()) {
+      session = envelope.team_session();
+      ++sessions;
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -221,6 +224,8 @@ struct Game {
   std::vector<bbcoop::TeamStart> starts;
   std::optional<bbcoop::TeamWorld> team_world;
   int team_worlds = 0;
+  std::optional<bbcoop::TeamSession> session;
+  int sessions = 0;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -880,6 +885,53 @@ int APortraitGoesToTheOthersAndToLaterMembers() {
   return 0;
 }
 
+// Phase 6: the host's open session reaches its guests (and later ones) to join;
+// a guest's says nothing, and a closed one goes too.
+int TheHostsSessionReachesItsGuestsToJoin() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(!guest.session.has_value());
+  bbcoop::Envelope open;
+  open.mutable_team_session()->set_join(std::string("NXRV\x05\x84", 6));
+  open.mutable_team_session()->set_kind(0xFFFFFFFFu);
+  open.mutable_team_session()->set_sign(7);
+  open.mutable_team_session()->set_session(1);
+  open.mutable_team_session()->set_host("spoofed");
+  host.Send(open, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.session.has_value());
+  CHECK(guest.session->join() == std::string("NXRV\x05\x84", 6));
+  CHECK(guest.session->kind() == 0xFFFFFFFFu && guest.session->sign() == 7);
+  CHECK(guest.session->host() == "host");
+  CHECK(!host.session.has_value());
+  // A guest's "session" is no team's.
+  bbcoop::Envelope other = open;
+  other.mutable_team_session()->set_join("guest's");
+  guest.Send(other, now + 5);
+  Pump(service, {&host, &guest}, now + 5);
+  CHECK(!host.session.has_value());
+  Game late{1002, "late", 13};
+  late.Hello(now + 10);
+  Pump(service, {&host, &guest, &late}, now + 10);
+  CHECK(late.session.has_value() && late.session->session() == 1);
+  // Closed: everyone hears it, and a later member gets none.
+  bbcoop::Envelope closed;
+  closed.mutable_team_session()->set_session(1);
+  host.Send(closed, now + 20);
+  Pump(service, {&host, &guest, &late}, now + 20);
+  CHECK(guest.session.has_value() && guest.session->join().empty());
+  Game later{1003, "later", 14};
+  later.Hello(now + 30);
+  Pump(service, {&host, &guest, &late, &later}, now + 30);
+  CHECK(!later.session.has_value());
+  return 0;
+}
+
 int TheFirstMemberOnAnAreaRunsItsEnemies() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -1221,6 +1273,8 @@ int main() {
        APortraitGoesToTheOthersAndToLaterMembers},
       {"WhateverAGameSendsTheServiceKeepsWorking",
        WhateverAGameSendsTheServiceKeepsWorking},
+      {"TheHostsSessionReachesItsGuestsToJoin",
+       TheHostsSessionReachesItsGuestsToJoin},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},

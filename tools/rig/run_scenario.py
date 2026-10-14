@@ -275,7 +275,8 @@ def judge(spec: dict, texts: dict[str, str]) -> list[str]:
             problems.append(f"all: {problem}")
     if limit := spec.get("max_hp_lag"):
         lag = hp_board_lag(texts, spec["hp_sums_hits"])
-        if lag is None or lag > limit:
+        # In milliseconds: the games' clock sums leave float noise (0.15 as 0.1500000000014).
+        if lag is None or round(lag, 3) > limit:
             problems.append(f"all: {spec['hp_sums_hits']} reached the other games' bars in "
                             f"{'?' if lag is None else f'{lag:.2f}'} s (at most {limit} s)")
     for role, text in texts.items():

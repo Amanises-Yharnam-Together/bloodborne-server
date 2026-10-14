@@ -114,6 +114,12 @@ START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
 # Phase 5b: a world flag of Central Yharnam's block no event uses (the rig's saves have it off).
 TEAM_WORLD_FLAG = 12410999
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
+# How a game joins: the port's team opens and joins the host's session itself (phase 6, no bell
+# and no signs); shadPS4 rings the bells.
+HOST_JOINS = (r"(?:auto-rejoin started search effect=9000|"
+              r"Co-op team join: this host's session \d+ to the server)")
+GUEST_JOINS = (r"(?:auto-rejoin started search effect=9005|"
+               r"Bloodborne team join: joining the host's session .* joined=true)")
 # The session must hold: a game that leaves the room (LeaveRoom) broke it.
 SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
 # A member's game died: the others' games close the room it was in (and open a new one for its
@@ -189,8 +195,8 @@ SCENARIOS = {
         "timeout": 300,
     },
     "join": {
-        "about": "host and guest join each other by themselves (the bells ring on their own); the "
-                 "guest keeps its full HP and its own level",
+        "about": "host and guest join each other by themselves (the port's team without a bell, "
+                 "shadPS4's bells on their own); the guest keeps its full HP and its own level",
         "roles": {
             "host": [START, "wait-session 2 300", "wait 10", "snapshot", "expect-session 2"],
             "guest": [START, "note-max-hp", "wait-session 2 300", "wait 10", "snapshot",
@@ -198,8 +204,8 @@ SCENARIOS = {
                       f"expect-effect {LEVEL_SYNC} 0"],
         },
         "expect": {
-            "host": [r"auto-rejoin started search effect=9000"],
-            "guest": [r"auto-rejoin started search effect=9005"],
+            "host": [HOST_JOINS],
+            "guest": [GUEST_JOINS],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 480,

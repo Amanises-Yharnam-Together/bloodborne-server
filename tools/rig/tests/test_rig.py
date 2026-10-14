@@ -679,6 +679,20 @@ class RunnerTest(unittest.TestCase):
         }
         self.assertAlmostEqual(run_scenario.hp_board_lag(hits, "0x1001400b"), 0.1)
 
+    def test_a_lag_at_the_limit_passes(self):
+        # Rig hit3 2026-10-14: 0.15 s on the games' clock came out as 0.1500000000014552 s, over a
+        # 0.15 s limit by the float sums alone.
+        hit = ("[Debug] <Info> () x: Bloodborne party: hit on {} by this player 0x10044000: "
+               "{} -> {} (t={})")
+        low = ("[Debug] <Info> () x: Bloodborne party: lowered 1 enemies by the other members' "
+               "damage on map 0x18010000: {} {}->{} (t={})")
+        texts = {"host": hit.format("0x1001400b", 484, 382, "57327.10"),
+                 "guest": low.format("0x1001400b", 484, 382, "57327.25")}
+        spec = {"hp_sums_hits": "0x1001400b", "max_hp_lag": 0.15}
+        self.assertFalse([p for p in run_scenario.judge(spec, texts) if "bars" in p])
+        late = dict(texts, guest=low.format("0x1001400b", 484, 382, "57327.27"))
+        self.assertTrue([p for p in run_scenario.judge(spec, late) if "bars" in p])
+
     def test_a_sync_is_let_go_once_every_game_in_it_reached_it(self):
         log = ("[Debug] <Info> () x: Bloodborne autoplay: sync join reached (t=10.0)\n"
                "[Debug] <Info> () x: Bloodborne autoplay: step 4/9 sync join ok (t=11.0)\n"

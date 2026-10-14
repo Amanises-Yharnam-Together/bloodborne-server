@@ -30,7 +30,8 @@ from scenarios import (AWAY_FROM_LAMP, BLOODSTAIN_DROPPED, BLOODSTAIN_STOLEN,  #
                        CLERIC_BEAST, CLERIC_BEAST_DEFEATED, CLINIC, CRASH_CLEANUP, DOG, ENEMY,
                        FORBIDDEN_WOODS_LAMP_LIT, GASCOIGNE, GASCOIGNE_DEFEATED, GIVE_UP,
                        HUNTERS_DREAM, LETHAL_FALL, LEVEL_SYNC, OTHER_MAP_FLAG, PARTY_DEATH,
-                       REVIVE_HITS, SESSION_HOLDS, START, STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_NPC,
+                       REVIVE_HITS, SESSION_HOLDS, HOST_JOINS, GUEST_JOINS, START,
+                       STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_NPC,
                        attack, only_kill)
 
 DREAM = "0x15000000"  # the Hunter's Dream's map (HUNTERS_DREAM is its lamp)
@@ -90,9 +91,8 @@ def join(roles, about: str = "every game joins the host by itself (the bells rin
         steps[guest] = ["note-max-hp", *steps[guest], "expect-max-hp self == noted",
                         f"expect-effect {LEVEL_SYNC} 0"]
     return chapter("join", about, steps, fatal=True, setup=True,
-                   expect={"host": [r"auto-rejoin started search effect=9000"],
-                           **{guest: [r"auto-rejoin started search effect=9005"]
-                              for guest in roles[1:]}},
+                   expect={"host": [HOST_JOINS],
+                           **{guest: [GUEST_JOINS] for guest in roles[1:]}},
                    forbid=holds(roles))
 
 

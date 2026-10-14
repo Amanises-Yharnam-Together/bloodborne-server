@@ -100,6 +100,16 @@ constexpr s64 TeamWorldReportMs = 10'000;
 // A load held for the team's world after the Start gives up waiting after this long.
 constexpr s64 TeamWorldWaitMs = 10'000;
 s64 team_world_wait_ms = 0;
+// Phase 6: the team join without signs or a bell (see TeamJoin). The host's open session as the
+// server last sent it (a guest joins it), the game thread's step, and the sessions this host
+// opened (each one's number).
+std::optional<bbcoop::TeamSession> team_session;
+TeamJoin team_join;
+u64 team_sessions_opened = 0;
+// What the summon packet carries before the join data (0x01873754): GameMan +0x16F0 and +0x16F4
+// on the guest, the same for every co-operator (rig 2026-10-14: 0xFFFFFFFF and 7).
+constexpr u32 TeamSessionKind = 0xFFFFFFFFu;
+constexpr u32 TeamSessionSign = 7;
 
 std::string PartyKey() {
     if (team_switch) {
@@ -135,6 +145,15 @@ bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
         LOG_INFO(Debug, "Co-op team world: the server's has {} ({} flags on, version {})",
                  team_world->exists() ? "a world" : "no world yet", team_world->on_size(),
                  team_world->version());
+        return true;
+    }
+    if (envelope.has_team_session()) {
+        const bbcoop::TeamSession& session = envelope.team_session();
+        LOG_INFO(Debug, "Co-op team join: {}'s session {} {}", session.host(), session.session(),
+                 session.join().empty() ? "closed"
+                                        : fmt::format("is open ({} bytes)", session.join().size()));
+        std::scoped_lock lock{team_mutex};
+        team_session = session;
         return true;
     }
     if (envelope.has_team_start()) {
@@ -825,6 +844,7 @@ bool HoldTitleLoadForTeam(u32 slot) {
             // for the team's world (TeamWorldWaitMs at most) so the save takes it as it loads.
             team_party = decision.start->party();
             team_world.reset();
+            team_session.reset();
             team_world_wait_ms = SteadyMilliseconds();
             new_party = true;
         }
@@ -918,6 +938,69 @@ void TeamBackAtTitle() {
         lobby_playing = false;
         lobby_hello_due = true;
     }
+    team_session.reset();
+}
+
+bool TickTeamJoin(bool ready) {
+    if (!team_switch) {
+        return false;
+    }
+    const u64 manager = GetMatchingState();
+    if (manager < 0x10000 || !HasMemoryAccess(manager, 0x128, MemoryProt::CpuRead)) {
+        return true;
+    }
+    std::optional<bbcoop::TeamSession> session;
+    bool in_team = false;
+    {
+        std::scoped_lock lock{team_mutex};
+        in_team = !team_party.empty() && lobby_playing;
+        session = team_session;
+    }
+    if (!in_team) {
+        return true; // alone: no session to open or join
+    }
+    const TeamJoin::Frame frame{
+        .host = !IsPartyGuestRole(),
+        .matching_state = ReadValue<s32>(manager, 0x124),
+        .ready = ready,
+        .session_known = session.has_value() && !session->join().empty(),
+    };
+    const auto say = [](std::string join, u64 number) {
+        bbcoop::Envelope envelope;
+        envelope.mutable_team_session()->set_join(std::move(join));
+        envelope.mutable_team_session()->set_kind(TeamSessionKind);
+        envelope.mutable_team_session()->set_sign(TeamSessionSign);
+        envelope.mutable_team_session()->set_session(number);
+        Queue(std::move(envelope));
+    };
+    switch (team_join.Tick(frame)) {
+    case TeamJoin::Action::None:
+        break;
+    case TeamJoin::Action::CreateSession:
+        OpenTeamSession();
+        break;
+    case TeamJoin::Action::Publish:
+        if (const auto join = TeamSessionJoinData()) {
+            ++team_sessions_opened;
+            say(std::string{join->begin(), join->end()}, team_sessions_opened);
+            LOG_INFO(Debug, "Co-op team join: this host's session {} to the server ({} bytes)",
+                     team_sessions_opened, join->size());
+        } else {
+            LOG_WARNING(Debug, "Co-op team join: this host's session has no join data");
+        }
+        break;
+    case TeamJoin::Action::PublishClosed:
+        say({}, team_sessions_opened);
+        LOG_INFO(Debug, "Co-op team join: this host's session {} closed", team_sessions_opened);
+        break;
+    case TeamJoin::Action::Join: {
+        const std::string& join = session->join();
+        JoinTeamSession({reinterpret_cast<const u8*>(join.data()), join.size()}, session->kind(),
+                        session->sign());
+        break;
+    }
+    }
+    return true;
 }
 
 std::optional<bbcoop::LobbyState> TeamLobbyState() {

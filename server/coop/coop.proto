@@ -17,7 +17,8 @@ option optimize_for = LITE_RUNTIME;
 // Raised when a message's meaning changes; a game and the server on different ones are refused.
 enum Protocol {
     PROTOCOL_NONE = 0;
-    PROTOCOL_CURRENT = 3; // 2: phase 4's enemy owners; 3: phase 5's teams
+    // 2: phase 4's enemy owners; 3: phase 5's teams; 4: phase 6's team sessions
+    PROTOCOL_CURRENT = 4;
 }
 
 // game -> server: the first message of the stream, and again whenever the stream starts over (the
@@ -380,6 +381,7 @@ message Envelope {
         TradeGrant trade_grant = 33;
         TradeGranted trade_granted = 34;
         TeamWorld team_world = 35;
+        TeamSession team_session = 36;
     }
 }
 
@@ -606,4 +608,17 @@ message StoredTrades {
     uint64 next_id = 1;
     repeated StoredTrade open = 2;
     repeated StoredGrant grants = 3;
+}
+
+// Phase 6: the team join without signs or a bell (docs/native-netcode/session.md, "Team join").
+// The team's host opens its game session itself once it stands in its world and sends what a
+// summon would send its guest (game -> server); the server keeps the latest and sends it to every
+// other member after its hello and when it changes (server -> game), and each guest's game joins
+// that session when it stands alone in its world. An empty `join`: the host's session closed.
+message TeamSession {
+    bytes join = 1;      // the session's join data, the game's own ("NXRV"...), empty: closed
+    uint32 kind = 2;     // for GameMan +0x16F0 (0xFFFFFFFF: a co-operator's summon)
+    uint32 sign = 3;     // for GameMan +0x16F4 (the sign's type, 7)
+    uint64 session = 4;  // the host's count of the sessions it opened
+    string host = 5;     // server -> game: the host's member name
 }

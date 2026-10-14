@@ -416,6 +416,12 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
         }
     }
     SendOwners(world, now_ms, result, &member);
+    // The host's open session: a guest joins it once it stands in its world.
+    if (world.session && world.session->host() != member.name) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_team_session() = *world.session;
+        SendTo(member, envelope, now_ms);
+    }
     // What its trades owe it: grants not yet added, offers waiting for its answer.
     Deliver(world, world.trades.Resume(member.name, now_ms), now_ms, result);
     world.team = world.team || team;
@@ -553,6 +559,27 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     case bbcoop::Envelope::kTeamWorld:
         TakeTeamWorld(member, world, envelope.team_world(), now_ms, result);
         break;
+    case bbcoop::Envelope::kTeamSession: {
+        // Only the host's session is the team's to join (a guest's says nothing).
+        if (!member.host) {
+            break;
+        }
+        bbcoop::Envelope relayed = envelope;
+        relayed.mutable_team_session()->set_host(member.name);
+        if (relayed.team_session().join().empty()) {
+            world.session.reset();
+        } else {
+            world.session = relayed.team_session();
+        }
+        result.log.append(QStringLiteral("party world %1: %2's session %3 %4")
+                              .arg(world.name, QString::fromStdString(member.name))
+                              .arg(relayed.team_session().session())
+                              .arg(world.session ? QStringLiteral("open (%1 bytes)")
+                                                       .arg(relayed.team_session().join().size())
+                                                 : QStringLiteral("closed")));
+        SendToOthers(world, member, relayed, now_ms);
+        break;
+    }
     case bbcoop::Envelope::kShown:
     case bbcoop::Envelope::kFlags:
     case bbcoop::Envelope::kMapState:

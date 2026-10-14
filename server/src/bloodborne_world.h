@@ -120,6 +120,8 @@ private:
         // member's last portrait.
         PartyBoards boards;
         std::map<std::string, bbcoop::Portrait> portraits;
+        // Phase 6: the host's open game session, for its guests to join (none: closed).
+        std::optional<bbcoop::TeamSession> session;
         // Phase 4: who runs each area's enemies, and what was logged of it.
         EnemyOwners owners;
         QString owners_logged;

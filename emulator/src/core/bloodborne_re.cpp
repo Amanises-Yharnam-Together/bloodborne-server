@@ -690,6 +690,10 @@ void TickPartyController() {
     const u64 player = GetLocalPlayer();
     const PartyObservation observation = ObserveParty(player, party_controller->SearchEffectId());
     const PartyAction action = party_controller->Tick(observation, PartyController::Clock::now());
+    // Phase 6: a team opens and joins its host's session itself, no bell and no signs.
+    if (TickTeamJoin(action == PartyAction::StartSearch)) {
+        return;
+    }
     if (action == PartyAction::EndSearch) {
         // A bell that outlasted its search (see PartyController::RingAgain): the game starts a
         // search only when the effect goes on, so the old one comes off first; the controller
