@@ -31,7 +31,8 @@ VERBS = {
     "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
     "return-point",
-    "team-create", "team-invite", "team-accept", "team-wait",  # the lobby's, on the title
+    "team-create", "team-invite", "team-accept", "team-wait", "team-leave",  # the lobby's
+    "team-screen", "team-ready", "team-start", "team-alone",  # the team screen's buttons
     "title-press", "title-wait", "title-shot",
     "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
 }

@@ -3,6 +3,8 @@
 
 // Phase 5: the title's load held for the team (TeamGate) and a party controller that waits for
 // the team to say its role.
+#include <algorithm>
+
 #include <gtest/gtest.h>
 
 #include "core/bloodborne_party.h"
@@ -36,64 +38,69 @@ TEST(TeamMode, Setting) {
     EXPECT_FALSE(TeamModeEnabled(""));
 }
 
-TEST(TeamGate, NotInATeamLoadsAlone) {
+// The team screen decides: nothing loads until its player plays alone or the team starts.
+TEST(TeamGate, NothingLoadsUntilTheScreenSaysSo) {
     TeamGate gate;
+    EXPECT_EQ(gate.Tick("me", 0, 1000).step, TeamGate::Step::Hold); // no word from the lobby
     gate.TakeLobby({});
-    const TeamGate::Decision decision = gate.Tick("me", 0, "Hunter", 1000);
+    const TeamGate::Decision decision = gate.Tick("me", 0, 600'000);
+    EXPECT_EQ(decision.step, TeamGate::Step::Hold); // not in a team: create, accept or alone
+    EXPECT_TRUE(gate.Holding());
+}
+
+TEST(TeamGate, PlayAloneLoadsAlone) {
+    TeamGate gate;
+    gate.TakeLobby(InTeam("leader"));
+    gate.Tick("me", 1, 1000);
+    EXPECT_TRUE(gate.Choose(TeamGate::Choice::Alone, "me").empty());
+    const TeamGate::Decision decision = gate.Tick("me", 1, 1100);
     EXPECT_EQ(decision.step, TeamGate::Step::Load);
-    EXPECT_TRUE(decision.requests.empty());
     EXPECT_FALSE(decision.start);
 }
 
-TEST(TeamGate, NoWordFromTheLobbyWaitsThenLoadsAlone) {
-    TeamGate gate;
-    EXPECT_EQ(gate.Tick("me", 0, "Hunter", 1000).step, TeamGate::Step::Hold);
-    EXPECT_EQ(gate.Tick("me", 0, "Hunter", 1000 + TeamGate::NoLobbyLoadsAfterMs - 1).step,
-              TeamGate::Step::Hold);
-    EXPECT_EQ(gate.Tick("me", 0, "Hunter", 1000 + TeamGate::NoLobbyLoadsAfterMs).step,
-              TeamGate::Step::Load);
-}
-
-TEST(TeamGate, AMembersLoadIsItsReadyAndWaitsForTheStart) {
+TEST(TeamGate, ReadyAsksWithTheSlotAndWaitsForTheStart) {
     TeamGate gate;
     gate.TakeLobby(InTeam("leader"));
-    TeamGate::Decision decision = gate.Tick("me", 2, "Hunter", 1000);
-    EXPECT_EQ(decision.step, TeamGate::Step::Hold);
-    ASSERT_EQ(decision.requests.size(), 1u);
-    EXPECT_EQ(decision.requests[0].action(), bbcoop::TeamRequest::READY);
-    EXPECT_EQ(decision.requests[0].slot(), 2u);
-    EXPECT_EQ(decision.requests[0].character(), "Hunter");
-    // Asked once; it waits as long as it takes (the leader decides when).
-    decision = gate.Tick("me", 2, "Hunter", 60'000);
-    EXPECT_EQ(decision.step, TeamGate::Step::Hold);
-    EXPECT_TRUE(decision.requests.empty());
+    EXPECT_EQ(gate.Tick("me", 2, 1000).step, TeamGate::Step::Hold);
+    const auto requests = gate.Choose(TeamGate::Choice::Ready, "me");
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_EQ(requests[0].action(), bbcoop::TeamRequest::READY);
+    EXPECT_EQ(requests[0].slot(), 2u);
+    EXPECT_EQ(gate.Tick("me", 2, 60'000).step, TeamGate::Step::Hold);
     gate.TakeStart(StartOf("leader", 2));
-    decision = gate.Tick("me", 2, "Hunter", 61'000);
+    const TeamGate::Decision decision = gate.Tick("me", 2, 61'000);
     EXPECT_EQ(decision.step, TeamGate::Step::Load);
     ASSERT_TRUE(decision.start);
     EXPECT_EQ(decision.start->party(), "team:t1");
 }
 
-TEST(TeamGate, TheLeadersLoadStartsTheTeam) {
+TEST(TeamGate, TheLeadersStartIsItsReadyAndTheTeamsStart) {
     TeamGate gate;
     gate.TakeLobby(InTeam("me"));
-    const TeamGate::Decision decision = gate.Tick("me", 0, "Hunter", 1000);
-    EXPECT_EQ(decision.step, TeamGate::Step::Hold);
-    ASSERT_EQ(decision.requests.size(), 2u);
-    EXPECT_EQ(decision.requests[0].action(), bbcoop::TeamRequest::READY);
-    EXPECT_EQ(decision.requests[1].action(), bbcoop::TeamRequest::START);
+    gate.Tick("me", 0, 1000);
+    const auto requests = gate.Choose(TeamGate::Choice::Start, "me");
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[0].action(), bbcoop::TeamRequest::READY);
+    EXPECT_EQ(requests[1].action(), bbcoop::TeamRequest::START);
+    // A member's Start is only its Ready (the leader starts).
+    TeamGate member;
+    member.TakeLobby(InTeam("leader"));
+    member.Tick("me", 0, 1000);
+    EXPECT_EQ(member.Choose(TeamGate::Choice::Start, "me").size(), 1u);
+    EXPECT_EQ(member.Choose(TeamGate::Choice::Unready, "me")[0].action(),
+              bbcoop::TeamRequest::UNREADY);
 }
 
-TEST(TeamGate, AStartFromAnEarlierLoadDoesNotCount) {
+TEST(TeamGate, AnEarlierLoadsChoicesDoNotCount) {
     TeamGate gate;
     gate.TakeLobby(InTeam("leader"));
+    gate.Tick("me", 0, 1000);
+    gate.Choose(TeamGate::Choice::Alone, "me");
     gate.TakeStart(StartOf("leader", 0));
     // Back at the title: the next load asks again.
     gate.Reset();
     EXPECT_FALSE(gate.Holding());
-    const TeamGate::Decision decision = gate.Tick("me", 0, "Hunter", 1000);
-    EXPECT_EQ(decision.step, TeamGate::Step::Hold);
-    EXPECT_EQ(decision.requests.size(), 1u);
+    EXPECT_EQ(gate.Tick("me", 0, 2000).step, TeamGate::Step::Hold);
 }
 
 TEST(PartyControllerTeam, AWaitingControllerRingsNothingUntilItsRoleComes) {
@@ -125,6 +132,77 @@ TEST(PartyControllerTeam, AWaitingControllerRingsNothingUntilItsRoleComes) {
         EXPECT_EQ(controller.Tick(idle, now), PartyAction::Wait);
         now += std::chrono::milliseconds{33};
     }
+}
+
+} // namespace
+
+namespace {
+
+// A store of three blocks of 1000 flags (125 bytes): 1 (1000-1999, the world's), 4 (4000-4999,
+// the session's bookkeeping) and 9 (9000-9999: 9300-9307 are each player's own).
+struct Store {
+    std::vector<std::vector<u8>> bytes{3, std::vector<u8>(125)};
+    std::vector<u32> ids{1, 4, 9};
+    void Set(s32 flag, bool on = true) {
+        const size_t block = std::find(ids.begin(), ids.end(), u32(flag / 1000)) - ids.begin();
+        const u32 within = u32(flag % 1000);
+        const u8 mask = u8(0x80 >> (within % 8));
+        auto& byte = bytes[block][within / 8];
+        byte = on ? u8(byte | mask) : u8(byte & ~mask);
+    }
+    std::vector<FlagBlockBits> Blocks() const {
+        std::vector<FlagBlockBits> out;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            out.push_back({ids[i], bytes[i]});
+        }
+        return out;
+    }
+};
+
+TEST(TeamWorld, TheWorldsFlagsOnlyAreCaptured) {
+    EXPECT_TRUE(IsWorldFlag(1500));
+    EXPECT_FALSE(IsWorldFlag(4000)); // the session's
+    EXPECT_FALSE(IsWorldFlag(9300)); // a player's own
+    Store store;
+    store.Set(1000);
+    store.Set(1999);
+    store.Set(4000);
+    store.Set(9300);
+    store.Set(9500);
+    const WorldFlags world = CaptureWorldFlags(1000, store.Blocks());
+    EXPECT_EQ(world.on, (std::vector<s32>{1000, 1999, 9500}));
+    EXPECT_EQ(world.blocks, (std::vector<u32>{1, 4, 9}));
+}
+
+TEST(TeamWorld, ChangesMakeTheWorldTheTargetAndLeaveTheRest) {
+    Store store;
+    store.Set(1000);
+    store.Set(1001);
+    store.Set(4000); // the session's: left alone
+    store.Set(9300); // a player's own: left alone
+    WorldFlags target;
+    target.blocks = {1, 9, 12};
+    target.on = {1001, 1002, 9301, 9600, 12000};
+    const auto changes = WorldFlagChanges(1000, store.Blocks(), target);
+    // 1000 off, 1002 on, 9600 on; 9301 is a player's own (never set by a world); block 12 is
+    // not in this store; block 4 is not in the target.
+    EXPECT_EQ(changes,
+              (std::vector<std::pair<s32, bool>>{{1000, false}, {1002, true}, {9600, true}}));
+    for (const auto& [flag, on] : changes) {
+        store.Set(flag, on);
+    }
+    EXPECT_TRUE(WorldFlagChanges(1000, store.Blocks(), target).empty());
+}
+
+TEST(TeamWorld, ThePersonalWorldFileRoundTripsAndACutOneIsNone) {
+    WorldFlags world;
+    world.blocks = {1, 9};
+    world.on = {1000, 9500};
+    const std::string text = FormatWorldFlags(world);
+    EXPECT_EQ(ParseWorldFlags(text), world);
+    EXPECT_FALSE(ParseWorldFlags(text.substr(0, text.size() - 4))); // no "end"
+    EXPECT_FALSE(ParseWorldFlags(""));
+    EXPECT_FALSE(ParseWorldFlags("blocks\n1\non\nx\nend\n"));
 }
 
 } // namespace

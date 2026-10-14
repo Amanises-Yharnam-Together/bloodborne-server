@@ -1525,6 +1525,300 @@ void TextPrompt() {
     ImGui::End();
 }
 
+// The team screen (phase 5, docs/SERVER_COOP_PLAN.md "The team lobby"): up while the title holds a
+// save's load for the team (bbcoop_team_screen). Four hunters' places, the players online to
+// invite, the invitations, and the buttons: create or leave a team, ready or start, play alone.
+// Drawn like the menu (its colours and ornaments, the game's serif); focus moves with the
+// d-pad / arrows over the buttons in the order they are drawn, Cross / Enter presses, the mouse
+// works too.
+namespace Team {
+using namespace Ui;
+
+bbcoop_lobby lobby{};
+bool open = false; // present thread: as Visible() read it last
+
+struct Focus {
+    int focus = 0;
+    int items = 0;
+    int move = 0;
+    bool activate = false;
+    bool fresh = true; // the screen just came up: the focus goes to the Ready / Begin button
+};
+Focus focus;
+
+/// One button: its label (drawn centred in `size` at `at`), true when pressed.
+bool Button(ImDrawList* draw, const char* id, const char* label, ImVec2 at, ImVec2 size, bool enabled = true,
+            bool primary = false) {
+    const int index = focus.items++;
+    ImGui::SetCursorScreenPos(at);
+    ImGui::PushID(id);
+    const bool clicked = ImGui::InvisibleButton("##b", size) && enabled;
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+    if (hovered && ImGui::GetIO().MouseDelta.x * ImGui::GetIO().MouseDelta.x +
+                           ImGui::GetIO().MouseDelta.y * ImGui::GetIO().MouseDelta.y >
+                       0.0f) {
+        focus.focus = index;
+    }
+    const bool focused = focus.focus == index;
+    const ImVec2 end(at.x + size.x, at.y + size.y);
+    draw->AddRectFilled(at, end, focused ? Gold(primary ? 0.30f : 0.20f) : Gold(primary ? 0.12f : 0.05f), S(2.0f));
+    draw->AddRect(at, end, focused ? Gold(0.95f) : Gold(enabled ? 0.45f : 0.15f), S(2.0f), 0, S(1.2f));
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    draw->AddText(ImVec2(at.x + (size.x - ts.x) * 0.5f, at.y + (size.y - ts.y) * 0.5f),
+                  !enabled ? Dim(0.6f) : focused ? Bright() : Plain(), label);
+    return clicked || (enabled && focused && focus.activate);
+}
+
+const char* StateText(const bbcoop_lobby_entry& e, bool member) {
+    if (e.state == BBCOOP_LOBBY_PLAYING) {
+        return T("In the hunt", "На охоте");
+    }
+    if (e.state == BBCOOP_LOBBY_OFFLINE) {
+        return T("Away", "Не в сети");
+    }
+    if (member && e.ready) {
+        return T("Ready", "Готов");
+    }
+    return T("Choosing", "Выбирает");
+}
+
+ImU32 StateColor(const bbcoop_lobby_entry& e, bool member) {
+    if (e.state == BBCOOP_LOBBY_OFFLINE) {
+        return Dim();
+    }
+    if (e.state == BBCOOP_LOBBY_PLAYING || (member && e.ready)) {
+        return Gold();
+    }
+    return Plain(0.85f);
+}
+
+/// A hunter's place: the emblem, the name, the state; an empty one says so.
+void Card(ImDrawList* draw, ImVec2 at, ImVec2 size, const bbcoop_lobby_entry* member, bool leader) {
+    const ImVec2 end(at.x + size.x, at.y + size.y);
+    draw->AddRectFilledMultiColor(at, end, IM_COL32(28, 24, 20, 235), IM_COL32(28, 24, 20, 235),
+                                  IM_COL32(10, 9, 8, 235), IM_COL32(10, 9, 8, 235));
+    draw->AddRect(at, end, member ? Gold(0.55f) : Gold(0.18f), S(2.0f), 0, S(1.2f));
+    Ornament(draw, at.x + S(14.0f), end.x - S(14.0f), at.y + S(12.0f));
+    const float mid = (at.x + end.x) * 0.5f;
+    // The emblem: a hunter's diamond, filled when the place is taken.
+    const float r = S(34.0f), cy = at.y + S(96.0f);
+    const ImU32 emblem = member ? StateColor(*member, true) : Dim(0.35f);
+    draw->AddQuad(ImVec2(mid, cy - r), ImVec2(mid + r, cy), ImVec2(mid, cy + r), ImVec2(mid - r, cy), emblem,
+                  S(2.0f));
+    if (member) {
+        const float k = r * 0.55f;
+        draw->AddQuadFilled(ImVec2(mid, cy - k), ImVec2(mid + k, cy), ImVec2(mid, cy + k), ImVec2(mid - k, cy),
+                            emblem);
+    }
+    ImGui::PushFont(serif_font, 24.0f);
+    const char* name = member ? member->name : T("An empty place", "Свободное место");
+    ImVec2 ns = ImGui::CalcTextSize(name);
+    draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(156.0f)), member ? Bright() : Dim(0.7f), name);
+    ImGui::PopFont();
+    ImGui::PushFont(serif_font, 18.0f);
+    if (member) {
+        const char* state = StateText(*member, true);
+        ns = ImGui::CalcTextSize(state);
+        draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(194.0f)), StateColor(*member, true), state);
+        if (leader) {
+            const char* lead = T("Leader, hosts the hunt", "Лидер, принимает у себя");
+            ns = ImGui::CalcTextSize(lead);
+            draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(222.0f)), Gold(0.75f), lead);
+        }
+    } else {
+        const char* note = T("Invite a hunter below", "Пригласите охотника ниже");
+        ns = ImGui::CalcTextSize(note);
+        draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(194.0f)), Dim(0.6f), note);
+    }
+    ImGui::PopFont();
+    Ornament(draw, at.x + S(14.0f), end.x - S(14.0f), end.y - S(12.0f));
+}
+
+void Screen() {
+    const auto pressed_any = [](std::initializer_list<ImGuiKey> keys) {
+        for (const ImGuiKey key : keys) {
+            if (ImGui::IsKeyPressed(key, true)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    focus.move = pressed_any({ImGuiKey_UpArrow, ImGuiKey_LeftArrow, ImGuiKey_GamepadDpadUp,
+                              ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickUp, ImGuiKey_GamepadLStickLeft})
+                     ? -1
+                 : pressed_any({ImGuiKey_DownArrow, ImGuiKey_RightArrow, ImGuiKey_Tab, ImGuiKey_GamepadDpadDown,
+                                ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickDown,
+                                ImGuiKey_GamepadLStickRight})
+                     ? 1
+                     : 0;
+    focus.activate = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+                     ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+    focus.items = 0;
+
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 200));
+    const ImVec2 size(std::min(S(1400.0f), display.x - S(40.0f)), std::min(S(900.0f), display.y - S(40.0f)));
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.035f, 0.032f, 0.028f, 0.96f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##bbport_team", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 win = ImGui::GetWindowPos();
+    const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
+    Ornament(draw, x0, x1, win.y + S(10.0f));
+    Ornament(draw, x0, x1, win.y + size.y - S(10.0f));
+
+    // Title and the team's state.
+    ImGui::PushFont(serif_font, 40.0f);
+    const char* title = T("The Hunt Together", "Совместная охота");
+    ImVec2 ts = ImGui::CalcTextSize(title);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(30.0f)), Bright(), title);
+    ImGui::PopFont();
+    ImGui::PushFont(serif_font, 20.0f);
+    std::string status;
+    if (!lobby.signed_in) {
+        status = T("Reaching the co-op server...", "Подключение к кооп-серверу...");
+    } else if (!lobby.in_team) {
+        status = T("Not in a team: create one, accept an invitation, or play alone",
+                   "Не в команде: создайте её, примите приглашение или играйте один");
+    } else {
+        status = std::string(lobby.members[0].name) + T("'s team", " — команда") + "   " +
+                 std::to_string(lobby.member_count) + T(" of 4", " из 4");
+    }
+    ts = ImGui::CalcTextSize(status.c_str());
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(84.0f)), Gold(0.85f), status.c_str());
+    ImGui::PopFont();
+
+    // The four places.
+    const float card_w = S(290.0f), card_h = S(270.0f), gap = S(24.0f);
+    const float cards_x = win.x + (size.x - (4 * card_w + 3 * gap)) * 0.5f, cards_y = win.y + S(128.0f);
+    for (int i = 0; i < BBCOOP_LOBBY_TEAM; ++i) {
+        const bool taken = lobby.in_team && i < lobby.member_count;
+        Card(draw, ImVec2(cards_x + i * (card_w + gap), cards_y), ImVec2(card_w, card_h),
+             taken ? &lobby.members[i] : nullptr, taken && i == 0);
+    }
+
+    // The players online (invite) and the invitations.
+    const float lists_y = cards_y + card_h + S(30.0f);
+    const float list_w = (size.x - S(72.0f) - gap) * 0.5f;
+    const float left_x = win.x + S(36.0f), right_x = left_x + list_w + gap;
+    ImGui::PushFont(serif_font, 22.0f);
+    draw->AddText(ImVec2(left_x, lists_y), Gold(), T("Hunters online", "Охотники в сети"));
+    draw->AddText(ImVec2(right_x, lists_y), Gold(), T("Invitations", "Приглашения"));
+    ImGui::PopFont();
+    draw->AddLine(ImVec2(left_x, lists_y + S(32.0f)), ImVec2(left_x + list_w, lists_y + S(32.0f)), Gold(0.25f));
+    draw->AddLine(ImVec2(right_x, lists_y + S(32.0f)), ImVec2(right_x + list_w, lists_y + S(32.0f)), Gold(0.25f));
+    ImGui::PushFont(serif_font, 19.0f);
+    const float row_h = S(40.0f), button_w = S(130.0f);
+    const int rows = 5;
+    float y = lists_y + S(42.0f);
+    const bool can_invite = lobby.in_team && lobby.member_count < BBCOOP_LOBBY_TEAM;
+    if (lobby.player_count == 0) {
+        draw->AddText(ImVec2(left_x, y + S(8.0f)), Dim(), T("Nobody else is online", "Больше никого нет в сети"));
+    }
+    for (int i = 0; i < lobby.player_count && i < rows; ++i, y += row_h) {
+        const bbcoop_lobby_entry& p = lobby.players[i];
+        draw->AddText(ImVec2(left_x, y + S(8.0f)), Plain(), p.name);
+        draw->AddText(ImVec2(left_x + S(220.0f), y + S(8.0f)), StateColor(p, false), StateText(p, false));
+        const std::string id = std::string("invite") + p.id;
+        if (Button(draw, id.c_str(), T("Invite", "Пригласить"), ImVec2(left_x + list_w - button_w, y),
+                   ImVec2(button_w, row_h - S(6.0f)), can_invite)) {
+            bbcoop_lobby_request(BBCOOP_TEAM_INVITE, p.id);
+        }
+    }
+    y = lists_y + S(42.0f);
+    if (lobby.invite_count == 0) {
+        draw->AddText(ImVec2(right_x, y + S(8.0f)), Dim(), T("None", "Нет"));
+    }
+    for (int i = 0; i < lobby.invite_count && i < rows; ++i, y += row_h) {
+        const bbcoop_lobby_entry& inv = lobby.invites[i];
+        const std::string text = std::string(inv.name) + T(" calls you to hunt", " зовёт на охоту");
+        draw->AddText(ImVec2(right_x, y + S(8.0f)), Plain(), text.c_str());
+        const std::string accept = std::string("accept") + inv.id, decline = std::string("decline") + inv.id;
+        if (Button(draw, accept.c_str(), T("Join", "Вступить"),
+                   ImVec2(right_x + list_w - 2 * button_w - S(8.0f), y), ImVec2(button_w, row_h - S(6.0f)),
+                   !lobby.in_team, true)) {
+            bbcoop_lobby_request(BBCOOP_TEAM_ACCEPT, inv.id);
+        }
+        if (Button(draw, decline.c_str(), T("Decline", "Отклонить"), ImVec2(right_x + list_w - button_w, y),
+                   ImVec2(button_w, row_h - S(6.0f)))) {
+            bbcoop_lobby_request(BBCOOP_TEAM_DECLINE, inv.id);
+        }
+    }
+    ImGui::PopFont();
+
+    // The buttons: the team, ready or start, alone.
+    bool me_ready = false;
+    for (int i = 0; i < lobby.member_count; ++i) {
+        if (std::strcmp(lobby.members[i].id, lobby.me) == 0) {
+            me_ready = lobby.members[i].ready != 0;
+        }
+    }
+    ImGui::PushFont(serif_font, 24.0f);
+    const float bw = S(260.0f), bh = S(54.0f);
+    const float by = win.y + size.y - S(150.0f);
+    float bx = win.x + (size.x - (3 * bw + 2 * gap)) * 0.5f;
+    if (!lobby.in_team) {
+        if (Button(draw, "create", T("Create a team", "Создать команду"), ImVec2(bx, by), ImVec2(bw, bh),
+                   lobby.signed_in != 0)) {
+            bbcoop_lobby_request(BBCOOP_TEAM_CREATE, "");
+        }
+    } else if (Button(draw, "leave", T("Leave the team", "Покинуть команду"), ImVec2(bx, by), ImVec2(bw, bh))) {
+        bbcoop_lobby_request(BBCOOP_TEAM_LEAVE, "");
+    }
+    bx += bw + gap;
+    const char* go = lobby.leader ? T("Begin the hunt", "Начать охоту")
+                     : me_ready   ? T("Not ready", "Не готов")
+                                  : T("Ready", "Готов");
+    if (focus.fresh && lobby.in_team) {
+        focus.fresh = false;
+        focus.focus = focus.items; // the next button's index
+    }
+    if (Button(draw, "go", go, ImVec2(bx, by), ImVec2(bw, bh), lobby.in_team != 0, true)) {
+        bbcoop_team_choose(lobby.leader ? BBCOOP_TEAM_GO_START
+                           : me_ready   ? BBCOOP_TEAM_GO_UNREADY
+                                        : BBCOOP_TEAM_GO_READY);
+    }
+    bx += bw + gap;
+    if (Button(draw, "alone", T("Play alone", "Играть одному"), ImVec2(bx, by), ImVec2(bw, bh))) {
+        bbcoop_team_choose(BBCOOP_TEAM_GO_ALONE);
+    }
+    ImGui::PopFont();
+
+    // The server's last refusal, the hint and the controls.
+    ImGui::PushFont(serif_font, 18.0f);
+    const char* hint = lobby.leader ? T("Everyone ready joins you when you begin; the others can join later.",
+                                        "Все готовые присоединятся, когда вы начнёте; остальные — позже.")
+                       : lobby.in_team ? T("The leader begins the hunt; you join it when ready.",
+                                           "Лидер начинает охоту; вы присоединитесь, когда будете готовы.")
+                                       : T("Your character plays its own world alone.",
+                                           "Ваш персонаж играет в своём мире один.");
+    const char* line = lobby.notice[0] ? lobby.notice : hint;
+    ts = ImGui::CalcTextSize(line);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(20.0f)),
+                  lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.8f), line);
+    ImGui::PopFont();
+    ImGui::PushFont(sans_font, 15.0f);
+    const char* controls = T("Arrows / D-pad: move     Enter / Cross: choose     Insert, L3 + R3: settings",
+                             "Стрелки / крестовина: выбор     Enter / Крест: нажать     Insert, L3 + R3: настройки");
+    ts = ImGui::CalcTextSize(controls);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(40.0f)), Gold(0.65f), controls);
+    ImGui::PopFont();
+
+    if (focus.items > 0) {
+        focus.focus = ((focus.focus + focus.move) % focus.items + focus.items) % focus.items;
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
+} // namespace Team
+
 // Party death (bbcoop.h): the other members down the left side, under the game's own bars, after
 // Elden Ring Nightreign's party list; whom an attack would revive; this player's own down in the
 // middle of the screen. Drawn shapes in the menu's colours; the HP bars are the game's own, from
@@ -2309,7 +2603,9 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     ImGuiIO& io = ImGui::GetIO();
-    const bool is_open = menu_open || quit_open;
+    const bool menu_or_quit = menu_open || quit_open;
+    // The team screen takes the input too (it has no Circle / Escape: its buttons decide).
+    const bool is_open = menu_or_quit || Team::open;
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
@@ -2318,9 +2614,9 @@ bool HandleEvent(const SDL_Event& event) {
         // SDL reports it as the keypad key.
         const bool insert = event.key.key == SDLK_INSERT ||
                             (event.key.scancode == SDL_SCANCODE_KP_0 && !(event.key.mod & SDL_KMOD_NUM));
-        if (down && !event.key.repeat && (insert || (is_open && event.key.key == SDLK_ESCAPE))) {
+        if (down && !event.key.repeat && (insert || (menu_or_quit && event.key.key == SDLK_ESCAPE))) {
             quit_open = false;
-            SetOpen(insert && !is_open);
+            SetOpen(insert && !menu_or_quit);
             return true;
         }
         if (!is_open) {
@@ -2353,14 +2649,14 @@ bool HandleEvent(const SDL_Event& event) {
             combo_held = false;
             if (!combo_fired) { // a tap: toggles the settings menu, or closes the quit box
                 quit_open = false;
-                SetOpen(!is_open);
+                SetOpen(!menu_or_quit);
             }
             return true;
         }
         if (!is_open) {
             return false;
         }
-        if (down && button == SDL_GAMEPAD_BUTTON_EAST) { // Circle: back to the game
+        if (down && button == SDL_GAMEPAD_BUTTON_EAST && menu_or_quit) { // Circle: back to the game
             quit_open = false;
             SetOpen(false);
             return true;
@@ -2414,7 +2710,14 @@ bool HandleEvent(const SDL_Event& event) {
 
 bool Visible() {
     const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
-    return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party);
+    const bool was_team = Team::open;
+    Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
+    if (Team::open && !was_team) {
+        SyncMousePos();
+        Team::focus.fresh = true;
+    }
+    return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party ||
+                           Team::open);
 }
 
 bool MenuOpen() {
@@ -2423,7 +2726,7 @@ bool MenuOpen() {
 
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
-    return menu_open || quit_open || prompt_active;
+    return menu_open || quit_open || prompt_active || Team::open;
 }
 
 void Tick() {
@@ -2536,6 +2839,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         Party::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                        float(game.extent.height)};
         Party::Draw();
+    }
+    if (Team::open && !menu_open) {
+        Team::Screen();
     }
     if (menu_open) {
         Menu();

@@ -1431,6 +1431,11 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"team-invite", AutoplayTeamVerb},
     {"team-accept", AutoplayTeamVerb},
     {"team-wait", AutoplayTeamVerb},
+    {"team-leave", AutoplayTeamVerb},
+    {"team-screen", AutoplayTeamVerb},
+    {"team-ready", AutoplayTeamVerb},
+    {"team-start", AutoplayTeamVerb},
+    {"team-alone", AutoplayTeamVerb},
     {"title-press", AutoplayTeamVerb},
     {"title-wait", AutoplayTeamVerb},
     {"title-shot", AutoplayTeamVerb},
@@ -1615,6 +1620,16 @@ void TickAutoplayTitle() {
             autoplay_buttons.store(0);
             const AutoplayCommand shot{"shot", command.args};
             finished = AutoplayShot(AutoplayStep{shot, autoplay_run.step_begun, elapsed, failure});
+        } else if (Coop::IsTeamScreenVerb(command.verb) && !Coop::TeamScreenUp()) {
+            // The title's Cross until the save's load is held and the team screen is up.
+            const auto ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - autoplay_run.started);
+            autoplay_buttons.store(
+                TitlePressesCross(static_cast<u64>(ms.count())) ? AutoplayButton("cross") : 0);
+            finished = false;
+            if (elapsed > 180.0) {
+                failure = "the team screen never came up";
+            }
         } else {
             autoplay_buttons.store(0);
             static std::chrono::steady_clock::time_point last_team_step{};

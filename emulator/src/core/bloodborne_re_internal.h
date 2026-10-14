@@ -12,6 +12,7 @@
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
+#include "core/bloodborne_team.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -719,10 +720,20 @@ void StartTeamLobby();
 bool HoldTitleLoadForTeam(u32 slot);
 // The title menu is up again: the next load asks the team again.
 void TeamBackAtTitle();
+// The team screen (bbport_overlay.cpp) is up: the title's load is held for it. Its buttons.
+bool TeamScreenUp();
+void TeamChoose(TeamGate::Choice choice);
+// The rig's screen verbs (team-ready, team-start, team-alone) want the title's Cross until the
+// screen is up.
+bool IsTeamScreenVerb(std::string_view verb);
 // The rig's lobby verbs (team-*), run on the title screen: true once done, `failure` if failed.
 bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed,
                       std::string& failure);
 bool IsTeamTitleVerb(std::string_view verb);
+// Phase 5b: the team's world goes into the save as it loads (before its map items), or the save's
+// own world comes back when it plays alone; the team's host reports its world now and then.
+void ApplyTeamWorldOnLoad();
+void TickTeamWorld(s64 now_ms);
 // The lobby as the server last sent it, for the game's menu (none before its answer), and this
 // player's lobby name; a request from the menu.
 std::optional<bbcoop::LobbyState> TeamLobbyState();

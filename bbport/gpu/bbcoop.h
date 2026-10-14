@@ -106,6 +106,7 @@ typedef struct bbcoop_lobby {
     bbcoop_lobby_entry players[BBCOOP_LOBBY_PLAYERS];    /* others signed in, not in this team */
     bbcoop_lobby_entry invites[BBCOOP_LOBBY_INVITES];    /* name: who invited, id: the team */
     char notice[96];                                      /* the server's last refusal */
+    char me[40];                                          /* this player's id */
 } bbcoop_lobby;
 /* Fills `lobby`; 0 when the team lobby is off. */
 int bbcoop_lobby_view(bbcoop_lobby *lobby);
@@ -114,6 +115,12 @@ int bbcoop_lobby_view(bbcoop_lobby *lobby);
 enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
        BBCOOP_TEAM_DECLINE = 4, BBCOOP_TEAM_LEAVE = 5, BBCOOP_TEAM_REMOVE = 6 };
 void bbcoop_lobby_request(int action, const char *id);
+/* The title holds a save's load for the team: the team screen is up (bbport_overlay.cpp). */
+int bbcoop_team_screen(void);
+/* Its buttons: this character ready, not ready, the leader's start (a member's: ready), alone. */
+enum { BBCOOP_TEAM_GO_READY = 0, BBCOOP_TEAM_GO_UNREADY = 1, BBCOOP_TEAM_GO_START = 2,
+       BBCOOP_TEAM_GO_ALONE = 3 };
+void bbcoop_team_choose(int what);
 
 /* Trading between party members (the co-op code's bloodborne_trade.h, with
  * always on in the port with the server world): what the port's trade menus (shim/bbport_trade_menu.cpp) need. An

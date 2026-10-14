@@ -319,7 +319,13 @@ def games() -> tuple[list[int], list[int]]:
          f"Get-CimInstance Win32_Process -Filter \"{names}\" | "
          "ForEach-Object { \"$($_.ProcessId)`t$($_.ExecutablePath)\" }"],
         capture_output=True, text=True).stdout
-    return split_games(listing, ENGINE.exe)
+    rig, others = split_games(listing, ENGINE.exe)
+    # BB_RIG_IGNORE_PIDS: games that cannot be ended and run nothing any more (a window closed
+    # while the GPU teardown hung, 2026-10-14), so they hold up no run.
+    ignored = {int(pid) for pid in os.environ.get("BB_RIG_IGNORE_PIDS", "").split(",")
+               if pid.strip().isdigit()}
+    return ([pid for pid in rig if pid not in ignored],
+            [pid for pid in others if pid not in ignored])
 
 
 def games_running() -> bool:

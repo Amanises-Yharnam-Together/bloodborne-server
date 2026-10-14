@@ -381,6 +381,7 @@ void ConfirmGuestPickupsInOwnWorld() {
 namespace Coop {
 
 void SetGuestPickupsBeforeMapItems() {
+    ApplyTeamWorldOnLoad();
     static std::chrono::steady_clock::time_point last{};
     static OncePerTrip trip_load;
     const auto now = std::chrono::steady_clock::now();

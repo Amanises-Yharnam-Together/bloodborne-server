@@ -379,6 +379,7 @@ message Envelope {
         TradeClosed trade_closed = 32;
         TradeGrant trade_grant = 33;
         TradeGranted trade_granted = 34;
+        TeamWorld team_world = 35;
     }
 }
 
@@ -521,6 +522,21 @@ message StoredWorld {
     int64 last_wipe_ms = 4;
     uint64 journal_from = 5; // the first journal record not in it
     StoredHost host = 6;
+}
+
+// Phase 5b: a team's world (docs/SERVER_COOP_PLAN.md, "Team worlds"): the world's event flags
+// that are on (FlagOwner Host and Shared: the world's, not a character's), as the team's host's
+// game has them. The host sends it whole when it changed (game -> server); the server keeps it
+// (team_world.pb in the team's world folder) and sends it to every member after its hello and when
+// it changes (server -> game): a member's game sets its world to it as its save loads, the
+// character's own world kept aside until it plays alone again.
+message TeamWorld {
+    bool exists = 1;              // server -> game: false, the team has no world yet (its host's
+                                  // save makes it)
+    repeated sint32 on = 2;       // sorted
+    repeated uint32 blocks = 3;   // the flag blocks it covers (a flag in another block is left as
+                                  // it is)
+    uint64 version = 4;           // counts up with each report taken
 }
 
 // shadNet's teams on disk (teams.pb, beside the worlds).

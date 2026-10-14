@@ -114,6 +114,8 @@ START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
 # The title menu (Continue, Load Game, New Game, System, ...) to the System menu's Co-op Team
 # page (Controls, Environment, Co-op Team, ...), and back from the page to Continue (the title's
 # own Cross then loads).
+# Phase 5b: a world flag of Central Yharnam's block no event uses (the rig's saves have it off).
+TEAM_WORLD_FLAG = 12410999
 TITLE_TO_TEAM_PAGE = ["title-press down", "title-press down", "title-press down",
                       "title-press cross", "title-wait 2", "title-press down", "title-press down",
                       "title-wait 1", "title-shot system", "title-press cross", "title-wait 3"]
@@ -882,10 +884,10 @@ SCENARIOS = {
         "about": "a team from the lobby: the host creates it and invites the guest, both press "
                  "Continue and play in one session (no party setting)",
         "roles": {
-            "host": ["team-create", "team-invite rig_guest", "team-wait 2", START,
+            "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
                      "wait-session 2 300", "wait 10", "snapshot", "expect-session 2"],
-            "guest": ["team-accept", START, "wait-session 2 300", "wait 10", "snapshot",
-                      "expect-session 2"],
+            "guest": ["team-accept", "team-ready", START, "wait-session 2 300", "wait 10",
+                      "snapshot", "expect-session 2"],
         },
         "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
         "expect": {
@@ -912,7 +914,8 @@ SCENARIOS = {
                      "title-wait 25", "title-press circle", "title-wait 2", "title-press cross",
                      "title-wait 3", "title-shot team-page-2", "title-press down",
                      "title-press down", "title-press down", "title-wait 1",
-                     "title-shot members-row", *TEAM_PAGE_TO_CONTINUE, START, "wait-session 2 300",
+                     "title-shot members-row", *TEAM_PAGE_TO_CONTINUE, "team-start",
+                     "title-wait 2", "title-shot team-screen", START, "wait-session 2 300",
                      "wait 10", "snapshot", "expect-session 2"],
             "guest": ["title-wait 6", "title-press cross", "title-wait 4", "title-wait 20",
                       *TITLE_TO_TEAM_PAGE, "title-shot guest-page", "title-press down",
@@ -921,7 +924,8 @@ SCENARIOS = {
                       "title-press down", "title-wait 1", "title-press cross", "title-wait 1",
                       "title-shot invitation-chosen",
                       "title-wait 5", "title-press circle", "title-wait 2", "title-press cross",
-                      "title-wait 3", "title-shot guest-page-2", *TEAM_PAGE_TO_CONTINUE, START,
+                      "title-wait 3", "title-shot guest-page-2", *TEAM_PAGE_TO_CONTINUE,
+                      "team-ready", "title-wait 2", "title-shot team-screen", START,
                       "wait-session 2 300", "wait 10", "snapshot", "expect-session 2"],
         },
         "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
@@ -933,15 +937,60 @@ SCENARIOS = {
         },
         "timeout": 600,
     },
+    # Phase 5b: the team's world. A world flag no save has (TEAM_WORLD_FLAG, Central Yharnam's
+    # block, unused) set by the host in the team's first session is in the team's world; the
+    # guest's save takes it at its next team load, and loses it again when it plays alone (its own
+    # world back).
+    "team-world": {
+        "about": "the team's world: the host's save makes it, the guest's save takes it in the "
+                 "next session, and the guest alone has its own world back",
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", f"set-flag {TEAM_WORLD_FLAG} 1", "wait 15", "done"],
+                     ["team-start", START, "wait-session 2 300", f"expect-flag {TEAM_WORLD_FLAG} 1",
+                      "wait 60",
+                      "done"]],
+            "guest": [["team-accept", "team-ready", START, "wait-session 2 300",
+                       f"expect-flag {TEAM_WORLD_FLAG} 0", "wait 45", "done"],
+                      ["team-ready", START, "wait-session 2 300", f"expect-flag {TEAM_WORLD_FLAG} 1",
+                       "done"],
+                      ["team-leave", "team-alone", START, "wait 10",
+                       f"expect-flag {TEAM_WORLD_FLAG} 0"]],
+        },
+        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
+        "expect": {
+            "host": [r"Co-op team world: this host's world to the server"],
+            "guest": [r"Co-op team world: the team's world is in this save",
+                      r"Co-op team world: slot \d+'s own world kept aside",
+                      r"Co-op team world: slot \d+ plays alone: its own world is back"],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
+    "team-screen": {
+        "about": "the team screen after Continue (run drawn: pictures): a team of two forms, the "
+                 "guest readies, the host begins",
+        "roles": {
+            "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-screen",
+                     "title-wait 3", "title-shot screen-host", "title-wait 10",
+                     "title-shot screen-host-ready", "team-start", START, "wait-session 2 300",
+                     "snapshot"],
+            "guest": ["team-accept", "team-screen", "title-wait 2", "title-shot screen-guest",
+                      "team-ready", "title-wait 2", "title-shot screen-guest-ready", START,
+                      "wait-session 2 300", "snapshot"],
+        },
+        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
+        "timeout": 600,
+    },
     "team-join3": {
         "about": "a team of three from the lobby: the host invites both guests",
         "roles": {
             "host": ["team-create", "team-invite rig_guest", "team-invite rig_guest2",
-                     "team-wait 3", START, "godmode", "wait-session 3 480", "wait 10",
+                     "team-wait 3", "team-start", START, "godmode", "wait-session 3 480", "wait 10",
                      "snapshot", "expect-session 3"],
-            "guest": ["team-accept", START, "godmode", "wait-session 3 480", "wait 10",
+            "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 3 480", "wait 10",
                       "snapshot", "expect-session 3"],
-            "guest2": ["team-accept", START, "godmode", "wait-session 3 480", "wait 10",
+            "guest2": ["team-accept", "team-ready", START, "godmode", "wait-session 3 480", "wait 10",
                        "snapshot", "expect-session 3"],
         },
         "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
