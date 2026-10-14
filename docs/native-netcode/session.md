@@ -120,3 +120,24 @@ Guest game                 shadNet HTTP           Host game                     
  ch 8/0xB/0xC/0xD/0x13/0x3B/0x3C character data (0x01781AC0) <==> both ways; tasks reach steps 4/5/6
 ```
 
+## 9. Team join (phase 6, no bell, no signs)
+
+Traced on the rig (2026-10-14): when a summon goes out, the host's summon manager update
+(0x01872360) writes each guest a packet of `{u32 0xFFFFFFFF, u32 7}` and the session's join data,
+and sends it over vport 40 (0x014BAEC0(member, len, data), 271 bytes with the transport's framing).
+The join data is the game's own (193 bytes, starting "NXRV"), the same for every guest; the two
+words become the guest's GameMan +0x16F0 (the summon's kind for the Lua events) and +0x16F4 (the
+sign's type, sent on ch 0x42).
+
+The port does the same without a summon (bloodborne_join.cpp):
+- **Host** (`OpenTeamSession`, `TeamSessionJoinData`): NetSync CreateSession 0x01788ED0(NetSync,
+  55.0f) as 0x01876060 calls it; once hosting (SSM +0x124 == 3): SessionInfo 0x00C8F500(SSM+0x18,
+  SSM+0x38, 1), the join param copied from it 0x00C90270, checked 0x00C90D80, written by
+  0x00C90B00 into the game's memory writer (vtable 0x053B2C80; +0x10 buffer, +0x18/+0x38 capacity,
+  +0x30 bytes written), freed 0x00C90520.
+- **Guest** (`JoinTeamSession`): the param made 0x00C8FBF0 and read 0x00C90DD0 from the game's
+  memory reader (vtable 0x053B2BE0; +0x08 size, +0x10 data, +0x18 position, +0x24 = 1), GameMan
+  +0x16F0/+0x16F4 set, NetSync JoinSession 0x01789010(NetSync, param), then the summon's placement
+  as 0x01873A26 writes it from the sign, with the guest's own spot (GameMan +0x14A0..+0x1648,
+  FrpgNetMan +0xA98 = 1, 0x01FF58B0).
+- The server carries the join data between them (`bbcoop::TeamSession`).

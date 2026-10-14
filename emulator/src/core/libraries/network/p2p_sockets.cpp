@@ -509,6 +509,11 @@ public:
         return static_cast<int>(copy_len);
     }
 
+    // The server link's endpoint (none until it is configured).
+    Link::ServerEndpoint Server() {
+        return LinkServer();
+    }
+
 private:
     P2PTransport() = default;
 
@@ -647,6 +652,10 @@ private:
                     OnLinkDatagram(*kind, datagram);
                     continue;
                 }
+            }
+            if (!Link::TakesDatagramFrom(LinkServer(), from.sin_addr.s_addr, from.sin_port,
+                                         PeersOnlyThroughServer())) {
+                continue; // the port takes no datagram straight from a peer (phase 6)
             }
             Deliver(from.sin_addr.s_addr, from.sin_port, datagram);
         }
@@ -1212,6 +1221,10 @@ int P2PSocket::SendPacket(const void* msg, u32 len, int flags, const OrbisNetSoc
         target = peer_addr;
     }
 
+    // The port sends a peer nothing straight (phase 6): before the server link is up, nothing.
+    if (!Link::SendsToPeer(P2PTransport::Instance().Server(), PeersOnlyThroughServer())) {
+        return FailWith(ORBIS_NET_EHOSTUNREACH);
+    }
     const int rc = P2PTransport::Instance().SendFrame(local_addr.sin_vport, target.sin_vport, msg,
                                                       len, target.sin_addr, target.sin_port);
     if (rc < 0) {
@@ -1430,6 +1443,10 @@ void P2PSocket::EnqueuePacket(P2PDatagram packet) {
     }
 #endif
     receive_cv.notify_all();
+}
+
+bool PeersOnlyThroughServer() {
+    return ServerLinkSwitchOn(); // the port: no direct P2P (phase 6)
 }
 
 bool ServerLinkSwitchOn() {

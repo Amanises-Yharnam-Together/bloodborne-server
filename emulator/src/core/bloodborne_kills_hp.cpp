@@ -67,18 +67,11 @@ namespace Coop {
 // for the board thread, and the other members' wait for the game thread to add those owed.
 std::mutex echo_board_mutex;
 KillEchoLedger echo_ledger;
-// Enemy deaths kept in step across loads (see VisitKills): this member's kills and visit ends
-// wait for the board thread; the others' current kills (character handles) are hidden here.
-std::mutex kill_board_mutex;
-std::vector<std::pair<s32, bool>> kills_to_post;
-std::unordered_set<u32> others_kills;
-bool kill_board_fresh_start = false;
 // World state per map (see MapFlagBase): the host's own snapshot waiting for the board thread,
 // and the latest one read back (on a guest).
 // Enemy HP kept in step (see EnemyHpReport): this member's hurt enemies and the others'.
 std::mutex enemy_hp_mutex;
 MemberMapState local_enemy_hp;
-std::vector<MemberMapState> others_enemy_hp;
 std::mutex map_state_mutex;
 MemberMapState local_map_state;
 std::optional<MemberMapState> host_map_state;
@@ -86,7 +79,6 @@ std::optional<MemberMapState> host_map_state;
 // board thread, and the host's latest read back (on a guest).
 std::mutex shown_board_mutex;
 MemberMapState local_shown;
-std::optional<MemberMapState> host_shown;
 
 std::mutex map_board_mutex;
 std::vector<MemberMap> map_board;

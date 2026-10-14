@@ -258,23 +258,6 @@ void RunMemberLog(const std::string& name, const WorldLogKills& mine, s64 now_ms
     }
 }
 
-// The kills' path changed: the board takes back what this member posted (its next post asks since
-// FreshStart). Back on the board this member posts its standing kills again; on the log nobody
-// posts kills there (the world snapshot is the copy).
-void SwitchKillPath(bool log, const WorldLogKills& mine) {
-    std::scoped_lock lock{kill_board_mutex};
-    kill_board_fresh_start = true;
-    kills_to_post.clear();
-    if (log) {
-        return;
-    }
-    for (const auto& [map, handles] : mine) {
-        for (const u32 handle : handles) {
-            kills_to_post.emplace_back(static_cast<s32>(handle), true);
-        }
-    }
-}
-
 // Which path the kills, shown characters and flags take now (see WorldLogPath).
 bool DecideKillPath(const WorldLogKills& mine, s64 now_ms) {
     const size_t peers = Libraries::Np::NpMatching2::GetActiveRoomPeers().size();
@@ -283,9 +266,6 @@ bool DecideKillPath(const WorldLogKills& mine, s64 now_ms) {
     if (const auto line = world_log_path.TakeChange()) {
         LOG_INFO(Debug, "{}", *line);
         Trace("wlog-path", {{"path", log ? "log" : "board"}, {"why", world_log_path.Why()}});
-    }
-    if (log != was) {
-        SwitchKillPath(log, mine);
     }
     if (was && !log) {
         world_log_host.ForgetShown(); // back on the log, its next Show starts with a ShownMap
@@ -597,8 +577,7 @@ std::optional<MemberMapState> HostShownNow() {
         }
         return MemberMapState{shown.map, EncodeShownCharacters(WorldLogShownCharacters(shown))};
     }
-    std::scoped_lock lock{shown_board_mutex};
-    return host_shown;
+    return std::nullopt; // the P2P path: no host's copy (the HTTP boards are gone)
 }
 
 std::vector<MemberMapState> OthersEnemyHp(u64 own_source) {
@@ -627,10 +606,7 @@ std::vector<MemberMapState> OthersEnemyHp(u64 own_source) {
         }
         return others;
     }
-    // The board path: then the HP board (the same reports, later).
-    std::scoped_lock lock{enemy_hp_mutex};
-    others.insert(others.end(), others_enemy_hp.begin(), others_enemy_hp.end());
-    return others;
+    return others; // the P2P path: the peers' direct frames only (the HP board is gone)
 }
 
 void SendEnemyHp(const MemberMapState& mine, bool changed) {
@@ -794,12 +770,8 @@ PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
     PartyKillsNow party;
     if (server) {
         party.members = RunServerWorld(mine, now_ms);
-    } else {
-        std::scoped_lock lock{kill_board_mutex};
-        if (!log) {
-            kills_to_post.insert(kills_to_post.end(), changes.begin(), changes.end());
-        }
-        party.members = log ? LogKills() : others_kills;
+    } else if (log) {
+        party.members = LogKills();
     }
     // Its own kills too (a guest pulled into the host's world sees the host's copy alive), and its
     // earlier visit's kills here that stood while another member stayed.

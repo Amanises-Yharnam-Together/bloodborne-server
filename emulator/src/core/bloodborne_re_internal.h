@@ -350,23 +350,13 @@ extern std::vector<std::pair<s32, bool>> flags_to_post;
 extern std::mutex echo_board_mutex;
 extern std::vector<KillEchoes> echoes_to_post;
 extern KillEchoLedger echo_ledger;
-extern std::mutex kill_board_mutex;
-extern std::vector<std::pair<s32, bool>> kills_to_post;
-extern std::unordered_set<u32> others_kills;
-// The kill board's standing kills by member, as the board client last read them.
-extern PartyKills party_kills;
-// The next kill board post asks for nothing older than now (since FreshStart), so the board takes
-// back this member's posted kills first: the kills changed path (see WorldLogPath).
-extern bool kill_board_fresh_start;
 extern std::mutex enemy_hp_mutex;
 extern MemberMapState local_enemy_hp;
-extern std::vector<MemberMapState> others_enemy_hp;
 extern std::mutex map_state_mutex;
 extern MemberMapState local_map_state;
 extern std::optional<MemberMapState> host_map_state;
 extern std::mutex shown_board_mutex;
 extern MemberMapState local_shown;
-extern std::optional<MemberMapState> host_shown;
 extern std::vector<std::pair<s32, bool>> flags_to_set;
 void PostWorldChanges(const FlagChanges& changes);
 extern std::mutex map_board_mutex;

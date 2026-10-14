@@ -63,11 +63,6 @@
 #include "core/memory.h"
 
 namespace Core::Bloodborne {
-namespace Coop {
-
-PartyKills party_kills; // kill_board_mutex
-
-} // namespace Coop
 namespace {} // namespace
 
 namespace Coop {

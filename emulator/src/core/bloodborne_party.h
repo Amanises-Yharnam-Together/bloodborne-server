@@ -410,7 +410,8 @@ private:
     bool joined = false;
 };
 
-// The party's rest board on shadNet (POST /bloodborne/party/rest): each member posts
+// The party's rest board on shadNet (a message on the server link, once POST
+// /bloodborne/party/rest): each member posts
 // "<member> <lamp>" and gets back one "<member> <lamp>" line per member resting right now.
 struct LampRest {
     std::string member;
@@ -657,7 +658,8 @@ bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_acti
 // The bell effects (9000/9003, 9005/9006) in `before` that are missing from `after`, in order.
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before, std::span<const s32> after);
 
-// The party's map board on shadNet (POST /bloodborne/party/map): each member posts
+// The party's map board on shadNet (a message on the server link, once POST /bloodborne/party/map):
+// each member posts
 // "<member> <map>" (the packed map in hex) and reads back one such line per member.
 struct MemberMap {
     std::string member;
@@ -704,9 +706,10 @@ bool PostsKillEchoes(std::span<const MemberMap> board, std::string_view self, u3
 // The host rings again: hosting, fewer than three in the session, a party member online outside.
 bool RoomForMore(bool hosting, size_t in_session, size_t party_online);
 
-// Shared trophies on shadNet (POST /bloodborne/party/trophy): "<member> [<id>...]" with the
-// trophies this member unlocked in a party session; the answer is every trophy the party
-// unlocked, one id per line. A member unlocks the ones it has not handled yet.
+// Shared trophies on shadNet (a message on the server link, once POST /bloodborne/party/trophy):
+// "<member> [<id>...]" with the trophies this member unlocked in a party session; the answer is
+// every trophy the party unlocked, one id per line. A member unlocks the ones it has not handled
+// yet.
 std::string EncodeTrophyUpdate(std::string_view member, std::span<const s32> trophies);
 std::optional<std::vector<s32>> ParseTrophyBoard(std::string_view body);
 std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s32> handled);
@@ -927,9 +930,10 @@ bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);
 std::map<s32, bool> ParseWorldChanges(std::string_view text);
-// Lamps shared by the party (POST /bloodborne/party/flags): every member posts the lamps it saw
-// lit (FlagsToShare; "<member> <since> [<flag>:<0|1>...]") and sets the other members' changes
-// after <since> (the answer: "<latest>", then "<flag> <0|1>" lines).
+// Lamps shared by the party (a message on the server link, once POST /bloodborne/party/flags):
+// every member posts the lamps it saw lit (FlagsToShare; "<member> <since> [<flag>:<0|1>...]") and
+// sets the other members' changes after <since> (the answer: "<latest>", then "<flag> <0|1>"
+// lines).
 struct FlagBoardAnswer {
     s64 latest = 0;
     std::vector<std::pair<s32, bool>> changes;
@@ -939,10 +943,11 @@ std::string EncodeFlagUpdate(std::string_view member, s64 since,
                              std::span<const std::pair<s32, bool>> changes);
 std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body);
 
-// Kill echoes shared across maps (POST /bloodborne/party/echoes): the echoes a member got from a
-// kill (AddSouls called from the enemy kill 0x018FC99B or the boss kill 0x01385263) while no
-// other member was on its map go to the board ("<member> <since> [<echoes>...]"), and the other
-// members add the ones after <since> (the answer: "<latest>", then one "<echoes>" line each).
+// Kill echoes shared across maps (a message on the server link, once POST
+// /bloodborne/party/echoes): the echoes a member got from a kill (AddSouls called from the enemy
+// kill 0x018FC99B or the boss kill 0x01385263) while no other member was on its map go to the board
+// ("<member> <since> [<echoes>...]"), and the other members add the ones after <since> (the answer:
+// "<latest>", then one "<echoes>" line each).
 struct KillEchoes {
     s32 amount = 0;
     u32 map = 0; // where the kill was made; 0 from an older post
@@ -987,10 +992,10 @@ private:
 // whenever a party is configured and the player is loaded, in a session or not.
 bool SharesWithParty(bool party_configured, bool player_loaded);
 
-// Enemy deaths kept in step across loads (POST /bloodborne/party/kills, the flag board's format
-// with character handles): the kills this member made during its current visit to a map, posted
-// as (handle, true), and taken back as (handle, false) when the visit ends. A visit is one load
-// of a map (the map and the player's character).
+// Enemy deaths kept in step across loads (a message on the server link, once POST
+// /bloodborne/party/kills; the flag board's format with character handles): the kills this member
+// made during its current visit to a map, posted as (handle, true), and taken back as (handle,
+// false) when the visit ends. A visit is one load of a map (the map and the player's character).
 // Where a party guest resumes (user/bloodborne_party_resume_slotN.txt, "<map> <x> <y> <z>"):
 // its last map and position, so the next start goes back there instead of to its save's
 // position (where it was first summoned from).
@@ -1016,9 +1021,10 @@ struct ResumeStep {
 ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at, s32 progress,
                             u32 loaded_map = 0);
 
-// World state per map (POST /bloodborne/party/mapstate): the host posts the bits of its map's
-// 10000 flags from MapFlagBase (MSB first, as the flag store keeps them) as "<member> <map>
-// <hex>", and a guest loading that map sets the TakesHostMapFlag ones to the host's.
+// World state per map (a message on the server link, once POST /bloodborne/party/mapstate): the
+// host posts the bits of its map's 10000 flags from MapFlagBase (MSB first, as the flag store keeps
+// them) as "<member> <map> <hex>", and a guest loading that map sets the TakesHostMapFlag ones to
+// the host's.
 s32 MapFlagBase(u32 packed_map);
 bool TakesHostMapFlag(s32 flag);
 struct MemberMapState {
@@ -1342,12 +1348,13 @@ std::vector<u8> EncodeDirectKills(std::string_view member, std::span<const u32> 
 std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload);
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills);
 
-// The world snapshot on the server (POST /bloodborne/party/world, Kaniel 2026-10-12): in place of
-// the polled per-feature boards while the world log runs, the host posts its whole log state every
-// WorldSnapshotPostMs as one blob, the same snapshot frames it sends a member that asks over the
-// link. A member reads it only when its copy is not fresh (a join, a restart, its link to the host
-// down) and takes the frames as it takes them from the host. The blob: a version byte, then each
-// frame as type (u8), length (u16), payload, after the frame count (u16).
+// The world snapshot on the server (a message on the server link, once POST
+// /bloodborne/party/world; Kaniel 2026-10-12): in place of the polled per-feature boards while the
+// world log runs, the host posts its whole log state every WorldSnapshotPostMs as one blob, the
+// same snapshot frames it sends a member that asks over the link. A member reads it only when its
+// copy is not fresh (a join, a restart, its link to the host down) and takes the frames as it takes
+// them from the host. The blob: a version byte, then each frame as type (u8), length (u16),
+// payload, after the frame count (u16).
 constexpr s64 WorldSnapshotPostMs = 2'000;
 // A server snapshot older than this is not taken (a party that went on without its host).
 constexpr s64 WorldSnapshotMaxAgeMs = 30'000;
@@ -2778,7 +2785,8 @@ private:
 };
 constexpr s64 GiveUpHoldMs = 3'000;
 
-// The party's vitals board on shadNet (POST /bloodborne/party/vitals). Each member posts
+// The party's vitals board on shadNet (a message on the server link, once POST
+// /bloodborne/party/vitals). Each member posts
 // "<member> <map> <vital> <hp> <max> <down> <landed> <needed> <x> <y> <z>" (map in hex, down the
 // id of its current or last down, landed/needed its revive progress in damage, x y z where it is)
 // and its revive damage on others as "<target>:<down>:<damage>" totals. The answer has the same

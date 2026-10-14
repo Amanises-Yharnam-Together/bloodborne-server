@@ -14,6 +14,8 @@
 namespace Libraries::Net {
 
 bool ServerLinkSwitchOn();
+// The port: a peer's datagrams only through the server, none straight (phase 6).
+bool PeersOnlyThroughServer();
 // Once signed in: shadNet's matching UDP port (where the STUN pings go) and this game's online id.
 void ConfigureServerLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id);
 // Which game this is, for the hello: shadNet refuses a game on another build.

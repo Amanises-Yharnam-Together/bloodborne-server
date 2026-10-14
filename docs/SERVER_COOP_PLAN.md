@@ -356,6 +356,30 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
      share the one file of the save's own world (it is the save's world from before any team).
 6. **Clean up.** Remove signs/bell auto-ringing for teams, the signaling handshake, the P2P vport
    transport, superseded patch sites and boards; update the kit, README and release tooling.
+   **Done 2026-10-14** (PRs #108, #109 and the cleanup after them), what changed against the plan:
+   - **No switches.** The port always runs the server link, the server world, the channel table,
+     the enemy owners and teams; `SHADPS4_BLOODBORNE_SERVER_LINK`, `_SERVER_WORLD`,
+     `_CHANNEL_TABLE`, `_ENEMY_OWNER` and `_TEAMS` are gone. shadPS4 keeps the old party path
+     (party settings, bells, signs, P2P) until it is dropped.
+   - **Team join without a bell or signs** (`TeamJoin`, bloodborne_team.h; docs/native-netcode/
+     session.md, "Team join"): the host opens its session with the game's own CreateSession and
+     sends the join data a summon would send (`TeamSession`, coop protocol 4); the server relays
+     it; each guest joins with the game's own JoinSession in place. Rig: join, join3, team-join3,
+     trip pass with no `/summon_messenger` request at all; join x25 for the stalls.
+   - **Launcher:** no party name/password or role; "host" only says which PC runs the server.
+     The team is made on the team screen. The System menu's Co-op Team page is gone.
+   - **Rig:** the runner makes every scenario's team on the title (`team_prelude`), so every
+     scenario runs as a team on the port.
+   - **Transport:** the port sends a peer nothing straight and takes no datagram from a peer once
+     the link is up (`SendsToPeer`, `TakesDatagramFrom`). Kept, not removed: our NP signaling
+     handshake and the STUN ping still answer the game's connection machine and fill the
+     server's address keys; they run through the server link (removing them needs the server to
+     answer the game's signaling itself: later, with the NP-local proposal Kaniel has not
+     decided).
+   - **Boards:** the HTTP boards' last receivers (kills, HP, shown characters) are gone; the
+     boards live in the server world (phase 3c). Patch sites: none removed; the ones the new
+     paths replaced already skip themselves on the port (map item sync), and the bell's are
+     shadPS4's.
 
 Later, not planned now (Kaniel 2026-10-13): a headless world host, the port running on the server
 without rendering, one copy per occupied map with a hidden anchor character, owning that map's

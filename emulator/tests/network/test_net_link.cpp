@@ -140,6 +140,20 @@ TEST(NetLink, RoutesEveryPeerThroughTheServer) {
     EXPECT_FALSE(RoutesThroughServer(ServerEndpoint{}, Loopback, Port1234)) << "no server yet";
 }
 
+// Phase 6, the port: a peer's datagrams only ever travel through the server, never straight
+// between games (shadPS4, `server_only` false, keeps direct P2P).
+TEST(NetLink, ThePortTalksToPeersOnlyThroughTheServer) {
+    const ServerEndpoint server{Loopback, 0x2A7A};
+    EXPECT_TRUE(SendsToPeer(server, true)) << "relayed by the server";
+    EXPECT_FALSE(SendsToPeer(ServerEndpoint{}, true)) << "no link yet";
+    EXPECT_TRUE(SendsToPeer(ServerEndpoint{}, false)) << "shadPS4";
+    EXPECT_TRUE(TakesDatagramFrom(server, Loopback, 0x2A7A, true));
+    EXPECT_FALSE(TakesDatagramFrom(server, 0x0201A8C0, Port1234, true)) << "straight from a peer";
+    EXPECT_TRUE(TakesDatagramFrom(ServerEndpoint{}, Loopback, 0x2A7A, true))
+        << "before the link: the server's answers (STUN) come in";
+    EXPECT_TRUE(TakesDatagramFrom(server, 0x0201A8C0, Port1234, false)) << "shadPS4";
+}
+
 TEST(NetLink, PingsOnceASecondAndMeasuresTheRoundTrip) {
     PingMeter meter;
     const auto first = meter.Due(0);
