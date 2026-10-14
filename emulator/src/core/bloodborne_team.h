@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // Phase 5: the team lobby on the game's side (docs/SERVER_COOP_PLAN.md, "The team lobby").
-// With SHADPS4_BLOODBORNE_TEAMS=1 the party is not a setting: the game signs in to the server's
+// In the port (always, phase 6) the party is not a setting: the game signs in to the server's
 // lobby, and a team's Start names the party (its key and who hosts). The load of a save is held
 // on the title until then (TeamGate): a member's Continue or Load Game is its Ready, the leader's
 // is the team's Start.
@@ -19,9 +19,6 @@
 #include "coop.pb.h"
 
 namespace Core::Bloodborne {
-
-// SHADPS4_BLOODBORNE_TEAMS: "1" or "on" turns the team lobby on.
-bool TeamModeEnabled(const char* setting);
 
 class TeamGate {
 public:

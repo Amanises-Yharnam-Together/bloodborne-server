@@ -450,9 +450,7 @@ public:
             link_welcomed = false;
             link_hello_ms.reset();
         }
-        LOG_INFO(Lib_Net,
-                 "Server link: every frame for a peer goes through the server at {:#x}:{} "
-                 "(SHADPS4_BLOODBORNE_SERVER_LINK)",
+        LOG_INFO(Lib_Net, "Server link: every frame for a peer goes through the server at {:#x}:{}",
                  ntohl(server_addr_nbo), ntohs(server_port_nbo));
     }
 
@@ -1436,12 +1434,8 @@ void P2PSocket::EnqueuePacket(P2PDatagram packet) {
 
 bool ServerLinkSwitchOn() {
 #ifdef BLOODBORNE_NATIVE_PORT
-    // On unless switched off ("0"): the party's world and boards live on the server (phase 3c).
-    static const bool on = [] {
-        const char* env = std::getenv("SHADPS4_BLOODBORNE_SERVER_LINK");
-        return env == nullptr || std::string_view{env} != "0";
-    }();
-    return on;
+    // Always in the port (phase 6: no switch): the team's world lives on the server.
+    return true;
 #else
     return false; // the port only (docs/SERVER_COOP_PLAN.md)
 #endif

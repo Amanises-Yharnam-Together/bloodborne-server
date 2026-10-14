@@ -630,7 +630,7 @@ void GrantPartyEchoes();
 // Whether this guest hid or switched off the character to match the host (game thread).
 bool ChangedLikeTheHost(u32 handle);
 void ClaimEnemiesWhenAlone(bool in_session, u32 map);
-// Phase 4 (see EnemyRole): with SHADPS4_BLOODBORNE_ENEMY_OWNER=1 the server's owner of this
+// Phase 4 (see EnemyRole), the port: the server's owner of this
 // member's area decides who runs its enemies, instead of ClaimEnemiesWhenAlone.
 bool EnemyOwnerOn();
 // With the owners on: whether the server sent the kill step something since the last call (the
@@ -684,7 +684,7 @@ PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
                                std::span<const std::pair<s32, bool>> changes, bool forgot,
                                const std::unordered_set<u32>& not_mine);
 // The party's world on the server (bloodborne_server_world.cpp, docs/SERVER_COOP_PLAN.md phase
-// 3): SHADPS4_BLOODBORNE_SERVER_WORLD=1 with the server link, the port only.
+// 3): always in the port, never in shadPS4.
 bool ServerWorldOn();
 // The kill step (game thread): this member's standing kills to shadNet (`propose`: in the session
 // and not held by a wipe), and the party's kills as the server's log has them.
@@ -710,7 +710,7 @@ std::optional<WorldLogMapState> ServerMapState();
 WorldLogHp ServerHp();
 // Step 3c, what the HTTP boards carried: the stream (its thread) runs without a kill step too.
 void StartServerWorld();
-// Phase 5, the team lobby (bloodborne_team.h): SHADPS4_BLOODBORNE_TEAMS=1 with the server world.
+// Phase 5, the team lobby (bloodborne_team.h): always in the port, with the server world.
 // The party is the team's: its key and this game's role come with the team's Start.
 bool TeamModeOn();
 // At the game's start: signs in to the server's lobby once the game has its online id.

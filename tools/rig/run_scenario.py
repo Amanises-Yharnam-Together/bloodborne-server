@@ -648,6 +648,30 @@ def forget_portraits(role: str) -> bool:
     return True
 
 
+def team_prelude(role: str, roles: list[str], stage: int) -> list[str]:
+    """The title's team verbs that put a role's game into the scenario's team (the port plays only
+    in teams, phase 6): the host makes it, invites the guests and starts it once they are in; each
+    guest accepts and is ready. A game started again (a later stage) goes back into its team; a game
+    alone plays alone."""
+    if len(roles) == 1:
+        return ["team-alone"]
+    if stage > 0:
+        return ["team-start" if role == "host" else "team-ready"]
+    if role != "host":
+        return ["team-accept", "team-ready"]
+    invites = [f"team-invite {engines.ACCOUNTS[r]}" for r in roles if r != "host"]
+    return ["team-create", *invites, f"team-wait {len(roles)}", "team-start"]
+
+
+def with_team(script: list[str] | None, role: str, roles: list[str], stage: int,
+              teams: bool) -> list[str] | None:
+    """`script` after the role's team prelude when the build plays in teams and the script does not
+    make its team itself."""
+    if script is None or not teams or any(line.startswith("team-") for line in script):
+        return script
+    return [*team_prelude(role, roles, stage), *script]
+
+
 def stages_of(script: list) -> list[list[str]]:
     """A role's scripts in turn: one script, or a list of them (the game is stopped once a stage
     is done, as a crash or a quit would, and started again with the next)."""
@@ -906,7 +930,9 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
         return False
     started = time.time()
     deadline = started + scenario.get("timeout", 600)
-    stages = {role: stages_of(scenario["roles"][role]) for role in roles}
+    stages = {role: [with_team(script, role, roles, index, ENGINE.teams)
+                     for index, script in enumerate(stages_of(scenario["roles"][role]))]
+              for role in roles}
     stage = {role: 0 for role in roles}
     syncs = scenario.get("syncs", {})
     reached: dict[str, set[str]] = {role: set() for role in roles}
@@ -1205,7 +1231,8 @@ def play(name: str, title: bool = False) -> int:
               rf"{BB_ROOT}\out\server\shadnet.exe into {RIG}\server.")
         stop_servers()
         return 2
-    scripts = play_scripts(scenario)
+    scripts = {role: with_team(script, role, roles, 0, ENGINE.teams)
+               for role, script in play_scripts(scenario).items()}
     processes = {}
     for role in roles:
         processes[role] = launch(role, None if title else scripts[role],

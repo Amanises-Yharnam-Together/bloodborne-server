@@ -603,10 +603,9 @@ void PS4_SYSV_ABI DecidePacketReceived(u64 tag, GuestRegisterSnapshot* registers
 
 void InstallChannelTable(u64 base, u64 image_size) {
 #ifdef BLOODBORNE_NATIVE_PORT
-    // Phase 4's enemy owners decide at the table's hooks too.
-    const bool wanted =
-        party_controller.has_value() &&
-        (ChannelTableEnabled(std::getenv("SHADPS4_BLOODBORNE_CHANNEL_TABLE")) || EnemyOwnerOn());
+    // Always with the port's co-op (phase 6: no switch); phase 4's enemy owners decide at the
+    // table's hooks too.
+    const bool wanted = party_controller.has_value();
 #else
     // The port only (docs/SERVER_COOP_PLAN.md); shadPS4 keeps the old path.
     const bool wanted = false;

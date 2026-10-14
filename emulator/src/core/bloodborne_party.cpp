@@ -3608,10 +3608,6 @@ std::string_view ChannelPolicyName(ChannelPolicy policy) {
     return "pass";
 }
 
-bool EnemyOwnerEnabled(const char* setting) {
-    return ChannelTableEnabled(setting);
-}
-
 const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32 map) {
     const u32 area = EnemyOwnerArea(map);
     if (area == 0) {
@@ -3721,11 +3717,6 @@ std::optional<std::string> EnemyRoleLog::Change(EnemyRole role, u32 map,
     }
     last = line;
     return line;
-}
-
-bool ChannelTableEnabled(const char* setting) {
-    const std::string_view value{setting != nullptr ? setting : ""};
-    return value == "1" || value == "on";
 }
 
 bool KeepsNativePacket(u32 channel, PacketWay way, u32 own_map, std::optional<u32> peer_map) {

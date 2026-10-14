@@ -8,7 +8,7 @@
 
 #include "common/types.h"
 
-// The server link (net_link.h): in the port (on unless SHADPS4_BLOODBORNE_SERVER_LINK=0) every
+// The server link (net_link.h): in the port (always) every
 // frame the P2P transport sends to a peer goes through shadNet, and the party's world and boards
 // live there (phase 3).
 namespace Libraries::Net {

@@ -287,7 +287,7 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
     }
 
     NpMatching2::SetMmShadNetClient(client, host, port);
-    // SHADPS4_BLOODBORNE_SERVER_LINK: the peers' frames through shadNet's matching UDP port.
+    // The port's server link: the peers' frames through shadNet's matching UDP port.
     Net::ConfigureServerLink(NpMatching2::GetMmServerAddr(), NpMatching2::GetMmServerUdpPort(),
                              npid);
 

@@ -30,14 +30,6 @@ bbcoop::TeamStart StartOf(const std::string& host, u32 slot) {
     return start;
 }
 
-TEST(TeamMode, Setting) {
-    EXPECT_TRUE(TeamModeEnabled("1"));
-    EXPECT_TRUE(TeamModeEnabled("on"));
-    EXPECT_FALSE(TeamModeEnabled(nullptr));
-    EXPECT_FALSE(TeamModeEnabled("0"));
-    EXPECT_FALSE(TeamModeEnabled(""));
-}
-
 // The team screen decides: nothing loads until its player plays alone or the team starts.
 TEST(TeamGate, NothingLoadsUntilTheScreenSaysSo) {
     TeamGate gate;

@@ -24,16 +24,6 @@ bool KeptOut(u32 channel, u32 own_map, std::optional<u32> peer_map) {
 
 } // namespace
 
-TEST(ChannelTable, OffUnlessAskedFor) {
-    EXPECT_FALSE(ChannelTableEnabled(nullptr));
-    EXPECT_FALSE(ChannelTableEnabled(""));
-    EXPECT_FALSE(ChannelTableEnabled("0"));
-    EXPECT_FALSE(ChannelTableEnabled("off"));
-    EXPECT_TRUE(ChannelTableEnabled("1"));
-    EXPECT_TRUE(ChannelTableEnabled("on"));
-    EXPECT_FALSE(ChannelTableEnabled("yes please"));
-}
-
 // docs/SERVER_COOP_PLAN.md "Traffic and who owns it", one row per area.
 TEST(ChannelTable, EveryChannelHasThePlansPolicy) {
     // The join handshake and its snapshots, character data, announcements: the game's own.

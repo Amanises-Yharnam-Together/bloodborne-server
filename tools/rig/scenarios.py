@@ -111,17 +111,8 @@ OTHER_MAP_FLAG = 12700131
 THIS_MAP_FLAG = 12410999
 FORBIDDEN_WOODS_LAMP_LIT = 12707810  # a lamp neither rig character has lit (see LampOfActiveFlag)
 START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
-# The title menu (Continue, Load Game, New Game, System, ...) to the System menu's Co-op Team
-# page (Controls, Environment, Co-op Team, ...), and back from the page to Continue (the title's
-# own Cross then loads).
 # Phase 5b: a world flag of Central Yharnam's block no event uses (the rig's saves have it off).
 TEAM_WORLD_FLAG = 12410999
-TITLE_TO_TEAM_PAGE = ["title-press down", "title-press down", "title-press down",
-                      "title-press cross", "title-wait 2", "title-press down", "title-press down",
-                      "title-wait 1", "title-shot system", "title-press cross", "title-wait 3"]
-TEAM_PAGE_TO_CONTINUE = ["title-press circle", "title-wait 2", "title-press circle",
-                         "title-wait 2", "title-press up", "title-press up", "title-press up",
-                         "title-wait 1", "title-shot back-at-continue"]
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
 # The session must hold: a game that leaves the room (LeaveRoom) broke it.
 SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
@@ -139,8 +130,8 @@ BLOODSTAIN_DROPPED = (r"bloodstain state map=0x18010000 has_mark=1 record_valid=
                       r"record_30=-?\d+ record_38=\d+ record_block=0x18010000")
 BLOODSTAIN_STOLEN = r"bloodstain state .* stain_hidden=1"
 LETHAL_FALL = ["hurt self 1", "rise 25"]
-# Enemy HP kept in step: over the HP board (the old path) or by the area's owner (phase 4,
-# SHADPS4_BLOODBORNE_ENEMY_OWNER=1: one game runs each area's enemies, the others follow it).
+# Enemy HP kept in step: over the HP board (shadPS4's path) or by the area's owner (the port,
+# phase 4: one game runs each area's enemies, the others follow it).
 HP_SHARED = r"enemy HP (?:shared over the HP board|from the area's owner)"
 # A copy lowered to the others' HP: the board's damage (old path) or the owner's HP (phase 4).
 HP_LOWERED = (r"(?:lowered \d+ enemies by the other members' damage|"
@@ -322,8 +313,7 @@ SCENARIOS = {
         "timeout": 900,
     },
     "server-restart": {
-        "about": "phase 3, the party's world on the server (run with SHADPS4_BLOODBORNE_SERVER_WORLD"
-                 "=1): the host kills an enemy while the guest is in the Dream, shadNet restarts "
+        "about": "phase 3, the party's world on the server (the port): the host kills an enemy while the guest is in the Dream, shadNet restarts "
                  "mid-session, the host kills another; the guest coming back finds both dead (a "
                  "server that lost the world would start a new one, and the first kill with it)",
         "roles": {
@@ -889,52 +879,12 @@ SCENARIOS = {
             "guest": ["team-accept", "team-ready", START, "wait-session 2 300", "wait 10",
                       "snapshot", "expect-session 2"],
         },
-        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
         "expect": {
             "host": [r"Co-op team lobby: the save plays in team \w+ as its host",
                      r"team lobby: a save's load waits for the team's Start"],
             "guest": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 600,
-    },
-    # The lobby's page in the game's own System menu (run it drawn, for pictures): the host
-    # creates a team and invites the guest from the page, the guest accepts from its page, both
-    # see the team and start it with Continue.
-    "team-menu": {
-        "about": "the Co-op Team page in the title's System menu: invite and accept there, then "
-                 "the team plays (run drawn: pictures of each step)",
-        "roles": {
-            "host": ["title-wait 6", "title-press cross", "title-wait 4", "title-shot title",
-                     "team-create", *TITLE_TO_TEAM_PAGE, "title-shot team-page",
-                     "title-press down", "title-wait 1", "title-shot invite-row",
-                     "title-press cross", "title-wait 1", "title-shot invite-list",
-                     "title-press down", "title-wait 1", "title-press cross", "title-wait 1",
-                     "title-shot invite-chosen",
-                     "title-wait 25", "title-press circle", "title-wait 2", "title-press cross",
-                     "title-wait 3", "title-shot team-page-2", "title-press down",
-                     "title-press down", "title-press down", "title-wait 1",
-                     "title-shot members-row", *TEAM_PAGE_TO_CONTINUE, "team-start",
-                     "title-wait 2", "title-shot team-screen", START, "wait-session 2 300",
-                     "wait 10", "snapshot", "expect-session 2"],
-            "guest": ["title-wait 6", "title-press cross", "title-wait 4", "title-wait 20",
-                      *TITLE_TO_TEAM_PAGE, "title-shot guest-page", "title-press down",
-                      "title-press down", "title-wait 1", "title-shot invitations-row",
-                      "title-press cross", "title-wait 1", "title-shot invitations-list",
-                      "title-press down", "title-wait 1", "title-press cross", "title-wait 1",
-                      "title-shot invitation-chosen",
-                      "title-wait 5", "title-press circle", "title-wait 2", "title-press cross",
-                      "title-wait 3", "title-shot guest-page-2", *TEAM_PAGE_TO_CONTINUE,
-                      "team-ready", "title-wait 2", "title-shot team-screen", START,
-                      "wait-session 2 300", "wait 10", "snapshot", "expect-session 2"],
-        },
-        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
-        "expect": {
-            "host": [r"Co-op team lobby: the menu asks INVITE",
-                     r"Co-op team lobby: the save plays in team \w+ as its host"],
-            "guest": [r"Co-op team lobby: the menu asks ACCEPT",
-                      r"Co-op team lobby: the save plays in team \w+ as its guest"],
-        },
         "timeout": 600,
     },
     # Phase 5b: the team's world. A world flag no save has (TEAM_WORLD_FLAG, Central Yharnam's
@@ -957,7 +907,6 @@ SCENARIOS = {
                       ["team-leave", "team-alone", START, "wait 10",
                        f"expect-flag {TEAM_WORLD_FLAG} 0"]],
         },
-        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
         "expect": {
             "host": [r"Co-op team world: this host's world to the server"],
             "guest": [r"Co-op team world: the team's world is in this save",
@@ -979,7 +928,6 @@ SCENARIOS = {
                       "team-ready", "title-wait 2", "title-shot screen-guest-ready", START,
                       "wait-session 2 300", "snapshot"],
         },
-        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
         "timeout": 600,
     },
     "team-join3": {
@@ -993,7 +941,6 @@ SCENARIOS = {
             "guest2": ["team-accept", "team-ready", START, "godmode", "wait-session 3 480", "wait 10",
                        "snapshot", "expect-session 3"],
         },
-        "settings": {"SHADPS4_BLOODBORNE_TEAMS": "1"},
         "expect": {
             "host": [r"Co-op team lobby: the save plays in team \w+ as its host"],
             "guest": [r"Co-op team lobby: the save plays in team \w+ as its guest"],

@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// The party's world on the server (docs/SERVER_COOP_PLAN.md phase 3): with
-// SHADPS4_BLOODBORNE_SERVER_WORLD=1 (the port only, and with the server link) shadNet keeps the
-// party's world log, not the host's game. Every member, the host too, proposes to it and follows
-// its log as a WorldLogMember (server/coop/world_log.h): the kills (3a; the kill board is not used
-// then), the host's characters, map state and return point, every member's shared flags and HP
-// reports (3b; the host's own log is not run then), and what the HTTP boards carried: maps, rests,
-// trophies, kill echoes, vitals and portraits (3c; the boards are not used then).
+// The party's world on the server (docs/SERVER_COOP_PLAN.md phase 3): in the port (always, over
+// the server link; never in shadPS4) shadNet keeps the party's world log, not the host's game.
+// Every member, the host too, proposes to it and follows its log as a WorldLogMember
+// (server/coop/world_log.h): the kills (3a; the kill board is not used then), the host's
+// characters, map state and return point, every member's shared flags and HP reports (3b; the
+// host's own log is not run then), and what the HTTP boards carried: maps, rests, trophies, kill
+// echoes, vitals and portraits (3c; the boards are not used then).
 //
 // The messages (server/coop/coop.proto) go in the server link's Coop datagrams, in their reliable
 // stream (server/coop/coop_stream.h). A thread of its own runs the stream (receives, resends,
@@ -41,20 +41,14 @@ constexpr s64 StreamTickMs = 20;
 constexpr s64 KillsResendMs = 2'000;
 constexpr s64 ReportResendMs = 5'000;
 
-const bool server_world_switch = [] {
+// The server's world, phase 4's enemy owners (see EnemyRole) and phase 5's teams: the port's only
+// way since phase 6 (no switches); shadPS4 keeps the old path (docs/SERVER_COOP_PLAN.md).
 #ifdef BLOODBORNE_NATIVE_PORT
-    // On with the server link (phase 3c: the boards went with it), unless switched off ("0", a
-    // test of the host's own log: no boards then).
-    const char* env = std::getenv("SHADPS4_BLOODBORNE_SERVER_WORLD");
-    return Libraries::Net::ServerLinkSwitchOn() && (env == nullptr || std::string_view{env} != "0");
+constexpr bool server_world_switch = true;
 #else
-    return false; // the port only (docs/SERVER_COOP_PLAN.md)
+constexpr bool server_world_switch = false;
 #endif
-}();
-
-// Phase 4's enemy owners (see EnemyRole): SHADPS4_BLOODBORNE_ENEMY_OWNER=1 with the server world.
-const bool enemy_owner_switch =
-    server_world_switch && EnemyOwnerEnabled(std::getenv("SHADPS4_BLOODBORNE_ENEMY_OWNER"));
+constexpr bool enemy_owner_switch = server_world_switch;
 
 // The server's enemy owners as last heard (the stream's thread writes, any thread reads).
 std::mutex owners_mutex;
@@ -80,8 +74,7 @@ std::once_flag thread_started;
 
 // Phase 5: the team lobby (bloodborne_team.h). The lobby's messages go on the same stream, before
 // any party hello; the party is the team's from its Start.
-const bool team_switch =
-    server_world_switch && TeamModeEnabled(std::getenv("SHADPS4_BLOODBORNE_TEAMS"));
+constexpr bool team_switch = server_world_switch;
 std::mutex team_mutex;
 TeamGate team_gate;
 std::string team_party;      // the team's party key once its Start let this game's load go
