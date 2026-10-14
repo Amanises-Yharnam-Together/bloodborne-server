@@ -5071,11 +5071,53 @@ def install_update(target, wait_pid):
     return 0
 
 
+# PROCESS_MITIGATION_POLICY's ProcessRedirectionTrustPolicy (Windows 11 RedirectionGuard).
+REDIRECTION_TRUST_POLICY = 16
+
+
+def redirection_guarded():
+    """Whether Windows refuses this process any path through a folder link a user made (the
+    RedirectionGuard mitigation: WinError 448). Kaniel 2026-10-14: the launcher the installer's last
+    page started inherited it from the installer, and PLAY could not read the game view (links to the
+    player's own copy)."""
+    kernel = ctypes.windll.kernel32
+    query = getattr(kernel, 'GetProcessMitigationPolicy', None)
+    if query is None:
+        return False
+    query.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t]
+    query.restype = ctypes.c_int
+    value = ctypes.c_uint32(0)
+    current = ctypes.c_void_p(-1)  # GetCurrentProcess's pseudo handle
+    if not query(current, REDIRECTION_TRUST_POLICY, ctypes.byref(value), ctypes.sizeof(value)):
+        return False
+    return bool(value.value & 1)
+
+
+def restart_without_redirection_guard():
+    """Starts this launcher again through Explorer, whose children have no such rule. Once a minute
+    at most (a marker file), so a launcher Explorer starts guarded all the same never loops. True
+    when it was started."""
+    marker = DATA_DIR / 'relaunched.txt'
+    try:
+        if marker.is_file() and time.time() - marker.stat().st_mtime < 60:
+            return False
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("the launcher started again without the installer's RedirectionGuard\n",
+                          encoding='utf-8')
+    except OSError:
+        return False
+    windows = os.environ.get('SystemRoot', r'C:\Windows')
+    subprocess.Popen([str(Path(windows) / 'explorer.exe'), sys.executable])
+    return True
+
+
 def main():
     global LANG
     args = sys.argv[1:]
     if args and args[0] in ('--run', '--script'):
         sys.exit(run_role(args))
+    if FROZEN and not args and redirection_guarded() and restart_without_redirection_guard():
+        sys.exit(0)
     if args[:1] == ['--coop-uninstall']:
         # The uninstaller: the game view goes as links, never the game behind them; the host's
         # servers stop.
