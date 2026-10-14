@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -1981,10 +1982,21 @@ public:
     static constexpr Clock::duration StaleSearchAfter =
         2 * SummonSearchInterval + std::chrono::seconds{2};
 
-    explicit PartyController(PartyRole role) : role{role} {}
+    // `waiting`: the team lobby (phase 5) says the role later (Assign); until then it rings
+    // nothing.
+    explicit PartyController(PartyRole role, bool waiting = false)
+        : role{role}, waiting{waiting} {}
 
     s32 SearchEffectId() const {
-        return role == PartyRole::Host ? BeckoningBellEffect : SmallResonantBellEffect;
+        return role.load() == PartyRole::Host ? BeckoningBellEffect : SmallResonantBellEffect;
+    }
+    bool Waiting() const {
+        return waiting.load();
+    }
+    // The team's Start: this game hosts the team's sessions or joins them.
+    void Assign(PartyRole assigned) {
+        role.store(assigned);
+        waiting.store(false);
     }
     PartyAction Tick(const PartyObservation& observation, Clock::time_point now);
 
@@ -1994,7 +2006,8 @@ private:
     std::optional<PartyAction> RingAgain(const PartyObservation& observation,
                                          Clock::time_point now);
 
-    PartyRole role;
+    std::atomic<PartyRole> role;
+    std::atomic<bool> waiting;
     u32 stable_ticks = 0;
     std::optional<Clock::time_point> last_search;
     /// Since when a hosting bell with room for more has been on (see Tick).
