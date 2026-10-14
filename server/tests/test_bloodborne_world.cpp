@@ -59,7 +59,30 @@ struct Game {
     envelope.mutable_hello()->set_member(name);
     envelope.mutable_hello()->set_run(run);
     envelope.mutable_hello()->set_host(name == "host");
+    envelope.mutable_hello()->set_enemy_owner(enemy_owner);
     Send(envelope, now_ms);
+  }
+  void Map(u32 map, qint64 now_ms) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_map()->set_map(map);
+    Send(envelope, now_ms);
+  }
+  // The owner of an area as this game heard it ("" for none).
+  std::string OwnerOf(u32 area) const {
+    for (const bbcoop::EnemyOwner &owner : owners.owners()) {
+      if (owner.map() == area) {
+        return owner.member();
+      }
+    }
+    return {};
+  }
+  u64 EpochOf(u32 area) const {
+    for (const bbcoop::EnemyOwner &owner : owners.owners()) {
+      if (owner.map() == area) {
+        return owner.epoch();
+      }
+    }
+    return 0;
   }
   void Show(u32 map, const std::vector<CharacterShown> &characters,
             qint64 now_ms) {
@@ -124,6 +147,9 @@ struct Game {
       }
     } else if (envelope.has_portrait()) {
       portraits[envelope.portrait().member()] = envelope.portrait();
+    } else if (envelope.has_enemy_owners()) {
+      owners = envelope.enemy_owners();
+      ++owner_messages;
     } else if (envelope.has_welcome()) {
       welcome = envelope.welcome();
     } else if (envelope.has_entries()) {
@@ -153,6 +179,9 @@ struct Game {
   bbcoop::VitalsBoard vitals_board;
   std::vector<s32> echoes;
   std::map<std::string, bbcoop::Portrait> portraits;
+  bbcoop::EnemyOwners owners;
+  int owner_messages = 0;
+  bool enemy_owner = true; // runs phase 4's owners (its hello says)
   u32 run = 0x1001;
   u32 number = 0;
   bool online = true; // false: its datagrams are lost
@@ -809,6 +838,145 @@ int APortraitGoesToTheOthersAndToLaterMembers() {
   return 0;
 }
 
+int TheFirstMemberOnAnAreaRunsItsEnemies() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game guest2{1002, "guest2", 13};
+  const std::vector<Game *> games{&host, &guest, &guest2};
+  qint64 now = 1'000'000;
+  for (Game *game : games) {
+    game->Hello(now);
+  }
+  Pump(service, games, now);
+  constexpr u32 Yharnam = 0x18010000; // Central Yharnam
+  constexpr u32 Ward = 0x18000000; // Cathedral Ward: another block of its area
+  constexpr u32 Woods = 0x15010000;
+
+  // The first one there runs the map.
+  host.Map(0x18010000, now);
+  Pump(service, games, now);
+  CHECK(host.OwnerOf(Yharnam) == "host");
+  CHECK(guest2.OwnerOf(Yharnam) == "host");
+  const u64 first = host.EpochOf(Yharnam);
+  CHECK(first != 0);
+  guest.Map(Yharnam, now + 100);
+  guest2.Map(Ward, now + 100);
+  Pump(service, games, now + 100);
+  CHECK(guest.OwnerOf(Yharnam) == "host");
+  CHECK(guest.EpochOf(Yharnam) == first);
+  // Another block of the area has its own: the game wakes a block's enemies
+  // only near a player in that world, so the host's copies of the Ward's stand
+  // still.
+  CHECK(host.OwnerOf(Ward) == "guest2");
+  guest2.Map(Woods, now + 150);
+  Pump(service, games, now + 150);
+  CHECK(host.OwnerOf(Ward).empty());
+  CHECK(host.OwnerOf(Woods) == "guest2");
+
+  // Every answer to a member's map carries the owners, changed or not.
+  const int heard = guest.owner_messages;
+  guest.Map(Yharnam, now + 200);
+  Pump(service, games, now + 200);
+  CHECK(guest.owner_messages > heard);
+
+  // A load hands the area on at once, to the member there longest.
+  host.Map(0, now + 300);
+  Pump(service, games, now + 300);
+  CHECK(guest2.OwnerOf(Yharnam) == "guest");
+  const u64 second = guest2.EpochOf(Yharnam);
+  CHECK(second > first);
+  guest2.Map(Yharnam, now + 400);
+  Pump(service, games, now + 400);
+  CHECK(host.OwnerOf(Yharnam) == "guest");
+  CHECK(host.OwnerOf(Woods).empty()); // nobody is there any more
+  // The session's host takes back the area it comes to: its game is the one the
+  // others' are built to follow.
+  host.Map(0x18010000, now + 1300);
+  guest.Map(Yharnam, now + 1300);
+  guest2.Map(0x18010000, now + 1300);
+  Pump(service, games, now + 1300);
+  CHECK(guest.OwnerOf(Yharnam) == "host");
+  CHECK(guest.EpochOf(Yharnam) > second);
+
+  // An owner not heard of for a while (its game died) hands it on.
+  host.Map(0, now + 1400);
+  Pump(service, games, now + 1400);
+  CHECK(guest2.OwnerOf(Yharnam) == "guest");
+  guest2.Map(0x18010000, now + 2300);
+  Pump(service, games, now + 2300);
+  guest2.Map(0x18010000, now + 3300);
+  Pump(service, games, now + 3300);
+  CHECK(guest2.OwnerOf(Yharnam) == "guest"); // 2 s: not yet
+  guest2.Map(0x18010000, now + 4300);
+  Pump(service, games, now + 4300);
+  CHECK(guest2.OwnerOf(Yharnam) == "guest2");
+
+  // An area nobody is on has no owner.
+  guest2.Map(0, now + 4400);
+  Pump(service, games, now + 4400);
+  CHECK(host.OwnerOf(Yharnam).empty());
+  return 0;
+}
+
+int OnlyTheOwnersKillsAndHpCount() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game old{1002, "old", 13};
+  old.enemy_owner = false; // a game without phase 4's owners: counts as before
+  const std::vector<Game *> games{&host, &guest, &old};
+  qint64 now = 1'000'000;
+  for (Game *game : games) {
+    game->Hello(now);
+  }
+  Pump(service, games, now);
+  host.Map(0x18010000, now);
+  Pump(service, games, now);
+  guest.Map(0x18010000, now + 100);
+  old.Map(0x18010000, now + 100);
+  Pump(service, games, now + 100);
+  CHECK(guest.OwnerOf(0x18010000) == "host");
+
+  // A kill on an area another member runs is not the guest's to make.
+  now += 200;
+  guest.Propose({{0x18010000, {0x10014066}}}, now);
+  Pump(service, games, now);
+  CHECK(!Killed(host, 0x10014066));
+  host.Propose({{0x18010000, {0x10014066}}}, now + 10);
+  Pump(service, games, now + 10);
+  CHECK(Killed(guest, 0x10014066));
+  // Its HP report neither.
+  guest.Hp(0x2222000000000001, {{0x1001400b, 100, 484}}, now + 20);
+  host.Hp(0x1111000000000001, {{0x1001400b, 300, 484}}, now + 20);
+  Pump(service, games, now + 20);
+  CHECK(!guest.member.Hp().contains(0x2222000000000001));
+  CHECK(guest.member.Hp().contains(0x1111000000000001));
+  // A game without the owners counts everywhere.
+  old.Propose({{0x18010000, {0x1001402e}}}, now + 30);
+  Pump(service, games, now + 30);
+  CHECK(Killed(host, 0x1001402e));
+  // An area nobody runs (nobody is there yet, or the server just started):
+  // counted.
+  guest.Propose({{0x21000000, {0x10210001}}}, now + 40);
+  Pump(service, games, now + 40);
+  CHECK(Killed(host, 0x10210001));
+
+  // The owner leaving keeps the kills it made there, but makes no new ones.
+  host.Map(0, now + 100);
+  Pump(service, games, now + 100);
+  CHECK(guest.OwnerOf(0x18010000) == "guest");
+  host.Propose({{0x18010000, {0x10014066, 0x10014009}}}, now + 110);
+  Pump(service, games, now + 110);
+  CHECK(Killed(guest, 0x10014066));
+  CHECK(!Killed(guest, 0x10014009));
+  guest.Propose({{0x18010000, {0x10014009}}, {0x21000000, {0x10210001}}},
+                now + 120);
+  Pump(service, games, now + 120);
+  CHECK(Killed(host, 0x10014009));
+  return 0;
+}
+
 } // namespace
 
 int main() {
@@ -836,6 +1004,9 @@ int main() {
        APortraitGoesToTheOthersAndToLaterMembers},
       {"WhateverAGameSendsTheServiceKeepsWorking",
        WhateverAGameSendsTheServiceKeepsWorking},
+      {"TheFirstMemberOnAnAreaRunsItsEnemies",
+       TheFirstMemberOnAnAreaRunsItsEnemies},
+      {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {

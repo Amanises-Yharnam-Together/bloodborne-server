@@ -48,13 +48,13 @@ std::map<std::string, QByteArray> ReadContracts(const char *path) {
   return datagrams;
 }
 
-const Endpoint Lisara127{0x7F000001, 0x1234};
+const Endpoint Ada127{0x7F000001, 0x1234};
 const QByteArray GameFrame = QByteArray::fromHex("75307531070000000200000"
                                                  "0abcd");
 const QByteArray Build = "92829ac4 events 1f protocol 9";
 
 const Endpoint Kaniel{0x7F000001, 40001};
-const Endpoint Lisara{0x7F000001, 40002};
+const Endpoint Ada{0x7F000001, 40002};
 const Endpoint Eileen{0xC0A80105, 40003};
 
 QByteArray HelloFrom(const char *who, const QByteArray &build = Build) {
@@ -89,9 +89,9 @@ int Contracts() {
   CHECK(refused && !refused->accepted &&
         refused->text == "another build: 13ddd14d");
 
-  CHECK(Encode(Data{Lisara127, GameFrame}) == datagram("data"));
+  CHECK(Encode(Data{Ada127, GameFrame}) == datagram("data"));
   const auto data = DecodeData(datagram("data"));
-  CHECK(data && data->peer == Lisara127 && data->frame == GameFrame);
+  CHECK(data && data->peer == Ada127 && data->frame == GameFrame);
 
   CHECK(Encode(Kind::Ping, Ping{7, 1000}) == datagram("ping"));
   CHECK(Encode(Kind::Pong, Ping{7, 1000}) == datagram("pong"));
@@ -99,15 +99,15 @@ int Contracts() {
   CHECK(ping && ping->seq == 7 && ping->sent_ms == 1000);
   CHECK(!DecodePing(Kind::Ping, datagram("pong")));
 
-  CHECK(Encode(Member{MemberState::Quiet, 3500, Lisara127, "Lisara"}) ==
+  CHECK(Encode(Member{MemberState::Quiet, 3500, Ada127, "Ada"}) ==
         datagram("member.quiet"));
-  CHECK(Encode(Member{MemberState::Back, 4200, Lisara127, "Lisara"}) ==
+  CHECK(Encode(Member{MemberState::Back, 4200, Ada127, "Ada"}) ==
         datagram("member.back"));
-  CHECK(Encode(Member{MemberState::Gone, 60000, Lisara127, "Lisara"}) ==
+  CHECK(Encode(Member{MemberState::Gone, 60000, Ada127, "Ada"}) ==
         datagram("member.gone"));
   const auto gone = DecodeMember(datagram("member.gone"));
   CHECK(gone && gone->state == MemberState::Gone && gone->gap_ms == 60000 &&
-        gone->endpoint == Lisara127 && gone->online_id == "Lisara");
+        gone->endpoint == Ada127 && gone->online_id == "Ada");
 
   for (const auto &[name, bytes] : datagrams) {
     CHECK(KindOf(bytes).has_value());
@@ -134,8 +134,8 @@ int HelloAndBuilds() {
   CHECK(DecodeWelcome(SentTo(result, Kaniel)[0])->accepted);
   CHECK(hub.Members() == 1 && hub.Build() == Build);
 
-  result = hub.Receive(Lisara, HelloFrom("Lisara"), 10);
-  CHECK(DecodeWelcome(SentTo(result, Lisara).value(0))->accepted);
+  result = hub.Receive(Ada, HelloFrom("Ada"), 10);
+  CHECK(DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
   CHECK(hub.Members() == 2);
 
   // One build for everyone: the 0x60 record carries a raw vtable pointer.
@@ -160,15 +160,15 @@ int HelloAndBuilds() {
 int Relays() {
   Hub hub;
   hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
-  hub.Receive(Lisara, HelloFrom("Lisara"), 0);
+  hub.Receive(Ada, HelloFrom("Ada"), 0);
 
-  auto result = hub.Receive(Kaniel, Encode(Data{Lisara, GameFrame}), 100);
-  const auto forwarded = SentTo(result, Lisara);
+  auto result = hub.Receive(Kaniel, Encode(Data{Ada, GameFrame}), 100);
+  const auto forwarded = SentTo(result, Ada);
   CHECK(forwarded.size() == 1 && result.sends.size() == 1);
   const auto data = DecodeData(forwarded[0]);
   CHECK(data && data->peer == Kaniel && data->frame == GameFrame);
   CHECK(!result.log.isEmpty() && result.log[0].contains("Kaniel") &&
-        result.log[0].contains("Lisara"));
+        result.log[0].contains("Ada"));
 
   // Nobody at the destination: dropped, and said.
   result = hub.Receive(Kaniel, Encode(Data{Eileen, GameFrame}), 110);
@@ -182,18 +182,18 @@ int Relays() {
   // Only the first frames of a pair are logged.
   Hub quiet_log(3000, 60000, 10000, 2);
   quiet_log.Receive(Kaniel, HelloFrom("Kaniel"), 0);
-  quiet_log.Receive(Lisara, HelloFrom("Lisara"), 0);
+  quiet_log.Receive(Ada, HelloFrom("Ada"), 0);
   int lines = 0;
   for (int index = 0; index < 5; ++index) {
     lines += static_cast<int>(
-        quiet_log.Receive(Kaniel, Encode(Data{Lisara, GameFrame}), index)
+        quiet_log.Receive(Kaniel, Encode(Data{Ada, GameFrame}), index)
             .log.size());
   }
   CHECK(lines == 2);
 
   // A ping comes back as a pong with the same body.
-  result = hub.Receive(Lisara, Encode(Kind::Ping, Ping{3, 777}), 130);
-  const auto pong = DecodePing(Kind::Pong, SentTo(result, Lisara).value(0));
+  result = hub.Receive(Ada, Encode(Kind::Ping, Ping{3, 777}), 130);
+  const auto pong = DecodePing(Kind::Pong, SentTo(result, Ada).value(0));
   CHECK(pong && pong->seq == 3 && pong->sent_ms == 777);
   std::cout << "server link relay: ok\n";
   return 0;
@@ -202,36 +202,35 @@ int Relays() {
 int Liveness() {
   Hub hub;
   hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
-  hub.Receive(Lisara, HelloFrom("Lisara"), 0);
+  hub.Receive(Ada, HelloFrom("Ada"), 0);
   hub.Receive(Kaniel, Encode(Kind::Ping, Ping{1, 1000}), 1000);
 
   auto result = hub.Tick(3000);
   CHECK(result.sends.isEmpty());
 
-  // Lisara's link quiet for longer than 3 s: Kaniel is told, once.
+  // Ada's link quiet for longer than 3 s: Kaniel is told, once.
   hub.Receive(Kaniel, Encode(Kind::Ping, Ping{2, 3000}), 3000);
   result = hub.Tick(3500);
   const auto told = SentTo(result, Kaniel);
-  CHECK(told.size() == 1 && SentTo(result, Lisara).isEmpty());
+  CHECK(told.size() == 1 && SentTo(result, Ada).isEmpty());
   const auto quiet = DecodeMember(told[0]);
-  CHECK(quiet && quiet->state == MemberState::Quiet &&
-        quiet->endpoint == Lisara && quiet->online_id == "Lisara" &&
-        quiet->gap_ms == 3500);
-  CHECK(!result.log.isEmpty() && result.log[0].contains("Lisara"));
+  CHECK(quiet && quiet->state == MemberState::Quiet && quiet->endpoint == Ada &&
+        quiet->online_id == "Ada" && quiet->gap_ms == 3500);
+  CHECK(!result.log.isEmpty() && result.log[0].contains("Ada"));
   hub.Receive(Kaniel, Encode(Kind::Ping, Ping{3, 4000}), 4000);
   CHECK(SentTo(hub.Tick(4500), Kaniel).isEmpty());
 
   // Heard again.
-  result = hub.Receive(Lisara, Encode(Kind::Ping, Ping{1, 6000}), 6000);
+  result = hub.Receive(Ada, Encode(Kind::Ping, Ping{1, 6000}), 6000);
   const auto back = DecodeMember(SentTo(result, Kaniel).value(0));
   CHECK(back && back->state == MemberState::Back && back->gap_ms == 6000);
 
   // Kaniel's game is gone after a minute without a word; the build is free
   // again once nobody is linked.
-  hub.Receive(Lisara, Encode(Kind::Ping, Ping{2, 64000}), 64000);
+  hub.Receive(Ada, Encode(Kind::Ping, Ping{2, 64000}), 64000);
   result = hub.Tick(64001);
-  CHECK(SentTo(result, Lisara).size() == 1); // gone, not quiet first
-  const auto gone = DecodeMember(SentTo(result, Lisara).value(0));
+  CHECK(SentTo(result, Ada).size() == 1); // gone, not quiet first
+  const auto gone = DecodeMember(SentTo(result, Ada).value(0));
   CHECK(gone && gone->state == MemberState::Gone &&
         gone->online_id == "Kaniel");
   CHECK(hub.Members() == 1);
@@ -243,15 +242,15 @@ int Liveness() {
   // The counters every 10 s.
   Hub counted;
   counted.Receive(Kaniel, HelloFrom("Kaniel"), 0);
-  counted.Receive(Lisara, HelloFrom("Lisara"), 0);
-  counted.Receive(Kaniel, Encode(Data{Lisara, GameFrame}), 1);
+  counted.Receive(Ada, HelloFrom("Ada"), 0);
+  counted.Receive(Kaniel, Encode(Data{Ada, GameFrame}), 1);
   counted.Receive(Kaniel, Encode(Kind::Ping, Ping{1, 1}), 9000);
-  counted.Receive(Lisara, Encode(Kind::Ping, Ping{1, 1}), 9000);
+  counted.Receive(Ada, Encode(Kind::Ping, Ping{1, 1}), 9000);
   CHECK(counted.Tick(9999).log.isEmpty());
   const auto counters = counted.Tick(10000).log;
   CHECK(counters.size() == 2);
   CHECK(counters.join('\n').contains("Kaniel") &&
-        counters.join('\n').contains("Lisara"));
+        counters.join('\n').contains("Ada"));
   std::cout << "server link liveness: ok\n";
   return 0;
 }

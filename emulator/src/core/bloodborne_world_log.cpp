@@ -636,7 +636,8 @@ std::vector<MemberMapState> OthersEnemyHp(u64 own_source) {
 void SendEnemyHp(const MemberMapState& mine, bool changed) {
     const s64 now_ms = SteadyMilliseconds();
     const bool held = IsPartyGuestRole() && wipe_hold.HoldsProposals(now_ms);
-    if (!held) {
+    // Phase 4's owners: the game sends the owner's HP itself (ch 5), no copy of ours.
+    if (!held && !EnemyOwnerOn()) {
         SendDirectDamage(mine, changed); // the fast copy (see OthersEnemyHp)
     }
     if (ServerWorldOn()) {

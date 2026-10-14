@@ -10,7 +10,7 @@
 #   data             address 127.0.0.1, port 0x1234 (both as sent: network byte order), and the
 #                    frame 7530 7531 07000000 02000000 abcd (vports 0x7530 -> 0x7531, a game packet)
 #   ping, pong       seq 7, sent at 1000 ms
-#   member.*         Lisara at 127.0.0.1:0x1234: quiet for 3500 ms, back after 4200 ms, gone
+#   member.*         Ada at 127.0.0.1:0x1234: quiet for 3500 ms, back after 4200 ms, gone
 #                    after 60000 ms
 hello	ffffffff53484c4b0101064b616e69656c1d3932383239616334206576656e74732031662070726f746f636f6c2039
 welcome.ok	ffffffff53484c4b020100
@@ -18,6 +18,6 @@ welcome.refused	ffffffff53484c4b020017616e6f74686572206275696c643a20313364646431
 data	ffffffff53484c4b037f0000011234753075310700000002000000abcd
 ping	ffffffff53484c4b0407000000e803000000000000
 pong	ffffffff53484c4b0507000000e803000000000000
-member.quiet	ffffffff53484c4b0600ac0d00007f0000011234064c6973617261
-member.back	ffffffff53484c4b0601681000007f0000011234064c6973617261
-member.gone	ffffffff53484c4b060260ea00007f0000011234064c6973617261
+member.quiet	ffffffff53484c4b0600ac0d00007f000001123403416461
+member.back	ffffffff53484c4b0601681000007f000001123403416461
+member.gone	ffffffff53484c4b060260ea00007f000001123403416461

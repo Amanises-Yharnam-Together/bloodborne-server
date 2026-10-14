@@ -1388,7 +1388,11 @@ void TickPlayersOnThisMap() {
     RestoreSearchAfterTrip(in_session);
     const u32 map = PlayingMap();
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
-    ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
+    if (EnemyOwnerOn()) {
+        TickEnemyOwner(in_session, IsUsablePackedMap(map) ? map : 0);
+    } else {
+        ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
+    }
     GrantPartyEchoes();
     FinishWaitingJoins(in_session);
     ResendOwnDataOnChange(in_session);

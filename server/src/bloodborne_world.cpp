@@ -354,6 +354,7 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     member.name = hello.member();
     member.run = hello.run();
     member.host = hello.host();
+    member.enemy_owner = hello.enemy_owner();
     PartyWorld& world = WorldFor(member.party, now_ms, result);
     welcome.set_accepted(true);
     welcome.set_epoch(world.host.Epoch());
@@ -374,6 +375,7 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
             SendTo(member, envelope, now_ms);
         }
     }
+    SendOwners(world, now_ms, result, &member);
     result.log.append(QStringLiteral("party world %1: %2 (run %3) follows log %4 at seq %5")
                           .arg(world.name, QString::fromStdString(member.name))
                           .arg(Hex(member.run), Hex(world.host.Epoch()))
@@ -410,6 +412,9 @@ void Service::OnLifecycle(Member& member, const bbcoop::Lifecycle& lifecycle, qi
         world.proposed.erase(member.name);
         if (lifecycle.event() == bbcoop::Lifecycle::LEAVE) {
             SendBoards(world, world.boards.Forget(member.name), now_ms);
+            if (world.owners.Forget(member.name)) {
+                SendOwners(world, now_ms, result);
+            }
         }
         bbcoop::JournalRecord record;
         record.mutable_drop()->set_member(member.name);
@@ -442,7 +447,29 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
         OnLifecycle(member, envelope.lifecycle(), now_ms, result);
         break;
     case bbcoop::Envelope::kKills: {
-        const WorldLogProposal proposal = ProposalOf(envelope.kills(), member.name);
+        WorldLogProposal proposal = ProposalOf(envelope.kills(), member.name);
+        // Phase 4: a new kill on an area another member runs is not this member's to make (the
+        // kills it made there before stand).
+        const auto before = world.proposed.find(member.name);
+        size_t refused = 0;
+        for (auto& [map, handles] : proposal.kills) {
+            if (Decides(world, member, map)) {
+                continue;
+            }
+            refused += std::erase_if(handles, [&](u32 handle) {
+                return before == world.proposed.end() || !before->second.contains(map) ||
+                       !before->second.at(map).contains(handle);
+            });
+        }
+        std::erase_if(proposal.kills, [](const auto& entry) { return entry.second.empty(); });
+        if (refused > 0) {
+            result.log.append(QStringLiteral("party world %1: %2's %3 new kills are not its to "
+                                             "make (another member runs their area)")
+                                  .arg(world.name, QString::fromStdString(member.name))
+                                  .arg(refused));
+        }
+        bbcoop::Envelope taken_envelope = envelope;
+        *taken_envelope.mutable_kills() = ToMessage(proposal);
         const WorldLogHost::Taken taken = world.host.Propose(proposal);
         if (taken.stale) {
             break;
@@ -452,7 +479,7 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
             world.proposed[member.name] = proposal.kills;
             bbcoop::JournalRecord record;
             record.mutable_propose()->set_member(member.name);
-            *record.mutable_propose()->mutable_kills() = envelope.kills();
+            *record.mutable_propose()->mutable_kills() = taken_envelope.kills();
             Journal(world, std::move(record), now_ms);
         }
         if (!taken.entries.empty()) {
@@ -555,6 +582,9 @@ void Service::TakeWorld(Member& member, PartyWorld& world, const bbcoop::Envelop
         break;
     }
     case bbcoop::Envelope::kHp: {
+        if (!Decides(world, member, envelope.hp().map())) {
+            return; // another member runs that area: its HP is the owner's to report
+        }
         const WorldLogHost::Taken taken = world.host.ProposeHp(HpOf(envelope.hp(), member.name));
         if (taken.stale) {
             return;
@@ -588,9 +618,17 @@ void Service::TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelop
         }
     };
     switch (envelope.body_case()) {
-    case bbcoop::Envelope::kMap:
-        answer(world.boards.Map(member.name, envelope.map().map(), now_ms), PartyBoards::Maps);
+    case bbcoop::Envelope::kMap: {
+        // A load (map 0) is no place on the boards, only for the enemy owners.
+        if (envelope.map().map() != 0) {
+            answer(world.boards.Map(member.name, envelope.map().map(), now_ms), PartyBoards::Maps);
+        }
+        // The owners go with every answer to a member's map (to everyone when they changed).
+        const bool changed =
+            world.owners.Place(member.name, envelope.map().map(), now_ms, member.host);
+        SendOwners(world, now_ms, result, changed ? nullptr : &member);
         return;
+    }
     case bbcoop::Envelope::kRest:
         answer(world.boards.Rest(member.name, envelope.rest(), now_ms), PartyBoards::Rests);
         return;
@@ -671,6 +709,40 @@ void Service::SendBoards(PartyWorld& world, unsigned changed, qint64 now_ms, Mem
     }
 }
 
+void Service::SendOwners(PartyWorld& world, qint64 now_ms, Result& result, Member* only) {
+    bbcoop::Envelope envelope;
+    *envelope.mutable_enemy_owners() = world.owners.Message();
+    QStringList owners;
+    for (const bbcoop::EnemyOwner& owner : envelope.enemy_owners().owners()) {
+        owners.append(QStringLiteral("%1 %2 (epoch %3)")
+                          .arg(Hex(owner.map()), QString::fromStdString(owner.member()))
+                          .arg(owner.epoch()));
+    }
+    const QString logged = owners.isEmpty() ? QStringLiteral("none") : owners.join(", ");
+    if (logged != world.owners_logged) {
+        world.owners_logged = logged;
+        result.log.append(
+            QStringLiteral("party world %1: enemy owners: %2").arg(world.name, logged));
+    }
+    if (only != nullptr) {
+        SendTo(*only, envelope, now_ms);
+        return;
+    }
+    for (auto& [key, member] : members) {
+        if (member.party == world.name) {
+            SendTo(member, envelope, now_ms);
+        }
+    }
+}
+
+bool Service::Decides(const PartyWorld& world, const Member& member, u32 map) const {
+    if (!member.enemy_owner) {
+        return true;
+    }
+    const std::string owner = world.owners.OwnerOf(map);
+    return owner.empty() || owner == member.name;
+}
+
 void Service::SendToOthers(PartyWorld& world, const Member& from, const bbcoop::Envelope& envelope,
                            qint64 now_ms) {
     for (auto& [key, member] : members) {
@@ -726,6 +798,9 @@ Service::Result Service::Tick(qint64 now_ms) {
             SendEntries(world, {}, now_ms);
         }
         SendBoards(world, world.boards.Expire(now_ms), now_ms);
+        if (world.owners.Expire(now_ms)) {
+            SendOwners(world, now_ms, result);
+        }
     }
     Flush(now_ms, result);
     return result;

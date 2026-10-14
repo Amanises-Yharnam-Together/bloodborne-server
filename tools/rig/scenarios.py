@@ -100,6 +100,14 @@ BLOODSTAIN_DROPPED = (r"bloodstain state map=0x18010000 has_mark=1 record_valid=
                       r"record_30=-?\d+ record_38=\d+ record_block=0x18010000")
 BLOODSTAIN_STOLEN = r"bloodstain state .* stain_hidden=1"
 LETHAL_FALL = ["hurt self 1", "rise 25"]
+# Enemy HP kept in step: over the HP board (the old path) or by the area's owner (phase 4,
+# SHADPS4_BLOODBORNE_ENEMY_OWNER=1: one game runs each area's enemies, the others follow it).
+HP_SHARED = r"enemy HP (?:shared over the HP board|from the area's owner)"
+# A copy lowered to the others' HP: the board's damage (old path) or the owner's HP (phase 4).
+HP_LOWERED = (r"(?:lowered \d+ enemies by the other members' damage|"
+              r"this follower's copies took the owner's HP from the log)")
+OWNER_RUNS = r"enemy owner: this game runs map 0x18010000's enemies"
+OWNER_FOLLOWS = r"enemy owner: this game follows \w+ on map 0x18010000"
 # A real death while a partner stands on the map, as a player has one (party death is always on in
 # the port, Kaniel 2026-10-13): the lethal fall puts it down and it gives up (Circle held 3 s).
 GIVE_UP = [*LETHAL_FALL, "wait-vital down 30", "wait 2", "press circle 3600", "wait-vital dead 15"]
@@ -345,7 +353,8 @@ SCENARIOS = {
                  "to the Dream and back, then the guest, and both hit it again from their own "
                  "worlds; each time both games show the same HP with both players' damage in it, "
                  "and at the end each sees the other (Kaniel 2026-10-10: HP bars apart after "
-                 "trips; host and guest unseen after the host's early trip)",
+                 "trips; host and guest unseen after the host's early trip). The guest hits once "
+                 "the second time: its weapon kills the enemy in two more",
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait 30", "census 40",
                      f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 12", "census 40",
@@ -357,15 +366,15 @@ SCENARIOS = {
                       f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 12", "census 40",
                       "wait 25", "wait-members 2 240", "wait 5", f"travel {HUNTERS_DREAM}",
                       "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 15",
-                      "census 40", f"hit {ENEMY} 30", "wait 1", f"hit {ENEMY} 30", "wait 45",
+                      "census 40", f"hit {ENEMY} 30", "wait 46",
                       "census 40", "wait 4", "census 40", "expect-others-near 1 40",
                       "expect-session 2"],
         },
         # The second census of each (after the hits in one world), and the last.
         "same_hp": ENEMY,
         "same_hp_census": [1],
-        "expect": {"host": [r"enemy HP shared over the HP board"],
-                   "guest": [r"enemy HP shared over the HP board"]},
+        "expect": {"host": [HP_SHARED],
+                   "guest": [HP_SHARED]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 900,
     },
@@ -462,7 +471,7 @@ SCENARIOS = {
                       "wait 10", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 45",
                       "snapshot", f"expect-hp {ENEMY} <= 200"],
         },
-        "expect": {"guest": [r"lowered \d+ enemies by the other members' damage"]},
+        "expect": {"guest": [HP_LOWERED]},
         "timeout": 720,
     },
     "boss-kill": {
@@ -607,8 +616,10 @@ SCENARIOS = {
                       "snapshot"],
         },
         "expect": {
-            "guest": [r"guest alone on map 0x18000000 took over \d+ enemies",
-                      r"guest no longer alone; handed back"],
+            "guest": [r"(?:guest alone on map 0x18000000 took over \d+ enemies|"
+                      r"enemy owner: took over \d+ enemies on map 0x18000000)",
+                      r"(?:guest no longer alone; handed back|"
+                      r"enemy owner: this game follows \w+ on map 0x18000000)"],
         },
         "timeout": 720,
     },
@@ -1015,9 +1026,9 @@ SCENARIOS = {
         },
         "same_hp": ENEMY,
         "hp_sums_hits": ENEMY,
-        "expect": {"host": [r"enemy HP shared over the HP board"],
+        "expect": {"host": [HP_SHARED],
                    "guest": [r"hit on 0x1001400b by this player",
-                             r"enemy HP shared over the HP board"]},
+                             HP_SHARED]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 720,
     },
@@ -1062,7 +1073,7 @@ SCENARIOS = {
         # link; forest run 2026-10-11: the host's two-hit kills ended before the guests' bars
         # moved).
         "max_hp_lag": 0.15,
-        "expect": {"host": [r"enemy HP shared over the HP board"]},
+        "expect": {"host": [HP_SHARED]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
         "timeout": 1200,
     },
@@ -1084,6 +1095,68 @@ SCENARIOS = {
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
+    "owner-leaves": {
+        "about": "phase 4: the host runs Central Yharnam's enemies and hurts one; it goes to the "
+                 "Dream and the guest takes the area over with the enemy as hurt as it was (no "
+                 "reset, no full HP), kills it, and the host coming back finds it dead",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 20", f"hurt {ENEMY} 200",
+                     "wait 10", "sync hurt", f"travel {HUNTERS_DREAM}", "sync killed", "wait 5",
+                     f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240", "wait 20",
+                     "snapshot"],
+            "guest": [START, "godmode", "wait-session 2 300", "sync hurt", "wait 5",
+                      f"expect-hp {ENEMY} <= 200", "wait 20", f"expect-hp {ENEMY} <= 200",
+                      *attack(ENEMY), "wait 5", "sync killed", "wait-members 2 240", "wait 20",
+                      "snapshot"],
+        },
+        "syncs": {"hurt": {"chapter": "owner-leaves", "roles": ["host", "guest"]},
+                  "killed": {"chapter": "owner-leaves", "roles": ["host", "guest"]}},
+        "expect": {"host": [OWNER_RUNS,
+                            r"(?:hid 1 enemies a member killed on map 0x18010000|"
+                            r"0x18010000, 1 near died)"],
+                   "guest": [OWNER_FOLLOWS, OWNER_RUNS]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 900,
+    },
+    "owner-crash": {
+        "about": "phase 4: the guest runs Central Yharnam's enemies (the host went to the Dream and "
+                 "came back to follow it); the guest's game crashes and the host takes the area "
+                 "over: its own hit lands",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 10", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
+                     "wait 20", "sync back", "wait 30", f"hit {ENEMY} 30", "wait 5",
+                     f"expect-hp {ENEMY} < 484", "snapshot"],
+            "guest": [[START, "godmode", "wait-session 2 300", "wait 20", "wait-members 2 240",
+                       "wait 20", "sync back", "wait 2", "done"],
+                      [START, "wait 20", "snapshot"]],
+        },
+        "syncs": {"back": {"chapter": "owner-crash", "roles": ["host", "guest"]}},
+        "expect": {"host": [OWNER_FOLLOWS, OWNER_RUNS], "guest": [OWNER_RUNS]},
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
+    "border-fight": {
+        "about": "phase 4: the guest joins in place in Cathedral Ward while the host is in Central "
+                 "Yharnam, two blocks of one area: each runs its own block's enemies, then the "
+                 "guest crosses to the host's block and follows it there; both hits on one enemy "
+                 "count once in both games",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 420", "wait 60", f"hit {ENEMY} 30",
+                     "wait 40", "census 40", "expect-session 2"],
+            "guest": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                      "wait-session 2 420", "wait 20", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait-members 2 240", "wait 10", f"hit {ENEMY} 30", "wait 30",
+                      "census 40", "expect-session 2"],
+        },
+        "same_hp": ENEMY,
+        "hp_sums_hits": ENEMY,
+        "expect": {"host": [OWNER_RUNS],
+                   "guest": [r"enemy owner: this game runs map 0x18000000's enemies",
+                             OWNER_FOLLOWS]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 900,
+    },
     "hp-across-blocks": {
         "about": "the guest joins in place in Cathedral Ward while the host is in Central "
                  "Yharnam (two blocks of one area); HP reports still count between them",
@@ -1095,7 +1168,7 @@ SCENARIOS = {
                       "wait-members 2 240", "wait 20", "snapshot", f"expect-hp {ENEMY} <= 200",
                       "expect-session 2"],
         },
-        "expect": {"guest": [r"lowered \d+ enemies by the other members' damage"]},
+        "expect": {"guest": [HP_LOWERED]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 900,
     },

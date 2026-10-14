@@ -61,6 +61,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"native packet trace", false},
     {"channel table", false},
     {"game packet link", false},
+    {"enemy owner", false},
     {"host leaves", true},
     {"seamless travel", true},
     {"stop request", true},
@@ -258,6 +259,15 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // The game's packets in our frames (InstallGamePacketLink): the transport send (the member
     // queues' fill 0x01790C20 is called, not hooked).
     {"transport send", "game packet link", CoopSiteKind::Hook, 0x00C8F0A0, "55 48 89 E5 41 57"},
+    // Phase 4's enemy owners (InstallEnemyOwner, see EnemyRole): the HP sync's host-only checks,
+    // the receive from the host and the hit on an enemy.
+    {"enemy HP round check", "enemy owner", CoopSiteKind::Hook, 0x018EF26C, "48 8B 9D 08 FF FF FF"},
+    {"enemy HP state read", "enemy owner", CoopSiteKind::Hook, 0x018EF578, "8B 87 24 01 00 00"},
+    {"enemy HP send branch", "enemy owner", CoopSiteKind::Hook, 0x018EF587, "80 BB 64 06 00 00 00"},
+    {"enemy HP receive branch", "enemy owner", CoopSiteKind::Hook, 0x018EF684, "49 89 DC 48 85 FF"},
+    {"receive from host member", "enemy owner", CoopSiteKind::Hook, 0x01789495,
+     "48 81 C3 D0 00 00 00"},
+    {"enemy hit state read", "enemy owner", CoopSiteKind::Hook, 0x01A2A102, "8B 88 24 01 00 00"},
 
     {"leave limit", "host leaves", CoopSiteKind::Hook, 0x0138A4A0, "55 48 89 E5 53 50"},
 
