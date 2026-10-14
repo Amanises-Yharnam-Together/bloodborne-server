@@ -1,9 +1,8 @@
 # Trading between party members
 
 Party members give each other Blood Echoes, Blood Vials and Quicksilver Bullets, and may ask for
-some back (a swap). The server owns every trade; each game owns its own inventory. Port only,
-behind `SHADPS4_BLOODBORNE_TRADE=1` (with the server world, `SHADPS4_BLOODBORNE_SERVER_WORLD`),
-until the rig and a playtest pass.
+some back (a swap). The server owns every trade; each game owns its own inventory. Always on in
+the port with the server world (Kaniel 2026-10-14); shadPS4 has none.
 
 ## How a trade goes
 
@@ -11,7 +10,7 @@ until the rig and a playtest pass.
    Echoes" there, shown while it has any), and a number in the game's quantity picker (cursor on
    No; down from 1 wraps to all of them). The offer goes to the nearest other party member
    standing on the same map. The game's inventory hides vials and bullets (they are on the HUD
-   only); with trading on, the port lists them in the Consumables tab (row filter 0x01BD8150 made
+   only); the port lists them in the Consumables tab (row filter 0x01BD8150 made
    to keep every row), with the game's own Use and Discard too.
 2. The giver's game takes the items out of its inventory at once, then sends `TradeOffer`.
 3. shadNet checks it (both members online in the party, tradeable items, counts within limits, at
@@ -60,7 +59,7 @@ whenever no menu is open, also mid-fight; its cursor starts on No.
 | Quantity picker | `0x01C203C0(Job**, owner, L"NumSelect", text, min, max, on_ok, extra)` |
 | Yes/no, OK box | `0x01C1ED10`, `0x01C1F500` (Job**, owner, text); answer MenuMan `[0x05562878]` +0x1CC (1 yes, 2 no) |
 | Show in the world | root `0x0176BAB0()`, owner root+0x48, push `0x01BB27A0(Handle*, root, Job**, abort)`; not while MenuMan +0x2FC; the box is gone once ours is the job's last reference |
-| Inventory row filter | `0x01BD8150` leaves out goods 900, 901, 1000; with trading on it is `mov al, 1; ret` |
+| Inventory row filter | `0x01BD8150` leaves out goods 900, 901, 1000; the port makes it `mov al, 1; ret` |
 
 Goods: Blood Vial 1000, Quicksilver Bullets 900 (max held 20, storage 600). Other consumables that
 could follow: Molotov 1200, Throwing Knife 1240, Pebble 1230, Antidote 1100, Sedative 1101,

@@ -245,7 +245,7 @@ SCENARIOS = {
         "timeout": 720,
     },
     "trade": {
-        "about": "trading on the server (SHADPS4_BLOODBORNE_TRADE=1, the port with the server world): "
+        "about": "trading on the server (the port with the server world): "
                  "the host gives the guest 4 Blood Vials, swaps 3000 Blood Echoes for 5 Quicksilver "
                  "Bullets, then offers 2 vials the guest declines (they come back)",
         "roles": {
@@ -275,7 +275,7 @@ SCENARIOS = {
         "timeout": 720,
     },
     "trade-menus": {
-        "about": "trading's menus (drawn, with SHADPS4_BLOODBORNE_TRADE=1): the guest answers the "
+        "about": "trading's menus (drawn): the guest answers the "
                  "host's offer in the game's yes/no box and the host sees the game's box saying it "
                  "was accepted; then the host gives 2 vials through the inventory's Give row and the "
                  "game's quantity picker, and 2,000 Blood Echoes through Give Blood Echoes; the "

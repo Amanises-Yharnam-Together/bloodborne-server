@@ -18,7 +18,7 @@ using BloodborneCoop::TradeClient;
 using BloodborneCoop::TradeItem;
 using BloodborneCoop::TradeItems;
 
-// SHADPS4_BLOODBORNE_TRADE=1 with the server world; on once shadNet said it keeps trades too.
+// The port with the server world; on once shadNet said it keeps trades too.
 bool TradeSwitchOn();
 bool TradesOn();
 // The game's functions trading calls are the ones it knows (InstallTrading).

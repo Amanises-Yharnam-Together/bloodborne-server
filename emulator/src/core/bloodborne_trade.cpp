@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // Trading between party members, the game's side (server/coop/trade.h has the protocol): with
-// SHADPS4_BLOODBORNE_TRADE=1 (the port only, with the server world) a member offers another
+// the server world (the port only, always on there) a member offers another
 // Blood Echoes, Blood Vials or Quicksilver Bullets and may ask for some back; shadNet holds the
 // offer until the other answers. This file takes items out of the player's inventory and puts
 // them in (with the game's own "item obtained" popup), keeps the trades' client and answers to
@@ -37,14 +37,13 @@ constexpr u64 GiveItemsOffset = 0x017D89F0;
 constexpr u32 GoodsCategory = 0x40000000;
 constexpr u32 GoodsHandle = 0xB0000000;
 
-const bool trade_switch = [] {
+// Always on in the port (Kaniel 2026-10-14), with the server world; the port only
+// (docs/SERVER_COOP_PLAN.md).
 #ifdef BLOODBORNE_NATIVE_PORT
-    const char* env = std::getenv("SHADPS4_BLOODBORNE_TRADE");
-    return env != nullptr && std::string_view{env} == "1";
+constexpr bool trade_switch = true;
 #else
-    return false; // the port only (docs/SERVER_COOP_PLAN.md)
+constexpr bool trade_switch = false;
 #endif
-}();
 
 std::atomic<bool> server_trades{false};
 std::atomic<bool> trade_sites{false};
