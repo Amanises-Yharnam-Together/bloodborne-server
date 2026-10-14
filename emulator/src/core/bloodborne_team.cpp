@@ -52,8 +52,7 @@ bool TeamCanBegin(const bbcoop::LobbyState& lobby, const std::string& me) {
         return true;
     }
     return std::ranges::all_of(lobby.team().members(), [&](const bbcoop::TeamMember& m) {
-        return m.member() == me ||
-               (m.ready() && m.state() != bbcoop::LobbyPlayer::OFFLINE);
+        return m.member() == me || (m.ready() && m.state() != bbcoop::LobbyPlayer::OFFLINE);
     });
 }
 

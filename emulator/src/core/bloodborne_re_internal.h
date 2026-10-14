@@ -438,6 +438,7 @@ void KeepBossHpInStep();
 void WatchEnemyHp(u64 hp_address, u32 handle);
 void LogNearbyEnemyControl();
 void LogJoinTasksOnChange();
+void ReconcileMemberPresence();
 // Whether this follower runs the enemy `handle` (the owner let it go and named it).
 bool ThisFollowerRuns(u32 handle);
 

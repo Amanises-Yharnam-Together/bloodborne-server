@@ -20,7 +20,8 @@ expect-hp <handle|self> <op> <value>, expect-session <n>, expect-map <map>,
 set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeout>],
 wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, for
 expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
-expect-others-near <n> <meters> (n other players alive that close), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
+expect-others-near <n> <meters> (n other players alive that close), expect-others-shown <n> (exactly n other players
+shown, not hidden for another map), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
 Party death (the scenario's "settings" switch it on): rise <metres> (straight up, to fall),
 approach-downed (beside the nearest downed member on the map), revive-downed [<timeout>]
@@ -1084,6 +1085,25 @@ SCENARIOS = {
         },
         "stays": {"guest2": 3.0},
         "timeout": 900,
+    },
+    # Kaniel 2026-10-15: the host and a guest went to the Hunter's Dream and the second guest still
+    # saw them in Central Yharnam. It sees neither while they are away, both once they are back.
+    "away-unseen3": {
+        "about": "a party of three: the host and the first guest go to the Hunter's Dream; the "
+                 "second guest shows neither of them meanwhile, and both again once they are back",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait 20", f"travel {HUNTERS_DREAM}",
+                     "wait 60", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 3 240", "wait 30",
+                     "expect-session 3"],
+            "guest": [START, "godmode", "wait-session 3 480", "wait 25",
+                      f"travel {HUNTERS_DREAM}", "wait 55", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait-members 3 240", "wait 30", "expect-session 3"],
+            # Both away from about 40 s on, back after about 85 s.
+            "guest2": [START, "godmode", "wait-session 3 480", "wait 15", "expect-others-shown 2",
+                       "wait 40", "expect-others-shown 0", "wait-members 3 240", "wait 20",
+                       "expect-others-shown 2", "expect-session 3"],
+        },
+        "timeout": 1000,
     },
     "join3-uncap": {
         "about": "join3 at the kit's frame rate (Uncap FPS++): rig 2026-10-12, the host saw the "

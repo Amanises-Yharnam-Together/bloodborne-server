@@ -997,7 +997,8 @@ int EachMembersLoadReachesTheOthers() {
   return 0;
 }
 
-// Kaniel 2026-10-14: the enemies the owner's game let go reach the others under its name.
+// Kaniel 2026-10-14: the enemies the owner's game let go reach the others under
+// its name.
 int TheEnemiesTheOwnerLetGoReachTheOthers() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -1015,14 +1016,16 @@ int TheEnemiesTheOwnerLetGoReachTheOthers() {
   CHECK(guest.let_go.has_value());
   CHECK(guest.let_go->member() == "host");
   CHECK(guest.let_go->map() == 0x18010000u);
-  CHECK(guest.let_go->handles_size() == 1 && guest.let_go->handles(0) == 0x1001400bu);
+  CHECK(guest.let_go->handles_size() == 1 &&
+        guest.let_go->handles(0) == 0x1001400bu);
   CHECK(!host.let_go.has_value());
   return 0;
 }
 
-// Kaniel 2026-10-15: with the host far away a guest runs an enemy the host let go; its hits went
-// to the host's sleeping copy and the HP came back late or not at all. The guest the owner named
-// reports that enemy's HP (and its kill) itself; the server takes them from that guest only.
+// Kaniel 2026-10-15: with the host far away a guest runs an enemy the host let
+// go; its hits went to the host's sleeping copy and the HP came back late or
+// not at all. The guest the owner named reports that enemy's HP (and its kill)
+// itself; the server takes them from that guest only.
 int TheGuestThatRunsAnEnemyReportsItsHp() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -1415,8 +1418,10 @@ int main() {
        TheHostsSessionReachesItsGuestsToJoin},
       {"AHostsSessionGoesWithItsGame", AHostsSessionGoesWithItsGame},
       {"EachMembersLoadReachesTheOthers", EachMembersLoadReachesTheOthers},
-      {"TheEnemiesTheOwnerLetGoReachTheOthers", TheEnemiesTheOwnerLetGoReachTheOthers},
-      {"TheGuestThatRunsAnEnemyReportsItsHp", TheGuestThatRunsAnEnemyReportsItsHp},
+      {"TheEnemiesTheOwnerLetGoReachTheOthers",
+       TheEnemiesTheOwnerLetGoReachTheOthers},
+      {"TheGuestThatRunsAnEnemyReportsItsHp",
+       TheGuestThatRunsAnEnemyReportsItsHp},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},

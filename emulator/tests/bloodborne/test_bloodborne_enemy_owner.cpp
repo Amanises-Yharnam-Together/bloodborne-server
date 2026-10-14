@@ -172,7 +172,8 @@ TEST(EnemyOwner, TheOwnerNamesTheNearestGuestToRunAnEnemyItLetGo) {
     EXPECT_EQ(RunnerOf("", enemy, std::vector<MemberVitals>{GuestAt("a", 5.0f, Vital::Down)},
                        CentralYharnam),
               "");
-    EXPECT_EQ(RunnerOf("", enemy, std::vector<MemberVitals>{GuestAt("a", 5.0f, Vital::Up, 0x18000000)},
+    EXPECT_EQ(RunnerOf("", enemy,
+                       std::vector<MemberVitals>{GuestAt("a", 5.0f, Vital::Up, 0x18000000)},
                        CentralYharnam),
               "");
     EXPECT_EQ(RunnerOf("a", enemy,
@@ -182,7 +183,8 @@ TEST(EnemyOwner, TheOwnerNamesTheNearestGuestToRunAnEnemyItLetGo) {
 }
 
 // Kaniel 2026-10-15: a guest's hits on an enemy it runs went to the host's sleeping copy and came
-// back late or not at all. On an enemy this follower runs, its own hits land at once, as the host's.
+// back late or not at all. On an enemy this follower runs, its own hits land at once, as the
+// host's.
 TEST(EnemyOwner, AGuestsHitOnAnEnemyItRunsLandsAtOnce) {
     constexpr s32 Hosting = MatchingStateHosting;
     constexpr s32 Guest = MatchingStateSummonedGuest;
@@ -191,4 +193,23 @@ TEST(EnemyOwner, AGuestsHitOnAnEnemyItRunsLandsAtOnce) {
     EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Guest, false), std::nullopt);
     EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Hosting, false), std::optional<s32>{Guest});
     EXPECT_EQ(EnemyHitState(EnemyRole::Owner, Hosting, false), std::nullopt);
+}
+
+// Kaniel 2026-10-15: a guest's hit did not count at once: its copy took the hit, then the host's
+// older HP (from before the hit reached it) put it back until the host's answer came. For a while
+// after its own hit, a guest's copy keeps what its hit left, unless the host's is lower.
+TEST(EnemyOwner, AGuestsOwnHitStaysWhileTheHostCatchesUp) {
+    EXPECT_EQ(HeldOwnHitHp(484, 382, 100), std::optional<s32>{382}) << "the host's HP from before";
+    EXPECT_EQ(HeldOwnHitHp(382, 382, 100), std::nullopt) << "the host has it";
+    EXPECT_EQ(HeldOwnHitHp(300, 382, 100), std::nullopt) << "another's hit on top";
+    EXPECT_EQ(HeldOwnHitHp(484, 382, OwnHitHoldMs), std::nullopt) << "too long: the host's stands";
+    EXPECT_EQ(HeldOwnHitHp(0, 382, 100), std::nullopt) << "dead";
+}
+
+// Kaniel 2026-10-15: the dog died as the team joined: the host, the map's first owner, took HP a
+// guest had reported from its own world before it joined (1093 -> 413). Only an owner that takes
+// a map over from another takes the log's HP; the first owner's world is the enemy.
+TEST(EnemyOwner, OnlyAnOwnerThatTakesOverTakesTheLogsHp) {
+    EXPECT_FALSE(TakesOverEnemyHp(EnemyOwnerEntry{CentralYharnam, "host", 1}));
+    EXPECT_TRUE(TakesOverEnemyHp(EnemyOwnerEntry{CentralYharnam, "guest", 2}));
 }

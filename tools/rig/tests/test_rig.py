@@ -26,7 +26,7 @@ VERBS = {
     "wait", "wait-session", "wait-members", "wait-map", "travel", "ensure-map", "hurt", "kill",
     "mark", "approach", "attack", "teleport", "press", "stick", "set-flag", "expect-flag",
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
-    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
+    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "expect-others-shown",
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
     "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
@@ -689,6 +689,17 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue([p for p in run_scenario.judge(spec, {"guest": still}) if "stood" in p])
         self.assertFalse([p for p in run_scenario.judge(spec, {"guest": moved}) if "stood" in p])
         self.assertTrue([p for p in run_scenario.judge(spec, {"guest": ""}) if "stood" in p])
+
+    def test_a_player_that_stands_still_stays_put(self):
+        # Kaniel 2026-10-15: one guest's backstab dragged the other guest to the enemy.
+        census = ("[Debug] <Info> () x: Bloodborne autoplay census: map 0x18010000, 1 characters "
+                  "within 5 m of ({}, -50.6, {})")
+        still = "\n".join([census.format(-199.7, 179.4), census.format(-200.3, 178.7)])
+        dragged = "\n".join([census.format(-199.7, 179.4), census.format(-223.5, 181.9)])
+        spec = {"stays": {"guest2": 3.0}}
+        self.assertFalse([p for p in run_scenario.judge(spec, {"guest2": still}) if "moved" in p])
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest2": dragged}) if "moved" in p])
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest2": ""}) if "moved" in p])
 
     def test_a_lag_at_the_limit_passes(self):
         # Rig hit3 2026-10-14: 0.15 s on the games' clock came out as 0.1500000000014552 s, over a

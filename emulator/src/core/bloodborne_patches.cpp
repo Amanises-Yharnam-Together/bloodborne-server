@@ -748,8 +748,12 @@ bool SendHitToOwner(const GuestRegisterSnapshot* registers) {
             ++game_link.sent;
             static std::atomic<u32> logged{0};
             if (logged.fetch_add(1) < 10) {
-                LOG_INFO(Debug, "Bloodborne enemy owner: a hit on {:#x} went to the owner {}",
-                         ReadValue<u32>(payload, 0), owner);
+                std::string bytes;
+                for (u32 i = 0; i < size; ++i) {
+                    bytes += fmt::format("{:02x}", ReadValue<u8>(payload, i));
+                }
+                LOG_INFO(Debug, "Bloodborne enemy owner: a hit on {:#x} went to the owner {} ({})",
+                         ReadValue<u32>(payload, 0), owner, bytes);
             }
             return true;
         }
@@ -837,8 +841,10 @@ void PS4_SYSV_ABI SetEnemyHitState(u64, GuestRegisterSnapshot* registers) {
     const bool runs = handle != 0 && ThisFollowerRuns(handle);
     static u32 logged = 0;
     if (runs && ++logged <= 20) {
-        LOG_INFO(Debug, "Bloodborne enemy owner: this follower's hit on {:#x}, an enemy it runs, "
-                        "lands here", handle);
+        LOG_INFO(Debug,
+                 "Bloodborne enemy owner: this follower's hit on {:#x}, an enemy it runs, "
+                 "lands here",
+                 handle);
     }
     if (const auto wanted = EnemyHitState(CurrentEnemyRole(), state, runs)) {
         registers->rax = StandInFor(*wanted);

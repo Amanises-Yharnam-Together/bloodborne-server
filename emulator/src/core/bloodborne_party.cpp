@@ -3678,6 +3678,17 @@ std::optional<s32> EnemyHitState(EnemyRole role, s32 state, bool runs_victim) {
     return EnemyHitState(role, state);
 }
 
+std::optional<s32> HeldOwnHitHp(s32 current, s32 after_own_hit, s64 age_ms) {
+    if (current <= 0 || current <= after_own_hit || age_ms >= OwnHitHoldMs) {
+        return std::nullopt;
+    }
+    return after_own_hit;
+}
+
+bool TakesOverEnemyHp(const EnemyOwnerEntry& owner) {
+    return owner.epoch > 1;
+}
+
 std::optional<u16> EnemyOwnershipWord(EnemyRole role) {
     switch (role) {
     case EnemyRole::Owner:
@@ -5420,6 +5431,28 @@ PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view
         });
     }
     return panel;
+}
+
+std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
+                                    std::span<const MemberVitals> board, std::string_view self,
+                                    u32 map) {
+    std::vector<bool> shown;
+    for (const std::optional<LampPosition>& at : characters) {
+        if (!at) {
+            shown.push_back(true);
+            continue;
+        }
+        shown.push_back(std::ranges::any_of(board, [&](const MemberVitals& member) {
+            if (member.member == self || member.map != map || map == 0) {
+                return false;
+            }
+            const float dx = member.at[0] - (*at)[0];
+            const float dy = member.at[1] - (*at)[1];
+            const float dz = member.at[2] - (*at)[2];
+            return dx * dx + dy * dy + dz * dz <= PresenceMetres * PresenceMetres;
+        }));
+    }
+    return shown;
 }
 
 } // namespace Core::Bloodborne

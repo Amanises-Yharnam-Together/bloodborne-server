@@ -2373,6 +2373,13 @@ std::optional<s32> EnemyHitState(EnemyRole role, s32 state);
 // at once, as the host's (Kaniel 2026-10-15).
 std::optional<s32> EnemyHitState(EnemyRole role, s32 state, bool runs_victim);
 std::optional<u16> EnemyOwnershipWord(EnemyRole role);
+// Whether this owner's copies take the log's HP on becoming the owner: when it takes the map over
+// from another (its epoch past the first), not as the map's first owner (Kaniel 2026-10-15).
+bool TakesOverEnemyHp(const EnemyOwnerEntry& owner);
+// Kaniel 2026-10-15: a guest's own hit on a copy holds for OwnHitHoldMs against the host's older HP
+// (ch 5 from before the hit reached the host): the HP to write back, or none.
+constexpr s64 OwnHitHoldMs = 1'500;
+std::optional<s32> HeldOwnHitHp(s32 current, s32 after_own_hit, s64 age_ms);
 enum class EnemyPacketFate : u8 { Keep, Drop, ToOwner };
 EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role);
 // `from_owner`: the sender is the area's owner.
@@ -2844,6 +2851,16 @@ struct VitalsBoard {
     bool operator==(const VitalsBoard&) const = default;
 };
 std::string EncodeVitalsUpdate(const MemberVitals& self, std::span<const ReviveHitTotal> hits);
+// Kaniel 2026-10-15: who shows in this world comes from one place, the server's map board. Another
+// player's character (by position, nothing when unknown) shows while a member other than `self`
+// stands on `map` within PresenceMetres of it; else it is hidden (no model, no collision) until
+// one does. The vitals board's positions are a little behind: the margin covers that.
+constexpr float PresenceMetres = 25.0f;
+// A character that stops matching stays shown this long first (a board a beat behind a sprint).
+constexpr s64 PresenceGraceMs = 3'000;
+std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
+                                    std::span<const MemberVitals> board, std::string_view self,
+                                    u32 map);
 std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body);
 // A member's own update (EncodeVitalsUpdate's line), as a peer sends it straight over the link.
 struct DirectVitals {
