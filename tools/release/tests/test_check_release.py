@@ -63,6 +63,14 @@ class CheckReleaseTest(unittest.TestCase):
                 temp.cleanup()
                 self.assertTrue(problems, player_file)
 
+    def test_there_are_no_bat_files(self):
+        # Kaniel 2026-10-13: one setup .exe and the launcher, no bat files.
+        make_release(self.root, extra=("2 - PLAY.bat",))
+        problems = tool.check(self.root)
+        self.assertTrue(any("2 - PLAY.bat" in problem for problem in problems), problems)
+        self.assertNotIn("1 - SETUP.bat", tool.REQUIRED)
+        self.assertNotIn("tools/setup.ps1", tool.REQUIRED)
+
     def test_the_event_reference_holds_hashes_only(self):
         make_release(self.root, extra=("event-reference.json",))
         (self.root / "event-reference.json").write_text(

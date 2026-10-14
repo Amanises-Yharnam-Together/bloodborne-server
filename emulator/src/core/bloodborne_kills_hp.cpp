@@ -1184,10 +1184,35 @@ void KeepEnemyDeathsInStep(bool sharing) {
         std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
                             KillPrologue.size()},
         KillPrologue);
+    // Copies at 0 HP without the game's death, since when (see FinishesStuckDeath).
+    static std::unordered_map<u64, s64> zero_since;
+    static std::unordered_set<u64> finished;
+    static u64 zero_visit = 0;
+    if (visit != zero_visit) {
+        zero_since.clear();
+        finished.clear();
+        zero_visit = visit;
+    }
     for (size_t index = 0; index < pointers.size(); ++index) {
         const u64 character = pointers[index];
         const u32 handle = characters[index].handle;
         const s32 hp = characters[index].hp;
+        if (hp > 0) {
+            zero_since.erase(character);
+        } else if (can_kill && !finished.contains(character)) {
+            const auto since = zero_since.try_emplace(character, now_ms).first->second;
+            const u8 death_flags = ReadValue<u8>(character, 0x1E3);
+            if (FinishesStuckDeath(others.contains(handle), hp, death_flags, since, now_ms) &&
+                IsCharacter(character, "stuck death")) {
+                using Kill = void PS4_SYSV_ABI (*)(u64 character);
+                reinterpret_cast<Kill>(image_base + KillCharacterOffset)(character);
+                finished.insert(character);
+                LOG_INFO(Debug,
+                         "Bloodborne party: {:#x} sat at 0 HP without dying (death flags {:#x}) "
+                         "after a member's kill; the game's kill now",
+                         handle, death_flags);
+            }
+        }
         const auto it = hidden.find(character);
         if (it == hidden.end() && hp > 0 &&
             AppliesMemberKill(others.contains(handle), CharacterHp(character)) &&

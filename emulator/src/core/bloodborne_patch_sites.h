@@ -71,6 +71,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"talk host", false},
     {"level sync", false},
     {"solid NPCs", false},
+    {"guests hit NPCs", false},
     {"full echoes", false},
     {"echo diagnostics", false},
     {"menu client", false},
@@ -288,6 +289,20 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
 
     {"level sync decision", "level sync", CoopSiteKind::Hook, 0x01507DB5,
      "41 0F B6 46 2C 0F B6 CB"},
+    // The team relation tables ([attacker's team][victim's], 32 x 32 bytes: hit as an enemy
+    // 0x04731560, hit as a friend 0x04731960; lock-on's 0x05127B90 is made at run time and left
+    // alone, a swing hits without it): a co-op guest (team 20) could
+    // not hit what the host (19) can, the friendly NPCs (teams 8, 9, 12, 26-28): the hag by the
+    // Cathedral Ward lamp took no hits from guests (playtest 2026-10-13, rig ward-npc). Row 20
+    // takes row 19's entries there.
+    {"guest hits NPCs as enemies", "guests hit NPCs", CoopSiteKind::Patch, 0x047317E8,
+     "00 00 00 00 00", "01 01 00 00 01"},
+    {"guest hits NPCs as enemies 26-28", "guests hit NPCs", CoopSiteKind::Patch, 0x047317FA,
+     "00 00 00", "01 01 01"},
+    {"guest hits NPCs as friends", "guests hit NPCs", CoopSiteKind::Patch, 0x04731BE8,
+     "00 00 00 00 00", "01 00 00 00 01"},
+    {"guest hits NPCs as friends 26-28", "guests hit NPCs", CoopSiteKind::Patch, 0x04731BFA,
+     "00 00 00", "01 00 01"},
     {"NPC wander check", "solid NPCs", CoopSiteKind::Hook, 0x018E4FB6,
      "8B 88 45 01 00 00 F6 C1 80"},
     {"NPC wander type check", "solid NPCs", CoopSiteKind::Hook, 0x018D8934,

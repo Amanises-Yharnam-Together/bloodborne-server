@@ -103,6 +103,12 @@ int main() {
     assert(BbSettings::DlssModelIndex(0) == 0);
     assert(BbSettings::DlssModels[BbSettings::DlssModelIndex(11)] == 11);
     assert(BbSettings::DlssModelIndex(99) == 0 && "unknown: NVIDIA's default");
+    // Online (co-op) play keeps the fixed 60 FPS mode (Kaniel 2026-10-13: a host above 60 made
+    // the guests see everyone freeze and fly): the FPS limit rows are locked there.
+    assert(BbSettings::FrameRateLocked("1"));
+    assert(!BbSettings::FrameRateLocked("0"));
+    assert(!BbSettings::FrameRateLocked(""));
+    assert(!BbSettings::FrameRateLocked(nullptr));
     std::puts("PASS: FPS limit and DLSS model settings");
 
     // Kaniel 2026-10-10: window mode (windowed, borderless, exclusive) and HDR output in the game's

@@ -287,6 +287,14 @@ int EffectiveFrameLimit(int fps_limit, bool uncapped_vblank) {
     return uncapped_vblank ? std::max(fps_limit, 0) : 0;
 }
 
+bool FrameRateLocked(const char* online) {
+    return online != nullptr && std::string_view{online} == "1";
+}
+
+bool FrameRateLocked() {
+    return FrameRateLocked(std::getenv("BB_ONLINE"));
+}
+
 int FpsLimitIndex(int limit) {
     int index = 0;
     for (int i = 0; i < FpsLimitCount; ++i) {
