@@ -111,12 +111,14 @@ WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& world);
 // stands alone in its world. TeamJoin says each frame what this game does.
 class TeamJoin {
 public:
-    enum class Action { None, CreateSession, Publish, PublishClosed, Join };
+    // TakeHost (phase 7): the server passed the room to this guest; it hosts the session now.
+    enum class Action { None, CreateSession, Publish, PublishClosed, Join, TakeHost };
     struct Frame {
         bool host = false;
         s32 matching_state = 0; // the session manager's +0x124: 0 alone, 3 hosting, 6 a guest
         bool ready = false;     // the party controller's go (in the world, settled, retry spaced)
         bool session_known = false; // a guest: the server sent its host's open session
+        bool room_owner = false;    // the server passed the session's room to this game
     };
     Action Tick(const Frame& frame);
 

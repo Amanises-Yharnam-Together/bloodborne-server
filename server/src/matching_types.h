@@ -120,6 +120,32 @@ struct Room {
     QHash<uint16_t, RoomMember> members;
     uint16_t memberIdCounter = 0;
 
+    // Phase 7, host migration: the owner left; the next is its successor list's first member still
+    // here, else the member who joined first (the lowest id), so every pass goes the same way.
+    // Sets the owner and its flag; 0 when nobody is left.
+    uint16_t PassOwnership() {
+        uint16_t next = 0;
+        while (!ownerSuccession.isEmpty()) {
+            const uint16_t candidate = ownerSuccession.takeFirst();
+            if (members.contains(candidate)) {
+                next = candidate;
+                break;
+            }
+        }
+        if (next == 0) {
+            for (auto it = members.cbegin(); it != members.cend(); ++it) {
+                if (next == 0 || it.key() < next) {
+                    next = it.key();
+                }
+            }
+        }
+        ownerMemberId = next;
+        if (RoomMember* owner = findById(next)) {
+            owner->flagAttr |= Matching2::ORBIS_NP_MATCHING2_ROOMMEMBER_FLAG_ATTR_OWNER;
+        }
+        return next;
+    }
+
     RoomMember* findById(uint16_t memberId) {
         auto it = members.find(memberId);
         return it == members.end() ? nullptr : &(*it);

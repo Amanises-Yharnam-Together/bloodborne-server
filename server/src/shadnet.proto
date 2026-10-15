@@ -546,6 +546,7 @@ message NotifyRoomEvent {
     uint32                   flags       = 8;
     bool                     has_passwd_mask = 9;
     uint64                   passwd_slot_mask = 10;
+    uint32                   prev_owner_id    = 11; // ROOM_OWNER_CHANGED: who owned it (phase 7)
 }
 
 // NotificationType::RoomMessage (11) maps onto

@@ -31,6 +31,7 @@
 #include "coop/coop_stream.h"
 #include "core/bloodborne_team.h"
 #include "core/libraries/network/server_link.h"
+#include "core/libraries/np/np_matching2/np_matching2.h"
 
 namespace Core::Bloodborne {
 namespace {
@@ -93,6 +94,7 @@ std::deque<bbcoop::Envelope> lobby_outbox;
 // world back (personal_world_due).
 std::optional<bbcoop::TeamWorld> team_world;
 std::optional<ResumePoint> server_resume_point; // ResumeAt, until the resume takes it
+bool server_resume_refused = false;             // RefuseServerResumePoint: this run's is not ours
 bool team_world_due = false;
 bool team_world_taken = false;
 std::set<u32> team_world_blocks;
@@ -176,6 +178,10 @@ bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
                  session.join().empty() ? "closed"
                                         : fmt::format("is open ({} bytes)", session.join().size()));
         std::scoped_lock lock{team_mutex};
+        if (team_session && !team_session->host().empty() && !session.host().empty() &&
+            team_session->host() != session.host() && !session.join().empty()) {
+            LOG_INFO(Debug, "Co-op team join: the session host moved to {}", session.host());
+        }
         team_session = session;
         return true;
     }
@@ -619,6 +625,11 @@ void SendEnemyHit(u32 map, u32 handle, s32 hp, s32 max) {
 std::vector<EnemyHitNews> TakeEnemyHits() {
     std::scoped_lock lock{enemy_hits_mutex};
     return std::exchange(enemy_hits, {});
+}
+
+void RequestServerHello() {
+    std::scoped_lock lock{stream_mutex};
+    hello_due = true;
 }
 
 ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms) {
@@ -1100,6 +1111,7 @@ bool TickTeamJoin(bool ready) {
         .matching_state = ReadValue<s32>(manager, 0x124),
         .ready = ready,
         .session_known = session.has_value() && !session->join().empty(),
+        .room_owner = Libraries::Np::NpMatching2::OwnsItsRoom(),
     };
     const auto say = [](std::string join, u64 number) {
         bbcoop::Envelope envelope;
@@ -1129,6 +1141,20 @@ bool TickTeamJoin(bool ready) {
         say({}, team_sessions_opened);
         LOG_INFO(Debug, "Co-op team join: this host's session {} closed", team_sessions_opened);
         break;
+    case TeamJoin::Action::TakeHost:
+        // Phase 7, host migration: the host's game went and the server passed the room to this
+        // guest. The game's room layer moved the owner flag (every game's session host follows,
+        // SprjSessionManager +0xD0); this game hosts the session now: +0x124 6 -> 3 (hosting) and
+        // +0x120 = 4 as a created session has, the host's role, and a hello saying so. Its next
+        // tick says the session to the server (Publish) for anyone joining later.
+        WriteValue(manager, 0x124, s32{MatchingStateHosting});
+        WriteValue(manager, 0x120, s32{4});
+        if (party_controller) {
+            party_controller->Assign(PartyRole::Host);
+        }
+        RequestServerHello();
+        LOG_INFO(Debug, "Co-op team join: the session host moved to this game (the room is ours)");
+        break;
     case TeamJoin::Action::Join: {
         const std::string& join = session->join();
         // Each guest's own player slot (two guests on one slot took each other's moves as their
@@ -1151,7 +1177,16 @@ bool TickTeamJoin(bool ready) {
 
 std::optional<ResumePoint> TakeServerResumePoint() {
     std::scoped_lock lock{team_mutex};
+    if (server_resume_refused) {
+        server_resume_point.reset();
+    }
     return std::exchange(server_resume_point, std::nullopt);
+}
+
+void RefuseServerResumePoint() {
+    std::scoped_lock lock{team_mutex};
+    server_resume_refused = true;
+    server_resume_point.reset();
 }
 
 std::optional<bbcoop::LobbyState> TeamLobbyState() {

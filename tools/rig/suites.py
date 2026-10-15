@@ -1079,7 +1079,10 @@ SUITES = {
                                   "Central Yharnam; the guest joins where it is (no kick)",
                     {"host": ["sync ja-restarted", "sync ja-joined", "wait 20",
                               "expect-session 2", f"expect-map {CATHEDRAL_WARD}"],
-                     "guest": [RESTART, START, "godmode", "sync ja-restarted",
+                     # Phase 7: a restarted guest comes back where it last stood in the team's
+                     # world (the server's point), so it goes to Central Yharnam first.
+                     "guest": [f"travel {CENTRAL_YHARNAM_LAMP}", "wait 12", RESTART, START,
+                               "godmode", "sync ja-restarted",
                                "wait-session 2 420", "sync ja-joined", "wait 20",
                                "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"]},
                     allow=CRASH_CLEANUP),
@@ -1237,6 +1240,17 @@ SUITES = {
                                "sync c3-back", "wait 10", "expect-session 3"]},
                     expect={role: [r"lost a member; staying where it is"]
                             for role in ("host", "guest")},
+                    allow=CRASH_CLEANUP),
+            chapter("host-crash3", "phase 7, host migration: the host's game dies; the two guests "
+                                   "stay together in their session (one of them hosts it now), "
+                                   "and the old host comes back into it: three again, nobody "
+                                   "leaving or joining again",
+                    {"host": ["sync hc3-ready", RESTART, START, "godmode", "wait-session 3 300",
+                              "wait 10", "sync hc3-back", "expect-session 3"],
+                     **{guest: ["sync hc3-ready", "wait 20", "expect-session 2",
+                                "expect-others-near 1 30", "sync hc3-back", "wait 10",
+                                "expect-session 3"] for guest in ("guest", "guest2")}},
+                    expect={guest: [r"session host moved to"] for guest in ("guest", "guest2")},
                     allow=CRASH_CLEANUP),
             wipe(PARTY3),
         ],

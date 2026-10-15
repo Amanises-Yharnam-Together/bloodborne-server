@@ -92,6 +92,7 @@ struct RoomCache {
 };
 
 struct CallbackPayload {
+    std::unique_ptr<OrbisNpMatching2RoomOwnerUpdate> room_owner_update;
     std::unique_ptr<OrbisNpMatching2RoomDataInternal> room_data;
     std::unique_ptr<OrbisNpMatching2CreateJoinRoomResponse> create_join_response;
     std::unique_ptr<OrbisNpMatching2CreateJoinRoomResponseA> create_join_response_a;

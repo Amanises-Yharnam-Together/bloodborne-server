@@ -59,7 +59,7 @@ struct Game {
     envelope.mutable_hello()->set_party(party.toStdString());
     envelope.mutable_hello()->set_member(name);
     envelope.mutable_hello()->set_run(run);
-    envelope.mutable_hello()->set_host(name == "host");
+    envelope.mutable_hello()->set_host(claims_host.value_or(name == "host"));
     envelope.mutable_hello()->set_enemy_owner(enemy_owner);
     Send(envelope, now_ms);
   }
@@ -142,13 +142,15 @@ struct Game {
     Send(envelope, now_ms);
   }
   void Team(bbcoop::TeamRequest::Action action, qint64 now_ms,
-            std::string other = {}, std::string team = {}, u32 slot = 0) {
+            std::string other = {}, std::string team = {}, u32 slot = 0,
+            std::string character = {}) {
     bbcoop::Envelope envelope;
     bbcoop::TeamRequest &request = *envelope.mutable_team_request();
     request.set_action(action);
     request.set_member(other);
     request.set_team(team);
     request.set_slot(slot);
+    request.set_character(character);
     Send(envelope, now_ms);
   }
   void Take(const bbcoop::Envelope &envelope, qint64 now_ms) {
@@ -232,6 +234,7 @@ struct Game {
   int team_worlds = 0;
   std::optional<bbcoop::TeamSession> session;
   std::optional<bbcoop::ResumeAt> resume_at;
+  std::optional<bool> claims_host; // its hello's host (default: named "host")
   int sessions = 0;
   std::map<std::string, bbcoop::LoadProgress> loads;
   std::vector<bbcoop::EnemyHit> hits;
@@ -1433,12 +1436,179 @@ int AMembersNextRunResumesWhereItWas() {
   return 0;
 }
 
+// Phase 7, host migration: the host's game dies; the room passes to a guest,
+// whose game takes the session host's role in place (a new hello saying so)
+// and offers the session; the other guest is told who hosts now, and the old
+// host's next run joins that session as a guest instead of closing it.
+int TheSessionHostMovesToAGuest() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game first{1001, "first", 12};
+  Game second{1002, "second", 13};
+  qint64 now = 1'000'000;
+  for (Game *game : {&host, &first, &second}) {
+    game->Hello(now);
+  }
+  Pump(service, {&host, &first, &second}, now);
+  bbcoop::Envelope open;
+  open.mutable_team_session()->set_join("NXRV-host");
+  open.mutable_team_session()->set_session(1);
+  host.Send(open, now);
+  Pump(service, {&host, &first, &second}, now);
+  CHECK(second.session && second.session->host() == "host");
+  // The host's game dies; the first guest takes over.
+  host.online = false;
+  first.claims_host = true;
+  first.Hello(now + 10);
+  bbcoop::Envelope moved;
+  moved.mutable_team_session()->set_join("NXRV-first");
+  moved.mutable_team_session()->set_session(1);
+  first.Send(moved, now + 10);
+  Pump(service, {&first, &second}, now + 10);
+  CHECK(second.session && second.session->host() == "first" &&
+        second.session->join() == "NXRV-first");
+  // The old host's next run says it hosts (its team's leader): the session
+  // stays the first guest's, and it is told to join it.
+  Game host_again{1003, "host", 21};
+  host_again.run = 0x2002;
+  host_again.Hello(now + 20);
+  Pump(service, {&host_again, &first, &second}, now + 20);
+  CHECK(second.session && second.session->join() == "NXRV-first");
+  CHECK(host_again.session && host_again.session->host() == "first");
+  // What it offers or closes does not count: it is not the session's host.
+  bbcoop::Envelope stray;
+  stray.mutable_team_session()->set_join("NXRV-stray");
+  host_again.Send(stray, now + 30);
+  bbcoop::Envelope closed;
+  closed.mutable_team_session()->set_session(5);
+  host_again.Send(closed, now + 31);
+  Pump(service, {&host_again, &first, &second}, now + 31);
+  CHECK(second.session && second.session->join() == "NXRV-first");
+  return 0;
+}
+
+// Phase 7, host migration: a team's leader whose game died comes back to a
+// session another member hosts now: its team start names that host, so its
+// game joins as a guest instead of opening a session of its own.
+int AReturningLeaderStartsAsAGuestOfTheNewHost() {
+  Service service{{}};
+  Game a{1000, "aa", 11};
+  Game b{1001, "bb", 12};
+  qint64 now = 1'000'000;
+  a.LobbyHello(false, now);
+  b.LobbyHello(false, now);
+  Pump(service, {&a, &b}, now);
+  a.Team(bbcoop::TeamRequest::CREATE, now);
+  Pump(service, {&a, &b}, now);
+  const std::string team = a.lobby.team().id();
+  a.Team(bbcoop::TeamRequest::INVITE, now, "bb");
+  Pump(service, {&a, &b}, now);
+  b.Team(bbcoop::TeamRequest::ACCEPT, now, {}, team);
+  Pump(service, {&a, &b}, now);
+  a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1);
+  b.Team(bbcoop::TeamRequest::READY, now, {}, {}, 2);
+  Pump(service, {&a, &b}, now);
+  a.Team(bbcoop::TeamRequest::START, now);
+  Pump(service, {&a, &b}, now);
+  CHECK(a.starts.size() == 1 && a.starts[0].host() == "aa");
+  a.LobbyHello(true, now); // both play now
+  b.LobbyHello(true, now);
+  const QByteArray party = QByteArray::fromStdString(a.starts[0].party());
+  // aa hosts the team's session; its game dies and bb takes over.
+  a.claims_host = true;
+  a.Hello(now, party);
+  b.claims_host = false;
+  b.Hello(now, party);
+  Pump(service, {&a, &b}, now);
+  bbcoop::Envelope open;
+  open.mutable_team_session()->set_join("NXRV-aa");
+  a.Send(open, now);
+  Pump(service, {&a, &b}, now);
+  a.online = false;
+  b.claims_host = true;
+  b.Hello(now + 10, party);
+  bbcoop::Envelope moved;
+  moved.mutable_team_session()->set_join("NXRV-bb");
+  b.Send(moved, now + 10);
+  Pump(service, {&b}, now + 10);
+  // aa's next run: back in the lobby, ready, Start (a started team's leader
+  // goes in at once).
+  Game a_again{1002, "aa", 21};
+  a_again.run = 0x2002;
+  a_again.LobbyHello(false, now + 20);
+  a_again.Team(bbcoop::TeamRequest::READY, now + 20, {}, {}, 1);
+  a_again.Team(bbcoop::TeamRequest::START, now + 20);
+  Pump(service, {&a_again, &b}, now + 20);
+  CHECK(!a_again.starts.empty());
+  CHECK(a_again.starts.back().host() == "bb");
+  return 0;
+}
+
+// Phase 7: the resume point is the character's: a new character (another one
+// readied in the slot) starts where its own save does.
+int TheResumePointIsTheCharactersOwn() {
+  Service service{{}};
+  Game a{1000, "aa", 11};
+  Game b{1001, "bb", 12};
+  qint64 now = 1'000'000;
+  a.LobbyHello(false, now);
+  b.LobbyHello(false, now);
+  Pump(service, {&a, &b}, now);
+  a.Team(bbcoop::TeamRequest::CREATE, now);
+  Pump(service, {&a, &b}, now);
+  const std::string team = a.lobby.team().id();
+  a.Team(bbcoop::TeamRequest::INVITE, now, "bb");
+  Pump(service, {&a, &b}, now);
+  b.Team(bbcoop::TeamRequest::ACCEPT, now, {}, team);
+  Pump(service, {&a, &b}, now);
+  a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1, "Gehrman");
+  b.Team(bbcoop::TeamRequest::READY, now, {}, {}, 2, "Eileen");
+  Pump(service, {&a, &b}, now);
+  a.Team(bbcoop::TeamRequest::START, now);
+  Pump(service, {&a, &b}, now);
+  a.LobbyHello(true, now);
+  b.LobbyHello(true, now);
+  const QByteArray party = QByteArray::fromStdString(b.starts.at(0).party());
+  a.Hello(now, party);
+  b.Hello(now, party);
+  Pump(service, {&a, &b}, now);
+  bbcoop::Envelope vitals = VitalsOf(0x18010000, 1);
+  vitals.mutable_vitals()->mutable_at()->set_x(-215.5f);
+  b.Send(vitals, now + 10);
+  Pump(service, {&a, &b}, now + 10);
+  // The same character's next run comes back there.
+  b.online = false;
+  service.Forget(b.endpoint);
+  Game b2{1002, "bb", 22};
+  b2.run = 0x3003;
+  b2.LobbyHello(false, now + 20);
+  b2.Team(bbcoop::TeamRequest::READY, now + 20, {}, {}, 2, "Eileen");
+  b2.Hello(now + 20, party);
+  Pump(service, {&a, &b2}, now + 20);
+  CHECK(b2.resume_at.has_value() && b2.resume_at->at().x() == -215.5f);
+  // Another character in the slot: nowhere to resume.
+  b2.online = false;
+  service.Forget(b2.endpoint);
+  Game b3{1003, "bb", 23};
+  b3.run = 0x4004;
+  b3.LobbyHello(false, now + 30);
+  b3.Team(bbcoop::TeamRequest::READY, now + 30, {}, {}, 2, "Newcomer");
+  b3.Hello(now + 30, party);
+  Pump(service, {&a, &b3}, now + 30);
+  CHECK(!b3.resume_at.has_value());
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
       {"EachLinksPartyIsKnownAfterItsHello",
        EachLinksPartyIsKnownAfterItsHello},
       {"AMembersNextRunResumesWhereItWas", AMembersNextRunResumesWhereItWas},
+      {"TheResumePointIsTheCharactersOwn", TheResumePointIsTheCharactersOwn},
+      {"TheSessionHostMovesToAGuest", TheSessionHostMovesToAGuest},
+      {"AReturningLeaderStartsAsAGuestOfTheNewHost",
+       AReturningLeaderStartsAsAGuestOfTheNewHost},
       {"AWrongPartyOrProtocolIsRefused", AWrongPartyOrProtocolIsRefused},
       {"AWipeStartsOneLogForTheParty", AWipeStartsOneLogForTheParty},
       {"TheHostsSessionEventsStartANewLogAGuestsTakeItsShare",

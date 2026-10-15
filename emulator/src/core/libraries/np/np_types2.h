@@ -898,6 +898,15 @@ struct OrbisNpMatching2RoomUpdate {
     OrbisNpMatching2PresenceOptionData optData;
 };
 
+// Room owner update information (ROOM_OWNER_CHANGED)
+struct OrbisNpMatching2RoomOwnerUpdate {
+    OrbisNpMatching2RoomMemberId prevOwner;
+    OrbisNpMatching2RoomMemberId newOwner;
+    OrbisNpMatching2EventCause eventCause;
+    u8 padding[3];
+    OrbisNpMatching2PresenceOptionData optData;
+};
+
 // Room member update information
 struct OrbisNpMatching2RoomMemberUpdate {
     OrbisNpMatching2RoomMemberDataInternal* roomMemberDataInternal;

@@ -242,6 +242,23 @@ TEST(TeamJoin, AGuestJoinsTheHostsSessionWhenReadyAndAlone) {
     EXPECT_EQ(join.Tick(GuestFrame(MatchingStateHosting, true, true)), TeamJoin::Action::None);
 }
 
+// Phase 7, host migration: the server passed the room to this guest (its host's game went): it
+// takes the session host's role in place, once, and then says its session like any host.
+TEST(TeamJoin, AGuestGivenTheRoomTakesTheHostsRole) {
+    TeamJoin join;
+    TeamJoin::Frame frame = GuestFrame(MatchingStateSummonedGuest, true, true);
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::None);
+    frame.room_owner = true;
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::TakeHost);
+    // Hosting now (the role and the state moved): it says its session.
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, true)), TeamJoin::Action::Publish);
+    // Not in a session, or not a guest's: nothing to take.
+    TeamJoin alone;
+    TeamJoin::Frame out = GuestFrame(0, true, false);
+    out.room_owner = true;
+    EXPECT_EQ(alone.Tick(out), TeamJoin::Action::None);
+}
+
 // tool that heals, 2050).
 TEST(BellItems, TheCoopBellsAndNothingElse) {
     for (const u32 bell : {200u, 205u, 225u, 4312u}) {

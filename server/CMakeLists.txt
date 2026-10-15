@@ -233,6 +233,11 @@ if(BUILD_TESTING)
     target_link_libraries(test_team_lobby PRIVATE libprotobuf)
     add_test(NAME team_lobby COMMAND test_team_lobby)
 
+    add_executable(test_room_owner EXCLUDE_FROM_ALL tests/test_room_owner.cpp)
+    target_include_directories(test_room_owner PRIVATE src)
+    target_link_libraries(test_room_owner PRIVATE Qt6::Core)
+    add_test(NAME room_owner COMMAND test_room_owner)
+
     add_executable(test_bloodborne_trade EXCLUDE_FROM_ALL
         tests/test_bloodborne_trade.cpp
         ${COOP_SOURCES}
