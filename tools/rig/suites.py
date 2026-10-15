@@ -821,6 +821,17 @@ SUITES = {
                     {role: ["sync outage-go", "wait 30", "wait-members 2 120",
                             "wait-member-vital up 60", "expect-session 2"] for role in PARTY2},
                     outages={"outage-go": 20}),
+            chapter("link-cut", "phase 7: the guest's connection drops for 3 s, then for 10 s "
+                                "(a Wi-Fi blip): both ride it out in the same session, no "
+                                "crash and no rejoin, and see each other again",
+                    {"host": ["sync cut-go", "sync cut-short", "sync cut-long",
+                              "wait-members 2 60", "wait-member-vital up 60", "expect-session 2",
+                              "expect-others-near 1 30"],
+                     "guest": ["sync cut-go", "cut-link 3", "wait 8", "expect-session 2",
+                               "sync cut-short", "cut-link 10", "wait 15", "sync cut-long",
+                               "wait-members 2 60", "wait-member-vital up 60",
+                               "expect-session 2", "expect-others-near 1 30"]},
+                    forbid=holds(PARTY2)),
             chapter("cutscene", "Father Gascoigne dies in the host's world with the guest there: "
                                 "his death's time-of-day cutscene reloads the host's world (a "
                                 "trip), and both are back together after it. Whether this kill "

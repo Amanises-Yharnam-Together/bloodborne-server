@@ -31,6 +31,9 @@ bool ServerCoopSend(const void* body, u32 len);
 int ServerCoopReceive(void* body, u32 len);
 // Whether the server took this game's hello (it may restart: then false until it does again).
 bool ServerLinkWelcomed();
+// The rig's dropped connection (autoplay cut-link, phase 7): nothing goes out or comes in on this
+// game's UDP socket for `ms`, as when its Wi-Fi drops.
+void CutServerLinkForTest(u32 ms);
 // Why the server refused this game's hello (another build), empty while it did not.
 std::string ServerLinkRefusal();
 
