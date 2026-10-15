@@ -38,7 +38,9 @@ static void *tls_worker(void *unused) {
     unsigned char *p=GET(TlsAddress,"vNe1w4diLCs#p#J")(index);
     assert(p[0]==42 && p[1]==17 && p[31]==0);
     p[0]=99;
-    assert(GET(ThreadSelf,"aI+OeCz8xrQ#p#J")()!=main_identity);
+    void *self=GET(ThreadSelf,"aI+OeCz8xrQ#p#J")();
+    assert(self!=main_identity);
+    assert(!((uintptr_t)self>>40)); /* the game packs thread handles into 40 bits */
     return NULL;
 }
 static void libc_support(void) {
@@ -51,6 +53,7 @@ static void libc_support(void) {
     assert(tls(last)==p+31 && tls(index)==p);
     p[0]=23;
     main_identity=GET(ThreadSelf,"aI+OeCz8xrQ#p#J")();
+    assert(!((uintptr_t)main_identity>>40));
     pthread_t worker;
     assert(pthread_create(&worker,NULL,tls_worker,NULL)==0);
     assert(pthread_join(worker,NULL)==0);
@@ -397,6 +400,7 @@ static void rw_timeouts(void) {
     assert(rw_unlock(&f.lock)==0);
     fixture_destroy(&f);
 }
+static void atexit_ran(void) { puts("atexit handler ran"); }
 int main(int argc,char **argv) {
     runtime_start(0); assert(runtime_resolve("bzQExy189ZI#q#q",0)==0);
     runtime_start(1);
@@ -415,6 +419,13 @@ int main(int argc,char **argv) {
         runtime_set_libc_tls(data,4,8);
         const uint64_t index[]={2,8};
         GET(TlsAddress,"vNe1w4diLCs#p#J")(index); return 99;
+    }
+    if (argc>1 && !strcmp(argv[1],"--raise-exception")) {
+        /* Other threads still run when the guest stops: no static destructors or atexit
+         * handlers under them. */
+        atexit(atexit_ran);
+        typedef void (ABI *Raise)(uint32_t,uint64_t);
+        GET(Raise,"OMDRKKAZ8I4#p#J")(1,2); return 99;
     }
     if (argc>1 && !strcmp(argv[1],"--stack-failure")) {
         GET(GuestCallback,"Ou3iL1abvng#p#J")(); return 99;

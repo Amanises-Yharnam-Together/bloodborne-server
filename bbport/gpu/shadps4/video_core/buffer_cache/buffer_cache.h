@@ -507,6 +507,12 @@ private:
     /// in VRAM (layer_cpu_blocks). On NVIDIA shaders reading the game's memory over the bus were
     /// slow where the model of 0.3 had copies in VRAM.
     IntervalList<> layer_watched;
+    /// Blocks a range the GPU writes covers only in part (its first and last, the rest of them
+    /// unannounced bytes), moved to VRAM with it all the same (LayerBind): a trap catches the CPU
+    /// writing beside it, and the GPU's bytes there are copied back before the block goes in place.
+    /// A frame-sized buffer of 305 blocks went in place for two such blocks (deadinside28's
+    /// bbport 0.6, their issue #149).
+    IntervalList<> layer_edge_blocks;
     /// Watched blocks that went back in place for writes (LayerDemote): not watched again.
     IntervalList<> layer_watch_failed;
     std::unordered_map<u64, u8> layer_watch_strikes; ///< watched blocks sent back for requests

@@ -50,7 +50,8 @@
     {"name": "party list in the HUD", "required": false},
     {"name": "sign timers", "required": true},
     {"name": "summon slot hold", "required": false},
-    {"name": "server owns leaves", "required": true}
+    {"name": "server owns leaves", "required": true},
+    {"name": "floor guard", "required": false}
   ],
   "sites": [
     {"name": "Beckoning area comparison", "feature": "seamless core", "kind": "patch", "offset": "0x0157F8C8", "original": "0F 87 90 00 00 00", "patched": "0F 8F 90 00 00 00", "accepted": []},
@@ -223,6 +224,7 @@
     {"name": "summon slot hold 2", "feature": "summon slot hold", "kind": "patch", "offset": "0x018729ED", "original": "C5 F8 2E 05 67 50 0B 03", "patched": "C5 F8 2E 05 CF 4E 0B 03", "accepted": []},
     {"name": "session idle timeout", "feature": "server owns leaves", "kind": "patch", "offset": "0x01789C5D", "original": "76 78", "patched": "EB 78", "accepted": []},
     {"name": "session resend overflow", "feature": "server owns leaves", "kind": "patch", "offset": "0x017897B2", "original": "0F 82 B8 00 00 00", "patched": "E9 B9 00 00 00 90", "accepted": []},
-    {"name": "room timeout", "feature": "server owns leaves", "kind": "patch", "offset": "0x01789F41", "original": "76 79", "patched": "EB 79", "accepted": []}
+    {"name": "room timeout", "feature": "server owns leaves", "kind": "patch", "offset": "0x01789F41", "original": "76 79", "patched": "EB 79", "accepted": []},
+    {"name": "character floor read", "feature": "floor guard", "kind": "hook", "offset": "0x018CB14F", "original": "48 8B B3 88 02 00 00 48 85 F6", "patched": "", "accepted": []}
   ]
 }
