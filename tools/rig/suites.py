@@ -1240,8 +1240,9 @@ SUITES = {
                               "expect-session 3"],
                      "guest": ["sync c3-ready", "sync c3-host-picked", "pickup 20", "wait 3",
                                "sync c3-back", "wait 10", "expect-session 3"]},
-                    expect={role: [r"lost a member; staying where it is"]
-                            for role in ("host", "guest")},
+                    # Phase 7: the host's game may take the member's going without its leave-limit
+                    # flow (its idle time-out is off); its pickup above is the check there.
+                    expect={"guest": [r"lost a member; staying where it is"]},
                     allow=CRASH_CLEANUP),
             # The host's game goes for good in this chapter, back in the next.
             chapter("host-crash3", "phase 7, host migration: the host's game dies; the two guests "
