@@ -108,6 +108,18 @@ quint16 Vport(const QByteArray& frame, int at) {
 
 } // namespace
 
+Endpoint VirtualEndpointOf(const QByteArray& online_id) {
+    quint32 hash = 2166136261u; // FNV-1a
+    for (const char c : online_id) {
+        hash = (hash ^ static_cast<quint8>(c)) * 16777619u;
+    }
+    quint32 host = hash & 0xFFFFFF;
+    if ((host & 0xFF) == 0 || (host & 0xFF) == 0xFF) {
+        host ^= 0x01; // no .0 or .255
+    }
+    return {(10u << 24) | host, VirtualPort};
+}
+
 QString Endpoint::Text() const {
     return QStringLiteral("%1.%2.%3.%4:%5")
         .arg(ipv4 >> 24)
@@ -240,6 +252,20 @@ QByteArray Hub::Build() const {
     return members.isEmpty() ? QByteArray{} : members.cbegin()->build;
 }
 
+std::optional<Endpoint> Hub::VirtualOf(const Endpoint& real) const {
+    const auto found = members.find(real.Key());
+    return found == members.end() ? std::nullopt : std::optional{found->virtual_endpoint};
+}
+
+void Hub::Unlink(quint64 key) {
+    const Link link = members.take(key);
+    by_virtual.remove(link.virtual_endpoint.Key());
+    for (auto it = pair_frames.begin(); it != pair_frames.end();) {
+        it =
+            it.key().first == key || it.key().second == key ? pair_frames.erase(it) : std::next(it);
+    }
+}
+
 QString Hub::Name(const Link& link) const {
     return QStringLiteral("%1 (%2)").arg(QString::fromUtf8(link.online_id), link.endpoint.Text());
 }
@@ -314,6 +340,15 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
             }
         }
     }
+    const Endpoint virtual_endpoint = VirtualEndpointOf(hello->online_id);
+    if (refusal.isEmpty()) {
+        const auto holder = by_virtual.find(virtual_endpoint.Key());
+        if (holder != by_virtual.end() && *holder != from.Key() &&
+            members.value(*holder).online_id != hello->online_id) {
+            refusal = "another account has this game's address (" +
+                      members.value(*holder).online_id + "): use another account name";
+        }
+    }
     if (!refusal.isEmpty()) {
         result.sends.append({from, Encode(Welcome{false, refusal})});
         result.log.append(
@@ -325,8 +360,25 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
         stats_started = true;
         stats_at_ms = now_ms;
     }
+    // The same account linked from another port (its game restarted, or its connection moved): one
+    // member, so the old link is forgotten without telling the others it went.
+    QList<quint64> moved;
+    for (const Link& other : std::as_const(members)) {
+        if (other.online_id == hello->online_id && !(other.endpoint == from)) {
+            moved.append(other.endpoint.Key());
+        }
+    }
+    for (const quint64 key : moved) {
+        const Endpoint old = members.value(key).endpoint;
+        Unlink(key);
+        result.gone.append(old);
+        result.log.append(QStringLiteral("server link: %1 moved from %2 to %3")
+                              .arg(QString::fromUtf8(hello->online_id), old.Text(), from.Text()));
+    }
     const bool again = members.contains(from.Key());
     Link& link = members[from.Key()];
+    link.virtual_endpoint = virtual_endpoint;
+    by_virtual[virtual_endpoint.Key()] = from.Key();
     link.endpoint = from;
     link.online_id = hello->online_id;
     link.build = hello->build;
@@ -346,7 +398,10 @@ void Hub::OnData(Link& sender, const QByteArray& datagram, Result& result) {
     }
     ++sender.frames_in;
     sender.bytes_in += static_cast<quint64>(data->frame.size());
-    const auto target = members.find(data->peer.Key());
+    // A game names the others by their virtual addresses (a real one still finds its game).
+    const auto by_address = by_virtual.find(data->peer.Key());
+    const auto target =
+        members.find(by_address != by_virtual.end() ? *by_address : data->peer.Key());
     if (target == members.end()) {
         if (dropped++ < DropsLogged) {
             result.log.append(QStringLiteral("server link: %1 sent %2 bytes to %3: no game linked "
@@ -369,7 +424,7 @@ void Hub::OnData(Link& sender, const QByteArray& datagram, Result& result) {
     }
     ++target->frames_out;
     target->bytes_out += static_cast<quint64>(data->frame.size());
-    result.sends.append({target->endpoint, Encode(Data{sender.endpoint, data->frame})});
+    result.sends.append({target->endpoint, Encode(Data{sender.virtual_endpoint, data->frame})});
     // The first frames between each pair: a stalled join shows which went.
     const quint64 count = ++pair_frames[qMakePair(sender.endpoint.Key(), target->endpoint.Key())];
     if (count <= static_cast<quint64>(pair_lines)) {
@@ -397,7 +452,7 @@ void Hub::Heard(Link& link, qint64 now_ms, Result& result) {
 void Hub::TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result& result) {
     const QByteArray told =
         Encode(Member{state, static_cast<quint32>(std::clamp<qint64>(gap_ms, 0, 0xFFFFFFFF)),
-                      about.endpoint, about.online_id});
+                      about.virtual_endpoint, about.online_id});
     for (const Link& other : std::as_const(members)) {
         if (!(other.endpoint == about.endpoint) && SameTeam(about.endpoint, other.endpoint)) {
             result.sends.append({other.endpoint, told});
@@ -415,17 +470,14 @@ Hub::Result Hub::Tick(qint64 now_ms) {
         }
     }
     for (const quint64 key : gone) {
-        const Link link = members.take(key);
+        const Link link = members.value(key);
+        Unlink(key);
         result.log.append(QStringLiteral("server link: %1 gone, nothing for %2 ms, %3 linked")
                               .arg(Name(link))
                               .arg(now_ms - link.last_heard_ms)
                               .arg(members.size()));
         TellOthers(link, MemberState::Gone, now_ms - link.last_heard_ms, result);
         result.gone.append(link.endpoint);
-        for (auto it = pair_frames.begin(); it != pair_frames.end();) {
-            it = it.key().first == key || it.key().second == key ? pair_frames.erase(it)
-                                                                 : std::next(it);
-        }
     }
     for (Link& link : members) {
         const qint64 gap = now_ms - link.last_heard_ms;

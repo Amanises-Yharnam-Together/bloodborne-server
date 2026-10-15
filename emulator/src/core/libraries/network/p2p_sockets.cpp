@@ -486,6 +486,11 @@ public:
     }
 
     int SendInternal(const void* data, u32 len, u32 dest_addr_nbo, u16 dest_port_nbo) {
+        // Phase 7: our signaling, matching and co-op frames go the game sockets' way, never
+        // straight to a peer (before the server is known, nothing).
+        if (!Link::SendsToPeer(Server(), PeersOnlyThroughServer())) {
+            return -1;
+        }
         return SendFrame(kSignalingVPortNbo, kSignalingVPortNbo, data, len, dest_addr_nbo,
                          dest_port_nbo);
     }

@@ -168,7 +168,8 @@ int Relays() {
   const auto forwarded = SentTo(result, Ada);
   CHECK(forwarded.size() == 1 && result.sends.size() == 1);
   const auto data = DecodeData(forwarded[0]);
-  CHECK(data && data->peer == Kaniel && data->frame == GameFrame);
+  CHECK(data && data->peer == VirtualEndpointOf("Kaniel") &&
+        data->frame == GameFrame);
   CHECK(!result.log.isEmpty() && result.log[0].contains("Kaniel") &&
         result.log[0].contains("Ada"));
 
@@ -216,7 +217,8 @@ int Liveness() {
   const auto told = SentTo(result, Kaniel);
   CHECK(told.size() == 1 && SentTo(result, Ada).isEmpty());
   const auto quiet = DecodeMember(told[0]);
-  CHECK(quiet && quiet->state == MemberState::Quiet && quiet->endpoint == Ada &&
+  CHECK(quiet && quiet->state == MemberState::Quiet &&
+        quiet->endpoint == VirtualEndpointOf("Ada") &&
         quiet->online_id == "Ada" && quiet->gap_ms == 3500);
   CHECK(!result.log.isEmpty() && result.log[0].contains("Ada"));
   hub.Receive(Kaniel, Encode(Kind::Ping, Ping{3, 4000}), 4000);
@@ -299,11 +301,52 @@ int TeamOnly() {
   return 0;
 }
 
+// Phase 7: no game learns another's address. Each game is known by a virtual
+// address made from its account (10.x.y.z, one port), the same from any port
+// it links from; the hub forwards between the virtual addresses.
+int VirtualMembers() {
+  Hub hub;
+  const Endpoint ada_virtual = VirtualEndpointOf("Ada");
+  const Endpoint kaniel_virtual = VirtualEndpointOf("Kaniel");
+  CHECK((ada_virtual.ipv4 >> 24) == 10 && ada_virtual.port == VirtualPort);
+  CHECK(!(ada_virtual == kaniel_virtual));
+  CHECK(VirtualEndpointOf("Ada") == ada_virtual); // the same every time
+  CHECK(!hub.VirtualOf(Ada));                     // not linked yet
+  hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
+  hub.Receive(Ada, HelloFrom("Ada"), 0);
+  CHECK(hub.VirtualOf(Ada) == ada_virtual);
+
+  // Sent to Ada's virtual address: Ada gets it from Kaniel's virtual address.
+  auto result = hub.Receive(Kaniel, Encode(Data{ada_virtual, GameFrame}), 10);
+  const auto forwarded = DecodeData(SentTo(result, Ada).value(0));
+  CHECK(forwarded && forwarded->peer == kaniel_virtual &&
+        forwarded->frame == GameFrame);
+
+  // Ada's game links again from another port: still the same address.
+  const Endpoint ada_moved{0x7F000001, 40099};
+  // Its old link is forgotten (the world's member there goes), told to nobody:
+  // Ada is still here.
+  result = hub.Receive(ada_moved, HelloFrom("Ada"), 20);
+  CHECK(result.gone.size() == 1 && result.gone[0] == Ada);
+  CHECK(SentTo(result, Kaniel).isEmpty() && hub.Members() == 2);
+  CHECK(hub.VirtualOf(ada_moved) == ada_virtual && !hub.VirtualOf(Ada));
+  result = hub.Receive(Kaniel, Encode(Data{ada_virtual, GameFrame}), 30);
+  CHECK(SentTo(result, ada_moved).size() == 1 && result.sends.size() == 1);
+
+  // The notices name the virtual address too.
+  hub.Receive(Kaniel, Encode(Kind::Ping, Ping{1, 3000}), 3000);
+  result = hub.Tick(3500);
+  const auto quiet = DecodeMember(SentTo(result, Kaniel).value(0));
+  CHECK(quiet && quiet->state == MemberState::Quiet &&
+        quiet->endpoint == ada_virtual);
+  std::cout << "server link virtual members: ok\n";
+  return 0;
+}
 } // namespace
 
 int main() {
   if (Contracts() != 0 || HelloAndBuilds() != 0 || Relays() != 0 ||
-      Liveness() != 0 || TeamOnly() != 0) {
+      Liveness() != 0 || TeamOnly() != 0 || VirtualMembers() != 0) {
     return 1;
   }
   return 0;
