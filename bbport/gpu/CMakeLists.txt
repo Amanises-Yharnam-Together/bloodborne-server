@@ -383,6 +383,15 @@ if (WIN32)
     target_compile_options(pad-calibration-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     target_include_directories(pad-calibration-test PRIVATE .. ../src)
     target_link_libraries(pad-calibration-test PRIVATE PkgConfig::SDL3 bcrypt -pthread)
+    # The HLE runtime as bb-probe links it: thread handles within 40 bits. No game, no Vulkan
+    # device.
+    add_executable(runtime-windows-test EXCLUDE_FROM_ALL ../tests/test_runtime_windows.c ${BB_RUNTIME}
+        ../src/compat_win.c)
+    set_target_properties(runtime-windows-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(runtime-windows-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(runtime-windows-test PRIVATE .. ../src)
+    target_link_libraries(runtime-windows-test PRIVATE bbgpu atrac9 onecore bcrypt ws2_32 -pthread)
+    target_link_options(runtime-windows-test PRIVATE -Wl,--disable-high-entropy-va)
     # Mouse inputs, wheel steps, the stick fallback and the camera hook's turn (no window, no game).
     add_executable(mouse-camera-test EXCLUDE_FROM_ALL ../tests/test_mouse_camera.c ../src/compat_win.c)
     set_target_properties(mouse-camera-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
