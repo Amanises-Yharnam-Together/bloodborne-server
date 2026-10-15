@@ -1120,6 +1120,12 @@ std::string_view PlaceStateName(PlaceState state);
 std::string_view PlaceCauseName(PlaceCause cause);
 // "Co-op place: <from> -> <to> map <hex> visit N (<cause>)"
 std::string FormatPlaceChange(const PlaceChange& change);
+// A change of place that starts a new world (world_changed_ms: the shown board waits for its
+// story, deaths then are no kills): a new visit that plays after a load, the first one after the
+// title (Unknown -> Playing, which once never counted, so a host posted its characters before its
+// story removed Iosefka) and a trip's arrival on another map (Playing -> Playing), not a walk
+// across a border or a teleport.
+bool StartsNewWorld(const PlaceChange& change);
 
 // What ends the state that lives for a visit or a session (docs/WORLD_SYNC.md): each container
 // registers its reset for the events that end it, and one dispatch runs them, instead of a reset
@@ -1449,6 +1455,42 @@ struct OwnRestore {
 OwnRestore RestoresOwnCharacters(std::span<const u32> own,
                                  const std::unordered_set<u32>& hidden_here,
                                  const std::unordered_set<u32>& switched_off);
+
+// A map's story removes some characters (2004:29, the hide byte +0x28) seconds after each load,
+// 3.5 to 13 s on the rig, so until then they stood there: Gilbert by the second Central Yharnam
+// lamp after a trip, Iosefka (Kaniel and Lisara's playtest 2026-10-15). Every game remembers per
+// map which characters its story had removed once a visit settled (StoryHoldMs after its load),
+// and on the next visit switches those off (2004:5) as they appear, until the story removes them
+// again (then switched on: removed, they stay unseen) or StoryHoldMs passes (the story no longer
+// removes them: switched on and forgotten). A guest's characters hidden to match the host's board
+// (the hide byte) count as removed by the story (the host's is the same story); those it only
+// switched off do not (held, nothing would show the story switched them off too), nor a kill.
+struct StoryCharacter {
+    u32 handle = 0;
+    bool removed = false;  // the hide byte +0x28
+    bool disabled = false; // the enable switch off
+    bool followed = false; // a guest's, hidden or switched off to match the host's board
+    bool killed = false;   // hidden for a member's kill
+};
+struct StoryHoldStep {
+    std::vector<u32> hold;      // switch off now (then Held, or Unheld if that failed)
+    std::vector<u32> release;   // switch on again
+    std::vector<u32> hand_over; // held, now the co-op code's: no longer held here
+    bool operator==(const StoryHoldStep&) const = default;
+};
+constexpr s64 StoryHoldMs = 20'000;
+class StoryRemovals {
+public:
+    // `seen`: every character loaded now but the players; `visit_ms`: the visit's load.
+    StoryHoldStep Step(u32 map, s64 visit_ms, s64 now_ms, std::span<const StoryCharacter> seen);
+    void Held(u32 handle, s64 now_ms);
+    bool Remembers(u32 map, u32 handle) const;
+    size_t RememberedOn(u32 map) const;
+
+private:
+    std::map<u32, std::set<u32>> removed; // per map
+    std::map<u32, s64> held;              // handle -> since
+};
 
 // A character's death flags (+0x1E3) say it is dead in its world: killed (bits 0 and 2, see
 // IsRealDeath) or dead in the save and put down at load (0x26).

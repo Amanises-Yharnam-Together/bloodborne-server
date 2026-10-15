@@ -477,6 +477,8 @@ void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
 
 void TickAutoplay();
+// The rig's watch-unseen check (bloodborne_autoplay.cpp), after the co-op tick.
+void CheckAutoplayWatch();
 void TickPartyDeath();
 
 void ReopenClosedPartySession();
@@ -650,6 +652,9 @@ void QueueGuestNpcGift(const NpcGift& gift);
 void InstallKeepLocalFlags(u64 base, u64 image_size);
 void InstallDeferredBossItems(u64 base, u64 image_size);
 extern std::atomic<s64> world_changed_ms;
+// The last load that started a new world (StartsNewWorld) alone, for StoryRemovals: no owner
+// change or wipe moves it.
+extern std::atomic<s64> world_loaded_ms;
 void LogFlagChangesInSession(bool sharing);
 void KeepGuestProgress(bool in_session);
 void SetPartyWorldChanges(bool sharing);

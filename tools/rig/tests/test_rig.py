@@ -37,6 +37,7 @@ VERBS = {
     "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
     "trade-socket", "expect-socketed",
     "cut-link",  # phase 7: a dropped connection
+    "watch-unseen",  # a story NPC never drawn after a load
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
