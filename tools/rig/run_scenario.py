@@ -842,6 +842,7 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     if ENGINE.name == "port":
         # keys / title-keys: the overlay's menu keys (Insert and the menu's buttons).
         env["BB_MENU_KEYS_FILE"] = str(menu_keys_path(role))
+        env["SHADPS4_NET_FIREWALL"] = firewall_setting()
     if PING:
         env["SHADPS4_P2P_DELAY_MS"] = latency.game_setting(PING)
         if "BB_SHADNET_SERVER" in env:
@@ -852,6 +853,16 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     env["SDL_WINDOW_ACTIVATE_WHEN_SHOWN"] = "0"
     env["SDL_WINDOW_ACTIVATE_WHEN_RAISED"] = "0"
     return env
+
+
+def firewall_setting() -> str:
+    """Phase 9's proof test: the only addresses a port game reaches (SHADPS4_NET_FIREWALL, a
+    firewall in each game: Windows does not filter loopback), the lane's servers. A datagram or
+    connection to anything else, another game above all, is blocked and logged, and the run
+    fails on it (check_party_log)."""
+    ports = (server_port(SHADNET_PORT), matching_udp_port(), server_port(WEBAPI_PORT),
+             server_port(BACKEND_PORT))
+    return ",".join(f"127.0.0.1:{port}" for port in ports)
 
 
 def menu_keys_path(role: str) -> pathlib.Path:

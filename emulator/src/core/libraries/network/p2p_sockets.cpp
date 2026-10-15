@@ -28,6 +28,7 @@
 #include "common/singleton.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/network/net_delay.h"
+#include "core/libraries/network/net_firewall.h"
 #include "core/libraries/network/net_link.h"
 #include "core/libraries/network/net_silence.h"
 #include "core/libraries/network/net_util.h"
@@ -419,6 +420,9 @@ public:
         if (LinkCut()) {
             return true; // lost on the way, as on a dropped connection
         }
+        if (!FirewallAllows(dest.sin_addr.s_addr, dest.sin_port, "a datagram to")) {
+            return false;
+        }
         if (delay_line) {
             {
                 std::lock_guard lock(delay_mutex);
@@ -669,6 +673,9 @@ private:
             }
             if (LinkCut()) {
                 continue; // never arrived (a dropped connection, the rig's cut-link)
+            }
+            if (!FirewallAllows(from.sin_addr.s_addr, from.sin_port, "a datagram from")) {
+                continue;
             }
             const std::span<const u8> datagram{buffer.data(), static_cast<size_t>(rc)};
             if (const auto server = LinkServer();
@@ -1591,6 +1598,29 @@ int P2PGamePacketsRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {
 int P2PCoopRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {
     return P2PTransport::Instance().ReceiveInternal(InternalChannel::Coop, buf, len, from_addr,
                                                     from_port);
+}
+
+bool FirewallAllows(u32 ipv4_nbo, u16 port_nbo, std::string_view what) {
+    static const std::optional<NetFirewall> firewall = [] {
+        const char* setting = std::getenv("SHADPS4_NET_FIREWALL");
+        auto parsed = NetFirewall::Parse(setting != nullptr ? setting : "");
+        if (parsed) {
+            LOG_INFO(Lib_Net, "Net firewall: on, the game reaches only {}", setting);
+        }
+        return parsed;
+    }();
+    const u32 ipv4 = ntohl(ipv4_nbo);
+    const u16 port = ntohs(port_nbo);
+    if (!firewall || firewall->Allows(ipv4, port)) {
+        return true;
+    }
+    static std::atomic<u32> blocked{0};
+    const u32 count = blocked.fetch_add(1) + 1;
+    if (count <= 20 || count % 1000 == 0) {
+        LOG_WARNING(Lib_Net, "Net firewall: blocked {} {}.{}.{}.{}:{} ({} blocked so far)", what,
+                    ipv4 >> 24, (ipv4 >> 16) & 0xFF, (ipv4 >> 8) & 0xFF, ipv4 & 0xFF, port, count);
+    }
+    return false;
 }
 
 } // namespace Libraries::Net
