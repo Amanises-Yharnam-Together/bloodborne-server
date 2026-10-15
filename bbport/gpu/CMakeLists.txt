@@ -383,6 +383,15 @@ if (WIN32)
     target_compile_options(pad-calibration-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     target_include_directories(pad-calibration-test PRIVATE .. ../src)
     target_link_libraries(pad-calibration-test PRIVATE PkgConfig::SDL3 bcrypt -pthread)
+    # The HLE runtime as bb-probe links it: thread handles within 40 bits, the guest's debug
+    # exception stop (no exit handlers). No game, no Vulkan device.
+    add_executable(runtime-windows-test EXCLUDE_FROM_ALL ../tests/test_runtime_windows.c ${BB_RUNTIME}
+        ../src/compat_win.c)
+    set_target_properties(runtime-windows-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(runtime-windows-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(runtime-windows-test PRIVATE .. ../src)
+    target_link_libraries(runtime-windows-test PRIVATE bbgpu atrac9 onecore bcrypt ws2_32 -pthread)
+    target_link_options(runtime-windows-test PRIVATE -Wl,--disable-high-entropy-va)
     # Mouse inputs, wheel steps, the stick fallback and the camera hook's turn (no window, no game).
     add_executable(mouse-camera-test EXCLUDE_FROM_ALL ../tests/test_mouse_camera.c ../src/compat_win.c)
     set_target_properties(mouse-camera-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
@@ -489,6 +498,10 @@ target_include_directories(settings-test PRIVATE .. shim)
 add_executable(spec-drop-test EXCLUDE_FROM_ALL ../tests/test_spec_drop.cpp)
 target_compile_options(spec-drop-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(spec-drop-test PRIVATE shim)
+
+add_executable(frame-slots-test EXCLUDE_FROM_ALL ../tests/test_frame_slots.cpp)
+target_compile_options(frame-slots-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(frame-slots-test PRIVATE shim)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)

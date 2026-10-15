@@ -21,7 +21,21 @@
 
 #include <vk_mem_alloc.h>
 
+#include <atomic>
+
 namespace Vulkan {
+
+void NoteOverBudget(const char* what) {
+    static std::atomic<bool> image_noted{false}, buffer_noted{false};
+    auto& noted = what[0] == 'i' ? image_noted : buffer_noted;
+    if (!noted.exchange(true)) {
+        std::printf("GPU: video memory full: %s memory allocated past the driver's budget (the "
+                    "driver may keep it in system memory: slower, but the game goes on). A lower "
+                    "output resolution or upscaler preset needs less.\n",
+                    what);
+        std::fflush(stdout);
+    }
+}
 
 namespace {
 
@@ -493,6 +507,7 @@ bool Instance::CreateDevice() {
     }
     // bbport: DLSS (optional bridge DLL) needs its own device extensions on NVIDIA GPUs.
     std::vector<const char*> dlss_extensions;
+    const std::size_t dlss_first = enabled_extensions.size();
     if (Dlss* dlss = Dlss::Get()) {
         dlss->AppendDeviceExtensions(*instance, physical_device, dlss_extensions);
         for (const char* name : dlss_extensions) {
@@ -503,6 +518,7 @@ bool Instance::CreateDevice() {
             }
         }
     }
+    const std::size_t dlss_end = enabled_extensions.size();
     // bbport: XeSS (optional libxess.dll) needs its own device extensions, on any GPU with DP4a.
     std::vector<const char*> xess_extensions;
     Xess* xess = Xess::Get();
@@ -765,14 +781,56 @@ bool Instance::CreateDevice() {
         auto& create_info = device_chain.get<vk::DeviceCreateInfo>();
         create_info.pNext = xess->PatchDeviceFeatures(*instance, physical_device, create_info.pNext);
     }
-    auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());
-    if (device_result != vk::Result::eSuccess) {
-        LOG_CRITICAL(Render_Vulkan, "Failed to create device: {}", vk::to_string(device_result));
+    auto created = physical_device.createDeviceUnique(device_chain.get());
+    if (created.result != vk::Result::eSuccess && dlss_end > dlss_first) {
+        // bbport: the driver lists NGX's extensions, but the device does not start with them
+        // (ErrorInitializationFailed when what they need is missing on the system). DLSS is
+        // optional: again without them (deadinside28's bbport 0.6, their issues #135, #147, #152).
+        LOG_WARNING(Render_Vulkan, "Device creation with the DLSS extensions failed ({}): again "
+                    "without them", vk::to_string(created.result));
+        if (Dlss* dlss = Dlss::Get()) {
+            dlss->Disable("the Vulkan device does not start with NGX's extensions");
+        }
+        enabled_extensions.erase(enabled_extensions.begin() + dlss_first,
+                                 enabled_extensions.begin() + dlss_end);
+        auto& create_info = device_chain.get<vk::DeviceCreateInfo>();
+        create_info.enabledExtensionCount = static_cast<u32>(enabled_extensions.size());
+        create_info.ppEnabledExtensionNames = enabled_extensions.data();
+        created = physical_device.createDeviceUnique(device_chain.get());
+    }
+    if (created.result != vk::Result::eSuccess) {
+        LOG_CRITICAL(Render_Vulkan, "Failed to create device: {}", vk::to_string(created.result));
         return false;
     }
-    device = std::move(dev);
+    device = std::move(created.value);
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
+    // bbport: an extension the driver lists and enables but whose commands it does not resolve
+    // counts as missing: calling them jumped to address 0 (RIP=0; NVIDIA 595, Intel ANV). From
+    // deadinside28's bbport 0.6 (their issues #161, #177, #181).
+    const auto& dispatch = VULKAN_HPP_DEFAULT_DISPATCHER;
+    const auto require = [](bool& flag, const void* command, const char* name) {
+        if (flag && !command) {
+            LOG_WARNING(Render_Vulkan, "{} is enabled but its commands are not resolved: off",
+                        name);
+            flag = false;
+        }
+    };
+    require(buffer_marker, reinterpret_cast<const void*>(dispatch.vkCmdWriteBufferMarkerAMD),
+            VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
+    require(vertex_input_dynamic_state,
+            reinterpret_cast<const void*>(dispatch.vkCmdSetVertexInputEXT),
+            VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
+    require(dynamic_state_3, reinterpret_cast<const void*>(dispatch.vkCmdSetColorWriteMaskEXT),
+            VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+    require(attachment_feedback_loop,
+            reinterpret_cast<const void*>(dispatch.vkCmdSetAttachmentFeedbackLoopEnableEXT),
+            VK_EXT_ATTACHMENT_FEEDBACK_LOOP_DYNAMIC_STATE_EXTENSION_NAME);
+    require(guest_memory_export, reinterpret_cast<const void*>(dispatch.vkGetMemoryFdKHR),
+            VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+    require(host_memory_import,
+            reinterpret_cast<const void*>(dispatch.vkGetMemoryHostPointerPropertiesEXT),
+            VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (Dlss* dlss = Dlss::Get()) {
         dlss->Initialize(*instance, physical_device, *device);
     }

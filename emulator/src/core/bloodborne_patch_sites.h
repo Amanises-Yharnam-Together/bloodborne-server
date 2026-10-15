@@ -89,6 +89,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"party list in the HUD", false},
     {"sign timers", true},
     {"summon slot hold", false},
+    {"floor guard", false},
 });
 
 inline constexpr auto CoopSites = std::to_array<CoopSite>({
@@ -417,6 +418,11 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "C5 F8 2E 05 77 50 0B 03", "C5 F8 2E 05 E3 4E 0B 03"},
     {"summon slot hold 2", "summon slot hold", CoopSiteKind::Patch, 0x018729ED,
      "C5 F8 2E 05 67 50 0B 03", "C5 F8 2E 05 CF 4E 0B 03"},
+
+    // The character floor update's read of the floor (InstallFloorGuard): a floor of a map block
+    // that is gone is cleared first.
+    {"character floor read", "floor guard", CoopSiteKind::Hook, 0x018CB14F,
+     "48 8B B3 88 02 00 00 48 85 F6"},
 });
 
 } // namespace Core::Bloodborne

@@ -30,7 +30,7 @@ using u64 = std::uint64_t;
 constexpr u64 ImageBase = 0x800000000ull;
 constexpr u64 ImageSize = 0x2700000ull;
 constexpr u64 AllocReturn = 0x26aa255, HeapReturn = 0x11e6629, CopyCall = 0x216d5ea,
-              Memcpy = 0x261a1b0;
+              Memcpy = 0x261a1b0, GxNodeSite = 0x2199310, GxNodeSkip = 0x219934e;
 
 u64 noted_address = 0, noted_size = 0, range_start = 0, range_size = 0;
 int ranges = 0;
@@ -90,6 +90,21 @@ u64 WriteCopyFunction() {
     Put(Memcpy, {0x48, 0x89, 0xf8, 0xc3}); // mov rax, rdi; ret
     return ImageBase + entry;
 }
+
+/// The GX per-frame render command (rdi the node, rsi the value): `mov [r12 + 8], r13` at
+/// GxNodeSite, then 1 when it went on, 0 from GxNodeSkip (where the game skips the post).
+u64 WriteGxNodeFunction() {
+    const u64 entry = GxNodeSite - 15;
+    // push r12; push r13; push r15; mov r12, rdi; mov r13, rsi; mov r15, rsp
+    Put(entry, {0x41, 0x54, 0x41, 0x55, 0x41, 0x57, 0x49, 0x89, 0xfc, 0x49, 0x89, 0xf5, 0x49, 0x89,
+                0xe7});
+    // mov [r12 + 8], r13; mov rax, [r15 + 0xb0]; mov eax, 1; jmp done
+    Put(GxNodeSite, {0x4d, 0x89, 0x6c, 0x24, 0x08, 0x49, 0x8b, 0x87, 0xb0, 0x00, 0x00, 0x00, 0xb8,
+                     0x01, 0x00, 0x00, 0x00, 0xe9, 0x2a, 0x00, 0x00, 0x00});
+    // xor eax, eax; done: pop r15; pop r13; pop r12; ret
+    Put(GxNodeSkip, {0x31, 0xc0, 0x41, 0x5f, 0x41, 0x5d, 0x41, 0x5c, 0xc3});
+    return ImageBase + entry;
+}
 } // namespace
 
 extern "C" void runtime_memory_note_write(uintptr_t address, uint64_t size) {
@@ -125,6 +140,8 @@ int main(int argc, char** argv) {
     const auto alloc_fn = reinterpret_cast<Call>(WriteAllocFunction(reinterpret_cast<u64>(node)));
     const auto heap_fn = reinterpret_cast<Call>(WriteHeapFunction(0x7700000, 0x4000));
     const auto copy_fn = reinterpret_cast<Copy>(WriteCopyFunction());
+    using GxNode = GUEST_ABI u64 (*)(u64*, u64);
+    const auto gx_fn = reinterpret_cast<GxNode>(WriteGxNodeFunction());
 
     BbGuestHooks::Install([](u64 address, u64 size) {
         range_start = address;
@@ -148,6 +165,16 @@ int main(int argc, char** argv) {
         assert(copy_fn(to, from, sizeof(from)) == to);
         assert(std::strcmp(to, "resource data") == 0);
         assert(noted_address == reinterpret_cast<u64>(to) && noted_size == sizeof(from));
+    }
+    // The GX command heap guard (a detour only): a node is written as before; without one the
+    // game's write to address 8 is skipped with the post.
+    if (!traps) {
+        assert(code[GxNodeSite] == 0xe9);
+        for (int round = 0; round < 2; ++round) {
+            u64 gx_node[2] = {0, 0};
+            assert(gx_fn(gx_node, 0x1234) == 1 && gx_node[1] == 0x1234);
+            assert(gx_fn(nullptr, 0x1234) == 0);
+        }
     }
     std::printf("guest hooks (%s): ok\n", traps ? "int3 traps" : "native detours");
     return 0;

@@ -875,6 +875,13 @@ const GraphicsPipeline* PipelineCache::PublishGraphicsPipeline(
     GraphicsPipeline::SerializationSupport& sdata, bool claimed) {
     const GraphicsPipeline* result;
     bool inserted;
+    // bbport: the driver could not create it. An empty entry keeps the key from being compiled
+    // again on every draw (its draws are skipped); it is not saved, so the next start compiles
+    // it again (Supermedo's bbport 188c1f6d).
+    const bool valid = pipeline->IsValid();
+    if (!valid) {
+        pipeline.reset();
+    }
     {
         std::unique_lock lock{pipelines_mutex};
         // Another thread may have published the same pipeline while this one compiled a copy
@@ -887,7 +894,7 @@ const GraphicsPipeline* PipelineCache::PublishGraphicsPipeline(
         }
     }
     pipelines_cv.notify_all();
-    if (inserted) {
+    if (inserted && valid) {
         RegisterPipelineData(key, hash, sdata);
         ++num_new_pipelines;
     }
@@ -1148,6 +1155,11 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
                                                        *pipeline_cache, compute_key, *sel.infos[0],
                                                        sel.modules[0], sdata, false);
+        // bbport: as for graphics pipelines, kept empty (its dispatches skipped) and not saved.
+        if (!it.value()->IsValid()) {
+            it.value().reset();
+            return nullptr;
+        }
         RegisterPipelineData(compute_key, sdata);
         ++num_new_pipelines;
 
@@ -1473,6 +1485,20 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
     }
 
     const auto* vs_info = sel.infos[static_cast<u32>(SwStage::Vertex)];
+    // bbport: a draw whose vertex buffer table pointer is null (a read fault at 0 before, at the
+    // cutscene after Rom and in normal play) has no vertex input to build: skipped (Supermedo's
+    // bbport 2c4ddeba).
+    if (vs_info && sel.fetch_shader) {
+        for (const auto& attrib : sel.fetch_shader->attributes) {
+            if (vs_info->UdPointerNull(attrib.sgpr_base)) {
+                static std::atomic<u32> reported{0};
+                if (reported.fetch_add(1, std::memory_order_relaxed) < 5) {
+                    std::printf("GPU: draw skipped: its vertex buffer table pointer is null\n");
+                }
+                return false;
+            }
+        }
+    }
     if (vs_info && sel.fetch_shader && !instance.IsVertexInputDynamicState()) {
         // Without vertex input dynamic state, the pipeline needs to specialize on format.
         // Stride will still be handled outside the pipeline using dynamic state.

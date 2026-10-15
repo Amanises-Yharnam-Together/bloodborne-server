@@ -298,6 +298,47 @@ bool InstallDetour(NativeSite& site) {
     return true;
 }
 
+/// The GX swap-chain's per-frame render command: its 16-byte node comes from a per-frame bump
+/// allocator that returns null once the frame's heap is used up; the game writes through it
+/// unchecked (`mov [r12 + 8], r13` at 0x2199310, then posts it to the render thread): a guest
+/// fault at address 8. Without a node the post is skipped and the pending flag (this + 0x3ab)
+/// stays set, so the command goes out with the next frame. From deadinside28's bbport 0.6
+/// (InstallGxNodeGuard; their issues #162, #192).
+constexpr u64 GxNodeSite = 0x2199310;
+constexpr u64 GxNodeSkip = 0x219934e; // past the post and the flag's clear
+constexpr unsigned char GxNodeCode[9] = {0x4d, 0x89, 0x6c, 0x24, 0x08,  // mov [r12 + 8], r13
+                                         0x49, 0x8b, 0x87, 0xb0};        // mov rax, [r15 + 0xb0]
+std::atomic<u64> gx_node_skip_trap{0}; ///< the stub's int3 for a null node (OnTrapAt)
+
+bool InstallGxNodeGuard() {
+    const u64 address = ImageBase + GxNodeSite;
+    if (std::memcmp(reinterpret_cast<const void*>(address), GxNodeCode, sizeof(GxNodeCode)) != 0) {
+        return false;
+    }
+    Emitter e;
+    e.Bytes({0x4d, 0x85, 0xe4});                   // test r12, r12
+    e.Bytes({0x74, 0x13});                         // jz null (past the next 19 bytes)
+    e.Bytes({0x4d, 0x89, 0x6c, 0x24, 0x08});       // mov [r12 + 8], r13
+    e.Bytes({0xff, 0x25, 0x00, 0x00, 0x00, 0x00}); // jmp [rip]
+    e.U64(address + 5);
+    const std::size_t trap_at = e.size;
+    e.Bytes({0xcc}); // null: OnTrapAt counts it and skips the post
+    const u64 stub = PlaceStub(e);
+    std::uint32_t rel = 0;
+    if (!stub || !Rel32To(address + 5, stub, rel)) {
+        return false;
+    }
+    gx_node_skip_trap.store(stub + trap_at, std::memory_order_release);
+    CodeWrite code;
+    if (!code.Open(address, 5)) {
+        return false;
+    }
+    __atomic_store_n(reinterpret_cast<u8*>(address), u8{0xcc}, __ATOMIC_SEQ_CST); // OnTrapAt runs
+    code.Restore();                                                             // it meanwhile
+    WriteJumpOverTrap(address, 0xe9, rel);
+    return true;
+}
+
 /// The copy call sites: the call's target becomes a trampoline to LoaderCopy.
 bool InstallCallDetour(u64 offset) {
     Emitter e;
@@ -321,11 +362,29 @@ struct TrapRegs {
     u64* rsp;
     u64* rbp;
     u64* rdi;
+    u64* r12;
+    u64* r13;
 };
 
 /// A thread at the int3 written at `rip`: runs what the site does and moves it on. False when the
 /// trap is not one of these hooks.
 bool OnTrapAt(u64 rip, const TrapRegs& g) {
+    // The GX node guard: its site while the detour goes in, and its null case.
+    const bool gx_site = rip == ImageBase + GxNodeSite;
+    if (gx_site || (rip != 0 && rip == gx_node_skip_trap.load(std::memory_order_acquire))) {
+        if (gx_site && *g.r12 != 0) {
+            *reinterpret_cast<u64*>(*g.r12 + 8) = *g.r13;
+            *g.rip = ImageBase + GxNodeSite + 5;
+            return true;
+        }
+        static std::atomic<bool> told{false};
+        if (!told.exchange(true)) {
+            std::printf("Guest hooks: the GX per-frame command heap was full: a render command "
+                        "waits for the next frame\n");
+        }
+        *g.rip = ImageBase + GxNodeSkip;
+        return true;
+    }
     for (const auto& site : native_sites) {
         if (rip == ImageBase + site.offset) {
             if (const u64 stub = site.stub.load(std::memory_order_acquire)) {
@@ -410,7 +469,8 @@ LONG CALLBACK OnTrapException(EXCEPTION_POINTERS* info) {
     CONTEXT* c = info->ContextRecord;
     const TrapRegs regs{reinterpret_cast<u64*>(&c->Rip), reinterpret_cast<u64*>(&c->Rax),
                         reinterpret_cast<u64*>(&c->Rbx), reinterpret_cast<u64*>(&c->Rsp),
-                        reinterpret_cast<u64*>(&c->Rbp), reinterpret_cast<u64*>(&c->Rdi)};
+                        reinterpret_cast<u64*>(&c->Rbp), reinterpret_cast<u64*>(&c->Rdi),
+                        reinterpret_cast<u64*>(&c->R12), reinterpret_cast<u64*>(&c->R13)};
     const u64 rip = reinterpret_cast<u64>(info->ExceptionRecord->ExceptionAddress);
     return OnTrapAt(rip, regs) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
 }
@@ -423,7 +483,8 @@ void OnTrap(int sig, siginfo_t* info, void* context) {
     static_assert(sizeof(greg_t) == sizeof(u64));
     const TrapRegs regs{reinterpret_cast<u64*>(&g[REG_RIP]), reinterpret_cast<u64*>(&g[REG_RAX]),
                         reinterpret_cast<u64*>(&g[REG_RBX]), reinterpret_cast<u64*>(&g[REG_RSP]),
-                        reinterpret_cast<u64*>(&g[REG_RBP]), reinterpret_cast<u64*>(&g[REG_RDI])};
+                        reinterpret_cast<u64*>(&g[REG_RBP]), reinterpret_cast<u64*>(&g[REG_RDI]),
+                        reinterpret_cast<u64*>(&g[REG_R12]), reinterpret_cast<u64*>(&g[REG_R13])};
     if (OnTrapAt(rip, regs)) {
         return;
     }
@@ -512,9 +573,12 @@ void Install(RangeCallback on_gpu_range_allocated) {
                 detours += InstallDetour(site);
             }
         }
+        const bool gx_guard = InstallGxNodeGuard();
         SealStubPage();
         std::printf("Guest hooks: %d native detours (no traps; BB_GUEST_HOOK_TRAPS=1: int3)\n",
                     detours);
+        std::printf("Guest hooks: GX command heap guard %s\n",
+                    gx_guard ? "in" : "not installed (other code there)");
     }
     BbHeapSites::Install();
     if (const char* env = std::getenv("BB_HEAP_SITES"); env && env[0] == '1') {

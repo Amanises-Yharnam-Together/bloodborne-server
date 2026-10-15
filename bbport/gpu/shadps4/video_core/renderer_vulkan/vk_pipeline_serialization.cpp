@@ -232,6 +232,19 @@ bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive&
 bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     sel.graphics_key.Deserialize(ar);
 
+    // bbport: motion-vector pipelines are never preloaded. Their vertex shader embeds session-
+    // local motion settings (see LoadShaderMeta), and the shader metadata is stored once per
+    // program, not per permutation: the meta found for a motion pipeline's stages could be the
+    // plain permutation, so the motion check there missed it and the preload built the
+    // 8-attachment motion key with plain shaders. The AMD driver refused some of these
+    // (ErrorUnknown: a startup crash), and the ones it accepted were registered under the motion
+    // key without motion output. Built at first use instead, like the vertex shaders (Supermedo's
+    // bbport f33e7617).
+    if (sel.graphics_key.motion_vectors) {
+        DropSelection();
+        return false;
+    }
+
     GraphicsPipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
 

@@ -445,13 +445,17 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, new_info);
         RegisterImage(new_image_id);
 
+        // bbport: insert() may have grown slot_images and moved every image: `cache_image` would
+        // then point at freed storage, so look it up again (Supermedo's bbport 3a7cde83).
+        auto& old_image = slot_images[cache_image_id];
+
         // Inherit image usage
         auto& new_image = slot_images[new_image_id];
-        new_image.usage = cache_image.usage;
+        new_image.usage = old_image.usage;
         new_image.flags &= ~ImageFlagBits::Dirty;
         // When creating a depth buffer through overlap resolution don't clear it on first use.
         new_image.info.meta_info.htile_clear_mask = 0;
-        runtime.CopyColorAndDepth(&cache_image, &new_image);
+        runtime.CopyColorAndDepth(&old_image, &new_image);
 
         // Free the cache image.
         FreeImage(cache_image_id);
@@ -990,10 +994,13 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
         }
         Image& stencil_image = slot_images[stencil_id];
         TouchImage(stencil_image);
-        stencil_image.AssociateDepth(image_id, image.image_uid);
+        // bbport: insert() above may have grown slot_images and moved every image, leaving
+        // `image` pointing at freed storage (a read fault here): look the depth image up again
+        // (Supermedo's bbport 3a7cde83).
+        stencil_image.AssociateDepth(image_id, slot_images[image_id].image_uid);
     }
 
-    return image.FindView(desc.view_info, false);
+    return slot_images[image_id].FindView(desc.view_info, false);
 }
 
 void TextureCache::RefreshImage(Image& image) {
@@ -1084,11 +1091,20 @@ void TextureCache::RefreshImage(Image& image) {
         // had no reference, and the first CPU write anywhere in its page replaced the GPU's
         // contents with stale guest memory (a 1x1 exposure texture computed once: the
         // character creation preview went black after one frame).
-        const u64 mip_hash = BbMemory::HashBacking(image.info.guest_address + mip_offset, mip_size);
-        if (is_gpu_modified && !is_gpu_dirty && image.mip_hashes[m] == mip_hash) {
-            continue;
+        // Only for images the GPU writes or may write (small ones, targets, storage images): a
+        // streamed texture hashed here cost the GPU thread its whole size again on every upload
+        // (Supermedo's bbport 136a72d0).
+        const bool track = (is_gpu_modified && !is_gpu_dirty) || mip_size <= 64_KB ||
+                           image.usage.storage || image.usage.render_target ||
+                           image.usage.depth_target;
+        if (track) {
+            const u64 mip_hash =
+                BbMemory::HashBacking(image.info.guest_address + mip_offset, mip_size);
+            if (is_gpu_modified && !is_gpu_dirty && image.mip_hashes[m] == mip_hash) {
+                continue;
+            }
+            image.mip_hashes[m] = mip_hash;
         }
-        image.mip_hashes[m] = mip_hash;
 
         const u32 extent_width = mip_pitch ? std::min(mip_pitch, width) : width;
         const u32 extent_height = mip_height ? std::min(mip_height, height) : height;
