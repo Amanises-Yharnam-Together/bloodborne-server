@@ -252,16 +252,23 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
         const u32 frame = static_cast<u32>(BbStats::frame_number.load(std::memory_order_relaxed));
         const bool skip = t.first == first && t.end == end && t.generation == layer_generation &&
                           t.frame == frame && t.written == is_written;
-        // Blocks with unannounced bytes are watched copies for a reading binding (BB_LAYER_WATCH).
-        std::vector<u64> blocks, unknown, watch;
+        // Blocks with unannounced bytes are watched copies for a reading binding (BB_LAYER_WATCH);
+        // for a writing one only its first and last block when it covers them in part (the bytes
+        // beside it: layer_edge_blocks).
+        std::vector<u64> blocks, unknown, watch, edges;
         for (u64 block = first; !skip && block < end && unknown.size() <= VolatileMaxBlocks;
              ++block) {
             if (!Layer().AnyValid(block, block + 1)) {
+                const bool partial = (block << block_shift) < address ||
+                                     ((block + 1) << block_shift) > address + size;
                 if (LayerEligible(block)) {
                     blocks.push_back(block);
                 } else if (!is_written && LayerWatchable(block)) {
                     blocks.push_back(block);
                     watch.push_back(block);
+                } else if (is_written && partial && LayerWatchable(block)) {
+                    blocks.push_back(block);
+                    edges.push_back(block);
                 } else {
                     unknown.push_back(block);
                 }
@@ -276,7 +283,15 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
             for (const u64 block : watch) {
                 layer_watched.Add({block, block + 1});
             }
+            for (const u64 block : edges) {
+                layer_edge_blocks.Add({block, block + 1});
+            }
             LayerPromote(blocks);
+            for (const u64 block : edges) {
+                if (!Layer().AnyValid(block, block + 1)) {
+                    layer_edge_blocks.Subtract(block, block + 1); // not moved (VRAM short)
+                }
+            }
             for (const u64 block : watch) {
                 if (Layer().AnyValid(block, block + 1)) {
                     layer_cpu_blocks.Add({block, block + 1}); // the GPU writes it in place
@@ -493,7 +508,8 @@ void BufferCache::LayerPromote(const std::vector<u64>& blocks) {
         u64 run_first = ~0ULL, run_end = 0;
         for (u64 block = a; block < b; ++block) {
             if (Layer().AnyValid(block, block + 1) ||
-                !(LayerEligible(block) || layer_watched.Contains(block, block + 1))) {
+                !(LayerEligible(block) || layer_watched.Contains(block, block + 1) ||
+                  layer_edge_blocks.Contains(block, block + 1))) {
                 if (run_first != ~0ULL) {
                     moved += LayerPromoteRun(run_first, run_end);
                     run_first = ~0ULL;
@@ -664,6 +680,7 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
             }
         }
         layer_volatile.Subtract(a, b);
+        layer_edge_blocks.Subtract(a, b);
         // A watched block sent back for a GPU write (binding or command) is not watched again (it
         // came back for every binding, ~40 MiB/s while playing; memory handed out anew does not
         // clear it either: the game's allocator recycles some every frame); one sent back for an
@@ -1540,6 +1557,10 @@ void BufferCache::LayerProcessTraps() {
     }
     for (const auto& [block, rip] : hits) {
         const bool watched = layer_watched.Contains(block, block + 1);
+        // An edge block of a range the GPU writes in VRAM: the CPU wrote beside that range (its
+        // bytes are the GPU's): they are copied back below before it goes in place.
+        const bool edge =
+            layer_edge_blocks.Contains(block, block + 1) && Layer().AnyValid(block, block + 1);
         ++layer_trap_kinds[rip == 0 ? 0 : (watched ? 1 : 2) + (IsGuestCode(rip) ? 0 : 2)];
         // The CPU uses this block: GPU writes there stay in place from now on (until it is handed
         // out again), so a VRAM copy never holds GPU data the CPU's data could meet.
@@ -1561,7 +1582,7 @@ void BufferCache::LayerProcessTraps() {
         // data again. An announced write: the GPU's data beside its bytes is copied back first
         // (LayerForgetGpuData took its bytes out). A write nobody announced: the CPU reuses the
         // memory, the GPU's data there is dead (copying it back would land over the CPU's).
-        LayerDemote(block, block + 1, rip == 0, 3);
+        LayerDemote(block, block + 1, rip == 0 || edge, 3);
     }
 }
 
