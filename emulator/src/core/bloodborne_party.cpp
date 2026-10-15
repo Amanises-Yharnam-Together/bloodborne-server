@@ -1284,6 +1284,14 @@ ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPositio
     return {ResumeStep::Kind::Move, 0};
 }
 
+std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<ResumePoint> from_file,
+                                           std::optional<ResumePoint> from_server) {
+    if (from_server) {
+        return from_server;
+    }
+    return in_session ? std::nullopt : from_file;
+}
+
 s32 MapFlagBase(u32 packed_map) {
     const s32 area = static_cast<s32>((packed_map >> 24) & 0xFF);
     const s32 block = static_cast<s32>((packed_map >> 16) & 0xFF);

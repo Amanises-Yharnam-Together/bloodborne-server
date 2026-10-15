@@ -428,6 +428,14 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
             SendTo(member, envelope, now_ms);
         }
     }
+    // Phase 7: where a guest last stood, for its run to come back there (the host's save is its
+    // own place).
+    if (const auto place = world.places.find(member.name);
+        !member.host && place != world.places.end()) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_resume_at() = place->second;
+        SendTo(member, envelope, now_ms);
+    }
     // The host's open session: a guest joins it once it stands in its world.
     if (world.session && world.session->host() != member.name) {
         bbcoop::Envelope envelope;
@@ -755,6 +763,12 @@ void Service::TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelop
         answer(world.boards.Trophies(envelope.trophies()), PartyBoards::TrophyBoard);
         return;
     case bbcoop::Envelope::kVitals: {
+        if (const bbcoop::Vitals& vitals = envelope.vitals();
+            vitals.map() != 0 && vitals.vital() == 1 && vitals.has_at()) {
+            bbcoop::ResumeAt& place = world.places[member.name];
+            place.set_map(vitals.map());
+            *place.mutable_at() = vitals.at();
+        }
         answer(world.boards.Vitals(member.name, envelope.vitals(), now_ms),
                PartyBoards::VitalsBoard);
         // Logged when someone's state or the wipes change, not for every HP change.

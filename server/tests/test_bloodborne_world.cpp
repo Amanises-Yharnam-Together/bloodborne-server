@@ -163,6 +163,8 @@ struct Game {
     } else if (envelope.has_team_session()) {
       session = envelope.team_session();
       ++sessions;
+    } else if (envelope.has_resume_at()) {
+      resume_at = envelope.resume_at();
     } else if (envelope.has_load_progress()) {
       loads[envelope.load_progress().member()] = envelope.load_progress();
     } else if (envelope.has_enemy_hit()) {
@@ -229,6 +231,7 @@ struct Game {
   std::optional<bbcoop::TeamWorld> team_world;
   int team_worlds = 0;
   std::optional<bbcoop::TeamSession> session;
+  std::optional<bbcoop::ResumeAt> resume_at;
   int sessions = 0;
   std::map<std::string, bbcoop::LoadProgress> loads;
   std::vector<bbcoop::EnemyHit> hits;
@@ -1397,11 +1400,45 @@ int EachLinksPartyIsKnownAfterItsHello() {
   return 0;
 }
 
+// Phase 7: a guest whose game died comes back where it was. The server keeps
+// each member's last place in the world (its vitals: map and position) and
+// tells the member's next run where to resume.
+int AMembersNextRunResumesWhereItWas() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(!guest.resume_at.has_value()); // nowhere known yet
+  bbcoop::Envelope vitals = VitalsOf(0x18010000, 1);
+  vitals.mutable_vitals()->mutable_at()->set_x(-215.5f);
+  vitals.mutable_vitals()->mutable_at()->set_y(-51.0f);
+  vitals.mutable_vitals()->mutable_at()->set_z(172.25f);
+  guest.Send(vitals, now + 10);
+  Pump(service, {&host, &guest}, now + 10);
+  // Its game dies and starts again (a new link, a new run).
+  service.Forget(guest.endpoint);
+  Game guest_again{1002, "guest", 22};
+  guest_again.run = 0x3003;
+  guest_again.Hello(now + 20);
+  Pump(service, {&host, &guest_again}, now + 20);
+  CHECK(guest_again.resume_at.has_value());
+  CHECK(guest_again.resume_at->map() == 0x18010000);
+  CHECK(guest_again.resume_at->at().x() == -215.5f &&
+        guest_again.resume_at->at().z() == 172.25f);
+  // The host's own save is its place: it is told nothing.
+  CHECK(!host.resume_at.has_value());
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
       {"EachLinksPartyIsKnownAfterItsHello",
        EachLinksPartyIsKnownAfterItsHello},
+      {"AMembersNextRunResumesWhereItWas", AMembersNextRunResumesWhereItWas},
       {"AWrongPartyOrProtocolIsRefused", AWrongPartyOrProtocolIsRefused},
       {"AWipeStartsOneLogForTheParty", AWipeStartsOneLogForTheParty},
       {"TheHostsSessionEventsStartANewLogAGuestsTakeItsShare",

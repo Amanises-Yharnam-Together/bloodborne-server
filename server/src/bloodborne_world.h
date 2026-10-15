@@ -126,6 +126,9 @@ private:
         std::optional<bbcoop::TeamSession> session;
         // Each member's load (the team loading screen), by member name.
         std::map<std::string, bbcoop::LoadProgress> loads;
+        // Phase 7: where each member last stood (its last vitals up, by member name), for its
+        // next run to resume there.
+        std::map<std::string, bbcoop::ResumeAt> places;
         u32 session_run = 0; // the host game's run that opened it
         // Phase 4: who runs each area's enemies, and what was logged of it.
         EnemyOwners owners;

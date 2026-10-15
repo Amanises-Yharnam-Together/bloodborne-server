@@ -1020,6 +1020,10 @@ struct ResumeStep {
 // guest no longer on the map it loaded on (`loaded_map`, 0 if not known) travelled on: it stays.
 ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at, s32 progress,
                             u32 loaded_map = 0);
+// Phase 7: the point a loaded guest resumes at: the server's (where it last stood in its team's
+// world: the newest) when it has one, else its own file's, which counts only out of a session.
+std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<ResumePoint> from_file,
+                                           std::optional<ResumePoint> from_server);
 
 // World state per map (a message on the server link, once POST /bloodborne/party/mapstate): the
 // host posts the bits of its map's 10000 flags from MapFlagBase (MSB first, as the flag store keeps

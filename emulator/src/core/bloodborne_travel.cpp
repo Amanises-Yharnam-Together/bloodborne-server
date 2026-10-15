@@ -1244,7 +1244,9 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         }
         std::ifstream file{GuestResumeFile()};
         const std::string text{std::istreambuf_iterator<char>{file}, {}};
-        const auto point = in_session ? std::nullopt : ParseResumePoint(text);
+        // Phase 7: the server's point first (a team join puts the guest in a session at once).
+        const auto point =
+            PickResumePoint(in_session, ParseResumePoint(text), TakeServerResumePoint());
         // An unknown count (0) is no other character (see IsOtherCharacter).
         own_progress = in_session ? 0 : CountSetFlags().value_or(0);
         const ResumeStep step =

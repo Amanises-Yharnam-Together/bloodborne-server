@@ -2849,6 +2849,19 @@ TEST(BloodborneGuestResume, AGuestResumesWhereItLeft) {
         << "a new character in the slot";
 }
 
+// Phase 7: a guest whose game died joins its team at once on its next run, so its own file's
+// point (kept only out of a session) never counts there; the server keeps where it last stood in
+// the team's world, and that point counts, in a session or not (it is the newest).
+TEST(BloodborneGuestResume, TheServersPointCountsInATeamSession) {
+    const ResumePoint file{0x18000000, {-120.5f, 10.25f, 33.0f}, 900};
+    const ResumePoint server{0x18010000, {-215.5f, -51.0f, 172.25f}, 0};
+    EXPECT_EQ(PickResumePoint(false, file, std::nullopt), std::optional{file});
+    EXPECT_EQ(PickResumePoint(true, file, std::nullopt), std::nullopt);
+    EXPECT_EQ(PickResumePoint(true, file, server), std::optional{server});
+    EXPECT_EQ(PickResumePoint(false, std::nullopt, server), std::optional{server});
+    EXPECT_EQ(PickResumePoint(false, std::nullopt, std::nullopt), std::nullopt);
+}
+
 // Ada's new character (2026-10-12) started in Central Yharnam: slot 5 still had the old
 // character's resume point, and its event flag count was too close to tell them apart. Once the
 // slot is found to hold another character (ForgetsSlotLists), its resume point goes with the

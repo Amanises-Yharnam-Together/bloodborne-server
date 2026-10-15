@@ -92,6 +92,7 @@ std::deque<bbcoop::Envelope> lobby_outbox;
 // once its save took the team's (team_host, team_world_taken), a save loaded alone takes its own
 // world back (personal_world_due).
 std::optional<bbcoop::TeamWorld> team_world;
+std::optional<ResumePoint> server_resume_point; // ResumeAt, until the resume takes it
 bool team_world_due = false;
 bool team_world_taken = false;
 std::set<u32> team_world_blocks;
@@ -157,6 +158,16 @@ bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
     if (envelope.has_load_progress()) {
         std::scoped_lock lock{team_mutex};
         team_load.Take(envelope.load_progress(), SteadyMilliseconds());
+        return true;
+    }
+    if (envelope.has_resume_at()) {
+        const bbcoop::ResumeAt& at = envelope.resume_at();
+        LOG_INFO(Debug,
+                 "Co-op team world: the server has this member last on map {:#x} at ({}, "
+                 "{}, {})",
+                 at.map(), at.at().x(), at.at().y(), at.at().z());
+        std::scoped_lock lock{team_mutex};
+        server_resume_point = ResumePoint{at.map(), {at.at().x(), at.at().y(), at.at().z()}, 0};
         return true;
     }
     if (envelope.has_team_session()) {
@@ -1136,6 +1147,11 @@ bool TickTeamJoin(bool ready) {
     }
     }
     return true;
+}
+
+std::optional<ResumePoint> TakeServerResumePoint() {
+    std::scoped_lock lock{team_mutex};
+    return std::exchange(server_resume_point, std::nullopt);
 }
 
 std::optional<bbcoop::LobbyState> TeamLobbyState() {

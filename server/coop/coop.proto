@@ -397,7 +397,15 @@ message Envelope {
         LoadProgress load_progress = 37;
         // 38 was EnemiesLetGo (phase 6's far-guest runners, gone in phase 8).
         EnemyHit enemy_hit = 39;
+        ResumeAt resume_at = 40;
     }
+}
+
+// Phase 7, server -> game (after its hello): where this member last stood in the team's world
+// (its last vitals), for a guest's next run to come back there instead of at its save's lamp.
+message ResumeAt {
+    uint32 map = 1;
+    Position at = 2;
 }
 
 // Phase 5: the team lobby (docs/SERVER_COOP_PLAN.md, "The team lobby"). A game signs in to the

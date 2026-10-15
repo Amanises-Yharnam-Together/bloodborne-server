@@ -762,6 +762,8 @@ void TickTeamWorld(s64 now_ms);
 // The lobby as the server last sent it, for the game's menu (none before its answer), and this
 // player's lobby name; a request from the menu.
 std::optional<bbcoop::LobbyState> TeamLobbyState();
+// Phase 7: where the server says this member last stood in its team's world (once per run).
+std::optional<ResumePoint> TakeServerResumePoint();
 std::string TeamLobbyMember();
 void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id);
 // This member's part of each board (bloodborne_boards.cpp's rounds send them).
