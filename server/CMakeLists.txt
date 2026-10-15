@@ -255,6 +255,11 @@ if(BUILD_TESTING)
     target_link_libraries(test_bloodborne_trade PRIVATE libprotobuf)
     add_test(NAME bloodborne_trade COMMAND test_bloodborne_trade)
 
+    add_executable(test_accounts EXCLUDE_FROM_ALL tests/test_accounts.cpp src/database.cpp)
+    target_include_directories(test_accounts PRIVATE src)
+    target_link_libraries(test_accounts PRIVATE Qt6::Core Qt6::Sql)
+    add_test(NAME accounts COMMAND test_accounts)
+
     # The backend in shadnet against backend/bb_dummy_server.py: the same requests, the same
     # answers (needs Python 3).
     find_package(Python3 COMPONENTS Interpreter)

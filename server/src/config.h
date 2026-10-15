@@ -83,6 +83,12 @@ public:
         QReadLocker lk(&m_lock);
         return m_emailValidated;
     }
+    // Phase 11: a player id never seen before gets its account at its first sign-in (no
+    // registering; the launcher makes the id).
+    bool IsMakingAccountsAtSignIn() const {
+        QReadLocker lk(&m_lock);
+        return m_makeAccountsAtSignIn;
+    }
     bool IsBannedDomain(const QString& d) const {
         QReadLocker lk(&m_lock);
         return m_bannedDomains.contains(d.toLower());
@@ -139,6 +145,7 @@ private:
     QString m_bloodborneWorldPath = "bloodborne_worlds";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute
     bool m_emailValidated = false;
+    bool m_makeAccountsAtSignIn = true;
     QStringList m_adminsList;
     QSet<QString> m_bannedDomains;
     // When non-empty, registrations must supply this key or they are rejected.

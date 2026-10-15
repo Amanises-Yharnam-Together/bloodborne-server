@@ -58,10 +58,28 @@ class AnswersTests(unittest.TestCase):
         # No party settings: teams are made in the game (phase 6), so no party name or password.
         self.assertNotIn('party_name', coop.DEFAULTS)
         self.assertNotIn('party_secret', coop.DEFAULTS)
-        settings = dict(coop.DEFAULTS, game='', role='guest', host_ip='', account='Ada', password='')
-        self.assertEqual(coop.missing(settings), ['game', 'host_ip', 'password'])
-        settings.update(game='G', host_ip='26.1.2.3', password='x')
+        # Phase 11 (Kaniel 2026-10-15): no account name or password to type; the player id is made.
+        settings = dict(coop.DEFAULTS, game='', role='guest', host_ip='', account='', password='')
+        self.assertEqual(coop.missing(settings), ['game', 'host_ip'])
+        settings.update(game='G', host_ip='26.1.2.3')
         self.assertEqual(coop.missing(settings), [])
+
+    def test_a_player_id_is_made_once_and_kept(self):
+        settings = coop.with_player_id(dict(coop.DEFAULTS))
+        self.assertTrue(coop.valid_name(settings['account']), settings['account'])
+        self.assertTrue(coop.valid_secret(settings['password']))
+        self.assertGreaterEqual(len(settings['password']), 32, 'the id is the secret: long and random')
+        self.assertEqual(coop.with_player_id(dict(settings)), settings, 'made once, then kept')
+        other = coop.with_player_id(dict(coop.DEFAULTS))
+        self.assertNotEqual(other['account'], settings['account'])
+        # A player who had an account keeps it, and with it its teams and worlds.
+        old = coop.with_player_id(dict(coop.DEFAULTS, account='kaniel', password='pw'))
+        self.assertEqual((old['account'], old['password']), ('kaniel', 'pw'))
+        with tempfile.TemporaryDirectory() as folder:
+            install = Path(folder)
+            made = coop.load_settings(install)
+            self.assertTrue(coop.valid_name(made['account']), 'a new install has its id at once')
+            self.assertEqual(coop.load_settings(install)['account'], made['account'], 'saved')
 
     def test_the_old_settings_bat_carries_over(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -81,8 +99,8 @@ class AnswersTests(unittest.TestCase):
     def test_settings_are_kept_in_the_user_folder(self):
         with tempfile.TemporaryDirectory() as folder:
             install = Path(folder)
-            self.assertEqual(coop.load_settings(install), coop.DEFAULTS)
-            coop.save_settings(install, dict(coop.DEFAULTS, account='Lisara'))
+            self.assertEqual(dict(coop.load_settings(install), account='', password=''), coop.DEFAULTS)
+            coop.save_settings(install, dict(coop.DEFAULTS, account='Lisara', password='pw'))
             self.assertEqual(json.loads((install / 'user' / 'coop.json').read_text('utf-8'))['account'], 'Lisara')
             self.assertEqual(coop.load_settings(install)['account'], 'Lisara')
 
@@ -181,14 +199,10 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(json.loads(coop.host_overrides('26.1.2.3')),
                          {'https://ss4.scej-network.jp:20443': 'http://26.1.2.3:20443'})
 
-    def test_the_account_registers_itself_on_the_hosts_server(self):
-        command = coop.register_command(Path('C:/Co-op'), '26.1.2.3', 'Lisara', 'pw')
-        self.assertEqual(command, [str(Path('C:/Co-op/server/clientsample/shadnet-sample.exe')), '26.1.2.3', '31313',
-                                   'register', 'Lisara', 'pw', 'Lisara.pw@p2p.db'])
-        self.assertTrue(coop.registered('[connect] OK\n[create] Account created successfully.\n', 0))
-        self.assertTrue(coop.registered('[create] FAILED: CreationExistingUsername\n', 0), 'made before')
-        self.assertFalse(coop.registered('[connect] FAILED: refused\n', 1))
-        self.assertFalse(coop.registered('[create] FAILED: CreationExistingEmail\n', 0))
+    def test_nothing_registers_the_account(self):
+        # Phase 11: the host's server makes a player's account at its first sign-in.
+        self.assertFalse(hasattr(coop, 'register'))
+        self.assertFalse(hasattr(coop, 'register_command'))
 
     def test_the_firewall_rules_cover_the_game_and_for_the_host_the_servers(self):
         install = Path('C:/Co-op')

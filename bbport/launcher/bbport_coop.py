@@ -15,6 +15,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import struct
@@ -65,9 +66,20 @@ def valid_harder(value):
 
 def missing(settings):
     """The answers still to give (or wrong), in the window's order."""
-    checks = (('game', lambda v: bool(v)), ('host_ip', valid_ip), ('account', valid_name),
-              ('password', valid_secret))
+    checks = (('game', lambda v: bool(v)), ('host_ip', valid_ip))
     return [key for key, ok in checks if not ok(str(settings.get(key, '')))]
+
+
+def with_player_id(settings):
+    """The settings with this player's id (phase 11, Kaniel 2026-10-15: no account name or password
+    to type). `account` and `password` are the id the game signs in with: an old install's account
+    stays, so its teams and worlds stay; otherwise a random one is made once. Players see only their
+    characters' names."""
+    if valid_name(settings.get('account', '')) and valid_secret(settings.get('password', '')):
+        return settings
+    settings['account'] = 'p' + secrets.token_hex(7)
+    settings['password'] = secrets.token_hex(16)
+    return settings
 
 
 def settings_path(install):
@@ -92,7 +104,19 @@ def from_settings_bat(path):
 
 
 def load_settings(install):
-    """coop.json, else the old settings.bat beside BLauncher.exe, else the defaults."""
+    """coop.json, else the old settings.bat beside BLauncher.exe, else the defaults; with the player's
+    id, saved the first time it is made."""
+    settings = read_settings(install)
+    if not (valid_name(settings['account']) and valid_secret(settings['password'])):
+        settings = with_player_id(settings)
+        try:
+            save_settings(install, settings)
+        except OSError:
+            pass
+    return settings
+
+
+def read_settings(install):
     path = settings_path(install)
     try:
         saved = json.loads(path.read_text(encoding='utf-8'))
@@ -488,7 +512,6 @@ def game_environment(env, settings, install, root):
         'BB_ONLINE': '1',
         'BB_SHADNET_SERVER': f'{host}:{SHADNET_PORT}', 'BB_SHADNET_WEBAPI': f'http://{host}:{WEBAPI_PORT}',
         'BB_SHADNET_NPID': settings['account'], 'BB_SHADNET_PASSWORD': settings['password'],
-        'BB_USER_NAME': settings['account'],
         'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1',
         'SHADPS4_BLOODBORNE_RE_TRACE': '0',
     })
@@ -518,28 +541,6 @@ def rotate_logs(install):
         if (log / f'{name}.txt').is_file():
             shutil.copy2(log / f'{name}.txt', log / f'{name}.prev.txt')
     return log / 'console.txt'
-
-
-def register_command(install, host_ip, account, password):
-    """Registers the account on the host's server (guests register themselves: no host step)."""
-    return [str(Path(install) / 'server' / 'clientsample' / 'shadnet-sample.exe'), host_ip, str(SHADNET_PORT),
-            'register', account, password, f'{account}.{password}@p2p.db']
-
-
-def registered(output, code):
-    """Whether the account exists on the server after a register: made now, or made before."""
-    return code == 0 and ('Account created' in output or 'CreationExistingUsername' in output)
-
-
-def register(install, host_ip, account, password, timeout=15):
-    """(ok, the tool's output)."""
-    try:
-        result = subprocess.run(register_command(install, host_ip, account, password), capture_output=True,
-                                text=True, timeout=timeout, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return False, str(error)
-    output = (result.stdout or '') + (result.stderr or '')
-    return registered(output, result.returncode), output
 
 
 # --- the host's servers -------------------------------------------------------------------------

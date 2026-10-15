@@ -2780,12 +2780,8 @@ class Launcher:
         ttk.Entry(self.cell(card, 2, 1, _("Host's IP address (VPN or public; the host types their own)",
                                           'IP хоста (VPN или внешний; хост вводит свой)')),
                   textvariable=var('host_ip')).pack(fill='x')
-        ttk.Entry(self.cell(card, 3, 0, _('Your account name (3-16 letters or digits)',
-                                          'Имя аккаунта (3-16 букв или цифр)')),
-                  textvariable=var('account')).pack(fill='x')
-        ttk.Entry(self.cell(card, 3, 1, _('Your account password', 'Пароль аккаунта')),
-                  textvariable=var('password'), show='•').pack(fill='x')
-        # No party settings: the team is made in the game (the team screen after Continue).
+        # No account name or password (phase 11): the player's id is made once and kept in coop.json,
+        # and the others see the character's name. No party settings: the team is made in the game (the team screen after Continue).
         combo(self.cell(card, 4, 0, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
               'harder', HARDER_CHOICES)
         holder = self.cell(card, 5, 0, '', span=2)
@@ -2801,11 +2797,11 @@ class Launcher:
                     self.coop_stop_servers).pack(side='left', padx=(px(8), 0))
         self.coop_server_line = self.label(holder, '', 'small', MUTED)
         self.coop_server_line.pack(side='left', padx=(px(14), 0))
-        self.note(card, _("Everyone uses this same release. Your account is made on the host's server the first time "
-                          'you press PLAY. Make or join a team in the game: Continue, Load Game or New Game opens the '
-                          'team screen. Windows asks once to let co-op through its firewall.',
-                          'Все используют один и тот же релиз. Аккаунт создаётся на сервере хоста при первом нажатии '
-                          'ИГРАТЬ. Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают '
+        self.note(card, _('Everyone uses this same release. No account to make: the others see your '
+                          "character's name. Make or join a team in the game: Continue, Load Game or New Game opens "
+                          'the team screen. Windows asks once to let co-op through its firewall.',
+                          'Все используют один и тот же релиз. Аккаунт не нужен: другие видят имя вашего '
+                          'персонажа. Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают '
                           'экран команды. Windows один раз спросит разрешение для брандмауэра.'), top=14)
         self.coop_changed()
         if not bbport_coop.find_game_folder(self.coop.get('game') or '.'):
@@ -2960,9 +2956,7 @@ class Launcher:
             return
         self.coop_changed()
         names = {'game': _('your Bloodborne folder', 'папку Bloodborne'),
-                 'host_ip': _("the host's IP address", 'IP хоста'),
-                 'account': _('an account name (3-16 letters, digits, _ or -)', 'имя аккаунта (3-16 букв, цифр, _ или -)'),
-                 'password': _('a password (letters, digits, _ or -)', 'пароль (буквы, цифры, _ или -)')}
+                 'host_ip': _("the host's IP address", 'IP хоста')}
         missing = bbport_coop.missing(self.coop)
         if missing:
             self.messagebox.showerror('Bloodborne', _('Fill in {} on the Co-op card.',
@@ -2987,13 +2981,8 @@ class Launcher:
                 bbport_coop.start_servers(PORT_DIR, settings['host_ip'])
             else:
                 self.coop_firewall()
-            self.coop_say(_("Signing in on the host's server…", 'Вход на сервер хоста…'))
-            ok, output = bbport_coop.register(PORT_DIR, settings['host_ip'], settings['account'], settings['password'])
-            if not ok:
-                raise RuntimeError(_("Could not reach the host's server at {}. Is the host's server running, and are "
-                                     'you on the same VPN?\n\n{}',
-                                     'Нет связи с сервером хоста {}. Запущен ли сервер у хоста и в одной ли вы '
-                                     'VPN?\n\n{}').format(settings['host_ip'], output.strip()[-400:]))
+            # No account step (phase 11): the host's server makes the player's account at its first
+            # sign-in, and the game's team screen says when it cannot reach the server.
             root = bbport_coop.view_root(PORT_DIR)
             if bbport_coop.needs_prepare(PORT_DIR, settings):
                 root, note = bbport_coop.prepare(PORT_DIR, settings, say=lambda text: self.coop_say(_(text)))
