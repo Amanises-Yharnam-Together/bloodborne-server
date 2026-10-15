@@ -38,7 +38,9 @@ static void *tls_worker(void *unused) {
     unsigned char *p=GET(TlsAddress,"vNe1w4diLCs#p#J")(index);
     assert(p[0]==42 && p[1]==17 && p[31]==0);
     p[0]=99;
-    assert(GET(ThreadSelf,"aI+OeCz8xrQ#p#J")()!=main_identity);
+    void *self=GET(ThreadSelf,"aI+OeCz8xrQ#p#J")();
+    assert(self!=main_identity);
+    assert(!((uintptr_t)self>>40)); /* the game packs thread handles into 40 bits */
     return NULL;
 }
 static void libc_support(void) {
@@ -51,6 +53,7 @@ static void libc_support(void) {
     assert(tls(last)==p+31 && tls(index)==p);
     p[0]=23;
     main_identity=GET(ThreadSelf,"aI+OeCz8xrQ#p#J")();
+    assert(!((uintptr_t)main_identity>>40));
     pthread_t worker;
     assert(pthread_create(&worker,NULL,tls_worker,NULL)==0);
     assert(pthread_join(worker,NULL)==0);
