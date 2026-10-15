@@ -186,7 +186,10 @@ static ABI __attribute__((noreturn)) void hard_exit(int status) {
 static ABI __attribute__((noreturn)) void raise_exception(uint32_t code,uint64_t argument) {
     fprintf(stderr,"STOP: guest raised debug exception code=0x%x argument=0x%llx\n",code,(unsigned long long)argument);
     runtime_report();
-    exit(23);
+    /* Other threads still run (the game's network threads among them): no exit handlers or
+     * static destructors under them (deadinside28's bbport 0.6). */
+    fflush(NULL);
+    _exit(23);
 }
 static ABI int32_t print_backtrace(void) {
     fputs("Runtime: guest requested a backtrace (not available)\n",stderr);
