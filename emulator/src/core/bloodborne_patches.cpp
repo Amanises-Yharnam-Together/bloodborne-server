@@ -1284,6 +1284,23 @@ void InstallShortSummonSlotHold(u64 base, u64 image_size) {
              PartySummonSlotHoldSeconds);
 }
 
+// Phase 7: the server says who is in a session (the rooms it keeps, its link's liveness), so the
+// game never leaves one on its own: no idle time-out, resend overflow, room time-out or irregular
+// leave (the sites' comments). A member that really went is the room's MEMBER_LEFT.
+void InstallServerOwnsLeaves(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "server owns leaves",
+                        "the game may end its own session (a save, a stall)")) {
+        return;
+    }
+    WriteCoopPatches(base, "server owns leaves");
+    coop_features.On("server owns leaves");
+    LOG_INFO(Debug, "Bloodborne party: only the server ends a session (the game's own time-outs "
+                    "are off)");
+}
+
 constexpr u64 LeaveLimitOffset = 0x0138A4A0;
 constexpr std::array<u8, 6> LeaveLimitPrologue{0x55, 0x48, 0x89, 0xE5, 0x53, 0x50};
 
@@ -1476,6 +1493,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallShortSummonSlotHold(base, image_size);
     InstallBossDeathTracer(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
+    InstallServerOwnsLeaves(base, image_size);
     InstallSeamlessTravel(base, image_size);
     InstallLampsAsCampfires(base, image_size);
     InstallNoLevelSyncInParty(base, image_size);
