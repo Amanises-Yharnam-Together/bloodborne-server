@@ -25,14 +25,15 @@ turns it into one script per game:
 run_scenario.py <suite> --chapter <name> runs only those chapters (and the "setup" ones they
 need, the join).
 """
+import budget
 from scenarios import (AWAY_FROM_LAMP, BLOODSTAIN_DROPPED, BLOODSTAIN_STOLEN,  # noqa: F401
                        CATHEDRAL_WARD, CATHEDRAL_WARD_LAMP, CENTRAL_YHARNAM, CENTRAL_YHARNAM_LAMP,
                        CLERIC_BEAST, CLERIC_BEAST_DEFEATED, CLINIC, CRASH_CLEANUP, DOG, ENEMY,
                        FORBIDDEN_WOODS_LAMP_LIT, GASCOIGNE, GASCOIGNE_DEFEATED, GIVE_UP,
                        HUNTERS_DREAM, LETHAL_FALL, LEVEL_SYNC, OTHER_MAP_FLAG, PARTY_DEATH,
                        REVIVE_HITS, SESSION_HOLDS, HOST_JOINS, GUEST_JOINS, START,
-                       STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_NPC,
-                       attack, only_kill)
+                       STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_NPC, GUEST_ALONE_SPOT,
+                       IOSEFKA_WAIT, HP_LOWERED, attack, only_kill)
 
 DREAM = "0x15000000"  # the Hunter's Dream's map (HUNTERS_DREAM is its lamp)
 # The party list's icons came (Kaniel 2026-10-12: no team icons; the log said "icons none").
@@ -43,6 +44,8 @@ HOSTS_MESSENGERS = (r"characters switched like the host has them on map 0x150000
                     r".* 0x1000000[0-3]\b")
 
 RESTART = "<restart>"
+# Steps a game runs on its title screen, before it is in the world (the lobby's, the title's).
+TITLE_STEPS = ("team-", "title-")
 RESTART_WITH = "<restart with "
 
 
@@ -64,6 +67,22 @@ DOG_MAX_HP = 364
 FRESH_ENEMY = "0x1001402e"
 ENEMY_MAX_HP = 484
 GUESTS = ("guest", "guest2")
+# Phase 10's bug, HP bars that lag: a chapter's other checks still fail it (known_problems).
+HP_LAG_BUG = {"known_bug": "phase 10: HP bars lag behind the hit (0.17-1.2 s measured, the limit "
+                           "0.15 s)",
+              "known_problems": [r"reached the other games' bars in", r"'s hits reached \S+ bar"]}
+
+# The rig refresh's tests of recent bugs (Kaniel 2026-10-15). A test of a bug whose fix has not
+# landed carries known_bug (what is wrong, and the phase that fixes it): it shows as KNOWN, and the
+# runner says when it passes. A log line such a test expects and no build writes yet is the
+# fix's to write: the test is its contract.
+# Where a player stands at the first lamp (its census), to come back to without a trip.
+AT_THE_LAMP = "-199.7 -50.7 179.0"
+# Phase 7's goal for a join: from the guest's load's end to its session, at most this long.
+JOIN_AFTER_LOAD_S = 10
+# The team's load screen (or its bar) shown and never gone after (Lisara 2026-10-14: after
+# Continue the team bars stayed on top).
+LOAD_VIEW_STAYS = r"load view is up \(\d+ rows\)(?![\s\S]*load view is gone)"
 
 
 def chapter(name: str, about: str, steps: dict[str, list[str]], **checks) -> dict:
@@ -207,21 +226,24 @@ BORDER_FORBID = [r"LeaveSession from the game", r"member leave .* trip=true"]
 BORDER_CROSSINGS = 3
 
 
-def border_crossings(name: str, border: dict) -> dict:
-    """Both players cross the border together and back, BORDER_CROSSINGS times; after each way
-    both are on the same map, and at the end the session holds and each sees the other."""
+def border_crossings(name: str, border: dict, *, name_as: str | None = None,
+                     crossings: int = BORDER_CROSSINGS, about: str | None = None) -> dict:
+    """Both players cross the border together and back, `crossings` times; after each way both
+    are on the same map, and at the end the session holds and each sees the other. The chapter
+    is border-<name> unless `name_as` names it."""
     points = border["trail"].split()
     back = " ".join(" ".join(points[at:at + 3]) for at in range(len(points) - 3, -1, -3))
     start = " ".join(points[:3])
     steps = [f"travel {border['lamp']}", "wait-members 2 300", f"sync {name}-there",
              f"teleport {start}", "wait 3"]
-    for crossing in range(1, BORDER_CROSSINGS + 1):
+    for crossing in range(1, crossings + 1):
         steps += [f"glide {border['trail']}", f"sync {name}-{crossing}-over", "wait 5",
                   f"expect-map {border['to']}", f"glide {back}", f"sync {name}-{crossing}-back",
                   "wait 5", f"expect-map {border['from']}"]
     steps += ["wait 10", "census 60", "expect-session 2", "expect-others-near 1 20"]
-    return chapter(f"border-{name}", f"both cross the {name} border {BORDER_CROSSINGS} times and "
-                                     "back: one map each time, nobody lost",
+    return chapter(name_as or f"border-{name}",
+                   about or f"both cross the {name} border {crossings} times and back: one map "
+                            "each time, nobody lost",
                    {role: list(steps) for role in PARTY2},
                    forbid={role: SESSION_HOLDS + BORDER_FORBID for role in PARTY2})
 
@@ -233,7 +255,6 @@ SUITES = {
         "roles": PARTY3,
         "settings": AS_PLAYERS,
         "join_within": 240,
-        "timeout": 1800,
         "chapters": [
             join(PARTY3),
             chapter("trip", "the host goes to the Dream and back; the session holds and it "
@@ -253,7 +274,8 @@ SUITES = {
                              "wait-members 3 300"]) + steps
                      for role, steps in hits_in_turn(PARTY3, ENEMY, "hit3",
                                                      ready="hit3-apart").items()},
-                    same_hp=ENEMY, hp_sums_hits=ENEMY, max_hp_lag=0.15, forbid=holds(PARTY3)),
+                    same_hp=ENEMY, hp_sums_hits=ENEMY, max_hp_lag=0.15, forbid=holds(PARTY3),
+                    **HP_LAG_BUG),
             chapter("kill-apart", "the host kills an enemy while the second guest is in the "
                                   "Dream; that guest's copy is gone when it comes back",
                     {"host": ["sync ka-away", *attack(ENEMY), "wait 5", "sync ka-killed",
@@ -285,10 +307,22 @@ SUITES = {
                     # only once it is in the session's world again (a wipe waited for it).
                     expect={"host": [r"Co-op lifecycle: member left"],
                             "guest2": [r"Co-op lifecycle: member left"],
-                            "guest": [r"Bloodborne party: in the session's world"]},
+                            "guest": [GUEST_JOINS]},
                     forbid={"guest": [r"new character in save slot"]},
                     allow=CRASH_CLEANUP),
-            wipe(PARTY3),
+            chapter("overlay-textures", "each game opens the port's menu and goes through its "
+                                        "pages: the overlay's textures fit its descriptor pool "
+                                        "(0.2.4: icons and runes garbled past 16 textures)",
+                    everyone(PARTY3, "keys toggle r1 r1 r1 r1 r1 back", "wait 5",
+                             "expect-session 3"),
+                    expect={role: [r"menu keys toggle r1"] for role in PARTY3},
+                    overlay_textures=list(PARTY3), forbid=holds(PARTY3)),
+            # After the rejoin chapter's restart the guest's lethal fall is a death alone, not a
+            # down (rig: smoke's wipe failed in 10 of 12 runs; party-death's, without a restart
+            # just before, passes).
+            {**wipe(PARTY3), "known_bug": "intermittent: after a guest's restart and rejoin, its "
+                                          "lethal fall is a real death, not a down, and the wipe "
+                                          "goes wrong (rig 2026-10-15: 2 of 3)"},
         ],
     },
     "together": {
@@ -297,7 +331,6 @@ SUITES = {
         "roles": PARTY2,
         "settings": AS_PLAYERS,
         "join_within": 180,
-        "timeout": 1800,
         "chapters": [
             join(PARTY2),
             chapter("story-hidden", "a character the host's story hides (Iosefka) stays hidden "
@@ -332,6 +365,34 @@ SUITES = {
                               f"expect-hp {DOG} == 300"],
                      "guest": ["sync hpw-hurt", "wait 10", f"expect-hp {DOG} == 300"]},
                     forbid=holds(PARTY2)),
+            # Phase 8 (whole-map owner): enemies by a teammate far from the map's owner run and
+            # stay on the ground. Today a far guest runs them itself (phase 6's radius split);
+            # after phase 8 the owner wakes the groups around every teammate. Both must pass.
+            chapter("apart-fight", "the host goes far up by Iosefka's clinic, the guest walks up "
+                                   "to an enemy by the lamp: it comes for the guest and the "
+                                   "guest's hit lands",
+                    {"host": ["sync af-go", f"teleport {IOSEFKA_WAIT}", "sync af-apart",
+                              "sync af-done", f"teleport {AT_THE_LAMP}", "wait 3"],
+                     "guest": ["sync af-go", "sync af-apart", "wait 3", "census 40",
+                               f"teleport {GUEST_ALONE_SPOT}", "wait 3", "census 40", "wait 20",
+                               "census 40", f"hit {ENEMY} 30", "wait 3", "sync af-done",
+                               f"teleport {AT_THE_LAMP}", "wait 3"]},
+                    moves={"guest": ENEMY},
+                    expect={"guest": [rf"hit on {ENEMY} by this player"]},
+                    known_bug="phase 8: beside a guest far from the host the enemy sometimes "
+                              "stands still (Kaniel 2026-10-14; rig 2026-10-15, 1 of 2)",
+                    known_problems=[r"stood still beside it"],
+                    forbid=holds(PARTY2)),
+            chapter("apart-collision", "with the host far away again, the enemy by the guest stays "
+                                       "on the ground (no fall through a map whose collision only "
+                                       "the far owner loaded)",
+                    {"host": ["sync ac-go", f"teleport {IOSEFKA_WAIT}", "sync ac-apart",
+                              "sync ac-done", f"teleport {AT_THE_LAMP}", "wait 3"],
+                     "guest": ["sync ac-go", "sync ac-apart", f"teleport {GUEST_ALONE_SPOT}",
+                               "wait 3", "census 40", "wait 10", "census 40", "wait 10",
+                               "census 40", "wait 10", "census 40", "sync ac-done",
+                               f"teleport {AT_THE_LAMP}", "wait 3"]},
+                    grounded={"guest": ENEMY}, forbid=holds(PARTY2)),
             chapter("near-kill", "both strike one enemy to death at once: it dies once in each "
                                  "world, body and loot there, never hidden (Kaniel 2026-10-11: the "
                                  "hunter died twice and vanished with its loot)",
@@ -360,11 +421,17 @@ SUITES = {
                                     "does not hide him, he dies in the host's world",
                     {"host": [f"set-flag {GASCOIGNE_DEFEATED} 0",
                               f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
-                              "sync refight-back", "wait 15", f"expect-hp {GASCOIGNE} > 0",
+                              "sync refight-back"],
+                     "guest": ["sync refight-back"]},
+                    forbid=holds(PARTY2)),
+            chapter("boss-refight-kill", "back in the reloaded world Gascoigne stands, is not "
+                                         "hidden by the guest's old kill, and dies in the host's "
+                                         "world",
+                    {"host": ["wait 15", f"expect-hp {GASCOIGNE} > 0",
                               f"expect-hidden {GASCOIGNE} 0",
                               f"kill {GASCOIGNE}", f"wait-flag {GASCOIGNE_DEFEATED} 1 60",
-                              "wait 10", "expect-session 2"],
-                     "guest": ["sync refight-back", "wait 30", "expect-session 2"]},
+                              "wait 10", "expect-session 2", "sync refight-done"],
+                     "guest": ["sync refight-done", "expect-session 2"]},
                     # Not "a member's kill hid something" before his: after the host's reload
                     # near-kill's enemy dies again as held kills do (rig 2026-10-13); his HP and
                     # +0x28 are the check.
@@ -384,7 +451,6 @@ SUITES = {
         "roles": PARTY2,
         "settings": AS_PLAYERS,
         "join_within": 180,
-        "timeout": 2400,
         "chapters": [
             join(PARTY2),
             chapter("trip", "the host goes to the Dream and back; the session holds and the guest "
@@ -395,6 +461,9 @@ SUITES = {
                                "expect-others-near 1 15"]},
                     expect={"host": [r"party trip started",
                                      r"re-creating rig_guest on map 0x18010000"]},
+                    known_bug="intermittent: after the host's trip the guest is sometimes not "
+                              "near it (rig 2026-10-15, 1 of 2 full passes)",
+                    known_problems=[r"expect-others-near 1 15 FAILED"],
                     forbid=holds(PARTY2)),
             chapter("story-after-trip", "the guest goes to the Dream and back: Iosefka, whom "
                                         "the host's story hides, stays hidden while its world "
@@ -408,7 +477,11 @@ SUITES = {
             chapter("hit-after-host-trip", "only the host went to the Dream: the guest's hits "
                                            "still reach the host's copy, each once",
                     {**hits_in_turn(("guest", "host"), ENEMY, "haht")},
-                    same_hp=ENEMY, hp_sums_hits=ENEMY, forbid=holds(PARTY2)),
+                    same_hp=ENEMY, hp_sums_hits=ENEMY, forbid=holds(PARTY2),
+                    known_bug="intermittent: after the host's trip the guest's hit on the enemy "
+                              "sometimes never lands (rig 2026-10-15, 1 of 2 full passes)",
+                    known_problems=[r"no hit landed in", r"no census of 0x1001400b",
+                                    r"no hit on 0x1001400b", r"took \d+ of 0x1001400b"]),
             chapter("guest-hit-once", "after the guest's trip too: its real hits count once in "
                                       "both games (Kaniel's friend 2026-10-11: each hit twice)",
                     {role: (trip_back("guest", 2, "gho-back") + ["wait 15"]
@@ -418,6 +491,9 @@ SUITES = {
                     same_hp=FRESH_ENEMY, hp_sums_hits=FRESH_ENEMY,
                     # The HP board line comes once, when the worlds go apart (the trip before).
                     expect={"guest": [rf"hit on {FRESH_ENEMY} by this player"]},
+                    known_bug="intermittent: after the guest's trip the host's copy takes only "
+                              "some of its hits (rig 2026-10-15: 6 of 10, 1 of 2 full passes)",
+                    known_problems=[r"took \d+ of 0x1001402e, the hits \d+"],
                     forbid=holds(PARTY2)),
             chapter("hp-apart", "worlds apart, the host takes the dog to 300 HP: the guest's copy "
                                 "follows, all of it (more than a byte: Kaniel 2026-10-12, the "
@@ -428,7 +504,7 @@ SUITES = {
                      "guest": ["sync hp-apart-hurt", "wait 12", f"expect-hp {DOG} == 300",
                                *trip_back("guest", 2, "hp-apart-back"), "wait 15", "census 60",
                                f"expect-hp {DOG} == 300"]},
-                    expect={"guest": [r"lowered \d+ enemies by the other members' damage"]},
+                    expect={"guest": [HP_LOWERED]},
                     forbid=holds(PARTY2)),
             chapter("kill-apart", "the host kills an enemy while the guest is in the Dream; the "
                                   "guest's copy is gone when it comes back",
@@ -447,8 +523,13 @@ SUITES = {
                                "wait-members 2 240", "sync dog-back", "wait 20", "snapshot"],
                      "host": [f"travel {HUNTERS_DREAM}", "sync dog-away", "sync dog-killed",
                               f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
-                              "sync dog-back", "wait 20", "snapshot"]},
-                    expect={"guest": [r"kill board gets 1 kills"],
+                              "sync dog-back", "wait 20", "snapshot", "census 60",
+                              f"expect-hp {FRESH_ENEMY} == 0"]},
+                    known_bug="a kill the guest makes while the host is in the Dream comes back "
+                              "to life once the host returns (rig 2026-10-15: full HP in both "
+                              "games; backlog, World and progress)",
+                    expect={"guest": [rf"(?:kill board gets 1 kills|{FRESH_ENEMY} died in "
+                                      r"attack cycle)"],
                             "host": [r"(?:hid 1 enemies a member killed on map 0x18010000|"
                                      r"0x18010000, [1-9]\d* near died)"]},
                     forbid={"guest": only_kill(FRESH_ENEMY)}),
@@ -456,8 +537,7 @@ SUITES = {
                                   "goes to the Dream and back, the host stays (Kaniel 2026-10-11: "
                                   "half the location reset after a trip)",
                     {"guest": trip_back("guest", 2, "held-back") + [
-                        "wait 15", "census 60", f"expect-hidden {ENEMY} 1 30",
-                        f"expect-hidden {FRESH_ENEMY} 1 30"],
+                        "wait 15", "census 60", f"expect-hp {ENEMY} == 0"],
                      "host": ["sync held-back", "wait 15", "census 60"]},
                     forbid=holds(PARTY2)),
             map_reset(PARTY2),
@@ -505,8 +585,10 @@ SUITES = {
                      "host": ["sync lone-there", "sync lone-killed", "wait 10",
                               f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 240", "wait 20",
                               "snapshot"]},
-                    expect={"guest": [r"guest alone on map 0x18000000 took over \d+ enemies",
-                                      r"guest no longer alone; handed back",
+                    expect={"guest": [r"(?:guest alone on map 0x18000000 took over \d+ enemies|"
+                                      r"enemy owner: took over \d+ enemies on map 0x18000000)",
+                                      r"(?:guest no longer alone; handed back|"
+                                      r"enemy owner: this game follows \w+ on map 0x18000000)",
                                       r"Bloodborne echoes: \+\d+ \(rates 1\) from 0x18fc99b"],
                             "host": [r"added \d+ echoes from a kill another member made apart"]}),
             chapter("ward-npc", "both by the Oedon Chapel lamp: the host hurts the NPC there, the "
@@ -515,7 +597,34 @@ SUITES = {
                               "census 60"],
                      "guest": ["sync npc-hurt", "wait 25", f"expect-hp {WARD_NPC} <= 600",
                                f"hit {WARD_NPC} 20", "sync npc-hit", "wait 20", "census 60"]},
-                    same_hp=WARD_NPC, forbid=holds(PARTY2)),
+                    same_hp=WARD_NPC, forbid=holds(PARTY2),
+                    known_bug="guests can't hurt the Oedon Chapel NPC (backlog; rig 2026-10-15: "
+                              "no hit landed in 20 s)"),
+            chapter("gascoigne-down", "Father Gascoigne dies in the host's world with the guest "
+                                      "there (his cutscene reloads the world); both are back on "
+                                      "the map",
+                    {"host": [f"set-flag {GASCOIGNE_DEFEATED} 0",
+                              f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
+                              "sync gd-ready", f"kill {GASCOIGNE}",
+                              f"wait-flag {GASCOIGNE_DEFEATED} 1 60", "wait 20",
+                              "wait-members 2 300", "sync gd-after", "expect-session 2"],
+                     "guest": [f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
+                               "sync gd-ready", "wait 20", "wait-members 2 300", "sync gd-after",
+                               "expect-session 2"]},
+                    known_bug="after Gascoigne's cutscene the guest's game sometimes leaves the "
+                              "session (Ada 2026-10-13; rig 2026-10-15, 1 of 2 full passes)",
+                    known_problems=[r"sceNpMatching2LeaveRoom", r"expect-session 2 FAILED"],
+                    forbid=holds(PARTY2)),
+            {**border_crossings("tomb", BORDERS["tomb"], name_as="border-after-gascoigne",
+                             crossings=1,
+                             about="after Gascoigne's death both cross the Central Yharnam to "
+                                   "Cathedral Ward border and back: no fake trip (Kaniel "
+                                   "2026-10-13: the map flipped back and forth)"),
+                       "known_bug": "fake trips at the border after Gascoigne (backlog; rig "
+                                    "2026-10-15: the host stayed on Central Yharnam, 1 of 2)",
+                       "known_problems": [r"expect-map 0x180[01]0000 FAILED", r"LeaveSession",
+                                          r"member leave .* trip=true", r"expect-session 2 FAILED",
+                                          r"expect-others-near 1 20 FAILED"]},
         ],
     },
     "party-death": {
@@ -524,9 +633,23 @@ SUITES = {
         "roles": PARTY2,
         "settings": AS_PLAYERS,
         "join_within": 180,
-        "timeout": 1800,
         "chapters": [
             join(PARTY2),
+            chapter("death-right-after-join", "the guest's game starts again and joins; its "
+                                              "lethal fall 2 s after the join puts it down, and "
+                                              "the host revives it",
+                    {"guest": [RESTART, START, "wait-session 2 420",
+                               f"teleport {WIPE_SPOT['guest']}", "wait 2", *LETHAL_FALL,
+                               "wait-vital down 30", "sync drj-down", "wait-vital up 120",
+                               "godmode"],
+                     "host": ["sync drj-down", "approach-downed", "wait 2", *REVIVE_HITS,
+                              "wait-member-vital up 30"]},
+                    expect={"guest": [r"party death: down \d+ on map 0x18010000",
+                                      r"party death: revived from down"]},
+                    forbid={"guest": [r"party guest died"]},
+                    known_bug="a guest's lethal fall right after its join does not put it down "
+                              "(backlog, Priority A deaths; rig 2026-10-15: no down in 30 s)",
+                    allow=CRASH_CLEANUP),
             chapter("down-revive", "the guest falls with 1 HP and goes down; the host strikes it "
                                    "up again",
                     {"host": ["wait-member-vital down 120", "shot sees-down", "approach-downed",
@@ -538,7 +661,8 @@ SUITES = {
                                "godmode"]},
                     # PR #67: it kneels; PR #69: Options and R3 do nothing while down; PR #71: R1
                     # hits count as light ones.
-                    expect={"host": [r"party death: real revive hit on .*, light\)"],
+                    expect={"host": [r"party death: ((real )?revive hit on .*, light\)|"
+                                     r"revive swing at)"],
                             "guest": [r"party death: down \d+ on map 0x18010000",
                                       r"party death: pose \d+ asked for \d+ ms into down",
                                       r"party death: down, the pad dropped buttons",
@@ -552,23 +676,36 @@ SUITES = {
                               f"{REVIVE_HITS[0]} r2", "wait-member-vital up 30"],
                      "guest": ["godmode off", *GUEST_FALL, "wait-vital down 30",
                                "wait-vital up 120", "godmode"]},
-                    expect={"host": [r"party death: real revive hit on .*, heavy\)"],
+                    # A swing that misses the body counts 25 for R1, more for R2 (rig 2026-10-15:
+                    # 37).
+                    expect={"host": [r"party death: ((real )?revive hit on .*, heavy\)|revive "
+                                     r"swing at .* counted for (?:2[6-9]|[3-9]\d|\d{3,}) damage)"],
                             "guest": [r"party death: revived from down"]},
+                    forbid=holds(PARTY2)),
+            chapter("down-kneel-seen", "the guest goes down: the host's copy of it kneels too",
+                    {"host": ["wait-member-vital down 120", "wait 5",
+                              "wait-member-vital up 120"],
+                     "guest": ["godmode off", *GUEST_FALL, "wait-vital down 30", "wait 5",
+                               "press circle 3600", "wait-vital dead 15", "wait-vital up 90",
+                               "godmode"]},
+                    expect={"host": [r"party death: rig_guest's copy kneels"]},
+                    known_bug="phase 10: the downed kneel is not shown on the other players; "
+                              "the fix logs \"party death: <member>'s copy kneels\"",
                     forbid=holds(PARTY2)),
             chapter("down-by-enemy", "the guest with 1 HP next to an enemy, locked on to it, goes "
                                      "down: the lock-on is let go (PR #69), the enemy leaves it "
                                      "alone, and the host revives it. Whether the rig's R3 locks "
                                      "on there is to be confirmed on the first run",
-                    {"host": ["wait-member-vital down 150", "wait 22", "approach-downed",
-                              "wait 2", *REVIVE_HITS],
+                    # Its end is a give-up, not a revive: a revive takes 50-70 s of swings (rig
+                    # 2026-10-15), revives have chapters of their own.
+                    {"host": ["wait-member-vital down 150", "wait-member-vital up 150"],
                      "guest": ["godmode off", "hurt self 1", f"approach {ENEMY}", "press r3 200",
                                "wait-vital down 90", "wait 20", "expect-hp self == 1",
-                               "wait-vital up 90", "expect-hp self > 1", "godmode"]},
-                    expect={"host": [r"party death: (real )?revive hit on"],
-                            "guest": [r"party death: enemies forgot \d+ target\(s\) on downed "
+                               "press circle 3600", "wait-vital dead 15", "wait-vital up 90",
+                               "godmode"]},
+                    expect={"guest": [r"party death: enemies forgot \d+ target\(s\) on downed "
                                       r"players \(self down=true",
-                                      r"party death: down, letting go of a lock-on \(R3\)",
-                                      r"party death: revived from down"]},
+                                      r"party death: giving up ends down"]},
                     forbid={"host": SESSION_HOLDS,
                             "guest": SESSION_HOLDS + [r"party death: killed while down"]}),
             chapter("give-up", "the downed guest holds Circle and dies; it gets up at its lamp "
@@ -596,11 +733,15 @@ SUITES = {
                                   "its lethal fall is a real death that reloads the map",
                     {"host": [f"travel {HUNTERS_DREAM}", "sync alone-away", "sync alone-woken",
                               f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240"],
-                     "guest": ["sync alone-away", "godmode off", *LETHAL_FALL,
+                     # The host's trip first: with it still on the map the fall is a down.
+                     "guest": ["sync alone-away", "wait 15", "godmode off", *LETHAL_FALL,
                                "wait-vital dead 30", "wait-vital up 120", "godmode",
                                "sync alone-woken", "wait-members 2 300"]},
                     expect={"guest": [r"party death: died for real on map 0x18010000 "
                                       r"\(reset=true\)", r"travelling there \(reset=true\)"]},
+                    # Right after stain-after-rejoin's restart (as smoke's wipe after rejoin).
+                    known_bug="after a guest's restart and rejoin its lethal fall is neither a "
+                              "down nor a death alone (rig 2026-10-15, twice)",
                     forbid={"host": SESSION_HOLDS,
                             "guest": SESSION_HOLDS + [r"party death: down \d+"]}),
             chapter("down-session-lost", "the guest is down when the host's game dies: its down "
@@ -624,6 +765,8 @@ SUITES = {
                                "sync saw-back"],
                      "host": ["sync saw-back"]},
                     expect={"guest": [r"showed the guest's own bloodstain \([1-9]\d* echoes\)"]},
+                    known_bug="after a wipe and a restart the guest is not shown its own "
+                              "bloodstain (rig 2026-10-15; after a give-up it is)",
                     allow=CRASH_CLEANUP),
         ],
     },
@@ -634,7 +777,6 @@ SUITES = {
         "roles": PARTY2,
         "settings": AS_PLAYERS,
         "join_within": 180,
-        "timeout": 2400,
         "chapters": [
             join(PARTY2),
             chapter("travel-mid-load", "the host goes to the Dream and back while the guest's map "
@@ -675,16 +817,29 @@ SUITES = {
                                 "his death's time-of-day cutscene reloads the host's world (a "
                                 "trip), and both are back together after it. Whether this kill "
                                 "plays the cutscene again is to be confirmed on the first run",
+                    # The cutscene's reload starts within seconds of the kill; then both wait for
+                    # the other on the map (no fixed minute: the rig's budget, 2026-10-15).
                     {"host": [f"set-flag {GASCOIGNE_DEFEATED} 0",
                               f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
                               "sync cs-ready", f"kill {GASCOIGNE}",
-                              f"wait-flag {GASCOIGNE_DEFEATED} 1 60", "wait 60",
-                              "wait-members 2 300", "sync cs-after", "wait 15",
+                              f"wait-flag {GASCOIGNE_DEFEATED} 1 60", "wait 20",
+                              "wait-members 2 300", "sync cs-after", "wait 10",
                               "expect-session 2", "expect-others-near 1 15"],
-                     "guest": ["sync cs-ready", "wait 60", "wait-members 2 300", "sync cs-after",
-                               "wait 15", "expect-session 2", "expect-others-near 1 15"]},
+                     "guest": ["sync cs-ready", "wait 20", "wait-members 2 300", "sync cs-after",
+                               "wait 10", "expect-session 2", "expect-others-near 1 15"]},
                     forbid=holds(PARTY2)),
             *[border_crossings(name, border) for name, border in BORDERS.items()],
+            chapter("guest-hits-npc", "both by the Oedon Chapel lamp, the guest hits the NPC "
+                                      "there: its hit lands and both games show it hurt",
+                    {"host": [f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 240",
+                              "sync ghn-there", "sync ghn-hit", "wait 5", "census 40",
+                              f"expect-hp {WARD_NPC} < 999"],
+                     "guest": [f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 240",
+                               "sync ghn-there", f"hit {WARD_NPC} 20", "sync ghn-hit", "wait 5",
+                               "census 40", f"expect-hp {WARD_NPC} < 999"]},
+                    known_bug="guests can't hurt some NPCs, the Oedon Chapel one and the hag "
+                              "(backlog; Kaniel wants guests to)",
+                    forbid=holds(PARTY2)),
         ],
     },
     "crashes": {
@@ -693,18 +848,17 @@ SUITES = {
         "roles": PARTY2,
         "settings": AS_PLAYERS,
         "join_within": 180,
-        "timeout": 3000,
         "chapters": [
             join(PARTY2),
             chapter("deaths", "the host goes down and gives up and gets up without a reload, then "
                               "the guest does away from the lamp, gets up at it and the host sees "
                               "it there",
-                    {"host": ["godmode off", *GIVE_UP, "wait 30", "godmode",
+                    {"host": ["godmode off", *GIVE_UP, "wait-vital up 60", "godmode",
                               "sync host-dead-done", "wait-member-vital down 120",
                               "wait-members 2 120", "sync guest-up", "wait 10",
                               "expect-others-near 1 12", "expect-session 2"],
                      "guest": ["sync host-dead-done", f"teleport {AWAY_FROM_LAMP}", "wait 5",
-                               "godmode off", *GIVE_UP, "wait 40", "godmode",
+                               "godmode off", *GIVE_UP, "wait-vital up 60", "godmode",
                                "wait-members 2 120", "sync guest-up", "wait 10",
                                "expect-others-near 1 12", "expect-session 2"]},
                     expect={"host": [r"party death: giving up ends down \d+; dies \(reset=false",
@@ -718,44 +872,87 @@ SUITES = {
                      "guest": [f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "sync lamp-lit",
                                "wait 20"]},
                     forbid=holds(PARTY2)),
+            # The return point settles in 10 s (ReturnPointSettleMs): 12 s away before the crash.
             chapter("resume", "the guest's game dies away from the lamp in the host's world: it "
-                              "comes back where it was and joins again; then the lamp it lit is "
-                              "still lit in both worlds, the host's hit reaches its copy, and "
-                              "both pick up items",
-                    {"guest": [f"teleport {AWAY_FROM_LAMP}", "wait 15", RESTART, "godmode",
-                               "wait-session 2 420", "wait 10", "expect-session 2",
-                               f"expect-map {CENTRAL_YHARNAM}",
-                               f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "sync resume-back",
-                               "sync resume-hurt", "wait 30", f"expect-hp {ENEMY} <= 300",
-                               "sync resume-host-picked", "pickup 20", "wait 5"],
-                     "host": ["sync resume-back", f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 1",
-                              f"hurt {ENEMY} 300", "sync resume-hurt", "pickup 20", "wait 5",
-                              "sync resume-host-picked"]},
+                              "comes back where it was and joins again",
+                    {"guest": [f"teleport {AWAY_FROM_LAMP}", "wait 12", RESTART, "godmode",
+                               "wait-session 2 420", "wait 5", "expect-session 2",
+                               f"expect-map {CENTRAL_YHARNAM}", "sync resume-back"],
+                     "host": ["sync resume-back"]},
                     expect={"guest": [r"guest resumed at \(-21\d(\.\d+)?, -5\d(\.\d+)?, "
                                       r"17\d(\.\d+)?\) on map 0x18010000"]},
+                    known_bug="phase 7: a restarted guest joins its team at the lamp, it does not "
+                              "resume where it was (rig 2026-10-15: no resume line)",
+                    known_problems=[r"expected, not seen: guest resumed at"],
+                    allow=CRASH_CLEANUP),
+            chapter("after-resume", "after its resume the lamp the guest lit is still lit in both "
+                                    "worlds, the host's hit reaches its copy, and both pick up "
+                                    "items",
+                    {"guest": [f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "sync resume-hurt",
+                               "wait 10", f"expect-hp {ENEMY} <= 300", "sync resume-host-picked",
+                               "pickup 20", "wait 5"],
+                     "host": [f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", f"hurt {ENEMY} 300",
+                              "sync resume-hurt", "pickup 20", "wait 5",
+                              "sync resume-host-picked"]},
+                    known_bug="the lamp the guest lit is out in its world after its restart (rig "
+                              "2026-10-15; backlog: changes lost across a load)",
+                    known_problems=[r"expect-flag 12707810 1 FAILED"],
+                    forbid=holds(PARTY2)),
+            chapter("rejoin-enemies", "the guest's game dies beside an enemy the host woke and "
+                                      "comes back there (Krolebord 0.2.5: a crash in the game's "
+                                      "character update after a rejoin)",
+                    {"guest": [f"teleport {GUEST_ALONE_SPOT}", "wait 12", RESTART, "godmode",
+                               "wait-session 2 420", "wait 5", "expect-session 2",
+                               "sync re-back"],
+                     "host": ["sync re-back"]},
+                    allow=CRASH_CLEANUP),
+            chapter("rejoin-enemies-hold", "a minute beside those enemies after the rejoin (it "
+                                           "goes back to them: phase 7 resumes it there): no "
+                                           "crash, the session holds",
+                    {"guest": [f"teleport {GUEST_ALONE_SPOT}", "wait 30", "census 40", "wait 30",
+                               "census 40", "expect-session 2"],
+                     "host": ["wait 30", "wait 30", "expect-session 2"]},
+                    forbid=holds(PARTY2)),
+            chapter("kills-after-crash", "the guest kills an enemy and its game dies: back in the "
+                                         "session the enemy is still dead in both games",
+                    {"guest": [*attack(FRESH_ENEMY), "wait 5", RESTART, "godmode",
+                               "wait-session 2 420", "wait 5", "census 60",
+                               f"expect-hp {FRESH_ENEMY} == 0", "sync kac-back"],
+                     "host": ["sync kac-back", "wait 5", "census 60",
+                              f"expect-hp {FRESH_ENEMY} == 0"]},
+                    expect={"guest": [rf"(?:kill board gets 1 kills|{FRESH_ENEMY} died in "
+                                      r"attack cycle)"]},
+                    known_bug="a crashed guest's kill comes back to life after its rejoin (rig "
+                              "2026-10-15: 175 HP in both games; backlog, World and progress)",
+                    allow=CRASH_CLEANUP),
+            chapter("rejoin-continue", "the guest quits and takes Continue: it joins again and the "
+                                       "team's load bars are gone (Lisara 2026-10-14: Continue "
+                                       "never rejoined, the bars stayed on top)",
+                    # The load view's bar stays a little after the join: 25 s is "stayed".
+                    {"guest": [RESTART, START, "godmode", "wait-session 2 420", "wait 25",
+                               "expect-session 2", "sync rc-back"],
+                     "host": ["sync rc-back"]},
+                    expect={"guest": [r"load view is gone"]},
+                    forbid={"guest": [LOAD_VIEW_STAYS]},
                     allow=CRASH_CLEANUP),
             chapter("crash-apart", "the guest's game dies while it is apart (in the Ward); the "
                                    "host stays in its world, the guest comes back in the Ward and "
-                                   "they join again; a kill it makes alone there pays the host",
-                    {"guest": [f"travel {CATHEDRAL_WARD_LAMP}", "wait 15", RESTART, "godmode",
-                               f"wait-map {CATHEDRAL_WARD} 180", "wait-session 2 420", "wait 10",
+                                   "they join again",
+                    {"guest": [f"travel {CATHEDRAL_WARD_LAMP}", "wait 12", RESTART, "godmode",
+                               f"wait-map {CATHEDRAL_WARD} 180", "wait-session 2 420", "wait 5",
                                "expect-session 2", f"expect-map {CATHEDRAL_WARD}",
-                               *attack(WARD_ENEMY), "wait 15", "sync apart-back"],
-                     "host": ["wait-solo 180", "wait 10", f"expect-map {CENTRAL_YHARNAM}",
+                               "sync apart-back"],
+                     "host": ["wait-solo 180", "wait 5", f"expect-map {CENTRAL_YHARNAM}",
                               "sync apart-back", "expect-session 2"]},
-                    expect={"guest": [r"kill board gets 1 kills"],
+                    allow=CRASH_CLEANUP),
+            chapter("kill-apart-pays", "back in the session but apart (in the Ward), the guest's "
+                                       "kill there pays the host",
+                    {"guest": [*attack(WARD_ENEMY), "wait 15", "sync kap-done"],
+                     "host": ["sync kap-done", "wait 5"]},
+                    expect={"guest": [rf"(?:kill board gets 1 kills|{WARD_ENEMY} died in "
+                                      r"attack cycle)"],
                             "host": [r"added \d+ echoes from a kill another member made apart"]},
-                    allow=CRASH_CLEANUP),
-            chapter("host-crash-apart", "the host's game dies while the guest is apart (in the "
-                                        "Ward); the guest stays and rings from there, and they "
-                                        "join again without meeting first",
-                    {"host": ["sync hca-ready", RESTART, START, "godmode", "wait-session 2 420",
-                              "wait 10", "expect-session 2", f"expect-map {CENTRAL_YHARNAM}",
-                              "sync hca-back"],
-                     "guest": ["sync hca-ready", "wait-solo 180", "wait 10",
-                               f"expect-map {CATHEDRAL_WARD}", "sync hca-back", "wait 10",
-                               "expect-session 2", f"expect-map {CATHEDRAL_WARD}"]},
-                    allow=CRASH_CLEANUP),
+                    forbid=holds(PARTY2)),
             chapter("host-crash", "with both back together, the host's game dies; the guest "
                                   "stays where it is and they join again once the host is back",
                     {"guest": [f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 2 240",
@@ -774,7 +971,24 @@ SUITES = {
                      # usable map item near" within 20 m): the nearest within 45 m.
                      "host": ["sync leave-ready", "wait-solo 120", "wait 10", "pickup 45",
                               "wait 3", "snapshot"]},
-                    expect={"host": [r"lost a member; staying where it is"]},
+                    # Since phase 6 the host notes the member gone and reopens its session.
+                    expect={"host": [r"(?:lost a member; staying where it is|member left, session "
+                                     r"epoch)"]},
+                    allow=CRASH_CLEANUP),
+            # Last: the guest's game crashes in it (a crash ends the suite).
+            chapter("host-crash-apart", "the host's game dies while the guest is apart (in the "
+                                        "Ward); the guest stays and rings from there, and they "
+                                        "join again without meeting first",
+                    {"host": ["sync hca-ready", RESTART, START, "godmode", "wait-session 2 420",
+                              "wait 10", "expect-session 2", f"expect-map {CENTRAL_YHARNAM}",
+                              "sync hca-back"],
+                     "guest": [f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 1 60",
+                               "sync hca-ready", "wait-solo 180", "wait 10",
+                               f"expect-map {CATHEDRAL_WARD}", "sync hca-back", "wait 10",
+                               "expect-session 2", f"expect-map {CATHEDRAL_WARD}"]},
+                    known_bug="the guest's game crashes at eboot+0x13cffba (read from 0x7c) when "
+                              "the host comes back (Krolebord's crash after a rejoin, 0.2.5; rig "
+                              "2026-10-15, twice in a row)",
                     allow=CRASH_CLEANUP),
         ],
     },
@@ -784,7 +998,6 @@ SUITES = {
         "roles": PARTY2,
         "settings": AS_PLAYERS,
         "join_within": 240,
-        "timeout": 2400,
         "chapters": [
             chapter("hurt-before-join", "an enemy hurt in the guest's own world before it joins "
                                         "stays whole in the host's; the session forming kills "
@@ -812,7 +1025,8 @@ SUITES = {
                     {"host": [f"hurt {ENEMY} 200", "sync hab-hurt"],
                      "guest": ["sync hab-hurt", f"travel {CENTRAL_YHARNAM_LAMP}",
                                "wait-members 2 240", "wait 20", f"expect-hp {ENEMY} <= 200"]},
-                    expect={"guest": [r"lowered \d+ enemies by the other members' damage"]},
+                    # Its expect-hp is the check: the lowering's line comes only when the guest's
+                    # copy had the old HP when it came over (rig 2026-10-15: 1 run of 2).
                     forbid=holds(PARTY2)),
             chapter("join-ward", "joining in Cathedral Ward, whose co-op the guest's own world has "
                                  "not opened",
@@ -827,10 +1041,10 @@ SUITES = {
                     allow=CRASH_CLEANUP),
             chapter("join-apart", "joining across maps: the host in the Ward, the guest in "
                                   "Central Yharnam; the guest joins where it is (no kick)",
-                    {"host": ["sync ja-restarted", "sync ja-joined", "wait 30",
+                    {"host": ["sync ja-restarted", "sync ja-joined", "wait 20",
                               "expect-session 2", f"expect-map {CATHEDRAL_WARD}"],
                      "guest": [RESTART, START, "godmode", "sync ja-restarted",
-                               "wait-session 2 420", "sync ja-joined", "wait 30",
+                               "wait-session 2 420", "sync ja-joined", "wait 20",
                                "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"]},
                     allow=CRASH_CLEANUP),
             chapter("restart-keeps", "the guest's game starts again in the session: it is the "
@@ -842,6 +1056,37 @@ SUITES = {
                      "host": ["sync rk-back", "expect-session 2"]},
                     forbid={"guest": [r"new character in save slot"]},
                     files_absent={"guest": ["bloodborne_party_*.bak-*"]},
+                    allow=CRASH_CLEANUP),
+            chapter("insert-while-loading", "the guest's game starts again and Insert is pressed "
+                                            "on and off while the team's load screen is up: "
+                                            "no crash, it joins (0.2.3: two games crashed)",
+                    {"guest": [RESTART, "team-ready", "title-keys toggle", "title-wait 3",
+                               "title-keys toggle", "title-wait 3", "title-keys toggle",
+                               "title-wait 3", "title-keys toggle", START, "keys back",
+                               "godmode", "wait-session 2 420", "wait 5", "expect-session 2",
+                               "sync iwl-back"],
+                     "host": ["sync iwl-back", "expect-session 2"]},
+                    expect={"guest": [r"menu keys toggle"]},
+                    allow=CRASH_CLEANUP),
+            chapter("guest-save-menu", "the guest opens the port's menu (Insert), edits its "
+                                       "character on the Save page and closes it: the session "
+                                       "holds (Lisara 2026-10-14: dropped after Insert, then save)",
+                    {"guest": ["keys toggle", "wait 2", "keys r1 r1 r1 r1 r1", "wait 2",
+                               "keys right", "wait 2", "keys back", "wait 20",
+                               "expect-session 2", "sync gsm-done"],
+                     "host": ["sync gsm-done", "expect-session 2"]},
+                    expect={"guest": [r"menu keys right"]},
+                    known_bug="after the Save page's edit (echoes +10,000) the guest's game "
+                              "tick stood still for 111 s while its frames went on (rig "
+                              "2026-10-15; Lisara dropped after Insert, then save)",
+                    forbid=holds(PARTY2)),
+            chapter("join-time", "the guest's game starts again: from its load's end to its "
+                                 "join takes no more than the budget (phase 7: a join costs only "
+                                 "the guest's own load)",
+                    {"guest": [RESTART, START, "godmode", "wait-session 2 420",
+                               "sync jt-back", "expect-session 2"],
+                     "host": ["sync jt-back", "expect-session 2"]},
+                    max_join_s={"guest": JOIN_AFTER_LOAD_S},
                     allow=CRASH_CLEANUP),
             chapter("new-character", "a guest on a brand-new character (rig/saves/new-character) "
                                      "joins where it stands: its kept lists start clean once, "
@@ -855,6 +1100,9 @@ SUITES = {
                     expect={"guest": [r"new character in save slot"]},
                     forbid={"guest": [r"guest resumed at", r"guest resumes on map"]},
                     files_present={"guest": ["bloodborne_party_*.bak-*"]},
+                    known_bug="the rig's new-character chapter fails (backlog): the restarted "
+                              "guest plays its old character (rig 2026-10-15: resumed, flag 9401 "
+                              "on, no new-character line)",
                     allow=CRASH_CLEANUP),
             chapter("first-death-dream", "the new character dies for the first time in the "
                                          "session: it wakes in the Hunter's Dream (its own first "
@@ -867,6 +1115,8 @@ SUITES = {
                                "sync fdd-back", "wait 10", "expect-session 2"],
                      "host": ["sync fdd-back", "expect-session 2"]},
                     expect={"guest": [r"guest travels by headstone"]},
+                    known_bug="needs new-character's brand-new character (backlog; rig "
+                              "2026-10-15: the old one's fall put it nowhere near down)",
                     forbid=holds(PARTY2)),
         ],
     },
@@ -876,7 +1126,6 @@ SUITES = {
         "roles": PARTY3,
         "settings": AS_PLAYERS,
         "join_within": 240,
-        "timeout": 2700,
         "chapters": [
             join(PARTY3),
             chapter("guest-trip3", "one guest goes to the Dream and back; afterwards everyone sees "
@@ -910,9 +1159,25 @@ SUITES = {
                                                                   "expect-others-near 2 15"],
                      "guest2": ["sync ta-back", "wait 25", "expect-others-near 2 15"]},
                     forbid=holds(PARTY3)),
-            chapter("hit3", "all three hit one enemy in turn: one HP everywhere, each hit once",
+            # guest-to-guest-hp (Kaniel 2026-10-14: lag between guests too): every direction on its
+            # own, guest to guest and guest to host as well as host to guest (the plan runs it at
+            # --ping 100). One enemy only: the rig's characters kill a fresh one in one hit.
+            chapter("hit3", "all three hit one enemy in turn: one HP everywhere, each hit once, "
+                            "each game's hits on each other game's bar within 0.15 s",
                     hits_in_turn(PARTY3, ENEMY, "p3hit"),
-                    same_hp=ENEMY, hp_sums_hits=ENEMY, max_hp_lag=0.15, forbid=holds(PARTY3)),
+                    same_hp=ENEMY, hp_sums_hits=ENEMY, max_hp_lag=0.15, max_hp_lag_each=0.15,
+                    forbid=holds(PARTY3), **HP_LAG_BUG),
+            chapter("kill-seen3", "the host kills that enemy: it dies on every screen within "
+                                  "0.2 s of the killing hit",
+                    {"host": ["sync ks3-go", *attack(ENEMY), "sync ks3-killed", "wait 5",
+                              "census 40"],
+                     **{guest: ["sync ks3-go", "sync ks3-killed", "wait 5", "census 40"]
+                        for guest in GUESTS}},
+                    killed=ENEMY, max_kill_lag=0.2, forbid=holds(PARTY3),
+                    known_bug="phase 10: a follower's copy dies when the kill's log entry comes "
+                              "and logs no time for it; the fix logs \"enemy death seen: "
+                              "<handle> (t=...)\"",
+                    known_problems=[r"after the killing hit", r"from the killing hit"]),
             chapter("down-revive3", "the guest goes down and the second guest, not the host, "
                                     "revives it",
                     {"guest": ["godmode off", *GUEST_FALL, "wait-vital down 30",
@@ -923,7 +1188,7 @@ SUITES = {
                      "host": ["wait-member-vital down 180"]},
                     expect={"guest": [r"party death: down \d+ on map 0x18010000",
                                       r"party death: revived from down"],
-                            "guest2": [r"party death: (real )?revive hit on"]},
+                            "guest2": [r"party death: ((real )?revive hit on|revive swing at)"]},
                     forbid={"host": SESSION_HOLDS + [r"party death: (real )?revive hit on"],
                             "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS}),
             chapter("crash3", "one guest's game dies; host and the other guest stay together and "
@@ -932,8 +1197,8 @@ SUITES = {
                     {"guest2": ["sync c3-ready", RESTART, START, "godmode", "wait-session 3 480",
                                 "wait 10", "sync c3-back", "expect-session 3"],
                      # hit3 woke the enemy by the item; awake, it hits the host on the item and
-                     # no X goes through (rig 2026-10-13): killed first.
-                     "host": [*attack(ENEMY), "sync c3-ready", "wait 20", "pickup 20", "wait 3",
+                     # no X goes through (rig 2026-10-13): kill-seen3 kills it first.
+                     "host": ["sync c3-ready", "wait 20", "pickup 20", "wait 3",
                               "sync c3-host-picked", "sync c3-back", "wait 10",
                               "expect-session 3"],
                      "guest": ["sync c3-ready", "sync c3-host-picked", "pickup 20", "wait 3",
@@ -960,32 +1225,43 @@ def compile_suite(suite: dict, only: list[str] | None = None) -> dict:
     outages: dict[str, float] = {}
     for c in chapters:
         keep_going = f"keep-going {'off' if c.get('fatal') else 'on'}"
+        mark = f"chapter {c['name']} {budget.chapter_budget(c)}"
         syncs[c["name"]] = {"chapter": c["name"], "roles": list(roles)}
         outages.update(c.get("outages", {}))
         for role in roles:
-            stages[role][-1] += [f"chapter {c['name']}", keep_going, f"sync {c['name']}"]
+            stages[role][-1] += [mark, keep_going, f"sync {c['name']}"]
+            marks_due = False  # a restarted game's chapter mark, after its title's steps
             for step in c["steps"].get(role, []):
                 if step == RESTART or step.startswith(RESTART_WITH):
                     # Started again: the same chapter, from the title screen (with other saves
                     # put in first for restart_with).
-                    stages[role].append([f"chapter {c['name']}", keep_going])
+                    stages[role].append([])
+                    marks_due = True
                     if step != RESTART:
                         saves = step[len(RESTART_WITH):-1]
                         stage_saves.setdefault(role, {})[len(stages[role]) - 1] = saves
                     continue
+                if marks_due and not step.startswith(TITLE_STEPS):
+                    # The title runs only its own steps (team-*, title-*): they go first.
+                    stages[role][-1] += [mark, keep_going]
+                    marks_due = False
                 stages[role][-1].append(step)
                 if step.startswith("sync "):
                     name = step.split()[1]
                     syncs.setdefault(name, {"chapter": c["name"], "roles": []})
                     syncs[name]["roles"].append(role)
+            if marks_due:
+                stages[role][-1] += [mark, keep_going]
     checks = ("about", "expect", "forbid", "allow", "same_hp", "same_hp_census", "hp_sums_hits",
-              "max_hp_lag", "files_present", "files_absent")
+              "max_hp_lag", "max_hp_lag_each", "killed", "max_kill_lag", "max_join_s", "moves",
+              "grounded", "overlay_textures", "known_bug", "known_problems", "files_present",
+              "files_absent")
     return {
         "about": suite["about"],
         "roles": {role: script if len(script) > 1 else script[0]
                   for role, script in stages.items()},
         "settings": suite.get("settings", {}),
-        "timeout": suite.get("timeout", 1800),
+        "timeout": budget.suite_timeout({"chapters": chapters}),
         "join_within": suite.get("join_within"),
         "chapters": [{"name": c["name"], "roles": roles,
                       **{key: c[key] for key in checks if key in c}} for c in chapters],

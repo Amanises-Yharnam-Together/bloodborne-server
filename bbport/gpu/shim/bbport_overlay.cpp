@@ -151,6 +151,11 @@ std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
 
+// The ImGui backend's descriptor pool: one set per texture (the font atlas, the party art and
+// icons, the team screens' menu art), and the texture count last printed for the rig.
+constexpr int OverlayDescriptorSets = 64;
+int textures_logged = -1;
+
 // Present rate for the FPS counter.
 std::chrono::steady_clock::time_point last_present{};
 float frame_ms_avg = 0.0f;
@@ -3046,7 +3051,7 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     info.QueueFamily = instance.GetGraphicsQueueFamilyIndex();
     info.Queue = instance.GetGraphicsQueue();
     // One set per texture: the font atlas, the party art and icons, the team screens' menu art (18).
-    info.DescriptorPoolSize = 64;
+    info.DescriptorPoolSize = OverlayDescriptorSets;
     info.MinImageCount = std::max(image_count, 2u);
     info.ImageCount = std::max(image_count, 2u);
     info.UseDynamicRendering = true;
@@ -3414,6 +3419,12 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     }
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
+    // Each texture takes a set from the backend's pool: past it, icons and runes came out garbled
+    // (0.2.4). The rig's smoke checks this line against the pool.
+    if (const int textures = ImGui::GetPlatformIO().Textures.Size; textures != textures_logged) {
+        textures_logged = textures;
+        std::printf("Overlay: %d textures, pool of %d sets\n", textures, OverlayDescriptorSets);
+    }
     if (Party::shown && !menu_open) {
         Party::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                        float(game.extent.height)};

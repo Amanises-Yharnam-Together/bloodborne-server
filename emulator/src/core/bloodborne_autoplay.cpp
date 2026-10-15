@@ -88,9 +88,12 @@ struct AutoplayRun {
     s32 hit_from_hp = 0;              // hit: the target's HP when it began
     std::string script_path;          // sync: the go files are beside it (AutoplaySyncPath)
     std::string chapter;              // the chapter the script is in (a rig suite's section)
-    bool keep_going = false;          // keep-going on: a failed step gives up only its chapter
-    bool failed = false;              // a step failed and the script went on: "done (failed)"
-    LampPosition glide_from{};        // glide: where the player was when it began
+    // chapter <name> <seconds>: when the chapter's time budget runs out (the rig's, 2026-10-15).
+    std::optional<std::chrono::steady_clock::time_point> chapter_deadline;
+    double chapter_budget = 0.0;
+    bool keep_going = false;   // keep-going on: a failed step gives up only its chapter
+    bool failed = false;       // a step failed and the script went on: "done (failed)"
+    LampPosition glide_from{}; // glide: where the player was when it began
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -914,6 +917,14 @@ bool AutoplaySnapshot(const AutoplayStep&) {
 bool AutoplayChapter(const AutoplayStep& step) {
     std::scoped_lock lock{autoplay_mutex};
     autoplay_run.chapter = std::string{step.Arg(0)};
+    autoplay_run.chapter_deadline.reset();
+    if (const auto budget = AutoplayChapterBudget(step.command)) {
+        autoplay_run.chapter_budget = *budget;
+        autoplay_run.chapter_deadline =
+            std::chrono::steady_clock::now() +
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(*budget));
+    }
     LOG_INFO(Debug, "Bloodborne autoplay: chapter {}", step.Arg(0));
     return true;
 }
@@ -990,6 +1001,36 @@ bool AutoplayShot(const AutoplayStep& step) {
         return true;
     }
     return false;
+}
+
+// keys <token>... (title-keys on the title screen): the port's menu keys (AutoplayMenuKeys), for
+// its overlay to press one a frame (BB_MENU_KEYS_FILE). The emulator has no such file: skipped.
+// Written whole, then moved into place: the overlay never reads half of it.
+bool WriteAutoplayMenuKeys(const std::vector<std::string>& tokens, std::string& failure) {
+    const auto text = AutoplayMenuKeys(tokens);
+    if (!text) {
+        failure = "no such menu key";
+        return false;
+    }
+    static const char* path = std::getenv("BB_MENU_KEYS_FILE");
+    if (path == nullptr || *path == '\0') {
+        LOG_INFO(Debug, "Bloodborne autoplay: menu keys skipped (no overlay reads them)");
+        return true;
+    }
+    const std::string partial = std::string{path} + ".part";
+    std::ofstream{partial, std::ios::binary | std::ios::trunc} << *text;
+    std::error_code error;
+    std::filesystem::rename(partial, path, error);
+    if (error) {
+        failure = fmt::format("no menu keys file: {}", error.message());
+        return false;
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay: menu keys {}", text->substr(0, text->size() - 1));
+    return true;
+}
+
+bool AutoplayKeys(const AutoplayStep& step) {
+    return WriteAutoplayMenuKeys(step.command.args, step.failure);
 }
 
 bool AutoplayLog(const AutoplayStep& step) {
@@ -1458,6 +1499,8 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"title-press", AutoplayTeamVerb},
     {"title-wait", AutoplayTeamVerb},
     {"title-shot", AutoplayTeamVerb},
+    {"title-keys", AutoplayTeamVerb},
+    {"keys", AutoplayKeys},
     {"done", AutoplayDone},
     {"trade-give", AutoplayTradeGive},
     {"trade-stock", AutoplayTradeStock},
@@ -1566,6 +1609,14 @@ void TickAutoplay() {
     {
         std::scoped_lock lock{autoplay_mutex};
         turn = NextAutoplayTurn(now);
+        // A chapter past its time budget gives up there (keep-going: the suite goes on).
+        if (turn && turn->command.verb != "chapter" && autoplay_run.chapter_deadline &&
+            now > *autoplay_run.chapter_deadline) {
+            autoplay_run.chapter_deadline.reset();
+            FailAutoplayStep(*turn, fmt::format("chapter {} over its {:g} s budget",
+                                                autoplay_run.chapter, autoplay_run.chapter_budget));
+            return;
+        }
     }
     if (!turn) {
         return;
@@ -1635,6 +1686,9 @@ void TickAutoplayTitle() {
         } else if (command.verb == "title-wait") {
             autoplay_buttons.store(0);
             finished = elapsed >= (command.args.empty() ? 1.0 : std::atof(command.args[0].c_str()));
+        } else if (command.verb == "title-keys") {
+            autoplay_buttons.store(0);
+            finished = WriteAutoplayMenuKeys(command.args, failure);
         } else if (command.verb == "title-shot") {
             autoplay_buttons.store(0);
             const AutoplayCommand shot{"shot", command.args};

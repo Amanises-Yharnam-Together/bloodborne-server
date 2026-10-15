@@ -2078,6 +2078,12 @@ std::optional<LampPosition> GlidePoint(const std::vector<LampPosition>& path, do
 // command after it, nothing if none is left.
 std::optional<size_t> NextAutoplayChapter(const std::vector<AutoplayCommand>& script,
                                           size_t failed);
+// chapter <name> <seconds>: how long the chapter may take (the rig's time budget), nothing for
+// another command or a chapter without one.
+std::optional<double> AutoplayChapterBudget(const AutoplayCommand& command);
+// keys <token>... / title-keys <token>...: the BB_MENU_KEYS_FILE text the port's overlay reads
+// (toggle up down left right enter back l1 r1 kdown kup), nothing for an unknown token or none.
+std::optional<std::string> AutoplayMenuKeys(const std::vector<std::string>& tokens);
 // The game's own kill (what an event's ForceCharacterDeath does): HP to 0, the dead flag
 // (+0x1E3 bit 0), then the death step (0x018BD9D0). `void (character)`.
 constexpr u64 KillCharacterOffset = 0x018BF9A0;

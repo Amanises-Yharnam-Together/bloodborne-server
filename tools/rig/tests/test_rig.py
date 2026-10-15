@@ -33,7 +33,7 @@ VERBS = {
     "return-point",
     "team-create", "team-invite", "team-accept", "team-wait", "team-leave",  # the lobby's
     "team-screen", "team-ready", "team-start", "team-alone",  # the team screen's buttons
-    "title-press", "title-wait", "title-shot",
+    "title-press", "title-wait", "title-shot", "title-keys", "keys",  # the port's menu keys
     "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
 }
 VITALS = {"up", "down", "dead"}
@@ -255,9 +255,9 @@ class SuiteTest(unittest.TestCase):
         ]}
         compiled = suites.compile_suite(suite)
         self.assertEqual(compiled["roles"]["guest"], [
-            [scenarios.START, "chapter join", "keep-going off", "sync join",
-             "chapter crash", "keep-going on", "sync crash", "sync c-ready"],
-            ["chapter crash", "keep-going on", "wait 2", "chapter trip", "keep-going on",
+            [scenarios.START, "chapter join 120", "keep-going off", "sync join",
+             "chapter crash 220", "keep-going on", "sync crash", "sync c-ready"],
+            ["chapter crash 220", "keep-going on", "wait 2", "chapter trip 120", "keep-going on",
              "sync trip"]])
         self.assertEqual(compiled["roles"]["host"][-3:], ["keep-going on", "sync trip", "wait 3"])
         self.assertEqual(compiled["syncs"]["c-ready"], {"chapter": "crash",
