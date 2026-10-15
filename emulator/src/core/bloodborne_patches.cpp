@@ -521,6 +521,9 @@ void PS4_SYSV_ABI DecidePacketReceived(u64 tag, GuestRegisterSnapshot* registers
     if (channel == 0x15 && enemy_owner_installed && CurrentEnemyRole() == EnemyRole::Owner) {
         ForceEnemySteps();
     }
+    if (channel == PositionChannel && enemy_owner_installed) {
+        CountPositionPacketIn();
+    }
 }
 
 void InstallChannelTable(u64 base, u64 image_size) {
@@ -679,6 +682,71 @@ bool SendHitToOwner(const GuestRegisterSnapshot* registers) {
         }
     }
     return false;
+}
+
+// The owner's full position packet (see SendsFullPositionPacket) to every other member of the
+// session, as the game's own (ch 4, unreliable): the game's loop then fills the next one.
+void PS4_SYSV_ABI SendFullPositionPacket(u64, GuestRegisterSnapshot* registers) {
+    static u64 frame = 0;
+    static u32 sent_this_frame = 0;
+    const u64 now_frame = EnemyFrameSerial();
+    if (now_frame != frame) {
+        frame = now_frame;
+        sent_this_frame = 0;
+    }
+    const u64 sync = registers->r12;
+    const u64 slots = registers->r15;
+    if (sync < 0x10000 || slots < 0x10000 ||
+        !HasMemoryAccess(sync + PositionPacketOffset, PositionPacketBytes, MemoryProt::CpuRead) ||
+        !SendsFullPositionPacket(CurrentEnemyRole(), static_cast<s32>(registers->rbx),
+                                 static_cast<s32>(registers->r14),
+                                 ReadValue<s32>(sync, PositionSlotOffset),
+                                 ReadValue<s32>(slots, 0x10), sent_this_frame)) {
+        return;
+    }
+    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+    const u64 first = session >= 0x10000 ? ReadValue<u64>(session, 0xF8) : 0;
+    const u64 end = session >= 0x10000 ? ReadValue<u64>(session, 0x100) : 0;
+    if (first < 0x10000 || end <= first || end - first > 0x20 * 8) {
+        return;
+    }
+    std::vector<u8> packet(8 + PositionPacketBytes);
+    std::memcpy(packet.data(), &PositionChannel, 4);
+    std::memcpy(packet.data() + 4, &PositionPacketBytes, 4);
+    std::memcpy(packet.data() + 8, reinterpret_cast<const void*>(sync + PositionPacketOffset),
+                PositionPacketBytes);
+    u32 members = 0;
+    {
+        std::scoped_lock lock{game_link.mutex};
+        if (game_link.self.empty()) {
+            return;
+        }
+        for (u64 entry = first; entry < end; entry += 0x20) {
+            const std::string member = OnlineIdOfMember(entry);
+            if (member.empty() || member == game_link.self) {
+                continue;
+            }
+            if (!game_link.addresses.contains(member)) {
+                game_link.unresolved.insert(member);
+            }
+            GameLinkPeerOf(member).Send(PacketClass::Unreliable, packet, GameLinkNowMs());
+            ++game_link.sent;
+            ++members;
+        }
+    }
+    if (members == 0) {
+        return;
+    }
+    CountEnemyPacketSent(PositionChannel);
+    ++sent_this_frame;
+    registers->rbx = 0; // the game fills a new packet from its first entry
+    static std::atomic<u32> logged{0};
+    if (logged.fetch_add(1) < 3) {
+        LOG_INFO(Debug,
+                 "Bloodborne enemy owner: sent a full position packet to {} member(s), the round "
+                 "goes on (slot {} of {})",
+                 members, ReadValue<s32>(sync, PositionSlotOffset), ReadValue<s32>(slots, 0x10));
+    }
 }
 
 // Phase 4's hooks (see EnemyRole and the offsets beside it). Stand-ins of SprjSessionManager for
@@ -841,6 +909,16 @@ void InstallEnemyOwner(u64 base, u64 image_size) {
         if (InstallCoopHook(reinterpret_cast<void*>(base + ActivationPassEndOffset),
                             ActivationPassEnd, 0, PutBackWokenRecords)) {
             coop_features.On("whole-map owner");
+            // The position hooks stand alone (a follower's only counts).
+            if (InstallCoopHook(reinterpret_cast<void*>(base + PositionPacketEntryOffset),
+                                PositionPacketEntry, 0, SendFullPositionPacket) &&
+                InstallCoopHook(reinterpret_cast<void*>(base + PositionReceiveEntryOffset),
+                                PositionReceiveEntry, 0, CountPositionTaken)) {
+                coop_features.On("whole-map positions");
+            } else {
+                coop_features.Skipped("whole-map positions",
+                                      SiteFailure(base, image_size, PositionPacketEntryOffset));
+            }
             if (!InstallCoopHook(reinterpret_cast<void*>(base + OwnershipStepEndOffset),
                                  OwnershipStepEndPrologue, 0, KeepAwakeEnemies)) {
                 coop_features.Skipped("whole-map runs",

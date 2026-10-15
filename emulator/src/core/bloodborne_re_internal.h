@@ -456,6 +456,12 @@ void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers);
 void PS4_SYSV_ABI PutBackWokenRecords(u64, const GuestRegisterSnapshot* registers);
 // After the game's ownership step: the owner runs every awake enemy (see AwakeEnemyWord).
 void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers);
+// Enemy positions (see SendsFullPositionPacket): a follower counts the entries it takes.
+void PS4_SYSV_ABI CountPositionTaken(u64, const GuestRegisterSnapshot* registers);
+// A position packet (ch 4) went into the game's queues.
+void CountPositionPacketIn();
+// How many party ticks (frames) have run: the owner's packets a frame.
+u64 EnemyFrameSerial();
 void LogNearbyEnemyControl();
 void LogJoinTasksOnChange();
 void ReconcileMemberPresence();

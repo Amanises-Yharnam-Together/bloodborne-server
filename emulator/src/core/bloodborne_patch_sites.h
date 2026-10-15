@@ -277,6 +277,10 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"activation pass", "enemy owner", CoopSiteKind::Hook, 0x019192A0, "55 48 89 E5 41 57"},
     {"activation pass end", "enemy owner", CoopSiteKind::Hook, 0x0191987E, "8A 5D 97 80 E3 01"},
     {"ownership step end", "enemy owner", CoopSiteKind::Hook, 0x019173B0, "55 48 89 E5 41 57"},
+    // Enemy positions (see SendsFullPositionPacket): the owner's send step, a follower's receive.
+    {"position packet entry", "enemy owner", CoopSiteKind::Hook, 0x018EE910,
+     "48 8B 85 F8 FE FF FF"},
+    {"position receive entry", "enemy owner", CoopSiteKind::Hook, 0x018EEBB0, "45 8B 6C 24 FC"},
     // Phase 5: the title's save load held for the team, and the title menu seen again.
     {"title load state", "team lobby", CoopSiteKind::Hook, 0x0195B480, "55 48 89 E5 41 57"},
     {"title menu state", "team lobby", CoopSiteKind::Hook, 0x0195AE80, "55 48 89 E5 41 57"},

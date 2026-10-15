@@ -115,6 +115,9 @@ OTHER_MAP_FLAG = 12700131
 THIS_MAP_FLAG = 12410999
 FORBIDDEN_WOODS_LAMP_LIT = 12707810  # a lamp neither rig character has lit (see LampOfActiveFlag)
 START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
+# Positions a follower's game takes a second for an enemy that comes for its player (the owner
+# sends a round every frame; the game's own pace gave about 1 for an enemy by a far guest).
+POSITIONS_PER_S = 6.0
 # Phase 5b: a world flag of Central Yharnam's block no event uses (the rig's saves have it off).
 TEAM_WORLD_FLAG = 12410999
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
@@ -544,6 +547,27 @@ SCENARIOS = {
         "same_hp": ENEMY,
         "hp_sums_hits": ENEMY,
         "expect": {"guest": [r"hit on 0x1001400b by this player"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    # Kaniel 2026-10-15: both on Central Yharnam, the guest a bit away from the host: every enemy
+    # lagged (about 200 ms) and acted dumb. The owner sent each enemy's position about twice a
+    # second (8 to a packet, one packet every other frame): the guest's game takes the position of
+    # the enemy that comes for it at least POSITIONS_PER_S times a second.
+    "guest-far-positions": {
+        "about": "the host far away on the same map, the enemy by the guest comes for it: the "
+                 "guest's game gets its position often (the owner sends a round's packets at once)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 75", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 15",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 3", "census 40", "wait 40",
+                      "census 40", "expect-session 2"],
+        },
+        "moves": {"guest": ENEMY},
+        "position_rate": {"guest": [ENEMY, POSITIONS_PER_S]},
+        "expect": {"host": [r"enemy positions go out every frame",
+                            r"sent a full position packet"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },

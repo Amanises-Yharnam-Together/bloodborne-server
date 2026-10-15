@@ -322,6 +322,17 @@ def judge(spec: dict, texts: dict[str, str]) -> list[str]:
             problems.append(f"{role}: {handle} stood still beside it "
                             f"({'no census' if len(places) < 2 else places[0]} -> "
                             f"{places[-1] if places else ''})")
+    # "position_rate": the role's game took [handle]'s position at least [per s] times a second
+    # in some 10 s of its follower's log (Kaniel 2026-10-15: every enemy by a far guest lagged).
+    for role, (handle, per_s) in spec.get("position_rate", {}).items():
+        bare = handle.lower().removeprefix("0x")
+        rates = [float(rate) for rate in re.findall(
+            rf"positions taken per s by this player: .*?\b{re.escape(bare)} ([\d.]+)",
+            texts.get(role, ""))]
+        if not rates or max(rates) < per_s:
+            problems.append(f"{role}: took {handle}'s position "
+                            f"{f'{max(rates):.1f}' if rates else 'never'} times a second at best "
+                            f"(at least {per_s} wanted)")
     # "grounded": an enemy by the role stays on the ground in its censuses: never more than
     # GroundedDropM below where it was first (phase 8: collision under enemies far from the owner).
     for role, handle in spec.get("grounded", {}).items():

@@ -162,6 +162,20 @@ class GroundAndJoinTest(unittest.TestCase):
         self.assertEqual(run_scenario.judge(spec, {"guest": census(self.ENEMY, -54.7)}),
                          ["guest: 0x1001400b has 1 census, at least 2 wanted"])
 
+    def test_a_far_guest_takes_the_enemys_position_often(self):
+        spec = {"position_rate": {"guest": [self.ENEMY, 6.0]}}
+        line = ("[Debug] <Info> Bloodborne party: enemy follower on map 0x18010000: positions "
+                "taken per s by this player: {}\n")
+        often = line.format("10014009 9.8, 1001400b 9.6") + line.format("1001400b 2.0")
+        self.assertEqual(run_scenario.judge(spec, {"guest": often}), [])
+        slow = line.format("1001400b 2.1, 10014009 0.4") + line.format("none")
+        self.assertEqual(run_scenario.judge(spec, {"guest": slow}),
+                         ["guest: took 0x1001400b's position 2.1 times a second at best "
+                          "(at least 6.0 wanted)"])
+        self.assertEqual(run_scenario.judge(spec, {"guest": line.format("none")}),
+                         ["guest: took 0x1001400b's position never times a second at best "
+                          "(at least 6.0 wanted)"])
+
     def test_a_restarted_game_joins_within_its_budget(self):
         before = ("Bloodborne autoplay: chapter join-time\n"
                   "Bloodborne autoplay: step 3/9 sync jt ok (t=10.0)\n")

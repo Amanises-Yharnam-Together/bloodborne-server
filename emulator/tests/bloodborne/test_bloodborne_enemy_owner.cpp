@@ -5,6 +5,7 @@
 // enemies; the others follow it. What each game does with that: its role, the state the game's
 // host-only checks see, the ownership words and what happens to the enemy packets.
 
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -229,4 +230,70 @@ TEST(EnemyOwner, AGuestsOwnHitStaysWhileTheHostCatchesUp) {
 TEST(EnemyOwner, OnlyAnOwnerThatTakesOverTakesTheLogsHp) {
     EXPECT_FALSE(TakesOverEnemyHp(EnemyOwnerEntry{CentralYharnam, "host", 1}));
     EXPECT_TRUE(TakesOverEnemyHp(EnemyOwnerEntry{CentralYharnam, "guest", 2}));
+}
+
+// Kaniel 2026-10-15: with the guest away from the host on one map, every enemy lagged (about
+// 200 ms) and acted dumb. The game sends positions (ch 4) 8 to a packet, one packet every other
+// frame, a round at most every 0.25 s: the guest's area woke three times the enemies, so each got
+// a position about twice a second. The owner sends a round's full packets at once, 10 rounds a
+// second.
+TEST(EnemyOwner, TheOwnerSendsEveryPositionOfARoundAtOnce) {
+    // Full, with slots left in the round: the owner sends it and the game fills another.
+    EXPECT_TRUE(SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 40, 281, 0));
+    EXPECT_TRUE(SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 40, 281, 5));
+    // Not full yet, or the round's last slot (the game sends that one itself).
+    EXPECT_FALSE(SendsFullPositionPacket(EnemyRole::Owner, 7, 8, 40, 281, 0));
+    EXPECT_FALSE(SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 280, 281, 0));
+    // At most MaxPositionPacketsPerFrame a frame, the game's own among them.
+    EXPECT_TRUE(
+        SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 40, 281, MaxPositionPacketsPerFrame - 2));
+    EXPECT_FALSE(
+        SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 40, 281, MaxPositionPacketsPerFrame - 1));
+    // Nonsense: the game's own way.
+    EXPECT_FALSE(SendsFullPositionPacket(EnemyRole::Owner, 0, 0, 40, 281, 0));
+    // Only the owner sends positions.
+    EXPECT_FALSE(SendsFullPositionPacket(EnemyRole::Follower, 8, 8, 40, 281, 0));
+    EXPECT_FALSE(SendsFullPositionPacket(EnemyRole::Unknown, 8, 8, 40, 281, 0));
+}
+
+// Kaniel 2026-10-15 (his own test, still laggy): "maybe we should send every frame?"
+TEST(EnemyOwner, TheOwnersPositionRoundsComeEveryFrame) {
+    EXPECT_FLOAT_EQ(PositionRoundSeconds(EnemyRole::Owner), 0.0f);
+    // Nor does it wait a frame after a packet (+0x658).
+    EXPECT_FALSE(WaitsAFrameAfterPositions(EnemyRole::Owner));
+    EXPECT_TRUE(WaitsAFrameAfterPositions(EnemyRole::Follower));
+    EXPECT_TRUE(WaitsAFrameAfterPositions(EnemyRole::Unknown));
+    // Everyone else keeps the game's 0.25 s (put back when the owner hands its map on).
+    EXPECT_FLOAT_EQ(PositionRoundSeconds(EnemyRole::Follower), GamePositionRoundSeconds);
+    EXPECT_FLOAT_EQ(PositionRoundSeconds(EnemyRole::Unknown), GamePositionRoundSeconds);
+    EXPECT_FLOAT_EQ(GamePositionRoundSeconds, 0.25f);
+}
+
+// A follower's measure: the positions it took for the enemies by its player, per second.
+TEST(EnemyOwner, AFollowerCountsThePositionsOfTheEnemiesByIt) {
+    // The packets name an enemy by its +0x90 index (map index << 11 | slot), the log by chr id.
+    const std::map<u32, u32> taken{{0x280b, 40}, {0x2809, 10}, {0x2871, 99}};
+    using Near = std::vector<std::pair<u32, u32>>;
+    // Fastest first; an enemy by it without a position yet shows 0.
+    EXPECT_EQ(
+        PositionRatesText(
+            taken, Near{{0x10014009, 0x2809}, {0x1001400b, 0x280b}, {0x10014066, 0x2866}}, 10.0),
+        "1001400b 4.0, 10014009 1.0, 10014066 0.0");
+    EXPECT_EQ(PositionRatesText(taken, Near{}, 10.0), "none");
+    EXPECT_EQ(PositionRatesText(taken, Near{{0x1001400b, 0x280b}}, 0.0), "none");
+}
+
+// Rig 2026-10-15 (a write watch): the game copies an enemy's place into the sync's position record
+// and marks it to send (0x0151BCA0) only for the enemies by its own player; the ones awake by
+// another player never went out. The owner does it for every awake enemy it runs.
+TEST(EnemyOwner, TheOwnerSendsThePositionOfEveryAwakeEnemyItRuns) {
+    EXPECT_TRUE(OwnerSendsPositionOf(EnemyRole::Owner, 4, 4, OwnedEnemyWord, false));
+    EXPECT_TRUE(OwnerSendsPositionOf(EnemyRole::Owner, 4, 4, 0, false));
+    // Let go (the network's), asleep, half awake or kept out: not this game's to send.
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Owner, 4, 4, 0xFFFF, false));
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Owner, 0, 0, OwnedEnemyWord, false));
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Owner, 2, 2, OwnedEnemyWord, false));
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Owner, 4, 4, OwnedEnemyWord, true));
+    // A follower sends none.
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Follower, 4, 4, OwnedEnemyWord, false));
 }

@@ -154,7 +154,7 @@ class Port(Emulator):
             "BB_GAME_DIR": str(self.game_dir),
             "BB_PROBE": str(self.exe),
             "BB_MODS_DIR": str(self.mods),
-            "BB_FPS": "30",
+            "BB_FPS": os.environ.get("BB_RIG_FPS", "30"),  # BB_RIG_FPS: a --play at another rate
             "BB_DMEM_MB": "5056",
             "BB_LOG_FILE": str(self.log_path(role)),
             "BB_LOG_LEVEL": "info",

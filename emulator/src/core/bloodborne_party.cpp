@@ -3588,6 +3588,44 @@ std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 wo
     return OwnedEnemyWord;
 }
 
+bool SendsFullPositionPacket(EnemyRole role, s32 entries, s32 per_packet, s32 slot, s32 slots,
+                             u32 sent_this_frame) {
+    // The game sends the round's last packet itself (and one a frame of its own).
+    return role == EnemyRole::Owner && per_packet > 0 && entries >= per_packet &&
+           slot + 1 < slots && sent_this_frame + 1 < MaxPositionPacketsPerFrame;
+}
+
+bool OwnerSendsPositionOf(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out) {
+    return role == EnemyRole::Owner && level == EnemyAwake && applied == EnemyAwake && !kept_out &&
+           static_cast<s16>(word) >= 0;
+}
+
+float PositionRoundSeconds(EnemyRole role) {
+    return role == EnemyRole::Owner ? 0.0f : GamePositionRoundSeconds;
+}
+
+bool WaitsAFrameAfterPositions(EnemyRole role) {
+    return role != EnemyRole::Owner;
+}
+
+std::string PositionRatesText(const std::map<u32, u32>& taken,
+                              std::span<const std::pair<u32, u32>> nearby, double seconds) {
+    if (nearby.empty() || seconds <= 0.0) {
+        return "none";
+    }
+    std::vector<std::pair<u32, u32>> rates;
+    for (const auto& [handle, index] : nearby) {
+        const auto found = taken.find(index);
+        rates.emplace_back(handle, found != taken.end() ? found->second : 0);
+    }
+    std::ranges::stable_sort(rates, std::ranges::greater{}, &std::pair<u32, u32>::second);
+    std::string text;
+    for (const auto& [handle, count] : rates) {
+        text += fmt::format("{}{:x} {:.1f}", text.empty() ? "" : ", ", handle, count / seconds);
+    }
+    return text;
+}
+
 WakeGroups WithOthersGroups(const WakeGroups& record, const WakeGroups& own,
                             std::span<const WakeGroups> others) {
     const auto shares = [](const GroupSet& a, const GroupSet& b) {
