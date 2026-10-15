@@ -436,11 +436,26 @@ void KeepBossHpInStep();
 // control block [+0x18] words +0x00..+0x3C, logged every 2 s on change to compare who runs an
 // enemy on the host, on a guest beside it and on a guest alone.
 void WatchEnemyHp(u64 hp_address, u32 handle);
+// Phase 8 (one HP path): this game's own hit, at once to the others through the server, and the
+// others' hits as they came (taken once).
+struct EnemyHitNews {
+    u32 map = 0;
+    u32 handle = 0;
+    s32 hp = 0;
+    s32 max = 0;
+    std::string member;
+};
+void SendEnemyHit(u32 map, u32 handle, s32 hp, s32 max);
+std::vector<EnemyHitNews> TakeEnemyHits();
+// Phase 8: the owner's activation pass wakes the groups around the other players too (its entry
+// adds their groups to its block's record, its end puts the record back; see WithOthersGroups).
+void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers);
+void PS4_SYSV_ABI PutBackWokenRecords(u64, const GuestRegisterSnapshot* registers);
+// After the game's ownership step: the owner runs every awake enemy (see AwakeEnemyWord).
+void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers);
 void LogNearbyEnemyControl();
 void LogJoinTasksOnChange();
 void ReconcileMemberPresence();
-// Whether this follower runs the enemy `handle` (the owner let it go and named it).
-bool ThisFollowerRuns(u32 handle);
 
 void TickPartyTrip();
 void LogJoinTaskChanges();
@@ -634,12 +649,6 @@ bool EnemyOwnerOn();
 bool TakeServerWorldNews();
 // The server's owners, or none when not heard of for EnemyOwnersFreshMs.
 std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms);
-// The enemies (handle -> the guest named to run it, or empty) the owner `member` let go on `map`,
-// as last heard (none when not fresh), and this owner's own list to the others (Kaniel
-// 2026-10-14: one game runs each enemy).
-std::optional<std::unordered_map<u32, std::string>> EnemiesLetGoBy(const std::string& member,
-                                                                   u32 map, s64 now_ms);
-void SendEnemiesLetGo(u32 map, const std::map<u32, std::string>& runners);
 // Once per party tick: this member's role on its map, the ownership words of its characters and
 // the owner's frame and send rates in the log.
 void TickEnemyOwner(bool in_session, u32 map);

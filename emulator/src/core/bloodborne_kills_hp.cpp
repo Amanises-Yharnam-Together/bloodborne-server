@@ -517,11 +517,6 @@ std::mutex enemy_owner_mutex;
 std::string enemy_owner_member;
 std::atomic<s64> became_owner_ms{-1'000'000'000};
 std::atomic<u32> enemy_frames{0};
-// Kaniel 2026-10-15: the enemies this follower runs (the owner named it), and, on the owner, those
-// a guest runs for it: their HP is that guest's to report and the others' to take.
-std::mutex enemy_runs_mutex;
-std::unordered_set<u32> follower_runs;
-std::unordered_set<u32> run_by_guests;
 std::array<std::atomic<u32>, NativeChannelCount> enemy_sent{};
 
 } // namespace
@@ -537,11 +532,6 @@ std::string CurrentEnemyOwner() {
     return enemy_owner_member;
 }
 
-bool ThisFollowerRuns(u32 handle) {
-    std::scoped_lock lock{enemy_runs_mutex};
-    return follower_runs.contains(handle);
-}
-
 void CountEnemyPacketSent(u32 channel) {
     if (channel < enemy_sent.size()) {
         enemy_sent[channel].fetch_add(1, std::memory_order_relaxed);
@@ -550,8 +540,251 @@ void CountEnemyPacketSent(u32 channel) {
 
 void HoldOwnHits();
 
+} // namespace Coop
+
+namespace {
+
+// Phase 8: the block records the owner's activation pass saw with the other players' groups
+// added (see WithOthersGroups), and their own groups, put back after the pass; the game thread.
+struct WokenRecord {
+    u64 record = 0;
+    WakeGroups own;
+};
+std::vector<WokenRecord> woken_records;
+std::atomic<u32> woken_for{0}; // how many other players' groups the last pass added
+
+WakeGroups ReadWakeGroups(u64 at, u64 wakes, u64 counted, u64 half) {
+    WakeGroups groups;
+    for (size_t i = 0; i < groups.wakes.size(); ++i) {
+        groups.wakes[i] = ReadValue<u32>(at, wakes + i * 4);
+        groups.counted[i] = ReadValue<u32>(at, counted + i * 4);
+        groups.half[i] = ReadValue<u32>(at, half + i * 4);
+    }
+    return groups;
+}
+
+void WriteRecordGroups(u64 record, const WakeGroups& groups) {
+    for (size_t i = 0; i < groups.wakes.size(); ++i) {
+        WriteValue(record, 0x38 + i * 4, groups.wakes[i]);
+        WriteValue(record, 0x18 + i * 4, groups.counted[i]);
+        WriteValue(record, 0x78 + i * 4, groups.half[i]);
+    }
+}
+
+} // namespace
+
+namespace Coop {
+
+void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers) {
+    woken_records.clear();
+    if (CurrentEnemyRole() != EnemyRole::Owner) {
+        woken_for.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const u64 world = registers->rdi;
+    const u64 player = GetLocalPlayer();
+    if (world < 0x10000 || player < 0x10000 ||
+        !HasMemoryAccess(player + 0x218, 0x60, MemoryProt::CpuRead)) {
+        return;
+    }
+    std::vector<WakeGroups> others;
+    for (const OtherPlayer& other : OtherPlayers()) {
+        // One hidden by the map board (on another map) wakes nothing here.
+        if (other.hp > 0 && !IsCharacterDisabled(other.character) &&
+            HasMemoryAccess(other.character + 0x218, 0x60, MemoryProt::CpuRead)) {
+            others.push_back(ReadWakeGroups(other.character, 0x218, 0x238, 0x258));
+        }
+    }
+    woken_for.store(static_cast<u32>(others.size()), std::memory_order_relaxed);
+    if (others.empty()) {
+        return;
+    }
+    const WakeGroups own = ReadWakeGroups(player, 0x218, 0x238, 0x258);
+    const s32 blocks = std::min(ReadValue<s32>(world, 0x278), 62);
+    for (s32 index = 0; index < blocks; ++index) {
+        const u64 record = ReadValue<u64>(world, 0x290 + static_cast<u64>(index) * 0x18);
+        if (record < 0x10000 || !HasMemoryAccess(record + 0x18, 0x80, MemoryProt::CpuWrite)) {
+            continue;
+        }
+        const WakeGroups before = ReadWakeGroups(record, 0x38, 0x18, 0x78);
+        const WakeGroups after = WithOthersGroups(before, own, others);
+        if (after != before) {
+            woken_records.push_back({record, before});
+            WriteRecordGroups(record, after);
+        }
+        static u32 logged = 0;
+        if (logged < 40 && (after != before || logged < 4)) {
+            ++logged;
+            LOG_INFO(Debug,
+                     "Bloodborne enemy owner: block record {} groups {:x} -> {:x} (own {:x}, "
+                     "{} others)",
+                     index, before.wakes[0], after.wakes[0], own.wakes[0], others.size());
+        }
+    }
+}
+
+void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) {
+    const EnemyRole role = CurrentEnemyRole();
+    const u64 world = registers->rdi;
+    if (role != EnemyRole::Owner || world < 0x10000) {
+        return;
+    }
+    // Never a player: the other players' copies follow their own games (an AI controller on one
+    // broke its copy: the full rig tier 2026-10-15, players unseen after trips).
+    std::unordered_set<u64> players{GetLocalPlayer()};
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    u32 kept = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (players.contains(character)) {
+            return;
+        }
+        const u64 control = ReadValue<u64>(character, 0x18);
+        const u64 word = OwnershipWordAddress(world, character);
+        if (control < 0x10000 || word == 0 || !HasMemoryAccess(word, 2, MemoryProt::CpuWrite)) {
+            return;
+        }
+        if (const auto wanted =
+                AwakeEnemyWord(role, ReadValue<s32>(control, 0x14), ReadValue<s32>(control, 0x10),
+                               ReadValue<u16>(word, 0), KeptOutByTheGame(character))) {
+            WriteValue(word, 0, *wanted);
+            ++kept;
+        }
+    });
+    static u32 last = 0;
+    static u32 logged = 0;
+    if (kept != last && logged < 60) {
+        last = kept;
+        ++logged;
+        LOG_INFO(Debug, "Bloodborne enemy owner: runs {} awake enemies the game let go (t={:.1f})",
+                 kept, SteadyMilliseconds() / 1000.0);
+    }
+}
+
+void PS4_SYSV_ABI PutBackWokenRecords(u64, const GuestRegisterSnapshot* registers) {
+    // How many the pass woke with the others' groups (+0x5F74), on a change.
+    static std::pair<size_t, s32> last{};
+    static u32 logged = 0;
+    const std::pair<size_t, s32> now{woken_records.size(), ReadValue<s32>(registers->r14, 0x5F74)};
+    if (now != last && logged < 60) {
+        last = now;
+        ++logged;
+        LOG_INFO(Debug,
+                 "Bloodborne enemy owner: the activation pass woke {} with the others' groups "
+                 "on {} block(s) (t={:.1f})",
+                 now.second, now.first, SteadyMilliseconds() / 1000.0);
+    }
+    for (const WokenRecord& woken : woken_records) {
+        if (HasMemoryAccess(woken.record + 0x18, 0x80, MemoryProt::CpuWrite)) {
+            WriteRecordGroups(woken.record, woken.own);
+        }
+    }
+    woken_records.clear();
+}
+
+// Phase 8 RE: which groups wake a block's enemies. WorldChrMan's activation pass (0x019192A0)
+// wakes a character whose groups (+0x218, +0x238, +0x258) share bits with its block record's
+// (WorldChrMan +0x290 entries: +0x38, +0x18, +0x78). Logged on change: each block's record sets,
+// this player's own sets and the other players' (their copies in this game), and the budget.
+void LogWakeGroups() {
+    static s64 checked_ms = 0;
+    static std::string last;
+    static u32 logged = 0;
+    const s64 now_ms = SteadyMilliseconds();
+    if (logged >= 600 || now_ms - checked_ms < 2'000) {
+        return;
+    }
+    checked_ms = now_ms;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000 || !HasMemoryAccess(world + 0x5F70, 0x20, MemoryProt::CpuRead)) {
+        return;
+    }
+    const auto set = [](u64 at) {
+        std::string words;
+        for (u64 offset = 0; offset < 0x20; offset += 4) {
+            words += fmt::format("{:x}{}", ReadValue<u32>(at, offset), offset < 0x1C ? "." : "");
+        }
+        return words;
+    };
+    const auto sets = [&](u64 character) {
+        if (character < 0x10000 || !HasMemoryAccess(character + 0x218, 0x60, MemoryProt::CpuRead)) {
+            return std::string{"?"};
+        }
+        return fmt::format("b {} a {} d {}", set(character + 0x218), set(character + 0x238),
+                           set(character + 0x258));
+    };
+    size_t awake_let_go = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        const u64 control = ReadValue<u64>(character, 0x18);
+        const u64 word = OwnershipWordAddress(world, character);
+        if (control >= 0x10000 && word != 0 && ReadValue<s32>(control, 0x14) == EnemyAwake &&
+            static_cast<s16>(ReadValue<u16>(word, 0)) < 0) {
+            ++awake_let_go;
+        }
+    });
+    std::string text = fmt::format(
+        "budget {} awake {} counted {} {} (awake let go {}, others' groups {})",
+        ReadValue<s32>(world, 0x5F70), ReadValue<s32>(world, 0x5F74), ReadValue<s32>(world, 0x5F88),
+        ReadValue<s32>(world, 0x5F8C), awake_let_go, woken_for.load(std::memory_order_relaxed));
+    const s32 blocks = std::min(ReadValue<s32>(world, 0x278), 16);
+    for (s32 index = 0; index < blocks; ++index) {
+        const u64 entry = world + 0x280 + static_cast<u64>(index) * 0x18;
+        const u64 record = ReadValue<u64>(entry, 0x10);
+        if (record < 0x10000 || !HasMemoryAccess(record + 0x18, 0x80, MemoryProt::CpuRead)) {
+            text += fmt::format(" | block {:#x} no record", ReadValue<s32>(entry, 0x08));
+            continue;
+        }
+        text += fmt::format(" | block {:#x} b {} a {} d {}", ReadValue<s32>(entry, 0x08),
+                            set(record + 0x38), set(record + 0x18), set(record + 0x78));
+    }
+    // The characters by each other player, as this game has them (why one sleeps).
+    for (const OtherPlayer& other : OtherPlayers()) {
+        if (!other.at) {
+            continue;
+        }
+        std::string by_them;
+        u32 listed = 0;
+        ForEachWorldCharacter(world, [&](u64 character) {
+            const u64 modules = ReadValue<u64>(character, 0x3B0);
+            const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+            const u64 control = ReadValue<u64>(character, 0x18);
+            if (listed >= 6 || physics < 0x10000 || control < 0x10000 ||
+                character == other.character || CharacterHp(character) <= 0) {
+                return;
+            }
+            const float dx = ReadValue<float>(physics, 0x1E0) - (*other.at)[0];
+            const float dz = ReadValue<float>(physics, 0x1E8) - (*other.at)[2];
+            if (dx * dx + dz * dz > 25.0f * 25.0f) {
+                return;
+            }
+            ++listed;
+            const u64 word = OwnershipWordAddress(world, character);
+            by_them += fmt::format(
+                " {:x}:l{}/{} h{}{} w{:x} b{:x} at {:.0f},{:.0f}", ReadValue<u32>(character, 0x08),
+                ReadValue<s32>(control, 0x14), ReadValue<s32>(control, 0x10),
+                ReadValue<u8>(character, 0x28), ReadValue<u8>(character, 0x29),
+                word != 0 ? ReadValue<u16>(word, 0) : 0xBAD, ReadValue<u32>(character, 0x218),
+                ReadValue<float>(physics, 0x1E0), ReadValue<float>(physics, 0x1E8));
+        });
+        text += fmt::format(" | by {:x}:{}", ReadValue<u32>(other.character, 0x08),
+                            by_them.empty() ? " none" : by_them);
+    }
+    text += fmt::format(" | me {}", sets(GetLocalPlayer()));
+    for (const OtherPlayer& other : OtherPlayers()) {
+        text += fmt::format(" | player {:#x} {}", ReadValue<u32>(other.character, 0x08),
+                            sets(other.character));
+    }
+    if (text != last) {
+        last = text;
+        ++logged;
+        LOG_INFO(Debug, "Bloodborne wake groups: {} (t={:.1f})", text, now_ms / 1000.0);
+    }
+}
+
 void TickEnemyOwner(bool in_session, u32 map) {
     HoldOwnHits();
+    LogWakeGroups();
     const s64 now_ms = SteadyMilliseconds();
     std::string self;
     {
@@ -617,87 +850,11 @@ void TickEnemyOwner(bool in_session, u32 map) {
         players.insert(other.character);
     }
     // The session's host runs its map's enemies the game's own way: its game puts its own words
-    // back every frame (rig 2026-10-14). It says which it let go (word 0xFFFF: none by its
-    // player), for the nearest guest to run (Kaniel 2026-10-14).
-    if (wanted && world >= 0x10000 && role == EnemyRole::Owner && !IsPartyGuestRole()) {
-        // The guests up on this map, where the vitals board last put them.
-        std::vector<MemberVitals> guests;
-        {
-            std::scoped_lock lock{vitals_mutex};
-            for (const MemberVitals& member : vitals_board.members) {
-                if (member.member != self) {
-                    guests.push_back(member);
-                }
-            }
-        }
-        // handle -> the guest running it (one decides: never two, Kaniel 2026-10-14)
-        static std::map<u32, std::string> runners;
-        std::map<u32, std::string> now_runners;
-        ForEachWorldCharacter(world, [&](u64 character) {
-            if (character == player || players.contains(character) || CharacterHp(character) <= 0) {
-                return;
-            }
-            const u64 word = OwnershipWordAddress(world, character);
-            const u64 modules = ReadValue<u64>(character, 0x3B0);
-            const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
-            if (word == 0 || physics < 0x10000 || static_cast<s16>(ReadValue<u16>(word, 0)) >= 0) {
-                return;
-            }
-            // Not one the game keeps out (Kaniel 2026-10-15: Iosefka showed at her door for the
-            // guests while the host was far): it stays the host's, hidden.
-            if (KeptOutByTheGame(character)) {
-                return;
-            }
-            const u32 handle = ReadValue<u32>(character, 0x08);
-            const LampPosition at{ReadValue<float>(physics, 0x1E0),
-                                  ReadValue<float>(physics, 0x1E4),
-                                  ReadValue<float>(physics, 0x1E8)};
-            const auto before = runners.find(handle);
-            now_runners[handle] =
-                RunnerOf(before != runners.end() ? before->second : std::string{}, at, guests, map);
-        });
-        static s64 said_ms = 0;
-        if ((now_runners != runners && now_ms - said_ms >= 250) ||
-            now_ms - said_ms >= EnemiesLetGoEveryMs) {
-            const auto running = [](const std::map<u32, std::string>& list) {
-                return std::ranges::count_if(list, [](const auto& e) { return !e.second.empty(); });
-            };
-            if (running(now_runners) != running(runners) || now_runners.size() != runners.size()) {
-                LOG_INFO(Debug,
-                         "Bloodborne party: enemy owner: lets go {} enemies on map {:#x}, {} run "
-                         "by guests",
-                         now_runners.size(), map, running(now_runners));
-            }
-            said_ms = now_ms;
-            SendEnemiesLetGo(map, now_runners);
-        }
-        runners = std::move(now_runners);
-        {
-            std::scoped_lock lock{enemy_runs_mutex};
-            follower_runs.clear();
-            run_by_guests.clear();
-            for (const auto& [handle, runner] : runners) {
-                if (!runner.empty()) {
-                    run_by_guests.insert(handle);
-                }
-            }
-        }
+    // back every frame (rig 2026-10-14). Phase 8: no guest runs one at any distance.
+    if (!wanted || world < 0x10000 || (role == EnemyRole::Owner && !IsPartyGuestRole())) {
         return;
     }
-    if (role != EnemyRole::Follower) {
-        std::scoped_lock lock{enemy_runs_mutex};
-        follower_runs.clear();
-        run_by_guests.clear();
-    }
-    if (!wanted || world < 0x10000) {
-        return;
-    }
-    const std::optional<std::unordered_map<u32, std::string>> let_go =
-        role == EnemyRole::Follower && owner != nullptr ? EnemiesLetGoBy(owner->member, map, now_ms)
-                                                        : std::nullopt;
     size_t changed = 0;
-    size_t claimed = 0;
-    std::unordered_set<u32> running_now;
     ForEachWorldCharacter(world, [&](u64 character) {
         if (character == player || players.contains(character) || CharacterHp(character) <= 0) {
             return;
@@ -708,52 +865,14 @@ void TickEnemyOwner(bool in_session, u32 map) {
         }
         // A word already on the wanted side keeps its value (the game's own >= 0 ones too).
         const bool runs = static_cast<s16>(ReadValue<u16>(word, 0)) >= 0;
-        bool should_run = role == EnemyRole::Owner;
-        if (role == EnemyRole::Follower) {
-            // Kaniel 2026-10-14: an enemy the owner let go and named this guest for runs here
-            // (by its player: awake in this world).
-            const u64 control = ReadValue<u64>(character, 0x18);
-            const bool awake = control >= 0x10000 && ReadValue<s32>(control, 0x14) == EnemyAwake &&
-                               !KeptOutByTheGame(character);
-            const auto named = let_go ? let_go->find(ReadValue<u32>(character, 0x08))
-                                      : std::unordered_map<u32, std::string>::const_iterator{};
-            should_run = let_go && named != let_go->end() && named->second == self && awake;
-            claimed += should_run ? 1 : 0;
-            if (should_run) {
-                running_now.insert(ReadValue<u32>(character, 0x08));
-            }
-        }
+        const bool should_run = role == EnemyRole::Owner;
         if (runs == should_run) {
             return;
         }
-        WriteValue(word, 0, should_run ? u16{0} : *wanted);
+        WriteValue(word, 0, *wanted);
         enemy_owner_changed_ms[character] = now_ms;
         ++changed;
-        if (role == EnemyRole::Follower) {
-            static u32 logged_hands = 0;
-            if (++logged_hands <= 200) {
-                LOG_INFO(Debug, "Bloodborne party: enemy owner: this follower {} {:#x} (t={:.1f})",
-                         should_run ? "runs" : "hands back", ReadValue<u32>(character, 0x08),
-                         now_ms / 1000.0);
-            }
-        }
     });
-    if (role == EnemyRole::Follower) {
-        std::scoped_lock lock{enemy_runs_mutex};
-        follower_runs = std::move(running_now);
-        run_by_guests.clear();
-    }
-    static size_t last_claimed = 0;
-    static u32 claimed_logged = 0;
-    if (claimed != last_claimed && claimed_logged < 60) {
-        last_claimed = claimed;
-        ++claimed_logged;
-        LOG_INFO(Debug,
-                 "Bloodborne party: enemy owner: this follower runs {} enemies the owner let go "
-                 "({} let go) (t={:.1f})",
-                 claimed, let_go ? fmt::format("{}", let_go->size()) : std::string{"none heard"},
-                 now_ms / 1000.0);
-    }
     static u32 logged = 0;
     if (changed > 0 && ++logged <= 60) {
         LOG_INFO(Debug, "Bloodborne party: enemy owner: {} {} enemies on map {:#x} (t={:.1f})",
@@ -810,6 +929,25 @@ std::unordered_map<u64, HeldHit> held_own_hits;
 } // namespace
 
 namespace Coop {
+
+// The character whose HP data is at `data` among this world's: a held hit needs the character.
+void HoldHitNews(u64 data, u32 handle, s32 hp, s64 now_ms) {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000) {
+        return;
+    }
+    u64 victim = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        const u64 modules = victim == 0 ? ReadValue<u64>(character, 0x3B0) : 0;
+        if (modules >= 0x10000 && ReadValue<u64>(modules, 0x20) == data) {
+            victim = character;
+        }
+    });
+    if (victim != 0) {
+        std::scoped_lock lock{own_hits_mutex};
+        held_own_hits[victim] = {handle, hp, now_ms};
+    }
+}
 
 // Kaniel 2026-10-15: a guest's hit took its copy down, then the host's HP from before the hit came
 // (ch 5) and put it back until the host's answer: the guest's own hits hold for a while.
@@ -919,6 +1057,15 @@ void PS4_SYSV_ABI NoteHitApplied(u64, const GuestRegisterSnapshot* registers) {
     }
     if (by != HitBy::OtherPlayer && taken > 0) {
         enemy_step_due.store(true);
+    }
+    // Phase 8 (one HP path): this player's hit goes to the others at once, with the HP it left.
+    if (by == HitBy::Me && taken > 0 && InPartySession() && EnemyOwnerOn()) {
+        const u64 modules = ReadValue<u64>(victim, 0x3B0);
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        if (data >= 0x10000) {
+            SendEnemyHit(PlayingMap(), handle, std::max(CharacterHp(victim), 0),
+                         ReadValue<s32>(data, 0xFC));
+        }
     }
     if (taken <= 0) {
         return;
@@ -1078,20 +1225,39 @@ void ShareEnemyHpByOwner(EnemyRole role, u32 map, u64 source, std::span<const En
     const s64 now_ms = SteadyMilliseconds();
     std::vector<EnemyHp> hurt;
     std::vector<EnemyWrite> writes;
-    std::unordered_set<u32> runs, guests_run;
-    {
-        std::scoped_lock lock{enemy_runs_mutex};
-        runs = follower_runs;
-        guests_run = run_by_guests;
-    }
     // The owner's copy is the enemy: its HP goes as read, at once (rig hit3 2026-10-14: two reads
-    // agreeing made the others' bars 0.4 s late). So is a follower's copy of an enemy it runs, and
-    // not the owner's copy of one a guest runs for it (Kaniel 2026-10-15).
+    // agreeing made the others' bars 0.4 s late).
     for (const EnemyCopy& copy : standing) {
-        const bool reports = role == EnemyRole::Owner ? !guests_run.contains(copy.handle)
-                                                      : runs.contains(copy.handle);
-        if (reports && copy.hp < copy.max) {
+        if (role == EnemyRole::Owner && copy.hp < copy.max) {
             hurt.push_back({copy.handle, copy.hp, copy.max});
+        }
+    }
+    // Phase 8 (one HP path): the others' hits, at once on a follower's copies; each holds against
+    // the owner's older HP as this game's own hit does (HoldOwnHits).
+    for (const EnemyHitNews& hit : TakeEnemyHits()) {
+        const auto it = data.find(hit.handle);
+        if (hit.map != map || it == data.end()) {
+            continue;
+        }
+        const auto copy = std::ranges::find(standing, hit.handle, &EnemyCopy::handle);
+        if (copy == standing.end()) {
+            continue;
+        }
+        const auto hp = HitNewsHp(role, copy->hp, copy->max, hit.hp, hit.max);
+        if (!hp || !HasMemoryAccess(it->second.first, 0xFC, MemoryProt::CpuWrite)) {
+            continue;
+        }
+        WriteValue(it->second.first, 0xF8, *hp);
+        HoldHitNews(it->second.first, hit.handle, *hp, now_ms);
+        static u32 logged_news = 0;
+        if (++logged_news <= 400) {
+            LOG_INFO(Debug,
+                     "Bloodborne party: {}'s hit damage on map {:#x}: {:#x} {}->{} (t={:.1f})",
+                     hit.member, map, hit.handle, copy->hp, *hp, now_ms / 1000.0);
+        }
+        if (*hp == 0) {
+            LOG_INFO(Debug, "Bloodborne party: enemy death seen: {:#x} (t={:.1f})", hit.handle,
+                     now_ms / 1000.0);
         }
     }
     // The log's HP (the owner's reports): a new owner's copies take it, and a follower's always.
@@ -1099,16 +1265,8 @@ void ShareEnemyHpByOwner(EnemyRole role, u32 map, u64 source, std::span<const En
     // copy of the map, and a follower's copy kept its own HP (rig hp-together 2026-10-14). Lower
     // only, so a follower's own hit, which also reaches the owner, counts once.
     const bool takeover = now_ms - became_owner_ms.load() < EnemyOwnerTakeoverMs;
-    if (role == EnemyRole::Follower || takeover || !guests_run.empty()) {
-        // A follower's copies but those it runs; the owner's those a guest runs (or all, newly
-        // the owner).
-        std::vector<EnemyCopy> taking;
-        for (const EnemyCopy& copy : standing) {
-            if (role == EnemyRole::Follower ? !runs.contains(copy.handle)
-                                            : takeover || guests_run.contains(copy.handle)) {
-                taking.push_back(copy);
-            }
-        }
+    if (role == EnemyRole::Follower || takeover) {
+        const std::vector<EnemyCopy> taking{standing.begin(), standing.end()};
         std::vector<EnemyHpReport> copies;
         for (const MemberMapState& state : others) {
             if (EnemyOwnerArea(state.map) == EnemyOwnerArea(map)) {
@@ -1126,7 +1284,7 @@ void ShareEnemyHpByOwner(EnemyRole role, u32 map, u64 source, std::span<const En
         if (changed) {
             local_enemy_hp = std::move(now);
         }
-        if (role == EnemyRole::Owner || !runs.empty()) {
+        if (role == EnemyRole::Owner) {
             SendEnemyHp(local_enemy_hp, changed);
         }
     }

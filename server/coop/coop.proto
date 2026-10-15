@@ -316,6 +316,18 @@ message ShownCharacter {
     uint32 bits = 2; // ShownBits
 }
 
+// Phase 8 (one HP path): a game's own hit on an enemy, sent the moment the game applies it, with
+// the HP it left; the server sends it on at once to the others (`member` set). The others' copies
+// take it at once (an owner applies the hit itself, from the game's own 0x15); the owner's HP (the
+// log) then corrects them.
+message EnemyHit {
+    uint32 map = 1;
+    uint32 handle = 2;
+    sint32 hp = 3;     // after the hit
+    sint32 max = 4;
+    string member = 5; // server -> game: whose
+}
+
 message HpEnemy {
     uint32 handle = 1;
     sint32 value = 2;
@@ -383,7 +395,8 @@ message Envelope {
         TeamWorld team_world = 35;
         TeamSession team_session = 36;
         LoadProgress load_progress = 37;
-        EnemiesLetGo enemies_let_go = 38;
+        // 38 was EnemiesLetGo (phase 6's far-guest runners, gone in phase 8).
+        EnemyHit enemy_hit = 39;
     }
 }
 
@@ -641,15 +654,3 @@ message LoadProgress {
     string member = 3;  // server -> game: whose
 }
 
-// Kaniel 2026-10-14: one game runs each enemy. The owner of a map (EnemyOwners) says which of its
-// map's enemies its game let go (none by its player: the game's own ownership word 0xFFFF), on a
-// change and every second; the server sends it to the others (`member` set). The guest it names
-// for one runs it until the owner's game takes it back.
-message EnemiesLetGo {
-    uint32 map = 1;
-    repeated uint32 handles = 2; // the characters' handles (+0x08)
-    string member = 3;           // server -> game: whose
-    // Beside each handle, the guest (member) the owner chose to run it (the nearest on the map,
-    // kept until another is clearly nearer), or empty: nobody (one decides, so never two).
-    repeated string runners = 4;
-}
