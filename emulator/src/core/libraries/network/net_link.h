@@ -293,6 +293,21 @@ inline bool RoutesThroughServer(const ServerEndpoint& server, u32 addr_nbo, u16 
     return addr_nbo != server.addr_nbo || port_nbo != server.port_nbo;
 }
 
+// Phase 6, the port (`server_only`): no direct P2P. A game's frame for a peer goes out only
+// through the server; before the link is up it is dropped (the game sends its own again). Datagrams
+// are taken only from the server once it is known (before, its STUN answers come from it
+// unannounced).
+inline bool SendsToPeer(const ServerEndpoint& server, bool server_only) {
+    return !server_only || (server.addr_nbo != 0 && server.port_nbo != 0);
+}
+inline bool TakesDatagramFrom(const ServerEndpoint& server, u32 addr_nbo, u16 port_nbo,
+                              bool server_only) {
+    if (!server_only || server.addr_nbo == 0 || server.port_nbo == 0) {
+        return true;
+    }
+    return addr_nbo == server.addr_nbo && port_nbo == server.port_nbo;
+}
+
 // The link to the server going quiet (no pong for quiet_ms) or answering again.
 struct LinkChange {
     bool quiet = false;

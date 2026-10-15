@@ -395,6 +395,10 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     member.host = hello.host();
     member.enemy_owner = hello.enemy_owner();
     PartyWorld& world = WorldFor(member.party, now_ms, result);
+    // The host's game started again: the session its last run opened is gone with it.
+    if (world.session && world.session->host() == member.name && world.session_run != member.run) {
+        CloseSession(world, now_ms, result);
+    }
     welcome.set_accepted(true);
     welcome.set_trades(true);
     welcome.set_epoch(world.host.Epoch());
@@ -416,6 +420,20 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
         }
     }
     SendOwners(world, now_ms, result, &member);
+    // The others' loads (the team loading screen).
+    for (const auto& [name, load] : world.loads) {
+        if (name != member.name) {
+            bbcoop::Envelope envelope;
+            *envelope.mutable_load_progress() = load;
+            SendTo(member, envelope, now_ms);
+        }
+    }
+    // The host's open session: a guest joins it once it stands in its world.
+    if (world.session && world.session->host() != member.name) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_team_session() = *world.session;
+        SendTo(member, envelope, now_ms);
+    }
     // What its trades owe it: grants not yet added, offers waiting for its answer.
     Deliver(world, world.trades.Resume(member.name, now_ms), now_ms, result);
     world.team = world.team || team;
@@ -511,8 +529,9 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
                 continue;
             }
             refused += std::erase_if(handles, [&](u32 handle) {
-                return before == world.proposed.end() || !before->second.contains(map) ||
-                       !before->second.at(map).contains(handle);
+                return !DecidesEnemy(world, member, map, handle) &&
+                       (before == world.proposed.end() || !before->second.contains(map) ||
+                        !before->second.at(map).contains(handle));
             });
         }
         std::erase_if(proposal.kills, [](const auto& entry) { return entry.second.empty(); });
@@ -553,6 +572,51 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     case bbcoop::Envelope::kTeamWorld:
         TakeTeamWorld(member, world, envelope.team_world(), now_ms, result);
         break;
+    case bbcoop::Envelope::kEnemiesLetGo: {
+        const bbcoop::EnemiesLetGo& let_go = envelope.enemies_let_go();
+        if (Decides(world, member, let_go.map())) {
+            auto& runners = world.runners[let_go.map()];
+            runners.clear();
+            for (int i = 0; i < let_go.handles_size() && i < let_go.runners_size(); ++i) {
+                if (!let_go.runners(i).empty()) {
+                    runners[let_go.handles(i)] = let_go.runners(i);
+                }
+            }
+        }
+        bbcoop::Envelope relayed = envelope;
+        relayed.mutable_enemies_let_go()->set_member(member.name);
+        SendToOthers(world, member, relayed, now_ms);
+        break;
+    }
+    case bbcoop::Envelope::kLoadProgress: {
+        bbcoop::Envelope relayed = envelope;
+        relayed.mutable_load_progress()->set_member(member.name);
+        world.loads[member.name] = relayed.load_progress();
+        SendToOthers(world, member, relayed, now_ms);
+        break;
+    }
+    case bbcoop::Envelope::kTeamSession: {
+        // Only the host's session is the team's to join (a guest's says nothing).
+        if (!member.host) {
+            break;
+        }
+        bbcoop::Envelope relayed = envelope;
+        relayed.mutable_team_session()->set_host(member.name);
+        if (relayed.team_session().join().empty()) {
+            world.session.reset();
+        } else {
+            world.session = relayed.team_session();
+            world.session_run = member.run;
+        }
+        result.log.append(QStringLiteral("party world %1: %2's session %3 %4")
+                              .arg(world.name, QString::fromStdString(member.name))
+                              .arg(relayed.team_session().session())
+                              .arg(world.session ? QStringLiteral("open (%1 bytes)")
+                                                       .arg(relayed.team_session().join().size())
+                                                 : QStringLiteral("closed")));
+        SendToOthers(world, member, relayed, now_ms);
+        break;
+    }
     case bbcoop::Envelope::kShown:
     case bbcoop::Envelope::kFlags:
     case bbcoop::Envelope::kMapState:
@@ -645,10 +709,22 @@ void Service::TakeWorld(Member& member, PartyWorld& world, const bbcoop::Envelop
         break;
     }
     case bbcoop::Envelope::kHp: {
-        if (!Decides(world, member, envelope.hp().map())) {
-            return; // another member runs that area: its HP is the owner's to report
+        // Another member runs that area: its HP is the owner's to report, but for the enemies the
+        // owner named this guest to run (Kaniel 2026-10-15).
+        bbcoop::HpProposal hp = envelope.hp();
+        if (!Decides(world, member, hp.map())) {
+            auto* enemies = hp.mutable_enemies();
+            enemies->erase(std::remove_if(enemies->begin(), enemies->end(),
+                                          [&](const bbcoop::HpEnemy& enemy) {
+                                              return !DecidesEnemy(world, member, hp.map(),
+                                                                   enemy.handle());
+                                          }),
+                           enemies->end());
+            if (enemies->empty()) {
+                return;
+            }
         }
-        const WorldLogHost::Taken taken = world.host.ProposeHp(HpOf(envelope.hp(), member.name));
+        const WorldLogHost::Taken taken = world.host.ProposeHp(HpOf(hp, member.name));
         if (taken.stale) {
             return;
         }
@@ -806,6 +882,19 @@ bool Service::Decides(const PartyWorld& world, const Member& member, u32 map) co
     return owner.empty() || owner == member.name;
 }
 
+bool Service::DecidesEnemy(const PartyWorld& world, const Member& member, u32 map,
+                           u32 handle) const {
+    if (Decides(world, member, map)) {
+        return true;
+    }
+    const auto on_map = world.runners.find(map);
+    if (on_map == world.runners.end()) {
+        return false;
+    }
+    const auto runner = on_map->second.find(handle);
+    return runner != on_map->second.end() && runner->second == member.name;
+}
+
 void Service::TakeTrade(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
                         qint64 now_ms, Result& result) {
     switch (envelope.body_case()) {
@@ -918,6 +1007,21 @@ Service::Result Service::Tick(qint64 now_ms) {
     }
     Flush(now_ms, result);
     return result;
+}
+
+void Service::CloseSession(PartyWorld& world, qint64 now_ms, Result& result) {
+    bbcoop::Envelope closed;
+    closed.mutable_team_session()->set_host(world.session->host());
+    closed.mutable_team_session()->set_session(world.session->session());
+    result.log.append(QStringLiteral("party world %1: %2's session %3 closed with its game")
+                          .arg(world.name, QString::fromStdString(world.session->host()))
+                          .arg(world.session->session()));
+    world.session.reset();
+    for (auto& [key, member] : members) {
+        if (member.party == world.name && member.name != closed.team_session().host()) {
+            SendTo(member, closed, now_ms);
+        }
+    }
 }
 
 void Service::Forget(const ServerLink::Endpoint& link) {

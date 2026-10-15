@@ -245,6 +245,15 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
         if (!MemberIn(*mine, member)->ready()) {
             return refuse("choose your character first");
         }
+        // Kaniel 2026-10-14: the hunt begins only once every member is ready (a started team's
+        // leader back from a crash goes in at once).
+        if (!mine->started()) {
+            for (const bbcoop::TeamMember& m : mine->members()) {
+                if (!m.ready() || !players.contains(m.member())) {
+                    return refuse("not every hunter is ready");
+                }
+            }
+        }
         mine->set_started(true);
         Outcome outcome{.changed = true};
         for (const bbcoop::TeamMember& m : mine->members()) {

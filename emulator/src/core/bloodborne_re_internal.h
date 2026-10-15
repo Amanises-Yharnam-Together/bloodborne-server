@@ -210,6 +210,8 @@ std::string BytesToHex(std::span<const u8> bytes);
 extern CoopFeatureReport coop_features;
 // The channel table is on (see ChannelPolicy): it drops the map item packets itself.
 extern bool channel_table_installed;
+// Phase 6: the team join's game functions are where the table has them (InstallTeamLobby).
+extern bool team_join_ready;
 std::string FeatureMismatch(u64 base, u64 image_size, std::string_view feature);
 std::string SiteFailure(u64 base, u64 image_size, u64 offset);
 bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestCodeHook hook);
@@ -348,23 +350,13 @@ extern std::vector<std::pair<s32, bool>> flags_to_post;
 extern std::mutex echo_board_mutex;
 extern std::vector<KillEchoes> echoes_to_post;
 extern KillEchoLedger echo_ledger;
-extern std::mutex kill_board_mutex;
-extern std::vector<std::pair<s32, bool>> kills_to_post;
-extern std::unordered_set<u32> others_kills;
-// The kill board's standing kills by member, as the board client last read them.
-extern PartyKills party_kills;
-// The next kill board post asks for nothing older than now (since FreshStart), so the board takes
-// back this member's posted kills first: the kills changed path (see WorldLogPath).
-extern bool kill_board_fresh_start;
 extern std::mutex enemy_hp_mutex;
 extern MemberMapState local_enemy_hp;
-extern std::vector<MemberMapState> others_enemy_hp;
 extern std::mutex map_state_mutex;
 extern MemberMapState local_map_state;
 extern std::optional<MemberMapState> host_map_state;
 extern std::mutex shown_board_mutex;
 extern MemberMapState local_shown;
-extern std::optional<MemberMapState> host_shown;
 extern std::vector<std::pair<s32, bool>> flags_to_set;
 void PostWorldChanges(const FlagChanges& changes);
 extern std::mutex map_board_mutex;
@@ -445,6 +437,10 @@ void KeepBossHpInStep();
 // enemy on the host, on a guest beside it and on a guest alone.
 void WatchEnemyHp(u64 hp_address, u32 handle);
 void LogNearbyEnemyControl();
+void LogJoinTasksOnChange();
+void ReconcileMemberPresence();
+// Whether this follower runs the enemy `handle` (the owner let it go and named it).
+bool ThisFollowerRuns(u32 handle);
 
 void TickPartyTrip();
 void LogJoinTaskChanges();
@@ -638,6 +634,12 @@ bool EnemyOwnerOn();
 bool TakeServerWorldNews();
 // The server's owners, or none when not heard of for EnemyOwnersFreshMs.
 std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms);
+// The enemies (handle -> the guest named to run it, or empty) the owner `member` let go on `map`,
+// as last heard (none when not fresh), and this owner's own list to the others (Kaniel
+// 2026-10-14: one game runs each enemy).
+std::optional<std::unordered_map<u32, std::string>> EnemiesLetGoBy(const std::string& member,
+                                                                   u32 map, s64 now_ms);
+void SendEnemiesLetGo(u32 map, const std::map<u32, std::string>& runners);
 // Once per party tick: this member's role on its map, the ownership words of its characters and
 // the owner's frame and send rates in the log.
 void TickEnemyOwner(bool in_session, u32 map);
@@ -713,6 +715,18 @@ void StartServerWorld();
 // Phase 5, the team lobby (bloodborne_team.h): always in the port, with the server world.
 // The party is the team's: its key and this game's role come with the team's Start.
 bool TeamModeOn();
+// Phase 6 (bloodborne_join.cpp, see TeamJoin): the host opens its game session as a summon
+// does; its join data (the summon packet's, without the sign's two words); a guest joins from it
+// in place. Game thread.
+bool OpenTeamSession();
+std::optional<std::vector<u8>> TeamSessionJoinData();
+bool JoinTeamSession(std::span<const u8> join, u32 kind, u32 sign);
+// Each party controller tick in team mode (bloodborne_server_world.cpp): opens, announces or
+// joins the team's session (`ready`: the controller's go, where it would ring the bell).
+// False when not in team mode (the bell and signs then).
+bool TickTeamJoin(bool ready);
+// The placement a guest's join keeps (its own spot), as a claim's header hands it.
+void ReceiveSeamlessPlacement(const SummonPlacementDescriptor& placement);
 // At the game's start: signs in to the server's lobby once the game has its online id.
 void StartTeamLobby();
 // The title loads the save in `slot` (TitleStep's load state, the game thread): true holds the load
@@ -722,6 +736,8 @@ bool HoldTitleLoadForTeam(u32 slot);
 void TeamBackAtTitle();
 // The team screen (bbport_overlay.cpp) is up: the title's load is held for it. Its buttons.
 bool TeamScreenUp();
+// A team's guest is loading or joining its host's session: the port holds a loading screen.
+TeamLoad::View TeamLoadView();
 void TeamChoose(TeamGate::Choice choice);
 // The rig's screen verbs (team-ready, team-start, team-alone) want the title's Cross until the
 // screen is up.

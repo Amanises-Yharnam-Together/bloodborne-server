@@ -160,6 +160,13 @@ struct Game {
     } else if (envelope.has_team_world()) {
       team_world = envelope.team_world();
       ++team_worlds;
+    } else if (envelope.has_team_session()) {
+      session = envelope.team_session();
+      ++sessions;
+    } else if (envelope.has_load_progress()) {
+      loads[envelope.load_progress().member()] = envelope.load_progress();
+    } else if (envelope.has_enemies_let_go()) {
+      let_go = envelope.enemies_let_go();
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -221,6 +228,10 @@ struct Game {
   std::vector<bbcoop::TeamStart> starts;
   std::optional<bbcoop::TeamWorld> team_world;
   int team_worlds = 0;
+  std::optional<bbcoop::TeamSession> session;
+  int sessions = 0;
+  std::map<std::string, bbcoop::LoadProgress> loads;
+  std::optional<bbcoop::EnemiesLetGo> let_go;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -880,6 +891,187 @@ int APortraitGoesToTheOthersAndToLaterMembers() {
   return 0;
 }
 
+// Phase 6: the host's open session reaches its guests (and later ones) to join;
+// a guest's says nothing, and a closed one goes too.
+int TheHostsSessionReachesItsGuestsToJoin() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(!guest.session.has_value());
+  bbcoop::Envelope open;
+  open.mutable_team_session()->set_join(std::string("NXRV\x05\x84", 6));
+  open.mutable_team_session()->set_kind(0xFFFFFFFFu);
+  open.mutable_team_session()->set_sign(7);
+  open.mutable_team_session()->set_session(1);
+  open.mutable_team_session()->set_host("spoofed");
+  host.Send(open, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.session.has_value());
+  CHECK(guest.session->join() == std::string("NXRV\x05\x84", 6));
+  CHECK(guest.session->kind() == 0xFFFFFFFFu && guest.session->sign() == 7);
+  CHECK(guest.session->host() == "host");
+  CHECK(!host.session.has_value());
+  // A guest's "session" is no team's.
+  bbcoop::Envelope other = open;
+  other.mutable_team_session()->set_join("guest's");
+  guest.Send(other, now + 5);
+  Pump(service, {&host, &guest}, now + 5);
+  CHECK(!host.session.has_value());
+  Game late{1002, "late", 13};
+  late.Hello(now + 10);
+  Pump(service, {&host, &guest, &late}, now + 10);
+  CHECK(late.session.has_value() && late.session->session() == 1);
+  // Closed: everyone hears it, and a later member gets none.
+  bbcoop::Envelope closed;
+  closed.mutable_team_session()->set_session(1);
+  host.Send(closed, now + 20);
+  Pump(service, {&host, &guest, &late}, now + 20);
+  CHECK(guest.session.has_value() && guest.session->join().empty());
+  Game later{1003, "later", 14};
+  later.Hello(now + 30);
+  Pump(service, {&host, &guest, &late, &later}, now + 30);
+  CHECK(!later.session.has_value());
+  return 0;
+}
+
+// Rig 2026-10-14 (team-world): a host whose game died left its session on the
+// server, and the guests joined a room that was gone. A new run of the host, or
+// the host's link gone, closes it.
+int AHostsSessionGoesWithItsGame() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope open;
+  open.mutable_team_session()->set_join("NXRV");
+  open.mutable_team_session()->set_session(1);
+  host.Send(open, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.session.has_value() && !guest.session->join().empty());
+  // The host's game starts again (a crash, a quit): its old session is no more.
+  Game host_again{1003, "host", 21};
+  host_again.run = 0x2002;
+  host_again.Hello(now + 10);
+  Pump(service, {&host_again, &guest}, now + 10);
+  CHECK(guest.session.has_value() && guest.session->join().empty());
+  Game late{1002, "late", 13};
+  late.Hello(now + 20);
+  Pump(service, {&host_again, &guest, &late}, now + 20);
+  CHECK(!late.session.has_value());
+  return 0;
+}
+
+// Kaniel 2026-10-14: the team loading screen. Each member's load reaches the
+// others, under its own name, and a member that says hello later gets the
+// others' as they are.
+int EachMembersLoadReachesTheOthers() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope load;
+  load.mutable_load_progress()->set_stage(bbcoop::LoadProgress::JOINING);
+  load.mutable_load_progress()->set_percent(70);
+  load.mutable_load_progress()->set_member("spoofed");
+  guest.Send(load, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(host.loads.contains("guest"));
+  CHECK(host.loads.at("guest").percent() == 70);
+  CHECK(host.loads.at("guest").stage() == bbcoop::LoadProgress::JOINING);
+  CHECK(!host.loads.contains("spoofed"));
+  CHECK(guest.loads.empty());
+  Game late{1002, "late", 13};
+  late.Hello(now + 10);
+  Pump(service, {&host, &guest, &late}, now + 10);
+  CHECK(late.loads.contains("guest") && late.loads.at("guest").percent() == 70);
+  return 0;
+}
+
+// Kaniel 2026-10-14: the enemies the owner's game let go reach the others under
+// its name.
+int TheEnemiesTheOwnerLetGoReachTheOthers() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope let_go;
+  let_go.mutable_enemies_let_go()->set_map(0x18010000);
+  let_go.mutable_enemies_let_go()->add_handles(0x1001400b);
+  let_go.mutable_enemies_let_go()->set_member("spoofed");
+  host.Send(let_go, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.let_go.has_value());
+  CHECK(guest.let_go->member() == "host");
+  CHECK(guest.let_go->map() == 0x18010000u);
+  CHECK(guest.let_go->handles_size() == 1 &&
+        guest.let_go->handles(0) == 0x1001400bu);
+  CHECK(!host.let_go.has_value());
+  return 0;
+}
+
+// Kaniel 2026-10-15: with the host far away a guest runs an enemy the host let
+// go; its hits went to the host's sleeping copy and the HP came back late or
+// not at all. The guest the owner named reports that enemy's HP (and its kill)
+// itself; the server takes them from that guest only.
+int TheGuestThatRunsAnEnemyReportsItsHp() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  const std::vector<Game *> games{&host, &guest, &other};
+  qint64 now = 1'000'000;
+  for (Game *game : games) {
+    game->Hello(now);
+  }
+  Pump(service, games, now);
+  host.Map(0x18010000, now);
+  Pump(service, games, now);
+  guest.Map(0x18010000, now + 100);
+  other.Map(0x18010000, now + 100);
+  Pump(service, games, now + 100);
+  CHECK(guest.OwnerOf(0x18010000) == "host");
+  // The host lets 0x1001400b go to the guest, 0x1001400c to nobody.
+  bbcoop::Envelope let_go;
+  let_go.mutable_enemies_let_go()->set_map(0x18010000);
+  let_go.mutable_enemies_let_go()->add_handles(0x1001400b);
+  let_go.mutable_enemies_let_go()->add_runners("guest");
+  let_go.mutable_enemies_let_go()->add_handles(0x1001400c);
+  let_go.mutable_enemies_let_go()->add_runners("");
+  host.Send(let_go, now + 200);
+  Pump(service, games, now + 200);
+  // Only the runner's report of its own enemy counts.
+  guest.Hp(0x2222000000000001, {{0x1001400c, 100, 484}}, now + 300);
+  other.Hp(0x3333000000000001, {{0x1001400b, 50, 484}}, now + 300);
+  Pump(service, games, now + 300);
+  CHECK(!host.member.Hp().contains(0x2222000000000001));
+  CHECK(!host.member.Hp().contains(0x3333000000000001));
+  guest.Hp(0x2222000000000001, {{0x1001400b, 300, 484}}, now + 400);
+  Pump(service, games, now + 400);
+  CHECK(host.member.Hp().contains(0x2222000000000001));
+  CHECK(other.member.Hp().contains(0x2222000000000001));
+  // And its kill of that enemy.
+  guest.Propose({{0x18010000, {0x1001400b}}}, now + 500);
+  Pump(service, games, now + 500);
+  CHECK(Killed(host, 0x1001400b));
+  other.Propose({{0x18010000, {0x1001400c}}}, now + 600);
+  Pump(service, games, now + 600);
+  CHECK(!Killed(host, 0x1001400c));
+  return 0;
+}
+
 int TheFirstMemberOnAnAreaRunsItsEnemies() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -1109,6 +1301,7 @@ int ATeamFormsAndStartsThroughTheService() {
     CHECK(a.lobby_states == a_states);
     a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 3);
     b.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1);
+    Pump(service, {&a, &b}, now); // every member ready before the Start
     a.Team(bbcoop::TeamRequest::START, now);
     Pump(service, {&a, &b}, now);
     CHECK(a.starts.size() == 1 && b.starts.size() == 1);
@@ -1221,6 +1414,14 @@ int main() {
        APortraitGoesToTheOthersAndToLaterMembers},
       {"WhateverAGameSendsTheServiceKeepsWorking",
        WhateverAGameSendsTheServiceKeepsWorking},
+      {"TheHostsSessionReachesItsGuestsToJoin",
+       TheHostsSessionReachesItsGuestsToJoin},
+      {"AHostsSessionGoesWithItsGame", AHostsSessionGoesWithItsGame},
+      {"EachMembersLoadReachesTheOthers", EachMembersLoadReachesTheOthers},
+      {"TheEnemiesTheOwnerLetGoReachTheOthers",
+       TheEnemiesTheOwnerLetGoReachTheOthers},
+      {"TheGuestThatRunsAnEnemyReportsItsHp",
+       TheGuestThatRunsAnEnemyReportsItsHp},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},

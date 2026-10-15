@@ -69,7 +69,9 @@ folder: `SeamlessCoopPort\` and the "... Port Co-op" launchers beside it.
   The backend runs inside `BLauncher.exe --script` (package.sh freezes the standard modules it
   needs), so the host needs no Python; its log is `user\log\backend.txt`, and
   `HOST - Stop Servers` stops it and shadnet.
-- Port and shadPS4 players in one party are not tested yet: everyone uses the same kit.
+- Port and shadPS4 players are never in one party (Kaniel): everyone uses the same kit. Since
+  phase 6 the port plays only in teams made on its team screen, all of its co-op traffic through
+  the server's UDP port 31314; shadPS4 keeps the party settings, bells and P2P.
 
 ## Public release
 

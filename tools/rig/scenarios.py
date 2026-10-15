@@ -20,7 +20,8 @@ expect-hp <handle|self> <op> <value>, expect-session <n>, expect-map <map>,
 set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeout>],
 wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, for
 expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
-expect-others-near <n> <meters> (n other players alive that close), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
+expect-others-near <n> <meters> (n other players alive that close), expect-others-shown <n> (exactly n other players
+shown, not hidden for another map), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
 Party death (the scenario's "settings" switch it on): rise <metres> (straight up, to fall),
 approach-downed (beside the nearest downed member on the map), revive-downed [<timeout>]
@@ -57,6 +58,9 @@ IOSEFKA_VIEWS = [("south", -200.0, 206.8, 0.0), ("north", -200.0, 212.8, 3.1416)
                  ("west", -203.0, 209.8, -1.5708), ("east", -197.0, 209.8, 1.5708)]
 # Up the hallway north of her: out of the other player's pictures.
 IOSEFKA_WAIT = "-200.0 -40.5 218.0 0.0"
+# 7 m from ENEMY (-216.7, 178.1), on the lamp's side: close enough for it to notice a player.
+GUEST_ALONE_SPOT = "-210.0 -54.5 181.0"
+GUEST_PAIR_SPOT = "-213.0 -54.5 184.0"  # 3-4 m from GUEST_ALONE_SPOT
 
 
 # At her clinic's door, facing it (south), where Kaniel talked to her (2026-10-13): Cross goes
@@ -114,6 +118,12 @@ START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
 # Phase 5b: a world flag of Central Yharnam's block no event uses (the rig's saves have it off).
 TEAM_WORLD_FLAG = 12410999
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
+# How a game joins: the port's team opens and joins the host's session itself (phase 6, no bell
+# and no signs); shadPS4 rings the bells.
+HOST_JOINS = (r"(?:auto-rejoin started search effect=9000|"
+              r"Co-op team join: this host's session \d+ to the server)")
+GUEST_JOINS = (r"(?:auto-rejoin started search effect=9005|"
+               r"Bloodborne team join: joining the host's session .* joined=true)")
 # The session must hold: a game that leaves the room (LeaveRoom) broke it.
 SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
 # A member's game died: the others' games close the room it was in (and open a new one for its
@@ -189,8 +199,8 @@ SCENARIOS = {
         "timeout": 300,
     },
     "join": {
-        "about": "host and guest join each other by themselves (the bells ring on their own); the "
-                 "guest keeps its full HP and its own level",
+        "about": "host and guest join each other by themselves (the port's team without a bell, "
+                 "shadPS4's bells on their own); the guest keeps its full HP and its own level",
         "roles": {
             "host": [START, "wait-session 2 300", "wait 10", "snapshot", "expect-session 2"],
             "guest": [START, "note-max-hp", "wait-session 2 300", "wait 10", "snapshot",
@@ -198,8 +208,8 @@ SCENARIOS = {
                       f"expect-effect {LEVEL_SYNC} 0"],
         },
         "expect": {
-            "host": [r"auto-rejoin started search effect=9000"],
-            "guest": [r"auto-rejoin started search effect=9005"],
+            "host": [HOST_JOINS],
+            "guest": [GUEST_JOINS],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 480,
@@ -451,6 +461,106 @@ SCENARIOS = {
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 480,
+    },
+    # Kaniel 2026-10-14: with the host far away on the same map, the enemies beside a guest stood
+    # still and did not attack (the host's game runs the map's enemies, and woke only its own).
+    "guest-alone-mobs": {
+        "about": "the host far away on the same map (by Iosefka's door), the guest walks up to an "
+                 "enemy alone: it comes for the guest (moves) and hits it",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 75", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", f"census 40",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 3", "census 40", "wait 25",
+                      "census 40", "expect-session 2"],
+        },
+        "moves": {"guest": ENEMY},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    # Kaniel 2026-10-14: the guest's game runs an enemy by it while the host is far; its hits
+    # still meet the host's HP (the owner applies them and sends the HP back).
+    "guest-alone-hits": {
+        "about": "the host far away on the same map, the guest hits the enemy it runs twice: "
+                 "both games end at max HP less the guest's hits",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 75", "census 60", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 15",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 8", f"hit {ENEMY} 30", "wait 1",
+                      f"hit {ENEMY} 30", "wait 15", "census 40", "expect-session 2"],
+        },
+        "same_hp": ENEMY,
+        "hp_sums_hits": ENEMY,
+        "expect": {"guest": [r"hit on 0x1001400b by this player"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    # Kaniel 2026-10-14: never two games running one enemy. Two guests by it, the host far: the
+    # nearer guest runs it (the logs say who runs which, and when).
+    "guests-pair-mobs": {
+        "about": "the host far away on the same map, both guests by one enemy: it comes for them, "
+                 "run by one guest's game at a time",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 80", "expect-session 3"],
+            "guest": [START, "wait-session 3 300", "wait 15", f"teleport {GUEST_ALONE_SPOT}",
+                      "wait 3", "census 40", "wait 25", "census 40", "expect-session 3"],
+            "guest2": [START, "wait-session 3 300", "wait 15", f"teleport {GUEST_PAIR_SPOT}",
+                       "wait 3", "census 40", "wait 25", "census 40", "expect-session 3"],
+        },
+        "moves": {"guest": ENEMY},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS},
+        "timeout": 720,
+    },
+    # The host comes back to the enemy the guest runs: its game takes it back, and it goes on.
+    "guest-mobs-host-comes": {
+        "about": "the guest runs an enemy with the host far away, then the host comes beside it: "
+                 "the host's game takes it back and it keeps fighting",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 40", f"teleport {GUEST_ALONE_SPOT}", "wait 40", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 15",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 3", "census 40", "wait 25",
+                      "census 40", "wait 30", "census 40", "expect-session 2"],
+        },
+        "moves": {"guest": ENEMY},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    # Kaniel 2026-10-15: the guest's hits on an enemy it ran came late, and the enemy went back to
+    # full HP once the host came near. The guest's hits land at once; the host's copy takes them.
+    "guest-hits-host-comes": {
+        "about": "the guest hits the enemy it runs twice with the host far away, then the host "
+                 "comes beside it: both games show the same HP, less the guest's hits",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
+                     "wait 50", f"teleport {GUEST_ALONE_SPOT}", "wait 25", "census 40",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 15",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 8", f"hit {ENEMY} 30", "wait 1",
+                      f"hit {ENEMY} 30", "wait 45", "census 40", "expect-session 2"],
+        },
+        "same_hp": ENEMY,
+        "hp_sums_hits": ENEMY,
+        "expect": {"guest": [r"hit on 0x1001400b by this player",
+                             r"this follower's hit on 0x1001400b, an enemy it runs, lands here"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    },
+    # Its control: the host beside the guest, the same enemy comes for them.
+    "guest-mobs-host-near": {
+        "about": "guest-alone-mobs with the host beside the guest: the enemy comes for them",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 18",
+                     f"teleport {GUEST_ALONE_SPOT}", "wait 40", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", f"census 40",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 3", "census 40", "wait 25",
+                      "census 40", "expect-session 2"],
+        },
+        "moves": {"guest": ENEMY},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
     },
     "hp-together": {
         "about": "both players hit one enemy in one world (after the join), then the host goes "
@@ -959,6 +1069,41 @@ SCENARIOS = {
                        "expect-session 3"],
         },
         "timeout": 900,
+    },
+    # Kaniel 2026-10-15: between two guests, one guest's actions played on the other guest's own
+    # character (a pick-up's gesture, a backstab's teleport, levers). The second guest stands
+    # still; its census shows where its own character is before and after the first one acts.
+    "guest-acts-for-two": {
+        "about": "a party of three: the first guest picks up an item and attacks an enemy while "
+                 "the second guest stands still; the second guest's own character stays put",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait 70", "expect-session 3"],
+            "guest": [START, "godmode", "wait-session 3 480", "wait 15", "pickup 60", "wait 5",
+                      *attack(ENEMY), "wait 10", "expect-session 3"],
+            "guest2": [START, "godmode", "wait-session 3 480", "wait 10", "census 5", "wait 20",
+                       "census 5", "wait 25", "census 5", "expect-session 3"],
+        },
+        "stays": {"guest2": 3.0},
+        "timeout": 900,
+    },
+    # Kaniel 2026-10-15: the host and a guest went to the Hunter's Dream and the second guest still
+    # saw them in Central Yharnam. It sees neither while they are away, both once they are back.
+    "away-unseen3": {
+        "about": "a party of three: the host and the first guest go to the Hunter's Dream; the "
+                 "second guest shows neither of them meanwhile, and both again once they are back",
+        "roles": {
+            "host": [START, "godmode", "wait-session 3 480", "wait 20", f"travel {HUNTERS_DREAM}",
+                     "wait 60", f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 3 240", "wait 30",
+                     "expect-session 3"],
+            "guest": [START, "godmode", "wait-session 3 480", "wait 25",
+                      f"travel {HUNTERS_DREAM}", "wait 55", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait-members 3 240", "wait 30", "expect-session 3"],
+            # Both away from about 40 s on, back after about 85 s.
+            "guest2": [START, "godmode", "wait-session 3 480", "wait 15", "expect-others-shown 2",
+                       "wait 40", "expect-others-shown 0", "wait-members 3 240", "wait 20",
+                       "expect-others-shown 2", "expect-session 3"],
+        },
+        "timeout": 1000,
     },
     "join3-uncap": {
         "about": "join3 at the kit's frame rate (Uncap FPS++): rig 2026-10-12, the host saw the "

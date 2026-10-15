@@ -197,4 +197,213 @@ TEST(TeamWorld, ThePersonalWorldFileRoundTripsAndACutOneIsNone) {
     EXPECT_FALSE(ParseWorldFlags("blocks\n1\non\nx\nend\n"));
 }
 
+// Phase 6: the team join without signs or a bell. The host opens its session once it stands in
+// its world and says so once (the server keeps it for its guests); a guest joins the session the
+// server sent when it stands alone in its world.
+TeamJoin::Frame HostFrame(s32 matching_state, bool ready) {
+    return {.host = true, .matching_state = matching_state, .ready = ready};
+}
+TeamJoin::Frame GuestFrame(s32 matching_state, bool ready, bool session_known) {
+    return {.host = false,
+            .matching_state = matching_state,
+            .ready = ready,
+            .session_known = session_known};
+}
+
+TEST(TeamJoin, TheHostOpensItsSessionWhenReadyAndAlone) {
+    TeamJoin join;
+    EXPECT_EQ(join.Tick(HostFrame(0, false)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(HostFrame(0, true)), TeamJoin::Action::CreateSession);
+    // Opening (the game's own states on the way): nothing more until it hosts.
+    EXPECT_EQ(join.Tick(HostFrame(1, true)), TeamJoin::Action::None);
+}
+
+TEST(TeamJoin, TheHostSaysItsSessionOnceAndThatItClosed) {
+    TeamJoin join;
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, false)), TeamJoin::Action::Publish);
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, false)), TeamJoin::Action::None);
+    // A member still out of the session (the controller's room for more): the server has it.
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, true)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(HostFrame(0, false)), TeamJoin::Action::PublishClosed);
+    EXPECT_EQ(join.Tick(HostFrame(0, false)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(HostFrame(0, true)), TeamJoin::Action::CreateSession);
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, false)), TeamJoin::Action::Publish);
+}
+
+TEST(TeamJoin, AGuestJoinsTheHostsSessionWhenReadyAndAlone) {
+    TeamJoin join;
+    EXPECT_EQ(join.Tick(GuestFrame(0, true, false)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(GuestFrame(0, false, true)), TeamJoin::Action::None);
+    EXPECT_EQ(join.Tick(GuestFrame(0, true, true)), TeamJoin::Action::Join);
+    // Joining or in the session: nothing.
+    EXPECT_EQ(join.Tick(GuestFrame(MatchingStateSummonedGuest, true, true)),
+              TeamJoin::Action::None);
+    // A guest never opens a session or says one.
+    EXPECT_EQ(join.Tick(GuestFrame(MatchingStateHosting, true, true)), TeamJoin::Action::None);
+}
+
+// tool that heals, 2050).
+TEST(BellItems, TheCoopBellsAndNothingElse) {
+    for (const u32 bell : {200u, 205u, 225u, 4312u}) {
+        EXPECT_TRUE(IsBellGoods(bell)) << bell;
+    }
+    for (const u32 other : {2050u, 111u, 201u, 1000u}) {
+        EXPECT_FALSE(IsBellGoods(other)) << other;
+    }
+    EXPECT_EQ(BellGoods.size(), 4u);
+}
+
+// Rig 2026-10-14 (host-crash-apart, team-world): the host's game gone, the guest's game set 4047
+// ("a player on the way out") and, with no summon reload to clear it, never joined again.
+TEST(LeavingFlag, ClearedOnceAGuestStandsAloneAWhile) {
+    LeavingFlag leaving;
+    EXPECT_FALSE(leaving.Clear(true, true, 0)) << "in the session: the game's own";
+    EXPECT_FALSE(leaving.Clear(true, false, 1000));
+    EXPECT_FALSE(leaving.Clear(true, false, 1000 + LeavingFlag::ClearAfterMs - 1));
+    EXPECT_TRUE(leaving.Clear(true, false, 1000 + LeavingFlag::ClearAfterMs));
+    EXPECT_FALSE(leaving.Clear(false, false, 9000)) << "off: nothing to clear";
+    EXPECT_FALSE(leaving.Clear(true, false, 10'000)) << "on again: its own wait again";
+}
+
+TEST(PhantomHome, APhantomAloneAWhileIsAPlayerAgainNeverWhileItJoins) {
+    PhantomHome home;
+    EXPECT_FALSE(home.Due(true, false, 0)) << "in a session (or joining): the game's phantom";
+    EXPECT_FALSE(home.Due(true, true, 1000));
+    EXPECT_FALSE(home.Due(true, false, 2000)) << "a join: the wait starts over";
+    EXPECT_FALSE(home.Due(true, true, 3000));
+    EXPECT_FALSE(home.Due(true, true, 3000 + PhantomHome::ReturnAfterMs - 1));
+    EXPECT_TRUE(home.Due(true, true, 3000 + PhantomHome::ReturnAfterMs));
+    EXPECT_FALSE(home.Due(false, true, 20'000)) << "a player already";
+}
+
+// Kaniel 2026-10-14: a team loading screen as in League of Legends: each hunter's progress, and
+// the hunt opens for everyone at once.
+using LoadStage = bbcoop::LoadProgress::Stage;
+bbcoop::LoadProgress OtherLoad(const std::string& member, LoadStage stage, u32 percent) {
+    bbcoop::LoadProgress load;
+    load.set_member(member);
+    load.set_stage(stage);
+    load.set_percent(percent);
+    return load;
+}
+const std::vector<std::pair<std::string, std::string>> Team2{{"h", "Host"}, {"g", "Guest"}};
+
+TEST(TeamLoad, NotUpBeforeTheTeamsLoad) {
+    TeamLoad load;
+    EXPECT_FALSE(load.Tick(Team2, "g", 0).up);
+}
+
+TEST(TeamLoad, ShowsEveryHunterAndHoldsUntilAllAreIn) {
+    TeamLoad load;
+    load.Start(1000);
+    auto view = load.Tick(Team2, "g", 1000);
+    ASSERT_TRUE(view.up);
+    ASSERT_EQ(view.rows.size(), 2u);
+    EXPECT_EQ(view.rows[0].name, "Host");
+    EXPECT_EQ(view.rows[1].name, "Guest");
+    EXPECT_TRUE(view.rows[1].self);
+    EXPECT_EQ(view.rows[1].stage, bbcoop::LoadProgress::LOADING);
+    EXPECT_EQ(view.rows[0].stage, bbcoop::LoadProgress::WAITING)
+        << "nothing heard from the host yet";
+    // The own bar grows while it loads, never past the load's share.
+    EXPECT_GT(load.Tick(Team2, "g", 1000 + TeamLoad::LoadingGuessMs / 2).rows[1].percent, 0u);
+    EXPECT_LE(load.Tick(Team2, "g", 1000 + 3 * TeamLoad::LoadingGuessMs).rows[1].percent,
+              TeamLoad::LoadedPercent);
+    load.Take(OtherLoad("h", bbcoop::LoadProgress::READY, 100), 2000);
+    load.SetStage(bbcoop::LoadProgress::JOINING, 3000);
+    view = load.Tick(Team2, "g", 3000);
+    EXPECT_TRUE(view.up);
+    EXPECT_EQ(view.rows[0].percent, 100u);
+    load.SetStage(bbcoop::LoadProgress::READY, 4000);
+    EXPECT_FALSE(load.Tick(Team2, "g", 4000).up) << "everyone in: it opens";
+    EXPECT_FALSE(load.Tick(Team2, "g", 5000).up) << "and stays open";
+}
+
+TEST(TeamLoad, OpensAnywayWhenSomeoneNeverComes) {
+    TeamLoad load;
+    load.Start(0);
+    load.SetStage(bbcoop::LoadProgress::READY, 100);
+    EXPECT_TRUE(load.Tick(Team2, "h", 100).up) << "the guest is still loading";
+    EXPECT_TRUE(load.Tick(Team2, "h", TeamLoad::LimitMs - 1).up);
+    EXPECT_FALSE(load.Tick(Team2, "h", TeamLoad::LimitMs).up);
+}
+
+TEST(TeamLoad, SaysItsOwnProgressWhenItChanges) {
+    TeamLoad load;
+    EXPECT_FALSE(load.ToSend(0).has_value()) << "not loading";
+    load.Start(0);
+    const auto first = load.ToSend(0);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first->stage(), bbcoop::LoadProgress::LOADING);
+    EXPECT_FALSE(load.ToSend(100).has_value()) << "nothing new";
+    load.SetStage(bbcoop::LoadProgress::JOINING, 200);
+    const auto joining = load.ToSend(200);
+    ASSERT_TRUE(joining.has_value());
+    EXPECT_EQ(joining->stage(), bbcoop::LoadProgress::JOINING);
+    EXPECT_GE(joining->percent(), TeamLoad::LoadedPercent);
+}
+
+// Kaniel 2026-10-14: the hunt begins only once every member is ready (online and Ready); a started
+// team's leader back from a crash goes in at once.
+TEST(TeamGate, TheHuntBeginsOnlyWhenEveryoneIsReady) {
+    bbcoop::LobbyState lobby = InTeam("a");
+    const auto add = [&](const std::string& member, bool ready, bbcoop::LobbyPlayer::State state) {
+        bbcoop::TeamMember& m = *lobby.mutable_team()->add_members();
+        m.set_member(member);
+        m.set_ready(ready);
+        m.set_state(state);
+    };
+    add("a", false, bbcoop::LobbyPlayer::TITLE);
+    add("b", true, bbcoop::LobbyPlayer::TITLE);
+    add("c", false, bbcoop::LobbyPlayer::TITLE);
+    EXPECT_FALSE(TeamCanBegin(lobby, "a")) << "c is not ready";
+    lobby.mutable_team()->mutable_members(2)->set_ready(true);
+    EXPECT_TRUE(TeamCanBegin(lobby, "a")) << "the leader's own Ready comes with its Begin";
+    lobby.mutable_team()->mutable_members(2)->set_state(bbcoop::LobbyPlayer::OFFLINE);
+    EXPECT_FALSE(TeamCanBegin(lobby, "a")) << "c went offline";
+    lobby.mutable_team()->set_started(true);
+    EXPECT_TRUE(TeamCanBegin(lobby, "a")) << "the team plays already";
+    EXPECT_FALSE(TeamCanBegin(bbcoop::LobbyState{}, "a")) << "no team";
+}
+
+// Kaniel 2026-10-15: between two guests, one guest's actions played on the other's own character
+// (a pick-up's gesture, a backstab's teleport): both joined with the same player slot (7), so each
+// took the other's packets as its own. Each guest joins with its own: 7 for the first, then down.
+TEST(TeamGate, EachGuestJoinsWithItsOwnPlayerSlot) {
+    bbcoop::LobbyState lobby = InTeam("a");
+    for (const char* member : {"a", "b", "c", "d"}) {
+        lobby.mutable_team()->add_members()->set_member(member);
+    }
+    EXPECT_EQ(TeamGuestSign(lobby, "b"), 7u);
+    EXPECT_EQ(TeamGuestSign(lobby, "c"), 6u);
+    EXPECT_EQ(TeamGuestSign(lobby, "d"), 5u);
+    EXPECT_EQ(TeamGuestSign(lobby, "x"), 7u) << "not in the team: the game's own";
+    EXPECT_EQ(TeamGuestSign(bbcoop::LobbyState{}, "b"), 7u);
+}
+
+// Kaniel 2026-10-15: Lisara back in after a drop still had the loading bars on top: they waited
+// for a member that had gone (offline) or stayed at the title. The screen shows the members coming.
+TEST(TeamLoad, ShowsOnlyTheMembersComing) {
+    bbcoop::LobbyState lobby = InTeam("a");
+    const auto add = [&](const char* member, bool ready, bbcoop::LobbyPlayer::State state) {
+        bbcoop::TeamMember& m = *lobby.mutable_team()->add_members();
+        m.set_member(member);
+        m.set_name(std::string("Name ") + member);
+        m.set_ready(ready);
+        m.set_state(state);
+    };
+    add("a", true, bbcoop::LobbyPlayer::PLAYING);
+    add("b", true, bbcoop::LobbyPlayer::TITLE);   // ready: on its way in
+    add("c", false, bbcoop::LobbyPlayer::TITLE);  // at the title, not coming
+    add("d", true, bbcoop::LobbyPlayer::OFFLINE); // gone
+    const auto members = TeamLoadMembers(lobby, "c");
+    ASSERT_EQ(members.size(), 3u) << "this game's own place always shows";
+    EXPECT_EQ(members[0].first, "a");
+    EXPECT_EQ(members[1].first, "b");
+    EXPECT_EQ(members[2].first, "c");
+    EXPECT_EQ(members[1].second, "Name b");
+    EXPECT_EQ(TeamLoadMembers(lobby, "a").size(), 2u);
+    EXPECT_TRUE(TeamLoadMembers(bbcoop::LobbyState{}, "a").empty());
+}
+
 } // namespace

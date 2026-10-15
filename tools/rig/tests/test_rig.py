@@ -26,7 +26,7 @@ VERBS = {
     "wait", "wait-session", "wait-members", "wait-map", "travel", "ensure-map", "hurt", "kill",
     "mark", "approach", "attack", "teleport", "press", "stick", "set-flag", "expect-flag",
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
-    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
+    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "expect-others-shown",
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
     "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
@@ -678,6 +678,42 @@ class RunnerTest(unittest.TestCase):
             "host": low.format("0x1001400b", 280, 178, "113.5"),
         }
         self.assertAlmostEqual(run_scenario.hp_board_lag(hits, "0x1001400b"), 0.1)
+
+    def test_an_enemy_that_comes_for_a_player_moves_between_its_censuses(self):
+        # Kaniel 2026-10-14: with the host far away, the enemies beside a guest stood still.
+        census = ("[Debug] <Info> () x: Bloodborne autoplay census: 0x1001400b hp 484/484 dead 0x0 "
+                  "hidden 0 disabled 0 at {} m ({}, -54.7, {}) backread 0/0 draw 0x0")
+        still = "\n".join([census.format(6.0, -216.7, 178.1), census.format(6.0, -216.6, 178.1)])
+        moved = "\n".join([census.format(6.0, -216.7, 178.1), census.format(1.0, -212.0, 180.0)])
+        spec = {"moves": {"guest": "0x1001400b"}}
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest": still}) if "stood" in p])
+        self.assertFalse([p for p in run_scenario.judge(spec, {"guest": moved}) if "stood" in p])
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest": ""}) if "stood" in p])
+
+    def test_a_player_that_stands_still_stays_put(self):
+        # Kaniel 2026-10-15: one guest's backstab dragged the other guest to the enemy.
+        census = ("[Debug] <Info> () x: Bloodborne autoplay census: map 0x18010000, 1 characters "
+                  "within 5 m of ({}, -50.6, {})")
+        still = "\n".join([census.format(-199.7, 179.4), census.format(-200.3, 178.7)])
+        dragged = "\n".join([census.format(-199.7, 179.4), census.format(-223.5, 181.9)])
+        spec = {"stays": {"guest2": 3.0}}
+        self.assertFalse([p for p in run_scenario.judge(spec, {"guest2": still}) if "moved" in p])
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest2": dragged}) if "moved" in p])
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest2": ""}) if "moved" in p])
+
+    def test_a_lag_at_the_limit_passes(self):
+        # Rig hit3 2026-10-14: 0.15 s on the games' clock came out as 0.1500000000014552 s, over a
+        # 0.15 s limit by the float sums alone.
+        hit = ("[Debug] <Info> () x: Bloodborne party: hit on {} by this player 0x10044000: "
+               "{} -> {} (t={})")
+        low = ("[Debug] <Info> () x: Bloodborne party: lowered 1 enemies by the other members' "
+               "damage on map 0x18010000: {} {}->{} (t={})")
+        texts = {"host": hit.format("0x1001400b", 484, 382, "57327.10"),
+                 "guest": low.format("0x1001400b", 484, 382, "57327.25")}
+        spec = {"hp_sums_hits": "0x1001400b", "max_hp_lag": 0.15}
+        self.assertFalse([p for p in run_scenario.judge(spec, texts) if "bars" in p])
+        late = dict(texts, guest=low.format("0x1001400b", 484, 382, "57327.27"))
+        self.assertTrue([p for p in run_scenario.judge(spec, late) if "bars" in p])
 
     def test_a_sync_is_let_go_once_every_game_in_it_reached_it(self):
         log = ("[Debug] <Info> () x: Bloodborne autoplay: sync join reached (t=10.0)\n"

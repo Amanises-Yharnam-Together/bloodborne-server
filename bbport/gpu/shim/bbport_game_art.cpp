@@ -2,6 +2,7 @@
 #include "bbport_game_art.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include "miniz.h"
@@ -331,6 +332,574 @@ std::optional<GaugeArt> LoadGaugeArt(std::span<const std::uint8_t> common_tpf_dc
     const PixelRect rows{0, 0, 656, 48};
     return GaugeArt{.width = rows.x1, .height = rows.y1,
                     .rgba = DecodeBc7Rect(blocks, texture->width, rows)};
+}
+
+std::array<std::uint8_t, 64> DecodeBc1Block(std::span<const std::uint8_t, 8> block) {
+    const auto colour = [&](int at) {
+        const int v = block[at] | block[at + 1] << 8;
+        const int r = (v >> 11) & 31, g = (v >> 5) & 63, b = v & 31;
+        return std::array<int, 4>{(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2), 255};
+    };
+    const int first = block[0] | block[1] << 8, second = block[2] | block[3] << 8;
+    std::array<std::array<int, 4>, 4> palette{colour(0), colour(2), {}, {}};
+    for (int channel = 0; channel < 3; ++channel) {
+        const int c0 = palette[0][channel], c1 = palette[1][channel];
+        if (first > second) {
+            palette[2][channel] = (2 * c0 + c1) / 3;
+            palette[3][channel] = (c0 + 2 * c1) / 3;
+        } else {
+            palette[2][channel] = (c0 + c1 + 1) / 2;
+            palette[3][channel] = 0;
+        }
+    }
+    palette[2][3] = 255;
+    palette[3][3] = first > second ? 255 : 0;
+    std::array<std::uint8_t, 64> out{};
+    for (int pixel = 0; pixel < 16; ++pixel) {
+        const int index = (block[4 + pixel / 4] >> (2 * (pixel % 4))) & 3;
+        for (int channel = 0; channel < 4; ++channel) {
+            out[pixel * 4 + channel] = std::uint8_t(palette[index][channel]);
+        }
+    }
+    return out;
+}
+
+std::optional<TpfFile> TpfFile::Read(std::span<const std::uint8_t> tpf_dcx) {
+    auto tpf = InflateDcx(tpf_dcx);
+    auto textures = tpf ? ParseTpf(*tpf) : std::nullopt;
+    if (!textures) {
+        return std::nullopt;
+    }
+    TpfFile file;
+    file.tpf = std::move(*tpf);
+    file.textures = std::move(*textures);
+    return file;
+}
+
+std::optional<Image> TpfFile::Piece(std::string_view name, const PixelRect& wanted) const {
+    const auto texture = std::ranges::find(textures, name, &TpfTexture::name);
+    if (texture == textures.end() || (texture->dxgi != 98 && texture->dxgi != 71)) {
+        return std::nullopt;
+    }
+    const PixelRect rect = wanted.x1 > wanted.x0 && wanted.y1 > wanted.y0
+                               ? wanted
+                               : PixelRect{0, 0, texture->width, texture->height};
+    if (rect.x0 < 0 || rect.y0 < 0 || rect.x1 > texture->width || rect.y1 > texture->height) {
+        return std::nullopt;
+    }
+    const int block_bytes = texture->dxgi == 98 ? 16 : 8;
+    const int width_blocks = (texture->width + 3) / 4, height_blocks = (texture->height + 3) / 4;
+    if (texture->size < std::uint32_t(width_blocks * height_blocks * block_bytes)) {
+        return std::nullopt;
+    }
+    const auto blocks = DeswizzleBlocks(
+        std::span<const std::uint8_t>{tpf.data() + texture->offset, texture->size}, width_blocks,
+        height_blocks, block_bytes);
+    Image image{.width = rect.x1 - rect.x0, .height = rect.y1 - rect.y0, .rgba = {}};
+    image.rgba.resize(std::size_t(image.width) * image.height * 4);
+    // Each block the piece touches, decoded once.
+    for (int by = rect.y0 / 4; by <= (rect.y1 - 1) / 4; ++by) {
+        for (int bx = rect.x0 / 4; bx <= (rect.x1 - 1) / 4; ++bx) {
+            const std::uint8_t* at = blocks.data() + (std::size_t(by) * width_blocks + bx) * block_bytes;
+            const auto pixels =
+                block_bytes == 16 ? DecodeBc7Block(std::span<const std::uint8_t, 16>{at, 16})
+                                  : DecodeBc1Block(std::span<const std::uint8_t, 8>{at, 8});
+            for (int py = 0; py < 4; ++py) {
+                const int y = by * 4 + py;
+                if (y < rect.y0 || y >= rect.y1) {
+                    continue;
+                }
+                for (int px = 0; px < 4; ++px) {
+                    const int x = bx * 4 + px;
+                    if (x < rect.x0 || x >= rect.x1) {
+                        continue;
+                    }
+                    std::memcpy(image.rgba.data() +
+                                    (std::size_t(y - rect.y0) * image.width + (x - rect.x0)) * 4,
+                                pixels.data() + (py * 4 + px) * 4, 4);
+                }
+            }
+        }
+    }
+    return image;
+}
+
+namespace {
+
+// SWF bit fields: most significant bit first.
+struct SwfBits {
+    std::span<const std::uint8_t> data;
+    std::size_t at = 0;
+    int bit = 0;
+    bool overrun = false;
+    std::uint32_t Unsigned(int count) {
+        std::uint32_t value = 0;
+        for (int i = 0; i < count; ++i) {
+            if (at >= data.size()) {
+                overrun = true;
+                return 0;
+            }
+            value = value << 1 | ((data[at] >> (7 - bit)) & 1);
+            if (++bit == 8) {
+                bit = 0;
+                ++at;
+            }
+        }
+        return value;
+    }
+    std::int32_t Signed(int count) {
+        const std::uint32_t value = Unsigned(count);
+        return count > 0 && (value >> (count - 1)) & 1 ? std::int32_t(value) - (1 << count)
+                                                        : std::int32_t(value);
+    }
+};
+
+struct GlyphPoint {
+    bool on = true;
+    std::int32_t x = 0, y = 0;
+};
+using Contour = std::vector<GlyphPoint>;
+
+// A DefineFont3 glyph's SHAPE: its contours (a move starts one), in twips (20 to a font unit).
+std::optional<std::vector<Contour>> GlyphContours(std::span<const std::uint8_t> shape) {
+    SwfBits bits{shape};
+    const int fill_bits = int(bits.Unsigned(4)), line_bits = int(bits.Unsigned(4));
+    std::vector<Contour> contours;
+    Contour current;
+    std::int32_t x = 0, y = 0;
+    for (int records = 0; records < 100000 && !bits.overrun; ++records) {
+        if (bits.Unsigned(1) == 0) {
+            const std::uint32_t flags = bits.Unsigned(5);
+            if (flags == 0) {
+                break;
+            }
+            if (flags & 16) {
+                return std::nullopt; // new styles: not a font glyph
+            }
+            if (flags & 1) {
+                const int count = int(bits.Unsigned(5));
+                x = bits.Signed(count);
+                y = bits.Signed(count);
+                if (!current.empty()) {
+                    contours.push_back(std::move(current));
+                }
+                current = {GlyphPoint{true, x, y}};
+            }
+            bits.Unsigned(flags & 2 ? fill_bits : 0);
+            bits.Unsigned(flags & 4 ? fill_bits : 0);
+            bits.Unsigned(flags & 8 ? line_bits : 0);
+            continue;
+        }
+        if (current.empty()) {
+            current.push_back(GlyphPoint{true, x, y});
+        }
+        const bool straight = bits.Unsigned(1) != 0;
+        const int count = int(bits.Unsigned(4)) + 2;
+        if (straight) {
+            if (bits.Unsigned(1)) {
+                x += bits.Signed(count);
+                y += bits.Signed(count);
+            } else if (bits.Unsigned(1)) {
+                y += bits.Signed(count);
+            } else {
+                x += bits.Signed(count);
+            }
+            current.push_back(GlyphPoint{true, x, y});
+        } else {
+            const std::int32_t cx = x + bits.Signed(count), cy = y + bits.Signed(count);
+            x = cx + bits.Signed(count);
+            y = cy + bits.Signed(count);
+            current.push_back(GlyphPoint{false, cx, cy});
+            current.push_back(GlyphPoint{true, x, y});
+        }
+    }
+    if (bits.overrun) {
+        return std::nullopt;
+    }
+    if (!current.empty()) {
+        contours.push_back(std::move(current));
+    }
+    std::vector<Contour> closed;
+    for (Contour& contour : contours) {
+        if (contour.size() > 1 && contour.front().x == contour.back().x &&
+            contour.front().y == contour.back().y) {
+            contour.pop_back();
+        }
+        if (contour.size() >= 3) {
+            closed.push_back(std::move(contour));
+        }
+    }
+    return closed;
+}
+
+struct Bytes {
+    std::vector<std::uint8_t> data;
+    void U8(std::uint32_t v) {
+        data.push_back(std::uint8_t(v));
+    }
+    void U16(std::uint32_t v) {
+        U8(v >> 8);
+        U8(v);
+    }
+    void U32(std::uint32_t v) {
+        U16(v >> 16);
+        U16(v & 0xFFFF);
+    }
+    void Pad() {
+        while (data.size() % 4) {
+            U8(0);
+        }
+    }
+};
+
+std::uint32_t TableSum(const std::vector<std::uint8_t>& data) {
+    std::uint32_t sum = 0;
+    for (std::size_t i = 0; i < data.size(); i += 4) {
+        std::uint32_t word = 0;
+        for (std::size_t j = 0; j < 4; ++j) {
+            word = word << 8 | (i + j < data.size() ? data[i + j] : 0);
+        }
+        sum += word;
+    }
+    return sum;
+}
+
+} // namespace
+
+std::optional<std::vector<std::uint8_t>> TtfFromGfxFont(std::span<const std::uint8_t> gfx) {
+    // The file: "GFX" (or "FWS"), version, size, the stage RECT, frame rate and count; then tags.
+    if (gfx.size() < 13 || !((gfx[0] == 'G' && gfx[1] == 'F' && gfx[2] == 'X') ||
+                             (gfx[0] == 'F' && gfx[1] == 'W' && gfx[2] == 'S'))) {
+        return std::nullopt;
+    }
+    std::size_t at = 8 + std::size_t(5 + 4 * (gfx[8] >> 3) + 7) / 8 + 4;
+    std::span<const std::uint8_t> font;
+    while (at + 2 <= gfx.size()) {
+        const std::uint16_t code_size = Le16(gfx, at);
+        at += 2;
+        std::size_t size = code_size & 0x3F;
+        if (size == 0x3F) {
+            if (at + 4 > gfx.size()) {
+                return std::nullopt;
+            }
+            size = Le32(gfx, at);
+            at += 4;
+        }
+        if (at + size > gfx.size()) {
+            return std::nullopt;
+        }
+        if (code_size >> 6 == 75) {
+            font = gfx.subspan(at, size);
+            break;
+        }
+        if (code_size >> 6 == 0) {
+            break;
+        }
+        at += size;
+    }
+    if (font.size() < 8) {
+        return std::nullopt;
+    }
+    // DefineFont3: id, flags (0x80 layout, 0x08 wide offsets, 0x04 wide codes, 0x01 bold),
+    // language, name, glyph count, offsets (from the table's start), code table, layout.
+    const std::uint8_t flags = font[2];
+    std::size_t p = 5 + font[4];
+    if (p + 2 > font.size() || !(flags & 0x80) || !(flags & 0x04)) {
+        return std::nullopt;
+    }
+    const std::size_t count = Le16(font, p);
+    p += 2;
+    const std::size_t table = p, offset_bytes = flags & 0x08 ? 4 : 2;
+    if (table + (count + 1) * offset_bytes > font.size()) {
+        return std::nullopt;
+    }
+    const auto offset = [&](std::size_t index) {
+        return offset_bytes == 4 ? std::size_t(Le32(font, table + index * 4))
+                                 : std::size_t(Le16(font, table + index * 2));
+    };
+    const std::size_t codes = table + offset(count);
+    if (codes + count * 4 + 6 > font.size()) {
+        return std::nullopt;
+    }
+    const auto s16 = [&](std::size_t at_) { return std::int16_t(Le16(font, at_)); };
+    const std::int32_t ascent = s16(codes + count * 2), descent = s16(codes + count * 2 + 2),
+                       leading = s16(codes + count * 2 + 4);
+    const std::size_t advances = codes + count * 2 + 6;
+    // The glyphs in TrueType units (twips / 20; y up), .notdef first.
+    struct Glyph {
+        std::vector<std::vector<GlyphPoint>> contours;
+        int advance = 0;
+    };
+    std::vector<Glyph> glyphs(1);
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> map; // code -> glyph
+    for (std::size_t i = 0; i < count; ++i) {
+        const std::size_t begin = table + offset(i), end = i + 1 < count ? table + offset(i + 1) : codes;
+        if (begin > end || end > font.size()) {
+            return std::nullopt;
+        }
+        auto contours = GlyphContours(font.subspan(begin, end - begin));
+        if (!contours) {
+            continue;
+        }
+        Glyph glyph;
+        for (const Contour& contour : *contours) {
+            auto& out = glyph.contours.emplace_back();
+            for (const GlyphPoint& point : contour) {
+                out.push_back(GlyphPoint{point.on, (point.x + (point.x >= 0 ? 10 : -10)) / 20,
+                                         -((point.y + (point.y >= 0 ? 10 : -10)) / 20)});
+            }
+        }
+        glyph.advance = advances + i * 2 + 2 <= font.size() ? s16(advances + i * 2) / 20 : 0;
+        map.emplace_back(Le16(font, codes + i * 2), std::uint32_t(glyphs.size()));
+        glyphs.push_back(std::move(glyph));
+    }
+    std::ranges::sort(map);
+    if (map.empty()) {
+        return std::nullopt;
+    }
+    // glyf and loca.
+    Bytes glyf;
+    std::vector<std::uint32_t> loca;
+    int x_min = 0, y_min = 0, x_max = 0, y_max = 0, max_points = 0, max_contours = 0, max_advance = 0;
+    bool any = false;
+    for (const Glyph& glyph : glyphs) {
+        loca.push_back(std::uint32_t(glyf.data.size()));
+        max_advance = std::max(max_advance, glyph.advance);
+        if (glyph.contours.empty()) {
+            continue;
+        }
+        int gx0 = INT32_MAX, gy0 = INT32_MAX, gx1 = INT32_MIN, gy1 = INT32_MIN, points = 0;
+        for (const auto& contour : glyph.contours) {
+            for (const GlyphPoint& point : contour) {
+                gx0 = std::min(gx0, point.x);
+                gy0 = std::min(gy0, point.y);
+                gx1 = std::max(gx1, point.x);
+                gy1 = std::max(gy1, point.y);
+                ++points;
+            }
+        }
+        x_min = any ? std::min(x_min, gx0) : gx0;
+        y_min = any ? std::min(y_min, gy0) : gy0;
+        x_max = any ? std::max(x_max, gx1) : gx1;
+        y_max = any ? std::max(y_max, gy1) : gy1;
+        any = true;
+        max_points = std::max(max_points, points);
+        max_contours = std::max(max_contours, int(glyph.contours.size()));
+        glyf.U16(std::uint32_t(glyph.contours.size()));
+        glyf.U16(std::uint16_t(gx0));
+        glyf.U16(std::uint16_t(gy0));
+        glyf.U16(std::uint16_t(gx1));
+        glyf.U16(std::uint16_t(gy1));
+        int end = -1;
+        for (const auto& contour : glyph.contours) {
+            end += int(contour.size());
+            glyf.U16(std::uint32_t(end));
+        }
+        glyf.U16(0); // no instructions
+        for (const auto& contour : glyph.contours) {
+            for (const GlyphPoint& point : contour) {
+                glyf.U8(point.on ? 1 : 0);
+            }
+        }
+        int previous = 0;
+        for (const auto& contour : glyph.contours) {
+            for (const GlyphPoint& point : contour) {
+                glyf.U16(std::uint16_t(point.x - previous));
+                previous = point.x;
+            }
+        }
+        previous = 0;
+        for (const auto& contour : glyph.contours) {
+            for (const GlyphPoint& point : contour) {
+                glyf.U16(std::uint16_t(point.y - previous));
+                previous = point.y;
+            }
+        }
+        glyf.Pad();
+    }
+    loca.push_back(std::uint32_t(glyf.data.size()));
+    const std::uint32_t glyph_count = std::uint32_t(glyphs.size());
+    const bool bold = flags & 0x01;
+    const int asc = ascent / 20, desc = descent / 20;
+    std::vector<std::pair<std::string, std::vector<std::uint8_t>>> tables;
+    {
+        Bytes head;
+        head.U32(0x10000);
+        head.U32(0x10000);
+        head.U32(0); // checksum adjustment
+        head.U32(0x5F0F3CF5);
+        head.U16(0x000B);
+        head.U16(1024);
+        for (int i = 0; i < 4; ++i) {
+            head.U32(0); // created, modified
+        }
+        head.U16(std::uint16_t(x_min));
+        head.U16(std::uint16_t(y_min));
+        head.U16(std::uint16_t(x_max));
+        head.U16(std::uint16_t(y_max));
+        head.U16(bold ? 1 : 0);
+        head.U16(8);
+        head.U16(2);
+        head.U16(1); // long loca
+        head.U16(0);
+        tables.emplace_back("head", std::move(head.data));
+    }
+    {
+        Bytes hhea;
+        hhea.U32(0x10000);
+        hhea.U16(std::uint16_t(asc));
+        hhea.U16(std::uint16_t(-desc));
+        hhea.U16(std::uint16_t(leading / 20));
+        hhea.U16(std::uint16_t(max_advance));
+        for (int i = 0; i < 3; ++i) {
+            hhea.U16(0);
+        }
+        hhea.U16(1); // caret slope rise
+        for (int i = 0; i < 7; ++i) {
+            hhea.U16(0);
+        }
+        hhea.U16(glyph_count);
+        tables.emplace_back("hhea", std::move(hhea.data));
+    }
+    {
+        Bytes maxp;
+        maxp.U32(0x10000);
+        maxp.U16(glyph_count);
+        maxp.U16(std::uint32_t(max_points));
+        maxp.U16(std::uint32_t(max_contours));
+        maxp.U16(0);
+        maxp.U16(0);
+        maxp.U16(2);
+        for (int i = 0; i < 8; ++i) {
+            maxp.U16(0);
+        }
+        tables.emplace_back("maxp", std::move(maxp.data));
+    }
+    {
+        Bytes hmtx;
+        for (const Glyph& glyph : glyphs) {
+            hmtx.U16(std::uint32_t(std::max(glyph.advance, 0)));
+            hmtx.U16(0);
+        }
+        tables.emplace_back("hmtx", std::move(hmtx.data));
+    }
+    {
+        Bytes out;
+        for (const std::uint32_t value : loca) {
+            out.U32(value);
+        }
+        tables.emplace_back("loca", std::move(out.data));
+    }
+    tables.emplace_back("glyf", std::move(glyf.data));
+    {
+        // Format 12, runs of codes that map to runs of glyphs.
+        std::vector<std::array<std::uint32_t, 3>> groups;
+        for (const auto& [code, glyph] : map) {
+            if (!groups.empty() && groups.back()[1] + 1 == code &&
+                groups.back()[2] + (code - groups.back()[0]) == glyph) {
+                groups.back()[1] = code;
+            } else if (groups.empty() || groups.back()[1] != code) {
+                groups.push_back({code, code, glyph});
+            }
+        }
+        Bytes cmap;
+        cmap.U16(0);
+        cmap.U16(1);
+        cmap.U16(3);
+        cmap.U16(10);
+        cmap.U32(12);
+        cmap.U16(12);
+        cmap.U16(0);
+        cmap.U32(std::uint32_t(16 + 12 * groups.size()));
+        cmap.U32(0);
+        cmap.U32(std::uint32_t(groups.size()));
+        for (const auto& group : groups) {
+            cmap.U32(group[0]);
+            cmap.U32(group[1]);
+            cmap.U32(group[2]);
+        }
+        tables.emplace_back("cmap", std::move(cmap.data));
+    }
+    {
+        Bytes post;
+        post.U32(0x30000);
+        for (int i = 0; i < 7; ++i) {
+            post.U32(0);
+        }
+        tables.emplace_back("post", std::move(post.data));
+    }
+    {
+        static constexpr std::string_view Family = "Bloodborne Menu";
+        const std::pair<int, std::string_view> names[] = {
+            {1, Family}, {2, "Regular"}, {4, Family}, {6, "BloodborneMenu"}};
+        Bytes name, strings;
+        name.U16(0);
+        name.U16(4);
+        name.U16(6 + 12 * 4);
+        for (const auto& [id, text] : names) {
+            name.U16(3);
+            name.U16(1);
+            name.U16(0x409);
+            name.U16(std::uint32_t(id));
+            name.U16(std::uint32_t(text.size() * 2));
+            name.U16(std::uint32_t(strings.data.size()));
+            for (const char c : text) {
+                strings.U16(std::uint8_t(c));
+            }
+        }
+        name.data.insert(name.data.end(), strings.data.begin(), strings.data.end());
+        tables.emplace_back("name", std::move(name.data));
+    }
+    {
+        Bytes os2;
+        os2.U16(1);
+        os2.U16(500);
+        os2.U16(bold ? 700 : 400);
+        os2.U16(5);
+        for (int i = 0; i < 12; ++i) {
+            os2.U16(0);
+        }
+        for (int i = 0; i < 10; ++i) {
+            os2.U8(0); // panose
+        }
+        for (int i = 0; i < 4; ++i) {
+            os2.U32(0);
+        }
+        os2.U32(0); // vendor
+        os2.U16(0x40);
+        os2.U16(std::min<std::uint32_t>(map.front().first, 0xFFFF));
+        os2.U16(std::min<std::uint32_t>(map.back().first, 0xFFFF));
+        os2.U16(std::uint16_t(asc));
+        os2.U16(std::uint16_t(-desc));
+        os2.U16(0);
+        os2.U16(std::uint16_t(asc));
+        os2.U16(std::uint16_t(desc));
+        os2.U32(1);
+        os2.U32(0);
+        tables.emplace_back("OS/2", std::move(os2.data));
+    }
+    std::ranges::sort(tables, {}, &decltype(tables)::value_type::first);
+    Bytes out;
+    out.U32(0x10000);
+    out.U16(std::uint32_t(tables.size()));
+    out.U16(0);
+    out.U16(0);
+    out.U16(0);
+    std::uint32_t offset_now = std::uint32_t(12 + 16 * tables.size());
+    for (const auto& [tag, data] : tables) {
+        for (const char c : tag) {
+            out.U8(std::uint8_t(c));
+        }
+        out.U32(TableSum(data));
+        out.U32(offset_now);
+        out.U32(std::uint32_t(data.size()));
+        offset_now += std::uint32_t((data.size() + 3) / 4 * 4);
+    }
+    for (const auto& [tag, data] : tables) {
+        out.data.insert(out.data.end(), data.begin(), data.end());
+        out.Pad();
+    }
+    return out.data;
 }
 
 } // namespace BbGameArt

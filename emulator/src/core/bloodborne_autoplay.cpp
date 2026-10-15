@@ -1216,6 +1216,24 @@ bool AutoplayExpectOthersNear(const AutoplayStep& step) {
     return true;
 }
 
+// expect-others-shown <n>: exactly n other players show in this world (not hidden: Kaniel
+// 2026-10-15, members gone to another map still stood here).
+bool AutoplayExpectOthersShown(const AutoplayStep& step) {
+    size_t shown = 0;
+    std::string seen;
+    for (const OtherPlayer& other : OtherPlayers()) {
+        const bool off = IsCharacterDisabled(other.character);
+        seen += fmt::format(" [{:#x} {}]", ReadValue<u32>(other.character, 0x08),
+                            off ? "hidden" : "shown");
+        shown += off ? 0 : 1;
+    }
+    if (shown != static_cast<size_t>(step.Number(0, 0))) {
+        step.failure = fmt::format("{} shown:{}", shown, seen.empty() ? " none" : seen);
+        return false;
+    }
+    return true;
+}
+
 bool AutoplayExpectMap(const AutoplayStep& step) {
     const auto map = ParseAutoplayTarget(step.Arg(0));
     // Raw, as all of the rig's checks (see AutoplayInWorld).
@@ -1423,6 +1441,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-effect", AutoplayExpectEffect},
     {"expect-session", AutoplayExpectSession},
     {"expect-others-near", AutoplayExpectOthersNear},
+    {"expect-others-shown", AutoplayExpectOthersShown},
     {"expect-map", AutoplayExpectMap},
     {"chapter", AutoplayChapter},
     {"keep-going", AutoplayKeepGoing},

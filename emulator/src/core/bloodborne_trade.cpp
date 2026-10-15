@@ -19,6 +19,7 @@
 //   Echoes: the shop's pay writes +0x94 itself; AddSouls (player vtable +0x3D0) adds them.
 
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_team.h"
 #include "core/bloodborne_trade.h"
 
 #include <deque>
@@ -300,10 +301,42 @@ std::optional<TradeClient::Notice> NextTradeNotice() {
 }
 
 // The game's thread, every party tick: what came from the server, grants added.
+// Kaniel 2026-10-14: the bell items go from the port's game (a team joins without them): any the
+// player holds leave the inventory, checked every few seconds in the world (a gift or a pickup that
+// gives one again loses it the same way).
+void RemoveBellItems() {
+    static s64 checked_ms = 0;
+    const s64 now_ms = SteadyMilliseconds();
+    if (now_ms - checked_ms < 3'000 || GetLocalPlayer() < 0x10000) {
+        return;
+    }
+    checked_ms = now_ms;
+    const u64 data = PlayerGameData();
+    if (data < 0x10000) {
+        return;
+    }
+    using ChangeCount = s32 PS4_SYSV_ABI (*)(u64 equip, u32 index, s32 delta, bool force,
+                                             bool no_replace, bool allow_111);
+    const auto change = reinterpret_cast<ChangeCount>(image_base + InventoryChangeCountOffset);
+    for (const u32 bell : BellGoods) {
+        const u64 entry = GoodsEntry(data, bell);
+        const s32 count = entry != 0 ? ReadValue<s32>(entry, 8) : 0;
+        if (count <= 0) {
+            continue;
+        }
+        const s32 index = GoodsIndex(data, bell);
+        const s32 left =
+            change(data + EquipGameDataOffset, static_cast<u32>(index), -count, true, true, false);
+        LOG_INFO(Debug, "Bloodborne team: bell item {} out of the inventory ({} -> {})", bell,
+                 count, left);
+    }
+}
+
 void TickTrades() {
     if (!TradeSwitchOn() || !trade_sites.load()) {
         return;
     }
+    RemoveBellItems();
     std::vector<TradeItems> add;
     std::vector<bbcoop::Envelope> replies;
     {

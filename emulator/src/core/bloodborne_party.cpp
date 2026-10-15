@@ -3617,6 +3617,34 @@ const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32
     return owner != owners.end() ? &*owner : nullptr;
 }
 
+std::string RunnerOf(const std::string& current, const LampPosition& enemy,
+                     std::span<const MemberVitals> guests, u32 map) {
+    const auto metres = [&](const MemberVitals& guest) {
+        const float dx = guest.at[0] - enemy[0];
+        const float dy = guest.at[1] - enemy[1];
+        const float dz = guest.at[2] - enemy[2];
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+    const MemberVitals* nearest = nullptr;
+    const MemberVitals* running = nullptr;
+    for (const MemberVitals& guest : guests) {
+        if (guest.map != map || guest.vital != Vital::Up || metres(guest) > RunnerReachMetres) {
+            continue;
+        }
+        if (nearest == nullptr || metres(guest) < metres(*nearest)) {
+            nearest = &guest;
+        }
+        if (guest.member == current) {
+            running = &guest;
+        }
+    }
+    if (running != nullptr &&
+        (nearest == running || metres(*running) < metres(*nearest) + NearestGuestLeadMetres)) {
+        return running->member;
+    }
+    return nearest != nullptr ? nearest->member : std::string{};
+}
+
 EnemyRole EnemyRoleOn(std::span<const EnemyOwnerEntry> owners, std::string_view self, u32 map) {
     const EnemyOwnerEntry* owner = EnemyOwnerOf(owners, map);
     if (owner == nullptr || self.empty() || owner->member.empty()) {
@@ -3642,6 +3670,25 @@ std::optional<s32> EnemyHitState(EnemyRole role, s32 state) {
     return std::nullopt;
 }
 
+std::optional<s32> EnemyHitState(EnemyRole role, s32 state, bool runs_victim) {
+    if (role == EnemyRole::Follower && runs_victim) {
+        return state == MatchingStateHosting ? std::nullopt
+                                             : std::optional<s32>{MatchingStateHosting};
+    }
+    return EnemyHitState(role, state);
+}
+
+std::optional<s32> HeldOwnHitHp(s32 current, s32 after_own_hit, s64 age_ms) {
+    if (current <= 0 || current <= after_own_hit || age_ms >= OwnHitHoldMs) {
+        return std::nullopt;
+    }
+    return after_own_hit;
+}
+
+bool TakesOverEnemyHp(const EnemyOwnerEntry& owner) {
+    return owner.epoch > 1;
+}
+
 std::optional<u16> EnemyOwnershipWord(EnemyRole role) {
     switch (role) {
     case EnemyRole::Owner:
@@ -3658,7 +3705,9 @@ namespace {
 
 // Positions, HP, catch-up and join animations: what only the enemies' runner sends.
 bool IsOwnersEnemyChannel(u32 channel) {
-    return channel == 0x04 || channel == 0x05 || channel == 0x29 || channel == 0x36;
+    // Not the positions (0x04): each game sends those of the enemies it runs (a follower those by
+    // it while the owner is far, FollowerRunsEnemy), and the others' copies follow them.
+    return channel == 0x05 || channel == 0x29 || channel == 0x36;
 }
 
 } // namespace
@@ -3687,6 +3736,12 @@ bool KeepsEnemyPacketIn(u32 channel, EnemyRole role, bool from_owner) {
     }
     if (IsOwnersEnemyChannel(channel)) {
         return role == EnemyRole::Unknown || (role == EnemyRole::Follower && from_owner);
+    }
+    // Positions: a follower's copies follow the owner's only (krolebord 2026-10-15: a guest that
+    // had just joined crashed in the game's character update while it took the other guests'
+    // positions too); the owner takes those of the enemies a guest runs for it.
+    if (channel == 0x04 && role == EnemyRole::Follower) {
+        return from_owner;
     }
     return true;
 }
@@ -5376,6 +5431,28 @@ PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view
         });
     }
     return panel;
+}
+
+std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
+                                    std::span<const MemberVitals> board, std::string_view self,
+                                    u32 map) {
+    std::vector<bool> shown;
+    for (const std::optional<LampPosition>& at : characters) {
+        if (!at) {
+            shown.push_back(true);
+            continue;
+        }
+        shown.push_back(std::ranges::any_of(board, [&](const MemberVitals& member) {
+            if (member.member == self || member.map != map || map == 0) {
+                return false;
+            }
+            const float dx = member.at[0] - (*at)[0];
+            const float dy = member.at[1] - (*at)[1];
+            const float dz = member.at[2] - (*at)[2];
+            return dx * dx + dy * dy + dz * dz <= PresenceMetres * PresenceMetres;
+        }));
+    }
+    return shown;
 }
 
 } // namespace Core::Bloodborne

@@ -1,8 +1,8 @@
 # Bloodborne Seamless Co-op
 
 Seamless co-op for **Bloodborne** on PC, in the spirit of
-[Elden Ring Seamless Co-op](https://www.nexusmods.com/eldenring/mods/510): two or three hunters
-share one world, join each other without bells or Insight, and keep playing together through
+[Elden Ring Seamless Co-op](https://www.nexusmods.com/eldenring/mods/510): up to four hunters
+make a team, share one world, join each other without bells, signs or Insight, and keep playing together through
 lamp trips, deaths and boss fights.
 
 It runs on **Bloodborne PC**, the native Windows port of the PS4 game (the game's own code runs on
@@ -32,9 +32,12 @@ expect rough edges and keep backups of your saves.
 
 ## What it does
 
-- **Join without bells.** Everyone types the same party name and secret once. Load your character
-  and you are pulled into the host's world a few seconds later, wherever you both are. Up to three
-  players (the host and two guests).
+- **Teams, no bells.** Continue, Load Game or New Game opens the team screen: make a team of up to
+  four from the hunters online, Ready, and the leader begins the hunt. Every game loads its own
+  save, the loading screen stays up until the team is together, and you are in one world where
+  each of you stands: no bells (the bell items are gone from the game), no signs, no summoning.
+- **The team's world.** The team keeps one world on the server, started from the leader's save;
+  each save's own world is kept aside and comes back when it plays alone.
 - **Stay together.** Nobody is sent home: lamp trips, the Hunter's Dream, deaths, boss kills and
   map changes all keep the party together. A guest who crashes or quits comes back into the same
   session, where they were.
@@ -48,25 +51,26 @@ expect rough edges and keep backups of your saves.
 - **No stolen bloodstains.** Your echoes stay where you died until you pick them up.
 - **Harder enemies** (optional): HP, damage and poise multipliers for every enemy and boss, to make
   up for the extra hunters.
-- **Self-hosted.** One player runs a small server (accounts, matchmaking, party state) and a stand-in
-  for the game's online services. No PlayStation Network, no community server, nothing in the cloud.
+- **Self-hosted.** One player runs a small server (accounts, the team lobby, the teams' worlds,
+  every game's co-op traffic) and a stand-in for the game's online services. No PlayStation Network, no community server, nothing in the cloud.
 - **Everything from Bloodborne PC**: 60 FPS and above, resolutions up to 4K, DLSS, FSR 3.1/4 and XeSS
   upscaling, frame generation, HDR, ReShade, mouse and keyboard, gamepads.
 
 ## Play it
 
-1. Download `BloodborneSeamlessCoop-v<version>-windows.zip` from the
-   [releases page](https://github.com/lKaniel/bloodborne-server/releases) and unzip it anywhere.
-   Every player in a party uses the same release.
-2. Open **`READ ME FIRST.txt`** in it. In short:
-   - Only `.pkg` files? `BLauncher.exe` → **Install from PKG** extracts the game and the update.
-   - Everyone runs **`FIREWALL - Allow (run as admin)`** once, then **`1 - SETUP`**: your game
-     folder, host or guest, the host's IP, your account and the party.
-   - The host runs **`HOST - Start Servers`** and registers every player's account with
-     **`HOST - Register Account`**.
-   - Everyone runs **`2 - PLAY`** and loads their character.
-3. The guests must reach the host's PC: the same VPN (Radmin VPN, Tailscale, ZeroTier) or the host's
-   public IP with ports forwarded (TCP 31313, 31315, 20443 and UDP 31314).
+1. Download the setup `.exe` from the
+   [releases page](https://github.com/lKaniel/bloodborne-server/releases) and run it. Every player
+   in a team uses the same release.
+2. Open **Bloodborne Seamless Co-op** (the launcher). It finds your game (or **Install from PKG**
+   extracts it); on the Co-op card choose host (runs the co-op server on this PC) or player, the
+   host's IP and an account.
+3. Press **PLAY**. The host's server starts by itself; Windows asks once to let co-op through its
+   firewall.
+4. Continue, Load Game or New Game opens the team screen: create a team or accept an invite, Ready,
+   and the leader presses **Begin the hunt**.
+5. Everyone must reach the host's PC: the same VPN (Radmin VPN, Tailscale, ZeroTier) or the host's
+   public IP with ports forwarded: TCP 31313, 31315, 20443 and **UDP 31314**. The UDP port carries
+   every game's co-op traffic (the games never talk to each other directly), so it must be open.
 
 Requirements: Windows 10 (1903 or later) or 11, 64-bit, and a Vulkan 1.3 graphics card with a current
 driver. Python, the libraries and the servers are all inside the zip. Tested with CUSA03173 (the
@@ -77,17 +81,16 @@ European Game of the Year edition) at 1.09; all players in a party should use th
 ```text
  Player's PC (each player)                          Host's PC (also plays)
  ┌──────────────────────────────────────────┐       ┌────────────────────────────────────┐
- │ Bloodborne PC (bbport): the 1.09 eboot   │ TCP   │ shadnet (server/): accounts,       │
- │ runs natively, renderer from shadPS4     │◄─────►│ matchmaking, signaling, the summon │
- │  + co-op code (emulator/src/core/        │       │ broker and the party boards        │
- │    bloodborne_*): hooks and patches in   │ HTTP  ├────────────────────────────────────┤
- │    the game, party logic, world sync     │◄─────►│ backend/: the game's own online    │
- │  + co-op map events (made by setup from  │       │ services (sign-in, online check)   │
- │    the player's own event files)         │       └────────────────────────────────────┘
- └───────────────▲──────────────────────────┘
-                 │ UDP peer-to-peer between every pair of players:
-                 ▼ the game's own session traffic, plus the co-op's sync frames
-          (other players' games)
+ │ Bloodborne PC (bbport): the 1.09 eboot   │ TCP   │ shadnet (server/): accounts, rooms │
+ │ runs natively, renderer from shadPS4     │◄─────►│ and signaling                      │
+ │  + co-op code (emulator/src/core/        │ UDP   │  + the co-op server: the team      │
+ │    bloodborne_*): hooks and patches in   │◄─────►│    lobby, the teams' worlds, enemy │
+ │    the game, team join, world sync       │ 31314 │    owners, and the relay of every  │
+ │  + co-op map events (made by setup from  │       │    game's packets                  │
+ │    the player's own event files)         │ HTTP  ├────────────────────────────────────┤
+ │                                          │◄─────►│ the game's own online services     │
+ └──────────────────────────────────────────┘       └────────────────────────────────────┘
+   every game talks only to the server: one UDP link each, no peer-to-peer
 ```
 
 - **The game runs itself.** Bloodborne PC loads the PS4 game's own x86-64 code and runs it on a
@@ -95,21 +98,22 @@ European Game of the Year edition) at 1.09; all players in a party should use th
   wires it in) and changes the game at known places in the 1.09 eboot: about 125 patch sites and
   hooks, listed in one table (`emulator/src/core/bloodborne_patch_sites.h`); the launcher warns
   when another game patch writes over one of them.
-- **Joining uses the game's own multiplayer.** Instead of bells, a party member's game is driven
-  through the game's summon flow by itself: the guest posts a sign for the party on shadnet, the
-  host's game finds and summons it, and both games then run a normal Bloodborne session. The
-  co-op code removes the limits that would end it (boss kills, lamp trips, deaths, map changes,
-  the area restrictions) and puts players back together after loads.
-- **Keeping the worlds in step.** The games talk directly over the P2P link the session already
-  has: enemy damage and HP, vitals, kills and an ordered log of world changes kept by the host
-  (`docs/WORLD_SYNC.md`). shadnet's party boards hold a snapshot for joins and crash recovery.
-  Who owns each event flag (host, per player, shared) is one table (`docs/FLAGS.md`).
+- **Joining uses the game's own multiplayer, without summoning.** The team's host opens its game
+  session itself (the game's own call) and sends its join data to the server; each member's game
+  joins that session directly as soon as it stands in its world. Both games then run a normal
+  Bloodborne session; the co-op code removes the limits that would end it (boss kills, lamp
+  trips, deaths, map changes, the area restrictions) and puts players back together after loads.
+- **The server in the middle.** Every game packet and co-op message goes through the server over
+  one UDP link with its own resend and ordering (`docs/SERVER_COOP_PLAN.md`). The server keeps the
+  team's world (kills, event flags, map state, enemy HP) as an ordered log, names one owner per
+  map who runs its enemies, and keeps the teams and their worlds on disk across restarts. Who owns
+  each event flag (host, per player, shared) is one table (`docs/FLAGS.md`).
 - **Map events.** Some of the game's event scripts end early for a summoned player (boss rewards,
   boss fog, the first visit to the Dream). Setup patches copies of the player's own event files
   (`tools/re/party_boss_events.py`, which checks that only the intended instructions changed);
   the release only carries their expected hashes.
-- **Self-hosted services.** `server/` is a shadNet server with the Bloodborne summon broker and
-  party boards added. The game's own online requests (JSON over HTTP, as the PS4 game sends them)
+- **Self-hosted services.** `server/` is a shadNet server with the co-op server added (`server/coop`:
+  the protobuf messages, the world log, the team lobby, trading). The game's own online requests (JSON over HTTP, as the PS4 game sends them)
   are answered by shadnet itself (`BloodborneBackend`, on by default) or the Python `backend/`, so
   the game goes online without the official or community servers.
 
@@ -124,7 +128,7 @@ More detail: [docs/BBPORT.md](docs/BBPORT.md) (the port and its co-op wiring),
 |---|---|---|
 | `bbport/` | Bloodborne PC, the native port, with the launcher and the Windows packaging | [deadinside28/bloodborne_pc](https://github.com/deadinside28/bloodborne_pc), [Supermedo/bloodborne_pc](https://github.com/Supermedo/bloodborne_pc), [AdrianCsT/bloodborne_pc](https://github.com/0xCydral/bloodborne_pc) |
 | `emulator/` | shadPS4 with P2P networking; `src/core/bloodborne_*` is the co-op code the port compiles in | [Wozzardman/shadp2p](https://github.com/Wozzardman/shadp2p) (from [shadPS4](https://github.com/shadps4-emu/shadPS4)) |
-| `server/` | shadNet server: accounts, matchmaking, signaling, the summon broker and party boards | [Wozzardman/shadnet-p2p](https://github.com/Wozzardman/shadnet-p2p) |
+| `server/` | shadNet server: accounts, rooms, signaling, and the co-op server (team lobby, team worlds, the relay) | [Wozzardman/shadnet-p2p](https://github.com/Wozzardman/shadnet-p2p) |
 | `backend/` | stand-in for the game's online services | the LocalServer of the Bloodborne PC Online community package |
 | `tools/` | build, local CI, the co-op kits and releases, the test rig (`tools/rig`), RE helpers (`tools/re`) | |
 | `docs/` | design notes and handovers | |

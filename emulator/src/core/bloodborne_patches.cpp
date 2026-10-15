@@ -93,6 +93,7 @@ bool summon_reload_state_hook_installed{};
 bool deferred_summon_reload_hook_installed{};
 bool healing_fountain_host_availability_hook_installed{};
 bool channel_table_installed{};
+bool team_join_ready{};
 
 bool EnvFlagEnabled(const char* name) {
     const char* value = std::getenv(name);
@@ -747,8 +748,12 @@ bool SendHitToOwner(const GuestRegisterSnapshot* registers) {
             ++game_link.sent;
             static std::atomic<u32> logged{0};
             if (logged.fetch_add(1) < 10) {
-                LOG_INFO(Debug, "Bloodborne enemy owner: a hit on {:#x} went to the owner {}",
-                         ReadValue<u32>(payload, 0), owner);
+                std::string bytes;
+                for (u32 i = 0; i < size; ++i) {
+                    bytes += fmt::format("{:02x}", ReadValue<u8>(payload, i));
+                }
+                LOG_INFO(Debug, "Bloodborne enemy owner: a hit on {:#x} went to the owner {} ({})",
+                         ReadValue<u32>(payload, 0), owner, bytes);
             }
             return true;
         }
@@ -830,7 +835,18 @@ void PS4_SYSV_ABI ReceiveHpFromOwner(u64, GuestRegisterSnapshot* registers) {
 
 void PS4_SYSV_ABI SetEnemyHitState(u64, GuestRegisterSnapshot* registers) {
     const s32 state = ReadValue<s32>(registers->rax, MatchingStateOffset);
-    if (const auto wanted = EnemyHitState(CurrentEnemyRole(), state)) {
+    // The victim: r12 is the hit's target (its character at +0x08).
+    const u64 victim = registers->r12 >= 0x10000 ? ReadValue<u64>(registers->r12, 0x08) : 0;
+    const u32 handle = victim >= 0x10000 ? ReadValue<u32>(victim, 0x08) : 0;
+    const bool runs = handle != 0 && ThisFollowerRuns(handle);
+    static u32 logged = 0;
+    if (runs && ++logged <= 20) {
+        LOG_INFO(Debug,
+                 "Bloodborne enemy owner: this follower's hit on {:#x}, an enemy it runs, "
+                 "lands here",
+                 handle);
+    }
+    if (const auto wanted = EnemyHitState(CurrentEnemyRole(), state, runs)) {
         registers->rax = StandInFor(*wanted);
     }
 }
@@ -865,6 +881,11 @@ void InstallTeamLobby(u64 base, u64 image_size) {
     }
     coop_features.On("team lobby");
     LOG_INFO(Debug, "Bloodborne team lobby: a save's load waits for the team's Start");
+    // Phase 6: the team joins its host's session without signs or a bell.
+    if (CoopSitesMatch(base, image_size, "team join", "the team cannot join its host")) {
+        team_join_ready = true;
+        coop_features.On("team join");
+    }
 }
 
 void InstallEnemyOwner(u64 base, u64 image_size) {

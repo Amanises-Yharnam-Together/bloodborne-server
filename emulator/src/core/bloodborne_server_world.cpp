@@ -54,6 +54,8 @@ constexpr bool enemy_owner_switch = server_world_switch;
 std::mutex owners_mutex;
 std::vector<EnemyOwnerEntry> server_owners;
 s64 owners_heard_ms = 0;
+// The enemies the owners' games let go (bbcoop::EnemiesLetGo), as last heard from each.
+std::map<std::string, std::pair<bbcoop::EnemiesLetGo, s64>> heard_let_go;
 
 const u32 run = [] {
     std::random_device random;
@@ -100,6 +102,20 @@ constexpr s64 TeamWorldReportMs = 10'000;
 // A load held for the team's world after the Start gives up waiting after this long.
 constexpr s64 TeamWorldWaitMs = 10'000;
 s64 team_world_wait_ms = 0;
+// Phase 6: the team join without signs or a bell (see TeamJoin). The host's open session as the
+// server last sent it (a guest joins it), the game thread's step, and the sessions this host
+// opened (each one's number).
+std::optional<bbcoop::TeamSession> team_session;
+TeamJoin team_join;
+TeamLoad team_load; // team_mutex
+// The team loading screen as the game's thread last made it (the present thread draws it).
+std::mutex team_load_view_mutex;
+TeamLoad::View team_load_view;
+u64 team_sessions_opened = 0;
+// What the summon packet carries before the join data (0x01873754): GameMan +0x16F0 and +0x16F4
+// on the guest, the same for every co-operator (rig 2026-10-14: 0xFFFFFFFF and 7).
+constexpr u32 TeamSessionKind = 0xFFFFFFFFu;
+constexpr u32 TeamSessionSign = 7;
 
 std::string PartyKey() {
     if (team_switch) {
@@ -135,6 +151,20 @@ bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
         LOG_INFO(Debug, "Co-op team world: the server's has {} ({} flags on, version {})",
                  team_world->exists() ? "a world" : "no world yet", team_world->on_size(),
                  team_world->version());
+        return true;
+    }
+    if (envelope.has_load_progress()) {
+        std::scoped_lock lock{team_mutex};
+        team_load.Take(envelope.load_progress(), SteadyMilliseconds());
+        return true;
+    }
+    if (envelope.has_team_session()) {
+        const bbcoop::TeamSession& session = envelope.team_session();
+        LOG_INFO(Debug, "Co-op team join: {}'s session {} {}", session.host(), session.session(),
+                 session.join().empty() ? "closed"
+                                        : fmt::format("is open ({} bytes)", session.join().size()));
+        std::scoped_lock lock{team_mutex};
+        team_session = session;
         return true;
     }
     if (envelope.has_team_start()) {
@@ -184,6 +214,7 @@ bool IsBoard(const bbcoop::Envelope& envelope) {
     case bbcoop::Envelope::kVitalsBoard:
     case bbcoop::Envelope::kPortrait:
     case bbcoop::Envelope::kEnemyOwners:
+    case bbcoop::Envelope::kEnemiesLetGo:
         return true;
     default:
         return false;
@@ -271,6 +302,18 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
         std::scoped_lock lock{owners_mutex};
         server_owners = std::move(owners);
         owners_heard_ms = SteadyMilliseconds();
+        return;
+    }
+    case bbcoop::Envelope::kEnemiesLetGo: {
+        std::scoped_lock lock{owners_mutex};
+        const bbcoop::EnemiesLetGo& let_go = envelope.enemies_let_go();
+        auto& [heard, heard_ms] = heard_let_go[let_go.member()];
+        if (heard.handles_size() != let_go.handles_size() || heard.map() != let_go.map()) {
+            LOG_INFO(Debug, "Bloodborne party: {} let go {} enemies on map {:#x}", let_go.member(),
+                     let_go.handles_size(), let_go.map());
+        }
+        heard = let_go;
+        heard_ms = SteadyMilliseconds();
         return;
     }
     default:
@@ -551,6 +594,33 @@ std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms) {
     return server_owners;
 }
 
+std::optional<std::unordered_map<u32, std::string>> EnemiesLetGoBy(const std::string& member,
+                                                                   u32 map, s64 now_ms) {
+    std::scoped_lock lock{owners_mutex};
+    const auto heard = heard_let_go.find(member);
+    if (heard == heard_let_go.end() || heard->second.first.map() != map ||
+        now_ms - heard->second.second > EnemiesLetGoFreshMs) {
+        return std::nullopt;
+    }
+    const bbcoop::EnemiesLetGo& let_go = heard->second.first;
+    std::unordered_map<u32, std::string> runners;
+    for (int index = 0; index < let_go.handles_size(); ++index) {
+        runners[let_go.handles(index)] =
+            index < let_go.runners_size() ? let_go.runners(index) : std::string{};
+    }
+    return runners;
+}
+
+void SendEnemiesLetGo(u32 map, const std::map<u32, std::string>& runners) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_enemies_let_go()->set_map(map);
+    for (const auto& [handle, runner] : runners) {
+        envelope.mutable_enemies_let_go()->add_handles(handle);
+        envelope.mutable_enemies_let_go()->add_runners(runner);
+    }
+    Queue(std::move(envelope));
+}
+
 ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms) {
     StartThread();
     std::scoped_lock member_lock{member_mutex};
@@ -825,6 +895,7 @@ bool HoldTitleLoadForTeam(u32 slot) {
             // for the team's world (TeamWorldWaitMs at most) so the save takes it as it loads.
             team_party = decision.start->party();
             team_world.reset();
+            team_session.reset();
             team_world_wait_ms = SteadyMilliseconds();
             new_party = true;
         }
@@ -874,6 +945,10 @@ bool HoldTitleLoadForTeam(u32 slot) {
     if (decision.start && party_controller) {
         const bool host = decision.start->host() == me;
         party_controller->Assign(host ? PartyRole::Host : PartyRole::Guest);
+        {
+            std::scoped_lock lock{team_mutex};
+            team_load.Start(SteadyMilliseconds());
+        }
         LOG_INFO(Debug, "Co-op team lobby: the save plays in team {} as its {}",
                  decision.start->team(), host ? "host" : "guest");
     } else {
@@ -883,6 +958,49 @@ bool HoldTitleLoadForTeam(u32 slot) {
         LOG_INFO(Debug, "Co-op team lobby: the save plays alone");
     }
     return false;
+}
+
+TeamLoad::View TeamLoadView() {
+    std::scoped_lock lock{team_load_view_mutex};
+    return team_load_view;
+}
+
+// The game's thread (TickTeamJoin): this game's stage of the team's load, said to the others, and
+// the screen as it stands. The present thread only reads the view (it read the game's memory
+// itself once and crashed: rig 2026-10-14).
+void UpdateTeamLoad() {
+    const s64 now_ms = SteadyMilliseconds();
+    const u64 global = GetGlobalState();
+    const bool loading = global < 0x10000 || TryRead<u8>(global, 0x08).value_or(1) != 0;
+    const u64 manager = GetMatchingState();
+    const s32 matching = manager >= 0x10000 && HasMemoryAccess(manager, 0x128, MemoryProt::CpuRead)
+                             ? ReadValue<s32>(manager, 0x124)
+                             : 0;
+    // The host is in once its session is open, a guest once it stands in the session's world
+    // (after the summon reload).
+    const bool in = IsPartyGuestRole() ? InPartySession() && InSessionWorld()
+                                       : matching == MatchingStateHosting;
+    std::optional<bbcoop::LoadProgress> said;
+    TeamLoad::View view;
+    {
+        std::scoped_lock lock{team_mutex};
+        team_load.SetStage(loading ? bbcoop::LoadProgress::LOADING
+                           : in    ? bbcoop::LoadProgress::READY
+                                   : bbcoop::LoadProgress::JOINING,
+                           now_ms);
+        said = team_load.ToSend(now_ms);
+        const auto& lobby = team_gate.Lobby();
+        const auto members = lobby ? TeamLoadMembers(*lobby, lobby_member)
+                                   : std::vector<std::pair<std::string, std::string>>{};
+        view = team_load.Tick(members, lobby_member, now_ms);
+    }
+    if (said) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_load_progress() = *said;
+        Queue(std::move(envelope));
+    }
+    std::scoped_lock lock{team_load_view_mutex};
+    team_load_view = std::move(view);
 }
 
 bool TeamScreenUp() {
@@ -918,6 +1036,109 @@ void TeamBackAtTitle() {
         lobby_playing = false;
         lobby_hello_due = true;
     }
+    team_session.reset();
+    team_load = {};
+    {
+        std::scoped_lock view_lock{team_load_view_mutex};
+        team_load_view = {};
+    }
+}
+
+bool TickTeamJoin(bool ready) {
+    if (!team_switch) {
+        return false;
+    }
+    UpdateTeamLoad();
+    const u64 manager = GetMatchingState();
+    if (manager < 0x10000 || !HasMemoryAccess(manager, 0x128, MemoryProt::CpuRead)) {
+        return true;
+    }
+    std::optional<bbcoop::TeamSession> session;
+    bool in_team = false;
+    {
+        std::scoped_lock lock{team_mutex};
+        in_team = !team_party.empty() && lobby_playing;
+        session = team_session;
+    }
+    if (!in_team) {
+        return true; // alone: no session to open or join
+    }
+    static LeavingFlag leaving;
+    if (leaving.Clear(EventFlagOn(LeavingFlag::Flag), InPartySession(), SteadyMilliseconds())) {
+        using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+        reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, LeavingFlag::Flag,
+                                                                             false);
+        LOG_INFO(Debug,
+                 "Co-op team join: flag {} (a player on the way out) cleared: this game "
+                 "stands alone in its world",
+                 LeavingFlag::Flag);
+    }
+    // A team's guest is in its own world in a session too (joined in place): once that session is
+    // over it is a player again, not a white phantom (the summon's way home, a reload, did that;
+    // rig 2026-10-14: a save loaded as a phantom and never joined again). Only well after the
+    // session (matching idle for PhantomHomeMs): while it joins, the game makes it a phantom first.
+    static PhantomHome home;
+    const u64 player = GetLocalPlayer();
+    const bool phantom = player >= 0x10000 && HasMemoryAccess(player, 0x7C, MemoryProt::CpuWrite) &&
+                         ReadValue<s32>(player, 0x78) == WhiteGhostCharacterType;
+    if (home.Due(phantom, !InPartySession() && ReadValue<s32>(manager, 0x124) == 0,
+                 SteadyMilliseconds())) {
+        WriteValue(player, 0x78, s32{0});
+        LOG_INFO(Debug, "Co-op team join: a white phantom out of a session in its own world: a "
+                        "player again");
+    }
+    const TeamJoin::Frame frame{
+        .host = !IsPartyGuestRole(),
+        .matching_state = ReadValue<s32>(manager, 0x124),
+        .ready = ready,
+        .session_known = session.has_value() && !session->join().empty(),
+    };
+    const auto say = [](std::string join, u64 number) {
+        bbcoop::Envelope envelope;
+        envelope.mutable_team_session()->set_join(std::move(join));
+        envelope.mutable_team_session()->set_kind(TeamSessionKind);
+        envelope.mutable_team_session()->set_sign(TeamSessionSign);
+        envelope.mutable_team_session()->set_session(number);
+        Queue(std::move(envelope));
+    };
+    switch (team_join.Tick(frame)) {
+    case TeamJoin::Action::None:
+        break;
+    case TeamJoin::Action::CreateSession:
+        OpenTeamSession();
+        break;
+    case TeamJoin::Action::Publish:
+        if (const auto join = TeamSessionJoinData()) {
+            ++team_sessions_opened;
+            say(std::string{join->begin(), join->end()}, team_sessions_opened);
+            LOG_INFO(Debug, "Co-op team join: this host's session {} to the server ({} bytes)",
+                     team_sessions_opened, join->size());
+        } else {
+            LOG_WARNING(Debug, "Co-op team join: this host's session has no join data");
+        }
+        break;
+    case TeamJoin::Action::PublishClosed:
+        say({}, team_sessions_opened);
+        LOG_INFO(Debug, "Co-op team join: this host's session {} closed", team_sessions_opened);
+        break;
+    case TeamJoin::Action::Join: {
+        const std::string& join = session->join();
+        // Each guest's own player slot (two guests on one slot took each other's moves as their
+        // own: Kaniel 2026-10-15).
+        u32 sign = session->sign();
+        {
+            std::scoped_lock lock{team_mutex};
+            if (const auto lobby = team_gate.Lobby()) {
+                sign = TeamGuestSign(*lobby, lobby_member);
+            }
+        }
+        LOG_INFO(Debug, "Co-op team join: joining with player slot {}", sign);
+        JoinTeamSession({reinterpret_cast<const u8*>(join.data()), join.size()}, session->kind(),
+                        sign);
+        break;
+    }
+    }
+    return true;
 }
 
 std::optional<bbcoop::LobbyState> TeamLobbyState() {
@@ -1170,9 +1391,11 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
                       std::string& failure) {
     constexpr double TimeoutSeconds = 180.0;
     std::optional<bbcoop::LobbyState> lobby;
+    std::string me;
     {
         std::scoped_lock lock{team_mutex};
         lobby = team_gate.Lobby();
+        me = lobby_member;
     }
     const auto request = [](bbcoop::TeamRequest::Action action, std::string member = {},
                             std::string team = {}) {
@@ -1207,6 +1430,13 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
     } else if (IsTeamScreenVerb(command.verb)) {
         if (!TeamScreenUp()) {
             return false; // the title's Cross first (TickAutoplayTitle presses it)
+        }
+        // The hunt begins only once every member is ready (the lobby refuses it before).
+        if (command.verb == "team-start" && !(lobby && TeamCanBegin(*lobby, me))) {
+            if (elapsed > TimeoutSeconds) {
+                failure = "not every member got ready";
+            }
+            return false;
         }
         if (command.verb != "team-screen") {
             TeamChoose(command.verb == "team-ready"   ? TeamGate::Choice::Ready

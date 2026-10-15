@@ -117,6 +117,20 @@ enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
 void bbcoop_lobby_request(int action, const char *id);
 /* The title holds a save's load for the team: the team screen is up (bbport_overlay.cpp). */
 int bbcoop_team_screen(void);
+/* Kaniel 2026-10-14: the team loading screen (League of Legends): each hunter's stage and bar,
+ * up from the team's Start until every member is in the team's session. 0 when it is not up. */
+enum { BBCOOP_LOAD_WAITING, BBCOOP_LOAD_LOADING, BBCOOP_LOAD_JOINING, BBCOOP_LOAD_READY };
+typedef struct bbcoop_team_load_row {
+    char name[40];
+    int stage; /* BBCOOP_LOAD_* */
+    int percent;
+    int self;
+} bbcoop_team_load_row;
+typedef struct bbcoop_team_load {
+    int count;
+    bbcoop_team_load_row rows[4];
+} bbcoop_team_load;
+int bbcoop_team_load_view(bbcoop_team_load *view);
 /* Its buttons: this character ready, not ready, the leader's start (a member's: ready), alone. */
 enum { BBCOOP_TEAM_GO_READY = 0, BBCOOP_TEAM_GO_UNREADY = 1, BBCOOP_TEAM_GO_START = 2,
        BBCOOP_TEAM_GO_ALONE = 3 };
