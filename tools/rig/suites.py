@@ -1226,6 +1226,8 @@ SUITES = {
                             "guest2": [r"party death: ((real )?revive hit on|revive swing at)"]},
                     forbid={"host": SESSION_HOLDS + [r"party death: (real )?revive hit on"],
                             "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS}),
+            # Before crash3: after a guest's restart its lethal fall is a real death (smoke's wipe).
+            wipe(PARTY3),
             chapter("crash3", "one guest's game dies; host and the other guest stay together and "
                               "both still pick up items, and the party is three again once it is "
                               "back",
@@ -1241,18 +1243,30 @@ SUITES = {
                     expect={role: [r"lost a member; staying where it is"]
                             for role in ("host", "guest")},
                     allow=CRASH_CLEANUP),
+            # The host's game goes for good in this chapter, back in the next.
             chapter("host-crash3", "phase 7, host migration: the host's game dies; the two guests "
-                                   "stay together in their session (one of them hosts it now), "
-                                   "and the old host comes back into it: three again, nobody "
-                                   "leaving or joining again",
-                    {"host": ["sync hc3-ready", RESTART, START, "godmode", "wait-session 3 300",
-                              "wait 10", "sync hc3-back", "expect-session 3"],
+                                   "stay together in their session, one of them hosting it now, "
+                                   "nobody leaving or joining again",
+                    {"host": ["sync hc3-ready", RESTART, "wait 1"],
                      **{guest: ["sync hc3-ready", "wait 20", "expect-session 2",
-                                "expect-others-near 1 30", "sync hc3-back", "wait 10",
-                                "expect-session 3"] for guest in ("guest", "guest2")}},
+                                "expect-others-near 1 30"] for guest in ("guest", "guest2")}},
                     expect={guest: [r"session host moved to"] for guest in ("guest", "guest2")},
+                    forbid={guest: [r"sceNpMatching2LeaveRoom: called"]
+                            for guest in ("guest", "guest2")},
                     allow=CRASH_CLEANUP),
-            wipe(PARTY3),
+            # Last: the returning host's game crashes in it (a crash ends the suite).
+            chapter("leader-returns3", "the old host's game comes back and joins the session the "
+                                       "guest hosts now, on the slot that guest left: three "
+                                       "again",
+                    {"host": [START, "godmode", "wait-session 3 300", "wait 10", "sync lr3-back",
+                              "expect-session 3"],
+                     **{guest: ["sync lr3-back", "wait 10", "expect-session 3"]
+                        for guest in ("guest", "guest2")}},
+                    known_bug="the old host's game, back as a guest, ends its own session (the "
+                              "game's Lua handlers at eboot+0x13808b0 and 0x1388680 call "
+                              "MultiPlayStopRequest) and crashes at eboot+0x13cffba (rig "
+                              "2026-10-15, phase 7)",
+                    allow=CRASH_CLEANUP),
         ],
     },
 }
