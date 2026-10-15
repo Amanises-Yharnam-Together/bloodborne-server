@@ -395,6 +395,35 @@ TEST(TeamLoad, ReadyOnlyOnceEveryHuntersCharacterIsInItsWorld) {
     EXPECT_EQ(TeamLoad::OwnStage(false, true, 0, 0), P::READY) << "nobody else coming";
 }
 
+// Release thread 2026-10-16 (the dog scenario): the host travelled to the Dream before it saw the
+// guest's character, never said ready, and the guest stayed covered (its attacks missed) until the
+// host came back. A member on another map is not waited for, and ready stays ready.
+TEST(TeamLoad, DoesNotWaitForMembersOnAnotherMap) {
+    const std::vector<std::pair<std::string, std::string>> team3{
+        {"h", "Host"}, {"g", "Guest"}, {"g2", "Guest 2"}};
+    using Maps = std::vector<std::pair<std::string, u32>>;
+    EXPECT_EQ(TeamLoad::OthersHere(team3, "h", Maps{}, 0x18010000), 2u) << "nothing known: all";
+    EXPECT_EQ(
+        TeamLoad::OthersHere(team3, "h", Maps{{"h", 0x18010000}, {"g", 0x18010000}}, 0x18010000),
+        2u)
+        << "g2 not on the board yet: waited for";
+    EXPECT_EQ(TeamLoad::OthersHere(team3, "h", Maps{{"g", 0x15000000}, {"g2", 0}}, 0x18010000), 1u)
+        << "g in the Dream: not waited for; g2 loading (map 0): waited for";
+    EXPECT_EQ(
+        TeamLoad::OthersHere(team3, "g", Maps{{"h", 0x15000000}, {"g2", 0x15000000}}, 0x18010000),
+        0u);
+}
+
+TEST(TeamLoad, ReadyStaysReady) {
+    TeamLoad load;
+    load.Start(0);
+    load.SetStage(bbcoop::LoadProgress::READY, 100);
+    load.SetStage(bbcoop::LoadProgress::JOINING, 200);
+    load.Take(OtherLoad("h", bbcoop::LoadProgress::READY, 100), 300);
+    EXPECT_FALSE(load.Tick(Team2, "g", 300).up)
+        << "the host left, this game no longer sees it: still ready, the screen opens";
+}
+
 // Kaniel 2026-10-15: the opening cutscene under the team's loading screen could not be skipped:
 // it is skipped by itself, the game's own skip (Options) pressed for the player.
 TEST(CutsceneSkip, PressesOptionsWhileACutscenePlaysUnderTheScreen) {

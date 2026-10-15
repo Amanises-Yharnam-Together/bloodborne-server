@@ -254,6 +254,11 @@ public:
     // session and `others_seen` of the `others_needed` other hunters' characters stand in its
     // world (Kaniel 2026-10-15: the screen stays until every guest's character has spawned).
     static Stage OwnStage(bool loading, bool in_session, size_t others_seen, size_t others_needed);
+    // The other members this game waits to see: `members` but this one (`me`) and those the map
+    // board (`maps`: member, map) has on another map than `map` (0: loading, still waited for).
+    static size_t OthersHere(std::span<const std::pair<std::string, std::string>> members,
+                             std::string_view me, std::span<const std::pair<std::string, u32>> maps,
+                             u32 map);
     void Start(s64 now_ms);
     void SetStage(Stage stage, s64 now_ms);
     void Take(const bbcoop::LoadProgress& other, s64 now_ms);
