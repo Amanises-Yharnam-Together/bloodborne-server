@@ -119,6 +119,12 @@ public:
         QStringList log;
         QList<Coop> coop;
         QList<Endpoint> gone; // links forgotten
+        // Games welcomed, with their virtual addresses (phase 7: what the rooms hand out).
+        struct Linked {
+            QByteArray online_id;
+            Endpoint virtual_endpoint;
+        };
+        QList<Linked> linked;
     };
 
     explicit Hub(qint64 quiet_ms = 3000, qint64 gone_ms = 60000, qint64 stats_ms = 10000,

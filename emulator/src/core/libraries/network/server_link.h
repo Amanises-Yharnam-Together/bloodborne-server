@@ -31,6 +31,11 @@ bool ServerCoopSend(const void* body, u32 len);
 int ServerCoopReceive(void* body, u32 len);
 // Whether the server took this game's hello (it may restart: then false until it does again).
 bool ServerLinkWelcomed();
+// Phase 7 (net_link.h ConnectsWithoutHandshake, PingsStun): the port's room members are connected
+// at once through the server, and it sends no STUN ping (the server has its address from its
+// hello).
+bool ConnectsPeersWithoutHandshake();
+bool PingsServerStun();
 // The rig's dropped connection (autoplay cut-link, phase 7): nothing goes out or comes in on this
 // game's UDP socket for `ms`, as when its Wi-Fi drops.
 void CutServerLinkForTest(u32 ms);

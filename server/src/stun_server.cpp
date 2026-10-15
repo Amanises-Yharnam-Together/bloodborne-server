@@ -162,6 +162,13 @@ void StunServer::Apply(const ServerLink::Hub::Result& result) {
         qInfo().noquote() << line;
     for (const auto& gone : result.gone)
         m_world.Forget(gone);
+    // Phase 7: a linked game's address for the rooms and signaling is its virtual one, known from
+    // its hello (its STUN ping says the same, and is no longer needed for it).
+    for (const auto& linked : result.linked) {
+        QWriteLocker lk(&m_shared->matching.udpLock);
+        m_shared->matching.udpExt[QString::fromUtf8(linked.online_id)] = {
+            QHostAddress(linked.virtual_endpoint.ipv4).toString(), linked.virtual_endpoint.port};
+    }
     for (const auto& coop : result.coop)
         Apply(m_world.Receive(coop.from, coop.online_id, coop.body,
                               QDateTime::currentMSecsSinceEpoch()));

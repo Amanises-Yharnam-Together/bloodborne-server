@@ -308,6 +308,16 @@ inline bool TakesDatagramFrom(const ServerEndpoint& server, u32 addr_nbo, u16 po
     return addr_nbo == server.addr_nbo && port_nbo == server.port_nbo;
 }
 
+// Phase 7, the port: its peers are the server's room members at their virtual addresses, every
+// frame through the server, which knows who is linked; a member is connected at once (no
+// signaling handshake), and the server knows this game's address from its hello (no STUN).
+inline bool ConnectsWithoutHandshake(const ServerEndpoint& server, bool server_only) {
+    return server_only && server.addr_nbo != 0 && server.port_nbo != 0;
+}
+inline bool PingsStun(bool server_only) {
+    return !server_only;
+}
+
 // The link to the server going quiet (no pong for quiet_ms) or answering again.
 struct LinkChange {
     bool quiet = false;

@@ -154,6 +154,17 @@ TEST(NetLink, ThePortTalksToPeersOnlyThroughTheServer) {
     EXPECT_TRUE(TakesDatagramFrom(server, 0x0201A8C0, Port1234, false)) << "shadPS4";
 }
 
+// Phase 7: the port's peers are the server's room members at their virtual addresses, all
+// reached through the server: a member is connected at once, with no handshake and no STUN.
+TEST(NetLink, ThePortsPeersNeedNoHandshake) {
+    const ServerEndpoint server{Loopback, 0x2A7A};
+    EXPECT_TRUE(ConnectsWithoutHandshake(server, true));
+    EXPECT_FALSE(ConnectsWithoutHandshake(ServerEndpoint{}, true)) << "no link yet";
+    EXPECT_FALSE(ConnectsWithoutHandshake(server, false)) << "shadPS4 handshakes";
+    EXPECT_FALSE(PingsStun(true)) << "the server knows the port's address from its hello";
+    EXPECT_TRUE(PingsStun(false)) << "shadPS4";
+}
+
 TEST(NetLink, PingsOnceASecondAndMeasuresTheRoundTrip) {
     PingMeter meter;
     const auto first = meter.Due(0);

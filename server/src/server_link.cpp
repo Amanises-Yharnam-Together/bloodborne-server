@@ -385,6 +385,7 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
     link.last_heard_ms = now_ms;
     link.quiet = false;
     result.sends.append({from, Encode(Welcome{true, {}})});
+    result.linked.append({link.online_id, link.virtual_endpoint});
     result.log.append(
         QStringLiteral("server link: %1 %2, build %3, %4 linked")
             .arg(again ? "hello again from" : "linked", Name(link), QString::fromUtf8(link.build))

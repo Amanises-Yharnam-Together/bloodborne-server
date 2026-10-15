@@ -14,6 +14,7 @@
 
 #include "common/logging/log.h"
 #include "core/libraries/network/net.h"
+#include "core/libraries/network/server_link.h"
 #include "core/libraries/network/sockets.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_matching2/np_matching2_internal.h"
@@ -356,7 +357,7 @@ std::vector<RoomPeerAddress> GetActiveRoomPeers() {
 }
 
 bool SendMatching2StunPing(const ContextObject& ctx) {
-    if (!NpSignaling::Stubs::Matching2Enabled()) {
+    if (!NpSignaling::Stubs::Matching2Enabled() || !Net::PingsServerStun()) {
         return false;
     }
     if (!ctx.started || ctx.online_id.data[0] == '\0') {
@@ -420,6 +421,11 @@ void StartMatching2PeerHandshake(ContextObject& ctx, OrbisNpMatching2RoomId room
         return;
     }
     ResolvePeerEndpoint(member_it->second, peer);
+    if (Net::ConnectsPeersWithoutHandshake() && peer.addr != 0 && peer.port != 0) {
+        // Phase 7: a room member of the server's, reached through it: connected now.
+        MarkMatching2PeerActive(ctx, room_id, member_id, peer.addr, peer.port);
+        return;
+    }
     peer.status = kMatching2ConnPending;
     peer.handshake_started = true;
     peer.sent_check = false;

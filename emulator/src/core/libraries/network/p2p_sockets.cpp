@@ -1515,6 +1515,15 @@ bool ServerLinkWelcomed() {
     return ServerLinkSwitchOn() && P2PTransport::Instance().LinkWelcomed();
 }
 
+bool ConnectsPeersWithoutHandshake() {
+    return Link::ConnectsWithoutHandshake(P2PTransport::Instance().Server(),
+                                          PeersOnlyThroughServer());
+}
+
+bool PingsServerStun() {
+    return Link::PingsStun(PeersOnlyThroughServer());
+}
+
 void CutServerLinkForTest(u32 ms) {
     P2PTransport::Instance().CutLink(ms);
 }

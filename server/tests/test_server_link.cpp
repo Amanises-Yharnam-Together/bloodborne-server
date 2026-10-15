@@ -313,7 +313,11 @@ int VirtualMembers() {
   CHECK(VirtualEndpointOf("Ada") == ada_virtual); // the same every time
   CHECK(!hub.VirtualOf(Ada));                     // not linked yet
   hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
-  hub.Receive(Ada, HelloFrom("Ada"), 0);
+  // A game welcomed is said with its virtual address: the rooms and signaling
+  // hand that one out (no STUN needed).
+  const auto linked = hub.Receive(Ada, HelloFrom("Ada"), 0).linked;
+  CHECK(linked.size() == 1 && linked[0].online_id == "Ada" &&
+        linked[0].virtual_endpoint == ada_virtual);
   CHECK(hub.VirtualOf(Ada) == ada_virtual);
 
   // Sent to Ada's virtual address: Ada gets it from Kaniel's virtual address.
