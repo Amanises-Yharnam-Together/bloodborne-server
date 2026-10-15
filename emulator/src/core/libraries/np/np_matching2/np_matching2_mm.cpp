@@ -821,9 +821,13 @@ s32 MmSubmitRequest(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId 
              ctx_id, req_id, static_cast<u16>(req_event), static_cast<u16>(cmd), a_variant,
              reinterpret_cast<std::uintptr_t>(request_cb.callback), fmt::ptr(request_cb.arg));
 
-    const u64 pkt_id = client->SubmitRequest(static_cast<ShadNet::CommandType>(cmd), payload);
+    u64 pkt_id = 0;
     {
+        // Held across the send: the reply can come back on the reader thread before the request
+        // is filed (rig 2026-10-15, a JoinRoom's on localhost: "has no pending entry", and the
+        // guest never joined); OnMatchingReply waits for the filing instead.
         std::lock_guard lock(g_mm.pending_mutex);
+        pkt_id = client->SubmitRequest(static_cast<ShadNet::CommandType>(cmd), payload);
         g_mm.pending[pkt_id] = {ctx_id,        req_id, req_event, a_variant, request_cb.callback,
                                 request_cb.arg};
     }
