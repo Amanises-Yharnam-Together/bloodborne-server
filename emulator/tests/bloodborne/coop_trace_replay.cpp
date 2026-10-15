@@ -149,7 +149,8 @@ void CoopTraceReplay::Kills(const TraceRecord& record, std::vector<std::string>&
     if (record.Field("forget") == "1") {
         changes = visit_kills.Forget();
     }
-    const auto observed = visit_kills.Observe(visit, characters, others);
+    const u32 map = static_cast<u32>(Hex(Value(kills_in.values, "map")).value_or(0));
+    const auto observed = visit_kills.Observe(visit, characters, others, map);
     changes.insert(changes.end(), observed.begin(), observed.end());
     for (const auto& [handle, killed] : changes) {
         out.push_back(fmt::format("kill {} {:#x}", killed ? "posted" : "withdrawn",

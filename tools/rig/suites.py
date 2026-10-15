@@ -33,7 +33,7 @@ from scenarios import (AWAY_FROM_LAMP, BLOODSTAIN_DROPPED, BLOODSTAIN_STOLEN,  #
                        HUNTERS_DREAM, LETHAL_FALL, LEVEL_SYNC, OTHER_MAP_FLAG, PARTY_DEATH,
                        REVIVE_HITS, SESSION_HOLDS, HOST_JOINS, GUEST_JOINS, START,
                        STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_NPC, GUEST_ALONE_SPOT,
-                       IOSEFKA_WAIT, HP_LOWERED, KNEEL, attack, only_kill)
+                       IOSEFKA_WAIT, HP_LOWERED, KNEEL, YHARNAM_TO_WARD, attack, only_kill)
 
 DREAM = "0x15000000"  # the Hunter's Dream's map (HUNTERS_DREAM is its lamp)
 # The party list's icons came (Kaniel 2026-10-12: no team icons; the log said "icons none").
@@ -246,6 +246,38 @@ def border_crossings(name: str, border: dict, *, name_as: str | None = None,
                             "each time, nobody lost",
                    {role: list(steps) for role in PARTY2},
                    forbid={role: SESSION_HOLDS + BORDER_FORBID for role in PARTY2})
+
+def ward_kill_held() -> list[dict]:
+    """Kaniel 2026-10-15 (Lisara's log, friend38): both walked from Central Yharnam into the
+    Cathedral Ward and killed there; Kaniel went to the Dream and back while Lisara stood in the
+    Ward, and the kills were alive again. A walk keeps the visit, and the kills were filed under
+    the map it began on, where nobody was. Two chapters: the walk and the kill, then the trip."""
+    border = BORDERS["tomb"]
+    start = " ".join(border["trail"].split()[:3])
+    # The glide alone sometimes leaves the map on Central Yharnam (border-after-gascoigne's known
+    # bug), so each then steps on, by the Ward's lamp: still a walk, nothing loads.
+    walk = [f"travel {border['lamp']}", "wait-members 2 300", "sync wkh-there",
+            f"teleport {start}", "wait 3", f"glide {border['trail']}",
+            f"glide {YHARNAM_TO_WARD}", "sync wkh-over", "wait 5", f"expect-map {CATHEDRAL_WARD}"]
+    return [
+        chapter("ward-walk-kill", "both walk from Central Yharnam into the Cathedral Ward; the "
+                                  "host kills an enemy there",
+                {"host": [*walk, *attack(WARD_ENEMY), "wait 5", "sync wkh-killed"],
+                 "guest": [*walk, "sync wkh-killed"]},
+                expect={"host": [r"kill board gets 1 kills"]},
+                forbid={"host": only_kill(WARD_ENEMY), "guest": SESSION_HOLDS}),
+        chapter("ward-kill-held", "the host goes to the Dream and back to the Ward's lamp while "
+                                  "the guest stays in the Ward: the kill stands in both games",
+                {"host": [f"travel {HUNTERS_DREAM}", "wait 5", f"travel {CATHEDRAL_WARD_LAMP}",
+                          "wait-members 2 300", "sync wkh-back", "wait 15", "census 60",
+                          f"expect-hp {WARD_ENEMY} == 0"],
+                 "guest": ["sync wkh-back", "wait 15", "census 60",
+                           f"expect-hp {WARD_ENEMY} == 0"]},
+                forbid={"host": SESSION_HOLDS + [rf"kill board gets \d+ kills, [1-9]\d* back "
+                                                 rf".*back {WARD_ENEMY}"],
+                        "guest": SESSION_HOLDS}),
+    ]
+
 
 SUITES = {
     # Before every kit (the robustness review: 12 of the night's bugs came from untested kits).
@@ -550,6 +582,7 @@ SUITES = {
                         "wait 15", "census 60", f"expect-hp {ENEMY} == 0"],
                      "host": ["sync held-back", "wait 15", "census 60"]},
                     forbid=holds(PARTY2)),
+            *ward_kill_held(),
             map_reset(PARTY2),
             chapter("kill-seen", "together, the host kills an enemy: the guest's copy is dead with "
                                  "the zero hit, not at the kill reward (Kaniel 2026-10-12: kills "

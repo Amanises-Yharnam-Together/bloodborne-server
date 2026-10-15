@@ -1731,6 +1731,43 @@ TEST(BloodborneSharedKills, KillsStandWhileSomeoneStaysOnTheMap) {
     EXPECT_TRUE(kills.Held(Yharnam).empty());
 }
 
+// Kaniel 2026-10-15 (Lisara's log, friend38): both had walked from Central Yharnam into the
+// Cathedral Ward and killed two enemies there; Kaniel went to the Dream and back while Lisara stood
+// in the Ward, and the enemies were alive again. A walk keeps the visit, so the kills were filed
+// under the map the visit began on (Central Yharnam, where nobody was) and taken back. A kill is
+// of the map it died on: it stands while someone is on that map.
+TEST(BloodborneSharedKills, AKillIsOfTheMapItDiedOn) {
+    constexpr u32 Yharnam = 0x18010000;
+    constexpr u32 Ward = 0x18000000;
+    constexpr u32 Dream = 0x15000000;
+    const auto visit = [](u32 map, u64 n) { return (u64{map} << 32) | n; };
+    using Changes = std::vector<std::pair<s32, bool>>;
+    const std::vector<SeenCharacter> alive{{0x10014068, 210}, {0x1001005f, 300}};
+    const std::vector<SeenCharacter> both_dead{{0x10014068, 0}, {0x1001005f, 0}};
+    const std::vector<u32> lisara_in_ward{Ward};
+    VisitKills kills;
+    const u64 walk = visit(Yharnam, 1);
+    kills.Observe(walk, alive, {}, Yharnam);
+    EXPECT_EQ(kills.Observe(walk, std::vector<SeenCharacter>{{0x10014068, 0}, {0x1001005f, 300}},
+                            {}, Yharnam),
+              (Changes{{0x10014068, true}}))
+        << "in Central Yharnam";
+    EXPECT_EQ(kills.Observe(walk, both_dead, lisara_in_ward, Ward), (Changes{{0x1001005f, true}}))
+        << "walked into the Ward: the same visit";
+    EXPECT_EQ(kills.Standing(), (WorldLogKills{{Yharnam, {0x10014068}}, {Ward, {0x1001005f}}}));
+    EXPECT_EQ(kills.Observe(visit(Dream, 2), {}, lisara_in_ward, Dream),
+              (Changes{{0x10014068, false}}))
+        << "to the Dream: Lisara holds the Ward's kill, Central Yharnam's goes";
+    EXPECT_EQ(kills.Held(Ward), (std::vector<u32>{0x1001005f}));
+    EXPECT_TRUE(kills.Held(Yharnam).empty());
+    EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, lisara_in_ward, Ward), Changes{})
+        << "back at the Ward's lamp: the respawned copy is hidden";
+    EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, {}, Ward), Changes{})
+        << "Lisara left, but this member is there";
+    EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, {}, Yharnam), (Changes{{0x1001005f, false}}))
+        << "walked out too: nobody on the Ward";
+}
+
 // Kaniel 2026-10-11: an enemy another member killed vanished in front of the player (hidden with
 // the event disable byte) instead of dying. One near this player dies by the game's own kill.
 TEST(BloodborneSharedKills, AnotherMembersKillNearbyDiesInsteadOfVanishing) {

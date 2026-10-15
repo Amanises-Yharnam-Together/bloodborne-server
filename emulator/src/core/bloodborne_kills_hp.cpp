@@ -1860,7 +1860,7 @@ void GiveMemberKillDrop(u64 character, u32 handle, bool own = false) {
 }
 
 // VisitKills's inputs for the trace (kills-in), when they change.
-void TraceKillsInputs(u64 visit, bool forget, std::span<const SeenCharacter> characters,
+void TraceKillsInputs(u64 visit, u32 map, bool forget, std::span<const SeenCharacter> characters,
                       std::span<const u32> others_maps) {
     if (!CoopTraceOn()) {
         return;
@@ -1871,10 +1871,11 @@ void TraceKillsInputs(u64 visit, bool forget, std::span<const SeenCharacter> cha
     for (const SeenCharacter& character : characters) {
         tokens.push_back(TraceToken(character));
     }
-    auto fields = sampler.Changes(
-        coop_trace_file.load(),
-        {{"visit", fmt::format("{:x}", visit)}, {"others", TraceHandles(others_maps)}},
-        {{"chars", std::move(tokens)}});
+    auto fields = sampler.Changes(coop_trace_file.load(),
+                                  {{"visit", fmt::format("{:x}", visit)},
+                                   {"map", fmt::format("{:x}", map)},
+                                   {"others", TraceHandles(others_maps)}},
+                                  {{"chars", std::move(tokens)}});
     if (forget) {
         fields.emplace_back("forget", "1");
     }
@@ -2030,9 +2031,9 @@ void KeepEnemyDeathsInStep(bool sharing) {
         died_visit = visit;
     }
     const bool forget_kills = party_kills_reset.exchange(false);
-    TraceKillsInputs(visit, forget_kills, characters, others_maps);
+    TraceKillsInputs(visit, map, forget_kills, characters, others_maps);
     auto changes = forget_kills ? visit_kills.Forget() : std::vector<std::pair<s32, bool>>{};
-    const auto observed = visit_kills.Observe(visit, characters, others_maps);
+    const auto observed = visit_kills.Observe(visit, characters, others_maps, map);
     changes.insert(changes.end(), observed.begin(), observed.end());
     std::erase_if(changes, [](const std::pair<s32, bool>& change) {
         return change.second && died_for_others.contains(static_cast<u32>(change.first));
