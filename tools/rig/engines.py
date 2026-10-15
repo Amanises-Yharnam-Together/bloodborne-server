@@ -67,6 +67,8 @@ class Emulator:
     commit_gb = 12.5
     # Each game starts once the one before is in the world: two loading at once were slow.
     staggered_start = True
+    # Phase 6: the port plays only in teams made on the title (the runner makes the scenario's).
+    teams = False
 
     def __init__(self, root: pathlib.Path = BB_ROOT):
         self.rig = root / "rig"
@@ -121,6 +123,7 @@ class Port(Emulator):
     commit_gb = 7.5
     # The port's games load side by side: all start at once.
     staggered_start = False
+    teams = True
 
     def __init__(self, root: pathlib.Path = BB_ROOT):
         super().__init__(root)

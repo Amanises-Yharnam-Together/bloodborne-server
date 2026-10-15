@@ -28,7 +28,7 @@ message Hello {
     string member = 3; // the member's board name (its online id in hex)
     uint32 run = 4;    // the game's run: a restart is a new run
     bool host = 5;     // it hosts the session: its world's state is the party's (shown, map state)
-    // It runs phase 4's enemy owners (SHADPS4_BLOODBORNE_ENEMY_OWNER): on an area another member
+    // It runs phase 4's enemy owners (every port game does): on an area another member
     // owns, its new kills and its HP reports do not count.
     bool enemy_owner = 6;
 }

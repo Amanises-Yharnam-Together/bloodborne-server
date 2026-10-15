@@ -87,8 +87,8 @@ void bbcoop_file_opened(const char *guest_path);
 /* The game unlocked a trophy itself; party members get it too. */
 void bbcoop_trophy_unlocked(int32_t trophy_id);
 
-/* Phase 5, the team lobby (SHADPS4_BLOODBORNE_TEAMS=1), for the game's own menu
- * (bbport_game_menu.cpp's Co-op Team page). Names are UTF-8; `id` is what a request names (a
+/* Phase 5, the team lobby (always on with co-op), for the game's own menu
+ * (the team screen, bbport_overlay.cpp). Names are UTF-8; `id` is what a request names (a
  * player's lobby member, a team's id). */
 enum { BBCOOP_LOBBY_TEAM = 4, BBCOOP_LOBBY_PLAYERS = 16, BBCOOP_LOBBY_INVITES = 8 };
 enum { BBCOOP_LOBBY_OFFLINE, BBCOOP_LOBBY_TITLE, BBCOOP_LOBBY_PLAYING };

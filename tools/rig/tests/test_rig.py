@@ -318,6 +318,40 @@ class EdgeTest(unittest.TestCase):
                         self.assertTrue(set(chapter.get(key, {})) <= set(scenario["roles"]))
 
 
+class TeamTest(unittest.TestCase):
+    """Phase 6: the port plays only in teams (the team screen holds every load), so the runner makes
+    the scenario's team on the title before its script, unless the script makes its own."""
+
+    def test_only_the_port_plays_in_teams(self):
+        self.assertTrue(engines.ENGINES["port"].teams)
+        self.assertFalse(engines.ENGINES["emulator"].teams)
+
+    def test_the_host_makes_the_team_and_the_guests_join_it(self):
+        roles = ["host", "guest", "guest2"]
+        self.assertEqual(run_scenario.team_prelude("host", roles, 0),
+                         ["team-create", "team-invite rig_guest", "team-invite rig_guest2",
+                          "team-wait 3", "team-start"])
+        self.assertEqual(run_scenario.team_prelude("guest", roles, 0), ["team-accept", "team-ready"])
+        self.assertEqual(run_scenario.team_prelude("guest2", roles, 0), ["team-accept", "team-ready"])
+
+    def test_a_restarted_game_goes_back_into_its_team(self):
+        roles = ["host", "guest"]
+        self.assertEqual(run_scenario.team_prelude("host", roles, 1), ["team-start"])
+        self.assertEqual(run_scenario.team_prelude("guest", roles, 2), ["team-ready"])
+
+    def test_a_game_alone_plays_alone(self):
+        self.assertEqual(run_scenario.team_prelude("host", ["host"], 0), ["team-alone"])
+
+    def test_the_prelude_goes_before_a_script_without_team_verbs_only(self):
+        roles = ["host", "guest"]
+        self.assertEqual(run_scenario.with_team(["wait 1"], "guest", roles, 0, teams=True),
+                         ["team-accept", "team-ready", "wait 1"])
+        self.assertEqual(run_scenario.with_team(["wait 1"], "guest", roles, 0, teams=False), ["wait 1"])
+        own = ["team-accept", "team-ready", "wait 1"]
+        self.assertEqual(run_scenario.with_team(own, "guest", roles, 0, teams=True), own)
+        self.assertIsNone(run_scenario.with_team(None, "guest", roles, 0, teams=True))
+
+
 class LaneTest(unittest.TestCase):
     def tearDown(self):
         run_scenario.use_lane(0)

@@ -11,14 +11,6 @@
 
 namespace Core::Bloodborne {
 
-bool TeamModeEnabled(const char* setting) {
-    if (setting == nullptr) {
-        return false;
-    }
-    const std::string_view value{setting};
-    return value == "1" || value == "on";
-}
-
 TeamGate::Decision TeamGate::Tick(const std::string& me, u32 slot_now, s64 now_ms) {
     (void)me;
     Decision decision;

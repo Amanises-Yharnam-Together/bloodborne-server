@@ -203,8 +203,8 @@ COOP_INSTALL = os.environ.get('BB_COOP_INSTALL') == '1' or (PORT_DIR / 'event-re
 HARDER_CHOICES = [('off', ('Off (the normal game)', 'Выключено (обычная игра)')),
                   (bbport_coop.HARDER_ON, ('Harder: enemy HP ×3, damage ×1.5, poise ×3',
                                            'Сложнее: HP врагов ×3, урон ×1.5, стойкость ×3'))]
-ROLES = [('guest', ('Guest (joins the host)', 'Гость (присоединяется к хосту)')),
-         ('host', ('Host (runs the co-op server)', 'Хост (запускает сервер)'))]
+ROLES = [('guest', ('Player (plays on the server)', 'Игрок (играет на сервере)')),
+         ('host', ('Host (runs the co-op server on this PC)', 'Хост (запускает сервер на этом ПК)'))]
 
 
 def coop_release_version():
@@ -2786,11 +2786,8 @@ class Launcher:
                   textvariable=var('account')).pack(fill='x')
         ttk.Entry(self.cell(card, 3, 1, _('Your account password', 'Пароль аккаунта')),
                   textvariable=var('password'), show='•').pack(fill='x')
-        # The party is its password alone (Kaniel 2026-10-13: no party name).
-        ttk.Entry(self.cell(card, 4, 0, _('Party password (the same for every player)',
-                                          'Пароль группы (одинаковый у всех)')),
-                  textvariable=var('party_secret')).pack(fill='x')
-        combo(self.cell(card, 4, 1, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
+        # No party settings: the team is made in the game (the team screen after Continue).
+        combo(self.cell(card, 4, 0, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
               'harder', HARDER_CHOICES)
         holder = self.cell(card, 5, 0, '', span=2)
         self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
@@ -2805,10 +2802,12 @@ class Launcher:
                     self.coop_stop_servers).pack(side='left', padx=(px(8), 0))
         self.coop_server_line = self.label(holder, '', 'small', MUTED)
         self.coop_server_line.pack(side='left', padx=(px(14), 0))
-        self.note(card, _("Everyone in a party uses this same release. Your account is made on the host's server the "
-                          'first time you press PLAY. Windows asks once to let co-op through its firewall.',
-                          'Все в группе используют один и тот же релиз. Аккаунт создаётся на сервере хоста при первом '
-                          'нажатии ИГРАТЬ. Windows один раз спросит разрешение для брандмауэра.'), top=14)
+        self.note(card, _("Everyone uses this same release. Your account is made on the host's server the first time "
+                          'you press PLAY. Make or join a team in the game: Continue, Load Game or New Game opens the '
+                          'team screen. Windows asks once to let co-op through its firewall.',
+                          'Все используют один и тот же релиз. Аккаунт создаётся на сервере хоста при первом нажатии '
+                          'ИГРАТЬ. Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают '
+                          'экран команды. Windows один раз спросит разрешение для брандмауэра.'), top=14)
         self.coop_changed()
         if not bbport_coop.find_game_folder(self.coop.get('game') or '.'):
             self.coop_search(None, quiet=True)
@@ -2964,8 +2963,7 @@ class Launcher:
         names = {'game': _('your Bloodborne folder', 'папку Bloodborne'),
                  'host_ip': _("the host's IP address", 'IP хоста'),
                  'account': _('an account name (3-16 letters, digits, _ or -)', 'имя аккаунта (3-16 букв, цифр, _ или -)'),
-                 'password': _('a password (letters, digits, _ or -)', 'пароль (буквы, цифры, _ или -)'),
-                 'party_secret': _('a party password (letters, digits, _ or -)', 'пароль группы (буквы, цифры, _ или -)')}
+                 'password': _('a password (letters, digits, _ or -)', 'пароль (буквы, цифры, _ или -)')}
         missing = bbport_coop.missing(self.coop)
         if missing:
             self.messagebox.showerror('Bloodborne', _('Fill in {} on the Co-op card.',

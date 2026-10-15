@@ -2118,7 +2118,7 @@ std::size_t PruneSaveBackups(const std::filesystem::path& user_dir, std::size_t 
 //   trace-dropped        lines lost to a full queue (TraceQueue)
 //   net-out, net-in      a game packet sent or queued for this game, only with
 //                        SHADPS4_BLOODBORNE_PACKET_TRACE on (see PacketTraceMode)
-//   link                 the server link's events (SHADPS4_BLOODBORNE_SERVER_LINK, net_link.h):
+//   link                 the server link's events (the port's, net_link.h):
 //                        event (welcome, refused, quiet, back, member-quiet/-back/-gone, rtt)
 //                        and detail
 // An "-in" record leaves out what did not change since its kind's last record, and its lists
@@ -2282,12 +2282,11 @@ constexpr std::array<u8, 7> UnreliablePacketQueued{0x48, 0x8D, 0x75, 0xC8, 0x4C,
 //   Drop     nobody's (0x27, the boss "thanks" kick)
 // The receiver decides on SameMap with the other member's map from the map board, so packets still
 // flow (the game's idle timer counts them) and both ends judge from the same board; Ours and Drop
-// stop at the send too. SHADPS4_BLOODBORNE_CHANNEL_TABLE=1 turns it on (port only, off by
-// default until the rig passes); it then replaces the map item header hook ("map item sync").
+// stop at the send too. Always on in the port's co-op (phase 6); it replaces the map item header
+// hook ("map item sync").
 enum class ChannelPolicy : u8 { Pass, SameMap, Ours, Drop };
 ChannelPolicy NativeChannelPolicy(u32 channel);
 std::string_view ChannelPolicyName(ChannelPolicy policy);
-bool ChannelTableEnabled(const char* setting);
 enum class PacketWay : u8 { Out, In };
 // Whether the game sends (Out) or gets (In) a packet on `channel`. `own_map` is this game's map (0
 // while it does not read), `peer_map` the other member's on the map board (nothing or 0 when not
@@ -2321,12 +2320,11 @@ constexpr u64 TitleLoadSlotOffset = 0x1490; // GameMan's (GlobalState's) save sl
 // Phase 4 (docs/SERVER_COOP_PLAN.md): one game runs each occupied map's enemies, the one shadNet
 // names (bbcoop::EnemyOwners: the session's host while it is there, else the member there first,
 // handed on when it leaves, loads or goes silent); the others follow it.
-// SHADPS4_BLOODBORNE_ENEMY_OWNER=1 (port only, with the server world; it turns the channel table
-// on) until the rig passes. The game is host-centred: the host runs every enemy (ownership words at
-// WorldChrMan +0xA40 >= 0), sends their HP (ch 5, only at state +0x124 == 3) and applies the
-// guests' hits (ch 0x15, sent to the host); a guest applies the host's HP (only at state 6, read
-// from the host's member). The owner's game is made to act as that host for the enemies, a
-// follower's as a guest:
+// Always in the port's co-op (phase 6), with the server world and the channel table. The game is
+// host-centred: the host runs every enemy (ownership words at WorldChrMan +0xA40 >= 0), sends their
+// HP (ch 5, only at state +0x124 == 3) and applies the guests' hits (ch 0x15, sent to the host); a
+// guest applies the host's HP (only at state 6, read from the host's member). The owner's game is
+// made to act as that host for the enemies, a follower's as a guest:
 //   ownership words  owner 0 (AI), follower 0xFFFF (the network controller follows the owner)
 //   HP sends         the state checks read 3 on the owner, 6 on a follower (EnemySyncState), and
 //                    a follower reads ch 5 from the owner's member, not the host's
@@ -2354,7 +2352,6 @@ constexpr s64 EnemyOwnersFreshMs = 3'000;
 // A new owner's copies take the log's HP (the last owner's reports) for this long.
 constexpr s64 EnemyOwnerTakeoverMs = 5'000;
 enum class EnemyRole : u8 { Unknown, Owner, Follower };
-bool EnemyOwnerEnabled(const char* setting);
 const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32 map);
 // This member's role on `map`: Unknown (the game's own way) out of the world (map 0), without a
 // name, or when nobody runs the area.

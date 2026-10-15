@@ -124,14 +124,6 @@ TEST(EnemyOwner, AFollowerTakesTheEnemiesFromTheOwnerOnly) {
     }
 }
 
-TEST(EnemyOwner, TheSwitchIsOffUnlessAskedFor) {
-    EXPECT_FALSE(EnemyOwnerEnabled(nullptr));
-    EXPECT_FALSE(EnemyOwnerEnabled(""));
-    EXPECT_FALSE(EnemyOwnerEnabled("0"));
-    EXPECT_TRUE(EnemyOwnerEnabled("1"));
-    EXPECT_TRUE(EnemyOwnerEnabled("on"));
-}
-
 TEST(EnemyOwner, ARoleChangeIsLoggedOnce) {
     EnemyRoleLog log;
     EXPECT_EQ(log.Change(EnemyRole::Unknown, CentralYharnam, nullptr), std::nullopt);

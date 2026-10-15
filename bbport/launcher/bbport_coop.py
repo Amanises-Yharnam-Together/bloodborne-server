@@ -31,11 +31,10 @@ GAME_SERVER = 'https://ss4.scej-network.jp:20443'
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 DETACHED = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
 
-# The answers, as 1 - SETUP asked them (FPS is gone: co-op is always the fixed 60 FPS mode; the party is
-# its password alone, Kaniel 2026-10-13: the party name went).
+# The answers, as 1 - SETUP asked them (FPS is gone: co-op is always the fixed 60 FPS mode). No party
+# settings: the team is made in the game's team screen (phase 6). `role` 'host' runs the co-op server.
 DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account': '', 'password': '',
-            'party_secret': '', 'p2p_port': 'auto', 'harder': 'off', 'prepared': ''}
-PARTY_NAME = 'party'  # the party's name on the server: every party there is told apart by its password
+            'p2p_port': 'auto', 'harder': 'off', 'prepared': ''}
 HARDER_ON = '3,1.5,3'  # the kit's harder enemies: HP, damage and poise multipliers
 
 
@@ -67,7 +66,7 @@ def valid_harder(value):
 def missing(settings):
     """The answers still to give (or wrong), in the window's order."""
     checks = (('game', lambda v: bool(v)), ('host_ip', valid_ip), ('account', valid_name),
-              ('password', valid_secret), ('party_secret', valid_secret))
+              ('password', valid_secret))
     return [key for key, ok in checks if not ok(str(settings.get(key, '')))]
 
 
@@ -82,13 +81,12 @@ def from_settings_bat(path):
         match = re.fullmatch(r'set "([A-Z0-9_]+)=(.*)"', line.strip())
         if match:
             values[match.group(1)] = match.group(2)
-    _party_name, _, party_secret = values.get('PARTY', '').partition(':')
     settings = dict(DEFAULTS)
     settings.update({'game': values.get('GAME', ''),
                      'update': '' if values.get('UPDATE', 'none') == 'none' else values['UPDATE'],
                      'role': values.get('ROLE', 'guest') if values.get('ROLE') in ('host', 'guest') else 'guest',
                      'host_ip': values.get('HOSTIP', ''), 'account': values.get('NPID', ''),
-                     'password': values.get('PASS', ''), 'party_secret': party_secret, 'p2p_port': values.get('P2PPORT', 'auto') or 'auto',
+                     'password': values.get('PASS', ''), 'p2p_port': values.get('P2PPORT', 'auto') or 'auto',
                      'harder': values.get('HARDER', 'off') or 'off'})
     return settings
 
@@ -492,10 +490,11 @@ def game_environment(env, settings, install, root):
         'BB_SHADNET_NPID': settings['account'], 'BB_SHADNET_PASSWORD': settings['password'],
         'BB_USER_NAME': settings['account'],
         'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1',
-        'SHADPS4_BLOODBORNE_PARTY': f'{PARTY_NAME}:{settings["party_secret"]}',
-        'SHADPS4_BLOODBORNE_PARTY_ROLE': settings['role'],
         'SHADPS4_BLOODBORNE_RE_TRACE': '0',
     })
+    # The party is the team made in the game's team screen: never a setting.
+    for key in ('SHADPS4_BLOODBORNE_PARTY', 'SHADPS4_BLOODBORNE_PARTY_ROLE'):
+        env.pop(key, None)
     # Co-op is the fixed 60 FPS mode for everyone (a host above 60 made the guests see everyone
     # freeze and fly): no frame cap from the launcher.
     env.pop('BB_FPS_LIMIT', None)
