@@ -381,6 +381,22 @@ TEST(TeamGate, EachGuestJoinsWithItsOwnPlayerSlot) {
     EXPECT_EQ(TeamGuestSign(bbcoop::LobbyState{}, "b"), 7u);
 }
 
+// Phase 7: the server says each guest's slot (TeamMember.sign), kept while others come and go:
+// b keeps 7 after c (6) left, and d keeps 5, whatever their order in the list.
+TEST(TeamGate, TheServerSaysEachGuestsPlayerSlot) {
+    bbcoop::LobbyState lobby = InTeam("a");
+    const auto add = [&](const char* member, u32 sign) {
+        bbcoop::TeamMember& m = *lobby.mutable_team()->add_members();
+        m.set_member(member);
+        m.set_sign(sign);
+    };
+    add("a", 0);
+    add("d", 5);
+    add("b", 7);
+    EXPECT_EQ(TeamGuestSign(lobby, "d"), 5u);
+    EXPECT_EQ(TeamGuestSign(lobby, "b"), 7u);
+}
+
 // Kaniel 2026-10-15: Lisara back in after a drop still had the loading bars on top: they waited
 // for a member that had gone (offline) or stayed at the title. The screen shows the members coming.
 TEST(TeamLoad, ShowsOnlyTheMembersComing) {

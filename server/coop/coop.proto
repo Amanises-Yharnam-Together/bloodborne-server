@@ -453,6 +453,9 @@ message TeamMember {
     bool ready = 4;
     uint32 slot = 5;
     string character = 6;
+    // Phase 7: the player slot the server gives this guest (the sign it joins sessions with:
+    // 7, 6, 5), kept while others come and go; 0 for the leader, who hosts.
+    uint32 sign = 7;
 }
 
 message Team {

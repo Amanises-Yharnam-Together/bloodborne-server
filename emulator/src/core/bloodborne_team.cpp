@@ -26,6 +26,11 @@ u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me) {
     if (!lobby.has_team()) {
         return FirstGuestSign;
     }
+    for (const bbcoop::TeamMember& m : lobby.team().members()) {
+        if (m.member() == me && m.sign() != 0) {
+            return m.sign(); // the server's (phase 7)
+        }
+    }
     u32 guest = 0;
     for (const bbcoop::TeamMember& m : lobby.team().members()) {
         if (m.member() == lobby.team().leader()) {
