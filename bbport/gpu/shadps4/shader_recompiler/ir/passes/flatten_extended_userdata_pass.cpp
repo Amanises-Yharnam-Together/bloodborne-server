@@ -103,6 +103,13 @@ static bool SrtWalkerSignalHandler(void* context, void* fault_address) {
     if (code < code_start || code >= code_end) {
         return false; // Not in SRT code range
     }
+    // bbport: walks ahead of the game (draw preparation workers, the recording thread's table
+    // check) may follow pointers into memory the game has reused since. They go back to their
+    // recovery point (probe.c) and the GPU thread walks the tables itself; patching here made one
+    // stale read zero that load for good (Supermedo's bbport 479f2f51).
+    if (runtime_fault_recover) {
+        return false;
+    }
 
     // bbport: draw-preparation workers run the same walker concurrently. A thread that faulted
     // on the instruction before another one patched it finds the patch here and retries; decoding
@@ -128,29 +135,38 @@ static bool SrtWalkerSignalHandler(void* context, void* fault_address) {
     size_t len = instruction.length;
     const size_t patch_size = 3;
     u8* code_patch = const_cast<u8*>(reinterpret_cast<const u8*>(code));
+    u8 patch[patch_size];
 
     // We can only encounter rdi or r10d as the first operand in a
     // fault memory access for SRT walker.
     switch (operands[0].reg.value) {
     case ZYDIS_REGISTER_RDI:
         // mov rdi, [rdi + (off_dw << 2)] -> xor rdi, rdi
-        code_patch[0] = 0x48;
-        code_patch[1] = 0x31;
-        code_patch[2] = 0xFF;
+        patch[0] = 0x48;
+        patch[1] = 0x31;
+        patch[2] = 0xFF;
         break;
     case ZYDIS_REGISTER_R10D:
         // mov r10d, [rdi + (off_dw << 2)] -> xor r10d, r10d
-        code_patch[0] = 0x45;
-        code_patch[1] = 0x31;
-        code_patch[2] = 0xD2;
+        patch[0] = 0x45;
+        patch[1] = 0x31;
+        patch[2] = 0xD2;
         break;
     default:
         UNREACHABLE_MSG("Unsupported register for SRT walker patch");
         return false;
     }
 
-    // Fill nops
-    memset(code_patch + patch_size, 0x90, len - patch_size);
+    // bbport: other threads may be running this code. Written from the end, every state in
+    // between is a load into the same register or a register move into it: nops over the
+    // displacement, then the ModRM byte (mov reg, reg), the REX prefix, the xor opcode last
+    // (Supermedo's bbport 479f2f51).
+    for (size_t i = len; i-- > patch_size;) {
+        __atomic_store_n(&code_patch[i], u8{0x90}, __ATOMIC_RELEASE);
+    }
+    for (const size_t i : {size_t{2}, size_t{0}, size_t{1}}) {
+        __atomic_store_n(&code_patch[i], patch[i], __ATOMIC_RELEASE);
+    }
 
     LOG_WARNING(Render_Recompiler, "Patched SRT walker at {}, fault address {}", code,
                 fault_address);
