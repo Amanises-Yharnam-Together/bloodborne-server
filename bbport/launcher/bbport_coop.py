@@ -485,7 +485,7 @@ def game_environment(env, settings, install, root):
         'BB_DATA_DIR': str(install), 'BB_USER_DIR': str(install / 'user'),
         'BB_GAME_DIR': str(root / 'CUSA03173'), 'BB_FPS': '60',
         'BB_LOG_FILE': str(install / 'user' / 'log' / 'shad_log.txt'), 'BB_LOG_LEVEL': 'info',
-        'BB_ONLINE': '1', 'BB_UPNP': '0',
+        'BB_ONLINE': '1',
         'BB_SHADNET_SERVER': f'{host}:{SHADNET_PORT}', 'BB_SHADNET_WEBAPI': f'http://{host}:{WEBAPI_PORT}',
         'BB_SHADNET_NPID': settings['account'], 'BB_SHADNET_PASSWORD': settings['password'],
         'BB_USER_NAME': settings['account'],

@@ -13,10 +13,10 @@
 // live there (phase 3).
 namespace Libraries::Net {
 
+// The port's co-op on the server (the team's world, boards and game packet link); shadPS4 keeps
+// its own co-op, but its peers too are reached through the server only (phase 9).
 bool ServerLinkSwitchOn();
-// The port: a peer's datagrams only through the server, none straight (phase 6).
-bool PeersOnlyThroughServer();
-// Once signed in: shadNet's matching UDP port (where the STUN pings go) and this game's online id.
+// Once signed in: shadNet's link UDP port and this game's online id.
 void ConfigureServerLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id);
 // Which game this is, for the hello: shadNet refuses a game on another build.
 void SetServerLinkBuild(std::string build);
@@ -31,11 +31,9 @@ bool ServerCoopSend(const void* body, u32 len);
 int ServerCoopReceive(void* body, u32 len);
 // Whether the server took this game's hello (it may restart: then false until it does again).
 bool ServerLinkWelcomed();
-// Phase 7 (net_link.h ConnectsWithoutHandshake, PingsStun): the port's room members are connected
-// at once through the server, and it sends no STUN ping (the server has its address from its
-// hello).
+// Phase 7 (net_link.h ConnectsWithoutHandshake): room members are connected at once through the
+// server once the link is configured; nothing is ever connected straight.
 bool ConnectsPeersWithoutHandshake();
-bool PingsServerStun();
 // The rig's dropped connection (autoplay cut-link, phase 7): nothing goes out or comes in on this
 // game's UDP socket for `ms`, as when its Wi-Fi drops.
 void CutServerLinkForTest(u32 ms);

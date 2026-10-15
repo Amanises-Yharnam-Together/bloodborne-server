@@ -167,7 +167,8 @@ int Relays() {
   hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
   hub.Receive(Ada, HelloFrom("Ada"), 0);
 
-  auto result = hub.Receive(Kaniel, Encode(Data{Ada, GameFrame}), 100);
+  auto result = hub.Receive(
+      Kaniel, Encode(Data{VirtualEndpointOf("Ada"), GameFrame}), 100);
   const auto forwarded = SentTo(result, Ada);
   CHECK(forwarded.size() == 1 && result.sends.size() == 1);
   const auto data = DecodeData(forwarded[0]);
@@ -177,12 +178,14 @@ int Relays() {
         result.log[0].contains("Ada"));
 
   // Nobody at the destination: dropped, and said.
-  result = hub.Receive(Kaniel, Encode(Data{Eileen, GameFrame}), 110);
+  result = hub.Receive(
+      Kaniel, Encode(Data{VirtualEndpointOf("Eileen"), GameFrame}), 110);
   CHECK(result.sends.isEmpty());
   CHECK(!result.log.isEmpty() && result.log[0].contains("no game"));
 
   // A game that never said hello is not relayed.
-  result = hub.Receive(Eileen, Encode(Data{Kaniel, GameFrame}), 120);
+  result = hub.Receive(
+      Eileen, Encode(Data{VirtualEndpointOf("Kaniel"), GameFrame}), 120);
   CHECK(result.sends.isEmpty());
 
   // Only the first frames of a pair are logged.
@@ -192,7 +195,9 @@ int Relays() {
   int lines = 0;
   for (int index = 0; index < 5; ++index) {
     lines += static_cast<int>(
-        quiet_log.Receive(Kaniel, Encode(Data{Ada, GameFrame}), index)
+        quiet_log
+            .Receive(Kaniel, Encode(Data{VirtualEndpointOf("Ada"), GameFrame}),
+                     index)
             .log.size());
   }
   CHECK(lines == 2);
@@ -250,7 +255,7 @@ int Liveness() {
   Hub counted;
   counted.Receive(Kaniel, HelloFrom("Kaniel"), 0);
   counted.Receive(Ada, HelloFrom("Ada"), 0);
-  counted.Receive(Kaniel, Encode(Data{Ada, GameFrame}), 1);
+  counted.Receive(Kaniel, Encode(Data{VirtualEndpointOf("Ada"), GameFrame}), 1);
   counted.Receive(Kaniel, Encode(Kind::Ping, Ping{1, 1}), 9000);
   counted.Receive(Ada, Encode(Kind::Ping, Ping{1, 1}), 9000);
   CHECK(counted.Tick(9999).log.isEmpty());
@@ -277,15 +282,19 @@ int TeamOnly() {
   hub.Receive(Eileen, HelloFrom("Eileen"), 0);
   hub.Receive(Lone, HelloFrom("Lone"), 0);
 
-  auto result = hub.Receive(Kaniel, Encode(Data{Ada, GameFrame}), 10);
+  auto result = hub.Receive(
+      Kaniel, Encode(Data{VirtualEndpointOf("Ada"), GameFrame}), 10);
   CHECK(SentTo(result, Ada).size() == 1);
   // Another team's game, or one in no team yet: dropped, and said.
-  result = hub.Receive(Kaniel, Encode(Data{Eileen, GameFrame}), 20);
+  result = hub.Receive(
+      Kaniel, Encode(Data{VirtualEndpointOf("Eileen"), GameFrame}), 20);
   CHECK(result.sends.isEmpty());
   CHECK(!result.log.isEmpty() && result.log[0].contains("another team"));
-  result = hub.Receive(Lone, Encode(Data{Ada, GameFrame}), 30);
+  result =
+      hub.Receive(Lone, Encode(Data{VirtualEndpointOf("Ada"), GameFrame}), 30);
   CHECK(result.sends.isEmpty());
-  result = hub.Receive(Ada, Encode(Data{Lone, GameFrame}), 40);
+  result =
+      hub.Receive(Ada, Encode(Data{VirtualEndpointOf("Lone"), GameFrame}), 40);
   CHECK(result.sends.isEmpty());
 
   // Eileen going quiet is told to nobody in team a.
@@ -314,7 +323,10 @@ int VirtualMembers() {
   CHECK((ada_virtual.ipv4 >> 24) == 10 && ada_virtual.port == VirtualPort);
   CHECK(!(ada_virtual == kaniel_virtual));
   CHECK(VirtualEndpointOf("Ada") == ada_virtual); // the same every time
-  CHECK(!hub.VirtualOf(Ada));                     // not linked yet
+  // The games compute the same (emulator/tests/network/test_net_link.cpp).
+  CHECK(VirtualEndpointOf("Kaniel").ipv4 == 0x0A89C805u);
+  CHECK(ada_virtual.ipv4 == 0x0AC3A55Bu);
+  CHECK(!hub.VirtualOf(Ada)); // not linked yet
   hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
   // A game welcomed is said with its virtual address: the rooms and signaling
   // hand that one out (no STUN needed).
@@ -328,6 +340,10 @@ int VirtualMembers() {
   const auto forwarded = DecodeData(SentTo(result, Ada).value(0));
   CHECK(forwarded && forwarded->peer == kaniel_virtual &&
         forwarded->frame == GameFrame);
+  // Phase 9: a real address finds nobody, even a linked game's.
+  result = hub.Receive(Kaniel, Encode(Data{Ada, GameFrame}), 15);
+  CHECK(result.sends.isEmpty());
+  CHECK(!result.log.isEmpty() && result.log[0].contains("no game"));
 
   // Ada's game links again from another port: still the same address.
   const Endpoint ada_moved{0x7F000001, 40099};
@@ -376,10 +392,11 @@ int RoutesGamePackets() {
   using BloodborneCoop::PacketClass;
   Hub hub;
   std::vector<std::tuple<Endpoint, Endpoint, u32>> asked;
-  hub.SetPacketRoutes([&](const Endpoint &from, const Endpoint &to, u32 channel) {
-    asked.emplace_back(from, to, channel);
-    return channel != 0x06 && channel != 0x31;
-  });
+  hub.SetPacketRoutes(
+      [&](const Endpoint &from, const Endpoint &to, u32 channel) {
+        asked.emplace_back(from, to, channel);
+        return channel != 0x06 && channel != 0x31;
+      });
   hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
   hub.Receive(Ada, HelloFrom("Ada"), 0);
 
@@ -394,9 +411,9 @@ int RoutesGamePackets() {
   CHECK(asked.size() == 4 && std::get<0>(asked[0]) == Kaniel &&
         std::get<1>(asked[0]) == Ada && std::get<2>(asked[0]) == 0x06);
   const auto data = DecodeData(SentTo(result, Ada).value(0));
-  CHECK(data && data->frame.startsWith(QByteArray::fromHex("ffffffff") +
-                                       "SHAD" +
-                                       char(BloodborneCoop::GamePacketsType)));
+  CHECK(data &&
+        data->frame.startsWith(QByteArray::fromHex("ffffffff") + "SHAD" +
+                               char(BloodborneCoop::GamePacketsType)));
   const auto routed = BloodborneCoop::DecodeGameFrame(
       {reinterpret_cast<const u8 *>(data->frame.constData()) + 9,
        static_cast<size_t>(data->frame.size() - 9)});
@@ -410,25 +427,28 @@ int RoutesGamePackets() {
   // Nothing left but its ack: the frame still goes (the stream needs the ack).
   BloodborneCoop::GameFrame only_refused{"Kaniel", 5, 6, 3, {}};
   only_refused.entries.push_back({PacketClass::Unreliable, 0, PacketOn(0x06)});
-  result = hub.Receive(Kaniel,
-                       Encode(Data{VirtualEndpointOf("Ada"),
-                                   GamePacketsFrame(only_refused)}),
-                       20);
+  result = hub.Receive(
+      Kaniel,
+      Encode(Data{VirtualEndpointOf("Ada"), GamePacketsFrame(only_refused)}),
+      20);
   CHECK(SentTo(result, Ada).size() == 1);
 
   // A frame that is not the game's packets is not read.
   asked.clear();
-  result = hub.Receive(Kaniel, Encode(Data{Ada, ::GameFrame}), 30);
-  CHECK(asked.empty() && DecodeData(SentTo(result, Ada).value(0))->frame ==
-                             ::GameFrame);
+  result = hub.Receive(Kaniel,
+                       Encode(Data{VirtualEndpointOf("Ada"), ::GameFrame}), 30);
+  CHECK(asked.empty() &&
+        DecodeData(SentTo(result, Ada).value(0))->frame == ::GameFrame);
   // A game frame that does not read is dropped, and said.
   result = hub.Receive(
       Kaniel,
-      Encode(Data{Ada, QByteArray::fromHex("ffffffff") + "SHAD" +
-                           char(BloodborneCoop::GamePacketsType) + "\x01"}),
+      Encode(Data{VirtualEndpointOf("Ada"),
+                  QByteArray::fromHex("ffffffff") + "SHAD" +
+                      char(BloodborneCoop::GamePacketsType) + "\x01"}),
       40);
   CHECK(result.sends.isEmpty());
-  CHECK(!result.log.isEmpty() && result.log.join('\n').contains("does not read"));
+  CHECK(!result.log.isEmpty() &&
+        result.log.join('\n').contains("does not read"));
 
   // The counters say how much each sender had refused, per channel.
   hub.Receive(Kaniel, Encode(Kind::Ping, Ping{1, 1}), 9000);

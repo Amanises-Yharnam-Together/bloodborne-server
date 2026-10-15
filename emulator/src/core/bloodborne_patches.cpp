@@ -577,7 +577,7 @@ struct GamePacketLink {
     std::map<std::string, std::pair<u32, u16>> addresses;
     std::set<std::string> unresolved;
     u64 sent = 0;
-    u64 no_member = 0;   // packets for a member without an online id: dropped
+    u64 no_member = 0;      // packets for a member without an online id: dropped
     u64 dropped_routed = 0; // reliable packets shadNet dropped (DroppedNativeChannel)
     u64 taken = 0;
     u64 dropped_unknown = 0;

@@ -285,7 +285,7 @@ inline std::optional<Member> DecodeMember(std::span<const u8> datagram) {
 }
 
 // Whether a frame for addr:port goes through the server: everything but what is for the server
-// itself (the STUN ping), once the server is known.
+// itself (the link's own kinds), once the server is known.
 inline bool RoutesThroughServer(const ServerEndpoint& server, u32 addr_nbo, u16 port_nbo) {
     if (server.addr_nbo == 0 || server.port_nbo == 0) {
         return false;
@@ -293,29 +293,41 @@ inline bool RoutesThroughServer(const ServerEndpoint& server, u32 addr_nbo, u16 
     return addr_nbo != server.addr_nbo || port_nbo != server.port_nbo;
 }
 
-// Phase 6, the port (`server_only`): no direct P2P. A game's frame for a peer goes out only
-// through the server; before the link is up it is dropped (the game sends its own again). Datagrams
-// are taken only from the server once it is known (before, its STUN answers come from it
-// unannounced).
-inline bool SendsToPeer(const ServerEndpoint& server, bool server_only) {
-    return !server_only || (server.addr_nbo != 0 && server.port_nbo != 0);
+// No direct P2P (phase 6, every build since phase 9): a game's frame for a peer goes out only
+// through the server; before the link is up it is dropped (the game sends its own again).
+// Datagrams are taken only from the server.
+inline bool SendsToPeer(const ServerEndpoint& server) {
+    return server.addr_nbo != 0 && server.port_nbo != 0;
 }
-inline bool TakesDatagramFrom(const ServerEndpoint& server, u32 addr_nbo, u16 port_nbo,
-                              bool server_only) {
-    if (!server_only || server.addr_nbo == 0 || server.port_nbo == 0) {
-        return true;
-    }
-    return addr_nbo == server.addr_nbo && port_nbo == server.port_nbo;
+inline bool TakesDatagramFrom(const ServerEndpoint& server, u32 addr_nbo, u16 port_nbo) {
+    return SendsToPeer(server) && addr_nbo == server.addr_nbo && port_nbo == server.port_nbo;
 }
 
-// Phase 7, the port: its peers are the server's room members at their virtual addresses, every
-// frame through the server, which knows who is linked; a member is connected at once (no
-// signaling handshake), and the server knows this game's address from its hello (no STUN).
-inline bool ConnectsWithoutHandshake(const ServerEndpoint& server, bool server_only) {
-    return server_only && server.addr_nbo != 0 && server.port_nbo != 0;
+// Phase 7: the peers are the server's room members at their virtual addresses, every frame
+// through the server, which knows who is linked; a member is connected at once (no signaling
+// handshake), and the server knows this game's address from its hello (no STUN).
+inline bool ConnectsWithoutHandshake(const ServerEndpoint& server) {
+    return SendsToPeer(server);
 }
-inline bool PingsStun(bool server_only) {
-    return !server_only;
+
+// A game's virtual address (host byte order), the one the server gives it from its online id
+// (server_link.h VirtualEndpointOf): 10.x.y.z, port 3658. What the game's own NAT queries see
+// as its address, never its real one.
+struct VirtualAddress {
+    u32 ipv4 = 0;
+    u16 port = 0;
+};
+constexpr u16 VirtualPort = 3658;
+inline VirtualAddress VirtualAddressOf(std::string_view online_id) {
+    u32 hash = 2166136261u; // FNV-1a
+    for (const char c : online_id) {
+        hash = (hash ^ static_cast<u8>(c)) * 16777619u;
+    }
+    u32 host = hash & 0xFFFFFF;
+    if ((host & 0xFF) == 0 || (host & 0xFF) == 0xFF) {
+        host ^= 0x01; // no .0 or .255
+    }
+    return {(10u << 24) | host, VirtualPort};
 }
 
 // The link to the server going quiet (no pong for quiet_ms) or answering again.

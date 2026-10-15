@@ -10,10 +10,12 @@
 #include "client_session.h"
 #include "server_link.h"
 
-class StunServer : public QObject {
+// shadNet's UDP port: the games' link (server_link.h), which relays their frames and carries
+// their messages with the parties' worlds (bloodborne_world.h).
+class LinkServer : public QObject {
     Q_OBJECT
 public:
-    explicit StunServer(SharedState* shared, QObject* parent = nullptr);
+    explicit LinkServer(SharedState* shared, QObject* parent = nullptr);
     bool Start(const QHostAddress& addr, uint16_t port);
 
 private slots:
@@ -22,7 +24,6 @@ private slots:
     void OnWorldTick();
 
 private:
-    void HandleStunPing(const QByteArray& data, const QHostAddress& sender, uint16_t senderPort);
     // The games' link (co-op phase 2, server_link.h): relayed frames, hellos, pings.
     void HandleLink(const QByteArray& datagram, const QHostAddress& sender, uint16_t senderPort);
     void Apply(const ServerLink::Hub::Result& result);

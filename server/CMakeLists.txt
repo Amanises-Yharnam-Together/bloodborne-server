@@ -99,8 +99,8 @@ set(SOURCES
     # Matchmaking
     src/matching.h
     src/cmd_matching.cpp
-    src/stun_server.h
-    src/stun_server.cpp
+    src/link_server.h
+    src/link_server.cpp
     # The games' one link to the server (co-op phase 2)
     src/server_link.h
     src/server_link.cpp
@@ -265,17 +265,6 @@ if(BUILD_TESTING)
         set_tests_properties(bloodborne_backend_parity PROPERTIES
             ENVIRONMENT "SHADNET_EXE=$<TARGET_FILE:shadnet>")
     endif()
-
-    add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
-        tests/bloodborne_matching_guest_probe.cpp
-        "${PROTO_OUT}/shadnet.pb.cc"
-    )
-    target_include_directories(bloodborne_matching_guest_probe PRIVATE
-        src
-        "${PROTO_OUT}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
-    )
-    target_link_libraries(bloodborne_matching_guest_probe PRIVATE libprotobuf)
 endif()
 
 add_custom_command(TARGET shadnet POST_BUILD

@@ -44,7 +44,7 @@ same shadNet server and backend.
   `C:\bb\out\bbport` (`run.py`, `scripts`, `patches`, `bin\bb-probe.exe`).
   `tools\ci-check.ps1 -Component bbport` does the same.
 - Linux: `bbport/build.sh --test`; needs clang (GCC 13 lacks deducing `this`), Vulkan headers
-  with `VK_VALVE_shader_mixed_float_dot_product` (1.4.33x or newer) and miniupnpc 2.2.8 or newer.
+  with `VK_VALVE_shader_mixed_float_dot_product` (1.4.33x or newer).
   The renderer tests (`ninja -C out/gpu scene-resolution-test taa-shader-test`) run on lavapipe
   (`VK_DRIVER_FILES=.../lvp_icd.json`).
 

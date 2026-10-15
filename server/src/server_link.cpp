@@ -400,10 +400,9 @@ void Hub::OnData(Link& sender, const QByteArray& datagram, Result& result) {
     }
     ++sender.frames_in;
     sender.bytes_in += static_cast<quint64>(data->frame.size());
-    // A game names the others by their virtual addresses (a real one still finds its game).
+    // A game names the others by their virtual addresses only (phase 9: a real one finds nobody).
     const auto by_address = by_virtual.find(data->peer.Key());
-    const auto target =
-        members.find(by_address != by_virtual.end() ? *by_address : data->peer.Key());
+    const auto target = by_address != by_virtual.end() ? members.find(*by_address) : members.end();
     if (target == members.end()) {
         if (dropped++ < DropsLogged) {
             result.log.append(QStringLiteral("server link: %1 sent %2 bytes to %3: no game linked "

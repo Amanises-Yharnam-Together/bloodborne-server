@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Phase 9: the channel table and the enemy owner rules shadNet routes every game packet by
-// (coop/packet_routes.h).
+// Phase 9: the channel table and the enemy owner rules shadNet routes every
+// game packet by (coop/packet_routes.h).
 #include <iostream>
 #include <string>
 #include <utility>
@@ -40,8 +40,7 @@ std::vector<u8> Packet(u32 channel, std::vector<u8> payload = {1, 2, 3}) {
 bool Routes(u32 channel, u32 sender_map, u32 target_map,
             EnemyPart sender = EnemyPart::None,
             EnemyPart target = EnemyPart::None) {
-  return RoutesNativePacket(channel,
-                            {sender_map, target_map, sender, target});
+  return RoutesNativePacket(channel, {sender_map, target_map, sender, target});
 }
 
 // docs/SERVER_COOP_PLAN.md "Traffic and who owns it", one row per area.
@@ -107,8 +106,8 @@ int TheEnemiesComeFromTheOwnerOnly() {
     // Still one map only.
     CHECK(!Routes(channel, Y, CathedralWard, O, F));
   }
-  // A follower's hit and near list go to the owner, never the owner's to anyone,
-  // and the owner's answer (0x17) nowhere.
+  // A follower's hit and near list go to the owner, never the owner's to
+  // anyone, and the owner's answer (0x17) nowhere.
   CHECK(Routes(0x15, Y, Y, F, O));
   CHECK(!Routes(0x15, Y, Y, O, F));
   CHECK(!Routes(0x15, Y, Y, F, F));

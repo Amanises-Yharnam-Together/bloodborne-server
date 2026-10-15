@@ -10,7 +10,6 @@
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/invitation_dialog/invitation_dialog.h"
-#include "core/libraries/network/net_upnp.h"
 #include "core/libraries/network/server_link.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_manager.h"
@@ -280,11 +279,6 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
 
     LOG_INFO(NpHandler, "user_id={} signed in npid='{}' accountId={}", user_id, npid,
              client->GetUserId());
-
-    Net::UPnPClient::Instance().SetP2PFeaturesEnabled(client->IsMatching2Enabled());
-    if (client->IsMatching2Enabled() && EmulatorSettings.IsUPnPEnabled()) {
-        Net::UPnPClient::Instance().Start();
-    }
 
     NpMatching2::SetMmShadNetClient(client, host, port);
     // The port's server link: the peers' frames through shadNet's matching UDP port.

@@ -162,7 +162,7 @@ private:
         // Runs phase 4's enemy owners (its hello says): on an area another member owns its new
         // kills and its HP reports do not count.
         bool enemy_owner = false;
-        std::string lobby; // its name in the team lobby, empty before its lobby hello
+        std::string lobby;     // its name in the team lobby, empty before its lobby hello
         std::uint32_t map = 0; // the map it last said (0: loading, or none yet)
     };
 

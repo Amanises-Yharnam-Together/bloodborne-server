@@ -238,8 +238,8 @@ static int socket_is_ready(int sock, bool is_read = true) {
 
 int PosixSocket::SendMessage(const OrbisNetMsghdr* msg, int flags) {
     std::scoped_lock lock{m_mutex};
-    if (msg != nullptr && FirewallBlocks(static_cast<const OrbisNetSockaddr*>(msg->msg_name),
-                                         "a message to")) {
+    if (msg != nullptr &&
+        FirewallBlocks(static_cast<const OrbisNetSockaddr*>(msg->msg_name), "a message to")) {
         return -1;
     }
 

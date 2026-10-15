@@ -11,10 +11,10 @@
 #include <QTcpServer>
 #include "client_session.h"
 #include "config.h"
+#include "link_server.h"
 #include "score_cache.h"
 #include "score_files.h"
 #include "stats_server.h"
-#include "stun_server.h"
 
 class ShadNetServer : public QObject {
     Q_OBJECT
@@ -48,5 +48,5 @@ private:
     std::unique_ptr<ScoreCache> m_scoreCache;
     std::unique_ptr<ScoreFiles> m_scoreFiles;
     std::unique_ptr<StatsServer> m_statsServer;
-    StunServer* m_stunServer = nullptr;
+    LinkServer* m_linkServer = nullptr;
 };

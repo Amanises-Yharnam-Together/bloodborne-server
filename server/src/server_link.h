@@ -144,8 +144,8 @@ public:
     // Phase 9: whether a game packet on `channel` goes from one link's game to another's
     // (coop/packet_routes.h). Once set, the hub reads every frame of game packets and forwards
     // only what this lets through; without it frames go unread.
-    using PacketRoutes = std::function<bool(const Endpoint& from, const Endpoint& to,
-                                            quint32 channel)>;
+    using PacketRoutes =
+        std::function<bool(const Endpoint& from, const Endpoint& to, quint32 channel)>;
     void SetPacketRoutes(PacketRoutes packet_routes) {
         this->packet_routes = std::move(packet_routes);
     }

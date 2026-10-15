@@ -1075,7 +1075,7 @@ bool Service::RoutesPacket(const ServerLink::Endpoint& from, const ServerLink::E
     const auto target = members.find(to.Key());
     if (sender == members.end() || target == members.end()) {
         return BloodborneCoop::NativeChannelPolicy(channel) ==
-               BloodborneCoop::ChannelPolicy::Pass &&
+                   BloodborneCoop::ChannelPolicy::Pass &&
                channel < BloodborneCoop::NativeChannelCount;
     }
     const auto world = worlds.find(sender->second.party);
@@ -1089,8 +1089,8 @@ bool Service::RoutesPacket(const ServerLink::Endpoint& from, const ServerLink::E
                                       : EnemyPart::Follower;
     };
     return BloodborneCoop::RoutesNativePacket(
-        channel, {sender->second.map, target->second.map, part(sender->second),
-                  part(target->second)});
+        channel,
+        {sender->second.map, target->second.map, part(sender->second), part(target->second)});
 }
 
 namespace {

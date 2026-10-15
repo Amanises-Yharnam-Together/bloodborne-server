@@ -12,7 +12,8 @@ namespace Libraries::Np::NpMatching2 {
 
 struct ContextObject;
 
-void StartMatching2HandshakeThread();
+// Phase 9: room members connect through the server only (no handshake, no STUN).
+void StartMatching2ConnectThread();
 
 // The room's peers with a live signaling link (network byte order), for seamless co-op's own
 // frames between the games.
@@ -21,12 +22,10 @@ struct RoomPeerAddress {
     u16 port = 0;
 };
 std::vector<RoomPeerAddress> GetActiveRoomPeers();
-void StopMatching2HandshakeThread();
+void StopMatching2ConnectThread();
 
-bool SendMatching2StunPing(const ContextObject& ctx);
-
-void StartMatching2PeerHandshake(ContextObject& ctx, OrbisNpMatching2RoomId room_id,
-                                 OrbisNpMatching2RoomMemberId member_id);
+void StartMatching2PeerConnect(ContextObject& ctx, OrbisNpMatching2RoomId room_id,
+                               OrbisNpMatching2RoomMemberId member_id);
 void StartMatching2SignalingForRoomPeers(ContextObject& ctx, OrbisNpMatching2RoomId room_id);
 void QueueMatching2DeadForRoomPeers(ContextObject& ctx, OrbisNpMatching2RoomId room_id,
                                     s32 error_code);
