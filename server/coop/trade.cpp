@@ -16,21 +16,60 @@ const TradeGood* FindTradeGood(TradeItemKind kind, u32 id) {
     return nullptr;
 }
 
+namespace {
+
+// Whether the game has such an item, and how many may go at once.
+std::optional<std::string> ItemProblem(const TradeItem& item) {
+    u32 limit = 0;
+    switch (item.kind) {
+    case TradeItemKind::Echoes:
+        if (item.id != 0) {
+            return "not an item the game has";
+        }
+        limit = MaxTradeEchoes;
+        break;
+    case TradeItemKind::Goods:
+        if (item.id == 0 || item.id > MaxTradeGoodsId) {
+            return "not an item the game has";
+        }
+        limit = MaxTradeGoods;
+        break;
+    case TradeItemKind::Item: {
+        const u32 category = item.id & 0xF0000000;
+        if ((category != WeaponCategory && category != ArmorCategory &&
+             category != AccessoryCategory && category != GemCategory) ||
+            (item.id & 0x0FFFFFFF) == 0x0FFFFFFF) {
+            return "not an item the game has";
+        }
+        limit = 1; // each its own
+        break;
+    }
+    default:
+        return "not an item the game has";
+    }
+    if (item.count == 0 || item.count > limit) {
+        return "too many or none";
+    }
+    if (item.name.size() > MaxTradeItemName || item.data.size() > MaxTradeItemData) {
+        return "an item too long to say";
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
 std::optional<std::string> TradeItemsProblem(std::span<const TradeItem> items, bool allow_empty) {
     if (items.empty()) {
         return allow_empty ? std::nullopt : std::optional<std::string>{"nothing offered"};
     }
     for (size_t index = 0; index < items.size(); ++index) {
         const TradeItem& item = items[index];
-        if (FindTradeGood(item.kind, item.id) == nullptr) {
-            return "not a tradeable item";
-        }
-        const u32 limit = item.kind == TradeItemKind::Echoes ? MaxTradeEchoes : MaxTradeGoods;
-        if (item.count == 0 || item.count > limit) {
-            return "too many or none";
+        if (std::optional<std::string> problem = ItemProblem(item)) {
+            return problem;
         }
         for (size_t other = 0; other < index; ++other) {
-            if (items[other].kind == item.kind && items[other].id == item.id) {
+            if (items[other].kind == item.kind && items[other].id == item.id &&
+                items[other].data == item.data) {
                 return "an item twice";
             }
         }
@@ -53,12 +92,18 @@ std::string Thousands(u32 value) {
 std::string TradeItemsText(std::span<const TradeItem> items) {
     std::string text;
     for (const TradeItem& item : items) {
-        const TradeGood* good = FindTradeGood(item.kind, item.id);
         if (!text.empty()) {
             text += ", ";
         }
-        text += Thousands(item.count) + " ";
-        text += good == nullptr ? "items" : (item.count == 1 ? good->name : good->plural);
+        if (const TradeGood* good = FindTradeGood(item.kind, item.id)) {
+            text += Thousands(item.count) + " " + (item.count == 1 ? good->name : good->plural);
+            continue;
+        }
+        // Others by the giver's game's name (no plurals known): "Molotov Cocktail x3".
+        text += item.name.empty() ? std::string{"an item"} : item.name;
+        if (item.count != 1) {
+            text += " x" + Thousands(item.count);
+        }
     }
     return text;
 }
@@ -68,11 +113,14 @@ bbcoop::TradeItem ToMessage(const TradeItem& item) {
     message.set_kind(static_cast<u32>(item.kind));
     message.set_id(item.id);
     message.set_count(item.count);
+    message.set_name(item.name);
+    message.set_data(item.data);
     return message;
 }
 
 TradeItem TradeItemOf(const bbcoop::TradeItem& message) {
-    return {static_cast<TradeItemKind>(message.kind()), message.id(), message.count()};
+    return {static_cast<TradeItemKind>(message.kind()), message.id(), message.count(),
+            message.name(), message.data()};
 }
 
 TradeItems TradeItemsOf(const google::protobuf::RepeatedPtrField<bbcoop::TradeItem>& items) {
@@ -103,8 +151,10 @@ std::string TradeAskText(const std::string& from_name, std::span<const TradeItem
 
 std::string TradeGiveQuestion(const TradeItem& item, const std::string& to_name) {
     const TradeGood* good = FindTradeGood(item.kind, item.id);
-    return std::string{"Select quantity of "} + (good != nullptr ? good->plural : "items") +
-           " to give to " + to_name + ".";
+    const std::string what = good != nullptr      ? good->plural
+                             : !item.name.empty() ? item.name
+                                                  : "items";
+    return "Select quantity of " + what + " to give to " + to_name + ".";
 }
 
 std::string TradeNoticeText(const TradeClient::Notice& notice) {
@@ -234,6 +284,13 @@ TradeDesk::Result TradeDesk::Offer(const std::string& from, const bbcoop::TradeO
     std::optional<std::string> problem = TradeItemsProblem(trade.give, false);
     if (!problem) {
         problem = TradeItemsProblem(trade.want, true);
+    }
+    // The asked side's game can't say which of its weapons it would give: only echoes and goods
+    // may be asked for.
+    if (!problem && std::ranges::any_of(trade.want, [](const TradeItem& item) {
+            return item.kind == TradeItemKind::Item;
+        })) {
+        problem = "an item asked for";
     }
     const auto open_from =
         std::ranges::count_if(open, [&](const auto& entry) { return entry.second.from == from; });

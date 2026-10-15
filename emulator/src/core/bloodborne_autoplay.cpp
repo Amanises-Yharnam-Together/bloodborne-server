@@ -1320,11 +1320,35 @@ bool AutoplayTeamVerb(const AutoplayStep&) {
     return true;
 }
 
-// Trading (bloodborne_trade.cpp). Items: echoes, vials, bullets.
+// Trading (bloodborne_trade.cpp). Items: echoes, vials, bullets, goods:<id> and, one each,
+// weapon:<id>, armor:<id>, gem:<id> (ids as the game's params have them, decimal).
+std::optional<u32> TradeItemId(std::string_view name, std::string_view prefix) {
+    u32 id = 0;
+    if (!name.starts_with(prefix) ||
+        std::from_chars(name.data() + prefix.size(), name.data() + name.size(), id).ec !=
+            std::errc{}) {
+        return std::nullopt;
+    }
+    return id;
+}
+
 std::optional<TradeItem> ParseTradeItem(std::string_view name, std::string_view count) {
     u32 value = 0;
     if (std::from_chars(count.data(), count.data() + count.size(), value).ec != std::errc{}) {
         return std::nullopt;
+    }
+    if (const auto goods = TradeItemId(name, "goods:")) {
+        return TradeItem{BloodborneCoop::TradeItemKind::Goods, *goods, value};
+    }
+    static constexpr std::pair<std::string_view, u32> Categories[]{
+        {"weapon:", BloodborneCoop::WeaponCategory},
+        {"armor:", BloodborneCoop::ArmorCategory},
+        {"gem:", BloodborneCoop::GemCategory},
+    };
+    for (const auto& [prefix, category] : Categories) {
+        if (const auto id = TradeItemId(name, prefix)) {
+            return TradeItem{BloodborneCoop::TradeItemKind::Item, category | *id, value};
+        }
     }
     if (name == "echoes") {
         return TradeItem{BloodborneCoop::TradeItemKind::Echoes, 0, value};
@@ -1362,7 +1386,15 @@ bool AutoplayTradeStock(const AutoplayStep& step) {
     }
     const u32 held = TradeHeld(*item);
     TradeItem change = *item;
-    if (held > item->count) {
+    if (item->kind == BloodborneCoop::TradeItemKind::Item) {
+        change.count = 1; // one each
+        for (u32 count = held; count > item->count; --count) {
+            TakeTradeItems(std::span{&change, 1});
+        }
+        for (u32 count = held; count < item->count; ++count) {
+            AddTradeItems(std::span{&change, 1});
+        }
+    } else if (held > item->count) {
         change.count = held - item->count;
         TakeTradeItems(std::span{&change, 1});
     } else if (held < item->count) {
@@ -1370,6 +1402,48 @@ bool AutoplayTradeStock(const AutoplayStep& step) {
         AddTradeItems(std::span{&change, 1});
     }
     return true;
+}
+
+// trade-socket weapon:<id> gem:<id> <effect>: a gem with that first effect in the first slot of
+// the player's first such weapon (a test's stock: the gem is what must travel with it).
+bool AutoplayTradeSocket(const AutoplayStep& step) {
+    const auto weapon = ParseTradeItem(step.Arg(0), "1");
+    const auto gem = ParseTradeItem(step.Arg(1), "1");
+    u32 effect = 0;
+    const std::string_view effect_text = step.Arg(2);
+    if (!weapon || !gem ||
+        std::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
+            std::errc{}) {
+        step.failure = "no such item";
+        return false;
+    }
+    if (!SocketTradeGem(weapon->id, gem->id, effect)) {
+        step.failure = "could not put the gem in";
+        return false;
+    }
+    return true;
+}
+
+// expect-socketed weapon:<id> gem:<id> <effect> [<timeout>]: one of the player's such weapons has
+// that gem with that first effect.
+bool AutoplayExpectSocketed(const AutoplayStep& step) {
+    const auto weapon = ParseTradeItem(step.Arg(0), "1");
+    const auto gem = ParseTradeItem(step.Arg(1), "1");
+    u32 effect = 0;
+    const std::string_view effect_text = step.Arg(2);
+    if (!weapon || !gem ||
+        std::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
+            std::errc{}) {
+        step.failure = "no such item";
+        return false;
+    }
+    if (HasSocketedGem(weapon->id, gem->id, effect)) {
+        return true;
+    }
+    if (step.elapsed > step.Number(3, 0)) {
+        step.failure = "no such gem in the weapon";
+    }
+    return false;
 }
 
 // trade-offer <item> <count>... [for <item> <count>...] [<timeout>]: an offer to the first other
@@ -1529,6 +1603,8 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"done", AutoplayDone},
     {"trade-give", AutoplayTradeGive},
     {"trade-stock", AutoplayTradeStock},
+    {"trade-socket", AutoplayTradeSocket},
+    {"expect-socketed", AutoplayExpectSocketed},
     {"trade-offer", AutoplayTradeOffer},
     {"trade-answer", AutoplayTradeAnswer},
     {"expect-held", AutoplayExpectHeld},

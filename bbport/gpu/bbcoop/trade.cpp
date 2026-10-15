@@ -2,10 +2,12 @@
 // bbport co-op: trading's C side for the port's trade menus (bbcoop.h, bbcoop_trade_*), on top of
 // the co-op code's bloodborne_trade.h.
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <string>
 
 #include "bbcoop.h"
+#include "core/bloodborne_team.h"
 #include "core/bloodborne_trade.h"
 
 namespace {
@@ -24,7 +26,22 @@ int Copy(const std::string& text, char* out, size_t size) {
 }
 
 TradeItem ItemOf(uint32_t kind, uint32_t id, uint32_t count = 0) {
-    return {static_cast<TradeItemKind>(kind), id, count};
+    TradeItem item{static_cast<TradeItemKind>(kind), id, count};
+    item.name = TradeItemName(item);
+    return item;
+}
+
+std::atomic<int (*)(uint32_t, char*, size_t)> namer{nullptr};
+
+std::string NameOf(const TradeItem& item) {
+    const auto call = namer.load();
+    if (call == nullptr || item.kind == TradeItemKind::Echoes) {
+        return {};
+    }
+    const uint32_t item_id =
+        item.kind == TradeItemKind::Goods ? BloodborneCoop::GoodsCategory | item.id : item.id;
+    char text[128] = {};
+    return call(item_id, text, sizeof text) ? std::string{text} : std::string{};
 }
 
 } // namespace
@@ -36,7 +53,11 @@ int bbcoop_trade_on(void) {
 }
 
 int bbcoop_trade_tradeable(uint32_t kind, uint32_t id) {
-    return BloodborneCoop::FindTradeGood(static_cast<TradeItemKind>(kind), id) != nullptr ? 1 : 0;
+    const TradeItem item = ItemOf(kind, id, 1);
+    if (item.kind == TradeItemKind::Goods && Core::Bloodborne::IsBellGoods(id)) {
+        return 0;
+    }
+    return BloodborneCoop::TradeItemsProblem(std::span{&item, 1}, false) ? 0 : 1;
 }
 
 uint32_t bbcoop_trade_held(uint32_t kind, uint32_t id) {
@@ -52,12 +73,13 @@ int bbcoop_trade_give_question(uint32_t kind, uint32_t id, char* text, size_t si
                 text, size);
 }
 
-int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count) {
+int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count, uint32_t handle) {
     const std::vector<std::string> partners = TradePartners();
     if (partners.empty() || count == 0) {
         return 0;
     }
-    return OfferTrade(partners.front(), {ItemOf(kind, id, count)}, {}) == TradeOfferResult::Sent
+    return OfferTrade(partners.front(), {ItemOf(kind, id, count)}, {}, handle) ==
+                   TradeOfferResult::Sent
                ? 1
                : 0;
 }
@@ -92,6 +114,11 @@ int bbcoop_trade_notice(char* text, size_t size) {
 
 void bbcoop_trade_set_ui_tick(void (*tick)(void)) {
     SetTradeUiTick(tick);
+}
+
+void bbcoop_trade_set_namer(int (*call)(uint32_t item_id, char* text, size_t size)) {
+    namer.store(call);
+    SetTradeItemNamer(call != nullptr ? &NameOf : nullptr);
 }
 
 } // extern "C"

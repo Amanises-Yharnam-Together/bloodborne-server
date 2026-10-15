@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -95,6 +96,14 @@ std::vector<Item> ParseItems(std::string_view goods, std::string_view weapons,
 /// ("*", "NOT NEEDED", "en1234", "... (not needed)"), gestures (goods 800-899), weapon levels
 /// (only each weapon's +0 id, a multiple of 10000) and bare fists. Sorted as ParseItems.
 std::vector<Item> ItemsFromGameText(std::span<const std::uint8_t> bnd);
+
+/// Every item's name by its full item id (category | id), for trading (Kaniel 2026-10-15: any
+/// item): goods, weapons at every level and armor from `items` (item.msgbnd as above), gems and
+/// runes (0x80000000 | id) from FMG 31 of `menu` (menu.msgbnd). Placeholders left out.
+std::map<std::uint32_t, std::string> ItemNamesFromGameText(std::span<const std::uint8_t> items,
+                                                           std::span<const std::uint8_t> menu);
+/// An item's English name by its full item id from the game's own text (loaded once), or empty.
+std::string ItemName(std::uint32_t item_id);
 
 /// Runtime (the GPU library): the loaded image, from bbgpu_patch_image.
 void SetImage(unsigned char* image);

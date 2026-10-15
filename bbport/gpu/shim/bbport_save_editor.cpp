@@ -209,6 +209,28 @@ const std::vector<Item>& Items() {
     return items;
 }
 
+std::string ItemName(std::uint32_t item_id) {
+    static const std::map<std::uint32_t, std::string> names = [] {
+        // The game's own English text (as the boxes' words are).
+        const auto read = [](const char* file) {
+            char path[1024];
+            if (!bbcoop_game_file(file, path, sizeof(path))) {
+                return std::vector<std::uint8_t>{};
+            }
+            const std::string bytes = ReadFile(path);
+            auto bnd = BbGameArt::InflateDcx(
+                {reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()});
+            return bnd ? std::move(*bnd) : std::vector<std::uint8_t>{};
+        };
+        auto list = ItemNamesFromGameText(read("dvdroot_ps4/msg/engus/item.msgbnd.dcx"),
+                                          read("dvdroot_ps4/msg/engus/menu.msgbnd.dcx"));
+        std::printf("Save editor: %zu item names for trading\n", list.size());
+        return list;
+    }();
+    const auto found = names.find(item_id);
+    return found == names.end() ? std::string{} : found->second;
+}
+
 const std::string& ItemsSource() {
     Items();
     return items_source;

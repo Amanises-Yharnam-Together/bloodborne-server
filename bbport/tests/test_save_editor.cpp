@@ -181,6 +181,20 @@ int main() {
     assert(game.size() == 6);
     assert(ItemsFromGameText(std::vector<std::uint8_t>{'B', 'N', 'D', '3'}).empty());
     assert(ItemsFromGameText(std::vector<std::uint8_t>{}).empty());
+
+    // Kaniel 2026-10-15, trading any item: each item's name by its full item id, weapons at every
+    // level, gems and runes from the menu text's FMG 31.
+    const auto menu = Bnd4({{31, Fmg({{1000000, u"Tempering Blood Gemstone (1)"},
+                                      {11000002, u"Clockwise Metamorphosis"}, {0, u"*"}})}});
+    const auto names = ItemNamesFromGameText(bnd, menu);
+    assert(names.at(0x40000000 | 1000) == "Blood Vial");
+    assert(names.at(2000100) == "Chikage +1");
+    assert(names.at(0x10000000 | 30000) == "Charred Hunter Garb \xc3\xa9");
+    assert(names.at(0x80000000 | 1000000) == "Tempering Blood Gemstone (1)");
+    assert(names.at(0x80000000 | 11000002) == "Clockwise Metamorphosis");
+    assert(!names.contains(0x80000000) && !names.contains(6000000) &&
+           !names.contains(0x10000000 | 1000));
+    assert(ItemNamesFromGameText({}, {}).empty());
     std::puts("save editor: ok");
     return 0;
 }
