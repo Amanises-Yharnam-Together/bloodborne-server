@@ -468,6 +468,17 @@ bool InPartySession() {
            IsPartySession(true, ReadValue<s32>(multi_play, 0x124));
 }
 
+size_t SessionMembers() {
+    const u64 session =
+        image_base != 0 ? ReadValue<u64>(image_base + SessionManagerPointerOffset, 0) : 0;
+    if (session < 0x10000 || !HasMemoryAccess(session, 0x108, MemoryProt::CpuRead)) {
+        return 1;
+    }
+    const u64 begin = ReadValue<u64>(session, 0xF8);
+    const u64 end = ReadValue<u64>(session, 0x100);
+    return begin >= 0x10000 && end > begin && end - begin <= 0x20 * 8 ? (end - begin) / 0x20 : 1;
+}
+
 s32 SessionPlayers() {
     const u64 global = GetGlobalState();
     const u64 session = global >= 0x10000 ? ReadValue<u64>(global, SessionPlayersOffset) : 0;

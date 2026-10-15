@@ -3107,6 +3107,11 @@ constexpr s64 BoardLostMs = 10'000;
 // Out of the session this long, a down ends (DownEnd::SessionLost).
 constexpr s64 DownSessionLostMs = 3'000;
 DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms, bool in_session = true);
+// Phase 7: a down has the party around while in a session with another member in it (only the
+// server ends a session, so one whose host's game died stays, with this game alone in it).
+constexpr bool DownHasThePartyAround(bool in_session, size_t session_members) {
+    return in_session && session_members >= 2;
+}
 // Whether a real death in a party session resets its map (see ChooseDeathRespawn): a wipe, or a
 // death with nobody else standing on the map (a wipe of one), as a solo death would.
 bool DeathResetsMap(bool wiped, bool someone_else_stands);

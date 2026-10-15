@@ -1274,7 +1274,7 @@ void TickDown(PartyDeathRun& run, const DeathTick& tick) {
     KeepDown(run, tick.data, tick.now);
     // Out of the session for a moment is a load or a matching hiccup; for longer, nobody is left to
     // revive this player (the host quit or crashed, a kick).
-    if (tick.in_session) {
+    if (DownHasThePartyAround(tick.in_session, SessionMembers())) {
         run.down_out_of_session_since.reset();
     } else if (!run.down_out_of_session_since) {
         run.down_out_of_session_since = tick.now;

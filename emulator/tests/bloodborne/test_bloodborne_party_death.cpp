@@ -1133,3 +1133,12 @@ TEST(PartyDeath, EachGameKneelsItsCopyOfADownedMemberOnce) {
     EXPECT_TRUE(kneels.Due("lisara", 4, true));
     EXPECT_FALSE(kneels.Due("krolebord", 1, true));
 }
+
+// Phase 7: only the server ends a session, so a guest whose host's game died stays in a session
+// of one; a down there has nobody to revive it: it counts as out of the session (rig
+// party-death/down-session-lost, 2026-10-15).
+TEST(PartyDeath, ADownAloneInItsSessionIsOutOfIt) {
+    EXPECT_TRUE(DownHasThePartyAround(true, 2));
+    EXPECT_FALSE(DownHasThePartyAround(true, 1));
+    EXPECT_FALSE(DownHasThePartyAround(false, 3));
+}

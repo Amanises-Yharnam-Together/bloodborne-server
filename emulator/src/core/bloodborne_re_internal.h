@@ -312,6 +312,9 @@ std::optional<std::chrono::steady_clock::time_point> LastSummonSearchPost();
 bool EventFlagOn(s32 flag);
 void LogBloodstainStateChanges();
 bool InPartySession();
+// The members of this game's session, itself counted (SprjSessionManager +0xF8..+0x100); 1
+// out of one (phase 7).
+size_t SessionMembers();
 // In the session and in its world (see SessionArrival): a summoned guest only once it arrived.
 // Party death counts and posts this member as in the party only then.
 bool InSessionWorld();
