@@ -48,6 +48,7 @@ LONG = {
     "iosefka-gift": "a 90 s wait for her gift",
     "iosefka-look": "a 60 s wait for pictures",
     "guest-alone-mobs": "a 75 s wait for the mob",
+    "guest-far-positions": "a 75 s wait for the mob",
     "guest-alone-hits": "a 75 s wait for the mob",
     "guests-pair-mobs": "an 80 s wait for the mob",
     "guest-mobs-host-comes": "40 s waits for the mob",

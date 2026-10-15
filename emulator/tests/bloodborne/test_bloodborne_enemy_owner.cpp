@@ -5,6 +5,7 @@
 // enemies; the others follow it. What each game does with that: its role, the state the game's
 // host-only checks see, the ownership words and what happens to the enemy packets.
 
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -84,9 +85,8 @@ TEST(EnemyOwner, TheOwnerRunsTheAiAFollowerTheNetworkController) {
 // (server/tests/test_packet_routes.cpp, which also keeps a follower from taking another
 // follower's enemies: krolebord 2026-10-15).
 TEST(EnemyOwner, OnlyTheOwnerSendsTheEnemiesAndAFollowersHitGoesToIt) {
-    // Positions, HP, catch-up and join animations: the owner's alone (phase 8: the owner runs
-    // every enemy on its map, wherever the others stand; no guest runs one).
-    for (const u32 channel : {0x04u, 0x05u, 0x29u, 0x36u}) {
+    // HP, catch-up and join animations: the owner's alone.
+    for (const u32 channel : {0x05u, 0x29u, 0x36u}) {
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Owner), EnemyPacketFate::Keep) << channel;
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Follower), EnemyPacketFate::Drop) << channel;
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Unknown), EnemyPacketFate::Keep) << channel;
@@ -95,13 +95,18 @@ TEST(EnemyOwner, OnlyTheOwnerSendsTheEnemiesAndAFollowersHitGoesToIt) {
     EXPECT_EQ(EnemyPacketOut(0x15, EnemyRole::Owner), EnemyPacketFate::Drop);
     EXPECT_EQ(EnemyPacketOut(0x15, EnemyRole::Follower), EnemyPacketFate::ToOwner);
     EXPECT_EQ(EnemyPacketOut(0x15, EnemyRole::Unknown), EnemyPacketFate::Keep);
-    // The game's own hand-out of enemies (the host's answer 0x17): never. A follower's near list
-    // (0x16) goes to the owner (rig apart-hurt 2026-10-15).
+    // A follower's near list (0x16) goes to the owner (rig apart-hurt 2026-10-15). Kaniel
+    // 2026-10-15 (enemies by a far guest lagged, run by the host): the game's own hand-out (the
+    // owner's answer 0x17) goes out again, so a guest runs the enemies only it is near, and sends
+    // their positions (ch 4).
     EXPECT_EQ(EnemyPacketOut(0x16, EnemyRole::Follower), EnemyPacketFate::ToOwner);
     EXPECT_EQ(EnemyPacketOut(0x16, EnemyRole::Owner), EnemyPacketFate::Drop);
     EXPECT_EQ(EnemyPacketOut(0x16, EnemyRole::Unknown), EnemyPacketFate::Drop);
+    EXPECT_EQ(EnemyPacketOut(0x17, EnemyRole::Owner), EnemyPacketFate::Keep);
+    EXPECT_EQ(EnemyPacketOut(0x17, EnemyRole::Follower), EnemyPacketFate::Drop);
+    EXPECT_EQ(EnemyPacketOut(0x17, EnemyRole::Unknown), EnemyPacketFate::Drop);
     for (const EnemyRole role : {EnemyRole::Owner, EnemyRole::Follower, EnemyRole::Unknown}) {
-        EXPECT_EQ(EnemyPacketOut(0x17, role), EnemyPacketFate::Drop);
+        EXPECT_EQ(EnemyPacketOut(0x04, role), EnemyPacketFate::Keep);
     }
     for (const u32 channel : {0x3Du, 0x41u, 0x34u, 0x06u, 0x14u, 0x24u, 0x26u}) {
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Follower), EnemyPacketFate::Keep) << channel;
@@ -151,6 +156,8 @@ TEST(EnemyOwner, TheOwnerWakesTheGroupsAroundTheOtherPlayers) {
 TEST(EnemyOwner, TheOwnerRunsEveryAwakeEnemyTheGameLetGo) {
     EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 4, 0xFFFF, false),
               std::optional<u16>{OwnedEnemyWord});
+    // Handed out to a follower by the game (0x17): that follower runs it.
+    EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 4, 0xFFFF, false, true), std::nullopt);
     // The game's own already: unchanged.
     EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 4, 1, false), std::nullopt);
     EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 4, 0, false), std::nullopt);
@@ -229,4 +236,109 @@ TEST(EnemyOwner, AGuestsOwnHitStaysWhileTheHostCatchesUp) {
 TEST(EnemyOwner, OnlyAnOwnerThatTakesOverTakesTheLogsHp) {
     EXPECT_FALSE(TakesOverEnemyHp(EnemyOwnerEntry{CentralYharnam, "host", 1}));
     EXPECT_TRUE(TakesOverEnemyHp(EnemyOwnerEntry{CentralYharnam, "guest", 2}));
+}
+
+// Kaniel 2026-10-15: with the guest away from the host on one map, every enemy lagged (about
+// 200 ms) and acted dumb. The game sends positions (ch 4) 8 to a packet, one packet every other
+// frame, a round at most every 0.25 s: the guest's area woke three times the enemies, so each got
+// a position about twice a second. The owner sends a round's full packets at once, 10 rounds a
+// second.
+TEST(EnemyOwner, TheOwnerSendsEveryPositionOfARoundAtOnce) {
+    // Full, with slots left in the round: the owner sends it and the game fills another.
+    EXPECT_TRUE(SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 40, 281, 0));
+    EXPECT_TRUE(SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 40, 281, 5));
+    // Not full yet, or the round's last slot (the game sends that one itself).
+    EXPECT_FALSE(SendsFullPositionPacket(EnemyRole::Owner, 7, 8, 40, 281, 0));
+    EXPECT_FALSE(SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 280, 281, 0));
+    // At most MaxPositionPacketsPerFrame a frame, the game's own among them.
+    EXPECT_TRUE(
+        SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 40, 281, MaxPositionPacketsPerFrame - 2));
+    EXPECT_FALSE(
+        SendsFullPositionPacket(EnemyRole::Owner, 8, 8, 40, 281, MaxPositionPacketsPerFrame - 1));
+    // Nonsense: the game's own way.
+    EXPECT_FALSE(SendsFullPositionPacket(EnemyRole::Owner, 0, 0, 40, 281, 0));
+    // A follower sends the enemies the owner handed it the same way; without an owner, the game's.
+    EXPECT_TRUE(SendsFullPositionPacket(EnemyRole::Follower, 8, 8, 40, 281, 0));
+    EXPECT_FALSE(SendsFullPositionPacket(EnemyRole::Unknown, 8, 8, 40, 281, 0));
+}
+
+// Every frame did not help (Kaniel 2026-10-15) and arrives in bunches without a de-jitter buffer:
+// 10 rounds a second, from whichever game runs an enemy.
+TEST(EnemyOwner, PositionRoundsComeTenTimesASecond) {
+    EXPECT_FLOAT_EQ(PositionRoundSeconds(EnemyRole::Owner), 0.1f);
+    EXPECT_FLOAT_EQ(PositionRoundSeconds(EnemyRole::Follower), 0.1f);
+    // Without an owner, the game's 0.25 s (put back when a map has none).
+    EXPECT_FLOAT_EQ(PositionRoundSeconds(EnemyRole::Unknown), GamePositionRoundSeconds);
+    EXPECT_FLOAT_EQ(GamePositionRoundSeconds, 0.25f);
+}
+
+// The old hitch when the host came near an enemy the guest ran (Kaniel 2026-10-15: "lagging for a
+// second before moving back"): the game hands enemies out every 3 s (the host's 0x17,
+// NetWorldChrSync +0x630) on near lists sent every 5 s (a guest's 0x16, +0x638). Both every 0.25 s
+// with an owner.
+TEST(EnemyOwner, EnemiesChangeHandsWithinAQuarterSecond) {
+    for (const EnemyRole role : {EnemyRole::Owner, EnemyRole::Follower}) {
+        EXPECT_FLOAT_EQ(HandOutSeconds(role), 0.25f);
+        EXPECT_FLOAT_EQ(NearListSeconds(role), 0.25f);
+    }
+    EXPECT_FLOAT_EQ(HandOutSeconds(EnemyRole::Unknown), GameHandOutSeconds);
+    EXPECT_FLOAT_EQ(NearListSeconds(EnemyRole::Unknown), GameNearListSeconds);
+    EXPECT_FLOAT_EQ(GameHandOutSeconds, 3.0f);
+    EXPECT_FLOAT_EQ(GameNearListSeconds, 5.0f);
+}
+
+// A follower runs exactly the enemies the owner's latest hand-out (0x17) gave it; the rest follow
+// the owner. Never two games on one enemy: the owner keeps what it did not hand out.
+TEST(EnemyOwner, AFollowerRunsWhatTheOwnerHandedIt) {
+    const std::vector<u32> handed{0x280b, 0x2871};
+    EXPECT_TRUE(HandedOut(handed, 0x280b));
+    EXPECT_FALSE(HandedOut(handed, 0x2809));
+    EXPECT_FALSE(HandedOut({}, 0x280b));
+    // The 0x17 payload: u32 n, then n entries, the chr +0x90 index in the low 16 bits (the high
+    // ones change from one hand-out to the next; rig 2026-10-15: 6f728a0, 6e1280b).
+    const std::vector<u8> payload{2, 0, 0, 0, 0x0b, 0x28, 0xe1, 0x06, 0x71, 0x28, 0xf7, 0x06};
+    EXPECT_EQ(HandOutIds(payload), handed);
+    // A short or nonsense one names nobody.
+    EXPECT_EQ(HandOutIds(std::vector<u8>{3, 0, 0, 0, 0x0b, 0x28, 0, 0}), std::vector<u32>{});
+    EXPECT_EQ(HandOutIds(std::vector<u8>{1, 0}), std::vector<u32>{});
+}
+
+// A follower's measure: the positions it took for the enemies by its player, per second.
+TEST(EnemyOwner, AFollowerCountsThePositionsOfTheEnemiesByIt) {
+    // The packets name an enemy by its +0x90 index (map index << 11 | slot), the log by chr id.
+    const std::map<u32, u32> taken{{0x280b, 40}, {0x2809, 10}, {0x2871, 99}};
+    using Near = std::vector<std::pair<u32, u32>>;
+    // Fastest first; an enemy by it without a position yet shows 0.
+    EXPECT_EQ(
+        PositionRatesText(
+            taken, Near{{0x10014009, 0x2809}, {0x1001400b, 0x280b}, {0x10014066, 0x2866}}, 10.0),
+        "1001400b 4.0, 10014009 1.0, 10014066 0.0");
+    EXPECT_EQ(PositionRatesText(taken, Near{}, 10.0), "none");
+    EXPECT_EQ(PositionRatesText(taken, Near{{0x1001400b, 0x280b}}, 0.0), "none");
+}
+
+// Rig 2026-10-15 (a write watch): the game copies an enemy's place into the sync's position record
+// and marks it to send (0x0151BCA0) only for the enemies by its own player; the ones awake by
+// another player never went out. The owner does it for every awake enemy it runs.
+TEST(EnemyOwner, TheOwnerSendsThePositionOfEveryAwakeEnemyItRuns) {
+    EXPECT_TRUE(OwnerSendsPositionOf(EnemyRole::Owner, 4, 4, OwnedEnemyWord, false));
+    EXPECT_TRUE(OwnerSendsPositionOf(EnemyRole::Owner, 4, 4, 0, false));
+    // Let go (the network's), asleep, half awake or kept out: not this game's to send.
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Owner, 4, 4, 0xFFFF, false));
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Owner, 0, 0, OwnedEnemyWord, false));
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Owner, 2, 2, OwnedEnemyWord, false));
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Owner, 4, 4, OwnedEnemyWord, true));
+    // A follower sends none.
+    EXPECT_FALSE(OwnerSendsPositionOf(EnemyRole::Follower, 4, 4, OwnedEnemyWord, false));
+}
+
+// The old hitch (Kaniel 2026-10-15): an enemy that changed hands jumped back. Each game logs an
+// enemy by its player that moves farther in one frame than any enemy runs (the rig forbids it).
+TEST(EnemyOwner, AnEnemyThatJumpsInOneFrameIsSeen) {
+    const std::array<float, 3> at{-216.7f, -54.7f, 178.1f};
+    EXPECT_FALSE(EnemyJumped(at, at));
+    EXPECT_FALSE(EnemyJumped(at, {-216.5f, -54.7f, 178.2f})); // a run, one frame
+    EXPECT_TRUE(EnemyJumped(at, {-215.8f, -54.7f, 178.1f}));  // 0.9 m at once
+    EXPECT_TRUE(EnemyJumped(at, {-212.0f, -54.7f, 178.1f}));  // 4.7 m at once
+    EXPECT_TRUE(EnemyJumped(at, {-216.7f, -58.0f, 178.1f}));  // up or down too
 }

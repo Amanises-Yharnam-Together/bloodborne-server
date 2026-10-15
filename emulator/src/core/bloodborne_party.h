@@ -2444,7 +2444,8 @@ constexpr std::array<u8, 6> OwnershipStepEndPrologue{0x55, 0x48, 0x89, 0xE5, 0x4
 constexpr u16 OwnedEnemyWord = 1;
 // The word the owner gives an enemy after the ownership step, or none: an awake one (`level` its
 // [control +0x14], `applied` +0x10) the game let go, unless the game keeps it out.
-std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out);
+std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out,
+                                  bool handed_out = false);
 using GroupSet = std::array<u32, 8>;
 struct WakeGroups {
     GroupSet wakes{};   // chr +0x218, record +0x38
@@ -2457,6 +2458,74 @@ struct WakeGroups {
 // yet (no groups, or all of them, as right after a join) adds nothing.
 WakeGroups WithOthersGroups(const WakeGroups& record, const WakeGroups& own,
                             std::span<const WakeGroups> others);
+// Enemy positions (ch 4, docs/native-netcode/characters.md), sent by the map's owner:
+// NetWorldChrSync (WorldChrMan +0xA40) walks the local player's map's slots in rounds (0x018ECEB0:
+// +0x640 the map index, +0x644 the next slot, +0x648 a round under way, +0x64C the round's period,
+// +0x650 its timer, +0x658 "sent last frame"), at most one packet every other frame of up to 8
+// entries {u32 chr id, 8 B packed position} (+0x654, the buffer at +0x6C8), only the slots with
+// dirty bit 2, a new round at most every 0.25 s. Kaniel 2026-10-15: with the guest away from the
+// host on one map, the guest's area woke three times the enemies and each got a position about
+// twice a second (every enemy laggy and dumb). The owner sends each full packet itself (our link,
+// ch 4 to every member) at the loop's slot step (0x018EE922: rbx the entries, r14 the packet's
+// size, r8 the sync, r15 the map's slots, +0x10 their count) and the game fills the next one: a
+// round goes in one frame. And a round every frame (Kaniel 2026-10-15: "send every frame?").
+constexpr float GamePositionRoundSeconds = 0.25f; // the sync's ctor, 0x018EC19D
+constexpr u64 PositionRoundPeriodOffset = 0x64C;  // in NetWorldChrSync
+constexpr u64 PositionSlotOffset = 0x644;
+constexpr u64 PositionPacketOffset = 0x6C8;
+constexpr u32 PositionPacketBytes = 0x60;
+constexpr u32 PositionChannel = 0x04;
+// 0x018EE910 `mov rax, [rbp - 0x108]` right after an entry went in (`inc ebx`): rbx the entries,
+// r14 the packet's size, r12 the sync, r15 the map's slots. 0x018EEBB0 `mov r13d, [r12 - 4]`: a
+// received entry's chr id at r12 - 4.
+constexpr u64 PositionPacketEntryOffset = 0x018EE910;
+constexpr std::array<u8, 7> PositionPacketEntry{0x48, 0x8B, 0x85, 0xF8, 0xFE, 0xFF, 0xFF};
+constexpr u64 PositionReceiveEntryOffset = 0x018EEBB0;
+constexpr std::array<u8, 5> PositionReceiveEntry{0x45, 0x8B, 0x6C, 0x24, 0xFC};
+constexpr u32 MaxPositionPacketsPerFrame = 16;
+bool SendsFullPositionPacket(EnemyRole role, s32 entries, s32 per_packet, s32 slot, s32 slots,
+                             u32 sent_this_frame);
+float PositionRoundSeconds(EnemyRole role);
+// The game's own hand-out of enemies (Kaniel 2026-10-15: the nearest player runs each enemy, as
+// in vanilla; the host running a far guest's enemies made them lag): a guest sends the enemies
+// near it (0x16, period NetWorldChrSync +0x638, 5 s), the host answers which of them that guest
+// runs (0x17, period +0x630, 3 s; payload u32 n + n entries, the chr +0x90 index in the low 16
+// bits, something that changes each time in the high ones; the guest sets those words
+// to 1 and the rest of its table to 0xFFFF, 0x018ED07E). The owner runs the awake enemies it did
+// not hand out (AwakeEnemyWord). The slow periods made a hand-over hang for a second: both every
+// 0.25 s with an owner.
+constexpr float GameHandOutSeconds = 3.0f;  // the sync's ctor, 0x018EC15A
+constexpr float GameNearListSeconds = 5.0f; // 0x018EC16E
+constexpr u64 HandOutPeriodOffset = 0x630;
+constexpr u64 NearListPeriodOffset = 0x638;
+float HandOutSeconds(EnemyRole role);
+float NearListSeconds(EnemyRole role);
+std::vector<u32> HandOutIds(std::span<const u8> payload);
+bool HandedOut(std::span<const u32> handed, u32 index);
+// An enemy by this player that moved farther in one frame than any enemy runs: a hand-over that
+// jumped (Kaniel 2026-10-15: "lagging for a second before moving back").
+constexpr float EnemyJumpMetres = 0.75f;
+bool EnemyJumped(const std::array<float, 3>& before, const std::array<float, 3>& now);
+// A hand-out older than this names nobody (the game sends one each period, empty or not).
+constexpr s64 HandOutFreshMs = 1'000;
+// The guest's receive of 0x17 (0x018ED083 `mov r8, rbx; mov ebx, eax; test ebx, ebx`, eax the
+// size) into the buffer at 0x05570090.
+constexpr u64 HandOutReceivedOffset = 0x018ED083;
+constexpr std::array<u8, 7> HandOutReceived{0x49, 0x89, 0xD8, 0x89, 0xC3, 0x85, 0xDB};
+constexpr u64 HandOutBufferOffset = 0x05570090;
+// The enemies awake only by another player get no position from the owner's game: its per-enemy
+// net update (0x0151BCA0, which copies the place (physics +0x1E0, +0x1E8) and the turn (+0x1D0,
+// +0x1D8) into the sync's position record (+0x20, 0x18 a slot: +0, +8, +0xC, +0x14) and sets bit 2
+// of the slot's flags (+0x38)) runs only for the enemies by its own player (rig 2026-10-15: a
+// write watch; the packets name an enemy by its chr +0x90 index). The owner does it for every
+// awake enemy it runs, every frame as the game does (after the ownership step, before the
+// characters' updates).
+bool OwnerSendsPositionOf(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out);
+// A follower's measure (its log): the positions it took (`taken` by the packets' id, the chr's
+// +0x90 index: map index << 11 | slot) for the enemies `nearby` its player ({chr id, index}), per
+// second over `seconds`, fastest first.
+std::string PositionRatesText(const std::map<u32, u32>& taken,
+                              std::span<const std::pair<u32, u32>> nearby, double seconds);
 
 // The game's packets in our frames (docs/SERVER_COOP_PLAN.md phase 2b, bloodborne_game_link.h,
 // see InstallGamePacketLink). The transport send under NetSync's send and its resend
