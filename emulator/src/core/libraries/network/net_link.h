@@ -369,6 +369,25 @@ struct PingSummary {
 };
 // The game's side of the link's liveness: a ping a second, the round trip of each pong, an
 // outage when the server stops answering (each reported once), and a summary every 10 s.
+// Whether the link's hello goes now: not once the server took it; once a second, every 10 s
+// after a refusal.
+constexpr s64 HelloRetryMs = 1000;
+constexpr s64 RefusedHelloRetryMs = 10'000;
+inline bool HelloDue(bool welcomed, std::optional<s64> last_hello_ms, bool refused, s64 now_ms) {
+    if (welcomed) {
+        return false;
+    }
+    return !last_hello_ms ||
+           now_ms - *last_hello_ms >= (refused ? RefusedHelloRetryMs : HelloRetryMs);
+}
+
+// Phase 11: the link starts with the NP sign-in, before the co-op code says the game's build; a
+// game welcomed without one says hello again once it is known (shadNet holds builds against each
+// other only once said).
+inline bool SaysHelloAgainForBuild(std::string_view before, std::string_view now) {
+    return before.empty() && !now.empty();
+}
+
 class PingMeter {
 public:
     explicit PingMeter(s64 interval_ms = 1000, s64 quiet_ms = 3000, s64 summary_ms = 10'000)

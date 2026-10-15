@@ -164,6 +164,21 @@ TEST(NetLink, AGameTalksToPeersOnlyThroughTheServer) {
 
 // Phase 7: the peers are the server's room members at their virtual addresses, all reached
 // through the server: a member is connected at once, with no handshake and no STUN.
+// Phase 11: the link starts with the NP sign-in, before the co-op code says the game's build; a
+// hello before that would leave shadNet an empty build to hold every later hello against.
+TEST(NetLink, AHelloGoesAgainOnceTheBuildIsKnown) {
+    EXPECT_TRUE(HelloDue(false, std::nullopt, false, 0));
+    EXPECT_FALSE(HelloDue(true, std::nullopt, false, 0)) << "welcomed: none";
+    EXPECT_FALSE(HelloDue(false, 0, false, 999));
+    EXPECT_TRUE(HelloDue(false, 0, false, 1000)) << "once a second";
+    EXPECT_FALSE(HelloDue(false, 0, true, 9999));
+    EXPECT_TRUE(HelloDue(false, 0, true, 10000)) << "refused: every 10 s";
+    // Welcomed before the co-op code said the build: a hello again with it.
+    EXPECT_TRUE(SaysHelloAgainForBuild("", "abc events 1 protocol 9"));
+    EXPECT_FALSE(SaysHelloAgainForBuild("abc", "abc"));
+    EXPECT_FALSE(SaysHelloAgainForBuild("", ""));
+}
+
 TEST(NetLink, PeersNeedNoHandshake) {
     EXPECT_TRUE(ConnectsWithoutHandshake(ServerEndpoint{Loopback, 0x2A7A}));
     EXPECT_FALSE(ConnectsWithoutHandshake(ServerEndpoint{})) << "no link yet";

@@ -267,7 +267,12 @@ Hub::Hub(qint64 quiet_ms, qint64 gone_ms, qint64 stats_ms, int pair_lines)
     : quiet_ms{quiet_ms}, gone_ms{gone_ms}, stats_ms{stats_ms}, pair_lines{pair_lines} {}
 
 QByteArray Hub::Build() const {
-    return members.isEmpty() ? QByteArray{} : members.cbegin()->build;
+    for (const Link& link : members) {
+        if (!link.build.isEmpty()) {
+            return link.build;
+        }
+    }
+    return {};
 }
 
 std::optional<Endpoint> Hub::VirtualOf(const Endpoint& real) const {
@@ -353,10 +358,11 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
     if (hello->version != LinkVersion) {
         refusal = "link version " + QByteArray::number(hello->version) + ", this server speaks " +
                   QByteArray::number(LinkVersion);
-    } else {
-        // Every other linked game's build (a game saying hello again is not one).
+    } else if (!hello->build.isEmpty()) {
+        // Every other linked game's build (a game saying hello again is not one). Phase 11: a game
+        // signs in before its co-op code says the build; none said holds nothing, either way.
         for (const Link& link : std::as_const(members)) {
-            if (!(link.endpoint == from) && link.build != hello->build) {
+            if (!(link.endpoint == from) && !link.build.isEmpty() && link.build != hello->build) {
                 refusal = "another build: everyone needs the same release (this game runs " +
                           hello->build + ", the games here run " + link.build + ")";
                 break;

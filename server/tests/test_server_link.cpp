@@ -164,6 +164,21 @@ int HelloAndBuilds() {
   result = hub.Receive(Kaniel, HelloFrom("Kaniel"), 40);
   CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
   CHECK(hub.Members() == 2);
+  // Phase 11: the link starts with the sign-in, before the co-op code says the
+  // build. A hello with none is welcomed and holds nothing against the others;
+  // the game says hello again once it knows its build, and that one counts.
+  Hub fresh;
+  result = fresh.Receive(Kaniel, HelloFrom("Kaniel", ""), 45);
+  CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
+  CHECK(fresh.Build().isEmpty());
+  result = fresh.Receive(Ada, HelloFrom("Ada"), 46);
+  CHECK(DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
+  CHECK(fresh.Build() == Build);
+  result = fresh.Receive(Kaniel, HelloFrom("Kaniel", "13ddd14d"), 47);
+  CHECK(!DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
+  result = fresh.Receive(Kaniel, HelloFrom("Kaniel"), 48);
+  CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
+  CHECK(fresh.Members() == 2);
   // A game of before phase 11 (link version 1, no secret) is a game of another
   // build.
   QByteArray old = QByteArray::fromHex("ffffffff") + "SHLK";

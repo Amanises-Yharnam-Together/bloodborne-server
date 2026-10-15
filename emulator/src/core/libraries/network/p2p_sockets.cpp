@@ -76,8 +76,6 @@ constexpr u16 kSignalingVPortNbo = 0xffff;
 // The server link's housekeeping (hello, ping, outage checks) runs this often on the receive
 // thread; a refused hello is said again this often (a hello lost on the way is said every second).
 constexpr s64 LinkTickMs = 100;
-constexpr s64 HelloRetryMs = 1000;
-constexpr s64 RefusedHelloRetryMs = 10'000;
 constexpr size_t kVPortHeaderSize = 4;
 constexpr size_t kMaxUdpPayload = 65507;
 constexpr size_t kMaxP2PPayload = kMaxUdpPayload - kVPortHeaderSize;
@@ -466,6 +464,10 @@ public:
 
     void SetLinkBuild(std::string build) {
         std::lock_guard lock(link_mutex);
+        if (Link::SaysHelloAgainForBuild(link_build, build)) {
+            link_welcomed = false;
+            link_hello_ms.reset();
+        }
         link_build = std::move(build);
     }
 
@@ -901,8 +903,7 @@ private:
             if (server.addr_nbo == 0 || server.port_nbo == 0) {
                 return;
             }
-            const s64 retry_ms = link_refusal.empty() ? HelloRetryMs : RefusedHelloRetryMs;
-            if (!link_welcomed && (!link_hello_ms || now_ms - *link_hello_ms >= retry_ms)) {
+            if (Link::HelloDue(link_welcomed, link_hello_ms, !link_refusal.empty(), now_ms)) {
                 link_hello_ms = now_ms;
                 datagrams.push_back(Link::Encode(Link::Hello{
                     .online_id = link_online_id, .build = link_build, .secret = link_secret}));

@@ -845,6 +845,7 @@ SUITES = {
                             "expect-others-near 1 30"] for role in PARTY2},
                     server_restarts=["restart-go"],
                     expect={role: [r"Rpc bridge: shadNet ended the connection",
+                                   r"the game stays signed in while it comes back",
                                    r"Co-op server world: shadNet started over"]
                             for role in PARTY2},
                     forbid=holds(PARTY2)),

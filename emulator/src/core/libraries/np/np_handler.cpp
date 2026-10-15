@@ -343,7 +343,16 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
         m_clients[user_id] = std::move(client);
     }
 
-    FireStateCallback(user_id, NpManager::OrbisNpState::SignedIn);
+    // Back after a drop the game was not told of: it is signed in already.
+    bool quiet = false;
+    {
+        std::lock_guard lock(m_mutex_clients);
+        if (const auto it = m_reconnect.find(user_id); it != m_reconnect.end())
+            quiet = it->second.quiet;
+    }
+    if (!quiet) {
+        FireStateCallback(user_id, NpManager::OrbisNpState::SignedIn);
+    }
     return true;
 }
 
@@ -356,7 +365,7 @@ void NpHandler::SetAppearOffline(bool enable) {
     }
 }
 
-void NpHandler::DisconnectUser(s32 user_id) {
+void NpHandler::DisconnectUser(s32 user_id, bool tell_game) {
     std::shared_ptr<ShadNet::ShadNetClient> client;
     {
         std::lock_guard lock(m_mutex_clients);
@@ -371,8 +380,11 @@ void NpHandler::DisconnectUser(s32 user_id) {
         m_friend_state.erase(user_id);
     }
     client->Stop();
-    FireStateCallback(user_id, NpManager::OrbisNpState::SignedOut);
-    LOG_INFO(NpHandler, "user_id={} disconnected", user_id);
+    if (tell_game) {
+        FireStateCallback(user_id, NpManager::OrbisNpState::SignedOut);
+    }
+    LOG_INFO(NpHandler, "user_id={} disconnected{}", user_id,
+             tell_game ? "" : " (the game stays signed in while it comes back)");
 }
 
 void NpHandler::OnUserLoggedIn(s32 user_id) {
@@ -406,15 +418,19 @@ void NpHandler::WorkerThread() {
 
         for (s32 uid : dropped) {
             LOG_WARNING(NpHandler, "user_id={} connection dropped (network); will retry", uid);
-            DisconnectUser(uid);   // reports SignedOut + stops/removes the dead client
-            MarkForReconnect(uid); // schedule transparent reconnect (network drop, not logout)
+            // Phase 11 (the port): a server restart or a link drop is ridden out, not a sign-out
+            // (a sign-out and sign-in made the game build its online parts again: a 4.6 s frame).
+            const bool quiet = Net::ServerLinkSwitchOn();
+            DisconnectUser(uid, !quiet); // stops/removes the dead client
+            MarkForReconnect(uid,
+                             quiet); // schedule transparent reconnect (network drop, not logout)
         }
 
         TryReconnect();
     }
 }
 
-void NpHandler::MarkForReconnect(s32 user_id) {
+void NpHandler::MarkForReconnect(s32 user_id, bool quiet) {
     if (!EmulatorSettings.IsShadNetEnabled())
         return; // offline mode: nothing to reconnect to
     constexpr auto kInitialBackoff = std::chrono::milliseconds(2000);
@@ -422,6 +438,7 @@ void NpHandler::MarkForReconnect(s32 user_id) {
     auto& st = m_reconnect[user_id];
     st.backoff = kInitialBackoff;
     st.next_attempt = std::chrono::steady_clock::now() + st.backoff;
+    st.quiet = quiet;
 }
 
 void NpHandler::TryReconnect() {
@@ -462,12 +479,18 @@ void NpHandler::TryReconnect() {
 
 bool NpHandler::IsPsnSignedIn(s32 user_id) const {
     std::lock_guard lock(m_mutex_clients);
+    if (const auto quiet = m_reconnect.find(user_id);
+        quiet != m_reconnect.end() && quiet->second.quiet)
+        return true; // coming back: still signed in for the game
     auto it = m_clients.find(user_id);
     return it != m_clients.end() && it->second->IsAuthenticated();
 }
 
 bool NpHandler::IsAnySignedIn() const {
     std::lock_guard lock(m_mutex_clients);
+    for (const auto& [_, st] : m_reconnect)
+        if (st.quiet)
+            return true;
     for (auto& [_, client] : m_clients)
         if (client->IsAuthenticated())
             return true;
