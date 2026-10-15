@@ -1473,6 +1473,20 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
     }
 
     const auto* vs_info = sel.infos[static_cast<u32>(SwStage::Vertex)];
+    // bbport: a draw whose vertex buffer table pointer is null (a read fault at 0 before, at the
+    // cutscene after Rom and in normal play) has no vertex input to build: skipped (Supermedo's
+    // bbport 2c4ddeba).
+    if (vs_info && sel.fetch_shader) {
+        for (const auto& attrib : sel.fetch_shader->attributes) {
+            if (vs_info->UdPointerNull(attrib.sgpr_base)) {
+                static std::atomic<u32> reported{0};
+                if (reported.fetch_add(1, std::memory_order_relaxed) < 5) {
+                    std::printf("GPU: draw skipped: its vertex buffer table pointer is null\n");
+                }
+                return false;
+            }
+        }
+    }
     if (vs_info && sel.fetch_shader && !instance.IsVertexInputDynamicState()) {
         // Without vertex input dynamic state, the pipeline needs to specialize on format.
         // Stride will still be handled outside the pipeline using dynamic state.
