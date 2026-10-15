@@ -115,7 +115,9 @@ WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& world);
 class TeamJoin {
 public:
     // TakeHost (phase 7): the server passed the room to this guest; it hosts the session now.
-    enum class Action { None, CreateSession, Publish, PublishClosed, Join, TakeHost };
+    // LeaveAlone (phase 7): a guest alone in its session for AloneLeaveMs leaves it.
+    enum class Action { None, CreateSession, Publish, PublishClosed, Join, TakeHost, LeaveAlone };
+    static constexpr s64 AloneLeaveMs = 5'000;
     struct Frame {
         bool host = false;
         s32 matching_state = 0; // the session manager's +0x124: 0 alone, 3 hosting, 6 a guest
@@ -123,11 +125,15 @@ public:
         bool session_known = false;   // a guest: the server sent its host's open session
         bool room_owner = false;      // the server passed the session's room to this game
         bool room_has_others = false; // another member is in that room (not the one who left)
+        size_t session_members = 2;   // the game's session, this game counted
+        bool standing = true;         // the player is up (not down or dead)
+        s64 now_ms = 0;
     };
     Action Tick(const Frame& frame);
 
 private:
-    bool published = false; // the host said its open session
+    bool published = false;         // the host said its open session
+    std::optional<s64> alone_since; // a guest alone in its session since
 };
 
 // Kaniel 2026-10-14: the bell items are out of the port's game (the team joins without them):

@@ -265,6 +265,17 @@ WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& message) {
 
 TeamJoin::Action TeamJoin::Tick(const Frame& frame) {
     if (!frame.host) {
+        if (frame.matching_state == MatchingStateSummonedGuest && frame.session_members <= 1) {
+            if (!alone_since) {
+                alone_since = frame.now_ms;
+            }
+            if (frame.standing && frame.now_ms - *alone_since >= AloneLeaveMs) {
+                alone_since.reset();
+                return Action::LeaveAlone;
+            }
+        } else {
+            alone_since.reset();
+        }
         if (frame.matching_state == MatchingStateSummonedGuest && frame.room_owner &&
             frame.room_has_others) {
             return Action::TakeHost;

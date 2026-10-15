@@ -1113,6 +1113,10 @@ bool TickTeamJoin(bool ready) {
         .session_known = session.has_value() && !session->join().empty(),
         .room_owner = Libraries::Np::NpMatching2::OwnsItsRoom(),
         .room_has_others = Libraries::Np::NpMatching2::OwnedRoomHasOthers(),
+        .session_members = SessionMembers(),
+        .standing = party_death_run.downed.Current() == Vital::Up ||
+                    party_death_run.downed.Current() == Vital::Off,
+        .now_ms = SteadyMilliseconds(),
     };
     const auto say = [](std::string join, u64 number) {
         bbcoop::Envelope envelope;
@@ -1155,6 +1159,14 @@ bool TickTeamJoin(bool ready) {
         }
         RequestServerHello();
         LOG_INFO(Debug, "Co-op team join: the session host moved to this game (the room is ours)");
+        break;
+    case TeamJoin::Action::LeaveAlone:
+        // Phase 7: the others left the room (only the server ends a session, so it stays with this
+        // guest alone in it): it leaves, and joins the session its host opens again.
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64)>(image_base +
+                                                     MultiPlayStopRequestOffset)(manager);
+        LOG_INFO(Debug,
+                 "Co-op team join: alone in the session; leaving it to join the host's next");
         break;
     case TeamJoin::Action::Join: {
         const std::string& join = session->join();
