@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "common/types.h"
+#include "coop/packet_routes.h"
 #include "coop/world_log.h"
 #include "core/bloodborne_patch_sites.h"
 
@@ -2248,12 +2249,10 @@ std::size_t PruneCoopTraces(const std::filesystem::path& log_dir, std::size_t ke
 // understood) or "full" (every payload); NativePayloadTraceCap bytes of a payload at most.
 enum class PacketTraceMode : u8 { Off, On, Full };
 PacketTraceMode ParsePacketTraceMode(const char* setting);
-constexpr u32 NativeChannelCount = 0x44;
+using BloodborneCoop::NativeChannelCount;
 constexpr u32 NativePacketMaxBytes = 0x6400; // header and payload
 constexpr std::size_t NativePayloadTraceCap = 512;
-constexpr bool IsReliableNativeChannel(u32 channel) {
-    return channel > 6;
-}
+using BloodborneCoop::IsReliableNativeChannel;
 // The channels whose payloads docs/NATIVE_NETCODE.md does not explain yet: the 0x60-byte enemy
 // state record (0x29, 0x3D), the 0x14-byte one (0x41), 0x34 and 0x43.
 bool NativePayloadUnknown(u32 channel);
@@ -2292,33 +2291,22 @@ constexpr std::array<u8, 8> ReliablePacketQueued{0x48, 0x8B, 0x4B, 0x30, 0x48, 0
 constexpr u64 UnreliablePacketQueuedOffset = 0x01790FCA;
 constexpr std::array<u8, 7> UnreliablePacketQueued{0x48, 0x8D, 0x75, 0xC8, 0x4C, 0x89, 0xEF};
 
-// The channel table (docs/SERVER_COOP_PLAN.md phase 1): what happens to each game packet, decided
-// once per channel where every packet passes, instead of a hook per feature deep in the game.
-//   Pass     the game's own (join handshake, character data, the unknown channels)
-//   SameMap  only between members on one map (players, hits, enemies, events, objects, bullets):
-//            a member apart has another copy of the world, so these act on the wrong one
-//   Ours     our code carries that state instead (0x2C map items stay each player's, 0x2F the
-//            host's door corrections: the world log and the map state board)
-//   Drop     nobody's (0x27, the boss "thanks" kick)
-// The receiver decides on SameMap with the other member's map from the map board, so packets still
-// flow (the game's idle timer counts them) and both ends judge from the same board; Ours and Drop
-// stop at the send too. Always on in the port's co-op (phase 6); it replaces the map item header
-// hook ("map item sync").
-enum class ChannelPolicy : u8 { Pass, SameMap, Ours, Drop };
-ChannelPolicy NativeChannelPolicy(u32 channel);
-std::string_view ChannelPolicyName(ChannelPolicy policy);
-enum class PacketWay : u8 { Out, In };
-// Whether the game sends (Out) or gets (In) a packet on `channel`. `own_map` is this game's map (0
-// while it does not read), `peer_map` the other member's on the map board (nothing or 0 when not
-// known): an unknown map lets SameMap channels through.
-bool KeepsNativePacket(u32 channel, PacketWay way, u32 own_map, std::optional<u32> peer_map);
-// A received packet the table drops gets this channel, past the game's last (0x43): both receive
-// paths then take the game's own drop branch (`cmp ..., 0x43; ja`), which frees it.
-constexpr u32 DroppedNativeChannel = NativeChannelCount;
+// The channel table (docs/SERVER_COOP_PLAN.md phase 1) decides where a packet goes at shadNet since
+// phase 9 (coop/packet_routes.h): the server reads every game packet it relays and forwards it only
+// to a teammate that needs it. A reliable packet it drops arrives as DroppedNativeChannel, which
+// the game link hands to nobody. The game still decides what it sends at all: an Ours or Drop
+// packet, or one the enemy owners keep from a follower, is "not sent" (the game then keeps the
+// state its own way: rig 2026-10-15, a guest whose map item packet went out waited for an answer
+// and could not pick the item up). Its hooks on both receive paths make the owner's enemies step
+// on a hit.
+using BloodborneCoop::ChannelPolicy;
+using BloodborneCoop::ChannelPolicyName;
+using BloodborneCoop::DroppedNativeChannel;
+using BloodborneCoop::NativeChannelPolicy;
 // The hooks (see InstallChannelTable): the send's prologue (`push rbp; mov rbp, rsp; push r15`),
-// answering 0 (not sent) for a dropped packet; the reliable receive's channel check
-// (`movsxd rax, [rbx + 0x64]; cmp rax, 0x43`, the channel rewritten in the member's queues) and
-// the unreliable one's (`mov r14, rdx; cmp eax, 0x43`, the channel in eax rewritten).
+// answering 0 (not sent) for a packet our link sent elsewhere; the reliable receive's channel check
+// (`movsxd rax, [rbx + 0x64]; cmp rax, 0x43`) and the unreliable one's (`mov r14, rdx; cmp eax,
+// 0x43`).
 constexpr u64 PacketSendOffset = 0x017894E0;
 constexpr std::array<u8, 6> PacketSendPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
 constexpr u64 ReliableChannelCheckOffset = 0x01790DDE;
@@ -2395,10 +2383,11 @@ std::optional<s32> HeldOwnHitHp(s32 current, s32 after_own_hit, s64 age_ms);
 // down to it (scaled by each copy's max, to 0 for a killing hit: it dies on every screen at
 // once); the owner applies the hit itself (the game's 0x15), and without an owner nothing.
 std::optional<s32> HitNewsHp(EnemyRole role, s32 current, s32 copy_max, s32 hp, s32 max);
+// What the game sends at all (shadNet routes what it sends, coop/packet_routes.h): a follower's
+// hit (0x15) and near list (0x16) go to the area's owner, not the session's host the game sends
+// them to; what only the owner sends, a follower does not send (the game sees "not sent").
 enum class EnemyPacketFate : u8 { Keep, Drop, ToOwner };
 EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role);
-// `from_owner`: the sender is the area's owner.
-bool KeepsEnemyPacketIn(u32 channel, EnemyRole role, bool from_owner);
 // One line per change of this member's role (or of the owner it follows).
 class EnemyRoleLog {
 public:

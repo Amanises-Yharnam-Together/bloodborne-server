@@ -965,6 +965,7 @@ void RunServerBoards(std::stop_token stop) {
     auto rounded_at = Clock::now();
     s32 posted_rest = NotResting;
     bool posted_on = false;
+    u32 posted_map = 0;
     while (!stop.stop_requested()) {
         bool someone_down = false;
         MemberVitals mine;
@@ -999,13 +1000,21 @@ void RunServerBoards(std::stop_token stop) {
                 posted_on = mine.vital != Vital::Off;
             }
         }
+        // With phase 4's owners a load (0) goes too: the area is handed on at once. A new map goes
+        // at once as well: shadNet routes the game's packets by it (phase 9).
+        const u32 map = party_map_now.load();
+        const bool map_wanted = map != 0 || EnemyOwnerOn();
+        if (map_wanted && map != posted_map) {
+            SendServerMap(map);
+            posted_map = map;
+        }
         if (now < next_second) {
             continue;
         }
         next_second = now + std::chrono::seconds{1};
-        // With phase 4's owners a load (0) goes too: the area is handed on at once.
-        if (const u32 map = party_map_now.load(); map != 0 || EnemyOwnerOn()) {
+        if (map_wanted) {
             SendServerMap(map);
+            posted_map = map;
         }
         const bool active = rest_board_active.load();
         const s32 lamp = active ? rest_board_lamp.load() : NotResting;

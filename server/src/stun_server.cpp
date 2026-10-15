@@ -40,6 +40,9 @@ StunServer::StunServer(SharedState* shared, QObject* parent)
     connect(m_worldTimer, &QTimer::timeout, this, &StunServer::OnWorldTick);
     // Phase 7: the link relays only between games of one team (the party of their hello).
     m_link.SetPartyOf([this](const ServerLink::Endpoint& link) { return m_world.PartyOf(link); });
+    // Phase 9: and forwards a game packet only to a teammate that needs it.
+    m_link.SetPacketRoutes([this](const ServerLink::Endpoint& from, const ServerLink::Endpoint& to,
+                                  quint32 channel) { return m_world.RoutesPacket(from, to, channel); });
     m_clock.start();
     m_linkTimer->start(500);
     // The worlds' clock is the wall clock: their journals keep it across restarts.

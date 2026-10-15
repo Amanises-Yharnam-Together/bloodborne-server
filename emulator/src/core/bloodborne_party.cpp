@@ -3571,59 +3571,6 @@ std::optional<NativePacketRecord> ParseNativePacketRecord(const TraceRecord& rec
                               *payload};
 }
 
-ChannelPolicy NativeChannelPolicy(u32 channel) {
-    switch (channel) {
-    case 0x04: // enemy positions
-    case 0x05: // enemy HP
-    case 0x06: // player state
-    case 0x0E: // Lua event calls
-    case 0x0F: // CompleteEvent flags
-    case 0x12: // throws
-    case 0x14: // hits on players
-    case 0x15: // a guest's hit on an enemy
-    case 0x16:
-    case 0x17: // enemy near lists
-    case 0x24:
-    case 0x25: // forced animations
-    case 0x29: // enemy join catch-up
-    case 0x2A: // breaks
-    case 0x2B: // object animations
-    case 0x2D: // object acts
-    case 0x2E: // object enable
-    case 0x30: // throw events
-    case 0x31: // EMEVD instance sync
-    case 0x34: // enemy hand-over block
-    case 0x36: // enemy join animations
-    case 0x37: // throw pair
-    case 0x3D: // enemy AI goal records
-    case 0x3E: // new bullets
-    case 0x40: // bullet updates
-    case 0x41: // enemy per-hit record
-        return ChannelPolicy::SameMap;
-    case 0x2C: // map items
-    case 0x2F: // the host's object state correction
-        return ChannelPolicy::Ours;
-    case 0x27: // the boss "thanks" kick
-        return ChannelPolicy::Drop;
-    default:
-        return ChannelPolicy::Pass;
-    }
-}
-
-std::string_view ChannelPolicyName(ChannelPolicy policy) {
-    switch (policy) {
-    case ChannelPolicy::SameMap:
-        return "same map";
-    case ChannelPolicy::Ours:
-        return "ours";
-    case ChannelPolicy::Drop:
-        return "drop";
-    case ChannelPolicy::Pass:
-        break;
-    }
-    return "pass";
-}
-
 const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32 map) {
     const u32 area = EnemyOwnerArea(map);
     if (area == 0) {
@@ -3731,15 +3678,6 @@ std::optional<u16> EnemyOwnershipWord(EnemyRole role) {
     return std::nullopt;
 }
 
-namespace {
-
-// Positions, HP, catch-up and join animations: what only the enemies' owner sends.
-bool IsOwnersEnemyChannel(u32 channel) {
-    return channel == 0x04 || channel == 0x05 || channel == 0x29 || channel == 0x36;
-}
-
-} // namespace
-
 EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role) {
     // A follower's near list (0x16) goes to the owner: the owner's game sends a member the state
     // of the enemies on its list (attacks too), and with none a far guest's enemies came for it
@@ -3756,26 +3694,10 @@ EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role) {
                : role == EnemyRole::Follower ? EnemyPacketFate::ToOwner
                                              : EnemyPacketFate::Keep;
     }
-    if (IsOwnersEnemyChannel(channel) && role == EnemyRole::Follower) {
+    if (BloodborneCoop::IsOwnersEnemyChannel(channel) && role == EnemyRole::Follower) {
         return EnemyPacketFate::Drop;
     }
     return EnemyPacketFate::Keep;
-}
-
-bool KeepsEnemyPacketIn(u32 channel, EnemyRole role, bool from_owner) {
-    if (channel == 0x16) {
-        return role == EnemyRole::Owner;
-    }
-    if (channel == 0x17) {
-        return false;
-    }
-    if (channel == 0x15) {
-        return role != EnemyRole::Follower;
-    }
-    if (IsOwnersEnemyChannel(channel)) {
-        return role == EnemyRole::Unknown || (role == EnemyRole::Follower && from_owner);
-    }
-    return true;
 }
 
 std::optional<std::string> EnemyRoleLog::Change(EnemyRole role, u32 map,
@@ -3804,20 +3726,6 @@ std::optional<std::string> EnemyRoleLog::Change(EnemyRole role, u32 map,
     }
     last = line;
     return line;
-}
-
-bool KeepsNativePacket(u32 channel, PacketWay way, u32 own_map, std::optional<u32> peer_map) {
-    switch (NativeChannelPolicy(channel)) {
-    case ChannelPolicy::Pass:
-        return true;
-    case ChannelPolicy::Ours:
-    case ChannelPolicy::Drop:
-        return false;
-    case ChannelPolicy::SameMap:
-        break;
-    }
-    return way == PacketWay::Out || own_map == 0 || peer_map.value_or(0) == 0 ||
-           *peer_map == own_map;
 }
 
 const std::vector<DeathFlagSite>& DeathFlagSites() {

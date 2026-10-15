@@ -62,6 +62,7 @@ set(COOP_SOURCES
     coop/world_log.h
     coop/world_log.cpp
     coop/game_link.h
+    coop/packet_routes.h
     coop/coop_stream.h
     coop/coop_messages.h
     coop/coop_messages.cpp
@@ -199,11 +200,15 @@ if(BUILD_TESTING)
         tests/test_server_link.cpp
         src/server_link.cpp
     )
-    target_include_directories(test_server_link PRIVATE src)
+    target_include_directories(test_server_link PRIVATE src "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(test_server_link PRIVATE Qt6::Core)
     target_compile_definitions(test_server_link PRIVATE
         BLOODBORNE_SERVER_LINK_CONTRACTS="${CMAKE_CURRENT_SOURCE_DIR}/tests/contracts/server_link_frames.txt")
     add_test(NAME server_link COMMAND test_server_link)
+
+    add_executable(test_packet_routes EXCLUDE_FROM_ALL tests/test_packet_routes.cpp)
+    target_include_directories(test_packet_routes PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME packet_routes COMMAND test_packet_routes)
 
     add_executable(test_bloodborne_world EXCLUDE_FROM_ALL
         tests/test_bloodborne_world.cpp

@@ -7,7 +7,10 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <tuple>
+#include <vector>
 
+#include "coop/packet_routes.h"
 #include "server_link.h"
 
 using namespace ServerLink;
@@ -346,11 +349,102 @@ int VirtualMembers() {
   std::cout << "server link virtual members: ok\n";
   return 0;
 }
+
+// Phase 9: the hub reads each game packet in a frame (SHAD GamePacketsType)
+// and forwards only what the sender's routes let reach that member: a refused
+// unreliable packet leaves the frame, a refused reliable one keeps its
+// sequence number (coop/packet_routes.h). Other frames go as they are.
+QByteArray GamePacketsFrame(const BloodborneCoop::GameFrame &frame) {
+  QByteArray bytes = QByteArray::fromHex("ffffffff") + "SHAD" +
+                     char(BloodborneCoop::GamePacketsType);
+  const auto payload = BloodborneCoop::EncodeGameFrame(frame);
+  bytes.append(reinterpret_cast<const char *>(payload.data()),
+               static_cast<qsizetype>(payload.size()));
+  return bytes;
+}
+
+std::vector<u8> PacketOn(u32 channel) {
+  std::vector<u8> packet;
+  BloodborneCoop::GameLinkDetail::Put(packet, channel);
+  BloodborneCoop::GameLinkDetail::Put(packet, u32{2});
+  packet.push_back(0xAB);
+  packet.push_back(0xCD);
+  return packet;
+}
+
+int RoutesGamePackets() {
+  using BloodborneCoop::PacketClass;
+  Hub hub;
+  std::vector<std::tuple<Endpoint, Endpoint, u32>> asked;
+  hub.SetPacketRoutes([&](const Endpoint &from, const Endpoint &to, u32 channel) {
+    asked.emplace_back(from, to, channel);
+    return channel != 0x06 && channel != 0x31;
+  });
+  hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
+  hub.Receive(Ada, HelloFrom("Ada"), 0);
+
+  BloodborneCoop::GameFrame frame{"Kaniel", 5, 6, 2, {}};
+  frame.entries.push_back({PacketClass::Unreliable, 0, PacketOn(0x06)});
+  frame.entries.push_back({PacketClass::Unreliable, 0, PacketOn(0x04)});
+  frame.entries.push_back({PacketClass::Reliable, 4, PacketOn(0x31)});
+  frame.entries.push_back({PacketClass::Reliable, 5, PacketOn(0x10)});
+  auto result = hub.Receive(
+      Kaniel, Encode(Data{VirtualEndpointOf("Ada"), GamePacketsFrame(frame)}),
+      10);
+  CHECK(asked.size() == 4 && std::get<0>(asked[0]) == Kaniel &&
+        std::get<1>(asked[0]) == Ada && std::get<2>(asked[0]) == 0x06);
+  const auto data = DecodeData(SentTo(result, Ada).value(0));
+  CHECK(data && data->frame.startsWith(QByteArray::fromHex("ffffffff") +
+                                       "SHAD" +
+                                       char(BloodborneCoop::GamePacketsType)));
+  const auto routed = BloodborneCoop::DecodeGameFrame(
+      {reinterpret_cast<const u8 *>(data->frame.constData()) + 9,
+       static_cast<size_t>(data->frame.size() - 9)});
+  CHECK(routed && routed->sender == "Kaniel" && routed->ack == 2 &&
+        routed->entries.size() == 3);
+  CHECK(routed->entries[0].packet == PacketOn(0x04));
+  CHECK(routed->entries[1].seq == 4 &&
+        routed->entries[1].packet == BloodborneCoop::DroppedNativePacket());
+  CHECK(routed->entries[2].packet == PacketOn(0x10));
+
+  // Nothing left but its ack: the frame still goes (the stream needs the ack).
+  BloodborneCoop::GameFrame only_refused{"Kaniel", 5, 6, 3, {}};
+  only_refused.entries.push_back({PacketClass::Unreliable, 0, PacketOn(0x06)});
+  result = hub.Receive(Kaniel,
+                       Encode(Data{VirtualEndpointOf("Ada"),
+                                   GamePacketsFrame(only_refused)}),
+                       20);
+  CHECK(SentTo(result, Ada).size() == 1);
+
+  // A frame that is not the game's packets is not read.
+  asked.clear();
+  result = hub.Receive(Kaniel, Encode(Data{Ada, ::GameFrame}), 30);
+  CHECK(asked.empty() && DecodeData(SentTo(result, Ada).value(0))->frame ==
+                             ::GameFrame);
+  // A game frame that does not read is dropped, and said.
+  result = hub.Receive(
+      Kaniel,
+      Encode(Data{Ada, QByteArray::fromHex("ffffffff") + "SHAD" +
+                           char(BloodborneCoop::GamePacketsType) + "\x01"}),
+      40);
+  CHECK(result.sends.isEmpty());
+  CHECK(!result.log.isEmpty() && result.log.join('\n').contains("does not read"));
+
+  // The counters say how much each sender had refused, per channel.
+  hub.Receive(Kaniel, Encode(Kind::Ping, Ping{1, 1}), 9000);
+  hub.Receive(Ada, Encode(Kind::Ping, Ping{1, 1}), 9000);
+  const QString counters = hub.Tick(10000).log.join('\n');
+  CHECK(counters.contains("refused") && counters.contains("0x6: 2") &&
+        counters.contains("0x31: 1"));
+  std::cout << "server link routes game packets: ok\n";
+  return 0;
+}
 } // namespace
 
 int main() {
   if (Contracts() != 0 || HelloAndBuilds() != 0 || Relays() != 0 ||
-      Liveness() != 0 || TeamOnly() != 0 || VirtualMembers() != 0) {
+      Liveness() != 0 || TeamOnly() != 0 || VirtualMembers() != 0 ||
+      RoutesGamePackets() != 0) {
     return 1;
   }
   return 0;

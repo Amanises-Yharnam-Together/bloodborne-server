@@ -1607,6 +1607,55 @@ int TheResumePointIsTheCharactersOwn() {
   return 0;
 }
 
+// Phase 9: the hub asks the service whether a game packet goes from one link to
+// another: by the channel table, the members' maps and each map's owner.
+int GamePacketsGoByMapAndOwner() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game guest2{1002, "guest2", 13};
+  const std::vector<Game *> games{&host, &guest, &guest2};
+  qint64 now = 1'000'000;
+  for (Game *game : games) {
+    game->Hello(now);
+  }
+  Pump(service, games, now);
+  constexpr u32 Yharnam = 0x18010000;
+  constexpr u32 Ward = 0x18000000;
+  const auto routes = [&](const Game &from, const Game &to, u32 channel) {
+    return service.RoutesPacket(from.endpoint, to.endpoint, channel);
+  };
+  // No map said yet: what the game does on its own.
+  CHECK(routes(host, guest, 0x06) && routes(host, guest, 0x04));
+  CHECK(!routes(host, guest, 0x2C) && !routes(host, guest, 0x27));
+
+  host.Map(Yharnam, now);
+  guest.Map(Yharnam, now);
+  guest2.Map(Ward, now);
+  Pump(service, games, now);
+  CHECK(routes(host, guest, 0x06) && routes(guest, host, 0x06));
+  CHECK(!routes(host, guest2, 0x06) && !routes(guest2, guest, 0x31));
+  CHECK(routes(host, guest2, 0x10)); // the game's own: any map
+  // The host runs Central Yharnam's enemies: they come from it only, and the
+  // guest's hits and near list go to it.
+  CHECK(routes(host, guest, 0x04) && !routes(guest, host, 0x04));
+  CHECK(routes(guest, host, 0x15) && !routes(host, guest, 0x15));
+  CHECK(routes(guest, host, 0x16) && !routes(host, guest, 0x17));
+  // A load lets everything of the map through again, then the new map counts.
+  guest2.Map(0, now + 100);
+  Pump(service, games, now + 100);
+  CHECK(routes(host, guest2, 0x06));
+  guest2.Map(Yharnam, now + 200);
+  Pump(service, games, now + 200);
+  CHECK(routes(host, guest2, 0x06) && routes(host, guest2, 0x04));
+  CHECK(!routes(guest2, guest, 0x04));
+  // A link the service does not know (no hello): only the game's own.
+  const ServerLink::Endpoint stranger{0x7F000001, 999};
+  CHECK(!service.RoutesPacket(stranger, host.endpoint, 0x06));
+  CHECK(service.RoutesPacket(stranger, host.endpoint, 0x10));
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
@@ -1647,6 +1696,7 @@ int main() {
       {"AHitReachesTheOthersAtOnce", AHitReachesTheOthersAtOnce},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
+      {"GamePacketsGoByMapAndOwner", GamePacketsGoByMapAndOwner},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},
       {"ATeamFormsAndStartsThroughTheService",
        ATeamFormsAndStartsThroughTheService},
