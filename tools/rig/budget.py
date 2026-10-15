@@ -34,6 +34,7 @@ SUITE_BOOT_S = 150
 # chapter. Most are older versions of a suite chapter (named after the arrow).
 LONG = {
     "soak": "a long session by design",
+    "cutscene-skip": "two stages (two boots), the opening cutscene played in between",
     "ward-door": "a 420 s wait for the Ward door",
     "save-backups": "waits out the save backups' 150 s timer",
     "hit3": "measured 277-304 s; suite chapter: smoke/hit3, party3/hit3",

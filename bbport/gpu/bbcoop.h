@@ -131,6 +131,12 @@ typedef struct bbcoop_team_load {
     bbcoop_team_load_row rows[4];
 } bbcoop_team_load;
 int bbcoop_team_load_view(bbcoop_team_load *view);
+/* Kaniel 2026-10-15: while that screen is up the game's sound is held (runtime_audio.c reads this
+ * every buffer): 1 held. */
+int bbcoop_sound_held(void);
+/* And a cutscene under it is skipped: 1 while Options is to be held down for the game's skip
+ * (runtime_pad.c, even while the screen takes the pad). */
+int bbcoop_cutscene_skip(void);
 /* Its buttons: this character ready, not ready, the leader's start (a member's: ready), alone. */
 enum { BBCOOP_TEAM_GO_READY = 0, BBCOOP_TEAM_GO_UNREADY = 1, BBCOOP_TEAM_GO_START = 2,
        BBCOOP_TEAM_GO_ALONE = 3 };

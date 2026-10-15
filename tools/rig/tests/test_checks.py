@@ -40,6 +40,14 @@ class ConsoleTest(unittest.TestCase):
             "host: the overlay never said how many textures it has",
             "guest: the overlay never said how many textures it has"])
 
+    def test_the_console_says_what_is_expected(self):
+        spec = {"roles": {}, "console_expect": {"guest": [r"sound back after [1-9]\d* silent"]}}
+        self.assertEqual(run_scenario.console_problems(
+            spec, {"guest": "Runtime: sound back after 120 silent buffers\n"}), [])
+        self.assertEqual(run_scenario.console_problems(
+            spec, {"guest": "Runtime: sound back after 0 silent buffers\n"}),
+            ["guest: the console never said /sound back after [1-9]\\d* silent/"])
+
     def test_a_suites_consoles_join_its_stages(self):
         import tempfile
         with tempfile.TemporaryDirectory() as folder:

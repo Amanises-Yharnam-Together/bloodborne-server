@@ -882,6 +882,8 @@ static void sample(PadData *d) {
         uint8_t ignored_sticks[4]={128,128,128,128};
         bbcoop_autoplay_pad(&ignored_buttons,ignored_sticks);
         hold_after_capture=1;
+        /* Kaniel 2026-10-15: a cutscene under the team's loading screen skips by itself. */
+        if (bbcoop_cutscene_skip()) d->buttons=BTN_OPTIONS;
         return;
     }
     record_sample(d);
@@ -913,6 +915,7 @@ static void sample(PadData *d) {
         if (d->buttons) d->buttons=0;
         else hold_after_capture=0;
     }
+    if (bbcoop_cutscene_skip()) d->buttons|=BTN_OPTIONS; /* headless: the screen is not drawn */
     touch_ids(d);
 }
 
