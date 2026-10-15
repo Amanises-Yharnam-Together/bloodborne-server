@@ -728,7 +728,7 @@ bool SendHitToOwner(const GuestRegisterSnapshot* registers) {
     const std::string owner = CurrentEnemyOwner();
     const u64 payload = registers->rcx;
     const u32 size = static_cast<u32>(registers->r8);
-    if (owner.empty() || payload < 0x10000 || size == 0 || size > 0x100 ||
+    if (owner.empty() || payload < 0x10000 || size == 0 || size > 0x1000 ||
         !HasMemoryAccess(payload, size, MemoryProt::CpuRead)) {
         return false;
     }
@@ -752,8 +752,9 @@ bool SendHitToOwner(const GuestRegisterSnapshot* registers) {
                 for (u32 i = 0; i < size; ++i) {
                     bytes += fmt::format("{:02x}", ReadValue<u8>(payload, i));
                 }
-                LOG_INFO(Debug, "Bloodborne enemy owner: a hit on {:#x} went to the owner {} ({})",
-                         ReadValue<u32>(payload, 0), owner, bytes);
+                LOG_INFO(Debug,
+                         "Bloodborne enemy owner: channel {:#x} ({:#x}) went to the owner {} ({})",
+                         channel, ReadValue<u32>(payload, 0), owner, bytes.substr(0, 64));
             }
             return true;
         }
@@ -835,18 +836,7 @@ void PS4_SYSV_ABI ReceiveHpFromOwner(u64, GuestRegisterSnapshot* registers) {
 
 void PS4_SYSV_ABI SetEnemyHitState(u64, GuestRegisterSnapshot* registers) {
     const s32 state = ReadValue<s32>(registers->rax, MatchingStateOffset);
-    // The victim: r12 is the hit's target (its character at +0x08).
-    const u64 victim = registers->r12 >= 0x10000 ? ReadValue<u64>(registers->r12, 0x08) : 0;
-    const u32 handle = victim >= 0x10000 ? ReadValue<u32>(victim, 0x08) : 0;
-    const bool runs = handle != 0 && ThisFollowerRuns(handle);
-    static u32 logged = 0;
-    if (runs && ++logged <= 20) {
-        LOG_INFO(Debug,
-                 "Bloodborne enemy owner: this follower's hit on {:#x}, an enemy it runs, "
-                 "lands here",
-                 handle);
-    }
-    if (const auto wanted = EnemyHitState(CurrentEnemyRole(), state, runs)) {
+    if (const auto wanted = EnemyHitState(CurrentEnemyRole(), state)) {
         registers->rax = StandInFor(*wanted);
     }
 }
@@ -926,6 +916,28 @@ void InstallEnemyOwner(u64 base, u64 image_size) {
     }
     enemy_owner_installed = true;
     coop_features.On("enemy owner");
+    // Phase 8: both or neither (a record left with the others' groups would wake them for good).
+    if (InstallCoopHook(reinterpret_cast<void*>(base + ActivationPassOffset),
+                        ActivationPassPrologue, 0, WakeAroundOthers)) {
+        if (InstallCoopHook(reinterpret_cast<void*>(base + ActivationPassEndOffset),
+                            ActivationPassEnd, 0, PutBackWokenRecords)) {
+            coop_features.On("whole-map owner");
+            if (!InstallCoopHook(reinterpret_cast<void*>(base + OwnershipStepEndOffset),
+                                 OwnershipStepEndPrologue, 0, KeepAwakeEnemies)) {
+                coop_features.Skipped("whole-map runs",
+                                      SiteFailure(base, image_size, OwnershipStepEndOffset));
+            } else {
+                coop_features.On("whole-map runs");
+            }
+        } else {
+            RemoveGuestCodeHook(reinterpret_cast<void*>(base + ActivationPassOffset));
+            coop_features.Skipped("whole-map owner",
+                                  SiteFailure(base, image_size, ActivationPassEndOffset));
+        }
+    } else {
+        coop_features.Skipped("whole-map owner",
+                              SiteFailure(base, image_size, ActivationPassOffset));
+    }
     LOG_INFO(Debug, "Bloodborne enemy owner: on (the server's owner of each area runs its "
                     "enemies, the others follow it)");
 }

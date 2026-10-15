@@ -3617,32 +3617,44 @@ const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32
     return owner != owners.end() ? &*owner : nullptr;
 }
 
-std::string RunnerOf(const std::string& current, const LampPosition& enemy,
-                     std::span<const MemberVitals> guests, u32 map) {
-    const auto metres = [&](const MemberVitals& guest) {
-        const float dx = guest.at[0] - enemy[0];
-        const float dy = guest.at[1] - enemy[1];
-        const float dz = guest.at[2] - enemy[2];
-        return std::sqrt(dx * dx + dy * dy + dz * dz);
+std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out) {
+    if (role != EnemyRole::Owner || level != EnemyAwake || applied != EnemyAwake || kept_out ||
+        static_cast<s16>(word) >= 0) {
+        return std::nullopt;
+    }
+    return OwnedEnemyWord;
+}
+
+WakeGroups WithOthersGroups(const WakeGroups& record, const WakeGroups& own,
+                            std::span<const WakeGroups> others) {
+    const auto shares = [](const GroupSet& a, const GroupSet& b) {
+        for (size_t i = 0; i < a.size(); ++i) {
+            if ((a[i] & b[i]) != 0) {
+                return true;
+            }
+        }
+        return false;
     };
-    const MemberVitals* nearest = nullptr;
-    const MemberVitals* running = nullptr;
-    for (const MemberVitals& guest : guests) {
-        if (guest.map != map || guest.vital != Vital::Up || metres(guest) > RunnerReachMetres) {
+    const auto placed = [](const GroupSet& set) {
+        return std::ranges::any_of(set, [](u32 word) { return word != 0; }) &&
+               !std::ranges::all_of(set, [](u32 word) { return word == 0xFFFFFFFFu; });
+    };
+    if (!shares(record.wakes, own.wakes) && !shares(record.counted, own.counted) &&
+        !shares(record.half, own.half)) {
+        return record;
+    }
+    WakeGroups groups = record;
+    for (const WakeGroups& other : others) {
+        if (!placed(other.wakes) || !placed(other.half)) {
             continue;
         }
-        if (nearest == nullptr || metres(guest) < metres(*nearest)) {
-            nearest = &guest;
-        }
-        if (guest.member == current) {
-            running = &guest;
+        for (size_t i = 0; i < groups.wakes.size(); ++i) {
+            groups.wakes[i] |= other.wakes[i];
+            groups.counted[i] |= other.counted[i];
+            groups.half[i] |= other.half[i];
         }
     }
-    if (running != nullptr &&
-        (nearest == running || metres(*running) < metres(*nearest) + NearestGuestLeadMetres)) {
-        return running->member;
-    }
-    return nearest != nullptr ? nearest->member : std::string{};
+    return groups;
 }
 
 EnemyRole EnemyRoleOn(std::span<const EnemyOwnerEntry> owners, std::string_view self, u32 map) {
@@ -3670,19 +3682,21 @@ std::optional<s32> EnemyHitState(EnemyRole role, s32 state) {
     return std::nullopt;
 }
 
-std::optional<s32> EnemyHitState(EnemyRole role, s32 state, bool runs_victim) {
-    if (role == EnemyRole::Follower && runs_victim) {
-        return state == MatchingStateHosting ? std::nullopt
-                                             : std::optional<s32>{MatchingStateHosting};
-    }
-    return EnemyHitState(role, state);
-}
-
 std::optional<s32> HeldOwnHitHp(s32 current, s32 after_own_hit, s64 age_ms) {
     if (current <= 0 || current <= after_own_hit || age_ms >= OwnHitHoldMs) {
         return std::nullopt;
     }
     return after_own_hit;
+}
+
+std::optional<s32> HitNewsHp(EnemyRole role, s32 current, s32 copy_max, s32 hp, s32 max) {
+    if (role != EnemyRole::Follower || current <= 0 || copy_max <= 0 || max <= 0 || hp < 0) {
+        return std::nullopt;
+    }
+    // Rounded up: a sliver left on either side is still alive here.
+    const s64 scaled = (s64{hp} * copy_max + max - 1) / max;
+    const s32 target = static_cast<s32>(std::clamp<s64>(scaled, 0, copy_max));
+    return target < current ? std::optional<s32>{target} : std::nullopt;
 }
 
 bool TakesOverEnemyHp(const EnemyOwnerEntry& owner) {
@@ -3703,17 +3717,22 @@ std::optional<u16> EnemyOwnershipWord(EnemyRole role) {
 
 namespace {
 
-// Positions, HP, catch-up and join animations: what only the enemies' runner sends.
+// Positions, HP, catch-up and join animations: what only the enemies' owner sends.
 bool IsOwnersEnemyChannel(u32 channel) {
-    // Not the positions (0x04): each game sends those of the enemies it runs (a follower those by
-    // it while the owner is far, FollowerRunsEnemy), and the others' copies follow them.
-    return channel == 0x05 || channel == 0x29 || channel == 0x36;
+    return channel == 0x04 || channel == 0x05 || channel == 0x29 || channel == 0x36;
 }
 
 } // namespace
 
 EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role) {
-    if (channel == 0x16 || channel == 0x17) {
+    // A follower's near list (0x16) goes to the owner: the owner's game sends a member the state
+    // of the enemies on its list (attacks too), and with none a far guest's enemies came for it
+    // but never struck (rig apart-hurt 2026-10-15). The owner's answer (0x17), which hands
+    // enemies away, never goes.
+    if (channel == 0x16) {
+        return role == EnemyRole::Follower ? EnemyPacketFate::ToOwner : EnemyPacketFate::Drop;
+    }
+    if (channel == 0x17) {
         return EnemyPacketFate::Drop;
     }
     if (channel == 0x15) {
@@ -3728,7 +3747,10 @@ EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role) {
 }
 
 bool KeepsEnemyPacketIn(u32 channel, EnemyRole role, bool from_owner) {
-    if (channel == 0x16 || channel == 0x17) {
+    if (channel == 0x16) {
+        return role == EnemyRole::Owner;
+    }
+    if (channel == 0x17) {
         return false;
     }
     if (channel == 0x15) {
@@ -3736,12 +3758,6 @@ bool KeepsEnemyPacketIn(u32 channel, EnemyRole role, bool from_owner) {
     }
     if (IsOwnersEnemyChannel(channel)) {
         return role == EnemyRole::Unknown || (role == EnemyRole::Follower && from_owner);
-    }
-    // Positions: a follower's copies follow the owner's only (krolebord 2026-10-15: a guest that
-    // had just joined crashed in the game's character update while it took the other guests'
-    // positions too); the owner takes those of the enemies a guest runs for it.
-    if (channel == 0x04 && role == EnemyRole::Follower) {
-        return from_owner;
     }
     return true;
 }
@@ -5223,6 +5239,21 @@ bool TakesAnimationRequest(u64 character,
         at = read(at + offset, 8);
     }
     return at >= 0x10000 && (read(at + AnimationRequestFlagAt, 1) & 0xFF) != 0;
+}
+
+bool CopyKneels::Due(const std::string& member, u32 down, bool takes_request) {
+    const auto it = knelt.find(member);
+    if (!takes_request || (it != knelt.end() && it->second == down)) {
+        return false;
+    }
+    knelt[member] = down;
+    return true;
+}
+
+void CopyKneels::KeepOnly(std::span<const std::string> downed) {
+    std::erase_if(knelt, [&](const auto& entry) {
+        return std::ranges::find(downed, entry.first) == downed.end();
+    });
 }
 
 bool KneelsNow(bool waiting, s64 down_for_ms, bool takes_request) {

@@ -366,8 +366,7 @@ SUITES = {
                      "guest": ["sync hpw-hurt", "wait 10", f"expect-hp {DOG} == 300"]},
                     forbid=holds(PARTY2)),
             # Phase 8 (whole-map owner): enemies by a teammate far from the map's owner run and
-            # stay on the ground. Today a far guest runs them itself (phase 6's radius split);
-            # after phase 8 the owner wakes the groups around every teammate. Both must pass.
+            # stay on the ground: the owner wakes the groups around every teammate and runs them.
             chapter("apart-fight", "the host goes far up by Iosefka's clinic, the guest walks up "
                                    "to an enemy by the lamp: it comes for the guest and the "
                                    "guest's hit lands",
@@ -378,10 +377,8 @@ SUITES = {
                                "census 40", f"hit {ENEMY} 30", "wait 3", "sync af-done",
                                f"teleport {AT_THE_LAMP}", "wait 3"]},
                     moves={"guest": ENEMY},
-                    expect={"guest": [rf"hit on {ENEMY} by this player"]},
-                    known_bug="phase 8: beside a guest far from the host the enemy sometimes "
-                              "stands still (Kaniel 2026-10-14; rig 2026-10-15, 1 of 2)",
-                    known_problems=[r"stood still beside it"],
+                    expect={"guest": [rf"hit on {ENEMY} by this player"],
+                            "host": [r"runs \d+ awake enemies the game let go"]},
                     forbid=holds(PARTY2)),
             chapter("apart-collision", "with the host far away again, the enemy by the guest stays "
                                        "on the ground (no fall through a map whose collision only "
@@ -393,6 +390,15 @@ SUITES = {
                                "census 40", "wait 10", "census 40", "sync ac-done",
                                f"teleport {AT_THE_LAMP}", "wait 3"]},
                     grounded={"guest": ENEMY}, forbid=holds(PARTY2)),
+            chapter("apart-hurt", "with the host far away, the enemy by the guest hurts it (its "
+                                  "hits on a guest from the owner's game land)",
+                    {"host": ["sync ah-go", f"teleport {IOSEFKA_WAIT}", "sync ah-apart",
+                              "sync ah-done", f"teleport {AT_THE_LAMP}", "wait 3"],
+                     "guest": ["sync ah-go", "sync ah-apart", "godmode off",
+                               f"teleport {GUEST_ALONE_SPOT}", "wait 25",
+                               "expect-hp self < 594", "godmode", "sync ah-done",
+                               f"teleport {AT_THE_LAMP}", "wait 3"]},
+                    forbid=holds(PARTY2)),
             chapter("near-kill", "both strike one enemy to death at once: it dies once in each "
                                  "world, body and loot there, never hidden (Kaniel 2026-10-11: the "
                                  "hunter died twice and vanished with its loot)",
@@ -689,8 +695,6 @@ SUITES = {
                                "press circle 3600", "wait-vital dead 15", "wait-vital up 90",
                                "godmode"]},
                     expect={"host": [r"party death: rig_guest's copy kneels"]},
-                    known_bug="phase 10: the downed kneel is not shown on the other players; "
-                              "the fix logs \"party death: <member>'s copy kneels\"",
                     forbid=holds(PARTY2)),
             chapter("down-by-enemy", "the guest with 1 HP next to an enemy, locked on to it, goes "
                                      "down: the lock-on is let go (PR #69), the enemy leaves it "
@@ -703,9 +707,13 @@ SUITES = {
                                "wait-vital down 90", "wait 20", "expect-hp self == 1",
                                "press circle 3600", "wait-vital dead 15", "wait-vital up 90",
                                "godmode"]},
-                    expect={"guest": [r"party death: enemies forgot \d+ target\(s\) on downed "
-                                      r"players \(self down=true",
-                                      r"party death: giving up ends down"]},
+                    # Phase 8: the map's owner runs the enemy, so its game forgets the target.
+                    expect={"host": [r"party death: enemies forgot \d+ target\(s\) on downed "
+                                     r"players \(self down=false, others down=1"],
+                            "guest": [r"party death: giving up ends down"]},
+                    known_bug="phase 8: with 1 HP (hurt self 1) the owner-run enemy beside the "
+                              "guest never strikes; at full HP it strikes and downs the guest (rig "
+                              "2026-10-15)",
                     forbid={"host": SESSION_HOLDS,
                             "guest": SESSION_HOLDS + [r"party death: killed while down"]}),
             chapter("give-up", "the downed guest holds Circle and dies; it gets up at its lamp "
@@ -990,6 +998,23 @@ SUITES = {
                               "the host comes back (Krolebord's crash after a rejoin, 0.2.5; rig "
                               "2026-10-15, twice in a row)",
                     allow=CRASH_CLEANUP),
+            # Phase 8: the map's owner dies mid-fight; the other game takes the map over with the
+            # enemy as hurt as it was, where it was, and it keeps fighting.
+            chapter("owner-crash-fight", "the host (the map's owner) hurts the enemy by the guest "
+                                         "and its game dies: the guest's game runs it on, as "
+                                         "hurt as it was, and it keeps coming for the guest",
+                    {"host": ["sync ocf-go", f"teleport {GUEST_ALONE_SPOT}", "wait 3",
+                              f"hurt {ENEMY} 200", "wait 3", "sync ocf-hurt", RESTART, START,
+                              "godmode", "wait-session 2 420", "wait 5", "expect-session 2",
+                              "sync ocf-back"],
+                     "guest": ["sync ocf-go", f"teleport {GUEST_ALONE_SPOT}", "sync ocf-hurt",
+                               "wait-solo 180", "wait 3", f"expect-hp {ENEMY} <= 200",
+                               "census 40", "wait 10", "census 40", f"expect-hp {ENEMY} <= 200",
+                               "sync ocf-back"]},
+                    moves={"guest": ENEMY}, allow=CRASH_CLEANUP,
+                    known_bug="the guest's game crashes (eboot+0x13cffba) once the dead owner's "
+                              "game comes back, as in host-crash-apart (backlog: Krolebord's crash "
+                              "after a rejoin; rig 2026-10-15)"),
         ],
     },
     "joins": {
@@ -1166,18 +1191,14 @@ SUITES = {
                             "each game's hits on each other game's bar within 0.15 s",
                     hits_in_turn(PARTY3, ENEMY, "p3hit"),
                     same_hp=ENEMY, hp_sums_hits=ENEMY, max_hp_lag=0.15, max_hp_lag_each=0.15,
-                    forbid=holds(PARTY3), **HP_LAG_BUG),
+                    forbid=holds(PARTY3)),
             chapter("kill-seen3", "the host kills that enemy: it dies on every screen within "
                                   "0.2 s of the killing hit",
                     {"host": ["sync ks3-go", *attack(ENEMY), "sync ks3-killed", "wait 5",
                               "census 40"],
                      **{guest: ["sync ks3-go", "sync ks3-killed", "wait 5", "census 40"]
                         for guest in GUESTS}},
-                    killed=ENEMY, max_kill_lag=0.2, forbid=holds(PARTY3),
-                    known_bug="phase 10: a follower's copy dies when the kill's log entry comes "
-                              "and logs no time for it; the fix logs \"enemy death seen: "
-                              "<handle> (t=...)\"",
-                    known_problems=[r"after the killing hit", r"from the killing hit"]),
+                    killed=ENEMY, max_kill_lag=0.2, forbid=holds(PARTY3)),
             chapter("down-revive3", "the guest goes down and the second guest, not the host, "
                                     "revives it",
                     {"guest": ["godmode off", *GUEST_FALL, "wait-vital down 30",

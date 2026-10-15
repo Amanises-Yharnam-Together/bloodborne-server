@@ -124,8 +124,6 @@ private:
         std::optional<bbcoop::TeamSession> session;
         // Each member's load (the team loading screen), by member name.
         std::map<std::string, bbcoop::LoadProgress> loads;
-        // The guest the owner named to run each enemy it let go (map -> handle -> member).
-        std::map<u32, std::map<u32, std::string>> runners;
         u32 session_run = 0; // the host game's run that opened it
         // Phase 4: who runs each area's enemies, and what was logged of it.
         EnemyOwners owners;
@@ -177,8 +175,6 @@ private:
     // Whether `member` may decide the enemies of `map` (phase 4): a game without the owners, or
     // on an area nobody or itself runs.
     bool Decides(const PartyWorld& world, const Member& member, u32 map) const;
-    // Decides, or the member is the guest the owner named to run that enemy.
-    bool DecidesEnemy(const PartyWorld& world, const Member& member, u32 map, u32 handle) const;
     // A member's trade messages, and what the desk says to send and store.
     void TakeTrade(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
                    qint64 now_ms, Result& result);

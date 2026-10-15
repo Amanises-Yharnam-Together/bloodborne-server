@@ -1118,3 +1118,18 @@ TEST(BloodbornePartyDeath, FindsTheOthersDownOnThisMap) {
               (std::vector<LampPosition>{{4.0f, 5.0f, 6.0f}}));
     EXPECT_TRUE(OthersDownOnMap(board, Kaniel, 0).empty());
 }
+
+// Phase 8 (rig down-kneel-seen): each game asks the kneel of its copy of a downed member itself,
+// once per down, as soon as the copy takes it.
+TEST(PartyDeath, EachGameKneelsItsCopyOfADownedMemberOnce) {
+    CopyKneels kneels;
+    EXPECT_FALSE(kneels.Due("lisara", 3, false)); // in a hit's reaction: later
+    EXPECT_TRUE(kneels.Due("lisara", 3, true));
+    EXPECT_FALSE(kneels.Due("lisara", 3, true)); // once
+    EXPECT_TRUE(kneels.Due("krolebord", 1, true));
+    EXPECT_TRUE(kneels.Due("lisara", 4, true)); // her next down
+    // Up again, then down with the same number after a restart: a new kneel.
+    kneels.KeepOnly(std::vector<std::string>{"krolebord"});
+    EXPECT_TRUE(kneels.Due("lisara", 4, true));
+    EXPECT_FALSE(kneels.Due("krolebord", 1, true));
+}

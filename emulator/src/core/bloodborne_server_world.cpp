@@ -54,8 +54,6 @@ constexpr bool enemy_owner_switch = server_world_switch;
 std::mutex owners_mutex;
 std::vector<EnemyOwnerEntry> server_owners;
 s64 owners_heard_ms = 0;
-// The enemies the owners' games let go (bbcoop::EnemiesLetGo), as last heard from each.
-std::map<std::string, std::pair<bbcoop::EnemiesLetGo, s64>> heard_let_go;
 
 const u32 run = [] {
     std::random_device random;
@@ -69,6 +67,9 @@ std::deque<bbcoop::Envelope> inbox;
 std::deque<bbcoop::Envelope> outbox;
 // Something for the kill step came (see TakeServerWorldNews).
 std::atomic<bool> inbox_news{false};
+// The others' hits (bbcoop::EnemyHit) as they came, for the next enemy step.
+std::mutex enemy_hits_mutex;
+std::vector<EnemyHitNews> enemy_hits;
 std::string hello_party;
 std::string hello_member;
 bool hello_due = true;
@@ -214,7 +215,6 @@ bool IsBoard(const bbcoop::Envelope& envelope) {
     case bbcoop::Envelope::kVitalsBoard:
     case bbcoop::Envelope::kPortrait:
     case bbcoop::Envelope::kEnemyOwners:
-    case bbcoop::Envelope::kEnemiesLetGo:
         return true;
     default:
         return false;
@@ -304,18 +304,6 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
         owners_heard_ms = SteadyMilliseconds();
         return;
     }
-    case bbcoop::Envelope::kEnemiesLetGo: {
-        std::scoped_lock lock{owners_mutex};
-        const bbcoop::EnemiesLetGo& let_go = envelope.enemies_let_go();
-        auto& [heard, heard_ms] = heard_let_go[let_go.member()];
-        if (heard.handles_size() != let_go.handles_size() || heard.map() != let_go.map()) {
-            LOG_INFO(Debug, "Bloodborne party: {} let go {} enemies on map {:#x}", let_go.member(),
-                     let_go.handles_size(), let_go.map());
-        }
-        heard = let_go;
-        heard_ms = SteadyMilliseconds();
-        return;
-    }
     default:
         return;
     }
@@ -341,6 +329,16 @@ void StreamTick(s64 now_ms) {
             for (const std::vector<u8>& message : stream->Receive(body, now_ms)) {
                 if (auto envelope = DecodeEnvelope(message)) {
                     if (TakeLobbyMessage(*envelope)) {
+                        continue;
+                    }
+                    if (envelope->has_enemy_hit()) {
+                        const bbcoop::EnemyHit& hit = envelope->enemy_hit();
+                        std::scoped_lock hits_lock{enemy_hits_mutex};
+                        if (enemy_hits.size() < 256) {
+                            enemy_hits.push_back(
+                                {hit.map(), hit.handle(), hit.hp(), hit.max(), hit.member()});
+                        }
+                        inbox_news.store(true);
                         continue;
                     }
                     if (IsTradeMessage(*envelope)) {
@@ -594,31 +592,22 @@ std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms) {
     return server_owners;
 }
 
-std::optional<std::unordered_map<u32, std::string>> EnemiesLetGoBy(const std::string& member,
-                                                                   u32 map, s64 now_ms) {
-    std::scoped_lock lock{owners_mutex};
-    const auto heard = heard_let_go.find(member);
-    if (heard == heard_let_go.end() || heard->second.first.map() != map ||
-        now_ms - heard->second.second > EnemiesLetGoFreshMs) {
-        return std::nullopt;
+void SendEnemyHit(u32 map, u32 handle, s32 hp, s32 max) {
+    if (!ServerWorldOn() || !enemy_owner_switch) {
+        return;
     }
-    const bbcoop::EnemiesLetGo& let_go = heard->second.first;
-    std::unordered_map<u32, std::string> runners;
-    for (int index = 0; index < let_go.handles_size(); ++index) {
-        runners[let_go.handles(index)] =
-            index < let_go.runners_size() ? let_go.runners(index) : std::string{};
-    }
-    return runners;
+    bbcoop::Envelope envelope;
+    bbcoop::EnemyHit& hit = *envelope.mutable_enemy_hit();
+    hit.set_map(map);
+    hit.set_handle(handle);
+    hit.set_hp(hp);
+    hit.set_max(max);
+    Queue(std::move(envelope));
 }
 
-void SendEnemiesLetGo(u32 map, const std::map<u32, std::string>& runners) {
-    bbcoop::Envelope envelope;
-    envelope.mutable_enemies_let_go()->set_map(map);
-    for (const auto& [handle, runner] : runners) {
-        envelope.mutable_enemies_let_go()->add_handles(handle);
-        envelope.mutable_enemies_let_go()->add_runners(runner);
-    }
-    Queue(std::move(envelope));
+std::vector<EnemyHitNews> TakeEnemyHits() {
+    std::scoped_lock lock{enemy_hits_mutex};
+    return std::exchange(enemy_hits, {});
 }
 
 ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms) {

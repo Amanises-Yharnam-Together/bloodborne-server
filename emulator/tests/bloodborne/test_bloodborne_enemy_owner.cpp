@@ -81,8 +81,9 @@ TEST(EnemyOwner, TheOwnerRunsTheAiAFollowerTheNetworkController) {
 }
 
 TEST(EnemyOwner, OnlyTheOwnerSendsTheEnemiesAndAFollowersHitGoesToIt) {
-    // HP, catch-up and join animations: the owner's alone.
-    for (const u32 channel : {0x05u, 0x29u, 0x36u}) {
+    // Positions, HP, catch-up and join animations: the owner's alone (phase 8: the owner runs
+    // every enemy on its map, wherever the others stand; no guest runs one).
+    for (const u32 channel : {0x04u, 0x05u, 0x29u, 0x36u}) {
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Owner), EnemyPacketFate::Keep) << channel;
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Follower), EnemyPacketFate::Drop) << channel;
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Unknown), EnemyPacketFate::Keep) << channel;
@@ -91,23 +92,27 @@ TEST(EnemyOwner, OnlyTheOwnerSendsTheEnemiesAndAFollowersHitGoesToIt) {
     EXPECT_EQ(EnemyPacketOut(0x15, EnemyRole::Owner), EnemyPacketFate::Drop);
     EXPECT_EQ(EnemyPacketOut(0x15, EnemyRole::Follower), EnemyPacketFate::ToOwner);
     EXPECT_EQ(EnemyPacketOut(0x15, EnemyRole::Unknown), EnemyPacketFate::Keep);
-    // The game's own hand-out of enemies (near lists 0x16, the host's answer 0x17): never, the
-    // server's owners decide.
+    // The game's own hand-out of enemies (the host's answer 0x17): never, the server's owners
+    // decide. A follower's near list (0x16) goes to the owner: its game sends a member the state
+    // of the enemies on its list, attacks too (rig apart-hurt 2026-10-15: a far guest's enemies
+    // came for it but never struck).
+    EXPECT_EQ(EnemyPacketOut(0x16, EnemyRole::Follower), EnemyPacketFate::ToOwner);
+    EXPECT_EQ(EnemyPacketOut(0x16, EnemyRole::Owner), EnemyPacketFate::Drop);
+    EXPECT_EQ(EnemyPacketOut(0x16, EnemyRole::Unknown), EnemyPacketFate::Drop);
     for (const EnemyRole role : {EnemyRole::Owner, EnemyRole::Follower, EnemyRole::Unknown}) {
-        EXPECT_EQ(EnemyPacketOut(0x16, role), EnemyPacketFate::Drop);
         EXPECT_EQ(EnemyPacketOut(0x17, role), EnemyPacketFate::Drop);
     }
-    // Positions (each game sends those of the enemies it runs: a follower runs those by it while
-    // the owner is far, see FollowerRunsEnemy), the AI records, the hand-over block, per-hit
-    // records and everything else: as they are.
-    for (const u32 channel : {0x04u, 0x3Du, 0x41u, 0x34u, 0x06u, 0x14u, 0x24u, 0x26u}) {
+    // The AI records, the hand-over block, per-hit records and everything else: as they are.
+    for (const u32 channel : {0x3Du, 0x41u, 0x34u, 0x06u, 0x14u, 0x24u, 0x26u}) {
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Follower), EnemyPacketFate::Keep) << channel;
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Owner), EnemyPacketFate::Keep) << channel;
     }
 }
 
 TEST(EnemyOwner, AFollowerTakesTheEnemiesFromTheOwnerOnly) {
-    for (const u32 channel : {0x05u, 0x29u, 0x36u}) {
+    // Positions too (krolebord 2026-10-15: a guest that had just joined crashed in the game's
+    // character update while it took the other guests' positions).
+    for (const u32 channel : {0x04u, 0x05u, 0x29u, 0x36u}) {
         EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, true)) << channel;
         EXPECT_FALSE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, false)) << channel;
         // The owner runs them itself.
@@ -118,14 +123,9 @@ TEST(EnemyOwner, AFollowerTakesTheEnemiesFromTheOwnerOnly) {
     EXPECT_TRUE(KeepsEnemyPacketIn(0x15, EnemyRole::Owner, false));
     EXPECT_FALSE(KeepsEnemyPacketIn(0x15, EnemyRole::Follower, true));
     EXPECT_TRUE(KeepsEnemyPacketIn(0x15, EnemyRole::Unknown, false));
-    EXPECT_FALSE(KeepsEnemyPacketIn(0x16, EnemyRole::Owner, false));
+    EXPECT_TRUE(KeepsEnemyPacketIn(0x16, EnemyRole::Owner, false));
+    EXPECT_FALSE(KeepsEnemyPacketIn(0x16, EnemyRole::Follower, true));
     EXPECT_FALSE(KeepsEnemyPacketIn(0x17, EnemyRole::Follower, true));
-    // Positions: the owner takes them from anyone (the guest that runs an enemy it let go); a
-    // follower from the owner only (krolebord 2026-10-15: a guest that had just joined crashed in
-    // the game's character update while it took the other guests' positions too).
-    EXPECT_TRUE(KeepsEnemyPacketIn(0x04, EnemyRole::Owner, false));
-    EXPECT_TRUE(KeepsEnemyPacketIn(0x04, EnemyRole::Follower, true));
-    EXPECT_FALSE(KeepsEnemyPacketIn(0x04, EnemyRole::Follower, false));
     for (const u32 channel : {0x3Du, 0x41u, 0x34u, 0x06u}) {
         EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, false)) << channel;
         EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Owner, false)) << channel;
@@ -148,51 +148,91 @@ TEST(EnemyOwner, ARoleChangeIsLoggedOnce) {
               std::optional<std::string>{"enemy owner: none (the game's own way)"});
 }
 
-// Kaniel 2026-10-14: the host far away, an enemy by a guest stood still and woke only when the
-// host came near; and never two games running one enemy (nor none: two guests about as near both
-// left it, rig guests-pair-mobs). The owner names the one guest that runs each enemy it let go.
-MemberVitals GuestAt(const std::string& member, float x, Vital vital = Vital::Up,
-                     u32 map = CentralYharnam) {
-    return MemberVitals{.member = member, .map = map, .vital = vital, .at = {x, 0.0f, 0.0f}};
+// Phase 8: the owner's game wakes the groups around every other player as around its own (the
+// sets from the rig run 2026-10-15: the host by the lamp, the guest by Iosefka's clinic).
+WakeGroups Groups(u32 wakes, u32 counted, u32 half) {
+    WakeGroups groups;
+    groups.wakes[0] = wakes;
+    groups.counted[0] = counted;
+    groups.half[0] = half;
+    return groups;
 }
 
-TEST(EnemyOwner, TheOwnerNamesTheNearestGuestToRunAnEnemyItLetGo) {
-    const LampPosition enemy{0.0f, 0.0f, 0.0f};
-    const std::vector<MemberVitals> a_near{GuestAt("a", 5.0f), GuestAt("b", 20.0f)};
-    EXPECT_EQ(RunnerOf("", enemy, a_near, CentralYharnam), "a");
-    // Kept until another is clearly nearer, then handed on.
-    const std::vector<MemberVitals> b_slightly{GuestAt("a", 6.0f), GuestAt("b", 4.0f)};
-    EXPECT_EQ(RunnerOf("a", enemy, b_slightly, CentralYharnam), "a");
-    const std::vector<MemberVitals> b_clearly{GuestAt("a", 9.0f), GuestAt("b", 4.0f)};
-    EXPECT_EQ(RunnerOf("a", enemy, b_clearly, CentralYharnam), "b");
-    // As near as each other, with nobody running it yet: still one of them.
-    const std::vector<MemberVitals> tie{GuestAt("a", 5.0f), GuestAt("b", 5.0f)};
-    EXPECT_FALSE(RunnerOf("", enemy, tie, CentralYharnam).empty());
-    // Only a guest up, on the map, within reach.
-    EXPECT_EQ(RunnerOf("", enemy, std::vector<MemberVitals>{GuestAt("a", 5.0f, Vital::Down)},
-                       CentralYharnam),
-              "");
-    EXPECT_EQ(RunnerOf("", enemy,
-                       std::vector<MemberVitals>{GuestAt("a", 5.0f, Vital::Up, 0x18000000)},
-                       CentralYharnam),
-              "");
-    EXPECT_EQ(RunnerOf("a", enemy,
-                       std::vector<MemberVitals>{GuestAt("a", RunnerReachMetres + 1.0f)},
-                       CentralYharnam),
-              "");
+TEST(EnemyOwner, TheOwnerWakesTheGroupsAroundTheOtherPlayers) {
+    const WakeGroups record = Groups(0x60000, 0x20000, 0x60000);
+    const WakeGroups own = Groups(0x60400, 0x20000, 0x60400);
+    const std::vector<WakeGroups> far{Groups(0x2810000, 0x2000000, 0x2810000)};
+    EXPECT_EQ(WithOthersGroups(record, own, far), Groups(0x2870000, 0x2020000, 0x2870000));
+    // Nobody else: the game's own.
+    EXPECT_EQ(WithOthersGroups(record, own, {}), record);
+    // Beside the owner: nothing new.
+    const std::vector<WakeGroups> near{Groups(0x60400, 0x20000, 0x60400)};
+    EXPECT_EQ(WithOthersGroups(record, own, near), Groups(0x60400, 0x20000, 0x60400));
 }
 
-// Kaniel 2026-10-15: a guest's hits on an enemy it runs went to the host's sleeping copy and came
-// back late or not at all. On an enemy this follower runs, its own hits land at once, as the
-// host's.
-TEST(EnemyOwner, AGuestsHitOnAnEnemyItRunsLandsAtOnce) {
+// Rig 2026-10-15: awake by the far guest's groups, the host's game still let the enemy go.
+TEST(EnemyOwner, TheOwnerRunsEveryAwakeEnemyTheGameLetGo) {
+    EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 4, 0xFFFF, false),
+              std::optional<u16>{OwnedEnemyWord});
+    // The game's own already: unchanged.
+    EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 4, 1, false), std::nullopt);
+    EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 4, 0, false), std::nullopt);
+    // Not awake (yet), or kept out by the game (a boss before its fight, Iosefka): the game's.
+    EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 2, 2, 0xFFFF, false), std::nullopt);
+    EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 2, 0xFFFF, false), std::nullopt);
+    EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 4, 0xFFFF, true), std::nullopt);
+    // Only the owner runs them.
+    EXPECT_EQ(AwakeEnemyWord(EnemyRole::Follower, 4, 4, 0xFFFF, false), std::nullopt);
+    EXPECT_EQ(AwakeEnemyWord(EnemyRole::Unknown, 4, 4, 0xFFFF, false), std::nullopt);
+}
+
+TEST(EnemyOwner, OnlyThisPlayersBlockTakesTheOthersGroups) {
+    // Another block's record (Cathedral Ward's, by the border): its groups are its own.
+    WakeGroups other_block;
+    other_block.wakes[6] = 0x10000000;
+    other_block.wakes[7] = 2;
+    const WakeGroups own = Groups(0x60400, 0x20000, 0x60400);
+    const std::vector<WakeGroups> far{Groups(0x2810000, 0x2000000, 0x2810000)};
+    EXPECT_EQ(WithOthersGroups(other_block, own, far), other_block);
+    // A block with no record yet (all zero) stays asleep.
+    EXPECT_EQ(WithOthersGroups(WakeGroups{}, own, far), WakeGroups{});
+}
+
+TEST(EnemyOwner, APlayerWithoutAPlaceYetWakesNothing) {
+    const WakeGroups record = Groups(0x60000, 0x20000, 0x60000);
+    const WakeGroups own = Groups(0x60400, 0x20000, 0x60400);
+    WakeGroups joining;
+    joining.wakes.fill(0xFFFFFFFF);
+    joining.half.fill(0xFFFFFFFF);
+    EXPECT_EQ(WithOthersGroups(record, own, std::vector<WakeGroups>{joining}), record);
+    EXPECT_EQ(WithOthersGroups(record, own, std::vector<WakeGroups>{WakeGroups{}}), record);
+}
+
+// Phase 8 (one HP path): another game's hit shows on a follower's copy at once.
+TEST(EnemyOwner, AFollowersCopyTakesAnotherGamesHitAtOnce) {
+    EXPECT_EQ(HitNewsHp(EnemyRole::Follower, 484, 484, 300, 484), std::optional<s32>{300});
+    // Scaled by each copy's max (the co-op HP bonus may differ), rounded up.
+    EXPECT_EQ(HitNewsHp(EnemyRole::Follower, 968, 968, 300, 484), std::optional<s32>{600});
+    // A killing hit: dead here too, at once.
+    EXPECT_EQ(HitNewsHp(EnemyRole::Follower, 120, 484, 0, 484), std::optional<s32>{0});
+    // Already as low (its own hit, or the owner's HP came first): nothing.
+    EXPECT_EQ(HitNewsHp(EnemyRole::Follower, 300, 484, 300, 484), std::nullopt);
+    EXPECT_EQ(HitNewsHp(EnemyRole::Follower, 250, 484, 300, 484), std::nullopt);
+    // Dead already, or nonsense: nothing.
+    EXPECT_EQ(HitNewsHp(EnemyRole::Follower, 0, 484, 0, 484), std::nullopt);
+    EXPECT_EQ(HitNewsHp(EnemyRole::Follower, 484, 484, 300, 0), std::nullopt);
+    // The owner applies the hit itself (the game's own 0x15): never twice.
+    EXPECT_EQ(HitNewsHp(EnemyRole::Owner, 484, 484, 300, 484), std::nullopt);
+    EXPECT_EQ(HitNewsHp(EnemyRole::Unknown, 484, 484, 300, 484), std::nullopt);
+}
+
+// Phase 8: no guest runs an enemy on a map that has an owner, at any distance; the owner wakes the
+// groups around every member instead. A follower's hits always go to the owner.
+TEST(EnemyOwner, AFollowerNeverRunsAnEnemy) {
     constexpr s32 Hosting = MatchingStateHosting;
     constexpr s32 Guest = MatchingStateSummonedGuest;
-    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Guest, true), std::optional<s32>{Hosting});
-    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Hosting, true), std::nullopt);
-    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Guest, false), std::nullopt);
-    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Hosting, false), std::optional<s32>{Guest});
-    EXPECT_EQ(EnemyHitState(EnemyRole::Owner, Hosting, false), std::nullopt);
+    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Guest), std::nullopt);
+    EXPECT_EQ(EnemyHitState(EnemyRole::Follower, Hosting), std::optional<s32>{Guest});
 }
 
 // Kaniel 2026-10-15: a guest's hit did not count at once: its copy took the hit, then the host's

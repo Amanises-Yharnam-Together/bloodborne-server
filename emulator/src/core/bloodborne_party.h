@@ -2344,10 +2344,10 @@ constexpr u64 TitleLoadSlotOffset = 0x1490; // GameMan's (GlobalState's) save sl
 //   hits             a follower's 0x15 goes to the owner (our link), the owner's own is dropped
 //                    (its hit applied already); a host that follows sends its hits as a guest
 //                    does (EnemyHitState)
-//   packets          only the owner sends HP, catch-up and join animations (5, 0x29, 0x36)
-//                    and a follower takes them from the owner only; positions (4) come from
-//                    whichever game runs the enemy (see FollowerRunsEnemy); the game's own
-//                    hand-out of enemies (0x16 near lists, 0x17 the host's answer) is dropped
+//   packets          only the owner sends positions, HP, catch-up and join animations (4, 5,
+//                    0x29, 0x36) and a follower takes them from the owner only (phase 8: the
+//                    owner runs every enemy on its map, wherever the others stand); the game's
+//                    own hand-out of enemies (0x16 near lists, 0x17 the host's answer) is dropped
 // The AI records (0x3D), per-hit records (0x41) and the hand-over block (0x34) go as they are: the
 // game sends 0x34 + 0x3D itself when a character changes hands (phase 0 trace).
 struct EnemyOwnerEntry {
@@ -2375,9 +2375,6 @@ EnemyRole EnemyRoleOn(std::span<const EnemyOwnerEntry> owners, std::string_view 
 std::optional<s32> EnemySyncState(EnemyRole role, s32 state);
 // The state the hit on an enemy (0x01A29E40) sees instead: a host that follows sends its hits.
 std::optional<s32> EnemyHitState(EnemyRole role, s32 state);
-// `runs_victim`: this follower runs the enemy hit (the owner let it go): its hit lands here
-// at once, as the host's (Kaniel 2026-10-15).
-std::optional<s32> EnemyHitState(EnemyRole role, s32 state, bool runs_victim);
 std::optional<u16> EnemyOwnershipWord(EnemyRole role);
 // Whether this owner's copies take the log's HP on becoming the owner: when it takes the map over
 // from another (its epoch past the first), not as the map's first owner (Kaniel 2026-10-15).
@@ -2386,6 +2383,11 @@ bool TakesOverEnemyHp(const EnemyOwnerEntry& owner);
 // (ch 5 from before the hit reached the host): the HP to write back, or none.
 constexpr s64 OwnHitHoldMs = 1'500;
 std::optional<s32> HeldOwnHitHp(s32 current, s32 after_own_hit, s64 age_ms);
+// Phase 8 (one HP path): another game's hit (bbcoop::EnemyHit, `hp` of `max` after it) on this
+// game's copy (`current` of `copy_max`): the HP to write at once, or none. A follower's copy goes
+// down to it (scaled by each copy's max, to 0 for a killing hit: it dies on every screen at
+// once); the owner applies the hit itself (the game's 0x15), and without an owner nothing.
+std::optional<s32> HitNewsHp(EnemyRole role, s32 current, s32 copy_max, s32 hp, s32 max);
 enum class EnemyPacketFate : u8 { Keep, Drop, ToOwner };
 EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role);
 // `from_owner`: the sender is the area's owner.
@@ -2421,23 +2423,44 @@ constexpr u64 ReceiveFromHostMemberOffset = 0x01789495;
 constexpr std::array<u8, 7> ReceiveFromHostMember{0x48, 0x81, 0xC3, 0xD0, 0x00, 0x00, 0x00};
 constexpr u64 EnemyHitStateReadOffset = 0x01A2A102;
 constexpr std::array<u8, 6> EnemyHitStateRead{0x8B, 0x88, 0x24, 0x01, 0x00, 0x00};
-// Kaniel 2026-10-14: the host far away on the same map, an enemy by a guest stood still and woke
-// only when the host came near. A game animates and runs only the enemies by its own player
-// (WorldChrMan's activation pass 0x019192A0 and the draw groups), and the host's own game hands an
-// enemy away from its player to the network (word 0xFFFF) for a guest's near list to claim, which
-// phase 4 drops. The owner says which enemies its game let go (bbcoop::EnemiesLetGo); the guest
-// nearest such an enemy, awake by its player, runs it (word 0); the owner still takes its hits
-// (0x15) and sends its HP. One game runs each enemy (Kaniel: never two at once).
 constexpr s32 EnemyAwake = 4; // [control +0x14] after the activation pass
-// The owner names the guest that runs each enemy it let go: the nearest up on its map within
-// RunnerReachMetres (by the vitals board's positions), kept until another is this much nearer.
-constexpr float NearestGuestLeadMetres = 3.0f;
-constexpr float RunnerReachMetres = 60.0f;
-constexpr s64 EnemiesLetGoFreshMs = 3'000;
-constexpr s64 EnemiesLetGoEveryMs = 1'000;
-// `current` the guest that runs it now (empty: none); `guests` the board without the owner.
-std::string RunnerOf(const std::string& current, const LampPosition& enemy,
-                     std::span<const struct MemberVitals> guests, u32 map);
+// Phase 8 (whole-map owner): WorldChrMan's activation pass (0x019192A0, once a frame) wakes a
+// character whose groups share a bit with its block's record (WorldChrMan +0x290 entries): the
+// first set (chr +0x218 vs record +0x38) wakes it (4), the third (+0x258 vs +0x78) half (2);
+// the second (+0x238 vs +0x18) is only counted. The record follows this game's own player: its
+// sets are the groups of the place it stands (a subset of the player's own sets, rig 2026-10-15),
+// and the other players' copies in this game carry the groups of where they stand. So the owner
+// adds every other player's sets to its block's record for the pass (and puts the record back
+// after it): the game wakes the enemies around each of them as around its own player. The pass's
+// nearest-first budget (+0x5F70) is -1 (no limit) in Bloodborne (rig 2026-10-15).
+constexpr u64 ActivationPassOffset = 0x019192A0;
+constexpr std::array<u8, 6> ActivationPassPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+constexpr u64 ActivationPassEndOffset = 0x0191987E; // mov bl, [rbp - 0x69]; and bl, 1 (r14 = it)
+constexpr std::array<u8, 6> ActivationPassEnd{0x8A, 0x5D, 0x97, 0x80, 0xE3, 0x01};
+// Awake is not run: in a session the host's game hands every enemy its player is not near to the
+// network (word 0xFFFF; WorldChrMan's ownership step 0x01915320, then 0x018ECEB0 with the near
+// lists), awake or not (rig 2026-10-15: the enemy by the far guest at 4 with word 0xFFFF stood
+// still). Right after that step (0x019173B0, called from 0x01916B3F, before the characters'
+// updates read the words) the owner keeps every awake enemy of its map as the game keeps its
+// own (word 1).
+constexpr u64 OwnershipStepEndOffset = 0x019173B0;
+constexpr std::array<u8, 6> OwnershipStepEndPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+constexpr u16 OwnedEnemyWord = 1;
+// The word the owner gives an enemy after the ownership step, or none: an awake one (`level` its
+// [control +0x14], `applied` +0x10) the game let go, unless the game keeps it out.
+std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out);
+using GroupSet = std::array<u32, 8>;
+struct WakeGroups {
+    GroupSet wakes{};   // chr +0x218, record +0x38
+    GroupSet counted{}; // chr +0x238, record +0x18
+    GroupSet half{};    // chr +0x258, record +0x78
+    bool operator==(const WakeGroups&) const = default;
+};
+// A block record's groups for the pass: `record` with each player's of `others` added, when the
+// record is this player's block (it shares a group with `own`). A player whose copy has no place
+// yet (no groups, or all of them, as right after a join) adds nothing.
+WakeGroups WithOthersGroups(const WakeGroups& record, const WakeGroups& own,
+                            std::span<const WakeGroups> others);
 
 // The game's packets in our frames (docs/SERVER_COOP_PLAN.md phase 2b, bloodborne_game_link.h,
 // see InstallGamePacketLink). The transport send under NetSync's send and its resend
@@ -2595,6 +2618,19 @@ constexpr s64 DownedKneelDelayMs = 400;
 bool TakesAnimationRequest(u64 character, const std::function<u64(u64 address, size_t size)>& read);
 // Whether a downed player still waiting for its kneel asks for it now.
 bool KneelsNow(bool waiting, s64 down_for_ms, bool takes_request);
+// Phase 8 (downs for everyone): the downed kneel the member's own game plays did not show on the
+// others' copies of it (rig down-kneel-seen). Each game asks the kneel of its copy of every downed
+// member itself, once per down, when the copy takes an animation request.
+class CopyKneels {
+public:
+    // Whether to ask the kneel of `member`'s copy now, for its down `down`; `downed` the members
+    // down now (the others' kneels are forgotten).
+    bool Due(const std::string& member, u32 down, bool takes_request);
+    void KeepOnly(std::span<const std::string> downed);
+
+private:
+    std::map<std::string, u32> knelt; // member -> the down its copy knelt for
+};
 // The HP a downed player shows while it is struck back up: 1, rising with the share of the revive
 // done to just under its max (the revive sets the real HP), so the game's own HP bar and the
 // nameplate bar the others see over it (RemotePCTag, fed by the synced HP) fill with the revive.

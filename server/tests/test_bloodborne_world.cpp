@@ -165,8 +165,8 @@ struct Game {
       ++sessions;
     } else if (envelope.has_load_progress()) {
       loads[envelope.load_progress().member()] = envelope.load_progress();
-    } else if (envelope.has_enemies_let_go()) {
-      let_go = envelope.enemies_let_go();
+    } else if (envelope.has_enemy_hit()) {
+      hits.push_back(envelope.enemy_hit());
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -231,7 +231,7 @@ struct Game {
   std::optional<bbcoop::TeamSession> session;
   int sessions = 0;
   std::map<std::string, bbcoop::LoadProgress> loads;
-  std::optional<bbcoop::EnemiesLetGo> let_go;
+  std::vector<bbcoop::EnemyHit> hits;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -997,36 +997,40 @@ int EachMembersLoadReachesTheOthers() {
   return 0;
 }
 
-// Kaniel 2026-10-14: the enemies the owner's game let go reach the others under
-// its name.
-int TheEnemiesTheOwnerLetGoReachTheOthers() {
+// Phase 8 (one HP path): a game's own hit goes to every other member at once,
+// under its name, and never into the log.
+int AHitReachesTheOthersAtOnce() {
   Service service{{}};
   Game host{1000, "host", 11};
   Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  const std::vector<Game *> games{&host, &guest, &other};
   qint64 now = 1'000'000;
-  host.Hello(now);
-  guest.Hello(now);
-  Pump(service, {&host, &guest}, now);
-  bbcoop::Envelope let_go;
-  let_go.mutable_enemies_let_go()->set_map(0x18010000);
-  let_go.mutable_enemies_let_go()->add_handles(0x1001400b);
-  let_go.mutable_enemies_let_go()->set_member("spoofed");
-  host.Send(let_go, now);
-  Pump(service, {&host, &guest}, now);
-  CHECK(guest.let_go.has_value());
-  CHECK(guest.let_go->member() == "host");
-  CHECK(guest.let_go->map() == 0x18010000u);
-  CHECK(guest.let_go->handles_size() == 1 &&
-        guest.let_go->handles(0) == 0x1001400bu);
-  CHECK(!host.let_go.has_value());
+  for (Game *game : games) {
+    game->Hello(now);
+  }
+  Pump(service, games, now);
+  bbcoop::Envelope hit;
+  hit.mutable_enemy_hit()->set_map(0x18010000);
+  hit.mutable_enemy_hit()->set_handle(0x1001400b);
+  hit.mutable_enemy_hit()->set_hp(300);
+  hit.mutable_enemy_hit()->set_max(484);
+  hit.mutable_enemy_hit()->set_member("spoofed");
+  guest.Send(hit, now + 10);
+  Pump(service, games, now + 10);
+  for (Game *game : {&host, &other}) {
+    CHECK(game->hits.size() == 1);
+    CHECK(game->hits[0].member() == "guest");
+    CHECK(game->hits[0].handle() == 0x1001400bu && game->hits[0].hp() == 300);
+  }
+  CHECK(guest.hits.empty());
+  CHECK(host.member.Hp().empty());
   return 0;
 }
 
-// Kaniel 2026-10-15: with the host far away a guest runs an enemy the host let
-// go; its hits went to the host's sleeping copy and the HP came back late or
-// not at all. The guest the owner named reports that enemy's HP (and its kill)
-// itself; the server takes them from that guest only.
-int TheGuestThatRunsAnEnemyReportsItsHp() {
+// Phase 8: no guest runs an enemy on a map that has an owner. A follower's HP
+// reports for that map are never the log's.
+int AFollowersHpIsNeverTheLogs() {
   Service service{{}};
   Game host{1000, "host", 11};
   Game guest{1001, "guest", 12};
@@ -1043,32 +1047,17 @@ int TheGuestThatRunsAnEnemyReportsItsHp() {
   other.Map(0x18010000, now + 100);
   Pump(service, games, now + 100);
   CHECK(guest.OwnerOf(0x18010000) == "host");
-  // The host lets 0x1001400b go to the guest, 0x1001400c to nobody.
-  bbcoop::Envelope let_go;
-  let_go.mutable_enemies_let_go()->set_map(0x18010000);
-  let_go.mutable_enemies_let_go()->add_handles(0x1001400b);
-  let_go.mutable_enemies_let_go()->add_runners("guest");
-  let_go.mutable_enemies_let_go()->add_handles(0x1001400c);
-  let_go.mutable_enemies_let_go()->add_runners("");
-  host.Send(let_go, now + 200);
-  Pump(service, games, now + 200);
-  // Only the runner's report of its own enemy counts.
-  guest.Hp(0x2222000000000001, {{0x1001400c, 100, 484}}, now + 300);
-  other.Hp(0x3333000000000001, {{0x1001400b, 50, 484}}, now + 300);
+  guest.Hp(0x2222000000000001, {{0x1001400b, 300, 484}}, now + 300);
   Pump(service, games, now + 300);
   CHECK(!host.member.Hp().contains(0x2222000000000001));
-  CHECK(!host.member.Hp().contains(0x3333000000000001));
-  guest.Hp(0x2222000000000001, {{0x1001400b, 300, 484}}, now + 400);
+  CHECK(!other.member.Hp().contains(0x2222000000000001));
+  host.Hp(0x1111000000000001, {{0x1001400b, 300, 484}}, now + 400);
   Pump(service, games, now + 400);
-  CHECK(host.member.Hp().contains(0x2222000000000001));
-  CHECK(other.member.Hp().contains(0x2222000000000001));
-  // And its kill of that enemy.
+  CHECK(guest.member.Hp().contains(0x1111000000000001));
+  // Nor its new kills there.
   guest.Propose({{0x18010000, {0x1001400b}}}, now + 500);
   Pump(service, games, now + 500);
-  CHECK(Killed(host, 0x1001400b));
-  other.Propose({{0x18010000, {0x1001400c}}}, now + 600);
-  Pump(service, games, now + 600);
-  CHECK(!Killed(host, 0x1001400c));
+  CHECK(!Killed(host, 0x1001400b));
   return 0;
 }
 
@@ -1418,10 +1407,8 @@ int main() {
        TheHostsSessionReachesItsGuestsToJoin},
       {"AHostsSessionGoesWithItsGame", AHostsSessionGoesWithItsGame},
       {"EachMembersLoadReachesTheOthers", EachMembersLoadReachesTheOthers},
-      {"TheEnemiesTheOwnerLetGoReachTheOthers",
-       TheEnemiesTheOwnerLetGoReachTheOthers},
-      {"TheGuestThatRunsAnEnemyReportsItsHp",
-       TheGuestThatRunsAnEnemyReportsItsHp},
+      {"AFollowersHpIsNeverTheLogs", AFollowersHpIsNeverTheLogs},
+      {"AHitReachesTheOthersAtOnce", AHitReachesTheOthersAtOnce},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},
