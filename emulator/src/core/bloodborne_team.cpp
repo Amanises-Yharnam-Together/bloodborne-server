@@ -12,6 +12,15 @@
 
 namespace Core::Bloodborne {
 
+std::string LinkRefusalNotice(std::string_view refusal) {
+    if (refusal.empty()) {
+        return {};
+    }
+    // The details in brackets (the builds) stay in the log: the screen has one short line.
+    return "The co-op server refused this game: " +
+           std::string{refusal.substr(0, refusal.find(" ("))};
+}
+
 u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me) {
     constexpr u32 FirstGuestSign = 7;
     if (!lobby.has_team()) {

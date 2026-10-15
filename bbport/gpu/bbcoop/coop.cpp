@@ -26,6 +26,7 @@
 #include "core/bloodborne_re_internal.h"
 #include "core/cpu_patches.h"
 #include "core/file_format/psf.h"
+#include "core/libraries/network/server_link.h"
 #include "core/libraries/np/np_trophy.h"
 
 extern "C" int32_t runtime_trophy_unlock_from_party(int32_t trophy_id);
@@ -239,6 +240,9 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
     }
     const auto state = Coop::TeamLobbyState();
     if (!state) {
+        // Refused (another build): no lobby comes, so the screen says why instead of "reaching".
+        CopyName(lobby->notice, sizeof(lobby->notice),
+                 Core::Bloodborne::LinkRefusalNotice(Libraries::Net::ServerLinkRefusal()));
         return 1;
     }
     const std::string me = Coop::TeamLobbyMember();

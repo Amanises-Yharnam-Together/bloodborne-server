@@ -407,3 +407,14 @@ TEST(TeamLoad, ShowsOnlyTheMembersComing) {
 }
 
 } // namespace
+
+// Phase 7: a game the server refuses (another build) says why on the team screen.
+TEST(TeamLobby, ARefusedLinkIsShownOnTheTeamScreen) {
+    EXPECT_EQ(LinkRefusalNotice(""), "");
+    // The screen has one short line (bbcoop_lobby::notice): the reason, not the builds.
+    const std::string notice = LinkRefusalNotice(
+        "another build: everyone needs the same release (this game runs b, the others run a)");
+    EXPECT_EQ(notice, "The co-op server refused this game: another build: everyone needs the same "
+                      "release");
+    EXPECT_LT(notice.size(), 96u);
+}

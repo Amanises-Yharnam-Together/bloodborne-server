@@ -29,6 +29,10 @@ bool TeamCanBegin(const bbcoop::LobbyState& lobby, const std::string& me);
 // own in the team: 7 for the first guest (the summon sign's), 6 for the second, 5 for the third.
 u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me);
 
+// Phase 7: what the team screen says when the server refused this game's link (another build),
+// from the server's reason; empty when it did not.
+std::string LinkRefusalNotice(std::string_view refusal);
+
 // The members the team loading screen shows (member, name), the leader first: this game and those
 // coming (ready, not offline); not one gone or staying at the title (Kaniel 2026-10-15).
 std::vector<std::pair<std::string, std::string>> TeamLoadMembers(const bbcoop::LobbyState& lobby,

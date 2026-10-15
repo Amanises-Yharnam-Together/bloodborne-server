@@ -476,6 +476,11 @@ public:
         return link_welcomed;
     }
 
+    std::string LinkRefusal() {
+        std::lock_guard lock(link_mutex);
+        return link_refusal;
+    }
+
     void SetLinkObserver(ServerLinkObserver observer) {
         link_observer.store(observer);
     }
@@ -1487,6 +1492,10 @@ int ServerCoopReceive(void* body, u32 len) {
 
 bool ServerLinkWelcomed() {
     return ServerLinkSwitchOn() && P2PTransport::Instance().LinkWelcomed();
+}
+
+std::string ServerLinkRefusal() {
+    return ServerLinkSwitchOn() ? P2PTransport::Instance().LinkRefusal() : std::string{};
 }
 
 u16 GetP2PConfiguredPort() {

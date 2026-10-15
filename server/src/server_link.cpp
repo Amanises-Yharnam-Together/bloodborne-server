@@ -300,8 +300,8 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
         // Every other linked game's build (a game saying hello again is not one).
         for (const Link& link : std::as_const(members)) {
             if (!(link.endpoint == from) && link.build != hello->build) {
-                refusal = "another build: this game runs " + hello->build +
-                          ", the games here run " + link.build;
+                refusal = "another build: everyone needs the same release (this game runs " +
+                          hello->build + ", the games here run " + link.build + ")";
                 break;
             }
         }

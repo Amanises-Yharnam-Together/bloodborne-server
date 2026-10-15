@@ -31,5 +31,7 @@ bool ServerCoopSend(const void* body, u32 len);
 int ServerCoopReceive(void* body, u32 len);
 // Whether the server took this game's hello (it may restart: then false until it does again).
 bool ServerLinkWelcomed();
+// Why the server refused this game's hello (another build), empty while it did not.
+std::string ServerLinkRefusal();
 
 } // namespace Libraries::Net

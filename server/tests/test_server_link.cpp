@@ -143,6 +143,8 @@ int HelloAndBuilds() {
   const auto refused = DecodeWelcome(SentTo(result, Eileen).value(0));
   CHECK(refused && !refused->accepted);
   CHECK(refused->text.contains("13ddd14d") && refused->text.contains(Build));
+  CHECK(refused->text.contains(
+      "everyone needs the same release")); // said on the team screen
   CHECK(hub.Members() == 2);
 
   Hello later{2, "Eileen", Build};
