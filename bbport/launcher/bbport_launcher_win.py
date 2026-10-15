@@ -1356,8 +1356,11 @@ class Motion:
         self.job = self.root.after(delay, self.tick)
 
     def visible(self):
+        """Shown and in front: loops rest while minimised, hidden or behind another window (the game
+        or anything else the player is at: no redrawing the banner 30 times a second behind it)."""
         try:
-            return bool(self.root.winfo_viewable()) and self.root.state() != 'iconic'
+            return (bool(self.root.winfo_viewable()) and self.root.state() != 'iconic'
+                    and bool(self.root.tk.call('focus')))
         except self.tcl_error:
             return False
 
@@ -1906,8 +1909,12 @@ class Hero:
 
     def set_art(self, path):
         path = Path(path)
-        self.art_path = path if path.is_file() else None
+        path = path if path.is_file() else None
+        if path == getattr(self, 'art_path', None) and getattr(self, 'art_built', False):
+            return  # the same picture: nothing to decode, scale and composite again
+        self.art_path = path
         self.art_size = 0
+        self.art_built = True
         self.rebuild()
 
     def resized(self, event):
@@ -2750,7 +2757,7 @@ class Launcher:
 
         def var(key, value=None):
             v = tk.StringVar(value=self.coop.get(key, '') if value is None else value)
-            v.trace_add('write', lambda *_a: self.coop_changed())
+            v.trace_add('write', lambda *_a: self.coop_changed_soon())
             self.coop_vars[key] = v
             return v
 
@@ -2804,10 +2811,25 @@ class Launcher:
                           'персонажа. Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают '
                           'экран команды. Windows один раз спросит разрешение для брандмауэра.'), top=14)
         self.coop_changed()
-        if not bbport_coop.find_game_folder(self.coop.get('game') or '.'):
+        if not self.coop_game_folder():
             self.coop_search(None, quiet=True)
 
+    def coop_game_folder(self):
+        """The game folder the co-op card names (None when none is set: the folder the launcher runs
+        from is its install folder, which a lookup would walk three levels deep on every refresh)."""
+        folder = (getattr(self, 'coop', None) or {}).get('game', '')
+        return bbport_coop.find_game_folder(folder) if folder else None
+
+    def coop_changed_soon(self):
+        """A co-op setting changed (a key typed): the settings file, the game line, the status and
+        the banner art follow once typing pauses for 250 ms, not for every key (each round looked the
+        game up several times and redrew the art: the launcher lagged, 2026-10-15)."""
+        if getattr(self, 'coop_change_job', None):
+            self.root.after_cancel(self.coop_change_job)
+        self.coop_change_job = self.root.after(250, self.coop_changed)
+
     def coop_changed(self):
+        self.coop_change_job = None
         if not hasattr(self, 'coop_host'):
             return
         for key, v in self.coop_vars.items():
@@ -2828,7 +2850,7 @@ class Launcher:
 
     def coop_game_info(self):
         """(title, version) of the co-op card's game as co-op runs it: 01.09 when the update is next to it."""
-        game = bbport_coop.find_game_folder(self.coop.get('game') or '.') if getattr(self, 'coop', None) else None
+        game = self.coop_game_folder()
         if not game:
             return None
         title, version = bbport_coop.game_version(game) or ('CUSA03173', '?')
@@ -3117,7 +3139,7 @@ class Launcher:
         """Cover art, game line and the cache of both for the selected game folder."""
         folder = Path(self.var('game_dir', 'app').get() or '.')
         if COOP_INSTALL:
-            folder = bbport_coop.find_game_folder(self.coop.get('game') or '.') or Path('.')
+            folder = self.coop_game_folder() or Path('.')
         self.hero.set_art(folder / 'sce_sys' / 'pic1.png')
         info = self.coop_game_info() if COOP_INSTALL else game_info(folder)
         self.hero.canvas.itemconfigure(self.hero.info, text=(

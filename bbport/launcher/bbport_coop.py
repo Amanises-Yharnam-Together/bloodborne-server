@@ -221,6 +221,10 @@ SKIPPED = {'windows', '$recycle.bin', 'system volume information', 'programdata'
            'coop-game', 'windowsapps', 'intel', 'amd', 'nvidia'}
 
 
+# Folders around an install that hold other programs, not a game.
+CROWDED = {'programs', 'local', 'appdata', 'roaming', 'program files', 'program files (x86)'}
+
+
 def search_game(install, drives=None, homes=None, depth=5, budget_s=20.0, near=None):
     """A Bloodborne game folder on this PC: first next to `near` (a folder the player picked) and
     around the install, then in the usual places in the home folder, then each drive, breadth
@@ -236,7 +240,13 @@ def search_game(install, drives=None, homes=None, depth=5, budget_s=20.0, near=N
     if near:
         near = Path(near)
         first += [near, near.parent]
-    first += [install / 'game', install.parent, install.parent.parent]
+    first.append(install / 'game')
+    # Beside the install, unless that is a folder of many programs: installed per user, the parents
+    # are %LOCALAPPDATA%\Programs and %LOCALAPPDATA% (thousands of folders, walked with no time
+    # limit while the launcher waited).
+    for folder in (install.parent, install.parent.parent):
+        if folder.name.lower() not in CROWDED:
+            first.append(folder)
     for folder in first:
         found = find_game_folder(folder, 2) if folder and Path(folder).is_dir() else None
         if found and is_bloodborne(found):
