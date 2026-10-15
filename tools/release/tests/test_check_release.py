@@ -40,6 +40,17 @@ class CheckReleaseTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("server/shadnet.exe", problems[0])
 
+    def test_a_release_without_dlss_is_reported(self):
+        # Releases built without the DLSS bridge had the launcher's DLSS option disabled on RTX GPUs
+        # (Kaniel 2026-10-15): bbport_dlss.dll and NVIDIA's nvngx_dlss.dll go next to bb-probe.exe.
+        for dll in ("bin/bbport_dlss.dll", "bin/nvngx_dlss.dll"):
+            with self.subTest(dll=dll), tempfile.TemporaryDirectory() as folder:
+                root = pathlib.Path(folder)
+                make_release(root, leave_out=(dll,))
+                problems = tool.check(root)
+                self.assertEqual(len(problems), 1)
+                self.assertIn(dll, problems[0])
+
     def test_game_files_are_refused(self):
         for game_file in ("game/CUSA03173/eboot.bin", "x/sce_sys/param.sfo",
                           "event-patch/m21_00_00_00.emevd.dcx", "dvdroot_ps4/menu/common.tpf.dcx",
