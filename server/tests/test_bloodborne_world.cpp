@@ -1378,9 +1378,30 @@ int ATeamsWorldComesFromItsHostAndOutlivesTheServer() {
   return 0;
 }
 
+// Phase 7: the link relays only inside a team, so the service says each link's
+// party.
+int EachLinksPartyIsKnownAfterItsHello() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game other{1001, "other", 12};
+  qint64 now = 1'000'000;
+  CHECK(service.PartyOf(host.endpoint).isEmpty());
+  host.Hello(now);
+  other.Hello(now, "team:t9");
+  Pump(service, {&host, &other}, now);
+  CHECK(!service.PartyOf(host.endpoint).isEmpty());
+  CHECK(!service.PartyOf(other.endpoint).isEmpty());
+  CHECK(service.PartyOf(host.endpoint) != service.PartyOf(other.endpoint));
+  service.Forget(host.endpoint);
+  CHECK(service.PartyOf(host.endpoint).isEmpty());
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
+      {"EachLinksPartyIsKnownAfterItsHello",
+       EachLinksPartyIsKnownAfterItsHello},
       {"AWrongPartyOrProtocolIsRefused", AWrongPartyOrProtocolIsRefused},
       {"AWipeStartsOneLogForTheParty", AWipeStartsOneLogForTheParty},
       {"TheHostsSessionEventsStartANewLogAGuestsTakeItsShare",

@@ -38,6 +38,8 @@ StunServer::StunServer(SharedState* shared, QObject* parent)
     connect(m_socket, &QUdpSocket::readyRead, this, &StunServer::OnReadyRead);
     connect(m_linkTimer, &QTimer::timeout, this, &StunServer::OnLinkTick);
     connect(m_worldTimer, &QTimer::timeout, this, &StunServer::OnWorldTick);
+    // Phase 7: the link relays only between games of one team (the party of their hello).
+    m_link.SetPartyOf([this](const ServerLink::Endpoint& link) { return m_world.PartyOf(link); });
     m_clock.start();
     m_linkTimer->start(500);
     // The worlds' clock is the wall clock: their journals keep it across restarts.

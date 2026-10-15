@@ -90,6 +90,8 @@ public:
     Result Tick(qint64 now_ms);
     // A link went (its game is gone).
     void Forget(const ServerLink::Endpoint& link);
+    // The party a link's game said in its hello, empty before one (phase 7: the hub's teams).
+    QString PartyOf(const ServerLink::Endpoint& link) const;
 
     // The team lobby (phase 5), for the tests and the log.
     const BloodborneCoop::TeamLobby& Lobby() const {

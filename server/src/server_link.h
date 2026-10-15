@@ -19,6 +19,7 @@
 // counters per member).
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <QByteArray>
 #include <QHash>
@@ -121,6 +122,13 @@ public:
     // Links newly quiet (told to the others), gone (forgotten) and the counters.
     Result Tick(qint64 now_ms);
 
+    // Phase 7: each link's team (its party, empty before the game said which). Once set, a frame
+    // and a member notice go only to games of the sender's team, never to one in no team.
+    using PartyOf = std::function<QString(const Endpoint&)>;
+    void SetPartyOf(PartyOf party_of) {
+        this->party_of = std::move(party_of);
+    }
+
     int Members() const {
         return static_cast<int>(members.size());
     }
@@ -146,6 +154,7 @@ private:
     void Heard(Link& link, qint64 now_ms, Result& result);
     void TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result& result);
     QString Name(const Link& link) const;
+    bool SameTeam(const Endpoint& a, const Endpoint& b) const;
 
     qint64 quiet_ms;
     qint64 gone_ms;
@@ -156,6 +165,7 @@ private:
     QHash<quint64, Link> members;
     QHash<QPair<quint64, quint64>, quint64> pair_frames;
     quint64 dropped = 0;
+    PartyOf party_of;
 };
 
 } // namespace ServerLink

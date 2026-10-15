@@ -244,6 +244,14 @@ QString Hub::Name(const Link& link) const {
     return QStringLiteral("%1 (%2)").arg(QString::fromUtf8(link.online_id), link.endpoint.Text());
 }
 
+bool Hub::SameTeam(const Endpoint& a, const Endpoint& b) const {
+    if (!party_of) {
+        return true; // nobody said the teams (the hub alone)
+    }
+    const QString party = party_of(a);
+    return !party.isEmpty() && party == party_of(b);
+}
+
 Hub::Result Hub::Receive(const Endpoint& from, const QByteArray& datagram, qint64 now_ms) {
     Result result;
     const auto kind = KindOf(datagram);
@@ -349,6 +357,16 @@ void Hub::OnData(Link& sender, const QByteArray& datagram, Result& result) {
         }
         return;
     }
+    if (!SameTeam(sender.endpoint, target->endpoint)) {
+        if (dropped++ < DropsLogged) {
+            result.log.append(QStringLiteral("server link: %1 sent %2 bytes to %3, a game of "
+                                             "another team or none: dropped")
+                                  .arg(Name(sender))
+                                  .arg(data->frame.size())
+                                  .arg(Name(*target)));
+        }
+        return;
+    }
     ++target->frames_out;
     target->bytes_out += static_cast<quint64>(data->frame.size());
     result.sends.append({target->endpoint, Encode(Data{sender.endpoint, data->frame})});
@@ -381,7 +399,7 @@ void Hub::TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result
         Encode(Member{state, static_cast<quint32>(std::clamp<qint64>(gap_ms, 0, 0xFFFFFFFF)),
                       about.endpoint, about.online_id});
     for (const Link& other : std::as_const(members)) {
-        if (!(other.endpoint == about.endpoint)) {
+        if (!(other.endpoint == about.endpoint) && SameTeam(about.endpoint, other.endpoint)) {
             result.sends.append({other.endpoint, told});
         }
     }

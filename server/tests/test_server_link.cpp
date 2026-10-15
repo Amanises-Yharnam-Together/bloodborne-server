@@ -257,11 +257,53 @@ int Liveness() {
   return 0;
 }
 
+// Phase 7: the relay and the member notices stay inside the sender's team.
+int TeamOnly() {
+  Hub hub;
+  const Endpoint Lone{0x7F000001, 40004};
+  hub.SetPartyOf([&](const Endpoint &link) -> QString {
+    if (link == Kaniel || link == Ada) {
+      return QStringLiteral("team-a");
+    }
+    return link == Eileen ? QStringLiteral("team-b") : QString{};
+  });
+  hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
+  hub.Receive(Ada, HelloFrom("Ada"), 0);
+  hub.Receive(Eileen, HelloFrom("Eileen"), 0);
+  hub.Receive(Lone, HelloFrom("Lone"), 0);
+
+  auto result = hub.Receive(Kaniel, Encode(Data{Ada, GameFrame}), 10);
+  CHECK(SentTo(result, Ada).size() == 1);
+  // Another team's game, or one in no team yet: dropped, and said.
+  result = hub.Receive(Kaniel, Encode(Data{Eileen, GameFrame}), 20);
+  CHECK(result.sends.isEmpty());
+  CHECK(!result.log.isEmpty() && result.log[0].contains("another team"));
+  result = hub.Receive(Lone, Encode(Data{Ada, GameFrame}), 30);
+  CHECK(result.sends.isEmpty());
+  result = hub.Receive(Ada, Encode(Data{Lone, GameFrame}), 40);
+  CHECK(result.sends.isEmpty());
+
+  // Eileen going quiet is told to nobody in team a.
+  for (const Endpoint &game : {Kaniel, Ada, Lone}) {
+    hub.Receive(game, Encode(Kind::Ping, Ping{1, 3000}), 3000);
+  }
+  result = hub.Tick(3500);
+  CHECK(result.sends.isEmpty());
+  // Ada going quiet is told to Kaniel only.
+  for (const Endpoint &game : {Kaniel, Eileen, Lone}) {
+    hub.Receive(game, Encode(Kind::Ping, Ping{2, 6000}), 6000);
+  }
+  result = hub.Tick(7000);
+  CHECK(SentTo(result, Kaniel).size() == 1 && result.sends.size() == 1);
+  std::cout << "server link team only: ok\n";
+  return 0;
+}
+
 } // namespace
 
 int main() {
   if (Contracts() != 0 || HelloAndBuilds() != 0 || Relays() != 0 ||
-      Liveness() != 0) {
+      Liveness() != 0 || TeamOnly() != 0) {
     return 1;
   }
   return 0;

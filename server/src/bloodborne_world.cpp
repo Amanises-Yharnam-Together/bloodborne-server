@@ -1007,6 +1007,11 @@ void Service::Forget(const ServerLink::Endpoint& link) {
     endpoints.erase(link.Key());
 }
 
+QString Service::PartyOf(const ServerLink::Endpoint& link) const {
+    const auto found = members.find(link.Key());
+    return found == members.end() ? QString{} : found->second.party;
+}
+
 namespace {
 const QString TeamsFile = QStringLiteral("teams.pb");
 const QString TeamWorldFile = QStringLiteral("team_world.pb");
