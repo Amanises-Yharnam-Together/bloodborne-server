@@ -18,6 +18,10 @@ import sys
 REQUIRED = (
     "BLauncher.exe",
     "bin/bb-probe.exe",
+    # DLSS: the bridge and NVIDIA's runtime next to bb-probe.exe. Without them the launcher's DLSS
+    # option is disabled on every PC (the 0.2.x local releases).
+    "bin/bbport_dlss.dll",
+    "bin/nvngx_dlss.dll",
     "READ ME FIRST.txt",
     "VERSION.txt",
     "tools/party_boss_events.py",
