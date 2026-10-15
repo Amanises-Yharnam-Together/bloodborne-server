@@ -265,7 +265,8 @@ WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& message) {
 
 TeamJoin::Action TeamJoin::Tick(const Frame& frame) {
     if (!frame.host) {
-        if (frame.matching_state == MatchingStateSummonedGuest && frame.room_owner) {
+        if (frame.matching_state == MatchingStateSummonedGuest && frame.room_owner &&
+            frame.room_has_others) {
             return Action::TakeHost;
         }
         return frame.ready && frame.matching_state == 0 && frame.session_known ? Action::Join

@@ -249,6 +249,11 @@ TEST(TeamJoin, AGuestGivenTheRoomTakesTheHostsRole) {
     TeamJoin::Frame frame = GuestFrame(MatchingStateSummonedGuest, true, true);
     EXPECT_EQ(join.Tick(frame), TeamJoin::Action::None);
     frame.room_owner = true;
+    // Alone in the room (a party of two): it stays a guest and runs its map alone; the host's
+    // next run hosts again and it joins that (rig crashes/host-crash, 2026-10-15: taking over
+    // there made the returning host a guest, whose game crashed at eboot+0x13cffba).
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::None);
+    frame.room_has_others = true;
     EXPECT_EQ(join.Tick(frame), TeamJoin::Action::TakeHost);
     // Hosting now (the role and the state moved): it says its session.
     EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, true)), TeamJoin::Action::Publish);

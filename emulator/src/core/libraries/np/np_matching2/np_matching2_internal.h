@@ -239,6 +239,7 @@ struct ContextObject {
     OrbisNpMatching2RoomId room_id = 0;
     OrbisNpMatching2RoomMemberId my_member_id = 0;
     bool is_room_owner = false;
+    OrbisNpMatching2RoomMemberId previous_owner = 0; // ROOM_OWNER_CHANGED's: on its way out
     u32 max_slot = 5;
     OrbisNpMatching2Flags flag_attr = 0;
 

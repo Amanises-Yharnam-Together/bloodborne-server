@@ -425,6 +425,7 @@ void HandleRoomEvent(const ShadNet::NotifyRoomEvent& n) {
         room.owner = member_id == ctx->my_member_id;
         room.signaling_main_member = member_id;
         ctx->is_room_owner = room.owner;
+        ctx->previous_owner = static_cast<OrbisNpMatching2RoomMemberId>(n.prev_owner_id);
         p.room_owner_update = std::make_unique<OrbisNpMatching2RoomOwnerUpdate>();
         OrbisNpMatching2RoomOwnerUpdate& u = *p.room_owner_update;
         u = OrbisNpMatching2RoomOwnerUpdate{};
@@ -661,6 +662,25 @@ bool OwnsItsRoom() {
         if (const ContextObject* ctx = ContextManager::Instance().Get(id);
             ctx && ctx->room_id != 0 && ctx->is_room_owner) {
             return true;
+        }
+    }
+    return false;
+}
+
+bool OwnedRoomHasOthers() {
+    for (OrbisNpMatching2ContextId id = 1; id <= ContextManager::kMaxContexts; ++id) {
+        const ContextObject* ctx = ContextManager::Instance().Get(id);
+        if (!ctx || ctx->room_id == 0 || !ctx->is_room_owner) {
+            continue;
+        }
+        const auto room = ctx->room_cache.find(ctx->room_id);
+        if (room == ctx->room_cache.end()) {
+            continue;
+        }
+        for (const auto& [member_id, member] : room->second.members) {
+            if (member_id != ctx->my_member_id && member_id != ctx->previous_owner) {
+                return true;
+            }
         }
     }
     return false;

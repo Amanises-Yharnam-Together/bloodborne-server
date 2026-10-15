@@ -1112,6 +1112,7 @@ bool TickTeamJoin(bool ready) {
         .ready = ready,
         .session_known = session.has_value() && !session->join().empty(),
         .room_owner = Libraries::Np::NpMatching2::OwnsItsRoom(),
+        .room_has_others = Libraries::Np::NpMatching2::OwnedRoomHasOthers(),
     };
     const auto say = [](std::string join, u64 number) {
         bbcoop::Envelope envelope;

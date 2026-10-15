@@ -23,4 +23,6 @@ void RegisterLib(Core::Loader::SymbolsResolver* sym);
 // Phase 7: whether this game owns the room it is in (the server passes a room to a guest when
 // its owner leaves: ROOM_OWNER_CHANGED).
 bool OwnsItsRoom();
+// Whether that room holds another member besides this game (the owner who left not counted).
+bool OwnedRoomHasOthers();
 } // namespace Libraries::Np::NpMatching2
