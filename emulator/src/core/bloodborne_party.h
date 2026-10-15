@@ -1652,19 +1652,22 @@ private:
 
 class VisitKills {
 public:
-    // `others_maps`: where the other members are now. A visit's kills stand while another member
-    // is on that visit's map (the high 32 bits of the visit, see VisitTracker): they are held
-    // instead of taken back, and taken back once neither this member nor another is on that map
-    // (Kaniel 2026-10-11: the host's trip to the Dream respawned half of Central Yharnam while
-    // Brom was still there).
+    // `others_maps`: where the other members are now; `map`: where this member is (0: the
+    // visit's map, the high 32 bits of the visit, see VisitTracker). A kill is of the map it died
+    // on, which a walk across a border makes another than the visit's (Kaniel 2026-10-15: Ward
+    // kills filed under Central Yharnam came back while Lisara stood in the Ward). When the visit
+    // ends its kills stand while another member is on their map: they are held instead of taken
+    // back, and taken back once neither this member nor another is on that map (Kaniel
+    // 2026-10-11: the host's trip to the Dream respawned half of Central Yharnam while Brom was
+    // still there).
     std::vector<std::pair<s32, bool>> Observe(u64 visit, std::span<const SeenCharacter> characters,
-                                              std::span<const u32> others_maps = {});
+                                              std::span<const u32> others_maps = {}, u32 map = 0);
     const std::vector<u32>& Killed() const {
         return killed;
     }
     // This member's held kills on `map` (hidden on its own copies there).
     std::vector<u32> Held(u32 map) const;
-    // All of this member's standing kills by map: this visit's (on the map it began on) and the
+    // All of this member's standing kills by map: this visit's (on the map each died on) and the
     // held ones (what it proposes to the world log).
     WorldLogKills Standing() const;
     // A death that resets the map (a party wipe): every kill of this member is taken back, the
@@ -1680,6 +1683,7 @@ private:
     u64 current = 0;
     std::map<u32, Seen> seen;
     std::vector<u32> killed;
+    std::map<u32, u32> killed_on;         // this visit's kills -> the map each died on
     std::map<u32, std::vector<u32>> held; // map -> kills of an earlier visit standing there
 };
 std::string EncodeEchoUpdate(std::string_view member, s64 since,

@@ -2071,32 +2071,30 @@ bool IsRealDeath(u8 death_flags) {
 
 std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
                                                       std::span<const SeenCharacter> characters,
-                                                      std::span<const u32> others_maps) {
+                                                      std::span<const u32> others_maps, u32 map) {
     std::vector<std::pair<s32, bool>> changes;
     const auto map_of = [](u64 v) { return static_cast<u32>(v >> 32); };
-    const auto someone_on = [&](u32 map) {
-        return map != 0 && std::ranges::find(others_maps, map) != others_maps.end();
+    const auto someone_on = [&](u32 on) {
+        return on != 0 && std::ranges::find(others_maps, on) != others_maps.end();
     };
     if (visit != current) {
-        const u32 old_map = map_of(current);
-        if (someone_on(old_map)) {
-            auto& standing = held[old_map];
-            for (const u32 handle : killed) {
-                if (std::ranges::find(standing, handle) == standing.end()) {
-                    standing.push_back(handle);
-                }
-            }
-        } else {
-            for (const u32 handle : killed) {
+        for (const u32 handle : killed) {
+            const u32 on = killed_on[handle];
+            if (!someone_on(on)) {
                 changes.emplace_back(static_cast<s32>(handle), false);
+            } else if (auto& standing = held[on];
+                       std::ranges::find(standing, handle) == standing.end()) {
+                standing.push_back(handle);
             }
         }
         killed.clear();
+        killed_on.clear();
         seen.clear();
         current = visit;
     }
+    const u32 here = map != 0 ? map : map_of(current);
     for (auto it = held.begin(); it != held.end();) {
-        if (it->first == map_of(current) || someone_on(it->first)) {
+        if (it->first == here || someone_on(it->first)) {
             ++it;
             continue;
         }
@@ -2115,6 +2113,7 @@ std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
             it->second.hp > 0 && !it->second.untouched_boss && now <= 0 &&
             std::ranges::find(killed, handle) == killed.end()) {
             killed.push_back(handle);
+            killed_on[handle] = here;
             changes.emplace_back(static_cast<s32>(handle), true);
         }
         it->second = {now, instance, untouched_boss};
@@ -2132,8 +2131,8 @@ WorldLogKills VisitKills::Standing() const {
     for (const auto& [map, handles] : held) {
         kills[map].insert(handles.begin(), handles.end());
     }
-    if (!killed.empty()) {
-        kills[static_cast<u32>(current >> 32)].insert(killed.begin(), killed.end());
+    for (const auto& [handle, map] : killed_on) {
+        kills[map].insert(handle);
     }
     return kills;
 }
@@ -2151,6 +2150,7 @@ std::vector<std::pair<s32, bool>> VisitKills::Forget() {
         }
     }
     killed.clear();
+    killed_on.clear();
     held.clear();
     seen.clear();
     return changes;
