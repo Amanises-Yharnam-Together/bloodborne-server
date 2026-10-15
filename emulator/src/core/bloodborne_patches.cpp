@@ -639,6 +639,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallLampsAsCampfires(base, image_size);
     InstallNoLevelSyncInParty(base, image_size);
     InstallSolidNpcsInParty(base, image_size);
+    InstallFloorGuard(base, image_size);
     InstallSharedLoot(base, image_size);
     InstallLampsStayLitAtRegistration(base, image_size);
     InstallDeferredBossItems(base, image_size);

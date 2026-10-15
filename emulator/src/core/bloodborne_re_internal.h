@@ -522,6 +522,7 @@ void MakeEnemiesHarder();
 void PolishMultiplayerUi();
 void InstallNoLevelSyncInParty(u64 base, u64 image_size);
 void InstallSolidNpcsInParty(u64 base, u64 image_size);
+void InstallFloorGuard(u64 base, u64 image_size);
 
 // Diagnostics for shared loot (RE trace only): the map item module (MapItemMan, 0x017D-0x017E)
 // asks "am I a summoned guest" (matching state 6) or "am I the host" (3) at these spots. Counting
