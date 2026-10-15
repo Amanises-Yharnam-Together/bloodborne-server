@@ -460,6 +460,10 @@ void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers);
 void PS4_SYSV_ABI CountPositionTaken(u64, const GuestRegisterSnapshot* registers);
 // A position packet (ch 4) went into the game's queues.
 void CountPositionPacketIn();
+// The game's hand-out of enemies (see HandOutSeconds): the owner's 0x17 to `member` as it sends
+// it, and a follower's as its game takes it (the hook at HandOutReceivedOffset).
+void NoteHandOutSent(const std::string& member, std::span<const u8> payload);
+void PS4_SYSV_ABI TakeHandOut(u64, const GuestRegisterSnapshot* registers);
 // How many party ticks (frames) have run: the owner's packets a frame.
 u64 EnemyFrameSerial();
 void LogNearbyEnemyControl();

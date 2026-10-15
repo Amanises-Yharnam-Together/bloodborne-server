@@ -88,9 +88,12 @@ constexpr std::string_view ChannelPolicyName(ChannelPolicy policy) {
 // A member's part in its map's enemies (phase 8: one game runs every enemy on a map).
 enum class EnemyPart : u8 { None, Owner, Follower };
 
-// Positions, HP, catch-up and join animations: what only the enemies' owner sends.
+// HP, catch-up and join animations: what only the enemies' owner sends. Positions (0x04) come from
+// whichever game runs an enemy: the owner hands the enemies only a follower is near to that
+// follower (the game's own 0x17, Kaniel 2026-10-15: a far guest's enemies lagged when the owner
+// ran them).
 constexpr bool IsOwnersEnemyChannel(u32 channel) {
-    return channel == 0x04 || channel == 0x05 || channel == 0x29 || channel == 0x36;
+    return channel == 0x05 || channel == 0x29 || channel == 0x36;
 }
 
 // The two ends of a packet as the server knows them: each one's map (0 while it loads or before it
@@ -120,14 +123,13 @@ constexpr bool RoutesNativePacket(u32 channel, const PacketEnds& ends) {
     if (ends.sender_map != 0 && ends.target_map != 0 && ends.sender_map != ends.target_map) {
         return false;
     }
-    // A follower's near list (0x16) goes to the owner only: the owner's game sends a member the
-    // state of the enemies on its list, attacks too. The owner's answer (0x17), which hands
-    // enemies away, never goes.
+    // A follower's near list (0x16) goes to the owner only, and the owner's answer (0x17: which
+    // enemies that follower runs) to the followers only.
     if (channel == 0x16) {
         return ends.sender == EnemyPart::Follower && ends.target == EnemyPart::Owner;
     }
     if (channel == 0x17) {
-        return false;
+        return ends.sender == EnemyPart::Owner && ends.target == EnemyPart::Follower;
     }
     // A hit on an enemy goes to whoever runs it: never from the owner (it applied its own), never
     // to a follower.

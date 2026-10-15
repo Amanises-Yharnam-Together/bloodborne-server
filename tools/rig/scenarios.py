@@ -115,9 +115,8 @@ OTHER_MAP_FLAG = 12700131
 THIS_MAP_FLAG = 12410999
 FORBIDDEN_WOODS_LAMP_LIT = 12707810  # a lamp neither rig character has lit (see LampOfActiveFlag)
 START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
-# Positions a follower's game takes a second for an enemy that comes for its player (the owner
-# sends a round every frame; the game's own pace gave about 1 for an enemy by a far guest).
-POSITIONS_PER_S = 6.0
+# An enemy by a player moved farther in one frame than any runs (a hand-over that jumped).
+ENEMY_JUMPED = r"Bloodborne party: enemy [0-9a-f]+ jumped"
 # Phase 5b: a world flag of Central Yharnam's block no event uses (the rig's saves have it off).
 TEAM_WORLD_FLAG = 12410999
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
@@ -528,7 +527,8 @@ SCENARIOS = {
                       "census 40", "wait 30", "census 40", "expect-session 2"],
         },
         "moves": {"guest": ENEMY},
-        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "forbid": {"host": SESSION_HOLDS + [ENEMY_JUMPED],
+                   "guest": SESSION_HOLDS + [ENEMY_JUMPED]},
         "timeout": 600,
     },
     # Kaniel 2026-10-15: the guest's hits on an enemy it ran came late, and the enemy went back to
@@ -551,12 +551,12 @@ SCENARIOS = {
         "timeout": 600,
     },
     # Kaniel 2026-10-15: both on Central Yharnam, the guest a bit away from the host: every enemy
-    # lagged (about 200 ms) and acted dumb. The owner sent each enemy's position about twice a
-    # second (8 to a packet, one packet every other frame): the guest's game takes the position of
-    # the enemy that comes for it at least POSITIONS_PER_S times a second.
+    # lagged (about 200 ms) and acted dumb, run by the host. As in vanilla, the host's game hands
+    # the enemies only the guest is near to the guest's game, which runs them and sends their
+    # positions (the host's copy takes them often, for a smooth hand-over back).
     "guest-far-positions": {
         "about": "the host far away on the same map, the enemy by the guest comes for it: the "
-                 "guest's game gets its position often (the owner sends a round's packets at once)",
+                 "host's game hands it to the guest's, which runs it; no enemy jumps",
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", f"teleport {IOSEFKA_WAIT}",
                      "wait 75", "expect-session 2"],
@@ -565,10 +565,10 @@ SCENARIOS = {
                       "census 40", "expect-session 2"],
         },
         "moves": {"guest": ENEMY},
-        "position_rate": {"guest": [ENEMY, POSITIONS_PER_S]},
-        "expect": {"host": [r"enemy positions go out every frame",
-                            r"sent a full position packet"]},
-        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "expect": {"host": [r"enemy positions go out every 0\.10 s",
+                            r"the game handed [1-9]\d* enemies to the others"],
+                   "guest": [r"enemy follower runs [1-9]\d* enemies the owner handed it"]},
+        "forbid": {"host": SESSION_HOLDS + [ENEMY_JUMPED], "guest": SESSION_HOLDS + [ENEMY_JUMPED]},
         "timeout": 600,
     },
     # Its control: the host beside the guest, the same enemy comes for them.

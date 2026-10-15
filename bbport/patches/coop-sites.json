@@ -125,6 +125,7 @@
     {"name": "ownership step end", "feature": "enemy owner", "kind": "hook", "offset": "0x019173B0", "original": "55 48 89 E5 41 57", "patched": "", "accepted": []},
     {"name": "position packet entry", "feature": "enemy owner", "kind": "hook", "offset": "0x018EE910", "original": "48 8B 85 F8 FE FF FF", "patched": "", "accepted": []},
     {"name": "position receive entry", "feature": "enemy owner", "kind": "hook", "offset": "0x018EEBB0", "original": "45 8B 6C 24 FC", "patched": "", "accepted": []},
+    {"name": "hand-out received", "feature": "enemy owner", "kind": "hook", "offset": "0x018ED083", "original": "49 89 D8 89 C3 85 DB", "patched": "", "accepted": []},
     {"name": "title load state", "feature": "team lobby", "kind": "hook", "offset": "0x0195B480", "original": "55 48 89 E5 41 57", "patched": "", "accepted": []},
     {"name": "title menu state", "feature": "team lobby", "kind": "hook", "offset": "0x0195AE80", "original": "55 48 89 E5 41 57", "patched": "", "accepted": []},
     {"name": "CreateSession", "feature": "team join", "kind": "call", "offset": "0x01788ED0", "original": "55 48 89 E5 41 57 41 56 53 50 C5 FA", "patched": "", "accepted": []},

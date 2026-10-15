@@ -1667,19 +1667,22 @@ int GamePacketsGoByMapAndOwner() {
   CHECK(routes(host, guest, 0x06) && routes(guest, host, 0x06));
   CHECK(!routes(host, guest2, 0x06) && !routes(guest2, guest, 0x31));
   CHECK(routes(host, guest2, 0x10)); // the game's own: any map
-  // The host runs Central Yharnam's enemies: they come from it only, and the
-  // guest's hits and near list go to it.
-  CHECK(routes(host, guest, 0x04) && !routes(guest, host, 0x04));
+  // The host runs Central Yharnam's enemies: their HP comes from it only, the
+  // guest's hits and near list go to it, and its hand-out (0x17) to the guest.
+  // Positions come from whichever game runs an enemy.
+  CHECK(routes(host, guest, 0x05) && !routes(guest, host, 0x05));
+  CHECK(routes(host, guest, 0x04) && routes(guest, host, 0x04));
   CHECK(routes(guest, host, 0x15) && !routes(host, guest, 0x15));
-  CHECK(routes(guest, host, 0x16) && !routes(host, guest, 0x17));
+  CHECK(routes(guest, host, 0x16) && routes(host, guest, 0x17));
+  CHECK(!routes(guest, host, 0x17));
   // A load lets everything of the map through again, then the new map counts.
   guest2.Map(0, now + 100);
   Pump(service, games, now + 100);
   CHECK(routes(host, guest2, 0x06));
   guest2.Map(Yharnam, now + 200);
   Pump(service, games, now + 200);
-  CHECK(routes(host, guest2, 0x06) && routes(host, guest2, 0x04));
-  CHECK(!routes(guest2, guest, 0x04));
+  CHECK(routes(host, guest2, 0x06) && routes(host, guest2, 0x05));
+  CHECK(!routes(guest2, guest, 0x05));
   // A link the service does not know (no hello): only the game's own.
   const ServerLink::Endpoint stranger{0x7F000001, 999};
   CHECK(!service.RoutesPacket(stranger, host.endpoint, 0x06));

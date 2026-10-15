@@ -98,7 +98,7 @@ int TheEnemiesComeFromTheOwnerOnly() {
   const auto F = EnemyPart::Follower;
   const auto N = EnemyPart::None;
   const u32 Y = CentralYharnam;
-  for (const u32 channel : {0x04u, 0x05u, 0x29u, 0x36u}) {
+  for (const u32 channel : {0x05u, 0x29u, 0x36u}) {
     CHECK(Routes(channel, Y, Y, O, F));
     CHECK(!Routes(channel, Y, Y, F, O));
     CHECK(!Routes(channel, Y, Y, F, F));
@@ -106,8 +106,17 @@ int TheEnemiesComeFromTheOwnerOnly() {
     // Still one map only.
     CHECK(!Routes(channel, Y, CathedralWard, O, F));
   }
+  // Positions come from whichever game runs the enemy (Kaniel 2026-10-15: a
+  // guest runs the enemies only it is near, the game's own hand-out): the
+  // owner and the followers, to everyone on the map.
+  CHECK(Routes(0x04, Y, Y, O, F));
+  CHECK(Routes(0x04, Y, Y, F, O));
+  CHECK(Routes(0x04, Y, Y, F, F));
+  CHECK(Routes(0x04, Y, Y, N, N));
+  CHECK(!Routes(0x04, Y, CathedralWard, F, O));
   // A follower's hit and near list go to the owner, never the owner's to
-  // anyone, and the owner's answer (0x17) nowhere.
+  // anyone; the owner's answer (0x17, which enemies a follower runs) goes to
+  // the followers only.
   CHECK(Routes(0x15, Y, Y, F, O));
   CHECK(!Routes(0x15, Y, Y, O, F));
   CHECK(!Routes(0x15, Y, Y, F, F));
@@ -116,8 +125,11 @@ int TheEnemiesComeFromTheOwnerOnly() {
   CHECK(!Routes(0x16, Y, Y, F, F));
   CHECK(!Routes(0x16, Y, Y, O, F));
   CHECK(!Routes(0x16, Y, Y, N, N));
-  CHECK(!Routes(0x17, Y, Y, O, F));
+  CHECK(Routes(0x17, Y, Y, O, F));
+  CHECK(!Routes(0x17, Y, Y, F, O));
+  CHECK(!Routes(0x17, Y, Y, F, F));
   CHECK(!Routes(0x17, Y, Y, N, N));
+  CHECK(!Routes(0x17, Y, CathedralWard, O, F));
   // Everything else on the map goes between any two members there.
   for (const u32 channel : {0x06u, 0x14u, 0x3Du, 0x41u}) {
     CHECK(Routes(channel, Y, Y, F, F));

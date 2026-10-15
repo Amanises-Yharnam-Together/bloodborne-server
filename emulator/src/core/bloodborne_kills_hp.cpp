@@ -524,6 +524,31 @@ std::mutex positions_taken_mutex;
 std::map<u32, u32> positions_taken;
 std::atomic<u32> position_packets_in{0}; // ch 4 packets the game's queues took
 std::atomic<u32> position_entries_read{0};
+// The game's hand-out (0x17, see HandOutSeconds): the owner's latest to each member, a
+// follower's latest from the owner, with when.
+struct HandOut {
+    std::vector<u32> ids;
+    s64 at_ms = 0;
+};
+std::mutex hand_out_mutex;
+std::map<std::string, HandOut> handed_by_me;
+HandOut handed_to_me;
+
+// The enemies this game handed out (owner) or was handed (follower), from fresh hand-outs only.
+std::vector<u32> FreshHandOut(EnemyRole role, s64 now_ms) {
+    std::scoped_lock lock{hand_out_mutex};
+    std::vector<u32> ids;
+    if (role == EnemyRole::Owner) {
+        for (const auto& [member, hand_out] : handed_by_me) {
+            if (now_ms - hand_out.at_ms < HandOutFreshMs) {
+                ids.insert(ids.end(), hand_out.ids.begin(), hand_out.ids.end());
+            }
+        }
+    } else if (role == EnemyRole::Follower && now_ms - handed_to_me.at_ms < HandOutFreshMs) {
+        ids = handed_to_me.ids;
+    }
+    return ids;
+}
 
 } // namespace
 
@@ -551,6 +576,47 @@ void PS4_SYSV_ABI CountPositionTaken(u64, const GuestRegisterSnapshot* registers
     position_entries_read.fetch_add(1, std::memory_order_relaxed);
     std::scoped_lock lock{positions_taken_mutex};
     ++positions_taken[id];
+}
+
+// A hand-out's ids on a change (which enemies, by the packets' ids).
+void LogHandOut(const std::string& who, const std::vector<u32>& ids) {
+    static std::map<std::string, std::vector<u32>> last;
+    static u32 logged = 0;
+    std::string text;
+    for (const u32 id : ids) {
+        text += fmt::format(" {:x}", id);
+    }
+    static std::mutex mutex;
+    std::scoped_lock lock{mutex};
+    if (last[who] != ids && logged < 120) {
+        last[who] = ids;
+        ++logged;
+        LOG_INFO(Debug, "Bloodborne party: enemy hand-out {}:{}", who,
+                 text.empty() ? " none" : text);
+    }
+}
+
+void NoteHandOutSent(const std::string& member, std::span<const u8> payload) {
+    const s64 now_ms = SteadyMilliseconds();
+    std::vector<u32> ids = HandOutIds(payload);
+    LogHandOut("to " + member, ids);
+    std::scoped_lock lock{hand_out_mutex};
+    handed_by_me[member] = {std::move(ids), now_ms};
+}
+
+void PS4_SYSV_ABI TakeHandOut(u64, const GuestRegisterSnapshot* registers) {
+    const u32 size = static_cast<u32>(registers->rax);
+    const u64 buffer = image_base + HandOutBufferOffset;
+    if (CurrentEnemyRole() != EnemyRole::Follower || size < 4 || size > 0x2004 ||
+        !HasMemoryAccess(buffer, size, MemoryProt::CpuRead)) {
+        return;
+    }
+    const std::span<const u8> payload{reinterpret_cast<const u8*>(buffer), size};
+    const s64 now_ms = SteadyMilliseconds();
+    std::vector<u32> ids = HandOutIds(payload);
+    LogHandOut("from the owner", ids);
+    std::scoped_lock lock{hand_out_mutex};
+    handed_to_me = {std::move(ids), now_ms};
 }
 
 void CountPositionPacketIn() {
@@ -711,6 +777,7 @@ void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) 
     }
     u32 kept = 0;
     u32 marked = 0;
+    const std::vector<u32> handed = FreshHandOut(role, SteadyMilliseconds());
     ForEachWorldCharacter(world, [&](u64 character) {
         if (players.contains(character)) {
             return;
@@ -724,7 +791,8 @@ void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) 
         const s32 applied = ReadValue<s32>(control, 0x10);
         const bool kept_out = KeptOutByTheGame(character);
         if (const auto wanted =
-                AwakeEnemyWord(role, level, applied, ReadValue<u16>(word, 0), kept_out)) {
+                AwakeEnemyWord(role, level, applied, ReadValue<u16>(word, 0), kept_out,
+                               HandedOut(handed, ReadValue<u32>(character, 0x90)))) {
             WriteValue(word, 0, *wanted);
             ++kept;
         }
@@ -738,6 +806,15 @@ void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) 
         ++marked_logged;
         LOG_INFO(Debug, "Bloodborne enemy owner: marked {} enemies to send (t={:.1f})", marked,
                  SteadyMilliseconds() / 1000.0);
+    }
+    static size_t handed_last = 0;
+    static u32 handed_logged = 0;
+    if (handed.size() != handed_last && handed_logged < 60) {
+        handed_last = handed.size();
+        ++handed_logged;
+        LOG_INFO(Debug,
+                 "Bloodborne enemy owner: the game handed {} enemies to the others (t={:.1f})",
+                 handed.size(), SteadyMilliseconds() / 1000.0);
     }
     static u32 last = 0;
     static u32 logged = 0;
@@ -906,18 +983,88 @@ std::vector<std::pair<u32, u32>> EnemiesByMe() {
     return nearby;
 }
 
-// The owner's position rounds every frame, everyone else's the game's (NetWorldChrSync +0x64C,
-// +0x658).
-void SetPositionRound(EnemyRole role) {
+// See EnemyJumped: each frame, the enemies within 25 m of this player against the last frame.
+void WatchEnemyJumps(EnemyRole role) {
+    static std::unordered_map<u64, std::array<float, 3>> last;
+    static std::unordered_map<u64, bool> ran_here; // which game ran each enemy last frame
+    static u32 logged = 0;
+    static u32 hands_logged = 0;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const u64 player = GetLocalPlayer();
+    const auto place = [](u64 character) -> std::optional<std::array<float, 3>> {
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (physics < 0x10000) {
+            return std::nullopt;
+        }
+        return std::array<float, 3>{ReadValue<float>(physics, 0x1E0),
+                                    ReadValue<float>(physics, 0x1E4),
+                                    ReadValue<float>(physics, 0x1E8)};
+    };
+    const auto me = role != EnemyRole::Unknown && world >= 0x10000 && player >= 0x10000
+                        ? place(player)
+                        : std::nullopt;
+    if (!me) {
+        last.clear();
+        return;
+    }
+    std::unordered_set<u64> players{player};
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    std::unordered_map<u64, std::array<float, 3>> now;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (players.contains(character) || CharacterHp(character) <= 0) {
+            return;
+        }
+        const auto at = place(character);
+        if (!at || ((*at)[0] - (*me)[0]) * ((*at)[0] - (*me)[0]) +
+                           ((*at)[2] - (*me)[2]) * ((*at)[2] - (*me)[2]) >
+                       25.0f * 25.0f) {
+            return;
+        }
+        now[character] = *at;
+        // An enemy by this player changing hands (its word's sign), each time: a hand-over that
+        // goes back and forth shows here.
+        const u64 hand_word = OwnershipWordAddress(world, character);
+        const bool runs_here =
+            hand_word != 0 && static_cast<s16>(ReadValue<u16>(hand_word, 0)) >= 0;
+        const auto ran = ran_here.find(character);
+        if (ran != ran_here.end() && ran->second != runs_here && hands_logged < 200) {
+            ++hands_logged;
+            LOG_INFO(Debug, "Bloodborne party: enemy {:x} ({:x}) changes hands: {} (t={:.1f})",
+                     ReadValue<u32>(character, 0x08), ReadValue<u32>(character, 0x90),
+                     runs_here ? "runs here" : "follows", SteadyMilliseconds() / 1000.0);
+        }
+        ran_here[character] = runs_here;
+        const auto before = last.find(character);
+        if (before != last.end() && EnemyJumped(before->second, *at) && logged < 200) {
+            ++logged;
+            const u64 word = OwnershipWordAddress(world, character);
+            LOG_INFO(Debug,
+                     "Bloodborne party: enemy {:x} jumped {:.1f} m in one frame (word {:x}, "
+                     "t={:.1f})",
+                     ReadValue<u32>(character, 0x08),
+                     std::sqrt(((*at)[0] - before->second[0]) * ((*at)[0] - before->second[0]) +
+                               ((*at)[1] - before->second[1]) * ((*at)[1] - before->second[1]) +
+                               ((*at)[2] - before->second[2]) * ((*at)[2] - before->second[2])),
+                     word != 0 ? ReadValue<u16>(word, 0) : 0xBAD, SteadyMilliseconds() / 1000.0);
+        }
+    });
+    last.swap(now);
+}
+
+// With an owner: position rounds every 0.1 s and the hand-out every 0.25 s; without, the game's
+// own periods (NetWorldChrSync +0x64C, +0x630, +0x638).
+void SetSyncPeriods(EnemyRole role) {
     const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
     const u64 sync = world >= 0x10000 ? ReadValue<u64>(world, 0xA40) : 0;
     if (sync < 0x10000 ||
-        !HasMemoryAccess(sync + PositionRoundPeriodOffset, 0x10, MemoryProt::CpuWrite)) {
+        !HasMemoryAccess(sync + HandOutPeriodOffset, 0x20, MemoryProt::CpuWrite)) {
         return;
     }
-    if (!WaitsAFrameAfterPositions(role)) {
-        WriteValue(sync, PositionSentLastFrameOffset, u8{0});
-    }
+    WriteValue(sync, HandOutPeriodOffset, HandOutSeconds(role));
+    WriteValue(sync, NearListPeriodOffset, NearListSeconds(role));
     const float wanted = PositionRoundSeconds(role);
     if (ReadValue<float>(sync, PositionRoundPeriodOffset) != wanted) {
         WriteValue(sync, PositionRoundPeriodOffset, wanted);
@@ -968,7 +1115,8 @@ void TickEnemyOwner(bool in_session, u32 map) {
     static s64 rates_ms = now_ms;
     enemy_frames.fetch_add(1, std::memory_order_relaxed);
     enemy_frame_serial.fetch_add(1, std::memory_order_relaxed);
-    SetPositionRound(role);
+    SetSyncPeriods(role);
+    WatchEnemyJumps(role);
     if (now_ms - rates_ms >= 10'000) {
         const double seconds = (now_ms - rates_ms) / 1000.0;
         rates_ms = now_ms;
@@ -1015,8 +1163,20 @@ void TickEnemyOwner(bool in_session, u32 map) {
         return;
     }
     size_t changed = 0;
+    const std::vector<u32> handed_to_this =
+        role == EnemyRole::Follower ? FreshHandOut(role, now_ms) : std::vector<u32>{};
+    static size_t handed_last = 0;
+    static u32 handed_logged = 0;
+    if (role == EnemyRole::Follower && handed_to_this.size() != handed_last && handed_logged < 60) {
+        handed_last = handed_to_this.size();
+        ++handed_logged;
+        LOG_INFO(Debug,
+                 "Bloodborne party: enemy follower runs {} enemies the owner handed it (t={:.1f})",
+                 handed_to_this.size(), now_ms / 1000.0);
+    }
     ForEachWorldCharacter(world, [&](u64 character) {
-        if (character == player || players.contains(character) || CharacterHp(character) <= 0) {
+        if (character == player || players.contains(character) || CharacterHp(character) <= 0 ||
+            HandedOut(handed_to_this, ReadValue<u32>(character, 0x90))) {
             return;
         }
         const u64 word = OwnershipWordAddress(world, character);

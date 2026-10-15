@@ -3580,9 +3580,10 @@ const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32
     return owner != owners.end() ? &*owner : nullptr;
 }
 
-std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out) {
+std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out,
+                                  bool handed_out) {
     if (role != EnemyRole::Owner || level != EnemyAwake || applied != EnemyAwake || kept_out ||
-        static_cast<s16>(word) >= 0) {
+        handed_out || static_cast<s16>(word) >= 0) {
         return std::nullopt;
     }
     return OwnedEnemyWord;
@@ -3591,7 +3592,7 @@ std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 wo
 bool SendsFullPositionPacket(EnemyRole role, s32 entries, s32 per_packet, s32 slot, s32 slots,
                              u32 sent_this_frame) {
     // The game sends the round's last packet itself (and one a frame of its own).
-    return role == EnemyRole::Owner && per_packet > 0 && entries >= per_packet &&
+    return role != EnemyRole::Unknown && per_packet > 0 && entries >= per_packet &&
            slot + 1 < slots && sent_this_frame + 1 < MaxPositionPacketsPerFrame;
 }
 
@@ -3601,11 +3602,43 @@ bool OwnerSendsPositionOf(EnemyRole role, s32 level, s32 applied, u16 word, bool
 }
 
 float PositionRoundSeconds(EnemyRole role) {
-    return role == EnemyRole::Owner ? 0.0f : GamePositionRoundSeconds;
+    return role != EnemyRole::Unknown ? 0.1f : GamePositionRoundSeconds;
 }
 
-bool WaitsAFrameAfterPositions(EnemyRole role) {
-    return role != EnemyRole::Owner;
+float HandOutSeconds(EnemyRole role) {
+    return role != EnemyRole::Unknown ? 0.25f : GameHandOutSeconds;
+}
+
+float NearListSeconds(EnemyRole role) {
+    return role != EnemyRole::Unknown ? 0.25f : GameNearListSeconds;
+}
+
+std::vector<u32> HandOutIds(std::span<const u8> payload) {
+    u32 count = 0;
+    if (payload.size() < 4) {
+        return {};
+    }
+    std::memcpy(&count, payload.data(), 4);
+    if (count > 0x800 || payload.size() < 4 + size_t{count} * 4) {
+        return {};
+    }
+    std::vector<u32> ids(count);
+    std::memcpy(ids.data(), payload.data() + 4, size_t{count} * 4);
+    for (u32& id : ids) {
+        id &= 0xFFFF;
+    }
+    return ids;
+}
+
+bool EnemyJumped(const std::array<float, 3>& before, const std::array<float, 3>& now) {
+    const float dx = now[0] - before[0];
+    const float dy = now[1] - before[1];
+    const float dz = now[2] - before[2];
+    return dx * dx + dy * dy + dz * dz > EnemyJumpMetres * EnemyJumpMetres;
+}
+
+bool HandedOut(std::span<const u32> handed, u32 index) {
+    return std::ranges::find(handed, index) != handed.end();
 }
 
 std::string PositionRatesText(const std::map<u32, u32>& taken,
@@ -3725,7 +3758,7 @@ EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role) {
         return role == EnemyRole::Follower ? EnemyPacketFate::ToOwner : EnemyPacketFate::Drop;
     }
     if (channel == 0x17) {
-        return EnemyPacketFate::Drop;
+        return role == EnemyRole::Owner ? EnemyPacketFate::Keep : EnemyPacketFate::Drop;
     }
     if (channel == 0x15) {
         return role == EnemyRole::Owner      ? EnemyPacketFate::Drop

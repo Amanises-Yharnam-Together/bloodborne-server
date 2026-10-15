@@ -477,6 +477,8 @@ std::string BoardMemberOfMemberId(u64 member_id) {
 // Phase 4's enemy owners are on (see InstallEnemyOwner).
 bool enemy_owner_installed = false;
 
+std::string OnlineIdOfMember(u64 member_id); // below, with the game link
+
 bool SendHitToOwner(const GuestRegisterSnapshot* registers); // below, with the game link
 
 // The send's entry (0x017894E0: rdi the net sync, rsi the member id, edx the channel, rcx the
@@ -486,6 +488,14 @@ bool SendHitToOwner(const GuestRegisterSnapshot* registers); // below, with the 
 // session's host.
 bool PS4_SYSV_ABI DecidePacketSend(u64, const GuestRegisterSnapshot* registers) {
     const u32 channel = static_cast<u32>(registers->rdx);
+    if (enemy_owner_installed && channel == 0x17 && CurrentEnemyRole() == EnemyRole::Owner) {
+        const u32 size = static_cast<u32>(registers->r8);
+        if (size >= 4 && size <= 0x2004 &&
+            HasMemoryAccess(registers->rcx, size, MemoryProt::CpuRead)) {
+            NoteHandOutSent(OnlineIdOfMember(registers->rsi),
+                            {reinterpret_cast<const u8*>(registers->rcx), size});
+        }
+    }
     if (enemy_owner_installed) {
         switch (EnemyPacketOut(channel, CurrentEnemyRole())) {
         case EnemyPacketFate::ToOwner:
@@ -913,7 +923,9 @@ void InstallEnemyOwner(u64 base, u64 image_size) {
             if (InstallCoopHook(reinterpret_cast<void*>(base + PositionPacketEntryOffset),
                                 PositionPacketEntry, 0, SendFullPositionPacket) &&
                 InstallCoopHook(reinterpret_cast<void*>(base + PositionReceiveEntryOffset),
-                                PositionReceiveEntry, 0, CountPositionTaken)) {
+                                PositionReceiveEntry, 0, CountPositionTaken) &&
+                InstallCoopHook(reinterpret_cast<void*>(base + HandOutReceivedOffset),
+                                HandOutReceived, 0, TakeHandOut)) {
                 coop_features.On("whole-map positions");
             } else {
                 coop_features.Skipped("whole-map positions",
