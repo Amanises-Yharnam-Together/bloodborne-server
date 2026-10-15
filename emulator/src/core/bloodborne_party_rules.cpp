@@ -430,9 +430,100 @@ void PS4_SYSV_ABI KeepNpcsSolidForPartyGuests(u64, GuestRegisterSnapshot* regist
     }
 }
 
+// The floor guard. A guest crashed at 0x018CB16A (access violation) after the host stayed in
+// Cathedral Ward while the guest walked on and its game streamed in the next map block. The
+// character floor update 0x018CB0E0 (per character) starts:
+//     MOV RSI, [RBX + 0x288]            <- 0x018CB14F: the character's floor (a collision part)
+//     TEST RSI, RSI / JZ no_floor
+//     MOV RCX, [RSI + 0x20] / TEST RCX, RCX / JZ ...
+//     MOV RDX, [RSI + 0x18] / MOV RDX, [RDX + 0x88]   <- the crash: [RSI + 0x18] was garbage
+//     CMP [RDX], 3 / then [[RCX + 0xB8] + 0x0A] or [[RCX + 0x70] + 0x27]
+// A character standing on the collision of a map block this game has since dropped keeps a stale
+// floor pointer. Without co-op the fog walls keep everyone in one block. In a party the hook checks
+// the chain the function is about to read and clears a floor that no longer reads back as one, so
+// the function takes its own "no floor" path (as in mid-air). Best effort: a freed floor whose
+// memory still reads sane passes. From deadinside28's bbport 0.6 (BBSC floor guard, by CLS_AMG).
+constexpr u64 ChrFloorUpdateOffset = 0x018CB14F;
+constexpr std::array<u8, 10> ChrFloorRead{0x48, 0x8B, 0xB3, 0x88, 0x02,
+                                          0x00, 0x00, 0x48, 0x85, 0xF6};
+constexpr size_t ChrFloorOffset = 0x288;
+
+bool ReadableAt(u64 address, size_t size) {
+    return address >= 0x10000 && HasMemoryAccess(address, size, MemoryProt::CpuRead);
+}
+
+bool FloorReadsBack(u64 floor) {
+    if (!ReadableAt(floor, 0x28)) {
+        return false;
+    }
+    const u64 part = ReadValue<u64>(floor, 0x20);
+    if (part == 0) {
+        return true; // the function does not follow the chain for this floor
+    }
+    const u64 block = ReadValue<u64>(floor, 0x18);
+    if (!ReadableAt(block, 0x90)) {
+        return false;
+    }
+    const u64 version = ReadValue<u64>(block, 0x88);
+    if (!ReadableAt(version, 4)) {
+        return false;
+    }
+    const u32 layout = ReadValue<u32>(version, 0);
+    if (layout > 0x10) {
+        return false; // a real map layout version is a small number
+    }
+    return layout >= 3 ? ReadableAt(ReadValue<u64>(part, 0xB8), 0x0B)
+                       : ReadableAt(ReadValue<u64>(part, 0x70), 0x28);
+}
+
+void PS4_SYSV_ABI ClearFloorThatIsGone(u64, GuestRegisterSnapshot* registers) {
+    if (!InPartySession()) {
+        return;
+    }
+    const u64 character = registers->rbx;
+    if (!ReadableAt(character + ChrFloorOffset, sizeof(u64))) {
+        return;
+    }
+    const u64 floor = ReadValue<u64>(character, ChrFloorOffset);
+    if (floor == 0 || FloorReadsBack(floor)) {
+        return;
+    }
+    WriteValue<u64>(character, ChrFloorOffset, 0);
+    // One line per character (the last 64 seen).
+    static std::mutex logged_mutex;
+    static std::array<u64, 64> logged{};
+    static size_t logged_next = 0;
+    std::scoped_lock lock{logged_mutex};
+    if (std::ranges::find(logged, character) != logged.end()) {
+        return;
+    }
+    logged[logged_next] = character;
+    logged_next = (logged_next + 1) % logged.size();
+    LOG_WARNING(Debug,
+                "Bloodborne floor guard: character {:#x} stood on a floor that is gone ({:#x}, map "
+                "{:#x}): floor cleared instead of a crash",
+                character, floor, GetCurrentPackedMap());
+}
+
 } // namespace
 
 namespace Coop {
+
+void InstallFloorGuard(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (ChrFloorUpdateOffset + ChrFloorRead.size() > image_size ||
+        !InstallCoopHook(reinterpret_cast<void*>(base + ChrFloorUpdateOffset), ChrFloorRead, 0,
+                         ClearFloorThatIsGone)) {
+        LOG_ERROR(Debug,
+                  "Bloodborne floor guard unavailable; a stale floor can still crash a guest");
+        coop_features.Skipped("floor guard", SiteFailure(base, image_size, ChrFloorUpdateOffset));
+        return;
+    }
+    coop_features.On("floor guard");
+    LOG_INFO(Debug, "Bloodborne floor guard: a floor of a map block that is gone is cleared");
+}
 
 void InstallSolidNpcsInParty(u64 base, u64 image_size) {
     if (!party_controller) {

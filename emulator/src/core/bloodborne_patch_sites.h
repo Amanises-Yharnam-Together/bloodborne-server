@@ -97,6 +97,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"sign timers", true},
     {"summon slot hold", false},
     {"server owns leaves", true},
+    {"floor guard", false},
 });
 
 inline constexpr auto CoopSites = std::to_array<CoopSite>({
@@ -495,6 +496,11 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"session resend overflow", "server owns leaves", CoopSiteKind::Patch, 0x017897B2,
      "0F 82 B8 00 00 00", "E9 B9 00 00 00 90"},
     {"room timeout", "server owns leaves", CoopSiteKind::Patch, 0x01789F41, "76 79", "EB 79"},
+
+    // The character floor update's read of the floor (InstallFloorGuard): a floor of a map block
+    // that is gone is cleared first.
+    {"character floor read", "floor guard", CoopSiteKind::Hook, 0x018CB14F,
+     "48 8B B3 88 02 00 00 48 85 F6"},
 });
 
 } // namespace Core::Bloodborne
