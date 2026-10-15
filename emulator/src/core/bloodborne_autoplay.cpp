@@ -1190,6 +1190,20 @@ bool AutoplayExpectDisabled(const AutoplayStep& step) {
     return false;
 }
 
+// set-disabled <handle> <0|1>: switches the character off (1) or on (0) in this game only, as its
+// own story's event command 2004:5 would (the red mist's enemy in the Forbidden Woods starts off).
+bool AutoplaySetDisabled(const AutoplayStep& step) {
+    const auto target = ParseAutoplayTarget(step.Arg(0));
+    const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+    if (!found || !SetCharacterDisabled(found->character, step.Number(1, 1) != 0)) {
+        step.failure = "no such character";
+        return false;
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay set-disabled: {:#x} -> {}",
+             ReadValue<u32>(found->character, 0x08), step.Number(1, 1) != 0 ? 1 : 0);
+    return true;
+}
+
 // note-max-hp: the player's max HP now, for a later expect-max-hp self == noted.
 bool AutoplayNoteMaxHp(const AutoplayStep& step) {
     const auto self = FindAutoplayCharacter(AutoplaySelf);
@@ -1487,6 +1501,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"poke", AutoplayPeekOrPoke},
     {"expect-hidden", AutoplayExpectHidden},
     {"expect-disabled", AutoplayExpectDisabled},
+    {"set-disabled", AutoplaySetDisabled},
     {"note-max-hp", AutoplayNoteMaxHp},
     {"expect-max-hp", AutoplayExpectMaxHp},
     {"expect-effect", AutoplayExpectEffect},

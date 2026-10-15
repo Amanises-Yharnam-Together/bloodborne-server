@@ -1949,21 +1949,20 @@ TEST(BloodborneHiddenCharacters, AGuestSwitchesOffWhatTheHostRemoved) {
         {0x100140ae, true},        // removed, and already off here
         {0x1001400b, false},       // an enemy both show
         {0x10014053, false},       // shown by the host again
-        {0x10014060, false},       // shown by the host, off here by the guest's own story
         {0x10014000, false, true}, // switched off by the host's story (by Iosefka's door)
     };
     const std::vector<CharacterSwitch> guest{
-        {0x10014005, false}, {0x100140ae, true}, {0x1001400b, false},
-        {0x10014053, true},  {0x10014060, true}, {0x10014099, false}, // not in the host's world
+        {0x10014005, false}, {0x100140ae, true},  {0x1001400b, false},
+        {0x10014053, true},  {0x10014099, false}, // not in the host's world
         {0x10014000, false},
     };
     const std::unordered_set<u32> switched_off{0x10014053};
     EXPECT_EQ(
         SwitchedLikeTheHost(host, guest, switched_off, {}),
         (std::vector<CharacterSwitch>{{0x10014005, true}, {0x10014053, false}, {0x10014000, true}}))
-        << "only what this guest turned off comes back on";
+        << "what this guest turned off comes back on";
     EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {0x10014005, 0x10014000}),
-              std::vector<CharacterSwitch>{})
+              (std::vector<CharacterSwitch>{{0x10014053, false}}))
         << "ones the kill board hid are left alone";
     const std::vector<CharacterSwitch> back_on{{0x10014005, false}};
     EXPECT_EQ(SwitchedLikeTheHost(host, back_on, {0x10014005}, {}),
@@ -1971,6 +1970,26 @@ TEST(BloodborneHiddenCharacters, AGuestSwitchesOffWhatTheHostRemoved) {
         << "turned on again by the guest's world: off again";
     EXPECT_EQ(SwitchedLikeTheHost({}, guest, switched_off, {}), std::vector<CharacterSwitch>{})
         << "nothing from the host: nothing changes";
+}
+
+// Kaniel's friend Lisara 2026-10-15 (v0.3.1-local): in the Forbidden Woods she never saw the enemy
+// that comes out of the red mist (0x1000801e), though Kaniel fought it beside her. It starts
+// switched off in both worlds; Kaniel's event switched it on, hers never did, and a guest only
+// switched back on what it had switched off itself. A copy near the host is now on wherever the
+// host's is, unless it is dead in either world.
+TEST(BloodborneHiddenCharacters, AGuestSwitchesOnWhatTheHostsStorySwitchedOn) {
+    const std::vector<CharacterShown> host{
+        {0x1000801e, false},                     // the red mist's enemy, on in the host's world
+        {0x1000801f, false, false, true},        // on, but far from the host
+        {0x10008040, false, false, false, true}, // on and dead in the host's world
+        {0x10008041, false},                     // on, and dead in this guest's world
+    };
+    const std::vector<CharacterSwitch> guest{
+        {0x1000801e, true}, {0x1000801f, true}, {0x10008040, true}, {0x10008041, true, true}};
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {}),
+              (std::vector<CharacterSwitch>{{0x1000801e, false}}));
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {0x1000801e}), std::vector<CharacterSwitch>{})
+        << "one the kill board hid stays off";
 }
 
 // Kaniel's friend 2026-10-11: no enemies in the Forbidden Woods. While the guest was in the

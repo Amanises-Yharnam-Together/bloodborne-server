@@ -428,6 +428,8 @@ void ForEachWorldCharacter(u64 world, Visit&& visit) {
     }
 }
 bool IsCharacterDisabled(u64 character);
+// The character's enable switch as event command 2004:5 sets it; false if it is no character.
+bool SetCharacterDisabled(u64 character, bool disabled);
 void TickLampRest();
 
 bool EnemiesAreHarder();

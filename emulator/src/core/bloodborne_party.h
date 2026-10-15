@@ -1477,13 +1477,16 @@ std::vector<CharacterShown> ShownLikeTheHost(std::span<const CharacterShown> hos
 struct CharacterSwitch {
     u32 handle = 0;
     bool disabled = false;
+    bool dead = false; // in this member's world (IsDeadInItsWorld): never switched on
     bool operator==(const CharacterSwitch&) const = default;
 };
 // The host's story removes some characters (2004:29 sets the +0x28 byte) before their model loads;
 // a guest's copy, built at its join, stays loaded and drawn with the byte set. What to switch on
 // this member's copies (`mine`: each one's switch now): off where the host removed or switched
-// it off near it, back on where the host shows it again or has it far away but only if this
-// member turned it off (`switched_off`), never one the kill board hid (`kill_hidden`).
+// it off near it; on where the host has it on near it and alive (its story switched it on: the
+// red mist's enemy in the Forbidden Woods), unless it is dead here; back on far from the host
+// only if this member turned it off (`switched_off`); never one the kill board hid
+// (`kill_hidden`).
 std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown> host,
                                                  std::span<const CharacterSwitch> mine,
                                                  const std::unordered_set<u32>& switched_off,
