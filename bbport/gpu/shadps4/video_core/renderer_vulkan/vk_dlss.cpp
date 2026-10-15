@@ -271,6 +271,11 @@ void Dlss::Initialize(vk::Instance instance, vk::PhysicalDevice physical, vk::De
     std::printf("DLSS: ready\n");
 }
 
+void Dlss::Disable(std::string_view reason) {
+    impl->device_ready = false;
+    impl->Disable(reason);
+}
+
 bool Dlss::Available() const {
     return impl->available;
 }
@@ -343,6 +348,7 @@ Dlss* Dlss::Get() {
 }
 void Dlss::AppendInstanceExtensions(std::vector<const char*>&) {}
 void Dlss::AppendDeviceExtensions(vk::Instance, vk::PhysicalDevice, std::vector<const char*>&) {}
+void Dlss::Disable(std::string_view) {}
 void Dlss::Initialize(vk::Instance, vk::PhysicalDevice, vk::Device) {}
 void Dlss::Shutdown() {}
 bool Dlss::Available() const {
