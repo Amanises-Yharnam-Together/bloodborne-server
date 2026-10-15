@@ -135,7 +135,7 @@ std::optional<Kind> KindOf(const QByteArray& datagram) {
         return std::nullopt;
     }
     const quint8 kind = static_cast<quint8>(datagram[8]);
-    if (kind < static_cast<quint8>(Kind::Hello) || kind > static_cast<quint8>(Kind::Coop) ||
+    if (kind < static_cast<quint8>(Kind::Hello) || kind > static_cast<quint8>(Kind::Rpc) ||
         !Body(datagram, static_cast<Kind>(kind))) {
         return std::nullopt;
     }
@@ -147,6 +147,7 @@ QByteArray Encode(const Hello& hello) {
     out.append(static_cast<char>(hello.version));
     PutText(out, hello.online_id);
     PutText(out, hello.build);
+    PutText(out, hello.secret);
     return out;
 }
 
@@ -185,11 +186,19 @@ QByteArray EncodeCoop(const QByteArray& body) {
     return Start(Kind::Coop) + body;
 }
 
+QByteArray EncodeRpc(const QByteArray& body) {
+    return Start(Kind::Rpc) + body;
+}
+
 std::optional<Hello> DecodeHello(const QByteArray& datagram) {
     auto body = Body(datagram, Kind::Hello);
     Hello hello;
     if (!body || !body->Get(hello.version) || !body->GetText(hello.online_id) ||
         !body->GetText(hello.build)) {
+        return std::nullopt;
+    }
+    // Link version 1 had no secret (a game of another build, refused for its version).
+    if (hello.version >= 2 && !body->GetText(hello.secret)) {
         return std::nullopt;
     }
     return hello;
@@ -240,6 +249,14 @@ std::optional<Member> DecodeMember(const QByteArray& datagram) {
 
 std::optional<QByteArray> DecodeCoop(const QByteArray& datagram) {
     auto body = Body(datagram, Kind::Coop);
+    if (!body) {
+        return std::nullopt;
+    }
+    return body->Rest();
+}
+
+std::optional<QByteArray> DecodeRpc(const QByteArray& datagram) {
+    auto body = Body(datagram, Kind::Rpc);
     if (!body) {
         return std::nullopt;
     }
@@ -316,6 +333,11 @@ Hub::Result Hub::Receive(const Endpoint& from, const QByteArray& datagram, qint6
             result.coop.append({from, link.online_id, std::move(*body)});
         }
         break;
+    case Kind::Rpc:
+        if (auto body = DecodeRpc(datagram)) {
+            result.rpc.append({from, link.online_id, std::move(*body)});
+        }
+        break;
     default:
         break; // the games' own kinds only
     }
@@ -340,6 +362,9 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
                 break;
             }
         }
+    }
+    if (refusal.isEmpty() && sign_in && !sign_in(hello->online_id, hello->secret)) {
+        refusal = "sign-in refused: another player has this id (" + hello->online_id + ")";
     }
     const Endpoint virtual_endpoint = VirtualEndpointOf(hello->online_id);
     if (refusal.isEmpty()) {

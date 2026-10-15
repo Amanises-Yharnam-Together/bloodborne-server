@@ -379,7 +379,7 @@ class LaneTest(unittest.TestCase):
         run_scenario.use_lane(2)
         self.assertEqual((run_scenario.SHADNET_PORT, run_scenario.WEBAPI_PORT,
                           run_scenario.BACKEND_PORT), (32513, 32515, 20653))
-        self.assertEqual(port.environment("host")["BB_SHADNET_SERVER"], "127.0.0.1:32513")
+        self.assertEqual(port.environment("host")["BB_SHADNET_SERVER"], "127.0.0.1:32514")
         self.assertEqual(run_scenario.p2p_port("guest"), 51621)
         self.assertEqual(run_scenario.lane_dir(), run_scenario.RIG / "lanes" / "2")
         self.assertEqual(port.role_dir("guest"), port.rig / "port" / "lanes" / "2" / "guest")

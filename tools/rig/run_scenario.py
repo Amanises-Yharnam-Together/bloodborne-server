@@ -846,7 +846,8 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     if PING:
         env["SHADPS4_P2P_DELAY_MS"] = latency.game_setting(PING)
         if "BB_SHADNET_SERVER" in env:
-            env["BB_SHADNET_SERVER"] = f"127.0.0.1:{server_port(SHADNET_PORT)}"
+            # The link (UDP) goes straight to shadNet, which listens at the proxy's port + 1.
+            env["BB_SHADNET_SERVER"] = f"127.0.0.1:{matching_udp_port()}"
             env["BB_SHADNET_WEBAPI"] = f"http://127.0.0.1:{server_port(WEBAPI_PORT)}"
     # In the background: the games' windows (SDL, both engines) open and come up without taking
     # the focus from whatever the person at the PC is doing.

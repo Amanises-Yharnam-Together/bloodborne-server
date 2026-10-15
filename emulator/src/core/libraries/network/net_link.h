@@ -26,9 +26,10 @@
 // and writes the same.
 namespace Libraries::Net::Link {
 
-constexpr u8 LinkVersion = 1;
+// 2 (phase 11): the hello carries the player id's secret and signs the player in.
+constexpr u8 LinkVersion = 2;
 enum class Kind : u8 {
-    Hello = 1,   // game -> server: link version, online id, build
+    Hello = 1,   // game -> server: link version, online id, build, secret
     Welcome = 2, // server -> game: accepted, or refused with the reason (another build)
     Data = 3,    // a frame for the peer at addr:port (game -> server), from it (server -> game)
     Ping = 4,    // game -> server, once a second
@@ -37,6 +38,9 @@ enum class Kind : u8 {
     // Both ways: our messages (server/coop/coop.proto) between the game and shadNet itself, one
     // frame of their reliable stream (server/coop/coop_stream.h). Phase 3: the party's world.
     Coop = 7,
+    // Both ways (phase 11): the game's calls for shadNet's TCP port (the NP sign-in, friends,
+    // scores), one frame of a second reliable stream (server/coop/rpc_tunnel.h): one port only.
+    Rpc = 8,
 };
 struct Hello {
     u8 version = LinkVersion;
@@ -44,6 +48,8 @@ struct Hello {
     // Which game this is: every member and the server run one build (the game's 0x60 record
     // carries a raw vtable pointer, so another eboot cannot even read the packets).
     std::string build;
+    // Phase 11: the player id's secret (the launcher made it once): the hello is the sign-in.
+    std::string secret;
 };
 struct Welcome {
     bool accepted = false;
@@ -165,7 +171,7 @@ inline std::optional<Kind> KindOf(std::span<const u8> datagram) {
         return std::nullopt;
     }
     const u8 kind = datagram[8];
-    if (kind < static_cast<u8>(Kind::Hello) || kind > static_cast<u8>(Kind::Coop)) {
+    if (kind < static_cast<u8>(Kind::Hello) || kind > static_cast<u8>(Kind::Rpc)) {
         return std::nullopt;
     }
     if (!Detail::Body(datagram, static_cast<Kind>(kind))) {
@@ -179,6 +185,7 @@ inline std::vector<u8> Encode(const Hello& hello) {
     out.push_back(hello.version);
     Detail::PutText(out, hello.online_id);
     Detail::PutText(out, hello.build);
+    Detail::PutText(out, hello.secret);
     return out;
 }
 
@@ -229,11 +236,28 @@ inline std::optional<std::span<const u8>> DecodeCoop(std::span<const u8> datagra
     return body->Rest();
 }
 
+inline std::vector<u8> EncodeRpc(std::span<const u8> body) {
+    auto out = Detail::Start(Kind::Rpc);
+    out.insert(out.end(), body.begin(), body.end());
+    return out;
+}
+
+inline std::optional<std::span<const u8>> DecodeRpc(std::span<const u8> datagram) {
+    auto body = Detail::Body(datagram, Kind::Rpc);
+    if (!body) {
+        return std::nullopt;
+    }
+    return body->Rest();
+}
+
 inline std::optional<Hello> DecodeHello(std::span<const u8> datagram) {
     auto body = Detail::Body(datagram, Kind::Hello);
     Hello hello;
     if (!body || !body->Get(hello.version) || !body->GetText(hello.online_id) ||
         !body->GetText(hello.build)) {
+        return std::nullopt;
+    }
+    if (hello.version >= 2 && !body->GetText(hello.secret)) {
         return std::nullopt;
     }
     return hello;

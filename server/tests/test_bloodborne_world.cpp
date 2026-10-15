@@ -537,6 +537,37 @@ int ABrokenWorldFileFallsBackToABackup() {
   return 0;
 }
 
+// Phase 11: besides the three backups of the last writes, one copy a day for a
+// week (a bad day's worlds can be taken back), in backups/.
+int AWorldKeepsADatedCopyADayForAWeek() {
+  QTemporaryDir dir;
+  BloodborneWorld::WorldStore store{dir.path()};
+  bbcoop::StoredWorld world;
+  world.set_version(1);
+  world.set_world(7);
+  const QDir backups{QDir{dir.path()}.filePath("backups")};
+  CHECK(store.Compact(world, QDate{2026, 10, 1}));
+  CHECK(store.Compact(world, QDate{2026, 10, 1}));
+  CHECK(backups.entryList(QDir::Files) ==
+        QStringList{"world-20261001.pb"}); // one a day
+  for (int day = 2; day <= 10; ++day) {
+    world.set_world(static_cast<u64>(day));
+    CHECK(store.Compact(world, QDate{2026, 10, day}));
+  }
+  const QStringList kept = backups.entryList(QDir::Files, QDir::Name);
+  CHECK(kept.size() == 7);
+  CHECK(kept.first() == "world-20261004.pb" &&
+        kept.last() == "world-20261010.pb");
+  // Each is the world as that day's first write left it.
+  QFile copy{backups.filePath("world-20261010.pb")};
+  CHECK(copy.open(QIODevice::ReadOnly));
+  bbcoop::StoredWorld read;
+  const QByteArray bytes = copy.readAll();
+  CHECK(read.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size())));
+  CHECK(read.world() == 10);
+  return 0;
+}
+
 int TheServerRestartingMidSessionLosesNothing() {
   QTemporaryDir dir;
   qint64 now = 1'000'000;
@@ -1678,6 +1709,7 @@ int main() {
        ABrokenWorldFileFallsBackToABackup},
       {"TheServerRestartingMidSessionLosesNothing",
        TheServerRestartingMidSessionLosesNothing},
+      {"AWorldKeepsADatedCopyADayForAWeek", AWorldKeepsADatedCopyADayForAWeek},
       {"ALostDatagramIsSentAgain", ALostDatagramIsSentAgain},
       {"TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember",
        TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember},

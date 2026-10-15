@@ -1230,6 +1230,16 @@ s32 MmKickoutRoomMember(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2Reques
                            MmCommand::KickoutRoomMember, MakeProtoPayload(req));
 }
 
+void SetMmServerEndpoint(u32 addr_nbo, u16 udp_port_nbo) {
+    {
+        std::lock_guard lock(g_mm.mutex);
+        g_mm.server_addr = addr_nbo;
+        g_mm.server_udp_port = g_mm.matching2_enabled ? udp_port_nbo : 0;
+        udp_port_nbo = g_mm.server_udp_port;
+    }
+    NpSignaling::Stubs::SetMmServerEndpoint(addr_nbo, udp_port_nbo);
+}
+
 u32 GetMmServerAddr() {
     std::lock_guard lock(g_mm.mutex);
     return g_mm.server_addr;

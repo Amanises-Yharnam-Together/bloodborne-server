@@ -68,6 +68,7 @@ void ConfigManager::Parse(const QString& path) {
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();
     m_emailValidated = boolean("EmailValidated", false);
     m_makeAccountsAtSignIn = boolean("MakeAccountsAtSignIn", true);
+    m_tcpLocalOnly = boolean("TcpLocalOnly", true);
     m_adminsList = strList("AdminsList");
     m_registrationSecretKey = str("RegistrationSecretKey", "");
 

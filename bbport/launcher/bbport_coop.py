@@ -510,7 +510,7 @@ def game_environment(env, settings, install, root):
         'BB_GAME_DIR': str(root / 'CUSA03173'), 'BB_FPS': '60',
         'BB_LOG_FILE': str(install / 'user' / 'log' / 'shad_log.txt'), 'BB_LOG_LEVEL': 'info',
         'BB_ONLINE': '1',
-        'BB_SHADNET_SERVER': f'{host}:{SHADNET_PORT}', 'BB_SHADNET_WEBAPI': f'http://{host}:{WEBAPI_PORT}',
+        'BB_SHADNET_SERVER': f'{host}:{MATCHING_PORT}', 'BB_SHADNET_WEBAPI': f'http://{host}:{WEBAPI_PORT}',
         'BB_SHADNET_NPID': settings['account'], 'BB_SHADNET_PASSWORD': settings['password'],
         'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1',
         'SHADPS4_BLOODBORNE_RE_TRACE': '0',
@@ -634,10 +634,10 @@ def firewall_commands(install, host):
     if host:
         lines.append(f'netsh advfirewall firewall delete rule name="{RULE_HOST_TCP}" & '
                      f'netsh advfirewall firewall add rule name="{RULE_HOST_TCP}" dir=in action=allow protocol=TCP '
-                     f'localport={SHADNET_PORT},{WEBAPI_PORT},{BACKEND_PORT} enable=yes profile=any')
+                     f'localport={WEBAPI_PORT},{BACKEND_PORT} enable=yes profile=any')
         lines.append(f'netsh advfirewall firewall delete rule name="{RULE_HOST_UDP}" & '
                      f'netsh advfirewall firewall add rule name="{RULE_HOST_UDP}" dir=in action=allow protocol=UDP '
-                     f'localport={MATCHING_PORT},51610-51611 enable=yes profile=any')
+                     f'localport={MATCHING_PORT} enable=yes profile=any')
     return lines
 
 

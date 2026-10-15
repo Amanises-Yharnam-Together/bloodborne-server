@@ -60,9 +60,12 @@ bool ShadNetServer::Start(ConfigManager* config) {
         addr = QHostAddress(host);
 
     uint16_t plainPort = static_cast<uint16_t>(config->GetUnsecuredPort().toUInt());
-    if (m_unsecuredServer->listen(addr, plainPort)) {
+    // Phase 11: only the link's UDP port faces the players; its tunnel comes in here locally.
+    const QHostAddress tcpAddr =
+        config->IsTcpLocalOnly() ? QHostAddress(QHostAddress::LocalHost) : addr;
+    if (m_unsecuredServer->listen(tcpAddr, plainPort)) {
         qInfo().nospace().noquote()
-            << "Unsecured TCP listener on: " << addr.toString() << ":" << plainPort
+            << "Unsecured TCP listener on: " << tcpAddr.toString() << ":" << plainPort
             << ". No encryption, use it only on trusted networks";
     } else {
         qCritical() << "Plain TCP listen failed:" << m_unsecuredServer->errorString();
@@ -70,7 +73,7 @@ bool ShadNetServer::Start(ConfigManager* config) {
 
     // The games' link (UDP) with the rooms: only when Matching2 is enabled.
     if (config->IsMatching2Enabled()) {
-        m_linkServer = new LinkServer(&m_shared, this);
+        m_linkServer = new LinkServer(&m_shared, m_dbPath, plainPort, this);
         uint16_t udpPort = static_cast<uint16_t>(config->GetMatchingUdpPort().toUInt());
         if (!m_linkServer->Start(addr, udpPort))
             qWarning() << "Link UDP listen failed on port" << udpPort;

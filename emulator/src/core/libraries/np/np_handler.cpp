@@ -10,7 +10,9 @@
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/invitation_dialog/invitation_dialog.h"
+#include "core/libraries/network/rpc_bridge.h"
 #include "core/libraries/network/server_link.h"
+#include "core/libraries/network/sockets.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_manager.h"
 #include "core/libraries/np/np_matching2/np_matching2_mm.h"
@@ -25,6 +27,24 @@
 #include "shadnet/server_probe.h"
 
 namespace Libraries::Np {
+
+namespace {
+
+// The IPv4 address of `host` in network byte order, 0 when it has none.
+u32 ResolveIpv4(const std::string& host) {
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    addrinfo* found = nullptr;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &found) != 0 || !found) {
+        return 0;
+    }
+    const u32 address = reinterpret_cast<const sockaddr_in*>(found->ai_addr)->sin_addr.s_addr;
+    freeaddrinfo(found);
+    return address;
+}
+
+} // namespace
 
 NpHandler& NpHandler::GetInstance() {
     static NpHandler s_instance;
@@ -103,7 +123,9 @@ void NpHandler::Initialize() {
         return;
     }
 
-    {
+    // Phase 11 (the port): the server's address is its link's UDP port, which a TCP probe
+    // cannot reach; the link says itself when the server does not answer or refuses the game.
+    if (!Net::ServerLinkSwitchOn()) {
         const auto [host, port] = ParseServerAddress();
         const ShadNet::ProbeInfo probe = ShadNet::ProbeServer(host, port);
         if (probe.result != ShadNet::ProbeResult::Ok) {
@@ -225,10 +247,31 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
         OnLoginResult(user_id, res);
     };
 
+    // Phase 11, one port (the port): the server's address is its link's UDP port. The link's
+    // hello signs the player in, and the shadNet client's TCP connection goes to the Rpc bridge
+    // on 127.0.0.1, which carries it through the link to shadNet.
+    std::string client_host = host;
+    u16 client_port = port;
+    const u32 link_addr = Net::ServerLinkSwitchOn() ? ResolveIpv4(host) : 0;
+    if (Net::ServerLinkSwitchOn()) {
+        if (link_addr == 0 || !Net::EnsureP2PTransport()) {
+            LOG_ERROR(NpHandler, "user_id={} no server link to {}:{}", user_id, host, port);
+            return false;
+        }
+        Net::ConfigureServerLink(link_addr, htons(port), npid, password);
+        client_port = Net::StartRpcBridge();
+        client_host = "127.0.0.1";
+        if (client_port == 0) {
+            return false;
+        }
+        LOG_INFO(NpHandler, "user_id={} signs in through the server link {}:{}", user_id, host,
+                 port);
+    }
+
     // Seed the current Appear-Offline preference so the login packet carries it (the send
     // is suppressed pre-auth; it just caches on the client).
     client->SetAppearOffline(m_appear_offline.load());
-    client->Start(host, port, npid, password, token);
+    client->Start(client_host, client_port, npid, password, token);
 
     // Shared handling for an incompatible-protocol failure (version mismatch or
     // corrupt/unparseable stream): tell the user and disable shadNet for this run,
@@ -280,10 +323,16 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
     LOG_INFO(NpHandler, "user_id={} signed in npid='{}' accountId={}", user_id, npid,
              client->GetUserId());
 
-    NpMatching2::SetMmShadNetClient(client, host, port);
-    // The port's server link: the peers' frames through shadNet's matching UDP port.
-    Net::ConfigureServerLink(NpMatching2::GetMmServerAddr(), NpMatching2::GetMmServerUdpPort(),
-                             npid);
+    if (Net::ServerLinkSwitchOn()) {
+        // The rooms' server is the link's (the client's own address is the bridge's).
+        NpMatching2::SetMmShadNetClient(client, host, static_cast<u16>(port - 1));
+        NpMatching2::SetMmServerEndpoint(link_addr, htons(port));
+    } else {
+        NpMatching2::SetMmShadNetClient(client, host, port);
+        // shadPS4: the peers' frames through shadNet's matching UDP port.
+        Net::ConfigureServerLink(NpMatching2::GetMmServerAddr(), NpMatching2::GetMmServerUdpPort(),
+                                 npid, password);
+    }
 
     // Build OrbisNpId
     {

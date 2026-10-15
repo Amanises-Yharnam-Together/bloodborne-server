@@ -182,7 +182,8 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(env['BB_ONLINE'], '1')
         self.assertEqual(env['BB_GAME_DIR'], str(Path('C:/Co-op/coop-game/CUSA03173')))
         self.assertEqual(env['BB_USER_DIR'], str(install / 'user'))
-        self.assertEqual(env['BB_SHADNET_SERVER'], '26.1.2.3:31313')
+        # Phase 11, one port: the game signs in on the link's UDP port.
+        self.assertEqual(env['BB_SHADNET_SERVER'], '26.1.2.3:31314')
         self.assertEqual(env['BB_SHADNET_WEBAPI'], 'http://26.1.2.3:31315')
         self.assertEqual((env['BB_SHADNET_NPID'], env['BB_SHADNET_PASSWORD']), ('Lisara', 'pw'))
         self.assertEqual(env['SHADPS4_BLOODBORNE_SEAMLESS_COOP'], '1')
@@ -211,8 +212,10 @@ class PlayTests(unittest.TestCase):
         self.assertIn(str(install / 'bin' / 'bb-probe.exe'), guest[0])
         host = coop.firewall_commands(install, host=True)
         self.assertEqual(len(host), 3)
-        self.assertTrue(any('localport=31313,31315,20443' in line for line in host))
-        self.assertTrue(any('protocol=UDP' in line and '31314' in line for line in host))
+        # Phase 11: the game's HTTP and one UDP port; shadNet's TCP port stays on the host's PC.
+        self.assertTrue(any('localport=31315,20443 ' in line for line in host))
+        self.assertTrue(any('protocol=UDP' in line and 'localport=31314 ' in line for line in host))
+        self.assertFalse(any('31313' in line for line in host))
 
 
 if __name__ == '__main__':

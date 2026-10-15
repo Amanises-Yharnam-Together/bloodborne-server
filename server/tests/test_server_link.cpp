@@ -60,8 +60,9 @@ const Endpoint Kaniel{0x7F000001, 40001};
 const Endpoint Ada{0x7F000001, 40002};
 const Endpoint Eileen{0xC0A80105, 40003};
 
-QByteArray HelloFrom(const char *who, const QByteArray &build = Build) {
-  return Encode(Hello{LinkVersion, who, build});
+QByteArray HelloFrom(const char *who, const QByteArray &build = Build,
+                     const QByteArray &secret = "s3cr3t") {
+  return Encode(Hello{LinkVersion, who, build, secret});
 }
 
 // The sends of `result` to `to`.
@@ -77,13 +78,18 @@ QList<QByteArray> SentTo(const Hub::Result &result, const Endpoint &to) {
 
 int Contracts() {
   const auto datagrams = ReadContracts(BLOODBORNE_SERVER_LINK_CONTRACTS);
-  CHECK(datagrams.size() == 9);
+  CHECK(datagrams.size() == 10);
   const auto datagram = [&](const char *name) { return datagrams.at(name); };
 
-  CHECK(Encode(Hello{LinkVersion, "Kaniel", Build}) == datagram("hello"));
+  CHECK(Encode(Hello{LinkVersion, "Kaniel", Build, "s3cr3t"}) ==
+        datagram("hello"));
   const auto hello = DecodeHello(datagram("hello"));
-  CHECK(hello && hello->version == 1 && hello->online_id == "Kaniel" &&
-        hello->build == Build);
+  CHECK(hello && hello->version == 2 && hello->online_id == "Kaniel" &&
+        hello->build == Build && hello->secret == "s3cr3t");
+  // Phase 11: the old calls (friends, scores) in the link's second stream.
+  CHECK(EncodeRpc(QByteArray::fromHex("0102")) == datagram("rpc"));
+  CHECK(DecodeRpc(datagram("rpc")) == QByteArray::fromHex("0102"));
+  CHECK(!DecodeRpc(datagram("ping")) && !DecodeCoop(datagram("rpc")));
 
   CHECK(Encode(Welcome{true, {}}) == datagram("welcome.ok"));
   CHECK(Encode(Welcome{false, "another build: 13ddd14d"}) ==
@@ -150,7 +156,7 @@ int HelloAndBuilds() {
       "everyone needs the same release")); // said on the team screen
   CHECK(hub.Members() == 2);
 
-  Hello later{2, "Eileen", Build};
+  Hello later{3, "Eileen", Build, "s3cr3t"};
   result = hub.Receive(Eileen, Encode(later), 30);
   CHECK(!DecodeWelcome(SentTo(result, Eileen).value(0))->accepted);
 
@@ -158,7 +164,46 @@ int HelloAndBuilds() {
   result = hub.Receive(Kaniel, HelloFrom("Kaniel"), 40);
   CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
   CHECK(hub.Members() == 2);
+  // A game of before phase 11 (link version 1, no secret) is a game of another
+  // build.
+  QByteArray old = QByteArray::fromHex("ffffffff") + "SHLK";
+  old += char(1);
+  old += char(1);
+  old += char(3);
+  old += "Old";
+  old += char(Build.size());
+  old += Build;
+  result = hub.Receive(Eileen, old, 50);
+  CHECK(!DecodeWelcome(SentTo(result, Eileen).value(0))->accepted);
   std::cout << "server link hello: ok\n";
+  return 0;
+}
+
+// Phase 11: the hello is the sign-in. The player's id and its secret (the
+// launcher made them) sign in, nothing else; the old calls go in the link's
+// second stream (Rpc), from signed-in games only.
+int SignsIn() {
+  Hub hub;
+  QList<QByteArray> asked;
+  hub.SetSignIn([&](const QByteArray &online_id, const QByteArray &secret) {
+    asked.append(online_id);
+    return online_id == "Kaniel" && secret == "right";
+  });
+  auto result = hub.Receive(Kaniel, HelloFrom("Kaniel", Build, "wrong"), 0);
+  const auto refused = DecodeWelcome(SentTo(result, Kaniel).value(0));
+  CHECK(refused && !refused->accepted && refused->text.contains("sign-in"));
+  CHECK(hub.Members() == 0 && asked == QList<QByteArray>{"Kaniel"});
+  result = hub.Receive(Kaniel, EncodeRpc("dropped"), 5);
+  CHECK(result.rpc.isEmpty() && result.sends.isEmpty());
+
+  result = hub.Receive(Kaniel, HelloFrom("Kaniel", Build, "right"), 10);
+  CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
+  CHECK(hub.Members() == 1);
+  result = hub.Receive(Kaniel, EncodeRpc("body"), 20);
+  CHECK(result.rpc.size() == 1 && result.rpc[0].from == Kaniel &&
+        result.rpc[0].online_id == "Kaniel" && result.rpc[0].body == "body");
+  CHECK(result.coop.isEmpty());
+  std::cout << "server link sign-in: ok\n";
   return 0;
 }
 
@@ -464,7 +509,7 @@ int RoutesGamePackets() {
 int main() {
   if (Contracts() != 0 || HelloAndBuilds() != 0 || Relays() != 0 ||
       Liveness() != 0 || TeamOnly() != 0 || VirtualMembers() != 0 ||
-      RoutesGamePackets() != 0) {
+      RoutesGamePackets() != 0 || SignsIn() != 0) {
     return 1;
   }
   return 0;

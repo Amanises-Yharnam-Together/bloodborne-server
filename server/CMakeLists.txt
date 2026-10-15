@@ -210,6 +210,10 @@ if(BUILD_TESTING)
     target_include_directories(test_packet_routes PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME packet_routes COMMAND test_packet_routes)
 
+    add_executable(test_rpc_tunnel EXCLUDE_FROM_ALL tests/test_rpc_tunnel.cpp)
+    target_include_directories(test_rpc_tunnel PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME rpc_tunnel COMMAND test_rpc_tunnel)
+
     add_executable(test_bloodborne_world EXCLUDE_FROM_ALL
         tests/test_bloodborne_world.cpp
         src/bloodborne_world.cpp

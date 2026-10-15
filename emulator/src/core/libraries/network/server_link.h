@@ -16,8 +16,10 @@ namespace Libraries::Net {
 // The port's co-op on the server (the team's world, boards and game packet link); shadPS4 keeps
 // its own co-op, but its peers too are reached through the server only (phase 9).
 bool ServerLinkSwitchOn();
-// Once signed in: shadNet's link UDP port and this game's online id.
-void ConfigureServerLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id);
+// shadNet's link UDP port, this game's online id and (phase 11) its secret: the link's hello
+// signs the player in.
+void ConfigureServerLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id,
+                         std::string secret = {});
 // Which game this is, for the hello: shadNet refuses a game on another build.
 void SetServerLinkBuild(std::string build);
 // The link's events ("welcome", "refused", "quiet", "back", "member-quiet", "member-back",
@@ -29,6 +31,10 @@ void SetServerLinkObserver(ServerLinkObserver observer);
 // gives one body (its size, -1 when none waits).
 bool ServerCoopSend(const void* body, u32 len);
 int ServerCoopReceive(void* body, u32 len);
+// Phase 11: the Rpc tunnel's frames (server/coop/rpc_tunnel.h), the same way. Send works before
+// the server's welcome (the server drops them until then; the stream sends them again).
+bool ServerRpcSend(const void* body, u32 len);
+int ServerRpcReceive(void* body, u32 len);
 // Whether the server took this game's hello (it may restart: then false until it does again).
 bool ServerLinkWelcomed();
 // Phase 7 (net_link.h ConnectsWithoutHandshake): room members are connected at once through the

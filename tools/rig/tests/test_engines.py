@@ -61,7 +61,8 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(env["BB_PROBE"], str(self.port.exe))
         self.assertEqual(env["BB_LOG_FILE"], str(role / "user" / "log" / "shad_log.txt"))
         self.assertEqual(env["BB_ONLINE"], "1")
-        self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:32313")
+        # Phase 11, one port: the port signs in on shadNet's link UDP port (the TCP port's +1).
+        self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:32314")
         self.assertEqual(env["BB_SHADNET_WEBAPI"], "http://127.0.0.1:32315")
         self.assertEqual(env["BB_SHADNET_NPID"], "rig_guest2")
         self.assertEqual(env["BB_SHADNET_PASSWORD"], "rig")
@@ -232,14 +233,15 @@ class RunnerTest(unittest.TestCase):
         try:
             env = run_scenario.game_environment("host", None, "rig:x")
             self.assertEqual(env["SHADPS4_P2P_DELAY_MS"], "25-50", "half the ping each way")
-            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:33313", "through the proxy")
+            # The link is UDP, straight to shadNet at the proxy's port + 1; the game delays it.
+            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:33314")
             self.assertEqual(env["BB_SHADNET_WEBAPI"], "http://127.0.0.1:33315")
             self.assertEqual(run_scenario.delayed_ports(), {33313: 32313, 33315: 32315,
                                                             21453: 20453})
             run_scenario.use_ping(None)
             env = run_scenario.game_environment("host", None, "rig:x")
             self.assertNotIn("SHADPS4_P2P_DELAY_MS", env)
-            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:32313")
+            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:32314")
         finally:
             run_scenario.use_ping(None)
 
