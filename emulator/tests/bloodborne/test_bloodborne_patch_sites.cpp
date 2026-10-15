@@ -313,18 +313,18 @@ TEST(CoopSites, TheJsonNamesEverySite) {
 }
 
 // Phase 7: only the server ends a session. The game's own reasons to leave one (no word from the
-// host for a while, a resend queue over 1000 bytes, a room time-out, the session layer's
-// "irregular leave") each raise their Lua event and MultiPlayStopRequest; their branches always
-// take the stay path now (Lisara 2026-10-14: his game ended its own session after a save).
+// host for a while, a resend queue over 1000 bytes, a room time-out) each raise their Lua event
+// and MultiPlayStopRequest; their branches always take the stay path now (Lisara 2026-10-14: his
+// game ended its own session after a save). A member's connection going ("irregular leave") still
+// runs the game's own member-left flow, which a host needs (rig crashes/leave).
 TEST(CoopSites, OnlyTheServerEndsASession) {
     ASSERT_NE(FindCoopFeature("server owns leaves"), nullptr);
     EXPECT_TRUE(FindCoopFeature("server owns leaves")->required);
     const auto sites = SitesOf("server owns leaves");
-    ASSERT_EQ(sites.size(), 4u);
+    ASSERT_EQ(sites.size(), 3u);
     EXPECT_EQ(Site("session idle timeout").offset, 0x01789C5Du);
     EXPECT_EQ(Site("session resend overflow").offset, 0x017897B2u);
     EXPECT_EQ(Site("room timeout").offset, 0x01789F41u);
-    EXPECT_EQ(Site("irregular leave event").offset, 0x0178F9E6u);
     for (const CoopSite* site : sites) {
         const auto patched = HexBytes(site->patched);
         ASSERT_FALSE(patched.empty()) << site->name;

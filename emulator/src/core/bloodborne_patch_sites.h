@@ -487,15 +487,14 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // each followed by its Lua event and MultiPlayStopRequest, take the stay branch: NetSync's
     // update (0x01789B60) with SprjSessionManager's idle timer +0x2E0 past its limit +0x2F0
     // (`jbe` -> `jmp`), and more than 1000 bytes in its resend queue (`jb` -> `jmp`); the room
-    // time-out ("OnRoomTimeOut", `jbe` -> `jmp`); and the session layer's reason 3 to NetSync
-    // (0x0178F9A0, its jump table's last case: "OnIrregularLeaveSession") jumps to the return.
+    // time-out ("OnRoomTimeOut", `jbe` -> `jmp`). Not the session layer's reason 3 to NetSync
+    // (0x0178F9A0, "OnIrregularLeaveSession" when a member's connection goes): skipping it left a
+    // host whose guest went unable to pick anything up (rig crashes/leave).
     {"session idle timeout", "server owns leaves", CoopSiteKind::Patch, 0x01789C5D, "76 78",
      "EB 78"},
     {"session resend overflow", "server owns leaves", CoopSiteKind::Patch, 0x017897B2,
      "0F 82 B8 00 00 00", "E9 B9 00 00 00 90"},
     {"room timeout", "server owns leaves", CoopSiteKind::Patch, 0x01789F41, "76 79", "EB 79"},
-    {"irregular leave event", "server owns leaves", CoopSiteKind::Patch, 0x0178F9E6, "48 8D",
-     "EB 78"},
 });
 
 } // namespace Core::Bloodborne

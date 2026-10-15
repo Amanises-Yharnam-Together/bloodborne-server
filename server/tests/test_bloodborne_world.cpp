@@ -1416,11 +1416,19 @@ int AMembersNextRunResumesWhereItWas() {
   Pump(service, {&host, &guest}, now);
   CHECK(!guest.resume_at.has_value()); // nowhere known yet
   bbcoop::Envelope vitals = VitalsOf(0x18010000, 1);
-  vitals.mutable_vitals()->mutable_at()->set_x(-215.5f);
+  vitals.mutable_vitals()->mutable_at()->set_x(-120.0f);
   vitals.mutable_vitals()->mutable_at()->set_y(-51.0f);
-  vitals.mutable_vitals()->mutable_at()->set_z(172.25f);
+  vitals.mutable_vitals()->mutable_at()->set_z(100.0f);
   guest.Send(vitals, now + 10);
   Pump(service, {&host, &guest}, now + 10);
+  // Down where it stands counts too (rig crashes/resume: the guest was down
+  // when it went).
+  bbcoop::Envelope down = VitalsOf(0x18010000, 2);
+  down.mutable_vitals()->mutable_at()->set_x(-215.5f);
+  down.mutable_vitals()->mutable_at()->set_z(172.25f);
+  vitals.mutable_vitals()->mutable_at()->set_x(-100.0f);
+  guest.Send(down, now + 11);
+  Pump(service, {&host, &guest}, now + 11);
   // Its game dies and starts again (a new link, a new run).
   service.Forget(guest.endpoint);
   Game guest_again{1002, "guest", 22};

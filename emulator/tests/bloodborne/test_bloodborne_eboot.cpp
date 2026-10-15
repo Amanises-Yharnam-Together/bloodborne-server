@@ -530,7 +530,6 @@ TEST_F(BloodborneEboot, TheGamesOwnLeavesAreSkippedForItsStayPath) {
         {"session idle timeout", 0x01789CB4},
         {"session resend overflow", 0x0178980D},
         {"room timeout", 0x01789F99},
-        {"irregular leave event", 0x0178FA3D},
     };
     for (const auto& [name, stop_call] : leaves) {
         const auto site = std::ranges::find(CoopSites, name, &CoopSite::name);

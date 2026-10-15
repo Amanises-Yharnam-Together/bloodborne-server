@@ -223,7 +223,6 @@
     {"name": "summon slot hold 2", "feature": "summon slot hold", "kind": "patch", "offset": "0x018729ED", "original": "C5 F8 2E 05 67 50 0B 03", "patched": "C5 F8 2E 05 CF 4E 0B 03", "accepted": []},
     {"name": "session idle timeout", "feature": "server owns leaves", "kind": "patch", "offset": "0x01789C5D", "original": "76 78", "patched": "EB 78", "accepted": []},
     {"name": "session resend overflow", "feature": "server owns leaves", "kind": "patch", "offset": "0x017897B2", "original": "0F 82 B8 00 00 00", "patched": "E9 B9 00 00 00 90", "accepted": []},
-    {"name": "room timeout", "feature": "server owns leaves", "kind": "patch", "offset": "0x01789F41", "original": "76 79", "patched": "EB 79", "accepted": []},
-    {"name": "irregular leave event", "feature": "server owns leaves", "kind": "patch", "offset": "0x0178F9E6", "original": "48 8D", "patched": "EB 78", "accepted": []}
+    {"name": "room timeout", "feature": "server owns leaves", "kind": "patch", "offset": "0x01789F41", "original": "76 79", "patched": "EB 79", "accepted": []}
   ]
 }

@@ -990,8 +990,9 @@ SUITES = {
                      # usable map item near" within 20 m): the nearest within 45 m.
                      "host": ["sync leave-ready", "wait-solo 120", "wait 10", "pickup 45",
                               "wait 3", "snapshot"]},
-                    # Phase 7: the game's own "member left" Lua (its irregular leave) is off; the
-                    # pickup is the check.
+                    # Since phase 6 the host notes the member gone and reopens its session.
+                    expect={"host": [r"(?:lost a member; staying where it is|member left, session "
+                                     r"epoch)"]},
                     allow=CRASH_CLEANUP),
             # Last: the guest's game crashes in it (a crash ends the suite).
             chapter("host-crash-apart", "the host's game dies while the guest is apart (in the "

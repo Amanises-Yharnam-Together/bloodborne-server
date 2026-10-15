@@ -784,7 +784,8 @@ void Service::TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelop
         return;
     case bbcoop::Envelope::kVitals: {
         if (const bbcoop::Vitals& vitals = envelope.vitals();
-            vitals.map() != 0 && vitals.vital() == 1 && vitals.has_at()) {
+            vitals.map() != 0 && (vitals.vital() == 1 || vitals.vital() == 2) &&
+            vitals.has_at()) { // up or down where it stands
             PartyWorld::Place& place = world.places[member.name];
             place.at.set_map(vitals.map());
             *place.at.mutable_at() = vitals.at();
