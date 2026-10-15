@@ -26,6 +26,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(r.returncode,22)
         self.assertIn('stack protector detected corruption',r.stderr)
 
+    def test_raised_exception_skips_exit_handlers(self):
+        r=self.run_case('--raise-exception')
+        self.assertEqual(r.returncode,23)
+        self.assertIn('guest raised debug exception',r.stderr)
+        self.assertNotIn('atexit handler ran',r.stdout)
+
     def test_tls_bounds_are_checked(self):
         r=self.run_case('--bad-tls')
         self.assertEqual(r.returncode,21)

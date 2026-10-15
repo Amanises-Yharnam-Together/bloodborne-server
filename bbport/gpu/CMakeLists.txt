@@ -389,8 +389,8 @@ if (WIN32)
     target_compile_options(pad-calibration-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     target_include_directories(pad-calibration-test PRIVATE .. ../src)
     target_link_libraries(pad-calibration-test PRIVATE PkgConfig::SDL3 bcrypt -pthread)
-    # The HLE runtime as bb-probe links it: thread handles within 40 bits. No game, no Vulkan
-    # device.
+    # The HLE runtime as bb-probe links it: thread handles within 40 bits, the guest's debug
+    # exception stop (no exit handlers). No game, no Vulkan device.
     add_executable(runtime-windows-test EXCLUDE_FROM_ALL ../tests/test_runtime_windows.c ${BB_RUNTIME}
         ../src/compat_win.c)
     set_target_properties(runtime-windows-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
