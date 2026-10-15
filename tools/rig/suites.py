@@ -263,8 +263,12 @@ SUITES = {
                               "expect-session 3", "expect-others-near 2 15"],
                      **{guest: ["sync trip-back", "wait 20", "snapshot", "expect-session 3",
                                 "expect-others-near 2 15"] for guest in GUESTS}},
+                    # Phase 11: the nameplates over the others show their characters' names.
                     expect={"host": [r"re-creating (?:\S+ )*rig_guest (?:\S+ )*on map 0x18010000",
-                                     r"re-creating (?:\S+ )*rig_guest2 (?:\S+ )*on map 0x18010000"]},
+                                     r"re-creating (?:\S+ )*rig_guest2 (?:\S+ )*on map 0x18010000",
+                                     r'nameplate \d is "rig_guest2? shown as [^"]+"'],
+                            **{guest: [r'nameplate \d is "rig_host shown as [^"]+"']
+                               for guest in GUESTS}},
                     forbid=holds(PARTY3)),
             chapter("hit3", "each guest back from its own trip (three worlds apart), all three "
                             "hit one enemy in turn: one HP in every game, each hit counted once, "
@@ -832,6 +836,18 @@ SUITES = {
                                "wait-members 2 60", "wait-member-vital up 60",
                                "expect-session 2", "expect-others-near 1 30"]},
                     forbid=holds(PARTY2)),
+            chapter("server-restart", "phase 11: shadNet stops and starts again while both play "
+                                      "(the host's PC hiccups): the session holds, both games "
+                                      "sign in again by themselves through the link and see "
+                                      "each other",
+                    {role: ["sync restart-go", "wait 20", "wait-members 2 120",
+                            "wait-member-vital up 60", "expect-session 2",
+                            "expect-others-near 1 30"] for role in PARTY2},
+                    server_restarts=["restart-go"],
+                    expect={role: [r"Rpc bridge: shadNet ended the connection",
+                                   r"Co-op server world: shadNet started over"]
+                            for role in PARTY2},
+                    forbid=holds(PARTY2)),
             chapter("cutscene", "Father Gascoigne dies in the host's world with the guest there: "
                                 "his death's time-of-day cutscene reloads the host's world (a "
                                 "trip), and both are back together after it. Whether this kill "
@@ -1286,11 +1302,13 @@ def compile_suite(suite: dict, only: list[str] | None = None) -> dict:
     stage_saves: dict[str, dict[int, str]] = {}
     syncs: dict[str, dict] = {}
     outages: dict[str, float] = {}
+    server_restarts: list[str] = []
     for c in chapters:
         keep_going = f"keep-going {'off' if c.get('fatal') else 'on'}"
         mark = f"chapter {c['name']} {budget.chapter_budget(c)}"
         syncs[c["name"]] = {"chapter": c["name"], "roles": list(roles)}
         outages.update(c.get("outages", {}))
+        server_restarts += c.get("server_restarts", [])
         for role in roles:
             stages[role][-1] += [mark, keep_going, f"sync {c['name']}"]
             marks_due = False  # a restarted game's chapter mark, after its title's steps
@@ -1331,6 +1349,7 @@ def compile_suite(suite: dict, only: list[str] | None = None) -> dict:
         "fatal": [c["name"] for c in chapters if c.get("fatal")],
         "syncs": syncs,
         "outages": outages,
+        "server_restarts": server_restarts,
         "stage_saves": stage_saves,
         **({"saves": suite["saves"]} if "saves" in suite else {}),
     }

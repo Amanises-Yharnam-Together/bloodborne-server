@@ -22,6 +22,7 @@ import struct
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 TITLE_IDS = ('CUSA03173', 'CUSA00900', 'CUSA00207', 'CUSA01363', 'CUSA03023')  # every Bloodborne release
@@ -533,6 +534,59 @@ def game_environment(env, settings, install, root):
     return env
 
 
+REPORTS_SENT = 'reports-sent.json'
+
+
+def reports_to_send(log):
+    """Phase 11: what a crash left for the host's server: the dumps not sent yet, and with a new one
+    the crashed run's logs (the .prev ones the start just made)."""
+    log = Path(log)
+    try:
+        sent = set(json.loads((log / REPORTS_SENT).read_text(encoding='utf-8')))
+    except (OSError, ValueError, TypeError):
+        sent = set()
+    dumps = sorted(path for path in log.glob('crash-*.dmp') if path.name not in sent)
+    if not dumps:
+        return []
+    logs = sorted(path for path in log.glob('*.prev.txt') if path.is_file())
+    return dumps + logs
+
+
+def note_reports_sent(log, paths):
+    log = Path(log)
+    try:
+        sent = json.loads((log / REPORTS_SENT).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        sent = []
+    sent = sorted(set(sent) | {Path(path).name for path in paths if Path(path).suffix == '.dmp'})
+    (log / REPORTS_SENT).write_text(json.dumps(sent, indent=1) + '\n', encoding='utf-8')
+
+
+def report_request(host_ip, path, data, player, secret):
+    return urllib.request.Request(f'http://{host_ip}:{WEBAPI_PORT}/bb/report/{Path(path).name}', data=data,
+                                  method='POST', headers={'X-Player': player, 'X-Secret': secret,
+                                                          'Content-Type': 'application/octet-stream'})
+
+
+def send_reports(install, settings, timeout=30):
+    """Sends what reports_to_send finds to the host's server; the number sent. Off the window's
+    thread: a host that does not answer only costs the wait."""
+    log = Path(install) / 'user' / 'log'
+    sent = []
+    for path in reports_to_send(log):
+        try:
+            request = report_request(settings['host_ip'], path, path.read_bytes(), settings['account'],
+                                     settings['password'])
+            with urllib.request.urlopen(request, timeout=timeout) as answer:
+                if answer.status == 200:
+                    sent.append(path)
+        except (OSError, ValueError):
+            break
+    if sent:
+        note_reports_sent(log, sent)
+    return len(sent)
+
+
 def rotate_logs(install):
     """shad_log.txt and console.txt become the .prev ones, as 2 - PLAY kept them."""
     log = Path(install) / 'user' / 'log'
@@ -557,6 +611,11 @@ def servers_running():
     return port_open(SHADNET_PORT)
 
 
+def server_command(install):
+    """shadnet under its watchdog (phase 11): started again after a crash or a hang."""
+    return [str(Path(install) / 'server' / 'shadnet.exe'), '--watchdog']
+
+
 def start_servers(install, host_ip, wait_s=10.0):
     """HOST - Start Servers: shadnet (accounts, matchmaking, the party boards; it answers the game's
     backend port itself), and the Python backend only when nothing answers that port. Returns the
@@ -569,7 +628,7 @@ def start_servers(install, host_ip, wait_s=10.0):
     if not servers_running():
         env = dict(os.environ, SHADNET_BACKEND_ADDRESS=host_ip)
         with open(log / 'shadnet.txt', 'a', encoding='utf-8') as out:
-            subprocess.Popen([str(server / 'shadnet.exe')], cwd=server, env=env, stdout=out, stderr=subprocess.STDOUT,
+            subprocess.Popen(server_command(install), cwd=server, env=env, stdout=out, stderr=subprocess.STDOUT,
                              stdin=subprocess.DEVNULL, creationflags=NO_WINDOW | DETACHED)
         said.append('Started the co-op server.')
     deadline = time.monotonic() + wait_s
@@ -589,7 +648,7 @@ def start_servers(install, host_ip, wait_s=10.0):
 
 
 def our_processes(install):
-    """(pid, name) of this install's shadnet and backend."""
+    """(pid, name, command line) of this install's shadnet (its watchdog too) and backend."""
     install = str(Path(install).resolve()).lower()
     script = ("Get-CimInstance Win32_Process -Filter \"Name='shadnet.exe' OR Name='BLauncher.exe' OR "
               "Name='python.exe' OR Name='pythonw.exe'\" | ForEach-Object { \"$($_.ProcessId)|$($_.Name)|"
@@ -606,15 +665,20 @@ def our_processes(install):
             continue
         pid, name, path, command = parts
         if name.lower() == 'shadnet.exe' and path.lower().startswith(install):
-            found.append((int(pid), name))
+            found.append((int(pid), name, command))
         elif 'bb_dummy_server.py' in command and install in command.lower():
-            found.append((int(pid), name))
+            found.append((int(pid), name, command))
     return found
+
+
+def stop_order(found):
+    """The watchdog first: stopped after its server, it would start that again."""
+    return sorted(found, key=lambda process: '--watchdog' not in process[2])
 
 
 def stop_servers(install):
     stopped = 0
-    for pid, _name in our_processes(install):
+    for pid, _name, _command in stop_order(our_processes(install)):
         subprocess.run(['taskkill', '/PID', str(pid), '/F'], capture_output=True, creationflags=NO_WINDOW)
         stopped += 1
     return stopped

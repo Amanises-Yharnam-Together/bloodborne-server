@@ -81,9 +81,10 @@ std::once_flag thread_started;
 constexpr bool team_switch = server_world_switch;
 std::mutex team_mutex;
 TeamGate team_gate;
-std::string team_party;      // the team's party key once its Start let this game's load go
-std::string lobby_member;    // this player in the lobby (its board name), once known
-std::string lobby_name;      // its online id
+std::string team_party;   // the team's party key once its Start let this game's load go
+std::string lobby_member; // this player in the lobby (its board name), once known
+std::string lobby_name;   // its character's name (phase 11), "" before one is known
+s64 lobby_name_read_ms = 0;
 bool lobby_playing = false;  // in a world (the load went)
 bool lobby_hello_due = true; // stream restarts and changes of lobby_playing
 std::deque<bbcoop::Envelope> lobby_outbox;
@@ -632,6 +633,27 @@ void RequestServerHello() {
     hello_due = true;
 }
 
+// Phase 11: the character's name, as the others see this player: to the lobby when it changes.
+void NoteCharacterName(s64 now_ms) {
+    {
+        std::scoped_lock lock{team_mutex};
+        if (!team_switch || now_ms - lobby_name_read_ms < 2'000) {
+            return;
+        }
+        lobby_name_read_ms = now_ms;
+    }
+    std::string name = OwnCharacterName();
+    if (name.empty()) {
+        return;
+    }
+    std::scoped_lock lock{team_mutex};
+    if (name != lobby_name) {
+        LOG_INFO(Debug, "Co-op team lobby: this character is \"{}\"", name);
+        lobby_name = std::move(name);
+        lobby_hello_due = true;
+    }
+}
+
 ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms) {
     StartThread();
     std::scoped_lock member_lock{member_mutex};
@@ -653,6 +675,7 @@ ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 no
         proposed_ms = 0;
     }
     TickTeamWorld(now_ms);
+    NoteCharacterName(now_ms);
     ServerWorldKills world;
     Taken taken = TakeInbox(now_ms);
     world.host_wiped = taken.after_wipe;
@@ -868,7 +891,6 @@ void StartTeamLobby() {
         {
             std::scoped_lock lock{team_mutex};
             lobby_member = member;
-            lobby_name = online_id;
             lobby_hello_due = true;
         }
         StartThread();
@@ -1210,6 +1232,28 @@ std::optional<bbcoop::LobbyState> TeamLobbyState() {
 std::string TeamLobbyMember() {
     std::scoped_lock lock{team_mutex};
     return lobby_member;
+}
+
+std::string CharacterNameOf(std::string_view member) {
+    std::scoped_lock lock{team_mutex};
+    if (member == lobby_member) {
+        return lobby_name;
+    }
+    const auto& lobby = team_gate.Lobby();
+    if (!lobby) {
+        return {};
+    }
+    for (const bbcoop::TeamMember& m : lobby->team().members()) {
+        if (m.member() == member) {
+            return m.name();
+        }
+    }
+    for (const bbcoop::LobbyPlayer& player : lobby->players()) {
+        if (player.member() == member) {
+            return player.name();
+        }
+    }
+    return {};
 }
 
 void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id) {

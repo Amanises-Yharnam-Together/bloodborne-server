@@ -591,6 +591,33 @@ void TickOffscreenPortrait(bool wanted, bool captured, s64 now) {
 
 namespace Coop {
 
+std::string OwnCharacterName() {
+    const u64 data = PlayerGameDataNow();
+    if (data < 0x10000 || !HasMemoryAccess(data + PlayerGameNameHolderAt, 8, MemoryProt::CpuRead)) {
+        return {};
+    }
+    const u64 holder = ReadValue<u64>(data, PlayerGameNameHolderAt);
+    if (holder < 0x10000 || !HasMemoryAccess(holder, 8, MemoryProt::CpuRead)) {
+        return {};
+    }
+    // Its name: at +0xC8 when the holder's kind (+0xC) is 1, else at +0x18 (0x01782045).
+    const u64 names = ReadValue<u64>(holder, 0);
+    if (names < 0x10000 || !HasMemoryAccess(names, 0xC8 + GameHudStringSize, MemoryProt::CpuRead)) {
+        return {};
+    }
+    const u64 at = names + (ReadValue<u32>(names, 0xC) == 1 ? 0xC8 : 0x18);
+    std::array<u8, GameHudStringSize> raw{};
+    std::memcpy(raw.data(), reinterpret_cast<const void*>(at), raw.size());
+    return GameStringUtf8(raw, [](u64 chars, size_t count) {
+        std::vector<char16_t> read(count);
+        if (chars < 0x10000 || !HasMemoryAccess(chars, count * 2, MemoryProt::CpuRead)) {
+            return std::vector<char16_t>{};
+        }
+        std::memcpy(read.data(), reinterpret_cast<const void*>(chars), count * 2);
+        return read;
+    });
+}
+
 // This character's portrait: the status page's last capture (kept on disk by its face), else the
 // one kept for its face; to every room peer at once when it changed or a peer came, and again now
 // and then (PortraitSender).

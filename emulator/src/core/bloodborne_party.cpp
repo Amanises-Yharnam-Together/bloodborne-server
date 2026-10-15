@@ -4411,6 +4411,81 @@ std::string GameHudString(std::span<const u8, GameHudStringSize> raw,
     return text;
 }
 
+std::string GameStringUtf8(std::span<const u8, GameHudStringSize> raw,
+                           const std::function<std::vector<char16_t>(u64, size_t)>& read) {
+    constexpr size_t MaxChars = 16;
+    u64 capacity = 0;
+    std::memcpy(&capacity, raw.data() + 0x20, sizeof(capacity));
+    std::vector<char16_t> chars;
+    if (capacity < 8) {
+        chars.resize(8);
+        std::memcpy(chars.data(), raw.data() + 0x08, 16);
+    } else {
+        u64 pointer = 0;
+        std::memcpy(&pointer, raw.data() + 0x08, sizeof(pointer));
+        chars = read(pointer, MaxChars + 1);
+    }
+    const auto end = std::ranges::find(chars, u'\0');
+    if (end == chars.end() || end - chars.begin() > static_cast<std::ptrdiff_t>(MaxChars)) {
+        return {}; // no end within a name's length: not a name
+    }
+    std::string text;
+    for (auto it = chars.begin(); it != end; ++it) {
+        u32 c = *it;
+        if (c >= 0xD800 && c < 0xDC00 && it + 1 != end && it[1] >= 0xDC00 && it[1] < 0xE000) {
+            c = 0x10000 + ((c - 0xD800) << 10) + (*++it - 0xDC00);
+        }
+        if (c < 0x80) {
+            text += static_cast<char>(c);
+        } else if (c < 0x800) {
+            text += static_cast<char>(0xC0 | (c >> 6));
+            text += static_cast<char>(0x80 | (c & 0x3F));
+        } else if (c < 0x10000) {
+            text += static_cast<char>(0xE0 | (c >> 12));
+            text += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+            text += static_cast<char>(0x80 | (c & 0x3F));
+        } else {
+            text += static_cast<char>(0xF0 | (c >> 18));
+            text += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+            text += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+            text += static_cast<char>(0x80 | (c & 0x3F));
+        }
+    }
+    return text;
+}
+
+std::string HtmlText(std::string_view text) {
+    std::string out;
+    for (const char c : text) {
+        switch (c) {
+        case '&':
+            out += "&amp;";
+            break;
+        case '<':
+            out += "&lt;";
+            break;
+        case '>':
+            out += "&gt;";
+            break;
+        default:
+            out += c;
+        }
+    }
+    return out;
+}
+
+std::optional<std::string> NameplateNameLine(const PartyPanel& panel, std::string_view name) {
+    if (name.empty()) {
+        return std::nullopt;
+    }
+    for (const PanelMember& member : panel.members) {
+        if (member.name == name && !member.shown.empty()) {
+            return HtmlText(member.shown);
+        }
+    }
+    return std::nullopt;
+}
+
 bool PanelHasDowned(const PartyPanel& panel) {
     return std::ranges::any_of(
         panel.members, [](const PanelMember& member) { return member.vital == Vital::Down; });
@@ -4444,9 +4519,11 @@ std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& pan
         entry.visible = true;
         // No role line: the icon says the state; the name goes on white after the tag's update
         // (name_line), since the game's own name text took html badly (rig 2026-10-12: a hang).
-        entry.name = member.name.empty() ? member.member : member.name;
+        entry.name = !member.shown.empty() ? member.shown
+                     : member.name.empty() ? member.member
+                                           : member.name;
         entry.member = member.member;
-        entry.name_line = RoleLine("ece8df", entry.name);
+        entry.name_line = RoleLine("ece8df", HtmlText(entry.name));
         entry.max = std::max(member.max, 1);
         entry.hp = std::clamp(member.hp, 0, entry.max);
         entry.icon = PartyListIconHunter;

@@ -127,11 +127,29 @@ TeamLobby::Outcome TeamLobby::Arrive(const std::string& member, const std::strin
                                      bool playing) {
     const bool arrived = !players.contains(member);
     Player& player = players[member];
-    const bool changed = arrived || player.name != name || player.playing != playing;
+    // Phase 11: the character's name, when the game says one (playing); else the last one said.
+    std::string& known = names[member];
+    if (!name.empty()) {
+        known = name;
+    } else if (known.empty()) {
+        known = "Hunter";
+    }
+    const bool changed = arrived || player.name != known || player.playing != playing;
     const bool was_playing = player.playing;
-    player.name = name;
+    player.name = known;
     player.playing = playing;
-    names[member] = name;
+    for (bbcoop::Team& team : teams) {
+        if (bbcoop::TeamMember* m = MemberIn(team, member)) {
+            m->set_name(known);
+        }
+    }
+    for (auto& [to, list] : invites) {
+        for (bbcoop::TeamInvite& invite : list) {
+            if (invite.from() == member) {
+                invite.set_from_name(known);
+            }
+        }
+    }
     if (was_playing && !playing) {
         // Back at the title: not ready any more (its game loads nothing now).
         for (bbcoop::Team& team : teams) {

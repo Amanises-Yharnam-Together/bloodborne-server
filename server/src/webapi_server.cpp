@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "bloodborne_reports.h"
 #include "webapi_server.h"
 
 #include <QDebug>
@@ -67,6 +68,8 @@ void WebApiServer::RegisterRoutes() {
     WebApiRoutes::RegisterPresenceRoutes(*m_http, *m_db, *m_shared);
     WebApiRoutes::RegisterSessionRoutes(*m_http, *m_db, *m_shared);
     WebApiRoutes::RegisterBloodborneRoutes(*m_http, m_config->IsBloodborneSeamlessCoopEnabled());
+    // Phase 11: crash dumps and logs the players' launchers send after a crash.
+    RegisterReportRoutes(*m_http, *m_db, QStringLiteral("reports"));
 
     m_http->setMissingHandler(
         this, [](const QHttpServerRequest& req, QHttpServerResponder& responder) {

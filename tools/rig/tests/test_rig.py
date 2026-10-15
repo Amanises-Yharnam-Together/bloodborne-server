@@ -302,9 +302,17 @@ class EdgeTest(unittest.TestCase):
         self.assertEqual(compiled["stage_saves"], {"guest": {1: "new-character"}},
                          "only the first restart puts other saves in")
 
+    def test_shadnet_restarts_mid_session_in_the_edges_suite(self):
+        # Phase 11: shadNet stops and starts again while two games play on (a host's PC hiccup):
+        # the session holds, and the games sign in again by themselves.
+        edges = suites.SUITE_SCENARIOS["edges"]
+        self.assertEqual(edges["server_restarts"], ["restart-go"])
+        chapter = next(c for c in edges["chapters"] if c["name"] == "server-restart")
+        self.assertIn("host", chapter["forbid"])
+
     def test_an_outage_starts_at_a_sync_of_its_chapter(self):
         for name, scenario in suites.SUITE_SCENARIOS.items():
-            for sync in scenario["outages"]:
+            for sync in [*scenario["outages"], *scenario["server_restarts"]]:
                 with self.subTest(suite=name, sync=sync):
                     self.assertIn(sync, scenario["syncs"])
             for role, saves in scenario["stage_saves"].items():

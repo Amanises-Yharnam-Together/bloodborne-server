@@ -3008,6 +3008,9 @@ class Launcher:
             self.messagebox.showerror('Bloodborne', failed)
             return
         log_path = bbport_coop.rotate_logs(PORT_DIR)
+        # Phase 11: a crash's dump and logs go to the host's server by themselves, alongside.
+        threading.Thread(target=bbport_coop.send_reports, args=(PORT_DIR, dict(settings)),
+                         daemon=True).start()
         env = bbport_coop.game_environment(game_environment(self.app), settings, PORT_DIR, root)
         self.set_log('')
         if note:

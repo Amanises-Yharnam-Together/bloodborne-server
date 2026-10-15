@@ -200,6 +200,35 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(json.loads(coop.host_overrides('26.1.2.3')),
                          {'https://ss4.scej-network.jp:20443': 'http://26.1.2.3:20443'})
 
+    def test_a_crash_goes_to_the_host_with_its_logs(self):
+        # Phase 11: after a crash, the next PLAY sends the dump and the crashed run's logs (the
+        # .prev ones, which the start just made) to the host's server, once each.
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder)
+            for name in ('shad_log.prev.txt', 'console.prev.txt', 'shad_log.txt'):
+                (log / name).write_text('log', encoding='utf-8')
+            self.assertEqual(coop.reports_to_send(log), [], 'no crash: nothing')
+            (log / 'crash-20261015-174001.dmp').write_bytes(b'MDMP')
+            self.assertEqual([path.name for path in coop.reports_to_send(log)],
+                             ['crash-20261015-174001.dmp', 'console.prev.txt', 'shad_log.prev.txt'])
+            coop.note_reports_sent(log, coop.reports_to_send(log))
+            self.assertEqual(coop.reports_to_send(log), [], 'sent once')
+            (log / 'crash-20261016-090000.dmp').write_bytes(b'MDMP')
+            self.assertEqual([path.name for path in coop.reports_to_send(log)][0], 'crash-20261016-090000.dmp')
+        request = coop.report_request('26.1.2.3', Path('crash-1.dmp'), b'MDMP', 'p0123', 'secret')
+        self.assertEqual(request.full_url, 'http://26.1.2.3:31315/bb/report/crash-1.dmp')
+        self.assertEqual((request.get_header('X-player'), request.get_header('X-secret')), ('p0123', 'secret'))
+        self.assertEqual(request.get_method(), 'POST')
+
+    def test_the_server_runs_under_its_watchdog(self):
+        # Phase 11: shadnet --watchdog keeps the co-op server running (it starts it again after a
+        # crash or a hang); stopping stops the watchdog first, so it starts nothing again.
+        install = Path('C:/Co-op')
+        self.assertEqual(coop.server_command(install), [str(install / 'server' / 'shadnet.exe'), '--watchdog'])
+        found = [(11, 'shadnet.exe', 'shadnet.exe --beat'), (12, 'python.exe', 'bb_dummy_server.py'),
+                 (10, 'shadnet.exe', 'shadnet.exe --watchdog')]
+        self.assertEqual([pid for pid, _name, _command in coop.stop_order(found)], [10, 11, 12])
+
     def test_nothing_registers_the_account(self):
         # Phase 11: the host's server makes a player's account at its first sign-in.
         self.assertFalse(hasattr(coop, 'register'))

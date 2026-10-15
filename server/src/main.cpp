@@ -8,6 +8,7 @@
 #include "bloodborne_backend_server.h"
 #include "config.h"
 #include "server.h"
+#include "watchdog.h"
 #include "webapi_server.h"
 
 const QString versionString = QStringLiteral("0.0.13");
@@ -28,6 +29,16 @@ int main(int argc, char* argv[]) {
     // Set working directory to executable location (SHADNET_HOME: another folder, for tests)
     const QString home = qEnvironmentVariable("SHADNET_HOME");
     QDir::setCurrent(home.isEmpty() ? QCoreApplication::applicationDirPath() : home);
+
+    // Phase 11: `--watchdog` keeps shadNet running as its child (watchdog.h); the child beats.
+    QStringList arguments = app.arguments().mid(1);
+    if (arguments.removeAll(QStringLiteral("--watchdog")) > 0) {
+        return RunWatchdog(QCoreApplication::applicationFilePath(),
+                           arguments << QStringLiteral("--beat"));
+    }
+    if (arguments.contains(QStringLiteral("--beat"))) {
+        StartWatchdogBeat(&app);
+    }
 
     qInfo() << "ShadNet Qt server version" << versionString;
 
