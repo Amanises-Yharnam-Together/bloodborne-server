@@ -10,6 +10,7 @@
 #include "core/bloodborne_re_internal.h"
 #include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
+#include "core/libraries/network/server_link.h"
 
 #include <algorithm>
 #include <array>
@@ -1033,6 +1034,15 @@ bool AutoplayKeys(const AutoplayStep& step) {
     return WriteAutoplayMenuKeys(step.command.args, step.failure);
 }
 
+// cut-link <seconds>: this game's connection drops for that long (phase 7: a Wi-Fi blip), then
+// comes back on the same socket; the session should ride it out.
+bool AutoplayCutLink(const AutoplayStep& step) {
+    const double seconds = step.Number(0, 3.0);
+    Libraries::Net::CutServerLinkForTest(static_cast<u32>(seconds * 1000.0));
+    LOG_INFO(Debug, "Bloodborne autoplay: connection cut for {:.0f} s", seconds);
+    return true;
+}
+
 bool AutoplayLog(const AutoplayStep& step) {
     std::string text;
     for (const std::string& word : step.command.args) {
@@ -1508,6 +1518,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"trade-answer", AutoplayTradeAnswer},
     {"expect-held", AutoplayExpectHeld},
     {"wait-trade", AutoplayWaitTrade},
+    {"cut-link", AutoplayCutLink},
 });
 
 // Runs one script command for this tick: true once it is done, `failure` set if it failed.

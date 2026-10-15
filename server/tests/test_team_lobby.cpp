@@ -229,6 +229,48 @@ int StoreKeepsTeams() {
   return 0;
 }
 
+// Phase 7: the server gives each guest its player slot (the sign it joins
+// with: 7, 6, 5), and a guest keeps it while others come and go.
+uint32_t SignOf(const TeamLobby &lobby, const std::string &member) {
+  for (const bbcoop::TeamMember &m : lobby.TeamOf(member)->members()) {
+    if (m.member() == member) {
+      return m.sign();
+    }
+  }
+  return 99;
+}
+
+int GuestsKeepTheirPlayerSlots() {
+  TeamLobby lobby = NewLobby();
+  for (const char *m : {"a", "b", "c", "d", "e"}) {
+    lobby.Arrive(m, m, false);
+  }
+  lobby.Request("a", Request(Action::CREATE));
+  const std::string team = lobby.TeamOf("a")->id();
+  for (const char *m : {"b", "c", "d"}) {
+    lobby.Request("a", Request(Action::INVITE, m));
+    lobby.Request(m, Request(Action::ACCEPT, {}, team));
+  }
+  CHECK(SignOf(lobby, "a") == 0); // the leader hosts: no sign
+  CHECK(SignOf(lobby, "b") == 7 && SignOf(lobby, "c") == 6 &&
+        SignOf(lobby, "d") == 5);
+  // c leaves: b and d keep theirs, and e takes the free one.
+  lobby.Request("c", Request(Action::LEAVE));
+  CHECK(SignOf(lobby, "b") == 7 && SignOf(lobby, "d") == 5);
+  lobby.Request("a", Request(Action::INVITE, "e"));
+  lobby.Request("e", Request(Action::ACCEPT, {}, team));
+  CHECK(SignOf(lobby, "e") == 6);
+  // The leader leaves: the new one hosts, the others keep theirs.
+  lobby.Request("a", Request(Action::LEAVE));
+  CHECK(lobby.TeamOf("b")->leader() == "b" && SignOf(lobby, "b") == 0);
+  CHECK(SignOf(lobby, "d") == 5 && SignOf(lobby, "e") == 6);
+  // Kept through a restart of the server.
+  TeamLobby restored = NewLobby();
+  restored.Restore(lobby.Store());
+  CHECK(SignOf(restored, "d") == 5 && SignOf(restored, "e") == 6);
+  return 0;
+}
+
 } // namespace
 
 int main() {
@@ -239,6 +281,7 @@ int main() {
   failed |= StartedTeamKeepsGoingWhileOnePlays();
   failed |= LeaveAndRemove();
   failed |= StoreKeepsTeams();
+  failed |= GuestsKeepTheirPlayerSlots();
   if (failed == 0) {
     std::cout << "team lobby: all checks passed\n";
   }

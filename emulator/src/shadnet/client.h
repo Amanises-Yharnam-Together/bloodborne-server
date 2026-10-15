@@ -235,6 +235,7 @@ struct NotifyRoomEvent {
     std::vector<MatchingBinAttr> member_bin_attrs;
 
     std::vector<MatchingBinAttr> bin_attrs;
+    u32 prev_owner_id = 0; // ROOM_OWNER_CHANGED (phase 7)
 };
 
 struct NotifyRoomMessage {

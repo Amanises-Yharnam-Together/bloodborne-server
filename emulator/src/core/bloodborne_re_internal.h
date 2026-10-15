@@ -312,6 +312,9 @@ std::optional<std::chrono::steady_clock::time_point> LastSummonSearchPost();
 bool EventFlagOn(s32 flag);
 void LogBloodstainStateChanges();
 bool InPartySession();
+// The members of this game's session, itself counted (SprjSessionManager +0xF8..+0x100); 1
+// out of one (phase 7).
+size_t SessionMembers();
 // In the session and in its world (see SessionArrival): a summoned guest only once it arrived.
 // Party death counts and posts this member as in the party only then.
 bool InSessionWorld();
@@ -762,6 +765,10 @@ void TickTeamWorld(s64 now_ms);
 // The lobby as the server last sent it, for the game's menu (none before its answer), and this
 // player's lobby name; a request from the menu.
 std::optional<bbcoop::LobbyState> TeamLobbyState();
+// Phase 7: where the server says this member last stood in its team's world (once per run).
+std::optional<ResumePoint> TakeServerResumePoint();
+// A new character in the slot: the server's point (the old character's) does not count this run.
+void RefuseServerResumePoint();
 std::string TeamLobbyMember();
 void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id);
 // This member's part of each board (bloodborne_boards.cpp's rounds send them).

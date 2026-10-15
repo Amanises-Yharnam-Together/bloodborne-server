@@ -90,6 +90,8 @@ public:
     Result Tick(qint64 now_ms);
     // A link went (its game is gone).
     void Forget(const ServerLink::Endpoint& link);
+    // The party a link's game said in its hello, empty before one (phase 7: the hub's teams).
+    QString PartyOf(const ServerLink::Endpoint& link) const;
 
     // The team lobby (phase 5), for the tests and the log.
     const BloodborneCoop::TeamLobby& Lobby() const {
@@ -124,6 +126,13 @@ private:
         std::optional<bbcoop::TeamSession> session;
         // Each member's load (the team loading screen), by member name.
         std::map<std::string, bbcoop::LoadProgress> loads;
+        // Phase 7: where each member last stood (its last vitals up, by member name), for its
+        // next run to resume there.
+        struct Place {
+            bbcoop::ResumeAt at;
+            std::string character; // whose (CharacterOf): another character resumes nowhere
+        };
+        std::map<std::string, Place> places;
         u32 session_run = 0; // the host game's run that opened it
         // Phase 4: who runs each area's enemies, and what was logged of it.
         EnemyOwners owners;
@@ -170,6 +179,10 @@ private:
     void SendBoards(PartyWorld& world, unsigned changed, qint64 now_ms, Member* only = nullptr);
     // The enemy owners to the party (or `only`), logged when they changed.
     // The host's session closed (its game gone or started again): the others hear it.
+    // Whether the member hosting the party's open session is linked (phase 7).
+    bool SessionHostLinked(const PartyWorld& world) const;
+    // The character a member readied in its team (save slot and name), empty when none.
+    std::string CharacterOf(const std::string& member) const;
     void CloseSession(PartyWorld& world, qint64 now_ms, Result& result);
     void SendOwners(PartyWorld& world, qint64 now_ms, Result& result, Member* only = nullptr);
     // Whether `member` may decide the enemies of `map` (phase 4): a game without the owners, or

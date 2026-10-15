@@ -15,6 +15,7 @@
 #include "core/libraries/kernel/process.h"
 #include "core/libraries/network/net.h"
 #include "core/libraries/network/net_util.h"
+#include "core/libraries/network/server_link.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_signaling/np_signaling_reuse.h"
 #include "core/libraries/np/np_signaling/np_signaling_state.h"
@@ -949,7 +950,10 @@ void ProcessPendingActivations() {
                      act.conn_id, act.peer_online_id, peer_addr, sceNetNtohs(peer_port),
                      act.start_handshake ? "" : " (existing connection)");
         }
-        if (act.start_handshake) {
+        if (Net::ConnectsPeersWithoutHandshake()) {
+            // Phase 7: the server's room member, reached through it: connected now.
+            EstablishConnection(act.conn_id, false);
+        } else if (act.start_handshake) {
             StartHandshakeInitiator(act.conn_id);
         } else if (already_established) {
             EstablishConnection(act.conn_id, false);
@@ -1323,7 +1327,7 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& p
 }
 
 void SendStunPing(s32 ctx_id) {
-    if (!Stubs::Matching2Enabled()) {
+    if (!Stubs::Matching2Enabled() || !Net::PingsServerStun()) {
         return;
     }
 

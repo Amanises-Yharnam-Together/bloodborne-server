@@ -27,7 +27,14 @@ bool TeamCanBegin(const bbcoop::LobbyState& lobby, const std::string& me);
 
 // Kaniel 2026-10-15: the player slot a guest joins the host's session with (GameMan +0x16F4), its
 // own in the team: 7 for the first guest (the summon sign's), 6 for the second, 5 for the third.
-u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me);
+// Phase 7: a member with no slot of its own (the leader) joining another member's session (that
+// member hosts it now, host migration) takes the slot the session's host left.
+u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me,
+                  const std::string& session_host = {});
+
+// Phase 7: what the team screen says when the server refused this game's link (another build),
+// from the server's reason; empty when it did not.
+std::string LinkRefusalNotice(std::string_view refusal);
 
 // The members the team loading screen shows (member, name), the leader first: this game and those
 // coming (ready, not offline); not one gone or staying at the title (Kaniel 2026-10-15).
@@ -107,17 +114,26 @@ WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& world);
 // stands alone in its world. TeamJoin says each frame what this game does.
 class TeamJoin {
 public:
-    enum class Action { None, CreateSession, Publish, PublishClosed, Join };
+    // TakeHost (phase 7): the server passed the room to this guest; it hosts the session now.
+    // LeaveAlone (phase 7): a guest alone in its session for AloneLeaveMs leaves it.
+    enum class Action { None, CreateSession, Publish, PublishClosed, Join, TakeHost, LeaveAlone };
+    static constexpr s64 AloneLeaveMs = 5'000;
     struct Frame {
         bool host = false;
         s32 matching_state = 0; // the session manager's +0x124: 0 alone, 3 hosting, 6 a guest
         bool ready = false;     // the party controller's go (in the world, settled, retry spaced)
-        bool session_known = false; // a guest: the server sent its host's open session
+        bool session_known = false;   // a guest: the server sent its host's open session
+        bool room_owner = false;      // the server passed the session's room to this game
+        bool room_has_others = false; // another member is in that room (not the one who left)
+        size_t session_members = 2;   // the game's session, this game counted
+        bool standing = true;         // the player is up (not down or dead)
+        s64 now_ms = 0;
     };
     Action Tick(const Frame& frame);
 
 private:
-    bool published = false; // the host said its open session
+    bool published = false;         // the host said its open session
+    std::optional<s64> alone_since; // a guest alone in its session since
 };
 
 // Kaniel 2026-10-14: the bell items are out of the port's game (the team joins without them):

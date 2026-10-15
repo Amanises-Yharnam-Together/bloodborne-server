@@ -96,6 +96,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"party list in the HUD", false},
     {"sign timers", true},
     {"summon slot hold", false},
+    {"server owns leaves", true},
 });
 
 inline constexpr auto CoopSites = std::to_array<CoopSite>({
@@ -481,6 +482,19 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "C5 F8 2E 05 77 50 0B 03", "C5 F8 2E 05 E3 4E 0B 03"},
     {"summon slot hold 2", "summon slot hold", CoopSiteKind::Patch, 0x018729ED,
      "C5 F8 2E 05 67 50 0B 03", "C5 F8 2E 05 CF 4E 0B 03"},
+
+    // Phase 7: only the server ends a session (InstallServerOwnsLeaves). The game's own reasons,
+    // each followed by its Lua event and MultiPlayStopRequest, take the stay branch: NetSync's
+    // update (0x01789B60) with SprjSessionManager's idle timer +0x2E0 past its limit +0x2F0
+    // (`jbe` -> `jmp`), and more than 1000 bytes in its resend queue (`jb` -> `jmp`); the room
+    // time-out ("OnRoomTimeOut", `jbe` -> `jmp`). Not the session layer's reason 3 to NetSync
+    // (0x0178F9A0, "OnIrregularLeaveSession" when a member's connection goes): skipping it left a
+    // host whose guest went unable to pick anything up (rig crashes/leave).
+    {"session idle timeout", "server owns leaves", CoopSiteKind::Patch, 0x01789C5D, "76 78",
+     "EB 78"},
+    {"session resend overflow", "server owns leaves", CoopSiteKind::Patch, 0x017897B2,
+     "0F 82 B8 00 00 00", "E9 B9 00 00 00 90"},
+    {"room timeout", "server owns leaves", CoopSiteKind::Patch, 0x01789F41, "76 79", "EB 79"},
 });
 
 } // namespace Core::Bloodborne

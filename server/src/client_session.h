@@ -276,6 +276,7 @@ private:
     void DoLeaveRoom(uint64_t roomId);
     void CleanupMatchingOnDisconnect();
     void ResetMatchingRoomState(uint64_t roomId);
+    void SendRoomOwnerChanged(uint64_t roomId, uint16_t previousOwner, const RoomMember& newOwner);
     void GetSelfSignalingAddr(QString& addr, uint16_t& port) const;
 
     QTcpSocket* m_socket;

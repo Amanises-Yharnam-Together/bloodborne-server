@@ -92,6 +92,7 @@ struct RoomCache {
 };
 
 struct CallbackPayload {
+    std::unique_ptr<OrbisNpMatching2RoomOwnerUpdate> room_owner_update;
     std::unique_ptr<OrbisNpMatching2RoomDataInternal> room_data;
     std::unique_ptr<OrbisNpMatching2CreateJoinRoomResponse> create_join_response;
     std::unique_ptr<OrbisNpMatching2CreateJoinRoomResponseA> create_join_response_a;
@@ -238,6 +239,7 @@ struct ContextObject {
     OrbisNpMatching2RoomId room_id = 0;
     OrbisNpMatching2RoomMemberId my_member_id = 0;
     bool is_room_owner = false;
+    OrbisNpMatching2RoomMemberId previous_owner = 0; // ROOM_OWNER_CHANGED's: on its way out
     u32 max_slot = 5;
     OrbisNpMatching2Flags flag_attr = 0;
 

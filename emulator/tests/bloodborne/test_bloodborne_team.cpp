@@ -242,6 +242,58 @@ TEST(TeamJoin, AGuestJoinsTheHostsSessionWhenReadyAndAlone) {
     EXPECT_EQ(join.Tick(GuestFrame(MatchingStateHosting, true, true)), TeamJoin::Action::None);
 }
 
+// Phase 7: only the server ends a session, so a guest whose host's game died is left in a session
+// of one. After a few seconds alone it leaves it (the room says the others went), so it can join
+// the session its host opens again (rig crashes/host-crash: it waited in the old one forever).
+TEST(TeamJoin, AGuestAloneInItsSessionLeavesIt) {
+    TeamJoin join;
+    TeamJoin::Frame frame = GuestFrame(MatchingStateSummonedGuest, true, false);
+    frame.session_members = 2;
+    frame.now_ms = 1'000;
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::None);
+    frame.session_members = 1;
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::None);
+    frame.now_ms = 1'000 + TeamJoin::AloneLeaveMs - 1;
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::None);
+    frame.now_ms = 1'000 + TeamJoin::AloneLeaveMs;
+    // Down or dead, it waits: its death and respawn run in the session (rig party-death: leaving
+    // mid-death left it dead for good).
+    frame.standing = false;
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::None);
+    frame.standing = true;
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::LeaveAlone);
+    // A host alone keeps its session open for its members.
+    TeamJoin host;
+    TeamJoin::Frame hosting = HostFrame(MatchingStateHosting, true);
+    hosting.session_members = 1;
+    hosting.now_ms = 1'000'000;
+    EXPECT_EQ(host.Tick(hosting), TeamJoin::Action::Publish);
+    hosting.now_ms += 60'000;
+    EXPECT_EQ(host.Tick(hosting), TeamJoin::Action::None);
+}
+
+// Phase 7, host migration: the server passed the room to this guest (its host's game went): it
+// takes the session host's role in place, once, and then says its session like any host.
+TEST(TeamJoin, AGuestGivenTheRoomTakesTheHostsRole) {
+    TeamJoin join;
+    TeamJoin::Frame frame = GuestFrame(MatchingStateSummonedGuest, true, true);
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::None);
+    frame.room_owner = true;
+    // Alone in the room (a party of two): it stays a guest and runs its map alone; the host's
+    // next run hosts again and it joins that (rig crashes/host-crash, 2026-10-15: taking over
+    // there made the returning host a guest, whose game crashed at eboot+0x13cffba).
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::None);
+    frame.room_has_others = true;
+    EXPECT_EQ(join.Tick(frame), TeamJoin::Action::TakeHost);
+    // Hosting now (the role and the state moved): it says its session.
+    EXPECT_EQ(join.Tick(HostFrame(MatchingStateHosting, true)), TeamJoin::Action::Publish);
+    // Not in a session, or not a guest's: nothing to take.
+    TeamJoin alone;
+    TeamJoin::Frame out = GuestFrame(0, true, false);
+    out.room_owner = true;
+    EXPECT_EQ(alone.Tick(out), TeamJoin::Action::None);
+}
+
 // tool that heals, 2050).
 TEST(BellItems, TheCoopBellsAndNothingElse) {
     for (const u32 bell : {200u, 205u, 225u, 4312u}) {
@@ -381,6 +433,28 @@ TEST(TeamGate, EachGuestJoinsWithItsOwnPlayerSlot) {
     EXPECT_EQ(TeamGuestSign(bbcoop::LobbyState{}, "b"), 7u);
 }
 
+// Phase 7: the server says each guest's slot (TeamMember.sign), kept while others come and go:
+// b keeps 7 after c (6) left, and d keeps 5, whatever their order in the list.
+TEST(TeamGate, TheServerSaysEachGuestsPlayerSlot) {
+    bbcoop::LobbyState lobby = InTeam("a");
+    const auto add = [&](const char* member, u32 sign) {
+        bbcoop::TeamMember& m = *lobby.mutable_team()->add_members();
+        m.set_member(member);
+        m.set_sign(sign);
+    };
+    add("a", 0);
+    add("d", 5);
+    add("b", 7);
+    EXPECT_EQ(TeamGuestSign(lobby, "d"), 5u);
+    EXPECT_EQ(TeamGuestSign(lobby, "b"), 7u);
+    // Phase 7, host migration: b hosts the session now (its game took over); the leader, back,
+    // joins as a guest on the slot b left (rig 2026-10-15: on 7 too, the two games took each
+    // other's place and the leader's game left the session).
+    EXPECT_EQ(TeamGuestSign(lobby, "a", "b"), 7u);
+    EXPECT_EQ(TeamGuestSign(lobby, "a", "d"), 5u);
+    EXPECT_EQ(TeamGuestSign(lobby, "d", "b"), 5u);
+}
+
 // Kaniel 2026-10-15: Lisara back in after a drop still had the loading bars on top: they waited
 // for a member that had gone (offline) or stayed at the title. The screen shows the members coming.
 TEST(TeamLoad, ShowsOnlyTheMembersComing) {
@@ -407,3 +481,14 @@ TEST(TeamLoad, ShowsOnlyTheMembersComing) {
 }
 
 } // namespace
+
+// Phase 7: a game the server refuses (another build) says why on the team screen.
+TEST(TeamLobby, ARefusedLinkIsShownOnTheTeamScreen) {
+    EXPECT_EQ(LinkRefusalNotice(""), "");
+    // The screen has one short line (bbcoop_lobby::notice): the reason, not the builds.
+    const std::string notice = LinkRefusalNotice(
+        "another build: everyone needs the same release (this game runs b, the others run a)");
+    EXPECT_EQ(notice, "The co-op server refused this game: another build: everyone needs the same "
+                      "release");
+    EXPECT_LT(notice.size(), 96u);
+}

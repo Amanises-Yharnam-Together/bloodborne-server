@@ -62,6 +62,9 @@ private:
     bbcoop::TeamMember* MemberIn(bbcoop::Team& team, const std::string& member);
     bbcoop::LobbyPlayer::State StateOf(const std::string& member) const;
     void RemoveFrom(bbcoop::Team& team, const std::string& member);
+    // Phase 7: the leader's sign is 0 (it hosts); a guest keeps its own, one without takes the
+    // first free of 7, 6, 5.
+    static void GiveSigns(bbcoop::Team& team);
     // A started team nobody plays in any more is not started.
     void Settle();
 

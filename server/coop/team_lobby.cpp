@@ -4,6 +4,8 @@
 #include "coop/team_lobby.h"
 
 #include <algorithm>
+#include <array>
+#include <vector>
 
 namespace BloodborneCoop {
 
@@ -70,11 +72,38 @@ void TeamLobby::RemoveFrom(bbcoop::Team& team, const std::string& member) {
     if (team.leader() == member && !members->empty()) {
         team.set_leader(members->begin()->member());
     }
+    GiveSigns(team);
     if (members->empty()) {
         const std::string id = team.id();
         std::erase_if(teams, [&](const bbcoop::Team& t) { return t.id() == id; });
         for (auto& [to, list] : invites) {
             std::erase_if(list, [&](const bbcoop::TeamInvite& i) { return i.team() == id; });
+        }
+    }
+}
+
+void TeamLobby::GiveSigns(bbcoop::Team& team) {
+    constexpr std::array<u32, 3> GuestSigns{7, 6, 5};
+    std::vector<u32> taken;
+    for (bbcoop::TeamMember& m : *team.mutable_members()) {
+        const bool guest_sign = std::ranges::find(GuestSigns, m.sign()) != GuestSigns.end();
+        if (m.member() == team.leader() || !guest_sign ||
+            std::ranges::find(taken, m.sign()) != taken.end()) {
+            m.set_sign(0);
+        } else {
+            taken.push_back(m.sign());
+        }
+    }
+    for (bbcoop::TeamMember& m : *team.mutable_members()) {
+        if (m.member() == team.leader() || m.sign() != 0) {
+            continue;
+        }
+        for (const u32 sign : GuestSigns) {
+            if (std::ranges::find(taken, sign) == taken.end()) {
+                m.set_sign(sign);
+                taken.push_back(sign);
+                break;
+            }
         }
     }
 }
@@ -203,6 +232,7 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
         bbcoop::TeamMember& m = *team->add_members();
         m.set_member(member);
         m.set_name(names[member]);
+        GiveSigns(*team);
         return {.changed = true};
     }
     case Action::LEAVE:
@@ -335,6 +365,7 @@ bbcoop::StoredTeams TeamLobby::Store() const {
             kept.set_name(m.name());
             kept.set_slot(m.slot());
             kept.set_character(m.character());
+            kept.set_sign(m.sign());
         }
     }
     for (const auto& [to, list] : invites) {
@@ -353,10 +384,11 @@ void TeamLobby::Restore(const bbcoop::StoredTeams& stored) {
     for (const bbcoop::StoredInvite& invite : stored.invites()) {
         invites[invite.to()].push_back(invite.invite());
     }
-    for (const bbcoop::Team& team : teams) {
+    for (bbcoop::Team& team : teams) {
         for (const bbcoop::TeamMember& m : team.members()) {
             names[m.member()] = m.name();
         }
+        GiveSigns(team); // teams stored before the signs
     }
 }
 

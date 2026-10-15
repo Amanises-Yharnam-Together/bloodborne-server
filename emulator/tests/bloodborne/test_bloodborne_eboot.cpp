@@ -507,3 +507,42 @@ TEST_F(BloodborneEboot, TheSummonSlotHoldsReadTheGamesTimes) {
     EXPECT_EQ(holds, (std::vector<float>{55.0f, 180.0f}));
     EXPECT_EQ(float_at(PartySummonSlotHoldConstant), PartySummonSlotHoldSeconds);
 }
+
+// Phase 7 (feature "server owns leaves"): each patched branch jumps where the game's own branch
+// went when it stays in the session, past a block that ends it (its MultiPlayStopRequest call).
+TEST_F(BloodborneEboot, TheGamesOwnLeavesAreSkippedForItsStayPath) {
+    const auto branch_target = [](u64 offset, const std::vector<u8>& bytes) -> u64 {
+        if (bytes.size() >= 2 && (bytes[0] == 0xEB || (bytes[0] >= 0x70 && bytes[0] <= 0x7F))) {
+            return offset + 2 + static_cast<s8>(bytes[1]);
+        }
+        s32 rel = 0;
+        if (bytes.size() >= 6 && bytes[0] == 0x0F && (bytes[1] & 0xF0) == 0x80) {
+            std::memcpy(&rel, bytes.data() + 2, 4);
+            return offset + 6 + rel;
+        }
+        if (bytes.size() >= 5 && bytes[0] == 0xE9) {
+            std::memcpy(&rel, bytes.data() + 1, 4);
+            return offset + 5 + rel;
+        }
+        return 0;
+    };
+    const std::vector<std::pair<std::string_view, u64>> leaves{
+        {"session idle timeout", 0x01789CB4},
+        {"session resend overflow", 0x0178980D},
+        {"room timeout", 0x01789F99},
+    };
+    for (const auto& [name, stop_call] : leaves) {
+        const auto site = std::ranges::find(CoopSites, name, &CoopSite::name);
+        ASSERT_NE(site, CoopSites.end()) << name;
+        const u64 jump = branch_target(site->offset, HexBytes(site->patched));
+        EXPECT_EQ(CallTarget(stop_call), MultiPlayStopRequest) << name;
+        EXPECT_GT(stop_call, site->offset) << name;
+        EXPECT_GT(jump, stop_call) << name; // the block that stops is jumped over
+        if (name != "irregular leave event") {
+            EXPECT_EQ(jump, branch_target(site->offset, HexBytes(site->original))) << name;
+        } else {
+            // NetSync's reason callback returns there: pop rbx; pop r14; pop rbp; ret.
+            EXPECT_EQ(Bytes(jump, 5), (std::vector<u8>{0x5B, 0x41, 0x5E, 0x5D, 0xC3}));
+        }
+    }
+}

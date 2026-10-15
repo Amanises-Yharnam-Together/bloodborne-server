@@ -821,6 +821,17 @@ SUITES = {
                     {role: ["sync outage-go", "wait 30", "wait-members 2 120",
                             "wait-member-vital up 60", "expect-session 2"] for role in PARTY2},
                     outages={"outage-go": 20}),
+            chapter("link-cut", "phase 7: the guest's connection drops for 3 s, then for 10 s "
+                                "(a Wi-Fi blip): both ride it out in the same session, no "
+                                "crash and no rejoin, and see each other again",
+                    {"host": ["sync cut-go", "sync cut-short", "sync cut-long",
+                              "wait-members 2 60", "wait-member-vital up 60", "expect-session 2",
+                              "expect-others-near 1 30"],
+                     "guest": ["sync cut-go", "cut-link 3", "wait 8", "expect-session 2",
+                               "sync cut-short", "cut-link 10", "wait 15", "sync cut-long",
+                               "wait-members 2 60", "wait-member-vital up 60",
+                               "expect-session 2", "expect-others-near 1 30"]},
+                    forbid=holds(PARTY2)),
             chapter("cutscene", "Father Gascoigne dies in the host's world with the guest there: "
                                 "his death's time-of-day cutscene reloads the host's world (a "
                                 "trip), and both are back together after it. Whether this kill "
@@ -1068,7 +1079,10 @@ SUITES = {
                                   "Central Yharnam; the guest joins where it is (no kick)",
                     {"host": ["sync ja-restarted", "sync ja-joined", "wait 20",
                               "expect-session 2", f"expect-map {CATHEDRAL_WARD}"],
-                     "guest": [RESTART, START, "godmode", "sync ja-restarted",
+                     # Phase 7: a restarted guest comes back where it last stood in the team's
+                     # world (the server's point), so it goes to Central Yharnam first.
+                     "guest": [f"travel {CENTRAL_YHARNAM_LAMP}", "wait 12", RESTART, START,
+                               "godmode", "sync ja-restarted",
                                "wait-session 2 420", "sync ja-joined", "wait 20",
                                "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"]},
                     allow=CRASH_CLEANUP),
@@ -1212,6 +1226,8 @@ SUITES = {
                             "guest2": [r"party death: ((real )?revive hit on|revive swing at)"]},
                     forbid={"host": SESSION_HOLDS + [r"party death: (real )?revive hit on"],
                             "guest": SESSION_HOLDS, "guest2": SESSION_HOLDS}),
+            # Before crash3: after a guest's restart its lethal fall is a real death (smoke's wipe).
+            wipe(PARTY3),
             chapter("crash3", "one guest's game dies; host and the other guest stay together and "
                               "both still pick up items, and the party is three again once it is "
                               "back",
@@ -1224,10 +1240,36 @@ SUITES = {
                               "expect-session 3"],
                      "guest": ["sync c3-ready", "sync c3-host-picked", "pickup 20", "wait 3",
                                "sync c3-back", "wait 10", "expect-session 3"]},
-                    expect={role: [r"lost a member; staying where it is"]
-                            for role in ("host", "guest")},
+                    # Phase 7: the host's game may take the member's going without its leave-limit
+                    # flow (its idle time-out is off); its pickup above is the check there.
+                    expect={"guest": [r"lost a member; staying where it is"]},
                     allow=CRASH_CLEANUP),
-            wipe(PARTY3),
+            # The host's game goes for good in this chapter, back in the next.
+            chapter("host-crash3", "phase 7, host migration: the host's game dies; the two guests "
+                                   "stay together in their session, one of them hosting it now, "
+                                   "nobody leaving or joining again",
+                    {"host": ["sync hc3-ready", RESTART, "wait 1"],
+                     # Where each stands after crash3's restart varies (its resume): the session
+                     # is the check, not who is near.
+                     **{guest: ["sync hc3-ready", "wait 20", "expect-session 2"]
+                        for guest in ("guest", "guest2")}},
+                    expect={guest: [r"session host moved to"] for guest in ("guest", "guest2")},
+                    forbid={guest: [r"sceNpMatching2LeaveRoom: called"]
+                            for guest in ("guest", "guest2")},
+                    allow=CRASH_CLEANUP),
+            # Last: the returning host's game crashes in it (a crash ends the suite).
+            chapter("leader-returns3", "the old host's game comes back and joins the session the "
+                                       "guest hosts now, on the slot that guest left: three "
+                                       "again",
+                    {"host": [START, "godmode", "wait-session 3 300", "wait 10", "sync lr3-back",
+                              "expect-session 3"],
+                     **{guest: ["sync lr3-back", "wait 10", "expect-session 3"]
+                        for guest in ("guest", "guest2")}},
+                    known_bug="the old host's game, back as a guest, ends its own session (the "
+                              "game's Lua handlers at eboot+0x13808b0 and 0x1388680 call "
+                              "MultiPlayStopRequest) and crashes at eboot+0x13cffba (rig "
+                              "2026-10-15, phase 7)",
+                    allow=CRASH_CLEANUP),
         ],
     },
 }

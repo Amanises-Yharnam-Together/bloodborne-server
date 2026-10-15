@@ -19,6 +19,7 @@
 // counters per member).
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <QByteArray>
 #include <QHash>
@@ -52,6 +53,12 @@ struct Endpoint {
     QString Text() const;
     bool operator==(const Endpoint&) const = default;
 };
+
+// Phase 7: a game is known to the others by a virtual address made from its account, never by its
+// real one: 10.x.y.z (x.y.z from a hash of the online id) and this port, the same from whatever
+// port or address the game links from, and after a restart of the server.
+constexpr quint16 VirtualPort = 3658;
+Endpoint VirtualEndpointOf(const QByteArray& online_id);
 
 struct Hello {
     quint8 version = LinkVersion;
@@ -112,6 +119,12 @@ public:
         QStringList log;
         QList<Coop> coop;
         QList<Endpoint> gone; // links forgotten
+        // Games welcomed, with their virtual addresses (phase 7: what the rooms hand out).
+        struct Linked {
+            QByteArray online_id;
+            Endpoint virtual_endpoint;
+        };
+        QList<Linked> linked;
     };
 
     explicit Hub(qint64 quiet_ms = 3000, qint64 gone_ms = 60000, qint64 stats_ms = 10000,
@@ -121,15 +134,25 @@ public:
     // Links newly quiet (told to the others), gone (forgotten) and the counters.
     Result Tick(qint64 now_ms);
 
+    // Phase 7: each link's team (its party, empty before the game said which). Once set, a frame
+    // and a member notice go only to games of the sender's team, never to one in no team.
+    using PartyOf = std::function<QString(const Endpoint&)>;
+    void SetPartyOf(PartyOf party_of) {
+        this->party_of = std::move(party_of);
+    }
+
     int Members() const {
         return static_cast<int>(members.size());
     }
     // The build every game here runs, empty while none is linked.
     QByteArray Build() const;
+    // The virtual address of the game linked from `real`, nothing when none is.
+    std::optional<Endpoint> VirtualOf(const Endpoint& real) const;
 
 private:
     struct Link {
         Endpoint endpoint;
+        Endpoint virtual_endpoint;
         QByteArray online_id;
         QByteArray build;
         qint64 last_heard_ms = 0;
@@ -144,8 +167,10 @@ private:
     void OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_ms, Result& result);
     void OnData(Link& sender, const QByteArray& datagram, Result& result);
     void Heard(Link& link, qint64 now_ms, Result& result);
+    void Unlink(quint64 key);
     void TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result& result);
     QString Name(const Link& link) const;
+    bool SameTeam(const Endpoint& a, const Endpoint& b) const;
 
     qint64 quiet_ms;
     qint64 gone_ms;
@@ -154,8 +179,10 @@ private:
     bool stats_started = false;
     qint64 stats_at_ms = 0;
     QHash<quint64, Link> members;
+    QHash<quint64, quint64> by_virtual; // a link's virtual address -> its real one (keys)
     QHash<QPair<quint64, quint64>, quint64> pair_frames;
     quint64 dropped = 0;
+    PartyOf party_of;
 };
 
 } // namespace ServerLink

@@ -388,6 +388,9 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
                 .arg(QString::fromStdString(Who(member)), QString::fromStdString(welcome.text())));
         return;
     }
+    // The same run saying hello again (a guest whose game took the session host's role: phase 7).
+    const bool same_run =
+        !member.name.empty() && member.name == hello.member() && member.run == hello.run();
     member.party = PartyFolderName(party);
     const bool team = party.startsWith("team:");
     member.name = hello.member();
@@ -395,6 +398,17 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     member.host = hello.host();
     member.enemy_owner = hello.enemy_owner();
     PartyWorld& world = WorldFor(member.party, now_ms, result);
+    // Phase 7, host migration: the session's host is whoever hosts its open session. The room's
+    // owner passes to a guest when the host's game goes, and that guest's game says hello again,
+    // hosting now; a new run saying it hosts (its team's leader, back) is a guest of that one.
+    if (member.host && !same_run && world.session && world.session->host() != member.name &&
+        SessionHostLinked(world)) {
+        member.host = false;
+        result.log.append(QStringLiteral("party world %1: %2 says it hosts, but %3 hosts the "
+                                         "session: it joins as a guest")
+                              .arg(world.name, QString::fromStdString(member.name),
+                                   QString::fromStdString(world.session->host())));
+    }
     // The host's game started again: the session its last run opened is gone with it.
     if (world.session && world.session->host() == member.name && world.session_run != member.run) {
         CloseSession(world, now_ms, result);
@@ -427,6 +441,15 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
             *envelope.mutable_load_progress() = load;
             SendTo(member, envelope, now_ms);
         }
+    }
+    // Phase 7: where a guest last stood, for its run to come back there (the host's save is its
+    // own place).
+    if (const auto place = world.places.find(member.name);
+        !member.host && place != world.places.end() &&
+        place->second.character == CharacterOf(member.name)) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_resume_at() = place->second.at;
+        SendTo(member, envelope, now_ms);
     }
     // The host's open session: a guest joins it once it stands in its world.
     if (world.session && world.session->host() != member.name) {
@@ -587,6 +610,11 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     case bbcoop::Envelope::kTeamSession: {
         // Only the host's session is the team's to join (a guest's says nothing).
         if (!member.host) {
+            break;
+        }
+        // A former host's close says nothing about the session another member hosts now.
+        if (envelope.team_session().join().empty() && world.session &&
+            world.session->host() != member.name) {
             break;
         }
         bbcoop::Envelope relayed = envelope;
@@ -755,6 +783,14 @@ void Service::TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelop
         answer(world.boards.Trophies(envelope.trophies()), PartyBoards::TrophyBoard);
         return;
     case bbcoop::Envelope::kVitals: {
+        if (const bbcoop::Vitals& vitals = envelope.vitals();
+            vitals.map() != 0 && (vitals.vital() == 1 || vitals.vital() == 2) &&
+            vitals.has_at()) { // up or down where it stands
+            PartyWorld::Place& place = world.places[member.name];
+            place.at.set_map(vitals.map());
+            *place.at.mutable_at() = vitals.at();
+            place.character = CharacterOf(member.name);
+        }
         answer(world.boards.Vitals(member.name, envelope.vitals(), now_ms),
                PartyBoards::VitalsBoard);
         // Logged when someone's state or the wipes change, not for every HP change.
@@ -976,6 +1012,24 @@ Service::Result Service::Tick(qint64 now_ms) {
     return result;
 }
 
+std::string Service::CharacterOf(const std::string& member) const {
+    if (const bbcoop::Team* team = lobby.TeamOf(member)) {
+        for (const bbcoop::TeamMember& m : team->members()) {
+            if (m.member() == member) {
+                return std::to_string(m.slot()) + ":" + m.character();
+            }
+        }
+    }
+    return {};
+}
+
+bool Service::SessionHostLinked(const PartyWorld& world) const {
+    return world.session && std::any_of(members.begin(), members.end(), [&](const auto& entry) {
+               return entry.second.party == world.name &&
+                      entry.second.name == world.session->host();
+           });
+}
+
 void Service::CloseSession(PartyWorld& world, qint64 now_ms, Result& result) {
     bbcoop::Envelope closed;
     closed.mutable_team_session()->set_host(world.session->host());
@@ -1005,6 +1059,11 @@ void Service::Forget(const ServerLink::Endpoint& link) {
     }
     members.erase(link.Key());
     endpoints.erase(link.Key());
+}
+
+QString Service::PartyOf(const ServerLink::Endpoint& link) const {
+    const auto found = members.find(link.Key());
+    return found == members.end() ? QString{} : found->second.party;
 }
 
 namespace {
@@ -1141,7 +1200,15 @@ void Service::Settle(const TeamLobby::Outcome& outcome, qint64 now_ms, Result& r
         SendLobby(now_ms);
     }
     for (const std::string& name : outcome.starts) {
-        const bbcoop::TeamStart start = lobby.StartFor(name);
+        bbcoop::TeamStart start = lobby.StartFor(name);
+        // Phase 7: the team's session is hosted by whoever hosts it now (it moves to a guest when
+        // the host's game goes), not always by the leader: a leader back joins that one.
+        if (const auto world =
+                worlds.find(PartyFolderName(QByteArray::fromStdString(start.party())));
+            world != worlds.end() && world->second.session &&
+            world->second.session->host() != start.host() && SessionHostLinked(world->second)) {
+            start.set_host(world->second.session->host());
+        }
         result.log.append(
             QStringLiteral("team lobby: %1 starts in team %2 (slot %3, host %4)")
                 .arg(QString::fromStdString(name), QString::fromStdString(start.team()))

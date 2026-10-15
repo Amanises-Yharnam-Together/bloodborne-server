@@ -35,6 +35,7 @@ VERBS = {
     "team-screen", "team-ready", "team-start", "team-alone",  # the team screen's buttons
     "title-press", "title-wait", "title-shot", "title-keys", "keys",  # the port's menu keys
     "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
+    "cut-link",  # phase 7: a dropped connection
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",

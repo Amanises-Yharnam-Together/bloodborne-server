@@ -382,6 +382,26 @@ void ClientSession::SendRoomMemberEvent(uint64_t roomId, uint32_t event, uint32_
     NotifyRoomMembers(buildPacket, m_matching.matchingKey, roomId, excludeNpid);
 }
 
+void ClientSession::SendRoomOwnerChanged(uint64_t roomId, uint16_t previousOwner,
+                                         const RoomMember& newOwner) {
+    shadnet::NotifyRoomEvent pb;
+    pb.set_room_id(roomId);
+    pb.set_event(Matching2::ORBIS_NP_MATCHING2_ROOM_EVENT_ROOM_OWNER_CHANGED);
+    pb.set_event_cause(Matching2::ORBIS_NP_MATCHING2_EVENT_CAUSE_LEAVE_ACTION);
+    *pb.mutable_member() = BuildRoomMemberData(newOwner);
+    pb.set_prev_owner_id(previousOwner);
+    const auto buildPacket = [pb](uint32_t contextId) {
+        auto event = pb;
+        event.set_ctx_id(contextId);
+        QByteArray payload;
+        appendProto(payload, event);
+        return BuildNotification(NotificationType::RoomEvent, payload);
+    };
+    NotifyRoomMembers(buildPacket, m_matching.matchingKey, roomId, m_info.npid);
+    qInfo() << "Room" << roomId << "owner changed: mid" << previousOwner << "->"
+            << newOwner.memberId << newOwner.npid;
+}
+
 void ClientSession::SendRoomEventToTarget(uint64_t roomId, uint32_t event, uint32_t cause,
                                           int32_t errorCode, const QString& targetNpid) {
     shadnet::NotifyRoomEvent pb;
@@ -778,6 +798,7 @@ ErrorType ClientSession::CmdLeaveRoom(StreamExtractor& data, QByteArray& reply) 
     uint16_t myMemberId = 0;
     bool wasOwner = false;
     bool roomDestroyed = false;
+    std::optional<RoomMember> ownerChange; // phase 7: the new owner, said before MemberLeft
 
     {
         QWriteLocker lk(&m_shared->matching.roomsLock);
@@ -811,19 +832,9 @@ ErrorType ClientSession::CmdLeaveRoom(StreamExtractor& data, QByteArray& reply) 
             room.flagAttr &= ~Matching2::ORBIS_NP_MATCHING2_ROOM_FLAG_ATTR_FULL;
 
             if (wasOwner) {
-                uint16_t newOwner = 0;
-                while (!room.ownerSuccession.isEmpty()) {
-                    const uint16_t cand = room.ownerSuccession.takeFirst();
-                    if (room.members.contains(cand)) {
-                        newOwner = cand;
-                        break;
-                    }
-                }
-                if (newOwner == 0)
-                    newOwner = room.members.begin()->memberId;
-                room.ownerMemberId = newOwner;
-                if (RoomMember* om = room.findById(newOwner))
-                    om->flagAttr |= Matching2::ORBIS_NP_MATCHING2_ROOMMEMBER_FLAG_ATTR_OWNER;
+                const uint16_t newOwner = room.PassOwnership();
+                if (const RoomMember* om = room.findById(newOwner))
+                    ownerChange = *om;
                 qInfo() << "Room" << roomId << "owner -> mid" << newOwner;
             }
         }
@@ -833,6 +844,9 @@ ErrorType ClientSession::CmdLeaveRoom(StreamExtractor& data, QByteArray& reply) 
     qInfo() << "Room" << roomId << m_info.npid << "left mid=" << myMemberId;
 
     // Notify remaining members (MemberLeft, 0x1102)
+    if (!roomDestroyed && ownerChange) {
+        SendRoomOwnerChanged(roomId, myMemberId, *ownerChange);
+    }
     if (!roomDestroyed) {
         RoomMember left;
         left.memberId = myMemberId;
@@ -1513,6 +1527,7 @@ ErrorType ClientSession::CmdSetRoomDataExternal(StreamExtractor& data, QByteArra
 void ClientSession::DoLeaveRoom(uint64_t roomId) {
     uint16_t myMemberId = 0;
     bool roomDestroyed = false;
+    std::optional<RoomMember> ownerChange; // phase 7: the new owner, said before MemberLeft
 
     {
         QWriteLocker lk(&m_shared->matching.roomsLock);
@@ -1545,19 +1560,9 @@ void ClientSession::DoLeaveRoom(uint64_t roomId) {
             RecomputeRoomSlotCounts(room);
             room.flagAttr &= ~Matching2::ORBIS_NP_MATCHING2_ROOM_FLAG_ATTR_FULL;
             if (wasOwner) {
-                uint16_t newOwner = 0;
-                while (!room.ownerSuccession.isEmpty()) {
-                    const uint16_t cand = room.ownerSuccession.takeFirst();
-                    if (room.members.contains(cand)) {
-                        newOwner = cand;
-                        break;
-                    }
-                }
-                if (newOwner == 0)
-                    newOwner = room.members.begin()->memberId;
-                room.ownerMemberId = newOwner;
-                if (RoomMember* om = room.findById(newOwner))
-                    om->flagAttr |= Matching2::ORBIS_NP_MATCHING2_ROOMMEMBER_FLAG_ATTR_OWNER;
+                const uint16_t newOwner = room.PassOwnership();
+                if (const RoomMember* om = room.findById(newOwner))
+                    ownerChange = *om;
                 qInfo() << "Room" << roomId << "owner -> mid" << newOwner << "(disconnect)";
             }
         }
@@ -1565,6 +1570,9 @@ void ClientSession::DoLeaveRoom(uint64_t roomId) {
 
     ResetMatchingRoomState(roomId);
 
+    if (!roomDestroyed && ownerChange) {
+        SendRoomOwnerChanged(roomId, myMemberId, *ownerChange);
+    }
     if (!roomDestroyed) {
         RoomMember left;
         left.memberId = myMemberId;

@@ -807,6 +807,7 @@ void ShadNetClient::HandleNotification(u16 cmd_raw, const std::vector<u8>& paylo
         n.flags = pb.flags();
         n.has_passwd_mask = pb.has_passwd_mask();
         n.passwd_slot_mask = pb.passwd_slot_mask();
+        n.prev_owner_id = pb.prev_owner_id();
         if (pb.has_member()) {
             const auto& m = pb.member();
             n.member_npid = m.npid();

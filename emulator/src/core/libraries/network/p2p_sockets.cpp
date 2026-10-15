@@ -416,6 +416,9 @@ public:
 #if !defined(__linux__) && !defined(_WIN32)
         return false;
 #else
+        if (LinkCut()) {
+            return true; // lost on the way, as on a dropped connection
+        }
         if (delay_line) {
             {
                 std::lock_guard lock(delay_mutex);
@@ -476,11 +479,30 @@ public:
         return link_welcomed;
     }
 
+    void CutLink(u32 ms) {
+        link_cut_until_ms.store(P2PNowMs() + ms);
+        LOG_WARNING(Lib_Net, "P2P: this game's connection is cut for {} ms (the rig)", ms);
+    }
+
+    bool LinkCut() const {
+        return P2PNowMs() < link_cut_until_ms.load(std::memory_order_relaxed);
+    }
+
+    std::string LinkRefusal() {
+        std::lock_guard lock(link_mutex);
+        return link_refusal;
+    }
+
     void SetLinkObserver(ServerLinkObserver observer) {
         link_observer.store(observer);
     }
 
     int SendInternal(const void* data, u32 len, u32 dest_addr_nbo, u16 dest_port_nbo) {
+        // Phase 7: our signaling, matching and co-op frames go the game sockets' way, never
+        // straight to a peer (before the server is known, nothing).
+        if (!Link::SendsToPeer(Server(), PeersOnlyThroughServer())) {
+            return -1;
+        }
         return SendFrame(kSignalingVPortNbo, kSignalingVPortNbo, data, len, dest_addr_nbo,
                          dest_port_nbo);
     }
@@ -644,6 +666,9 @@ private:
             if (rc < static_cast<decltype(rc)>(kVPortHeaderSize)) {
                 LOG_DEBUG(Lib_Net, "P2P dropping too-short UDP frame size={}", rc);
                 continue;
+            }
+            if (LinkCut()) {
+                continue; // never arrived (a dropped connection, the rig's cut-link)
             }
             const std::span<const u8> datagram{buffer.data(), static_cast<size_t>(rc)};
             if (const auto server = LinkServer();
@@ -917,6 +942,7 @@ private:
     std::thread receive_thread;
 
     std::optional<DelayLine> delay_line;
+    std::atomic<s64> link_cut_until_ms{0}; // CutLink
     std::thread delay_thread;
     std::mutex delay_mutex;
     std::condition_variable delay_ready;
@@ -1487,6 +1513,23 @@ int ServerCoopReceive(void* body, u32 len) {
 
 bool ServerLinkWelcomed() {
     return ServerLinkSwitchOn() && P2PTransport::Instance().LinkWelcomed();
+}
+
+bool ConnectsPeersWithoutHandshake() {
+    return Link::ConnectsWithoutHandshake(P2PTransport::Instance().Server(),
+                                          PeersOnlyThroughServer());
+}
+
+bool PingsServerStun() {
+    return Link::PingsStun(PeersOnlyThroughServer());
+}
+
+void CutServerLinkForTest(u32 ms) {
+    P2PTransport::Instance().CutLink(ms);
+}
+
+std::string ServerLinkRefusal() {
+    return ServerLinkSwitchOn() ? P2PTransport::Instance().LinkRefusal() : std::string{};
 }
 
 u16 GetP2PConfiguredPort() {

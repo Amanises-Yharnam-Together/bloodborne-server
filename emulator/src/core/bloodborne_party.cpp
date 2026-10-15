@@ -1265,9 +1265,17 @@ s32 MapWarpPoint(u32 packed_map) {
 }
 
 ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at, s32 progress,
-                            u32 loaded_map) {
+                            u32 loaded_map, std::optional<LampPosition> loaded_at) {
     if (point.map == 0 || (loaded_map != 0 && loaded_map != map)) {
         return {};
+    }
+    if (loaded_at) {
+        const float mx = at[0] - (*loaded_at)[0];
+        const float my = at[1] - (*loaded_at)[1];
+        const float mz = at[2] - (*loaded_at)[2];
+        if (mx * mx + my * my + mz * mz > 1.0f) {
+            return {}; // it set off on its own
+        }
     }
     if (IsOtherCharacter(progress, point.progress)) {
         return {ResumeStep::Kind::Forget, 0};
@@ -1282,6 +1290,14 @@ ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPositio
         return {};
     }
     return {ResumeStep::Kind::Move, 0};
+}
+
+std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<ResumePoint> from_file,
+                                           std::optional<ResumePoint> from_server) {
+    if (from_server) {
+        return from_server;
+    }
+    return in_session ? std::nullopt : from_file;
 }
 
 s32 MapFlagBase(u32 packed_map) {

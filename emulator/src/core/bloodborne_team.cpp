@@ -12,10 +12,32 @@
 
 namespace Core::Bloodborne {
 
-u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me) {
+std::string LinkRefusalNotice(std::string_view refusal) {
+    if (refusal.empty()) {
+        return {};
+    }
+    // The details in brackets (the builds) stay in the log: the screen has one short line.
+    return "The co-op server refused this game: " +
+           std::string{refusal.substr(0, refusal.find(" ("))};
+}
+
+u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me,
+                  const std::string& session_host) {
     constexpr u32 FirstGuestSign = 7;
     if (!lobby.has_team()) {
         return FirstGuestSign;
+    }
+    for (const bbcoop::TeamMember& m : lobby.team().members()) {
+        if (m.member() == me && m.sign() != 0) {
+            return m.sign(); // the server's (phase 7)
+        }
+    }
+    if (!session_host.empty() && session_host != me) {
+        for (const bbcoop::TeamMember& m : lobby.team().members()) {
+            if (m.member() == session_host && m.sign() != 0) {
+                return m.sign(); // the slot the session's host (once a guest) left
+            }
+        }
     }
     u32 guest = 0;
     for (const bbcoop::TeamMember& m : lobby.team().members()) {
@@ -243,6 +265,21 @@ WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& message) {
 
 TeamJoin::Action TeamJoin::Tick(const Frame& frame) {
     if (!frame.host) {
+        if (frame.matching_state == MatchingStateSummonedGuest && frame.session_members <= 1) {
+            if (!alone_since) {
+                alone_since = frame.now_ms;
+            }
+            if (frame.standing && frame.now_ms - *alone_since >= AloneLeaveMs) {
+                alone_since.reset();
+                return Action::LeaveAlone;
+            }
+        } else {
+            alone_since.reset();
+        }
+        if (frame.matching_state == MatchingStateSummonedGuest && frame.room_owner &&
+            frame.room_has_others) {
+            return Action::TakeHost;
+        }
         return frame.ready && frame.matching_state == 0 && frame.session_known ? Action::Join
                                                                                : Action::None;
     }

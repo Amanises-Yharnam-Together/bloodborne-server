@@ -406,6 +406,37 @@ void HandleRoomEvent(const ShadNet::NotifyRoomEvent& n) {
         ctx->peers.erase(member_id);
         break;
     }
+    case ORBIS_NP_MATCHING2_ROOM_EVENT_ROOM_OWNER_CHANGED: {
+        // Phase 7, host migration: the server passed the room to `member_id` (the owner left).
+        // The game's room layer moves its owner flag itself (0xCC3F44), so every game's session
+        // host (SprjSessionManager +0xD0) follows.
+        auto room_it = ctx->room_cache.find(room_id);
+        if (room_it == ctx->room_cache.end()) {
+            return;
+        }
+        RoomCache& room = room_it->second;
+        for (auto& [id, member] : room.members) {
+            if (id == member_id) {
+                member.flag_attr |= ORBIS_NP_MATCHING2_ROOMMEMBER_FLAG_ATTR_OWNER;
+            } else {
+                member.flag_attr &= ~ORBIS_NP_MATCHING2_ROOMMEMBER_FLAG_ATTR_OWNER;
+            }
+        }
+        room.owner = member_id == ctx->my_member_id;
+        room.signaling_main_member = member_id;
+        ctx->is_room_owner = room.owner;
+        ctx->previous_owner = static_cast<OrbisNpMatching2RoomMemberId>(n.prev_owner_id);
+        p.room_owner_update = std::make_unique<OrbisNpMatching2RoomOwnerUpdate>();
+        OrbisNpMatching2RoomOwnerUpdate& u = *p.room_owner_update;
+        u = OrbisNpMatching2RoomOwnerUpdate{};
+        u.prevOwner = static_cast<OrbisNpMatching2RoomMemberId>(n.prev_owner_id);
+        u.newOwner = member_id;
+        u.eventCause = cause;
+        p.room_event_data = p.room_owner_update.get();
+        LOG_INFO(Lib_NpMatching2, "Room {} owner changed: member {} -> {}{}", room_id,
+                 n.prev_owner_id, member_id, room.owner ? " (this game)" : "");
+        break;
+    }
     case ORBIS_NP_MATCHING2_ROOM_EVENT_KICKEDOUT: {
         p.room_update = std::make_unique<OrbisNpMatching2RoomUpdate>();
         OrbisNpMatching2RoomUpdate& u = *p.room_update;
@@ -626,6 +657,35 @@ void HandleRoomMessage(const ShadNet::NotifyRoomMessage& n) {
 
 } // namespace
 
+bool OwnsItsRoom() {
+    for (OrbisNpMatching2ContextId id = 1; id <= ContextManager::kMaxContexts; ++id) {
+        if (const ContextObject* ctx = ContextManager::Instance().Get(id);
+            ctx && ctx->room_id != 0 && ctx->is_room_owner) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool OwnedRoomHasOthers() {
+    for (OrbisNpMatching2ContextId id = 1; id <= ContextManager::kMaxContexts; ++id) {
+        const ContextObject* ctx = ContextManager::Instance().Get(id);
+        if (!ctx || ctx->room_id == 0 || !ctx->is_room_owner) {
+            continue;
+        }
+        const auto room = ctx->room_cache.find(ctx->room_id);
+        if (room == ctx->room_cache.end()) {
+            continue;
+        }
+        for (const auto& [member_id, member] : room->second.members) {
+            if (member_id != ctx->my_member_id && member_id != ctx->previous_owner) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void OnMatchingReply(ShadNet::CommandType cmd, u64 pkt_id, ShadNet::ErrorType error,
                      const std::vector<u8>& body) {
     if (cmd == ShadNet::CommandType::RequestSignalingInfos) {
@@ -821,9 +881,13 @@ s32 MmSubmitRequest(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId 
              ctx_id, req_id, static_cast<u16>(req_event), static_cast<u16>(cmd), a_variant,
              reinterpret_cast<std::uintptr_t>(request_cb.callback), fmt::ptr(request_cb.arg));
 
-    const u64 pkt_id = client->SubmitRequest(static_cast<ShadNet::CommandType>(cmd), payload);
+    u64 pkt_id = 0;
     {
+        // Held across the send: the reply can come back on the reader thread before the request
+        // is filed (rig 2026-10-15, a JoinRoom's on localhost: "has no pending entry", and the
+        // guest never joined); OnMatchingReply waits for the filing instead.
         std::lock_guard lock(g_mm.pending_mutex);
+        pkt_id = client->SubmitRequest(static_cast<ShadNet::CommandType>(cmd), payload);
         g_mm.pending[pkt_id] = {ctx_id,        req_id, req_event, a_variant, request_cb.callback,
                                 request_cb.arg};
     }

@@ -38,6 +38,8 @@ StunServer::StunServer(SharedState* shared, QObject* parent)
     connect(m_socket, &QUdpSocket::readyRead, this, &StunServer::OnReadyRead);
     connect(m_linkTimer, &QTimer::timeout, this, &StunServer::OnLinkTick);
     connect(m_worldTimer, &QTimer::timeout, this, &StunServer::OnWorldTick);
+    // Phase 7: the link relays only between games of one team (the party of their hello).
+    m_link.SetPartyOf([this](const ServerLink::Endpoint& link) { return m_world.PartyOf(link); });
     m_clock.start();
     m_linkTimer->start(500);
     // The worlds' clock is the wall clock: their journals keep it across restarts.
@@ -105,18 +107,30 @@ void StunServer::HandleStunPing(const QByteArray& data, const QHostAddress& send
     if (extIpStr.startsWith("::ffff:"))
         extIpStr = extIpStr.mid(7);
 
-    qInfo() << "STUN ping: npid=" << npid << "ext=" << extIpStr << ":" << senderPort;
+    // Phase 7: a game on the server link is known by its virtual address (server_link.h), which
+    // the rooms and signaling then hand to the others; it never learns another's real one.
+    quint16 extPort = senderPort;
+    bool linkedV4 = false;
+    const quint32 senderV4 = sender.toIPv4Address(&linkedV4);
+    if (linkedV4) {
+        if (const auto virtualEndpoint = m_link.VirtualOf({senderV4, senderPort})) {
+            extIpStr = QHostAddress(virtualEndpoint->ipv4).toString();
+            extPort = virtualEndpoint->port;
+        }
+    }
+
+    qInfo() << "STUN ping: npid=" << npid << "ext=" << extIpStr << ":" << extPort;
 
     // Record external endpoint
     {
         QWriteLocker lk(&m_shared->matching.udpLock);
-        m_shared->matching.udpExt[npid] = {extIpStr, senderPort};
+        m_shared->matching.udpExt[npid] = {extIpStr, extPort};
     }
 
     // Reply: ext_ip(4 bytes network order) + ext_port(2 bytes network order)
     QHostAddress extAddr(extIpStr);
     uint32_t ipNet = qToBigEndian(static_cast<uint32_t>(extAddr.toIPv4Address()));
-    uint16_t portNet = qToBigEndian(senderPort);
+    uint16_t portNet = qToBigEndian(extPort);
 
     QByteArray response;
     response.append(reinterpret_cast<const char*>(&ipNet), 4);
@@ -148,6 +162,13 @@ void StunServer::Apply(const ServerLink::Hub::Result& result) {
         qInfo().noquote() << line;
     for (const auto& gone : result.gone)
         m_world.Forget(gone);
+    // Phase 7: a linked game's address for the rooms and signaling is its virtual one, known from
+    // its hello (its STUN ping says the same, and is no longer needed for it).
+    for (const auto& linked : result.linked) {
+        QWriteLocker lk(&m_shared->matching.udpLock);
+        m_shared->matching.udpExt[QString::fromUtf8(linked.online_id)] = {
+            QHostAddress(linked.virtual_endpoint.ipv4).toString(), linked.virtual_endpoint.port};
+    }
     for (const auto& coop : result.coop)
         Apply(m_world.Receive(coop.from, coop.online_id, coop.body,
                               QDateTime::currentMSecsSinceEpoch()));
