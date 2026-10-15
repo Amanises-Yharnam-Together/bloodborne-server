@@ -228,6 +228,10 @@ std::vector<std::string> TradePartners() {
 }
 
 std::string TradeName(const std::string& member) {
+    // Phase 11: the character's name, as everywhere else.
+    if (std::string shown = Coop::CharacterNameOf(member); !shown.empty()) {
+        return shown;
+    }
     const std::string name = OnlineIdOfBoardMember(member);
     return name.empty() ? member : name;
 }
@@ -245,7 +249,9 @@ TradeOfferResult OfferTrade(const std::string& to, TradeItems give, TradeItems w
     bbcoop::Envelope envelope;
     {
         std::scoped_lock lock{trade_mutex};
-        envelope = client.Offer(to, TradeName(to), LocalOnlineId(), give, want);
+        std::string from = Coop::OwnCharacterName();
+        envelope =
+            client.Offer(to, TradeName(to), from.empty() ? LocalOnlineId() : from, give, want);
     }
     QueueServerWorld(std::move(envelope));
     LOG_INFO(Debug, "Bloodborne trade: offered {} {}{}", TradeName(to), TradeItemsText(give),

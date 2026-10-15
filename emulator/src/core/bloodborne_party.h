@@ -2669,6 +2669,17 @@ constexpr size_t GameHudStringFullSize = 0x38;
 // UTF-16 characters from guest memory for a string kept out of place.
 std::string GameHudString(std::span<const u8, GameHudStringSize> raw,
                           const std::function<std::vector<char16_t>(u64, size_t)>& read);
+// Phase 11: a character's name, the game string at PlayerGameData +0x5D0's name holder (what the
+// game sends the others on channel 8, 0x01782088), in UTF-8; "" when it does not read or is longer
+// than the 16 characters a name has.
+constexpr u64 PlayerGameNameHolderAt = 0x5D0;
+std::string GameStringUtf8(std::span<const u8, GameHudStringSize> raw,
+                           const std::function<std::vector<char16_t>(u64, size_t)>& read);
+// Phase 11: the name line of the nameplate over `name` (the game's, an online id): the member's
+// character name as html text, when the panel knows one; else the game's own stays.
+std::optional<std::string> NameplateNameLine(const struct PartyPanel& panel, std::string_view name);
+// Text for a game html field: &, < and > as entities.
+std::string HtmlText(std::string_view text);
 // Whether any member on the panel is down (only then does a nameplate say anything of ours).
 bool PanelHasDowned(const struct PartyPanel& panel);
 // The role line of the nameplate over `name` (an online id, or a board name without one): its
@@ -3123,6 +3134,9 @@ std::vector<LampPosition> OthersDownOnMap(std::span<const MemberVitals> board,
 struct PanelMember {
     std::string member; // its board name
     std::string name;   // its online id, "" when the board name is not one
+    // Phase 11: its character's name, as the server knows it ("" before one is known); what the
+    // player sees wherever it is known.
+    std::string shown;
     Vital vital = Vital::Up;
     bool here = false; // on the local player's map
     s32 hp = 0;

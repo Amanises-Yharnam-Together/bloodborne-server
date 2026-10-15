@@ -273,8 +273,38 @@ int GuestsKeepTheirPlayerSlots() {
 
 } // namespace
 
+// Phase 11 (Kaniel 2026-10-15): players are seen by their character's name
+// only. A game at the title has none to say (""): the last one it said stays,
+// and before any it is "Hunter". A new name reaches its team and its invites.
+int PlayersAreSeenByTheirCharactersName() {
+  TeamLobby lobby = NewLobby();
+  lobby.Arrive("a", "", false);
+  lobby.Arrive("b", "", false);
+  CHECK(lobby.StateFor("b").players(0).name() == "Hunter");
+  CHECK(lobby.Request("a", Request(Action::CREATE)).changed);
+  CHECK(lobby.Request("a", Request(Action::INVITE, "b")).changed);
+  CHECK(lobby.StateFor("b").invites(0).from_name() == "Hunter");
+
+  CHECK(lobby.Arrive("a", "Lady Maria", true).changed);
+  bbcoop::LobbyState b = lobby.StateFor("b");
+  CHECK(b.players(0).name() == "Lady Maria");
+  CHECK(b.invites(0).from_name() == "Lady Maria");
+  CHECK(lobby.StateFor("a").team().members(0).name() == "Lady Maria");
+  // Back at the title, it says no name: the character's stays.
+  lobby.Arrive("a", "", false);
+  CHECK(lobby.StateFor("b").players(0).name() == "Lady Maria");
+  // And after a restart of the server, from its store.
+  TeamLobby again = NewLobby();
+  again.Restore(lobby.Store());
+  again.Arrive("a", "", false);
+  again.Arrive("b", "", false);
+  CHECK(again.StateFor("b").players(0).name() == "Lady Maria");
+  return 0;
+}
+
 int main() {
   int failed = 0;
+  failed |= PlayersAreSeenByTheirCharactersName();
   failed |= TeamFormsByInvite();
   failed |= TeamHoldsFour();
   failed |= ReadyAndStart();

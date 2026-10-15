@@ -76,8 +76,6 @@ constexpr u16 kSignalingVPortNbo = 0xffff;
 // The server link's housekeeping (hello, ping, outage checks) runs this often on the receive
 // thread; a refused hello is said again this often (a hello lost on the way is said every second).
 constexpr s64 LinkTickMs = 100;
-constexpr s64 HelloRetryMs = 1000;
-constexpr s64 RefusedHelloRetryMs = 10'000;
 constexpr size_t kVPortHeaderSize = 4;
 constexpr size_t kMaxUdpPayload = 65507;
 constexpr size_t kMaxP2PPayload = kMaxUdpPayload - kVPortHeaderSize;
@@ -97,6 +95,8 @@ enum class InternalChannel {
     GamePackets,
     // Our messages with the server itself (the link's Coop kind: the party's world).
     ServerCoop,
+    // Phase 11: the game's calls for shadNet's TCP port, tunnelled (the link's Rpc kind).
+    ServerRpc,
 };
 
 struct QueuedPacket {
@@ -448,11 +448,13 @@ public:
 #endif
     }
 
-    void ConfigureLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id) {
+    void ConfigureLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id,
+                       std::string secret) {
         {
             std::lock_guard lock(link_mutex);
             link_server = {server_addr_nbo, server_port_nbo};
             link_online_id = std::move(online_id);
+            link_secret = std::move(secret);
             link_welcomed = false;
             link_hello_ms.reset();
         }
@@ -462,6 +464,10 @@ public:
 
     void SetLinkBuild(std::string build) {
         std::lock_guard lock(link_mutex);
+        if (Link::SaysHelloAgainForBuild(link_build, build)) {
+            link_welcomed = false;
+            link_hello_ms.reset();
+        }
         link_build = std::move(build);
     }
 
@@ -475,6 +481,20 @@ public:
         dest.sin_addr.s_addr = server.addr_nbo;
         dest.sin_port = server.port_nbo;
         return Transmit(dest, Link::EncodeCoop(body));
+    }
+
+    // Phase 11: a frame of the Rpc tunnel's stream for the server (before its welcome too: the
+    // stream resends until it is taken).
+    bool SendRpcToServer(std::span<const u8> body) {
+        const Link::ServerEndpoint server = LinkServer();
+        if (server.addr_nbo == 0 || server.port_nbo == 0 || !IsReady()) {
+            return false;
+        }
+        sockaddr_in dest{};
+        dest.sin_family = AF_INET;
+        dest.sin_addr.s_addr = server.addr_nbo;
+        dest.sin_port = server.port_nbo;
+        return Transmit(dest, Link::EncodeRpc(body));
     }
 
     bool LinkWelcomed() {
@@ -587,6 +607,8 @@ private:
             return game_packets_queue;
         case InternalChannel::ServerCoop:
             return server_coop_queue;
+        case InternalChannel::ServerRpc:
+            return server_rpc_queue;
         }
         return signaling_queue;
     }
@@ -621,7 +643,8 @@ private:
             queue.pop_front();
         }
         // Read every few milliseconds while a party plays; a run without one keeps the newest.
-        if ((channel == InternalChannel::GamePackets || channel == InternalChannel::ServerCoop) &&
+        if ((channel == InternalChannel::GamePackets || channel == InternalChannel::ServerCoop ||
+             channel == InternalChannel::ServerRpc) &&
             queue.size() >= 4096) {
             queue.pop_front();
         }
@@ -790,6 +813,13 @@ private:
                              body->data(), body->size());
             }
             return;
+        case Link::Kind::Rpc:
+            if (const auto body = Link::DecodeRpc(datagram)) {
+                const Link::ServerEndpoint server = LinkServer();
+                PushInternal(InternalChannel::ServerRpc, server.addr_nbo, server.port_nbo,
+                             body->data(), body->size());
+            }
+            return;
         default:
             return;
         }
@@ -873,11 +903,10 @@ private:
             if (server.addr_nbo == 0 || server.port_nbo == 0) {
                 return;
             }
-            const s64 retry_ms = link_refusal.empty() ? HelloRetryMs : RefusedHelloRetryMs;
-            if (!link_welcomed && (!link_hello_ms || now_ms - *link_hello_ms >= retry_ms)) {
+            if (Link::HelloDue(link_welcomed, link_hello_ms, !link_refusal.empty(), now_ms)) {
                 link_hello_ms = now_ms;
-                datagrams.push_back(
-                    Link::Encode(Link::Hello{.online_id = link_online_id, .build = link_build}));
+                datagrams.push_back(Link::Encode(Link::Hello{
+                    .online_id = link_online_id, .build = link_build, .secret = link_secret}));
             }
             if (const auto ping = ping_meter.Due(now_ms)) {
                 datagrams.push_back(Link::Encode(Link::Kind::Ping, *ping));
@@ -964,6 +993,7 @@ private:
     std::mutex link_mutex;
     Link::ServerEndpoint link_server;
     std::string link_online_id;
+    std::string link_secret;
     std::string link_build;
     bool link_welcomed{false};
     std::string link_refusal;
@@ -982,6 +1012,7 @@ private:
     std::deque<QueuedPacket> coop_queue;
     std::deque<QueuedPacket> game_packets_queue;
     std::deque<QueuedPacket> server_coop_queue;
+    std::deque<QueuedPacket> server_rpc_queue;
 };
 
 int ReadIntegerOption(const void* optval, u32 optlen, int* out) {
@@ -1484,12 +1515,14 @@ bool ServerLinkSwitchOn() {
 #endif
 }
 
-void ConfigureServerLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id) {
+void ConfigureServerLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id,
+                         std::string secret) {
     // Every build (phase 9): a game reaches its peers through the server only.
     if (server_addr_nbo == 0 || server_port_nbo == 0) {
         return;
     }
-    P2PTransport::Instance().ConfigureLink(server_addr_nbo, server_port_nbo, std::move(online_id));
+    P2PTransport::Instance().ConfigureLink(server_addr_nbo, server_port_nbo, std::move(online_id),
+                                           std::move(secret));
 }
 
 void SetServerLinkBuild(std::string build) {
@@ -1509,6 +1542,17 @@ int ServerCoopReceive(void* body, u32 len) {
     u32 addr = 0;
     u16 port = 0;
     return P2PTransport::Instance().ReceiveInternal(InternalChannel::ServerCoop, body, len, &addr,
+                                                    &port);
+}
+
+bool ServerRpcSend(const void* body, u32 len) {
+    return P2PTransport::Instance().SendRpcToServer({static_cast<const u8*>(body), len});
+}
+
+int ServerRpcReceive(void* body, u32 len) {
+    u32 addr = 0;
+    u16 port = 0;
+    return P2PTransport::Instance().ReceiveInternal(InternalChannel::ServerRpc, body, len, &addr,
                                                     &port);
 }
 

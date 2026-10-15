@@ -75,6 +75,9 @@ set(COOP_SOURCES
 
 set(SOURCES
     src/main.cpp
+    src/watchdog.cpp
+    src/bloodborne_reports.cpp
+    src/webapi_routes_reports.cpp
     src/config.cpp
     src/config.h
     src/server.cpp
@@ -210,6 +213,20 @@ if(BUILD_TESTING)
     target_include_directories(test_packet_routes PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME packet_routes COMMAND test_packet_routes)
 
+    add_executable(test_rpc_tunnel EXCLUDE_FROM_ALL tests/test_rpc_tunnel.cpp)
+    target_include_directories(test_rpc_tunnel PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME rpc_tunnel COMMAND test_rpc_tunnel)
+
+    add_executable(test_watchdog EXCLUDE_FROM_ALL tests/test_watchdog.cpp src/watchdog.cpp)
+    target_include_directories(test_watchdog PRIVATE src)
+    target_link_libraries(test_watchdog PRIVATE Qt6::Core)
+    add_test(NAME watchdog COMMAND test_watchdog)
+
+    add_executable(test_reports EXCLUDE_FROM_ALL tests/test_reports.cpp src/bloodborne_reports.cpp)
+    target_include_directories(test_reports PRIVATE src)
+    target_link_libraries(test_reports PRIVATE Qt6::Core)
+    add_test(NAME reports COMMAND test_reports)
+
     add_executable(test_bloodborne_world EXCLUDE_FROM_ALL
         tests/test_bloodborne_world.cpp
         src/bloodborne_world.cpp
@@ -254,6 +271,11 @@ if(BUILD_TESTING)
     )
     target_link_libraries(test_bloodborne_trade PRIVATE libprotobuf)
     add_test(NAME bloodborne_trade COMMAND test_bloodborne_trade)
+
+    add_executable(test_accounts EXCLUDE_FROM_ALL tests/test_accounts.cpp src/database.cpp)
+    target_include_directories(test_accounts PRIVATE src)
+    target_link_libraries(test_accounts PRIVATE Qt6::Core Qt6::Sql)
+    add_test(NAME accounts COMMAND test_accounts)
 
     # The backend in shadnet against backend/bb_dummy_server.py: the same requests, the same
     # answers (needs Python 3).

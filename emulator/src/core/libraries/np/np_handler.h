@@ -233,11 +233,13 @@ private:
     void StartWorker();
 
     // Disconnect and remove one user's client.
-    void DisconnectUser(s32 user_id);
+    // `tell_game` false (phase 11, the port): a dropped connection the game is not told of; the
+    // user stays signed in for it while the connection comes back.
+    void DisconnectUser(s32 user_id, bool tell_game = true);
 
     void WorkerThread();
     // Transparent reconnect after a network drop
-    void MarkForReconnect(s32 user_id);
+    void MarkForReconnect(s32 user_id, bool quiet = false);
     void TryReconnect();
     void FireStateCallback(s32 user_id, NpManager::OrbisNpState state);
 
@@ -301,6 +303,7 @@ private:
     struct ReconnectState {
         std::chrono::steady_clock::time_point next_attempt{};
         std::chrono::milliseconds backoff{0};
+        bool quiet = false; // the game was not told: still signed in for it
     };
     std::unordered_map<s32, ReconnectState> m_reconnect;
 

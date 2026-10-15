@@ -74,6 +74,10 @@ public:
                                          const QString& avatarUrl, const QString& email);
     std::optional<UserRecord> CheckUser(const QString& npid, const QString& password,
                                         const QString& token, bool checkToken);
+    // CheckUser, and with `make` an id never seen before gets its account now (phase 11: a
+    // player's id from the launcher, no registering). A known id's password still has to match.
+    std::optional<UserRecord> SignIn(const QString& npid, const QString& password,
+                                     const QString& token, bool checkToken, bool make);
     std::optional<int64_t> GetUserId(const QString& npid);
     std::optional<QString> GetUsername(int64_t userId);
     std::optional<QString> GetAvatarUrl(int64_t userId);

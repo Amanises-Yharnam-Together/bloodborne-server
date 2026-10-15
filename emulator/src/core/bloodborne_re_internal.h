@@ -679,6 +679,9 @@ void SendToRoomPeers(const std::vector<u8>& frame);
 void SendToPeer(const std::vector<u8>& frame, u32 addr, u16 port);
 // The signed-in user's online id, or "" before shadNet's login.
 std::string LocalOnlineId();
+// Phase 11: this game's character's name (PlayerGameData +0x5D0, what the game sends the others),
+// "" before a save is loaded or when it does not read. Players see only characters' names.
+std::string OwnCharacterName();
 void SendDirectKills(std::span<const u32> kills, bool changed);
 // The world log's runtime (bloodborne_world_log.cpp, docs/WORLD_SYNC.md Stage C).
 // SHADPS4_BLOODBORNE_WORLD_LOG (this game's hello says so: WorldLogFeature).
@@ -770,6 +773,9 @@ std::optional<ResumePoint> TakeServerResumePoint();
 // A new character in the slot: the server's point (the old character's) does not count this run.
 void RefuseServerResumePoint();
 std::string TeamLobbyMember();
+// Phase 11: a member's character name (its board name), as the server's lobby last said it; ""
+// when the lobby does not know it.
+std::string CharacterNameOf(std::string_view member);
 void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id);
 // This member's part of each board (bloodborne_boards.cpp's rounds send them).
 void SendServerMap(u32 map);

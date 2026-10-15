@@ -135,7 +135,7 @@ std::optional<Kind> KindOf(const QByteArray& datagram) {
         return std::nullopt;
     }
     const quint8 kind = static_cast<quint8>(datagram[8]);
-    if (kind < static_cast<quint8>(Kind::Hello) || kind > static_cast<quint8>(Kind::Coop) ||
+    if (kind < static_cast<quint8>(Kind::Hello) || kind > static_cast<quint8>(Kind::Rpc) ||
         !Body(datagram, static_cast<Kind>(kind))) {
         return std::nullopt;
     }
@@ -147,6 +147,7 @@ QByteArray Encode(const Hello& hello) {
     out.append(static_cast<char>(hello.version));
     PutText(out, hello.online_id);
     PutText(out, hello.build);
+    PutText(out, hello.secret);
     return out;
 }
 
@@ -185,11 +186,19 @@ QByteArray EncodeCoop(const QByteArray& body) {
     return Start(Kind::Coop) + body;
 }
 
+QByteArray EncodeRpc(const QByteArray& body) {
+    return Start(Kind::Rpc) + body;
+}
+
 std::optional<Hello> DecodeHello(const QByteArray& datagram) {
     auto body = Body(datagram, Kind::Hello);
     Hello hello;
     if (!body || !body->Get(hello.version) || !body->GetText(hello.online_id) ||
         !body->GetText(hello.build)) {
+        return std::nullopt;
+    }
+    // Link version 1 had no secret (a game of another build, refused for its version).
+    if (hello.version >= 2 && !body->GetText(hello.secret)) {
         return std::nullopt;
     }
     return hello;
@@ -246,11 +255,25 @@ std::optional<QByteArray> DecodeCoop(const QByteArray& datagram) {
     return body->Rest();
 }
 
-Hub::Hub(qint64 quiet_ms, qint64 gone_ms, qint64 stats_ms, int pair_lines)
-    : quiet_ms{quiet_ms}, gone_ms{gone_ms}, stats_ms{stats_ms}, pair_lines{pair_lines} {}
+std::optional<QByteArray> DecodeRpc(const QByteArray& datagram) {
+    auto body = Body(datagram, Kind::Rpc);
+    if (!body) {
+        return std::nullopt;
+    }
+    return body->Rest();
+}
+
+Hub::Hub(qint64 quiet_ms, qint64 gone_ms, qint64 stats_ms, int pair_lines, qint64 lost_ms)
+    : quiet_ms{quiet_ms}, gone_ms{gone_ms}, stats_ms{stats_ms}, lost_ms{lost_ms},
+      pair_lines{pair_lines} {}
 
 QByteArray Hub::Build() const {
-    return members.isEmpty() ? QByteArray{} : members.cbegin()->build;
+    for (const Link& link : members) {
+        if (!link.build.isEmpty()) {
+            return link.build;
+        }
+    }
+    return {};
 }
 
 std::optional<Endpoint> Hub::VirtualOf(const Endpoint& real) const {
@@ -316,6 +339,11 @@ Hub::Result Hub::Receive(const Endpoint& from, const QByteArray& datagram, qint6
             result.coop.append({from, link.online_id, std::move(*body)});
         }
         break;
+    case Kind::Rpc:
+        if (auto body = DecodeRpc(datagram)) {
+            result.rpc.append({from, link.online_id, std::move(*body)});
+        }
+        break;
     default:
         break; // the games' own kinds only
     }
@@ -331,15 +359,19 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
     if (hello->version != LinkVersion) {
         refusal = "link version " + QByteArray::number(hello->version) + ", this server speaks " +
                   QByteArray::number(LinkVersion);
-    } else {
-        // Every other linked game's build (a game saying hello again is not one).
+    } else if (!hello->build.isEmpty()) {
+        // Every other linked game's build (a game saying hello again is not one). Phase 11: a game
+        // signs in before its co-op code says the build; none said holds nothing, either way.
         for (const Link& link : std::as_const(members)) {
-            if (!(link.endpoint == from) && link.build != hello->build) {
+            if (!(link.endpoint == from) && !link.build.isEmpty() && link.build != hello->build) {
                 refusal = "another build: everyone needs the same release (this game runs " +
                           hello->build + ", the games here run " + link.build + ")";
                 break;
             }
         }
+    }
+    if (refusal.isEmpty() && sign_in && !sign_in(hello->online_id, hello->secret)) {
+        refusal = "sign-in refused: another player has this id (" + hello->online_id + ")";
     }
     const Endpoint virtual_endpoint = VirtualEndpointOf(hello->online_id);
     if (refusal.isEmpty()) {
@@ -487,6 +519,7 @@ void Hub::Heard(Link& link, qint64 now_ms, Result& result) {
         TellOthers(link, MemberState::Back, gap, result);
     }
     link.last_heard_ms = now_ms;
+    link.lost = false;
 }
 
 void Hub::TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result& result) {
@@ -526,6 +559,14 @@ Hub::Result Hub::Tick(qint64 now_ms) {
             result.log.append(
                 QStringLiteral("server link: nothing from %1 for %2 ms").arg(Name(link)).arg(gap));
             TellOthers(link, MemberState::Quiet, gap, result);
+        }
+        if (!link.lost && gap > lost_ms) {
+            link.lost = true;
+            result.lost.append(link.endpoint);
+            result.log.append(QStringLiteral("server link: nothing from %1 for %2 ms: its "
+                                             "sign-in ends until it is back")
+                                  .arg(Name(link))
+                                  .arg(gap));
         }
     }
     if (stats_started && now_ms - stats_at_ms >= stats_ms) {

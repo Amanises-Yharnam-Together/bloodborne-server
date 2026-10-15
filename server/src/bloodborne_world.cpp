@@ -5,12 +5,22 @@
 #include <algorithm>
 
 #include <QCryptographicHash>
+#include <QDate>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QRandomGenerator>
 #include <QSaveFile>
 #include <QtEndian>
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <io.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "coop/coop_messages.h"
 #include "coop/packet_routes.h"
@@ -23,6 +33,7 @@ namespace {
 
 constexpr quint32 StoreVersion = 1;
 constexpr int Backups = 3;
+constexpr int DatedBackups = 7; // phase 11: a week of daily copies
 const QString WorldFile = QStringLiteral("world.pb");
 const QString JournalFile = QStringLiteral("journal.pb");
 const QString TradesFile = QStringLiteral("trades.pb");
@@ -51,6 +62,20 @@ QByteArray Serialized(const google::protobuf::MessageLite& message) {
 
 QString Hex(quint64 value) {
     return QStringLiteral("%1").arg(value, 0, 16);
+}
+
+// Phase 11: what was written reaches the disk, not only the system's cache (a power cut or a
+// crash of the PC keeps it).
+bool SyncToDisk(QFile& file) {
+    if (!file.flush()) {
+        return false;
+    }
+#ifdef Q_OS_WIN
+    const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(file.handle()));
+    return handle != INVALID_HANDLE_VALUE && FlushFileBuffers(handle) != 0;
+#else
+    return fsync(file.handle()) == 0;
+#endif
 }
 
 } // namespace
@@ -120,10 +145,11 @@ bool WorldStore::Append(const bbcoop::JournalRecord& record) {
     const QByteArray bytes = Serialized(record);
     char size[4];
     qToLittleEndian<quint32>(static_cast<quint32>(bytes.size()), size);
-    return journal.write(size, 4) == 4 && journal.write(bytes) == bytes.size() && journal.flush();
+    return journal.write(size, 4) == 4 && journal.write(bytes) == bytes.size() &&
+           SyncToDisk(journal);
 }
 
-bool WorldStore::Compact(const bbcoop::StoredWorld& world) {
+bool WorldStore::Compact(const bbcoop::StoredWorld& world, const QDate& today) {
     QDir{}.mkpath(folder);
     const QDir dir{folder};
     const QString path = dir.filePath(WorldFile);
@@ -144,6 +170,19 @@ bool WorldStore::Compact(const bbcoop::StoredWorld& world) {
     file.write(Serialized(world));
     if (!file.commit()) {
         return false;
+    }
+    // The day's copy, once a day; the oldest beyond a week go.
+    const QDir backups{dir.filePath(QStringLiteral("backups"))};
+    const QString dated = backups.filePath(
+        QStringLiteral("world-%1.pb").arg(today.toString(QStringLiteral("yyyyMMdd"))));
+    if (!QFileInfo::exists(dated)) {
+        QDir{}.mkpath(backups.path());
+        QFile::copy(path, dated);
+        QStringList days =
+            backups.entryList({QStringLiteral("world-*.pb")}, QDir::Files, QDir::Name);
+        while (days.size() > DatedBackups) {
+            QFile::remove(backups.filePath(days.takeFirst()));
+        }
     }
     // The journal's records are in the world now (journal_from); a crash before this leaves them
     // to be skipped on the next load.

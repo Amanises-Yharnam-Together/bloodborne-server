@@ -168,7 +168,9 @@ extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
     for (std::size_t index = 0; index < count; ++index) {
         const auto& member = party.members[index];
         auto& out = panel->members[index];
-        std::snprintf(out.name, sizeof(out.name), "%s", member.name.c_str());
+        // Phase 11: the character's name when the server knows it.
+        std::snprintf(out.name, sizeof(out.name), "%s",
+                      (member.shown.empty() ? member.name : member.shown).c_str());
         out.vital = static_cast<int>(member.vital);
         out.here = member.here ? 1 : 0;
         out.hp = member.hp;

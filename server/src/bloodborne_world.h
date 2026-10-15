@@ -20,6 +20,7 @@
 #include <string>
 
 #include <QByteArray>
+#include <QDate>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -50,8 +51,9 @@ public:
     // falls back to the backups; a journal cut short ends at its last whole record.
     std::optional<Loaded> Load(QStringList& log) const;
     bool Append(const bbcoop::JournalRecord& record);
-    // The world written whole (the old one to the backups) and the journal emptied.
-    bool Compact(const bbcoop::StoredWorld& world);
+    // The world written whole (the old one to the backups) and the journal emptied. Phase 11:
+    // the first write of each day is also kept as backups/world-<yyyyMMdd>.pb, the last 7 days.
+    bool Compact(const bbcoop::StoredWorld& world, const QDate& today = QDate::currentDate());
     // The party's trades (trades.pb, coop/trade.h), written whole on every change.
     std::optional<bbcoop::StoredTrades> LoadTrades() const;
     bool SaveTrades(const bbcoop::StoredTrades& trades);

@@ -58,10 +58,28 @@ class AnswersTests(unittest.TestCase):
         # No party settings: teams are made in the game (phase 6), so no party name or password.
         self.assertNotIn('party_name', coop.DEFAULTS)
         self.assertNotIn('party_secret', coop.DEFAULTS)
-        settings = dict(coop.DEFAULTS, game='', role='guest', host_ip='', account='Ada', password='')
-        self.assertEqual(coop.missing(settings), ['game', 'host_ip', 'password'])
-        settings.update(game='G', host_ip='26.1.2.3', password='x')
+        # Phase 11 (Kaniel 2026-10-15): no account name or password to type; the player id is made.
+        settings = dict(coop.DEFAULTS, game='', role='guest', host_ip='', account='', password='')
+        self.assertEqual(coop.missing(settings), ['game', 'host_ip'])
+        settings.update(game='G', host_ip='26.1.2.3')
         self.assertEqual(coop.missing(settings), [])
+
+    def test_a_player_id_is_made_once_and_kept(self):
+        settings = coop.with_player_id(dict(coop.DEFAULTS))
+        self.assertTrue(coop.valid_name(settings['account']), settings['account'])
+        self.assertTrue(coop.valid_secret(settings['password']))
+        self.assertGreaterEqual(len(settings['password']), 32, 'the id is the secret: long and random')
+        self.assertEqual(coop.with_player_id(dict(settings)), settings, 'made once, then kept')
+        other = coop.with_player_id(dict(coop.DEFAULTS))
+        self.assertNotEqual(other['account'], settings['account'])
+        # A player who had an account keeps it, and with it its teams and worlds.
+        old = coop.with_player_id(dict(coop.DEFAULTS, account='kaniel', password='pw'))
+        self.assertEqual((old['account'], old['password']), ('kaniel', 'pw'))
+        with tempfile.TemporaryDirectory() as folder:
+            install = Path(folder)
+            made = coop.load_settings(install)
+            self.assertTrue(coop.valid_name(made['account']), 'a new install has its id at once')
+            self.assertEqual(coop.load_settings(install)['account'], made['account'], 'saved')
 
     def test_the_old_settings_bat_carries_over(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -81,8 +99,8 @@ class AnswersTests(unittest.TestCase):
     def test_settings_are_kept_in_the_user_folder(self):
         with tempfile.TemporaryDirectory() as folder:
             install = Path(folder)
-            self.assertEqual(coop.load_settings(install), coop.DEFAULTS)
-            coop.save_settings(install, dict(coop.DEFAULTS, account='Lisara'))
+            self.assertEqual(dict(coop.load_settings(install), account='', password=''), coop.DEFAULTS)
+            coop.save_settings(install, dict(coop.DEFAULTS, account='Lisara', password='pw'))
             self.assertEqual(json.loads((install / 'user' / 'coop.json').read_text('utf-8'))['account'], 'Lisara')
             self.assertEqual(coop.load_settings(install)['account'], 'Lisara')
 
@@ -164,7 +182,8 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(env['BB_ONLINE'], '1')
         self.assertEqual(env['BB_GAME_DIR'], str(Path('C:/Co-op/coop-game/CUSA03173')))
         self.assertEqual(env['BB_USER_DIR'], str(install / 'user'))
-        self.assertEqual(env['BB_SHADNET_SERVER'], '26.1.2.3:31313')
+        # Phase 11, one port: the game signs in on the link's UDP port.
+        self.assertEqual(env['BB_SHADNET_SERVER'], '26.1.2.3:31314')
         self.assertEqual(env['BB_SHADNET_WEBAPI'], 'http://26.1.2.3:31315')
         self.assertEqual((env['BB_SHADNET_NPID'], env['BB_SHADNET_PASSWORD']), ('Lisara', 'pw'))
         self.assertEqual(env['SHADPS4_BLOODBORNE_SEAMLESS_COOP'], '1')
@@ -181,14 +200,39 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(json.loads(coop.host_overrides('26.1.2.3')),
                          {'https://ss4.scej-network.jp:20443': 'http://26.1.2.3:20443'})
 
-    def test_the_account_registers_itself_on_the_hosts_server(self):
-        command = coop.register_command(Path('C:/Co-op'), '26.1.2.3', 'Lisara', 'pw')
-        self.assertEqual(command, [str(Path('C:/Co-op/server/clientsample/shadnet-sample.exe')), '26.1.2.3', '31313',
-                                   'register', 'Lisara', 'pw', 'Lisara.pw@p2p.db'])
-        self.assertTrue(coop.registered('[connect] OK\n[create] Account created successfully.\n', 0))
-        self.assertTrue(coop.registered('[create] FAILED: CreationExistingUsername\n', 0), 'made before')
-        self.assertFalse(coop.registered('[connect] FAILED: refused\n', 1))
-        self.assertFalse(coop.registered('[create] FAILED: CreationExistingEmail\n', 0))
+    def test_a_crash_goes_to_the_host_with_its_logs(self):
+        # Phase 11: after a crash, the next PLAY sends the dump and the crashed run's logs (the
+        # .prev ones, which the start just made) to the host's server, once each.
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder)
+            for name in ('shad_log.prev.txt', 'console.prev.txt', 'shad_log.txt'):
+                (log / name).write_text('log', encoding='utf-8')
+            self.assertEqual(coop.reports_to_send(log), [], 'no crash: nothing')
+            (log / 'crash-20261015-174001.dmp').write_bytes(b'MDMP')
+            self.assertEqual([path.name for path in coop.reports_to_send(log)],
+                             ['crash-20261015-174001.dmp', 'console.prev.txt', 'shad_log.prev.txt'])
+            coop.note_reports_sent(log, coop.reports_to_send(log))
+            self.assertEqual(coop.reports_to_send(log), [], 'sent once')
+            (log / 'crash-20261016-090000.dmp').write_bytes(b'MDMP')
+            self.assertEqual([path.name for path in coop.reports_to_send(log)][0], 'crash-20261016-090000.dmp')
+        request = coop.report_request('26.1.2.3', Path('crash-1.dmp'), b'MDMP', 'p0123', 'secret')
+        self.assertEqual(request.full_url, 'http://26.1.2.3:31315/bb/report/crash-1.dmp')
+        self.assertEqual((request.get_header('X-player'), request.get_header('X-secret')), ('p0123', 'secret'))
+        self.assertEqual(request.get_method(), 'POST')
+
+    def test_the_server_runs_under_its_watchdog(self):
+        # Phase 11: shadnet --watchdog keeps the co-op server running (it starts it again after a
+        # crash or a hang); stopping stops the watchdog first, so it starts nothing again.
+        install = Path('C:/Co-op')
+        self.assertEqual(coop.server_command(install), [str(install / 'server' / 'shadnet.exe'), '--watchdog'])
+        found = [(11, 'shadnet.exe', 'shadnet.exe --beat'), (12, 'python.exe', 'bb_dummy_server.py'),
+                 (10, 'shadnet.exe', 'shadnet.exe --watchdog')]
+        self.assertEqual([pid for pid, _name, _command in coop.stop_order(found)], [10, 11, 12])
+
+    def test_nothing_registers_the_account(self):
+        # Phase 11: the host's server makes a player's account at its first sign-in.
+        self.assertFalse(hasattr(coop, 'register'))
+        self.assertFalse(hasattr(coop, 'register_command'))
 
     def test_the_firewall_rules_cover_the_game_and_for_the_host_the_servers(self):
         install = Path('C:/Co-op')
@@ -197,8 +241,10 @@ class PlayTests(unittest.TestCase):
         self.assertIn(str(install / 'bin' / 'bb-probe.exe'), guest[0])
         host = coop.firewall_commands(install, host=True)
         self.assertEqual(len(host), 3)
-        self.assertTrue(any('localport=31313,31315,20443' in line for line in host))
-        self.assertTrue(any('protocol=UDP' in line and '31314' in line for line in host))
+        # Phase 11: the game's HTTP and one UDP port; shadNet's TCP port stays on the host's PC.
+        self.assertTrue(any('localport=31315,20443 ' in line for line in host))
+        self.assertTrue(any('protocol=UDP' in line and 'localport=31314 ' in line for line in host))
+        self.assertFalse(any('31313' in line for line in host))
 
 
 if __name__ == '__main__':

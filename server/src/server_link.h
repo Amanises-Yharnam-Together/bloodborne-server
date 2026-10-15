@@ -30,7 +30,8 @@
 
 namespace ServerLink {
 
-constexpr quint8 LinkVersion = 1;
+// 2 (phase 11): the hello carries the player's secret and signs it in.
+constexpr quint8 LinkVersion = 2;
 enum class Kind : quint8 {
     Hello = 1,
     Welcome = 2,
@@ -41,6 +42,9 @@ enum class Kind : quint8 {
     // Our messages (coop/coop.proto) between a game and shadNet itself, in the link's reliable
     // stream (coop/coop_stream.h): the body is one stream frame. Phase 3: the party's world.
     Coop = 7,
+    // Phase 11: the calls that went over shadNet's TCP port (friends, scores, the NP sign-in), in
+    // a second reliable stream (coop/coop_stream.h) of the link, so a host opens one UDP port.
+    Rpc = 8,
 };
 enum class MemberState : quint8 { Quiet = 0, Back = 1, Gone = 2 };
 
@@ -65,6 +69,7 @@ struct Hello {
     quint8 version = LinkVersion;
     QByteArray online_id;
     QByteArray build;
+    QByteArray secret; // phase 11: the player id's secret (the launcher made it)
 };
 struct Welcome {
     bool accepted = false;
@@ -93,12 +98,14 @@ QByteArray Encode(const Data& data);
 QByteArray Encode(Kind kind, const Ping& ping);
 QByteArray Encode(const Member& member);
 QByteArray EncodeCoop(const QByteArray& body);
+QByteArray EncodeRpc(const QByteArray& body);
 std::optional<Hello> DecodeHello(const QByteArray& datagram);
 std::optional<Welcome> DecodeWelcome(const QByteArray& datagram);
 std::optional<Data> DecodeData(const QByteArray& datagram);
 std::optional<Ping> DecodePing(Kind kind, const QByteArray& datagram);
 std::optional<Member> DecodeMember(const QByteArray& datagram);
 std::optional<QByteArray> DecodeCoop(const QByteArray& datagram);
+std::optional<QByteArray> DecodeRpc(const QByteArray& datagram);
 
 // The links of the games on this server, without sockets or clocks: the socket
 // hands it each datagram and calls Tick now and then; it says what to send and
@@ -119,7 +126,11 @@ public:
         QList<Send> sends;
         QStringList log;
         QList<Coop> coop;
+        QList<Coop> rpc;      // phase 11: the Rpc stream's datagram bodies, the same way
         QList<Endpoint> gone; // links forgotten
+        // Phase 11: links silent for lost_ms (once a silence): their game's sign-in session ends,
+        // as its TCP connection's did when its game died. A blip under that rides out.
+        QList<Endpoint> lost;
         // Games welcomed, with their virtual addresses (phase 7: what the rooms hand out).
         struct Linked {
             QByteArray online_id;
@@ -129,7 +140,7 @@ public:
     };
 
     explicit Hub(qint64 quiet_ms = 3000, qint64 gone_ms = 60000, qint64 stats_ms = 10000,
-                 int pair_lines = 20);
+                 int pair_lines = 20, qint64 lost_ms = 12000);
 
     Result Receive(const Endpoint& from, const QByteArray& datagram, qint64 now_ms);
     // Links newly quiet (told to the others), gone (forgotten) and the counters.
@@ -150,6 +161,12 @@ public:
         this->packet_routes = std::move(packet_routes);
     }
 
+    // Phase 11: whether a hello's player id and secret sign in. Without it every hello does.
+    using SignIn = std::function<bool(const QByteArray& online_id, const QByteArray& secret)>;
+    void SetSignIn(SignIn sign_in) {
+        this->sign_in = std::move(sign_in);
+    }
+
     int Members() const {
         return static_cast<int>(members.size());
     }
@@ -166,6 +183,7 @@ private:
         QByteArray build;
         qint64 last_heard_ms = 0;
         bool quiet = false;
+        bool lost = false; // its sign-in session ended for this silence
         quint64 frames_in = 0;
         quint64 bytes_in = 0;
         quint64 frames_out = 0;
@@ -188,6 +206,7 @@ private:
     qint64 quiet_ms;
     qint64 gone_ms;
     qint64 stats_ms;
+    qint64 lost_ms;
     int pair_lines;
     bool stats_started = false;
     qint64 stats_at_ms = 0;
@@ -197,6 +216,7 @@ private:
     quint64 dropped = 0;
     PartyOf party_of;
     PacketRoutes packet_routes;
+    SignIn sign_in;
 };
 
 } // namespace ServerLink

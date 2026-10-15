@@ -159,7 +159,8 @@ class Port(Emulator):
             "BB_LOG_FILE": str(self.log_path(role)),
             "BB_LOG_LEVEL": "info",
             "BB_ONLINE": "1",
-            "BB_SHADNET_SERVER": f"127.0.0.1:{SHADNET_PORT}",
+            # Phase 11, one port: shadNet's link UDP port (the TCP port's + 1) signs the game in.
+            "BB_SHADNET_SERVER": f"127.0.0.1:{SHADNET_PORT + 1}",
             "BB_SHADNET_WEBAPI": f"http://127.0.0.1:{WEBAPI_PORT}",
             "BB_SHADNET_NPID": ACCOUNTS[role],
             "BB_SHADNET_PASSWORD": PASSWORD,

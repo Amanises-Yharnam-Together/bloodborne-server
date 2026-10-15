@@ -75,7 +75,8 @@ ErrorType ClientSession::CmdLogin(StreamExtractor& data, QByteArray& reply) {
     QString token = QString::fromStdString(req.token());
 
     bool checkToken = m_shared->config->IsEmailValidated();
-    auto userOpt = m_db->CheckUser(npid, QString::fromStdString(req.password()), token, checkToken);
+    auto userOpt = m_db->SignIn(npid, QString::fromStdString(req.password()), token, checkToken,
+                                m_shared->config->IsMakingAccountsAtSignIn());
     if (!userOpt) {
         qWarning() << "Login failed for" << npid;
         return ErrorType::LoginInvalidPassword;
