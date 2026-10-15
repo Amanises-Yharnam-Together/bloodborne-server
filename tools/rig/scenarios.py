@@ -128,6 +128,8 @@ GUEST_JOINS = (r"(?:auto-rejoin started search effect=9005|"
                r"Bloodborne team join: joining the host's session .* joined=true)")
 # The session must hold: a game that leaves the room (LeaveRoom) broke it.
 SESSION_HOLDS = [r"sceNpMatching2LeaveRoom: called"]
+# A downed player's kneel, on its own game or on another's copy of it (Kaniel 2026-10-15: none).
+KNEEL = r"party death: (pose [1-9]\d* asked|.*'s copy kneels)"
 # A member's game died: the others' games close the room it was in (and open a new one for its
 # return), which check_party_log reports as leaving the session outside a trip.
 CRASH_CLEANUP = [r"left the session outside a trip"]
@@ -1690,14 +1692,15 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party guest died"]},
         "timeout": 300,
     },
-    "down-kneel": {
-        "about": "party death: the guest goes down and kneels while nobody strikes it for 12 s "
+    "down-wait": {
+        "about": "party death: the guest goes down (no kneel, Kaniel 2026-10-15) while nobody "
+                 "strikes it for 12 s "
                  "(playtest 2026-10-13: the others saw Lisara kneel and no strike landed, so he had "
                  "to give up); then the host strikes it and it gets up",
         "settings": PARTY_DEATH,
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
-                     "wait 12", "shot sees-kneel", "approach-downed", "wait 2", *REVIVE_HITS,
+                     "wait 12", "shot sees-down", "approach-downed", "wait 2", *REVIVE_HITS,
                      "wait-member-vital up 30", "wait 3", "shot after-revive", "wait 2", "snapshot",
                      "expect-session 2"],
             "guest": [START, "wait-session 2 300", "wait 15", *LETHAL_FALL, "wait-vital down 30",
@@ -1706,10 +1709,11 @@ SCENARIOS = {
         },
         "expect": {
             "host": [r"party death: (real revive hit on|revive swing at)"],
-            "guest": [r"party death: down \d+ on map 0x18010000", r"party death: pose \d+ asked",
+            "guest": [r"party death: down \d+ on map 0x18010000",
                       r"party death: revived from down"],
         },
-        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party guest died"]},
+        "forbid": {"host": SESSION_HOLDS + [KNEEL],
+                   "guest": SESSION_HOLDS + [r"party guest died", KNEEL]},
         "timeout": 300,
     },
     "portrait": {

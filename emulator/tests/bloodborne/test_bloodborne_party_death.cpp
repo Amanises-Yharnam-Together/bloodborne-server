@@ -146,6 +146,13 @@ TEST(BloodbornePartyDeath, TheKneelWaitsUntilThePlayerTakesIt) {
     EXPECT_FALSE(KneelsNow(false, 5'000, true)) << "already asked for";
 }
 
+// A down plays no pose (Kaniel 2026-10-15: no kneel); the setting still picks one for a test.
+TEST(BloodbornePartyDeath, ADownPlaysNoKneel) {
+    EXPECT_EQ(DownedAnimation(nullptr), 0);
+    EXPECT_EQ(DownedAnimation("101260"), DownedKneelAnimation);
+    EXPECT_EQ(DownedAnimation("0"), 0);
+}
+
 // A new HUD gets its own list, also when it is made where the old one was (its tags and icons died
 // with the old one).
 TEST(BloodbornePartyDeath, ANewHudGetsANewPartyList) {
@@ -1165,21 +1172,6 @@ TEST(BloodbornePartyDeath, FindsTheOthersDownOnThisMap) {
     EXPECT_EQ(OthersDownOnMap(board, Kaniel, CentralYharnam),
               (std::vector<LampPosition>{{4.0f, 5.0f, 6.0f}}));
     EXPECT_TRUE(OthersDownOnMap(board, Kaniel, 0).empty());
-}
-
-// Phase 8 (rig down-kneel-seen): each game asks the kneel of its copy of a downed member itself,
-// once per down, as soon as the copy takes it.
-TEST(PartyDeath, EachGameKneelsItsCopyOfADownedMemberOnce) {
-    CopyKneels kneels;
-    EXPECT_FALSE(kneels.Due("lisara", 3, false)); // in a hit's reaction: later
-    EXPECT_TRUE(kneels.Due("lisara", 3, true));
-    EXPECT_FALSE(kneels.Due("lisara", 3, true)); // once
-    EXPECT_TRUE(kneels.Due("krolebord", 1, true));
-    EXPECT_TRUE(kneels.Due("lisara", 4, true)); // her next down
-    // Up again, then down with the same number after a restart: a new kneel.
-    kneels.KeepOnly(std::vector<std::string>{"krolebord"});
-    EXPECT_TRUE(kneels.Due("lisara", 4, true));
-    EXPECT_FALSE(kneels.Due("krolebord", 1, true));
 }
 
 // Phase 7: only the server ends a session, so a guest whose host's game died stays in a session

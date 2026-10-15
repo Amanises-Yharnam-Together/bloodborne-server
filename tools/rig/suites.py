@@ -33,7 +33,7 @@ from scenarios import (AWAY_FROM_LAMP, BLOODSTAIN_DROPPED, BLOODSTAIN_STOLEN,  #
                        HUNTERS_DREAM, LETHAL_FALL, LEVEL_SYNC, OTHER_MAP_FLAG, PARTY_DEATH,
                        REVIVE_HITS, SESSION_HOLDS, HOST_JOINS, GUEST_JOINS, START,
                        STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_NPC, GUEST_ALONE_SPOT,
-                       IOSEFKA_WAIT, HP_LOWERED, attack, only_kill)
+                       IOSEFKA_WAIT, HP_LOWERED, KNEEL, attack, only_kill)
 
 DREAM = "0x15000000"  # the Hunter's Dream's map (HUNTERS_DREAM is its lamp)
 # The party list's icons came (Kaniel 2026-10-12: no team icons; the log said "icons none").
@@ -669,16 +669,15 @@ SUITES = {
                                "press options 200", "wait 1", "press r3 200",
                                "expect-hp self == 1", "wait-vital up 90", "expect-hp self > 1",
                                "godmode"]},
-                    # PR #67: it kneels; PR #69: Options and R3 do nothing while down; PR #71: R1
-                    # hits count as light ones.
+                    # PR #69: Options and R3 do nothing while down; PR #71: R1 hits count as light
+                    # ones. No kneel (Kaniel 2026-10-15).
                     expect={"host": [r"party death: ((real )?revive hit on .*, light\)|"
                                      r"revive swing at)"],
                             "guest": [r"party death: down \d+ on map 0x18010000",
-                                      r"party death: pose \d+ asked for \d+ ms into down",
                                       r"party death: down, the pad dropped buttons",
                                       r"party death: revived from down"]},
                     forbid={"host": SESSION_HOLDS,
-                            "guest": SESSION_HOLDS + [r"party guest died"]}),
+                            "guest": SESSION_HOLDS + [r"party guest died", KNEEL]}),
             chapter("down-revive-heavy", "the host revives the downed guest with R2: each heavy "
                                          "hit counts for more than an R1 (Kaniel 2026-10-12: R2 "
                                          "revived no faster)",
@@ -692,14 +691,15 @@ SUITES = {
                                      r"swing at .* counted for (?:2[6-9]|[3-9]\d|\d{3,}) damage)"],
                             "guest": [r"party death: revived from down"]},
                     forbid=holds(PARTY2)),
-            chapter("down-kneel-seen", "the guest goes down: the host's copy of it kneels too",
+            chapter("down-no-kneel", "the guest goes down: neither its game nor the host's copy "
+                                     "of it kneels (Kaniel 2026-10-15)",
                     {"host": ["wait-member-vital down 120", "wait 5",
                               "wait-member-vital up 120"],
                      "guest": ["godmode off", *GUEST_FALL, "wait-vital down 30", "wait 5",
                                "press circle 3600", "wait-vital dead 15", "wait-vital up 90",
                                "godmode"]},
-                    expect={"host": [r"party death: rig_guest's copy kneels"]},
-                    forbid=holds(PARTY2)),
+                    expect={"guest": [r"party death: down \d+ on map"]},
+                    forbid={role: SESSION_HOLDS + [KNEEL] for role in PARTY2}),
             chapter("down-by-enemy", "the guest with 1 HP next to an enemy, locked on to it, goes "
                                      "down: the lock-on is let go (PR #69), the enemy leaves it "
                                      "alone, and the host revives it. Whether the rig's R3 locks "
