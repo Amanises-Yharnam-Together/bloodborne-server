@@ -1163,7 +1163,7 @@ bool TickTeamJoin(bool ready) {
         {
             std::scoped_lock lock{team_mutex};
             if (const auto lobby = team_gate.Lobby()) {
-                sign = TeamGuestSign(*lobby, lobby_member);
+                sign = TeamGuestSign(*lobby, lobby_member, session->host());
             }
         }
         LOG_INFO(Debug, "Co-op team join: joining with player slot {}", sign);

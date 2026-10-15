@@ -21,7 +21,8 @@ std::string LinkRefusalNotice(std::string_view refusal) {
            std::string{refusal.substr(0, refusal.find(" ("))};
 }
 
-u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me) {
+u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me,
+                  const std::string& session_host) {
     constexpr u32 FirstGuestSign = 7;
     if (!lobby.has_team()) {
         return FirstGuestSign;
@@ -29,6 +30,13 @@ u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me) {
     for (const bbcoop::TeamMember& m : lobby.team().members()) {
         if (m.member() == me && m.sign() != 0) {
             return m.sign(); // the server's (phase 7)
+        }
+    }
+    if (!session_host.empty() && session_host != me) {
+        for (const bbcoop::TeamMember& m : lobby.team().members()) {
+            if (m.member() == session_host && m.sign() != 0) {
+                return m.sign(); // the slot the session's host (once a guest) left
+            }
         }
     }
     u32 guest = 0;

@@ -412,6 +412,12 @@ TEST(TeamGate, TheServerSaysEachGuestsPlayerSlot) {
     add("b", 7);
     EXPECT_EQ(TeamGuestSign(lobby, "d"), 5u);
     EXPECT_EQ(TeamGuestSign(lobby, "b"), 7u);
+    // Phase 7, host migration: b hosts the session now (its game took over); the leader, back,
+    // joins as a guest on the slot b left (rig 2026-10-15: on 7 too, the two games took each
+    // other's place and the leader's game left the session).
+    EXPECT_EQ(TeamGuestSign(lobby, "a", "b"), 7u);
+    EXPECT_EQ(TeamGuestSign(lobby, "a", "d"), 5u);
+    EXPECT_EQ(TeamGuestSign(lobby, "d", "b"), 5u);
 }
 
 // Kaniel 2026-10-15: Lisara back in after a drop still had the loading bars on top: they waited
