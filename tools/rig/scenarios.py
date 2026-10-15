@@ -187,7 +187,7 @@ SCENARIOS = {
             "guest": [START, "wait 20", "snapshot"],
         },
         "expect": {"host": [r"snapshot: map 0x18010000"], "guest": [r"snapshot: map 0x18010000"]},
-        "timeout": 420,
+        "timeout": 300,
         "no_baseline": True,
     },
     "boot": {
@@ -212,7 +212,7 @@ SCENARIOS = {
             "guest": [GUEST_JOINS],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 480,
+        "timeout": 300,
     },
     "trip": {
         "about": "the host goes to the Hunter's Dream and back; the session holds and the players "
@@ -228,7 +228,7 @@ SCENARIOS = {
             "host": [r"party trip started", r"re-creating rig_guest on map 0x18010000"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 600,
+        "timeout": 300,
     },
     "kill-apart": {
         "about": "the host kills an enemy while the guest is in the Dream; the guest's copy of it "
@@ -275,7 +275,7 @@ SCENARIOS = {
                       r"Bloodborne trade: declined offer"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 720,
+        "timeout": 300,
     },
     "trade-menus": {
         "about": "trading's menus (drawn): the guest answers the "
@@ -349,7 +349,7 @@ SCENARIOS = {
         },
         "forbid": {"guest": [r"Co-op server world: following the party's log 0x[0-9a-f]+0{7}3\b",
                              r"Co-op server world: shadNet refused"]},
-        "timeout": 900,
+        "timeout": 300,
     },
     "dog": {
         "about": "Kaniel's dog: the guest kills an enemy while the host is in the Dream; the host "
@@ -381,7 +381,7 @@ SCENARIOS = {
         "expect": {"guest": [rf"characters as the host has them on map 0x18010000: hid \d+, "
                              rf"showed \d+:.* {STORY_HIDDEN}"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 600,
+        "timeout": 300,
     },
     "iosefka-new": {
         "about": "iosefka-look on a new character (Kaniel's, rig/saves/new-character): every "
@@ -401,7 +401,7 @@ SCENARIOS = {
             for role in ("host", "guest")
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 600,
+        "timeout": 300,
     },
     "iosefka-mine": {
         "about": "iosefka-new on the characters each game has now (no saves put back): Kaniel's "
@@ -409,7 +409,7 @@ SCENARIOS = {
         "no_baseline": True,
         "roles": None,  # iosefka-new's, set below
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 600,
+        "timeout": 300,
     },
     "iosefka-gift": {
         "about": "each player gets its own gift from an NPC (Kaniel 2026-10-13: the host got "
@@ -460,7 +460,7 @@ SCENARIOS = {
                       "shot guest-self", "dump nearest", "wait 10"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 480,
+        "timeout": 300,
     },
     # Kaniel 2026-10-14: with the host far away on the same map, the enemies beside a guest stood
     # still and did not attack (the host's game runs the map's enemies, and woke only its own).
@@ -644,7 +644,7 @@ SCENARIOS = {
         },
         "forbid": {"host": SESSION_HOLDS + [r"Bloodborne echoes: \+\d+"],
                    "guest": SESSION_HOLDS},
-        "timeout": 600,
+        "timeout": 300,
     },
     "clinic": {
         "about": "both players by Iosefka's Clinic in the session: what each world shows and "
@@ -800,7 +800,7 @@ SCENARIOS = {
             "guest": [START, "wait-session 2 300", "wait 30",
                       f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "wait 30", "snapshot"],
         },
-        "timeout": 600,
+        "timeout": 300,
     },
     "join-ward": {
         "about": "joining in Cathedral Ward, whose co-op the guest's own world has not opened",
@@ -812,7 +812,7 @@ SCENARIOS = {
         },
         "expect": {"host": [r"join-anywhere patch"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 720,
+        "timeout": 300,
     },
     "join-apart": {
         "about": "joining across maps: the host in Cathedral Ward, the guest in Central Yharnam; "
@@ -838,7 +838,7 @@ SCENARIOS = {
                       f"expect-map {CATHEDRAL_WARD}"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 780,
+        "timeout": 300,
     },
     "lone-guest": {
         "about": "a guest alone on a map runs its enemies, and hands them back when the host comes",
@@ -915,7 +915,7 @@ SCENARIOS = {
                       "snapshot", "expect-session 2"],
         },
         "allow": CRASH_CLEANUP,
-        "timeout": 900,
+        "timeout": 300,
     },
     "guest-crash": {
         "about": "the guest's game crashes; the host plays on, and they join again once the guest "
@@ -929,7 +929,7 @@ SCENARIOS = {
                        "expect-session 2"]],
         },
         "allow": CRASH_CLEANUP,
-        "timeout": 900,
+        "timeout": 300,
     },
     "resume": {
         "about": "a guest whose game dies in the host's world comes back where it was (its own "
@@ -995,7 +995,7 @@ SCENARIOS = {
             "guest": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 600,
+        "timeout": 300,
     },
     # Phase 5b: the team's world. A world flag no save has (TEAM_WORLD_FLAG, Central Yharnam's
     # block, unused) set by the host in the team's first session is in the team's world; the
@@ -1038,7 +1038,7 @@ SCENARIOS = {
                       "team-ready", "title-wait 2", "title-shot screen-guest-ready", START,
                       "wait-session 2 300", "snapshot"],
         },
-        "timeout": 600,
+        "timeout": 300,
     },
     "team-join3": {
         "about": "a team of three from the lobby: the host invites both guests",
@@ -1056,7 +1056,7 @@ SCENARIOS = {
             "guest": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
             "guest2": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
         },
-        "timeout": 900,
+        "timeout": 300,
     },
     "join3": {
         "about": "a party of three: both guests join the host (one bell summons both)",
@@ -1068,7 +1068,7 @@ SCENARIOS = {
             "guest2": [START, "godmode", "wait-session 3 480", "wait 10", "snapshot",
                        "expect-session 3"],
         },
-        "timeout": 900,
+        "timeout": 300,
     },
     # Kaniel 2026-10-15: between two guests, one guest's actions played on the other guest's own
     # character (a pick-up's gesture, a backstab's teleport, levers). The second guest stands
@@ -1220,7 +1220,7 @@ SCENARIOS = {
             "guest": [START, "godmode", "wait-session 2 300", "wait 30", "pickup 60", "wait 5",
                       "snapshot", "expect-session 2"],
         },
-        "timeout": 600,
+        "timeout": 300,
     },
     "pickup-after-crash": {
         "about": "after the guest's game crashes and it joins again, both still pick up map items "
@@ -1250,7 +1250,7 @@ SCENARIOS = {
         },
         "expect": {"host": [r"lost a member; staying where it is"]},
         "allow": CRASH_CLEANUP,
-        "timeout": 600,
+        "timeout": 300,
     },
     "pickup-after-leave3": {
         "about": "a party of three: one guest's game goes away; the host and the other guest "
@@ -1266,7 +1266,7 @@ SCENARIOS = {
         },
         "expect": {role: [r"lost a member; staying where it is"] for role in ("host", "guest")},
         "allow": CRASH_CLEANUP,
-        "timeout": 900,
+        "timeout": 300,
     },
     "guest-talk-by-the-lamp": {
         "about": "a guest in the session presses X on each side of the character beside the first "
@@ -1506,7 +1506,7 @@ SCENARIOS = {
                             r"0x18010000, 1 near died)"],
                    "guest": [OWNER_FOLLOWS, OWNER_RUNS]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 900,
+        "timeout": 300,
     },
     "owner-crash": {
         "about": "phase 4: the guest runs Central Yharnam's enemies (the host went to the Dream and "
@@ -1560,7 +1560,7 @@ SCENARIOS = {
         },
         "expect": {"guest": [HP_LOWERED]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 900,
+        "timeout": 300,
     },
     "guest-death-seen": {
         "about": "the guest dies (goes down and gives up) away from the lamp in the host's world "
@@ -1665,7 +1665,7 @@ SCENARIOS = {
                       r"party death: revived from down"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party guest died"]},
-        "timeout": 600,
+        "timeout": 300,
     },
     "down-kneel": {
         "about": "party death: the guest goes down and kneels while nobody strikes it for 12 s "
@@ -1687,7 +1687,7 @@ SCENARIOS = {
                       r"party death: revived from down"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party guest died"]},
-        "timeout": 600,
+        "timeout": 300,
     },
     "portrait": {
         "about": "party portraits: each player opens its status page (its face is taken from it), "
@@ -1711,7 +1711,7 @@ SCENARIOS = {
                       r"Party portraits: slot 0 texture 0x[0-9a-f]+ .* shows the member's picture"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 600,
+        "timeout": 300,
     },
     "portrait-auto": {
         "about": "each player's portrait without the status page (Kaniel 2026-10-13: 'ideally "
@@ -1730,7 +1730,7 @@ SCENARIOS = {
                           r"picture"]
                    for role in ("host", "guest")},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-        "timeout": 600,
+        "timeout": 300,
     },
     "portrait-dressed": {
         "about": "party portraits on a dressed character (Kaniel 2026-10-13: are clothes on the portrait?): "
@@ -1782,7 +1782,7 @@ SCENARIOS = {
         },
         "forbid": {"host": SESSION_HOLDS + [BLOODSTAIN_STOLEN],
                    "guest": SESSION_HOLDS + [BLOODSTAIN_STOLEN]},
-        "timeout": 900,
+        "timeout": 300,
     },
     "down-alone": {
         "about": "party death: with the host away in the Hunter's Dream nobody else stands on the "
@@ -1826,7 +1826,7 @@ SCENARIOS = {
         },
         "forbid": {"host": SESSION_HOLDS,
                    "guest": SESSION_HOLDS + [r"party death: killed while down"]},
-        "timeout": 600,
+        "timeout": 300,
     },
     "down-revive3": {
         "about": "party death in a party of three: the guest goes down and the second guest, "
@@ -1886,7 +1886,22 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS + [BLOODSTAIN_STOLEN],
                    "guest": SESSION_HOLDS + [BLOODSTAIN_STOLEN],
                    "guest2": SESSION_HOLDS + [BLOODSTAIN_STOLEN]},
-        "timeout": 1200,
+        "timeout": 300,
+    },
+    # Rig refresh (2026-10-15): its own boot, a brand-new character's first load in a team (the
+    # opening cutscene). 0.2.3: the cutscene ran under the team's load screen and could not be
+    # skipped; the title's Cross skips it now and the load screen goes once the world is in.
+    "new-char-cutscene": {
+        "about": "both games on brand-new characters (rig/saves/new-character) load into their "
+                 "team: the opening cutscene is skipped, the team's load screen goes away, they "
+                 "are in one session",
+        "saves": "new-character",
+        "roles": {role: ["wait-session 2 240", "wait 25", "expect-session 2"]
+                  for role in ("host", "guest")},
+        "expect": {role: [r"load view is gone"] for role in ("host", "guest")},
+        "forbid": {role: SESSION_HOLDS + [r"load view is up \(\d+ rows\)(?![\s\S]*load view "
+                                          r"is gone)"] for role in ("host", "guest")},
+        "timeout": 300,
     },
     "soak": {
         "about": "half an hour of trips back and forth with the session up (leaks, slow growth, "

@@ -999,6 +999,14 @@ void UpdateTeamLoad() {
         *envelope.mutable_load_progress() = *said;
         Queue(std::move(envelope));
     }
+    // When the team's load screen (or its bar) comes and goes: the rig checks it is gone after a
+    // rejoin (Lisara 2026-10-14: after Continue the team bars stayed on top).
+    static bool shown = false;
+    if (view.up != shown) {
+        shown = view.up;
+        LOG_INFO(Debug, "Co-op team load: the team's load view is {} ({} rows)",
+                 shown ? "up" : "gone", view.rows.size());
+    }
     std::scoped_lock lock{team_load_view_mutex};
     team_load_view = std::move(view);
 }

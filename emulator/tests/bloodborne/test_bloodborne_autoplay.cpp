@@ -161,6 +161,29 @@ TEST(BloodborneAutoplay, AFailedStepGoesOnAtTheNextChapter) {
     EXPECT_EQ(NextAutoplayChapter({}, 0), std::nullopt);
 }
 
+// Kaniel 2026-10-15: short rig runs. "chapter <name> <seconds>": a chapter still going after its
+// budget fails its step there (keep-going gives the chapter up), instead of holding the suite.
+TEST(BloodborneAutoplay, AChapterCarriesItsTimeBudget) {
+    const auto script = ParseAutoplayScript("chapter join 120\nchapter trip\nchapter a 0\n"
+                                            "chapter b x\nchapter c 90.5\nwait 120\n");
+    EXPECT_EQ(AutoplayChapterBudget(script[0]), std::optional<double>{120.0});
+    EXPECT_EQ(AutoplayChapterBudget(script[1]), std::nullopt) << "no budget: as before";
+    EXPECT_EQ(AutoplayChapterBudget(script[2]), std::nullopt);
+    EXPECT_EQ(AutoplayChapterBudget(script[3]), std::nullopt);
+    EXPECT_EQ(AutoplayChapterBudget(script[4]), std::optional<double>{90.5});
+    EXPECT_EQ(AutoplayChapterBudget(script[5]), std::nullopt) << "not a chapter";
+}
+
+// keys <token>... (and title-keys on the title screen): the port's menu keys a scripted test
+// presses (BB_MENU_KEYS_FILE), e.g. Insert ("toggle") while the team's load screen is up.
+TEST(BloodborneAutoplay, MenuKeysAreTheOverlaysTokens) {
+    EXPECT_EQ(AutoplayMenuKeys({"toggle", "r1", "r1", "enter", "back"}),
+              std::optional<std::string>{"toggle r1 r1 enter back\n"});
+    EXPECT_EQ(AutoplayMenuKeys({"toggle"}), std::optional<std::string>{"toggle\n"});
+    EXPECT_EQ(AutoplayMenuKeys({}), std::nullopt) << "nothing to press";
+    EXPECT_EQ(AutoplayMenuKeys({"toggle", "insert"}), std::nullopt) << "no such key";
+}
+
 // Kaniel 2026-10-12: the hardest bugs come where two maps meet (a fog border crossed back and
 // forth). Where a player walked before a map change is logged (PositionTrail): a path the rig
 // replays with `glide` to cross that border itself.

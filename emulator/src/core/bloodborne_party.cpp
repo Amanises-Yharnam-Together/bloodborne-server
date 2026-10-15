@@ -4206,6 +4206,35 @@ std::optional<size_t> NextAutoplayChapter(const std::vector<AutoplayCommand>& sc
     return std::nullopt;
 }
 
+std::optional<double> AutoplayChapterBudget(const AutoplayCommand& command) {
+    if (command.verb != "chapter" || command.args.size() < 2) {
+        return std::nullopt;
+    }
+    const std::string& text = command.args[1];
+    double seconds = 0.0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), seconds);
+    if (error != std::errc{} || end != text.data() + text.size() || seconds <= 0.0) {
+        return std::nullopt;
+    }
+    return seconds;
+}
+
+std::optional<std::string> AutoplayMenuKeys(const std::vector<std::string>& tokens) {
+    static constexpr std::array<std::string_view, 11> Keys{
+        "toggle", "up", "down", "left", "right", "enter", "back", "l1", "r1", "kdown", "kup"};
+    if (tokens.empty()) {
+        return std::nullopt;
+    }
+    std::string text;
+    for (const std::string& token : tokens) {
+        if (std::ranges::find(Keys, token) == Keys.end()) {
+            return std::nullopt;
+        }
+        text += text.empty() ? token : " " + token;
+    }
+    return text + "\n";
+}
+
 std::optional<u32> ParseAutoplayTarget(std::string_view text) {
     if (text == "nearest") {
         return 0;

@@ -14,6 +14,8 @@ stay in rig/runs/<when>/<scenario>/ (the last RUNS_KEPT batches).
   py -3.12 tools/rig/run_scenario.py --engine port trips --chapter dog   (one of its chapters)
   py -3.12 tools/rig/run_scenario.py --engine port --setup-lanes 3   (once: lanes 1 and 2)
   py -3.12 tools/rig/run_scenario.py --engine port --lanes 3 smoke trips together ...
+  py -3.12 tools/rig/run_scenario.py --engine port --headless --lanes 3 --tier full
+  py -3.12 tools/rig/run_scenario.py --engine port --lanes-status   (who holds which lane)
   py -3.12 tools/rig/run_scenario.py --save-baseline
   py -3.12 tools/rig/run_scenario.py --add-guest2   (a third game for parties of three)
   py -3.12 tools/rig/run_scenario.py --boot-check host [--seconds 40]   (tools/smoke-boot.ps1)
@@ -35,6 +37,14 @@ closed.
 --engine port plays with the native port (Bloodborne PC, tools/build-bbport.ps1) instead of the
 emulator, in rig/port/<role> (engines.py); --engine port --setup makes those folders from the
 emulator rig's (its game with the update, each role's baseline saves and party files).
+
+Time budget and tiers (budget.py): a scenario's timeout is at most 300 s, a suite chapter's
+budget 120 s (the game gives a chapter up past it), no fixed wait over 30 s; --tier quick|full|long
+runs a tier (quick: smoke and the suites named after it). --list shows each one's time.
+
+Lanes are shared between threads (lanes.py): a run takes its lane (rig/lanes/<n>/owner, named by
+--owner or BB_RIG_OWNER) and frees it at its end; --lanes N takes the N lowest free ones. A lane
+whose games outlive their run and cannot be stopped is marked blocked until they are gone.
 """
 import argparse
 import math
@@ -53,8 +63,10 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "re"))
+import budget  # noqa: E402
 import check_party_log  # noqa: E402
 import engines  # noqa: E402
+import lanes  # noqa: E402
 import latency  # noqa: E402
 from engines import BACKEND_PORT, BB_ROOT, SHADNET_PORT, WEBAPI_PORT  # noqa: E402
 from scenarios import SCENARIOS, START  # noqa: E402
@@ -263,6 +275,8 @@ def chapter_sections(text: str) -> dict[str, str]:
 
 # How far (m, on the ground) an enemy that comes for a player moves between two censuses.
 EnemyMovesM = 1.5
+# How far (m) an enemy may drop below its first census before it counts as fallen through.
+GroundedDropM = 3.0
 
 
 def judge(spec: dict, texts: dict[str, str]) -> list[str]:
@@ -284,6 +298,20 @@ def judge(spec: dict, texts: dict[str, str]) -> list[str]:
         if lag is None or round(lag, 3) > limit:
             problems.append(f"all: {spec['hp_sums_hits']} reached the other games' bars in "
                             f"{'?' if lag is None else f'{lag:.2f}'} s (at most {limit} s)")
+    if limit := spec.get("max_hp_lag_each"):
+        for (hitter, other), lag in hp_lag_pairs(texts, spec["hp_sums_hits"]).items():
+            if round(lag, 3) > limit:
+                problems.append(f"all: {hitter}'s hits reached {other}'s bar in {lag:.2f} s "
+                                f"(at most {limit} s)")
+    if limit := spec.get("max_kill_lag"):
+        lags = kill_lags(texts, spec["killed"])
+        if not lags:
+            problems.append(f"all: no game saw {spec['killed']} die from the killing hit")
+        for other, lag in lags.items():
+            if lag is None or round(lag, 3) > limit:
+                problems.append(f"{other}: {spec['killed']} died "
+                                f"{'never' if lag is None else f'{lag:.2f} s'} after the killing "
+                                f"hit (at most {limit} s)")
     # "moves": an enemy that comes for the role's player moves between its first and last census
     # there (Kaniel 2026-10-14: beside a guest whose host was far away, the enemies stood still).
     for role, handle in spec.get("moves", {}).items():
@@ -294,6 +322,25 @@ def judge(spec: dict, texts: dict[str, str]) -> list[str]:
             problems.append(f"{role}: {handle} stood still beside it "
                             f"({'no census' if len(places) < 2 else places[0]} -> "
                             f"{places[-1] if places else ''})")
+    # "grounded": an enemy by the role stays on the ground in its censuses: never more than
+    # GroundedDropM below where it was first (phase 8: collision under enemies far from the owner).
+    for role, handle in spec.get("grounded", {}).items():
+        heights = [float(y) for y in re.findall(
+            rf"autoplay census: {re.escape(handle)} hp .* at [\d.]+ m \(-?[\d.]+, (-?[\d.]+), "
+            rf"-?[\d.]+\)", texts.get(role, ""))]
+        if len(heights) < 2:
+            problems.append(f"{role}: {handle} has {len(heights)} census, at least 2 wanted")
+        elif min(heights) < heights[0] - GroundedDropM:
+            problems.append(f"{role}: {handle} fell from {heights[0]:.1f} to {min(heights):.1f}")
+    # "max_join_s": a game started again in the chapter joins within that many seconds of its
+    # load's end (its last chapter mark: the restarted game's).
+    for role, limit in spec.get("max_join_s", {}).items():
+        text = texts.get(role, "")
+        last = text.rfind("Bloodborne autoplay: chapter ")
+        joined = join_times({role: text[last:] if last >= 0 else text}).get(role)
+        if joined is None or joined > limit:
+            problems.append(f"{role}: joined {'never' if joined is None else f'{joined:.0f} s'} "
+                            f"after its load (at most {limit} s)")
     # "stays": the role's own character stays within that many metres between its first and last
     # census (Kaniel 2026-10-15: one guest's backstab dragged the other guest to the enemy).
     for role, metres in spec.get("stays", {}).items():
@@ -325,15 +372,20 @@ def port_open(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
-def split_games(listing: str, exe: pathlib.Path) -> tuple[list[int], list[int]]:
-    """The rig's games (the build's game executable) and every other one (Kaniel's own copy),
-    from "<pid>\t<path>" lines."""
+def split_games(listing: str, exe: pathlib.Path,
+                rig_folder: pathlib.Path | None = None) -> tuple[list[int], list[int]]:
+    """The rig's games (the build's game executable, or any build playing in the rig's folders:
+    another thread's staged build in its lane) and every other one (Kaniel's own copy), from
+    "<pid>\t<path>[\t<command line>]" lines."""
     rig, others = [], []
+    folder = str(rig_folder).lower().rstrip("\\/") + os.sep if rig_folder else None
     for line in listing.splitlines():
-        pid, _, path = line.strip().partition("\t")
+        pid, _, rest = line.strip().partition("\t")
+        path, _, command = rest.partition("\t")
         if pid.isdigit():
             same = path.strip().lower() == str(exe).lower()
-            (rig if same else others).append(int(pid))
+            in_rig = folder is not None and folder in command.lower().replace("/", os.sep)
+            (rig if same or in_rig else others).append(int(pid))
     return rig, others
 
 
@@ -343,9 +395,9 @@ def games() -> tuple[list[int], list[int]]:
     listing = subprocess.run(
         ["powershell", "-NoProfile", "-Command",
          f"Get-CimInstance Win32_Process -Filter \"{names}\" | "
-         "ForEach-Object { \"$($_.ProcessId)`t$($_.ExecutablePath)\" }"],
+         "ForEach-Object { \"$($_.ProcessId)`t$($_.ExecutablePath)`t$($_.CommandLine)\" }"],
         capture_output=True, text=True).stdout
-    rig, others = split_games(listing, ENGINE.exe)
+    rig, others = split_games(listing, ENGINE.exe, RIG)
     # BB_RIG_IGNORE_PIDS: games that cannot be ended and run nothing any more (a window closed
     # while the GPU teardown hung, 2026-10-14), so they hold up no run.
     ignored = {int(pid) for pid in os.environ.get("BB_RIG_IGNORE_PIDS", "").split(",")
@@ -393,6 +445,35 @@ def stop_lane_games():
     LAUNCHED.clear()
 
 
+def stop_lane_strays(roles: list[str]):
+    """The lane's games that outlived its run (a hung game the window close and taskkill /T
+    missed): stopped by their command line (the lane's role folders), never another lane's. A
+    game that still will not go marks the lane blocked (lanes.py) for the runs after this one."""
+    if ENGINE.name != "port":
+        return
+    folders = [ENGINE.role_dir(role) for role in roles]
+
+    def listing() -> str:
+        return subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='bb-probe.exe'\" | "
+             "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"],
+            capture_output=True, text=True).stdout
+
+    found = lanes.strays(listing(), folders)
+    if not found:
+        return
+    print(f"  lane {LANE}: games left after the run ({', '.join(map(str, found))}): stopping them")
+    for pid in found:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+    deadline = time.time() + 20
+    while time.time() < deadline and lanes.strays(listing(), folders):
+        time.sleep(1)
+    if left := lanes.strays(listing(), folders):
+        lanes.block(RIG, LANE, left)
+        print(f"  lane {LANE}: blocked, {', '.join(map(str, left))} will not stop")
+
+
 def listening_pids(netstat: str, port: int) -> set[int]:
     """The processes `netstat -ano -p TCP` shows listening on `port`."""
     pids = set()
@@ -427,10 +508,29 @@ def start_server(command: list[str], cwd: pathlib.Path, log: pathlib.Path | None
                          creationflags=subprocess.CREATE_NEW_CONSOLE)
 
 
+def install_shadnet(build: str | None, server: pathlib.Path | None = None) -> bool:
+    """BB_RIG_SHADNET: a thread's own shadnet.exe, put into the lane's server folder when it
+    differs (shadnet reads its settings beside itself: the lane's ports and accounts are there;
+    the lanes held servers of different days, 2026-10-15). The one there before stays as
+    shadnet.exe.prev. Whether it was put in."""
+    if not build:
+        return False
+    source = pathlib.Path(build)
+    target = (server or lane_dir() / "server") / "shadnet.exe"
+    if target.is_file() and target.read_bytes() == source.read_bytes():
+        return False
+    if target.is_file():
+        shutil.copy2(target, target.with_name("shadnet.exe.prev"))
+    shutil.copy2(source, target)
+    print(f"  shadnet from {source} put into {target.parent}")
+    return True
+
+
 def start_servers(log_dir: pathlib.Path | None = None):
     """The rig's shadNet and backend, the ones not up yet, their output in log_dir."""
     if not port_open(SHADNET_PORT):
         configure_shadnet()
+        install_shadnet(os.environ.get("BB_RIG_SHADNET"))
         start_server([str(lane_dir() / "server" / "shadnet.exe")], lane_dir() / "server",
                      log_dir / "shadnet.log" if log_dir else None)
         # shadnet's own backend takes the backend port; the Python one only when it did not.
@@ -477,16 +577,18 @@ def setup_lane(lane: int) -> list[pathlib.Path]:
 LANE_STAGGER = 45
 
 
-def run_in_lanes(names: list[str], lanes: int, runner, stagger: float = LANE_STAGGER,
+def run_in_lanes(names: list[str], lanes: int | list[int], runner, stagger: float = LANE_STAGGER,
                  sleep=time.sleep) -> dict[str, bool]:
-    """Runs `names` across lanes 0..lanes-1, each lane one run at a time and taking the next name
-    as it finishes (the longest first, as given). runner(lane, name) -> passed."""
+    """Runs `names` across the lanes (a list, or a count: 0..lanes-1), each lane one run at a
+    time and taking the next name as it finishes (the longest first, as given).
+    runner(lane, name) -> passed."""
+    lane_list = list(range(lanes)) if isinstance(lanes, int) else list(lanes)
     pending = list(names)
     lock = threading.Lock()
     results: dict[str, bool] = {}
 
     def lane_worker(lane: int):
-        sleep(lane * stagger)
+        sleep(lane_list.index(lane) * stagger)
         while True:
             with lock:
                 if not pending:
@@ -496,7 +598,7 @@ def run_in_lanes(names: list[str], lanes: int, runner, stagger: float = LANE_STA
             with lock:
                 results[name] = passed
 
-    workers = [threading.Thread(target=lane_worker, args=(lane,)) for lane in range(lanes)]
+    workers = [threading.Thread(target=lane_worker, args=(lane,)) for lane in lane_list]
     for worker in workers:
         worker.start()
     for worker in workers:
@@ -511,7 +613,11 @@ def lane_command(lane: int, name: str, batch: pathlib.Path) -> list[str]:
             "--lane", str(lane), "--batch", str(batch), "--ping", ping, name]
 
 
-def run_lanes(names: list[str], lanes: int, batch: pathlib.Path) -> dict[str, bool]:
+# Set for a lane's run started by --lanes: the lane it was given (the --lanes run holds it).
+LANE_HELD = "BB_RIG_LANE_HELD"
+
+
+def run_lanes(names: list[str], lanes: list[int], batch: pathlib.Path) -> dict[str, bool]:
     """--lanes: each run in its own process and lane, its output in <batch>/lane-<n>-<name>.txt."""
     batch.mkdir(parents=True, exist_ok=True)
 
@@ -520,7 +626,8 @@ def run_lanes(names: list[str], lanes: int, batch: pathlib.Path) -> dict[str, bo
         print(f"lane {lane}: {name} (output in {output})", flush=True)
         with open(output, "wb") as out:
             code = subprocess.run(lane_command(lane, name, batch), stdout=out,
-                                  stderr=subprocess.STDOUT).returncode
+                                  stderr=subprocess.STDOUT,
+                                  env=dict(os.environ, **{LANE_HELD: str(lane)})).returncode
         print(f"lane {lane}: {name} {'passed' if code == 0 else 'FAILED'}", flush=True)
         return code == 0
 
@@ -732,6 +839,9 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     env.update(ENGINE.environment(role))
     env.update(settings or {})  # over the engine's own (a suite plays at the kit's frame rate)
     env.pop("SHADPS4_P2P_DELAY_MS", None)
+    if ENGINE.name == "port":
+        # keys / title-keys: the overlay's menu keys (Insert and the menu's buttons).
+        env["BB_MENU_KEYS_FILE"] = str(menu_keys_path(role))
     if PING:
         env["SHADPS4_P2P_DELAY_MS"] = latency.game_setting(PING)
         if "BB_SHADNET_SERVER" in env:
@@ -742,6 +852,10 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
     env["SDL_WINDOW_ACTIVATE_WHEN_SHOWN"] = "0"
     env["SDL_WINDOW_ACTIVATE_WHEN_RAISED"] = "0"
     return env
+
+
+def menu_keys_path(role: str) -> pathlib.Path:
+    return ENGINE.role_dir(role) / "menu-keys.txt"
 
 
 def background_window_options() -> dict:
@@ -774,6 +888,7 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters",
         script_path = folder / "autoplay.txt"
         script_path.write_text("\n".join(script) + "\n", encoding="utf-8", newline="\n")
     set_aside(log_path(role))
+    menu_keys_path(role).unlink(missing_ok=True)  # a key the last game never took
     ENGINE.prepare(role, backend_port=server_port(BACKEND_PORT))
     env = game_environment(role, script_path, party, settings)
     if ENGINE.name == "emulator":
@@ -885,6 +1000,37 @@ def free_commit_gb() -> float:
         return float("inf")  # not known: let the games try
 
 
+# A lane's run waits this long for another lane's games to give back their memory (rig
+# 2026-10-15: a party of three beside a party of two found 18-19 GB of the 22.5 it needs).
+MEMORY_WAIT_S = 1800
+
+
+def wait_for_memory(need: float, wait: float = MEMORY_WAIT_S, sleep=time.sleep,
+                    free=None) -> float:
+    """What can be committed, once it is `need` GB or the wait is over."""
+    free = free or free_commit_gb
+    deadline = time.time() + wait
+    now = free()
+    if now < need:
+        print(f"  waiting for memory: {now:.1f} GB can be committed, {need} GB needed")
+    while now < need and time.time() < deadline:
+        sleep(15)
+        now = free()
+    return now
+
+
+def crashed_in_known_bug(scenario: dict, text: str) -> dict | None:
+    """The chapter a crashed game was in, when that chapter is a known bug's (a crash it
+    reproduces: judged as KNOWN instead of run again); a single scenario with known_bug counts."""
+    if not scenario.get("chapters"):
+        return scenario if scenario.get("known_bug") else None
+    sections = list(chapter_sections(text))
+    if not sections:
+        return None
+    return next((chapter for chapter in scenario["chapters"]
+                 if chapter["name"] == sections[-1] and chapter.get("known_bug")), None)
+
+
 def boot_failure(text: str) -> str | None:
     """Why a game stopped before it got going: the emulator's failed assertion and its reason."""
     found = re.search(r"Assertion Failed!\s*\n(.*)", text)
@@ -941,7 +1087,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
             print(f"  {role}: kept portraits removed")
     keep_shots(run_dir / "earlier", roles)  # an aborted run's, apart from this one's
     need = ENGINE.commit_gb * len(roles)
-    free = free_commit_gb()
+    free = wait_for_memory(need) if IN_LANES else free_commit_gb()
     if free < need:
         print(f"  not enough memory for {len(roles)} games: {free:.1f} GB can be committed, "
               f"{need} GB needed (close something big, or give Windows a bigger page file)")
@@ -1040,9 +1186,15 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
             print(f"  sync {sync} after {time.time() - started:.0f} s")
         time.sleep(1 if syncs else 2)
     stop_games()
+    stop_lane_strays(roles)
     keep_logs(run_dir, roles)
     keep_shots(run_dir, roles)
-    if crashed:
+    known_crash = [crashed_in_known_bug(scenario, role_text(run_dir, role, stage[role] + 1))
+                   for role in crashed]
+    if crashed and all(known_crash):
+        print(f"  KNOWN crash in {', '.join(spec.get('name', name) for spec in known_crash)}: "
+              f"{known_crash[0]['known_bug']}")
+    elif crashed:
         # A crash is the emulator's (the GPU's device lost, so far), not the scenario's: once more.
         if attempt == 1:
             print("  a game crashed; running the scenario once more")
@@ -1052,14 +1204,20 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
         return False
 
     texts = {role: role_text(run_dir, role, stage[role] + 1) for role in roles}
+    consoles = {role: console_text(run_dir, role, stage[role] + 1) for role in roles}
     passed = True
     for role in roles:
-        status = done.get(role, "timed out")
+        status = done.get(role, "crashed (known)" if role in crashed else "timed out")
         print(f"  {role}: {status} (build {check_party_log.revision(texts[role])})")
         # A suite's chapters carry their own verdicts; a game that never finished fails it.
-        if status != "ok" and not (scenario.get("chapters") and status == "failed"):
+        # A known crash ends the run there: no game finished its script.
+        if status != "ok" and not (scenario.get("chapters") and status == "failed") and not (
+                crashed and all(known_crash)):
             passed = False
-    for problem in suite_problems(scenario, texts):
+    if joins := join_times(texts):
+        print("  join: " + ", ".join(f"{role} {seconds:.0f} s after its load"
+                                      for role, seconds in joins.items()))
+    for problem in suite_problems(scenario, texts) + console_problems(scenario, consoles):
         print(f"    {problem}")
         passed = False
     if chapters := scenario.get("chapters"):
@@ -1070,16 +1228,28 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
             if missing := [role for role, text in part.items() if text is None]:
                 problems = [f"{role}: never got to it" for role in missing]
             else:
-                problems = judge(chapter, part) + file_problems(chapter, started)
-            print(f"  {'ok  ' if not problems else 'FAIL'} {chapter['name']}"
+                problems = (judge(chapter, part) + file_problems(chapter, started) +
+                            console_problems(chapter, consoles) +
+                            [f"{role}: crashed: {crashed[role]}" for role, spec
+                             in zip(crashed, known_crash) if spec is chapter])
+            seconds = chapter_seconds(part)
+            verdict, ok = chapter_verdict(chapter, problems)
+            print(f"  {verdict} {chapter['name']}"
+                  f"{f' ({seconds:.0f} s)' if seconds is not None else ''}"
                   f"{': ' + chapter['about'] if problems and chapter.get('about') else ''}")
             for problem in problems:
                 print(f"    {problem}")
-            passed = passed and not problems
+            if ok and not problems and chapter.get("known_bug"):
+                print(f"    known bug no longer seen ({chapter['known_bug']}): drop known_bug")
+            passed = passed and ok
     else:
-        for problem in judge(scenario, texts):
+        problems = judge(scenario, texts)
+        for problem in problems:
             print(f"    {problem}")
-            passed = False
+        verdict, ok = chapter_verdict(scenario, problems)
+        if problems and verdict == "KNOWN":
+            print(f"  KNOWN {name}: {scenario['known_bug']}")
+        passed = passed and ok
     print(f"  {'PASSED' if passed else 'FAILED'} in {time.time() - started:.0f} s (logs in "
           f"{run_dir})")
     return passed
@@ -1138,6 +1308,82 @@ def suite_problems(scenario: dict, texts: dict[str, str]) -> list[str]:
                 problems.append(f"{role}: log writes {rate:.0f} lines/s "
                                 f"(at most {LOG_LINES_PER_SECOND})")
     return problems
+
+
+def chapter_verdict(spec: dict, problems: list[str]) -> tuple[str, bool]:
+    """A chapter's (or scenario's) verdict and whether it passes: one with a known bug the phase
+    that fixes it has not landed yet ("known_bug": what is wrong) fails as KNOWN without failing
+    the run, so a tier stays green until its fix; a fixed one says so."""
+    if not problems:
+        return "ok  ", True
+    # "known_problems": the bug is known only by these problems (patterns); any other fails.
+    known = spec.get("known_problems")
+    if spec.get("known_bug") and (known is None or all(
+            any(re.search(pattern, problem) for pattern in known) for problem in problems)):
+        return "KNOWN", True
+    return "FAIL", False
+
+
+def chapter_seconds(texts: dict[str, str | None]) -> float | None:
+    """How long a chapter took: from its first step to its last in any game (the games' clocks
+    are the one PC's)."""
+    times = [float(at) for text in texts.values() if text
+             for at in re.findall(r"\(t=([\d.]+)\)", text)]
+    return max(times) - min(times) if len(times) >= 2 else None
+
+
+def console_text(run_dir: pathlib.Path, role: str, stages: int) -> str:
+    """What a role's games printed (the port's console: its frame times, its overlay)."""
+    texts = []
+    for suffix in [f"-stage{stage}" for stage in range(1, stages)] + [""]:
+        try:
+            texts.append((run_dir / f"{role}{suffix}-console.txt").read_text(encoding="utf-8",
+                                                                               errors="replace"))
+        except OSError:
+            pass
+    return "\n".join(texts)
+
+
+# A frame that takes this long is a freeze (Krolebord, 0.2.4: 24.6 s, then he dropped): the port's
+# own "Perf:" line every 30 s has the worst frame. A run's normal worst frames are 0.2-0.35 s.
+LONG_FRAME_MS = 2000
+WORST_FRAME = re.compile(r"Perf: .*worst frame ([\d.]+) ms")
+OVERLAY_TEXTURES = re.compile(r"Overlay: (\d+) textures, pool of (\d+) sets")
+
+
+def console_problems(spec: dict, consoles: dict[str, str]) -> list[str]:
+    """Checks on the games' consoles: no frame over LONG_FRAME_MS ("long_frame_ms" changes it,
+    a suite or a single scenario; a chapter checks the overlay only), and with
+    "overlay_textures" the overlay's textures seen and within its descriptor pool (0.2.4: icons
+    and runes garbled past it)."""
+    problems = []
+    limit = spec.get("long_frame_ms", LONG_FRAME_MS)
+    if "name" not in spec:  # a whole run (a chapter's spec has its name)
+        for role, text in consoles.items():
+            worst = max((float(ms) for ms in WORST_FRAME.findall(text)), default=0.0)
+            if worst > limit:
+                problems.append(f"{role}: a frame took {worst / 1000:.1f} s (at most "
+                                f"{limit / 1000:g} s)")
+    for role in spec.get("overlay_textures", []):
+        counts = [(int(used), int(pool)) for used, pool in OVERLAY_TEXTURES.findall(
+            consoles.get(role, ""))]
+        if not counts:
+            problems.append(f"{role}: the overlay never said how many textures it has")
+        elif (most := max(counts))[0] > most[1]:
+            problems.append(f"{role}: the overlay has {most[0]} textures, its pool {most[1]}")
+    return problems
+
+
+def join_times(texts: dict[str, str]) -> dict[str, float]:
+    """Each game's join: from its first step in the world to its wait-session's end (a guest's
+    is how long the team's session took once its own load was done)."""
+    joins = {}
+    for role, text in texts.items():
+        steps = [(verb, float(at)) for verb, at in STEP_TIME.findall(text)]
+        joined = next((at for verb, at in steps if verb == "wait-session"), None)
+        if steps and joined is not None:
+            joins[role] = joined - steps[0][1]
+    return joins
 
 
 def last_census_hp(text: str, handle: str, index: int = -1) -> tuple[int, int] | None:
@@ -1214,6 +1460,59 @@ def hp_board_lag(texts: dict[str, str], handle: str) -> float | None:
                 if other != role and matching:
                     lags.append(min(matching) - at)
     return sum(lags) / len(lags) if lags else None
+
+
+def hit_lowerings(texts: dict[str, str], handle: str):
+    """Each role's own hits on the character and the lowerings of it it saw (start HP, drop,
+    t), as hp_board_lag reads them."""
+    pattern = re.escape(handle)
+    hits = {role: [(int(a), int(a) - int(b), float(t)) for a, b, t in re.findall(
+        rf"hit on {pattern} by this player \S+: (-?\d+) -> (-?\d+) \(t=([\d.]+)\)", text)]
+        for role, text in texts.items()}
+    lowered = {role: [(int(a), int(a) - int(b), float(t)) for a, b, t in re.findall(
+        rf"(?:damage|HP from the log: \d+ enemies) on map \S+: (?:\S+ \S+ )*?{pattern} "
+        rf"(-?\d+)->(-?\d+)[^\n]*\(t=([\d.]+)\)",
+        text)] for role, text in texts.items()}
+    return hits, lowered
+
+
+def hp_lag_pairs(texts: dict[str, str], handle: str) -> dict[tuple[str, str], float]:
+    """hp_board_lag for each direction (hitter, the other game), on its own (2026-10-09: hit3
+    checked host to guest only; Kaniel 2026-10-14: lag between guests too)."""
+    hits, lowered = hit_lowerings(texts, handle)
+    lags: dict[tuple[str, str], list[float]] = {}
+    for role, own in hits.items():
+        for start, damage, at in own:
+            for other, seen in lowered.items():
+                matching = [t for before, drop, t in seen
+                            if drop > 0 and abs(drop - damage) <= 3 and abs(before - start) <= 3
+                            and 0 <= t - at <= 5]
+                if other != role and matching:
+                    lags.setdefault((role, other), []).append(min(matching) - at)
+    return {pair: sum(found) / len(found) for pair, found in lags.items()}
+
+
+def kill_lags(texts: dict[str, str], handle: str) -> dict[str, float | None]:
+    """From the killing hit (a hit taking the character to 0) to its 0 in each other game (its
+    lowering to 0, within 5 s), or None in a game it never reached; empty without a killing
+    hit."""
+    hits, lowered = hit_lowerings(texts, handle)
+    kills = [(role, at) for role, own in hits.items() for start, damage, at in own
+             if start - damage <= 0]
+    if not kills:
+        return {}
+    killer, at = kills[0]
+    lags: dict[str, float | None] = {}
+    for other, seen in lowered.items():
+        if other == killer:
+            continue
+        zero = [t for before, drop, t in seen if before - drop <= 0 and 0 <= t - at <= 5]
+        # Phase 10's line for a copy's death (a follower's copy dies by the kill's log entry).
+        zero += [float(t) for t in re.findall(
+            rf"enemy death seen: {re.escape(handle)} \(t=([\d.]+)\)", texts[other])
+            if 0 <= float(t) - at <= 5]
+        lags[other] = min(zero) - at if zero else None
+    return lags
 
 
 def play_scripts(scenario: dict) -> dict[str, list[str]]:
@@ -1308,7 +1607,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("scenarios", nargs="*")
     parser.add_argument("--keep-servers", action="store_true",
                         help="leave the rig's servers running afterwards")
-    parser.add_argument("--list", action="store_true", help="list the scenarios and suites")
+    parser.add_argument("--list", action="store_true",
+                        help="list the scenarios and suites, with their times")
+    parser.add_argument("--tier", choices=("quick", "full", "long"),
+                        help="run a tier (budget.py): quick is smoke and the suites named after "
+                             "it, full every suite, long the slow scenarios")
+    parser.add_argument("--lanes-status", action="store_true",
+                        help="who holds which lane (lanes.py)")
+    parser.add_argument("--owner", help="who this run's lane claims name (default BB_RIG_OWNER, "
+                                        "else this user and PC)")
     parser.add_argument("--chapter", action="append", metavar="NAME",
                         help="with one suite: run only this chapter (again for more), and the "
                              "setup chapters it needs")
@@ -1407,12 +1714,22 @@ def act(args: argparse.Namespace) -> int:
                 save_baseline(role)
                 print(f"{role}: baseline saved")
         return 0
+    if args.lanes_status:
+        print("\n".join(lanes.status(RIG)))
+        return 0
+    if args.tier:
+        tier = budget.tiers(SUITES, SCENARIOS)[args.tier]
+        args.scenarios = tier + [name for name in args.scenarios if name not in tier]
     if args.list or not args.scenarios:
         for name, scenario in SCENARIOS.items():
-            print(f"{name}: {scenario.get('about', '')} ({', '.join(scenario['roles'])})")
-        for name, scenario in SUITE_SCENARIOS.items():
-            print(f"suite {name}: {scenario['about']} ({', '.join(scenario['roles'])}): "
-                  f"{', '.join(chapter['name'] for chapter in scenario['chapters'])}")
+            print(f"{name}: {scenario.get('about', '')} ({', '.join(scenario['roles'])}; "
+                  f"{budget.describe(name, scenario)})")
+        for name, suite in SUITES.items():
+            print(f"suite {name}: {suite['about']} ({', '.join(suite['roles'])}; timeout "
+                  f"{budget.suite_timeout(suite)} s): " + ", ".join(
+                      f"{chapter['name']} {budget.chapter_budget(chapter)} s"
+                      f"{' KNOWN' if chapter.get('known_bug') else ''}"
+                      for chapter in suite["chapters"]))
         return 0
     # Another lane's games are the rig's own: only a game someone plays stops a lane's run.
     if games()[1] if IN_LANES or args.lanes else games_running():
@@ -1432,16 +1749,31 @@ def act(args: argparse.Namespace) -> int:
             print(f"No such chapter in {args.scenarios[0]}: {', '.join(sorted(missing))}")
             return 2
         chosen[args.scenarios[0]] = compile_suite(suite, only=args.chapter)
+    owner = args.owner or lanes.default_owner()
     if args.lanes:
-        if missing := [lane for lane in range(1, args.lanes) if not lane_dir(lane).is_dir()]:
-            print(f"No lane {', '.join(map(str, missing))} yet: --engine port --setup-lanes "
-                  f"{args.lanes} makes them.")
+        taken = lanes.claim_free(RIG, args.lanes, owner)
+        if not taken:
+            print("Every lane is held or blocked (--lanes-status): not starting the rig.")
             return 2
+        print(f"lanes {', '.join(map(str, taken))} taken for {owner}"
+              f"{f' (of {args.lanes} asked)' if len(taken) < args.lanes else ''}")
         batch = RUNS / time.strftime("%Y%m%d-%H%M%S")
         prune_runs(RUNS, RUNS_KEPT - 1)
-        results = run_lanes(args.scenarios, args.lanes, batch)
+        try:
+            results = run_lanes(args.scenarios, taken, batch)
+        finally:
+            for lane in taken:
+                lanes.release(RIG, lane)
         print("\n".join(f"{'ok  ' if ok else 'FAIL'} {name}" for name, ok in results.items()))
         return 0 if all(results.values()) else 1
+    # One lane: taken here unless the --lanes run that started this one holds it.
+    claimed_by_parent = os.environ.get(LANE_HELD) == str(LANE)
+    if not claimed_by_parent and not lanes.claim(RIG, LANE, owner):
+        held = lanes.read_claim(RIG, LANE)
+        print(f"Lane {LANE} is " + (f"held by {held['owner']} since {held['since']}"
+                                    if held else "blocked by games that would not stop") +
+              " (--lanes-status): not starting the rig.")
+        return 2
     batch = args.batch or RUNS / time.strftime("%Y%m%d-%H%M%S")
     if not args.batch:  # a lane's run: --lanes keeps the batches
         prune_runs(RUNS, RUNS_KEPT - 1)
@@ -1451,6 +1783,8 @@ def act(args: argparse.Namespace) -> int:
         stop_games()
         if not args.keep_servers:
             stop_servers()
+        if not claimed_by_parent:
+            lanes.release(RIG, LANE)
     print("\n".join(f"{'ok  ' if ok else 'FAIL'} {name}" for name, ok in results.items()))
     return 0 if all(results.values()) else 1
 
