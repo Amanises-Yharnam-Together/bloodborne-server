@@ -2178,6 +2178,10 @@ namespace {
 constexpr std::array<u8, 8> SetCharacterDisabledPrologue{0x55, 0x48, 0x89, 0xE5,
                                                          0x41, 0x57, 0x41, 0x56};
 
+} // namespace
+
+namespace Coop {
+
 // The game's thread only.
 bool SetCharacterDisabled(u64 character, bool disabled) {
     if (!IsCharacter(character, "SetCharacterDisabled") ||
@@ -2192,6 +2196,10 @@ bool SetCharacterDisabled(u64 character, bool disabled) {
     reinterpret_cast<Set>(image_base + SetCharacterDisabledOffset)(character, disabled ? 1 : 0);
     return true;
 }
+
+} // namespace Coop
+
+namespace {
 
 // What this guest changed to match the host: characters it hid (+0x28) and switched off. Kept
 // across loads of the same map; see UndoGuestChangesOnMapChange.
@@ -2252,7 +2260,8 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
     std::vector<u64> pointers;
     for (const u64 character : characters) {
         if (!players.contains(character)) {
-            mine.push_back({ReadValue<u32>(character, 0x08), IsCharacterDisabled(character)});
+            mine.push_back({ReadValue<u32>(character, 0x08), IsCharacterDisabled(character),
+                            IsDeadInItsWorld(ReadValue<u8>(character, 0x1E3))});
             pointers.push_back(character);
         }
     }

@@ -1996,9 +1996,15 @@ std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown>
                                                  std::span<const CharacterSwitch> mine,
                                                  const std::unordered_set<u32>& switched_off,
                                                  const std::unordered_set<u32>& kill_hidden) {
-    std::unordered_map<u32, bool> hosts; // off in the host's world: removed or switched off
+    struct HostSwitch {
+        bool off = false; // removed or switched off near the host
+        bool on = false;  // on near the host, alive
+    };
+    std::unordered_map<u32, HostSwitch> hosts;
     for (const CharacterShown& character : host) {
-        hosts[character.handle] = !character.distant && (character.hidden || character.disabled);
+        const bool off = character.hidden || character.disabled;
+        hosts[character.handle] = {!character.distant && off,
+                                   !character.distant && !off && !character.dead};
     }
     std::vector<CharacterSwitch> changes;
     for (const CharacterSwitch& character : mine) {
@@ -2006,9 +2012,11 @@ std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown>
         if (it == hosts.end() || kill_hidden.contains(character.handle)) {
             continue;
         }
-        if (it->second && !character.disabled) {
+        if (it->second.off && !character.disabled) {
             changes.push_back({character.handle, true});
-        } else if (!it->second && character.disabled && switched_off.contains(character.handle)) {
+        } else if (!it->second.off && character.disabled &&
+                   (switched_off.contains(character.handle) ||
+                    (it->second.on && !character.dead))) {
             changes.push_back({character.handle, false});
         }
     }

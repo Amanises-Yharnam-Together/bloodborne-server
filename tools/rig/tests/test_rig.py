@@ -28,7 +28,7 @@ VERBS = {
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "expect-others-shown",
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
-    "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
+    "shot", "expect-hidden", "expect-disabled", "set-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
     "return-point",
     "team-create", "team-invite", "team-accept", "team-wait", "team-leave",  # the lobby's

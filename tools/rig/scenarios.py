@@ -387,6 +387,24 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
+    "story-switched-on": {
+        "about": "an enemy the guest's own story has switched off while the host's has it on "
+                 "(Kaniel's friend 2026-10-15: the Forbidden Woods' enemy out of the red mist "
+                 "never showed for her): the guest switches its copy on as the host has it",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 20",
+                     f"expect-disabled {ENEMY} 0", "wait 30",
+                     f"expect-disabled {ENEMY} 0"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 20",
+                      f"expect-disabled {ENEMY} 0", f"set-disabled {ENEMY} 1",
+                      f"expect-disabled {ENEMY} 0 30", "wait 10", f"expect-disabled {ENEMY} 0"],
+        },
+        "expect": {"guest": [rf"autoplay set-disabled: {ENEMY} -> 1",
+                             rf"characters switched like the host has them on map 0x18010000 "
+                             rf"\(off, \+on\):.* \+{ENEMY}"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     "iosefka-new": {
         "about": "iosefka-look on a new character (Kaniel's, rig/saves/new-character): every "
                  "character nearby in both worlds, then Iosefka's dump and pictures (the guest "
