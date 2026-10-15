@@ -1248,8 +1248,10 @@ SUITES = {
                                    "stay together in their session, one of them hosting it now, "
                                    "nobody leaving or joining again",
                     {"host": ["sync hc3-ready", RESTART, "wait 1"],
-                     **{guest: ["sync hc3-ready", "wait 20", "expect-session 2",
-                                "expect-others-near 1 30"] for guest in ("guest", "guest2")}},
+                     # Where each stands after crash3's restart varies (its resume): the session
+                     # is the check, not who is near.
+                     **{guest: ["sync hc3-ready", "wait 20", "expect-session 2"]
+                        for guest in ("guest", "guest2")}},
                     expect={guest: [r"session host moved to"] for guest in ("guest", "guest2")},
                     forbid={guest: [r"sceNpMatching2LeaveRoom: called"]
                             for guest in ("guest", "guest2")},
