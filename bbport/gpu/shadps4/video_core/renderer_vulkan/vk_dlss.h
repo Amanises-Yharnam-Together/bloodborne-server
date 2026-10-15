@@ -12,6 +12,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "common/types.h"
@@ -29,6 +30,8 @@ public:
     void AppendInstanceExtensions(std::vector<const char*>& enabled);
     void AppendDeviceExtensions(vk::Instance instance, vk::PhysicalDevice physical,
                                 std::vector<const char*>& enabled);
+    /// Device creation failed with the extensions AppendDeviceExtensions added: DLSS is off.
+    void Disable(std::string_view reason);
     /// After the device exists.
     void Initialize(vk::Instance instance, vk::PhysicalDevice physical, vk::Device device);
     void Shutdown();
