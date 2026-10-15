@@ -131,7 +131,7 @@ TEST(NetLink, TellsLinkDatagramsFromSignaling) {
     EXPECT_FALSE(KindOf(unknown).has_value());
 }
 
-// Every frame goes to the server but what is for the server itself (the STUN ping).
+// Every frame goes to the server but what is for the server itself (the link's own kinds).
 TEST(NetLink, RoutesEveryPeerThroughTheServer) {
     const ServerEndpoint server{Loopback, 0x2A7A};
     EXPECT_TRUE(RoutesThroughServer(server, 0x0201A8C0, Port1234));
@@ -140,29 +140,30 @@ TEST(NetLink, RoutesEveryPeerThroughTheServer) {
     EXPECT_FALSE(RoutesThroughServer(ServerEndpoint{}, Loopback, Port1234)) << "no server yet";
 }
 
-// Phase 6, the port: a peer's datagrams only ever travel through the server, never straight
-// between games (shadPS4, `server_only` false, keeps direct P2P).
-TEST(NetLink, ThePortTalksToPeersOnlyThroughTheServer) {
+// Phase 9: a peer's datagrams only ever travel through the server, never straight between
+// games, in every build; before the link nothing goes and nothing comes in.
+TEST(NetLink, AGameTalksToPeersOnlyThroughTheServer) {
     const ServerEndpoint server{Loopback, 0x2A7A};
-    EXPECT_TRUE(SendsToPeer(server, true)) << "relayed by the server";
-    EXPECT_FALSE(SendsToPeer(ServerEndpoint{}, true)) << "no link yet";
-    EXPECT_TRUE(SendsToPeer(ServerEndpoint{}, false)) << "shadPS4";
-    EXPECT_TRUE(TakesDatagramFrom(server, Loopback, 0x2A7A, true));
-    EXPECT_FALSE(TakesDatagramFrom(server, 0x0201A8C0, Port1234, true)) << "straight from a peer";
-    EXPECT_TRUE(TakesDatagramFrom(ServerEndpoint{}, Loopback, 0x2A7A, true))
-        << "before the link: the server's answers (STUN) come in";
-    EXPECT_TRUE(TakesDatagramFrom(server, 0x0201A8C0, Port1234, false)) << "shadPS4";
+    EXPECT_TRUE(SendsToPeer(server)) << "relayed by the server";
+    EXPECT_FALSE(SendsToPeer(ServerEndpoint{})) << "no link yet";
+    EXPECT_TRUE(TakesDatagramFrom(server, Loopback, 0x2A7A));
+    EXPECT_FALSE(TakesDatagramFrom(server, 0x0201A8C0, Port1234)) << "straight from a peer";
+    EXPECT_FALSE(TakesDatagramFrom(ServerEndpoint{}, Loopback, 0x2A7A)) << "no link yet";
 }
 
-// Phase 7: the port's peers are the server's room members at their virtual addresses, all
-// reached through the server: a member is connected at once, with no handshake and no STUN.
-TEST(NetLink, ThePortsPeersNeedNoHandshake) {
-    const ServerEndpoint server{Loopback, 0x2A7A};
-    EXPECT_TRUE(ConnectsWithoutHandshake(server, true));
-    EXPECT_FALSE(ConnectsWithoutHandshake(ServerEndpoint{}, true)) << "no link yet";
-    EXPECT_FALSE(ConnectsWithoutHandshake(server, false)) << "shadPS4 handshakes";
-    EXPECT_FALSE(PingsStun(true)) << "the server knows the port's address from its hello";
-    EXPECT_TRUE(PingsStun(false)) << "shadPS4";
+// Phase 7: the peers are the server's room members at their virtual addresses, all reached
+// through the server: a member is connected at once, with no handshake and no STUN.
+TEST(NetLink, PeersNeedNoHandshake) {
+    EXPECT_TRUE(ConnectsWithoutHandshake(ServerEndpoint{Loopback, 0x2A7A}));
+    EXPECT_FALSE(ConnectsWithoutHandshake(ServerEndpoint{})) << "no link yet";
+}
+
+// The game's own address, as the game's NAT queries see it, is its virtual one (the server's
+// VirtualEndpointOf, server/tests/test_server_link.cpp): no STUN, and never its real one.
+TEST(NetLink, AGameIsKnownByTheVirtualAddressTheServerGivesIt) {
+    EXPECT_EQ(VirtualAddressOf("Kaniel").ipv4, 0x0A89C805u);
+    EXPECT_EQ(VirtualAddressOf("Ada").ipv4, 0x0AC3A55Bu);
+    EXPECT_EQ(VirtualAddressOf("Ada").port, 3658);
 }
 
 TEST(NetLink, PingsOnceASecondAndMeasuresTheRoundTrip) {

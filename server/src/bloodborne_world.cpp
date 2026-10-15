@@ -13,6 +13,7 @@
 #include <QtEndian>
 
 #include "coop/coop_messages.h"
+#include "coop/packet_routes.h"
 
 namespace BloodborneWorld {
 
@@ -766,6 +767,7 @@ void Service::TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelop
     };
     switch (envelope.body_case()) {
     case bbcoop::Envelope::kMap: {
+        member.map = envelope.map().map();
         // A load (map 0) is no place on the boards, only for the enemy owners.
         if (envelope.map().map() != 0) {
             answer(world.boards.Map(member.name, envelope.map().map(), now_ms), PartyBoards::Maps);
@@ -1064,6 +1066,31 @@ void Service::Forget(const ServerLink::Endpoint& link) {
 QString Service::PartyOf(const ServerLink::Endpoint& link) const {
     const auto found = members.find(link.Key());
     return found == members.end() ? QString{} : found->second.party;
+}
+
+bool Service::RoutesPacket(const ServerLink::Endpoint& from, const ServerLink::Endpoint& to,
+                           std::uint32_t channel) const {
+    using BloodborneCoop::EnemyPart;
+    const auto sender = members.find(from.Key());
+    const auto target = members.find(to.Key());
+    if (sender == members.end() || target == members.end()) {
+        return BloodborneCoop::NativeChannelPolicy(channel) ==
+                   BloodborneCoop::ChannelPolicy::Pass &&
+               channel < BloodborneCoop::NativeChannelCount;
+    }
+    const auto world = worlds.find(sender->second.party);
+    const auto part = [&](const Member& member) {
+        if (member.map == 0 || world == worlds.end()) {
+            return EnemyPart::None;
+        }
+        const std::string owner = world->second.owners.OwnerOf(member.map);
+        return owner.empty()          ? EnemyPart::None
+               : owner == member.name ? EnemyPart::Owner
+                                      : EnemyPart::Follower;
+    };
+    return BloodborneCoop::RoutesNativePacket(
+        channel,
+        {sender->second.map, target->second.map, part(sender->second), part(target->second)});
 }
 
 namespace {

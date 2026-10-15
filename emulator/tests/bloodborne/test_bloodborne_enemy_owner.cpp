@@ -80,6 +80,9 @@ TEST(EnemyOwner, TheOwnerRunsTheAiAFollowerTheNetworkController) {
     EXPECT_EQ(EnemyOwnershipWord(EnemyRole::Unknown), std::nullopt);
 }
 
+// What the game sends at all; which member gets it is shadNet's since phase 9
+// (server/tests/test_packet_routes.cpp, which also keeps a follower from taking another
+// follower's enemies: krolebord 2026-10-15).
 TEST(EnemyOwner, OnlyTheOwnerSendsTheEnemiesAndAFollowersHitGoesToIt) {
     // Positions, HP, catch-up and join animations: the owner's alone (phase 8: the owner runs
     // every enemy on its map, wherever the others stand; no guest runs one).
@@ -92,43 +95,17 @@ TEST(EnemyOwner, OnlyTheOwnerSendsTheEnemiesAndAFollowersHitGoesToIt) {
     EXPECT_EQ(EnemyPacketOut(0x15, EnemyRole::Owner), EnemyPacketFate::Drop);
     EXPECT_EQ(EnemyPacketOut(0x15, EnemyRole::Follower), EnemyPacketFate::ToOwner);
     EXPECT_EQ(EnemyPacketOut(0x15, EnemyRole::Unknown), EnemyPacketFate::Keep);
-    // The game's own hand-out of enemies (the host's answer 0x17): never, the server's owners
-    // decide. A follower's near list (0x16) goes to the owner: its game sends a member the state
-    // of the enemies on its list, attacks too (rig apart-hurt 2026-10-15: a far guest's enemies
-    // came for it but never struck).
+    // The game's own hand-out of enemies (the host's answer 0x17): never. A follower's near list
+    // (0x16) goes to the owner (rig apart-hurt 2026-10-15).
     EXPECT_EQ(EnemyPacketOut(0x16, EnemyRole::Follower), EnemyPacketFate::ToOwner);
     EXPECT_EQ(EnemyPacketOut(0x16, EnemyRole::Owner), EnemyPacketFate::Drop);
     EXPECT_EQ(EnemyPacketOut(0x16, EnemyRole::Unknown), EnemyPacketFate::Drop);
     for (const EnemyRole role : {EnemyRole::Owner, EnemyRole::Follower, EnemyRole::Unknown}) {
         EXPECT_EQ(EnemyPacketOut(0x17, role), EnemyPacketFate::Drop);
     }
-    // The AI records, the hand-over block, per-hit records and everything else: as they are.
     for (const u32 channel : {0x3Du, 0x41u, 0x34u, 0x06u, 0x14u, 0x24u, 0x26u}) {
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Follower), EnemyPacketFate::Keep) << channel;
         EXPECT_EQ(EnemyPacketOut(channel, EnemyRole::Owner), EnemyPacketFate::Keep) << channel;
-    }
-}
-
-TEST(EnemyOwner, AFollowerTakesTheEnemiesFromTheOwnerOnly) {
-    // Positions too (krolebord 2026-10-15: a guest that had just joined crashed in the game's
-    // character update while it took the other guests' positions).
-    for (const u32 channel : {0x04u, 0x05u, 0x29u, 0x36u}) {
-        EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, true)) << channel;
-        EXPECT_FALSE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, false)) << channel;
-        // The owner runs them itself.
-        EXPECT_FALSE(KeepsEnemyPacketIn(channel, EnemyRole::Owner, false)) << channel;
-        EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Unknown, false)) << channel;
-    }
-    // A hit is the owner's to apply; a follower's copy would die alone.
-    EXPECT_TRUE(KeepsEnemyPacketIn(0x15, EnemyRole::Owner, false));
-    EXPECT_FALSE(KeepsEnemyPacketIn(0x15, EnemyRole::Follower, true));
-    EXPECT_TRUE(KeepsEnemyPacketIn(0x15, EnemyRole::Unknown, false));
-    EXPECT_TRUE(KeepsEnemyPacketIn(0x16, EnemyRole::Owner, false));
-    EXPECT_FALSE(KeepsEnemyPacketIn(0x16, EnemyRole::Follower, true));
-    EXPECT_FALSE(KeepsEnemyPacketIn(0x17, EnemyRole::Follower, true));
-    for (const u32 channel : {0x3Du, 0x41u, 0x34u, 0x06u}) {
-        EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Follower, false)) << channel;
-        EXPECT_TRUE(KeepsEnemyPacketIn(channel, EnemyRole::Owner, false)) << channel;
     }
 }
 

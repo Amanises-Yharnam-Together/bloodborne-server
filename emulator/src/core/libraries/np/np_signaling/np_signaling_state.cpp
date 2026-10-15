@@ -875,31 +875,6 @@ void SendHandshakeLocked(ConnectionInfo& ci, const SignalingHandshake& pkt) {
 
 } // namespace
 
-void StartHandshakeInitiator(OrbisNpSignalingConnectionId conn_id) {
-    SignalingHandshake offer{};
-    bool send = false;
-    {
-        SignalingMutexGuard lock;
-        const auto it = g_connections.find(conn_id);
-        if (it == g_connections.end()) {
-            return;
-        }
-        ConnectionInfo& ci = it->second;
-        ci.is_initiator = true;
-        SetConnStateLocked(ci, ConnState::SendingOffer);
-        if (!ci.timeout_callout_armed) {
-            ArmTimeoutCalloutLocked(ci, kHandshakeConnectTimeoutMs * 1000);
-        }
-        ArmStepCalloutLocked(ci, kHandshakeRetransmitMs * 1000);
-        offer = MakeHandshakeLocked(ci, HandshakeKind::Offer);
-        SendHandshakeLocked(ci, offer);
-        send = true;
-    }
-    if (send) {
-        LOG_DEBUG(Lib_NpSignaling, "Handshake[{}]: -> SENDING_OFFER", conn_id);
-    }
-}
-
 void QueueActivationLocked(OrbisNpSignalingConnectionId conn_id, std::string_view peer_online_id,
                            bool start_handshake) {
     g_pending_activations.push_back({conn_id, std::string(peer_online_id), start_handshake});
@@ -915,7 +890,13 @@ void ProcessPendingActivations() {
         work.swap(g_pending_activations);
     }
 
-    for (const PendingActivation& act : work) {
+    const s64 now_us = NowUs();
+    for (PendingActivation& act : work) {
+        if (act.retry_at_us > now_us) {
+            SignalingMutexGuard lock;
+            g_pending_activations.push_back(std::move(act));
+            continue;
+        }
         bool already_established = false;
         {
             SignalingMutexGuard lock;
@@ -950,13 +931,15 @@ void ProcessPendingActivations() {
                      act.conn_id, act.peer_online_id, peer_addr, sceNetNtohs(peer_port),
                      act.start_handshake ? "" : " (existing connection)");
         }
-        if (Net::ConnectsPeersWithoutHandshake()) {
+        if (Net::ConnectsPeersWithoutHandshake() || already_established) {
             // Phase 7: the server's room member, reached through it: connected now.
             EstablishConnection(act.conn_id, false);
-        } else if (act.start_handshake) {
-            StartHandshakeInitiator(act.conn_id);
-        } else if (already_established) {
-            EstablishConnection(act.conn_id, false);
+        } else {
+            // Phase 9: no handshake between the games; the link comes first, then the activation
+            // again (the connection's timeout still runs).
+            act.retry_at_us = now_us + kSigRetryMs * 1000;
+            SignalingMutexGuard lock;
+            g_pending_activations.push_back(act);
         }
     }
 }
@@ -990,47 +973,8 @@ void HandleHandshakePacket(u32 from_addr, u16 from_port, const SignalingHandshak
             g_connections[conn_id].last_peer_rx_us = NowUs();
         }
 
-        if (kind == HandshakeKind::Offer) {
-            if (conn_id == 0) {
-                return;
-            }
-            ConnectionInfo& ci = g_connections[conn_id];
-            ci.addr = from_addr;
-            ci.port = from_port;
-            ci.peer_activated = true;
-            if (pkt.mapped_addr != 0) {
-                ci.addr = pkt.mapped_addr;
-            }
-            if (ci.state != ConnState::Established) {
-                SetConnStateLocked(ci, ConnState::SendingAccept);
-                if (!ci.timeout_callout_armed) {
-                    ArmTimeoutCalloutLocked(ci, kHandshakeConnectTimeoutMs * 1000);
-                }
-                ArmStepCalloutLocked(ci, kHandshakeRetransmitMs * 1000);
-                reply = MakeHandshakeLocked(ci, HandshakeKind::Accept);
-                send_reply = true;
-                reply_conn = conn_id;
-            }
-        } else if (conn_id == 0) {
+        if (conn_id == 0) {
             return;
-        } else if (kind == HandshakeKind::Accept) {
-            ConnectionInfo& ci = g_connections[conn_id];
-            ci.peer_activated = true;
-            if (pkt.mapped_addr != 0) {
-                ci.addr = pkt.mapped_addr;
-            } else {
-                ci.addr = from_addr;
-                ci.port = from_port;
-            }
-            if (ci.state == ConnState::SendingOffer || ci.state == ConnState::WaitAccept ||
-                ci.state == ConnState::SendingAccept || ci.state == ConnState::WaitOffer) {
-                SetConnStateLocked(ci, ConnState::ConnCheck);
-                ArmStepCalloutLocked(ci, kHandshakeRetransmitMs * 1000);
-                reply = MakeHandshakeLocked(ci, HandshakeKind::Check);
-                reply.nonce = static_cast<u64>(NowUs());
-                send_reply = true;
-                reply_conn = conn_id;
-            }
         } else if (kind == HandshakeKind::Check) {
             ConnectionInfo& ci = g_connections[conn_id];
             reply = MakeHandshakeLocked(ci, HandshakeKind::CheckAck);
@@ -1112,31 +1056,6 @@ static void PS4_SYSV_ABI StepCalloutHandler(u64 arg) {
                     ArmStepCalloutLocked(ci, kKeepaliveIntervalMs * 1000);
                 }
             }
-        } else if (ci.state != ConnState::Inactive) {
-            if (ci.addr != 0 && ci.port != 0) {
-                HandshakeKind kind = HandshakeKind::Offer;
-                switch (ci.state) {
-                case ConnState::SendingOffer:
-                case ConnState::WaitAccept:
-                    kind = HandshakeKind::Offer;
-                    break;
-                case ConnState::SendingAccept:
-                case ConnState::WaitOffer:
-                    kind = HandshakeKind::Accept;
-                    break;
-                case ConnState::ConnCheck:
-                    kind = HandshakeKind::Check;
-                    break;
-                default:
-                    break;
-                }
-                SignalingHandshake pkt = MakeHandshakeLocked(ci, kind);
-                if (kind == HandshakeKind::Check) {
-                    pkt.nonce = static_cast<u64>(now_us);
-                }
-                SendHandshakeLocked(ci, pkt);
-            }
-            ArmStepCalloutLocked(ci, kHandshakeRetransmitMs * 1000);
         }
     }
     if (liveness_dead) {
@@ -1311,8 +1230,8 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& p
     if (send_ack && ack_addr != 0 && ack_port != 0) {
         Stubs::ControlSendTo(&ack, sizeof(ack), ack_addr, ack_port);
     }
-    if (start_handshake_conn != 0) {
-        StartHandshakeInitiator(start_handshake_conn);
+    if (start_handshake_conn != 0 && Net::ConnectsPeersWithoutHandshake()) {
+        EstablishConnection(start_handshake_conn, true);
     }
     if (establish_conn != 0) {
         EstablishConnection(establish_conn, false);
@@ -1324,46 +1243,6 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& p
     if (dead_conn != 0) {
         CloseConnectionAndDispatchDead(dead_conn, ORBIS_NP_SIGNALING_ERROR_TERMINATED_BY_PEER);
     }
-}
-
-void SendStunPing(s32 ctx_id) {
-    if (!Stubs::Matching2Enabled() || !Net::PingsServerStun()) {
-        return;
-    }
-
-    OrbisNpOnlineId online_id{};
-
-    {
-        SignalingMutexGuard lock;
-        const auto it = g_contexts.find(ctx_id);
-        if (it == g_contexts.end() || !it->second.active) {
-            return;
-        }
-        online_id = it->second.owner_online_id;
-    }
-
-    if (!Stubs::EnsureTransport()) {
-        return;
-    }
-
-    const u32 server_addr = Stubs::MmServerAddr();
-    const u16 server_udp = Stubs::MmServerUdpPort();
-
-    if (server_addr == 0 || server_udp == 0) {
-        LOG_WARNING(Lib_NpSignaling, "ctxId={} skipped (server_addr={:#x} udp_port={})", ctx_id,
-                    server_addr, sceNetNtohs(server_udp));
-        return;
-    }
-
-    StunPing ping{};
-    ping.cmd = 0x01;
-    std::memcpy(ping.online_id, online_id.data, ORBIS_NP_ONLINEID_MAX_LENGTH);
-    ping.local_ip = Stubs::AdvertisedAddr();
-
-    LOG_DEBUG(Lib_NpSignaling, "ctxId={} online_id='{}' server={:#x}:{} local_ip={:#x}", ctx_id,
-              OnlineIdToString(online_id), server_addr, sceNetNtohs(server_udp), ping.local_ip);
-
-    Stubs::SignalingSendTo(&ping, sizeof(ping), server_addr, server_udp);
 }
 
 s32 GetActiveConnectionIdForPeer(std::string_view online_id) {

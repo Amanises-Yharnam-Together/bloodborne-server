@@ -20,6 +20,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <optional>
 #include <QByteArray>
 #include <QHash>
@@ -140,6 +141,14 @@ public:
     void SetPartyOf(PartyOf party_of) {
         this->party_of = std::move(party_of);
     }
+    // Phase 9: whether a game packet on `channel` goes from one link's game to another's
+    // (coop/packet_routes.h). Once set, the hub reads every frame of game packets and forwards
+    // only what this lets through; without it frames go unread.
+    using PacketRoutes =
+        std::function<bool(const Endpoint& from, const Endpoint& to, quint32 channel)>;
+    void SetPacketRoutes(PacketRoutes packet_routes) {
+        this->packet_routes = std::move(packet_routes);
+    }
 
     int Members() const {
         return static_cast<int>(members.size());
@@ -162,6 +171,7 @@ private:
         quint64 frames_out = 0;
         quint64 bytes_out = 0;
         quint32 pings = 0;
+        std::map<quint32, quint64> refused; // game packets not forwarded, per channel
     };
 
     void OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_ms, Result& result);
@@ -171,6 +181,9 @@ private:
     void TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result& result);
     QString Name(const Link& link) const;
     bool SameTeam(const Endpoint& a, const Endpoint& b) const;
+    // The frame with only the game packets the routes let reach `target`, or nothing when it is
+    // a frame of game packets that does not read.
+    std::optional<QByteArray> Routed(Link& sender, const Link& target, const QByteArray& frame);
 
     qint64 quiet_ms;
     qint64 gone_ms;
@@ -183,6 +196,7 @@ private:
     QHash<QPair<quint64, quint64>, quint64> pair_frames;
     quint64 dropped = 0;
     PartyOf party_of;
+    PacketRoutes packet_routes;
 };
 
 } // namespace ServerLink

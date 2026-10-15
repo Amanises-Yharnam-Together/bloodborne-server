@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <QtEndian>
+#include "coop/packet_routes.h"
 
 namespace ServerLink {
 
@@ -399,10 +400,9 @@ void Hub::OnData(Link& sender, const QByteArray& datagram, Result& result) {
     }
     ++sender.frames_in;
     sender.bytes_in += static_cast<quint64>(data->frame.size());
-    // A game names the others by their virtual addresses (a real one still finds its game).
+    // A game names the others by their virtual addresses only (phase 9: a real one finds nobody).
     const auto by_address = by_virtual.find(data->peer.Key());
-    const auto target =
-        members.find(by_address != by_virtual.end() ? *by_address : data->peer.Key());
+    const auto target = by_address != by_virtual.end() ? members.find(*by_address) : members.end();
     if (target == members.end()) {
         if (dropped++ < DropsLogged) {
             result.log.append(QStringLiteral("server link: %1 sent %2 bytes to %3: no game linked "
@@ -423,9 +423,20 @@ void Hub::OnData(Link& sender, const QByteArray& datagram, Result& result) {
         }
         return;
     }
+    const auto routed = Routed(sender, *target, data->frame);
+    if (!routed) {
+        if (dropped++ < DropsLogged) {
+            result.log.append(QStringLiteral("server link: %1 sent %2 bytes of game packets to %3 "
+                                             "that does not read: dropped")
+                                  .arg(Name(sender))
+                                  .arg(data->frame.size())
+                                  .arg(Name(*target)));
+        }
+        return;
+    }
     ++target->frames_out;
-    target->bytes_out += static_cast<quint64>(data->frame.size());
-    result.sends.append({target->endpoint, Encode(Data{sender.virtual_endpoint, data->frame})});
+    target->bytes_out += static_cast<quint64>(routed->size());
+    result.sends.append({target->endpoint, Encode(Data{sender.virtual_endpoint, *routed})});
     // The first frames between each pair: a stalled join shows which went.
     const quint64 count = ++pair_frames[qMakePair(sender.endpoint.Key(), target->endpoint.Key())];
     if (count <= static_cast<quint64>(pair_lines)) {
@@ -437,6 +448,34 @@ void Hub::OnData(Link& sender, const QByteArray& datagram, Result& result) {
                               .arg(Vport(data->frame, 2))
                               .arg(Head(data->frame)));
     }
+}
+
+std::optional<QByteArray> Hub::Routed(Link& sender, const Link& target, const QByteArray& frame) {
+    // The signaling vports (4 bytes), "SHAD", the type, the game frame.
+    constexpr qsizetype GameFrameAt = 9;
+    if (!packet_routes || frame.size() < GameFrameAt || frame.mid(4, 4) != "SHAD" ||
+        static_cast<quint8>(frame[8]) != BloodborneCoop::GamePacketsType) {
+        return frame;
+    }
+    auto game_frame = BloodborneCoop::DecodeGameFrame(
+        {reinterpret_cast<const u8*>(frame.constData()) + GameFrameAt,
+         static_cast<size_t>(frame.size() - GameFrameAt)});
+    if (!game_frame) {
+        return std::nullopt;
+    }
+    const size_t refused = BloodborneCoop::RouteGameFrame(*game_frame, [&](u32 channel) {
+        if (packet_routes(sender.endpoint, target.endpoint, channel)) {
+            return true;
+        }
+        ++sender.refused[channel];
+        return false;
+    });
+    if (refused == 0) {
+        return frame;
+    }
+    const auto payload = BloodborneCoop::EncodeGameFrame(*game_frame);
+    return frame.left(GameFrameAt) + QByteArray(reinterpret_cast<const char*>(payload.data()),
+                                                static_cast<qsizetype>(payload.size()));
 }
 
 void Hub::Heard(Link& link, qint64 now_ms, Result& result) {
@@ -492,15 +531,24 @@ Hub::Result Hub::Tick(qint64 now_ms) {
     if (stats_started && now_ms - stats_at_ms >= stats_ms) {
         stats_at_ms = now_ms;
         for (Link& link : members) {
+            QString refused;
+            for (const auto& [channel, count] : link.refused) {
+                refused += QStringLiteral("%1%2: %3")
+                               .arg(refused.isEmpty() ? ", refused " : ", ")
+                               .arg(QStringLiteral("0x%1").arg(channel, 0, 16))
+                               .arg(count);
+            }
+            link.refused.clear();
             result.log.append(QStringLiteral("server link: %1 in %2 frames/%3 bytes, out %4 "
-                                             "frames/%5 bytes, %6 pings%7")
+                                             "frames/%5 bytes, %6 pings%7%8")
                                   .arg(Name(link))
                                   .arg(link.frames_in)
                                   .arg(link.bytes_in)
                                   .arg(link.frames_out)
                                   .arg(link.bytes_out)
                                   .arg(link.pings)
-                                  .arg(link.quiet ? ", quiet" : ""));
+                                  .arg(link.quiet ? ", quiet" : "")
+                                  .arg(refused));
             link.frames_in = link.bytes_in = link.frames_out = link.bytes_out = 0;
             link.pings = 0;
         }

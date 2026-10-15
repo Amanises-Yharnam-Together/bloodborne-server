@@ -13,7 +13,6 @@
 
 #include "common/logging/log.h"
 #include "core/libraries/network/net.h"
-#include "core/libraries/network/net_upnp.h"
 #include "core/libraries/network/sockets.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_matching2/np_matching2_internal.h"
@@ -600,7 +599,7 @@ void HandleRoomEvent(const ShadNet::NotifyRoomEvent& n) {
     ScheduleEvent(std::move(ev));
 
     if (event == ORBIS_NP_MATCHING2_ROOM_EVENT_MEMBER_JOINED) {
-        StartMatching2PeerHandshake(*ctx, room_id, member_id);
+        StartMatching2PeerConnect(*ctx, room_id, member_id);
     }
 }
 
@@ -732,14 +731,13 @@ void SetMmShadNetClient(std::shared_ptr<ShadNet::ShadNetClient> client,
         server_udp_port = g_mm.server_udp_port;
     }
     LOG_INFO(Lib_NpMatching2, "ShadNet features: matching2_enabled={}", matching2_enabled);
-    Net::UPnPClient::Instance().SetP2PFeaturesEnabled(matching2_enabled);
 
     if (!client) {
         NpSignaling::Stubs::SetTransportHooks({});
         NpSignaling::Stubs::SetPeerResolver(nullptr);
         NpSignaling::Stubs::SetMatching2Enabled(false);
         NpSignaling::Stubs::SetMmServerEndpoint(0, 0);
-        StopMatching2HandshakeThread();
+        StopMatching2ConnectThread();
         return;
     }
 
@@ -757,9 +755,9 @@ void SetMmShadNetClient(std::shared_ptr<ShadNet::ShadNetClient> client,
     NpSignaling::Stubs::SetMatching2Enabled(matching2_enabled);
     NpSignaling::Stubs::SetMmServerEndpoint(server_addr, server_udp_port);
     if (matching2_enabled) {
-        StartMatching2HandshakeThread();
+        StartMatching2ConnectThread();
     } else {
-        StopMatching2HandshakeThread();
+        StopMatching2ConnectThread();
     }
     client->onRoomEvent = [](const ShadNet::NotifyRoomEvent& n) { HandleRoomEvent(n); };
     client->onRoomMessage = [](const ShadNet::NotifyRoomMessage& n) { HandleRoomMessage(n); };
@@ -774,7 +772,6 @@ void ClearMmShadNetClient() {
         g_mm.server_udp_port = 0;
         g_mm.matching2_enabled = false;
     }
-    Net::UPnPClient::Instance().SetP2PFeaturesEnabled(false);
     if (old_client) {
         old_client->onRoomEvent = nullptr;
         old_client->onRoomMessage = nullptr;
@@ -783,7 +780,7 @@ void ClearMmShadNetClient() {
     NpSignaling::Stubs::SetPeerResolver(nullptr);
     NpSignaling::Stubs::SetMatching2Enabled(false);
     NpSignaling::Stubs::SetMmServerEndpoint(0, 0);
-    StopMatching2HandshakeThread();
+    StopMatching2ConnectThread();
     {
         std::lock_guard lock(g_mm.pending_mutex);
         g_mm.pending.clear();
@@ -801,9 +798,6 @@ void MmContextStart(OrbisNpMatching2ContextId ctx_id) {
     req.set_ctx_id(ctx_id);
     MmSubmitRequest(ctx_id, 0, ORBIS_NP_MATCHING2_CONTEXT_EVENT_STARTED, MmCommand::ContextStart,
                     MakeProtoPayload(req));
-    if (ContextObject* ctx = ContextManager::Instance().Get(ctx_id)) {
-        SendMatching2StunPing(*ctx);
-    }
 }
 
 s32 MmContextStop(OrbisNpMatching2ContextId ctx_id) {

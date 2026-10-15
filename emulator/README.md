@@ -286,8 +286,6 @@ network/shadNet settings. In BBLauncher, open **shadPS4 Settings**, then
 | shadNet | Enabled |
 | Server | `100.101.102.103:31313` |
 | WebAPI Server | `http://100.101.102.103:31315` |
-| Signaling Info | Leave blank |
-| UPnP | Disabled for the Tailscale setup |
 
 Use the same server values on every player's PC, including the PC that also
 runs shadNet. Restart shadPS4 after changing network or user settings.

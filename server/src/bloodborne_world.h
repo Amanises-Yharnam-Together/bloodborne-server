@@ -92,6 +92,11 @@ public:
     void Forget(const ServerLink::Endpoint& link);
     // The party a link's game said in its hello, empty before one (phase 7: the hub's teams).
     QString PartyOf(const ServerLink::Endpoint& link) const;
+    // Phase 9: whether a game packet on `channel` goes from one link's game to another's, by the
+    // channel table, their maps and their parts in their maps' enemies (coop/packet_routes.h). A
+    // link without a member here gets only the game's own channels.
+    bool RoutesPacket(const ServerLink::Endpoint& from, const ServerLink::Endpoint& to,
+                      std::uint32_t channel) const;
 
     // The team lobby (phase 5), for the tests and the log.
     const BloodborneCoop::TeamLobby& Lobby() const {
@@ -157,7 +162,8 @@ private:
         // Runs phase 4's enemy owners (its hello says): on an area another member owns its new
         // kills and its HP reports do not count.
         bool enemy_owner = false;
-        std::string lobby; // its name in the team lobby, empty before its lobby hello
+        std::string lobby;     // its name in the team lobby, empty before its lobby hello
+        std::uint32_t map = 0; // the map it last said (0: loading, or none yet)
     };
 
     PartyWorld& WorldFor(const QString& name, qint64 now_ms, Result& result);

@@ -281,6 +281,7 @@ set(HTTP_TEST_SOURCES
     network/test_net_delay.cpp
     network/test_net_silence.cpp
     network/test_net_link.cpp
+    network/test_net_firewall.cpp
 )
 
 add_executable(shadps4_http_test ${HTTP_TEST_SOURCES})

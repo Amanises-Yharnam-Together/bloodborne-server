@@ -464,10 +464,6 @@ void InstallNativePacketTrace(u64 base, u64 image_size) {
              packet_trace_mode == PacketTraceMode::Full ? "every payload" : "unknown payloads");
 }
 
-// See ChannelPolicy: the game's packets decided per channel at the send and at both receive paths.
-// Members are found on the map board by their online id; a board this old knows no map.
-constexpr auto ChannelTableBoardAge = std::chrono::seconds{5};
-
 // A member's name on the boards (`member_id` the game's {identity*, lock}), or "".
 std::string BoardMemberOfMemberId(u64 member_id) {
     const u64 identity = member_id >= 0x10000 ? ReadValue<u64>(member_id, 0) : 0;
@@ -478,127 +474,52 @@ std::string BoardMemberOfMemberId(u64 member_id) {
     return online_id ? BoardMemberOfOnlineId(*online_id) : std::string{};
 }
 
-// The map board's map of a member (`member_id` the game's {identity*, lock}), or nothing.
-std::optional<u32> BoardMapOf(u64 member_id) {
-    const std::string member = BoardMemberOfMemberId(member_id);
-    if (member.empty()) {
-        return std::nullopt;
-    }
-    std::scoped_lock lock{map_board_mutex};
-    if (std::chrono::steady_clock::now() - map_board_time > ChannelTableBoardAge) {
-        return std::nullopt;
-    }
-    const auto entry = std::ranges::find(map_board, member, &MemberMap::member);
-    return entry != map_board.end() ? std::optional{entry->map} : std::nullopt;
-}
-
 // Phase 4's enemy owners are on (see InstallEnemyOwner).
 bool enemy_owner_installed = false;
-
-// An enemy packet the owners drop: logged once per channel and way.
-void LogEnemyPacketDropped(u32 channel, PacketWay way, EnemyRole role) {
-    static std::array<std::array<std::atomic<bool>, NativeChannelCount>, 2> logged{};
-    if (channel < NativeChannelCount && !logged[static_cast<size_t>(way)][channel].exchange(true)) {
-        LOG_INFO(Debug, "Bloodborne enemy owner: first {} packet on channel {:#x} dropped ({})",
-                 way == PacketWay::Out ? "sent" : "received", channel,
-                 role == EnemyRole::Owner      ? "this game runs the area"
-                 : role == EnemyRole::Follower ? "not from the area's owner"
-                                               : "the game's own hand-out");
-    }
-}
-
-// Whether the game keeps a packet; a dropped one is logged once per channel and way, and put on
-// the co-op trace ("net-drop") while the packet trace runs.
-bool KeepsPacket(u32 channel, PacketWay way, u64 member_id) {
-    if (channel >= NativeChannelCount) {
-        return true;
-    }
-    if (enemy_owner_installed && way == PacketWay::In) {
-        // A follower takes the enemies from the area's owner only (see KeepsEnemyPacketIn).
-        const EnemyRole role = CurrentEnemyRole();
-        bool from_owner = false;
-        if (role == EnemyRole::Follower) {
-            const std::string owner = CurrentEnemyOwner();
-            from_owner = !owner.empty() && BoardMemberOfMemberId(member_id) == owner;
-        }
-        if (!KeepsEnemyPacketIn(channel, role, from_owner)) {
-            LogEnemyPacketDropped(channel, way, role);
-            return false;
-        }
-        if (channel == 0x15 && role == EnemyRole::Owner) {
-            ForceEnemySteps();
-        }
-    }
-    const ChannelPolicy policy = NativeChannelPolicy(channel);
-    if (policy == ChannelPolicy::Pass) {
-        return true;
-    }
-    const u32 own_map = PlayingMap();
-    const std::optional<u32> peer_map =
-        policy == ChannelPolicy::SameMap ? BoardMapOf(member_id) : std::nullopt;
-    if (KeepsNativePacket(channel, way, own_map, peer_map)) {
-        return true;
-    }
-    static std::array<std::array<std::atomic<bool>, NativeChannelCount>, 2> logged{};
-    if (!logged[static_cast<size_t>(way)][channel].exchange(true)) {
-        LOG_INFO(Debug, "Bloodborne channel table: first {} packet on channel {:#x} dropped ({})",
-                 way == PacketWay::Out ? "sent" : "received", channel, ChannelPolicyName(policy));
-    }
-    if (packet_trace_mode != PacketTraceMode::Off) {
-        Trace("net-drop", {{"ch", fmt::format("{:02x}", channel)},
-                           {"way", way == PacketWay::Out ? "out" : "in"},
-                           {"policy", std::string{ChannelPolicyName(policy)}},
-                           {"map", fmt::format("{:x}", own_map)},
-                           {"peer-map", peer_map ? fmt::format("{:x}", *peer_map) : "-"}});
-    }
-    return false;
-}
 
 bool SendHitToOwner(const GuestRegisterSnapshot* registers); // below, with the game link
 
 // The send's entry (0x017894E0: rdi the net sync, rsi the member id, edx the channel, rcx the
-// payload, r8d its size): true returns 0, "not sent", as the game's own checks do.
+// payload, r8d its size): true returns 0, "not sent", as the game's own checks do. Which member
+// gets a packet is shadNet's (coop/packet_routes.h); here the game decides what it sends at all
+// (see ChannelPolicy), and a follower's hit and near list go to the area's owner instead of the
+// session's host.
 bool PS4_SYSV_ABI DecidePacketSend(u64, const GuestRegisterSnapshot* registers) {
     const u32 channel = static_cast<u32>(registers->rdx);
     if (enemy_owner_installed) {
-        const EnemyRole role = CurrentEnemyRole();
-        switch (EnemyPacketOut(channel, role)) {
+        switch (EnemyPacketOut(channel, CurrentEnemyRole())) {
         case EnemyPacketFate::ToOwner:
             if (SendHitToOwner(registers)) {
                 CountEnemyPacketSent(channel);
                 return true;
             }
-            break; // no link to the owner: the game's own way
+            break; // no link to the owner: the game's own way (shadNet routes it)
         case EnemyPacketFate::Drop:
-            LogEnemyPacketDropped(channel, PacketWay::Out, role);
             return true;
         case EnemyPacketFate::Keep:
             break;
         }
     }
-    const bool dropped = !KeepsPacket(channel, PacketWay::Out, registers->rsi);
-    if (!dropped) {
-        CountEnemyPacketSent(channel);
+    const ChannelPolicy policy = NativeChannelPolicy(channel);
+    if (policy == ChannelPolicy::Ours || policy == ChannelPolicy::Drop) {
+        static std::array<std::atomic<bool>, NativeChannelCount> logged{};
+        if (channel < NativeChannelCount && !logged[channel].exchange(true)) {
+            LOG_INFO(Debug, "Bloodborne channel table: first packet on channel {:#x} not sent ({})",
+                     channel, ChannelPolicyName(policy));
+        }
+        return true;
     }
-    return dropped;
+    CountEnemyPacketSent(channel);
+    return false;
 }
 
-// The receive's channel checks in 0x01790C20 (r8 / rbx the member's queues, their member id at
-// +0x08): reliable (tag 0) before `movsxd rax, [rbx + 0x64]`, so the channel is rewritten there;
-// unreliable (tag 1) after `mov eax, [rdx]`, so eax is. DroppedNativeChannel makes the game's own
-// `cmp ..., 0x43; ja` drop it.
+// The receive's channel checks in 0x01790C20 (rbx / rax the reliable and unreliable channel): a
+// hit on an enemy this game runs makes its enemies step at once.
 void PS4_SYSV_ABI DecidePacketReceived(u64 tag, GuestRegisterSnapshot* registers) {
-    if (tag == 0) {
-        const u64 queues = registers->rbx;
-        const u32 channel = ReadValue<u32>(queues, 0x64);
-        if (!KeepsPacket(channel, PacketWay::In, queues + 0x08)) {
-            WriteValue(queues, 0x64, DroppedNativeChannel);
-        }
-        return;
-    }
-    const u32 channel = static_cast<u32>(registers->rax);
-    if (!KeepsPacket(channel, PacketWay::In, registers->r8 + 0x08)) {
-        registers->rax = DroppedNativeChannel;
+    const u32 channel =
+        tag == 0 ? ReadValue<u32>(registers->rbx, 0x64) : static_cast<u32>(registers->rax);
+    if (channel == 0x15 && enemy_owner_installed && CurrentEnemyRole() == EnemyRole::Owner) {
+        ForceEnemySteps();
     }
 }
 
@@ -630,14 +551,13 @@ void InstallChannelTable(u64 base, u64 image_size) {
     }
     channel_table_installed = true;
     coop_features.On("channel table");
-    LOG_INFO(Debug, "Bloodborne channel table: on (map items, the host's door corrections and the "
-                    "boss kick dropped; players, enemies, events and objects only on one map)");
+    LOG_INFO(Debug, "Bloodborne channel table: on (shadNet routes the packets; a follower's hits "
+                    "go to the enemies' owner)");
 }
 
 // See bloodborne_game_link.h: with the server link on, the game's packets leave at its transport
 // send in our frames (SHAD GamePacketsType, through the link) and come back into the member's
-// queues on the game's thread. SHADPS4_BLOODBORNE_GAME_PACKETS=native keeps the game's own
-// transport under the link (phase 2a alone).
+// queues on the game's thread; the game's own transport sends nothing (phase 9).
 struct InboundGamePacket {
     std::string member; // the sender's online id
     PacketClass packet_class;
@@ -657,8 +577,8 @@ struct GamePacketLink {
     std::map<std::string, std::pair<u32, u16>> addresses;
     std::set<std::string> unresolved;
     u64 sent = 0;
-    u64 native_no_member = 0;
-    u64 native_no_address = 0;
+    u64 no_member = 0;      // packets for a member without an online id: dropped
+    u64 dropped_routed = 0; // reliable packets shadNet dropped (DroppedNativeChannel)
     u64 taken = 0;
     u64 dropped_unknown = 0;
 };
@@ -688,8 +608,9 @@ GameLinkPeer& GameLinkPeerOf(const std::string& member) {
     return found->second;
 }
 
-// 0x00C8F0A0's entry: a packet for a member our link reaches is taken ("sent"); else the
-// game's transport sends it (a member whose address signaling does not know yet).
+// 0x00C8F0A0's entry: every packet is taken ("sent"); never the game's own transport (phase 9:
+// nothing falls back to it). A member whose address is not known yet gets its packets once it is;
+// one the game names without an online id gets nothing.
 bool PS4_SYSV_ABI TakeGamePacket(u64, GuestRegisterSnapshot* registers) {
     const u64 packet = registers->rcx;
     const u32 size = static_cast<u32>(registers->r8);
@@ -703,20 +624,18 @@ bool PS4_SYSV_ABI TakeGamePacket(u64, GuestRegisterSnapshot* registers) {
     {
         std::scoped_lock lock{game_link.mutex};
         if (game_link.self.empty()) {
-            return false;
+            game_link.self = LocalOnlineId();
         }
-        if (member.empty()) {
-            ++game_link.native_no_member;
-            return false;
+        if (member.empty() || game_link.self.empty()) {
+            ++game_link.no_member;
+        } else {
+            if (!game_link.addresses.contains(member)) {
+                game_link.unresolved.insert(member);
+            }
+            GameLinkPeerOf(member).Send(packet_class, {reinterpret_cast<const u8*>(packet), size},
+                                        GameLinkNowMs());
+            ++game_link.sent;
         }
-        if (!game_link.addresses.contains(member)) {
-            game_link.unresolved.insert(member);
-            ++game_link.native_no_address;
-            return false;
-        }
-        GameLinkPeerOf(member).Send(packet_class, {reinterpret_cast<const u8*>(packet), size},
-                                    GameLinkNowMs());
-        ++game_link.sent;
     }
     registers->rax = 1;
     return true;
@@ -1105,6 +1024,10 @@ void RunGamePacketLink() {
                     continue;
                 }
                 for (auto& packet : GameLinkPeerOf(frame->sender).Receive(*frame, now_ms)) {
+                    if (NativePacketChannel(packet) >= NativeChannelCount) {
+                        ++game_link.dropped_routed; // shadNet's: it keeps the stream's order
+                        continue;
+                    }
                     const bool reliable =
                         (packet[0] | packet[1] << 8 | packet[2] << 16 | packet[3] << 24) >= 7;
                     game_link.inbound.push_back(
@@ -1141,13 +1064,11 @@ void RunGamePacketLink() {
                     peers += fmt::format(" {}: {} unacked, {} resends, {} late dropped;", member,
                                          peer.Unacked(), peer.Resends(), peer.DroppedOld());
                 }
-                lines.push_back(
-                    fmt::format("{} packets taken from the game, {} handed to it, "
-                                "{} dropped (no member), {} left to the game's own "
-                                "transport (no member id {}, no address {});{}",
-                                game_link.sent, game_link.taken, game_link.dropped_unknown,
-                                game_link.native_no_member + game_link.native_no_address,
-                                game_link.native_no_member, game_link.native_no_address, peers));
+                lines.push_back(fmt::format(
+                    "{} packets taken from the game, {} handed to it, {} dropped (no member), "
+                    "{} dropped by shadNet, {} for no member id;{}",
+                    game_link.sent, game_link.taken, game_link.dropped_unknown,
+                    game_link.dropped_routed, game_link.no_member, peers));
             }
         }
         DeliverGamePackets();
@@ -1165,9 +1086,7 @@ void RunGamePacketLink() {
 
 void InstallGamePacketLink(u64 base, u64 image_size) {
 #ifdef BLOODBORNE_NATIVE_PORT
-    const char* mode = std::getenv("SHADPS4_BLOODBORNE_GAME_PACKETS");
-    const bool wanted = party_controller.has_value() && Libraries::Net::ServerLinkSwitchOn() &&
-                        !(mode != nullptr && std::string_view{mode} == "native");
+    const bool wanted = party_controller.has_value() && Libraries::Net::ServerLinkSwitchOn();
 #else
     // The port only (docs/SERVER_COOP_PLAN.md); shadPS4 keeps the old path.
     const bool wanted = false;

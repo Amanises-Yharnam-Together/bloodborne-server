@@ -62,6 +62,7 @@ set(COOP_SOURCES
     coop/world_log.h
     coop/world_log.cpp
     coop/game_link.h
+    coop/packet_routes.h
     coop/coop_stream.h
     coop/coop_messages.h
     coop/coop_messages.cpp
@@ -98,8 +99,8 @@ set(SOURCES
     # Matchmaking
     src/matching.h
     src/cmd_matching.cpp
-    src/stun_server.h
-    src/stun_server.cpp
+    src/link_server.h
+    src/link_server.cpp
     # The games' one link to the server (co-op phase 2)
     src/server_link.h
     src/server_link.cpp
@@ -199,11 +200,15 @@ if(BUILD_TESTING)
         tests/test_server_link.cpp
         src/server_link.cpp
     )
-    target_include_directories(test_server_link PRIVATE src)
+    target_include_directories(test_server_link PRIVATE src "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(test_server_link PRIVATE Qt6::Core)
     target_compile_definitions(test_server_link PRIVATE
         BLOODBORNE_SERVER_LINK_CONTRACTS="${CMAKE_CURRENT_SOURCE_DIR}/tests/contracts/server_link_frames.txt")
     add_test(NAME server_link COMMAND test_server_link)
+
+    add_executable(test_packet_routes EXCLUDE_FROM_ALL tests/test_packet_routes.cpp)
+    target_include_directories(test_packet_routes PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME packet_routes COMMAND test_packet_routes)
 
     add_executable(test_bloodborne_world EXCLUDE_FROM_ALL
         tests/test_bloodborne_world.cpp
@@ -260,17 +265,6 @@ if(BUILD_TESTING)
         set_tests_properties(bloodborne_backend_parity PROPERTIES
             ENVIRONMENT "SHADNET_EXE=$<TARGET_FILE:shadnet>")
     endif()
-
-    add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
-        tests/bloodborne_matching_guest_probe.cpp
-        "${PROTO_OUT}/shadnet.pb.cc"
-    )
-    target_include_directories(bloodborne_matching_guest_probe PRIVATE
-        src
-        "${PROTO_OUT}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
-    )
-    target_link_libraries(bloodborne_matching_guest_probe PRIVATE libprotobuf)
 endif()
 
 add_custom_command(TARGET shadnet POST_BUILD

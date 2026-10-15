@@ -430,8 +430,8 @@ void ClientSession::GetSelfSignalingAddr(QString& addr, uint16_t& port) const {
             port = it.value().second;
         }
     }
-    if (addr.isEmpty() && m_socket)
-        addr = m_socket->peerAddress().toString();
+    // Phase 9: a game is known only by its virtual address, once its link said hello; never by
+    // the address it signed in from.
 }
 
 void ClientSession::ResetMatchingRoomState(uint64_t roomId) {

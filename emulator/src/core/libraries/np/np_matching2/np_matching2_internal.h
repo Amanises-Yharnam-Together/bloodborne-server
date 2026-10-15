@@ -37,13 +37,11 @@ struct PeerInfo {
     s32 conn_id = 0;
     s32 status = 0;
     Libraries::Np::OrbisNpOnlineId online_id{};
-    bool handshake_started = false;
-    bool sent_check = false;
+    bool handshake_started = false; // a connect through the server is under way
     bool sent_established = false;
-    u64 nonce = 0;
     u32 ping_us = 0;
+    std::chrono::steady_clock::time_point first_try{};
     std::chrono::steady_clock::time_point last_send{};
-    std::chrono::steady_clock::time_point last_check_send{};
 };
 
 struct MemberBinCache {

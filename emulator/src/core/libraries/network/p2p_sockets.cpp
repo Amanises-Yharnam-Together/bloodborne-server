@@ -28,6 +28,7 @@
 #include "common/singleton.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/network/net_delay.h"
+#include "core/libraries/network/net_firewall.h"
 #include "core/libraries/network/net_link.h"
 #include "core/libraries/network/net_silence.h"
 #include "core/libraries/network/net_util.h"
@@ -90,7 +91,6 @@ constexpr net_socket kInvalidSocket = -1;
 enum class InternalChannel {
     Signaling,
     Control,
-    Matching2,
     // Seamless co-op's own frames between the games ("SHAD" type 0x30: enemy damage).
     Coop,
     // The game's own packets in our frames ("SHAD" type 0x40, bloodborne_game_link.h).
@@ -419,6 +419,9 @@ public:
         if (LinkCut()) {
             return true; // lost on the way, as on a dropped connection
         }
+        if (!FirewallAllows(dest.sin_addr.s_addr, dest.sin_port, "a datagram to")) {
+            return false;
+        }
         if (delay_line) {
             {
                 std::lock_guard lock(delay_mutex);
@@ -500,7 +503,7 @@ public:
     int SendInternal(const void* data, u32 len, u32 dest_addr_nbo, u16 dest_port_nbo) {
         // Phase 7: our signaling, matching and co-op frames go the game sockets' way, never
         // straight to a peer (before the server is known, nothing).
-        if (!Link::SendsToPeer(Server(), PeersOnlyThroughServer())) {
+        if (!Link::SendsToPeer(Server())) {
             return -1;
         }
         return SendFrame(kSignalingVPortNbo, kSignalingVPortNbo, data, len, dest_addr_nbo,
@@ -578,8 +581,6 @@ private:
             return signaling_queue;
         case InternalChannel::Control:
             return control_queue;
-        case InternalChannel::Matching2:
-            return matching2_queue;
         case InternalChannel::Coop:
             return coop_queue;
         case InternalChannel::GamePackets:
@@ -592,9 +593,6 @@ private:
 
     static InternalChannel ClassifyInternal(const u8* payload, size_t size) {
         if (size >= 5 && std::memcmp(payload, "SHAD", 4) == 0) {
-            if (payload[4] == 0x21) {
-                return InternalChannel::Matching2;
-            }
             if (payload[4] == 0x10) {
                 return InternalChannel::Control;
             }
@@ -605,7 +603,7 @@ private:
                 return InternalChannel::GamePackets;
             }
         }
-        // STUN echo (6 bytes) and generic signaling 0x05/0x06/0x07 land here.
+        // Signaling 0x05/0x06/0x07 land here.
         return InternalChannel::Signaling;
     }
 
@@ -670,6 +668,9 @@ private:
             if (LinkCut()) {
                 continue; // never arrived (a dropped connection, the rig's cut-link)
             }
+            if (!FirewallAllows(from.sin_addr.s_addr, from.sin_port, "a datagram from")) {
+                continue;
+            }
             const std::span<const u8> datagram{buffer.data(), static_cast<size_t>(rc)};
             if (const auto server = LinkServer();
                 server.addr_nbo == from.sin_addr.s_addr && server.port_nbo == from.sin_port) {
@@ -678,9 +679,8 @@ private:
                     continue;
                 }
             }
-            if (!Link::TakesDatagramFrom(LinkServer(), from.sin_addr.s_addr, from.sin_port,
-                                         PeersOnlyThroughServer())) {
-                continue; // the port takes no datagram straight from a peer (phase 6)
+            if (!Link::TakesDatagramFrom(LinkServer(), from.sin_addr.s_addr, from.sin_port)) {
+                continue; // no datagram straight from a peer (phase 6), nor before the link
             }
             Deliver(from.sin_addr.s_addr, from.sin_port, datagram);
         }
@@ -739,9 +739,6 @@ private:
     }
 
     Link::ServerEndpoint LinkServer() {
-        if (!ServerLinkSwitchOn()) {
-            return {};
-        }
         std::lock_guard lock(link_mutex);
         return link_server;
     }
@@ -813,6 +810,14 @@ private:
             }
         }
         if (welcome.accepted) {
+            // The address the game's own NAT queries see: its virtual one (no STUN).
+            std::string online_id;
+            {
+                std::lock_guard lock(link_mutex);
+                online_id = link_online_id;
+            }
+            Common::Singleton<NetUtil::NetUtilInternal>::Instance()->SetExternalIp(
+                htonl(Link::VirtualAddressOf(online_id).ipv4));
             if (first) {
                 LOG_INFO(Lib_Net, "Server link: the server took this game's hello");
                 TellLinkObserver("welcome", "");
@@ -974,7 +979,6 @@ private:
     std::mutex internal_mutex;
     std::deque<QueuedPacket> signaling_queue;
     std::deque<QueuedPacket> control_queue;
-    std::deque<QueuedPacket> matching2_queue;
     std::deque<QueuedPacket> coop_queue;
     std::deque<QueuedPacket> game_packets_queue;
     std::deque<QueuedPacket> server_coop_queue;
@@ -1248,7 +1252,7 @@ int P2PSocket::SendPacket(const void* msg, u32 len, int flags, const OrbisNetSoc
     }
 
     // The port sends a peer nothing straight (phase 6): before the server link is up, nothing.
-    if (!Link::SendsToPeer(P2PTransport::Instance().Server(), PeersOnlyThroughServer())) {
+    if (!Link::SendsToPeer(P2PTransport::Instance().Server())) {
         return FailWith(ORBIS_NET_EHOSTUNREACH);
     }
     const int rc = P2PTransport::Instance().SendFrame(local_addr.sin_vport, target.sin_vport, msg,
@@ -1471,10 +1475,6 @@ void P2PSocket::EnqueuePacket(P2PDatagram packet) {
     receive_cv.notify_all();
 }
 
-bool PeersOnlyThroughServer() {
-    return ServerLinkSwitchOn(); // the port: no direct P2P (phase 6)
-}
-
 bool ServerLinkSwitchOn() {
 #ifdef BLOODBORNE_NATIVE_PORT
     // Always in the port (phase 6: no switch): the team's world lives on the server.
@@ -1485,7 +1485,8 @@ bool ServerLinkSwitchOn() {
 }
 
 void ConfigureServerLink(u32 server_addr_nbo, u16 server_port_nbo, std::string online_id) {
-    if (!ServerLinkSwitchOn() || server_addr_nbo == 0 || server_port_nbo == 0) {
+    // Every build (phase 9): a game reaches its peers through the server only.
+    if (server_addr_nbo == 0 || server_port_nbo == 0) {
         return;
     }
     P2PTransport::Instance().ConfigureLink(server_addr_nbo, server_port_nbo, std::move(online_id));
@@ -1516,12 +1517,7 @@ bool ServerLinkWelcomed() {
 }
 
 bool ConnectsPeersWithoutHandshake() {
-    return Link::ConnectsWithoutHandshake(P2PTransport::Instance().Server(),
-                                          PeersOnlyThroughServer());
-}
-
-bool PingsServerStun() {
-    return Link::PingsStun(PeersOnlyThroughServer());
+    return Link::ConnectsWithoutHandshake(P2PTransport::Instance().Server());
 }
 
 void CutServerLinkForTest(u32 ms) {
@@ -1567,15 +1563,6 @@ int P2PControlRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {
                                                     from_port);
 }
 
-int P2PMatching2SendTo(const void* data, u32 len, u32 dest_addr, u16 dest_port) {
-    return P2PTransport::Instance().SendInternal(data, len, dest_addr, dest_port);
-}
-
-int P2PMatching2RecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {
-    return P2PTransport::Instance().ReceiveInternal(InternalChannel::Matching2, buf, len, from_addr,
-                                                    from_port);
-}
-
 int P2PCoopSendTo(const void* data, u32 len, u32 dest_addr, u16 dest_port) {
     if (!P2PTransport::Instance().IsReady()) {
         return -1; // no session has started the transport
@@ -1591,6 +1578,29 @@ int P2PGamePacketsRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {
 int P2PCoopRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port) {
     return P2PTransport::Instance().ReceiveInternal(InternalChannel::Coop, buf, len, from_addr,
                                                     from_port);
+}
+
+bool FirewallAllows(u32 ipv4_nbo, u16 port_nbo, std::string_view what) {
+    static const std::optional<NetFirewall> firewall = [] {
+        const char* setting = std::getenv("SHADPS4_NET_FIREWALL");
+        auto parsed = NetFirewall::Parse(setting != nullptr ? setting : "");
+        if (parsed) {
+            LOG_INFO(Lib_Net, "Net firewall: on, the game reaches only {}", setting);
+        }
+        return parsed;
+    }();
+    const u32 ipv4 = ntohl(ipv4_nbo);
+    const u16 port = ntohs(port_nbo);
+    if (!firewall || firewall->Allows(ipv4, port)) {
+        return true;
+    }
+    static std::atomic<u32> blocked{0};
+    const u32 count = blocked.fetch_add(1) + 1;
+    if (count <= 20 || count % 1000 == 0) {
+        LOG_WARNING(Lib_Net, "Net firewall: blocked {} {}.{}.{}.{}:{} ({} blocked so far)", what,
+                    ipv4 >> 24, (ipv4 >> 16) & 0xFF, (ipv4 >> 8) & 0xFF, ipv4 & 0xFF, port, count);
+    }
+    return false;
 }
 
 } // namespace Libraries::Net

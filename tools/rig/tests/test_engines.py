@@ -243,6 +243,25 @@ class RunnerTest(unittest.TestCase):
         finally:
             run_scenario.use_ping(None)
 
+    def test_a_port_game_reaches_only_the_lanes_servers(self):
+        # Phase 9's proof test: every game talks only to the server, never to another game. Each
+        # game's own firewall (SHADPS4_NET_FIREWALL) names the servers it reaches: shadNet's TCP
+        # and UDP ports, the web API and the backend, through their proxies with a ping.
+        run_scenario.use_engine("port")
+        env = run_scenario.game_environment("guest", None, "rig:x")
+        self.assertEqual(env["SHADPS4_NET_FIREWALL"],
+                         "127.0.0.1:32313,127.0.0.1:32314,127.0.0.1:32315,127.0.0.1:20453")
+        run_scenario.use_ping((50, 100))
+        try:
+            env = run_scenario.game_environment("guest", None, "rig:x")
+            self.assertEqual(env["SHADPS4_NET_FIREWALL"],
+                             "127.0.0.1:33313,127.0.0.1:33314,127.0.0.1:33315,127.0.0.1:21453")
+        finally:
+            run_scenario.use_ping(None)
+        with unittest.mock.patch.dict(os.environ, {"SHADPS4_NET_FIREWALL": "127.0.0.1:*"}):
+            env = run_scenario.game_environment("guest", None, "rig:x")
+        self.assertNotIn("127.0.0.1:*", env["SHADPS4_NET_FIREWALL"], "never the PC's own")
+
     def test_the_servers_udp_port_follows_the_one_the_games_reach(self):
         # A game sends its STUN pings to the TCP port it reached + 1 (np_matching2_mm.cpp): with
         # a ping that is the proxy's port + 1, which shadNet must listen on itself (UDP is not

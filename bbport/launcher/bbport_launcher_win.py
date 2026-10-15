@@ -305,7 +305,7 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'vk_validation': False, 'extra_env': '', 'close_on_play': False,
                 'check_updates': True, 'ui_advanced': False, 'animations': True,
                 'addcont': '', 'pkg_dir': '', 'pkg_src': '', 'reshade': False, 'online': False, 'online_server': 'srv.shadps4.net:31313',
-                'online_webapi': '', 'online_npid': '', 'online_password': '', 'online_upnp': True,
+                'online_webapi': '', 'online_npid': '', 'online_password': '',
                 'online_community': COMMUNITY_SERVER,
                 'beta_versions': is_prerelease(VERSION),  # a beta user keeps getting betas unless they say no
                 'experimental': False, 'object_motion_amd': False, 'monitor': '',  # monitor: a name from --displays; '' is the primary
@@ -989,7 +989,6 @@ def game_environment(s, frame_generation=None):
         env['BB_SHADNET_WEBAPI'] = webapi_setting(s)
         env['BB_SHADNET_NPID'] = str(s['online_npid']).strip()
         env['BB_SHADNET_PASSWORD'] = str(s['online_password'])
-        env['BB_UPNP'] = '1' if s['online_upnp'] else '0'
         env['BB_COMMUNITY_SERVER'] = community_address(s['online_community'])
     if s.get('reshade') and reshade_ready():
         # An explicit layer for this run only; its files, settings and log stay in bin/reshade.
@@ -3708,9 +3707,6 @@ class Launcher:
                    'owner of a private server.'))
         self.row(f, _('Password'), ttk.Entry(f, textvariable=self.var('online_password', 'app'), width=40, show='•'),
                  _('Saved on this PC with the other launcher settings.'))
-        self.section(f, _('Connection'))
-        self.check(f, 'online_upnp', 'app', _('UPnP (open a port on the router automatically)'),
-                   _('Turn it off on Tailscale or another VPN.'))
         result = ttk.Label(f, text='', style='Muted.TLabel', justify='left')
 
         def check():

@@ -64,7 +64,6 @@ foreach ($p in $players) {
     $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
     $cfg.General.shadnet_server = "127.0.0.1:$GamePort"
     $cfg.General.shadnet_webapi_server = "http://127.0.0.1:$webPort"
-    $cfg.General.enable_upnp = $false
     $cfg.GPU.full_screen = $false
     $cfg.GPU.window_width = 1280; $cfg.GPU.window_height = 720
     Write-Utf8 $cfgPath ($cfg | ConvertTo-Json -Depth 10)
