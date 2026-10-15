@@ -281,6 +281,35 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
+    "trade-any": {
+        "about": "trading any item (Kaniel 2026-10-15): the host gives the guest a key item (Oedon "
+                 "Tomb Key), a weapon with a blood gem in it (Hunter Axe +5) and armor (Charred "
+                 "Hunter Garb) in one offer; the guest gets each, the weapon with its gem",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10",
+                     "trade-stock goods:4000 1", "trade-stock weapon:5000500 1",
+                     "trade-socket weapon:5000500 gem:1000000 13101",
+                     "trade-stock armor:11000 1", "wait 5",
+                     "trade-offer goods:4000 1 weapon:5000500 1 armor:11000 1 120",
+                     "expect-held goods:4000 0", "expect-held weapon:5000500 0",
+                     "expect-held armor:11000 0", "wait-trade accepted 120"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10",
+                      "trade-stock goods:4000 0", "trade-stock weapon:5000500 0",
+                      "trade-stock armor:11000 0",
+                      "trade-answer yes 180", "expect-held goods:4000 1 30",
+                      "expect-held weapon:5000500 1 30",
+                      "expect-socketed weapon:5000500 gem:1000000 13101",
+                      "expect-held armor:11000 1", "wait-trade received 10"],
+        },
+        "expect": {
+            "host": [r"Bloodborne trade: offered .* Oedon Tomb Key, Hunter Axe \+5, Charred "
+                     r"Hunter Garb"],
+            "guest": [r"Bloodborne trade: added Oedon Tomb Key, Hunter Axe \+5, Charred Hunter "
+                      r"Garb"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     "trade-menus": {
         "about": "trading's menus (drawn): the guest answers the "
                  "host's offer in the game's yes/no box and the host sees the game's box saying it "

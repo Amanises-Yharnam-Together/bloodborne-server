@@ -33,7 +33,8 @@ namespace BloodborneCoop {
 
 enum class TradeItemKind : u32 {
     Echoes = 1, // Blood Echoes (id 0)
-    Goods = 2,  // consumables, by EquipParamGoods id
+    Goods = 2,  // goods (consumables, materials, key items), by EquipParamGoods id
+    Item = 3,   // an item of its own (weapon, armor, gem): category | id, one each, with its data
 };
 enum class TradeState : u32 {
     Open = 1,
@@ -52,15 +53,27 @@ struct TradeItem {
     TradeItemKind kind = TradeItemKind::Goods;
     u32 id = 0;
     u32 count = 0;
+    std::string name; // as the giver's game calls it (empty: the known goods' names)
+    std::string data; // an item of its own: what the giver's game wrote of it (upgrades, gems)
     bool operator==(const TradeItem&) const = default;
 };
 using TradeItems = std::vector<TradeItem>;
 
-// What may be traded: Blood Echoes, Blood Vials and Quicksilver Bullets.
+// What may be traded (Kaniel 2026-10-15: any item): Blood Echoes, any goods, and items of their
+// own (weapons, armor, gems and runes), each with its data. Item categories as the game's item ids
+// carry them (the top 4 bits).
 constexpr u32 BloodVialGoods = 1000;
 constexpr u32 QuicksilverBulletGoods = 900;
 constexpr u32 MaxTradeEchoes = 999'999'999;
 constexpr u32 MaxTradeGoods = 99;
+constexpr u32 MaxTradeGoodsId = 0x7FFFFF; // the game's goods handles keep 23 bits
+constexpr u32 WeaponCategory = 0x00000000;
+constexpr u32 ArmorCategory = 0x10000000;
+constexpr u32 AccessoryCategory = 0x20000000;
+constexpr u32 GoodsCategory = 0x40000000;
+constexpr u32 GemCategory = 0x80000000; // blood gems and Caryll runes
+constexpr size_t MaxTradeItemData = 1024;
+constexpr size_t MaxTradeItemName = 96;
 struct TradeGood {
     TradeItemKind kind;
     u32 id;
@@ -72,11 +85,14 @@ inline constexpr TradeGood TradeGoods[]{
     {TradeItemKind::Goods, BloodVialGoods, "Blood Vial", "Blood Vials"},
     {TradeItemKind::Goods, QuicksilverBulletGoods, "Quicksilver Bullet", "Quicksilver Bullets"},
 };
+// The goods with names of their own here (echoes, vials, bullets: plurals too), or nothing.
 const TradeGood* FindTradeGood(TradeItemKind kind, u32 id);
-// Why these items can't be offered (or asked for), or nothing: unknown items, a count of 0 or over
-// the limit, an item twice. `allow_empty`: the asked-for side may be empty, the offered one not.
+// Why these items can't be offered (or asked for), or nothing: no such kind or category, a count
+// of 0 or over the limit (one of an item of its own), a name or data too long, an item twice.
+// `allow_empty`: the asked-for side may be empty, the offered one not.
 std::optional<std::string> TradeItemsProblem(std::span<const TradeItem> items, bool allow_empty);
-// "5 Blood Vials, 1,000 Blood Echoes": how the game words a trade's items.
+// "5 Blood Vials, 1,000 Blood Echoes, Saw Cleaver +5, Molotov Cocktail x3": how the game words a
+// trade's items (others than the known goods by their names, "an item" without one).
 std::string TradeItemsText(std::span<const TradeItem> items);
 
 // An open offer lives this long unanswered, and a member may have this many open at once.

@@ -225,9 +225,11 @@ message Portrait {
 // before it accepts. Every hand-over is a grant, kept on the server (and on disk) until the
 // member's game says it added it.
 message TradeItem {
-    uint32 kind = 1;  // TradeItemKind: 1 Blood Echoes, 2 goods
-    uint32 id = 2;    // the goods' EquipParamGoods id (0 for echoes)
+    uint32 kind = 1;  // TradeItemKind: 1 Blood Echoes, 2 goods, 3 an item of its own
+    uint32 id = 2;    // goods: the EquipParamGoods id; an item: category | id; echoes: 0
     uint32 count = 3;
+    string name = 4;  // the item's name in the giver's game (the words of the boxes)
+    bytes data = 5;   // an item of its own: what makes it itself (its upgrades, its gems)
 }
 
 // game -> server: an offer to another member, its items already taken out.

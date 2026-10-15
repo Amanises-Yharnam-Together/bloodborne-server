@@ -138,16 +138,19 @@ void bbcoop_team_choose(int what);
 
 /* Trading between party members (the co-op code's bloodborne_trade.h, with
  * always on in the port with the server world): what the port's trade menus (shim/bbport_trade_menu.cpp) need. An
- * item is a kind (1 Blood Echoes with id 0, 2 goods by EquipParamGoods id); texts are UTF-8 and
- * `size` bytes at most. Calls from the game's thread. */
+ * item is a kind (1 Blood Echoes with id 0, 2 goods by EquipParamGoods id, 3 an item of its own:
+ * a weapon, armor, gem or rune by its full item id, category | id); texts are UTF-8 and `size`
+ * bytes at most. Calls from the game's thread. */
 int bbcoop_trade_on(void);
+/* Whether the item may be given (Kaniel 2026-10-15: any item; not the bell items). */
 int bbcoop_trade_tradeable(uint32_t kind, uint32_t id);
 uint32_t bbcoop_trade_held(uint32_t kind, uint32_t id);
 /* The quantity picker's line for giving the item to the nearest member on this map; 0 when
  * nobody is there to give to. */
 int bbcoop_trade_give_question(uint32_t kind, uint32_t id, char *text, size_t size);
-/* Offers `count` of the item to the nearest member (taken out at once): 1 when sent. */
-int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count);
+/* Offers `count` of the item to the nearest member (taken out at once; an item of its own: the
+ * inventory entry with `handle`, else the first): 1 when sent. */
+int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count, uint32_t handle);
 /* The oldest offer to this player waiting for an answer: its id and question; 0 when none. */
 int bbcoop_trade_ask(uint64_t *id, char *text, size_t size);
 /* Whether offer `id` still waits for this player's answer. */
@@ -158,6 +161,9 @@ int bbcoop_trade_answer(uint64_t id, int accept);
 int bbcoop_trade_notice(char *text, size_t size);
 /* The menus' tick: the co-op code runs it on the game's thread with its trades. */
 void bbcoop_trade_set_ui_tick(void (*tick)(void));
+/* Items' names for the boxes (the save editor's, from the game's text): by full item id (goods
+ * 0x40000000 | id), 1 when it knows the item. */
+void bbcoop_trade_set_namer(int (*namer)(uint32_t item_id, char *text, size_t size));
 
 #ifdef __cplusplus
 }

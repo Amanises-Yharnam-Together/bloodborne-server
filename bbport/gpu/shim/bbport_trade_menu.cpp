@@ -3,9 +3,9 @@
 // the 1.09 eboot, 2026-10-14):
 //   - the inventory's item commands (Use, Use Multiple, Discard) are a command list opened by
 //     `call 0x01BEA630(Job** out, model, Function* factory)` at 0x01BA152A; the factory (vtable
-//     0x0533FE00) holds a copy of the item's record at +8, its item id at +0x4C. The call goes to
-//     OpenItemCommands, which adds the "Give" rows with AddRow 0x01B4C9A0(model, name+help texts,
-//     Function* action, 0) first;
+//     0x0533FE00) holds a copy of the item's record at +8, its item id at +0x4C, its handle at +0x70
+//     (an item of its own: which one). The call goes to OpenItemCommands, which adds the "Give"
+//     rows with AddRow 0x01B4C9A0(model, name+help texts, Function* action, 0) first;
 //   - a row's action is a std::function whose call is Do_call(Job** out, self, ctx), ctx + 0x48 the
 //     owner for its dialogs; ours opens the quantity picker 0x01C203C0(Job** out, owner,
 //     L"NumSelect", text, min, max, Function* on_ok, Function* extra), whose on_ok gets the number;
@@ -25,6 +25,7 @@
 
 #include "../bbcoop.h"
 #include "bbport_game_menu.h"
+#include "bbport_save_editor.h"
 
 namespace BbTradeMenu {
 namespace {
@@ -39,6 +40,7 @@ constexpr u64 ItemCommandsOpenCall = 0x01BA152A;
 constexpr u64 OpenCommandList = 0x01BEA630;
 constexpr u64 ItemCommandsFactoryVtable = 0x0533FE00;
 constexpr u64 FactoryItemIdAt = 8 + 0x4C;
+constexpr u64 FactoryHandleAt = 8 + 0x70;
 constexpr u64 AddRow = 0x01B4C9A0;
 constexpr u64 MakeText = 0x01AE8CC0;
 constexpr u64 NumSelect = 0x01C203C0;
@@ -56,7 +58,8 @@ constexpr u64 OperatorNew = 0x02BBE9A8;
 constexpr u64 OperatorDelete = 0x02BBE588;
 constexpr u32 RowNameCategory = 200, RowHelpCategory = 201, DialogCategory = 204;
 constexpr u32 GoodsItem = 0x40000000;
-constexpr u32 EchoesKind = 1, GoodsKind = 2;
+constexpr u32 EchoesKind = 1, GoodsKind = 2, ItemKind = 3;
+constexpr u32 BloodVialGoods = 1000, QuicksilverBulletGoods = 900;
 constexpr std::size_t TextSize = 0x40, FunctionSize = 0x28;
 constexpr u32 MaxGoods = 99, MaxEchoes = 999'999'999;
 
@@ -81,6 +84,7 @@ struct Impl {
     const void* const* vtable;
     u32 kind;
     u32 id;
+    u32 handle; // an item of its own: which one
 };
 
 GAME_ABI Impl* ImplCopy(Impl* self, Impl* where) {
@@ -128,7 +132,7 @@ void MakeTextOf(u8* text, u32 category, u32 id) {
 // The quantity picker's OK: the offer.
 GAME_ABI void** OkCall(void** out, Impl* self, int* chosen) {
     const u32 count = chosen ? u32(*chosen) : 0;
-    if (count > 0 && bbcoop_trade_offer(self->kind, self->id, count)) {
+    if (count > 0 && bbcoop_trade_offer(self->kind, self->id, count, self->handle)) {
         std::printf("Trade menu: offered %u of %u/%u\n", count, self->kind, self->id);
     }
     return NothingJob(out);
@@ -143,14 +147,16 @@ const void* const ok_vtable[8] = {
 GAME_ABI void** GiveCall(void** out, Impl* self, u8* context) {
     char question[256] = {};
     const u32 held = bbcoop_trade_held(self->kind, self->id);
-    const u32 max = std::min(held, self->kind == EchoesKind ? MaxEchoes : MaxGoods);
+    const u32 max = std::min(held, self->kind == EchoesKind ? MaxEchoes
+                                   : self->kind == ItemKind ? 1u
+                                                            : MaxGoods);
     if (max == 0 || !bbcoop_trade_give_question(self->kind, self->id, question, sizeof question)) {
         return NothingJob(out);
     }
     alignas(16) u8 text[TextSize] = {};
     MakeTextOf(text, DialogCategory, BbGameMenu::SetDynamicText(0, question));
     alignas(16) u8 on_ok[FunctionSize] = {};
-    *reinterpret_cast<Impl*>(on_ok) = {ok_vtable, self->kind, self->id};
+    *reinterpret_cast<Impl*>(on_ok) = {ok_vtable, self->kind, self->id, self->handle};
     *reinterpret_cast<void**>(on_ok + 0x20) = on_ok;
     alignas(16) u8 extra[FunctionSize] = {};
     using Open = void (GAME_ABI *)(void**, void*, const char16_t*, void*, int, int, void*, void*);
@@ -166,12 +172,12 @@ const void* const give_vtable[8] = {
     reinterpret_cast<const void*>(&ImplDelete),     reinterpret_cast<const void*>(&ImplDestroy),
     reinterpret_cast<const void*>(&ImplDeleting),   reinterpret_cast<const void*>(&ImplGet)};
 
-void AddGiveRow(void* model, u32 name, u32 help, u32 kind, u32 id) {
+void AddGiveRow(void* model, u32 name, u32 help, u32 kind, u32 id, u32 handle = 0) {
     alignas(16) u8 pair[2 * TextSize] = {};
     MakeTextOf(pair, RowNameCategory, name);
     MakeTextOf(pair + TextSize, RowHelpCategory, help);
     alignas(16) u8 action[FunctionSize] = {};
-    *reinterpret_cast<Impl*>(action) = {give_vtable, kind, id};
+    *reinterpret_cast<Impl*>(action) = {give_vtable, kind, id, handle};
     *reinterpret_cast<void**>(action + 0x20) = action;
     using Add = void* (GAME_ABI *)(void*, void*, void*, int);
     Game<Add>(AddRow)(model, pair, action, 0);
@@ -180,17 +186,26 @@ void AddGiveRow(void* model, u32 name, u32 help, u32 kind, u32 id) {
     BbGameMenu::DestroyGameText(pair + TextSize);
 }
 
-// The inventory's item commands: "Give" rows for what may be traded, when someone is near.
+// The inventory's item commands: a "Give" row for any item (Kaniel 2026-10-15), when someone is
+// near; "Give Blood Echoes" on the vials' and bullets' rows.
 GAME_ABI void* OpenItemCommands(void** out, void* model, u8* factory) {
     u8* impl = factory ? *reinterpret_cast<u8**>(factory + 0x20) : nullptr;
     if (impl && *reinterpret_cast<u64*>(impl) == image + ItemCommandsFactoryVtable &&
         bbcoop_trade_on()) {
         const u32 item = *reinterpret_cast<u32*>(impl + FactoryItemIdAt);
+        const u32 handle = *reinterpret_cast<u32*>(impl + FactoryHandleAt);
+        const bool goods = (item & 0xF0000000) == GoodsItem;
+        const u32 kind = goods ? GoodsKind : ItemKind;
+        const u32 id = goods ? item & 0xFFFFFFF : item;
         char question[8];
-        if ((item & 0xF0000000) == GoodsItem && bbcoop_trade_tradeable(GoodsKind, item & 0xFFFFFFF) &&
-            bbcoop_trade_give_question(GoodsKind, item & 0xFFFFFFF, question, sizeof question)) {
-            AddGiveRow(model, give_name, give_help, GoodsKind, item & 0xFFFFFFF);
-            if (bbcoop_trade_held(EchoesKind, 0) > 0) {
+        const bool give = bbcoop_trade_tradeable(kind, id) &&
+                          bbcoop_trade_give_question(kind, id, question, sizeof question);
+        std::printf("Trade menu: commands of item %#x (handle %#x)%s\n", item, handle,
+                    give ? ", Give" : "");
+        if (give) {
+            AddGiveRow(model, give_name, give_help, kind, id, goods ? 0 : handle);
+            if (goods && (id == BloodVialGoods || id == QuicksilverBulletGoods) &&
+                bbcoop_trade_held(EchoesKind, 0) > 0) {
                 AddGiveRow(model, give_echoes_name, give_echoes_help, EchoesKind, 0);
             }
         }
@@ -320,6 +335,15 @@ void TickCall() {
     Tick();
 }
 
+int NameItem(std::uint32_t item_id, char* text, std::size_t size) {
+    const std::string name = BbSaveEditor::ItemName(item_id);
+    if (name.empty() || size == 0) {
+        return 0;
+    }
+    std::snprintf(text, size, "%s", name.c_str());
+    return 1;
+}
+
 } // namespace
 
 bool PatchImage(unsigned char* image_start, std::uint64_t size, std::uint8_t*& stubs) {
@@ -358,6 +382,7 @@ bool PatchImage(unsigned char* image_start, std::uint64_t size, std::uint8_t*& s
     std::memcpy(image_start + ItemCommandsOpenCall + 1, &to32, 4);
     stubs += 16;
     bbcoop_trade_set_ui_tick(&TickCall);
+    bbcoop_trade_set_namer(&NameItem);
     std::printf("Trade menu: in (Give rows, offers asked in the world)\n");
     return true;
 }

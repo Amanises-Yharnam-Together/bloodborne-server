@@ -91,16 +91,15 @@ bool Placeholder(const std::string& name) {
            std::all_of(name.begin() + 2, name.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
 
-} // namespace
-
-std::vector<Item> ItemsFromGameText(std::span<const std::uint8_t> bnd) {
-    std::vector<Item> items;
+// The FMGs of a BND4 (msgbnd inflated) by their ids; empty on bad input.
+std::map<std::int32_t, std::span<const std::uint8_t>> FmgsOf(std::span<const std::uint8_t> bnd) {
+    std::map<std::int32_t, std::span<const std::uint8_t>> fmgs;
     std::uint32_t count = 0;
     std::uint64_t entry_size = 0;
     if (bnd.size() < 0x40 || std::memcmp(bnd.data(), "BND4", 4) != 0 ||
         !ReadAt(bnd, 0x0C, count) || !ReadAt(bnd, 0x20, entry_size) || entry_size < 0x24 ||
         count > 1000) {
-        return items;
+        return fmgs;
     }
     for (std::uint32_t i = 0; i < count; ++i) {
         const std::size_t entry = 0x40 + i * entry_size;
@@ -111,6 +110,39 @@ std::vector<Item> ItemsFromGameText(std::span<const std::uint8_t> bnd) {
             !ReadAt(bnd, entry + 0x1C, id) || offset > bnd.size() || size > bnd.size() - offset) {
             return {};
         }
+        fmgs[id] = bnd.subspan(offset, static_cast<std::size_t>(size));
+    }
+    return fmgs;
+}
+
+} // namespace
+
+std::map<std::uint32_t, std::string> ItemNamesFromGameText(std::span<const std::uint8_t> items,
+                                                           std::span<const std::uint8_t> menu) {
+    std::map<std::uint32_t, std::string> names;
+    const auto add = [&](std::span<const std::uint8_t> bnd, std::int32_t fmg,
+                         std::uint32_t category) {
+        const auto fmgs = FmgsOf(bnd);
+        const auto found = fmgs.find(fmg);
+        if (found == fmgs.end()) {
+            return;
+        }
+        for (auto& [id, name] : ParseFmg(found->second)) {
+            if (!Placeholder(name) && id <= 0x0FFFFFFF) {
+                names[category | id] = std::move(name);
+            }
+        }
+    };
+    add(items, 10, GoodsCategory);
+    add(items, 11, WeaponCategory);
+    add(items, 12, ArmorCategory);
+    add(menu, 31, 0x80000000u); // gems and runes
+    return names;
+}
+
+std::vector<Item> ItemsFromGameText(std::span<const std::uint8_t> bnd) {
+    std::vector<Item> items;
+    for (const auto& [id, fmg] : FmgsOf(bnd)) {
         const std::uint32_t category = id == 10   ? GoodsCategory
                                        : id == 11 ? WeaponCategory
                                        : id == 12 ? ArmorCategory
@@ -118,7 +150,7 @@ std::vector<Item> ItemsFromGameText(std::span<const std::uint8_t> bnd) {
         if (category == 0xFFFFFFFFu) {
             continue;
         }
-        for (auto& [item, name] : ParseFmg(bnd.subspan(offset, static_cast<std::size_t>(size)))) {
+        for (auto& [item, name] : ParseFmg(fmg)) {
             if (Placeholder(name) || (category == GoodsCategory && item >= 800 && item < 900) ||
                 (category == WeaponCategory && (item % 10000 != 0 || item == 1000000))) {
                 continue;

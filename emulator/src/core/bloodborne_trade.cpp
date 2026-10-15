@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // Trading between party members, the game's side (server/coop/trade.h has the protocol): with
-// the server world (the port only, always on there) a member offers another
-// Blood Echoes, Blood Vials or Quicksilver Bullets and may ask for some back; shadNet holds the
-// offer until the other answers. This file takes items out of the player's inventory and puts
+// the server world (the port only, always on there) a member offers another Blood Echoes or any
+// item (Kaniel 2026-10-15) and may ask for echoes or goods back; shadNet holds the offer until the
+// other answers. This file takes items out of the player's inventory and puts
 // them in (with the game's own "item obtained" popup), keeps the trades' client and answers to
 // the rig's verbs; the native menus are in bloodborne_trade_ui.cpp.
 //
@@ -17,12 +17,27 @@
 //   Give 0x017D89F0(MapItemMan [0x0553D6E0], list {n, {handle, item id, count, -1}[n]}): what a
 //   pickup calls, up to the max held, the rest to the storage box, each with the popup.
 //   Echoes: the shop's pay writes +0x94 itself; AddSouls (player vtable +0x3D0) adds them.
+// Items of their own (weapons, armor, gems and runes; static RE 2026-10-15):
+//   Their inventory entries hold a handle with bit 0x800000 into SprjGaitem [0x0553E990]: the
+//   object at +8 + (handle & 0xFFFF) * 8 (its +8 the handle, +0xC the item id), the reference
+//   count at +0x800C + index * 8. Make one 0x01A86FF0(u32* out, SprjGaitem, const u32* item id)
+//   (a reference held in *out), let go of a reference 0x01A8BC00(u32*).
+//   Each object writes and reads all it is through its vtable +0x40 / +0x48 (stream): a weapon
+//   its upgrade fields (+0x18, +0x1C, +0x28) and its five gem slots, each slot its shape, and a
+//   gem in it whole (id, +0x18, +0x1C, six effects); reading makes the gems anew. A stream is
+//   {vtable}, +0x20 = (self, void* bytes, u32 size), the same call for both ways.
+//   Take one out 0x014D0310(EquipGameData, index, 1): unequipped first (the 15 equipment slots,
+//   the quick items), then the entry and its reference go (the inventory's Discard does so).
+//   Add one as a pickup: 0x017D89F0 with {handle, item id, 1, -1}.
 
 #include "core/bloodborne_re_internal.h"
 #include "core/bloodborne_team.h"
 #include "core/bloodborne_trade.h"
 
+#include <array>
+#include <cstring>
 #include <deque>
+#include <functional>
 
 namespace Core::Bloodborne {
 namespace {
@@ -35,8 +50,17 @@ constexpr u64 InventoryOffset = 0x328;
 constexpr u64 InventoryFindOffset = 0x014D9F60;
 constexpr u64 InventoryChangeCountOffset = 0x014D0BE0;
 constexpr u64 GiveItemsOffset = 0x017D89F0;
-constexpr u32 GoodsCategory = 0x40000000;
+constexpr u64 SprjGaitemPointerOffset = 0x0553E990;
+constexpr u64 MakeGaitemOffset = 0x01A86FF0;
+constexpr u64 ReleaseGaitemOffset = 0x01A8BC00;
+constexpr u64 RemoveEntryOffset = 0x014D0310;
+constexpr u64 GaitemWriteSlot = 0x40;
+constexpr u64 GaitemReadSlot = 0x48;
+// The objects' vtables: weapon, armor, gem.
+constexpr std::array<u64, 3> GaitemVtables{0x05336330, 0x053362D0, 0x05336180};
 constexpr u32 GoodsHandle = 0xB0000000;
+constexpr u32 AccessoryHandle = 0xA0000000;
+constexpr u32 GaitemBit = 0x800000;
 
 // Always on in the port (Kaniel 2026-10-14), with the server world; the port only
 // (docs/SERVER_COOP_PLAN.md).
@@ -87,6 +111,149 @@ u64 GoodsEntry(u64 data, u32 goods) {
     return entries >= 0x10000 && ReadValue<u32>(entry, 4) == (GoodsCategory | goods) ? entry : 0;
 }
 
+// The inventory's entries (their addresses), in order.
+std::vector<u64> InventoryEntries(u64 data) {
+    std::vector<u64> found;
+    const u64 inventory = data + InventoryOffset;
+    const s32 last = ReadValue<s32>(inventory, 0x88);
+    const u32 split = ReadValue<u32>(inventory, 0x24);
+    const u64 first_entries = ReadValue<u64>(inventory, 0x58);
+    const u64 later_entries = ReadValue<u64>(inventory, 0x48);
+    for (s32 index = 0; index <= last && index < 0x1000; ++index) {
+        const bool first = static_cast<u32>(index) < split;
+        const u64 entries = first ? first_entries : later_entries;
+        if (entries < 0x10000) {
+            continue;
+        }
+        const u64 entry =
+            entries + 16ull * (first ? static_cast<u32>(index) : static_cast<u32>(index) - split);
+        if (ReadValue<u32>(entry, 0) != 0) {
+            found.push_back(entry);
+        }
+    }
+    return found;
+}
+
+// The index of an entry (its address) in the inventory.
+s32 EntryIndex(u64 data, u64 entry) {
+    const u64 inventory = data + InventoryOffset;
+    const u32 split = ReadValue<u32>(inventory, 0x24);
+    const u64 first_entries = ReadValue<u64>(inventory, 0x58);
+    if (entry >= first_entries && entry < first_entries + 16ull * split) {
+        return static_cast<s32>((entry - first_entries) / 16);
+    }
+    return static_cast<s32>(split + (entry - ReadValue<u64>(inventory, 0x48)) / 16);
+}
+
+// The inventory entries of an item of its own (by item id), or the one with `handle`.
+std::vector<u64> ItemEntries(u64 data, u32 item_id, u32 handle = 0) {
+    std::vector<u64> found;
+    for (const u64 entry : InventoryEntries(data)) {
+        if (ReadValue<u32>(entry, 4) == item_id &&
+            (handle == 0 || ReadValue<u32>(entry, 0) == handle)) {
+            found.push_back(entry);
+        }
+    }
+    return found;
+}
+
+bool IsGaitemHandle(u32 handle) {
+    return handle != 0 && (handle & 0xFFFFFF) != 0xFFFFFF && (handle & GaitemBit) != 0;
+}
+
+// The SprjGaitem object of a handle, or 0.
+u64 GaitemOf(u32 handle) {
+    const u64 table = ReadValue<u64>(image_base + SprjGaitemPointerOffset, 0);
+    if (table < 0x10000 || !IsGaitemHandle(handle) || (handle & 0xFFFF) == 0xFFFF) {
+        return 0;
+    }
+    const u64 object = ReadValue<u64>(table, 8 + 8ull * (handle & 0xFFFF));
+    return object >= 0x10000 && ReadValue<u32>(object, 8) == handle &&
+                   HasVtable(object, GaitemVtables, "trade item")
+               ? object
+               : 0;
+}
+
+// A stream for the objects' own write and read (vtable +0x20 the only call they make).
+struct GaitemStream {
+    const void* const* vtable;
+    std::string* bytes;
+    size_t at;
+    bool failed;
+};
+PS4_SYSV_ABI void StreamWrite(GaitemStream* self, const void* bytes, u32 size) {
+    self->bytes->append(static_cast<const char*>(bytes), size);
+}
+PS4_SYSV_ABI void StreamRead(GaitemStream* self, void* bytes, u32 size) {
+    if (self->bytes->size() - self->at < size) {
+        std::memset(bytes, 0, size);
+        self->failed = true;
+        return;
+    }
+    std::memcpy(bytes, self->bytes->data() + self->at, size);
+    self->at += size;
+}
+PS4_SYSV_ABI void StreamOther(GaitemStream* self) {
+    self->failed = true;
+}
+const void* const WriteStreamVtable[8] = {
+    reinterpret_cast<const void*>(&StreamOther), reinterpret_cast<const void*>(&StreamOther),
+    reinterpret_cast<const void*>(&StreamOther), reinterpret_cast<const void*>(&StreamOther),
+    reinterpret_cast<const void*>(&StreamWrite), reinterpret_cast<const void*>(&StreamOther),
+    reinterpret_cast<const void*>(&StreamOther), reinterpret_cast<const void*>(&StreamOther)};
+const void* const ReadStreamVtable[8] = {
+    reinterpret_cast<const void*>(&StreamOther), reinterpret_cast<const void*>(&StreamOther),
+    reinterpret_cast<const void*>(&StreamOther), reinterpret_cast<const void*>(&StreamOther),
+    reinterpret_cast<const void*>(&StreamRead),  reinterpret_cast<const void*>(&StreamOther),
+    reinterpret_cast<const void*>(&StreamOther), reinterpret_cast<const void*>(&StreamOther)};
+
+// What an object is (the game's own write), or nothing.
+std::optional<std::string> WriteGaitem(u64 object) {
+    std::string bytes;
+    GaitemStream stream{WriteStreamVtable, &bytes, 0, false};
+    using Write = void PS4_SYSV_ABI (*)(u64 object, GaitemStream* stream);
+    reinterpret_cast<Write>(ReadValue<u64>(ReadValue<u64>(object, 0), GaitemWriteSlot))(object,
+                                                                                        &stream);
+    if (stream.failed) {
+        return std::nullopt;
+    }
+    return bytes;
+}
+
+// Makes an object what `bytes` say (the game's own read): false if they did not fit.
+bool ReadGaitem(u64 object, const std::string& bytes) {
+    std::string copy = bytes;
+    GaitemStream stream{ReadStreamVtable, &copy, 0, false};
+    using Read = void PS4_SYSV_ABI (*)(u64 object, GaitemStream* stream);
+    reinterpret_cast<Read>(ReadValue<u64>(ReadValue<u64>(object, 0), GaitemReadSlot))(object,
+                                                                                      &stream);
+    return !stream.failed && stream.at == copy.size();
+}
+
+// A new object of an item (its reference in the handle), or 0.
+u32 MakeGaitem(u32 item_id) {
+    const u64 table = ReadValue<u64>(image_base + SprjGaitemPointerOffset, 0);
+    if (table < 0x10000) {
+        return 0;
+    }
+    u32 handle = 0;
+    using Make = void PS4_SYSV_ABI (*)(u32* out, u64 table, const u32* item_id);
+    reinterpret_cast<Make>(image_base + MakeGaitemOffset)(&handle, table, &item_id);
+    return handle;
+}
+
+void ReleaseGaitem(u32 handle) {
+    using Release = void PS4_SYSV_ABI (*)(u32* handle);
+    reinterpret_cast<Release>(image_base + ReleaseGaitemOffset)(&handle);
+}
+
+bool HasGaitem(u32 item_id) {
+    const u32 category = item_id & 0xF0000000;
+    return category == WeaponCategory || category == ArmorCategory || category == GemCategory;
+}
+
+std::atomic<std::string (*)(const TradeItem&)> trade_namer{nullptr};
+
 } // namespace
 
 namespace Coop {
@@ -121,33 +288,88 @@ u32 TradeHeld(const TradeItem& item) {
     if (item.kind == TradeItemKind::Echoes) {
         return static_cast<u32>(std::max(ReadValue<s32>(data, EchoesOffset), 0));
     }
+    if (item.kind == TradeItemKind::Item) {
+        u32 held = 0;
+        for (const u64 entry : ItemEntries(data, item.id)) {
+            held += static_cast<u32>(std::max(ReadValue<s32>(entry, 8), 0));
+        }
+        return held;
+    }
     const u64 entry = GoodsEntry(data, item.id);
     return entry != 0 ? static_cast<u32>(std::max(ReadValue<s32>(entry, 8), 0)) : 0;
 }
 
-// Takes the items out of the inventory, all or none (the game's thread).
-bool TakeTradeItems(std::span<const TradeItem> items) {
+// Takes the items out of the inventory, all or none (the game's thread); an item of its own
+// (the one with `handle` if given) keeps what it is in its data.
+bool TakeTradeItems(std::span<TradeItem> items, u32 handle) {
     const u64 data = PlayerGameData();
     if (!trade_sites.load() || data < 0x10000 || TradeItemsProblem(items, true)) {
         return false;
     }
-    for (const TradeItem& item : items) {
-        if (TradeHeld(item) < item.count) {
+    std::vector<u64> item_entries(items.size(), 0);
+    for (size_t index = 0; index < items.size(); ++index) {
+        TradeItem& item = items[index];
+        if (item.kind == TradeItemKind::Goods && IsBellGoods(item.id)) {
+            return false; // the bell items go from the port's game (RemoveBellItems)
+        }
+        if (item.kind != TradeItemKind::Item) {
+            if (TradeHeld(item) < item.count) {
+                return false;
+            }
+            continue;
+        }
+        // Each its own entry: the one asked for, else the first that is not taken already.
+        const std::vector<u64> entries = ItemEntries(data, item.id, handle);
+        const auto free = std::ranges::find_if(entries, [&](u64 entry) {
+            return std::ranges::find(item_entries, entry) == item_entries.end();
+        });
+        if (free == entries.end()) {
             return false;
+        }
+        item_entries[index] = *free;
+        item.data.clear();
+        const u32 item_handle = ReadValue<u32>(*free, 0);
+        if (IsGaitemHandle(item_handle)) {
+            const u64 object = GaitemOf(item_handle);
+            std::optional<std::string> written = object != 0 ? WriteGaitem(object) : std::nullopt;
+            if (!written || written->size() > MaxTradeItemData) {
+                LOG_ERROR(Debug, "Bloodborne trade: could not write item {:#x} (handle {:#x})",
+                          item.id, item_handle);
+                return false;
+            }
+            item.data = std::move(*written);
         }
     }
     using ChangeCount = s32 PS4_SYSV_ABI (*)(u64 equip, u32 index, s32 delta, bool force,
                                              bool no_replace, bool allow_111);
     const auto change = reinterpret_cast<ChangeCount>(image_base + InventoryChangeCountOffset);
+    using Remove = s32 PS4_SYSV_ABI (*)(u64 equip, u32 index, bool unlink);
+    const auto remove = reinterpret_cast<Remove>(image_base + RemoveEntryOffset);
+    // Items of their own first (by their entries' addresses, which a removal can change), the last
+    // entry first.
+    std::vector<s32> item_indexes;
+    for (const u64 entry : item_entries) {
+        if (entry != 0) {
+            item_indexes.push_back(EntryIndex(data, entry));
+        }
+    }
+    std::ranges::sort(item_indexes, std::greater{});
+    for (const s32 index : item_indexes) {
+        remove(data + EquipGameDataOffset, static_cast<u32>(index), true);
+    }
     for (const TradeItem& item : items) {
         if (item.kind == TradeItemKind::Echoes) {
             const s32 echoes = ReadValue<s32>(data, EchoesOffset);
             WriteValue(data, EchoesOffset, std::max(echoes - static_cast<s32>(item.count), 0));
             continue;
         }
+        if (item.kind == TradeItemKind::Item) {
+            continue;
+        }
+        // Forced: key items and other goods that are not used up go too.
         const s32 index = GoodsIndex(data, item.id);
         change(data + EquipGameDataOffset, static_cast<u32>(index), -static_cast<s32>(item.count),
-               false, true, false);
+               true, true, false);
     }
     if (!items.empty()) {
         LOG_INFO(Debug, "Bloodborne trade: took {} out of the inventory", TradeItemsText(items));
@@ -172,7 +394,51 @@ void AddTradeItems(std::span<const TradeItem> items) {
         GiveEntry entries[6];
     };
     GiveList list{};
+    std::vector<u32> made; // our references to the new objects, let go once given
+    const auto give = [&] {
+        if (list.count == 0) {
+            return;
+        }
+        const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
+        if (HasVtable(item_man, MapItemManVtable, "trade give")) {
+            using Give = void PS4_SYSV_ABI (*)(u64 item_man, GiveList* list);
+            reinterpret_cast<Give>(image_base + GiveItemsOffset)(item_man, &list);
+        } else {
+            LOG_ERROR(Debug, "Bloodborne trade: no item man to add {}", TradeItemsText(items));
+        }
+        list = {};
+        for (const u32 handle : made) {
+            ReleaseGaitem(handle);
+        }
+        made.clear();
+    };
     for (const TradeItem& item : items) {
+        if (list.count == std::size(list.entries)) {
+            give();
+        }
+        if (item.kind == TradeItemKind::Item) {
+            u32 handle = (item.id & 0xF0000000) == AccessoryCategory
+                             ? AccessoryHandle | (item.id & 0xFFFFFF)
+                             : 0;
+            if (HasGaitem(item.id)) {
+                handle = MakeGaitem(item.id);
+                const u64 object = GaitemOf(handle);
+                if (object == 0) {
+                    LOG_ERROR(Debug, "Bloodborne trade: could not make item {:#x}", item.id);
+                    if (handle != 0) {
+                        ReleaseGaitem(handle);
+                    }
+                    continue;
+                }
+                made.push_back(handle);
+                if (!item.data.empty() && !ReadGaitem(object, item.data)) {
+                    LOG_ERROR(Debug, "Bloodborne trade: item {:#x}'s {} bytes did not fit", item.id,
+                              item.data.size());
+                }
+            }
+            list.entries[list.count++] = {handle, item.id, 1, -1};
+            continue;
+        }
         if (item.kind == TradeItemKind::Echoes) {
             const u64 player = GetLocalPlayer();
             if (HasVirtual(player, 0x3D0, AddSoulsOffset, "trade AddSouls")) {
@@ -182,20 +448,10 @@ void AddTradeItems(std::span<const TradeItem> items) {
             }
             continue;
         }
-        if (list.count < std::size(list.entries)) {
-            list.entries[list.count++] = {GoodsHandle | item.id, GoodsCategory | item.id,
-                                          static_cast<s32>(item.count), -1};
-        }
+        list.entries[list.count++] = {GoodsHandle | item.id, GoodsCategory | item.id,
+                                      static_cast<s32>(item.count), -1};
     }
-    if (list.count > 0) {
-        const u64 item_man = ReadValue<u64>(image_base + MapItemManPointerOffset, 0);
-        if (HasVtable(item_man, MapItemManVtable, "trade give")) {
-            using Give = void PS4_SYSV_ABI (*)(u64 item_man, GiveList* list);
-            reinterpret_cast<Give>(image_base + GiveItemsOffset)(item_man, &list);
-        } else {
-            LOG_ERROR(Debug, "Bloodborne trade: no item man to add {}", TradeItemsText(items));
-        }
-    }
+    give();
     LOG_INFO(Debug, "Bloodborne trade: added {}", TradeItemsText(items));
 }
 
@@ -236,14 +492,34 @@ std::string TradeName(const std::string& member) {
     return name.empty() ? member : name;
 }
 
-TradeOfferResult OfferTrade(const std::string& to, TradeItems give, TradeItems want) {
+std::string TradeItemName(const TradeItem& item) {
+    if (!item.name.empty() || FindTradeGood(item.kind, item.id) != nullptr) {
+        return item.name;
+    }
+    const auto namer = trade_namer.load();
+    return namer != nullptr ? namer(item) : std::string{};
+}
+
+void SetTradeItemNamer(std::string (*namer)(const TradeItem& item)) {
+    trade_namer.store(namer);
+}
+
+TradeOfferResult OfferTrade(const std::string& to, TradeItems give, TradeItems want, u32 handle) {
     if (!TradesOn()) {
         return TradeOfferResult::Off;
     }
-    if (TradeItemsProblem(give, false) || TradeItemsProblem(want, true)) {
+    for (TradeItem& item : give) {
+        item.name = TradeItemName(item);
+    }
+    for (TradeItem& item : want) {
+        item.name = TradeItemName(item);
+    }
+    if (TradeItemsProblem(give, false) || TradeItemsProblem(want, true) ||
+        std::ranges::any_of(
+            want, [](const TradeItem& item) { return item.kind == TradeItemKind::Item; })) {
         return TradeOfferResult::Bad;
     }
-    if (!TakeTradeItems(give)) {
+    if (!TakeTradeItems(give, handle)) {
         return TradeOfferResult::NotEnough;
     }
     bbcoop::Envelope envelope;
@@ -386,6 +662,125 @@ void TickTrades() {
 
 void SetTradeUiTick(void (*tick)()) {
     trade_ui_tick.store(tick);
+}
+
+// A weapon's data (its object's own write): three fields, then five gem slots, each its shape and
+// a handle, a gem in it whole (its item id, two fields and six effects).
+namespace {
+
+struct WeaponSlot {
+    u32 shape = 0;
+    u32 handle = 0;
+    u32 gem = 0;
+    std::array<u32, 8> fields{}; // +0x18, +0x1C, then the six effects
+};
+struct WeaponData {
+    std::array<u32, 3> fields{};
+    std::array<WeaponSlot, 5> slots{};
+};
+
+std::optional<WeaponData> ParseWeaponData(const std::string& bytes) {
+    size_t at = 0;
+    const auto next = [&](u32& value) {
+        if (bytes.size() - at < 4) {
+            return false;
+        }
+        std::memcpy(&value, bytes.data() + at, 4);
+        at += 4;
+        return true;
+    };
+    WeaponData weapon;
+    for (u32& field : weapon.fields) {
+        if (!next(field)) {
+            return std::nullopt;
+        }
+    }
+    for (WeaponSlot& slot : weapon.slots) {
+        if (!next(slot.shape) || !next(slot.handle)) {
+            return std::nullopt;
+        }
+        if (IsGaitemHandle(slot.handle)) {
+            if (!next(slot.gem)) {
+                return std::nullopt;
+            }
+            for (u32& field : slot.fields) {
+                if (!next(field)) {
+                    return std::nullopt;
+                }
+            }
+        }
+    }
+    return at == bytes.size() ? std::optional{weapon} : std::nullopt;
+}
+
+std::string WeaponDataBytes(const WeaponData& weapon) {
+    std::string bytes;
+    const auto put = [&](u32 value) { bytes.append(reinterpret_cast<const char*>(&value), 4); };
+    for (const u32 field : weapon.fields) {
+        put(field);
+    }
+    for (const WeaponSlot& slot : weapon.slots) {
+        put(slot.shape);
+        put(slot.handle);
+        if (IsGaitemHandle(slot.handle)) {
+            put(slot.gem);
+            for (const u32 field : slot.fields) {
+                put(field);
+            }
+        }
+    }
+    return bytes;
+}
+
+// The objects of the player's weapons of an id.
+std::vector<u64> WeaponObjects(u32 weapon) {
+    std::vector<u64> objects;
+    const u64 data = PlayerGameData();
+    if (data < 0x10000) {
+        return objects;
+    }
+    for (const u64 entry : ItemEntries(data, weapon)) {
+        if (const u64 object = GaitemOf(ReadValue<u32>(entry, 0)); object != 0) {
+            objects.push_back(object);
+        }
+    }
+    return objects;
+}
+
+} // namespace
+
+bool SocketTradeGem(u32 weapon, u32 gem, u32 effect) {
+    const std::vector<u64> objects = WeaponObjects(weapon);
+    if (objects.empty()) {
+        return false;
+    }
+    const std::optional<std::string> written = WriteGaitem(objects.front());
+    std::optional<WeaponData> data = written ? ParseWeaponData(*written) : std::nullopt;
+    if (!data) {
+        return false;
+    }
+    WeaponSlot& slot = data->slots.front();
+    slot.handle = 0xC0800000; // a gem object: the read makes it anew
+    slot.gem = gem;
+    slot.fields = {0, 0, effect, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
+    if (!ReadGaitem(objects.front(), WeaponDataBytes(*data))) {
+        return false;
+    }
+    LOG_INFO(Debug, "Bloodborne trade: gem {:#x} ({}) in weapon {:#x}", gem, effect, weapon);
+    return true;
+}
+
+bool HasSocketedGem(u32 weapon, u32 gem, u32 effect) {
+    for (const u64 object : WeaponObjects(weapon)) {
+        const std::optional<std::string> written = WriteGaitem(object);
+        const std::optional<WeaponData> data = written ? ParseWeaponData(*written) : std::nullopt;
+        if (data && std::ranges::any_of(data->slots, [&](const WeaponSlot& slot) {
+                return IsGaitemHandle(slot.handle) && slot.gem == gem && slot.fields[2] == effect;
+            })) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string TradeAskQuestion(const bbcoop::TradeAsk& ask) {

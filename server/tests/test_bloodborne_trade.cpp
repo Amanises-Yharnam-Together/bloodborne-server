@@ -36,6 +36,15 @@ TradeItem Vials(u32 count) {
 TradeItem Bullets(u32 count) {
   return {TradeItemKind::Goods, QuicksilverBulletGoods, count};
 }
+// Any other goods (a key item), and an item of its own (a weapon with its
+// gems, as the giver's game wrote it).
+TradeItem TombKey() {
+  return {TradeItemKind::Goods, 4000, 1, "Oedon Tomb Key"};
+}
+TradeItem Cleaver(std::string data = "gems") {
+  return {TradeItemKind::Item, 0x002DC8B4, 1, "Saw Cleaver +5",
+          std::move(data)};
+}
 
 // A game: its client and its inventory (what it holds of each item).
 struct Game {
@@ -44,6 +53,7 @@ struct Game {
   TradeClient client;
   std::map<std::pair<u32, u32>, u32> held;
   std::vector<TradeClient::Notice> seen; // the notices shown so far
+  TradeItems added;                      // every item added, as it came
 
   u32 Held(const TradeItem &item) const {
     const auto found = held.find({static_cast<u32>(item.kind), item.id});
@@ -61,6 +71,7 @@ struct Game {
   void Add(const TradeItems &items) {
     for (const TradeItem &item : items) {
       held[{static_cast<u32>(item.kind), item.id}] += item.count;
+      added.push_back(item);
     }
   }
 };
@@ -136,7 +147,7 @@ int TestItems() {
   CHECK(FindTradeGood(TradeItemKind::Echoes, 0) != nullptr);
   CHECK(FindTradeGood(TradeItemKind::Goods, BloodVialGoods) != nullptr);
   CHECK(FindTradeGood(TradeItemKind::Goods, QuicksilverBulletGoods) != nullptr);
-  CHECK(FindTradeGood(TradeItemKind::Goods, 4242) == nullptr);
+  CHECK(FindTradeGood(TradeItemKind::Goods, 4242) == nullptr); // no plural
   CHECK(FindTradeGood(TradeItemKind::Echoes, BloodVialGoods) == nullptr);
 
   const TradeItems fine{Vials(5), Echoes(1000)};
@@ -152,18 +163,108 @@ int TestItems() {
   CHECK(TradeItemsProblem(TradeItems{Echoes(MaxTradeEchoes + 1)}, false)
             .has_value());
   CHECK(TradeItemsProblem(TradeItems{Vials(1), Vials(2)}, false).has_value());
-  CHECK(TradeItemsProblem(TradeItems{{TradeItemKind::Goods, 4242, 1}}, false)
+  // Kaniel 2026-10-15: any item. Any goods (key items too), and weapons,
+  // armor and gems with what makes each one itself (its data).
+  CHECK(!TradeItemsProblem(TradeItems{{TradeItemKind::Goods, 4242, 1}}, false)
+             .has_value());
+  CHECK(
+      !TradeItemsProblem(TradeItems{TombKey(), Cleaver()}, false).has_value());
+  CHECK(!TradeItemsProblem(TradeItems{Cleaver("a"), Cleaver("b")}, false)
+             .has_value()); // two of the same weapon, each its own
+  CHECK(TradeItemsProblem(TradeItems{Cleaver(), Cleaver()}, false).has_value());
+  TradeItem two_cleavers = Cleaver();
+  two_cleavers.count = 2; // one item each
+  CHECK(TradeItemsProblem(TradeItems{two_cleavers}, false).has_value());
+  for (const u32 category :
+       {0x00000000u, 0x10000000u, 0x20000000u, 0x80000000u}) {
+    CHECK(!TradeItemsProblem(
+               TradeItems{{TradeItemKind::Item, category | 1000, 1}}, false)
+               .has_value());
+  }
+  // Goods go as goods; no such category.
+  CHECK(TradeItemsProblem(
+            TradeItems{{TradeItemKind::Item, 0x40000000 | 1000, 1}}, false)
+            .has_value());
+  CHECK(TradeItemsProblem(
+            TradeItems{{TradeItemKind::Item, 0x30000000 | 1000, 1}}, false)
+            .has_value());
+  CHECK(TradeItemsProblem(TradeItems{{TradeItemKind::Goods, 0x01000000, 1}},
+                          false)
+            .has_value());
+  CHECK(TradeItemsProblem(TradeItems{{TradeItemKind::Goods, 0, 1}}, false)
+            .has_value());
+  CHECK(TradeItemsProblem(
+            TradeItems{Cleaver(std::string(MaxTradeItemData + 1, 'x'))}, false)
+            .has_value());
+  CHECK(TradeItemsProblem(TradeItems{{TradeItemKind::Goods, 1200, 1,
+                                      std::string(MaxTradeItemName + 1, 'x')}},
+                          false)
+            .has_value());
+  CHECK(TradeItemsProblem(TradeItems{{static_cast<TradeItemKind>(9), 1, 1}},
+                          false)
             .has_value());
 
   CHECK(TradeItemsText(TradeItems{Vials(1)}) == "1 Blood Vial");
   CHECK(TradeItemsText(TradeItems{Vials(5), Echoes(12345)}) ==
         "5 Blood Vials, 12,345 Blood Echoes");
   CHECK(TradeItemsText(TradeItems{Bullets(20)}) == "20 Quicksilver Bullets");
+  // Other items by the name the giver's game gave them.
+  CHECK(TradeItemsText(TradeItems{TombKey()}) == "Oedon Tomb Key");
+  CHECK(TradeItemsText(
+            TradeItems{{TradeItemKind::Goods, 1200, 3, "Molotov Cocktail"}}) ==
+        "Molotov Cocktail x3");
+  CHECK(TradeItemsText(TradeItems{Cleaver(), Vials(2)}) ==
+        "Saw Cleaver +5, 2 Blood Vials");
+  CHECK(TradeItemsText(TradeItems{{TradeItemKind::Item, 1000, 1}}) ==
+        "an item");
 
-  // Round trip through the messages.
+  // Round trip through the messages, names and data too.
   google::protobuf::RepeatedPtrField<bbcoop::TradeItem> out;
   PutTradeItems(fine, &out);
   CHECK(TradeItemsOf(out) == fine);
+  const TradeItems any{TombKey(), Cleaver(std::string("\0\x01\xff", 3))};
+  PutTradeItems(any, &out);
+  CHECK(TradeItemsOf(out) == any);
+  return 0;
+}
+
+int TestAnyItemGiven() {
+  // A key item and a weapon with its gems reach the other member as they
+  // left the giver.
+  Party party;
+  Game ada{"a1", "Ada"}, bo{"b2", "Bo"};
+  ada.held[{2, 4000}] = 1;
+  ada.held[{3, Cleaver().id}] = 1;
+  party.Add(ada);
+  party.Add(bo);
+
+  party.Offer(ada, bo, {TombKey(), Cleaver()});
+  CHECK(bo.client.Asked().size() == 1);
+  CHECK(
+      TradeAskText("Ada", TradeItemsOf(bo.client.Asked().front().give()), {}) ==
+      "Ada offers you Oedon Tomb Key, Saw Cleaver +5.\nAccept?");
+  party.Answer(bo, true);
+  CHECK(bo.Held(TombKey()) == 1);
+  CHECK(bo.Held(Cleaver()) == 1);
+  CHECK(ada.Held(Cleaver()) == 0);
+  CHECK(bo.added == (TradeItems{TombKey(), Cleaver()})); // the gems too
+  CHECK(HasNotice(ada, TradeClient::Notice::Kind::Accepted));
+
+  // Declined: the weapon comes back to the giver with its gems.
+  ada.held[{3, Cleaver().id}] = 1;
+  ada.added.clear();
+  party.Offer(ada, bo, {Cleaver("other gems")});
+  party.Answer(bo, false);
+  CHECK(ada.added == TradeItems{Cleaver("other gems")});
+
+  // Asking for a weapon back is not a thing (the asked side's game has no
+  // way to say which one): refused, the offer back.
+  ada.added.clear();
+  ada.held[{2, BloodVialGoods}] = 1;
+  party.Offer(ada, bo, {Vials(1)}, {Cleaver()});
+  CHECK(bo.client.Asked().empty());
+  CHECK(HasNotice(ada, TradeClient::Notice::Kind::Refused));
+  CHECK(ada.Held(Vials(0)) == 1);
   return 0;
 }
 
@@ -287,7 +388,7 @@ int TestRefused() {
   Party party;
   Game ada{"a1", "Ada"}, bo{"b2", "Bo"};
   ada.held[{2, BloodVialGoods}] = 10;
-  ada.held[{2, 4242}] = 1;
+  ada.held[{3, 0x30000000 | 4242}] = 1;
   party.Add(ada);
   party.Add(bo);
   party.online.erase("b2");
@@ -298,9 +399,9 @@ int TestRefused() {
   CHECK(HasNotice(ada, TradeClient::Notice::Kind::Refused));
   party.online.insert("b2");
 
-  // Not a tradeable item: back too.
-  party.Offer(ada, bo, {{TradeItemKind::Goods, 4242, 1}});
-  CHECK(ada.Held({TradeItemKind::Goods, 4242, 0}) == 1);
+  // Not an item the game has (no such category): back too.
+  party.Offer(ada, bo, {{TradeItemKind::Item, 0x30000000 | 4242, 1}});
+  CHECK(ada.Held({TradeItemKind::Item, 0x30000000 | 4242, 0}) == 1);
   CHECK(bo.client.Asked().empty());
   // Nor to itself.
   ada.Take({Vials(1)});
@@ -432,6 +533,7 @@ int TestTexts() {
 int main() {
   int failed = 0;
   failed += TestItems();
+  failed += TestAnyItemGiven();
   failed += TestGiveAccepted();
   failed += TestSwap();
   failed += TestDeclinedAndExpired();

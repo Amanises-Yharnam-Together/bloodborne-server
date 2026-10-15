@@ -1,13 +1,15 @@
 # Trading between party members
 
-Party members give each other Blood Echoes, Blood Vials and Quicksilver Bullets, and may ask for
-some back (a swap). The server owns every trade; each game owns its own inventory. Always on in
+Party members give each other Blood Echoes and any item (Kaniel 2026-10-15): goods of every kind
+(key items too), weapons with their upgrades and the blood gems in them, armor, loose gems and
+runes. They may ask for echoes or goods back (a swap); not for a weapon, armor or gem (the asked
+side could not say which one). The bell items stay out (the port's game removes them anyway). The server owns every trade; each game owns its own inventory. Always on in
 the port with the server world (Kaniel 2026-10-14); shadPS4 has none.
 
 ## How a trade goes
 
-1. The giver picks "Give" on a Blood Vial or Quicksilver Bullet in the inventory (or "Give Blood
-   Echoes" there, shown while it has any), and a number in the game's quantity picker (cursor on
+1. The giver picks "Give" on any item in the inventory (or "Give Blood Echoes" on a Blood Vial or
+   Quicksilver Bullet, shown while it has any), and a number in the game's quantity picker (cursor on
    No; down from 1 wraps to all of them). The offer goes to the nearest other party member
    standing on the same map. The game's inventory hides vials and bullets (they are on the HUD
    only); the port lists them in the Consumables tab (row filter 0x01BD8150 made
@@ -44,6 +46,26 @@ whenever no menu is open, also mid-fight; its cursor starts on No.
 - `bbport/gpu/shim/bbport_trade_menu.cpp` + `bbport/gpu/bbcoop/trade.cpp`: the menus.
 - Rig: scenarios `trade` (headless) and `trade-menus` (drawn, screenshots); verbs `trade-stock`,
   `trade-give`, `trade-offer`, `trade-answer`, `expect-held`, `wait-trade`.
+
+## Items of their own (weapons, armor, gems; static RE 2026-10-15)
+
+`TradeItem` kind 3 carries the full item id (category | id: weapon 0x0, armor 0x1, accessory 0x2,
+gem 0x8), one each, its name in the giver's game (`name`, from the game's own text: item.msgbnd FMG
+10/11/12, menu.msgbnd FMG 31 for gems and runes) and what makes it itself (`data`).
+
+| What | Where |
+|---|---|
+| SprjGaitem (the items' objects) | `[0x0553E990]`: object at +8 + (handle & 0xFFFF) * 8 (+8 handle, +0xC item id), references at +0x800C + index * 8; handles with bit 0x800000 |
+| Make one | `0x01A86FF0(u32* out, SprjGaitem, const u32* item id)`; let go `0x01A8BC00(u32*)` |
+| Write / read it whole | vtable +0x40 / +0x48 (stream), stream vtable +0x20 = (self, bytes, size): a weapon its fields +0x18, +0x1C, +0x28 and five gem slots (shape, handle, a gem in it whole: id, +0x18, +0x1C, six effects); the read makes the gems anew |
+| Take one out | `0x014D0310(EquipGameData, index, 1)`: unequips it (15 equipment slots, quick items), then the entry goes (the inventory's Discard) |
+| Add one | as a pickup, `0x017D89F0` with {handle of a new object, item id, 1, -1} |
+| The row's item | the item commands' factory +8 is the item's record: +0x4C item id, +0x70 its handle |
+
+The giver writes the item into `data` before taking it out; the receiver makes a new object, reads
+`data` into it and adds it like a pickup (the game's "item obtained" popup). Rig: scenario `trade-any`
+(a key item, a Hunter Axe +5 with a gem in it, armor), verbs `goods:<id>`, `weapon:<id>`,
+`armor:<id>`, `gem:<id>`, `trade-socket`, `expect-socketed`.
 
 ## The game's functions (1.09, static RE 2026-10-14)
 
