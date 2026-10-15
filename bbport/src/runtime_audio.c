@@ -8,6 +8,7 @@
  * ports only follow the clock. */
 #define _GNU_SOURCE
 #include "runtime.h"
+#include "gpu/bbcoop.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +42,7 @@ typedef struct {
     int stats;
     uint64_t stat_start_ns, stat_last_ns, stat_max_gap_ns; /* BB_AUDIO_STATS */
     unsigned stat_starved, stat_buffers; int stat_min_queued;
+    float hold_gain;                /* 1 playing, 0 held (the team's loading screen), ramped */
 } Port;
 typedef struct { uint16_t output; uint8_t channel, reserved; int16_t volume; uint16_t reroute; uint64_t flag, reserved64[2]; } PortState;
 _Static_assert(sizeof(PortState)==32,"AudioOut port state layout");
@@ -159,6 +161,7 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
     p->is_float=format>=3 && format!=6;
     p->sample_bytes=p->is_float ? 4 : 2; p->frames=(int)length; p->std_layout=format>=6;
     for (int c=0;c<8;++c) p->volume[c]=VOLUME_0DB;
+    p->hold_gain=1.f;
     if (sdl_audio()) {
         audio_levels();
         int out=p->channels;
@@ -196,6 +199,25 @@ static ABI int32_t audio_close(int32_t handle) {
     return p ? 0 : error;
 }
 /* `pace`: wait for this port's next period. sceAudioOutOutputs waits once for all its ports. */
+/* Kaniel 2026-10-15: the team's loading screen holds the game's sound until every hunter is in
+ * (bbcoop_sound_held). Each port fades to silence over a few buffers and back; the console says
+ * when it holds and how many buffers it kept silent (the rig checks both). */
+static int sound_held;
+static unsigned long held_buffers;
+static float sound_hold_gain(Port *p) {
+    int held=bbcoop_sound_held();
+    if (__atomic_exchange_n(&sound_held,held,__ATOMIC_RELAXED)!=held) {
+        if (held) { __atomic_store_n(&held_buffers,0,__ATOMIC_RELAXED); printf("Runtime: sound held under the team's loading screen\n"); }
+        else printf("Runtime: sound back after %lu silent buffers\n",__atomic_load_n(&held_buffers,__ATOMIC_RELAXED));
+    }
+    float target=held ? 0.f : 1.f;
+    p->hold_gain += target>p->hold_gain ? .125f : target<p->hold_gain ? -.125f : 0.f;
+    if (p->hold_gain<0.f) p->hold_gain=0.f;
+    if (p->hold_gain>1.f) p->hold_gain=1.f;
+    if (held && p->hold_gain==0.f) __atomic_add_fetch(&held_buffers,1,__ATOMIC_RELAXED);
+    return p->hold_gain;
+}
+
 static int32_t output_port(int32_t handle, const void *data, int pace) {
     int32_t error=0;
     pthread_mutex_lock(&table_lock);
@@ -210,13 +232,14 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
         /* Per-channel volume. When the device has fewer channels than the port,
          * fold here with fronts at unity. Otherwise map PS4 8ch (L R C LFE SL SR BL BR) to SDL 7.1. */
         unsigned char converted[2048*8*4];
+        const float hold=sound_hold_gain(p);
         if (p->out_channels!=p->channels) {
             static const int from_std[8]={0,1,2,3,6,7,4,5}; /* SDL order -> PS4 L R C LFE SL SR BL BR */
             for (size_t f=0;f<(size_t)p->frames;++f) {
                 float in[8]={0}, out[8]={0};
                 for (int s=0;s<p->channels && s<8;++s) {
                     int guest=p->channels==8 && p->std_layout ? from_std[s] : s;
-                    float gain=(float)p->volume[guest]/VOLUME_0DB*master_gain;
+                    float gain=(float)p->volume[guest]/VOLUME_0DB*master_gain*hold;
                     in[s]=take(data,p->is_float,f*(size_t)p->channels+(size_t)guest,gain);
                 }
                 fold8(in,out,p->out_channels);
@@ -227,7 +250,7 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
             for (size_t f=0;f<(size_t)p->frames;++f) for (int c=0;c<p->channels;++c) {
                 int target=p->channels==8 && !p->std_layout ? remap[c] : c;
                 size_t from=f*(size_t)p->channels+(size_t)c, to=f*(size_t)p->channels+(size_t)target;
-                float gain=(float)p->volume[c]/VOLUME_0DB*master_gain;
+                float gain=(float)p->volume[c]/VOLUME_0DB*master_gain*hold;
                 if (p->is_float) { float v; memcpy(&v,(const char *)data+from*4,4); v*=gain; memcpy(converted+to*4,&v,4); }
                 else { int16_t v; memcpy(&v,(const char *)data+from*2,2); v=(int16_t)((float)v*gain); memcpy(converted+to*2,&v,2); }
             }

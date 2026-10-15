@@ -380,6 +380,54 @@ TEST(TeamLoad, OpensAnywayWhenSomeoneNeverComes) {
     EXPECT_FALSE(load.Tick(Team2, "h", TeamLoad::LimitMs).up);
 }
 
+// Kaniel 2026-10-15: the loading screen stays until every guest has fully joined, its character
+// already spawned: a game is ready only once each other hunter's character stands in its world.
+TEST(TeamLoad, ReadyOnlyOnceEveryHuntersCharacterIsInItsWorld) {
+    using P = bbcoop::LoadProgress;
+    EXPECT_EQ(TeamLoad::OwnStage(true, false, 0, 1), P::LOADING);
+    EXPECT_EQ(TeamLoad::OwnStage(true, true, 1, 1), P::LOADING) << "its world still loading";
+    EXPECT_EQ(TeamLoad::OwnStage(false, false, 1, 1), P::JOINING) << "not in the session yet";
+    EXPECT_EQ(TeamLoad::OwnStage(false, true, 0, 1), P::JOINING)
+        << "in the session, the other hunter's character not spawned yet";
+    EXPECT_EQ(TeamLoad::OwnStage(false, true, 1, 2), P::JOINING) << "one of two still missing";
+    EXPECT_EQ(TeamLoad::OwnStage(false, true, 2, 2), P::READY);
+    EXPECT_EQ(TeamLoad::OwnStage(false, true, 3, 2), P::READY);
+    EXPECT_EQ(TeamLoad::OwnStage(false, true, 0, 0), P::READY) << "nobody else coming";
+}
+
+// Kaniel 2026-10-15: the opening cutscene under the team's loading screen could not be skipped:
+// it is skipped by itself, the game's own skip (Options) pressed for the player.
+TEST(CutsceneSkip, PressesOptionsWhileACutscenePlaysUnderTheScreen) {
+    using S = CutsceneSkip;
+    CutsceneSkip skip;
+    EXPECT_FALSE(skip.Press(false, S::PlayStep, 1000, 1000)) << "no screen: the player's own";
+    EXPECT_FALSE(skip.Press(true, -1, 0, 1000)) << "no cutscene";
+    EXPECT_FALSE(skip.Press(true, S::PrologueStep - 1, 1000, 1000)) << "still loading";
+    EXPECT_TRUE(skip.Press(true, S::PrologueStep, 1000, 1000)) << "its prologue: pressed";
+    EXPECT_FALSE(skip.Press(true, S::PrologueStep, 1000, 1000 + S::HoldMs)) << "released";
+    skip = {};
+    EXPECT_TRUE(skip.Press(true, S::PlayStep, 2000, 2000)) << "it plays: pressed";
+    EXPECT_TRUE(skip.Press(true, S::PlayStep, 2000, 2000 + S::HoldMs - 10));
+    EXPECT_FALSE(skip.Press(true, S::PlayStep, 2000, 2000 + S::HoldMs)) << "released";
+    EXPECT_FALSE(skip.Press(true, S::PlayStep, 2000, 2000 + S::EveryMs - 1));
+    EXPECT_TRUE(skip.Press(true, S::PlayStep, 2000, 2000 + S::EveryMs)) << "pressed again";
+    EXPECT_EQ(skip.Presses(), 2);
+    EXPECT_FALSE(skip.Press(true, S::PlayStep, 2000, 2000 + S::LongestMs + 1))
+        << "stuck in its playing step: left alone";
+    EXPECT_FALSE(skip.Press(true, S::PlayStep + 1, 5000, 5000)) << "it ends by itself";
+}
+
+TEST(CutsceneSkip, GivesUpAfterSoManyPresses) {
+    using S = CutsceneSkip;
+    CutsceneSkip skip;
+    s64 now = 0;
+    int pressed = 0;
+    for (int i = 0; i < 4 * S::MostPresses; ++i, now += S::EveryMs) {
+        pressed += skip.Press(true, S::PlayStep, now, now) ? 1 : 0;
+    }
+    EXPECT_EQ(pressed, S::MostPresses) << "an unskippable cutscene is left alone";
+}
+
 TEST(TeamLoad, SaysItsOwnProgressWhenItChanges) {
     TeamLoad load;
     EXPECT_FALSE(load.ToSend(0).has_value()) << "not loading";

@@ -116,6 +116,15 @@ TeamLoad team_load; // team_mutex
 // The team loading screen as the game's thread last made it (the present thread draws it).
 std::mutex team_load_view_mutex;
 TeamLoad::View team_load_view;
+// The screen is up: the port's sound holds (its audio thread reads it every buffer).
+std::atomic<bool> team_load_covers{false};
+// Kaniel 2026-10-15: a cutscene under that screen is skipped. The cutscene player's (SprjRemoMan)
+// step as its step methods last ran (NoteRemoStep), and Options held for the skip (the pad reads
+// it).
+std::atomic<int> remo_step{-1};
+std::atomic<s64> remo_step_ms{0};
+CutsceneSkip cutscene_skip; // CutsceneSkipPressed (the pad's reads)
+std::atomic<bool> skip_pressed{false};
 u64 team_sessions_opened = 0;
 // What the summon packet carries before the join data (0x01873754): GameMan +0x16F0 and +0x16F4
 // on the guest, the same for every co-operator (rig 2026-10-14: 0xFFFFFFFF and 7).
@@ -998,6 +1007,39 @@ TeamLoad::View TeamLoadView() {
     return team_load_view;
 }
 
+bool TeamLoadCovers() {
+    return team_load_covers.load(std::memory_order_relaxed);
+}
+
+bool CutsceneSkipPressed() {
+    static std::mutex skip_mutex;
+    std::scoped_lock lock{skip_mutex};
+    const bool press = cutscene_skip.Press(
+        team_load_covers.load(std::memory_order_relaxed), remo_step.load(std::memory_order_relaxed),
+        remo_step_ms.load(std::memory_order_relaxed), SteadyMilliseconds());
+    if (press && !skip_pressed.exchange(true, std::memory_order_relaxed)) {
+        LOG_INFO(Debug,
+                 "Co-op team load: a cutscene plays under the screen: Options pressed to skip it "
+                 "(press {})",
+                 cutscene_skip.Presses());
+    } else if (!press) {
+        skip_pressed.store(false, std::memory_order_relaxed);
+    }
+    return press;
+}
+
+void PS4_SYSV_ABI NoteRemoStep(u64 step, const GuestRegisterSnapshot*) {
+    static constexpr std::array<const char*, 7> Steps{
+        "Init", "RegistWait", "Prologue", "PrologueWait", "Update", "Epilog", "EpilogWait"};
+    const int now_step = static_cast<int>(step);
+    if (remo_step.load(std::memory_order_relaxed) != now_step) {
+        remo_step_ms.store(SteadyMilliseconds(), std::memory_order_relaxed);
+        remo_step.store(now_step, std::memory_order_relaxed);
+        LOG_INFO(Debug, "Co-op cutscene: the cutscene player's step is {}",
+                 Steps[step % Steps.size()]);
+    }
+}
+
 // The game's thread (TickTeamJoin): this game's stage of the team's load, said to the others, and
 // the screen as it stands. The present thread only reads the view (it read the game's memory
 // itself once and crashed: rig 2026-10-14).
@@ -1009,22 +1051,30 @@ void UpdateTeamLoad() {
     const s32 matching = manager >= 0x10000 && HasMemoryAccess(manager, 0x128, MemoryProt::CpuRead)
                              ? ReadValue<s32>(manager, 0x124)
                              : 0;
-    // The host is in once its session is open, a guest once it stands in the session's world
-    // (after the summon reload).
-    const bool in = IsPartyGuestRole() ? InPartySession() && InSessionWorld()
-                                       : matching == MatchingStateHosting;
+    // The host is in once its session is open, a guest once it is in the session.
+    const bool in = IsPartyGuestRole() ? InPartySession() : matching == MatchingStateHosting;
+    // Kaniel 2026-10-15: ready once every other hunter's character stands in this world: spawned
+    // (a body somewhere) and shown (one on another map is hidden, ReconcileMemberPresence). A team
+    // guest joins in place, with no reload to wait for (InSessionWorld waited its 30 s for one).
+    size_t seen = 0;
+    if (!loading && in) {
+        for (const OtherPlayer& other : OtherPlayers()) {
+            seen += other.at.has_value() && !IsCharacterDisabled(other.character) ? 1 : 0;
+        }
+    }
     std::optional<bbcoop::LoadProgress> said;
     TeamLoad::View view;
+    size_t needed = 0;
+    TeamLoad::Stage stage = bbcoop::LoadProgress::LOADING;
     {
         std::scoped_lock lock{team_mutex};
-        team_load.SetStage(loading ? bbcoop::LoadProgress::LOADING
-                           : in    ? bbcoop::LoadProgress::READY
-                                   : bbcoop::LoadProgress::JOINING,
-                           now_ms);
-        said = team_load.ToSend(now_ms);
         const auto& lobby = team_gate.Lobby();
         const auto members = lobby ? TeamLoadMembers(*lobby, lobby_member)
                                    : std::vector<std::pair<std::string, std::string>>{};
+        needed = members.empty() ? 0 : members.size() - 1;
+        stage = TeamLoad::OwnStage(loading, in, seen, needed);
+        team_load.SetStage(stage, now_ms);
+        said = team_load.ToSend(now_ms);
         view = team_load.Tick(members, lobby_member, now_ms);
     }
     if (said) {
@@ -1032,13 +1082,32 @@ void UpdateTeamLoad() {
         *envelope.mutable_load_progress() = *said;
         Queue(std::move(envelope));
     }
-    // When the team's load screen (or its bar) comes and goes: the rig checks it is gone after a
-    // rejoin (Lisara 2026-10-14: after Continue the team bars stayed on top).
+    // Said while the screen is up, and the stage that opens it (in the tick it goes).
     static bool shown = false;
+    static TeamLoad::Stage said_stage = bbcoop::LoadProgress::WAITING;
+    if ((view.up || shown) && stage != said_stage) {
+        said_stage = stage;
+        static constexpr std::array<const char*, 4> Stages{"waiting", "loading", "joining",
+                                                           "ready"};
+        LOG_INFO(Debug,
+                 "Co-op team load: this game is {}, {} of {} other hunters' characters in its "
+                 "world",
+                 Stages[static_cast<size_t>(stage) % Stages.size()], seen, needed);
+    }
+    // When the team's load screen comes and goes: the rig checks it is gone after a rejoin
+    // (Lisara 2026-10-14: after Continue the team bars stayed on top). Kaniel 2026-10-15: it
+    // covers the whole screen, the game's input and its sound until every hunter is in.
     if (view.up != shown) {
         shown = view.up;
+        team_load_covers.store(shown, std::memory_order_relaxed);
         LOG_INFO(Debug, "Co-op team load: the team's load view is {} ({} rows)",
                  shown ? "up" : "gone", view.rows.size());
+        LOG_INFO(Debug, "Co-op team load: {}",
+                 shown ? "the screen covers the game, its sound held"
+                       : "the screen opens, the sound back");
+        if (!shown) {
+            said_stage = bbcoop::LoadProgress::WAITING;
+        }
     }
     std::scoped_lock lock{team_load_view_mutex};
     team_load_view = std::move(view);
@@ -1079,6 +1148,7 @@ void TeamBackAtTitle() {
     }
     team_session.reset();
     team_load = {};
+    team_load_covers.store(false, std::memory_order_relaxed);
     {
         std::scoped_lock view_lock{team_load_view_mutex};
         team_load_view = {};

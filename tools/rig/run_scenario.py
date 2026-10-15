@@ -1394,6 +1394,11 @@ def console_problems(spec: dict, consoles: dict[str, str]) -> list[str]:
             problems.append(f"{role}: the overlay never said how many textures it has")
         elif (most := max(counts))[0] > most[1]:
             problems.append(f"{role}: the overlay has {most[0]} textures, its pool {most[1]}")
+    # What the port's runtime prints beside the log (its sound: the team's loading screen).
+    for role, patterns in spec.get("console_expect", {}).items():
+        for pattern in patterns:
+            if not re.search(pattern, consoles.get(role, "")):
+                problems.append(f"{role}: the console never said /{pattern}/")
     return problems
 
 

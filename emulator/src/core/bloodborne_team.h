@@ -202,6 +202,31 @@ private:
     std::optional<s64> since_ms;
 };
 
+// Kaniel 2026-10-15: a cutscene that plays under the team's loading screen (a new character's
+// opening) is skipped by itself: Options, the game's own skip, pressed for the player in short
+// pulses while the cutscene player (SprjRemoMan) is in its playing step. `step` is that player's
+// step (-1 none), entered at `step_ms`; true while Options is to be held down. The pad asks it
+// as the game reads the pad (the game's own tick may stand still under a cutscene).
+class CutsceneSkip {
+public:
+    // SprjRemoMan::STEP_PrologueWait and STEP_Update: the rig's opening spent ~100 s in the
+    // first, the second only its last moment.
+    static constexpr int PrologueStep = 3;
+    static constexpr int PlayStep = 4;
+    static constexpr s64 HoldMs = 120;        // a press
+    static constexpr s64 EveryMs = 700;       // between presses
+    static constexpr s64 LongestMs = 300'000; // in the step this long: stuck, left alone
+    static constexpr int MostPresses = 200;   // about two minutes of presses: then left alone
+    bool Press(bool covered, int step, s64 step_ms, s64 now_ms);
+    int Presses() const {
+        return presses;
+    }
+
+private:
+    std::optional<s64> pressed_ms;
+    int presses = 0;
+};
+
 // Kaniel 2026-10-14: the team loading screen, as in League of Legends. From the team's Start every
 // member's game shows each hunter with a bar (bbcoop::LoadProgress through the server) and holds
 // until all of them are in the team's session (or LimitMs), so the hunt opens for everyone at once.
@@ -225,6 +250,10 @@ public:
         std::vector<Row> rows;
     };
 
+    // This game's stage: loading its world, then joining, and ready only once it is in the
+    // session and `others_seen` of the `others_needed` other hunters' characters stand in its
+    // world (Kaniel 2026-10-15: the screen stays until every guest's character has spawned).
+    static Stage OwnStage(bool loading, bool in_session, size_t others_seen, size_t others_needed);
     void Start(s64 now_ms);
     void SetStage(Stage stage, s64 now_ms);
     void Take(const bbcoop::LoadProgress& other, s64 now_ms);

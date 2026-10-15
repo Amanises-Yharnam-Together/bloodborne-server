@@ -49,6 +49,8 @@ GASCOIGNE_BEAST = "0x1001409e"
 # Event 12411800's own flag: on, the map's load puts Gascoigne down (Force Character Death);
 # off, he waits for the fight. Both rig saves have him beaten.
 GASCOIGNE_DEFEATED = 12411800
+# The opening cutscene's event in Central Yharnam (m24_01): off, the next load plays it again.
+OPENING_EVENT = 12410000
 # Hidden by the host's story (event disable +0x28) and shown on the guest after its join until
 # guests followed the host (Kaniel 2026-10-10: Iosefka at her clinic door, play-down-revive).
 STORY_HIDDEN = "0x10014005"
@@ -1067,6 +1069,56 @@ SCENARIOS = {
             "guest": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
+    # Kaniel 2026-10-15: a cutscene under the team's loading screen skips by itself (Options
+    # pressed for the game's own skip). The opening's event (12410000, m24_01's emevd) plays its
+    # cutscene again at the next load once its flag is off: the host clears it, and its next team
+    # load plays the opening under the screen.
+    "cutscene-skip": {
+        "about": "the opening cutscene plays under the team's loading screen and skips by itself "
+                 "(Options pressed); the screen opens and both are in one session",
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", f"set-flag {OPENING_EVENT} 0", "wait 15", "done"],
+                     # The guest back at the title and ready first: both load together.
+                     ["title-wait 60", "team-start", START, "wait-session 2 300", "wait 15",
+                      "expect-session 2"]],
+            "guest": [["team-accept", "team-ready", START, "wait-session 2 300", "wait 30",
+                       "done"],
+                      ["team-ready", START, "wait-session 2 300", "wait 15", "expect-session 2"]],
+        },
+        "expect": {"host": [r"cutscene player's step is Update",
+                            r"Options pressed to skip it[\s\S]*cutscene player's step is Epilog"
+                            r"[\s\S]*this game is ready, 1 of 1[\s\S]*load view is gone"]},
+        # Unskipped, the opening held the screen ~115 s (21593 silent buffers): skipped, under
+        # 10000 (about 53 s, the load and the join included).
+        "console_expect": {"host": [r"Runtime: sound back after \d{1,4} silent buffers"]},
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
+    # Kaniel 2026-10-15: the team's loading screen stays over the whole screen, the sound held,
+    # until every guest has fully joined the host (its character spawned), then opens for all.
+    "team-load-cover": {
+        "about": "a team's load: each game's loading screen stays full screen with its sound "
+                 "held until the other hunter's character stands in its world, then it opens "
+                 "and the sound comes back",
+        "roles": {
+            "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                     "wait-session 2 300", "wait 15", "expect-session 2"],
+            "guest": ["team-accept", "team-ready", START, "wait-session 2 300", "wait 15",
+                      "expect-session 2"],
+        },
+        "expect": {role: [r"Co-op team load: the screen covers the game, its sound held",
+                          r"Co-op team load: this game is ready, 1 of 1 other hunters' characters "
+                          r"in its world[\s\S]*load view is gone",
+                          r"Co-op team load: the screen opens, the sound back"]
+                   for role in ("host", "guest")},
+        "forbid": {role: SESSION_HOLDS + [r"load view is gone[\s\S]*load view is up"]
+                   for role in ("host", "guest")},
+        "console_expect": {role: [r"Runtime: sound held under the team's loading screen",
+                                  r"Runtime: sound back after [1-9]\d* silent buffers"]
+                           for role in ("host", "guest")},
         "timeout": 300,
     },
     # Phase 5b: the team's world. A world flag no save has (TEAM_WORLD_FLAG, Central Yharnam's

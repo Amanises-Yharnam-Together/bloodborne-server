@@ -766,6 +766,12 @@ void TeamBackAtTitle();
 bool TeamScreenUp();
 // A team's guest is loading or joining its host's session: the port holds a loading screen.
 TeamLoad::View TeamLoadView();
+// The team's loading screen is up: it holds the game's input and its sound (the port's audio).
+bool TeamLoadCovers();
+// Options held down for the game to skip a cutscene under that screen (the port's pad).
+bool CutsceneSkipPressed();
+// SprjRemoMan's step methods (tag: the step), hooked at their entries.
+void PS4_SYSV_ABI NoteRemoStep(u64 step, const GuestRegisterSnapshot* registers);
 void TeamChoose(TeamGate::Choice choice);
 // The rig's screen verbs (team-ready, team-start, team-alone) want the title's Cross until the
 // screen is up.

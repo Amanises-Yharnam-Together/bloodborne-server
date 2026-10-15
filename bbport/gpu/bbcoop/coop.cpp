@@ -325,6 +325,14 @@ extern "C" int bbcoop_team_load_view(bbcoop_team_load* view) {
     return 1;
 }
 
+extern "C" int bbcoop_sound_held(void) {
+    return Core::Bloodborne::Coop::TeamLoadCovers() ? 1 : 0;
+}
+
+extern "C" int bbcoop_cutscene_skip(void) {
+    return Core::Bloodborne::Coop::CutsceneSkipPressed() ? 1 : 0;
+}
+
 extern "C" void bbcoop_team_choose(int what) {
     Core::Bloodborne::Coop::TeamChoose(static_cast<Core::Bloodborne::TeamGate::Choice>(what));
 }

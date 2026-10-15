@@ -1372,7 +1372,8 @@ def compile_suite(suite: dict, only: list[str] | None = None) -> dict:
                 stages[role][-1] += [mark, keep_going]
     checks = ("about", "expect", "forbid", "allow", "same_hp", "same_hp_census", "hp_sums_hits",
               "max_hp_lag", "max_hp_lag_each", "killed", "max_kill_lag", "max_join_s", "moves",
-              "grounded", "overlay_textures", "known_bug", "known_problems", "files_present",
+              "grounded", "overlay_textures", "console_expect", "known_bug", "known_problems",
+              "files_present",
               "files_absent")
     return {
         "about": suite["about"],

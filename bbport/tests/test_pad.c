@@ -24,6 +24,9 @@ void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, u
     sticks[0]=sticks[1]=128;
     *l2=*r2=0;
 }
+/* A cutscene under the team's loading screen: Options pressed for its skip. */
+static int skip;
+int bbcoop_cutscene_skip(void) { return skip; }
 /* The mouse is tested apart (test_mouse_camera.c); here the window has none. */
 void bbgpu_mouse_enable(int enabled) { (void)enabled; }
 void bbgpu_mouse_set_direct(void (*turn)(float, float), void (*drop)(void)) { (void)turn; (void)drop; }
@@ -82,6 +85,10 @@ int main(void) {
     assert(data.left_x==200 && data.left_y==128 && data.right_x==128 && data.right_y==128);
     capture=1;
     assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.left_x==128);
+    /* Kaniel 2026-10-15: the loading screen takes the pad, but a cutscene under it skips. */
+    skip=1;
+    assert(pad_read_state(1,&data)==0 && data.buttons==BTN_OPTIONS);
+    skip=0;
     capture=0;
     autoplay=0; autoplay_sticks[0]=128;
     inject(path,"");

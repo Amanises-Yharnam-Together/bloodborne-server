@@ -2253,59 +2253,6 @@ void PlainScreen() {
     }
 }
 
-/// Kaniel 2026-10-14: a new character's opening cutscene played under the loading screen, which
-/// could not be skipped (the screen took the pad). The whole screen covers only this game's own
-/// load; once its world is in, the team waits in a bar along the top and the pad is the game's.
-bool CoversTheGame() {
-    for (int i = 0; i < load.count && i < 4; ++i) {
-        if (load.rows[i].self) {
-            return load.rows[i].stage == BBCOOP_LOAD_LOADING || load.rows[i].stage == BBCOOP_LOAD_WAITING;
-        }
-    }
-    return true;
-}
-
-const char* StageText(int stage);
-
-/// The team still loading, as a bar along the top: each hunter's name, stage and bar.
-void Banner() {
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    ImDrawList* draw = ImGui::GetForegroundDrawList();
-    const float u = display.y / 1080.0f;
-    ImFont* font = MenuArt::Font();
-    const int count = std::clamp(load.count, 1, 4);
-    const float slot_w = 300.0f * u, h = 92.0f * u;
-    const float w = slot_w * count + 40.0f * u, x0 = (display.x - w) * 0.5f, y0 = 24.0f * u;
-    const ImVec2 p0(x0, y0), p1(x0 + w, y0 + h);
-    if (!MenuArt::Nine(draw, MenuArt::Row, p0, p1, 10.0f, 8.0f * u, 0.95f)) {
-        draw->AddRectFilled(p0, p1, IM_COL32(12, 10, 8, 230), 2.0f);
-        draw->AddRect(p0, p1, IM_COL32(150, 140, 120, 160), 2.0f);
-    }
-    const auto text = [&](const char* s, float size, ImVec2 at, ImU32 colour) {
-        const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, s);
-        at.x = std::floor(at.x - extent.x * 0.5f);
-        draw->AddText(font, size, ImVec2(at.x + 1.5f * u, at.y + 1.5f * u), IM_COL32(0, 0, 0, 200), s);
-        draw->AddText(font, size, at, colour, s);
-    };
-    for (int i = 0; i < load.count && i < 4; ++i) {
-        const bbcoop_team_load_row& row = load.rows[i];
-        const float cx = x0 + 20.0f * u + slot_w * (i + 0.5f);
-        const bool ready = row.stage == BBCOOP_LOAD_READY;
-        text(row.name, 22.0f * u, ImVec2(cx, y0 + 10.0f * u), row.self ? IM_COL32(222, 214, 196, 255)
-                                                                       : IM_COL32(200, 192, 176, 255));
-        const float bar_w = slot_w - 60.0f * u, bar_h = 12.0f * u, bx = cx - bar_w * 0.5f, by = y0 + 44.0f * u;
-        const float fill = std::clamp(row.percent, 0, 100) / 100.0f;
-        if (!Party::GameHpBar(draw, ImVec2(bx, by), bar_w, bar_h, fill, 1.0f)) {
-            draw->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bar_w, by + bar_h), IM_COL32(40, 34, 28, 255));
-            draw->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bar_w * fill, by + bar_h), IM_COL32(150, 40, 30, 255));
-        }
-        char line[64];
-        std::snprintf(line, sizeof(line), "%s  %d%%", StageText(row.stage), std::clamp(row.percent, 0, 100));
-        text(line, 17.0f * u, ImVec2(cx, y0 + 62.0f * u),
-             ready ? IM_COL32(200, 176, 120, 255) : IM_COL32(150, 142, 128, 255));
-    }
-}
-
 const char* StageText(int stage) {
     return stage == BBCOOP_LOAD_READY     ? Team::T("Ready", "Готов")
            : stage == BBCOOP_LOAD_JOINING ? Team::T("Joining the hunt", "Присоединяется")
@@ -2315,12 +2262,10 @@ const char* StageText(int stage) {
 
 /// Kaniel 2026-10-14: as the game's own loading screen (black, the Bloodborne word, the menus'
 /// cards and font), each hunter's card with its rune, name, stage and the game's own HP bar as
-/// its progress; it opens for all of them at once.
+/// its progress; it opens for all of them at once. Kaniel 2026-10-15: it covers the whole screen,
+/// the input and the sound (bbcoop_sound_held) until every guest's character has spawned; no
+/// more top bar once this game's own world is in.
 void Screen() {
-    if (!CoversTheGame()) {
-        Banner();
-        return;
-    }
     if (!MenuArt::Has(MenuArt::Card)) {
         PlainScreen();
         return;
@@ -3292,7 +3237,7 @@ bool Visible() {
     const bool was_team = Team::open;
     Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
     Joining::open = initialized && bbcoop_team_load_view(&Joining::load) != 0;
-    loading_cover = Joining::open && Joining::CoversTheGame();
+    loading_cover = Joining::open;
     if (Team::open && !was_team) {
         SyncMousePos();
         Team::focus.fresh = true;
@@ -3307,7 +3252,7 @@ bool MenuOpen() {
 
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
-    return menu_open || quit_open || prompt_active || Team::open || (Joining::open && Joining::CoversTheGame());
+    return menu_open || quit_open || prompt_active || Team::open || Joining::open;
 }
 
 void Tick() {

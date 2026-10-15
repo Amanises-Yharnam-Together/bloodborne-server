@@ -305,6 +305,33 @@ void TeamLoad::Start(s64 now_ms) {
     sent.reset();
 }
 
+bool CutsceneSkip::Press(bool covered, int step, s64 step_ms, s64 now_ms) {
+    const bool playing =
+        covered && (step == PrologueStep || step == PlayStep) && now_ms - step_ms <= LongestMs;
+    if (!playing) {
+        pressed_ms.reset();
+        return false;
+    }
+    if (pressed_ms && now_ms - *pressed_ms < HoldMs) {
+        return true;
+    }
+    if (presses >= MostPresses || (pressed_ms && now_ms - *pressed_ms < EveryMs)) {
+        return false;
+    }
+    pressed_ms = now_ms;
+    ++presses;
+    return true;
+}
+
+TeamLoad::Stage TeamLoad::OwnStage(bool loading, bool in_session, size_t others_seen,
+                                   size_t others_needed) {
+    if (loading) {
+        return bbcoop::LoadProgress::LOADING;
+    }
+    return in_session && others_seen >= others_needed ? bbcoop::LoadProgress::READY
+                                                      : bbcoop::LoadProgress::JOINING;
+}
+
 void TeamLoad::SetStage(TeamLoad::Stage stage, s64 now_ms) {
     if (stage != own) {
         own = stage;
