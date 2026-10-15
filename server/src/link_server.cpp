@@ -214,6 +214,16 @@ void LinkServer::Apply(const ServerLink::Hub::Result& result) {
         m_shared->matching.udpExt[QString::fromUtf8(linked.online_id)] = {
             QHostAddress(linked.virtual_endpoint.ipv4).toString(), linked.virtual_endpoint.port};
     }
+    // Phase 11: a game silent too long (died, or down for longer than a blip): its TCP side ends,
+    // and the game is told when it is back (its client signs in again by itself).
+    for (const auto& lost : result.lost) {
+        for (auto& [id, end] : m_rpc) {
+            if (end->to == lost && end->socket) {
+                CloseRpc(*end);
+                end->tunnel->Close(m_clock.elapsed());
+            }
+        }
+    }
     for (const auto& coop : result.coop)
         Apply(m_world.Receive(coop.from, coop.online_id, coop.body,
                               QDateTime::currentMSecsSinceEpoch()));

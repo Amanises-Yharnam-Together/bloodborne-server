@@ -765,8 +765,11 @@ SUITES = {
                      "host": ["wait-member-vital down 120", "sync dsl-down", RESTART, START,
                               "godmode", "wait-session 2 480", "sync dsl-back",
                               "expect-session 2"]},
-                    expect={"guest": [r"party death: the party session ending ends down \d+; "
-                                      r"dies \(reset=false"]},
+                    # Phase 11: the host's dead game no longer ends the session at once (its
+                    # TCP connection was what ended it; the link waits for it to come back): the
+                    # guest is down with nobody standing, a wipe, and dies all the same.
+                    expect={"guest": [r"party death: (?:the party session ending|wipe \d+) ends "
+                                      r"down \d+; dies"]},
                     allow=CRASH_CLEANUP),
             # Kaniel 2026-10-13: after a wipe everyone wakes where the host does.
             wipe(PARTY2, guests_point=2412951),

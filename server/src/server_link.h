@@ -128,6 +128,9 @@ public:
         QList<Coop> coop;
         QList<Coop> rpc;      // phase 11: the Rpc stream's datagram bodies, the same way
         QList<Endpoint> gone; // links forgotten
+        // Phase 11: links silent for lost_ms (once a silence): their game's sign-in session ends,
+        // as its TCP connection's did when its game died. A blip under that rides out.
+        QList<Endpoint> lost;
         // Games welcomed, with their virtual addresses (phase 7: what the rooms hand out).
         struct Linked {
             QByteArray online_id;
@@ -137,7 +140,7 @@ public:
     };
 
     explicit Hub(qint64 quiet_ms = 3000, qint64 gone_ms = 60000, qint64 stats_ms = 10000,
-                 int pair_lines = 20);
+                 int pair_lines = 20, qint64 lost_ms = 12000);
 
     Result Receive(const Endpoint& from, const QByteArray& datagram, qint64 now_ms);
     // Links newly quiet (told to the others), gone (forgotten) and the counters.
@@ -180,6 +183,7 @@ private:
         QByteArray build;
         qint64 last_heard_ms = 0;
         bool quiet = false;
+        bool lost = false; // its sign-in session ended for this silence
         quint64 frames_in = 0;
         quint64 bytes_in = 0;
         quint64 frames_out = 0;
@@ -202,6 +206,7 @@ private:
     qint64 quiet_ms;
     qint64 gone_ms;
     qint64 stats_ms;
+    qint64 lost_ms;
     int pair_lines;
     bool stats_started = false;
     qint64 stats_at_ms = 0;

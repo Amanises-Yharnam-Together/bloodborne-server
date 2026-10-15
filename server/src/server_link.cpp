@@ -263,8 +263,9 @@ std::optional<QByteArray> DecodeRpc(const QByteArray& datagram) {
     return body->Rest();
 }
 
-Hub::Hub(qint64 quiet_ms, qint64 gone_ms, qint64 stats_ms, int pair_lines)
-    : quiet_ms{quiet_ms}, gone_ms{gone_ms}, stats_ms{stats_ms}, pair_lines{pair_lines} {}
+Hub::Hub(qint64 quiet_ms, qint64 gone_ms, qint64 stats_ms, int pair_lines, qint64 lost_ms)
+    : quiet_ms{quiet_ms}, gone_ms{gone_ms}, stats_ms{stats_ms}, lost_ms{lost_ms},
+      pair_lines{pair_lines} {}
 
 QByteArray Hub::Build() const {
     for (const Link& link : members) {
@@ -518,6 +519,7 @@ void Hub::Heard(Link& link, qint64 now_ms, Result& result) {
         TellOthers(link, MemberState::Back, gap, result);
     }
     link.last_heard_ms = now_ms;
+    link.lost = false;
 }
 
 void Hub::TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result& result) {
@@ -557,6 +559,14 @@ Hub::Result Hub::Tick(qint64 now_ms) {
             result.log.append(
                 QStringLiteral("server link: nothing from %1 for %2 ms").arg(Name(link)).arg(gap));
             TellOthers(link, MemberState::Quiet, gap, result);
+        }
+        if (!link.lost && gap > lost_ms) {
+            link.lost = true;
+            result.lost.append(link.endpoint);
+            result.log.append(QStringLiteral("server link: nothing from %1 for %2 ms: its "
+                                             "sign-in ends until it is back")
+                                  .arg(Name(link))
+                                  .arg(gap));
         }
     }
     if (stats_started && now_ms - stats_at_ms >= stats_ms) {

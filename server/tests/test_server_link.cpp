@@ -270,6 +270,31 @@ int Relays() {
   return 0;
 }
 
+// Phase 11: a game silent for 12 s (its game died, or its connection is down
+// for longer than a blip) loses its sign-in session (`lost`, once a silence):
+// what the TCP connection's end did at once when its game died. A blip under
+// that rides out.
+int ALongSilenceEndsTheSignIn() {
+  Hub hub;
+  hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
+  hub.Receive(Ada, HelloFrom("Ada"), 0);
+  for (qint64 at = 1000; at <= 30000; at += 1000) {
+    hub.Receive(Ada, Encode(Kind::Ping, Ping{1, 1}), at);
+    const auto result = hub.Tick(at + 1);
+    if (at == 12000) {
+      CHECK(result.lost.size() == 1 && result.lost[0] == Kaniel);
+    } else {
+      CHECK(result.lost.isEmpty());
+    }
+    if (at == 20000) {
+      hub.Receive(Kaniel, Encode(Kind::Ping, Ping{1, 1}), at); // back
+    }
+  }
+  CHECK(hub.Tick(32002).lost.size() == 1); // silent again since 20 s
+  std::cout << "server link: a long silence ends the sign-in\n";
+  return 0;
+}
+
 int Liveness() {
   Hub hub;
   hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
@@ -524,7 +549,8 @@ int RoutesGamePackets() {
 int main() {
   if (Contracts() != 0 || HelloAndBuilds() != 0 || Relays() != 0 ||
       Liveness() != 0 || TeamOnly() != 0 || VirtualMembers() != 0 ||
-      RoutesGamePackets() != 0 || SignsIn() != 0) {
+      RoutesGamePackets() != 0 || SignsIn() != 0 ||
+      ALongSilenceEndsTheSignIn() != 0) {
     return 1;
   }
   return 0;
