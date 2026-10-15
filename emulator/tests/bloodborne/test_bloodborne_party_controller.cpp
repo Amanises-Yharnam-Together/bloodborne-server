@@ -2862,6 +2862,18 @@ TEST(BloodborneGuestResume, TheServersPointCountsInATeamSession) {
     EXPECT_EQ(PickResumePoint(false, std::nullopt, std::nullopt), std::nullopt);
 }
 
+// Phase 7: the resume moves a guest only while it still stands where its load put it; one that
+// already moved (a player who set off, the rig's own steps) stays (rig party-death 2026-10-15:
+// the resume teleported a guest in the middle of its fall).
+TEST(BloodborneGuestResume, AGuestThatMovedSinceItsLoadStays) {
+    using Kind = ResumeStep::Kind;
+    const ResumePoint point{0x18010000, {-215.5f, -51.0f, 172.25f}, 0};
+    const LampPosition loaded{-199.7f, -50.7f, 179.4f};
+    const LampPosition walked{-196.7f, -50.5f, 179.4f}; // 3 m on
+    EXPECT_EQ(ChooseResumeStep(point, 0x18010000, loaded, 0, 0x18010000, loaded).kind, Kind::Move);
+    EXPECT_EQ(ChooseResumeStep(point, 0x18010000, walked, 0, 0x18010000, loaded).kind, Kind::Stay);
+}
+
 // Ada's new character (2026-10-12) started in Central Yharnam: slot 5 still had the old
 // character's resume point, and its event flag count was too close to tell them apart. Once the
 // slot is found to hold another character (ForgetsSlotLists), its resume point goes with the

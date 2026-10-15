@@ -1018,8 +1018,11 @@ struct ResumeStep {
 // From where the guest loaded: stay (nothing remembered, or within 5 m), move on the same map,
 // travel to the remembered map first, or forget the point (another character in the slot). A
 // guest no longer on the map it loaded on (`loaded_map`, 0 if not known) travelled on: it stays.
+// One that moved more than a metre from where its load put it (`loaded_at`, when known) set off on
+// its own: it stays too (phase 7).
 ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at, s32 progress,
-                            u32 loaded_map = 0);
+                            u32 loaded_map = 0,
+                            std::optional<LampPosition> loaded_at = std::nullopt);
 // Phase 7: the point a loaded guest resumes at: the server's (where it last stood in its team's
 // world: the newest) when it has one, else its own file's, which counts only out of a session.
 std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<ResumePoint> from_file,
