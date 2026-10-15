@@ -27,12 +27,17 @@
 #                   <BB_ROOT>\out\release-clientsample
 #   -DlssSdk        a checkout of github.com/NVIDIA/DLSS: builds the DLSS bridge first (else the
 #                   release has DLSS only when bbport\out already holds bbport_dlss.dll)
+#   -DlssDir        a folder with a built bbport_dlss.dll and nvngx_dlss.dll (default: the port-src
+#                   checkout's bbport\out when this one has none)
+#   -NoDlss         release without DLSS (otherwise a missing DLSS bridge stops the build)
 #   -Iscc           Inno Setup 6's ISCC.exe (default: its per-user or Program Files install)
 param(
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$')][string]$Version,
     [string]$Out,
     [string]$GameDir,
     [string]$DlssSdk,
+    [string]$DlssDir,
+    [switch]$NoDlss,
     [string]$Iscc,
     [switch]$SkipPortBuild,
     [switch]$SkipServerBuild,
@@ -106,8 +111,25 @@ if (-not (Test-Path (Join-Path $bbport "fsr4_shaders"))) {
     try { Invoke-Clang64 "bash tools/fetch_fsr4_assets.sh" }
     catch { Write-Host "  FSR 4 assets could not be fetched: the release has FSR 3.1 only, FSR 4 downloads from the launcher" -ForegroundColor Yellow }
 }
-if (-not (Test-Path (Join-Path $bbport "out\bbport_dlss.dll"))) {
-    Write-Host "  No DLSS bridge (pass -DlssSdk): the release has no DLSS" -ForegroundColor Yellow
+# DLSS: the bridge and NVIDIA's nvngx_dlss.dll next to bb-probe.exe. A checkout without them (no
+# -DlssSdk) takes a built pair from -DlssDir, by default another checkout's bbport\out: the 0.2.x
+# local releases had none, and their launcher showed DLSS disabled on RTX GPUs.
+$dlssFiles = "bbport_dlss.dll", "nvngx_dlss.dll"
+$haveDlss = { -not ($dlssFiles | Where-Object { -not (Test-Path (Join-Path $bbport "out\$_")) }) }
+if (-not (& $haveDlss)) {
+    $candidates = @($DlssDir) + @(Join-Path $env:BB_ROOT "port-src\bbport\out") | Where-Object { $_ }
+    foreach ($dir in $candidates) {
+        if (-not ($dlssFiles | Where-Object { -not (Test-Path (Join-Path $dir $_)) })) {
+            foreach ($file in $dlssFiles + "NVIDIA-DLSS-LICENSE.txt") {
+                if (Test-Path (Join-Path $dir $file)) { Copy-Item (Join-Path $dir $file) (Join-Path $bbport "out\$file") }
+            }
+            Write-Host "  DLSS bridge taken from $dir"
+            break
+        }
+    }
+}
+if (-not (& $haveDlss) -and -not $NoDlss) {
+    throw "No DLSS bridge in bbport\out: pass -DlssSdk (an NVIDIA DLSS checkout), -DlssDir (a folder with bbport_dlss.dll and nvngx_dlss.dll) or -NoDlss"
 }
 if (-not $env:WINPYTHON) {
     $python = Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe", "C:\Python3*\python.exe" -ErrorAction SilentlyContinue |
