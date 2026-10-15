@@ -220,6 +220,20 @@ class NoteTests(unittest.TestCase):
         self.assertEqual(re.findall(r'Note="[^"]*[\r\n][^"]*"', text), [])
 
 
+class PhysicsStepTests(unittest.TestCase):
+    # The FPS presets set the physics step, a float immediate at 0x00F383CA (1/30 in the game).
+    # "60FPS (no deltatime)" still wrote 0x011383CA, inside a multi-byte NOP, with a garbled value
+    # (1/15): the step was never set (Supermedo's bbport be1cde36 moved the others).
+    def test_presets_write_the_physics_step(self):
+        for preset, step in [('30 FPS++', 60), ('60FPS (no deltatime)', 60), ('60 FPS++', 30),
+                             ('90 FPS++', 90), ('Uncap FPS++', 90)]:
+            with self.subTest(preset=preset):
+                writes = dict(compile_patches(XML, [preset], '01.09', SEGMENTS))
+                value = struct.unpack('<f', writes[0x00F383CA - EBOOT_BASE])[0]
+                self.assertAlmostEqual(1 / value, step, places=2)
+                self.assertNotIn(0x011383CA - EBOOT_BASE, writes)
+
+
 class DebugPatchTests(unittest.TestCase):
     def test_camera_patch_is_optional_and_compatible_with_fps_and_debug_menu(self):
         self.assertEqual(effect_patches({'debug_camera': '0', 'debug_menu': '0'}), [])
