@@ -315,8 +315,9 @@ bool OnPlaceChange(std::function<void(const PlaceChange&)> listener) {
 // A load's end changes the world: its characters settle (deaths now are no kills, the shown board
 // waits for its story, see PostsShownState).
 [[maybe_unused]] const bool place_world_listening = OnPlaceChange([](const PlaceChange& change) {
-    if (change.from.state == PlaceState::Loading && change.to.state == PlaceState::Playing) {
+    if (StartsNewWorld(change)) {
         world_changed_ms.store(SteadyMilliseconds());
+        world_loaded_ms.store(SteadyMilliseconds());
     }
 });
 
@@ -748,6 +749,7 @@ void TickPartyController() {
     TickAutoplay();
     TickPartyTrip();
     TickPlayersOnThisMap();
+    CheckAutoplayWatch();
     LogJoinTaskChanges();
     WatchSummonJoin();
     KeepGuestBloodstainMark();

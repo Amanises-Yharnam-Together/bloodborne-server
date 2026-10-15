@@ -95,6 +95,11 @@ struct AutoplayRun {
     bool keep_going = false;   // keep-going on: a failed step gives up only its chapter
     bool failed = false;       // a step failed and the script went on: "done (failed)"
     LampPosition glide_from{}; // glide: where the player was when it began
+    // watch-unseen: the character watched and until when, and how often it was seen drawn.
+    u32 watch_handle = 0;
+    std::optional<std::chrono::steady_clock::time_point> watch_until;
+    std::optional<std::chrono::steady_clock::time_point> watch_started;
+    u32 watch_seen = 0;
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -1204,6 +1209,70 @@ bool AutoplaySetDisabled(const AutoplayStep& step) {
     return true;
 }
 
+// watch-unseen <handle> <seconds>: from now on, for that long, every frame the character is
+// loaded on this map drawn (neither its hide byte +0x28 nor its enable switch off) is logged as
+// "watched <handle> drawn" (a scenario forbids it). The step itself ends at once.
+bool AutoplayWatchUnseen(const AutoplayStep& step) {
+    const auto target = ParseAutoplayTarget(step.Arg(0));
+    if (!target) {
+        step.failure = "no such character";
+        return false;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.watch_handle = static_cast<u32>(*target);
+    autoplay_run.watch_started = now;
+    autoplay_run.watch_until =
+        now + std::chrono::milliseconds{static_cast<s64>(step.Number(1, 30) * 1000.0)};
+    autoplay_run.watch_seen = 0;
+    return true;
+}
+
+} // namespace
+
+namespace Coop {
+
+// The watch-unseen check, every frame after the co-op tick (TickPartyController). Not while the
+// world loads: nothing is drawn then.
+void CheckAutoplayWatch() {
+    const auto now = std::chrono::steady_clock::now();
+    u32 handle = 0;
+    double into = 0.0;
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        if (!autoplay_run.watch_until) {
+            return;
+        }
+        if (now > *autoplay_run.watch_until) {
+            LOG_INFO(Debug, "Bloodborne autoplay: watch on {:#x} over, seen drawn {} times",
+                     autoplay_run.watch_handle, autoplay_run.watch_seen);
+            autoplay_run.watch_until.reset();
+            return;
+        }
+        handle = autoplay_run.watch_handle;
+        into = std::chrono::duration<double>(now - *autoplay_run.watch_started).count();
+    }
+    if (!AutoplayInWorld()) {
+        return;
+    }
+    const auto found = FindAutoplayCharacter(handle);
+    if (!found || ReadValue<u8>(found->character, 0x28) != 0 ||
+        IsCharacterDisabled(found->character)) {
+        return;
+    }
+    std::scoped_lock lock{autoplay_mutex};
+    if (++autoplay_run.watch_seen <= 5) {
+        LOG_INFO(Debug,
+                 "Bloodborne autoplay: watched {:#x} drawn on map {:#x} ({:.2f} s into the "
+                 "watch)",
+                 handle, GetCurrentPackedMap(), into);
+    }
+}
+
+} // namespace Coop
+
+namespace {
+
 // note-max-hp: the player's max HP now, for a later expect-max-hp self == noted.
 bool AutoplayNoteMaxHp(const AutoplayStep& step) {
     const auto self = FindAutoplayCharacter(AutoplaySelf);
@@ -1576,6 +1645,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-hidden", AutoplayExpectHidden},
     {"expect-disabled", AutoplayExpectDisabled},
     {"set-disabled", AutoplaySetDisabled},
+    {"watch-unseen", AutoplayWatchUnseen},
     {"note-max-hp", AutoplayNoteMaxHp},
     {"expect-max-hp", AutoplayExpectMaxHp},
     {"expect-effect", AutoplayExpectEffect},

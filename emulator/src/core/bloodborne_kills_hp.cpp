@@ -327,6 +327,7 @@ void LogNearbyEnemyControl() {
 // When the map's world last changed hands (a bulk flag change, i.e. a load that kept the map's
 // objects; a guest starting or ending its run of the map's enemies): see CharacterSettles.
 std::atomic<s64> world_changed_ms{-1'000'000'000};
+std::atomic<s64> world_loaded_ms{-1'000'000'000};
 
 } // namespace Coop
 
@@ -1808,6 +1809,8 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
 
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                                const std::unordered_set<u32>& kill_hidden);
+void HoldStoryRemovals(u32 map, std::span<const u64> characters,
+                       const std::unordered_set<u32>& kill_hidden);
 
 // See GetsKillDrop: the character's NpcParam row is [vtable +0x168 (character) +8], as the
 // respawn walk reads it (0x0190E433). `own`: this guest's own kill. The game's thread only.
@@ -1977,8 +1980,27 @@ void KeepEnemyDeathsInStep(bool sharing) {
     // Not while the world goes away: a trip's start posted the old map's characters as kills.
     const bool forced = enemy_steps_forced.load(std::memory_order_relaxed) > 0 &&
                         enemy_steps_forced.fetch_sub(1, std::memory_order_relaxed) > 0;
-    if (!WatchesKills(sharing, PartyTripActive(), loading) ||
-        (now - checked < HpBoardRound && !enemy_step_due.exchange(false) && !forced)) {
+    // Every tick, not every round (a hold a round late was drawn a frame), and in a trip's arrival
+    // too (a guest's lasts seconds after the load: Gilbert was drawn all along).
+    if (const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+        sharing && !loading && world >= 0x10000 && IsUsablePackedMap(PlayingMap())) {
+        const u64 player = GetLocalPlayer();
+        std::vector<u64> loaded;
+        ForEachWorldCharacter(world, [&](u64 character) {
+            if (character != player) {
+                loaded.push_back(character);
+            }
+        });
+        std::unordered_set<u32> kill_hidden;
+        for (const auto& [character, handle] : hidden) {
+            kill_hidden.insert(handle);
+        }
+        HoldStoryRemovals(PlayingMap(), loaded, kill_hidden);
+    }
+    if (!WatchesKills(sharing, PartyTripActive(), loading)) {
+        return;
+    }
+    if (now - checked < HpBoardRound && !enemy_step_due.exchange(false) && !forced) {
         return;
     }
     checked = now;
@@ -2288,6 +2310,68 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                  "Bloodborne party: characters switched like the host has them on map {:#x} "
                  "(off, +on):{}",
                  map, which);
+    }
+}
+
+// See StoryRemovals: what this game's story removed on its last visit of the map is switched off
+// from a load until the story removes it again. Hosts and guests alike (a guest far from its host
+// follows its own story). The game's thread only.
+void HoldStoryRemovals(u32 map, std::span<const u64> characters,
+                       const std::unordered_set<u32>& kill_hidden) {
+    static StoryRemovals removals;
+    std::unordered_set<u64> players;
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    std::vector<StoryCharacter> seen;
+    std::unordered_map<u32, u64> pointers;
+    for (const u64 character : characters) {
+        if (players.contains(character)) {
+            continue;
+        }
+        const u32 handle = ReadValue<u32>(character, 0x08);
+        seen.push_back({handle, ReadValue<u8>(character, 0x28) != 0, IsCharacterDisabled(character),
+                        guest_hidden_here.contains(handle) || guest_switched_off.contains(handle),
+                        kill_hidden.contains(handle)});
+        pointers[handle] = character;
+    }
+    const s64 now = SteadyMilliseconds();
+    const StoryHoldStep step = removals.Step(map, world_loaded_ms.load(), now, seen);
+    std::string which;
+    for (const u32 handle : step.hold) {
+        if (SetCharacterDisabled(pointers[handle], true)) {
+            removals.Held(handle, now);
+            which += fmt::format(" {:#x}", handle);
+        }
+    }
+    for (const u32 handle : step.release) {
+        SetCharacterDisabled(pointers[handle], false);
+        which += fmt::format(" +{:#x}", handle);
+    }
+    for (const u32 handle : step.hand_over) {
+        // The host's board hid it: left off for SwitchCharactersLikeTheHost to switch on with
+        // the host. A kill's hide is the hide byte alone.
+        if (guest_hidden_here.contains(handle) || guest_switched_off.contains(handle)) {
+            guest_switched_off.insert(handle);
+        } else {
+            SetCharacterDisabled(pointers[handle], false);
+        }
+        which += fmt::format(" ={:#x}", handle);
+    }
+    static u32 logged = 0;
+    if (!which.empty() && ++logged <= 200) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: story removals held on map {:#x} until the story runs (off, "
+                 "+on, =handed over):{} ({:.1f} s after the load)",
+                 map, which, (now - world_loaded_ms.load()) / 1000.0);
+    }
+    static std::pair<u32, size_t> remembered{};
+    static u32 remembered_logged = 0;
+    if (const std::pair now_remembered{map, removals.RememberedOn(map)};
+        now_remembered != remembered && ++remembered_logged <= 100) {
+        remembered = now_remembered;
+        LOG_INFO(Debug, "Bloodborne party: the story removed {} characters on map {:#x}",
+                 now_remembered.second, map);
     }
 }
 

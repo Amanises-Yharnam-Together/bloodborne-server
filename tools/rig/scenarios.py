@@ -21,7 +21,8 @@ set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeou
 wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, for
 expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
 expect-others-near <n> <meters> (n other players alive that close), expect-others-shown <n> (exactly n other players
-shown, not hidden for another map), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
+shown, not hidden for another map), watch-unseen <handle> <seconds> (from now on, every frame the
+character is drawn logs "watched <handle> drawn"; forbid that), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
 Party death (the scenario's "settings" switch it on): rise <metres> (straight up, to fall),
 approach-downed (beside the nearest downed member on the map), revive-downed [<timeout>]
@@ -113,6 +114,11 @@ WARD_NPC = "0x10010075"  # the NPC sitting by the Oedon Chapel lamp (999 HP)
 # Another ordinary enemy near the first lamp (suites.FRESH_ENEMY: real hits land on it).
 SECOND_ENEMY = "0x1001402e"
 CLINIC = "0x10014000"  # 573 HP, by Iosefka's door 32 m from the first lamp, 10 m up
+# Gilbert (entity 2410781), 5.6 m from the second lamp: the map's story removes him (2004:29,
+# the hide byte +0x28) seconds after every load, so he stood by the lamp until then (Kaniel's
+# and Lisara's playtest 2026-10-15). The first lamp is 110 m away.
+GILBERT = "0x1001400c"
+GILBERT_SEEN = r"watched 0x1001400c drawn"
 OTHER_MAP_FLAG = 12700131
 THIS_MAP_FLAG = 12410999
 FORBIDDEN_WOODS_LAMP_LIT = 12707810  # a lamp neither rig character has lit (see LampOfActiveFlag)
@@ -384,6 +390,25 @@ SCENARIOS = {
         },
         "forbid": {"guest": [r"Co-op server world: following the party's log 0x[0-9a-f]+0{7}3\b",
                              r"Co-op server world: shadNet refused"]},
+        "timeout": 300,
+    },
+    "story-npc-trips": {
+        "about": "Gilbert, whom the map's story removes seconds after each load, is not drawn "
+                 "by the second Central Yharnam lamp after a trip there (Kaniel and Lisara "
+                 "2026-10-15: he stood there a moment, then vanished): first the guest alone (the "
+                 "host 110 m away at the first lamp), then the host with the guest there",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 30", "sync guest-back",
+                     f"watch-unseen {GILBERT} 30", f"travel {HUNTERS_DREAM}", "wait 5",
+                     f"travel {CENTRAL_YHARNAM_LAMP_2}", "wait 15", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 30",
+                      f"watch-unseen {GILBERT} 30", f"travel {HUNTERS_DREAM}", "wait 5",
+                      f"travel {CENTRAL_YHARNAM_LAMP_2}", "wait 15", "sync guest-back",
+                      "wait 30", "snapshot", "expect-session 2"],
+        },
+        "syncs": {"guest-back": {"chapter": "story-npc-trips", "roles": ["host", "guest"]}},
+        "forbid": {"host": [GILBERT_SEEN] + SESSION_HOLDS, "guest": [GILBERT_SEEN] + SESSION_HOLDS},
         "timeout": 300,
     },
     "dog": {

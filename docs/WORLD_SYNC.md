@@ -181,6 +181,13 @@ world 8, as on the shown board) go on the same log.
   keeps posting. Everything after that is unchanged: `HostNearStates` (a window NPC keeps what the
   host's world had while the host was near), the far-away parking bit, the switches
   (`SwitchedLikeTheHost`: Iosefka's copy by her door) and the host's dead bit for guests apart.
+- **Story removals over a load** (`StoryRemovals`, 2026-10-16): a map's story removes some
+  characters (2004:29, the hide byte) seconds after every load, 3.5 to 13 s on the rig, so each game
+  drew them until then (Gilbert by the second Central Yharnam lamp after a trip, Iosefka). Every
+  game remembers per map what its story removed (a guest also what it hid to match the host) and on
+  its next load switches those off as they appear, until the story removes them again or 20 s pass.
+  The host's first load and a trip's arrival now count as loads (`StartsNewWorld`), so the host no
+  longer posts its characters before its story ran. Rig: story-npc-trips (`watch-unseen`).
 - **The path:** the kills' (one build: no hello bit of its own; co-op protocol 3).
 - **Trace:** `wlog-in` ops `show` (the host's list when it changed the log) and `shown-snapshot`.
   `traces/world-log-shown.txt` is a checked-in case.

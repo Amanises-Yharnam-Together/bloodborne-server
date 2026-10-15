@@ -855,6 +855,66 @@ OwnRestore RestoresOwnCharacters(std::span<const u32> own,
     return restore;
 }
 
+StoryHoldStep StoryRemovals::Step(u32 map, s64 visit_ms, s64 now_ms,
+                                  std::span<const StoryCharacter> seen) {
+    StoryHoldStep step;
+    std::set<u32>& remembered = removed[map];
+    const bool settled = now_ms - visit_ms >= StoryHoldMs;
+    std::set<u32> loaded;
+    for (const StoryCharacter& character : seen) {
+        loaded.insert(character.handle);
+        const auto holding = held.find(character.handle);
+        if (character.followed || character.killed) {
+            if (holding != held.end()) {
+                step.hand_over.push_back(character.handle);
+                held.erase(holding);
+            }
+            if (settled && character.followed && character.removed) {
+                remembered.insert(character.handle);
+            }
+            continue;
+        }
+        if (holding != held.end()) {
+            if (character.removed) {
+                step.release.push_back(character.handle);
+                held.erase(holding);
+            } else if (now_ms - holding->second >= StoryHoldMs) {
+                step.release.push_back(character.handle);
+                held.erase(holding);
+                remembered.erase(character.handle);
+            }
+            continue;
+        }
+        if (!settled) {
+            if (remembered.contains(character.handle) && !character.removed &&
+                !character.disabled) {
+                step.hold.push_back(character.handle);
+            }
+        } else if (character.removed) {
+            remembered.insert(character.handle);
+        } else {
+            remembered.erase(character.handle);
+        }
+    }
+    // Unloaded: nothing left to switch on.
+    std::erase_if(held, [&](const auto& entry) { return !loaded.contains(entry.first); });
+    return step;
+}
+
+void StoryRemovals::Held(u32 handle, s64 now_ms) {
+    held[handle] = now_ms;
+}
+
+size_t StoryRemovals::RememberedOn(u32 map) const {
+    const auto it = removed.find(map);
+    return it != removed.end() ? it->second.size() : 0;
+}
+
+bool StoryRemovals::Remembers(u32 map, u32 handle) const {
+    const auto it = removed.find(map);
+    return it != removed.end() && it->second.contains(handle);
+}
+
 bool FollowsTheHostsShown(s32 entity) {
     // m21_00: the right- and left-hand weapon givers and their weapon displays (12101020/21
     // hide them once their gift is taken), the note and the multiplayer items givers.
@@ -5339,6 +5399,11 @@ bool PartyListOutdated(u64 hud, u64 generation, u64 list_hud, u64 list_generatio
 
 bool SkipsHitReaction(bool down, u64 victim, u64 local_player) {
     return down && victim != 0 && victim == local_player;
+}
+
+bool StartsNewWorld(const PlaceChange& change) {
+    return change.to.state == PlaceState::Playing && change.to.visit != change.from.visit &&
+           change.cause != PlaceCause::Border && change.cause != PlaceCause::Teleport;
 }
 
 bool PostsShownState(s64 now_ms, s64 world_changed_ms) {
