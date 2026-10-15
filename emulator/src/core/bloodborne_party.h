@@ -2683,19 +2683,9 @@ constexpr s64 DownedKneelDelayMs = 400;
 bool TakesAnimationRequest(u64 character, const std::function<u64(u64 address, size_t size)>& read);
 // Whether a downed player still waiting for its kneel asks for it now.
 bool KneelsNow(bool waiting, s64 down_for_ms, bool takes_request);
-// Phase 8 (downs for everyone): the downed kneel the member's own game plays did not show on the
-// others' copies of it (rig down-kneel-seen). Each game asks the kneel of its copy of every downed
-// member itself, once per down, when the copy takes an animation request.
-class CopyKneels {
-public:
-    // Whether to ask the kneel of `member`'s copy now, for its down `down`; `downed` the members
-    // down now (the others' kneels are forgotten).
-    bool Due(const std::string& member, u32 down, bool takes_request);
-    void KeepOnly(std::span<const std::string> downed);
-
-private:
-    std::map<std::string, u32> knelt; // member -> the down its copy knelt for
-};
+// The pose a downed player plays: none (Kaniel 2026-10-15: no kneel on a down);
+// SHADPS4_BLOODBORNE_DOWNED_ANIMATION (`setting`, null when unset) picks one, as the kneel.
+s32 DownedAnimation(const char* setting);
 // The HP a downed player shows while it is struck back up: 1, rising with the share of the revive
 // done to just under its max (the revive sets the real HP), so the game's own HP bar and the
 // nameplate bar the others see over it (RemotePCTag, fed by the synced HP) fill with the revive.

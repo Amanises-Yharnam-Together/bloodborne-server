@@ -5313,23 +5313,16 @@ bool TakesAnimationRequest(u64 character,
     return at >= 0x10000 && (read(at + AnimationRequestFlagAt, 1) & 0xFF) != 0;
 }
 
-bool CopyKneels::Due(const std::string& member, u32 down, bool takes_request) {
-    const auto it = knelt.find(member);
-    if (!takes_request || (it != knelt.end() && it->second == down)) {
-        return false;
-    }
-    knelt[member] = down;
-    return true;
-}
-
-void CopyKneels::KeepOnly(std::span<const std::string> downed) {
-    std::erase_if(knelt, [&](const auto& entry) {
-        return std::ranges::find(downed, entry.first) == downed.end();
-    });
-}
-
 bool KneelsNow(bool waiting, s64 down_for_ms, bool takes_request) {
     return waiting && down_for_ms >= DownedKneelDelayMs && takes_request;
+}
+
+s32 DownedAnimation(const char* setting) {
+    s32 animation = 0;
+    if (setting != nullptr) {
+        std::from_chars(setting, setting + std::strlen(setting), animation);
+    }
+    return animation;
 }
 
 bool PartyListOutdated(u64 hud, u64 generation, u64 list_hud, u64 list_generation) {

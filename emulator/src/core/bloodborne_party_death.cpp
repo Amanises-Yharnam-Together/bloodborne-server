@@ -881,17 +881,9 @@ void PS4_SYSV_ABI KeepPartyMemberUp(u64, GuestRegisterSnapshot* registers) {
     }
 }
 
-// The animation a downed player plays: the kneel (DownedKneelAnimation; Kaniel 2026-10-12), which
-// the player's behaviour holds by itself; SHADPS4_BLOODBORNE_DOWNED_ANIMATION picks another (0:
-// none). Getting up plays its stand-up (DownedStandAnimation), or for another pose resets.
-const s32 downed_animation = [] {
-    const char* setting = std::getenv("SHADPS4_BLOODBORNE_DOWNED_ANIMATION");
-    s32 animation = DownedKneelAnimation;
-    if (setting != nullptr) {
-        std::from_chars(setting, setting + std::strlen(setting), animation);
-    }
-    return animation;
-}();
+// The animation a downed player plays (DownedAnimation): none. Getting up from the kneel plays its
+// stand-up (DownedStandAnimation), from another pose resets.
+const s32 downed_animation = DownedAnimation(std::getenv("SHADPS4_BLOODBORNE_DOWNED_ANIMATION"));
 
 } // namespace
 
@@ -1305,34 +1297,6 @@ void TickDown(PartyDeathRun& run, const DeathTick& tick) {
     }
 }
 
-// Phase 8 (downs for everyone): the kneel of this game's copy of each downed member, asked here
-// as the game's play-animation does for a character (0x013CC132-0x013CC164: the request, when the
-// copy takes one, in its behaviour module [+0x3B0]+0x58: +0x20, and [[module +0x08] +0x20] +0x04).
-void KneelDownedCopies(std::span<const DownedBody> bodies) {
-    static CopyKneels kneels;
-    std::vector<std::string> downed;
-    for (const DownedBody& body : bodies) {
-        downed.push_back(body.member.member);
-        if (!kneels.Due(body.member.member, body.member.down,
-                        TakesAnimationRequest(body.character, ReadGuest))) {
-            continue;
-        }
-        const u64 module = ReadValue<u64>(ReadValue<u64>(body.character, 0x3B0), 0x58);
-        const u64 owner = module >= 0x10000 ? ReadValue<u64>(module, 0x08) : 0;
-        const u64 request = owner >= 0x10000 ? ReadValue<u64>(owner, 0x20) : 0;
-        if (request < 0x10000 || !HasMemoryAccess(module + 0x20, 4, MemoryProt::CpuWrite) ||
-            !HasMemoryAccess(request + 0x04, 4, MemoryProt::CpuWrite)) {
-            continue;
-        }
-        WriteValue(module, 0x20, DownedKneelAnimation);
-        WriteValue(request, 0x04, DownedKneelAnimation);
-        const std::string name = OnlineIdOfBoardMember(body.member.member);
-        LOG_INFO(Debug, "Bloodborne party death: {}'s copy kneels (down {}, {:#x})",
-                 name.empty() ? body.member.member : name, body.member.down, body.handle);
-    }
-    kneels.KeepOnly(downed);
-}
-
 // Enemies forget the downed players here (this one and the others), every tick while any is down:
 // an enemy that sees a downed guest again (Hide is the local player's only) would take it as a
 // target again.
@@ -1341,7 +1305,6 @@ void ForgetTargetsOnDowned(PartyDeathRun& run, const DeathTick& tick) {
         tick.in_session ? DownedBodies(run.downed_bodies, tick.board, tick.view.member, tick.map,
                                        OtherPlayers())
                         : std::vector<DownedBody>{};
-    KneelDownedCopies(others_down);
     const std::vector<u32> downed_handles =
         DownedPlayerHandles(tick.player, run.downed.Current() == Vital::Down, others_down);
     if (const u32 forgotten = ForgetDownedTargets(downed_handles); forgotten > 0) {
