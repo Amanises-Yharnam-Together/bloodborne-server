@@ -1088,10 +1088,10 @@ void SaveTab() {
     ImGui::Spacing();
     const auto& items = BbSaveEditor::Items();
     if (items.empty()) {
-        Note(T("Items: no item list found. It comes from the shadPS4 kit's save editor "
-               "(DATA/Bloodborne Save Editor/resources) or BB_SAVE_EDITOR_DATA.",
-               "Предметы: список не найден. Он берётся из редактора сохранений набора shadPS4 "
-               "(DATA/Bloodborne Save Editor/resources) или BB_SAVE_EDITOR_DATA."),
+        Note(T("Items: no item list found. It comes from the game's item names "
+               "(dvdroot_ps4/msg/engus/item.msgbnd.dcx); check the game files.",
+               "Предметы: список не найден. Он берётся из названий предметов игры "
+               "(dvdroot_ps4/msg/engus/item.msgbnd.dcx); проверьте файлы игры."),
              Dim());
         return;
     }
