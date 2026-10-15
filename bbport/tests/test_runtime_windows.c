@@ -57,6 +57,20 @@ int main(int argc, char **argv) {
         CHECK(handle && handle != self);
         CHECK(!((uintptr_t)handle >> 40));
     }
+    /* The records so far left the start of low memory to the game's image (0x800000000, where
+     * the guest code hooks expect it). */
+    void *image = runtime_low_map(65536, PROT_READ | PROT_WRITE);
+    printf("image placed at %p\n", image);
+    CHECK((uintptr_t)image == UINT64_C(0x800000000));
+    runtime_image_start = (uintptr_t)image;
+    /* After it: records from low memory. */
+    for (int i = 0; i < 64; ++i) {
+        pthread_t thread;
+        void *handle = NULL;
+        CHECK(pthread_create(&thread, NULL, worker, NULL) == 0);
+        CHECK(pthread_join(thread, &handle) == 0);
+        CHECK((uintptr_t)handle > (uintptr_t)image && (uintptr_t)handle < UINT64_C(0x1000000000));
+    }
     puts("thread handles fit 40 bits: ok");
     /* The exit path in a child: rc 23, no exit handlers. */
     char command[1024];

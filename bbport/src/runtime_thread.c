@@ -127,9 +127,12 @@ static GuestThread *low_record(void) {
     return record;
 }
 static GuestThread *new_thread(void) {
-    GuestThread *t=low_record();
+    /* Not before the game's image is placed: it takes the start of low memory (the guest code
+     * hooks expect it at 0x800000000). A host thread's record before that comes from the heap. */
+    GuestThread *t=runtime_image_start ? low_record() : NULL;
     if (!t) {
-        fputs("Runtime: no low memory for a thread record; its handle may not fit 40 bits\n",stderr);
+        if (runtime_image_start)
+            fputs("Runtime: no low memory for a thread record; its handle may not fit 40 bits\n",stderr);
         t=calloc(1,sizeof(*t));
     }
     if (!t) return NULL;
