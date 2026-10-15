@@ -791,6 +791,32 @@ bool Instance::CreateDevice() {
     device = std::move(created.value);
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
+    // bbport: an extension the driver lists and enables but whose commands it does not resolve
+    // counts as missing: calling them jumped to address 0 (RIP=0; NVIDIA 595, Intel ANV). From
+    // deadinside28's bbport 0.6 (their issues #161, #177, #181).
+    const auto& dispatch = VULKAN_HPP_DEFAULT_DISPATCHER;
+    const auto require = [](bool& flag, const void* command, const char* name) {
+        if (flag && !command) {
+            LOG_WARNING(Render_Vulkan, "{} is enabled but its commands are not resolved: off",
+                        name);
+            flag = false;
+        }
+    };
+    require(buffer_marker, reinterpret_cast<const void*>(dispatch.vkCmdWriteBufferMarkerAMD),
+            VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
+    require(vertex_input_dynamic_state,
+            reinterpret_cast<const void*>(dispatch.vkCmdSetVertexInputEXT),
+            VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
+    require(dynamic_state_3, reinterpret_cast<const void*>(dispatch.vkCmdSetColorWriteMaskEXT),
+            VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+    require(attachment_feedback_loop,
+            reinterpret_cast<const void*>(dispatch.vkCmdSetAttachmentFeedbackLoopEnableEXT),
+            VK_EXT_ATTACHMENT_FEEDBACK_LOOP_DYNAMIC_STATE_EXTENSION_NAME);
+    require(guest_memory_export, reinterpret_cast<const void*>(dispatch.vkGetMemoryFdKHR),
+            VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+    require(host_memory_import,
+            reinterpret_cast<const void*>(dispatch.vkGetMemoryHostPointerPropertiesEXT),
+            VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (Dlss* dlss = Dlss::Get()) {
         dlss->Initialize(*instance, physical_device, *device);
     }
