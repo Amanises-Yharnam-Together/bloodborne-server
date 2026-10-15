@@ -3699,15 +3699,15 @@ class Launcher:
         self.section(f, _('Co-op server (bells and summons)'))
         server = self.var('online_server', 'app')
         self.row(f, _('Server address'), ttk.Entry(f, textvariable=server, width=40),
-                 _('srv.shadps4.net:31313 is the public shadPS4 server. For a private server, enter '
-                   'host:port from the person who runs it.'))
+                 _('Enter the server address (host:port) you get from the person who hosts your '
+                   'party.'))
         self.row(f, _('WebAPI address'), ttk.Entry(f, textvariable=self.var('online_webapi', 'app'), width=40),
                  _('Of the shadNet server, not the game server. Leave empty: the server address with '
                    'port 31315 is used.'))
         self.section(f, _('Account'))
         self.row(f, _('Online ID (NPID)'), ttk.Entry(f, textvariable=self.var('online_npid', 'app'), width=40),
-                 _('Your shadNet account name, not your email. Register one at shadnet.shadps4.net, or ask the '
-                   'owner of a private server.'))
+                 _('Your shadNet account name, not your email: the one on the server of the person who hosts '
+                   'your party.'))
         self.row(f, _('Password'), ttk.Entry(f, textvariable=self.var('online_password', 'app'), width=40, show='•'),
                  _('Saved on this PC with the other launcher settings.'))
         self.section(f, _('Connection'))
