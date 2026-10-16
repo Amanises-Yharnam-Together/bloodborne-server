@@ -114,7 +114,8 @@ s64 team_world_wait_ms = 0;
 // opened (each one's number).
 std::optional<bbcoop::TeamSession> team_session;
 TeamJoin team_join;
-TeamLoad team_load; // team_mutex
+TeamLoad team_load;           // team_mutex
+ReadySettle team_load_settle; // team_mutex
 // The team loading screen as the game's thread last made it (the present thread draws it).
 std::mutex team_load_view_mutex;
 TeamLoad::View team_load_view;
@@ -1146,7 +1147,22 @@ void UpdateTeamLoad() {
         const auto members = lobby ? TeamLoadMembers(*lobby, lobby_member)
                                    : std::vector<std::pair<std::string, std::string>>{};
         needed = TeamLoad::OthersHere(members, lobby_member, maps, map);
-        stage = TeamLoad::OwnStage(loading, in, seen, needed);
+        // A cutscene playing (SprjRemoMan's RegistWait .. Update): not ready, so it is skipped
+        // under the screen.
+        const int step = remo_step.load(std::memory_order_relaxed);
+        const bool cutscene = step >= 1 && step <= CutsceneSkip::PlayStep &&
+                              now_ms - remo_step_ms.load(std::memory_order_relaxed) <
+                                  CutsceneSkip::LongestMs;
+        const TeamLoad::Stage own_stage = TeamLoad::OwnStage(loading, in, seen, needed);
+        stage = team_load_settle.Settle(own_stage, needed, now_ms, cutscene);
+        static TeamLoad::Stage logged_own = bbcoop::LoadProgress::WAITING;
+        if (own_stage != logged_own) {
+            logged_own = own_stage;
+            LOG_INFO(Debug,
+                     "Co-op team load: in the session {}, {} of {} others seen, cutscene {}: {}",
+                     in, seen, needed, cutscene,
+                     own_stage == bbcoop::LoadProgress::READY ? "ready (settling)" : "not ready");
+        }
         team_load.SetStage(stage, now_ms);
         said = team_load.ToSend(now_ms);
         view = team_load.Tick(members, lobby_member, now_ms);
@@ -1385,6 +1401,7 @@ void TeamBackAtTitle() {
     }
     team_session.reset();
     team_load = {};
+    team_load_settle = {};
     left_team_in_play = false;
     team_world_default_sent = false;
     team_load_covers.store(false, std::memory_order_relaxed);

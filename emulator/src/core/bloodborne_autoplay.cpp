@@ -366,7 +366,10 @@ bool AutoplayWait(const AutoplayStep& step) {
 }
 
 bool AutoplayWaitSession(const AutoplayStep& step) {
-    return AutoplaySessionMembers() >= static_cast<size_t>(step.Number(0, 2)) ||
+    // In a team, until its load screen is gone too (Kaniel 2026-10-16: it stays a while longer
+    // now, and a member under it is not up on the vitals board yet).
+    return (AutoplaySessionMembers() >= static_cast<size_t>(step.Number(0, 2)) &&
+            !Coop::TeamLoadCovers()) ||
            step.WaitedOut(step.Number(1, 180));
 }
 
