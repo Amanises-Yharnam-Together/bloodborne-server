@@ -3,6 +3,7 @@
 
 #include "core/bloodborne_write_watch.h"
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 
@@ -34,6 +35,16 @@ LONG WINAPI OnWatchedWrite(EXCEPTION_POINTERS* exception) noexcept {
 }
 
 } // namespace
+
+size_t ReadableBytesAt(u64 address, size_t most) {
+    MEMORY_BASIC_INFORMATION info{};
+    if (VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) == 0 ||
+        info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) {
+        return 0;
+    }
+    const u64 end = reinterpret_cast<u64>(info.BaseAddress) + info.RegionSize;
+    return end > address ? static_cast<size_t>(std::min<u64>(end - address, most)) : 0;
+}
 
 bool WatchByteWrites(u64 address, WriteObserver observer) {
     std::call_once(handler_once, [] { AddVectoredExceptionHandler(1, OnWatchedWrite); });
@@ -76,6 +87,10 @@ bool WatchByteWrites(u64 address, WriteObserver observer) {
     return armed > 0;
 }
 #else
+size_t ReadableBytesAt(u64, size_t most) {
+    return most;
+}
+
 bool WatchByteWrites(u64, WriteObserver) {
     return false;
 }

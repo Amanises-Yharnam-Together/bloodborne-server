@@ -627,7 +627,8 @@ void RecordWatchedWrite(u64 rip, u64 rsp) {
     const u64 low = image_base;
     const u64 high = image_base + MemoryPatcher::g_eboot_image_size;
     size_t found = 0;
-    for (size_t slot = 0; slot < 256 && found < write.callers.size(); ++slot) {
+    const size_t slots = StackSlotsToScan(ReadableBytesAt(rsp, 256 * 8), 256);
+    for (size_t slot = 0; slot < slots && found < write.callers.size(); ++slot) {
         const u64 value = reinterpret_cast<const u64*>(rsp)[slot];
         if (value > low && value < high) {
             write.callers[found++] = value;
