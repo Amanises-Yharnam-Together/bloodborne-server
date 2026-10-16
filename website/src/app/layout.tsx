@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { EB_Garamond } from "next/font/google";
 
 import { SiteFooter } from "@/components/site-footer";
+import { Backdrop } from "@/components/backdrop";
 import { SiteHeader } from "@/components/site-header";
 import { JsonLd } from "@/lib/json-ld";
 import { REPO_URL, site, siteUrl } from "@/lib/site";
@@ -50,6 +51,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={garamond.variable}>
       <body className="flex min-h-dvh flex-col">
+        <Backdrop />
         <a
           href="#main"
           className="sr-only z-50 bg-card px-4 py-2 text-bone focus:not-sr-only focus:fixed focus:top-2 focus:left-2"

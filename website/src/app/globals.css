@@ -204,7 +204,147 @@
   }
 }
 
+/* The backdrop (src/components/backdrop.tsx). */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.backdrop > * {
+  position: absolute;
+}
+.backdrop-moon {
+  top: -6vh;
+  right: 0;
+  width: min(46vw, 36rem);
+  aspect-ratio: 1;
+  /* A lit disc with a soft edge, then a wide glow fading into the mist. */
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgb(236 228 210 / 0.17) 0,
+    rgb(220 210 190 / 0.12) 30%,
+    rgb(210 200 180 / 0.07) 34%,
+    rgb(200 190 170 / 0.035) 55%,
+    transparent 70%
+  );
+  filter: blur(1.5px);
+}
+.backdrop-city {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 46vh;
+}
+.backdrop-city-far {
+  fill: #13110f;
+  opacity: 0.9;
+}
+.backdrop-city-near {
+  fill: #090808;
+  height: 40vh;
+}
+.backdrop-fog {
+  left: -25%;
+  width: 150%;
+  animation: fog-drift 70s ease-in-out infinite alternate;
+}
+.backdrop-fog-high {
+  top: 18vh;
+  height: 40vh;
+  background:
+    radial-gradient(ellipse 40% 50% at 30% 50%, rgb(190 186 176 / 0.06), transparent 70%),
+    radial-gradient(ellipse 35% 45% at 75% 40%, rgb(190 186 176 / 0.05), transparent 70%);
+}
+.backdrop-fog-low {
+  bottom: -6vh;
+  height: 36vh;
+  background:
+    radial-gradient(ellipse 45% 60% at 25% 60%, rgb(170 165 155 / 0.09), transparent 70%),
+    radial-gradient(ellipse 40% 55% at 70% 70%, rgb(170 165 155 / 0.08), transparent 70%);
+  animation-duration: 50s;
+  animation-direction: alternate-reverse;
+}
+.backdrop-embers {
+  inset: 0;
+}
+.backdrop-embers > span {
+  position: absolute;
+  bottom: -10px;
+  border-radius: 50%;
+  background: #e9a35a;
+  box-shadow: 0 0 6px 2px rgb(233 140 70 / 0.45);
+  opacity: 0;
+  animation: ember-rise linear infinite;
+}
+@keyframes fog-drift {
+  from {
+    transform: translateX(-6%);
+  }
+  to {
+    transform: translateX(6%);
+  }
+}
+@keyframes ember-rise {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.7;
+  }
+  70% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: translate(var(--drift), -85vh);
+    opacity: 0;
+  }
+}
+
+/* Parallax: as the page scrolls, the far layers move less than the near ones. */
+@supports (animation-timeline: scroll()) {
+  .backdrop-moon,
+  .backdrop-city {
+    animation-timeline: scroll(root);
+    animation-range: 0 1400px;
+    animation-fill-mode: both;
+    animation-timing-function: linear;
+  }
+  .backdrop-moon {
+    animation-name: parallax-moon;
+  }
+  .backdrop-city-far {
+    animation-name: parallax-far;
+  }
+  .backdrop-city-near {
+    animation-name: parallax-near;
+  }
+}
+@keyframes parallax-moon {
+  to {
+    translate: 0 14vh;
+  }
+}
+@keyframes parallax-far {
+  to {
+    translate: 0 10vh;
+  }
+}
+@keyframes parallax-near {
+  to {
+    translate: 0 24vh;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .backdrop * {
+    animation: none !important;
+  }
+  .backdrop-embers {
+    display: none;
+  }
   html {
     scroll-behavior: auto;
   }
