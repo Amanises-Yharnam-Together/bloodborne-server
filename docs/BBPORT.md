@@ -44,7 +44,7 @@ same shadNet server and backend.
   `C:\bb\out\bbport` (`run.py`, `scripts`, `patches`, `bin\bb-probe.exe`).
   `tools\ci-check.ps1 -Component bbport` does the same.
 - Linux: `bbport/build.sh --test`; needs clang (GCC 13 lacks deducing `this`), Vulkan headers
-  with `VK_VALVE_shader_mixed_float_dot_product` (1.4.33x or newer) and miniupnpc 2.2.8 or newer.
+  with `VK_VALVE_shader_mixed_float_dot_product` (1.4.33x or newer).
   The renderer tests (`ninja -C out/gpu scene-resolution-test taa-shader-test`) run on lavapipe
   (`VK_DRIVER_FILES=.../lvp_icd.json`).
 
@@ -69,7 +69,9 @@ folder: `SeamlessCoopPort\` and the "... Port Co-op" launchers beside it.
   The backend runs inside `BLauncher.exe --script` (package.sh freezes the standard modules it
   needs), so the host needs no Python; its log is `user\log\backend.txt`, and
   `HOST - Stop Servers` stops it and shadnet.
-- Port and shadPS4 players in one party are not tested yet: everyone uses the same kit.
+- Port and shadPS4 players are never in one party (Kaniel): everyone uses the same kit. Since
+  phase 6 the port plays only in teams made on its team screen, all of its co-op traffic through
+  the server's UDP port 31314; shadPS4 keeps the party settings, bells and P2P.
 
 ## Public release
 

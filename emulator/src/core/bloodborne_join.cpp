@@ -991,6 +991,21 @@ static std::vector<SavedJoinTask> CurrentJoinTasks() {
     return found;
 }
 
+// Diagnostic (Kaniel 2026-10-15: between two guests, one's actions played on the other's own
+// character): the join list (kind, slot, flags, step) whenever it changes.
+void LogJoinTasksOnChange() {
+    std::string which;
+    for (const SavedJoinTask& task : CurrentJoinTasks()) {
+        which += fmt::format(" [kind={} slot={} flags={:#x} step={} identity={:#x}]", task.kind,
+                             task.slot, task.flags, task.step, task.identity);
+    }
+    static std::string last;
+    if (which != last) {
+        last = which;
+        LOG_INFO(Debug, "Bloodborne join tasks:{}", which.empty() ? " none" : which);
+    }
+}
+
 void SaveRemoteJoinTasks() {
     const std::vector<SavedJoinTask> found = CurrentJoinTasks();
     saved_join_tasks = MergeSavedJoinTasks(saved_join_tasks, found);
@@ -1424,13 +1439,7 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
             placement = own;
         }
     }
-    std::scoped_lock lock{seamless_placement_mutex};
-    if (!seamless_received_host_placement.has_value() ||
-        !IsSameSummonPlacement(*seamless_received_host_placement, placement)) {
-        seamless_received_host_placement_consumed = false;
-        seamless_received_host_placement_life.Received();
-    }
-    seamless_received_host_placement = placement;
+    ReceiveSeamlessPlacement(placement);
     return true;
 }
 
@@ -1494,5 +1503,171 @@ void TraceMatching2LeaveRoom(std::uintptr_t return_address, std::uint64_t room_i
              "current_map={:#x} requested_map={:#x}",
              room_id, return_address, caller_offset, reload_phase, current_map, requested_map);
 }
+
+namespace {
+
+// Phase 6: the team join without signs or a bell (docs/native-netcode/session.md, "Team join").
+// What the summon manager's update (0x01872360) does when a summon goes out or comes in, called
+// by us instead: the host's session opened as a summon opens it, its join data written as the
+// summon packet carries it, and a guest's join from that data with its own spot as the sign's.
+constexpr u64 NetSyncPointerOffset = 0x0553D6D0;
+constexpr u64 CreateSessionOffset = 0x01788ED0;  // NetSync, float (the summon's 55.0)
+constexpr u64 JoinSessionOffset = 0x01789010;    // NetSync, join param
+constexpr u64 SessionInfoOffset = 0x00C8F500;    // session +0x18, info +0x38, 1
+constexpr u64 JoinParamCopyOffset = 0x00C90270;  // param, info: constructs the param
+constexpr u64 JoinParamValidOffset = 0x00C90D80; // param
+constexpr u64 JoinParamWriteOffset = 0x00C90B00; // param, writer
+constexpr u64 JoinParamInitOffset = 0x00C8FBF0;  // param: constructs an empty one
+constexpr u64 JoinParamReadOffset = 0x00C90DD0;  // param, reader
+constexpr u64 JoinParamFreeOffset = 0x00C90520;  // param
+constexpr u64 SummonedNoticeOffset = 0x01FF58B0; // after a guest's join (the summon manager's)
+constexpr u64 StreamWriterVtableOffset = 0x053B2C80;
+constexpr u64 StreamReaderVtableOffset = 0x053B2BE0;
+// The session's search time (a summon's: 55 s). Over with nobody summoned, the game ends the
+// search with "No guests found" (event text 100300, Kaniel 2026-10-14): a team's session waits
+// for its members as long as it is open.
+constexpr float SummonSessionSeconds = 24.0F * 3600.0F;
+constexpr size_t JoinParamSize = 0x1A8; // the summon manager's frame holds it at rbp-0x1A8
+constexpr size_t JoinDataCapacity = 0x200;
+
+bool TeamJoinCallsMatch() {
+    return image_base != 0 && team_join_ready;
+}
+
+// A field of one of our own buffers handed to the game (not guest memory: no access check).
+template <typename T>
+void Put(void* buffer, size_t offset, const T& value) {
+    std::memcpy(static_cast<u8*>(buffer) + offset, &value, sizeof(value));
+}
+
+} // namespace
+
+namespace Coop {
+
+void ReceiveSeamlessPlacement(const SummonPlacementDescriptor& placement) {
+    std::scoped_lock lock{seamless_placement_mutex};
+    if (!seamless_received_host_placement.has_value() ||
+        !IsSameSummonPlacement(*seamless_received_host_placement, placement)) {
+        seamless_received_host_placement_consumed = false;
+        seamless_received_host_placement_life.Received();
+    }
+    seamless_received_host_placement = placement;
+}
+
+bool OpenTeamSession() {
+    const u64 netsync = image_base != 0 ? ReadValue<u64>(image_base + NetSyncPointerOffset, 0) : 0;
+    if (netsync < 0x10000 || !TeamJoinCallsMatch()) {
+        return false;
+    }
+    using Create = bool PS4_SYSV_ABI (*)(u64, float);
+    const bool opened =
+        reinterpret_cast<Create>(image_base + CreateSessionOffset)(netsync, SummonSessionSeconds);
+    LOG_INFO(Debug, "Bloodborne team join: the host opens its session (ok={})", opened);
+    return opened;
+}
+
+std::optional<std::vector<u8>> TeamSessionJoinData() {
+    const u64 manager = GetMatchingState();
+    if (manager < 0x10000 || !HasMemoryAccess(manager, 0x128, MemoryProt::CpuWrite) ||
+        !TeamJoinCallsMatch()) {
+        return std::nullopt;
+    }
+    using Info = void PS4_SYSV_ABI (*)(u64, u64, u32);
+    using ParamFrom = void PS4_SYSV_ABI (*)(void*, u64);
+    using ParamCheck = bool PS4_SYSV_ABI (*)(void*);
+    using ParamWrite = void PS4_SYSV_ABI (*)(void*, void*);
+    using ParamFree = void PS4_SYSV_ABI (*)(void*);
+    alignas(16) std::array<u8, JoinParamSize + 0x58> param{};
+    reinterpret_cast<Info>(image_base + SessionInfoOffset)(manager + 0x18, manager + 0x38, 1);
+    reinterpret_cast<ParamFrom>(image_base + JoinParamCopyOffset)(param.data(), manager + 0x38);
+    std::optional<std::vector<u8>> join;
+    if (reinterpret_cast<ParamCheck>(image_base + JoinParamValidOffset)(param.data())) {
+        // The game's memory writer as the summon packet's (0x018736DA): its own buffer, no
+        // allocator; +0x30 is how much it wrote.
+        alignas(16) std::array<u8, JoinDataCapacity> buffer{};
+        alignas(16) std::array<u8, 0x60> writer{};
+        Put(writer.data(), 0x00, image_base + StreamWriterVtableOffset);
+        Put(writer.data(), 0x10, reinterpret_cast<u64>(buffer.data()));
+        Put(writer.data(), 0x18, u64{JoinDataCapacity});
+        Put(writer.data(), 0x38, u64{JoinDataCapacity});
+        reinterpret_cast<ParamWrite>(image_base + JoinParamWriteOffset)(param.data(),
+                                                                        writer.data());
+        u64 written = 0;
+        std::memcpy(&written, writer.data() + 0x30, sizeof(written));
+        if (written > 0 && written <= JoinDataCapacity) {
+            join.emplace(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(written));
+        }
+    }
+    reinterpret_cast<ParamFree>(image_base + JoinParamFreeOffset)(param.data());
+    LOG_INFO(Debug, "Bloodborne team join: the host's session join data: {} bytes",
+             join ? join->size() : 0);
+    return join;
+}
+
+bool JoinTeamSession(std::span<const u8> join, u32 kind, u32 sign) {
+    const u64 netsync = image_base != 0 ? ReadValue<u64>(image_base + NetSyncPointerOffset, 0) : 0;
+    const u64 state = GetGlobalState();
+    const u64 manager_root = GetSummonManagerRoot();
+    if (netsync < 0x10000 || join.empty() || join.size() > JoinDataCapacity || state < 0x10000 ||
+        !HasMemoryAccess(state, 0x1650, MemoryProt::CpuWrite) || manager_root < 0x10000 ||
+        !HasMemoryAccess(manager_root, 0xAA0, MemoryProt::CpuWrite) || !TeamJoinCallsMatch()) {
+        return false;
+    }
+    // The sign's spot is this guest's own: it joins where it stands (as a party guest's claim).
+    SummonPlacementDescriptor own{};
+    std::string_view own_result;
+    if (!ReadLocalSummonPlacement(own, own_result)) {
+        LOG_INFO(Debug, "Bloodborne team join: no spot to join from ({})", own_result);
+        return false;
+    }
+    using ParamInit = void PS4_SYSV_ABI (*)(void*);
+    using ParamRead = bool PS4_SYSV_ABI (*)(void*, void*);
+    using ParamFree = void PS4_SYSV_ABI (*)(void*);
+    using Join = bool PS4_SYSV_ABI (*)(u64, void*);
+    using Notice = void PS4_SYSV_ABI (*)();
+    alignas(16) std::array<u8, JoinParamSize + 0x58> param{};
+    alignas(16) std::array<u8, JoinDataCapacity> data{};
+    std::copy(join.begin(), join.end(), data.begin());
+    // The game's memory reader as the summon manager's (0x018738F3).
+    alignas(16) std::array<u8, 0x30> reader{};
+    Put(reader.data(), 0x00, image_base + StreamReaderVtableOffset);
+    Put(reader.data(), 0x08, u64{join.size()});
+    Put(reader.data(), 0x10, reinterpret_cast<u64>(data.data()));
+    Put(reader.data(), 0x24, u8{1});
+    reinterpret_cast<ParamInit>(image_base + JoinParamInitOffset)(param.data());
+    bool joined = false;
+    const bool read =
+        reinterpret_cast<ParamRead>(image_base + JoinParamReadOffset)(param.data(), reader.data());
+    if (read) {
+        WriteValue(state, 0x16F0, kind);
+        WriteValue(state, 0x16F4, static_cast<u8>(sign));
+        joined = reinterpret_cast<Join>(image_base + JoinSessionOffset)(netsync, param.data());
+        // The summon's placement, as the summon manager writes it from the sign (0x01873A26).
+        const std::array<float, 4> position{own.x, own.y, own.z, 1.0F};
+        const std::array<float, 4> orientation{0.0F, own.heading, 0.0F, 0.0F};
+        WriteValue(state, 0x14C0, own.packed_region);
+        WriteValue(state, 0x14A0, position);
+        WriteValue(state, 0x14B0, orientation);
+        WriteValue(state, 0x14C4, own.packed_region);
+        WriteValue(state, 0x14D0, position);
+        WriteValue(state, 0x14E0, orientation);
+        WriteValue(state, 0x1620, position);
+        WriteValue(state, 0x1630, orientation);
+        WriteValue(state, 0x1640, own.area);
+        WriteValue(state, 0x1644, own.packed_region);
+        WriteValue(state, 0x1648, u8{1});
+        WriteValue(manager_root, 0xA98, u32{1});
+        reinterpret_cast<Notice>(image_base + SummonedNoticeOffset)();
+        ReceiveSeamlessPlacement(own);
+    }
+    reinterpret_cast<ParamFree>(image_base + JoinParamFreeOffset)(param.data());
+    LOG_INFO(Debug,
+             "Bloodborne team join: joining the host's session ({} bytes, read={} joined={}) in "
+             "place on map {:#x} ({}, {}, {})",
+             join.size(), read, joined, own.packed_region, own.x, own.y, own.z);
+    return joined;
+}
+
+} // namespace Coop
 
 } // namespace Core::Bloodborne

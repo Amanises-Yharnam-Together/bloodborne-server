@@ -50,6 +50,7 @@
 #include "core/debugger.h"
 #include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
+#include "core/libraries/network/server_link.h"
 #include "core/libraries/network/sockets.h"
 #include "core/libraries/np/np_handler.h"
 #include "core/libraries/np/np_matching2/np_matching2_signaling.h"
@@ -314,8 +315,9 @@ bool OnPlaceChange(std::function<void(const PlaceChange&)> listener) {
 // A load's end changes the world: its characters settle (deaths now are no kills, the shown board
 // waits for its story, see PostsShownState).
 [[maybe_unused]] const bool place_world_listening = OnPlaceChange([](const PlaceChange& change) {
-    if (change.from.state == PlaceState::Loading && change.to.state == PlaceState::Playing) {
+    if (StartsNewWorld(change)) {
         world_changed_ms.store(SteadyMilliseconds());
+        world_loaded_ms.store(SteadyMilliseconds());
     }
 });
 
@@ -353,6 +355,13 @@ void OnLifecycle(Lifecycle event) {
 }
 
 void InitPartyController() {
+    if (TeamModeOn()) {
+        // Phase 5: the team's Start says the party and the role (HoldTitleLoadForTeam).
+        party_controller.emplace(PartyRole::Host, true);
+        LOG_INFO(Debug, "Bloodborne party: the team lobby decides the party (team mode)");
+        StartTeamLobby();
+        return;
+    }
     const char* party = std::getenv("SHADPS4_BLOODBORNE_PARTY");
     const char* role = std::getenv("SHADPS4_BLOODBORNE_PARTY_ROLE");
     if (party == nullptr || !ParsePartySetting(party)) {
@@ -460,6 +469,17 @@ bool InPartySession() {
            IsPartySession(true, ReadValue<s32>(multi_play, 0x124));
 }
 
+size_t SessionMembers() {
+    const u64 session =
+        image_base != 0 ? ReadValue<u64>(image_base + SessionManagerPointerOffset, 0) : 0;
+    if (session < 0x10000 || !HasMemoryAccess(session, 0x108, MemoryProt::CpuRead)) {
+        return 1;
+    }
+    const u64 begin = ReadValue<u64>(session, 0xF8);
+    const u64 end = ReadValue<u64>(session, 0x100);
+    return begin >= 0x10000 && end > begin && end - begin <= 0x20 * 8 ? (end - begin) / 0x20 : 1;
+}
+
 s32 SessionPlayers() {
     const u64 global = GetGlobalState();
     const u64 session = global >= 0x10000 ? ReadValue<u64>(global, SessionPlayersOffset) : 0;
@@ -534,6 +554,84 @@ std::vector<OtherPlayer> OtherPlayers() {
         players.push_back(other);
     }
     return players;
+}
+
+// Kaniel 2026-10-15: the other players' characters show by the server's map board alone
+// (ShownOtherPlayers): one whose member is not on this map is hidden (the game's disable: no
+// model, no collision) and shown again once a member stands there.
+void ReconcileMemberPresence() {
+    static std::unordered_map<u64, s64> unmatched_since;
+    static std::unordered_set<u64> hidden;
+    using SetDisabled = void PS4_SYSV_ABI (*)(u64, bool);
+    const auto set_disabled =
+        reinterpret_cast<SetDisabled>(image_base + SetCharacterDisabledOffset);
+    const std::vector<OtherPlayer> others = OtherPlayers();
+    std::unordered_set<u64> present;
+    for (const OtherPlayer& other : others) {
+        present.insert(other.character);
+    }
+    // Characters gone from the world are forgotten (never touched again).
+    std::erase_if(hidden, [&](u64 character) { return !present.contains(character); });
+    std::erase_if(unmatched_since,
+                  [&](const auto& entry) { return !present.contains(entry.first); });
+    std::vector<MemberVitals> board;
+    std::string self;
+    bool fresh = false;
+    {
+        std::scoped_lock lock{vitals_mutex};
+        board = vitals_board.members;
+        self = vitals_member;
+        fresh = vitals_heard_at &&
+                std::chrono::steady_clock::now() - *vitals_heard_at < std::chrono::seconds{5};
+    }
+    const u32 map = CurrentPlace().map;
+    if (!InPartySession() || !fresh || map == 0) {
+        // Out of a session (or nothing known): everyone as the game has them.
+        for (const u64 character : hidden) {
+            if (IsCharacterDisabled(character)) {
+                set_disabled(character, false);
+            }
+        }
+        hidden.clear();
+        unmatched_since.clear();
+        return;
+    }
+    std::vector<std::optional<LampPosition>> positions;
+    for (const OtherPlayer& other : others) {
+        positions.push_back(other.at);
+    }
+    const std::vector<bool> shown = ShownOtherPlayers(positions, board, self, map);
+    const s64 now_ms = SteadyMilliseconds();
+    for (size_t i = 0; i < others.size(); ++i) {
+        const u64 character = others[i].character;
+        if (shown[i]) {
+            unmatched_since.erase(character);
+            if (hidden.erase(character) > 0 && IsCharacterDisabled(character)) {
+                set_disabled(character, false);
+                std::string board_text;
+                for (const MemberVitals& member : board) {
+                    board_text +=
+                        fmt::format(" [{} map {:#x} at ({:.0f}, {:.0f}, {:.0f})]", member.member,
+                                    member.map, member.at[0], member.at[1], member.at[2]);
+                }
+                const auto& at = others[i].at;
+                LOG_INFO(Debug,
+                         "Bloodborne presence: a member stands by player {:#x} at ({:.0f}, {:.0f}, "
+                         "{:.0f}) again: shown; board (self {}):{}",
+                         ReadValue<u32>(character, 0x08), at ? (*at)[0] : 0.0f,
+                         at ? (*at)[1] : 0.0f, at ? (*at)[2] : 0.0f, self, board_text);
+            }
+            continue;
+        }
+        const s64 since = unmatched_since.try_emplace(character, now_ms).first->second;
+        if (now_ms - since >= PresenceGraceMs && !hidden.contains(character) &&
+            !IsCharacterDisabled(character)) {
+            set_disabled(character, true);
+            hidden.insert(character);
+            LOG_INFO(Debug, "Bloodborne presence: no member on map {:#x} by player {:#x}: hidden",
+                     map, ReadValue<u32>(character, 0x08));
+        }
+    }
 }
 
 bool IsCharacterDisabled(u64 character) {
@@ -651,6 +749,7 @@ void TickPartyController() {
     TickAutoplay();
     TickPartyTrip();
     TickPlayersOnThisMap();
+    CheckAutoplayWatch();
     LogJoinTaskChanges();
     WatchSummonJoin();
     KeepGuestBloodstainMark();
@@ -662,6 +761,8 @@ void TickPartyController() {
         LogActionBlockingState();
         KeepBossHpInStep();
         LogNearbyEnemyControl();
+        LogJoinTasksOnChange();
+        ReconcileMemberPresence();
     }
     LogOtherPlayersChanges();
     ObserveLocalAliveState();
@@ -682,6 +783,24 @@ void TickPartyController() {
     const u64 player = GetLocalPlayer();
     const PartyObservation observation = ObserveParty(player, party_controller->SearchEffectId());
     const PartyAction action = party_controller->Tick(observation, PartyController::Clock::now());
+    // Phase 6: a team opens and joins its host's session itself, no bell and no signs.
+    if (TeamModeOn() && !InPartySession()) {
+        // Why a team's game out of its session does not open or join one (every 10 s).
+        static s64 said_ms = 0;
+        if (const s64 now_ms = SteadyMilliseconds(); now_ms - said_ms >= 10'000) {
+            said_ms = now_ms;
+            LOG_INFO(Debug,
+                     "Co-op team join: out of a session: action {} player {} map {} transition {} "
+                     "boss {} idle {} effect {} phantom {} waiting {}",
+                     static_cast<int>(action), observation.player_valid, observation.map_usable,
+                     observation.stage_transition, observation.boss_sequence,
+                     observation.matching_idle, observation.search_effect_active,
+                     observation.white_phantom, party_controller->Waiting());
+        }
+    }
+    if (TickTeamJoin(action == PartyAction::StartSearch)) {
+        return;
+    }
     if (action == PartyAction::EndSearch) {
         // A bell that outlasted its search (see PartyController::RingAgain): the game starts a
         // search only when the effect goes on, so the old one comes off first; the controller
@@ -745,10 +864,18 @@ void TickPartyController() {
 } // namespace Coop
 
 void SetBuildIdentity(std::string_view revision, u64 event_files) {
-    std::scoped_lock lock{peer_hello_mutex};
-    own_hello = PeerHello{.revision = std::string{revision},
-                          .event_files = event_files,
-                          .features = WorldLogSwitchOn() ? WorldLogFeature : u8{0}};
+    {
+        std::scoped_lock lock{peer_hello_mutex};
+        own_hello = PeerHello{.revision = std::string{revision},
+                              .event_files = event_files,
+                              .features = WorldLogSwitchOn() ? WorldLogFeature : u8{0}};
+    }
+    // The server link's hello: shadNet takes one build only (see PeerHello).
+    Libraries::Net::SetServerLinkBuild(
+        fmt::format("{} events {:x} protocol {}", revision, event_files, CoopProtocolVersion));
+    Libraries::Net::SetServerLinkObserver([](std::string_view event, std::string_view detail) {
+        Trace("link", {{"event", std::string{event}}, {"detail", std::string{detail}}});
+    });
 }
 
 void NoteSaveFileOpened(std::string_view guest_path) {

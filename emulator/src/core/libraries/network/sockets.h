@@ -236,10 +236,10 @@ int P2PSignalingSendTo(const void* data, u32 len, u32 dest_addr, u16 dest_port);
 int P2PSignalingRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port);
 int P2PControlSendTo(const void* data, u32 len, u32 dest_addr, u16 dest_port);
 int P2PControlRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port);
-int P2PMatching2SendTo(const void* data, u32 len, u32 dest_addr, u16 dest_port);
-int P2PMatching2RecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port);
 // Seamless co-op's frames ("SHAD" type 0x30) to and from the other games, on the P2P socket.
 int P2PCoopSendTo(const void* data, u32 len, u32 dest_addr, u16 dest_port);
 int P2PCoopRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port);
+// The game's own packets in our frames ("SHAD" type 0x40); sent with P2PCoopSendTo.
+int P2PGamePacketsRecvFrom(void* buf, u32 len, u32* from_addr, u16* from_port);
 
 } // namespace Libraries::Net

@@ -258,23 +258,6 @@ void RunMemberLog(const std::string& name, const WorldLogKills& mine, s64 now_ms
     }
 }
 
-// The kills' path changed: the board takes back what this member posted (its next post asks since
-// FreshStart). Back on the board this member posts its standing kills again; on the log nobody
-// posts kills there (the world snapshot is the copy).
-void SwitchKillPath(bool log, const WorldLogKills& mine) {
-    std::scoped_lock lock{kill_board_mutex};
-    kill_board_fresh_start = true;
-    kills_to_post.clear();
-    if (log) {
-        return;
-    }
-    for (const auto& [map, handles] : mine) {
-        for (const u32 handle : handles) {
-            kills_to_post.emplace_back(static_cast<s32>(handle), true);
-        }
-    }
-}
-
 // Which path the kills, shown characters and flags take now (see WorldLogPath).
 bool DecideKillPath(const WorldLogKills& mine, s64 now_ms) {
     const size_t peers = Libraries::Np::NpMatching2::GetActiveRoomPeers().size();
@@ -283,9 +266,6 @@ bool DecideKillPath(const WorldLogKills& mine, s64 now_ms) {
     if (const auto line = world_log_path.TakeChange()) {
         LOG_INFO(Debug, "{}", *line);
         Trace("wlog-path", {{"path", log ? "log" : "board"}, {"why", world_log_path.Why()}});
-    }
-    if (log != was) {
-        SwitchKillPath(log, mine);
     }
     if (was && !log) {
         world_log_host.ForgetShown(); // back on the log, its next Show starts with a ShownMap
@@ -520,6 +500,33 @@ void FollowFlagsPath(bool log, s64 now_ms) {
     log_map_state = std::move(copy);
 }
 
+// The party's world on the server (phase 3): this member's kills, flags and (the host's) map
+// state and return point to it, what came from it applied. The party's kills as it has them.
+std::unordered_set<u32> RunServerWorld(const WorldLogKills& mine, s64 now_ms) {
+    flags_on_log.store(true);
+    const bool in_session = InPartySession();
+    const ServerWorldKills world =
+        TickServerWorld(mine, in_session && !wipe_hold.HoldsProposals(now_ms), now_ms);
+    if (world.host_wiped) {
+        wipe_hold.HostWiped(now_ms);
+    }
+    ApplyFlagEntries(world.applied, now_ms);
+    if (!in_session) {
+        return {};
+    }
+    if (IsPartyGuestRole()) {
+        if (const s32 point = world.return_point.point;
+            point > 0 && host_return_point.exchange(point) != point) {
+            LOG_INFO(Debug, "Co-op server world: the host's return point is {} (map {:#x})", point,
+                     world.return_point.map);
+        }
+    } else if (const u64 global = GetGlobalState(); global >= 0x10000) {
+        const s32 point = ReadValue<s32>(global, 0x1528);
+        ReturnPointToServer(point, point > 0 ? PackedMapOfWarpPoint(point) : 0);
+    }
+    return world.kills;
+}
+
 } // namespace
 
 namespace Coop {
@@ -538,6 +545,12 @@ void TakeWorldLogFrame(u8 type, std::span<const u8> payload, u32 addr, u16 port)
 }
 
 void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters) {
+    if (ServerWorldOn()) {
+        if (!IsPartyGuestRole() && map != 0 && InPartySession()) {
+            ShowToServer(map, characters);
+        }
+        return;
+    }
     const std::string name = LogMemberName();
     if (!world_log_path.Active() || !world_log_host.Started() || name.empty() || map == 0) {
         return;
@@ -550,6 +563,13 @@ void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters) {
 }
 
 std::optional<MemberMapState> HostShownNow() {
+    if (ServerWorldOn()) {
+        const std::optional<WorldLogShown> shown = ServerShown();
+        if (!shown || shown->map == 0) {
+            return std::nullopt;
+        }
+        return MemberMapState{shown->map, EncodeShownCharacters(WorldLogShownCharacters(*shown))};
+    }
     if (world_log_path.Active()) {
         const WorldLogShown& shown = world_log_member.Shown();
         if (!world_log_member.ShownKnown() || shown.map == 0) {
@@ -557,8 +577,7 @@ std::optional<MemberMapState> HostShownNow() {
         }
         return MemberMapState{shown.map, EncodeShownCharacters(WorldLogShownCharacters(shown))};
     }
-    std::scoped_lock lock{shown_board_mutex};
-    return host_shown;
+    return std::nullopt; // the P2P path: no host's copy (the HTTP boards are gone)
 }
 
 std::vector<MemberMapState> OthersEnemyHp(u64 own_source) {
@@ -568,6 +587,15 @@ std::vector<MemberMapState> OthersEnemyHp(u64 own_source) {
     // moves the bars on the first hop; each report is cumulative per member and visit and
     // MergeEnemyHpReports takes the most damage of its copies, so nothing counts twice).
     std::vector<MemberMapState> others = direct_damage_inbox.Fresh(now_ms);
+    if (ServerWorldOn()) {
+        // The reports the server's log has (this member's own left out).
+        for (const auto& [map, report] : WorldLogHpReports(ServerHp())) {
+            if ((report.visit & ~HostHpReport) != own_source) {
+                others.push_back({map, EncodeEnemyHp(report.visit, report.enemies)});
+            }
+        }
+        return others;
+    }
     if (world_log_path.Active()) {
         // The reports the host's log has (this member's own left out).
         for (const auto& [map, report] :
@@ -578,17 +606,23 @@ std::vector<MemberMapState> OthersEnemyHp(u64 own_source) {
         }
         return others;
     }
-    // The board path: then the HP board (the same reports, later).
-    std::scoped_lock lock{enemy_hp_mutex};
-    others.insert(others.end(), others_enemy_hp.begin(), others_enemy_hp.end());
-    return others;
+    return others; // the P2P path: the peers' direct frames only (the HP board is gone)
 }
 
 void SendEnemyHp(const MemberMapState& mine, bool changed) {
     const s64 now_ms = SteadyMilliseconds();
     const bool held = IsPartyGuestRole() && wipe_hold.HoldsProposals(now_ms);
-    if (!held) {
+    // Phase 4's owners: the game sends the owner's HP itself (ch 5), no copy of ours.
+    if (!held && !EnemyOwnerOn()) {
         SendDirectDamage(mine, changed); // the fast copy (see OthersEnemyHp)
+    }
+    if (ServerWorldOn()) {
+        const auto report = mine.map != 0 ? DecodeEnemyHp(mine.bits) : std::nullopt;
+        // A guest's damage from before its own wipe must not stand (see WorldLogWipeHold).
+        if (report && !held && InPartySession()) {
+            HpToServer(mine.map, *report, changed);
+        }
+        return;
     }
     if (!world_log_path.Active()) {
         return;
@@ -617,7 +651,7 @@ void SendEnemyHp(const MemberMapState& mine, bool changed) {
 }
 
 bool WorldLogCarriesBoards() {
-    return flags_on_log.load();
+    return ServerWorldOn() || flags_on_log.load();
 }
 
 std::optional<std::vector<u8>> TakeWorldSnapshotToPost() {
@@ -635,6 +669,10 @@ void NoteWorldSnapshot(s64 age_ms, std::vector<u8> blob) {
 }
 
 bool TakeFlagsForTheLog(std::span<const std::pair<s32, bool>> shared) {
+    if (ServerWorldOn()) {
+        FlagsToServer(shared);
+        return true;
+    }
     if (!flags_on_log.load()) {
         return false;
     }
@@ -653,6 +691,12 @@ void FilterBoardFlags(std::vector<std::pair<s32, bool>>& changes) {
 }
 
 void MapStateOnTheLog(u32 map, std::span<const u8> bits) {
+    if (ServerWorldOn()) {
+        if (!IsPartyGuestRole() && map != 0 && InPartySession()) {
+            MapStateToServer(map, bits);
+        }
+        return;
+    }
     const std::string name = LogMemberName();
     if (!flags_on_log.load() || !world_log_host.Started() || name.empty()) {
         return;
@@ -665,6 +709,13 @@ void MapStateOnTheLog(u32 map, std::span<const u8> bits) {
 }
 
 std::optional<MemberMapState> HostMapStateNow() {
+    if (ServerWorldOn()) {
+        const std::optional<WorldLogMapState> state = ServerMapState();
+        if (!state || state->map == 0) {
+            return std::nullopt;
+        }
+        return MemberMapState{state->map, state->bits};
+    }
     std::scoped_lock lock{map_state_mutex};
     return log_map_state ? log_map_state : host_map_state;
 }
@@ -699,24 +750,28 @@ PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
             TraceLog("member", "reset", {});
         }
     }
-    const bool log = DecideKillPath(mine, now_ms);
-    FollowFlagsPath(log, now_ms);
-    const std::string name = LogMemberName();
-    if (log && !name.empty()) {
-        if (IsPartyGuestRole()) {
-            RunMemberLog(name, mine, now_ms);
-            TakeWorldSnapshot(now_ms);
-        } else {
-            RunHostLog(name, mine, now_ms);
+    // With the party's world on the server everything the host's log carried goes there instead
+    // (phase 3): neither the host's log nor the boards run.
+    const bool server = ServerWorldOn();
+    bool log = false;
+    if (!server) {
+        log = DecideKillPath(mine, now_ms);
+        FollowFlagsPath(log, now_ms);
+        const std::string name = LogMemberName();
+        if (log && !name.empty()) {
+            if (IsPartyGuestRole()) {
+                RunMemberLog(name, mine, now_ms);
+                TakeWorldSnapshot(now_ms);
+            } else {
+                RunHostLog(name, mine, now_ms);
+            }
         }
     }
     PartyKillsNow party;
-    {
-        std::scoped_lock lock{kill_board_mutex};
-        if (!log) {
-            kills_to_post.insert(kills_to_post.end(), changes.begin(), changes.end());
-        }
-        party.members = log ? LogKills() : others_kills;
+    if (server) {
+        party.members = RunServerWorld(mine, now_ms);
+    } else if (log) {
+        party.members = LogKills();
     }
     // Its own kills too (a guest pulled into the host's world sees the host's copy alive), and its
     // earlier visit's kills here that stood while another member stayed.
@@ -726,7 +781,7 @@ PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
     party.all.insert(held.begin(), held.end());
     // On the board path, straight over the P2P link: this member's standing kills out, the peers'
     // in (the board brings the same a moment later, and to members who load in later).
-    if (!log && InPartySession()) {
+    if (!server && !log && InPartySession()) {
         std::vector<u32> standing(visit_kills.Killed().begin(), visit_kills.Killed().end());
         standing.insert(standing.end(), held.begin(), held.end());
         SendDirectKills(standing, !changes.empty());

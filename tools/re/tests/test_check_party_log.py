@@ -110,6 +110,13 @@ class SessionTest(unittest.TestCase):
         self.assertIn("left the session outside a trip", joined)
         self.assertIn("graphics device was lost", joined)
 
+    def test_flags_a_game_reaching_past_the_server(self):
+        # Phase 9's proof test: the rig's games reach only the server (SHADPS4_NET_FIREWALL).
+        text = line("Net firewall: blocked a datagram to 127.0.0.1:51601", level="Warning")
+        _, problems = tool.summarize(text)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("past the server", problems[0])
+
     def test_flags_a_refused_game_call(self):
         # A guarded call skipped because the object's vtable was not the expected kind: either a
         # wrong pointer or a vtable list that misses a class (the feature quietly stops).

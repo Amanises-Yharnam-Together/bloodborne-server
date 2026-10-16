@@ -61,7 +61,8 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(env["BB_PROBE"], str(self.port.exe))
         self.assertEqual(env["BB_LOG_FILE"], str(role / "user" / "log" / "shad_log.txt"))
         self.assertEqual(env["BB_ONLINE"], "1")
-        self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:32313")
+        # Phase 11, one port: the port signs in on shadNet's link UDP port (the TCP port's +1).
+        self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:32314")
         self.assertEqual(env["BB_SHADNET_WEBAPI"], "http://127.0.0.1:32315")
         self.assertEqual(env["BB_SHADNET_NPID"], "rig_guest2")
         self.assertEqual(env["BB_SHADNET_PASSWORD"], "rig")
@@ -232,16 +233,36 @@ class RunnerTest(unittest.TestCase):
         try:
             env = run_scenario.game_environment("host", None, "rig:x")
             self.assertEqual(env["SHADPS4_P2P_DELAY_MS"], "25-50", "half the ping each way")
-            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:33313", "through the proxy")
+            # The link is UDP, straight to shadNet at the proxy's port + 1; the game delays it.
+            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:33314")
             self.assertEqual(env["BB_SHADNET_WEBAPI"], "http://127.0.0.1:33315")
             self.assertEqual(run_scenario.delayed_ports(), {33313: 32313, 33315: 32315,
                                                             21453: 20453})
             run_scenario.use_ping(None)
             env = run_scenario.game_environment("host", None, "rig:x")
             self.assertNotIn("SHADPS4_P2P_DELAY_MS", env)
-            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:32313")
+            self.assertEqual(env["BB_SHADNET_SERVER"], "127.0.0.1:32314")
         finally:
             run_scenario.use_ping(None)
+
+    def test_a_port_game_reaches_only_the_lanes_servers(self):
+        # Phase 9's proof test: every game talks only to the server, never to another game. Each
+        # game's own firewall (SHADPS4_NET_FIREWALL) names the servers it reaches: shadNet's TCP
+        # and UDP ports, the web API and the backend, through their proxies with a ping.
+        run_scenario.use_engine("port")
+        env = run_scenario.game_environment("guest", None, "rig:x")
+        self.assertEqual(env["SHADPS4_NET_FIREWALL"],
+                         "127.0.0.1:32313,127.0.0.1:32314,127.0.0.1:32315,127.0.0.1:20453")
+        run_scenario.use_ping((50, 100))
+        try:
+            env = run_scenario.game_environment("guest", None, "rig:x")
+            self.assertEqual(env["SHADPS4_NET_FIREWALL"],
+                             "127.0.0.1:33313,127.0.0.1:33314,127.0.0.1:33315,127.0.0.1:21453")
+        finally:
+            run_scenario.use_ping(None)
+        with unittest.mock.patch.dict(os.environ, {"SHADPS4_NET_FIREWALL": "127.0.0.1:*"}):
+            env = run_scenario.game_environment("guest", None, "rig:x")
+        self.assertNotIn("127.0.0.1:*", env["SHADPS4_NET_FIREWALL"], "never the PC's own")
 
     def test_the_servers_udp_port_follows_the_one_the_games_reach(self):
         # A game sends its STUN pings to the TCP port it reached + 1 (np_matching2_mm.cpp): with

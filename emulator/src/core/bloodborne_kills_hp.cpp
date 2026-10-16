@@ -67,18 +67,11 @@ namespace Coop {
 // for the board thread, and the other members' wait for the game thread to add those owed.
 std::mutex echo_board_mutex;
 KillEchoLedger echo_ledger;
-// Enemy deaths kept in step across loads (see VisitKills): this member's kills and visit ends
-// wait for the board thread; the others' current kills (character handles) are hidden here.
-std::mutex kill_board_mutex;
-std::vector<std::pair<s32, bool>> kills_to_post;
-std::unordered_set<u32> others_kills;
-bool kill_board_fresh_start = false;
 // World state per map (see MapFlagBase): the host's own snapshot waiting for the board thread,
 // and the latest one read back (on a guest).
 // Enemy HP kept in step (see EnemyHpReport): this member's hurt enemies and the others'.
 std::mutex enemy_hp_mutex;
 MemberMapState local_enemy_hp;
-std::vector<MemberMapState> others_enemy_hp;
 std::mutex map_state_mutex;
 MemberMapState local_map_state;
 std::optional<MemberMapState> host_map_state;
@@ -86,7 +79,6 @@ std::optional<MemberMapState> host_map_state;
 // board thread, and the host's latest read back (on a guest).
 std::mutex shown_board_mutex;
 MemberMapState local_shown;
-std::optional<MemberMapState> host_shown;
 
 std::mutex map_board_mutex;
 std::vector<MemberMap> map_board;
@@ -335,6 +327,7 @@ void LogNearbyEnemyControl() {
 // When the map's world last changed hands (a bulk flag change, i.e. a load that kept the map's
 // objects; a guest starting or ending its run of the map's enemies): see CharacterSettles.
 std::atomic<s64> world_changed_ms{-1'000'000'000};
+std::atomic<s64> world_loaded_ms{-1'000'000'000};
 
 } // namespace Coop
 
@@ -510,6 +503,708 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
 
 namespace {
 
+// A character the game keeps out of the world for now (its event's +0x28 / +0x29, or disabled):
+// an NPC behind a door, a boss before its fight.
+bool KeptOutByTheGame(u64 character) {
+    return ReadValue<u8>(character, 0x28) != 0 || ReadValue<u8>(character, 0x29) != 0 ||
+           IsCharacterDisabled(character);
+}
+
+// Phase 4's enemy owners (see EnemyRole): this member's role and the owner it follows, as the last
+// party tick found them, for the hooks; when it last became its area's owner (its copies then
+// take the log's HP, see ShareEnemyHp); the frames and sends counted for the owner's rates.
+std::atomic<u8> enemy_role{static_cast<u8>(EnemyRole::Unknown)};
+std::mutex enemy_owner_mutex;
+std::string enemy_owner_member;
+std::atomic<s64> became_owner_ms{-1'000'000'000};
+std::atomic<u32> enemy_frames{0};
+std::array<std::atomic<u32>, NativeChannelCount> enemy_sent{};
+std::atomic<u64> enemy_frame_serial{0};
+// A follower's positions taken (ch 4) by the packets' id (chr +0x90) since its last rates line.
+std::mutex positions_taken_mutex;
+std::map<u32, u32> positions_taken;
+std::atomic<u32> position_packets_in{0}; // ch 4 packets the game's queues took
+std::atomic<u32> position_entries_read{0};
+// The game's hand-out (0x17, see HandOutSeconds): the owner's latest to each member, a
+// follower's latest from the owner, with when.
+struct HandOut {
+    std::vector<u32> ids;
+    s64 at_ms = 0;
+};
+std::mutex hand_out_mutex;
+std::map<std::string, HandOut> handed_by_me;
+HandOut handed_to_me;
+
+// The enemies this game handed out (owner) or was handed (follower), from fresh hand-outs only.
+std::vector<u32> FreshHandOut(EnemyRole role, s64 now_ms) {
+    std::scoped_lock lock{hand_out_mutex};
+    std::vector<u32> ids;
+    if (role == EnemyRole::Owner) {
+        for (const auto& [member, hand_out] : handed_by_me) {
+            if (now_ms - hand_out.at_ms < HandOutFreshMs) {
+                ids.insert(ids.end(), hand_out.ids.begin(), hand_out.ids.end());
+            }
+        }
+    } else if (role == EnemyRole::Follower && now_ms - handed_to_me.at_ms < HandOutFreshMs) {
+        ids = handed_to_me.ids;
+    }
+    return ids;
+}
+
+} // namespace
+
+namespace Coop {
+
+EnemyRole CurrentEnemyRole() {
+    return static_cast<EnemyRole>(enemy_role.load(std::memory_order_relaxed));
+}
+
+std::string CurrentEnemyOwner() {
+    std::scoped_lock lock{enemy_owner_mutex};
+    return enemy_owner_member;
+}
+
+u64 EnemyFrameSerial() {
+    return enemy_frame_serial.load(std::memory_order_relaxed);
+}
+
+void PS4_SYSV_ABI CountPositionTaken(u64, const GuestRegisterSnapshot* registers) {
+    if (CurrentEnemyRole() != EnemyRole::Follower ||
+        !HasMemoryAccess(registers->r12 - 4, 4, MemoryProt::CpuRead)) {
+        return;
+    }
+    const u32 id = ReadValue<u32>(registers->r12 - 4, 0);
+    position_entries_read.fetch_add(1, std::memory_order_relaxed);
+    std::scoped_lock lock{positions_taken_mutex};
+    ++positions_taken[id];
+}
+
+// A hand-out's ids on a change (which enemies, by the packets' ids).
+void LogHandOut(const std::string& who, const std::vector<u32>& ids) {
+    static std::map<std::string, std::vector<u32>> last;
+    static u32 logged = 0;
+    std::string text;
+    for (const u32 id : ids) {
+        text += fmt::format(" {:x}", id);
+    }
+    static std::mutex mutex;
+    std::scoped_lock lock{mutex};
+    if (last[who] != ids && logged < 120) {
+        last[who] = ids;
+        ++logged;
+        LOG_INFO(Debug, "Bloodborne party: enemy hand-out {}:{}", who,
+                 text.empty() ? " none" : text);
+    }
+}
+
+void NoteHandOutSent(const std::string& member, std::span<const u8> payload) {
+    const s64 now_ms = SteadyMilliseconds();
+    std::vector<u32> ids = HandOutIds(payload);
+    LogHandOut("to " + member, ids);
+    std::scoped_lock lock{hand_out_mutex};
+    handed_by_me[member] = {std::move(ids), now_ms};
+}
+
+void PS4_SYSV_ABI TakeHandOut(u64, const GuestRegisterSnapshot* registers) {
+    const u32 size = static_cast<u32>(registers->rax);
+    const u64 buffer = image_base + HandOutBufferOffset;
+    if (CurrentEnemyRole() != EnemyRole::Follower || size < 4 || size > 0x2004 ||
+        !HasMemoryAccess(buffer, size, MemoryProt::CpuRead)) {
+        return;
+    }
+    const std::span<const u8> payload{reinterpret_cast<const u8*>(buffer), size};
+    const s64 now_ms = SteadyMilliseconds();
+    std::vector<u32> ids = HandOutIds(payload);
+    LogHandOut("from the owner", ids);
+    std::scoped_lock lock{hand_out_mutex};
+    handed_to_me = {std::move(ids), now_ms};
+}
+
+void CountPositionPacketIn() {
+    position_packets_in.fetch_add(1, std::memory_order_relaxed);
+}
+
+void CountEnemyPacketSent(u32 channel) {
+    if (channel < enemy_sent.size()) {
+        enemy_sent[channel].fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void HoldOwnHits();
+
+} // namespace Coop
+
+namespace {
+
+// Phase 8: the block records the owner's activation pass saw with the other players' groups
+// added (see WithOthersGroups), and their own groups, put back after the pass; the game thread.
+struct WokenRecord {
+    u64 record = 0;
+    WakeGroups own;
+};
+std::vector<WokenRecord> woken_records;
+std::atomic<u32> woken_for{0}; // how many other players' groups the last pass added
+
+WakeGroups ReadWakeGroups(u64 at, u64 wakes, u64 counted, u64 half) {
+    WakeGroups groups;
+    for (size_t i = 0; i < groups.wakes.size(); ++i) {
+        groups.wakes[i] = ReadValue<u32>(at, wakes + i * 4);
+        groups.counted[i] = ReadValue<u32>(at, counted + i * 4);
+        groups.half[i] = ReadValue<u32>(at, half + i * 4);
+    }
+    return groups;
+}
+
+void WriteRecordGroups(u64 record, const WakeGroups& groups) {
+    for (size_t i = 0; i < groups.wakes.size(); ++i) {
+        WriteValue(record, 0x38 + i * 4, groups.wakes[i]);
+        WriteValue(record, 0x18 + i * 4, groups.counted[i]);
+        WriteValue(record, 0x78 + i * 4, groups.half[i]);
+    }
+}
+
+} // namespace
+
+namespace Coop {
+
+void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers) {
+    woken_records.clear();
+    if (CurrentEnemyRole() != EnemyRole::Owner) {
+        woken_for.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const u64 world = registers->rdi;
+    const u64 player = GetLocalPlayer();
+    if (world < 0x10000 || player < 0x10000 ||
+        !HasMemoryAccess(player + 0x218, 0x60, MemoryProt::CpuRead)) {
+        return;
+    }
+    std::vector<WakeGroups> others;
+    for (const OtherPlayer& other : OtherPlayers()) {
+        // One hidden by the map board (on another map) wakes nothing here.
+        if (other.hp > 0 && !IsCharacterDisabled(other.character) &&
+            HasMemoryAccess(other.character + 0x218, 0x60, MemoryProt::CpuRead)) {
+            others.push_back(ReadWakeGroups(other.character, 0x218, 0x238, 0x258));
+        }
+    }
+    woken_for.store(static_cast<u32>(others.size()), std::memory_order_relaxed);
+    if (others.empty()) {
+        return;
+    }
+    const WakeGroups own = ReadWakeGroups(player, 0x218, 0x238, 0x258);
+    const s32 blocks = std::min(ReadValue<s32>(world, 0x278), 62);
+    for (s32 index = 0; index < blocks; ++index) {
+        const u64 record = ReadValue<u64>(world, 0x290 + static_cast<u64>(index) * 0x18);
+        if (record < 0x10000 || !HasMemoryAccess(record + 0x18, 0x80, MemoryProt::CpuWrite)) {
+            continue;
+        }
+        const WakeGroups before = ReadWakeGroups(record, 0x38, 0x18, 0x78);
+        const WakeGroups after = WithOthersGroups(before, own, others);
+        if (after != before) {
+            woken_records.push_back({record, before});
+            WriteRecordGroups(record, after);
+        }
+        static u32 logged = 0;
+        if (logged < 40 && (after != before || logged < 4)) {
+            ++logged;
+            LOG_INFO(Debug,
+                     "Bloodborne enemy owner: block record {} groups {:x} -> {:x} (own {:x}, "
+                     "{} others)",
+                     index, before.wakes[0], after.wakes[0], own.wakes[0], others.size());
+        }
+    }
+}
+
+} // namespace Coop
+
+namespace {
+
+// See OwnerSendsPositionOf: the character's place and turn into its slot's position record, marked
+// to send, as the game's own net update does every frame.
+bool MarkPositionToSend(u64 world, u64 character) {
+    const s32 index = ReadValue<s32>(character, 0x90);
+    const u64 table = ReadValue<u64>(world, 0xA40);
+    const u64 modules = ReadValue<u64>(character, 0x3B0);
+    const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+    if (index < 0 || table < 0x10000 || physics < 0x10000) {
+        return false;
+    }
+    const s32 block = (index >> 11) & 0x1F;
+    const s32 slot = index & 0x7FF;
+    if (block >= ReadValue<s32>(table, 0x08)) {
+        return false;
+    }
+    const u64 entry = ReadValue<u64>(table, 0x10 + 8 * block);
+    if (entry < 0x10000 || slot >= ReadValue<s32>(entry, 0x10)) {
+        return false;
+    }
+    const u64 records = ReadValue<u64>(entry, 0x20);
+    const u64 flags = ReadValue<u64>(entry, 0x38);
+    if (records < 0x10000 || flags < 0x10000) {
+        return false;
+    }
+    const u64 record = records + 0x18 * static_cast<u64>(slot);
+    const u64 flag = flags + 2 * static_cast<u64>(slot);
+    if (!HasMemoryAccess(record, 0x18, MemoryProt::CpuWrite) ||
+        !HasMemoryAccess(flag, 2, MemoryProt::CpuWrite)) {
+        return false;
+    }
+    const std::array<float, 6> now{
+        ReadValue<float>(physics, 0x1E0), ReadValue<float>(physics, 0x1E4),
+        ReadValue<float>(physics, 0x1E8), ReadValue<float>(physics, 0x1D0),
+        ReadValue<float>(physics, 0x1D4), ReadValue<float>(physics, 0x1D8)};
+    for (size_t i = 0; i < now.size(); ++i) {
+        WriteValue(record, i * 4, now[i]);
+    }
+    WriteValue(flag, 0, static_cast<u16>(ReadValue<u16>(flag, 0) | 2));
+    return true;
+}
+
+} // namespace
+
+namespace Coop {
+
+void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) {
+    const EnemyRole role = CurrentEnemyRole();
+    const u64 world = registers->rdi;
+    if (role != EnemyRole::Owner || world < 0x10000) {
+        return;
+    }
+    // Never a player: the other players' copies follow their own games (an AI controller on one
+    // broke its copy: the full rig tier 2026-10-15, players unseen after trips).
+    std::unordered_set<u64> players{GetLocalPlayer()};
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    u32 kept = 0;
+    u32 marked = 0;
+    const std::vector<u32> handed = FreshHandOut(role, SteadyMilliseconds());
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (players.contains(character)) {
+            return;
+        }
+        const u64 control = ReadValue<u64>(character, 0x18);
+        const u64 word = OwnershipWordAddress(world, character);
+        if (control < 0x10000 || word == 0 || !HasMemoryAccess(word, 2, MemoryProt::CpuWrite)) {
+            return;
+        }
+        const s32 level = ReadValue<s32>(control, 0x14);
+        const s32 applied = ReadValue<s32>(control, 0x10);
+        const bool kept_out = KeptOutByTheGame(character);
+        if (const auto wanted =
+                AwakeEnemyWord(role, level, applied, ReadValue<u16>(word, 0), kept_out,
+                               HandedOut(handed, ReadValue<u32>(character, 0x90)))) {
+            WriteValue(word, 0, *wanted);
+            ++kept;
+        }
+        if (OwnerSendsPositionOf(role, level, applied, ReadValue<u16>(word, 0), kept_out) &&
+            MarkPositionToSend(world, character)) {
+            ++marked;
+        }
+    });
+    static u32 marked_logged = 0;
+    if (marked > 0 && marked_logged < 3) {
+        ++marked_logged;
+        LOG_INFO(Debug, "Bloodborne enemy owner: marked {} enemies to send (t={:.1f})", marked,
+                 SteadyMilliseconds() / 1000.0);
+    }
+    static size_t handed_last = 0;
+    static u32 handed_logged = 0;
+    if (handed.size() != handed_last && handed_logged < 60) {
+        handed_last = handed.size();
+        ++handed_logged;
+        LOG_INFO(Debug,
+                 "Bloodborne enemy owner: the game handed {} enemies to the others (t={:.1f})",
+                 handed.size(), SteadyMilliseconds() / 1000.0);
+    }
+    static u32 last = 0;
+    static u32 logged = 0;
+    if (kept != last && logged < 60) {
+        last = kept;
+        ++logged;
+        LOG_INFO(Debug, "Bloodborne enemy owner: runs {} awake enemies the game let go (t={:.1f})",
+                 kept, SteadyMilliseconds() / 1000.0);
+    }
+}
+
+void PS4_SYSV_ABI PutBackWokenRecords(u64, const GuestRegisterSnapshot* registers) {
+    // How many the pass woke with the others' groups (+0x5F74), on a change.
+    static std::pair<size_t, s32> last{};
+    static u32 logged = 0;
+    const std::pair<size_t, s32> now{woken_records.size(), ReadValue<s32>(registers->r14, 0x5F74)};
+    if (now != last && logged < 60) {
+        last = now;
+        ++logged;
+        LOG_INFO(Debug,
+                 "Bloodborne enemy owner: the activation pass woke {} with the others' groups "
+                 "on {} block(s) (t={:.1f})",
+                 now.second, now.first, SteadyMilliseconds() / 1000.0);
+    }
+    for (const WokenRecord& woken : woken_records) {
+        if (HasMemoryAccess(woken.record + 0x18, 0x80, MemoryProt::CpuWrite)) {
+            WriteRecordGroups(woken.record, woken.own);
+        }
+    }
+    woken_records.clear();
+}
+
+// Phase 8 RE: which groups wake a block's enemies. WorldChrMan's activation pass (0x019192A0)
+// wakes a character whose groups (+0x218, +0x238, +0x258) share bits with its block record's
+// (WorldChrMan +0x290 entries: +0x38, +0x18, +0x78). Logged on change: each block's record sets,
+// this player's own sets and the other players' (their copies in this game), and the budget.
+void LogWakeGroups() {
+    static s64 checked_ms = 0;
+    static std::string last;
+    static u32 logged = 0;
+    const s64 now_ms = SteadyMilliseconds();
+    if (logged >= 600 || now_ms - checked_ms < 2'000) {
+        return;
+    }
+    checked_ms = now_ms;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000 || !HasMemoryAccess(world + 0x5F70, 0x20, MemoryProt::CpuRead)) {
+        return;
+    }
+    const auto set = [](u64 at) {
+        std::string words;
+        for (u64 offset = 0; offset < 0x20; offset += 4) {
+            words += fmt::format("{:x}{}", ReadValue<u32>(at, offset), offset < 0x1C ? "." : "");
+        }
+        return words;
+    };
+    const auto sets = [&](u64 character) {
+        if (character < 0x10000 || !HasMemoryAccess(character + 0x218, 0x60, MemoryProt::CpuRead)) {
+            return std::string{"?"};
+        }
+        return fmt::format("b {} a {} d {}", set(character + 0x218), set(character + 0x238),
+                           set(character + 0x258));
+    };
+    size_t awake_let_go = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        const u64 control = ReadValue<u64>(character, 0x18);
+        const u64 word = OwnershipWordAddress(world, character);
+        if (control >= 0x10000 && word != 0 && ReadValue<s32>(control, 0x14) == EnemyAwake &&
+            static_cast<s16>(ReadValue<u16>(word, 0)) < 0) {
+            ++awake_let_go;
+        }
+    });
+    std::string text = fmt::format(
+        "budget {} awake {} counted {} {} (awake let go {}, others' groups {})",
+        ReadValue<s32>(world, 0x5F70), ReadValue<s32>(world, 0x5F74), ReadValue<s32>(world, 0x5F88),
+        ReadValue<s32>(world, 0x5F8C), awake_let_go, woken_for.load(std::memory_order_relaxed));
+    const s32 blocks = std::min(ReadValue<s32>(world, 0x278), 16);
+    for (s32 index = 0; index < blocks; ++index) {
+        const u64 entry = world + 0x280 + static_cast<u64>(index) * 0x18;
+        const u64 record = ReadValue<u64>(entry, 0x10);
+        if (record < 0x10000 || !HasMemoryAccess(record + 0x18, 0x80, MemoryProt::CpuRead)) {
+            text += fmt::format(" | block {:#x} no record", ReadValue<s32>(entry, 0x08));
+            continue;
+        }
+        text += fmt::format(" | block {:#x} b {} a {} d {}", ReadValue<s32>(entry, 0x08),
+                            set(record + 0x38), set(record + 0x18), set(record + 0x78));
+    }
+    // The characters by each other player, as this game has them (why one sleeps).
+    for (const OtherPlayer& other : OtherPlayers()) {
+        if (!other.at) {
+            continue;
+        }
+        std::string by_them;
+        u32 listed = 0;
+        ForEachWorldCharacter(world, [&](u64 character) {
+            const u64 modules = ReadValue<u64>(character, 0x3B0);
+            const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+            const u64 control = ReadValue<u64>(character, 0x18);
+            if (listed >= 6 || physics < 0x10000 || control < 0x10000 ||
+                character == other.character || CharacterHp(character) <= 0) {
+                return;
+            }
+            const float dx = ReadValue<float>(physics, 0x1E0) - (*other.at)[0];
+            const float dz = ReadValue<float>(physics, 0x1E8) - (*other.at)[2];
+            if (dx * dx + dz * dz > 25.0f * 25.0f) {
+                return;
+            }
+            ++listed;
+            const u64 word = OwnershipWordAddress(world, character);
+            by_them += fmt::format(
+                " {:x}:l{}/{} h{}{} w{:x} b{:x} at {:.0f},{:.0f}", ReadValue<u32>(character, 0x08),
+                ReadValue<s32>(control, 0x14), ReadValue<s32>(control, 0x10),
+                ReadValue<u8>(character, 0x28), ReadValue<u8>(character, 0x29),
+                word != 0 ? ReadValue<u16>(word, 0) : 0xBAD, ReadValue<u32>(character, 0x218),
+                ReadValue<float>(physics, 0x1E0), ReadValue<float>(physics, 0x1E8));
+        });
+        text += fmt::format(" | by {:x}:{}", ReadValue<u32>(other.character, 0x08),
+                            by_them.empty() ? " none" : by_them);
+    }
+    text += fmt::format(" | me {}", sets(GetLocalPlayer()));
+    for (const OtherPlayer& other : OtherPlayers()) {
+        text += fmt::format(" | player {:#x} {}", ReadValue<u32>(other.character, 0x08),
+                            sets(other.character));
+    }
+    if (text != last) {
+        last = text;
+        ++logged;
+        LOG_INFO(Debug, "Bloodborne wake groups: {} (t={:.1f})", text, now_ms / 1000.0);
+    }
+}
+
+// The enemies within 25 m of this player (alive, not a player), {chr id, +0x90 index}: a
+// follower's measure.
+std::vector<std::pair<u32, u32>> EnemiesByMe() {
+    std::vector<std::pair<u32, u32>> nearby;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const u64 player = GetLocalPlayer();
+    const auto place = [](u64 character) -> std::optional<std::array<float, 2>> {
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (physics < 0x10000) {
+            return std::nullopt;
+        }
+        return std::array<float, 2>{ReadValue<float>(physics, 0x1E0),
+                                    ReadValue<float>(physics, 0x1E8)};
+    };
+    const auto me = world >= 0x10000 && player >= 0x10000 ? place(player) : std::nullopt;
+    if (!me) {
+        return nearby;
+    }
+    std::unordered_set<u64> players{player};
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    ForEachWorldCharacter(world, [&](u64 character) {
+        const auto at =
+            nearby.size() < 8 && !players.contains(character) && CharacterHp(character) > 0
+                ? place(character)
+                : std::nullopt;
+        if (at && ((*at)[0] - (*me)[0]) * ((*at)[0] - (*me)[0]) +
+                          ((*at)[1] - (*me)[1]) * ((*at)[1] - (*me)[1]) <=
+                      25.0f * 25.0f) {
+            nearby.emplace_back(ReadValue<u32>(character, 0x08), ReadValue<u32>(character, 0x90));
+        }
+    });
+    return nearby;
+}
+
+// See EnemyJumped: each frame, the enemies within 25 m of this player against the last frame.
+void WatchEnemyJumps(EnemyRole role) {
+    static std::unordered_map<u64, std::array<float, 3>> last;
+    static std::unordered_map<u64, bool> ran_here; // which game ran each enemy last frame
+    static u32 logged = 0;
+    static u32 hands_logged = 0;
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const u64 player = GetLocalPlayer();
+    const auto place = [](u64 character) -> std::optional<std::array<float, 3>> {
+        const u64 modules = ReadValue<u64>(character, 0x3B0);
+        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+        if (physics < 0x10000) {
+            return std::nullopt;
+        }
+        return std::array<float, 3>{ReadValue<float>(physics, 0x1E0),
+                                    ReadValue<float>(physics, 0x1E4),
+                                    ReadValue<float>(physics, 0x1E8)};
+    };
+    const auto me = role != EnemyRole::Unknown && world >= 0x10000 && player >= 0x10000
+                        ? place(player)
+                        : std::nullopt;
+    if (!me) {
+        last.clear();
+        return;
+    }
+    std::unordered_set<u64> players{player};
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    std::unordered_map<u64, std::array<float, 3>> now;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (players.contains(character) || CharacterHp(character) <= 0) {
+            return;
+        }
+        const auto at = place(character);
+        if (!at || ((*at)[0] - (*me)[0]) * ((*at)[0] - (*me)[0]) +
+                           ((*at)[2] - (*me)[2]) * ((*at)[2] - (*me)[2]) >
+                       25.0f * 25.0f) {
+            return;
+        }
+        now[character] = *at;
+        // An enemy by this player changing hands (its word's sign), each time: a hand-over that
+        // goes back and forth shows here.
+        const u64 hand_word = OwnershipWordAddress(world, character);
+        const bool runs_here =
+            hand_word != 0 && static_cast<s16>(ReadValue<u16>(hand_word, 0)) >= 0;
+        const auto ran = ran_here.find(character);
+        if (ran != ran_here.end() && ran->second != runs_here && hands_logged < 200) {
+            ++hands_logged;
+            LOG_INFO(Debug, "Bloodborne party: enemy {:x} ({:x}) changes hands: {} (t={:.1f})",
+                     ReadValue<u32>(character, 0x08), ReadValue<u32>(character, 0x90),
+                     runs_here ? "runs here" : "follows", SteadyMilliseconds() / 1000.0);
+        }
+        ran_here[character] = runs_here;
+        const auto before = last.find(character);
+        if (before != last.end() && EnemyJumped(before->second, *at) && logged < 200) {
+            ++logged;
+            const u64 word = OwnershipWordAddress(world, character);
+            LOG_INFO(Debug,
+                     "Bloodborne party: enemy {:x} jumped {:.1f} m in one frame (word {:x}, "
+                     "t={:.1f})",
+                     ReadValue<u32>(character, 0x08),
+                     std::sqrt(((*at)[0] - before->second[0]) * ((*at)[0] - before->second[0]) +
+                               ((*at)[1] - before->second[1]) * ((*at)[1] - before->second[1]) +
+                               ((*at)[2] - before->second[2]) * ((*at)[2] - before->second[2])),
+                     word != 0 ? ReadValue<u16>(word, 0) : 0xBAD, SteadyMilliseconds() / 1000.0);
+        }
+    });
+    last.swap(now);
+}
+
+// With an owner: position rounds every 0.1 s and the hand-out every 0.25 s; without, the game's
+// own periods (NetWorldChrSync +0x64C, +0x630, +0x638).
+void SetSyncPeriods(EnemyRole role) {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const u64 sync = world >= 0x10000 ? ReadValue<u64>(world, 0xA40) : 0;
+    if (sync < 0x10000 ||
+        !HasMemoryAccess(sync + HandOutPeriodOffset, 0x20, MemoryProt::CpuWrite)) {
+        return;
+    }
+    WriteValue(sync, HandOutPeriodOffset, HandOutSeconds(role));
+    WriteValue(sync, NearListPeriodOffset, NearListSeconds(role));
+    const float wanted = PositionRoundSeconds(role);
+    if (ReadValue<float>(sync, PositionRoundPeriodOffset) != wanted) {
+        WriteValue(sync, PositionRoundPeriodOffset, wanted);
+        LOG_INFO(Debug, "Bloodborne party: enemy positions go out {}",
+                 wanted > 0.0f ? fmt::format("every {:.2f} s", wanted) : "every frame");
+    }
+}
+
+void TickEnemyOwner(bool in_session, u32 map) {
+    HoldOwnHits();
+    LogWakeGroups();
+    const s64 now_ms = SteadyMilliseconds();
+    std::string self;
+    {
+        std::scoped_lock lock{vitals_mutex};
+        self = vitals_member;
+    }
+    const std::vector<EnemyOwnerEntry> owners =
+        in_session ? ServerEnemyOwners(now_ms) : std::vector<EnemyOwnerEntry>{};
+    const EnemyRole role = in_session ? EnemyRoleOn(owners, self, map) : EnemyRole::Unknown;
+    const EnemyOwnerEntry* owner = EnemyOwnerOf(owners, map);
+    const EnemyRole before = CurrentEnemyRole();
+    enemy_role.store(static_cast<u8>(role), std::memory_order_relaxed);
+    {
+        std::scoped_lock lock{enemy_owner_mutex};
+        enemy_owner_member = role == EnemyRole::Follower && owner != nullptr ? owner->member : "";
+    }
+    static EnemyRoleLog role_log;
+    if (const auto line = role_log.Change(role, map, owner)) {
+        LOG_INFO(Debug, "Bloodborne party: {} (t={:.1f})", *line, now_ms / 1000.0);
+    }
+    // Taking the area over (or arriving on one this member runs) settles its world: deaths now
+    // are no kills, and its copies take the log's HP.
+    static u32 owned_area = 0;
+    const u32 area = role == EnemyRole::Owner ? EnemyOwnerArea(map) : 0;
+    if (area != owned_area) {
+        owned_area = area;
+        // Only on taking the map over from another: the first owner's world is the enemy (a guest's
+        // HP from its own world before it joined killed the dog: Kaniel 2026-10-15).
+        if (area != 0 && owner != nullptr && TakesOverEnemyHp(*owner)) {
+            became_owner_ms.store(now_ms);
+        }
+    }
+    if (role != before) {
+        world_changed_ms.store(now_ms);
+    }
+    // The owner's frame rate and send rate (its enemies' updates follow its frames).
+    static s64 rates_ms = now_ms;
+    enemy_frames.fetch_add(1, std::memory_order_relaxed);
+    enemy_frame_serial.fetch_add(1, std::memory_order_relaxed);
+    SetSyncPeriods(role);
+    WatchEnemyJumps(role);
+    if (now_ms - rates_ms >= 10'000) {
+        const double seconds = (now_ms - rates_ms) / 1000.0;
+        rates_ms = now_ms;
+        const u32 frames = enemy_frames.exchange(0);
+        std::array<u32, NativeChannelCount> sent{};
+        for (size_t channel = 0; channel < sent.size(); ++channel) {
+            sent[channel] = enemy_sent[channel].exchange(0, std::memory_order_relaxed);
+        }
+        if (role != EnemyRole::Unknown) {
+            LOG_INFO(Debug,
+                     "Bloodborne party: enemy {} on map {:#x}: {:.0f} frames/s; sent per s: "
+                     "positions {:.1f}, HP {:.1f}, AI records {:.1f}, per-hit {:.1f}, hand-over "
+                     "{:.1f}, hits {:.1f}",
+                     role == EnemyRole::Owner ? "owner" : "follower", EnemyOwnerArea(map),
+                     frames / seconds, sent[0x04] / seconds, sent[0x05] / seconds,
+                     sent[0x3D] / seconds, sent[0x41] / seconds, sent[0x34] / seconds,
+                     sent[0x15] / seconds);
+        }
+        std::map<u32, u32> taken;
+        {
+            std::scoped_lock lock{positions_taken_mutex};
+            taken.swap(positions_taken);
+        }
+        const u32 packets_in = position_packets_in.exchange(0, std::memory_order_relaxed);
+        const u32 entries_read = position_entries_read.exchange(0, std::memory_order_relaxed);
+        if (role == EnemyRole::Follower) {
+            LOG_INFO(Debug,
+                     "Bloodborne party: enemy follower on map {:#x}: positions in {:.1f} packets "
+                     "and {:.1f} entries read per s; positions taken per s by this player: {}",
+                     EnemyOwnerArea(map), packets_in / seconds, entries_read / seconds,
+                     PositionRatesText(taken, EnemiesByMe(), seconds));
+        }
+    }
+    const std::optional<u16> wanted = EnemyOwnershipWord(role);
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const u64 player = GetLocalPlayer();
+    std::unordered_set<u64> players;
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    // The session's host runs its map's enemies the game's own way: its game puts its own words
+    // back every frame (rig 2026-10-14). Phase 8: no guest runs one at any distance.
+    if (!wanted || world < 0x10000 || (role == EnemyRole::Owner && !IsPartyGuestRole())) {
+        return;
+    }
+    size_t changed = 0;
+    const std::vector<u32> handed_to_this =
+        role == EnemyRole::Follower ? FreshHandOut(role, now_ms) : std::vector<u32>{};
+    static size_t handed_last = 0;
+    static u32 handed_logged = 0;
+    if (role == EnemyRole::Follower && handed_to_this.size() != handed_last && handed_logged < 60) {
+        handed_last = handed_to_this.size();
+        ++handed_logged;
+        LOG_INFO(Debug,
+                 "Bloodborne party: enemy follower runs {} enemies the owner handed it (t={:.1f})",
+                 handed_to_this.size(), now_ms / 1000.0);
+    }
+    ForEachWorldCharacter(world, [&](u64 character) {
+        if (character == player || players.contains(character) || CharacterHp(character) <= 0 ||
+            HandedOut(handed_to_this, ReadValue<u32>(character, 0x90))) {
+            return;
+        }
+        const u64 word = OwnershipWordAddress(world, character);
+        if (word == 0 || !HasMemoryAccess(word, 2, MemoryProt::CpuWrite)) {
+            return;
+        }
+        // A word already on the wanted side keeps its value (the game's own >= 0 ones too).
+        const bool runs = static_cast<s16>(ReadValue<u16>(word, 0)) >= 0;
+        const bool should_run = role == EnemyRole::Owner;
+        if (runs == should_run) {
+            return;
+        }
+        WriteValue(word, 0, *wanted);
+        enemy_owner_changed_ms[character] = now_ms;
+        ++changed;
+    });
+    static u32 logged = 0;
+    if (changed > 0 && ++logged <= 60) {
+        LOG_INFO(Debug, "Bloodborne party: enemy owner: {} {} enemies on map {:#x} (t={:.1f})",
+                 role == EnemyRole::Owner ? "took over" : "handed", changed, map, now_ms / 1000.0);
+    }
+}
+
+} // namespace Coop
+
+namespace {
+
 // Whether some player in this world is a phantom (WorldChrMan's players, type +0x78: 1 a summoned
 // client): a guest joined into the host's world, before either made a trip. The game then sends
 // enemy HP between them itself; after a trip each member runs its own copy of the map (all type
@@ -543,8 +1238,76 @@ std::mutex own_hits_mutex;
 namespace {
 
 std::unordered_map<u64, std::pair<u64, s32>> hits_in_flight; // victim -> (attacker, HP before)
+// A guest's own hits, held against the host's older HP (HeldOwnHitHp): victim -> (handle, HP its
+// hit left, when).
+struct HeldHit {
+    u32 handle = 0;
+    s32 hp = 0;
+    s64 at_ms = 0;
+};
+std::unordered_map<u64, HeldHit> held_own_hits;
 
 } // namespace
+
+namespace Coop {
+
+// The character whose HP data is at `data` among this world's: a held hit needs the character.
+void HoldHitNews(u64 data, u32 handle, s32 hp, s64 now_ms) {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000) {
+        return;
+    }
+    u64 victim = 0;
+    ForEachWorldCharacter(world, [&](u64 character) {
+        const u64 modules = victim == 0 ? ReadValue<u64>(character, 0x3B0) : 0;
+        if (modules >= 0x10000 && ReadValue<u64>(modules, 0x20) == data) {
+            victim = character;
+        }
+    });
+    if (victim != 0) {
+        std::scoped_lock lock{own_hits_mutex};
+        held_own_hits[victim] = {handle, hp, now_ms};
+    }
+}
+
+// Kaniel 2026-10-15: a guest's hit took its copy down, then the host's HP from before the hit came
+// (ch 5) and put it back until the host's answer: the guest's own hits hold for a while.
+void HoldOwnHits() {
+    const s64 now_ms = SteadyMilliseconds();
+    std::vector<std::pair<u64, HeldHit>> held;
+    {
+        std::scoped_lock lock{own_hits_mutex};
+        std::erase_if(held_own_hits, [&](const auto& entry) {
+            return now_ms - entry.second.at_ms >= OwnHitHoldMs;
+        });
+        held.assign(held_own_hits.begin(), held_own_hits.end());
+    }
+    for (const auto& [victim, hit] : held) {
+        // Still that character (a freed one reads as anything).
+        if (!HasMemoryAccess(victim, 0x3B8, MemoryProt::CpuRead) ||
+            ReadValue<u32>(victim, 0x08) != hit.handle) {
+            continue;
+        }
+        const u64 modules = ReadValue<u64>(victim, 0x3B0);
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        if (data < 0x10000 || !HasMemoryAccess(data + 0xF8, 4, MemoryProt::CpuWrite)) {
+            continue;
+        }
+        const s32 current = ReadValue<s32>(data, 0xF8);
+        if (const auto hp = HeldOwnHitHp(current, hit.hp, now_ms - hit.at_ms)) {
+            WriteValue(data, 0xF8, *hp);
+            static u32 logged = 0;
+            if (++logged <= 40) {
+                LOG_INFO(Debug,
+                         "Bloodborne party: this guest's hit on {:#x} held: {} -> {} (the host's "
+                         "HP from before it, {} ms after)",
+                         hit.handle, current, *hp, now_ms - hit.at_ms);
+            }
+        }
+    }
+}
+
+} // namespace Coop
 
 namespace Coop {
 
@@ -558,6 +1321,21 @@ bool hit_hooks_installed = false;
 // This player's damage changed, or another game's came: the enemy step runs on the next frame
 // instead of waiting out its round, so the damage goes out (or is shown) at once.
 std::atomic<bool> enemy_step_due{false};
+// Frames the enemy step runs on regardless (an owner got another member's hit: the game applies it
+// on one of the next frames, and its HP goes to the others at once).
+std::atomic<int> enemy_steps_forced{0};
+
+} // namespace
+
+namespace Coop {
+
+void ForceEnemySteps() {
+    enemy_steps_forced.store(6, std::memory_order_relaxed);
+}
+
+} // namespace Coop
+
+namespace {
 
 void PS4_SYSV_ABI NoteHitStart(u64, const GuestRegisterSnapshot* registers) {
     const u64 victim = ReadValue<u64>(registers->rdi, 0x08);
@@ -594,9 +1372,21 @@ void PS4_SYSV_ABI NoteHitApplied(u64, const GuestRegisterSnapshot* registers) {
         std::scoped_lock lock{own_hits_mutex};
         own_damage.Hit(handle, by, taken);
         own_damage.HitLeft(handle, CharacterHp(victim), SteadyMilliseconds());
+        if (by == HitBy::Me && taken > 0 && IsPartyGuestRole()) {
+            held_own_hits[victim] = {handle, CharacterHp(victim), SteadyMilliseconds()};
+        }
     }
     if (by != HitBy::OtherPlayer && taken > 0) {
         enemy_step_due.store(true);
+    }
+    // Phase 8 (one HP path): this player's hit goes to the others at once, with the HP it left.
+    if (by == HitBy::Me && taken > 0 && InPartySession() && EnemyOwnerOn()) {
+        const u64 modules = ReadValue<u64>(victim, 0x3B0);
+        const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+        if (data >= 0x10000) {
+            SendEnemyHit(PlayingMap(), handle, std::max(CharacterHp(victim), 0),
+                         ReadValue<s32>(data, 0xFC));
+        }
     }
     if (taken <= 0) {
         return;
@@ -747,11 +1537,120 @@ std::atomic<bool> party_hp_reset{};
 [[maybe_unused]] const bool shown_wipe_registered = RegisterLifecycleReset(
     "shown state", {Lifecycle::Wipe}, [] { world_changed_ms.store(SteadyMilliseconds()); });
 
+// The HP data (+0xF8) of each standing copy, by handle (for the writes).
+using EnemyHpData = std::unordered_map<u32, std::pair<u64, s32>>; // handle -> (data, hp)
+
+// See ShareEnemyHp: phase 4's way, the area's owner runs the HP.
+void ShareEnemyHpByOwner(EnemyRole role, u32 map, u64 source, std::span<const EnemyCopy> standing,
+                         const EnemyHpData& data, std::span<const MemberMapState> others) {
+    const s64 now_ms = SteadyMilliseconds();
+    std::vector<EnemyHp> hurt;
+    std::vector<EnemyWrite> writes;
+    // The owner's copy is the enemy: its HP goes as read, at once (rig hit3 2026-10-14: two reads
+    // agreeing made the others' bars 0.4 s late).
+    for (const EnemyCopy& copy : standing) {
+        if (role == EnemyRole::Owner && copy.hp < copy.max) {
+            hurt.push_back({copy.handle, copy.hp, copy.max});
+        }
+    }
+    // Phase 8 (one HP path): the others' hits, at once on a follower's copies; each holds against
+    // the owner's older HP as this game's own hit does (HoldOwnHits).
+    for (const EnemyHitNews& hit : TakeEnemyHits()) {
+        const auto it = data.find(hit.handle);
+        if (hit.map != map || it == data.end()) {
+            continue;
+        }
+        const auto copy = std::ranges::find(standing, hit.handle, &EnemyCopy::handle);
+        if (copy == standing.end()) {
+            continue;
+        }
+        const auto hp = HitNewsHp(role, copy->hp, copy->max, hit.hp, hit.max);
+        if (!hp || !HasMemoryAccess(it->second.first, 0xFC, MemoryProt::CpuWrite)) {
+            continue;
+        }
+        WriteValue(it->second.first, 0xF8, *hp);
+        HoldHitNews(it->second.first, hit.handle, *hp, now_ms);
+        static u32 logged_news = 0;
+        if (++logged_news <= 400) {
+            LOG_INFO(Debug,
+                     "Bloodborne party: {}'s hit damage on map {:#x}: {:#x} {}->{} (t={:.1f})",
+                     hit.member, map, hit.handle, copy->hp, *hp, now_ms / 1000.0);
+        }
+        if (*hp == 0) {
+            LOG_INFO(Debug, "Bloodborne party: enemy death seen: {:#x} (t={:.1f})", hit.handle,
+                     now_ms / 1000.0);
+        }
+    }
+    // The log's HP (the owner's reports): a new owner's copies take it, and a follower's always.
+    // The game applies the owner's ch 5 only in one world: after a trip each member has its own
+    // copy of the map, and a follower's copy kept its own HP (rig hp-together 2026-10-14). Lower
+    // only, so a follower's own hit, which also reaches the owner, counts once.
+    const bool takeover = now_ms - became_owner_ms.load() < EnemyOwnerTakeoverMs;
+    if (role == EnemyRole::Follower || takeover) {
+        const std::vector<EnemyCopy> taking{standing.begin(), standing.end()};
+        std::vector<EnemyHpReport> copies;
+        for (const MemberMapState& state : others) {
+            if (EnemyOwnerArea(state.map) == EnemyOwnerArea(map)) {
+                if (auto report = DecodeEnemyHp(state.bits)) {
+                    copies.push_back(std::move(*report));
+                }
+            }
+        }
+        writes = LowerToHostHp(taking, MergeEnemyHpReports(copies));
+    }
+    {
+        std::scoped_lock lock{enemy_hp_mutex};
+        MemberMapState now{map, EncodeEnemyHp(source | HostHpReport, hurt)};
+        const bool changed = now != local_enemy_hp;
+        if (changed) {
+            local_enemy_hp = std::move(now);
+        }
+        if (role == EnemyRole::Owner) {
+            SendEnemyHp(local_enemy_hp, changed);
+        }
+    }
+    std::string which;
+    size_t lowered = 0;
+    for (const EnemyWrite& write : writes) {
+        const auto it = data.find(write.handle);
+        if (it == data.end() || write.hp >= it->second.second ||
+            !HasMemoryAccess(it->second.first, 0xFC, MemoryProt::CpuWrite)) {
+            continue;
+        }
+        WriteValue(it->second.first, 0xF8, write.hp);
+        ++lowered;
+        if (which.size() < 200) {
+            which += fmt::format(" {:#x} {}->{}", write.handle, it->second.second, write.hp);
+        }
+    }
+    static u32 logged_lowered = 0;
+    if (lowered > 0 && ++logged_lowered <= 400) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: {} copies took the owner's HP from the log: {} enemies on "
+                 "map {:#x}:{} (t={:.1f})",
+                 role == EnemyRole::Owner ? "the new owner's" : "this follower's", lowered, map,
+                 which, now_ms / 1000.0);
+    }
+    static std::optional<EnemyRole> logged_role;
+    if (logged_role != role) {
+        logged_role = role;
+        LOG_INFO(Debug, "Bloodborne party: enemy HP from the area's owner ({}, map {:#x})",
+                 role == EnemyRole::Owner ? "this game runs them" : "this game follows", map);
+    }
+}
+
 void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     struct Copy {
         u64 data;
         s32 hp;
         s32 max;
+    };
+    const auto alive_data = [](const auto& alive) {
+        EnemyHpData data;
+        for (const auto& [handle, copy] : alive) {
+            data[handle] = {copy.data, copy.hp};
+        }
+        return data;
     };
     static SharedDamage damage;
     const bool in_session = InPartySession();
@@ -787,6 +1686,14 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
     // OthersEnemyHp).
     const u64 source = (u64{enemy_hp_source & 0x7FFFFFFFu} << 32) | (visit & 0xFFFFFFFFu);
     const std::vector<MemberMapState> others = OthersEnemyHp(source);
+    // Phase 4: the area's owner runs its enemies' HP (the game sends it to the others, ch 5); it
+    // reports its hurt ones to the log, and the copies of a new owner first take the log's HP
+    // (the last owner's). A follower reports nothing and writes nothing.
+    if (const EnemyRole role = CurrentEnemyRole();
+        in_session && EnemyOwnerOn() && role != EnemyRole::Unknown) {
+        ShareEnemyHpByOwner(role, map, source, standing, alive_data(alive), others);
+        return;
+    }
     // The other members' reports for this area (any block of it: one who joined in place stands
     // on another block, and the blocks give their enemies distinct handles).
     std::vector<EnemyHpReport> copies;
@@ -902,6 +1809,8 @@ void ShareEnemyHp(u32 map, u64 visit, std::span<const u64> characters) {
 
 void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                                const std::unordered_set<u32>& kill_hidden);
+void HoldStoryRemovals(u32 map, std::span<const u64> characters,
+                       const std::unordered_set<u32>& kill_hidden);
 
 // See GetsKillDrop: the character's NpcParam row is [vtable +0x168 (character) +8], as the
 // respawn walk reads it (0x0190E433). `own`: this guest's own kill. The game's thread only.
@@ -954,7 +1863,7 @@ void GiveMemberKillDrop(u64 character, u32 handle, bool own = false) {
 }
 
 // VisitKills's inputs for the trace (kills-in), when they change.
-void TraceKillsInputs(u64 visit, bool forget, std::span<const SeenCharacter> characters,
+void TraceKillsInputs(u64 visit, u32 map, bool forget, std::span<const SeenCharacter> characters,
                       std::span<const u32> others_maps) {
     if (!CoopTraceOn()) {
         return;
@@ -965,10 +1874,11 @@ void TraceKillsInputs(u64 visit, bool forget, std::span<const SeenCharacter> cha
     for (const SeenCharacter& character : characters) {
         tokens.push_back(TraceToken(character));
     }
-    auto fields = sampler.Changes(
-        coop_trace_file.load(),
-        {{"visit", fmt::format("{:x}", visit)}, {"others", TraceHandles(others_maps)}},
-        {{"chars", std::move(tokens)}});
+    auto fields = sampler.Changes(coop_trace_file.load(),
+                                  {{"visit", fmt::format("{:x}", visit)},
+                                   {"map", fmt::format("{:x}", map)},
+                                   {"others", TraceHandles(others_maps)}},
+                                  {{"chars", std::move(tokens)}});
     if (forget) {
         fields.emplace_back("forget", "1");
     }
@@ -1061,11 +1971,36 @@ void KeepEnemyDeathsInStep(bool sharing) {
     if (TakeDirectDamage()) {
         enemy_step_due.store(true);
     }
+    // Phase 4: the log's entries (the owner's HP) are shown on the next frame, not the next round.
+    if (TakeServerWorldNews()) {
+        enemy_step_due.store(true);
+    }
     SendPeerHello();
     TickPortraits();
     // Not while the world goes away: a trip's start posted the old map's characters as kills.
-    if (!WatchesKills(sharing, PartyTripActive(), loading) ||
-        (now - checked < HpBoardRound && !enemy_step_due.exchange(false))) {
+    const bool forced = enemy_steps_forced.load(std::memory_order_relaxed) > 0 &&
+                        enemy_steps_forced.fetch_sub(1, std::memory_order_relaxed) > 0;
+    // Every tick, not every round (a hold a round late was drawn a frame), and in a trip's arrival
+    // too (a guest's lasts seconds after the load: Gilbert was drawn all along).
+    if (const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+        sharing && !loading && world >= 0x10000 && IsUsablePackedMap(PlayingMap())) {
+        const u64 player = GetLocalPlayer();
+        std::vector<u64> loaded;
+        ForEachWorldCharacter(world, [&](u64 character) {
+            if (character != player) {
+                loaded.push_back(character);
+            }
+        });
+        std::unordered_set<u32> kill_hidden;
+        for (const auto& [character, handle] : hidden) {
+            kill_hidden.insert(handle);
+        }
+        HoldStoryRemovals(PlayingMap(), loaded, kill_hidden);
+    }
+    if (!WatchesKills(sharing, PartyTripActive(), loading)) {
+        return;
+    }
+    if (now - checked < HpBoardRound && !enemy_step_due.exchange(false) && !forced) {
         return;
     }
     checked = now;
@@ -1118,9 +2053,9 @@ void KeepEnemyDeathsInStep(bool sharing) {
         died_visit = visit;
     }
     const bool forget_kills = party_kills_reset.exchange(false);
-    TraceKillsInputs(visit, forget_kills, characters, others_maps);
+    TraceKillsInputs(visit, map, forget_kills, characters, others_maps);
     auto changes = forget_kills ? visit_kills.Forget() : std::vector<std::pair<s32, bool>>{};
-    const auto observed = visit_kills.Observe(visit, characters, others_maps);
+    const auto observed = visit_kills.Observe(visit, characters, others_maps, map);
     changes.insert(changes.end(), observed.begin(), observed.end());
     std::erase_if(changes, [](const std::pair<s32, bool>& change) {
         return change.second && died_for_others.contains(static_cast<u32>(change.first));
@@ -1266,6 +2201,10 @@ namespace {
 constexpr std::array<u8, 8> SetCharacterDisabledPrologue{0x55, 0x48, 0x89, 0xE5,
                                                          0x41, 0x57, 0x41, 0x56};
 
+} // namespace
+
+namespace Coop {
+
 // The game's thread only.
 bool SetCharacterDisabled(u64 character, bool disabled) {
     if (!IsCharacter(character, "SetCharacterDisabled") ||
@@ -1280,6 +2219,10 @@ bool SetCharacterDisabled(u64 character, bool disabled) {
     reinterpret_cast<Set>(image_base + SetCharacterDisabledOffset)(character, disabled ? 1 : 0);
     return true;
 }
+
+} // namespace Coop
+
+namespace {
 
 // What this guest changed to match the host: characters it hid (+0x28) and switched off. Kept
 // across loads of the same map; see UndoGuestChangesOnMapChange.
@@ -1340,7 +2283,8 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
     std::vector<u64> pointers;
     for (const u64 character : characters) {
         if (!players.contains(character)) {
-            mine.push_back({ReadValue<u32>(character, 0x08), IsCharacterDisabled(character)});
+            mine.push_back({ReadValue<u32>(character, 0x08), IsCharacterDisabled(character),
+                            IsDeadInItsWorld(ReadValue<u8>(character, 0x1E3))});
             pointers.push_back(character);
         }
     }
@@ -1366,6 +2310,68 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                  "Bloodborne party: characters switched like the host has them on map {:#x} "
                  "(off, +on):{}",
                  map, which);
+    }
+}
+
+// See StoryRemovals: what this game's story removed on its last visit of the map is switched off
+// from a load until the story removes it again. Hosts and guests alike (a guest far from its host
+// follows its own story). The game's thread only.
+void HoldStoryRemovals(u32 map, std::span<const u64> characters,
+                       const std::unordered_set<u32>& kill_hidden) {
+    static StoryRemovals removals;
+    std::unordered_set<u64> players;
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    std::vector<StoryCharacter> seen;
+    std::unordered_map<u32, u64> pointers;
+    for (const u64 character : characters) {
+        if (players.contains(character)) {
+            continue;
+        }
+        const u32 handle = ReadValue<u32>(character, 0x08);
+        seen.push_back({handle, ReadValue<u8>(character, 0x28) != 0, IsCharacterDisabled(character),
+                        guest_hidden_here.contains(handle) || guest_switched_off.contains(handle),
+                        kill_hidden.contains(handle)});
+        pointers[handle] = character;
+    }
+    const s64 now = SteadyMilliseconds();
+    const StoryHoldStep step = removals.Step(map, world_loaded_ms.load(), now, seen);
+    std::string which;
+    for (const u32 handle : step.hold) {
+        if (SetCharacterDisabled(pointers[handle], true)) {
+            removals.Held(handle, now);
+            which += fmt::format(" {:#x}", handle);
+        }
+    }
+    for (const u32 handle : step.release) {
+        SetCharacterDisabled(pointers[handle], false);
+        which += fmt::format(" +{:#x}", handle);
+    }
+    for (const u32 handle : step.hand_over) {
+        // The host's board hid it: left off for SwitchCharactersLikeTheHost to switch on with
+        // the host. A kill's hide is the hide byte alone.
+        if (guest_hidden_here.contains(handle) || guest_switched_off.contains(handle)) {
+            guest_switched_off.insert(handle);
+        } else {
+            SetCharacterDisabled(pointers[handle], false);
+        }
+        which += fmt::format(" ={:#x}", handle);
+    }
+    static u32 logged = 0;
+    if (!which.empty() && ++logged <= 200) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: story removals held on map {:#x} until the story runs (off, "
+                 "+on, =handed over):{} ({:.1f} s after the load)",
+                 map, which, (now - world_loaded_ms.load()) / 1000.0);
+    }
+    static std::pair<u32, size_t> remembered{};
+    static u32 remembered_logged = 0;
+    if (const std::pair now_remembered{map, removals.RememberedOn(map)};
+        now_remembered != remembered && ++remembered_logged <= 100) {
+        remembered = now_remembered;
+        LOG_INFO(Debug, "Bloodborne party: the story removed {} characters on map {:#x}",
+                 now_remembered.second, map);
     }
 }
 

@@ -53,7 +53,7 @@ BUNDLED COMPONENTS (licenses in the licenses folder)
                                       (MIT), miniz (MIT), xbyak (BSD-3-Clause), SDL3 (zlib),
                                       FFmpeg (LGPL), Vulkan Memory Allocator (MIT), glslang,
                                       SPIRV-Tools, fmt, Boost, robin-map, xxHash, Zydis, protobuf,
-                                      abseil, OpenSSL, miniupnpc, zlib, wepoll, cpp-httplib,
+                                      abseil, OpenSSL, zlib, wepoll, cpp-httplib,
                                       nlohmann-json, DejaVu fonts; built with MSYS2 CLANG64 (LLVM)
   The launcher                        frozen with PyInstaller (Python, PSF license); icon drawn
                                       with Pillow

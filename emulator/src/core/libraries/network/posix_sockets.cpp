@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #endif
 #include "net_error.h"
+#include "net_firewall.h"
 #include "sockets.h"
 
 namespace Libraries::Net {
@@ -143,6 +144,22 @@ static void convertOrbisNetSockaddrToPosix(const OrbisNetSockaddr* src, sockaddr
     memcpy(&dst_in->sin_addr, &src_in->sin_addr, 4);
 }
 
+// Phase 9's proof test (net_firewall.h): an IPv4 destination the rig's firewall does not name is
+// blocked, as an unreachable host.
+static bool FirewallBlocks(const OrbisNetSockaddr* to, std::string_view what) {
+    if (to == nullptr) {
+        return false;
+    }
+    sockaddr addr{};
+    convertOrbisNetSockaddrToPosix(to, &addr);
+    const auto* in = reinterpret_cast<const sockaddr_in*>(&addr);
+    if (in->sin_family != AF_INET || FirewallAllows(in->sin_addr.s_addr, in->sin_port, what)) {
+        return false;
+    }
+    *Libraries::Kernel::__Error() = ORBIS_NET_EHOSTUNREACH;
+    return true;
+}
+
 static void convertPosixSockaddrToOrbis(sockaddr* src, OrbisNetSockaddr* dst) {
     if (src == nullptr || dst == nullptr)
         return;
@@ -221,6 +238,10 @@ static int socket_is_ready(int sock, bool is_read = true) {
 
 int PosixSocket::SendMessage(const OrbisNetMsghdr* msg, int flags) {
     std::scoped_lock lock{m_mutex};
+    if (msg != nullptr &&
+        FirewallBlocks(static_cast<const OrbisNetSockaddr*>(msg->msg_name), "a message to")) {
+        return -1;
+    }
 
 #ifdef _WIN32
     int totalSent = 0;
@@ -297,6 +318,9 @@ int PosixSocket::SendPacket(const void* msg, u32 len, int flags, const OrbisNetS
             return res;
     }
 #endif
+    if (FirewallBlocks(to, "a datagram to")) {
+        return -1;
+    }
     const auto posix_flags = convertOrbisFlagsToPosix(socket_type, flags);
     if (to == nullptr) {
         res = send(sock, (const char*)msg, len, posix_flags);
@@ -427,6 +451,9 @@ SocketPtr PosixSocket::Accept(OrbisNetSockaddr* addr, u32* addrlen) {
 
 int PosixSocket::Connect(const OrbisNetSockaddr* addr, u32 namelen) {
     std::scoped_lock lock{m_mutex};
+    if (FirewallBlocks(addr, "a connection to")) {
+        return -1;
+    }
     sockaddr addr2;
     convertOrbisNetSockaddrToPosix(addr, &addr2);
     int result = ::connect(sock, &addr2, sizeof(sockaddr_in));

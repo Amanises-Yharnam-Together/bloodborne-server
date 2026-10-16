@@ -85,6 +85,7 @@ struct Functions {
     u8* answer;   // mov eax, 42; ret
     u8* relative; // lea rax, [rip]; ret
     u8* plain;    // mov rax, rdi; add rax, rsi; ret (never hooked)
+    u8* chosen;   // mov eax, 42; ret (its result chosen by the hook)
 };
 
 Functions WriteFunctions(u8* code) {
@@ -107,6 +108,10 @@ Functions WriteFunctions(u8* code) {
     gen.mov(rax, rdi);
     gen.add(rax, rsi);
     gen.ret();
+    gen.align(16);
+    f.chosen = const_cast<u8*>(gen.getCurr());
+    gen.mov(eax, 42);
+    gen.ret();
     return f;
 }
 
@@ -128,6 +133,15 @@ void PS4_SYSV_ABI ReplaceFirst(u64, Core::GuestRegisterSnapshot* registers) {
 
 bool PS4_SYSV_ABI SkipOnSeven(u64, const Core::GuestRegisterSnapshot* registers) {
     return registers->rdi == 7;
+}
+
+// Skips the function on 7 with 9 as its result.
+bool PS4_SYSV_ABI NineOnSeven(u64, Core::GuestRegisterSnapshot* registers) {
+    if (registers->rdi != 7) {
+        return false;
+    }
+    registers->rax = 9;
+    return true;
 }
 
 } // namespace
@@ -169,6 +183,11 @@ int main() {
     CHECK(Core::InstallGuestFunctionOverride(f.answer, answer_bytes, 3, SkipOnSeven));
     CHECK(reinterpret_cast<Function2>(f.answer)(7, 0) == 0);
     CHECK(reinterpret_cast<Function2>(f.answer)(8, 0) == 42);
+
+    // A result override returns the value it chose instead (the game's "sent").
+    CHECK(Core::InstallGuestFunctionResult(f.chosen, answer_bytes, 7, NineOnSeven));
+    CHECK(reinterpret_cast<Function2>(f.chosen)(7, 0) == 9);
+    CHECK(reinterpret_cast<Function2>(f.chosen)(8, 0) == 42);
 
     // A hook taken out again (an all-or-nothing install that failed half way) puts the game's
     // instructions back, read-execute as they were, and the site can be hooked again.

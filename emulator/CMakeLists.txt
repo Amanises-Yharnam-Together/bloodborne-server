@@ -241,7 +241,6 @@ if (ENABLE_SYSTEM_LIBRARIES)
     find_package(glslang 15 CONFIG)
     find_package(half 1.12.0 MODULE)
     find_package(magic_enum 0.9.7 CONFIG)
-    find_package(miniupnpc 2.3.3 MODULE)
     find_package(miniz 3.1 CONFIG)
     find_package(nlohmann_json 3.12 CONFIG)
     find_package(PNG 1.6 MODULE)
@@ -269,6 +268,8 @@ endif()
 
 add_subdirectory(externals)
 include_directories(src)
+# The co-op code shared with shadNet (server/coop: the world log).
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../server)
 
 set(AJM_LIB src/core/libraries/ajm/ajm.cpp
             src/core/libraries/ajm/ajm.h
@@ -385,8 +386,6 @@ set(NETWORK_LIBS src/core/libraries/network/http.cpp
                  src/core/libraries/network/net_epoll.h
                  src/core/libraries/network/net_resolver.cpp
                  src/core/libraries/network/net_resolver.h
-                 src/core/libraries/network/net_upnp.cpp
-                 src/core/libraries/network/net_upnp.h
                  src/core/libraries/network/net_error.h
                  src/core/libraries/network/net.h
                  src/core/libraries/network/ssl.cpp
@@ -397,6 +396,8 @@ set(NETWORK_LIBS src/core/libraries/network/http.cpp
                  src/core/libraries/network/sys_net.h
                  src/core/libraries/network/posix_sockets.cpp
                  src/core/libraries/network/p2p_sockets.cpp
+                 src/core/libraries/network/rpc_bridge.cpp
+                 src/core/libraries/network/rpc_bridge.h
                  src/core/libraries/network/unix_sockets.cpp
                  src/core/libraries/network/sockets.h
 )
@@ -969,6 +970,12 @@ if (ARCHITECTURE STREQUAL "x86_64")
              src/core/bloodborne_portrait.h
              src/core/bloodborne_boards.cpp
              src/core/bloodborne_world_log.cpp
+             src/core/bloodborne_server_world.cpp
+             src/core/bloodborne_team.cpp
+             src/core/bloodborne_trade.cpp
+             src/core/bloodborne_trade.h
+             ${CMAKE_CURRENT_SOURCE_DIR}/../server/coop/world_log.cpp
+             ${CMAKE_CURRENT_SOURCE_DIR}/../server/coop/world_log.h
              src/core/bloodborne_autoplay.cpp
              src/core/bloodborne_trace_diag.cpp
              src/core/bloodborne_re_tracer.cpp
@@ -1230,7 +1237,7 @@ set(EMULATOR src/emulator.cpp
              src/sdl_window.cpp
 )
 
-# shadNet protobuf generation
+# shadNet protobuf generation, from shadNet's own file (one copy for both sides)
 set(SHADNET_PROTO_OUT "${CMAKE_CURRENT_BINARY_DIR}/shadnet_proto_gen")
 file(MAKE_DIRECTORY "${SHADNET_PROTO_OUT}")
 add_custom_command(
@@ -1238,12 +1245,26 @@ add_custom_command(
         "${SHADNET_PROTO_OUT}/shadnet.pb.cc"
         "${SHADNET_PROTO_OUT}/shadnet.pb.h"
     COMMAND protobuf::protoc
-        "--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/src/shadnet"
+        "--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/../server/src"
         "--cpp_out=${SHADNET_PROTO_OUT}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/shadnet/shadnet.proto"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../server/src/shadnet.proto"
     DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/shadnet/shadnet.proto"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../server/src/shadnet.proto"
     COMMENT "Generating shadnet protobuf sources"
+    VERBATIM
+)
+# The co-op messages with shadNet (server/coop/coop.proto: the party's world, phase 3)
+add_custom_command(
+    OUTPUT
+        "${SHADNET_PROTO_OUT}/coop.pb.cc"
+        "${SHADNET_PROTO_OUT}/coop.pb.h"
+    COMMAND protobuf::protoc
+        "--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/../server/coop"
+        "--cpp_out=${SHADNET_PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../server/coop/coop.proto"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/../server/coop/coop.proto"
+    COMMENT "Generating the co-op protobuf sources"
     VERBATIM
 )
 
@@ -1252,6 +1273,9 @@ set(SHADNET src/shadnet/client.cpp
             src/shadnet/server_probe.cpp
             src/shadnet/server_probe.h
             "${SHADNET_PROTO_OUT}/shadnet.pb.cc"
+            "${SHADNET_PROTO_OUT}/coop.pb.cc"
+            ${CMAKE_CURRENT_SOURCE_DIR}/../server/coop/coop_messages.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../server/coop/trade.cpp
 )
 if (APPLE)
     list(APPEND EMULATOR src/sdl_window_apple.mm)
@@ -1281,7 +1305,7 @@ create_target_directory_groups(shadps4)
 target_link_libraries(shadps4 PRIVATE spdlog::spdlog)
 target_link_libraries(shadps4 PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak Tracy::TracyClient RenderDoc::API FFmpeg::ffmpeg Dear_ImGui ImGuiFileDialog gcn half::half ZLIB::ZLIB PNG::PNG minimp3)
 target_link_libraries(shadps4 PRIVATE Boost::headers GPUOpen::VulkanMemoryAllocator LibAtrac9 sirit Vulkan::Headers xxHash::xxhash Zydis::Zydis glslang::glslang SDL3::SDL3 pugixml::pugixml)
-target_link_libraries(shadps4 PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac CLI11::CLI11 OpenAL::OpenAL Cpp_Httplib miniupnpc::miniupnpc)
+target_link_libraries(shadps4 PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac CLI11::CLI11 OpenAL::OpenAL Cpp_Httplib)
 target_link_libraries(shadps4 PRIVATE Freetype::Freetype)
 target_link_libraries(shadps4 PRIVATE libprotobuf)
 target_link_libraries(shadps4 PRIVATE ZArchive::zarchive)

@@ -136,6 +136,21 @@ TEST_F(BloodborneEboot, EveryCoopSiteHoldsItsOriginalBytes) {
     }
 }
 
+// The channel table drops a received packet by giving it a channel past 0x43: both receive paths
+// of 0x01790C20 test `cmp ..., 0x43` right after its hook and take the game's own drop branch
+// (`ja`), which frees the packet (reliable, 0x01790E31) or returns false (unreliable, 0x01790F2E).
+TEST_F(BloodborneEboot, TheChannelChecksJumpToTheGamesOwnDrop) {
+    EXPECT_EQ(Bytes(UnreliableChannelCheckOffset + UnreliableChannelCheck.size(), 6),
+              (std::vector<u8>{0x0F, 0x87, 0xAF, 0x02, 0x00, 0x00})); // ja 0x01790F2E
+    EXPECT_EQ(Bytes(ReliableChannelCheckOffset + ReliableChannelCheck.size(), 2),
+              (std::vector<u8>{0x77, 0x49})); // ja 0x01790E31
+    // The reliable check reads the channel the hook rewrites: movsxd rax, [rbx + 0x64].
+    EXPECT_EQ(Bytes(ReliableChannelCheckOffset, 4), (std::vector<u8>{0x48, 0x63, 0x43, 0x64}));
+    // The send's prologue, where the table answers "not sent" (0) for a dropped channel.
+    EXPECT_EQ(Bytes(PacketSendOffset, PacketSendPrologue.size()),
+              std::vector<u8>(PacketSendPrologue.begin(), PacketSendPrologue.end()));
+}
+
 // The joiner kick of a closing session tests SessionManager +0x118 (ReopensClosedSession):
 // cmp byte [r12 + 0x118], 0 at 0x01ED121E.
 TEST_F(BloodborneEboot, TheClosingSessionKickTestsTheFlagWeClear) {
@@ -491,4 +506,43 @@ TEST_F(BloodborneEboot, TheSummonSlotHoldsReadTheGamesTimes) {
     }
     EXPECT_EQ(holds, (std::vector<float>{55.0f, 180.0f}));
     EXPECT_EQ(float_at(PartySummonSlotHoldConstant), PartySummonSlotHoldSeconds);
+}
+
+// Phase 7 (feature "server owns leaves"): each patched branch jumps where the game's own branch
+// went when it stays in the session, past a block that ends it (its MultiPlayStopRequest call).
+TEST_F(BloodborneEboot, TheGamesOwnLeavesAreSkippedForItsStayPath) {
+    const auto branch_target = [](u64 offset, const std::vector<u8>& bytes) -> u64 {
+        if (bytes.size() >= 2 && (bytes[0] == 0xEB || (bytes[0] >= 0x70 && bytes[0] <= 0x7F))) {
+            return offset + 2 + static_cast<s8>(bytes[1]);
+        }
+        s32 rel = 0;
+        if (bytes.size() >= 6 && bytes[0] == 0x0F && (bytes[1] & 0xF0) == 0x80) {
+            std::memcpy(&rel, bytes.data() + 2, 4);
+            return offset + 6 + rel;
+        }
+        if (bytes.size() >= 5 && bytes[0] == 0xE9) {
+            std::memcpy(&rel, bytes.data() + 1, 4);
+            return offset + 5 + rel;
+        }
+        return 0;
+    };
+    const std::vector<std::pair<std::string_view, u64>> leaves{
+        {"session idle timeout", 0x01789CB4},
+        {"session resend overflow", 0x0178980D},
+        {"room timeout", 0x01789F99},
+    };
+    for (const auto& [name, stop_call] : leaves) {
+        const auto site = std::ranges::find(CoopSites, name, &CoopSite::name);
+        ASSERT_NE(site, CoopSites.end()) << name;
+        const u64 jump = branch_target(site->offset, HexBytes(site->patched));
+        EXPECT_EQ(CallTarget(stop_call), MultiPlayStopRequest) << name;
+        EXPECT_GT(stop_call, site->offset) << name;
+        EXPECT_GT(jump, stop_call) << name; // the block that stops is jumped over
+        if (name != "irregular leave event") {
+            EXPECT_EQ(jump, branch_target(site->offset, HexBytes(site->original))) << name;
+        } else {
+            // NetSync's reason callback returns there: pop rbx; pop r14; pop rbp; ret.
+            EXPECT_EQ(Bytes(jump, 5), (std::vector<u8>{0x5B, 0x41, 0x5E, 0x5D, 0xC3}));
+        }
+    }
 }

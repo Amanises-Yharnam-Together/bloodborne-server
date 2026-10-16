@@ -907,7 +907,18 @@ static void touch_ids(PadData *d) {
 static void sample(PadData *d) {
     bbgpu_game_thread_tick();
     sample_host(d);
-    if (bbgpu_overlay_captures_input()) { hold_after_capture=1; return; }
+    if (bbgpu_overlay_captures_input()) {
+        /* The rig's autoplay still runs (its team screen steps); its buttons stay out of the game. */
+        uint32_t ignored_buttons=0;
+        uint8_t ignored_sticks[4]={128,128,128,128};
+        bbcoop_autoplay_pad(&ignored_buttons,ignored_sticks);
+        hold_after_capture=1;
+        /* Kaniel 2026-10-15: a cutscene under the team's loading screen skips by itself. */
+        if (bbcoop_cutscene_skip()) d->buttons=BTN_OPTIONS;
+        /* The team menu closed as the team's loading screen came up: the game's page under it too. */
+        if (bbcoop_team_menu_back()) d->buttons|=BTN_CIRCLE;
+        return;
+    }
     record_sample(d);
     read_inject();
     replay_sample(d);
@@ -937,6 +948,9 @@ static void sample(PadData *d) {
         if (d->buttons) d->buttons=0;
         else hold_after_capture=0;
     }
+    if (bbcoop_cutscene_skip()) d->buttons|=BTN_OPTIONS; /* headless: the screen is not drawn */
+    /* Kaniel 2026-10-16: the team screen over the game closed: the game's page under it too. */
+    if (bbcoop_team_menu_back()) d->buttons|=BTN_CIRCLE;
     touch_ids(d);
 }
 

@@ -13,7 +13,6 @@
 
 #include "common/logging/log.h"
 #include "core/libraries/network/net.h"
-#include "core/libraries/network/net_upnp.h"
 #include "core/libraries/network/sockets.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_matching2/np_matching2_internal.h"
@@ -406,6 +405,37 @@ void HandleRoomEvent(const ShadNet::NotifyRoomEvent& n) {
         ctx->peers.erase(member_id);
         break;
     }
+    case ORBIS_NP_MATCHING2_ROOM_EVENT_ROOM_OWNER_CHANGED: {
+        // Phase 7, host migration: the server passed the room to `member_id` (the owner left).
+        // The game's room layer moves its owner flag itself (0xCC3F44), so every game's session
+        // host (SprjSessionManager +0xD0) follows.
+        auto room_it = ctx->room_cache.find(room_id);
+        if (room_it == ctx->room_cache.end()) {
+            return;
+        }
+        RoomCache& room = room_it->second;
+        for (auto& [id, member] : room.members) {
+            if (id == member_id) {
+                member.flag_attr |= ORBIS_NP_MATCHING2_ROOMMEMBER_FLAG_ATTR_OWNER;
+            } else {
+                member.flag_attr &= ~ORBIS_NP_MATCHING2_ROOMMEMBER_FLAG_ATTR_OWNER;
+            }
+        }
+        room.owner = member_id == ctx->my_member_id;
+        room.signaling_main_member = member_id;
+        ctx->is_room_owner = room.owner;
+        ctx->previous_owner = static_cast<OrbisNpMatching2RoomMemberId>(n.prev_owner_id);
+        p.room_owner_update = std::make_unique<OrbisNpMatching2RoomOwnerUpdate>();
+        OrbisNpMatching2RoomOwnerUpdate& u = *p.room_owner_update;
+        u = OrbisNpMatching2RoomOwnerUpdate{};
+        u.prevOwner = static_cast<OrbisNpMatching2RoomMemberId>(n.prev_owner_id);
+        u.newOwner = member_id;
+        u.eventCause = cause;
+        p.room_event_data = p.room_owner_update.get();
+        LOG_INFO(Lib_NpMatching2, "Room {} owner changed: member {} -> {}{}", room_id,
+                 n.prev_owner_id, member_id, room.owner ? " (this game)" : "");
+        break;
+    }
     case ORBIS_NP_MATCHING2_ROOM_EVENT_KICKEDOUT: {
         p.room_update = std::make_unique<OrbisNpMatching2RoomUpdate>();
         OrbisNpMatching2RoomUpdate& u = *p.room_update;
@@ -569,7 +599,7 @@ void HandleRoomEvent(const ShadNet::NotifyRoomEvent& n) {
     ScheduleEvent(std::move(ev));
 
     if (event == ORBIS_NP_MATCHING2_ROOM_EVENT_MEMBER_JOINED) {
-        StartMatching2PeerHandshake(*ctx, room_id, member_id);
+        StartMatching2PeerConnect(*ctx, room_id, member_id);
     }
 }
 
@@ -626,6 +656,35 @@ void HandleRoomMessage(const ShadNet::NotifyRoomMessage& n) {
 
 } // namespace
 
+bool OwnsItsRoom() {
+    for (OrbisNpMatching2ContextId id = 1; id <= ContextManager::kMaxContexts; ++id) {
+        if (const ContextObject* ctx = ContextManager::Instance().Get(id);
+            ctx && ctx->room_id != 0 && ctx->is_room_owner) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool OwnedRoomHasOthers() {
+    for (OrbisNpMatching2ContextId id = 1; id <= ContextManager::kMaxContexts; ++id) {
+        const ContextObject* ctx = ContextManager::Instance().Get(id);
+        if (!ctx || ctx->room_id == 0 || !ctx->is_room_owner) {
+            continue;
+        }
+        const auto room = ctx->room_cache.find(ctx->room_id);
+        if (room == ctx->room_cache.end()) {
+            continue;
+        }
+        for (const auto& [member_id, member] : room->second.members) {
+            if (member_id != ctx->my_member_id && member_id != ctx->previous_owner) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void OnMatchingReply(ShadNet::CommandType cmd, u64 pkt_id, ShadNet::ErrorType error,
                      const std::vector<u8>& body) {
     if (cmd == ShadNet::CommandType::RequestSignalingInfos) {
@@ -672,14 +731,13 @@ void SetMmShadNetClient(std::shared_ptr<ShadNet::ShadNetClient> client,
         server_udp_port = g_mm.server_udp_port;
     }
     LOG_INFO(Lib_NpMatching2, "ShadNet features: matching2_enabled={}", matching2_enabled);
-    Net::UPnPClient::Instance().SetP2PFeaturesEnabled(matching2_enabled);
 
     if (!client) {
         NpSignaling::Stubs::SetTransportHooks({});
         NpSignaling::Stubs::SetPeerResolver(nullptr);
         NpSignaling::Stubs::SetMatching2Enabled(false);
         NpSignaling::Stubs::SetMmServerEndpoint(0, 0);
-        StopMatching2HandshakeThread();
+        StopMatching2ConnectThread();
         return;
     }
 
@@ -697,9 +755,9 @@ void SetMmShadNetClient(std::shared_ptr<ShadNet::ShadNetClient> client,
     NpSignaling::Stubs::SetMatching2Enabled(matching2_enabled);
     NpSignaling::Stubs::SetMmServerEndpoint(server_addr, server_udp_port);
     if (matching2_enabled) {
-        StartMatching2HandshakeThread();
+        StartMatching2ConnectThread();
     } else {
-        StopMatching2HandshakeThread();
+        StopMatching2ConnectThread();
     }
     client->onRoomEvent = [](const ShadNet::NotifyRoomEvent& n) { HandleRoomEvent(n); };
     client->onRoomMessage = [](const ShadNet::NotifyRoomMessage& n) { HandleRoomMessage(n); };
@@ -714,7 +772,6 @@ void ClearMmShadNetClient() {
         g_mm.server_udp_port = 0;
         g_mm.matching2_enabled = false;
     }
-    Net::UPnPClient::Instance().SetP2PFeaturesEnabled(false);
     if (old_client) {
         old_client->onRoomEvent = nullptr;
         old_client->onRoomMessage = nullptr;
@@ -723,7 +780,7 @@ void ClearMmShadNetClient() {
     NpSignaling::Stubs::SetPeerResolver(nullptr);
     NpSignaling::Stubs::SetMatching2Enabled(false);
     NpSignaling::Stubs::SetMmServerEndpoint(0, 0);
-    StopMatching2HandshakeThread();
+    StopMatching2ConnectThread();
     {
         std::lock_guard lock(g_mm.pending_mutex);
         g_mm.pending.clear();
@@ -741,9 +798,6 @@ void MmContextStart(OrbisNpMatching2ContextId ctx_id) {
     req.set_ctx_id(ctx_id);
     MmSubmitRequest(ctx_id, 0, ORBIS_NP_MATCHING2_CONTEXT_EVENT_STARTED, MmCommand::ContextStart,
                     MakeProtoPayload(req));
-    if (ContextObject* ctx = ContextManager::Instance().Get(ctx_id)) {
-        SendMatching2StunPing(*ctx);
-    }
 }
 
 s32 MmContextStop(OrbisNpMatching2ContextId ctx_id) {
@@ -821,9 +875,13 @@ s32 MmSubmitRequest(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId 
              ctx_id, req_id, static_cast<u16>(req_event), static_cast<u16>(cmd), a_variant,
              reinterpret_cast<std::uintptr_t>(request_cb.callback), fmt::ptr(request_cb.arg));
 
-    const u64 pkt_id = client->SubmitRequest(static_cast<ShadNet::CommandType>(cmd), payload);
+    u64 pkt_id = 0;
     {
+        // Held across the send: the reply can come back on the reader thread before the request
+        // is filed (rig 2026-10-15, a JoinRoom's on localhost: "has no pending entry", and the
+        // guest never joined); OnMatchingReply waits for the filing instead.
         std::lock_guard lock(g_mm.pending_mutex);
+        pkt_id = client->SubmitRequest(static_cast<ShadNet::CommandType>(cmd), payload);
         g_mm.pending[pkt_id] = {ctx_id,        req_id, req_event, a_variant, request_cb.callback,
                                 request_cb.arg};
     }
@@ -1170,6 +1228,16 @@ s32 MmKickoutRoomMember(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2Reques
     req.set_block_kick_flag(request.blockKickFlag);
     return MmSubmitRequest(ctx_id, req_id, ORBIS_NP_MATCHING2_REQUEST_EVENT_KICKOUT_ROOM_MEMBER,
                            MmCommand::KickoutRoomMember, MakeProtoPayload(req));
+}
+
+void SetMmServerEndpoint(u32 addr_nbo, u16 udp_port_nbo) {
+    {
+        std::lock_guard lock(g_mm.mutex);
+        g_mm.server_addr = addr_nbo;
+        g_mm.server_udp_port = g_mm.matching2_enabled ? udp_port_nbo : 0;
+        udp_port_nbo = g_mm.server_udp_port;
+    }
+    NpSignaling::Stubs::SetMmServerEndpoint(addr_nbo, udp_port_nbo);
 }
 
 u32 GetMmServerAddr() {

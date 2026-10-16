@@ -29,7 +29,6 @@ set "BB_LOG_FILE=%KIT%user\log\shad_log.txt"
 set "BB_LOG_LEVEL=info"
 rem Online through the host's shadnet and backend (user\host_overrides.custom.json).
 set "BB_ONLINE=1"
-set "BB_UPNP=0"
 set "BB_SHADNET_SERVER=%HOSTIP%:31313"
 set "BB_SHADNET_WEBAPI=http://%HOSTIP%:31315"
 set "BB_SHADNET_NPID=%NPID%"

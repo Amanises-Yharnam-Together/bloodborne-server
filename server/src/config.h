@@ -52,6 +52,11 @@ public:
         QReadLocker lk(&m_lock);
         return m_statsPort;
     }
+    // Where the parties' worlds are kept (bloodborne_world.h): one folder per party.
+    QString GetBloodborneWorldPath() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWorldPath;
+    }
     QString GetStatsPath() const {
         QReadLocker lk(&m_lock);
         return m_statsPath;
@@ -77,6 +82,18 @@ public:
     bool IsEmailValidated() const {
         QReadLocker lk(&m_lock);
         return m_emailValidated;
+    }
+    // Phase 11: a player id never seen before gets its account at its first sign-in (no
+    // registering; the launcher makes the id).
+    bool IsMakingAccountsAtSignIn() const {
+        QReadLocker lk(&m_lock);
+        return m_makeAccountsAtSignIn;
+    }
+    // Phase 11, one port: the TCP port listens on 127.0.0.1 only (the games' calls come through
+    // the UDP link's Rpc tunnel). Off: on Host, for games that connect to it themselves.
+    bool IsTcpLocalOnly() const {
+        QReadLocker lk(&m_lock);
+        return m_tcpLocalOnly;
     }
     bool IsBannedDomain(const QString& d) const {
         QReadLocker lk(&m_lock);
@@ -131,8 +148,11 @@ private:
     BackendConfig m_backend;
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
+    QString m_bloodborneWorldPath = "bloodborne_worlds";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute
     bool m_emailValidated = false;
+    bool m_makeAccountsAtSignIn = true;
+    bool m_tcpLocalOnly = true;
     QStringList m_adminsList;
     QSet<QString> m_bannedDomains;
     // When non-empty, registrations must supply this key or they are rejected.

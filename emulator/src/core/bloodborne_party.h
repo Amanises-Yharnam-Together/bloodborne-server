@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -21,9 +22,16 @@
 #include <vector>
 
 #include "common/types.h"
+#include "coop/packet_routes.h"
+#include "coop/world_log.h"
 #include "core/bloodborne_patch_sites.h"
 
 namespace Core::Bloodborne {
+
+// The world log's types and logic are shared with shadNet (server/coop/world_log.h).
+using namespace ::BloodborneCoop;
+// "seq 3 kill 0x10014066 on 0x18000000" (here: it names the map flags with MapFlagBase)
+std::string FormatWorldLogEntry(const WorldLogEntry& entry);
 
 // Validates a "<name>:<secret>" party setting and returns the header value to send.
 std::optional<std::string> ParsePartySetting(std::string_view setting);
@@ -403,7 +411,8 @@ private:
     bool joined = false;
 };
 
-// The party's rest board on shadNet (POST /bloodborne/party/rest): each member posts
+// The party's rest board on shadNet (a message on the server link, once POST
+// /bloodborne/party/rest): each member posts
 // "<member> <lamp>" and gets back one "<member> <lamp>" line per member resting right now.
 struct LampRest {
     std::string member;
@@ -650,7 +659,8 @@ bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_acti
 // The bell effects (9000/9003, 9005/9006) in `before` that are missing from `after`, in order.
 std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before, std::span<const s32> after);
 
-// The party's map board on shadNet (POST /bloodborne/party/map): each member posts
+// The party's map board on shadNet (a message on the server link, once POST /bloodborne/party/map):
+// each member posts
 // "<member> <map>" (the packed map in hex) and reads back one such line per member.
 struct MemberMap {
     std::string member;
@@ -697,9 +707,10 @@ bool PostsKillEchoes(std::span<const MemberMap> board, std::string_view self, u3
 // The host rings again: hosting, fewer than three in the session, a party member online outside.
 bool RoomForMore(bool hosting, size_t in_session, size_t party_online);
 
-// Shared trophies on shadNet (POST /bloodborne/party/trophy): "<member> [<id>...]" with the
-// trophies this member unlocked in a party session; the answer is every trophy the party
-// unlocked, one id per line. A member unlocks the ones it has not handled yet.
+// Shared trophies on shadNet (a message on the server link, once POST /bloodborne/party/trophy):
+// "<member> [<id>...]" with the trophies this member unlocked in a party session; the answer is
+// every trophy the party unlocked, one id per line. A member unlocks the ones it has not handled
+// yet.
 std::string EncodeTrophyUpdate(std::string_view member, std::span<const s32> trophies);
 std::optional<std::vector<s32>> ParseTrophyBoard(std::string_view body);
 std::vector<s32> TrophiesToUnlock(std::span<const s32> board, std::span<const s32> handled);
@@ -920,9 +931,10 @@ bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);
 std::map<s32, bool> ParseWorldChanges(std::string_view text);
-// Lamps shared by the party (POST /bloodborne/party/flags): every member posts the lamps it saw
-// lit (FlagsToShare; "<member> <since> [<flag>:<0|1>...]") and sets the other members' changes
-// after <since> (the answer: "<latest>", then "<flag> <0|1>" lines).
+// Lamps shared by the party (a message on the server link, once POST /bloodborne/party/flags):
+// every member posts the lamps it saw lit (FlagsToShare; "<member> <since> [<flag>:<0|1>...]") and
+// sets the other members' changes after <since> (the answer: "<latest>", then "<flag> <0|1>"
+// lines).
 struct FlagBoardAnswer {
     s64 latest = 0;
     std::vector<std::pair<s32, bool>> changes;
@@ -932,10 +944,11 @@ std::string EncodeFlagUpdate(std::string_view member, s64 since,
                              std::span<const std::pair<s32, bool>> changes);
 std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body);
 
-// Kill echoes shared across maps (POST /bloodborne/party/echoes): the echoes a member got from a
-// kill (AddSouls called from the enemy kill 0x018FC99B or the boss kill 0x01385263) while no
-// other member was on its map go to the board ("<member> <since> [<echoes>...]"), and the other
-// members add the ones after <since> (the answer: "<latest>", then one "<echoes>" line each).
+// Kill echoes shared across maps (a message on the server link, once POST
+// /bloodborne/party/echoes): the echoes a member got from a kill (AddSouls called from the enemy
+// kill 0x018FC99B or the boss kill 0x01385263) while no other member was on its map go to the board
+// ("<member> <since> [<echoes>...]"), and the other members add the ones after <since> (the answer:
+// "<latest>", then one "<echoes>" line each).
 struct KillEchoes {
     s32 amount = 0;
     u32 map = 0; // where the kill was made; 0 from an older post
@@ -980,10 +993,10 @@ private:
 // whenever a party is configured and the player is loaded, in a session or not.
 bool SharesWithParty(bool party_configured, bool player_loaded);
 
-// Enemy deaths kept in step across loads (POST /bloodborne/party/kills, the flag board's format
-// with character handles): the kills this member made during its current visit to a map, posted
-// as (handle, true), and taken back as (handle, false) when the visit ends. A visit is one load
-// of a map (the map and the player's character).
+// Enemy deaths kept in step across loads (a message on the server link, once POST
+// /bloodborne/party/kills; the flag board's format with character handles): the kills this member
+// made during its current visit to a map, posted as (handle, true), and taken back as (handle,
+// false) when the visit ends. A visit is one load of a map (the map and the player's character).
 // Where a party guest resumes (user/bloodborne_party_resume_slotN.txt, "<map> <x> <y> <z>"):
 // its last map and position, so the next start goes back there instead of to its save's
 // position (where it was first summoned from).
@@ -1006,15 +1019,22 @@ struct ResumeStep {
 // From where the guest loaded: stay (nothing remembered, or within 5 m), move on the same map,
 // travel to the remembered map first, or forget the point (another character in the slot). A
 // guest no longer on the map it loaded on (`loaded_map`, 0 if not known) travelled on: it stays.
+// One that moved more than a metre from where its load put it (`loaded_at`, when known) set off on
+// its own: it stays too (phase 7).
 ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPosition& at, s32 progress,
-                            u32 loaded_map = 0);
+                            u32 loaded_map = 0,
+                            std::optional<LampPosition> loaded_at = std::nullopt);
+// Phase 7: the point a loaded guest resumes at: the server's (where it last stood in its team's
+// world: the newest) when it has one, else its own file's, which counts only out of a session.
+std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<ResumePoint> from_file,
+                                           std::optional<ResumePoint> from_server);
 
-// World state per map (POST /bloodborne/party/mapstate): the host posts the bits of its map's
-// 10000 flags from MapFlagBase (MSB first, as the flag store keeps them) as "<member> <map>
-// <hex>", and a guest loading that map sets the TakesHostMapFlag ones to the host's.
+// World state per map (a message on the server link, once POST /bloodborne/party/mapstate): the
+// host posts the bits of its map's 10000 flags from MapFlagBase (MSB first, as the flag store keeps
+// them) as "<member> <map> <hex>", and a guest loading that map sets the TakesHostMapFlag ones to
+// the host's.
 s32 MapFlagBase(u32 packed_map);
 bool TakesHostMapFlag(s32 flag);
-constexpr s32 MapFlagCount = 10000;
 struct MemberMapState {
     u32 map = 0;
     std::vector<u8> bits;
@@ -1100,6 +1120,12 @@ std::string_view PlaceStateName(PlaceState state);
 std::string_view PlaceCauseName(PlaceCause cause);
 // "Co-op place: <from> -> <to> map <hex> visit N (<cause>)"
 std::string FormatPlaceChange(const PlaceChange& change);
+// A change of place that starts a new world (world_changed_ms: the shown board waits for its
+// story, deaths then are no kills): a new visit that plays after a load, the first one after the
+// title (Unknown -> Playing, which once never counted, so a host posted its characters before its
+// story removed Iosefka) and a trip's arrival on another map (Playing -> Playing), not a walk
+// across a border or a teleport.
+bool StartsNewWorld(const PlaceChange& change);
 
 // What ends the state that lives for a visit or a session (docs/WORLD_SYNC.md): each container
 // registers its reset for the events that end it, and one dispatch runs them, instead of a reset
@@ -1143,21 +1169,6 @@ private:
     u64 epoch = 1; // 0 stays free for "unknown"
 };
 
-// Enemy HP kept in step (POST /bloodborne/party/hp, the map state board's format): each member
-// posts the enemies it has hurt during its visit, as (handle, HP, max HP), and every member
-// shows the lowest share of HP left. Since seamless travel each member runs its own copy of a
-// map, so the host's hits never reached the guest's Gascoigne (friend run 2026-10-09).
-struct EnemyHp {
-    u32 handle = 0;
-    s32 hp = 0;
-    s32 max = 0;
-    bool operator==(const EnemyHp&) const = default;
-};
-struct EnemyHpReport {
-    u64 visit = 0;
-    std::vector<EnemyHp> enemies;
-    bool operator==(const EnemyHpReport&) const = default;
-};
 // Enemy HP between members whose worlds are separate (after a trip each member runs its own copy
 // of a map, and the game no longer sends HP between them): each member posts the damage its
 // copy of each enemy took from it this visit (EnemyHp.hp is that damage), under its own source
@@ -1223,11 +1234,6 @@ private:
 // A report can come straight over the P2P link before the game's own copy of the same hit; once
 // that happened for a member, its new damage waits this long for the game's copy.
 constexpr s64 SharedDamageHoldMs = 250;
-// In one world the game sends enemy HP from the host, but not an NPC's (rig 2026-10-10: the
-// host's Oedon Chapel NPC at 422 while the guest's showed 910). There the host posts the HP its
-// hurt characters have (EnemyHp.hp is HP, the report's source has HostHpReport set), and a guest
-// lowers its copies to that share; the guest's own hits reach the host by the game.
-constexpr u64 HostHpReport = u64{1} << 63;
 // How often the HP board is posted and read, and the world's enemies read for it (see
 // HpBoardWait).
 constexpr std::chrono::milliseconds HpBoardRound{100};
@@ -1356,327 +1362,13 @@ std::vector<u8> EncodeDirectKills(std::string_view member, std::span<const u32> 
 std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload);
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills);
 
-// Characters hidden or shown as the host's world has them (POST /bloodborne/party/shown, the map
-// state board's format): the host posts every character of its map with its event disable byte
-// (+0x28, "hidden by the story"), and a guest on that map in the session sets its copies the
-// same. A guest's world, rebuilt as the host's client when it joins, does not run the events
-// that hide story NPCs (Iosefka at her clinic door, the Doll), so it showed them.
-struct CharacterShown {
-    u32 handle = 0;
-    bool hidden = false;
-    // Its enable switch off (2004:5; the byte's bit 1): the host's story switches some story
-    // NPCs off instead (the copy of Iosefka by her door, 0x10014000, on new characters).
-    bool disabled = false;
-    // Farther than FarFromHostMetres from the host (bit 2). The host's events park characters far
-    // from its player (+0x28 and the switch: the woods' enemies by the Cathedral Ward border), so
-    // a guest elsewhere does not follow those (Kaniel's friend, 2026-10-11: an empty forest).
-    bool distant = false;
-    // Dead in the host's world (bit 3; IsDeadInItsWorld), killed now or dead in its save. Guests
-    // whose worlds are apart take these as killed (DeadInTheHostsWorld).
-    bool dead = false;
-    bool operator==(const CharacterShown&) const = default;
-};
-
-// The world log (docs/WORLD_SYNC.md, Stage C): one ordered list of world changes, kept by the
-// host and sent to every member over the P2P link, instead of a board per feature. Step 1 carries
-// the kills (the kill board's job before); shown state, flags and enemy HP come later.
-//
-// Members propose, the host orders: each member sends its standing kills, whole, to the host
-// (WorldLogProposal); the host keeps every member's set and appends an entry when the party's
-// union changes (the first member's kill of an enemy is a Kill, the last one's withdrawal an
-// Unkill, so two members' kills of one enemy are one entry). Entries carry a seq that only grows
-// within the host's log epoch; members apply them in seq order exactly once, and ask for a
-// snapshot (the union per map and the last seq) when they find a gap, join late or meet a new
-// epoch past its start. A new epoch (the host's new session, wipe or character) starts with a
-// Reset of every map. The kill board stays underneath as the fallback copy: the host posts the
-// union there.
-//
-// Step 2 carries the shown characters (the shown board's job before): the host's map and each of
-// its characters' CharacterShown bits, as entries when they change (ShownMap, Shown, Unshown),
-// and in a snapshot of their own (WorldLogShownSnapshotType). A guest follows them as it followed
-// the board's copy. A member that meets a kind it does not know counts it as applied and does
-// nothing, so a protocol 2 member skips the shown entries.
-enum class WorldLogKind : u8 {
-    Reset = 0,    // every kill on `map` goes (map 0: on every map), and the shown state there
-    Kill = 1,     // `subject` (a character's handle) is dead on `map`
-    Unkill = 2,   // `subject` is no longer
-    ShownMap = 3, // the host's shown characters are of `map` from now on (none known yet)
-    Unshown = 4,  // `subject` is no longer in the host's world on `map`
-    // `subject` on `map` has `value` (ShownBits) in the host's world; on the link 0x10 | value.
-    Shown = 0x10,
-    // Step 3 (the flag boards' job): a shared flag (FlagsToShare: a lamp lit, a boss fog entered)
-    // turned on or off in a member's world, `subject` the flag; every member sets it. Events, not
-    // state: a snapshot does not carry them (a member that joins later gets none of the earlier
-    // ones, as a game's first flag board post gets none), the flag board's copy covers a gap.
-    FlagSet = 5,
-    FlagClear = 6,
-    // The host's map state (the map state board's job): its flags on `map` are from now on all
-    // off but the MapFlagOn ones that follow; MapFlagOn / MapFlagOff: flag MapFlagBase(map) +
-    // `subject` turned on / off. A guest loading that map takes the TakesHostMapFlag ones.
-    MapStateMap = 7,
-    MapFlagOn = 8,
-    MapFlagOff = 9,
-    // Step 4 (the HP board's and the direct damage frames' job): each member's HP report
-    // (EnemyHpReport: its damage per enemy this visit, or the host's HP in one world), by source.
-    // HpSource: the entries after it are of source `subject` << 32 | `value` on `map`; HpValue:
-    // `subject` (a handle) has `value` (damage or HP) of max `map`; HpGone: `subject` is no longer
-    // in that report; HpSourceGone: source `subject` << 32 | `value` went (a new visit, a member's
-    // restart).
-    HpSource = 10,
-    HpValue = 11,
-    HpGone = 12,
-    HpSourceGone = 13,
-    // The host's return point (GlobalState +0x1528, where its death respawn wakes it) is `subject`
-    // from now on, on `map` (PackedMapOfWarpPoint, 0 when not known): a guest's party death wakes
-    // there too (see PartyRespawnPoint). A new log starts with it; a snapshot's map state part
-    // carries it.
-    ReturnPoint = 14,
-};
-struct WorldLogEntry {
-    u64 seq = 0;
-    u64 epoch = 0;
-    u32 map = 0;
-    WorldLogKind kind = WorldLogKind::Kill;
-    u32 subject = 0;
-    u32 value = 0; // Shown: the bits; HP entries: see WorldLogKind
-    bool operator==(const WorldLogEntry&) const = default;
-};
-// "seq 3 kill 0x10014066 on 0x18000000"
-std::string FormatWorldLogEntry(const WorldLogEntry& entry);
-// A character's CharacterShown bits (hidden 1, disabled 2, distant 4, dead 8, as on the shown
-// board) and back.
-u8 ShownBits(const CharacterShown& character);
-CharacterShown ShownFromBits(u32 handle, u8 bits);
-// The host's shown characters: its map and each character's bits.
-struct WorldLogShown {
-    u32 map = 0;
-    std::map<u32, u8> bits;
-    bool operator==(const WorldLogShown&) const = default;
-};
-std::vector<CharacterShown> WorldLogShownCharacters(const WorldLogShown& shown);
-// The host's map state: its map and the MapFlagCount flags from MapFlagBase(map), MSB first (as on
-// the map state board, MemberMapState::bits). Empty bits for map 0.
-struct WorldLogMapState {
-    u32 map = 0;
-    std::vector<u8> bits;
-    bool operator==(const WorldLogMapState&) const = default;
-};
-// The host's return point (WorldLogKind::ReturnPoint): point 0 when none is known.
-struct WorldLogReturnPoint {
-    s32 point = 0;
-    u32 map = 0;
-    bool operator==(const WorldLogReturnPoint&) const = default;
-};
-// A member's shared flag events to the host (frame WorldLogFlagsProposeType): each with a number
-// that counts up within the member's run, resent for WorldLogFlagResendWindowMs so a lost frame
-// costs nothing; the host takes each number once.
-struct WorldLogFlagEvent {
-    u32 number = 0;
-    s32 flag = 0;
-    bool on = true;
-    bool operator==(const WorldLogFlagEvent&) const = default;
-};
-struct WorldLogFlagProposal {
-    std::string member;
-    u64 epoch = 0; // the host's log this member follows, 0 before it heard one
-    u32 run = 0;
-    std::vector<WorldLogFlagEvent> events;
-    bool operator==(const WorldLogFlagProposal&) const = default;
-};
-constexpr s64 WorldLogFlagResendWindowMs = 10'000;
-constexpr size_t WorldLogFlagEventsPerFrame = 64;
-// The same flag turned the same way again this soon is the same event (two members lit one lamp;
-// the log's and the flag board's copies of one event).
-constexpr s64 WorldLogFlagRepeatMs = 10'000;
-// A member's events waiting to be taken: numbered as they come, sent until they are
-// WorldLogFlagResendWindowMs old (the newest WorldLogFlagEventsPerFrame).
-class WorldLogFlagOutbox {
-public:
-    void Add(std::span<const std::pair<s32, bool>> changes, s64 now_ms);
-    std::vector<WorldLogFlagEvent> Pending(s64 now_ms);
-    // Whether something came since the last call (it goes out at once).
-    bool TakeNew() {
-        return std::exchange(fresh, false);
-    }
-    // The events went another way (the flag board): none waits any more.
-    void Clear() {
-        sent.clear();
-        fresh = false;
-    }
-
-private:
-    u32 next = 0;
-    std::vector<std::pair<WorldLogFlagEvent, s64>> sent;
-    bool fresh = false;
-};
-// One flag event from either copy (the log's entries, the flag board's answers): true the first
-// time (flag, on) is seen within WorldLogFlagRepeatMs, and it is remembered.
-class FlagEventOnce {
-public:
-    bool First(s32 flag, bool on, s64 now_ms);
-
-private:
-    std::map<std::pair<s32, bool>, s64> seen;
-};
-// Standing kills by map.
-using WorldLogKills = std::map<u32, std::set<u32>>;
-size_t WorldLogKillCount(const WorldLogKills& kills);
-std::unordered_set<u32> WorldLogHandles(const WorldLogKills& kills);
-// A log epoch is the host's run (its upper half, random per game start) and its count of logs
-// started in that run. A member follows any epoch of another run (the host's game restarted), and
-// within one run only a later one (a frame of an older log that came late is dropped).
-u64 WorldLogEpoch(u32 run, u32 count);
-bool WorldLogEpochFollows(u64 next, u64 current);
-
-// The frames (on the co-op channel, after the hello): older builds drop these types (their
-// decoders take only 0x30-0x33).
-constexpr u8 WorldLogProposeType = 0x34;         // member -> host: its standing kills
-constexpr u8 WorldLogEntriesType = 0x35;         // host -> members: entries, or a heartbeat
-constexpr u8 WorldLogSnapshotRequestType = 0x36; // member -> host
-constexpr u8 WorldLogSnapshotType = 0x37;        // host -> that member, in parts
-// host -> that member, after the kills' parts: the shown characters at the same seq (protocol 2
-// builds drop it, as they drop any type they do not know)
-constexpr u8 WorldLogShownSnapshotType = 0x38;
-// member -> host: its shared flag events (WorldLogFlagProposal; protocol 3 builds drop it)
-constexpr u8 WorldLogFlagsProposeType = 0x39;
-// host -> that member, after the shown parts: the host's map state at the same seq
-constexpr u8 WorldLogMapStateSnapshotType = 0x3A;
-// member -> host: its HP report (WorldLogHpProposal), at once on a change and every
-// WorldLogResendMs
-constexpr u8 WorldLogHpProposeType = 0x3B;
-// host -> that member, after the map state: every HP report at the same seq, in parts
-constexpr u8 WorldLogHpSnapshotType = 0x3C;
-// host -> that member, last: the flag events of the log's last WorldLogRecentFlags (a member that
-// missed some in a gap sets them; one that joins gets none, as a game's first flag board post)
-constexpr u8 WorldLogFlagsSnapshotType = 0x3D;
-constexpr size_t WorldLogRecentFlags = 64;
-bool IsWorldLogFrameType(u8 type);
-// A member's proposal and the host's heartbeat go out at once on a change and again every
-// WorldLogResendMs; a member's log stands WorldLogLifeMs after the host's last frame (else the
-// kill board's copy is used); a snapshot is asked for at most every WorldLogSnapshotRetryMs.
-constexpr s64 WorldLogResendMs = 500;
-constexpr s64 WorldLogLifeMs = 3'000;
-constexpr s64 WorldLogSnapshotRetryMs = 1'000;
-// Kept small for the link's 1400-byte frames: entries per entries frame, handles per proposal or
-// snapshot part (a member's standing kills above it are cut, as the direct kills frame did).
-constexpr size_t WorldLogEntriesPerFrame = 100; // 13 bytes each
-// Enemies per HP proposal or HP snapshot part (12 bytes each).
-constexpr size_t WorldLogHpPerFrame = 100;
-constexpr size_t WorldLogHandlesPerFrame = 280;
-// Characters per shown snapshot part (5 bytes each).
-constexpr size_t WorldLogShownPerFrame = 240;
-// Entries a member keeps past a gap until the snapshot comes.
-constexpr size_t WorldLogWaitingCap = 2'000;
-
-struct WorldLogProposal {
-    std::string member; // the board's name for the member
-    u64 epoch = 0;      // the host's log epoch this member follows, 0 before it heard one
-    u32 run = 0;        // this game's run: a restart is a new run (its old kills go)
-    u32 number = 0;     // counts up within a run: an older proposal that comes late is dropped
-    WorldLogKills kills;
-    bool operator==(const WorldLogProposal&) const = default;
-};
-struct WorldLogBatch {
-    std::string host; // the host's board name (its own kill board entries are the log's copy)
-    u64 epoch = 0;
-    u64 last = 0;                       // the host's last seq: no entries is a heartbeat
-    std::vector<WorldLogEntry> entries; // consecutive seqs, all of `epoch`
-    bool operator==(const WorldLogBatch&) const = default;
-};
-struct WorldLogSnapshotRequest {
-    std::string member;
-    u64 epoch = 0; // what the member has
-    u64 seq = 0;
-    bool operator==(const WorldLogSnapshotRequest&) const = default;
-};
-struct WorldLogSnapshot {
-    std::string host;
-    u64 epoch = 0;
-    u64 last = 0;
-    u8 part = 0;
-    u8 parts = 1;
-    WorldLogKills kills; // this part's share
-    bool operator==(const WorldLogSnapshot&) const = default;
-};
-std::vector<u8> EncodeWorldLogProposal(const WorldLogProposal& proposal);
-std::optional<WorldLogProposal> DecodeWorldLogProposal(std::span<const u8> payload);
-std::vector<u8> EncodeWorldLogBatch(const WorldLogBatch& batch);
-std::optional<WorldLogBatch> DecodeWorldLogBatch(std::span<const u8> payload);
-std::vector<u8> EncodeWorldLogSnapshotRequest(const WorldLogSnapshotRequest& request);
-std::optional<WorldLogSnapshotRequest> DecodeWorldLogSnapshotRequest(std::span<const u8> payload);
-std::vector<u8> EncodeWorldLogSnapshot(const WorldLogSnapshot& snapshot);
-std::optional<WorldLogSnapshot> DecodeWorldLogSnapshot(std::span<const u8> payload);
-struct WorldLogShownSnapshot {
-    std::string host;
-    u64 epoch = 0;
-    u64 last = 0;
-    u8 part = 0;
-    u8 parts = 1;
-    WorldLogShown shown; // the map, and this part's share of the characters
-    bool operator==(const WorldLogShownSnapshot&) const = default;
-};
-std::vector<u8> EncodeWorldLogShownSnapshot(const WorldLogShownSnapshot& snapshot);
-std::optional<WorldLogShownSnapshot> DecodeWorldLogShownSnapshot(std::span<const u8> payload);
-struct WorldLogMapStateSnapshot {
-    std::string host;
-    u64 epoch = 0;
-    u64 last = 0;
-    WorldLogMapState state;           // one part: the bitmap fits a frame
-    WorldLogReturnPoint return_point; // the host's, at the same seq
-    bool operator==(const WorldLogMapStateSnapshot&) const = default;
-};
-std::vector<u8> EncodeWorldLogMapStateSnapshot(const WorldLogMapStateSnapshot& snapshot);
-std::optional<WorldLogMapStateSnapshot> DecodeWorldLogMapStateSnapshot(std::span<const u8> payload);
-std::vector<u8> EncodeWorldLogFlagProposal(const WorldLogFlagProposal& proposal);
-std::optional<WorldLogFlagProposal> DecodeWorldLogFlagProposal(std::span<const u8> payload);
-// A member's HP report as the host keeps it: the report's map and each enemy's (value, max).
-struct WorldLogHpReport {
-    u32 map = 0;
-    std::map<u32, std::pair<s32, s32>> enemies;
-    bool operator==(const WorldLogHpReport&) const = default;
-};
-using WorldLogHp = std::map<u64, WorldLogHpReport>; // by source (EnemyHpReport::visit)
-// The reports as SharedDamage takes them, with their maps.
-std::vector<std::pair<u32, EnemyHpReport>> WorldLogHpReports(const WorldLogHp& hp);
-struct WorldLogHpProposal {
-    std::string member;
-    u64 epoch = 0; // the host's log this member follows, 0 before it heard one
-    u32 run = 0;
-    u32 number = 0; // counts up within the run: a late one is dropped
-    u32 map = 0;
-    EnemyHpReport report; // at most WorldLogHpPerFrame enemies
-    bool operator==(const WorldLogHpProposal&) const = default;
-};
-std::vector<u8> EncodeWorldLogHpProposal(const WorldLogHpProposal& proposal);
-std::optional<WorldLogHpProposal> DecodeWorldLogHpProposal(std::span<const u8> payload);
-struct WorldLogHpSnapshot {
-    std::string host;
-    u64 epoch = 0;
-    u64 last = 0;
-    u8 part = 0;
-    u8 parts = 1;
-    WorldLogHp hp; // this part's share (a source may span parts)
-    bool operator==(const WorldLogHpSnapshot&) const = default;
-};
-std::vector<u8> EncodeWorldLogHpSnapshot(const WorldLogHpSnapshot& snapshot);
-std::optional<WorldLogHpSnapshot> DecodeWorldLogHpSnapshot(std::span<const u8> payload);
-struct WorldLogFlagsSnapshot {
-    std::string host;
-    u64 epoch = 0;
-    u64 last = 0;
-    std::vector<WorldLogEntry> events; // FlagSet / FlagClear entries, oldest first
-    bool after_wipe = false; // the log started at a wipe (its Reset's WorldLogResetAfterWipe)
-    bool operator==(const WorldLogFlagsSnapshot&) const = default;
-};
-std::vector<u8> EncodeWorldLogFlagsSnapshot(const WorldLogFlagsSnapshot& snapshot);
-std::optional<WorldLogFlagsSnapshot> DecodeWorldLogFlagsSnapshot(std::span<const u8> payload);
-
-// The world snapshot on the server (POST /bloodborne/party/world, Kaniel 2026-10-12): in place of
-// the polled per-feature boards while the world log runs, the host posts its whole log state every
-// WorldSnapshotPostMs as one blob, the same snapshot frames it sends a member that asks over the
-// link. A member reads it only when its copy is not fresh (a join, a restart, its link to the host
-// down) and takes the frames as it takes them from the host. The blob: a version byte, then each
-// frame as type (u8), length (u16), payload, after the frame count (u16).
+// The world snapshot on the server (a message on the server link, once POST
+// /bloodborne/party/world; Kaniel 2026-10-12): in place of the polled per-feature boards while the
+// world log runs, the host posts its whole log state every WorldSnapshotPostMs as one blob, the
+// same snapshot frames it sends a member that asks over the link. A member reads it only when its
+// copy is not fresh (a join, a restart, its link to the host down) and takes the frames as it takes
+// them from the host. The blob: a version byte, then each frame as type (u8), length (u16),
+// payload, after the frame count (u16).
 constexpr s64 WorldSnapshotPostMs = 2'000;
 // A server snapshot older than this is not taken (a party that went on without its host).
 constexpr s64 WorldSnapshotMaxAgeMs = 30'000;
@@ -1692,304 +1384,6 @@ struct WorldSnapshotAnswer {
     bool operator==(const WorldSnapshotAnswer&) const = default;
 };
 std::optional<WorldSnapshotAnswer> ParseWorldSnapshotAnswer(std::string_view body);
-// `entries` (consecutive) as batches of at most WorldLogEntriesPerFrame; one heartbeat for none.
-std::vector<WorldLogBatch> BatchWorldLog(std::string_view host, u64 epoch, u64 last,
-                                         std::span<const WorldLogEntry> entries);
-
-// The host's side: every member's standing kills and the log of the party's union.
-class WorldLogHost {
-public:
-    // A new log (a new epoch): a Reset of every map and no kills, the members' sets gone (a new
-    // session or character, or a party wipe, which respawns the map for everyone: rig smoke
-    // 2026-10-12, run 191219, the kept sets stood the host's own kill again). `after_wipe` marks
-    // the Reset (WorldLogResetAfterWipe): a member proposes again only after its own wipe (see
-    // WorldLogWipeHold).
-    std::vector<WorldLogEntry> Start(u64 epoch, bool after_wipe);
-    struct Taken {
-        bool stale = false; // dropped: an older one of the member's run, or another log epoch
-        std::vector<WorldLogEntry> entries;
-    };
-    // A member's (or the host's own) proposal. Its set replaces the member's last one.
-    Taken Propose(const WorldLogProposal& proposal);
-    bool Started() const {
-        return epoch != 0;
-    }
-    u64 Epoch() const {
-        return epoch;
-    }
-    u64 Last() const {
-        return last;
-    }
-    // The party's standing kills.
-    WorldLogKills Kills() const;
-    // The kills in parts of at most WorldLogHandlesPerFrame handles (one part when there are none).
-    std::vector<WorldLogSnapshot> Snapshot(std::string_view host) const;
-    // The host's characters on its map now: the entries that bring the log's copy to them (on
-    // another map a ShownMap first, then each character).
-    std::vector<WorldLogEntry> Show(u32 map, std::span<const CharacterShown> characters);
-    // The shown characters left the log (its path went back to the board): the next Show starts
-    // with a ShownMap.
-    void ForgetShown() {
-        shown = {};
-    }
-    const WorldLogShown& Shown() const {
-        return shown;
-    }
-    // The shown characters in parts of at most WorldLogShownPerFrame (one part when there are
-    // none), at the same seq as Snapshot.
-    std::vector<WorldLogShownSnapshot> ShownSnapshot(std::string_view host) const;
-    // A member's (or the host's own) shared flag events: an entry for each new one (by number
-    // within its run), but none for a flag turned the same way within WorldLogFlagRepeatMs.
-    Taken ProposeFlags(const WorldLogFlagProposal& proposal, s64 now_ms);
-    // The host's map state now (its map's flags): the entries that bring the log's copy to it
-    // (another map: a MapStateMap, then each flag on).
-    std::vector<WorldLogEntry> MapState(u32 map, std::span<const u8> bits);
-    // The flags left the log (their path went back to the boards).
-    void ForgetMapState() {
-        map_state = {};
-    }
-    const WorldLogMapState& MapStateNow() const {
-        return map_state;
-    }
-    // The map state part carries the return point too.
-    WorldLogMapStateSnapshot MapStateSnapshot(std::string_view host) const;
-    // The host's return point now (GlobalState +0x1528 and its map): an entry when it changed. A
-    // point that cannot be read (0 or below, a load) leaves the last one standing.
-    std::vector<WorldLogEntry> ReturnPoint(s32 point, u32 map);
-    const WorldLogReturnPoint& ReturnPointNow() const {
-        return return_point;
-    }
-    // A member's (or the host's own) HP report, whole: the entries for what changed (a new source
-    // of the member's first: its old one goes).
-    Taken ProposeHp(const WorldLogHpProposal& proposal);
-    const WorldLogHp& Hp() const {
-        return hp;
-    }
-    // The HP reports in parts of at most WorldLogHpPerFrame enemies (one part when there are none).
-    std::vector<WorldLogHpSnapshot> HpSnapshot(std::string_view host) const;
-    // The flag events of the log's last WorldLogRecentFlags entries.
-    WorldLogFlagsSnapshot FlagsSnapshot(std::string_view host) const;
-
-private:
-    struct Member {
-        u32 run = 0;
-        u32 number = 0;
-        WorldLogKills kills;
-    };
-    struct FlagSender {
-        u32 run = 0;
-        u32 number = 0; // the last event taken
-    };
-    struct Standing {
-        u32 map = 0;
-        std::set<std::string> by;
-    };
-    WorldLogEntry Append(WorldLogKind kind, u32 map, u32 subject, u32 value = 0);
-    void Own(const std::string& member, u32 map, u32 handle, std::vector<WorldLogEntry>& entries);
-    void Disown(const std::string& member, u32 handle, std::vector<WorldLogEntry>& entries);
-    void AppendShown(std::vector<WorldLogEntry>& entries);
-    void AppendMapState(std::vector<WorldLogEntry>& entries);
-    void DropHpSource(u64 source, std::vector<WorldLogEntry>& entries);
-
-    u64 epoch = 0;
-    u64 last = 0;
-    std::map<std::string, Member> members;
-    std::map<u32, Standing> standing; // handle -> its map and the members whose kill it is
-    WorldLogShown shown;
-    std::map<std::string, FlagSender> flag_senders;
-    FlagEventOnce flag_events;
-    WorldLogMapState map_state;
-    struct HpSender {
-        u32 run = 0;
-        u32 number = 0;
-        u64 source = 0;
-    };
-    std::map<std::string, HpSender> hp_senders;
-    WorldLogHp hp;
-    std::vector<WorldLogEntry> recent_flags; // the last WorldLogRecentFlags flag entries
-    bool started_after_wipe = false;         // Start's `after_wipe`, for the snapshots
-    WorldLogReturnPoint return_point;
-};
-
-// A member's side: the entries applied in seq order, exactly once.
-class WorldLogMember {
-public:
-    struct Step {
-        std::vector<WorldLogEntry> applied;
-        bool new_epoch = false; // the host's log started over (everything before is gone)
-        bool snapshot = false;  // a whole snapshot was applied
-        bool stale = false;     // an older log's frame: dropped
-        bool gap = false;       // entries are missing (a snapshot is due)
-        // A snapshot based this member on a log that started at a wipe (see WorldLogWipeHold).
-        bool after_wipe = false;
-    };
-    Step Take(const WorldLogBatch& batch, s64 now_ms);
-    Step Take(const WorldLogSnapshot& part, s64 now_ms);
-    Step Take(const WorldLogShownSnapshot& part, s64 now_ms);
-    // A snapshot is whole with its kills, shown characters and map state parts (one build: the host
-    // sends all of them).
-    Step Take(const WorldLogMapStateSnapshot& part, s64 now_ms);
-    Step Take(const WorldLogHpSnapshot& part, s64 now_ms);
-    // The last part: a snapshot is whole with it. Its events after what this member had applied
-    // (in the same log) come out in Step::applied, the flag events it missed.
-    Step Take(const WorldLogFlagsSnapshot& part, s64 now_ms);
-    // Every member's HP report (this member's own too), as the host has them.
-    const WorldLogHp& Hp() const {
-        return hp;
-    }
-    const WorldLogMapState& MapState() const {
-        return map_state;
-    }
-    // Whether MapState is the host's (as ShownKnown).
-    bool MapStateKnown() const {
-        return map_state_known;
-    }
-    // The host's return point (point 0: not known yet).
-    const WorldLogReturnPoint& HostReturnPoint() const {
-        return return_point;
-    }
-    // Whether to ask the host for a snapshot now (a gap, a late join, a new epoch past its start),
-    // at most every WorldLogSnapshotRetryMs; true marks it asked.
-    bool SnapshotDue(s64 now_ms);
-    // In step with the host (no gap) and heard from within WorldLogLifeMs.
-    bool Fresh(s64 now_ms) const;
-    // This member left the session or became another character: the log is forgotten.
-    void Reset();
-    u64 Epoch() const {
-        return epoch;
-    }
-    u64 Applied() const {
-        return applied;
-    }
-    const std::string& Host() const {
-        return host;
-    }
-    const WorldLogKills& Kills() const {
-        return kills;
-    }
-    const WorldLogShown& Shown() const {
-        return shown;
-    }
-    // Whether Shown is the host's: the log seen from its start or from a ShownMap, or the last
-    // snapshot had the shown characters too.
-    bool ShownKnown() const {
-        return shown_known;
-    }
-
-private:
-    bool Follow(u64 next_epoch, std::string_view next_host, s64 now_ms, Step& step);
-    void Drain(Step& step);
-    void Apply(const WorldLogEntry& entry);
-    bool Behind() const;
-    struct PartialSnapshot;
-    PartialSnapshot& Pending(u64 last);
-    void Complete(Step& step);
-
-    u64 epoch = 0;
-    u64 applied = 0;
-    u64 host_last = 0;
-    bool based = false; // has the log from its start or a snapshot
-    std::string host;
-    std::map<u64, WorldLogEntry> waiting; // past a gap
-    std::optional<s64> heard_ms;
-    std::optional<s64> asked_ms;
-    struct PartialSnapshot {
-        u64 last = 0;
-        std::optional<u8> parts;
-        std::map<u8, WorldLogKills> got;
-        std::optional<u8> shown_parts;
-        std::map<u8, WorldLogShown> shown_got;
-        std::optional<WorldLogMapState> map_state;
-        WorldLogReturnPoint return_point; // with map_state
-        std::optional<u8> hp_parts;
-        std::map<u8, WorldLogHp> hp_got;
-        std::optional<std::vector<WorldLogEntry>> flags;
-        bool after_wipe = false; // the flags part's WorldLogFlagsSnapshot::after_wipe
-    };
-    void ApplyMapFlag(const WorldLogEntry& entry);
-    void ApplyHp(const WorldLogEntry& entry);
-    std::optional<PartialSnapshot> partial;
-    WorldLogKills kills;
-    WorldLogShown shown;
-    bool shown_known = false;
-    WorldLogMapState map_state;
-    bool map_state_known = false;
-    WorldLogReturnPoint return_point;
-    WorldLogHp hp;
-    u64 hp_source = 0; // the source the HP entries are of (HpSource)
-};
-
-// Whether the kills, the shown characters and the shared flags go through the world log: while
-// this game has it on and is linked to the room's peers; the boards otherwise (alone, or with the
-// log switched off). Every peer runs this build. A moment without peers (a link that drops, a load)
-// keeps the log WorldLogUnsureMs, then the boards.
-constexpr s64 WorldLogUnsureMs = 5'000;
-// SHADPS4_BLOODBORNE_WORLD_LOG: on unless "0" or "off" (everything keeps to the boards).
-bool WorldLogEnabled(const char* setting);
-class WorldLogPath {
-public:
-    // Whether the log is the path now, with `peers` room peers linked.
-    bool Decide(bool enabled, size_t peers, s64 now_ms);
-    bool Active() const {
-        return active;
-    }
-    const std::string& Why() const {
-        return why;
-    }
-    // The line to log at the first decision and when the path or its reason changed since the
-    // last call ("Co-op world log: ...").
-    std::optional<std::string> TakeChange();
-
-private:
-    bool decided = false;
-    bool active = false;
-    std::string why = "not decided";
-    std::optional<s64> unsure_since;
-    bool changed = false;
-};
-// A host's Start on a trace record: the epoch (u64) and after_wipe (u8).
-std::vector<u8> EncodeWorldLogStart(u64 epoch, bool after_wipe);
-// A Reset entry's subject when the host's log started over after a party wipe (older members read
-// a Reset as before).
-constexpr u32 WorldLogResetAfterWipe = 1;
-// Whether `applied` holds the Reset of a log started after a wipe.
-bool StartsAfterAWipe(std::span<const WorldLogEntry> applied);
-// A member's proposals around a party wipe: the host's new log has no kills, and a member's set
-// from before its own wipe (still standing until its kill step forgets it, or a kill applied from
-// a stale copy in between) must not stand them again. From the host's wiped log on, a member
-// proposes nothing until its own wipe has run (or had run within WorldLogWipeGraceMs before), or
-// WorldLogWipeGraceMs went by (it was elsewhere: no wipe for it); and for WorldLogWipeGraceMs after
-// either wipe the kill board's host entries (posted before it) are not taken.
-constexpr s64 WorldLogWipeGraceMs = 15'000;
-class WorldLogWipeHold {
-public:
-    void HostWiped(s64 now_ms) {
-        host_wiped_ms = now_ms;
-    }
-    void OwnWipe(s64 now_ms) {
-        own_wipe_ms = now_ms;
-    }
-    bool HoldsProposals(s64 now_ms) const;
-    bool BoardStale(s64 now_ms) const;
-
-private:
-    std::optional<s64> host_wiped_ms;
-    std::optional<s64> own_wipe_ms;
-};
-std::optional<std::pair<u64, bool>> DecodeWorldLogStart(std::span<const u8> payload);
-// A host's Show on a trace record: the map (u32) and the characters (EncodeShownCharacters).
-std::vector<u8> EncodeWorldLogShow(u32 map, std::span<const CharacterShown> characters);
-// A host's MapState on a trace record: the map (u32) and the bits.
-std::vector<u8> EncodeWorldLogMapStateInput(u32 map, std::span<const u8> bits);
-std::optional<WorldLogMapState> DecodeWorldLogMapStateInput(std::span<const u8> payload);
-// A host's ReturnPoint on a trace record: the point (s32) and its map (u32).
-std::vector<u8> EncodeWorldLogReturnPointInput(const WorldLogReturnPoint& point);
-std::optional<WorldLogReturnPoint> DecodeWorldLogReturnPointInput(std::span<const u8> payload);
-std::optional<std::pair<u32, std::vector<CharacterShown>>> DecodeWorldLogShow(
-    std::span<const u8> payload);
-// One report per source from copies of it (direct and the board): per enemy the most damage, or
-// for HP from one world (HostHpReport) the least HP; in the order the sources first come.
-std::vector<EnemyHpReport> MergeEnemyHpReports(std::span<const EnemyHpReport> reports);
 // The game's hit (0x01A2A770, called through the victim's damage module): rdi the module (+0x08
 // the victim), rsi the attacker (null for none), rdx the hit. Hooked at its entry (HP before)
 // and at the return from its IsNoDead check once the hit is applied (r14 the module again).
@@ -2040,8 +1434,6 @@ private:
 };
 std::vector<EnemyWrite> LowerToHostHp(std::span<const EnemyCopy> mine,
                                       std::span<const EnemyHpReport> reports);
-std::vector<u8> EncodeEnemyHp(u64 visit, std::span<const EnemyHp> enemies);
-std::optional<EnemyHpReport> DecodeEnemyHp(std::span<const u8> bytes);
 // The HP to write on the local copy, or nothing: only ever down, never to 0 (a death comes
 // from the game itself), scaled by each copy's max HP (the co-op HP bonus may differ).
 std::optional<s32> SharedEnemyHp(s32 hp, s32 max, s32 other_hp, s32 other_max);
@@ -2064,6 +1456,42 @@ OwnRestore RestoresOwnCharacters(std::span<const u32> own,
                                  const std::unordered_set<u32>& hidden_here,
                                  const std::unordered_set<u32>& switched_off);
 
+// A map's story removes some characters (2004:29, the hide byte +0x28) seconds after each load,
+// 3.5 to 13 s on the rig, so until then they stood there: Gilbert by the second Central Yharnam
+// lamp after a trip, Iosefka (Kaniel and Lisara's playtest 2026-10-15). Every game remembers per
+// map which characters its story had removed once a visit settled (StoryHoldMs after its load),
+// and on the next visit switches those off (2004:5) as they appear, until the story removes them
+// again (then switched on: removed, they stay unseen) or StoryHoldMs passes (the story no longer
+// removes them: switched on and forgotten). A guest's characters hidden to match the host's board
+// (the hide byte) count as removed by the story (the host's is the same story); those it only
+// switched off do not (held, nothing would show the story switched them off too), nor a kill.
+struct StoryCharacter {
+    u32 handle = 0;
+    bool removed = false;  // the hide byte +0x28
+    bool disabled = false; // the enable switch off
+    bool followed = false; // a guest's, hidden or switched off to match the host's board
+    bool killed = false;   // hidden for a member's kill
+};
+struct StoryHoldStep {
+    std::vector<u32> hold;      // switch off now (then Held, or Unheld if that failed)
+    std::vector<u32> release;   // switch on again
+    std::vector<u32> hand_over; // held, now the co-op code's: no longer held here
+    bool operator==(const StoryHoldStep&) const = default;
+};
+constexpr s64 StoryHoldMs = 20'000;
+class StoryRemovals {
+public:
+    // `seen`: every character loaded now but the players; `visit_ms`: the visit's load.
+    StoryHoldStep Step(u32 map, s64 visit_ms, s64 now_ms, std::span<const StoryCharacter> seen);
+    void Held(u32 handle, s64 now_ms);
+    bool Remembers(u32 map, u32 handle) const;
+    size_t RememberedOn(u32 map) const;
+
+private:
+    std::map<u32, std::set<u32>> removed; // per map
+    std::map<u32, s64> held;              // handle -> since
+};
+
 // A character's death flags (+0x1E3) say it is dead in its world: killed (bits 0 and 2, see
 // IsRealDeath) or dead in the save and put down at load (0x26).
 bool IsDeadInItsWorld(u8 death_flags);
@@ -2079,8 +1507,6 @@ bool DiesInsteadOfHiding(const std::optional<LampPosition>& me,
                          const std::optional<LampPosition>& enemy);
 bool FarFromHost(const std::optional<LampPosition>& host,
                  const std::optional<LampPosition>& character);
-std::vector<u8> EncodeShownCharacters(std::span<const CharacterShown> characters);
-std::optional<std::vector<CharacterShown>> DecodeShownCharacters(std::span<const u8> bytes);
 // What to write on this member's copies to match the host: every character both worlds have
 // that differs, apart from those this member's kill board hid (`kill_hidden`: another member
 // killed them, which the host may not have heard yet). A character far from the host is left as
@@ -2093,13 +1519,16 @@ std::vector<CharacterShown> ShownLikeTheHost(std::span<const CharacterShown> hos
 struct CharacterSwitch {
     u32 handle = 0;
     bool disabled = false;
+    bool dead = false; // in this member's world (IsDeadInItsWorld): never switched on
     bool operator==(const CharacterSwitch&) const = default;
 };
 // The host's story removes some characters (2004:29 sets the +0x28 byte) before their model loads;
 // a guest's copy, built at its join, stays loaded and drawn with the byte set. What to switch on
 // this member's copies (`mine`: each one's switch now): off where the host removed or switched
-// it off near it, back on where the host shows it again or has it far away but only if this
-// member turned it off (`switched_off`), never one the kill board hid (`kill_hidden`).
+// it off near it; on where the host has it on near it and alive (its story switched it on: the
+// red mist's enemy in the Forbidden Woods), unless it is dead here; back on far from the host
+// only if this member turned it off (`switched_off`); never one the kill board hid
+// (`kill_hidden`).
 std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown> host,
                                                  std::span<const CharacterSwitch> mine,
                                                  const std::unordered_set<u32>& switched_off,
@@ -2265,19 +1694,22 @@ private:
 
 class VisitKills {
 public:
-    // `others_maps`: where the other members are now. A visit's kills stand while another member
-    // is on that visit's map (the high 32 bits of the visit, see VisitTracker): they are held
-    // instead of taken back, and taken back once neither this member nor another is on that map
-    // (Kaniel 2026-10-11: the host's trip to the Dream respawned half of Central Yharnam while
-    // Brom was still there).
+    // `others_maps`: where the other members are now; `map`: where this member is (0: the
+    // visit's map, the high 32 bits of the visit, see VisitTracker). A kill is of the map it died
+    // on, which a walk across a border makes another than the visit's (Kaniel 2026-10-15: Ward
+    // kills filed under Central Yharnam came back while Lisara stood in the Ward). When the visit
+    // ends its kills stand while another member is on their map: they are held instead of taken
+    // back, and taken back once neither this member nor another is on that map (Kaniel
+    // 2026-10-11: the host's trip to the Dream respawned half of Central Yharnam while Brom was
+    // still there).
     std::vector<std::pair<s32, bool>> Observe(u64 visit, std::span<const SeenCharacter> characters,
-                                              std::span<const u32> others_maps = {});
+                                              std::span<const u32> others_maps = {}, u32 map = 0);
     const std::vector<u32>& Killed() const {
         return killed;
     }
     // This member's held kills on `map` (hidden on its own copies there).
     std::vector<u32> Held(u32 map) const;
-    // All of this member's standing kills by map: this visit's (on the map it began on) and the
+    // All of this member's standing kills by map: this visit's (on the map each died on) and the
     // held ones (what it proposes to the world log).
     WorldLogKills Standing() const;
     // A death that resets the map (a party wipe): every kill of this member is taken back, the
@@ -2293,6 +1725,7 @@ private:
     u64 current = 0;
     std::map<u32, Seen> seen;
     std::vector<u32> killed;
+    std::map<u32, u32> killed_on;         // this visit's kills -> the map each died on
     std::map<u32, std::vector<u32>> held; // map -> kills of an earlier visit standing there
 };
 std::string EncodeEchoUpdate(std::string_view member, s64 since,
@@ -2613,10 +2046,25 @@ public:
     static constexpr Clock::duration StaleSearchAfter =
         2 * SummonSearchInterval + std::chrono::seconds{2};
 
-    explicit PartyController(PartyRole role) : role{role} {}
+    // `waiting`: the team lobby (phase 5) says the role later (Assign); until then it rings
+    // nothing.
+    explicit PartyController(PartyRole role, bool waiting = false) : role{role}, waiting{waiting} {}
 
     s32 SearchEffectId() const {
-        return role == PartyRole::Host ? BeckoningBellEffect : SmallResonantBellEffect;
+        return role.load() == PartyRole::Host ? BeckoningBellEffect : SmallResonantBellEffect;
+    }
+    bool Waiting() const {
+        return waiting.load();
+    }
+    // The team's Start: this game hosts the team's sessions or joins them.
+    void Assign(PartyRole assigned) {
+        role.store(assigned);
+        waiting.store(false);
+    }
+    // A save played alone after a team's (the title again): it rings nothing until a team's
+    // Start assigns a role again.
+    void Wait() {
+        waiting.store(true);
     }
     PartyAction Tick(const PartyObservation& observation, Clock::time_point now);
 
@@ -2626,7 +2074,8 @@ private:
     std::optional<PartyAction> RingAgain(const PartyObservation& observation,
                                          Clock::time_point now);
 
-    PartyRole role;
+    std::atomic<PartyRole> role;
+    std::atomic<bool> waiting;
     u32 stable_ticks = 0;
     std::optional<Clock::time_point> last_search;
     /// Since when a hosting bell with room for more has been on (see Tick).
@@ -2686,6 +2135,12 @@ std::optional<LampPosition> GlidePoint(const std::vector<LampPosition>& path, do
 // command after it, nothing if none is left.
 std::optional<size_t> NextAutoplayChapter(const std::vector<AutoplayCommand>& script,
                                           size_t failed);
+// chapter <name> <seconds>: how long the chapter may take (the rig's time budget), nothing for
+// another command or a chapter without one.
+std::optional<double> AutoplayChapterBudget(const AutoplayCommand& command);
+// keys <token>... / title-keys <token>...: the BB_MENU_KEYS_FILE text the port's overlay reads
+// (toggle up down left right enter back l1 r1 kdown kup), nothing for an unknown token or none.
+std::optional<std::string> AutoplayMenuKeys(const std::vector<std::string>& tokens);
 // The game's own kill (what an event's ForceCharacterDeath does): HP to 0, the dead flag
 // (+0x1E3 bit 0), then the death step (0x018BD9D0). `void (character)`.
 constexpr u64 KillCharacterOffset = 0x018BF9A0;
@@ -2731,10 +2186,15 @@ std::size_t PruneSaveBackups(const std::filesystem::path& user_dir, std::size_t 
 //                        starts and the proposals it took, a member's batches and snapshots
 //   wlog-path            the path the kills take: path (log or board) and why
 //   trace-dropped        lines lost to a full queue (TraceQueue)
+//   net-out, net-in      a game packet sent or queued for this game, only with
+//                        SHADPS4_BLOODBORNE_PACKET_TRACE on (see PacketTraceMode)
+//   link                 the server link's events (the port's, net_link.h):
+//                        event (welcome, refused, quiet, back, member-quiet/-back/-gone, rtt)
+//                        and detail
 // An "-in" record leaves out what did not change since its kind's last record, and its lists
 // only name what came, changed or went (TraceListDelta). SHADPS4_BLOODBORNE_TRACE=0 turns it off.
-// 2: the world log's records.
-constexpr int CoopTraceVersion = 2;
+// 2: the world log's records. 3: the game's packets.
+constexpr int CoopTraceVersion = 3;
 constexpr std::size_t TraceBodyCap = 8 * 1024;
 constexpr std::uintmax_t TraceFileCap = 50 * 1024 * 1024;
 constexpr std::size_t TraceFilesKept = 5;
@@ -2829,6 +2289,310 @@ private:
 std::string CoopTraceFileName(std::chrono::sys_seconds local_when, u32 process);
 // Deletes all but the newest `kept` traces in `log_dir`; returns how many went.
 std::size_t PruneCoopTraces(const std::filesystem::path& log_dir, std::size_t kept);
+
+// The game's own packets on the co-op trace (docs/SERVER_COOP_PLAN.md phase 0, no change to what
+// the game does): every packet the game sends (0x017894E0, once it has passed its checks) and
+// every one it queues for a member as it arrives (0x01790C20), on "net-out" / "net-in" records.
+// A packet is {u32 channel, u32 size, payload}, channels 0..0x43, 0..6 unreliable.
+// SHADPS4_BLOODBORNE_PACKET_TRACE: off unless "1"/"on" (the payloads of the channels not yet
+// understood) or "full" (every payload); NativePayloadTraceCap bytes of a payload at most.
+enum class PacketTraceMode : u8 { Off, On, Full };
+PacketTraceMode ParsePacketTraceMode(const char* setting);
+using BloodborneCoop::NativeChannelCount;
+constexpr u32 NativePacketMaxBytes = 0x6400; // header and payload
+constexpr std::size_t NativePayloadTraceCap = 512;
+using BloodborneCoop::IsReliableNativeChannel;
+// The channels whose payloads docs/NATIVE_NETCODE.md does not explain yet: the 0x60-byte enemy
+// state record (0x29, 0x3D), the 0x14-byte one (0x41), 0x34 and 0x43.
+bool NativePayloadUnknown(u32 channel);
+// How many of a payload's `size` bytes a record carries in `mode`.
+std::size_t TracedPayloadBytes(PacketTraceMode mode, u32 channel, std::size_t size);
+struct NativePacketView {
+    u32 channel = 0;
+    std::span<const u8> payload;
+};
+// A packet as the game builds it, or nothing for a short or bad one.
+std::optional<NativePacketView> DecodeNativePacket(std::span<const u8> bytes);
+// A member's online id where the game keeps it (a SceNpId's handle: up to 16 letters, digits, '-'
+// or '_', at least 3, NUL after), or nothing.
+std::optional<std::string> NpOnlineIdAt(std::span<const u8> bytes);
+struct NativePacketRecord {
+    bool sent = false;
+    u32 channel = 0;
+    u32 size = 0;            // the whole payload's, whatever part of it `payload` holds
+    std::string peer;        // the other member: online id, else its identity's address
+    u32 map = 0;             // this game's map (packed)
+    s32 sync_state = -1;     // NetSync +0x84 (4 in the world)
+    s32 matching_state = -1; // SprjSessionManager +0x124 (3 host, 6 guest)
+    std::vector<u8> payload;
+    bool operator==(const NativePacketRecord&) const = default;
+};
+const char* NativePacketTraceKind(bool sent); // "net-out" / "net-in"
+TraceSampler::Fields NativePacketFields(const NativePacketRecord& packet);
+std::optional<NativePacketRecord> ParseNativePacketRecord(const TraceRecord& record);
+// The hooks (see InstallNativePacketTrace): the send's `mov r12, [rbp - 0xA0]` as it hands the
+// packet to the transport, and the receive's queue pushes, reliable (`mov rcx, [rbx + 0x30];
+// mov rdi, [rcx + rax*8]`) and unreliable (`lea rsi, [rbp - 0x38]; mov rdi, r13`).
+constexpr u64 PacketSendTraceOffset = 0x0178970D;
+constexpr std::array<u8, 7> PacketSendTrace{0x4C, 0x8B, 0xA5, 0x60, 0xFF, 0xFF, 0xFF};
+constexpr u64 ReliablePacketQueuedOffset = 0x01790E0E;
+constexpr std::array<u8, 8> ReliablePacketQueued{0x48, 0x8B, 0x4B, 0x30, 0x48, 0x8B, 0x3C, 0xC1};
+constexpr u64 UnreliablePacketQueuedOffset = 0x01790FCA;
+constexpr std::array<u8, 7> UnreliablePacketQueued{0x48, 0x8D, 0x75, 0xC8, 0x4C, 0x89, 0xEF};
+
+// The channel table (docs/SERVER_COOP_PLAN.md phase 1) decides where a packet goes at shadNet since
+// phase 9 (coop/packet_routes.h): the server reads every game packet it relays and forwards it only
+// to a teammate that needs it. A reliable packet it drops arrives as DroppedNativeChannel, which
+// the game link hands to nobody. The game still decides what it sends at all: an Ours or Drop
+// packet, or one the enemy owners keep from a follower, is "not sent" (the game then keeps the
+// state its own way: rig 2026-10-15, a guest whose map item packet went out waited for an answer
+// and could not pick the item up). Its hooks on both receive paths make the owner's enemies step
+// on a hit.
+using BloodborneCoop::ChannelPolicy;
+using BloodborneCoop::ChannelPolicyName;
+using BloodborneCoop::DroppedNativeChannel;
+using BloodborneCoop::NativeChannelPolicy;
+// The hooks (see InstallChannelTable): the send's prologue (`push rbp; mov rbp, rsp; push r15`),
+// answering 0 (not sent) for a packet our link sent elsewhere; the reliable receive's channel check
+// (`movsxd rax, [rbx + 0x64]; cmp rax, 0x43`) and the unreliable one's (`mov r14, rdx; cmp eax,
+// 0x43`).
+constexpr u64 PacketSendOffset = 0x017894E0;
+constexpr std::array<u8, 6> PacketSendPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+constexpr u64 ReliableChannelCheckOffset = 0x01790DDE;
+constexpr std::array<u8, 8> ReliableChannelCheck{0x48, 0x63, 0x43, 0x64, 0x48, 0x83, 0xF8, 0x43};
+constexpr u64 UnreliableChannelCheckOffset = 0x01790C73;
+constexpr std::array<u8, 6> UnreliableChannelCheck{0x49, 0x89, 0xD6, 0x83, 0xF8, 0x43};
+
+// Phase 5, the team lobby (bloodborne_team.h): TitleStep's states (table filled at its start; the
+// step's state index at +0x0C, each state's function called every frame until it moves the index
+// on). State 6 (0x0195B480) loads the save in GameMan +0x1490 (it copies it to the profile's
+// +0x7D0 first) and moves on at once: skipped, the step stays in state 6 and asks again next
+// frame, which holds the load for the team. State 2 (0x0195AE80) runs the title menu: the player
+// is back at the title.
+constexpr u64 TitleLoadStateOffset = 0x0195B480;
+constexpr u64 TitleMenuStateOffset = 0x0195AE80;
+constexpr std::array<u8, 6> TitleStatePrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+constexpr u64 TitleLoadSlotOffset = 0x1490; // GameMan's (GlobalState's) save slot to load
+
+// Phase 4 (docs/SERVER_COOP_PLAN.md): one game runs each occupied map's enemies, the one shadNet
+// names (bbcoop::EnemyOwners: the session's host while it is there, else the member there first,
+// handed on when it leaves, loads or goes silent); the others follow it.
+// Always in the port's co-op (phase 6), with the server world and the channel table. The game is
+// host-centred: the host runs every enemy (ownership words at WorldChrMan +0xA40 >= 0), sends their
+// HP (ch 5, only at state +0x124 == 3) and applies the guests' hits (ch 0x15, sent to the host); a
+// guest applies the host's HP (only at state 6, read from the host's member). The owner's game is
+// made to act as that host for the enemies, a follower's as a guest:
+//   ownership words  owner 0 (AI), follower 0xFFFF (the network controller follows the owner)
+//   HP sends         the state checks read 3 on the owner, 6 on a follower (EnemySyncState), and
+//                    a follower reads ch 5 from the owner's member, not the host's
+//   hits             a follower's 0x15 goes to the owner (our link), the owner's own is dropped
+//                    (its hit applied already); a host that follows sends its hits as a guest
+//                    does (EnemyHitState)
+//   packets          only the owner sends positions, HP, catch-up and join animations (4, 5,
+//                    0x29, 0x36) and a follower takes them from the owner only (phase 8: the
+//                    owner runs every enemy on its map, wherever the others stand); the game's
+//                    own hand-out of enemies (0x16 near lists, 0x17 the host's answer) is dropped
+// The AI records (0x3D), per-hit records (0x41) and the hand-over block (0x34) go as they are: the
+// game sends 0x34 + 0x3D itself when a character changes hands (phase 0 trace).
+struct EnemyOwnerEntry {
+    u32 area = 0; // EnemyOwnerArea
+    std::string member;
+    u64 epoch = 0;
+    bool operator==(const EnemyOwnerEntry&) const = default;
+};
+// What an owner runs: one map (a block, as shadNet's EnemyOwners::AreaOf). The blocks of an area
+// are loaded together, but the game wakes a block's enemies only near a player in that world.
+constexpr u32 EnemyOwnerArea(u32 map) {
+    return map;
+}
+// The server answers every map (sent each second) with its owners: older ones are stale.
+constexpr s64 EnemyOwnersFreshMs = 3'000;
+// A new owner's copies take the log's HP (the last owner's reports) for this long.
+constexpr s64 EnemyOwnerTakeoverMs = 5'000;
+enum class EnemyRole : u8 { Unknown, Owner, Follower };
+const EnemyOwnerEntry* EnemyOwnerOf(std::span<const EnemyOwnerEntry> owners, u32 map);
+// This member's role on `map`: Unknown (the game's own way) out of the world (map 0), without a
+// name, or when nobody runs the area.
+EnemyRole EnemyRoleOn(std::span<const EnemyOwnerEntry> owners, std::string_view self, u32 map);
+// The session state a host-only check of the HP sync sees instead of `state` (3 hosting, 6 a
+// guest), or nothing to change.
+std::optional<s32> EnemySyncState(EnemyRole role, s32 state);
+// The state the hit on an enemy (0x01A29E40) sees instead: a host that follows sends its hits.
+std::optional<s32> EnemyHitState(EnemyRole role, s32 state);
+std::optional<u16> EnemyOwnershipWord(EnemyRole role);
+// Whether this owner's copies take the log's HP on becoming the owner: when it takes the map over
+// from another (its epoch past the first), not as the map's first owner (Kaniel 2026-10-15).
+bool TakesOverEnemyHp(const EnemyOwnerEntry& owner);
+// Kaniel 2026-10-15: a guest's own hit on a copy holds for OwnHitHoldMs against the host's older HP
+// (ch 5 from before the hit reached the host): the HP to write back, or none.
+constexpr s64 OwnHitHoldMs = 1'500;
+std::optional<s32> HeldOwnHitHp(s32 current, s32 after_own_hit, s64 age_ms);
+// Phase 8 (one HP path): another game's hit (bbcoop::EnemyHit, `hp` of `max` after it) on this
+// game's copy (`current` of `copy_max`): the HP to write at once, or none. A follower's copy goes
+// down to it (scaled by each copy's max, to 0 for a killing hit: it dies on every screen at
+// once); the owner applies the hit itself (the game's 0x15), and without an owner nothing.
+std::optional<s32> HitNewsHp(EnemyRole role, s32 current, s32 copy_max, s32 hp, s32 max);
+// What the game sends at all (shadNet routes what it sends, coop/packet_routes.h): a follower's
+// hit (0x15) and near list (0x16) go to the area's owner, not the session's host the game sends
+// them to; what only the owner sends, a follower does not send (the game sees "not sent").
+enum class EnemyPacketFate : u8 { Keep, Drop, ToOwner };
+EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role);
+// One line per change of this member's role (or of the owner it follows).
+class EnemyRoleLog {
+public:
+    std::optional<std::string> Change(EnemyRole role, u32 map, const EnemyOwnerEntry* owner);
+
+private:
+    std::optional<std::string> last;
+};
+// The hooks (see InstallEnemyOwner), each with the instructions it copies:
+//   0x018EF26C the HP round's `mov rbx, [rbp - 0xF8]` between its `cmp [rax + 0x124], 3` and the
+//              jne: the zero flag is the owner's
+//   0x018EF578 the dirty HP send's `mov eax, [rdi + 0x124]` (then cmp 3: send, else cmp 6:
+//              receive): rdi points at a stand-in with the role's state for that read, put back
+//              at 0x018EF587 (`cmp byte [rbx + 0x664], 0`, the send branch) and 0x018EF684
+//              (`mov r12, rbx; test rdi, rdi`, the receive branch)
+//   0x01789495 the receive from the host's `add rbx, 0xD0` (0x017893E0, channel in r12d): rbx
+//              moved so the member read is the owner's
+//   0x01A2A102 the hit's `mov ecx, [rax + 0x124]` after the attacker is the local player: rax
+//              points at a stand-in (rax is overwritten before its next use)
+constexpr u64 EnemyHpRoundCheckOffset = 0x018EF26C;
+constexpr std::array<u8, 7> EnemyHpRoundCheck{0x48, 0x8B, 0x9D, 0x08, 0xFF, 0xFF, 0xFF};
+constexpr u64 EnemyHpStateReadOffset = 0x018EF578;
+constexpr std::array<u8, 6> EnemyHpStateRead{0x8B, 0x87, 0x24, 0x01, 0x00, 0x00};
+constexpr u64 EnemyHpSendBranchOffset = 0x018EF587;
+constexpr std::array<u8, 7> EnemyHpSendBranch{0x80, 0xBB, 0x64, 0x06, 0x00, 0x00, 0x00};
+constexpr u64 EnemyHpReceiveBranchOffset = 0x018EF684;
+constexpr std::array<u8, 6> EnemyHpReceiveBranch{0x49, 0x89, 0xDC, 0x48, 0x85, 0xFF};
+constexpr u64 ReceiveFromHostMemberOffset = 0x01789495;
+constexpr std::array<u8, 7> ReceiveFromHostMember{0x48, 0x81, 0xC3, 0xD0, 0x00, 0x00, 0x00};
+constexpr u64 EnemyHitStateReadOffset = 0x01A2A102;
+constexpr std::array<u8, 6> EnemyHitStateRead{0x8B, 0x88, 0x24, 0x01, 0x00, 0x00};
+constexpr s32 EnemyAwake = 4; // [control +0x14] after the activation pass
+// Phase 8 (whole-map owner): WorldChrMan's activation pass (0x019192A0, once a frame) wakes a
+// character whose groups share a bit with its block's record (WorldChrMan +0x290 entries): the
+// first set (chr +0x218 vs record +0x38) wakes it (4), the third (+0x258 vs +0x78) half (2);
+// the second (+0x238 vs +0x18) is only counted. The record follows this game's own player: its
+// sets are the groups of the place it stands (a subset of the player's own sets, rig 2026-10-15),
+// and the other players' copies in this game carry the groups of where they stand. So the owner
+// adds every other player's sets to its block's record for the pass (and puts the record back
+// after it): the game wakes the enemies around each of them as around its own player. The pass's
+// nearest-first budget (+0x5F70) is -1 (no limit) in Bloodborne (rig 2026-10-15).
+constexpr u64 ActivationPassOffset = 0x019192A0;
+constexpr std::array<u8, 6> ActivationPassPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+constexpr u64 ActivationPassEndOffset = 0x0191987E; // mov bl, [rbp - 0x69]; and bl, 1 (r14 = it)
+constexpr std::array<u8, 6> ActivationPassEnd{0x8A, 0x5D, 0x97, 0x80, 0xE3, 0x01};
+// Awake is not run: in a session the host's game hands every enemy its player is not near to the
+// network (word 0xFFFF; WorldChrMan's ownership step 0x01915320, then 0x018ECEB0 with the near
+// lists), awake or not (rig 2026-10-15: the enemy by the far guest at 4 with word 0xFFFF stood
+// still). Right after that step (0x019173B0, called from 0x01916B3F, before the characters'
+// updates read the words) the owner keeps every awake enemy of its map as the game keeps its
+// own (word 1).
+constexpr u64 OwnershipStepEndOffset = 0x019173B0;
+constexpr std::array<u8, 6> OwnershipStepEndPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+constexpr u16 OwnedEnemyWord = 1;
+// The word the owner gives an enemy after the ownership step, or none: an awake one (`level` its
+// [control +0x14], `applied` +0x10) the game let go, unless the game keeps it out.
+std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out,
+                                  bool handed_out = false);
+using GroupSet = std::array<u32, 8>;
+struct WakeGroups {
+    GroupSet wakes{};   // chr +0x218, record +0x38
+    GroupSet counted{}; // chr +0x238, record +0x18
+    GroupSet half{};    // chr +0x258, record +0x78
+    bool operator==(const WakeGroups&) const = default;
+};
+// A block record's groups for the pass: `record` with each player's of `others` added, when the
+// record is this player's block (it shares a group with `own`). A player whose copy has no place
+// yet (no groups, or all of them, as right after a join) adds nothing.
+WakeGroups WithOthersGroups(const WakeGroups& record, const WakeGroups& own,
+                            std::span<const WakeGroups> others);
+// Enemy positions (ch 4, docs/native-netcode/characters.md), sent by the map's owner:
+// NetWorldChrSync (WorldChrMan +0xA40) walks the local player's map's slots in rounds (0x018ECEB0:
+// +0x640 the map index, +0x644 the next slot, +0x648 a round under way, +0x64C the round's period,
+// +0x650 its timer, +0x658 "sent last frame"), at most one packet every other frame of up to 8
+// entries {u32 chr id, 8 B packed position} (+0x654, the buffer at +0x6C8), only the slots with
+// dirty bit 2, a new round at most every 0.25 s. Kaniel 2026-10-15: with the guest away from the
+// host on one map, the guest's area woke three times the enemies and each got a position about
+// twice a second (every enemy laggy and dumb). The owner sends each full packet itself (our link,
+// ch 4 to every member) at the loop's slot step (0x018EE922: rbx the entries, r14 the packet's
+// size, r8 the sync, r15 the map's slots, +0x10 their count) and the game fills the next one: a
+// round goes in one frame. And a round every frame (Kaniel 2026-10-15: "send every frame?").
+constexpr float GamePositionRoundSeconds = 0.25f; // the sync's ctor, 0x018EC19D
+constexpr u64 PositionRoundPeriodOffset = 0x64C;  // in NetWorldChrSync
+constexpr u64 PositionSlotOffset = 0x644;
+constexpr u64 PositionPacketOffset = 0x6C8;
+constexpr u32 PositionPacketBytes = 0x60;
+constexpr u32 PositionChannel = 0x04;
+// 0x018EE910 `mov rax, [rbp - 0x108]` right after an entry went in (`inc ebx`): rbx the entries,
+// r14 the packet's size, r12 the sync, r15 the map's slots. 0x018EEBB0 `mov r13d, [r12 - 4]`: a
+// received entry's chr id at r12 - 4.
+constexpr u64 PositionPacketEntryOffset = 0x018EE910;
+constexpr std::array<u8, 7> PositionPacketEntry{0x48, 0x8B, 0x85, 0xF8, 0xFE, 0xFF, 0xFF};
+constexpr u64 PositionReceiveEntryOffset = 0x018EEBB0;
+constexpr std::array<u8, 5> PositionReceiveEntry{0x45, 0x8B, 0x6C, 0x24, 0xFC};
+constexpr u32 MaxPositionPacketsPerFrame = 16;
+bool SendsFullPositionPacket(EnemyRole role, s32 entries, s32 per_packet, s32 slot, s32 slots,
+                             u32 sent_this_frame);
+float PositionRoundSeconds(EnemyRole role);
+// The game's own hand-out of enemies (Kaniel 2026-10-15: the nearest player runs each enemy, as
+// in vanilla; the host running a far guest's enemies made them lag): a guest sends the enemies
+// near it (0x16, period NetWorldChrSync +0x638, 5 s), the host answers which of them that guest
+// runs (0x17, period +0x630, 3 s; payload u32 n + n entries, the chr +0x90 index in the low 16
+// bits, something that changes each time in the high ones; the guest sets those words
+// to 1 and the rest of its table to 0xFFFF, 0x018ED07E). The owner runs the awake enemies it did
+// not hand out (AwakeEnemyWord). The slow periods made a hand-over hang for a second: both every
+// 0.25 s with an owner.
+constexpr float GameHandOutSeconds = 3.0f;  // the sync's ctor, 0x018EC15A
+constexpr float GameNearListSeconds = 5.0f; // 0x018EC16E
+constexpr u64 HandOutPeriodOffset = 0x630;
+constexpr u64 NearListPeriodOffset = 0x638;
+float HandOutSeconds(EnemyRole role);
+float NearListSeconds(EnemyRole role);
+std::vector<u32> HandOutIds(std::span<const u8> payload);
+bool HandedOut(std::span<const u32> handed, u32 index);
+// An enemy by this player that moved farther in one frame than any enemy runs: a hand-over that
+// jumped (Kaniel 2026-10-15: "lagging for a second before moving back").
+constexpr float EnemyJumpMetres = 0.75f;
+bool EnemyJumped(const std::array<float, 3>& before, const std::array<float, 3>& now);
+// A hand-out older than this names nobody (the game sends one each period, empty or not).
+constexpr s64 HandOutFreshMs = 1'000;
+// The guest's receive of 0x17 (0x018ED083 `mov r8, rbx; mov ebx, eax; test ebx, ebx`, eax the
+// size) into the buffer at 0x05570090.
+constexpr u64 HandOutReceivedOffset = 0x018ED083;
+constexpr std::array<u8, 7> HandOutReceived{0x49, 0x89, 0xD8, 0x89, 0xC3, 0x85, 0xDB};
+constexpr u64 HandOutBufferOffset = 0x05570090;
+// The enemies awake only by another player get no position from the owner's game: its per-enemy
+// net update (0x0151BCA0, which copies the place (physics +0x1E0, +0x1E8) and the turn (+0x1D0,
+// +0x1D8) into the sync's position record (+0x20, 0x18 a slot: +0, +8, +0xC, +0x14) and sets bit 2
+// of the slot's flags (+0x38)) runs only for the enemies by its own player (rig 2026-10-15: a
+// write watch; the packets name an enemy by its chr +0x90 index). The owner does it for every
+// awake enemy it runs, every frame as the game does (after the ownership step, before the
+// characters' updates).
+bool OwnerSendsPositionOf(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out);
+// A follower's measure (its log): the positions it took (`taken` by the packets' id, the chr's
+// +0x90 index: map index << 11 | slot) for the enemies `nearby` its player ({chr id, index}), per
+// second over `seconds`, fastest first.
+std::string PositionRatesText(const std::map<u32, u32>& taken,
+                              std::span<const std::pair<u32, u32>> nearby, double seconds);
+
+// The game's packets in our frames (docs/SERVER_COOP_PLAN.md phase 2b, bloodborne_game_link.h,
+// see InstallGamePacketLink). The transport send under NetSync's send and its resend
+// (0x00C8F0A0: rdi the session, esi reliable, rdx the member id, rcx the packet {u32 channel,
+// u32 size, payload}, r8d its size; it answers true for "sent"): a packet our link takes is
+// "sent", so the game's resend queue and its 180 s backlog timer (SprjSessionManager +0x2E0 /
+// +0x2F0, raised only by a backlog) stay empty. The packets our link took go to the member's
+// queues from the link's own thread, as the game's receive (0x0178D510, on its network thread)
+// does: the member's peer found in the net sync's list ([0x0553D6D0] +0x28: nodes {next, prev,
+// peer}, the peer's member id at +0x08), then the game's own fill 0x01790C20(peer, reliable,
+// bytes, size), which locks the queues itself. Not from a hook on NetSync's per-frame update:
+// a hook on a per-frame path made joins stall before (the talk position hook, 2026-10-10), and
+// with one there 4 of about 25 joins stalled on the rig.
+constexpr u64 TransportSendOffset = 0x00C8F0A0;
+constexpr u64 MemberQueuesFillOffset = 0x01790C20;
+constexpr std::array<u8, 6> GamePacketLinkPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+// A packet for a member the game has no queues for yet (it is still joining) waits this long.
+constexpr s64 HeldForUnknownMemberMs = 10'000;
 
 // Boss-death tracer (Kaniel 2026-10-11: Father Gascoigne died in the host's world with nobody
 // hitting him, and a guest got "Prey Slaughtered"): the game sets a character's dead flag
@@ -2968,6 +2732,9 @@ constexpr s64 DownedKneelDelayMs = 400;
 bool TakesAnimationRequest(u64 character, const std::function<u64(u64 address, size_t size)>& read);
 // Whether a downed player still waiting for its kneel asks for it now.
 bool KneelsNow(bool waiting, s64 down_for_ms, bool takes_request);
+// The pose a downed player plays: none (Kaniel 2026-10-15: no kneel on a down);
+// SHADPS4_BLOODBORNE_DOWNED_ANIMATION (`setting`, null when unset) picks one, as the kneel.
+s32 DownedAnimation(const char* setting);
 // The HP a downed player shows while it is struck back up: 1, rising with the share of the revive
 // done to just under its max (the revive sets the real HP), so the game's own HP bar and the
 // nameplate bar the others see over it (RemotePCTag, fed by the synced HP) fill with the revive.
@@ -3010,6 +2777,17 @@ constexpr size_t GameHudStringFullSize = 0x38;
 // UTF-16 characters from guest memory for a string kept out of place.
 std::string GameHudString(std::span<const u8, GameHudStringSize> raw,
                           const std::function<std::vector<char16_t>(u64, size_t)>& read);
+// Phase 11: a character's name, the game string at PlayerGameData +0x5D0's name holder (what the
+// game sends the others on channel 8, 0x01782088), in UTF-8; "" when it does not read or is longer
+// than the 16 characters a name has.
+constexpr u64 PlayerGameNameHolderAt = 0x5D0;
+std::string GameStringUtf8(std::span<const u8, GameHudStringSize> raw,
+                           const std::function<std::vector<char16_t>(u64, size_t)>& read);
+// Phase 11: the name line of the nameplate over `name` (the game's, an online id): the member's
+// character name as html text, when the panel knows one; else the game's own stays.
+std::optional<std::string> NameplateNameLine(const struct PartyPanel& panel, std::string_view name);
+// Text for a game html field: &, < and > as entities.
+std::string HtmlText(std::string_view text);
 // Whether any member on the panel is down (only then does a nameplate say anything of ours).
 bool PanelHasDowned(const struct PartyPanel& panel);
 // The role line of the nameplate over `name` (an online id, or a board name without one): its
@@ -3192,7 +2970,8 @@ private:
 };
 constexpr s64 GiveUpHoldMs = 3'000;
 
-// The party's vitals board on shadNet (POST /bloodborne/party/vitals). Each member posts
+// The party's vitals board on shadNet (a message on the server link, once POST
+// /bloodborne/party/vitals). Each member posts
 // "<member> <map> <vital> <hp> <max> <down> <landed> <needed> <x> <y> <z>" (map in hex, down the
 // id of its current or last down, landed/needed its revive progress in damage, x y z where it is)
 // and its revive damage on others as "<target>:<down>:<damage>" totals. The answer has the same
@@ -3229,6 +3008,16 @@ struct VitalsBoard {
     bool operator==(const VitalsBoard&) const = default;
 };
 std::string EncodeVitalsUpdate(const MemberVitals& self, std::span<const ReviveHitTotal> hits);
+// Kaniel 2026-10-15: who shows in this world comes from one place, the server's map board. Another
+// player's character (by position, nothing when unknown) shows while a member other than `self`
+// stands on `map` within PresenceMetres of it; else it is hidden (no model, no collision) until
+// one does. The vitals board's positions are a little behind: the margin covers that.
+constexpr float PresenceMetres = 25.0f;
+// A character that stops matching stays shown this long first (a board a beat behind a sprint).
+constexpr s64 PresenceGraceMs = 3'000;
+std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
+                                    std::span<const MemberVitals> board, std::string_view self,
+                                    u32 map);
 std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body);
 // A member's own update (EncodeVitalsUpdate's line), as a peer sends it straight over the link.
 struct DirectVitals {
@@ -3426,6 +3215,11 @@ constexpr s64 BoardLostMs = 10'000;
 // Out of the session this long, a down ends (DownEnd::SessionLost).
 constexpr s64 DownSessionLostMs = 3'000;
 DownEnd EndOfDown(bool wiped, bool gave_up, bool revived, s64 board_age_ms, bool in_session = true);
+// Phase 7: a down has the party around while in a session with another member in it (only the
+// server ends a session, so one whose host's game died stays, with this game alone in it).
+constexpr bool DownHasThePartyAround(bool in_session, size_t session_members) {
+    return in_session && session_members >= 2;
+}
 // Whether a real death in a party session resets its map (see ChooseDeathRespawn): a wipe, or a
 // death with nobody else standing on the map (a wipe of one), as a solo death would.
 bool DeathResetsMap(bool wiped, bool someone_else_stands);
@@ -3448,6 +3242,9 @@ std::vector<LampPosition> OthersDownOnMap(std::span<const MemberVitals> board,
 struct PanelMember {
     std::string member; // its board name
     std::string name;   // its online id, "" when the board name is not one
+    // Phase 11: its character's name, as the server knows it ("" before one is known); what the
+    // player sees wherever it is known.
+    std::string shown;
     Vital vital = Vital::Up;
     bool here = false; // on the local player's map
     s32 hp = 0;

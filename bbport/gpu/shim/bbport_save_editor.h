@@ -12,7 +12,9 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -88,6 +90,21 @@ inline std::uint32_t UpgradedWeaponId(std::uint32_t id, int level) {
 std::vector<Item> ParseItems(std::string_view goods, std::string_view weapons,
                              std::string_view armors);
 
+/// The item list from the game's own text (Kaniel 2026-10-15: a release installed from a plain
+/// game folder had none): `bnd` is msg/<language>/item.msgbnd.dcx inflated, a BND4 of FMGs (10
+/// goods, 11 weapons, 12 armor names, by item id). Left out: unnamed and placeholder entries
+/// ("*", "NOT NEEDED", "en1234", "... (not needed)"), gestures (goods 800-899), weapon levels
+/// (only each weapon's +0 id, a multiple of 10000) and bare fists. Sorted as ParseItems.
+std::vector<Item> ItemsFromGameText(std::span<const std::uint8_t> bnd);
+
+/// Every item's name by its full item id (category | id), for trading (Kaniel 2026-10-15: any
+/// item): goods, weapons at every level and armor from `items` (item.msgbnd as above), gems and
+/// runes (0x80000000 | id) from FMG 31 of `menu` (menu.msgbnd). Placeholders left out.
+std::map<std::uint32_t, std::string> ItemNamesFromGameText(std::span<const std::uint8_t> items,
+                                                           std::span<const std::uint8_t> menu);
+/// An item's English name by its full item id from the game's own text (loaded once), or empty.
+std::string ItemName(std::uint32_t item_id);
+
 /// Runtime (the GPU library): the loaded image, from bbgpu_patch_image.
 void SetImage(unsigned char* image);
 /// The local character, once it is in the world.
@@ -100,8 +117,9 @@ void SetAttributes(const std::int32_t attributes[AttributeCount]);
 void GiveItem(std::uint32_t category, std::uint32_t id, std::int32_t quantity);
 /// Runs what was queued (the game's thread).
 void RunPending();
-/// The item list, loaded once: BB_SAVE_EDITOR_DATA, else the shadPS4 kit's save editor beside
-/// the port ("DATA/Bloodborne Save Editor/resources" up from the working folder). Empty if none.
+/// The item list, loaded once: the game's own item names (ItemsFromGameText, English), else
+/// BB_SAVE_EDITOR_DATA or the shadPS4 kit's save editor beside the port ("DATA/Bloodborne Save
+/// Editor/resources" up from the working folder). Empty if none.
 const std::vector<Item>& Items();
 /// Where the list was looked for (for the page's note).
 const std::string& ItemsSource();

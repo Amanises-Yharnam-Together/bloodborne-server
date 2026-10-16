@@ -10,7 +10,9 @@
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/invitation_dialog/invitation_dialog.h"
-#include "core/libraries/network/net_upnp.h"
+#include "core/libraries/network/rpc_bridge.h"
+#include "core/libraries/network/server_link.h"
+#include "core/libraries/network/sockets.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_manager.h"
 #include "core/libraries/np/np_matching2/np_matching2_mm.h"
@@ -25,6 +27,24 @@
 #include "shadnet/server_probe.h"
 
 namespace Libraries::Np {
+
+namespace {
+
+// The IPv4 address of `host` in network byte order, 0 when it has none.
+u32 ResolveIpv4(const std::string& host) {
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    addrinfo* found = nullptr;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &found) != 0 || !found) {
+        return 0;
+    }
+    const u32 address = reinterpret_cast<const sockaddr_in*>(found->ai_addr)->sin_addr.s_addr;
+    freeaddrinfo(found);
+    return address;
+}
+
+} // namespace
 
 NpHandler& NpHandler::GetInstance() {
     static NpHandler s_instance;
@@ -103,7 +123,9 @@ void NpHandler::Initialize() {
         return;
     }
 
-    {
+    // Phase 11 (the port): the server's address is its link's UDP port, which a TCP probe
+    // cannot reach; the link says itself when the server does not answer or refuses the game.
+    if (!Net::ServerLinkSwitchOn()) {
         const auto [host, port] = ParseServerAddress();
         const ShadNet::ProbeInfo probe = ShadNet::ProbeServer(host, port);
         if (probe.result != ShadNet::ProbeResult::Ok) {
@@ -225,10 +247,31 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
         OnLoginResult(user_id, res);
     };
 
+    // Phase 11, one port (the port): the server's address is its link's UDP port. The link's
+    // hello signs the player in, and the shadNet client's TCP connection goes to the Rpc bridge
+    // on 127.0.0.1, which carries it through the link to shadNet.
+    std::string client_host = host;
+    u16 client_port = port;
+    const u32 link_addr = Net::ServerLinkSwitchOn() ? ResolveIpv4(host) : 0;
+    if (Net::ServerLinkSwitchOn()) {
+        if (link_addr == 0 || !Net::EnsureP2PTransport()) {
+            LOG_ERROR(NpHandler, "user_id={} no server link to {}:{}", user_id, host, port);
+            return false;
+        }
+        Net::ConfigureServerLink(link_addr, htons(port), npid, password);
+        client_port = Net::StartRpcBridge();
+        client_host = "127.0.0.1";
+        if (client_port == 0) {
+            return false;
+        }
+        LOG_INFO(NpHandler, "user_id={} signs in through the server link {}:{}", user_id, host,
+                 port);
+    }
+
     // Seed the current Appear-Offline preference so the login packet carries it (the send
     // is suppressed pre-auth; it just caches on the client).
     client->SetAppearOffline(m_appear_offline.load());
-    client->Start(host, port, npid, password, token);
+    client->Start(client_host, client_port, npid, password, token);
 
     // Shared handling for an incompatible-protocol failure (version mismatch or
     // corrupt/unparseable stream): tell the user and disable shadNet for this run,
@@ -280,12 +323,16 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
     LOG_INFO(NpHandler, "user_id={} signed in npid='{}' accountId={}", user_id, npid,
              client->GetUserId());
 
-    Net::UPnPClient::Instance().SetP2PFeaturesEnabled(client->IsMatching2Enabled());
-    if (client->IsMatching2Enabled() && EmulatorSettings.IsUPnPEnabled()) {
-        Net::UPnPClient::Instance().Start();
+    if (Net::ServerLinkSwitchOn()) {
+        // The rooms' server is the link's (the client's own address is the bridge's).
+        NpMatching2::SetMmShadNetClient(client, host, static_cast<u16>(port - 1));
+        NpMatching2::SetMmServerEndpoint(link_addr, htons(port));
+    } else {
+        NpMatching2::SetMmShadNetClient(client, host, port);
+        // shadPS4: the peers' frames through shadNet's matching UDP port.
+        Net::ConfigureServerLink(NpMatching2::GetMmServerAddr(), NpMatching2::GetMmServerUdpPort(),
+                                 npid, password);
     }
-
-    NpMatching2::SetMmShadNetClient(client, host, port);
 
     // Build OrbisNpId
     {
@@ -296,7 +343,16 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
         m_clients[user_id] = std::move(client);
     }
 
-    FireStateCallback(user_id, NpManager::OrbisNpState::SignedIn);
+    // Back after a drop the game was not told of: it is signed in already.
+    bool quiet = false;
+    {
+        std::lock_guard lock(m_mutex_clients);
+        if (const auto it = m_reconnect.find(user_id); it != m_reconnect.end())
+            quiet = it->second.quiet;
+    }
+    if (!quiet) {
+        FireStateCallback(user_id, NpManager::OrbisNpState::SignedIn);
+    }
     return true;
 }
 
@@ -309,7 +365,7 @@ void NpHandler::SetAppearOffline(bool enable) {
     }
 }
 
-void NpHandler::DisconnectUser(s32 user_id) {
+void NpHandler::DisconnectUser(s32 user_id, bool tell_game) {
     std::shared_ptr<ShadNet::ShadNetClient> client;
     {
         std::lock_guard lock(m_mutex_clients);
@@ -324,8 +380,11 @@ void NpHandler::DisconnectUser(s32 user_id) {
         m_friend_state.erase(user_id);
     }
     client->Stop();
-    FireStateCallback(user_id, NpManager::OrbisNpState::SignedOut);
-    LOG_INFO(NpHandler, "user_id={} disconnected", user_id);
+    if (tell_game) {
+        FireStateCallback(user_id, NpManager::OrbisNpState::SignedOut);
+    }
+    LOG_INFO(NpHandler, "user_id={} disconnected{}", user_id,
+             tell_game ? "" : " (the game stays signed in while it comes back)");
 }
 
 void NpHandler::OnUserLoggedIn(s32 user_id) {
@@ -359,15 +418,19 @@ void NpHandler::WorkerThread() {
 
         for (s32 uid : dropped) {
             LOG_WARNING(NpHandler, "user_id={} connection dropped (network); will retry", uid);
-            DisconnectUser(uid);   // reports SignedOut + stops/removes the dead client
-            MarkForReconnect(uid); // schedule transparent reconnect (network drop, not logout)
+            // Phase 11 (the port): a server restart or a link drop is ridden out, not a sign-out
+            // (a sign-out and sign-in made the game build its online parts again: a 4.6 s frame).
+            const bool quiet = Net::ServerLinkSwitchOn();
+            DisconnectUser(uid, !quiet); // stops/removes the dead client
+            MarkForReconnect(uid,
+                             quiet); // schedule transparent reconnect (network drop, not logout)
         }
 
         TryReconnect();
     }
 }
 
-void NpHandler::MarkForReconnect(s32 user_id) {
+void NpHandler::MarkForReconnect(s32 user_id, bool quiet) {
     if (!EmulatorSettings.IsShadNetEnabled())
         return; // offline mode: nothing to reconnect to
     constexpr auto kInitialBackoff = std::chrono::milliseconds(2000);
@@ -375,6 +438,7 @@ void NpHandler::MarkForReconnect(s32 user_id) {
     auto& st = m_reconnect[user_id];
     st.backoff = kInitialBackoff;
     st.next_attempt = std::chrono::steady_clock::now() + st.backoff;
+    st.quiet = quiet;
 }
 
 void NpHandler::TryReconnect() {
@@ -415,12 +479,18 @@ void NpHandler::TryReconnect() {
 
 bool NpHandler::IsPsnSignedIn(s32 user_id) const {
     std::lock_guard lock(m_mutex_clients);
+    if (const auto quiet = m_reconnect.find(user_id);
+        quiet != m_reconnect.end() && quiet->second.quiet)
+        return true; // coming back: still signed in for the game
     auto it = m_clients.find(user_id);
     return it != m_clients.end() && it->second->IsAuthenticated();
 }
 
 bool NpHandler::IsAnySignedIn() const {
     std::lock_guard lock(m_mutex_clients);
+    for (const auto& [_, st] : m_reconnect)
+        if (st.quiet)
+            return true;
     for (auto& [_, client] : m_clients)
         if (client->IsAuthenticated())
             return true;

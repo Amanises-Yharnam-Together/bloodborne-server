@@ -146,6 +146,13 @@ TEST(BloodbornePartyDeath, TheKneelWaitsUntilThePlayerTakesIt) {
     EXPECT_FALSE(KneelsNow(false, 5'000, true)) << "already asked for";
 }
 
+// A down plays no pose (Kaniel 2026-10-15: no kneel); the setting still picks one for a test.
+TEST(BloodbornePartyDeath, ADownPlaysNoKneel) {
+    EXPECT_EQ(DownedAnimation(nullptr), 0);
+    EXPECT_EQ(DownedAnimation("101260"), DownedKneelAnimation);
+    EXPECT_EQ(DownedAnimation("0"), 0);
+}
+
 // A new HUD gets its own list, also when it is made where the old one was (its tags and icons died
 // with the old one).
 TEST(BloodbornePartyDeath, ANewHudGetsANewPartyList) {
@@ -255,6 +262,34 @@ TEST(BloodbornePartyHud, ReadsTheGamesHudString) {
     const char16_t accented[] = u"h\u00e9";
     std::memcpy(inline_name.data() + 0x08, accented, sizeof(accented));
     EXPECT_EQ(GameHudString(inline_name, read), "h?");
+}
+
+// Phase 11: a character's name (PlayerGameData +0x5D0's game string, what the game sends the
+// others on channel 8) in UTF-8, any script; nothing over 16 characters (the packet's limit).
+TEST(BloodbornePartyHud, ReadsACharactersName) {
+    std::array<u8, GameHudStringSize> inline_name{};
+    const char16_t cyrillic[] = u"\u041b\u0438\u0437\u0430";
+    std::memcpy(inline_name.data() + 0x08, cyrillic, sizeof(cyrillic));
+    const u64 small = 7;
+    std::memcpy(inline_name.data() + 0x20, &small, sizeof(small));
+    const auto none = [](u64, size_t) { return std::vector<char16_t>{}; };
+    EXPECT_EQ(GameStringUtf8(inline_name, none), "\xd0\x9b\xd0\xb8\xd0\xb7\xd0\xb0");
+
+    std::array<u8, GameHudStringSize> long_name{};
+    const u64 pointer = 0x1234'5000, capacity = 15;
+    std::memcpy(long_name.data() + 0x08, &pointer, sizeof(pointer));
+    std::memcpy(long_name.data() + 0x20, &capacity, sizeof(capacity));
+    std::u16string text = u"Lady Maria";
+    const auto read = [&](u64 at, size_t count) {
+        EXPECT_EQ(at, pointer);
+        std::u16string copy = text;
+        copy.resize(count, u'\0');
+        return std::vector<char16_t>(copy.begin(), copy.end());
+    };
+    EXPECT_EQ(GameStringUtf8(long_name, read), "Lady Maria");
+    text = u"A name of seventeen";
+    EXPECT_EQ(GameStringUtf8(long_name, read), "") << "not a character's name";
+    EXPECT_EQ(GameStringUtf8(long_name, none), "");
 }
 
 // The nameplate over a downed member says so, with its revive, in the tag's own red; the others
@@ -1093,6 +1128,26 @@ TEST(BloodbornePartyDeath, ListsTheOthersOnThePartyPanel) {
     EXPECT_TRUE(BuildPartyPanel({}, Kaniel, CentralYharnam, std::nullopt).members.empty());
 }
 
+// Phase 11 (Kaniel 2026-10-15): players see each other by their characters' names only. The
+// native party list and the nameplates over the others show a member's character name (the
+// server's, PanelMember::shown) when one is known, as plain text in html.
+TEST(BloodbornePartyDeath, ThePanelShowsTheCharactersNames) {
+    PartyPanel panel;
+    panel.members.push_back(
+        PanelMember{.member = Ada, .name = "Ada", .shown = "Lady <Maria> & co"});
+    panel.members.push_back(PanelMember{.member = Third, .name = "third"});
+    const auto entries = PartyListEntries(panel);
+    EXPECT_EQ(entries[0].name, "Lady <Maria> & co");
+    EXPECT_EQ(entries[0].name_line, "<font color=\"#ece8df\">Lady &lt;Maria&gt; &amp; co</font>");
+    EXPECT_EQ(entries[1].name, "third") << "no character name known: the online id";
+
+    // The nameplate over a member (the game names it by its online id) says its character's name.
+    EXPECT_EQ(NameplateNameLine(panel, "Ada"), "Lady &lt;Maria&gt; &amp; co");
+    EXPECT_EQ(NameplateNameLine(panel, "third"), std::nullopt) << "the game's own name stays";
+    EXPECT_EQ(NameplateNameLine(panel, "nobody"), std::nullopt);
+    EXPECT_EQ(NameplateNameLine(panel, ""), std::nullopt);
+}
+
 // Enemies forget a downed player at once: a target node of theirs that is a live character target
 // (slot type 1 with the alive bit, kind 1) on a downed player's handle has its memory run out.
 TEST(BloodbornePartyDeath, EnemiesForgetADownedPlayersTargetNode) {
@@ -1117,4 +1172,13 @@ TEST(BloodbornePartyDeath, FindsTheOthersDownOnThisMap) {
     EXPECT_EQ(OthersDownOnMap(board, Kaniel, CentralYharnam),
               (std::vector<LampPosition>{{4.0f, 5.0f, 6.0f}}));
     EXPECT_TRUE(OthersDownOnMap(board, Kaniel, 0).empty());
+}
+
+// Phase 7: only the server ends a session, so a guest whose host's game died stays in a session
+// of one; a down there has nobody to revive it: it counts as out of the session (rig
+// party-death/down-session-lost, 2026-10-15).
+TEST(PartyDeath, ADownAloneInItsSessionIsOutOfIt) {
+    EXPECT_TRUE(DownHasThePartyAround(true, 2));
+    EXPECT_FALSE(DownHasThePartyAround(true, 1));
+    EXPECT_FALSE(DownHasThePartyAround(false, 3));
 }

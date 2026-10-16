@@ -881,17 +881,9 @@ void PS4_SYSV_ABI KeepPartyMemberUp(u64, GuestRegisterSnapshot* registers) {
     }
 }
 
-// The animation a downed player plays: the kneel (DownedKneelAnimation; Kaniel 2026-10-12), which
-// the player's behaviour holds by itself; SHADPS4_BLOODBORNE_DOWNED_ANIMATION picks another (0:
-// none). Getting up plays its stand-up (DownedStandAnimation), or for another pose resets.
-const s32 downed_animation = [] {
-    const char* setting = std::getenv("SHADPS4_BLOODBORNE_DOWNED_ANIMATION");
-    s32 animation = DownedKneelAnimation;
-    if (setting != nullptr) {
-        std::from_chars(setting, setting + std::strlen(setting), animation);
-    }
-    return animation;
-}();
+// The animation a downed player plays (DownedAnimation): none. Getting up from the kneel plays its
+// stand-up (DownedStandAnimation), from another pose resets.
+const s32 downed_animation = DownedAnimation(std::getenv("SHADPS4_BLOODBORNE_DOWNED_ANIMATION"));
 
 } // namespace
 
@@ -1274,7 +1266,7 @@ void TickDown(PartyDeathRun& run, const DeathTick& tick) {
     KeepDown(run, tick.data, tick.now);
     // Out of the session for a moment is a load or a matching hiccup; for longer, nobody is left to
     // revive this player (the host quit or crashed, a kick).
-    if (tick.in_session) {
+    if (DownHasThePartyAround(tick.in_session, SessionMembers())) {
         run.down_out_of_session_since.reset();
     } else if (!run.down_out_of_session_since) {
         run.down_out_of_session_since = tick.now;
@@ -1348,6 +1340,10 @@ void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
     PartyPanel panel = tick.in_session ? BuildPartyPanel(tick.board, tick.view.member, tick.map,
                                                          vital == Vital::Up ? at : std::nullopt)
                                        : PartyPanel{};
+    // Phase 11: what the player sees is each one's character name.
+    for (PanelMember& member : panel.members) {
+        member.shown = Coop::CharacterNameOf(member.member);
+    }
     panel.vital = tick.in_session ? vital : Vital::Off;
     panel.landed = run.downed.DamageLanded();
     panel.needed = run.downed.DamageNeeded();
@@ -1489,7 +1485,15 @@ void PS4_SYSV_ABI WriteNameplateRoleLine(u64, const GuestRegisterSnapshot* regis
     const std::string name = NameplateName(data);
     NoteNameplate(*index, name);
     PartyPanel panel;
-    if (!panel_has_downed.load(std::memory_order_relaxed) || !ReadPartyPanel(panel)) {
+    if (!ReadPartyPanel(panel)) {
+        return;
+    }
+    // Phase 11: the name over the member is its character's (the game writes its online id).
+    if (const auto line = NameplateNameLine(panel, name)) {
+        SetElementText(tag + HudTagNameLineAt, *line);
+        NoteNameplate(*index, name + " shown as " + *line);
+    }
+    if (!panel_has_downed.load(std::memory_order_relaxed)) {
         return;
     }
     if (const auto line = NameplateRoleLine(panel, name)) {

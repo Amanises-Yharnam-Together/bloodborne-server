@@ -6,6 +6,17 @@ mechanic simpler or more reliable. No mixed parties (port and shadPS4 players ne
 leave/rejoin a session as a fix: everything is seamless. See docs/BBPORT.md for how the port and
 its co-op are wired, built, packaged and tested.
 
+## Phase 6: teams join without the bell (server co-op, 2026-10-14)
+
+- The port has one co-op mode: teams on the server (docs/SERVER_COOP_PLAN.md). There are no
+  switches and no party settings; the launcher's "host" only runs the server.
+- A team's game session is opened by its host with the game's own CreateSession and joined by
+  each guest with the game's own JoinSession, from the join data the server relays
+  (docs/native-netcode/session.md, "Team join"). No bell rings and no sign is posted, so the
+  summon-slot and sign problems below are shadPS4's only: the port never claims a sign.
+- The rig makes each scenario's team on the title by itself (`team_prelude` in
+  tools/rig/run_scenario.py).
+
 ## The third member's 180 s wait (branch host-search-cooldown, 2026-10-12)
 
 - At 30 FPS the host's searches (/summon_messenger/get) stopped once the second member was in and

@@ -5,9 +5,11 @@
 // bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h.
 
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_game_link.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -29,6 +31,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string>
@@ -53,9 +56,12 @@
 #include "core/debugger.h"
 #include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
+#include "core/libraries/network/server_link.h"
 #include "core/libraries/network/sockets.h"
 #include "core/libraries/np/np_handler.h"
+#include "core/libraries/np/np_matching2/np_matching2_mm.h"
 #include "core/libraries/np/np_matching2/np_matching2_signaling.h"
+#include "core/libraries/np/np_signaling/np_signaling.h"
 #include "core/libraries/np/np_trophy.h"
 #include "core/libraries/system/userservice.h"
 #include "core/memory.h"
@@ -86,6 +92,8 @@ bool cross_map_guest_handoff_hook_installed{};
 bool summon_reload_state_hook_installed{};
 bool deferred_summon_reload_hook_installed{};
 bool healing_fountain_host_availability_hook_installed{};
+bool channel_table_installed{};
+bool team_join_ready{};
 
 bool EnvFlagEnabled(const char* name) {
     const char* value = std::getenv(name);
@@ -199,6 +207,11 @@ bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag,
                      GuestFunctionOverride hook) {
     CheckCoopHookRegistered(address, bytes);
     return InstallGuestFunctionOverride(address, bytes, tag, hook);
+}
+
+bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestFunctionResult hook) {
+    CheckCoopHookRegistered(address, bytes);
+    return InstallGuestFunctionResult(address, bytes, tag, hook);
 }
 
 bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag,
@@ -364,6 +377,863 @@ void InstallBossDeathTracer(u64 base, u64 image_size) {
                     "call chain");
 }
 
+// See PacketTraceMode: the game's own packets on the co-op trace, nothing changed.
+PacketTraceMode packet_trace_mode = PacketTraceMode::Off;
+
+// A member as the trace names it: its online id where its identity keeps it (the SceNpId, +0x36),
+// else the identity's address. Looked up once per identity.
+std::string TracedPeer(u64 identity) {
+    static std::mutex mutex;
+    static std::unordered_map<u64, std::string> names;
+    std::scoped_lock lock{mutex};
+    const auto [it, added] = names.try_emplace(identity);
+    if (added) {
+        std::optional<std::string> id;
+        if (identity >= 0x10000 && HasMemoryAccess(identity + 0x36, 17, MemoryProt::CpuRead)) {
+            id = NpOnlineIdAt({reinterpret_cast<const u8*>(identity + 0x36), 17});
+        }
+        it->second = id.value_or(fmt::format("{:x}", identity));
+    }
+    return it->second;
+}
+
+void TraceNativePacket(bool sent, u32 channel, u64 member_id, u64 payload, u32 size) {
+    NativePacketRecord record{sent, channel, size, TracedPeer(ReadValue<u64>(member_id, 0)),
+                              GetCurrentPackedMap()};
+    const u64 net_sync = ReadValue<u64>(image_base + SummonSessionRulesPointerOffset, 0);
+    const u64 session = GetMatchingState();
+    record.sync_state = net_sync >= 0x10000 ? ReadValue<s32>(net_sync, 0x84) : -1;
+    record.matching_state = session >= 0x10000 ? ReadValue<s32>(session, MatchingStateOffset) : -1;
+    const std::size_t shown = TracedPayloadBytes(packet_trace_mode, channel, size);
+    if (shown > 0 && payload >= 0x10000 && HasMemoryAccess(payload, shown, MemoryProt::CpuRead)) {
+        const auto* bytes = reinterpret_cast<const u8*>(payload);
+        record.payload.assign(bytes, bytes + shown);
+    }
+    Trace(NativePacketTraceKind(sent), NativePacketFields(record));
+}
+
+// 0x0178970D in the send (0x017894E0), after its checks, as it hands the packet to the
+// transport: rcx the packet (the static buffer 0x055640F0), rdx the member id.
+void PS4_SYSV_ABI TracePacketSent(u64, const GuestRegisterSnapshot* registers) {
+    const u64 packet = registers->rcx;
+    if (packet < 0x10000 || !HasMemoryAccess(packet, 8, MemoryProt::CpuRead)) {
+        return;
+    }
+    const u32 size = ReadValue<u32>(packet, 4);
+    TraceNativePacket(true, ReadValue<u32>(packet, 0), registers->rdx, packet + 8, size);
+}
+
+// A whole packet queued for its member (0x01790C20, rbx the member's queues, their member id at
+// +0x08): reliable ones (0x01790E0E) once reassembled, channel rax, the node {u32 size, payload*}
+// at +0x68; unreliable ones (0x01790FCA) channel [rbp - 0x40], node [rbp - 0x38].
+void PS4_SYSV_ABI TracePacketReceived(u64 tag, const GuestRegisterSnapshot* registers) {
+    const bool reliable = tag == 0;
+    const u64 queues = registers->rbx;
+    const u32 channel =
+        reliable ? static_cast<u32>(registers->rax) : ReadValue<u32>(registers->rbp - 0x40, 0);
+    const u64 node =
+        reliable ? ReadValue<u64>(queues, 0x68) : ReadValue<u64>(registers->rbp - 0x38, 0);
+    if (node < 0x10000) {
+        return;
+    }
+    TraceNativePacket(false, channel, queues + 0x08, ReadValue<u64>(node, 0x08),
+                      ReadValue<u32>(node, 0x00));
+}
+
+void InstallNativePacketTrace(u64 base, u64 image_size) {
+    packet_trace_mode = ParsePacketTraceMode(std::getenv("SHADPS4_BLOODBORNE_PACKET_TRACE"));
+    if (packet_trace_mode == PacketTraceMode::Off || !CoopTraceOn()) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "native packet trace", "game packets are not traced")) {
+        return;
+    }
+    const bool installed =
+        InstallCoopHook(reinterpret_cast<void*>(base + PacketSendTraceOffset), PacketSendTrace, 0,
+                        TracePacketSent) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + ReliablePacketQueuedOffset),
+                        ReliablePacketQueued, 0, TracePacketReceived) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + UnreliablePacketQueuedOffset),
+                        UnreliablePacketQueued, 1, TracePacketReceived);
+    if (!installed) {
+        coop_features.Skipped("native packet trace", "a hook did not go in");
+        return;
+    }
+    coop_features.On("native packet trace");
+    LOG_INFO(Debug, "Bloodborne native packet trace: on ({})",
+             packet_trace_mode == PacketTraceMode::Full ? "every payload" : "unknown payloads");
+}
+
+// A member's name on the boards (`member_id` the game's {identity*, lock}), or "".
+std::string BoardMemberOfMemberId(u64 member_id) {
+    const u64 identity = member_id >= 0x10000 ? ReadValue<u64>(member_id, 0) : 0;
+    if (identity < 0x10000 || !HasMemoryAccess(identity + 0x36, 17, MemoryProt::CpuRead)) {
+        return {};
+    }
+    const auto online_id = NpOnlineIdAt({reinterpret_cast<const u8*>(identity + 0x36), 17});
+    return online_id ? BoardMemberOfOnlineId(*online_id) : std::string{};
+}
+
+// Phase 4's enemy owners are on (see InstallEnemyOwner).
+bool enemy_owner_installed = false;
+
+std::string OnlineIdOfMember(u64 member_id); // below, with the game link
+
+bool SendHitToOwner(const GuestRegisterSnapshot* registers); // below, with the game link
+
+// The send's entry (0x017894E0: rdi the net sync, rsi the member id, edx the channel, rcx the
+// payload, r8d its size): true returns 0, "not sent", as the game's own checks do. Which member
+// gets a packet is shadNet's (coop/packet_routes.h); here the game decides what it sends at all
+// (see ChannelPolicy), and a follower's hit and near list go to the area's owner instead of the
+// session's host.
+bool PS4_SYSV_ABI DecidePacketSend(u64, const GuestRegisterSnapshot* registers) {
+    const u32 channel = static_cast<u32>(registers->rdx);
+    if (enemy_owner_installed && channel == 0x17 && CurrentEnemyRole() == EnemyRole::Owner) {
+        const u32 size = static_cast<u32>(registers->r8);
+        if (size >= 4 && size <= 0x2004 &&
+            HasMemoryAccess(registers->rcx, size, MemoryProt::CpuRead)) {
+            NoteHandOutSent(OnlineIdOfMember(registers->rsi),
+                            {reinterpret_cast<const u8*>(registers->rcx), size});
+        }
+    }
+    if (enemy_owner_installed) {
+        switch (EnemyPacketOut(channel, CurrentEnemyRole())) {
+        case EnemyPacketFate::ToOwner:
+            if (SendHitToOwner(registers)) {
+                CountEnemyPacketSent(channel);
+                return true;
+            }
+            break; // no link to the owner: the game's own way (shadNet routes it)
+        case EnemyPacketFate::Drop:
+            return true;
+        case EnemyPacketFate::Keep:
+            break;
+        }
+    }
+    const ChannelPolicy policy = NativeChannelPolicy(channel);
+    if (policy == ChannelPolicy::Ours || policy == ChannelPolicy::Drop) {
+        static std::array<std::atomic<bool>, NativeChannelCount> logged{};
+        if (channel < NativeChannelCount && !logged[channel].exchange(true)) {
+            LOG_INFO(Debug, "Bloodborne channel table: first packet on channel {:#x} not sent ({})",
+                     channel, ChannelPolicyName(policy));
+        }
+        return true;
+    }
+    CountEnemyPacketSent(channel);
+    return false;
+}
+
+// The receive's channel checks in 0x01790C20 (rbx / rax the reliable and unreliable channel): a
+// hit on an enemy this game runs makes its enemies step at once.
+void PS4_SYSV_ABI DecidePacketReceived(u64 tag, GuestRegisterSnapshot* registers) {
+    const u32 channel =
+        tag == 0 ? ReadValue<u32>(registers->rbx, 0x64) : static_cast<u32>(registers->rax);
+    if (channel == 0x15 && enemy_owner_installed && CurrentEnemyRole() == EnemyRole::Owner) {
+        ForceEnemySteps();
+    }
+    if (channel == PositionChannel && enemy_owner_installed) {
+        CountPositionPacketIn();
+    }
+}
+
+void InstallChannelTable(u64 base, u64 image_size) {
+#ifdef BLOODBORNE_NATIVE_PORT
+    // Always with the port's co-op (phase 6: no switch); phase 4's enemy owners decide at the
+    // table's hooks too.
+    const bool wanted = party_controller.has_value();
+#else
+    // The port only (docs/SERVER_COOP_PLAN.md); shadPS4 keeps the old path.
+    const bool wanted = false;
+#endif
+    if (!wanted) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "channel table", "packets keep the old path")) {
+        return;
+    }
+    const bool installed =
+        InstallCoopHook(reinterpret_cast<void*>(base + PacketSendOffset), PacketSendPrologue, 0,
+                        DecidePacketSend) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + ReliableChannelCheckOffset),
+                        ReliableChannelCheck, 0, DecidePacketReceived) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + UnreliableChannelCheckOffset),
+                        UnreliableChannelCheck, 1, DecidePacketReceived);
+    if (!installed) {
+        coop_features.Skipped("channel table", "a hook did not go in");
+        return;
+    }
+    channel_table_installed = true;
+    coop_features.On("channel table");
+    LOG_INFO(Debug, "Bloodborne channel table: on (shadNet routes the packets; a follower's hits "
+                    "go to the enemies' owner)");
+}
+
+// See bloodborne_game_link.h: with the server link on, the game's packets leave at its transport
+// send in our frames (SHAD GamePacketsType, through the link) and come back into the member's
+// queues on the game's thread; the game's own transport sends nothing (phase 9).
+struct InboundGamePacket {
+    std::string member; // the sender's online id
+    PacketClass packet_class;
+    std::vector<u8> packet;
+    s64 received_ms;
+};
+
+struct GamePacketLink {
+    std::mutex mutex;
+    std::string self;
+    u32 instance = 0;
+    std::map<std::string, GameLinkPeer> peers;
+    std::deque<InboundGamePacket> inbound;
+    std::map<std::string, bool> reported_silent;
+    // Where each member's frames go (signaling's address for it, else shadNet's), refreshed on the
+    // link's thread; a member not found yet is asked for there.
+    std::map<std::string, std::pair<u32, u16>> addresses;
+    std::set<std::string> unresolved;
+    u64 sent = 0;
+    u64 no_member = 0;      // packets for a member without an online id: dropped
+    u64 dropped_routed = 0; // reliable packets shadNet dropped (DroppedNativeChannel)
+    u64 taken = 0;
+    u64 dropped_unknown = 0;
+};
+GamePacketLink game_link;
+bool game_link_installed = false;
+
+s64 GameLinkNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// A member id's online id ({identity*, lock}, the identity's SceNpId at +0x36), or "".
+std::string OnlineIdOfMember(u64 member_id) {
+    const u64 identity = member_id >= 0x10000 ? ReadValue<u64>(member_id, 0) : 0;
+    if (identity < 0x10000 || !HasMemoryAccess(identity + 0x36, 17, MemoryProt::CpuRead)) {
+        return {};
+    }
+    return NpOnlineIdAt({reinterpret_cast<const u8*>(identity + 0x36), 17}).value_or("");
+}
+
+GameLinkPeer& GameLinkPeerOf(const std::string& member) {
+    auto found = game_link.peers.find(member);
+    if (found == game_link.peers.end()) {
+        found = game_link.peers.try_emplace(member, game_link.self, game_link.instance).first;
+    }
+    return found->second;
+}
+
+// 0x00C8F0A0's entry: every packet is taken ("sent"); never the game's own transport (phase 9:
+// nothing falls back to it). A member whose address is not known yet gets its packets once it is;
+// one the game names without an online id gets nothing.
+bool PS4_SYSV_ABI TakeGamePacket(u64, GuestRegisterSnapshot* registers) {
+    const u64 packet = registers->rcx;
+    const u32 size = static_cast<u32>(registers->r8);
+    if (packet < 0x10000 || size < 8 || size > 0x6400 + 8 ||
+        !HasMemoryAccess(packet, size, MemoryProt::CpuRead)) {
+        return false;
+    }
+    const std::string member = OnlineIdOfMember(registers->rdx);
+    const auto packet_class =
+        static_cast<u32>(registers->rsi) != 0 ? PacketClass::Reliable : PacketClass::Unreliable;
+    {
+        std::scoped_lock lock{game_link.mutex};
+        if (game_link.self.empty()) {
+            game_link.self = LocalOnlineId();
+        }
+        if (member.empty() || game_link.self.empty()) {
+            ++game_link.no_member;
+        } else {
+            if (!game_link.addresses.contains(member)) {
+                game_link.unresolved.insert(member);
+            }
+            GameLinkPeerOf(member).Send(packet_class, {reinterpret_cast<const u8*>(packet), size},
+                                        GameLinkNowMs());
+            ++game_link.sent;
+        }
+    }
+    registers->rax = 1;
+    return true;
+}
+
+// A follower's hit on an enemy (ch 0x15, 12 bytes {chr id, damage, poise}) to the area's owner,
+// through our link (the game sends it to the session's host): true when it went.
+bool SendHitToOwner(const GuestRegisterSnapshot* registers) {
+    const std::string owner = CurrentEnemyOwner();
+    const u64 payload = registers->rcx;
+    const u32 size = static_cast<u32>(registers->r8);
+    if (owner.empty() || payload < 0x10000 || size == 0 || size > 0x1000 ||
+        !HasMemoryAccess(payload, size, MemoryProt::CpuRead)) {
+        return false;
+    }
+    std::vector<u8> packet(8 + size);
+    const u32 channel = static_cast<u32>(registers->rdx);
+    std::memcpy(packet.data(), &channel, 4);
+    std::memcpy(packet.data() + 4, &size, 4);
+    std::memcpy(packet.data() + 8, reinterpret_cast<const void*>(payload), size);
+    std::scoped_lock lock{game_link.mutex};
+    if (game_link.self.empty()) {
+        return false;
+    }
+    for (const auto& [member, address] : game_link.addresses) {
+        if (BoardMemberOfOnlineId(member) == owner) {
+            // Reliable, as the game sends channels above 6.
+            GameLinkPeerOf(member).Send(PacketClass::Reliable, packet, GameLinkNowMs());
+            ++game_link.sent;
+            static std::atomic<u32> logged{0};
+            if (logged.fetch_add(1) < 10) {
+                std::string bytes;
+                for (u32 i = 0; i < size; ++i) {
+                    bytes += fmt::format("{:02x}", ReadValue<u8>(payload, i));
+                }
+                LOG_INFO(Debug,
+                         "Bloodborne enemy owner: channel {:#x} ({:#x}) went to the owner {} ({})",
+                         channel, ReadValue<u32>(payload, 0), owner, bytes.substr(0, 64));
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+// The owner's full position packet (see SendsFullPositionPacket) to every other member of the
+// session, as the game's own (ch 4, unreliable): the game's loop then fills the next one.
+void PS4_SYSV_ABI SendFullPositionPacket(u64, GuestRegisterSnapshot* registers) {
+    static u64 frame = 0;
+    static u32 sent_this_frame = 0;
+    const u64 now_frame = EnemyFrameSerial();
+    if (now_frame != frame) {
+        frame = now_frame;
+        sent_this_frame = 0;
+    }
+    const u64 sync = registers->r12;
+    const u64 slots = registers->r15;
+    if (sync < 0x10000 || slots < 0x10000 ||
+        !HasMemoryAccess(sync + PositionPacketOffset, PositionPacketBytes, MemoryProt::CpuRead) ||
+        !SendsFullPositionPacket(CurrentEnemyRole(), static_cast<s32>(registers->rbx),
+                                 static_cast<s32>(registers->r14),
+                                 ReadValue<s32>(sync, PositionSlotOffset),
+                                 ReadValue<s32>(slots, 0x10), sent_this_frame)) {
+        return;
+    }
+    const u64 session = ReadValue<u64>(image_base + SessionManagerPointerOffset, 0);
+    const u64 first = session >= 0x10000 ? ReadValue<u64>(session, 0xF8) : 0;
+    const u64 end = session >= 0x10000 ? ReadValue<u64>(session, 0x100) : 0;
+    if (first < 0x10000 || end <= first || end - first > 0x20 * 8) {
+        return;
+    }
+    std::vector<u8> packet(8 + PositionPacketBytes);
+    std::memcpy(packet.data(), &PositionChannel, 4);
+    std::memcpy(packet.data() + 4, &PositionPacketBytes, 4);
+    std::memcpy(packet.data() + 8, reinterpret_cast<const void*>(sync + PositionPacketOffset),
+                PositionPacketBytes);
+    u32 members = 0;
+    {
+        std::scoped_lock lock{game_link.mutex};
+        if (game_link.self.empty()) {
+            return;
+        }
+        for (u64 entry = first; entry < end; entry += 0x20) {
+            const std::string member = OnlineIdOfMember(entry);
+            if (member.empty() || member == game_link.self) {
+                continue;
+            }
+            if (!game_link.addresses.contains(member)) {
+                game_link.unresolved.insert(member);
+            }
+            GameLinkPeerOf(member).Send(PacketClass::Unreliable, packet, GameLinkNowMs());
+            ++game_link.sent;
+            ++members;
+        }
+    }
+    if (members == 0) {
+        return;
+    }
+    CountEnemyPacketSent(PositionChannel);
+    ++sent_this_frame;
+    registers->rbx = 0; // the game fills a new packet from its first entry
+    static std::atomic<u32> logged{0};
+    if (logged.fetch_add(1) < 3) {
+        LOG_INFO(Debug,
+                 "Bloodborne enemy owner: sent a full position packet to {} member(s), the round "
+                 "goes on (slot {} of {})",
+                 members, ReadValue<s32>(sync, PositionSlotOffset), ReadValue<s32>(slots, 0x10));
+    }
+}
+
+// Phase 4's hooks (see EnemyRole and the offsets beside it). Stand-ins of SprjSessionManager for
+// one read of its state (+0x124): the host's and a guest's.
+struct SessionStateStandIn {
+    alignas(16) std::array<u8, 0x130> bytes{};
+    explicit SessionStateStandIn(s32 state) {
+        std::memcpy(bytes.data() + MatchingStateOffset, &state, sizeof(state));
+    }
+    u64 Address() const {
+        return reinterpret_cast<u64>(bytes.data());
+    }
+};
+const SessionStateStandIn hosting_stand_in{MatchingStateHosting};
+const SessionStateStandIn guest_stand_in{MatchingStateSummonedGuest};
+
+u64 StandInFor(s32 state) {
+    return state == MatchingStateHosting ? hosting_stand_in.Address() : guest_stand_in.Address();
+}
+
+// The game's thread runs the HP sync: the session manager the stand-in replaced, put back on the
+// branch taken.
+thread_local u64 enemy_hp_session = 0;
+
+void PS4_SYSV_ABI SetEnemyHpRoundState(u64, GuestRegisterSnapshot* registers) {
+    const s32 state = ReadValue<s32>(registers->rax, MatchingStateOffset);
+    if (const auto wanted = EnemySyncState(CurrentEnemyRole(), state)) {
+        constexpr u64 ZeroFlag = u64{1} << 6;
+        registers->rflags = *wanted == MatchingStateHosting ? (registers->rflags | ZeroFlag)
+                                                            : (registers->rflags & ~ZeroFlag);
+    }
+}
+
+void PS4_SYSV_ABI SetEnemyHpSendState(u64, GuestRegisterSnapshot* registers) {
+    enemy_hp_session = 0;
+    const s32 state = ReadValue<s32>(registers->rdi, MatchingStateOffset);
+    if (const auto wanted = EnemySyncState(CurrentEnemyRole(), state)) {
+        enemy_hp_session = registers->rdi;
+        registers->rdi = StandInFor(*wanted);
+    }
+}
+
+void PS4_SYSV_ABI RestoreEnemyHpSession(u64, GuestRegisterSnapshot* registers) {
+    if (enemy_hp_session != 0) {
+        registers->rdi = enemy_hp_session;
+        enemy_hp_session = 0;
+    }
+}
+
+// The receive from the host (0x017893E0) of the enemies' HP (ch 5, r12d): a follower reads the
+// owner's member instead (the session's members at [+0xF8, +0x100), 0x20 each; rbx is the session
+// manager before `add rbx, 0xD0`).
+void PS4_SYSV_ABI ReceiveHpFromOwner(u64, GuestRegisterSnapshot* registers) {
+    if (static_cast<u32>(registers->r12) != 0x05 || CurrentEnemyRole() != EnemyRole::Follower) {
+        return;
+    }
+    const std::string owner = CurrentEnemyOwner();
+    const u64 session = registers->rbx;
+    if (owner.empty() || session < 0x10000) {
+        return;
+    }
+    const u64 first = ReadValue<u64>(session, 0xF8);
+    const u64 end = ReadValue<u64>(session, 0x100);
+    if (first < 0x10000 || end < first || end - first > 0x20 * 8) {
+        return;
+    }
+    for (u64 entry = first; entry < end; entry += 0x20) {
+        if (BoardMemberOfMemberId(entry) == owner) {
+            registers->rbx = entry - 0xD0;
+            return;
+        }
+    }
+}
+
+void PS4_SYSV_ABI SetEnemyHitState(u64, GuestRegisterSnapshot* registers) {
+    const s32 state = ReadValue<s32>(registers->rax, MatchingStateOffset);
+    if (const auto wanted = EnemyHitState(CurrentEnemyRole(), state)) {
+        registers->rax = StandInFor(*wanted);
+    }
+}
+
+// Phase 5 (bloodborne_team.h): the title's load waits for the team's Start (state 6 skipped while
+// HoldTitleLoadForTeam says so), and the title menu tells the lobby the player is back.
+bool PS4_SYSV_ABI HoldTitleLoad(u64, const GuestRegisterSnapshot*) {
+    const u64 game = GetGlobalState();
+    const s32 slot = game >= 0x10000 ? ReadValue<s32>(game, TitleLoadSlotOffset) : -1;
+    return HoldTitleLoadForTeam(slot < 0 ? 0u : static_cast<u32>(slot));
+}
+
+void PS4_SYSV_ABI NoteTitleMenu(u64, const GuestRegisterSnapshot*) {
+    TeamBackAtTitle();
+}
+
+// SprjRemoMan's step methods, Init .. EpilogWait (its step table, filled at 0x01CFBA91), and
+// their first instructions.
+constexpr std::array<u64, 7> SprjRemoManStepOffsets{0x01CFA050, 0x01CFA310, 0x01CFA4C0, 0x01CFA670,
+                                                    0x01CFB060, 0x01CFB350, 0x01CFB5F0};
+constexpr std::array<u8, 8> RemoStepEntry{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
+constexpr std::array<u8, 7> RemoEpilogWaitEntry{0x55, 0x48, 0x89, 0xE5, 0x41, 0x56, 0x53};
+
+void InstallTeamLobby(u64 base, u64 image_size) {
+    if (!TeamModeOn()) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "team lobby", "loads do not wait for the team")) {
+        return;
+    }
+    const bool installed =
+        InstallCoopHook(reinterpret_cast<void*>(base + TitleLoadStateOffset), TitleStatePrologue, 0,
+                        GuestFunctionOverride{HoldTitleLoad}) &&
+        InstallCoopHook(reinterpret_cast<void*>(base + TitleMenuStateOffset), TitleStatePrologue, 0,
+                        GuestCodeHook{NoteTitleMenu});
+    if (!installed) {
+        coop_features.Skipped("team lobby", "a hook did not go in");
+        return;
+    }
+    coop_features.On("team lobby");
+    LOG_INFO(Debug, "Bloodborne team lobby: a save's load waits for the team's Start");
+    // Phase 6: the team joins its host's session without signs or a bell.
+    if (CoopSitesMatch(base, image_size, "team join", "the team cannot join its host")) {
+        team_join_ready = true;
+        coop_features.On("team join");
+    }
+    // Kaniel 2026-10-15: a cutscene under the team's loading screen is skipped (Options pressed
+    // for it while the cutscene player is in its playing step).
+    struct RemoStep {
+        u64 offset;
+        std::span<const u8> bytes;
+    };
+    const std::array<RemoStep, 7> steps{{
+        {SprjRemoManStepOffsets[0], RemoStepEntry},
+        {SprjRemoManStepOffsets[1], RemoStepEntry},
+        {SprjRemoManStepOffsets[2], RemoStepEntry},
+        {SprjRemoManStepOffsets[3], RemoStepEntry},
+        {SprjRemoManStepOffsets[4], RemoStepEntry},
+        {SprjRemoManStepOffsets[5], RemoStepEntry},
+        {SprjRemoManStepOffsets[6], RemoEpilogWaitEntry},
+    }};
+    for (size_t step = 0; step < steps.size(); ++step) {
+        if (!InstallCoopHook(reinterpret_cast<void*>(base + steps[step].offset), steps[step].bytes,
+                             step, GuestCodeHook{Coop::NoteRemoStep})) {
+            coop_features.Skipped("cutscene skip", "a cutscene step hook did not go in");
+            return;
+        }
+    }
+    coop_features.On("cutscene skip");
+}
+
+void InstallEnemyOwner(u64 base, u64 image_size) {
+    if (!EnemyOwnerOn()) {
+        return;
+    }
+    if (!channel_table_installed) {
+        coop_features.Skipped("enemy owner", "the channel table is off");
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "enemy owner", "enemies keep the old path")) {
+        return;
+    }
+    struct Hook {
+        u64 offset;
+        std::span<const u8> bytes;
+        GuestRegisterEditHook hook;
+    };
+    const std::array<Hook, 6> hooks{{
+        {EnemyHpRoundCheckOffset, EnemyHpRoundCheck, SetEnemyHpRoundState},
+        {EnemyHpStateReadOffset, EnemyHpStateRead, SetEnemyHpSendState},
+        {EnemyHpSendBranchOffset, EnemyHpSendBranch, RestoreEnemyHpSession},
+        {EnemyHpReceiveBranchOffset, EnemyHpReceiveBranch, RestoreEnemyHpSession},
+        {ReceiveFromHostMemberOffset, ReceiveFromHostMember, ReceiveHpFromOwner},
+        {EnemyHitStateReadOffset, EnemyHitStateRead, SetEnemyHitState},
+    }};
+    // All or none: a stand-in nobody puts back would break the game.
+    for (size_t installed = 0; installed < hooks.size(); ++installed) {
+        if (!InstallCoopHook(reinterpret_cast<void*>(base + hooks[installed].offset),
+                             hooks[installed].bytes, installed, hooks[installed].hook)) {
+            for (size_t undo = 0; undo < installed; ++undo) {
+                RemoveGuestCodeHook(reinterpret_cast<void*>(base + hooks[undo].offset));
+            }
+            coop_features.Skipped("enemy owner",
+                                  SiteFailure(base, image_size, hooks[installed].offset));
+            return;
+        }
+    }
+    enemy_owner_installed = true;
+    coop_features.On("enemy owner");
+    // Phase 8: both or neither (a record left with the others' groups would wake them for good).
+    if (InstallCoopHook(reinterpret_cast<void*>(base + ActivationPassOffset),
+                        ActivationPassPrologue, 0, WakeAroundOthers)) {
+        if (InstallCoopHook(reinterpret_cast<void*>(base + ActivationPassEndOffset),
+                            ActivationPassEnd, 0, PutBackWokenRecords)) {
+            coop_features.On("whole-map owner");
+            // The position hooks stand alone (a follower's only counts).
+            if (InstallCoopHook(reinterpret_cast<void*>(base + PositionPacketEntryOffset),
+                                PositionPacketEntry, 0, SendFullPositionPacket) &&
+                InstallCoopHook(reinterpret_cast<void*>(base + PositionReceiveEntryOffset),
+                                PositionReceiveEntry, 0, CountPositionTaken) &&
+                InstallCoopHook(reinterpret_cast<void*>(base + HandOutReceivedOffset),
+                                HandOutReceived, 0, TakeHandOut)) {
+                coop_features.On("whole-map positions");
+            } else {
+                coop_features.Skipped("whole-map positions",
+                                      SiteFailure(base, image_size, PositionPacketEntryOffset));
+            }
+            if (!InstallCoopHook(reinterpret_cast<void*>(base + OwnershipStepEndOffset),
+                                 OwnershipStepEndPrologue, 0, KeepAwakeEnemies)) {
+                coop_features.Skipped("whole-map runs",
+                                      SiteFailure(base, image_size, OwnershipStepEndOffset));
+            } else {
+                coop_features.On("whole-map runs");
+            }
+        } else {
+            RemoveGuestCodeHook(reinterpret_cast<void*>(base + ActivationPassOffset));
+            coop_features.Skipped("whole-map owner",
+                                  SiteFailure(base, image_size, ActivationPassEndOffset));
+        }
+    } else {
+        coop_features.Skipped("whole-map owner",
+                              SiteFailure(base, image_size, ActivationPassOffset));
+    }
+    LOG_INFO(Debug, "Bloodborne enemy owner: on (the server's owner of each area runs its "
+                    "enemies, the others follow it)");
+}
+
+// The peer (its queues) of a member in NetSync's list, or 0.
+u64 NetSyncPeerOf(u64 net_sync, const std::string& member) {
+    const u64 head = ReadValue<u64>(net_sync, 0x28);
+    if (head < 0x10000) {
+        return 0;
+    }
+    u32 steps = 0;
+    for (u64 node = ReadValue<u64>(head, 0); node >= 0x10000 && node != head && steps < 16;
+         node = ReadValue<u64>(node, 0), ++steps) {
+        const u64 peer = ReadValue<u64>(node, 0x10);
+        if (peer >= 0x10000 && OnlineIdOfMember(peer + 0x08) == member) {
+            return peer;
+        }
+    }
+    return 0;
+}
+
+// The packets our link took go into the members' queues, in the order they came (the link's
+// thread; the game's receive runs on its network thread too).
+void DeliverGamePackets() {
+    std::deque<InboundGamePacket> inbound;
+    {
+        std::scoped_lock lock{game_link.mutex};
+        inbound.swap(game_link.inbound);
+    }
+    if (inbound.empty()) {
+        return;
+    }
+    // Not mapped yet while the game starts (rig 2026-10-13: a read here crashed a booting game).
+    const u64 net_sync_pointer = image_base + SummonSessionRulesPointerOffset;
+    const u64 net_sync = HasMemoryAccess(net_sync_pointer, 8, MemoryProt::CpuRead)
+                             ? ReadValue<u64>(net_sync_pointer, 0)
+                             : 0;
+    if (net_sync < 0x10000) {
+        std::scoped_lock lock{game_link.mutex};
+        for (auto it = inbound.rbegin(); it != inbound.rend(); ++it) {
+            game_link.inbound.push_front(std::move(*it));
+        }
+        return;
+    }
+    using Fill = u8 PS4_SYSV_ABI (*)(u64 peer, u32 reliable, const u8* bytes, u32 size);
+    const auto fill = reinterpret_cast<Fill>(image_base + MemberQueuesFillOffset);
+    const s64 now_ms = GameLinkNowMs();
+    std::deque<InboundGamePacket> waiting;
+    std::set<std::string> missing; // a member's packets keep their order: once one waits, all do
+    u64 taken = 0;
+    u64 dropped = 0;
+    for (InboundGamePacket& packet : inbound) {
+        const u64 peer =
+            missing.contains(packet.member) ? 0 : NetSyncPeerOf(net_sync, packet.member);
+        if (peer == 0) {
+            missing.insert(packet.member);
+            if (now_ms - packet.received_ms < HeldForUnknownMemberMs) {
+                waiting.push_back(std::move(packet));
+            } else {
+                ++dropped;
+            }
+            continue;
+        }
+        fill(peer, packet.packet_class == PacketClass::Reliable ? 1 : 0, packet.packet.data(),
+             static_cast<u32>(packet.packet.size()));
+        ++taken;
+    }
+    std::scoped_lock lock{game_link.mutex};
+    game_link.taken += taken;
+    game_link.dropped_unknown += dropped;
+    // Before what came meanwhile.
+    for (auto it = waiting.rbegin(); it != waiting.rend(); ++it) {
+        game_link.inbound.push_front(std::move(*it));
+    }
+}
+
+// A member's address: signaling's connection to it, else shadNet's record of its link (the
+// matching server's RequestSignalingInfos, which waits for the server: the link's thread only).
+std::optional<std::pair<u32, u16>> ResolveMember(const std::string& member, bool ask_server) {
+    u32 addr = 0;
+    u16 port = 0;
+    if (Libraries::Np::NpSignaling::GetPeerAddress(member, &addr, &port) && addr != 0 &&
+        port != 0) {
+        return std::pair{addr, port};
+    }
+    if (ask_server && Libraries::Np::NpMatching2::RequestSignalingInfos(member, &addr, &port) &&
+        addr != 0 && port != 0) {
+        return std::pair{addr, port};
+    }
+    return std::nullopt;
+}
+
+// The members' addresses: new ones (asked for every 2 s until found), and every known one again
+// every 5 s (a member whose game restarted has a new port).
+void RefreshMemberAddresses(s64 now_ms, s64& refreshed_ms, s64& asked_ms) {
+    std::vector<std::string> wanted;
+    std::vector<std::string> known;
+    {
+        std::scoped_lock lock{game_link.mutex};
+        wanted.assign(game_link.unresolved.begin(), game_link.unresolved.end());
+        for (const auto& [member, address] : game_link.addresses) {
+            known.push_back(member);
+        }
+    }
+    const bool ask = !wanted.empty() && now_ms - asked_ms >= 2000;
+    const bool refresh = now_ms - refreshed_ms >= 5000;
+    if (!ask && !refresh) {
+        return;
+    }
+    std::vector<std::pair<std::string, std::pair<u32, u16>>> found;
+    if (ask) {
+        asked_ms = now_ms;
+        for (const std::string& member : wanted) {
+            if (const auto address = ResolveMember(member, true)) {
+                found.emplace_back(member, *address);
+            }
+        }
+    }
+    if (refresh) {
+        refreshed_ms = now_ms;
+        for (const std::string& member : known) {
+            if (const auto address = ResolveMember(member, false)) {
+                found.emplace_back(member, *address);
+            }
+        }
+    }
+    std::scoped_lock lock{game_link.mutex};
+    for (const auto& [member, address] : found) {
+        auto& known_address = game_link.addresses[member];
+        if (known_address != address) {
+            LOG_INFO(Debug, "Bloodborne game packet link: {} at {:#x}:{}", member,
+                     ntohl(address.first), ntohs(address.second));
+        }
+        known_address = address;
+        game_link.unresolved.erase(member);
+    }
+}
+
+void RunGamePacketLink() {
+    std::vector<u8> buffer(70'000);
+    s64 stats_ms = GameLinkNowMs();
+    s64 refreshed_ms = 0;
+    s64 asked_ms = 0;
+    while (true) {
+        RefreshMemberAddresses(GameLinkNowMs(), refreshed_ms, asked_ms);
+        const s64 now_ms = GameLinkNowMs();
+        std::vector<std::pair<std::pair<u32, u16>, std::vector<u8>>> out;
+        std::vector<std::string> lines;
+        {
+            std::scoped_lock lock{game_link.mutex};
+            if (game_link.self.empty()) {
+                game_link.self = LocalOnlineId();
+            }
+            u32 from_addr = 0;
+            u16 from_port = 0;
+            for (int read = 0; read < 512; ++read) {
+                const int size = Libraries::Net::P2PGamePacketsRecvFrom(
+                    buffer.data(), static_cast<u32>(buffer.size()), &from_addr, &from_port);
+                if (size < 5) {
+                    break;
+                }
+                const auto frame =
+                    DecodeGameFrame({buffer.data() + 5, static_cast<size_t>(size) - 5});
+                if (!frame || frame->sender.empty() || game_link.self.empty()) {
+                    continue;
+                }
+                for (auto& packet : GameLinkPeerOf(frame->sender).Receive(*frame, now_ms)) {
+                    if (NativePacketChannel(packet) >= NativeChannelCount) {
+                        ++game_link.dropped_routed; // shadNet's: it keeps the stream's order
+                        continue;
+                    }
+                    const bool reliable =
+                        (packet[0] | packet[1] << 8 | packet[2] << 16 | packet[3] << 24) >= 7;
+                    game_link.inbound.push_back(
+                        {frame->sender, reliable ? PacketClass::Reliable : PacketClass::Unreliable,
+                         std::move(packet), now_ms});
+                }
+            }
+            for (auto& [member, peer] : game_link.peers) {
+                const auto address = game_link.addresses.find(member);
+                if (address == game_link.addresses.end()) {
+                    game_link.unresolved.insert(member);
+                    continue; // its frames wait
+                }
+                for (const GameFrame& frame : peer.Flush(now_ms)) {
+                    std::vector<u8> bytes{'S', 'H', 'A', 'D', GamePacketsType};
+                    const auto payload = EncodeGameFrame(frame);
+                    bytes.insert(bytes.end(), payload.begin(), payload.end());
+                    out.emplace_back(address->second, std::move(bytes));
+                }
+                const auto silent = peer.SilentFor(now_ms);
+                bool& reported = game_link.reported_silent[member];
+                if (silent && *silent > 3000 && !reported) {
+                    reported = true;
+                    lines.push_back(fmt::format("nothing from {} for {} ms", member, *silent));
+                } else if (silent && *silent <= 3000 && reported) {
+                    reported = false;
+                    lines.push_back(fmt::format("{} heard again", member));
+                }
+            }
+            if (now_ms - stats_ms >= 10'000) {
+                stats_ms = now_ms;
+                std::string peers;
+                for (const auto& [member, peer] : game_link.peers) {
+                    peers += fmt::format(" {}: {} unacked, {} resends, {} late dropped;", member,
+                                         peer.Unacked(), peer.Resends(), peer.DroppedOld());
+                }
+                lines.push_back(fmt::format(
+                    "{} packets taken from the game, {} handed to it, {} dropped (no member), "
+                    "{} dropped by shadNet, {} for no member id;{}",
+                    game_link.sent, game_link.taken, game_link.dropped_unknown,
+                    game_link.dropped_routed, game_link.no_member, peers));
+            }
+        }
+        DeliverGamePackets();
+        for (const auto& [address, bytes] : out) {
+            Libraries::Net::P2PCoopSendTo(bytes.data(), static_cast<u32>(bytes.size()),
+                                          address.first, address.second);
+        }
+        for (const std::string& line : lines) {
+            LOG_INFO(Debug, "Bloodborne game packet link: {}", line);
+            Trace("glink", {{"what", line}});
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{4});
+    }
+}
+
+void InstallGamePacketLink(u64 base, u64 image_size) {
+#ifdef BLOODBORNE_NATIVE_PORT
+    const bool wanted = party_controller.has_value() && Libraries::Net::ServerLinkSwitchOn();
+#else
+    // The port only (docs/SERVER_COOP_PLAN.md); shadPS4 keeps the old path.
+    const bool wanted = false;
+#endif
+    if (!wanted) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "game packet link", "the game sends its own packets")) {
+        return;
+    }
+    std::random_device random;
+    game_link.instance = random() | 1;
+    const bool installed = InstallCoopHook(reinterpret_cast<void*>(base + TransportSendOffset),
+                                           GamePacketLinkPrologue, 0, TakeGamePacket);
+    if (!installed) {
+        coop_features.Skipped("game packet link", "a hook did not go in");
+        return;
+    }
+    game_link_installed = true;
+    std::thread(RunGamePacketLink).detach();
+    coop_features.On("game packet link");
+    LOG_INFO(Debug,
+             "Bloodborne game packet link: on (the game's packets in our frames, "
+             "instance {:08x})",
+             game_link.instance);
+}
+
 // See SaveBackups: a thread of its own copies the saves a minute after the start, then every few
 // minutes, and keeps the newest few.
 void StartSaveBackups() {
@@ -414,6 +1284,16 @@ void InstallGuestsHitNpcs(u64 base, u64 image_size) {
     coop_features.On("guests hit NPCs");
 }
 
+// Trading (bloodborne_trade.cpp, the port with the server world): the game functions it calls to
+// take items out of the inventory and put them in.
+void InstallTrading(u64 base, u64 image_size) {
+    if (!TradeSwitchOn() || !CoopSitesMatch(base, image_size, "trading", "no trading")) {
+        return;
+    }
+    EnableTrading();
+    coop_features.On("trading");
+}
+
 // See QuietSummonBannerPatches: a party's joins show one banner, not two.
 void InstallQuietSummonBanners(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -441,6 +1321,23 @@ void InstallShortSummonSlotHold(u64 base, u64 image_size) {
     coop_features.On("summon slot hold");
     LOG_INFO(Debug, "Bloodborne summon slot patch: a summon in flight holds its slot for {} s",
              PartySummonSlotHoldSeconds);
+}
+
+// Phase 7: the server says who is in a session (the rooms it keeps, its link's liveness), so the
+// game never leaves one on its own: no idle time-out, resend overflow, room time-out or irregular
+// leave (the sites' comments). A member that really went is the room's MEMBER_LEFT.
+void InstallServerOwnsLeaves(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "server owns leaves",
+                        "the game may end its own session (a save, a stall)")) {
+        return;
+    }
+    WriteCoopPatches(base, "server owns leaves");
+    coop_features.On("server owns leaves");
+    LOG_INFO(Debug, "Bloodborne party: only the server ends a session (the game's own time-outs "
+                    "are off)");
 }
 
 constexpr u64 LeaveLimitOffset = 0x0138A4A0;
@@ -635,11 +1532,18 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallShortSummonSlotHold(base, image_size);
     InstallBossDeathTracer(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
+    InstallServerOwnsLeaves(base, image_size);
     InstallSeamlessTravel(base, image_size);
     InstallLampsAsCampfires(base, image_size);
     InstallNoLevelSyncInParty(base, image_size);
     InstallSolidNpcsInParty(base, image_size);
+    // Before the shared loot: the table takes over its map item packets.
+    InstallChannelTable(base, image_size);
+    InstallGamePacketLink(base, image_size);
+    InstallEnemyOwner(base, image_size);
+    InstallTeamLobby(base, image_size);
     InstallFloorGuard(base, image_size);
+    InstallFlagBlockGuard(base, image_size);
     InstallSharedLoot(base, image_size);
     InstallLampsStayLitAtRegistration(base, image_size);
     InstallDeferredBossItems(base, image_size);
@@ -648,8 +1552,10 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallItemButtonDiagnostics(base, image_size);
     InstallPartyDeath(base, image_size);
     InstallOwnHitCount(base, image_size);
+    InstallTrading(base, image_size);
     StartSaveBackups();
     StartCoopTrace();
+    InstallNativePacketTrace(base, image_size);
     StartRestBoardClient();
     StartVitalsBoardClient();
     PatchSignTimers(base, image_size);

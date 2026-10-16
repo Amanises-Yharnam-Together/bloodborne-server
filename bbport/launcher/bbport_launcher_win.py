@@ -203,8 +203,8 @@ COOP_INSTALL = os.environ.get('BB_COOP_INSTALL') == '1' or (PORT_DIR / 'event-re
 HARDER_CHOICES = [('off', ('Off (the normal game)', 'Выключено (обычная игра)')),
                   (bbport_coop.HARDER_ON, ('Harder: enemy HP ×3, damage ×1.5, poise ×3',
                                            'Сложнее: HP врагов ×3, урон ×1.5, стойкость ×3'))]
-ROLES = [('guest', ('Guest (joins the host)', 'Гость (присоединяется к хосту)')),
-         ('host', ('Host (runs the co-op server)', 'Хост (запускает сервер)'))]
+ROLES = [('guest', ('Player (plays on the server)', 'Игрок (играет на сервере)')),
+         ('host', ('Host (runs the co-op server on this PC)', 'Хост (запускает сервер на этом ПК)'))]
 
 
 def coop_release_version():
@@ -305,7 +305,7 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'vk_validation': False, 'extra_env': '', 'close_on_play': False,
                 'check_updates': True, 'ui_advanced': False, 'animations': True,
                 'addcont': '', 'pkg_dir': '', 'pkg_src': '', 'reshade': False, 'online': False, 'online_server': 'srv.shadps4.net:31313',
-                'online_webapi': '', 'online_npid': '', 'online_password': '', 'online_upnp': True,
+                'online_webapi': '', 'online_npid': '', 'online_password': '',
                 'online_community': COMMUNITY_SERVER,
                 'beta_versions': is_prerelease(VERSION),  # a beta user keeps getting betas unless they say no
                 'experimental': False, 'object_motion_amd': False, 'monitor': '',  # monitor: a name from --displays; '' is the primary
@@ -989,7 +989,6 @@ def game_environment(s, frame_generation=None):
         env['BB_SHADNET_WEBAPI'] = webapi_setting(s)
         env['BB_SHADNET_NPID'] = str(s['online_npid']).strip()
         env['BB_SHADNET_PASSWORD'] = str(s['online_password'])
-        env['BB_UPNP'] = '1' if s['online_upnp'] else '0'
         env['BB_COMMUNITY_SERVER'] = community_address(s['online_community'])
     if s.get('reshade') and reshade_ready():
         # An explicit layer for this run only; its files, settings and log stay in bin/reshade.
@@ -2788,16 +2787,9 @@ class Launcher:
         ttk.Entry(self.cell(card, 2, 1, _("Host's IP address (VPN or public; the host types their own)",
                                           'IP хоста (VPN или внешний; хост вводит свой)')),
                   textvariable=var('host_ip')).pack(fill='x')
-        ttk.Entry(self.cell(card, 3, 0, _('Your account name (3-16 letters or digits)',
-                                          'Имя аккаунта (3-16 букв или цифр)')),
-                  textvariable=var('account')).pack(fill='x')
-        ttk.Entry(self.cell(card, 3, 1, _('Your account password', 'Пароль аккаунта')),
-                  textvariable=var('password'), show='•').pack(fill='x')
-        # The party is its password alone (Kaniel 2026-10-13: no party name).
-        ttk.Entry(self.cell(card, 4, 0, _('Party password (the same for every player)',
-                                          'Пароль группы (одинаковый у всех)')),
-                  textvariable=var('party_secret')).pack(fill='x')
-        combo(self.cell(card, 4, 1, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
+        # No account name or password (phase 11): the player's id is made once and kept in coop.json,
+        # and the others see the character's name. No party settings: the team is made in the game (the team screen after Continue).
+        combo(self.cell(card, 4, 0, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
               'harder', HARDER_CHOICES)
         holder = self.cell(card, 5, 0, '', span=2)
         self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
@@ -2812,10 +2804,12 @@ class Launcher:
                     self.coop_stop_servers).pack(side='left', padx=(px(8), 0))
         self.coop_server_line = self.label(holder, '', 'small', MUTED)
         self.coop_server_line.pack(side='left', padx=(px(14), 0))
-        self.note(card, _("Everyone in a party uses this same release. Your account is made on the host's server the "
-                          'first time you press PLAY. Windows asks once to let co-op through its firewall.',
-                          'Все в группе используют один и тот же релиз. Аккаунт создаётся на сервере хоста при первом '
-                          'нажатии ИГРАТЬ. Windows один раз спросит разрешение для брандмауэра.'), top=14)
+        self.note(card, _('Everyone uses this same release. No account to make: the others see your '
+                          "character's name. Make or join a team in the game: Continue, Load Game or New Game opens "
+                          'the team screen. Windows asks once to let co-op through its firewall.',
+                          'Все используют один и тот же релиз. Аккаунт не нужен: другие видят имя вашего '
+                          'персонажа. Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают '
+                          'экран команды. Windows один раз спросит разрешение для брандмауэра.'), top=14)
         self.coop_changed()
         if not self.coop_game_folder():
             self.coop_search(None, quiet=True)
@@ -2984,10 +2978,7 @@ class Launcher:
             return
         self.coop_changed()
         names = {'game': _('your Bloodborne folder', 'папку Bloodborne'),
-                 'host_ip': _("the host's IP address", 'IP хоста'),
-                 'account': _('an account name (3-16 letters, digits, _ or -)', 'имя аккаунта (3-16 букв, цифр, _ или -)'),
-                 'password': _('a password (letters, digits, _ or -)', 'пароль (буквы, цифры, _ или -)'),
-                 'party_secret': _('a party password (letters, digits, _ or -)', 'пароль группы (буквы, цифры, _ или -)')}
+                 'host_ip': _("the host's IP address", 'IP хоста')}
         missing = bbport_coop.missing(self.coop)
         if missing:
             self.messagebox.showerror('Bloodborne', _('Fill in {} on the Co-op card.',
@@ -3012,13 +3003,8 @@ class Launcher:
                 bbport_coop.start_servers(PORT_DIR, settings['host_ip'])
             else:
                 self.coop_firewall()
-            self.coop_say(_("Signing in on the host's server…", 'Вход на сервер хоста…'))
-            ok, output = bbport_coop.register(PORT_DIR, settings['host_ip'], settings['account'], settings['password'])
-            if not ok:
-                raise RuntimeError(_("Could not reach the host's server at {}. Is the host's server running, and are "
-                                     'you on the same VPN?\n\n{}',
-                                     'Нет связи с сервером хоста {}. Запущен ли сервер у хоста и в одной ли вы '
-                                     'VPN?\n\n{}').format(settings['host_ip'], output.strip()[-400:]))
+            # No account step (phase 11): the host's server makes the player's account at its first
+            # sign-in, and the game's team screen says when it cannot reach the server.
             root = bbport_coop.view_root(PORT_DIR)
             if bbport_coop.needs_prepare(PORT_DIR, settings):
                 root, note = bbport_coop.prepare(PORT_DIR, settings, say=lambda text: self.coop_say(_(text)))
@@ -3044,6 +3030,9 @@ class Launcher:
             self.messagebox.showerror('Bloodborne', failed)
             return
         log_path = bbport_coop.rotate_logs(PORT_DIR)
+        # Phase 11: a crash's dump and logs go to the host's server by themselves, alongside.
+        threading.Thread(target=bbport_coop.send_reports, args=(PORT_DIR, dict(settings)),
+                         daemon=True).start()
         env = bbport_coop.game_environment(game_environment(self.app), settings, PORT_DIR, root)
         self.set_log('')
         if note:
@@ -3732,9 +3721,6 @@ class Launcher:
                    'your party.'))
         self.row(f, _('Password'), ttk.Entry(f, textvariable=self.var('online_password', 'app'), width=40, show='•'),
                  _('Saved on this PC with the other launcher settings.'))
-        self.section(f, _('Connection'))
-        self.check(f, 'online_upnp', 'app', _('UPnP (open a port on the router automatically)'),
-                   _('Turn it off on Tailscale or another VPN.'))
         result = ttk.Label(f, text='', style='Muted.TLabel', justify='left')
 
         def check():
@@ -5095,11 +5081,53 @@ def install_update(target, wait_pid):
     return 0
 
 
+# PROCESS_MITIGATION_POLICY's ProcessRedirectionTrustPolicy (Windows 11 RedirectionGuard).
+REDIRECTION_TRUST_POLICY = 16
+
+
+def redirection_guarded():
+    """Whether Windows refuses this process any path through a folder link a user made (the
+    RedirectionGuard mitigation: WinError 448). Kaniel 2026-10-14: the launcher the installer's last
+    page started inherited it from the installer, and PLAY could not read the game view (links to the
+    player's own copy)."""
+    kernel = ctypes.windll.kernel32
+    query = getattr(kernel, 'GetProcessMitigationPolicy', None)
+    if query is None:
+        return False
+    query.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t]
+    query.restype = ctypes.c_int
+    value = ctypes.c_uint32(0)
+    current = ctypes.c_void_p(-1)  # GetCurrentProcess's pseudo handle
+    if not query(current, REDIRECTION_TRUST_POLICY, ctypes.byref(value), ctypes.sizeof(value)):
+        return False
+    return bool(value.value & 1)
+
+
+def restart_without_redirection_guard():
+    """Starts this launcher again through Explorer, whose children have no such rule. Once a minute
+    at most (a marker file), so a launcher Explorer starts guarded all the same never loops. True
+    when it was started."""
+    marker = DATA_DIR / 'relaunched.txt'
+    try:
+        if marker.is_file() and time.time() - marker.stat().st_mtime < 60:
+            return False
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("the launcher started again without the installer's RedirectionGuard\n",
+                          encoding='utf-8')
+    except OSError:
+        return False
+    windows = os.environ.get('SystemRoot', r'C:\Windows')
+    subprocess.Popen([str(Path(windows) / 'explorer.exe'), sys.executable])
+    return True
+
+
 def main():
     global LANG
     args = sys.argv[1:]
     if args and args[0] in ('--run', '--script'):
         sys.exit(run_role(args))
+    if FROZEN and not args and redirection_guarded() and restart_without_redirection_guard():
+        sys.exit(0)
     if args[:1] == ['--coop-uninstall']:
         # The uninstaller: the game view goes as links, never the game behind them; the host's
         # servers stop.

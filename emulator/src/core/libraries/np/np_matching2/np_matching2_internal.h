@@ -37,13 +37,11 @@ struct PeerInfo {
     s32 conn_id = 0;
     s32 status = 0;
     Libraries::Np::OrbisNpOnlineId online_id{};
-    bool handshake_started = false;
-    bool sent_check = false;
+    bool handshake_started = false; // a connect through the server is under way
     bool sent_established = false;
-    u64 nonce = 0;
     u32 ping_us = 0;
+    std::chrono::steady_clock::time_point first_try{};
     std::chrono::steady_clock::time_point last_send{};
-    std::chrono::steady_clock::time_point last_check_send{};
 };
 
 struct MemberBinCache {
@@ -92,6 +90,7 @@ struct RoomCache {
 };
 
 struct CallbackPayload {
+    std::unique_ptr<OrbisNpMatching2RoomOwnerUpdate> room_owner_update;
     std::unique_ptr<OrbisNpMatching2RoomDataInternal> room_data;
     std::unique_ptr<OrbisNpMatching2CreateJoinRoomResponse> create_join_response;
     std::unique_ptr<OrbisNpMatching2CreateJoinRoomResponseA> create_join_response_a;
@@ -238,6 +237,7 @@ struct ContextObject {
     OrbisNpMatching2RoomId room_id = 0;
     OrbisNpMatching2RoomMemberId my_member_id = 0;
     bool is_room_owner = false;
+    OrbisNpMatching2RoomMemberId previous_owner = 0; // ROOM_OWNER_CHANGED's: on its way out
     u32 max_slot = 5;
     OrbisNpMatching2Flags flag_attr = 0;
 

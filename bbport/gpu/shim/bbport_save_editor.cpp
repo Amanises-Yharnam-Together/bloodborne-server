@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_save_editor.h"
 
+#include "../bbcoop.h"
+#include "bbport_game_art.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -162,6 +165,19 @@ void RunPending() {
 
 const std::vector<Item>& Items() {
     static const std::vector<Item> items = [] {
+        // The game's own item names (English, as the page is).
+        char path[1024];
+        if (bbcoop_game_file("dvdroot_ps4/msg/engus/item.msgbnd.dcx", path, sizeof(path))) {
+            const std::string file = ReadFile(path);
+            const auto bnd = BbGameArt::InflateDcx(
+                {reinterpret_cast<const std::uint8_t*>(file.data()), file.size()});
+            if (auto list = bnd ? ItemsFromGameText(*bnd) : std::vector<Item>{}; !list.empty()) {
+                items_source = path;
+                std::printf("Save editor: %zu items from the game's text (%s)\n", list.size(),
+                            path);
+                return list;
+            }
+        }
         std::vector<std::filesystem::path> candidates;
         if (const char* env = std::getenv("BB_SAVE_EDITOR_DATA"); env && *env) {
             candidates.emplace_back(env);
@@ -191,6 +207,28 @@ const std::vector<Item>& Items() {
         return std::vector<Item>{};
     }();
     return items;
+}
+
+std::string ItemName(std::uint32_t item_id) {
+    static const std::map<std::uint32_t, std::string> names = [] {
+        // The game's own English text (as the boxes' words are).
+        const auto read = [](const char* file) {
+            char path[1024];
+            if (!bbcoop_game_file(file, path, sizeof(path))) {
+                return std::vector<std::uint8_t>{};
+            }
+            const std::string bytes = ReadFile(path);
+            auto bnd = BbGameArt::InflateDcx(
+                {reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()});
+            return bnd ? std::move(*bnd) : std::vector<std::uint8_t>{};
+        };
+        auto list = ItemNamesFromGameText(read("dvdroot_ps4/msg/engus/item.msgbnd.dcx"),
+                                          read("dvdroot_ps4/msg/engus/menu.msgbnd.dcx"));
+        std::printf("Save editor: %zu item names for trading\n", list.size());
+        return list;
+    }();
+    const auto found = names.find(item_id);
+    return found == names.end() ? std::string{} : found->second;
 }
 
 const std::string& ItemsSource() {

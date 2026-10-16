@@ -52,7 +52,8 @@ bool CanCopyGuestHookInstructions(const void* address, std::span<const u8> instr
 
 void EmitGuestHookTrampoline(Xbyak::CodeGenerator& trampoline, const u8* code,
                              std::span<const u8> expected_instructions, u64 tag, const void* hook,
-                             bool can_return) {
+                             GuestHookReturn returns) {
+    const bool can_return = returns != GuestHookReturn::No;
     constexpr size_t GuestRedZoneBytes = 128;
     constexpr size_t SnapshotOffset = 0;
     constexpr size_t ScratchR11Offset = sizeof(GuestRegisterSnapshot);
@@ -146,10 +147,15 @@ void EmitGuestHookTrampoline(Xbyak::CodeGenerator& trampoline, const u8* code,
     trampoline.db(expected_instructions.data(), expected_instructions.size());
     trampoline.jmp(code + expected_instructions.size(), Xbyak::CodeGenerator::LabelType::T_NEAR);
     if (can_return) {
-        // At a function entry: return 0 to the caller with its registers intact.
+        // At a function entry: return 0 (or the hook's rax) to the caller with its registers
+        // intact.
         trampoline.L(return_to_caller);
         restore_registers();
-        trampoline.mov(rax, 0);
+        if (returns == GuestHookReturn::Rax) {
+            trampoline.mov(rax, snapshot(offsetof(GuestRegisterSnapshot, rax)));
+        } else {
+            trampoline.mov(rax, 0);
+        }
         trampoline.mov(rsp, snapshot(offsetof(GuestRegisterSnapshot, rsp)));
         trampoline.ret();
     }

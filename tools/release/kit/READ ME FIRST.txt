@@ -1,8 +1,8 @@
 BLOODBORNE SEAMLESS CO-OP (BLOODBORNE PC, THE NATIVE PORT)
 ==========================================================
 
-Seamless co-op for Bloodborne, in the spirit of Elden Ring Seamless Co-op: two or three players
-share one world, join each other without bells or Insight, keep playing together through lamp
+Seamless co-op for Bloodborne, in the spirit of Elden Ring Seamless Co-op: up to four players
+make a team, share one world, join each other without bells, signs or Insight, keep playing together through lamp
 trips, deaths and boss fights, and progress is shared. The game runs natively on Windows (the
 Bloodborne PC port), not in an emulator.
 
@@ -18,26 +18,30 @@ YOU NEED
     driver. Nothing else.
   - Bloodborne 1.09 (see above). Tested with CUSA03173 (the European Game of the Year edition);
     every player in a party should use the same edition.
-  - A way for the guests to reach the host's PC: the same VPN (Radmin VPN, Tailscale, ZeroTier)
-    or the host's public IP with ports forwarded (TCP 31313, 31315, 20443 and UDP 31314 to the
-    host).
+  - A way for everyone to reach the PC that runs the co-op server (the host's): the same VPN
+    (Radmin VPN, Tailscale, ZeroTier) or its public IP with ports forwarded: TCP 31313, 31315,
+    20443 and UDP 31314. UDP 31314 must be open: every game's co-op traffic goes through the
+    server on it.
 
 STEPS (everyone)
   1. Run the setup .exe. Keep "Create a desktop shortcut" ticked if you want one.
   2. Open "Bloodborne Seamless Co-op" (the desktop shortcut or the Start menu). On the Co-op card:
        Your Bloodborne folder  the launcher looks for it by itself; else press Browse (it searches
                                inside and around the folder you pick) or Install from PKG
-       You are                 one player is the Host, the others are Guests
+       You are                 one player is the Host (runs the co-op server on their PC),
+                               the others are Players
        Host's IP address       the host's VPN or public IP (the host types their own)
        Account name/password   pick any; your account is made on the host's server the first
                                time you press PLAY
-       Party name/password     the same for every player
        Enemies                 the same for every player
   3. Press PLAY. The first time, Windows asks once to let co-op through its firewall (say yes),
      and the launcher prepares the game from your copy (links to it, nothing is copied) and makes
      the co-op map event files. The host's co-op server starts by itself with the host's PLAY.
-  4. Load your character and wait: you are pulled into the host's world after a few seconds; no
-     bells needed. The first start takes longer (it builds its shader cache).
+  4. Continue, Load Game or New Game opens the team screen: create a team and invite the
+     hunters online, or join a team you were invited to, then Ready. The leader's "Begin the
+     hunt" starts everyone; the leader hosts the team's world. Load in and you are in one world
+     with your team a few seconds later, no bells or signs. "Play alone" plays without a team.
+     The first start takes longer (it builds its shader cache).
 
 The game always runs at 60 FPS in co-op: every player must send and take the same number of
 updates, or the others freeze and fly.

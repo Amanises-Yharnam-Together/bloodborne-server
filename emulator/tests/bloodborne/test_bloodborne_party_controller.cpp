@@ -1731,6 +1731,43 @@ TEST(BloodborneSharedKills, KillsStandWhileSomeoneStaysOnTheMap) {
     EXPECT_TRUE(kills.Held(Yharnam).empty());
 }
 
+// Kaniel 2026-10-15 (Lisara's log, friend38): both had walked from Central Yharnam into the
+// Cathedral Ward and killed two enemies there; Kaniel went to the Dream and back while Lisara stood
+// in the Ward, and the enemies were alive again. A walk keeps the visit, so the kills were filed
+// under the map the visit began on (Central Yharnam, where nobody was) and taken back. A kill is
+// of the map it died on: it stands while someone is on that map.
+TEST(BloodborneSharedKills, AKillIsOfTheMapItDiedOn) {
+    constexpr u32 Yharnam = 0x18010000;
+    constexpr u32 Ward = 0x18000000;
+    constexpr u32 Dream = 0x15000000;
+    const auto visit = [](u32 map, u64 n) { return (u64{map} << 32) | n; };
+    using Changes = std::vector<std::pair<s32, bool>>;
+    const std::vector<SeenCharacter> alive{{0x10014068, 210}, {0x1001005f, 300}};
+    const std::vector<SeenCharacter> both_dead{{0x10014068, 0}, {0x1001005f, 0}};
+    const std::vector<u32> lisara_in_ward{Ward};
+    VisitKills kills;
+    const u64 walk = visit(Yharnam, 1);
+    kills.Observe(walk, alive, {}, Yharnam);
+    EXPECT_EQ(kills.Observe(walk, std::vector<SeenCharacter>{{0x10014068, 0}, {0x1001005f, 300}},
+                            {}, Yharnam),
+              (Changes{{0x10014068, true}}))
+        << "in Central Yharnam";
+    EXPECT_EQ(kills.Observe(walk, both_dead, lisara_in_ward, Ward), (Changes{{0x1001005f, true}}))
+        << "walked into the Ward: the same visit";
+    EXPECT_EQ(kills.Standing(), (WorldLogKills{{Yharnam, {0x10014068}}, {Ward, {0x1001005f}}}));
+    EXPECT_EQ(kills.Observe(visit(Dream, 2), {}, lisara_in_ward, Dream),
+              (Changes{{0x10014068, false}}))
+        << "to the Dream: Lisara holds the Ward's kill, Central Yharnam's goes";
+    EXPECT_EQ(kills.Held(Ward), (std::vector<u32>{0x1001005f}));
+    EXPECT_TRUE(kills.Held(Yharnam).empty());
+    EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, lisara_in_ward, Ward), Changes{})
+        << "back at the Ward's lamp: the respawned copy is hidden";
+    EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, {}, Ward), Changes{})
+        << "Lisara left, but this member is there";
+    EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, {}, Yharnam), (Changes{{0x1001005f, false}}))
+        << "walked out too: nobody on the Ward";
+}
+
 // Kaniel 2026-10-11: an enemy another member killed vanished in front of the player (hidden with
 // the event disable byte) instead of dying. One near this player dies by the game's own kill.
 TEST(BloodborneSharedKills, AnotherMembersKillNearbyDiesInsteadOfVanishing) {
@@ -1949,21 +1986,20 @@ TEST(BloodborneHiddenCharacters, AGuestSwitchesOffWhatTheHostRemoved) {
         {0x100140ae, true},        // removed, and already off here
         {0x1001400b, false},       // an enemy both show
         {0x10014053, false},       // shown by the host again
-        {0x10014060, false},       // shown by the host, off here by the guest's own story
         {0x10014000, false, true}, // switched off by the host's story (by Iosefka's door)
     };
     const std::vector<CharacterSwitch> guest{
-        {0x10014005, false}, {0x100140ae, true}, {0x1001400b, false},
-        {0x10014053, true},  {0x10014060, true}, {0x10014099, false}, // not in the host's world
+        {0x10014005, false}, {0x100140ae, true},  {0x1001400b, false},
+        {0x10014053, true},  {0x10014099, false}, // not in the host's world
         {0x10014000, false},
     };
     const std::unordered_set<u32> switched_off{0x10014053};
     EXPECT_EQ(
         SwitchedLikeTheHost(host, guest, switched_off, {}),
         (std::vector<CharacterSwitch>{{0x10014005, true}, {0x10014053, false}, {0x10014000, true}}))
-        << "only what this guest turned off comes back on";
+        << "what this guest turned off comes back on";
     EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {0x10014005, 0x10014000}),
-              std::vector<CharacterSwitch>{})
+              (std::vector<CharacterSwitch>{{0x10014053, false}}))
         << "ones the kill board hid are left alone";
     const std::vector<CharacterSwitch> back_on{{0x10014005, false}};
     EXPECT_EQ(SwitchedLikeTheHost(host, back_on, {0x10014005}, {}),
@@ -1971,6 +2007,26 @@ TEST(BloodborneHiddenCharacters, AGuestSwitchesOffWhatTheHostRemoved) {
         << "turned on again by the guest's world: off again";
     EXPECT_EQ(SwitchedLikeTheHost({}, guest, switched_off, {}), std::vector<CharacterSwitch>{})
         << "nothing from the host: nothing changes";
+}
+
+// Kaniel's friend Lisara 2026-10-15 (v0.3.1-local): in the Forbidden Woods she never saw the enemy
+// that comes out of the red mist (0x1000801e), though Kaniel fought it beside her. It starts
+// switched off in both worlds; Kaniel's event switched it on, hers never did, and a guest only
+// switched back on what it had switched off itself. A copy near the host is now on wherever the
+// host's is, unless it is dead in either world.
+TEST(BloodborneHiddenCharacters, AGuestSwitchesOnWhatTheHostsStorySwitchedOn) {
+    const std::vector<CharacterShown> host{
+        {0x1000801e, false},                     // the red mist's enemy, on in the host's world
+        {0x1000801f, false, false, true},        // on, but far from the host
+        {0x10008040, false, false, false, true}, // on and dead in the host's world
+        {0x10008041, false},                     // on, and dead in this guest's world
+    };
+    const std::vector<CharacterSwitch> guest{
+        {0x1000801e, true}, {0x1000801f, true}, {0x10008040, true}, {0x10008041, true, true}};
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {}),
+              (std::vector<CharacterSwitch>{{0x1000801e, false}}));
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {0x1000801e}), std::vector<CharacterSwitch>{})
+        << "one the kill board hid stays off";
 }
 
 // Kaniel's friend 2026-10-11: no enemies in the Forbidden Woods. While the guest was in the
@@ -2847,6 +2903,31 @@ TEST(BloodborneGuestResume, AGuestResumesWhereItLeft) {
         << "nothing remembered";
     EXPECT_EQ(ChooseResumeStep(point, 0x18010000, far, 120).kind, Kind::Forget)
         << "a new character in the slot";
+}
+
+// Phase 7: a guest whose game died joins its team at once on its next run, so its own file's
+// point (kept only out of a session) never counts there; the server keeps where it last stood in
+// the team's world, and that point counts, in a session or not (it is the newest).
+TEST(BloodborneGuestResume, TheServersPointCountsInATeamSession) {
+    const ResumePoint file{0x18000000, {-120.5f, 10.25f, 33.0f}, 900};
+    const ResumePoint server{0x18010000, {-215.5f, -51.0f, 172.25f}, 0};
+    EXPECT_EQ(PickResumePoint(false, file, std::nullopt), std::optional{file});
+    EXPECT_EQ(PickResumePoint(true, file, std::nullopt), std::nullopt);
+    EXPECT_EQ(PickResumePoint(true, file, server), std::optional{server});
+    EXPECT_EQ(PickResumePoint(false, std::nullopt, server), std::optional{server});
+    EXPECT_EQ(PickResumePoint(false, std::nullopt, std::nullopt), std::nullopt);
+}
+
+// Phase 7: the resume moves a guest only while it still stands where its load put it; one that
+// already moved (a player who set off, the rig's own steps) stays (rig party-death 2026-10-15:
+// the resume teleported a guest in the middle of its fall).
+TEST(BloodborneGuestResume, AGuestThatMovedSinceItsLoadStays) {
+    using Kind = ResumeStep::Kind;
+    const ResumePoint point{0x18010000, {-215.5f, -51.0f, 172.25f}, 0};
+    const LampPosition loaded{-199.7f, -50.7f, 179.4f};
+    const LampPosition walked{-196.7f, -50.5f, 179.4f}; // 3 m on
+    EXPECT_EQ(ChooseResumeStep(point, 0x18010000, loaded, 0, 0x18010000, loaded).kind, Kind::Move);
+    EXPECT_EQ(ChooseResumeStep(point, 0x18010000, walked, 0, 0x18010000, loaded).kind, Kind::Stay);
 }
 
 // Ada's new character (2026-10-12) started in Central Yharnam: slot 5 still had the old

@@ -15,12 +15,14 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import struct
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 TITLE_IDS = ('CUSA03173', 'CUSA00900', 'CUSA00207', 'CUSA01363', 'CUSA03023')  # every Bloodborne release
@@ -31,11 +33,10 @@ GAME_SERVER = 'https://ss4.scej-network.jp:20443'
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 DETACHED = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
 
-# The answers, as 1 - SETUP asked them (FPS is gone: co-op is always the fixed 60 FPS mode; the party is
-# its password alone, Kaniel 2026-10-13: the party name went).
+# The answers, as 1 - SETUP asked them (FPS is gone: co-op is always the fixed 60 FPS mode). No party
+# settings: the team is made in the game's team screen (phase 6). `role` 'host' runs the co-op server.
 DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account': '', 'password': '',
-            'party_secret': '', 'p2p_port': 'auto', 'harder': 'off', 'prepared': ''}
-PARTY_NAME = 'party'  # the party's name on the server: every party there is told apart by its password
+            'p2p_port': 'auto', 'harder': 'off', 'prepared': ''}
 HARDER_ON = '3,1.5,3'  # the kit's harder enemies: HP, damage and poise multipliers
 
 
@@ -66,9 +67,20 @@ def valid_harder(value):
 
 def missing(settings):
     """The answers still to give (or wrong), in the window's order."""
-    checks = (('game', lambda v: bool(v)), ('host_ip', valid_ip), ('account', valid_name),
-              ('password', valid_secret), ('party_secret', valid_secret))
+    checks = (('game', lambda v: bool(v)), ('host_ip', valid_ip))
     return [key for key, ok in checks if not ok(str(settings.get(key, '')))]
+
+
+def with_player_id(settings):
+    """The settings with this player's id (phase 11, Kaniel 2026-10-15: no account name or password
+    to type). `account` and `password` are the id the game signs in with: an old install's account
+    stays, so its teams and worlds stay; otherwise a random one is made once. Players see only their
+    characters' names."""
+    if valid_name(settings.get('account', '')) and valid_secret(settings.get('password', '')):
+        return settings
+    settings['account'] = 'p' + secrets.token_hex(7)
+    settings['password'] = secrets.token_hex(16)
+    return settings
 
 
 def settings_path(install):
@@ -82,19 +94,30 @@ def from_settings_bat(path):
         match = re.fullmatch(r'set "([A-Z0-9_]+)=(.*)"', line.strip())
         if match:
             values[match.group(1)] = match.group(2)
-    _party_name, _, party_secret = values.get('PARTY', '').partition(':')
     settings = dict(DEFAULTS)
     settings.update({'game': values.get('GAME', ''),
                      'update': '' if values.get('UPDATE', 'none') == 'none' else values['UPDATE'],
                      'role': values.get('ROLE', 'guest') if values.get('ROLE') in ('host', 'guest') else 'guest',
                      'host_ip': values.get('HOSTIP', ''), 'account': values.get('NPID', ''),
-                     'password': values.get('PASS', ''), 'party_secret': party_secret, 'p2p_port': values.get('P2PPORT', 'auto') or 'auto',
+                     'password': values.get('PASS', ''), 'p2p_port': values.get('P2PPORT', 'auto') or 'auto',
                      'harder': values.get('HARDER', 'off') or 'off'})
     return settings
 
 
 def load_settings(install):
-    """coop.json, else the old settings.bat beside BLauncher.exe, else the defaults."""
+    """coop.json, else the old settings.bat beside BLauncher.exe, else the defaults; with the player's
+    id, saved the first time it is made."""
+    settings = read_settings(install)
+    if not (valid_name(settings['account']) and valid_secret(settings['password'])):
+        settings = with_player_id(settings)
+        try:
+            save_settings(install, settings)
+        except OSError:
+            pass
+    return settings
+
+
+def read_settings(install):
     path = settings_path(install)
     try:
         saved = json.loads(path.read_text(encoding='utf-8'))
@@ -497,15 +520,15 @@ def game_environment(env, settings, install, root):
         'BB_DATA_DIR': str(install), 'BB_USER_DIR': str(install / 'user'),
         'BB_GAME_DIR': str(root / 'CUSA03173'), 'BB_FPS': '60',
         'BB_LOG_FILE': str(install / 'user' / 'log' / 'shad_log.txt'), 'BB_LOG_LEVEL': 'info',
-        'BB_ONLINE': '1', 'BB_UPNP': '0',
-        'BB_SHADNET_SERVER': f'{host}:{SHADNET_PORT}', 'BB_SHADNET_WEBAPI': f'http://{host}:{WEBAPI_PORT}',
+        'BB_ONLINE': '1',
+        'BB_SHADNET_SERVER': f'{host}:{MATCHING_PORT}', 'BB_SHADNET_WEBAPI': f'http://{host}:{WEBAPI_PORT}',
         'BB_SHADNET_NPID': settings['account'], 'BB_SHADNET_PASSWORD': settings['password'],
-        'BB_USER_NAME': settings['account'],
         'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1',
-        'SHADPS4_BLOODBORNE_PARTY': f'{PARTY_NAME}:{settings["party_secret"]}',
-        'SHADPS4_BLOODBORNE_PARTY_ROLE': settings['role'],
         'SHADPS4_BLOODBORNE_RE_TRACE': '0',
     })
+    # The party is the team made in the game's team screen: never a setting.
+    for key in ('SHADPS4_BLOODBORNE_PARTY', 'SHADPS4_BLOODBORNE_PARTY_ROLE'):
+        env.pop(key, None)
     # Co-op is the fixed 60 FPS mode for everyone (a host above 60 made the guests see everyone
     # freeze and fly): no frame cap from the launcher.
     env.pop('BB_FPS_LIMIT', None)
@@ -521,6 +544,59 @@ def game_environment(env, settings, install, root):
     return env
 
 
+REPORTS_SENT = 'reports-sent.json'
+
+
+def reports_to_send(log):
+    """Phase 11: what a crash left for the host's server: the dumps not sent yet, and with a new one
+    the crashed run's logs (the .prev ones the start just made)."""
+    log = Path(log)
+    try:
+        sent = set(json.loads((log / REPORTS_SENT).read_text(encoding='utf-8')))
+    except (OSError, ValueError, TypeError):
+        sent = set()
+    dumps = sorted(path for path in log.glob('crash-*.dmp') if path.name not in sent)
+    if not dumps:
+        return []
+    logs = sorted(path for path in log.glob('*.prev.txt') if path.is_file())
+    return dumps + logs
+
+
+def note_reports_sent(log, paths):
+    log = Path(log)
+    try:
+        sent = json.loads((log / REPORTS_SENT).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        sent = []
+    sent = sorted(set(sent) | {Path(path).name for path in paths if Path(path).suffix == '.dmp'})
+    (log / REPORTS_SENT).write_text(json.dumps(sent, indent=1) + '\n', encoding='utf-8')
+
+
+def report_request(host_ip, path, data, player, secret):
+    return urllib.request.Request(f'http://{host_ip}:{WEBAPI_PORT}/bb/report/{Path(path).name}', data=data,
+                                  method='POST', headers={'X-Player': player, 'X-Secret': secret,
+                                                          'Content-Type': 'application/octet-stream'})
+
+
+def send_reports(install, settings, timeout=30):
+    """Sends what reports_to_send finds to the host's server; the number sent. Off the window's
+    thread: a host that does not answer only costs the wait."""
+    log = Path(install) / 'user' / 'log'
+    sent = []
+    for path in reports_to_send(log):
+        try:
+            request = report_request(settings['host_ip'], path, path.read_bytes(), settings['account'],
+                                     settings['password'])
+            with urllib.request.urlopen(request, timeout=timeout) as answer:
+                if answer.status == 200:
+                    sent.append(path)
+        except (OSError, ValueError):
+            break
+    if sent:
+        note_reports_sent(log, sent)
+    return len(sent)
+
+
 def rotate_logs(install):
     """shad_log.txt and console.txt become the .prev ones, as 2 - PLAY kept them."""
     log = Path(install) / 'user' / 'log'
@@ -529,28 +605,6 @@ def rotate_logs(install):
         if (log / f'{name}.txt').is_file():
             shutil.copy2(log / f'{name}.txt', log / f'{name}.prev.txt')
     return log / 'console.txt'
-
-
-def register_command(install, host_ip, account, password):
-    """Registers the account on the host's server (guests register themselves: no host step)."""
-    return [str(Path(install) / 'server' / 'clientsample' / 'shadnet-sample.exe'), host_ip, str(SHADNET_PORT),
-            'register', account, password, f'{account}.{password}@p2p.db']
-
-
-def registered(output, code):
-    """Whether the account exists on the server after a register: made now, or made before."""
-    return code == 0 and ('Account created' in output or 'CreationExistingUsername' in output)
-
-
-def register(install, host_ip, account, password, timeout=15):
-    """(ok, the tool's output)."""
-    try:
-        result = subprocess.run(register_command(install, host_ip, account, password), capture_output=True,
-                                text=True, timeout=timeout, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return False, str(error)
-    output = (result.stdout or '') + (result.stderr or '')
-    return registered(output, result.returncode), output
 
 
 # --- the host's servers -------------------------------------------------------------------------
@@ -567,6 +621,11 @@ def servers_running():
     return port_open(SHADNET_PORT)
 
 
+def server_command(install):
+    """shadnet under its watchdog (phase 11): started again after a crash or a hang."""
+    return [str(Path(install) / 'server' / 'shadnet.exe'), '--watchdog']
+
+
 def start_servers(install, host_ip, wait_s=10.0):
     """HOST - Start Servers: shadnet (accounts, matchmaking, the party boards; it answers the game's
     backend port itself), and the Python backend only when nothing answers that port. Returns the
@@ -579,7 +638,7 @@ def start_servers(install, host_ip, wait_s=10.0):
     if not servers_running():
         env = dict(os.environ, SHADNET_BACKEND_ADDRESS=host_ip)
         with open(log / 'shadnet.txt', 'a', encoding='utf-8') as out:
-            subprocess.Popen([str(server / 'shadnet.exe')], cwd=server, env=env, stdout=out, stderr=subprocess.STDOUT,
+            subprocess.Popen(server_command(install), cwd=server, env=env, stdout=out, stderr=subprocess.STDOUT,
                              stdin=subprocess.DEVNULL, creationflags=NO_WINDOW | DETACHED)
         said.append('Started the co-op server.')
     deadline = time.monotonic() + wait_s
@@ -599,7 +658,7 @@ def start_servers(install, host_ip, wait_s=10.0):
 
 
 def our_processes(install):
-    """(pid, name) of this install's shadnet and backend."""
+    """(pid, name, command line) of this install's shadnet (its watchdog too) and backend."""
     install = str(Path(install).resolve()).lower()
     script = ("Get-CimInstance Win32_Process -Filter \"Name='shadnet.exe' OR Name='BLauncher.exe' OR "
               "Name='python.exe' OR Name='pythonw.exe'\" | ForEach-Object { \"$($_.ProcessId)|$($_.Name)|"
@@ -616,15 +675,20 @@ def our_processes(install):
             continue
         pid, name, path, command = parts
         if name.lower() == 'shadnet.exe' and path.lower().startswith(install):
-            found.append((int(pid), name))
+            found.append((int(pid), name, command))
         elif 'bb_dummy_server.py' in command and install in command.lower():
-            found.append((int(pid), name))
+            found.append((int(pid), name, command))
     return found
+
+
+def stop_order(found):
+    """The watchdog first: stopped after its server, it would start that again."""
+    return sorted(found, key=lambda process: '--watchdog' not in process[2])
 
 
 def stop_servers(install):
     stopped = 0
-    for pid, _name in our_processes(install):
+    for pid, _name, _command in stop_order(our_processes(install)):
         subprocess.run(['taskkill', '/PID', str(pid), '/F'], capture_output=True, creationflags=NO_WINDOW)
         stopped += 1
     return stopped
@@ -644,10 +708,10 @@ def firewall_commands(install, host):
     if host:
         lines.append(f'netsh advfirewall firewall delete rule name="{RULE_HOST_TCP}" & '
                      f'netsh advfirewall firewall add rule name="{RULE_HOST_TCP}" dir=in action=allow protocol=TCP '
-                     f'localport={SHADNET_PORT},{WEBAPI_PORT},{BACKEND_PORT} enable=yes profile=any')
+                     f'localport={WEBAPI_PORT},{BACKEND_PORT} enable=yes profile=any')
         lines.append(f'netsh advfirewall firewall delete rule name="{RULE_HOST_UDP}" & '
                      f'netsh advfirewall firewall add rule name="{RULE_HOST_UDP}" dir=in action=allow protocol=UDP '
-                     f'localport={MATCHING_PORT},51610-51611 enable=yes profile=any')
+                     f'localport={MATCHING_PORT} enable=yes profile=any')
     return lines
 
 

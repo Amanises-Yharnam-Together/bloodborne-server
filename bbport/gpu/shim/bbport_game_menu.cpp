@@ -19,7 +19,9 @@
 #include <string>
 #include <vector>
 
+#include "../bbcoop.h"
 #include "bbport_settings.h"
+#include "bbport_trade_menu.h"
 
 namespace BbGameMenu {
 namespace {
@@ -124,6 +126,12 @@ const char16_t* TextOf(u32 id) {
                              : game == GameLanguage::Russian;
     return russian ? t.russian.c_str() : t.english.c_str();
 }
+
+// Texts the trade menus change while the game runs (SetDynamicText): ids from DynamicIdBase, one
+// per slot, set and looked up on the game's thread.
+constexpr u32 DynamicIdBase = IdBase + 0x8000;
+constexpr int DynamicSlots = 8;
+std::u16string dynamic_texts[DynamicSlots];
 
 // ---- The port's values the game's rows edit (ints: the list rows bind ints). ----
 enum Field : int {
@@ -523,6 +531,44 @@ void* const factories[MaxPages] = {
     reinterpret_cast<void*>(&PageFactory<4>), reinterpret_cast<void*>(&PageFactory<5>),
     reinterpret_cast<void*>(&PageFactory<6>), reinterpret_cast<void*>(&PageFactory<7>)};
 
+// ---- Kaniel 2026-10-16: the team menu in game. The System menu's "Co-op Team" item opens a page
+// of the game's own (one row saying so) and, over it, the team screen (bbport_overlay.cpp, the
+// title's in the game's art): invite, remove a member, leave, join the hunt. Its buttons close it,
+// and the pad's Circle a moment later closes this page too (bbcoop_team_menu_back). ----
+u32 team_page_name = 0, team_page_help = 0, team_row_name = 0, team_row_help = 0,
+    team_row_value = 0;
+int team_value = 0;
+const int team_default = 0;
+
+GAME_ABI void TeamRows(void* page, void*) {
+    using Push = void (GAME_ABI *)(void*, void*);
+    using AddRow = void (GAME_ABI *)(void*, void*, int*, void*, const int*);
+    using Make = void* (GAME_ABI *)(void*, u32, u32);
+    alignas(16) u8 pair[2 * TextSize] = {};
+    MakeTexts(pair, team_row_name, team_row_help);
+    u8* list = static_cast<u8*>(AlignedAlloc(ListSize));
+    std::memset(list, 0, ListSize);
+    alignas(16) u8 value[ValueSize] = {};
+    Game<Make>(MakeText)(value + 8, TextName, team_row_value);
+    Game<Push>(ListPush)(list, value);
+    DestroyText(value + 8);
+    team_value = 0;
+    Game<AddRow>(ListRow)(page, pair, &team_value, list, &team_default);
+    DestroyValues(list, ListCountOffset);
+    AlignedFree(list);
+    DestroyTexts(pair);
+    bbcoop_team_menu(1); // the page opens: the team screen over it
+}
+GAME_ABI void* TeamContent(void* a, void* b) {
+    using Open = void* (GAME_ABI *)(void*, void*, const char*, void*, u64, u64);
+    title_override = nullptr;
+    return Game<Open>(OpenPage)(a, b, Game<const char*>(ControlsLayout),
+                                reinterpret_cast<void*>(&TeamRows), 0, 0);
+}
+GAME_ABI void* TeamPageFactory(void* out, void* arg) {
+    return Factory(out, arg, reinterpret_cast<void*>(&TeamContent), TextOf(team_page_name));
+}
+
 // ---- Hooks ----
 using LookupFn = const char16_t* (GAME_ABI *)(void*, u32, u32, u32);
 using AddFn = void* (GAME_ABI *)(void*, void*, void*, void*);
@@ -531,6 +577,9 @@ AddFn add_original = nullptr;
 std::atomic<const void*> screen_sound_text{nullptr};
 
 GAME_ABI const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
+    if (id >= DynamicIdBase && id < DynamicIdBase + DynamicSlots) {
+        return dynamic_texts[id - DynamicIdBase].c_str();
+    }
     if (id >= IdBase && id < IdBase + texts.size()) {
         // BB_GAME_MENU_TRACE=1: how often the game asks for our texts (per 2 s).
         static const bool count = [] {
@@ -595,6 +644,10 @@ GAME_ABI void* AddHook(void* menu, void* pair, void* function, void* out) {
     void* result = add_original(menu, pair, function, out);
     const void* screen_sound = screen_sound_text.load();
     if (screen_sound && *reinterpret_cast<const void* const*>(pair) == screen_sound) {
+        bbcoop_lobby lobby;
+        if (bbcoop_lobby_view(&lobby)) {
+            AddItem(menu, team_page_name, team_page_help, reinterpret_cast<void*>(&TeamPageFactory));
+        }
         for (std::size_t i = 0; i < pages.size() && i < MaxPages; ++i) {
             AddItem(menu, pages[i].name, pages[i].help, factories[i]);
         }
@@ -665,6 +718,28 @@ u8* MapNear(unsigned char* image, u64 image_size, std::size_t size) {
 
 } // namespace
 
+std::uint64_t ImageBase() {
+    return image_base;
+}
+
+std::uint32_t AddGameText(const char* english, const char* russian) {
+    return AddText(english, russian);
+}
+
+std::uint32_t SetDynamicText(int slot, const char* utf8) {
+    slot = std::clamp(slot, 0, DynamicSlots - 1);
+    dynamic_texts[slot] = Utf16(utf8);
+    return DynamicIdBase + u32(slot);
+}
+
+void DestroyGameText(unsigned char* text) {
+    DestroyText(text);
+}
+
+void DestroyGameFunction(unsigned char* function) {
+    DestroyFunction(function);
+}
+
 void PatchImage(unsigned char* image, std::uint64_t size) {
     if (const char* env = std::getenv("BB_GAME_MENU"); env && env[0] == '0') {
         return;
@@ -681,6 +756,14 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
         return;
     }
     DefineTexts();
+    team_page_name = AddText("Co-op Team", "Кооп-команда");
+    team_page_help = AddText("Your team: invite hunters, remove a member, leave, or join the hunt",
+                             "Ваша команда: пригласить охотников, исключить, покинуть или вступить в охоту");
+    team_row_name = AddText("Team screen", "Экран команды");
+    team_row_help = AddText("The team screen is open over the game: its Close button comes back here",
+                            "Экран команды открыт поверх игры: кнопка «Закрыть» вернёт сюда");
+    team_row_value = AddText("Open", "Открыт");
+
     for (const Page& p : pages) {
         for (const Row& r : p.rows) {
             byte_field[r.field] = r.kind != Kind::List;
@@ -703,6 +786,10 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
                reinterpret_cast<void*>(&LookupHook), reinterpret_cast<void**>(&lookup_original), cursor) &&
         Detour(image, AddPageItem, AddPageItemPrologue, sizeof(AddPageItemPrologue),
                reinterpret_cast<void*>(&AddHook), reinterpret_cast<void**>(&add_original), cursor);
+    // Trading's menus (their texts go through the lookup hook too).
+    if (ok) {
+        BbTradeMenu::PatchImage(image, size, cursor);
+    }
 #ifdef _WIN32
     DWORD old_protect = 0;
     VirtualProtect(stubs, page, PAGE_EXECUTE_READ, &old_protect);

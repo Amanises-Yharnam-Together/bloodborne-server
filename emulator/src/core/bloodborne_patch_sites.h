@@ -58,6 +58,12 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"quiet summon banners", false},
     {"movie player delete delay", false},
     {"boss death tracer", false},
+    {"native packet trace", false},
+    {"channel table", false},
+    {"game packet link", false},
+    {"enemy owner", false},
+    {"team lobby", false},
+    {"team join", false},
     {"host leaves", true},
     {"seamless travel", true},
     {"stop request", true},
@@ -71,6 +77,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"guests hit NPCs", false},
     {"full echoes", false},
     {"echo diagnostics", false},
+    {"trading", false},
     {"menu client", false},
     {"map item sync", false},
     {"shared loot", false},
@@ -89,7 +96,9 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"party list in the HUD", false},
     {"sign timers", true},
     {"summon slot hold", false},
+    {"server owns leaves", true},
     {"floor guard", false},
+    {"flag block guard", false},
 });
 
 inline constexpr auto CoopSites = std::to_array<CoopSite>({
@@ -242,6 +251,64 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "80 89 E3 01 00 00 01"},
     {"death flag of the game's kill", "boss death tracer", CoopSiteKind::Hook, 0x018BFAD3,
      "41 80 8F E3 01 00 00 01"},
+
+    {"packet sent", "native packet trace", CoopSiteKind::Hook, 0x0178970D, "4C 8B A5 60 FF FF FF"},
+    {"reliable packet queued", "native packet trace", CoopSiteKind::Hook, 0x01790E0E,
+     "48 8B 4B 30 48 8B 3C C1"},
+    {"unreliable packet queued", "native packet trace", CoopSiteKind::Hook, 0x01790FCA,
+     "48 8D 75 C8 4C 89 EF"},
+    // The channel table (InstallChannelTable): the send, and both receive paths' channel checks.
+    {"packet send", "channel table", CoopSiteKind::Hook, 0x017894E0, "55 48 89 E5 41 57"},
+    {"reliable channel check", "channel table", CoopSiteKind::Hook, 0x01790DDE,
+     "48 63 43 64 48 83 F8 43"},
+    {"unreliable channel check", "channel table", CoopSiteKind::Hook, 0x01790C73,
+     "49 89 D6 83 F8 43"},
+    // The game's packets in our frames (InstallGamePacketLink): the transport send (the member
+    // queues' fill 0x01790C20 is called, not hooked).
+    {"transport send", "game packet link", CoopSiteKind::Hook, 0x00C8F0A0, "55 48 89 E5 41 57"},
+    // Phase 4's enemy owners (InstallEnemyOwner, see EnemyRole): the HP sync's host-only checks,
+    // the receive from the host and the hit on an enemy.
+    {"enemy HP round check", "enemy owner", CoopSiteKind::Hook, 0x018EF26C, "48 8B 9D 08 FF FF FF"},
+    {"enemy HP state read", "enemy owner", CoopSiteKind::Hook, 0x018EF578, "8B 87 24 01 00 00"},
+    {"enemy HP send branch", "enemy owner", CoopSiteKind::Hook, 0x018EF587, "80 BB 64 06 00 00 00"},
+    {"enemy HP receive branch", "enemy owner", CoopSiteKind::Hook, 0x018EF684, "49 89 DC 48 85 FF"},
+    {"receive from host member", "enemy owner", CoopSiteKind::Hook, 0x01789495,
+     "48 81 C3 D0 00 00 00"},
+    {"enemy hit state read", "enemy owner", CoopSiteKind::Hook, 0x01A2A102, "8B 88 24 01 00 00"},
+    {"activation pass", "enemy owner", CoopSiteKind::Hook, 0x019192A0, "55 48 89 E5 41 57"},
+    {"activation pass end", "enemy owner", CoopSiteKind::Hook, 0x0191987E, "8A 5D 97 80 E3 01"},
+    {"ownership step end", "enemy owner", CoopSiteKind::Hook, 0x019173B0, "55 48 89 E5 41 57"},
+    // Enemy positions (see SendsFullPositionPacket): the owner's send step, a follower's receive.
+    {"position packet entry", "enemy owner", CoopSiteKind::Hook, 0x018EE910,
+     "48 8B 85 F8 FE FF FF"},
+    {"position receive entry", "enemy owner", CoopSiteKind::Hook, 0x018EEBB0, "45 8B 6C 24 FC"},
+    // The game's hand-out of enemies (see HandOutSeconds): a guest's receive of 0x17.
+    {"hand-out received", "enemy owner", CoopSiteKind::Hook, 0x018ED083, "49 89 D8 89 C3 85 DB"},
+    // Phase 5: the title's save load held for the team, and the title menu seen again.
+    {"title load state", "team lobby", CoopSiteKind::Hook, 0x0195B480, "55 48 89 E5 41 57"},
+    {"title menu state", "team lobby", CoopSiteKind::Hook, 0x0195AE80, "55 48 89 E5 41 57"},
+    // Phase 6: the team join without signs or a bell (bloodborne_join.cpp, OpenTeamSession,
+    // TeamSessionJoinData, JoinTeamSession): what the summon manager's update calls.
+    {"CreateSession", "team join", CoopSiteKind::Call, 0x01788ED0,
+     "55 48 89 E5 41 57 41 56 53 50 C5 FA"},
+    {"JoinSession", "team join", CoopSiteKind::Call, 0x01789010,
+     "55 48 89 E5 41 57 41 56 53 50 48 89"},
+    {"SessionInfo", "team join", CoopSiteKind::Call, 0x00C8F500,
+     "55 48 89 E5 41 57 41 56 41 54 53 41"},
+    {"JoinParamCopy", "team join", CoopSiteKind::Call, 0x00C90270,
+     "55 48 89 E5 41 57 41 56 41 55 41 54"},
+    {"JoinParamValid", "team join", CoopSiteKind::Call, 0x00C90D80,
+     "55 48 89 E5 41 56 53 49 89 FE 4C 89"},
+    {"JoinParamWrite", "team join", CoopSiteKind::Call, 0x00C90B00,
+     "55 48 89 E5 41 57 41 56 41 55 41 54"},
+    {"JoinParamInit", "team join", CoopSiteKind::Call, 0x00C8FBF0,
+     "55 48 89 E5 41 57 41 56 41 54 53 48"},
+    {"JoinParamRead", "team join", CoopSiteKind::Call, 0x00C90DD0,
+     "55 48 89 E5 41 57 41 56 41 55 41 54"},
+    {"JoinParamFree", "team join", CoopSiteKind::Call, 0x00C90520,
+     "55 48 89 E5 41 57 41 56 41 55 41 54"},
+    {"SummonedNotice", "team join", CoopSiteKind::Call, 0x01FF58B0,
+     "55 48 89 E5 41 57 41 56 53 48 81 EC"},
 
     {"leave limit", "host leaves", CoopSiteKind::Hook, 0x0138A4A0, "55 48 89 E5 53 50"},
 
@@ -399,6 +466,11 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"HUD constructor", "party list in the HUD", CoopSiteKind::Hook, 0x01BF41C0,
      "55 48 89 E5 41 57 41 56"},
 
+    // Trading (bloodborne_trade.cpp): the inventory's find and count change, and the pickup's give.
+    {"InventoryFind", "trading", CoopSiteKind::Call, 0x014D9F60, "8B 06 83 F8 FF 0F 84 A6"},
+    {"InventoryChangeCount", "trading", CoopSiteKind::Call, 0x014D0BE0, "55 48 89 E5 41 57 41 56"},
+    {"GiveItems", "trading", CoopSiteKind::Call, 0x017D89F0, "55 48 89 E5 41 57 41 56"},
+
     // The sign poster's timers (SignTimerSites): `mov dword ptr [<reg> + 0x28], <seconds>`. Game
     // patches rewrite the re-post time (the bundled "Uncap FPS++" writes 60 s), and the store is
     // ours to rewrite all the same: any time is accepted.
@@ -419,10 +491,36 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"summon slot hold 2", "summon slot hold", CoopSiteKind::Patch, 0x018729ED,
      "C5 F8 2E 05 67 50 0B 03", "C5 F8 2E 05 CF 4E 0B 03"},
 
+    // Phase 7: only the server ends a session (InstallServerOwnsLeaves). The game's own reasons,
+    // each followed by its Lua event and MultiPlayStopRequest, take the stay branch: NetSync's
+    // update (0x01789B60) with SprjSessionManager's idle timer +0x2E0 past its limit +0x2F0
+    // (`jbe` -> `jmp`), and more than 1000 bytes in its resend queue (`jb` -> `jmp`); the room
+    // time-out ("OnRoomTimeOut", `jbe` -> `jmp`). Not the session layer's reason 3 to NetSync
+    // (0x0178F9A0, "OnIrregularLeaveSession" when a member's connection goes): skipping it left a
+    // host whose guest went unable to pick anything up (rig crashes/leave).
+    {"session idle timeout", "server owns leaves", CoopSiteKind::Patch, 0x01789C5D, "76 78",
+     "EB 78"},
+    {"session resend overflow", "server owns leaves", CoopSiteKind::Patch, 0x017897B2,
+     "0F 82 B8 00 00 00", "E9 B9 00 00 00 90"},
+    {"room timeout", "server owns leaves", CoopSiteKind::Patch, 0x01789F41, "76 79", "EB 79"},
+
     // The character floor update's read of the floor (InstallFloorGuard): a floor of a map block
     // that is gone is cleared first.
     {"character floor read", "floor guard", CoopSiteKind::Hook, 0x018CB14F,
      "48 8B B3 88 02 00 00 48 85 F6"},
+
+    // The event flag manager's read of a value over two flag blocks (0x013CFD80), where it reads
+    // each block (InstallFlagBlockGuard): a missing block reads as zeros (rig 2026-10-16: a game
+    // joining a session for the second time crashed at 0x013CFFBA).
+    {"flag value first block", "flag block guard", CoopSiteKind::Hook, 0x013CFF79,
+     "41 FF C9 44 89 C9 C1 E9 03"},
+    {"flag value second block", "flag block guard", CoopSiteKind::Hook, 0x013CFFEC,
+     "45 29 D0 41 8D 58 FF 89 D8"},
 });
+
+// The flag block guard's choice: a block that is there, else the zeros it reads instead.
+constexpr u64 GuardedFlagBlock(u64 block, u64 zeros) {
+    return block != 0 ? block : zeros;
+}
 
 } // namespace Core::Bloodborne

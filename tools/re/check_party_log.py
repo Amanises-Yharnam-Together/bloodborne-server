@@ -93,6 +93,9 @@ PROBLEMS = {
     "the graphics device was lost (GPU driver or emulator, not co-op)":
         re.compile(r"Device lost"),
     "a crash was caught": re.compile(r"crash: exception"),
+    # Phase 9's proof test: the rig lets a game reach the server only (SHADPS4_NET_FIREWALL).
+    "the game reached past the server (another game, or the internet)":
+        re.compile(r"Net firewall: blocked"),
 }
 # A game call skipped because its object's vtable was not the expected kind (HasVtable): fine
 # for a stale pointer, but a vtable list missing a class quietly turns a feature off.

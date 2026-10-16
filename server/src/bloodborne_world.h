@@ -1,0 +1,247 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadNet Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+// The party's world on the server (docs/SERVER_COOP_PLAN.md phase 3): shadNet keeps each party's
+// world log (coop/world_log.h, WorldLogHost) instead of the host's game, orders what the members
+// propose, stores it on disk and sends every member the entries, and a snapshot when it asks.
+//
+// The messages (coop/coop.proto) come in the server link's Coop datagrams, in each link's
+// reliable stream (coop/coop_stream.h). A party is its key (SHADPS4_BLOODBORNE_PARTY, from the
+// member's hello); on disk it goes by a hash of the key, never the key itself.
+//
+// The epochs are the server's: the world's id (random, kept with the world) and its count of logs
+// started. A wipe starts a new log once for the party; the session's host joining, leaving or
+// becoming another character starts one too (a new session); a guest's own events take only its
+// share out of the log.
+#pragma once
+
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+
+#include <QByteArray>
+#include <QDate>
+#include <QList>
+#include <QString>
+#include <QStringList>
+
+#include "bloodborne_party_boards.h"
+#include "coop.pb.h"
+#include "coop/coop_stream.h"
+#include "coop/team_lobby.h"
+#include "coop/trade.h"
+#include "coop/world_log.h"
+#include "server_link.h"
+
+namespace BloodborneWorld {
+
+// One party's world on disk, in its folder: world.pb (the world as of its journal_from), the
+// journal of changes since (journal.pb: each record its size, u32 little-endian, then the record),
+// and the last three worlds before (world.pb.1-3). A world is written whole to a new file and
+// renamed over the old one (QSaveFile), so a crash leaves the old one or the new one.
+class WorldStore {
+public:
+    explicit WorldStore(QString folder);
+
+    struct Loaded {
+        bbcoop::StoredWorld world;
+        QList<bbcoop::JournalRecord> journal; // the records from world.journal_from on
+    };
+    // The world and its journal, or nothing (no world here yet). A world file that does not read
+    // falls back to the backups; a journal cut short ends at its last whole record.
+    std::optional<Loaded> Load(QStringList& log) const;
+    bool Append(const bbcoop::JournalRecord& record);
+    // The world written whole (the old one to the backups) and the journal emptied. Phase 11:
+    // the first write of each day is also kept as backups/world-<yyyyMMdd>.pb, the last 7 days.
+    bool Compact(const bbcoop::StoredWorld& world, const QDate& today = QDate::currentDate());
+    // The party's trades (trades.pb, coop/trade.h), written whole on every change.
+    std::optional<bbcoop::StoredTrades> LoadTrades() const;
+    bool SaveTrades(const bbcoop::StoredTrades& trades);
+    const QString& Folder() const {
+        return folder;
+    }
+
+private:
+    QString folder;
+};
+
+// The world key of a party: a hash of its key, safe as a folder name.
+QString PartyFolderName(const QByteArray& party);
+
+class Service {
+public:
+    // `folder`: where the worlds are kept (one folder per party); empty keeps them in memory only.
+    explicit Service(QString folder, qint64 heartbeat_ms = 1000, int compact_records = 200,
+                     qint64 compact_ms = 30'000);
+
+    struct Send {
+        ServerLink::Endpoint to;
+        QByteArray body; // a Coop datagram's body
+    };
+    struct Result {
+        QList<Send> sends;
+        QStringList log;
+    };
+
+    // Every party's world in the folder (shadNet's start).
+    Result Load(qint64 now_ms);
+    // A Coop datagram's body from a linked game.
+    Result Receive(const ServerLink::Endpoint& from, const QByteArray& online_id,
+                   const QByteArray& body, qint64 now_ms);
+    // Resends, acks and heartbeats; worlds written whole when their journal grew.
+    Result Tick(qint64 now_ms);
+    // A link went (its game is gone).
+    void Forget(const ServerLink::Endpoint& link);
+    // The party a link's game said in its hello, empty before one (phase 7: the hub's teams).
+    QString PartyOf(const ServerLink::Endpoint& link) const;
+    // Phase 9: whether a game packet on `channel` goes from one link's game to another's, by the
+    // channel table, their maps and their parts in their maps' enemies (coop/packet_routes.h). A
+    // link without a member here gets only the game's own channels.
+    bool RoutesPacket(const ServerLink::Endpoint& from, const ServerLink::Endpoint& to,
+                      std::uint32_t channel) const;
+
+    // The team lobby (phase 5), for the tests and the log.
+    const BloodborneCoop::TeamLobby& Lobby() const {
+        return lobby;
+    }
+
+    // For the tests and the log.
+    const BloodborneCoop::WorldLogHost* World(const QByteArray& party) const;
+    int Parties() const {
+        return static_cast<int>(worlds.size());
+    }
+
+private:
+    struct PartyWorld {
+        QString name; // PartyFolderName
+        BloodborneCoop::WorldLogHost host;
+        quint32 world = 0;
+        quint32 logs = 0;
+        qint64 last_wipe_ms = 0;
+        quint64 records = 0;      // journal records written (the next one's number)
+        quint64 journal_from = 0; // the first record not in the stored world
+        qint64 compacted_ms = 0;
+        std::unique_ptr<WorldStore> store;
+        qint64 heartbeat_ms = 0;
+        // Each member's last kills taken into the log: a proposal that changes them is journaled.
+        std::map<std::string, BloodborneCoop::WorldLogKills> proposed;
+        // Phase 3c: the boards (in memory only: they are about the games running now) and each
+        // member's last portrait.
+        PartyBoards boards;
+        std::map<std::string, bbcoop::Portrait> portraits;
+        // Phase 6: the host's open game session, for its guests to join (none: closed).
+        std::optional<bbcoop::TeamSession> session;
+        // Each member's load (the team loading screen), by member name.
+        std::map<std::string, bbcoop::LoadProgress> loads;
+        // Phase 7: where each member last stood (its last vitals up, by member name), for its
+        // next run to resume there.
+        struct Place {
+            bbcoop::ResumeAt at;
+            std::string character; // whose (CharacterOf): another character resumes nowhere
+        };
+        std::map<std::string, Place> places;
+        u32 session_run = 0; // the host game's run that opened it
+        // Phase 4: who runs each area's enemies, and what was logged of it.
+        EnemyOwners owners;
+        QString owners_logged;
+        QString vitals_logged; // the members' states and the wipes, as last logged
+        // Its trades (coop/trade.h): the offers held and the grants owed.
+        BloodborneCoop::TradeDesk trades;
+        // Phase 5b: a team's world (its party key is a team's), from its host's reports; read
+        // from team_world.pb when the party first comes.
+        bool team = false;
+        std::optional<bbcoop::TeamWorld> team_world;
+        bool team_world_read = false;
+    };
+    struct Member {
+        explicit Member(quint32 instance) : stream{"shadnet", instance} {}
+        BloodborneCoop::CoopStream stream;
+        QByteArray online_id;
+        QString party; // PartyFolderName, empty before its hello
+        std::string name;
+        quint32 run = 0;
+        bool host = false; // hosts the session (its hello says): its characters and map state count
+        // Runs phase 4's enemy owners (its hello says): on an area another member owns its new
+        // kills and its HP reports do not count.
+        bool enemy_owner = false;
+        std::string lobby;     // its name in the team lobby, empty before its lobby hello
+        std::uint32_t map = 0; // the map it last said (0: loading, or none yet)
+        // Kaniel 2026-10-16: the team world it was taken out of (removed from the team, or left
+        // it): no game packet goes between it and that party until its next hello.
+        QString cut_from;
+    };
+
+    PartyWorld& WorldFor(const QString& name, qint64 now_ms, Result& result);
+    void Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_ms, Result& result);
+    void OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms, Result& result);
+    void OnLifecycle(Member& member, const bbcoop::Lifecycle& lifecycle, qint64 now_ms,
+                     Result& result);
+    void StartLog(PartyWorld& world, bool after_wipe, qint64 now_ms, Result& result);
+    void Journal(PartyWorld& world, bbcoop::JournalRecord record, qint64 now_ms);
+    void Compact(PartyWorld& world, qint64 now_ms);
+    void Replay(PartyWorld& world, const bbcoop::JournalRecord& record);
+    // The host's reports and every member's flags and HP (phase 3b): taken into the log, journaled
+    // and the entries sent.
+    void TakeWorld(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                   qint64 now_ms, Result& result);
+    // The boards' messages (phase 3c), and the changed boards to the party.
+    void TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                   qint64 now_ms, Result& result);
+    void SendBoards(PartyWorld& world, unsigned changed, qint64 now_ms, Member* only = nullptr);
+    // The enemy owners to the party (or `only`), logged when they changed.
+    // The host's session closed (its game gone or started again): the others hear it.
+    // Whether the member hosting the party's open session is linked (phase 7).
+    bool SessionHostLinked(const PartyWorld& world) const;
+    // The character a member readied in its team (save slot and name), empty when none.
+    std::string CharacterOf(const std::string& member) const;
+    void CloseSession(PartyWorld& world, qint64 now_ms, Result& result);
+    void SendOwners(PartyWorld& world, qint64 now_ms, Result& result, Member* only = nullptr);
+    // Whether `member` may decide the enemies of `map` (phase 4): a game without the owners, or
+    // on an area nobody or itself runs.
+    bool Decides(const PartyWorld& world, const Member& member, u32 map) const;
+    // A member's trade messages, and what the desk says to send and store.
+    void TakeTrade(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                   qint64 now_ms, Result& result);
+    void Deliver(PartyWorld& world, BloodborneCoop::TradeDesk::Result trades, qint64 now_ms,
+                 Result& result);
+    void SendToOthers(PartyWorld& world, const Member& from, const bbcoop::Envelope& envelope,
+                      qint64 now_ms);
+    void SendTo(Member& member, const bbcoop::Envelope& envelope, qint64 now_ms);
+    void SendEntries(PartyWorld& world, const std::vector<BloodborneCoop::WorldLogEntry>& entries,
+                     qint64 now_ms);
+    void Flush(qint64 now_ms, Result& result);
+    std::string Who(const Member& member) const;
+    // The team lobby (phase 5): a player's sign-in and requests; every signed-in player's state
+    // after a change, a TeamStart to those the outcome starts, the teams to disk.
+    void OnLobbyHello(Member& member, const bbcoop::LobbyHello& hello, qint64 now_ms,
+                      Result& result);
+    void OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, qint64 now_ms,
+                       Result& result);
+    void Settle(const BloodborneCoop::TeamLobby::Outcome& outcome, qint64 now_ms, Result& result);
+    // A member out of its team: out of that team's world at once (its share, boards, owners, load
+    // and session go, as when its game leaves) and cut off from the team's games.
+    void TakeOutOfTeam(const BloodborneCoop::TeamLobby::Departure& out, qint64 now_ms,
+                       Result& result);
+    // What goes when a guest leaves its party's world (its game said so, or its team let it go).
+    void ForgetMember(PartyWorld& world, const std::string& name, qint64 now_ms, Result& result);
+    void SendLobby(qint64 now_ms);
+    void StoreTeams(Result& result);
+    // Phase 5b: the team's world, read from its folder once; a host's report taken.
+    const std::optional<bbcoop::TeamWorld>& TeamWorldOf(PartyWorld& world);
+    void TakeTeamWorld(Member& member, PartyWorld& world, const bbcoop::TeamWorld& report,
+                       qint64 now_ms, Result& result);
+    void SendTeamWorld(PartyWorld& world, Member& member, qint64 now_ms);
+    void LoadTeams(Result& result);
+
+    QString folder;
+    qint64 heartbeat_ms;
+    int compact_records;
+    qint64 compact_ms;
+    std::map<QString, PartyWorld> worlds;
+    std::map<quint64, Member> members; // by link (Endpoint::Key)
+    std::map<quint64, ServerLink::Endpoint> endpoints;
+    BloodborneCoop::TeamLobby lobby;
+    bool lobby_changed = false; // a player's game went: states to send at the next tick
+};
+
+} // namespace BloodborneWorld

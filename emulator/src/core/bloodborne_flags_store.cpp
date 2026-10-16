@@ -353,6 +353,7 @@ void ForgetSlotIfNewCharacter() {
     std::filesystem::remove(Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
                                 SlotFileName("resume", character_slot.load()),
                             error);
+    RefuseServerResumePoint(); // the old character's place in its team's world (phase 7)
     LOG_INFO(Debug,
              "Bloodborne party: new character in save slot {} ({} event flags set, {} kept); its "
              "kept lists and resume point start clean (old ones copied aside as .bak files)",
@@ -381,6 +382,7 @@ void ConfirmGuestPickupsInOwnWorld() {
 namespace Coop {
 
 void SetGuestPickupsBeforeMapItems() {
+    ApplyTeamWorldOnLoad();
     static std::chrono::steady_clock::time_point last{};
     static OncePerTrip trip_load;
     const auto now = std::chrono::steady_clock::now();

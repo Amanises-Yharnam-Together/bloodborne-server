@@ -87,6 +87,104 @@ void bbcoop_file_opened(const char *guest_path);
 /* The game unlocked a trophy itself; party members get it too. */
 void bbcoop_trophy_unlocked(int32_t trophy_id);
 
+/* Phase 5, the team lobby (always on with co-op), for the game's own menu
+ * (the team screen, bbport_overlay.cpp). Names are UTF-8; `id` is what a request names (a
+ * player's lobby member, a team's id). */
+enum { BBCOOP_LOBBY_TEAM = 4, BBCOOP_LOBBY_PLAYERS = 16, BBCOOP_LOBBY_INVITES = 8 };
+enum { BBCOOP_LOBBY_OFFLINE, BBCOOP_LOBBY_TITLE, BBCOOP_LOBBY_PLAYING };
+typedef struct bbcoop_lobby_entry {
+    char name[40];
+    char id[40];
+    int state; /* BBCOOP_LOBBY_*: a player's or a member's */
+    int ready; /* a member's */
+} bbcoop_lobby_entry;
+typedef struct bbcoop_lobby {
+    int signed_in; /* the server answered */
+    int in_team, leader, started;
+    int member_count, player_count, invite_count;
+    bbcoop_lobby_entry members[BBCOOP_LOBBY_TEAM];       /* the leader first */
+    bbcoop_lobby_entry players[BBCOOP_LOBBY_PLAYERS];    /* others signed in, not in this team */
+    bbcoop_lobby_entry invites[BBCOOP_LOBBY_INVITES];    /* name: who invited, id: the team */
+    char notice[96];                                      /* the server's last refusal */
+    char me[40];                                          /* this player's id */
+    /* Kaniel 2026-10-16: the screen opened from the game's System menu (not the title's load),
+     * a save playing, and playing in the team's world. */
+    int menu, playing, in_hunt;
+} bbcoop_lobby;
+/* Fills `lobby`; 0 when the team lobby is off. */
+int bbcoop_lobby_view(bbcoop_lobby *lobby);
+/* The menu's requests (TeamRequest actions): create, leave, invite a player (`id`), accept or
+ * decline an invite (`id`: its team), remove a member (`id`). */
+enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
+       BBCOOP_TEAM_DECLINE = 4, BBCOOP_TEAM_LEAVE = 5, BBCOOP_TEAM_REMOVE = 6 };
+void bbcoop_lobby_request(int action, const char *id);
+/* The title holds a save's load for the team: the team screen is up (bbport_overlay.cpp). */
+int bbcoop_team_screen(void);
+/* Kaniel 2026-10-16: the team menu in game. The System menu's "Co-op Team" page opens the team
+ * screen over the game (1) and its buttons close it (0); a moment after it closed the pad presses
+ * Circle for the game (1 while held) so the page under it closes too. The port's Insert menu opens
+ * it with 2: no page of the game under it, no Circle. "Join the hunt": this save
+ * into its team's world where it stands (`team`: an invitation accepted first, or "" in a team). */
+void bbcoop_team_menu(int open);
+int bbcoop_team_menu_back(void);
+void bbcoop_team_join_hunt(const char *team);
+/* Kaniel 2026-10-14: the team loading screen (League of Legends): each hunter's stage and bar,
+ * up from the team's Start until every member is in the team's session. 0 when it is not up. */
+enum { BBCOOP_LOAD_WAITING, BBCOOP_LOAD_LOADING, BBCOOP_LOAD_JOINING, BBCOOP_LOAD_READY };
+typedef struct bbcoop_team_load_row {
+    char name[40];
+    int stage; /* BBCOOP_LOAD_* */
+    int percent;
+    int self;
+} bbcoop_team_load_row;
+typedef struct bbcoop_team_load {
+    int count;
+    bbcoop_team_load_row rows[4];
+} bbcoop_team_load;
+int bbcoop_team_load_view(bbcoop_team_load *view);
+/* Kaniel 2026-10-15: while that screen is up the game's sound is held (runtime_audio.c reads this
+ * every buffer): 1 held. */
+int bbcoop_sound_held(void);
+/* And a cutscene under it is skipped: 1 while Options is to be held down for the game's skip
+ * (runtime_pad.c, even while the screen takes the pad). */
+int bbcoop_cutscene_skip(void);
+/* Its buttons: this character ready, not ready, the leader's start (a member's: ready), alone. */
+enum { BBCOOP_TEAM_GO_READY = 0, BBCOOP_TEAM_GO_UNREADY = 1, BBCOOP_TEAM_GO_START = 2,
+       BBCOOP_TEAM_GO_ALONE = 3 };
+void bbcoop_team_choose(int what);
+
+/* Trading between party members (the co-op code's bloodborne_trade.h, with
+ * always on in the port with the server world): what the port's trade menus (shim/bbport_trade_menu.cpp) need. An
+ * item is a kind (1 Blood Echoes with id 0, 2 goods by EquipParamGoods id, 3 an item of its own:
+ * a weapon, armor, gem or rune by its full item id, category | id); texts are UTF-8 and `size`
+ * bytes at most. Calls from the game's thread. */
+int bbcoop_trade_on(void);
+/* Whether the item may be given (Kaniel 2026-10-15: any item; not the bell items). */
+int bbcoop_trade_tradeable(uint32_t kind, uint32_t id);
+uint32_t bbcoop_trade_held(uint32_t kind, uint32_t id);
+/* The quantity picker's line for giving the item to the nearest member on this map; 0 when
+ * nobody is there to give to. */
+int bbcoop_trade_give_question(uint32_t kind, uint32_t id, char *text, size_t size);
+/* The Blood Echoes picker's steps for what the player holds now: Up/Down (also its first and
+ * lowest number) and the game's other step. */
+void bbcoop_trade_echoes_picker(uint32_t *step, uint32_t *big_step);
+/* Offers `count` of the item to the nearest member (taken out at once; an item of its own: the
+ * inventory entry with `handle`, else the first): 1 when sent. */
+int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count, uint32_t handle);
+/* The oldest offer to this player waiting for an answer: its id and question; 0 when none. */
+int bbcoop_trade_ask(uint64_t *id, char *text, size_t size);
+/* Whether offer `id` still waits for this player's answer. */
+int bbcoop_trade_ask_open(uint64_t id);
+/* Accepting takes what was asked for out first: 1 when it was a yes that went. */
+int bbcoop_trade_answer(uint64_t id, int accept);
+/* The next notice to show, skipping those with nothing to say; 0 when none. */
+int bbcoop_trade_notice(char *text, size_t size);
+/* The menus' tick: the co-op code runs it on the game's thread with its trades. */
+void bbcoop_trade_set_ui_tick(void (*tick)(void));
+/* Items' names for the boxes (the save editor's, from the game's text): by full item id (goods
+ * 0x40000000 | id), 1 when it knows the item. */
+void bbcoop_trade_set_namer(int (*namer)(uint32_t item_id, char *text, size_t size));
+
 #ifdef __cplusplus
 }
 #endif

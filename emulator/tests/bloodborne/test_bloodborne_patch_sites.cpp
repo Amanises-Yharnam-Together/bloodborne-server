@@ -214,6 +214,14 @@ TEST(CoopSites, ThePartyHeaderHooksAreRegistered) {
     EXPECT_TRUE(IsRegisteredCoopHook(HitReactionOffset, HitReactionPrologue));
     EXPECT_TRUE(IsRegisteredCoopHook(PartyGhostDeathMenuBranchOffset - 5,
                                      std::vector<u8>{0x41, 0x80, 0x7E, 0x0C, 0x00}));
+    // The game's packets, traced at its send and at its receive queues (phase 0).
+    EXPECT_TRUE(IsRegisteredCoopHook(PacketSendTraceOffset, PacketSendTrace));
+    EXPECT_TRUE(IsRegisteredCoopHook(ReliablePacketQueuedOffset, ReliablePacketQueued));
+    EXPECT_TRUE(IsRegisteredCoopHook(UnreliablePacketQueuedOffset, UnreliablePacketQueued));
+    // The channel table's send and receive decisions (phase 1).
+    EXPECT_TRUE(IsRegisteredCoopHook(PacketSendOffset, PacketSendPrologue));
+    EXPECT_TRUE(IsRegisteredCoopHook(ReliableChannelCheckOffset, ReliableChannelCheck));
+    EXPECT_TRUE(IsRegisteredCoopHook(UnreliableChannelCheckOffset, UnreliableChannelCheck));
     // Other bytes, another length or an offset that is no hook are not.
     EXPECT_FALSE(IsRegisteredCoopHook(HitOffset, std::span{HitPrologue}.first(6)));
     EXPECT_FALSE(IsRegisteredCoopHook(HitOffset + 1, HitPrologue));
@@ -302,4 +310,40 @@ TEST(CoopSites, TheJsonNamesEverySite) {
     EXPECT_NE(json.find(R"({"name": "sign timers", "required": true})"), std::string::npos);
     EXPECT_NE(json.find(R"("kind": "hook")"), std::string::npos);
     EXPECT_NE(json.find(R"("kind": "call")"), std::string::npos);
+}
+
+// Phase 7: only the server ends a session. The game's own reasons to leave one (no word from the
+// host for a while, a resend queue over 1000 bytes, a room time-out) each raise their Lua event
+// and MultiPlayStopRequest; their branches always take the stay path now (Lisara 2026-10-14: his
+// game ended its own session after a save). A member's connection going ("irregular leave") still
+// runs the game's own member-left flow, which a host needs (rig crashes/leave).
+TEST(CoopSites, OnlyTheServerEndsASession) {
+    ASSERT_NE(FindCoopFeature("server owns leaves"), nullptr);
+    EXPECT_TRUE(FindCoopFeature("server owns leaves")->required);
+    const auto sites = SitesOf("server owns leaves");
+    ASSERT_EQ(sites.size(), 3u);
+    EXPECT_EQ(Site("session idle timeout").offset, 0x01789C5Du);
+    EXPECT_EQ(Site("session resend overflow").offset, 0x017897B2u);
+    EXPECT_EQ(Site("room timeout").offset, 0x01789F41u);
+    for (const CoopSite* site : sites) {
+        const auto patched = HexBytes(site->patched);
+        ASSERT_FALSE(patched.empty()) << site->name;
+        EXPECT_TRUE(patched[0] == 0xEB || patched[0] == 0xE9) << site->name; // always jumps
+    }
+}
+
+// Kaniel 2026-10-16 (a removed member invited back): a game that was in a session joining one
+// again crashed at 0x013CFFBA. The event flag manager's read of a value over two flag blocks
+// (0x013CFD80) looks both blocks up but checks neither (a value in one block is checked and reads
+// 0 when its block is missing). The guard hooks it where each block is about to be read.
+TEST(CoopSites, AValueOverAMissingFlagBlockReadsAsZero) {
+    ASSERT_NE(FindCoopFeature("flag block guard"), nullptr);
+    const auto sites = SitesOf("flag block guard");
+    ASSERT_EQ(sites.size(), 2u);
+    EXPECT_EQ(Site("flag value first block").offset, 0x013CFF79u);
+    EXPECT_EQ(Site("flag value first block").original, "41 FF C9 44 89 C9 C1 E9 03");
+    EXPECT_EQ(Site("flag value second block").offset, 0x013CFFECu);
+    EXPECT_EQ(Site("flag value second block").original, "45 29 D0 41 8D 58 FF 89 D8");
+    EXPECT_EQ(GuardedFlagBlock(0x1234, 0x5000), 0x1234u);
+    EXPECT_EQ(GuardedFlagBlock(0, 0x5000), 0x5000u);
 }

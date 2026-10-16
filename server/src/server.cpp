@@ -60,22 +60,25 @@ bool ShadNetServer::Start(ConfigManager* config) {
         addr = QHostAddress(host);
 
     uint16_t plainPort = static_cast<uint16_t>(config->GetUnsecuredPort().toUInt());
-    if (m_unsecuredServer->listen(addr, plainPort)) {
+    // Phase 11: only the link's UDP port faces the players; its tunnel comes in here locally.
+    const QHostAddress tcpAddr =
+        config->IsTcpLocalOnly() ? QHostAddress(QHostAddress::LocalHost) : addr;
+    if (m_unsecuredServer->listen(tcpAddr, plainPort)) {
         qInfo().nospace().noquote()
-            << "Unsecured TCP listener on: " << addr.toString() << ":" << plainPort
+            << "Unsecured TCP listener on: " << tcpAddr.toString() << ":" << plainPort
             << ". No encryption, use it only on trusted networks";
     } else {
         qCritical() << "Plain TCP listen failed:" << m_unsecuredServer->errorString();
     }
 
-    // Start matching/STUN UDP server only when Matching2 is enabled.
+    // The games' link (UDP) with the rooms: only when Matching2 is enabled.
     if (config->IsMatching2Enabled()) {
-        m_stunServer = new StunServer(&m_shared, this);
+        m_linkServer = new LinkServer(&m_shared, m_dbPath, plainPort, this);
         uint16_t udpPort = static_cast<uint16_t>(config->GetMatchingUdpPort().toUInt());
-        if (!m_stunServer->Start(addr, udpPort))
-            qWarning() << "STUN UDP listen failed on port" << udpPort;
+        if (!m_linkServer->Start(addr, udpPort))
+            qWarning() << "Link UDP listen failed on port" << udpPort;
     } else {
-        qInfo() << "Matching2 disabled; STUN UDP listener not started";
+        qInfo() << "Matching2 disabled; the games' link (UDP) not started";
     }
 
     // Read-only stats HTTP server (live usage + public leaderboards), own port.

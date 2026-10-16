@@ -67,6 +67,8 @@ class Emulator:
     commit_gb = 12.5
     # Each game starts once the one before is in the world: two loading at once were slow.
     staggered_start = True
+    # Phase 6: the port plays only in teams made on the title (the runner makes the scenario's).
+    teams = False
 
     def __init__(self, root: pathlib.Path = BB_ROOT):
         self.rig = root / "rig"
@@ -121,6 +123,7 @@ class Port(Emulator):
     commit_gb = 7.5
     # The port's games load side by side: all start at once.
     staggered_start = False
+    teams = True
 
     def __init__(self, root: pathlib.Path = BB_ROOT):
         super().__init__(root)
@@ -151,13 +154,13 @@ class Port(Emulator):
             "BB_GAME_DIR": str(self.game_dir),
             "BB_PROBE": str(self.exe),
             "BB_MODS_DIR": str(self.mods),
-            "BB_FPS": "30",
+            "BB_FPS": os.environ.get("BB_RIG_FPS", "30"),  # BB_RIG_FPS: a --play at another rate
             "BB_DMEM_MB": "5056",
             "BB_LOG_FILE": str(self.log_path(role)),
             "BB_LOG_LEVEL": "info",
             "BB_ONLINE": "1",
-            "BB_UPNP": "0",
-            "BB_SHADNET_SERVER": f"127.0.0.1:{SHADNET_PORT}",
+            # Phase 11, one port: shadNet's link UDP port (the TCP port's + 1) signs the game in.
+            "BB_SHADNET_SERVER": f"127.0.0.1:{SHADNET_PORT + 1}",
             "BB_SHADNET_WEBAPI": f"http://127.0.0.1:{WEBAPI_PORT}",
             "BB_SHADNET_NPID": ACCOUNTS[role],
             "BB_SHADNET_PASSWORD": PASSWORD,

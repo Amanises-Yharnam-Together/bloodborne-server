@@ -26,11 +26,19 @@ VERBS = {
     "wait", "wait-session", "wait-members", "wait-map", "travel", "ensure-map", "hurt", "kill",
     "mark", "approach", "attack", "teleport", "press", "stick", "set-flag", "expect-flag",
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
-    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near",
+    "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "expect-others-shown",
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
-    "shot", "expect-hidden", "expect-disabled", "census", "peek", "poke", "dump", "raise-stat",
+    "shot", "expect-hidden", "expect-disabled", "set-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
     "return-point",
+    "team-create", "team-invite", "team-accept", "team-wait", "team-leave",  # the lobby's
+    "team-screen", "team-ready", "team-start", "team-alone",  # the team screen's buttons
+    "title-press", "title-wait", "title-shot", "title-keys", "keys",  # the port's menu keys
+    "menu-invite", "menu-kick", "menu-join", "menu-leave",  # the team menu in game
+    "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
+    "trade-socket", "expect-socketed",
+    "cut-link",  # phase 7: a dropped connection
+    "watch-unseen",  # a story NPC never drawn after a load
 }
 VITALS = {"up", "down", "dead"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
@@ -123,7 +131,10 @@ class ScenarioTest(unittest.TestCase):
                 continue
             for role, script in scenario["roles"].items():
                 with self.subTest(scenario=name, role=role):
-                    self.assertEqual(run_scenario.stages_of(script)[0][0], scenarios.START)
+                    first = run_scenario.stages_of(script)[0]
+                    # The lobby's and the title's steps (team-*, title-*) run before the world.
+                    first = [step for step in first if not step.startswith(("team-", "title-"))]
+                    self.assertEqual(first[0], scenarios.START)
 
     def test_only_the_kill_made_is_posted(self):
         [pattern] = scenarios.only_kill("0x1001400b")
@@ -248,9 +259,9 @@ class SuiteTest(unittest.TestCase):
         ]}
         compiled = suites.compile_suite(suite)
         self.assertEqual(compiled["roles"]["guest"], [
-            [scenarios.START, "chapter join", "keep-going off", "sync join",
-             "chapter crash", "keep-going on", "sync crash", "sync c-ready"],
-            ["chapter crash", "keep-going on", "wait 2", "chapter trip", "keep-going on",
+            [scenarios.START, "chapter join 120", "keep-going off", "sync join",
+             "chapter crash 220", "keep-going on", "sync crash", "sync c-ready"],
+            ["chapter crash 220", "keep-going on", "wait 2", "chapter trip 120", "keep-going on",
              "sync trip"]])
         self.assertEqual(compiled["roles"]["host"][-3:], ["keep-going on", "sync trip", "wait 3"])
         self.assertEqual(compiled["syncs"]["c-ready"], {"chapter": "crash",
@@ -294,9 +305,17 @@ class EdgeTest(unittest.TestCase):
         self.assertEqual(compiled["stage_saves"], {"guest": {1: "new-character"}},
                          "only the first restart puts other saves in")
 
+    def test_shadnet_restarts_mid_session_in_the_edges_suite(self):
+        # Phase 11: shadNet stops and starts again while two games play on (a host's PC hiccup):
+        # the session holds, and the games sign in again by themselves.
+        edges = suites.SUITE_SCENARIOS["edges"]
+        self.assertEqual(edges["server_restarts"], ["restart-go"])
+        chapter = next(c for c in edges["chapters"] if c["name"] == "server-restart")
+        self.assertIn("host", chapter["forbid"])
+
     def test_an_outage_starts_at_a_sync_of_its_chapter(self):
         for name, scenario in suites.SUITE_SCENARIOS.items():
-            for sync in scenario["outages"]:
+            for sync in [*scenario["outages"], *scenario["server_restarts"]]:
                 with self.subTest(suite=name, sync=sync):
                     self.assertIn(sync, scenario["syncs"])
             for role, saves in scenario["stage_saves"].items():
@@ -309,6 +328,40 @@ class EdgeTest(unittest.TestCase):
                 for key in ("files_present", "files_absent"):
                     with self.subTest(suite=name, chapter=chapter["name"]):
                         self.assertTrue(set(chapter.get(key, {})) <= set(scenario["roles"]))
+
+
+class TeamTest(unittest.TestCase):
+    """Phase 6: the port plays only in teams (the team screen holds every load), so the runner makes
+    the scenario's team on the title before its script, unless the script makes its own."""
+
+    def test_only_the_port_plays_in_teams(self):
+        self.assertTrue(engines.ENGINES["port"].teams)
+        self.assertFalse(engines.ENGINES["emulator"].teams)
+
+    def test_the_host_makes_the_team_and_the_guests_join_it(self):
+        roles = ["host", "guest", "guest2"]
+        self.assertEqual(run_scenario.team_prelude("host", roles, 0),
+                         ["team-create", "team-invite rig_guest", "team-invite rig_guest2",
+                          "team-wait 3", "team-start"])
+        self.assertEqual(run_scenario.team_prelude("guest", roles, 0), ["team-accept", "team-ready"])
+        self.assertEqual(run_scenario.team_prelude("guest2", roles, 0), ["team-accept", "team-ready"])
+
+    def test_a_restarted_game_goes_back_into_its_team(self):
+        roles = ["host", "guest"]
+        self.assertEqual(run_scenario.team_prelude("host", roles, 1), ["team-start"])
+        self.assertEqual(run_scenario.team_prelude("guest", roles, 2), ["team-ready"])
+
+    def test_a_game_alone_plays_alone(self):
+        self.assertEqual(run_scenario.team_prelude("host", ["host"], 0), ["team-alone"])
+
+    def test_the_prelude_goes_before_a_script_without_team_verbs_only(self):
+        roles = ["host", "guest"]
+        self.assertEqual(run_scenario.with_team(["wait 1"], "guest", roles, 0, teams=True),
+                         ["team-accept", "team-ready", "wait 1"])
+        self.assertEqual(run_scenario.with_team(["wait 1"], "guest", roles, 0, teams=False), ["wait 1"])
+        own = ["team-accept", "team-ready", "wait 1"]
+        self.assertEqual(run_scenario.with_team(own, "guest", roles, 0, teams=True), own)
+        self.assertIsNone(run_scenario.with_team(None, "guest", roles, 0, teams=True))
 
 
 class LaneTest(unittest.TestCase):
@@ -337,7 +390,7 @@ class LaneTest(unittest.TestCase):
         run_scenario.use_lane(2)
         self.assertEqual((run_scenario.SHADNET_PORT, run_scenario.WEBAPI_PORT,
                           run_scenario.BACKEND_PORT), (32513, 32515, 20653))
-        self.assertEqual(port.environment("host")["BB_SHADNET_SERVER"], "127.0.0.1:32513")
+        self.assertEqual(port.environment("host")["BB_SHADNET_SERVER"], "127.0.0.1:32514")
         self.assertEqual(run_scenario.p2p_port("guest"), 51621)
         self.assertEqual(run_scenario.lane_dir(), run_scenario.RIG / "lanes" / "2")
         self.assertEqual(port.role_dir("guest"), port.rig / "port" / "lanes" / "2" / "guest")
@@ -637,6 +690,42 @@ class RunnerTest(unittest.TestCase):
             "host": low.format("0x1001400b", 280, 178, "113.5"),
         }
         self.assertAlmostEqual(run_scenario.hp_board_lag(hits, "0x1001400b"), 0.1)
+
+    def test_an_enemy_that_comes_for_a_player_moves_between_its_censuses(self):
+        # Kaniel 2026-10-14: with the host far away, the enemies beside a guest stood still.
+        census = ("[Debug] <Info> () x: Bloodborne autoplay census: 0x1001400b hp 484/484 dead 0x0 "
+                  "hidden 0 disabled 0 at {} m ({}, -54.7, {}) backread 0/0 draw 0x0")
+        still = "\n".join([census.format(6.0, -216.7, 178.1), census.format(6.0, -216.6, 178.1)])
+        moved = "\n".join([census.format(6.0, -216.7, 178.1), census.format(1.0, -212.0, 180.0)])
+        spec = {"moves": {"guest": "0x1001400b"}}
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest": still}) if "stood" in p])
+        self.assertFalse([p for p in run_scenario.judge(spec, {"guest": moved}) if "stood" in p])
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest": ""}) if "stood" in p])
+
+    def test_a_player_that_stands_still_stays_put(self):
+        # Kaniel 2026-10-15: one guest's backstab dragged the other guest to the enemy.
+        census = ("[Debug] <Info> () x: Bloodborne autoplay census: map 0x18010000, 1 characters "
+                  "within 5 m of ({}, -50.6, {})")
+        still = "\n".join([census.format(-199.7, 179.4), census.format(-200.3, 178.7)])
+        dragged = "\n".join([census.format(-199.7, 179.4), census.format(-223.5, 181.9)])
+        spec = {"stays": {"guest2": 3.0}}
+        self.assertFalse([p for p in run_scenario.judge(spec, {"guest2": still}) if "moved" in p])
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest2": dragged}) if "moved" in p])
+        self.assertTrue([p for p in run_scenario.judge(spec, {"guest2": ""}) if "moved" in p])
+
+    def test_a_lag_at_the_limit_passes(self):
+        # Rig hit3 2026-10-14: 0.15 s on the games' clock came out as 0.1500000000014552 s, over a
+        # 0.15 s limit by the float sums alone.
+        hit = ("[Debug] <Info> () x: Bloodborne party: hit on {} by this player 0x10044000: "
+               "{} -> {} (t={})")
+        low = ("[Debug] <Info> () x: Bloodborne party: lowered 1 enemies by the other members' "
+               "damage on map 0x18010000: {} {}->{} (t={})")
+        texts = {"host": hit.format("0x1001400b", 484, 382, "57327.10"),
+                 "guest": low.format("0x1001400b", 484, 382, "57327.25")}
+        spec = {"hp_sums_hits": "0x1001400b", "max_hp_lag": 0.15}
+        self.assertFalse([p for p in run_scenario.judge(spec, texts) if "bars" in p])
+        late = dict(texts, guest=low.format("0x1001400b", 484, 382, "57327.27"))
+        self.assertTrue([p for p in run_scenario.judge(spec, late) if "bars" in p])
 
     def test_a_sync_is_let_go_once_every_game_in_it_reached_it(self):
         log = ("[Debug] <Info> () x: Bloodborne autoplay: sync join reached (t=10.0)\n"

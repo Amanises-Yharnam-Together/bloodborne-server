@@ -251,6 +251,7 @@ set(HTTP_TEST_SOURCES
     # Under test
     ${CMAKE_SOURCE_DIR}/src/core/libraries/network/http.cpp
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_party.cpp
+    ${CMAKE_SOURCE_DIR}/../server/coop/world_log.cpp
     # Required to link RegisterLib's LIB_FUNCTION calls and the logger's
     # access to EmulatorSettings.
     ${CMAKE_SOURCE_DIR}/src/core/emulator_settings.cpp
@@ -279,6 +280,8 @@ set(HTTP_TEST_SOURCES
     network/test_http_lifecycle.cpp
     network/test_net_delay.cpp
     network/test_net_silence.cpp
+    network/test_net_link.cpp
+    network/test_net_firewall.cpp
 )
 
 add_executable(shadps4_http_test ${HTTP_TEST_SOURCES})
@@ -287,10 +290,14 @@ list(APPEND TEST_TARGETS shadps4_http_test)
 
 target_include_directories(shadps4_http_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/../server
     ${CMAKE_SOURCE_DIR}
 )
 target_compile_features(shadps4_http_test PRIVATE cxx_std_23)
 target_compile_definitions(shadps4_http_test PRIVATE BOOST_ASIO_STANDALONE)
+# The server link's datagrams, shared with shadNet's tests (see test_net_link.cpp).
+target_compile_definitions(shadps4_http_test PRIVATE
+    BLOODBORNE_SERVER_LINK_CONTRACTS="${CMAKE_SOURCE_DIR}/../server/tests/contracts/server_link_frames.txt")
 
 target_link_libraries(shadps4_http_test PRIVATE
     GTest::gtest_main
@@ -339,8 +346,22 @@ gtest_discover_tests(shadps4_http_test
 # Bloodborne co-op helpers (pure functions, no emulator dependencies)
 # ===========================================================================
 
+# The co-op messages with shadNet (server/coop/coop.proto), for the server world's tests.
+set(COOP_TEST_PROTO_OUT "${CMAKE_CURRENT_BINARY_DIR}/coop_proto_gen")
+file(MAKE_DIRECTORY "${COOP_TEST_PROTO_OUT}")
+add_custom_command(
+    OUTPUT "${COOP_TEST_PROTO_OUT}/coop.pb.cc" "${COOP_TEST_PROTO_OUT}/coop.pb.h"
+    COMMAND protobuf::protoc "--proto_path=${CMAKE_SOURCE_DIR}/../server/coop"
+            "--cpp_out=${COOP_TEST_PROTO_OUT}" "${CMAKE_SOURCE_DIR}/../server/coop/coop.proto"
+    DEPENDS "${CMAKE_SOURCE_DIR}/../server/coop/coop.proto"
+    VERBATIM)
+
 add_executable(shadps4_bloodborne_test
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_party.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/bloodborne_team.cpp
+    ${CMAKE_SOURCE_DIR}/../server/coop/world_log.cpp
+    ${CMAKE_SOURCE_DIR}/../server/coop/coop_messages.cpp
+    "${COOP_TEST_PROTO_OUT}/coop.pb.cc"
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_portrait.cpp
     bloodborne/test_bloodborne_party.cpp
     bloodborne/test_bloodborne_portrait.cpp
@@ -350,7 +371,6 @@ add_executable(shadps4_bloodborne_test
     bloodborne/test_bloodborne_three_players.cpp
     bloodborne/test_bloodborne_eboot.cpp
     bloodborne/test_bloodborne_patch_sites.cpp
-    bloodborne/test_bloodborne_contracts.cpp
     bloodborne/test_bloodborne_fuzz.cpp
     bloodborne/test_bloodborne_autoplay.cpp
     bloodborne/test_bloodborne_harder_enemies.cpp
@@ -361,25 +381,30 @@ add_executable(shadps4_bloodborne_test
     bloodborne/test_bloodborne_flag_rules.cpp
     bloodborne/test_bloodborne_place.cpp
     bloodborne/test_bloodborne_coop_trace.cpp
+    bloodborne/test_bloodborne_channel_table.cpp
+    bloodborne/test_bloodborne_enemy_owner.cpp
     bloodborne/test_bloodborne_world_log.cpp
     bloodborne/test_bloodborne_world_log_shown.cpp
+    bloodborne/test_bloodborne_story_hold.cpp
     bloodborne/test_bloodborne_world_log_flags.cpp
     bloodborne/test_bloodborne_world_log_hp.cpp
     bloodborne/test_bloodborne_world_snapshot.cpp
+    bloodborne/test_bloodborne_game_link.cpp
+    bloodborne/test_bloodborne_server_world.cpp
+    bloodborne/test_bloodborne_team.cpp
     bloodborne/coop_trace_replay.cpp
 )
-target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
-# The party boards' messages, shared with shadNet's tests (see test_bloodborne_contracts.cpp),
-# and the flag decisions recorded before the flag table (see test_bloodborne_flag_rules.cpp).
+target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/../server
+    "${COOP_TEST_PROTO_OUT}")
+# The flag decisions recorded before the flag table (see test_bloodborne_flag_rules.cpp).
 target_compile_definitions(shadps4_bloodborne_test PRIVATE
-    BLOODBORNE_CONTRACTS="${CMAKE_SOURCE_DIR}/../server/tests/contracts/bloodborne_party_boards.txt"
     # The co-op site table as the launcher reads it (see test_bloodborne_patch_sites.cpp).
     BLOODBORNE_COOP_SITES="${CMAKE_SOURCE_DIR}/../bbport/patches/coop-sites.json"
     BLOODBORNE_FLAG_RULES="${CMAKE_CURRENT_SOURCE_DIR}/bloodborne/flag_rules_expected.txt"
     # Co-op traces checked in with their decisions (see test_bloodborne_coop_trace.cpp).
     BLOODBORNE_TRACES="${CMAKE_CURRENT_SOURCE_DIR}/bloodborne/traces")
 target_compile_features(shadps4_bloodborne_test PRIVATE cxx_std_23)
-target_link_libraries(shadps4_bloodborne_test PRIVATE GTest::gtest_main fmt::fmt)
+target_link_libraries(shadps4_bloodborne_test PRIVATE GTest::gtest_main fmt::fmt libprotobuf)
 gtest_discover_tests(shadps4_bloodborne_test
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     DISCOVERY_TIMEOUT 60

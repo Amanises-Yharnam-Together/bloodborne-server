@@ -8,9 +8,11 @@
 
 #pragma once
 
+#include "coop.pb.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
+#include "core/bloodborne_team.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -206,11 +208,17 @@ extern thread_local HealingFountainAvailabilityRecord healing_fountain_availabil
 bool EnvFlagEnabled(const char* name);
 std::string BytesToHex(std::span<const u8> bytes);
 extern CoopFeatureReport coop_features;
+// The channel table is on (see ChannelPolicy): it drops the map item packets itself.
+extern bool channel_table_installed;
+// Phase 6: the team join's game functions are where the table has them (InstallTeamLobby).
+extern bool team_join_ready;
 std::string FeatureMismatch(u64 base, u64 image_size, std::string_view feature);
 std::string SiteFailure(u64 base, u64 image_size, u64 offset);
 bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestCodeHook hook);
 
 bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestFunctionOverride hook);
+
+bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestFunctionResult hook);
 
 bool InstallCoopHook(void* address, std::span<const u8> bytes, u64 tag, GuestRegisterEditHook hook);
 bool HasMemoryAccess(u64 address, size_t size, MemoryProt required);
@@ -304,6 +312,9 @@ std::optional<std::chrono::steady_clock::time_point> LastSummonSearchPost();
 bool EventFlagOn(s32 flag);
 void LogBloodstainStateChanges();
 bool InPartySession();
+// The members of this game's session, itself counted (SprjSessionManager +0xF8..+0x100); 1
+// out of one (phase 7).
+size_t SessionMembers();
 // In the session and in its world (see SessionArrival): a summoned guest only once it arrived.
 // Party death counts and posts this member as in the party only then.
 bool InSessionWorld();
@@ -342,23 +353,13 @@ extern std::vector<std::pair<s32, bool>> flags_to_post;
 extern std::mutex echo_board_mutex;
 extern std::vector<KillEchoes> echoes_to_post;
 extern KillEchoLedger echo_ledger;
-extern std::mutex kill_board_mutex;
-extern std::vector<std::pair<s32, bool>> kills_to_post;
-extern std::unordered_set<u32> others_kills;
-// The kill board's standing kills by member, as the board client last read them.
-extern PartyKills party_kills;
-// The next kill board post asks for nothing older than now (since FreshStart), so the board takes
-// back this member's posted kills first: the kills changed path (see WorldLogPath).
-extern bool kill_board_fresh_start;
 extern std::mutex enemy_hp_mutex;
 extern MemberMapState local_enemy_hp;
-extern std::vector<MemberMapState> others_enemy_hp;
 extern std::mutex map_state_mutex;
 extern MemberMapState local_map_state;
 extern std::optional<MemberMapState> host_map_state;
 extern std::mutex shown_board_mutex;
 extern MemberMapState local_shown;
-extern std::optional<MemberMapState> host_shown;
 extern std::vector<std::pair<s32, bool>> flags_to_set;
 void PostWorldChanges(const FlagChanges& changes);
 extern std::mutex map_board_mutex;
@@ -427,6 +428,8 @@ void ForEachWorldCharacter(u64 world, Visit&& visit) {
     }
 }
 bool IsCharacterDisabled(u64 character);
+// The character's enable switch as event command 2004:5 sets it; false if it is no character.
+bool SetCharacterDisabled(u64 character, bool disabled);
 void TickLampRest();
 
 bool EnemiesAreHarder();
@@ -438,13 +441,44 @@ void KeepBossHpInStep();
 // control block [+0x18] words +0x00..+0x3C, logged every 2 s on change to compare who runs an
 // enemy on the host, on a guest beside it and on a guest alone.
 void WatchEnemyHp(u64 hp_address, u32 handle);
+// Phase 8 (one HP path): this game's own hit, at once to the others through the server, and the
+// others' hits as they came (taken once).
+struct EnemyHitNews {
+    u32 map = 0;
+    u32 handle = 0;
+    s32 hp = 0;
+    s32 max = 0;
+    std::string member;
+};
+void SendEnemyHit(u32 map, u32 handle, s32 hp, s32 max);
+std::vector<EnemyHitNews> TakeEnemyHits();
+// Phase 8: the owner's activation pass wakes the groups around the other players too (its entry
+// adds their groups to its block's record, its end puts the record back; see WithOthersGroups).
+void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers);
+void PS4_SYSV_ABI PutBackWokenRecords(u64, const GuestRegisterSnapshot* registers);
+// After the game's ownership step: the owner runs every awake enemy (see AwakeEnemyWord).
+void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers);
+// Enemy positions (see SendsFullPositionPacket): a follower counts the entries it takes.
+void PS4_SYSV_ABI CountPositionTaken(u64, const GuestRegisterSnapshot* registers);
+// A position packet (ch 4) went into the game's queues.
+void CountPositionPacketIn();
+// The game's hand-out of enemies (see HandOutSeconds): the owner's 0x17 to `member` as it sends
+// it, and a follower's as its game takes it (the hook at HandOutReceivedOffset).
+void NoteHandOutSent(const std::string& member, std::span<const u8> payload);
+void PS4_SYSV_ABI TakeHandOut(u64, const GuestRegisterSnapshot* registers);
+// How many party ticks (frames) have run: the owner's packets a frame.
+u64 EnemyFrameSerial();
 void LogNearbyEnemyControl();
+void LogJoinTasksOnChange();
+void ReconcileMemberPresence();
 
 void TickPartyTrip();
 void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
 
 void TickAutoplay();
+// The rig's watch-unseen check (bloodborne_autoplay.cpp), after the co-op tick.
+void CheckAutoplayWatch();
 void TickPartyDeath();
 
 void ReopenClosedPartySession();
@@ -523,6 +557,8 @@ void PolishMultiplayerUi();
 void InstallNoLevelSyncInParty(u64 base, u64 image_size);
 void InstallSolidNpcsInParty(u64 base, u64 image_size);
 void InstallFloorGuard(u64 base, u64 image_size);
+// A flag value read over a flag block that is missing reads as zeros (bloodborne_party_rules.cpp).
+void InstallFlagBlockGuard(u64 base, u64 image_size);
 
 // Diagnostics for shared loot (RE trace only): the map item module (MapItemMan, 0x017D-0x017E)
 // asks "am I a summoned guest" (matching state 6) or "am I the host" (3) at these spots. Counting
@@ -618,6 +654,9 @@ void QueueGuestNpcGift(const NpcGift& gift);
 void InstallKeepLocalFlags(u64 base, u64 image_size);
 void InstallDeferredBossItems(u64 base, u64 image_size);
 extern std::atomic<s64> world_changed_ms;
+// The last load that started a new world (StartsNewWorld) alone, for StoryRemovals: no owner
+// change or wipe moves it.
+extern std::atomic<s64> world_loaded_ms;
 void LogFlagChangesInSession(bool sharing);
 void KeepGuestProgress(bool in_session);
 void SetPartyWorldChanges(bool sharing);
@@ -625,6 +664,26 @@ void GrantPartyEchoes();
 // Whether this guest hid or switched off the character to match the host (game thread).
 bool ChangedLikeTheHost(u32 handle);
 void ClaimEnemiesWhenAlone(bool in_session, u32 map);
+// Phase 4 (see EnemyRole), the port: the server's owner of this
+// member's area decides who runs its enemies, instead of ClaimEnemiesWhenAlone.
+bool EnemyOwnerOn();
+// With the owners on: whether the server sent the kill step something since the last call (the
+// owner's HP, kills), so it runs at once.
+bool TakeServerWorldNews();
+// The server's owners, or none when not heard of for EnemyOwnersFreshMs.
+std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms);
+// Once per party tick: this member's role on its map, the ownership words of its characters and
+// the owner's frame and send rates in the log.
+void TickEnemyOwner(bool in_session, u32 map);
+// This member's role and the owner it follows (its board name), as the last tick found them: for
+// the hooks (any thread).
+EnemyRole CurrentEnemyRole();
+std::string CurrentEnemyOwner();
+// The owner got another member's hit (0x15): the enemy step runs on the next frames, so the HP
+// it takes goes to the log at once.
+void ForceEnemySteps();
+// A game packet this member sent on `channel` (the send's entry): counted for the owner's rates.
+void CountEnemyPacketSent(u32 channel);
 extern std::mutex own_hits_mutex;
 extern OwnDamage own_damage;
 void InstallOwnHitCount(u64 base, u64 image_size);
@@ -638,6 +697,11 @@ bool TakeDirectDamage();
 // A co-op frame to every room peer, or to one (both traced).
 void SendToRoomPeers(const std::vector<u8>& frame);
 void SendToPeer(const std::vector<u8>& frame, u32 addr, u16 port);
+// The signed-in user's online id, or "" before shadNet's login.
+std::string LocalOnlineId();
+// Phase 11: this game's character's name (PlayerGameData +0x5D0, what the game sends the others),
+// "" before a save is loaded or when it does not read. Players see only characters' names.
+std::string OwnCharacterName();
 void SendDirectKills(std::span<const u32> kills, bool changed);
 // The world log's runtime (bloodborne_world_log.cpp, docs/WORLD_SYNC.md Stage C).
 // SHADPS4_BLOODBORNE_WORLD_LOG (this game's hello says so: WorldLogFeature).
@@ -656,6 +720,115 @@ struct PartyKillsNow {
 PartyKillsNow GatherPartyKills(const VisitKills& visit_kills, u32 map,
                                std::span<const std::pair<s32, bool>> changes, bool forgot,
                                const std::unordered_set<u32>& not_mine);
+// The party's world on the server (bloodborne_server_world.cpp, docs/SERVER_COOP_PLAN.md phase
+// 3): always in the port, never in shadPS4.
+bool ServerWorldOn();
+// The kill step (game thread): this member's standing kills to shadNet (`propose`: in the session
+// and not held by a wipe), and the party's kills as the server's log has them.
+struct ServerWorldKills {
+    std::unordered_set<u32> kills;
+    bool host_wiped = false; // the party's log started over after a wipe (see WorldLogWipeHold)
+    bool fresh = false;      // in step with the server's log
+    std::vector<WorldLogEntry> applied; // what came in this step (the flag events among them)
+    WorldLogReturnPoint return_point;   // the host's, as the log has it
+};
+ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms);
+// Step 3b: the host's characters on its map, its map's state and its return point, whole (sent on
+// a change); any member's shared flag events and HP report.
+void ShowToServer(u32 map, std::span<const CharacterShown> characters);
+void MapStateToServer(u32 map, std::span<const u8> bits);
+void ReturnPointToServer(s32 point, u32 map);
+void FlagsToServer(std::span<const std::pair<s32, bool>> shared);
+void HpToServer(u32 map, const EnemyHpReport& report, bool changed);
+// The party's log as this member has it: the host's characters and map state (none until known),
+// every member's HP reports.
+std::optional<WorldLogShown> ServerShown();
+std::optional<WorldLogMapState> ServerMapState();
+WorldLogHp ServerHp();
+// Step 3c, what the HTTP boards carried: the stream (its thread) runs without a kill step too.
+void StartServerWorld();
+// Phase 5, the team lobby (bloodborne_team.h): always in the port, with the server world.
+// The party is the team's: its key and this game's role come with the team's Start.
+bool TeamModeOn();
+// Phase 6 (bloodborne_join.cpp, see TeamJoin): the host opens its game session as a summon
+// does; its join data (the summon packet's, without the sign's two words); a guest joins from it
+// in place. Game thread.
+bool OpenTeamSession();
+std::optional<std::vector<u8>> TeamSessionJoinData();
+bool JoinTeamSession(std::span<const u8> join, u32 kind, u32 sign);
+// Each party controller tick in team mode (bloodborne_server_world.cpp): opens, announces or
+// joins the team's session (`ready`: the controller's go, where it would ring the bell).
+// False when not in team mode (the bell and signs then).
+bool TickTeamJoin(bool ready);
+// The placement a guest's join keeps (its own spot), as a claim's header hands it.
+void ReceiveSeamlessPlacement(const SummonPlacementDescriptor& placement);
+// At the game's start: signs in to the server's lobby once the game has its online id.
+void StartTeamLobby();
+// The title loads the save in `slot` (TitleStep's load state, the game thread): true holds the load
+// a frame more (waiting for the team's Start); false lets it go, the team's party set if any.
+bool HoldTitleLoadForTeam(u32 slot);
+// The title menu is up again: the next load asks the team again.
+void TeamBackAtTitle();
+// The team screen (bbport_overlay.cpp) is up: the title's load is held for it. Its buttons.
+bool TeamScreenUp();
+// A team's guest is loading or joining its host's session: the port holds a loading screen.
+TeamLoad::View TeamLoadView();
+// The team's loading screen is up: it holds the game's input and its sound (the port's audio).
+bool TeamLoadCovers();
+// Options held down for the game to skip a cutscene under that screen (the port's pad).
+bool CutsceneSkipPressed();
+// SprjRemoMan's step methods (tag: the step), hooked at their entries.
+void PS4_SYSV_ABI NoteRemoStep(u64 step, const GuestRegisterSnapshot* registers);
+void TeamChoose(TeamGate::Choice choice);
+// Kaniel 2026-10-16: the team screen over the game, opened from its System menu (the port's
+// "Co-op Team" page) and closed by its own buttons; Circle for the game's page under it a moment
+// after it closed (the port's pad); whether a save plays (and in its team's world); the menu's
+// "Join the hunt" (an invitation's team, or "" in a team already).
+void TeamMenu(bool open, bool from_page);
+bool TeamMenuOpen();
+bool TeamMenuBackPressed();
+bool TeamPlaying(bool* in_hunt);
+void TeamJoinHunt(const std::string& invite_team);
+// The rig's in-game team menu verbs (menu-invite, menu-kick, menu-join, menu-leave).
+bool RunTeamMenuVerb(const AutoplayCommand& command, bool begun, double elapsed,
+                     std::string& failure);
+// The rig's screen verbs (team-ready, team-start, team-alone) want the title's Cross until the
+// screen is up.
+bool IsTeamScreenVerb(std::string_view verb);
+// The rig's lobby verbs (team-*), run on the title screen: true once done, `failure` if failed.
+bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed,
+                      std::string& failure);
+bool IsTeamTitleVerb(std::string_view verb);
+// Phase 5b: the team's world goes into the save as it loads (before its map items), or the save's
+// own world comes back when it plays alone; the team's host reports its world now and then.
+void ApplyTeamWorldOnLoad();
+void TickTeamWorld(s64 now_ms);
+// The lobby as the server last sent it, for the game's menu (none before its answer), and this
+// player's lobby name; a request from the menu.
+std::optional<bbcoop::LobbyState> TeamLobbyState();
+// Phase 7: where the server says this member last stood in its team's world (once per run).
+std::optional<ResumePoint> TakeServerResumePoint();
+// A new character in the slot: the server's point (the old character's) does not count this run.
+void RefuseServerResumePoint();
+std::string TeamLobbyMember();
+// Phase 11: a member's character name (its board name), as the server's lobby last said it; ""
+// when the lobby does not know it.
+std::string CharacterNameOf(std::string_view member);
+void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id);
+// This member's part of each board (bloodborne_boards.cpp's rounds send them).
+void SendServerMap(u32 map);
+void SendServerRest(s32 lamp, const std::optional<LampPosition>& at);
+void SendServerTrophies(std::span<const s32> trophies);
+void SendServerEchoes(std::span<const KillEchoes> echoes);
+void SendServerVitals(const MemberVitals& mine, std::span<const ReviveHitTotal> hits);
+// The portrait's pixels as its parts carry them (SplitPortrait), or none.
+void SendServerPortrait(u32 id, std::span<const u8> pixels);
+// The boards as the server sends them, taken on the stream's thread (bloodborne_boards.cpp).
+void TakeServerMapBoard(std::vector<MemberMap> maps);
+void TakeServerRestBoard(std::vector<LampRest> rests);
+void TakeServerEchoes(std::vector<KillEchoes> echoes);
+void TakeServerVitals(VitalsBoard board);
+void TakeServerPortrait(const std::string& member, u32 id, std::vector<u8> pixels);
 // The host's characters on its map (step 2): to the log while the shown characters take it (the
 // shown board gets them as before, the fallback copy).
 void ShowOnTheLog(u32 map, std::span<const CharacterShown> characters);

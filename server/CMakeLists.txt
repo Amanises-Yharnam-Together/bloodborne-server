@@ -3,7 +3,8 @@ project(shadnet VERSION 1.0.0 LANGUAGES CXX)
 
 include(CTest)
 
-set(CMAKE_CXX_STANDARD 17)
+# C++20: the co-op code shared with the game (coop/) needs it.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
@@ -40,8 +41,43 @@ add_custom_command(
     VERBATIM
 )
 
+# Our co-op messages (coop/coop.proto), shared with the game; with the world log (coop/), which the
+# game compiles too.
+add_custom_command(
+    OUTPUT
+        "${PROTO_OUT}/coop.pb.cc"
+        "${PROTO_OUT}/coop.pb.h"
+    COMMAND $<TARGET_FILE:protoc>
+        "--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/coop"
+        "--cpp_out=${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/coop/coop.proto"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/coop/coop.proto"
+        protoc
+    COMMENT "Generating the co-op protobuf sources"
+    VERBATIM
+)
+set(COOP_SOURCES
+    coop/coop_types.h
+    coop/world_log.h
+    coop/world_log.cpp
+    coop/game_link.h
+    coop/packet_routes.h
+    coop/coop_stream.h
+    coop/coop_messages.h
+    coop/coop_messages.cpp
+    coop/team_lobby.h
+    coop/team_lobby.cpp
+    coop/trade.h
+    coop/trade.cpp
+    "${PROTO_OUT}/coop.pb.cc"
+)
+
 set(SOURCES
     src/main.cpp
+    src/watchdog.cpp
+    src/bloodborne_reports.cpp
+    src/webapi_routes_reports.cpp
     src/config.cpp
     src/config.h
     src/server.cpp
@@ -66,8 +102,17 @@ set(SOURCES
     # Matchmaking
     src/matching.h
     src/cmd_matching.cpp
-    src/stun_server.h
-    src/stun_server.cpp
+    src/link_server.h
+    src/link_server.cpp
+    # The games' one link to the server (co-op phase 2)
+    src/server_link.h
+    src/server_link.cpp
+    # The parties' worlds (co-op phase 3)
+    src/bloodborne_world.h
+    src/bloodborne_world.cpp
+    src/bloodborne_party_boards.h
+    src/bloodborne_party_boards.cpp
+    ${COOP_SOURCES}
     # WebAPI HTTP/JSON listener
     src/webapi_server.h
     src/webapi_server.cpp
@@ -83,8 +128,6 @@ set(SOURCES
     src/webapi_routes_session.cpp
     src/bloodborne_summon_broker.h
     src/bloodborne_summon_broker.cpp
-    src/bloodborne_party_rest.h
-    src/bloodborne_party_rest.cpp
     src/webapi_routes_bloodborne.h
     src/webapi_routes_bloodborne.cpp
     src/webapi_routes_common.h
@@ -117,6 +160,7 @@ qt_add_resources(shadnet bloodborne_backend
 
 target_include_directories(shadnet PRIVATE
     src
+    "${CMAKE_CURRENT_SOURCE_DIR}"
     "${PROTO_OUT}"                                    
     "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
 )
@@ -147,32 +191,6 @@ if(BUILD_TESTING)
     target_link_libraries(test_bloodborne_summon_party PRIVATE Qt6::Core)
     add_test(NAME bloodborne_summon_party COMMAND test_bloodborne_summon_party)
 
-    add_executable(test_bloodborne_party_rest EXCLUDE_FROM_ALL
-        tests/test_bloodborne_party_rest.cpp
-        src/bloodborne_party_rest.cpp
-    )
-    target_include_directories(test_bloodborne_party_rest PRIVATE src)
-    target_link_libraries(test_bloodborne_party_rest PRIVATE Qt6::Core)
-    add_test(NAME bloodborne_party_rest COMMAND test_bloodborne_party_rest)
-
-    add_executable(test_bloodborne_party_contracts EXCLUDE_FROM_ALL
-        tests/test_bloodborne_party_contracts.cpp
-        src/bloodborne_party_rest.cpp
-    )
-    target_include_directories(test_bloodborne_party_contracts PRIVATE src)
-    target_link_libraries(test_bloodborne_party_contracts PRIVATE Qt6::Core)
-    target_compile_definitions(test_bloodborne_party_contracts PRIVATE
-        BLOODBORNE_CONTRACTS="${CMAKE_CURRENT_SOURCE_DIR}/tests/contracts/bloodborne_party_boards.txt")
-    add_test(NAME bloodborne_party_contracts COMMAND test_bloodborne_party_contracts)
-
-    add_executable(test_bloodborne_party_fuzz EXCLUDE_FROM_ALL
-        tests/test_bloodborne_party_fuzz.cpp
-        src/bloodborne_party_rest.cpp
-    )
-    target_include_directories(test_bloodborne_party_fuzz PRIVATE src)
-    target_link_libraries(test_bloodborne_party_fuzz PRIVATE Qt6::Core)
-    add_test(NAME bloodborne_party_fuzz COMMAND test_bloodborne_party_fuzz)
-
     add_executable(test_bloodborne_backend_json EXCLUDE_FROM_ALL
         tests/test_bloodborne_backend_json.cpp
         src/bloodborne_backend_json.cpp
@@ -180,6 +198,84 @@ if(BUILD_TESTING)
     target_include_directories(test_bloodborne_backend_json PRIVATE src)
     target_link_libraries(test_bloodborne_backend_json PRIVATE Qt6::Core)
     add_test(NAME bloodborne_backend_json COMMAND test_bloodborne_backend_json)
+
+    add_executable(test_server_link EXCLUDE_FROM_ALL
+        tests/test_server_link.cpp
+        src/server_link.cpp
+    )
+    target_include_directories(test_server_link PRIVATE src "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_server_link PRIVATE Qt6::Core)
+    target_compile_definitions(test_server_link PRIVATE
+        BLOODBORNE_SERVER_LINK_CONTRACTS="${CMAKE_CURRENT_SOURCE_DIR}/tests/contracts/server_link_frames.txt")
+    add_test(NAME server_link COMMAND test_server_link)
+
+    add_executable(test_packet_routes EXCLUDE_FROM_ALL tests/test_packet_routes.cpp)
+    target_include_directories(test_packet_routes PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME packet_routes COMMAND test_packet_routes)
+
+    add_executable(test_rpc_tunnel EXCLUDE_FROM_ALL tests/test_rpc_tunnel.cpp)
+    target_include_directories(test_rpc_tunnel PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME rpc_tunnel COMMAND test_rpc_tunnel)
+
+    add_executable(test_watchdog EXCLUDE_FROM_ALL tests/test_watchdog.cpp src/watchdog.cpp)
+    target_include_directories(test_watchdog PRIVATE src)
+    target_link_libraries(test_watchdog PRIVATE Qt6::Core)
+    add_test(NAME watchdog COMMAND test_watchdog)
+
+    add_executable(test_reports EXCLUDE_FROM_ALL tests/test_reports.cpp src/bloodborne_reports.cpp)
+    target_include_directories(test_reports PRIVATE src)
+    target_link_libraries(test_reports PRIVATE Qt6::Core)
+    add_test(NAME reports COMMAND test_reports)
+
+    add_executable(test_bloodborne_world EXCLUDE_FROM_ALL
+        tests/test_bloodborne_world.cpp
+        src/bloodborne_world.cpp
+        src/bloodborne_party_boards.cpp
+        src/server_link.cpp
+        ${COOP_SOURCES}
+    )
+    target_include_directories(test_bloodborne_world PRIVATE
+        src
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(test_bloodborne_world PRIVATE Qt6::Core libprotobuf)
+    add_test(NAME bloodborne_world COMMAND test_bloodborne_world)
+
+    add_executable(test_team_lobby EXCLUDE_FROM_ALL
+        tests/test_team_lobby.cpp
+        ${COOP_SOURCES}
+    )
+    target_include_directories(test_team_lobby PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(test_team_lobby PRIVATE libprotobuf)
+    add_test(NAME team_lobby COMMAND test_team_lobby)
+
+    add_executable(test_room_owner EXCLUDE_FROM_ALL tests/test_room_owner.cpp)
+    target_include_directories(test_room_owner PRIVATE src)
+    target_link_libraries(test_room_owner PRIVATE Qt6::Core)
+    add_test(NAME room_owner COMMAND test_room_owner)
+
+    add_executable(test_bloodborne_trade EXCLUDE_FROM_ALL
+        tests/test_bloodborne_trade.cpp
+        ${COOP_SOURCES}
+    )
+    target_include_directories(test_bloodborne_trade PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(test_bloodborne_trade PRIVATE libprotobuf)
+    add_test(NAME bloodborne_trade COMMAND test_bloodborne_trade)
+
+    add_executable(test_accounts EXCLUDE_FROM_ALL tests/test_accounts.cpp src/database.cpp)
+    target_include_directories(test_accounts PRIVATE src)
+    target_link_libraries(test_accounts PRIVATE Qt6::Core Qt6::Sql)
+    add_test(NAME accounts COMMAND test_accounts)
 
     # The backend in shadnet against backend/bb_dummy_server.py: the same requests, the same
     # answers (needs Python 3).
@@ -191,17 +287,6 @@ if(BUILD_TESTING)
         set_tests_properties(bloodborne_backend_parity PROPERTIES
             ENVIRONMENT "SHADNET_EXE=$<TARGET_FILE:shadnet>")
     endif()
-
-    add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
-        tests/bloodborne_matching_guest_probe.cpp
-        "${PROTO_OUT}/shadnet.pb.cc"
-    )
-    target_include_directories(bloodborne_matching_guest_probe PRIVATE
-        src
-        "${PROTO_OUT}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
-    )
-    target_link_libraries(bloodborne_matching_guest_probe PRIVATE libprotobuf)
 endif()
 
 add_custom_command(TARGET shadnet POST_BUILD
@@ -212,7 +297,6 @@ add_custom_command(TARGET shadnet POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/scoreboards.cfg"
         "$<TARGET_FILE_DIR:shadnet>/scoreboards.cfg"
 )
-
 
 install(TARGETS shadnet RUNTIME DESTINATION bin)
 install(FILES worlds.cfg scoreboards.cfg DESTINATION bin)

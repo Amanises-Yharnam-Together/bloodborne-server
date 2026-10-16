@@ -86,6 +86,9 @@ s32 MmSetRoomDataExternal(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2Requ
 s32 MmKickoutRoomMember(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                         const OrbisNpMatching2KickoutRoomMemberRequest& request);
 
+// Phase 11 (the port): the rooms' server is the server link's address and UDP port (network byte
+// order), not the shadNet client's (it connects to the Rpc bridge on 127.0.0.1).
+void SetMmServerEndpoint(u32 addr_nbo, u16 udp_port_nbo);
 u32 GetMmServerAddr();
 u16 GetMmServerUdpPort();
 

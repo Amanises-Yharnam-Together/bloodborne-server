@@ -8,7 +8,9 @@
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
+#include "core/libraries/network/server_link.h"
 
 #include <algorithm>
 #include <array>
@@ -87,9 +89,17 @@ struct AutoplayRun {
     s32 hit_from_hp = 0;              // hit: the target's HP when it began
     std::string script_path;          // sync: the go files are beside it (AutoplaySyncPath)
     std::string chapter;              // the chapter the script is in (a rig suite's section)
-    bool keep_going = false;          // keep-going on: a failed step gives up only its chapter
-    bool failed = false;              // a step failed and the script went on: "done (failed)"
-    LampPosition glide_from{};        // glide: where the player was when it began
+    // chapter <name> <seconds>: when the chapter's time budget runs out (the rig's, 2026-10-15).
+    std::optional<std::chrono::steady_clock::time_point> chapter_deadline;
+    double chapter_budget = 0.0;
+    bool keep_going = false;   // keep-going on: a failed step gives up only its chapter
+    bool failed = false;       // a step failed and the script went on: "done (failed)"
+    LampPosition glide_from{}; // glide: where the player was when it began
+    // watch-unseen: the character watched and until when, and how often it was seen drawn.
+    u32 watch_handle = 0;
+    std::optional<std::chrono::steady_clock::time_point> watch_until;
+    std::optional<std::chrono::steady_clock::time_point> watch_started;
+    u32 watch_seen = 0;
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -913,6 +923,14 @@ bool AutoplaySnapshot(const AutoplayStep&) {
 bool AutoplayChapter(const AutoplayStep& step) {
     std::scoped_lock lock{autoplay_mutex};
     autoplay_run.chapter = std::string{step.Arg(0)};
+    autoplay_run.chapter_deadline.reset();
+    if (const auto budget = AutoplayChapterBudget(step.command)) {
+        autoplay_run.chapter_budget = *budget;
+        autoplay_run.chapter_deadline =
+            std::chrono::steady_clock::now() +
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(*budget));
+    }
     LOG_INFO(Debug, "Bloodborne autoplay: chapter {}", step.Arg(0));
     return true;
 }
@@ -989,6 +1007,45 @@ bool AutoplayShot(const AutoplayStep& step) {
         return true;
     }
     return false;
+}
+
+// keys <token>... (title-keys on the title screen): the port's menu keys (AutoplayMenuKeys), for
+// its overlay to press one a frame (BB_MENU_KEYS_FILE). The emulator has no such file: skipped.
+// Written whole, then moved into place: the overlay never reads half of it.
+bool WriteAutoplayMenuKeys(const std::vector<std::string>& tokens, std::string& failure) {
+    const auto text = AutoplayMenuKeys(tokens);
+    if (!text) {
+        failure = "no such menu key";
+        return false;
+    }
+    static const char* path = std::getenv("BB_MENU_KEYS_FILE");
+    if (path == nullptr || *path == '\0') {
+        LOG_INFO(Debug, "Bloodborne autoplay: menu keys skipped (no overlay reads them)");
+        return true;
+    }
+    const std::string partial = std::string{path} + ".part";
+    std::ofstream{partial, std::ios::binary | std::ios::trunc} << *text;
+    std::error_code error;
+    std::filesystem::rename(partial, path, error);
+    if (error) {
+        failure = fmt::format("no menu keys file: {}", error.message());
+        return false;
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay: menu keys {}", text->substr(0, text->size() - 1));
+    return true;
+}
+
+bool AutoplayKeys(const AutoplayStep& step) {
+    return WriteAutoplayMenuKeys(step.command.args, step.failure);
+}
+
+// cut-link <seconds>: this game's connection drops for that long (phase 7: a Wi-Fi blip), then
+// comes back on the same socket; the session should ride it out.
+bool AutoplayCutLink(const AutoplayStep& step) {
+    const double seconds = step.Number(0, 3.0);
+    Libraries::Net::CutServerLinkForTest(static_cast<u32>(seconds * 1000.0));
+    LOG_INFO(Debug, "Bloodborne autoplay: connection cut for {:.0f} s", seconds);
+    return true;
 }
 
 bool AutoplayLog(const AutoplayStep& step) {
@@ -1138,6 +1195,84 @@ bool AutoplayExpectDisabled(const AutoplayStep& step) {
     return false;
 }
 
+// set-disabled <handle> <0|1>: switches the character off (1) or on (0) in this game only, as its
+// own story's event command 2004:5 would (the red mist's enemy in the Forbidden Woods starts off).
+bool AutoplaySetDisabled(const AutoplayStep& step) {
+    const auto target = ParseAutoplayTarget(step.Arg(0));
+    const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+    if (!found || !SetCharacterDisabled(found->character, step.Number(1, 1) != 0)) {
+        step.failure = "no such character";
+        return false;
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay set-disabled: {:#x} -> {}",
+             ReadValue<u32>(found->character, 0x08), step.Number(1, 1) != 0 ? 1 : 0);
+    return true;
+}
+
+// watch-unseen <handle> <seconds>: from now on, for that long, every frame the character is
+// loaded on this map drawn (neither its hide byte +0x28 nor its enable switch off) is logged as
+// "watched <handle> drawn" (a scenario forbids it). The step itself ends at once.
+bool AutoplayWatchUnseen(const AutoplayStep& step) {
+    const auto target = ParseAutoplayTarget(step.Arg(0));
+    if (!target) {
+        step.failure = "no such character";
+        return false;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.watch_handle = static_cast<u32>(*target);
+    autoplay_run.watch_started = now;
+    autoplay_run.watch_until =
+        now + std::chrono::milliseconds{static_cast<s64>(step.Number(1, 30) * 1000.0)};
+    autoplay_run.watch_seen = 0;
+    return true;
+}
+
+} // namespace
+
+namespace Coop {
+
+// The watch-unseen check, every frame after the co-op tick (TickPartyController). Not while the
+// world loads: nothing is drawn then.
+void CheckAutoplayWatch() {
+    const auto now = std::chrono::steady_clock::now();
+    u32 handle = 0;
+    double into = 0.0;
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        if (!autoplay_run.watch_until) {
+            return;
+        }
+        if (now > *autoplay_run.watch_until) {
+            LOG_INFO(Debug, "Bloodborne autoplay: watch on {:#x} over, seen drawn {} times",
+                     autoplay_run.watch_handle, autoplay_run.watch_seen);
+            autoplay_run.watch_until.reset();
+            return;
+        }
+        handle = autoplay_run.watch_handle;
+        into = std::chrono::duration<double>(now - *autoplay_run.watch_started).count();
+    }
+    if (!AutoplayInWorld()) {
+        return;
+    }
+    const auto found = FindAutoplayCharacter(handle);
+    if (!found || ReadValue<u8>(found->character, 0x28) != 0 ||
+        IsCharacterDisabled(found->character)) {
+        return;
+    }
+    std::scoped_lock lock{autoplay_mutex};
+    if (++autoplay_run.watch_seen <= 5) {
+        LOG_INFO(Debug,
+                 "Bloodborne autoplay: watched {:#x} drawn on map {:#x} ({:.2f} s into the "
+                 "watch)",
+                 handle, GetCurrentPackedMap(), into);
+    }
+}
+
+} // namespace Coop
+
+namespace {
+
 // note-max-hp: the player's max HP now, for a later expect-max-hp self == noted.
 bool AutoplayNoteMaxHp(const AutoplayStep& step) {
     const auto self = FindAutoplayCharacter(AutoplaySelf);
@@ -1215,6 +1350,24 @@ bool AutoplayExpectOthersNear(const AutoplayStep& step) {
     return true;
 }
 
+// expect-others-shown <n>: exactly n other players show in this world (not hidden: Kaniel
+// 2026-10-15, members gone to another map still stood here).
+bool AutoplayExpectOthersShown(const AutoplayStep& step) {
+    size_t shown = 0;
+    std::string seen;
+    for (const OtherPlayer& other : OtherPlayers()) {
+        const bool off = IsCharacterDisabled(other.character);
+        seen += fmt::format(" [{:#x} {}]", ReadValue<u32>(other.character, 0x08),
+                            off ? "hidden" : "shown");
+        shown += off ? 0 : 1;
+    }
+    if (shown != static_cast<size_t>(step.Number(0, 0))) {
+        step.failure = fmt::format("{} shown:{}", shown, seen.empty() ? " none" : seen);
+        return false;
+    }
+    return true;
+}
+
 bool AutoplayExpectMap(const AutoplayStep& step) {
     const auto map = ParseAutoplayTarget(step.Arg(0));
     // Raw, as all of the rig's checks (see AutoplayInWorld).
@@ -1227,6 +1380,232 @@ bool AutoplayExpectMap(const AutoplayStep& step) {
 
 bool AutoplayDone(const AutoplayStep&) {
     return true;
+}
+
+// The lobby's verbs (team-*) and the title's (title-press <button> [ms], title-wait <seconds>,
+// title-shot <name>: the menus before the world) run on the title screen (TickAutoplayTitle); in
+// the world they are over already.
+bool AutoplayTeamVerb(const AutoplayStep&) {
+    return true;
+}
+
+// Kaniel 2026-10-16: the team menu in game, what its buttons do (menu-invite <online id>,
+// menu-kick <online id>, menu-join, menu-leave; each [timeout]).
+bool AutoplayTeamMenuVerb(const AutoplayStep& step) {
+    return Coop::RunTeamMenuVerb(step.command, step.begun, step.elapsed, step.failure);
+}
+
+// Trading (bloodborne_trade.cpp). Items: echoes, vials, bullets, goods:<id> and, one each,
+// weapon:<id>, armor:<id>, gem:<id> (ids as the game's params have them, decimal).
+std::optional<u32> TradeItemId(std::string_view name, std::string_view prefix) {
+    u32 id = 0;
+    if (!name.starts_with(prefix) ||
+        std::from_chars(name.data() + prefix.size(), name.data() + name.size(), id).ec !=
+            std::errc{}) {
+        return std::nullopt;
+    }
+    return id;
+}
+
+std::optional<TradeItem> ParseTradeItem(std::string_view name, std::string_view count) {
+    u32 value = 0;
+    if (std::from_chars(count.data(), count.data() + count.size(), value).ec != std::errc{}) {
+        return std::nullopt;
+    }
+    if (const auto goods = TradeItemId(name, "goods:")) {
+        return TradeItem{BloodborneCoop::TradeItemKind::Goods, *goods, value};
+    }
+    static constexpr std::pair<std::string_view, u32> Categories[]{
+        {"weapon:", BloodborneCoop::WeaponCategory},
+        {"armor:", BloodborneCoop::ArmorCategory},
+        {"gem:", BloodborneCoop::GemCategory},
+    };
+    for (const auto& [prefix, category] : Categories) {
+        if (const auto id = TradeItemId(name, prefix)) {
+            return TradeItem{BloodborneCoop::TradeItemKind::Item, category | *id, value};
+        }
+    }
+    if (name == "echoes") {
+        return TradeItem{BloodborneCoop::TradeItemKind::Echoes, 0, value};
+    }
+    if (name == "vials") {
+        return TradeItem{BloodborneCoop::TradeItemKind::Goods, BloodborneCoop::BloodVialGoods,
+                         value};
+    }
+    if (name == "bullets") {
+        return TradeItem{BloodborneCoop::TradeItemKind::Goods,
+                         BloodborneCoop::QuicksilverBulletGoods, value};
+    }
+    return std::nullopt;
+}
+
+// trade-give <item> <count>: adds the items as a trade's grant does (the popup and all): a test's
+// stock.
+bool AutoplayTradeGive(const AutoplayStep& step) {
+    const auto item = ParseTradeItem(step.Arg(0), step.Arg(1));
+    if (!item) {
+        step.failure = "no such item";
+        return false;
+    }
+    AddTradeItems(std::span{&*item, 1});
+    return true;
+}
+
+// trade-stock <item> <count>: the player holds exactly that many (the rest taken out, or what is
+// missing added): a test's start.
+bool AutoplayTradeStock(const AutoplayStep& step) {
+    const auto item = ParseTradeItem(step.Arg(0), step.Arg(1));
+    if (!item) {
+        step.failure = "no such item";
+        return false;
+    }
+    const u32 held = TradeHeld(*item);
+    TradeItem change = *item;
+    if (item->kind == BloodborneCoop::TradeItemKind::Item) {
+        change.count = 1; // one each
+        for (u32 count = held; count > item->count; --count) {
+            TakeTradeItems(std::span{&change, 1});
+        }
+        for (u32 count = held; count < item->count; ++count) {
+            AddTradeItems(std::span{&change, 1});
+        }
+    } else if (held > item->count) {
+        change.count = held - item->count;
+        TakeTradeItems(std::span{&change, 1});
+    } else if (held < item->count) {
+        change.count = item->count - held;
+        AddTradeItems(std::span{&change, 1});
+    }
+    return true;
+}
+
+// trade-socket weapon:<id> gem:<id> <effect>: a gem with that first effect in the first slot of
+// the player's first such weapon (a test's stock: the gem is what must travel with it).
+bool AutoplayTradeSocket(const AutoplayStep& step) {
+    const auto weapon = ParseTradeItem(step.Arg(0), "1");
+    const auto gem = ParseTradeItem(step.Arg(1), "1");
+    u32 effect = 0;
+    const std::string_view effect_text = step.Arg(2);
+    if (!weapon || !gem ||
+        std::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
+            std::errc{}) {
+        step.failure = "no such item";
+        return false;
+    }
+    if (!SocketTradeGem(weapon->id, gem->id, effect)) {
+        step.failure = "could not put the gem in";
+        return false;
+    }
+    return true;
+}
+
+// expect-socketed weapon:<id> gem:<id> <effect> [<timeout>]: one of the player's such weapons has
+// that gem with that first effect.
+bool AutoplayExpectSocketed(const AutoplayStep& step) {
+    const auto weapon = ParseTradeItem(step.Arg(0), "1");
+    const auto gem = ParseTradeItem(step.Arg(1), "1");
+    u32 effect = 0;
+    const std::string_view effect_text = step.Arg(2);
+    if (!weapon || !gem ||
+        std::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
+            std::errc{}) {
+        step.failure = "no such item";
+        return false;
+    }
+    if (HasSocketedGem(weapon->id, gem->id, effect)) {
+        return true;
+    }
+    if (step.elapsed > step.Number(3, 0)) {
+        step.failure = "no such gem in the weapon";
+    }
+    return false;
+}
+
+// trade-offer <item> <count>... [for <item> <count>...] [<timeout>]: an offer to the first other
+// member on this map, once there is one and trades are on.
+bool AutoplayTradeOffer(const AutoplayStep& step) {
+    TradeItems give;
+    TradeItems want;
+    bool wanting = false;
+    double timeout = 60;
+    for (size_t index = 0; index < step.command.args.size();) {
+        const std::string_view word = step.Arg(index);
+        if (word == "for") {
+            wanting = true;
+            ++index;
+            continue;
+        }
+        const auto item = ParseTradeItem(word, step.Arg(index + 1));
+        if (!item) {
+            timeout = step.Number(index, timeout);
+            ++index;
+            continue;
+        }
+        (wanting ? want : give).push_back(*item);
+        index += 2;
+    }
+    const std::vector<std::string> partners = TradePartners();
+    if (!TradesOn() || partners.empty()) {
+        return step.WaitedOut(timeout);
+    }
+    switch (OfferTrade(partners.front(), give, want)) {
+    case TradeOfferResult::Sent:
+        return true;
+    case TradeOfferResult::NotEnough:
+        step.failure = "not enough to offer";
+        return false;
+    default:
+        step.failure = "not an offer";
+        return false;
+    }
+}
+
+// trade-answer <yes|no> [<timeout>]: answers the oldest offer to this member once there is one.
+bool AutoplayTradeAnswer(const AutoplayStep& step) {
+    const auto ask = FrontTradeAsk();
+    if (!ask) {
+        return step.WaitedOut(step.Number(1, 60));
+    }
+    const bool yes = step.Arg(0) == "yes";
+    if (AnswerTrade(ask->id(), yes) != yes) {
+        step.failure = "could not accept";
+        return false;
+    }
+    return true;
+}
+
+// expect-held <item> <count> [<timeout>]: what the player holds of it, within the time given.
+bool AutoplayExpectHeld(const AutoplayStep& step) {
+    const auto item = ParseTradeItem(step.Arg(0), step.Arg(1));
+    if (!item) {
+        step.failure = "no such item";
+        return false;
+    }
+    const u32 held = TradeHeld(*item);
+    if (held == item->count) {
+        return true;
+    }
+    if (step.elapsed > step.Number(2, 0)) {
+        step.failure = fmt::format("holds {}, not {}", held, item->count);
+    }
+    return false;
+}
+
+// wait-trade <accepted|declined|expired|refused|received|returned> [<timeout>]: until this run saw
+// such a trade notice.
+bool AutoplayWaitTrade(const AutoplayStep& step) {
+    using Kind = TradeClient::Notice::Kind;
+    static constexpr std::pair<std::string_view, Kind> Kinds[]{
+        {"accepted", Kind::Accepted}, {"declined", Kind::Declined}, {"expired", Kind::Expired},
+        {"refused", Kind::Refused},   {"received", Kind::Received}, {"returned", Kind::Returned},
+    };
+    const auto found =
+        std::ranges::find(Kinds, step.Arg(0), &std::pair<std::string_view, Kind>::first);
+    if (found == std::end(Kinds)) {
+        step.failure = "no such notice";
+        return false;
+    }
+    return TradeNoticesSeen(found->second) > 0 || step.WaitedOut(step.Number(1, 60));
 }
 
 // The script's verbs (tools/rig/tests/test_rig.py keeps the same list for the scenarios).
@@ -1271,16 +1650,46 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"poke", AutoplayPeekOrPoke},
     {"expect-hidden", AutoplayExpectHidden},
     {"expect-disabled", AutoplayExpectDisabled},
+    {"set-disabled", AutoplaySetDisabled},
+    {"watch-unseen", AutoplayWatchUnseen},
     {"note-max-hp", AutoplayNoteMaxHp},
     {"expect-max-hp", AutoplayExpectMaxHp},
     {"expect-effect", AutoplayExpectEffect},
     {"expect-session", AutoplayExpectSession},
     {"expect-others-near", AutoplayExpectOthersNear},
+    {"expect-others-shown", AutoplayExpectOthersShown},
     {"expect-map", AutoplayExpectMap},
     {"chapter", AutoplayChapter},
     {"keep-going", AutoplayKeepGoing},
     {"sync", AutoplaySync},
+    {"team-create", AutoplayTeamVerb},
+    {"team-invite", AutoplayTeamVerb},
+    {"team-accept", AutoplayTeamVerb},
+    {"team-wait", AutoplayTeamVerb},
+    {"team-leave", AutoplayTeamVerb},
+    {"team-screen", AutoplayTeamVerb},
+    {"team-ready", AutoplayTeamVerb},
+    {"team-start", AutoplayTeamVerb},
+    {"team-alone", AutoplayTeamVerb},
+    {"title-press", AutoplayTeamVerb},
+    {"title-wait", AutoplayTeamVerb},
+    {"title-shot", AutoplayTeamVerb},
+    {"title-keys", AutoplayTeamVerb},
+    {"menu-invite", AutoplayTeamMenuVerb},
+    {"menu-kick", AutoplayTeamMenuVerb},
+    {"menu-join", AutoplayTeamMenuVerb},
+    {"menu-leave", AutoplayTeamMenuVerb},
+    {"keys", AutoplayKeys},
     {"done", AutoplayDone},
+    {"trade-give", AutoplayTradeGive},
+    {"trade-stock", AutoplayTradeStock},
+    {"trade-socket", AutoplayTradeSocket},
+    {"expect-socketed", AutoplayExpectSocketed},
+    {"trade-offer", AutoplayTradeOffer},
+    {"trade-answer", AutoplayTradeAnswer},
+    {"expect-held", AutoplayExpectHeld},
+    {"wait-trade", AutoplayWaitTrade},
+    {"cut-link", AutoplayCutLink},
 });
 
 // Runs one script command for this tick: true once it is done, `failure` set if it failed.
@@ -1382,6 +1791,14 @@ void TickAutoplay() {
     {
         std::scoped_lock lock{autoplay_mutex};
         turn = NextAutoplayTurn(now);
+        // A chapter past its time budget gives up there (keep-going: the suite goes on).
+        if (turn && turn->command.verb != "chapter" && autoplay_run.chapter_deadline &&
+            now > *autoplay_run.chapter_deadline) {
+            autoplay_run.chapter_deadline.reset();
+            FailAutoplayStep(*turn, fmt::format("chapter {} over its {:g} s budget",
+                                                autoplay_run.chapter, autoplay_run.chapter_budget));
+            return;
+        }
     }
     if (!turn) {
         return;
@@ -1423,6 +1840,74 @@ void TickAutoplayTitle() {
         autoplay_buttons.store(0);
         // Raw, as all of the rig's checks (see AutoplayInWorld).
         LOG_INFO(Debug, "Bloodborne autoplay: in the world on map {:#x}", GetCurrentPackedMap());
+        return;
+    }
+    // The script's first steps may be the lobby's (team-*): they run here, before the title's
+    // Cross (twice a second: they wait on the server's answers).
+    if (autoplay_run.next < autoplay_run.script.size() &&
+        (Coop::IsTeamTitleVerb(autoplay_run.script[autoplay_run.next].verb) ||
+         autoplay_run.script[autoplay_run.next].verb.starts_with("title-"))) {
+        const AutoplayCommand& command = autoplay_run.script[autoplay_run.next];
+        if (!autoplay_run.step_begun) {
+            autoplay_run.step_started = now; // the title's steps time from their own start
+        }
+        const double elapsed =
+            std::chrono::duration<double>(now - autoplay_run.step_started).count();
+        std::string failure;
+        bool finished = false;
+        if (command.verb == "title-press") {
+            // The button held for its time (150 ms), then let go for as long.
+            const u32 button = AutoplayButton(command.args.empty() ? "" : command.args[0]);
+            const double held =
+                (command.args.size() > 1 ? std::atof(command.args[1].c_str()) : 150.0) / 1000.0;
+            if (button == 0) {
+                failure = "no such button";
+            }
+            autoplay_buttons.store(elapsed < held ? button : 0);
+            finished = elapsed >= 2 * held;
+        } else if (command.verb == "title-wait") {
+            autoplay_buttons.store(0);
+            finished = elapsed >= (command.args.empty() ? 1.0 : std::atof(command.args[0].c_str()));
+        } else if (command.verb == "title-keys") {
+            autoplay_buttons.store(0);
+            finished = WriteAutoplayMenuKeys(command.args, failure);
+        } else if (command.verb == "title-shot") {
+            autoplay_buttons.store(0);
+            const AutoplayCommand shot{"shot", command.args};
+            finished = AutoplayShot(AutoplayStep{shot, autoplay_run.step_begun, elapsed, failure});
+        } else if (Coop::IsTeamScreenVerb(command.verb) && !Coop::TeamScreenUp()) {
+            // The title's Cross until the save's load is held and the team screen is up.
+            const auto ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - autoplay_run.started);
+            autoplay_buttons.store(
+                TitlePressesCross(static_cast<u64>(ms.count())) ? AutoplayButton("cross") : 0);
+            finished = false;
+            if (elapsed > 180.0) {
+                failure = "the team screen never came up";
+            }
+        } else {
+            autoplay_buttons.store(0);
+            static std::chrono::steady_clock::time_point last_team_step{};
+            if (now - last_team_step < std::chrono::milliseconds{500}) {
+                return;
+            }
+            last_team_step = now;
+            finished = Coop::RunTeamTitleVerb(command, autoplay_run.step_begun, elapsed, failure);
+        }
+        autoplay_run.step_begun = true;
+        if (!failure.empty()) {
+            LOG_ERROR(Debug, "Bloodborne autoplay: step {}/{} {} FAILED: {}", autoplay_run.next + 1,
+                      autoplay_run.script.size(), AutoplayText(command), failure);
+            LOG_INFO(Debug, "Bloodborne autoplay: done (failed)");
+            autoplay_run.phase = AutoplayRun::Phase::Done;
+        } else if (finished) {
+            LOG_INFO(Debug, "Bloodborne autoplay: step {}/{} {} ok (t={:.1f})",
+                     autoplay_run.next + 1, autoplay_run.script.size(), AutoplayText(command),
+                     SteadyMilliseconds() / 1000.0);
+            ++autoplay_run.next;
+            autoplay_run.step_started = now;
+            autoplay_run.step_begun = false;
+        }
         return;
     }
     const auto ms =

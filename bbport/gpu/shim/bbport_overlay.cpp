@@ -118,6 +118,9 @@ namespace {
 std::mutex imgui_mutex; // the ImGui context: window thread (input) and present thread
 bool initialized = false;
 std::atomic<bool> menu_open{false};
+// The team loading screen covers the game's own load: the settings menu stays shut meanwhile
+// (Kaniel 2026-10-14: Insert during that load lost the GPU on one game, froze another).
+std::atomic<bool> loading_cover{false};
 bool l3_down = false, r3_down = false;
 // L3+R3: a tap toggles the settings menu (on release), a hold opens the quit box (Tick).
 constexpr auto quit_hold = std::chrono::milliseconds(1500);
@@ -148,6 +151,11 @@ std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
 
+// The ImGui backend's descriptor pool: one set per texture (the font atlas, the party art and
+// icons, the team screens' menu art), and the texture count last printed for the rig.
+constexpr int OverlayDescriptorSets = 64;
+int textures_logged = -1;
+
 // Present rate for the FPS counter.
 std::chrono::steady_clock::time_point last_present{};
 float frame_ms_avg = 0.0f;
@@ -166,6 +174,9 @@ void SyncMousePos() {
 }
 
 void SetOpen(bool value) {
+    if (value && loading_cover) {
+        return;
+    }
     if (menu_open.exchange(value) == value) {
         return;
     }
@@ -175,6 +186,7 @@ void SetOpen(bool value) {
     }
     if (!value && dirty) {
         dirty = false;
+        std::printf("Overlay: settings changed in the menu, saved\n");
         BbSettings::Save();
         runtime_pad_reload_controls(); // the mouse settings of the Controls tab
     }
@@ -271,10 +283,248 @@ void Hint(const char* text) {
     }
 }
 
+// Kaniel 2026-10-14: the team screen and the team loading screen in the game's own style: its
+// menu art (the wall, the title picture, the cards, the gold selection frame, the rows, the
+// ornaments, the button icons) and its menu font, read at runtime from the player's game files
+// (bbport_game_art.h) like the HP bars; nothing of the game's is shipped. Each piece falls back to
+// the drawn look when the files can't be read. Kaniel 2026-10-16: the settings menu too.
+namespace MenuArt {
+
+enum Piece {
+    Wall,          // the in-game menus' backdrop
+    Title,         // the title screen's picture
+    Logo,          // the loading screen's Bloodborne
+    Row,           // a menu row (a button)
+    RowSelected,   // the gold-framed selected row
+    EntryRow,      // a list row with its square slot
+    Slot,          // a square slot
+    SlotSelected,  // the gold-framed square slot
+    Card,          // a tall card
+    CardSelected,  // the gold-framed tall card
+    HeaderFrame,   // a framed header with corner ornaments
+    Divider,       // the silver divider with its scroll
+    HeaderOrnament, // the scrollwork under a title
+    Flourish,      // a row's scroll
+    Runes,         // eight 32 px runes in a row
+    ButtonCross,   // the pad's Cross
+    ButtonCircle,  // the pad's Circle
+    ButtonMove,    // the d-pad
+    PieceCount
+};
+
+struct Source {
+    const char* file;
+    const char* texture;
+    BbGameArt::PixelRect rect; // empty: all of it
+    bool light_is_alpha;       // white art on black: its brightness is its coverage
+};
+
+// Measured on MENU_Common_00001-3 (common.tpf.dcx), MENU_Title_00001 and MENU_NowLoading_00001.
+constexpr Source Sources[PieceCount] = {
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {0, 0, 1920, 1080}, false},
+    {"menu/title.tpf.dcx", "MENU_Title_00001", {0, 0, 1780, 1024}, false},
+    {"menu/nowloading.tpf.dcx", "MENU_NowLoading_00001", {440, 420, 1520, 660}, true},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {988, 1532, 1562, 1580}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {1156, 1228, 1958, 1326}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {1144, 1438, 1716, 1530}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {482, 1230, 610, 1358}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {626, 1230, 760, 1364}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00002", {2, 708, 134, 966}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00002", {138, 708, 278, 974}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00002", {1156, 412, 1582, 502}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00003", {12, 14, 368, 46}, true},
+    {"menu/common.tpf.dcx", "MENU_Common_00003", {42, 58, 438, 106}, true},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {482, 1174, 754, 1208}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00002", {1570, 4, 1826, 36}, false},
+    {"menu/common.tpf.dcx", "KG_Cancel", {}, false},
+    {"menu/common.tpf.dcx", "KG_OK", {}, false},
+    {"menu/common.tpf.dcx", "KG_L_UDLR", {}, false},
+};
+
+ImTextureData* textures[PieceCount] = {};
+ImFont* font = nullptr; // the game's menu font
+bool tried = false;
+
+std::vector<std::uint8_t> ReadGameFile(const char* relative) {
+    std::vector<std::uint8_t> bytes;
+    char path[1024];
+    if (!bbcoop_game_file((std::string("dvdroot_ps4/") + relative).c_str(), path, sizeof(path))) {
+        return bytes;
+    }
+    if (FILE* f = std::fopen(path, "rb")) {
+        std::uint8_t chunk[65536];
+        for (size_t n; (n = std::fread(chunk, 1, sizeof(chunk), f)) > 0;) {
+            bytes.insert(bytes.end(), chunk, chunk + n);
+        }
+        std::fclose(f);
+    }
+    return bytes;
+}
+
+/// Reads the pieces and the font once, before a frame (new textures and fonts go to the backend
+/// with the next NewFrame).
+void Load() {
+    if (tried) {
+        return;
+    }
+    tried = true;
+    std::map<std::string, std::optional<BbGameArt::TpfFile>> files;
+    int loaded = 0;
+    for (int i = 0; i < PieceCount; ++i) {
+        const Source& source = Sources[i];
+        auto& file = files[source.file];
+        if (!file) {
+            file = BbGameArt::TpfFile::Read(ReadGameFile(source.file));
+        }
+        auto image = file ? file->Piece(source.texture, source.rect) : std::nullopt;
+        if (!image) {
+            continue;
+        }
+        if (source.light_is_alpha) {
+            for (std::size_t at = 0; at < image->rgba.size(); at += 4) {
+                std::uint8_t* px = image->rgba.data() + at;
+                px[3] = std::max({px[0], px[1], px[2]});
+            }
+        }
+        textures[i] = IM_NEW(ImTextureData)();
+        textures[i]->Create(ImTextureFormat_RGBA32, image->width, image->height);
+        std::memcpy(textures[i]->GetPixels(), image->rgba.data(), image->rgba.size());
+        ImGui::RegisterUserTexture(textures[i]);
+        ++loaded;
+    }
+    if (const auto ttf = BbGameArt::TtfFromGfxFont(ReadGameFile("menu/engus/font.gfx"))) {
+        void* data = IM_ALLOC(ttf->size());
+        std::memcpy(data, ttf->data(), ttf->size());
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = true;
+        font = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, int(ttf->size()), 21.0f, &config);
+        // What the game's font lacks (the Russian menu's letters, ×) comes from the serif.
+        ImFontConfig merge;
+        merge.MergeMode = true;
+        merge.FontDataOwnedByAtlas = false;
+        ImGui::GetIO().Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_serif_ttf),
+                                                   int(bb_serif_ttf_end - bb_serif_ttf), 21.0f, &merge);
+    }
+    std::printf("Overlay: the menus use %d of %d pieces of the game's menu art%s\n", loaded,
+                int(PieceCount), font ? " and its menu font" : " (the game's font did not load)");
+}
+
+bool Has(Piece piece) {
+    return textures[piece] != nullptr;
+}
+
+ImVec2 SizeOf(Piece piece) {
+    return textures[piece] ? ImVec2(float(textures[piece]->Width), float(textures[piece]->Height))
+                           : ImVec2(0, 0);
+}
+
+ImU32 Tint(float alpha, ImU32 tint = IM_COL32_WHITE) {
+    const ImVec4 c = ImGui::ColorConvertU32ToFloat4(tint);
+    return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, c.w * alpha));
+}
+
+/// `piece` (its source pixels [s0, s1]) stretched into [p0, p1].
+void Part(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, ImVec2 s0, ImVec2 s1, ImU32 color) {
+    const ImVec2 size = SizeOf(piece);
+    draw->AddImage(textures[piece]->GetTexRef(), p0, p1, ImVec2(s0.x / size.x, s0.y / size.y),
+                   ImVec2(s1.x / size.x, s1.y / size.y), color);
+}
+
+/// All of `piece` stretched into [p0, p1]; false when it is not loaded.
+bool Draw(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float alpha = 1.0f,
+          ImU32 tint = IM_COL32_WHITE) {
+    if (!Has(piece)) {
+        return false;
+    }
+    Part(draw, piece, p0, p1, ImVec2(0, 0), SizeOf(piece), Tint(alpha, tint));
+    return true;
+}
+
+/// `piece` as a nine-slice frame into [p0, p1]: its corners (`edge` source pixels, drawn `drawn`
+/// pixels) kept, its edges and middle stretched.
+bool Nine(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float edge, float drawn,
+          float alpha = 1.0f) {
+    if (!Has(piece)) {
+        return false;
+    }
+    const ImVec2 size = SizeOf(piece);
+    drawn = std::min({drawn, (p1.x - p0.x) * 0.5f, (p1.y - p0.y) * 0.5f});
+    const float sx[4] = {0, edge, size.x - edge, size.x}, sy[4] = {0, edge, size.y - edge, size.y};
+    const float dx[4] = {p0.x, p0.x + drawn, p1.x - drawn, p1.x};
+    const float dy[4] = {p0.y, p0.y + drawn, p1.y - drawn, p1.y};
+    const ImU32 color = Tint(alpha);
+    for (int y = 0; y < 3; ++y) {
+        for (int x = 0; x < 3; ++x) {
+            Part(draw, piece, ImVec2(dx[x], dy[y]), ImVec2(dx[x + 1], dy[y + 1]), ImVec2(sx[x], sy[y]),
+                 ImVec2(sx[x + 1], sy[y + 1]), color);
+        }
+    }
+    return true;
+}
+
+/// `piece` filling [p0, p1] without stretching it out of shape (cut to fit), as a backdrop.
+bool Cover(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float alpha = 1.0f) {
+    if (!Has(piece)) {
+        return false;
+    }
+    const ImVec2 size = SizeOf(piece);
+    const float want = (p1.x - p0.x) / (p1.y - p0.y), have = size.x / size.y;
+    ImVec2 s0(0, 0), s1 = size;
+    if (have > want) {
+        const float cut = (size.x - size.y * want) * 0.5f;
+        s0.x = cut;
+        s1.x = size.x - cut;
+    } else {
+        const float cut = (size.y - size.x / want) * 0.5f;
+        s0.y = cut;
+        s1.y = size.y - cut;
+    }
+    Part(draw, piece, p0, p1, s0, s1, Tint(alpha));
+    return true;
+}
+
+/// Rune `index` (0..7) of the runes row, into [p0, p1].
+bool Rune(ImDrawList* draw, int index, ImVec2 p0, ImVec2 p1, float alpha = 1.0f) {
+    if (!Has(Runes)) {
+        return false;
+    }
+    const float side = SizeOf(Runes).y;
+    Part(draw, Runes, p0, p1, ImVec2(side * float(index % 8), 0), ImVec2(side * float(index % 8 + 1), side),
+         Tint(alpha));
+    return true;
+}
+
+/// The menus' text font: the game's own when it loaded.
+ImFont* Font() {
+    return font != nullptr ? font : serif_font;
+}
+
+/// A soft dark vignette over [p0, p1] (the game's menus darken toward their edges).
+void Vignette(ImDrawList* draw, ImVec2 p0, ImVec2 p1, float strength) {
+    const ImU32 dark = IM_COL32(0, 0, 0, int(255 * strength)), clear = IM_COL32(0, 0, 0, 0);
+    const float band = (p1.y - p0.y) * 0.22f;
+    draw->AddRectFilledMultiColor(p0, ImVec2(p1.x, p0.y + band), dark, dark, clear, clear);
+    draw->AddRectFilledMultiColor(ImVec2(p0.x, p1.y - band), p1, clear, clear, dark, dark);
+    const float side = (p1.x - p0.x) * 0.16f;
+    draw->AddRectFilledMultiColor(p0, ImVec2(p0.x + side, p1.y), dark, clear, clear, dark);
+    draw->AddRectFilledMultiColor(ImVec2(p1.x - side, p0.y), p1, clear, dark, dark, clear);
+}
+
+} // namespace MenuArt
+
+// The game's HP bar (the party list's art): the settings menu's sliders, the team loading
+// screen's progress.
+namespace Party {
+bool GameHpBar(ImDrawList* draw, ImVec2 b0, float width, float height, float fill, float alpha);
+void LoadGauge();
+} // namespace Party
+
 // The settings menu, laid out like a PC game's options screen in the game's own style: the game
-// dimmed behind, a centred panel framed by ornament lines, tabs (L1/R1, Q/E, mouse), one setting
-// per row ("name  < value >": left/right change it, Cross/Enter steps it, the mouse clicks either
-// side), the focused row's description at the bottom and the controls in the footer.
+// dimmed behind, a centred panel on the menus' wall between the game's dividers, tabs (L1/R1,
+// Q/E, mouse), one setting per row on the game's menu rows ("name  < value >": left/right change
+// it, Cross/Enter steps it, the mouse clicks either side), the focused row's description at the
+// bottom and the game's key guide in the footer. Kaniel 2026-10-16: the same art, font and
+// colours as the team screens and the party list (MenuArt), the drawn look without the art.
 namespace Ui {
 
 float S(float v) {
@@ -309,6 +559,50 @@ void Ornament(ImDrawList* draw, float x0, float x1, float y) {
                         ImVec2(mid - d * 3.0f, y + d * 0.5f), ImVec2(mid - d * 3.5f, y), Gold(0.7f));
     draw->AddQuadFilled(ImVec2(mid + d * 3.0f, y - d * 0.5f), ImVec2(mid + d * 3.5f, y),
                         ImVec2(mid + d * 3.0f, y + d * 0.5f), ImVec2(mid + d * 2.5f, y), Gold(0.7f));
+}
+
+/// The game's silver divider centred on [x0, x1] at `y` (the drawn ornament without the art).
+void Divider(ImDrawList* draw, float x0, float x1, float y, float alpha = 0.9f) {
+    const ImVec2 size = MenuArt::SizeOf(MenuArt::Divider);
+    if (size.x <= 0.0f) {
+        Ornament(draw, x0, x1, y);
+        return;
+    }
+    const float w = std::min(x1 - x0, S(size.x * 1.1f)), h = w * size.y / size.x;
+    const float mid = (x0 + x1) * 0.5f;
+    MenuArt::Draw(draw, MenuArt::Divider, ImVec2(mid - w * 0.5f, y - h * 0.5f), ImVec2(mid + w * 0.5f, y + h * 0.5f),
+                  alpha);
+}
+
+/// The game's scrollwork under a title, centred on `mid` from `y`; returns its height (0 without
+/// the art).
+float HeaderOrnament(ImDrawList* draw, float mid, float y, float scale, float alpha = 0.8f) {
+    if (!MenuArt::Has(MenuArt::HeaderOrnament)) {
+        return 0.0f;
+    }
+    const ImVec2 o = MenuArt::SizeOf(MenuArt::HeaderOrnament);
+    const float ow = S(o.x * scale), oh = ow * o.y / o.x;
+    MenuArt::Draw(draw, MenuArt::HeaderOrnament, ImVec2(mid - ow * 0.5f, y), ImVec2(mid + ow * 0.5f, y + oh), alpha);
+    return oh;
+}
+
+/// `text` in the current font wrapped to `width` from `at`, its lines spaced apart (the game's
+/// font draws taller than ImGui's line height: wrapped lines touched); returns its height.
+float WrappedText(ImDrawList* draw, ImVec2 at, float width, ImU32 color, const char* text) {
+    ImFont* font = ImGui::GetFont();
+    const float size = ImGui::GetFontSize(), step = std::round(size * 1.3f);
+    const char* end = text + std::strlen(text);
+    float y = at.y;
+    for (const char* line = text; line < end;) {
+        const char* cut = font->CalcWordWrapPosition(size, line, end, width);
+        if (cut == line && *cut != '\n') {
+            cut = line + ImTextCountUtf8BytesFromChar(line, end); // a word wider than the line
+        }
+        draw->AddText(font, size, ImVec2(at.x, y), color, line, cut);
+        y += step;
+        line = ImTextCalcWordWrapNextLineStart(cut, end);
+    }
+    return y - at.y;
 }
 
 // Focus is the menu's own, as in a game: a row index moved by up/down to the next enabled row
@@ -356,7 +650,11 @@ int Row(const char* id, const char* label, const char* value, const char* hint, 
     }
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float mid_y = at.y + height * 0.5f;
-    if (focused || hovered) {
+    // The game's menu rows (as the team screen's buttons): the gold-framed one has the focus.
+    const ImVec2 end(at.x + width, at.y + height);
+    const bool row_art = MenuArt::Nine(draw, focused ? MenuArt::RowSelected : MenuArt::Row, at, end, 12.0f,
+                                       S(9.0f), focused ? 1.0f : !enabled ? 0.25f : hovered ? 0.85f : 0.5f);
+    if (!row_art && (focused || hovered)) {
         // The game's highlight: a glow strongest under the text, fading to the sides.
         const float a = focused ? 0.22f : 0.10f;
         const float x0 = at.x, x1 = at.x + width, xm = at.x + width * 0.35f;
@@ -388,12 +686,18 @@ int Row(const char* id, const char* label, const char* value, const char* hint, 
     if (slider >= 0.0f) {
         const float b0 = col0 + S(24.0f), b1 = col1 - S(24.0f) - S(60.0f);
         const float bh = S(3.0f);
-        draw->AddRectFilled(ImVec2(b0, mid_y - bh), ImVec2(b1, mid_y + bh), Dim(0.6f), bh);
-        draw->AddRectFilled(ImVec2(b0, mid_y - bh),
-                            ImVec2(b0 + (b1 - b0) * std::clamp(slider, 0.0f, 1.0f), mid_y + bh),
-                            enabled ? Gold(0.9f) : Dim(), bh);
-        const float knob = b0 + (b1 - b0) * std::clamp(slider, 0.0f, 1.0f);
-        draw->AddCircleFilled(ImVec2(knob, mid_y), S(7.0f), enabled ? Bright() : Dim());
+        const float fill = std::clamp(slider, 0.0f, 1.0f), knob = b0 + (b1 - b0) * fill;
+        // The game's own HP bar as the slider (as the team's loading screen shows progress),
+        // a bone-white mark where the value is; drawn bars without the game's art.
+        const float gh = S(15.0f);
+        if (Party::GameHpBar(draw, ImVec2(b0, mid_y - gh * 0.5f), b1 - b0, gh, fill, enabled ? 1.0f : 0.4f)) {
+            draw->AddRectFilled(ImVec2(knob - S(1.5f), mid_y - gh * 0.75f), ImVec2(knob + S(1.5f), mid_y + gh * 0.75f),
+                                enabled ? Bright() : Dim());
+        } else {
+            draw->AddRectFilled(ImVec2(b0, mid_y - bh), ImVec2(b1, mid_y + bh), Dim(0.6f), bh);
+            draw->AddRectFilled(ImVec2(b0, mid_y - bh), ImVec2(knob, mid_y + bh), enabled ? Gold(0.9f) : Dim(), bh);
+            draw->AddCircleFilled(ImVec2(knob, mid_y), S(7.0f), enabled ? Bright() : Dim());
+        }
         if (value) {
             const ImVec2 size = ImGui::CalcTextSize(value);
             draw->AddText(ImVec2(col1 - S(24.0f) - size.x, mid_y - size.y * 0.5f),
@@ -432,13 +736,10 @@ int Row(const char* id, const char* label, const char* value, const char* hint, 
 
 /// A non-interactive line under the rows (state, warnings).
 void Note(const char* text, ImU32 color) {
-    ImGui::PushStyleColor(ImGuiCol_Text, color);
-    ImGui::Indent(S(28.0f));
-    ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - S(28.0f));
-    ImGui::TextUnformatted(text);
-    ImGui::PopTextWrapPos();
-    ImGui::Unindent(S(28.0f));
-    ImGui::PopStyleColor();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x - S(56.0f);
+    ImGui::Dummy(ImVec2(width, WrappedText(ImGui::GetWindowDrawList(), ImVec2(at.x + S(28.0f), at.y), width,
+                                           color, text)));
 }
 
 const char* OnOff(bool on) {
@@ -1077,10 +1378,10 @@ void SaveTab() {
     ImGui::Spacing();
     const auto& items = BbSaveEditor::Items();
     if (items.empty()) {
-        Note(T("Items: no item list found. It comes from the shadPS4 kit's save editor "
-               "(DATA/Bloodborne Save Editor/resources) or BB_SAVE_EDITOR_DATA.",
-               "Предметы: список не найден. Он берётся из редактора сохранений набора shadPS4 "
-               "(DATA/Bloodborne Save Editor/resources) или BB_SAVE_EDITOR_DATA."),
+        Note(T("Items: no item list found. It comes from the game's item names "
+               "(dvdroot_ps4/msg/engus/item.msgbnd.dcx); check the game files.",
+               "Предметы: список не найден. Он берётся из названий предметов игры "
+               "(dvdroot_ps4/msg/engus/item.msgbnd.dcx); проверьте файлы игры."),
              Dim());
         return;
     }
@@ -1144,6 +1445,17 @@ void Menu() {
     ImGuiIO& io = ImGui::GetIO();
     const ImVec2 display = io.DisplaySize;
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 165));
+    MenuArt::Vignette(ImGui::GetBackgroundDrawList(), ImVec2(0, 0), display, 0.6f);
+    static bool told = false;
+    if (!told) {
+        told = true;
+        int pieces = 0;
+        for (int i = 0; i < MenuArt::PieceCount; ++i) {
+            pieces += MenuArt::Has(MenuArt::Piece(i)) ? 1 : 0;
+        }
+        std::printf("Overlay: the settings menu uses %d of %d pieces of the game's menu art%s\n", pieces,
+                    int(MenuArt::PieceCount), MenuArt::font ? " and its menu font" : "");
+    }
 
     static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Controls", "Advanced", "Save"};
     static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Управление",
@@ -1187,28 +1499,33 @@ void Menu() {
     const ImVec2 size(std::min(S(1180.0f), display.x - S(40.0f)), std::min(S(800.0f), display.y - S(40.0f)));
     ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.035f, 0.032f, 0.028f, 0.94f));
+    const bool wall = MenuArt::Has(MenuArt::Wall);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, wall ? ImVec4(0, 0, 0, 0) : ImVec4(0.035f, 0.032f, 0.028f, 0.94f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(36.0f), S(24.0f)));
-    ImGui::PushFont(serif_font, 21.0f);
+    ImGui::PushFont(MenuArt::Font(), 21.0f);
     ImGui::Begin("##bbport_settings", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 win = ImGui::GetWindowPos();
     const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
-    Ornament(draw, x0, x1, win.y + S(10.0f));
-    Ornament(draw, x0, x1, win.y + size.y - S(10.0f));
+    if (wall) { // the panel as the team screen's: the menus' wall, darker to its edges
+        const ImVec2 w1(win.x + size.x, win.y + size.y);
+        MenuArt::Cover(draw, MenuArt::Wall, win, w1, 0.97f);
+        MenuArt::Vignette(draw, win, w1, 0.55f);
+        draw->AddRect(win, w1, IM_COL32(150, 140, 120, 90), 0.0f, 0, S(1.0f));
+    }
+    Divider(draw, x0, x1, win.y + S(12.0f));
+    Divider(draw, x0, x1, win.y + size.y - S(12.0f));
 
-    // Title.
-    ImGui::PushFont(serif_font, 34.0f);
+    // Title, the game's scrollwork under it.
+    ImGui::PushFont(MenuArt::Font(), 38.0f);
     const char* title = T("Settings", "Настройки");
-    const float title_w = ImGui::CalcTextSize(title).x;
-    ImGui::SetCursorPosX((size.x - title_w) * 0.5f);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(Bright()));
-    ImGui::TextUnformatted(title);
-    ImGui::PopStyleColor();
+    const ImVec2 title_size = ImGui::CalcTextSize(title);
+    draw->AddText(ImVec2(win.x + (size.x - title_size.x) * 0.5f, win.y + S(26.0f)), Bright(), title);
     ImGui::PopFont();
+    const float ornament = HeaderOrnament(draw, win.x + size.x * 0.5f, win.y + S(26.0f) + title_size.y, 0.7f);
     // Close (mouse), top right.
     {
         const char* close = "×";
@@ -1225,50 +1542,65 @@ void Menu() {
         ImGui::PopItemFlag();
     }
 
-    // Tabs: L1 ... R1, the current one gold and underlined.
-    ImGui::SetCursorPosY(S(76.0f));
+    // Tabs: L1 ... R1, the current one on the game's gold-framed row (underlined without the art).
+    ImGui::SetCursorScreenPos(
+        ImVec2(win.x + S(36.0f), win.y + S(26.0f) + title_size.y + std::max(ornament, S(12.0f)) + S(8.0f)));
     {
         const float row_y = ImGui::GetCursorScreenPos().y;
-        float widths[tabs], total = 0.0f;
-        const float gap = S(46.0f);
+        float widths[tabs], names = 0.0f;
+        const float pad_x = S(16.0f), tab_h = S(36.0f);
+        ImGui::PushFont(MenuArt::Font(), 17.0f);
+        const ImVec2 l1 = ImGui::CalcTextSize("L1 / Q");
+        ImGui::PopFont();
+        ImGui::PushFont(MenuArt::Font(), 22.0f);
         for (int i = 0; i < tabs; ++i) {
             widths[i] = ImGui::CalcTextSize(T(tab_en[i], tab_ru[i])).x;
-            total += widths[i] + (i ? gap : 0.0f);
+            names += widths[i];
         }
+        // The gaps shrink to keep the row and its L1 / R1 inside the panel (the Russian names are
+        // longer).
+        const float room = size.x - S(72.0f) - 2.0f * l1.x;
+        const float gap = std::clamp((room - names) / float(tabs + 1), S(20.0f), S(46.0f));
+        const float total = names + gap * float(tabs - 1);
         float x = win.x + (size.x - total) * 0.5f;
-        ImGui::PushFont(sans_font, 15.0f);
-        const ImVec2 l1 = ImGui::CalcTextSize("L1 / Q");
-        draw->AddText(ImVec2(x - gap - l1.x, row_y + S(4.0f)), Gold(0.6f), "L1 / Q");
-        draw->AddText(ImVec2(x + total + gap, row_y + S(4.0f)), Gold(0.6f), "E / R1");
+        ImGui::PushFont(MenuArt::Font(), 17.0f);
+        draw->AddText(ImVec2(x - gap - l1.x, row_y + (tab_h - l1.y) * 0.5f), Gold(0.6f), "L1 / Q");
+        draw->AddText(ImVec2(x + total + gap, row_y + (tab_h - l1.y) * 0.5f), Gold(0.6f), "E / R1");
         ImGui::PopFont();
         ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         for (int i = 0; i < tabs; ++i) {
             const char* name = T(tab_en[i], tab_ru[i]);
-            ImGui::SetCursorScreenPos(ImVec2(x, row_y));
+            const ImVec2 t0(x - pad_x, row_y), t1(x + widths[i] + pad_x, row_y + tab_h);
+            ImGui::SetCursorScreenPos(t0);
             ImGui::PushID(i);
-            if (ImGui::InvisibleButton("##tab", ImVec2(widths[i], S(32.0f)))) {
+            if (ImGui::InvisibleButton("##tab", ImVec2(t1.x - t0.x, tab_h))) {
                 state.tab = i;
                 state.focus_first = true;
             }
             const bool hovered = ImGui::IsItemHovered();
             ImGui::PopID();
             const bool current = i == state.tab;
-            draw->AddText(ImVec2(x, row_y), current ? Bright() : hovered ? Plain() : Dim(), name);
-            if (current) {
-                draw->AddLine(ImVec2(x - S(6.0f), row_y + S(31.0f)), ImVec2(x + widths[i] + S(6.0f), row_y + S(31.0f)),
+            const bool art = (current || hovered) &&
+                             MenuArt::Nine(draw, current ? MenuArt::RowSelected : MenuArt::Row, t0, t1, 12.0f,
+                                           S(8.0f), current ? 1.0f : 0.7f);
+            const float text_h = ImGui::CalcTextSize(name).y;
+            draw->AddText(ImVec2(x, row_y + (tab_h - text_h) * 0.5f), current ? Bright() : hovered ? Plain() : Dim(),
+                          name);
+            if (current && !art) {
+                draw->AddLine(ImVec2(x - S(6.0f), t1.y - S(1.0f)), ImVec2(x + widths[i] + S(6.0f), t1.y - S(1.0f)),
                               Gold(0.9f), S(1.5f));
             }
             x += widths[i] + gap;
         }
         ImGui::PopItemFlag();
-        ImGui::SetCursorScreenPos(ImVec2(win.x + S(36.0f), row_y + S(44.0f)));
+        ImGui::PopFont();
+        ImGui::SetCursorScreenPos(ImVec2(win.x + S(36.0f), row_y + tab_h + S(26.0f)));
     }
-    draw->AddLine(ImVec2(x0 + S(20.0f), ImGui::GetCursorScreenPos().y),
-                  ImVec2(x1 - S(20.0f), ImGui::GetCursorScreenPos().y), Gold(0.25f), S(1.0f));
-    ImGui::Dummy(ImVec2(0, S(6.0f)));
+    Divider(draw, x0 + S(20.0f), x1 - S(20.0f), ImGui::GetCursorScreenPos().y - S(8.0f), 0.6f);
+    ImGui::Dummy(ImVec2(0, S(8.0f)));
 
     // Rows (scrolling when they do not fit), then the description and the controls.
-    const float footer = S(150.0f);
+    const float footer = S(170.0f);
     state.next_hint = nullptr;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, S(2.0f)));
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, S(6.0f));
@@ -1301,6 +1633,16 @@ void Menu() {
         }
     }
     ImGui::Spacing();
+    // Kaniel 2026-10-16: the team menu from here too (as from the game's System menu): the team
+    // screen over the game, with invite, remove, leave and join the hunt.
+    if (bbcoop_lobby probe; bbcoop_lobby_view(&probe) &&
+                            Row("team", T("Co-op Team", "Кооп-команда"), nullptr,
+                                T("Your team: invite hunters, remove a member, leave, or join the hunt.",
+                                  "Ваша команда: пригласить охотников, исключить, покинуть или вступить в охоту."),
+                                true) != 0) {
+        SetOpen(false);
+        bbcoop_team_menu(2); // no page of the game under it
+    }
     if (Row("quit", T("Quit to desktop", "Выйти на рабочий стол"), nullptr,
             T("Asks first: progress since the last autosave is lost. Holding L3 + R3 asks too.",
               "Сначала спросит: прогресс после последнего автосохранения теряется. Удержание L3 + R3 "
@@ -1334,36 +1676,69 @@ void Menu() {
 
     // Description of the focused setting.
     const float desc_y = win.y + size.y - footer;
-    draw->AddLine(ImVec2(x0 + S(20.0f), desc_y + S(6.0f)), ImVec2(x1 - S(20.0f), desc_y + S(6.0f)), Gold(0.25f),
-                  S(1.0f));
-    ImGui::SetCursorScreenPos(ImVec2(win.x + S(64.0f), desc_y + S(18.0f)));
-    ImGui::PushFont(serif_font, 17.0f);
-    ImGui::BeginGroup(); // the lines start where the first one does
-    ImGui::PushTextWrapPos(size.x - S(64.0f));
-    if (RestartNeeded()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.72f, 0.35f, 1.0f));
-        ImGui::TextUnformatted(T("Some changes apply after restarting the game.",
-                                 "Часть изменений применится после перезапуска игры."));
-        ImGui::PopStyleColor();
+    Divider(draw, x0 + S(20.0f), x1 - S(20.0f), desc_y + S(6.0f), 0.6f);
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    {
+        ImVec2 at(win.x + S(64.0f), desc_y + S(20.0f));
+        const float width = size.x - S(128.0f);
+        if (RestartNeeded()) {
+            at.y += WrappedText(draw, at, width, ImGui::GetColorU32(ImVec4(0.95f, 0.72f, 0.35f, 1.0f)),
+                                T("Some changes apply after restarting the game.",
+                                  "Часть изменений применится после перезапуска игры."));
+        }
+        if (state.hint) {
+            WrappedText(draw, at, width, Plain(0.85f), state.hint);
+        }
     }
-    if (state.hint) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(Plain(0.85f)));
-        ImGui::TextUnformatted(state.hint);
-        ImGui::PopStyleColor();
-    }
-    ImGui::PopTextWrapPos();
-    ImGui::EndGroup();
     ImGui::PopFont();
 
-    // Controls.
-    ImGui::PushFont(sans_font, 15.0f);
-    const char* controls = T("Enter / Cross: change     Left / Right: value     Q / E, L1 / R1: tabs     "
-                             "Esc / Circle: close     Insert, L3 + R3: menu     hold L3 + R3: quit",
-                             "Enter / Крест: изменить     Влево / Вправо: значение     Q / E, L1 / R1: "
-                             "вкладки     Esc / Круг: закрыть     Insert, L3 + R3: меню     удерживать L3 + R3: выход");
-    const ImVec2 cs = ImGui::CalcTextSize(controls);
-    draw->AddText(ImVec2(win.x + (size.x - cs.x) * 0.5f, win.y + size.y - S(40.0f)), Gold(0.65f), controls);
-    ImGui::PopFont();
+    // Controls: as the game's own key guide (the team screen's), an icon, then what it does.
+    if (MenuArt::Has(MenuArt::ButtonMove) && MenuArt::Has(MenuArt::ButtonCross) &&
+        MenuArt::Has(MenuArt::ButtonCircle)) {
+        const struct {
+            MenuArt::Piece icon;
+            const char* text;
+        } keys[] = {{MenuArt::ButtonMove, T("Choose, value", "Выбор, значение")},
+                    {MenuArt::ButtonCross, T("Change", "Изменить")},
+                    {MenuArt::ButtonCircle, T("Close", "Закрыть")}};
+        const char* rest = T("L1 / R1, Q / E: tabs     Insert, L3 + R3: menu     hold L3 + R3: quit",
+                             "L1 / R1, Q / E: вкладки     Insert, L3 + R3: меню     удерживать L3 + R3: выход");
+        // Smaller when the line does not fit the panel (the Russian one is longer).
+        float fit = 1.0f, total = 0.0f, icon = 0.0f, space = 0.0f;
+        for (int pass = 0; pass < 2; ++pass) {
+            ImGui::PushFont(MenuArt::Font(), 18.0f * fit);
+            icon = S(26.0f) * fit;
+            space = S(28.0f) * fit;
+            total = ImGui::CalcTextSize(rest).x;
+            for (const auto& key : keys) {
+                total += icon + S(6.0f) + ImGui::CalcTextSize(key.text).x + space;
+            }
+            if (pass == 1 || total <= size.x - S(72.0f)) {
+                break;
+            }
+            ImGui::PopFont();
+            fit = std::max(0.7f, (size.x - S(72.0f)) / total);
+        }
+        float kx = win.x + (size.x - total) * 0.5f;
+        const float ky = win.y + size.y - S(48.0f);
+        for (const auto& key : keys) {
+            MenuArt::Draw(draw, key.icon, ImVec2(kx, ky), ImVec2(kx + icon, ky + icon));
+            kx += icon + S(6.0f);
+            draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.85f), key.text);
+            kx += ImGui::CalcTextSize(key.text).x + space;
+        }
+        draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.6f), rest);
+        ImGui::PopFont();
+    } else {
+        ImGui::PushFont(sans_font, 15.0f);
+        const char* controls = T("Enter / Cross: change     Left / Right: value     Q / E, L1 / R1: tabs     "
+                                 "Esc / Circle: close     Insert, L3 + R3: menu     hold L3 + R3: quit",
+                                 "Enter / Крест: изменить     Влево / Вправо: значение     Q / E, L1 / R1: "
+                                 "вкладки     Esc / Круг: закрыть     Insert, L3 + R3: меню     удерживать L3 + R3: выход");
+        const ImVec2 cs = ImGui::CalcTextSize(controls);
+        draw->AddText(ImVec2(win.x + (size.x - cs.x) * 0.5f, win.y + size.y - S(40.0f)), Gold(0.65f), controls);
+        ImGui::PopFont();
+    }
 
     ImGui::End();
     ImGui::PopFont();
@@ -1409,7 +1784,10 @@ void QuitBox() {
     using namespace Ui;
     static int choice = 0; // 0 Cancel, 1 Quit
     static int last_frame = -2;
-    if (ImGui::GetFrameCount() != last_frame + 1) {
+    // Opened this frame: the press that opened it (Cross on the menu's Quit row) is not an answer
+    // (the rig: the box closed on Cancel the frame it opened).
+    const bool opened = ImGui::GetFrameCount() != last_frame + 1;
+    if (opened) {
         choice = 0;
     }
     last_frame = ImGui::GetFrameCount();
@@ -1430,13 +1808,17 @@ void QuitBox() {
         choice = 0;
         activate = true;
     }
+    if (opened) {
+        activate = false;
+    }
 
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 165));
     const ImVec2 size(std::min(S(620.0f), display.x - S(40.0f)), S(230.0f));
     ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.035f, 0.032f, 0.028f, 0.94f));
+    const bool wall = MenuArt::Has(MenuArt::Wall);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, wall ? ImVec4(0, 0, 0, 0) : ImVec4(0.035f, 0.032f, 0.028f, 0.94f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::Begin("##quit", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
@@ -1444,32 +1826,38 @@ void QuitBox() {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 win = ImGui::GetWindowPos();
     const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
-    Ornament(draw, x0, x1, win.y + S(10.0f));
-    Ornament(draw, x0, x1, win.y + size.y - S(10.0f));
+    if (wall) { // as the settings menu's panel
+        const ImVec2 w1(win.x + size.x, win.y + size.y);
+        MenuArt::Cover(draw, MenuArt::Wall, win, w1, 0.97f);
+        MenuArt::Vignette(draw, win, w1, 0.55f);
+        draw->AddRect(win, w1, IM_COL32(150, 140, 120, 90), 0.0f, 0, S(1.0f));
+    }
+    Divider(draw, x0, x1, win.y + S(12.0f));
+    Divider(draw, x0, x1, win.y + size.y - S(12.0f));
 
-    ImGui::PushFont(serif_font, 30.0f);
+    ImGui::PushFont(MenuArt::Font(), 32.0f);
     const char* title = T("Quit to desktop?", "Выйти на рабочий стол?");
     const ImVec2 ts = ImGui::CalcTextSize(title);
-    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(36.0f)), Bright(), title);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(34.0f)), Bright(), title);
     ImGui::PopFont();
-    ImGui::PushFont(serif_font, 17.0f);
+    ImGui::PushFont(MenuArt::Font(), 19.0f);
     const char* note = T("Progress since the last autosave is lost.",
                          "Прогресс после последнего автосохранения будет потерян.");
     const ImVec2 ns = ImGui::CalcTextSize(note);
-    draw->AddText(ImVec2(win.x + (size.x - ns.x) * 0.5f, win.y + S(88.0f)), Plain(0.85f), note);
+    draw->AddText(ImVec2(win.x + (size.x - ns.x) * 0.5f, win.y + S(86.0f)), Plain(0.85f), note);
     ImGui::PopFont();
 
-    ImGui::PushFont(serif_font, 24.0f);
+    // The choices on the game's menu rows, the chosen one gold-framed (underlined without the art).
+    ImGui::PushFont(MenuArt::Font(), 24.0f);
     const char* labels[2] = {T("Cancel", "Отмена"), T("Quit", "Выйти")};
-    const float gap = S(90.0f);
-    const float w0 = ImGui::CalcTextSize(labels[0]).x, w1 = ImGui::CalcTextSize(labels[1]).x;
-    float x = win.x + (size.x - (w0 + gap + w1)) * 0.5f;
-    const float y = win.y + S(140.0f);
+    const float gap = S(40.0f), bh = S(44.0f);
+    const float bw = std::max(ImGui::CalcTextSize(labels[0]).x, ImGui::CalcTextSize(labels[1]).x) + S(70.0f);
+    float x = win.x + (size.x - (2 * bw + gap)) * 0.5f;
+    const float y = win.y + S(132.0f);
     for (int i = 0; i < 2; ++i) {
-        const float w = i == 0 ? w0 : w1;
-        ImGui::SetCursorScreenPos(ImVec2(x - S(10.0f), y - S(4.0f)));
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
         ImGui::PushID(i);
-        if (ImGui::InvisibleButton("##quit_choice", ImVec2(w + S(20.0f), S(40.0f)))) {
+        if (ImGui::InvisibleButton("##quit_choice", ImVec2(bw, bh))) {
             choice = i;
             activate = true;
         }
@@ -1477,12 +1865,16 @@ void QuitBox() {
             choice = i;
         }
         ImGui::PopID();
-        draw->AddText(ImVec2(x, y), i == choice ? Bright() : Dim(), labels[i]);
-        if (i == choice) {
-            draw->AddLine(ImVec2(x - S(6.0f), y + S(33.0f)), ImVec2(x + w + S(6.0f), y + S(33.0f)), Gold(0.9f),
-                          S(1.5f));
+        const bool art = MenuArt::Nine(draw, i == choice ? MenuArt::RowSelected : MenuArt::Row, ImVec2(x, y),
+                                       ImVec2(x + bw, y + bh), 12.0f, S(9.0f), i == choice ? 1.0f : 0.6f);
+        const ImVec2 ls = ImGui::CalcTextSize(labels[i]);
+        const float lx = x + (bw - ls.x) * 0.5f;
+        draw->AddText(ImVec2(lx, y + (bh - ls.y) * 0.5f), i == choice ? Bright() : Dim(), labels[i]);
+        if (i == choice && !art) {
+            draw->AddLine(ImVec2(lx - S(6.0f), y + bh - S(4.0f)), ImVec2(lx + ls.x + S(6.0f), y + bh - S(4.0f)),
+                          Gold(0.9f), S(1.5f));
         }
-        x += w + gap;
+        x += bw + gap;
     }
     ImGui::PopFont();
     ImGui::End();
@@ -1524,6 +1916,661 @@ void TextPrompt() {
     ImGui::TextUnformatted("Controller: Cross (A) = OK, Circle (B) = cancel");
     ImGui::End();
 }
+
+// The team screen (phase 5, docs/SERVER_COOP_PLAN.md "The team lobby"): up while the title holds a
+// save's load for the team (bbcoop_team_screen). Four hunters' places, the players online to
+// invite, the invitations, and the buttons: create or leave a team, ready or start, play alone.
+// Drawn like the menu (its colours and ornaments, the game's serif); focus moves with the
+// d-pad / arrows over the buttons in the order they are drawn, Cross / Enter presses, the mouse
+// works too.
+namespace Team {
+using namespace Ui;
+
+bbcoop_lobby lobby{};
+bool open = false; // present thread: as Visible() read it last
+
+struct Focus {
+    int focus = 0;
+    int items = 0;
+    int move = 0;
+    bool activate = false;
+    bool fresh = true; // the screen just came up: the focus goes to the Ready / Begin button
+    // The focused button by its id, so the focus stays on it when the rows before it change
+    // (Kaniel 2026-10-14: once an invitation was accepted its row went, and Cross landed on Play
+    // alone); this frame's button ids in order.
+    std::string id;
+    std::vector<std::string> ids;
+    bool was_in_team = false;
+};
+Focus focus;
+
+/// One button: its label (drawn centred in `size` at `at`), true when pressed.
+bool Button(ImDrawList* draw, const char* id, const char* label, ImVec2 at, ImVec2 size, bool enabled = true,
+            bool primary = false) {
+    const int index = focus.items++;
+    focus.ids.emplace_back(id);
+    if (!focus.id.empty() && focus.id == id) {
+        focus.focus = index;
+    }
+    ImGui::SetCursorScreenPos(at);
+    ImGui::PushID(id);
+    const bool clicked = ImGui::InvisibleButton("##b", size) && enabled;
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+    if (hovered && ImGui::GetIO().MouseDelta.x * ImGui::GetIO().MouseDelta.x +
+                           ImGui::GetIO().MouseDelta.y * ImGui::GetIO().MouseDelta.y >
+                       0.0f) {
+        focus.focus = index;
+    }
+    const bool focused = focus.focus == index;
+    const ImVec2 end(at.x + size.x, at.y + size.y);
+    if (!MenuArt::Nine(draw, focused && enabled ? MenuArt::RowSelected : MenuArt::Row, at, end, 12.0f,
+                       S(9.0f), enabled ? 1.0f : 0.5f)) {
+        draw->AddRectFilled(at, end, focused ? Gold(primary ? 0.30f : 0.20f) : Gold(primary ? 0.12f : 0.05f),
+                            S(2.0f));
+        draw->AddRect(at, end, focused ? Gold(0.95f) : Gold(enabled ? 0.45f : 0.15f), S(2.0f), 0, S(1.2f));
+    }
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    draw->AddText(ImVec2(at.x + (size.x - ts.x) * 0.5f, at.y + (size.y - ts.y) * 0.5f),
+                  !enabled ? Dim(0.6f) : focused ? Bright() : Plain(), label);
+    return clicked || (enabled && focused && focus.activate);
+}
+
+const char* StateText(const bbcoop_lobby_entry& e, bool member) {
+    if (e.state == BBCOOP_LOBBY_PLAYING) {
+        return T("In the hunt", "На охоте");
+    }
+    if (e.state == BBCOOP_LOBBY_OFFLINE) {
+        return T("Away", "Не в сети");
+    }
+    if (member && e.ready) {
+        return T("Ready", "Готов");
+    }
+    return T("Choosing", "Выбирает");
+}
+
+ImU32 StateColor(const bbcoop_lobby_entry& e, bool member) {
+    if (e.state == BBCOOP_LOBBY_OFFLINE) {
+        return Dim();
+    }
+    if (e.state == BBCOOP_LOBBY_PLAYING || (member && e.ready)) {
+        return Gold();
+    }
+    return Plain(0.85f);
+}
+
+/// A hunter's place: the emblem, the name, the state; an empty one says so.
+void Card(ImDrawList* draw, ImVec2 at, ImVec2 size, const bbcoop_lobby_entry* member, bool leader,
+          int place = 0) {
+    const ImVec2 end(at.x + size.x, at.y + size.y);
+    if (MenuArt::Has(MenuArt::Card)) {
+        const bool mine = member != nullptr && std::strcmp(member->id, lobby.me) == 0;
+        MenuArt::Nine(draw, mine ? MenuArt::CardSelected : MenuArt::Card, at, end, 14.0f, S(12.0f),
+                      member ? 1.0f : 0.55f);
+        const float mid = (at.x + end.x) * 0.5f;
+        // The emblem: the hunter's rune in a square slot, framed in gold once ready.
+        const float slot = S(96.0f), sy = at.y + S(34.0f);
+        const bool ready = member && (member->ready || member->state == BBCOOP_LOBBY_PLAYING);
+        if (!MenuArt::Draw(draw, ready ? MenuArt::SlotSelected : MenuArt::Slot, ImVec2(mid - slot * 0.5f, sy),
+                           ImVec2(mid + slot * 0.5f, sy + slot), member ? 1.0f : 0.5f)) {
+            draw->AddRect(ImVec2(mid - slot * 0.5f, sy), ImVec2(mid + slot * 0.5f, sy + slot), Gold(0.4f));
+        }
+        if (member) {
+            const float rune = slot * 0.58f;
+            MenuArt::Rune(draw, place, ImVec2(mid - rune * 0.5f, sy + (slot - rune) * 0.5f),
+                          ImVec2(mid + rune * 0.5f, sy + (slot + rune) * 0.5f),
+                          member->state == BBCOOP_LOBBY_OFFLINE ? 0.35f : 1.0f);
+        }
+        ImGui::PushFont(MenuArt::Font(), 26.0f);
+        const char* name = member ? member->name : T("An empty place", "Свободное место");
+        ImVec2 ns = ImGui::CalcTextSize(name);
+        draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(150.0f)), member ? Bright() : Dim(0.7f), name);
+        ImGui::PopFont();
+        ImGui::PushFont(MenuArt::Font(), 19.0f);
+        if (member) {
+            const char* state = StateText(*member, true);
+            ns = ImGui::CalcTextSize(state);
+            draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(188.0f)), StateColor(*member, true), state);
+            if (leader) {
+                const char* lead = T("Leader, hosts the hunt", "Лидер, принимает у себя");
+                ns = ImGui::CalcTextSize(lead);
+                draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(216.0f)), Gold(0.75f), lead);
+            }
+        } else {
+            const char* note = T("Invite a hunter below", "Пригласите охотника ниже");
+            ns = ImGui::CalcTextSize(note);
+            draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(188.0f)), Dim(0.6f), note);
+        }
+        ImGui::PopFont();
+        return;
+    }
+    draw->AddRectFilledMultiColor(at, end, IM_COL32(28, 24, 20, 235), IM_COL32(28, 24, 20, 235),
+                                  IM_COL32(10, 9, 8, 235), IM_COL32(10, 9, 8, 235));
+    draw->AddRect(at, end, member ? Gold(0.55f) : Gold(0.18f), S(2.0f), 0, S(1.2f));
+    Ornament(draw, at.x + S(14.0f), end.x - S(14.0f), at.y + S(12.0f));
+    const float mid = (at.x + end.x) * 0.5f;
+    // The emblem: a hunter's diamond, filled when the place is taken.
+    const float r = S(34.0f), cy = at.y + S(96.0f);
+    const ImU32 emblem = member ? StateColor(*member, true) : Dim(0.35f);
+    draw->AddQuad(ImVec2(mid, cy - r), ImVec2(mid + r, cy), ImVec2(mid, cy + r), ImVec2(mid - r, cy), emblem,
+                  S(2.0f));
+    if (member) {
+        const float k = r * 0.55f;
+        draw->AddQuadFilled(ImVec2(mid, cy - k), ImVec2(mid + k, cy), ImVec2(mid, cy + k), ImVec2(mid - k, cy),
+                            emblem);
+    }
+    ImGui::PushFont(MenuArt::Font(), 24.0f);
+    const char* name = member ? member->name : T("An empty place", "Свободное место");
+    ImVec2 ns = ImGui::CalcTextSize(name);
+    draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(156.0f)), member ? Bright() : Dim(0.7f), name);
+    ImGui::PopFont();
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    if (member) {
+        const char* state = StateText(*member, true);
+        ns = ImGui::CalcTextSize(state);
+        draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(194.0f)), StateColor(*member, true), state);
+        if (leader) {
+            const char* lead = T("Leader, hosts the hunt", "Лидер, принимает у себя");
+            ns = ImGui::CalcTextSize(lead);
+            draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(222.0f)), Gold(0.75f), lead);
+        }
+    } else {
+        const char* note = T("Invite a hunter below", "Пригласите охотника ниже");
+        ns = ImGui::CalcTextSize(note);
+        draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(194.0f)), Dim(0.6f), note);
+    }
+    ImGui::PopFont();
+    Ornament(draw, at.x + S(14.0f), end.x - S(14.0f), end.y - S(12.0f));
+}
+
+/// The team menu in game: the server's last refusal or what the screen does, and its keys.
+void MenuHint(ImDrawList* draw, ImVec2 win, ImVec2 size, float y, bool leader_hosts) {
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    const char* hint = leader_hosts
+                           ? T("You host the hunt: remove the others before you leave, or quit to the title.",
+                               "Вы принимаете охоту: исключите остальных перед уходом или выйдите в меню.")
+                       : lobby.in_hunt ? T("Invite hunters online; they join your hunt where they stand.",
+                                           "Приглашайте охотников в сети: они присоединятся там, где стоят.")
+                       : lobby.in_team && lobby.playing
+                           ? T("Join the hunt: this character goes into the team's world where it stands.",
+                               "Вступите в охоту: персонаж войдёт в мир команды там, где стоит.")
+                           : T("Accept an invitation to join a team's hunt, or create a team.",
+                               "Примите приглашение, чтобы вступить в охоту команды, или создайте команду.");
+    const char* line = lobby.notice[0] ? lobby.notice : hint;
+    ImVec2 ts = ImGui::CalcTextSize(line);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, y),
+                  lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.8f), line);
+    const char* keys = T("D-pad: move     Cross: choose     Circle: close",
+                         "Крестовина: выбор     Крест: нажать     Круг: закрыть");
+    ts = ImGui::CalcTextSize(keys);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(46.0f)), Plain(0.6f), keys);
+    ImGui::PopFont();
+}
+
+void Screen() {
+    const auto pressed_any = [](std::initializer_list<ImGuiKey> keys) {
+        for (const ImGuiKey key : keys) {
+            if (ImGui::IsKeyPressed(key, true)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    focus.move = pressed_any({ImGuiKey_UpArrow, ImGuiKey_LeftArrow, ImGuiKey_GamepadDpadUp,
+                              ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickUp, ImGuiKey_GamepadLStickLeft})
+                     ? -1
+                 : pressed_any({ImGuiKey_DownArrow, ImGuiKey_RightArrow, ImGuiKey_Tab, ImGuiKey_GamepadDpadDown,
+                                ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickDown,
+                                ImGuiKey_GamepadLStickRight})
+                     ? 1
+                     : 0;
+    focus.activate = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+                     ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+    focus.items = 0;
+    focus.ids.clear();
+    // Kaniel 2026-10-16: opened from the game's System menu (lobby.menu), Circle or Escape closes
+    // it, as the game's own pages close.
+    if (lobby.menu && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+                       ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))) {
+        bbcoop_team_menu(0);
+    }
+    // Over the game the world stays in sight behind it, darkened as under the game's menus.
+    const bool over_game = lobby.menu && lobby.playing;
+
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImDrawList* back = ImGui::GetBackgroundDrawList();
+    if (over_game) {
+        back->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 170));
+        MenuArt::Vignette(back, ImVec2(0, 0), display, 0.85f);
+    } else {
+        back->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
+        if (MenuArt::Cover(back, MenuArt::Title, ImVec2(0, 0), display, 0.55f)) {
+            MenuArt::Vignette(back, ImVec2(0, 0), display, 0.85f);
+        }
+    }
+    const ImVec2 size(std::min(S(1400.0f), display.x - S(40.0f)), std::min(S(900.0f), display.y - S(40.0f)));
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    const bool wall = MenuArt::Has(MenuArt::Wall);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, wall ? ImVec4(0, 0, 0, 0) : ImVec4(0.035f, 0.032f, 0.028f, 0.96f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##bbport_team", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 win = ImGui::GetWindowPos();
+    const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
+    if (wall) {
+        const ImVec2 w1(win.x + size.x, win.y + size.y);
+        MenuArt::Cover(draw, MenuArt::Wall, win, w1, 0.97f);
+        MenuArt::Vignette(draw, win, w1, 0.55f);
+        draw->AddRect(win, w1, IM_COL32(150, 140, 120, 90), 0.0f, 0, S(1.0f));
+    }
+    Divider(draw, x0, x1, win.y + S(14.0f));
+    Divider(draw, x0, x1, win.y + size.y - S(14.0f));
+
+    // Title and the team's state.
+    ImGui::PushFont(MenuArt::Font(), 40.0f);
+    const char* title = T("The Hunt Together", "Совместная охота");
+    ImVec2 ts = ImGui::CalcTextSize(title);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(30.0f)), Bright(), title);
+    ImGui::PopFont();
+    if (MenuArt::Has(MenuArt::HeaderOrnament)) {
+        const ImVec2 o = MenuArt::SizeOf(MenuArt::HeaderOrnament);
+        const float ow = S(o.x * 0.9f), oh = ow * o.y / o.x, mid = win.x + size.x * 0.5f;
+        MenuArt::Draw(draw, MenuArt::HeaderOrnament, ImVec2(mid - ow * 0.5f, win.y + S(70.0f)),
+                      ImVec2(mid + ow * 0.5f, win.y + S(70.0f) + oh), 0.8f);
+    }
+    ImGui::PushFont(MenuArt::Font(), 20.0f);
+    std::string status;
+    if (!lobby.signed_in) {
+        status = T("Reaching the co-op server...", "Подключение к кооп-серверу...");
+    } else if (!lobby.in_team) {
+        status = T("Not in a team: create one, accept an invitation, or play alone",
+                   "Не в команде: создайте её, примите приглашение или играйте один");
+    } else {
+        status = std::string(lobby.members[0].name) + T("'s team", " — команда") + "   " +
+                 std::to_string(lobby.member_count) + T(" of 4", " из 4");
+    }
+    ts = ImGui::CalcTextSize(status.c_str());
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(MenuArt::Has(MenuArt::HeaderOrnament) ? 102.0f : 84.0f)),
+                  Gold(0.85f), status.c_str());
+    ImGui::PopFont();
+
+    // The four places.
+    const float card_w = S(290.0f), card_h = S(270.0f), gap = S(24.0f);
+    const float cards_x = win.x + (size.x - (4 * card_w + 3 * gap)) * 0.5f,
+                cards_y = win.y + S(MenuArt::Has(MenuArt::HeaderOrnament) ? 140.0f : 128.0f);
+    for (int i = 0; i < BBCOOP_LOBBY_TEAM; ++i) {
+        const bool taken = lobby.in_team && i < lobby.member_count;
+        Card(draw, ImVec2(cards_x + i * (card_w + gap), cards_y), ImVec2(card_w, card_h),
+             taken ? &lobby.members[i] : nullptr, taken && i == 0, i);
+    }
+    // Kaniel 2026-10-16: the leader removes a member from the team (the server's word: that
+    // member's game leaves the hunt where it stands and plays on alone).
+    if (lobby.leader) {
+        ImGui::PushFont(MenuArt::Font(), 19.0f);
+        const ImVec2 remove_size(S(170.0f), S(38.0f));
+        for (int i = 1; i < lobby.member_count && i < BBCOOP_LOBBY_TEAM; ++i) {
+            const bbcoop_lobby_entry& m = lobby.members[i];
+            const std::string id = std::string("remove") + m.id;
+            const ImVec2 at(cards_x + i * (card_w + gap) + (card_w - remove_size.x) * 0.5f,
+                            cards_y + card_h - remove_size.y - S(12.0f));
+            if (Button(draw, id.c_str(), T("Remove", "Исключить"), at, remove_size)) {
+                bbcoop_lobby_request(BBCOOP_TEAM_REMOVE, m.id);
+            }
+        }
+        ImGui::PopFont();
+    }
+
+    // The players online (invite) and the invitations.
+    const float lists_y = cards_y + card_h + S(30.0f);
+    const float list_w = (size.x - S(72.0f) - gap) * 0.5f;
+    const float left_x = win.x + S(36.0f), right_x = left_x + list_w + gap;
+    ImGui::PushFont(MenuArt::Font(), 22.0f);
+    draw->AddText(ImVec2(left_x, lists_y), Gold(), T("Hunters online", "Охотники в сети"));
+    draw->AddText(ImVec2(right_x, lists_y), Gold(), T("Invitations", "Приглашения"));
+    ImGui::PopFont();
+    if (MenuArt::Has(MenuArt::Flourish)) {
+        const ImVec2 f = MenuArt::SizeOf(MenuArt::Flourish);
+        const float fh = S(f.y * 0.8f);
+        for (const float lx : {left_x, right_x}) {
+            MenuArt::Draw(draw, MenuArt::Flourish, ImVec2(lx, lists_y + S(30.0f)),
+                          ImVec2(lx + list_w, lists_y + S(30.0f) + fh), 0.85f);
+        }
+    } else {
+        draw->AddLine(ImVec2(left_x, lists_y + S(32.0f)), ImVec2(left_x + list_w, lists_y + S(32.0f)), Gold(0.25f));
+        draw->AddLine(ImVec2(right_x, lists_y + S(32.0f)), ImVec2(right_x + list_w, lists_y + S(32.0f)),
+                      Gold(0.25f));
+    }
+    ImGui::PushFont(MenuArt::Font(), 19.0f);
+    const float row_h = S(40.0f), button_w = S(130.0f);
+    const int rows = 5;
+    float y = lists_y + S(42.0f);
+    const bool can_invite = lobby.in_team && lobby.member_count < BBCOOP_LOBBY_TEAM;
+    if (lobby.player_count == 0) {
+        draw->AddText(ImVec2(left_x, y + S(8.0f)), Dim(), T("Nobody else is online", "Больше никого нет в сети"));
+    }
+    for (int i = 0; i < lobby.player_count && i < rows; ++i, y += row_h) {
+        const bbcoop_lobby_entry& p = lobby.players[i];
+        MenuArt::Nine(draw, MenuArt::Row, ImVec2(left_x - S(6.0f), y - S(2.0f)),
+                      ImVec2(left_x + list_w + S(4.0f), y + row_h - S(4.0f)), 10.0f, S(6.0f), 0.7f);
+        draw->AddText(ImVec2(left_x + S(8.0f), y + S(8.0f)), Plain(), p.name);
+        draw->AddText(ImVec2(left_x + S(220.0f), y + S(8.0f)), StateColor(p, false), StateText(p, false));
+        const std::string id = std::string("invite") + p.id;
+        if (Button(draw, id.c_str(), T("Invite", "Пригласить"), ImVec2(left_x + list_w - button_w, y),
+                   ImVec2(button_w, row_h - S(6.0f)), can_invite)) {
+            bbcoop_lobby_request(BBCOOP_TEAM_INVITE, p.id);
+        }
+    }
+    y = lists_y + S(42.0f);
+    if (lobby.invite_count == 0) {
+        draw->AddText(ImVec2(right_x, y + S(8.0f)), Dim(), T("None", "Нет"));
+    }
+    for (int i = 0; i < lobby.invite_count && i < rows; ++i, y += row_h) {
+        const bbcoop_lobby_entry& inv = lobby.invites[i];
+        const std::string text = std::string(inv.name) + T(" calls you to hunt", " зовёт на охоту");
+        MenuArt::Nine(draw, MenuArt::Row, ImVec2(right_x - S(6.0f), y - S(2.0f)),
+                      ImVec2(right_x + list_w + S(4.0f), y + row_h - S(4.0f)), 10.0f, S(6.0f), 0.7f);
+        draw->AddText(ImVec2(right_x + S(8.0f), y + S(8.0f)), Plain(), text.c_str());
+        const std::string accept = std::string("accept") + inv.id, decline = std::string("decline") + inv.id;
+        if (Button(draw, accept.c_str(), T("Join", "Вступить"),
+                   ImVec2(right_x + list_w - 2 * button_w - S(8.0f), y), ImVec2(button_w, row_h - S(6.0f)),
+                   !lobby.in_team, true)) {
+            if (lobby.playing) {
+                bbcoop_team_join_hunt(inv.id); // in game: into the team and its hunt at once
+            } else {
+                bbcoop_lobby_request(BBCOOP_TEAM_ACCEPT, inv.id);
+            }
+        }
+        if (Button(draw, decline.c_str(), T("Decline", "Отклонить"), ImVec2(right_x + list_w - button_w, y),
+                   ImVec2(button_w, row_h - S(6.0f)))) {
+            bbcoop_lobby_request(BBCOOP_TEAM_DECLINE, inv.id);
+        }
+    }
+    ImGui::PopFont();
+
+    // The buttons: the team, ready or start, alone.
+    bool me_ready = false;
+    for (int i = 0; i < lobby.member_count; ++i) {
+        if (std::strcmp(lobby.members[i].id, lobby.me) == 0) {
+            me_ready = lobby.members[i].ready != 0;
+        }
+    }
+    ImGui::PushFont(MenuArt::Font(), 24.0f);
+    const float bw = S(260.0f), bh = S(54.0f);
+    const float by = win.y + size.y - S(150.0f);
+    float bx = win.x + (size.x - (3 * bw + 2 * gap)) * 0.5f;
+    // The leader hosts the hunt: it leaves only once it is alone in it (its game leaving would
+    // end the others' session).
+    const bool leader_hosts = lobby.leader && lobby.in_hunt && lobby.member_count > 1;
+    if (!lobby.in_team) {
+        if (Button(draw, "create", T("Create a team", "Создать команду"), ImVec2(bx, by), ImVec2(bw, bh),
+                   lobby.signed_in != 0)) {
+            bbcoop_lobby_request(BBCOOP_TEAM_CREATE, "");
+        }
+    } else if (Button(draw, "leave", T("Leave the team", "Покинуть команду"), ImVec2(bx, by), ImVec2(bw, bh),
+                      !leader_hosts)) {
+        bbcoop_lobby_request(BBCOOP_TEAM_LEAVE, "");
+    }
+    bx += bw + gap;
+    if (lobby.menu) {
+        // Kaniel 2026-10-16, the team menu in game: join the hunt from here (this save, where it
+        // stands), and close back to the game's menu.
+        if (focus.fresh) {
+            focus.fresh = false;
+            focus.focus = focus.items;
+            focus.id = lobby.playing && lobby.in_team && !lobby.in_hunt ? "hunt" : "close";
+        }
+        const char* hunt = lobby.in_hunt ? T("In the hunt", "На охоте") : T("Join the hunt", "Вступить в охоту");
+        if (Button(draw, "hunt", hunt, ImVec2(bx, by), ImVec2(bw, bh),
+                   lobby.playing && lobby.in_team && !lobby.in_hunt, true)) {
+            bbcoop_team_join_hunt("");
+        }
+        bx += bw + gap;
+        if (Button(draw, "close", T("Close", "Закрыть"), ImVec2(bx, by), ImVec2(bw, bh))) {
+            bbcoop_team_menu(0);
+        }
+        ImGui::PopFont();
+        MenuHint(draw, win, size, by + bh + S(20.0f), leader_hosts);
+        if (focus.items > 0) {
+            focus.focus = ((focus.focus + focus.move) % focus.items + focus.items) % focus.items;
+            focus.id = focus.ids[static_cast<size_t>(focus.focus)];
+        }
+        ImGui::End();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        return;
+    }
+    const char* go = lobby.leader ? T("Begin the hunt", "Начать охоту")
+                     : me_ready   ? T("Not ready", "Не готов")
+                                  : T("Ready", "Готов");
+    // Kaniel 2026-10-14: the hunt begins only once every member is ready (the server refuses it
+    // too); a started team's leader back from a crash goes in at once.
+    bool everyone_ready = lobby.started != 0;
+    if (!everyone_ready) {
+        everyone_ready = true;
+        for (int i = 0; i < lobby.member_count; ++i) {
+            const bbcoop_lobby_entry& m = lobby.members[i];
+            if (std::strcmp(m.id, lobby.me) != 0 && (!m.ready || m.state == BBCOOP_LOBBY_OFFLINE)) {
+                everyone_ready = false;
+            }
+        }
+    }
+    // Into a team (an invitation accepted): the focus goes to Ready.
+    if (lobby.in_team && !focus.was_in_team) {
+        focus.fresh = true;
+    }
+    focus.was_in_team = lobby.in_team != 0;
+    if (focus.fresh && lobby.in_team) {
+        focus.fresh = false;
+        focus.focus = focus.items; // the next button's index
+        focus.id = "go";
+    }
+    if (Button(draw, "go", go, ImVec2(bx, by), ImVec2(bw, bh),
+               lobby.in_team != 0 && (!lobby.leader || everyone_ready), true)) {
+        bbcoop_team_choose(lobby.leader ? BBCOOP_TEAM_GO_START
+                           : me_ready   ? BBCOOP_TEAM_GO_UNREADY
+                                        : BBCOOP_TEAM_GO_READY);
+    }
+    bx += bw + gap;
+    if (Button(draw, "alone", T("Play alone", "Играть одному"), ImVec2(bx, by), ImVec2(bw, bh))) {
+        bbcoop_team_choose(BBCOOP_TEAM_GO_ALONE);
+    }
+    ImGui::PopFont();
+
+    // The server's last refusal, the hint and the controls.
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    const char* hint = lobby.leader && !everyone_ready
+                           ? T("The hunt begins once every hunter is ready.",
+                               "Охота начнётся, когда все охотники будут готовы.")
+                       : lobby.leader ? T("Everyone is ready: begin the hunt together.",
+                                          "Все готовы: начните охоту вместе.")
+                       : lobby.in_team ? T("The leader begins the hunt; you join it when ready.",
+                                           "Лидер начинает охоту; вы присоединитесь, когда будете готовы.")
+                                       : T("Your character plays its own world alone.",
+                                           "Ваш персонаж играет в своём мире один.");
+    const char* line = lobby.notice[0] ? lobby.notice : hint;
+    ts = ImGui::CalcTextSize(line);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(20.0f)),
+                  lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.8f), line);
+    ImGui::PopFont();
+    if (MenuArt::Has(MenuArt::ButtonCross) && MenuArt::Has(MenuArt::ButtonMove)) {
+        // As the game's own key guide: an icon, then what it does.
+        ImGui::PushFont(MenuArt::Font(), 18.0f);
+        const struct {
+            MenuArt::Piece icon;
+            const char* text;
+        } keys[] = {{MenuArt::ButtonMove, T("Move", "Выбор")},
+                    {MenuArt::ButtonCross, T("Choose", "Нажать")}};
+        const char* settings = T("L3 + R3 / Insert: settings", "L3 + R3 / Insert: настройки");
+        const float icon = S(26.0f), space = S(28.0f);
+        float total = ImGui::CalcTextSize(settings).x;
+        for (const auto& key : keys) {
+            total += icon + S(6.0f) + ImGui::CalcTextSize(key.text).x + space;
+        }
+        float kx = win.x + (size.x - total) * 0.5f;
+        const float ky = win.y + size.y - S(46.0f);
+        for (const auto& key : keys) {
+            MenuArt::Draw(draw, key.icon, ImVec2(kx, ky), ImVec2(kx + icon, ky + icon));
+            kx += icon + S(6.0f);
+            draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.85f), key.text);
+            kx += ImGui::CalcTextSize(key.text).x + space;
+        }
+        draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.6f), settings);
+        ImGui::PopFont();
+    } else {
+        ImGui::PushFont(sans_font, 15.0f);
+        const char* controls = T("Arrows / D-pad: move     Enter / Cross: choose     Insert, L3 + R3: settings",
+                                 "Стрелки / крестовина: выбор     Enter / Крест: нажать     Insert, L3 + R3: настройки");
+        ts = ImGui::CalcTextSize(controls);
+        draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(40.0f)), Gold(0.65f), controls);
+        ImGui::PopFont();
+    }
+
+    if (focus.items > 0) {
+        focus.focus = ((focus.focus + focus.move) % focus.items + focus.items) % focus.items;
+        focus.id = focus.ids[static_cast<size_t>(focus.focus)];
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
+} // namespace Team
+
+// Kaniel 2026-10-14: the team loading screen, as in League of Legends but in Bloodborne's colours:
+// each hunter's name, its stage and a bar, over the whole screen until every member is in the
+// team's session (bbcoop_team_load_view); the hunt opens for everyone at once.
+
+namespace Joining {
+bool open = false; // present thread: as Visible() read it last
+bbcoop_team_load load{};
+
+/// The drawn look (no game art): plain cards and bars.
+void PlainScreen() {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(6, 5, 4, 255));
+    const ImU32 gold = IM_COL32(200, 176, 120, 255);
+    const ImU32 dim = IM_COL32(140, 128, 110, 255);
+    ImFont* font = MenuArt::Font();
+    const float unit = display.y / 40.0f;
+    const auto centred = [&](const char* text, float size, float y, ImU32 colour) {
+        const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+        draw->AddText(font, size, ImVec2((display.x - extent.x) * 0.5f, y), colour, text);
+    };
+    centred(Team::T("The Hunt Begins", "Охота начинается"), unit * 1.6f, display.y * 0.16f, gold);
+    const float left = display.x * 0.18f, right = display.x * 0.82f;
+    draw->AddLine(ImVec2(left, display.y * 0.24f), ImVec2(right, display.y * 0.24f), dim, 1.0f);
+    const float card_w = (right - left) / 4.0f;
+    const int count = std::clamp(load.count, 1, 4);
+    const float start = (display.x - card_w * count) * 0.5f;
+    for (int i = 0; i < load.count && i < 4; ++i) {
+        const bbcoop_team_load_row& row = load.rows[i];
+        const float x0 = start + card_w * i + unit * 0.5f, x1 = start + card_w * (i + 1) - unit * 0.5f;
+        const float y0 = display.y * 0.30f, y1 = display.y * 0.72f;
+        draw->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(20, 17, 14, 255), 2.0f);
+        draw->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), row.self ? gold : dim, 2.0f, 0, row.self ? 2.0f : 1.0f);
+        const ImVec2 name_size = font->CalcTextSizeA(unit * 1.1f, FLT_MAX, 0.0f, row.name);
+        draw->AddText(font, unit * 1.1f, ImVec2((x0 + x1 - name_size.x) * 0.5f, y0 + (y1 - y0) * 0.45f), gold,
+                      row.name);
+        const float bx0 = x0 + unit, bx1 = x1 - unit, by = y0 + (y1 - y0) * 0.84f;
+        draw->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + unit * 0.45f), IM_COL32(40, 34, 28, 255));
+        draw->AddRectFilled(ImVec2(bx0, by),
+                            ImVec2(bx0 + (bx1 - bx0) * std::clamp(row.percent, 0, 100) / 100.0f, by + unit * 0.45f),
+                            row.stage == BBCOOP_LOAD_READY ? IM_COL32(150, 40, 30, 255) : gold);
+    }
+}
+
+const char* StageText(int stage) {
+    return stage == BBCOOP_LOAD_READY     ? Team::T("Ready", "Готов")
+           : stage == BBCOOP_LOAD_JOINING ? Team::T("Joining the hunt", "Присоединяется")
+           : stage == BBCOOP_LOAD_LOADING ? Team::T("Loading", "Загрузка")
+                                          : Team::T("Waiting", "Ожидание");
+}
+
+/// Kaniel 2026-10-14: as the game's own loading screen (black, the Bloodborne word, the menus'
+/// cards and font), each hunter's card with its rune, name, stage and the game's own HP bar as
+/// its progress; it opens for all of them at once. Kaniel 2026-10-15: it covers the whole screen,
+/// the input and the sound (bbcoop_sound_held) until every guest's character has spawned; no
+/// more top bar once this game's own world is in.
+void Screen() {
+    if (!MenuArt::Has(MenuArt::Card)) {
+        PlainScreen();
+        return;
+    }
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
+    // The menus' wall, faint, under it all; the Bloodborne word above the cards.
+    if (MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 0.45f)) {
+        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.95f);
+    }
+    const float u = display.y / 1080.0f; // 1080p pixels
+    ImFont* font = MenuArt::Font();
+    const auto text = [&](const char* s, float size, ImVec2 at, ImU32 colour, float align) {
+        const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, s);
+        at.x = std::floor(at.x - extent.x * align);
+        draw->AddText(font, size, ImVec2(at.x + 2.0f * u, at.y + 2.0f * u), IM_COL32(0, 0, 0, 200), s);
+        draw->AddText(font, size, at, colour, s);
+    };
+    const float mid = display.x * 0.5f;
+    if (MenuArt::Has(MenuArt::Logo)) {
+        const ImVec2 logo = MenuArt::SizeOf(MenuArt::Logo);
+        const float lw = 640.0f * u, lh = lw * logo.y / logo.x;
+        MenuArt::Draw(draw, MenuArt::Logo, ImVec2(mid - lw * 0.5f, 120.0f * u), ImVec2(mid + lw * 0.5f, 120.0f * u + lh),
+                      0.85f);
+    }
+    text(Team::T("The Hunt Begins", "Охота начинается"), 40.0f * u, ImVec2(mid, 290.0f * u),
+         IM_COL32(222, 214, 196, 255), 0.5f);
+    if (MenuArt::Has(MenuArt::HeaderOrnament)) {
+        const ImVec2 o = MenuArt::SizeOf(MenuArt::HeaderOrnament);
+        const float ow = 420.0f * u, oh = ow * o.y / o.x;
+        MenuArt::Draw(draw, MenuArt::HeaderOrnament, ImVec2(mid - ow * 0.5f, 342.0f * u),
+                      ImVec2(mid + ow * 0.5f, 342.0f * u + oh), 0.8f);
+    }
+    // The cards.
+    const int count = std::clamp(load.count, 1, 4);
+    const float card_w = 300.0f * u, card_h = 420.0f * u, gap = 36.0f * u;
+    const float x_start = mid - (card_w * count + gap * (count - 1)) * 0.5f, y0 = 420.0f * u;
+    for (int i = 0; i < load.count && i < 4; ++i) {
+        const bbcoop_team_load_row& row = load.rows[i];
+        const float x0 = x_start + i * (card_w + gap), x1 = x0 + card_w, cx = (x0 + x1) * 0.5f;
+        const bool ready = row.stage == BBCOOP_LOAD_READY;
+        MenuArt::Nine(draw, row.self ? MenuArt::CardSelected : MenuArt::Card, ImVec2(x0, y0),
+                      ImVec2(x1, y0 + card_h), 14.0f, 12.0f * u);
+        const float slot = 110.0f * u, sy = y0 + 40.0f * u;
+        MenuArt::Draw(draw, ready ? MenuArt::SlotSelected : MenuArt::Slot, ImVec2(cx - slot * 0.5f, sy),
+                      ImVec2(cx + slot * 0.5f, sy + slot));
+        const float rune = slot * 0.58f;
+        MenuArt::Rune(draw, i, ImVec2(cx - rune * 0.5f, sy + (slot - rune) * 0.5f),
+                      ImVec2(cx + rune * 0.5f, sy + (slot + rune) * 0.5f), row.stage == BBCOOP_LOAD_WAITING ? 0.4f : 1.0f);
+        text(row.name, 30.0f * u, ImVec2(cx, y0 + 180.0f * u), IM_COL32(222, 214, 196, 255), 0.5f);
+        text(StageText(row.stage), 22.0f * u, ImVec2(cx, y0 + 228.0f * u),
+             ready ? IM_COL32(200, 176, 120, 255) : IM_COL32(150, 142, 128, 255), 0.5f);
+        // Progress on the game's own HP bar (red fill in its framed track).
+        const float bar_w = card_w - 52.0f * u, bar_h = 17.0f * u, bx = cx - bar_w * 0.5f, by = y0 + 300.0f * u;
+        const float fill = std::clamp(row.percent, 0, 100) / 100.0f;
+        if (!Party::GameHpBar(draw, ImVec2(bx, by), bar_w, bar_h, fill, 1.0f)) {
+            draw->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bar_w, by + bar_h), IM_COL32(40, 34, 28, 255));
+            draw->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bar_w * fill, by + bar_h), IM_COL32(150, 40, 30, 255));
+        }
+        char percent[8];
+        std::snprintf(percent, sizeof(percent), "%d%%", std::clamp(row.percent, 0, 100));
+        text(percent, 22.0f * u, ImVec2(cx, by + 30.0f * u), IM_COL32(170, 160, 140, 255), 0.5f);
+    }
+    // The divider and the line under it.
+    const ImVec2 d = MenuArt::SizeOf(MenuArt::Divider);
+    if (d.x > 0.0f) {
+        const float dw = 520.0f * u, dh = dw * d.y / d.x, dy = y0 + card_h + 50.0f * u;
+        MenuArt::Draw(draw, MenuArt::Divider, ImVec2(mid - dw * 0.5f, dy), ImVec2(mid + dw * 0.5f, dy + dh), 0.8f);
+    }
+    text(Team::T("The hunt opens for everyone once all hunters are ready",
+                 "Охота начнётся, когда все охотники будут готовы"),
+         22.0f * u, ImVec2(mid, y0 + card_h + 100.0f * u), IM_COL32(150, 142, 128, 255), 0.5f);
+}
+} // namespace Joining
 
 // Party death (bbcoop.h): the other members down the left side, under the game's own bars, after
 // Elden Ring Nightreign's party list; whom an attack would revive; this player's own down in the
@@ -2070,6 +3117,7 @@ void Draw() {
 
 /// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1,
 /// consumed when the file appears (it is removed), one key press per frame.
+bool scripted_busy = false; // keys of the file still to press
 void ScriptedKeys() {
     static const char* path = std::getenv("BB_MENU_KEYS_FILE");
     static std::chrono::steady_clock::time_point last_check{};
@@ -2097,6 +3145,7 @@ void ScriptedKeys() {
             std::remove(path);
         }
     }
+    scripted_busy = !queue.empty();
     if (queue.empty()) {
         return;
     }
@@ -2119,6 +3168,27 @@ void ScriptedKeys() {
         io.AddKeyEvent(held, true);
         release = true;
     }
+}
+
+/// Scripted keys are waiting (their file is there, or a key is still to be pressed or let go):
+/// the overlay runs its frames for them even with nothing to draw, or a game that shows nothing
+/// (no party, no FPS counter) never opened the menu for the rig.
+bool ScriptedKeysWaiting() {
+    static const char* path = std::getenv("BB_MENU_KEYS_FILE");
+    static std::chrono::steady_clock::time_point last_check{};
+    static bool file_there = false;
+    if (!path) {
+        return false;
+    }
+    if (const auto now = std::chrono::steady_clock::now(); now - last_check > std::chrono::milliseconds(100)) {
+        last_check = now;
+        FILE* f = std::fopen(path, "r");
+        file_there = f != nullptr;
+        if (f) {
+            std::fclose(f);
+        }
+    }
+    return file_there || scripted_busy;
 }
 
 } // namespace
@@ -2178,7 +3248,8 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     info.Device = instance.GetDevice();
     info.QueueFamily = instance.GetGraphicsQueueFamilyIndex();
     info.Queue = instance.GetGraphicsQueue();
-    info.DescriptorPoolSize = 16;
+    // One set per texture: the font atlas, the party art and icons, the team screens' menu art (18).
+    info.DescriptorPoolSize = OverlayDescriptorSets;
     info.MinImageCount = std::max(image_count, 2u);
     info.ImageCount = std::max(image_count, 2u);
     info.UseDynamicRendering = true;
@@ -2309,7 +3380,9 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     ImGuiIO& io = ImGui::GetIO();
-    const bool is_open = menu_open || quit_open;
+    const bool menu_or_quit = menu_open || quit_open;
+    // The team screen takes the input too (it has no Circle / Escape: its buttons decide).
+    const bool is_open = menu_or_quit || Team::open;
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
@@ -2318,9 +3391,9 @@ bool HandleEvent(const SDL_Event& event) {
         // SDL reports it as the keypad key.
         const bool insert = event.key.key == SDLK_INSERT ||
                             (event.key.scancode == SDL_SCANCODE_KP_0 && !(event.key.mod & SDL_KMOD_NUM));
-        if (down && !event.key.repeat && (insert || (is_open && event.key.key == SDLK_ESCAPE))) {
+        if (down && !event.key.repeat && (insert || (menu_or_quit && event.key.key == SDLK_ESCAPE))) {
             quit_open = false;
-            SetOpen(insert && !is_open);
+            SetOpen(insert && !menu_or_quit);
             return true;
         }
         if (!is_open) {
@@ -2353,14 +3426,14 @@ bool HandleEvent(const SDL_Event& event) {
             combo_held = false;
             if (!combo_fired) { // a tap: toggles the settings menu, or closes the quit box
                 quit_open = false;
-                SetOpen(!is_open);
+                SetOpen(!menu_or_quit);
             }
             return true;
         }
         if (!is_open) {
             return false;
         }
-        if (down && button == SDL_GAMEPAD_BUTTON_EAST) { // Circle: back to the game
+        if (down && button == SDL_GAMEPAD_BUTTON_EAST && menu_or_quit) { // Circle: back to the game
             quit_open = false;
             SetOpen(false);
             return true;
@@ -2414,7 +3487,16 @@ bool HandleEvent(const SDL_Event& event) {
 
 bool Visible() {
     const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
-    return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party);
+    const bool was_team = Team::open;
+    Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
+    Joining::open = initialized && bbcoop_team_load_view(&Joining::load) != 0;
+    loading_cover = Joining::open;
+    if (Team::open && !was_team) {
+        SyncMousePos();
+        Team::focus.fresh = true;
+    }
+    return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party ||
+                           Team::open || Joining::open || ScriptedKeysWaiting());
 }
 
 bool MenuOpen() {
@@ -2423,7 +3505,7 @@ bool MenuOpen() {
 
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
-    return menu_open || quit_open || prompt_active;
+    return menu_open || quit_open || prompt_active || Team::open || Joining::open;
 }
 
 void Tick() {
@@ -2527,15 +3609,30 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         base_scale = scale;
     }
 
-    if (Party::shown) {
+    if (Party::shown || Joining::open || menu_open) {
         Party::LoadGauge(); // before NewFrame, which hands new textures to the backend
+    }
+    if (Team::open || Joining::open || menu_open || quit_open) {
+        MenuArt::Load(); // the same: the game's menu art and font
     }
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
+    // Each texture takes a set from the backend's pool: past it, icons and runes came out garbled
+    // (0.2.4). The rig's smoke checks this line against the pool.
+    if (const int textures = ImGui::GetPlatformIO().Textures.Size; textures != textures_logged) {
+        textures_logged = textures;
+        std::printf("Overlay: %d textures, pool of %d sets\n", textures, OverlayDescriptorSets);
+    }
     if (Party::shown && !menu_open) {
         Party::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                        float(game.extent.height)};
         Party::Draw();
+    }
+    if (Team::open && !menu_open) {
+        Team::Screen();
+    }
+    if (Joining::open && !menu_open) {
+        Joining::Screen();
     }
     if (menu_open) {
         Menu();

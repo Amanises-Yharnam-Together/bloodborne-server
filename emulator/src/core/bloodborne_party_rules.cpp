@@ -505,9 +505,79 @@ void PS4_SYSV_ABI ClearFloorThatIsGone(u64, GuestRegisterSnapshot* registers) {
                 character, floor, GetCurrentPackedMap());
 }
 
+// The flag block guard (rig 2026-10-16: a removed member invited back, and host-crash-apart's
+// guest, crashed at 0x013CFFBA when their game joined a session the second time). The event flag
+// manager's read of a value of several bits, 0x013CFD80, checks the block holding a value inside
+// one block and reads 0 when it is missing; a value over two blocks looks both up (the first in
+// rax, the second in rdx) and reads them unchecked. Here a missing block reads as zeros, as a
+// missing block of a one-block value does.
+constexpr u64 FlagValueFirstBlockOffset = 0x013CFF79;
+constexpr std::array<u8, 9> FlagValueFirstBlock{0x41, 0xFF, 0xC9, 0x44, 0x89,
+                                                0xC9, 0xC1, 0xE9, 0x03};
+constexpr u64 FlagValueSecondBlockOffset = 0x013CFFEC;
+constexpr std::array<u8, 9> FlagValueSecondBlock{0x45, 0x29, 0xD0, 0x41, 0x8D,
+                                                 0x58, 0xFF, 0x89, 0xD8};
+// A block's bytes never reach 0x10000 (ReadFlagStore's bound).
+alignas(64) constexpr std::array<u8, 0x10000> MissingFlagBlock{};
+
+void NoteMissingFlagBlock(const char* which) {
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 8) {
+        LOG_WARNING(Debug,
+                    "Bloodborne flag block guard: a flag value's {} block is missing: read as "
+                    "zeros instead of a crash (map {:#x})",
+                    which, GetCurrentPackedMap());
+    }
+}
+
+void PS4_SYSV_ABI GuardFlagValueFirstBlock(u64, GuestRegisterSnapshot* registers) {
+    const u64 zeros = reinterpret_cast<u64>(MissingFlagBlock.data());
+    if (registers->rax == 0) {
+        NoteMissingFlagBlock("first");
+    }
+    if (registers->rdx == 0) {
+        NoteMissingFlagBlock("second");
+    }
+    registers->rax = GuardedFlagBlock(registers->rax, zeros);
+    registers->rdx = GuardedFlagBlock(registers->rdx, zeros);
+}
+
+void PS4_SYSV_ABI GuardFlagValueSecondBlock(u64, GuestRegisterSnapshot* registers) {
+    if (registers->rdx == 0) {
+        NoteMissingFlagBlock("second");
+    }
+    registers->rdx =
+        GuardedFlagBlock(registers->rdx, reinterpret_cast<u64>(MissingFlagBlock.data()));
+}
+
 } // namespace
 
 namespace Coop {
+
+void InstallFlagBlockGuard(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    // Both or neither: the second alone leaves the first block's read unguarded.
+    const auto install = [&](u64 offset, std::span<const u8> bytes, GuestRegisterEditHook hook) {
+        return offset + bytes.size() <= image_size &&
+               InstallCoopHook(reinterpret_cast<void*>(base + offset), bytes, 0, hook);
+    };
+    if (!install(FlagValueFirstBlockOffset, FlagValueFirstBlock, GuardFlagValueFirstBlock)) {
+        coop_features.Skipped("flag block guard",
+                              SiteFailure(base, image_size, FlagValueFirstBlockOffset));
+        return;
+    }
+    if (!install(FlagValueSecondBlockOffset, FlagValueSecondBlock, GuardFlagValueSecondBlock)) {
+        RemoveGuestCodeHook(reinterpret_cast<void*>(base + FlagValueFirstBlockOffset));
+        coop_features.Skipped("flag block guard",
+                              SiteFailure(base, image_size, FlagValueSecondBlockOffset));
+        return;
+    }
+    coop_features.On("flag block guard");
+    LOG_INFO(Debug,
+             "Bloodborne flag block guard: a flag value over a missing block reads as zeros");
+}
 
 void InstallFloorGuard(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -712,9 +782,11 @@ void InstallSharedLoot(u64 base, u64 image_size) {
     } else {
         coop_features.On("menu client");
     }
-    if (MapItemPacketHeaderOffset + MapItemPacketHeader.size() > image_size ||
-        !InstallCoopHook(reinterpret_cast<void*>(base + MapItemPacketHeaderOffset),
-                         MapItemPacketHeader, 0, IgnorePartyMapItemSync)) {
+    if (channel_table_installed) {
+        coop_features.Skipped("map item sync", "the channel table drops map item packets");
+    } else if (MapItemPacketHeaderOffset + MapItemPacketHeader.size() > image_size ||
+               !InstallCoopHook(reinterpret_cast<void*>(base + MapItemPacketHeaderOffset),
+                                MapItemPacketHeader, 0, IgnorePartyMapItemSync)) {
         LOG_ERROR(Debug, "Bloodborne map item sync hook unavailable; the host's sync clears the "
                          "guest's map items");
         coop_features.Skipped("map item sync",

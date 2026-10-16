@@ -31,6 +31,8 @@ void runtime_camhook_turn(float pitch, float yaw) { (void)pitch; (void)yaw; }
 void runtime_camhook_drop(void) {}
 void bbgpu_game_thread_tick(void) {}
 int bbcoop_autoplay_pad(uint32_t *buttons, uint8_t sticks[4]) { (void)buttons; (void)sticks; return 0; }
+int bbcoop_cutscene_skip(void) { return 0; }
+int bbcoop_team_menu_back(void) { return 0; }
 void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2) {
     (void)buttons; (void)sticks; (void)l2; (void)r2;
 }

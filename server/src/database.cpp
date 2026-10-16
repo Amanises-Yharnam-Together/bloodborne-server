@@ -423,6 +423,26 @@ std::optional<UserRecord> Database::CheckUser(const QString& npid, const QString
     return r;
 }
 
+std::optional<UserRecord> Database::SignIn(const QString& npid, const QString& password,
+                                           const QString& token, bool checkToken, bool make) {
+    if (auto user = CheckUser(npid, password, token, checkToken))
+        return user;
+    if (!make || password.isEmpty() || npid.size() < 3 || npid.size() > 16 ||
+        npid == QStringLiteral("DeletedUser"))
+        return std::nullopt;
+    for (const QChar& c : npid)
+        if (!c.isLetterOrNumber() && c != '-' && c != '_')
+            return std::nullopt;
+    if (GetUserId(npid))
+        return std::nullopt; // a known id with another password: not this player
+    if (CreateAccount(npid, password,
+                      QStringLiteral("https://shadps4.net/shadnet/avatars/default_01.png"),
+                      npid + QStringLiteral("@player.local")))
+        return std::nullopt;
+    qInfo() << "signIn: made the account of player" << npid;
+    return CheckUser(npid, password, token, false);
+}
+
 std::optional<int64_t> Database::GetUserId(const QString& npid) {
     QSqlQuery q(m_db);
     q.prepare("SELECT user_id FROM account WHERE username=? COLLATE NOCASE");
