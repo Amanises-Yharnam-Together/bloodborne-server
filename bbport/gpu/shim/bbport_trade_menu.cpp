@@ -169,6 +169,8 @@ const void* const ok_vtable[8] = {
     reinterpret_cast<const void*>(&ImplDeleting),   reinterpret_cast<const void*>(&ImplGet)};
 
 // A "Give" row: the quantity picker, up to what the player holds.
+const char* BoxState(); // below, with the boxes
+
 GAME_ABI void** GiveCall(void** out, Impl* self, u8* context) {
     char question[256] = {};
     const u32 held = bbcoop_trade_held(self->kind, self->id);
@@ -176,8 +178,14 @@ GAME_ABI void** GiveCall(void** out, Impl* self, u8* context) {
                                    : self->kind == ItemKind ? 1u
                                                             : MaxGoods);
     const char* to = self->partner < MaxPartners ? partners[self->partner] : "";
-    if (max == 0 ||
-        !bbcoop_trade_give_question_to(to, self->kind, self->id, question, sizeof question)) {
+    const bool asked =
+        max > 0 && bbcoop_trade_give_question_to(to, self->kind, self->id, question, sizeof question);
+    // Kaniel 2026-10-16: after the first give every Give row did nothing, silently. Said now.
+    std::printf("Trade menu: Give %u/%u to %s: held %u, max %u, question %s, a box %s\n", self->kind,
+                self->id, to, held, max, asked ? "ok" : "none",
+                BoxState());
+    std::fflush(stdout);
+    if (!asked) {
         return NothingJob(out);
     }
     alignas(16) u8 text[TextSize] = {};
@@ -201,6 +209,10 @@ GAME_ABI void** GiveCall(void** out, Impl* self, u8* context) {
     using Open = void (GAME_ABI *)(void**, void*, const char16_t*, void*, int, int, void*, void*);
     Game<Open>(NumSelect)(out, context + 0x48, Game<const char16_t*>(NumSelectMovie), text,
                           int(first), int(max), on_ok, extra);
+    if (!*out) {
+        std::printf("Trade menu: the game opened no picker\n");
+        std::fflush(stdout);
+    }
     picker_steps = GamePickerSteps;
     BbGameMenu::DestroyGameFunction(on_ok);
     BbGameMenu::DestroyGameText(text);
@@ -295,6 +307,10 @@ struct Shown {
 };
 Shown shown;
 
+const char* BoxState() {
+    return !shown.job ? "none" : shown.running ? "shown" : "waiting";
+}
+
 GAME_ABI bool AbortCall(Impl*, void*) {
     if (!shown.running) {
         // Its turn now: the answer field is ours from here (a dialog before it wrote it too).
@@ -346,6 +362,8 @@ bool OpenBox(u64 box, const char* utf8) {
         Release(job);
         shown = {};
     }
+    std::printf("Trade menu: box %s: %s\n", pushed ? "pushed" : "not pushed", utf8);
+    std::fflush(stdout);
     return pushed;
 }
 
@@ -363,6 +381,8 @@ void Tick() {
         if (References(shown.job) > 1) {
             return; // still the game's
         }
+        std::printf("Trade menu: box gone (%s)\n", shown.running ? "shown" : "never shown");
+        std::fflush(stdout);
         if (shown.ask != 0 && bbcoop_trade_ask_open(shown.ask)) {
             bbcoop_trade_answer(shown.ask, 0); // closed without an answer: a no
         }
