@@ -3144,6 +3144,22 @@ private:
     std::vector<Swing> counted; // at: when it was counted
 };
 
+// Kaniel's playtest 2026-10-16: Lisara started Gascoigne's fight alone; the host's game, far
+// away, ran him (the game never hands a boss out), so her copy only followed its positions (lag)
+// and his AI went for nobody near. A boss-sized enemy is run by the member in its arena: the
+// nearest standing one within BossEnterMetres, kept while it stays within BossLeaveMetres (down
+// too); none: the game's own runner. Every game picks from the same vitals board, ties by name.
+constexpr float BossEnterMetres = 25.0f;
+constexpr float BossLeaveMetres = 45.0f;
+class BossRunnerPick {
+public:
+    // The member whose game runs the boss at `boss` on `map` now, "" for the game's own.
+    std::string Tick(u32 map, const LampPosition& boss, std::span<const MemberVitals> board);
+
+private:
+    std::string current;
+};
+
 // Real revive hits. A character's team is ChrIns +0x88; the game's relation tables
 // ([my team][other's]: hit an enemy 0x04731560, hit a friend 0x04731960, hostile 0x05127B90)
 // let the host (19) and co-op guests (20) lock on to and hit Hostile (21, the invaders') and keep

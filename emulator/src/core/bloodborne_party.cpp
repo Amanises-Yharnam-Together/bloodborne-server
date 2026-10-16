@@ -5289,6 +5289,38 @@ std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self) {
     return std::nullopt;
 }
 
+std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
+                                 std::span<const MemberVitals> board) {
+    const auto distance = [&](const MemberVitals& member) {
+        float sum = 0.0f;
+        for (size_t axis = 0; axis < 3; ++axis) {
+            const float delta = member.at[axis] - boss[axis];
+            sum += delta * delta;
+        }
+        return std::sqrt(sum);
+    };
+    if (!current.empty()) {
+        const auto kept = std::ranges::find(board, current, &MemberVitals::member);
+        if (kept != board.end() && kept->map == map &&
+            (kept->vital == Vital::Up || kept->vital == Vital::Down) &&
+            distance(*kept) <= BossLeaveMetres) {
+            return current;
+        }
+    }
+    const MemberVitals* nearest = nullptr;
+    for (const MemberVitals& member : board) {
+        if (member.map != map || member.vital != Vital::Up || distance(member) > BossEnterMetres) {
+            continue;
+        }
+        if (nearest == nullptr || distance(member) < distance(*nearest) - 0.5f ||
+            (distance(member) <= distance(*nearest) + 0.5f && member.member < nearest->member)) {
+            nearest = &member;
+        }
+    }
+    current = nearest ? nearest->member : std::string{};
+    return current;
+}
+
 bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies) {
     return std::ranges::find(downed_bodies, handle) != downed_bodies.end();
 }

@@ -787,6 +787,43 @@ TEST(BloodbornePartyDeath, ADownedBodyGetsNoEnemyBarDamage) {
     EXPECT_FALSE(SkipsEnemyBarDamage(0x10044001, {}));
 }
 
+// Kaniel's playtest 2026-10-16: Lisara started Gascoigne alone; the host's game, far away, ran
+// him, so her copy only followed (lag) and his AI went for nobody. The member in the arena runs a
+// boss and keeps it while it stays near.
+TEST(BloodbornePartyDeath, TheMemberInTheArenaRunsTheBoss) {
+    constexpr u32 Yharnam = 0x18010000;
+    const LampPosition boss{0.0f, 0.0f, 0.0f};
+    const auto at = [&](std::string member, float x, Vital vital = Vital::Up, u32 map = Yharnam) {
+        MemberVitals entry;
+        entry.member = std::move(member);
+        entry.map = map;
+        entry.vital = vital;
+        entry.at = {x, 0.0f, 0.0f};
+        return entry;
+    };
+    BossRunnerPick pick;
+    EXPECT_EQ(pick.Tick(Yharnam, boss, std::vector{at("host", 150.0f)}), "")
+        << "nobody near: as the game runs it";
+    EXPECT_EQ(pick.Tick(Yharnam, boss, std::vector{at("host", 150.0f), at("lisara", 10.0f)}),
+              "lisara");
+    EXPECT_EQ(pick.Tick(Yharnam, boss, std::vector{at("host", 5.0f), at("lisara", 10.0f)}),
+              "lisara")
+        << "the host comes in: the boss stays with her";
+    EXPECT_EQ(
+        pick.Tick(Yharnam, boss, std::vector{at("host", 5.0f), at("lisara", 10.0f, Vital::Down)}),
+        "lisara")
+        << "down in the arena: still hers";
+    EXPECT_EQ(pick.Tick(Yharnam, boss, std::vector{at("host", 5.0f), at("lisara", 60.0f)}), "host")
+        << "she left: the nearest one in it";
+    EXPECT_EQ(pick.Tick(Yharnam, boss,
+                        std::vector{at("host", 5.0f, Vital::Up, 0x15000000), at("lisara", 60.0f)}),
+              "")
+        << "nobody in the arena";
+    BossRunnerPick tie;
+    EXPECT_EQ(tie.Tick(Yharnam, boss, std::vector{at("b", 10.0f), at("a", 10.0f)}), "a")
+        << "a tie: by name, the same in every game";
+}
+
 TEST(BloodbornePartyDeath, GoesDownOnlyWithSomeoneElseStandingOnTheMap) {
     EXPECT_TRUE(SomeoneElseStands(std::vector{Member(Ada, CentralYharnam, Vital::Up)}, Kaniel,
                                   CentralYharnam));

@@ -762,6 +762,39 @@ bool MarkPositionToSend(u64 world, u64 character) {
 
 } // namespace
 
+namespace {
+
+// See BossRunnerPick: whose game runs a boss-sized enemy (by handle), "" for the game's own; the
+// game's thread.
+std::map<u32, BossRunnerPick> boss_runners;
+bool IsBossSized(u64 character); // below, with the characters shown like the host
+
+std::string BossRunnerOf(u64 character) {
+    if (!IsBossSized(character)) {
+        return {};
+    }
+    const auto at = CharacterPosition(character);
+    const VitalsView view = ReadVitalsBoard();
+    if (!at || !view.Fresh()) {
+        return {};
+    }
+    const u32 handle = ReadValue<u32>(character, 0x08);
+    const std::string runner = boss_runners[handle].Tick(PlayingMap(), *at, view.board.members);
+    static std::map<u32, std::string> logged;
+    if (auto& said = logged[handle]; said != runner) {
+        said = runner;
+        LOG_INFO(Debug, "Bloodborne enemy owner: boss {:#x} is run by {}", handle,
+                 runner.empty() ? "the game's own runner" : runner);
+    }
+    return runner;
+}
+
+bool IsMe(const std::string& member) {
+    return !member.empty() && member == ReadVitalsBoard().member;
+}
+
+} // namespace
+
 namespace Coop {
 
 void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) {
@@ -791,6 +824,16 @@ void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) 
         const s32 level = ReadValue<s32>(control, 0x14);
         const s32 applied = ReadValue<s32>(control, 0x10);
         const bool kept_out = KeptOutByTheGame(character);
+        // Kaniel 2026-10-16: a boss another member's game runs (BossRunnerPick) is followed here.
+        if (level == EnemyAwake && !kept_out) {
+            if (const std::string runner = BossRunnerOf(character);
+                !runner.empty() && !IsMe(runner)) {
+                if (static_cast<s16>(ReadValue<u16>(word, 0)) >= 0) {
+                    WriteValue(word, 0, u16{0xFFFF});
+                }
+                return;
+            }
+        }
         if (const auto wanted =
                 AwakeEnemyWord(role, level, applied, ReadValue<u16>(word, 0), kept_out,
                                HandedOut(handed, ReadValue<u32>(character, 0x90)))) {
@@ -1186,11 +1229,16 @@ void TickEnemyOwner(bool in_session, u32 map) {
         }
         // A word already on the wanted side keeps its value (the game's own >= 0 ones too).
         const bool runs = static_cast<s16>(ReadValue<u16>(word, 0)) >= 0;
-        const bool should_run = role == EnemyRole::Owner;
+        // Kaniel 2026-10-16: a follower runs the boss whose arena it is in (BossRunnerPick).
+        const u64 control = ReadValue<u64>(character, 0x18);
+        const bool boss_mine = role == EnemyRole::Follower && control >= 0x10000 &&
+                               ReadValue<s32>(control, 0x14) == EnemyAwake &&
+                               IsMe(BossRunnerOf(character));
+        const bool should_run = role == EnemyRole::Owner || boss_mine;
         if (runs == should_run) {
             return;
         }
-        WriteValue(word, 0, *wanted);
+        WriteValue(word, 0, boss_mine ? u16{0} : *wanted);
         enemy_owner_changed_ms[character] = now_ms;
         ++changed;
     });
