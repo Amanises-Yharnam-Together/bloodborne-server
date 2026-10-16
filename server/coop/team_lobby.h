@@ -4,7 +4,8 @@
 // The team lobby's rules (phase 5, docs/SERVER_COOP_PLAN.md "The team lobby"): who is signed in,
 // the teams (up to TeamSize members, a leader that hosts), the invites, Ready and Start. shadNet
 // keeps one TeamLobby (bloodborne_world.h) and sends every signed-in player its LobbyState after a
-// change; the teams outlive the games and the server (Store/Restore, teams.pb).
+// change; the teams outlive the games and the server (Store/Restore, teams.pb), but a member whose
+// game stays gone for OfflineGraceMs leaves its team (Expire).
 #pragma once
 
 #include <functional>
@@ -19,6 +20,10 @@ namespace BloodborneCoop {
 
 // The game's remote player slots: the host and three more.
 constexpr size_t TeamSize = 4;
+
+// Kaniel 2026-10-16: how long a member's game may stay gone (a crash and a restart) before the
+// member leaves its team; a team with nobody left is gone.
+constexpr s64 OfflineGraceMs = 10 * 60 * 1000;
 
 class TeamLobby {
 public:
@@ -35,6 +40,9 @@ public:
     Outcome Arrive(const std::string& member, const std::string& name, bool playing);
     // Its game is gone.
     Outcome Leave(const std::string& member);
+    // Members gone for OfflineGraceMs leave their teams. The clock of a member starts at the first
+    // call that finds it gone (after Leave, or after Restore for everyone not back yet).
+    Outcome Expire(s64 now_ms);
     Outcome Request(const std::string& member, const bbcoop::TeamRequest& request);
 
     // What `member` sees.
@@ -73,6 +81,7 @@ private:
     std::vector<bbcoop::Team> teams;
     std::map<std::string, std::vector<bbcoop::TeamInvite>> invites; // by invited member
     std::map<std::string, std::string> names; // every member's last known name
+    std::map<std::string, s64> gone_since;    // team members not signed in, since when
 };
 
 } // namespace BloodborneCoop

@@ -1352,6 +1352,20 @@ int ATeamFormsAndStartsThroughTheService() {
   Pump(service, {&b}, now);
   CHECK(b.lobby.has_team() && b.lobby.team().id() == team);
   CHECK(b.lobby.team().members_size() == 2);
+  // Kaniel 2026-10-16: aa's game stays gone for the grace: it leaves the team,
+  // b leads, and the store says so.
+  now += OfflineGraceMs - 1;
+  Pump(service, {&b}, now);
+  CHECK(b.lobby.team().members_size() == 2);
+  now += 1;
+  Pump(service, {&b}, now);
+  CHECK(b.lobby.team().members_size() == 1 && b.lobby.team().leader() == "bb");
+  Service later{dir.path()};
+  later.Load(now);
+  Game b2{1001, "bb", 23};
+  b2.LobbyHello(false, now);
+  Pump(later, {&b2}, now);
+  CHECK(b2.lobby.team().members_size() == 1);
   return 0;
 }
 
