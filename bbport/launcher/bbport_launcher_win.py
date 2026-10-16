@@ -2190,7 +2190,7 @@ class Sidebar:
         self.near = c.create_polygon(0, 0, 0, 0, 0, 0, fill='#07090c', outline='', tags='city')
         self.lights = [c.create_rectangle(0, 0, 0, 0, fill='#6a5430', outline='', tags='city') for _i in range(7)]
         self.edge = c.create_line(0, 0, 0, 0, fill=LINE)
-        self.emblem_image = self.load_emblem(px(58))
+        self.emblem_image = self.load_emblem(px(92))
         self.emblem = c.create_image(0, 0, anchor='n', image=self.emblem_image or '', tags='txt')
         font = ui.fonts['title']
         self.letters, self.xs, x = [], [], 0
@@ -2250,7 +2250,7 @@ class Sidebar:
         self.layout()
 
     def menu_top(self):
-        return self.ui.px(262)
+        return self.ui.px(274)
 
     def entry_y(self, index):
         return self.menu_top() + index * self.ui.px(34)
@@ -2289,14 +2289,14 @@ class Sidebar:
             x, y = w * fx, h - px(up)
             c.coords(item, x, y, x + px(2), y + px(3))
         # Emblem, title, the version line and the game line, an ornament.
-        c.coords(self.emblem, mid, px(26))
-        base = px(136)
+        c.coords(self.emblem, mid, px(18))
+        base = px(152)
         x0 = mid - self.title_w / 2
         for i, item in enumerate(self.letters):
             c.coords(item, x0 + self.xs[i], base + round((1 - ease_out(self.letter_alpha(i))) * px(10)))
-        c.coords(self.sub, mid, px(146))
-        c.coords(self.info, mid, px(168))
-        y, half = px(206), min(px(96), w / 2 - px(20))
+        c.coords(self.sub, mid, px(162))
+        c.coords(self.info, mid, px(184))
+        y, half = px(220), min(px(96), w / 2 - px(20))
         c.coords(self.rule[0], mid - half, y, mid - px(9), y)
         c.coords(self.rule[1], mid + px(9), y, mid + half, y)
         c.coords(self.gem, *diamond(mid, y, px(5)))
