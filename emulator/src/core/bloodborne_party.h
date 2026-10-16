@@ -2001,6 +2001,10 @@ std::size_t RemoveBellIcons(std::span<u8> sp_effect_param);
 //   5-byte nops; neither caller uses the result.
 constexpr u64 ShowNetworkBannerOffset = 0x01BFFE80;
 const std::vector<CodePatch>& QuietSummonBannerPatches();
+// Kaniel 2026-10-16: no multiplayer banners at all in a party (joins, leaves, summons, the
+// chimes): the network banner (0x01BFFE80, message id in edi) shows none of them.
+constexpr std::array<u8, 8> ShowNetworkBannerPrologue{0x55, 0x48, 0x89, 0xE5,
+                                                      0x41, 0x57, 0x41, 0x56};
 
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
