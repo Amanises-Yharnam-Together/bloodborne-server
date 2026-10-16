@@ -2375,6 +2375,21 @@ constexpr std::array<u8, 6> UnreliableChannelCheck{0x49, 0x89, 0xD6, 0x83, 0xF8,
 // frame, which holds the load for the team. State 2 (0x0195AE80) runs the title menu: the player
 // is back at the title.
 constexpr u64 TitleLoadStateOffset = 0x0195B480;
+// Kaniel's playtest 2026-10-16: a guest's lever pull (ch 0x2D), forced animation (0x24) and event
+// (0x31) name their player by its number (player +0x3B8), which the host's game hands out when a
+// member joins (0x0178C524: 0x01A6C160 on NetSync +0x18, sent on ch 7). Its counter moves on only
+// past a number in use, and a member's counts as used once its character data came (ch 8): the
+// team join brings the guests in before that, so two got the same number and each game did the
+// other's actions on its own player. Right after the hand-out (eax: the number, r15: NetSync)
+// the counter goes on past it.
+constexpr u64 PlayerNumberHandedOutOffset = 0x0178C529;
+constexpr std::array<u8, 12> PlayerNumberHandedOut{0x89, 0x85, 0x8C, 0xFE, 0xFF, 0xFF,
+                                                   0x89, 0x85, 0xDC, 0xFE, 0xFF, 0xFF};
+constexpr u64 PlayerNumberCounterOffset = 0x18;
+// The number after `n`, as the game's counter goes (past 0x7FFD back to 2; 1 is the host's).
+constexpr s32 NextPlayerNumber(s32 n) {
+    return n > 0x7FFD ? 2 : n + 1;
+}
 constexpr u64 TitleMenuStateOffset = 0x0195AE80;
 constexpr std::array<u8, 6> TitleStatePrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
 constexpr u64 TitleLoadSlotOffset = 0x1490; // GameMan's (GlobalState's) save slot to load

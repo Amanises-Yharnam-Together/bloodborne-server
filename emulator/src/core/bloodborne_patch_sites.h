@@ -64,6 +64,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"enemy owner", false},
     {"team lobby", false},
     {"team join", false},
+    {"own player numbers", false},
     {"host leaves", true},
     {"seamless travel", true},
     {"stop request", true},
@@ -287,6 +288,9 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // Phase 5: the title's save load held for the team, and the title menu seen again.
     {"title load state", "team lobby", CoopSiteKind::Hook, 0x0195B480, "55 48 89 E5 41 57"},
     {"title menu state", "team lobby", CoopSiteKind::Hook, 0x0195AE80, "55 48 89 E5 41 57"},
+    // Kaniel 2026-10-16: each joining member its own player number (PlayerNumberHandedOut).
+    {"player number handed out", "own player numbers", CoopSiteKind::Hook, 0x0178C529,
+     "89 85 8C FE FF FF 89 85 DC FE FF FF"},
     // Phase 6: the team join without signs or a bell (bloodborne_join.cpp, OpenTeamSession,
     // TeamSessionJoinData, JoinTeamSession): what the summon manager's update calls.
     {"CreateSession", "team join", CoopSiteKind::Call, 0x01788ED0,
