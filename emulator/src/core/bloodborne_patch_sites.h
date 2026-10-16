@@ -397,6 +397,12 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "83 B8 24 01 00 00 06"},
     {"drop handle session check", "shared loot", CoopSiteKind::Hook, 0x017D564B,
      "41 83 BF 98 00 00 00 FF"},
+    // Kaniel's playtest 2026-10-16 (the Cathedral Ward hag): an enemy's item lot on a guest keeps
+    // only the items for co-op phantoms (the one-time ones go); a guest's rolls as solo play does.
+    {"drop lot guest state check", "shared loot", CoopSiteKind::Hook, 0x017DD17C,
+     "83 B8 24 01 00 00 06"},
+    {"drop lot guest session check", "shared loot", CoopSiteKind::Hook, 0x017DD186,
+     "41 83 BF 98 00 00 00 FF"},
     {"map item pickup check", "map item pickup", CoopSiteKind::Hook, 0x017D6831,
      "80 B8 92 15 00 00 00"},
     {"map item pickup check 2", "map item pickup", CoopSiteKind::Hook, 0x017D6AEF,
@@ -423,8 +429,6 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "83 B8 24 01 00 00 06"},
     {"item check 0x017D9EE0", "item diagnostics", CoopSiteKind::Hook, 0x017D9EE0,
      "83 B9 24 01 00 00 06"},
-    {"item check 0x017DD17C", "item diagnostics", CoopSiteKind::Hook, 0x017DD17C,
-     "83 B8 24 01 00 00 06"},
     {"item check 0x017DDCD9", "item diagnostics", CoopSiteKind::Hook, 0x017DDCD9,
      "83 B8 24 01 00 00 06"},
     {"item check 0x017DE5EC", "item diagnostics", CoopSiteKind::Hook, 0x017DE5EC,

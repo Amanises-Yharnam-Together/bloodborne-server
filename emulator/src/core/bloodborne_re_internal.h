@@ -582,7 +582,6 @@ constexpr auto ItemModuleChecks = std::to_array<ItemModuleCheck>({
     {0x017D9AA8, GuestStateCheckRcx},
     {0x017D9E1C, GuestStateCheck},
     {0x017D9EE0, GuestStateCheckRcx},
-    {0x017DD17C, GuestStateCheck},
     {0x017DDCD9, GuestStateCheck},
     {0x017DE5EC, GuestStateCheck},
     {0x017DE738, GuestStateCheck},

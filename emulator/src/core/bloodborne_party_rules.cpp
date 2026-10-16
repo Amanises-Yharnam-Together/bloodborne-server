@@ -639,8 +639,14 @@ constexpr std::array<u8, 8> MapItemHandleSessionCheck{0x41, 0x83, 0xBF, 0x98,
 // Kaniel's playtest 2026-10-16: an enemy's death drop (0x017D5320, the MapItemMan +0x38 list;
 // counter +0x10) has the same guest branch at its handle: on a guest every drop kept the kind-only
 // handle 0x2, so one pickup took them all (krolebord found every kill's drop on the first wolf).
-constexpr u64 DropHandleStateCheckOffset = 0x017D5642;                    // cmp [rax+0x124], 6
-constexpr u64 DropHandleSessionCheckOffset = 0x017D564B;                  // cmp [r15+0x98], -1
+constexpr u64 DropHandleStateCheckOffset = 0x017D5642;   // cmp [rax+0x124], 6
+constexpr u64 DropHandleSessionCheckOffset = 0x017D564B; // cmp [r15+0x98], -1
+// Kaniel's playtest 2026-10-16: only the host got the Cathedral Ward hag's loot. An enemy's item
+// lot roll (0x017DD0B0) on a summoned guest (its flag at [rbp-0x208]) keeps only the lot's items
+// for co-op phantoms, so the one-time drops never came; the guest's roll as solo play's (each
+// world's own lot flag still gives a one-time item once). rax and r15 are reloaded after.
+constexpr u64 DropLotStateCheckOffset = 0x017DD17C;                       // cmp [rax+0x124], 6
+constexpr u64 DropLotSessionCheckOffset = 0x017DD186;                     // cmp [r15+0x98], -1
 constexpr std::array<u64, 2> MapItemPickupChecks{0x017D6831, 0x017D6AEF}; // [rax+0x1592], 0
 // Picking up a networked map item (0x017D8570): a summoned guest only asks the host for it.
 constexpr u64 MapItemTakeStateCheckOffset = 0x017D85F4; // cmp [rax+0x124], 6
@@ -811,7 +817,7 @@ void InstallSharedLoot(u64 base, u64 image_size) {
         std::span<const u8> bytes;
         GuestRegisterEditHook edit;
     };
-    const std::array<LootHook, 7> loot_hooks{{
+    const std::array<LootHook, 9> loot_hooks{{
         {MapItemCreateStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest},
         {MapItemCreateSessionCheckOffset, MapItemCreateSessionCheck, CreateMapItemsInJoinedSession},
         {MapItemHandleStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest},
@@ -821,6 +827,8 @@ void InstallSharedLoot(u64 base, u64 image_size) {
         {DropHandleStateCheckOffset, GuestStateCheck, GiveDropsAHandle},
         {DropHandleSessionCheckOffset, MapItemHandleSessionCheck,
          GiveMapItemsAHandleInJoinedSession},
+        {DropLotStateCheckOffset, GuestStateCheck, GiveDropsAHandle},
+        {DropLotSessionCheckOffset, MapItemHandleSessionCheck, GiveMapItemsAHandleInJoinedSession},
     }};
     const auto hook = [base, image_size](u64 offset, std::span<const u8> bytes,
                                          GuestRegisterEditHook edit) {
