@@ -290,9 +290,10 @@ set_source_files_properties(third_party/imgui/imgui.cpp third_party/imgui/imgui_
 target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
     BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf"
     BB_SERIF_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf"
-    BB_PARTY_ICONS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/art/party_icons.bin")
+    BB_PARTY_ICONS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/art/party_icons.bin"
+    BB_COOP_ART_PATH="${CMAKE_CURRENT_SOURCE_DIR}/art/coop_art.bin")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
-    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf;${CMAKE_CURRENT_SOURCE_DIR}/art/party_icons.bin")
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf;${CMAKE_CURRENT_SOURCE_DIR}/art/party_icons.bin;${CMAKE_CURRENT_SOURCE_DIR}/art/coop_art.bin")
 target_include_directories(bbgpu PRIVATE shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include
     ${BB_EMULATOR_SRC})
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
@@ -481,6 +482,13 @@ target_include_directories(party-icons-test PRIVATE ..)
 target_compile_definitions(party-icons-test PRIVATE
     BB_PARTY_ICONS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/art/party_icons.bin")
 target_link_libraries(party-icons-test PRIVATE miniz::miniz)
+# bbport co-op: the co-op screens' own art (art/coop_art.bin, scripts/coop_art.py) as the overlay embeds it.
+add_executable(coop-art-test EXCLUDE_FROM_ALL ../tests/test_coop_art.cpp shim/bbport_coop_art.cpp)
+target_compile_options(coop-art-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(coop-art-test PRIVATE ..)
+target_compile_definitions(coop-art-test PRIVATE
+    BB_COOP_ART_PATH="${CMAKE_CURRENT_SOURCE_DIR}/art/coop_art.bin")
+target_link_libraries(coop-art-test PRIVATE miniz::miniz)
 # bbport co-op: the party portraits' textures (shim/bbport_portraits.h): placeholders by colour, mips.
 add_executable(portraits-test EXCLUDE_FROM_ALL ../tests/test_portraits.cpp shim/bbport_portraits.cpp)
 target_compile_options(portraits-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

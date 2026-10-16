@@ -30,7 +30,7 @@ FE = 'dvdroot_ps4/menu/fe.gfx'
 LAYER = 'party HUD'
 # Part of the generated file's name: a patcher that patches differently makes its file anew (the old
 # one is not reused). Bump it with every change to what patch_fe writes.
-PATCH_VERSION = b'party-hud 7'
+PATCH_VERSION = b'party-hud 9'
 DRAW_BANNER = 'Fe_fla._TextEffect_Draw_195'
 DRAW_FIELD = 'StaticText_522007'
 DOWNED_FIELD = 'CoopDownedText'
@@ -58,15 +58,17 @@ ICON_SIZE, ICON_PAD = 36, 18
 # and the bar's bottom.
 NAME_TOP_FROM_BAR, BAR_BOTTOM_FROM_BAR = -34.5, 4.5
 # The portraits (Kaniel 2026-10-13: 1.5-2x the icon, centred on the whole block, the icon a small badge at its
-# top right; then round, in a Bloodborne frame; after the 3-player playtest 1.5-2x smaller, 64 to 36 px): their
+# top right; then round, in a Bloodborne frame; after the 3-player playtest 1.5-2x smaller, 64 to 36 px; 2026-10-17
+# "really poor quality": bitmaps of 128 px, sharp at 4K, where the HUD shows 72 px; the same day the co-op art's
+# wrought-iron frame, whose inner gold ring is 69% of its width: the frame 52 px round a 36 px portrait): their
 # size on the stage, their bitmaps' side (the port's PortraitSide), the frame's size on the stage and its
 # drawing's side (drawn larger, crisp when scaled; the ring keeps the picture's 4:5 to the frame), the frame
 # ICON_PAD px left of the bar; the badge's size, its centre BADGE_DISTANCE px up and right of the portrait's, on
 # the diagonal, over the ring.
 PARTY_FACES = ('CoopPartyFace0', 'CoopPartyFace1', 'CoopPartyFace2')
 PARTY_BADGES = ('CoopPartyBadge0', 'CoopPartyBadge1', 'CoopPartyBadge2')
-PORTRAIT_SIZE, PORTRAIT_PIXELS = 36, 64
-FRAME_SIZE, FRAME_PIXELS = 45, 128
+PORTRAIT_SIZE, PORTRAIT_PIXELS = 36, 128
+FRAME_SIZE, FRAME_PIXELS = 52, 128
 BADGE_SIZE, BADGE_DISTANCE = 16, 25
 FIRST_FACE_ID = 50100  # after the icons' ids
 

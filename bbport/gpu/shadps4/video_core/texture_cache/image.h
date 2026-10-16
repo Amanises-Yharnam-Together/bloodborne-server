@@ -199,6 +199,8 @@ public:
     /// none, and the slot's version its contents show.
     s32 portrait_slot = -1;
     u32 portrait_version = 0;
+    /// The screen height it was fitted to (BbPortraits::FitToScreen).
+    s32 portrait_output = 0;
 
 private:
     static Common::IncrementalIdProvider<u64> global_image_uid;

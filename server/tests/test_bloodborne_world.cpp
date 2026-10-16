@@ -954,11 +954,13 @@ int APortraitGoesToTheOthersAndToLaterMembers() {
   bbcoop::Envelope portrait;
   portrait.mutable_portrait()->set_member("spoofed");
   portrait.mutable_portrait()->set_id(0xabcd);
-  portrait.mutable_portrait()->set_pixels(std::string(8192, 'p'));
+  // 128 px in RGB888 (Kaniel 2026-10-17: sharper, true colour): the stream
+  // carries it whole.
+  portrait.mutable_portrait()->set_pixels(std::string(128 * 128 * 3, 'p'));
   host.Send(portrait, now);
   Pump(service, {&host, &guest}, now);
   CHECK(guest.portraits.contains("host"));
-  CHECK(guest.portraits.at("host").pixels().size() == 8192);
+  CHECK(guest.portraits.at("host").pixels().size() == 128 * 128 * 3);
   CHECK(!guest.portraits.contains("spoofed"));
   CHECK(host.portraits.empty());
   Game late{1002, "late", 13};

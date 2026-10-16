@@ -34,6 +34,8 @@ patches.json
 *.dll
 !launcher/bloodborne.png
 !docs/screenshots/*.png
+# The co-op art's pieces (scripts/coop_art.py packs them into gpu/art/coop_art.bin).
+!gpu/art/coop/*.png
 # Local: game logs, messages and archives from users, internal plans
 /logs/
 /message*.txt

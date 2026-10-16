@@ -25,8 +25,10 @@
 
 namespace Core::Bloodborne {
 
-// A portrait: PortraitSide square, RGBA rows, opaque.
-constexpr int PortraitSide = 64;
+// A portrait: PortraitSide square, RGBA rows, opaque. Kaniel 2026-10-17 ("really poor quality"):
+// 128, about the model's own head and shoulders (StatusModelCropSide), sharp where a 4K screen
+// shows it 72 px across (64 was magnified there).
+constexpr int PortraitSide = 128;
 constexpr size_t PortraitBytes = size_t{PortraitSide} * PortraitSide * 4;
 using PortraitPixels = std::vector<u8>;
 
@@ -57,12 +59,13 @@ std::optional<PortraitPixels> PortraitFromModel(std::span<const u8> rgba, int wi
 // premultiplied as the HUD's bitmaps are. Nothing for anything but a portrait.
 PortraitPixels CircularPortrait(const PortraitPixels& pixels);
 
-// A portrait on the co-op link: RGB565 in PortraitPartCount parts of PortraitPartBytes, each
-// naming the member (its board name) and the picture (PortraitId). CoopFrameMax is the link's
-// frame size (P2PCoopSendTo, the receive buffer in TakeDirectDamage).
+// A portrait on the co-op link: RGB888 in PortraitPartCount parts of PortraitPartBytes, each
+// naming the member (its board name) and the picture (PortraitId). Kaniel 2026-10-17 ("very bad
+// colors"): true colour; RGB565 banded the dark hoods and backdrops and turned them green-grey.
+// CoopFrameMax is the link's frame size (P2PCoopSendTo, the receive buffer in TakeDirectDamage).
 constexpr u8 PortraitPartType = 0x3E;
 constexpr size_t PortraitPartBytes = 1024;
-constexpr size_t PortraitPartCount = size_t{PortraitSide} * PortraitSide * 2 / PortraitPartBytes;
+constexpr size_t PortraitPartCount = size_t{PortraitSide} * PortraitSide * 3 / PortraitPartBytes;
 constexpr size_t CoopFrameMax = 1400;
 struct PortraitPart {
     std::string member;
@@ -95,8 +98,8 @@ public:
 private:
     struct Pending {
         u32 id = 0;
-        std::vector<u8> rgb565;
-        u32 have = 0; // a bit per part
+        std::vector<u8> rgb;
+        u64 have = 0; // a bit per part
         bool made = false;
         u64 touched = 0;
     };
@@ -163,7 +166,7 @@ private:
 // by its face data and the armour it wears (head, body, arms, legs ids), and the capture's format
 // (PortraitCaptureFormat; bump it when captures change): a picture of another outfit, or one an
 // older build took, is never loaded (Kaniel 2026-10-13: #77's first build's bald heads were).
-constexpr std::string_view PortraitCaptureFormat = "m2";
+constexpr std::string_view PortraitCaptureFormat = "m3";
 struct PortraitKey {
     u64 face = 0;
     std::array<s32, 4> outfit{};

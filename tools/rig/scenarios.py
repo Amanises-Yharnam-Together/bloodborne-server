@@ -1213,6 +1213,17 @@ SCENARIOS = {
     },
     # Kaniel 2026-10-15: the team's loading screen stays over the whole screen, the sound held,
     # until every guest has fully joined the host (its character spawned), then opens for all.
+    "team-load-art": {
+        "about": "the team loading screen's art (Kaniel 2026-10-17: the co-op art's night city, cards, "
+                 "medallions and sigils): each game shoots its loading screen as it comes up",
+        "roles": {
+            "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START, "shot host-loading",
+                     "wait-session 2 300"],
+            "guest": ["team-accept", "team-ready", START, "shot guest-loading", "wait-session 2 300"],
+        },
+        "expect": {role: [r"Co-op team load: the screen covers the game"] for role in ("host", "guest")},
+        "timeout": 300,
+    },
     "team-load-cover": {
         "about": "a team's load: each game's loading screen stays full screen with its sound "
                  "held until the other hunter's character stands in its world, then it opens "

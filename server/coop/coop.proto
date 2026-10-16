@@ -211,7 +211,7 @@ message VitalsBoard {
     repeated Wipe wipes = 2;
 }
 
-// A member's portrait (bloodborne_portrait.h), RGB565, or none (no pixels); the server keeps each
+// A member's portrait (bloodborne_portrait.h), RGB888, or none (no pixels); the server keeps each
 // member's last one for the members that come later.
 message Portrait {
     string member = 1; // server -> game: whose

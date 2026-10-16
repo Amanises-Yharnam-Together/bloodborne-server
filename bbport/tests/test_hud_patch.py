@@ -140,11 +140,22 @@ class GfxTests(unittest.TestCase):
             self.assertEqual(bar_start - (cx + hud_patch.FRAME_SIZE / 2), hud_patch.ICON_PAD, 'the padding')
             self.assertGreater(cx - hud_patch.FRAME_SIZE / 2, 0, 'on the stage')
 
+    def test_the_portrait_bitmaps_are_sharp_at_4k_and_the_ports_size(self):
+        # Kaniel 2026-10-17 ("really poor quality"): the HUD is drawn at the output's size, so a 4K screen
+        # shows the portrait twice its stage size; its bitmap is at least that, and the port's texture
+        # cache (bbport_portraits.h Side, StageSize) knows the same sizes.
+        self.assertGreaterEqual(hud_patch.PORTRAIT_PIXELS, hud_patch.PORTRAIT_SIZE * 2160 / 1080)
+        import re
+        header = (Path(__file__).resolve().parents[1] / 'gpu' / 'shim' / 'bbport_portraits.h').read_text()
+        self.assertEqual(int(re.search(r'constexpr int Side = (\d+);', header).group(1)), hud_patch.PORTRAIT_PIXELS)
+        self.assertEqual(int(re.search(r'constexpr int StageSize = (\d+);', header).group(1)),
+                         hud_patch.PORTRAIT_SIZE)
+
     def test_the_frame_rings_the_portrait(self):
         # Kaniel 2026-10-13: a round portrait in a Bloodborne frame, drawn larger than it shows (crisp when
         # scaled), a few pixels round the picture, shown with it (a second layer of the face sprite's picture
         # frame).
-        self.assertGreaterEqual(hud_patch.FRAME_PIXELS, 2 * hud_patch.PORTRAIT_PIXELS)
+        self.assertGreaterEqual(hud_patch.FRAME_PIXELS, 2 * hud_patch.FRAME_SIZE)
         self.assertTrue(hud_patch.PORTRAIT_SIZE + 8 <= hud_patch.FRAME_SIZE <= hud_patch.PORTRAIT_SIZE + 16)
         strip = hud_patch.HUD_ICONS.read_bytes()
         _, tags = hud_patch.read_movie(hud_patch.patch_fe(fe_movie(), strip))
@@ -184,11 +195,10 @@ class GfxTests(unittest.TestCase):
         # The ring just round the picture (64 px of 76 across) is drawn.
         ring = half * hud_patch.PORTRAIT_SIZE / hud_patch.FRAME_SIZE
         self.assertTrue(any(alpha(half, round(half + ring + d)) > 0xC0 for d in range(-1, 4)))
-        # Drawn with the icons (gpu/art/party_icons.svg's h-frame), last in the HUD strip.
-        import party_icons_atlas
-        svg = party_icons_atlas.hud_strip_svg(party_icons_atlas.SVG.read_text(encoding='utf-8'))
-        self.assertIn('href="#h-frame" x="%d"' % (128 * len(hud_patch.HUD_ICON_FRAMES)), svg)
-        self.assertEqual(party_icons_atlas.HUD_COUNT, len(hud_patch.HUD_ICON_FRAMES) + 1)
+        # Kaniel 2026-10-17: the co-op art's frame and badges (coop_art.py's strip), the frame last.
+        import coop_art
+        self.assertEqual(coop_art.HUD_COUNT, len(hud_patch.HUD_ICON_FRAMES) + 1)
+        self.assertEqual(coop_art.HUD_STRIP, hud_patch.HUD_ICONS)
 
     def test_the_badge_sits_on_the_frames_top_right(self):
         # Smaller with the portrait, still big enough to read a downed member's revive.

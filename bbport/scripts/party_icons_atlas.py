@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Draws the party death icons (gpu/art/party_icons.svg) into the atlas the overlay embeds (gpu/art/party_icons.bin)
-and the strip the party HUD's list shows (scripts/party_hud_icons.bin, hud_patch.py puts it in the game's HUD):
+(the strip the party HUD's list shows, scripts/party_hud_icons.bin, is coop_art.py's since 2026-10-17; --hud-strip
+draws the old one from the SVG):
 'BBIC', width, height and icon count (little-endian u16 each), then the RGBA pixels, zlib-compressed. A developer
 tool, run after editing the drawing: it needs a Chromium browser (Edge or Chrome) to draw the SVG and Pillow."""
 import argparse
@@ -78,13 +79,15 @@ def draw(browser, svg_text, png, count):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--browser', help='a Chromium browser (default: Edge, then Chrome)')
+    parser.add_argument('--hud-strip', action='store_true', help="also the HUD strip from the SVG (coop_art.py's now)")
     args = parser.parse_args()
     browser = args.browser or next((b for b in BROWSERS if Path(b).is_file() or shutil.which(b)), None)
     if not browser:
         raise SystemExit('No Chromium browser found: pass --browser')
     from PIL.PngImagePlugin import PngImageFile
     svg_text = SVG.read_text(encoding='utf-8')
-    for target, text, count in ((ATLAS, svg_text, COUNT), (HUD_STRIP, hud_strip_svg(svg_text), HUD_COUNT)):
+    targets = [(ATLAS, svg_text, COUNT)] + ([(HUD_STRIP, hud_strip_svg(svg_text), HUD_COUNT)] if args.hud_strip else [])
+    for target, text, count in targets:
         with tempfile.TemporaryDirectory() as folder:
             png = Path(folder) / 'atlas.png'
             draw(browser, text, png, count)

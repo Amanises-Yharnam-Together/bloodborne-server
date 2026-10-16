@@ -26,17 +26,8 @@ void PutU32(std::vector<u8>& out, u32 value) {
     }
 }
 
-u16 ToRgb565(const u8* rgba) {
-    return static_cast<u16>((rgba[0] >> 3) << 11 | (rgba[1] >> 2) << 5 | rgba[2] >> 3);
-}
-
-void FromRgb565(u16 value, u8* rgba) {
-    const u8 r = (value >> 11) & 0x1F, g = (value >> 5) & 0x3F, b = value & 0x1F;
-    rgba[0] = static_cast<u8>(r << 3 | r >> 2);
-    rgba[1] = static_cast<u8>(g << 2 | g >> 4);
-    rgba[2] = static_cast<u8>(b << 3 | b >> 2);
-    rgba[3] = 0xFF;
-}
+static_assert(PortraitPartCount * PortraitPartBytes == size_t{PortraitSide} * PortraitSide * 3);
+static_assert(PortraitPartCount <= 64, "a bit per part in PortraitAssembler's mask");
 
 } // namespace
 
@@ -166,17 +157,16 @@ std::vector<PortraitPart> SplitPortrait(std::string_view member, const PortraitP
     if (pixels.size() != PortraitBytes) {
         return {};
     }
-    std::vector<u8> rgb565;
-    rgb565.reserve(PortraitBytes / 2);
+    std::vector<u8> rgb;
+    rgb.reserve(PortraitBytes / 4 * 3);
     for (size_t at = 0; at < pixels.size(); at += 4) {
-        const u16 value = ToRgb565(&pixels[at]);
-        rgb565.push_back(static_cast<u8>(value));
-        rgb565.push_back(static_cast<u8>(value >> 8));
+        rgb.insert(rgb.end(), pixels.begin() + static_cast<std::ptrdiff_t>(at),
+                   pixels.begin() + static_cast<std::ptrdiff_t>(at + 3));
     }
     const u32 id = PortraitId(pixels);
     std::vector<PortraitPart> parts;
     for (size_t part = 0; part < PortraitPartCount; ++part) {
-        const auto first = rgb565.begin() + static_cast<std::ptrdiff_t>(part * PortraitPartBytes);
+        const auto first = rgb.begin() + static_cast<std::ptrdiff_t>(part * PortraitPartBytes);
         parts.push_back(PortraitPart{.member = std::string{member.substr(0, 0xFF)},
                                      .id = id,
                                      .part = static_cast<u8>(part),
@@ -247,7 +237,7 @@ std::optional<PortraitPixels> PortraitAssembler::Take(const PortraitPart& part) 
         if (pictures.size() >= PicturesKept) {
             pictures.erase(std::ranges::min_element(pictures, {}, &Pending::touched));
         }
-        pictures.push_back(Pending{.id = part.id, .rgb565 = std::vector<u8>(PortraitBytes / 2)});
+        pictures.push_back(Pending{.id = part.id, .rgb = std::vector<u8>(PortraitBytes / 4 * 3)});
         found = pictures.end() - 1;
     }
     Pending& pending = *found;
@@ -255,17 +245,19 @@ std::optional<PortraitPixels> PortraitAssembler::Take(const PortraitPart& part) 
     if (pending.made) {
         return std::nullopt;
     }
-    std::ranges::copy(part.bytes, pending.rgb565.begin() +
+    std::ranges::copy(part.bytes, pending.rgb.begin() +
                                       static_cast<std::ptrdiff_t>(part.part * PortraitPartBytes));
-    pending.have |= 1u << part.part;
-    if (pending.have != (1u << PortraitPartCount) - 1) {
+    pending.have |= u64{1} << part.part;
+    constexpr u64 all = PortraitPartCount == 64 ? ~u64{0} : (u64{1} << PortraitPartCount) - 1;
+    if (pending.have != all) {
         return std::nullopt;
     }
     pending.made = true;
     PortraitPixels pixels(PortraitBytes);
     for (size_t index = 0; index < PortraitBytes / 4; ++index) {
-        FromRgb565(static_cast<u16>(pending.rgb565[index * 2] | pending.rgb565[index * 2 + 1] << 8),
-                   &pixels[index * 4]);
+        std::copy_n(pending.rgb.begin() + static_cast<std::ptrdiff_t>(index * 3), 3,
+                    pixels.begin() + static_cast<std::ptrdiff_t>(index * 4));
+        pixels[index * 4 + 3] = 0xFF;
     }
     return pixels;
 }
