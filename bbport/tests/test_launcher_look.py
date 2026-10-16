@@ -275,6 +275,12 @@ class CoopSettingsTests(unittest.TestCase):
         self.assertTrue(self.app.server_row.winfo_manager())
 
 
+    def test_the_side_column_shows_the_releases_version_not_the_ports(self):
+        """Kaniel 2026-10-16: the version is the co-op release's (VERSION.txt), not the upstream fork's."""
+        sub = self.app.side.canvas.itemcget(self.app.side.sub, 'text')
+        self.assertNotIn(launcher.VERSION, sub)
+        self.assertIn('development build', sub, 'a source tree has no release version')
+
     def test_a_newer_release_shows_the_update_button_and_installs_with_the_switch(self):
         """Kaniel 2026-10-16: an Update button when a newer release is out; with the automatic update
         switch on, the update starts by itself at the launcher's start."""
