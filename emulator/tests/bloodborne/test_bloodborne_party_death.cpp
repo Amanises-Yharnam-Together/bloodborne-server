@@ -769,6 +769,16 @@ TEST(BloodbornePartyDeath, RevivesTheNearestDownedMemberInReach) {
     EXPECT_FALSE(ReviveTarget(self, Kaniel, CentralYharnam, me));
 }
 
+// Kaniel's playtest 2026-10-16: a downed member showed an ever-growing damage number (27317). The
+// body takes the invaders' team for its revive hits, so the game keeps an enemy bar for it and
+// adds every drop of its synced HP (and every hit again) to the bar's damage: none for a body.
+TEST(BloodbornePartyDeath, ADownedBodyGetsNoEnemyBarDamage) {
+    const std::vector<u32> bodies{0x10044001};
+    EXPECT_TRUE(SkipsEnemyBarDamage(0x10044001, bodies));
+    EXPECT_FALSE(SkipsEnemyBarDamage(0x1001408d, bodies)) << "an enemy's number stays";
+    EXPECT_FALSE(SkipsEnemyBarDamage(0x10044001, {}));
+}
+
 TEST(BloodbornePartyDeath, GoesDownOnlyWithSomeoneElseStandingOnTheMap) {
     EXPECT_TRUE(SomeoneElseStands(std::vector{Member(Ada, CentralYharnam, Vital::Up)}, Kaniel,
                                   CentralYharnam));

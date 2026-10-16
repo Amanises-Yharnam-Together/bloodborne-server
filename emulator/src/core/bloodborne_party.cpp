@@ -5276,6 +5276,10 @@ std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self) {
     return std::nullopt;
 }
 
+bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies) {
+    return std::ranges::find(downed_bodies, handle) != downed_bodies.end();
+}
+
 bool SomeoneElseStands(std::span<const MemberVitals> board, std::string_view self, u32 map) {
     return map != 0 && std::ranges::any_of(board, [&](const MemberVitals& member) {
                return member.member != self && member.map == map && member.vital == Vital::Up;
