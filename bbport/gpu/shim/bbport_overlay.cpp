@@ -586,6 +586,44 @@ float HeaderOrnament(ImDrawList* draw, float mid, float y, float scale, float al
     return oh;
 }
 
+/// `text` cut to `width` in the current font, "..." at its end when it was longer (a long name never
+/// runs over the button or the card edge next to it).
+std::string Fit(const char* text, float width) {
+    if (ImGui::CalcTextSize(text).x <= width) {
+        return text;
+    }
+    const float dots = ImGui::CalcTextSize("...").x;
+    std::string cut(text);
+    while (!cut.empty() && ImGui::CalcTextSize(cut.c_str()).x + dots > width) {
+        // Drop one UTF-8 character (and any continuation bytes before it).
+        do {
+            cut.pop_back();
+        } while (!cut.empty() && (static_cast<unsigned char>(cut.back()) & 0xC0) == 0x80);
+    }
+    return cut + "...";
+}
+
+/// A hunter's card: the game's stone card; the player's own framed in gold over it (the game's
+/// selected card is tinted blue, out of place among the others).
+void HunterCard(ImDrawList* draw, ImVec2 at, ImVec2 end, bool mine, float alpha = 1.0f) {
+    MenuArt::Nine(draw, MenuArt::Card, at, end, 14.0f, S(12.0f), alpha);
+    if (mine) {
+        const float in = S(4.0f);
+        draw->AddRectFilled(ImVec2(at.x + in, at.y + in), ImVec2(end.x - in, end.y - in), Gold(0.06f));
+        draw->AddRect(ImVec2(at.x + in, at.y + in), ImVec2(end.x - in, end.y - in), Gold(0.85f), 0.0f, 0, S(1.5f));
+    }
+}
+
+/// A list's rule under its heading: a gold line fading out to the right (drawn: the game's scroll
+/// art comes without a see-through background).
+void ListRule(ImDrawList* draw, float x0, float x1, float y) {
+    const float t = S(1.2f), d = S(4.0f);
+    draw->AddRectFilledMultiColor(ImVec2(x0 + d * 2.5f, y - t * 0.5f), ImVec2(x1, y + t * 0.5f), Gold(0.7f), Gold(0.0f),
+                                  Gold(0.0f), Gold(0.7f));
+    draw->AddQuadFilled(ImVec2(x0 + d, y - d), ImVec2(x0 + d * 2.0f, y), ImVec2(x0 + d, y + d), ImVec2(x0, y),
+                        Gold(0.9f));
+}
+
 /// `text` in the current font wrapped to `width` from `at`, its lines spaced apart (the game's
 /// font draws taller than ImGui's line height: wrapped lines touched); returns its height.
 float WrappedText(ImDrawList* draw, ImVec2 at, float width, ImU32 color, const char* text) {
@@ -1964,8 +2002,15 @@ bool Button(ImDrawList* draw, const char* id, const char* label, ImVec2 at, ImVe
     }
     const bool focused = focus.focus == index;
     const ImVec2 end(at.x + size.x, at.y + size.y);
-    if (!MenuArt::Nine(draw, focused && enabled ? MenuArt::RowSelected : MenuArt::Row, at, end, 12.0f,
-                       S(9.0f), enabled ? 1.0f : 0.5f)) {
+    // The game's row; the focused one framed in gold over it (the game's selected row is tinted
+    // blue, out of place on this screen's stone).
+    if (MenuArt::Nine(draw, MenuArt::Row, at, end, 12.0f, S(9.0f), enabled ? 1.0f : 0.5f)) {
+        if (focused && enabled) {
+            const float in = S(2.0f);
+            draw->AddRectFilled(ImVec2(at.x + in, at.y + in), ImVec2(end.x - in, end.y - in), Gold(0.10f));
+            draw->AddRect(ImVec2(at.x + in, at.y + in), ImVec2(end.x - in, end.y - in), Gold(0.9f), 0.0f, 0, S(1.5f));
+        }
+    } else {
         draw->AddRectFilled(at, end, focused ? Gold(primary ? 0.30f : 0.20f) : Gold(primary ? 0.12f : 0.05f),
                             S(2.0f));
         draw->AddRect(at, end, focused ? Gold(0.95f) : Gold(enabled ? 0.45f : 0.15f), S(2.0f), 0, S(1.2f));
@@ -2005,8 +2050,8 @@ void Card(ImDrawList* draw, ImVec2 at, ImVec2 size, const bbcoop_lobby_entry* me
     const ImVec2 end(at.x + size.x, at.y + size.y);
     if (MenuArt::Has(MenuArt::Card)) {
         const bool mine = member != nullptr && std::strcmp(member->id, lobby.me) == 0;
-        MenuArt::Nine(draw, mine ? MenuArt::CardSelected : MenuArt::Card, at, end, 14.0f, S(12.0f),
-                      member ? 1.0f : 0.55f);
+        HunterCard(draw, at, end, mine, member ? 1.0f : 0.55f);
+        const float fit = size.x - S(28.0f);
         const float mid = (at.x + end.x) * 0.5f;
         // The emblem: the hunter's rune in a square slot, framed in gold once ready.
         const float slot = S(96.0f), sy = at.y + S(34.0f);
@@ -2021,25 +2066,23 @@ void Card(ImDrawList* draw, ImVec2 at, ImVec2 size, const bbcoop_lobby_entry* me
                           ImVec2(mid + rune * 0.5f, sy + (slot + rune) * 0.5f),
                           member->state == BBCOOP_LOBBY_OFFLINE ? 0.35f : 1.0f);
         }
+        const auto centred = [&](const char* text, float y, ImU32 color) {
+            const std::string line = Fit(text, fit);
+            const ImVec2 ts = ImGui::CalcTextSize(line.c_str());
+            draw->AddText(ImVec2(mid - ts.x * 0.5f, y), color, line.c_str());
+        };
         ImGui::PushFont(MenuArt::Font(), 26.0f);
-        const char* name = member ? member->name : T("An empty place", "Свободное место");
-        ImVec2 ns = ImGui::CalcTextSize(name);
-        draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(150.0f)), member ? Bright() : Dim(0.7f), name);
+        centred(member ? member->name : T("An empty place", "Свободное место"), at.y + S(146.0f),
+                member ? Bright() : Dim(0.7f));
         ImGui::PopFont();
         ImGui::PushFont(MenuArt::Font(), 19.0f);
         if (member) {
-            const char* state = StateText(*member, true);
-            ns = ImGui::CalcTextSize(state);
-            draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(188.0f)), StateColor(*member, true), state);
+            centred(StateText(*member, true), at.y + S(184.0f), StateColor(*member, true));
             if (leader) {
-                const char* lead = T("Leader, hosts the hunt", "Лидер, принимает у себя");
-                ns = ImGui::CalcTextSize(lead);
-                draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(216.0f)), Gold(0.75f), lead);
+                centred(T("Leader, hosts the hunt", "Лидер, принимает у себя"), at.y + S(210.0f), Gold(0.75f));
             }
         } else {
-            const char* note = T("Invite a hunter below", "Пригласите охотника ниже");
-            ns = ImGui::CalcTextSize(note);
-            draw->AddText(ImVec2(mid - ns.x * 0.5f, at.y + S(188.0f)), Dim(0.6f), note);
+            centred(T("Invite a hunter below", "Пригласите охотника ниже"), at.y + S(184.0f), Dim(0.6f));
         }
         ImGui::PopFont();
         return;
@@ -2103,7 +2146,7 @@ void MenuHint(ImDrawList* draw, ImVec2 win, ImVec2 size, float y, bool leader_ho
     const char* keys = T("D-pad: move     Cross: choose     Circle: close",
                          "Крестовина: выбор     Крест: нажать     Круг: закрыть");
     ts = ImGui::CalcTextSize(keys);
-    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(46.0f)), Plain(0.6f), keys);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(64.0f)), Plain(0.6f), keys);
     ImGui::PopFont();
 }
 
@@ -2231,22 +2274,12 @@ void Screen() {
     draw->AddText(ImVec2(left_x, lists_y), Gold(), T("Hunters online", "Охотники в сети"));
     draw->AddText(ImVec2(right_x, lists_y), Gold(), T("Invitations", "Приглашения"));
     ImGui::PopFont();
-    if (MenuArt::Has(MenuArt::Flourish)) {
-        const ImVec2 f = MenuArt::SizeOf(MenuArt::Flourish);
-        const float fh = S(f.y * 0.8f);
-        for (const float lx : {left_x, right_x}) {
-            MenuArt::Draw(draw, MenuArt::Flourish, ImVec2(lx, lists_y + S(30.0f)),
-                          ImVec2(lx + list_w, lists_y + S(30.0f) + fh), 0.85f);
-        }
-    } else {
-        draw->AddLine(ImVec2(left_x, lists_y + S(32.0f)), ImVec2(left_x + list_w, lists_y + S(32.0f)), Gold(0.25f));
-        draw->AddLine(ImVec2(right_x, lists_y + S(32.0f)), ImVec2(right_x + list_w, lists_y + S(32.0f)),
-                      Gold(0.25f));
-    }
+    ListRule(draw, left_x, left_x + list_w, lists_y + S(36.0f));
+    ListRule(draw, right_x, right_x + list_w, lists_y + S(36.0f));
     ImGui::PushFont(MenuArt::Font(), 19.0f);
-    const float row_h = S(40.0f), button_w = S(130.0f);
+    const float row_h = S(42.0f), button_w = S(130.0f);
     const int rows = 5;
-    float y = lists_y + S(42.0f);
+    float y = lists_y + S(50.0f);
     const bool can_invite = lobby.in_team && lobby.member_count < BBCOOP_LOBBY_TEAM;
     if (lobby.player_count == 0) {
         draw->AddText(ImVec2(left_x, y + S(8.0f)), Dim(), T("Nobody else is online", "Больше никого нет в сети"));
@@ -2255,15 +2288,19 @@ void Screen() {
         const bbcoop_lobby_entry& p = lobby.players[i];
         MenuArt::Nine(draw, MenuArt::Row, ImVec2(left_x - S(6.0f), y - S(2.0f)),
                       ImVec2(left_x + list_w + S(4.0f), y + row_h - S(4.0f)), 10.0f, S(6.0f), 0.7f);
-        draw->AddText(ImVec2(left_x + S(8.0f), y + S(8.0f)), Plain(), p.name);
-        draw->AddText(ImVec2(left_x + S(220.0f), y + S(8.0f)), StateColor(p, false), StateText(p, false));
+        // The state right-aligned before the button, the name in what is left.
+        const char* state = StateText(p, false);
+        const float state_x = left_x + list_w - button_w - S(18.0f) - ImGui::CalcTextSize(state).x;
+        draw->AddText(ImVec2(left_x + S(8.0f), y + S(8.0f)), Plain(),
+                      Fit(p.name, state_x - left_x - S(24.0f)).c_str());
+        draw->AddText(ImVec2(state_x, y + S(8.0f)), StateColor(p, false), state);
         const std::string id = std::string("invite") + p.id;
         if (Button(draw, id.c_str(), T("Invite", "Пригласить"), ImVec2(left_x + list_w - button_w, y),
                    ImVec2(button_w, row_h - S(6.0f)), can_invite)) {
             bbcoop_lobby_request(BBCOOP_TEAM_INVITE, p.id);
         }
     }
-    y = lists_y + S(42.0f);
+    y = lists_y + S(50.0f);
     if (lobby.invite_count == 0) {
         draw->AddText(ImVec2(right_x, y + S(8.0f)), Dim(), T("None", "Нет"));
     }
@@ -2272,7 +2309,8 @@ void Screen() {
         const std::string text = std::string(inv.name) + T(" calls you to hunt", " зовёт на охоту");
         MenuArt::Nine(draw, MenuArt::Row, ImVec2(right_x - S(6.0f), y - S(2.0f)),
                       ImVec2(right_x + list_w + S(4.0f), y + row_h - S(4.0f)), 10.0f, S(6.0f), 0.7f);
-        draw->AddText(ImVec2(right_x + S(8.0f), y + S(8.0f)), Plain(), text.c_str());
+        draw->AddText(ImVec2(right_x + S(8.0f), y + S(8.0f)), Plain(),
+                      Fit(text.c_str(), list_w - 2 * button_w - S(32.0f)).c_str());
         const std::string accept = std::string("accept") + inv.id, decline = std::string("decline") + inv.id;
         if (Button(draw, accept.c_str(), T("Join", "Вступить"),
                    ImVec2(right_x + list_w - 2 * button_w - S(8.0f), y), ImVec2(button_w, row_h - S(6.0f)),
@@ -2304,7 +2342,7 @@ void Screen() {
         }
         const std::string text = std::string(T("World: ", "Мир: ")) + world;
         const ImVec2 row_size(S(560.0f), S(40.0f));
-        const ImVec2 row_at(win.x + (size.x - row_size.x) * 0.5f, win.y + size.y - S(150.0f) - S(52.0f));
+        const ImVec2 row_at(win.x + (size.x - row_size.x) * 0.5f, win.y + size.y - S(166.0f) - S(52.0f));
         const bool can_pick = lobby.leader && !lobby.started;
         if (can_pick) {
             if (Button(draw, "world", text.c_str(), row_at, row_size)) {
@@ -2329,7 +2367,7 @@ void Screen() {
     }
     ImGui::PushFont(MenuArt::Font(), 24.0f);
     const float bw = S(260.0f), bh = S(54.0f);
-    const float by = win.y + size.y - S(150.0f);
+    const float by = win.y + size.y - S(166.0f);
     float bx = win.x + (size.x - (3 * bw + 2 * gap)) * 0.5f;
     // The leader hosts the hunt: it leaves only once it is alone in it (its game leaving would
     // end the others' session).
@@ -2440,7 +2478,7 @@ void Screen() {
             total += icon + S(6.0f) + ImGui::CalcTextSize(key.text).x + space;
         }
         float kx = win.x + (size.x - total) * 0.5f;
-        const float ky = win.y + size.y - S(46.0f);
+        const float ky = win.y + size.y - S(64.0f);
         for (const auto& key : keys) {
             MenuArt::Draw(draw, key.icon, ImVec2(kx, ky), ImVec2(kx + icon, ky + icon));
             kx += icon + S(6.0f);
@@ -2454,7 +2492,7 @@ void Screen() {
         const char* controls = T("Arrows / D-pad: move     Enter / Cross: choose     Insert, L3 + R3: settings",
                                  "Стрелки / крестовина: выбор     Enter / Крест: нажать     Insert, L3 + R3: настройки");
         ts = ImGui::CalcTextSize(controls);
-        draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(40.0f)), Gold(0.65f), controls);
+        draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(64.0f)), Gold(0.65f), controls);
         ImGui::PopFont();
     }
 
@@ -2568,8 +2606,7 @@ void Screen() {
         const bbcoop_team_load_row& row = load.rows[i];
         const float x0 = x_start + i * (card_w + gap), x1 = x0 + card_w, cx = (x0 + x1) * 0.5f;
         const bool ready = row.stage == BBCOOP_LOAD_READY;
-        MenuArt::Nine(draw, row.self ? MenuArt::CardSelected : MenuArt::Card, ImVec2(x0, y0),
-                      ImVec2(x1, y0 + card_h), 14.0f, 12.0f * u);
+        Ui::HunterCard(draw, ImVec2(x0, y0), ImVec2(x1, y0 + card_h), row.self != 0);
         const float slot = 110.0f * u, sy = y0 + 40.0f * u;
         MenuArt::Draw(draw, ready ? MenuArt::SlotSelected : MenuArt::Slot, ImVec2(cx - slot * 0.5f, sy),
                       ImVec2(cx + slot * 0.5f, sy + slot));
