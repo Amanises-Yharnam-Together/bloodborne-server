@@ -34,15 +34,14 @@ function DocBlock({ block }: { block: Block }) {
       );
     }
     case "terms":
-      // The game's two-column menus: the label on the left, its value on the right.
       return (
         <dl className="my-5 max-w-[72ch]">
           {block.items.map(([term, text]) => (
             <div
               key={term}
-              className="grid gap-x-6 gap-y-1 border-b border-silver/15 py-3 sm:grid-cols-[13rem_minmax(0,1fr)]"
+              className="grid gap-x-6 gap-y-1 border-b border-silver/15 py-3 sm:grid-cols-[12rem_minmax(0,1fr)]"
             >
-              <dt className="text-bone sm:text-right">
+              <dt className="text-bone">
                 <InlineText text={term} />
               </dt>
               <dd className="text-foreground">
@@ -57,7 +56,7 @@ function DocBlock({ block }: { block: Block }) {
       return (
         <figure className="my-8">
           <Figure />
-          <figcaption className="mt-3 text-center text-sm text-muted-foreground">
+          <figcaption className="mt-3 text-sm text-muted-foreground italic">
             <InlineText text={block.caption} />
           </figcaption>
         </figure>
@@ -71,10 +70,10 @@ function DocBlock({ block }: { block: Block }) {
             alt={block.alt}
             width={block.width}
             height={block.height}
-            sizes="(min-width: 1024px) 860px, 100vw"
+            sizes="(min-width: 1024px) 832px, 100vw"
             className="h-auto w-full border-y border-silver/30 bg-card shadow-[0_20px_60px_rgb(0_0_0/0.6)]"
           />
-          <figcaption className="mt-3 text-center text-sm text-muted-foreground">
+          <figcaption className="mt-3 text-sm text-muted-foreground italic">
             <InlineText text={block.caption} />
           </figcaption>
         </figure>

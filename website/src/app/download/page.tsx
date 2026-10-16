@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Download, FileCheck2 } from "lucide-react";
 
-import { MenuTitle } from "@/components/ornament";
+import { Heading } from "@/components/ornament";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,8 +19,8 @@ export const metadata: Metadata = {
 export default function DownloadPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 pt-16 sm:px-6">
-      <MenuTitle as="h1">Download</MenuTitle>
-      <p className="mx-auto mt-5 max-w-xl text-center text-lg text-muted-foreground italic">
+      <Heading as="h1">Download</Heading>
+      <p className="mt-5 max-w-xl text-lg text-muted-foreground">
         For Windows 10 and 11. Everyone in a team installs the same release.
       </p>
 
@@ -28,7 +28,7 @@ export default function DownloadPage() {
         <LatestRelease />
       </div>
 
-      <dl className="mx-auto mt-14 max-w-3xl">
+      <dl className="mt-14">
         {[
           [
             "You need",
@@ -44,13 +44,16 @@ export default function DownloadPage() {
             key={term}
             className="grid gap-x-8 gap-y-1 border-b border-silver/15 py-4 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]"
           >
-            <dt className="text-xl text-bone sm:text-right">{term}</dt>
+            <dt className="text-xl text-bone">{term}</dt>
             <dd>{text}</dd>
           </div>
         ))}
       </dl>
-      <p className="mt-8 text-center">
-        <Link href="/docs/install" className="menu-item inline-block">
+      <p className="mt-8">
+        <Link
+          href="/docs/install"
+          className="text-title underline decoration-title/40 underline-offset-4 hover:text-bone"
+        >
           The install guide, step by step
         </Link>
       </p>

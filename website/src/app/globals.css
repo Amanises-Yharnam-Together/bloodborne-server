@@ -109,52 +109,40 @@
       inset 0 0 80px rgb(0 0 0 / 0.5);
   }
 
-  /* A menu item: a short silver underline with tiny end marks, and the game's warm glow when it
-     is hovered or current. */
-  .menu-item {
-    position: relative;
-    display: block;
-    padding: 0.35rem 1.5rem 0.55rem;
-    color: var(--foreground);
-    transition:
-      color 160ms,
-      background-color 160ms;
+  /* A plain text link in the header, the guide's page list and the footer: off-white, gold
+     when current, with a thin gold rule under it. */
+  .nav-link {
+    color: var(--muted-foreground);
+    text-decoration: none;
+    transition: color 160ms;
   }
-  .menu-item::after {
-    content: "";
-    position: absolute;
-    left: 50%;
-    bottom: 0.15rem;
-    width: min(12rem, 80%);
-    height: 5px;
-    transform: translateX(-50%);
-    background:
-      radial-gradient(circle, var(--silver) 1px, transparent 1.5px) left center / 5px 5px no-repeat,
-      radial-gradient(circle, var(--silver) 1px, transparent 1.5px) right center / 5px 5px no-repeat,
-      linear-gradient(90deg, transparent, rgb(185 180 170 / 0.55), transparent) center / 100% 1px
-        no-repeat;
-    opacity: 0.7;
-  }
-  .menu-item:hover,
-  .menu-item[aria-current="page"] {
+  .nav-link:hover {
     color: var(--bone);
-    background: radial-gradient(ellipse 60% 70% at 50% 60%, var(--glow), transparent 75%);
   }
-  .menu-item[aria-current="page"] {
-    color: #f6e2b6;
+  .nav-link[aria-current="page"] {
+    color: var(--title);
   }
 
-  /* Long text in the guide. Each section is a row: its title on the left like a menu label, the
-     text on the right. */
+  /* Long text in the guide: each section has its title in old gold over a short silver rule. */
   .guide {
     @apply text-foreground;
   }
   .guide > section {
-    @apply grid gap-x-10 gap-y-3 py-10 lg:grid-cols-[12rem_minmax(0,1fr)];
-    border-top: 1px solid rgb(185 180 170 / 0.14);
+    @apply py-8;
   }
   .guide > section > h2 {
-    @apply scroll-mt-24 text-2xl leading-snug text-title lg:text-right;
+    @apply scroll-mt-24 text-[1.7rem] leading-snug text-title;
+  }
+  .guide > section > h2::after {
+    content: "";
+    display: block;
+    width: 9rem;
+    height: 1px;
+    margin-top: 0.4rem;
+    background: linear-gradient(90deg, rgb(220 215 205 / 0.7), transparent);
+  }
+  .guide > section > div {
+    @apply mt-5;
   }
   .guide > section > div > h3 {
     @apply mt-8 mb-2 text-xl text-bone;

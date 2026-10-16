@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { DocsShell } from "@/components/doc-article";
-import { MenuTitle } from "@/components/ornament";
+import { Heading } from "@/components/ornament";
 import {
   Accordion,
   AccordionContent,
@@ -23,8 +23,8 @@ export const metadata: Metadata = {
 export default function DocsIndex() {
   return (
     <DocsShell>
-      <MenuTitle as="h1">Guide</MenuTitle>
-      <dl className="mx-auto mt-8 max-w-3xl">
+      <Heading as="h1">The guide</Heading>
+      <dl className="mt-8">
         {docs.map((d) => (
           <div
             key={d.slug}
@@ -40,8 +40,8 @@ export default function DocsIndex() {
         ))}
       </dl>
 
-      <section aria-labelledby="questions" className="mx-auto mt-20 max-w-3xl">
-        <MenuTitle id="questions">Questions</MenuTitle>
+      <section aria-labelledby="questions" className="mt-20">
+        <Heading id="questions">Questions</Heading>
         <Accordion type="single" collapsible className="mt-4">
           {faq.map((f) => (
             <AccordionItem key={f.q} value={f.q}>

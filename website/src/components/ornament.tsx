@@ -64,8 +64,8 @@ export function MenuRule({ crest = true, className }: { crest?: boolean; classNa
   );
 }
 
-/** A menu's title in old gold between two rules, like the game's "System" or "Inventory". */
-export function MenuTitle({
+/** A section heading: the title in old gold, left-aligned, over a short rule with a scroll end. */
+export function Heading({
   children,
   id,
   as: Tag = "h2",
@@ -77,39 +77,20 @@ export function MenuTitle({
   className?: string;
 }) {
   return (
-    <div className={cn("mx-auto max-w-3xl", className)}>
-      <MenuRule />
+    <div className={className}>
       <Tag
         id={id}
-        className="scroll-mt-24 py-2 text-center text-2xl font-normal text-title sm:text-3xl"
+        className={cn(
+          "scroll-mt-24 font-normal text-title",
+          Tag === "h1" ? "text-4xl sm:text-5xl" : "text-3xl sm:text-[2.1rem]",
+        )}
       >
         {children}
       </Tag>
-      <div className="h-px bg-[linear-gradient(90deg,transparent,rgb(185_180_170/0.45),transparent)]" />
+      <div className="mt-2 flex items-center gap-1.5 text-silver" aria-hidden>
+        <EndCap />
+        <span className="h-px w-40 bg-[linear-gradient(90deg,rgb(220_215_205/0.7),transparent)]" />
+      </div>
     </div>
-  );
-}
-
-/** A pad button glyph as the game's key hints draw them. */
-export function PadGlyph({ button }: { button: "cross" | "circle" | "triangle" | "square" }) {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      className="inline-block size-[1.05em] align-[-0.15em]"
-      fill="none"
-      strokeWidth="1.6"
-      aria-hidden
-    >
-      <circle cx="10" cy="10" r="9" fill="#1b1a18" stroke="#6f6b64" strokeWidth="1" />
-      {button === "cross" ? (
-        <path d="M6.5 6.5l7 7M13.5 6.5l-7 7" stroke="#8fb4e3" />
-      ) : button === "circle" ? (
-        <circle cx="10" cy="10" r="4" stroke="#e38f8f" />
-      ) : button === "triangle" ? (
-        <path d="M10 5.5l4.5 8h-9z" stroke="#8fe3c6" />
-      ) : (
-        <rect x="6" y="6" width="8" height="8" stroke="#e3a8d8" />
-      )}
-    </svg>
   );
 }
