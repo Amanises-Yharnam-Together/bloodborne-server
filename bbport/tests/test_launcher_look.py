@@ -86,6 +86,21 @@ class LookTests(unittest.TestCase):
         for path in self.opened + [str(f) for f in tk_files]:
             self.assertFalse(str(path).lower().startswith(game), f'game art shown: {path}')
 
+    def test_dragging_moves_the_window_without_windows_move_loop(self):
+        """Kaniel 2026-10-17: the release crashed (0xc0000409) on a press on an empty place, where the drag
+        handed Windows its modal move loop inside a Tk callback. The launcher moves the window itself."""
+        import inspect
+        self.app.start_motion()
+        self.settle()
+        self.assertNotIn('SendMessage', inspect.getsource(launcher.WindowChrome))
+        top = self.app.caption_buttons['min'].canvas.master
+        x0, y0 = self.root.winfo_x(), self.root.winfo_y()
+        top.event_generate('<ButtonPress-1>', x=40, y=10, rootx=x0 + 400, rooty=y0 + 10)
+        top.event_generate('<B1-Motion>', x=140, y=60, rootx=x0 + 500, rooty=y0 + 60)
+        top.event_generate('<ButtonRelease-1>', x=140, y=60, rootx=x0 + 500, rooty=y0 + 60)
+        self.settle()
+        self.assertEqual((self.root.winfo_x(), self.root.winfo_y()), (x0 + 100, y0 + 50))
+
     def test_the_side_menu_is_home_and_settings(self):
         """Kaniel 2026-10-16: no Simple/Advanced views; a short menu, every other page under Settings."""
         side = self.app.side
