@@ -102,3 +102,29 @@ TEST(BloodborneWriteWatch, TheStackScanStaysOnTheStack) {
     EXPECT_EQ(StackSlotsToScan(7, 256), 0u);
     EXPECT_EQ(StackSlotsToScan(0, 256), 0u);
 }
+
+// Kaniel's playtest 2026-10-16: krolebord's copy stayed by the Cleric Beast lantern after his Dream
+// trip: Lisara stood 16 m away and kept it shown. Each member vouches for one character only.
+TEST(MemberPresence, OneMemberKeepsOnlyOneCharacterShown) {
+    constexpr u32 Yharnam = 0x18010000, Dream = 0x15000000;
+    const auto member = [](std::string name, u32 map, float x) {
+        return MemberVitals{.member = name, .map = map, .vital = Vital::Up, .at = {x, 0.0f, 0.0f}};
+    };
+    const std::vector<std::optional<LampPosition>> characters{LampPosition{0.0f, 0.0f, 0.0f},
+                                                              LampPosition{16.0f, 0.0f, 0.0f}};
+    const std::vector<MemberVitals> board{member("me", Yharnam, 50.0f),
+                                          member("lisara", Yharnam, 0.5f),
+                                          member("krolebord", Dream, 16.0f)};
+    EXPECT_EQ(ShownOtherPlayers(characters, board, "me", Yharnam),
+              (std::vector<bool>{true, false}));
+}
+
+// Kaniel's playtest 2026-10-16: krolebord joined in place and never saw Lisara (her task stayed at
+// step 1): a remote player's task before its character is made waits for its data.
+TEST(MemberPresence, AJoinStillBeforeItsCharacterAsksForTheData) {
+    EXPECT_TRUE(WaitsForMemberData(RemoteGuestTask, 1));
+    EXPECT_TRUE(WaitsForMemberData(RemoteHostTask, 3));
+    EXPECT_FALSE(WaitsForMemberData(RemoteGuestTask, CreateCharacterStep));
+    EXPECT_FALSE(WaitsForMemberData(RemoteGuestTask, InSessionStep));
+    EXPECT_FALSE(WaitsForMemberData(LocalTaskKind(false), 1)) << "its own task";
+}

@@ -1109,9 +1109,16 @@ void RecreateRemotePlayers(std::span<const u64> only, bool build_missing) {
         }
         if (const u64 found = task_for(member)) {
             const s32 kind = ReadValue<s32>(found, 0xE8);
-            if (ShouldRecreateAfterTrip(kind, ReadValue<s32>(found, 0x50))) {
+            const s32 step = ReadValue<s32>(found, 0x50);
+            if (ShouldRecreateAfterTrip(kind, step)) {
                 set_step(found, CreateCharacterStep);
                 LOG_INFO(Debug, "Bloodborne party trip: re-creating remote player kind={}", kind);
+            } else if (WaitsForMemberData(kind, step)) {
+                joins_waiting_for_data.try_emplace(ReadValue<u64>(member, 0), MemberDataWait{});
+                LOG_INFO(Debug,
+                         "Bloodborne party: a remote player kind={} still joining at step {}: its "
+                         "data is asked for",
+                         kind, step);
             }
             continue;
         }
