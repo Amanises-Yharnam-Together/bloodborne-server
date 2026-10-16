@@ -1242,13 +1242,14 @@ def console_encoding():
 
 
 # ---------------------------------------------------------------------------------------------
-# The window. Near-black stage, warm parchment text, one accent (blood red). Everything that
+# The window, in the colours of the game's team screen and team loading screen: dark slate stone,
+# parchment text, gold frames and ornaments (Kaniel 2026-10-16). Everything that
 # moves goes through Motion; BB_LAUNCHER_ANIMATIONS=0 (or the Animations switch) turns it off.
 
-BG, PANEL, CARD, FIELD = '#0b0a0c', '#0f0d0f', '#151113', '#0d0b0c'
-LINE, LINE_HI = '#2a2224', '#4a3a36'
-TEXT, MUTED, DIM, GOLD, GOLD_DIM = '#e8dfcf', '#a09282', '#6b6054', '#c8a96a', '#6e5a3a'
-BLOOD, BLOOD_HI, BLOOD_DEEP = '#8e1a1f', '#b8282e', '#5c1014'
+BG, PANEL, CARD, FIELD = '#0d0f13', '#12151a', '#191c22', '#0b0d11'
+LINE, LINE_HI = '#2b3038', '#4a505a'
+TEXT, MUTED, DIM, GOLD, GOLD_DIM = '#f0e2c2', '#aea590', '#6e6a60', '#d9b878', '#7d6b48'
+ACCENT, ACCENT_HI, ACCENT_DEEP = '#6e5a36', '#c9a86a', '#2a2620'
 OK, CAUTION, BAD = '#8fae7e', '#d9a441', '#d9695c'
 GLYPH_COLORS = {'✓': OK, '⚠': CAUTION, '✗': BAD, '•': DIM}
 
@@ -1502,7 +1503,7 @@ class FlatButton(Widget):
         if self.state != 'normal':
             fill, line, ink = bg, mix(bg, TEXT, .08), DIM
         elif self.kind == 'primary':
-            fill, line, ink = mix(BLOOD_DEEP, BLOOD, t), mix(BLOOD, BLOOD_HI, t), TEXT
+            fill, line, ink = mix(ACCENT_DEEP, ACCENT, t), mix(ACCENT, ACCENT_HI, t), TEXT
         else:
             fill = mix(mix(bg, TEXT, .05), mix(bg, TEXT, .13), t)
             line, ink = mix(mix(bg, TEXT, .14), mix(bg, TEXT, .34), t), TEXT
@@ -1595,15 +1596,16 @@ class PlayButton(Widget):
     def paint(self):
         c, t = self.canvas, self.hover
         if self.state != 'normal':
-            glow, base, edge, ink = 0.0, '#2a1a1c', '#3a2a2c', DIM
+            glow, base, edge, ink = 0.0, '#1c1f24', '#2c3038', DIM
         else:
+            # The team screen's chosen button: dark stone, a gold frame, a faint gold wash.
             glow = 0.9 * t + (1 - t) * (0.12 + 0.34 * self.pulse)
-            base = mix(BLOOD_DEEP, BLOOD, 0.35 + 0.65 * t)
-            edge, ink = mix(BLOOD, '#e0a690', 0.18 + 0.5 * t), TEXT
+            base = mix('#1d2027', '#3a3428', 0.25 + 0.55 * t)
+            edge, ink = mix(GOLD_DIM, GOLD, 0.45 + 0.55 * t), TEXT
             if self.pressed:
                 base, glow = mix(base, BG, .35), 0.35
         for i, ring in enumerate(self.rings):  # outermost first
-            c.itemconfigure(ring, outline=mix(BG, BLOOD_HI, glow * (i / len(self.rings)) ** 1.6 * 0.8))
+            c.itemconfigure(ring, outline=mix(BG, GOLD, glow * (i / len(self.rings)) ** 1.6 * 0.55))
         c.itemconfigure(self.body, fill=base, outline=edge)
         c.itemconfigure(self.sheen, fill=mix(base, '#ffffff', 0.045 if self.state == 'normal' else 0.0))
         c.itemconfigure(self.label, fill=ink)
@@ -1622,7 +1624,7 @@ class ModeToggle(Widget):
         super().__init__(ui, parent, 2 * seg, self.h, FIELD)
         c = self.canvas
         c.create_rectangle(0, 0, 2 * seg - 1, self.h - 1, fill=FIELD, outline=LINE_HI)
-        self.slide = c.create_rectangle(1, 1, seg, self.h - 2, fill=BLOOD, outline=BLOOD_HI)
+        self.slide = c.create_rectangle(1, 1, seg, self.h - 2, fill=ACCENT, outline=ACCENT_HI)
         self.texts = [c.create_text(seg * i + seg // 2, self.h // 2, text=t, font=self.font) for i, t in enumerate(labels)]
         self.pos, self.advanced, self.hv = 0.0, False, [0.0, 0.0]
         c.bind('<Button-1>', lambda e: self.command(e.x >= seg))
@@ -1703,11 +1705,11 @@ class Switch(Widget):
         x = pad + p * (self.w - self.h)
         c.coords(self.knob, x, pad, x + self.h - 2 * pad, self.h - pad - 1)
         if not self.enabled:
-            c.itemconfigure(self.track, fill=mix('#221c1e', DIM, .2 + .2 * p), outline=mix(LINE_HI, '#221c1e', .5))
-            c.itemconfigure(self.knob, fill=mix(DIM, '#221c1e', .35))
+            c.itemconfigure(self.track, fill=mix('#1f2228', DIM, .2 + .2 * p), outline=mix(LINE_HI, '#1f2228', .5))
+            c.itemconfigure(self.knob, fill=mix(DIM, '#1f2228', .35))
             return
-        c.itemconfigure(self.track, fill=mix('#221c1e', BLOOD, p), outline=MUTED if self.focused else
-                        mix(LINE_HI, BLOOD_HI, p))
+        c.itemconfigure(self.track, fill=mix('#1f2228', ACCENT, p), outline=MUTED if self.focused else
+                        mix(LINE_HI, ACCENT_HI, p))
         c.itemconfigure(self.knob, fill=mix(mix(DIM, MUTED, self.hover), TEXT, p))
 
 
@@ -1721,7 +1723,7 @@ class Slider(Widget):
         c = self.canvas
         mid = self.h // 2
         self.trough = c.create_rectangle(px(7), mid - 2, self.w - px(7), mid + 2, fill=FIELD, outline=LINE)
-        self.fill = c.create_rectangle(px(7), mid - 2, px(7), mid + 2, fill=BLOOD, outline='')
+        self.fill = c.create_rectangle(px(7), mid - 2, px(7), mid + 2, fill=ACCENT, outline='')
         self.knob = c.create_rectangle(0, 0, 0, 0, fill=TEXT, outline='')
         c.bind('<Button-1>', self.drag)
         c.bind('<B1-Motion>', self.drag)
@@ -1757,8 +1759,8 @@ class Bar(Widget):
         super().__init__(ui, parent, self.w, self.h, bg, cursor='arrow')
         c = self.canvas
         c.create_rectangle(0, 0, self.w - 1, self.h - 1, fill=FIELD, outline=LINE)
-        self.fill = c.create_rectangle(1, 1, 1, self.h - 2, fill=BLOOD_HI, outline='')
-        self.band = c.create_rectangle(0, 1, 0, self.h - 2, fill=mix(BLOOD_HI, TEXT, .45), outline='', state='hidden')
+        self.fill = c.create_rectangle(1, 1, 1, self.h - 2, fill=ACCENT_HI, outline='')
+        self.band = c.create_rectangle(0, 1, 0, self.h - 2, fill=mix(ACCENT_HI, TEXT, .45), outline='', state='hidden')
         self.running = False
 
     def set(self, fraction):
@@ -1791,7 +1793,7 @@ class Spinner(Widget):
         super().__init__(ui, parent, s, s, bg, cursor='arrow')
         w = ui.px(2)
         self.canvas.create_oval(w, w, s - w, s - w, outline=LINE_HI, width=w)
-        self.arc = self.canvas.create_arc(w, w, s - w, s - w, start=90, extent=100, style='arc', outline=BLOOD_HI, width=w)
+        self.arc = self.canvas.create_arc(w, w, s - w, s - w, start=90, extent=100, style='arc', outline=ACCENT_HI, width=w)
         self.on = False
 
     def start(self):
@@ -1885,7 +1887,7 @@ class CaptionButton(Widget):
 
     def paint(self):
         t = self.hover
-        hot = BLOOD if self.kind == 'close' else mix(self.bg, TEXT, 0.12)
+        hot = '#8a2a26' if self.kind == 'close' else mix(self.bg, TEXT, 0.12)
         self.canvas.itemconfigure(self.back, fill=mix(self.bg, hot, t))
         for item in self.glyph:
             option = 'outline' if self.canvas.type(item) == 'rectangle' else 'fill'
@@ -1926,7 +1928,7 @@ class WindowChrome:
             style = user32.GetWindowLongPtrW(hwnd, self.GWL_EXSTYLE)
             user32.SetWindowLongPtrW(hwnd, self.GWL_EXSTYLE, (style | self.WS_EX_APPWINDOW) & ~self.WS_EX_TOOLWINDOW)
             dwm = ctypes.windll.dwmapi
-            corners, border = ctypes.c_int(2), ctypes.c_uint(0x00242224)  # rounded; the border in LINE (0x00bbggrr)
+            corners, border = ctypes.c_int(2), ctypes.c_uint(0x0038302b)  # rounded; the border in LINE (0x00bbggrr)
             dwm.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corners), 4)
             dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), 4)
             self.root.withdraw()  # shown again with the new style: the taskbar button comes back
@@ -1982,7 +1984,7 @@ class Sidebar:
     drifting up. Everything here is drawn by the launcher; no art of the game is used."""
 
     EMBERS = 26
-    SKY = '#1c0b0e'  # the sky over the moon, at the foot of the column
+    SKY = '#18202c'  # the night sky over the moon, at the foot of the column
     # The skyline, left to right: (width, height, roof) in pixels at 96 dpi; roof 's' spire, 'g' gable, 'f' flat.
     FAR = ((14, 58, 'f'), (10, 96, 's'), (22, 64, 'g'), (8, 128, 's'), (18, 76, 'f'), (12, 104, 's'),
            (26, 70, 'g'), (9, 140, 's'), (16, 88, 'f'), (11, 112, 's'), (24, 66, 'g'), (10, 92, 's'),
@@ -2001,11 +2003,11 @@ class Sidebar:
         c = self.canvas = ui.tk.Canvas(parent, width=width, height=self.h, bg=BG, highlightthickness=0, bd=0)
         self.sky = [c.create_rectangle(0, 0, 0, 0, outline='', tags='sky') for _i in range(28)]
         self.halo = [c.create_oval(0, 0, 0, 0, outline='', tags='moon') for _i in range(16)]
-        self.disc = c.create_oval(0, 0, 0, 0, fill='#8a1a1f', outline='#a8303a', tags='moon')
-        self.craters = [c.create_oval(0, 0, 0, 0, fill='#771519', outline='', tags='moon') for _i in range(3)]
-        self.far = c.create_polygon(0, 0, 0, 0, 0, 0, fill='#1a0f12', outline='', tags='city')
-        self.near = c.create_polygon(0, 0, 0, 0, 0, 0, fill='#060506', outline='', tags='city')
-        self.lights = [c.create_rectangle(0, 0, 0, 0, fill='#4a2412', outline='', tags='city') for _i in range(7)]
+        self.disc = c.create_oval(0, 0, 0, 0, fill='#d8ccae', outline='#efe3c8', tags='moon')
+        self.craters = [c.create_oval(0, 0, 0, 0, fill='#c4b693', outline='', tags='moon') for _i in range(3)]
+        self.far = c.create_polygon(0, 0, 0, 0, 0, 0, fill='#1a212c', outline='', tags='city')
+        self.near = c.create_polygon(0, 0, 0, 0, 0, 0, fill='#07090c', outline='', tags='city')
+        self.lights = [c.create_rectangle(0, 0, 0, 0, fill='#6a5430', outline='', tags='city') for _i in range(7)]
         self.edge = c.create_line(0, 0, 0, 0, fill=LINE)
         self.emblem_image = self.load_emblem(px(58))
         self.emblem = c.create_image(0, 0, anchor='n', image=self.emblem_image or '', tags='txt')
@@ -2019,7 +2021,7 @@ class Sidebar:
         self.sub = c.create_text(0, 0, text='', anchor='n', font=ui.fonts['small'], fill=MUTED, tags='txt')
         self.info = c.create_text(0, 0, text='', anchor='n', font=ui.fonts['small_bold'], fill=GOLD, tags='txt')
         self.rule = [c.create_line(0, 0, 0, 0, fill=GOLD_DIM, tags='txt') for _i in range(2)]
-        self.gem = c.create_polygon(0, 0, 0, 0, 0, 0, fill=BLOOD_HI, outline='', tags='txt')
+        self.gem = c.create_polygon(0, 0, 0, 0, 0, 0, fill=ACCENT_HI, outline='', tags='txt')
         self.band = [c.create_rectangle(0, 0, 0, 0, outline='', fill=BG, tags='band') for _i in range(14)]
         self.band_lines = [c.create_line(0, 0, 0, 0, fill=BG, tags='band') for _i in range(2)]
         self.menu_font = ui.fonts['menu']
@@ -2085,14 +2087,14 @@ class Sidebar:
         c, w, h, px = self.canvas, max(self.w, 1), max(self.h, 1), self.ui.px
         mid = w / 2
         c.coords(self.edge, w - 1, 0, w - 1, h)
-        # Sky: plain at the top, warming towards the moon at the foot.
-        start, n = h * 0.42, len(self.sky)
+        # Sky: plain down to the moon (its glow carries the light there), lighter below it, behind the spires.
+        cx, cy, radius = w * 0.64, h - px(118), px(50)
+        start, n = cy, len(self.sky)
         for i, item in enumerate(self.sky):
             y0, y1 = start + (h - start) * i / n, start + (h - start) * (i + 1) / n + 1
             c.coords(item, 0, y0, w, y1)
             c.itemconfigure(item, fill=mix(BG, self.SKY, (i / n) ** 1.6))
-        cx, cy, radius = w * 0.64, h - px(118), px(50)
-        self.halo_base = mix(BG, self.SKY, max(0.0, (cy - start) / (h - start)) ** 1.6)
+        self.halo_base = BG
         c.coords(self.disc, cx - radius, cy - radius, cx + radius, cy + radius)
         for item, (dx, dy, r) in zip(self.craters, ((-14, -8, 12), (10, 14, 9), (16, -18, 6))):
             c.coords(item, cx + px(dx) - px(r), cy + px(dy) - px(r), cx + px(dx) + px(r), cy + px(dy) + px(r))
@@ -2146,7 +2148,7 @@ class Sidebar:
         n = len(self.halo)
         for i, item in enumerate(self.halo):  # outermost first
             level = (i / n) ** 2.2 * (0.6 + 0.4 * b)
-            self.canvas.itemconfigure(item, fill=mix(self.halo_base, '#40121a', level) if i else '')
+            self.canvas.itemconfigure(item, fill=mix(self.halo_base, '#4a5260', level) if i else '')
 
     # ---- the menu ---------------------------------------------------------------------------
     def place_entries(self):
@@ -2175,10 +2177,10 @@ class Sidebar:
         for i, item in enumerate(self.band):
             t = abs((i + 0.5) / n - 0.5) * 2
             c.coords(item, x0 + i * step, y - half_h, x0 + (i + 1) * step + 1, y + half_h)
-            c.itemconfigure(item, fill=mix('#3a0e12', BG, t ** 1.4))
+            c.itemconfigure(item, fill=mix('#2e2b24', BG, t ** 1.4))
         for item, dy in zip(self.band_lines, (-half_h, half_h)):
             c.coords(item, x0 + px(24), y + dy, x1 - px(24), y + dy)
-            c.itemconfigure(item, fill=mix(BG, BLOOD, 0.55))
+            c.itemconfigure(item, fill=mix(BG, ACCENT, 0.55))
 
     def at(self, y):
         for index, name in enumerate(self.visible()):
@@ -2219,7 +2221,7 @@ class Sidebar:
         on = name == self.active
         ink = TEXT if on else mix(MUTED, TEXT, self.hv[name])
         self.canvas.itemconfigure(self.items[name], fill=mix(BG, ink, alpha))
-        gem = BLOOD_HI if on else mix(BG, GOLD_DIM, self.hv[name])
+        gem = ACCENT_HI if on else mix(BG, GOLD_DIM, self.hv[name])
         for mark in self.marks[name]:
             self.canvas.itemconfigure(mark, fill=mix(BG, gem, alpha))
 
@@ -2268,7 +2270,7 @@ class Sidebar:
         c.itemconfigure(self.info, fill=mix(BG, GOLD, late))
         for item in self.rule:
             c.itemconfigure(item, fill=mix(BG, GOLD_DIM, late))
-        c.itemconfigure(self.gem, fill=mix(BG, BLOOD_HI, late))
+        c.itemconfigure(self.gem, fill=mix(BG, ACCENT_HI, late))
         self.layout()
 
     def intro(self):
@@ -2322,7 +2324,7 @@ class Sidebar:
             px = x + math.sin(now * 0.9 + phase) * sway * 3
             r = size * (0.5 + 0.7 * fade)
             c.coords(item, px - r, y - r, px + r, y + r)
-            c.itemconfigure(item, fill=mix(BG, mix('#f0a050', '#8a2a1a', fraction), fade))
+            c.itemconfigure(item, fill=mix(BG, mix('#f2e3c0', '#7d6b48', fraction), fade * 0.8))
 
 
 class Launcher:
@@ -2426,7 +2428,7 @@ class Launcher:
         ttk, px, f = self.ttk, self.px, self.fonts
         s = ttk.Style(self.root)
         s.theme_use('clam')
-        for option, value in (('background', FIELD), ('foreground', TEXT), ('selectBackground', BLOOD),
+        for option, value in (('background', FIELD), ('foreground', TEXT), ('selectBackground', ACCENT),
                               ('selectForeground', TEXT), ('font', f['body']), ('borderWidth', 0),
                               ('highlightThickness', 0), ('relief', 'flat')):
             self.root.option_add(f'*TCombobox*Listbox.{option}', value)
@@ -2440,7 +2442,7 @@ class Launcher:
               bordercolor=[('focus', MUTED), ('active', MUTED)], lightcolor=[('focus', FIELD)],
               darkcolor=[('focus', FIELD)])
         s.configure('TEntry', foreground=TEXT, insertcolor=TEXT, padding=(8, 6), bordercolor=LINE_HI, lightcolor=FIELD,
-                    darkcolor=FIELD, selectbackground=BLOOD, selectforeground=TEXT)
+                    darkcolor=FIELD, selectbackground=ACCENT, selectforeground=TEXT)
         s.map('TEntry', bordercolor=[('focus', MUTED)], lightcolor=[('focus', FIELD)], darkcolor=[('focus', FIELD)])
         s.layout('Vertical.TScrollbar', [('Vertical.Scrollbar.trough', {'sticky': 'ns', 'children': [
             ('Vertical.Scrollbar.thumb', {'expand': '1', 'sticky': 'nswe'})]})])
@@ -2579,7 +2581,7 @@ class Launcher:
         """An ornamental rule: a small blood-red diamond, then a gold line that fades out to the right."""
         px = self.px
         canvas = self.tk.Canvas(parent, width=1, height=px(height), bg=bg, highlightthickness=0, bd=0)
-        gem = canvas.create_polygon(diamond(px(4), px(height) // 2, px(3)), fill=BLOOD_HI, outline='')
+        gem = canvas.create_polygon(diamond(px(4), px(height) // 2, px(3)), fill=ACCENT_HI, outline='')
         parts = [canvas.create_line(0, 0, 0, 0) for _i in range(16)]
 
         def draw(event):
@@ -2646,7 +2648,7 @@ class Launcher:
 
     def light(self, card, value):
         card.glow = value
-        card.configure(highlightbackground=mix(LINE, BLOOD, value * 0.75))
+        card.configure(highlightbackground=mix(LINE, ACCENT, value * 0.75))
         for corner in getattr(card, 'corners', ()):
             corner.itemconfigure('arm', fill=mix(GOLD_DIM, GOLD, value * 0.8))
 
@@ -4073,7 +4075,7 @@ class Launcher:
         frame.pack(fill='both', expand=True, padx=px(32), pady=(0, px(20)))
         self.log = tk.Text(frame, wrap='none', bg=FIELD, fg='#cfc6b8', insertbackground=TEXT, relief='flat',
                            font=self.fonts['mono'], padx=px(10), pady=px(8), state='disabled', highlightthickness=0,
-                           selectbackground=BLOOD)
+                           selectbackground=ACCENT)
         bar = self.ttk.Scrollbar(frame, command=self.log.yview)
         self.log.configure(yscrollcommand=bar.set)
         bar.pack(side='right', fill='y')
@@ -4855,7 +4857,7 @@ class Launcher:
             self.root.after_cancel(self.install_hide)
             self.install_hide = None
         if not self.install_card:
-            self.install_card = tk.Frame(self.root, bg=CARD, highlightthickness=1, highlightbackground=BLOOD)
+            self.install_card = tk.Frame(self.root, bg=CARD, highlightthickness=1, highlightbackground=ACCENT)
             body = tk.Frame(self.install_card, bg=CARD)
             body.pack(padx=px(20), pady=px(14))
             head = tk.Frame(body, bg=CARD)
@@ -4868,7 +4870,7 @@ class Launcher:
             self.install_bar = Bar(self, body, 520)
             self.install_close = self.button(body, _('Close', 'Закрыть'), self.hide_install_card)
         self.install_close.pack_forget()
-        self.install_card.configure(highlightbackground=BLOOD)
+        self.install_card.configure(highlightbackground=ACCENT)
         self.install_title.configure(text=title, fg=TEXT)
         self.install_detail.configure(text=detail)
         self.install_spin.pack(side='right', padx=(px(16), 0))
@@ -4957,7 +4959,7 @@ class Launcher:
             return
         tk, px = self.tk, self.px
         text = _('Version {} is available.', 'Доступна версия {}.').format(version)
-        box = tk.Frame(self.content, bg=CARD, highlightthickness=1, highlightbackground=BLOOD)
+        box = tk.Frame(self.content, bg=CARD, highlightthickness=1, highlightbackground=ACCENT)
         row = tk.Frame(box, bg=CARD)
         row.pack(padx=px(14), pady=px(8))
         self.update_label = self.label(row, text, 'body_bold')
