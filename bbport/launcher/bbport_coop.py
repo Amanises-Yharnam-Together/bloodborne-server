@@ -36,7 +36,9 @@ DETACHED = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CRE
 # The answers, as 1 - SETUP asked them (FPS is gone: co-op is always the fixed 60 FPS mode). No party
 # settings: the team is made in the game's team screen (phase 6). `role` 'host' runs the co-op server.
 DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account': '', 'password': '',
-            'p2p_port': 'auto', 'harder': 'off', 'prepared': ''}
+            'p2p_port': 'auto', 'harder': 'off', 'prepared': '',
+            # '1' once the player pressed Done in the launcher's co-op settings (they open by themselves until then).
+            'confirmed': ''}
 HARDER_ON = '3,1.5,3'  # the kit's harder enemies: HP, damage and poise multipliers
 
 
@@ -50,6 +52,19 @@ def valid_ip(value):
     try:
         return not ipaddress.IPv4Address(value).is_loopback
     except ValueError:
+        return False
+
+
+def is_this_pc(value):
+    """Whether the host's IP is an address of this PC: then this PC hosts (PLAY starts the server). There
+    is no Player/Host switch (Kaniel 2026-10-16); an address can be bound only where it is the PC's own."""
+    if not valid_ip(value):
+        return False
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.bind((value, 0))
+        return True
+    except OSError:
         return False
 
 

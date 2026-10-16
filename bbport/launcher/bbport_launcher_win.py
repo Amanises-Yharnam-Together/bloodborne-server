@@ -203,8 +203,6 @@ COOP_INSTALL = os.environ.get('BB_COOP_INSTALL') == '1' or (PORT_DIR / 'event-re
 HARDER_CHOICES = [('off', ('Off (the normal game)', 'Выключено (обычная игра)')),
                   (bbport_coop.HARDER_ON, ('Harder: enemy HP ×3, damage ×1.5, poise ×3',
                                            'Сложнее: HP врагов ×3, урон ×1.5, стойкость ×3'))]
-ROLES = [('guest', ('Player (plays on the server)', 'Игрок (играет на сервере)')),
-         ('host', ('Host (runs the co-op server on this PC)', 'Хост (запускает сервер на этом ПК)'))]
 
 
 def coop_release_version():
@@ -303,7 +301,7 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'fps_mode': 'uncap', 'frame_cap': '', 'draw_pipe': '', 'readbacks': '',
                 'frames_ahead': '', 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'extra_env': '', 'close_on_play': False,
-                'check_updates': True, 'ui_advanced': False, 'animations': True,
+                'check_updates': True, 'animations': True,
                 'addcont': '', 'pkg_dir': '', 'pkg_src': '', 'reshade': False, 'online': False, 'online_server': 'srv.shadps4.net:31313',
                 'online_webapi': '', 'online_npid': '', 'online_password': '',
                 'online_community': COMMUNITY_SERVER,
@@ -399,6 +397,27 @@ def work_area(screen=(1280, 720)):
     except (AttributeError, OSError, ImportError):
         pass
     return 0, 0, screen[0], screen[1]
+
+
+def work_area_of(hwnd, screen=(1280, 720)):
+    """(left, top, right, bottom) of the work area of the monitor a window is on (the primary one's when
+    Windows cannot say)."""
+    try:
+        from ctypes import wintypes
+
+        class MonitorInfo(ctypes.Structure):
+            _fields_ = [('size', wintypes.DWORD), ('monitor', wintypes.RECT), ('work', wintypes.RECT),
+                        ('flags', wintypes.DWORD)]
+        user32 = ctypes.windll.user32
+        user32.MonitorFromWindow.restype = ctypes.c_void_p
+        user32.MonitorFromWindow.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        info = MonitorInfo(size=ctypes.sizeof(MonitorInfo))
+        if user32.GetMonitorInfoW(user32.MonitorFromWindow(hwnd, 2), ctypes.byref(info)):  # MONITOR_DEFAULTTONEAREST
+            return info.work.left, info.work.top, info.work.right, info.work.bottom
+    except (AttributeError, OSError, ImportError):
+        pass
+    return work_area(screen)
 
 
 def auto_cap(refresh):
@@ -1222,16 +1241,80 @@ def console_encoding():
         return 'utf-8'
 
 
+# The home page's banner (Kaniel 2026-10-16): news and patch notes from the website, a file the site
+# serves as it is (website/public/launcher/news.json). The last copy read is kept for a start offline.
+NEWS_URL = 'https://bloodborne-seamless-coop.vercel.app/launcher/news.json'
+NEWS_FALLBACK = {
+    'kicker': 'Seamless Co-op',
+    'title': 'Hunt Yharnam together',
+    'intro': 'Up to four hunters share one world: no bells, no signs, no peer-to-peer. Set the co-op up once, '
+             'press PLAY, then make or join a team on the screen after Continue.',
+    'notes': [],
+    'link': {'text': 'Open the website', 'url': 'https://bloodborne-seamless-coop.vercel.app'},
+    'info': [],
+}
+
+
+def parse_news(data):
+    """The banner from news.json's data, every field checked and cut to a sane length; None when it is not
+    the file the launcher knows."""
+    if not isinstance(data, dict) or not isinstance(data.get('title'), str) or not data['title'].strip():
+        return None
+
+    def text(value, limit):
+        return value.strip()[:limit] if isinstance(value, str) else ''
+
+    news = {'kicker': text(data.get('kicker'), 60), 'title': text(data.get('title'), 90),
+            'date': text(data.get('date'), 30), 'version': text(data.get('version'), 30),
+            'intro': text(data.get('intro'), 600),
+            'notes': [text(n, 240) for n in data.get('notes', []) if isinstance(n, str) and n.strip()][:8]
+            if isinstance(data.get('notes'), list) else [],
+            'link': None, 'info': []}
+    link = data.get('link')
+    if isinstance(link, dict) and text(link.get('url'), 300).startswith('https://'):
+        news['link'] = {'text': text(link.get('text'), 40) or 'Read more', 'url': text(link.get('url'), 300)}
+    for item in data.get('info', []) if isinstance(data.get('info'), list) else []:
+        if isinstance(item, dict) and text(item.get('title'), 60):
+            news['info'].append({'title': text(item.get('title'), 60), 'text': text(item.get('text'), 300)})
+    news['info'] = news['info'][:3]
+    return news
+
+
+def fetch_news(url=NEWS_URL, timeout=6):
+    """news.json from the website, parsed; None when it cannot be read."""
+    try:
+        request = urllib.request.Request(url, headers={'User-Agent': f'bbport-launcher/{VERSION}'})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return parse_news(json.loads(response.read(200_000).decode('utf-8')))
+    except (OSError, ValueError):
+        return None
+
+
+def cached_news():
+    return parse_news(load_json(CONFIG_DIR / 'news.json', None)) or parse_news(NEWS_FALLBACK)
+
+
 # ---------------------------------------------------------------------------------------------
-# The window. Near-black stage, warm parchment text, one accent (blood red). Everything that
+# The window, in the colours of the game's team screen and team loading screen: dark slate stone,
+# parchment text, gold frames and ornaments (Kaniel 2026-10-16). Everything that
 # moves goes through Motion; BB_LAUNCHER_ANIMATIONS=0 (or the Animations switch) turns it off.
 
-BG, PANEL, CARD, FIELD = '#0b0a0c', '#0f0d0f', '#171315', '#0d0b0c'
-LINE, LINE_HI = '#2a2224', '#4a3a36'
-TEXT, MUTED, DIM, GOLD = '#e8dfcf', '#a09282', '#6b6054', '#c8a96a'
-BLOOD, BLOOD_HI, BLOOD_DEEP = '#8e1a1f', '#b8282e', '#5c1014'
+BG, PANEL, CARD, FIELD = '#0d0f13', '#12151a', '#191c22', '#0b0d11'
+LINE, LINE_HI = '#2b3038', '#4a505a'
+TEXT, MUTED, DIM, GOLD, GOLD_DIM = '#f0e2c2', '#aea590', '#6e6a60', '#d9b878', '#7d6b48'
+ACCENT, ACCENT_HI, ACCENT_DEEP = '#6e5a36', '#c9a86a', '#2a2620'
 OK, CAUTION, BAD = '#8fae7e', '#d9a441', '#d9695c'
 GLYPH_COLORS = {'✓': OK, '⚠': CAUTION, '✗': BAD, '•': DIM}
+
+
+def spaced(text):
+    """A heading set the way game menus set them: capitals with a thin space between the letters."""
+    return ' '.join(text.upper())
+
+
+def diamond(x, y, r):
+    """Points of a small diamond (the ornament of headings and of the menu) centred on (x, y)."""
+    return [x, y - r, x + r, y, x, y + r, x - r, y]
 
 
 def short_path(path, limit=44):
@@ -1399,8 +1482,14 @@ class Widget:
         pass
 
 
+def chamfer(w, h, cut):
+    """Points of a w x h box with its corners cut off (the buttons' shape)."""
+    x1, y1 = w - 1, h - 1
+    return [cut, 0, x1 - cut, 0, x1, cut, x1, y1 - cut, x1 - cut, y1, cut, y1, 0, y1 - cut, 0, cut]
+
+
 class FlatButton(Widget):
-    """A flat button: kind 'ghost' (quiet) or 'primary' (accent)."""
+    """A flat button with cut corners: kind 'ghost' (quiet) or 'primary' (accent)."""
 
     def __init__(self, ui, parent, text, command, kind='ghost', bg=CARD, width=None, font='body'):
         px = ui.px
@@ -1410,7 +1499,7 @@ class FlatButton(Widget):
         w = width or ui.measure(self.font, text) + px(32)
         super().__init__(ui, parent, w, px(34), bg, takefocus=True)
         c = self.canvas
-        self.rect = c.create_rectangle(0, 0, w - 1, px(34) - 1, width=1)
+        self.rect = c.create_polygon(chamfer(w, px(34), px(5)), width=1)
         self.label = c.create_text(w // 2, px(34) // 2, text=text, font=self.font)
         c.bind('<Enter>', lambda _e: self.state == 'normal' and self.fade_hover(1.0))
         c.bind('<Leave>', lambda _e: self.leave())
@@ -1453,7 +1542,7 @@ class FlatButton(Widget):
             if not self.fixed_width:
                 w = self.ui.measure(self.font, self.text) + self.ui.px(32)
                 self.canvas.configure(width=w)
-                self.canvas.coords(self.rect, 0, 0, w - 1, self.ui.px(34) - 1)
+                self.canvas.coords(self.rect, *chamfer(w, self.ui.px(34), self.ui.px(5)))
                 self.canvas.coords(self.label, w // 2, self.ui.px(34) // 2)
         if 'state' in options:
             self.state = options['state']
@@ -1467,7 +1556,7 @@ class FlatButton(Widget):
         if self.state != 'normal':
             fill, line, ink = bg, mix(bg, TEXT, .08), DIM
         elif self.kind == 'primary':
-            fill, line, ink = mix(BLOOD_DEEP, BLOOD, t), mix(BLOOD, BLOOD_HI, t), TEXT
+            fill, line, ink = mix(ACCENT_DEEP, ACCENT, t), mix(ACCENT, ACCENT_HI, t), TEXT
         else:
             fill = mix(mix(bg, TEXT, .05), mix(bg, TEXT, .13), t)
             line, ink = mix(mix(bg, TEXT, .14), mix(bg, TEXT, .34), t), TEXT
@@ -1478,19 +1567,18 @@ class FlatButton(Widget):
 
 
 class PlayButton(Widget):
-    """The big primary button: chamfered corners, hover glow, a slow idle pulse, pressed state."""
+    """The big primary button: dark stone with cut corners in a gold frame, a thin inner gold line, lighter
+    under the pointer, pressed state (Kaniel 2026-10-16: no glow around it, no sheen across it)."""
 
     def __init__(self, ui, parent, text, command):
         px = ui.px
-        self.pad, self.w, self.h = px(12), px(228), px(58)
+        self.pad, self.w, self.h = px(3), px(228), px(58)
         self.text, self.command, self.state, self.pressed, self.pulse = text, command, 'normal', False, 0.5
         super().__init__(ui, parent, self.w + 2 * self.pad, self.h + 2 * self.pad, BG, takefocus=True)
         c, pad, cut = self.canvas, self.pad, px(10)
         self.cut = cut
-        self.rings = [c.create_polygon(self.outline(pad - px(2) * i, cut + px(2) * i), fill='', width=px(2))
-                      for i in range(5, 0, -1)]
-        self.body = c.create_polygon(self.outline(pad, cut), width=1)
-        self.sheen = c.create_polygon(self.sheen_points(), outline='')
+        self.body = c.create_polygon(self.outline(pad, cut), width=max(1, px(1.5)))
+        self.inner = c.create_polygon(self.outline(pad + px(4), cut - px(2)), fill='', width=1)
         self.label = c.create_text(pad + self.w // 2, pad + self.h // 2, text=text, font=ui.fonts['play'])
         c.bind('<Enter>', lambda _e: self.state == 'normal' and self.fade_hover(1.0, 200))
         c.bind('<Leave>', lambda _e: self.leave())
@@ -1507,11 +1595,6 @@ class PlayButton(Widget):
         x0, y0, x1, y1 = self.pad - grow, self.pad - grow, self.pad + self.w + grow, self.pad + self.h + grow
         return [x0 + cut, y0, x1 - cut, y0, x1, y0 + cut, x1, y1 - cut, x1 - cut, y1, x0 + cut, y1, x0, y1 - cut,
                 x0, y0 + cut]
-
-    def sheen_points(self):
-        x0, y0, x1, ym = self.pad + 1, self.pad + 1, self.pad + self.w - 1, self.pad + self.h // 2
-        c = self.cut
-        return [x0 + c, y0, x1 - c, y0, x1, y0 + c, x1, ym, x0, ym, x0, y0 + c]
 
     def animate(self, on):
         if on:
@@ -1560,61 +1643,49 @@ class PlayButton(Widget):
     def paint(self):
         c, t = self.canvas, self.hover
         if self.state != 'normal':
-            glow, base, edge, ink = 0.0, '#2a1a1c', '#3a2a2c', DIM
+            glow, base, edge, ink = 0.0, '#1c1f24', '#2c3038', DIM
         else:
+            # The team screen's chosen button: dark stone, a gold frame, a faint gold wash.
             glow = 0.9 * t + (1 - t) * (0.12 + 0.34 * self.pulse)
-            base = mix(BLOOD_DEEP, BLOOD, 0.35 + 0.65 * t)
-            edge, ink = mix(BLOOD, '#e0a690', 0.18 + 0.5 * t), TEXT
+            base = mix('#1d2027', '#3a3428', 0.25 + 0.55 * t)
+            edge, ink = mix(GOLD_DIM, GOLD, 0.45 + 0.55 * t), TEXT
             if self.pressed:
                 base, glow = mix(base, BG, .35), 0.35
-        for i, ring in enumerate(self.rings):  # outermost first
-            c.itemconfigure(ring, outline=mix(BG, BLOOD_HI, glow * (i / len(self.rings)) ** 1.6 * 0.8))
         c.itemconfigure(self.body, fill=base, outline=edge)
-        c.itemconfigure(self.sheen, fill=mix(base, '#ffffff', 0.045 if self.state == 'normal' else 0.0))
+        c.itemconfigure(self.inner, outline=mix(base, edge, 0.35 + 0.25 * glow if self.state == 'normal' else 0.2))
         c.itemconfigure(self.label, fill=ink)
         shift = self.ui.px(1) if self.pressed else 0
         c.coords(self.label, self.pad + self.w // 2, self.pad + self.h // 2 + shift)
 
 
-class TabBar(Widget):
-    """Text tabs with an accent underline that slides to the selected one."""
+class SubTabs(Widget):
+    """The Settings page's own tabs: plain names, a gold rule sliding under the chosen one (as the
+    team screen marks its choice)."""
 
     def __init__(self, ui, parent, tabs, command):
         px = ui.px
         self.tabs, self.command, self.active = tabs, command, None
-        self.h = px(48)
-        super().__init__(ui, parent, 10, self.h, BG, cursor='arrow')
+        self.h = px(44)
+        super().__init__(ui, parent, 10, self.h, PANEL, cursor='arrow')
         c = self.canvas
         self.font = ui.fonts['tab']
         self.base_line = c.create_line(0, self.h - 1, 10, self.h - 1, fill=LINE)
-        self.slots, self.hv, self.items, x = {}, {}, {}, px(20)
+        self.slots, self.hv, self.items, self.aim, x = {}, {}, {}, {}, px(32)
         for name, title in tabs:
-            w = ui.measure(self.font, title) + px(32)
+            w = ui.measure(self.font, title) + px(24)
             self.slots[name] = (x, w)
             self.hv[name] = 0.0
-            self.items[name] = c.create_text(x + w // 2, self.h // 2 - px(1), text=title, font=self.font, fill=MUTED)
+            self.items[name] = c.create_text(x + w // 2, self.h // 2, text=title, font=self.font, fill=MUTED)
             x += w
-        self.mark = c.create_rectangle(0, self.h - px(3), 0, self.h - 1, fill=BLOOD_HI, outline='')
-        self.mark_x, self.mark_w, self.aim, self.shown = 0.0, 0.0, {}, 0
-        c.bind('<Configure>', lambda e: c.coords(self.base_line, 0, self.h - 1, e.width, self.h - 1))
-        c.bind('<Motion>', self.moved)
+        self.mark = c.create_rectangle(0, 0, 0, 0, fill=GOLD, outline='')
+        self.mark_x = self.mark_w = 0.0
+        c.bind('<Configure>', lambda e: c.coords(self.base_line, px(32), self.h - 1, e.width - px(32), self.h - 1))
+        c.bind('<Motion>', lambda e: self.hot(self.at(e.x)))
         c.bind('<Leave>', lambda _e: self.hot(None))
-        c.bind('<Button-1>', lambda e: self.pick(e.x))
-
-    def set_height(self, h):
-        self.shown = max(1, int(h))
-        self.canvas.configure(height=self.shown)
+        c.bind('<Button-1>', lambda e: self.at(e.x) and self.command(self.at(e.x)))
 
     def at(self, x):
         return next((name for name, (x0, w) in self.slots.items() if x0 <= x < x0 + w), None)
-
-    def pick(self, x):
-        name = self.at(x)
-        if name:
-            self.command(name)
-
-    def moved(self, event):
-        self.hot(self.at(event.x))
 
     def hot(self, name):
         for tab in self.slots:
@@ -1634,59 +1705,137 @@ class TabBar(Widget):
     def select(self, name, animate=True):
         old, self.active = self.active, name
         x1, w1 = self.slots[name]
-        x0, w0 = (self.mark_x, self.mark_w) if old else (x1, 0.0)
+        x0, w0 = (self.mark_x, self.mark_w) if old else (x1, w1)
+        px = self.ui.px
 
         def move(p):
             self.mark_x, self.mark_w = x0 + (x1 - x0) * p, w0 + (w1 - w0) * p
-            self.canvas.coords(self.mark, self.mark_x + self.ui.px(10), self.h - self.ui.px(3),
-                               self.mark_x + self.mark_w - self.ui.px(10), self.h - 1)
-        self.ui.motion.tween((id(self), 'mark'), 260 if animate else 0, 0.0, 1.0, move)
+            self.canvas.coords(self.mark, self.mark_x + px(8), self.h - px(2), self.mark_x + self.mark_w - px(8), self.h)
+        self.ui.motion.tween((id(self), 'mark'), 240 if animate else 0, 0.0, 1.0, move)
         for tab in self.slots:
             self.colour(tab)
 
 
-class ModeToggle(Widget):
-    """Simple | Advanced: a segmented switch whose highlight slides."""
+class Tooltip:
+    """A small framed note shown over a widget while the pointer rests on it."""
 
-    def __init__(self, ui, parent, labels, command):
+    def __init__(self, ui, widget, text=''):
+        self.ui, self.widget, self.text, self.window, self.job = ui, widget, text, None, None
+        widget.bind('<Enter>', lambda _e: self.schedule(), add='+')
+        widget.bind('<Leave>', lambda _e: self.hide(), add='+')
+        widget.bind('<ButtonPress>', lambda _e: self.hide(), add='+')
+
+    def schedule(self):
+        self.cancel()
+        self.job = self.widget.after(250, self.show)
+
+    def cancel(self):
+        if self.job:
+            self.widget.after_cancel(self.job)
+            self.job = None
+
+    def show(self):
+        self.job = None
+        if not self.text or self.window:
+            return
+        tk, px = self.ui.tk, self.ui.px
+        window = self.window = tk.Toplevel(self.widget)
+        window.overrideredirect(True)
+        try:
+            window.attributes('-topmost', True)
+        except tk.TclError:
+            pass
+        frame = tk.Frame(window, bg=CARD, highlightthickness=1, highlightbackground=GOLD_DIM)
+        frame.pack()
+        tk.Label(frame, text=self.text, bg=CARD, fg=TEXT, font=self.ui.fonts['body'], justify='left',
+                 wraplength=px(340), padx=px(12), pady=px(8)).pack()
+        window.update_idletasks()
+        x = self.widget.winfo_rootx() - px(8)
+        y = self.widget.winfo_rooty() - window.winfo_reqheight() - px(8)
+        window.geometry(f'+{max(0, x)}+{max(0, y)}')
+
+    def hide(self):
+        self.cancel()
+        if self.window:
+            self.window.destroy()
+            self.window = None
+
+    def set(self, text):
+        self.text = text
+        if self.window:
+            self.hide()
+            self.show()
+
+
+class StatusIcon(Widget):
+    """One item of the ready check in the bottom bar: a small drawn glyph (the game, the saves, the
+    graphics card, the FSR 4 files, the upscaler) with a badge for its state, and the full line as a
+    tooltip. set() takes the ready check's line: its first character (✓ ⚠ ✗ •) is the state."""
+
+    STATES = {'✓': OK, '⚠': CAUTION, '✗': BAD, '•': DIM}
+
+    def __init__(self, ui, parent, kind, bg=BG):
         px = ui.px
-        self.command, self.labels, self.font = command, labels, ui.fonts['small_bold']
-        seg = max(ui.measure(self.font, text) for text in labels) + px(34)
-        self.seg, self.h = seg, px(32)
-        super().__init__(ui, parent, 2 * seg, self.h, FIELD)
-        c = self.canvas
-        c.create_rectangle(0, 0, 2 * seg - 1, self.h - 1, fill=FIELD, outline=LINE_HI)
-        self.slide = c.create_rectangle(1, 1, seg, self.h - 2, fill=BLOOD, outline=BLOOD_HI)
-        self.texts = [c.create_text(seg * i + seg // 2, self.h // 2, text=t, font=self.font) for i, t in enumerate(labels)]
-        self.pos, self.advanced, self.hv = 0.0, False, [0.0, 0.0]
-        c.bind('<Button-1>', lambda e: self.command(e.x >= seg))
-        c.bind('<Motion>', lambda e: self.over(int(e.x >= seg)))
-        c.bind('<Leave>', lambda _e: self.over(None))
+        self.kind, self.state, self.busy, self.bg = kind, '•', False, bg
+        self.size = px(34)
+        super().__init__(ui, parent, self.size, self.size, bg, cursor='arrow')
+        self.tip = Tooltip(ui, self.canvas)
+        self.canvas.bind('<Enter>', lambda _e: self.fade_hover(1.0), add='+')
+        self.canvas.bind('<Leave>', lambda _e: self.fade_hover(0.0, 200), add='+')
         self.paint()
 
-    def over(self, index):
-        for i in (0, 1):
-            self.ui.motion.tween((id(self), i), 140, self.hv[i], 1.0 if i == index else 0.0,
-                                 lambda v, i=i: self.shade(i, v))
-
-    def shade(self, index, value):
-        self.hv[index] = value
+    def set(self, text, busy=False):
+        glyph, rest = (text[0], text[1:].strip()) if text[:1] in self.STATES else ('•', text)
+        self.state, self.busy = glyph, busy
+        self.tip.set(rest)
         self.paint()
 
-    def select(self, advanced, animate=True):
-        self.advanced = advanced
-        self.ui.motion.tween((id(self), 'slide'), 240 if animate else 0, self.pos, 1.0 if advanced else 0.0, self.move)
-
-    def move(self, pos):
-        self.pos = pos
-        x = 1 + pos * self.seg
-        self.canvas.coords(self.slide, x, 1, x + self.seg - 1, self.h - 2)
-        self.paint()
+    def glyph(self, c, ink, w):
+        s, px = self.size, self.ui.px
+        m = s / 2 - px(3)
+        if self.kind == 'game':  # a disc
+            c.create_oval(m - px(9), m - px(9), m + px(9), m + px(9), outline=ink, width=w)
+            c.create_oval(m - px(2), m - px(2), m + px(2), m + px(2), outline=ink, width=w)
+        elif self.kind == 'saves':  # a bound book
+            c.create_rectangle(m - px(7), m - px(9), m + px(8), m + px(9), outline=ink, width=w)
+            c.create_line(m - px(3), m - px(9), m - px(3), m + px(9), fill=ink, width=w)
+        elif self.kind == 'gpu':  # a chip and its pins
+            c.create_rectangle(m - px(6), m - px(6), m + px(6), m + px(6), outline=ink, width=w)
+            for d in (-3, 1, 5):
+                for x0, y0, x1, y1 in ((m - px(9), m + px(d) - px(1), m - px(6), m + px(d) - px(1)),
+                                       (m + px(6), m + px(d) - px(1), m + px(9), m + px(d) - px(1)),
+                                       (m + px(d) - px(1), m - px(9), m + px(d) - px(1), m - px(6)),
+                                       (m + px(d) - px(1), m + px(6), m + px(d) - px(1), m + px(9))):
+                    c.create_line(x0, y0, x1, y1, fill=ink, width=w)
+        elif self.kind == 'fsr4':  # a small picture made large
+            c.create_rectangle(m - px(9), m - px(1), m - px(1), m + px(9), outline=ink, width=w)
+            c.create_rectangle(m - px(9), m - px(9), m + px(9), m + px(9), outline=ink, width=w)
+            c.create_line(m - px(1), m + px(1), m + px(6), m - px(6), fill=ink, width=w)
+            c.create_line(m + px(1), m - px(6), m + px(6), m - px(6), m + px(6), m - px(1), fill=ink, width=w)
+        else:  # the upscaler that changed: a warning sign
+            c.create_polygon(m, m - px(9), m + px(9), m + px(8), m - px(9), m + px(8), outline=ink, fill='', width=w)
+            c.create_line(m, m - px(3), m, m + px(3), fill=ink, width=w)
 
     def paint(self):
-        for i, item in enumerate(self.texts):
-            on = abs(self.pos - i)  # 0 when the highlight is under this label
-            self.canvas.itemconfigure(item, fill=mix(mix(MUTED, TEXT, self.hv[i]), TEXT, 1 - min(1.0, on)))
+        c, px = self.canvas, self.ui.px
+        c.delete('all')
+        ink = mix(MUTED, TEXT, self.hover)
+        self.glyph(c, ink, max(1, px(1.4)))
+        # The badge: the state's colour in the lower right, a tick, a bar or a cross in it.
+        r, cx, cy = px(6), self.size - px(7), self.size - px(7)
+        color = DIM if self.busy else self.STATES.get(self.state, DIM)
+        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=color, outline=self.bg, width=px(2))
+        w = max(1, px(1.5))
+        if self.busy:
+            c.create_line(cx - px(3), cy, cx + px(3), cy, fill=BG, width=w)
+        elif self.state == '✓':
+            c.create_line(cx - px(3), cy, cx - px(1), cy + px(2), cx + px(3), cy - px(2), fill=BG, width=w)
+        elif self.state == '⚠':
+            c.create_line(cx, cy - px(3), cx, cy + px(1), fill=BG, width=w)
+            c.create_line(cx, cy + px(2), cx, cy + px(3), fill=BG, width=w)
+        elif self.state == '✗':
+            c.create_line(cx - px(2), cy - px(2), cx + px(3), cy + px(3), fill=BG, width=w)
+            c.create_line(cx - px(2), cy + px(2), cx + px(3), cy - px(3), fill=BG, width=w)
 
 
 class Switch(Widget):
@@ -1737,11 +1886,11 @@ class Switch(Widget):
         x = pad + p * (self.w - self.h)
         c.coords(self.knob, x, pad, x + self.h - 2 * pad, self.h - pad - 1)
         if not self.enabled:
-            c.itemconfigure(self.track, fill=mix('#221c1e', DIM, .2 + .2 * p), outline=mix(LINE_HI, '#221c1e', .5))
-            c.itemconfigure(self.knob, fill=mix(DIM, '#221c1e', .35))
+            c.itemconfigure(self.track, fill=mix('#1f2228', DIM, .2 + .2 * p), outline=mix(LINE_HI, '#1f2228', .5))
+            c.itemconfigure(self.knob, fill=mix(DIM, '#1f2228', .35))
             return
-        c.itemconfigure(self.track, fill=mix('#221c1e', BLOOD, p), outline=MUTED if self.focused else
-                        mix(LINE_HI, BLOOD_HI, p))
+        c.itemconfigure(self.track, fill=mix('#1f2228', ACCENT, p), outline=MUTED if self.focused else
+                        mix(LINE_HI, ACCENT_HI, p))
         c.itemconfigure(self.knob, fill=mix(mix(DIM, MUTED, self.hover), TEXT, p))
 
 
@@ -1755,7 +1904,7 @@ class Slider(Widget):
         c = self.canvas
         mid = self.h // 2
         self.trough = c.create_rectangle(px(7), mid - 2, self.w - px(7), mid + 2, fill=FIELD, outline=LINE)
-        self.fill = c.create_rectangle(px(7), mid - 2, px(7), mid + 2, fill=BLOOD, outline='')
+        self.fill = c.create_rectangle(px(7), mid - 2, px(7), mid + 2, fill=ACCENT, outline='')
         self.knob = c.create_rectangle(0, 0, 0, 0, fill=TEXT, outline='')
         c.bind('<Button-1>', self.drag)
         c.bind('<B1-Motion>', self.drag)
@@ -1791,8 +1940,8 @@ class Bar(Widget):
         super().__init__(ui, parent, self.w, self.h, bg, cursor='arrow')
         c = self.canvas
         c.create_rectangle(0, 0, self.w - 1, self.h - 1, fill=FIELD, outline=LINE)
-        self.fill = c.create_rectangle(1, 1, 1, self.h - 2, fill=BLOOD_HI, outline='')
-        self.band = c.create_rectangle(0, 1, 0, self.h - 2, fill=mix(BLOOD_HI, TEXT, .45), outline='', state='hidden')
+        self.fill = c.create_rectangle(1, 1, 1, self.h - 2, fill=ACCENT_HI, outline='')
+        self.band = c.create_rectangle(0, 1, 0, self.h - 2, fill=mix(ACCENT_HI, TEXT, .45), outline='', state='hidden')
         self.running = False
 
     def set(self, fraction):
@@ -1825,7 +1974,7 @@ class Spinner(Widget):
         super().__init__(ui, parent, s, s, bg, cursor='arrow')
         w = ui.px(2)
         self.canvas.create_oval(w, w, s - w, s - w, outline=LINE_HI, width=w)
-        self.arc = self.canvas.create_arc(w, w, s - w, s - w, start=90, extent=100, style='arc', outline=BLOOD_HI, width=w)
+        self.arc = self.canvas.create_arc(w, w, s - w, s - w, start=90, extent=100, style='arc', outline=ACCENT_HI, width=w)
         self.on = False
 
     def start(self):
@@ -1851,9 +2000,12 @@ class StatusLine:
         self.glyph = ui.tk.Label(slot, bg=bg, fg=DIM, font=ui.fonts['body_bold'])
         self.spinner = Spinner(ui, slot, 16, bg)
         self.glyph.pack()
+        # The text asks for no width of its own (width=1) and wraps at the width its column gives it: a
+        # wrap length taken from the label's own width would feed back into the column's width.
         self.text = ui.tk.Label(self.frame, bg=bg, fg=TEXT, font=ui.fonts['body'], justify='left', anchor='w',
-                                wraplength=px(280))
+                                wraplength=px(240), width=1)
         self.text.pack(side='left', fill='x', expand=True, anchor='n')
+        self.text.bind('<Configure>', lambda e: self.text.configure(wraplength=max(px(120), e.width - px(4))))
 
     def set(self, text, busy=False):
         glyph, rest = (text[0], text[1:].strip()) if text[:1] in GLYPH_COLORS else ('', text)
@@ -1869,212 +2021,426 @@ class StatusLine:
             self.glyph.configure(text=glyph or '•', fg=GLYPH_COLORS.get(glyph, DIM))
 
 
-class Hero:
-    """The banner: cover art under a dark gradient (or a blood moon without art), the title
-    that writes itself in, drifting embers, and a height that eases between the two views."""
+class CaptionButton(Widget):
+    """A window button of the launcher's own title bar: minimize, maximize/restore or close, drawn as thin glyphs;
+    the close button turns blood red under the pointer."""
 
-    EMBERS = 36
+    def __init__(self, ui, parent, kind, command, bg=PANEL):
+        px = ui.px
+        self.kind, self.command, self.bg, self.zoomed = kind, command, bg, False
+        self.w, self.h = px(46), px(34)
+        super().__init__(ui, parent, self.w, self.h, bg)
+        c = self.canvas
+        self.back = c.create_rectangle(0, 0, self.w, self.h, outline='', fill=bg)
+        self.glyph = []
+        c.bind('<Enter>', lambda _e: self.fade_hover(1.0, 120))
+        c.bind('<Leave>', lambda _e: self.fade_hover(0.0, 180))
+        c.bind('<ButtonRelease-1>', self.release)
+        self.draw()
 
-    def __init__(self, ui, parent, tall, short):
-        self.ui, self.tall, self.short, self.h, self.w = ui, tall, short, tall, 0
-        c = self.canvas = ui.tk.Canvas(parent, height=tall, bg=BG, highlightthickness=0, bd=0)
-        self.art_path, self.art_size, self.images, self.reveal = None, 0, {}, 1.0
-        self.art = c.create_image(0, 0, anchor='nw', tags='art')
-        self.vignette = c.create_image(0, 0, anchor='nw', tags='art')
-        self.halo = [c.create_oval(0, 0, 0, 0, outline='', tags='moon') for _i in range(18)]
-        self.disc = c.create_oval(0, 0, 0, 0, fill='#8a1a1f', outline='#b8383a', tags='moon')
-        self.craters = [c.create_oval(0, 0, 0, 0, fill='#771519', outline='', tags='moon') for _i in range(3)]
-        self.embers = []
-        self.scrim_b = c.create_image(0, 0, anchor='nw', tags='scrim')
-        self.scrim_l = c.create_image(0, 0, anchor='nw', tags='scrim')
-        self.strips = [c.create_rectangle(0, 0, 0, 0, fill=BG, outline='', stipple=s, tags='scrim')
-                       for s in ('gray12', 'gray25', 'gray50', 'gray75', '')]
-        self.rule = c.create_line(0, 0, 0, 0, fill=LINE, tags='txt')
-        self.accent = c.create_rectangle(0, 0, 0, 0, fill=BLOOD_HI, outline='', tags='txt')
+    def release(self, event):
+        if 0 <= event.x < self.w and 0 <= event.y < self.h:
+            self.command()
+
+    def set_zoomed(self, zoomed):
+        if zoomed != self.zoomed:
+            self.zoomed = zoomed
+            self.draw()
+
+    def draw(self):
+        c, px = self.canvas, self.ui.px
+        for item in self.glyph:
+            c.delete(item)
+        x, y, s, w = self.w // 2, self.h // 2, px(5), max(1, px(1))
+        if self.kind == 'min':
+            self.glyph = [c.create_line(x - s, y, x + s + 1, y, width=w)]
+        elif self.kind == 'max' and not self.zoomed:
+            self.glyph = [c.create_rectangle(x - s, y - s, x + s, y + s, width=w)]
+        elif self.kind == 'max':
+            d = px(2)
+            self.glyph = [c.create_rectangle(x - s, y - s + d, x + s - d, y + s, width=w),
+                          c.create_line(x - s + d, y - s + d, x - s + d, y - s, x + s, y - s, x + s, y + s - d,
+                                        x + s - d, y + s - d, width=w)]
+        else:
+            self.glyph = [c.create_line(x - s, y - s, x + s + 1, y + s + 1, width=w),
+                          c.create_line(x - s, y + s, x + s + 1, y - s - 1, width=w)]
+        self.paint()
+
+    def paint(self):
+        t = self.hover
+        hot = '#8a2a26' if self.kind == 'close' else mix(self.bg, TEXT, 0.12)
+        self.canvas.itemconfigure(self.back, fill=mix(self.bg, hot, t))
+        for item in self.glyph:
+            option = 'outline' if self.canvas.type(item) == 'rectangle' else 'fill'
+            self.canvas.itemconfigure(item, **{option: mix(MUTED, TEXT, t)})
+
+
+class WindowChrome:
+    """The launcher draws its own title bar (Kaniel 2026-10-16: no Windows caption buttons). The window is
+    Tk's override-redirect kind (no frame at all, so Tk's sizes stay right; taking the caption style bits off
+    a framed window left Tk computing its size with the old borders), given back its taskbar button and
+    Alt+Tab with WS_EX_APPWINDOW. Moving is handed to Windows as a drag of a caption (WM_NCLBUTTONDOWN);
+    the grip in the bottom right corner resizes; maximize fills the work area of the window's screen."""
+
+    GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW = -20, 0x00040000, 0x00000080
+    WM_NCLBUTTONDOWN, HTCAPTION = 0x00A1, 2
+
+    def __init__(self, ui):
+        self.ui, self.root = ui, ui.root
+        self.enabled = sys.platform == 'win32'
+        self.applied, self.restore, self.sizing = False, None, None
+
+    def hwnd(self):
+        return int(self.root.wm_frame(), 16)
+
+    def apply(self):
+        """Drops the Windows frame once, before the window first shows (it is still see-through then)."""
+        if not self.enabled or self.applied:
+            return
+        self.applied = True
+        try:
+            self.root.overrideredirect(True)
+            self.root.update_idletasks()
+            user32 = ctypes.windll.user32
+            user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+            user32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+            hwnd = self.hwnd()
+            style = user32.GetWindowLongPtrW(hwnd, self.GWL_EXSTYLE)
+            user32.SetWindowLongPtrW(hwnd, self.GWL_EXSTYLE, (style | self.WS_EX_APPWINDOW) & ~self.WS_EX_TOOLWINDOW)
+            dwm = ctypes.windll.dwmapi
+            corners, border = ctypes.c_int(2), ctypes.c_uint(0x0038302b)  # rounded; the border in LINE (0x00bbggrr)
+            dwm.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corners), 4)
+            dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), 4)
+            self.root.withdraw()  # shown again with the new style: the taskbar button comes back
+            self.root.deiconify()
+        except (AttributeError, OSError, ValueError, self.ui.tk.TclError):
+            pass
+
+    def drag(self, event):
+        """A press on the title bar (or the empty top of the side column) moves the window like its caption."""
+        if not self.enabled or self.restore:
+            return
+        try:
+            ctypes.windll.user32.ReleaseCapture()
+            ctypes.windll.user32.SendMessageW(self.hwnd(), self.WM_NCLBUTTONDOWN, self.HTCAPTION, 0)
+        except (AttributeError, OSError, ValueError, self.ui.tk.TclError):
+            pass
+
+    def resize_start(self, event):
+        self.sizing = (event.x_root, event.y_root, self.root.winfo_width(), self.root.winfo_height())
+
+    def resize_move(self, event):
+        if self.sizing and not self.restore:
+            x, y, w, h = self.sizing
+            minw, minh = self.root.minsize()
+            self.root.geometry(f'{max(minw, w + event.x_root - x)}x{max(minh, h + event.y_root - y)}')
+
+    def zoomed(self):
+        return self.restore is not None
+
+    def toggle_zoom(self, _event=None):
+        """Maximize: the work area of the screen the window is on; again: back to where it was."""
+        if self.restore:
+            self.root.geometry(self.restore)
+            self.restore = None
+        else:
+            self.restore = self.root.geometry()
+            left, top, right, bottom = work_area_of(self.hwnd(), (self.root.winfo_screenwidth(),
+                                                                  self.root.winfo_screenheight()))
+            self.root.geometry(f'{right - left}x{bottom - top}+{left}+{top}')
+        self.ui.caption_buttons['max'].set_zoomed(self.zoomed())
+
+    def minimize(self):
+        """Tk cannot iconify an override-redirect window; Windows can (SW_MINIMIZE)."""
+        try:
+            ctypes.windll.user32.ShowWindow(self.hwnd(), 6)
+        except (AttributeError, OSError, ValueError, self.ui.tk.TclError):
+            self.root.iconify()
+
+
+class Sidebar:
+    """The left column, drawn like a game's title menu: the emblem and the title, the page menu (a band
+    slides to the chosen page), and at its foot a night scene: a blood moon rising behind spires, embers
+    drifting up. Everything here is drawn by the launcher; no art of the game is used."""
+
+    EMBERS = 26
+    SKY = '#18202c'  # the night sky over the moon, at the foot of the column
+    # The skyline, left to right: (width, height, roof) in pixels at 96 dpi; roof 's' spire, 'g' gable, 'f' flat.
+    FAR = ((14, 58, 'f'), (10, 96, 's'), (22, 64, 'g'), (8, 128, 's'), (18, 76, 'f'), (12, 104, 's'),
+           (26, 70, 'g'), (9, 140, 's'), (16, 88, 'f'), (11, 112, 's'), (24, 66, 'g'), (10, 92, 's'),
+           (20, 78, 'f'), (12, 120, 's'), (30, 62, 'g'))
+    NEAR = ((24, 34, 'g'), (8, 62, 's'), (30, 40, 'f'), (14, 52, 'g'), (6, 84, 's'), (12, 58, 's'),
+            (28, 38, 'g'), (18, 46, 'f'), (7, 74, 's'), (26, 42, 'g'), (10, 56, 's'), (32, 36, 'f'),
+            (16, 50, 'g'), (8, 68, 's'), (40, 32, 'f'))
+
+    def __init__(self, ui, parent, entries, command, width):
+        px = ui.px
+        self.ui, self.entries, self.command, self.w, self.h = ui, entries, command, width, px(700)
+        self.active, self.reveal, self.pending, self.embers = None, 1.0, None, []
+        self.hv = {name: 0.0 for name, _t in entries}
+        self.shown = {name: 1.0 for name, _t in entries}
+        self.band_y, self.halo_base = None, BG
+        c = self.canvas = ui.tk.Canvas(parent, width=width, height=self.h, bg=BG, highlightthickness=0, bd=0)
+        self.sky = [c.create_rectangle(0, 0, 0, 0, outline='', tags='sky') for _i in range(28)]
+        self.halo = [c.create_oval(0, 0, 0, 0, outline='', tags='moon') for _i in range(16)]
+        self.disc = c.create_oval(0, 0, 0, 0, fill='#d8ccae', outline='#efe3c8', tags='moon')
+        self.craters = [c.create_oval(0, 0, 0, 0, fill='#c4b693', outline='', tags='moon') for _i in range(3)]
+        self.far = c.create_polygon(0, 0, 0, 0, 0, 0, fill='#1a212c', outline='', tags='city')
+        self.near = c.create_polygon(0, 0, 0, 0, 0, 0, fill='#07090c', outline='', tags='city')
+        self.lights = [c.create_rectangle(0, 0, 0, 0, fill='#6a5430', outline='', tags='city') for _i in range(7)]
+        self.edge = c.create_line(0, 0, 0, 0, fill=LINE)
+        self.emblem_image = self.load_emblem(px(58))
+        self.emblem = c.create_image(0, 0, anchor='n', image=self.emblem_image or '', tags='txt')
         font = ui.fonts['title']
         self.letters, self.xs, x = [], [], 0
         for char in 'BLOODBORNE':
             self.letters.append(c.create_text(0, 0, text=char, anchor='sw', font=font, fill=TEXT, tags='txt'))
             self.xs.append(x)
-            x += ui.measure(font, char) + ui.px(5)
-        self.sub = c.create_text(0, 0, text='', anchor='sw', font=ui.fonts['small'], fill=MUTED, tags='txt')
-        self.info = c.create_text(0, 0, text='', anchor='sw', font=ui.fonts['small_bold'], fill=GOLD, tags='txt')
-        self.pending = None
+            x += ui.measure(font, char) + px(3)
+        self.title_w = x - px(3)
+        self.sub = c.create_text(0, 0, text='', anchor='n', font=ui.fonts['small'], fill=MUTED, tags='txt')
+        self.info = c.create_text(0, 0, text='', anchor='n', font=ui.fonts['small_bold'], fill=GOLD, tags='txt')
+        self.rule = [c.create_line(0, 0, 0, 0, fill=GOLD_DIM, tags='txt') for _i in range(2)]
+        self.gem = c.create_polygon(0, 0, 0, 0, 0, 0, fill=ACCENT_HI, outline='', tags='txt')
+        self.band = [c.create_rectangle(0, 0, 0, 0, outline='', fill=BG, tags='band') for _i in range(14)]
+        self.band_lines = [c.create_line(0, 0, 0, 0, fill=BG, tags='band') for _i in range(2)]
+        self.menu_font = ui.fonts['menu']
+        self.items, self.marks = {}, {}
+        for name, title in entries:
+            self.items[name] = c.create_text(0, 0, text=spaced(title), font=self.menu_font, fill=MUTED, tags='menu')
+            self.marks[name] = [c.create_polygon(0, 0, 0, 0, 0, 0, fill=BG, outline='', tags='menu') for _i in range(2)]
+        self.hot_name = None
         c.bind('<Configure>', self.resized)
+        c.bind('<Motion>', lambda e: self.hot(self.at(e.y)))
+        c.bind('<Leave>', lambda _e: self.hot(None))
+        c.bind('<Button-1>', self.press)
+        c.bind('<Double-Button-1>', lambda e: self.above_menu(e.y) and self.ui.chrome.toggle_zoom())
+
+    def load_emblem(self, size):
+        """The project's emblem (launcher/bloodborne.png, the icon of the window too), scaled to size."""
+        path = PORT_DIR / 'launcher' / 'bloodborne.png'
+        try:
+            from PIL import Image, ImageTk
+            with Image.open(path) as image:
+                return ImageTk.PhotoImage(image.convert('RGBA').resize((size, size), Image.Resampling.LANCZOS))
+        except ImportError:
+            pass
+        except (OSError, ValueError):
+            return None
+        try:
+            image = self.ui.tk.PhotoImage(file=str(path))
+            factor = max(1, image.width() // size)
+            return image.subsample(factor) if factor > 1 else image
+        except (self.ui.tk.TclError, OSError):
+            return None
 
     # ---- content ----------------------------------------------------------------------------
     def set_texts(self, sub, info):
         self.canvas.itemconfigure(self.sub, text=sub)
         self.canvas.itemconfigure(self.info, text=info)
 
-    def set_art(self, path):
-        path = Path(path)
-        path = path if path.is_file() else None
-        if path == getattr(self, 'art_path', None) and getattr(self, 'art_built', False):
-            return  # the same picture: nothing to decode, scale and composite again
-        self.art_path = path
-        self.art_size = 0
-        self.art_built = True
-        self.rebuild()
-
     def resized(self, event):
-        if abs(event.width - self.w) > 2:
-            self.w = event.width
-            if self.pending:
-                self.canvas.after_cancel(self.pending)
-            self.pending = self.canvas.after(90, self.rebuild)
+        if abs(event.height - self.h) > 1 or abs(event.width - self.w) > 1:
+            self.w, self.h = event.width, event.height
+            self.layout()
 
     def flush(self):
-        """Builds the pending images now (the first frame must not appear without the art)."""
-        if self.pending:
-            self.canvas.after_cancel(self.pending)
-        self.w = self.w if self.w > 100 else self.canvas.winfo_width()
-        self.rebuild()
-
-    def rebuild(self):
-        """Pillow: art crop, vignette and scrims in one go; plain Tk images and stipple without it."""
-        self.pending = None
-        w, tall, px, c = self.w, self.tall, self.ui.px, self.canvas
-        if w < 100:
-            return
-        has_art = bool(self.art_path)
-        for item in self.halo + [self.disc] + self.craters:
-            c.itemconfigure(item, state='hidden' if has_art else 'normal')
-        try:
-            from PIL import Image, ImageTk
-        except ImportError:
-            self.rebuild_plain(w, has_art)
-            return
-        rgb = tuple(int(BG[i:i + 2], 16) for i in (1, 3, 5))
-        resample = Image.Resampling.LANCZOS
-        art = None
-        if has_art:
-            try:
-                with Image.open(self.art_path) as source:
-                    source = source.convert('RGB')
-                scale = max(w / source.width, tall / source.height)
-                size = (max(w, round(source.width * scale)), max(tall, round(source.height * scale)))
-                source = source.resize(size, resample, reducing_gap=2.0)
-                top = int(min(max(0.36 * size[1] - tall / 2, 0), size[1] - tall))
-                left = (size[0] - w) // 2
-                art = source.crop((left, top, left + w, top + tall))
-                art = Image.blend(art, Image.new('RGB', art.size, rgb), 0.34)
-            except (OSError, ValueError):
-                art = None
-        if art is None:  # a faint red haze around the moon, as the backdrop
-            art = Image.new('RGB', (w, tall), rgb)
-            glow = Image.radial_gradient('L').resize((int(w * 0.9), int(tall * 3.0)), Image.Resampling.BICUBIC)
-            glow = glow.point(lambda v: int(max(0, 255 - v * 1.35) * 0.30))
-            cx, cy = self.moon_center(tall)
-            art.paste(Image.new('RGB', glow.size, (58, 14, 18)), (int(cx - glow.width / 2), int(cy - glow.height / 2)), glow)
-        edge = Image.radial_gradient('L').resize((w, tall), Image.Resampling.BICUBIC)
-        edge = edge.point(lambda v: 0 if v < 125 else min(255, int((v - 125) * 2.3 * 0.9)))
-        vignette = Image.new('RGBA', (w, tall), rgb + (255,))
-        vignette.putalpha(edge)
-        down = Image.linear_gradient('L')
-        scrim_h = px(190)
-        bottom = Image.new('RGBA', (w, scrim_h), rgb + (255,))
-        bottom.putalpha(down.resize((w, scrim_h), Image.Resampling.BICUBIC).point(lambda v: int(255 * (v / 255) ** 1.5 * 0.97)))
-        scrim_w = px(640)
-        left = Image.new('RGBA', (scrim_w, tall), rgb + (255,))
-        left.putalpha(down.transpose(Image.Transpose.ROTATE_270).resize((scrim_w, tall), Image.Resampling.BICUBIC)
-                      .point(lambda v: int(255 * (v / 255) ** 1.7 * 0.78)))
-        self.images = {'art': ImageTk.PhotoImage(art), 'vig': ImageTk.PhotoImage(vignette),
-                       'sb': ImageTk.PhotoImage(bottom), 'sl': ImageTk.PhotoImage(left)}
-        self.scrim_h, self.art_off = scrim_h, (0, 0)
-        c.itemconfigure(self.art, image=self.images['art'])
-        c.itemconfigure(self.vignette, image=self.images['vig'])
-        c.itemconfigure(self.scrim_b, image=self.images['sb'])
-        c.itemconfigure(self.scrim_l, image=self.images['sl'])
-        for strip in self.strips:
-            c.itemconfigure(strip, state='hidden')
+        self.w, self.h = max(self.w, self.canvas.winfo_width()), max(self.canvas.winfo_height(), 100)
         self.layout()
 
-    def rebuild_plain(self, w, has_art):
-        c = self.canvas
-        self.images, self.art_off = {}, (0, 0)
-        if has_art:
-            try:
-                image = self.ui.tk.PhotoImage(file=str(self.art_path))
-                factor = max(1, image.width() // max(w, 1))  # Tk can only drop whole pixels: keep it wider, crop
-                self.images['art'] = image.subsample(factor) if factor > 1 else image
-                art = self.images['art']
-                self.art_off = ((w - art.width()) // 2, -int(min(max(0.36 * art.height() - self.tall / 2, 0),
-                                                                max(0, art.height() - self.tall))))
-            except (self.ui.tk.TclError, OSError):
-                pass
-        c.itemconfigure(self.art, image=self.images.get('art', ''))
-        for item in (self.vignette, self.scrim_b, self.scrim_l):
-            c.itemconfigure(item, image='')
-        for strip in self.strips:
-            c.itemconfigure(strip, state='normal')
-        self.scrim_h = self.ui.px(90)
-        self.layout()
+    def menu_top(self):
+        return self.ui.px(262)
+
+    def entry_y(self, index):
+        return self.menu_top() + index * self.ui.px(34)
+
+    def visible(self):
+        """The entries shown, in order."""
+        return [name for name, _t in self.entries if self.shown[name] > 0.01]
+
+    def min_height(self):
+        """The height that shows the whole menu above the skyline."""
+        return self.entry_y(len(self.entries)) + self.ui.px(150)
 
     # ---- geometry ---------------------------------------------------------------------------
-    def moon_center(self, h):
-        return self.w * 0.76, h * 0.48
-
-    def set_height(self, h):
-        self.h = int(h)
-        self.canvas.configure(height=self.h)
-        self.layout()
-
     def layout(self):
-        c, h, w, px = self.canvas, self.h, max(self.w, 1), self.ui.px
-        ox, oy = getattr(self, 'art_off', (0, 0))
-        c.coords(self.art, ox, oy - int((self.tall - h) * 0.45))
-        c.coords(self.vignette, 0, -int((self.tall - h) * 0.45))
-        c.coords(self.scrim_b, 0, h - getattr(self, 'scrim_h', px(120)))
-        c.coords(self.scrim_l, 0, -int((self.tall - h) * 0.45))
-        band = getattr(self, 'scrim_h', px(120)) // 5
-        for i, strip in enumerate(self.strips):
-            c.coords(strip, 0, h - band * (5 - i), w, h - band * (4 - i) if i < 4 else h)
-        c.coords(self.rule, 0, h - 1, w, h - 1)
-        base = h - px(70)
-        for i, item in enumerate(self.letters):
-            c.coords(item, px(36) + self.xs[i], base + round((1 - self.letter_alpha(i)) * px(14)))
-        c.coords(self.accent, px(36), h - px(60), px(36) + px(44), h - px(58))
-        c.coords(self.sub, px(36), h - px(36))
-        c.coords(self.info, px(36), h - px(16))
-        cx, cy = self.moon_center(h)
-        radius = px(46)
+        c, w, h, px = self.canvas, max(self.w, 1), max(self.h, 1), self.ui.px
+        mid = w / 2
+        c.coords(self.edge, w - 1, 0, w - 1, h)
+        # Sky: plain down to the moon (its glow carries the light there), lighter below it, behind the spires.
+        cx, cy, radius = w * 0.64, h - px(118), px(50)
+        start, n = cy, len(self.sky)
+        for i, item in enumerate(self.sky):
+            y0, y1 = start + (h - start) * i / n, start + (h - start) * (i + 1) / n + 1
+            c.coords(item, 0, y0, w, y1)
+            c.itemconfigure(item, fill=mix(BG, self.SKY, (i / n) ** 1.6))
+        self.halo_base = BG
         c.coords(self.disc, cx - radius, cy - radius, cx + radius, cy + radius)
         for item, (dx, dy, r) in zip(self.craters, ((-14, -8, 12), (10, 14, 9), (16, -18, 6))):
             c.coords(item, cx + px(dx) - px(r), cy + px(dy) - px(r), cx + px(dx) + px(r), cy + px(dy) + px(r))
         for i, item in enumerate(self.halo):
-            r = radius * (1 + 3.4 * (len(self.halo) - i) / len(self.halo))
+            r = radius * (1 + 2.0 * (len(self.halo) - i) / len(self.halo))
             c.coords(item, cx - r, cy - r, cx + r, cy + r)
+        c.coords(self.far, *self.skyline(self.FAR, h - px(46), w, px))
+        c.coords(self.near, *self.skyline(self.NEAR, h, w, px))
+        lights = ((0.08, 26), (0.21, 30), (0.37, 22), (0.55, 28), (0.71, 24), (0.86, 30), (0.94, 20))
+        for item, (fx, up) in zip(self.lights, lights):
+            x, y = w * fx, h - px(up)
+            c.coords(item, x, y, x + px(2), y + px(3))
+        # Emblem, title, the version line and the game line, an ornament.
+        c.coords(self.emblem, mid, px(26))
+        base = px(136)
+        x0 = mid - self.title_w / 2
+        for i, item in enumerate(self.letters):
+            c.coords(item, x0 + self.xs[i], base + round((1 - ease_out(self.letter_alpha(i))) * px(10)))
+        c.coords(self.sub, mid, px(146))
+        c.coords(self.info, mid, px(168))
+        y, half = px(206), min(px(96), w / 2 - px(20))
+        c.coords(self.rule[0], mid - half, y, mid - px(9), y)
+        c.coords(self.rule[1], mid + px(9), y, mid + half, y)
+        c.coords(self.gem, *diamond(mid, y, px(5)))
+        self.place_entries()
         self.breathe(0.5)
-        self.raise_text()
+        c.tag_raise('city')
+        c.tag_raise('ember')
+        c.tag_raise('txt')
+        c.tag_raise('band')
+        c.tag_raise('menu')
 
-    def raise_text(self):
-        self.canvas.tag_raise('scrim')
-        self.canvas.tag_raise('txt')
+    def skyline(self, buildings, base, w, px):
+        """Polygon points of a row of towers standing on y = base, repeated across the width."""
+        points, x, i = [0, base], 0.0, 0
+        while x < w:
+            bw, bh, roof = buildings[i % len(buildings)]
+            bw, bh = px(bw), px(bh)
+            top = base - bh
+            if roof == 's':
+                points += [x, top + px(10), x + bw / 2, top - bw * 1.6, x + bw, top + px(10)]
+            elif roof == 'g':
+                points += [x, top + bw * 0.35, x + bw / 2, top, x + bw, top + bw * 0.35]
+            else:
+                points += [x, top, x + bw, top]
+            x += bw
+            i += 1
+        return points + [w, base, w, self.h + 2, 0, self.h + 2]
 
     def breathe(self, b):
         n = len(self.halo)
         for i, item in enumerate(self.halo):  # outermost first
-            level = (i / n) ** 2.4 * (0.55 + 0.45 * b)
-            self.canvas.itemconfigure(item, fill=mix(BG, '#3c1013', level) if i else '')
+            level = (i / n) ** 2.2 * (0.6 + 0.4 * b)
+            self.canvas.itemconfigure(item, fill=mix(self.halo_base, '#4a5260', level) if i else '')
+
+    # ---- the menu ---------------------------------------------------------------------------
+    def place_entries(self):
+        c, mid = self.canvas, self.w / 2
+        for index, name in enumerate(self.visible()):
+            y = self.entry_y(index)
+            c.coords(self.items[name], mid, y)
+            half = self.ui.measure(self.menu_font, c.itemcget(self.items[name], 'text')) / 2 + self.ui.px(16)
+            for side, mark in ((-1, self.marks[name][0]), (1, self.marks[name][1])):
+                c.coords(mark, *diamond(mid + side * half, y, self.ui.px(3)))
+            self.colour(name)
+        for name, _t in self.entries:
+            state = 'normal' if self.shown[name] > 0.01 else 'hidden'
+            c.itemconfigure(self.items[name], state=state)
+            for mark in self.marks[name]:
+                c.itemconfigure(mark, state=state)
+        if self.active in self.visible():
+            self.move_band(self.entry_y(self.visible().index(self.active)) if self.band_y is None else self.band_y)
+
+    def move_band(self, y):
+        """The highlight under the chosen entry: a dark red band fading to both sides, thin rules above and below."""
+        c, px, w = self.canvas, self.ui.px, self.w
+        self.band_y = y
+        n, x0, x1, half_h = len(self.band), px(10), w - px(10), px(15)
+        step = (x1 - x0) / n
+        for i, item in enumerate(self.band):
+            t = abs((i + 0.5) / n - 0.5) * 2
+            c.coords(item, x0 + i * step, y - half_h, x0 + (i + 1) * step + 1, y + half_h)
+            c.itemconfigure(item, fill=mix('#2e2b24', BG, t ** 1.4))
+        for item, dy in zip(self.band_lines, (-half_h, half_h)):
+            c.coords(item, x0 + px(24), y + dy, x1 - px(24), y + dy)
+            c.itemconfigure(item, fill=mix(BG, ACCENT, 0.55))
+
+    def at(self, y):
+        for index, name in enumerate(self.visible()):
+            if abs(y - self.entry_y(index)) < self.ui.px(17):
+                return name
+        return None
+
+    def above_menu(self, y):
+        return y < self.entry_y(0) - self.ui.px(24)
+
+    def press(self, event):
+        """A menu entry opens its page; the emblem and title above the menu move the window."""
+        if self.above_menu(event.y):
+            self.ui.chrome.drag(event)
+        else:
+            self.pick(event.y)
+
+    def pick(self, y):
+        name = self.at(y)
+        if name:
+            self.command(name)
+
+    def hot(self, name):
+        for entry, _t in self.entries:
+            target = 1.0 if entry == name else 0.0
+            if (self.hv[entry] < 0.5) == (target > 0.5):
+                self.ui.motion.tween((id(self), entry), 140, self.hv[entry], target,
+                                     lambda v, e=entry: self.shade(e, v))
+        self.hot_name = name
+        self.canvas.configure(cursor='hand2' if name else 'arrow')
+
+    def shade(self, name, value):
+        self.hv[name] = value
+        self.colour(name)
+
+    def colour(self, name):
+        alpha = self.shown[name] * self.entry_alpha(name)
+        on = name == self.active
+        ink = TEXT if on else mix(MUTED, TEXT, self.hv[name])
+        self.canvas.itemconfigure(self.items[name], fill=mix(BG, ink, alpha))
+        gem = ACCENT_HI if on else mix(BG, GOLD_DIM, self.hv[name])
+        for mark in self.marks[name]:
+            self.canvas.itemconfigure(mark, fill=mix(BG, gem, alpha))
+
+    def select(self, name, animate=True):
+        old, self.active = self.active, name
+        visible = self.visible()
+        if name not in visible:  # nothing chosen: no band
+            for item in self.band + self.band_lines:
+                self.canvas.itemconfigure(item, state='hidden')
+        else:
+            for item in self.band + self.band_lines:
+                self.canvas.itemconfigure(item, state='normal')
+            target = self.entry_y(visible.index(name))
+            start = self.band_y if old and self.band_y is not None else target
+            self.ui.motion.tween((id(self), 'band'), 240 if animate else 0, start, target, self.move_band)
+        for entry, _t in self.entries:
+            self.colour(entry)
 
     # ---- motion -----------------------------------------------------------------------------
     def letter_alpha(self, i):
         return max(0.0, min(1.0, (self.reveal * 1.5 - i * 0.07) / 0.6))
 
+    def entry_alpha(self, name):
+        index = [n for n, _t in self.entries].index(name)
+        return max(0.0, min(1.0, (self.reveal - 0.3 - index * 0.05) / 0.3))
+
     def set_reveal(self, p):
         self.reveal = p
         c = self.canvas
         for i, item in enumerate(self.letters):
-            a = ease_out(self.letter_alpha(i))
-            c.itemconfigure(item, fill=mix(BG, TEXT, a))
+            c.itemconfigure(item, fill=mix(BG, TEXT, ease_out(self.letter_alpha(i))))
         late = max(0.0, min(1.0, (p - 0.55) / 0.45))
         c.itemconfigure(self.sub, fill=mix(BG, MUTED, late))
         c.itemconfigure(self.info, fill=mix(BG, GOLD, late))
-        c.itemconfigure(self.accent, fill=mix(BG, BLOOD_HI, late))
-        base = self.h - self.ui.px(70)
-        for i, item in enumerate(self.letters):
-            c.coords(item, self.ui.px(36) + self.xs[i], base + round((1 - ease_out(self.letter_alpha(i))) * self.ui.px(14)))
+        for item in self.rule:
+            c.itemconfigure(item, fill=mix(BG, GOLD_DIM, late))
+        c.itemconfigure(self.gem, fill=mix(BG, ACCENT_HI, late))
+        self.layout()
 
     def intro(self):
         self.ui.motion.tween('reveal', 1100, 0.0, 1.0, self.set_reveal, ease=linear)
@@ -2093,10 +2459,10 @@ class Hero:
             self.breathe(0.5)
 
     def spawn(self, first=False):
-        r, w, h = random.Random(), max(self.w, 400), self.h
-        size = r.uniform(1.2, 2.6) * self.ui.dpi
-        return [None, r.uniform(0, w), r.uniform(0, h) if first else h + r.uniform(0, 30), size,
-                r.uniform(14, 34) * self.ui.dpi, r.uniform(-8, 8) * self.ui.dpi, r.uniform(0, 6.28), r.uniform(6, 13), 0.0]
+        r, w, h = random.Random(), max(self.w, 200), self.h
+        size = r.uniform(1.0, 2.2) * self.ui.dpi
+        return [None, r.uniform(0, w), r.uniform(h * 0.5, h) if first else h + r.uniform(0, 20), size,
+                r.uniform(12, 30) * self.ui.dpi, r.uniform(-6, 6) * self.ui.dpi, r.uniform(0, 6.28), r.uniform(6, 12), 0.0]
 
     def drift(self, now):
         c = self.canvas
@@ -2106,8 +2472,10 @@ class Hero:
                 ember[8] = random.random() * ember[7]
                 ember[0] = c.create_oval(0, 0, 0, 0, outline='', fill=BG, tags='ember')
                 self.embers.append(ember)
-            c.tag_raise('ember', 'moon')
-            self.raise_text()
+            c.tag_raise('ember', 'city')
+            c.tag_raise('txt')
+            c.tag_raise('band')
+            c.tag_raise('menu')
             self.last = now
         dt = min(0.1, now - self.last)
         self.last = now
@@ -2125,7 +2493,7 @@ class Hero:
             px = x + math.sin(now * 0.9 + phase) * sway * 3
             r = size * (0.5 + 0.7 * fade)
             c.coords(item, px - r, y - r, px + r, y + r)
-            c.itemconfigure(item, fill=mix(BG, mix('#f0a050', '#8a2a1a', fraction), fade * 1.1))
+            c.itemconfigure(item, fill=mix(BG, mix('#f2e3c0', '#7d6b48', fraction), fade * 0.8))
 
 
 class Launcher:
@@ -2174,21 +2542,20 @@ class Launcher:
         # The width is fixed here; the height starts at 780 and fit_window grows it to whatever the page
         # being shown needs, within the work area of the screen (the screen minus the taskbar).
         left, top, right, bottom = work_area((root.winfo_screenwidth(), root.winfo_screenheight()))
-        size = (min(self.px(1120), right - left - self.px(40)), min(self.px(780), bottom - top - self.frame_extra()))
+        size = (min(self.px(1200), right - left - self.px(40)), min(self.px(780), bottom - top - self.frame_extra()))
         origin = (left + (right - left - size[0]) // 2, top + max(0, (bottom - top - size[1] - self.frame_extra()) // 3))
         root.geometry(f'{size[0]}x{size[1]}+{origin[0]}+{origin[1]}')
         self.planned = (*size, *origin)  # what was asked of the window manager, until the window is on screen
-        root.minsize(min(self.px(980), size[0]), min(self.px(660), size[1]))
-        # The banner: tall in the Simple view, short in the Advanced one; fit_window lowers them (never
-        # under hero_min) when the work area is too short for the page.
-        self.hero_tall, self.hero_short, self.hero_min = self.px(142), self.px(140), self.px(120)
+        root.minsize(min(self.px(1040), size[0]), min(self.px(660), size[1]))
         self.fit_pending = False
         self.set_icon()
         self.pick_fonts()
         self.style()
         self.build()
-        self.set_mode(bool(self.var('ui_advanced', 'app').get()), animate=False)
-        self.show('play', animate=False)
+        self.show('home', animate=False)
+        self.fit_window()
+        if COOP_INSTALL and self.coop_needs_setup():
+            self.open_coop(required=True)
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
         root.after(30, self.start_motion)
@@ -2205,15 +2572,13 @@ class Launcher:
             return
         except self.tk.TclError:
             pass
-        for icon in (PORT_DIR / 'launcher' / 'bloodborne.png', Path(self.app['game_dir']) / 'sce_sys' / 'icon0.png'):
-            try:
-                self.icon = self.tk.PhotoImage(file=str(icon))
-                if self.icon.width() > 128:
-                    self.icon = self.icon.subsample(self.icon.width() // 64)
-                self.root.iconphoto(True, self.icon)
-                return
-            except (self.tk.TclError, OSError):
-                continue
+        try:  # the project's own emblem only: never the game's icon0.png
+            self.icon = self.tk.PhotoImage(file=str(PORT_DIR / 'launcher' / 'bloodborne.png'))
+            if self.icon.width() > 128:
+                self.icon = self.icon.subsample(self.icon.width() // 64)
+            self.root.iconphoto(True, self.icon)
+        except (self.tk.TclError, OSError):
+            pass
 
     # ---- look --------------------------------------------------------------------------------
     def pick_fonts(self):
@@ -2222,8 +2587,9 @@ class Launcher:
         serif = next((f for f in ('Cinzel', 'Palatino Linotype', 'Georgia') if f in families), 'Times New Roman')
         sans = 'Segoe UI' if 'Segoe UI' in families else 'Arial'
         self.fonts = {'body': (sans, 10), 'body_bold': (sans, 10, 'bold'), 'small': (sans, 9),
-                      'small_bold': (sans, 9, 'bold'), 'tab': (sans, 11), 'h1': (serif, 20), 'h2': (serif, 13),
-                      'title': (serif, 34), 'play': (serif, 16, 'bold'), 'mono': ('Consolas', 9)}
+                      'small_bold': (sans, 9, 'bold'), 'menu': (serif, 12), 'h1': (serif, 19), 'h2': (serif, 12),
+                      'title': (serif, 22), 'play': (serif, 16, 'bold'), 'mono': ('Consolas', 9),
+                      'banner': (serif, 24), 'tab': (sans, 10)}
 
     def measure(self, spec, text):
         if spec not in self.measures:
@@ -2234,7 +2600,7 @@ class Launcher:
         ttk, px, f = self.ttk, self.px, self.fonts
         s = ttk.Style(self.root)
         s.theme_use('clam')
-        for option, value in (('background', FIELD), ('foreground', TEXT), ('selectBackground', BLOOD),
+        for option, value in (('background', FIELD), ('foreground', TEXT), ('selectBackground', ACCENT),
                               ('selectForeground', TEXT), ('font', f['body']), ('borderWidth', 0),
                               ('highlightThickness', 0), ('relief', 'flat')):
             self.root.option_add(f'*TCombobox*Listbox.{option}', value)
@@ -2248,7 +2614,7 @@ class Launcher:
               bordercolor=[('focus', MUTED), ('active', MUTED)], lightcolor=[('focus', FIELD)],
               darkcolor=[('focus', FIELD)])
         s.configure('TEntry', foreground=TEXT, insertcolor=TEXT, padding=(8, 6), bordercolor=LINE_HI, lightcolor=FIELD,
-                    darkcolor=FIELD, selectbackground=BLOOD, selectforeground=TEXT)
+                    darkcolor=FIELD, selectbackground=ACCENT, selectforeground=TEXT)
         s.map('TEntry', bordercolor=[('focus', MUTED)], lightcolor=[('focus', FIELD)], darkcolor=[('focus', FIELD)])
         s.layout('Vertical.TScrollbar', [('Vertical.Scrollbar.trough', {'sticky': 'ns', 'children': [
             ('Vertical.Scrollbar.thumb', {'expand': '1', 'sticky': 'nswe'})]})])
@@ -2383,14 +2749,49 @@ class Launcher:
     def label(self, parent, text, style='body', fg=TEXT, bg=CARD, **options):
         return self.tk.Label(parent, text=text, bg=bg, fg=fg, font=self.fonts[style], **options)
 
+    def rule(self, parent, bg, height=7):
+        """An ornamental rule: a small blood-red diamond, then a gold line that fades out to the right."""
+        px = self.px
+        canvas = self.tk.Canvas(parent, width=1, height=px(height), bg=bg, highlightthickness=0, bd=0)
+        gem = canvas.create_polygon(diamond(px(4), px(height) // 2, px(3)), fill=ACCENT_HI, outline='')
+        parts = [canvas.create_line(0, 0, 0, 0) for _i in range(16)]
+
+        def draw(event):
+            y, x0, n = px(height) // 2, px(12), len(parts)
+            step = (event.width - x0) / n
+            for i, item in enumerate(parts):
+                canvas.coords(item, x0 + i * step, y, x0 + (i + 1) * step + 1, y)
+                canvas.itemconfigure(item, fill=mix(GOLD_DIM, bg, (i / n) ** 0.8))
+        canvas.bind('<Configure>', draw)
+        canvas.gem = gem
+        return canvas
+
+    def heading(self, parent, title, bg, font='h2'):
+        """A panel or page heading: spaced capitals over an ornamental rule."""
+        head = self.tk.Frame(parent, bg=bg)
+        self.label(head, spaced(title), font, bg=bg).pack(anchor='w')
+        self.rule(head, bg).pack(fill='x', pady=(self.px(6), self.px(2)))
+        return head
+
     def card(self, parent, title=None, grid=None, pad=24):
-        """A bordered panel (it lights up under the pointer); returns the frame to put rows in."""
+        """A framed panel with gilt corners (frame and corners light up under the pointer); returns the frame
+        to put rows in."""
         tk, px = self.tk, self.px
         frame = tk.Frame(parent, bg=CARD, highlightthickness=1, highlightbackground=LINE, highlightcolor=LINE)
         if grid:
             frame.grid(sticky='nsew', **grid)
         else:
             frame.pack(fill='x', padx=px(32), pady=(0, px(16)))
+        size, arm = px(12), px(2)
+        frame.corners = []
+        for relx, rely, anchor in ((0, 0, 'nw'), (1, 0, 'ne'), (0, 1, 'sw'), (1, 1, 'se')):
+            corner = tk.Canvas(frame, width=size, height=size, bg=CARD, highlightthickness=0, bd=0)
+            x = 0 if relx == 0 else size - arm
+            y = 0 if rely == 0 else size - arm
+            corner.create_rectangle(0, y, size, y + arm, fill=GOLD_DIM, outline='', tags='arm')
+            corner.create_rectangle(x, 0, x + arm, size, fill=GOLD_DIM, outline='', tags='arm')
+            corner.place(in_=frame, relx=relx, rely=rely, anchor=anchor, bordermode='outside')
+            frame.corners.append(corner)
         body = tk.Frame(frame, bg=CARD)
         body.pack(fill='both', expand=True, padx=px(pad), pady=px(pad - 4))
         body.columnconfigure(0, minsize=px(210))
@@ -2398,10 +2799,7 @@ class Launcher:
         self.cards.add(frame)
         body.frame, body.hovered = frame, 0.0
         if title:
-            head = tk.Frame(body, bg=CARD)
-            head.grid(row=0, column=0, columnspan=2, sticky='we')
-            self.label(head, title, 'h2').pack(anchor='w')
-            tk.Frame(head, bg=LINE, height=1).pack(fill='x', pady=(px(8), px(4)))
+            self.heading(body, title, CARD).grid(row=0, column=0, columnspan=2, sticky='we', pady=(0, px(2)))
         return body
 
     def pointer_moved(self, event):
@@ -2422,7 +2820,9 @@ class Launcher:
 
     def light(self, card, value):
         card.glow = value
-        card.configure(highlightbackground=mix(LINE, BLOOD, value * 0.75))
+        card.configure(highlightbackground=mix(LINE, ACCENT, value * 0.75))
+        for corner in getattr(card, 'corners', ()):
+            corner.itemconfigure('arm', fill=mix(GOLD_DIM, GOLD, value * 0.8))
 
     def next_row(self, parent):
         return parent.grid_size()[1]
@@ -2507,10 +2907,9 @@ class Launcher:
         tk, ttk, px = self.tk, self.ttk, self.px
         outer = tk.Frame(self.content, bg=PANEL)
         if title:
-            head = tk.Frame(outer, bg=PANEL)
-            head.pack(fill='x', padx=px(32), pady=(px(18), px(10)))
-            self.label(head, title, 'h1', bg=PANEL).pack(anchor='w')
-            self.label(head, subtitle, 'small', MUTED, PANEL, justify='left', wraplength=px(860)).pack(anchor='w', pady=(px(2), 0))
+            head = self.heading(outer, title, PANEL, 'h1')
+            head.pack(fill='x', padx=px(32), pady=(px(22), px(12)))
+            self.label(head, subtitle, 'small', MUTED, PANEL, justify='left', wraplength=px(820)).pack(anchor='w', pady=(px(4), 0))
         body = tk.Frame(outer, bg=PANEL)
         body.pack(fill='both', expand=True)
         canvas = tk.Canvas(body, bg=PANEL, highlightthickness=0, bd=0)
@@ -2543,43 +2942,53 @@ class Launcher:
     def build(self):
         tk, px = self.tk, self.px
         root = self.root
-        # Bottom bar: what is happening on the left, Stop and the big PLAY on the right.
-        footer = tk.Frame(root, bg=BG)
-        footer.pack(side='bottom', fill='x')
-        tk.Frame(footer, bg=LINE, height=1).pack(fill='x')
-        bar = tk.Frame(footer, bg=BG, height=px(88))
-        bar.pack(fill='x')
-        bar.pack_propagate(False)
-        self.play_button = PlayButton(self, bar, _('PLAY', 'ИГРАТЬ'), self.play)
-        self.play_button.pack(side='right', padx=(px(8), px(24)))
-        self.stop_button = FlatButton(self, bar, _('Stop', 'Остановить'), self.stop, bg=BG)
-        self.busy = Spinner(self, bar, 18, BG)
-        self.status = tk.Label(bar, text='', bg=BG, fg=MUTED, font=self.fonts['body'], anchor='w', justify='left')
-        self.status.pack(side='left', padx=(px(36), 0))
-        self.footer = footer
-        self.hero = Hero(self, root, self.hero_tall, self.hero_short)
-        self.hero.canvas.pack(side='top', fill='x')
-        self.tab_names = (('play', _('Play', 'Играть')), ('graphics', _('Graphics', 'Графика')),
-                          ('display', _('Display & FPS', 'Экран и FPS')), ('controls', _('Controls', 'Управление')),
-                          ('game', _('Game & effects', 'Игра и эффекты')),
-                          ('cheats', _('Cheats', 'Читы')), ('mods', _('Mods & patches', 'Моды и патчи')),
-                          ('advanced', _('Advanced', 'Дополнительно')), ('log', _('Log', 'Журнал')))
-        self.tabbar = TabBar(self, root, self.tab_names, self.show)
-        self.content = tk.Frame(root, bg=PANEL)
-        self.content.pack(side='top', fill='both', expand=True)
-        self.toggle = ModeToggle(self, self.hero.canvas, (_('Simple', 'Простой'), _('Advanced', 'Дополнительно')),
-                                 self.set_mode)
-        self.toggle.place(relx=1.0, x=-px(24), y=px(20), anchor='ne')
+        # Like a game's title menu: the side column (emblem, title, a short menu, a night scene) on the
+        # left; the chosen page and, under it, the bar with the ready check, the server and PLAY on the right.
+        # Kaniel 2026-10-16: no Simple/Advanced views; Home shows the website's news, Co-op opens the co-op
+        # settings over the window, and every other page sits under Settings.
+        entries = [('home', _('Home', 'Главная'))]
         if COOP_INSTALL:
-            self.hero.set_texts(_('Seamless Co-op', 'Бесшовный кооператив') + f'  ·  v{coop_release_version() or VERSION}', '')
+            entries.append(('coop', _('Co-op', 'Кооператив')))
+        entries.append(('settings', _('Settings', 'Настройки')))
+        self.tab_names = tuple(entries)
+        self.settings_tabs = (('general', _('General', 'Основное')), ('graphics', _('Graphics', 'Графика')),
+                              ('display', _('Display & FPS', 'Экран и FPS')),
+                              ('controls', _('Controls', 'Управление')),
+                              ('game', _('Game & effects', 'Игра и эффекты')), ('cheats', _('Cheats', 'Читы')),
+                              ('mods', _('Mods & patches', 'Моды и патчи')),
+                              ('advanced', _('Advanced', 'Дополнительно')), ('log', _('Log', 'Журнал')))
+        self.last_settings = 'general'
+        self.side = Sidebar(self, root, self.tab_names, self.menu_pick, px(280))
+        self.side.canvas.pack(side='left', fill='y')
+        main = tk.Frame(root, bg=PANEL)
+        main.pack(side='left', fill='both', expand=True)
+        self.build_footer(main)
+        # The launcher's own title bar (no Windows caption): a strip to drag by, and the window buttons.
+        self.chrome = WindowChrome(self)
+        top = tk.Frame(main, bg=PANEL, height=px(34))
+        top.pack(side='top', fill='x')
+        top.pack_propagate(False)
+        self.caption_buttons = {}
+        for kind, command in (('close', self.close), ('max', self.chrome.toggle_zoom), ('min', self.chrome.minimize)):
+            self.caption_buttons[kind] = CaptionButton(self, top, kind, command)
+            self.caption_buttons[kind].pack(side='right')
+        top.bind('<ButtonPress-1>', self.chrome.drag)
+        top.bind('<Double-Button-1>', self.chrome.toggle_zoom)
+        root.bind('<Alt-F4>', lambda _e: self.close())  # no system menu to do it without a caption
+        self.subtabs = SubTabs(self, main, self.settings_tabs, self.show)
+        self.content = tk.Frame(main, bg=PANEL)
+        self.content.pack(side='top', fill='both', expand=True)
+        if COOP_INSTALL:
+            self.side.set_texts(_('Seamless Co-op', 'Бесшовный кооператив') + f'  ·  v{coop_release_version() or VERSION}', '')
         else:
-            self.hero.set_texts(_('native port · Windows', 'нативный порт · Windows') + f'  ·  v{VERSION}', '')
+            self.side.set_texts(_('native port · Windows', 'нативный порт · Windows') + f'  ·  v{VERSION}', '')
         if self.motion.enabled:
-            self.hero.set_reveal(0.0)
+            self.side.set_reveal(0.0)
         self.update_box = None
         self.current_page = None
         self.pages = {}
-        self.build_play()
+        self.build_home()
+        self.build_general()
         self.build_graphics()
         self.build_display()
         self.build_controls()
@@ -2589,20 +2998,74 @@ class Launcher:
         self.build_mods()
         self.build_advanced()
         self.build_log()
+        if COOP_INSTALL:
+            self.build_coop_popup()
         self.root.bind_all('<MouseWheel>', self.wheel)
         self.root.bind_all('<Motion>', self.pointer_moved, add='+')
-        self.refresh_hero()
+        self.refresh_game_line()
         self.refresh_status()
+        threading.Thread(target=self.load_news, daemon=True).start()
+
+    def build_footer(self, main):
+        """The bottom bar: the ready check as icons (their lines as tooltips) and the co-op server's
+        buttons on the left, what is happening under them, Stop and the big PLAY on the right."""
+        tk, px = self.tk, self.px
+        footer = tk.Frame(main, bg=BG)
+        footer.pack(side='bottom', fill='x')
+        tk.Frame(footer, bg=LINE, height=1).pack(fill='x')
+        bar = tk.Frame(footer, bg=BG, height=px(96))
+        bar.pack(fill='x')
+        bar.pack_propagate(False)
+        self.play_button = PlayButton(self, bar, _('PLAY', 'ИГРАТЬ'), self.play)
+        self.play_button.pack(side='right', padx=(px(8), px(24)))
+        self.stop_button = FlatButton(self, bar, _('Stop', 'Остановить'), self.stop, bg=BG)
+        left = tk.Frame(bar, bg=BG)
+        left.pack(side='left', fill='y', padx=(px(30), 0), pady=(px(12), px(10)))
+        icons = tk.Frame(left, bg=BG)
+        icons.pack(side='top', anchor='w')
+        self.checks = {}
+        for key in ('game', 'saves', 'gpu', 'fsr4', 'upscaler'):
+            self.checks[key] = StatusIcon(self, icons, key)
+            self.checks[key].pack(side='left', padx=(0, px(6)))
+        self.checks['upscaler'].pack_forget()  # only once the saved upscaler was changed
+        self.server_row = None
+        if COOP_INSTALL:
+            # The host's server: PLAY starts it on the host's PC; these are for a host who only hosts.
+            row = self.server_row = tk.Frame(icons, bg=BG)
+            row.pack(side='left', padx=(px(14), 0))
+            tk.Frame(row, bg=LINE, width=1, height=px(26)).pack(side='left', padx=(0, px(14)))
+            self.button(row, _('Start server', 'Запустить сервер'), self.coop_start_servers, bg=BG).pack(side='left')
+            self.button(row, _('Stop server', 'Остановить сервер'), self.coop_stop_servers,
+                        bg=BG).pack(side='left', padx=(px(8), 0))
+            self.coop_server_line = self.label(row, '', 'small', MUTED, bg=BG)
+            self.coop_server_line.pack(side='left', padx=(px(12), 0))
+        line = tk.Frame(left, bg=BG)
+        line.pack(side='top', anchor='w', pady=(px(8), 0))
+        self.busy = Spinner(self, line, 16, BG)
+        self.busy_parent = line
+        self.status = tk.Label(line, text='', bg=BG, fg=MUTED, font=self.fonts['small'], anchor='w', justify='left')
+        self.status.pack(side='left')
+        self.footer = footer
+        grip = tk.Canvas(footer, width=px(14), height=px(14), bg=BG, highlightthickness=0, bd=0, cursor='size_nw_se')
+        for i in range(3):
+            for j in range(i + 1):
+                x, y = px(12) - (i - j) * px(4), px(12) - j * px(4)
+                grip.create_rectangle(x - px(1), y - px(1), x + px(1), y + px(1), fill=DIM, outline='')
+        grip.place(relx=1.0, rely=1.0, x=-px(2), y=-px(2), anchor='se')
+        self.grip = grip
 
     def start_motion(self):
-        """First frame is up: fade the window in, write the title, start the ember drift."""
+        """First frame is up: fade the window in, write the title, start the moon and the embers."""
         self.root.update_idletasks()
-        self.hero.flush()
+        self.chrome.apply()
+        self.grip.bind('<ButtonPress-1>', self.chrome.resize_start)
+        self.grip.bind('<B1-Motion>', self.chrome.resize_move)
+        self.side.flush()
         if self.motion.enabled:
-            self.hero.set_reveal(0.0)
+            self.side.set_reveal(0.0)
             self.motion.tween('fade', 280, 0.0, 1.0, lambda a: self.root.attributes('-alpha', a))
-            self.hero.intro()
-            self.hero.animate(True)
+            self.side.intro()
+            self.side.animate(True)
 
     def set_running(self, running, preparing=False):
         """The footer while the game runs: Stop appears, PLAY rests, a spinner shows during start-up."""
@@ -2613,7 +3076,7 @@ class Launcher:
         else:
             self.stop_button.pack_forget()
         if preparing:
-            self.busy.pack(side='left', padx=(px(12), 0))
+            self.busy.pack(side='left', padx=(0, px(8)), before=self.status)
             self.busy.start()
         else:
             self.busy.stop()
@@ -2625,34 +3088,30 @@ class Launcher:
                 and 'popdown' not in str(event.widget):
             page.scroll(int(-event.delta / 120))
 
-    def set_mode(self, advanced, animate=True):
-        """Simple: the hero and the Play page. Advanced: every tab (the hero shrinks to make room)."""
-        advanced = bool(advanced)
-        if animate and advanced == self.var('ui_advanced', 'app').get():
-            return
-        self.var('ui_advanced', 'app').set(advanced)
-        self.fit_window(set_hero=False)  # the banner eases to its new height below
-        self.toggle.select(advanced, animate)
-        ms = 320 if animate else 0
-        if advanced:
-            if not self.tabbar.canvas.winfo_manager():
-                self.tabbar.set_height(1)
-                self.tabbar.pack(side='top', fill='x', before=self.content)
-            self.motion.tween('tabs', ms, self.tabbar.shown, self.tabbar.h, self.tabbar.set_height, ease=ease_in_out)
+    def menu_pick(self, name):
+        """The side menu: Co-op opens its settings over the window, Settings the page last open under it."""
+        if name == 'coop':
+            self.open_coop()
+        elif name == 'settings':
+            self.show(self.last_settings)
         else:
-            if self.current_page not in (None, 'play'):
-                self.show('play', animate)
-            self.motion.tween('tabs', ms, self.tabbar.shown, 1, self.tabbar.set_height, self.tabbar.pack_forget,
-                              ease_in_out)
-        target = self.hero.short if advanced else self.hero.tall
-        self.motion.tween('hero', ms, self.hero.h, target, self.hero.set_height, ease=ease_in_out)
+            self.show(name)
 
     def show(self, name, animate=True):
         self.stop_capture()
         old, new = self.pages.get(self.current_page), self.pages[name]
         changed = name != self.current_page
         self.current_page = name
-        self.tabbar.select(name, animate and changed)
+        settings = name != 'home'
+        if settings:
+            if name in dict(self.settings_tabs):
+                self.last_settings = name
+                self.subtabs.select(name, animate and changed)
+            if not self.subtabs.canvas.winfo_manager():
+                self.subtabs.pack(side='top', fill='x', before=self.content)
+        else:
+            self.subtabs.pack_forget()
+        self.side.select('settings' if settings else name, animate and changed)
         if changed:
             if old:
                 old.place_forget()
@@ -2666,10 +3125,9 @@ class Launcher:
             self.refresh_fsr4()
             self.refresh_fsr4vk()
             self.refresh_reshade()
-        elif name == 'play':
+        elif name in ('home', 'general'):
             self.refresh_status()
             self.refresh_reshade()
-            self.fit_window()
 
     def frame_extra(self):
         """Height of the title bar and the borders around the window's client area."""
@@ -2684,54 +3142,170 @@ class Launcher:
         except (AttributeError, OSError, ValueError, self.tk.TclError):
             return self.px(40)
 
-    def schedule_fit(self):
-        """Content of the Play page changed (a hint wrapped, the check card filled): fit once, when idle."""
-        if not self.fit_pending:
-            self.fit_pending = True
-            self.root.after_idle(self.fit_window)
-
-    def fit_window(self, set_hero=True):
-        """Sizes the window to the Play page, measured: the page's requested height plus the banner, the tab
-        bar and the footer. It only grows (a taller window set by hand stays), up to the work area of the
-        screen. When even that is too short the banner shrinks first, down to hero_min; what still does not
-        fit scrolls (the Play page is a scrolling area)."""
-        self.fit_pending = False
-        if self.current_page != 'play':
-            return
+    def fit_window(self):
+        """Tall enough for the side menu and a page: it only grows (a taller window set by hand stays), up to
+        the work area of the screen; a page that still does not fit scrolls."""
         root, px = self.root, self.px
         root.update_idletasks()
-        advanced = bool(self.var('ui_advanced', 'app').get())
         left, top, right, bottom = work_area((root.winfo_screenwidth(), root.winfo_screenheight()))
         extra = self.frame_extra()
         room = bottom - top - extra
-        page = self.pages['play'].inner.winfo_reqheight() + px(8)
-        fixed = self.footer.winfo_reqheight() + (self.tabbar.h if advanced else 0)
-        want = self.hero_short if advanced else self.hero_tall
-        hero = max(self.hero_min, min(want, room - fixed - page))
-        if advanced:
-            self.hero.short = hero
-        elif hero != self.hero.tall:
-            self.hero.tall = hero
-            self.hero.rebuild()
-        if set_hero and abs(self.hero.h - hero) > 1 and 'hero' not in self.motion.tweens:
-            self.hero.set_height(hero)
         width, height, x, y = ((root.winfo_width(), root.winfo_height(), root.winfo_x(), root.winfo_y())
                                if root.winfo_ismapped() else self.planned)
-        height = min(max(height, hero + fixed + page), room)
+        height = min(max(height, self.side.min_height(), px(780)), room)
         y = max(top, min(y, bottom - height - extra))
-        root.minsize(min(px(980), width), min(px(660), height))
+        root.minsize(min(px(1040), width), min(px(660), height))
         root.geometry(f'{width}x{height}+{x}+{y}')
         self.planned = (width, height, x, y)
 
-    def cell(self, parent, row, column, title, span=1):
-        """A settings field of the Play page: a small caption above, the control returned in a frame."""
+    def cell(self, parent, row, column, title, span=1, bg=CARD):
+        """A settings field: a small caption above, the control returned in a frame."""
         px = self.px
-        holder = self.tk.Frame(parent, bg=CARD)
+        holder = self.tk.Frame(parent, bg=bg)
         holder.grid(row=row, column=column, columnspan=span, sticky='we', pady=(px(10), 0),
                     padx=(0, px(12)) if column == 0 and span == 1 else 0)
         if title:
-            self.label(holder, title, 'small', MUTED).pack(anchor='w', pady=(0, px(4)))
+            self.label(holder, title, 'small', MUTED, bg=bg).pack(anchor='w', pady=(0, px(4)))
         return holder
+
+    def flow(self, parent, text, style='body', fg=TEXT, bg=CARD):
+        """A label that wraps at the width its parent gives it (it asks for no width of its own)."""
+        label = self.label(parent, text, style, fg, bg=bg, justify='left', anchor='w', width=1)
+        label.bind('<Configure>', lambda e: label.configure(wraplength=max(self.px(80), e.width - self.px(4))))
+        return label
+
+    # --- home: the website's news --------------------------------------------------------------
+
+    def build_home(self):
+        """The home page: the banner of news and patch notes from the website (news.json), its cards of
+        information under it."""
+        page = self.scrolled_page('home', None, None)
+        self.news_holder = self.tk.Frame(page, bg=PANEL)
+        self.news_holder.pack(fill='both', expand=True)
+        self.render_news(cached_news())
+
+    def load_news(self):
+        """Off the window's thread: the website's news.json; kept for the next start offline."""
+        news = fetch_news()
+        if not news:
+            return
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            (CONFIG_DIR / 'news.json').write_text(json.dumps(news, ensure_ascii=False, indent=1), encoding='utf-8')
+        except OSError:
+            pass
+        self.ui_calls.put(lambda: self.render_news(news))
+
+    def render_news(self, news):
+        tk, px = self.tk, self.px
+        self.news = news
+        for child in self.news_holder.winfo_children():
+            child.destroy()
+        banner = self.card(self.news_holder, None, pad=34)
+        banner.frame.pack_configure(pady=(px(28), px(18)))
+        meta = '   ·   '.join(part for part in (news['kicker'], news['version'], news['date']) if part)
+        if meta:
+            self.label(banner, spaced(meta), 'small_bold', GOLD).grid(row=0, column=0, columnspan=2, sticky='w')
+        self.label(banner, news['title'], 'banner').grid(row=1, column=0, columnspan=2, sticky='w', pady=(px(10), 0))
+        self.rule(banner, CARD).grid(row=2, column=0, columnspan=2, sticky='we', pady=(px(10), px(4)))
+        r = 3
+        if news['intro']:
+            self.flow(banner, news['intro'], 'body', MUTED).grid(row=r, column=0, columnspan=2, sticky='we',
+                                                                 pady=(px(10), 0))
+            r += 1
+        for note in news['notes']:
+            row = tk.Frame(banner, bg=CARD)
+            row.grid(row=r, column=0, columnspan=2, sticky='we', pady=(px(8), 0))
+            gem = tk.Canvas(row, width=px(14), height=px(16), bg=CARD, highlightthickness=0, bd=0)
+            gem.create_polygon(diamond(px(5), px(9), px(3)), fill=GOLD, outline='')
+            gem.pack(side='left', anchor='n')
+            self.flow(row, note).pack(side='left', fill='x', expand=True)
+            r += 1
+        if news['link']:
+            link = news['link']
+            self.button(banner, link['text'], lambda url=link['url']: webbrowser.open(url)).grid(
+                row=r, column=0, columnspan=2, sticky='w', pady=(px(20), 0))
+        if news['info']:
+            cards = tk.Frame(self.news_holder, bg=PANEL)
+            cards.pack(fill='x', padx=px(32), pady=(0, px(24)))
+            for i, item in enumerate(news['info']):
+                cards.columnconfigure(i, weight=1, uniform='info')
+                body = self.card(cards, None, grid={'row': 0, 'column': i,
+                                                    'padx': (0 if i == 0 else px(8), 0 if i == len(news['info']) - 1
+                                                             else px(8))}, pad=22)
+                body.columnconfigure(0, minsize=0)
+                self.label(body, spaced(item['title']), 'h2').grid(row=0, column=0, columnspan=2, sticky='w')
+                self.flow(body, item['text'], 'small', MUTED).grid(row=1, column=0, columnspan=2, sticky='we',
+                                                                   pady=(px(8), 0))
+
+    # --- settings: general --------------------------------------------------------------------
+
+    def build_general(self):
+        """Settings, General: what the old Play page held (the quick settings, the saves folder, Steam)."""
+        tk, px = self.tk, self.px
+        page = self.scrolled_page('general', _('General', 'Основное'),
+                                  _('The settings most players change. Every other one is in the tabs above.',
+                                    'Настройки, которые меняют чаще всего. Остальные — во вкладках выше.'))
+        quick = self.card(page, _('Quick settings', 'Основное'))
+        quick.columnconfigure(0, weight=1, uniform='quick', minsize=0)
+        quick.columnconfigure(1, weight=1, uniform='quick', minsize=0)
+        r = 1
+        if not COOP_INSTALL:  # co-op: the game folder is in the co-op settings
+            cell = self.cell(quick, r, 0, _('Game folder', 'Папка игры'), span=2)
+            var = self.var('game_dir', 'app')
+            holder = tk.Frame(cell, bg=CARD)
+            holder.pack(fill='x')
+            self.ttk.Entry(holder, textvariable=var, width=30).pack(side='left', fill='x', expand=True)
+            self.button(holder, _('Browse…', 'Обзор…'), lambda: self.browse_game(var)).pack(side='left',
+                                                                                         padx=(px(8), 0))
+            self.pkg_button(cell).pack(anchor='w', pady=(px(8), 0))
+        for r, pairs in enumerate((((_('Output', 'Разрешение'), 'output_res', 'ini', OUTPUTS),
+                                    (_('Frame rate (60 in co-op)', 'Частота кадров (60 в кооперативе)') if COOP_INSTALL
+                                     else _('Frame rate', 'Частота кадров'), 'fps_mode', 'app', FPS_MODES)),
+                                   ((_('Upscaler', 'Апскейлер'), 'upscaler', 'ini', UPSCALERS),
+                                    (_('Preset', 'Пресет'), 'preset', 'ini', PRESETS)),
+                                   ((_('Game language', 'Язык игры'), 'language', 'app', LANGUAGES),
+                                    (_('Launcher language', 'Язык лаунчера'), 'ui_language', 'app', UI_LANGUAGES))), 2):
+            for column, (title, key, store, options) in enumerate(pairs):
+                holder = self.cell(quick, r, column, title)
+                box = (self.upscaler_choice(holder, 16) if key == 'upscaler' else
+                       self.choice(holder, key, store, options, 16))
+                box.pack(fill='x')
+                if key == 'fps_mode':
+                    self.lock_frame_rate(box)
+        if reshade_ready():
+            self.reshade_box(self.cell(quick, 5, 0, _('ReShade look', 'Стиль ReShade')), simple=True).pack(fill='x')
+            holder = self.cell(quick, 5, 1, ' ')
+        else:
+            holder = self.cell(quick, 5, 0, '', span=2)
+        self.choice(holder, 'window_mode', 'ini', WINDOW_MODES, 30).pack(anchor='w')
+        holder = self.cell(quick, 6, 0, '', span=2)
+        row = self.switch(holder, self.var('frame_generation', 'ini'),
+                          _('Frame generation', 'Генерация кадров'))
+        row.pack(anchor='w')
+        note = self.label(holder, '', 'small', MUTED, wraplength=px(560), justify='left')
+        note.pack(anchor='w', padx=(px(54), 0), pady=(px(2), 0))
+        self.grey_with_upscaler(row, note)
+        generation, cap = self.var('frame_generation', 'ini'), self.var('frame_cap', 'app')
+
+        def show_note(*_args):
+            """Off: what the switch does. On: what the frame cap (set in Advanced) gives on this screen."""
+            note.configure(text=simple_cap_line(cap.get(), display_refresh()) if generation.get() else
+                           _('Doubles the frame rate; adds a little input lag. Best with at least 60 FPS.',
+                             'Удваивает частоту кадров; добавляет немного задержки ввода. Лучше всего от 60 FPS.'))
+        for var in (generation, cap):
+            var.trace_add('write', show_note)
+        show_note()
+        for key in ('fps_mode', 'upscaler', 'output_res'):
+            self.vars[key].trace_add('write', lambda *_a: self.refresh_status())
+        files = self.card(page, _('Saves and shortcuts', 'Сохранения и ярлыки'))
+        holder = tk.Frame(files, bg=CARD)
+        holder.grid(row=self.next_row(files), column=0, columnspan=2, sticky='w', pady=(px(12), 0))
+        self.button(holder, _('Open the saves folder', 'Открыть папку сохранений'),
+                    lambda: self.open_path(self.var('user_dir', 'app').get(), 'user_dir')).pack(side='left')
+        self.button(holder, _('Add to Steam', 'Добавить в Steam'), self.add_to_steam).pack(side='left', padx=(px(8), 0))
+        self.note(files, _("In the game, Insert or L3 + R3 opens the port's menu.",
+                           'В игре Insert или L3 + R3 открывает меню порта.'), top=14)
 
     # --- seamless co-op (the release: COOP_INSTALL) ---------------------------------------------
 
@@ -2744,16 +3318,27 @@ class Launcher:
             box.configure(state='disabled')
         return box
 
-    def build_coop(self, page):
-        """The Co-op card on the Play page: what 1 - SETUP asked, and the host's server."""
+    def build_coop_popup(self):
+        """The co-op settings, over the whole window (Kaniel 2026-10-16): opened from the menu, and by
+        itself at the first start; the launcher stays behind it until the game folder and the host's IP
+        are set and Done is pressed."""
         tk, ttk, px = self.tk, self.ttk, self.px
         self.coop = bbport_coop.load_settings(PORT_DIR)
         self.coop_busy = self.coop_searching = False
-        card = self.card(page, _('Co-op', 'Кооператив'), grid={'row': 0, 'column': 0, 'columnspan': 2,
-                                                              'padx': px(32), 'pady': (px(24), 0)})
+        self.coop_required = False
+        cover = self.coop_cover = tk.Frame(self.root, bg=BG)
+        cover.bind('<ButtonPress-1>', lambda e: self.chrome.drag(e))
+        strip = tk.Frame(cover, bg=BG)
+        strip.place(relx=1.0, y=0, anchor='ne')
+        for kind, command in (('close', self.close), ('min', self.chrome.minimize)):
+            CaptionButton(self, strip, kind, command, bg=BG).pack(side='right')
+        holder = tk.Frame(cover, bg=BG)
+        holder.place(relx=0.5, rely=0.5, anchor='center', width=px(820))
+        card = self.card(holder, _('Co-op', 'Кооператив'), pad=32)
+        card.frame.pack_configure(padx=0, pady=0)
         card.columnconfigure(0, weight=1, uniform='coop', minsize=0)
         card.columnconfigure(1, weight=1, uniform='coop', minsize=0)
-        self.coop_vars = {}
+        self.coop_vars, self.coop_picked = {}, set()
 
         def var(key, value=None):
             v = tk.StringVar(value=self.coop.get(key, '') if value is None else value)
@@ -2761,64 +3346,113 @@ class Launcher:
             self.coop_vars[key] = v
             return v
 
-        cell = self.cell(card, 1, 0, _('Your Bloodborne folder (version 1.09, or with the 1.09 update next to it)',
+        self.flow(card, _('Set co-op up once: where your game is, who hosts, and how hard the enemies are. '
+                          'Everyone uses this same release; the others see your character\'s name.',
+                          'Настройте кооператив один раз: где игра, кто хост и насколько сильны враги. '
+                          'Все используют один релиз; другие видят имя вашего персонажа.'), 'body', MUTED).grid(
+            row=1, column=0, columnspan=2, sticky='we', pady=(px(6), px(4)))
+        cell = self.cell(card, 2, 0, _('Your Bloodborne folder (version 1.09, or with the 1.09 update next to it)',
                                        'Папка Bloodborne (версия 1.09 или с обновлением 1.09 рядом)'), span=2)
         holder = tk.Frame(cell, bg=CARD)
         holder.pack(fill='x')
-        ttk.Entry(holder, textvariable=var('game'), width=40).pack(side='left', fill='x', expand=True)
+        ttk.Entry(holder, textvariable=var('game'), width=30).pack(side='left', fill='x', expand=True)
         self.button(holder, _('Browse…', 'Обзор…'), self.coop_browse).pack(side='left', padx=(px(8), 0))
         self.button(holder, _('Find it for me', 'Найти автоматически'),
                     lambda: self.coop_search(None)).pack(side='left', padx=(px(8), 0))
         self.pkg_button(holder).pack(side='left', padx=(px(8), 0))
         self.coop_game_line = StatusLine(self, cell)
         self.coop_game_line.frame.pack(fill='x', pady=(px(6), 0))
-        self.coop_game_line.text.configure(wraplength=px(900))
 
         def combo(cell, key, options):
             values = [v for v, _t in options]
-            box = ttk.Combobox(cell, values=[_(*t) for _v, t in options], state='readonly', width=34)
+            box = ttk.Combobox(cell, values=[_(*t) for _v, t in options], state='readonly', width=30)
             box.current(values.index(self.coop.get(key)) if self.coop.get(key) in values else 0)
             v = var(key, values[box.current()])
-            box.bind('<<ComboboxSelected>>', lambda _e: v.set(values[box.current()]))
+
+            def picked(_e):
+                self.coop_picked.add(key)
+                v.set(values[box.current()])
+                self.coop_changed_soon()
+            box.bind('<<ComboboxSelected>>', picked)
             box.pack(fill='x')
+            if self.coop.get('confirmed') != '1':
+                box.set('')  # chosen once by the player (Kaniel 2026-10-16), not taken by default
+            else:
+                self.coop_picked.add(key)
             return box
 
-        combo(self.cell(card, 2, 0, _('You are', 'Вы')), 'role', ROLES)
-        ttk.Entry(self.cell(card, 2, 1, _("Host's IP address (VPN or public; the host types their own)",
+        # No Player/Host switch (Kaniel 2026-10-16): the host types their own address, and PLAY starts the
+        # server when the address is this PC's (bbport_coop.is_this_pc).
+        ttk.Entry(self.cell(card, 3, 0, _("Host's IP address (VPN or public; the host types their own)",
                                           'IP хоста (VPN или внешний; хост вводит свой)')),
                   textvariable=var('host_ip')).pack(fill='x')
         # No account name or password (phase 11): the player's id is made once and kept in coop.json,
         # and the others see the character's name. No party settings: the team is made in the game (the team screen after Continue).
-        combo(self.cell(card, 4, 0, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
-              'harder', HARDER_CHOICES)
-        holder = self.cell(card, 5, 0, '', span=2)
+        self.coop_enemies = combo(self.cell(card, 3, 1, _('Enemies (the same for every player)',
+                                                          'Враги (у всех одинаково)')), 'harder', HARDER_CHOICES)
+        holder = self.cell(card, 4, 0, '', span=2)
         self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
                     self.coop_import_saves).pack(anchor='w')
-        # The host's server: it starts by itself with PLAY; these are for a host who only hosts.
-        self.coop_host = self.cell(card, 6, 0, _('Host: the co-op server (it starts by itself with PLAY)',
-                                                 'Хост: сервер кооператива (запускается сам с ИГРАТЬ)'), span=2)
-        holder = tk.Frame(self.coop_host, bg=CARD)
-        holder.pack(fill='x')
-        self.button(holder, _('Start server', 'Запустить сервер'), self.coop_start_servers).pack(side='left')
-        self.button(holder, _('Stop server', 'Остановить сервер'),
-                    self.coop_stop_servers).pack(side='left', padx=(px(8), 0))
-        self.coop_server_line = self.label(holder, '', 'small', MUTED)
-        self.coop_server_line.pack(side='left', padx=(px(14), 0))
-        self.note(card, _('Everyone uses this same release. No account to make: the others see your '
-                          "character's name. Make or join a team in the game: Continue, Load Game or New Game opens "
-                          'the team screen. Windows asks once to let co-op through its firewall.',
-                          'Все используют один и тот же релиз. Аккаунт не нужен: другие видят имя вашего '
-                          'персонажа. Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают '
-                          'экран команды. Windows один раз спросит разрешение для брандмауэра.'), top=14)
+        self.note(card, _('Make or join a team in the game: Continue, Load Game or New Game opens the team screen. '
+                          'Windows asks once to let co-op through its firewall.',
+                          'Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают экран '
+                          'команды. Windows один раз спросит разрешение для брандмауэра.'), top=16)
+        done_row = tk.Frame(card, bg=CARD)
+        done_row.grid(row=self.next_row(card), column=0, columnspan=2, sticky='we', pady=(px(22), 0))
+        self.coop_done = self.button(done_row, _('Done', 'Готово'), self.close_coop, 'primary', width=px(150))
+        self.coop_done.pack(side='right')
+        self.coop_missing = self.label(done_row, '', 'small', CAUTION)
+        self.coop_missing.pack(side='right', padx=(0, px(16)))
+        self.coop_host = done_row  # coop_changed waits for the card to be built
         self.coop_changed()
         if not self.coop_game_folder():
             self.coop_search(None, quiet=True)
+
+    def coop_ready(self):
+        """What the co-op settings still lack (the window's words), [] when PLAY can start."""
+        missing = []
+        if not self.coop_game_folder():
+            missing.append(_('the game folder', 'папка игры'))
+        if not bbport_coop.valid_ip(self.coop.get('host_ip', '')):
+            missing.append(_("the host's IP", 'IP хоста'))
+        if 'harder' not in getattr(self, 'coop_picked', {'harder'}):
+            missing.append(_('the enemies', 'враги'))
+        return missing
+
+    def open_coop(self, required=False):
+        self.coop_required = required
+        self.coop_cover.place(x=0, y=0, relwidth=1, relheight=1)
+        self.coop_cover.lift()
+        self.coop_changed()
+
+    def close_coop(self):
+        if self.coop_ready():
+            return
+        self.coop['confirmed'] = '1'
+        try:
+            bbport_coop.save_settings(PORT_DIR, self.coop)
+        except OSError:
+            pass
+        self.coop_required = False
+        self.coop_cover.place_forget()
+        self.refresh_status()
+
+    def coop_needs_setup(self):
+        """At the start: the co-op settings open by themselves until they were done once and still hold."""
+        return COOP_INSTALL and (self.coop.get('confirmed') != '1' or bool(self.coop_ready()))
 
     def coop_game_folder(self):
         """The game folder the co-op card names (None when none is set: the folder the launcher runs
         from is its install folder, which a lookup would walk three levels deep on every refresh)."""
         folder = (getattr(self, 'coop', None) or {}).get('game', '')
-        return bbport_coop.find_game_folder(folder) if folder else None
+        if not folder:
+            return None
+        cached = getattr(self, 'coop_found', None)
+        if cached and cached[0] == folder and time.monotonic() - cached[1] < 1.0:
+            return cached[2]
+        found = bbport_coop.find_game_folder(folder)
+        self.coop_found = (folder, time.monotonic(), found)
+        return found
 
     def coop_changed_soon(self):
         """A co-op setting changed (a key typed): the settings file, the game line, the status and
@@ -2830,7 +3464,7 @@ class Launcher:
 
     def coop_changed(self):
         self.coop_change_job = None
-        if not hasattr(self, 'coop_host'):
+        if not hasattr(self, 'coop_done'):
             return
         for key, v in self.coop_vars.items():
             self.coop[key] = v.get().strip()
@@ -2838,15 +3472,16 @@ class Launcher:
             bbport_coop.save_settings(PORT_DIR, self.coop)
         except OSError:
             pass
-        if self.coop.get('role') == 'host':
-            self.coop_host.grid()
-        else:
-            self.coop_host.grid_remove()
+        self.coop['role'] = 'host' if bbport_coop.is_this_pc(self.coop.get('host_ip', '')) else 'guest'
         if not self.coop_searching:
             self.coop_show_game()
+        missing = self.coop_ready()
+        self.coop_done.configure(state='disabled' if missing else 'normal')
+        self.coop_missing.configure(text=_('Still needed: {}', 'Ещё нужно: {}').format(', '.join(missing))
+                                    if missing else '')
         if hasattr(self, 'checks'):
             self.refresh_status()
-            self.refresh_hero()
+            self.refresh_game_line()
 
     def coop_game_info(self):
         """(title, version) of the co-op card's game as co-op runs it: 01.09 when the update is next to it."""
@@ -2860,7 +3495,7 @@ class Launcher:
 
     def coop_show_game(self):
         folder = self.coop.get('game', '')
-        game = bbport_coop.find_game_folder(folder) if folder else None
+        game = self.coop_game_folder()
         if not game:
             self.coop_game_line.set('⚠ ' + (_('No game there: Browse, Find it for me, or Install from PKG.',
                                                'Игры там нет: Обзор, Найти автоматически или Установить из PKG.')
@@ -2940,6 +3575,12 @@ class Launcher:
             self.messagebox.showerror('Bloodborne', _("Type the host's IP address first (yours, as the guests reach you).",
                                                       'Сначала введите IP хоста (ваш, по которому вас видят гости).'))
             return
+        if not bbport_coop.is_this_pc(self.coop['host_ip']):
+            self.messagebox.showerror('Bloodborne', _("The host's IP is not an address of this PC: to host, type your "
+                                                      'own (the one the others reach you at).',
+                                                      'IP хоста — не адрес этого ПК: чтобы стать хостом, введите '
+                                                      'свой (по которому вас видят другие).'))
+            return
         self.coop_server_line.configure(text=_('Starting…', 'Запуск…'), fg=MUTED)
         host_ip = self.coop['host_ip']
 
@@ -2947,9 +3588,10 @@ class Launcher:
             self.coop_firewall()
             said = bbport_coop.start_servers(PORT_DIR, host_ip)
             running = bbport_coop.servers_running()
-            text = (_('Running', 'Работает') if running else _('Not running', 'Не работает')) + (
-                '  ·  ' + ' '.join(said) if said else '')
+            text = _('Running', 'Работает') if running else _('Not running', 'Не работает')
             self.ui_calls.put(lambda: self.coop_server_line.configure(text=text, fg=OK if running else BAD))
+            if said:
+                self.coop_say(' '.join(_(line) for line in said), MUTED)
         threading.Thread(target=work, daemon=True).start()
 
     def coop_stop_servers(self):
@@ -2961,7 +3603,7 @@ class Launcher:
 
     def coop_firewall(self):
         """This install's firewall rules, asking Windows for them (one UAC prompt) when they are missing."""
-        host = self.coop.get('role') == 'host'
+        host = bbport_coop.is_this_pc(self.coop.get('host_ip', ''))
         if bbport_coop.firewall_ready(PORT_DIR, host):
             return True
         self.coop_say(_('Windows asks to let co-op through its firewall…', 'Windows спрашивает разрешение брандмауэра…'))
@@ -2977,14 +3619,8 @@ class Launcher:
         if self.coop_busy:
             return
         self.coop_changed()
-        names = {'game': _('your Bloodborne folder', 'папку Bloodborne'),
-                 'host_ip': _("the host's IP address", 'IP хоста')}
-        missing = bbport_coop.missing(self.coop)
-        if missing:
-            self.messagebox.showerror('Bloodborne', _('Fill in {} on the Co-op card.',
-                                                      'Заполните {} в карточке «Кооператив».')
-                                      .format(', '.join(names[key] for key in missing)))
-            self.show('play')
+        if bbport_coop.missing(self.coop) or self.coop_ready():
+            self.open_coop(required=True)
             return
         self.collect()
         self.coop_busy = True
@@ -2997,7 +3633,7 @@ class Launcher:
         then the game starts on the window's thread."""
         failed, note, root = None, '', None
         try:
-            if settings['role'] == 'host' and not bbport_coop.servers_running():
+            if bbport_coop.is_this_pc(settings['host_ip']) and not bbport_coop.servers_running():
                 self.coop_say(_('Starting the co-op server…', 'Запуск сервера кооператива…'))
                 self.coop_firewall()
                 bbport_coop.start_servers(PORT_DIR, settings['host_ip'])
@@ -3050,99 +3686,17 @@ class Launcher:
         self.status.configure(text=_('Preparing the game; it opens in its own window…',
                                      'Подготовка игры; она откроется в своём окне…'), fg=GOLD)
 
-    def build_play(self):
-        tk, px = self.tk, self.px
-        page = self.scrolled_page('play', None, None)
-        page.bind('<Configure>', lambda _e: self.schedule_fit(), add='+')
-        page.columnconfigure(0, weight=2, uniform='play', minsize=px(300))
-        page.columnconfigure(1, weight=3, uniform='play')
-        top = 0
-        if COOP_INSTALL:
-            self.build_coop(page)
-            top = 1
-        info = self.card(page, _('Ready check', 'Проверка'), grid={'row': top, 'column': 0, 'padx': (px(32), px(8)),
-                                                                   'pady': px(24)})
-        self.checks = {}
-        for key in ('game', 'saves', 'gpu', 'fsr4', 'upscaler'):
-            self.checks[key] = StatusLine(self, info)
-            self.checks[key].frame.grid(row=self.next_row(info), column=0, columnspan=2, sticky='we', pady=(px(10), 0))
-        holder = tk.Frame(info, bg=CARD)
-        holder.grid(row=self.next_row(info), column=0, columnspan=2, sticky='w', pady=(px(14), 0))
-        self.button(holder, _('Open folder', 'Открыть папку'),
-                    lambda: self.open_path(self.var('user_dir', 'app').get(), 'user_dir')).pack(side='left')
-        self.button(holder, _('Add to Steam', 'Добавить в Steam'), self.add_to_steam).pack(side='left', padx=(px(8), 0))
-        self.note(info, _("In the game: Insert or L3+R3\nopens the port's menu.", 'В игре: Insert или L3+R3\nоткрывает меню порта.'),
-                  top=14)
-        # Only shown after the saved upscaler was changed; hidden last so the rows below keep their place.
-        self.checks['upscaler'].frame.grid_remove()
-        quick = self.card(page, _('Quick settings', 'Основное'), grid={'row': top, 'column': 1, 'padx': (px(8), px(32)),
-                                                                       'pady': px(24)})
-        quick.columnconfigure(0, weight=1, uniform='quick', minsize=0)
-        quick.columnconfigure(1, weight=1, uniform='quick', minsize=0)
-        r = 1
-        if not COOP_INSTALL:  # co-op: the game folder is the co-op card's
-            cell = self.cell(quick, r, 0, _('Game folder', 'Папка игры'), span=2)
-            var = self.var('game_dir', 'app')
-            holder = tk.Frame(cell, bg=CARD)
-            holder.pack(fill='x')
-            self.ttk.Entry(holder, textvariable=var, width=30).pack(side='left', fill='x', expand=True)
-            self.button(holder, _('Browse…', 'Обзор…'), lambda: self.browse_game(var)).pack(side='left',
-                                                                                         padx=(px(8), 0))
-            self.pkg_button(cell).pack(anchor='w', pady=(px(8), 0))
-        for r, pairs in enumerate((((_('Output', 'Разрешение'), 'output_res', 'ini', OUTPUTS),
-                                    (_('Frame rate (60 in co-op)', 'Частота кадров (60 в кооперативе)') if COOP_INSTALL
-                                     else _('Frame rate', 'Частота кадров'), 'fps_mode', 'app', FPS_MODES)),
-                                   ((_('Upscaler', 'Апскейлер'), 'upscaler', 'ini', UPSCALERS),
-                                    (_('Preset', 'Пресет'), 'preset', 'ini', PRESETS)),
-                                   ((_('Game language', 'Язык игры'), 'language', 'app', LANGUAGES),
-                                    (_('Launcher language', 'Язык лаунчера'), 'ui_language', 'app', UI_LANGUAGES))), 2):
-            for column, (title, key, store, options) in enumerate(pairs):
-                holder = self.cell(quick, r, column, title)
-                box = (self.upscaler_choice(holder, 16) if key == 'upscaler' else
-                       self.choice(holder, key, store, options, 16))
-                box.pack(fill='x')
-                if key == 'fps_mode':
-                    self.lock_frame_rate(box)
-        if reshade_ready():
-            self.reshade_box(self.cell(quick, 5, 0, _('ReShade look', 'Стиль ReShade')), simple=True).pack(fill='x')
-            holder = self.cell(quick, 5, 1, ' ')
-        else:
-            holder = self.cell(quick, 5, 0, '', span=2)
-        self.choice(holder, 'window_mode', 'ini', WINDOW_MODES, 30).pack(anchor='w')
-        holder = self.cell(quick, 6, 0, '', span=2)
-        row = self.switch(holder, self.var('frame_generation', 'ini'),
-                          _('Frame generation', 'Генерация кадров'))
-        row.pack(anchor='w')
-        note = self.label(holder, '', 'small', MUTED, wraplength=px(420), justify='left')
-        note.pack(anchor='w', padx=(px(54), 0), pady=(px(2), 0))
-        self.grey_with_upscaler(row, note)
-        generation, cap = self.var('frame_generation', 'ini'), self.var('frame_cap', 'app')
-
-        def show_note(*_args):
-            """Off: what the switch does. On: what the frame cap (set in Advanced) gives on this screen."""
-            note.configure(text=simple_cap_line(cap.get(), display_refresh()) if generation.get() else
-                           _('Doubles the frame rate; adds a little input lag. Best with at least 60 FPS.',
-                             'Удваивает частоту кадров; добавляет немного задержки ввода. Лучше всего от 60 FPS.'))
-        for var in (generation, cap):
-            var.trace_add('write', show_note)
-        show_note()
-        for key in ('fps_mode', 'upscaler', 'output_res'):
-            self.vars[key].trace_add('write', lambda *_a: self.refresh_status())
-
     def browse_game(self, var):
         chosen = self.filedialog.askdirectory(title=_('Choose the folder with eboot.bin', 'Выберите папку с eboot.bin'),
                                               initialdir=var.get() or str(PORT_DIR))
         if chosen:
             var.set(str(Path(chosen)))
 
-    def refresh_hero(self):
-        """Cover art, game line and the cache of both for the selected game folder."""
+    def refresh_game_line(self):
+        """The game line under the title, for the selected game folder."""
         folder = Path(self.var('game_dir', 'app').get() or '.')
-        if COOP_INSTALL:
-            folder = self.coop_game_folder() or Path('.')
-        self.hero.set_art(folder / 'sce_sys' / 'pic1.png')
         info = self.coop_game_info() if COOP_INSTALL else game_info(folder)
-        self.hero.canvas.itemconfigure(self.hero.info, text=(
+        self.side.canvas.itemconfigure(self.side.info, text=(
             _('CUSA03173 · game version {}', 'CUSA03173 · версия игры {}').format(info[1]) if info
             else _('Game folder not set', 'Папка игры не выбрана')))
 
@@ -3825,7 +4379,7 @@ class Launcher:
         """The Animations switch: motion stops at once, or starts again."""
         on = bool(self.vars['animations'].get()) and os.environ.get('BB_LAUNCHER_ANIMATIONS', '1') != '0'
         self.motion.set_enabled(on)
-        self.hero.animate(on)
+        self.side.animate(on)
         self.play_button.animate(on)
 
     def build_log(self):
@@ -3833,15 +4387,18 @@ class Launcher:
         page = tk.Frame(self.content, bg=PANEL)
         self.pages['log'] = page
         top = tk.Frame(page, bg=PANEL)
-        top.pack(fill='x', padx=px(32), pady=(px(18), px(10)))
-        self.label(top, _('Log', 'Журнал'), 'h1', bg=PANEL).pack(side='left')
-        self.button(top, _('Copy', 'Копировать'), self.copy_log, bg=PANEL).pack(side='right')
-        self.button(top, _('Clear', 'Очистить'), lambda: self.set_log(''), bg=PANEL).pack(side='right', padx=px(8))
+        top.pack(fill='x', padx=px(32), pady=(px(22), px(12)))
+        row = tk.Frame(top, bg=PANEL)
+        row.pack(fill='x')
+        self.label(row, spaced(_('Log', 'Журнал')), 'h1', bg=PANEL).pack(side='left')
+        self.button(row, _('Copy', 'Копировать'), self.copy_log, bg=PANEL).pack(side='right')
+        self.button(row, _('Clear', 'Очистить'), lambda: self.set_log(''), bg=PANEL).pack(side='right', padx=px(8))
+        self.rule(top, PANEL).pack(fill='x', pady=(px(6), px(2)))
         frame = tk.Frame(page, bg=FIELD, highlightthickness=1, highlightbackground=LINE)
         frame.pack(fill='both', expand=True, padx=px(32), pady=(0, px(20)))
         self.log = tk.Text(frame, wrap='none', bg=FIELD, fg='#cfc6b8', insertbackground=TEXT, relief='flat',
                            font=self.fonts['mono'], padx=px(10), pady=px(8), state='disabled', highlightthickness=0,
-                           selectbackground=BLOOD)
+                           selectbackground=ACCENT)
         bar = self.ttk.Scrollbar(frame, command=self.log.yview)
         self.log.configure(yscrollcommand=bar.set)
         bar.pack(side='right', fill='y')
@@ -3862,14 +4419,14 @@ class Launcher:
 
     # ---- state -------------------------------------------------------------------------------
     def game_changed(self):
-        self.refresh_hero()
+        self.refresh_game_line()
         self.set_icon()
         self.refresh_status()
 
     def refresh_status(self):
         info = self.coop_game_info() if COOP_INSTALL else game_info(self.var('game_dir', 'app').get())
         if not info:
-            game = (_('✗ Choose your Bloodborne folder on the Co-op card', '✗ Выберите папку Bloodborne в карточке «Кооператив»')
+            game = (_('✗ Choose your Bloodborne folder in Co-op', '✗ Выберите папку Bloodborne в разделе «Кооператив»')
                     if COOP_INSTALL else
                     _('✗ No eboot.bin in the game folder (Game & effects)', '✗ В папке игры нет eboot.bin («Игра и эффекты»)'))
         elif info[1] == PATCH_VERSION:
@@ -3889,7 +4446,8 @@ class Launcher:
             self.checks[key].set(text, busy=key == 'gpu' and self.gpu_checking)
         if self.upscaler_notice:
             self.checks['upscaler'].set(self.upscaler_notice)
-            self.checks['upscaler'].frame.grid()
+            if not self.checks['upscaler'].canvas.winfo_manager():
+                self.checks['upscaler'].pack(side='left', padx=(0, self.px(6)), after=self.checks['fsr4'].canvas)
         for label in getattr(self, 'warnings', []):
             if info and info[1] != PATCH_VERSION:
                 label.configure(text=label.template.format(info[1]))
@@ -4205,7 +4763,7 @@ class Launcher:
         if not game_info(self.app['game_dir']):
             self.messagebox.showerror('Bloodborne', _('Choose the game folder with eboot.bin (CUSA03173).',
                                                       'Выберите папку игры с eboot.bin (CUSA03173).'))
-            self.show('game' if self.var('ui_advanced', 'app').get() else 'play')
+            self.show('general')
             return
         self.set_log('')
         log_path = Path(self.app.get('user_dir') or DATA_DIR / 'user') / 'last_run.log'
@@ -4623,7 +5181,7 @@ class Launcher:
             self.root.after_cancel(self.install_hide)
             self.install_hide = None
         if not self.install_card:
-            self.install_card = tk.Frame(self.root, bg=CARD, highlightthickness=1, highlightbackground=BLOOD)
+            self.install_card = tk.Frame(self.root, bg=CARD, highlightthickness=1, highlightbackground=ACCENT)
             body = tk.Frame(self.install_card, bg=CARD)
             body.pack(padx=px(20), pady=px(14))
             head = tk.Frame(body, bg=CARD)
@@ -4636,7 +5194,7 @@ class Launcher:
             self.install_bar = Bar(self, body, 520)
             self.install_close = self.button(body, _('Close', 'Закрыть'), self.hide_install_card)
         self.install_close.pack_forget()
-        self.install_card.configure(highlightbackground=BLOOD)
+        self.install_card.configure(highlightbackground=ACCENT)
         self.install_title.configure(text=title, fg=TEXT)
         self.install_detail.configure(text=detail)
         self.install_spin.pack(side='right', padx=(px(16), 0))
@@ -4720,12 +5278,12 @@ class Launcher:
         self.ui_calls.put(show)
 
     def offer_update(self, version, url, page):
-        """A card in the banner (it slides in below the view switch) offering the new release."""
+        """A card that slides down into the top right corner of the page, offering the new release."""
         if self.update_box:
             return
         tk, px = self.tk, self.px
         text = _('Version {} is available.', 'Доступна версия {}.').format(version)
-        box = tk.Frame(self.hero.canvas, bg=CARD, highlightthickness=1, highlightbackground=BLOOD)
+        box = tk.Frame(self.content, bg=CARD, highlightthickness=1, highlightbackground=ACCENT)
         row = tk.Frame(box, bg=CARD)
         row.pack(padx=px(14), pady=px(8))
         self.update_label = self.label(row, text, 'body_bold')
@@ -4736,7 +5294,7 @@ class Launcher:
         self.update_button.pack(side='left', padx=(px(14), 0))
         self.button(row, _("What's new", 'Что нового'), lambda: webbrowser.open(page)).pack(side='left', padx=(px(8), 0))
         box.place(relx=1.0, x=-px(24), y=-px(80), anchor='ne')
-        self.motion.tween('update-card', 380, -px(80), px(62), lambda y: box.place_configure(y=int(y)))
+        self.motion.tween('update-card', 380, -px(80), px(16), lambda y: box.place_configure(y=int(y)))
         self.update_box = box
         if not self.process:
             self.status.configure(text=text, fg=GOLD)

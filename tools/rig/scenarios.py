@@ -1354,7 +1354,7 @@ SCENARIOS = {
             "host": [START, "godmode", "wait-session 2 300", "wait 30", "wait 20", "snapshot",
                      "expect-session 2"],
             "guest": [START, "godmode", "wait-session 2 300", "wait 25", "keys toggle up up enter",
-                      "wait 3", "keys enter", "wait 3", "snapshot", "expect-session 2"],
+                      "wait 3", "shot team-menu", "keys enter", "wait 3", "snapshot", "expect-session 2"],
         },
         "expect": {
             "guest": [r"Co-op team menu: the team screen is open from the port's Insert menu",
