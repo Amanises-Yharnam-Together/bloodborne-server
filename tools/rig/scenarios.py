@@ -1122,6 +1122,26 @@ SCENARIOS = {
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
+    # Release thread 2026-10-16 (dog): the host travelled to the Dream before it saw the guest's
+    # character; neither game said ready and the guest stayed covered (its input held) until the
+    # host came back. A member on another map is not waited for: both screens open with the host
+    # still in the Dream.
+    "team-load-apart": {
+        "about": "the host leaves for the Dream as soon as the team's session is up: neither "
+                 "loading screen waits for it, both open with the host still away",
+        "roles": {
+            "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                     "wait-session 2 300", f"travel {HUNTERS_DREAM}", "wait 25",
+                     "log apart-host", "wait 5"],
+            "guest": ["team-accept", "team-ready", START, "wait-session 2 300", "wait 30",
+                      "log apart-guest", "wait 5"],
+        },
+        "expect": {"host": [r"load view is gone[\s\S]*autoplay log: apart-host"],
+                   "guest": [r"load view is gone[\s\S]*autoplay log: apart-guest"]},
+        "forbid": {role: [r"load view is gone[\s\S]*load view is up"]
+                   for role in ("host", "guest")},
+        "timeout": 300,
+    },
     # Kaniel 2026-10-15: the team's loading screen stays over the whole screen, the sound held,
     # until every guest has fully joined the host (its character spawned), then opens for all.
     "team-load-cover": {

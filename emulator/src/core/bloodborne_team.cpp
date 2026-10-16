@@ -332,7 +332,25 @@ TeamLoad::Stage TeamLoad::OwnStage(bool loading, bool in_session, size_t others_
                                                       : bbcoop::LoadProgress::JOINING;
 }
 
+size_t TeamLoad::OthersHere(std::span<const std::pair<std::string, std::string>> members,
+                            std::string_view me, std::span<const std::pair<std::string, u32>> maps,
+                            u32 map) {
+    size_t here = 0;
+    for (const auto& [member, name] : members) {
+        if (member == me) {
+            continue;
+        }
+        const auto at = std::ranges::find(maps, member, &std::pair<std::string, u32>::first);
+        here += at == maps.end() || at->second == 0 || at->second == map ? 1 : 0;
+    }
+    return here;
+}
+
 void TeamLoad::SetStage(TeamLoad::Stage stage, s64 now_ms) {
+    // Ready stays ready: a member who then leaves this map must not cover it again.
+    if (own == bbcoop::LoadProgress::READY) {
+        return;
+    }
     if (stage != own) {
         own = stage;
         own_since_ms = now_ms;

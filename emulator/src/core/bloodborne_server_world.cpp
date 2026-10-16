@@ -1062,6 +1062,19 @@ void UpdateTeamLoad() {
             seen += other.at.has_value() && !IsCharacterDisabled(other.character) ? 1 : 0;
         }
     }
+    // Release thread 2026-10-16: members the server's map board has on another map are not waited
+    // for (a host off to the Dream before it saw the guest kept the guest covered until it came
+    // back).
+    std::vector<std::pair<std::string, u32>> maps;
+    {
+        std::scoped_lock lock{map_board_mutex};
+        if (std::chrono::steady_clock::now() - map_board_time < std::chrono::seconds{10}) {
+            for (const MemberMap& entry : map_board) {
+                maps.emplace_back(entry.member, entry.map);
+            }
+        }
+    }
+    const u32 map = CurrentPlace().map;
     std::optional<bbcoop::LoadProgress> said;
     TeamLoad::View view;
     size_t needed = 0;
@@ -1071,7 +1084,7 @@ void UpdateTeamLoad() {
         const auto& lobby = team_gate.Lobby();
         const auto members = lobby ? TeamLoadMembers(*lobby, lobby_member)
                                    : std::vector<std::pair<std::string, std::string>>{};
-        needed = members.empty() ? 0 : members.size() - 1;
+        needed = TeamLoad::OthersHere(members, lobby_member, maps, map);
         stage = TeamLoad::OwnStage(loading, in, seen, needed);
         team_load.SetStage(stage, now_ms);
         said = team_load.ToSend(now_ms);
