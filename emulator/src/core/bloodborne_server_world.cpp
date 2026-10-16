@@ -126,6 +126,12 @@ std::atomic<s64> remo_step_ms{0};
 CutsceneSkip cutscene_skip; // CutsceneSkipPressed (the pad's reads)
 std::atomic<bool> skip_pressed{false};
 u64 team_sessions_opened = 0;
+// Kaniel 2026-10-16: the team screen opened over the game from its System menu (TeamMenu), and
+// when it closed: the game's own page under it gets a Circle a moment later (TeamMenuBackPressed).
+std::atomic<bool> team_menu_open{false};
+std::atomic<s64> team_menu_closed_ms{0};
+constexpr s64 TeamMenuBackAfterMs = 100;
+constexpr s64 TeamMenuBackHoldMs = 150;
 // What the summon packet carries before the join data (0x01873754): GameMan +0x16F0 and +0x16F4
 // on the guest, the same for every co-operator (rig 2026-10-14: 0xFFFFFFFF and 7).
 constexpr u32 TeamSessionKind = 0xFFFFFFFFu;
@@ -1130,9 +1136,162 @@ bool TeamScreenUp() {
     if (!team_switch) {
         return false;
     }
+    if (team_menu_open.load(std::memory_order_relaxed)) {
+        return true;
+    }
     std::scoped_lock lock{team_mutex};
     return team_gate.Holding() && !lobby_playing;
 }
+
+void TeamMenu(bool open) {
+    if (!team_switch || team_menu_open.exchange(open) == open) {
+        return;
+    }
+    if (!open) {
+        // The game's own page under the screen (bbport_game_menu.cpp) closes with it: Circle,
+        // pressed for the game once the player's buttons are up (TeamMenuBackPressed).
+        team_menu_closed_ms.store(SteadyMilliseconds(), std::memory_order_relaxed);
+    }
+    LOG_INFO(Debug, "Co-op team menu: the team screen is {} the game's System menu",
+             open ? "open from" : "closed back to");
+}
+
+bool TeamMenuOpen() {
+    return team_menu_open.load(std::memory_order_relaxed);
+}
+
+bool TeamMenuBackPressed() {
+    const s64 closed = team_menu_closed_ms.load(std::memory_order_relaxed);
+    const s64 since = SteadyMilliseconds() - closed;
+    return closed != 0 && since >= TeamMenuBackAfterMs &&
+           since < TeamMenuBackAfterMs + TeamMenuBackHoldMs;
+}
+
+bool TeamPlaying(bool* in_hunt) {
+    std::scoped_lock lock{team_mutex};
+    if (in_hunt != nullptr) {
+        *in_hunt = lobby_playing && !team_party.empty();
+    }
+    return lobby_playing;
+}
+
+void TeamJoinHunt(const std::string& invite_team) {
+    std::scoped_lock lock{team_mutex};
+    if (!lobby_playing || !team_party.empty() || !team_gate.Lobby()) {
+        return;
+    }
+    const int slot = character_slot.load();
+    const auto requests = TeamJoinHuntRequests(*team_gate.Lobby(), lobby_member, invite_team,
+                                               slot < 0 ? 0u : static_cast<u32>(slot), lobby_name);
+    LOG_INFO(Debug, "Co-op team menu: this save joins the hunt ({} requests, slot {}{})",
+             requests.size(), slot, invite_team.empty() ? "" : ", the invitation accepted");
+    for (const bbcoop::TeamRequest& request : requests) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_team_request() = request;
+        lobby_outbox.push_back(std::move(envelope));
+    }
+}
+
+namespace {
+
+// Kaniel 2026-10-16: out of the team this save played in (removed by its leader, or it left from
+// the menu): the team's session is left where the player stands, as a guest alone in it leaves
+// (TeamJoin::LeaveAlone), and the save plays on alone: no party, its own world back from the next
+// load. The white phantom of a joined guest is a player again a little later (PhantomHome).
+void LeaveTeamInPlay(u64 manager) {
+    std::string party;
+    {
+        std::scoped_lock lock{team_mutex};
+        party = std::exchange(team_party, {});
+        team_world.reset();
+        team_session.reset();
+        team_world_due = false;
+        team_world_taken = false;
+        team_world_blocks.clear();
+        team_host = false;
+        personal_world_due = true;
+        team_join = {};
+        team_load = {};
+        team_gate.DropStart();
+    }
+    {
+        std::scoped_lock lock{stream_mutex};
+        hello_party.clear();
+    }
+    if (party_controller) {
+        party_controller->Wait();
+    }
+    const s32 matching = ReadValue<s32>(manager, 0x124);
+    if (matching != 0) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64)>(image_base +
+                                                     MultiPlayStopRequestOffset)(manager);
+    }
+    LOG_INFO(Debug,
+             "Co-op team menu: out of the team ({}): {}; the save plays on alone where it "
+             "stands",
+             party, matching != 0 ? "left its session" : "no session to leave");
+}
+
+// Kaniel 2026-10-16: the team's Start for a save playing alone (it joined the hunt from the
+// menu): the team's party and role as at the title's Start, and its loading screen; the session
+// is joined in place (TeamJoin), the team's world taken as the join's reload brings the blocks.
+void AdoptTeamInPlay(const bbcoop::TeamStart& start) {
+    std::string me;
+    {
+        std::scoped_lock lock{team_mutex};
+        me = lobby_member;
+        team_party = start.party();
+        team_world.reset();
+        team_session.reset();
+        team_world_due = true;
+        team_world_taken = false;
+        team_world_blocks.clear();
+        team_host = start.host() == me;
+        personal_world_due = false;
+        team_world_reported = {};
+        team_world_reported_ms = 0;
+        team_join = {};
+        team_load.Start(SteadyMilliseconds());
+    }
+    const bool host = start.host() == me;
+    if (party_controller) {
+        party_controller->Assign(host ? PartyRole::Host : PartyRole::Guest);
+    }
+    {
+        std::scoped_lock lock{stream_mutex};
+        hello_party = start.party();
+        hello_due = true;
+        if (hello_member.empty()) {
+            hello_member = me;
+        }
+    }
+    LOG_INFO(Debug, "Co-op team menu: this save joins team {} where it stands, as its {}",
+             start.team(), host ? "host" : "guest");
+    // The team's loading screen takes over from the menu (back in the game when it opens).
+    TeamMenu(false);
+}
+
+void TickTeamPlay(u64 manager) {
+    TeamPlayStep step = TeamPlayStep::None;
+    std::optional<bbcoop::TeamStart> start;
+    {
+        std::scoped_lock lock{team_mutex};
+        if (!lobby_playing) {
+            return;
+        }
+        const auto& lobby = team_gate.Lobby();
+        start = team_gate.Start();
+        step = TeamPlayStepOf(lobby ? &*lobby : nullptr, team_party, start ? &*start : nullptr,
+                              lobby_member);
+    }
+    if (step == TeamPlayStep::Leave) {
+        LeaveTeamInPlay(manager);
+    } else if (step == TeamPlayStep::Adopt) {
+        AdoptTeamInPlay(*start);
+    }
+}
+
+} // namespace
 
 void TeamChoose(TeamGate::Choice choice) {
     std::scoped_lock lock{team_mutex};
@@ -1162,6 +1321,7 @@ void TeamBackAtTitle() {
     team_session.reset();
     team_load = {};
     team_load_covers.store(false, std::memory_order_relaxed);
+    team_menu_open.store(false, std::memory_order_relaxed);
     {
         std::scoped_lock view_lock{team_load_view_mutex};
         team_load_view = {};
@@ -1177,15 +1337,19 @@ bool TickTeamJoin(bool ready) {
     if (manager < 0x10000 || !HasMemoryAccess(manager, 0x128, MemoryProt::CpuRead)) {
         return true;
     }
+    // Kaniel 2026-10-16: the team menu in game: out of the team, or into it, where it stands.
+    TickTeamPlay(manager);
     std::optional<bbcoop::TeamSession> session;
     bool in_team = false;
+    bool playing = false;
     {
         std::scoped_lock lock{team_mutex};
+        playing = lobby_playing;
         in_team = !team_party.empty() && lobby_playing;
         session = team_session;
     }
-    if (!in_team) {
-        return true; // alone: no session to open or join
+    if (!playing) {
+        return true; // at the title
     }
     static LeavingFlag leaving;
     if (leaving.Clear(EventFlagOn(LeavingFlag::Flag), InPartySession(), SteadyMilliseconds())) {
@@ -1210,6 +1374,9 @@ bool TickTeamJoin(bool ready) {
         WriteValue(player, 0x78, s32{0});
         LOG_INFO(Debug, "Co-op team join: a white phantom out of a session in its own world: a "
                         "player again");
+    }
+    if (!in_team) {
+        return true; // alone (from the title, or out of its team since): no session to open or join
     }
     const TeamJoin::Frame frame{
         .host = !IsPartyGuestRole(),
@@ -1646,6 +1813,73 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
     }
     if (!done && elapsed > TimeoutSeconds) {
         failure = "timed out in the lobby";
+    }
+    return done;
+}
+
+bool RunTeamMenuVerb(const AutoplayCommand& command, bool begun, double elapsed,
+                     std::string& failure) {
+    // menu-invite <online id> [timeout], menu-kick <online id> [timeout], menu-join [timeout],
+    // menu-leave [timeout].
+    const size_t timeout_arg = command.verb == "menu-invite" || command.verb == "menu-kick" ? 1 : 0;
+    const double timeout =
+        command.args.size() > timeout_arg ? std::atof(command.args[timeout_arg].c_str()) : 180.0;
+    std::optional<bbcoop::LobbyState> lobby;
+    {
+        std::scoped_lock lock{team_mutex};
+        lobby = team_gate.Lobby();
+    }
+    // What the screen's buttons send, at most every 5 s while the lobby does not show it done.
+    static double asked_at = -100.0;
+    if (!begun) {
+        asked_at = -100.0;
+    }
+    const bool ask = elapsed - asked_at >= 5.0;
+    const auto member_in_team = [&](const std::string& member) {
+        return lobby && lobby->has_team() &&
+               std::ranges::any_of(lobby->team().members(), [&](const bbcoop::TeamMember& m) {
+                   return m.member() == member;
+               });
+    };
+    bool in_hunt = false;
+    TeamPlaying(&in_hunt);
+    bool done = false;
+    if (command.verb == "menu-invite" && !command.args.empty()) {
+        const std::string member = BoardMemberOfOnlineId(command.args[0]);
+        const bool online =
+            lobby && std::ranges::any_of(lobby->players(), [&](const bbcoop::LobbyPlayer& p) {
+                return p.member() == member;
+            });
+        done = member_in_team(member);
+        if (!done && online && lobby->has_team() && ask) {
+            asked_at = elapsed;
+            TeamLobbyRequest(bbcoop::TeamRequest::INVITE, member);
+        }
+    } else if (command.verb == "menu-kick" && !command.args.empty()) {
+        const std::string member = BoardMemberOfOnlineId(command.args[0]);
+        done = lobby && !member_in_team(member);
+        if (!done && ask) {
+            asked_at = elapsed;
+            TeamLobbyRequest(bbcoop::TeamRequest::REMOVE, member);
+        }
+    } else if (command.verb == "menu-join") {
+        done = in_hunt;
+        if (!done && lobby && ask && (lobby->has_team() || lobby->invites_size() > 0)) {
+            asked_at = elapsed;
+            TeamJoinHunt(lobby->has_team() ? std::string{} : lobby->invites(0).team());
+        }
+    } else if (command.verb == "menu-leave") {
+        done = lobby && !lobby->has_team() && !in_hunt;
+        if (!done && lobby && lobby->has_team() && ask) {
+            asked_at = elapsed;
+            TeamLobbyRequest(bbcoop::TeamRequest::LEAVE, {});
+        }
+    } else {
+        failure = "unknown team menu verb";
+        return false;
+    }
+    if (!done && elapsed > timeout) {
+        failure = "timed out in the team menu";
     }
     return done;
 }

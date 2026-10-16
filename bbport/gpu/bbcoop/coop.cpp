@@ -250,6 +250,10 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
     const std::string me = Coop::TeamLobbyMember();
     CopyName(lobby->me, sizeof(lobby->me), me);
     lobby->signed_in = 1;
+    lobby->menu = Coop::TeamMenuOpen() ? 1 : 0;
+    bool in_hunt = false;
+    lobby->playing = Coop::TeamPlaying(&in_hunt) ? 1 : 0;
+    lobby->in_hunt = in_hunt ? 1 : 0;
     CopyName(lobby->notice, sizeof(lobby->notice), state->notice());
     if (state->has_team()) {
         const bbcoop::Team& team = state->team();
@@ -331,6 +335,18 @@ extern "C" int bbcoop_sound_held(void) {
 
 extern "C" int bbcoop_cutscene_skip(void) {
     return Core::Bloodborne::Coop::CutsceneSkipPressed() ? 1 : 0;
+}
+
+extern "C" void bbcoop_team_menu(int open) {
+    Core::Bloodborne::Coop::TeamMenu(open != 0);
+}
+
+extern "C" int bbcoop_team_menu_back(void) {
+    return Core::Bloodborne::Coop::TeamMenuBackPressed() ? 1 : 0;
+}
+
+extern "C" void bbcoop_team_join_hunt(const char* team) {
+    Core::Bloodborne::Coop::TeamJoinHunt(team ? team : "");
 }
 
 extern "C" void bbcoop_team_choose(int what) {

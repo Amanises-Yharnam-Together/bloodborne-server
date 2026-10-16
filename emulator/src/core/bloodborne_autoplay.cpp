@@ -1389,6 +1389,12 @@ bool AutoplayTeamVerb(const AutoplayStep&) {
     return true;
 }
 
+// Kaniel 2026-10-16: the team menu in game, what its buttons do (menu-invite <online id>,
+// menu-kick <online id>, menu-join, menu-leave; each [timeout]).
+bool AutoplayTeamMenuVerb(const AutoplayStep& step) {
+    return Coop::RunTeamMenuVerb(step.command, step.begun, step.elapsed, step.failure);
+}
+
 // Trading (bloodborne_trade.cpp). Items: echoes, vials, bullets, goods:<id> and, one each,
 // weapon:<id>, armor:<id>, gem:<id> (ids as the game's params have them, decimal).
 std::optional<u32> TradeItemId(std::string_view name, std::string_view prefix) {
@@ -1669,6 +1675,10 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"title-wait", AutoplayTeamVerb},
     {"title-shot", AutoplayTeamVerb},
     {"title-keys", AutoplayTeamVerb},
+    {"menu-invite", AutoplayTeamMenuVerb},
+    {"menu-kick", AutoplayTeamMenuVerb},
+    {"menu-join", AutoplayTeamMenuVerb},
+    {"menu-leave", AutoplayTeamMenuVerb},
     {"keys", AutoplayKeys},
     {"done", AutoplayDone},
     {"trade-give", AutoplayTradeGive},

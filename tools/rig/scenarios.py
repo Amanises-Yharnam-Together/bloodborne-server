@@ -1227,6 +1227,44 @@ SCENARIOS = {
         },
         "timeout": 300,
     },
+    # Kaniel 2026-10-16: the team menu in game (the System menu's Co-op Team page). The leader
+    # removes a member while both play: it leaves the session where it stands and plays on alone
+    # (no title, no reload); the host plays on with its session open.
+    "team-menu-kick": {
+        "about": "in game, the host removes the guest from the team: the guest leaves the session "
+                 "where it stands and plays alone, the host plays on",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", "menu-kick rig_guest 60",
+                     "wait-solo 120", "wait 10", "snapshot", f"expect-map {CENTRAL_YHARNAM}"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait-solo 120", "wait 15",
+                      "snapshot", f"expect-map {CENTRAL_YHARNAM}", "wait 15", "snapshot",
+                      f"expect-map {CENTRAL_YHARNAM}"],
+        },
+        "expect": {
+            "guest": [r"Co-op team menu: out of the team \(team:\w+\): left its session"],
+        },
+        # The removed guest's own leave (MultiPlayStopRequest where it stands) is the point.
+        "allow": [r"left the session outside a trip"],
+        "timeout": 300,
+    },
+    # A save playing alone is invited from the leader's menu and joins the hunt from its own,
+    # where it stands, without going back to the title.
+    "team-menu-join": {
+        "about": "in game, the host invites a guest playing alone; the guest joins the hunt from "
+                 "the menu where it stands",
+        "roles": {
+            "host": ["team-create", "team-start", START, "godmode", "wait 15",
+                     "menu-invite rig_guest 240", "wait-session 2 300", "wait 10", "snapshot",
+                     "expect-session 2"],
+            "guest": ["team-alone", START, "godmode", "wait 10", "menu-join 240",
+                      "wait-session 2 300", "wait 10", "snapshot", "expect-session 2",
+                      f"expect-map {CENTRAL_YHARNAM}"],
+        },
+        "expect": {
+            "guest": [r"Co-op team menu: this save joins team \w+ where it stands, as its guest"],
+        },
+        "timeout": 300,
+    },
     "join3": {
         "about": "a party of three: both guests join the host (one bell summons both)",
         "roles": {

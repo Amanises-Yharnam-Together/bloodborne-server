@@ -124,6 +124,47 @@ void TeamGate::Reset() {
     alone = false;
 }
 
+TeamPlayStep TeamPlayStepOf(const bbcoop::LobbyState* lobby, std::string_view party,
+                            const bbcoop::TeamStart* start, const std::string& me) {
+    if (lobby == nullptr) {
+        return TeamPlayStep::None; // no word from the lobby yet
+    }
+    const std::string mine = lobby->has_team() ? "team:" + lobby->team().id() : std::string{};
+    if (!party.empty()) {
+        return party == mine ? TeamPlayStep::None : TeamPlayStep::Leave;
+    }
+    if (start == nullptr || start->party() != mine) {
+        return TeamPlayStep::None;
+    }
+    const auto& members = lobby->team().members();
+    const bool ready = std::ranges::any_of(
+        members, [&](const bbcoop::TeamMember& m) { return m.member() == me && m.ready(); });
+    return ready ? TeamPlayStep::Adopt : TeamPlayStep::None;
+}
+
+std::vector<bbcoop::TeamRequest> TeamJoinHuntRequests(const bbcoop::LobbyState& lobby,
+                                                      const std::string& me,
+                                                      const std::string& invite_team, u32 slot,
+                                                      const std::string& character) {
+    std::vector<bbcoop::TeamRequest> requests;
+    if (!lobby.has_team()) {
+        if (invite_team.empty()) {
+            return requests;
+        }
+        bbcoop::TeamRequest& accept = requests.emplace_back();
+        accept.set_action(bbcoop::TeamRequest::ACCEPT);
+        accept.set_team(invite_team);
+    }
+    bbcoop::TeamRequest& ready = requests.emplace_back();
+    ready.set_action(bbcoop::TeamRequest::READY);
+    ready.set_slot(slot);
+    ready.set_character(character);
+    if (lobby.has_team() && lobby.team().leader() == me) {
+        requests.emplace_back().set_action(bbcoop::TeamRequest::START);
+    }
+    return requests;
+}
+
 bool IsWorldFlag(s32 flag) {
     const FlagOwner owner = RuleFor(flag).owner;
     return owner == FlagOwner::Host || owner == FlagOwner::Shared;

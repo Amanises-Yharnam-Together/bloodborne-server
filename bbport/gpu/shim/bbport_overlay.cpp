@@ -1938,6 +1938,30 @@ void Card(ImDrawList* draw, ImVec2 at, ImVec2 size, const bbcoop_lobby_entry* me
     Ornament(draw, at.x + S(14.0f), end.x - S(14.0f), end.y - S(12.0f));
 }
 
+/// The team menu in game: the server's last refusal or what the screen does, and its keys.
+void MenuHint(ImDrawList* draw, ImVec2 win, ImVec2 size, float y, bool leader_hosts) {
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    const char* hint = leader_hosts
+                           ? T("You host the hunt: remove the others before you leave, or quit to the title.",
+                               "Вы принимаете охоту: исключите остальных перед уходом или выйдите в меню.")
+                       : lobby.in_hunt ? T("Invite hunters online; they join your hunt where they stand.",
+                                           "Приглашайте охотников в сети: они присоединятся там, где стоят.")
+                       : lobby.in_team && lobby.playing
+                           ? T("Join the hunt: this character goes into the team's world where it stands.",
+                               "Вступите в охоту: персонаж войдёт в мир команды там, где стоит.")
+                           : T("Accept an invitation to join a team's hunt, or create a team.",
+                               "Примите приглашение, чтобы вступить в охоту команды, или создайте команду.");
+    const char* line = lobby.notice[0] ? lobby.notice : hint;
+    ImVec2 ts = ImGui::CalcTextSize(line);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, y),
+                  lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.8f), line);
+    const char* keys = T("D-pad: move     Cross: choose     Circle: close",
+                         "Крестовина: выбор     Крест: нажать     Круг: закрыть");
+    ts = ImGui::CalcTextSize(keys);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(46.0f)), Plain(0.6f), keys);
+    ImGui::PopFont();
+}
+
 void Screen() {
     const auto pressed_any = [](std::initializer_list<ImGuiKey> keys) {
         for (const ImGuiKey key : keys) {
@@ -1959,12 +1983,25 @@ void Screen() {
                      ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
     focus.items = 0;
     focus.ids.clear();
+    // Kaniel 2026-10-16: opened from the game's System menu (lobby.menu), Circle or Escape closes
+    // it, as the game's own pages close.
+    if (lobby.menu && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+                       ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))) {
+        bbcoop_team_menu(0);
+    }
+    // Over the game the world stays in sight behind it, darkened as under the game's menus.
+    const bool over_game = lobby.menu && lobby.playing;
 
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImDrawList* back = ImGui::GetBackgroundDrawList();
-    back->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
-    if (MenuArt::Cover(back, MenuArt::Title, ImVec2(0, 0), display, 0.55f)) {
+    if (over_game) {
+        back->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 170));
         MenuArt::Vignette(back, ImVec2(0, 0), display, 0.85f);
+    } else {
+        back->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
+        if (MenuArt::Cover(back, MenuArt::Title, ImVec2(0, 0), display, 0.55f)) {
+            MenuArt::Vignette(back, ImVec2(0, 0), display, 0.85f);
+        }
     }
     const ImVec2 size(std::min(S(1400.0f), display.x - S(40.0f)), std::min(S(900.0f), display.y - S(40.0f)));
     ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -2024,6 +2061,22 @@ void Screen() {
         Card(draw, ImVec2(cards_x + i * (card_w + gap), cards_y), ImVec2(card_w, card_h),
              taken ? &lobby.members[i] : nullptr, taken && i == 0, i);
     }
+    // Kaniel 2026-10-16: the leader removes a member from the team (the server's word: that
+    // member's game leaves the hunt where it stands and plays on alone).
+    if (lobby.leader) {
+        ImGui::PushFont(MenuArt::Font(), 19.0f);
+        const ImVec2 remove_size(S(170.0f), S(38.0f));
+        for (int i = 1; i < lobby.member_count && i < BBCOOP_LOBBY_TEAM; ++i) {
+            const bbcoop_lobby_entry& m = lobby.members[i];
+            const std::string id = std::string("remove") + m.id;
+            const ImVec2 at(cards_x + i * (card_w + gap) + (card_w - remove_size.x) * 0.5f,
+                            cards_y + card_h - remove_size.y - S(12.0f));
+            if (Button(draw, id.c_str(), T("Remove", "Исключить"), at, remove_size)) {
+                bbcoop_lobby_request(BBCOOP_TEAM_REMOVE, m.id);
+            }
+        }
+        ImGui::PopFont();
+    }
 
     // The players online (invite) and the invitations.
     const float lists_y = cards_y + card_h + S(30.0f);
@@ -2079,7 +2132,11 @@ void Screen() {
         if (Button(draw, accept.c_str(), T("Join", "Вступить"),
                    ImVec2(right_x + list_w - 2 * button_w - S(8.0f), y), ImVec2(button_w, row_h - S(6.0f)),
                    !lobby.in_team, true)) {
-            bbcoop_lobby_request(BBCOOP_TEAM_ACCEPT, inv.id);
+            if (lobby.playing) {
+                bbcoop_team_join_hunt(inv.id); // in game: into the team and its hunt at once
+            } else {
+                bbcoop_lobby_request(BBCOOP_TEAM_ACCEPT, inv.id);
+            }
         }
         if (Button(draw, decline.c_str(), T("Decline", "Отклонить"), ImVec2(right_x + list_w - button_w, y),
                    ImVec2(button_w, row_h - S(6.0f)))) {
@@ -2099,15 +2156,47 @@ void Screen() {
     const float bw = S(260.0f), bh = S(54.0f);
     const float by = win.y + size.y - S(150.0f);
     float bx = win.x + (size.x - (3 * bw + 2 * gap)) * 0.5f;
+    // The leader hosts the hunt: it leaves only once it is alone in it (its game leaving would
+    // end the others' session).
+    const bool leader_hosts = lobby.leader && lobby.in_hunt && lobby.member_count > 1;
     if (!lobby.in_team) {
         if (Button(draw, "create", T("Create a team", "Создать команду"), ImVec2(bx, by), ImVec2(bw, bh),
                    lobby.signed_in != 0)) {
             bbcoop_lobby_request(BBCOOP_TEAM_CREATE, "");
         }
-    } else if (Button(draw, "leave", T("Leave the team", "Покинуть команду"), ImVec2(bx, by), ImVec2(bw, bh))) {
+    } else if (Button(draw, "leave", T("Leave the team", "Покинуть команду"), ImVec2(bx, by), ImVec2(bw, bh),
+                      !leader_hosts)) {
         bbcoop_lobby_request(BBCOOP_TEAM_LEAVE, "");
     }
     bx += bw + gap;
+    if (lobby.menu) {
+        // Kaniel 2026-10-16, the team menu in game: join the hunt from here (this save, where it
+        // stands), and close back to the game's menu.
+        if (focus.fresh) {
+            focus.fresh = false;
+            focus.focus = focus.items;
+            focus.id = lobby.playing && lobby.in_team && !lobby.in_hunt ? "hunt" : "close";
+        }
+        const char* hunt = lobby.in_hunt ? T("In the hunt", "На охоте") : T("Join the hunt", "Вступить в охоту");
+        if (Button(draw, "hunt", hunt, ImVec2(bx, by), ImVec2(bw, bh),
+                   lobby.playing && lobby.in_team && !lobby.in_hunt, true)) {
+            bbcoop_team_join_hunt("");
+        }
+        bx += bw + gap;
+        if (Button(draw, "close", T("Close", "Закрыть"), ImVec2(bx, by), ImVec2(bw, bh))) {
+            bbcoop_team_menu(0);
+        }
+        ImGui::PopFont();
+        MenuHint(draw, win, size, by + bh + S(20.0f), leader_hosts);
+        if (focus.items > 0) {
+            focus.focus = ((focus.focus + focus.move) % focus.items + focus.items) % focus.items;
+            focus.id = focus.ids[static_cast<size_t>(focus.focus)];
+        }
+        ImGui::End();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        return;
+    }
     const char* go = lobby.leader ? T("Begin the hunt", "Начать охоту")
                      : me_ready   ? T("Not ready", "Не готов")
                                   : T("Ready", "Готов");

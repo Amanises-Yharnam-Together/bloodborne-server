@@ -166,6 +166,9 @@ private:
         bool enemy_owner = false;
         std::string lobby;     // its name in the team lobby, empty before its lobby hello
         std::uint32_t map = 0; // the map it last said (0: loading, or none yet)
+        // Kaniel 2026-10-16: the team world it was taken out of (removed from the team, or left
+        // it): no game packet goes between it and that party until its next hello.
+        QString cut_from;
     };
 
     PartyWorld& WorldFor(const QString& name, qint64 now_ms, Result& result);
@@ -215,6 +218,12 @@ private:
     void OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, qint64 now_ms,
                        Result& result);
     void Settle(const BloodborneCoop::TeamLobby::Outcome& outcome, qint64 now_ms, Result& result);
+    // A member out of its team: out of that team's world at once (its share, boards, owners, load
+    // and session go, as when its game leaves) and cut off from the team's games.
+    void TakeOutOfTeam(const BloodborneCoop::TeamLobby::Departure& out, qint64 now_ms,
+                       Result& result);
+    // What goes when a guest leaves its party's world (its game said so, or its team let it go).
+    void ForgetMember(PartyWorld& world, const std::string& name, qint64 now_ms, Result& result);
     void SendLobby(qint64 now_ms);
     void StoreTeams(Result& result);
     // Phase 5b: the team's world, read from its folder once; a host's report taken.

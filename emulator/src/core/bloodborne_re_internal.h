@@ -778,6 +778,18 @@ bool CutsceneSkipPressed();
 // SprjRemoMan's step methods (tag: the step), hooked at their entries.
 void PS4_SYSV_ABI NoteRemoStep(u64 step, const GuestRegisterSnapshot* registers);
 void TeamChoose(TeamGate::Choice choice);
+// Kaniel 2026-10-16: the team screen over the game, opened from its System menu (the port's
+// "Co-op Team" page) and closed by its own buttons; Circle for the game's page under it a moment
+// after it closed (the port's pad); whether a save plays (and in its team's world); the menu's
+// "Join the hunt" (an invitation's team, or "" in a team already).
+void TeamMenu(bool open);
+bool TeamMenuOpen();
+bool TeamMenuBackPressed();
+bool TeamPlaying(bool* in_hunt);
+void TeamJoinHunt(const std::string& invite_team);
+// The rig's in-game team menu verbs (menu-invite, menu-kick, menu-join, menu-leave).
+bool RunTeamMenuVerb(const AutoplayCommand& command, bool begun, double elapsed,
+                     std::string& failure);
 // The rig's screen verbs (team-ready, team-start, team-alone) want the title's Cross until the
 // screen is up.
 bool IsTeamScreenVerb(std::string_view verb);

@@ -401,6 +401,41 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
      paths replaced already skip themselves on the port (map item sync), and the bell's are
      shadPS4's.
 
+**The team menu in game** (Kaniel 2026-10-16: "go to team menu from the game and invite someone
+there, or kick someone"):
+- **Where:** a "Co-op Team" item in the game's own System menu (Options, System; first after
+  Screen/Sound, before the port's pages, `bbport_game_menu.cpp`). It opens a page of the game's own
+  with one row, and over it the team screen of the title (`bbport_overlay.cpp` `Team::Screen`, the
+  game's art and font), the world darkened behind it. Its Close button, Circle or Escape close it;
+  the pad then presses Circle for the game once (`bbcoop_team_menu_back`), so the page under it
+  closes too and the player is back in the System menu.
+- **What it does there:** the four places; the leader's **Remove** under each other member;
+  Invite on the hunters online; the invitations' **Join**, which in game accepts and joins the hunt
+  at once; **Join the hunt** for a member playing alone (this save, its slot and character, ready:
+  `TeamJoinHuntRequests`); Leave (the leader only once alone in the hunt: its game hosts the
+  others' session).
+- **Removed, or left: out where it stands** (`TeamPlayStepOf` Leave). The server takes the member
+  out of the team's world at once (`TeamLobby::Outcome::departed`, `Service::TakeOutOfTeam`: its
+  share of the log, boards, owners, load and session go, as when its game leaves) and routes no game
+  packet between it and the team (`Member::cut_from`) until its next hello: the server's word stands
+  even if that game never leaves. The game leaves its session in place (MultiPlayStopRequest, as a
+  guest alone leaves: `TeamJoin::LeaveAlone`), drops the party (no party hello, the controller
+  waits), is a player again after `PhantomHome`, and takes its own world back from its next load
+  (`personal_world_due`). No title, no reload.
+- **Into the hunt from play** (`TeamPlayStepOf` Adopt): the team's Start for a save playing alone
+  (it readied from the menu) gives it the team's party and role as the title's Start would, and the
+  team's loading screen; the session is joined in place by `TeamJoin` (with the join's own summon
+  reload, which takes the team's world).
+  A started team stays started while its games load (`TeamLobby::played`: it ends only once one
+  of its games played since the Start and none plays now), so a Ready from a game in the world
+  always gets its Start.
+- Rig: `menu-invite <online id>`, `menu-kick <online id>`, `menu-join`, `menu-leave` (each
+  [timeout]); scenarios `team-menu-kick` (removed in game, plays on alone) and `team-menu-join`
+  (a save playing alone joins from the menu).
+- Known: a game that was in a session joining one again in the same run (removed, then invited
+  back) crashes at eboot+0x13cffba in the join's summon reload (rig 2026-10-16, 2 of 2), the same
+  crash as host-crash-apart's guest: the event flag manager's bit read over a block with no data.
+
 Backlog (Kaniel 2026-10-14): faster guest loading. A guest's join costs the summon reload (up to
 about 15 s on the rig) on top of its own load. Joining in place without it (tried in phase 6,
 PR #111) saves most of that, once the host's task for the guest gets past the step that waits for

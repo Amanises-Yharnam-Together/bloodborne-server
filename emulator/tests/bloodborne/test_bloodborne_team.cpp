@@ -569,3 +569,70 @@ TEST(TeamLobby, ARefusedLinkIsShownOnTheTeamScreen) {
                       "release");
     EXPECT_LT(notice.size(), 96u);
 }
+
+namespace {
+
+bbcoop::LobbyState WithMember(bbcoop::LobbyState state, const std::string& member, bool ready) {
+    bbcoop::TeamMember& m = *state.mutable_team()->add_members();
+    m.set_member(member);
+    m.set_ready(ready);
+    return state;
+}
+
+} // namespace
+
+// Kaniel 2026-10-16, the team menu in game: a save playing in a team whose lobby says it is out of
+// that team (the leader removed it, or it left) leaves the team's session where it stands.
+TEST(TeamPlay, OutOfTheTeamItPlaysInItLeaves) {
+    const bbcoop::LobbyState in = WithMember(InTeam("leader"), "me", true);
+    EXPECT_EQ(TeamPlayStepOf(&in, "team:t1", nullptr), TeamPlayStep::None);
+    const bbcoop::LobbyState out;
+    EXPECT_EQ(TeamPlayStepOf(&out, "team:t1", nullptr), TeamPlayStep::Leave);
+    // In another team now (it left and joined another): out of this one all the same.
+    const bbcoop::LobbyState other = WithMember(InTeam("leader", "t2"), "me", false);
+    EXPECT_EQ(TeamPlayStepOf(&other, "team:t1", nullptr), TeamPlayStep::Leave);
+    // No word from the lobby yet, or a save playing alone: nothing to leave.
+    EXPECT_EQ(TeamPlayStepOf(nullptr, "team:t1", nullptr), TeamPlayStep::None);
+    EXPECT_EQ(TeamPlayStepOf(&out, "", nullptr), TeamPlayStep::None);
+}
+
+// A save playing alone takes its team's party when the team's Start for it comes (it joined the
+// hunt from the menu), never an old Start of a team it is no longer ready in.
+TEST(TeamPlay, AStartWhileAloneTakesTheTeamsParty) {
+    const bbcoop::TeamStart start = StartOf("leader", 2);
+    const bbcoop::LobbyState ready = WithMember(InTeam("leader"), "me", true);
+    EXPECT_EQ(TeamPlayStepOf(&ready, "", &start, "me"), TeamPlayStep::Adopt);
+    EXPECT_EQ(TeamPlayStepOf(&ready, "", nullptr, "me"), TeamPlayStep::None);
+    // Played alone by choice (not ready), or out of that team: the Start is an old one.
+    const bbcoop::LobbyState not_ready = WithMember(InTeam("leader"), "me", false);
+    EXPECT_EQ(TeamPlayStepOf(&not_ready, "", &start, "me"), TeamPlayStep::None);
+    const bbcoop::LobbyState out;
+    EXPECT_EQ(TeamPlayStepOf(&out, "", &start, "me"), TeamPlayStep::None);
+    const bbcoop::LobbyState other = WithMember(InTeam("leader", "t2"), "me", true);
+    EXPECT_EQ(TeamPlayStepOf(&other, "", &start, "me"), TeamPlayStep::None);
+    // Already in that party: nothing more.
+    EXPECT_EQ(TeamPlayStepOf(&ready, "team:t1", &start, "me"), TeamPlayStep::None);
+}
+
+// The menu's "Join the hunt" in game: an invitation accepted first (when in no team), then this
+// save ready with its slot and character; the leader's starts the team too.
+TEST(TeamPlay, JoiningTheHuntFromTheMenuReadiesThisSave) {
+    const bbcoop::LobbyState alone;
+    auto requests = TeamJoinHuntRequests(alone, "me", "t1", 3, "Eileen");
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[0].action(), bbcoop::TeamRequest::ACCEPT);
+    EXPECT_EQ(requests[0].team(), "t1");
+    EXPECT_EQ(requests[1].action(), bbcoop::TeamRequest::READY);
+    EXPECT_EQ(requests[1].slot(), 3u);
+    EXPECT_EQ(requests[1].character(), "Eileen");
+    // No team and no invitation: nothing to join.
+    EXPECT_TRUE(TeamJoinHuntRequests(alone, "me", "", 3, "Eileen").empty());
+    // In a team already: ready.
+    requests = TeamJoinHuntRequests(WithMember(InTeam("leader"), "me", false), "me", "", 1, "");
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_EQ(requests[0].action(), bbcoop::TeamRequest::READY);
+    // The leader: ready and start.
+    requests = TeamJoinHuntRequests(InTeam("me"), "me", "", 1, "");
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[1].action(), bbcoop::TeamRequest::START);
+}
