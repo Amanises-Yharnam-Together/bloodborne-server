@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -140,8 +141,49 @@ def remove_link(path):
     if hasattr(path, 'is_junction') and path.is_junction():
         os.rmdir(path)
     else:
-        path.unlink()
+        unlink_file(path, LINKED.get(str(path)))
     LINKED.pop(str(path), None)
+
+
+def unlink_file(path, linked=None):
+    """Windows refuses to delete a read-only file (WinError 5), and a hard link shares the attribute with the file
+    it links: a game copied from a read-only source keeps it. The attribute is cleared for the deletion and set
+    again on `linked`, the file that stays. From Supermedo's bbport (ba34a3a, emurphy04's PR #77)."""
+    try:
+        path.unlink()
+        return
+    except PermissionError:
+        mode = path.stat().st_mode
+        if os.name != 'nt' or mode & stat.S_IWRITE:
+            raise
+    os.chmod(path, mode | stat.S_IWRITE)
+    try:
+        path.unlink()
+    finally:
+        rest = path if path.exists() else linked
+        if rest is not None and rest.exists():
+            os.chmod(rest, mode)
+
+
+def remove_overlay(overlay, game=None):
+    """shutil.rmtree for an overlay, whose read-only links are deleted as remove_link does (`game`: the game
+    folder it mirrors, for links made by another process, such as run.py removing the view after the game)."""
+    overlay = Path(overlay)
+
+    def retry(function, path, error):
+        path = Path(path)
+        if function not in (os.unlink, os.remove) or not path.is_file():
+            raise error[1] if isinstance(error, tuple) else error
+        linked = LINKED.get(str(path))
+        if linked is None and game is not None:
+            mirror = Path(game) / path.relative_to(overlay)
+            if mirror.is_file() and os.path.samefile(path, mirror):
+                linked = mirror
+        unlink_file(path, linked)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(overlay, onexc=retry)
+    else:
+        shutil.rmtree(overlay, onerror=retry)
 
 
 def expand(directory):
@@ -191,7 +233,9 @@ def copy_bytes(game, replacements):
     return total
 
 
-def build_overlay(game, out, mods):
+def build_overlay(game, out, mods, beside=True):
+    """beside: with the game on another drive than out, the overlay goes beside the game (beside_game); False
+    keeps it in out (files are then copied, folders linked)."""
     game = Path(game).resolve(strict=True)
     replacements = []
     owners = {}
@@ -210,7 +254,7 @@ def build_overlay(game, out, mods):
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     overlay = None
-    if beside_game(game, out):
+    if beside and beside_game(game, out):
         try:
             overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=game.parent))
         except OSError as error:
@@ -250,7 +294,7 @@ def build_overlay(game, out, mods):
         print(f'Mods: {replaced} game files replaced, {added} added', file=sys.stderr)
         return overlay
     except BaseException:
-        shutil.rmtree(overlay)
+        remove_overlay(overlay)
         raise
 
 
@@ -322,7 +366,19 @@ def main():
         layers, notes = hud_patch.with_party_hud(args.game, layers, args.out)
         for line in notes:
             print(f'Mods: {line}', file=sys.stderr)
-    print(build_overlay(args.game, args.out, layers))
+    try:
+        print(build_overlay(args.game, args.out, layers))
+    except OSError as error:
+        # [WinError 1] "Incorrect function": without symlink rights a folder becomes a junction, and junctions
+        # exist only on NTFS. A port on an exFAT or FAT32 drive (USB, external) gets its game view in the system
+        # drive's temporary folder instead, which is NTFS. From Supermedo's bbport (bf0878b).
+        if os.name != 'nt' or getattr(error, 'winerror', None) != 1:
+            raise
+        fallback = Path(tempfile.gettempdir()) / 'bbport-game-view'
+        fallback.mkdir(parents=True, exist_ok=True)
+        print(f'Mods: links are not supported on the drive of {args.out}; '
+              f'the game view is made in {fallback}', file=sys.stderr)
+        print(build_overlay(args.game, fallback, layers, beside=False))
 
 
 if __name__ == '__main__':
