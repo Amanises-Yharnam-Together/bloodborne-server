@@ -171,6 +171,16 @@ void bbcoop_trade_echoes_picker(uint32_t *step, uint32_t *big_step);
 /* Offers `count` of the item to the nearest member (taken out at once; an item of its own: the
  * inventory entry with `handle`, else the first): 1 when sent. */
 int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count, uint32_t handle);
+/* Kaniel 2026-10-16: the giver picks who gets it. The members a trade may go to now (on this map,
+ * standing, the nearest first): their count, and member `index`'s id (board name) and name; the
+ * question and the offer for one of them (`member`: its id). */
+int bbcoop_trade_partner_count(void);
+int bbcoop_trade_partner(int index, char *member, size_t member_size, char *name,
+                         size_t name_size);
+int bbcoop_trade_give_question_to(const char *member, uint32_t kind, uint32_t id, char *text,
+                                  size_t size);
+int bbcoop_trade_offer_to(const char *member, uint32_t kind, uint32_t id, uint32_t count,
+                          uint32_t handle);
 /* The oldest offer to this player waiting for an answer: its id and question; 0 when none. */
 int bbcoop_trade_ask(uint64_t *id, char *text, size_t size);
 /* Whether offer `id` still waits for this player's answer. */

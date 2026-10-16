@@ -95,6 +95,45 @@ int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count, uint32_t hand
                : 0;
 }
 
+int bbcoop_trade_partner_count(void) {
+    return static_cast<int>(TradePartners().size());
+}
+
+int bbcoop_trade_partner(int index, char* member, size_t member_size, char* name,
+                         size_t name_size) {
+    const std::vector<std::string> partners = TradePartners();
+    if (index < 0 || static_cast<size_t>(index) >= partners.size()) {
+        return 0;
+    }
+    const std::string& who = partners[static_cast<size_t>(index)];
+    return Copy(who, member, member_size) && Copy(TradeName(who), name, name_size);
+}
+
+int bbcoop_trade_give_question_to(const char* member, uint32_t kind, uint32_t id, char* text,
+                                  size_t size) {
+    const std::vector<std::string> partners = TradePartners();
+    if (member == nullptr || std::ranges::find(partners, member) == partners.end()) {
+        return 0;
+    }
+    const std::string to = TradeName(member);
+    if (static_cast<TradeItemKind>(kind) == TradeItemKind::Echoes) {
+        return Copy(BloodborneCoop::TradeGiveEchoesQuestion(TradeHeld(ItemOf(kind, id)), to), text,
+                    size);
+    }
+    return Copy(BloodborneCoop::TradeGiveQuestion(ItemOf(kind, id), to), text, size);
+}
+
+int bbcoop_trade_offer_to(const char* member, uint32_t kind, uint32_t id, uint32_t count,
+                          uint32_t handle) {
+    const std::vector<std::string> partners = TradePartners();
+    if (member == nullptr || count == 0 ||
+        std::ranges::find(partners, member) == partners.end()) {
+        return 0;
+    }
+    return OfferTrade(member, {ItemOf(kind, id, count)}, {}, handle) == TradeOfferResult::Sent ? 1
+                                                                                             : 0;
+}
+
 int bbcoop_trade_ask(uint64_t* id, char* text, size_t size) {
     const auto ask = FrontTradeAsk();
     if (!ask) {
