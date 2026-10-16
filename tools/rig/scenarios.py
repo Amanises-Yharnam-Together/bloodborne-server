@@ -43,6 +43,9 @@ BY_THE_LAMP = "0x100140a0"  # 999 HP, 1.6 m from the first lamp: by Gilbert's wi
 AWAY_FROM_LAMP = "-215.0 -54.5 178.0"  # beside that enemy, 17 m from the lamp
 WARD_ENEMY = "0x10010019"  # 211 HP, 7 m from the Cathedral Ward lamp (the nearest, 0x10010075,
 # has 999 HP and dies of nothing: an object, as Central Yharnam's 0x100140a0)
+# Another one, 22 m from that lamp (123 HP): lone-guest's, as WARD_ENEMY's kill stands from
+# ward-walk-kill on (Central Yharnam and the Ward load together, so it never comes back).
+WARD_ENEMY_2 = "0x10010021"
 CLERIC_BEAST = "0x1001409f"  # entity 2410800; its death runs event 12411700
 CLERIC_BEAST_DEFEATED = 2411  # set by event 12411700 after Handle Boss Defeat
 GASCOIGNE = "0x1001409c"  # entity 2410810 (his beast form: 0x1001409e, 2410811)
