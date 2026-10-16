@@ -2146,6 +2146,35 @@ SCENARIOS = {
                                           r"is gone)"] for role in ("host", "guest")},
         "timeout": 300,
     },
+    # Kaniel 2026-10-16: the port's settings menu (Insert) in the style of the team screens and
+    # the party list: the game's menu art and font. A picture of each page; an effect's row is
+    # switched and back, and the menu saves the change when it closes; the menu in Russian (the
+    # serif's letters behind the game's font); the quit box, cancelled.
+    "settings-menu": {
+        "about": "the port's settings menu (Insert) drawn with the game's menu art and font: a "
+                 "picture of every page, a row's value changed and back, saved on close, the "
+                 "menu in Russian, the quit box cancelled",
+        "roles": {
+            "host": [START, "wait 5", "keys toggle", "wait 3", "shot menu-display",
+                     *[step for name in ("upscaler", "effects", "controls", "advanced", "save")
+                       for step in ("keys r1", "wait 2", f"shot menu-{name}")],
+                     "keys r1 r1 r1 down", "wait 2", "shot menu-effect-row",
+                     "keys right", "wait 2", "shot menu-effect-changed",
+                     "keys left", "wait 2",
+                     # The Display page's language row: five down from its first.
+                     "keys l1 l1 down down down down down", "wait 2", "keys right", "wait 2",
+                     "shot menu-russian", "keys left", "wait 2",
+                     # Up from a page's first row is Quit (nothing waits for a restart): its box
+                     # opens on Cancel, which Cross takes.
+                     "keys l1 r1 up enter", "wait 2", "shot menu-quit", "keys enter", "wait 3",
+                     "shot menu-closed"],
+        },
+        "expect": {"host": [r"menu keys right"]},
+        "console_expect": {"host": [r"Overlay: the settings menu uses \d+ of \d+ pieces of the "
+                                    r"game's menu art",
+                                    r"Overlay: settings changed in the menu, saved"]},
+        "timeout": 300,
+    },
     "soak": {
         "about": "half an hour of trips back and forth with the session up (leaks, slow growth, "
                  "a trip that breaks after many)",

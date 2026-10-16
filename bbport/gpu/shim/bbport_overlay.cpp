@@ -186,6 +186,7 @@ void SetOpen(bool value) {
     }
     if (!value && dirty) {
         dirty = false;
+        std::printf("Overlay: settings changed in the menu, saved\n");
         BbSettings::Save();
         runtime_pad_reload_controls(); // the mouse settings of the Controls tab
     }
@@ -282,10 +283,248 @@ void Hint(const char* text) {
     }
 }
 
+// Kaniel 2026-10-14: the team screen and the team loading screen in the game's own style: its
+// menu art (the wall, the title picture, the cards, the gold selection frame, the rows, the
+// ornaments, the button icons) and its menu font, read at runtime from the player's game files
+// (bbport_game_art.h) like the HP bars; nothing of the game's is shipped. Each piece falls back to
+// the drawn look when the files can't be read. Kaniel 2026-10-16: the settings menu too.
+namespace MenuArt {
+
+enum Piece {
+    Wall,          // the in-game menus' backdrop
+    Title,         // the title screen's picture
+    Logo,          // the loading screen's Bloodborne
+    Row,           // a menu row (a button)
+    RowSelected,   // the gold-framed selected row
+    EntryRow,      // a list row with its square slot
+    Slot,          // a square slot
+    SlotSelected,  // the gold-framed square slot
+    Card,          // a tall card
+    CardSelected,  // the gold-framed tall card
+    HeaderFrame,   // a framed header with corner ornaments
+    Divider,       // the silver divider with its scroll
+    HeaderOrnament, // the scrollwork under a title
+    Flourish,      // a row's scroll
+    Runes,         // eight 32 px runes in a row
+    ButtonCross,   // the pad's Cross
+    ButtonCircle,  // the pad's Circle
+    ButtonMove,    // the d-pad
+    PieceCount
+};
+
+struct Source {
+    const char* file;
+    const char* texture;
+    BbGameArt::PixelRect rect; // empty: all of it
+    bool light_is_alpha;       // white art on black: its brightness is its coverage
+};
+
+// Measured on MENU_Common_00001-3 (common.tpf.dcx), MENU_Title_00001 and MENU_NowLoading_00001.
+constexpr Source Sources[PieceCount] = {
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {0, 0, 1920, 1080}, false},
+    {"menu/title.tpf.dcx", "MENU_Title_00001", {0, 0, 1780, 1024}, false},
+    {"menu/nowloading.tpf.dcx", "MENU_NowLoading_00001", {440, 420, 1520, 660}, true},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {988, 1532, 1562, 1580}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {1156, 1228, 1958, 1326}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {1144, 1438, 1716, 1530}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {482, 1230, 610, 1358}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {626, 1230, 760, 1364}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00002", {2, 708, 134, 966}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00002", {138, 708, 278, 974}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00002", {1156, 412, 1582, 502}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00003", {12, 14, 368, 46}, true},
+    {"menu/common.tpf.dcx", "MENU_Common_00003", {42, 58, 438, 106}, true},
+    {"menu/common.tpf.dcx", "MENU_Common_00001", {482, 1174, 754, 1208}, false},
+    {"menu/common.tpf.dcx", "MENU_Common_00002", {1570, 4, 1826, 36}, false},
+    {"menu/common.tpf.dcx", "KG_Cancel", {}, false},
+    {"menu/common.tpf.dcx", "KG_OK", {}, false},
+    {"menu/common.tpf.dcx", "KG_L_UDLR", {}, false},
+};
+
+ImTextureData* textures[PieceCount] = {};
+ImFont* font = nullptr; // the game's menu font
+bool tried = false;
+
+std::vector<std::uint8_t> ReadGameFile(const char* relative) {
+    std::vector<std::uint8_t> bytes;
+    char path[1024];
+    if (!bbcoop_game_file((std::string("dvdroot_ps4/") + relative).c_str(), path, sizeof(path))) {
+        return bytes;
+    }
+    if (FILE* f = std::fopen(path, "rb")) {
+        std::uint8_t chunk[65536];
+        for (size_t n; (n = std::fread(chunk, 1, sizeof(chunk), f)) > 0;) {
+            bytes.insert(bytes.end(), chunk, chunk + n);
+        }
+        std::fclose(f);
+    }
+    return bytes;
+}
+
+/// Reads the pieces and the font once, before a frame (new textures and fonts go to the backend
+/// with the next NewFrame).
+void Load() {
+    if (tried) {
+        return;
+    }
+    tried = true;
+    std::map<std::string, std::optional<BbGameArt::TpfFile>> files;
+    int loaded = 0;
+    for (int i = 0; i < PieceCount; ++i) {
+        const Source& source = Sources[i];
+        auto& file = files[source.file];
+        if (!file) {
+            file = BbGameArt::TpfFile::Read(ReadGameFile(source.file));
+        }
+        auto image = file ? file->Piece(source.texture, source.rect) : std::nullopt;
+        if (!image) {
+            continue;
+        }
+        if (source.light_is_alpha) {
+            for (std::size_t at = 0; at < image->rgba.size(); at += 4) {
+                std::uint8_t* px = image->rgba.data() + at;
+                px[3] = std::max({px[0], px[1], px[2]});
+            }
+        }
+        textures[i] = IM_NEW(ImTextureData)();
+        textures[i]->Create(ImTextureFormat_RGBA32, image->width, image->height);
+        std::memcpy(textures[i]->GetPixels(), image->rgba.data(), image->rgba.size());
+        ImGui::RegisterUserTexture(textures[i]);
+        ++loaded;
+    }
+    if (const auto ttf = BbGameArt::TtfFromGfxFont(ReadGameFile("menu/engus/font.gfx"))) {
+        void* data = IM_ALLOC(ttf->size());
+        std::memcpy(data, ttf->data(), ttf->size());
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = true;
+        font = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, int(ttf->size()), 21.0f, &config);
+        // What the game's font lacks (the Russian menu's letters, ×) comes from the serif.
+        ImFontConfig merge;
+        merge.MergeMode = true;
+        merge.FontDataOwnedByAtlas = false;
+        ImGui::GetIO().Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_serif_ttf),
+                                                   int(bb_serif_ttf_end - bb_serif_ttf), 21.0f, &merge);
+    }
+    std::printf("Overlay: the menus use %d of %d pieces of the game's menu art%s\n", loaded,
+                int(PieceCount), font ? " and its menu font" : " (the game's font did not load)");
+}
+
+bool Has(Piece piece) {
+    return textures[piece] != nullptr;
+}
+
+ImVec2 SizeOf(Piece piece) {
+    return textures[piece] ? ImVec2(float(textures[piece]->Width), float(textures[piece]->Height))
+                           : ImVec2(0, 0);
+}
+
+ImU32 Tint(float alpha, ImU32 tint = IM_COL32_WHITE) {
+    const ImVec4 c = ImGui::ColorConvertU32ToFloat4(tint);
+    return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, c.w * alpha));
+}
+
+/// `piece` (its source pixels [s0, s1]) stretched into [p0, p1].
+void Part(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, ImVec2 s0, ImVec2 s1, ImU32 color) {
+    const ImVec2 size = SizeOf(piece);
+    draw->AddImage(textures[piece]->GetTexRef(), p0, p1, ImVec2(s0.x / size.x, s0.y / size.y),
+                   ImVec2(s1.x / size.x, s1.y / size.y), color);
+}
+
+/// All of `piece` stretched into [p0, p1]; false when it is not loaded.
+bool Draw(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float alpha = 1.0f,
+          ImU32 tint = IM_COL32_WHITE) {
+    if (!Has(piece)) {
+        return false;
+    }
+    Part(draw, piece, p0, p1, ImVec2(0, 0), SizeOf(piece), Tint(alpha, tint));
+    return true;
+}
+
+/// `piece` as a nine-slice frame into [p0, p1]: its corners (`edge` source pixels, drawn `drawn`
+/// pixels) kept, its edges and middle stretched.
+bool Nine(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float edge, float drawn,
+          float alpha = 1.0f) {
+    if (!Has(piece)) {
+        return false;
+    }
+    const ImVec2 size = SizeOf(piece);
+    drawn = std::min({drawn, (p1.x - p0.x) * 0.5f, (p1.y - p0.y) * 0.5f});
+    const float sx[4] = {0, edge, size.x - edge, size.x}, sy[4] = {0, edge, size.y - edge, size.y};
+    const float dx[4] = {p0.x, p0.x + drawn, p1.x - drawn, p1.x};
+    const float dy[4] = {p0.y, p0.y + drawn, p1.y - drawn, p1.y};
+    const ImU32 color = Tint(alpha);
+    for (int y = 0; y < 3; ++y) {
+        for (int x = 0; x < 3; ++x) {
+            Part(draw, piece, ImVec2(dx[x], dy[y]), ImVec2(dx[x + 1], dy[y + 1]), ImVec2(sx[x], sy[y]),
+                 ImVec2(sx[x + 1], sy[y + 1]), color);
+        }
+    }
+    return true;
+}
+
+/// `piece` filling [p0, p1] without stretching it out of shape (cut to fit), as a backdrop.
+bool Cover(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float alpha = 1.0f) {
+    if (!Has(piece)) {
+        return false;
+    }
+    const ImVec2 size = SizeOf(piece);
+    const float want = (p1.x - p0.x) / (p1.y - p0.y), have = size.x / size.y;
+    ImVec2 s0(0, 0), s1 = size;
+    if (have > want) {
+        const float cut = (size.x - size.y * want) * 0.5f;
+        s0.x = cut;
+        s1.x = size.x - cut;
+    } else {
+        const float cut = (size.y - size.x / want) * 0.5f;
+        s0.y = cut;
+        s1.y = size.y - cut;
+    }
+    Part(draw, piece, p0, p1, s0, s1, Tint(alpha));
+    return true;
+}
+
+/// Rune `index` (0..7) of the runes row, into [p0, p1].
+bool Rune(ImDrawList* draw, int index, ImVec2 p0, ImVec2 p1, float alpha = 1.0f) {
+    if (!Has(Runes)) {
+        return false;
+    }
+    const float side = SizeOf(Runes).y;
+    Part(draw, Runes, p0, p1, ImVec2(side * float(index % 8), 0), ImVec2(side * float(index % 8 + 1), side),
+         Tint(alpha));
+    return true;
+}
+
+/// The menus' text font: the game's own when it loaded.
+ImFont* Font() {
+    return font != nullptr ? font : serif_font;
+}
+
+/// A soft dark vignette over [p0, p1] (the game's menus darken toward their edges).
+void Vignette(ImDrawList* draw, ImVec2 p0, ImVec2 p1, float strength) {
+    const ImU32 dark = IM_COL32(0, 0, 0, int(255 * strength)), clear = IM_COL32(0, 0, 0, 0);
+    const float band = (p1.y - p0.y) * 0.22f;
+    draw->AddRectFilledMultiColor(p0, ImVec2(p1.x, p0.y + band), dark, dark, clear, clear);
+    draw->AddRectFilledMultiColor(ImVec2(p0.x, p1.y - band), p1, clear, clear, dark, dark);
+    const float side = (p1.x - p0.x) * 0.16f;
+    draw->AddRectFilledMultiColor(p0, ImVec2(p0.x + side, p1.y), dark, clear, clear, dark);
+    draw->AddRectFilledMultiColor(ImVec2(p1.x - side, p0.y), p1, clear, dark, dark, clear);
+}
+
+} // namespace MenuArt
+
+// The game's HP bar (the party list's art): the settings menu's sliders, the team loading
+// screen's progress.
+namespace Party {
+bool GameHpBar(ImDrawList* draw, ImVec2 b0, float width, float height, float fill, float alpha);
+void LoadGauge();
+} // namespace Party
+
 // The settings menu, laid out like a PC game's options screen in the game's own style: the game
-// dimmed behind, a centred panel framed by ornament lines, tabs (L1/R1, Q/E, mouse), one setting
-// per row ("name  < value >": left/right change it, Cross/Enter steps it, the mouse clicks either
-// side), the focused row's description at the bottom and the controls in the footer.
+// dimmed behind, a centred panel on the menus' wall between the game's dividers, tabs (L1/R1,
+// Q/E, mouse), one setting per row on the game's menu rows ("name  < value >": left/right change
+// it, Cross/Enter steps it, the mouse clicks either side), the focused row's description at the
+// bottom and the game's key guide in the footer. Kaniel 2026-10-16: the same art, font and
+// colours as the team screens and the party list (MenuArt), the drawn look without the art.
 namespace Ui {
 
 float S(float v) {
@@ -320,6 +559,50 @@ void Ornament(ImDrawList* draw, float x0, float x1, float y) {
                         ImVec2(mid - d * 3.0f, y + d * 0.5f), ImVec2(mid - d * 3.5f, y), Gold(0.7f));
     draw->AddQuadFilled(ImVec2(mid + d * 3.0f, y - d * 0.5f), ImVec2(mid + d * 3.5f, y),
                         ImVec2(mid + d * 3.0f, y + d * 0.5f), ImVec2(mid + d * 2.5f, y), Gold(0.7f));
+}
+
+/// The game's silver divider centred on [x0, x1] at `y` (the drawn ornament without the art).
+void Divider(ImDrawList* draw, float x0, float x1, float y, float alpha = 0.9f) {
+    const ImVec2 size = MenuArt::SizeOf(MenuArt::Divider);
+    if (size.x <= 0.0f) {
+        Ornament(draw, x0, x1, y);
+        return;
+    }
+    const float w = std::min(x1 - x0, S(size.x * 1.1f)), h = w * size.y / size.x;
+    const float mid = (x0 + x1) * 0.5f;
+    MenuArt::Draw(draw, MenuArt::Divider, ImVec2(mid - w * 0.5f, y - h * 0.5f), ImVec2(mid + w * 0.5f, y + h * 0.5f),
+                  alpha);
+}
+
+/// The game's scrollwork under a title, centred on `mid` from `y`; returns its height (0 without
+/// the art).
+float HeaderOrnament(ImDrawList* draw, float mid, float y, float scale, float alpha = 0.8f) {
+    if (!MenuArt::Has(MenuArt::HeaderOrnament)) {
+        return 0.0f;
+    }
+    const ImVec2 o = MenuArt::SizeOf(MenuArt::HeaderOrnament);
+    const float ow = S(o.x * scale), oh = ow * o.y / o.x;
+    MenuArt::Draw(draw, MenuArt::HeaderOrnament, ImVec2(mid - ow * 0.5f, y), ImVec2(mid + ow * 0.5f, y + oh), alpha);
+    return oh;
+}
+
+/// `text` in the current font wrapped to `width` from `at`, its lines spaced apart (the game's
+/// font draws taller than ImGui's line height: wrapped lines touched); returns its height.
+float WrappedText(ImDrawList* draw, ImVec2 at, float width, ImU32 color, const char* text) {
+    ImFont* font = ImGui::GetFont();
+    const float size = ImGui::GetFontSize(), step = std::round(size * 1.3f);
+    const char* end = text + std::strlen(text);
+    float y = at.y;
+    for (const char* line = text; line < end;) {
+        const char* cut = font->CalcWordWrapPosition(size, line, end, width);
+        if (cut == line && *cut != '\n') {
+            cut = line + ImTextCountUtf8BytesFromChar(line, end); // a word wider than the line
+        }
+        draw->AddText(font, size, ImVec2(at.x, y), color, line, cut);
+        y += step;
+        line = ImTextCalcWordWrapNextLineStart(cut, end);
+    }
+    return y - at.y;
 }
 
 // Focus is the menu's own, as in a game: a row index moved by up/down to the next enabled row
@@ -367,7 +650,11 @@ int Row(const char* id, const char* label, const char* value, const char* hint, 
     }
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float mid_y = at.y + height * 0.5f;
-    if (focused || hovered) {
+    // The game's menu rows (as the team screen's buttons): the gold-framed one has the focus.
+    const ImVec2 end(at.x + width, at.y + height);
+    const bool row_art = MenuArt::Nine(draw, focused ? MenuArt::RowSelected : MenuArt::Row, at, end, 12.0f,
+                                       S(9.0f), focused ? 1.0f : !enabled ? 0.25f : hovered ? 0.85f : 0.5f);
+    if (!row_art && (focused || hovered)) {
         // The game's highlight: a glow strongest under the text, fading to the sides.
         const float a = focused ? 0.22f : 0.10f;
         const float x0 = at.x, x1 = at.x + width, xm = at.x + width * 0.35f;
@@ -399,12 +686,18 @@ int Row(const char* id, const char* label, const char* value, const char* hint, 
     if (slider >= 0.0f) {
         const float b0 = col0 + S(24.0f), b1 = col1 - S(24.0f) - S(60.0f);
         const float bh = S(3.0f);
-        draw->AddRectFilled(ImVec2(b0, mid_y - bh), ImVec2(b1, mid_y + bh), Dim(0.6f), bh);
-        draw->AddRectFilled(ImVec2(b0, mid_y - bh),
-                            ImVec2(b0 + (b1 - b0) * std::clamp(slider, 0.0f, 1.0f), mid_y + bh),
-                            enabled ? Gold(0.9f) : Dim(), bh);
-        const float knob = b0 + (b1 - b0) * std::clamp(slider, 0.0f, 1.0f);
-        draw->AddCircleFilled(ImVec2(knob, mid_y), S(7.0f), enabled ? Bright() : Dim());
+        const float fill = std::clamp(slider, 0.0f, 1.0f), knob = b0 + (b1 - b0) * fill;
+        // The game's own HP bar as the slider (as the team's loading screen shows progress),
+        // a bone-white mark where the value is; drawn bars without the game's art.
+        const float gh = S(15.0f);
+        if (Party::GameHpBar(draw, ImVec2(b0, mid_y - gh * 0.5f), b1 - b0, gh, fill, enabled ? 1.0f : 0.4f)) {
+            draw->AddRectFilled(ImVec2(knob - S(1.5f), mid_y - gh * 0.75f), ImVec2(knob + S(1.5f), mid_y + gh * 0.75f),
+                                enabled ? Bright() : Dim());
+        } else {
+            draw->AddRectFilled(ImVec2(b0, mid_y - bh), ImVec2(b1, mid_y + bh), Dim(0.6f), bh);
+            draw->AddRectFilled(ImVec2(b0, mid_y - bh), ImVec2(knob, mid_y + bh), enabled ? Gold(0.9f) : Dim(), bh);
+            draw->AddCircleFilled(ImVec2(knob, mid_y), S(7.0f), enabled ? Bright() : Dim());
+        }
         if (value) {
             const ImVec2 size = ImGui::CalcTextSize(value);
             draw->AddText(ImVec2(col1 - S(24.0f) - size.x, mid_y - size.y * 0.5f),
@@ -443,13 +736,10 @@ int Row(const char* id, const char* label, const char* value, const char* hint, 
 
 /// A non-interactive line under the rows (state, warnings).
 void Note(const char* text, ImU32 color) {
-    ImGui::PushStyleColor(ImGuiCol_Text, color);
-    ImGui::Indent(S(28.0f));
-    ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - S(28.0f));
-    ImGui::TextUnformatted(text);
-    ImGui::PopTextWrapPos();
-    ImGui::Unindent(S(28.0f));
-    ImGui::PopStyleColor();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x - S(56.0f);
+    ImGui::Dummy(ImVec2(width, WrappedText(ImGui::GetWindowDrawList(), ImVec2(at.x + S(28.0f), at.y), width,
+                                           color, text)));
 }
 
 const char* OnOff(bool on) {
@@ -1155,6 +1445,17 @@ void Menu() {
     ImGuiIO& io = ImGui::GetIO();
     const ImVec2 display = io.DisplaySize;
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 165));
+    MenuArt::Vignette(ImGui::GetBackgroundDrawList(), ImVec2(0, 0), display, 0.6f);
+    static bool told = false;
+    if (!told) {
+        told = true;
+        int pieces = 0;
+        for (int i = 0; i < MenuArt::PieceCount; ++i) {
+            pieces += MenuArt::Has(MenuArt::Piece(i)) ? 1 : 0;
+        }
+        std::printf("Overlay: the settings menu uses %d of %d pieces of the game's menu art%s\n", pieces,
+                    int(MenuArt::PieceCount), MenuArt::font ? " and its menu font" : "");
+    }
 
     static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Controls", "Advanced", "Save"};
     static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Управление",
@@ -1198,28 +1499,33 @@ void Menu() {
     const ImVec2 size(std::min(S(1180.0f), display.x - S(40.0f)), std::min(S(800.0f), display.y - S(40.0f)));
     ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.035f, 0.032f, 0.028f, 0.94f));
+    const bool wall = MenuArt::Has(MenuArt::Wall);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, wall ? ImVec4(0, 0, 0, 0) : ImVec4(0.035f, 0.032f, 0.028f, 0.94f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(36.0f), S(24.0f)));
-    ImGui::PushFont(serif_font, 21.0f);
+    ImGui::PushFont(MenuArt::Font(), 21.0f);
     ImGui::Begin("##bbport_settings", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 win = ImGui::GetWindowPos();
     const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
-    Ornament(draw, x0, x1, win.y + S(10.0f));
-    Ornament(draw, x0, x1, win.y + size.y - S(10.0f));
+    if (wall) { // the panel as the team screen's: the menus' wall, darker to its edges
+        const ImVec2 w1(win.x + size.x, win.y + size.y);
+        MenuArt::Cover(draw, MenuArt::Wall, win, w1, 0.97f);
+        MenuArt::Vignette(draw, win, w1, 0.55f);
+        draw->AddRect(win, w1, IM_COL32(150, 140, 120, 90), 0.0f, 0, S(1.0f));
+    }
+    Divider(draw, x0, x1, win.y + S(12.0f));
+    Divider(draw, x0, x1, win.y + size.y - S(12.0f));
 
-    // Title.
-    ImGui::PushFont(serif_font, 34.0f);
+    // Title, the game's scrollwork under it.
+    ImGui::PushFont(MenuArt::Font(), 38.0f);
     const char* title = T("Settings", "Настройки");
-    const float title_w = ImGui::CalcTextSize(title).x;
-    ImGui::SetCursorPosX((size.x - title_w) * 0.5f);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(Bright()));
-    ImGui::TextUnformatted(title);
-    ImGui::PopStyleColor();
+    const ImVec2 title_size = ImGui::CalcTextSize(title);
+    draw->AddText(ImVec2(win.x + (size.x - title_size.x) * 0.5f, win.y + S(26.0f)), Bright(), title);
     ImGui::PopFont();
+    const float ornament = HeaderOrnament(draw, win.x + size.x * 0.5f, win.y + S(26.0f) + title_size.y, 0.7f);
     // Close (mouse), top right.
     {
         const char* close = "×";
@@ -1236,50 +1542,65 @@ void Menu() {
         ImGui::PopItemFlag();
     }
 
-    // Tabs: L1 ... R1, the current one gold and underlined.
-    ImGui::SetCursorPosY(S(76.0f));
+    // Tabs: L1 ... R1, the current one on the game's gold-framed row (underlined without the art).
+    ImGui::SetCursorScreenPos(
+        ImVec2(win.x + S(36.0f), win.y + S(26.0f) + title_size.y + std::max(ornament, S(12.0f)) + S(8.0f)));
     {
         const float row_y = ImGui::GetCursorScreenPos().y;
-        float widths[tabs], total = 0.0f;
-        const float gap = S(46.0f);
+        float widths[tabs], names = 0.0f;
+        const float pad_x = S(16.0f), tab_h = S(36.0f);
+        ImGui::PushFont(MenuArt::Font(), 17.0f);
+        const ImVec2 l1 = ImGui::CalcTextSize("L1 / Q");
+        ImGui::PopFont();
+        ImGui::PushFont(MenuArt::Font(), 22.0f);
         for (int i = 0; i < tabs; ++i) {
             widths[i] = ImGui::CalcTextSize(T(tab_en[i], tab_ru[i])).x;
-            total += widths[i] + (i ? gap : 0.0f);
+            names += widths[i];
         }
+        // The gaps shrink to keep the row and its L1 / R1 inside the panel (the Russian names are
+        // longer).
+        const float room = size.x - S(72.0f) - 2.0f * l1.x;
+        const float gap = std::clamp((room - names) / float(tabs + 1), S(20.0f), S(46.0f));
+        const float total = names + gap * float(tabs - 1);
         float x = win.x + (size.x - total) * 0.5f;
-        ImGui::PushFont(sans_font, 15.0f);
-        const ImVec2 l1 = ImGui::CalcTextSize("L1 / Q");
-        draw->AddText(ImVec2(x - gap - l1.x, row_y + S(4.0f)), Gold(0.6f), "L1 / Q");
-        draw->AddText(ImVec2(x + total + gap, row_y + S(4.0f)), Gold(0.6f), "E / R1");
+        ImGui::PushFont(MenuArt::Font(), 17.0f);
+        draw->AddText(ImVec2(x - gap - l1.x, row_y + (tab_h - l1.y) * 0.5f), Gold(0.6f), "L1 / Q");
+        draw->AddText(ImVec2(x + total + gap, row_y + (tab_h - l1.y) * 0.5f), Gold(0.6f), "E / R1");
         ImGui::PopFont();
         ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         for (int i = 0; i < tabs; ++i) {
             const char* name = T(tab_en[i], tab_ru[i]);
-            ImGui::SetCursorScreenPos(ImVec2(x, row_y));
+            const ImVec2 t0(x - pad_x, row_y), t1(x + widths[i] + pad_x, row_y + tab_h);
+            ImGui::SetCursorScreenPos(t0);
             ImGui::PushID(i);
-            if (ImGui::InvisibleButton("##tab", ImVec2(widths[i], S(32.0f)))) {
+            if (ImGui::InvisibleButton("##tab", ImVec2(t1.x - t0.x, tab_h))) {
                 state.tab = i;
                 state.focus_first = true;
             }
             const bool hovered = ImGui::IsItemHovered();
             ImGui::PopID();
             const bool current = i == state.tab;
-            draw->AddText(ImVec2(x, row_y), current ? Bright() : hovered ? Plain() : Dim(), name);
-            if (current) {
-                draw->AddLine(ImVec2(x - S(6.0f), row_y + S(31.0f)), ImVec2(x + widths[i] + S(6.0f), row_y + S(31.0f)),
+            const bool art = (current || hovered) &&
+                             MenuArt::Nine(draw, current ? MenuArt::RowSelected : MenuArt::Row, t0, t1, 12.0f,
+                                           S(8.0f), current ? 1.0f : 0.7f);
+            const float text_h = ImGui::CalcTextSize(name).y;
+            draw->AddText(ImVec2(x, row_y + (tab_h - text_h) * 0.5f), current ? Bright() : hovered ? Plain() : Dim(),
+                          name);
+            if (current && !art) {
+                draw->AddLine(ImVec2(x - S(6.0f), t1.y - S(1.0f)), ImVec2(x + widths[i] + S(6.0f), t1.y - S(1.0f)),
                               Gold(0.9f), S(1.5f));
             }
             x += widths[i] + gap;
         }
         ImGui::PopItemFlag();
-        ImGui::SetCursorScreenPos(ImVec2(win.x + S(36.0f), row_y + S(44.0f)));
+        ImGui::PopFont();
+        ImGui::SetCursorScreenPos(ImVec2(win.x + S(36.0f), row_y + tab_h + S(26.0f)));
     }
-    draw->AddLine(ImVec2(x0 + S(20.0f), ImGui::GetCursorScreenPos().y),
-                  ImVec2(x1 - S(20.0f), ImGui::GetCursorScreenPos().y), Gold(0.25f), S(1.0f));
-    ImGui::Dummy(ImVec2(0, S(6.0f)));
+    Divider(draw, x0 + S(20.0f), x1 - S(20.0f), ImGui::GetCursorScreenPos().y - S(8.0f), 0.6f);
+    ImGui::Dummy(ImVec2(0, S(8.0f)));
 
     // Rows (scrolling when they do not fit), then the description and the controls.
-    const float footer = S(150.0f);
+    const float footer = S(170.0f);
     state.next_hint = nullptr;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, S(2.0f)));
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, S(6.0f));
@@ -1345,36 +1666,69 @@ void Menu() {
 
     // Description of the focused setting.
     const float desc_y = win.y + size.y - footer;
-    draw->AddLine(ImVec2(x0 + S(20.0f), desc_y + S(6.0f)), ImVec2(x1 - S(20.0f), desc_y + S(6.0f)), Gold(0.25f),
-                  S(1.0f));
-    ImGui::SetCursorScreenPos(ImVec2(win.x + S(64.0f), desc_y + S(18.0f)));
-    ImGui::PushFont(serif_font, 17.0f);
-    ImGui::BeginGroup(); // the lines start where the first one does
-    ImGui::PushTextWrapPos(size.x - S(64.0f));
-    if (RestartNeeded()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.72f, 0.35f, 1.0f));
-        ImGui::TextUnformatted(T("Some changes apply after restarting the game.",
-                                 "Часть изменений применится после перезапуска игры."));
-        ImGui::PopStyleColor();
+    Divider(draw, x0 + S(20.0f), x1 - S(20.0f), desc_y + S(6.0f), 0.6f);
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    {
+        ImVec2 at(win.x + S(64.0f), desc_y + S(20.0f));
+        const float width = size.x - S(128.0f);
+        if (RestartNeeded()) {
+            at.y += WrappedText(draw, at, width, ImGui::GetColorU32(ImVec4(0.95f, 0.72f, 0.35f, 1.0f)),
+                                T("Some changes apply after restarting the game.",
+                                  "Часть изменений применится после перезапуска игры."));
+        }
+        if (state.hint) {
+            WrappedText(draw, at, width, Plain(0.85f), state.hint);
+        }
     }
-    if (state.hint) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(Plain(0.85f)));
-        ImGui::TextUnformatted(state.hint);
-        ImGui::PopStyleColor();
-    }
-    ImGui::PopTextWrapPos();
-    ImGui::EndGroup();
     ImGui::PopFont();
 
-    // Controls.
-    ImGui::PushFont(sans_font, 15.0f);
-    const char* controls = T("Enter / Cross: change     Left / Right: value     Q / E, L1 / R1: tabs     "
-                             "Esc / Circle: close     Insert, L3 + R3: menu     hold L3 + R3: quit",
-                             "Enter / Крест: изменить     Влево / Вправо: значение     Q / E, L1 / R1: "
-                             "вкладки     Esc / Круг: закрыть     Insert, L3 + R3: меню     удерживать L3 + R3: выход");
-    const ImVec2 cs = ImGui::CalcTextSize(controls);
-    draw->AddText(ImVec2(win.x + (size.x - cs.x) * 0.5f, win.y + size.y - S(40.0f)), Gold(0.65f), controls);
-    ImGui::PopFont();
+    // Controls: as the game's own key guide (the team screen's), an icon, then what it does.
+    if (MenuArt::Has(MenuArt::ButtonMove) && MenuArt::Has(MenuArt::ButtonCross) &&
+        MenuArt::Has(MenuArt::ButtonCircle)) {
+        const struct {
+            MenuArt::Piece icon;
+            const char* text;
+        } keys[] = {{MenuArt::ButtonMove, T("Choose, value", "Выбор, значение")},
+                    {MenuArt::ButtonCross, T("Change", "Изменить")},
+                    {MenuArt::ButtonCircle, T("Close", "Закрыть")}};
+        const char* rest = T("L1 / R1, Q / E: tabs     Insert, L3 + R3: menu     hold L3 + R3: quit",
+                             "L1 / R1, Q / E: вкладки     Insert, L3 + R3: меню     удерживать L3 + R3: выход");
+        // Smaller when the line does not fit the panel (the Russian one is longer).
+        float fit = 1.0f, total = 0.0f, icon = 0.0f, space = 0.0f;
+        for (int pass = 0; pass < 2; ++pass) {
+            ImGui::PushFont(MenuArt::Font(), 18.0f * fit);
+            icon = S(26.0f) * fit;
+            space = S(28.0f) * fit;
+            total = ImGui::CalcTextSize(rest).x;
+            for (const auto& key : keys) {
+                total += icon + S(6.0f) + ImGui::CalcTextSize(key.text).x + space;
+            }
+            if (pass == 1 || total <= size.x - S(72.0f)) {
+                break;
+            }
+            ImGui::PopFont();
+            fit = std::max(0.7f, (size.x - S(72.0f)) / total);
+        }
+        float kx = win.x + (size.x - total) * 0.5f;
+        const float ky = win.y + size.y - S(48.0f);
+        for (const auto& key : keys) {
+            MenuArt::Draw(draw, key.icon, ImVec2(kx, ky), ImVec2(kx + icon, ky + icon));
+            kx += icon + S(6.0f);
+            draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.85f), key.text);
+            kx += ImGui::CalcTextSize(key.text).x + space;
+        }
+        draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.6f), rest);
+        ImGui::PopFont();
+    } else {
+        ImGui::PushFont(sans_font, 15.0f);
+        const char* controls = T("Enter / Cross: change     Left / Right: value     Q / E, L1 / R1: tabs     "
+                                 "Esc / Circle: close     Insert, L3 + R3: menu     hold L3 + R3: quit",
+                                 "Enter / Крест: изменить     Влево / Вправо: значение     Q / E, L1 / R1: "
+                                 "вкладки     Esc / Круг: закрыть     Insert, L3 + R3: меню     удерживать L3 + R3: выход");
+        const ImVec2 cs = ImGui::CalcTextSize(controls);
+        draw->AddText(ImVec2(win.x + (size.x - cs.x) * 0.5f, win.y + size.y - S(40.0f)), Gold(0.65f), controls);
+        ImGui::PopFont();
+    }
 
     ImGui::End();
     ImGui::PopFont();
@@ -1420,7 +1774,10 @@ void QuitBox() {
     using namespace Ui;
     static int choice = 0; // 0 Cancel, 1 Quit
     static int last_frame = -2;
-    if (ImGui::GetFrameCount() != last_frame + 1) {
+    // Opened this frame: the press that opened it (Cross on the menu's Quit row) is not an answer
+    // (the rig: the box closed on Cancel the frame it opened).
+    const bool opened = ImGui::GetFrameCount() != last_frame + 1;
+    if (opened) {
         choice = 0;
     }
     last_frame = ImGui::GetFrameCount();
@@ -1441,13 +1798,17 @@ void QuitBox() {
         choice = 0;
         activate = true;
     }
+    if (opened) {
+        activate = false;
+    }
 
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 165));
     const ImVec2 size(std::min(S(620.0f), display.x - S(40.0f)), S(230.0f));
     ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.035f, 0.032f, 0.028f, 0.94f));
+    const bool wall = MenuArt::Has(MenuArt::Wall);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, wall ? ImVec4(0, 0, 0, 0) : ImVec4(0.035f, 0.032f, 0.028f, 0.94f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::Begin("##quit", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
@@ -1455,32 +1816,38 @@ void QuitBox() {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 win = ImGui::GetWindowPos();
     const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
-    Ornament(draw, x0, x1, win.y + S(10.0f));
-    Ornament(draw, x0, x1, win.y + size.y - S(10.0f));
+    if (wall) { // as the settings menu's panel
+        const ImVec2 w1(win.x + size.x, win.y + size.y);
+        MenuArt::Cover(draw, MenuArt::Wall, win, w1, 0.97f);
+        MenuArt::Vignette(draw, win, w1, 0.55f);
+        draw->AddRect(win, w1, IM_COL32(150, 140, 120, 90), 0.0f, 0, S(1.0f));
+    }
+    Divider(draw, x0, x1, win.y + S(12.0f));
+    Divider(draw, x0, x1, win.y + size.y - S(12.0f));
 
-    ImGui::PushFont(serif_font, 30.0f);
+    ImGui::PushFont(MenuArt::Font(), 32.0f);
     const char* title = T("Quit to desktop?", "Выйти на рабочий стол?");
     const ImVec2 ts = ImGui::CalcTextSize(title);
-    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(36.0f)), Bright(), title);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(34.0f)), Bright(), title);
     ImGui::PopFont();
-    ImGui::PushFont(serif_font, 17.0f);
+    ImGui::PushFont(MenuArt::Font(), 19.0f);
     const char* note = T("Progress since the last autosave is lost.",
                          "Прогресс после последнего автосохранения будет потерян.");
     const ImVec2 ns = ImGui::CalcTextSize(note);
-    draw->AddText(ImVec2(win.x + (size.x - ns.x) * 0.5f, win.y + S(88.0f)), Plain(0.85f), note);
+    draw->AddText(ImVec2(win.x + (size.x - ns.x) * 0.5f, win.y + S(86.0f)), Plain(0.85f), note);
     ImGui::PopFont();
 
-    ImGui::PushFont(serif_font, 24.0f);
+    // The choices on the game's menu rows, the chosen one gold-framed (underlined without the art).
+    ImGui::PushFont(MenuArt::Font(), 24.0f);
     const char* labels[2] = {T("Cancel", "Отмена"), T("Quit", "Выйти")};
-    const float gap = S(90.0f);
-    const float w0 = ImGui::CalcTextSize(labels[0]).x, w1 = ImGui::CalcTextSize(labels[1]).x;
-    float x = win.x + (size.x - (w0 + gap + w1)) * 0.5f;
-    const float y = win.y + S(140.0f);
+    const float gap = S(40.0f), bh = S(44.0f);
+    const float bw = std::max(ImGui::CalcTextSize(labels[0]).x, ImGui::CalcTextSize(labels[1]).x) + S(70.0f);
+    float x = win.x + (size.x - (2 * bw + gap)) * 0.5f;
+    const float y = win.y + S(132.0f);
     for (int i = 0; i < 2; ++i) {
-        const float w = i == 0 ? w0 : w1;
-        ImGui::SetCursorScreenPos(ImVec2(x - S(10.0f), y - S(4.0f)));
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
         ImGui::PushID(i);
-        if (ImGui::InvisibleButton("##quit_choice", ImVec2(w + S(20.0f), S(40.0f)))) {
+        if (ImGui::InvisibleButton("##quit_choice", ImVec2(bw, bh))) {
             choice = i;
             activate = true;
         }
@@ -1488,12 +1855,16 @@ void QuitBox() {
             choice = i;
         }
         ImGui::PopID();
-        draw->AddText(ImVec2(x, y), i == choice ? Bright() : Dim(), labels[i]);
-        if (i == choice) {
-            draw->AddLine(ImVec2(x - S(6.0f), y + S(33.0f)), ImVec2(x + w + S(6.0f), y + S(33.0f)), Gold(0.9f),
-                          S(1.5f));
+        const bool art = MenuArt::Nine(draw, i == choice ? MenuArt::RowSelected : MenuArt::Row, ImVec2(x, y),
+                                       ImVec2(x + bw, y + bh), 12.0f, S(9.0f), i == choice ? 1.0f : 0.6f);
+        const ImVec2 ls = ImGui::CalcTextSize(labels[i]);
+        const float lx = x + (bw - ls.x) * 0.5f;
+        draw->AddText(ImVec2(lx, y + (bh - ls.y) * 0.5f), i == choice ? Bright() : Dim(), labels[i]);
+        if (i == choice && !art) {
+            draw->AddLine(ImVec2(lx - S(6.0f), y + bh - S(4.0f)), ImVec2(lx + ls.x + S(6.0f), y + bh - S(4.0f)),
+                          Gold(0.9f), S(1.5f));
         }
-        x += w + gap;
+        x += bw + gap;
     }
     ImGui::PopFont();
     ImGui::End();
@@ -1535,229 +1906,6 @@ void TextPrompt() {
     ImGui::TextUnformatted("Controller: Cross (A) = OK, Circle (B) = cancel");
     ImGui::End();
 }
-
-// Kaniel 2026-10-14: the team screen and the team loading screen in the game's own style: its
-// menu art (the wall, the title picture, the cards, the gold selection frame, the rows, the
-// ornaments, the button icons) and its menu font, read at runtime from the player's game files
-// (bbport_game_art.h) like the HP bars; nothing of the game's is shipped. Each piece falls back to
-// the drawn look when the files can't be read.
-namespace MenuArt {
-
-enum Piece {
-    Wall,          // the in-game menus' backdrop
-    Title,         // the title screen's picture
-    Logo,          // the loading screen's Bloodborne
-    Row,           // a menu row (a button)
-    RowSelected,   // the gold-framed selected row
-    EntryRow,      // a list row with its square slot
-    Slot,          // a square slot
-    SlotSelected,  // the gold-framed square slot
-    Card,          // a tall card
-    CardSelected,  // the gold-framed tall card
-    HeaderFrame,   // a framed header with corner ornaments
-    Divider,       // the silver divider with its scroll
-    HeaderOrnament, // the scrollwork under a title
-    Flourish,      // a row's scroll
-    Runes,         // eight 32 px runes in a row
-    ButtonCross,   // the pad's Cross
-    ButtonCircle,  // the pad's Circle
-    ButtonMove,    // the d-pad
-    PieceCount
-};
-
-struct Source {
-    const char* file;
-    const char* texture;
-    BbGameArt::PixelRect rect; // empty: all of it
-    bool light_is_alpha;       // white art on black: its brightness is its coverage
-};
-
-// Measured on MENU_Common_00001-3 (common.tpf.dcx), MENU_Title_00001 and MENU_NowLoading_00001.
-constexpr Source Sources[PieceCount] = {
-    {"menu/common.tpf.dcx", "MENU_Common_00001", {0, 0, 1920, 1080}, false},
-    {"menu/title.tpf.dcx", "MENU_Title_00001", {0, 0, 1780, 1024}, false},
-    {"menu/nowloading.tpf.dcx", "MENU_NowLoading_00001", {440, 420, 1520, 660}, true},
-    {"menu/common.tpf.dcx", "MENU_Common_00001", {988, 1532, 1562, 1580}, false},
-    {"menu/common.tpf.dcx", "MENU_Common_00001", {1156, 1228, 1958, 1326}, false},
-    {"menu/common.tpf.dcx", "MENU_Common_00001", {1144, 1438, 1716, 1530}, false},
-    {"menu/common.tpf.dcx", "MENU_Common_00001", {482, 1230, 610, 1358}, false},
-    {"menu/common.tpf.dcx", "MENU_Common_00001", {626, 1230, 760, 1364}, false},
-    {"menu/common.tpf.dcx", "MENU_Common_00002", {2, 708, 134, 966}, false},
-    {"menu/common.tpf.dcx", "MENU_Common_00002", {138, 708, 278, 974}, false},
-    {"menu/common.tpf.dcx", "MENU_Common_00002", {1156, 412, 1582, 502}, false},
-    {"menu/common.tpf.dcx", "MENU_Common_00003", {12, 14, 368, 46}, true},
-    {"menu/common.tpf.dcx", "MENU_Common_00003", {42, 58, 438, 106}, true},
-    {"menu/common.tpf.dcx", "MENU_Common_00001", {482, 1174, 754, 1208}, false},
-    {"menu/common.tpf.dcx", "MENU_Common_00002", {1570, 4, 1826, 36}, false},
-    {"menu/common.tpf.dcx", "KG_Cancel", {}, false},
-    {"menu/common.tpf.dcx", "KG_OK", {}, false},
-    {"menu/common.tpf.dcx", "KG_L_UDLR", {}, false},
-};
-
-ImTextureData* textures[PieceCount] = {};
-ImFont* font = nullptr; // the game's menu font
-bool tried = false;
-
-std::vector<std::uint8_t> ReadGameFile(const char* relative) {
-    std::vector<std::uint8_t> bytes;
-    char path[1024];
-    if (!bbcoop_game_file((std::string("dvdroot_ps4/") + relative).c_str(), path, sizeof(path))) {
-        return bytes;
-    }
-    if (FILE* f = std::fopen(path, "rb")) {
-        std::uint8_t chunk[65536];
-        for (size_t n; (n = std::fread(chunk, 1, sizeof(chunk), f)) > 0;) {
-            bytes.insert(bytes.end(), chunk, chunk + n);
-        }
-        std::fclose(f);
-    }
-    return bytes;
-}
-
-/// Reads the pieces and the font once, before a frame (new textures and fonts go to the backend
-/// with the next NewFrame).
-void Load() {
-    if (tried) {
-        return;
-    }
-    tried = true;
-    std::map<std::string, std::optional<BbGameArt::TpfFile>> files;
-    int loaded = 0;
-    for (int i = 0; i < PieceCount; ++i) {
-        const Source& source = Sources[i];
-        auto& file = files[source.file];
-        if (!file) {
-            file = BbGameArt::TpfFile::Read(ReadGameFile(source.file));
-        }
-        auto image = file ? file->Piece(source.texture, source.rect) : std::nullopt;
-        if (!image) {
-            continue;
-        }
-        if (source.light_is_alpha) {
-            for (std::size_t at = 0; at < image->rgba.size(); at += 4) {
-                std::uint8_t* px = image->rgba.data() + at;
-                px[3] = std::max({px[0], px[1], px[2]});
-            }
-        }
-        textures[i] = IM_NEW(ImTextureData)();
-        textures[i]->Create(ImTextureFormat_RGBA32, image->width, image->height);
-        std::memcpy(textures[i]->GetPixels(), image->rgba.data(), image->rgba.size());
-        ImGui::RegisterUserTexture(textures[i]);
-        ++loaded;
-    }
-    if (const auto ttf = BbGameArt::TtfFromGfxFont(ReadGameFile("menu/engus/font.gfx"))) {
-        void* data = IM_ALLOC(ttf->size());
-        std::memcpy(data, ttf->data(), ttf->size());
-        ImFontConfig config;
-        config.FontDataOwnedByAtlas = true;
-        font = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, int(ttf->size()), 21.0f, &config);
-    }
-    std::printf("Overlay: team screens use %d of %d pieces of the game's menu art%s\n", loaded,
-                int(PieceCount), font ? " and its menu font" : " (the game's font did not load)");
-}
-
-bool Has(Piece piece) {
-    return textures[piece] != nullptr;
-}
-
-ImVec2 SizeOf(Piece piece) {
-    return textures[piece] ? ImVec2(float(textures[piece]->Width), float(textures[piece]->Height))
-                           : ImVec2(0, 0);
-}
-
-ImU32 Tint(float alpha, ImU32 tint = IM_COL32_WHITE) {
-    const ImVec4 c = ImGui::ColorConvertU32ToFloat4(tint);
-    return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, c.w * alpha));
-}
-
-/// `piece` (its source pixels [s0, s1]) stretched into [p0, p1].
-void Part(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, ImVec2 s0, ImVec2 s1, ImU32 color) {
-    const ImVec2 size = SizeOf(piece);
-    draw->AddImage(textures[piece]->GetTexRef(), p0, p1, ImVec2(s0.x / size.x, s0.y / size.y),
-                   ImVec2(s1.x / size.x, s1.y / size.y), color);
-}
-
-/// All of `piece` stretched into [p0, p1]; false when it is not loaded.
-bool Draw(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float alpha = 1.0f,
-          ImU32 tint = IM_COL32_WHITE) {
-    if (!Has(piece)) {
-        return false;
-    }
-    Part(draw, piece, p0, p1, ImVec2(0, 0), SizeOf(piece), Tint(alpha, tint));
-    return true;
-}
-
-/// `piece` as a nine-slice frame into [p0, p1]: its corners (`edge` source pixels, drawn `drawn`
-/// pixels) kept, its edges and middle stretched.
-bool Nine(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float edge, float drawn,
-          float alpha = 1.0f) {
-    if (!Has(piece)) {
-        return false;
-    }
-    const ImVec2 size = SizeOf(piece);
-    drawn = std::min({drawn, (p1.x - p0.x) * 0.5f, (p1.y - p0.y) * 0.5f});
-    const float sx[4] = {0, edge, size.x - edge, size.x}, sy[4] = {0, edge, size.y - edge, size.y};
-    const float dx[4] = {p0.x, p0.x + drawn, p1.x - drawn, p1.x};
-    const float dy[4] = {p0.y, p0.y + drawn, p1.y - drawn, p1.y};
-    const ImU32 color = Tint(alpha);
-    for (int y = 0; y < 3; ++y) {
-        for (int x = 0; x < 3; ++x) {
-            Part(draw, piece, ImVec2(dx[x], dy[y]), ImVec2(dx[x + 1], dy[y + 1]), ImVec2(sx[x], sy[y]),
-                 ImVec2(sx[x + 1], sy[y + 1]), color);
-        }
-    }
-    return true;
-}
-
-/// `piece` filling [p0, p1] without stretching it out of shape (cut to fit), as a backdrop.
-bool Cover(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float alpha = 1.0f) {
-    if (!Has(piece)) {
-        return false;
-    }
-    const ImVec2 size = SizeOf(piece);
-    const float want = (p1.x - p0.x) / (p1.y - p0.y), have = size.x / size.y;
-    ImVec2 s0(0, 0), s1 = size;
-    if (have > want) {
-        const float cut = (size.x - size.y * want) * 0.5f;
-        s0.x = cut;
-        s1.x = size.x - cut;
-    } else {
-        const float cut = (size.y - size.x / want) * 0.5f;
-        s0.y = cut;
-        s1.y = size.y - cut;
-    }
-    Part(draw, piece, p0, p1, s0, s1, Tint(alpha));
-    return true;
-}
-
-/// Rune `index` (0..7) of the runes row, into [p0, p1].
-bool Rune(ImDrawList* draw, int index, ImVec2 p0, ImVec2 p1, float alpha = 1.0f) {
-    if (!Has(Runes)) {
-        return false;
-    }
-    const float side = SizeOf(Runes).y;
-    Part(draw, Runes, p0, p1, ImVec2(side * float(index % 8), 0), ImVec2(side * float(index % 8 + 1), side),
-         Tint(alpha));
-    return true;
-}
-
-/// The menus' text font: the game's own when it loaded.
-ImFont* Font() {
-    return font != nullptr ? font : serif_font;
-}
-
-/// A soft dark vignette over [p0, p1] (the game's menus darken toward their edges).
-void Vignette(ImDrawList* draw, ImVec2 p0, ImVec2 p1, float strength) {
-    const ImU32 dark = IM_COL32(0, 0, 0, int(255 * strength)), clear = IM_COL32(0, 0, 0, 0);
-    const float band = (p1.y - p0.y) * 0.22f;
-    draw->AddRectFilledMultiColor(p0, ImVec2(p1.x, p0.y + band), dark, dark, clear, clear);
-    draw->AddRectFilledMultiColor(ImVec2(p0.x, p1.y - band), p1, clear, clear, dark, dark);
-    const float side = (p1.x - p0.x) * 0.16f;
-    draw->AddRectFilledMultiColor(p0, ImVec2(p0.x + side, p1.y), dark, clear, clear, dark);
-    draw->AddRectFilledMultiColor(ImVec2(p1.x - side, p0.y), p1, clear, dark, dark, clear);
-}
-
-} // namespace MenuArt
 
 // The team screen (phase 5, docs/SERVER_COOP_PLAN.md "The team lobby"): up while the title holds a
 // save's load for the team (bbcoop_team_screen). Four hunters' places, the players online to
@@ -1816,19 +1964,6 @@ bool Button(ImDrawList* draw, const char* id, const char* label, ImVec2 at, ImVe
     draw->AddText(ImVec2(at.x + (size.x - ts.x) * 0.5f, at.y + (size.y - ts.y) * 0.5f),
                   !enabled ? Dim(0.6f) : focused ? Bright() : Plain(), label);
     return clicked || (enabled && focused && focus.activate);
-}
-
-/// The game's silver divider centred on [x0, x1] at `y` (the drawn ornament without the art).
-void Divider(ImDrawList* draw, float x0, float x1, float y, float alpha = 0.9f) {
-    const ImVec2 size = MenuArt::SizeOf(MenuArt::Divider);
-    if (size.x <= 0.0f) {
-        Ornament(draw, x0, x1, y);
-        return;
-    }
-    const float w = std::min(x1 - x0, S(size.x * 1.1f)), h = w * size.y / size.x;
-    const float mid = (x0 + x1) * 0.5f;
-    MenuArt::Draw(draw, MenuArt::Divider, ImVec2(mid - w * 0.5f, y - h * 0.5f), ImVec2(mid + w * 0.5f, y + h * 0.5f),
-                  alpha);
 }
 
 const char* StateText(const bbcoop_lobby_entry& e, bool member) {
@@ -2297,10 +2432,6 @@ void Screen() {
 // Kaniel 2026-10-14: the team loading screen, as in League of Legends but in Bloodborne's colours:
 // each hunter's name, its stage and a bar, over the whole screen until every member is in the
 // team's session (bbcoop_team_load_view); the hunt opens for everyone at once.
-namespace Party {
-bool GameHpBar(ImDrawList* draw, ImVec2 b0, float width, float height, float fill, float alpha);
-void LoadGauge();
-} // namespace Party
 
 namespace Joining {
 bool open = false; // present thread: as Visible() read it last
@@ -2976,6 +3107,7 @@ void Draw() {
 
 /// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1,
 /// consumed when the file appears (it is removed), one key press per frame.
+bool scripted_busy = false; // keys of the file still to press
 void ScriptedKeys() {
     static const char* path = std::getenv("BB_MENU_KEYS_FILE");
     static std::chrono::steady_clock::time_point last_check{};
@@ -3003,6 +3135,7 @@ void ScriptedKeys() {
             std::remove(path);
         }
     }
+    scripted_busy = !queue.empty();
     if (queue.empty()) {
         return;
     }
@@ -3025,6 +3158,27 @@ void ScriptedKeys() {
         io.AddKeyEvent(held, true);
         release = true;
     }
+}
+
+/// Scripted keys are waiting (their file is there, or a key is still to be pressed or let go):
+/// the overlay runs its frames for them even with nothing to draw, or a game that shows nothing
+/// (no party, no FPS counter) never opened the menu for the rig.
+bool ScriptedKeysWaiting() {
+    static const char* path = std::getenv("BB_MENU_KEYS_FILE");
+    static std::chrono::steady_clock::time_point last_check{};
+    static bool file_there = false;
+    if (!path) {
+        return false;
+    }
+    if (const auto now = std::chrono::steady_clock::now(); now - last_check > std::chrono::milliseconds(100)) {
+        last_check = now;
+        FILE* f = std::fopen(path, "r");
+        file_there = f != nullptr;
+        if (f) {
+            std::fclose(f);
+        }
+    }
+    return file_there || scripted_busy;
 }
 
 } // namespace
@@ -3332,7 +3486,7 @@ bool Visible() {
         Team::focus.fresh = true;
     }
     return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party ||
-                           Team::open || Joining::open);
+                           Team::open || Joining::open || ScriptedKeysWaiting());
 }
 
 bool MenuOpen() {
@@ -3445,10 +3599,10 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         base_scale = scale;
     }
 
-    if (Party::shown || Joining::open) {
+    if (Party::shown || Joining::open || menu_open) {
         Party::LoadGauge(); // before NewFrame, which hands new textures to the backend
     }
-    if (Team::open || Joining::open) {
+    if (Team::open || Joining::open || menu_open || quit_open) {
         MenuArt::Load(); // the same: the game's menu art and font
     }
     ImGui_ImplVulkan_NewFrame();
