@@ -823,6 +823,21 @@ SCENARIOS = {
         "expect": {"guest": [HP_LOWERED]},
         "timeout": 720,
     },
+    "guest-drops": {
+        "about": "Kaniel 2026-10-16: the enemies the host kills drop in the guest's world with a "
+                 "handle each (krolebord found every kill's drop on the first wolf: one pickup "
+                 "took them all)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 15", f"kill {ENEMY}",
+                     "wait 5", f"kill {DOG}", "wait 5", f"kill {BY_THE_LAMP}", "wait 30",
+                     "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 70", "snapshot",
+                      "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS,
+                   "guest": SESSION_HOLDS + [r"0x38: [1-9]\d* items, \d+ usable, 0 with handle"]},
+        "timeout": 600,
+    },
     "boss-kill": {
         "about": "the Cleric Beast dies in the host's world with the guest there; the session "
                  "holds (no leave after the boss-clear script)",

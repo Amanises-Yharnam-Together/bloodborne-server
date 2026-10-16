@@ -574,7 +574,6 @@ constexpr std::array<u8, 7> HostStateCheck{0x83, 0xB8, 0x24, 0x01, 0x00, 0x00, 0
 constexpr auto ItemModuleChecks = std::to_array<ItemModuleCheck>({
     {0x017D3759, GuestStateCheck},
     {0x017D4F54, GuestStateCheck},
-    {0x017D5642, GuestStateCheck},
     {0x017D6818, GuestStateCheck},
     {0x017D6AD2, GuestStateCheck},
     {0x017D83CB, GuestStateCheck},

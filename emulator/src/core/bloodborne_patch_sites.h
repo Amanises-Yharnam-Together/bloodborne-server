@@ -391,6 +391,12 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "83 B8 24 01 00 00 06"},
     {"map item handle session check", "shared loot", CoopSiteKind::Hook, 0x017D52DB,
      "41 83 BF 98 00 00 00 FF"},
+    // Kaniel's playtest 2026-10-16: an enemy's drop (0x017D5320, MapItemMan +0x38) gets its own
+    // handle on a guest too (DropHandleStateCheckOffset).
+    {"drop handle state check", "shared loot", CoopSiteKind::Hook, 0x017D5642,
+     "83 B8 24 01 00 00 06"},
+    {"drop handle session check", "shared loot", CoopSiteKind::Hook, 0x017D564B,
+     "41 83 BF 98 00 00 00 FF"},
     {"map item pickup check", "map item pickup", CoopSiteKind::Hook, 0x017D6831,
      "80 B8 92 15 00 00 00"},
     {"map item pickup check 2", "map item pickup", CoopSiteKind::Hook, 0x017D6AEF,
@@ -400,8 +406,6 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"item check 0x017D3759", "item diagnostics", CoopSiteKind::Hook, 0x017D3759,
      "83 B8 24 01 00 00 06"},
     {"item check 0x017D4F54", "item diagnostics", CoopSiteKind::Hook, 0x017D4F54,
-     "83 B8 24 01 00 00 06"},
-    {"item check 0x017D5642", "item diagnostics", CoopSiteKind::Hook, 0x017D5642,
      "83 B8 24 01 00 00 06"},
     {"item check 0x017D6818", "item diagnostics", CoopSiteKind::Hook, 0x017D6818,
      "83 B8 24 01 00 00 06"},
