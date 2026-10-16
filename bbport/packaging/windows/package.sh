@@ -116,6 +116,7 @@ mkdir -p "$dest/bin" "$dest/launcher"
 cp -r out/pyi-dist/BLauncher/. "$dest/"
 llvm-strip -o "$dest/Bloodborne.exe" out/bb-play.exe
 cp launcher/bloodborne.ico launcher/bloodborne.png "$dest/launcher/"
+cp -r launcher/art "$dest/launcher/"  # the launcher's painted pictures
 # The executables without debug information (out/ keeps the symbols for crash reports).
 for exe in bb-probe.exe bb-gpu-capabilities.exe; do
     llvm-strip --strip-debug -o "$dest/bin/$exe" "out/$exe"
