@@ -1,10 +1,12 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { ArtIcon } from "@/components/art-icon";
 import { DownloadButton } from "@/components/download-button";
 import { Emblem } from "@/components/logo";
 import { Heading } from "@/components/ornament";
 import { VideoSlot } from "@/components/video-slot";
+import type { IconName } from "@/content/docs";
 import { JsonLd } from "@/lib/json-ld";
 import { REPO_URL, site, siteUrl } from "@/lib/site";
 
@@ -21,9 +23,19 @@ const changes: [string, string][] = [
   ["Your server", "One of you hosts it next to the game. No accounts, no cloud."],
 ];
 
-const features = [
+const features: {
+  title: string;
+  icon: IconName;
+  text: string;
+  href: string;
+  src: string;
+  width: number;
+  height: number;
+  alt: string;
+}[] = [
   {
     title: "Your teammates on screen",
+    icon: "tricorn",
     text: "Each teammate sits on the left under your own bars, with a portrait, their name and their health. When they are on another map the list says so.",
     href: "/docs/play#party",
     src: "/docs/party-alive.webp",
@@ -33,6 +45,7 @@ const features = [
   },
   {
     title: "Down, not dead",
+    icon: "hand",
     text: "A killing blow puts you down while a teammate is on your map. They strike you to raise you; if everyone goes down, the party wakes at its lamps.",
     href: "/docs/play#down",
     src: "/docs/party-downed.webp",
@@ -42,6 +55,7 @@ const features = [
   },
   {
     title: "Hand things over",
+    icon: "vial",
     text: "Give a teammate Blood Vials, weapons or Blood Echoes from the inventory. They accept in the game's own dialog.",
     href: "/docs/play#give",
     src: "/docs/give-items.webp",
@@ -139,6 +153,7 @@ export default function Home() {
                 }
               />
               <div>
+                <ArtIcon name={f.icon} className="mb-3 size-14" />
                 <h3 className="text-2xl text-bone">{f.title}</h3>
                 <p className="mt-3">{f.text}</p>
                 <Link

@@ -168,7 +168,7 @@
     color: var(--title);
   }
 
-  /* Long text in the guide: each section has its title in old gold over a short silver rule. */
+  /* Long text in the guide: each section has its title in old gold over the painted divider. */
   .guide {
     @apply text-foreground;
   }
@@ -181,10 +181,10 @@
   .guide > section > h2::after {
     content: "";
     display: block;
-    width: 9rem;
-    height: 1px;
-    margin-top: 0.55rem;
-    background: linear-gradient(90deg, rgb(217 184 120 / 0.8), transparent);
+    width: 12rem;
+    height: 1rem;
+    margin-top: 0.45rem;
+    background: url("/art/divider.webp") left center / contain no-repeat;
   }
   .guide > section > div {
     @apply mt-5;
@@ -265,34 +265,30 @@
   position: absolute;
 }
 .backdrop-moon {
-  top: -6vh;
-  right: 0;
-  width: min(46vw, 36rem);
+  top: 4vh;
+  right: 6vw;
+  width: min(30vw, 22rem);
   aspect-ratio: 1;
-  /* A lit disc with a soft edge, then a wide glow fading into the mist. */
-  background: radial-gradient(
-    circle at 50% 50%,
-    rgb(236 228 210 / 0.17) 0,
-    rgb(220 210 190 / 0.12) 30%,
-    rgb(210 200 180 / 0.07) 34%,
-    rgb(200 190 170 / 0.035) 55%,
-    transparent 70%
-  );
-  filter: blur(1.5px);
+  background: url("/art/moon.webp") center / contain no-repeat;
+  opacity: 0.35;
 }
 .backdrop-city {
   left: 0;
   bottom: 0;
   width: 100%;
-  height: 46vh;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  background-size: cover;
 }
 .backdrop-city-far {
-  fill: #161a21;
-  opacity: 0.9;
+  height: 52vh;
+  background-image: url("/art/skyline-far.webp");
+  opacity: 0.75;
 }
 .backdrop-city-near {
-  fill: #0f1217;
-  height: 40vh;
+  bottom: -2vh;
+  height: 42vh;
+  background-image: url("/art/skyline-near.webp");
 }
 .backdrop-fog {
   left: -25%;
@@ -307,11 +303,10 @@
     radial-gradient(ellipse 35% 45% at 75% 40%, rgb(120 138 168 / 0.05), transparent 70%);
 }
 .backdrop-fog-low {
-  bottom: -6vh;
-  height: 36vh;
-  background:
-    radial-gradient(ellipse 45% 60% at 25% 60%, rgb(110 125 150 / 0.09), transparent 70%),
-    radial-gradient(ellipse 40% 55% at 70% 70%, rgb(110 125 150 / 0.08), transparent 70%);
+  bottom: -8vh;
+  height: 30vh;
+  background: url("/art/fog.webp") left bottom / auto 100% repeat-x;
+  opacity: 0.5;
   animation-duration: 50s;
   animation-direction: alternate-reverse;
 }

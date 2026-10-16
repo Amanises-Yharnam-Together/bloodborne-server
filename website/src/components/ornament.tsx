@@ -64,7 +64,7 @@ export function MenuRule({ crest = true, className }: { crest?: boolean; classNa
   );
 }
 
-/** A section heading: the title in old gold, left-aligned, over a short rule with a scroll end. */
+/** A section heading: the title in old gold, left-aligned, over the painted gold divider. */
 export function Heading({
   children,
   id,
@@ -87,11 +87,10 @@ export function Heading({
       >
         {children}
       </Tag>
-      <div className="mt-2.5 flex items-center gap-2 text-title" aria-hidden>
-        <span className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgb(217_184_120/0.8))]" />
-        <span className="size-1.5 rotate-45 bg-current" />
-        <span className="h-px w-24 bg-[linear-gradient(90deg,rgb(217_184_120/0.8),transparent)]" />
-      </div>
+      <div
+        className="mt-2.5 h-4 w-64 bg-[url(/art/divider.webp)] bg-contain bg-left bg-no-repeat"
+        aria-hidden
+      />
     </div>
   );
 }
