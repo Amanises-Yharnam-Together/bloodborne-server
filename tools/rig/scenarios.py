@@ -1283,6 +1283,35 @@ SCENARIOS = {
     },
     # A save playing alone is invited from the leader's menu and joins the hunt from its own,
     # where it stands, without going back to the title.
+    # A member leaves the team from the menu while playing: out of the session where it stands, it
+    # plays on alone; the host plays on with its session open.
+    # A save played alone while another game starts a team loads into its world (rig 2026-10-16:
+    # with the team menu's first build its load hung 3 times in 7, the game's flag read run every
+    # frame of it).
+    "team-solo-load": {
+        "about": "the host starts a team alone and the guest plays alone: the guest's load gets "
+                 "into its world",
+        "roles": {
+            "host": ["team-create", "team-start", START, "wait 20", "snapshot"],
+            "guest": ["team-alone", START, "wait 10", "snapshot"],
+        },
+        "timeout": 200,
+    },
+    "team-menu-leave": {
+        "about": "in game, the guest leaves the team from the menu: it leaves the session where it "
+                 "stands and plays alone, the host plays on",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-solo 120", "wait 10",
+                     "snapshot", f"expect-map {CENTRAL_YHARNAM}"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10", "menu-leave 60",
+                      "wait-solo 60", "wait 15", "snapshot", f"expect-map {CENTRAL_YHARNAM}"],
+        },
+        "expect": {
+            "guest": [r"Co-op team menu: out of the team \(team:\w+\): left its session"],
+        },
+        "allow": [r"left the session outside a trip"],
+        "timeout": 300,
+    },
     # Kaniel 2026-10-16: the team menu from the Insert menu too (its "Co-op Team" row, the last
     # but Quit): the team screen opens over the game and its Close goes back to the game. The
     # team's loading screen lingers a while after the join (the menu does not open under it).
