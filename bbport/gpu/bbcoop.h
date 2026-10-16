@@ -122,7 +122,8 @@ void bbcoop_lobby_request(int action, const char *id);
 int bbcoop_team_screen(void);
 /* Kaniel 2026-10-16: the team menu in game. The System menu's "Co-op Team" page opens the team
  * screen over the game (1) and its buttons close it (0); a moment after it closed the pad presses
- * Circle for the game (1 while held) so the page under it closes too. "Join the hunt": this save
+ * Circle for the game (1 while held) so the page under it closes too. The port's Insert menu opens
+ * it with 2: no page of the game under it, no Circle. "Join the hunt": this save
  * into its team's world where it stands (`team`: an invitation accepted first, or "" in a team). */
 void bbcoop_team_menu(int open);
 int bbcoop_team_menu_back(void);

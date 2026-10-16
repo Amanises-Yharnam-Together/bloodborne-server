@@ -129,9 +129,9 @@ u64 team_sessions_opened = 0;
 // Kaniel 2026-10-16: the team screen opened over the game from its System menu (TeamMenu), and
 // when it closed: the game's own page under it gets a Circle a moment later (TeamMenuBackPressed).
 std::atomic<bool> team_menu_open{false};
-std::atomic<s64> team_menu_closed_ms{0};
-constexpr s64 TeamMenuBackAfterMs = 100;
-constexpr s64 TeamMenuBackHoldMs = 150;
+bool team_menu_from_page = false; // team_back_mutex
+std::mutex team_back_mutex;
+TeamMenuBack team_menu_back;
 // What the summon packet carries before the join data (0x01873754): GameMan +0x16F0 and +0x16F4
 // on the guest, the same for every co-operator (rig 2026-10-14: 0xFFFFFFFF and 7).
 constexpr u32 TeamSessionKind = 0xFFFFFFFFu;
@@ -1143,17 +1143,26 @@ bool TeamScreenUp() {
     return team_gate.Holding() && !lobby_playing;
 }
 
-void TeamMenu(bool open) {
+void TeamMenu(bool open, bool from_page) {
     if (!team_switch || team_menu_open.exchange(open) == open) {
         return;
     }
-    if (!open) {
-        // The game's own page under the screen (bbport_game_menu.cpp) closes with it: Circle,
-        // pressed for the game once the player's buttons are up (TeamMenuBackPressed).
-        team_menu_closed_ms.store(SteadyMilliseconds(), std::memory_order_relaxed);
+    bool page = from_page;
+    {
+        std::scoped_lock lock{team_back_mutex};
+        if (open) {
+            team_menu_from_page = from_page;
+        } else {
+            // The game's own page under the screen (bbport_game_menu.cpp) closes with it: Circle,
+            // pressed for the game once the player's buttons are up (TeamMenuBackPressed). The
+            // Insert menu's has no page of the game under it.
+            page = team_menu_from_page;
+            team_menu_back.Closed(SteadyMilliseconds(), page);
+        }
     }
-    LOG_INFO(Debug, "Co-op team menu: the team screen is {} the game's System menu",
-             open ? "open from" : "closed back to");
+    LOG_INFO(Debug, "Co-op team menu: the team screen is {} the {}",
+             open ? "open from" : "closed back to",
+             page ? "game's System menu" : "port's Insert menu");
 }
 
 bool TeamMenuOpen() {
@@ -1161,10 +1170,8 @@ bool TeamMenuOpen() {
 }
 
 bool TeamMenuBackPressed() {
-    const s64 closed = team_menu_closed_ms.load(std::memory_order_relaxed);
-    const s64 since = SteadyMilliseconds() - closed;
-    return closed != 0 && since >= TeamMenuBackAfterMs &&
-           since < TeamMenuBackAfterMs + TeamMenuBackHoldMs;
+    std::scoped_lock lock{team_back_mutex};
+    return team_menu_back.Pressed(SteadyMilliseconds());
 }
 
 bool TeamPlaying(bool* in_hunt) {
@@ -1268,7 +1275,7 @@ void AdoptTeamInPlay(const bbcoop::TeamStart& start) {
     LOG_INFO(Debug, "Co-op team menu: this save joins team {} where it stands, as its {}",
              start.team(), host ? "host" : "guest");
     // The team's loading screen takes over from the menu (back in the game when it opens).
-    TeamMenu(false);
+    TeamMenu(false, false);
 }
 
 void TickTeamPlay(u64 manager) {

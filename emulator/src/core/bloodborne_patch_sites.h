@@ -98,6 +98,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"summon slot hold", false},
     {"server owns leaves", true},
     {"floor guard", false},
+    {"flag block guard", false},
 });
 
 inline constexpr auto CoopSites = std::to_array<CoopSite>({
@@ -507,6 +508,19 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // that is gone is cleared first.
     {"character floor read", "floor guard", CoopSiteKind::Hook, 0x018CB14F,
      "48 8B B3 88 02 00 00 48 85 F6"},
+
+    // The event flag manager's read of a value over two flag blocks (0x013CFD80), where it reads
+    // each block (InstallFlagBlockGuard): a missing block reads as zeros (rig 2026-10-16: a game
+    // joining a session for the second time crashed at 0x013CFFBA).
+    {"flag value first block", "flag block guard", CoopSiteKind::Hook, 0x013CFF79,
+     "41 FF C9 44 89 C9 C1 E9 03"},
+    {"flag value second block", "flag block guard", CoopSiteKind::Hook, 0x013CFFEC,
+     "45 29 D0 41 8D 58 FF 89 D8"},
 });
+
+// The flag block guard's choice: a block that is there, else the zeros it reads instead.
+constexpr u64 GuardedFlagBlock(u64 block, u64 zeros) {
+    return block != 0 ? block : zeros;
+}
 
 } // namespace Core::Bloodborne

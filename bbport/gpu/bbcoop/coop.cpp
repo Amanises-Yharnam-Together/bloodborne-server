@@ -338,7 +338,7 @@ extern "C" int bbcoop_cutscene_skip(void) {
 }
 
 extern "C" void bbcoop_team_menu(int open) {
-    Core::Bloodborne::Coop::TeamMenu(open != 0);
+    Core::Bloodborne::Coop::TeamMenu(open != 0, open == 1);
 }
 
 extern "C" int bbcoop_team_menu_back(void) {

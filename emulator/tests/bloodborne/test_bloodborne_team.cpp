@@ -636,3 +636,16 @@ TEST(TeamPlay, JoiningTheHuntFromTheMenuReadiesThisSave) {
     ASSERT_EQ(requests.size(), 2u);
     EXPECT_EQ(requests[1].action(), bbcoop::TeamRequest::START);
 }
+
+// The team menu closes: opened from the game's System page, the pad presses Circle a moment later
+// so that page closes too; opened from the port's Insert menu (no page of the game under it), none.
+TEST(TeamMenuBack, CircleOnlyForTheGamesPage) {
+    TeamMenuBack back;
+    EXPECT_FALSE(back.Pressed(1000));
+    back.Closed(1000, true);
+    EXPECT_FALSE(back.Pressed(1000 + TeamMenuBack::AfterMs - 1));
+    EXPECT_TRUE(back.Pressed(1000 + TeamMenuBack::AfterMs));
+    EXPECT_FALSE(back.Pressed(1000 + TeamMenuBack::AfterMs + TeamMenuBack::HoldMs));
+    back.Closed(5000, false);
+    EXPECT_FALSE(back.Pressed(5000 + TeamMenuBack::AfterMs));
+}

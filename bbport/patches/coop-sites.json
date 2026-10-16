@@ -51,7 +51,8 @@
     {"name": "sign timers", "required": true},
     {"name": "summon slot hold", "required": false},
     {"name": "server owns leaves", "required": true},
-    {"name": "floor guard", "required": false}
+    {"name": "floor guard", "required": false},
+    {"name": "flag block guard", "required": false}
   ],
   "sites": [
     {"name": "Beckoning area comparison", "feature": "seamless core", "kind": "patch", "offset": "0x0157F8C8", "original": "0F 87 90 00 00 00", "patched": "0F 8F 90 00 00 00", "accepted": []},
@@ -228,6 +229,8 @@
     {"name": "session idle timeout", "feature": "server owns leaves", "kind": "patch", "offset": "0x01789C5D", "original": "76 78", "patched": "EB 78", "accepted": []},
     {"name": "session resend overflow", "feature": "server owns leaves", "kind": "patch", "offset": "0x017897B2", "original": "0F 82 B8 00 00 00", "patched": "E9 B9 00 00 00 90", "accepted": []},
     {"name": "room timeout", "feature": "server owns leaves", "kind": "patch", "offset": "0x01789F41", "original": "76 79", "patched": "EB 79", "accepted": []},
-    {"name": "character floor read", "feature": "floor guard", "kind": "hook", "offset": "0x018CB14F", "original": "48 8B B3 88 02 00 00 48 85 F6", "patched": "", "accepted": []}
+    {"name": "character floor read", "feature": "floor guard", "kind": "hook", "offset": "0x018CB14F", "original": "48 8B B3 88 02 00 00 48 85 F6", "patched": "", "accepted": []},
+    {"name": "flag value first block", "feature": "flag block guard", "kind": "hook", "offset": "0x013CFF79", "original": "41 FF C9 44 89 C9 C1 E9 03", "patched": "", "accepted": []},
+    {"name": "flag value second block", "feature": "flag block guard", "kind": "hook", "offset": "0x013CFFEC", "original": "45 29 D0 41 8D 58 FF 89 D8", "patched": "", "accepted": []}
   ]
 }
