@@ -1704,6 +1704,83 @@ int GamePacketsGoByMapAndOwner() {
   return 0;
 }
 
+// Kaniel 2026-10-16 (the team menu in game): the leader removes a member while
+// both play. The server takes it out of the team's world at once: it hears
+// nothing more of it, the others' boards forget it, and no game packet goes
+// between it and the team (its game leaves the session; the server's word
+// stands even if it did not). Invited again, its hello brings it back in.
+int ARemovedMemberIsOutOfTheTeamsWorld() {
+  Service service{{}};
+  Game a{1000, "aa", 11};
+  Game b{1001, "bb", 12};
+  const std::vector<Game *> games{&a, &b};
+  qint64 now = 1'000'000;
+  a.LobbyHello(false, now);
+  b.LobbyHello(false, now);
+  Pump(service, games, now);
+  a.Team(bbcoop::TeamRequest::CREATE, now);
+  Pump(service, games, now);
+  const std::string team = a.lobby.team().id();
+  a.Team(bbcoop::TeamRequest::INVITE, now, "bb");
+  Pump(service, games, now);
+  b.Team(bbcoop::TeamRequest::ACCEPT, now, {}, team);
+  Pump(service, games, now);
+  a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1);
+  b.Team(bbcoop::TeamRequest::READY, now, {}, {}, 2);
+  Pump(service, games, now);
+  a.Team(bbcoop::TeamRequest::START, now);
+  Pump(service, games, now);
+  a.LobbyHello(true, now);
+  b.LobbyHello(true, now);
+  const QByteArray party = QByteArray::fromStdString(a.starts.at(0).party());
+  a.Hello(now, party);
+  b.claims_host = false;
+  b.Hello(now, party);
+  constexpr u32 Yharnam = 0x18010000;
+  a.Map(Yharnam, now);
+  b.Map(Yharnam, now);
+  Pump(service, games, now);
+  const auto routes = [&](const Game &from, const Game &to, u32 channel) {
+    return service.RoutesPacket(from.endpoint, to.endpoint, channel);
+  };
+  CHECK(routes(a, b, 0x06) && routes(b, a, 0x10));
+  CHECK(a.map_board.members_size() == 2);
+
+  a.Team(bbcoop::TeamRequest::REMOVE, now + 10, "bb");
+  Pump(service, games, now + 10);
+  CHECK(!b.lobby.has_team());
+  CHECK(service.PartyOf(b.endpoint).isEmpty());
+  CHECK(a.map_board.members_size() == 1 &&
+        a.map_board.members(0).member() == "aa");
+  for (const u32 channel : {0x06u, 0x10u, 0x07u}) {
+    CHECK(!routes(a, b, channel) && !routes(b, a, channel));
+  }
+  // What its game still sends of the team's world counts for nothing.
+  b.Map(0x18000000, now + 20);
+  Pump(service, games, now + 20);
+  CHECK(a.map_board.members_size() == 1);
+
+  // Invited again: in the team, its hello brings it back to the team's world.
+  a.Team(bbcoop::TeamRequest::INVITE, now + 30, "bb");
+  Pump(service, games, now + 30);
+  b.Team(bbcoop::TeamRequest::ACCEPT, now + 30, {}, team);
+  b.Team(bbcoop::TeamRequest::READY, now + 30, {}, {}, 2);
+  Pump(service, games, now + 30);
+  CHECK(b.starts.size() == 2 && b.starts.back().party() == party.toStdString());
+  b.Hello(now + 40, party);
+  b.Map(Yharnam, now + 40);
+  Pump(service, games, now + 40);
+  CHECK(routes(a, b, 0x06) && routes(b, a, 0x06));
+  CHECK(a.map_board.members_size() == 2);
+
+  // A member that leaves by itself is out the same way.
+  b.Team(bbcoop::TeamRequest::LEAVE, now + 50);
+  Pump(service, games, now + 50);
+  CHECK(service.PartyOf(b.endpoint).isEmpty());
+  CHECK(!routes(a, b, 0x06) && !routes(b, a, 0x06));
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
@@ -1746,6 +1823,8 @@ int main() {
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"GamePacketsGoByMapAndOwner", GamePacketsGoByMapAndOwner},
+      {"ARemovedMemberIsOutOfTheTeamsWorld",
+       ARemovedMemberIsOutOfTheTeamsWorld},
       {"OnlyTheOwnersKillsAndHpCount", OnlyTheOwnersKillsAndHpCount},
       {"ATeamFormsAndStartsThroughTheService",
        ATeamFormsAndStartsThroughTheService},

@@ -4,6 +4,7 @@
 // and the store.
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "coop/team_lobby.h"
 
@@ -139,6 +140,31 @@ int ReadyAndStart() {
   return 0;
 }
 
+// Kaniel 2026-10-16 (the team menu in game): a team just started stays started
+// while its games load (none plays yet; another player's hello comes then), so
+// a player invited later joins the hunt from its own game with its Ready.
+int AStartedTeamStaysStartedWhileItsGamesLoad() {
+  TeamLobby lobby = NewLobby();
+  lobby.Arrive("a", "Kaniel", false);
+  lobby.Arrive("b", "Ada", false);
+  lobby.Request("a", Request(Action::CREATE));
+  lobby.Request("a", Request(Action::READY, {}, {}, 0));
+  lobby.Request("a", Request(Action::START));
+  lobby.Arrive("b", "Ada", true); // b plays alone; a's game still loads
+  CHECK(lobby.TeamOf("a")->started());
+  lobby.Arrive("a", "Kaniel", true);
+  lobby.Request("a", Request(Action::INVITE, "b"));
+  lobby.Request("b", Request(Action::ACCEPT, {}, lobby.TeamOf("a")->id()));
+  const TeamLobby::Outcome in =
+      lobby.Request("b", Request(Action::READY, {}, {}, 1));
+  CHECK(in.starts.size() == 1 && in.starts[0] == "b");
+  // Once it played, nobody playing any more ends it.
+  lobby.Arrive("a", "Kaniel", false);
+  lobby.Arrive("b", "Ada", false);
+  CHECK(!lobby.TeamOf("a")->started());
+  return 0;
+}
+
 int StartedTeamKeepsGoingWhileOnePlays() {
   TeamLobby lobby = NewLobby();
   lobby.Arrive("a", "Kaniel", false);
@@ -271,6 +297,35 @@ int GuestsKeepTheirPlayerSlots() {
   return 0;
 }
 
+// Kaniel 2026-10-16 (the team menu in game): a member out of a team, removed
+// by the leader or gone itself, is named with the team it left, so the server
+// takes it out of that team's world too.
+int AMemberOutOfATeamIsNamed() {
+  TeamLobby lobby = NewLobby();
+  for (const char *m : {"a", "b", "c"}) {
+    lobby.Arrive(m, m, true);
+  }
+  lobby.Request("a", Request(Action::CREATE));
+  const std::string team = lobby.TeamOf("a")->id();
+  for (const char *m : {"b", "c"}) {
+    lobby.Request("a", Request(Action::INVITE, m));
+    lobby.Request(m, Request(Action::ACCEPT, {}, team));
+  }
+  using Departed = std::vector<TeamLobby::Departure>;
+  // A refused removal names nobody.
+  CHECK(lobby.Request("b", Request(Action::REMOVE, "c")).departed.empty());
+  const TeamLobby::Outcome removed =
+      lobby.Request("a", Request(Action::REMOVE, "c"));
+  CHECK((removed.departed == Departed{{"c", team}}));
+  const TeamLobby::Outcome left = lobby.Request("b", Request(Action::LEAVE));
+  CHECK((left.departed == Departed{{"b", team}}));
+  // The last one out: its team is gone, and it is named all the same.
+  CHECK((lobby.Request("a", Request(Action::LEAVE)).departed ==
+         Departed{{"a", team}}));
+  CHECK(lobby.Request("a", Request(Action::CREATE)).departed.empty());
+  return 0;
+}
+
 } // namespace
 
 // Phase 11 (Kaniel 2026-10-15): players are seen by their character's name
@@ -345,10 +400,12 @@ int main() {
   failed |= TeamHoldsFour();
   failed |= ReadyAndStart();
   failed |= StartedTeamKeepsGoingWhileOnePlays();
+  failed |= AStartedTeamStaysStartedWhileItsGamesLoad();
   failed |= LeaveAndRemove();
   failed |= OfflineMemberLeavesAfterGrace();
   failed |= StoreKeepsTeams();
   failed |= GuestsKeepTheirPlayerSlots();
+  failed |= AMemberOutOfATeamIsNamed();
   if (failed == 0) {
     std::cout << "team lobby: all checks passed\n";
   }

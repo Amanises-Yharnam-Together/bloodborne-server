@@ -113,8 +113,11 @@ void TeamLobby::Settle() {
         return StateOf(member) == bbcoop::LobbyPlayer::PLAYING;
     };
     for (bbcoop::Team& team : teams) {
-        if (team.started() && !AnyPlays(team, plays)) {
+        if (team.started() && AnyPlays(team, plays)) {
+            played.insert(team.id());
+        } else if (team.started() && played.contains(team.id())) {
             // Back at the title, every one: the next session needs a Start again.
+            played.erase(team.id());
             team.set_started(false);
             for (bbcoop::TeamMember& m : *team.mutable_members()) {
                 m.set_ready(false);
@@ -280,21 +283,25 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
         GiveSigns(*team);
         return {.changed = true};
     }
-    case Action::LEAVE:
+    case Action::LEAVE: {
         if (!mine) {
             return refuse("you are not in a team");
         }
+        Departure out{member, mine->id()};
         RemoveFrom(*mine, member);
-        return {.changed = true};
-    case Action::REMOVE:
+        return {.changed = true, .departed = {std::move(out)}};
+    }
+    case Action::REMOVE: {
         if (!mine || mine->leader() != member) {
             return refuse("only the team's leader removes members");
         }
         if (request.member() == member || !MemberIn(*mine, request.member())) {
             return refuse("not a member you can remove");
         }
+        Departure out{request.member(), mine->id()};
         RemoveFrom(*mine, request.member());
-        return {.changed = true};
+        return {.changed = true, .departed = {std::move(out)}};
+    }
     case Action::READY:
     case Action::UNREADY: {
         if (!mine) {
@@ -328,6 +335,9 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
                     return refuse("not every hunter is ready");
                 }
             }
+        }
+        if (!mine->started()) {
+            played.erase(mine->id()); // its games load: none plays yet
         }
         mine->set_started(true);
         Outcome outcome{.changed = true};

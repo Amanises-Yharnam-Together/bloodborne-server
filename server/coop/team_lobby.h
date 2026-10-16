@@ -10,6 +10,7 @@
 
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -30,10 +31,18 @@ public:
     // `make_id` names a new team (random on the server, counted in the tests).
     explicit TeamLobby(std::function<std::string()> make_id);
 
+    // Kaniel 2026-10-16 (the team menu in game): a member out of a team, removed by its leader or
+    // gone itself; the server takes it out of that team's world too.
+    struct Departure {
+        std::string member;
+        std::string team;
+        bool operator==(const Departure&) const = default;
+    };
     struct Outcome {
         bool changed = false;            // send everyone their state again
         std::string notice;              // why the request was refused (to the requester)
         std::vector<std::string> starts; // members to send a TeamStart now
+        std::vector<Departure> departed; // members out of their team
     };
 
     // A player signed in (or said it now plays / is back at the title).
@@ -82,6 +91,9 @@ private:
     std::map<std::string, std::vector<bbcoop::TeamInvite>> invites; // by invited member
     std::map<std::string, std::string> names; // every member's last known name
     std::map<std::string, s64> gone_since;    // team members not signed in, since when
+    // Kaniel 2026-10-16: the started teams one of whose games played since the Start (a team
+    // whose games still load is not over: a member invited in game joins it with its Ready).
+    std::set<std::string> played;
 };
 
 } // namespace BloodborneCoop

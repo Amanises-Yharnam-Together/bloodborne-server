@@ -432,6 +432,7 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     const bool same_run =
         !member.name.empty() && member.name == hello.member() && member.run == hello.run();
     member.party = PartyFolderName(party);
+    member.cut_from.clear();
     const bool team = party.startsWith("team:");
     member.name = hello.member();
     member.run = hello.run();
@@ -1123,6 +1124,11 @@ bool Service::RoutesPacket(const ServerLink::Endpoint& from, const ServerLink::E
                    BloodborneCoop::ChannelPolicy::Pass &&
                channel < BloodborneCoop::NativeChannelCount;
     }
+    // Kaniel 2026-10-16: a member out of its team reaches none of the team's games, nor they it.
+    if ((!sender->second.cut_from.isEmpty() && sender->second.cut_from == target->second.party) ||
+        (!target->second.cut_from.isEmpty() && target->second.cut_from == sender->second.party)) {
+        return false;
+    }
     const auto world = worlds.find(sender->second.party);
     const auto part = [&](const Member& member) {
         if (member.map == 0 || world == worlds.end()) {
@@ -1264,7 +1270,50 @@ void Service::OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, 
     if (outcome.changed) {
         StoreTeams(result);
     }
+    for (const TeamLobby::Departure& out : outcome.departed) {
+        TakeOutOfTeam(out, now_ms, result);
+    }
     Settle(outcome, now_ms, result);
+}
+
+void Service::TakeOutOfTeam(const TeamLobby::Departure& out, qint64 now_ms, Result& result) {
+    const QString party = PartyFolderName(QByteArray::fromStdString(TeamLobby::PartyOf(out.team)));
+    const auto world = worlds.find(party);
+    if (world == worlds.end()) {
+        return; // nobody played the team's world
+    }
+    for (auto& [key, member] : members) {
+        if (member.lobby != out.member || member.party != party) {
+            continue;
+        }
+        result.log.append(
+            QStringLiteral("party world %1: %2 is out of team %3: out of its world")
+                .arg(party, QString::fromStdString(member.name), QString::fromStdString(out.team)));
+        member.party.clear();
+        member.cut_from = party;
+        member.map = 0;
+        if (world->second.session && world->second.session->host() == member.name) {
+            CloseSession(world->second, now_ms, result);
+        }
+        ForgetMember(world->second, member.name, now_ms, result);
+    }
+}
+
+void Service::ForgetMember(PartyWorld& world, const std::string& name, qint64 now_ms,
+                           Result& result) {
+    const std::vector<WorldLogEntry> entries = world.host.Drop(name);
+    world.proposed.erase(name);
+    world.loads.erase(name);
+    SendBoards(world, world.boards.Forget(name), now_ms);
+    if (world.owners.Forget(name)) {
+        SendOwners(world, now_ms, result);
+    }
+    bbcoop::JournalRecord record;
+    record.mutable_drop()->set_member(name);
+    Journal(world, std::move(record), now_ms);
+    if (!entries.empty()) {
+        SendEntries(world, entries, now_ms);
+    }
 }
 
 void Service::Settle(const TeamLobby::Outcome& outcome, qint64 now_ms, Result& result) {

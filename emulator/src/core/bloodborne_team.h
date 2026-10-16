@@ -72,6 +72,14 @@ public:
     bool Holding() const {
         return holding_since.has_value();
     }
+    // The team's Start as it came (a save playing alone takes it in game: TeamPlayStepOf), and
+    // forgotten once the save is out of that team.
+    const std::optional<bbcoop::TeamStart>& Start() const {
+        return started;
+    }
+    void DropStart() {
+        started.reset();
+    }
 
 private:
     std::optional<bbcoop::LobbyState> lobby;
@@ -80,6 +88,23 @@ private:
     u32 slot = 0;
     bool alone = false;
 };
+
+// Kaniel 2026-10-16: the team menu in game (the team screen over the game, from the System menu:
+// invite, remove a member, leave, join the hunt). What a game playing a save does about its team
+// each frame: `party` is the team's party it plays in ("" alone), `start` the team's last Start.
+//  - Leave: the lobby says it is out of that team (its leader removed it, or it left): it leaves
+//    the team's session where it stands and plays on alone, in its own world (no reload).
+//  - Adopt: playing alone, the Start of the team it is ready in came (it joined the hunt from the
+//    menu): it takes the team's party, and joins the session in place (TeamJoin).
+enum class TeamPlayStep { None, Adopt, Leave };
+TeamPlayStep TeamPlayStepOf(const bbcoop::LobbyState* lobby, std::string_view party,
+                            const bbcoop::TeamStart* start, const std::string& me = {});
+// The menu's "Join the hunt" in game: the invitation to `invite_team` accepted first (when in no
+// team), then this save ready with its slot and character; the leader's starts the team too.
+std::vector<bbcoop::TeamRequest> TeamJoinHuntRequests(const bbcoop::LobbyState& lobby,
+                                                      const std::string& me,
+                                                      const std::string& invite_team, u32 slot,
+                                                      const std::string& character);
 
 // Phase 5b: a team's world (bbcoop::TeamWorld). The world's part of the event flags (FlagOwner
 // Host and Shared, docs/FLAGS.md; a character's own flags are never in it): the ones on, in the

@@ -27,6 +27,9 @@ void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, u
 /* A cutscene under the team's loading screen: Options pressed for its skip. */
 static int skip;
 int bbcoop_cutscene_skip(void) { return skip; }
+/* The team menu in game just closed: Circle for the game's page under it. */
+static int menu_back;
+int bbcoop_team_menu_back(void) { return menu_back; }
 /* The mouse is tested apart (test_mouse_camera.c); here the window has none. */
 void bbgpu_mouse_enable(int enabled) { (void)enabled; }
 void bbgpu_mouse_set_direct(void (*turn)(float, float), void (*drop)(void)) { (void)turn; (void)drop; }
@@ -92,6 +95,11 @@ int main(void) {
     capture=0;
     autoplay=0; autoplay_sticks[0]=128;
     inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    /* Kaniel 2026-10-16: the team screen over the game closed: Circle closes the game's page too. */
+    menu_back=1;
+    assert(pad_read_state(1,&data)==0 && data.buttons==BTN_CIRCLE);
+    menu_back=0;
     assert(pad_read_state(1,&data)==0 && data.buttons==0);
     /* Party death: what the game reads, autoplay's buttons and sticks too, goes through it. */
     downed=1; autoplay=1; autoplay_buttons=BTN_R1; autoplay_sticks[0]=200; autoplay_sticks[2]=60;

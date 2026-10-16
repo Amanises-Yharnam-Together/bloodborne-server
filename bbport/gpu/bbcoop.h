@@ -107,6 +107,9 @@ typedef struct bbcoop_lobby {
     bbcoop_lobby_entry invites[BBCOOP_LOBBY_INVITES];    /* name: who invited, id: the team */
     char notice[96];                                      /* the server's last refusal */
     char me[40];                                          /* this player's id */
+    /* Kaniel 2026-10-16: the screen opened from the game's System menu (not the title's load),
+     * a save playing, and playing in the team's world. */
+    int menu, playing, in_hunt;
 } bbcoop_lobby;
 /* Fills `lobby`; 0 when the team lobby is off. */
 int bbcoop_lobby_view(bbcoop_lobby *lobby);
@@ -117,6 +120,13 @@ enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
 void bbcoop_lobby_request(int action, const char *id);
 /* The title holds a save's load for the team: the team screen is up (bbport_overlay.cpp). */
 int bbcoop_team_screen(void);
+/* Kaniel 2026-10-16: the team menu in game. The System menu's "Co-op Team" page opens the team
+ * screen over the game (1) and its buttons close it (0); a moment after it closed the pad presses
+ * Circle for the game (1 while held) so the page under it closes too. "Join the hunt": this save
+ * into its team's world where it stands (`team`: an invitation accepted first, or "" in a team). */
+void bbcoop_team_menu(int open);
+int bbcoop_team_menu_back(void);
+void bbcoop_team_join_hunt(const char *team);
 /* Kaniel 2026-10-14: the team loading screen (League of Legends): each hunter's stage and bar,
  * up from the team's Start until every member is in the team's session. 0 when it is not up. */
 enum { BBCOOP_LOAD_WAITING, BBCOOP_LOAD_LOADING, BBCOOP_LOAD_JOINING, BBCOOP_LOAD_READY };
