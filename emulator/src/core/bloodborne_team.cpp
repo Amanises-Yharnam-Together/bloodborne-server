@@ -130,10 +130,15 @@ TeamPlayStep TeamPlayStepOf(const bbcoop::LobbyState* lobby, std::string_view pa
         return TeamPlayStep::None; // no word from the lobby yet
     }
     const std::string mine = lobby->has_team() ? "team:" + lobby->team().id() : std::string{};
+    // Any of the team's worlds ("team:<team>" or "team:<team>/<world>").
+    const auto in_mine = [&](std::string_view key) {
+        return !mine.empty() && key.starts_with(mine) &&
+               (key.size() == mine.size() || key[mine.size()] == '/');
+    };
     if (!party.empty()) {
-        return party == mine ? TeamPlayStep::None : TeamPlayStep::Leave;
+        return in_mine(party) ? TeamPlayStep::None : TeamPlayStep::Leave;
     }
-    if (start == nullptr || start->party() != mine) {
+    if (start == nullptr || !in_mine(start->party())) {
         return TeamPlayStep::None;
     }
     const auto& members = lobby->team().members();
@@ -145,7 +150,8 @@ TeamPlayStep TeamPlayStepOf(const bbcoop::LobbyState* lobby, std::string_view pa
 std::vector<bbcoop::TeamRequest> TeamJoinHuntRequests(const bbcoop::LobbyState& lobby,
                                                       const std::string& me,
                                                       const std::string& invite_team, u32 slot,
-                                                      const std::string& character) {
+                                                      const std::string& character,
+                                                      std::string_view world) {
     std::vector<bbcoop::TeamRequest> requests;
     if (!lobby.has_team()) {
         if (invite_team.empty()) {
@@ -160,9 +166,39 @@ std::vector<bbcoop::TeamRequest> TeamJoinHuntRequests(const bbcoop::LobbyState& 
     ready.set_slot(slot);
     ready.set_character(character);
     if (lobby.has_team() && lobby.team().leader() == me) {
+        const std::string pick = DefaultTeamWorld(lobby.team(), world, false);
+        if (!lobby.team().started() && lobby.team().world() != pick) {
+            bbcoop::TeamRequest& choose = requests.emplace_back();
+            choose.set_action(bbcoop::TeamRequest::WORLD);
+            choose.set_world(pick);
+        }
         requests.emplace_back().set_action(bbcoop::TeamRequest::START);
     }
     return requests;
+}
+
+std::string TeamPartyOf(std::string_view team, std::string_view world) {
+    std::string party = "team:" + std::string{team};
+    if (world != "0") {
+        party += "/" + std::string{world};
+    }
+    return party;
+}
+
+std::string DefaultTeamWorld(const bbcoop::Team& team, std::string_view hint, bool fresh) {
+    if (fresh || hint.empty()) {
+        return {};
+    }
+    const bool kept = std::ranges::any_of(
+        team.worlds(), [&](const bbcoop::TeamWorldInfo& w) { return w.id() == hint; });
+    return kept ? std::string{hint} : std::string{};
+}
+
+std::string TeamWorldName(const bbcoop::TeamWorldInfo& world) {
+    if (!world.character().empty()) {
+        return world.character() + "'s world";
+    }
+    return world.id() == "0" ? "The team's earlier world" : "A world";
 }
 
 bool IsWorldFlag(s32 flag) {

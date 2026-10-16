@@ -637,6 +637,69 @@ TEST(TeamPlay, JoiningTheHuntFromTheMenuReadiesThisSave) {
     EXPECT_EQ(requests[1].action(), bbcoop::TeamRequest::START);
 }
 
+// Kaniel 2026-10-16: a new character got the team's old world. The team's worlds are kept apart
+// and the leader picks one; the screen starts on this save's own (the world it last played in the
+// team), a new one for a new character or a save that never played in it.
+namespace {
+bbcoop::Team TeamWithWorlds(std::initializer_list<const char*> ids) {
+    bbcoop::Team team;
+    team.set_id("t1");
+    for (const char* id : ids) {
+        team.add_worlds()->set_id(id);
+    }
+    return team;
+}
+} // namespace
+
+TEST(TeamWorlds, TheScreenStartsOnThisSavesOwnWorld) {
+    const bbcoop::Team team = TeamWithWorlds({"w2", "w1"});
+    EXPECT_EQ(DefaultTeamWorld(team, "w1", false), "w1");
+    // A new character (the game starts it at the beginning): a new world, whatever its slot
+    // played before.
+    EXPECT_EQ(DefaultTeamWorld(team, "w1", true), "");
+    // A save that never played in this team, or whose world the team no longer keeps.
+    EXPECT_EQ(DefaultTeamWorld(team, "", false), "");
+    EXPECT_EQ(DefaultTeamWorld(team, "w9", false), "");
+}
+
+TEST(TeamWorlds, AWorldsPartyIsItsOwn) {
+    EXPECT_EQ(TeamPartyOf("t1", "w1"), "team:t1/w1");
+    EXPECT_EQ(TeamPartyOf("t1", "0"), "team:t1"); // the world a team had before
+    // Playing any of its team's worlds is playing in the team.
+    const bbcoop::LobbyState in = WithMember(InTeam("leader"), "me", true);
+    EXPECT_EQ(TeamPlayStepOf(&in, "team:t1/w1", nullptr), TeamPlayStep::None);
+    EXPECT_EQ(TeamPlayStepOf(&in, "team:t10/w1", nullptr), TeamPlayStep::Leave);
+    bbcoop::TeamStart start = StartOf("leader", 2);
+    start.set_party("team:t1/w1");
+    EXPECT_EQ(TeamPlayStepOf(&in, "", &start, "me"), TeamPlayStep::Adopt);
+}
+
+TEST(TeamWorlds, ALeaderJoiningTheHuntPicksItsSavesWorld) {
+    bbcoop::LobbyState lobby = InTeam("me");
+    *lobby.mutable_team()->mutable_worlds() = TeamWithWorlds({"w2", "w1"}).worlds();
+    lobby.mutable_team()->set_world("w2");
+    auto requests = TeamJoinHuntRequests(lobby, "me", "", 1, "", "w1");
+    ASSERT_EQ(requests.size(), 3u);
+    EXPECT_EQ(requests[0].action(), bbcoop::TeamRequest::READY);
+    EXPECT_EQ(requests[1].action(), bbcoop::TeamRequest::WORLD);
+    EXPECT_EQ(requests[1].world(), "w1");
+    EXPECT_EQ(requests[2].action(), bbcoop::TeamRequest::START);
+    // The world picked already: no pick.
+    requests = TeamJoinHuntRequests(lobby, "me", "", 1, "", "w2");
+    EXPECT_EQ(requests.size(), 2u);
+}
+
+TEST(TeamWorlds, AWorldsNameSaysWhoseItIs) {
+    bbcoop::TeamWorldInfo world;
+    world.set_id("w1");
+    world.set_character("Kaniel");
+    EXPECT_EQ(TeamWorldName(world), "Kaniel's world");
+    world.set_character("");
+    EXPECT_EQ(TeamWorldName(world), "A world");
+    world.set_id("0");
+    EXPECT_EQ(TeamWorldName(world), "The team's earlier world");
+}
+
 // The team menu closes: opened from the game's System page, the pad presses Circle a moment later
 // so that page closes too; opened from the port's Insert menu (no page of the game under it), none.
 TEST(TeamMenuBack, CircleOnlyForTheGamesPage) {

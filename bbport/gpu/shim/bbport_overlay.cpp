@@ -2290,6 +2290,36 @@ void Screen() {
     }
     ImGui::PopFont();
 
+    // Kaniel 2026-10-16: the team's world, kept apart on the server for each world it played: the
+    // leader picks it (Cross goes to the next one, then a new world), the others see it.
+    if (lobby.in_team && !lobby.menu) {
+        ImGui::PushFont(MenuArt::Font(), 20.0f);
+        std::string world = T("A new world", "Новый мир");
+        if (lobby.world >= 0 && lobby.world < lobby.world_count) {
+            const bbcoop_lobby_world& w = lobby.worlds[lobby.world];
+            world = w.name;
+            if (w.when[0]) {
+                world += std::string("  ·  ") + w.when;
+            }
+        }
+        const std::string text = std::string(T("World: ", "Мир: ")) + world;
+        const ImVec2 row_size(S(560.0f), S(40.0f));
+        const ImVec2 row_at(win.x + (size.x - row_size.x) * 0.5f, win.y + size.y - S(150.0f) - S(52.0f));
+        const bool can_pick = lobby.leader && !lobby.started;
+        if (can_pick) {
+            if (Button(draw, "world", text.c_str(), row_at, row_size)) {
+                // The next world, then a new one, then the first again.
+                const int next = lobby.world + 1 >= lobby.world_count ? -1 : lobby.world + 1;
+                const int wrapped = lobby.world < 0 ? (lobby.world_count > 0 ? 0 : -1) : next;
+                bbcoop_lobby_request(BBCOOP_TEAM_WORLD, wrapped < 0 ? "" : lobby.worlds[wrapped].id);
+            }
+        } else {
+            ts = ImGui::CalcTextSize(text.c_str());
+            draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, row_at.y + S(8.0f)), Gold(0.85f), text.c_str());
+        }
+        ImGui::PopFont();
+    }
+
     // The buttons: the team, ready or start, alone.
     bool me_ready = false;
     for (int i = 0; i < lobby.member_count; ++i) {

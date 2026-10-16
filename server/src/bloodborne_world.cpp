@@ -6,6 +6,7 @@
 
 #include <QCryptographicHash>
 #include <QDate>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -439,6 +440,13 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     member.host = hello.host();
     member.enemy_owner = hello.enemy_owner();
     PartyWorld& world = WorldFor(member.party, now_ms, result);
+    if (team && world.team_id.empty()) {
+        const QByteArray key = party.mid(5);
+        const int slash = key.indexOf('/');
+        world.team_id = (slash < 0 ? key : key.left(slash)).toStdString();
+        world.team_world_id =
+            slash < 0 ? std::string{FirstTeamWorld} : key.mid(slash + 1).toStdString();
+    }
     // Phase 7, host migration: the session's host is whoever hosts its open session. The room's
     // owner passes to a guest when the host's game goes, and that guest's game says hello again,
     // hosting now; a new run saying it hosts (its team's leader, back) is a guest of that one.
@@ -1211,6 +1219,15 @@ void Service::TakeTeamWorld(Member& member, PartyWorld& world, const bbcoop::Tea
                           .arg(world.name, QString::fromStdString(member.name))
                           .arg(taken.on_size())
                           .arg(taken.version()));
+    // Kaniel 2026-10-16: what the team's world list says of it (its host's character, how far).
+    bbcoop::TeamWorldInfo note;
+    note.set_id(world.team_world_id);
+    note.set_character(report.character());
+    note.set_flags_on(static_cast<u32>(taken.on_size()));
+    if (lobby.NoteWorld(world.team_id, note)) {
+        StoreTeams(result);
+        lobby_changed = true;
+    }
     for (auto& [key, other] : members) {
         if (other.party == world.name) {
             SendTeamWorld(world, other, now_ms);
@@ -1254,6 +1271,18 @@ void Service::OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, 
         return; // nothing before its lobby hello
     }
     const TeamLobby::Outcome outcome = lobby.Request(member.lobby, request);
+    // Kaniel 2026-10-16: the world a Start plays is the team's last played.
+    if (request.action() == bbcoop::TeamRequest::START && !outcome.starts.empty()) {
+        if (const bbcoop::Team* team = lobby.TeamOf(member.lobby)) {
+            bbcoop::TeamWorldInfo note;
+            note.set_id(team->world());
+            note.set_played_ms(QDateTime::currentMSecsSinceEpoch());
+            lobby.NoteWorld(team->id(), note);
+            result.log.append(QStringLiteral("team lobby: team %1 plays its world %2")
+                                  .arg(QString::fromStdString(team->id()),
+                                       QString::fromStdString(team->world())));
+        }
+    }
     result.log.append(
         QStringLiteral("team lobby: %1 %2%3")
             .arg(QString::fromStdString(member.lobby),
@@ -1277,14 +1306,14 @@ void Service::OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, 
 }
 
 void Service::TakeOutOfTeam(const TeamLobby::Departure& out, qint64 now_ms, Result& result) {
-    const QString party = PartyFolderName(QByteArray::fromStdString(TeamLobby::PartyOf(out.team)));
-    const auto world = worlds.find(party);
-    if (world == worlds.end()) {
-        return; // nobody played the team's world
-    }
     for (auto& [key, member] : members) {
-        if (member.lobby != out.member || member.party != party) {
+        if (member.lobby != out.member || member.party.isEmpty()) {
             continue;
+        }
+        const QString party = member.party;
+        const auto world = worlds.find(party);
+        if (world == worlds.end() || world->second.team_id != out.team) {
+            continue; // not in one of that team's worlds
         }
         result.log.append(
             QStringLiteral("party world %1: %2 is out of team %3: out of its world")
@@ -1381,6 +1410,33 @@ void Service::LoadTeams(Result& result) {
     }
     lobby.Restore(stored);
     result.log.append(QStringLiteral("team lobby: %1 teams loaded").arg(stored.teams_size()));
+    // Kaniel 2026-10-16: the world a team had before its worlds were kept apart is one of its
+    // worlds ("0", in its old folder) for its leader to pick.
+    for (const bbcoop::Team& team : stored.teams()) {
+        const bool listed = std::any_of(team.worlds().begin(), team.worlds().end(),
+                                        [](const auto& w) { return w.id() == FirstTeamWorld; });
+        if (listed) {
+            continue;
+        }
+        const QString party = PartyFolderName(
+            QByteArray::fromStdString(TeamLobby::PartyOf(team.id(), std::string{FirstTeamWorld})));
+        QFile world_file{QDir{QDir{folder}.filePath(party)}.filePath(TeamWorldFile)};
+        if (!world_file.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        const QByteArray bytes = world_file.readAll();
+        bbcoop::TeamWorld stored_world;
+        if (!stored_world.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size()))) {
+            continue;
+        }
+        bbcoop::TeamWorldInfo note;
+        note.set_id(std::string{FirstTeamWorld});
+        note.set_flags_on(static_cast<u32>(stored_world.on_size()));
+        note.set_played_ms(QFileInfo{world_file}.lastModified().toMSecsSinceEpoch());
+        lobby.NoteWorld(team.id(), note);
+        result.log.append(QStringLiteral("team lobby: team %1's earlier world is its world 0")
+                              .arg(QString::fromStdString(team.id())));
+    }
 }
 
 } // namespace BloodborneWorld

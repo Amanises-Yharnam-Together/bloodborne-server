@@ -843,7 +843,8 @@ void PS4_SYSV_ABI SetEnemyHitState(u64, GuestRegisterSnapshot* registers) {
 bool PS4_SYSV_ABI HoldTitleLoad(u64, const GuestRegisterSnapshot*) {
     const u64 game = GetGlobalState();
     const s32 slot = game >= 0x10000 ? ReadValue<s32>(game, TitleLoadSlotOffset) : -1;
-    return HoldTitleLoadForTeam(slot < 0 ? 0u : static_cast<u32>(slot));
+    const bool fresh = ReadValue<u32>(image_base + TitleResultOffset, 0) == 1;
+    return HoldTitleLoadForTeam(slot < 0 ? 0u : static_cast<u32>(slot), fresh);
 }
 
 void PS4_SYSV_ABI NoteTitleMenu(u64, const GuestRegisterSnapshot*) {
