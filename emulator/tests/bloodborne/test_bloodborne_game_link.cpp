@@ -177,6 +177,48 @@ TEST(GameLink, AnIdleLinkSaysItIsThereOnceASecond) {
     EXPECT_TRUE(host.Flush(1500).empty());
 }
 
+// Lisara's playtest 2026-10-16: her link to the server dropped with ~4500 packets unacked per
+// member, and every one went again every 150 ms: ~53k packets a second for over a minute, which
+// kept her from getting back. Resends back off per packet (doubling to max_resend_ms), go at most
+// max_resends a flush (oldest first), and stop while the member has been silent for quiet_ms.
+TEST(GameLink, AnUnansweredLinkDoesNotFloodResends) {
+    GameLinkPeer host{"rig_host", 1};
+    for (int index = 0; index < 5000; ++index) {
+        host.Send(PacketClass::Reliable, Packet(0x31, static_cast<u8>(index)), 0);
+    }
+    host.Flush(0);
+    u64 entries = 0;
+    for (s64 now = 10; now <= 10'000; now += 10) {
+        for (const GameFrame& frame : host.Flush(now)) {
+            entries += frame.entries.size();
+            EXPECT_LE(frame.entries.size(), GameLinkPeer::Settings{}.max_resends);
+        }
+    }
+    EXPECT_EQ(entries, host.Resends());
+    // Without the backoff and the cap: 5000 packets every 150 ms, over 300000.
+    EXPECT_LT(host.Resends(), 50'000u);
+    EXPECT_EQ(host.Unacked(), 5000u) << "kept: still owed";
+}
+
+TEST(GameLink, NoResendsWhileTheMemberIsSilentThenTheyGoOnAtOnce) {
+    GameLinkPeer host{"rig_host", 1};
+    GameLinkPeer guest{"rig_guest", 2};
+    guest.Send(PacketClass::Unreliable, Packet(6, 1), 0);
+    Carry(guest, host, 0);
+    host.Send(PacketClass::Reliable, Packet(0x31, 7), 0);
+    host.Flush(0); // lost
+    const s64 quiet = GameLinkPeer::Settings{}.quiet_ms;
+    const u64 before = host.Resends();
+    for (s64 now = quiet; now < quiet + 5'000; now += 10) {
+        host.Flush(now);
+    }
+    EXPECT_EQ(host.Resends(), before) << "silent: only the keepalive goes";
+    // Heard again: the packet goes at the next flush.
+    guest.Send(PacketClass::Unreliable, Packet(6, 2), quiet + 5'000);
+    Carry(guest, host, quiet + 5'000);
+    EXPECT_EQ(Marks(Carry(host, guest, quiet + 5'010)), (std::vector<u8>{7}));
+}
+
 TEST(GameLink, SaysHowLongThePeerHasBeenSilent) {
     GameLinkPeer host{"rig_host", 1};
     GameLinkPeer guest{"rig_guest", 2};
