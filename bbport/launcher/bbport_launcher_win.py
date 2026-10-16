@@ -2214,6 +2214,9 @@ class Sidebar:
         # the drawn towers above stand in.
         self.skyline_art, self.skyline_image, self.skyline_width = load_art('side-skyline.png'), None, 0
         self.painted = c.create_image(0, 0, anchor='nw', tags='city')
+        # The website's painted moon (launcher/art/side-moon.png) behind the towers, in place of the drawn glow.
+        self.moon_art, self.moon_image = load_art('side-moon.png'), None
+        self.moon_painted = c.create_image(0, 0, anchor='center', tags='moon')
         self.edge = c.create_line(0, 0, 0, 0, fill=LINE)
         self.emblem_image = self.load_emblem(px(92))
         self.emblem = c.create_image(0, 0, anchor='n', image=self.emblem_image or '', tags='txt')
@@ -2297,7 +2300,7 @@ class Sidebar:
         c.coords(self.edge, w - 1, 0, w - 1, h)
         # Sky: plain down to the moon (its glow carries the light there), lighter below it, behind the spires.
         art_top = self.place_skyline(w, h)
-        cx, cy, radius = (w * 0.64, h - px(118), px(50)) if art_top is None else (w * 0.66, art_top + px(70), px(46))
+        cx, cy, radius = (w * 0.64, h - px(118), px(50)) if art_top is None else (w * 0.68, art_top + px(95), px(46))
         start, n = cy, len(self.sky)
         for i, item in enumerate(self.sky):
             y0, y1 = start + (h - start) * i / n, start + (h - start) * (i + 1) / n + 1
@@ -2314,6 +2317,16 @@ class Sidebar:
         # With the painting: its towers and only the moon's glow behind them (a drawn disc looked flat on it).
         for item in [self.far, self.near, self.disc] + self.lights + self.craters:
             c.itemconfigure(item, state=drawn)
+        moon = art_top is not None and self.moon_art is not None
+        if moon and self.moon_image is None:
+            from PIL import Image, ImageTk
+            size = px(140)
+            self.moon_image = ImageTk.PhotoImage(self.moon_art.resize((size, size), Image.Resampling.LANCZOS))
+            c.itemconfigure(self.moon_painted, image=self.moon_image)
+        c.itemconfigure(self.moon_painted, state='normal' if moon else 'hidden')
+        c.coords(self.moon_painted, cx, cy)
+        for item in self.halo:
+            c.itemconfigure(item, state='hidden' if moon else 'normal')
         c.coords(self.far, *self.skyline(self.FAR, h - px(46), w, px))
         c.coords(self.near, *self.skyline(self.NEAR, h, w, px))
         lights = ((0.08, 26), (0.21, 30), (0.37, 22), (0.55, 28), (0.71, 24), (0.86, 30), (0.94, 20))
