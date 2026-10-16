@@ -43,6 +43,8 @@ public:
     unsigned Expire(std::int64_t now_ms);
     // A member's own events took it out (its leave).
     unsigned Forget(const std::string& member);
+    // Kaniel 2026-10-16: whether any member but `member` stands (up, on any map).
+    bool SomeoneStandsBesides(const std::string& member) const;
 
     bbcoop::MapBoard MapMessage() const;
     bbcoop::RestBoard RestMessage() const;

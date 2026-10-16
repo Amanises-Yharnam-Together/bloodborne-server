@@ -85,6 +85,13 @@ unsigned PartyBoards::Vitals(const std::string& member, const bbcoop::Vitals& me
     return changed;
 }
 
+bool PartyBoards::SomeoneStandsBesides(const std::string& member) const {
+    return std::ranges::any_of(vitals, [&](const auto& entry) {
+        return entry.first != member && entry.second.vitals.map() != 0 &&
+               entry.second.vitals.vital() == VitalUp;
+    });
+}
+
 unsigned PartyBoards::Expire(std::int64_t now_ms) {
     unsigned changed = None;
     const auto stale = [now_ms](const auto& entry) {
