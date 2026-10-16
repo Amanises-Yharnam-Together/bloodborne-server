@@ -771,6 +771,9 @@ void StartTeamLobby();
 bool HoldTitleLoadForTeam(u32 slot, bool fresh = false);
 // The title menu is up again: the next load asks the team again.
 void TeamBackAtTitle();
+// Kaniel 2026-10-16: a save loads from the title: what the last one's story removed is forgotten
+// (HoldStoryRemovals).
+void ForgetStoryRemovals();
 // The team screen (bbport_overlay.cpp) is up: the title's load is held for it. Its buttons.
 bool TeamScreenUp();
 // A team's guest is loading or joining its host's session: the port holds a loading screen.

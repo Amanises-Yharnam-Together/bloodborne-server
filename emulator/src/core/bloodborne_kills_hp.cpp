@@ -2316,9 +2316,31 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
 // See StoryRemovals: what this game's story removed on its last visit of the map is switched off
 // from a load until the story removes it again. Hosts and guests alike (a guest far from its host
 // follows its own story). The game's thread only.
+// Kaniel 2026-10-16: the memory is the save's: another character (or a save loaded from the
+// title) starts without it.
+std::atomic<bool> story_removals_reset{false};
+[[maybe_unused]] const bool story_removals_registered = RegisterLifecycleReset(
+    "story removals", {Lifecycle::NewCharacter}, [] { story_removals_reset.store(true); });
+
+} // namespace
+
+namespace Coop {
+
+void ForgetStoryRemovals() {
+    story_removals_reset.store(true);
+}
+
+} // namespace Coop
+
+namespace {
+
 void HoldStoryRemovals(u32 map, std::span<const u64> characters,
                        const std::unordered_set<u32>& kill_hidden) {
     static StoryRemovals removals;
+    if (story_removals_reset.exchange(false)) {
+        removals.Forget();
+        LOG_INFO(Debug, "Bloodborne party: story removals forgotten (another save)");
+    }
     std::unordered_set<u64> players;
     for (const OtherPlayer& other : OtherPlayers()) {
         players.insert(other.character);
@@ -2332,7 +2354,8 @@ void HoldStoryRemovals(u32 map, std::span<const u64> characters,
         const u32 handle = ReadValue<u32>(character, 0x08);
         seen.push_back({handle, ReadValue<u8>(character, 0x28) != 0, IsCharacterDisabled(character),
                         guest_hidden_here.contains(handle) || guest_switched_off.contains(handle),
-                        kill_hidden.contains(handle)});
+                        kill_hidden.contains(handle),
+                        IsDeadInItsWorld(ReadValue<u8>(character, 0x1E3))});
         pointers[handle] = character;
     }
     const s64 now = SteadyMilliseconds();

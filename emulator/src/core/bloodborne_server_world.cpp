@@ -958,6 +958,7 @@ bool HoldTitleLoadForTeam(u32 slot, bool fresh) {
         const bool first = !team_gate.Holding();
         decision = team_gate.Tick(me, slot, SteadyMilliseconds());
         if (first) {
+            ForgetStoryRemovals();
             title_fresh = fresh;
             team_world_hint = fresh ? std::string{} : ReadTeamWorldHint(static_cast<int>(slot));
             team_world_default_sent = false;
