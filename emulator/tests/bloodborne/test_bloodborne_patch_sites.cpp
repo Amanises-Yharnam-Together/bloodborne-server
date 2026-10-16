@@ -331,3 +331,19 @@ TEST(CoopSites, OnlyTheServerEndsASession) {
         EXPECT_TRUE(patched[0] == 0xEB || patched[0] == 0xE9) << site->name; // always jumps
     }
 }
+
+// Kaniel 2026-10-16 (a removed member invited back): a game that was in a session joining one
+// again crashed at 0x013CFFBA. The event flag manager's read of a value over two flag blocks
+// (0x013CFD80) looks both blocks up but checks neither (a value in one block is checked and reads
+// 0 when its block is missing). The guard hooks it where each block is about to be read.
+TEST(CoopSites, AValueOverAMissingFlagBlockReadsAsZero) {
+    ASSERT_NE(FindCoopFeature("flag block guard"), nullptr);
+    const auto sites = SitesOf("flag block guard");
+    ASSERT_EQ(sites.size(), 2u);
+    EXPECT_EQ(Site("flag value first block").offset, 0x013CFF79u);
+    EXPECT_EQ(Site("flag value first block").original, "41 FF C9 44 89 C9 C1 E9 03");
+    EXPECT_EQ(Site("flag value second block").offset, 0x013CFFECu);
+    EXPECT_EQ(Site("flag value second block").original, "45 29 D0 41 8D 58 FF 89 D8");
+    EXPECT_EQ(GuardedFlagBlock(0x1234, 0x5000), 0x1234u);
+    EXPECT_EQ(GuardedFlagBlock(0, 0x5000), 0x5000u);
+}

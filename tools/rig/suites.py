@@ -1058,9 +1058,6 @@ SUITES = {
                                "sync hca-ready", "wait-solo 180", "wait 10",
                                f"expect-map {CATHEDRAL_WARD}", "sync hca-back", "wait 10",
                                "expect-session 2", f"expect-map {CATHEDRAL_WARD}"]},
-                    known_bug="the guest's game crashes at eboot+0x13cffba (read from 0x7c) when "
-                              "the host comes back (Krolebord's crash after a rejoin, 0.2.5; rig "
-                              "2026-10-15, twice in a row)",
                     allow=CRASH_CLEANUP),
             # Phase 8: the map's owner dies mid-fight; the other game takes the map over with the
             # enemy as hurt as it was, where it was, and it keeps fighting.

@@ -1283,6 +1283,26 @@ SCENARIOS = {
     },
     # A save playing alone is invited from the leader's menu and joins the hunt from its own,
     # where it stands, without going back to the title.
+    # Kaniel 2026-10-16: a removed member invited back joins again from the menu where it stands
+    # (its game's second join crashed at eboot+0x13cffba until the flag block guard).
+    "team-menu-rejoin": {
+        "about": "in game, the host removes the guest, then invites it back: the guest joins the "
+                 "hunt again from the menu, no title, no crash",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", "menu-kick rig_guest 60",
+                     "wait-solo 120", "wait 10", "menu-invite rig_guest 120",
+                     "wait-session 2 120", "wait 20", "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait-solo 120", "wait 10",
+                      "menu-join 120", "wait-session 2 120", "wait 20", "snapshot",
+                      "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"],
+        },
+        "expect": {
+            "guest": [r"Co-op team menu: out of the team \(team:\w+\): left its session",
+                      r"Co-op team menu: this save joins team \w+ where it stands, as its guest"],
+        },
+        "allow": [r"left the session outside a trip"],
+        "timeout": 300,
+    },
     "team-menu-join": {
         "about": "in game, the host invites a guest playing alone; the guest joins the hunt from "
                  "the menu where it stands",
