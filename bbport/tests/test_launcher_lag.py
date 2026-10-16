@@ -45,6 +45,7 @@ class CoopCardTypingTests(unittest.TestCase):
                       mock.patch.object(bbport_coop, 'load_settings', return_value={}),
                       mock.patch.object(bbport_coop, 'save_settings'),
                       mock.patch.object(bbport_coop, 'search_game', return_value=None),
+                      mock.patch.object(bbport_coop, 'fetch_newest_release', return_value=None),
                       mock.patch.object(bbport_coop, 'find_game_folder', side_effect=counting_find)):
             patch.start()
             self.addCleanup(patch.stop)

@@ -257,5 +257,98 @@ class PlayTests(unittest.TestCase):
         self.assertFalse(any('31313' in line for line in host))
 
 
+class UpdateTests(unittest.TestCase):
+    """Kaniel 2026-10-16: the launcher updates the install from this repository's releases, every release
+    counted (pre-releases too), and only a file that matches its SHA-256 is run."""
+
+    @staticmethod
+    def release(tag, prerelease=False, draft=False, setup=True, sums=True):
+        name = f'BloodborneSeamlessCoop-{tag}-setup.exe'
+        assets = []
+        if setup:
+            assets.append({'name': name, 'browser_download_url': f'https://example.test/{name}'})
+        if sums:
+            assets.append({'name': name + '.sha256', 'browser_download_url': f'https://example.test/{name}.sha256'})
+        return {'tag_name': tag, 'prerelease': prerelease, 'draft': draft, 'assets': assets,
+                'html_url': f'https://example.test/{tag}', 'body': f'notes of {tag}'}
+
+    def test_versions_sort_with_a_suffix_below_the_plain_one(self):
+        self.assertLess(coop.version_key('0.3.3-local'), coop.version_key('0.3.3'))
+        self.assertLess(coop.version_key('0.3.3'), coop.version_key('0.3.4-local'))
+        self.assertLess(coop.version_key('v0.1.4'), coop.version_key('0.3.3-local'))
+        self.assertLess(coop.version_key('0.3.9'), coop.version_key('0.3.10'))
+        self.assertEqual(coop.version_key('nonsense')[0], ())
+
+    def test_the_newest_release_with_a_setup_is_offered_pre_releases_too(self):
+        releases = [self.release('v0.3.4-local', prerelease=True), self.release('v0.4.0', draft=True),
+                    self.release('v0.3.5', sums=False), self.release('v0.1.2', setup=False), self.release('v0.1.4')]
+        best = coop.newest_release(releases)
+        self.assertEqual(best['version'], '0.3.4-local', 'drafts and releases without a setup and its sum do not count')
+        self.assertTrue(best['setup'].endswith('-setup.exe'))
+        self.assertTrue(best['sha256'].endswith('.sha256'))
+        self.assertIsNone(coop.newest_release([]))
+        with self.assertRaises(ValueError):
+            coop.newest_release({'message': 'rate limited'})
+
+    def test_only_a_newer_release_is_offered(self):
+        best = coop.newest_release([self.release('v0.3.4-local', prerelease=True)])
+        self.assertIs(coop.update_offer('0.3.3-local', best), best)
+        self.assertIsNone(coop.update_offer('0.3.4-local', best))
+        self.assertIsNone(coop.update_offer('0.3.5', best))
+        self.assertIsNone(coop.update_offer('', best), 'a source tree has no release version')
+
+    def test_the_sum_file_is_read_as_the_release_writes_it(self):
+        digest = 'ab' * 32
+        self.assertEqual(coop.expected_sum(f'{digest.upper()} *Setup.exe\n', 'Setup.exe'), digest)
+        self.assertEqual(coop.expected_sum(f'{digest}  Setup.exe', 'Setup.exe'), digest)
+        self.assertEqual(coop.expected_sum(digest, 'Setup.exe'), digest)
+        with self.assertRaises(ValueError):
+            coop.expected_sum(f'{digest} *Other.exe', 'Setup.exe')
+
+    def test_a_download_that_does_not_match_its_sum_is_thrown_away(self):
+        import hashlib
+        import io
+        from unittest import mock
+        body = b'setup bytes'
+        release = coop.newest_release([self.release('v0.3.4')])
+
+        class Response(io.BytesIO):
+            headers = {'Content-Length': str(len(body))}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+        def opener(digest):
+            def open_url(request, timeout=0):
+                url = request.full_url if hasattr(request, 'full_url') else request
+                return Response(f'{digest} *{release["name"]}'.encode() if url.endswith('.sha256') else body)
+            return open_url
+
+        with tempfile.TemporaryDirectory() as tmp:
+            seen = []
+            with mock.patch.object(coop.urllib.request, 'urlopen', opener(hashlib.sha256(body).hexdigest())):
+                path = coop.download_update(release, tmp, progress=seen.append)
+            self.assertEqual(path.read_bytes(), body)
+            self.assertEqual(seen[-1], 1.0)
+            path.unlink()
+            with mock.patch.object(coop.urllib.request, 'urlopen', opener('00' * 32)):
+                with self.assertRaises(ValueError):
+                    coop.download_update(release, tmp)
+            self.assertFalse((Path(tmp) / release['name']).exists(), 'a file that does not match is gone')
+
+    def test_the_setup_updates_this_install_silently(self):
+        command = coop.setup_command(Path('C:/Temp/Setup.exe'), Path('C:/Games/Co-op'))
+        self.assertIn('/VERYSILENT', command)
+        self.assertIn('/CLOSEAPPLICATIONS', command)
+        self.assertIn(f'/DIR={Path("C:/Games/Co-op")}', command)
+
+    def test_the_setup_starts_the_launcher_again_after_a_silent_update(self):
+        iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8')
+        self.assertRegex(iss, r'Filename: "\{app\}\\BLauncher\.exe";[^\n]*Flags: nowait skipifnotsilent')
+
+
 if __name__ == '__main__':
     unittest.main()
