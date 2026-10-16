@@ -1,11 +1,11 @@
 ﻿# Local mirror of the upstream CI checks, per component of the monorepo.
-# Usage: ci-check.ps1 -Component emulator|server|backend|tools|bbport [-All] [-SkipBuild] [-Src <dir>]
+# Usage: ci-check.ps1 -Component emulator|server|backend|tools|bbport|website [-All] [-SkipBuild] [-Src <dir>]
 #                    [-CompileDb <dir>]
 #   default lints only files changed vs. trunk(); -All lints every source file like a branch push.
 #   -CompileDb (emulator): also tools\re\code_health.py --check on the co-op sources, with the
 #   compile_commands.json in <dir> (the port's: bbport\out after `ninja -C out/gpu -t compdb`).
 param(
-    [Parameter(Mandatory)][ValidateSet("emulator", "server", "backend", "tools", "bbport")][string]$Component,
+    [Parameter(Mandatory)][ValidateSet("emulator", "server", "backend", "tools", "bbport", "website")][string]$Component,
     [switch]$All,
     [switch]$SkipBuild,
     [string]$Src,
@@ -28,6 +28,17 @@ if ($Component -eq "tools") {
         py -3.12 -m unittest discover -s $tests 2>&1 | Select-Object -Last 4
         if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: $tests"; exit 1 }
     }
+    Write-Host "CI CHECK PASSED"
+    exit 0
+}
+
+if ($Component -eq "website") {
+    # The project's website (Next.js): Prettier, ESLint, the type check, its tests and the
+    # production build, all in `npm run check`. Needs Node 22 or later.
+    npm ci --no-audit --no-fund 2>&1 | Select-Object -Last 2
+    if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: website npm ci"; exit 1 }
+    npm run check 2>&1 | Select-Object -Last 30
+    if ($LASTEXITCODE -ne 0) { Write-Host "CI CHECK FAILED: website check"; exit 1 }
     Write-Host "CI CHECK PASSED"
     exit 0
 }

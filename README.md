@@ -19,6 +19,13 @@ everything else it needs run on the players' own PCs.
 checked by an automated two- and three-game test rig on every change, but it is a fan project:
 expect rough edges and keep backups of your saves.
 
+**The server netcode** (every game talks only to a co-op server that owns the team's world, up to
+four players, teams made in the game's own menus) is built on the `server-coop` branch and in
+testing; the releases so far use the peer-to-peer design described below.
+
+The project's website (`website/`) has the download, an explainer and illustrated docs, including
+how the server netcode works.
+
 ## Contents
 
 1. [What it does](#what-it-does)
@@ -128,6 +135,7 @@ More detail: [docs/BBPORT.md](docs/BBPORT.md) (the port and its co-op wiring),
 | `backend/` | stand-in for the game's online services | the LocalServer of the Bloodborne PC Online community package |
 | `tools/` | build, local CI, the co-op kits and releases, the test rig (`tools/rig`), RE helpers (`tools/re`) | |
 | `docs/` | design notes and handovers | |
+| `website/` | the project's website: landing page, download and docs (Next.js, deploys to Vercel) | |
 
 All upstreams are imported with their full history (subtree merges), so `git log` shows their
 authors. The shadPS4 build of the co-op (`emulator/`) still works but the port is the main target;
@@ -167,6 +175,10 @@ git submodule update --init --recursive
 
 To play a build of your own, run `bash build.sh` and `bash packaging/windows/package.sh` in
 `bbport/` (MSYS2 CLANG64 shell) and use `tools/make-release.ps1 -SkipPortBuild -AllowDirty`.
+
+The website builds on its own with Node 22: `npm ci` and `npm run check` in `website/` (format,
+lint, type check, tests and the production build); `tools/ci-check.ps1 -Component website` runs
+the same. Deploying it is described in [website/README.md](website/README.md).
 
 ## Make a release
 
