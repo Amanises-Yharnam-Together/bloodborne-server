@@ -101,8 +101,13 @@ struct Impl {
     const void* const* vtable;
     u32 kind;
     u32 id;
-    u32 handle; // an item of its own: which one
+    u32 handle;  // an item of its own: which one
+    u32 partner; // Kaniel 2026-10-16: who gets it (an index into `partners`)
 };
+
+// The members a give row goes to, as the item's commands last opened (the game's thread).
+constexpr int MaxPartners = 3;
+char partners[MaxPartners][48] = {};
 
 GAME_ABI Impl* ImplCopy(Impl* self, Impl* where) {
     using New = void* (GAME_ABI *)(u64);
@@ -149,9 +154,11 @@ void MakeTextOf(u8* text, u32 category, u32 id) {
 // The quantity picker's OK: the offer.
 GAME_ABI void** OkCall(void** out, Impl* self, int* chosen) {
     const u32 count = chosen ? u32(*chosen) : 0;
-    const bool sent = count > 0 && bbcoop_trade_offer(self->kind, self->id, count, self->handle);
-    std::printf("Trade menu: %s %u of %u/%u\n", sent ? "offered" : "could not offer", count,
-                self->kind, self->id);
+    const char* to = self->partner < MaxPartners ? partners[self->partner] : "";
+    const bool sent = count > 0 && bbcoop_trade_offer_to(to, self->kind, self->id, count,
+                                                         self->handle);
+    std::printf("Trade menu: %s %u of %u/%u to %s\n", sent ? "offered" : "could not offer", count,
+                self->kind, self->id, to);
     std::fflush(stdout);
     return NothingJob(out);
 }
@@ -168,13 +175,16 @@ GAME_ABI void** GiveCall(void** out, Impl* self, u8* context) {
     const u32 max = std::min(held, self->kind == EchoesKind ? MaxEchoes
                                    : self->kind == ItemKind ? 1u
                                                             : MaxGoods);
-    if (max == 0 || !bbcoop_trade_give_question(self->kind, self->id, question, sizeof question)) {
+    const char* to = self->partner < MaxPartners ? partners[self->partner] : "";
+    if (max == 0 ||
+        !bbcoop_trade_give_question_to(to, self->kind, self->id, question, sizeof question)) {
         return NothingJob(out);
     }
     alignas(16) u8 text[TextSize] = {};
     MakeTextOf(text, DialogCategory, BbGameMenu::SetDynamicText(0, question));
     alignas(16) u8 on_ok[FunctionSize] = {};
-    *reinterpret_cast<Impl*>(on_ok) = {ok_vtable, self->kind, self->id, self->handle};
+    *reinterpret_cast<Impl*>(on_ok) = {ok_vtable, self->kind, self->id, self->handle,
+                                        self->partner};
     *reinterpret_cast<void**>(on_ok + 0x20) = on_ok;
     alignas(16) u8 extra[FunctionSize] = {};
     u32 first = 1;
@@ -202,12 +212,12 @@ const void* const give_vtable[8] = {
     reinterpret_cast<const void*>(&ImplDelete),     reinterpret_cast<const void*>(&ImplDestroy),
     reinterpret_cast<const void*>(&ImplDeleting),   reinterpret_cast<const void*>(&ImplGet)};
 
-void AddGiveRow(void* model, u32 name, u32 help, u32 kind, u32 id, u32 handle = 0) {
+void AddGiveRow(void* model, u32 name, u32 help, u32 kind, u32 id, u32 handle, u32 partner) {
     alignas(16) u8 pair[2 * TextSize] = {};
     MakeTextOf(pair, RowNameCategory, name);
     MakeTextOf(pair + TextSize, RowHelpCategory, help);
     alignas(16) u8 action[FunctionSize] = {};
-    *reinterpret_cast<Impl*>(action) = {give_vtable, kind, id, handle};
+    *reinterpret_cast<Impl*>(action) = {give_vtable, kind, id, handle, partner};
     *reinterpret_cast<void**>(action + 0x20) = action;
     using Add = void* (GAME_ABI *)(void*, void*, void*, int);
     Game<Add>(AddRow)(model, pair, action, 0);
@@ -228,18 +238,31 @@ GAME_ABI void* OpenItemCommands(void** out, void* model, u8* factory) {
         const bool goods = (item & 0xF0000000) == GoodsItem;
         const u32 kind = goods ? GoodsKind : ItemKind;
         const u32 id = goods ? item & 0xFFFFFFF : item;
-        char question[8];
-        const bool someone = bbcoop_trade_give_question(EchoesKind, 0, question, sizeof question);
-        const bool give = someone && bbcoop_trade_tradeable(kind, id);
-        const bool echoes = someone && bbcoop_trade_held(EchoesKind, 0) > 0;
-        std::printf("Trade menu: commands of item %#x (handle %#x)%s%s\n", item, handle,
-                    give ? ", Give" : "", echoes ? ", Give Blood Echoes" : "");
-        std::fflush(stdout);
-        if (give) {
-            AddGiveRow(model, give_name, give_help, kind, id, goods ? 0 : handle);
+        // Kaniel 2026-10-16: one row per member near ("Give to Lisara"), so the giver picks who
+        // gets it (dynamic texts 2-4 and 5-7).
+        char names[MaxPartners][48] = {};
+        int count = std::min(bbcoop_trade_partner_count(), MaxPartners);
+        for (int i = 0; i < count; ++i) {
+            if (!bbcoop_trade_partner(i, partners[i], sizeof partners[i], names[i],
+                                      sizeof names[i])) {
+                count = i;
+                break;
+            }
         }
-        if (echoes) {
-            AddGiveRow(model, give_echoes_name, give_echoes_help, EchoesKind, 0);
+        const bool give = count > 0 && bbcoop_trade_tradeable(kind, id);
+        const bool echoes = count > 0 && bbcoop_trade_held(EchoesKind, 0) > 0;
+        std::printf("Trade menu: commands of item %#x (handle %#x), %d to give to%s%s\n", item,
+                    handle, count, give ? ", Give" : "", echoes ? ", Give Blood Echoes" : "");
+        std::fflush(stdout);
+        for (int i = 0; give && i < count; ++i) {
+            const std::string row = std::string("Give to ") + names[i];
+            AddGiveRow(model, BbGameMenu::SetDynamicText(2 + i, row.c_str()), give_help, kind, id,
+                       goods ? 0 : handle, u32(i));
+        }
+        for (int i = 0; echoes && i < count; ++i) {
+            const std::string row = std::string("Give Blood Echoes to ") + names[i];
+            AddGiveRow(model, BbGameMenu::SetDynamicText(5 + i, row.c_str()), give_echoes_help,
+                       EchoesKind, 0, 0, u32(i));
         }
     }
     using Open = void* (GAME_ABI *)(void**, void*, void*);
@@ -394,12 +417,12 @@ bool PatchImage(unsigned char* image_start, std::uint64_t size, std::uint8_t*& s
     }
     std::memcpy(image_start + InventoryRowFilter, KeepEveryRow, sizeof KeepEveryRow);
     give_name = BbGameMenu::AddGameText("Give", "Отдать");
-    give_help = BbGameMenu::AddGameText("Give some to the nearest party member",
-                                        "Отдать ближайшему участнику группы");
+    give_help = BbGameMenu::AddGameText("Give some to this party member",
+                                        "Отдать этому участнику группы");
     give_echoes_name = BbGameMenu::AddGameText("Give Blood Echoes", "Отдать Отголоски крови");
     give_echoes_help = BbGameMenu::AddGameText(
-        "Give some of your Blood Echoes to the nearest party member",
-        "Отдать часть своих Отголосков крови ближайшему участнику группы");
+        "Give some of your Blood Echoes to this party member",
+        "Отдать часть своих Отголосков крови этому участнику группы");
     // call rel32 -> a thunk: movabs rax, OpenItemCommands; jmp rax.
     u8* thunk = stubs;
     void* hook = reinterpret_cast<void*>(&OpenItemCommands);
