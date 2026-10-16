@@ -196,6 +196,16 @@ class PlayTests(unittest.TestCase):
         self.assertNotIn('SHADPS4_BLOODBORNE_HARDER_ENEMIES', env)
         self.assertEqual(env['SHADPS4_P2P_PORT'], '51700')
 
+    def test_this_pc_hosts_when_the_host_ip_is_its_own(self):
+        """No Player/Host switch (Kaniel 2026-10-16): PLAY starts the server when the host's IP is this PC's."""
+        import socket
+        own = [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith('127.')]
+        if own:
+            self.assertTrue(coop.is_this_pc(own[0]), own[0])
+        self.assertFalse(coop.is_this_pc('192.0.2.77'), "a documentation address is nobody's PC")
+        self.assertFalse(coop.is_this_pc(''))
+        self.assertFalse(coop.is_this_pc('not an ip'))
+
     def test_the_host_overrides_point_the_game_at_the_host(self):
         self.assertEqual(json.loads(coop.host_overrides('26.1.2.3')),
                          {'https://ss4.scej-network.jp:20443': 'http://26.1.2.3:20443'})
