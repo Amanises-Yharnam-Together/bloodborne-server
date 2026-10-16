@@ -142,6 +142,13 @@ public:
         s64 keepalive_ms = 1000;   // an empty frame when nothing else went for this long
         size_t frame_bytes = 1200; // entries share a frame up to this; a larger packet goes alone
         size_t held_out_of_order = 4096;
+        // Lisara's playtest 2026-10-16 (a resend storm on a dropped link): a packet's resends back
+        // off (doubling from resend_ms to max_resend_ms), at most max_resends go per flush
+        // (oldest first), and none while the member has been silent for quiet_ms (heard again,
+        // they go at once).
+        s64 max_resend_ms = 2000;
+        size_t max_resends = 64;
+        s64 quiet_ms = 10'000;
     };
 
     GameLinkPeer(std::string self, u32 instance) : GameLinkPeer(std::move(self), instance, {}) {}
@@ -166,17 +173,34 @@ public:
             entries.push_back({out.packet_class, out.seq, out.packet});
             if (out.packet_class == PacketClass::Reliable) {
                 out.sent_ms = now_ms;
+                out.wait_ms = settings.resend_ms;
                 unacked.emplace(out.seq, std::move(out));
             }
         }
         fresh.clear();
+        const bool quiet = last_heard_ms && now_ms - *last_heard_ms >= settings.quiet_ms;
+        if (heard_since_quiet) {
+            // Heard again after a silence: what is owed goes now.
+            heard_since_quiet = false;
+            for (auto& [seq, out] : unacked) {
+                out.wait_ms = settings.resend_ms;
+                out.sent_ms = (std::min)(out.sent_ms, now_ms - settings.resend_ms);
+            }
+        }
+        was_quiet = quiet;
+        size_t resent = 0;
         for (auto& [seq, out] : unacked) {
-            if (now_ms - out.sent_ms >= settings.resend_ms &&
+            if (quiet || resent >= settings.max_resends) {
+                break;
+            }
+            if (now_ms - out.sent_ms >= out.wait_ms &&
                 std::ranges::none_of(entries, [&](const GameFrameEntry& entry) {
                     return entry.packet_class == PacketClass::Reliable && entry.seq == seq;
                 })) {
                 out.sent_ms = now_ms;
+                out.wait_ms = (std::min)(out.wait_ms * 2, settings.max_resend_ms);
                 ++resends;
+                ++resent;
                 entries.push_back({out.packet_class, out.seq, out.packet});
             }
         }
@@ -203,6 +227,9 @@ public:
 
     // A frame from the member: the packets for the game, in order.
     std::vector<std::vector<u8>> Receive(const GameFrame& frame, s64 now_ms) {
+        if (was_quiet) {
+            heard_since_quiet = true;
+        }
         last_heard_ms = now_ms;
         if (!peer_instance || *peer_instance != frame.instance) {
             if (peer_instance) {
@@ -258,6 +285,7 @@ private:
         u32 seq;
         std::vector<u8> packet;
         s64 sent_ms;
+        s64 wait_ms = 0; // until its next resend (backs off)
     };
 
     static u32 ChannelOf(const std::vector<u8>& packet) {
@@ -330,6 +358,8 @@ private:
     std::deque<Outgoing> fresh;
     std::map<u32, Outgoing> unacked;
     u64 resends = 0;
+    bool was_quiet = false;         // the last flush found the member silent
+    bool heard_since_quiet = false; // and it was heard since
 
     u32 expected = 0;
     std::map<u32, std::vector<u8>> held;
