@@ -36,7 +36,9 @@ DETACHED = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CRE
 # The answers, as 1 - SETUP asked them (FPS is gone: co-op is always the fixed 60 FPS mode). No party
 # settings: the team is made in the game's team screen (phase 6). `role` 'host' runs the co-op server.
 DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account': '', 'password': '',
-            'p2p_port': 'auto', 'harder': 'off', 'prepared': ''}
+            'p2p_port': 'auto', 'harder': 'off', 'prepared': '',
+            # '1' once the player pressed Done in the launcher's co-op settings (they open by themselves until then).
+            'confirmed': ''}
 HARDER_ON = '3,1.5,3'  # the kit's harder enemies: HP, damage and poise multipliers
 
 

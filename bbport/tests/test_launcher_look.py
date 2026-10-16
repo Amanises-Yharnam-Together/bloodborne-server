@@ -36,7 +36,7 @@ class LookTests(unittest.TestCase):
             (self.game / 'sce_sys' / name).write_bytes(PNG)
         (scratch / 'config').mkdir()
         (scratch / 'config' / 'settings.json').write_text(
-            json.dumps({'check_updates': False, 'game_dir': str(self.game), 'ui_advanced': True}), encoding='utf-8')
+            json.dumps({'check_updates': False, 'game_dir': str(self.game)}), encoding='utf-8')
         self.opened = []
         from PIL import Image
         real_open = Image.open
@@ -55,6 +55,7 @@ class LookTests(unittest.TestCase):
                       mock.patch.object(launcher, 'LANG', 'en'),
                       mock.patch.object(launcher, 'COOP_INSTALL', False),
                       mock.patch.object(bbport_coop, 'search_game', return_value=None),
+                      mock.patch.object(launcher, 'fetch_news', return_value=None),
                       mock.patch.object(Image, 'open', side_effect=recording_open)):
             patch.start()
             self.addCleanup(patch.stop)
@@ -85,26 +86,70 @@ class LookTests(unittest.TestCase):
         for path in self.opened + [str(f) for f in tk_files]:
             self.assertFalse(str(path).lower().startswith(game), f'game art shown: {path}')
 
-    def test_the_side_menu_lists_every_page_in_the_advanced_view(self):
+    def test_the_side_menu_is_home_and_settings(self):
+        """Kaniel 2026-10-16: no Simple/Advanced views; a short menu, every other page under Settings."""
         side = self.app.side
-        self.assertEqual(side.visible(), [name for name, _t in self.app.tab_names])
-        self.app.set_mode(False)
-        self.settle()
-        self.assertEqual(side.visible(), ['play'], 'the Simple view: Play alone')
-        self.app.set_mode(True)
-        self.settle()
-        self.assertEqual(len(side.visible()), len(self.app.tab_names))
+        self.assertEqual(side.visible(), ['home', 'settings'], 'Co-op only in the co-op release')
+        self.assertEqual(self.app.current_page, 'home')
+        self.assertFalse(hasattr(self.app, 'set_mode'))
 
-    def test_a_click_on_an_entry_shows_its_page(self):
+    def test_settings_opens_its_tabs(self):
         side = self.app.side
-        y = side.entry_y(side.visible().index('graphics'))
-        side.pick(y)
+        side.pick(side.entry_y(side.visible().index('settings')))
         self.settle()
-        self.assertEqual(self.app.current_page, 'graphics')
-        self.assertEqual(side.active, 'graphics')
+        self.assertEqual(self.app.current_page, 'general')
+        self.assertEqual(side.active, 'settings')
+        self.assertTrue(self.app.subtabs.canvas.winfo_ismapped())
+        self.app.show('graphics')
+        self.settle()
+        self.assertEqual(self.app.subtabs.active, 'graphics')
         side.pick(side.entry_y(0))
         self.settle()
-        self.assertEqual(self.app.current_page, 'play')
+        self.assertEqual(self.app.current_page, 'home')
+        self.assertFalse(self.app.subtabs.canvas.winfo_ismapped())
+        side.pick(side.entry_y(1))
+        self.settle()
+        self.assertEqual(self.app.current_page, 'graphics', 'Settings goes back to its last tab')
+
+    def test_the_ready_check_is_icons_with_tooltips_in_the_bottom_bar(self):
+        icons = self.app.checks
+        self.assertEqual(set(icons), {'game', 'saves', 'gpu', 'fsr4', 'upscaler'})
+        for key in ('game', 'saves', 'gpu', 'fsr4'):
+            self.assertTrue(icons[key].canvas.winfo_ismapped(), key)
+            self.assertTrue(icons[key].tip.text, key)
+        self.assertFalse(icons['upscaler'].canvas.winfo_ismapped(), 'only once the upscaler was changed')
+        self.assertEqual(icons['game'].state, '✗', 'no eboot.bin in the test folder')
+
+    def test_the_home_banner_shows_the_websites_news(self):
+        news = launcher.parse_news({'title': 'Patch 9', 'version': '9.9', 'intro': 'Hello',
+                                    'notes': ['One', 'Two', 3], 'link': {'text': 'More', 'url': 'https://x.test/'},
+                                    'info': [{'title': 'Tip', 'text': 'Text'}]})
+        self.assertEqual(news['notes'], ['One', 'Two'])
+        self.assertIsNone(launcher.parse_news({'title': ''}), 'not the file the launcher knows')
+        self.assertIsNone(launcher.parse_news([1, 2]))
+        self.assertIsNone(launcher.parse_news({'title': 'x', 'link': {'url': 'http://plain'}})['link'],
+                          'only https links')
+        self.app.render_news(news)
+        self.settle()
+        texts = []
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                try:
+                    texts.append(child.cget('text'))
+                except Exception:
+                    pass
+                walk(child)
+        walk(self.app.news_holder)
+        for expected in ('Patch 9', 'Hello', 'One', 'Two', 'Text'):
+            self.assertIn(expected, texts)
+
+    def test_the_website_news_file_is_one_the_launcher_reads(self):
+        site = Path(__file__).resolve().parents[2] / 'website' / 'public' / 'launcher' / 'news.json'
+        news = launcher.parse_news(json.loads(site.read_text(encoding='utf-8')))
+        self.assertIsNotNone(news)
+        self.assertTrue(news['notes'])
+        self.assertTrue(launcher.NEWS_URL.endswith('/launcher/news.json'))
 
     def test_the_window_is_tall_enough_for_the_menu(self):
         self.root.update_idletasks()
@@ -140,6 +185,88 @@ class LookTests(unittest.TestCase):
         self.settle(0.3)
         self.assertTrue(user32.IsIconic(ctypes.c_void_p(self.app.chrome.hwnd())), 'minimized')
         user32.ShowWindow(ctypes.c_void_p(self.app.chrome.hwnd()), 9)
+
+
+
+@unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
+class CoopSettingsTests(unittest.TestCase):
+    """Kaniel 2026-10-16: the co-op settings open over the window at the first start, and the launcher
+    stays behind them until the game folder and the host's IP are set."""
+
+    def setUp(self):
+        import tempfile
+        import tkinter
+        from tkinter import filedialog, messagebox, ttk
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        scratch = Path(self.tmp.name)
+        self.game = scratch / 'CUSA03173'
+        (self.game / 'sce_sys').mkdir(parents=True)
+        (self.game / 'eboot.bin').write_bytes(b'eboot')
+        (scratch / 'config').mkdir()
+        (scratch / 'config' / 'settings.json').write_text('{"check_updates": false}', encoding='utf-8')
+        self.saved = []
+        settings = dict(bbport_coop.DEFAULTS, game='', account='Lisara', password='pw')
+        for patch in (mock.patch.dict(launcher.os.environ, {'BB_CONFIG': str(scratch / 'bbport.ini'),
+                                                            'BB_LAUNCHER_ANIMATIONS': '0'}),
+                      mock.patch.object(launcher, 'CONFIG_FILE', scratch / 'config' / 'settings.json'),
+                      mock.patch.object(launcher, 'CONFIG_DIR', scratch / 'config'),
+                      mock.patch.object(launcher, 'DATA_DIR', scratch),
+                      mock.patch.object(launcher, 'connected_displays', return_value=[]),
+                      mock.patch.object(launcher, 'gpu_tool', return_value=(scratch / 'no-such.exe', {})),
+                      mock.patch.object(launcher, 'LANG', 'en'),
+                      mock.patch.object(launcher, 'COOP_INSTALL', True),
+                      mock.patch.object(launcher, 'fetch_news', return_value=None),
+                      mock.patch.object(bbport_coop, 'load_settings', return_value=settings),
+                      mock.patch.object(bbport_coop, 'save_settings',
+                                        side_effect=lambda _i, s: self.saved.append(dict(s))),
+                      mock.patch.object(bbport_coop, 'search_game', return_value=None),
+                      mock.patch.object(bbport_coop, 'find_game_folder',
+                                        side_effect=lambda folder, depth=3: Path(folder) if folder and
+                                        (Path(folder) / 'eboot.bin').is_file() else None)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        for _attempt in range(5):
+            try:
+                self.root = tkinter.Tk()
+                break
+            except tkinter.TclError:
+                time.sleep(0.5)
+        else:
+            self.skipTest('no display for Tk')
+        self.addCleanup(self.root.destroy)
+        self.app = launcher.Launcher(self.root, tkinter, ttk, filedialog, messagebox)
+        self.settle()
+
+    def settle(self, seconds=0.6):
+        end = time.time() + seconds
+        while time.time() < end:
+            self.root.update()
+            time.sleep(0.02)
+
+    def test_the_first_start_opens_the_co_op_settings_until_they_are_done(self):
+        self.assertEqual(self.app.side.visible(), ['home', 'coop', 'settings'])
+        cover = self.app.coop_cover
+        self.assertTrue(cover.winfo_ismapped(), 'over the window at the first start')
+        self.assertEqual(self.app.coop_done.state, 'disabled')
+        self.app.close_coop()
+        self.settle()
+        self.assertTrue(cover.winfo_ismapped(), 'Done does nothing while settings are missing')
+        self.app.coop_vars['game'].set(str(self.game))
+        self.app.coop_vars['host_ip'].set('26.1.2.3')
+        self.settle()
+        self.assertEqual(self.app.coop_done.state, 'normal')
+        self.app.coop_done.invoke()
+        self.settle()
+        self.assertFalse(cover.winfo_ismapped())
+        self.assertEqual(self.saved[-1]['confirmed'], '1')
+        self.assertFalse(self.app.coop_needs_setup(), 'not again at the next start')
+        # From the menu it opens again; the server buttons are in the bottom bar.
+        side = self.app.side
+        side.pick(side.entry_y(side.visible().index('coop')))
+        self.settle()
+        self.assertTrue(cover.winfo_ismapped())
+        self.assertTrue(self.app.server_row.winfo_manager())
 
 
 if __name__ == '__main__':
