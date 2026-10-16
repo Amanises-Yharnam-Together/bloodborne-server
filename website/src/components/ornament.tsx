@@ -48,7 +48,7 @@ function Crest() {
 /** A menu rule: a silver line with scrollwork ends and, when `crest`, a crest in the middle. */
 export function MenuRule({ crest = true, className }: { crest?: boolean; className?: string }) {
   const line =
-    "h-px flex-1 bg-[linear-gradient(90deg,rgb(185_180_170/0.15),rgb(220_215_205/0.75),rgb(185_180_170/0.15))]";
+    "h-px flex-1 bg-[linear-gradient(90deg,rgb(201_168_106/0.15),rgb(217_184_120/0.75),rgb(201_168_106/0.15))]";
   return (
     <div className={cn("flex items-center gap-1.5 text-silver", className)} aria-hidden>
       <EndCap />
@@ -82,14 +82,15 @@ export function Heading({
         id={id}
         className={cn(
           "scroll-mt-24 font-normal text-title",
-          Tag === "h1" ? "text-4xl sm:text-5xl" : "text-3xl sm:text-[2.1rem]",
+          Tag === "h1" ? "text-4xl sm:text-5xl" : "text-xl tracking-[0.16em] uppercase sm:text-2xl",
         )}
       >
         {children}
       </Tag>
-      <div className="mt-2 flex items-center gap-1.5 text-silver" aria-hidden>
-        <EndCap />
-        <span className="h-px w-40 bg-[linear-gradient(90deg,rgb(220_215_205/0.7),transparent)]" />
+      <div className="mt-2.5 flex items-center gap-2 text-title" aria-hidden>
+        <span className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgb(217_184_120/0.8))]" />
+        <span className="size-1.5 rotate-45 bg-current" />
+        <span className="h-px w-24 bg-[linear-gradient(90deg,rgb(217_184_120/0.8),transparent)]" />
       </div>
     </div>
   );

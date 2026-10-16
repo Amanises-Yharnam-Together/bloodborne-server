@@ -9,7 +9,7 @@ import sharp from "sharp";
 import { emblem, mark } from "./emblem.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const BG = "#050505";
+const BG = "#0d0f13";
 
 const png = (svg, size) =>
   sharp(Buffer.from(svg), { density: Math.max(72, (size / 64) * 72 * 2) })

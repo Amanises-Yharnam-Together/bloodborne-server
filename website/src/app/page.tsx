@@ -74,7 +74,7 @@ export default function Home() {
     <>
       <section className="mx-auto grid max-w-6xl items-center gap-x-14 gap-y-12 px-4 pt-14 pb-20 sm:px-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:pt-20">
         <div>
-          <Emblem priority className="size-28 drop-shadow-[0_0_30px_rgb(190_186_176/0.15)]" />
+          <Emblem priority className="size-28 drop-shadow-[0_0_30px_rgb(120_138_168/0.15)]" />
           <h1 className="mt-6 text-5xl leading-[1.05] font-normal text-bone sm:text-6xl">
             Bloodborne
             <span className="block text-title">Seamless Co-op</span>

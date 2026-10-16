@@ -25,7 +25,7 @@ export default function Image() {
         justifyContent: "center",
         gap: 64,
         background:
-          "radial-gradient(ellipse 80% 70% at 50% 0%, rgba(190,186,176,0.13), rgba(5,5,5,1) 70%), #050505",
+          "radial-gradient(ellipse 80% 70% at 50% 0%, rgba(190,186,176,0.13), rgba(5,5,5,1) 70%), #0d0f13",
         color: "#f3ead8",
         fontFamily: "Garamond",
       }}
@@ -33,7 +33,7 @@ export default function Image() {
       <img src={emblem} width={300} height={300} alt="" />
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ fontSize: 92, lineHeight: 1 }}>Bloodborne</div>
-        <div style={{ fontSize: 54, color: "#c4a46b", marginTop: 8 }}>Seamless Co-op</div>
+        <div style={{ fontSize: 54, color: "#d9b878", marginTop: 8 }}>Seamless Co-op</div>
         <div
           style={{
             fontSize: 30,

@@ -7,7 +7,7 @@
     <stop offset="0" stop-color="#ecd49a"/><stop offset="0.5" stop-color="#b08a4c"/><stop offset="1" stop-color="#6b4f25"/>
   </linearGradient>
   <radialGradient id="field" cx="0.5" cy="0.45" r="0.65">
-    <stop offset="0" stop-color="#2a241d"/><stop offset="0.6" stop-color="#110f0d"/><stop offset="1" stop-color="#060505"/>
+    <stop offset="0" stop-color="#262b34"/><stop offset="0.6" stop-color="#14171c"/><stop offset="1" stop-color="#0b0d11"/>
   </radialGradient>
   <linearGradient id="bronze" x1="0" y1="0" x2="1" y2="0">
     <stop offset="0" stop-color="#1e170e"/><stop offset="0.25" stop-color="#7d6a49"/><stop offset="0.42" stop-color="#d8c8a2"/>
