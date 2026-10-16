@@ -47,6 +47,7 @@ CLERIC_BEAST = "0x1001409f"  # entity 2410800; its death runs event 12411700
 CLERIC_BEAST_DEFEATED = 2411  # set by event 12411700 after Handle Boss Defeat
 GASCOIGNE = "0x1001409c"  # entity 2410810 (his beast form: 0x1001409e, 2410811)
 GASCOIGNE_BEAST = "0x1001409e"
+BIG_BY_THE_LAMP = "0x10014001"  # boss-sized (max HP 1917), near the first lamp
 # Event 12411800's own flag: on, the map's load puts Gascoigne down (Force Character Death);
 # off, he waits for the fight. Both rig saves have him beaten.
 GASCOIGNE_DEFEATED = 12411800
@@ -876,6 +877,22 @@ SCENARIOS = {
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 900,
+    },
+    "boss-guest-runs": {
+        "about": "Kaniel 2026-10-16: a guest alone at a boss-sized enemy (max HP 1500 or more; "
+                 "the big one by the first lamp) while the host stays back: the guest's game runs "
+                 "it (no copy following the host's positions), in both games' eyes",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 90", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 20",
+                      f"approach {BIG_BY_THE_LAMP} 4 0", "wait 10", f"hurt {BIG_BY_THE_LAMP} 300",
+                      "wait 50", "snapshot", "expect-session 2"],
+        },
+        "expect": {"guest": [r"boss 0x10014001 is run by 7269675f6775657374"]},
+        "forbid": {"host": SESSION_HOLDS,
+                   "guest": SESSION_HOLDS + [r"enemy 10014001 jumped"]},
+        "timeout": 600,
     },
     "save-backups": {
         "about": "the saves are backed up by themselves (Kaniel 2026-10-11): with a backup every "
