@@ -377,6 +377,10 @@ bool TakeTradeItems(std::span<TradeItem> items, u32 handle) {
     return true;
 }
 
+bool TradeItemsCanBeAdded() {
+    return trade_sites.load();
+}
+
 // Puts the items in as a pickup does: goods up to the max held, the rest to the storage box,
 // each with the game's popup; echoes through AddSouls (the game's thread).
 void AddTradeItems(std::span<const TradeItem> items) {

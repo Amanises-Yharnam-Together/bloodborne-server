@@ -195,6 +195,14 @@ int main() {
     assert(!names.contains(0x80000000) && !names.contains(6000000) &&
            !names.contains(0x10000000 | 1000));
     assert(ItemNamesFromGameText({}, {}).empty());
+    // Kaniel's playtest 2026-10-16: on a guest the level-up commit sometimes left max HP at 255
+    // (HP 1, a stagger); the next press was right. Max HP falling though Vitality did not is a
+    // commit gone wrong: done again.
+    assert(StatsCommitWentWrong(682, 255, 9, 10));
+    assert(!StatsCommitWentWrong(682, 719, 9, 10));
+    assert(!StatsCommitWentWrong(682, 682, 9, 9));
+    assert(!StatsCommitWentWrong(719, 682, 10, 9)) ; // Vitality lowered: less is right
+    assert(!StatsCommitWentWrong(0, 255, 9, 10));     // nothing known before
     std::puts("save editor: ok");
     return 0;
 }
