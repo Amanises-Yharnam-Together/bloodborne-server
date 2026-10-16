@@ -62,6 +62,14 @@ inline std::int32_t LevelAfter(const Character& now, const std::int32_t attribut
     return level < 1 ? 1 : level;
 }
 
+/// Kaniel's playtest 2026-10-16: on a guest the level-up commit 0x1c13d00 sometimes recomputed
+/// max HP as 255 (and HP to 1, a stagger); the next commit was right. Max HP falling though
+/// Vitality did not means the commit went wrong.
+inline bool StatsCommitWentWrong(std::int32_t hp_max_before, std::int32_t hp_max_after,
+                                 std::int32_t vitality_before, std::int32_t vitality_after) {
+    return hp_max_before > 0 && vitality_after >= vitality_before && hp_max_after < hp_max_before;
+}
+
 /// The request 0x1c13d00 reads: level at +0x08, the six attributes from +0x0c.
 inline std::array<std::uint8_t, 0x24> StatsRequest(std::int32_t level,
                                                     const std::int32_t attributes[AttributeCount]) {

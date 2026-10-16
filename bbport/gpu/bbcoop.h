@@ -191,6 +191,10 @@ int bbcoop_trade_ask_open(uint64_t id);
 int bbcoop_trade_answer(uint64_t id, int accept);
 /* The next notice to show, skipping those with nothing to say; 0 when none. */
 int bbcoop_trade_notice(char *text, size_t size);
+/* Kaniel 2026-10-16 (the save editor's Give): items of the player's own (weapons, armor, gems,
+ * runes: full item id, `count` of them) put in as a pickup does, with the game's popup (the
+ * game's thread). 0 when trading's game functions are not known. */
+int bbcoop_give_own_item(uint32_t item_id, uint32_t count);
 /* The menus' tick: the co-op code runs it on the game's thread with its trades. */
 void bbcoop_trade_set_ui_tick(void (*tick)(void));
 /* Items' names for the boxes (the save editor's, from the game's text): by full item id (goods

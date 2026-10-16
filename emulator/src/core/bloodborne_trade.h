@@ -35,6 +35,8 @@ void QueueServerWorld(bbcoop::Envelope envelope);
 u32 TradeHeld(const TradeItem& item);
 bool TakeTradeItems(std::span<TradeItem> items, u32 handle = 0);
 void AddTradeItems(std::span<const TradeItem> items);
+// Whether AddTradeItems can (the game's functions it calls are the ones it knows).
+bool TradeItemsCanBeAdded();
 // An item's name for the other member's boxes (the port's, from the game's own text): the name it
 // has, else the namer's (SetTradeItemNamer), else nothing.
 std::string TradeItemName(const TradeItem& item);

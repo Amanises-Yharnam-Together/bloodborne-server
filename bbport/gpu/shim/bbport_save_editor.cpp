@@ -116,6 +116,38 @@ void SetInsight(std::int32_t insight) {
     });
 }
 
+namespace {
+
+// The level-up commit of `wanted`; done again (at most `tries` more, a tick apart) when it went
+// wrong (StatsCommitWentWrong), measured against the max HP before the first.
+void CommitStats(std::array<std::int32_t, AttributeCount> wanted, std::int32_t hp_max_before,
+                 std::int32_t vitality_before, int tries) {
+    const auto now = Read();
+    if (!now) {
+        return;
+    }
+    const std::int32_t level = LevelAfter(*now, wanted.data());
+    auto request = StatsRequest(level, wanted.data());
+    using SetStats = void GAME_ABI (*)(const void*);
+    reinterpret_cast<SetStats>(image_base + SetStatsFunction)(request.data());
+    const auto after = Read();
+    std::printf("Save editor: level %d, attributes %d %d %d %d %d %d, max HP %d\n", level,
+                wanted[0], wanted[1], wanted[2], wanted[3], wanted[4], wanted[5],
+                after ? after->hp_max : -1);
+    if (after && StatsCommitWentWrong(hp_max_before, after->hp_max, vitality_before,
+                                      after->attributes[Vitality])) {
+        std::printf("Save editor: max HP %d after the commit (was %d): %s\n", after->hp_max,
+                    hp_max_before, tries > 0 ? "done again" : "left");
+        if (tries > 0) {
+            Queue([wanted, hp_max_before, vitality_before, tries] {
+                CommitStats(wanted, hp_max_before, vitality_before, tries - 1);
+            });
+        }
+    }
+}
+
+} // namespace
+
 void SetAttributes(const std::int32_t attributes[AttributeCount]) {
     std::array<std::int32_t, AttributeCount> wanted;
     for (int i = 0; i < AttributeCount; ++i) {
@@ -126,18 +158,21 @@ void SetAttributes(const std::int32_t attributes[AttributeCount]) {
         if (!now) {
             return;
         }
-        const std::int32_t level = LevelAfter(*now, wanted.data());
-        auto request = StatsRequest(level, wanted.data());
-        using SetStats = void GAME_ABI (*)(const void*);
-        reinterpret_cast<SetStats>(image_base + SetStatsFunction)(request.data());
-        std::printf("Save editor: level %d, attributes %d %d %d %d %d %d\n", level, wanted[0],
-                    wanted[1], wanted[2], wanted[3], wanted[4], wanted[5]);
+        CommitStats(wanted, now->hp_max, now->attributes[Vitality], 3);
     });
 }
 
 void GiveItem(std::uint32_t category, std::uint32_t id, std::int32_t quantity) {
     Queue([category, id, quantity] {
         if (!InWorld() || quantity == 0) {
+            return;
+        }
+        // Kaniel's playtest 2026-10-16: a weapon given silently showed nothing. Items of their
+        // own (weapons, armor) go as trading's do: as a pickup, with the game's popup.
+        if (category != GoodsCategory && quantity > 0 &&
+            bbcoop_give_own_item(category | id, static_cast<std::uint32_t>(quantity))) {
+            std::printf("Save editor: gave item %#x:%u x%d as a pickup\n", category, id,
+                        quantity);
             return;
         }
         using Give = void GAME_ABI (*)(void*, std::uint32_t, std::uint32_t, std::int32_t);

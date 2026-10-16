@@ -48,6 +48,15 @@ std::string NameOf(const TradeItem& item) {
 
 extern "C" {
 
+int bbcoop_give_own_item(uint32_t item_id, uint32_t count) {
+    if (!TradeItemsCanBeAdded() || count == 0) {
+        return 0;
+    }
+    TradeItems items(std::min<uint32_t>(count, 20), TradeItem{TradeItemKind::Item, item_id, 1});
+    AddTradeItems(items);
+    return 1;
+}
+
 int bbcoop_trade_on(void) {
     return TradesOn() ? 1 : 0;
 }
