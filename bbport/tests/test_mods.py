@@ -431,3 +431,123 @@ class IconLayerTests(unittest.TestCase):
                                  '--out', str(self.root / 'out'), '--mods-dir', str(self.moddir),
                                  '--icons-layer', str(self.icons)], capture_output=True, text=True, check=True)
         self.assertEqual((Path(result.stdout.strip()) / self.COMMON).read_bytes(), b'generated icons')
+
+
+@unittest.skipUnless(os.name == 'nt', 'read-only hard links and junctions are Windows')
+class ReadOnlyGameFileTests(unittest.TestCase):
+    """A hard link shares the read-only attribute with the game file it links (a game copied from a read-only
+    source), and Windows refuses to delete a read-only file: replacing such a file with a mod, or removing the
+    overlay after the game, failed with WinError 5 "Access is denied". The attribute is cleared for the deletion
+    and put back on the game file. From Supermedo's bbport (ba34a3a, emurphy04's PR #77)."""
+
+    def setUp(self):
+        import stat
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.game = self.root / 'CUSA03173'
+        self.chr = self.game / 'dvdroot_ps4' / 'chr'
+        self.chr.mkdir(parents=True)
+        (self.game / 'eboot.bin').write_bytes(b'original executable')
+        (self.chr / 'a.dcx').write_bytes(b'original')
+        (self.chr / 'b.dcx').write_bytes(b'untouched')
+        self.read_only = [self.game / 'eboot.bin', self.chr / 'a.dcx', self.chr / 'b.dcx']
+        for path in self.read_only:
+            os.chmod(path, stat.S_IREAD)
+        self.addCleanup(self.cleanup)
+        mod = self.root / 'mods' / 'A' / 'dvdroot_ps4' / 'chr'
+        mod.mkdir(parents=True)
+        (mod / 'a.dcx').write_bytes(b'mod')
+        self.layers = [('A', self.root / 'mods' / 'A')]
+
+    def cleanup(self):
+        import stat
+        for path in self.root.rglob('*'):
+            if path.is_file() and not path.is_junction():
+                os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+        self.temp.cleanup()
+
+    def assert_game_intact(self):
+        import stat
+        self.assertEqual((self.game / 'eboot.bin').read_bytes(), b'original executable')
+        self.assertEqual((self.chr / 'a.dcx').read_bytes(), b'original')
+        self.assertEqual((self.chr / 'b.dcx').read_bytes(), b'untouched')
+        for path in self.read_only:
+            self.assertFalse(path.stat().st_mode & stat.S_IWRITE, f'{path} lost its read-only attribute')
+
+    def test_a_mod_replaces_a_read_only_game_file(self):
+        overlay = mods.build_overlay(self.game, self.root / 'out', self.layers)
+        self.assertEqual((overlay / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+        self.assertTrue((overlay / 'dvdroot_ps4/chr/b.dcx').samefile(self.chr / 'b.dcx'))  # a hard link
+        self.assert_game_intact()
+
+    def test_the_overlay_is_removed_and_the_game_keeps_its_files_and_attributes(self):
+        overlay = mods.build_overlay(self.game, self.root / 'out', self.layers)
+        mods.remove_overlay(overlay, self.game)
+        self.assertFalse(overlay.exists())
+        self.assert_game_intact()
+
+    def test_an_overlay_made_by_another_run_is_removed_too(self):
+        # run.py removes the view after the game: the links it made in mods.py's process are unknown there.
+        overlay = mods.build_overlay(self.game, self.root / 'out', self.layers)
+        mods.LINKED.clear()
+        mods.remove_overlay(overlay, self.game)
+        self.assertFalse(overlay.exists())
+        self.assert_game_intact()
+
+
+class LinklessDriveTests(unittest.TestCase):
+    """[WinError 1] "Incorrect function": without symlink rights a folder of the view is a junction, which only NTFS
+    has, so a port on an exFAT or FAT32 drive (USB, external) stopped at start. The view is then made in the system
+    drive's temporary folder. From Supermedo's bbport (bf0878b)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.game = self.root / 'CUSA03173'
+        (self.game / 'dvdroot_ps4' / 'chr').mkdir(parents=True)
+        (self.game / 'dvdroot_ps4' / 'chr' / 'a.dcx').write_bytes(b'original')
+        (self.game / 'eboot.bin').write_bytes(b'exe')
+        mod = self.root / 'mods' / 'A' / 'dvdroot_ps4' / 'chr'
+        mod.mkdir(parents=True)
+        (mod / 'a.dcx').write_bytes(b'mod')
+        self.layers = [('A', self.root / 'mods' / 'A')]
+
+    def test_beside_game_false_keeps_the_view_in_out(self):
+        with mock.patch.object(mods, 'beside_game', return_value=True):
+            overlay = mods.build_overlay(self.game, self.root / 'out', self.layers, beside=False)
+        self.addCleanup(shutil.rmtree, overlay, True)
+        self.assertEqual(overlay.parent, (self.root / 'out').resolve())
+        self.assertEqual((overlay / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+
+    @unittest.skipUnless(os.name == 'nt', 'WinError codes are Windows')
+    def test_incorrect_function_makes_the_view_in_the_temporary_folder(self):
+        import contextlib
+        import io
+        refused = OSError(None, 'Incorrect function', None, 1)
+        calls = []
+
+        def build(game, out, layers, beside=True):
+            calls.append((Path(out), beside))
+            if len(calls) == 1:
+                raise refused
+            return Path(out) / 'view'
+        argv = ['mods.py', str(self.game), '--out', str(self.root / 'out'), '--mods-dir', str(self.root / 'mods')]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(mods, 'build_overlay', build), mock.patch.object(sys, 'argv', argv), \
+                mock.patch.object(mods.tempfile, 'gettempdir', return_value=str(self.root / 'temp')), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            mods.main()
+        fallback = self.root / 'temp' / 'bbport-game-view'
+        self.assertEqual(calls, [(self.root / 'out', True), (fallback, False)])
+        self.assertEqual(stdout.getvalue().strip(), str(fallback / 'view'))
+        self.assertIn(str(fallback), stderr.getvalue())
+
+    @unittest.skipUnless(os.name == 'nt', 'WinError codes are Windows')
+    def test_other_errors_still_stop(self):
+        def build(game, out, layers, beside=True):
+            raise OSError(None, 'Access is denied', None, 5)
+        argv = ['mods.py', str(self.game), '--out', str(self.root / 'out'), '--mods-dir', str(self.root / 'mods')]
+        with mock.patch.object(mods, 'build_overlay', build), mock.patch.object(sys, 'argv', argv):
+            with self.assertRaises(OSError):
+                mods.main()
