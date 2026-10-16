@@ -819,6 +819,15 @@ TEST(BloodbornePartyDeath, TheMemberInTheArenaRunsTheBoss) {
                         std::vector{at("host", 5.0f, Vital::Up, 0x15000000), at("lisara", 60.0f)}),
               "")
         << "nobody in the arena";
+    // krolebord joined in the middle of the host's fight: the boss stays with the host's game.
+    BossRunnerPick fight;
+    EXPECT_EQ(
+        fight.Tick(Yharnam, boss, std::vector{at("host", 8.0f), at("krolebord", 3.0f)}, "host"), "")
+        << "the game's own runner is in the arena";
+    EXPECT_EQ(
+        fight.Tick(Yharnam, boss, std::vector{at("host", 80.0f), at("krolebord", 3.0f)}, "host"),
+        "krolebord")
+        << "the host left: the one in the arena";
     BossRunnerPick tie;
     EXPECT_EQ(tie.Tick(Yharnam, boss, std::vector{at("b", 10.0f), at("a", 10.0f)}), "a")
         << "a tie: by name, the same in every game";
