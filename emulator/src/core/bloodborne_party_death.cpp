@@ -1467,7 +1467,8 @@ std::string NameplateName(u64 tag_data) {
     });
 }
 
-// Each nameplate name seen once, in the log (the rig checks that the names are the members').
+// Each change of a nameplate's name, in the log (the rig checks that the names are the members'):
+// a name back after a blank (a member hidden off the map, then shown) is logged again.
 void NoteNameplate(int index, const std::string& name) {
     // The HUD's thread calls this for each tag every frame: the same name as last time is no news.
     static std::array<std::string, 16> last;
@@ -1475,10 +1476,8 @@ void NoteNameplate(int index, const std::string& name) {
         return;
     }
     last[index] = name;
-    static std::mutex mutex;
-    static std::unordered_set<std::string> seen;
-    std::scoped_lock lock{mutex};
-    if (seen.size() < 32 && seen.insert(fmt::format("{}:{}", index, name)).second) {
+    static std::atomic<u32> logged{0};
+    if (logged.fetch_add(1) < 400) {
         LOG_INFO(Debug, "Bloodborne party HUD: nameplate {} is \"{}\"", index, name);
     }
 }
