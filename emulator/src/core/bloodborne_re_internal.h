@@ -784,7 +784,7 @@ void TeamChoose(TeamGate::Choice choice);
 // "Co-op Team" page) and closed by its own buttons; Circle for the game's page under it a moment
 // after it closed (the port's pad); whether a save plays (and in its team's world); the menu's
 // "Join the hunt" (an invitation's team, or "" in a team already).
-void TeamMenu(bool open);
+void TeamMenu(bool open, bool from_page);
 bool TeamMenuOpen();
 bool TeamMenuBackPressed();
 bool TeamPlaying(bool* in_hunt);

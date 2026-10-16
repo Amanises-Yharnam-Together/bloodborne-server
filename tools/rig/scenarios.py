@@ -1283,6 +1283,25 @@ SCENARIOS = {
     },
     # A save playing alone is invited from the leader's menu and joins the hunt from its own,
     # where it stands, without going back to the title.
+    # Kaniel 2026-10-16: the team menu from the Insert menu too (its "Co-op Team" row, the last
+    # but Quit): the team screen opens over the game and its Close goes back to the game. The
+    # team's loading screen lingers a while after the join (the menu does not open under it).
+    "team-menu-insert": {
+        "about": "in game, the Insert menu's Co-op Team row opens the team screen; its Close "
+                 "closes it again, the session holds",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 30", "wait 20", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 25", "keys toggle up up enter",
+                      "wait 3", "keys enter", "wait 3", "snapshot", "expect-session 2"],
+        },
+        "expect": {
+            "guest": [r"Co-op team menu: the team screen is open from the port's Insert menu",
+                      r"Co-op team menu: the team screen is closed back to the port's Insert menu"],
+        },
+        "forbid": {"guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     # Kaniel 2026-10-16: a removed member invited back joins again from the menu where it stands
     # (its game's second join crashed at eboot+0x13cffba until the flag block guard).
     "team-menu-rejoin": {

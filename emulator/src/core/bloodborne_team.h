@@ -96,6 +96,24 @@ private:
 //    the team's session where it stands and plays on alone, in its own world (no reload).
 //  - Adopt: playing alone, the Start of the team it is ready in came (it joined the hunt from the
 //    menu): it takes the team's party, and joins the session in place (TeamJoin).
+// The team menu closed (TeamMenu): opened from the game's System page, the pad presses Circle from
+// AfterMs after for HoldMs so that page closes too; opened from the port's Insert menu, nothing.
+class TeamMenuBack {
+public:
+    static constexpr s64 AfterMs = 100;
+    static constexpr s64 HoldMs = 150;
+    void Closed(s64 now_ms, bool from_page) {
+        closed_ms = from_page ? std::optional<s64>{now_ms} : std::nullopt;
+    }
+    bool Pressed(s64 now_ms) const {
+        return closed_ms && now_ms - *closed_ms >= AfterMs &&
+               now_ms - *closed_ms < AfterMs + HoldMs;
+    }
+
+private:
+    std::optional<s64> closed_ms;
+};
+
 enum class TeamPlayStep { None, Adopt, Leave };
 TeamPlayStep TeamPlayStepOf(const bbcoop::LobbyState* lobby, std::string_view party,
                             const bbcoop::TeamStart* start, const std::string& me = {});

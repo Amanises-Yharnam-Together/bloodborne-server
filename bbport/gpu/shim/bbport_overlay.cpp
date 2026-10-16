@@ -1633,6 +1633,16 @@ void Menu() {
         }
     }
     ImGui::Spacing();
+    // Kaniel 2026-10-16: the team menu from here too (as from the game's System menu): the team
+    // screen over the game, with invite, remove, leave and join the hunt.
+    if (bbcoop_lobby probe; bbcoop_lobby_view(&probe) &&
+                            Row("team", T("Co-op Team", "Кооп-команда"), nullptr,
+                                T("Your team: invite hunters, remove a member, leave, or join the hunt.",
+                                  "Ваша команда: пригласить охотников, исключить, покинуть или вступить в охоту."),
+                                true) != 0) {
+        SetOpen(false);
+        bbcoop_team_menu(2); // no page of the game under it
+    }
     if (Row("quit", T("Quit to desktop", "Выйти на рабочий стол"), nullptr,
             T("Asks first: progress since the last autosave is lost. Holding L3 + R3 asks too.",
               "Сначала спросит: прогресс после последнего автосохранения теряется. Удержание L3 + R3 "
