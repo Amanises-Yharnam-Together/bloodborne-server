@@ -363,6 +363,40 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 900,
     },
+    "trade-echoes": {
+        "about": "giving Blood Echoes through the menus (Kaniel 2026-10-16: a clearer soul trade): "
+                 "the host holding 54,321 opens Give Blood Echoes (the last row of any item's "
+                 "commands); the picker opens on 1,000 and steps by 1,000, so Up twice is 3,000; "
+                 "then Down from 1,000 wraps to all the rest; the guest accepts both",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10",
+                     "trade-stock vials 10", "trade-stock bullets 0", "trade-stock echoes 54321",
+                     "wait 5", "press options", "wait 2", "press cross", "wait 2",
+                     # The first row's commands -> Up wraps to Give Blood Echoes -> 3,000 -> Yes.
+                     "press cross", "wait 2", "press up", "wait 1", "press cross", "wait 2",
+                     "press up", "wait 1", "press up", "wait 1", "press left", "wait 1",
+                     "press cross", "wait 3", "expect-held echoes 51321",
+                     # The menu closes after an offer; the game's OK box says it was accepted.
+                     "wait-trade accepted 60", "wait 2", "press cross", "wait 2",
+                     # Again: Down from the first step is all of them.
+                     "press options", "wait 2", "press cross", "wait 2",
+                     "press cross", "wait 2", "press up", "wait 1", "press cross", "wait 2",
+                     "press down", "wait 1", "press left", "wait 1", "press cross", "wait 3",
+                     "expect-held echoes 0", "wait 5"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 10",
+                      "trade-stock echoes 0", "trade-answer yes 180",
+                      "expect-held echoes 3000 30", "trade-answer yes 120",
+                      "expect-held echoes 54321 30", "wait-trade received 10"],
+        },
+        "expect": {
+            "host": [r"Bloodborne trade: offered .* 3,000 Blood Echoes",
+                     r"Bloodborne trade: offered .* 51,321 Blood Echoes"],
+            "guest": [r"Bloodborne trade: added 3,000 Blood Echoes",
+                      r"Bloodborne trade: added 51,321 Blood Echoes"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     "server-restart": {
         "about": "phase 3, the party's world on the server (the port): the host kills an enemy while the guest is in the Dream, shadNet restarts "
                  "mid-session, the host kills another; the guest coming back finds both dead (a "

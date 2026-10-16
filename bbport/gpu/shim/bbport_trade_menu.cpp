@@ -59,11 +59,28 @@ constexpr u64 OperatorDelete = 0x02BBE588;
 constexpr u32 RowNameCategory = 200, RowHelpCategory = 201, DialogCategory = 204;
 constexpr u32 GoodsItem = 0x40000000;
 constexpr u32 EchoesKind = 1, GoodsKind = 2, ItemKind = 3;
-constexpr u32 BloodVialGoods = 1000, QuicksilverBulletGoods = 900;
 constexpr std::size_t TextSize = 0x40, FunctionSize = 0x28;
 constexpr u32 MaxGoods = 99, MaxEchoes = 999'999'999;
 
 const u8 ItemCommandsCall[] = {0xE8, 0x01, 0x91, 0x04, 0x00};
+// NumSelect fills the picker's numbers on its stack ({lowest 1, max, first number, Up/Down step 1,
+// other step 10 (inputs 0x3C/0x3D, 0x42/0x43; not L1/R1 or L2/R2, the rig found)}, read by the
+// picker's input 0x01ADD210: Up/Down wrap at the ends) with these instructions; the port calls a
+// stub there that takes the lowest and the steps from `picker_steps`: the game's own for its
+// pickers, sized to the echoes held for ours.
+constexpr u64 NumSelectNumbers = 0x01C2040E;
+const u8 NumSelectNumbersCode[] = {
+    0xC7, 0x85, 0x38, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, // mov [rbp-0xC8], 1
+    0x44, 0x89, 0xB5, 0x3C, 0xFF, 0xFF, 0xFF,                   // mov [rbp-0xC4], r14d (max)
+    0x89, 0x9D, 0x40, 0xFF, 0xFF, 0xFF,                         // mov [rbp-0xC0], ebx (first)
+    0xC7, 0x85, 0x44, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, // mov [rbp-0xBC], 1
+    0xC7, 0x85, 0x48, 0xFF, 0xFF, 0xFF, 0x0A, 0x00, 0x00, 0x00, // mov [rbp-0xB8], 10
+};
+struct PickerSteps {
+    u32 lowest, step, big_step;
+};
+constexpr PickerSteps GamePickerSteps{1, 1, 10};
+PickerSteps picker_steps = GamePickerSteps;
 // The inventory's row filter (functor call 0x01BD8150(self, item record) -> keep) leaves out Blood
 // Vials, Quicksilver Bullets and Blood Bullets (goods 1000, 900, 901), shown on the HUD only. The port
 // keeps them: their rows carry the Give commands (and the game's own Use/Discard).
@@ -132,9 +149,10 @@ void MakeTextOf(u8* text, u32 category, u32 id) {
 // The quantity picker's OK: the offer.
 GAME_ABI void** OkCall(void** out, Impl* self, int* chosen) {
     const u32 count = chosen ? u32(*chosen) : 0;
-    if (count > 0 && bbcoop_trade_offer(self->kind, self->id, count, self->handle)) {
-        std::printf("Trade menu: offered %u of %u/%u\n", count, self->kind, self->id);
-    }
+    const bool sent = count > 0 && bbcoop_trade_offer(self->kind, self->id, count, self->handle);
+    std::printf("Trade menu: %s %u of %u/%u\n", sent ? "offered" : "could not offer", count,
+                self->kind, self->id);
+    std::fflush(stdout);
     return NothingJob(out);
 }
 const void* const ok_vtable[8] = {
@@ -159,9 +177,21 @@ GAME_ABI void** GiveCall(void** out, Impl* self, u8* context) {
     *reinterpret_cast<Impl*>(on_ok) = {ok_vtable, self->kind, self->id, self->handle};
     *reinterpret_cast<void**>(on_ok + 0x20) = on_ok;
     alignas(16) u8 extra[FunctionSize] = {};
+    u32 first = 1;
+    if (self->kind == EchoesKind) {
+        // Echoes in round steps sized to what the player holds, from one step, its lowest (the
+        // picker reads them as it opens): past the last step and below the first comes `max`.
+        u32 step = 1, big_step = 10;
+        bbcoop_trade_echoes_picker(&step, &big_step);
+        first = std::min(step, max);
+        picker_steps = {first, step, big_step};
+        std::printf("Trade menu: echoes picker of %u, step %u\n", max, step);
+        std::fflush(stdout);
+    }
     using Open = void (GAME_ABI *)(void**, void*, const char16_t*, void*, int, int, void*, void*);
-    Game<Open>(NumSelect)(out, context + 0x48, Game<const char16_t*>(NumSelectMovie), text, 1,
-                          int(max), on_ok, extra);
+    Game<Open>(NumSelect)(out, context + 0x48, Game<const char16_t*>(NumSelectMovie), text,
+                          int(first), int(max), on_ok, extra);
+    picker_steps = GamePickerSteps;
     BbGameMenu::DestroyGameFunction(on_ok);
     BbGameMenu::DestroyGameText(text);
     return out;
@@ -187,7 +217,8 @@ void AddGiveRow(void* model, u32 name, u32 help, u32 kind, u32 id, u32 handle = 
 }
 
 // The inventory's item commands: a "Give" row for any item (Kaniel 2026-10-15), when someone is
-// near; "Give Blood Echoes" on the vials' and bullets' rows.
+// near; "Give Blood Echoes" on every item's rows while the player holds any (Kaniel 2026-10-16:
+// echoes easy to find, not only on the vials and bullets).
 GAME_ABI void* OpenItemCommands(void** out, void* model, u8* factory) {
     u8* impl = factory ? *reinterpret_cast<u8**>(factory + 0x20) : nullptr;
     if (impl && *reinterpret_cast<u64*>(impl) == image + ItemCommandsFactoryVtable &&
@@ -198,16 +229,17 @@ GAME_ABI void* OpenItemCommands(void** out, void* model, u8* factory) {
         const u32 kind = goods ? GoodsKind : ItemKind;
         const u32 id = goods ? item & 0xFFFFFFF : item;
         char question[8];
-        const bool give = bbcoop_trade_tradeable(kind, id) &&
-                          bbcoop_trade_give_question(kind, id, question, sizeof question);
-        std::printf("Trade menu: commands of item %#x (handle %#x)%s\n", item, handle,
-                    give ? ", Give" : "");
+        const bool someone = bbcoop_trade_give_question(EchoesKind, 0, question, sizeof question);
+        const bool give = someone && bbcoop_trade_tradeable(kind, id);
+        const bool echoes = someone && bbcoop_trade_held(EchoesKind, 0) > 0;
+        std::printf("Trade menu: commands of item %#x (handle %#x)%s%s\n", item, handle,
+                    give ? ", Give" : "", echoes ? ", Give Blood Echoes" : "");
+        std::fflush(stdout);
         if (give) {
             AddGiveRow(model, give_name, give_help, kind, id, goods ? 0 : handle);
-            if (goods && (id == BloodVialGoods || id == QuicksilverBulletGoods) &&
-                bbcoop_trade_held(EchoesKind, 0) > 0) {
-                AddGiveRow(model, give_echoes_name, give_echoes_help, EchoesKind, 0);
-            }
+        }
+        if (echoes) {
+            AddGiveRow(model, give_echoes_name, give_echoes_help, EchoesKind, 0);
         }
     }
     using Open = void* (GAME_ABI *)(void**, void*, void*);
@@ -353,7 +385,10 @@ bool PatchImage(unsigned char* image_start, std::uint64_t size, std::uint8_t*& s
                     sizeof InventoryRowFilterPrologue) != 0 ||
         ItemCommandsOpenCall + sizeof ItemCommandsCall > size ||
         std::memcmp(image_start + ItemCommandsOpenCall, ItemCommandsCall,
-                    sizeof ItemCommandsCall) != 0) {
+                    sizeof ItemCommandsCall) != 0 ||
+        NumSelectNumbers + sizeof NumSelectNumbersCode > size ||
+        std::memcmp(image_start + NumSelectNumbers, NumSelectNumbersCode,
+                    sizeof NumSelectNumbersCode) != 0) {
         std::printf("Trade menu: unexpected code in the inventory, no Give row\n");
         return false;
     }
@@ -362,8 +397,9 @@ bool PatchImage(unsigned char* image_start, std::uint64_t size, std::uint8_t*& s
     give_help = BbGameMenu::AddGameText("Give some to the nearest party member",
                                         "Отдать ближайшему участнику группы");
     give_echoes_name = BbGameMenu::AddGameText("Give Blood Echoes", "Отдать Отголоски крови");
-    give_echoes_help = BbGameMenu::AddGameText("Give Blood Echoes to the nearest party member",
-                                               "Отдать Отголоски крови ближайшему участнику группы");
+    give_echoes_help = BbGameMenu::AddGameText(
+        "Give some of your Blood Echoes to the nearest party member",
+        "Отдать часть своих Отголосков крови ближайшему участнику группы");
     // call rel32 -> a thunk: movabs rax, OpenItemCommands; jmp rax.
     u8* thunk = stubs;
     void* hook = reinterpret_cast<void*>(&OpenItemCommands);
@@ -372,15 +408,42 @@ bool PatchImage(unsigned char* image_start, std::uint64_t size, std::uint8_t*& s
     std::memcpy(thunk + 2, &hook, 8);
     thunk[10] = 0xFF;
     thunk[11] = 0xE0;
+    // The picker's numbers: call a stub that stores them as the game did, the lowest and the steps
+    // from picker_steps (rax and rdx are free there: the game sets both next).
+    u8* numbers = stubs + 16;
+    const PickerSteps* steps = &picker_steps;
+    const u8 numbers_head[] = {
+        0x44, 0x89, 0xB5, 0x3C, 0xFF, 0xFF, 0xFF, // mov [rbp-0xC4], r14d
+        0x89, 0x9D, 0x40, 0xFF, 0xFF, 0xFF,       // mov [rbp-0xC0], ebx
+        0x48, 0xB8};                              // movabs rax, &picker_steps
+    const u8 numbers_tail[] = {
+        0x8B, 0x10,                               // mov edx, [rax]
+        0x89, 0x95, 0x38, 0xFF, 0xFF, 0xFF,       // mov [rbp-0xC8], edx
+        0x48, 0x8B, 0x50, 0x04,                   // mov rdx, [rax+4]
+        0x48, 0x89, 0x95, 0x44, 0xFF, 0xFF, 0xFF, // mov [rbp-0xBC], rdx (both steps)
+        0xC3};                                    // ret
+    std::memcpy(numbers, numbers_head, sizeof numbers_head);
+    std::memcpy(numbers + sizeof numbers_head, &steps, 8);
+    std::memcpy(numbers + sizeof numbers_head + 8, numbers_tail, sizeof numbers_tail);
     const std::int64_t to =
         std::int64_t(thunk) - std::int64_t(image_start + ItemCommandsOpenCall + 5);
-    if (to != std::int32_t(to)) {
+    const std::int64_t to_numbers =
+        std::int64_t(numbers) - std::int64_t(image_start + NumSelectNumbers + 5);
+    if (to != std::int32_t(to) || to_numbers != std::int32_t(to_numbers)) {
         std::printf("Trade menu: stub out of call range, no Give row\n");
         return false;
     }
     const std::int32_t to32 = std::int32_t(to);
     std::memcpy(image_start + ItemCommandsOpenCall + 1, &to32, 4);
-    stubs += 16;
+    // call numbers; jmp past the rest of the game's instructions.
+    u8* site = image_start + NumSelectNumbers;
+    std::memset(site, 0xCC, sizeof NumSelectNumbersCode);
+    site[0] = 0xE8;
+    const std::int32_t numbers32 = std::int32_t(to_numbers);
+    std::memcpy(site + 1, &numbers32, 4);
+    site[5] = 0xEB;
+    site[6] = u8(sizeof NumSelectNumbersCode - 7);
+    stubs += 16 + 48;
     bbcoop_trade_set_ui_tick(&TickCall);
     bbcoop_trade_set_namer(&NameItem);
     std::printf("Trade menu: in (Give rows, offers asked in the world)\n");

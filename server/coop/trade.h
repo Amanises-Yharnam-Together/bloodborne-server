@@ -111,6 +111,19 @@ std::string TradeAskText(const std::string& from_name, std::span<const TradeItem
                          std::span<const TradeItem> want);
 std::string TradeGiveQuestion(const TradeItem& item, const std::string& to_name);
 
+// The quantity picker for Blood Echoes (Kaniel 2026-10-16: a clearer soul trade): Up/Down move by
+// `step`, a round amount sized to what the player holds (under a hundred presses to any of them);
+// it opens on one step, its lowest, and past the last step comes all of them. `big_step` is the
+// game's other step (its inputs 0x3C/0x3D, 0x42/0x43, not the shoulder buttons).
+struct TradeEchoesPicker {
+    u32 step = 1;
+    u32 big_step = 10;
+    bool operator==(const TradeEchoesPicker&) const = default;
+};
+TradeEchoesPicker TradeEchoesPickerFor(u32 held);
+// Its line: to whom, how many the player holds and the step.
+std::string TradeGiveEchoesQuestion(u32 held, const std::string& to_name);
+
 // Whether a message is one of trading's (coop.proto's Trade*).
 bool IsTradeMessage(const bbcoop::Envelope& envelope);
 

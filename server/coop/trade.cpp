@@ -157,6 +157,22 @@ std::string TradeGiveQuestion(const TradeItem& item, const std::string& to_name)
     return "Select quantity of " + what + " to give to " + to_name + ".";
 }
 
+TradeEchoesPicker TradeEchoesPickerFor(u32 held) {
+    // The power of ten below a hundredth of what the player holds (1 under 100).
+    const u32 most = std::min(held, MaxTradeEchoes);
+    u32 step = 1;
+    while (most / step >= 100) {
+        step *= 10;
+    }
+    return {step, step * 10};
+}
+
+std::string TradeGiveEchoesQuestion(u32 held, const std::string& to_name) {
+    return "Give Blood Echoes to " + to_name + " (you hold " + Thousands(held) +
+           ").\nUp/Down: " + Thousands(TradeEchoesPickerFor(held).step) +
+           " at a time, up to all of them.";
+}
+
 std::string TradeNoticeText(const TradeClient::Notice& notice) {
     using Kind = TradeClient::Notice::Kind;
     const std::string items = TradeItemsText(notice.items);

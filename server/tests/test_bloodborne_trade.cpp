@@ -528,11 +528,36 @@ int TestTexts() {
   return 0;
 }
 
+int TestEchoesPicker() {
+  // Blood Echoes go in round steps that fit what the player holds: under a
+  // hundred presses to any of them, all of them past the last (Kaniel
+  // 2026-10-16). The picker opens on one step, its lowest.
+  CHECK((TradeEchoesPickerFor(54'321) == TradeEchoesPicker{1'000, 10'000}));
+  CHECK((TradeEchoesPickerFor(1'000) == TradeEchoesPicker{100, 1'000}));
+  CHECK((TradeEchoesPickerFor(999) == TradeEchoesPicker{10, 100}));
+  CHECK((TradeEchoesPickerFor(100) == TradeEchoesPicker{10, 100}));
+  CHECK((TradeEchoesPickerFor(99) == TradeEchoesPicker{1, 10}));
+  CHECK((TradeEchoesPickerFor(0) == TradeEchoesPicker{1, 10}));
+  CHECK((TradeEchoesPickerFor(123'456'789) ==
+         TradeEchoesPicker{10'000'000, 100'000'000}));
+  // Over what a trade may carry: the steps of the most.
+  CHECK((TradeEchoesPickerFor(4'000'000'000u) ==
+         TradeEchoesPicker{10'000'000, 100'000'000}));
+  CHECK(TradeGiveEchoesQuestion(54'321, "Ada") ==
+        "Give Blood Echoes to Ada (you hold 54,321).\n"
+        "Up/Down: 1,000 at a time, up to all of them.");
+  CHECK(TradeGiveEchoesQuestion(7, "Ada") ==
+        "Give Blood Echoes to Ada (you hold 7).\n"
+        "Up/Down: 1 at a time, up to all of them.");
+  return 0;
+}
+
 } // namespace
 
 int main() {
   int failed = 0;
   failed += TestItems();
+  failed += TestEchoesPicker();
   failed += TestAnyItemGiven();
   failed += TestGiveAccepted();
   failed += TestSwap();

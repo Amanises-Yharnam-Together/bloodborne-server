@@ -8,9 +8,13 @@ the port with the server world (Kaniel 2026-10-14); shadPS4 has none.
 
 ## How a trade goes
 
-1. The giver picks "Give" on any item in the inventory (or "Give Blood Echoes" on a Blood Vial or
-   Quicksilver Bullet, shown while it has any), and a number in the game's quantity picker (cursor on
-   No; down from 1 wraps to all of them). The offer goes to the nearest other party member
+1. The giver picks "Give" on any item in the inventory, or "Give Blood Echoes" (on every item's
+   commands while it holds any echoes and someone is near), and a number in the game's quantity
+   picker (cursor on No; down from 1 wraps to all of them). "Give Blood Echoes" is the last row,
+   one Up from the first. For echoes the picker says to whom and how many the giver holds ("Give
+   Blood Echoes to Ada (you hold 54,321).\nUp/Down: 1,000 at a time, up to all of them."): Up/Down
+   step by a round amount under a hundredth of that (1 under 100), the picker opens on one step,
+   its lowest, and past the last step (or down from the first) comes all of them. The offer goes to the nearest other party member
    standing on the same map. The game's inventory hides vials and bullets (they are on the HUD
    only); the port lists them in the Consumables tab (row filter 0x01BD8150 made
    to keep every row), with the game's own Use and Discard too.
@@ -31,8 +35,8 @@ folder, written whole on every change) and hands them again when a member's game
 crash or a restart of either side loses nothing. A grant is added once per game run.
 
 Known limits: a giver whose game crashes after taking items out but before its offer reached the
-server (one stream tick, 20 ms) loses them if the game saved in between. The quantity picker steps one at a time, slow for large
-echo amounts (the game's LargeNumSelect is not traced yet). An offer's box opens in the world
+server (one stream tick, 20 ms) loses them if the game saved in between. The goods' picker steps
+one at a time (99 at most). An offer's box opens in the world
 whenever no menu is open, also mid-fight; its cursor starts on No.
 
 ## Code
@@ -44,7 +48,7 @@ whenever no menu is open, also mid-fight; its cursor starts on No.
 - `server/src/bloodborne_world.cpp`: the desk per party world, its file, expiry on the tick.
 - `emulator/src/core/bloodborne_trade.cpp`: the inventory (take out, put in), the client.
 - `bbport/gpu/shim/bbport_trade_menu.cpp` + `bbport/gpu/bbcoop/trade.cpp`: the menus.
-- Rig: scenarios `trade` (headless) and `trade-menus` (drawn, screenshots); verbs `trade-stock`,
+- Rig: scenarios `trade` and `trade-echoes` (headless) and `trade-menus` (drawn, screenshots); verbs `trade-stock`,
   `trade-give`, `trade-offer`, `trade-answer`, `expect-held`, `wait-trade`.
 
 ## Items of their own (weapons, armor, gems; static RE 2026-10-15)
@@ -78,7 +82,8 @@ The giver writes the item into `data` before taking it out; the receiver makes a
 | Add echoes | AddSouls `0x018FC600` (player vtable +0x3D0) |
 | Item commands list | `call 0x01BEA630` at `0x01BA152A` (factory vtable 0x0533FE00, item id at factory +8 +0x4C) |
 | Add a row | `0x01B4C9A0(model, name+help texts, Function*, 0)` |
-| Quantity picker | `0x01C203C0(Job**, owner, L"NumSelect", text, min, max, on_ok, extra)` |
+| Quantity picker | `0x01C203C0(Job**, owner, L"NumSelect", text, first, max, on_ok, extra)`: `first` is the number it opens on, the lowest is always 1 |
+| Picker's numbers | stored at `0x01C2040E` as {lowest 1, max, first, step 1, other step 10}; input `0x01ADD210`: Up/Down (menu inputs 0x24/0x20) the step, clamped, wrapping at the ends; the other step on inputs 0x3C/0x3D and 0x42/0x43 (not L1/R1, L2/R2 or Left/Right: the rig found no effect; Left/Right move between Yes and No). The port calls a stub there that takes the lowest and the steps from its own (the game's for the game's pickers) |
 | Yes/no, OK box | `0x01C1ED10`, `0x01C1F500` (Job**, owner, text); answer MenuMan `[0x05562878]` +0x1CC (1 yes, 2 no) |
 | Show in the world | root `0x0176BAB0()`, owner root+0x48, push `0x01BB27A0(Handle*, root, Job**, abort)`; not while MenuMan +0x2FC; the box is gone once ours is the job's last reference |
 | Inventory row filter | `0x01BD8150` leaves out goods 900, 901, 1000; the port makes it `mov al, 1; ret` |
