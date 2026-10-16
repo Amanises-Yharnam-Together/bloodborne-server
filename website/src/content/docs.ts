@@ -319,6 +319,13 @@ const netcode: DocPage = {
           alt: "Left, peer to peer: four hunters each linked to every other, six links. Right, one server in the middle linked to each of the four hunters, four links.",
         },
         {
+          type: "figure",
+          figure: "links",
+          caption:
+            "Links to keep alive as the team grows: every pair of players with peer to peer, one per player with a server.",
+          alt: "Bar chart. Two players: 1 link peer to peer, 2 with a server. Three players: 3 and 3. Four players: 6 and 4.",
+        },
+        {
           type: "table",
           head: ["Question", "Decision", "Why"],
           rows: [
@@ -357,53 +364,14 @@ const netcode: DocPage = {
         {
           type: "ul",
           items: [
-            "**Every game packet goes through one send and one receive function.** A packet is `{u32 channel, u32 size, payload}`, up to 0x6400 bytes, on 68 channels (about 60 used). Channels 0 to 6 are unreliable, 7 and up reliable. Two hooks see, drop, rewrite or inject any packet.",
+            "**Every game packet goes through one send and one receive point.** Packets travel on numbered channels, some unreliable (movement) and some reliable (everything that must arrive). Hooking those two points lets the co-op code see, drop, rewrite or inject any packet.",
             "**The native model is one host's world.** The host runs every enemy and sends their positions and HP; a guest's hit on an enemy goes to the host, which applies it. A joining guest gets the host's flags for the host's current map only, once.",
-            "**Players sync themselves.** Each game sends its own player on channel 6: position, heading, HP and the animation graph's events and variables. A hit on a player goes to the victim's game, which decides its HP.",
+            "**Players sync themselves.** Each game sends its own player: position, heading, HP and the animation state. A hit on a player goes to the victim's game, which decides its HP.",
           ],
         },
         {
           type: "p",
           text: "When members are on different maps, those assumptions produce double damage, late health bars and joins that only cover one map. That is where the old design's bugs came from.",
-        },
-        { type: "h3", text: "What the game really sends" },
-        {
-          type: "p",
-          text: "A packet trace on the rig (the host of a three-player run, 235 seconds, players on different maps) shows where the traffic goes: player state on channel 6 at about 11 packets a second per peer, enemy HP from the host only, enemy positions from every game, and event-script sync as the busiest reliable channel.",
-        },
-        {
-          type: "figure",
-          figure: "channel-traffic",
-          caption:
-            "Packets the host sent and received per game channel. Source: the phase 0 trace in NATIVE_NETCODE.md.",
-          alt: "Bar chart; the same numbers are in the table below.",
-        },
-        {
-          type: "table",
-          head: ["Channel", "What it carries", "Sent", "Received", "Bytes each"],
-          rows: [
-            ["`0x04`", "enemy positions (every game runs its own copies)", "1181", "1484", "96"],
-            ["`0x05`", "enemy HP, host only", "3289", "0", "80"],
-            ["`0x06`", "player state", "2592", "2439", "75-96"],
-            ["`0x13`", "character data", "405", "382", "8"],
-            [
-              "`0x16` / `0x17`",
-              "near lists (guests send 0x16, the host 0x17)",
-              "127",
-              "77",
-              "4-120",
-            ],
-            [
-              "`0x29`",
-              "join catch-up: one packet per enemy, once per joining guest",
-              "362",
-              "0",
-              "108",
-            ],
-            ["`0x31`", "event script sync, the busiest reliable channel", "554", "662", "24"],
-            ["`0x34`", "enemy hand-over block", "0", "58", "100"],
-            ["`0x3D`", "enemy AI state on hand-over", "20", "95", "100-900"],
-          ],
         },
       ],
     },
@@ -460,7 +428,7 @@ const netcode: DocPage = {
           items: [
             "**One UDP socket per game** to the server, on a fixed port next to the TCP one. Each datagram holds messages; each message has a one-byte kind and a length.",
             "**Kinds:** `Game` (a small fixed header `{channel, reliable bit, sender member, map, visit}` followed by the game's packet untouched), `Proto` (one protobuf message), `Ack` and `Ping`.",
-            "**Our own reliability layer**, per member and per class: sequence numbers, acks, resends and in-order delivery for reliable traffic (the game's channels 7 and up, world-log entries, snapshots). Unreliable traffic such as movement is never resent; the newest wins. Who is connected, outages and timeouts come from this layer, not from the game's own timers.",
+            "**Our own reliability layer**, per member and per class: sequence numbers, acks, resends and in-order delivery for reliable traffic (the game's reliable channels, world-log entries, snapshots). Unreliable traffic such as movement is never resent; the newest wins. Who is connected, outages and timeouts come from this layer, not from the game's own timers.",
             "**Protobuf messages** (`server/proto/coop.proto`, shared by the game and the server): `Hello` (account, build, protocol), the lobby (`TeamCreate`, `Invite`, `InviteAnswer`, `TeamState`, `Ready`, `Start`), the session (`Place`, `MemberJoined`, `MemberLeft`, `EnemyOwner`), the world log (`Propose`, `Entries`, `SnapshotRequest`, `Snapshot`), vitals, party death and portraits.",
             "**One build for everyone.** `Hello` carries the build, and a different build is refused at the lobby with a clear message. There are no compatibility fallbacks.",
           ],
@@ -515,47 +483,16 @@ const netcode: DocPage = {
       ],
     },
     {
-      id: "hooks",
-      title: "Hooks in the game",
-      blocks: [
-        {
-          type: "table",
-          head: ["Hook", "Address (1.09)", "Use"],
-          rows: [
-            [
-              "Packet send",
-              "`0x017894E0`",
-              "every game packet: channel policy, then out through our socket",
-            ],
-            [
-              "Packet receive",
-              "`0x0178D510` → `0x01790C20`",
-              "inject packets from the server into the game's per-member queues",
-            ],
-            ["Resend and idle timer", "`0x01ED0B20`", "kept quiet: our layer decides liveness"],
-            ["Session events", "`0x0178B5E0`", "member joined and left, from the server's session"],
-            ["Create and join session", "`0x01788ED0`, `0x01789010`", "team join without signs"],
-            [
-              "Join snapshots",
-              "`0x01786050`, `0x01786360`, `0x01A04190`",
-              "built from the world log",
-            ],
-            ["Enemy authority", "`WorldChrMan+0xA40`", "one owner per map, from the server"],
-          ],
-        },
-        {
-          type: "p",
-          text: `Every hook is in \`bloodborne_patch_sites.h\` with its byte check. The full research is in [NATIVE_NETCODE.md](${blob("docs/NATIVE_NETCODE.md", "server-coop")}) and the plan with every phase in [SERVER_COOP_PLAN.md](${blob("docs/SERVER_COOP_PLAN.md", "server-coop")}).`,
-        },
-      ],
-    },
-    {
       id: "status",
       title: "Status",
       blocks: [
         {
           type: "p",
           text: `The rewrite was built in phases on the [server-coop branch](${SERVER_COOP_BRANCH_URL}), each with tests first and runs on the multi-game rig: a packet trace, a channel policy table, one UDP link to the server, the world log on the server, enemy owners from the server, the native team lobby, the server owning the session (faster joins, host migration, resuming after a drop), one owner per map with a single HP path, server routing with the old peer-to-peer paths deleted, and crash-safe world saves with a server that restarts without ending sessions. It is in testing and ships in the next public release.`,
+        },
+        {
+          type: "p",
+          text: `The full research and the plan with every phase are in the repository's design notes on the [server-coop branch](${SERVER_COOP_BRANCH_URL}).`,
         },
       ],
     },

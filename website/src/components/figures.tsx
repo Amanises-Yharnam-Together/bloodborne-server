@@ -122,122 +122,86 @@ export function TopologyFigure() {
   );
 }
 
-/* Per-channel traffic from the phase 0 packet trace (docs/NATIVE_NETCODE.md): the host of the
-   hit3 rig scenario, three players, 235 s. */
-export const channelTraffic = [
-  { ch: "0x06", name: "player state", out: 2592, in: 2439 },
-  { ch: "0x05", name: "enemy HP", out: 3289, in: 0 },
-  { ch: "0x04", name: "enemy positions", out: 1181, in: 1484 },
-  { ch: "0x31", name: "event script sync", out: 554, in: 662 },
-  { ch: "0x13", name: "character data", out: 405, in: 382 },
-  { ch: "0x29", name: "join catch-up", out: 362, in: 0 },
-  { ch: "0x16/17", name: "near lists", out: 127, in: 77 },
-  { ch: "0x3D", name: "enemy AI hand-over", out: 20, in: 95 },
-  { ch: "0x34", name: "enemy hand-over block", out: 0, in: 58 },
-];
+/* How many links a team keeps alive: every pair of players peer to peer, one per player with a
+   server. */
+export const linkCounts = [2, 3, 4].map((n) => ({ players: n, p2p: (n * (n - 1)) / 2, server: n }));
 
-const SENT = "#b08a42";
-const RECEIVED = "#c4443f";
+const P2P = "#b08a42";
+const SERVER = "#c4443f";
 
-export function ChannelTrafficChart() {
-  const max = 3500;
-  const rowH = 34;
-  const barH = 11;
-  const left = 170;
-  const width = 640;
-  const plot = width - left - 56;
-  const top = 28;
-  const height = top + channelTraffic.length * rowH + 30;
-  const x = (v: number) => left + (v / max) * plot;
-  const ticks = [0, 1000, 2000, 3000];
+export function LinksChart() {
+  const max = 6;
+  const width = 520;
+  const height = 240;
+  const left = 36;
+  const bottom = 200;
+  const top = 20;
+  const groupW = (width - left - 10) / linkCounts.length;
+  const barW = 34;
+  const y = (v: number) => bottom - (v / max) * (bottom - top);
   return (
     <div className="frame bg-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="font-display text-xs uppercase tracking-[0.18em] text-gilt">
-          Packets per channel, host, 3 players, 235 s
+          Links per team size
         </p>
         <ul className="flex gap-4 text-sm text-muted-foreground" aria-label="Legend">
           <li className="flex items-center gap-2">
-            <span className="h-2.5 w-4 rounded-sm" style={{ background: SENT }} /> Sent
+            <span className="h-2.5 w-4 rounded-sm" style={{ background: P2P }} /> Peer to peer
           </li>
           <li className="flex items-center gap-2">
-            <span className="h-2.5 w-4 rounded-sm" style={{ background: RECEIVED }} /> Received
+            <span className="h-2.5 w-4 rounded-sm" style={{ background: SERVER }} /> Server
           </li>
         </ul>
       </div>
-      <div className="-mx-4 overflow-x-auto px-4">
-        <svg
-          viewBox={`0 0 ${width} ${height}`}
-          className="mt-3 w-full min-w-[34rem]"
-          role="img"
-          aria-label="Bar chart of packets sent and received per game channel by the host; the data is in the table below."
-        >
-          {ticks.map((t) => (
-            <g key={t}>
-              <line x1={x(t)} x2={x(t)} y1={top - 8} y2={height - 24} stroke="var(--border)" />
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="mx-auto mt-3 w-full max-w-xl"
+        role="img"
+        aria-label="Links per team size: 2 players, 1 peer to peer and 2 with a server; 3 players, 3 and 3; 4 players, 6 and 4."
+      >
+        {[0, 2, 4, 6].map((t) => (
+          <g key={t}>
+            <line x1={left} x2={width - 10} y1={y(t)} y2={y(t)} stroke="var(--border)" />
+            <text
+              x={left - 10}
+              y={y(t) + 4}
+              textAnchor="end"
+              fontSize="12"
+              fill="var(--muted-foreground)"
+            >
+              {t}
+            </text>
+          </g>
+        ))}
+        {linkCounts.map((d, i) => {
+          const cx = left + groupW * i + groupW / 2;
+          const bar = (v: number, x: number, color: string, label: string) => (
+            <g>
+              <title>{`${d.players} players, ${label}: ${v} ${v === 1 ? "link" : "links"}`}</title>
+              <rect x={x} y={y(v)} width={barW} height={bottom - y(v)} rx="2" fill={color} />
               <text
-                x={x(t)}
-                y={height - 8}
+                x={x + barW / 2}
+                y={y(v) - 6}
                 textAnchor="middle"
                 fontSize="12"
                 fill="var(--muted-foreground)"
               >
-                {t.toLocaleString("en")}
+                {v}
               </text>
             </g>
-          ))}
-          {channelTraffic.map((d, i) => {
-            const y = top + i * rowH;
-            const bar = (v: number, dy: number, color: string, label: string) =>
-              v > 0 ? (
-                <g>
-                  <title>{`${d.ch} ${d.name}: ${v.toLocaleString("en")} ${label}`}</title>
-                  <rect
-                    x={left}
-                    y={y + dy}
-                    width={Math.max(x(v) - left, 2)}
-                    height={barH}
-                    rx="2"
-                    fill={color}
-                  />
-                  <text
-                    x={x(v) + 6}
-                    y={y + dy + barH - 1}
-                    fontSize="11.5"
-                    fill="var(--muted-foreground)"
-                  >
-                    {v.toLocaleString("en")}
-                  </text>
-                </g>
-              ) : null;
-            return (
-              <g key={d.ch}>
-                <text
-                  x={left - 12}
-                  y={y + 11}
-                  textAnchor="end"
-                  fontSize="13"
-                  fill="var(--bone)"
-                  fontFamily="var(--font-mono)"
-                >
-                  {d.ch}
-                </text>
-                <text
-                  x={left - 12}
-                  y={y + 25}
-                  textAnchor="end"
-                  fontSize="11.5"
-                  fill="var(--muted-foreground)"
-                >
-                  {d.name}
-                </text>
-                {bar(d.out, 1, SENT, "sent")}
-                {bar(d.in, 1 + barH + 2, RECEIVED, "received")}
-              </g>
-            );
-          })}
-        </svg>
-      </div>
+          );
+          return (
+            <g key={d.players}>
+              {bar(d.p2p, cx - barW - 1, P2P, "peer to peer")}
+              {bar(d.server, cx + 1, SERVER, "server")}
+              <text x={cx} y={bottom + 22} textAnchor="middle" fontSize="13" fill="var(--bone)">
+                {d.players} players
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
@@ -247,7 +211,7 @@ export function PacketPathFigure() {
   const steps = [
     {
       title: "Game sends",
-      text: "one send function sees every packet (0x017894E0)",
+      text: "one send point sees every packet",
     },
     { title: "Channel policy", text: "pass, same map only, ours, or drop" },
     {
@@ -352,7 +316,7 @@ export function JoinFlowFigure() {
 export const figures = {
   architecture: ArchitectureDiagram,
   topology: TopologyFigure,
-  "channel-traffic": ChannelTrafficChart,
+  links: LinksChart,
   "packet-path": PacketPathFigure,
   "save-split": SaveSplitFigure,
   "join-flow": JoinFlowFigure,
