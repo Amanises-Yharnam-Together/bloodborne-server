@@ -19,7 +19,7 @@ export function SiteHeader() {
           className="flex items-center gap-2.5 py-1 text-lg text-bone hover:text-title"
           aria-label={`${site.name}, home`}
         >
-          <LogoMark className="size-7" />
+          <LogoMark className="size-9" />
           {site.shortName}
         </Link>
         <nav

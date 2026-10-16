@@ -1,12 +1,13 @@
 import { cn } from "@/lib/utils";
 
-/** The site's emblem (scripts/emblem.mjs): an engraved medallion with a moon and a drop of blood. */
+/** The logo: two hunters back to back before the moon, in an engraved ring (public/logo.webp,
+ *  made from assets-src/logo.png by scripts/generate-icons.mjs). */
 export function Emblem({ className, priority }: { className?: string; priority?: boolean }) {
   return (
-    // A static SVG: next/image would only add a wrapper for it.
+    // A static image the size it is shown at: next/image would only add a wrapper.
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src="/emblem.svg"
+      src="/logo.webp"
       alt=""
       width={512}
       height={512}
@@ -16,10 +17,10 @@ export function Emblem({ className, priority }: { className?: string; priority?:
   );
 }
 
-/** The small mark: the moon and the drop alone, for sizes where the ring would blur. */
+/** The same logo at header size. */
 export function LogoMark({ className }: { className?: string }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src="/mark.svg" alt="" width={32} height={32} className={cn("size-8", className)} />
+    <img src="/logo.webp" alt="" width={32} height={32} className={cn("size-8", className)} />
   );
 }

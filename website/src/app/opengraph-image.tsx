@@ -12,7 +12,7 @@ export const contentType = "image/png";
 const fonts = join(process.cwd(), "src/assets/fonts");
 const regular = await readFile(join(fonts, "EBGaramond-Regular.ttf"));
 const italic = await readFile(join(fonts, "EBGaramond-Italic.ttf"));
-const emblem = `data:image/svg+xml;base64,${(await readFile(join(process.cwd(), "src/assets/emblem.svg"))).toString("base64")}`;
+const emblem = `data:image/png;base64,${(await readFile(join(process.cwd(), "public/logo.png"))).toString("base64")}`;
 
 export default function Image() {
   return new ImageResponse(
