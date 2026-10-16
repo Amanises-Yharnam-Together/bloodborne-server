@@ -749,9 +749,25 @@ void PS4_SYSV_ABI RecordReviveHit(u64, const GuestRegisterSnapshot* registers) {
     }
 }
 
+// The downed bodies' handles for the enemy bar hook (SkipsEnemyBarDamage), as of the last tick.
+std::mutex bar_bodies_mutex;
+std::vector<u32> bar_bodies;
+
+bool PS4_SYSV_ABI SkipDownedBodyBarDamage(u64, const GuestRegisterSnapshot* registers) {
+    std::scoped_lock lock{bar_bodies_mutex};
+    return SkipsEnemyBarDamage(static_cast<u32>(registers->rsi), bar_bodies);
+}
+
 // The downed bodies here take the invaders' team (DownedTeams) and give it back once up.
 void SetDownedTeams(PartyDeathRun& run, std::span<const DownedBody> bodies,
                     std::span<const OtherPlayer> players) {
+    {
+        std::scoped_lock lock{bar_bodies_mutex};
+        bar_bodies.clear();
+        for (const DownedBody& body : bodies) {
+            bar_bodies.push_back(body.handle);
+        }
+    }
     std::vector<CopyTeam> downed, present;
     for (const DownedBody& body : bodies) {
         downed.push_back(
@@ -1837,6 +1853,14 @@ void InstallPartyDeath(u64 base, u64 image_size) {
     } else {
         coop_features.Skipped("no hit reaction while down",
                               SiteFailure(base, image_size, HitReactionOffset));
+    }
+    if (EnemyBarDamageOffset + EnemyBarDamageStart.size() <= image_size &&
+        InstallCoopHook(reinterpret_cast<void*>(base + EnemyBarDamageOffset), EnemyBarDamageStart,
+                        0, GuestFunctionOverride{SkipDownedBodyBarDamage})) {
+        coop_features.On("no damage number on downed bodies");
+    } else {
+        coop_features.Skipped("no damage number on downed bodies",
+                              SiteFailure(base, image_size, EnemyBarDamageOffset));
     }
     const char* hits = std::getenv("SHADPS4_BLOODBORNE_REVIVE_HITS");
     if (hits != nullptr && std::string_view{hits} == "presses") {

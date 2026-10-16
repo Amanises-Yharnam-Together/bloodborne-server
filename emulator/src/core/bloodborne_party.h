@@ -3203,6 +3203,13 @@ constexpr u64 HitReactionOffset = 0x01A2E570;
 constexpr std::array<u8, 8> HitReactionPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
 // Whether a hit on `victim` skips its push and reaction: the local player's own body while down.
 bool SkipsHitReaction(bool down, u64 victim, u64 local_player);
+// Kaniel's playtest 2026-10-16: the game's enemy bars (8 slots at [0x05562878] +0x10F8) count
+// damage per handle (0x016F9A50: table rdi, handle esi, damage edx; +0x88 += damage). A downed
+// body on the invaders' team (DownedTeams) gets a bar too, and every drop of its synced HP adds to
+// it: an ever-growing number over the body. No damage is counted for a downed body.
+constexpr u64 EnemyBarDamageOffset = 0x016F9A50;
+constexpr std::array<u8, 8> EnemyBarDamageStart{0x45, 0x31, 0xC0, 0x48, 0x89, 0xF8, 0x31, 0xC9};
+bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies);
 std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, std::string_view self,
                                          u32 map, const LampPosition& me);
 
