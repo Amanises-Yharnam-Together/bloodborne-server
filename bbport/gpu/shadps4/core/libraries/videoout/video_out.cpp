@@ -13,6 +13,11 @@
 #include "core/platform.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include "bbport_flip_label.h"
+
 extern std::unique_ptr<Vulkan::Presenter> presenter;
 
 namespace Libraries::VideoOut {
@@ -353,8 +358,19 @@ s32 sceVideoOutSubmitEopFlip(s32 handle, u32 buf_id, u32 mode, s64 flip_arg, voi
             ASSERT_MSG(irq == Platform::InterruptId::GfxFlip, "An unexpected IRQ occured");
             // bbport: with nothing drawn (BB_NULL_GPU) the game runs frames ahead of the flips:
             // the flip of the frame before may already have reset this buffer's label.
-            if (!EmulatorSettings.IsNullGPU()) {
-                ASSERT_MSG(port->buffer_labels[buf_id] == 1, "Out of order flip IRQ");
+            // Otherwise the label's write may still be on its way from the draw recording
+            // thread: waited for briefly, then the flip goes on (bbport_flip_label.h). It was
+            // an ASSERT ("Out of order flip IRQ") that stopped the game.
+            if (!EmulatorSettings.IsNullGPU() &&
+                !BbFlipLabel::WaitForLabel(port->buffer_labels[buf_id],
+                                           std::chrono::milliseconds(20))) {
+                static std::atomic<u32> reported{0};
+                if (reported.fetch_add(1, std::memory_order_relaxed) < 5) {
+                    std::printf("VideoOut: flip IRQ for buffer %u before its label was set "
+                                "(label %llu); flipping anyway\n",
+                                buf_id,
+                                static_cast<unsigned long long>(port->buffer_labels[buf_id]));
+                }
             }
             const auto result = driver->SubmitFlip(port, buf_id, flip_arg, true);
             ASSERT_MSG(result, "EOP flip submission failed");
