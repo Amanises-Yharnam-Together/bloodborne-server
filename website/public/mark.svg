@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="60 80 340 340">
+  <defs>
+  <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#f2ede2"/><stop offset="0.55" stop-color="#bdb6a8"/><stop offset="1" stop-color="#6f6a61"/>
+  </linearGradient>
+  <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#e2c98f"/><stop offset="0.5" stop-color="#b08a4c"/><stop offset="1" stop-color="#6b4f25"/>
+  </linearGradient>
+  <radialGradient id="field" cx="0.45" cy="0.38" r="0.7">
+    <stop offset="0" stop-color="#1f1c19"/><stop offset="1" stop-color="#070606"/>
+  </radialGradient>
+  <linearGradient id="moon" x1="0.1" y1="0" x2="0.7" y2="1">
+    <stop offset="0" stop-color="#f6f0e2"/><stop offset="0.6" stop-color="#cfc6b2"/><stop offset="1" stop-color="#8d8573"/>
+  </linearGradient>
+  <linearGradient id="blood" x1="0.3" y1="0" x2="0.7" y2="1">
+    <stop offset="0" stop-color="#d13a32"/><stop offset="0.55" stop-color="#8e1a17"/><stop offset="1" stop-color="#4a0907"/>
+  </linearGradient>
+  <mask id="crescent">
+    <rect width="512" height="512" fill="#000"/>
+    <circle cx="236" cy="268" r="142" fill="#fff"/>
+    <circle cx="300" cy="222" r="122" fill="#000"/>
+  </mask></defs>
+  
+  <g mask="url(#crescent)">
+    <circle cx="236" cy="268" r="142" fill="url(#moon)"/>
+    <g stroke="#3a352e" stroke-opacity="0.32" stroke-width="1.4"><line x1="-280" y1="0" x2="20" y2="512"/><line x1="-273" y1="0" x2="27" y2="512"/><line x1="-266" y1="0" x2="34" y2="512"/><line x1="-259" y1="0" x2="41" y2="512"/><line x1="-252" y1="0" x2="48" y2="512"/><line x1="-245" y1="0" x2="55" y2="512"/><line x1="-238" y1="0" x2="62" y2="512"/><line x1="-231" y1="0" x2="69" y2="512"/><line x1="-224" y1="0" x2="76" y2="512"/><line x1="-217" y1="0" x2="83" y2="512"/><line x1="-210" y1="0" x2="90" y2="512"/><line x1="-203" y1="0" x2="97" y2="512"/><line x1="-196" y1="0" x2="104" y2="512"/><line x1="-189" y1="0" x2="111" y2="512"/><line x1="-182" y1="0" x2="118" y2="512"/><line x1="-175" y1="0" x2="125" y2="512"/><line x1="-168" y1="0" x2="132" y2="512"/><line x1="-161" y1="0" x2="139" y2="512"/><line x1="-154" y1="0" x2="146" y2="512"/><line x1="-147" y1="0" x2="153" y2="512"/><line x1="-140" y1="0" x2="160" y2="512"/><line x1="-133" y1="0" x2="167" y2="512"/><line x1="-126" y1="0" x2="174" y2="512"/><line x1="-119" y1="0" x2="181" y2="512"/><line x1="-112" y1="0" x2="188" y2="512"/><line x1="-105" y1="0" x2="195" y2="512"/><line x1="-98" y1="0" x2="202" y2="512"/><line x1="-91" y1="0" x2="209" y2="512"/><line x1="-84" y1="0" x2="216" y2="512"/><line x1="-77" y1="0" x2="223" y2="512"/><line x1="-70" y1="0" x2="230" y2="512"/><line x1="-63" y1="0" x2="237" y2="512"/><line x1="-56" y1="0" x2="244" y2="512"/><line x1="-49" y1="0" x2="251" y2="512"/><line x1="-42" y1="0" x2="258" y2="512"/><line x1="-35" y1="0" x2="265" y2="512"/><line x1="-28" y1="0" x2="272" y2="512"/><line x1="-21" y1="0" x2="279" y2="512"/><line x1="-14" y1="0" x2="286" y2="512"/><line x1="-7" y1="0" x2="293" y2="512"/><line x1="0" y1="0" x2="300" y2="512"/><line x1="7" y1="0" x2="307" y2="512"/><line x1="14" y1="0" x2="314" y2="512"/><line x1="21" y1="0" x2="321" y2="512"/><line x1="28" y1="0" x2="328" y2="512"/><line x1="35" y1="0" x2="335" y2="512"/><line x1="42" y1="0" x2="342" y2="512"/><line x1="49" y1="0" x2="349" y2="512"/><line x1="56" y1="0" x2="356" y2="512"/><line x1="63" y1="0" x2="363" y2="512"/><line x1="70" y1="0" x2="370" y2="512"/><line x1="77" y1="0" x2="377" y2="512"/><line x1="84" y1="0" x2="384" y2="512"/><line x1="91" y1="0" x2="391" y2="512"/><line x1="98" y1="0" x2="398" y2="512"/><line x1="105" y1="0" x2="405" y2="512"/><line x1="112" y1="0" x2="412" y2="512"/><line x1="119" y1="0" x2="419" y2="512"/><line x1="126" y1="0" x2="426" y2="512"/><line x1="133" y1="0" x2="433" y2="512"/><line x1="140" y1="0" x2="440" y2="512"/><line x1="147" y1="0" x2="447" y2="512"/><line x1="154" y1="0" x2="454" y2="512"/><line x1="161" y1="0" x2="461" y2="512"/><line x1="168" y1="0" x2="468" y2="512"/><line x1="175" y1="0" x2="475" y2="512"/><line x1="182" y1="0" x2="482" y2="512"/><line x1="189" y1="0" x2="489" y2="512"/><line x1="196" y1="0" x2="496" y2="512"/><line x1="203" y1="0" x2="503" y2="512"/><line x1="210" y1="0" x2="510" y2="512"/><line x1="217" y1="0" x2="517" y2="512"/><line x1="224" y1="0" x2="524" y2="512"/><line x1="231" y1="0" x2="531" y2="512"/><line x1="238" y1="0" x2="538" y2="512"/><line x1="245" y1="0" x2="545" y2="512"/><line x1="252" y1="0" x2="552" y2="512"/><line x1="259" y1="0" x2="559" y2="512"/><line x1="266" y1="0" x2="566" y2="512"/><line x1="273" y1="0" x2="573" y2="512"/><line x1="280" y1="0" x2="580" y2="512"/><line x1="287" y1="0" x2="587" y2="512"/><line x1="294" y1="0" x2="594" y2="512"/><line x1="301" y1="0" x2="601" y2="512"/><line x1="308" y1="0" x2="608" y2="512"/><line x1="315" y1="0" x2="615" y2="512"/><line x1="322" y1="0" x2="622" y2="512"/><line x1="329" y1="0" x2="629" y2="512"/><line x1="336" y1="0" x2="636" y2="512"/><line x1="343" y1="0" x2="643" y2="512"/><line x1="350" y1="0" x2="650" y2="512"/><line x1="357" y1="0" x2="657" y2="512"/><line x1="364" y1="0" x2="664" y2="512"/><line x1="371" y1="0" x2="671" y2="512"/><line x1="378" y1="0" x2="678" y2="512"/><line x1="385" y1="0" x2="685" y2="512"/><line x1="392" y1="0" x2="692" y2="512"/><line x1="399" y1="0" x2="699" y2="512"/><line x1="406" y1="0" x2="706" y2="512"/><line x1="413" y1="0" x2="713" y2="512"/></g>
+    <circle cx="190" cy="330" r="16" fill="#8d8573" fill-opacity="0.35"/>
+    <circle cx="150" cy="262" r="9" fill="#8d8573" fill-opacity="0.35"/>
+    <circle cx="214" cy="386" r="7" fill="#8d8573" fill-opacity="0.3"/>
+  </g>
+  <circle cx="236" cy="268" r="142" fill="none" stroke="#f2ede2" stroke-opacity="0.18" stroke-width="1.5" mask="url(#crescent)"/>
+  <path d="M318 214c0 0-34 46-34 72a34 34 0 0 0 68 0c0-26-34-72-34-72z" fill="url(#blood)" stroke="#2a0504" stroke-width="2"/>
+  <path d="M305 268c-3 9-4 18-1 24" fill="none" stroke="#f3b3a4" stroke-opacity="0.75" stroke-width="5" stroke-linecap="round"/>
+</svg>

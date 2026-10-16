@@ -1,15 +1,13 @@
-import { Play } from "lucide-react";
-
 import { resolveTrailerId, site } from "@/lib/site";
 
 /**
  * The trailer frame on the landing page. With NEXT_PUBLIC_TRAILER_YOUTUBE_ID set it embeds the
- * video (privacy-enhanced mode, loaded lazily); without it, it keeps the space with a placeholder.
+ * video (privacy-enhanced mode, loaded lazily); without it, it keeps the space empty and says so.
  */
 export function VideoSlot() {
   const id = resolveTrailerId();
   return (
-    <figure className="frame relative mx-auto aspect-video w-full max-w-4xl overflow-hidden bg-card">
+    <figure className="panel relative mx-auto aspect-video w-full max-w-4xl overflow-hidden">
       {id ? (
         <iframe
           className="absolute inset-0 size-full"
@@ -21,12 +19,9 @@ export function VideoSlot() {
           allowFullScreen
         />
       ) : (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-[radial-gradient(ellipse_at_center,rgb(232_220_196/0.06),transparent_65%)]">
-          <span className="flex size-16 items-center justify-center rounded-full border border-gilt/50 text-gilt">
-            <Play className="ml-1 size-6" aria-hidden />
-          </span>
-          <figcaption className="eyebrow">Trailer coming soon</figcaption>
-        </div>
+        <figcaption className="absolute inset-0 flex items-center justify-center text-lg text-muted-foreground italic">
+          The trailer goes here.
+        </figcaption>
       )}
     </figure>
   );

@@ -3,8 +3,8 @@
 // [links](/path).
 
 import type { FigureId } from "@/components/figures";
-import { RELEASES_URL, REPO_URL, SERVER_COOP_BRANCH_URL } from "@/lib/site";
 import { packetRates, rateTotal, roles } from "@/content/traffic";
+import { ISSUES_URL, RELEASES_URL, REPO_URL, blob, netcodeStatus } from "@/lib/site";
 
 export type Block =
   | { type: "p"; text: string }
@@ -14,6 +14,8 @@ export type Block =
   | { type: "table"; head: string[]; rows: string[][] }
   | { type: "note"; text: string }
   | { type: "h3"; text: string }
+  /** Terms and what they mean, like the game's two-column menus: a label, then its text. */
+  | { type: "terms"; items: [string, string][] }
   /** A diagram or chart drawn by the site (src/components/figures.tsx); `alt` is its text
    *  version for screen readers and /llms-full.txt. */
   | { type: "figure"; figure: FigureId; caption: string; alt: string }
@@ -37,31 +39,26 @@ export type DocPage = {
   sections: Section[];
 };
 
-const blob = (path: string, branch = "main") => `${REPO_URL}/blob/${branch}/${path}`;
-
 const install: DocPage = {
   slug: "install",
-  title: "Install and play",
+  title: "Install and set up",
   description:
-    "What you need to play Bloodborne Seamless Co-op, how to install the release, and how the players of a party reach the host's PC.",
+    "What you need, how to install Bloodborne Seamless Co-op, what each part of the launcher's Co-op card is for, and how the other players reach the host.",
   sections: [
     {
       id: "requirements",
-      title: "What you need",
+      title: "Before you start",
       blocks: [
         {
           type: "ul",
           items: [
-            "**Your own copy of Bloodborne for PS4, version 1.09.** No game files are included: use a dump of the game folder with the 1.09 update, or the PS4 `.pkg` files, which the included launcher installs (**Install from PKG**).",
+            "Your own Bloodborne for PS4 at version 1.09: the game folder with the 1.09 update, or the PS4 `.pkg` files. Nothing from the game is included.",
             "Windows 10 (1903 or later) or Windows 11, 64-bit.",
             "A graphics card with Vulkan 1.3 and a current driver.",
-            "Everyone in a party on **the same release**. The server refuses a different build with a clear message: there is no mixed-version play.",
+            "Everyone, the host included, on the same release. The server turns away a different build.",
           ],
         },
-        {
-          type: "p",
-          text: "It is tested with CUSA03173 (the European Game of the Year edition) at 1.09. All players in a party should use the same edition.",
-        },
+        { type: "note", text: netcodeStatus.note },
       ],
     },
     {
@@ -71,15 +68,68 @@ const install: DocPage = {
         {
           type: "ol",
           items: [
-            `Download the setup \`.exe\` of the latest release from the [download page](/download) (or [GitHub releases](${RELEASES_URL})) and run it. It installs for your Windows user; keep **Create a desktop shortcut** ticked.`,
-            "Open **Bloodborne Seamless Co-op**. The launcher finds your Bloodborne folder, or extracts the game and the update from `.pkg` files.",
-            "Fill in the **Co-op** card: host (this PC runs the co-op server) or player, the host's IP, an account and the party password.",
-            "Press **PLAY**. On the host the co-op server starts by itself. Windows asks once to let co-op through its firewall.",
+            `Download the setup \`.exe\` from the [download page](/download) or [GitHub releases](${RELEASES_URL}) and run it. It installs for your Windows user and adds a desktop shortcut.`,
+            "Open **Bloodborne Seamless Co-op**. The launcher looks for your Bloodborne folder on its own the first time.",
+            "Fill in the **Co-op** card on the Play tab (below), then press **PLAY**.",
+          ],
+        },
+      ],
+    },
+    {
+      id: "coop-card",
+      title: "The Co-op card",
+      blocks: [
+        {
+          type: "terms",
+          items: [
+            [
+              "Your Bloodborne folder",
+              "The game, at 1.09 or with the 1.09 update next to it. **Browse…** picks the folder; **Find it for me** searches the usual places and then every drive; **Install from PKG…** installs the game and the update from your `.pkg` files. The line under it says which version it found, or what is missing.",
+            ],
+            [
+              "You are",
+              "Host runs the co-op server on this PC; one player in the group does this. Everyone else is **Player**.",
+            ],
+            [
+              "Host's IP address",
+              "Where the host's PC can be reached: its VPN address, or its public IP. The host types their own.",
+            ],
+            [
+              "Enemies",
+              "Off is the normal game. **Harder** gives every enemy and boss three times the HP and poise and half again the damage, to make up for the extra hunters. Everyone picks the same.",
+            ],
+            [
+              "Bring saves from another folder…",
+              "Copies your characters over from a PS4 save folder, a shadPS4 `user` folder or an older co-op install.",
+            ],
+            [
+              "Host: the co-op server",
+              "Host only. The server starts by itself when you press PLAY; **Start server** and **Stop server** are there for when you want it without the game.",
+            ],
           ],
         },
         {
-          type: "note",
-          text: "Online play is locked to 60 FPS. The game's send rate follows its frame rate, so every player runs at the same speed.",
+          type: "p",
+          text: "There is no account to make. The others see your character's name.",
+        },
+      ],
+    },
+    {
+      id: "play",
+      title: "Press PLAY",
+      blocks: [
+        {
+          type: "ol",
+          items: [
+            "On the host, the co-op server starts first. If it ever stops, it restarts by itself.",
+            "The first time, Windows asks once to let co-op through its firewall. Say yes: the launcher adds the rules for you.",
+            "The first start prepares a game folder that links to your game. Nothing is copied.",
+            "The game starts. Making a team happens in the game: see [Playing together](/docs/play).",
+          ],
+        },
+        {
+          type: "p",
+          text: "If the game crashes, the next PLAY sends the crash report and the logs to the host's server, so the host can pass them on.",
         },
       ],
     },
@@ -89,71 +139,221 @@ const install: DocPage = {
       blocks: [
         {
           type: "p",
-          text: "Everything runs on the players' own PCs: one player hosts the server, nothing is in the cloud. Every other player must reach the host's PC, either:",
+          text: "The host's PC is the server, so every other player has to reach it. Either:",
         },
         {
           type: "ul",
           items: [
-            "on the same VPN, such as Radmin VPN, Tailscale or ZeroTier (the easy way), or",
-            "at the host's public IP with these ports forwarded: TCP **31313**, **31315** and **20443**, and UDP **31314**.",
+            "join the same VPN, such as Radmin VPN, Tailscale or ZeroTier, and use the host's VPN address (the easy way), or",
+            "forward these ports on the host's router and use its public IP: TCP **31313**, **31315** and **20443**, and UDP **31314**.",
           ],
         },
         {
           type: "p",
-          text: "With the server netcode the UDP port carries every game's co-op traffic, because the games never talk to each other directly. It must be open.",
+          text: "All co-op traffic goes through UDP 31314. The games never talk to each other directly.",
         },
       ],
     },
     {
-      id: "play",
-      title: "Play together",
+      id: "graphics",
+      title: "Graphics and frame rate",
       blocks: [
         {
           type: "p",
-          text: "In today's release everyone loads their character and is pulled into the host's world a few seconds later, wherever they are, for up to three players.",
+          text: "The other tabs are the port's own: resolution up to 4K, DLSS, XeSS, FSR 3.1 and FSR 4 upscaling, frame generation, HDR, ReShade, mouse and keyboard. Co-op runs at a fixed 60 FPS, so the frame rate field is greyed out: the game sends its updates once per frame, and every player has to send at the same pace.",
         },
+      ],
+    },
+    {
+      id: "problems",
+      title: "When something goes wrong",
+      blocks: [
         {
-          type: "p",
-          text: "With the server netcode (in testing, see [the server netcode](/docs/netcode)) teams are made in the game's own menus:",
-        },
-        {
-          type: "ol",
+          type: "terms",
           items: [
-            "Continue, Load Game or New Game opens the team screen.",
-            "Make a team of up to four from the hunters online, or accept an invite.",
-            "Everyone picks a character and marks Ready; the leader presses **Begin the hunt**.",
-            "Every game loads its own save, the loading screen stays up until the team is together, and you are in one world where each of you stands.",
+            [
+              "✗ co-op needs 1.09",
+              "The launcher found the game without the update. Put the update folder next to the game, or install both from the `.pkg` files.",
+            ],
+            [
+              "Co-op could not start",
+              "Usually the folder or the host's IP is empty or wrong. On the host, check that nothing else uses the ports above.",
+            ],
+            [
+              "Nobody can join",
+              "The others can't reach the host. Check that everyone is on the same VPN, or that the ports are forwarded, and that the host allowed the firewall prompt.",
+            ],
+            [
+              "A crash",
+              `Report it on [GitHub issues](${ISSUES_URL}) with the crash report and say which release every player was on.`,
+            ],
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+const play: DocPage = {
+  slug: "play",
+  title: "Playing together",
+  description:
+    "How to make a team in the game, what the party list shows, how going down and reviving work, and how to give items to a teammate.",
+  sections: [
+    {
+      id: "team",
+      title: "Make a team",
+      blocks: [
+        {
+          type: "p",
+          text: "**Continue**, **Load Game** or **New Game** on the title screen opens the team screen, The Hunt Together. You can also open it in the game from **System**, **Co-op Team**.",
+        },
+        {
+          type: "image",
+          src: "/docs/team-host.webp",
+          alt: "The Hunt Together team screen: four places, Player 1 as leader choosing a character, Player 2 ready, two empty places, the Hunters online and Invitations lists, and the buttons Leave the team, Begin the hunt and Play alone.",
+          caption: "The leader's view. Each place shows a hunter and where they are.",
+          width: 1200,
+          height: 771,
+        },
+        {
+          type: "terms",
+          items: [
+            [
+              "Create a team",
+              "Makes you the leader. The leader's game hosts the hunt; the server keeps the world.",
+            ],
+            [
+              "Hunters online",
+              "Everyone signed in to your server. **Invite** calls one of them to your team.",
+            ],
+            ["Invitations", "Who called you. **Join** or **Decline**."],
+            ["Ready", "You have picked your character. The hunt waits for every hunter."],
+            ["Begin the hunt", "Leader only, once everyone is ready."],
+            ["Play alone", "Your character plays its own world, without the team."],
+            ["Leave the team", "Back to no team. The leader can also **Remove** a member."],
           ],
         },
         {
           type: "image",
-          src: "/docs/team-screen.webp",
-          width: 980,
-          height: 740,
-          alt: "The Co-op Team page in the game's own menu style: Team, Invite, Invitations, Members, Remove and Start, showing a team of 2 of 4.",
-          caption: "The team page, drawn with the game's own menus (test rig accounts).",
-        },
-        {
-          type: "image",
-          src: "/docs/team-invitation.webp",
-          width: 980,
-          height: 740,
-          alt: "An invitation on the team page with the choices to join the host's team or decline.",
-          caption: "Accepting an invitation to a team.",
+          src: "/docs/team-guest.webp",
+          alt: "The same team screen seen by Player 2, with the Ready button instead of Begin the hunt.",
+          caption: "A member's view: Ready instead of Begin the hunt.",
+          width: 1200,
+          height: 771,
         },
         {
           type: "p",
-          text: "This is a fan project, played regularly in parties of two and three and checked by an automated multi-game test rig, but expect rough edges and keep backups of your saves.",
+          text: "After **Begin the hunt** every game loads its own save. The loading screen, The Hunt Begins, lists each hunter as Loading, Joining the hunt or Ready, and opens for everyone at once. You arrive where your character stood. Starting the game again after a crash puts you back in the team.",
         },
       ],
     },
     {
-      id: "help",
-      title: "Problems",
+      id: "world",
+      title: "One world",
+      blocks: [
+        {
+          type: "ul",
+          items: [
+            "Enemies, their health and their deaths are shared. Everyone's hits land on the same health bar.",
+            "Doors, levers, shortcuts, lamps and beaten bosses belong to the team's world, which the server keeps on the host's disk.",
+            "Items you pick up, Blood Echoes and Insight are your own. NPC gifts are per player, so everyone gets their own.",
+            "Everyone travels on their own. Nobody is pulled to the host or sent home.",
+          ],
+        },
+      ],
+    },
+    {
+      id: "party",
+      title: "The party list",
       blocks: [
         {
           type: "p",
-          text: `Report a bug on [GitHub issues](${REPO_URL}/issues). The launcher writes crash reports with the dump and the logs; attach them, and say which release every player was on.`,
+          text: "Your teammates are listed on the left, under your own bars: a portrait, the name and the health bar. It reads **Down** with the revive progress, **Dead**, or **elsewhere** when they are on another map.",
+        },
+        {
+          type: "image",
+          src: "/docs/party-alive.webp",
+          alt: "A teammate in the party list: a round framed portrait, the name Player 2 and a health bar.",
+          caption: "A teammate on your map.",
+          width: 1040,
+          height: 340,
+        },
+      ],
+    },
+    {
+      id: "down",
+      title: "Going down",
+      blocks: [
+        {
+          type: "p",
+          text: "While a teammate stands on your map, a killing blow puts you down instead of killing you. The screen edge turns red and reads **You are down**.",
+        },
+        {
+          type: "image",
+          src: "/docs/party-downed.webp",
+          alt: "The same teammate shown as downed: an empty health bar and a red blood-drop badge on the portrait.",
+          caption: "How the others see you while you are down.",
+          width: 1040,
+          height: 340,
+        },
+        {
+          type: "terms",
+          items: [
+            [
+              "Reviving",
+              "Strike the downed hunter. The prompt shows **strike to revive** and how far along it is. The first down needs as much damage as their full health, the second twice that, then four times. They get up with half their health and two seconds of safety.",
+            ],
+            ["Giving up", "Hold the dodge button for three seconds to die at once."],
+            [
+              "A wipe",
+              "When everyone on a map is down, the party dies and wakes at its lamps. The map resets as it would after a death, but the team's kills stay.",
+            ],
+          ],
+        },
+      ],
+    },
+    {
+      id: "give",
+      title: "Giving items",
+      blocks: [
+        {
+          type: "p",
+          text: "In the inventory, an item's menu lists **Give to** for each teammate nearby, and **Give Blood Echoes to** for echoes. Pick how many; the teammate accepts in the game's own dialog. Weapons go one at a time.",
+        },
+        {
+          type: "image",
+          src: "/docs/give-menu.webp",
+          alt: "The inventory with an item's menu open: Use, Discard, Give and Give Blood Echoes.",
+          caption: "Giving from the inventory.",
+          width: 1280,
+          height: 720,
+        },
+        {
+          type: "image",
+          src: "/docs/give-items.webp",
+          alt: "In game, a guest receives four Blood Vials from the host, shown in the game's own item dialog, with the host's name and health above their head.",
+          caption: "Four Blood Vials arriving from the host.",
+          width: 1280,
+          height: 720,
+        },
+      ],
+    },
+    {
+      id: "settings",
+      title: "Settings in the game",
+      blocks: [
+        {
+          type: "p",
+          text: "**Insert** on the keyboard, or **L3 + R3** on a pad, opens the port's settings over the game, with Co-op Team, Apply and restart the game and Quit to desktop. The frame rate shows 60 (co-op) and can't be changed while playing together.",
+        },
+        {
+          type: "image",
+          src: "/docs/system-menu.webp",
+          alt: "The game's System menu with Controls, Environment, Co-op Team, Display and Screen.",
+          caption: "Co-op Team in the game's System menu.",
+          width: 960,
+          height: 720,
         },
       ],
     },
@@ -164,7 +364,7 @@ const architecture: DocPage = {
   slug: "architecture",
   title: "How it works",
   description:
-    "The pieces of Bloodborne Seamless Co-op: the native PC port, the co-op code compiled into it, the patched map events and the self-hosted server.",
+    "The parts of Bloodborne Seamless Co-op: the native PC port, the co-op code built into it, the patched map events and the server one player runs.",
   sections: [
     {
       id: "overview",
@@ -173,12 +373,12 @@ const architecture: DocPage = {
         {
           type: "figure",
           figure: "architecture",
-          caption: "Every game keeps one UDP link to the co-op server on the host's PC.",
+          caption: "Every game keeps one link to the co-op server on the host's PC.",
           alt: "Up to four games (Bloodborne PC with the co-op hooks) each connect over UDP to one co-op server, which holds accounts, presence and the team lobby, the session with one enemy owner per map, the world log saved to disk, and the relay of game packets. The games never connect to each other.",
         },
         {
           type: "p",
-          text: "Two programs: the game, which every player runs, and the server, which one player runs next to their game. The design above is the server netcode; today's release still links the games peer to peer.",
+          text: "Two programs: the game, which everyone runs, and the server, which the host runs next to their game.",
         },
       ],
     },
@@ -188,11 +388,7 @@ const architecture: DocPage = {
       blocks: [
         {
           type: "p",
-          text: "**Bloodborne PC** loads the PS4 game's own x86-64 code and runs it on a small runtime, with shadPS4's renderer drawing through Vulkan. There is no emulator in between: hooks, memory, threads, files and networking are direct, which removes a whole class of co-op failures.",
-        },
-        {
-          type: "p",
-          text: "It keeps everything the port offers: 60 FPS and above, resolutions up to 4K, DLSS, FSR 3.1 and 4 and XeSS upscaling, frame generation, HDR, ReShade, mouse and keyboard and gamepads. The port is optimised for co-op: the co-op code is part of the build, and online play is locked to 60 FPS so every game sends at the same rate.",
+          text: "Bloodborne PC loads the PS4 game's own x86-64 code and runs it on a small runtime, with shadPS4's renderer drawing through Vulkan. There is no emulator in between, so hooks, memory, threads, files and networking are direct. It keeps what the port offers (high frame rates, 4K, DLSS, FSR, XeSS, frame generation, HDR, ReShade, mouse and keyboard) and builds the co-op code in.",
         },
       ],
     },
@@ -202,96 +398,62 @@ const architecture: DocPage = {
       blocks: [
         {
           type: "p",
-          text: "The co-op code is compiled into the port (`bbport/gpu/bbcoop` wires it in) and changes the game at known places in the 1.09 eboot: about 125 patch sites and hooks, listed in one table (`emulator/src/core/bloodborne_patch_sites.h`) with a byte check each. The launcher warns when another game patch writes over one of them.",
+          text: "The co-op code changes the 1.09 game at about 125 known places, each listed in one table (`emulator/src/core/bloodborne_patch_sites.h`) with the bytes it expects. The launcher warns when another game patch writes over one of them.",
         },
         {
-          type: "ul",
-          items: [
-            "**Joining without summoning.** The team's host opens its game session itself and sends its join data to the server; each member's game joins that session as soon as it stands in its world. The co-op code removes the limits that would end a normal session (boss kills, lamp trips, deaths, map changes, area restrictions) and puts players back together after loads.",
-            "**One world.** Enemies, their HP and their deaths are shared: every player's hits count on the same health bar. Doors, lamps, shortcuts and boss kills belong to the team's world; pickups, echoes and Insight stay each player's own. NPC gifts are per player, so everyone gets their own.",
-            "**Party death** (always on, an idea from Elden Ring Nightreign): a killing blow puts you down instead of killing you while a partner stands on your map, and they revive you by striking you. When everyone on a map is down, the party wipes and wakes at its lamps.",
-            "**Giving items.** Hand Blood Vials, echoes and other items to a teammate from the inventory; they accept in a native dialog.",
-            "**Harder enemies** (optional): HP, damage and poise multipliers for every enemy and boss, to make up for the extra hunters.",
-          ],
-        },
-        {
-          type: "image",
-          src: "/docs/party-alive.webp",
-          width: 1040,
-          height: 340,
-          alt: "A teammate in the party list: a round framed portrait, the name and a health bar.",
-          caption: "The party list: each teammate's portrait, name and health.",
-        },
-        {
-          type: "image",
-          src: "/docs/party-downed.webp",
-          width: 1040,
-          height: 340,
-          alt: "The same teammate shown as downed: an empty health bar and a red blood-drop badge on the portrait.",
-          caption: "A downed teammate, waiting for a strike to get back up.",
-        },
-        {
-          type: "image",
-          src: "/docs/give-items.webp",
-          width: 1280,
-          height: 720,
-          alt: "In game, a guest receives four Blood Vials from the host, shown in the game's own item dialog, with the host's name and health above their head.",
-          caption: "Four Blood Vials received from the host.",
+          type: "p",
+          text: "It opens the game's session from the team instead of a summoning bell, removes the things that would end a normal visit (boss kills, lamp trips, deaths, map changes, area limits), shares enemies and world state, and adds party death, giving items and the harder enemies option.",
         },
       ],
     },
     {
-      id: "map-events",
+      id: "events",
       title: "Map events",
       blocks: [
         {
           type: "p",
-          text: "Some of the game's event scripts end early for a summoned player: boss rewards, boss fog, the first visit to the Hunter's Dream. Setup patches copies of **your own** event files (`tools/re/party_boss_events.py`, which checks that only the intended instructions changed). The release carries only their expected hashes, never game files.",
+          text: "Some of the game's event scripts stop early for a summoned player: boss rewards, boss fog, the first visit to the Hunter's Dream. Setup patches copies of your own event files (`tools/re/party_boss_events.py` checks that only the intended instructions changed). The release carries only their expected hashes, never game files.",
         },
       ],
     },
     {
-      id: "services",
-      title: "Self-hosted services",
+      id: "server",
+      title: "The server",
       blocks: [
         {
           type: "p",
-          text: "`server/` is a shadNet server with the co-op server added (`server/coop`: the protobuf messages, the world log, the team lobby, trading). The game's own online requests, JSON over HTTP as the PS4 game sends them, are answered by shadNet itself, so the game goes online without the official or community servers and without PlayStation Network.",
+          text: "`server/` is a shadNet server with the co-op server added (`server/coop`: the protobuf messages, the world log, the team lobby, trading). shadNet also answers the game's own online requests, so the game goes online without PlayStation Network or any public server. How the server and the games talk is on [the server netcode](/docs/netcode) page.",
         },
       ],
     },
     {
       id: "layout",
-      title: "Repository layout",
+      title: "Repository",
       blocks: [
         {
-          type: "table",
-          head: ["Folder", "What it is"],
-          rows: [
+          type: "terms",
+          items: [
             [
-              "`bbport/`",
+              "bbport/",
               "Bloodborne PC, the native port, with the launcher and the Windows packaging",
             ],
             [
-              "`emulator/`",
-              "shadPS4 with networking; `src/core/bloodborne_*` is the co-op code the port compiles in",
+              "emulator/",
+              "shadPS4 with networking; `src/core/bloodborne_*` is the co-op code the port builds in",
             ],
+            ["server/", "shadNet and the co-op server"],
+            ["backend/", "a stand-in for the game's online services"],
             [
-              "`server/`",
-              "shadNet: accounts, rooms, signaling, and the co-op server (team lobby, team worlds, the relay)",
+              "tools/",
+              "build scripts, local checks, releases, the test rig, reverse-engineering helpers",
             ],
-            ["`backend/`", "a stand-in for the game's online services"],
-            [
-              "`tools/`",
-              "build scripts, local CI, releases, the multi-game test rig (`tools/rig`), reverse-engineering helpers (`tools/re`)",
-            ],
-            ["`docs/`", "design notes and handovers"],
-            ["`website/`", "this site"],
+            ["docs/", "design notes"],
+            ["website/", "this site"],
           ],
         },
         {
           type: "p",
-          text: `Every upstream is imported with its full history, so \`git log\` shows its authors. The design notes in the repository go deeper: [BBPORT.md](${blob("docs/BBPORT.md")}) (the port and its co-op wiring), [WORLD_SYNC.md](${blob("docs/WORLD_SYNC.md")}) and [FLAGS.md](${blob("docs/FLAGS.md")}) (who owns each event flag).`,
+          text: `Each upstream project is imported with its history, so \`git log\` shows its authors. The design notes go deeper: [BBPORT.md](${blob("docs/BBPORT.md")}), [WORLD_SYNC.md](${blob("docs/WORLD_SYNC.md")}) and [FLAGS.md](${blob("docs/FLAGS.md")}).`,
         },
       ],
     },
@@ -365,9 +527,9 @@ const netcode: DocPage = {
         {
           type: "ul",
           items: [
-            "**Every game packet goes through one send and one receive point.** Packets travel on 68 numbered channels (about 60 in use), some unreliable (movement) and some reliable (everything that must arrive). Hooking those two points lets the co-op code see, drop, rewrite or inject any packet.",
-            "**The native model is one host's world.** The host runs every enemy and sends their positions and HP; a guest's hit on an enemy goes to the host, which applies it. A joining guest gets the host's flags for the host's current map only, once.",
-            "**Players sync themselves.** Each game sends its own player: position, heading, HP and the animation state. A hit on a player goes to the victim's game, which decides its HP.",
+            "Every game packet goes through one send and one receive point. Packets travel on 68 numbered channels (about 60 in use), some unreliable (movement) and some reliable (everything that must arrive). Hooking those two points lets the co-op code see, drop, rewrite or inject any packet.",
+            "The native model is one host's world. The host runs every enemy and sends their positions and HP; a guest's hit on an enemy goes to the host, which applies it. A joining guest gets the host's flags for the host's current map only, once.",
+            "Players sync themselves. Each game sends its own player: position, heading, HP and the animation state. A hit on a player goes to the victim's game, which decides its HP.",
           ],
         },
         {
@@ -427,11 +589,11 @@ const netcode: DocPage = {
         {
           type: "ul",
           items: [
-            "**One UDP socket per game** to the server, on a fixed port next to the TCP one. Each datagram holds messages; each message has a one-byte kind and a length.",
-            "**Kinds:** `Game` (a small fixed header `{channel, reliable bit, sender member, map, visit}` followed by the game's packet untouched), `Proto` (one protobuf message), `Ack` and `Ping`.",
-            "**Our own reliability layer**, per member and per class: sequence numbers, acks, resends and in-order delivery for reliable traffic (the game's reliable channels, world-log entries, snapshots). Unreliable traffic such as movement is never resent; the newest wins. Who is connected, outages and timeouts come from this layer, not from the game's own timers.",
-            "**Protobuf messages** (`server/proto/coop.proto`, shared by the game and the server): `Hello` (account, build, protocol), the lobby (`TeamCreate`, `Invite`, `InviteAnswer`, `TeamState`, `Ready`, `Start`), the session (`Place`, `MemberJoined`, `MemberLeft`, `EnemyOwner`), the world log (`Propose`, `Entries`, `SnapshotRequest`, `Snapshot`), vitals, party death and portraits.",
-            "**One build for everyone.** `Hello` carries the build, and a different build is refused at the lobby with a clear message. There are no compatibility fallbacks.",
+            "One UDP socket per game to the server, on a fixed port next to the TCP one. Each datagram holds messages; each message has a one-byte kind and a length.",
+            "Kinds: `Game` (a small fixed header `{channel, reliable bit, sender member, map, visit}` followed by the game's packet untouched), `Proto` (one protobuf message), `Ack` and `Ping`.",
+            "Our own reliability layer, per member and per class: sequence numbers, acks, resends and in-order delivery for reliable traffic (the game's reliable channels, world-log entries, snapshots). Unreliable traffic such as movement is never resent; the newest wins. Who is connected, outages and timeouts come from this layer, not from the game's own timers.",
+            "Protobuf messages (`server/proto/coop.proto`, shared by the game and the server): `Hello` (account, build, protocol), the lobby (`TeamCreate`, `Invite`, `InviteAnswer`, `TeamState`, `Ready`, `Start`), the session (`Place`, `MemberJoined`, `MemberLeft`, `EnemyOwner`), the world log (`Propose`, `Entries`, `SnapshotRequest`, `Snapshot`), vitals, party death and portraits.",
+            "One build for everyone. `Hello` carries the build, and a different build is refused at the lobby with a clear message. There are no compatibility fallbacks.",
           ],
         },
       ],
@@ -467,9 +629,9 @@ const netcode: DocPage = {
         {
           type: "ul",
           items: [
-            "**Event sync is most of the owner's packets.** It is reliable, so every packet is acknowledged. It ran at about 2 a second in an earlier trace, so the current rate is being looked into.",
-            "**Frame rate sets most of the rates.** Enemy HP goes every 4th frame and player state every 5th, so at the 60 FPS used online both double.",
-            "**Bandwidth is not the limit.** Under 10 KB/s per game with two players; with three, the host's upload peaks around 13 KB/s. The rig link had 2 ms round trips and no resends.",
+            "Event sync is most of the owner's packets. It is reliable, so every packet is acknowledged. It ran at about 2 a second in an earlier trace, so the current rate is being looked into.",
+            "Frame rate sets most of the rates. Enemy HP goes every 4th frame and player state every 5th, so at the 60 FPS used online both double.",
+            "Bandwidth is not the limit. Under 10 KB/s per game with two players; with three, the host's upload peaks around 13 KB/s. The rig link had 2 ms round trips and no resends.",
           ],
         },
         {
@@ -545,12 +707,11 @@ const netcode: DocPage = {
         {
           type: "ul",
           items: [
-            "**The save splits in two.** The character (level, stats, gear, inventory, Insight, echoes, appearance) stays in each player's save on their PC. The world (bosses beaten, lamps, doors, levers, shortcuts, items picked up, NPC and quest states, kills, map state) of a team lives on the server, one world per team.",
-            "**The server stores the worlds itself,** with atomic writes and backups. Every accepted world-log entry is written at once, so a crash, a quit or a host change loses nothing, and any member can be the game-level host.",
-            "**A new team world starts from the leader's progress.**",
-            "**Every save keeps its personal world.** Loading into a team world puts the save's own world aside and applies the team's; playing solo again brings it back. The character is never touched by this.",
-            "**Bosses** beaten solo stay in that save's personal world; in a team only the team world counts.",
-            "**Up to four** hunters per team: the game's remote player slots.",
+            "The server stores the worlds itself, with atomic writes and backups. Every accepted world-log entry is written at once, so a crash, a quit or a host change loses nothing, and any member can be the game-level host.",
+            "A new team world starts from the leader's progress.",
+            "Every save keeps its personal world. Loading into a team world puts the save's own world aside and applies the team's; playing solo again brings it back. The character is never touched by this.",
+            "Bosses beaten solo stay in that save's personal world; in a team only the team world counts.",
+            "Up to four hunters per team: the game's remote player slots.",
           ],
         },
       ],
@@ -561,7 +722,7 @@ const netcode: DocPage = {
       blocks: [
         {
           type: "p",
-          text: "Teams are made in the game's own menus, drawn with its own dialogs and fonts rather than an overlay. Continue, Load Game or New Game opens the team screen: the team and the hunters online, Invite, Ready and Start. When the leader starts, every member's game loads its save; the first to load becomes the game-level host (the server still owns the world) and the others join its session the moment they finish loading. After a crash or a quit, starting the game again rejoins the team where it is.",
+          text: "Continue, Load Game or New Game opens the team screen, where the server keeps the team: its members, the hunters online and the invitations. When the leader begins the hunt, every member's game loads its own save; the first to load becomes the game-level host (the server still owns the world) and the others join its session as they finish loading. After a crash or a quit, starting the game again rejoins the team. Using it is on [Playing together](/docs/play).",
         },
         {
           type: "figure",
@@ -569,27 +730,20 @@ const netcode: DocPage = {
           caption: "From the title screen to one world, with no bell and no signs.",
           alt: "Six steps: Continue, Load Game or New Game; the team screen, to create a team or accept an invite; everyone picks a character and marks Ready; the leader begins the hunt; loading holds until the team is together; one world, each hunter where they stand.",
         },
-        {
-          type: "image",
-          src: "/docs/team-screen.webp",
-          width: 980,
-          height: 740,
-          alt: "The Co-op Team page in the game's own menu style.",
-          caption: "The team page in the title menu.",
-        },
       ],
     },
+
     {
       id: "status",
       title: "Status",
       blocks: [
         {
           type: "p",
-          text: `The rewrite was built in phases on the [server-coop branch](${SERVER_COOP_BRANCH_URL}), each with tests first and runs on the multi-game rig: a packet trace, a channel policy table, one UDP link to the server, the world log on the server, enemy owners from the server, the native team lobby, the server owning the session (faster joins, host migration, resuming after a drop), one owner per map with a single HP path, server routing with the old peer-to-peer paths deleted, and crash-safe world saves with a server that restarts without ending sessions. It is in testing and ships in the next public release.`,
+          text: `The rewrite was built in phases on a branch, each with tests first and runs on the multi-game rig: a packet trace, a channel policy table, one UDP link to the server, the world log on the server, enemy owners from the server, the native team lobby, the server owning the session (faster joins, host migration, resuming after a drop), one owner per map with a single HP path, server routing with the old peer-to-peer paths deleted, and crash-safe world saves with a server that restarts without ending sessions. It is in main, in testing, and ships in the next public release.`,
         },
         {
           type: "p",
-          text: `The full research and the plan with every phase are in the repository's design notes on the [server-coop branch](${SERVER_COOP_BRANCH_URL}).`,
+          text: `The research and the plan with every phase are in the repository's design notes: [NATIVE_NETCODE.md](${blob("docs/NATIVE_NETCODE.md")}) and [SERVER_COOP_PLAN.md](${blob("docs/SERVER_COOP_PLAN.md")}).`,
         },
       ],
     },
@@ -610,9 +764,9 @@ const build: DocPage = {
         {
           type: "ul",
           items: [
-            "**The port:** [MSYS2](https://www.msys2.org) with the CLANG64 packages listed in `bbport/packaging/windows/README.md`, and a python.org Python 3.10 or later (it freezes the launcher).",
-            "**The server and emulator:** VS 2022 Build Tools (C++ workload, Windows SDK), LLVM 20.1.8 (clang-cl), CMake, Ninja, Qt 6.8.3 `msvc2022_64`.",
-            "**Checks:** Python 3.12 with `clang-format==19.1.7` and `reuse`, and [jj](https://jj-vcs.github.io/jj/) for the local CI script.",
+            "The port: [MSYS2](https://www.msys2.org) with the CLANG64 packages listed in `bbport/packaging/windows/README.md`, and a python.org Python 3.10 or later (it freezes the launcher).",
+            "The server and emulator: VS 2022 Build Tools (C++ workload, Windows SDK), LLVM 20.1.8 (clang-cl), CMake, Ninja, Qt 6.8.3 `msvc2022_64`.",
+            "Checks: Python 3.12 with `clang-format==19.1.7` and `reuse`, and [jj](https://jj-vcs.github.io/jj/) for the local CI script.",
           ],
         },
       ],
@@ -773,7 +927,7 @@ const credits: DocPage = {
   ],
 };
 
-export const docs: DocPage[] = [install, architecture, netcode, build, credits];
+export const docs: DocPage[] = [install, play, architecture, netcode, build, credits];
 
 export function getDoc(slug: string): DocPage | undefined {
   return docs.find((d) => d.slug === slug);

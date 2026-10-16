@@ -1,35 +1,25 @@
-import { useId } from "react";
-
 import { cn } from "@/lib/utils";
 
-/** The site's mark (src/assets/mark.svg): a pale crescent moon and a drop of blood. */
-export function LogoMark({ className, title }: { className?: string; title?: string }) {
-  const id = useId();
-  const cut = `${id}cut`;
-  const moon = `${id}moon`;
+/** The site's emblem (scripts/emblem.mjs): an engraved medallion with a moon and a drop of blood. */
+export function Emblem({ className, priority }: { className?: string; priority?: boolean }) {
   return (
-    <svg
-      viewBox="0 0 64 64"
-      className={cn("size-8", className)}
-      role={title ? "img" : undefined}
-      aria-hidden={title ? undefined : true}
-    >
-      {title ? <title>{title}</title> : null}
-      <defs>
-        <mask id={cut}>
-          <rect width="64" height="64" fill="#fff" />
-          <circle cx="41" cy="24" r="19" fill="#000" />
-        </mask>
-        <linearGradient id={moon} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#efe3c8" />
-          <stop offset="1" stopColor="#b89c66" />
-        </linearGradient>
-      </defs>
-      <circle cx="32" cy="32" r="25" fill={`url(#${moon})`} mask={`url(#${cut})`} />
-      <path
-        d="M43 25.5c0 0-4.4 6-4.4 9.2a4.4 4.4 0 0 0 8.8 0c0-3.2-4.4-9.2-4.4-9.2z"
-        fill="#a11d1d"
-      />
-    </svg>
+    // A static SVG: next/image would only add a wrapper for it.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/emblem.svg"
+      alt=""
+      width={512}
+      height={512}
+      fetchPriority={priority ? "high" : undefined}
+      className={cn("size-40", className)}
+    />
+  );
+}
+
+/** The small mark: the moon and the drop alone, for sizes where the ring would blur. */
+export function LogoMark({ className }: { className?: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/mark.svg" alt="" width={32} height={32} className={cn("size-8", className)} />
   );
 }

@@ -1,26 +1,15 @@
-// Draws every icon the site ships from src/assets/mark.svg: the favicon set, the Apple touch
-// icon and the web app manifest's icons. Run `npm run icons` after changing the mark.
-import { readFile, writeFile } from "node:fs/promises";
+// Draws every icon the site ships from scripts/emblem.mjs: the emblem and the small mark the
+// pages show, the favicon set, the Apple touch icon and the web app manifest's icons. Run
+// `npm run icons` after changing the emblem.
+import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import pngToIco from "png-to-ico";
 import sharp from "sharp";
 
-const root = fileURLToPath(new URL("..", import.meta.url));
-const BG = "#0a0908";
-const mark = await readFile(`${root}src/assets/mark.svg`, "utf8");
-const inner = mark.replace(/^[\s\S]*?<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
+import { emblem, mark } from "./emblem.mjs";
 
-// The mark on the site's background, scaled to `scale` of the canvas; `radius` rounds the
-// corners (in a 64 unit box).
-function onBackground({ scale = 0.86, radius = 0 } = {}) {
-  const offset = (64 * (1 - scale)) / 2;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="${radius}" fill="${BG}"/>
-  <rect x="2.5" y="2.5" width="59" height="59" rx="${Math.max(radius - 2.5, 0)}" fill="none" stroke="#b89c66" stroke-opacity="0.35"/>
-  <g transform="translate(${offset} ${offset}) scale(${scale})">${inner}</g>
-</svg>
-`;
-}
+const root = fileURLToPath(new URL("..", import.meta.url));
+const BG = "#050505";
 
 const png = (svg, size) =>
   sharp(Buffer.from(svg), { density: Math.max(72, (size / 64) * 72 * 2) })
@@ -28,17 +17,34 @@ const png = (svg, size) =>
     .png()
     .toBuffer();
 
-const favicon = onBackground({ scale: 0.92, radius: 12 });
-await writeFile(`${root}src/app/icon.svg`, favicon);
+// An SVG drawn on a square of the site's background, scaled to `scale` of it.
+function onBackground(svg, { scale = 0.9, radius = 0 } = {}) {
+  const inner = Buffer.from(svg).toString("base64");
+  const s = 512 * scale;
+  const o = (512 - s) / 2;
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="${radius}" fill="${BG}"/>
+  <image x="${o}" y="${o}" width="${s}" height="${s}" href="data:image/svg+xml;base64,${inner}"/>
+</svg>
+`;
+}
+
+await writeFile(`${root}public/emblem.svg`, emblem());
+await writeFile(`${root}public/mark.svg`, mark());
+await writeFile(`${root}src/assets/emblem.svg`, emblem());
+
+// Favicons keep only the moon and the drop: the ring's detail is lost below 64 pixels.
+const small = onBackground(mark(), { scale: 0.96, radius: 96 });
+await writeFile(`${root}src/app/icon.svg`, small);
 await writeFile(
   `${root}src/app/favicon.ico`,
-  await pngToIco(await Promise.all([16, 32, 48].map((s) => png(favicon, s)))),
+  await pngToIco(await Promise.all([16, 32, 48].map((s) => png(small, s)))),
 );
-await writeFile(`${root}src/app/apple-icon.png`, await png(onBackground({ scale: 0.8 }), 180));
-await writeFile(`${root}public/icon-192.png`, await png(onBackground({ radius: 12 }), 192));
-await writeFile(`${root}public/icon-512.png`, await png(onBackground({ radius: 12 }), 512));
+await writeFile(`${root}src/app/apple-icon.png`, await png(onBackground(emblem()), 180));
+await writeFile(`${root}public/icon-192.png`, await png(onBackground(emblem()), 192));
+await writeFile(`${root}public/icon-512.png`, await png(onBackground(emblem()), 512));
 await writeFile(
   `${root}public/icon-maskable-512.png`,
-  await png(onBackground({ scale: 0.62 }), 512),
+  await png(onBackground(emblem(), { scale: 0.7 }), 512),
 );
 console.log("icons written");

@@ -14,13 +14,12 @@ function Box({
   return (
     <div
       className={cn(
-        "frame bg-card px-4 py-3 text-left",
-        accent &&
-          "border-blood-bright/50 bg-[linear-gradient(180deg,rgb(122_23_23/0.18),transparent)]",
+        "panel px-4 py-3 text-left",
+        accent && "border-title/50 bg-[linear-gradient(180deg,rgb(196_164_107/0.1),transparent)]",
         className,
       )}
     >
-      <p className="font-display text-xs uppercase tracking-[0.18em] text-gilt">{title}</p>
+      <p className="text-lg text-title">{title}</p>
       <ul className="mt-2 space-y-1 text-[0.95rem] leading-snug text-muted-foreground">
         {lines.map((l) => (
           <li key={l}>{l}</li>
@@ -69,12 +68,10 @@ export function ArchitectureDiagram() {
 
 function Connector() {
   return (
-    <div className="flex flex-col items-center justify-center text-gilt md:flex-row" aria-hidden>
-      <span className="h-8 w-px bg-gilt/50 md:h-px md:w-10" />
-      <span className="py-1 font-display text-[0.65rem] uppercase tracking-[0.2em] md:px-1.5">
-        UDP
-      </span>
-      <span className="h-8 w-px bg-gilt/50 md:h-px md:w-10" />
+    <div className="flex flex-col items-center justify-center text-title md:flex-row" aria-hidden>
+      <span className="h-8 w-px bg-silver/50 md:h-px md:w-10" />
+      <span className="py-1 text-sm italic md:px-1.5">UDP</span>
+      <span className="h-8 w-px bg-silver/50 md:h-px md:w-10" />
     </div>
   );
 }

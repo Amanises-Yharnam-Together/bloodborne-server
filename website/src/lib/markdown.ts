@@ -20,6 +20,8 @@ function block(b: Block): string {
       return b.items.map((i) => `- ${absolutize(i)}`).join("\n");
     case "ol":
       return b.items.map((i, n) => `${n + 1}. ${absolutize(i)}`).join("\n");
+    case "terms":
+      return b.items.map(([t, d]) => `- **${absolutize(t)}**: ${absolutize(d)}`).join("\n");
     case "figure":
       return `*Figure: ${absolutize(b.caption)}* ${b.alt}`;
     case "image":

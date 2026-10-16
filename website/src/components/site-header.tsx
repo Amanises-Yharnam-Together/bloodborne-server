@@ -5,35 +5,30 @@ import { REPO_URL, site } from "@/lib/site";
 
 const nav = [
   { href: "/download", label: "Download" },
-  { href: "/docs", label: "Docs" },
-  { href: "/docs/netcode", label: "Netcode" },
+  { href: "/docs/install", label: "Install" },
+  { href: "/docs/play", label: "Play together" },
+  { href: "/docs/architecture", label: "How it works" },
 ];
 
 export function SiteHeader() {
   return (
-    <header className="sticky top-0 z-40 border-b border-border/80 bg-background/85 backdrop-blur-md">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
-        <Link href="/" className="group flex items-center gap-3" aria-label={`${site.name}, home`}>
-          <LogoMark className="size-8 transition-[filter] duration-300 group-hover:drop-shadow-[0_0_8px_rgb(232_220_196/0.5)]" />
-          <span className="font-display text-sm uppercase tracking-[0.2em] text-bone">
-            {site.shortName}
-          </span>
+    <header className="relative z-40 border-b border-silver/15 bg-black/60">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-1 px-4 py-2 sm:px-6">
+        <Link
+          href="/"
+          className="flex items-center gap-2.5 py-1 text-lg text-bone hover:text-title"
+          aria-label={`${site.name}, home`}
+        >
+          <LogoMark className="size-7" />
+          {site.shortName}
         </Link>
-        <nav aria-label="Main" className="flex items-center gap-1 sm:gap-2">
+        <nav aria-label="Main" className="-mx-2 flex flex-wrap items-center text-base sm:-mx-3">
           {nav.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="px-2.5 py-1.5 font-display text-xs uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:text-bone sm:px-3"
-            >
+            <Link key={item.href} href={item.href} className="menu-item px-2! sm:px-3!">
               {item.label}
             </Link>
           ))}
-          <a
-            href={REPO_URL}
-            rel="noopener"
-            className="px-2.5 py-1.5 font-display text-xs uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:text-bone sm:px-3"
-          >
+          <a href={REPO_URL} rel="noopener" className="menu-item hidden! px-3! sm:block!">
             GitHub
           </a>
         </nav>

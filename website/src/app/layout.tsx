@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Cinzel, EB_Garamond } from "next/font/google";
+import { EB_Garamond } from "next/font/google";
 
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
@@ -7,15 +7,10 @@ import { JsonLd } from "@/lib/json-ld";
 import { REPO_URL, site, siteUrl } from "@/lib/site";
 import "./globals.css";
 
-const cinzel = Cinzel({
-  variable: "--font-cinzel",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-});
-
 const garamond = EB_Garamond({
   variable: "--font-garamond",
   subsets: ["latin"],
+  weight: ["400", "500"],
   style: ["normal", "italic"],
 });
 
@@ -47,17 +42,17 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0a0908",
+  themeColor: "#050505",
   colorScheme: "dark",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${cinzel.variable} ${garamond.variable}`}>
+    <html lang="en" className={garamond.variable}>
       <body className="flex min-h-dvh flex-col">
         <a
           href="#main"
-          className="sr-only z-50 bg-primary px-4 py-2 text-bone focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+          className="sr-only z-50 bg-card px-4 py-2 text-bone focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
         >
           Skip to content
         </a>

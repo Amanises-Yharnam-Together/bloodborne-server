@@ -2,13 +2,12 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-// shadcn/ui card as a Bloodborne menu panel: dark lacquer, a hairline gilt frame and engraved
-// corner marks (drawn by the .frame utility in globals.css).
+// shadcn/ui card as one of the game's panels (the .panel utility in globals.css).
 function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card"
-      className={cn("frame flex flex-col gap-4 bg-card py-6 text-card-foreground", className)}
+      className={cn("panel flex flex-col gap-4 py-6 text-card-foreground", className)}
       {...props}
     />
   );
@@ -19,13 +18,7 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
-  return (
-    <h3
-      data-slot="card-title"
-      className={cn("font-display text-lg uppercase tracking-[0.12em] text-bone", className)}
-      {...props}
-    />
-  );
+  return <h3 data-slot="card-title" className={cn("text-2xl text-title", className)} {...props} />;
 }
 
 function CardDescription({ className, ...props }: React.ComponentProps<"p">) {

@@ -1,212 +1,144 @@
+import Image from "next/image";
 import Link from "next/link";
-import { BookOpen, Server, Skull, Swords, Users, Wifi, Moon, Flame } from "lucide-react";
 
-import { ArchitectureDiagram } from "@/components/architecture-diagram";
 import { DownloadButton } from "@/components/download-button";
-import { SectionHeading } from "@/components/ornament";
+import { Emblem } from "@/components/logo";
+import { MenuRule, MenuTitle } from "@/components/ornament";
 import { VideoSlot } from "@/components/video-slot";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { faq } from "@/content/faq";
 import { JsonLd } from "@/lib/json-ld";
-import { RELEASES_URL, REPO_URL, netcodeStatus, site, siteUrl } from "@/lib/site";
+import { REPO_URL, site, siteUrl } from "@/lib/site";
 
-const pillars = [
-  {
-    icon: Moon,
-    title: "A native port",
-    text: "Bloodborne PC runs the PS4 game's own code on your CPU and draws it with Vulkan. No emulator in between: 60 FPS and beyond, up to 4K, DLSS, FSR, XeSS, frame generation and HDR.",
-  },
-  {
-    icon: Users,
-    title: "Seamless co-op",
-    text: "Make a team in the game's own menus and load in together, wherever each of you stands. No bells, no signs, no Insight. Lamps, deaths, bosses and map changes never split the team.",
-  },
-  {
-    icon: Server,
-    title: "A new netcode",
-    text: "The game's networking is rewritten around a server: every game keeps one UDP link to it, and the server owns the team's world. No peer-to-peer, with protobuf messages and our own reliability layer.",
-  },
+// What changes, as the game lists a menu: the name on the left, its value on the right.
+const changes: [string, string][] = [
+  ["One world", "Enemies, bosses, doors, lamps and shortcuts are shared by the whole team."],
+  [
+    "Your own things",
+    "Pickups, Blood Echoes and Insight stay yours. NPC gifts come to each of you.",
+  ],
+  ["Free travel", "Everyone goes where they like. Nobody is pulled along or sent home."],
+  ["Party death", "A killing blow puts you down. A teammate strikes you to bring you back."],
+  ["Up to four", "Four hunters in a team, made in the game's own menus."],
+  ["Native port", "Bloodborne PC, not an emulator: 60 FPS, 4K, DLSS, FSR and XeSS."],
+  ["Your server", "One of you hosts it next to the game. No accounts, no cloud."],
 ];
 
-const features = [
+const shots = [
   {
-    icon: Users,
-    title: "Up to four hunters",
-    text: "Every remote slot the game has, in one team and one world.",
+    src: "/docs/team-host.webp",
+    width: 1200,
+    height: 771,
+    alt: "The Hunt Together team screen with two hunters and two empty places.",
+    caption: "Making a team before loading in",
   },
   {
-    icon: Swords,
-    title: "One shared world",
-    text: "Enemies, their HP and their deaths are shared: every hit lands on the same health bar.",
-  },
-  {
-    icon: Skull,
-    title: "Party death",
-    text: "A killing blow downs you while a partner stands near; they strike you to revive you.",
-  },
-  {
-    icon: Flame,
-    title: "Team worlds on the server",
-    text: "Lamps, doors, shortcuts and bosses are saved per team on disk. A crash loses nothing.",
-  },
-  {
-    icon: Wifi,
-    title: "Self-hosted",
-    text: "One player hosts on their own PC. No PlayStation Network, no cloud, nothing to pay.",
-  },
-  {
-    icon: BookOpen,
-    title: "Open source",
-    text: "GPL v2. Every hook in the game is listed and checked, and changes run on a multi-game test rig.",
+    src: "/docs/give-items.webp",
+    width: 1280,
+    height: 720,
+    alt: "A guest receives four Blood Vials from the host in the game's own item dialog.",
+    caption: "Blood Vials handed over by a teammate",
   },
 ];
 
 export default function Home() {
   return (
     <>
-      <section className="relative overflow-hidden">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -top-40 left-1/2 size-[42rem] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgb(232_220_196/0.16),rgb(232_220_196/0.04)_45%,transparent_70%)]"
+      <section className="flex min-h-[calc(100dvh-3.25rem)] flex-col items-center justify-center px-4 py-16 text-center">
+        <Emblem
+          priority
+          className="size-36 drop-shadow-[0_0_40px_rgb(190_186_176/0.18)] sm:size-44"
         />
-        <div className="relative mx-auto max-w-4xl px-4 pt-20 pb-14 text-center sm:px-6 sm:pt-28">
-          <div className="flex flex-wrap justify-center gap-2">
-            <Badge>Free and open source</Badge>
-            <Badge variant="muted">Windows</Badge>
-            <Badge variant="muted">Bloodborne 1.09</Badge>
-          </div>
-          <h1 className="mt-8 font-display text-4xl leading-[1.1] tracking-[0.04em] text-bone sm:text-6xl">
-            Bloodborne
-            <span className="mt-2 block text-2xl tracking-[0.3em] text-gilt sm:text-3xl">
-              Seamless Co-op
-            </span>
-          </h1>
-          <p className="mx-auto mt-8 max-w-2xl text-xl leading-relaxed text-foreground sm:text-2xl">
-            Hunt Yharnam together on PC. A native port of the game, tuned for co-op, with its
-            networking rewritten around a server:{" "}
-            <em className="text-bone">no bells, no signs, no peer-to-peer.</em>
-          </p>
-          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-            <DownloadButton />
-            <Button asChild variant="outline" size="lg">
-              <Link href="/docs">Read the docs</Link>
-            </Button>
-          </div>
-          <p className="mt-6 text-base text-muted-foreground">
-            Requires your own copy of Bloodborne for PS4 (1.09). No game files are included.
-          </p>
-        </div>
+        <h1 className="mt-8 text-4xl font-normal tracking-[0.01em] text-bone sm:text-6xl">
+          Bloodborne
+          <span className="mt-1 block text-2xl text-title sm:text-3xl">Seamless Co-op</span>
+        </h1>
+        <p className="mt-6 max-w-xl text-lg text-muted-foreground">{site.tagline}</p>
+
+        <nav aria-label="Start" className="mt-10 flex w-full max-w-xs flex-col items-stretch">
+          <Link href="/download" className="menu-item text-xl">
+            Download
+          </Link>
+          <Link href="/docs/install" className="menu-item text-xl">
+            Install guide
+          </Link>
+          <Link href="/docs/play" className="menu-item text-xl">
+            Playing together
+          </Link>
+          <Link href="/docs/architecture" className="menu-item text-xl">
+            How it works
+          </Link>
+          <a href={REPO_URL} rel="noopener" className="menu-item text-xl">
+            Source code
+          </a>
+        </nav>
+
+        <p className="mt-12 text-sm text-muted-foreground/80">
+          For Windows. Bring your own Bloodborne 1.09 for PS4.
+        </p>
       </section>
 
-      <section aria-label="Trailer" className="px-4 sm:px-6">
+      <section aria-labelledby="trailer" className="mx-auto max-w-5xl px-4 sm:px-6">
+        <h2 id="trailer" className="sr-only">
+          Trailer
+        </h2>
         <VideoSlot />
       </section>
 
-      <section aria-labelledby="what" className="mx-auto mt-28 max-w-6xl px-4 sm:px-6">
-        <SectionHeading eyebrow="What it is" title="One port, made for hunting together" id="what">
-          <p>
-            {site.name} combines three things: a native PC port of Bloodborne, a co-op layer
-            inspired by Elden Ring&apos;s Seamless Co-op, and a full rewrite of the game&apos;s
-            networking so that a server, not a web of peers, holds the hunt together.
-          </p>
-        </SectionHeading>
-        <div className="mt-14 grid gap-6 md:grid-cols-3">
-          {pillars.map(({ icon: Icon, title, text }) => (
-            <Card key={title}>
-              <CardHeader>
-                <Icon className="size-6 text-gilt" aria-hidden />
-                <CardTitle className="mt-2">{title}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CardDescription>{text}</CardDescription>
-              </CardContent>
-            </Card>
+      <section aria-labelledby="what" className="mx-auto mt-24 max-w-4xl px-4 sm:px-6">
+        <MenuTitle id="what">What changes</MenuTitle>
+        <dl className="mx-auto mt-4 max-w-3xl">
+          {changes.map(([term, text]) => (
+            <div
+              key={term}
+              className="grid gap-x-8 gap-y-1 border-b border-silver/15 py-4 sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)]"
+            >
+              <dt className="text-xl text-bone sm:text-right">{term}</dt>
+              <dd className="text-foreground">{text}</dd>
+            </div>
           ))}
-        </div>
-      </section>
-
-      <section aria-labelledby="netcode" className="mx-auto mt-28 max-w-6xl px-4 sm:px-6">
-        <SectionHeading eyebrow="The netcode" title="Every hunter, one server" id="netcode">
-          <p>
-            Bloodborne&apos;s own netcode assumes a short visit to one host&apos;s world. Seamless
-            co-op breaks that, so the networking was rebuilt: the server orders and saves every
-            kill, flag, door and lamp, names one game per map to run its enemies, and relays the
-            game&apos;s own packets to the members who need them.
-          </p>
-        </SectionHeading>
-        <div className="mt-14">
-          <ArchitectureDiagram />
-        </div>
-        <div className="mt-10 flex flex-col items-center gap-4 text-center">
-          <Badge variant="blood">{netcodeStatus.label}</Badge>
-          <p className="max-w-2xl text-base text-muted-foreground">{netcodeStatus.note}</p>
-          <Button asChild variant="outline">
-            <Link href="/docs/netcode">How the netcode works</Link>
-          </Button>
-        </div>
-      </section>
-
-      <section aria-labelledby="features" className="mx-auto mt-28 max-w-6xl px-4 sm:px-6">
-        <SectionHeading eyebrow="In the hunt" title="What you get" id="features" />
-        <ul className="mt-14 grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
-          {features.map(({ icon: Icon, title, text }) => (
-            <li key={title} className="flex gap-4">
-              <span className="flex size-10 shrink-0 rotate-45 items-center justify-center border border-gilt/40">
-                <Icon className="size-4 -rotate-45 text-gilt" aria-hidden />
-              </span>
-              <div>
-                <h3 className="font-display text-base tracking-[0.08em] text-bone">{title}</h3>
-                <p className="mt-1 text-base text-muted-foreground">{text}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section aria-labelledby="faq" className="mx-auto mt-28 max-w-3xl px-4 sm:px-6">
-        <SectionHeading eyebrow="Questions" title="Before you set out" id="faq" />
-        <Accordion type="single" collapsible className="frame mt-12 bg-card px-6">
-          {faq.map(({ q, a }) => (
-            <AccordionItem key={q} value={q}>
-              <AccordionTrigger>{q}</AccordionTrigger>
-              <AccordionContent>{a}</AccordionContent>
-            </AccordionItem>
-          ))}
-        </Accordion>
-      </section>
-
-      <section aria-labelledby="start" className="mx-auto mt-28 max-w-3xl px-4 text-center sm:px-6">
-        <SectionHeading eyebrow="Begin the hunt" title="Grab the latest release" id="start">
-          <p>
-            One installer for every player. The launcher finds your game, sets up co-op and, on the
-            host, starts the server.
-          </p>
-        </SectionHeading>
-        <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-          <DownloadButton />
-          <Button asChild variant="outline" size="lg">
-            <Link href="/docs/install">Install guide</Link>
-          </Button>
-        </div>
-        <p className="mt-6 text-base text-muted-foreground">
-          All versions are on{" "}
-          <a
-            href={RELEASES_URL}
-            rel="noopener"
-            className="text-gilt underline-offset-4 hover:underline"
-          >
-            GitHub releases
-          </a>
-          .
+        </dl>
+        <p className="mx-auto mt-8 max-w-3xl text-center text-muted-foreground">
+          Instead of the game&apos;s peer-to-peer links, every game connects to one small server
+          that keeps the team&apos;s world.{" "}
+          <Link href="/docs/netcode" className="text-title hover:text-bone">
+            Why a server
+          </Link>
         </p>
+      </section>
+
+      <section
+        aria-label="Screenshots"
+        className="mx-auto mt-24 grid max-w-6xl gap-8 px-4 sm:px-6 md:grid-cols-2"
+      >
+        {shots.map((s) => (
+          <figure key={s.src}>
+            <Image
+              src={s.src}
+              alt={s.alt}
+              width={s.width}
+              height={s.height}
+              sizes="(min-width: 768px) 560px, 100vw"
+              className="h-auto w-full border-y border-silver/30 shadow-[0_20px_60px_rgb(0_0_0/0.6)]"
+            />
+            <figcaption className="mt-3 text-center text-muted-foreground italic">
+              {s.caption}
+            </figcaption>
+          </figure>
+        ))}
+      </section>
+
+      <section aria-labelledby="get" className="mx-auto mt-24 max-w-3xl px-4 text-center sm:px-6">
+        <MenuTitle id="get">Get it</MenuTitle>
+        <p className="mx-auto mt-6 max-w-xl">
+          One installer for every player. Everyone in a team, the host included, uses the same
+          release.
+        </p>
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
+          <DownloadButton />
+          <Link href="/docs/install" className="menu-item">
+            Read the install guide
+          </Link>
+        </div>
+        <MenuRule crest={false} className="mx-auto mt-12 max-w-md" />
       </section>
 
       <JsonLd
@@ -215,26 +147,14 @@ export default function Home() {
           "@type": "SoftwareApplication",
           name: site.name,
           description: site.description,
-          url: siteUrl,
           applicationCategory: "GameApplication",
           operatingSystem: "Windows 10, Windows 11",
-          license: "https://spdx.org/licenses/GPL-2.0-or-later.html",
+          url: siteUrl,
+          downloadUrl: `${siteUrl}/download`,
+          license: `https://spdx.org/licenses/${site.license}.html`,
           isAccessibleForFree: true,
           offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-          downloadUrl: RELEASES_URL,
           codeRepository: REPO_URL,
-          softwareRequirements: "Bloodborne for PS4, version 1.09 (not included)",
-        }}
-      />
-      <JsonLd
-        data={{
-          "@context": "https://schema.org",
-          "@type": "FAQPage",
-          mainEntity: faq.map(({ q, a }) => ({
-            "@type": "Question",
-            name: q,
-            acceptedAnswer: { "@type": "Answer", text: a },
-          })),
         }}
       />
     </>

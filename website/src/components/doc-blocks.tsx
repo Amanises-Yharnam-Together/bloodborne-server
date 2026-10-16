@@ -16,7 +16,7 @@ function DocBlock({ block }: { block: Block }) {
       return <h3>{block.text}</h3>;
     case "note":
       return (
-        <aside className="frame my-6 bg-card/60 px-5 py-4 text-base text-muted-foreground">
+        <aside className="panel my-6 max-w-[68ch] px-5 py-4 text-base text-muted-foreground italic">
           <InlineText text={block.text} />
         </aside>
       );
@@ -33,6 +33,25 @@ function DocBlock({ block }: { block: Block }) {
         </List>
       );
     }
+    case "terms":
+      // The game's two-column menus: the label on the left, its value on the right.
+      return (
+        <dl className="my-5 max-w-[72ch]">
+          {block.items.map(([term, text]) => (
+            <div
+              key={term}
+              className="grid gap-x-6 gap-y-1 border-b border-silver/15 py-3 sm:grid-cols-[13rem_minmax(0,1fr)]"
+            >
+              <dt className="text-bone sm:text-right">
+                <InlineText text={term} />
+              </dt>
+              <dd className="text-foreground">
+                <InlineText text={text} />
+              </dd>
+            </div>
+          ))}
+        </dl>
+      );
     case "figure": {
       const Figure = figures[block.figure];
       return (
@@ -52,8 +71,8 @@ function DocBlock({ block }: { block: Block }) {
             alt={block.alt}
             width={block.width}
             height={block.height}
-            sizes="(min-width: 1024px) 720px, 100vw"
-            className="frame h-auto w-full bg-card"
+            sizes="(min-width: 1024px) 860px, 100vw"
+            className="h-auto w-full border-y border-silver/30 bg-card shadow-[0_20px_60px_rgb(0_0_0/0.6)]"
           />
           <figcaption className="mt-3 text-center text-sm text-muted-foreground">
             <InlineText text={block.caption} />
@@ -98,17 +117,19 @@ function DocBlock({ block }: { block: Block }) {
 
 export function DocBody({ page }: { page: DocPage }) {
   return (
-    <div className="prose-hunter">
+    <div className="guide">
       {page.sections.map((s) => (
         <section key={s.id} aria-labelledby={s.id}>
           <h2 id={s.id}>
-            <a href={`#${s.id}`} className="no-underline! text-inherit!">
+            <a href={`#${s.id}`} className="no-underline! text-inherit! hover:text-bone!">
               {s.title}
             </a>
           </h2>
-          {s.blocks.map((b, i) => (
-            <DocBlock key={i} block={b} />
-          ))}
+          <div className="min-w-0">
+            {s.blocks.map((b, i) => (
+              <DocBlock key={i} block={b} />
+            ))}
+          </div>
         </section>
       ))}
     </div>

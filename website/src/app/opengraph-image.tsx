@@ -4,15 +4,15 @@ import { ImageResponse } from "next/og";
 
 import { site } from "@/lib/site";
 
-// The social preview: the mark, the name and the tagline in the site's own type.
+// The social preview: the emblem and the name, set like the game's title screen.
 export const alt = `${site.name}: play Bloodborne together on PC`;
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 const fonts = join(process.cwd(), "src/assets/fonts");
-const cinzel = await readFile(join(fonts, "Cinzel-Medium.ttf"));
-const garamond = await readFile(join(fonts, "EBGaramond-Italic.ttf"));
-const mark = `data:image/svg+xml;base64,${(await readFile(join(process.cwd(), "src/assets/mark.svg"))).toString("base64")}`;
+const regular = await readFile(join(fonts, "EBGaramond-Regular.ttf"));
+const italic = await readFile(join(fonts, "EBGaramond-Italic.ttf"));
+const emblem = `data:image/svg+xml;base64,${(await readFile(join(process.cwd(), "src/assets/emblem.svg"))).toString("base64")}`;
 
 export default function Image() {
   return new ImageResponse(
@@ -21,54 +21,37 @@ export default function Image() {
         width: "100%",
         height: "100%",
         display: "flex",
-        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
+        gap: 64,
         background:
-          "radial-gradient(ellipse 70% 60% at 50% 0%, rgba(232,220,196,0.11), rgba(10,9,8,1) 70%), #0a0908",
-        color: "#f1e9d8",
-        border: "2px solid rgba(184,156,102,0.45)",
+          "radial-gradient(ellipse 80% 70% at 50% 0%, rgba(190,186,176,0.13), rgba(5,5,5,1) 70%), #050505",
+        color: "#f3ead8",
+        fontFamily: "Garamond",
       }}
     >
-      <img src={mark} width={150} height={150} alt="" />
-      <div
-        style={{
-          fontFamily: "Cinzel",
-          fontSize: 86,
-          letterSpacing: 4,
-          marginTop: 24,
-        }}
-      >
-        Bloodborne
-      </div>
-      <div
-        style={{
-          fontFamily: "Cinzel",
-          fontSize: 40,
-          letterSpacing: 14,
-          color: "#b89c66",
-          marginTop: 4,
-        }}
-      >
-        SEAMLESS CO-OP
-      </div>
-      <div
-        style={{
-          fontFamily: "Garamond",
-          fontSize: 36,
-          color: "#ddd4c2",
-          marginTop: 34,
-          fontStyle: "italic",
-        }}
-      >
-        {site.tagline}
+      <img src={emblem} width={300} height={300} alt="" />
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        <div style={{ fontSize: 92, lineHeight: 1 }}>Bloodborne</div>
+        <div style={{ fontSize: 54, color: "#c4a46b", marginTop: 8 }}>Seamless Co-op</div>
+        <div
+          style={{
+            fontSize: 30,
+            color: "#b9b4aa",
+            marginTop: 30,
+            fontStyle: "italic",
+            maxWidth: 560,
+          }}
+        >
+          {site.tagline}
+        </div>
       </div>
     </div>,
     {
       ...size,
       fonts: [
-        { name: "Cinzel", data: cinzel, weight: 500, style: "normal" },
-        { name: "Garamond", data: garamond, weight: 400, style: "italic" },
+        { name: "Garamond", data: regular, weight: 400, style: "normal" },
+        { name: "Garamond", data: italic, weight: 400, style: "italic" },
       ],
     },
   );

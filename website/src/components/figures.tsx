@@ -8,14 +8,14 @@ import { apart, packetRates, roles, upload } from "@/content/traffic";
 function Hunter({ x, y, n }: { x: number; y: number; n: number }) {
   return (
     <g>
-      <circle cx={x} cy={y} r="18" fill="var(--card)" stroke="var(--gilt)" strokeOpacity="0.7" />
+      <circle cx={x} cy={y} r="18" fill="var(--card)" stroke="var(--silver)" strokeOpacity="0.7" />
       <text
         x={x}
         y={y + 5}
         textAnchor="middle"
         fontSize="13"
         fill="var(--bone)"
-        fontFamily="var(--font-display)"
+        fontFamily="var(--font-garamond)"
       >
         {n}
       </text>
@@ -33,10 +33,8 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <div className="frame bg-card p-4">
-      <p className="text-center font-display text-xs uppercase tracking-[0.18em] text-gilt">
-        {title}
-      </p>
+    <div className="panel p-4">
+      <p className="text-center text-lg text-title">{title}</p>
       <svg viewBox="0 0 240 200" className="mx-auto mt-2 w-full max-w-72" aria-hidden>
         {children}
       </svg>
@@ -92,7 +90,7 @@ export function TopologyFigure() {
             y1={p.y}
             x2={hub.x}
             y2={hub.y}
-            stroke="var(--gilt)"
+            stroke="var(--silver)"
             strokeOpacity="0.8"
           />
         ))}
@@ -102,7 +100,7 @@ export function TopologyFigure() {
           width="60"
           height="36"
           fill="var(--primary)"
-          stroke="var(--gilt)"
+          stroke="var(--silver)"
         />
         <text
           x={hub.x}
@@ -110,7 +108,7 @@ export function TopologyFigure() {
           textAnchor="middle"
           fontSize="11"
           fill="var(--bone)"
-          fontFamily="var(--font-display)"
+          fontFamily="var(--font-garamond)"
           letterSpacing="1.5"
         >
           SERVER
@@ -141,11 +139,9 @@ export function LinksChart() {
   const barW = 34;
   const y = (v: number) => bottom - (v / max) * (bottom - top);
   return (
-    <div className="frame bg-card p-4">
+    <div className="panel p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="font-display text-xs uppercase tracking-[0.18em] text-gilt">
-          Links per team size
-        </p>
+        <p className="text-lg text-title">Links per team size</p>
         <ul className="flex gap-4 text-sm text-muted-foreground" aria-label="Legend">
           <li className="flex items-center gap-2">
             <span className="h-2.5 w-4 rounded-sm" style={{ background: P2P }} /> Peer to peer
@@ -236,11 +232,9 @@ export function RatesChart() {
   const max = 70;
   const x = (v: number) => left + ((width - left - right) * v) / max;
   return (
-    <div className="frame bg-card p-4">
+    <div className="panel p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="font-display text-xs uppercase tracking-[0.18em] text-gilt">
-          Packets per second, to each teammate
-        </p>
+        <p className="text-lg text-title">Packets per second, to each teammate</p>
         <Legend items={roles} />
       </div>
       <div className="mt-3 overflow-x-auto">
@@ -327,11 +321,9 @@ export function UploadChart() {
     { name: "Guest", color: roles[1].color, i: 2 as const },
   ];
   return (
-    <div className="frame bg-card p-4">
+    <div className="panel p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="font-display text-xs uppercase tracking-[0.18em] text-gilt">
-          Upload to the server, KB/s
-        </p>
+        <p className="text-lg text-title">Upload to the server, KB/s</p>
         <Legend items={series} />
       </div>
       <div className="mt-3 overflow-x-auto">
@@ -447,12 +439,9 @@ export function PacketPathFigure() {
   return (
     <ol className="grid gap-3 sm:grid-cols-5" aria-label="The path of a game packet">
       {steps.map((s, i) => (
-        <li
-          key={s.title}
-          className={cn("frame relative bg-card px-4 py-3", i === 3 && "bg-primary/25")}
-        >
-          <span className="font-display text-xs text-gilt">{String(i + 1).padStart(2, "0")}</span>
-          <p className="mt-1 font-display text-sm tracking-[0.06em] text-bone">{s.title}</p>
+        <li key={s.title} className={cn("panel px-4 py-3", i === 3 && "bg-[#1d1710]")}>
+          <span className="text-sm text-title">{String(i + 1).padStart(2, "0")}</span>
+          <p className="mt-1 text-base text-bone">{s.title}</p>
           <p className="mt-1 text-sm leading-snug text-muted-foreground">{s.text}</p>
         </li>
       ))}
@@ -490,9 +479,9 @@ export function SaveSplitFigure() {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {columns.map((c) => (
-        <div key={c.title} className={cn("frame bg-card px-5 py-4", c.accent && "bg-primary/20")}>
-          <p className="font-display text-sm uppercase tracking-[0.14em] text-bone">{c.title}</p>
-          <p className="text-sm text-gilt">{c.sub}</p>
+        <div key={c.title} className={cn("panel px-5 py-4", c.accent && "bg-[#1d1710]")}>
+          <p className="text-lg text-bone">{c.title}</p>
+          <p className="text-sm text-title">{c.sub}</p>
           <ul className="mt-3 space-y-1 text-base text-muted-foreground">
             {c.items.map((i) => (
               <li key={i}>{i}</li>
@@ -515,14 +504,14 @@ export function JoinFlowFigure() {
     "One world, each hunter where they stand",
   ];
   return (
-    <ol className="relative grid gap-3 border-l border-gilt/40 pl-6" aria-label="Joining a team">
+    <ol className="relative grid gap-3 border-l border-title/40 pl-6" aria-label="Joining a team">
       {steps.map((s, i) => (
         <li key={s} className="relative">
           <span
             aria-hidden
-            className="absolute top-2 -left-[1.95rem] size-2.5 rotate-45 border border-gilt bg-background"
+            className="absolute top-2 -left-[1.95rem] size-2.5 rotate-45 border border-title bg-background"
           />
-          <span className="font-display text-xs text-gilt">{String(i + 1).padStart(2, "0")}</span>{" "}
+          <span className="text-sm text-title">{String(i + 1).padStart(2, "0")}</span>{" "}
           <span className="text-base text-foreground">{s}</span>
         </li>
       ))}
