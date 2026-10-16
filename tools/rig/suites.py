@@ -32,7 +32,8 @@ from scenarios import (AWAY_FROM_LAMP, BLOODSTAIN_DROPPED, BLOODSTAIN_STOLEN,  #
                        FORBIDDEN_WOODS_LAMP_LIT, GASCOIGNE, GASCOIGNE_DEFEATED, GIVE_UP,
                        HUNTERS_DREAM, LETHAL_FALL, LEVEL_SYNC, OTHER_MAP_FLAG, PARTY_DEATH,
                        REVIVE_HITS, SESSION_HOLDS, HOST_JOINS, GUEST_JOINS, START,
-                       STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_NPC, GUEST_ALONE_SPOT,
+                       STORY_HIDDEN, THIS_MAP_FLAG, WARD_ENEMY, WARD_ENEMY_2, WARD_NPC,
+                       GUEST_ALONE_SPOT,
                        IOSEFKA_WAIT, HP_LOWERED, KNEEL, YHARNAM_TO_WARD, attack, only_kill)
 
 DREAM = "0x15000000"  # the Hunter's Dream's map (HUNTERS_DREAM is its lamp)
@@ -623,7 +624,7 @@ SUITES = {
             chapter("lone-guest", "a guest alone on a map runs its enemies and hands them back "
                                   "when the host comes",
                     {"guest": [f"travel {CATHEDRAL_WARD_LAMP}", "sync lone-there", "wait 15",
-                               *attack(WARD_ENEMY), "wait 10", "sync lone-killed",
+                               *attack(WARD_ENEMY_2), "wait 10", "sync lone-killed",
                                "wait-members 2 300", "wait 20", "snapshot"],
                      "host": ["sync lone-there", "sync lone-killed", "wait 10",
                               f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 240", "wait 20",
