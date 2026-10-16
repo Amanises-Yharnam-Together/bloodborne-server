@@ -238,6 +238,7 @@
     {"name": "session resend overflow", "feature": "server owns leaves", "kind": "patch", "offset": "0x017897B2", "original": "0F 82 B8 00 00 00", "patched": "E9 B9 00 00 00 90", "accepted": []},
     {"name": "room timeout", "feature": "server owns leaves", "kind": "patch", "offset": "0x01789F41", "original": "76 79", "patched": "EB 79", "accepted": []},
     {"name": "character floor read", "feature": "floor guard", "kind": "hook", "offset": "0x018CB14F", "original": "48 8B B3 88 02 00 00 48 85 F6", "patched": "", "accepted": []},
+    {"name": "stands on part floor read", "feature": "floor guard", "kind": "hook", "offset": "0x0191B79E", "original": "48 8B 8E 88 02 00 00 48 85 C9", "patched": "", "accepted": []},
     {"name": "flag value first block", "feature": "flag block guard", "kind": "hook", "offset": "0x013CFF79", "original": "41 FF C9 44 89 C9 C1 E9 03", "patched": "", "accepted": []},
     {"name": "flag value second block", "feature": "flag block guard", "kind": "hook", "offset": "0x013CFFEC", "original": "45 29 D0 41 8D 58 FF 89 D8", "patched": "", "accepted": []}
   ]

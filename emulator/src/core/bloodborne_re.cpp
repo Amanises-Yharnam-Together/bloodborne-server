@@ -627,6 +627,12 @@ void ReconcileMemberPresence() {
         if (now_ms - since >= PresenceGraceMs && !hidden.contains(character) &&
             !IsCharacterDisabled(character)) {
             set_disabled(character, true);
+            // Kaniel's crash 2026-10-17: hidden, its floor update no longer runs, and the floor of
+            // a map block this game then drops stayed (0x0191B7C0). No floor (as in mid-air) until
+            // it is shown again and finds one.
+            if (HasMemoryAccess(character + 0x288, sizeof(u64), MemoryProt::CpuWrite)) {
+                WriteValue<u64>(character, 0x288, 0);
+            }
             hidden.insert(character);
             LOG_INFO(Debug, "Bloodborne presence: no member on map {:#x} by player {:#x}: hidden",
                      map, ReadValue<u32>(character, 0x08));

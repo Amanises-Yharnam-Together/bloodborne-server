@@ -447,6 +447,14 @@ constexpr u64 ChrFloorUpdateOffset = 0x018CB14F;
 constexpr std::array<u8, 10> ChrFloorRead{0x48, 0x8B, 0xB3, 0x88, 0x02,
                                           0x00, 0x00, 0x48, 0x85, 0xF6};
 constexpr size_t ChrFloorOffset = 0x288;
+// Kaniel's crash 2026-10-17 (0x0191B7C0): the query "does any character stand on the part with
+// entity id X" (0x0191B6E0, a lift-like object's update) reads every character's floor chain,
+// disabled ones too. A remote player copy hidden by presence (disabled: its floor update no longer
+// runs) kept the floor of a map block the host's game had dropped. The query's read of the floor
+// gets the same check.
+constexpr u64 StandsOnPartFloorOffset = 0x0191B79E;
+constexpr std::array<u8, 10> StandsOnPartFloorRead{0x48, 0x8B, 0x8E, 0x88, 0x02,
+                                                   0x00, 0x00, 0x48, 0x85, 0xC9};
 
 bool ReadableAt(u64 address, size_t size) {
     return address >= 0x10000 && HasMemoryAccess(address, size, MemoryProt::CpuRead);
@@ -476,11 +484,7 @@ bool FloorReadsBack(u64 floor) {
                        : ReadableAt(ReadValue<u64>(part, 0x70), 0x28);
 }
 
-void PS4_SYSV_ABI ClearFloorThatIsGone(u64, GuestRegisterSnapshot* registers) {
-    if (!InPartySession()) {
-        return;
-    }
-    const u64 character = registers->rbx;
+void ClearStaleFloor(u64 character) {
     if (!ReadableAt(character + ChrFloorOffset, sizeof(u64))) {
         return;
     }
@@ -503,6 +507,21 @@ void PS4_SYSV_ABI ClearFloorThatIsGone(u64, GuestRegisterSnapshot* registers) {
                 "Bloodborne floor guard: character {:#x} stood on a floor that is gone ({:#x}, map "
                 "{:#x}): floor cleared instead of a crash",
                 character, floor, GetCurrentPackedMap());
+}
+
+void PS4_SYSV_ABI ClearFloorThatIsGone(u64, GuestRegisterSnapshot* registers) {
+    if (InPartySession()) {
+        ClearStaleFloor(registers->rbx);
+    }
+}
+
+void PS4_SYSV_ABI ClearQueriedFloorThatIsGone(u64, GuestRegisterSnapshot* registers) {
+    // Only a disabled character's: an enabled one's floor update checks its own every frame, and
+    // this query runs for every character for every such object.
+    const u64 character = registers->rsi;
+    if (InPartySession() && character >= 0x10000 && IsCharacterDisabled(character)) {
+        ClearStaleFloor(character);
+    }
 }
 
 // The flag block guard (rig 2026-10-16: a removed member invited back, and host-crash-apart's
@@ -589,6 +608,13 @@ void InstallFloorGuard(u64 base, u64 image_size) {
         LOG_ERROR(Debug,
                   "Bloodborne floor guard unavailable; a stale floor can still crash a guest");
         coop_features.Skipped("floor guard", SiteFailure(base, image_size, ChrFloorUpdateOffset));
+        return;
+    }
+    if (StandsOnPartFloorOffset + StandsOnPartFloorRead.size() > image_size ||
+        !InstallCoopHook(reinterpret_cast<void*>(base + StandsOnPartFloorOffset),
+                         StandsOnPartFloorRead, 0, ClearQueriedFloorThatIsGone)) {
+        coop_features.Skipped("floor guard",
+                              SiteFailure(base, image_size, StandsOnPartFloorOffset));
         return;
     }
     coop_features.On("floor guard");
