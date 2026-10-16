@@ -222,41 +222,107 @@ static void defaults(void) {
     assert(bindings[IN_CROSS].pad_count==1 && bindings[IN_CROSS].pad[0]==SDL_GAMEPAD_BUTTON_SOUTH);
 }
 
-/* Sprinting on the keyboard: W + A (or D) + Space, then one of the two direction keys is let go. The pad
- * state the game reads must stay continuous: Circle held and the left stick at a full push in every poll. A
- * diagonal sits on the stick's circle (about 90 counts a side, 45 degrees) like a real stick's, not in the
- * square's corner ((0,0) for W+A, (255,0) for W+D), 1.41 times a full push: letting go of one key then dropped the push to 1.0 at once. */
-static float stick_push(const PadData *d) { return hypotf((float)d->left_x-128.0f,(float)d->left_y-128.0f); }
-static void sprint_poll(const bool *keys, int side_key, const char *step, int expect_x, int expect_y) {
+/* Sprinting on the keyboard (Supermedo's bbport 4b930b1, measured by cassioKenji, their PR #74): the game picks walk
+ * or run by the larger stick axis, and ends a sprint when the stick's direction moves 45 degrees or more between two
+ * reads. So in every read the movement keys give a full push on the larger axis (the square gate: W+A is the corner),
+ * and a change of keys turns the stick in steps of at most 30 degrees a read. The clock is synthetic (key_left_stick
+ * takes the time), reads 16 ms apart. */
+#define READ_US 16000u
+static double stick_x(const PadData *d) { return d->left_x<128 ? (d->left_x-128)/128.0 : (d->left_x-128)/127.0; }
+static double stick_y(const PadData *d) { return d->left_y<128 ? (d->left_y-128)/128.0 : (d->left_y-128)/127.0; }
+static double stick_degrees(const PadData *d) { return atan2(stick_y(d),stick_x(d))*180.0/3.14159265358979323846; }
+static double turn_degrees(double from, double to) {
+    const double diff=fmod(to-from+540.0,360.0)-180.0;
+    return fabs(diff);
+}
+static PadData key_read(int left, int right, int up, int down, uint64_t now) {
     PadData d;
     memset(&d,0,sizeof d);
     d.left_x=d.left_y=d.right_x=d.right_y=128;
-    apply_keyboard(&d,keys);
-    printf("  %-18s side=%s left=(%3d,%3d) push=%.1f circle=%d\n",step,side_key==SDL_SCANCODE_A ? "A" : "D",
-           d.left_x,d.left_y,stick_push(&d),(d.buttons & BTN_CIRCLE)!=0);
-    assert(d.buttons & BTN_CIRCLE);
-    assert(abs(d.left_x-expect_x)<=1 && abs(d.left_y-expect_y)<=1);
-    assert(close_to(stick_push(&d),128.0f,2.0f));       /* a full push, never the corner's 181 */
+    key_left_stick(&d,left,right,up,down,now);
+    return d;
 }
-static void sprint_diagonal(int side_key) {
-    bool keys[SDL_SCANCODE_COUNT]={0};
-    const int diagonal_x=side_key==SDL_SCANCODE_A ? 38 : 218;
-    bind_defaults();
-    keys[SDL_SCANCODE_W]=true; keys[side_key]=true; keys[SDL_SCANCODE_SPACE]=true;
-    for (int i=0;i<3;++i) { sprint_poll(keys,side_key,"W+side+Space held",diagonal_x,38); SLEEP_MS(16); }
-    keys[side_key]=false;
-    for (int i=0;i<6;++i) { sprint_poll(keys,side_key,"side released",128,0); SLEEP_MS(16); }
-    keys[side_key]=true;                          /* and back to the diagonal */
-    sprint_poll(keys,side_key,"side pressed again",diagonal_x,38);
+static int full_push(const PadData *d) { return d->left_x==0 || d->left_x==255 || d->left_y==0 || d->left_y==255; }
+/* Reads with the keys `to` held after `from` until the stick is at (x, y); every read a full push and no turn of 30
+ * degrees or more (plus rounding). Returns the reads it took; *passed_right / *passed_forward: a read on that side. */
+static int turn_to(const int from[4], const int to[4], int x, int y, uint64_t *now, int *passed_right, int *passed_forward) {
+    PadData d=key_read(from[0],from[1],from[2],from[3],*now);
+    assert(full_push(&d));
+    double previous=stick_degrees(&d);
+    *passed_right=*passed_forward=0;
+    for (int reads=1;reads<=40;++reads) {
+        *now+=READ_US;
+        d=key_read(to[0],to[1],to[2],to[3],*now);
+        const double angle=stick_degrees(&d);
+        printf("  read %2d: left=(%3d,%3d) %7.1f degrees, turned %4.1f\n",reads,d.left_x,d.left_y,angle,turn_degrees(previous,angle));
+        assert(full_push(&d));
+        assert(turn_degrees(previous,angle)<31.0);
+        previous=angle;
+        if (d.left_x>128) *passed_right=1;
+        if (d.left_y<128) *passed_forward=1;
+        if (abs(d.left_x-x)<=1 && abs(d.left_y-y)<=1) return reads;
+    }
+    assert(!"the stick never reached the keys' direction");
+    return 0;
 }
 static void sprint(void) {
-    sprint_diagonal(SDL_SCANCODE_A);
-    sprint_diagonal(SDL_SCANCODE_D);
-    /* Opposing keys are no diagonal: A with D cancel to the stick's centre side (127, the positive side's full
-     * push is one less than the negative's), and with W only the vertical axis moves, as before. */
+    const int w[4]={0,0,1,0}, s[4]={0,0,0,1}, a[4]={1,0,0,0}, dk[4]={0,1,0,0}, wa[4]={1,0,1,0}, wd[4]={0,1,1,0};
+    int right, forward;
+    uint64_t now=1000000;
+    memset(&key_stick,0,sizeof key_stick);
+    /* W + A from neutral: the square's corner at once, (0,0): both axes a full push. */
+    PadData d=key_read(1,0,1,0,now);
+    assert(d.left_x==0 && d.left_y==0);
+    /* A let go: the stick turns to W (45 degrees) in steps, never in one read. */
+    puts("W+A -> W:");
+    int reads=turn_to(wa,w,128,0,&now,&right,&forward);
+    assert(reads>=2 && reads<=4);
+    puts("W -> W+D:");
+    reads=turn_to(w,wd,255,0,&now,&right,&forward);
+    assert(reads>=2 && reads<=4);
+    /* A half turn has no shorter way round: W <-> S goes through the right (both ways are sideways), A <-> D
+     * through forward. */
+    puts("W -> S:");
+    turn_to(w,w,128,0,&now,&right,&forward);
+    turn_to(w,s,128,255,&now,&right,&forward);
+    assert(right);
+    puts("A -> D:");
+    turn_to(a,a,0,128,&now,&right,&forward);
+    turn_to(a,dk,255,128,&now,&right,&forward);
+    assert(forward);
+    puts("D -> A:");
+    turn_to(dk,a,0,128,&now,&right,&forward);
+    assert(forward);
+    /* All keys let go: the last direction stays for 60 ms (a key let go just before the next one is pressed shows
+     * no neutral read), then the gamepad's stick shows through. */
+    now+=READ_US;
+    d=key_read(1,0,0,0,now);
+    assert(d.left_x==0 && d.left_y==128);
+    d=key_read(0,0,0,0,now+READ_US);
+    assert(d.left_x==0 && d.left_y==128);
+    d=key_read(0,0,0,0,now+59000);
+    assert(d.left_x==0 && d.left_y==128);
+    d=key_read(0,0,0,0,now+60000);
+    assert(d.left_x==128 && d.left_y==128);
+    /* After neutral a new key starts at its own direction: no turn from the old one. */
+    d=key_read(0,1,0,0,now+76000);
+    assert(d.left_x==255 && d.left_y==128);
+    memset(&key_stick,0,sizeof key_stick);
+    /* Through apply_keyboard: W + A + Space is the corner with Circle held. */
+    {
+        bool keys[SDL_SCANCODE_COUNT]={0};
+        bind_defaults();
+        keys[SDL_SCANCODE_W]=keys[SDL_SCANCODE_A]=keys[SDL_SCANCODE_SPACE]=true;
+        memset(&d,0,sizeof d); d.left_x=d.left_y=d.right_x=d.right_y=128;
+        apply_keyboard(&d,keys);
+        assert((d.buttons & BTN_CIRCLE) && d.left_x==0 && d.left_y==0);
+    }
+    /* Opposing keys are no direction: A with D cancel to the stick's centre side (127, the positive side's full
+     * push is one less than the negative's); with W as well the stick points forward. */
     {
         bool both[SDL_SCANCODE_COUNT]={0};
         PadData e;
+        memset(&key_stick,0,sizeof key_stick);
         both[SDL_SCANCODE_A]=both[SDL_SCANCODE_D]=true;
         memset(&e,0,sizeof e); e.left_x=e.left_y=e.right_x=e.right_y=128;
         apply_keyboard(&e,both);
@@ -264,8 +330,8 @@ static void sprint(void) {
         both[SDL_SCANCODE_W]=true;
         memset(&e,0,sizeof e); e.left_x=e.left_y=e.right_x=e.right_y=128;
         apply_keyboard(&e,both);
-        assert(e.left_x==127 && e.left_y==0);
-        both[SDL_SCANCODE_S]=true;     /* W with S as well: both axes opposed, nothing is a diagonal */
+        assert(e.left_x==128 && e.left_y==0);
+        both[SDL_SCANCODE_S]=true;     /* W with S as well: both axes opposed, nothing is a direction */
         memset(&e,0,sizeof e); e.left_x=e.left_y=e.right_x=e.right_y=128;
         apply_keyboard(&e,both);
         assert(e.left_x==127 && e.left_y==127);
@@ -277,7 +343,6 @@ static void sprint(void) {
     }
     /* The look keys (right stick) keep the square's corner. */
     bool keys[SDL_SCANCODE_COUNT]={0};
-    PadData d;
     keys[SDL_SCANCODE_I]=keys[SDL_SCANCODE_J]=true;
     memset(&d,0,sizeof d); d.left_x=d.left_y=d.right_x=d.right_y=128;
     apply_keyboard(&d,keys);
@@ -540,5 +605,5 @@ int main(void) {
 #ifdef _WIN32
     hook_install();
 #endif
-    puts("PASS: mouse input names and modifiers, held buttons, wheel steps, mouse settings, Dark Souls III default layout, diagonal sprint stays continuous, stick fallback, camera turn, hook refusals, hook install (stub page not writable, data page not executable), menu controls");
+    puts("PASS: mouse input names and modifiers, held buttons, wheel steps, mouse settings, Dark Souls III default layout, keyboard sprint kept through direction changes, stick fallback, camera turn, hook refusals, hook install (stub page not writable, data page not executable), menu controls");
 }
