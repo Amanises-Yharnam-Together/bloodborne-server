@@ -3114,10 +3114,12 @@ struct DownedMember {
 // Swings at a downed body whose hit never lands, counted as the attack presses were before real
 // hits: a body that others saw kneel took no hits at all (playtest 2026-10-13, Lisara had to give
 // up), so a swing near a downed member (ReviveTarget) waits WaitMs for its hit, and counts its
-// press damage when none landed on that member's body (a charged R2 lands within it).
+// press damage when none landed on that member's body. Kaniel's playtest 2026-10-16: every swing
+// at Lisara missed her body and each waited 1.5 s, so the revive came late: the wait is short now
+// (a hit landing later is still that swing's, Landed, never counted twice).
 class RevivePressFallback {
 public:
-    static constexpr s64 WaitMs = 1'500;
+    static constexpr s64 WaitMs = 400;
     // A hit that lands up to LateMs after its swing was counted is that swing's (Landed).
     static constexpr s64 LateMs = 2'000;
     struct Swing {

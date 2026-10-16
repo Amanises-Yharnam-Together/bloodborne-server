@@ -1964,7 +1964,7 @@ SCENARIOS = {
                      *REVIVE_HITS, "wait-member-vital up 30", "wait 3", "shot after-revive",
                      "wait 2", "snapshot", "expect-session 2"],
             "guest": [START, "wait-session 2 300", "wait 15", *LETHAL_FALL, "wait-vital down 30",
-                      "wait 2", "shot down", "wait 1", "expect-hp self == 1", "wait-vital up 90",
+                      "expect-hp self == 1", "wait 2", "shot down", "wait-vital up 90",
                       "wait 3", "shot after-revive", "snapshot", "expect-hp self > 1",
                       "expect-session 2"],
         },
@@ -2148,8 +2148,10 @@ SCENARIOS = {
             # in seconds, before its board shows the down (rig 2026-10-14).
             "host": [START, "godmode", "wait-session 3 480", "wait 60", "snapshot",
                      "expect-session 3"],
+            # Checked at once: a missed swing counts within 0.4 s now (Kaniel 2026-10-16), so the
+            # second guest's first ones may already be in a few seconds later.
             "guest": [START, "wait-session 3 480", "wait 20", *LETHAL_FALL, "wait-vital down 30",
-                      "wait 2", "shot down", "wait 1", "expect-hp self == 1", "wait-vital up 90",
+                      "expect-hp self == 1", "wait 2", "shot down", "wait-vital up 90",
                       "wait 3", "shot after-revive", "snapshot", "expect-hp self > 1",
                       "expect-session 3"],
             "guest2": [START, "godmode", "wait-session 3 480", "wait-member-vital down 180",

@@ -510,6 +510,14 @@ TEST(BloodbornePartyDeath, CountsRealHitsOnTheBodyAsReviveDamage) {
 // A swing at a downed body whose hit never lands still counts, as a press did before real hits:
 // a kneeling body others see kneel took no hits at all (playtest 2026-10-13, Lisara had to give
 // up). A swing whose hit lands counts once, as that hit.
+// Kaniel's playtest 2026-10-16: the revive came 1.5 s after the swings that missed the body.
+TEST(BloodbornePartyDeath, AMissedSwingCountsWithinHalfASecond) {
+    RevivePressFallback fallback;
+    fallback.Swung({"a", 4}, 349, 0);
+    EXPECT_EQ(fallback.Due(500).size(), 1u);
+    EXPECT_TRUE(fallback.Landed("a", 4, 1'200)) << "its late hit is not counted again";
+}
+
 TEST(BloodbornePartyDeath, ASwingWhoseHitNeverLandsCountsAsAPress) {
     RevivePressFallback fallback;
     fallback.Swung({"a", 4}, 90, 1'000);
