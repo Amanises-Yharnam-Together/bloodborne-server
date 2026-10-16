@@ -784,6 +784,19 @@ TEST(BloodbornePartyDeath, GoesDownOnlyWithSomeoneElseStandingOnTheMap) {
     EXPECT_FALSE(SomeoneElseStands({}, Kaniel, CentralYharnam));
 }
 
+// Kaniel's playtest 2026-10-16: Lisara down alone in the Dream while the others stood in Central
+// Yharnam was no party wipe (the party's kills stay while anyone is on their map).
+TEST(BloodbornePartyDeath, ADeathWhileAnotherStandsAnywhereIsNoPartyWipe) {
+    EXPECT_TRUE(
+        SomeoneElseStandsAnywhere(std::vector{Member(Ada, CentralYharnam, Vital::Up)}, Kaniel));
+    EXPECT_FALSE(SomeoneElseStandsAnywhere(std::vector{Member(Ada, CentralYharnam, Vital::Down, 1)},
+                                           Kaniel));
+    EXPECT_FALSE(
+        SomeoneElseStandsAnywhere(std::vector{Member(Kaniel, HuntersDream, Vital::Up)}, Kaniel));
+    EXPECT_FALSE(SomeoneElseStandsAnywhere(std::vector{Member(Ada, 0, Vital::Up)}, Kaniel));
+    EXPECT_FALSE(SomeoneElseStandsAnywhere({}, Kaniel));
+}
+
 // Rig 2026-10-12 (run 132915, Kaniel: "the third player just didn't die"): only the members in
 // this member's session count. A line from a member out of it (its game restarted, back in its
 // own world on the same map; or one that left, until its line expires) is dropped before

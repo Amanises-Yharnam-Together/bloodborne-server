@@ -5295,6 +5295,12 @@ bool SomeoneElseStands(std::span<const MemberVitals> board, std::string_view sel
            });
 }
 
+bool SomeoneElseStandsAnywhere(std::span<const MemberVitals> board, std::string_view self) {
+    return std::ranges::any_of(board, [&](const MemberVitals& member) {
+        return member.member != self && member.map != 0 && member.vital == Vital::Up;
+    });
+}
+
 std::vector<MemberVitals> OnlySessionMembers(
     std::span<const MemberVitals> board, std::string_view self,
     const std::optional<std::vector<std::string>>& session) {

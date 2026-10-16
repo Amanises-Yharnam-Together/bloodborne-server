@@ -530,6 +530,14 @@ void Service::OnLifecycle(Member& member, const bbcoop::Lifecycle& lifecycle, qi
                                   .arg(world.name, who));
             return;
         }
+        // Kaniel 2026-10-16: kills stay while anyone is on their map. A member down alone (its
+        // map wiped) while another stands anywhere dies on its own: the party's log stands.
+        if (world.boards.SomeoneStandsBesides(member.name)) {
+            result.log.append(QStringLiteral("party world %1: %2's wipe is its own (another "
+                                             "member stands): the party's log stands")
+                                  .arg(world.name, who));
+            return;
+        }
         result.log.append(QStringLiteral("party world %1: %2 wiped").arg(world.name, who));
         StartLog(world, true, now_ms, result);
         return;

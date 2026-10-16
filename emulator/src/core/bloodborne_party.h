@@ -3058,6 +3058,10 @@ std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self);
 // Whether another member stands on `map` (a usable map): a lethal hit then puts this player down
 // instead of wiping the map at once.
 bool SomeoneElseStands(std::span<const MemberVitals> board, std::string_view self, u32 map);
+// Kaniel 2026-10-16: whether another member stands anywhere (up, on a map). A death that resets
+// this member's map is then its own: not the party's wipe (kills stay while anyone is on their
+// map).
+bool SomeoneElseStandsAnywhere(std::span<const MemberVitals> board, std::string_view self);
 // Only the members of this member's session count (rig 2026-10-12, run 132915: a line from a
 // member out of it kept a downed party from its wipe): the board's lines of `self` and of the
 // `session`'s other members (board names), all of them while the session's names are unknown.

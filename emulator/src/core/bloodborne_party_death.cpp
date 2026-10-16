@@ -274,6 +274,9 @@ std::atomic<bool> party_death_down{};
 std::atomic<u32> party_death_catches{};
 // The next death respawn resets the map (see DeathResetsMap).
 std::atomic<bool> party_death_reset{};
+// Kaniel 2026-10-16: another member stood (anywhere) at this member's last tick: its death's reset
+// is its own map's, not the party's wipe.
+std::atomic<bool> party_death_others_stand{};
 // This player's GlobalState +0x1528 from before a death (party death tick, while it is up), to
 // tell a special death by (see PartyRespawnPoint). Another character starts over.
 std::mutex own_point_mutex;
@@ -335,7 +338,10 @@ namespace Coop {
 // PartyDeathPoint): the party wakes together.
 void MoveToRespawnPoint(bool arriving_from_trip) {
     const bool reset = !arriving_from_trip && party_death_reset.exchange(false);
-    if (reset) {
+    if (reset && party_death_others_stand.load()) {
+        LOG_INFO(Debug, "Bloodborne party death: another member stands: this death is no party "
+                        "wipe (the party's kills stay)");
+    } else if (reset) {
         OnLifecycle(Lifecycle::Wipe); // kills and enemy HP, see their RegisterLifecycleReset
     }
     const u64 global = GetGlobalState();
@@ -1373,6 +1379,8 @@ void TickPartyDeath() {
     tick.in_session = InPartyHere();
     tick.map = PlayingMap();
     tick.view = ReadVitalsBoard();
+    party_death_others_stand.store(
+        tick.view.Fresh() && SomeoneElseStandsAnywhere(tick.view.board.members, tick.view.member));
     tick.board = tick.view.Fresh() ? std::span<const MemberVitals>{tick.view.board.members}
                                    : std::span<const MemberVitals>{};
     tick.armed = tick.in_session && !tick.view.member.empty() &&

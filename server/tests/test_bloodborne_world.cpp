@@ -782,6 +782,47 @@ int TheBoardsGoToEveryMember() {
   return 0;
 }
 
+// Kaniel's playtest 2026-10-16: Lisara went down alone in the Hunter's Dream
+// (a wipe of her map) while Kaniel and krolebord stood in Central Yharnam; her
+// WIPE started a new log for the whole party, so Kaniel's game showed every
+// enemy they had killed there again. A member's wipe while another member
+// stands anywhere is its own: the party's log stands.
+int AMembersOwnWipeKeepsThePartysLog() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  qint64 now = 1'000'000;
+  for (Game *game : {&host, &guest, &other}) {
+    game->Hello(now);
+  }
+  Pump(service, {&host, &guest, &other}, now);
+  constexpr u32 Up = 1;
+  constexpr u32 Down = 2;
+  host.Propose({{0x18010000, {7}}}, now);
+  host.Send(VitalsOf(0x18010000, Up), now);
+  other.Send(VitalsOf(0x18010000, Up), now);
+  guest.Send(VitalsOf(0x15000000, Down, 3), now);
+  Pump(service, {&host, &guest, &other}, now);
+  const u64 before = other.member.Epoch();
+  CHECK(Killed(other, 7));
+  now += 1000;
+  guest.Lifecycle(bbcoop::Lifecycle::WIPE, false, now);
+  Pump(service, {&host, &guest, &other}, now);
+  CHECK(other.member.Epoch() == before);
+  CHECK(Killed(other, 7));
+  // Everyone down: the party's wipe, a new log.
+  now += WorldLogWipeGraceMs + 1000;
+  host.Send(VitalsOf(0x18010000, Down, 5), now);
+  other.Send(VitalsOf(0x18010000, Down, 6), now);
+  Pump(service, {&host, &guest, &other}, now);
+  host.Lifecycle(bbcoop::Lifecycle::WIPE, true, now + 10);
+  Pump(service, {&host, &guest, &other}, now + 10);
+  CHECK(other.member.Epoch() != before);
+  CHECK(!Killed(other, 7));
+  return 0;
+}
+
 int ThePartyIsWipedWhenNobodyOnTheMapStands() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -1920,6 +1961,7 @@ int main() {
       {"TheBoardsGoToEveryMember", TheBoardsGoToEveryMember},
       {"ThePartyIsWipedWhenNobodyOnTheMapStands",
        ThePartyIsWipedWhenNobodyOnTheMapStands},
+      {"AMembersOwnWipeKeepsThePartysLog", AMembersOwnWipeKeepsThePartysLog},
       {"APortraitGoesToTheOthersAndToLaterMembers",
        APortraitGoesToTheOthersAndToLaterMembers},
       {"WhateverAGameSendsTheServiceKeepsWorking",
