@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- The site's mark: a pale crescent moon and a drop of blood. Our own drawing. -->
+  <defs>
+    <mask id="cut"><rect width="64" height="64" fill="#fff"/><circle cx="41" cy="24" r="19" fill="#000"/></mask>
+    <linearGradient id="moon" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#efe3c8"/><stop offset="1" stop-color="#b89c66"/></linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="25" fill="url(#moon)" mask="url(#cut)"/>
+  <path d="M43 25.5c0 0-4.4 6-4.4 9.2a4.4 4.4 0 0 0 8.8 0c0-3.2-4.4-9.2-4.4-9.2z" fill="#a11d1d"/>
+</svg>
