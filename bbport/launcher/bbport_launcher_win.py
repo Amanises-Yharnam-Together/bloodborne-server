@@ -1307,6 +1307,19 @@ OK, CAUTION, BAD = '#8fae7e', '#d9a441', '#d9695c'
 GLYPH_COLORS = {'✓': OK, '⚠': CAUTION, '✗': BAD, '•': DIM}
 
 
+ART_DIR = PORT_DIR / 'launcher' / 'art'  # Kaniel's painted pictures (2026-10-17), shipped beside the launcher
+
+
+def load_art(name):
+    """A picture of launcher/art as a Pillow image (RGBA), or None without Pillow or the file."""
+    try:
+        from PIL import Image
+        with Image.open(ART_DIR / name) as image:
+            return image.convert('RGBA')
+    except (ImportError, OSError, ValueError):
+        return None
+
+
 def spaced(text):
     """A heading set the way game menus set them: capitals with a thin space between the letters."""
     return ' '.join(text.upper())
@@ -1777,7 +1790,13 @@ class StatusIcon(Widget):
     def __init__(self, ui, parent, kind, bg=BG):
         px = ui.px
         self.kind, self.state, self.busy, self.bg = kind, '•', False, bg
-        self.size = px(34)
+        # Kaniel's painted icon (launcher/art/status-<kind>.png) when there is one, else the drawn glyph.
+        art = load_art(f'status-{kind}.png')
+        self.size = px(44) if art is not None else px(34)
+        self.picture = None
+        if art is not None:
+            from PIL import Image, ImageTk
+            self.picture = ImageTk.PhotoImage(art.resize((px(38), px(38)), Image.Resampling.LANCZOS))
         super().__init__(ui, parent, self.size, self.size, bg, cursor='arrow')
         self.tip = Tooltip(ui, self.canvas)
         self.canvas.bind('<Enter>', lambda _e: self.fade_hover(1.0), add='+')
@@ -1820,7 +1839,10 @@ class StatusIcon(Widget):
         c, px = self.canvas, self.ui.px
         c.delete('all')
         ink = mix(MUTED, TEXT, self.hover)
-        self.glyph(c, ink, max(1, px(1.4)))
+        if self.picture is not None:
+            c.create_image(self.size // 2 - px(2), self.size // 2 - px(2), image=self.picture)
+        else:
+            self.glyph(c, ink, max(1, px(1.4)))
         # The badge: the state's colour in the lower right, a tick, a bar or a cross in it.
         r, cx, cy = px(6), self.size - px(7), self.size - px(7)
         color = DIM if self.busy else self.STATES.get(self.state, DIM)
@@ -2197,6 +2219,13 @@ class Sidebar:
         self.far = c.create_polygon(0, 0, 0, 0, 0, 0, fill='#1a212c', outline='', tags='city')
         self.near = c.create_polygon(0, 0, 0, 0, 0, 0, fill='#07090c', outline='', tags='city')
         self.lights = [c.create_rectangle(0, 0, 0, 0, fill='#6a5430', outline='', tags='city') for _i in range(7)]
+        # Kaniel's painted Yharnam (launcher/art/side-skyline.png), scaled to the column's width; without it
+        # the drawn towers above stand in.
+        self.skyline_art, self.skyline_image, self.skyline_width = load_art('side-skyline.png'), None, 0
+        self.painted = c.create_image(0, 0, anchor='nw', tags='city')
+        # The website's painted moon (launcher/art/side-moon.png) behind the towers, in place of the drawn glow.
+        self.moon_art, self.moon_image = load_art('side-moon.png'), None
+        self.moon_painted = c.create_image(0, 0, anchor='center', tags='moon')
         self.edge = c.create_line(0, 0, 0, 0, fill=LINE)
         self.emblem_image = self.load_emblem(px(92))
         self.emblem = c.create_image(0, 0, anchor='n', image=self.emblem_image or '', tags='txt')
@@ -2279,7 +2308,8 @@ class Sidebar:
         mid = w / 2
         c.coords(self.edge, w - 1, 0, w - 1, h)
         # Sky: plain down to the moon (its glow carries the light there), lighter below it, behind the spires.
-        cx, cy, radius = w * 0.64, h - px(118), px(50)
+        art_top = self.place_skyline(w, h)
+        cx, cy, radius = (w * 0.64, h - px(118), px(50)) if art_top is None else (w * 0.68, art_top + px(95), px(46))
         start, n = cy, len(self.sky)
         for i, item in enumerate(self.sky):
             y0, y1 = start + (h - start) * i / n, start + (h - start) * (i + 1) / n + 1
@@ -2292,6 +2322,20 @@ class Sidebar:
         for i, item in enumerate(self.halo):
             r = radius * (1 + 2.0 * (len(self.halo) - i) / len(self.halo))
             c.coords(item, cx - r, cy - r, cx + r, cy + r)
+        drawn = 'hidden' if art_top is not None else 'normal'
+        # With the painting: its towers and only the moon's glow behind them (a drawn disc looked flat on it).
+        for item in [self.far, self.near, self.disc] + self.lights + self.craters:
+            c.itemconfigure(item, state=drawn)
+        moon = art_top is not None and self.moon_art is not None
+        if moon and self.moon_image is None:
+            from PIL import Image, ImageTk
+            size = px(140)
+            self.moon_image = ImageTk.PhotoImage(self.moon_art.resize((size, size), Image.Resampling.LANCZOS))
+            c.itemconfigure(self.moon_painted, image=self.moon_image)
+        c.itemconfigure(self.moon_painted, state='normal' if moon else 'hidden')
+        c.coords(self.moon_painted, cx, cy)
+        for item in self.halo:
+            c.itemconfigure(item, state='hidden' if moon else 'normal')
         c.coords(self.far, *self.skyline(self.FAR, h - px(46), w, px))
         c.coords(self.near, *self.skyline(self.NEAR, h, w, px))
         lights = ((0.08, 26), (0.21, 30), (0.37, 22), (0.55, 28), (0.71, 24), (0.86, 30), (0.94, 20))
@@ -2317,6 +2361,22 @@ class Sidebar:
         c.tag_raise('txt')
         c.tag_raise('band')
         c.tag_raise('menu')
+
+    def place_skyline(self, w, h):
+        """The painted skyline at the foot of the column, its top clear of the menu (the bottom of the picture
+        leaves the window when the window is short); returns its top, None without the picture."""
+        art = self.skyline_art
+        if art is None or w < 50:
+            return None
+        if self.skyline_width != w:
+            from PIL import Image, ImageTk
+            height = round(art.height * w / art.width)
+            self.skyline_image = ImageTk.PhotoImage(art.resize((w, height), Image.Resampling.LANCZOS))
+            self.skyline_width = w
+            self.canvas.itemconfigure(self.painted, image=self.skyline_image)
+        top = max(h - self.skyline_image.height(), self.entry_y(len(self.entries)) + self.ui.px(10))
+        self.canvas.coords(self.painted, 0, top)
+        return top
 
     def skyline(self, buildings, base, w, px):
         """Polygon points of a row of towers standing on y = base, repeated across the width."""
@@ -3198,10 +3258,29 @@ class Launcher:
     def build_home(self):
         """The home page: the banner of news and patch notes from the website (news.json), its cards of
         information under it."""
+        self.street_art = load_art('home-banner.jpg')
         page = self.scrolled_page('home', None, None)
         self.news_holder = self.tk.Frame(page, bg=PANEL)
         self.news_holder.pack(fill='both', expand=True)
         self.render_news(cached_news())
+
+    def paint_street(self, header, width):
+        """The street picture covering the header at its width (kept to the right, where the moon is), fading
+        into the card at its foot."""
+        if width < 50 or getattr(header, 'painted_width', 0) == width:
+            return
+        from PIL import Image, ImageTk
+        art, height = self.street_art, int(header.cget('height'))
+        scale = max(width / art.width, height / art.height)
+        size = (max(width, round(art.width * scale)), max(height, round(art.height * scale)))
+        picture = art.resize(size, Image.Resampling.LANCZOS).crop((size[0] - width, (size[1] - height) // 2,
+                                                                   size[0], (size[1] - height) // 2 + height))
+        fade = Image.linear_gradient('L').resize((width, height)).point(lambda v: 0 if v < 170 else (v - 170) * 255 // 85)
+        card = Image.new('RGBA', (width, height), tuple(int(CARD[i:i + 2], 16) for i in (1, 3, 5)) + (255,))
+        picture = Image.composite(card, picture, fade)
+        header.image = ImageTk.PhotoImage(picture)
+        header.itemconfigure(header.picture, image=header.image)
+        header.painted_width = width
 
     def load_news(self):
         """Off the window's thread: the website's news.json; kept for the next start offline."""
@@ -3223,10 +3302,28 @@ class Launcher:
         banner = self.card(self.news_holder, None, pad=34)
         banner.frame.pack_configure(pady=(px(28), px(18)))
         meta = '   ·   '.join(part for part in (news['kicker'], news['version'], news['date']) if part)
-        if meta:
-            self.label(banner, spaced(meta), 'small_bold', GOLD).grid(row=0, column=0, columnspan=2, sticky='w')
-        self.label(banner, news['title'], 'banner').grid(row=1, column=0, columnspan=2, sticky='w', pady=(px(10), 0))
-        self.rule(banner, CARD).grid(row=2, column=0, columnspan=2, sticky='we', pady=(px(10), px(4)))
+        if self.street_art is not None:
+            # Kaniel's painted street (launcher/art/home-banner.jpg) across the top of the card, the kicker
+            # and the title over its dark left side.
+            header = self.news_header = tk.Canvas(banner.frame, height=px(210), bg=CARD, highlightthickness=0, bd=0)
+            header.pack(side='top', fill='x', before=banner)
+            header.picture = header.create_image(0, 0, anchor='nw')
+            for text, font, color, y in ((spaced(meta), 'small_bold', GOLD, px(92)),
+                                         (news['title'], 'banner', TEXT, px(118))):
+                if text:
+                    header.create_text(px(36) + 2, y + 2, text=text, font=self.fonts[font], fill='#000000', anchor='nw')
+                    header.create_text(px(36), y, text=text, font=self.fonts[font], fill=color, anchor='nw')
+            header.bind('<Configure>', lambda e, h=header: self.paint_street(h, e.width))
+            banner.pack_configure(pady=(0, px(30)))
+            for corner in banner.frame.corners[2:]:  # the lower ones: the picture is the top's frame
+                corner.tk.call('raise', corner._w)  # (Canvas.lift raises canvas items)
+        else:
+            if meta:
+                self.label(banner, spaced(meta), 'small_bold', GOLD).grid(row=0, column=0, columnspan=2, sticky='w')
+            self.label(banner, news['title'], 'banner').grid(row=1, column=0, columnspan=2, sticky='w',
+                                                             pady=(px(10), 0))
+        self.rule(banner, CARD).grid(row=2, column=0, columnspan=2, sticky='we',
+                                     pady=(px(10) if self.street_art is None else 0, px(4)))
         r = 3
         if news['intro']:
             self.flow(banner, news['intro'], 'body', MUTED).grid(row=r, column=0, columnspan=2, sticky='we',

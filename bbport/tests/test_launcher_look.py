@@ -154,6 +154,9 @@ class LookTests(unittest.TestCase):
                     texts.append(child.cget('text'))
                 except Exception:
                     pass
+                if child.winfo_class() == 'Canvas':  # the title over the painted street
+                    texts.extend(child.itemcget(item, 'text') for item in child.find_all()
+                                 if child.type(item) == 'text')
                 walk(child)
         walk(self.app.news_holder)
         for expected in ('Patch 9', 'Hello', 'One', 'Two', 'Text'):
