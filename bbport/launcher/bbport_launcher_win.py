@@ -301,7 +301,7 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'fps_mode': 'uncap', 'frame_cap': '', 'draw_pipe': '', 'readbacks': '',
                 'frames_ahead': '', 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'extra_env': '', 'close_on_play': False,
-                'check_updates': True, 'animations': True,
+                'check_updates': True, 'animations': True, 'auto_update': False,
                 'addcont': '', 'pkg_dir': '', 'pkg_src': '', 'reshade': False, 'online': False, 'online_server': 'srv.shadps4.net:31313',
                 'online_webapi': '', 'online_npid': '', 'online_password': '',
                 'online_community': COMMUNITY_SERVER,
@@ -2510,6 +2510,7 @@ class Launcher:
         self.reshade_started, self.reshade_refreshers = self.reshade_preset.get(), []
         self.process = self.job = None
         self.downloading = self.downloading_fsr4vk = self.fsr4vk_hashing = self.rechecking = False
+        self.updating, self.update_release = False, None  # the co-op release's update (coop_check_update)
         self.close_scheduled = False  # "Close the launcher when the game starts" is armed once per run
         self.installing, self.install_proc, self.install_cancel = False, None, threading.Event()
         self.install_card = self.install_hide = self.pkg_dialog = None
@@ -2562,6 +2563,8 @@ class Launcher:
         threading.Thread(target=self.detect_gpu, daemon=True).start()
         if self.app.get('check_updates', True) and not COOP_TEST:
             threading.Thread(target=self.check_update, daemon=True).start()
+        if COOP_INSTALL:
+            threading.Thread(target=self.coop_check_update, kwargs={'auto': True}, daemon=True).start()
 
     def px(self, size):
         return int(size * self.dpi)
@@ -3019,6 +3022,8 @@ class Launcher:
         self.play_button = PlayButton(self, bar, _('PLAY', 'ИГРАТЬ'), self.play)
         self.play_button.pack(side='right', padx=(px(8), px(24)))
         self.stop_button = FlatButton(self, bar, _('Stop', 'Остановить'), self.stop, bg=BG)
+        # Shown once a newer release is out (coop_check_update).
+        self.update_button = FlatButton(self, bar, _('Update', 'Обновить'), self.coop_install_update, 'primary', bg=BG)
         left = tk.Frame(bar, bg=BG)
         left.pack(side='left', fill='y', padx=(px(30), 0), pady=(px(12), px(10)))
         icons = tk.Frame(left, bg=BG)
@@ -3306,6 +3311,27 @@ class Launcher:
         self.button(holder, _('Add to Steam', 'Добавить в Steam'), self.add_to_steam).pack(side='left', padx=(px(8), 0))
         self.note(files, _("In the game, Insert or L3 + R3 opens the port's menu.",
                            'В игре Insert или L3 + R3 открывает меню порта.'), top=14)
+        if COOP_INSTALL:
+            # Kaniel 2026-10-16: updates from this repository's releases, by the Update button in the
+            # bottom bar, or at the start with this switch on.
+            card = self.card(page, _('Updates', 'Обновления'))
+            current = coop_release_version()
+            self.label(card, _('This version: v{}', 'Эта версия: v{}').format(current) if current else
+                       _('This build has no release version.', 'У этой сборки нет версии релиза.'),
+                       'body', MUTED).grid(row=self.next_row(card), column=0, columnspan=2, sticky='w', pady=(px(12), 0))
+            self.check(card, 'auto_update', 'app', _('Update automatically when the launcher starts',
+                                                     'Обновлять автоматически при запуске лаунчера'),
+                       _('Every release counts, test builds too: everyone plays the same build. Without this '
+                         'switch, the Update button in the bottom bar installs a new version.',
+                         'Учитываются все релизы, тестовые тоже: все играют на одной сборке. Без этого '
+                         'переключателя новую версию ставит кнопка «Обновить» внизу.'))
+            holder = tk.Frame(card, bg=CARD)
+            holder.grid(row=self.next_row(card), column=0, columnspan=2, sticky='w', pady=(px(14), 0))
+            self.button(holder, _('Check for updates', 'Проверить обновления'),
+                        lambda: threading.Thread(target=self.coop_check_update, args=(True,), daemon=True).start()
+                        ).pack(side='left')
+            self.update_line = self.label(holder, '', 'small', MUTED)
+            self.update_line.pack(side='left', padx=(px(14), 0))
 
     # --- seamless co-op (the release: COOP_INSTALL) ---------------------------------------------
 
@@ -4330,11 +4356,12 @@ class Launcher:
         self.row(f, _('Launcher language', 'Язык лаунчера'), self.choice(f, 'ui_language', 'app', UI_LANGUAGES),
                  _('Applies when the launcher opens again.', 'Применится при следующем открытии лаунчера.'))
         self.check(f, 'close_on_play', 'app', _('Close the launcher when the game starts', 'Закрывать лаунчер при запуске игры'))
-        self.check(f, 'check_updates', 'app', _('Check for updates when the launcher opens',
-                                                'Проверять обновления при открытии лаунчера'))
-        self.check(f, 'beta_versions', 'app', _('Beta versions', 'Бета-версии'),
-                   _('Also offer beta releases when checking for updates. They are tested less than stable ones.',
-                     'Предлагать и бета-версии при проверке обновлений. Они проверены меньше, чем стабильные.'))
+        if not COOP_INSTALL:  # the co-op release updates from Settings > General
+            self.check(f, 'check_updates', 'app', _('Check for updates when the launcher opens',
+                                                    'Проверять обновления при открытии лаунчера'))
+            self.check(f, 'beta_versions', 'app', _('Beta versions', 'Бета-версии'),
+                       _('Also offer beta releases when checking for updates. They are tested less than stable ones.',
+                         'Предлагать и бета-версии при проверке обновлений. Они проверены меньше, чем стабильные.'))
         self.check(f, 'animations', 'app', _('Animations', 'Анимации'))
         self.vars['animations'].trace_add('write', lambda *_a: self.animations_changed())
         holder = tk.Frame(f, bg=CARD)
@@ -4342,13 +4369,14 @@ class Launcher:
         self.button(holder, _('Desktop shortcut', 'Ярлык на рабочем столе'), self.shortcut).pack(side='left')
         self.button(holder, _('Port folder', 'Папка порта'), lambda: self.open_path(DATA_DIR)).pack(side='left', padx=px(8))
         self.button(holder, 'bbport.ini', lambda: self.open_path(ini_path())).pack(side='left')
-        holder = tk.Frame(f, bg=CARD)
-        holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(px(10), 0))
-        self.button(holder, _('Check for updates', 'Проверить обновления'),
-                    lambda: threading.Thread(target=self.check_update, daemon=True,
-                                             args=(True, bool(self.var('beta_versions', 'app').get()))).start()
-                    ).pack(side='left')
-        self.label(holder, f'v{VERSION}', 'small', MUTED).pack(side='left', padx=px(12))
+        if not COOP_INSTALL:
+            holder = tk.Frame(f, bg=CARD)
+            holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(px(10), 0))
+            self.button(holder, _('Check for updates', 'Проверить обновления'),
+                        lambda: threading.Thread(target=self.check_update, daemon=True,
+                                                 args=(True, bool(self.var('beta_versions', 'app').get()))).start()
+                        ).pack(side='left')
+            self.label(holder, f'v{VERSION}', 'small', MUTED).pack(side='left', padx=px(12))
         holder = tk.Frame(f, bg=CARD)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(px(10), 0))
         self.button(holder, _('Clear shader cache', 'Очистить кэш шейдеров'), self.clear_cache).pack(side='left')
@@ -5252,6 +5280,90 @@ class Launcher:
         self.refresh_status()
 
     # ---- updates -------------------------------------------------------------------------------
+    # --- updates of the co-op release (Kaniel 2026-10-16) ----------------------------------------
+
+    def coop_check_update(self, manual=False, auto=False):
+        """Helper thread: the newest release of this repository (every release, pre-releases too); a newer
+        one shows the Update button, and with the automatic update switch on (at the start: AUTO) installs."""
+        current = coop_release_version()
+        try:
+            release = bbport_coop.update_offer(current, bbport_coop.fetch_newest_release())
+            failure = None
+        except (OSError, ValueError) as error:
+            release, failure = None, error
+
+        def show():
+            if failure:
+                if manual:
+                    self.update_line.configure(text=_('Could not check for updates: {}',
+                                                      'Не удалось проверить обновления: {}').format(failure), fg=BAD)
+                return
+            if not release:
+                if manual:
+                    self.update_line.configure(text=_('You have the latest version.', 'У вас последняя версия.')
+                                               if current else _('This build has no release version.',
+                                                                 'У этой сборки нет версии релиза.'), fg=MUTED)
+                return
+            self.update_release = release
+            text = _('Update to v{}', 'Обновить до v{}').format(release['version'])
+            self.update_button.configure(text=text)
+            if not self.update_button.canvas.winfo_manager():
+                self.update_button.pack(side='right', padx=(0, self.px(12)), after=self.play_button.canvas)
+            self.update_line.configure(text=_('Version {} is available.', 'Доступна версия {}.').format(
+                release['version']), fg=GOLD)
+            if auto and self.var('auto_update', 'app').get() and not self.process:
+                self.coop_install_update()
+        self.ui_calls.put(show)
+
+    def coop_install_update(self):
+        """Downloads the release's setup, checks its SHA-256, stops this install's servers, runs the setup
+        silently into this folder (it keeps user\\ and starts the launcher again) and closes the launcher."""
+        release = getattr(self, 'update_release', None)
+        if not release or self.updating:
+            return
+        if self.process:
+            self.status.configure(text=_('Close the game first: the update replaces its files.',
+                                         'Сначала закройте игру: обновление заменяет её файлы.'), fg=CAUTION)
+            return
+        self.updating = True
+        self.update_button.configure(state='disabled')
+        self.play_button.configure(state='disabled')
+        self.set_running(False, preparing=True)
+        self.status.configure(text=_('Downloading v{}…', 'Загрузка v{}…').format(release['version']), fg=GOLD)
+
+        def progress(fraction):
+            self.ui_calls.put(lambda: self.status.configure(text=_('Downloading v{}… {}%', 'Загрузка v{}… {}%').format(
+                release['version'], int(fraction * 100))))
+
+        def work():
+            try:
+                setup = bbport_coop.download_update(release, Path(tempfile.gettempdir()) / 'bloodborne-coop-update',
+                                                    progress)
+                bbport_coop.stop_servers(PORT_DIR)
+            except (OSError, ValueError) as error:
+                self.ui_calls.put(lambda failure=error: self.coop_update_failed(failure))
+                return
+            self.ui_calls.put(lambda: self.coop_run_setup(setup))
+        threading.Thread(target=work, daemon=True).start()
+
+    def coop_update_failed(self, error):
+        self.updating = False
+        self.set_running(False)
+        self.update_button.configure(state='normal')
+        self.play_button.configure(state='normal')
+        self.status.configure(text=_('The update failed: {}', 'Обновление не удалось: {}').format(error), fg=BAD)
+
+    def coop_run_setup(self, setup):
+        try:
+            subprocess.Popen(bbport_coop.setup_command(setup, PORT_DIR), cwd=str(Path(setup).parent),
+                             creationflags=bbport_coop.DETACHED)
+        except OSError as error:
+            self.coop_update_failed(error)
+            return
+        self.status.configure(text=_('Installing the update; the launcher opens again when it is done…',
+                                     'Установка обновления; лаунчер откроется снова, когда она закончится…'), fg=GOLD)
+        self.root.after(600, self.close)
+
     def check_update(self, manual=False, beta=None):
         """Helper thread: asks GitHub for the newest release (a pre-release only with the Beta versions
         switch on; BETA is its value, read on the window's thread) and offers it when it is newer."""

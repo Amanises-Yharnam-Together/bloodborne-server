@@ -751,3 +751,105 @@ def allow_through_firewall(install, host):
     command = ' & '.join(firewall_commands(install, host))
     result = ctypes.windll.shell32.ShellExecuteW(None, 'runas', 'cmd.exe', f'/c {command}', None, 0)
     return result > 32
+
+
+# --- updates (Kaniel 2026-10-16) ---------------------------------------------------------------
+# The launcher looks for a newer release of this repository: every release counts, pre-releases too
+# (everyone runs one build). A release carries BloodborneSeamlessCoop-v<version>-setup.exe and its
+# .sha256; the update downloads both, checks the file against the sum, and runs the setup silently
+# into this install (it keeps user\), which starts the launcher again when it is done.
+# By repository id, not owner/name: the id survives a rename of the owner.
+RELEASES_API = 'https://api.github.com/repositories/1405692683/releases?per_page=30'
+SETUP_SUFFIX = '-setup.exe'
+
+
+def version_key(version):
+    """A sort key for '0.3.4', '0.3.3-local' or 'v0.1.4': the numbers, then 1 for a plain version and 0
+    for one with a suffix (0.3.3 is above 0.3.3-local), then the suffix."""
+    match = re.match(r'v?(\d+(?:\.\d+)*)(?:[-+](\S+))?$', (version or '').strip())
+    if not match:
+        return (), 0, ''
+    numbers = tuple(int(part) for part in match.group(1).split('.'))
+    numbers += (0,) * (4 - len(numbers))
+    return numbers, 0 if match.group(2) else 1, match.group(2) or ''
+
+
+def newest_release(releases):
+    """The newest release in GitHub's /releases list that carries a setup .exe and its sum, pre-releases
+    included and drafts never: {'version', 'setup', 'sha256', 'page', 'notes'}, or None."""
+    if not isinstance(releases, list):
+        raise ValueError('GitHub did not return a list of releases')
+    best = None
+    for release in releases:
+        if not isinstance(release, dict) or release.get('draft') or not isinstance(release.get('tag_name'), str):
+            continue
+        version = release['tag_name'].lstrip('v')
+        if not version_key(version)[0]:
+            continue
+        assets = {asset.get('name'): asset.get('browser_download_url') for asset in release.get('assets') or []
+                  if isinstance(asset, dict) and isinstance(asset.get('name'), str)}
+        setup = next((name for name in assets if name.endswith(SETUP_SUFFIX)), None)
+        if not setup or not assets.get(setup + '.sha256'):
+            continue
+        if best is None or version_key(version) > version_key(best['version']):
+            best = {'version': version, 'setup': assets[setup], 'sha256': assets[setup + '.sha256'],
+                    'page': release.get('html_url') or '', 'notes': (release.get('body') or '')[:2000],
+                    'name': setup}
+    return best
+
+
+def fetch_newest_release(timeout=15):
+    """newest_release() of what GitHub lists now (raises OSError or ValueError when it cannot be read)."""
+    request = urllib.request.Request(RELEASES_API, headers={'Accept': 'application/vnd.github+json',
+                                                            'User-Agent': 'bloodborne-coop-launcher'})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return newest_release(json.loads(response.read().decode('utf-8')))
+
+
+def update_offer(current, release):
+    """The release when it is newer than the running version (an unknown running version, as in a
+    source tree, is offered nothing)."""
+    if not release or not version_key(current)[0]:
+        return None
+    return release if version_key(release['version']) > version_key(current) else None
+
+
+def expected_sum(text, name):
+    """The SHA-256 a .sha256 file gives for `name` ('<hex> *<name>' or '<hex>  <name>' or just '<hex>')."""
+    for line in (text or '').splitlines():
+        parts = line.strip().split()
+        if parts and re.fullmatch(r'[0-9a-fA-F]{64}', parts[0]) and (len(parts) == 1 or parts[-1].lstrip('*') == name):
+            return parts[0].lower()
+    raise ValueError(f'no SHA-256 for {name} in the release')
+
+
+def download_update(release, folder, progress=None, timeout=30):
+    """The release's setup .exe in `folder`, checked against its .sha256 (ValueError when it does not
+    match, and the file is gone). progress(fraction) is called while it downloads."""
+    import hashlib
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    headers = {'User-Agent': 'bloodborne-coop-launcher'}
+    with urllib.request.urlopen(urllib.request.Request(release['sha256'], headers=headers), timeout=timeout) as response:
+        want = expected_sum(response.read(4096).decode('utf-8', 'replace'), release['name'])
+    target = folder / release['name']
+    digest, done = hashlib.sha256(), 0
+    with urllib.request.urlopen(urllib.request.Request(release['setup'], headers=headers), timeout=timeout) as response:
+        size = int(response.headers.get('Content-Length') or 0)
+        with open(target, 'wb') as out:
+            for chunk in iter(lambda: response.read(1 << 20), b''):
+                out.write(chunk)
+                digest.update(chunk)
+                done += len(chunk)
+                if progress and size:
+                    progress(done / size)
+    if digest.hexdigest() != want:
+        target.unlink(missing_ok=True)
+        raise ValueError('the downloaded update does not match its SHA-256; nothing was changed')
+    return target
+
+
+def setup_command(setup, install):
+    """The setup run that updates this install in place, without a window, and starts the launcher again."""
+    return [str(setup), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS',
+            f'/DIR={Path(install)}']

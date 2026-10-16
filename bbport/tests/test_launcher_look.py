@@ -221,6 +221,7 @@ class CoopSettingsTests(unittest.TestCase):
                       mock.patch.object(bbport_coop, 'save_settings',
                                         side_effect=lambda _i, s: self.saved.append(dict(s))),
                       mock.patch.object(bbport_coop, 'search_game', return_value=None),
+                      mock.patch.object(bbport_coop, 'fetch_newest_release', return_value=None),
                       mock.patch.object(bbport_coop, 'find_game_folder',
                                         side_effect=lambda folder, depth=3: Path(folder) if folder and
                                         (Path(folder) / 'eboot.bin').is_file() else None)):
@@ -273,6 +274,27 @@ class CoopSettingsTests(unittest.TestCase):
         self.assertTrue(cover.winfo_ismapped())
         self.assertTrue(self.app.server_row.winfo_manager())
 
+
+    def test_a_newer_release_shows_the_update_button_and_installs_with_the_switch(self):
+        """Kaniel 2026-10-16: an Update button when a newer release is out; with the automatic update
+        switch on, the update starts by itself at the launcher's start."""
+        release = {'version': '0.3.4', 'setup': 'https://example.test/s.exe', 'sha256': 'https://example.test/s.sha256',
+                   'page': '', 'notes': '', 'name': 's.exe'}
+        self.assertFalse(self.app.update_button.canvas.winfo_manager(), 'nothing offered yet')
+        with mock.patch.object(launcher, 'coop_release_version', return_value='0.3.3-local'),                 mock.patch.object(bbport_coop, 'fetch_newest_release', return_value=release),                 mock.patch.object(self.app, 'coop_install_update') as install:
+            self.app.coop_check_update(manual=True)
+            self.settle()
+            self.assertTrue(self.app.update_button.canvas.winfo_manager())
+            self.assertIn('0.3.4', self.app.update_button.text)
+            install.assert_not_called()
+            self.app.var('auto_update', 'app').set(True)
+            self.app.coop_check_update(auto=True)
+            self.settle()
+            install.assert_called_once()
+        with mock.patch.object(launcher, 'coop_release_version', return_value='0.3.4'),                 mock.patch.object(bbport_coop, 'fetch_newest_release', return_value=release):
+            self.app.coop_check_update(manual=True)
+            self.settle()
+            self.assertIn('latest', self.app.update_line.cget('text'))
 
 if __name__ == '__main__':
     unittest.main()

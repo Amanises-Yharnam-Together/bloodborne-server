@@ -57,6 +57,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\BLauncher.exe"; WorkingDir: "
 
 [Run]
 Filename: "{app}\BLauncher.exe"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; The launcher's update runs this setup silently (bbport_coop.setup_command): the launcher starts again.
+Filename: "{app}\BLauncher.exe"; WorkingDir: "{app}"; Flags: nowait skipifnotsilent
 
 [UninstallRun]
 Filename: "{app}\BLauncher.exe"; Parameters: "--coop-uninstall"; WorkingDir: "{app}"; Flags: runhidden waituntilterminated; RunOnceId: "CoopUninstall"
