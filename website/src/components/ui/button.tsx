@@ -12,9 +12,9 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "cut-corners border border-title/55 bg-[linear-gradient(180deg,#262a31,#14171c)] tracking-[0.06em] text-bone hover:border-title hover:bg-[linear-gradient(180deg,#2d323a,#181b21)]",
+          "cut-corners tracking-[0.06em] text-bone [--cut-edge:rgb(217_184_120/0.55)] [--cut-fill:linear-gradient(180deg,#262a31,#14171c)] hover:[--cut-edge:#d9b878] hover:[--cut-fill:linear-gradient(180deg,#2d323a,#181b21)]",
         outline:
-          "cut-corners border border-[#4a505a] bg-[#12151a] text-foreground hover:border-title/70 hover:text-bone",
+          "cut-corners text-foreground [--cut-edge:#4a505a] [--cut-fill:#12151a] hover:text-bone hover:[--cut-edge:rgb(217_184_120/0.7)]",
         ghost:
           "text-muted-foreground hover:text-foreground hover:bg-[linear-gradient(90deg,transparent,rgb(214_196_158/0.08),transparent)]",
         link: "text-title underline-offset-4 hover:underline",
