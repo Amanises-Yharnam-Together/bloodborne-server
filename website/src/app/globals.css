@@ -257,7 +257,11 @@
   overflow: hidden;
   pointer-events: none;
 }
-.backdrop > * {
+.backdrop-layer {
+  position: absolute;
+  inset: 0;
+}
+.backdrop-layer > * {
   position: absolute;
 }
 .backdrop-moon {
@@ -345,41 +349,6 @@
   100% {
     transform: translate(var(--drift), -85vh);
     opacity: 0;
-  }
-}
-
-/* Parallax: as the page scrolls, the far layers move less than the near ones. */
-@supports (animation-timeline: scroll()) {
-  .backdrop-moon,
-  .backdrop-city {
-    animation-timeline: scroll(root);
-    animation-range: 0 1400px;
-    animation-fill-mode: both;
-    animation-timing-function: linear;
-  }
-  .backdrop-moon {
-    animation-name: parallax-moon;
-  }
-  .backdrop-city-far {
-    animation-name: parallax-far;
-  }
-  .backdrop-city-near {
-    animation-name: parallax-near;
-  }
-}
-@keyframes parallax-moon {
-  to {
-    translate: 0 14vh;
-  }
-}
-@keyframes parallax-far {
-  to {
-    translate: 0 10vh;
-  }
-}
-@keyframes parallax-near {
-  to {
-    translate: 0 24vh;
   }
 }
 

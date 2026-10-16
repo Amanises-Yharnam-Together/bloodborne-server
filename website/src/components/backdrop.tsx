@@ -1,9 +1,11 @@
 /*
  * The page's backdrop, behind everything: a pale moon in the mist, two layers of a gothic city's
  * roofs and spires against a faint glow, slow fog and drifting embers. All of it is drawn here;
- * the motion is CSS only (see globals.css): the layers drift on their own and, where the browser
- * supports scroll-driven animation, move at different speeds as the page scrolls.
+ * the fog and embers drift on their own in CSS (see globals.css), and each layer moves at its own
+ * speed as the page scrolls (ParallaxLayer, with Motion).
  */
+
+import { ParallaxLayer } from "@/components/parallax-layer";
 
 // A small seeded random, so the skyline is the same on every build.
 function rng(seed: number) {
@@ -62,40 +64,52 @@ const embers = Array.from({ length: 22 }, (_, i) => {
 export function Backdrop() {
   return (
     <div aria-hidden className="backdrop">
-      <div className="backdrop-moon" />
-      <div className="backdrop-fog backdrop-fog-high" />
-      <svg
-        className="backdrop-city backdrop-city-far"
-        viewBox="0 0 1600 400"
-        preserveAspectRatio="xMidYMax slice"
-      >
-        <path d={skyline(7, 300, 200)} />
-      </svg>
-      <svg
-        className="backdrop-city backdrop-city-near"
-        viewBox="0 0 1600 400"
-        preserveAspectRatio="xMidYMax slice"
-      >
-        <path d={skyline(29, 360, 240)} />
-      </svg>
-      <div className="backdrop-fog backdrop-fog-low" />
-      <div className="backdrop-embers">
-        {embers.map((e, i) => (
-          <span
-            key={i}
-            style={
-              {
-                left: e.left,
-                width: e.size,
-                height: e.size,
-                animationDelay: e.delay,
-                animationDuration: e.duration,
-                "--drift": e.drift,
-              } as React.CSSProperties
-            }
-          />
-        ))}
-      </div>
+      <ParallaxLayer depth={6}>
+        <div className="backdrop-moon" />
+      </ParallaxLayer>
+      <ParallaxLayer depth={9}>
+        <div className="backdrop-fog backdrop-fog-high" />
+      </ParallaxLayer>
+      <ParallaxLayer depth={3}>
+        <svg
+          className="backdrop-city backdrop-city-far"
+          viewBox="0 0 1600 400"
+          preserveAspectRatio="xMidYMax slice"
+        >
+          <path d={skyline(7, 300, 200)} />
+        </svg>
+      </ParallaxLayer>
+      <ParallaxLayer depth={12}>
+        <svg
+          className="backdrop-city backdrop-city-near"
+          viewBox="0 0 1600 400"
+          preserveAspectRatio="xMidYMax slice"
+        >
+          <path d={skyline(29, 360, 240)} />
+        </svg>
+      </ParallaxLayer>
+      <ParallaxLayer depth={16}>
+        <div className="backdrop-fog backdrop-fog-low" />
+      </ParallaxLayer>
+      <ParallaxLayer depth={-10}>
+        <div className="backdrop-embers">
+          {embers.map((e, i) => (
+            <span
+              key={i}
+              style={
+                {
+                  left: e.left,
+                  width: e.size,
+                  height: e.size,
+                  animationDelay: e.delay,
+                  animationDuration: e.duration,
+                  "--drift": e.drift,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+        </div>
+      </ParallaxLayer>
     </div>
   );
 }
