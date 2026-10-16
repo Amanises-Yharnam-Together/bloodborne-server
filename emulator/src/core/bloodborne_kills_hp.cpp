@@ -775,11 +775,19 @@ std::string BossRunnerOf(u64 character) {
     }
     const auto at = CharacterPosition(character);
     const VitalsView view = ReadVitalsBoard();
-    if (!at || !view.Fresh()) {
-        return {};
-    }
     const u32 handle = ReadValue<u32>(character, 0x08);
-    const std::string runner = boss_runners[handle].Tick(PlayingMap(), *at, view.board.members);
+    if (!at || !view.Fresh()) {
+        return boss_runners[handle].Last(); // as last decided, not back and forth
+    }
+    std::string owner;
+    if (CurrentEnemyRole() == EnemyRole::Owner) {
+        owner = view.member;
+    } else {
+        std::scoped_lock lock{enemy_owner_mutex};
+        owner = enemy_owner_member;
+    }
+    const std::string runner =
+        boss_runners[handle].Tick(PlayingMap(), *at, view.board.members, owner);
     static std::map<u32, std::string> logged;
     if (auto& said = logged[handle]; said != runner) {
         said = runner;

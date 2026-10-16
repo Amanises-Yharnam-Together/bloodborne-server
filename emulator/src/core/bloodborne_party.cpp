@@ -5290,7 +5290,7 @@ std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self) {
 }
 
 std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
-                                 std::span<const MemberVitals> board) {
+                                 std::span<const MemberVitals> board, std::string_view owner) {
     const auto distance = [&](const MemberVitals& member) {
         float sum = 0.0f;
         for (size_t axis = 0; axis < 3; ++axis) {
@@ -5299,6 +5299,15 @@ std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
         }
         return std::sqrt(sum);
     };
+    const auto in_arena = [&](std::string_view name) {
+        const auto member = std::ranges::find(board, name, &MemberVitals::member);
+        return member != board.end() && member->map == map &&
+               (member->vital == Vital::Up || member->vital == Vital::Down) &&
+               distance(*member) <= BossLeaveMetres;
+    };
+    if (current.empty() && !owner.empty() && in_arena(owner)) {
+        return current; // the game's own runner fights it already
+    }
     if (!current.empty()) {
         const auto kept = std::ranges::find(board, current, &MemberVitals::member);
         if (kept != board.end() && kept->map == map &&

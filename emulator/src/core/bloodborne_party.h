@@ -3151,10 +3151,19 @@ private:
 // too); none: the game's own runner. Every game picks from the same vitals board, ties by name.
 constexpr float BossEnterMetres = 25.0f;
 constexpr float BossLeaveMetres = 45.0f;
+// Kaniel's playtest 2026-10-16 (later): krolebord joined in the middle of a boss fight and the
+// boss stood in a T-pose: the pick handed it to him at once, but his fresh game did not run it.
+// While the game's own runner (the map's `owner`) is in the arena, the boss stays with it; and a
+// stale board keeps the last pick (Last) rather than flipping back.
 class BossRunnerPick {
 public:
-    // The member whose game runs the boss at `boss` on `map` now, "" for the game's own.
-    std::string Tick(u32 map, const LampPosition& boss, std::span<const MemberVitals> board);
+    // The member whose game runs the boss at `boss` on `map` now, "" for the game's own (the map's
+    // enemy owner, `owner`).
+    std::string Tick(u32 map, const LampPosition& boss, std::span<const MemberVitals> board,
+                     std::string_view owner = {});
+    const std::string& Last() const {
+        return current;
+    }
 
 private:
     std::string current;
