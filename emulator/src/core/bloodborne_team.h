@@ -287,6 +287,44 @@ private:
 // Kaniel 2026-10-14: the team loading screen, as in League of Legends. From the team's Start every
 // member's game shows each hunter with a bar (bbcoop::LoadProgress through the server) and holds
 // until all of them are in the team's session (or LimitMs), so the hunt opens for everyone at once.
+// Kaniel 2026-10-16: ready (OwnStage) only once it has held for SettleMs: the others' characters
+// stand in the world, not just started to appear. Nobody else coming: at once. And never while a
+// cutscene plays (krolebord's opening started after the screen lifted, so nothing skipped it: his
+// game stood still two minutes, his copy flew off on the others' screens and he missed the door
+// the host opened): the screen stays and the cutscene is skipped under it.
+class ReadySettle {
+public:
+    static constexpr s64 SettleMs = 5'000;
+    bbcoop::LoadProgress::Stage Settle(bbcoop::LoadProgress::Stage stage, size_t others_needed,
+                                       s64 now_ms, bool cutscene = false) {
+        if (stage == bbcoop::LoadProgress::READY && cutscene) {
+            since.reset();
+            return bbcoop::LoadProgress::JOINING;
+        }
+        if (others_needed == 0) {
+            since.reset();
+            return stage;
+        }
+        if (stage != bbcoop::LoadProgress::READY) {
+            // A character missing for a moment (a copy's flicker) does not start it over.
+            if (since && now_ms - last_ready_ms > FlickerMs) {
+                since.reset();
+            }
+            return stage;
+        }
+        last_ready_ms = now_ms;
+        if (!since) {
+            since = now_ms;
+        }
+        return now_ms - *since >= SettleMs ? stage : bbcoop::LoadProgress::JOINING;
+    }
+    static constexpr s64 FlickerMs = 1'000;
+
+private:
+    std::optional<s64> since;
+    s64 last_ready_ms = 0;
+};
+
 class TeamLoad {
 public:
     using Stage = bbcoop::LoadProgress::Stage;

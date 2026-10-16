@@ -1141,7 +1141,7 @@ SCENARIOS = {
             "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
                       "wait-session 2 300", f"set-flag {OPENING_EVENT} 0", "wait 15", "done"],
                      # The guest back at the title and ready first: both load together.
-                     ["title-wait 60", "team-start", START, "wait-session 2 300", "wait 15",
+                     ["title-wait 60", "team-start", START, "wait-session 2 300", "wait 30",
                       "expect-session 2"]],
             "guest": [["team-accept", "team-ready", START, "wait-session 2 300", "wait 30",
                        "done"],
@@ -1184,8 +1184,8 @@ SCENARIOS = {
                  "and the sound comes back",
         "roles": {
             "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
-                     "wait-session 2 300", "wait 15", "expect-session 2"],
-            "guest": ["team-accept", "team-ready", START, "wait-session 2 300", "wait 15",
+                     "wait-session 2 300", "wait 30", "expect-session 2"],
+            "guest": ["team-accept", "team-ready", START, "wait-session 2 300", "wait 30",
                       "expect-session 2"],
         },
         "expect": {role: [r"Co-op team load: the screen covers the game, its sound held",
