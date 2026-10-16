@@ -91,7 +91,9 @@ def no_console():
     return 0 if ctypes.windll.kernel32.GetConsoleWindow() else subprocess.CREATE_NO_WINDOW
 
 
-def run_script(name, *args, capture=False):
+def run_script(name, *args, capture=False, optional=False):
+    """Runs scripts/<name>; capture: returns what it prints. optional (with capture): a failure returns None
+    instead of stopping the start."""
     # Inside the packaged Bloodborne.exe (PyInstaller) the executable runs scripts itself.
     script = ['--script'] if getattr(sys, 'frozen', False) else []
     command = [sys.executable, *script, str(PORT / 'scripts' / name), *map(str, args)]
@@ -102,6 +104,8 @@ def run_script(name, *args, capture=False):
                                 encoding='utf-8', errors='replace', creationflags=no_console(),
                                 env={**os.environ, 'PYTHONIOENCODING': 'utf-8'})
         if result.returncode:
+            if optional:
+                return None
             sys.exit(result.returncode)
         return result.stdout
     # stdin given: the output handles are passed explicitly (a windowed Bloodborne.exe child would
@@ -117,6 +121,24 @@ def party_hud_args(env):
     and party list, over them). Party death is always on in the port and drives the list, so the HUD is patched
     whatever an old kit's SHADPS4_BLOODBORNE_PARTY_DEATH says; BB_PARTY_HUD=0 keeps the game's HUD as it is."""
     return [] if env.get('BB_PARTY_HUD', '1') == '0' else ['--party-hud']
+
+
+def game_view(env, game, out, data, icons):
+    """The game folder the game starts from: mods.py's view of the player's mods, the button icons (`icons`, its
+    --icons-layer arguments) and the party HUD over the game. When it cannot be made with the port's own layers,
+    the game starts without them, as it did before they existed: the overlay then draws the downed banner itself
+    (BB_PARTY_HUD=0) and the glyphs are the game's own. From Supermedo's bbport (bf0878b, 9461312: their own layers
+    there are Quit to Desktop's texts and the HUD layout)."""
+    args = [game, '--out', out, '--mods-dir', env.get('BB_MODS_DIR', data / 'mods'),
+            '--config', env.get('BB_MODS_CONFIG', data / 'mods.json'), '--enabled', env.get('BB_MODS_ENABLED', '1')]
+    layers = [*icons, *party_hud_args(env)]
+    view = run_script('mods.py', *args, *layers, capture=True, optional=bool(layers))
+    if view is None:
+        print('Mods: the game view could not be made with the button icons and the party HUD; starting without them')
+        env['BB_PARTY_HUD'] = '0'
+        env['BB_ICONS_SET'] = 'playstation'
+        view = run_script('mods.py', *args, capture=True)
+    return Path(view.strip())
 
 
 def frame_mode(requested, fps_limit, online=False):
@@ -222,11 +244,7 @@ def main():
             lambda: button_icons.list_gamepads(probe.parent / 'bb-gpu-capabilities.exe'))
     except Exception:  # nothing about the icons may stop the game from starting
         env['BB_ICONS_SET'] = 'playstation'
-    game = Path(run_script('mods.py', game, '--out', out,
-                           '--mods-dir', env.get('BB_MODS_DIR', data / 'mods'),
-                           '--config', env.get('BB_MODS_CONFIG', data / 'mods.json'),
-                           '--enabled', env.get('BB_MODS_ENABLED', '1'), *icons, *party_hud_args(env),
-                           capture=True).strip())
+    game = game_view(env, game, out, data, icons)
     mod_view = game if game.resolve() != original_game else None
     try:
         run_script('prepare.py', game, '--out', out)
@@ -317,7 +335,12 @@ def main():
         return subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console()).returncode
     finally:
         if mod_view:
-            shutil.rmtree(mod_view, ignore_errors=True)
+            # Read-only game files leave read-only links (mods.remove_overlay clears them, WinError 5).
+            from mods import remove_overlay
+            try:
+                remove_overlay(mod_view, original_game)
+            except OSError:
+                pass
 
 
 if __name__ == '__main__':
