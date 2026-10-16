@@ -58,8 +58,8 @@ const steps = [
     href: "/docs/install#install",
   },
   {
-    title: "Fill in the Co-op card",
-    text: "One player is the host and runs the server. The others type the host's address.",
+    title: "Fill in the Co-op page",
+    text: "Everyone types the host's address, the host included. PLAY then starts the server on the host's PC.",
     href: "/docs/install#coop-card",
   },
   {

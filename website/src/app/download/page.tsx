@@ -34,7 +34,7 @@ export default function DownloadPage() {
             "You need",
             "Your own Bloodborne for PS4 at 1.09 (a game folder with the update, or the .pkg files), and a Vulkan 1.3 graphics card.",
           ],
-          ["Then", "Run the setup, open the launcher, fill in the Co-op card and press PLAY."],
+          ["Then", "Run the setup, open the launcher, fill in the Co-op page and press PLAY."],
           [
             "Players",
             "A way to reach the host's PC: the same VPN, or ports forwarded on the host's router.",

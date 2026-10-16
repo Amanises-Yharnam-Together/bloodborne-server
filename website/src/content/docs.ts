@@ -43,7 +43,7 @@ const install: DocPage = {
   slug: "install",
   title: "Install and set up",
   description:
-    "What you need, how to install Bloodborne Seamless Co-op, what each part of the launcher's Co-op card is for, and how the other players reach the host.",
+    "What you need, how to install Bloodborne Seamless Co-op, what each part of the launcher's Co-op page is for, and how the other players reach the host.",
   sections: [
     {
       id: "requirements",
@@ -69,16 +69,36 @@ const install: DocPage = {
           type: "ol",
           items: [
             `Download the setup \`.exe\` from the [download page](/download) or [GitHub releases](${RELEASES_URL}) and run it. It installs for your Windows user and adds a desktop shortcut.`,
-            "Open **Bloodborne Seamless Co-op**. The launcher looks for your Bloodborne folder on its own the first time.",
-            "Fill in the **Co-op** card on the Play tab (below), then press **PLAY**.",
+            "Open **Bloodborne Seamless Co-op**. The launcher opens on **Home**, with the latest patch notes and three short reminders.",
+            "Go to **Co-op** in the sidebar and fill it in (below). **Done** lights up once nothing is missing. Then press **PLAY**.",
           ],
+        },
+        {
+          type: "image",
+          src: "/docs/launcher-home.webp",
+          width: 1200,
+          height: 1017,
+          alt: "The launcher's Home page: patch notes for the latest release, three cards First time here, Make a team and In the game, and the bottom bar with Start server, Stop server and PLAY.",
+          caption: "Home: the patch notes, three reminders and the PLAY bar.",
         },
       ],
     },
     {
       id: "coop-card",
-      title: "The Co-op card",
+      title: "The Co-op page",
       blocks: [
+        {
+          type: "p",
+          text: "One page for everyone, host or not. You fill it in once.",
+        },
+        {
+          type: "image",
+          src: "/docs/launcher-coop.webp",
+          width: 1200,
+          height: 690,
+          alt: "The Co-op page filled in: the Bloodborne folder with a green check for version 01.09, the host's IP 10.0.0.2, Enemies Off, the Bring saves button and Done.",
+          caption: "Filled in: the folder is found, the host's IP is set and Enemies is Off.",
+        },
         {
           type: "terms",
           items: [
@@ -87,12 +107,8 @@ const install: DocPage = {
               "The game, at 1.09 or with the 1.09 update next to it. **Browse…** picks the folder; **Find it for me** searches the usual places and then every drive; **Install from PKG…** installs the game and the update from your `.pkg` files. The line under it says which version it found, or what is missing.",
             ],
             [
-              "You are",
-              "Host runs the co-op server on this PC; one player in the group does this. Everyone else is **Player**.",
-            ],
-            [
               "Host's IP address",
-              "Where the host's PC can be reached: its VPN address, or its public IP. The host types their own.",
+              "Where the host's PC can be reached: its VPN address, or its public IP. The host types their own address too; that is how the launcher knows this PC is the host.",
             ],
             [
               "Enemies",
@@ -100,13 +116,21 @@ const install: DocPage = {
             ],
             [
               "Bring saves from another folder…",
-              "Copies your characters over from a PS4 save folder, a shadPS4 `user` folder or an older co-op install.",
+              "Opens a folder picker and copies your characters over from a PS4 save folder, a shadPS4 `user` folder or an older co-op install.",
             ],
             [
-              "Host: the co-op server",
-              "Host only. The server starts by itself when you press PLAY; **Start server** and **Stop server** are there for when you want it without the game.",
+              "Done",
+              "Greyed out until the page is complete. The line beside it says what is still needed.",
             ],
           ],
+        },
+        {
+          type: "image",
+          src: "/docs/launcher-coop-empty.webp",
+          width: 1200,
+          height: 690,
+          alt: "The Co-op page on first start, with the host's IP and Enemies empty, Done greyed out and the line Still needed: the host's IP, the enemies.",
+          caption: "On first start, Done waits until the host's IP and the enemies are set.",
         },
         {
           type: "p",
@@ -121,10 +145,35 @@ const install: DocPage = {
         {
           type: "ol",
           items: [
-            "On the host, the co-op server starts first. If it ever stops, it restarts by itself.",
+            "When the host's IP is this PC's own address, PLAY starts the co-op server first. If it ever stops, it restarts by itself.",
             "The first time, Windows asks once to let co-op through its firewall. Say yes: the launcher adds the rules for you.",
             "The first start prepares a game folder that links to your game. Nothing is copied.",
             "The game starts. Making a team happens in the game: see [Playing together](/docs/play).",
+          ],
+        },
+        {
+          type: "image",
+          src: "/docs/launcher-bar.webp",
+          width: 1200,
+          height: 126,
+          alt: "The launcher's bottom bar: status icons, Start server, Stop server, Running, the line Started the co-op server, and PLAY.",
+          caption: "The bottom bar on the host, with the server running.",
+        },
+        {
+          type: "terms",
+          items: [
+            [
+              "The four icons",
+              "Quick checks of your setup. A green check means ready, a grey dot means it is not set yet.",
+            ],
+            [
+              "Start server, Stop server",
+              "For running the server without the game, for example when the host plays later. The word beside them says whether it is running.",
+            ],
+            [
+              "The line under them",
+              "Your frame rate, upscaler, resolution and mode, or the last thing the launcher did.",
+            ],
           ],
         },
         {
@@ -160,7 +209,15 @@ const install: DocPage = {
       blocks: [
         {
           type: "p",
-          text: "The other tabs are the port's own: resolution up to 4K, DLSS, XeSS, FSR 3.1 and FSR 4 upscaling, frame generation, HDR, ReShade, mouse and keyboard. Co-op runs at a fixed 60 FPS, so the frame rate field is greyed out: the game sends its updates once per frame, and every player has to send at the same pace.",
+          text: "**Settings** holds the port's own options. **General** has the ones most players change: output resolution, upscaler and preset, frame generation, languages and window mode. The tabs above it go further: graphics, display and FPS, controls, mods and the log. Co-op runs at a fixed 60 FPS: the game sends its updates once per frame, and every player has to send at the same pace.",
+        },
+        {
+          type: "image",
+          src: "/docs/launcher-settings.webp",
+          width: 1200,
+          height: 1017,
+          alt: "Settings, General: Output 1920 by 1080, Frame rate 60 FPS, Upscaler FSR 4, Preset Quality, Game and launcher language, Windowed, Frame generation, and Saves and shortcuts.",
+          caption: "Settings, General.",
         },
       ],
     },
