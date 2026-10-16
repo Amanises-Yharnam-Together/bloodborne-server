@@ -729,8 +729,9 @@ std::string SlotFileName(std::string_view list, int slot);
 // The slot's files of its character, dropped (copied aside first) when another character is found
 // in the slot (ForgetsSlotLists): its pickups, world changes, confirmed pickups and where it
 // resumes (Ada 2026-10-12: a new character resumed at the old one's spot).
-inline constexpr std::array<std::string_view, 4> CharacterSlotFiles{"progress", "world",
-                                                                    "confirmed", "resume"};
+// Kaniel 2026-10-16: and the team world it last played ("team_world": its id in its team).
+inline constexpr std::array<std::string_view, 5> CharacterSlotFiles{
+    "progress", "world", "confirmed", "resume", "team_world"};
 // Whether the character loaded now is another one than the one a slot's lists were kept for
 // (`progress_kept`, its own world's set event flags then; 0 not known): far fewer set now.
 bool IsOtherCharacter(s32 progress_now, s32 progress_kept);
@@ -2373,6 +2374,9 @@ constexpr u64 TitleLoadStateOffset = 0x0195B480;
 constexpr u64 TitleMenuStateOffset = 0x0195AE80;
 constexpr std::array<u8, 6> TitleStatePrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
 constexpr u64 TitleLoadSlotOffset = 0x1490; // GameMan's (GlobalState's) save slot to load
+// The title's result (docs/native-netcode/title-menu.md): 1 when the save starts at the game's
+// beginning (state 5, the first-time start: a new character), 2 for any other load.
+constexpr u64 TitleResultOffset = 0x05580334;
 
 // Phase 4 (docs/SERVER_COOP_PLAN.md): one game runs each occupied map's enemies, the one shadNet
 // names (bbcoop::EnemyOwners: the session's host while it is there, else the member there first,

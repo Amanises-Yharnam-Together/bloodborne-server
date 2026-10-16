@@ -1331,7 +1331,8 @@ int ATeamFormsAndStartsThroughTheService() {
     a.Team(bbcoop::TeamRequest::START, now);
     Pump(service, {&a, &b}, now);
     CHECK(a.starts.size() == 1 && b.starts.size() == 1);
-    CHECK(b.starts[0].party() == "team:" + team && b.starts[0].host() == "aa");
+    CHECK(b.starts[0].party() == "team:" + team + "/" + b.starts[0].world() &&
+          !b.starts[0].world().empty() && b.starts[0].host() == "aa");
     CHECK(b.starts[0].slot() == 1);
     // The team's party hello plays its world like any party's.
     a.Hello(now, QByteArray::fromStdString(b.starts[0].party()));
@@ -1426,6 +1427,115 @@ int ATeamsWorldComesFromItsHostAndOutlivesTheServer() {
   Pump(service, {&guest}, now);
   CHECK(guest.team_world && guest.team_world->exists());
   CHECK(guest.team_world->on_size() == 3 && guest.team_world->version() == 1);
+  return 0;
+}
+
+// Kaniel 2026-10-16: a new character got the team's old world. Each of a
+// team's worlds is kept apart; the team's list says whose world each one is
+// (its host's reports), and the world a team had before is one of them.
+int ATeamsWorldsAreKeptApart() {
+  QTemporaryDir dir;
+  CHECK(dir.isValid());
+  qint64 now = 1'000'000;
+  std::string team;
+  {
+    Service service{dir.path()};
+    Game a{1000, "aa", 11};
+    Game b{1001, "bb", 12};
+    a.claims_host = true; // the leader hosts
+    a.LobbyHello(false, now);
+    b.LobbyHello(false, now);
+    Pump(service, {&a, &b}, now);
+    a.Team(bbcoop::TeamRequest::CREATE, now);
+    Pump(service, {&a, &b}, now);
+    team = a.lobby.team().id();
+    a.Team(bbcoop::TeamRequest::INVITE, now, "bb");
+    Pump(service, {&a, &b}, now);
+    b.Team(bbcoop::TeamRequest::ACCEPT, now, {}, team);
+    Pump(service, {&a, &b}, now);
+    const auto play = [&] {
+      a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 3);
+      b.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1);
+      Pump(service, {&a, &b}, now);
+      a.Team(bbcoop::TeamRequest::START, now);
+      Pump(service, {&a, &b}, now);
+      const bbcoop::TeamStart go = a.starts.back();
+      a.Hello(now, QByteArray::fromStdString(go.party()));
+      b.Hello(now, QByteArray::fromStdString(go.party()));
+      a.LobbyHello(true, now);
+      Pump(service, {&a, &b}, now);
+      return go;
+    };
+    const auto stop = [&] {
+      a.LobbyHello(false, now);
+      b.LobbyHello(false, now);
+      Pump(service, {&a, &b}, now);
+    };
+    const bbcoop::TeamStart first = play();
+    CHECK(b.team_world && !b.team_world->exists());
+    // The host's report: the team's world, and its line in the team's list.
+    bbcoop::Envelope envelope;
+    envelope.mutable_team_world()->add_on(1000);
+    envelope.mutable_team_world()->add_on(12401800);
+    envelope.mutable_team_world()->add_blocks(1);
+    envelope.mutable_team_world()->set_character("Kaniel");
+    now += 100;
+    a.Send(envelope, now);
+    Pump(service, {&a, &b}, now);
+    CHECK(b.team_world && b.team_world->exists());
+    CHECK(b.lobby.team().worlds_size() == 1);
+    CHECK(b.lobby.team().worlds(0).id() == first.world());
+    CHECK(b.lobby.team().worlds(0).character() == "Kaniel");
+    CHECK(b.lobby.team().worlds(0).flags_on() == 2);
+    CHECK(b.lobby.team().worlds(0).played_ms() > 0);
+    stop();
+    // The leader picks a new world: none of the first one's in it.
+    bbcoop::Envelope pick;
+    pick.mutable_team_request()->set_action(bbcoop::TeamRequest::WORLD);
+    pick.mutable_team_request()->set_world("");
+    a.Send(pick, now);
+    Pump(service, {&a, &b}, now);
+    const bbcoop::TeamStart second = play();
+    CHECK(second.world() != first.world() && second.party() != first.party());
+    CHECK(b.team_world && !b.team_world->exists());
+    CHECK(b.lobby.team().worlds_size() == 2);
+    stop();
+    // And back to the first: its world again.
+    pick.mutable_team_request()->set_world(first.world());
+    a.Send(pick, now);
+    Pump(service, {&a, &b}, now);
+    const bbcoop::TeamStart third = play();
+    CHECK(third.party() == first.party());
+    CHECK(b.team_world && b.team_world->exists() &&
+          b.team_world->on_size() == 2);
+  }
+  // A world from before the worlds were apart ("team:<id>"): a new server
+  // lists it as world "0".
+  {
+    const QString old =
+        QDir{dir.path()}.filePath(BloodborneWorld::PartyFolderName(
+            QByteArray::fromStdString("team:" + team)));
+    CHECK(QDir{}.mkpath(old));
+    bbcoop::TeamWorld stored;
+    stored.add_on(1000);
+    stored.add_blocks(1);
+    stored.set_exists(true);
+    QFile file{QDir{old}.filePath("team_world.pb")};
+    CHECK(file.open(QIODevice::WriteOnly));
+    const std::string bytes = stored.SerializeAsString();
+    file.write(bytes.data(), static_cast<qint64>(bytes.size()));
+  }
+  Service service{dir.path()};
+  service.Load(now);
+  Game b{1001, "bb", 22};
+  b.LobbyHello(false, now);
+  Pump(service, {&b}, now);
+  CHECK(b.lobby.team().worlds_size() == 3);
+  bool listed = false;
+  for (const bbcoop::TeamWorldInfo &world : b.lobby.team().worlds()) {
+    listed = listed || (world.id() == "0" && world.flags_on() == 1);
+  }
+  CHECK(listed);
   return 0;
 }
 
@@ -1832,6 +1942,7 @@ int main() {
        ATradeGoesThroughTheServerAndOutlivesItsRestart},
       {"ATeamsWorldComesFromItsHostAndOutlivesTheServer",
        ATeamsWorldComesFromItsHostAndOutlivesTheServer},
+      {"ATeamsWorldsAreKeptApart", ATeamsWorldsAreKeptApart},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {

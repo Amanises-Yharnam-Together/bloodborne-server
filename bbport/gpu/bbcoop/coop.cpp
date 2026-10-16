@@ -279,6 +279,29 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
             out.state = LobbyStateOf(m->state());
             out.ready = m->ready();
         }
+        // Kaniel 2026-10-16: the team's worlds.
+        lobby->world = -1;
+        for (const bbcoop::TeamWorldInfo& w : team.worlds()) {
+            if (lobby->world_count == BBCOOP_LOBBY_WORLDS) {
+                break;
+            }
+            if (w.id() == team.world()) {
+                lobby->world = lobby->world_count;
+            }
+            bbcoop_lobby_world& out = lobby->worlds[lobby->world_count++];
+            CopyName(out.id, sizeof(out.id), w.id());
+            CopyName(out.name, sizeof(out.name), Core::Bloodborne::TeamWorldName(w));
+            if (w.played_ms() > 0) {
+                const std::time_t at = static_cast<std::time_t>(w.played_ms() / 1000);
+                std::tm local{};
+#ifdef _WIN32
+                localtime_s(&local, &at);
+#else
+                localtime_r(&at, &local);
+#endif
+                std::strftime(out.when, sizeof(out.when), "%d %b %H:%M", &local);
+            }
+        }
     }
     for (const bbcoop::LobbyPlayer& player : state->players()) {
         const bool mine = state->has_team() && player.team() == state->team().id();

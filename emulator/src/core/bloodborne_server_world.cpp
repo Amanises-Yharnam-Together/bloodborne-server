@@ -18,6 +18,8 @@
 #include "core/bloodborne_trade.h"
 
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -126,6 +128,12 @@ std::atomic<s64> remo_step_ms{0};
 CutsceneSkip cutscene_skip; // CutsceneSkipPressed (the pad's reads)
 std::atomic<bool> skip_pressed{false};
 u64 team_sessions_opened = 0;
+// Kaniel 2026-10-16: the team's worlds. The world this save last played in its team (its slot's
+// "team_world" file), whether the title starts it new, and whether the leader's screen picked its
+// default world for this hold yet.
+std::string team_world_hint;
+bool title_fresh = false;
+bool team_world_default_sent = false;
 // Kaniel 2026-10-16: this save left its team while playing (removed, or left from the menu): it
 // still clears the leaving flag and its phantom (TickTeamJoin) until the title or a team again.
 bool left_team_in_play = false; // team_mutex
@@ -155,6 +163,23 @@ void QueueLobby(bbcoop::Envelope envelope) {
 }
 
 // On the stream's thread, as they come.
+std::filesystem::path TeamWorldHintFile(int slot) {
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+           SlotFileName("team_world", slot);
+}
+
+std::string ReadTeamWorldHint(int slot) {
+    std::ifstream file{TeamWorldHintFile(slot), std::ios::binary};
+    std::string id;
+    std::getline(file, id);
+    return id;
+}
+
+void WriteTeamWorldHint(int slot, const std::string& id) {
+    std::ofstream file{TeamWorldHintFile(slot), std::ios::binary | std::ios::trunc};
+    file << id << '\n';
+}
+
 bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
     if (envelope.has_lobby_state()) {
         std::scoped_lock lock{team_mutex};
@@ -206,8 +231,11 @@ bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
     }
     if (envelope.has_team_start()) {
         const bbcoop::TeamStart& start = envelope.team_start();
-        LOG_INFO(Debug, "Co-op team lobby: team {} starts (party {}, host {}, slot {})",
-                 start.team(), start.party(), start.host(), start.slot());
+        LOG_INFO(Debug, "Co-op team lobby: team {} starts (party {}, host {}, slot {}, world {})",
+                 start.team(), start.party(), start.host(), start.slot(), start.world());
+        if (!start.world().empty()) {
+            WriteTeamWorldHint(static_cast<int>(start.slot()), start.world());
+        }
         std::scoped_lock lock{team_mutex};
         team_gate.TakeStart(start);
         return true;
@@ -916,7 +944,7 @@ void StartTeamLobby() {
     }}.detach();
 }
 
-bool HoldTitleLoadForTeam(u32 slot) {
+bool HoldTitleLoadForTeam(u32 slot, bool fresh) {
     if (!team_switch) {
         return false;
     }
@@ -930,13 +958,36 @@ bool HoldTitleLoadForTeam(u32 slot) {
         const bool first = !team_gate.Holding();
         decision = team_gate.Tick(me, slot, SteadyMilliseconds());
         if (first) {
+            title_fresh = fresh;
+            team_world_hint = fresh ? std::string{} : ReadTeamWorldHint(static_cast<int>(slot));
+            team_world_default_sent = false;
             LOG_INFO(Debug,
-                     "Co-op team lobby: the title loads slot {}: the team screen decides "
-                     "({})",
-                     slot,
+                     "Co-op team lobby: the title loads slot {}{}: the team screen decides "
+                     "({}; its team world {})",
+                     slot, fresh ? " (a new character)" : "",
                      !team_gate.Lobby()              ? "no word from the lobby yet"
                      : team_gate.Lobby()->has_team() ? "in a team"
-                                                     : "not in a team");
+                                                     : "not in a team",
+                     team_world_hint.empty() ? "none" : team_world_hint);
+        }
+        // Kaniel 2026-10-16: the leader's screen starts on this save's own world (a new one for
+        // a new character); the leader may pick another.
+        if (decision.step == TeamGate::Step::Hold && !team_world_default_sent) {
+            const auto& lobby = team_gate.Lobby();
+            if (lobby && lobby->has_team() && lobby->team().leader() == me &&
+                !lobby->team().started()) {
+                team_world_default_sent = true;
+                const std::string pick =
+                    DefaultTeamWorld(lobby->team(), team_world_hint, title_fresh);
+                if (lobby->team().world() != pick) {
+                    bbcoop::Envelope envelope;
+                    envelope.mutable_team_request()->set_action(bbcoop::TeamRequest::WORLD);
+                    envelope.mutable_team_request()->set_world(pick);
+                    lobby_outbox.push_back(std::move(envelope));
+                }
+                LOG_INFO(Debug, "Co-op team lobby: the team screen starts on {}",
+                         pick.empty() ? "a new world" : "world " + pick);
+            }
         }
         if (decision.step == TeamGate::Step::Hold) {
             return true;
@@ -1192,7 +1243,8 @@ void TeamJoinHunt(const std::string& invite_team) {
     }
     const int slot = character_slot.load();
     const auto requests = TeamJoinHuntRequests(*team_gate.Lobby(), lobby_member, invite_team,
-                                               slot < 0 ? 0u : static_cast<u32>(slot), lobby_name);
+                                               slot < 0 ? 0u : static_cast<u32>(slot), lobby_name,
+                                               slot < 0 ? std::string{} : ReadTeamWorldHint(slot));
     LOG_INFO(Debug, "Co-op team menu: this save joins the hunt ({} requests, slot {}{})",
              requests.size(), slot, invite_team.empty() ? "" : ", the invitation accepted");
     for (const bbcoop::TeamRequest& request : requests) {
@@ -1333,6 +1385,7 @@ void TeamBackAtTitle() {
     team_session.reset();
     team_load = {};
     left_team_in_play = false;
+    team_world_default_sent = false;
     team_load_covers.store(false, std::memory_order_relaxed);
     team_menu_open.store(false, std::memory_order_relaxed);
     {
@@ -1528,6 +1581,8 @@ void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id)
     request.set_action(action);
     if (action == bbcoop::TeamRequest::ACCEPT || action == bbcoop::TeamRequest::DECLINE) {
         request.set_team(id);
+    } else if (action == bbcoop::TeamRequest::WORLD) {
+        request.set_world(id);
     } else {
         request.set_member(id);
     }
@@ -1744,6 +1799,10 @@ void TickTeamWorld(s64 now_ms) {
     bbcoop::Envelope envelope;
     envelope.mutable_team_world()->mutable_on()->Add(world.on.begin(), world.on.end());
     envelope.mutable_team_world()->mutable_blocks()->Add(world.blocks.begin(), world.blocks.end());
+    {
+        std::scoped_lock lock{team_mutex};
+        envelope.mutable_team_world()->set_character(lobby_name);
+    }
     Queue(std::move(envelope));
     LOG_INFO(Debug, "Co-op team world: this host's world to the server ({} flags on)",
              world.on.size());

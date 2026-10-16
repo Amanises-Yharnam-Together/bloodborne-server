@@ -12,6 +12,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "coop.pb.h"
@@ -25,6 +26,11 @@ constexpr size_t TeamSize = 4;
 // Kaniel 2026-10-16: how long a member's game may stay gone (a crash and a restart) before the
 // member leaves its team; a team with nobody left is gone.
 constexpr s64 OfflineGraceMs = 10 * 60 * 1000;
+
+// Kaniel 2026-10-16: a team keeps this many of its worlds (the last played), each apart.
+constexpr size_t MaxTeamWorlds = 8;
+// The id of the world a team had before its worlds were kept apart (its party "team:<id>").
+inline constexpr std::string_view FirstTeamWorld = "0";
 
 class TeamLobby {
 public:
@@ -62,12 +68,18 @@ public:
     const bbcoop::Team* TeamOf(const std::string& member) const;
     std::vector<std::string> SignedIn() const;
 
+    // Kaniel 2026-10-16: what the server learnt of one of a team's worlds (its host's character,
+    // its flags, when a Start played it; empty or 0 fields say nothing). A world the team does
+    // not have yet is added. Whether anything changed.
+    bool NoteWorld(const std::string& team, const bbcoop::TeamWorldInfo& note);
+
     // The teams and invites as the store keeps them (no states, nobody started).
     bbcoop::StoredTeams Store() const;
     void Restore(const bbcoop::StoredTeams& stored);
 
-    // A team's party key, the world it plays.
-    static std::string PartyOf(const std::string& team);
+    // The party key of a team's world: "team:<team>/<world>" ("team:<team>" for
+    // FirstTeamWorld).
+    static std::string PartyOf(const std::string& team, const std::string& world);
 
 private:
     struct Player {

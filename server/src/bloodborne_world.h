@@ -152,6 +152,10 @@ private:
         bool team = false;
         std::optional<bbcoop::TeamWorld> team_world;
         bool team_world_read = false;
+        // Kaniel 2026-10-16: which team and which of its worlds (TeamWorldInfo.id) this party
+        // is, from its key ("team:<team>/<world>"; FirstTeamWorld for "team:<team>").
+        std::string team_id;
+        std::string team_world_id;
     };
     struct Member {
         explicit Member(quint32 instance) : stream{"shadnet", instance} {}

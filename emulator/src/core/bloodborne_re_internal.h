@@ -766,7 +766,9 @@ void ReceiveSeamlessPlacement(const SummonPlacementDescriptor& placement);
 void StartTeamLobby();
 // The title loads the save in `slot` (TitleStep's load state, the game thread): true holds the load
 // a frame more (waiting for the team's Start); false lets it go, the team's party set if any.
-bool HoldTitleLoadForTeam(u32 slot);
+// `fresh`: the game starts that character at the beginning (a new one: Kaniel 2026-10-16, its
+// team's world is a new one unless the leader picks another).
+bool HoldTitleLoadForTeam(u32 slot, bool fresh = false);
 // The title menu is up again: the next load asks the team again.
 void TeamBackAtTitle();
 // The team screen (bbport_overlay.cpp) is up: the title's load is held for it. Its buttons.

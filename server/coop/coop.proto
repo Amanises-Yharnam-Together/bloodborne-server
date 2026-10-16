@@ -17,8 +17,9 @@ option optimize_for = LITE_RUNTIME;
 // Raised when a message's meaning changes; a game and the server on different ones are refused.
 enum Protocol {
     PROTOCOL_NONE = 0;
-    // 2: phase 4's enemy owners; 3: phase 5's teams; 4: phase 6's team sessions
-    PROTOCOL_CURRENT = 4;
+    // 2: phase 4's enemy owners; 3: phase 5's teams; 4: phase 6's team sessions; 5: a team's
+    // worlds (the leader picks one)
+    PROTOCOL_CURRENT = 5;
 }
 
 // game -> server: the first message of the stream, and again whenever the stream starts over (the
@@ -436,12 +437,16 @@ message TeamRequest {
         READY = 7;   // with the character in `slot` (`character`: its name)
         UNREADY = 8;
         START = 9; // the leader: every ready member's game loads its save
+        // Kaniel 2026-10-16: the leader picks the world the next Start plays: `world`, one of
+        // the team's worlds, or empty for a new one.
+        WORLD = 10;
     }
     Action action = 1;
     string member = 2;
     string team = 3;
     uint32 slot = 4;
     string character = 5;
+    string world = 6;
 }
 
 message LobbyPlayer {
@@ -468,11 +473,24 @@ message TeamMember {
     uint32 sign = 7;
 }
 
+// Kaniel 2026-10-16: one of a team's worlds (each kept apart on the server, its own party key
+// "team:<team>/<id>"; id "0" is the world a team had before, "team:<team>").
+message TeamWorldInfo {
+    string id = 1;
+    string character = 2; // its host's character, as its host's reports last said
+    int64 played_ms = 3;  // the last Start that played it (the server's clock, ms since 1970)
+    uint32 flags_on = 4;  // its world flags on, as its host last reported (how far it is)
+}
+
 message Team {
     string id = 1;
     string leader = 2; // hosts the team's sessions
     repeated TeamMember members = 3;
     bool started = 4; // the leader pressed Start and a member still plays
+    // Kaniel 2026-10-16: the team's worlds, the last played first, and the one the next Start
+    // plays (empty: a new one).
+    repeated TeamWorldInfo worlds = 5;
+    string world = 6;
 }
 
 message TeamInvite {
@@ -493,9 +511,10 @@ message LobbyState {
 // to a member that readies while the team plays.
 message TeamStart {
     string team = 1;
-    string party = 2; // the party key for the party hello ("team:<id>")
+    string party = 2; // the party key for the party hello ("team:<id>/<world>")
     string host = 3;  // the member that hosts the sessions (the leader)
     uint32 slot = 4;  // the save slot the member readied with
+    string world = 5; // the team's world it plays (TeamWorldInfo.id)
 }
 
 // shadNet's world store (server/src/bloodborne_world_store.h): a party's world as it keeps it on
@@ -567,6 +586,7 @@ message TeamWorld {
     repeated uint32 blocks = 3;   // the flag blocks it covers (a flag in another block is left as
                                   // it is)
     uint64 version = 4;           // counts up with each report taken
+    string character = 5;         // game -> server: the host's character's name, if known
 }
 
 // shadNet's teams on disk (teams.pb, beside the worlds).

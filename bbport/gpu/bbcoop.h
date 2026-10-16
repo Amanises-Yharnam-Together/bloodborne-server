@@ -90,7 +90,8 @@ void bbcoop_trophy_unlocked(int32_t trophy_id);
 /* Phase 5, the team lobby (always on with co-op), for the game's own menu
  * (the team screen, bbport_overlay.cpp). Names are UTF-8; `id` is what a request names (a
  * player's lobby member, a team's id). */
-enum { BBCOOP_LOBBY_TEAM = 4, BBCOOP_LOBBY_PLAYERS = 16, BBCOOP_LOBBY_INVITES = 8 };
+enum { BBCOOP_LOBBY_TEAM = 4, BBCOOP_LOBBY_PLAYERS = 16, BBCOOP_LOBBY_INVITES = 8,
+       BBCOOP_LOBBY_WORLDS = 8 };
 enum { BBCOOP_LOBBY_OFFLINE, BBCOOP_LOBBY_TITLE, BBCOOP_LOBBY_PLAYING };
 typedef struct bbcoop_lobby_entry {
     char name[40];
@@ -98,6 +99,12 @@ typedef struct bbcoop_lobby_entry {
     int state; /* BBCOOP_LOBBY_*: a player's or a member's */
     int ready; /* a member's */
 } bbcoop_lobby_entry;
+/* Kaniel 2026-10-16: one of the team's worlds (each kept apart on the server). */
+typedef struct bbcoop_lobby_world {
+    char id[40];
+    char name[64]; /* "Kaniel's world" */
+    char when[32]; /* when it was last played, local time ("16 Oct 19:12"), "" when not known */
+} bbcoop_lobby_world;
 typedef struct bbcoop_lobby {
     int signed_in; /* the server answered */
     int in_team, leader, started;
@@ -110,13 +117,18 @@ typedef struct bbcoop_lobby {
     /* Kaniel 2026-10-16: the screen opened from the game's System menu (not the title's load),
      * a save playing, and playing in the team's world. */
     int menu, playing, in_hunt;
+    /* Kaniel 2026-10-16: the team's worlds, the last played first, and the one its next Start
+     * plays: an index into them, -1 a new world. */
+    int world_count, world;
+    bbcoop_lobby_world worlds[BBCOOP_LOBBY_WORLDS];
 } bbcoop_lobby;
 /* Fills `lobby`; 0 when the team lobby is off. */
 int bbcoop_lobby_view(bbcoop_lobby *lobby);
 /* The menu's requests (TeamRequest actions): create, leave, invite a player (`id`), accept or
  * decline an invite (`id`: its team), remove a member (`id`). */
 enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
-       BBCOOP_TEAM_DECLINE = 4, BBCOOP_TEAM_LEAVE = 5, BBCOOP_TEAM_REMOVE = 6 };
+       BBCOOP_TEAM_DECLINE = 4, BBCOOP_TEAM_LEAVE = 5, BBCOOP_TEAM_REMOVE = 6,
+       BBCOOP_TEAM_WORLD = 10 /* the leader picks the world (`id`; "" a new one) */ };
 void bbcoop_lobby_request(int action, const char *id);
 /* The title holds a save's load for the team: the team screen is up (bbport_overlay.cpp). */
 int bbcoop_team_screen(void);
