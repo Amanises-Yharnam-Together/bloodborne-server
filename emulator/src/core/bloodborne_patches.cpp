@@ -1320,6 +1320,29 @@ void InstallTrading(u64 base, u64 image_size) {
     coop_features.On("trading");
 }
 
+// See ShowNetworkBannerPrologue: no multiplayer banner in a party.
+bool PS4_SYSV_ABI SkipNetworkBanner(u64, const GuestRegisterSnapshot* registers) {
+    static std::atomic<u32> logged{0};
+    if (logged.fetch_add(1) < 50) {
+        LOG_INFO(Debug, "Bloodborne party: multiplayer banner {} not shown",
+                 static_cast<s32>(registers->rdi));
+    }
+    return true;
+}
+
+void InstallNoMultiplayerBanners(u64 base, u64 image_size) {
+    if (!party_controller || !CoopSitesMatch(base, image_size, "no multiplayer banners",
+                                             "join and leave banners show")) {
+        return;
+    }
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + ShowNetworkBannerOffset),
+                         ShowNetworkBannerPrologue, 0, GuestFunctionOverride{SkipNetworkBanner})) {
+        coop_features.Skipped("no multiplayer banners", "the hook did not go in");
+        return;
+    }
+    coop_features.On("no multiplayer banners");
+}
+
 // See QuietSummonBannerPatches: a party's joins show one banner, not two.
 void InstallQuietSummonBanners(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -1553,6 +1576,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallBossClearKeepsSession(base, image_size);
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
+    InstallNoMultiplayerBanners(base, image_size);
     InstallGuestsHitNpcs(base, image_size);
     InstallOwnPlayerNumbers(base, image_size);
     InstallMoviePlayerDeleteDelay(base, image_size);
