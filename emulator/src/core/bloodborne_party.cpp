@@ -2142,13 +2142,22 @@ bool IsRealDeath(u8 death_flags) {
     return (death_flags & 0x05) != 0 && (death_flags & PutDownByTheWorld) == 0;
 }
 
+bool MapsLoadedTogether(u32 a, u32 b) {
+    constexpr u32 CathedralWard = 0x18000000;
+    constexpr u32 CentralYharnam = 0x18010000;
+    const auto pair = [&](u32 x, u32 y) { return (a == x && b == y) || (a == y && b == x); };
+    return a == b || pair(CathedralWard, CentralYharnam);
+}
+
 std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
                                                       std::span<const SeenCharacter> characters,
                                                       std::span<const u32> others_maps, u32 map) {
     std::vector<std::pair<s32, bool>> changes;
     const auto map_of = [](u64 v) { return static_cast<u32>(v >> 32); };
     const auto someone_on = [&](u32 on) {
-        return on != 0 && std::ranges::find(others_maps, on) != others_maps.end();
+        return on != 0 && std::ranges::any_of(others_maps, [&](u32 other) {
+                   return other != 0 && MapsLoadedTogether(other, on);
+               });
     };
     if (visit != current) {
         for (const u32 handle : killed) {
@@ -2167,7 +2176,7 @@ std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
     }
     const u32 here = map != 0 ? map : map_of(current);
     for (auto it = held.begin(); it != held.end();) {
-        if (it->first == here || someone_on(it->first)) {
+        if (MapsLoadedTogether(it->first, here) || someone_on(it->first)) {
             ++it;
             continue;
         }
