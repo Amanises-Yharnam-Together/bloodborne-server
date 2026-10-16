@@ -20,18 +20,15 @@
   "info": [
     {
       "title": "First time here",
-      "text": "Open Co-op, point it at your Bloodborne folder and type the host's IP. The host types their own address and PLAY starts the server for them.",
-      "icon": "lamp"
+      "text": "Open Co-op, point it at your Bloodborne folder and type the host's IP. The host types their own address and PLAY starts the server for them."
     },
     {
       "title": "Make a team",
-      "text": "Press Continue, Load Game or New Game: the team screen opens. Invite hunters online, ready up, and the leader begins the hunt.",
-      "icon": "hunters"
+      "text": "Press Continue, Load Game or New Game: the team screen opens. Invite hunters online, ready up, and the leader begins the hunt."
     },
     {
       "title": "In the game",
-      "text": "Insert or L3 + R3 opens the port's menu: graphics, controls and the Co-op Team page, where you can invite or remove players.",
-      "icon": "pad"
+      "text": "Insert or L3 + R3 opens the port's menu: graphics, controls and the Co-op Team page, where you can invite or remove players."
     }
   ]
 }

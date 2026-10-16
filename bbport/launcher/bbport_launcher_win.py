@@ -1275,49 +1275,9 @@ def parse_news(data):
         news['link'] = {'text': text(link.get('text'), 40) or 'Read more', 'url': text(link.get('url'), 300)}
     for item in data.get('info', []) if isinstance(data.get('info'), list) else []:
         if isinstance(item, dict) and text(item.get('title'), 60):
-            news['info'].append({'title': text(item.get('title'), 60), 'text': text(item.get('text'), 300),
-                                 'icon': item.get('icon') if item.get('icon') in INFO_ICONS else 'moon'})
+            news['info'].append({'title': text(item.get('title'), 60), 'text': text(item.get('text'), 300)})
     news['info'] = news['info'][:3]
     return news
-
-
-INFO_ICONS = ('lamp', 'hunters', 'pad', 'moon')
-
-
-def draw_info_icon(canvas, kind, size, ink, dim, px):
-    """A big line-drawn icon for a card of the home page (news.json's info[].icon): the Hunter's Dream lamp,
-    a party of hunters, a game pad, or the moon. Drawn here: no art of the game."""
-    c, s = canvas, size
-    w = max(2, px(2))
-
-    def at(x, y):
-        return x * s, y * s
-
-    if kind == 'lamp':  # a lamp post: the lantern with its little roof, the post, a step at its foot
-        c.create_line(*at(0.5, 0.42), *at(0.5, 0.88), fill=ink, width=w)
-        c.create_line(*at(0.32, 0.9), *at(0.68, 0.9), fill=ink, width=w)
-        c.create_polygon(*at(0.36, 0.2), *at(0.64, 0.2), *at(0.6, 0.42), *at(0.4, 0.42), outline=ink, fill='', width=w)
-        c.create_line(*at(0.3, 0.2), *at(0.5, 0.08), *at(0.7, 0.2), fill=ink, width=w)
-        c.create_oval(*at(0.45, 0.25), *at(0.55, 0.36), fill=dim, outline='')
-    elif kind == 'hunters':  # three hunters in tricorn hats, the middle one in front
-        for x, y, k in ((0.26, 0.5, 0.8), (0.74, 0.5, 0.8), (0.5, 0.42, 1.0)):
-            r = 0.1 * k
-            c.create_oval(*at(x - r, y - r), *at(x + r, y + r), outline=ink, width=w, fill=c['bg'])
-            c.create_line(*at(x - r * 1.7, y - r * 0.7), *at(x, y - r * 1.9), *at(x + r * 1.7, y - r * 0.7),
-                          fill=ink, width=w)
-            c.create_arc(*at(x - r * 2.2, y + r * 1.4), *at(x + r * 2.2, y + r * 5.4), start=0, extent=180,
-                         style='arc', outline=ink, width=w)
-    elif kind == 'pad':  # a game pad: its body, the cross on the left, four buttons on the right
-        c.create_polygon(*at(0.14, 0.38), *at(0.86, 0.38), *at(0.94, 0.72), *at(0.78, 0.78), *at(0.64, 0.62),
-                         *at(0.36, 0.62), *at(0.22, 0.78), *at(0.06, 0.72), outline=ink, fill='', width=w,
-                         smooth=True)
-        c.create_line(*at(0.24, 0.5), *at(0.36, 0.5), fill=ink, width=w)
-        c.create_line(*at(0.3, 0.44), *at(0.3, 0.56), fill=ink, width=w)
-        for x, y in ((0.7, 0.44), (0.7, 0.56), (0.64, 0.5), (0.76, 0.5)):
-            c.create_oval(*at(x - 0.022, y - 0.022), *at(x + 0.022, y + 0.022), fill=ink, outline='')
-    else:  # the moon
-        c.create_oval(*at(0.22, 0.22), *at(0.78, 0.78), outline=ink, width=w)
-        c.create_oval(*at(0.38, 0.12), *at(0.88, 0.62), fill=c['bg'], outline='')
 
 
 def fetch_news(url=NEWS_URL, timeout=6):
@@ -3274,13 +3234,8 @@ class Launcher:
                                                     'padx': (0 if i == 0 else px(8), 0 if i == len(news['info']) - 1
                                                              else px(8))}, pad=22)
                 body.columnconfigure(0, minsize=0)
-                # Kaniel 2026-10-16: each card with a big icon above its title.
-                size = px(72)
-                art = tk.Canvas(body, width=size, height=size, bg=CARD, highlightthickness=0, bd=0)
-                draw_info_icon(art, item['icon'], size, GOLD, GOLD_DIM, px)
-                art.grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, px(10)))
-                self.label(body, spaced(item['title']), 'h2').grid(row=1, column=0, columnspan=2, sticky='w')
-                self.flow(body, item['text'], 'small', MUTED).grid(row=2, column=0, columnspan=2, sticky='we',
+                self.label(body, spaced(item['title']), 'h2').grid(row=0, column=0, columnspan=2, sticky='w')
+                self.flow(body, item['text'], 'small', MUTED).grid(row=1, column=0, columnspan=2, sticky='we',
                                                                    pady=(px(8), 0))
 
     # --- settings: general --------------------------------------------------------------------
