@@ -29,7 +29,9 @@ export type Block =
       height: number;
     };
 
-export type Section = { id: string; title: string; blocks: Block[] };
+/** The painted icons in public/art, shown beside a section's title. */
+export type IconName = "lantern" | "blades" | "bell" | "tricorn" | "vial" | "skull" | "hand";
+export type Section = { id: string; title: string; icon?: IconName; blocks: Block[] };
 
 export type DocPage = {
   slug: string;
@@ -224,6 +226,7 @@ const install: DocPage = {
     {
       id: "problems",
       title: "When something goes wrong",
+      icon: "skull",
       blocks: [
         {
           type: "terms",
@@ -260,6 +263,7 @@ const play: DocPage = {
     {
       id: "team",
       title: "Make a team",
+      icon: "bell",
       blocks: [
         {
           type: "p",
@@ -308,6 +312,7 @@ const play: DocPage = {
     {
       id: "world",
       title: "One world",
+      icon: "lantern",
       blocks: [
         {
           type: "ul",
@@ -323,6 +328,7 @@ const play: DocPage = {
     {
       id: "party",
       title: "The party list",
+      icon: "tricorn",
       blocks: [
         {
           type: "p",
@@ -341,6 +347,7 @@ const play: DocPage = {
     {
       id: "down",
       title: "Going down",
+      icon: "hand",
       blocks: [
         {
           type: "p",
@@ -373,6 +380,7 @@ const play: DocPage = {
     {
       id: "give",
       title: "Giving items",
+      icon: "vial",
       blocks: [
         {
           type: "p",

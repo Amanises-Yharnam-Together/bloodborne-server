@@ -1,5 +1,6 @@
 import Image from "next/image";
 
+import { ArtIcon } from "@/components/art-icon";
 import { figures } from "@/components/figures";
 import { InlineText } from "@/components/inline";
 import type { Block, DocPage } from "@/content/docs";
@@ -120,6 +121,9 @@ export function DocBody({ page }: { page: DocPage }) {
       {page.sections.map((s) => (
         <section key={s.id} aria-labelledby={s.id}>
           <h2 id={s.id}>
+            {s.icon ? (
+              <ArtIcon name={s.icon} className="mr-3 inline-block size-10 align-middle" />
+            ) : null}
             <a href={`#${s.id}`} className="no-underline! text-inherit! hover:text-bone!">
               {s.title}
             </a>
