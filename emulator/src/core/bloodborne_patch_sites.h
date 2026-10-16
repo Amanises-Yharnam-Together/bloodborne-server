@@ -64,6 +64,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"enemy owner", false},
     {"team lobby", false},
     {"team join", false},
+    {"no multiplayer banners", false},
     {"own player numbers", false},
     {"host leaves", true},
     {"seamless travel", true},
@@ -289,6 +290,9 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // Phase 5: the title's save load held for the team, and the title menu seen again.
     {"title load state", "team lobby", CoopSiteKind::Hook, 0x0195B480, "55 48 89 E5 41 57"},
     {"title menu state", "team lobby", CoopSiteKind::Hook, 0x0195AE80, "55 48 89 E5 41 57"},
+    // Kaniel 2026-10-16: the network banner, none in a party (ShowNetworkBannerPrologue).
+    {"network banner", "no multiplayer banners", CoopSiteKind::Hook, 0x01BFFE80,
+     "55 48 89 E5 41 57 41 56"},
     // Kaniel 2026-10-16: each joining member its own player number (PlayerNumberHandedOut).
     {"player number handed out", "own player numbers", CoopSiteKind::Hook, 0x0178C529,
      "89 85 8C FE FF FF 89 85 DC FE FF FF"},
@@ -387,6 +391,12 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "83 B8 24 01 00 00 06"},
     {"map item handle session check", "shared loot", CoopSiteKind::Hook, 0x017D52DB,
      "41 83 BF 98 00 00 00 FF"},
+    // Kaniel's playtest 2026-10-16: an enemy's drop (0x017D5320, MapItemMan +0x38) gets its own
+    // handle on a guest too (DropHandleStateCheckOffset).
+    {"drop handle state check", "shared loot", CoopSiteKind::Hook, 0x017D5642,
+     "83 B8 24 01 00 00 06"},
+    {"drop handle session check", "shared loot", CoopSiteKind::Hook, 0x017D564B,
+     "41 83 BF 98 00 00 00 FF"},
     {"map item pickup check", "map item pickup", CoopSiteKind::Hook, 0x017D6831,
      "80 B8 92 15 00 00 00"},
     {"map item pickup check 2", "map item pickup", CoopSiteKind::Hook, 0x017D6AEF,
@@ -396,8 +406,6 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"item check 0x017D3759", "item diagnostics", CoopSiteKind::Hook, 0x017D3759,
      "83 B8 24 01 00 00 06"},
     {"item check 0x017D4F54", "item diagnostics", CoopSiteKind::Hook, 0x017D4F54,
-     "83 B8 24 01 00 00 06"},
-    {"item check 0x017D5642", "item diagnostics", CoopSiteKind::Hook, 0x017D5642,
      "83 B8 24 01 00 00 06"},
     {"item check 0x017D6818", "item diagnostics", CoopSiteKind::Hook, 0x017D6818,
      "83 B8 24 01 00 00 06"},

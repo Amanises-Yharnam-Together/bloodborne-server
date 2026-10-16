@@ -636,6 +636,11 @@ constexpr u64 MapItemHandleStateCheckOffset = 0x017D52D2;   // cmp [rax+0x124], 
 constexpr u64 MapItemHandleSessionCheckOffset = 0x017D52DB; // cmp [r15+0x98], -1
 constexpr std::array<u8, 8> MapItemHandleSessionCheck{0x41, 0x83, 0xBF, 0x98,
                                                       0x00, 0x00, 0x00, 0xFF};
+// Kaniel's playtest 2026-10-16: an enemy's death drop (0x017D5320, the MapItemMan +0x38 list;
+// counter +0x10) has the same guest branch at its handle: on a guest every drop kept the kind-only
+// handle 0x2, so one pickup took them all (krolebord found every kill's drop on the first wolf).
+constexpr u64 DropHandleStateCheckOffset = 0x017D5642;                    // cmp [rax+0x124], 6
+constexpr u64 DropHandleSessionCheckOffset = 0x017D564B;                  // cmp [r15+0x98], -1
 constexpr std::array<u64, 2> MapItemPickupChecks{0x017D6831, 0x017D6AEF}; // [rax+0x1592], 0
 // Picking up a networked map item (0x017D8570): a summoned guest only asks the host for it.
 constexpr u64 MapItemTakeStateCheckOffset = 0x017D85F4; // cmp [rax+0x124], 6
@@ -655,6 +660,13 @@ void PS4_SYSV_ABI CreateMapItemsForPartyGuest(u64, GuestRegisterSnapshot* regist
 void PS4_SYSV_ABI CreateMapItemsInJoinedSession(u64, GuestRegisterSnapshot* registers) {
     if (GuestHandlesMapItemsAlone(party_controller.has_value())) {
         registers->rdx = SoloMapItemStandInAddress();
+    }
+}
+
+// A drop's handle check (DropHandleStateCheckOffset): as a solo player's.
+void PS4_SYSV_ABI GiveDropsAHandle(u64, GuestRegisterSnapshot* registers) {
+    if (GuestHandlesMapItemsAlone(party_controller.has_value())) {
+        registers->rax = SoloMapItemStandInAddress();
     }
 }
 
@@ -799,12 +811,15 @@ void InstallSharedLoot(u64 base, u64 image_size) {
         std::span<const u8> bytes;
         GuestRegisterEditHook edit;
     };
-    const std::array<LootHook, 5> loot_hooks{{
+    const std::array<LootHook, 7> loot_hooks{{
         {MapItemCreateStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest},
         {MapItemCreateSessionCheckOffset, MapItemCreateSessionCheck, CreateMapItemsInJoinedSession},
         {MapItemHandleStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest},
         {MapItemTakeStateCheckOffset, GuestStateCheck, CreateMapItemsForPartyGuest},
         {MapItemHandleSessionCheckOffset, MapItemHandleSessionCheck,
+         GiveMapItemsAHandleInJoinedSession},
+        {DropHandleStateCheckOffset, GuestStateCheck, GiveDropsAHandle},
+        {DropHandleSessionCheckOffset, MapItemHandleSessionCheck,
          GiveMapItemsAHandleInJoinedSession},
     }};
     const auto hook = [base, image_size](u64 offset, std::span<const u8> bytes,

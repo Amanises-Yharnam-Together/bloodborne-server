@@ -2001,6 +2001,10 @@ std::size_t RemoveBellIcons(std::span<u8> sp_effect_param);
 //   5-byte nops; neither caller uses the result.
 constexpr u64 ShowNetworkBannerOffset = 0x01BFFE80;
 const std::vector<CodePatch>& QuietSummonBannerPatches();
+// Kaniel 2026-10-16: no multiplayer banners at all in a party (joins, leaves, summons, the
+// chimes): the network banner (0x01BFFE80, message id in edi) shows none of them.
+constexpr std::array<u8, 8> ShowNetworkBannerPrologue{0x55, 0x48, 0x89, 0xE5,
+                                                      0x41, 0x57, 0x41, 0x56};
 
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small
@@ -3114,10 +3118,12 @@ struct DownedMember {
 // Swings at a downed body whose hit never lands, counted as the attack presses were before real
 // hits: a body that others saw kneel took no hits at all (playtest 2026-10-13, Lisara had to give
 // up), so a swing near a downed member (ReviveTarget) waits WaitMs for its hit, and counts its
-// press damage when none landed on that member's body (a charged R2 lands within it).
+// press damage when none landed on that member's body. Kaniel's playtest 2026-10-16: every swing
+// at Lisara missed her body and each waited 1.5 s, so the revive came late: the wait is short now
+// (a hit landing later is still that swing's, Landed, never counted twice).
 class RevivePressFallback {
 public:
-    static constexpr s64 WaitMs = 1'500;
+    static constexpr s64 WaitMs = 400;
     // A hit that lands up to LateMs after its swing was counted is that swing's (Landed).
     static constexpr s64 LateMs = 2'000;
     struct Swing {
@@ -3136,6 +3142,22 @@ public:
 private:
     std::vector<Swing> waiting;
     std::vector<Swing> counted; // at: when it was counted
+};
+
+// Kaniel's playtest 2026-10-16: Lisara started Gascoigne's fight alone; the host's game, far
+// away, ran him (the game never hands a boss out), so her copy only followed its positions (lag)
+// and his AI went for nobody near. A boss-sized enemy is run by the member in its arena: the
+// nearest standing one within BossEnterMetres, kept while it stays within BossLeaveMetres (down
+// too); none: the game's own runner. Every game picks from the same vitals board, ties by name.
+constexpr float BossEnterMetres = 25.0f;
+constexpr float BossLeaveMetres = 45.0f;
+class BossRunnerPick {
+public:
+    // The member whose game runs the boss at `boss` on `map` now, "" for the game's own.
+    std::string Tick(u32 map, const LampPosition& boss, std::span<const MemberVitals> board);
+
+private:
+    std::string current;
 };
 
 // Real revive hits. A character's team is ChrIns +0x88; the game's relation tables

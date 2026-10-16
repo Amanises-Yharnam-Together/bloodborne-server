@@ -414,6 +414,38 @@ TEST(TeamLoad, DoesNotWaitForMembersOnAnotherMap) {
         0u);
 }
 
+// Kaniel 2026-10-16: the screen opened as the others connected, their characters only starting
+// to appear. Ready holds for ReadySettle::SettleMs first: everyone stands in the world.
+TEST(TeamLoad, ReadyOnlyAfterTheOthersHaveStoodThereAWhile) {
+    using P = bbcoop::LoadProgress;
+    ReadySettle settle;
+    EXPECT_EQ(settle.Settle(P::JOINING, 1, 0), P::JOINING);
+    EXPECT_EQ(settle.Settle(P::READY, 1, 1000), P::JOINING) << "just seen: not yet";
+    EXPECT_EQ(settle.Settle(P::READY, 1, 1000 + ReadySettle::SettleMs - 1), P::JOINING);
+    EXPECT_EQ(settle.Settle(P::READY, 1, 1000 + ReadySettle::SettleMs), P::READY);
+    // Gone again for longer than a flicker before then: it starts over.
+    ReadySettle again;
+    again.Settle(P::READY, 2, 0);
+    again.Settle(P::JOINING, 2, ReadySettle::FlickerMs + 100);
+    EXPECT_EQ(again.Settle(P::READY, 2, ReadySettle::SettleMs), P::JOINING);
+    // A flicker (a copy missing for a frame or two) does not.
+    ReadySettle flicker;
+    flicker.Settle(P::READY, 1, 0);
+    flicker.Settle(P::JOINING, 1, 500);
+    EXPECT_EQ(flicker.Settle(P::READY, 1, ReadySettle::SettleMs), P::READY);
+    // A cutscene playing: not ready, however long the others have stood there.
+    ReadySettle cutscene;
+    cutscene.Settle(P::READY, 1, 0);
+    EXPECT_EQ(cutscene.Settle(P::READY, 1, ReadySettle::SettleMs, true), P::JOINING);
+    EXPECT_EQ(cutscene.Settle(P::READY, 0, ReadySettle::SettleMs, true), P::JOINING);
+    EXPECT_EQ(cutscene.Settle(P::READY, 1, ReadySettle::SettleMs + 100), P::JOINING)
+        << "over: it settles again";
+    // Nobody else coming: ready at once; loading stays loading.
+    ReadySettle alone;
+    EXPECT_EQ(alone.Settle(P::READY, 0, 0), P::READY);
+    EXPECT_EQ(alone.Settle(P::LOADING, 1, 0), P::LOADING);
+}
+
 TEST(TeamLoad, ReadyStaysReady) {
     TeamLoad load;
     load.Start(0);
