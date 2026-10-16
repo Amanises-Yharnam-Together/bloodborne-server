@@ -1472,6 +1472,7 @@ struct StoryCharacter {
     bool disabled = false; // the enable switch off
     bool followed = false; // a guest's, hidden or switched off to match the host's board
     bool killed = false;   // hidden for a member's kill
+    bool dead = false;     // dead in its world (IsDeadInItsWorld): no story removal
 };
 struct StoryHoldStep {
     std::vector<u32> hold;      // switch off now (then Held, or Unheld if that failed)
@@ -1485,6 +1486,9 @@ public:
     // `seen`: every character loaded now but the players; `visit_ms`: the visit's load.
     StoryHoldStep Step(u32 map, s64 visit_ms, s64 now_ms, std::span<const StoryCharacter> seen);
     void Held(u32 handle, s64 now_ms);
+    // Kaniel 2026-10-16: another save (or the same slot started again) plays another world:
+    // nothing its story removed counts.
+    void Forget();
     bool Remembers(u32 map, u32 handle) const;
     size_t RememberedOn(u32 map) const;
 

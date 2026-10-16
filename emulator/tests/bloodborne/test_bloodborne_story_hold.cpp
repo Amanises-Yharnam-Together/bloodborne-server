@@ -40,6 +40,39 @@ StoryRemovals AfterAFirstVisit() {
     return removals;
 }
 
+// Kaniel's playtest 2026-10-16: a new character (another save) loaded with the last save's
+// memory of the same map. Iosefka's door copy and the first dog were held off, then switched on
+// at the time-out: Iosefka stood by her door, and the dog missed its scripted HP drop.
+TEST(StoryHold, AnotherSaveForgetsWhatTheLastOnesStoryRemoved) {
+    StoryRemovals removals = AfterAFirstVisit();
+    removals.Forget();
+    EXPECT_FALSE(removals.Remembers(Yharnam, Gilbert));
+    const std::vector<StoryCharacter> fresh{Shown(Gilbert), Shown(Enemy)};
+    EXPECT_TRUE(removals.Step(Yharnam, 60'000, 60'100, fresh).hold.empty());
+}
+
+// An enemy dead in its world at the settle (killed, or put down at its load) is no story removal:
+// held off over the next load it would miss what the map's events do to it then.
+TEST(StoryHold, ADeadEnemyIsNoStoryRemoval) {
+    StoryRemovals removals = AfterAFirstVisit();
+    StoryCharacter dead = Removed(Enemy);
+    dead.dead = true;
+    const std::vector<StoryCharacter> settled{Removed(Gilbert), dead};
+    EXPECT_EQ(removals.Step(Yharnam, 0, StoryHoldMs + 1'000, settled), StoryHoldStep{});
+    EXPECT_FALSE(removals.Remembers(Yharnam, Enemy));
+    // One remembered from before it died is not held either, and one held is switched on.
+    StoryRemovals other = AfterAFirstVisit();
+    const s64 load = 60'000;
+    const std::vector<StoryCharacter> fresh{Shown(Gilbert)};
+    ASSERT_EQ(other.Step(Yharnam, load, load + 100, fresh).hold, std::vector<u32>{Gilbert});
+    other.Held(Gilbert, load + 100);
+    StoryCharacter gone = Off(Gilbert);
+    gone.dead = true;
+    const std::vector<StoryCharacter> died{gone};
+    EXPECT_EQ(other.Step(Yharnam, load, load + 200, died).release, std::vector<u32>{Gilbert});
+    EXPECT_FALSE(other.Remembers(Yharnam, Gilbert));
+}
+
 TEST(StoryHold, NothingIsHeldOnAMapNeverSettled) {
     StoryRemovals removals;
     const std::vector<StoryCharacter> seen{Shown(Gilbert)};

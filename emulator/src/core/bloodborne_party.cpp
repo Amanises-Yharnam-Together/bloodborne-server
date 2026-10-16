@@ -864,6 +864,14 @@ StoryHoldStep StoryRemovals::Step(u32 map, s64 visit_ms, s64 now_ms,
     for (const StoryCharacter& character : seen) {
         loaded.insert(character.handle);
         const auto holding = held.find(character.handle);
+        if (character.dead) {
+            if (holding != held.end()) {
+                step.release.push_back(character.handle);
+                held.erase(holding);
+            }
+            remembered.erase(character.handle);
+            continue;
+        }
         if (character.followed || character.killed) {
             if (holding != held.end()) {
                 step.hand_over.push_back(character.handle);
@@ -903,6 +911,11 @@ StoryHoldStep StoryRemovals::Step(u32 map, s64 visit_ms, s64 now_ms,
 
 void StoryRemovals::Held(u32 handle, s64 now_ms) {
     held[handle] = now_ms;
+}
+
+void StoryRemovals::Forget() {
+    removed.clear();
+    held.clear();
 }
 
 size_t StoryRemovals::RememberedOn(u32 map) const {
