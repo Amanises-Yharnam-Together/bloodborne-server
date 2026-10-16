@@ -126,6 +126,9 @@ std::atomic<s64> remo_step_ms{0};
 CutsceneSkip cutscene_skip; // CutsceneSkipPressed (the pad's reads)
 std::atomic<bool> skip_pressed{false};
 u64 team_sessions_opened = 0;
+// Kaniel 2026-10-16: this save left its team while playing (removed, or left from the menu): it
+// still clears the leaving flag and its phantom (TickTeamJoin) until the title or a team again.
+bool left_team_in_play = false; // team_mutex
 // Kaniel 2026-10-16: the team screen opened over the game from its System menu (TeamMenu), and
 // when it closed: the game's own page under it gets a Circle a moment later (TeamMenuBackPressed).
 std::atomic<bool> team_menu_open{false};
@@ -1220,6 +1223,7 @@ void LeaveTeamInPlay(u64 manager) {
         team_join = {};
         team_load = {};
         team_gate.DropStart();
+        left_team_in_play = true;
     }
     {
         std::scoped_lock lock{stream_mutex};
@@ -1259,6 +1263,7 @@ void AdoptTeamInPlay(const bbcoop::TeamStart& start) {
         team_world_reported_ms = 0;
         team_join = {};
         team_load.Start(SteadyMilliseconds());
+        left_team_in_play = false;
     }
     const bool host = start.host() == me;
     if (party_controller) {
@@ -1327,6 +1332,7 @@ void TeamBackAtTitle() {
     }
     team_session.reset();
     team_load = {};
+    left_team_in_play = false;
     team_load_covers.store(false, std::memory_order_relaxed);
     team_menu_open.store(false, std::memory_order_relaxed);
     {
@@ -1348,15 +1354,18 @@ bool TickTeamJoin(bool ready) {
     TickTeamPlay(manager);
     std::optional<bbcoop::TeamSession> session;
     bool in_team = false;
-    bool playing = false;
+    bool left_in_play = false;
     {
         std::scoped_lock lock{team_mutex};
-        playing = lobby_playing;
         in_team = !team_party.empty() && lobby_playing;
+        left_in_play = left_team_in_play && lobby_playing;
         session = team_session;
     }
-    if (!playing) {
-        return true; // at the title
+    // A save playing alone from its start reads none of this: the game's flag read walks the flag
+    // tree the loading thread rebuilds (rig 2026-10-16: a solo guest's load hung 3 times in 7 when
+    // every save read flag 4047 here). A save out of its team since still needs it to be a player.
+    if (!in_team && !left_in_play) {
+        return true;
     }
     static LeavingFlag leaving;
     if (leaving.Clear(EventFlagOn(LeavingFlag::Flag), InPartySession(), SteadyMilliseconds())) {
