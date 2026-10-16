@@ -2079,16 +2079,17 @@ class WindowChrome:
     """The launcher draws its own title bar (Kaniel 2026-10-16: no Windows caption buttons). The window is
     Tk's override-redirect kind (no frame at all, so Tk's sizes stay right; taking the caption style bits off
     a framed window left Tk computing its size with the old borders), given back its taskbar button and
-    Alt+Tab with WS_EX_APPWINDOW. Moving is handed to Windows as a drag of a caption (WM_NCLBUTTONDOWN);
-    the grip in the bottom right corner resizes; maximize fills the work area of the window's screen."""
+    Alt+Tab with WS_EX_APPWINDOW. The launcher moves the window itself while the button is held (handing
+    the drag to Windows with WM_NCLBUTTONDOWN ran Windows' move loop inside a Tk callback: the frozen
+    launcher aborted, 0xc0000409, on a press on an empty place, Kaniel 2026-10-17); the grip in the bottom
+    right corner resizes; maximize fills the work area of the window's screen."""
 
     GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW = -20, 0x00040000, 0x00000080
-    WM_NCLBUTTONDOWN, HTCAPTION = 0x00A1, 2
 
     def __init__(self, ui):
         self.ui, self.root = ui, ui.root
         self.enabled = sys.platform == 'win32'
-        self.applied, self.restore, self.sizing = False, None, None
+        self.applied, self.restore, self.sizing, self.grab = False, None, None, None
 
     def hwnd(self):
         return int(self.root.wm_frame(), 16)
@@ -2118,14 +2119,21 @@ class WindowChrome:
             pass
 
     def drag(self, event):
-        """A press on the title bar (or the empty top of the side column) moves the window like its caption."""
-        if not self.enabled or self.restore:
-            return
-        try:
-            ctypes.windll.user32.ReleaseCapture()
-            ctypes.windll.user32.SendMessageW(self.hwnd(), self.WM_NCLBUTTONDOWN, self.HTCAPTION, 0)
-        except (AttributeError, OSError, ValueError, self.ui.tk.TclError):
-            pass
+        """A press on the title bar (or the empty top of the side column, or around the co-op settings):
+        the window follows the pointer while the button is held (drag_move, bound beside it)."""
+        self.grab = None if self.restore else (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
+
+    def drag_move(self, event):
+        if self.grab:
+            self.root.geometry(f'+{event.x_root - self.grab[0]}+{event.y_root - self.grab[1]}')
+
+    def drag_end(self, _event=None):
+        self.grab = None
+
+    def bind_drag(self, widget):
+        widget.bind('<ButtonPress-1>', self.drag, add='+')
+        widget.bind('<B1-Motion>', self.drag_move, add='+')
+        widget.bind('<ButtonRelease-1>', self.drag_end, add='+')
 
     def resize_start(self, event):
         self.sizing = (event.x_root, event.y_root, self.root.winfo_width(), self.root.winfo_height())
@@ -2215,6 +2223,8 @@ class Sidebar:
         c.bind('<Motion>', lambda e: self.hot(self.at(e.y)))
         c.bind('<Leave>', lambda _e: self.hot(None))
         c.bind('<Button-1>', self.press)
+        c.bind('<B1-Motion>', lambda e: self.ui.chrome.drag_move(e))
+        c.bind('<ButtonRelease-1>', lambda e: self.ui.chrome.drag_end(e))
         c.bind('<Double-Button-1>', lambda e: self.above_menu(e.y) and self.ui.chrome.toggle_zoom())
 
     def load_emblem(self, size):
@@ -2377,6 +2387,7 @@ class Sidebar:
         if self.above_menu(event.y):
             self.ui.chrome.drag(event)
         else:
+            self.ui.chrome.drag_end()
             self.pick(event.y)
 
     def pick(self, y):
@@ -2975,7 +2986,7 @@ class Launcher:
         for kind, command in (('close', self.close), ('max', self.chrome.toggle_zoom), ('min', self.chrome.minimize)):
             self.caption_buttons[kind] = CaptionButton(self, top, kind, command)
             self.caption_buttons[kind].pack(side='right')
-        top.bind('<ButtonPress-1>', self.chrome.drag)
+        self.chrome.bind_drag(top)
         top.bind('<Double-Button-1>', self.chrome.toggle_zoom)
         root.bind('<Alt-F4>', lambda _e: self.close())  # no system menu to do it without a caption
         self.subtabs = SubTabs(self, main, self.settings_tabs, self.show)
@@ -3356,7 +3367,7 @@ class Launcher:
         self.coop_busy = self.coop_searching = False
         self.coop_required = False
         cover = self.coop_cover = tk.Frame(self.root, bg=BG)
-        cover.bind('<ButtonPress-1>', lambda e: self.chrome.drag(e))
+        self.chrome.bind_drag(cover)
         strip = tk.Frame(cover, bg=BG)
         strip.place(relx=1.0, y=0, anchor='ne')
         for kind, command in (('close', self.close), ('min', self.chrome.minimize)):
@@ -5828,8 +5839,29 @@ def main():
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
     root = tk.Tk()
+    keep_launcher_errors(root)
     Launcher(root, tk, ttk, filedialog, messagebox)
     root.mainloop()
+
+
+def keep_launcher_errors(root):
+    """The windowed launcher has no console: a fault of the process and an error in a window callback go
+    to user/log/launcher-errors.txt, so a crash leaves its cause behind (Kaniel 2026-10-17)."""
+    import faulthandler
+    import traceback
+    try:
+        folder = DATA_DIR / 'user' / 'log'
+        folder.mkdir(parents=True, exist_ok=True)
+        log = open(folder / 'launcher-errors.txt', 'a', encoding='utf-8', buffering=1)
+    except OSError:
+        return
+    log.write(f'--- launcher started {time.strftime("%Y-%m-%d %H:%M:%S")}\n')
+    faulthandler.enable(log)
+
+    def report(kind, value, trace):
+        log.write(''.join(traceback.format_exception(kind, value, trace)))
+    root.report_callback_exception = report
+    root.launcher_errors = log  # kept open for faulthandler while the window lives
 
 
 if __name__ == '__main__':
