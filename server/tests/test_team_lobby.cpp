@@ -302,6 +302,42 @@ int PlayersAreSeenByTheirCharactersName() {
   return 0;
 }
 
+int OfflineMemberLeavesAfterGrace() {
+  // Kaniel 2026-10-16: a game closed for good drops its player from the team
+  // after a grace period; a crash and Continue inside it still rejoin.
+  TeamLobby lobby = NewLobby();
+  lobby.Arrive("a", "Kaniel", false);
+  lobby.Arrive("b", "Ada", false);
+  lobby.Request("a", Request(Action::CREATE));
+  lobby.Request("a", Request(Action::INVITE, "b"));
+  lobby.Request("b", Request(Action::ACCEPT, {}, lobby.TeamOf("a")->id()));
+  lobby.Leave("a");
+  // The clock starts at the first look after the game is gone.
+  CHECK(!lobby.Expire(1000).changed);
+  CHECK(!lobby.Expire(1000 + OfflineGraceMs - 1).changed);
+  CHECK(lobby.TeamOf("a") != nullptr);
+  // Back in time: still a member, and its clock is gone.
+  lobby.Arrive("a", "Kaniel", false);
+  CHECK(!lobby.Expire(1000 + OfflineGraceMs).changed);
+  lobby.Leave("a");
+  CHECK(!lobby.Expire(5000).changed);
+  CHECK(!lobby.Expire(5000 + OfflineGraceMs - 1).changed);
+  // Gone for the whole grace: out of the team, and b leads.
+  CHECK(lobby.Expire(5000 + OfflineGraceMs).changed);
+  CHECK(lobby.TeamOf("a") == nullptr);
+  CHECK(lobby.TeamOf("b")->leader() == "b" &&
+        lobby.TeamOf("b")->members_size() == 1);
+  // A team kept on the server's disk, nobody online after a restart: the
+  // grace starts with the server, then the team is gone.
+  TeamLobby again = NewLobby();
+  again.Restore(lobby.Store());
+  CHECK(!again.Expire(7000).changed);
+  CHECK(again.TeamOf("b") != nullptr);
+  CHECK(again.Expire(7000 + OfflineGraceMs).changed);
+  CHECK(again.TeamOf("b") == nullptr && again.Store().teams_size() == 0);
+  return 0;
+}
+
 int main() {
   int failed = 0;
   failed |= PlayersAreSeenByTheirCharactersName();
@@ -310,6 +346,7 @@ int main() {
   failed |= ReadyAndStart();
   failed |= StartedTeamKeepsGoingWhileOnePlays();
   failed |= LeaveAndRemove();
+  failed |= OfflineMemberLeavesAfterGrace();
   failed |= StoreKeepsTeams();
   failed |= GuestsKeepTheirPlayerSlots();
   if (failed == 0) {

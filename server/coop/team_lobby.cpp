@@ -126,6 +126,7 @@ void TeamLobby::Settle() {
 TeamLobby::Outcome TeamLobby::Arrive(const std::string& member, const std::string& name,
                                      bool playing) {
     const bool arrived = !players.contains(member);
+    gone_since.erase(member);
     Player& player = players[member];
     // Phase 11: the character's name, when the game says one (playing); else the last one said.
     std::string& known = names[member];
@@ -170,6 +171,32 @@ TeamLobby::Outcome TeamLobby::Leave(const std::string& member) {
         if (bbcoop::TeamMember* m = MemberIn(team, member)) {
             m->set_ready(false);
         }
+    }
+    Settle();
+    return {.changed = true};
+}
+
+TeamLobby::Outcome TeamLobby::Expire(s64 now_ms) {
+    std::vector<std::string> expired;
+    for (const bbcoop::Team& team : teams) {
+        for (const bbcoop::TeamMember& m : team.members()) {
+            if (players.contains(m.member())) {
+                continue;
+            }
+            const s64 since = gone_since.try_emplace(m.member(), now_ms).first->second;
+            if (now_ms - since >= OfflineGraceMs) {
+                expired.push_back(m.member());
+            }
+        }
+    }
+    for (const std::string& member : expired) {
+        gone_since.erase(member);
+        if (bbcoop::Team* team = const_cast<bbcoop::Team*>(TeamOf(member))) {
+            RemoveFrom(*team, member);
+        }
+    }
+    if (expired.empty()) {
+        return {};
     }
     Settle();
     return {.changed = true};

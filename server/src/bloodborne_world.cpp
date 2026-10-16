@@ -1033,6 +1033,12 @@ void Service::Flush(qint64 now_ms, Result& result) {
 
 Service::Result Service::Tick(qint64 now_ms) {
     Result result;
+    if (const TeamLobby::Outcome expired = lobby.Expire(now_ms); expired.changed) {
+        result.log.append(QStringLiteral("team lobby: members gone for %1 min left their teams")
+                              .arg(OfflineGraceMs / 60000));
+        StoreTeams(result);
+        Settle(expired, now_ms, result);
+    }
     if (lobby_changed) {
         SendLobby(now_ms);
     }

@@ -134,7 +134,8 @@ Every hook goes in `bloodborne_patch_sites.h` with its byte check.
      session's host at the game level (the server still owns the world); the others join its
      session the moment they finish loading, no bell, no signs.
   6. The team lives on the server: after a crash or a quit, starting the game again and choosing
-     Continue in Co-op Party rejoins it where it is.
+     Continue in Co-op Party rejoins it where it is (within 10 minutes; a member gone longer
+     leaves the team).
 - **What the game offers** (static RE, details in docs/native-netcode/title-menu.md):
   - The live menus are Scaleform dialogs (`menu:/<name>.gfx`) opened with OpenDialog 0x01C1CDF0;
     the `FrpgMenuDlg*` classes are dead code. Clips are found with 0x01ADB220, the same lookup the
@@ -378,6 +379,10 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
      old session closes on the server (its new run's hello); a guest left alone clears flag 4047
      ("a player on the way out", `LeavingFlag`) and, a white phantom with no session, is a player
      again (`PhantomHome`). Rig: crash-apart, host-crash-apart, team-world.
+   - **Grace period** (Kaniel 2026-10-16): a member whose game stays gone for 10 minutes
+     (`OfflineGraceMs`) leaves its team on the server, as if it chose Leave; the next member
+     leads and an empty team is gone. A crash and restart inside the 10 minutes still rejoins.
+     After a server restart the clock starts with the server for everyone not back yet.
    - **No bell items** (Kaniel 2026-10-14): Beckoning Bell 200, Small Resonant Bell 205,
      Sinister Resonant Bell 225 and Old Hunter Bell 4312 leave the inventory in the port's co-op
      (checked every 3 s in the world); the Choir Bell (2050, a hunter tool) stays.
