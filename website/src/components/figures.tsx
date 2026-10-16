@@ -3,6 +3,7 @@
 
 import { ArchitectureDiagram } from "@/components/architecture-diagram";
 import { cn } from "@/lib/utils";
+import { apart, packetRates, roles, upload } from "@/content/traffic";
 
 function Hunter({ x, y, n }: { x: number; y: number; n: number }) {
   return (
@@ -206,6 +207,222 @@ export function LinksChart() {
   );
 }
 
+function Legend({ items }: { items: { name: string; color: string }[] }) {
+  return (
+    <ul
+      className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground"
+      aria-label="Legend"
+    >
+      {items.map((i) => (
+        <li key={i.name} className="flex items-center gap-2">
+          <span className="h-2.5 w-4 rounded-sm" style={{ background: i.color }} /> {i.name}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/* Packets a game sends each teammate per second, by kind and by the game's role. */
+export function RatesChart() {
+  const width = 640;
+  const left = 150;
+  const right = 44;
+  const top = 26;
+  const barH = 8;
+  const gap = 2;
+  const groupGap = 14;
+  const groupH = roles.length * (barH + gap) - gap;
+  const height = top + packetRates.length * (groupH + groupGap) + 22;
+  const max = 70;
+  const x = (v: number) => left + ((width - left - right) * v) / max;
+  return (
+    <div className="frame bg-card p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="font-display text-xs uppercase tracking-[0.18em] text-gilt">
+          Packets per second, to each teammate
+        </p>
+        <Legend items={roles} />
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="mx-auto w-full min-w-[520px] max-w-2xl"
+          role="img"
+          aria-label="Packets per second by kind and role; the same numbers are in the table below."
+        >
+          {[0, 10, 20, 30, 40, 50, 60, 70].map((t) => (
+            <g key={t}>
+              <line x1={x(t)} x2={x(t)} y1={top - 6} y2={height - 20} stroke="var(--border)" />
+              <text
+                x={x(t)}
+                y={top - 12}
+                textAnchor="middle"
+                fontSize="11"
+                fill="var(--muted-foreground)"
+              >
+                {t}
+              </text>
+            </g>
+          ))}
+          {packetRates.map((row, i) => {
+            const y0 = top + i * (groupH + groupGap);
+            return (
+              <g key={row.kind}>
+                <text x={0} y={y0 + groupH / 2 + 5} fontSize="13" fill="var(--bone)">
+                  {row.kind}
+                </text>
+                {roles.map((role, j) => {
+                  const v = row[role.key];
+                  const y = y0 + j * (barH + gap);
+                  const w = Math.max(v > 0 ? 2 : 0, x(v) - left);
+                  return (
+                    <g key={role.key}>
+                      <title>{`${row.kind}, ${role.name.toLowerCase()}: ${v} per second`}</title>
+                      <rect
+                        x={left}
+                        y={y - 1}
+                        width={width - left - right}
+                        height={barH + 2}
+                        fill="transparent"
+                      />
+                      {w > 0 && (
+                        <rect x={left} y={y} width={w} height={barH} rx="2" fill={role.color} />
+                      )}
+                      {v >= 20 && (
+                        <text
+                          x={x(v) + 6}
+                          y={y + barH}
+                          fontSize="11"
+                          fill="var(--muted-foreground)"
+                        >
+                          {v}/s
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+/* Upload from each game to the server over the rig run. */
+export function UploadChart() {
+  const width = 640;
+  const height = 260;
+  const l = 40;
+  const r = 14;
+  const t = 14;
+  const b = 40;
+  const xmax = 15;
+  const ymax = 10;
+  const x = (v: number) => l + ((width - l - r) * v) / xmax;
+  const y = (v: number) => t + (height - t - b) * (1 - v / ymax);
+  const series = [
+    { name: "Host, enemy owner", color: roles[0].color, i: 1 as const },
+    { name: "Guest", color: roles[1].color, i: 2 as const },
+  ];
+  return (
+    <div className="frame bg-card p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="font-display text-xs uppercase tracking-[0.18em] text-gilt">
+          Upload to the server, KB/s
+        </p>
+        <Legend items={series} />
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="mx-auto w-full min-w-[520px] max-w-2xl"
+          role="img"
+          aria-label="Upload over 15 minutes: the host sends about 6 to 9 KB/s, the guest about 2 to 4 KB/s. While the guest was on another map, from minute 11 to 13.5, the guest's upload rose to about 4.5 KB/s and the host's fell slightly."
+        >
+          <rect
+            x={x(apart[0])}
+            y={t}
+            width={x(apart[1]) - x(apart[0])}
+            height={height - t - b}
+            fill="var(--primary)"
+            fillOpacity="0.25"
+          />
+          <text x={x(apart[0]) + 6} y={t + 14} fontSize="11" fill="var(--bone)">
+            guest on another map
+          </text>
+          {[0, 2, 4, 6, 8, 10].map((v) => (
+            <g key={v}>
+              <line x1={l} x2={width - r} y1={y(v)} y2={y(v)} stroke="var(--border)" />
+              <text
+                x={l - 8}
+                y={y(v) + 4}
+                textAnchor="end"
+                fontSize="11"
+                fill="var(--muted-foreground)"
+              >
+                {v}
+              </text>
+            </g>
+          ))}
+          {[0, 3, 6, 9, 12, 15].map((v) => (
+            <text
+              key={v}
+              x={x(v)}
+              y={height - b + 16}
+              textAnchor="middle"
+              fontSize="11"
+              fill="var(--muted-foreground)"
+            >
+              {v}
+            </text>
+          ))}
+          <text x={l} y={height - 4} fontSize="11" fill="var(--muted-foreground)">
+            minutes since the guest joined
+          </text>
+          {series.map((s) => {
+            const last = upload[upload.length - 1];
+            return (
+              <g key={s.name}>
+                <path
+                  d={upload
+                    .map((p, k) => `${k ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[s.i]).toFixed(1)}`)
+                    .join("")}
+                  fill="none"
+                  stroke={s.color}
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                />
+                <circle
+                  cx={x(last[0])}
+                  cy={y(last[s.i])}
+                  r="4"
+                  fill={s.color}
+                  stroke="var(--card)"
+                  strokeWidth="2"
+                />
+              </g>
+            );
+          })}
+          {upload.map((p) => (
+            <rect
+              key={p[0]}
+              x={x(p[0]) - 3}
+              y={t}
+              width="6"
+              height={height - t - b}
+              fill="transparent"
+            >
+              <title>{`Minute ${p[0].toFixed(1)}: host ${p[1]} KB/s, guest ${p[2]} KB/s`}</title>
+            </rect>
+          ))}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 /* The path of one game packet with the server netcode. */
 export function PacketPathFigure() {
   const steps = [
@@ -317,6 +534,8 @@ export const figures = {
   architecture: ArchitectureDiagram,
   topology: TopologyFigure,
   links: LinksChart,
+  rates: RatesChart,
+  upload: UploadChart,
   "packet-path": PacketPathFigure,
   "save-split": SaveSplitFigure,
   "join-flow": JoinFlowFigure,

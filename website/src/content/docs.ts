@@ -4,6 +4,7 @@
 
 import type { FigureId } from "@/components/figures";
 import { RELEASES_URL, REPO_URL, SERVER_COOP_BRANCH_URL } from "@/lib/site";
+import { packetRates, rateTotal, roles } from "@/content/traffic";
 
 export type Block =
   | { type: "p"; text: string }
@@ -364,7 +365,7 @@ const netcode: DocPage = {
         {
           type: "ul",
           items: [
-            "**Every game packet goes through one send and one receive point.** Packets travel on numbered channels, some unreliable (movement) and some reliable (everything that must arrive). Hooking those two points lets the co-op code see, drop, rewrite or inject any packet.",
+            "**Every game packet goes through one send and one receive point.** Packets travel on 68 numbered channels (about 60 in use), some unreliable (movement) and some reliable (everything that must arrive). Hooking those two points lets the co-op code see, drop, rewrite or inject any packet.",
             "**The native model is one host's world.** The host runs every enemy and sends their positions and HP; a guest's hit on an enemy goes to the host, which applies it. A joining guest gets the host's flags for the host's current map only, once.",
             "**Players sync themselves.** Each game sends its own player: position, heading, HP and the animation state. A hit on a player goes to the victim's game, which decides its HP.",
           ],
@@ -431,6 +432,102 @@ const netcode: DocPage = {
             "**Our own reliability layer**, per member and per class: sequence numbers, acks, resends and in-order delivery for reliable traffic (the game's reliable channels, world-log entries, snapshots). Unreliable traffic such as movement is never resent; the newest wins. Who is connected, outages and timeouts come from this layer, not from the game's own timers.",
             "**Protobuf messages** (`server/proto/coop.proto`, shared by the game and the server): `Hello` (account, build, protocol), the lobby (`TeamCreate`, `Invite`, `InviteAnswer`, `TeamState`, `Ready`, `Start`), the session (`Place`, `MemberJoined`, `MemberLeft`, `EnemyOwner`), the world log (`Propose`, `Entries`, `SnapshotRequest`, `Snapshot`), vitals, party death and portraits.",
             "**One build for everyone.** `Hello` carries the build, and a different build is refused at the lobby with a clear message. There are no compatibility fallbacks.",
+          ],
+        },
+      ],
+    },
+    {
+      id: "traffic",
+      title: "What a game sends",
+      blocks: [
+        {
+          type: "p",
+          text: "Measured on the test rig: two players at 30 FPS on one PC, from the server's per-kind counters and the games' own logs. The game sends each packet once per teammate, and the server forwards it only to teammates on the same map, so a player on another map gets almost nothing from the others.",
+        },
+        {
+          type: "figure",
+          figure: "rates",
+          caption:
+            "Game packets a game hands to each teammate per second, by its role. The follower's total is measured; its split is partly inferred.",
+          alt: "Grouped bar chart; the same numbers are in the table below.",
+        },
+        {
+          type: "table",
+          head: ["Kind", ...roles.map((r) => r.name)],
+          rows: [
+            ...packetRates.map((r) => [
+              r.kind,
+              String(r.owner),
+              String(r.follower),
+              String(r.lone),
+            ]),
+            ["**Total**", ...roles.map((r) => `**~${rateTotal(r.key)}**`)],
+          ],
+        },
+        {
+          type: "ul",
+          items: [
+            "**Event sync is most of the owner's packets.** It is reliable, so every packet is acknowledged. It ran at about 2 a second in an earlier trace, so the current rate is being looked into.",
+            "**Frame rate sets most of the rates.** Enemy HP goes every 4th frame and player state every 5th, so at the 60 FPS used online both double.",
+            "**Bandwidth is not the limit.** Under 10 KB/s per game with two players; with three, the host's upload peaks around 13 KB/s. The rig link had 2 ms round trips and no resends.",
+          ],
+        },
+        {
+          type: "figure",
+          figure: "upload",
+          caption:
+            "Bytes each game sent to the server per second, from the server's 10-second link counters. While the guest was on another map it ran that map's enemies, so its upload rose; the server forwarded none of the host's same-map packets to it.",
+          alt: "Line chart over 15 minutes: the host uploads about 6 to 9 KB/s, the guest about 2 to 4 KB/s. While the guest was on another map, from minute 11 to 13.5, the guest's upload rose to about 4.5 KB/s and the host's fell slightly.",
+        },
+        { type: "h3", text: "Where the server sends each kind" },
+        {
+          type: "table",
+          head: ["Kind", "Route"],
+          rows: [
+            [
+              "Player state, event sync, enemy AI records, forced animations, script calls",
+              "teammates on the same map",
+            ],
+            [
+              "Enemy positions, HP and catch-up for joiners",
+              "from the map's enemy owner to the others on that map",
+            ],
+            ["A teammate's hits on enemies, enemy near lists", "to the map's enemy owner only"],
+            ["Player hits, throws, bullets, objects", "teammates on the same map"],
+            ["Join handshake, character data", "every teammate"],
+            ["Map items, door corrections, the boss-room kick", "never forwarded"],
+          ],
+        },
+        { type: "h3", text: "Our own messages" },
+        {
+          type: "p",
+          text: "Besides the game's packets, each game and the server exchange protobuf messages on their own reliable stream: about five a second each way when nothing changes.",
+        },
+        {
+          type: "table",
+          head: ["Message", "Direction", "How often"],
+          rows: [
+            ["Ping", "game and server", "once a second"],
+            [
+              "Map and enemy owners board",
+              "game to server to team",
+              "once a second, and at once on a map change",
+            ],
+            [
+              "Vitals (HP, downed)",
+              "game to server to team",
+              "once a second; 4 a second while someone is down",
+            ],
+            ["HP proposals", "game to server", "twice a second, and at once on a change"],
+            ["Enemy hits", "game to server to team", "one per hit that takes HP"],
+            ["World-log entries", "server to team", "heartbeat once a second, at once on news"],
+            [
+              "Flags (doors, lamps, levers)",
+              "game to server",
+              "at once, then every half second for 10 seconds",
+            ],
+            ["Map state report", "host to server", "about every 6 seconds, ~1.25 KB"],
+            ["Portrait", "game to server to team", "every 15 seconds, 16 KB"],
           ],
         },
       ],

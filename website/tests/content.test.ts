@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { figures } from "@/components/figures";
 import { docs } from "@/content/docs";
 import { faq } from "@/content/faq";
+import { packetRates } from "@/content/traffic";
 import { parseInline, stripInline } from "@/lib/inline";
 import { llmsFull, llmsIndex } from "@/lib/llms";
 import { existsSync } from "node:fs";
@@ -69,6 +70,12 @@ describe("docs content", () => {
   it("never names a real player: only rig and placeholder accounts", () => {
     const all = llmsFull();
     for (const name of ["Lisara", "krolebord", "Krolebord"]) expect(all).not.toContain(name);
+  });
+
+  it("shows no packet channel codes or game addresses", () => {
+    const all = llmsFull() + JSON.stringify(packetRates);
+    expect(all).not.toMatch(/(?<![\w/])0x[0-9a-f]+/i);
+    expect(all).not.toMatch(/\bchannels? \d/i);
   });
 });
 
