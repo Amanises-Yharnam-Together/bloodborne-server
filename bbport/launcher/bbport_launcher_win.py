@@ -1567,19 +1567,18 @@ class FlatButton(Widget):
 
 
 class PlayButton(Widget):
-    """The big primary button: chamfered corners, hover glow, a slow idle pulse, pressed state."""
+    """The big primary button: dark stone with cut corners in a gold frame, a thin inner gold line, lighter
+    under the pointer, pressed state (Kaniel 2026-10-16: no glow around it, no sheen across it)."""
 
     def __init__(self, ui, parent, text, command):
         px = ui.px
-        self.pad, self.w, self.h = px(12), px(228), px(58)
+        self.pad, self.w, self.h = px(3), px(228), px(58)
         self.text, self.command, self.state, self.pressed, self.pulse = text, command, 'normal', False, 0.5
         super().__init__(ui, parent, self.w + 2 * self.pad, self.h + 2 * self.pad, BG, takefocus=True)
         c, pad, cut = self.canvas, self.pad, px(10)
         self.cut = cut
-        self.rings = [c.create_polygon(self.outline(pad - px(2) * i, cut + px(2) * i), fill='', width=px(2))
-                      for i in range(5, 0, -1)]
-        self.body = c.create_polygon(self.outline(pad, cut), width=1)
-        self.sheen = c.create_polygon(self.sheen_points(), outline='')
+        self.body = c.create_polygon(self.outline(pad, cut), width=max(1, px(1.5)))
+        self.inner = c.create_polygon(self.outline(pad + px(4), cut - px(2)), fill='', width=1)
         self.label = c.create_text(pad + self.w // 2, pad + self.h // 2, text=text, font=ui.fonts['play'])
         c.bind('<Enter>', lambda _e: self.state == 'normal' and self.fade_hover(1.0, 200))
         c.bind('<Leave>', lambda _e: self.leave())
@@ -1596,11 +1595,6 @@ class PlayButton(Widget):
         x0, y0, x1, y1 = self.pad - grow, self.pad - grow, self.pad + self.w + grow, self.pad + self.h + grow
         return [x0 + cut, y0, x1 - cut, y0, x1, y0 + cut, x1, y1 - cut, x1 - cut, y1, x0 + cut, y1, x0, y1 - cut,
                 x0, y0 + cut]
-
-    def sheen_points(self):
-        x0, y0, x1, ym = self.pad + 1, self.pad + 1, self.pad + self.w - 1, self.pad + self.h // 2
-        c = self.cut
-        return [x0 + c, y0, x1 - c, y0, x1, y0 + c, x1, ym, x0, ym, x0, y0 + c]
 
     def animate(self, on):
         if on:
@@ -1657,10 +1651,8 @@ class PlayButton(Widget):
             edge, ink = mix(GOLD_DIM, GOLD, 0.45 + 0.55 * t), TEXT
             if self.pressed:
                 base, glow = mix(base, BG, .35), 0.35
-        for i, ring in enumerate(self.rings):  # outermost first
-            c.itemconfigure(ring, outline=mix(BG, GOLD, glow * (i / len(self.rings)) ** 1.6 * 0.55))
         c.itemconfigure(self.body, fill=base, outline=edge)
-        c.itemconfigure(self.sheen, fill=mix(base, '#ffffff', 0.045 if self.state == 'normal' else 0.0))
+        c.itemconfigure(self.inner, outline=mix(base, edge, 0.35 + 0.25 * glow if self.state == 'normal' else 0.2))
         c.itemconfigure(self.label, fill=ink)
         shift = self.ui.px(1) if self.pressed else 0
         c.coords(self.label, self.pad + self.w // 2, self.pad + self.h // 2 + shift)
@@ -1785,7 +1777,7 @@ class StatusIcon(Widget):
     def __init__(self, ui, parent, kind, bg=BG):
         px = ui.px
         self.kind, self.state, self.busy, self.bg = kind, '•', False, bg
-        self.size = px(34)
+        self.size = px(54)
         super().__init__(ui, parent, self.size, self.size, bg, cursor='arrow')
         self.tip = Tooltip(ui, self.canvas)
         self.canvas.bind('<Enter>', lambda _e: self.fade_hover(1.0), add='+')
@@ -1799,8 +1791,11 @@ class StatusIcon(Widget):
         self.paint()
 
     def glyph(self, c, ink, w):
-        s, px = self.size, self.ui.px
-        m = s / 2 - px(3)
+        s, ui = self.size, self.ui
+        m = s / 2 - ui.px(2)
+
+        def px(v):  # the glyph drawn 1.7 times its first size (Kaniel 2026-10-16: big icons)
+            return ui.px(v * 1.7)
         if self.kind == 'game':  # a disc
             c.create_oval(m - px(9), m - px(9), m + px(9), m + px(9), outline=ink, width=w)
             c.create_oval(m - px(2), m - px(2), m + px(2), m + px(2), outline=ink, width=w)
@@ -1827,13 +1822,18 @@ class StatusIcon(Widget):
     def paint(self):
         c, px = self.canvas, self.ui.px
         c.delete('all')
+        # A slot as the game's item slots: dark stone, a thin frame, gold once the pointer is on it.
+        s = self.size - 1
+        c.create_rectangle(0, 0, s, s, fill=CARD, outline=mix(LINE_HI, GOLD, self.hover))
+        c.create_rectangle(px(3), px(3), s - px(3), s - px(3), outline=mix(CARD, LINE, 0.8))
         ink = mix(MUTED, TEXT, self.hover)
-        self.glyph(c, ink, max(1, px(1.4)))
-        # The badge: the state's colour in the lower right, a tick, a bar or a cross in it.
-        r, cx, cy = px(6), self.size - px(7), self.size - px(7)
+        self.glyph(c, ink, max(1, px(1.8)))
+        # The badge: the state's colour in the lower right corner, a tick, a bar or a cross in it.
+        r, cx, cy = px(8), self.size - px(10), self.size - px(10)
         color = DIM if self.busy else self.STATES.get(self.state, DIM)
-        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=color, outline=self.bg, width=px(2))
-        w = max(1, px(1.5))
+        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=color, outline=CARD, width=px(2))
+        w = max(1, px(2))
+        px = lambda v: self.ui.px(v * 1.3)  # noqa: E731 (the marks in the larger badge)
         if self.busy:
             c.create_line(cx - px(3), cy, cx + px(3), cy, fill=BG, width=w)
         elif self.state == '✓':
@@ -3021,7 +3021,7 @@ class Launcher:
         footer = tk.Frame(main, bg=BG)
         footer.pack(side='bottom', fill='x')
         tk.Frame(footer, bg=LINE, height=1).pack(fill='x')
-        bar = tk.Frame(footer, bg=BG, height=px(96))
+        bar = tk.Frame(footer, bg=BG, height=px(112))
         bar.pack(fill='x')
         bar.pack_propagate(False)
         self.play_button = PlayButton(self, bar, _('PLAY', 'ИГРАТЬ'), self.play)
@@ -3034,14 +3034,14 @@ class Launcher:
         self.checks = {}
         for key in ('game', 'saves', 'gpu', 'fsr4', 'upscaler'):
             self.checks[key] = StatusIcon(self, icons, key)
-            self.checks[key].pack(side='left', padx=(0, px(6)))
+            self.checks[key].pack(side='left', padx=(0, px(8)))
         self.checks['upscaler'].pack_forget()  # only once the saved upscaler was changed
         self.server_row = None
         if COOP_INSTALL:
             # The host's server: PLAY starts it on the host's PC; these are for a host who only hosts.
             row = self.server_row = tk.Frame(icons, bg=BG)
             row.pack(side='left', padx=(px(14), 0))
-            tk.Frame(row, bg=LINE, width=1, height=px(26)).pack(side='left', padx=(0, px(14)))
+            tk.Frame(row, bg=LINE, width=1, height=px(40)).pack(side='left', padx=(0, px(14)))
             self.button(row, _('Start server', 'Запустить сервер'), self.coop_start_servers, bg=BG).pack(side='left')
             self.button(row, _('Stop server', 'Остановить сервер'), self.coop_stop_servers,
                         bg=BG).pack(side='left', padx=(px(8), 0))
@@ -4455,7 +4455,7 @@ class Launcher:
         if self.upscaler_notice:
             self.checks['upscaler'].set(self.upscaler_notice)
             if not self.checks['upscaler'].canvas.winfo_manager():
-                self.checks['upscaler'].pack(side='left', padx=(0, self.px(6)), after=self.checks['fsr4'].canvas)
+                self.checks['upscaler'].pack(side='left', padx=(0, self.px(8)), after=self.checks['fsr4'].canvas)
         for label in getattr(self, 'warnings', []):
             if info and info[1] != PATCH_VERSION:
                 label.configure(text=label.template.format(info[1]))
