@@ -3346,7 +3346,7 @@ class Launcher:
         card.frame.pack_configure(padx=0, pady=0)
         card.columnconfigure(0, weight=1, uniform='coop', minsize=0)
         card.columnconfigure(1, weight=1, uniform='coop', minsize=0)
-        self.coop_vars = {}
+        self.coop_vars, self.coop_picked = {}, set()
 
         def var(key, value=None):
             v = tk.StringVar(value=self.coop.get(key, '') if value is None else value)
@@ -3376,8 +3376,17 @@ class Launcher:
             box = ttk.Combobox(cell, values=[_(*t) for _v, t in options], state='readonly', width=30)
             box.current(values.index(self.coop.get(key)) if self.coop.get(key) in values else 0)
             v = var(key, values[box.current()])
-            box.bind('<<ComboboxSelected>>', lambda _e: v.set(values[box.current()]))
+
+            def picked(_e):
+                self.coop_picked.add(key)
+                v.set(values[box.current()])
+                self.coop_changed_soon()
+            box.bind('<<ComboboxSelected>>', picked)
             box.pack(fill='x')
+            if self.coop.get('confirmed') != '1':
+                box.set('')  # chosen once by the player (Kaniel 2026-10-16), not taken by default
+            else:
+                self.coop_picked.add(key)
             return box
 
         # No Player/Host switch (Kaniel 2026-10-16): the host types their own address, and PLAY starts the
@@ -3387,8 +3396,8 @@ class Launcher:
                   textvariable=var('host_ip')).pack(fill='x')
         # No account name or password (phase 11): the player's id is made once and kept in coop.json,
         # and the others see the character's name. No party settings: the team is made in the game (the team screen after Continue).
-        combo(self.cell(card, 3, 1, _('Enemies (the same for every player)', 'Враги (у всех одинаково)')),
-              'harder', HARDER_CHOICES)
+        self.coop_enemies = combo(self.cell(card, 3, 1, _('Enemies (the same for every player)',
+                                                          'Враги (у всех одинаково)')), 'harder', HARDER_CHOICES)
         holder = self.cell(card, 4, 0, '', span=2)
         self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
                     self.coop_import_saves).pack(anchor='w')
@@ -3414,6 +3423,8 @@ class Launcher:
             missing.append(_('the game folder', 'папка игры'))
         if not bbport_coop.valid_ip(self.coop.get('host_ip', '')):
             missing.append(_("the host's IP", 'IP хоста'))
+        if 'harder' not in getattr(self, 'coop_picked', {'harder'}):
+            missing.append(_('the enemies', 'враги'))
         return missing
 
     def open_coop(self, required=False):

@@ -191,7 +191,7 @@ class LookTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
 class CoopSettingsTests(unittest.TestCase):
     """Kaniel 2026-10-16: the co-op settings open over the window at the first start, and the launcher
-    stays behind them until the game folder and the host's IP are set."""
+    stays behind them until the game folder, the host's IP and the enemies are set."""
 
     def setUp(self):
         import tempfile
@@ -254,6 +254,11 @@ class CoopSettingsTests(unittest.TestCase):
         self.assertTrue(cover.winfo_ismapped(), 'Done does nothing while settings are missing')
         self.app.coop_vars['game'].set(str(self.game))
         self.app.coop_vars['host_ip'].set('26.1.2.3')
+        self.settle()
+        self.assertEqual(self.app.coop_done.state, 'disabled', 'the enemies are chosen, not taken by default')
+        self.assertIn('the enemies', self.app.coop_missing.cget('text'))
+        self.app.coop_enemies.current(0)
+        self.app.coop_enemies.event_generate('<<ComboboxSelected>>')
         self.settle()
         self.assertEqual(self.app.coop_done.state, 'normal')
         self.app.coop_done.invoke()
