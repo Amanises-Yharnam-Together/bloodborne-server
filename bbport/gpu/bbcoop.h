@@ -154,6 +154,9 @@ uint32_t bbcoop_trade_held(uint32_t kind, uint32_t id);
 /* The quantity picker's line for giving the item to the nearest member on this map; 0 when
  * nobody is there to give to. */
 int bbcoop_trade_give_question(uint32_t kind, uint32_t id, char *text, size_t size);
+/* The Blood Echoes picker's steps for what the player holds now: Up/Down (also its first and
+ * lowest number) and the game's other step. */
+void bbcoop_trade_echoes_picker(uint32_t *step, uint32_t *big_step);
 /* Offers `count` of the item to the nearest member (taken out at once; an item of its own: the
  * inventory entry with `handle`, else the first): 1 when sent. */
 int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count, uint32_t handle);

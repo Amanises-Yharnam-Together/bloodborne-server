@@ -69,8 +69,19 @@ int bbcoop_trade_give_question(uint32_t kind, uint32_t id, char* text, size_t si
     if (partners.empty()) {
         return 0;
     }
-    return Copy(BloodborneCoop::TradeGiveQuestion(ItemOf(kind, id), TradeName(partners.front())),
-                text, size);
+    const std::string to = TradeName(partners.front());
+    if (static_cast<TradeItemKind>(kind) == TradeItemKind::Echoes) {
+        return Copy(BloodborneCoop::TradeGiveEchoesQuestion(TradeHeld(ItemOf(kind, id)), to), text,
+                    size);
+    }
+    return Copy(BloodborneCoop::TradeGiveQuestion(ItemOf(kind, id), to), text, size);
+}
+
+void bbcoop_trade_echoes_picker(uint32_t* step, uint32_t* big_step) {
+    const BloodborneCoop::TradeEchoesPicker picker =
+        BloodborneCoop::TradeEchoesPickerFor(TradeHeld(ItemOf(1, 0)));
+    *step = picker.step;
+    *big_step = picker.big_step;
 }
 
 int bbcoop_trade_offer(uint32_t kind, uint32_t id, uint32_t count, uint32_t handle) {
