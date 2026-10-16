@@ -403,6 +403,11 @@ bool LampRestsEnabled(const char* setting) {
     return setting != nullptr && std::string_view{setting} == "1";
 }
 
+bool WaitsForMemberData(s32 kind, s32 step) {
+    return (kind == RemoteHostTask || kind == RemoteGuestTask) && step >= 0 &&
+           step < CreateCharacterStep;
+}
+
 bool ShouldRecreateAfterTrip(s32 kind, s32 step) {
     return (kind == RemoteHostTask || kind == RemoteGuestTask) && step == InSessionStep;
 }
@@ -5707,21 +5712,43 @@ PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view
 std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
                                     std::span<const MemberVitals> board, std::string_view self,
                                     u32 map) {
-    std::vector<bool> shown;
-    for (const std::optional<LampPosition>& at : characters) {
+    // Kaniel's playtest 2026-10-16: krolebord's copy stayed by the lantern after his Dream trip,
+    // kept shown by Lisara standing 16 m away. Each member on this map vouches for one character
+    // only: the nearest pairs first.
+    std::vector<bool> shown(characters.size(), false);
+    struct Pair {
+        float distance;
+        size_t character;
+        size_t member;
+    };
+    std::vector<Pair> pairs;
+    for (size_t c = 0; c < characters.size(); ++c) {
+        const std::optional<LampPosition>& at = characters[c];
         if (!at) {
-            shown.push_back(true);
+            shown[c] = true;
             continue;
         }
-        shown.push_back(std::ranges::any_of(board, [&](const MemberVitals& member) {
+        for (size_t m = 0; m < board.size(); ++m) {
+            const MemberVitals& member = board[m];
             if (member.member == self || member.map != map || map == 0) {
-                return false;
+                continue;
             }
             const float dx = member.at[0] - (*at)[0];
             const float dy = member.at[1] - (*at)[1];
             const float dz = member.at[2] - (*at)[2];
-            return dx * dx + dy * dy + dz * dz <= PresenceMetres * PresenceMetres;
-        }));
+            const float distance = dx * dx + dy * dy + dz * dz;
+            if (distance <= PresenceMetres * PresenceMetres) {
+                pairs.push_back({distance, c, m});
+            }
+        }
+    }
+    std::ranges::sort(pairs, {}, &Pair::distance);
+    std::vector<bool> vouched(board.size(), false);
+    for (const Pair& pair : pairs) {
+        if (!shown[pair.character] && !vouched[pair.member]) {
+            shown[pair.character] = true;
+            vouched[pair.member] = true;
+        }
     }
     return shown;
 }

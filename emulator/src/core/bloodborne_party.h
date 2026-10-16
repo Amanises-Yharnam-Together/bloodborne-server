@@ -634,6 +634,10 @@ private:
 };
 constexpr s32 InSessionStep = 6;
 bool ShouldRecreateAfterTrip(s32 kind, s32 step);
+// Kaniel's playtest 2026-10-16: krolebord joined in place and never saw Lisara: her task in his
+// game stayed at step 1 (waiting for her character data) and nothing asked for it. A remote
+// player's task still before CreateCharacterStep is one to ask the data for.
+bool WaitsForMemberData(s32 kind, s32 step);
 s32 RemoteTaskKind(bool hosting);
 // SessionManager +0x118: set by the game's kick-all (0x0178D7F8, the ForceSummonSuccess handler);
 // while it is set the host kicks every joiner on arrival (0x01ED121E, reason 0xff000019) until the
