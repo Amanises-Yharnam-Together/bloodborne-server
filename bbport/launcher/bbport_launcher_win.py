@@ -2982,7 +2982,10 @@ class Launcher:
         self.content = tk.Frame(main, bg=PANEL)
         self.content.pack(side='top', fill='both', expand=True)
         if COOP_INSTALL:
-            self.side.set_texts(_('Seamless Co-op', 'Бесшовный кооператив') + f'  ·  v{coop_release_version() or VERSION}', '')
+            # The co-op release's own version (VERSION.txt), never the upstream port's (Kaniel 2026-10-16).
+            release = coop_release_version()
+            self.side.set_texts(_('Seamless Co-op', 'Бесшовный кооператив') + '  ·  ' + (
+                f'v{release}' if release else _('development build', 'сборка разработчика')), '')
         else:
             self.side.set_texts(_('native port · Windows', 'нативный порт · Windows') + f'  ·  v{VERSION}', '')
         if self.motion.enabled:
