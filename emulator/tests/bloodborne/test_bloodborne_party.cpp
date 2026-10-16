@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "core/bloodborne_party.h"
+#include "core/bloodborne_write_watch.h"
 
 using Core::Bloodborne::CoopTimeMeter;
 using Core::Bloodborne::ParsePartySetting;
@@ -91,4 +92,13 @@ TEST(MemberPresence, AnotherPlayerShowsOnlyWhileAMemberOnThisMapStandsThere) {
     // A character without a position shows (nothing to tell).
     const std::vector<std::optional<LampPosition>> unknown{std::nullopt};
     EXPECT_EQ(ShownOtherPlayers(unknown, board, "me", Yharnam), (std::vector<bool>{true}));
+}
+
+// Kaniel's playtest 2026-10-16: krolebord's game crashed scanning 256 stack slots past the end of a
+// worker thread's stack (a watched write). The scan stops where the stack's readable bytes do.
+TEST(BloodborneWriteWatch, TheStackScanStaysOnTheStack) {
+    EXPECT_EQ(StackSlotsToScan(2000, 256), 250u);
+    EXPECT_EQ(StackSlotsToScan(4096, 256), 256u);
+    EXPECT_EQ(StackSlotsToScan(7, 256), 0u);
+    EXPECT_EQ(StackSlotsToScan(0, 256), 0u);
 }
