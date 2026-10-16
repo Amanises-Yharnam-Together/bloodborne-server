@@ -1697,6 +1697,12 @@ private:
     u64 player = 0;
 };
 
+// Kaniel's playtest 2026-10-17: his Central Yharnam kills came back for him only after a lamp
+// trip while both guests stood in Cathedral Ward, where Central Yharnam's enemies are loaded too.
+// Maps the game loads together count as one for "someone is on that map" (the Ward and Central
+// Yharnam).
+bool MapsLoadedTogether(u32 a, u32 b);
+
 class VisitKills {
 public:
     // `others_maps`: where the other members are now; `map`: where this member is (0: the

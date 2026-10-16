@@ -1657,6 +1657,28 @@ TEST(BloodborneSharedKills, AMembersKillsLastForItsVisit) {
 // hid 3 enemies where the host had killed 1. He went down at full HP: a boss-sized character
 // dying with no damage seen before is its world putting it down, not a kill. Big ordinary
 // enemies (late game, co-op scaled) hit to death still are.
+// Kaniel's playtest 2026-10-17: Central Yharnam kills, the host gone to the Dream, both guests in
+// Cathedral Ward (Central Yharnam's enemies loaded there too): the kills stand.
+TEST(BloodborneSharedKills, KillsStandWhileSomeoneIsOnAMapLoadedWithTheirs) {
+    constexpr u32 Ward = 0x18000000, Central = 0x18010000, Dream = 0x15000000;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    const u64 visit = u64{Central} << 32 | 1;
+    VisitKills kills;
+    kills.Observe(visit, std::vector<SeenCharacter>{{0x10014007, 300}}, {}, Central);
+    EXPECT_EQ(kills.Observe(visit, std::vector<SeenCharacter>{{0x10014007, 0}}, {}, Central),
+              (Changes{{0x10014007, true}}));
+    const std::vector<u32> guests_in_the_ward{Ward, Ward};
+    EXPECT_EQ(kills.Observe(u64{Dream} << 32 | 2, {}, guests_in_the_ward, Dream), Changes{})
+        << "held: someone is where Central Yharnam is loaded";
+    const std::vector<u32> guests_elsewhere{0x16000000, 0x16000000};
+    EXPECT_EQ(kills.Observe(u64{Dream} << 32 | 2, {}, guests_elsewhere, Dream),
+              (Changes{{0x10014007, false}}))
+        << "nobody there any more: it resets";
+    EXPECT_TRUE(MapsLoadedTogether(Ward, Central));
+    EXPECT_TRUE(MapsLoadedTogether(Central, Ward));
+    EXPECT_FALSE(MapsLoadedTogether(Central, Dream));
+}
+
 TEST(BloodborneSharedKills, ABossSizedPutDownIsNoKill) {
     VisitKills kills;
     using Changes = std::vector<std::pair<s32, bool>>;
@@ -1755,17 +1777,21 @@ TEST(BloodborneSharedKills, AKillIsOfTheMapItDiedOn) {
     EXPECT_EQ(kills.Observe(walk, both_dead, lisara_in_ward, Ward), (Changes{{0x1001005f, true}}))
         << "walked into the Ward: the same visit";
     EXPECT_EQ(kills.Standing(), (WorldLogKills{{Yharnam, {0x10014068}}, {Ward, {0x1001005f}}}));
-    EXPECT_EQ(kills.Observe(visit(Dream, 2), {}, lisara_in_ward, Dream),
-              (Changes{{0x10014068, false}}))
-        << "to the Dream: Lisara holds the Ward's kill, Central Yharnam's goes";
+    // Kaniel 2026-10-17: Central Yharnam's enemies are loaded in the Ward too, so Lisara there
+    // holds both kills (the Central one came back for the host alone).
+    EXPECT_EQ(kills.Observe(visit(Dream, 2), {}, lisara_in_ward, Dream), Changes{})
+        << "to the Dream: Lisara holds both";
     EXPECT_EQ(kills.Held(Ward), (std::vector<u32>{0x1001005f}));
-    EXPECT_TRUE(kills.Held(Yharnam).empty());
+    EXPECT_EQ(kills.Held(Yharnam), (std::vector<u32>{0x10014068}));
     EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, lisara_in_ward, Ward), Changes{})
-        << "back at the Ward's lamp: the respawned copy is hidden";
+        << "back at the Ward's lamp: the respawned copies are hidden";
     EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, {}, Ward), Changes{})
         << "Lisara left, but this member is there";
-    EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, {}, Yharnam), (Changes{{0x1001005f, false}}))
-        << "walked out too: nobody on the Ward";
+    EXPECT_EQ(kills.Observe(visit(Ward, 3), alive, {}, Yharnam), Changes{})
+        << "walked into Central Yharnam: the Ward is loaded with it";
+    EXPECT_EQ(kills.Observe(visit(Dream, 4), {}, {}, Dream),
+              (Changes{{0x1001005f, false}, {0x10014068, false}}))
+        << "nobody in either: both reset";
 }
 
 // Kaniel 2026-10-11: an enemy another member killed vanished in front of the player (hidden with
