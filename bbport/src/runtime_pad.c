@@ -584,20 +584,55 @@ static int pad_value(SDL_Gamepad *g, int input) {
 static uint8_t key_axis(uint8_t value, int negative, int positive) {
     return negative || positive ? (uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0)) : value;
 }
-/* The left stick from the movement keys. Keys on both axes (a diagonal) put the stick on the circle a real
- * stick travels, 45 degrees at 90 counts a side (127 * sqrt(1/2)), not in a corner of the square ((0,0) for W+A), 1.41
- * times a full push: letting go of one key then dropped the push from 1.41 to 1.0 in one frame, which the
- * game may read as the stick being let go (the sprint ends). Keys on one axis only, or opposing keys, and
- * a gamepad's stick otherwise, keep key_axis. */
-#define DIAGONAL_COUNTS 90
-static void key_left_stick(PadData *d, int left, int right, int up, int down) {
-    if (left!=right && up!=down) {
-        d->left_x=(uint8_t)(128+(right ? DIAGONAL_COUNTS : -DIAGONAL_COUNTS));
-        d->left_y=(uint8_t)(128+(down ? DIAGONAL_COUNTS : -DIAGONAL_COUNTS));
+static uint8_t stick_byte(float v) {
+    const int x=128+(int)lroundf(v*(v<0 ? 128.0f : 127.0f));
+    return (uint8_t)(x<0 ? 0 : x>255 ? 255 : x);
+}
+/* The left stick from the movement keys. Measured by cassioKenji (Supermedo's bbport 4b930b1, their PR #74): the game
+ * picks walk or run by the larger stick axis (a square gate), and ends a sprint when the stick's direction moves 45
+ * degrees or more between two reads, while the same turn in steps keeps it. So the keys put the stick on the square
+ * (the larger axis a full push at every angle: W+A is the corner), turn it at KEY_TURN_DEG_S but at most
+ * KEY_TURN_STEP_DEG a read, and keep the last direction KEY_RELEASE_HOLD_US after the keys are let go (a key let go
+ * just before the next one is pressed shows no neutral read). A half turn (A <-> D, W <-> S) has no shorter way
+ * round: it goes through forward, or through the right when both ways are sideways. The direction starts fresh from
+ * the keys pressed while the stick was neutral. Opposing keys on both axes are no direction (key_axis), and a
+ * gamepad's stick is untouched while no movement key is held. */
+#define KEY_TURN_DEG_S 900.0
+#define KEY_TURN_STEP_DEG 30.0
+#define KEY_HALF_TURN_DEG 170.0
+#define KEY_RELEASE_HOLD_US 60000u
+typedef struct { double angle; uint64_t at; int active; } KeyStick; /* radians (y down), the last read with keys */
+static KeyStick key_stick;
+static void key_left_stick(PadData *d, int left, int right, int up, int down, uint64_t now) {
+    const double pi=3.14159265358979323846;
+    KeyStick *s=&key_stick;
+    const int dx=(right!=0)-(left!=0), dy=(down!=0)-(up!=0);
+    if (dx || dy) {
+        const double target=atan2((double)dy,(double)dx);
+        if (s->active) {
+            const double diff=fmod(target-s->angle+3.0*pi,2.0*pi)-pi; /* -pi..pi, the shorter way round */
+            const double step=fmin(KEY_TURN_DEG_S*pi/180.0*(double)(now-s->at)/1e6,KEY_TURN_STEP_DEG*pi/180.0);
+            double way=diff>0 ? 1.0 : -1.0;
+            if (fabs(diff)>KEY_HALF_TURN_DEG*pi/180.0) {
+                /* A quarter turn counter-clockwise (y down: toward forward from the right) is angle + pi/2. */
+                const double qy=sin(s->angle+pi/2.0), qx=cos(s->angle+pi/2.0);
+                way=qy<-1e-9 ? 1.0 : qy>1e-9 ? -1.0 : qx>0 ? 1.0 : -1.0;
+            }
+            s->angle=fabs(diff)<=step ? target : atan2(sin(s->angle+way*step),cos(s->angle+way*step));
+        } else {
+            s->angle=target;
+        }
+        s->active=1;
+        s->at=now;
+    } else if (left || right || up || down || !s->active || now-s->at>=KEY_RELEASE_HOLD_US) {
+        s->active=0;
+        d->left_x=key_axis(d->left_x,left,right);
+        d->left_y=key_axis(d->left_y,up,down);
         return;
     }
-    d->left_x=key_axis(d->left_x,left,right);
-    d->left_y=key_axis(d->left_y,up,down);
+    const double c=cos(s->angle), sn=sin(s->angle), k=1.0/fmax(fabs(c),fabs(sn));
+    d->left_x=stick_byte((float)(c*k));
+    d->left_y=stick_byte((float)(sn*k));
 }
 static void apply_keyboard(PadData *d, const bool *k) {
     int held[IN_COUNT];
@@ -609,7 +644,7 @@ static void apply_keyboard(PadData *d, const bool *k) {
     if (held[IN_TOUCHPAD_RIGHT]) touch_click(d,1);
     if (held[IN_L2]) d->l2=255;
     if (held[IN_R2]) d->r2=255;
-    key_left_stick(d,held[IN_MOVE_LEFT],held[IN_MOVE_RIGHT],held[IN_MOVE_UP],held[IN_MOVE_DOWN]);
+    key_left_stick(d,held[IN_MOVE_LEFT],held[IN_MOVE_RIGHT],held[IN_MOVE_UP],held[IN_MOVE_DOWN],now);
     d->right_x=key_axis(d->right_x,held[IN_LOOK_LEFT],held[IN_LOOK_RIGHT]);
     d->right_y=key_axis(d->right_y,held[IN_LOOK_UP],held[IN_LOOK_DOWN]);
 }
@@ -639,10 +674,6 @@ static void mouse_direct_turn(float dx, float dy) {
 #define MOUSE_SMOOTHING_MS 8.0f
 #define MOUSE_DEADZONE 0.25f
 typedef struct { float vx, vy; uint64_t last; } MouseStick; /* counts a second, smoothed; time of the last read */
-static uint8_t stick_byte(float v) {
-    const int x=128+(int)lroundf(v*(v<0 ? 128.0f : 127.0f));
-    return (uint8_t)(x<0 ? 0 : x>255 ? 255 : x);
-}
 static void mouse_stick_step(MouseStick *s, PadData *d, float dx, float dy, uint64_t now) {
     float dt=s->last ? (float)(now-s->last)*1e-6f : 0.016f;
     s->last=now;
