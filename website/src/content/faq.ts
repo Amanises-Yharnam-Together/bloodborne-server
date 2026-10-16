@@ -1,32 +1,28 @@
-// The landing page's questions; also published as FAQPage structured data.
+// Common questions, shown on the guide's index and published as FAQPage structured data.
 
 export const faq: { q: string; a: string }[] = [
   {
     q: "Do I need my own copy of Bloodborne?",
-    a: "Yes. No game files are included or downloaded. You need Bloodborne for PS4 at version 1.09: a dump of the game folder with the update, or the PS4 .pkg files, which the launcher installs for you.",
+    a: "Yes. Nothing from the game is included or downloaded. You need Bloodborne for PS4 at version 1.09, as a game folder with the update or as the PS4 .pkg files, which the launcher can install.",
   },
   {
-    q: "How many players can play together?",
-    a: "Up to four hunters in one team with the server netcode, which uses all of the game's remote player slots. Today's release, on the first peer-to-peer design, takes up to three.",
+    q: "How many can play together?",
+    a: "Up to four in a team with the server netcode. Today's release, the older peer-to-peer version, takes up to three.",
   },
   {
-    q: "Do I need a server or a subscription?",
-    a: "No subscription and no cloud. One player of the team hosts the co-op server on their own PC, next to their game; the launcher starts it. The others reach that PC over a VPN such as Radmin VPN, Tailscale or ZeroTier, or through forwarded ports.",
+    q: "Do I need to rent a server?",
+    a: "No. One player hosts the server on their own PC; the launcher starts it with the game. The others reach that PC over a VPN such as Radmin VPN, Tailscale or ZeroTier, or through forwarded ports.",
   },
   {
-    q: "Why a server instead of peer-to-peer?",
-    a: "Players already reach each other over a VPN, so peer-to-peer gains nothing there. A server keeps the team's world when the host leaves or crashes, puts every change in one order, and gives each game one link instead of a mesh. The price is one extra hop between guests: milliseconds on a VPN.",
-  },
-  {
-    q: "Does it run on an emulator?",
-    a: "No. It runs on Bloodborne PC, a native port: the PS4 game's own code runs on your CPU and its graphics go through Vulkan, with DLSS, FSR, XeSS, frame generation, HDR and ReShade available.",
+    q: "Is it an emulator?",
+    a: "No. It runs on Bloodborne PC, a native port: the PS4 game's own code runs on your CPU and its graphics go through Vulkan.",
   },
   {
     q: "Can players on different versions play together?",
-    a: "No. Everyone in a team, and the server, runs the same release. A different build is refused with a clear message.",
+    a: "No. Everyone, the server included, runs the same release, and a different build is turned away.",
   },
   {
     q: "Is it official?",
-    a: "No. It is a free, open-source fan project under the GPL. It contains no game code or assets and is not affiliated with Sony Interactive Entertainment or FromSoftware.",
+    a: "No. It is a free, open-source fan project under the GPL, with no game code or assets, and is not affiliated with Sony Interactive Entertainment or FromSoftware.",
   },
 ];

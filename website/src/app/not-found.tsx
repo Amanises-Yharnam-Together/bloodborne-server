@@ -1,17 +1,22 @@
 import Link from "next/link";
 
-import { SectionHeading } from "@/components/ornament";
-import { Button } from "@/components/ui/button";
+import { Heading } from "@/components/ornament";
 
 export default function NotFound() {
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-28 text-center sm:px-6">
-      <SectionHeading eyebrow="Lost in the nightmare" title="This page does not exist">
-        <p>The path you followed leads nowhere. Return to the Dream.</p>
-      </SectionHeading>
-      <Button asChild variant="outline" className="mt-10">
-        <Link href="/">Back to the start</Link>
-      </Button>
+    <div className="mx-auto max-w-4xl px-4 pt-28 sm:px-6">
+      <Heading as="h1">Nothing here</Heading>
+      <p className="mt-6 text-muted-foreground">
+        This page does not exist. Try the{" "}
+        <Link href="/" className="text-title hover:text-bone">
+          home page
+        </Link>{" "}
+        or the{" "}
+        <Link href="/docs/install" className="text-title hover:text-bone">
+          install guide
+        </Link>
+        .
+      </p>
     </div>
   );
 }

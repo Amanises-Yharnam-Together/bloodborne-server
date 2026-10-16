@@ -2,37 +2,40 @@
 @import "tw-animate-css";
 
 /*
- * Bloodborne-inspired theme for shadcn/ui. Colours are taken from the feel of the game's menus,
- * not from its art: lacquer black panels, bone-white text, tarnished gilt rules and old blood.
- * The site is dark only, like the game.
+ * The site's look follows Bloodborne's own menus: black panels in a grey mist, off-white serif
+ * text, silver rules with scrollwork, menu titles in old gold and a warm glow behind the chosen
+ * item. One typeface throughout (EB Garamond). Dark only, like the game.
  */
 :root {
   color-scheme: dark;
   --radius: 0rem;
 
-  --background: #0a0908;
-  --foreground: #ddd4c2;
-  --card: #110f0d;
-  --card-foreground: #ddd4c2;
-  --popover: #110f0d;
-  --popover-foreground: #ddd4c2;
-  --primary: #7a1717;
-  --primary-foreground: #f1e9d8;
-  --secondary: #1a1714;
-  --secondary-foreground: #ddd4c2;
-  --muted: #171411;
-  --muted-foreground: #a0968a;
-  --accent: #221d18;
-  --accent-foreground: #f1e9d8;
-  --destructive: #a32020;
-  --border: #2e2822;
-  --input: #2e2822;
-  --ring: #b89c66;
+  --background: #0d0f13;
+  --foreground: #e2d6b9;
+  --card: #191c22;
+  --card-foreground: #e2d6b9;
+  --popover: #12151a;
+  --popover-foreground: #e2d6b9;
+  --primary: #6e5a36;
+  --primary-foreground: #f0e2c2;
+  --secondary: #12151a;
+  --secondary-foreground: #e2d6b9;
+  --muted: #0b0d11;
+  --muted-foreground: #aea590;
+  --accent: #191c22;
+  --accent-foreground: #f0e2c2;
+  --destructive: #d9695c;
+  --border: #2b3038;
+  --input: #2b3038;
+  --ring: #d9b878;
 
-  --bone: #f1e9d8;
-  --gilt: #b89c66;
-  --blood-bright: #9b2020;
-  --moon: #e8dcc4;
+  /* The launcher's palette: parchment text, gold for titles and the gilt of rules and frames,
+     a soft gold glow behind a chosen item, and red kept for the blood drop alone. */
+  --bone: #f0e2c2;
+  --title: #d9b878;
+  --silver: #c9a86a;
+  --glow: rgb(217 184 120 / 0.22);
+  --blood: #a3231f;
 }
 
 @theme inline {
@@ -55,21 +58,18 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-bone: var(--bone);
-  --color-gilt: var(--gilt);
-  --color-blood-bright: var(--blood-bright);
-  --color-moon: var(--moon);
+  --color-title: var(--title);
+  --color-silver: var(--silver);
+  --color-blood: var(--blood);
 
   --radius-sm: var(--radius);
   --radius-md: var(--radius);
   --radius-lg: var(--radius);
   --radius-xl: var(--radius);
 
-  --font-display: var(--font-cinzel), "Times New Roman", serif;
-  --font-body: var(--font-garamond), Georgia, serif;
-  --font-sans: var(--font-garamond), Georgia, serif;
+  --font-serif: var(--font-garamond), "Garamond", Georgia, serif;
+  --font-sans: var(--font-garamond), "Garamond", Georgia, serif;
   --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
-
-  --spacing-13: 3.25rem;
 }
 
 @layer base {
@@ -80,122 +80,316 @@
     scroll-behavior: smooth;
   }
   body {
-    @apply bg-background font-body text-[1.125rem] leading-relaxed text-foreground antialiased;
+    @apply bg-background font-serif text-[1.15rem] leading-relaxed text-foreground antialiased;
+    /* Mist from above, a dark vignette, and a faint grain so the black is not flat. */
     background-image:
-      radial-gradient(ellipse 120% 60% at 50% -10%, rgb(232 220 196 / 0.07), transparent 60%),
-      radial-gradient(ellipse 80% 50% at 50% 110%, rgb(122 23 23 / 0.12), transparent 70%);
+      radial-gradient(ellipse 90% 55% at 50% -5%, rgb(120 138 168 / 0.09), transparent 65%),
+      radial-gradient(ellipse 140% 100% at 50% 50%, transparent 55%, rgb(0 0 0 / 0.85)),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
     background-attachment: fixed;
   }
   ::selection {
-    background: rgb(122 23 23 / 0.7);
+    background: rgb(196 164 107 / 0.35);
     color: var(--bone);
   }
   :focus-visible {
-    outline-color: var(--ring);
+    outline: 1px solid var(--ring);
+    outline-offset: 3px;
   }
 }
 
 @layer components {
-  /* A menu panel's frame: a hairline gilt border with short engraved marks at the corners. */
-  .frame {
+  /* A panel like the game's: dark, with silver rules above and below and no side borders. */
+  .panel {
     position: relative;
-    border: 1px solid rgb(184 156 102 / 0.28);
-    box-shadow:
-      inset 0 0 0 1px rgb(0 0 0 / 0.7),
-      inset 0 0 60px rgb(0 0 0 / 0.55);
+    --c: rgb(201 168 106 / 0.75);
+    background:
+      linear-gradient(var(--c), var(--c)) top left / 14px 1px no-repeat,
+      linear-gradient(var(--c), var(--c)) top left / 1px 14px no-repeat,
+      linear-gradient(var(--c), var(--c)) top right / 14px 1px no-repeat,
+      linear-gradient(var(--c), var(--c)) top right / 1px 14px no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom left / 14px 1px no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom left / 1px 14px no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom right / 14px 1px no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom right / 1px 14px no-repeat,
+      linear-gradient(180deg, rgb(25 28 34 / 0.92), rgb(18 21 26 / 0.94));
+    border: 1px solid #2b3038;
+    box-shadow: inset 0 0 60px rgb(0 0 0 / 0.35);
   }
-  .frame::before,
-  .frame::after {
+
+  /* The launcher's buttons have their corners cut off. The edge is the element's own
+     background, cut to shape; the fill is a layer 1px inside it, cut the same way, so the gold
+     line follows the cut corners too. Set --cut-edge and --cut-fill to colour it. */
+  .cut-corners {
+    isolation: isolate;
+    border: 0;
+    background: var(--cut-edge);
+    clip-path: polygon(
+      8px 0,
+      calc(100% - 8px) 0,
+      100% 8px,
+      100% calc(100% - 8px),
+      calc(100% - 8px) 100%,
+      8px 100%,
+      0 calc(100% - 8px),
+      0 8px
+    );
+  }
+  .cut-corners::before {
     content: "";
     position: absolute;
-    width: 14px;
-    height: 14px;
-    pointer-events: none;
-    border-color: var(--gilt);
-    opacity: 0.85;
-  }
-  .frame::before {
-    top: -1px;
-    left: -1px;
-    border-top: 1px solid;
-    border-left: 1px solid;
-  }
-  .frame::after {
-    right: -1px;
-    bottom: -1px;
-    border-right: 1px solid;
-    border-bottom: 1px solid;
+    inset: 1px;
+    z-index: -1;
+    background: var(--cut-fill);
+    clip-path: polygon(
+      7.6px 0,
+      calc(100% - 7.6px) 0,
+      100% 7.6px,
+      100% calc(100% - 7.6px),
+      calc(100% - 7.6px) 100%,
+      7.6px 100%,
+      0 calc(100% - 7.6px),
+      0 7.6px
+    );
+    transition: background 200ms;
   }
 
-  /* Small caps label above a heading. */
-  .eyebrow {
-    @apply font-display text-xs uppercase tracking-[0.35em] text-gilt;
+  /* A plain text link in the header, the guide's page list and the footer: off-white, gold
+     when current, with a thin gold rule under it. */
+  .nav-link {
+    color: var(--muted-foreground);
+    text-decoration: none;
+    transition: color 160ms;
+  }
+  .nav-link:hover {
+    color: var(--bone);
+  }
+  .nav-link[aria-current="page"] {
+    color: var(--title);
   }
 
-  /* Long-form text in the docs. */
-  .prose-hunter {
-    @apply max-w-none text-foreground;
+  /* Long text in the guide: each section has its title in old gold over a short silver rule. */
+  .guide {
+    @apply text-foreground;
   }
-  .prose-hunter > section > h2 {
-    @apply mt-12 mb-4 scroll-mt-24 font-display text-2xl tracking-[0.06em] text-bone;
+  .guide > section {
+    @apply py-8;
   }
-  .prose-hunter > section > h3 {
-    @apply mt-8 mb-3 scroll-mt-24 font-display text-lg tracking-[0.06em] text-bone;
+  .guide > section > h2 {
+    @apply scroll-mt-24 text-xl leading-snug tracking-[0.14em] text-title uppercase;
   }
-  .prose-hunter > section > p {
-    @apply my-4;
+  .guide > section > h2::after {
+    content: "";
+    display: block;
+    width: 9rem;
+    height: 1px;
+    margin-top: 0.55rem;
+    background: linear-gradient(90deg, rgb(217 184 120 / 0.8), transparent);
   }
-  .prose-hunter > section > ul,
-  .prose-hunter > section > ol {
-    @apply my-4 space-y-2 pl-6;
+  .guide > section > div {
+    @apply mt-5;
   }
-  .prose-hunter > section > ul {
+  .guide > section > div > h3 {
+    @apply mt-8 mb-2 text-xl text-bone;
+  }
+  .guide > section > div > p {
+    @apply my-3 max-w-[68ch];
+  }
+  .guide > section > div > p:first-child {
+    @apply mt-0;
+  }
+  .guide > section > div > ul,
+  .guide > section > div > ol {
+    @apply my-4 max-w-[68ch] space-y-2 pl-6;
+  }
+  .guide > section > div > ul {
     list-style: none;
   }
-  .prose-hunter > section > ul > li {
+  .guide > section > div > ul > li {
     position: relative;
   }
-  .prose-hunter > section > ul > li::before {
+  .guide > section > div > ul > li::before {
     content: "";
     position: absolute;
-    left: -1.1rem;
-    top: 0.72em;
+    left: -1.05rem;
+    top: 0.7em;
     width: 5px;
     height: 5px;
-    background: var(--gilt);
+    border: 1px solid var(--silver);
     transform: rotate(45deg);
   }
-  .prose-hunter > section > ol {
-    @apply list-decimal marker:font-display marker:text-gilt;
+  .guide > section > div > ol {
+    @apply list-decimal marker:text-title;
   }
-  .prose-hunter a {
-    @apply text-gilt underline decoration-gilt/40 underline-offset-4 hover:decoration-gilt;
+  .guide a {
+    @apply text-title underline decoration-title/40 underline-offset-4 hover:text-bone hover:decoration-bone/60;
   }
-  .prose-hunter strong {
-    @apply font-semibold text-bone;
+  .guide strong {
+    @apply font-medium text-bone;
   }
-  .prose-hunter :where(p, li, td) code {
-    @apply bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-bone;
+  .guide :where(p, li, td, dd) code {
+    @apply bg-muted px-1.5 py-0.5 font-mono text-[0.82em] text-bone;
     overflow-wrap: anywhere;
   }
-  .prose-hunter pre {
-    @apply my-6 overflow-x-auto border border-gilt/25 bg-card p-4 font-mono text-sm leading-snug text-bone;
+  .guide pre {
+    @apply my-6 overflow-x-auto bg-card p-4 font-mono text-sm leading-snug text-bone;
+    border-block: 1px solid rgb(201 168 106 / 0.32);
   }
-  .prose-hunter pre code {
+  .guide pre code {
     @apply bg-transparent p-0 text-[inherit];
   }
-  .prose-hunter table {
+  .guide table {
     @apply my-6 w-full border-collapse text-base;
   }
-  .prose-hunter th {
-    @apply border-b border-gilt/40 px-3 py-2 text-left font-display text-sm font-normal uppercase tracking-[0.12em] text-gilt;
+  .guide th {
+    @apply border-b border-silver/40 px-3 py-2 text-left font-normal text-title;
   }
-  .prose-hunter td {
+  .guide td {
     @apply border-b border-border px-3 py-2 align-top;
   }
 }
 
+/* The backdrop (src/components/backdrop.tsx). */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.backdrop > * {
+  position: absolute;
+}
+.backdrop-moon {
+  top: -6vh;
+  right: 0;
+  width: min(46vw, 36rem);
+  aspect-ratio: 1;
+  /* A lit disc with a soft edge, then a wide glow fading into the mist. */
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgb(236 228 210 / 0.17) 0,
+    rgb(220 210 190 / 0.12) 30%,
+    rgb(210 200 180 / 0.07) 34%,
+    rgb(200 190 170 / 0.035) 55%,
+    transparent 70%
+  );
+  filter: blur(1.5px);
+}
+.backdrop-city {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 46vh;
+}
+.backdrop-city-far {
+  fill: #161a21;
+  opacity: 0.9;
+}
+.backdrop-city-near {
+  fill: #0f1217;
+  height: 40vh;
+}
+.backdrop-fog {
+  left: -25%;
+  width: 150%;
+  animation: fog-drift 70s ease-in-out infinite alternate;
+}
+.backdrop-fog-high {
+  top: 18vh;
+  height: 40vh;
+  background:
+    radial-gradient(ellipse 40% 50% at 30% 50%, rgb(120 138 168 / 0.06), transparent 70%),
+    radial-gradient(ellipse 35% 45% at 75% 40%, rgb(120 138 168 / 0.05), transparent 70%);
+}
+.backdrop-fog-low {
+  bottom: -6vh;
+  height: 36vh;
+  background:
+    radial-gradient(ellipse 45% 60% at 25% 60%, rgb(110 125 150 / 0.09), transparent 70%),
+    radial-gradient(ellipse 40% 55% at 70% 70%, rgb(110 125 150 / 0.08), transparent 70%);
+  animation-duration: 50s;
+  animation-direction: alternate-reverse;
+}
+.backdrop-embers {
+  inset: 0;
+}
+.backdrop-embers > span {
+  position: absolute;
+  bottom: -10px;
+  border-radius: 50%;
+  background: #e8cf98;
+  box-shadow: 0 0 6px 2px rgb(217 184 120 / 0.4);
+  opacity: 0;
+  animation: ember-rise linear infinite;
+}
+@keyframes fog-drift {
+  from {
+    transform: translateX(-6%);
+  }
+  to {
+    transform: translateX(6%);
+  }
+}
+@keyframes ember-rise {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.7;
+  }
+  70% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: translate(var(--drift), -85vh);
+    opacity: 0;
+  }
+}
+
+/* Parallax: as the page scrolls, the far layers move less than the near ones. */
+@supports (animation-timeline: scroll()) {
+  .backdrop-moon,
+  .backdrop-city {
+    animation-timeline: scroll(root);
+    animation-range: 0 1400px;
+    animation-fill-mode: both;
+    animation-timing-function: linear;
+  }
+  .backdrop-moon {
+    animation-name: parallax-moon;
+  }
+  .backdrop-city-far {
+    animation-name: parallax-far;
+  }
+  .backdrop-city-near {
+    animation-name: parallax-near;
+  }
+}
+@keyframes parallax-moon {
+  to {
+    translate: 0 14vh;
+  }
+}
+@keyframes parallax-far {
+  to {
+    translate: 0 10vh;
+  }
+}
+@keyframes parallax-near {
+  to {
+    translate: 0 24vh;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .backdrop * {
+    animation: none !important;
+  }
+  .backdrop-embers {
+    display: none;
+  }
   html {
     scroll-behavior: auto;
   }

@@ -46,9 +46,11 @@ describe("docs content", () => {
               ? b.items
               : b.type === "table"
                 ? b.rows.flat()
-                : "text" in b
-                  ? [b.text]
-                  : [b.caption];
+                : b.type === "terms"
+                  ? b.items.flat()
+                  : "text" in b
+                    ? [b.text]
+                    : [b.caption];
           for (const t of texts)
             for (const m of t.matchAll(/\]\((\/[^)#]*)/g))
               expect(internal, `${d.slug}: ${m[1]}`).toContain(m[1]);
@@ -67,9 +69,10 @@ describe("docs content", () => {
         }
   });
 
-  it("never names a real player: only rig and placeholder accounts", () => {
+  it("never names a real player or a test account: players are Player 1, Player 2 and so on", () => {
     const all = llmsFull();
-    for (const name of ["Lisara", "krolebord", "Krolebord"]) expect(all).not.toContain(name);
+    for (const name of ["Lisara", "krolebord", "Krolebord", "rig_"])
+      expect(all).not.toContain(name);
   });
 
   it("shows no packet channel codes or game addresses", () => {

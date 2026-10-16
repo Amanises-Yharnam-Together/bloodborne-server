@@ -5,15 +5,14 @@ export const REPO_URL = `https://github.com/${REPO}`;
 export const RELEASES_URL = `${REPO_URL}/releases`;
 export const LATEST_RELEASE_URL = `${RELEASES_URL}/latest`;
 export const ISSUES_URL = `${REPO_URL}/issues`;
-// The server rewrite is developed on its own branch until its last phase is verified.
-export const SERVER_COOP_BRANCH_URL = `${REPO_URL}/tree/server-coop`;
+export const blob = (path: string) => `${REPO_URL}/blob/main/${path}`;
 
 export const site = {
   name: "Bloodborne Seamless Co-op",
   shortName: "Seamless Co-op",
-  tagline: "Hunt Yharnam together. No bells, no signs, no peer-to-peer.",
+  tagline: "Play all of Bloodborne with your friends, in one world.",
   description:
-    "Free, open-source seamless co-op for Bloodborne on PC: a native port of the PS4 game tuned for co-op, with a rewritten server-based netcode. Up to four hunters share one world and stay together through lamps, deaths and bosses.",
+    "Free, open-source seamless co-op for Bloodborne on PC. Up to four players share one world on a native port of the PS4 game, connected through a small server one of them runs.",
   keywords: [
     "Bloodborne",
     "Bloodborne PC",
@@ -28,12 +27,12 @@ export const site = {
   license: "GPL-2.0-or-later",
 } as const;
 
-// Where the server rewrite stands. The public releases still carry the first, peer-to-peer
-// design; flip this when a release ships the server netcode.
+// Where the server netcode stands. It is in main but not yet in a public release, which still
+// carries the first, peer-to-peer design; flip this when a release ships it.
 export const netcodeStatus = {
   shippedInRelease: false,
   label: "In testing",
-  note: "The server netcode is complete on the server-coop branch and in testing; it ships in the next public release. Today's release uses the first, peer-to-peer design.",
+  note: "The guide follows the next release, with the server netcode. Today's release (0.1.4) is the older peer-to-peer version: its Co-op card also asks for an account and a party password, and there is no team screen, so everyone joins the host a few seconds after loading.",
 } as const;
 
 type Env = Record<string, string | undefined>;

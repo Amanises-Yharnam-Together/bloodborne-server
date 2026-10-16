@@ -4,20 +4,20 @@ import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "@/lib/utils";
 
-// shadcn/ui button, restyled after Bloodborne's menus: square corners, engraved caps, a thin
-// gilt rule and a soft band of light on focus and hover instead of a filled highlight.
+// shadcn/ui button in the look of the launcher's: a slate plate with cut corners and a thin gold
+// edge that brightens on hover. No glow.
 const buttonVariants = cva(
-  "relative inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap font-display text-sm uppercase tracking-[0.18em] transition-[color,background-color,border-color,box-shadow] duration-300 outline-none disabled:pointer-events-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "relative inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap font-serif text-lg transition-[color,background-color,border-color,box-shadow] duration-300 outline-none disabled:pointer-events-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
         default:
-          "border border-gilt/70 bg-primary text-primary-foreground shadow-[inset_0_0_0_1px_rgb(0_0_0/0.6),inset_0_0_24px_rgb(0_0_0/0.45)] hover:border-gilt hover:bg-blood-bright hover:shadow-[inset_0_0_0_1px_rgb(0_0_0/0.6),0_0_24px_rgb(142_27_27/0.45)]",
+          "cut-corners tracking-[0.06em] text-bone [--cut-edge:rgb(217_184_120/0.55)] [--cut-fill:linear-gradient(180deg,#262a31,#14171c)] hover:[--cut-edge:#d9b878] hover:[--cut-fill:linear-gradient(180deg,#2d323a,#181b21)]",
         outline:
-          "border border-gilt/45 bg-transparent text-foreground hover:border-gilt hover:bg-[linear-gradient(90deg,transparent,rgb(214_196_158/0.12),transparent)] hover:text-bone",
+          "cut-corners text-foreground [--cut-edge:#4a505a] [--cut-fill:#12151a] hover:text-bone hover:[--cut-edge:rgb(217_184_120/0.7)]",
         ghost:
           "text-muted-foreground hover:text-foreground hover:bg-[linear-gradient(90deg,transparent,rgb(214_196_158/0.08),transparent)]",
-        link: "font-body normal-case tracking-normal text-gilt underline-offset-4 hover:underline",
+        link: "text-title underline-offset-4 hover:underline",
       },
       size: {
         default: "h-11 px-6",
