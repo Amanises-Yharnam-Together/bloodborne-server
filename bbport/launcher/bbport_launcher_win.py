@@ -1790,7 +1790,13 @@ class StatusIcon(Widget):
     def __init__(self, ui, parent, kind, bg=BG):
         px = ui.px
         self.kind, self.state, self.busy, self.bg = kind, '•', False, bg
-        self.size = px(34)
+        # Kaniel's painted icon (launcher/art/status-<kind>.png) when there is one, else the drawn glyph.
+        art = load_art(f'status-{kind}.png')
+        self.size = px(44) if art is not None else px(34)
+        self.picture = None
+        if art is not None:
+            from PIL import Image, ImageTk
+            self.picture = ImageTk.PhotoImage(art.resize((px(38), px(38)), Image.Resampling.LANCZOS))
         super().__init__(ui, parent, self.size, self.size, bg, cursor='arrow')
         self.tip = Tooltip(ui, self.canvas)
         self.canvas.bind('<Enter>', lambda _e: self.fade_hover(1.0), add='+')
@@ -1833,7 +1839,10 @@ class StatusIcon(Widget):
         c, px = self.canvas, self.ui.px
         c.delete('all')
         ink = mix(MUTED, TEXT, self.hover)
-        self.glyph(c, ink, max(1, px(1.4)))
+        if self.picture is not None:
+            c.create_image(self.size // 2 - px(2), self.size // 2 - px(2), image=self.picture)
+        else:
+            self.glyph(c, ink, max(1, px(1.4)))
         # The badge: the state's colour in the lower right, a tick, a bar or a cross in it.
         r, cx, cy = px(6), self.size - px(7), self.size - px(7)
         color = DIM if self.busy else self.STATES.get(self.state, DIM)
