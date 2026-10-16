@@ -527,6 +527,9 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // that is gone is cleared first.
     {"character floor read", "floor guard", CoopSiteKind::Hook, 0x018CB14F,
      "48 8B B3 88 02 00 00 48 85 F6"},
+    // And the "stands on part X" query's (StandsOnPartFloorRead; Kaniel's crash 2026-10-17).
+    {"stands on part floor read", "floor guard", CoopSiteKind::Hook, 0x0191B79E,
+     "48 8B 8E 88 02 00 00 48 85 C9"},
 
     // The event flag manager's read of a value over two flag blocks (0x013CFD80), where it reads
     // each block (InstallFlagBlockGuard): a missing block reads as zeros (rig 2026-10-16: a game
