@@ -581,6 +581,34 @@ bbcoop::LobbyState WithMember(bbcoop::LobbyState state, const std::string& membe
 
 } // namespace
 
+// Kaniel's playtest 2026-10-16: a guest's lever pull moved the other guest to the lever. The host's
+// game gives a joining member its player number (0x01A6C160: its counter, moved on only past a
+// number in use), and a member's number counts as used only once its character data came; the
+// team join brings both guests in before that, so both got 2. The counter goes on past each
+// number it hands out.
+namespace {
+// The game's hand-out: the counter, unless in use (then the next free one, the counter moved).
+s32 HandOut(s32& counter, const std::vector<s32>& used) {
+    while (std::ranges::find(used, counter) != used.end()) {
+        counter = NextPlayerNumber(counter);
+    }
+    return counter;
+}
+} // namespace
+
+TEST(TeamJoin, EachGuestJoiningAtOnceGetsItsOwnPlayerNumber) {
+    s32 counter = 2;
+    const std::vector<s32> used{1}; // the host; the guests' data not here yet
+    const s32 first = HandOut(counter, used);
+    counter = NextPlayerNumber(first); // the hook after the hand-out
+    const s32 second = HandOut(counter, used);
+    EXPECT_EQ(first, 2);
+    EXPECT_EQ(second, 3);
+    // As the game wraps its counter.
+    EXPECT_EQ(NextPlayerNumber(0x7FFD), 0x7FFE);
+    EXPECT_EQ(NextPlayerNumber(0x7FFE), 2);
+}
+
 // Kaniel 2026-10-16, the team menu in game: a save playing in a team whose lobby says it is out of
 // that team (the leader removed it, or it left) leaves the team's session where it stands.
 TEST(TeamPlay, OutOfTheTeamItPlaysInItLeaves) {

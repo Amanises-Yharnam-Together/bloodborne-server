@@ -1285,6 +1285,31 @@ void InstallGuestsHitNpcs(u64 base, u64 image_size) {
     coop_features.On("guests hit NPCs");
 }
 
+// See PlayerNumberHandedOut: the host's counter goes on past the number it just handed out.
+void PS4_SYSV_ABI MovePlayerNumberOn(u64, const GuestRegisterSnapshot* registers) {
+    const u64 net_sync = registers->r15;
+    const s32 given = static_cast<s32>(registers->rax);
+    if (net_sync < 0x10000 || given <= 0) {
+        return;
+    }
+    WriteValue(net_sync, PlayerNumberCounterOffset, NextPlayerNumber(given));
+    LOG_INFO(Debug, "Bloodborne party: a joining member got player number {}", given);
+}
+
+void InstallOwnPlayerNumbers(u64 base, u64 image_size) {
+    if (!party_controller || !CoopSitesMatch(base, image_size, "own player numbers",
+                                             "two joining guests may share a "
+                                             "player number")) {
+        return;
+    }
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + PlayerNumberHandedOutOffset),
+                         PlayerNumberHandedOut, 0, GuestCodeHook{MovePlayerNumberOn})) {
+        coop_features.Skipped("own player numbers", "the hook did not go in");
+        return;
+    }
+    coop_features.On("own player numbers");
+}
+
 // Trading (bloodborne_trade.cpp, the port with the server world): the game functions it calls to
 // take items out of the inventory and put them in.
 void InstallTrading(u64 base, u64 image_size) {
@@ -1529,6 +1554,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
     InstallGuestsHitNpcs(base, image_size);
+    InstallOwnPlayerNumbers(base, image_size);
     InstallMoviePlayerDeleteDelay(base, image_size);
     InstallShortSummonSlotHold(base, image_size);
     InstallBossDeathTracer(base, image_size);
