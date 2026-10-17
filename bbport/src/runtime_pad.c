@@ -948,6 +948,10 @@ static void sample(PadData *d) {
         if (d->buttons) d->buttons=0;
         else hold_after_capture=0;
     }
+    /* Kaniel 2026-10-17: under a party's cutscene Options is a vote; the skip waits for everyone. */
+    const int vote=bbcoop_cutscene_vote_pad((d->buttons & BTN_OPTIONS)!=0);
+    if (vote==1) d->buttons&=~(uint32_t)BTN_OPTIONS;
+    else if (vote==2) d->buttons|=BTN_OPTIONS;
     if (bbcoop_cutscene_skip()) d->buttons|=BTN_OPTIONS; /* headless: the screen is not drawn */
     /* Kaniel 2026-10-16: the team screen over the game closed: the game's page under it too. */
     if (bbcoop_team_menu_back()) d->buttons|=BTN_CIRCLE;

@@ -327,5 +327,6 @@
  "The map: where you and your team are, and travel to a lit lamp": "La carte : où vous et votre équipe êtes, et voyage vers une lanterne allumée",
  "Map screen": "Écran de la carte",
  "The map is open over the game: Circle comes back here": "La carte est ouverte par-dessus le jeu : Rond revient ici",
- "Triangle  Whole map": "Triangle  Carte entière"
+ "Triangle  Whole map": "Triangle  Carte entière",
+ "%d of %d want to skip": "%d sur %d veulent passer"
 }

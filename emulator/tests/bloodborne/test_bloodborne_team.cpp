@@ -509,6 +509,58 @@ TEST(CutsceneSkip, GivesUpAfterSoManyPresses) {
     EXPECT_EQ(pressed, S::MostPresses) << "an unskippable cutscene is left alone";
 }
 
+// Kaniel 2026-10-17: when every party member on the map sees the same cutscene, nobody skips it
+// for the others: Options is a vote ("1/3 want to skip"), and the cutscene is skipped once every
+// member watching it voted.
+CutsceneVote::Frame Watching(bool options, u32 others, u32 others_skip, s64 now_ms) {
+    return {.watching = true,
+            .options = options,
+            .others_watching = others,
+            .others_skip = others_skip,
+            .now_ms = now_ms};
+}
+
+TEST(CutsceneVote, AloneOptionsSkipsAsBefore) {
+    using Pad = CutsceneVote::Pad;
+    CutsceneVote vote;
+    EXPECT_EQ(vote.Tick({.watching = false, .options = true, .now_ms = 0}), Pad::Leave)
+        << "no cutscene: Options is the menu";
+    EXPECT_EQ(vote.Tick(Watching(false, 0, 0, 100)), Pad::Hide) << "watching: no stray skip";
+    EXPECT_EQ(vote.Own(), CutsceneVote::Watching);
+    EXPECT_EQ(vote.Tick(Watching(true, 0, 0, 200)), Pad::Press) << "alone: its own vote skips";
+    EXPECT_FALSE(vote.Shown()) << "alone: no count on the screen";
+}
+
+TEST(CutsceneVote, SkipsOnlyOnceEveryoneWatchingVoted) {
+    using Pad = CutsceneVote::Pad;
+    using V = CutsceneVote;
+    CutsceneVote vote;
+    EXPECT_EQ(vote.Tick(Watching(false, 2, 0, 0)), Pad::Hide);
+    EXPECT_FALSE(vote.Shown()) << "nobody wants to skip yet";
+    EXPECT_EQ(vote.Tick(Watching(true, 2, 0, 100)), Pad::Hide) << "1 of 3: held back";
+    EXPECT_EQ(vote.Own(), V::WantsSkip);
+    EXPECT_TRUE(vote.Shown());
+    EXPECT_EQ(vote.Want(), 1u);
+    EXPECT_EQ(vote.Watchers(), 3u);
+    EXPECT_EQ(vote.Tick(Watching(false, 2, 1, 200)), Pad::Hide) << "2 of 3, its vote stands";
+    EXPECT_EQ(vote.Want(), 2u);
+    EXPECT_EQ(vote.Tick(Watching(false, 2, 2, 300)), Pad::Press) << "3 of 3: skipped";
+    EXPECT_EQ(vote.Tick(Watching(false, 2, 2, 300 + V::HoldMs)), Pad::Hide) << "released";
+    EXPECT_EQ(vote.Tick(Watching(false, 2, 2, 300 + V::EveryMs)), Pad::Press) << "again";
+    EXPECT_EQ(vote.Tick({.watching = false, .now_ms = 2000}), Pad::Leave) << "it ended";
+    EXPECT_EQ(vote.Own(), V::NotWatching);
+    EXPECT_EQ(vote.Tick(Watching(false, 2, 2, 3000)), Pad::Hide)
+        << "the next cutscene: its own vote starts over";
+}
+
+TEST(CutsceneVote, AMemberWhoseCutsceneEndedNoLongerCounts) {
+    using Pad = CutsceneVote::Pad;
+    CutsceneVote vote;
+    EXPECT_EQ(vote.Tick(Watching(true, 1, 0, 0)), Pad::Hide) << "1 of 2";
+    EXPECT_EQ(vote.Tick(Watching(false, 0, 0, 100)), Pad::Press)
+        << "the other's ended (or it left): everyone left watching voted";
+}
+
 TEST(TeamLoad, SaysItsOwnProgressWhenItChanges) {
     TeamLoad load;
     EXPECT_FALSE(load.ToSend(0).has_value()) << "not loading";

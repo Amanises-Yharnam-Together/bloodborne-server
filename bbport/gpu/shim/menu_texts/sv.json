@@ -327,5 +327,6 @@
  "The map: where you and your team are, and travel to a lit lamp": "Kartan: var du och ditt lag är, och resor till en tänd lykta",
  "Map screen": "Kartskärm",
  "The map is open over the game: Circle comes back here": "Kartan är öppen över spelet: Cirkel kommer tillbaka hit",
- "Triangle  Whole map": "Triangel  Hela kartan"
+ "Triangle  Whole map": "Triangel  Hela kartan",
+ "%d of %d want to skip": "%d av %d vill hoppa över"
 }

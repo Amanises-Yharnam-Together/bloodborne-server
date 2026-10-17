@@ -295,6 +295,50 @@ private:
     int presses = 0;
 };
 
+// Kaniel 2026-10-17: a cutscene that the party's events play for everyone on the map (a boss's
+// entrance, the Ward door's evening, Amelia's skull) was skipped by whoever pressed Options first,
+// each for itself. Now Options is a vote while this game's cutscene plays in a party session: the
+// game's skip is held back until every member on this map whose cutscene plays voted (others whose
+// cutscene ended, or who left, no longer count), then pressed for the player as CutsceneSkip does.
+// The others' votes come with their vitals (bbcoop::Vitals.cutscene).
+class CutsceneVote {
+public:
+    enum : u32 { NotWatching = 0, Watching = 1, WantsSkip = 2 };
+    static constexpr s64 HoldMs = CutsceneSkip::HoldMs;
+    static constexpr s64 EveryMs = CutsceneSkip::EveryMs;
+    struct Frame {
+        bool watching = false;   // this game's cutscene plays, in a party session
+        bool options = false;    // the player holds Options
+        u32 others_watching = 0; // the other members on this map whose cutscene plays
+        u32 others_skip = 0;     // of them, the ones that voted
+        s64 now_ms = 0;
+    };
+    // What the pad does with Options: the player's own, held back, or pressed for the skip.
+    enum class Pad { Leave, Hide, Press };
+    Pad Tick(const Frame& frame);
+    // This member's state, for the others.
+    u32 Own() const {
+        return !watching ? NotWatching : voted ? WantsSkip : Watching;
+    }
+    // "Want() of Watchers() want to skip", shown while others watch too and someone voted.
+    bool Shown() const {
+        return watching && watchers > 1 && want > 0;
+    }
+    u32 Want() const {
+        return want;
+    }
+    u32 Watchers() const {
+        return watchers;
+    }
+
+private:
+    bool watching = false;
+    bool voted = false;
+    u32 want = 0;
+    u32 watchers = 0;
+    std::optional<s64> pressed_ms;
+};
+
 // Kaniel 2026-10-14: the team loading screen, as in League of Legends. From the team's Start every
 // member's game shows each hunter with a bar (bbcoop::LoadProgress through the server) and holds
 // until all of them are in the team's session (or LimitMs), so the hunt opens for everyone at once.

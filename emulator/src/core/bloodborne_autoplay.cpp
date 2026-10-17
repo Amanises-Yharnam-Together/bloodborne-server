@@ -1053,6 +1053,14 @@ bool AutoplayCutLink(const AutoplayStep& step) {
     return true;
 }
 
+// cutscene-options <seconds>: Options pressed (200 ms) once the next cutscene has played that long.
+// The game's tick, and so the script, stands still under a cutscene: the press waits in the pad's
+// vote (CutsceneVotePad), which still runs.
+bool AutoplayCutsceneOptions(const AutoplayStep& step) {
+    Coop::ArmCutsceneOptions(static_cast<s64>(step.Number(0, 5) * 1000.0));
+    return true;
+}
+
 bool AutoplayLog(const AutoplayStep& step) {
     std::string text;
     for (const std::string& word : step.command.args) {
@@ -1698,6 +1706,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"census", AutoplayCensus},
     {"shot", AutoplayShot},
     {"log", AutoplayLog},
+    {"cutscene-options", AutoplayCutsceneOptions},
     {"expect-hp", AutoplayExpectHp},
     {"dump", AutoplayDump},
     {"raise-stat", AutoplayRaiseStat},

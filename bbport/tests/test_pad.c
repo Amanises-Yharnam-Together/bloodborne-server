@@ -27,6 +27,9 @@ void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, u
 /* A cutscene under the team's loading screen: Options pressed for its skip. */
 static int skip;
 int bbcoop_cutscene_skip(void) { return skip; }
+/* A party's cutscene: Options is a vote (0 the player's, 1 held back, 2 pressed for the skip). */
+static int vote, vote_options=-1;
+int bbcoop_cutscene_vote_pad(int options) { vote_options=options; return vote; }
 /* The team menu in game just closed: Circle for the game's page under it. */
 static int menu_back;
 int bbcoop_team_menu_back(void) { return menu_back; }
@@ -100,6 +103,19 @@ int main(void) {
     menu_back=1;
     assert(pad_read_state(1,&data)==0 && data.buttons==BTN_CIRCLE);
     menu_back=0;
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    /* Kaniel 2026-10-17: under a party's cutscene Options is a vote: held back until everyone
+     * watching voted, then pressed for the game's skip. */
+    vote=1;
+    inject(path,"options cross");
+    assert(pad_read_state(1,&data)==0 && data.buttons==BTN_CROSS && vote_options==1);
+    vote=2;
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==BTN_OPTIONS && vote_options==0);
+    vote=0;
+    inject(path,"options");
+    assert(pad_read_state(1,&data)==0 && data.buttons==BTN_OPTIONS);
+    inject(path,"");
     assert(pad_read_state(1,&data)==0 && data.buttons==0);
     /* Party death: what the game reads, autoplay's buttons and sticks too, goes through it. */
     downed=1; autoplay=1; autoplay_buttons=BTN_R1; autoplay_sticks[0]=200; autoplay_sticks[2]=60;

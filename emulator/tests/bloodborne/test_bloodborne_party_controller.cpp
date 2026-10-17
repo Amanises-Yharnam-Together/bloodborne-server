@@ -2552,6 +2552,11 @@ TEST(BloodborneDirectBoards, DirectVitalsGoOverTheBoardsCopy) {
         << "the board had more (another member's hits)";
     direct.push_back({MemberVitals{.member = "dd", .map = 0x18010000, .vital = Vital::Up}, {}});
     EXPECT_EQ(MergeDirectVitals(board, direct).members.size(), 3u) << "not on the board yet";
+
+    // Kaniel 2026-10-17: a member's cutscene vote comes through the server only; its direct line
+    // (without one) must not wipe it.
+    board.members[0].cutscene = 2;
+    EXPECT_EQ(MergeDirectVitals(board, direct).members[0].cutscene, 2u);
 }
 
 // A member's standing kills go to the peers whole (at once on a change, again every half

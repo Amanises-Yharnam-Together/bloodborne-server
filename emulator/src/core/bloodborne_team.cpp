@@ -416,6 +416,29 @@ bool CutsceneSkip::Press(bool covered, int step, s64 step_ms, s64 now_ms) {
     return true;
 }
 
+CutsceneVote::Pad CutsceneVote::Tick(const Frame& frame) {
+    if (!frame.watching) {
+        *this = {};
+        return Pad::Leave;
+    }
+    watching = true;
+    voted = voted || frame.options;
+    watchers = 1 + frame.others_watching;
+    want = (voted ? 1 : 0) + std::min(frame.others_skip, frame.others_watching);
+    if (want < watchers) {
+        pressed_ms.reset();
+        return Pad::Hide;
+    }
+    if (pressed_ms && frame.now_ms - *pressed_ms < HoldMs) {
+        return Pad::Press;
+    }
+    if (pressed_ms && frame.now_ms - *pressed_ms < EveryMs) {
+        return Pad::Hide;
+    }
+    pressed_ms = frame.now_ms;
+    return Pad::Press;
+}
+
 TeamLoad::Stage TeamLoad::OwnStage(bool loading, bool in_session, size_t others_seen,
                                    size_t others_needed) {
     if (loading) {

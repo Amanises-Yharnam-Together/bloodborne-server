@@ -250,6 +250,12 @@ int bbcoop_sound_held(void);
 /* And a cutscene under it is skipped: 1 while Options is to be held down for the game's skip
  * (runtime_pad.c, even while the screen takes the pad). */
 int bbcoop_cutscene_skip(void);
+/* Kaniel 2026-10-17: under a cutscene every party member on the map sees, Options is a vote
+ * (runtime_pad.c, `options`: the player holds it): 0 the player's own, 1 held back (others still
+ * watch), 2 pressed for the game's skip (everyone watching voted). */
+int bbcoop_cutscene_vote_pad(int options);
+/* The vote as the overlay shows it: 1 while some of those watching want to skip. */
+int bbcoop_cutscene_vote(int *want, int *watching);
 /* Its buttons: this character ready, not ready, the leader's start (a member's: ready), alone. */
 enum { BBCOOP_TEAM_GO_READY = 0, BBCOOP_TEAM_GO_UNREADY = 1, BBCOOP_TEAM_GO_START = 2,
        BBCOOP_TEAM_GO_ALONE = 3 };

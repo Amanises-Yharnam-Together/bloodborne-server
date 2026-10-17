@@ -24,7 +24,8 @@ import suites  # noqa: E402
 # The game's autoplay verbs (AutoplayVerbs, bloodborne_autoplay.cpp; VerbsTest keeps them equal).
 VERBS = {
     "wait", "wait-session", "wait-members", "wait-map", "travel", "ensure-map", "hurt", "kill",
-    "mark", "approach", "attack", "teleport", "press", "stick", "set-flag", "expect-flag",
+    "mark", "approach", "attack", "teleport", "press", "cutscene-options", "stick", "set-flag",
+    "expect-flag",
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "expect-others-shown",
     "expect-compass",  # Kaniel 2026-10-17: the teammate compass

@@ -5308,8 +5308,10 @@ VitalsBoard MergeDirectVitals(const VitalsBoard& board, std::span<const DirectVi
         }
         const bool same_down = same->down == update.self.down;
         const u32 board_damage = same_down ? same->revive_damage : 0;
+        const u32 board_cutscene = same->cutscene;
         *same = update.self;
         same->revive_damage = board_damage;
+        same->cutscene = board_cutscene; // the direct line does not carry it
     }
     for (MemberVitals& member : merged.members) {
         u32 hits = 0;

@@ -128,6 +128,17 @@ std::atomic<int> remo_step{-1};
 std::atomic<s64> remo_step_ms{0};
 CutsceneSkip cutscene_skip; // CutsceneSkipPressed (the pad's reads)
 std::atomic<bool> skip_pressed{false};
+// Kaniel 2026-10-17: Options under a party's cutscene is a vote (the pad's reads; the overlay shows
+// the count).
+std::mutex cutscene_vote_mutex;
+CutsceneVote cutscene_vote;
+std::atomic<u64> cutscene_vote_shown{0}; // want << 32 | watchers, 0: none
+// The others' votes on the vitals board count while it is this fresh.
+constexpr auto CutsceneVoteFresh = std::chrono::seconds{3};
+// The rig's press under a cutscene (ArmCutsceneOptions): after this long, -1 none; and since when
+// this game's cutscene plays.
+std::atomic<s64> cutscene_options_after{-1};
+s64 cutscene_watch_since_ms = 0; // cutscene_vote_mutex
 u64 team_sessions_opened = 0;
 // Kaniel 2026-10-16: the team's worlds. The world this save last played in its team (its slot's
 // "team_world" file), whether the title starts it new, and whether the leader's screen picked its
@@ -346,7 +357,8 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
                              .landed = vitals.landed(),
                              .needed = vitals.needed(),
                              .at = PositionOf(vitals.at()),
-                             .revive_damage = entry.revive_damage()});
+                             .revive_damage = entry.revive_damage(),
+                             .cutscene = vitals.cutscene()});
         }
         for (const auto& wipe : envelope.vitals_board().wipes()) {
             board.wipes.push_back(
@@ -899,6 +911,7 @@ void SendServerVitals(const MemberVitals& mine, std::span<const ReviveHitTotal> 
     vitals.set_down(mine.down);
     vitals.set_landed(mine.landed);
     vitals.set_needed(mine.needed);
+    vitals.set_cutscene(mine.cutscene);
     PutPosition(mine.at, vitals.mutable_at());
     for (const ReviveHitTotal& hit : hits) {
         bbcoop::ReviveHit* out = vitals.add_hits();
@@ -1090,6 +1103,72 @@ bool CutsceneSkipPressed() {
         skip_pressed.store(false, std::memory_order_relaxed);
     }
     return press;
+}
+
+CutsceneVote::Pad CutsceneVotePad(bool options) {
+    const s64 now_ms = SteadyMilliseconds();
+    const int step = remo_step.load(std::memory_order_relaxed);
+    const bool playing =
+        (step == CutsceneSkip::PrologueStep || step == CutsceneSkip::PlayStep) &&
+        now_ms - remo_step_ms.load(std::memory_order_relaxed) <= CutsceneSkip::LongestMs;
+    // Under the team's loading screen CutsceneSkip skips it; out of a session it is the player's.
+    const bool watching =
+        playing && !team_load_covers.load(std::memory_order_relaxed) && InPartySession();
+    CutsceneVote::Frame frame{.watching = watching, .options = options, .now_ms = now_ms};
+    const u32 map = party_map_now.load();
+    if (watching && map != 0) {
+        std::scoped_lock lock{vitals_mutex};
+        if (vitals_heard_at &&
+            std::chrono::steady_clock::now() - *vitals_heard_at < CutsceneVoteFresh) {
+            for (const MemberVitals& other : vitals_board.members) {
+                if (other.member != vitals_member && other.map == map &&
+                    other.cutscene != CutsceneVote::NotWatching) {
+                    ++frame.others_watching;
+                    frame.others_skip += other.cutscene == CutsceneVote::WantsSkip ? 1 : 0;
+                }
+            }
+        }
+    }
+    std::scoped_lock lock{cutscene_vote_mutex};
+    if (!watching) {
+        cutscene_watch_since_ms = 0;
+    } else if (cutscene_watch_since_ms == 0) {
+        cutscene_watch_since_ms = now_ms;
+    }
+    if (const s64 after = cutscene_options_after.load();
+        after >= 0 && watching && now_ms - cutscene_watch_since_ms >= after) {
+        frame.options = true;
+        cutscene_options_after.store(-1);
+        LOG_INFO(Debug, "Co-op cutscene vote: the script presses Options");
+    }
+    const u32 was = cutscene_vote.Own();
+    const u32 watchers_before = cutscene_vote.Watchers();
+    const u64 shown_before = cutscene_vote_shown.load();
+    const CutsceneVote::Pad pad = cutscene_vote.Tick(frame);
+    NoteCutsceneVote(cutscene_vote.Own());
+    const u64 shown =
+        cutscene_vote.Shown() ? (u64{cutscene_vote.Want()} << 32) | cutscene_vote.Watchers() : 0;
+    cutscene_vote_shown.store(shown);
+    if (cutscene_vote.Own() != was || shown != shown_before ||
+        cutscene_vote.Watchers() != watchers_before) {
+        LOG_INFO(Debug, "Co-op cutscene vote: this member {}, {} of {} watching want to skip",
+                 cutscene_vote.Own() == CutsceneVote::WantsSkip  ? "wants to skip"
+                 : cutscene_vote.Own() == CutsceneVote::Watching ? "watches"
+                                                                 : "is out of a cutscene",
+                 cutscene_vote.Want(), cutscene_vote.Watchers());
+    }
+    return pad;
+}
+
+void ArmCutsceneOptions(s64 after_ms) {
+    cutscene_options_after.store(std::max<s64>(after_ms, 0));
+}
+
+bool CutsceneVoteView(u32& want, u32& watchers) {
+    const u64 shown = cutscene_vote_shown.load();
+    want = static_cast<u32>(shown >> 32);
+    watchers = static_cast<u32>(shown);
+    return shown != 0;
 }
 
 void PS4_SYSV_ABI NoteRemoStep(u64 step, const GuestRegisterSnapshot*) {
