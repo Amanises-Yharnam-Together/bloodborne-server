@@ -346,10 +346,13 @@ class TeamTest(unittest.TestCase):
         self.assertEqual(run_scenario.team_prelude("guest", roles, 0), ["team-accept", "team-ready"])
         self.assertEqual(run_scenario.team_prelude("guest2", roles, 0), ["team-accept", "team-ready"])
 
-    def test_a_restarted_game_goes_back_into_its_team(self):
+    def test_a_restarted_game_makes_or_finds_its_team(self):
+        # Kaniel 2026-10-17: a team lives only while one of its games is there, so a game started
+        # again does the whole prelude (team-create and team-accept pass at once in a team).
         roles = ["host", "guest"]
-        self.assertEqual(run_scenario.team_prelude("host", roles, 1), ["team-start"])
-        self.assertEqual(run_scenario.team_prelude("guest", roles, 2), ["team-ready"])
+        self.assertEqual(run_scenario.team_prelude("host", roles, 1),
+                         run_scenario.team_prelude("host", roles, 0))
+        self.assertEqual(run_scenario.team_prelude("guest", roles, 2), ["team-accept", "team-ready"])
 
     def test_a_game_alone_plays_alone(self):
         self.assertEqual(run_scenario.team_prelude("host", ["host"], 0), ["team-alone"])

@@ -18,13 +18,16 @@ bbcoop::LobbyState InTeam(const std::string& leader, const std::string& id = "t1
     bbcoop::LobbyState state;
     state.mutable_team()->set_id(id);
     state.mutable_team()->set_leader(leader);
+    // The world it plays (a world of the server's, apart from the team).
+    state.mutable_team()->set_world("w-" + id);
+    state.mutable_team()->set_party("world:w-" + id);
     return state;
 }
 
 bbcoop::TeamStart StartOf(const std::string& host, u32 slot) {
     bbcoop::TeamStart start;
     start.set_team("t1");
-    start.set_party("team:t1");
+    start.set_party("world:w-t1");
     start.set_host(host);
     start.set_slot(slot);
     return start;
@@ -63,7 +66,7 @@ TEST(TeamGate, ReadyAsksWithTheSlotAndWaitsForTheStart) {
     const TeamGate::Decision decision = gate.Tick("me", 2, 61'000);
     EXPECT_EQ(decision.step, TeamGate::Step::Load);
     ASSERT_TRUE(decision.start);
-    EXPECT_EQ(decision.start->party(), "team:t1");
+    EXPECT_EQ(decision.start->party(), "world:w-t1");
 }
 
 TEST(TeamGate, TheLeadersStartIsItsReadyAndTheTeamsStart) {
@@ -645,14 +648,14 @@ TEST(TeamJoin, EachGuestJoiningAtOnceGetsItsOwnPlayerNumber) {
 // that team (the leader removed it, or it left) leaves the team's session where it stands.
 TEST(TeamPlay, OutOfTheTeamItPlaysInItLeaves) {
     const bbcoop::LobbyState in = WithMember(InTeam("leader"), "me", true);
-    EXPECT_EQ(TeamPlayStepOf(&in, "team:t1", nullptr), TeamPlayStep::None);
+    EXPECT_EQ(TeamPlayStepOf(&in, "world:w-t1", nullptr), TeamPlayStep::None);
     const bbcoop::LobbyState out;
-    EXPECT_EQ(TeamPlayStepOf(&out, "team:t1", nullptr), TeamPlayStep::Leave);
+    EXPECT_EQ(TeamPlayStepOf(&out, "world:w-t1", nullptr), TeamPlayStep::Leave);
     // In another team now (it left and joined another): out of this one all the same.
     const bbcoop::LobbyState other = WithMember(InTeam("leader", "t2"), "me", false);
-    EXPECT_EQ(TeamPlayStepOf(&other, "team:t1", nullptr), TeamPlayStep::Leave);
+    EXPECT_EQ(TeamPlayStepOf(&other, "world:w-t1", nullptr), TeamPlayStep::Leave);
     // No word from the lobby yet, or a save playing alone: nothing to leave.
-    EXPECT_EQ(TeamPlayStepOf(nullptr, "team:t1", nullptr), TeamPlayStep::None);
+    EXPECT_EQ(TeamPlayStepOf(nullptr, "world:w-t1", nullptr), TeamPlayStep::None);
     EXPECT_EQ(TeamPlayStepOf(&out, "", nullptr), TeamPlayStep::None);
 }
 
@@ -671,7 +674,7 @@ TEST(TeamPlay, AStartWhileAloneTakesTheTeamsParty) {
     const bbcoop::LobbyState other = WithMember(InTeam("leader", "t2"), "me", true);
     EXPECT_EQ(TeamPlayStepOf(&other, "", &start, "me"), TeamPlayStep::None);
     // Already in that party: nothing more.
-    EXPECT_EQ(TeamPlayStepOf(&ready, "team:t1", &start, "me"), TeamPlayStep::None);
+    EXPECT_EQ(TeamPlayStepOf(&ready, "world:w-t1", &start, "me"), TeamPlayStep::None);
 }
 
 // The menu's "Join the hunt" in game: an invitation accepted first (when in no team), then this
@@ -691,52 +694,58 @@ TEST(TeamPlay, JoiningTheHuntFromTheMenuReadiesThisSave) {
     requests = TeamJoinHuntRequests(WithMember(InTeam("leader"), "me", false), "me", "", 1, "");
     ASSERT_EQ(requests.size(), 1u);
     EXPECT_EQ(requests[0].action(), bbcoop::TeamRequest::READY);
-    // The leader: ready and start.
-    requests = TeamJoinHuntRequests(InTeam("me"), "me", "", 1, "");
+    // The leader: ready and start (a team with no world yet, this save none either).
+    bbcoop::LobbyState lead = InTeam("me");
+    lead.mutable_team()->clear_world();
+    lead.mutable_team()->clear_party();
+    requests = TeamJoinHuntRequests(lead, "me", "", 1, "");
     ASSERT_EQ(requests.size(), 2u);
     EXPECT_EQ(requests[1].action(), bbcoop::TeamRequest::START);
 }
 
-// Kaniel 2026-10-16: a new character got the team's old world. The team's worlds are kept apart
-// and the leader picks one; the screen starts on this save's own (the world it last played in the
-// team), a new one for a new character or a save that never played in it.
+// Kaniel 2026-10-16: a new character got the team's old world. Kaniel 2026-10-17: the worlds are
+// the server's (any team plays any of them) and the leader picks one; the screen starts on this
+// save's own (the world it last played), a new one for a new character or a save that never
+// played in a team.
 namespace {
-bbcoop::Team TeamWithWorlds(std::initializer_list<const char*> ids) {
-    bbcoop::Team team;
-    team.set_id("t1");
+bbcoop::LobbyState WithWorlds(bbcoop::LobbyState lobby, std::initializer_list<const char*> ids) {
     for (const char* id : ids) {
-        team.add_worlds()->set_id(id);
+        lobby.add_worlds()->set_id(id);
     }
-    return team;
+    return lobby;
 }
 } // namespace
 
 TEST(TeamWorlds, TheScreenStartsOnThisSavesOwnWorld) {
-    const bbcoop::Team team = TeamWithWorlds({"w2", "w1"});
-    EXPECT_EQ(DefaultTeamWorld(team, "w1", false), "w1");
+    const bbcoop::LobbyState lobby = WithWorlds(InTeam("me"), {"w2", "w1"});
+    EXPECT_EQ(DefaultTeamWorld(lobby, "w1", false), "w1");
     // A new character (the game starts it at the beginning): a new world, whatever its slot
     // played before.
-    EXPECT_EQ(DefaultTeamWorld(team, "w1", true), "");
-    // A save that never played in this team, or whose world the team no longer keeps.
-    EXPECT_EQ(DefaultTeamWorld(team, "", false), "");
-    EXPECT_EQ(DefaultTeamWorld(team, "w9", false), "");
+    EXPECT_EQ(DefaultTeamWorld(lobby, "w1", true), "");
+    // A save that never played in a team, or whose world the server no longer lists.
+    EXPECT_EQ(DefaultTeamWorld(lobby, "", false), "");
+    EXPECT_EQ(DefaultTeamWorld(lobby, "w9", false), "");
 }
 
-TEST(TeamWorlds, AWorldsPartyIsItsOwn) {
-    EXPECT_EQ(TeamPartyOf("t1", "w1"), "team:t1/w1");
-    EXPECT_EQ(TeamPartyOf("t1", "0"), "team:t1"); // the world a team had before
-    // Playing any of its team's worlds is playing in the team.
+TEST(TeamWorlds, AGameInAnotherWorldIsOutOfTheTeam) {
+    // Playing the team's world is playing in the team; another world (the team picked another
+    // since, or another team's) is not.
     const bbcoop::LobbyState in = WithMember(InTeam("leader"), "me", true);
-    EXPECT_EQ(TeamPlayStepOf(&in, "team:t1/w1", nullptr), TeamPlayStep::None);
-    EXPECT_EQ(TeamPlayStepOf(&in, "team:t10/w1", nullptr), TeamPlayStep::Leave);
+    EXPECT_EQ(TeamPlayStepOf(&in, "world:w-t1", nullptr), TeamPlayStep::None);
+    EXPECT_EQ(TeamPlayStepOf(&in, "world:w-t10", nullptr), TeamPlayStep::Leave);
+    // A team with no world yet (a new one at its Start) has no game in it.
+    bbcoop::LobbyState fresh = in;
+    fresh.mutable_team()->clear_world();
+    fresh.mutable_team()->clear_party();
+    EXPECT_EQ(TeamPlayStepOf(&fresh, "world:w-t1", nullptr), TeamPlayStep::Leave);
     bbcoop::TeamStart start = StartOf("leader", 2);
-    start.set_party("team:t1/w1");
     EXPECT_EQ(TeamPlayStepOf(&in, "", &start, "me"), TeamPlayStep::Adopt);
+    start.set_party("world:w-t10");
+    EXPECT_EQ(TeamPlayStepOf(&in, "", &start, "me"), TeamPlayStep::None);
 }
 
 TEST(TeamWorlds, ALeaderJoiningTheHuntPicksItsSavesWorld) {
-    bbcoop::LobbyState lobby = InTeam("me");
-    *lobby.mutable_team()->mutable_worlds() = TeamWithWorlds({"w2", "w1"}).worlds();
+    bbcoop::LobbyState lobby = WithWorlds(InTeam("me"), {"w2", "w1"});
     lobby.mutable_team()->set_world("w2");
     auto requests = TeamJoinHuntRequests(lobby, "me", "", 1, "", "w1");
     ASSERT_EQ(requests.size(), 3u);
@@ -756,8 +765,6 @@ TEST(TeamWorlds, AWorldsNameSaysWhoseItIs) {
     EXPECT_EQ(TeamWorldName(world), "Kaniel's world");
     world.set_character("");
     EXPECT_EQ(TeamWorldName(world), "A world");
-    world.set_id("0");
-    EXPECT_EQ(TeamWorldName(world), "The team's earlier world");
 }
 
 // The team menu closes: opened from the game's System page, the pad presses Circle a moment later

@@ -279,9 +279,9 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
             out.state = LobbyStateOf(m->state());
             out.ready = m->ready();
         }
-        // Kaniel 2026-10-16: the team's worlds.
+        // Kaniel 2026-10-17: the server's worlds (any team's to pick).
         lobby->world = -1;
-        for (const bbcoop::TeamWorldInfo& w : team.worlds()) {
+        for (const bbcoop::TeamWorldInfo& w : state->worlds()) {
             if (lobby->world_count == BBCOOP_LOBBY_WORLDS) {
                 break;
             }
@@ -291,6 +291,7 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
             bbcoop_lobby_world& out = lobby->worlds[lobby->world_count++];
             CopyName(out.id, sizeof(out.id), w.id());
             CopyName(out.name, sizeof(out.name), Core::Bloodborne::TeamWorldName(w));
+            out.lamps = static_cast<int>(w.lamps());
             if (w.played_ms() > 0) {
                 const std::time_t at = static_cast<std::time_t>(w.played_ms() / 1000);
                 std::tm local{};
@@ -375,6 +376,9 @@ extern "C" void bbcoop_team_join_hunt(const char* team) {
 extern "C" void bbcoop_team_choose(int what) {
     Core::Bloodborne::Coop::TeamChoose(static_cast<Core::Bloodborne::TeamGate::Choice>(what));
 }
+
+static_assert(BBCOOP_TEAM_WORLD == bbcoop::TeamRequest::WORLD &&
+              BBCOOP_TEAM_FORGET_WORLD == bbcoop::TeamRequest::FORGET_WORLD);
 
 extern "C" void bbcoop_lobby_request(int action, const char* id) {
     Core::Bloodborne::Coop::TeamLobbyRequest(static_cast<bbcoop::TeamRequest::Action>(action),

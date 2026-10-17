@@ -795,12 +795,11 @@ def forget_portraits(role: str) -> bool:
 def team_prelude(role: str, roles: list[str], stage: int) -> list[str]:
     """The title's team verbs that put a role's game into the scenario's team (the port plays only
     in teams, phase 6): the host makes it, invites the guests and starts it once they are in; each
-    guest accepts and is ready. A game started again (a later stage) goes back into its team; a game
-    alone plays alone."""
+    guest accepts and is ready. A game started again (a later stage) does the same: Kaniel
+    2026-10-17, a team lives only while one of its games is there (the verbs pass at once when it
+    still does: team-create and team-accept are done in a team); a game alone plays alone."""
     if len(roles) == 1:
         return ["team-alone"]
-    if stage > 0:
-        return ["team-start" if role == "host" else "team-ready"]
     if role != "host":
         return ["team-accept", "team-ready"]
     invites = [f"team-invite {engines.ACCOUNTS[r]}" for r in roles if r != "host"]

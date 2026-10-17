@@ -1337,7 +1337,8 @@ int ATradeGoesThroughTheServerAndOutlivesItsRestart() {
 } // namespace
 
 // Phase 5: the lobby on the service. Players sign in before any party, form a
-// team, ready up and start; the team outlives the server.
+// team, ready up and start. Kaniel 2026-10-17: the team is only a session (a
+// new server has none); its world outlives the server.
 int ATeamFormsAndStartsThroughTheService() {
   QTemporaryDir dir;
   CHECK(dir.isValid());
@@ -1374,7 +1375,7 @@ int ATeamFormsAndStartsThroughTheService() {
     a.Team(bbcoop::TeamRequest::START, now);
     Pump(service, {&a, &b}, now);
     CHECK(a.starts.size() == 1 && b.starts.size() == 1);
-    CHECK(b.starts[0].party() == "team:" + team + "/" + b.starts[0].world() &&
+    CHECK(b.starts[0].party() == "world:" + b.starts[0].world() &&
           !b.starts[0].world().empty() && b.starts[0].host() == "aa");
     CHECK(b.starts[0].slot() == 1);
     // The team's party hello plays its world like any party's.
@@ -1388,28 +1389,48 @@ int ATeamFormsAndStartsThroughTheService() {
     Pump(service, {&a}, now);
     CHECK(a.lobby.team().members(1).state() == bbcoop::LobbyPlayer::OFFLINE);
   }
-  // A new server: the team is still there for its members.
+  // A new server: no team, but the world is on its list.
   Service service{dir.path()};
   service.Load(now);
   Game b{1001, "bb", 22};
   b.LobbyHello(false, now);
   Pump(service, {&b}, now);
-  CHECK(b.lobby.has_team() && b.lobby.team().id() == team);
-  CHECK(b.lobby.team().members_size() == 2);
-  // Kaniel 2026-10-16: aa's game stays gone for the grace: it leaves the team,
-  // b leads, and the store says so.
-  now += OfflineGraceMs - 1;
+  CHECK(!b.lobby.has_team());
+  CHECK(b.lobby.worlds_size() == 1 && b.lobby.worlds(0).played_ms() > 0);
+  return 0;
+}
+
+// Kaniel 2026-10-17: a team lives while one of its members' games is there: a
+// member's crash keeps its place (the grace), every member's game gone ends it.
+int ATeamEndsWhenEveryMembersGameIsGone() {
+  Service service{{}};
+  Game a{1000, "aa", 11};
+  Game b{1001, "bb", 12};
+  qint64 now = 1'000'000;
+  a.LobbyHello(false, now);
+  b.LobbyHello(false, now);
+  Pump(service, {&a, &b}, now);
+  a.Team(bbcoop::TeamRequest::CREATE, now);
+  Pump(service, {&a, &b}, now);
+  const std::string team = a.lobby.team().id();
+  a.Team(bbcoop::TeamRequest::INVITE, now, "bb");
+  Pump(service, {&a, &b}, now);
+  b.Team(bbcoop::TeamRequest::ACCEPT, now, {}, team);
+  Pump(service, {&a, &b}, now);
+  // a's game goes: b's team still has it, offline.
+  service.Forget(a.endpoint);
+  now += 2000;
   Pump(service, {&b}, now);
-  CHECK(b.lobby.team().members_size() == 2);
-  now += 1;
-  Pump(service, {&b}, now);
-  CHECK(b.lobby.team().members_size() == 1 && b.lobby.team().leader() == "bb");
-  Service later{dir.path()};
-  later.Load(now);
-  Game b2{1001, "bb", 23};
+  CHECK(b.lobby.team().members_size() == 2 &&
+        b.lobby.team().members(0).state() == bbcoop::LobbyPlayer::OFFLINE);
+  // b's game goes too: back, b is in no team.
+  service.Forget(b.endpoint);
+  now += 2000;
+  Pump(service, {}, now);
+  Game b2{1002, "bb", 13};
   b2.LobbyHello(false, now);
-  Pump(later, {&b2}, now);
-  CHECK(b2.lobby.team().members_size() == 1);
+  Pump(service, {&b2}, now);
+  CHECK(!b2.lobby.has_team());
   return 0;
 }
 
@@ -1419,7 +1440,7 @@ int ATeamFormsAndStartsThroughTheService() {
 int ATeamsWorldComesFromItsHostAndOutlivesTheServer() {
   QTemporaryDir dir;
   CHECK(dir.isValid());
-  const QByteArray team = "team:00ff00ff00ff00ff";
+  const QByteArray team = "world:00ff00ff00ff00ff";
   qint64 now = 1'000'000;
   const auto report = [](Game &game, std::vector<s32> on, qint64 at) {
     bbcoop::Envelope envelope;
@@ -1473,9 +1494,9 @@ int ATeamsWorldComesFromItsHostAndOutlivesTheServer() {
   return 0;
 }
 
-// Kaniel 2026-10-16: a new character got the team's old world. Each of a
-// team's worlds is kept apart; the team's list says whose world each one is
-// (its host's reports), and the world a team had before is one of them.
+// Kaniel 2026-10-16: a new character got the team's old world. Each world is
+// kept apart; the server's list says whose world each one is (its host's
+// reports).
 int ATeamsWorldsAreKeptApart() {
   QTemporaryDir dir;
   CHECK(dir.isValid());
@@ -1526,11 +1547,11 @@ int ATeamsWorldsAreKeptApart() {
     a.Send(envelope, now);
     Pump(service, {&a, &b}, now);
     CHECK(b.team_world && b.team_world->exists());
-    CHECK(b.lobby.team().worlds_size() == 1);
-    CHECK(b.lobby.team().worlds(0).id() == first.world());
-    CHECK(b.lobby.team().worlds(0).character() == "Kaniel");
-    CHECK(b.lobby.team().worlds(0).flags_on() == 2);
-    CHECK(b.lobby.team().worlds(0).played_ms() > 0);
+    CHECK(b.lobby.worlds_size() == 1);
+    CHECK(b.lobby.worlds(0).id() == first.world());
+    CHECK(b.lobby.worlds(0).character() == "Kaniel");
+    CHECK(b.lobby.worlds(0).flags_on() == 2);
+    CHECK(b.lobby.worlds(0).played_ms() > 0);
     stop();
     // The leader picks a new world: none of the first one's in it.
     bbcoop::Envelope pick;
@@ -1541,7 +1562,7 @@ int ATeamsWorldsAreKeptApart() {
     const bbcoop::TeamStart second = play();
     CHECK(second.world() != first.world() && second.party() != first.party());
     CHECK(b.team_world && !b.team_world->exists());
-    CHECK(b.lobby.team().worlds_size() == 2);
+    CHECK(b.lobby.worlds_size() == 2);
     stop();
     // And back to the first: its world again.
     pick.mutable_team_request()->set_world(first.world());
@@ -1552,33 +1573,147 @@ int ATeamsWorldsAreKeptApart() {
     CHECK(b.team_world && b.team_world->exists() &&
           b.team_world->on_size() == 2);
   }
-  // A world from before the worlds were apart ("team:<id>"): a new server
-  // lists it as world "0".
+  return 0;
+}
+
+namespace {
+
+void WriteMessage(const QString &path, const google::protobuf::MessageLite &m) {
+  QDir{}.mkpath(QFileInfo{path}.path());
+  QFile file{path};
+  file.open(QIODevice::WriteOnly);
+  const std::string bytes = m.SerializeAsString();
+  file.write(bytes.data(), static_cast<qint64>(bytes.size()));
+}
+
+QString FolderOfKey(const QString &root, const std::string &key) {
+  return QDir{root}.filePath(
+      BloodborneWorld::PartyFolderName(QByteArray::fromStdString(key)));
+}
+
+} // namespace
+
+// Kaniel 2026-10-17: the worlds kept under their teams' keys before the list
+// ("team:<team>/<world>", "team:<team>" for the first) are on it after the
+// update, with their ids and lines from the old teams file, and play from
+// their folders; the teams file is not read again.
+int TheWorldsOfTheOldTeamsAreOnTheList() {
+  QTemporaryDir dir;
+  CHECK(dir.isValid());
+  bbcoop::TeamWorld stored;
+  stored.add_on(1000);
+  stored.add_on(12107810); // a lamp
+  stored.add_blocks(1);
+  stored.set_exists(true);
+  stored.set_version(4);
+  WriteMessage(
+      QDir{FolderOfKey(dir.path(), "team:t9/w1")}.filePath("team_world.pb"),
+      stored);
+  stored.clear_on();
+  stored.add_on(1000);
+  WriteMessage(
+      QDir{FolderOfKey(dir.path(), "team:t9")}.filePath("team_world.pb"),
+      stored);
+  bbcoop::OldStoredTeams teams;
+  bbcoop::OldTeam &team = *teams.add_teams();
+  team.set_id("t9");
+  bbcoop::TeamWorldInfo &w1 = *team.add_worlds();
+  w1.set_id("w1");
+  w1.set_character("Ada");
+  w1.set_played_ms(5000);
+  WriteMessage(QDir{dir.path()}.filePath("teams.pb"), teams);
+  qint64 now = 1'000'000;
   {
-    const QString old =
-        QDir{dir.path()}.filePath(BloodborneWorld::PartyFolderName(
-            QByteArray::fromStdString("team:" + team)));
-    CHECK(QDir{}.mkpath(old));
-    bbcoop::TeamWorld stored;
-    stored.add_on(1000);
-    stored.add_blocks(1);
-    stored.set_exists(true);
-    QFile file{QDir{old}.filePath("team_world.pb")};
-    CHECK(file.open(QIODevice::WriteOnly));
-    const std::string bytes = stored.SerializeAsString();
-    file.write(bytes.data(), static_cast<qint64>(bytes.size()));
+    Service service{dir.path()};
+    service.Load(now);
+    Game b{1001, "bb", 22};
+    b.LobbyHello(false, now);
+    Pump(service, {&b}, now);
+    CHECK(b.lobby.worlds_size() == 2);
+    const bbcoop::TeamWorldInfo *ada = nullptr;
+    const bbcoop::TeamWorldInfo *first = nullptr;
+    for (const bbcoop::TeamWorldInfo &world : b.lobby.worlds()) {
+      (world.id() == "w1" ? ada : first) = &world;
+    }
+    CHECK(ada && ada->character() == "Ada" && ada->played_ms() == 5000);
+    CHECK(ada->flags_on() == 2 && ada->lamps() == 1);
+    CHECK(first && first->id() != "0" && !first->id().empty());
+    CHECK(first->flags_on() == 1 && first->played_ms() > 0);
+    CHECK(!QFile::exists(QDir{dir.path()}.filePath("teams.pb")));
+    CHECK(QFile::exists(QDir{dir.path()}.filePath("teams.pb.old")));
+    // Its party plays the world in its old folder.
+    Game a{1000, "aa", 11};
+    a.Hello(now, "world:w1");
+    Pump(service, {&a}, now);
+    CHECK(a.team_world && a.team_world->exists() &&
+          a.team_world->version() == 4);
   }
+  // Again: the same list, from worlds.pb.
   Service service{dir.path()};
   service.Load(now);
-  Game b{1001, "bb", 22};
+  Game b{1001, "bb", 23};
   b.LobbyHello(false, now);
   Pump(service, {&b}, now);
-  CHECK(b.lobby.team().worlds_size() == 3);
-  bool listed = false;
-  for (const bbcoop::TeamWorldInfo &world : b.lobby.team().worlds()) {
-    listed = listed || (world.id() == "0" && world.flags_on() == 1);
-  }
-  CHECK(listed);
+  CHECK(b.lobby.worlds_size() == 2);
+  Game a{1000, "aa", 12};
+  a.Hello(now, "world:w1");
+  Pump(service, {&a}, now);
+  CHECK(a.team_world && a.team_world->exists() && a.team_world->version() == 4);
+  return 0;
+}
+
+// Kaniel 2026-10-17: a leader forgets a world in the picker: off the list, its
+// folder put aside on the server (nothing deleted).
+int AForgottenWorldsFolderIsPutAside() {
+  QTemporaryDir dir;
+  CHECK(dir.isValid());
+  qint64 now = 1'000'000;
+  Service service{dir.path()};
+  service.Load(now);
+  Game a{1000, "aa", 11};
+  a.claims_host = true;
+  a.LobbyHello(false, now);
+  Pump(service, {&a}, now);
+  a.Team(bbcoop::TeamRequest::CREATE, now);
+  a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1);
+  a.Team(bbcoop::TeamRequest::START, now);
+  Pump(service, {&a}, now);
+  const bbcoop::TeamStart go = a.starts.at(0);
+  a.Hello(now, QByteArray::fromStdString(go.party()));
+  a.LobbyHello(true, now);
+  Pump(service, {&a}, now);
+  const QString folder = FolderOfKey(dir.path(), go.party());
+  CHECK(QDir{folder}.exists());
+  bbcoop::Envelope forget;
+  forget.mutable_team_request()->set_action(bbcoop::TeamRequest::FORGET_WORLD);
+  forget.mutable_team_request()->set_world(go.world());
+  a.Send(forget, now);
+  Pump(service, {&a}, now);
+  CHECK(!a.lobby.notice().empty()); // played now
+  // Its game leaves the world (back at the title, out of the party).
+  service.Forget(a.endpoint);
+  Game a2{1002, "aa", 12};
+  a2.LobbyHello(false, now);
+  Pump(service, {&a2}, now);
+  a2.Team(bbcoop::TeamRequest::CREATE, now);
+  Pump(service, {&a2}, now);
+  a2.Send(forget, now);
+  Pump(service, {&a2}, now);
+  CHECK(a2.lobby.notice().empty());
+  CHECK(a2.lobby.worlds_size() == 0);
+  CHECK(!QDir{folder}.exists());
+  const QStringList aside =
+      QDir{QDir{dir.path()}.filePath("forgotten")}.entryList(
+          QDir::Dirs | QDir::NoDotAndDotDot);
+  CHECK(aside.size() == 1 &&
+        aside[0].startsWith(QFileInfo{folder}.fileName() + "-"));
+  // Not on the list after a restart either.
+  Service again{dir.path()};
+  again.Load(now);
+  Game a3{1003, "aa", 13};
+  a3.LobbyHello(false, now);
+  Pump(again, {&a3}, now);
+  CHECK(a3.lobby.worlds_size() == 0);
   return 0;
 }
 
@@ -1591,7 +1726,7 @@ int EachLinksPartyIsKnownAfterItsHello() {
   qint64 now = 1'000'000;
   CHECK(service.PartyOf(host.endpoint).isEmpty());
   host.Hello(now);
-  other.Hello(now, "team:t9");
+  other.Hello(now, "world:t9");
   Pump(service, {&host, &other}, now);
   CHECK(!service.PartyOf(host.endpoint).isEmpty());
   CHECK(!service.PartyOf(other.endpoint).isEmpty());
@@ -1937,6 +2072,11 @@ int ARemovedMemberIsOutOfTheTeamsWorld() {
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
+      {"ATeamEndsWhenEveryMembersGameIsGone",
+       ATeamEndsWhenEveryMembersGameIsGone},
+      {"TheWorldsOfTheOldTeamsAreOnTheList",
+       TheWorldsOfTheOldTeamsAreOnTheList},
+      {"AForgottenWorldsFolderIsPutAside", AForgottenWorldsFolderIsPutAside},
       {"EachLinksPartyIsKnownAfterItsHello",
        EachLinksPartyIsKnownAfterItsHello},
       {"AMembersNextRunResumesWhereItWas", AMembersNextRunResumesWhereItWas},

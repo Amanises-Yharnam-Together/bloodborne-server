@@ -1256,12 +1256,14 @@ SCENARIOS = {
         "roles": {
             "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
                       "wait-session 2 300", f"set-flag {TEAM_WORLD_FLAG} 1", "wait 15", "done"],
-                     ["team-start", START, "wait-session 2 300", f"expect-flag {TEAM_WORLD_FLAG} 1",
+                     ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", f"expect-flag {TEAM_WORLD_FLAG} 1",
                       "wait 60",
                       "done"]],
             "guest": [["team-accept", "team-ready", START, "wait-session 2 300",
                        f"expect-flag {TEAM_WORLD_FLAG} 0", "wait 45", "done"],
-                      ["team-ready", START, "wait-session 2 300", f"expect-flag {TEAM_WORLD_FLAG} 1",
+                      ["team-accept", "team-ready", START, "wait-session 2 300",
+                       f"expect-flag {TEAM_WORLD_FLAG} 1",
                        "done"],
                       ["team-leave", "team-alone", START, "wait 10",
                        f"expect-flag {TEAM_WORLD_FLAG} 0"]],
@@ -1321,7 +1323,7 @@ SCENARIOS = {
                       f"expect-map {CENTRAL_YHARNAM}"],
         },
         "expect": {
-            "guest": [r"Co-op team menu: out of the team \(team:\w+\): left its session"],
+            "guest": [r"Co-op team menu: out of the team \(world:\w+\): left its session"],
         },
         # The removed guest's own leave (MultiPlayStopRequest where it stands) is the point.
         "allow": [r"left the session outside a trip"],
@@ -1353,7 +1355,7 @@ SCENARIOS = {
                       "wait-solo 60", "wait 15", "snapshot", f"expect-map {CENTRAL_YHARNAM}"],
         },
         "expect": {
-            "guest": [r"Co-op team menu: out of the team \(team:\w+\): left its session"],
+            "guest": [r"Co-op team menu: out of the team \(world:\w+\): left its session"],
         },
         "allow": [r"left the session outside a trip"],
         "timeout": 300,
@@ -1391,7 +1393,7 @@ SCENARIOS = {
                       "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"],
         },
         "expect": {
-            "guest": [r"Co-op team menu: out of the team \(team:\w+\): left its session",
+            "guest": [r"Co-op team menu: out of the team \(world:\w+\): left its session",
                       r"Co-op team menu: this save joins team \w+ where it stands, as its guest"],
         },
         "allow": [r"left the session outside a trip"],

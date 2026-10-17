@@ -11,7 +11,7 @@ only (bbport is the target; every player and the server run one build).
 | Question | Decision | Why |
 |---|---|---|
 | Peer to peer or server? | **Server.** Every game keeps one UDP connection to it; nothing goes game to game. | Players reach each other over a VPN anyway, so P2P's only advantage (NAT) is gone. The world survives the host, one place orders every change, one link per game instead of a mesh. Cost: guest-to-guest packets take one extra hop (milliseconds on a VPN). |
-| Where is the world saved? | **On the server, one world per team;** each save keeps its own personal world for solo play. | See "Team worlds". |
+| Where is the world saved? | **On the server, its worlds apart from its teams** (any team plays any of them); each save keeps its own personal world for solo play. | See "Team worlds". |
 | Who owns the world? | **The server owns the world's state;** the games still play it. | The server records and orders kills, flags, doors, lamps, shortcuts, items, enemy HP and map state, keeps them across sessions and crashes, and hands them to joiners. It runs no game: enemies' AI runs in one game per map (chosen by the server), each player's character in its own game. Saves stay on each PC; the server's world is applied when a game loads. |
 | Do we rewrite movement sync? | **No.** The game's own player and enemy sync (channel 6 behavior graph, ch 4/0x24/0x36 enemy movement) keeps running; its packets just travel through the server. | Writing our own animation sync would be a large project for no gain. |
 | Which wire format? | **UDP to the server.** Our messages in **protobuf**; the game's packets as raw bytes behind a small fixed header. | shadNet already uses protobuf; a schema ends hand-written frames breaking older readers. Game packets are many per second and the server never reads them. |
@@ -43,6 +43,20 @@ only (bbport is the target; every player and the server run one build).
 - **NG cycle:** the team world has its own cycle. Starting NG+ is the team's choice, made by the
   leader at the final boss; a character joining plays at the team's cycle.
 - **Team size:** up to 4 (the game's remote player slots).
+- **Teams are sessions, worlds are the server's** (Kaniel 2026-10-17). A team lives in the
+  server's memory only: never written to disk, gone once every member's game is gone (a member
+  whose game crashed keeps its place for 10 minutes while someone is still in the team). The
+  worlds are kept apart from the teams: the server lists every world it has (`worlds.pb`, each
+  world's id, folder and line: its host's character, when it was last played, its lamps lit), the
+  last played first, at most 16 (a new one past them puts the least lately played aside). Every
+  team's leader picks any of them on the team screen, or a new one (made from the leader's save,
+  as before); the screen starts on the world this save last played (its slot's `team_world`
+  file), else a new one. A world another team plays now cannot be picked. The leader may forget a
+  world (pressed twice): it goes off the list and its folder is moved to `forgotten/` beside the
+  worlds, nothing deleted. Player ids are each install's own, so worlds are nobody's. A world's
+  party key is `world:<id>`. The worlds kept under their teams before (`team:<team>/<world>`) are
+  put on the list once, with their ids and lines from the old `teams.pb` (kept as `teams.pb.old`),
+  and any world folder with a `team_world.pb` not on the list is added too.
 - **Chalice dungeons:** shared too, as team worlds (dungeon progress and glyphs per team). Never
   tested on our version yet: a rig check of plain co-op in a dungeon comes first.
 - **Server down:** team play needs the server; solo play with the personal world needs nothing, so
@@ -296,10 +310,12 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
    - **Server** (`server/coop/team_lobby.h`, in shadNet's world service): players sign in with a
      `LobbyHello` on the Coop stream before any party hello; teams of up to 4 with a leader,
      invites, Ready (with the save slot), Start; every signed-in player gets its `LobbyState`
-     after any change, a refused request comes back with a notice. The teams and invites are kept
-     in `teams.pb` beside the worlds (they outlive the server); a team is started while one of
-     its members plays, and a member that readies then goes at once (a crash and Continue rejoin).
-     A team's party key is `team:<id>`, so its world is the server world of phase 3.
+     after any change, a refused request comes back with a notice. The teams and invites live in
+     the server's memory (2026-10-17: see "Team worlds"; first kept in `teams.pb`); a team is
+     started while one of its members plays, and a member that readies then goes at once (a
+     crash and Continue rejoin).
+     A team plays a world's party key (`world:<id>`, first `team:<id>`), so its world is the
+     server world of phase 3.
    - **Game** (`bloodborne_team.h`, `bloodborne_server_world.cpp`): the party controller waits
      for its role. TitleStep's load state (0x0195B480, called every frame until it moves on) is
      skipped while the team decides: a member's Continue or Load Game is its Ready, the leader's

@@ -2533,32 +2533,60 @@ void Screen() {
     }
     ImGui::PopFont();
 
-    // Kaniel 2026-10-16: the team's world, kept apart on the server for each world it played: the
-    // leader picks it (Cross goes to the next one, then a new world), the others see it.
+    // Kaniel 2026-10-17: the team's world, one of the server's (any team plays any of them, each
+    // kept apart): the leader picks it (Cross goes to the next one, the last played first, then a
+    // new world) and may forget one (pressed twice), the others see it.
     if (lobby.in_team && !lobby.menu) {
         ImGui::PushFont(MenuArt::Font(), 20.0f);
         std::string world = T("A new world", "Новый мир");
-        if (lobby.world >= 0 && lobby.world < lobby.world_count) {
-            const bbcoop_lobby_world& w = lobby.worlds[lobby.world];
-            world = w.name;
-            if (w.when[0]) {
-                world += std::string("  ·  ") + w.when;
+        const bbcoop_lobby_world* picked =
+            lobby.world >= 0 && lobby.world < lobby.world_count ? &lobby.worlds[lobby.world] : nullptr;
+        if (picked) {
+            world = picked->name;
+            if (picked->when[0]) {
+                world += std::string("  ·  ") + picked->when;
+            }
+            if (picked->lamps > 0) {
+                const std::string count = std::to_string(picked->lamps);
+                const std::string en = count + (picked->lamps == 1 ? " lamp" : " lamps");
+                const std::string ru = "фонарей: " + count;
+                world += std::string("  ·  ") + T(en.c_str(), ru.c_str());
             }
         }
         const std::string text = std::string(T("World: ", "Мир: ")) + world;
-        const ImVec2 row_size(S(560.0f), S(40.0f));
-        const ImVec2 row_at(win.x + (size.x - row_size.x) * 0.5f, win.y + size.y - S(166.0f) - S(52.0f));
         const bool can_pick = lobby.leader && !lobby.started;
+        const bool can_forget = can_pick && picked != nullptr;
+        const float forget_w = S(150.0f), forget_gap = S(10.0f);
+        const ImVec2 row_size(S(640.0f), S(40.0f));
+        const float all_w = row_size.x + (can_forget ? forget_gap + forget_w : 0.0f);
+        const ImVec2 row_at(win.x + (size.x - all_w) * 0.5f, win.y + size.y - S(166.0f) - S(52.0f));
         if (can_pick) {
-            if (Button(draw, "world", text.c_str(), row_at, row_size)) {
+            if (Button(draw, "world", Fit(text.c_str(), row_size.x - S(24.0f)).c_str(), row_at, row_size)) {
                 // The next world, then a new one, then the first again.
                 const int next = lobby.world + 1 >= lobby.world_count ? -1 : lobby.world + 1;
                 const int wrapped = lobby.world < 0 ? (lobby.world_count > 0 ? 0 : -1) : next;
                 bbcoop_lobby_request(BBCOOP_TEAM_WORLD, wrapped < 0 ? "" : lobby.worlds[wrapped].id);
             }
         } else {
-            ts = ImGui::CalcTextSize(text.c_str());
-            draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, row_at.y + S(8.0f)), Gold(0.85f), text.c_str());
+            const std::string shown = Fit(text.c_str(), row_size.x);
+            ts = ImGui::CalcTextSize(shown.c_str());
+            draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, row_at.y + S(8.0f)), Gold(0.85f), shown.c_str());
+        }
+        // Forget: the first press asks, a second one within a few seconds forgets (the server keeps
+        // the world's folder aside).
+        static std::string forget_armed;
+        static double forget_armed_at = 0.0;
+        const bool armed = can_forget && forget_armed == picked->id && ImGui::GetTime() - forget_armed_at < 4.0;
+        if (can_forget &&
+            Button(draw, "forget", armed ? T("Forget it?", "Забыть?") : T("Forget", "Забыть"),
+                   ImVec2(row_at.x + row_size.x + forget_gap, row_at.y), ImVec2(forget_w, row_size.y))) {
+            if (armed) {
+                forget_armed.clear();
+                bbcoop_lobby_request(BBCOOP_TEAM_FORGET_WORLD, picked->id);
+            } else {
+                forget_armed = picked->id;
+                forget_armed_at = ImGui::GetTime();
+            }
         }
         ImGui::PopFont();
     }

@@ -119,22 +119,20 @@ TeamPlayStep TeamPlayStepOf(const bbcoop::LobbyState* lobby, std::string_view pa
                             const bbcoop::TeamStart* start, const std::string& me = {});
 // The menu's "Join the hunt" in game: the invitation to `invite_team` accepted first (when in no
 // team), then this save ready with its slot and character; the leader's starts the team too.
-// Kaniel 2026-10-16: the leader's also picks `world`, this save's world in the team ("" a new one).
+// Kaniel 2026-10-16: the leader's also picks `world`, this save's world ("" a new one).
 std::vector<bbcoop::TeamRequest> TeamJoinHuntRequests(const bbcoop::LobbyState& lobby,
                                                       const std::string& me,
                                                       const std::string& invite_team, u32 slot,
                                                       const std::string& character,
                                                       std::string_view world = {});
 
-// Kaniel 2026-10-16: a new character got the team's old world. Each of a team's worlds is kept
-// apart on the server (bbcoop::TeamWorldInfo) and the leader picks the one its Start plays. The
-// party key of a team's world ("team:<team>/<world>"; "team:<team>" for world "0", the one a team
-// had before).
-std::string TeamPartyOf(std::string_view team, std::string_view world);
-// The world the team screen starts on for the leader's save: the world it last played in this
-// team (`hint`, kept per save slot) while the team keeps it; a new one ("") for a new character
-// (`fresh`: the game starts it at the beginning) or a save that never played in the team.
-std::string DefaultTeamWorld(const bbcoop::Team& team, std::string_view hint, bool fresh);
+// Kaniel 2026-10-16: a new character got the team's old world. Kaniel 2026-10-17: the worlds are
+// the server's, apart from its teams (bbcoop::TeamWorldInfo, LobbyState.worlds: any team plays
+// any of them) and the leader picks the one its Start plays. The world the team screen starts on
+// for the leader's save: the world it last played (`hint`, kept per save slot) while the server
+// lists it; a new one ("") for a new character (`fresh`: the game starts it at the beginning) or
+// a save that never played in a team.
+std::string DefaultTeamWorld(const bbcoop::LobbyState& lobby, std::string_view hint, bool fresh);
 // What the screen calls a world.
 std::string TeamWorldName(const bbcoop::TeamWorldInfo& world);
 

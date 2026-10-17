@@ -129,12 +129,9 @@ TeamPlayStep TeamPlayStepOf(const bbcoop::LobbyState* lobby, std::string_view pa
     if (lobby == nullptr) {
         return TeamPlayStep::None; // no word from the lobby yet
     }
-    const std::string mine = lobby->has_team() ? "team:" + lobby->team().id() : std::string{};
-    // Any of the team's worlds ("team:<team>" or "team:<team>/<world>").
-    const auto in_mine = [&](std::string_view key) {
-        return !mine.empty() && key.starts_with(mine) &&
-               (key.size() == mine.size() || key[mine.size()] == '/');
-    };
+    // Kaniel 2026-10-17: the world the team plays (a world of the server's, "world:<id>").
+    const std::string mine = lobby->has_team() ? lobby->team().party() : std::string{};
+    const auto in_mine = [&](std::string_view key) { return !mine.empty() && key == mine; };
     if (!party.empty()) {
         return in_mine(party) ? TeamPlayStep::None : TeamPlayStep::Leave;
     }
@@ -166,7 +163,7 @@ std::vector<bbcoop::TeamRequest> TeamJoinHuntRequests(const bbcoop::LobbyState& 
     ready.set_slot(slot);
     ready.set_character(character);
     if (lobby.has_team() && lobby.team().leader() == me) {
-        const std::string pick = DefaultTeamWorld(lobby.team(), world, false);
+        const std::string pick = DefaultTeamWorld(lobby, world, false);
         if (!lobby.team().started() && lobby.team().world() != pick) {
             bbcoop::TeamRequest& choose = requests.emplace_back();
             choose.set_action(bbcoop::TeamRequest::WORLD);
@@ -177,28 +174,17 @@ std::vector<bbcoop::TeamRequest> TeamJoinHuntRequests(const bbcoop::LobbyState& 
     return requests;
 }
 
-std::string TeamPartyOf(std::string_view team, std::string_view world) {
-    std::string party = "team:" + std::string{team};
-    if (world != "0") {
-        party += "/" + std::string{world};
-    }
-    return party;
-}
-
-std::string DefaultTeamWorld(const bbcoop::Team& team, std::string_view hint, bool fresh) {
+std::string DefaultTeamWorld(const bbcoop::LobbyState& lobby, std::string_view hint, bool fresh) {
     if (fresh || hint.empty()) {
         return {};
     }
     const bool kept = std::ranges::any_of(
-        team.worlds(), [&](const bbcoop::TeamWorldInfo& w) { return w.id() == hint; });
+        lobby.worlds(), [&](const bbcoop::TeamWorldInfo& w) { return w.id() == hint; });
     return kept ? std::string{hint} : std::string{};
 }
 
 std::string TeamWorldName(const bbcoop::TeamWorldInfo& world) {
-    if (!world.character().empty()) {
-        return world.character() + "'s world";
-    }
-    return world.id() == "0" ? "The team's earlier world" : "A world";
+    return world.character().empty() ? "A world" : world.character() + "'s world";
 }
 
 bool IsWorldFlag(s32 flag) {
