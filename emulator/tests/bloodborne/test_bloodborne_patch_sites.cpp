@@ -321,15 +321,20 @@ TEST(CoopSites, OnlyTheServerEndsASession) {
     ASSERT_NE(FindCoopFeature("server owns leaves"), nullptr);
     EXPECT_TRUE(FindCoopFeature("server owns leaves")->required);
     const auto sites = SitesOf("server owns leaves");
-    ASSERT_EQ(sites.size(), 3u);
+    ASSERT_EQ(sites.size(), 4u);
     EXPECT_EQ(Site("session idle timeout").offset, 0x01789C5Du);
     EXPECT_EQ(Site("session resend overflow").offset, 0x017897B2u);
     EXPECT_EQ(Site("room timeout").offset, 0x01789F41u);
-    for (const CoopSite* site : sites) {
-        const auto patched = HexBytes(site->patched);
-        ASSERT_FALSE(patched.empty()) << site->name;
-        EXPECT_TRUE(patched[0] == 0xEB || patched[0] == 0xE9) << site->name; // always jumps
+    for (const char* jump : {"session idle timeout", "session resend overflow", "room timeout"}) {
+        const auto patched = HexBytes(Site(jump).patched);
+        ASSERT_FALSE(patched.empty()) << jump;
+        EXPECT_TRUE(patched[0] == 0xEB || patched[0] == 0xE9) << jump; // always jumps
     }
+    // Rig party3/leader-returns3: the old host back as a guest left again every few seconds from
+    // Lua's OnMatchingCheck. Its failed check returns instead of ending the session.
+    EXPECT_EQ(Site("matching check").offset, 0x0138095Fu);
+    EXPECT_EQ(Site("matching check").original, "74 0B");
+    EXPECT_EQ(Site("matching check").patched, "90 90");
 }
 
 // Kaniel 2026-10-16 (a removed member invited back): a game that was in a session joining one

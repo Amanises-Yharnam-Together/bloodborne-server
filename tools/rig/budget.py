@@ -34,6 +34,8 @@ SUITE_BOOT_S = 150
 # chapter. Most are older versions of a suite chapter (named after the arrow).
 LONG = {
     "soak": "a long session by design",
+    "guest-drops": "a 70 s wait for the drops (Kaniel's playtest 2026-10-16)",
+    "boss-guest-runs": "50 s and 90 s waits by the boss (Kaniel's playtest 2026-10-16)",
     "cutscene-skip": "two stages (two boots), the opening cutscene played in between",
     "ward-door": "a 420 s wait for the Ward door",
     "save-backups": "waits out the save backups' 150 s timer",
@@ -150,8 +152,9 @@ def restarts(steps: list[str]) -> int:
 
 def chapter_budget(chapter: dict) -> int:
     """A chapter's time: its own budget, and a boot for each restart of its games (one game's
-    restarts follow each other; the others wait for them)."""
-    boots = sum(restarts(steps) for steps in chapter["steps"].values())
+    restarts follow each other; the others wait for them). "boots_in": the boots of a restart
+    that ended the chapter before, which go on in this one."""
+    boots = sum(restarts(steps) for steps in chapter["steps"].values()) + chapter.get("boots_in", 0)
     return chapter.get("budget", CHAPTER_MAX_S) + BOOT_S * boots
 
 
