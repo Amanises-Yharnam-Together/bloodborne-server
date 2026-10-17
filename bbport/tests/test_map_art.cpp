@@ -117,6 +117,7 @@ struct Mesh {
     std::string mtd;
     std::vector<Vec3> vertices;
     std::vector<Faceset> facesets;
+    std::string diffuse = {}; // its material's diffuse texture, "" none
 };
 
 /// A FLVER2 with each mesh its own material, vertex buffer (float3 position then 8 bytes of
@@ -142,7 +143,22 @@ std::vector<std::uint8_t> MakeFlver(const std::vector<Mesh>& meshes) {
     const std::size_t faceset_base = mesh_base + meshes.size() * 0x30;
     const std::size_t buffer_base = faceset_base + facesets * 0x20;
     const std::size_t layout_base = buffer_base + meshes.size() * 0x20;
-    f.bytes.resize(layout_base + 0x10);
+    // The layout, then a texture entry for each mesh's material (a normal map, then its diffuse).
+    const std::size_t texture_base = layout_base + 0x10;
+    f.bytes.resize(texture_base + meshes.size() * 2 * 0x20);
+    for (std::size_t m = 0; m < meshes.size(); ++m) {
+        if (meshes[m].diffuse.empty()) {
+            continue;
+        }
+        f.Put<std::int32_t>(materials + m * 0x20 + 8, 2);
+        f.Put<std::int32_t>(materials + m * 0x20 + 0xC, std::int32_t(m * 2));
+        const std::size_t normal = texture_base + m * 2 * 0x20, diffuse = normal + 0x20;
+        f.Put<std::int32_t>(normal, std::int32_t(f.AddUtf16("N:\\tex\\" + meshes[m].diffuse + "_n.tif")));
+        f.Put<std::int32_t>(normal + 4, std::int32_t(f.AddUtf16("g_BumpmapTexture")));
+        f.Put<std::int32_t>(diffuse, std::int32_t(f.AddUtf16("N:\\tex\\" + meshes[m].diffuse + ".tif")));
+        f.Put<std::int32_t>(diffuse + 4, std::int32_t(f.AddUtf16("g_DiffuseTexture")));
+    }
+    f.Align(4);
     // The layout: position (float3, semantic 0) at 0, then a normal (byte4, semantic 2) at 12.
     const std::size_t members = f.Size();
     f.Put<std::int32_t>(layout_base, 2);
@@ -259,6 +275,82 @@ int main() {
         assert(!AppendTriangles(std::vector<std::uint8_t>(0x100, 0), none) && none.empty());
     }
 
+    // Kaniel 2026-10-17 (colour): each triangle's colour is its material's diffuse texture's; none
+    // without one.
+    {
+        Mesh stone{"M[ARSN]_l.mtd", {{0, 0, 0}, {1, 0, 0}, {0, 0, 1}}, {{0, false, {0, 1, 2}}}, "m24_01_stone_a"};
+        Mesh bare{"M[ARSN]_l.mtd", {{0, 0, 0}, {1, 0, 0}, {0, 0, 1}}, {{0, false, {0, 1, 2}}}};
+        std::vector<float> out;
+        std::vector<std::uint32_t> colors;
+        std::vector<std::string> asked;
+        assert(AppendTriangles(MakeFlver({stone, bare}), out, &colors, [&](std::string_view texture) {
+            asked.emplace_back(texture);
+            return texture == "m24_01_stone_a" ? 0xFF804020u : 0u;
+        }));
+        assert(colors == (std::vector<std::uint32_t>{0xFF804020u, 0u}));
+        assert(asked == (std::vector<std::string>{"m24_01_stone_a"})); // once a material
+        // Placing keeps each kept triangle's colour.
+        std::vector<float> world;
+        std::vector<std::uint32_t> world_colors;
+        Place(Piece{"m000100", {}, {}, {1, 1, 1}}, out, PlayArea{-10, 10, -10, 10, 10}, world, colors, &world_colors);
+        assert(world_colors == colors);
+    }
+
+    // A texture's average colour: a TPF of one 8x4 BC1 texture, a red block and a blue one.
+    {
+        Blob tpf;
+        tpf.bytes = {'T', 'P', 'F', 0};
+        tpf.Put<std::uint32_t>(8, 1);
+        tpf.Put<std::uint32_t>(16 + 0x00, 0x60);                     // data offset
+        tpf.Put<std::uint32_t>(16 + 0x04, 16);                       // data size
+        tpf.Put<std::uint16_t>(16 + 12, 8);                          // width
+        tpf.Put<std::uint16_t>(16 + 14, 4);                          // height
+        tpf.Put<std::uint32_t>(16 + 0x18, 0x50);                     // its name
+        tpf.Put<std::uint32_t>(16 + 0x20, 72);                       // BC1 sRGB
+        tpf.Put<std::uint16_t>(0x50, 0);
+        tpf.Put<std::uint16_t>(0x60, 0xF800), tpf.Put<std::uint16_t>(0x62, 0xF800); // red, indices 0
+        tpf.Put<std::uint32_t>(0x64, 0);
+        tpf.Put<std::uint16_t>(0x68, 0x001F), tpf.Put<std::uint16_t>(0x6A, 0x001F); // blue
+        tpf.Put<std::uint32_t>(0x6C, 0);
+        const std::uint32_t average = AverageColor(tpf.bytes);
+        assert((average >> 24) == 0xFF);
+        assert(((average >> 16) & 0xFF) > 120 && ((average >> 16) & 0xFF) < 135); // half red
+        assert(((average >> 8) & 0xFF) == 0);
+        assert((average & 0xFF) > 120 && (average & 0xFF) < 135); // half blue
+        tpf.Put<std::uint32_t>(16 + 0x20, 77); // BC3: not read
+        assert(AverageColor(tpf.bytes) == 0 && AverageColor(std::vector<std::uint8_t>(64, 0)) == 0);
+    }
+
+    // A texture archive's header: each file's name, offset and size in the .tpfbdt.
+    {
+        Blob bhd;
+        bhd.bytes = {'B', 'H', 'F', '4'};
+        bhd.Put<std::uint8_t>(0x30, 1); // UTF-16 names
+        bhd.Put<std::int32_t>(0x0C, 2);
+        bhd.Put<std::int64_t>(0x20, 0x24);
+        bhd.bytes.resize(0x40 + 2 * 0x24);
+        for (int i = 0; i < 2; ++i) {
+            const std::size_t at = 0x40 + std::size_t(i) * 0x24;
+            bhd.Put<std::int64_t>(at + 8, 100 + i);
+            bhd.Put<std::uint32_t>(at + 0x18, 1000u * std::uint32_t(i + 1));
+            bhd.Put<std::uint32_t>(at + 0x20, std::uint32_t(bhd.AddUtf16(i ? "b_a_l.tpf.dcx" : "a_a.tpf.dcx")));
+        }
+        const auto entries = ReadArchiveHeader(bhd.bytes);
+        assert(entries.size() == 2 && entries[1].name == "b_a_l.tpf.dcx" && entries[1].offset == 2000 &&
+               entries[1].size == 101);
+        assert(ReadArchiveHeader(std::vector<std::uint8_t>(16, 0)).empty());
+        // A repacked archive's names in single bytes (+0x30 0).
+        Blob narrow = bhd;
+        narrow.Put<std::uint8_t>(0x30, 0);
+        const std::size_t name = narrow.Size();
+        for (const char c : std::string("c_a.tpf.dcx")) {
+            narrow.Add<char>(c);
+        }
+        narrow.Add<char>(0);
+        narrow.Put<std::uint32_t>(0x40 + 0x20, std::uint32_t(name));
+        assert(ReadArchiveHeader(narrow.bytes).at(0).name == "c_a.tpf.dcx");
+    }
+
     // Models left out: the sky (m9xxxxx), the distant views (m008xxx), a quad of huge triangles.
     {
         const std::vector<float> small{0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -329,6 +421,12 @@ int main() {
         assert(low && low[3] == 255 && roof && roof[3] == 255);
         assert(south_east && south_east[3] == 0);
         assert(roof[0] > low[0]); // pale high ground, darker low ground
+        // A green material's ground comes out green.
+        Canvas green(area, 2.0f, 4096);
+        green.Add(std::vector<float>{0, 0, 0, 10, 0, 0, 0, 0, 10}, std::vector<std::uint32_t>{0xFF208020u});
+        const Chart painted = green.Finish();
+        const std::uint8_t* leaf = PixelAt(painted, 2, 2);
+        assert(leaf && leaf[1] > leaf[0] + 20 && leaf[1] > leaf[2] + 20);
         // Two canvases of one area (two threads' models) merge: the higher surface wins.
         Canvas first(area, 2.0f, 4096), second(area, 2.0f, 4096);
         first.Add(std::vector<float>{0, 0, 0, 10, 0, 0, 0, 0, 10, 10, 0, 0, 10, 0, 10, 0, 0, 10});
@@ -371,14 +469,28 @@ int main() {
         if (std::filesystem::exists(dvdroot / "map" / "MapStudio" / "m24_01_00_00.msb.dcx")) {
             const auto chart = ChartArea(
                 0x18010000, [&](const std::string& relative) { return ReadAll(dvdroot / relative); }, 2.0f, 2048,
-                4);
+                4, [&](const std::string& relative, std::uint64_t offset, std::uint64_t size) {
+                    std::ifstream file(dvdroot / relative, std::ios::binary);
+                    std::vector<std::uint8_t> bytes(size);
+                    file.seekg(std::streamoff(offset));
+                    file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(size));
+                    return bytes;
+                });
             assert(chart && chart->width > 500 && chart->height > 500);
             // 1st Floor Sickroom, Central Yharnam, Great Bridge (bloodborne_lamp_points.h).
             for (const auto& [x, z] : {std::pair{-199.74f, 179.42f}, {-193.4f, 68.5f}, {-124.8f, 64.3f}}) {
                 const std::uint8_t* px = PixelAt(*chart, x, z);
                 assert(px && px[3] == 255);
             }
-            std::printf("map-art: Central Yharnam drawn %dx%d\n", chart->width, chart->height);
+            // In colour: the copper roofs and the moss are far from the paper's brown.
+            std::size_t coloured = 0;
+            for (std::size_t i = 0; i < chart->rgba.size(); i += 4) {
+                const int r = chart->rgba[i], g = chart->rgba[i + 1], b = chart->rgba[i + 2];
+                coloured += chart->rgba[i + 3] != 0 && (b > r + 10 || g > r + 10);
+            }
+            assert(coloured > 1000);
+            std::printf("map-art: Central Yharnam drawn %dx%d, %zu pixels blue or green\n", chart->width,
+                        chart->height, coloured);
         }
     }
     std::printf("map-art: all passed\n");

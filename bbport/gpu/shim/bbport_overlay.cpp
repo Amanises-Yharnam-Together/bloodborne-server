@@ -4044,14 +4044,46 @@ struct State {
 };
 State state;
 
-/// The area's picture as a texture (one at a time; the last one goes once another is shown).
+/// An area's picture as a texture.
 struct ChartTexture {
     uint32_t map = 0;
     std::shared_ptr<const BbMapArt::Chart> chart;
     ImTextureData* texture = nullptr;
 };
-ChartTexture current;
+/// Kaniel 2026-10-17 ("one big map"): the pictures of the shown area's world drawn so far (the
+/// other worlds' go when another is shown).
+std::map<uint32_t, ChartTexture> charts;
 std::vector<ImTextureData*> dying;
+
+/// The shown area's picture once it is there; the areas drawn with it (WorldAreas, below).
+const ChartTexture* Shown();
+std::vector<uint32_t> WorldAreas();
+
+/// The areas of one world share the game's coordinates (their MSBs place them where they stand in
+/// it), so the map draws them together: the waking world (Hemwick, Old Yharnam, the Cathedral Ward
+/// blocks, Cainhurst, the Forbidden Woods, Yahar'gul, Byrgenwerth), the Nightmare of Mensis, the
+/// Nightmare Frontier with the Hunter's Nightmare; the Dream and anything else alone.
+int WorldOf(uint32_t map) {
+    switch (map >> 24) {
+    case 0x16:
+    case 0x17:
+    case 0x18:
+    case 0x19:
+    case 0x1b:
+    case 0x1c:
+    case 0x20:
+        return 1;
+    case 0x1a:
+        return 2;
+    case 0x21:
+    case 0x22:
+    case 0x23:
+    case 0x24:
+        return 3;
+    default:
+        return 100 + int(map >> 16);
+    }
+}
 
 Compass::PortraitTexture portraits[BBCOOP_MAP_MEMBERS];
 
@@ -4081,21 +4113,45 @@ void Refresh() {
     for (int i = 0; i < view.member_count; ++i) {
         Compass::RefreshPortrait(portraits[i], view.members[i].board);
     }
-    if (current.map == state.shown && current.texture != nullptr) {
-        return;
+    // The shown area's world: the other worlds' pictures go, this one's come as they are drawn
+    // (the shown area's asked for first).
+    const auto world = WorldAreas();
+    for (auto it = charts.begin(); it != charts.end();) {
+        if (std::find(world.begin(), world.end(), it->first) == world.end()) {
+            if (it->second.texture != nullptr) {
+                it->second.texture->WantDestroyNextFrame = true;
+                dying.push_back(it->second.texture);
+            }
+            it = charts.erase(it);
+        } else {
+            ++it;
+        }
     }
-    auto chart = BbMapCharts::Get(state.shown);
-    if (!chart) {
-        return;
+    std::vector<uint32_t> order{state.shown};
+    for (const uint32_t map : world) {
+        if (map != state.shown) {
+            order.push_back(map);
+        }
     }
-    if (current.texture != nullptr) {
-        current.texture->WantDestroyNextFrame = true;
-        dying.push_back(current.texture);
+    for (const uint32_t map : order) {
+        if (map == 0 || charts.contains(map)) {
+            continue;
+        }
+        auto chart = BbMapCharts::Get(map);
+        if (!chart) {
+            continue;
+        }
+        ChartTexture& slot = charts[map];
+        slot = {map, chart, IM_NEW(ImTextureData)()};
+        slot.texture->Create(ImTextureFormat_RGBA32, chart->width, chart->height);
+        std::memcpy(slot.texture->GetPixels(), chart->rgba.data(), chart->rgba.size());
+        ImGui::RegisterUserTexture(slot.texture);
     }
-    current = {state.shown, chart, IM_NEW(ImTextureData)()};
-    current.texture->Create(ImTextureFormat_RGBA32, chart->width, chart->height);
-    std::memcpy(current.texture->GetPixels(), chart->rgba.data(), chart->rgba.size());
-    ImGui::RegisterUserTexture(current.texture);
+}
+
+const ChartTexture* Shown() {
+    const auto found = charts.find(state.shown);
+    return found != charts.end() && found->second.texture != nullptr ? &found->second : nullptr;
 }
 
 std::string AreaName(uint32_t map) {
@@ -4124,6 +4180,20 @@ std::vector<uint32_t> Areas() {
     }
     std::sort(areas.begin(), areas.end());
     return areas;
+}
+
+/// The areas drawn with the shown one: those of its world among Areas().
+std::vector<uint32_t> WorldAreas() {
+    std::vector<uint32_t> world;
+    for (const uint32_t map : Areas()) {
+        if (WorldOf(map) == WorldOf(state.shown)) {
+            world.push_back(map);
+        }
+    }
+    if (std::find(world.begin(), world.end(), state.shown) == world.end() && state.shown != 0) {
+        world.push_back(state.shown);
+    }
+    return world;
 }
 
 /// The shown area's lit lamps, in their order.
@@ -4232,22 +4302,49 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                   ImVec2(frame.p1.x + S(14.0f), frame.p1.y + S(14.0f)), 14.0f, S(12.0f), 0.95f);
     draw->AddRectFilled(frame.p0, frame.p1, Party::Rgba(0.045f, 0.040f, 0.035f, 0.92f));
     draw->PushClipRect(frame.p0, frame.p1, true);
-    const bool has = current.map == state.shown && current.texture != nullptr;
-    if (has) {
-        const BbMapArt::Chart& chart = *current.chart;
-        const ImVec2 a = frame.Screen(chart.x0, chart.z1);
-        const ImVec2 b = frame.Screen(chart.x0 + float(chart.width) / chart.ppm, chart.z1 - float(chart.height) / chart.ppm);
-        draw->AddImage(current.texture->GetTexRef(), a, b);
+    if (const ChartTexture* shown = Shown()) {
+        // The world's other areas under the shown one, a little darker; the shown one over them.
+        const auto picture = [&](const ChartTexture& c, float tone) {
+            const BbMapArt::Chart& chart = *c.chart;
+            const ImVec2 a = frame.Screen(chart.x0, chart.z1);
+            const ImVec2 b =
+                frame.Screen(chart.x0 + float(chart.width) / chart.ppm, chart.z1 - float(chart.height) / chart.ppm);
+            draw->AddImage(c.texture->GetTexRef(), a, b, ImVec2(0, 0), ImVec2(1, 1), Party::Rgba(tone, tone, tone, 1.0f));
+        };
+        for (const auto& [map, c] : charts) {
+            if (map != state.shown && c.texture != nullptr) {
+                picture(c, 0.62f);
+            }
+        }
+        picture(*shown, 1.0f);
+        const int world = WorldOf(state.shown);
+        // Zoomed out: each area's name over its middle.
+        if (state.zoom < S(1.2f) && charts.size() > 1) {
+            for (const auto& [map, c] : charts) {
+                const BbMapArt::Chart& chart = *c.chart;
+                const ImVec2 at = frame.Screen(chart.x0 + float(chart.width) / chart.ppm * 0.5f,
+                                               chart.z1 - float(chart.height) / chart.ppm * 0.5f);
+                Party::Text(draw, MenuArt::Font(), S(map == state.shown ? 24.0f : 20.0f), at,
+                            map == state.shown ? Bright() : Plain(0.8f), AreaName(map).c_str(), 0.5f);
+            }
+        }
+        // The lamps lit in the other areas of the world, then the shown area's (focusable).
+        for (int i = 0; i < view.lamp_count; ++i) {
+            const bbcoop_map_lamp& lamp = view.lamps[i];
+            if (lamp.lit && lamp.map != state.shown && WorldOf(lamp.map) == world && charts.contains(lamp.map)) {
+                LampMark(draw, frame.Screen(lamp.x, lamp.z), false, 0.0f);
+            }
+        }
         for (size_t i = 0; i < lamps.size(); ++i) {
             LampMark(draw, frame.Screen(lamps[i]->x, lamps[i]->z), int(i) == state.focus, pulse);
         }
         for (int i = 0; i < view.member_count; ++i) {
             const bbcoop_map_member& m = view.members[i];
-            if (m.has_at && m.map == state.shown) {
+            if (m.has_at && WorldOf(m.map) == world) {
                 MemberMark(draw, frame.Screen(m.x, m.z), i);
             }
         }
-        if (view.has_me && view.map == state.shown) {
+        if (view.has_me && WorldOf(view.map) == world) {
             PlayerMark(draw, frame.Screen(view.x, view.z));
         }
         if (state.focus >= 0 && state.focus < int(lamps.size())) {
@@ -4407,10 +4504,11 @@ void DrawKeys(ImDrawList* draw, float mid, float y) {
     ImGui::PushFont(MenuArt::Font(), 18.0f);
     const char* text = T("L1 / R1  Area     Right stick, drag  Move     L2 / R2, wheel  Zoom     Square  You",
                          "L1 / R1  Область     Правый стик, мышь  Сдвиг     L2 / R2, колесо  Масштаб     Квадрат  Вы");
+    const char* whole = T("Triangle  Whole map", "Треугольник  Вся карта");
     const char* choose = T("Travel", "В путь");
     const char* back = T("Close", "Закрыть");
     const float icon = S(26.0f), space = S(28.0f);
-    float total = ImGui::CalcTextSize(text).x + space;
+    float total = ImGui::CalcTextSize(text).x + space + ImGui::CalcTextSize(whole).x + space;
     const bool art = MenuArt::Has(MenuArt::ButtonCross) && MenuArt::Has(MenuArt::ButtonCircle);
     if (art) {
         total += 2 * (icon + S(6.0f)) + ImGui::CalcTextSize(choose).x + ImGui::CalcTextSize(back).x + space;
@@ -4418,6 +4516,8 @@ void DrawKeys(ImDrawList* draw, float mid, float y) {
     float x = mid - total * 0.5f;
     draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), text);
     x += ImGui::CalcTextSize(text).x + space;
+    draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), whole);
+    x += ImGui::CalcTextSize(whole).x + space;
     if (art) {
         for (const auto& [piece, label] : {std::pair{MenuArt::ButtonCross, choose}, {MenuArt::ButtonCircle, back}}) {
             MenuArt::Draw(draw, piece, ImVec2(x, y), ImVec2(x + icon, y + icon));
@@ -4466,12 +4566,17 @@ void MoveView(const Frame& frame) {
     if (inside && io.MouseWheel != 0.0f) {
         zoom *= std::pow(1.25f, io.MouseWheel);
     }
-    state.zoom = std::clamp(state.zoom * zoom, S(0.3f), S(12.0f));
-    // The middle stays over the picture.
-    if (current.chart && current.map == state.shown) {
-        const BbMapArt::Chart& chart = *current.chart;
-        state.cx = std::clamp(state.cx, chart.x0, chart.x0 + float(chart.width) / chart.ppm);
-        state.cz = std::clamp(state.cz, chart.z1 - float(chart.height) / chart.ppm, chart.z1);
+    state.zoom = std::clamp(state.zoom * zoom, S(0.05f), S(12.0f));
+    // The middle stays over the world's pictures.
+    if (!charts.empty()) {
+        float x0 = FLT_MAX, x1 = -FLT_MAX, z0 = FLT_MAX, z1 = -FLT_MAX;
+        for (const auto& [map, c] : charts) {
+            const BbMapArt::Chart& chart = *c.chart;
+            x0 = std::min(x0, chart.x0), x1 = std::max(x1, chart.x0 + float(chart.width) / chart.ppm);
+            z0 = std::min(z0, chart.z1 - float(chart.height) / chart.ppm), z1 = std::max(z1, chart.z1);
+        }
+        state.cx = std::clamp(state.cx, x0, x1);
+        state.cz = std::clamp(state.cz, z0, z1);
     }
 }
 
@@ -4558,9 +4663,9 @@ void Screen() {
     const float list_w = S(430.0f);
     const float top = win.y + S(84.0f) + ornament + S(20.0f), bottom = win.y + size.y - S(80.0f);
     const Frame frame{ImVec2(win.x + S(40.0f), top), ImVec2(win.x + size.x - list_w - S(70.0f), bottom)};
-    if (state.zoom <= 0.0f && current.map == state.shown && current.texture != nullptr) {
-        state.zoom = FitZoom(frame, *current.chart);
-        CentreOnChart(*current.chart);
+    if (const ChartTexture* shown = Shown(); state.zoom <= 0.0f && shown != nullptr) {
+        state.zoom = FitZoom(frame, *shown->chart);
+        CentreOnChart(*shown->chart);
         if (view.has_me && view.map == state.shown) {
             state.zoom = std::max(state.zoom, S(3.0f)); // the streets round the player
             state.cx = view.x;
@@ -4574,6 +4679,20 @@ void Screen() {
         if (Pressed({ImGuiKey_GamepadFaceLeft, ImGuiKey_C}) && view.has_me && view.map == state.shown) {
             state.cx = view.x;
             state.cz = view.z;
+        }
+        // Kaniel 2026-10-17 ("one big map"): Triangle shows the whole world drawn so far.
+        if (Pressed({ImGuiKey_GamepadFaceUp, ImGuiKey_Tab}) && !charts.empty()) {
+            float x0 = FLT_MAX, x1 = -FLT_MAX, z0 = FLT_MAX, z1 = -FLT_MAX;
+            for (const auto& [map, c] : charts) {
+                const BbMapArt::Chart& chart = *c.chart;
+                x0 = std::min(x0, chart.x0), x1 = std::max(x1, chart.x0 + float(chart.width) / chart.ppm);
+                z0 = std::min(z0, chart.z1 - float(chart.height) / chart.ppm), z1 = std::max(z1, chart.z1);
+            }
+            state.zoom = std::min((frame.p1.x - frame.p0.x) / std::max(1.0f, x1 - x0),
+                                  (frame.p1.y - frame.p0.y) / std::max(1.0f, z1 - z0)) * 0.95f;
+            state.zoom = std::max(state.zoom, S(0.05f));
+            state.cx = (x0 + x1) * 0.5f;
+            state.cz = (z0 + z1) * 0.5f;
         }
         if (!lamps.empty() && (up || down || left || right)) {
             state.focus = std::clamp(state.focus + ((down || right) ? 1 : -1), 0, int(lamps.size()) - 1);
@@ -4609,7 +4728,7 @@ void Screen() {
 } // namespace Map
 
 /// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1
-/// (map: M, the map screen; circle, square), consumed when the file appears (it is removed), one
+/// (map: M, the map screen; circle, square, triangle), consumed when the file appears (it is removed), one
 /// key press per frame.
 bool scripted_busy = false; // keys of the file still to press
 void ScriptedKeys() {
@@ -4658,7 +4777,8 @@ void ScriptedKeys() {
          : token == "enter" ? ImGuiKey_GamepadFaceDown : token == "l1" ? ImGuiKey_GamepadL1
          : token == "r1" ? ImGuiKey_GamepadR1 : token == "kdown" ? ImGuiKey_DownArrow
          : token == "kup" ? ImGuiKey_UpArrow : token == "circle" ? ImGuiKey_GamepadFaceRight
-         : token == "square" ? ImGuiKey_GamepadFaceLeft : ImGuiKey_None;
+         : token == "square" ? ImGuiKey_GamepadFaceLeft
+         : token == "triangle" ? ImGuiKey_GamepadFaceUp : ImGuiKey_None;
     if (token == "back") {
         SetOpen(false);
         return;

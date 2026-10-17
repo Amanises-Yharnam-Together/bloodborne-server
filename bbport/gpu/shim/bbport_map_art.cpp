@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <thread>
 #include <utility>
 
@@ -124,6 +125,73 @@ float TriangleArea(const float* t) {
 
 } // namespace
 
+std::uint32_t AverageColor(std::span<const std::uint8_t> tpf) {
+    const auto textures = BbGameArt::ParseTpf(tpf);
+    if (!textures || textures->empty()) {
+        return 0;
+    }
+    const BbGameArt::TpfTexture& texture = textures->front();
+    // DXGI BC1 (71, 72 sRGB) and BC7 (98, 99 sRGB); the blocks in any order make the same average.
+    const bool bc1 = texture.dxgi == 71 || texture.dxgi == 72, bc7 = texture.dxgi == 98 || texture.dxgi == 99;
+    if (!bc1 && !bc7) {
+        return 0;
+    }
+    const std::size_t block = bc1 ? 8 : 16;
+    const std::size_t blocks = std::size_t(std::max(1, texture.width / 4)) * std::size_t(std::max(1, texture.height / 4));
+    const std::size_t count = std::min<std::size_t>(blocks, texture.size / block);
+    const std::size_t step = std::max<std::size_t>(1, count / 1024); // a thousand blocks at most
+    double sum[3] = {}, weight = 0;
+    for (std::size_t b = 0; b < count; b += step) {
+        const std::uint8_t* at = tpf.data() + texture.offset + b * block;
+        std::array<std::uint8_t, 64> pixels;
+        if (bc1) {
+            pixels = BbGameArt::DecodeBc1Block(std::span<const std::uint8_t, 8>(at, 8));
+        } else {
+            pixels = BbGameArt::DecodeBc7Block(std::span<const std::uint8_t, 16>(at, 16));
+        }
+        for (std::size_t p = 0; p < 64; p += 4) {
+            const double a = pixels[p + 3] / 255.0;
+            sum[0] += pixels[p] * a, sum[1] += pixels[p + 1] * a, sum[2] += pixels[p + 2] * a;
+            weight += a;
+        }
+    }
+    if (weight <= 0) {
+        return 0;
+    }
+    const auto channel = [&](int c) { return std::uint32_t(std::clamp(sum[c] / weight, 0.0, 255.0)); };
+    return 0xFF000000u | channel(0) << 16 | channel(1) << 8 | channel(2);
+}
+
+std::vector<ArchiveEntry> ReadArchiveHeader(std::span<const std::uint8_t> bhd) {
+    std::vector<ArchiveEntry> entries;
+    std::int32_t count = 0;
+    std::int64_t entry_size = 0;
+    if (bhd.size() < 0x40 || std::memcmp(bhd.data(), "BHF4", 4) != 0 || !Get(bhd, 0x0C, count) ||
+        !Get(bhd, 0x20, entry_size) || entry_size < 0x24 || count < 0 || count > 1'000'000) {
+        return entries;
+    }
+    for (std::int32_t i = 0; i < count; ++i) {
+        const std::size_t at = 0x40 + std::size_t(i) * std::size_t(entry_size);
+        std::int64_t size = 0;
+        std::uint32_t offset = 0, name = 0;
+        if (!Get(bhd, at + 8, size) || !Get(bhd, at + 0x18, offset) || !Get(bhd, at + 0x20, name)) {
+            break;
+        }
+        // Names in UTF-16 when the header says so (+0x30), else in single bytes (a repacked
+        // archive, as the rig's low-spec texture mod's).
+        std::string text;
+        if (bhd[0x30] != 0) {
+            text = Utf16At(bhd, name);
+        } else {
+            for (std::size_t c = name; c < bhd.size() && bhd[c] != 0 && text.size() < 256; ++c) {
+                text += char(bhd[c]);
+            }
+        }
+        entries.push_back(ArchiveEntry{std::move(text), offset, std::uint64_t(size)});
+    }
+    return entries;
+}
+
 std::optional<MapStudio> ReadMapStudio(std::span<const std::uint8_t> msb) {
     if (msb.size() < 0x20 || std::memcmp(msb.data(), "MSB ", 4) != 0) {
         return std::nullopt;
@@ -168,7 +236,8 @@ std::optional<MapStudio> ReadMapStudio(std::span<const std::uint8_t> msb) {
     return studio;
 }
 
-bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& out) {
+bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& out, std::vector<std::uint32_t>* colors,
+                     const MaterialColor& color_of) {
     if (flver.size() < 0x80 || std::memcmp(flver.data(), "FLVER\0L\0", 8) != 0) {
         return false;
     }
@@ -192,6 +261,7 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
     const std::size_t faceset_base = mesh_base + std::size_t(meshes) * 0x30;
     const std::size_t buffer_base = faceset_base + std::size_t(facesets) * 0x20;
     const std::size_t layout_base = buffer_base + std::size_t(buffers) * 0x20;
+    const std::size_t texture_base = layout_base + std::size_t(layouts) * 0x10;
     // Each layout's position member: its offset in the vertex and whether it is a float3 or float4.
     std::vector<std::int32_t> position_of(std::size_t(layouts), -1);
     for (std::int32_t i = 0; i < layouts; ++i) {
@@ -212,6 +282,38 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
         }
     }
     std::vector<float> corners;
+    std::vector<std::uint32_t> corner_colors;
+    std::map<std::int32_t, std::uint32_t> material_colors;
+    // A material's colour: its first diffuse texture's (path "...\m24_01_trims_003_a.tif").
+    const auto material_color = [&](std::int32_t material) -> std::uint32_t {
+        if (!colors || !color_of || material < 0 || material >= materials) {
+            return 0;
+        }
+        if (const auto known = material_colors.find(material); known != material_colors.end()) {
+            return known->second;
+        }
+        std::int32_t count = 0, first = 0;
+        Get(flver, material_base + std::size_t(material) * 0x20 + 8, count);
+        Get(flver, material_base + std::size_t(material) * 0x20 + 0xC, first);
+        std::uint32_t color = 0;
+        for (std::int32_t t = first; t < first + count && t >= 0 && t < first + 32; ++t) {
+            std::int32_t path = 0, type = 0;
+            Get(flver, texture_base + std::size_t(t) * 0x20, path);
+            Get(flver, texture_base + std::size_t(t) * 0x20 + 4, type);
+            if (Utf16At(flver, std::size_t(type)).find("Diffuse") == std::string::npos) {
+                continue;
+            }
+            std::string name = Utf16At(flver, std::size_t(path));
+            name = name.substr(name.find_last_of("\\/") + 1);
+            name = name.substr(0, name.find('.'));
+            if (!name.empty()) {
+                color = color_of(name);
+            }
+            break;
+        }
+        material_colors[material] = color;
+        return color;
+    };
     for (std::int32_t mesh = 0; mesh < meshes; ++mesh) {
         const std::size_t at = mesh_base + std::size_t(mesh) * 0x30;
         std::int32_t material = 0, faceset_count = 0, faceset_list = 0, buffer_count = 0, buffer_list = 0;
@@ -242,6 +344,7 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
             vertex_count <= 0) {
             continue;
         }
+        const std::uint32_t mesh_color = material_color(material);
         const std::size_t vertices = std::size_t(data) + buffer_offset + std::size_t(position_of[std::size_t(layout)]);
         if (vertices + std::size_t(vertex_count - 1) * std::size_t(vertex_size) + 12 > flver.size()) {
             continue;
@@ -296,6 +399,7 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
                 corner(a);
                 corner(b);
                 corner(c);
+                corner_colors.push_back(mesh_color);
             };
             if (strip) {
                 for (std::int32_t i = 0; i + 2 < index_count; ++i) {
@@ -309,6 +413,9 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
         }
     }
     out.insert(out.end(), corners.begin(), corners.end());
+    if (colors) {
+        colors->insert(colors->end(), corner_colors.begin(), corner_colors.end());
+    }
     return true;
 }
 
@@ -364,7 +471,8 @@ std::optional<PlayArea> PlayAreaOf(std::span<const Vec3> spots) {
                     Percentile(zs, 0.99) + Margin, Percentile(ys, 0.99) + 25.0f};
 }
 
-void Place(const Piece& piece, std::span<const float> model, const PlayArea& area, std::vector<float>& out) {
+void Place(const Piece& piece, std::span<const float> model, const PlayArea& area, std::vector<float>& out,
+           std::span<const std::uint32_t> colors, std::vector<std::uint32_t>* out_colors) {
     const std::array<float, 9> m = RotationOf(piece.rotation, piece.scale);
     const Vec3& p = piece.position;
     float tri[9];
@@ -381,6 +489,9 @@ void Place(const Piece& piece, std::span<const float> model, const PlayArea& are
             continue;
         }
         out.insert(out.end(), tri, tri + 9);
+        if (out_colors) {
+            out_colors->push_back(t / 9 < colors.size() ? colors[t / 9] : 0u);
+        }
     }
 }
 
@@ -393,9 +504,10 @@ Canvas::Canvas(const PlayArea& area, float ppm_, int max_side) {
     z1 = area.z1;
     top.assign(std::size_t(width) * std::size_t(height), -std::numeric_limits<float>::infinity());
     light.assign(top.size(), 0);
+    color.assign(top.size(), 0);
 }
 
-void Canvas::Add(std::span<const float> triangles) {
+void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t> colors) {
     // The light from the north-west, high, as an old map's relief.
     const float lx = -0.45f, ly = 0.78f, lz = 0.43f;
     for (std::size_t t = 0; t + 9 <= triangles.size(); t += 9) {
@@ -412,6 +524,7 @@ void Canvas::Add(std::span<const float> triangles) {
         }
         const float lambert = std::clamp((nx * lx + ny * ly + nz * lz) / length, 0.0f, 1.0f);
         const auto shade = std::uint8_t(std::lround(lambert * 255.0f));
+        const std::uint32_t tint = t / 9 < colors.size() ? colors[t / 9] : 0u;
         // Pixels of the corners (z north up).
         float px[3], py[3], h[3];
         for (int k = 0; k < 3; ++k) {
@@ -431,6 +544,7 @@ void Canvas::Add(std::span<const float> triangles) {
             if (z > top[at]) {
                 top[at] = z;
                 light[at] = shade;
+                color[at] = tint;
             }
         };
         if (bx0 == bx1 && by0 == by1) {
@@ -480,6 +594,7 @@ void Canvas::Merge(const Canvas& other) {
         if (other.top[i] > top[i]) {
             top[i] = other.top[i];
             light[i] = other.light[i];
+            color[i] = other.color[i];
         }
     }
 }
@@ -531,8 +646,25 @@ Chart Canvas::Finish() const {
             hash = (hash ^ (hash >> 13)) * 0x5bd1e995u;
             const float grain = float((hash >> 24) & 0xFF) / 255.0f * 8.0f - 4.0f;
             std::uint8_t* px = chart.rgba.data() + at * 4;
+            float base[3];
             for (int c = 0; c < 3; ++c) {
-                float v = (umber[c] + (paper[c] - umber[c]) * t) * relief + grain;
+                base[c] = umber[c] + (paper[c] - umber[c]) * t;
+            }
+            if (const std::uint32_t tint = color[at]; tint != 0) {
+                // Kaniel 2026-10-17 ("can we make it colored?"): the material's own colour,
+                // livelier than the dark textures and as bright as the height says, a little of
+                // the paper's tone kept.
+                float rgb[3] = {float((tint >> 16) & 0xFF), float((tint >> 8) & 0xFF), float(tint & 0xFF)};
+                const float lum = std::max(1.0f, 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2]);
+                const float want = 95.0f + 120.0f * t;
+                for (int c = 0; c < 3; ++c) {
+                    const float vivid = lum + (rgb[c] - lum) * 1.7f;
+                    const float paper_tone = (umber[c] + (paper[c] - umber[c]) * t);
+                    base[c] = std::clamp(vivid * want / lum, 0.0f, 255.0f) * 0.8f + paper_tone * 0.2f;
+                }
+            }
+            for (int c = 0; c < 3; ++c) {
+                float v = base[c] * relief + grain;
                 v = v * (1.0f - line) + ink[c] * line;
                 px[c] = std::uint8_t(std::clamp(v, 0.0f, 255.0f));
             }
@@ -574,7 +706,7 @@ Chart Cropped(const Chart& chart) {
 
 std::vector<std::uint8_t> Save(const Chart& chart) {
     std::vector<std::uint8_t> file(32);
-    std::memcpy(file.data(), "BBMAP1\0\0", 8);
+    std::memcpy(file.data(), "BBMAP3\0\0", 8);
     std::memcpy(file.data() + 8, &chart.width, 4);
     std::memcpy(file.data() + 12, &chart.height, 4);
     std::memcpy(file.data() + 16, &chart.x0, 4);
@@ -592,7 +724,7 @@ std::vector<std::uint8_t> Save(const Chart& chart) {
 }
 
 std::optional<Chart> Load(std::span<const std::uint8_t> file) {
-    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP1\0\0", 8) != 0) {
+    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP3\0\0", 8) != 0) {
         return std::nullopt;
     }
     Chart chart;
@@ -621,46 +753,164 @@ std::string MapNameOf(std::uint32_t packed_map) {
     return name;
 }
 
-std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, float ppm, int max_side, int threads) {
-    const std::string name = MapNameOf(packed_map);
+std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, float ppm, int max_side, int threads,
+                               const ReadRange& read_range) {
+    const std::array<std::uint32_t, 1> one{packed_map};
+    return ChartAreas(one, read, ppm, max_side, threads, read_range);
+}
+
+namespace {
+
+/// The material colours of an area's textures (map/mAA/*.tpfbhd, their low-resolution "_l"
+/// copies), worked out when first asked; safe from several threads.
+class TextureColors {
+public:
+    TextureColors(const ReadFile& read, const ReadRange& read_range) : read{read}, read_range{read_range} {}
+
+    /// The archives of area folder `folder` ("m24") in the index.
+    void AddFolder(const std::string& folder, std::span<const std::string> archives) {
+        std::scoped_lock lock{mutex};
+        for (const std::string& archive : archives) {
+            const std::string bhd = "map/" + folder + "/" + archive + ".tpfbhd";
+            for (const ArchiveEntry& entry : ReadArchiveHeader(read(bhd))) {
+                index.try_emplace(entry.name, Where{"map/" + folder + "/" + archive + ".tpfbdt", entry.offset, entry.size});
+            }
+        }
+    }
+
+    std::uint32_t Of(std::string_view texture) {
+        if (!read_range) {
+            return 0;
+        }
+        const std::string name(texture);
+        Where where;
+        {
+            std::scoped_lock lock{mutex};
+            if (const auto known = colors.find(name); known != colors.end()) {
+                return known->second;
+            }
+            auto found = index.find(name + "_l.tpf.dcx");
+            if (found == index.end()) {
+                found = index.find(name + ".tpf.dcx");
+            }
+            if (found == index.end()) {
+                colors[name] = 0;
+                return 0;
+            }
+            where = found->second;
+        }
+        const auto packed = read_range(where.file, where.offset, where.size);
+        const auto tpf = BbGameArt::InflateDcx(packed);
+        const std::uint32_t color = tpf ? AverageColor(*tpf) : 0;
+        std::scoped_lock lock{mutex};
+        colors[name] = color;
+        return color;
+    }
+
+private:
+    struct Where {
+        std::string file;
+        std::uint64_t offset = 0, size = 0;
+    };
+    const ReadFile& read;
+    const ReadRange& read_range;
+    std::mutex mutex;
+    std::map<std::string, Where> index;
+    std::map<std::string, std::uint32_t> colors;
+};
+
+/// The texture archives of area AA's folder: mAA_0000 .. mAA_0009 and mAA_BB_0000 .. (those
+/// that are there).
+std::vector<std::string> ArchivesOf(const std::string& map_name, const ReadFile& exists) {
+    std::vector<std::string> archives;
+    const std::string area = map_name.substr(0, 3), block = map_name.substr(0, 6);
+    for (const std::string& prefix : {area, block}) {
+        for (int i = 0; i < 10; ++i) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "%s_%04d", prefix.c_str(), i);
+            if (std::find(archives.begin(), archives.end(), name) == archives.end() &&
+                !exists("map/" + area + "/" + name + ".tpfbhd").empty()) {
+                archives.emplace_back(name);
+            }
+        }
+    }
+    return archives;
+}
+
+} // namespace
+
+std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, const ReadFile& read, float ppm,
+                                int max_side, int threads, const ReadRange& read_range) {
+    TextureColors textures(read, read_range);
     const auto inflate = [](std::vector<std::uint8_t> file) {
         if (file.size() >= 4 && std::memcmp(file.data(), "DCX\0", 4) == 0) {
             return BbGameArt::InflateDcx(file).value_or(std::vector<std::uint8_t>{});
         }
         return file;
     };
-    const auto msb = inflate(read("map/MapStudio/" + name + ".msb.dcx"));
-    const auto studio = ReadMapStudio(msb);
-    if (!studio || studio->pieces.empty()) {
-        return std::nullopt;
+    // Each area's pieces, filtered by its own play area; the picture spans them all.
+    struct Source {
+        std::string name;
+        MapStudio studio;
+        PlayArea area;
+    };
+    std::vector<Source> sources;
+    std::optional<PlayArea> all;
+    for (const std::uint32_t packed_map : packed_maps) {
+        const std::string name = MapNameOf(packed_map);
+        auto studio = ReadMapStudio(inflate(read("map/MapStudio/" + name + ".msb.dcx")));
+        const auto area = studio && !studio->pieces.empty() ? PlayAreaOf(studio->spots) : std::nullopt;
+        if (!area) {
+            continue;
+        }
+        all = all ? PlayArea{std::min(all->x0, area->x0), std::max(all->x1, area->x1), std::min(all->z0, area->z0),
+                             std::max(all->z1, area->z1), std::max(all->ceiling, area->ceiling)}
+                  : *area;
+        sources.push_back(Source{name, std::move(*studio), *area});
+        if (read_range) {
+            textures.AddFolder(name.substr(0, 3), ArchivesOf(name, read));
+        }
     }
-    const auto area = PlayAreaOf(studio->spots);
-    if (!area) {
+    if (sources.empty()) {
         return std::nullopt;
     }
     // A model at a time, every piece of it: tens of millions of triangles never at once. Each
     // thread draws every `threads`-th model on its own canvas; the canvases are merged.
-    std::map<std::string, std::vector<const Piece*>> by_model;
-    for (const Piece& piece : studio->pieces) {
-        by_model[piece.model].push_back(&piece);
+    struct Model {
+        const Source* source;
+        std::string name;
+        std::vector<const Piece*> pieces;
+    };
+    std::vector<Model> models;
+    for (const Source& source : sources) {
+        std::map<std::string, std::vector<const Piece*>> by_model;
+        for (const Piece& piece : source.studio.pieces) {
+            by_model[piece.model].push_back(&piece);
+        }
+        for (auto& [name, pieces] : by_model) {
+            models.push_back(Model{&source, name, std::move(pieces)});
+        }
     }
-    const std::vector<std::pair<std::string, std::vector<const Piece*>>> models(by_model.begin(), by_model.end());
     threads = std::clamp(threads, 1, 16);
-    std::vector<Canvas> canvases(std::size_t(threads), Canvas(*area, ppm, max_side));
+    std::vector<Canvas> canvases(std::size_t(threads), Canvas(*all, ppm, max_side));
     const auto draw = [&](int part) {
         std::vector<float> model, world;
+        std::vector<std::uint32_t> model_colors, world_colors;
+        const MaterialColor color_of = [&](std::string_view texture) { return textures.Of(texture); };
         for (std::size_t m = std::size_t(part); m < models.size(); m += std::size_t(threads)) {
-            const auto& [model_name, pieces] = models[m];
+            const Model& it = models[m];
+            const std::string& map = it.source->name;
             model.clear();
-            const auto flver =
-                inflate(read("map/" + name + "/" + name + "_" + model_name.substr(1) + ".flver.dcx"));
-            if (!AppendTriangles(flver, model) || SkippedModel(model_name, model)) {
+            model_colors.clear();
+            const auto flver = inflate(read("map/" + map + "/" + map + "_" + it.name.substr(1) + ".flver.dcx"));
+            if (!AppendTriangles(flver, model, &model_colors, color_of) || SkippedModel(it.name, model)) {
                 continue;
             }
-            for (const Piece* piece : pieces) {
+            for (const Piece* piece : it.pieces) {
                 world.clear();
-                Place(*piece, model, *area, world);
-                canvases[std::size_t(part)].Add(world);
+                world_colors.clear();
+                Place(*piece, model, it.source->area, world, model_colors, &world_colors);
+                canvases[std::size_t(part)].Add(world, world_colors);
             }
         }
     };
