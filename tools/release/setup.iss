@@ -222,6 +222,201 @@ begin
   Below.Top := Below.Top + Grown;
 end;
 
+// --- The launcher's own title bar (Kaniel 2026-10-17: custom, as in the launcher) ---------------
+// Windows' bar goes (no border); a strip on the launcher's ground takes its place with the
+// launcher's CaptionButton: thin glyphs, MUTED, PARCHMENT over a light wash under the pointer, the
+// close button blood red. A 30 ms timer follows the pointer for the hover and hands a press on the
+// empty strip to Windows' own window move.
+const
+  Ground = $130f0d;
+  Parchment = $c2e2f0;
+  HotWash = $282828;
+  CloseHot = $262a8a;
+  WM_NCLBUTTONDOWN = $00A1;
+  WM_SYSCOMMAND = $0112;
+  HTCAPTION = 2;
+  SC_MINIMIZE = $F020;
+
+var
+  BarForm: TSetupForm;
+  Bar: TPanel;
+  BarMin, BarClose: TBitmapImage;
+  BarTimer: LongWord;
+  BarHot: Integer;
+  BarHeld, BarMoving: Boolean;
+
+function SetTimer(Wnd: HWND; IDEvent, Elapse: LongWord; TimerFunc: LongWord): LongWord;
+  external 'SetTimer@user32.dll stdcall';
+function KillTimer(Wnd: HWND; IDEvent: LongWord): BOOL;
+  external 'KillTimer@user32.dll stdcall';
+function GetCursorPos(var Point: TPoint): BOOL;
+  external 'GetCursorPos@user32.dll stdcall';
+function WindowFromPoint(X, Y: Longint): HWND;
+  external 'WindowFromPoint@user32.dll stdcall';
+function GetAsyncKeyState(Key: Integer): Integer;
+  external 'GetAsyncKeyState@user32.dll stdcall';
+function GetForegroundWindow: HWND;
+  external 'GetForegroundWindow@user32.dll stdcall';
+function ReleaseCapture: BOOL;
+  external 'ReleaseCapture@user32.dll stdcall';
+function DwmSetWindowAttribute(Wnd: HWND; Attribute: LongWord; var Value: LongWord; Size: LongWord): Longint;
+  external 'DwmSetWindowAttribute@dwmapi.dll stdcall delayload';
+
+// One window button: its glyph (minimize or close) drawn as the launcher draws it.
+procedure PaintBarButton(Button: TBitmapImage; Close, Hot: Boolean);
+var
+  W, H, X, Y, S: Integer;
+  Back: Integer;
+begin
+  W := Button.Width;
+  H := Button.Height;
+  X := W div 2;
+  Y := H div 2;
+  S := ScaleX(5);
+  Back := Ground;
+  if Hot and Close then
+    Back := CloseHot
+  else if Hot then
+    Back := HotWash;
+  Button.Bitmap.Width := W;
+  Button.Bitmap.Height := H;
+  with Button.Bitmap.Canvas do begin
+    Brush.Color := Back;
+    Pen.Color := Back;
+    Rectangle(0, 0, W, H);
+    if Hot then
+      Pen.Color := Parchment
+    else
+      Pen.Color := Muted;
+    Pen.Width := ScaleX(1);
+    if Close then begin
+      MoveTo(X - S, Y - S);
+      LineTo(X + S + 1, Y + S + 1);
+      MoveTo(X - S, Y + S);
+      LineTo(X + S + 1, Y - S - 1);
+    end else begin
+      MoveTo(X - S, Y);
+      LineTo(X + S + 1, Y);
+    end;
+  end;
+  Button.Invalidate;
+end;
+
+procedure BarMinClick(Sender: TObject);
+begin
+  SendMessage(BarForm.Handle, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+end;
+
+procedure BarCloseClick(Sender: TObject);
+begin
+  BarForm.Close;
+end;
+
+// Hover and moving: which button the pointer is over, and a press on the empty strip.
+procedure BarTick(Wnd: HWND; Msg, IDEvent, Time: LongWord);
+var
+  P: TPoint;
+  Over: Boolean;
+  Hot, X: Integer;
+  Down: Boolean;
+begin
+  if BarMoving or (Bar = nil) then
+    exit;
+  GetCursorPos(P);
+  Over := (GetForegroundWindow = BarForm.Handle) and (WindowFromPoint(P.X, P.Y) = Bar.Handle);
+  Hot := 0;
+  X := P.X - BarForm.Left;
+  if Over and (X >= BarMin.Left) and (X < BarMin.Left + BarMin.Width) then
+    Hot := 1
+  else if Over and (X >= BarClose.Left) then
+    Hot := 2;
+  if Hot <> BarHot then begin
+    BarHot := Hot;
+    PaintBarButton(BarMin, False, Hot = 1);
+    PaintBarButton(BarClose, True, Hot = 2);
+  end;
+  Down := (GetAsyncKeyState($01) and $8000) <> 0;
+  if Down and not BarHeld and Over and (Hot = 0) then begin
+    BarMoving := True;
+    ReleaseCapture;
+    SendMessage(BarForm.Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+    BarMoving := False;
+    Down := False;
+  end;
+  BarHeld := Down;
+end;
+
+function BarButton(Close: Boolean; Left: Integer): TBitmapImage;
+begin
+  Result := TBitmapImage.Create(Bar);
+  Result.Parent := Bar;
+  Result.SetBounds(Left, 0, ScaleX(46), Bar.Height);
+  Result.Bitmap := TBitmap.Create;
+  PaintBarButton(Result, Close, False);
+end;
+
+// Swaps Windows' bar for ours: the window keeps its page size and grows by the strip.
+procedure LauncherBar(Form: TSetupForm);
+var
+  I, W, H, Tall: Integer;
+  Bounds: array of TRect;
+  Corner, Edge: LongWord;
+begin
+  BarForm := Form;
+  Tall := ScaleY(34);
+  W := Form.ClientWidth;
+  H := Form.ClientHeight;
+  // where everything sits now: the anchors would move it as the frame goes, so it is put back
+  SetArrayLength(Bounds, Form.ControlCount);
+  for I := 0 to Form.ControlCount - 1 do begin
+    Bounds[I].Left := Form.Controls[I].Left;
+    Bounds[I].Top := Form.Controls[I].Top;
+    Bounds[I].Right := Form.Controls[I].Width;
+    Bounds[I].Bottom := Form.Controls[I].Height;
+  end;
+  Form.BorderStyle := bsNone;
+  Form.ClientWidth := W;
+  Form.ClientHeight := H + Tall;
+  for I := 0 to GetArrayLength(Bounds) - 1 do
+    Form.Controls[I].SetBounds(Bounds[I].Left, Bounds[I].Top + Tall, Bounds[I].Right, Bounds[I].Bottom);
+  Bar := TPanel.Create(Form);
+  Bar.Parent := Form;
+  Bar.SetBounds(0, 0, W, Tall);
+  Bar.Anchors := [akLeft, akTop, akRight];
+  Bar.BevelOuter := bvNone;
+  Bar.StyleElements := [];
+  Bar.ParentBackground := False;
+  Bar.Color := Ground;
+  BarClose := BarButton(True, W - ScaleX(46));
+  BarClose.OnClick := @BarCloseClick;
+  BarMin := BarButton(False, W - 2 * ScaleX(46));
+  BarMin.OnClick := @BarMinClick;
+  // Windows 11: round corners and a thin LINE edge, as other windows have
+  Corner := 2;
+  Edge := $38302b;
+  DwmSetWindowAttribute(Form.Handle, 33, Corner, 4);
+  DwmSetWindowAttribute(Form.Handle, 34, Edge, 4);
+  BarTimer := SetTimer(0, 0, 30, CreateCallback(@BarTick));
+end;
+
+procedure StopBar;
+begin
+  if BarTimer <> 0 then
+    KillTimer(0, BarTimer);
+  BarTimer := 0;
+  Bar := nil;
+end;
+
+procedure DeinitializeSetup;
+begin
+  StopBar;
+end;
+
+procedure DeinitializeUninstall;
+begin
+  StopBar;
+end;
+
 procedure InitializeWizard;
 begin
   Header(WizardForm.PageNameLabel, WizardForm.PageDescriptionLabel, True);
@@ -232,6 +427,7 @@ begin
   DropPicture(WizardForm.SelectDirBitmapImage, WizardForm.SelectDirLabel);
   DropPicture(WizardForm.SelectGroupBitmapImage, WizardForm.SelectStartMenuFolderLabel);
   DropPicture(WizardForm.PreparingErrorBitmapImage, WizardForm.PreparingLabel);
+  LauncherBar(WizardForm);
 end;
 
 // Each page's title is fitted again, as its text changes from page to page, and the folder is not
@@ -246,4 +442,5 @@ end;
 procedure InitializeUninstallProgressForm;
 begin
   Header(UninstallProgressForm.PageNameLabel, UninstallProgressForm.PageDescriptionLabel, False);
+  LauncherBar(UninstallProgressForm);
 end;

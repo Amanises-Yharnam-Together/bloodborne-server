@@ -149,6 +149,15 @@ class SetupScriptTest(unittest.TestCase):
         self.assertIn('setup_style.py', release)
         self.assertIn('/DStyleFile=', release)
 
+    def test_setup_draws_its_own_title_bar(self):
+        iss = (RELEASE / 'setup.iss').read_text(encoding='utf-8')
+        self.assertIn('Form.BorderStyle := bsNone;', iss)
+        self.assertIn('LauncherBar(WizardForm);', iss)
+        self.assertIn('LauncherBar(UninstallProgressForm);', iss)
+        for event in ('DeinitializeSetup', 'DeinitializeUninstall'):
+            body = iss.split(f'procedure {event};', 1)[1].split('end;', 1)[0]
+            self.assertIn('StopBar', body)
+
     def test_setup_speaks_every_language_inno_has(self):
         iss = (RELEASE / 'setup.iss').read_text(encoding='utf-8')
         files = [line.split('MessagesFile: "', 1)[1].rstrip('"') for line in iss.splitlines()
