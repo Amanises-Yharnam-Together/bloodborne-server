@@ -52,6 +52,20 @@ std::vector<std::uint8_t> ReadGameFile(const std::string& relative) {
     return ReadFile(std::filesystem::u8path(path));
 }
 
+/// Bytes [offset, offset + size) of a file of the game's (a texture archive's piece).
+std::vector<std::uint8_t> ReadGameRange(const std::string& relative, std::uint64_t offset, std::uint64_t size) {
+    char path[1024];
+    if (!bbcoop_game_file(("dvdroot_ps4/" + relative).c_str(), path, sizeof(path))) {
+        return {};
+    }
+    std::ifstream file(std::filesystem::u8path(path), std::ios::binary);
+    std::vector<std::uint8_t> bytes(size);
+    file.seekg(std::streamoff(offset));
+    file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(size));
+    bytes.resize(std::size_t(std::max<std::streamsize>(0, file.gcount())));
+    return bytes;
+}
+
 std::filesystem::path CachePath(std::uint32_t packed_map) {
     return std::filesystem::path("user") / "map" / (BbMapArt::MapNameOf(packed_map) + ".bbmap");
 }
@@ -71,7 +85,7 @@ std::shared_ptr<const BbMapArt::Chart> Make(std::uint32_t packed_map) {
     }
     const auto start = std::chrono::steady_clock::now();
     const int threads = int(std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u));
-    auto drawn = BbMapArt::ChartArea(packed_map, ReadGameFile, 3.0f, 3072, threads);
+    auto drawn = BbMapArt::ChartArea(packed_map, ReadGameFile, 3.0f, 3072, threads, ReadGameRange);
     if (!drawn) {
         std::printf("Map: no picture of %s in the game's files\n", BbMapArt::MapNameOf(packed_map).c_str());
         return nullptr;

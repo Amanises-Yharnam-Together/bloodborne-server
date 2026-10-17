@@ -38,11 +38,28 @@ struct MapStudio {
 /// The MSB (inflated); nothing if it is not one.
 std::optional<MapStudio> ReadMapStudio(std::span<const std::uint8_t> msb);
 
+/// A material's colour by its diffuse texture's name ("m24_01_trims_003_a"): 0xFFRRGGBB, or 0
+/// when it has none.
+using MaterialColor = std::function<std::uint32_t(std::string_view texture)>;
+
 /// The highest-detail triangles of a FLVER2 model (inflated), three corners of x, y, z each,
-/// appended to `out` in the model's space. Left out: the lower levels of detail and the meshes
-/// whose material is the sky, the moon, the sun or water (a flat disc over a river). False if it
-/// is not a FLVER.
-bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& out);
+/// appended to `out` in the model's space; with `colors`, each triangle's material colour
+/// (`color_of` its diffuse texture) appended to it. Left out: the lower levels of detail and the
+/// meshes whose material is the sky, the moon, the sun or water (a flat disc over a river). False
+/// if it is not a FLVER.
+bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& out,
+                     std::vector<std::uint32_t>* colors = nullptr, const MaterialColor& color_of = {});
+
+/// A texture's average colour (a .tpf inflated, its first texture: BC1 or BC7, opaque pixels
+/// only) as 0xFFRRGGBB; 0 when it is not one of those.
+std::uint32_t AverageColor(std::span<const std::uint8_t> tpf);
+
+/// A texture archive's header (BHF4, a .tpfbhd): each file's name and where it is in the .tpfbdt.
+struct ArchiveEntry {
+    std::string name;
+    std::uint64_t offset = 0, size = 0;
+};
+std::vector<ArchiveEntry> ReadArchiveHeader(std::span<const std::uint8_t> bhd);
 
 /// Models left out of the picture: the sky domes (m9xxxxx), the distant views (m008xxx, m009xxx)
 /// and loose effect quads (a few huge flat triangles: fog, light shafts).
@@ -57,8 +74,10 @@ struct PlayArea {
 std::optional<PlayArea> PlayAreaOf(std::span<const Vec3> spots);
 
 /// The piece's model triangles (`model`, its space) put where the piece stands, appended to `out`;
-/// the ones whose middle is outside the play area or wholly above its ceiling are left out.
-void Place(const Piece& piece, std::span<const float> model, const PlayArea& area, std::vector<float>& out);
+/// the ones whose middle is outside the play area or wholly above its ceiling are left out. With
+/// `colors` (one a triangle) the kept ones' go to `out_colors`.
+void Place(const Piece& piece, std::span<const float> model, const PlayArea& area, std::vector<float>& out,
+           std::span<const std::uint32_t> colors = {}, std::vector<std::uint32_t>* out_colors = nullptr);
 
 /// An area's picture: RGBA rows, `ppm` pixels a metre; the pixel (px, py) shows x = x0 + px / ppm,
 /// z = z1 - py / ppm (north up). Transparent where nothing is.
@@ -80,7 +99,8 @@ Chart Cropped(const Chart& chart);
 class Canvas {
 public:
     Canvas(const PlayArea& area, float ppm, int max_side);
-    void Add(std::span<const float> triangles);
+    /// `colors`: each triangle's material colour (0xFFRRGGBB, 0 none); empty: none.
+    void Add(std::span<const float> triangles, std::span<const std::uint32_t> colors = {});
     /// Another canvas of the same play area and size drawn into this one (the higher surface wins):
     /// an area's models drawn by several threads at once.
     void Merge(const Canvas& other);
@@ -91,9 +111,11 @@ private:
     float x0 = 0, z1 = 0, ppm = 1;
     std::vector<float> top;          // the highest surface's height at each pixel (-inf: none)
     std::vector<std::uint8_t> light; // its slope's light, 0 to 255
+    std::vector<std::uint32_t> color; // its material's colour (0 none)
 };
 
-/// A chart as kept in the user folder ("BBMAP1", the frame, then the pixels zlib-compressed), and
+/// A chart as kept in the user folder ("BBMAP3": the number goes up whenever the drawing changes,
+/// so pictures drawn the old way are drawn again; the frame, then the pixels zlib-compressed), and
 /// read back (nothing when it is not one).
 std::vector<std::uint8_t> Save(const Chart& chart);
 std::optional<Chart> Load(std::span<const std::uint8_t> file);
@@ -103,10 +125,17 @@ std::string MapNameOf(std::uint32_t packed_map);
 
 /// An area's picture from the game's files: `read` gives a file of dvdroot_ps4 by its relative
 /// path ("map/MapStudio/m24_01_00_00.msb.dcx"), inflated or not as the file is, empty when it is
-/// missing (called from `threads` threads at once). Nothing when the MSB is missing or places
-/// nothing.
+/// missing (called from `threads` threads at once); `read_range` the bytes [offset, offset + size)
+/// of one (the texture archives are hundreds of megabytes). Nothing when the MSB is missing or
+/// places nothing.
 using ReadFile = std::function<std::vector<std::uint8_t>(const std::string& relative)>;
+using ReadRange =
+    std::function<std::vector<std::uint8_t>(const std::string& relative, std::uint64_t offset, std::uint64_t size)>;
 std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, float ppm = 3.0f,
-                               int max_side = 3072, int threads = 1);
+                               int max_side = 3072, int threads = 1, const ReadRange& read_range = {});
+/// Several areas in one picture, each placed by its own MSB's coordinates (the blocks of one
+/// area, m24_00 to m24_02, share them).
+std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, const ReadFile& read, float ppm = 3.0f,
+                                int max_side = 3072, int threads = 1, const ReadRange& read_range = {});
 
 } // namespace BbMapArt

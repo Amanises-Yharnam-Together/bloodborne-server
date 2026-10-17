@@ -2398,7 +2398,9 @@ SCENARIOS = {
         "roles": {
             # The player's own area is drawn ahead while the screen is shut; another as it shows.
             "host": [START, "godmode", f"set-flag {CATHEDRAL_WARD_LAMP_LIT}", "wait 25", "keys map", "wait 10",
-                     "shot map-central-yharnam", "keys square", "wait 2", "shot map-centred", "keys l1",
+                     "shot map-central-yharnam", "keys square", "wait 2", "shot map-centred",
+                     # Kaniel 2026-10-17 ("one big map"): Triangle, the whole waking world drawn so far.
+                     "keys triangle", "wait 20", "shot map-world", "keys l1",
                      "wait 30", "shot map-cathedral-ward", "keys enter", "wait 2", "shot map-question",
                      "keys enter", f"wait-map {CATHEDRAL_WARD} 120", "wait 8", "keys map", "wait 5",
                      "shot map-arrived", "keys circle", "wait 2"],

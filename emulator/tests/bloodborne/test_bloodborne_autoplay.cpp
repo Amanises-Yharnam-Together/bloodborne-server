@@ -183,6 +183,8 @@ TEST(BloodborneAutoplay, MenuKeysAreTheOverlaysTokens) {
     EXPECT_EQ(AutoplayMenuKeys({}), std::nullopt) << "nothing to press";
     EXPECT_EQ(AutoplayMenuKeys({"toggle", "insert"}), std::nullopt) << "no such key";
     // Kaniel 2026-10-17, the map screen: M opens it, Circle closes it, Square centres it.
+    EXPECT_EQ(AutoplayMenuKeys({"triangle"}), std::optional<std::string>{"triangle\n"})
+        << "the whole map";
     EXPECT_EQ(AutoplayMenuKeys({"map", "r1", "circle", "square"}),
               std::optional<std::string>{"map r1 circle square\n"});
 }
