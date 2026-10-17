@@ -270,11 +270,13 @@ TWEAKS = [
     ('tweak_ragdoll', ('Dark Souls-style ragdoll physics (corpses fly further)',
                        'Физика тел как в Dark Souls (тела отлетают дальше)'), False),
 ]
-INI_FLAGS = {'sharpen', 'object_motion', 'frame_generation', 'show_fps', 'hdr', 'mouse_camera', 'mouse_invert_y',
+INI_FLAGS = {'sharpen', 'object_motion', 'frame_generation', 'frame_gen_fit_display', 'show_fps', 'hdr',
+             'mouse_camera', 'mouse_invert_y',
              'mouse_no_auto_rotation', *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS)}
 INI_FLOATS = {'sharpness', 'mouse_sensitivity'}  # written with two decimals
 INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'frame_generation': '0', 'show_fps': '1',
+                'frame_gen_provider': 'fsr3', 'frame_gen_multiplier': '2', 'frame_gen_fit_display': '1',
                 'output_res': '1920x1080', 'model_lod': '0',
                 'live_resolution': 'auto', 'window_mode': 'windowed', 'hdr': '0',
                 'button_icons': bbport_controls.ICON_DEFAULT, **bbport_controls.MOUSE_DEFAULTS,
@@ -329,6 +331,11 @@ LODS = [('0', ('As in the game', 'Как в игре')), ('-2', ('Highest (−2)
 FPS_MODES = [('uncap', ('Unlocked (frame-time patch)', 'Без ограничения (патч)')), ('60', ('60 FPS',)),
              ('90', ('90 FPS',)), ('30', ('30 FPS (as on PS4)', '30 FPS (как на PS4)'))]
 # bbport.ini window_mode; the game's System menu and the Insert menu change it too.
+# Frame generation's provider and multiplier (bbport.ini frame_gen_provider, frame_gen_multiplier).
+FRAME_GEN_PROVIDERS = [('fsr3', ('FSR 3.1 (any GPU, 2×)', 'FSR 3.1 (любая видеокарта, 2×)')),
+                       ('dlss', ('DLSS (GeForce RTX 40: 2×, RTX 50: up to 4×)',
+                                 'DLSS (GeForce RTX 40: 2×, RTX 50: до 4×)'))]
+FRAME_GEN_MULTIPLIERS = [('2', ('2×',)), ('3', ('3× (DLSS, GeForce RTX 50)',)), ('4', ('4× (DLSS, GeForce RTX 50)',))]
 WINDOW_MODES = [('windowed', ('Windowed', 'В окне')),
                 ('borderless', ('Borderless window (full screen)', 'Окно без рамки (на весь экран)')),
                 ('fullscreen', ('Exclusive fullscreen', 'Эксклюзивный полный экран'))]
@@ -3900,6 +3907,24 @@ class Launcher:
             f, 'frame_generation', 'ini', _('Frame generation', 'Генерация кадров'),
             _('Doubles the frame rate; adds a little input lag. Best with at least 60 FPS.',
               'Удваивает частоту кадров; добавляет немного задержки ввода. Лучше всего от 60 FPS.')))
+        self.row(f, _('Frame generation provider', 'Технология генерации кадров'),
+                 self.choice(f, 'frame_gen_provider', 'ini', FRAME_GEN_PROVIDERS),
+                 _('DLSS needs bbport_dlss.dll and nvngx_dlssg.dll next to the game; without them, or on '
+                   'other GPUs, FSR 3.1 is used.',
+                   'Для DLSS нужны bbport_dlss.dll и nvngx_dlssg.dll рядом с игрой; без них или на других '
+                   'видеокартах используется FSR 3.1.'))
+        self.row(f, _('Frame generation multiplier', 'Множитель генерации кадров'),
+                 self.choice(f, 'frame_gen_multiplier', 'ini', FRAME_GEN_MULTIPLIERS),
+                 _('Frames shown per game frame. FSR 3.1 makes one (2×); DLSS on a GeForce RTX 50 up to three '
+                   '(4×). Each one more uses some video memory.',
+                   'Кадров на экране на каждый кадр игры. FSR 3.1 делает один (2×); DLSS на GeForce RTX 50 — '
+                   'до трёх (4×). Каждый следующий занимает видеопамять.'))
+        self.check(f, 'frame_gen_fit_display', 'ini', _('Fit frame generation to the display refresh',
+                                                         'Генерация кадров под частоту экрана'),
+                   _('On: no more frames than the display shows (an uncapped game gets fewer generated frames, '
+                     'and the GPU does less). Off: the multiplier as chosen. With V-Sync always fitted.',
+                     'Вкл.: не больше кадров, чем показывает экран (при снятом ограничении FPS генерируется '
+                     'меньше, видеокарта меньше нагружена). Выкл.: множитель как выбран. С V-Sync — всегда.'))
         self.build_reshade(page)
         f = self.card(page, _('FSR 4 assets', 'Ассеты FSR 4'))
         self.fsr4_label = self.label(f, '', wraplength=px(640), justify='left')

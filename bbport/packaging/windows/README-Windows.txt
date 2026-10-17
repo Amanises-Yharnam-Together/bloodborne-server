@@ -132,23 +132,39 @@ FSR 4.1.1 (experimental)
 
 Frame generation (optional)
 - Graphics -> "Frame generation" (also on the Play page and in the in-game menu, or
-  frame_generation=1 in bbport.ini, or BB_FRAME_GEN=1 for one run) shows one interpolated frame
-  between every two game frames: 60 FPS of the game are shown as 120. It is AMD's FidelityFX
-  frame interpolation and optical flow, driven by the game's depth and motion vectors, and it
-  works with every upscaler (FSR 4, FSR 4.1.1, FSR 3.1, DLSS, XeSS or TAA). The HUD of the game
-  frame is kept over the interpolated frame, so it does not smear. Default: off.
+  frame_generation=1 in bbport.ini, or BB_FRAME_GEN=1 for one run) shows generated frames
+  between the game's own: 60 FPS of the game are shown as 120 (2x) or, with DLSS on a GeForce
+  RTX 50, up to 240 (4x). Driven by the game's depth and motion vectors, it works with every
+  upscaler (FSR 4, FSR 4.1.1, FSR 3.1, DLSS, XeSS or TAA). The HUD is kept out of the generated
+  frames, so it does not smear. Default: off.
+- Provider (frame_gen_provider=fsr3|dlss, BB_FRAME_GEN_PROVIDER): FSR 3.1 is AMD's FidelityFX
+  frame interpolation and optical flow, on any GPU, one frame (2x). DLSS is NVIDIA's Frame
+  Generation: GeForce RTX 40 2x, RTX 50 up to 4x (multiplier frame_gen_multiplier=2..4,
+  BB_FRAME_GEN_MULTIPLIER). It needs bbport_dlss.dll built with Frame Generation and NVIDIA's
+  nvngx_dlssg.dll in bin\ (packaging/windows/build_dlss.sh puts both there); without them, on
+  other GPUs or when it fails, FSR 3.1 runs instead and the menu says why.
+- Each generated frame needs its own image (8 MB at 1080p, 33 MB at 4K, four game frames' worth
+  are kept). They are made only while generation is on and freed when it is switched off; when
+  the video memory is full generation goes off instead of the game stopping ("Not enough video
+  memory for the generated frames"). On 6 GB cards prefer 2x.
 - It costs input lag: the game frame is shown about half a frame interval later than without
   it. Best with at least 60 FPS before generation; below that the interpolated frames show
   more artifacts and the lag is more noticeable.
 - It is off, with a line in the log, when the upscaler is Off, with HDR output, and when the
-  scene is rendered larger than the window. While the game runs faster than half of the
-  display's refresh rate there is no room for a second image per frame: generation pauses
-  ("Frame generation: idle, base FPS above half the refresh rate" in the log) and returns when
-  the rate falls. For example on a 144 Hz display it works up to about 65 FPS of the game.
+  scene is rendered larger than the window.
+- "Fit to display refresh" (frame_gen_fit_display, on by default): no more frames than the
+  display shows between two of the game's, decided once a second. While the game runs faster
+  than half of the refresh rate there is no room for a second image per frame: generation pauses
+  ("Frame generation: paused, no room on the display" in the log) and returns when the rate
+  falls; on a 144 Hz display 2x works up to about 65 FPS of the game, and DLSS 4x at 60 FPS runs
+  as 2x (the menu shows "Now 2x on a 144 Hz display"). Off: the multiplier as chosen; past the
+  refresh rate the display shows the newest images. With vertical sync it is always fitted.
+  When presenting takes the whole frame interval (a GPU or display too slow) generation pauses
+  for 5 seconds, longer each time ("presenting does not keep up").
 - Menus, loading screens and movies are shown as they are; generation restarts with the scene.
 - With vertical sync (present mode Fifo, which AMD GPUs use on Windows; BB_PRESENT_MODE) the
-  display paces the two images. With Mailbox or Immediate the port shows the interpolated frame
-  and then the game frame half a frame interval later.
+  display paces the images. With Mailbox or Immediate the port spreads them evenly over the
+  game's frame interval: the generated frames first, then the game frame.
 - You do not need to pick a frame cap. With frame generation on, the launcher caps the game at
   half of your display's refresh rate (at most 120 FPS, at least 30; 60 when the refresh rate
   cannot be read): 72 FPS shown as 144 on a 144 Hz display, 90 as 180 on 180 Hz, 120 as 240 on
@@ -164,7 +180,8 @@ Frame generation (optional)
   your switch; a cap whose double does not fit the display ("Too high to double on your 144 Hz
   screen") makes generation pause while the game runs above half of the refresh rate, and
   "Auto" fixes it. A frame cap saved by v1.6.13 as "Half the refresh rate" now reads Auto.
-- The FPS counter reads "60 -> 120 FPS FG" while it works. With BB_FRAME_STATS=1 the log gets
+- The FPS counter reads "120 FPS (game 60, frame gen 2x)" while it works: the game's own rate is
+  what resolution and upscaler change. With BB_FRAME_STATS=1 the log gets
   "Frame generation: N generated/s, M presented/s, base B FPS, X skipped" every 5 seconds.
 - ReShade and other overlays see every shown image, so twice as many presents as game frames.
 

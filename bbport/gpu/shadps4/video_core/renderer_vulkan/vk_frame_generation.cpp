@@ -8,9 +8,11 @@
 #include <string_view>
 #include <utility>
 
+#include "bbport_frame_gen_pace.h"
 #include "bbport_settings.h"
 #include "core/emulator_settings.h"
 #include "ffx_vk_portable.h"
+#include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -18,10 +20,15 @@ namespace Vulkan {
 
 namespace {
 
-constexpr float kCameraFar = 3000.0f;
 /// The library's effect calls recycle their image views after 8 calls and the interpolation
 /// makes two a frame: the GPU must have finished the frame three back before the next is recorded.
 constexpr size_t kFramesInFlight = 3;
+
+/// Frames DLSS Frame Generation can make per game frame on this system (0: none).
+int DlssMaxCount() {
+    const Dlss* dlss = Dlss::Get();
+    return dlss ? dlss->FrameGenMaxCount() : 0;
+}
 
 FfxVkPortableImage Describe(vk::Image image, vk::Format format, u32 width, u32 height,
                             vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect,
@@ -80,15 +87,40 @@ FfxVkPortableFrameGenerationCreateInfo MakeCreateInfo(u32 width, u32 height, vk:
 } // namespace
 
 FrameGeneration::FrameGeneration(const Instance& instance_, Scheduler& scheduler_)
-    : instance{instance_}, scheduler{scheduler_} {}
+    : instance{instance_}, scheduler{scheduler_} {
+    auto& settings = BbSettings::Get();
+    const int dlss_max = DlssMaxCount();
+    settings.dlssg_max_multiplier = dlss_max + 1;
+    // BB_DEPTH_INVERTED=1: the game's depth is 1 at the near plane (reversed Z). For DLSS; the
+    // FSR 3.1 interface has no such option (0 at the near plane).
+    if (const char* env = std::getenv("BB_DEPTH_INVERTED")) {
+        depth_inverted = env[0] == '1';
+    }
+    std::printf("Frame generation: DLSS Frame Generation %s\n",
+                dlss_max >= 3   ? "up to 4x (GeForce RTX 50)"
+                : dlss_max >= 1 ? "2x (GeForce RTX 40)"
+                : !Dlss::Get()  ? "unavailable (no DLSS bridge)"
+                                : "unavailable (needs a GeForce RTX 40 or newer, nvngx_dlssg.dll and a "
+                                  "bbport_dlss.dll with Frame Generation)");
+}
 
 FrameGeneration::~FrameGeneration() {
     if (context) {
         ffxVkPortableFrameGenerationContextDestroy(context);
         context = nullptr;
     }
+    if (Dlss* dlss = Dlss::Get()) {
+        dlss->ReleaseFrameGen();
+    }
+    const auto device = instance.GetDevice();
     for (const auto& entry : hudless_views) {
-        instance.GetDevice().destroyImageView(entry.view);
+        device.destroyImageView(entry.view);
+    }
+    if (depth_copy_view) {
+        device.destroyImageView(depth_copy_view);
+    }
+    if (motion_view) {
+        device.destroyImageView(motion_view);
     }
 }
 
@@ -96,6 +128,16 @@ bool FrameGeneration::Requested() {
     const auto& settings = BbSettings::Get();
     return settings.frame_generation.load(std::memory_order_relaxed) &&
            settings.upscaler.load(std::memory_order_relaxed) != BbSettings::UpscalerOff;
+}
+
+u32 FrameGeneration::WantedCount() {
+    if (!Requested()) {
+        return 0;
+    }
+    const auto& settings = BbSettings::Get();
+    return BbFrameGenPace::WantedCount(settings.frame_gen_provider.load(std::memory_order_relaxed),
+                                       settings.frame_gen_multiplier.load(std::memory_order_relaxed),
+                                       DlssMaxCount());
 }
 
 // ---- Capture --------------------------------------------------------------------------------
@@ -106,8 +148,13 @@ void FrameGeneration::EnsureDepthCopy(vk::Format format, u32 width, u32 height) 
         return;
     }
     // Earlier frames may still read the old one.
-    scheduler.DeferOperation([old = std::move(depth_copy)] {});
     const auto device = instance.GetDevice();
+    scheduler.DeferOperation([device, old = std::move(depth_copy), view = depth_copy_view] {
+        if (view) {
+            device.destroyImageView(view);
+        }
+    });
+    depth_copy_view = vk::ImageView{};
     depth_copy = VideoCore::UniqueImage(device, instance.GetAllocator());
     depth_copy.Create(vk::ImageCreateInfo{
         .imageType = vk::ImageType::e2D,
@@ -123,6 +170,13 @@ void FrameGeneration::EnsureDepthCopy(vk::Format format, u32 width, u32 height) 
     depth_copy_format = format;
     depth_copy_width = width;
     depth_copy_height = height;
+    // DLSS reads it through a view of its depth aspect.
+    depth_copy_view = Check(device.createImageView({
+        .image = vk::Image(depth_copy),
+        .viewType = vk::ImageViewType::e2D,
+        .format = format,
+        .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1},
+    }));
     // The interpolation context holds no reference to the image between frames.
 }
 
@@ -211,6 +265,11 @@ void FrameGeneration::CaptureScene(const Scene& scene) {
     pending.frame_ms = scene.frame_ms;
     pending.camera_near = scene.camera_near;
     pending.camera_fov = scene.camera_fov;
+    pending.camera_far = scene.camera_far;
+    pending.has_matrices = scene.has_matrices;
+    pending.view_to_clip = scene.view_to_clip;
+    pending.clip_to_prev_clip = scene.clip_to_prev_clip;
+    pending.prev_clip_to_clip = scene.prev_clip_to_clip;
     pending.reset = scene.reset;
 }
 
@@ -273,6 +332,24 @@ void FrameGeneration::Report(std::string_view state) {
     std::printf("Frame generation: %.*s\n", int(state.size()), state.data());
 }
 
+bool FrameGeneration::ChooseOutputFormat(vk::Format format) {
+    // The generated frames are written by compute shaders: storage support in the frame's
+    // format, else RGBA8 (the swapchain blit converts).
+    const auto physical = instance.GetPhysicalDevice();
+    const auto storage = [&](vk::Format candidate) {
+        const auto features = physical.getFormatProperties(candidate).optimalTilingFeatures;
+        return (features & vk::FormatFeatureFlagBits::eStorageImage) &&
+               (features & vk::FormatFeatureFlagBits::eSampledImage) &&
+               (features & vk::FormatFeatureFlagBits::eTransferSrc);
+    };
+    output_format = storage(format) ? format : vk::Format::eR8G8B8A8Unorm;
+    if (!storage(output_format)) {
+        Report("off (no storage image format for the generated frames)");
+        return false;
+    }
+    return true;
+}
+
 bool FrameGeneration::CreateContext(u32 width, u32 height, vk::Format format) {
     const auto physical = instance.GetPhysicalDevice();
     FfxVkPortableDeviceCapabilities capabilities{};
@@ -282,17 +359,7 @@ bool FrameGeneration::CreateContext(u32 width, u32 height, vk::Format format) {
         Report("off (the GPU lacks what AMD's frame interpolation needs)");
         return false;
     }
-    // The interpolated frame is written by a compute shader: storage support in the frame's
-    // format, else RGBA8 (the swapchain blit converts).
-    const auto storage = [&](vk::Format candidate) {
-        const auto features = physical.getFormatProperties(candidate).optimalTilingFeatures;
-        return (features & vk::FormatFeatureFlagBits::eStorageImage) &&
-               (features & vk::FormatFeatureFlagBits::eSampledImage) &&
-               (features & vk::FormatFeatureFlagBits::eTransferSrc);
-    };
-    output_format = storage(format) ? format : vk::Format::eR8G8B8A8Unorm;
-    if (!storage(output_format)) {
-        Report("off (no storage image format for the interpolated frame)");
+    if (!ChooseOutputFormat(format)) {
         return false;
     }
 
@@ -343,49 +410,87 @@ void FrameGeneration::DestroyContext() {
     ticks.clear();
 }
 
-bool FrameGeneration::Idle() {
-    const float refresh = refresh_hz.load(std::memory_order_relaxed);
-    const float interval = base_interval_ms.load(std::memory_order_relaxed);
-    if (refresh <= 0.0f || interval <= 0.0f) {
-        return false; // refresh rate unknown: no rule
-    }
-    const float base_fps = 1000.0f / interval;
-    const float half = refresh * 0.5f;
-    // A frame cap at or below half the refresh rate leaves a refresh slot for every generated
-    // frame, so there is nothing to pause for (the cap itself bounds the base rate).
-    const u32 cap = EmulatorSettings.GetFrameLimit();
-    if (cap > 0 && float(cap) <= half * 1.02f) {
-        idle = false;
-        if (!cap_reported) {
-            cap_reported = true;
-            std::printf("Frame generation: frame cap %u FPS fits half the refresh rate (%.0f Hz): "
-                        "always on\n", cap, refresh);
+void FrameGeneration::ReleaseAll() {
+    // Submitted frames may still use them; the open command buffer does not.
+    DestroyContext();
+    if (provider == BbFrameGenPace::ProviderDlss) {
+        if (Dlss* dlss = Dlss::Get()) {
+            scheduler.WaitSubmitted();
+            dlss->ReleaseFrameGen();
         }
-        return false;
     }
-    if (!idle && base_fps > 0.9f * half) {
-        idle = true;
-        std::printf("Frame generation: idle, base FPS above half the refresh rate (%.0f FPS, "
-                    "%.0f Hz)\n", base_fps, refresh);
-    } else if (idle && base_fps < 0.8f * half) {
-        idle = false;
-        std::printf("Frame generation: active again (%.0f FPS, %.0f Hz)\n", base_fps, refresh);
+    provider = 0;
+    if (!depth_copy && !hudless_raw && !motion_view) {
+        return;
     }
-    return idle;
+    const auto device = instance.GetDevice();
+    scheduler.DeferOperation([device, depth = std::move(depth_copy), depth_view = depth_copy_view,
+                              hudless = std::move(hudless_raw), views = std::move(hudless_views),
+                              motion = motion_view] {
+        for (const auto& entry : views) {
+            device.destroyImageView(entry.view);
+        }
+        if (depth_view) {
+            device.destroyImageView(depth_view);
+        }
+        if (motion) {
+            device.destroyImageView(motion);
+        }
+    });
+    depth_copy = VideoCore::UniqueImage{};
+    depth_copy_view = vk::ImageView{};
+    depth_copy_format = {};
+    depth_copy_width = depth_copy_height = 0;
+    hudless_raw = VideoCore::UniqueImage{};
+    hudless_views.clear();
+    hudless_format = {};
+    hudless_width = hudless_height = 0;
+    motion_image = vk::Image{};
+    motion_view = vk::ImageView{};
+    std::printf("Frame generation: off, its memory freed\n");
+}
+
+int FrameGeneration::ChooseProvider() {
+    auto& settings = BbSettings::Get();
+    if (settings.frame_gen_provider.load(std::memory_order_relaxed) != BbSettings::FrameGenDlss) {
+        dlss_failed = false; // tried again when it is chosen again
+        return BbFrameGenPace::ProviderFsr3;
+    }
+    if (dlss_failed) {
+        return BbFrameGenPace::ProviderFsr3;
+    }
+    if (DlssMaxCount() < 1) {
+        dlss_failed = true;
+        settings.frame_gen_problem = "DLSS Frame Generation needs a GeForce RTX 40 or newer";
+        std::printf("Frame generation: DLSS Frame Generation unavailable; using FSR 3.1\n");
+        return BbFrameGenPace::ProviderFsr3;
+    }
+    return BbFrameGenPace::ProviderDlss;
+}
+
+void FrameGeneration::OutOfMemory() {
+    failed = true;
+    history_broken = true;
+    BbSettings::Get().frame_gen_problem = "Not enough video memory for the generated frames";
+    Report("off (not enough video memory for the generated frames)");
 }
 
 FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Format format,
                                                  bool hdr, vk::Extent2D display) {
     Plan plan;
     current = std::exchange(pending, Pending{});
-    const bool switched_on = BbSettings::Get().frame_generation.load(std::memory_order_relaxed);
+    auto& settings = BbSettings::Get();
+    const bool switched_on = settings.frame_generation.load(std::memory_order_relaxed);
     if (!switched_on || !Requested()) {
         if (was_requested) {
             was_requested = false;
-            DestroyContext();
+            ReleaseAll();
             failed = false;
-            idle = false;
+            dlss_failed = false;
+            paused = false;
             history_broken = true;
+            settings.frame_gen_problem = nullptr;
+            plan.off = true;
         }
         if (switched_on) {
             Report("off (no temporal upscaler selected)");
@@ -420,29 +525,70 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
         skipped.fetch_add(1, std::memory_order_relaxed);
         return plan;
     }
-    if (!context || context_width != width || context_height != height ||
-        context_format != format) {
-        if (context) {
+    // The provider of this frame; a change restarts the history and frees the other one's.
+    const int chosen = ChooseProvider();
+    if (chosen != provider) {
+        if (provider == BbFrameGenPace::ProviderFsr3) {
             DestroyContext();
+        } else if (provider == BbFrameGenPace::ProviderDlss) {
+            if (Dlss* dlss = Dlss::Get()) {
+                scheduler.WaitSubmitted();
+                dlss->ReleaseFrameGen();
+            }
         }
-        if (!CreateContext(width, height, format)) {
+        provider = chosen;
+        history_broken = true;
+        std::printf("Frame generation: %s\n",
+                    provider == BbFrameGenPace::ProviderDlss ? "DLSS Frame Generation"
+                                                             : "FSR 3.1 frame interpolation");
+    }
+    if (provider == BbFrameGenPace::ProviderFsr3) {
+        if (!context || context_width != width || context_height != height ||
+            context_format != format) {
+            if (context) {
+                DestroyContext();
+            }
+            if (!CreateContext(width, height, format)) {
+                failed = true;
+                return plan;
+            }
+            history_broken = true;
+        } else if (reported != "on") {
+            Report("on");
+        }
+    } else {
+        if (!ChooseOutputFormat(format)) {
             failed = true;
             return plan;
         }
-        history_broken = true;
-    } else if (reported != "on") {
-        Report("on");
+        if (reported != "on (DLSS)") {
+            Report("on (DLSS)");
+        }
     }
-    if (Idle()) {
+    // As many as the settings ask for, within what the display has room for (swap thread).
+    const u32 wanted = BbFrameGenPace::WantedCount(
+        provider, settings.frame_gen_multiplier.load(std::memory_order_relaxed),
+        provider == BbFrameGenPace::ProviderDlss ? DlssMaxCount() : 0);
+    const u32 count = std::min(wanted, display_limit.load(std::memory_order_relaxed));
+    if (count == 0) {
+        if (!paused) {
+            paused = true;
+            std::printf("Frame generation: paused, no room on the display at this frame rate\n");
+        }
         history_broken = true;
         skipped.fetch_add(1, std::memory_order_relaxed);
         return plan;
+    }
+    if (paused) {
+        paused = false;
+        std::printf("Frame generation: active again, %u per game frame\n", count);
     }
     while (ticks.size() >= kFramesInFlight) {
         scheduler.Wait(ticks.front());
         ticks.pop_front();
     }
     plan.generate = true;
+    plan.count = count;
     reset_frame = current.reset || history_broken;
     history_broken = false;
     plan.present = !reset_frame;
@@ -470,31 +616,147 @@ FrameGeneration::Hudless FrameGeneration::HudlessView(vk::Format view_format) {
     return {view, {hudless_width, hudless_height}};
 }
 
-bool FrameGeneration::Record(vk::CommandBuffer cmdbuf, const Targets& targets) {
+u32 FrameGeneration::Record(vk::CommandBuffer cmdbuf, const Targets& targets) {
+    if (targets.count == 0) {
+        return 0;
+    }
     const auto all = vk::PipelineStageFlagBits2::eAllCommands;
-    const bool hudless = bool(targets.hudless);
-    // The host passes of the frame (and the last interpolation's reads) come first.
+    // The host passes of the frame (and the last frames' reads) come first.
     const vk::MemoryBarrier2 before{
         .srcStageMask = all,
         .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
         .dstStageMask = all,
         .dstAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
     };
-    const vk::ImageMemoryBarrier2 output_to_general{
-        .srcStageMask = all,
-        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
-        .dstStageMask = all,
-        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
-        .oldLayout = vk::ImageLayout::eUndefined,
-        .newLayout = vk::ImageLayout::eGeneral,
-        .image = targets.output,
-        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-    };
+    std::array<vk::ImageMemoryBarrier2, MaxGenerated> outputs_to_general{};
+    const u32 count = std::min(targets.count, MaxGenerated);
+    for (u32 i = 0; i < count; ++i) {
+        outputs_to_general[i] = {
+            .srcStageMask = all,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+            .dstStageMask = all,
+            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+            .oldLayout = vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = targets.outputs[i],
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+    }
     cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1,
                              .pMemoryBarriers = &before,
-                             .imageMemoryBarrierCount = 1,
-                             .pImageMemoryBarriers = &output_to_general});
+                             .imageMemoryBarrierCount = count,
+                             .pImageMemoryBarriers = outputs_to_general.data()});
+    u32 made = 0;
+    if (provider == BbFrameGenPace::ProviderDlss) {
+        made = RecordDlss(cmdbuf, targets);
+        if (made == 0) {
+            // FSR 3.1 takes over from the next frame (ChooseProvider).
+            dlss_failed = true;
+            history_broken = true;
+            BbSettings::Get().frame_gen_problem = "DLSS Frame Generation failed; FSR 3.1 is used";
+        }
+    } else {
+        made = RecordFsr(cmdbuf, targets) ? 1 : 0;
+    }
+    if (made == 0) {
+        return 0;
+    }
+    ++frame_id;
+    const vk::MemoryBarrier2 after{
+        .srcStageMask = all,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = all,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
+    return made;
+}
 
+vk::ImageView FrameGeneration::MotionView(vk::Image image) {
+    if (image == motion_image && motion_view) {
+        return motion_view;
+    }
+    const auto device = instance.GetDevice();
+    if (motion_view) {
+        scheduler.DeferOperation([device, view = motion_view] { device.destroyImageView(view); });
+    }
+    motion_image = image;
+    motion_view = Check(device.createImageView({
+        .image = image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = vk::Format::eR16G16Sfloat,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    }));
+    return motion_view;
+}
+
+u32 FrameGeneration::RecordDlss(vk::CommandBuffer cmdbuf, const Targets& targets) {
+    Dlss* dlss = Dlss::Get();
+    if (!dlss || dlss->FrameGenMaxCount() < 1 || !depth_copy_view || !targets.current_view) {
+        std::printf("Frame generation: DLSS Frame Generation is unavailable; using FSR 3.1\n");
+        return 0;
+    }
+    const Dlss::FrameGenDesc desc{targets.width, targets.height, targets.format, current.width,
+                                  current.height};
+    if (!dlss->HasFrameGen(desc)) {
+        // The previous feature may still be used by submitted work; `cmdbuf` stays open.
+        scheduler.WaitSubmitted();
+        dlss->ReleaseFrameGen();
+        if (!dlss->CreateFrameGen(cmdbuf, desc)) {
+            std::printf("Frame generation: DLSS Frame Generation feature creation failed (%ux%u "
+                        "%s); using FSR 3.1\n",
+                        targets.width, targets.height, vk::to_string(targets.format).c_str());
+            return 0;
+        }
+        std::printf("Frame generation: DLSS Frame Generation %ux%u (depth and motion %ux%u)\n",
+                    targets.width, targets.height, current.width, current.height);
+        reset_frame = true;
+    }
+    const auto resource = [](vk::Image image, vk::ImageView view, vk::Format format,
+                             vk::ImageAspectFlags aspect, u32 w, u32 h) {
+        return Dlss::Resource{image, view, format, aspect, w, h};
+    };
+    const auto color = vk::ImageAspectFlagBits::eColor;
+    const u32 count = std::min(targets.count, MaxGenerated);
+    for (u32 index = 1; index <= count; ++index) {
+        Dlss::FrameGenFrame frame{
+            .backbuffer = resource(targets.current, targets.current_view, targets.format, color,
+                                   targets.width, targets.height),
+            .depth = resource(vk::Image(depth_copy), depth_copy_view, depth_copy_format,
+                              vk::ImageAspectFlagBits::eDepth, depth_copy_width, depth_copy_height),
+            .motion = resource(current.motion, MotionView(current.motion),
+                               vk::Format::eR16G16Sfloat, color, current.width, current.height),
+            .output = resource(targets.outputs[index - 1], targets.output_views[index - 1],
+                               output_format, color, targets.width, targets.height),
+            .hudless = targets.hudless ? resource(targets.hudless, targets.hudless_view,
+                                                  targets.format, color, targets.width,
+                                                  targets.height)
+                                       : Dlss::Resource{},
+            .jitter_x = current.jitter[0],
+            .jitter_y = current.jitter[1],
+            .camera_near = current.camera_near,
+            .camera_far = current.camera_far,
+            .camera_fov = current.camera_fov,
+            .depth_inverted = depth_inverted,
+            .has_matrices = current.has_matrices,
+            .view_to_clip = current.view_to_clip,
+            .clip_to_prev_clip = current.clip_to_prev_clip,
+            .prev_clip_to_clip = current.prev_clip_to_clip,
+            .reset = reset_frame,
+            .count = count,
+            .index = index,
+        };
+        if (!dlss->EvaluateFrameGen(cmdbuf, frame)) {
+            std::printf("Frame generation: DLSS Frame Generation evaluation failed; using FSR "
+                        "3.1\n");
+            return 0;
+        }
+    }
+    return count;
+}
+
+bool FrameGeneration::RecordFsr(vk::CommandBuffer cmdbuf, const Targets& targets) {
+    const bool hudless = bool(targets.hudless);
     const auto sampled = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc;
     const auto create_info = MakeCreateInfo(context_width, context_height, context_format,
                                             output_format);
@@ -527,7 +789,7 @@ bool FrameGeneration::Record(vk::CommandBuffer cmdbuf, const Targets& targets) {
     prepare.motionVectorScale = {1.0f, 1.0f};
     prepare.frameTimeMilliseconds = current.frame_ms;
     prepare.cameraNear = current.camera_near;
-    prepare.cameraFar = kCameraFar;
+    prepare.cameraFar = current.camera_far;
     prepare.cameraVerticalFovRadians = current.camera_fov;
     prepare.viewSpaceToMeters = 1.0f;
     prepare.minLuminance = 0.0f;
@@ -546,7 +808,7 @@ bool FrameGeneration::Record(vk::CommandBuffer cmdbuf, const Targets& targets) {
     dispatch.currentColor = current_color;
     dispatch.hudlessColor = hudless_color;
     dispatch.distortionField = Absent();
-    dispatch.output = Describe(targets.output, output_format, targets.width, targets.height,
+    dispatch.output = Describe(targets.outputs[0], output_format, targets.width, targets.height,
                                vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
                                    vk::ImageUsageFlagBits::eTransferSrc,
                                vk::ImageAspectFlagBits::eColor,
@@ -555,7 +817,7 @@ bool FrameGeneration::Record(vk::CommandBuffer cmdbuf, const Targets& targets) {
     dispatch.interpolationRect = {0, 0, targets.width, targets.height};
     dispatch.frameTimeMilliseconds = current.frame_ms;
     dispatch.cameraNear = current.camera_near;
-    dispatch.cameraFar = kCameraFar;
+    dispatch.cameraFar = current.camera_far;
     dispatch.cameraVerticalFovRadians = current.camera_fov;
     dispatch.viewSpaceToMeters = 1.0f;
     dispatch.minLuminance = 0.0f;
@@ -588,14 +850,6 @@ bool FrameGeneration::Record(vk::CommandBuffer cmdbuf, const Targets& targets) {
         failed = true;
         return false;
     }
-    ++frame_id;
-    const vk::MemoryBarrier2 after{
-        .srcStageMask = all,
-        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
-        .dstStageMask = all,
-        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
-    };
-    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
     return true;
 }
 
@@ -605,11 +859,11 @@ void FrameGeneration::EndFrame(u64 submission_tick) {
 
 // ---- Pacing and statistics (swap thread) ----------------------------------------------------
 
-float FrameGeneration::OnPresent(bool generated) {
+float FrameGeneration::OnPresent(u32 generated) {
     const auto now = std::chrono::steady_clock::now();
     if (last_present.time_since_epoch().count() != 0) {
         const float ms = std::chrono::duration<float, std::milli>(now - last_present).count();
-        // A frame of a menu or a hitch is not the rate the interpolated frame is placed by.
+        // A frame of a menu or a hitch is not the rate the generated frames are placed by.
         const float clamped = std::clamp(ms, 1.0f, 33.0f);
         const float previous = base_interval_ms.load(std::memory_order_relaxed);
         base_interval_ms.store(previous > 0.0f ? previous * 0.9f + clamped * 0.1f : clamped,
@@ -618,8 +872,7 @@ float FrameGeneration::OnPresent(bool generated) {
     last_present = now;
     ++stats_base;
     ++overlay_base;
-    return generated ? std::clamp(base_interval_ms.load(std::memory_order_relaxed), 1.0f, 33.0f) *
-                           0.5f
+    return generated ? std::clamp(base_interval_ms.load(std::memory_order_relaxed), 1.0f, 33.0f)
                      : 0.0f;
 }
 

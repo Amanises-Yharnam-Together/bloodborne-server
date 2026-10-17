@@ -346,6 +346,9 @@ if (WIN32)
     target_link_options(bb-probe PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
     add_executable(bb-gpu-capabilities ../tools/gpu_capabilities.c ../packaging/windows/bb-gpu-capabilities.rc)
     target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)
+    # bbport_dlss.dll on this PC's GPU without the game (tools/dlss_bridge_check.c).
+    add_executable(dlss-bridge-check EXCLUDE_FROM_ALL ../tools/dlss_bridge_check.c)
+    target_link_libraries(dlss-bridge-check PRIVATE Vulkan::Vulkan)
     # Bloodborne.exe (bb-play): the game with the launcher's saved settings, no launcher window.
     add_executable(bb-play WIN32 ../packaging/windows/play.c ../packaging/windows/play.rc)
     target_compile_options(bb-play PRIVATE -municode)
@@ -519,6 +522,10 @@ target_include_directories(spec-drop-test PRIVATE shim)
 add_executable(frame-slots-test EXCLUDE_FROM_ALL ../tests/test_frame_slots.cpp)
 target_compile_options(frame-slots-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(frame-slots-test PRIVATE shim)
+
+add_executable(frame-gen-pace-test EXCLUDE_FROM_ALL ../tests/test_frame_gen_pace.cpp)
+target_compile_options(frame-gen-pace-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(frame-gen-pace-test PRIVATE shim)
 
 add_executable(flip-label-test EXCLUDE_FROM_ALL ../tests/test_flip_label.cpp)
 target_compile_options(flip-label-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

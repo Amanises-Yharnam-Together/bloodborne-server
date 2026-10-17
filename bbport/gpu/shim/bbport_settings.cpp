@@ -82,6 +82,12 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.object_motion = i != 0;
     } else if (key == "frame_generation") {
         v.frame_generation = i != 0;
+    } else if (key == "frame_gen_provider") {
+        v.frame_gen_provider = value == "dlss" ? FrameGenDlss : FrameGenFsr3;
+    } else if (key == "frame_gen_multiplier") {
+        v.frame_gen_multiplier = std::clamp(i, 2, 4);
+    } else if (key == "frame_gen_fit_display") {
+        v.frame_gen_fit_display = i != 0;
     } else if (key == "reactive_scale") {
         v.reactive_scale = Clamp(f, 0.0f, 16.0f);
     } else if (key == "reactive_threshold") {
@@ -310,7 +316,9 @@ void Load() {
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
-        {"BB_FRAME_GEN", "frame_generation"},
+        {"BB_FRAME_GEN", "frame_generation"},       {"BB_FRAME_GEN_PROVIDER", "frame_gen_provider"},
+        {"BB_FRAME_GEN_MULTIPLIER", "frame_gen_multiplier"},
+        {"BB_FRAME_GEN_FIT_DISPLAY", "frame_gen_fit_display"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -475,6 +483,9 @@ void Save() {
     put("reactive", flag(v.reactive));
     put("object_motion", flag(v.object_motion));
     put("frame_generation", flag(v.frame_generation));
+    put("frame_gen_provider", v.frame_gen_provider == FrameGenDlss ? "dlss" : "fsr3");
+    put("frame_gen_multiplier", std::to_string(std::clamp(v.frame_gen_multiplier.load(), 2, 4)));
+    put("frame_gen_fit_display", flag(v.frame_gen_fit_display));
     put("reactive_scale", fixed(v.reactive_scale, 2));
     put("reactive_threshold", fixed(v.reactive_threshold, 2));
     put("reactive_max", fixed(v.reactive_max, 2));

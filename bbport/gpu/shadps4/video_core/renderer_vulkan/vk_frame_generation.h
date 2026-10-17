@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: FSR 3.1 frame generation on top of the temporal upscaler (docs: README-Windows.txt).
+// bbport: frame generation on top of the temporal upscaler (docs: README-Windows.txt).
 //
-// One interpolated frame is shown between every two game frames. The port keeps its own
-// swapchain and presenter; this class drives the frame interpolation and optical flow compute
-// passes of the FSR-Vulkan portable library (ffx_vk_portable.h) and keeps what they need:
+// Generated frames are shown between every two game frames: FSR 3.1 (any GPU) makes one, DLSS
+// Frame Generation (bbport_dlss.dll ABI 2 with nvngx_dlssg.dll; GeForce RTX 40: one, RTX 50: up
+// to three, from Supermedo's bbport 026f8ff) as many as the multiplier asks for. The port keeps
+// its own swapchain and presenter; this class drives the providers and keeps what they need:
 //
 //   * at the upscale (UpscalerFsr3/4/DLSS/XeSS/TAA, GPU command thread): the scene depth and the
 //     camera motion vectors of the frame, which the game overwrites before the frame is
 //     presented (CaptureScene), and a copy of the upscaled scene right before the first UI
 //     draw (CaptureHudless);
-//   * in the presenter (PrepareFrame, same thread): Plan() decides whether this frame gets an
-//     interpolated frame, Record() puts the optical flow and interpolation passes after the
-//     frame's host passes;
-//   * on the swap thread (Present): the smoothed interval of the game frames, which places
-//     the interpolated frame half way, and the statistics.
+//   * in the presenter (PrepareFrame, same thread): Plan() decides whether and how many frames
+//     this frame gets, Record() puts the provider's passes after the frame's host passes;
+//   * on the swap thread (Present): the smoothed interval of the game frames, which places the
+//     generated frames evenly, how many the display has room for, and the statistics.
 //
-// SDR output only. With the switch off none of this runs.
+// SDR output only. With the switch off none of this runs, and its memory is freed.
 
 #pragma once
 
@@ -27,6 +27,7 @@
 #include <string_view>
 #include <vector>
 
+#include "bbport_frame_gen_pace.h"
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/texture_cache/image.h"
@@ -40,12 +41,18 @@ class Scheduler;
 
 class FrameGeneration {
 public:
+    /// Frames generated per game frame at most (DLSS 4x).
+    static constexpr u32 MaxGenerated = BbFrameGenPace::MaxGenerated;
+
     FrameGeneration(const Instance& instance, Scheduler& scheduler);
     ~FrameGeneration();
 
     /// The switch is on (bbport.ini frame_generation, BB_FRAME_GEN) and a temporal upscaler is
     /// selected. Thread safe.
     [[nodiscard]] static bool Requested();
+    /// Generated frames per game frame the settings ask for (FSR 3.1: one; DLSS: the multiplier
+    /// less one, within what the GPU can), 0 when not requested. Thread safe.
+    [[nodiscard]] static u32 WantedCount();
 
     // ---- Upscaler side: GPU command thread, in command order ---------------------------------
 
@@ -58,6 +65,11 @@ public:
         std::array<float, 2> jitter;
         float frame_ms;
         float camera_near, camera_fov;
+        float camera_far; ///< 3000 when the projection's is infinite
+        /// DLSS: row-vector D3D clip-space matrices (CameraMotion::ClipTransforms): the
+        /// projection, current to previous clip, and back. Without them a still camera.
+        bool has_matrices;
+        std::array<float, 16> view_to_clip, clip_to_prev_clip, prev_clip_to_clip;
         bool reset; ///< the upscaler restarted its history with this frame
     };
     /// The upscaler ran for this frame: copies the depth, notes the rest for PrepareFrame.
@@ -74,17 +86,22 @@ public:
 
     struct Plan {
         bool generate = false; ///< Record() will be called for this frame
-        bool present = false;  ///< the interpolated frame can be shown (not a history restart)
+        bool present = false;  ///< the generated frames can be shown (not a history restart)
         bool hudless = false;  ///< a HUD-less image of the size of the display buffer exists
+        u32 count = 0;         ///< frames to generate (1..MaxGenerated) when `generate`
+        bool off = false;      ///< switched off: the presenter frees what it held for it
     };
     /// Called for every game frame at PrepareFrame (also with the switch off, cheaply):
     /// `width` x `height` is the size of the presented frame image, `format` its format,
     /// `display` the size of the image the host passes read (the display buffer).
     Plan PlanFrame(u32 width, u32 height, vk::Format format, bool hdr, vk::Extent2D display);
-    /// Format of the interpolated image, valid after a Plan with generate set.
+    /// Format of the generated images, valid after a Plan with generate set.
     [[nodiscard]] vk::Format OutputFormat() const noexcept {
         return output_format;
     }
+    /// The presenter could not make the images for the generated frames (video memory full):
+    /// generation stays off until the switch is turned off and on again.
+    void OutOfMemory();
     /// The HUD-less copy as an image the host passes can sample, in `view_format`.
     struct Hudless {
         vk::ImageView view;
@@ -96,31 +113,36 @@ public:
     }
 
     struct Targets {
-        vk::Image current;  ///< the presented frame, with the UI (General, shader readable)
-        vk::Image hudless;  ///< the same without the UI, or null
-        vk::Image output;   ///< the interpolated frame, to be written (any layout)
+        vk::Image current;          ///< the presented frame, with the UI (General, shader readable)
+        vk::ImageView current_view;
+        vk::Image hudless;          ///< the same without the UI, or null
+        vk::ImageView hudless_view;
+        /// The generated frames, oldest first, to be written (any layout); `count` of them.
+        std::array<vk::Image, MaxGenerated> outputs{};
+        std::array<vk::ImageView, MaxGenerated> output_views{};
+        u32 count = 0;
         vk::Format format;
         u32 width, height;
     };
-    /// Records the optical flow, the interpolation preparation and the interpolation into
-    /// `cmdbuf` (direct recording, after the frame's host passes). The image `output` is in
-    /// General afterwards. False when the library refused (generation is off until the
-    /// switch is turned off and on again).
-    bool Record(vk::CommandBuffer cmdbuf, const Targets& targets);
+    /// Records the provider's passes into `cmdbuf` (direct recording, after the frame's host
+    /// passes). The outputs are in General afterwards. Returns the frames made, 0 when the
+    /// provider refused (FSR 3.1: generation is off until the switch is cycled; DLSS: FSR 3.1
+    /// takes over).
+    u32 Record(vk::CommandBuffer cmdbuf, const Targets& targets);
     /// After the frame's submission: its tick, which the library's view recycling waits for.
     void EndFrame(u64 submission_tick);
 
     // ---- Swap thread --------------------------------------------------------------------------
 
-    /// A game frame (not a redraw) is presented now. `generated`: an interpolated frame goes
-    /// first. Returns the delay of the game frame after the interpolated one, in ms (0 when
-    /// there is no interpolated frame).
-    float OnPresent(bool generated);
-    /// The display's refresh rate when known (0 otherwise).
-    void SetRefreshRate(float hz) noexcept {
-        refresh_hz.store(hz, std::memory_order_relaxed);
+    /// A game frame (not a redraw) is presented now. `generated`: that many generated frames go
+    /// first. Returns the smoothed interval of the game frames in ms, which they are spread over.
+    float OnPresent(u32 generated);
+    /// Generated frames per game frame the display has room for now (BbFrameGenPace::Limiter);
+    /// read by PlanFrame.
+    void SetDisplayLimit(u32 limit) noexcept {
+        display_limit.store(limit, std::memory_order_relaxed);
     }
-    /// Swap thread: one more image went out (an interpolated one or a game frame).
+    /// Swap thread: one more image went out (a generated one or a game frame).
     void OnImagePresented(bool generated);
     /// Swap thread: a game frame goes out with generation switched off.
     void OnSwitchedOff();
@@ -136,7 +158,9 @@ private:
         u32 width = 0, height = 0;
         vk::Format depth_format{};
         std::array<float, 2> jitter{};
-        float frame_ms = 16.6f, camera_near = 0.05f, camera_fov = 1.0f;
+        float frame_ms = 16.6f, camera_near = 0.05f, camera_fov = 1.0f, camera_far = 3000.0f;
+        bool has_matrices = false;
+        std::array<float, 16> view_to_clip{}, clip_to_prev_clip{}, prev_clip_to_clip{};
         bool reset = false;
         bool hudless = false;
         u32 hudless_width = 0, hudless_height = 0;
@@ -144,12 +168,19 @@ private:
 
     void EnsureDepthCopy(vk::Format format, u32 width, u32 height);
     void EnsureHudless(vk::Format format, u32 width, u32 height);
+    /// The generated images' format for frames in `format`: it if storage works, else RGBA8.
+    bool ChooseOutputFormat(vk::Format format);
     bool CreateContext(u32 width, u32 height, vk::Format format);
     void DestroyContext();
+    /// Switched off: the contexts and the captured inputs are freed.
+    void ReleaseAll();
+    /// The provider of this frame: DLSS when asked for and it can run, else FSR 3.1.
+    int ChooseProvider();
+    bool RecordFsr(vk::CommandBuffer cmdbuf, const Targets& targets);
+    u32 RecordDlss(vk::CommandBuffer cmdbuf, const Targets& targets);
+    vk::ImageView MotionView(vk::Image image);
     /// Logs a change of state once ("off (HDR output)").
     void Report(std::string_view state);
-    /// Whether the base frame rate leaves room for a doubled one on this display.
-    bool Idle();
     void PrintStats(std::chrono::steady_clock::time_point now);
 
     const Instance& instance;
@@ -159,6 +190,7 @@ private:
     Pending pending;
     Pending current; ///< the capture PrepareFrame is using
     VideoCore::UniqueImage depth_copy;
+    vk::ImageView depth_copy_view{}; ///< depth aspect (DLSS)
     vk::Format depth_copy_format{};
     u32 depth_copy_width = 0, depth_copy_height = 0;
     VideoCore::UniqueImage hudless_raw;
@@ -169,25 +201,29 @@ private:
         vk::ImageView view;
     };
     std::vector<View> hudless_views;
+    vk::Image motion_image{}; ///< the upscaler's, which motion_view shows
+    vk::ImageView motion_view{};
 
     // Context (command thread).
     FfxVkPortableFrameGenerationContext* context = nullptr;
     u32 context_width = 0, context_height = 0;
     vk::Format context_format{};
     vk::Format output_format{};
-    bool failed = false;          ///< the library refused; until the switch is cycled
+    bool failed = false;          ///< FSR 3.1 refused, or no memory; until the switch is cycled
+    bool dlss_failed = false;     ///< DLSS Frame Generation refused; FSR 3.1 runs instead
     bool was_requested = false;
     bool history_broken = true;   ///< the next frame restarts the interpolation history
-    bool idle = false;
-    bool cap_reported = false;    ///< the "frame cap fits half the refresh rate" line was printed
+    bool paused = false;          ///< no room on the display (BbFrameGenPace::Limiter)
+    int provider = 0;             ///< of the last frame (BbFrameGenPace::Provider)
+    bool depth_inverted = false;  ///< BB_DEPTH_INVERTED=1 (DLSS)
     u64 frame_id = 0;
-    std::deque<u64> ticks;        ///< submissions of the last frames the library recorded
+    std::deque<u64> ticks;        ///< submissions of the last frames the providers recorded
     std::string reported;
     bool reset_frame = false;     ///< this frame restarts the interpolation history
 
     // Pacing and statistics (swap thread writes; the command thread reads the atomics).
     std::atomic<float> base_interval_ms{0.0f};
-    std::atomic<float> refresh_hz{0.0f};
+    std::atomic<u32> display_limit{MaxGenerated};
     std::chrono::steady_clock::time_point last_present{};
     std::chrono::steady_clock::time_point stats_start{}, overlay_start{};
     u32 stats_base = 0, stats_images = 0, stats_generated = 0;
