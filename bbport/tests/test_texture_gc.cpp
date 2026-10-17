@@ -6,10 +6,13 @@
 // mips whose guest bytes did not change), were dropped and later rebuilt from stale memory.
 #include <cassert>
 #include "gpu/shadps4/video_core/texture_cache/gc_policy.h"
+#include "gpu/shadps4/video_core/texture_cache/vram_placement.h"
 
 using VideoCore::GcAction;
 using VideoCore::GcActionFor;
 using VideoCore::GcImageState;
+using VideoCore::HeapUse;
+using VideoCore::SystemMemoryTypesNearVramLimit;
 
 int main() {
     // Uploaded from guest memory only: rebuilt the same from it.
@@ -36,5 +39,30 @@ int main() {
     assert(GcActionFor({.gpu_modified = true, .gpu_dirty = true, .tiled = true}, true) ==
            GcAction::Evict);
     assert(GcActionFor({.gpu_modified = true, .gpu_dirty = true}, true) == GcAction::Evict);
+
+    // krolebord's play test 2026-10-17 (RTX 4050 Laptop, 5920 MiB): 5834 MiB in use of a ~5150
+    // MiB budget, the GPU stopped. NVIDIA: heap 0 VRAM, heap 1 system memory; types 0-1 in
+    // system memory, 2-3 in VRAM.
+    constexpr std::uint64_t MiB = 1ull << 20;
+    const std::uint32_t type_heaps[] = {1, 1, 0, 0};
+    const HeapUse full[] = {{.size = 5920 * MiB, .device_local = true, .usage = 5834 * MiB,
+                             .budget = 5152 * MiB},
+                            {.size = 16000 * MiB, .usage = 200 * MiB, .budget = 15000 * MiB}};
+    // New images go to the system memory types.
+    assert(SystemMemoryTypesNearVramLimit(true, full, type_heaps) == 0b0011);
+    // Within the reserve (512 MiB) of the budget: already there.
+    HeapUse close[] = {full[0], full[1]};
+    close[0].usage = 4700 * MiB;
+    assert(SystemMemoryTypesNearVramLimit(true, close, type_heaps) == 0b0011);
+    // Room left: VRAM as before.
+    close[0].usage = 4500 * MiB;
+    assert(SystemMemoryTypesNearVramLimit(true, close, type_heaps) == 0);
+    // Integrated GPUs (Steam Deck) keep their own rules.
+    assert(SystemMemoryTypesNearVramLimit(false, full, type_heaps) == 0);
+    // A 3 GB card keeps an eighth free (384 MiB; 512 would be too much of it).
+    const HeapUse small[] = {{.size = 3072 * MiB, .device_local = true, .usage = 2700 * MiB,
+                              .budget = 3100 * MiB},
+                             full[1]};
+    assert(SystemMemoryTypesNearVramLimit(true, small, type_heaps) == 0);
     return 0;
 }

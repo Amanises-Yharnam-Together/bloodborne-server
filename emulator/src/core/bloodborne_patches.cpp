@@ -493,7 +493,8 @@ bool PS4_SYSV_ABI DecidePacketSend(u64, const GuestRegisterSnapshot* registers) 
         if (size >= 4 && size <= 0x2004 &&
             HasMemoryAccess(registers->rcx, size, MemoryProt::CpuRead)) {
             NoteHandOutSent(OnlineIdOfMember(registers->rsi),
-                            {reinterpret_cast<const u8*>(registers->rcx), size});
+                            {reinterpret_cast<u8*>(registers->rcx), size},
+                            HasMemoryAccess(registers->rcx, size, MemoryProt::CpuWrite));
         }
     }
     if (enemy_owner_installed) {

@@ -10,6 +10,7 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
+#include "video_core/texture_cache/vram_placement.h"
 
 #include <vk_mem_alloc.h>
 
@@ -18,6 +19,39 @@ namespace VideoCore {
 using namespace Vulkan;
 
 Common::IncrementalIdProvider<u64> Image::global_image_uid{};
+
+namespace {
+
+/// bbport: the memory types outside VRAM when VRAM is near the driver's budget (see
+/// SystemMemoryTypesNearVramLimit), from VMA's view of the heaps (the driver's usage with
+/// VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT, fetched again every 30 allocations).
+u32 SystemMemoryTypesNearVramLimit(VmaAllocator allocator) {
+    const VkPhysicalDeviceProperties* device{};
+    vmaGetPhysicalDeviceProperties(allocator, &device);
+    const VkPhysicalDeviceMemoryProperties* memory{};
+    vmaGetMemoryProperties(allocator, &memory);
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(allocator, budgets);
+    HeapUse heaps[VK_MAX_MEMORY_HEAPS]{};
+    for (u32 heap = 0; heap < memory->memoryHeapCount; ++heap) {
+        heaps[heap] = {
+            .size = memory->memoryHeaps[heap].size,
+            .device_local = (memory->memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0,
+            .usage = budgets[heap].usage,
+            .budget = budgets[heap].budget,
+        };
+    }
+    u32 type_heaps[VK_MAX_MEMORY_TYPES]{};
+    for (u32 type = 0; type < memory->memoryTypeCount; ++type) {
+        type_heaps[type] = memory->memoryTypes[type].heapIndex;
+    }
+    return SystemMemoryTypesNearVramLimit(
+        device->deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
+        std::span<const HeapUse>{heaps, memory->memoryHeapCount},
+        std::span<const u32>{type_heaps, memory->memoryTypeCount});
+}
+
+} // namespace
 
 static vk::ImageUsageFlags ImageUsageFlags(const Vulkan::Instance& instance,
                                            const ImageInfo& info) {
@@ -130,8 +164,22 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
     const VkImageCreateInfo image_ci_unsafe = static_cast<VkImageCreateInfo>(image_ci);
     VkImage unsafe_image{};
     VmaAllocationInfo alloc_info{};
-    VkResult result = vmaCreateImage(allocator, &image_ci_unsafe, &alloc_ci, &unsafe_image,
-                                     &allocation, &alloc_info);
+    VkResult result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    if (const u32 system_types = SystemMemoryTypesNearVramLimit(allocator)) {
+        // VRAM near the driver's budget: in system memory (images the collector evicts come
+        // back there), so VRAM goes to what can only be there.
+        VmaAllocationCreateInfo system = alloc_ci;
+        system.memoryTypeBits = system_types;
+        result = vmaCreateImage(allocator, &image_ci_unsafe, &system, &unsafe_image, &allocation,
+                                &alloc_info);
+        if (result == VK_SUCCESS) {
+            Vulkan::NoteOverBudget("image");
+        }
+    }
+    if (result != VK_SUCCESS) {
+        result = vmaCreateImage(allocator, &image_ci_unsafe, &alloc_ci, &unsafe_image,
+                                &allocation, &alloc_info);
+    }
     if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) {
         // bbport: VRAM full (6 GB cards, high resolutions). Past the budget the driver keeps the
         // image in system memory, which is slower but no crash (Supermedo's bbport 44e76442).

@@ -922,8 +922,17 @@ void Instance::CreateAllocator() {
         const char* env = std::getenv("BB_VMA_BLOCK_MB");
         return VkDeviceSize(env ? std::max(1ul, std::strtoul(env, nullptr, 10)) : 64ul) << 20;
     }();
+    // bbport: with VK_EXT_memory_budget VMA's budget checks (WITHIN_BUDGET) use the driver's
+    // usage, which counts the buffer cache's backing of the game's memory (allocated directly,
+    // not through VMA). Without it VMA counted only its own allocations against 80% of VRAM: on a
+    // 6 GB card the process held 5.8 GB of a 5.1 GB budget and images still went to VRAM, until
+    // the GPU stopped (krolebord 2026-10-17; Supermedo's bbport acfe3a8).
+    VmaAllocatorCreateFlags allocator_flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    if (supports_memory_budget) {
+        allocator_flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+    }
     const VmaAllocatorCreateInfo allocator_info = {
-        .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .flags = allocator_flags,
         .physicalDevice = physical_device,
         .device = *device,
         .preferredLargeHeapBlockSize = block_size,

@@ -2594,6 +2594,28 @@ constexpr float EnemyJumpMetres = 0.75f;
 bool EnemyJumped(const std::array<float, 3>& before, const std::array<float, 3>& now);
 // A hand-out older than this names nobody (the game sends one each period, empty or not).
 constexpr s64 HandOutFreshMs = 1'000;
+// Kaniel's play test 2026-10-17 (a dog lagged while both players fought it): with both players
+// about as near, the owner's game handed an enemy out and took it back every 0.25-1.3 s, and each
+// change of hands jumps it. The owner keeps an enemy (its entry replaced by HandOutHeldEntry)
+// until its game has wanted to hand it out to that member for HandOverSettleMs; one the game takes
+// back goes back at once (the follower's game drops what a hand-out leaves out, 0x018ED0ED).
+// HandOutHeldEntry is block 31, slot 0x7FF: the follower's game skips it (0x018ED127, 0x018ED13D)
+// and the payload keeps its size (it must be 4 + 4 n, 0x018ED0A5).
+constexpr s64 HandOverSettleMs = 1'000;
+constexpr u32 HandOutHeldEntry = 0xFFFF;
+class HandOutSettle {
+public:
+    // The game's hand-out to `member` (the payload's entries): the entries to send.
+    std::vector<u32> Filter(const std::string& member, std::span<const u32> entries, s64 now_ms);
+
+private:
+    struct Member {
+        std::map<u32, s64> wanted_since; // by index, while the game hands it out
+        std::set<u32> handed;            // by index, handed out by this filter
+        s64 last_ms = 0;
+    };
+    std::map<std::string, Member> members;
+};
 // The guest's receive of 0x17 (0x018ED083 `mov r8, rbx; mov ebx, eax; test ebx, ebx`, eax the
 // size) into the buffer at 0x05570090.
 constexpr u64 HandOutReceivedOffset = 0x018ED083;
