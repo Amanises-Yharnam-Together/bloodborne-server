@@ -5,22 +5,55 @@ import { ArtIcon } from "@/components/art-icon";
 import { DownloadButton } from "@/components/download-button";
 import { Emblem } from "@/components/logo";
 import { Heading } from "@/components/ornament";
+import { StartSteps, type StartStep } from "@/components/start-steps";
 import { VideoSlot } from "@/components/video-slot";
 import type { IconName } from "@/content/docs";
 import { JsonLd } from "@/lib/json-ld";
 import { REPO_URL, site, siteUrl } from "@/lib/site";
 
-// The rest of what changes, in a few words each.
-const changes: [string, string][] = [
-  ["One world", "Enemies, bosses, doors, lamps and shortcuts are shared by the whole team."],
-  [
-    "Your own things",
-    "Pickups, Blood Echoes and Insight stay yours. NPC gifts come to each of you.",
-  ],
-  ["Free travel", "Everyone goes where they like. Nobody is pulled along or sent home."],
-  ["Up to four", "Four hunters in a team, made in the game's own menus."],
-  ["Native port", "Bloodborne PC, not an emulator: 60 FPS, 4K, DLSS, FSR and XeSS."],
-  ["Your server", "One of you hosts it next to the game. No accounts, no cloud."],
+// The rest of what changes: four short ones with an icon, then two with a picture.
+const changes: { term: string; icon: IconName; text: string }[] = [
+  {
+    term: "One world",
+    icon: "lantern",
+    text: "Enemies, bosses, doors, lamps and shortcuts are shared by the whole team.",
+  },
+  {
+    term: "Your own things",
+    icon: "vial",
+    text: "Pickups, Blood Echoes and Insight stay yours. NPC gifts come to each of you.",
+  },
+  {
+    term: "Free travel",
+    icon: "bell",
+    text: "Everyone goes where they like. Nobody is pulled along or sent home.",
+  },
+  {
+    term: "Up to four",
+    icon: "tricorn",
+    text: "Four hunters in a team, made in the game's own menus.",
+  },
+];
+
+const showcases = [
+  {
+    term: "Native port",
+    text: "Bloodborne PC, not an emulator: 60 FPS, 4K, DLSS, FSR and XeSS, set in the launcher.",
+    href: "/docs/install#graphics",
+    src: "/docs/launcher-settings.webp",
+    width: 1200,
+    height: 1017,
+    alt: "The launcher's settings: resolution, frame rate and upscaler.",
+  },
+  {
+    term: "Your server",
+    text: "One of you hosts it next to the game. No accounts, no cloud: everyone types the host's address.",
+    href: "/docs/install#coop-card",
+    src: "/docs/launcher-coop.webp",
+    width: 1200,
+    height: 690,
+    alt: "The launcher's Co-op page with the game folder and the host's address filled in.",
+  },
 ];
 
 const features: {
@@ -63,23 +96,55 @@ const features: {
     height: 720,
     alt: "A guest receives four Blood Vials from the host in the game's own item dialog.",
   },
+  {
+    title: "Teams from the System menu",
+    icon: "bell",
+    text: "Co-op Team sits in the game's own System menu. Open it any time to see who is online, invite them or leave.",
+    href: "/docs/play#team",
+    src: "/docs/system-menu.webp",
+    width: 960,
+    height: 720,
+    alt: "The game's System menu with Co-op Team between Environment and Display.",
+  },
+  {
+    title: "Ready, then the hunt",
+    icon: "blades",
+    text: "Members press Ready on the team screen. The leader begins the hunt and everyone loads into the same world.",
+    href: "/docs/play#team",
+    src: "/docs/team-guest.webp",
+    width: 1200,
+    height: 771,
+    alt: "The team screen seen by Player 2, with Ready instead of Begin the hunt.",
+  },
 ];
 
-const steps = [
+const steps: StartStep[] = [
   {
     title: "Install",
     text: "Run the setup on every PC and point the launcher at your Bloodborne folder.",
     href: "/docs/install#install",
+    src: "/docs/launcher-home.webp",
+    width: 1200,
+    height: 1017,
+    alt: "The launcher's Home page after the first start.",
   },
   {
     title: "Fill in the Co-op page",
     text: "Everyone types the host's address, the host included. PLAY then starts the server on the host's PC.",
     href: "/docs/install#coop-card",
+    src: "/docs/launcher-coop.webp",
+    width: 1200,
+    height: 690,
+    alt: "The Co-op page with the game folder and the host's address.",
   },
   {
     title: "Make a team",
     text: "Press PLAY, invite each other on the team screen and begin the hunt.",
     href: "/docs/play#team",
+    src: "/docs/team-host.webp",
+    width: 1200,
+    height: 771,
+    alt: "The team screen with two hunters, before loading in.",
   },
 ];
 
@@ -153,8 +218,10 @@ export default function Home() {
                 }
               />
               <div>
-                <ArtIcon name={f.icon} className="mb-3 size-14" />
-                <h3 className="text-2xl text-bone">{f.title}</h3>
+                <h3 className="flex items-center gap-4 text-2xl text-bone">
+                  <ArtIcon name={f.icon} className="size-11" />
+                  {f.title}
+                </h3>
                 <p className="mt-3">{f.text}</p>
                 <Link
                   href={f.href}
@@ -167,14 +234,39 @@ export default function Home() {
           ))}
         </div>
 
-        <dl className="mt-24 grid gap-x-14 gap-y-8 border-t border-silver/15 pt-12 sm:grid-cols-2 lg:grid-cols-3">
-          {changes.map(([term, text]) => (
-            <div key={term}>
-              <dt className="text-xl text-bone">{term}</dt>
-              <dd className="mt-1 text-muted-foreground">{text}</dd>
+        <dl className="mt-24 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          {changes.map((c) => (
+            <div key={c.term} className="panel px-6 pt-6 pb-7">
+              <ArtIcon name={c.icon} className="size-14" />
+              <dt className="mt-4 text-xl text-bone">{c.term}</dt>
+              <dd className="mt-1.5 text-muted-foreground">{c.text}</dd>
             </div>
           ))}
         </dl>
+        <div className="mt-5 grid gap-5 md:grid-cols-2">
+          {showcases.map((c) => (
+            <Link
+              key={c.term}
+              href={c.href}
+              className="panel group flex flex-col overflow-hidden transition-colors hover:border-silver/50"
+            >
+              <div className="relative aspect-[16/9] overflow-hidden border-b border-silver/20">
+                <Image
+                  src={c.src}
+                  alt={c.alt}
+                  width={c.width}
+                  height={c.height}
+                  sizes="(min-width: 768px) 560px, 100vw"
+                  className="h-full w-full object-cover object-top transition-transform duration-700 group-hover:scale-[1.03]"
+                />
+              </div>
+              <div className="px-6 pt-5 pb-6">
+                <h3 className="text-xl text-bone">{c.term}</h3>
+                <p className="mt-1.5 text-muted-foreground">{c.text}</p>
+              </div>
+            </Link>
+          ))}
+        </div>
         <p className="mt-10 max-w-2xl text-muted-foreground">
           Instead of the game&apos;s peer-to-peer links, every game connects to one small server
           that keeps the team&apos;s world.{" "}
@@ -186,19 +278,9 @@ export default function Home() {
 
       <section aria-labelledby="start" className="mx-auto mt-28 max-w-6xl px-4 sm:px-6">
         <Heading id="start">Getting started</Heading>
-        <ol className="mt-10 grid gap-x-12 gap-y-10 md:grid-cols-3">
-          {steps.map((step, i) => (
-            <li key={step.title} className="border-t border-silver/25 pt-5">
-              <span className="text-4xl text-title/80">{["I", "II", "III"][i]}</span>
-              <h3 className="mt-2 text-2xl text-bone">
-                <Link href={step.href} className="hover:text-title">
-                  {step.title}
-                </Link>
-              </h3>
-              <p className="mt-2 text-muted-foreground">{step.text}</p>
-            </li>
-          ))}
-        </ol>
+        <div className="mt-10">
+          <StartSteps steps={steps} />
+        </div>
 
         <div className="panel mt-20 flex flex-col gap-6 px-6 py-8 sm:px-10 md:flex-row md:items-center md:justify-between">
           <p className="max-w-xl text-lg">
