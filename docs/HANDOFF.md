@@ -660,6 +660,14 @@ e	ests. Rig: guest enters Gascoigne's fog
   host's first claim goes unanswered and its game retries after a timeout; find what the host's
   join task waits for at step 6.
 
+- **A guest sometimes loses the host after the host's Dream trip (rig only, Kaniel 2026-10-17:
+  not seen in play, may be the test).** smoke's trip chapter (run 20261017-010558): the host goes
+  to the Dream and back while both guests stay on Central Yharnam; the host re-creates both
+  guests, but on both guests the host's character is gone 20 s later (`expect-others-near 2 15`:
+  only the other guest) and nothing logs its leaving or a re-create (only the member that
+  travelled re-creates the others). Intermittent: 1 of 3 smoke runs that night, the trips
+  suite's known_bug since 2026-10-15. Kaniel reports it if he sees it in play.
+
 ## Known loose ends
 - shadnet logs `unhandled POST /v1/users/<npid>/feed`. Harmless so far.
 - The backend answers `ChairMessRespawnPointNotice` generically.
