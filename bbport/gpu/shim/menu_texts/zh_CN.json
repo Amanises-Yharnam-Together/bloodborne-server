@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "每帧将场景偏移不到一个像素，让超分辨率从多帧中重建更多细节。",
  "Character motion vectors": "角色运动矢量",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "动画物体的精确运动：衣物和武器在运动中更少破碎。重启游戏后生效。",
- "Frame generation (FSR 3.1)": "帧生成（FSR 3.1）",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "帧率翻倍：每两帧游戏画面之间插入一帧插值帧。略微增加输入延迟；60 FPS 以上效果最佳。帧率高于显示器刷新率一半时暂停。",
  "FSR 4: auto exposure": "FSR 4：自动曝光",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "FSR 4 网络按曝光归一化颜色，并据此决定何时丢弃旧帧。",
  "FSR 4: invert jitter sign": "FSR 4：反转抖动符号",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "地图开在游戏之上：按 ○ 回到这里",
  "Triangle  Whole map": "△  整张地图",
  "%d of %d want to skip": "%d/%d 人想跳过",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  区域     摇杆、拖动  移动     L2 / R2、滚轮  缩放     □  自己"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  区域     摇杆、拖动  移动     L2 / R2、滚轮  缩放     □  自己",
+ "Frame generation: provider": "画面生成：技术",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1：任何 GPU，2x。DLSS：NVIDIA 的画面生成，运动更流畅；在 GeForce RTX 50 上最高 4x。",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1：任何 GPU，2x。DLSS Frame Generation 需要 GeForce RTX 40 或更新的显卡，以及 bbport_dlss.dll 和 nvngx_dlssg.dll。",
+ "Frame generation: multiplier": "画面生成：倍数",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "游戏每输出一个画面时显示的画面数。FSR 3.1 和 GeForce RTX 40 上的 DLSS：2x；GeForce RTX 50 上的 DLSS：最高 4x。每多一级会多占用一些显存。",
+ "Fit to display refresh": "匹配显示器刷新率",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "开启：画面数不超过显示器能显示的数量（不限 FPS 时生成的画面更少，GPU 负担更轻）。关闭：保持所选倍数；超过刷新率时显示器只显示最新的画面。使用 V-Sync 时始终匹配。",
+ "Now %dx on a %d Hz display": "当前 %dx，%d Hz 显示器",
+ "Paused: no room on the %d Hz display at this frame rate": "已暂停：在当前 FPS 下 %d Hz 显示器没有余量",
+ "Frame generation": "画面生成",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "在游戏自身的画面之间生成画面：FSR 3.1 在任何 GPU 上使 FPS 翻倍，DLSS 在 GeForce RTX 50 上最多生成三个（4x）。略微增加输入延迟并占用一些显存；60 FPS 以上效果最佳。默认关闭。"
 }

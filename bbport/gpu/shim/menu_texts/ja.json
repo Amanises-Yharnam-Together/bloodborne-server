@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "毎フレームシーンを1ピクセル未満ずらし、アップスケーラーが複数フレームからより多くのディテールを再構成します。",
  "Character motion vectors": "キャラクターのモーションベクトル",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "アニメーションするオブジェクトの正確な動き：服や武器が動きの中で崩れにくくなります。ゲームの再起動後に適用。",
- "Frame generation (FSR 3.1)": "フレーム生成（FSR 3.1）",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "フレームレートを2倍に：ゲームの2フレームごとに補間フレームを1枚挿入。入力遅延が少し増えます。60 FPS以上推奨。フレームレートがディスプレイのリフレッシュレートの半分を超える間は停止します。",
  "FSR 4: auto exposure": "FSR 4：自動露出",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "FSR 4のネットワークは露出で色を正規化し、それを使って古いフレームを捨てるタイミングを判断します。",
  "FSR 4: invert jitter sign": "FSR 4：ジッターの符号を反転",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "マップはゲームの上に開いています：○で戻ります",
  "Triangle  Whole map": "△  マップ全体",
  "%d of %d want to skip": "%d/%d人がスキップ希望",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  エリア     スティック、ドラッグ  移動     L2 / R2、ホイール  拡大縮小     □  自分"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  エリア     スティック、ドラッグ  移動     L2 / R2、ホイール  拡大縮小     □  自分",
+ "Frame generation: provider": "フレーム生成：方式",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1：どのGPUでも2x。DLSS：NVIDIAのフレーム生成で、動きがより滑らか。GeForce RTX 50では最大4x。",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1：どのGPUでも2x。DLSS Frame GenerationにはGeForce RTX 40以降とbbport_dlss.dll、nvngx_dlssg.dllが必要です。",
+ "Frame generation: multiplier": "フレーム生成：倍率",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "ゲームの1フレームあたりの表示フレーム数。FSR 3.1とGeForce RTX 40のDLSS：2x。GeForce RTX 50のDLSS：最大4x。1段上げるごとにビデオメモリを使います。",
+ "Fit to display refresh": "リフレッシュレートに合わせる",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "ON：ディスプレイが表示できる数以上のフレームを作りません（FPS無制限時は生成フレームが減り、GPU負荷も下がります）。OFF：選んだ倍率のまま。リフレッシュレートを超えると最新のフレームが表示されます。V-Sync使用時は常に合わせます。",
+ "Now %dx on a %d Hz display": "現在 %dx（%d Hzディスプレイ）",
+ "Paused: no room on the %d Hz display at this frame rate": "停止中：このフレームレートでは%d Hzディスプレイに余裕がありません",
+ "Frame generation": "フレーム生成",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "ゲームのフレームの間にフレームを作ります：FSR 3.1はどのGPUでもフレームレートを2倍に、DLSSはGeForce RTX 50で最大3枚（4x）。入力遅延が少し増え、ビデオメモリも使います。60 FPS以上推奨。初期設定はOFF。"
 }

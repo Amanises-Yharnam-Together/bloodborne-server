@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "Każda klatka przesuwa scenę o ułamek piksela, by upscaler odtworzył więcej detali z kilku klatek.",
  "Character motion vectors": "Wektory ruchu postaci",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "Dokładny ruch animowanych obiektów: ubrania i broń mniej się rozpadają w ruchu. Działa po ponownym uruchomieniu gry.",
- "Frame generation (FSR 3.1)": "Generowanie klatek (FSR 3.1)",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "Podwaja liczbę klatek: jedna klatka interpolowana między każdymi dwiema klatkami gry. Dodaje nieco opóźnienia sterowania; najlepiej od 60 FPS. Wstrzymuje się, gdy liczba klatek przekracza połowę odświeżania ekranu.",
  "FSR 4: auto exposure": "FSR 4: automatyczna ekspozycja",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "Sieć FSR 4 normalizuje kolor według ekspozycji i na jej podstawie decyduje, kiedy porzucić starsze klatki.",
  "FSR 4: invert jitter sign": "FSR 4: odwróć znak drgania",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "Mapa jest otwarta nad grą: Kółko wraca tutaj",
  "Triangle  Whole map": "Trójkąt  Cała mapa",
  "%d of %d want to skip": "%d z %d chce pominąć",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Obszar     Gałki, przeciąganie  Ruch     L2 / R2, kółko  Powiększenie     Kwadrat  Ty"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Obszar     Gałki, przeciąganie  Ruch     L2 / R2, kółko  Powiększenie     Kwadrat  Ty",
+ "Frame generation: provider": "Generowanie klatek: technologia",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1: każdy GPU, 2x. DLSS: generowanie klatek NVIDIA, płynniejsze w ruchu; do 4x na GeForce RTX 50.",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1: każdy GPU, 2x. DLSS Frame Generation wymaga GeForce RTX 40 lub nowszego oraz bbport_dlss.dll i nvngx_dlssg.dll.",
+ "Frame generation: multiplier": "Generowanie klatek: mnożnik",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "Klatki wyświetlane na każdą klatkę gry. FSR 3.1 i DLSS na GeForce RTX 40: 2x; DLSS na GeForce RTX 50: do 4x. Każdy kolejny stopień zajmuje trochę pamięci wideo.",
+ "Fit to display refresh": "Dopasuj do odświeżania ekranu",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "Wł.: nie więcej klatek, niż pokazuje ekran (bez limitu FPS generuje się mniej, a GPU ma mniej pracy). Wył.: wybrany mnożnik; powyżej odświeżania ekran pokazuje najnowsze klatki. Z V-Sync zawsze dopasowane.",
+ "Now %dx on a %d Hz display": "Teraz %dx na ekranie %d Hz",
+ "Paused: no room on the %d Hz display at this frame rate": "Wstrzymane: brak miejsca na ekranie %d Hz przy tej liczbie klatek",
+ "Frame generation": "Generowanie klatek",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "Klatki tworzone między klatkami gry: FSR 3.1 podwaja liczbę klatek na każdym GPU, DLSS tworzy do trzech na GeForce RTX 50 (4x). Dodaje nieco opóźnienia sterowania i zajmuje trochę pamięci wideo; najlepiej od 60 FPS. Domyślnie wył."
 }

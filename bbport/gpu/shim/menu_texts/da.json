@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "Hvert billede forskyder scenen en brøkdel af en pixel, så opskaleren genskaber flere detaljer fra flere billeder.",
  "Character motion vectors": "Bevægelsesvektorer for figurer",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "Præcis bevægelse for animerede objekter: tøj og våben brydes mindre op i bevægelse. Træder i kraft efter genstart af spillet.",
- "Frame generation (FSR 3.1)": "Billedgenerering (FSR 3.1)",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "Fordobler billedhastigheden: ét interpoleret billede mellem hver to spilbilleder. Giver lidt inputforsinkelse; bedst fra 60 FPS. Holder pause, når billedhastigheden er over halvdelen af skærmens opdateringshastighed.",
  "FSR 4: auto exposure": "FSR 4: automatisk eksponering",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "FSR 4-netværket normaliserer farver efter eksponering og bruger den til at afgøre, hvornår ældre billeder skal kasseres.",
  "FSR 4: invert jitter sign": "FSR 4: vend jitterfortegn",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "Kortet er åbent over spillet: Cirkel vender tilbage hertil",
  "Triangle  Whole map": "Trekant  Hele kortet",
  "%d of %d want to skip": "%d af %d vil springe over",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Område     Stik, træk  Flyt     L2 / R2, hjul  Zoom     Firkant  Dig"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Område     Stik, træk  Flyt     L2 / R2, hjul  Zoom     Firkant  Dig",
+ "Frame generation: provider": "Billedgenerering: teknologi",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1: alle GPU'er, 2x. DLSS: NVIDIAs billedgenerering, mere jævn i bevægelse; op til 4x på et GeForce RTX 50.",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1: alle GPU'er, 2x. DLSS Frame Generation kræver et GeForce RTX 40 eller nyere med bbport_dlss.dll og nvngx_dlssg.dll.",
+ "Frame generation: multiplier": "Billedgenerering: multiplikator",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "Viste billeder pr. spilbillede. FSR 3.1 og DLSS på et GeForce RTX 40: 2x; DLSS på et GeForce RTX 50: op til 4x. Hvert trin mere bruger lidt videohukommelse.",
+ "Fit to display refresh": "Tilpas til skærmens opdatering",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "Til: ikke flere billeder, end skærmen viser (uden FPS-grænse genereres færre, og GPU'en belastes mindre). Fra: multiplikatoren som valgt; over opdateringshastigheden viser skærmen de nyeste billeder. Med V-Sync altid tilpasset.",
+ "Now %dx on a %d Hz display": "Nu %dx på en %d Hz-skærm",
+ "Paused: no room on the %d Hz display at this frame rate": "På pause: ingen plads på %d Hz-skærmen ved denne billedhastighed",
+ "Frame generation": "Billedgenerering",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "Billeder mellem spillets egne: FSR 3.1 fordobler billedhastigheden på alle GPU'er, DLSS laver op til tre på et GeForce RTX 50 (4x). Giver lidt inputforsinkelse og bruger lidt videohukommelse; bedst fra 60 FPS. Fra som standard."
 }

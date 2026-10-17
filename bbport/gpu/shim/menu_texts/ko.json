@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "매 프레임 장면을 픽셀 일부만큼 이동시켜, 업스케일러가 여러 프레임에서 더 많은 디테일을 재구성합니다.",
  "Character motion vectors": "캐릭터 모션 벡터",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "애니메이션 오브젝트의 정확한 움직임: 옷과 무기가 움직일 때 덜 깨집니다. 게임을 재시작하면 적용됩니다.",
- "Frame generation (FSR 3.1)": "프레임 생성(FSR 3.1)",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "프레임 레이트를 두 배로: 게임 프레임 두 개마다 보간 프레임 하나를 넣습니다. 입력 지연이 약간 늘어나며, 60 FPS 이상에서 권장. 프레임 레이트가 디스플레이 주사율의 절반을 넘는 동안은 일시 정지됩니다.",
  "FSR 4: auto exposure": "FSR 4: 자동 노출",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "FSR 4 네트워크는 노출로 색을 정규화하고, 이를 이용해 이전 프레임을 버릴 시점을 판단합니다.",
  "FSR 4: invert jitter sign": "FSR 4: 지터 부호 반전",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "지도가 게임 위에 열려 있습니다: ○로 돌아옵니다",
  "Triangle  Whole map": "△  전체 지도",
  "%d of %d want to skip": "%d/%d명이 건너뛰기 원함",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  지역     스틱, 드래그  이동     L2 / R2, 휠  확대/축소     □  나"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  지역     스틱, 드래그  이동     L2 / R2, 휠  확대/축소     □  나",
+ "Frame generation: provider": "프레임 생성: 방식",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1: 모든 GPU, 2x. DLSS: NVIDIA의 프레임 생성으로 움직임이 더 부드럽습니다. GeForce RTX 50에서 최대 4x.",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1: 모든 GPU, 2x. DLSS Frame Generation에는 GeForce RTX 40 이상과 bbport_dlss.dll, nvngx_dlssg.dll이 필요합니다.",
+ "Frame generation: multiplier": "프레임 생성: 배수",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "게임 프레임 하나당 표시되는 프레임 수. FSR 3.1과 GeForce RTX 40의 DLSS: 2x, GeForce RTX 50의 DLSS: 최대 4x. 한 단계 올릴 때마다 비디오 메모리를 더 사용합니다.",
+ "Fit to display refresh": "주사율에 맞추기",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "ON: 디스플레이가 표시하는 것보다 많은 프레임을 만들지 않습니다(FPS 제한이 없으면 생성 프레임이 줄고 GPU 부담도 줄어듦). OFF: 선택한 배수 그대로이며, 주사율을 넘으면 최신 프레임이 표시됩니다. V-Sync 사용 시 항상 맞춥니다.",
+ "Now %dx on a %d Hz display": "현재 %dx, %d Hz 디스플레이",
+ "Paused: no room on the %d Hz display at this frame rate": "일시 정지: 이 프레임 레이트에서는 %d Hz 디스플레이에 여유가 없습니다",
+ "Frame generation": "프레임 생성",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "게임 프레임 사이에 프레임을 만듭니다: FSR 3.1은 모든 GPU에서 프레임 레이트를 두 배로, DLSS는 GeForce RTX 50에서 최대 세 개(4x). 입력 지연이 약간 늘고 비디오 메모리를 사용하며, 60 FPS 이상에서 권장. 기본값은 OFF."
 }
