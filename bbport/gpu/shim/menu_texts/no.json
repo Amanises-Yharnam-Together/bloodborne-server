@@ -323,10 +323,10 @@
  "Travel to this lamp?": "Reise til denne lykten?",
  "Travel": "Reis",
  "Stay": "Bli",
- "L1 / R1  Area     Right stick, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Område     Høyre spak, dra  Flytt     L2 / R2, hjul  Zoom     Firkant  Deg",
  "The map: where you and your team are, and travel to a lit lamp": "Kartet: hvor du og laget ditt er, og reise til en tent lykt",
  "Map screen": "Kartskjerm",
  "The map is open over the game: Circle comes back here": "Kartet er åpent over spillet: Sirkel kommer tilbake hit",
  "Triangle  Whole map": "Trekant  Hele kartet",
- "%d of %d want to skip": "%d av %d vil hoppe over"
+ "%d of %d want to skip": "%d av %d vil hoppe over",
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Område     Spaker, dra  Flytt     L2 / R2, hjul  Zoom     Firkant  Deg"
 }

@@ -33,6 +33,9 @@ int bbcoop_cutscene_vote_pad(int options) { vote_options=options; return vote; }
 /* The team menu in game just closed: Circle for the game's page under it. */
 static int menu_back;
 int bbcoop_team_menu_back(void) { return menu_back; }
+/* The touchpad held: the map opens. */
+static int map_opened;
+void bbcoop_map_from_pad(void) { ++map_opened; }
 /* The mouse is tested apart (test_mouse_camera.c); here the window has none. */
 void bbgpu_mouse_enable(int enabled) { (void)enabled; }
 void bbgpu_mouse_set_direct(void (*turn)(float, float), void (*drop)(void)) { (void)turn; (void)drop; }

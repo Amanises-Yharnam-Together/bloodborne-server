@@ -323,10 +323,10 @@
  "Travel to this lamp?": "要前往这盏灯吗？",
  "Travel": "前往",
  "Stay": "留下",
- "L1 / R1  Area     Right stick, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  区域     右摇杆、拖动  移动     L2 / R2、滚轮  缩放     □  自己",
  "The map: where you and your team are, and travel to a lit lamp": "地图：你与队友所在之处，以及前往已点亮的灯",
  "Map screen": "地图画面",
  "The map is open over the game: Circle comes back here": "地图开在游戏之上：按 ○ 回到这里",
  "Triangle  Whole map": "△  整张地图",
- "%d of %d want to skip": "%d/%d 人想跳过"
+ "%d of %d want to skip": "%d/%d 人想跳过",
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  区域     摇杆、拖动  移动     L2 / R2、滚轮  缩放     □  自己"
 }

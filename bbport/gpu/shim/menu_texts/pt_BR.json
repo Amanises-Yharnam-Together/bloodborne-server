@@ -323,10 +323,10 @@
  "Travel to this lamp?": "Viajar até esta lanterna?",
  "Travel": "Viajar",
  "Stay": "Ficar",
- "L1 / R1  Area     Right stick, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Área     Analógico direito, arrastar  Mover     L2 / R2, roda  Zoom     Quadrado  Você",
  "The map: where you and your team are, and travel to a lit lamp": "O mapa: onde você e sua equipe estão, e viagem até uma lanterna acesa",
  "Map screen": "Tela do mapa",
  "The map is open over the game: Circle comes back here": "O mapa está aberto sobre o jogo: Círculo volta aqui",
  "Triangle  Whole map": "Triângulo  Mapa inteiro",
- "%d of %d want to skip": "%d de %d querem pular"
+ "%d of %d want to skip": "%d de %d querem pular",
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Área     Analógicos, arrastar  Mover     L2 / R2, roda  Zoom     Quadrado  Você"
 }

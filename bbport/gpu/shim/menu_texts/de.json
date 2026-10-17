@@ -323,10 +323,10 @@
  "Travel to this lamp?": "Zu dieser Laterne reisen?",
  "Travel": "Reisen",
  "Stay": "Bleiben",
- "L1 / R1  Area     Right stick, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Gebiet     Rechter Stick, ziehen  Bewegen     L2 / R2, Mausrad  Zoom     Viereck  Du",
  "The map: where you and your team are, and travel to a lit lamp": "Die Karte: wo du und dein Team seid, und Reisen zu einer entzündeten Laterne",
  "Map screen": "Kartenansicht",
  "The map is open over the game: Circle comes back here": "Die Karte ist über dem Spiel geöffnet: Kreis kehrt hierher zurück",
  "Triangle  Whole map": "Dreieck  Ganze Karte",
- "%d of %d want to skip": "%d von %d wollen überspringen"
+ "%d of %d want to skip": "%d von %d wollen überspringen",
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Gebiet     Sticks, ziehen  Bewegen     L2 / R2, Mausrad  Zoom     Viereck  Du"
 }

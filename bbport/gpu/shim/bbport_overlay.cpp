@@ -266,6 +266,7 @@ ImGuiKey KeyFromGamepad(u8 button) {
     case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return ImGuiKey_GamepadR1;
     case SDL_GAMEPAD_BUTTON_START: return ImGuiKey_GamepadStart;
     case SDL_GAMEPAD_BUTTON_BACK: return ImGuiKey_GamepadBack;
+    case SDL_GAMEPAD_BUTTON_TOUCHPAD: return ImGuiKey_GamepadBack;
     default: return ImGuiKey_None;
     }
 }
@@ -4134,6 +4135,10 @@ struct State {
     bool fresh = true;       // just opened: the player's area, centred on the player
     bool placed = false;     // the first reading since it opened came (or a moment passed)
     double opened = 0;
+    // Kaniel 2026-10-18 (as Elden Ring's): the cursor over the picture, moved by the left stick (or
+    // the mouse); the lit lamp under it, if any (its warp point).
+    ImVec2 cursor{-1.0f, -1.0f};
+    int32_t hover = 0;
 };
 State state;
 
@@ -4440,10 +4445,34 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
         if (view.has_me && WorldOf(view.map) == world) {
             PlayerMark(draw, frame.Screen(view.x, view.z));
         }
-        if (state.focus >= 0 && state.focus < int(lamps.size())) {
-            const ImVec2 at = frame.Screen(lamps[size_t(state.focus)]->x, lamps[size_t(state.focus)]->z);
-            const std::string name = BbMapCharts::LampName(lamps[size_t(state.focus)]->name_id);
+        // The lamp under the cursor (else the list's): ringed, its name over it.
+        const bbcoop_map_lamp* named = nullptr;
+        for (int i = 0; i < view.lamp_count; ++i) {
+            if (view.lamps[i].warp_point == state.hover) {
+                named = &view.lamps[i];
+            }
+        }
+        if (named == nullptr && state.focus >= 0 && state.focus < int(lamps.size())) {
+            named = lamps[size_t(state.focus)];
+        }
+        if (named != nullptr) {
+            const ImVec2 at = frame.Screen(named->x, named->z);
+            LampMark(draw, at, true, pulse);
+            const std::string name = BbMapCharts::LampName(named->name_id);
             Party::Text(draw, MenuArt::Font(), S(20.0f), ImVec2(at.x, at.y - S(40.0f)), Bright(), name.c_str(), 0.5f);
+        }
+        // The cursor: a ring with four ticks, in the compass's light gray.
+        if (state.cursor.x >= 0.0f) {
+            const ImVec2 c = state.cursor;
+            const float r = S(11.0f), t = S(7.0f);
+            const ImU32 ink = Party::Rgba(0, 0, 0, 0.6f), gray = Gray(0.95f);
+            for (const auto& [color, width] : {std::pair{ink, S(3.5f)}, {gray, S(1.6f)}}) {
+                draw->AddCircle(c, r, color, 32, width);
+                draw->AddLine(ImVec2(c.x - r - t, c.y), ImVec2(c.x - r + S(2.0f), c.y), color, width);
+                draw->AddLine(ImVec2(c.x + r - S(2.0f), c.y), ImVec2(c.x + r + t, c.y), color, width);
+                draw->AddLine(ImVec2(c.x, c.y - r - t), ImVec2(c.x, c.y - r + S(2.0f)), color, width);
+                draw->AddLine(ImVec2(c.x, c.y + r - S(2.0f)), ImVec2(c.x, c.y + r + t), color, width);
+            }
         }
     } else {
         ImGui::PushFont(MenuArt::Font(), 24.0f);
@@ -4595,8 +4624,8 @@ void DrawQuestion(ImDrawList* draw, ImVec2 display, bool yes_pressed, bool no_pr
 /// The game's key guide at the bottom.
 void DrawKeys(ImDrawList* draw, float mid, float y) {
     ImGui::PushFont(MenuArt::Font(), 18.0f);
-    const char* text = T("L1 / R1  Area     Right stick, drag  Move     L2 / R2, wheel  Zoom     Square  You",
-                         "L1 / R1  Область     Правый стик, мышь  Сдвиг     L2 / R2, колесо  Масштаб     Квадрат  Вы");
+    const char* text = T("L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You",
+                         "L1 / R1  Область     Стики, мышь  Сдвиг     L2 / R2, колесо  Масштаб     Квадрат  Вы");
     const char* whole = T("Triangle  Whole map", "Треугольник  Вся карта");
     const char* choose = T("Travel", "В путь");
     const char* back = T("Close", "Закрыть");
@@ -4673,6 +4702,51 @@ void MoveView(const Frame& frame) {
     }
 }
 
+/// The cursor: the left stick moves it (the picture scrolls once it reaches the frame's edge, as
+/// Elden Ring's map), the mouse puts it where it points; the lit lamp of the world nearest under
+/// it becomes `state.hover`.
+void MoveCursor(const Frame& frame) {
+    ImGuiIO& io = ImGui::GetIO();
+    const float dt = std::min(io.DeltaTime, 0.1f);
+    if (state.cursor.x < 0.0f) {
+        state.cursor = frame.Mid();
+    }
+    const auto analog = [](ImGuiKey key) { return ImGui::GetKeyData(key)->AnalogValue; };
+    const float sx = analog(ImGuiKey_GamepadLStickRight) - analog(ImGuiKey_GamepadLStickLeft);
+    const float sy = analog(ImGuiKey_GamepadLStickDown) - analog(ImGuiKey_GamepadLStickUp);
+    const float speed = S(650.0f); // screen pixels a second at full tilt
+    ImVec2 next(state.cursor.x + sx * speed * dt, state.cursor.y + sy * speed * dt);
+    const bool inside = io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x && io.MousePos.y >= frame.p0.y &&
+                        io.MousePos.y < frame.p1.y;
+    if (inside && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f)) {
+        next = io.MousePos;
+    }
+    const float edge = S(48.0f);
+    const ImVec2 lo(frame.p0.x + edge, frame.p0.y + edge), hi(frame.p1.x - edge, frame.p1.y - edge);
+    const ImVec2 kept(std::clamp(next.x, lo.x, hi.x), std::clamp(next.y, lo.y, hi.y));
+    if (state.zoom > 0.0f && (sx != 0.0f || sy != 0.0f)) {
+        // Past the edge: the picture scrolls under the cursor instead.
+        state.cx += (next.x - kept.x) / state.zoom;
+        state.cz -= (next.y - kept.y) / state.zoom;
+    }
+    state.cursor = kept;
+    // The lit lamp nearest the cursor, within reach.
+    state.hover = 0;
+    float best = S(26.0f) * S(26.0f);
+    for (int i = 0; i < view.lamp_count; ++i) {
+        const bbcoop_map_lamp& lamp = view.lamps[i];
+        if (!lamp.lit || WorldOf(lamp.map) != WorldOf(state.shown) || !charts.contains(lamp.map)) {
+            continue;
+        }
+        const ImVec2 at = frame.Screen(lamp.x, lamp.z);
+        const float d = (at.x - state.cursor.x) * (at.x - state.cursor.x) + (at.y - state.cursor.y) * (at.y - state.cursor.y);
+        if (d < best) {
+            best = d;
+            state.hover = lamp.warp_point;
+        }
+    }
+}
+
 void Screen() {
     ImGuiIO& io = ImGui::GetIO();
     const ImVec2 display = io.DisplaySize;
@@ -4690,15 +4764,17 @@ void Screen() {
         state.zoom = 0;
     }
     // Keys first (the question takes them while it is up).
-    const bool up = Pressed({ImGuiKey_UpArrow, ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp}, true);
-    const bool down = Pressed({ImGuiKey_DownArrow, ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown}, true);
-    const bool left = Pressed({ImGuiKey_LeftArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft}, true);
-    const bool right = Pressed({ImGuiKey_RightArrow, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight}, true);
+    // The list's up and down: the d-pad and the arrows (the left stick moves the cursor).
+    const bool up = Pressed({ImGuiKey_UpArrow, ImGuiKey_GamepadDpadUp}, true);
+    const bool down = Pressed({ImGuiKey_DownArrow, ImGuiKey_GamepadDpadDown}, true);
+    const bool left = Pressed({ImGuiKey_LeftArrow, ImGuiKey_GamepadDpadLeft}, true);
+    const bool right = Pressed({ImGuiKey_RightArrow, ImGuiKey_GamepadDpadRight}, true);
     const bool cross = Pressed({ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space, ImGuiKey_GamepadFaceDown});
     const bool asked_before = state.asking != 0; // a question opened this frame takes no keys yet
     const bool circle = Pressed({ImGuiKey_Escape, ImGuiKey_GamepadFaceRight});
     if (state.asking == 0) {
-        if (circle || Pressed({ImGuiKey_M})) {
+        // Kaniel 2026-10-18: the touchpad (Back, View) that opened it closes it too.
+        if (circle || Pressed({ImGuiKey_M, ImGuiKey_GamepadBack})) {
             bbcoop_map_menu(0);
             return;
         }
@@ -4791,8 +4867,17 @@ void Screen() {
             state.focus = std::clamp(state.focus + ((down || right) ? 1 : -1), 0, int(lamps.size()) - 1);
             state.cx = lamps[size_t(state.focus)]->x; // the picture follows the focused lamp
             state.cz = lamps[size_t(state.focus)]->z;
+            state.cursor = frame.Mid(); // and the cursor sits on it
         }
-        if (cross && !lamps.empty()) {
+        MoveCursor(frame);
+        // Cross (or a click on the picture): the lamp under the cursor, else the list's focused one.
+        const bool clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && state.hover != 0 &&
+                             io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x &&
+                             io.MousePos.y >= frame.p0.y && io.MousePos.y < frame.p1.y;
+        if ((cross || clicked) && state.hover != 0) {
+            state.asking = state.hover;
+            state.ask_yes = true;
+        } else if (cross && !lamps.empty()) {
             state.asking = lamps[size_t(state.focus)]->warp_point;
             state.ask_yes = true;
         }
@@ -5198,6 +5283,42 @@ bool HandleEvent(const SDL_Event& event) {
         }
         io.AddMouseWheelEvent(event.wheel.x, event.wheel.y);
         return true;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+        // Kaniel 2026-10-18 ("no way to scroll the map on the gamepad"): the sticks and triggers as
+        // ImGui's analog keys (they never reached it before), a little dead zone in the middle.
+        if (!is_open) {
+            return false;
+        }
+        const float v = std::clamp(float(event.gaxis.value) / 32767.0f, -1.0f, 1.0f);
+        const auto put = [&](ImGuiKey negative, ImGuiKey positive) {
+            const float dead = 0.2f, out = std::abs(v) < dead ? 0.0f : (std::abs(v) - dead) / (1.0f - dead);
+            io.AddKeyAnalogEvent(negative, v < 0.0f && out > 0.0f, v < 0.0f ? out : 0.0f);
+            io.AddKeyAnalogEvent(positive, v > 0.0f && out > 0.0f, v > 0.0f ? out : 0.0f);
+        };
+        switch (event.gaxis.axis) {
+        case SDL_GAMEPAD_AXIS_LEFTX:
+            put(ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight);
+            break;
+        case SDL_GAMEPAD_AXIS_LEFTY:
+            put(ImGuiKey_GamepadLStickUp, ImGuiKey_GamepadLStickDown);
+            break;
+        case SDL_GAMEPAD_AXIS_RIGHTX:
+            put(ImGuiKey_GamepadRStickLeft, ImGuiKey_GamepadRStickRight);
+            break;
+        case SDL_GAMEPAD_AXIS_RIGHTY:
+            put(ImGuiKey_GamepadRStickUp, ImGuiKey_GamepadRStickDown);
+            break;
+        case SDL_GAMEPAD_AXIS_LEFT_TRIGGER:
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadL2, v > 0.3f, std::max(0.0f, v));
+            break;
+        case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER:
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadR2, v > 0.3f, std::max(0.0f, v));
+            break;
+        default:
+            break;
+        }
+        return true;
+    }
     default:
         return false;
     }
