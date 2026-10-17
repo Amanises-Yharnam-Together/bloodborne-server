@@ -1792,11 +1792,17 @@ class StatusIcon(Widget):
         self.kind, self.state, self.busy, self.bg = kind, '•', False, bg
         # Kaniel's painted icon (launcher/art/status-<kind>.png) when there is one, else the drawn glyph.
         art = load_art(f'status-{kind}.png')
-        self.size = px(44) if art is not None else px(34)
-        self.picture = None
+        self.size = px(32) if art is not None else px(34)
+        self.picture = self.picture_hot = None
         if art is not None:
+            # Small and quiet (Kaniel 2026-10-17: too bulky and contrasty): 22 px, toned down towards the bar's
+            # colour, full strength under the pointer.
             from PIL import Image, ImageTk
-            self.picture = ImageTk.PhotoImage(art.resize((px(38), px(38)), Image.Resampling.LANCZOS))
+            small = art.resize((px(22), px(22)), Image.Resampling.LANCZOS)
+            quiet = small.copy()
+            quiet.putalpha(small.getchannel('A').point(lambda v: v * 55 // 100))
+            self.picture = ImageTk.PhotoImage(quiet)
+            self.picture_hot = ImageTk.PhotoImage(small)
         super().__init__(ui, parent, self.size, self.size, bg, cursor='arrow')
         self.tip = Tooltip(ui, self.canvas)
         self.canvas.bind('<Enter>', lambda _e: self.fade_hover(1.0), add='+')
@@ -1840,11 +1846,12 @@ class StatusIcon(Widget):
         c.delete('all')
         ink = mix(MUTED, TEXT, self.hover)
         if self.picture is not None:
-            c.create_image(self.size // 2 - px(2), self.size // 2 - px(2), image=self.picture)
+            c.create_image(self.size // 2 - px(3), self.size // 2 - px(3),
+                           image=self.picture_hot if self.hover > 0.5 else self.picture)
         else:
             self.glyph(c, ink, max(1, px(1.4)))
         # The badge: the state's colour in the lower right, a tick, a bar or a cross in it.
-        r, cx, cy = px(6), self.size - px(7), self.size - px(7)
+        r, cx, cy = (px(5), self.size - px(6), self.size - px(6)) if self.picture else (px(6), self.size - px(7), self.size - px(7))
         color = DIM if self.busy else self.STATES.get(self.state, DIM)
         c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=color, outline=self.bg, width=px(2))
         w = max(1, px(1.5))
