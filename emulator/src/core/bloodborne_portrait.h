@@ -54,6 +54,15 @@ std::optional<PortraitCrop> HeadAndShoulders(std::span<const u8> rgba, int width
 // The portrait of a model target's pixels (RGBA rows, `width` x `height`); nothing for another
 // target or one with too little of a character on it yet.
 std::optional<PortraitPixels> PortraitFromModel(std::span<const u8> rgba, int width, int height);
+// Kaniel 2026-10-17 ("is there a way to render it like it's seen in a game?"): the off-screen
+// model is drawn with the character creator's face camera (BodyRendererSetCameraMode, mode
+// FaceCameraMode: a narrow lens on the head), so the head fills the target, about six times the
+// status page's detail. Its portrait is the target's full-width square from FaceCropTop: the
+// hood, the face and the collar (the camera frames the head, so no search). Nothing for another
+// target or an empty one.
+constexpr int FaceCropTop = 20;
+std::optional<PortraitPixels> FacePortraitFromModel(std::span<const u8> rgba, int width,
+                                                    int height);
 // The portrait as the party list shows it, in the round (Kaniel 2026-10-13: a circle in a
 // Bloodborne frame, hud_patch.py's): clear outside its inscribed circle, its edge smoothed,
 // premultiplied as the HUD's bitmaps are. Nothing for anything but a portrait.
@@ -169,7 +178,7 @@ private:
 // by its face data and the armour it wears (head, body, arms, legs ids), and the capture's format
 // (PortraitCaptureFormat; bump it when captures change): a picture of another outfit, or one an
 // older build took, is never loaded (Kaniel 2026-10-13: #77's first build's bald heads were).
-constexpr std::string_view PortraitCaptureFormat = "m3";
+constexpr std::string_view PortraitCaptureFormat = "f1";
 struct PortraitKey {
     u64 face = 0;
     std::array<s32, 4> outfit{};

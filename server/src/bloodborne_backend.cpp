@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bloodborne_backend.h"
 
+#include <algorithm>
 #include <functional>
 #include <map>
+#include <optional>
 #include <random>
+#include <set>
 
 #include <QDateTime>
 #include <QDebug>
@@ -1028,6 +1031,132 @@ Json IdObjects(const std::vector<qint64>& ids, const QString& key) {
     return list;
 }
 
+// Standard chalice dungeons. A standard (not root) chalice's ritual asks for the one dungeon the
+// server keeps for that chalice: ChannelSearch with FixedOrGeneral 2 and GetCount 1, then its
+// details by ChannelId. Without one the game says "Failed to contribute ritual materials" and
+// returns to the title. The server makes them itself, so they need no store. A dungeon is the
+// 124-byte record the game reads as FormData (base64): 1D, depth*10 + area (0 Pthumeru,
+// 1 Hintertomb, 2 Loran, 3 Isz), rites, layout; u32 seed; u32 0; the first 4 bytes again; the
+// chalice's goods id (u32 big-endian); 9 slots of 8 bytes, FF but for each's last byte (its
+// layer's code, FF for none); 32 bytes of 0. Keyed by RitualLevel * 10 + HolyGrailTypeId, as
+// the game's own records of these chalices have them.
+struct StandardChalice {
+    int key;
+    quint8 rites;
+    quint32 goods;
+    std::vector<quint8> codes;
+};
+
+const std::vector<StandardChalice>& StandardChalices() {
+    static const std::vector<StandardChalice> chalices = {
+        {10, 0, 6109, {0xFF, 0x23, 0x32}},
+        {20, 0, 6209, {0xFF, 0x24, 0x32, 0x3C}},
+        {21, 0, 6219, {0xFF, 0x23, 0x33, 0x3C, 0x0A}},
+        {30, 0, 6309, {0xFF, 0x24, 0x32, 0x3D}},
+        {31, 0, 6319, {0xFF, 0x25, 0x33, 0x3C, 0x0A}},
+        {40, 10, 6409, {0xFF, 0x24, 0x32, 0x3D, 0x0E}},
+        {42, 0, 6429, {0xFF, 0x23, 0x34, 0x3C}},
+        {50, 0, 6509, {0xFF, 0x24, 0x32, 0x3D, 0x0E}},
+        {52, 0, 6529, {0xFF, 0x26, 0x34, 0x3C}},
+        {53, 0, 6539, {0x4F, 0x27, 0x35, 0x43, 0x0F}},
+    };
+    return chalices;
+}
+
+// Their ChannelIds: this base plus the key, far above any stored dungeon's.
+constexpr qint64 StandardChannelBase = 2'000'000'000;
+
+std::optional<Json> StandardDungeon(qint64 key) {
+    const auto& chalices = StandardChalices();
+    const auto it = std::find_if(chalices.begin(), chalices.end(),
+                                 [key](const StandardChalice& c) { return c.key == key; });
+    if (it == chalices.end()) {
+        return std::nullopt;
+    }
+    QByteArray header;
+    header.append(char(0x1D)).append(char(it->key)).append(char(it->rites)).append('\0');
+    QByteArray form = header;
+    form.append(8, '\0'); // seed 0, then 0
+    form.append(header);
+    for (int shift = 24; shift >= 0; shift -= 8) {
+        form.append(char((it->goods >> shift) & 0xFF));
+    }
+    for (size_t slot = 0; slot < 9; ++slot) {
+        form.append(7, char(0xFF));
+        form.append(char(slot < it->codes.size() ? it->codes[slot] : 0xFF));
+    }
+    form.append(32, '\0');
+    const QString glyph = QStringLiteral("chs") + QChar::fromLatin1(GlyphAlphabet[key / 32]) +
+                          QChar::fromLatin1(GlyphAlphabet[key % 32]);
+    const QString stamp = QStringLiteral("2015-03-24T00:00:00");
+    Json record = Json::Object();
+    record.Set(QStringLiteral("ChannelId"), Int(StandardChannelBase + key));
+    record.Set(QStringLiteral("ShareLevel"), Int(2));
+    record.Set(QStringLiteral("Status"), Int(1));
+    record.Set(QStringLiteral("TurnoutLevel"), Int(0));
+    record.Set(QStringLiteral("FormDataVersion"), Int(0));
+    record.Set(QStringLiteral("FormData"), Str(QString::fromLatin1(form.toBase64())));
+    record.Set(QStringLiteral("DiscernmentWord"), Str(glyph));
+    record.Set(QStringLiteral("RitualLevel"), Int(key / 10));
+    record.Set(QStringLiteral("HolyGrailTypeId"), Int(key % 10));
+    record.Set(QStringLiteral("FixedOrGeneral"), Int(2));
+    record.Set(QStringLiteral("SubFeatureFlag"), Int(256));
+    record.Set(QStringLiteral("CreateUserId"), Int(0));
+    record.Set(QStringLiteral("CreateCharaId"), Int(0));
+    record.Set(QStringLiteral("CreateDate"), Str(stamp));
+    record.Set(QStringLiteral("LastPlayDate"), Str(stamp));
+    record.Set(QStringLiteral("WishMaterialList"), Json::Array());
+    record.Set(QStringLiteral("UnlockFlagList"), Json::Array());
+    return record;
+}
+
+// The standard chalice dungeon a ritual's ChannelSearch asks for, or nothing.
+std::optional<Json> StandardSearch(const Json& req) {
+    if (IdList(req.Get(QStringLiteral("FixedOrGeneralList")), QStringLiteral("FixedOrGeneral")) !=
+        std::vector<qint64>{2}) {
+        return std::nullopt;
+    }
+    const Json level = req.Get(QStringLiteral("RitualLevel"));
+    const Json area = req.Get(QStringLiteral("HolyGrailTypeId"));
+    if (level.kind() != Json::Kind::Int || area.kind() != Json::Kind::Int || area.IntValue() < 0 ||
+        area.IntValue() > 9) {
+        return std::nullopt;
+    }
+    return StandardDungeon(level.IntValue() * 10 + area.IntValue());
+}
+
+// Adds the standard dungeons among a request's ChannelIds to an answer's list.
+void StandardDetails(const Json& req, Json& payload, const QString& listKey) {
+    std::vector<Json> found;
+    std::set<qint64> taken;
+    for (const qint64 id :
+         IdList(req.Get(QStringLiteral("ChannelIdList")), QStringLiteral("ChannelId"))) {
+        if (auto dungeon = StandardDungeon(id - StandardChannelBase)) {
+            taken.insert(id);
+            found.push_back(std::move(*dungeon));
+        }
+    }
+    if (found.empty()) {
+        return;
+    }
+    const auto kept = [&taken](const Json& list) {
+        Json out = Json::Array();
+        for (const Json& item : list.IsArray() ? list.Items() : std::vector<Json>{}) {
+            if (!item.IsObject() || !taken.contains(AsInt(item.Get(QStringLiteral("ChannelId"))))) {
+                out.Append(item);
+            }
+        }
+        return out;
+    };
+    Json list = kept(payload.Get(listKey));
+    for (Json& dungeon : found) {
+        list.Append(std::move(dungeon));
+    }
+    payload.Set(listKey, std::move(list));
+    payload.Set(QStringLiteral("LostChannelIdList"),
+                kept(payload.Get(QStringLiteral("LostChannelIdList"))));
+}
+
 const std::map<QString, StoreHandler>& StoreHandlers() {
     static const std::map<QString, StoreHandler> handlers = {
         {QStringLiteral("MessengerShellUpload"),
@@ -1342,6 +1471,10 @@ Json BloodborneBackend::Service(const QString& path, const Json& request) {
             ids.Append(entry);
         }
         payload.Set(QStringLiteral("PublishCharacterIdList"), ids);
+    } else if (const auto standard = name == QStringLiteral("ChannelSearch")
+                                         ? StandardSearch(request)
+                                         : std::nullopt) {
+        payload.Set(QStringLiteral("ChannelList"), Json::Array({*standard}));
     } else if (m_store && handlers.count(name)) {
         Json fields = Json::Object();
         try {
@@ -1367,6 +1500,12 @@ Json BloodborneBackend::Service(const QString& path, const Json& request) {
         }
     } else {
         qInfo().noquote() << "backend: POST" << path << "with no MessageId; answering ResKind 0";
+    }
+
+    if (name == QStringLiteral("ChannelGetDetailsInfo")) {
+        StandardDetails(request, payload, QStringLiteral("ChannelList"));
+    } else if (name == QStringLiteral("ChannelGetInfo")) {
+        StandardDetails(request, payload, QStringLiteral("ChannelInfoList"));
     }
 
     if (qEnvironmentVariableIsSet("BB_TRACE_BODIES")) {

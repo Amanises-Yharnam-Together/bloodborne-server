@@ -10,6 +10,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #ifdef _WIN32
 #include <windows.h>
@@ -22,10 +23,12 @@
 #include "common/singleton.h"
 #include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_map.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_portrait.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_team.h"
 #include "core/cpu_patches.h"
 #include "core/file_format/psf.h"
 #include "core/libraries/network/server_link.h"
@@ -214,6 +217,80 @@ extern "C" int bbcoop_compass_view(bbcoop_compass* compass) {
     return compass->count > 0 ? 1 : 0;
 }
 
+extern "C" int bbcoop_map_view(bbcoop_map* map, int open) {
+    using namespace Core::Bloodborne;
+    *map = {};
+    MapScreenView view;
+    if (!ReadMapScreen(view, open != 0)) {
+        return 0;
+    }
+    map->in_world = view.in_world ? 1 : 0;
+    map->map = view.map;
+    map->area_name_id = AreaNameId(view.map);
+    if (view.me) {
+        map->has_me = 1;
+        map->x = (*view.me)[0];
+        map->y = (*view.me)[1];
+        map->z = (*view.me)[2];
+    }
+    if (view.heading) {
+        map->has_heading = 1;
+        map->heading = *view.heading;
+    }
+    const MapTravelBlock block = MapTravelCheck({.lit = true,
+                                                 .in_world = view.in_world,
+                                                 .down = view.down,
+                                                 .boss_fight = view.boss_fight,
+                                                 .travelling = view.travelling});
+    map->block = static_cast<int>(block); // the enums' orders agree (static_asserts below)
+    PartyPanel panel;
+    ReadPartyPanel(panel);
+    for (const PanelMember& member : panel.members) {
+        if (map->member_count >= BBCOOP_MAP_MEMBERS) {
+            break;
+        }
+        bbcoop_map_member& out = map->members[map->member_count++];
+        std::snprintf(out.name, sizeof(out.name), "%s", (member.shown.empty() ? member.name : member.shown).c_str());
+        std::snprintf(out.board, sizeof(out.board), "%s", member.member.c_str());
+        out.map = member.map;
+        out.vital = static_cast<int>(member.vital);
+        if (member.at) {
+            out.has_at = 1;
+            out.x = (*member.at)[0];
+            out.y = (*member.at)[1];
+            out.z = (*member.at)[2];
+        }
+    }
+    for (const MapLamp& lamp : MapLamps()) {
+        if (map->lamp_count >= BBCOOP_MAP_LAMPS) {
+            break;
+        }
+        bbcoop_map_lamp& out = map->lamps[map->lamp_count++];
+        out.warp_point = lamp.warp_point;
+        out.map = lamp.packed_map;
+        out.x = lamp.x;
+        out.y = lamp.y;
+        out.z = lamp.z;
+        out.lit = std::ranges::find(view.lit, lamp.warp_point) != view.lit.end() ? 1 : 0;
+        out.name_id = LampNameId(lamp.warp_point);
+    }
+    return 1;
+}
+static_assert(BBCOOP_MAP_GO == int(Core::Bloodborne::MapTravelBlock::None) &&
+              BBCOOP_MAP_NOT_LIT == int(Core::Bloodborne::MapTravelBlock::NotLit) &&
+              BBCOOP_MAP_NOT_IN_WORLD == int(Core::Bloodborne::MapTravelBlock::NotInWorld) &&
+              BBCOOP_MAP_DOWN == int(Core::Bloodborne::MapTravelBlock::Down) &&
+              BBCOOP_MAP_BOSS == int(Core::Bloodborne::MapTravelBlock::BossFight) &&
+              BBCOOP_MAP_TRAVELLING == int(Core::Bloodborne::MapTravelBlock::Travelling));
+
+extern "C" void bbcoop_map_travel(int32_t warp_point) {
+    Core::Bloodborne::RequestMapTrip(warp_point);
+}
+
+extern "C" int32_t bbcoop_map_area_name_id(uint32_t map) {
+    return Core::Bloodborne::AreaNameId(map);
+}
+
 static_assert(BBCOOP_PORTRAIT_SIDE == Core::Bloodborne::PortraitSide);
 
 extern "C" int bbcoop_member_portrait(const char* member, uint8_t* rgba, size_t size, uint32_t* id) {
@@ -316,30 +393,44 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
             out.state = LobbyStateOf(m->state());
             out.ready = m->ready();
         }
-        // Kaniel 2026-10-17: the server's worlds (any team's to pick).
-        lobby->world = -1;
-        for (const bbcoop::TeamWorldInfo& w : state->worlds()) {
-            if (lobby->world_count == BBCOOP_LOBBY_WORLDS) {
-                break;
-            }
-            if (w.id() == team.world()) {
-                lobby->world = lobby->world_count;
-            }
-            bbcoop_lobby_world& out = lobby->worlds[lobby->world_count++];
-            CopyName(out.id, sizeof(out.id), w.id());
-            CopyName(out.name, sizeof(out.name), Core::Bloodborne::TeamWorldName(w));
-            out.lamps = static_cast<int>(w.lamps());
-            if (w.played_ms() > 0) {
-                const std::time_t at = static_cast<std::time_t>(w.played_ms() / 1000);
-                std::tm local{};
-#ifdef _WIN32
-                localtime_s(&local, &at);
-#else
-                localtime_r(&at, &local);
-#endif
-                std::strftime(out.when, sizeof(out.when), "%d %b %H:%M", &local);
-            }
+    }
+    // Kaniel 2026-10-17: the server's worlds (any team's to pick, the leader's or, before a team, the
+    // player's own pick), as the game's Load Game lists its saves.
+    const std::string pick = state->has_team() ? state->team().world() : state->world();
+    const std::string own_team = state->has_team() ? state->team().id() : std::string{};
+    lobby->world = -1;
+    const auto local_time = [](int64_t ms, char* out, size_t size, const char* format) {
+        if (ms <= 0) {
+            return;
         }
+        const std::time_t at = static_cast<std::time_t>(ms / 1000);
+        std::tm local{};
+#ifdef _WIN32
+        localtime_s(&local, &at);
+#else
+        localtime_r(&at, &local);
+#endif
+        std::strftime(out, size, format, &local);
+    };
+    for (const bbcoop::TeamWorldInfo& w : state->worlds()) {
+        if (lobby->world_count == BBCOOP_LOBBY_WORLDS) {
+            break;
+        }
+        if (w.id() == pick) {
+            lobby->world = lobby->world_count;
+        }
+        bbcoop_lobby_world& out = lobby->worlds[lobby->world_count++];
+        CopyName(out.id, sizeof(out.id), w.id());
+        CopyName(out.name, sizeof(out.name), Core::Bloodborne::TeamWorldName(w));
+        out.lamps = static_cast<int>(w.lamps());
+        local_time(w.played_ms(), out.when, sizeof(out.when), "%d %b %H:%M");
+        local_time(w.created_ms(), out.created, sizeof(out.created), "%d %b %Y");
+        std::string hunters;
+        for (const std::string& name : w.characters()) {
+            hunters += (hunters.empty() ? "" : ", ") + name;
+        }
+        CopyName(out.characters, sizeof(out.characters), hunters);
+        out.busy = !w.played_by().empty() && w.played_by() != own_team;
     }
     for (const bbcoop::LobbyPlayer& player : state->players()) {
         const bool mine = state->has_team() && player.team() == state->team().id();
@@ -402,8 +493,35 @@ extern "C" void bbcoop_team_menu(int open) {
     Core::Bloodborne::Coop::TeamMenu(open != 0, open == 1);
 }
 
+extern "C" int bbcoop_team_world_list_asked(void) {
+    return Core::Bloodborne::Coop::TeamWorldListAsked() ? 1 : 0;
+}
+
+namespace {
+std::atomic<int> map_menu{}; // how the map screen was opened (bbcoop_map_menu), 0 shut
+std::mutex map_back_mutex;
+Core::Bloodborne::TeamMenuBack map_back;
+} // namespace
+
+extern "C" void bbcoop_map_menu(int open) {
+    const int was = map_menu.exchange(open);
+    if (open == 0 && was != 0) {
+        std::scoped_lock lock{map_back_mutex};
+        map_back.Closed(Core::Bloodborne::Coop::SteadyMilliseconds(), was == 1);
+    }
+}
+
+extern "C" int bbcoop_map_screen(void) {
+    return map_menu.load() != 0 ? 1 : 0;
+}
+
 extern "C" int bbcoop_team_menu_back(void) {
-    return Core::Bloodborne::Coop::TeamMenuBackPressed() ? 1 : 0;
+    bool map_page = false;
+    {
+        std::scoped_lock lock{map_back_mutex};
+        map_page = map_back.Pressed(Core::Bloodborne::Coop::SteadyMilliseconds());
+    }
+    return Core::Bloodborne::Coop::TeamMenuBackPressed() || map_page ? 1 : 0;
 }
 
 extern "C" void bbcoop_team_join_hunt(const char* team) {

@@ -58,6 +58,8 @@ public:
         std::vector<Departure> departed; // members out of their team
         // Worlds off the list (forgotten by a leader, or past MaxWorlds): their folders go aside.
         std::vector<std::string> forgotten;
+        // Kaniel 2026-10-17: a world's line changed (a character played in it): the list to disk.
+        bool worlds_changed = false;
     };
 
     // A player signed in (or said it now plays / is back at the title).
@@ -83,7 +85,8 @@ public:
         return worlds;
     }
     // What the server learnt of one of its worlds (its host's character, its flags and lamps, when
-    // a Start played it; empty or 0 fields say nothing). A world not listed stays unlisted.
+    // a Start played it, when it was made: kept from the first note; characters that played in it:
+    // added to its own; empty or 0 fields say nothing). A world not listed stays unlisted.
     // Whether anything changed.
     bool NoteWorld(const bbcoop::TeamWorldInfo& note);
     // An id no listed world (nor team) has.
@@ -96,6 +99,8 @@ private:
     struct Player {
         std::string name;
         bool playing = false;
+        // Kaniel 2026-10-17: the world it picked while in no team (the team it makes takes it).
+        std::string world;
     };
 
     bbcoop::Team* FindTeam(const std::string& id);

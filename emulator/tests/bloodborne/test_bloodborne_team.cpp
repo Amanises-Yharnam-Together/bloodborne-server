@@ -758,6 +758,23 @@ TEST(TeamWorlds, ALeaderJoiningTheHuntPicksItsSavesWorld) {
     EXPECT_EQ(requests.size(), 2u);
 }
 
+// Kaniel 2026-10-17: the world is picked before the team is made. The screen starts on this save's
+// world for a player in no team too (its team takes the pick), and for a leader whose team does
+// not play yet; a member, or a team playing, picks nothing.
+TEST(TeamWorlds, TheScreensFirstPickGoesBeforeATeamToo) {
+    bbcoop::LobbyState alone = WithWorlds({}, {"w2", "w1"});
+    EXPECT_EQ(TeamScreenWorldPick(alone, "me", "w1", false), std::optional<std::string>{"w1"});
+    alone.set_world("w1");
+    EXPECT_EQ(TeamScreenWorldPick(alone, "me", "w1", false), std::nullopt); // picked already
+    EXPECT_EQ(TeamScreenWorldPick(alone, "me", "w1", true), std::optional<std::string>{""});
+    bbcoop::LobbyState lead = WithWorlds(InTeam("me"), {"w2", "w1"});
+    EXPECT_EQ(TeamScreenWorldPick(lead, "me", "w1", false), std::optional<std::string>{"w1"});
+    lead.mutable_team()->set_started(true);
+    EXPECT_EQ(TeamScreenWorldPick(lead, "me", "w1", false), std::nullopt);
+    const bbcoop::LobbyState member = WithWorlds(InTeam("leader"), {"w1"});
+    EXPECT_EQ(TeamScreenWorldPick(member, "me", "w1", false), std::nullopt);
+}
+
 TEST(TeamWorlds, AWorldsNameSaysWhoseItIs) {
     bbcoop::TeamWorldInfo world;
     world.set_id("w1");
@@ -765,6 +782,9 @@ TEST(TeamWorlds, AWorldsNameSaysWhoseItIs) {
     EXPECT_EQ(TeamWorldName(world), "Kaniel's world");
     world.set_character("");
     EXPECT_EQ(TeamWorldName(world), "A world");
+    // A name of its own (the server's) comes first.
+    world.set_name("Old Yharnam run");
+    EXPECT_EQ(TeamWorldName(world), "Old Yharnam run");
 }
 
 // The team menu closes: opened from the game's System page, the pad presses Circle a moment later

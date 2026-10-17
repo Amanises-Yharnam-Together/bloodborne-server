@@ -164,6 +164,46 @@ TEST(BloodbornePortrait, TheCropFollowsTheHeadWhereverTheModelStands) {
     EXPECT_EQ(At(*edge, PortraitSide / 2, PortraitSide / 4), Ground);
 }
 
+TEST(BloodbornePortrait, TheFaceCameraPictureIsCutAtItsFixedFraming) {
+    // Kaniel 2026-10-17 ("is there a way to render it like it's seen in a game?"): the off-screen
+    // model is drawn with the character creator's face camera (the head fills the 560x768
+    // target); the portrait is its square under the target's top (FaceCropTop), as wide as the
+    // target: the hood, the face and the collar.
+    std::vector<u8> rgba(size_t{StatusModelWidth} * StatusModelHeight * 4, 0);
+    const auto fill = [&](int x0, int x1, int y0, int y1, std::array<u8, 3> color) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                u8* pixel = &rgba[(size_t(y) * StatusModelWidth + x) * 4];
+                pixel[0] = color[0];
+                pixel[1] = color[1];
+                pixel[2] = color[2];
+                pixel[3] = 0xFF;
+            }
+        }
+    };
+    fill(100, 460, 0, StatusModelHeight, Coat);                  // the hood and the shoulders
+    fill(200, 360, 300, 420, Skin);                              // the face
+    fill(100, 460, FaceCropTop, FaceCropTop + 16, {90, 30, 30}); // a band at the crop's top
+    const auto portrait = FacePortraitFromModel(rgba, StatusModelWidth, StatusModelHeight);
+    ASSERT_TRUE(portrait.has_value());
+    ASSERT_EQ(portrait->size(), PortraitBytes);
+    const auto at = [&](int x, int y) {
+        return At(*portrait, x * PortraitSide / StatusModelWidth,
+                  (y - FaceCropTop) * PortraitSide / StatusModelWidth);
+    };
+    EXPECT_EQ(at(280, 360), (std::array<u8, 4>{200, 150, 100, 0xFF})) << "the face";
+    EXPECT_EQ(at(140, 200), (std::array<u8, 4>{40, 60, 80, 0xFF})) << "the hood";
+    EXPECT_EQ(at(30, 200), Ground) << "beside the hood";
+    EXPECT_EQ(At(*portrait, PortraitSide / 2, 0), (std::array<u8, 4>{90, 30, 30, 0xFF}))
+        << "the portrait starts FaceCropTop rows down";
+    // The same picture wherever nothing moved: no head search (the camera frames the head).
+    EXPECT_EQ(FacePortraitFromModel(rgba, StatusModelWidth, StatusModelHeight), portrait);
+    // Another target, or an empty one, is no portrait.
+    EXPECT_FALSE(FacePortraitFromModel(rgba, StatusModelWidth, 256));
+    std::vector<u8> empty(rgba.size(), 0);
+    EXPECT_FALSE(FacePortraitFromModel(empty, StatusModelWidth, StatusModelHeight));
+}
+
 TEST(BloodbornePortrait, AnEmptyOrOtherTargetIsNoPortrait) {
     std::vector<u8> empty(size_t{StatusModelWidth} * StatusModelHeight * 4, 0);
     EXPECT_FALSE(PortraitFromModel(empty, StatusModelWidth, StatusModelHeight).has_value());
@@ -349,8 +389,7 @@ TEST(BloodbornePortrait, AnOldOrOutdatedPictureIsNeverLoaded) {
     const auto name = PortraitCachePath(dir, key).filename().string();
     EXPECT_NE(name, "0123456789abcdef.rgba") << "#77's first build's name";
     EXPECT_NE(name.find(std::string{PortraitCaptureFormat}), std::string::npos);
-    EXPECT_EQ(PortraitCaptureFormat, "m3")
-        << "the model capture (head, hood and collar), 128 px since Kaniel 2026-10-17";
+    EXPECT_EQ(PortraitCaptureFormat, "f1") << "the face camera's picture (Kaniel 2026-10-17)";
     for (size_t piece = 0; piece < key.outfit.size(); ++piece) {
         PortraitKey other = key;
         other.outfit[piece] += 100;

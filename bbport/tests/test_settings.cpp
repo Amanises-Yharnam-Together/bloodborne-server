@@ -250,4 +250,65 @@ int main() {
     assert(s.frame_gen_provider == BbSettings::FrameGenFsr3);
     unlink(sixth);
     std::puts("PASS: frame generation provider, multiplier, fit to display");
+
+    // The menus speak the game's language (the launcher's BB_LANGUAGE, the PS4 system language
+    // the game reads), every one the game has, until one is chosen in the Insert menu
+    // (overlay_language in bbport.ini; "auto" is the game's).
+    {
+        using BbSettings::MenuLanguage;
+        assert(BbSettings::LanguageFromPs4(1) == MenuLanguage::English);
+        assert(BbSettings::LanguageFromPs4(18) == MenuLanguage::English && "English (UK)");
+        assert(BbSettings::LanguageFromPs4(8) == MenuLanguage::Russian);
+        assert(BbSettings::LanguageFromPs4(0) == MenuLanguage::Ja);
+        assert(BbSettings::LanguageFromPs4(4) == MenuLanguage::De);
+        assert(BbSettings::LanguageFromPs4(20) == MenuLanguage::Es419);
+        assert(BbSettings::LanguageFromPs4(11) == MenuLanguage::ZhCn);
+        assert(BbSettings::LanguageFromPs4(17) == MenuLanguage::PtBr);
+        assert(BbSettings::LanguageFromPs4(99) == MenuLanguage::English && "a language the game lacks");
+        assert(std::string(BbSettings::LanguageCode(MenuLanguage::ZhTw)) == "zh_TW");
+        assert(std::string(BbSettings::LanguageName(MenuLanguage::Russian)) == "Русский");
+        assert(std::string(BbSettings::LanguageName(MenuLanguage::De)) == "Deutsch");
+        for (int l = 0; l < BbSettings::MenuLanguageCount; ++l) {
+            const auto language = MenuLanguage(l);
+            assert(BbSettings::LanguageFromCode(BbSettings::LanguageCode(language)) == language);
+        }
+        assert(!BbSettings::LanguageFromCode("xx"));
+
+        // Every language has every text; Russian is the source's, unknown texts stay English.
+        assert(std::string(BbSettings::Translate(MenuLanguage::Russian, "Off", "Выкл")) == "Выкл");
+        assert(std::string(BbSettings::Translate(MenuLanguage::English, "Off", "Выкл")) == "Off");
+        assert(std::string(BbSettings::Translate(MenuLanguage::De, "Blood Echoes", "Отголоски крови")) == "Blutechos");
+        assert(std::string(BbSettings::Translate(MenuLanguage::Ja, "Insight", "Озарение")) == "啓蒙");
+        assert(std::string(BbSettings::Translate(MenuLanguage::Fr, "not a menu text", "нет")) == "not a menu text");
+        const std::string german(BbSettings::Translate(MenuLanguage::De, "Level %d, HP %d / %d", "Уровень %d, здоровье %d / %d"));
+        assert(german.find("%d") != std::string::npos && german != "Level %d, HP %d / %d");
+
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+        const int file = mkstemp(path);
+        const char text[] = "menu_language=ru\n"; // the old key: written by every save, not a choice
+        assert(write(file, text, sizeof(text) - 1) == ssize_t(sizeof(text) - 1));
+        close(file);
+        setenv("BB_CONFIG", path, 1);
+        setenv("BB_LANGUAGE", "4", 1);
+        BbSettings::Load();
+        assert(BbSettings::GameLanguage() == MenuLanguage::De);
+        assert(s.menu_language_auto && s.menu_language == MenuLanguage::De && "the game's language");
+        assert(std::string(BbSettings::MenuText("Blood Echoes", "Отголоски крови")) == "Blutechos");
+        BbSettings::SetMenuLanguage(MenuLanguage::Pl);
+        assert(!s.menu_language_auto && s.menu_language == MenuLanguage::Pl);
+        BbSettings::Save();
+        assert(Read(path).find("overlay_language=pl\n") != std::string::npos);
+        BbSettings::Load();
+        assert(s.menu_language == MenuLanguage::Pl && "the choice wins over the game's");
+        BbSettings::SetMenuLanguage(std::nullopt);
+        assert(s.menu_language_auto && s.menu_language == MenuLanguage::De);
+        BbSettings::Save();
+        assert(Read(path).find("overlay_language=auto\n") != std::string::npos);
+        unsetenv("BB_LANGUAGE");
+        BbSettings::Load();
+        assert(s.menu_language == MenuLanguage::English && "no BB_LANGUAGE: the game runs in English");
+        unlink(path);
+    }
+    std::puts("PASS: menu languages follow the game's");
 }

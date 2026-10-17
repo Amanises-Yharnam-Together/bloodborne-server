@@ -970,6 +970,9 @@ if (ARCHITECTURE STREQUAL "x86_64")
              src/core/bloodborne_portrait.h
              src/core/bloodborne_compass.cpp
              src/core/bloodborne_compass.h
+             src/core/bloodborne_map.cpp
+             src/core/bloodborne_map.h
+             src/core/bloodborne_map_screen.cpp
              src/core/bloodborne_boards.cpp
              src/core/bloodborne_world_log.cpp
              src/core/bloodborne_server_world.cpp

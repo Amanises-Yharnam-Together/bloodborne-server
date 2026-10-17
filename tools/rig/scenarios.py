@@ -41,6 +41,7 @@ CENTRAL_YHARNAM_LAMP = 2412950  # the first lamp, where the rig's characters sta
 CENTRAL_YHARNAM_LAMP_2 = 2412951  # talk 241001, 3 m from talk 241319 (Gilbert's window?)
 CATHEDRAL_WARD = "0x18000000"
 CATHEDRAL_WARD_LAMP = 2402950
+CATHEDRAL_WARD_LAMP_LIT = 12407810  # its active flag (bloodborne_map.h's LampActiveFlag)
 ENEMY = "0x1001400b"  # 484 HP, 17 m from the lamp (farther ones are not awake)
 BY_THE_LAMP = "0x100140a0"  # 999 HP, 1.6 m from the first lamp: by Gilbert's window
 AWAY_FROM_LAMP = "-215.0 -54.5 178.0"  # beside that enemy, 17 m from the lamp
@@ -1323,6 +1324,26 @@ SCENARIOS = {
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
+    # Kaniel 2026-10-17: the world list (as the game's Load Game). A team's first hunt makes a
+    # world; back at the title the host leaves that team (its guest still hunts in it, so its
+    # world cannot change), and in no team its screen starts on that world (the save's own,
+    # picked before a team) and its list shows it, greyed: the guest's team plays it now.
+    "team-worlds": {
+        "about": "the world list: a team's hunt makes a world, the host's next screen starts on it "
+                 "and lists it (headless: pictures of the list)",
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", "done"],
+                     ["team-leave", "team-worlds", "title-wait 3", "title-shot worlds-list",
+                      "team-alone", START, "done"]],
+            "guest": [["team-accept", "team-ready", START, "wait-session 2 300", "wait 10",
+                       "done"]],
+        },
+        "expect": {
+            "host": [r"Co-op team lobby: the team screen starts on world \w+"],
+        },
+        "timeout": 300,
+    },
     "team-screen": {
         "about": "the team screen after Continue (run drawn: pictures): a team of two forms, the "
                  "guest readies, the host begins",
@@ -2325,9 +2346,11 @@ SCENARIOS = {
                      "keys r1 r1 r1 down", "wait 2", "shot menu-effect-row",
                      "keys right", "wait 2", "shot menu-effect-changed",
                      "keys left", "wait 2",
-                     # The Display page's language row: five down from its first.
-                     "keys l1 l1 down down down down down", "wait 2", "keys right", "wait 2",
-                     "shot menu-russian", "keys left", "wait 2",
+                     # The Display page's language row: seven down from its first (past the
+                     # compass rows, the greyed ones skipped). Auto (the game's language), English, Russian, ...: two
+                     # right is Russian.
+                     "keys l1 l1 down down down down down down down", "wait 2", "keys right right", "wait 2",
+                     "shot menu-russian", "keys left left", "wait 2",
                      # Up from a page's first row is Quit (nothing waits for a restart): its box
                      # opens on Cancel, which Cross takes.
                      "keys l1 r1 up enter", "wait 2", "shot menu-quit", "keys enter", "wait 3",
@@ -2337,6 +2360,69 @@ SCENARIOS = {
         "console_expect": {"host": [r"Overlay: the settings menu uses \d+ of \d+ pieces of the "
                                     r"game's menu art",
                                     r"Overlay: settings changed in the menu, saved"]},
+        "timeout": 300,
+    },
+    "menu-languages": {
+        "about": "the port's menus in the game's language (Simplified Chinese here, the game's "
+                 "own font for it) and every other the game has, chosen in the Insert menu: "
+                 "Japanese, German, Korean, Traditional Chinese, then back to the game's",
+        "settings": {"BB_LANGUAGE": "11"},
+        "roles": {
+            # The Display page's language row is seven down from its first: Auto, English,
+            # Russian, Japanese (3), French, Spanish, Spanish (Latin America), German (7),
+            # Italian, Dutch, Portuguese, Korean (11), Traditional Chinese (12), ...
+            "host": [START, "wait 5", "keys toggle", "wait 3", "shot menu-zh-cn",
+                     "keys down down down down down down down", "wait 2",
+                     "keys right right right", "wait 3", "shot menu-ja",
+                     "keys right right right right", "wait 3", "shot menu-de",
+                     "keys right right right right", "wait 3", "shot menu-ko",
+                     "keys right", "wait 3", "shot menu-zh-tw",
+                     "keys left left left left left left left left left left left left", "wait 3",
+                     "shot menu-auto", "keys toggle", "wait 3", "shot menu-closed"],
+        },
+        "expect": {"host": [r"menu keys right"]},
+        "console_expect": {"host": [r"Overlay: zh_CN text from the game's zhocn font",
+                                    r"Overlay: ja text from the game's engus font",
+                                    r"Overlay: ko text from the game's korkr font",
+                                    r"Overlay: zh_TW text from the game's zhotw font"]},
+        "timeout": 300,
+    },
+    # Kaniel 2026-10-17: the map screen (an Elden Ring style map). Cathedral Ward's lamp lit, the
+    # map opens on Central Yharnam (its picture drawn from the game's map files the first time),
+    # L1 goes to Cathedral Ward (the areas in order: the Dream, Cathedral Ward, Central Yharnam),
+    # Cross asks to travel to its lamp and Cross again travels.
+    "map-screen": {
+        "about": "the map screen: the area's picture drawn from the game's map files with the "
+                 "player's arrow and the lamps lit; L1 to another area; a trip from the map to its "
+                 "lamp; pictures of each",
+        "roles": {
+            # The player's own area is drawn ahead while the screen is shut; another as it shows.
+            "host": [START, "godmode", f"set-flag {CATHEDRAL_WARD_LAMP_LIT}", "wait 25", "keys map", "wait 10",
+                     "shot map-central-yharnam", "keys square", "wait 2", "shot map-centred",
+                     # Kaniel 2026-10-17 ("one big map"): Triangle, the whole waking world drawn so far.
+                     "keys triangle", "wait 20", "shot map-world", "keys l1",
+                     "wait 30", "shot map-cathedral-ward", "keys enter", "wait 2", "shot map-question",
+                     "keys enter", f"wait-map {CATHEDRAL_WARD} 120", "wait 8", "keys map", "wait 5",
+                     "shot map-arrived", "keys circle", "wait 2"],
+        },
+        "expect": {"host": [rf"Bloodborne map screen: travels to {CATHEDRAL_WARD_LAMP}",
+                            rf"Bloodborne map screen: arrived at {CATHEDRAL_WARD_LAMP}"]},
+        "console_expect": {"host": [r"Map: (drew|read) m24_01_00_00", r"Map: (drew|read) m24_00_00_00"]},
+        "timeout": 300,
+    },
+    # Kaniel 2026-10-17: the map screen in a session: the other hunter at its spot on the
+    # picture, ringed in the compass's light gray, and listed with its area.
+    "map-team": {
+        "about": "the map screen with a teammate: its marker where it stands, its name and area "
+                 "in the list; the host shoots it",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 5", f"teleport {COMPASS_HOST} 0.0",
+                     "wait 10", "keys map", "wait 12", "shot map-team", "keys circle", "wait 3",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 8", f"teleport {COMPASS_GUEST} 0.0",
+                      "wait 30", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
     "soak": {
@@ -2361,4 +2447,60 @@ SCENARIOS = {
 SCENARIOS["iosefka-mine"]["roles"] = {
     role: [*steps[:6], f"expect-disabled {CLINIC} 1 30", *steps[6:]]
     for role, steps in SCENARIOS["iosefka-new"]["roles"].items()
+}
+
+
+# Chalice dungeons. The Dream's first ritual altar: talk t210060 on the talk dummy c9020_0005 at
+# (-18.27, -5.43, -16.88) in m21_00's MSB, used from 1 m east of it facing west. Its talk sets
+# 6708 on the first use (and shows a message first); its menu is Chalice Ritual (first),
+# Chalice Dungeon Search, Search by Chalice Glyph; Chalice Ritual, then Conduct Ritual, asks
+# "Conduct a ritual...?" (No first: left is Yes). After the ritual the altar's menu has its
+# layers, Layer One first (the warp 72100300). Chalice dungeons are map 0x1d000000.
+# A headless game draws no menus: BB_GAME_MENU_TRACE_IDS=262000-267999 makes the port print
+# which of the altar's texts it shows ("Game menu: shows ...").
+PTHUMERU_CHALICE = "goods:6109"
+RITUAL_BLOOD_1 = "goods:7000"
+ALTAR_SPOT = "-17.27 -5.23 -16.88 1.571"
+CHALICE_DUNGEON = "0x1d000000"
+
+
+def CHALICE_ENTER(role: str) -> list[str]:
+    """The Pthumeru Chalice and its materials, the Dream, the altar (its first use's message),
+    Chalice Ritual, Conduct Ritual, Yes, then the altar again and Layer One."""
+    return [f"trade-stock {PTHUMERU_CHALICE} 1", f"trade-stock {RITUAL_BLOOD_1} 10",
+            "trade-stock echoes 20000", f"travel {HUNTERS_DREAM}", "wait 5",
+            f"teleport {ALTAR_SPOT}", "wait 2", "press cross 200", "wait 7",
+            *[step for _ in range(4) for step in ("press cross 200", "wait 7")],
+            "press left 200", "wait 1", "press cross 200", "wait 20", f"log {role} ritual done",
+            *[step for _ in range(3) for step in ("press cross 200", "wait 10")],
+            f"wait-map {CHALICE_DUNGEON} 180", "wait 10", "snapshot",
+            f"log {role} in the dungeon"]
+
+
+SCENARIOS["chalice-ritual"] = {
+    "about": "a ritual with the Pthumeru Chalice at the Dream's altar, then its Layer One (the "
+             "server's own dungeon for the chalice: none made the game return to the title)",
+    "roles": {"host": [START, "godmode", *CHALICE_ENTER("host"), f"expect-map {CHALICE_DUNGEON}"]},
+    "expect": {"host": [r"host in the dungeon"]},
+    "timeout": 300,
+}
+
+# Each member of a team of two conducts the same chalice's ritual at its own altar; the server
+# gives both the one dungeon it keeps for that chalice, and each enters Layer One alone: they
+# meet in it.
+SCENARIOS["chalice-team"] = {
+    "about": "a team of two enters the same chalice dungeon, each from its own altar",
+    "roles": {
+        "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                 "godmode", "wait-session 2 300", "wait 10", *CHALICE_ENTER("host"),
+                 "wait-members 2 300", "wait 20", "expect-session 2", "snapshot"],
+        "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 2 300", "wait 30",
+                  "wait 10",
+                  *CHALICE_ENTER("guest"), "wait-members 2 300", "wait 20", "expect-session 2",
+                  "snapshot"],
+    },
+    "expect": {"host": [r"host in the dungeon"], "guest": [r"guest in the dungeon"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "allow": CRASH_CLEANUP,
+    "timeout": 1200,
 }

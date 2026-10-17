@@ -464,6 +464,11 @@ std::atomic<bool> offscreen_wanted{false};
 constexpr u64 MenuHeapPointerOffset = 0x05540418;
 constexpr u64 BodyRendererConstructorOffset = 0x01DB1190;
 constexpr u64 BodyRendererSetArmourOffset = 0x01DB1B90;
+// Kaniel 2026-10-17: the camera the character creator zooms onto the face with (0x1DB1960: mode
+// +0x804, the renderer table's per-mode lens, distance and angles; mode 1: a 16 degree lens on the
+// head, mode 0 the 49 degree body view; the creator's menu 0x1B07870 switches its four previews).
+constexpr u64 BodyRendererSetCameraModeOffset = 0x01DB1960;
+constexpr s32 FaceCameraMode = 1;
 constexpr u64 OwnerHeapOffset = 0x0207B720;
 constexpr u64 GameDataManPointerOffset = 0x0553B130;
 constexpr s32 RankingBodyIndex = 5;
@@ -506,6 +511,8 @@ u64 BuildOffscreenModel() {
     WriteValue<u8>(renderer, 0x658, ReadValue<u8>(data, 0xCA));
     reinterpret_cast<void PS4_SYSV_ABI (*)(u64, u64)>(image_base + BodyRendererSetArmourOffset)(
         renderer, data + 0x240);
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32)>(image_base + BodyRendererSetCameraModeOffset)(
+        renderer, FaceCameraMode);
     WriteValue<s32>(renderer, 0x7F0, 0);
     WriteValue<u8>(renderer, 0x660, 1);
     return renderer;
@@ -1155,7 +1162,11 @@ bool OffscreenPortraitWanted() {
 }
 
 void NoteStatusModel(std::span<const u8> rgba, int width, int height) {
-    auto portrait = PortraitFromModel(rgba, width, height);
+    // Only the off-screen model's (the face camera's): the status page's own is the whole body.
+    if (!offscreen_wanted.load()) {
+        return;
+    }
+    auto portrait = FacePortraitFromModel(rgba, width, height);
     if (!portrait) {
         return;
     }

@@ -219,6 +219,8 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_party_death.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_portrait.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_compass.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_map.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_map_screen.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_boards.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_world_log.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_server_world.cpp
@@ -577,3 +579,11 @@ add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
     shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)
 target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)
 target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
+# bbport co-op: the map screen's pictures of the areas from the game's map files (shim/bbport_map_art.h),
+# on made-up MSB and FLVER data (and the game's Central Yharnam with BLOODBORNE_EBOOT).
+add_executable(map-art-test EXCLUDE_FROM_ALL ../tests/test_map_art.cpp shim/bbport_map_art.cpp shim/bbport_game_art.cpp)
+target_compile_options(map-art-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(map-art-test PRIVATE ..)
+target_link_libraries(map-art-test PRIVATE miniz::miniz)
+add_executable(map-art-tool EXCLUDE_FROM_ALL tools/map_art_tool.cpp shim/bbport_map_art.cpp shim/bbport_game_art.cpp)
+target_link_libraries(map-art-tool PRIVATE miniz::miniz)

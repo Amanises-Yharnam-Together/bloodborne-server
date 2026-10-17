@@ -183,7 +183,21 @@ std::string DefaultTeamWorld(const bbcoop::LobbyState& lobby, std::string_view h
     return kept ? std::string{hint} : std::string{};
 }
 
+std::optional<std::string> TeamScreenWorldPick(const bbcoop::LobbyState& lobby,
+                                               const std::string& me, std::string_view hint,
+                                               bool fresh) {
+    if (lobby.has_team() && (lobby.team().leader() != me || lobby.team().started())) {
+        return std::nullopt;
+    }
+    const std::string pick = DefaultTeamWorld(lobby, hint, fresh);
+    const std::string& now = lobby.has_team() ? lobby.team().world() : lobby.world();
+    return now == pick ? std::nullopt : std::optional<std::string>{pick};
+}
+
 std::string TeamWorldName(const bbcoop::TeamWorldInfo& world) {
+    if (!world.name().empty()) {
+        return world.name();
+    }
     return world.character().empty() ? "A world" : world.character() + "'s world";
 }
 

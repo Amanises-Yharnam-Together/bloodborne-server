@@ -15,12 +15,14 @@
 #include <string_view>
 #include <optional>
 #include <map>
+#include <memory>
 #include <vector>
 
 #include <SDL3/SDL.h>
 #include "../bbcoop.h"
 #include "bbport_game_art.h"
 #include "bbport_coop_art.h"
+#include "bbport_map_charts.h"
 #include "bbport_party_icons.h"
 #include "bbport_party_layout.h"
 #include "bbport_save_editor.h"
@@ -670,8 +672,138 @@ bool Rune(ImDrawList* draw, int index, ImVec2 p0, ImVec2 p1, float alpha = 1.0f)
     return true;
 }
 
-/// The menus' text font: the game's own when it loaded.
+// Japanese, Korean and Chinese (Kaniel 2026-10-17: every language the game has): the game's own
+// font of that language first, as the game draws it (menu/<folder>/font.gfx; the English one
+// holds the Japanese kana and kanji), then the system's for what the game's set lacks, made the
+// first time the menus speak the language. The plain overlay fonts get the same glyphs merged in.
+ImFont* language_fonts[BbSettings::MenuLanguageCount] = {};
+bool language_tried[BbSettings::MenuLanguageCount] = {};
+
+const char* GameFontFolder(BbSettings::MenuLanguage language) {
+    switch (language) {
+    case BbSettings::MenuLanguage::Ja:
+        return "engus";
+    case BbSettings::MenuLanguage::Ko:
+        return "korkr";
+    case BbSettings::MenuLanguage::ZhCn:
+        return "zhocn";
+    case BbSettings::MenuLanguage::ZhTw:
+        return "zhotw";
+    default:
+        return nullptr;
+    }
+}
+
+/// The system fonts with the language's glyphs (path, face in a collection), the first found.
+std::optional<std::pair<std::string, int>> SystemFont(BbSettings::MenuLanguage language) {
+    using L = BbSettings::MenuLanguage;
+    std::vector<std::pair<std::string, int>> candidates;
+#ifdef _WIN32
+    const char* windir = std::getenv("WINDIR");
+    const std::string fonts = std::string(windir && *windir ? windir : "C:\\Windows") + "\\Fonts\\";
+    const auto add = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            candidates.emplace_back(fonts + name, 0);
+        }
+    };
+    switch (language) {
+    case L::Ja: add({"YuGothM.ttc", "meiryo.ttc", "msgothic.ttc"}); break;
+    case L::Ko: add({"malgun.ttf", "gulim.ttc"}); break;
+    case L::ZhCn: add({"msyh.ttc", "simsun.ttc"}); break;
+    case L::ZhTw: add({"msjh.ttc", "mingliu.ttc"}); break;
+    default: break;
+    }
+#else
+    // Noto Sans CJK's collection: Japanese, Korean, Simplified and Traditional Chinese faces.
+    const int face = language == L::Ja ? 0 : language == L::Ko ? 1 : language == L::ZhCn ? 2 : 3;
+    for (const char* path : {"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                             "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+                             "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc"}) {
+        candidates.emplace_back(path, face);
+    }
+#endif
+    for (const auto& candidate : candidates) {
+        if (FILE* f = std::fopen(candidate.first.c_str(), "rb")) {
+            std::fclose(f);
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
+/// Before NewFrame: the fonts of the language the menus speak now.
+void LoadLanguage() {
+    const auto language = BbSettings::Get().menu_language.load();
+    const int l = int(language);
+    const char* folder = GameFontFolder(language);
+    if (!folder || language_tried[l]) {
+        return;
+    }
+    language_tried[l] = true;
+    std::vector<std::vector<std::uint8_t>> sources;
+    if (auto ttf = BbGameArt::TtfFromGfxFont(ReadGameFile((std::string("menu/") + folder + "/font.gfx").c_str()))) {
+        sources.push_back(std::move(*ttf));
+    }
+    if (std::string_view(folder) != "engus") {
+        // Latin and Cyrillic as in the other languages.
+        if (auto ttf = BbGameArt::TtfFromGfxFont(ReadGameFile("menu/engus/font.gfx"))) {
+            sources.push_back(std::move(*ttf));
+        }
+    }
+    sources.emplace_back(bb_serif_ttf, bb_serif_ttf_end);
+    const auto system = SystemFont(language);
+    if (system) {
+        if (FILE* f = std::fopen(system->first.c_str(), "rb")) {
+            std::vector<std::uint8_t> bytes;
+            std::uint8_t chunk[65536];
+            for (size_t n; (n = std::fread(chunk, 1, sizeof(chunk), f)) > 0;) {
+                bytes.insert(bytes.end(), chunk, chunk + n);
+            }
+            std::fclose(f);
+            sources.push_back(std::move(bytes));
+        }
+    }
+    ImFont* made = nullptr;
+    for (std::size_t i = 0; i < sources.size(); ++i) {
+        const bool system_face = system && i + 1 == sources.size();
+        void* data = IM_ALLOC(sources[i].size());
+        std::memcpy(data, sources[i].data(), sources[i].size());
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = true;
+        config.MergeMode = made != nullptr;
+        config.DstFont = made;
+        config.FontNo = system_face ? ImU32(system->second) : 0;
+        ImFont* added = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, int(sources[i].size()), 21.0f, &config);
+        made = made ? made : added;
+    }
+    language_fonts[l] = made;
+    // The overlay's plain fonts: the language's glyphs after their own (the first source above
+    // and the system's; the serif is already theirs).
+    for (ImFont* plain : {sans_font, serif_font}) {
+        for (std::size_t i = 0; plain && i < sources.size(); ++i) {
+            const bool system_face = system && i + 1 == sources.size();
+            if (i != 0 && !system_face) {
+                continue;
+            }
+            void* data = IM_ALLOC(sources[i].size());
+            std::memcpy(data, sources[i].data(), sources[i].size());
+            ImFontConfig config;
+            config.FontDataOwnedByAtlas = true;
+            config.MergeMode = true;
+            config.DstFont = plain;
+            config.FontNo = system_face ? ImU32(system->second) : 0;
+            ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, int(sources[i].size()), 18.0f, &config);
+        }
+    }
+    std::printf("Overlay: %s text from the game's %s font%s%s\n", BbSettings::LanguageCode(language), folder,
+                system ? " and " : "", system ? system->first.c_str() : "");
+}
+
+/// The menus' text font: the game's own when it loaded, in the menus' language.
 ImFont* Font() {
+    if (ImFont* own = language_fonts[int(BbSettings::Get().menu_language.load())]) {
+        return own;
+    }
     return font != nullptr ? font : serif_font;
 }
 
@@ -1234,12 +1366,17 @@ void DisplayTab() {
                    "следующего запуска (режим 60 FPS — собственные 60 игры); дальше меняется "
                    "сразу. Выкл оставляет режим лаунчера."),
            !BbSettings::FrameRateLocked(), [&](int i) { Store(s.fps_limit, BbSettings::FpsLimits[i], true); });
-    static const char* languages[] = {"English", "Русский"};
-    Choice("language", "Language", s.menu_language == BbSettings::MenuLanguage::Russian ? 1 : 0, 2,
-           [](int i) { return languages[i]; }, [](int) { return true; },
-           T("Language of this menu.", "Язык этого меню."), true, [&](int i) {
-               s.menu_language = i == 1 ? BbSettings::MenuLanguage::Russian
-                                        : BbSettings::MenuLanguage::English;
+    // Auto (the game's language), then every language the game has, in their own names.
+    static std::string auto_name;
+    auto_name = std::string("Auto (") + BbSettings::LanguageName(BbSettings::GameLanguage()) + ")";
+    Choice("language", "Language", s.menu_language_auto ? 0 : int(s.menu_language.load()) + 1,
+           BbSettings::MenuLanguageCount + 1,
+           [](int i) {
+               return i == 0 ? auto_name.c_str() : BbSettings::LanguageName(BbSettings::MenuLanguage(i - 1));
+           },
+           [](int) { return true; }, T("Language of this menu.", "Язык этого меню."), true, [&](int i) {
+               BbSettings::SetMenuLanguage(i == 0 ? std::nullopt
+                                                  : std::optional(BbSettings::MenuLanguage(i - 1)));
                BbSettings::Save();
            });
 }
@@ -1944,6 +2081,14 @@ void Menu() {
         SetOpen(false);
         bbcoop_team_menu(2); // no page of the game under it
     }
+    // Kaniel 2026-10-17: the map screen (also M, and the game's System menu).
+    if (Row("map", T("Map", "Карта"), nullptr,
+            T("Where you and your team are; travel to a lit lamp. M opens it in the game too.",
+              "Где вы и ваша команда; путь к зажжённой лампе. В игре её открывает и клавиша M."),
+            true) != 0) {
+        SetOpen(false);
+        bbcoop_map_menu(2);
+    }
     if (Row("quit", T("Quit to desktop", "Выйти на рабочий стол"), nullptr,
             T("Asks first: progress since the last autosave is lost. Holding L3 + R3 asks too.",
               "Сначала спросит: прогресс после последнего автосохранения теряется. Удержание L3 + R3 "
@@ -2426,6 +2571,231 @@ void MenuHint(ImDrawList* draw, ImVec2 win, ImVec2 size, float y, bool leader_ho
     ImGui::PopFont();
 }
 
+/// Kaniel 2026-10-17: the world list, as the game's Load Game lists its saves: one row per world
+/// of the server's (and a new one first), the d-pad moves, Cross picks, Triangle forgets (pressed
+/// twice), Circle goes back. Only the team's leader (or a player in no team yet: the team it makes
+/// takes the pick) opens it.
+struct WorldPicker {
+    bool open = false;
+    int row = 0; // 0: a new world, 1..: lobby.worlds[row - 1]
+    int top = 0; // the first row shown
+    bool moved = false; // the player moved the focus (else it follows the chosen world)
+    std::string armed; // the world Triangle asked about, and when
+    double armed_at = 0.0;
+};
+WorldPicker picker;
+
+bool CanPickWorld() {
+    return lobby.signed_in && !lobby.menu && (lobby.in_team ? lobby.leader && !lobby.started : true);
+}
+
+void OpenWorldPicker() {
+    picker.open = true;
+    picker.row = lobby.world >= 0 && lobby.world < lobby.world_count ? lobby.world + 1 : 0;
+    picker.top = 0;
+    picker.moved = false;
+    picker.armed.clear();
+}
+
+/// The list over the whole screen (the team screen's wall behind it).
+void DrawWorldPicker(ImDrawList* draw, ImVec2 win, ImVec2 size) {
+    const auto pressed = [](std::initializer_list<ImGuiKey> keys) {
+        for (const ImGuiKey key : keys) {
+            if (ImGui::IsKeyPressed(key, true)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const int rows = lobby.world_count + 1;
+    if (!picker.moved) {
+        picker.row = lobby.world >= 0 && lobby.world < lobby.world_count ? lobby.world + 1 : 0;
+    }
+    picker.row = std::clamp(picker.row, 0, rows - 1);
+    if (pressed({ImGuiKey_UpArrow, ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp})) {
+        picker.row = (picker.row + rows - 1) % rows;
+        picker.moved = true;
+    } else if (pressed({ImGuiKey_DownArrow, ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown, ImGuiKey_Tab})) {
+        picker.row = (picker.row + 1) % rows;
+        picker.moved = true;
+    }
+    bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+    bool choose = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+                  ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+    bool forget = ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
+
+    ImGui::PushFont(MenuArt::Font(), 40.0f);
+    const char* title = T("Choose a World", "Выбор мира");
+    ImVec2 ts = ImGui::CalcTextSize(title);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(30.0f)), Bright(), title);
+    ImGui::PopFont();
+    ImGui::PushFont(MenuArt::Font(), 20.0f);
+    const char* about = T("Each world keeps its own progress on the server; any team may hunt in it.",
+                          "Каждый мир хранит свой прогресс на сервере; охотиться в нём может любая команда.");
+    ts = ImGui::CalcTextSize(about);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(84.0f)), Gold(0.85f), about);
+    ImGui::PopFont();
+
+    // The rows, as many as fit; the list scrolls with the focused one.
+    const float list_w = std::min(S(1100.0f), size.x - S(80.0f));
+    const float list_x = win.x + (size.x - list_w) * 0.5f;
+    const float list_y = win.y + S(130.0f), list_end = win.y + size.y - S(170.0f);
+    const float row_h = S(104.0f), row_gap = S(8.0f);
+    const int shown = std::max(1, static_cast<int>((list_end - list_y + row_gap) / (row_h + row_gap)));
+    if (picker.row < picker.top) {
+        picker.top = picker.row;
+    } else if (picker.row >= picker.top + shown) {
+        picker.top = picker.row - shown + 1;
+    }
+    picker.top = std::clamp(picker.top, 0, std::max(0, rows - shown));
+    for (int r = picker.top; r < rows && r < picker.top + shown; ++r) {
+        const bbcoop_lobby_world* w = r == 0 ? nullptr : &lobby.worlds[r - 1];
+        const bool current = r == 0 ? lobby.world < 0 : lobby.world == r - 1;
+        const bool busy = w && w->busy;
+        const ImVec2 at(list_x, list_y + (r - picker.top) * (row_h + row_gap));
+        const ImVec2 end(at.x + list_w, at.y + row_h);
+        ImGui::SetCursorScreenPos(at);
+        ImGui::PushID(r);
+        const bool clicked = ImGui::InvisibleButton("##world", ImVec2(list_w, row_h));
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        if (hovered && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) {
+            picker.row = r;
+            picker.moved = true;
+        }
+        if (clicked) {
+            picker.row = r;
+            picker.moved = true;
+            choose = true;
+        }
+        const bool focused = picker.row == r;
+        if (MenuArt::Nine(draw, MenuArt::Row, at, end, 12.0f, S(9.0f), busy ? 0.5f : 1.0f)) {
+            if (focused) {
+                const float in = S(2.0f);
+                draw->AddRectFilled(ImVec2(at.x + in, at.y + in), ImVec2(end.x - in, end.y - in), Gold(0.10f));
+                draw->AddRect(ImVec2(at.x + in, at.y + in), ImVec2(end.x - in, end.y - in), Gold(0.9f), 0.0f, 0,
+                              S(1.5f));
+            }
+        } else {
+            draw->AddRectFilled(at, end, focused ? Gold(0.18f) : Gold(0.05f), S(2.0f));
+            draw->AddRect(at, end, focused ? Gold(0.95f) : Gold(busy ? 0.15f : 0.45f), S(2.0f), 0, S(1.2f));
+        }
+        const float tx = at.x + S(24.0f), tw = list_w - S(48.0f);
+        ImGui::PushFont(MenuArt::Font(), 26.0f);
+        const std::string name = w ? w->name : T("A new world", "Новый мир");
+        draw->AddText(ImVec2(tx, at.y + S(10.0f)), busy ? Dim(0.6f) : focused ? Bright() : Plain(),
+                      Fit(name.c_str(), tw - S(220.0f)).c_str());
+        if (current) {
+            const char* mark = T("Chosen", "Выбран");
+            const ImVec2 ms = ImGui::CalcTextSize(mark);
+            draw->AddText(ImVec2(end.x - S(24.0f) - ms.x, at.y + S(10.0f)), Gold(), mark);
+        }
+        ImGui::PopFont();
+        ImGui::PushFont(MenuArt::Font(), 19.0f);
+        std::string line, hunters;
+        if (!w) {
+            line = T("Starts from the leader's save; kept on the server from the first hunt.",
+                     "Начинается с сохранения лидера; хранится на сервере с первой охоты.");
+        } else {
+            const auto add = [&](const std::string& part) {
+                if (!part.empty()) {
+                    line += (line.empty() ? "" : "   ·   ") + part;
+                }
+            };
+            add(w->when[0] ? std::string(T("Last played ", "Последняя игра ")) + w->when : std::string{});
+            add(w->created[0] ? std::string(T("Made ", "Создан ")) + w->created : std::string{});
+            if (w->lamps > 0) {
+                const std::string count = std::to_string(w->lamps);
+                const std::string en = count + (w->lamps == 1 ? " lamp lit" : " lamps lit");
+                const std::string ru = "фонарей: " + count;
+                add(T(en.c_str(), ru.c_str()));
+            }
+            hunters = w->characters[0] ? std::string(T("Hunters: ", "Охотники: ")) + w->characters
+                                       : std::string(T("No hunter yet", "Ещё никто не играл"));
+        }
+        draw->AddText(ImVec2(tx, at.y + S(46.0f)), busy ? Dim(0.6f) : Plain(0.85f), Fit(line.c_str(), tw).c_str());
+        float hunters_w = tw;
+        if (busy) {
+            // Right on the hunters' line: why it cannot be picked now.
+            const char* note = T("Another team is hunting here now", "Здесь сейчас охотится другая команда");
+            const float nw = ImGui::CalcTextSize(note).x;
+            draw->AddText(ImVec2(end.x - S(24.0f) - nw, at.y + S(72.0f)), IM_COL32(220, 150, 110, 255), note);
+            hunters_w = tw - nw - S(24.0f);
+        }
+        if (!hunters.empty()) {
+            draw->AddText(ImVec2(tx, at.y + S(72.0f)), busy ? Dim(0.7f) : Gold(0.75f),
+                          Fit(hunters.c_str(), hunters_w).c_str());
+        }
+        ImGui::PopFont();
+    }
+    // More above or below: the game's arrows' place, as a line of dots.
+    ImGui::PushFont(MenuArt::Font(), 19.0f);
+    if (rows > shown) {
+        const std::string where = std::to_string(picker.row + 1) + " / " + std::to_string(rows);
+        ts = ImGui::CalcTextSize(where.c_str());
+        draw->AddText(ImVec2(list_x + list_w - ts.x, list_end + S(4.0f)), Dim(0.8f), where.c_str());
+    }
+    ImGui::PopFont();
+
+    // Back and Forget for the mouse too; Forget asks first.
+    const bbcoop_lobby_world* focused_world = picker.row > 0 ? &lobby.worlds[picker.row - 1] : nullptr;
+    const bool armed = focused_world && picker.armed == focused_world->id && ImGui::GetTime() - picker.armed_at < 4.0;
+    ImGui::PushFont(MenuArt::Font(), 22.0f);
+    const float bw = S(300.0f), bh = S(50.0f), gap = S(24.0f), by = win.y + size.y - S(150.0f);
+    float bx = win.x + (size.x - (2 * bw + gap)) * 0.5f;
+    const auto plain_button = [&](const char* id, const char* label, ImVec2 at, bool enabled) {
+        ImGui::SetCursorScreenPos(at);
+        const bool hit = ImGui::InvisibleButton(id, ImVec2(bw, bh)) && enabled;
+        const bool hover = ImGui::IsItemHovered();
+        const ImVec2 end(at.x + bw, at.y + bh);
+        if (!MenuArt::Nine(draw, MenuArt::Row, at, end, 12.0f, S(9.0f), enabled ? 1.0f : 0.5f)) {
+            draw->AddRect(at, end, Gold(enabled ? 0.45f : 0.15f), S(2.0f), 0, S(1.2f));
+        }
+        if (hover && enabled) {
+            draw->AddRect(at, end, Gold(0.9f), 0.0f, 0, S(1.5f));
+        }
+        const ImVec2 ls = ImGui::CalcTextSize(label);
+        draw->AddText(ImVec2(at.x + (bw - ls.x) * 0.5f, at.y + (bh - ls.y) * 0.5f), enabled ? Plain() : Dim(0.6f),
+                      label);
+        return hit;
+    };
+    if (plain_button("##forget", armed ? T("Forget it? Press again", "Забыть? Нажмите ещё раз")
+                                       : T("Forget this world", "Забыть этот мир"),
+                     ImVec2(bx, by), focused_world && !focused_world->busy)) {
+        forget = true;
+    }
+    bx += bw + gap;
+    if (plain_button("##back", T("Back", "Назад"), ImVec2(bx, by), true)) {
+        back = true;
+    }
+    ImGui::PopFont();
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    const char* line = lobby.notice[0] ? lobby.notice
+                                       : armed ? T("Forgotten worlds go off the list; the server keeps their files aside.",
+                                                   "Забытые миры исчезают из списка; сервер сохраняет их файлы отдельно.")
+                                               : T("D-pad: move     Cross: choose     Triangle: forget     Circle: back",
+                                                   "Крестовина: выбор     Крест: выбрать     Треугольник: забыть     Круг: назад");
+    ts = ImGui::CalcTextSize(line);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(24.0f)),
+                  lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.75f), line);
+    ImGui::PopFont();
+
+    if (forget && focused_world && !focused_world->busy) {
+        if (armed) {
+            picker.armed.clear();
+            bbcoop_lobby_request(BBCOOP_TEAM_FORGET_WORLD, focused_world->id);
+        } else {
+            picker.armed = focused_world->id;
+            picker.armed_at = ImGui::GetTime();
+        }
+    } else if (choose && !(focused_world && focused_world->busy)) {
+        bbcoop_lobby_request(BBCOOP_TEAM_WORLD, focused_world ? focused_world->id : "");
+        picker.open = false;
+    } else if (back) {
+        picker.open = false;
+    }
+}
+
 void Screen() {
     const auto pressed_any = [](std::initializer_list<ImGuiKey> keys) {
         for (const ImGuiKey key : keys) {
@@ -2487,6 +2857,20 @@ void Screen() {
     const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
     Divider(draw, x0, x1, win.y + S(14.0f));
     Divider(draw, x0, x1, win.y + size.y - S(14.0f));
+    if (bbcoop_team_world_list_asked() && CanPickWorld()) {
+        OpenWorldPicker();
+    }
+    if (picker.open && !CanPickWorld()) {
+        picker.open = false; // the team began, or its leader is another now
+    }
+    if (picker.open) {
+        DrawWorldPicker(draw, win, size);
+        focus.fresh = true; // back on the team screen: the focus goes to Begin / Ready again
+        ImGui::End();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        return;
+    }
 
     // Title and the team's state.
     ImGui::PushFont(MenuArt::Font(), 40.0f);
@@ -2616,60 +3000,28 @@ void Screen() {
     }
     ImGui::PopFont();
 
-    // Kaniel 2026-10-17: the team's world, one of the server's (any team plays any of them, each
-    // kept apart): the leader picks it (Cross goes to the next one, the last played first, then a
-    // new world) and may forget one (pressed twice), the others see it.
-    if (lobby.in_team && !lobby.menu) {
+    // Kaniel 2026-10-17: the world the hunt plays, one of the server's (any team plays any of them,
+    // each kept apart). Its leader (or a player in no team yet: the team it makes takes it) opens
+    // the list to choose it; the others see which it is.
+    if (!lobby.menu && (lobby.in_team || lobby.signed_in)) {
         ImGui::PushFont(MenuArt::Font(), 20.0f);
-        std::string world = T("A new world", "Новый мир");
-        const bbcoop_lobby_world* picked =
+        const bbcoop_lobby_world* chosen =
             lobby.world >= 0 && lobby.world < lobby.world_count ? &lobby.worlds[lobby.world] : nullptr;
-        if (picked) {
-            world = picked->name;
-            if (picked->when[0]) {
-                world += std::string("  ·  ") + picked->when;
-            }
-            if (picked->lamps > 0) {
-                const std::string count = std::to_string(picked->lamps);
-                const std::string en = count + (picked->lamps == 1 ? " lamp" : " lamps");
-                const std::string ru = "фонарей: " + count;
-                world += std::string("  ·  ") + T(en.c_str(), ru.c_str());
-            }
+        std::string world = chosen ? chosen->name : T("A new world", "Новый мир");
+        if (chosen && chosen->when[0]) {
+            world += std::string("  ·  ") + chosen->when;
         }
-        const std::string text = std::string(T("World: ", "Мир: ")) + world;
-        const bool can_pick = lobby.leader && !lobby.started;
-        const bool can_forget = can_pick && picked != nullptr;
-        const float forget_w = S(150.0f), forget_gap = S(10.0f);
         const ImVec2 row_size(S(640.0f), S(40.0f));
-        const float all_w = row_size.x + (can_forget ? forget_gap + forget_w : 0.0f);
-        const ImVec2 row_at(win.x + (size.x - all_w) * 0.5f, win.y + size.y - S(166.0f) - S(52.0f));
-        if (can_pick) {
+        const ImVec2 row_at(win.x + (size.x - row_size.x) * 0.5f, win.y + size.y - S(166.0f) - S(52.0f));
+        if (CanPickWorld()) {
+            const std::string text = std::string(T("Choose a world  —  ", "Выбрать мир  —  ")) + world;
             if (Button(draw, "world", Fit(text.c_str(), row_size.x - S(24.0f)).c_str(), row_at, row_size)) {
-                // The next world, then a new one, then the first again.
-                const int next = lobby.world + 1 >= lobby.world_count ? -1 : lobby.world + 1;
-                const int wrapped = lobby.world < 0 ? (lobby.world_count > 0 ? 0 : -1) : next;
-                bbcoop_lobby_request(BBCOOP_TEAM_WORLD, wrapped < 0 ? "" : lobby.worlds[wrapped].id);
+                OpenWorldPicker();
             }
-        } else {
-            const std::string shown = Fit(text.c_str(), row_size.x);
+        } else if (lobby.in_team) {
+            const std::string shown = Fit((std::string(T("World: ", "Мир: ")) + world).c_str(), row_size.x);
             ts = ImGui::CalcTextSize(shown.c_str());
             draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, row_at.y + S(8.0f)), Gold(0.85f), shown.c_str());
-        }
-        // Forget: the first press asks, a second one within a few seconds forgets (the server keeps
-        // the world's folder aside).
-        static std::string forget_armed;
-        static double forget_armed_at = 0.0;
-        const bool armed = can_forget && forget_armed == picked->id && ImGui::GetTime() - forget_armed_at < 4.0;
-        if (can_forget &&
-            Button(draw, "forget", armed ? T("Forget it?", "Забыть?") : T("Forget", "Забыть"),
-                   ImVec2(row_at.x + row_size.x + forget_gap, row_at.y), ImVec2(forget_w, row_size.y))) {
-            if (armed) {
-                forget_armed.clear();
-                bbcoop_lobby_request(BBCOOP_TEAM_FORGET_WORLD, picked->id);
-            } else {
-                forget_armed = picked->id;
-                forget_armed_at = ImGui::GetTime();
-            }
         }
         ImGui::PopFont();
     }
@@ -2887,19 +3239,11 @@ void Screen() {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
-    // Kaniel 2026-10-17: the night city (the co-op art's) behind it all, else the menus' wall,
-    // faint; the Bloodborne word above the cards.
-    if (CoopArt::Has()) {
-        const ImVec2 b = CoopArt::SizeOf(CoopArt::Piece::Backdrop);
-        // Cut to the screen's shape, from the top (the city's lower part is dark: the cards sit on it).
-        const float want = display.x / display.y, have = b.x / b.y;
-        const BbCoopArt::Share part = have > want ? BbCoopArt::Share{0.5f - want / have * 0.5f, 0.0f,
-                                                                      0.5f + want / have * 0.5f, 1.0f}
-                                                  : BbCoopArt::Share{0.0f, 0.0f, 1.0f, have / want};
-        CoopArt::Part(draw, CoopArt::Piece::Backdrop, ImVec2(0, 0), display, part, 0.9f);
-        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.6f);
-    } else if (MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 0.45f)) {
-        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.95f);
+    // The menus' wall under it all, as the team screen has it (Kaniel 2026-10-17: the same
+    // background as the party view; the co-op art's night city looked out of place); the Bloodborne
+    // word above the cards.
+    if (MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 1.0f)) {
+        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.75f);
     }
     const float u = display.y / 1080.0f; // 1080p pixels
     ImFont* font = MenuArt::Font();
@@ -3528,13 +3872,15 @@ bool Read() {
     return shown;
 }
 
-/// The members' colours, by their place on the party panel: muted as the game's HUD (old gold,
-/// blood, pale steel, moss).
-ImU32 MemberColor(int member, float alpha) {
-    static constexpr float colors[][3] = {
-        {0.84f, 0.68f, 0.38f}, {0.74f, 0.22f, 0.18f}, {0.56f, 0.66f, 0.78f}, {0.58f, 0.68f, 0.46f}};
-    const float* c = colors[((member % 4) + 4) % 4];
-    return Party::Rgba(c[0], c[1], c[2], alpha);
+/// Kaniel 2026-10-17 (after a play test): the compass in the light gray of the game's own counters
+/// (the souls at the top right), not gold, and a bit transparent: everything of it is drawn at
+/// Opacity. A downed member's marker stays red.
+constexpr float Opacity = 0.78f;
+ImU32 Gray(float alpha) {
+    return Party::Rgba(0.85f, 0.85f, 0.82f, alpha * Opacity);
+}
+ImU32 Faded(float r, float g, float b, float alpha) {
+    return Party::Rgba(r, g, b, alpha * Opacity);
 }
 
 /// The first letter of a name (UTF-8: a whole character), "?" for none.
@@ -3573,30 +3919,34 @@ PortraitTexture portraits[BBCOOP_COMPASS_MARKERS];
 
 /// The markers' portrait textures brought up to date: before NewFrame, which hands new textures and
 /// their uploads to the backend.
+/// A slot's texture brought up to date with the member's (board name's) portrait.
+void RefreshPortrait(PortraitTexture& slot, const char* board) {
+    uint32_t id = 0;
+    bbcoop_member_portrait(board, nullptr, 0, &id); // the id alone: no pixels asked for
+    if (slot.member == board && slot.id == id) {
+        return;
+    }
+    slot.member = board;
+    slot.id = id;
+    slot.has = false;
+    static std::vector<uint8_t> rgba(size_t{BBCOOP_PORTRAIT_SIDE} * BBCOOP_PORTRAIT_SIDE * 4);
+    if (id != 0 && bbcoop_member_portrait(board, rgba.data(), rgba.size(), &id)) {
+        if (slot.texture == nullptr) {
+            slot.texture = IM_NEW(ImTextureData)();
+            slot.texture->Create(ImTextureFormat_RGBA32, BBCOOP_PORTRAIT_SIDE, BBCOOP_PORTRAIT_SIDE);
+            ImGui::RegisterUserTexture(slot.texture);
+        }
+        std::memcpy(slot.texture->GetPixels(), rgba.data(), rgba.size());
+        if (slot.texture->Status == ImTextureStatus_OK || slot.texture->Status == ImTextureStatus_WantUpdates) {
+            ImTextureDataQueueUpload(slot.texture, 0, 0, BBCOOP_PORTRAIT_SIDE, BBCOOP_PORTRAIT_SIDE);
+        }
+        slot.has = true;
+    }
+}
+
 void RefreshPortraits() {
     for (int place = 0; place < view.count; ++place) {
-        const bbcoop_compass_marker& marker = view.markers[place];
-        PortraitTexture& slot = portraits[place];
-        uint32_t id = 0;
-        bbcoop_member_portrait(marker.board, nullptr, 0, &id); // the id alone: no pixels asked for
-        if (slot.member != marker.board || slot.id != id) {
-            slot.member = marker.board;
-            slot.id = id;
-            slot.has = false;
-            static std::vector<uint8_t> rgba(size_t{BBCOOP_PORTRAIT_SIDE} * BBCOOP_PORTRAIT_SIDE * 4);
-            if (id != 0 && bbcoop_member_portrait(marker.board, rgba.data(), rgba.size(), &id)) {
-                if (slot.texture == nullptr) {
-                    slot.texture = IM_NEW(ImTextureData)();
-                    slot.texture->Create(ImTextureFormat_RGBA32, BBCOOP_PORTRAIT_SIDE, BBCOOP_PORTRAIT_SIDE);
-                    ImGui::RegisterUserTexture(slot.texture);
-                }
-                std::memcpy(slot.texture->GetPixels(), rgba.data(), rgba.size());
-                if (slot.texture->Status == ImTextureStatus_OK || slot.texture->Status == ImTextureStatus_WantUpdates) {
-                    ImTextureDataQueueUpload(slot.texture, 0, 0, BBCOOP_PORTRAIT_SIDE, BBCOOP_PORTRAIT_SIDE);
-                }
-                slot.has = true;
-            }
-        }
+        RefreshPortrait(portraits[place], view.markers[place].board);
     }
 }
 
@@ -3615,31 +3965,33 @@ void Marker(ImDrawList* draw, ImVec2 at, int place, const bbcoop_compass_marker&
     const bool down = marker.vital == BBCOOP_VITAL_DOWN, dead = marker.vital == BBCOOP_VITAL_DEAD;
     const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
     const float r = down ? S(17.0f) : S(13.0f);
-    const ImU32 color = down ? Party::Blood(0.75f + 0.25f * pulse) : MemberColor(marker.member, dead ? 0.5f : 1.0f);
-    draw->AddCircleFilled(ImVec2(at.x + S(1.0f), at.y + S(1.5f)), r + S(1.5f), Party::Rgba(0, 0, 0, 0.55f), 32);
+    const ImU32 color = down ? Party::Blood((0.75f + 0.25f * pulse) * Opacity) : Gray(dead ? 0.5f : 1.0f);
+    draw->AddCircleFilled(ImVec2(at.x + S(1.0f), at.y + S(1.5f)), r + S(1.5f), Faded(0, 0, 0, 0.55f), 32);
     using BbPartyIcons::Icon;
-    if (down && Party::Icon(draw, Icon::Downed, at, r * 2.6f, 1.0f)) {
+    if (down && Party::Icon(draw, Icon::Downed, at, r * 2.6f, Opacity)) {
         // The badge's own ring fills red with the revive, as on the party list.
-        Party::RingShare(draw, at, r * 2.6f, BbPartyIcons::DownedRing, marker.revive, 0.8f + 0.2f * pulse);
-    } else if (dead && Party::Icon(draw, Icon::Fallen, at, r * 2.6f, 0.85f)) {
+        Party::RingShare(draw, at, r * 2.6f, BbPartyIcons::DownedRing, marker.revive,
+                         (0.8f + 0.2f * pulse) * Opacity);
+    } else if (dead && Party::Icon(draw, Icon::Fallen, at, r * 2.6f, 0.6f * Opacity)) {
     } else {
-        draw->AddCircleFilled(at, r, Party::Rgba(0.06f, 0.05f, 0.05f, 0.88f), 32);
+        draw->AddCircleFilled(at, r, Faded(0.06f, 0.05f, 0.05f, 0.88f), 32);
         if (ImTextureData* face = dead ? nullptr : Portrait(place, marker)) {
             const float f = r - S(1.0f);
-            draw->AddImage(face->GetTexRef(), ImVec2(at.x - f, at.y - f), ImVec2(at.x + f, at.y + f));
+            draw->AddImage(face->GetTexRef(), ImVec2(at.x - f, at.y - f), ImVec2(at.x + f, at.y + f), ImVec2(0, 0),
+                          ImVec2(1, 1), Faded(1, 1, 1, 1));
         } else {
             const std::string initial = Initial(marker.name);
             const float size = S(17.0f);
             const ImVec2 extent = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, initial.c_str());
             Party::Text(draw, serif_font, size, ImVec2(at.x, at.y - extent.y * 0.5f),
-                        dead ? Ui::Dim(1.0f) : Party::Bone(1.0f), initial.c_str(), 0.5f);
+                        Gray(dead ? 0.5f : 1.0f), initial.c_str(), 0.5f);
         }
         draw->AddCircle(at, r, color, 32, S(2.0f));
         if (down) {
             // No badge art: the revive's share as a red arc round the ring.
             const float top = -IM_PI * 0.5f;
             draw->PathArcTo(at, r + S(3.0f), top, top + 2.0f * IM_PI * std::clamp(marker.revive, 0.0f, 1.0f), 48);
-            draw->PathStroke(Party::Blood(0.9f), 0, S(3.0f));
+            draw->PathStroke(Party::Blood(0.9f * Opacity), 0, S(3.0f));
         }
     }
     if (arrow != 0) {
@@ -3654,7 +4006,7 @@ void Marker(ImDrawList* draw, ImVec2 at, int place, const bbcoop_compass_marker&
         std::snprintf(line, sizeof(line), marker.distance < 10.0f ? "%.1f m" : "%.0f m", marker.distance);
     }
     Party::Text(draw, sans_font, S(13.0f), ImVec2(at.x, at.y + r + S(3.0f)),
-                down ? Party::Rgba(1.0f, 0.52f, 0.46f, 1.0f) : Ui::Plain(dead ? 0.6f : 0.95f), line, 0.5f);
+                down ? Faded(1.0f, 0.52f, 0.46f, 1.0f) : Gray(dead ? 0.6f : 0.95f), line, 0.5f);
 }
 
 void Strip(ImDrawList* draw, float y) {
@@ -3662,7 +4014,7 @@ void Strip(ImDrawList* draw, float y) {
     constexpr float Pi = 3.14159265f;
     const float mid = game.x + game.w * 0.5f, half = S(280.0f);
     // The shade behind it, fading out to both ends; no frame.
-    const ImU32 shade = Party::Rgba(0.02f, 0.02f, 0.02f, 0.50f), clear = Party::Rgba(0, 0, 0, 0);
+    const ImU32 shade = Faded(0.02f, 0.02f, 0.02f, 0.50f), clear = Party::Rgba(0, 0, 0, 0);
     draw->AddRectFilledMultiColor(ImVec2(mid - half, y - S(10.0f)), ImVec2(mid, y + S(10.0f)), clear, shade,
                                   shade, clear);
     draw->AddRectFilledMultiColor(ImVec2(mid, y - S(10.0f)), ImVec2(mid + half, y + S(10.0f)), shade, clear,
@@ -3672,7 +4024,7 @@ void Strip(ImDrawList* draw, float y) {
     for (int i = 0; i < pieces; ++i) {
         const float t0 = float(i) / pieces, t1 = float(i + 1) / pieces;
         const float a = 0.8f * std::sin(Pi * (t0 + t1) * 0.5f);
-        draw->AddLine(ImVec2(mid - half + 2 * half * t0, y), ImVec2(mid - half + 2 * half * t1, y), Ui::Gold(a),
+        draw->AddLine(ImVec2(mid - half + 2 * half * t0, y), ImVec2(mid - half + 2 * half * t1, y), Gray(a),
                       S(1.0f));
     }
     // Ticks at every 15 degrees of the world's headings, turning with the camera; every 45 longer.
@@ -3687,11 +4039,11 @@ void Strip(ImDrawList* draw, float y) {
         const bool major = std::lround(world / step) % 3 == 0;
         const float a = 0.75f * std::cos(bearing);
         const float h = major ? S(6.0f) : S(3.5f);
-        draw->AddLine(ImVec2(x, y - h), ImVec2(x, y + h), Ui::Gold(a), S(major ? 1.5f : 1.0f));
+        draw->AddLine(ImVec2(x, y - h), ImVec2(x, y + h), Gray(a), S(major ? 1.5f : 1.0f));
     }
     // Straight ahead: a small notch above the line.
     draw->AddTriangleFilled(ImVec2(mid - S(5.0f), y - S(14.0f)), ImVec2(mid + S(5.0f), y - S(14.0f)),
-                            ImVec2(mid, y - S(7.0f)), Ui::Bright(0.9f));
+                            ImVec2(mid, y - S(7.0f)), Gray(0.9f));
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const int arrow = marker.pinned ? (marker.x < 0.0f ? -1 : 1) : 0;
@@ -3703,7 +4055,7 @@ void Ring(ImDrawList* draw) {
     using Ui::S;
     const ImVec2 mid(game.x + game.w * 0.5f, game.y + game.h * 0.5f);
     const float r = S(150.0f);
-    draw->AddCircle(mid, r, Ui::Gold(0.18f), 96, S(1.0f));
+    draw->AddCircle(mid, r, Gray(0.18f), 96, S(1.0f));
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const ImVec2 at(mid.x + r * std::sin(marker.bearing), mid.y - r * std::cos(marker.bearing));
@@ -3729,8 +4081,722 @@ void Draw() {
 
 } // namespace Compass
 
-/// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1,
-/// consumed when the file appears (it is removed), one key press per frame.
+/// Kaniel 2026-10-17: the map screen (an Elden Ring style map). The area's picture
+/// (BbMapCharts, drawn from the game's map files) on the menus' wall, framed in the game's card
+/// art: this player as an arrow turned with the camera, the party members on this map at their
+/// spots (their portraits ringed in the compass's light gray, not gold), the lamps lit as small
+/// lamps; beside it the area's lit lamps and where each member is. L1 / R1 go through the areas
+/// with a lit lamp, Cross on a lamp asks to travel there (BBCOOP_MAP_* says when it can't).
+/// Opened by M, the Insert menu's row or the System menu's "Map"; Circle, Escape or M closes it.
+namespace Map {
+using namespace Ui;
+
+bbcoop_map view{};
+bool open = false;
+bool was_open = false;
+int shut_reads = 0; // frames while shut: the view is read every 120th
+
+struct State {
+    uint32_t shown = 0;      // the area on screen
+    float cx = 0, cz = 0;    // the world spot in the middle of the picture
+    float zoom = 0;          // screen pixels a metre (0: fit the area on first sight)
+    int focus = 0;           // the focused lamp row
+    int32_t asking = 0;      // the lamp a travel question is open for
+    bool ask_yes = true;
+    std::string notice;      // why a trip did not start
+    double notice_until = 0;
+    bool fresh = true;       // just opened: the player's area, centred on the player
+    bool placed = false;     // the first reading since it opened came (or a moment passed)
+    double opened = 0;
+};
+State state;
+
+/// An area's picture as a texture.
+struct ChartTexture {
+    uint32_t map = 0;
+    std::shared_ptr<const BbMapArt::Chart> chart;
+    ImTextureData* texture = nullptr;
+};
+/// Kaniel 2026-10-17 ("one big map"): the pictures of the shown area's world drawn so far (the
+/// other worlds' go when another is shown).
+std::map<uint32_t, ChartTexture> charts;
+std::vector<ImTextureData*> dying;
+
+/// The shown area's picture once it is there; the areas drawn with it (WorldAreas, below).
+const ChartTexture* Shown();
+std::vector<uint32_t> WorldAreas();
+
+/// The areas of one world share the game's coordinates (their MSBs place them where they stand in
+/// it), so the map draws them together: the waking world (Hemwick, Old Yharnam, the Cathedral Ward
+/// blocks, Cainhurst, the Forbidden Woods, Yahar'gul, Byrgenwerth), the Nightmare of Mensis, the
+/// Nightmare Frontier with the Hunter's Nightmare; the Dream and anything else alone.
+int WorldOf(uint32_t map) {
+    switch (map >> 24) {
+    case 0x16:
+    case 0x17:
+    case 0x18:
+    case 0x19:
+    case 0x1b:
+    case 0x1c:
+    case 0x20:
+        return 1;
+    case 0x1a:
+        return 2;
+    case 0x21:
+    case 0x22:
+    case 0x23:
+    case 0x24:
+        return 3;
+    default:
+        return 100 + int(map >> 16);
+    }
+}
+
+Compass::PortraitTexture portraits[BBCOOP_MAP_MEMBERS];
+
+ImU32 Gray(float alpha = 1.0f) {
+    return Party::Rgba(0.85f, 0.85f, 0.82f, alpha);
+}
+ImU32 LampLight(float alpha = 1.0f) {
+    return Party::Rgba(1.0f, 0.80f, 0.48f, alpha);
+}
+
+/// Textures for the frame ahead: the shown area's picture once it is drawn, the members'
+/// portraits. Before NewFrame, which hands new textures to the backend. (While the screen is shut,
+/// Visible asks for the picture of the player's own area, so it is ready when it opens.)
+void Refresh() {
+    for (auto it = dying.begin(); it != dying.end();) {
+        if ((*it)->Status == ImTextureStatus_Destroyed) {
+            ImGui::UnregisterUserTexture(*it);
+            IM_DELETE(*it);
+            it = dying.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!open) {
+        return;
+    }
+    for (int i = 0; i < view.member_count; ++i) {
+        Compass::RefreshPortrait(portraits[i], view.members[i].board);
+    }
+    // The shown area's world: the other worlds' pictures go, this one's come as they are drawn
+    // (the shown area's asked for first).
+    const auto world = WorldAreas();
+    for (auto it = charts.begin(); it != charts.end();) {
+        if (std::find(world.begin(), world.end(), it->first) == world.end()) {
+            if (it->second.texture != nullptr) {
+                it->second.texture->WantDestroyNextFrame = true;
+                dying.push_back(it->second.texture);
+            }
+            it = charts.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    std::vector<uint32_t> order{state.shown};
+    for (const uint32_t map : world) {
+        if (map != state.shown) {
+            order.push_back(map);
+        }
+    }
+    for (const uint32_t map : order) {
+        if (map == 0 || charts.contains(map)) {
+            continue;
+        }
+        auto chart = BbMapCharts::Get(map);
+        if (!chart) {
+            continue;
+        }
+        ChartTexture& slot = charts[map];
+        slot = {map, chart, IM_NEW(ImTextureData)()};
+        slot.texture->Create(ImTextureFormat_RGBA32, chart->width, chart->height);
+        std::memcpy(slot.texture->GetPixels(), chart->rgba.data(), chart->rgba.size());
+        ImGui::RegisterUserTexture(slot.texture);
+    }
+}
+
+const ChartTexture* Shown() {
+    const auto found = charts.find(state.shown);
+    return found != charts.end() && found->second.texture != nullptr ? &found->second : nullptr;
+}
+
+std::string AreaName(uint32_t map) {
+    std::string name = BbMapCharts::AreaName(bbcoop_map_area_name_id(map));
+    if (name.empty()) {
+        char fallback[24];
+        std::snprintf(fallback, sizeof(fallback), "m%02u_%02u", (map >> 24) & 0xFF, (map >> 16) & 0xFF);
+        name = fallback;
+    }
+    return name;
+}
+
+/// The areas the screen goes through: each with a lit lamp, and the player's own.
+std::vector<uint32_t> Areas() {
+    std::vector<uint32_t> areas;
+    const auto add = [&](uint32_t map) {
+        if (map != 0 && std::find(areas.begin(), areas.end(), map) == areas.end()) {
+            areas.push_back(map);
+        }
+    };
+    add(view.map);
+    for (int i = 0; i < view.lamp_count; ++i) {
+        if (view.lamps[i].lit) {
+            add(view.lamps[i].map);
+        }
+    }
+    std::sort(areas.begin(), areas.end());
+    return areas;
+}
+
+/// The areas drawn with the shown one: those of its world among Areas().
+std::vector<uint32_t> WorldAreas() {
+    std::vector<uint32_t> world;
+    for (const uint32_t map : Areas()) {
+        if (WorldOf(map) == WorldOf(state.shown)) {
+            world.push_back(map);
+        }
+    }
+    if (std::find(world.begin(), world.end(), state.shown) == world.end() && state.shown != 0) {
+        world.push_back(state.shown);
+    }
+    return world;
+}
+
+/// The shown area's lit lamps, in their order.
+std::vector<const bbcoop_map_lamp*> LitLamps() {
+    std::vector<const bbcoop_map_lamp*> lamps;
+    for (int i = 0; i < view.lamp_count; ++i) {
+        if (view.lamps[i].lit && view.lamps[i].map == state.shown) {
+            lamps.push_back(&view.lamps[i]);
+        }
+    }
+    return lamps;
+}
+
+const char* BlockText(int block) {
+    switch (block) {
+    case BBCOOP_MAP_NOT_LIT:
+        return T("That lamp is not lit", "Эта лампа не зажжена");
+    case BBCOOP_MAP_NOT_IN_WORLD:
+        return T("Not now", "Не сейчас");
+    case BBCOOP_MAP_DOWN:
+        return T("Not while you are down", "Нельзя, пока вы повержены");
+    case BBCOOP_MAP_BOSS:
+        return T("Not during a boss fight", "Нельзя во время битвы с боссом");
+    case BBCOOP_MAP_TRAVELLING:
+        return T("Already travelling", "Уже в пути");
+    default:
+        return "";
+    }
+}
+
+/// The view's transform: world (x, z) to the screen inside `box`.
+struct Frame {
+    ImVec2 p0, p1;
+    ImVec2 Mid() const { return ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f); }
+    ImVec2 Screen(float x, float z) const {
+        const ImVec2 m = Mid();
+        return ImVec2(m.x + (x - state.cx) * state.zoom, m.y - (z - state.cz) * state.zoom);
+    }
+};
+
+/// The zoom that fits the whole picture in the frame.
+float FitZoom(const Frame& frame, const BbMapArt::Chart& chart) {
+    const float w = float(chart.width) / chart.ppm, h = float(chart.height) / chart.ppm;
+    return std::min((frame.p1.x - frame.p0.x) / w, (frame.p1.y - frame.p0.y) / h) * 0.95f;
+}
+
+void CentreOnChart(const BbMapArt::Chart& chart) {
+    state.cx = chart.x0 + float(chart.width) / chart.ppm * 0.5f;
+    state.cz = chart.z1 - float(chart.height) / chart.ppm * 0.5f;
+}
+
+/// A small lamp: its post and its glowing head; `focused` rings it.
+void LampMark(ImDrawList* draw, ImVec2 at, bool focused, float pulse) {
+    const float r = S(7.0f);
+    draw->AddCircleFilled(at, r * 2.4f, LampLight(0.10f + 0.06f * pulse), 24);
+    draw->AddRectFilled(ImVec2(at.x - S(1.2f), at.y), ImVec2(at.x + S(1.2f), at.y + r * 1.6f), Party::Iron(0.95f));
+    draw->AddCircleFilled(at, r, Party::Rgba(0.10f, 0.07f, 0.05f, 0.9f), 20);
+    draw->AddCircleFilled(at, r * 0.68f, LampLight(0.95f), 20);
+    if (focused) {
+        draw->AddCircle(at, r * 2.0f + S(2.0f) * pulse, Gold(0.95f), 32, S(2.0f));
+    }
+}
+
+/// This player: an arrow turned to the camera's heading (0 north, turning right toward east).
+void PlayerMark(ImDrawList* draw, ImVec2 at) {
+    const float h = view.has_heading ? view.heading : 0.0f;
+    const ImVec2 dir(std::sin(h), -std::cos(h)), side(-dir.y, dir.x);
+    const float len = S(15.0f), wid = S(9.0f);
+    const ImVec2 tip(at.x + dir.x * len, at.y + dir.y * len);
+    const ImVec2 back(at.x - dir.x * len * 0.45f, at.y - dir.y * len * 0.45f);
+    const ImVec2 l(back.x - dir.x * S(4.0f) + side.x * wid, back.y - dir.y * S(4.0f) + side.y * wid);
+    const ImVec2 r(back.x - dir.x * S(4.0f) - side.x * wid, back.y - dir.y * S(4.0f) - side.y * wid);
+    draw->AddCircleFilled(at, S(15.0f), Party::Rgba(0, 0, 0, 0.35f), 24);
+    draw->AddQuadFilled(tip, l, back, r, Party::Rgba(0.97f, 0.96f, 0.92f, 1.0f));
+    draw->AddQuad(tip, l, back, r, Party::Rgba(0.05f, 0.04f, 0.03f, 0.9f), S(1.5f));
+}
+
+/// A party member: its portrait (or initial) in a dark disc, ringed in light gray; red while down.
+void MemberMark(ImDrawList* draw, ImVec2 at, int index, bool label = true) {
+    const bbcoop_map_member& m = view.members[index];
+    const bool down = m.vital == BBCOOP_VITAL_DOWN, dead = m.vital == BBCOOP_VITAL_DEAD;
+    const float r = S(13.0f);
+    draw->AddCircleFilled(ImVec2(at.x + S(1.0f), at.y + S(1.5f)), r + S(1.5f), Party::Rgba(0, 0, 0, 0.55f), 32);
+    draw->AddCircleFilled(at, r, Party::Rgba(0.06f, 0.05f, 0.05f, 0.92f), 32);
+    const Compass::PortraitTexture& face = portraits[index];
+    if (face.has && face.member == m.board && !dead) {
+        const float f = r - S(1.0f);
+        draw->AddImage(face.texture->GetTexRef(), ImVec2(at.x - f, at.y - f), ImVec2(at.x + f, at.y + f));
+    } else {
+        const std::string initial = Compass::Initial(m.name);
+        const float size = S(17.0f);
+        const ImVec2 extent = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, initial.c_str());
+        Party::Text(draw, serif_font, size, ImVec2(at.x, at.y - extent.y * 0.5f), Gray(dead ? 0.5f : 1.0f),
+                    initial.c_str(), 0.5f);
+    }
+    draw->AddCircle(at, r, down ? Party::Blood(0.95f) : Gray(dead ? 0.5f : 1.0f), 32, S(2.0f));
+    if (label) {
+        Party::Text(draw, sans_font, S(14.0f), ImVec2(at.x, at.y + r + S(3.0f)), Gray(0.95f), m.name, 0.5f);
+    }
+}
+
+/// The picture with its marks, inside the game's card art.
+void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const bbcoop_map_lamp*>& lamps,
+                 float pulse) {
+    MenuArt::Nine(draw, MenuArt::Card, ImVec2(frame.p0.x - S(14.0f), frame.p0.y - S(14.0f)),
+                  ImVec2(frame.p1.x + S(14.0f), frame.p1.y + S(14.0f)), 14.0f, S(12.0f), 0.95f);
+    draw->AddRectFilled(frame.p0, frame.p1, Party::Rgba(0.045f, 0.040f, 0.035f, 0.92f));
+    draw->PushClipRect(frame.p0, frame.p1, true);
+    if (const ChartTexture* shown = Shown()) {
+        // The world's other areas under the shown one, a little darker; the shown one over them.
+        const auto picture = [&](const ChartTexture& c, float tone) {
+            const BbMapArt::Chart& chart = *c.chart;
+            const ImVec2 a = frame.Screen(chart.x0, chart.z1);
+            const ImVec2 b =
+                frame.Screen(chart.x0 + float(chart.width) / chart.ppm, chart.z1 - float(chart.height) / chart.ppm);
+            draw->AddImage(c.texture->GetTexRef(), a, b, ImVec2(0, 0), ImVec2(1, 1), Party::Rgba(tone, tone, tone, 1.0f));
+        };
+        for (const auto& [map, c] : charts) {
+            if (map != state.shown && c.texture != nullptr) {
+                picture(c, 0.62f);
+            }
+        }
+        picture(*shown, 1.0f);
+        const int world = WorldOf(state.shown);
+        // Zoomed out: each area's name over its middle.
+        if (state.zoom < S(1.2f) && charts.size() > 1) {
+            for (const auto& [map, c] : charts) {
+                const BbMapArt::Chart& chart = *c.chart;
+                const ImVec2 at = frame.Screen(chart.x0 + float(chart.width) / chart.ppm * 0.5f,
+                                               chart.z1 - float(chart.height) / chart.ppm * 0.5f);
+                Party::Text(draw, MenuArt::Font(), S(map == state.shown ? 24.0f : 20.0f), at,
+                            map == state.shown ? Bright() : Plain(0.8f), AreaName(map).c_str(), 0.5f);
+            }
+        }
+        // The lamps lit in the other areas of the world, then the shown area's (focusable).
+        for (int i = 0; i < view.lamp_count; ++i) {
+            const bbcoop_map_lamp& lamp = view.lamps[i];
+            if (lamp.lit && lamp.map != state.shown && WorldOf(lamp.map) == world && charts.contains(lamp.map)) {
+                LampMark(draw, frame.Screen(lamp.x, lamp.z), false, 0.0f);
+            }
+        }
+        for (size_t i = 0; i < lamps.size(); ++i) {
+            LampMark(draw, frame.Screen(lamps[i]->x, lamps[i]->z), int(i) == state.focus, pulse);
+        }
+        for (int i = 0; i < view.member_count; ++i) {
+            const bbcoop_map_member& m = view.members[i];
+            if (m.has_at && WorldOf(m.map) == world) {
+                MemberMark(draw, frame.Screen(m.x, m.z), i);
+            }
+        }
+        if (view.has_me && WorldOf(view.map) == world) {
+            PlayerMark(draw, frame.Screen(view.x, view.z));
+        }
+        if (state.focus >= 0 && state.focus < int(lamps.size())) {
+            const ImVec2 at = frame.Screen(lamps[size_t(state.focus)]->x, lamps[size_t(state.focus)]->z);
+            const std::string name = BbMapCharts::LampName(lamps[size_t(state.focus)]->name_id);
+            Party::Text(draw, MenuArt::Font(), S(20.0f), ImVec2(at.x, at.y - S(40.0f)), Bright(), name.c_str(), 0.5f);
+        }
+    } else {
+        ImGui::PushFont(MenuArt::Font(), 24.0f);
+        const bool failed = BbMapCharts::Failed(state.shown);
+        const std::string text = failed ? T("No map of this place", "Для этого места нет карты")
+                                        : std::string(T("Charting the area", "Составляется карта")) +
+                                              std::string(int(ImGui::GetTime() * 2.0) % 4, '.');
+        const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
+        const ImVec2 m = frame.Mid();
+        draw->AddText(ImVec2(m.x - ts.x * 0.5f, m.y - ts.y * 0.5f), failed ? Dim() : Plain(0.85f), text.c_str());
+        ImGui::PopFont();
+    }
+    draw->PopClipRect();
+    MenuArt::Vignette(draw, frame.p0, frame.p1, 0.35f);
+}
+
+/// The right-hand column: the area's lit lamps (the focused one framed), then the party.
+void DrawList(ImDrawList* draw, ImVec2 at, float width, float bottom, const std::vector<const bbcoop_map_lamp*>& lamps) {
+    ImGui::PushFont(MenuArt::Font(), 22.0f);
+    draw->AddText(at, Gold(), T("Lamps", "Лампы"));
+    ImGui::PopFont();
+    ListRule(draw, at.x, at.x + width, at.y + S(34.0f));
+    float y = at.y + S(46.0f);
+    const float row_h = S(40.0f);
+    ImGui::PushFont(MenuArt::Font(), 19.0f);
+    if (lamps.empty()) {
+        draw->AddText(ImVec2(at.x + S(8.0f), y + S(8.0f)), Dim(), T("No lamp lit here", "Здесь нет зажжённых ламп"));
+        y += row_h;
+    }
+    for (size_t i = 0; i < lamps.size() && y + row_h < bottom - S(150.0f); ++i, y += row_h) {
+        const ImVec2 p0(at.x - S(6.0f), y - S(2.0f)), p1(at.x + width + S(4.0f), y + row_h - S(4.0f));
+        MenuArt::Nine(draw, MenuArt::Row, p0, p1, 10.0f, S(6.0f), 0.8f);
+        ImGui::SetCursorScreenPos(p0);
+        ImGui::PushID(int(i));
+        if (ImGui::InvisibleButton("##lamp", ImVec2(p1.x - p0.x, p1.y - p0.y))) {
+            state.focus = int(i);
+            state.asking = lamps[i]->warp_point;
+            state.ask_yes = true;
+        }
+        if (ImGui::IsItemHovered() && ImGui::GetIO().MouseDelta.x * ImGui::GetIO().MouseDelta.x +
+                                              ImGui::GetIO().MouseDelta.y * ImGui::GetIO().MouseDelta.y >
+                                          0.0f) {
+            state.focus = int(i);
+        }
+        ImGui::PopID();
+        const bool focused = int(i) == state.focus;
+        if (focused) {
+            const float in = S(2.0f);
+            draw->AddRectFilled(ImVec2(p0.x + in, p0.y + in), ImVec2(p1.x - in, p1.y - in), Gold(0.10f));
+            draw->AddRect(ImVec2(p0.x + in, p0.y + in), ImVec2(p1.x - in, p1.y - in), Gold(0.9f), 0.0f, 0, S(1.5f));
+        }
+        LampMark(draw, ImVec2(at.x + S(14.0f), y + row_h * 0.5f - S(4.0f)), false, 0.0f);
+        const std::string name = BbMapCharts::LampName(lamps[i]->name_id);
+        draw->AddText(ImVec2(at.x + S(34.0f), y + S(8.0f)), focused ? Bright() : Plain(),
+                      Fit(name.c_str(), width - S(40.0f)).c_str());
+    }
+    ImGui::PopFont();
+    // The party: who is where.
+    y += S(18.0f);
+    if (view.member_count > 0) {
+        ImGui::PushFont(MenuArt::Font(), 22.0f);
+        draw->AddText(ImVec2(at.x, y), Gold(), T("Hunters", "Охотники"));
+        ImGui::PopFont();
+        ListRule(draw, at.x, at.x + width, y + S(34.0f));
+        y += S(46.0f);
+        ImGui::PushFont(MenuArt::Font(), 18.0f);
+        for (int i = 0; i < view.member_count && y + row_h < bottom; ++i, y += row_h) {
+            const bbcoop_map_member& m = view.members[i];
+            MemberMark(draw, ImVec2(at.x + S(14.0f), y + S(10.0f)), i, false);
+            const std::string where = m.map == 0 ? T("Away", "Не в мире") : AreaName(m.map);
+            draw->AddText(ImVec2(at.x + S(38.0f), y + S(1.0f)), Plain(), Fit(m.name, width * 0.45f).c_str());
+            const std::string shown = Fit(where.c_str(), width * 0.5f);
+            const float wx = at.x + width - ImGui::CalcTextSize(shown.c_str()).x;
+            draw->AddText(ImVec2(wx, y + S(1.0f)), m.map == view.map ? Gray(0.95f) : Dim(), shown.c_str());
+        }
+        ImGui::PopFont();
+    }
+}
+
+/// The question before a trip: the lamp's name, Yes and No in the game's rows.
+void DrawQuestion(ImDrawList* draw, ImVec2 display, bool yes_pressed, bool no_pressed) {
+    const bbcoop_map_lamp* lamp = nullptr;
+    for (int i = 0; i < view.lamp_count; ++i) {
+        if (view.lamps[i].warp_point == state.asking) {
+            lamp = &view.lamps[i];
+        }
+    }
+    if (lamp == nullptr) {
+        state.asking = 0;
+        return;
+    }
+    const ImVec2 size(S(640.0f), S(230.0f));
+    const ImVec2 p0((display.x - size.x) * 0.5f, (display.y - size.y) * 0.5f), p1(p0.x + size.x, p0.y + size.y);
+    draw->AddRectFilled(ImVec2(0, 0), display, Party::Rgba(0, 0, 0, 0.45f));
+    HunterCard(draw, p0, p1, false);
+    ImGui::PushFont(MenuArt::Font(), 24.0f);
+    const std::string name = BbMapCharts::LampName(lamp->name_id);
+    ImVec2 ts = ImGui::CalcTextSize(name.c_str());
+    draw->AddText(ImVec2((display.x - ts.x) * 0.5f, p0.y + S(44.0f)), Bright(), name.c_str());
+    ImGui::PopFont();
+    ImGui::PushFont(MenuArt::Font(), 20.0f);
+    const char* line = T("Travel to this lamp?", "Отправиться к этой лампе?");
+    ts = ImGui::CalcTextSize(line);
+    draw->AddText(ImVec2((display.x - ts.x) * 0.5f, p0.y + S(80.0f)), Plain(), line);
+    ImGui::PopFont();
+    Divider(draw, p0.x + S(40.0f), p1.x - S(40.0f), p0.y + S(122.0f), 0.7f);
+    ImGui::PushFont(MenuArt::Font(), 22.0f);
+    const float bw = S(200.0f), bh = S(48.0f), gap = S(30.0f);
+    const float bx = (display.x - 2 * bw - gap) * 0.5f, by = p1.y - bh - S(36.0f);
+    bool choose = yes_pressed, cancel = no_pressed;
+    for (int b = 0; b < 2; ++b) {
+        const bool yes = b == 0;
+        const ImVec2 a(bx + float(b) * (bw + gap), by), e(a.x + bw, a.y + bh);
+        MenuArt::Nine(draw, MenuArt::Row, a, e, 12.0f, S(9.0f), 1.0f);
+        ImGui::SetCursorScreenPos(a);
+        ImGui::PushID(b);
+        if (ImGui::InvisibleButton("##ask", ImVec2(bw, bh))) {
+            (yes ? choose : cancel) = true;
+            state.ask_yes = yes;
+        }
+        if (ImGui::IsItemHovered()) {
+            state.ask_yes = yes;
+        }
+        ImGui::PopID();
+        const bool focused = state.ask_yes == yes;
+        if (focused) {
+            draw->AddRect(ImVec2(a.x + S(2.0f), a.y + S(2.0f)), ImVec2(e.x - S(2.0f), e.y - S(2.0f)), Gold(0.9f), 0.0f,
+                          0, S(1.5f));
+        }
+        const char* label = yes ? T("Travel", "В путь") : T("Stay", "Остаться");
+        ts = ImGui::CalcTextSize(label);
+        draw->AddText(ImVec2(a.x + (bw - ts.x) * 0.5f, a.y + (bh - ts.y) * 0.5f), focused ? Bright() : Plain(), label);
+    }
+    ImGui::PopFont();
+    if (choose && state.ask_yes) {
+        if (view.block == BBCOOP_MAP_GO) {
+            bbcoop_map_travel(state.asking);
+            bbcoop_map_menu(0);
+        } else {
+            state.notice = BlockText(view.block);
+            state.notice_until = ImGui::GetTime() + 3.0;
+        }
+        state.asking = 0;
+    } else if (cancel || (choose && !state.ask_yes)) {
+        state.asking = 0;
+    }
+}
+
+/// The game's key guide at the bottom.
+void DrawKeys(ImDrawList* draw, float mid, float y) {
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    const char* text = T("L1 / R1  Area     Right stick, drag  Move     L2 / R2, wheel  Zoom     Square  You",
+                         "L1 / R1  Область     Правый стик, мышь  Сдвиг     L2 / R2, колесо  Масштаб     Квадрат  Вы");
+    const char* whole = T("Triangle  Whole map", "Треугольник  Вся карта");
+    const char* choose = T("Travel", "В путь");
+    const char* back = T("Close", "Закрыть");
+    const float icon = S(26.0f), space = S(28.0f);
+    float total = ImGui::CalcTextSize(text).x + space + ImGui::CalcTextSize(whole).x + space;
+    const bool art = MenuArt::Has(MenuArt::ButtonCross) && MenuArt::Has(MenuArt::ButtonCircle);
+    if (art) {
+        total += 2 * (icon + S(6.0f)) + ImGui::CalcTextSize(choose).x + ImGui::CalcTextSize(back).x + space;
+    }
+    float x = mid - total * 0.5f;
+    draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), text);
+    x += ImGui::CalcTextSize(text).x + space;
+    draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), whole);
+    x += ImGui::CalcTextSize(whole).x + space;
+    if (art) {
+        for (const auto& [piece, label] : {std::pair{MenuArt::ButtonCross, choose}, {MenuArt::ButtonCircle, back}}) {
+            MenuArt::Draw(draw, piece, ImVec2(x, y), ImVec2(x + icon, y + icon));
+            x += icon + S(6.0f);
+            draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.85f), label);
+            x += ImGui::CalcTextSize(label).x + space;
+        }
+    }
+    ImGui::PopFont();
+}
+
+bool Pressed(std::initializer_list<ImGuiKey> keys, bool repeat = false) {
+    for (const ImGuiKey key : keys) {
+        if (ImGui::IsKeyPressed(key, repeat)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Moving and zooming the picture: the right stick, the arrow-free keys, the mouse.
+void MoveView(const Frame& frame) {
+    ImGuiIO& io = ImGui::GetIO();
+    const float dt = std::min(io.DeltaTime, 0.1f);
+    const auto analog = [](ImGuiKey key) { return ImGui::GetKeyData(key)->AnalogValue; };
+    float sx = analog(ImGuiKey_GamepadRStickRight) - analog(ImGuiKey_GamepadRStickLeft);
+    float sy = analog(ImGuiKey_GamepadRStickDown) - analog(ImGuiKey_GamepadRStickUp);
+    sx += (ImGui::IsKeyDown(ImGuiKey_D) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_A) ? 1.0f : 0.0f);
+    sy += (ImGui::IsKeyDown(ImGuiKey_S) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_W) ? 1.0f : 0.0f);
+    const float speed = S(700.0f) / state.zoom; // metres a second at full tilt
+    state.cx += sx * speed * dt;
+    state.cz -= sy * speed * dt;
+    const bool inside = io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x && io.MousePos.y >= frame.p0.y &&
+                        io.MousePos.y < frame.p1.y;
+    if (inside && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) {
+        state.cx -= io.MouseDelta.x / state.zoom;
+        state.cz += io.MouseDelta.y / state.zoom;
+    }
+    float zoom = 1.0f;
+    if (ImGui::IsKeyDown(ImGuiKey_GamepadR2) || ImGui::IsKeyDown(ImGuiKey_Equal)) {
+        zoom *= std::pow(2.0f, dt * 1.5f);
+    }
+    if (ImGui::IsKeyDown(ImGuiKey_GamepadL2) || ImGui::IsKeyDown(ImGuiKey_Minus)) {
+        zoom /= std::pow(2.0f, dt * 1.5f);
+    }
+    if (inside && io.MouseWheel != 0.0f) {
+        zoom *= std::pow(1.25f, io.MouseWheel);
+    }
+    state.zoom = std::clamp(state.zoom * zoom, S(0.05f), S(12.0f));
+    // The middle stays over the world's pictures.
+    if (!charts.empty()) {
+        float x0 = FLT_MAX, x1 = -FLT_MAX, z0 = FLT_MAX, z1 = -FLT_MAX;
+        for (const auto& [map, c] : charts) {
+            const BbMapArt::Chart& chart = *c.chart;
+            x0 = std::min(x0, chart.x0), x1 = std::max(x1, chart.x0 + float(chart.width) / chart.ppm);
+            z0 = std::min(z0, chart.z1 - float(chart.height) / chart.ppm), z1 = std::max(z1, chart.z1);
+        }
+        state.cx = std::clamp(state.cx, x0, x1);
+        state.cz = std::clamp(state.cz, z0, z1);
+    }
+}
+
+void Screen() {
+    ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 display = io.DisplaySize;
+    const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
+    const auto areas = Areas();
+    if (state.fresh) {
+        state = {};
+        state.fresh = false;
+        state.opened = ImGui::GetTime();
+    }
+    // The player's own area once the game thread has read where it stands (a moment after opening).
+    if (!state.placed && (view.has_me || ImGui::GetTime() - state.opened > 1.5)) {
+        state.placed = true;
+        state.shown = view.map != 0 ? view.map : (areas.empty() ? 0 : areas.front());
+        state.zoom = 0;
+    }
+    // Keys first (the question takes them while it is up).
+    const bool up = Pressed({ImGuiKey_UpArrow, ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp}, true);
+    const bool down = Pressed({ImGuiKey_DownArrow, ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown}, true);
+    const bool left = Pressed({ImGuiKey_LeftArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft}, true);
+    const bool right = Pressed({ImGuiKey_RightArrow, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight}, true);
+    const bool cross = Pressed({ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space, ImGuiKey_GamepadFaceDown});
+    const bool asked_before = state.asking != 0; // a question opened this frame takes no keys yet
+    const bool circle = Pressed({ImGuiKey_Escape, ImGuiKey_GamepadFaceRight});
+    if (state.asking == 0) {
+        if (circle || Pressed({ImGuiKey_M})) {
+            bbcoop_map_menu(0);
+            return;
+        }
+        if (!areas.empty() && Pressed({ImGuiKey_GamepadL1, ImGuiKey_GamepadR1, ImGuiKey_Q, ImGuiKey_E, ImGuiKey_PageUp,
+                                       ImGuiKey_PageDown})) {
+            const bool next = Pressed({ImGuiKey_GamepadR1, ImGuiKey_E, ImGuiKey_PageDown});
+            auto it = std::find(areas.begin(), areas.end(), state.shown);
+            const int at = it == areas.end() ? 0 : int(it - areas.begin());
+            const int n = int(areas.size());
+            state.shown = areas[size_t(((at + (next ? 1 : -1)) % n + n) % n)];
+            state.zoom = 0;
+            state.focus = 0;
+        }
+    }
+    const auto lamps = LitLamps();
+    if (!lamps.empty()) {
+        state.focus = std::clamp(state.focus, 0, int(lamps.size()) - 1);
+    }
+
+    ImDrawList* back = ImGui::GetBackgroundDrawList();
+    back->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 175));
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(display, ImGuiCond_Always);
+    const bool wall = MenuArt::Has(MenuArt::Wall);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, wall ? ImVec4(0, 0, 0, 0) : ImVec4(0.035f, 0.032f, 0.028f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##bbport_map", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    if (wall) {
+        MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 1.0f);
+        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.75f);
+    }
+    const ImVec2 size(std::min(S(1760.0f), display.x - S(60.0f)), display.y - S(40.0f));
+    const ImVec2 win((display.x - size.x) * 0.5f, (display.y - size.y) * 0.5f);
+    Divider(draw, win.x + S(24.0f), win.x + size.x - S(24.0f), win.y + S(14.0f));
+    Divider(draw, win.x + S(24.0f), win.x + size.x - S(24.0f), win.y + size.y - S(14.0f));
+
+    // The area's name, with L1 and R1 either side when there are others.
+    ImGui::PushFont(MenuArt::Font(), 40.0f);
+    const std::string title = state.shown != 0 ? AreaName(state.shown) : std::string(T("Map", "Карта"));
+    ImVec2 ts = ImGui::CalcTextSize(title.c_str());
+    const float mid = win.x + size.x * 0.5f;
+    draw->AddText(ImVec2(mid - ts.x * 0.5f, win.y + S(30.0f)), Bright(), title.c_str());
+    ImGui::PopFont();
+    if (areas.size() > 1) {
+        ImGui::PushFont(MenuArt::Font(), 22.0f);
+        draw->AddText(ImVec2(mid - ts.x * 0.5f - S(70.0f), win.y + S(42.0f)), Gold(0.8f), "L1");
+        draw->AddText(ImVec2(mid + ts.x * 0.5f + S(44.0f), win.y + S(42.0f)), Gold(0.8f), "R1");
+        ImGui::PopFont();
+    }
+    const float ornament = HeaderOrnament(draw, mid, win.y + S(78.0f), 0.9f);
+
+    const float list_w = S(430.0f);
+    const float top = win.y + S(84.0f) + ornament + S(20.0f), bottom = win.y + size.y - S(80.0f);
+    const Frame frame{ImVec2(win.x + S(40.0f), top), ImVec2(win.x + size.x - list_w - S(70.0f), bottom)};
+    if (const ChartTexture* shown = Shown(); state.zoom <= 0.0f && shown != nullptr) {
+        state.zoom = FitZoom(frame, *shown->chart);
+        CentreOnChart(*shown->chart);
+        if (view.has_me && view.map == state.shown) {
+            state.zoom = std::max(state.zoom, S(3.0f)); // the streets round the player
+            state.cx = view.x;
+            state.cz = view.z;
+        }
+    }
+    if (state.asking == 0) {
+        if (state.zoom > 0.0f) {
+            MoveView(frame);
+        }
+        if (Pressed({ImGuiKey_GamepadFaceLeft, ImGuiKey_C}) && view.has_me && view.map == state.shown) {
+            state.cx = view.x;
+            state.cz = view.z;
+        }
+        // Kaniel 2026-10-17 ("one big map"): Triangle shows the whole world drawn so far.
+        if (Pressed({ImGuiKey_GamepadFaceUp, ImGuiKey_Tab}) && !charts.empty()) {
+            float x0 = FLT_MAX, x1 = -FLT_MAX, z0 = FLT_MAX, z1 = -FLT_MAX;
+            for (const auto& [map, c] : charts) {
+                const BbMapArt::Chart& chart = *c.chart;
+                x0 = std::min(x0, chart.x0), x1 = std::max(x1, chart.x0 + float(chart.width) / chart.ppm);
+                z0 = std::min(z0, chart.z1 - float(chart.height) / chart.ppm), z1 = std::max(z1, chart.z1);
+            }
+            state.zoom = std::min((frame.p1.x - frame.p0.x) / std::max(1.0f, x1 - x0),
+                                  (frame.p1.y - frame.p0.y) / std::max(1.0f, z1 - z0)) * 0.95f;
+            state.zoom = std::max(state.zoom, S(0.05f));
+            state.cx = (x0 + x1) * 0.5f;
+            state.cz = (z0 + z1) * 0.5f;
+        }
+        if (!lamps.empty() && (up || down || left || right)) {
+            state.focus = std::clamp(state.focus + ((down || right) ? 1 : -1), 0, int(lamps.size()) - 1);
+            state.cx = lamps[size_t(state.focus)]->x; // the picture follows the focused lamp
+            state.cz = lamps[size_t(state.focus)]->z;
+        }
+        if (cross && !lamps.empty()) {
+            state.asking = lamps[size_t(state.focus)]->warp_point;
+            state.ask_yes = true;
+        }
+    }
+    DrawPicture(draw, frame, lamps, pulse);
+    DrawList(draw, ImVec2(frame.p1.x + S(46.0f), top), list_w, bottom, lamps);
+    if (!state.notice.empty() && ImGui::GetTime() < state.notice_until) {
+        ImGui::PushFont(MenuArt::Font(), 20.0f);
+        ts = ImGui::CalcTextSize(state.notice.c_str());
+        draw->AddText(ImVec2(mid - ts.x * 0.5f, bottom + S(8.0f)), IM_COL32(220, 150, 110, 255), state.notice.c_str());
+        ImGui::PopFont();
+    } else {
+        DrawKeys(draw, mid, bottom + S(14.0f));
+    }
+    if (state.asking != 0) {
+        if (asked_before && (left || right || up || down)) {
+            state.ask_yes = !state.ask_yes;
+        }
+        DrawQuestion(ImGui::GetForegroundDrawList(), display, asked_before && cross, asked_before && circle);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
+} // namespace Map
+
+/// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1
+/// (map: M, the map screen; circle, square, triangle), consumed when the file appears (it is removed), one
+/// key press per frame.
 bool scripted_busy = false; // keys of the file still to press
 void ScriptedKeys() {
     static const char* path = std::getenv("BB_MENU_KEYS_FILE");
@@ -3769,11 +4835,17 @@ void ScriptedKeys() {
         SetOpen(!menu_open);
         return;
     }
+    if (token == "map") {
+        bbcoop_map_menu(Map::open ? 0 : 2);
+        return;
+    }
     held = token == "up" ? ImGuiKey_GamepadDpadUp : token == "down" ? ImGuiKey_GamepadDpadDown
          : token == "left" ? ImGuiKey_GamepadDpadLeft : token == "right" ? ImGuiKey_GamepadDpadRight
          : token == "enter" ? ImGuiKey_GamepadFaceDown : token == "l1" ? ImGuiKey_GamepadL1
          : token == "r1" ? ImGuiKey_GamepadR1 : token == "kdown" ? ImGuiKey_DownArrow
-         : token == "kup" ? ImGuiKey_UpArrow : ImGuiKey_None;
+         : token == "kup" ? ImGuiKey_UpArrow : token == "circle" ? ImGuiKey_GamepadFaceRight
+         : token == "square" ? ImGuiKey_GamepadFaceLeft
+         : token == "triangle" ? ImGuiKey_GamepadFaceUp : ImGuiKey_None;
     if (token == "back") {
         SetOpen(false);
         return;
@@ -3996,7 +5068,7 @@ bool HandleEvent(const SDL_Event& event) {
     ImGuiIO& io = ImGui::GetIO();
     const bool menu_or_quit = menu_open || quit_open;
     // The team screen takes the input too (it has no Circle / Escape: its buttons decide).
-    const bool is_open = menu_or_quit || Team::open;
+    const bool is_open = menu_or_quit || Team::open || Map::open;
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
@@ -4008,6 +5080,12 @@ bool HandleEvent(const SDL_Event& event) {
         if (down && !event.key.repeat && (insert || (menu_or_quit && event.key.key == SDLK_ESCAPE))) {
             quit_open = false;
             SetOpen(insert && !menu_or_quit);
+            return true;
+        }
+        // Kaniel 2026-10-17: M opens the map in the world (the screen closes itself on M).
+        if (down && !event.key.repeat && event.key.key == SDLK_M && !is_open && !prompt_active &&
+            Map::view.in_world) {
+            bbcoop_map_menu(2);
             return true;
         }
         if (!is_open) {
@@ -4106,12 +5184,24 @@ bool Visible() {
     Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
     Joining::open = initialized && bbcoop_team_load_view(&Joining::load) != 0;
     loading_cover = Joining::open;
+    Map::was_open = Map::open;
+    Map::open = initialized && bbcoop_map_screen() != 0;
+    if (initialized && (Map::open || Map::was_open || ++Map::shut_reads % 120 == 0)) {
+        bbcoop_map_view(&Map::view, Map::open ? 1 : 0); // shut: which map (its picture drawn ahead)
+        if (!Map::open && Map::view.in_world && Map::view.map != 0) {
+            BbMapCharts::Get(Map::view.map);
+        }
+    }
+    if (Map::open && !Map::was_open) {
+        SyncMousePos();
+        Map::state.fresh = true;
+    }
     if (Team::open && !was_team) {
         SyncMousePos();
         Team::focus.fresh = true;
     }
     return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party || compass ||
-                           Team::open || Joining::open || ScriptedKeysWaiting());
+                           Team::open || Joining::open || Map::open || ScriptedKeysWaiting());
 }
 
 bool MenuOpen() {
@@ -4120,7 +5210,7 @@ bool MenuOpen() {
 
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
-    return menu_open || quit_open || prompt_active || Team::open || Joining::open;
+    return menu_open || quit_open || prompt_active || Team::open || Joining::open || Map::open;
 }
 
 void Tick() {
@@ -4227,9 +5317,11 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     if (Party::shown || Joining::open || menu_open) {
         Party::LoadGauge(); // before NewFrame, which hands new textures to the backend
     }
-    if (Team::open || Joining::open || menu_open || quit_open) {
+    if (Team::open || Joining::open || Map::open || menu_open || quit_open) {
         MenuArt::Load(); // the same: the game's menu art and font
     }
+    MenuArt::LoadLanguage(); // the same: Japanese, Korean or Chinese glyphs once they are needed
+    Map::Refresh(); // the same: the area's picture, the members' portraits
     if (Compass::shown) {
         Compass::RefreshPortraits(); // the same: the markers' portraits
     }
@@ -4246,7 +5338,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
                        float(game.extent.height)};
         Party::Draw();
     }
-    if (Compass::shown && !menu_open && !quit_open && !Team::open && !Joining::open) {
+    if (Compass::shown && !menu_open && !quit_open && !Team::open && !Joining::open && !Map::open) {
         Compass::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                          float(game.extent.height)};
         Compass::Draw();
@@ -4256,6 +5348,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     }
     if (Joining::open && !menu_open) {
         Joining::Screen();
+    }
+    if (Map::open && !menu_open && !Team::open && !Joining::open) {
+        Map::Screen();
     }
     if (menu_open) {
         Menu();

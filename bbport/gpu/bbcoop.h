@@ -85,6 +85,55 @@ typedef struct bbcoop_compass {
     bbcoop_compass_marker markers[BBCOOP_COMPASS_MARKERS];
 } bbcoop_compass;
 int bbcoop_compass_view(bbcoop_compass *compass);
+/* Kaniel 2026-10-17: the map screen (an Elden Ring style map). What it shows as the game thread
+ * read it last while `open` (the screen is up; the game is read only then): this player's map and
+ * where it stands (the game's metres on that map: x east, y up, z north; the camera's heading as
+ * the compass's), the party members (on this map: where they stand), every lamp (`lit` for this
+ * character; names by the game's text ids: menu FMG 30, the area's item FMG 19) and what would
+ * stop a trip now (BBCOOP_MAP_*: GO when nothing would). 0 before the first reading. */
+enum { BBCOOP_MAP_LAMPS = 80, BBCOOP_MAP_MEMBERS = 4 };
+enum { BBCOOP_MAP_GO, BBCOOP_MAP_NOT_LIT, BBCOOP_MAP_NOT_IN_WORLD, BBCOOP_MAP_DOWN, BBCOOP_MAP_BOSS,
+       BBCOOP_MAP_TRAVELLING };
+typedef struct bbcoop_map_lamp {
+    int32_t warp_point;
+    uint32_t map;
+    float x, y, z;
+    int lit;
+    int32_t name_id;
+} bbcoop_map_lamp;
+typedef struct bbcoop_map_member {
+    char name[20];  /* the panel's name */
+    char board[40]; /* bbcoop_member_portrait's key */
+    uint32_t map;   /* 0 when not known */
+    int has_at;
+    float x, y, z;
+    int vital; /* BBCOOP_VITAL_* */
+} bbcoop_map_member;
+typedef struct bbcoop_map {
+    int in_world;
+    uint32_t map;
+    int32_t area_name_id;
+    int has_me;
+    float x, y, z;
+    int has_heading;
+    float heading;
+    int block; /* BBCOOP_MAP_*, for a lit lamp */
+    int member_count;
+    bbcoop_map_member members[BBCOOP_MAP_MEMBERS];
+    int lamp_count;
+    bbcoop_map_lamp lamps[BBCOOP_MAP_LAMPS];
+} bbcoop_map;
+int bbcoop_map_view(bbcoop_map *map, int open);
+/* A trip from the map to the lamp (a warp point of the view's lamps), started by the game thread
+ * if nothing stops it. */
+void bbcoop_map_travel(int32_t warp_point);
+/* An area's name id (item FMG 19) by its packed map. */
+int32_t bbcoop_map_area_name_id(uint32_t map);
+/* The map screen opens (1 from the game's System menu, 2 from the port's Insert menu or its key)
+ * and closes (0); opened from the System menu, its page closes with it (bbcoop_team_menu_back
+ * presses Circle a moment later). bbcoop_map_screen: 1 while it is open. */
+void bbcoop_map_menu(int open);
+int bbcoop_map_screen(void);
 /* A member's portrait by its board name: round, BBCOOP_PORTRAIT_SIDE square RGBA into `rgba`
  * (`size` bytes). Its id (changes with the picture, 0 none) into `id`; 1 when it has one. */
 enum { BBCOOP_PORTRAIT_SIDE = 128 };
@@ -134,6 +183,12 @@ typedef struct bbcoop_lobby_world {
     char name[64]; /* "Kaniel's world" */
     char when[32]; /* when it was last played, local time ("16 Oct 19:12"), "" when not known */
     int lamps;     /* its lamps lit (how far it is) */
+    /* Kaniel 2026-10-17 (the list as the game's Load Game): when it was made ("14 Oct 2026", ""
+     * when not known), the characters that played in it ("Kaniel, Ada"), and 1 while another team
+     * plays it (it cannot be picked then). */
+    char created[32];
+    char characters[160];
+    int busy;
 } bbcoop_lobby_world;
 typedef struct bbcoop_lobby {
     int signed_in; /* the server answered */
@@ -148,7 +203,8 @@ typedef struct bbcoop_lobby {
      * a save playing, and playing in the team's world. */
     int menu, playing, in_hunt;
     /* Kaniel 2026-10-17: the server's worlds, the last played first, and the one the team's next
-     * Start plays: an index into them, -1 a new world. */
+     * Start plays (before a team: the one its team will take): an index into them, -1 a new
+     * world. */
     int world_count, world;
     bbcoop_lobby_world worlds[BBCOOP_LOBBY_WORLDS];
 } bbcoop_lobby;
@@ -170,6 +226,9 @@ int bbcoop_team_screen(void);
  * into its team's world where it stands (`team`: an invitation accepted first, or "" in a team). */
 void bbcoop_team_menu(int open);
 int bbcoop_team_menu_back(void);
+/* Kaniel 2026-10-17: the rig's team-worlds verb asks the team screen to open its world list: 1
+ * once. */
+int bbcoop_team_world_list_asked(void);
 void bbcoop_team_join_hunt(const char *team);
 /* Kaniel 2026-10-14: the team loading screen (League of Legends): each hunter's stage and bar,
  * up from the team's Start until every member is in the team's session. 0 when it is not up. */

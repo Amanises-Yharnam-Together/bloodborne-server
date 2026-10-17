@@ -342,9 +342,14 @@ WINDOW_MODES = [('windowed', ('Windowed', 'В окне')),
 PRESENT_MODES = [('Mailbox', ('Mailbox (low latency, no tearing)', 'Mailbox (без разрывов)')),
                  ('Fifo', ('FIFO (VSync)',)), ('FifoRelaxed', ('FIFO Relaxed',)),
                  ('Immediate', ('Immediate (tearing)', 'Immediate (с разрывами)'))]
-LANGUAGES = [('1', ('English', 'Английский')), ('8', ('Russian', 'Русский')), ('0', ('Japanese', 'Японский')),
-             ('2', ('French', 'Французский')), ('3', ('Spanish', 'Испанский')), ('4', ('German', 'Немецкий')),
-             ('5', ('Italian', 'Итальянский'))]
+# The game's language (BB_LANGUAGE, the PS4 system language id): every one the game has text in,
+# in its own name. The port's menus follow it (scripts/menu_texts.py).
+LANGUAGES = [('1', ('English',)), ('18', ('English (UK)',)), ('8', ('Русский',)), ('0', ('日本語',)),
+             ('2', ('Français',)), ('3', ('Español',)), ('20', ('Español (Latinoamérica)',)),
+             ('4', ('Deutsch',)), ('5', ('Italiano',)), ('6', ('Nederlands',)), ('7', ('Português',)),
+             ('17', ('Português (Brasil)',)), ('9', ('한국어',)), ('10', ('繁體中文',)), ('11', ('简体中文',)),
+             ('12', ('Suomi',)), ('13', ('Svenska',)), ('14', ('Dansk',)), ('15', ('Norsk',)),
+             ('16', ('Polski',)), ('19', ('Türkçe',))]
 DRAW_PIPE = [('', ('Auto (8+ threads)', 'Авто (8+ потоков)')), ('1', ('On', 'Включён')),
              ('0', ('Off (more stable)', 'Выключен (стабильнее)'))]
 READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('0', ('Off', 'Выключены')),

@@ -30,7 +30,7 @@ FE = 'dvdroot_ps4/menu/fe.gfx'
 LAYER = 'party HUD'
 # Part of the generated file's name: a patcher that patches differently makes its file anew (the old
 # one is not reused). Bump it with every change to what patch_fe writes.
-PATCH_VERSION = b'party-hud 9'
+PATCH_VERSION = b'party-hud 10'
 DRAW_BANNER = 'Fe_fla._TextEffect_Draw_195'
 DRAW_FIELD = 'StaticText_522007'
 DOWNED_FIELD = 'CoopDownedText'
@@ -67,9 +67,9 @@ NAME_TOP_FROM_BAR, BAR_BOTTOM_FROM_BAR = -34.5, 4.5
 # the diagonal, over the ring.
 PARTY_FACES = ('CoopPartyFace0', 'CoopPartyFace1', 'CoopPartyFace2')
 PARTY_BADGES = ('CoopPartyBadge0', 'CoopPartyBadge1', 'CoopPartyBadge2')
-PORTRAIT_SIZE, PORTRAIT_PIXELS = 36, 128
-FRAME_SIZE, FRAME_PIXELS = 52, 128
-BADGE_SIZE, BADGE_DISTANCE = 16, 25
+PORTRAIT_SIZE, PORTRAIT_PIXELS = 42, 128
+FRAME_SIZE, FRAME_PIXELS = 61, 128
+BADGE_SIZE, BADGE_DISTANCE = 18, 29
 FIRST_FACE_ID = 50100  # after the icons' ids
 
 

@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport co-op: an area's map picture as the map screen draws it (shim/bbport_map_art.h), to a PNG.
+//   map-art-tool <dvdroot_ps4> <packed maps, hex: 18010000[,18000000...]> <out.png> [pixels a metre] [threads]
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+#include "../shim/bbport_map_art.h"
+#include "miniz.h"
+
+int main(int argc, char** argv) {
+    if (argc < 4) {
+        std::fprintf(stderr, "map-art-tool <dvdroot_ps4> <packed map hex> <out.png> [ppm]\n");
+        return 2;
+    }
+    const std::filesystem::path root = argv[1];
+    // One map, or several in one picture: 18000000,18010000.
+    std::vector<std::uint32_t> maps;
+    for (const char* at = argv[2]; *at;) {
+        char* end = nullptr;
+        maps.push_back(std::uint32_t(std::strtoul(at, &end, 16)));
+        at = *end == ',' ? end + 1 : end;
+    }
+    const std::uint32_t packed = maps.front();
+    const float ppm = argc > 4 ? std::strtof(argv[4], nullptr) : 3.0f;
+    const auto start = std::chrono::steady_clock::now();
+    const auto chart = BbMapArt::ChartAreas(maps, [&](const std::string& relative) {
+        std::ifstream file(root / relative, std::ios::binary);
+        return std::vector<std::uint8_t>{std::istreambuf_iterator<char>(file), {}};
+    }, ppm, 3072, argc > 5 ? std::atoi(argv[5]) : 4,
+        [&](const std::string& relative, std::uint64_t offset, std::uint64_t size) {
+            std::ifstream file(root / relative, std::ios::binary);
+            std::vector<std::uint8_t> bytes(size);
+            file.seekg(std::streamoff(offset));
+            file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(size));
+            bytes.resize(std::size_t(file.gcount()));
+            return bytes;
+        });
+    if (!chart) {
+        std::fprintf(stderr, "no map for %08x\n", packed);
+        return 1;
+    }
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    size_t size = 0;
+    void* png = tdefl_write_image_to_png_file_in_memory(chart->rgba.data(), chart->width, chart->height, 4, &size);
+    std::ofstream(argv[3], std::ios::binary).write(static_cast<const char*>(png), std::streamsize(size));
+    mz_free(png);
+    std::printf("%s: %dx%d at %.2f px/m, x0 %.2f z1 %.2f, drawn in %.1f s\n", argv[3], chart->width, chart->height,
+                chart->ppm, chart->x0, chart->z1, seconds);
+    return 0;
+}

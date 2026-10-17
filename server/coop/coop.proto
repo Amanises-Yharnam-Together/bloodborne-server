@@ -18,8 +18,9 @@ option optimize_for = LITE_RUNTIME;
 enum Protocol {
     PROTOCOL_NONE = 0;
     // 2: phase 4's enemy owners; 3: phase 5's teams; 4: phase 6's team sessions; 5: a team's
-    // worlds (the leader picks one); 6: the server's worlds, apart from its teams
-    PROTOCOL_CURRENT = 6;
+    // worlds (the leader picks one); 6: the server's worlds, apart from its teams; 7: a world's
+    // name, birth and hunters, and the pick before a team
+    PROTOCOL_CURRENT = 7;
 }
 
 // game -> server: the first message of the stream, and again whenever the stream starts over (the
@@ -438,7 +439,8 @@ message TeamRequest {
         UNREADY = 8;
         START = 9; // the leader: every ready member's game loads its save
         // Kaniel 2026-10-16: the leader picks the world the next Start plays: `world`, one of
-        // the server's worlds, or empty for a new one.
+        // the server's worlds, or empty for a new one. A player in no team picks the world of
+        // the team it makes next.
         WORLD = 10;
         // Kaniel 2026-10-17: the leader forgets one of the server's worlds (`world`): off the
         // list, its folder kept aside on the server.
@@ -485,6 +487,14 @@ message TeamWorldInfo {
     int64 played_ms = 3;  // the last Start that played it (the server's clock, ms since 1970)
     uint32 flags_on = 4;  // its world flags on, as its host last reported
     uint32 lamps = 5;     // its lamps lit, as its host last reported (how far it is)
+    // Kaniel 2026-10-17 (the world list, as the game's Load Game): its name (empty: "<host
+    // character>'s world"), when it was made (ms since 1970; for a world from before, the earliest
+    // time known of it), the characters that played in it, and (server -> game, never stored) the
+    // team that plays it now.
+    string name = 6;
+    int64 created_ms = 7;
+    repeated string characters = 8;
+    string played_by = 9;
 }
 
 message Team {
@@ -513,6 +523,9 @@ message LobbyState {
     string notice = 4;                // why the player's last request was refused
     // Kaniel 2026-10-17: every world on the server, the last played first.
     repeated TeamWorldInfo worlds = 5;
+    // Kaniel 2026-10-17: the world a player not in a team picked (its team takes it when it makes
+    // one; empty: a new one).
+    string world = 6;
 }
 
 // server -> game: load your save and play the team's world. To every ready member at Start, and
