@@ -533,6 +533,13 @@ extern "C" void bbcoop_map_menu(int open) {
     }
 }
 
+extern "C" void bbcoop_map_from_pad(void) {
+    Core::Bloodborne::MapScreenView view;
+    if (map_menu.load() == 0 && Core::Bloodborne::ReadMapScreen(view, false) && view.in_world) {
+        bbcoop_map_menu(2);
+    }
+}
+
 extern "C" int bbcoop_map_screen(void) {
     return map_menu.load() != 0 ? 1 : 0;
 }

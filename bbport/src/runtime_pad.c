@@ -232,6 +232,28 @@ static void touch_click(PadData *d, int right) {
     d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=0};
 }
 
+/* Kaniel 2026-10-18: holding the pad's touchpad (Back / View on pads without one) opens the port's
+ * map, as Elden Ring's map button; a short press is still the game's touchpad (its gestures), sent
+ * for a moment when it is let go, on the side it was pressed. */
+#define MAP_HOLD_US 450000u
+#define MAP_TAP_US 120000u
+typedef struct { uint64_t since; int fired, side; uint64_t tap_until; int tap_side; } MapHold;
+/* `down`: the pad's touchpad now (`side` 1: its right half). Returns 1 once a hold is long enough;
+ * `*click`: -1 when the game sees no touchpad, else the side its press is on. */
+static int map_hold_step(MapHold *h, int down, int side, uint64_t now, int *click) {
+    int opened=0;
+    if (down) {
+        if (!h->since) { h->since=now ? now : 1; h->fired=0; h->side=side; }
+        if (!h->fired && now-h->since>=MAP_HOLD_US) { h->fired=1; opened=1; }
+    } else if (h->since) {
+        if (!h->fired) { h->tap_until=now+MAP_TAP_US; h->tap_side=h->side; }
+        h->since=0;
+    }
+    *click=!down && now<h->tap_until ? h->tap_side : -1;
+    return opened;
+}
+static MapHold map_hold;
+
 /* BB_GAMEPAD (the launcher's controller choice): its SDL GUID, or part of its name. Issue #15:
  * wheels and other controllers connected for good came first. */
 static const char *preferred_gamepad(void) {
@@ -758,9 +780,15 @@ static void sample_host(PadData *d) {
                 }
             }
         }
-        // Back/Select on pads without a touch surface is a left-side click.
-        if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
-        if (touch_right) touch_click(d,1);
+        // The touchpad (Back/Select on pads without a touch surface) held opens the map; a short
+        // press is the game's, on the side it was pressed.
+        const int touch_down=(d->buttons & BTN_TOUCHPAD) || touch_right;
+        const int side=touch_right || (d->touch_count && d->touches[0].x>959);
+        int click=-1;
+        if (map_hold_step(&map_hold,touch_down,side,d->timestamp,&click)) bbcoop_map_from_pad();
+        d->buttons&=~(uint32_t)BTN_TOUCHPAD;
+        d->touch_count=0;
+        if (click>=0) touch_click(d,click);
     }
     read_mouse(k);
     if (k) apply_keyboard(d,k);

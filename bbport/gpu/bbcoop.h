@@ -134,6 +134,9 @@ int32_t bbcoop_map_area_name_id(uint32_t map);
  * presses Circle a moment later). bbcoop_map_screen: 1 while it is open. */
 void bbcoop_map_menu(int open);
 int bbcoop_map_screen(void);
+/* Kaniel 2026-10-18: the pad's touchpad held: the map opens (as from the Insert menu) while the
+ * player is in the world. */
+void bbcoop_map_from_pad(void);
 /* A member's portrait by its board name: round, BBCOOP_PORTRAIT_SIDE square RGBA into `rgba`
  * (`size` bytes). Its id (changes with the picture, 0 none) into `id`; 1 when it has one. */
 enum { BBCOOP_PORTRAIT_SIDE = 128 };

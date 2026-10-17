@@ -323,10 +323,10 @@
  "Travel to this lamp?": "この灯りへ移動しますか？",
  "Travel": "移動する",
  "Stay": "とどまる",
- "L1 / R1  Area     Right stick, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  エリア     右スティック、ドラッグ  移動     L2 / R2、ホイール  拡大縮小     □  自分",
  "The map: where you and your team are, and travel to a lit lamp": "マップ：あなたと仲間の居場所と、灯った灯りへの移動",
  "Map screen": "マップ画面",
  "The map is open over the game: Circle comes back here": "マップはゲームの上に開いています：○で戻ります",
  "Triangle  Whole map": "△  マップ全体",
- "%d of %d want to skip": "%d/%d人がスキップ希望"
+ "%d of %d want to skip": "%d/%d人がスキップ希望",
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  エリア     スティック、ドラッグ  移動     L2 / R2、ホイール  拡大縮小     □  自分"
 }
