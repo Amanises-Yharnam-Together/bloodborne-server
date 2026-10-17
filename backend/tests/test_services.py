@@ -73,6 +73,44 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(len(set(a1)), 2)
         self.assertFalse(set(a1) & set(b))
 
+    # A standard chalice's ritual asks for the one dungeon the server keeps for that chalice
+    # (ChannelSearch, FixedOrGeneral 2, GetCount 1) and gives up without one: "Failed to
+    # contribute ritual materials", then back to the title (rig 2026-10-17).
+    PTHUMERU_SEARCH = {"FixedOrGeneralList": [{"FixedOrGeneral": 2}], "FormDataVersion": 0,
+                       "GetCount": 1, "HolyGrailTypeId": 0, "MessageId": "ChannelSearchRequest",
+                       "RitualLevel": 1, "SessionId": "s", "Status": 1, "SubFeatureFlag": 256,
+                       "UnlockedFlagList": [{"UnlockedFlag": 0}, {"UnlockedFlag": 1},
+                                            {"UnlockedFlag": 0}], "UserId": 1}
+    # The Pthumeru Chalice's dungeon: depth 1 in Pthumeru, no rites, layout 0, seed 0, the
+    # chalice (goods 6109) and its layers; the record the rig's ritual loaded.
+    PTHUMERU_FORM = ("1d0a000000000000000000001d0a0000000017dd" + "ff" * 15 + "23" + "ff" * 7 +
+                     "32" + "ff" * 48 + "00" * 32)
+
+    def test_standard_chalice_search_finds_its_dungeon(self):
+        found = self.post("/channel/search?user_id=1", self.PTHUMERU_SEARCH)["ChannelList"]
+        self.assertEqual(len(found), 1)
+        dungeon = found[0]
+        self.assertEqual(base64.b64decode(dungeon["FormData"]).hex(), self.PTHUMERU_FORM)
+        self.assertEqual((dungeon["RitualLevel"], dungeon["HolyGrailTypeId"],
+                          dungeon["FixedOrGeneral"], dungeon["Status"]), (1, 0, 2, 1))
+
+    def test_standard_chalice_dungeon_details(self):
+        found = self.post("/channel/search?user_id=1", self.PTHUMERU_SEARCH)["ChannelList"]
+        details = self.post("/channel/get_details_info?user_id=1",
+                            {"ChannelIdList": [{"ChannelId": found[0]["ChannelId"]}],
+                             "MessageId": "ChannelGetDetailsInfoRequest", "SessionId": "s",
+                             "UserId": 1})
+        self.assertEqual(details["ChannelList"], found)
+        self.assertEqual(details["LostChannelIdList"], [])
+
+    def test_other_searches_find_no_made_up_dungeon(self):
+        # Chalice Dungeon Search (FixedOrGeneral 1, other players' dungeons) and an unknown
+        # chalice stay empty.
+        other = dict(self.PTHUMERU_SEARCH, FixedOrGeneralList=[{"FixedOrGeneral": 1}])
+        self.assertEqual(self.post("/channel/search?user_id=1", other).get("ChannelList", []), [])
+        unknown = dict(self.PTHUMERU_SEARCH, RitualLevel=9)
+        self.assertEqual(self.post("/channel/search?user_id=1", unknown).get("ChannelList", []), [])
+
 
 class SsInfoTest(unittest.TestCase):
     """ss.info drives how often the game polls for summons; retail's 30-35 s makes every

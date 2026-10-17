@@ -16,6 +16,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -609,6 +611,36 @@ GAME_ABI const char16_t* LookupHook(void* repository, u32 table, u32 category, u
         const char* env = std::getenv("BB_GAME_MENU_TRACE");
         return env && env[0] == '1';
     }();
+    // BB_GAME_MENU_TRACE_IDS=<first>-<last>[,<first>-<last>...]: which of those texts the game
+    // shows (once per 5 s each), the rig's eyes on menus a headless game does not draw.
+    static const std::vector<std::pair<u32, u32>> traced = [] {
+        std::vector<std::pair<u32, u32>> ranges;
+        const char* env = std::getenv("BB_GAME_MENU_TRACE_IDS");
+        for (const char* at = env; at && *at;) {
+            unsigned first = 0;
+            unsigned last = 0;
+            if (std::sscanf(at, "%u-%u", &first, &last) == 2) {
+                ranges.emplace_back(first, last);
+            }
+            at = std::strchr(at, ',');
+            at = at ? at + 1 : nullptr;
+        }
+        return ranges;
+    }();
+    const bool is_traced = std::ranges::any_of(
+        traced, [id](const auto& range) { return range.first <= id && id <= range.second; });
+    if (is_traced) {
+        static std::mutex shown_mutex;
+        static std::map<std::pair<u32, u32>, std::chrono::steady_clock::time_point> shown;
+        const auto now = std::chrono::steady_clock::now();
+        std::scoped_lock lock{shown_mutex};
+        auto& last = shown[{category, id}];
+        if (now - last > std::chrono::seconds{5}) {
+            last = now;
+            std::printf("Game menu: shows %#x/%u\n", category, id);
+            std::fflush(stdout);
+        }
+    }
     if (trace && id >= 110000 && id < 120000) {
         std::printf("Game menu: text %#x/%u%s from %#llx\n", category, id, title_override ? " (our page)" : "",
                     (unsigned long long)(reinterpret_cast<u64>(__builtin_return_address(0)) - image_base));
