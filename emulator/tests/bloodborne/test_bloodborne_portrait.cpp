@@ -56,9 +56,9 @@ PortraitPixels Gradient(u8 seed) {
     for (int y = 0; y < PortraitSide; ++y) {
         for (int x = 0; x < PortraitSide; ++x) {
             u8* pixel = &pixels[(size_t(y) * PortraitSide + x) * 4];
-            pixel[0] = u8(x * 4 + seed);
-            pixel[1] = u8(y * 4);
-            pixel[2] = u8((x + y) * 2 + seed);
+            pixel[0] = u8(x * 256 / PortraitSide + seed);
+            pixel[1] = u8(y * 256 / PortraitSide);
+            pixel[2] = u8((x + y) * 128 / PortraitSide + seed);
             pixel[3] = 0xFF;
         }
     }
@@ -133,6 +133,21 @@ TEST(BloodbornePortrait, TheHeadAndShouldersAreCroppedScaledAndPutOnTheBackdrop)
     }
     EXPECT_NEAR(left, right, 1);
     EXPECT_GT(left, 8);
+}
+
+TEST(BloodbornePortrait, ThePortraitKeepsTheModelsDetail) {
+    // Kaniel 2026-10-17 ("really poor quality"): the party list shows the portrait 36 px tall on
+    // the HUD's 1080p stage, 72 px at 4K; the picture is at least that on a 4K screen and keeps
+    // most of the model's head and shoulders (StatusModelCropSide pixels across).
+    EXPECT_GE(PortraitSide, 36 * 2160 / 1080);
+    EXPECT_GE(PortraitSide * 5, StatusModelCropSide * 4);
+    EXPECT_LE(PortraitSide, StatusModelCropSide);
+}
+
+TEST(BloodbornePortrait, ThePortraitsBytesFitTheServersEnvelopeAndTheLinksParts) {
+    // True colour (RGB888) on the link: the parts hold the picture's three channels.
+    EXPECT_EQ(PortraitPartCount * PortraitPartBytes, size_t{PortraitSide} * PortraitSide * 3);
+    EXPECT_LE(PortraitPartCount, 64u) << "a part per bit of the assembler's mask";
 }
 
 TEST(BloodbornePortrait, TheCropFollowsTheHeadWhereverTheModelStands) {
@@ -211,13 +226,9 @@ TEST(BloodbornePortrait, ThePartsMakeThePictureAgainInAnyOrder) {
     }
     ASSERT_TRUE(made.has_value());
     ASSERT_EQ(made->size(), PortraitBytes);
-    // RGB565 on the way: each channel within its lost bits.
-    for (size_t at = 0; at < made->size(); at += 4) {
-        EXPECT_NEAR((*made)[at], pixels[at], 7);
-        EXPECT_NEAR((*made)[at + 1], pixels[at + 1], 3);
-        EXPECT_NEAR((*made)[at + 2], pixels[at + 2], 7);
-        EXPECT_EQ((*made)[at + 3], 0xFF);
-    }
+    // Kaniel 2026-10-17 ("very bad colors"): the picture comes as it went, every channel whole
+    // (RGB565 turned the dark hoods and backdrops green-grey and banded).
+    EXPECT_EQ(*made, pixels);
     // Once made, the same parts again make nothing new.
     EXPECT_FALSE(assembler.Take(parts[0]).has_value());
 }
@@ -338,7 +349,8 @@ TEST(BloodbornePortrait, AnOldOrOutdatedPictureIsNeverLoaded) {
     const auto name = PortraitCachePath(dir, key).filename().string();
     EXPECT_NE(name, "0123456789abcdef.rgba") << "#77's first build's name";
     EXPECT_NE(name.find(std::string{PortraitCaptureFormat}), std::string::npos);
-    EXPECT_EQ(PortraitCaptureFormat, "m2") << "the model capture (head, hood and collar)";
+    EXPECT_EQ(PortraitCaptureFormat, "m3")
+        << "the model capture (head, hood and collar), 128 px since Kaniel 2026-10-17";
     for (size_t piece = 0; piece < key.outfit.size(); ++piece) {
         PortraitKey other = key;
         other.outfit[piece] += 100;
@@ -388,10 +400,17 @@ TEST(BloodbornePortrait, TheListShowsThePortraitInACircle) {
     const auto pixels = Gradient(9);
     const auto round = CircularPortrait(pixels);
     ASSERT_EQ(round.size(), PortraitBytes);
-    for (const auto& [x, y] : {std::pair{0, 0}, {63, 0}, {0, 63}, {63, 63}, {5, 5}, {58, 6}}) {
+    constexpr int L = PortraitSide - 1;
+    const auto share = [](int sixty_fourths) { return sixty_fourths * PortraitSide / 64; };
+    for (const auto& [x, y] :
+         {std::pair{0, 0}, {L, 0}, {0, L}, {L, L}, {share(5), share(5)}, {share(58), share(6)}}) {
         EXPECT_EQ(At(round, x, y), (std::array<u8, 4>{0, 0, 0, 0})) << x << "," << y;
     }
-    for (const auto& [x, y] : {std::pair{32, 32}, {31, 3}, {3, 31}, {50, 50}, {20, 55}}) {
+    for (const auto& [x, y] : {std::pair{share(32), share(32)},
+                               {share(31), share(3)},
+                               {share(3), share(31)},
+                               {share(50), share(50)},
+                               {share(20), share(55)}}) {
         EXPECT_EQ(At(round, x, y), At(pixels, x, y)) << x << "," << y;
     }
     int edge = 0;

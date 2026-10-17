@@ -20,6 +20,7 @@
 #include <SDL3/SDL.h>
 #include "../bbcoop.h"
 #include "bbport_game_art.h"
+#include "bbport_coop_art.h"
 #include "bbport_party_icons.h"
 #include "bbport_party_layout.h"
 #include "bbport_save_editor.h"
@@ -102,6 +103,30 @@ asm(".section .rodata\n"
 #endif
 extern "C" const unsigned char bb_party_icons[];
 extern "C" const unsigned char bb_party_icons_end[];
+// The co-op screens' own art (art/coop_art.bin, drawn for the port: shim/bbport_coop_art.h).
+#ifdef _WIN32
+asm(".section .rdata,\"dr\"\n"
+    ".balign 16\n"
+    ".global bb_coop_art\n"
+    "bb_coop_art:\n"
+    ".incbin \"" BB_COOP_ART_PATH "\"\n"
+    ".global bb_coop_art_end\n"
+    "bb_coop_art_end:\n"
+    ".text\n");
+#else
+asm(".section .rodata\n"
+    ".balign 16\n"
+    ".hidden bb_coop_art\n"
+    ".global bb_coop_art\n"
+    "bb_coop_art:\n"
+    ".incbin \"" BB_COOP_ART_PATH "\"\n"
+    ".hidden bb_coop_art_end\n"
+    ".global bb_coop_art_end\n"
+    "bb_coop_art_end:\n"
+    ".previous\n");
+#endif
+extern "C" const unsigned char bb_coop_art[];
+extern "C" const unsigned char bb_coop_art_end[];
 
 extern "C" void runtime_restart(void); // bb-probe (probe.c)
 // The controls (runtime_pad.c, declared in src/runtime.h): the Controls tab.
@@ -283,11 +308,109 @@ void Hint(const char* text) {
     }
 }
 
+// Kaniel 2026-10-17: the co-op screens' own art, drawn for the port (Nano Banana, flat gold on dark;
+// shim/bbport_coop_art.h): the hunters' round medallions and sigils in place of the game's square
+// slots and runes, the reliquary cards, the dividers and title scrollwork, the ready, leader and
+// invitation marks, and the night city behind the team loading screen. Packed into one texture.
+namespace CoopArt {
+using BbCoopArt::Piece;
+using BbCoopArt::Share;
+
+ImTextureData* texture = nullptr;
+std::vector<BbCoopArt::Rect> rects;
+bool tried = false;
+
+void Load() {
+    if (tried) {
+        return;
+    }
+    tried = true;
+    const auto atlas = BbCoopArt::Decode(bb_coop_art, size_t(bb_coop_art_end - bb_coop_art));
+    if (!atlas) {
+        std::printf("Overlay: the co-op art did not decode; the game's menu art is used\n");
+        return;
+    }
+    texture = IM_NEW(ImTextureData)();
+    texture->Create(ImTextureFormat_RGBA32, atlas->width, atlas->height);
+    std::memcpy(texture->GetPixels(), atlas->rgba.data(), atlas->rgba.size());
+    ImGui::RegisterUserTexture(texture);
+    rects = atlas->rects;
+}
+
+bool Has() {
+    return texture != nullptr;
+}
+
+ImVec2 SizeOf(Piece piece) {
+    const auto& r = rects[size_t(piece)];
+    return ImVec2(float(r.width), float(r.height));
+}
+
+ImU32 Tint(float alpha) {
+    return ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, alpha));
+}
+
+/// The `part` of `piece` stretched into [p0, p1].
+void Part(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, Share part, float alpha) {
+    const auto& r = rects[size_t(piece)];
+    const float w = float(texture->Width), h = float(texture->Height);
+    const auto u = [&](float share) { return (float(r.x) + share * float(r.width)) / w; };
+    const auto v = [&](float share) { return (float(r.y) + share * float(r.height)) / h; };
+    draw->AddImage(texture->GetTexRef(), p0, p1, ImVec2(u(part.x0), v(part.y0)), ImVec2(u(part.x1), v(part.y1)),
+                   Tint(alpha));
+}
+
+void Draw(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float alpha) {
+    Part(draw, piece, p0, p1, Share{0.0f, 0.0f, 1.0f, 1.0f}, alpha);
+}
+
+/// `piece` `height` tall (its shape kept), centred on `centre`.
+void Centred(ImDrawList* draw, Piece piece, ImVec2 centre, float height, float alpha) {
+    const ImVec2 size = SizeOf(piece);
+    const float width = height * size.x / size.y;
+    Draw(draw, piece, ImVec2(centre.x - width * 0.5f, centre.y - height * 0.5f),
+         ImVec2(centre.x + width * 0.5f, centre.y + height * 0.5f), alpha);
+}
+
+/// The reliquary card in [at, end], of any shape: its corners, arch and flourish at one scale (the
+/// card's own shape fitted in), its edges and inside stretched between them.
+void Card(ImDrawList* draw, ImVec2 at, ImVec2 end, float alpha) {
+    namespace P = BbCoopArt::CardParts;
+    const ImVec2 size = SizeOf(Piece::Card);
+    const float w = end.x - at.x, h = end.y - at.y;
+    const float k = std::min(w / size.x, h / size.y);
+    const float cw = P::CornerX * size.x * k, ch = P::CornerY * size.y * k;
+    Part(draw, Piece::Card, ImVec2(at.x + cw, at.y + ch), ImVec2(end.x - cw, end.y - ch), P::Inside, alpha);
+    Part(draw, Piece::Card, ImVec2(at.x + cw, at.y), ImVec2(end.x - cw, at.y + ch), P::Top, alpha);
+    Part(draw, Piece::Card, ImVec2(at.x + cw, end.y - ch), ImVec2(end.x - cw, end.y), P::Bottom, alpha);
+    Part(draw, Piece::Card, ImVec2(at.x, at.y + ch), ImVec2(at.x + cw, end.y - ch), P::Left, alpha);
+    Part(draw, Piece::Card, ImVec2(end.x - cw, at.y + ch), ImVec2(end.x, end.y - ch), P::Right, alpha);
+    const Share corners[4] = {{0.0f, 0.0f, P::CornerX, P::CornerY},
+                              {1.0f - P::CornerX, 0.0f, 1.0f, P::CornerY},
+                              {0.0f, 1.0f - P::CornerY, P::CornerX, 1.0f},
+                              {1.0f - P::CornerX, 1.0f - P::CornerY, 1.0f, 1.0f}};
+    const ImVec2 places[4] = {at, ImVec2(end.x - cw, at.y), ImVec2(at.x, end.y - ch), ImVec2(end.x - cw, end.y - ch)};
+    for (int i = 0; i < 4; ++i) {
+        Part(draw, Piece::Card, places[i], ImVec2(places[i].x + cw, places[i].y + ch), corners[i], alpha);
+    }
+    const float mid = (at.x + end.x) * 0.5f;
+    const auto stamp = [&](Share part, float y0) {
+        const float pw = (part.x1 - part.x0) * size.x * k, ph = (part.y1 - part.y0) * size.y * k;
+        Part(draw, Piece::Card, ImVec2(mid - pw * 0.5f, y0), ImVec2(mid + pw * 0.5f, y0 + ph), part, alpha);
+    };
+    stamp(P::Arch, at.y);
+    stamp(P::Flourish, end.y - (P::Flourish.y1 - P::Flourish.y0) * size.y * k);
+}
+
+} // namespace CoopArt
+
 // Kaniel 2026-10-14: the team screen and the team loading screen in the game's own style: its
 // menu art (the wall, the title picture, the cards, the gold selection frame, the rows, the
 // ornaments, the button icons) and its menu font, read at runtime from the player's game files
 // (bbport_game_art.h) like the HP bars; nothing of the game's is shipped. Each piece falls back to
 // the drawn look when the files can't be read. Kaniel 2026-10-16: the settings menu too.
+// Kaniel 2026-10-17: the slots, runes, dividers and title scrollwork are the co-op art's
+// (CoopArt) when it loaded.
 namespace MenuArt {
 
 enum Piece {
@@ -407,13 +530,45 @@ void Load() {
     }
     std::printf("Overlay: the menus use %d of %d pieces of the game's menu art%s\n", loaded,
                 int(PieceCount), font ? " and its menu font" : " (the game's font did not load)");
+    CoopArt::Load();
+}
+
+/// The co-op art's piece in place of the game's `piece`, if it has one.
+std::optional<CoopArt::Piece> Own(Piece piece) {
+    if (!CoopArt::Has()) {
+        return std::nullopt;
+    }
+    switch (piece) {
+    case Divider:
+        return CoopArt::Piece::Divider;
+    case HeaderOrnament:
+        return CoopArt::Piece::TitleOrnament;
+    case Slot:
+        return CoopArt::Piece::Medallion;
+    case SlotSelected:
+        return CoopArt::Piece::MedallionReady;
+    default:
+        return std::nullopt;
+    }
 }
 
 bool Has(Piece piece) {
-    return textures[piece] != nullptr;
+    return Own(piece) || textures[piece] != nullptr;
 }
 
 ImVec2 SizeOf(Piece piece) {
+    if (const auto own = Own(piece)) {
+        // About the game's size, so layouts stay: its divider 356 px wide; the scrollwork 34 px tall
+        // (the game's is 48 with clear space round its drawing).
+        const ImVec2 size = CoopArt::SizeOf(*own);
+        if (piece == Divider) {
+            return ImVec2(356.0f, 356.0f * size.y / size.x);
+        }
+        if (piece == HeaderOrnament) {
+            return ImVec2(34.0f * size.x / size.y, 34.0f);
+        }
+        return size;
+    }
     return textures[piece] ? ImVec2(float(textures[piece]->Width), float(textures[piece]->Height))
                            : ImVec2(0, 0);
 }
@@ -433,6 +588,18 @@ void Part(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, ImVec2 s0, ImVec2
 /// All of `piece` stretched into [p0, p1]; false when it is not loaded.
 bool Draw(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float alpha = 1.0f,
           ImU32 tint = IM_COL32_WHITE) {
+    if (const auto own = Own(piece)) {
+        // The medallions are round where the game's slots were square: a little larger, and the
+        // ready one's outer ring round the same medallion.
+        float grow = 1.0f;
+        if (piece == Slot || piece == SlotSelected) {
+            grow = 1.2f * CoopArt::SizeOf(*own).x / CoopArt::SizeOf(CoopArt::Piece::Medallion).x;
+        }
+        const ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+        const ImVec2 half((p1.x - p0.x) * 0.5f * grow, (p1.y - p0.y) * 0.5f * grow);
+        CoopArt::Draw(draw, *own, ImVec2(c.x - half.x, c.y - half.y), ImVec2(c.x + half.x, c.y + half.y), alpha);
+        return true;
+    }
     if (!Has(piece)) {
         return false;
     }
@@ -485,6 +652,14 @@ bool Cover(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, float alpha = 1.
 
 /// Rune `index` (0..7) of the runes row, into [p0, p1].
 bool Rune(ImDrawList* draw, int index, ImVec2 p0, ImVec2 p1, float alpha = 1.0f) {
+    if (CoopArt::Has()) {
+        // The place's hunter sigil (four), a little larger than the rune was in its medallion.
+        const ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+        const float half = (p1.x - p0.x) * 0.6f;
+        CoopArt::Draw(draw, CoopArt::Piece(int(CoopArt::Piece::Sigil0) + index % 4), ImVec2(c.x - half, c.y - half),
+                      ImVec2(c.x + half, c.y + half), alpha);
+        return true;
+    }
     if (!Has(Runes)) {
         return false;
     }
@@ -606,6 +781,14 @@ std::string Fit(const char* text, float width) {
 /// A hunter's card: the game's stone card; the player's own framed in gold over it (the game's
 /// selected card is tinted blue, out of place among the others).
 void HunterCard(ImDrawList* draw, ImVec2 at, ImVec2 end, bool mine, float alpha = 1.0f) {
+    if (CoopArt::Has()) {
+        CoopArt::Card(draw, at, end, alpha);
+        if (mine) {
+            const float in = S(9.0f);
+            draw->AddRect(ImVec2(at.x + in, at.y + in), ImVec2(end.x - in, end.y - in), Gold(0.55f), 0.0f, 0, S(1.2f));
+        }
+        return;
+    }
     MenuArt::Nine(draw, MenuArt::Card, at, end, 14.0f, S(12.0f), alpha);
     if (mine) {
         const float in = S(4.0f);
@@ -2071,6 +2254,16 @@ void Card(ImDrawList* draw, ImVec2 at, ImVec2 size, const bbcoop_lobby_entry* me
             const ImVec2 ts = ImGui::CalcTextSize(line.c_str());
             draw->AddText(ImVec2(mid - ts.x * 0.5f, y), color, line.c_str());
         };
+        // The marks: the leader's hat at the top left, the ready quill at the top right.
+        if (member && CoopArt::Has()) {
+            const float mark = S(44.0f), in = S(34.0f);
+            if (leader) {
+                CoopArt::Centred(draw, CoopArt::Piece::MarkLeader, ImVec2(at.x + in, at.y + in), mark, 0.95f);
+            }
+            if (ready) {
+                CoopArt::Centred(draw, CoopArt::Piece::MarkReady, ImVec2(end.x - in, at.y + in), mark, 0.95f);
+            }
+        }
         ImGui::PushFont(MenuArt::Font(), 26.0f);
         centred(member ? member->name : T("An empty place", "Свободное место"), at.y + S(146.0f),
                 member ? Bright() : Dim(0.7f));
@@ -2191,24 +2384,24 @@ void Screen() {
             MenuArt::Vignette(back, ImVec2(0, 0), display, 0.85f);
         }
     }
-    const ImVec2 size(std::min(S(1400.0f), display.x - S(40.0f)), std::min(S(900.0f), display.y - S(40.0f)));
-    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    // Kaniel 2026-10-17: the screen is the whole screen (the menus' wall edge to edge, as the game's
+    // own pages), its content in the middle, as wide as reads well.
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(display, ImGuiCond_Always);
     const bool wall = MenuArt::Has(MenuArt::Wall);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, wall ? ImVec4(0, 0, 0, 0) : ImVec4(0.035f, 0.032f, 0.028f, 0.96f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, wall ? ImVec4(0, 0, 0, 0) : ImVec4(0.035f, 0.032f, 0.028f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::Begin("##bbport_team", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav);
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 win = ImGui::GetWindowPos();
-    const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
     if (wall) {
-        const ImVec2 w1(win.x + size.x, win.y + size.y);
-        MenuArt::Cover(draw, MenuArt::Wall, win, w1, 0.97f);
-        MenuArt::Vignette(draw, win, w1, 0.55f);
-        draw->AddRect(win, w1, IM_COL32(150, 140, 120, 90), 0.0f, 0, S(1.0f));
+        MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 1.0f);
+        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.75f);
     }
+    const ImVec2 size(std::min(S(1600.0f), display.x - S(80.0f)), display.y - S(40.0f));
+    const ImVec2 win((display.x - size.x) * 0.5f, (display.y - size.y) * 0.5f);
+    const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
     Divider(draw, x0, x1, win.y + S(14.0f));
     Divider(draw, x0, x1, win.y + size.y - S(14.0f));
 
@@ -2243,7 +2436,12 @@ void Screen() {
     // The four places.
     const float card_w = S(290.0f), card_h = S(270.0f), gap = S(24.0f);
     const float cards_x = win.x + (size.x - (4 * card_w + 3 * gap)) * 0.5f,
-                cards_y = win.y + S(MenuArt::Has(MenuArt::HeaderOrnament) ? 140.0f : 128.0f);
+                header_y = win.y + S(MenuArt::Has(MenuArt::HeaderOrnament) ? 140.0f : 128.0f);
+    // Full screen: the cards and the two lists (five rows) as one block, in the middle of the room
+    // between the title and the world row.
+    const float block_h = card_h + S(30.0f) + S(50.0f) + 5 * S(42.0f);
+    const float room = (win.y + size.y - S(166.0f) - S(60.0f)) - header_y;
+    const float cards_y = header_y + std::max(0.0f, (room - block_h) * 0.5f);
     for (int i = 0; i < BBCOOP_LOBBY_TEAM; ++i) {
         const bool taken = lobby.in_team && i < lobby.member_count;
         Card(draw, ImVec2(cards_x + i * (card_w + gap), cards_y), ImVec2(card_w, card_h),
@@ -2278,6 +2476,7 @@ void Screen() {
     ListRule(draw, right_x, right_x + list_w, lists_y + S(36.0f));
     ImGui::PushFont(MenuArt::Font(), 19.0f);
     const float row_h = S(42.0f), button_w = S(130.0f);
+    // As many rows as fit above the world row and the buttons (5 on the old 900 px panel).
     const int rows = 5;
     float y = lists_y + S(50.0f);
     const bool can_invite = lobby.in_team && lobby.member_count < BBCOOP_LOBBY_TEAM;
@@ -2309,8 +2508,14 @@ void Screen() {
         const std::string text = std::string(inv.name) + T(" calls you to hunt", " зовёт на охоту");
         MenuArt::Nine(draw, MenuArt::Row, ImVec2(right_x - S(6.0f), y - S(2.0f)),
                       ImVec2(right_x + list_w + S(4.0f), y + row_h - S(4.0f)), 10.0f, S(6.0f), 0.7f);
-        draw->AddText(ImVec2(right_x + S(8.0f), y + S(8.0f)), Plain(),
-                      Fit(text.c_str(), list_w - 2 * button_w - S(32.0f)).c_str());
+        float text_x = right_x + S(8.0f);
+        if (CoopArt::Has()) {
+            CoopArt::Centred(draw, CoopArt::Piece::MarkInvite, ImVec2(text_x + S(14.0f), y + row_h * 0.5f - S(3.0f)),
+                             S(26.0f), 0.95f);
+            text_x += S(36.0f);
+        }
+        draw->AddText(ImVec2(text_x, y + S(8.0f)), Plain(),
+                      Fit(text.c_str(), list_w - 2 * button_w - S(32.0f) - (text_x - right_x - S(8.0f))).c_str());
         const std::string accept = std::string("accept") + inv.id, decline = std::string("decline") + inv.id;
         if (Button(draw, accept.c_str(), T("Join", "Вступить"),
                    ImVec2(right_x + list_w - 2 * button_w - S(8.0f), y), ImVec2(button_w, row_h - S(6.0f)),
@@ -2571,8 +2776,18 @@ void Screen() {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
-    // The menus' wall, faint, under it all; the Bloodborne word above the cards.
-    if (MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 0.45f)) {
+    // Kaniel 2026-10-17: the night city (the co-op art's) behind it all, else the menus' wall,
+    // faint; the Bloodborne word above the cards.
+    if (CoopArt::Has()) {
+        const ImVec2 b = CoopArt::SizeOf(CoopArt::Piece::Backdrop);
+        // Cut to the screen's shape, from the top (the city's lower part is dark: the cards sit on it).
+        const float want = display.x / display.y, have = b.x / b.y;
+        const BbCoopArt::Share part = have > want ? BbCoopArt::Share{0.5f - want / have * 0.5f, 0.0f,
+                                                                      0.5f + want / have * 0.5f, 1.0f}
+                                                  : BbCoopArt::Share{0.0f, 0.0f, 1.0f, have / want};
+        CoopArt::Part(draw, CoopArt::Piece::Backdrop, ImVec2(0, 0), display, part, 0.9f);
+        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.6f);
+    } else if (MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 0.45f)) {
         MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.95f);
     }
     const float u = display.y / 1080.0f; // 1080p pixels
@@ -2613,6 +2828,10 @@ void Screen() {
         const float rune = slot * 0.58f;
         MenuArt::Rune(draw, i, ImVec2(cx - rune * 0.5f, sy + (slot - rune) * 0.5f),
                       ImVec2(cx + rune * 0.5f, sy + (slot + rune) * 0.5f), row.stage == BBCOOP_LOAD_WAITING ? 0.4f : 1.0f);
+        if (ready && CoopArt::Has()) {
+            CoopArt::Centred(draw, CoopArt::Piece::MarkReady, ImVec2(x1 - 34.0f * u, y0 + 34.0f * u), 38.0f * u,
+                             0.95f);
+        }
         text(row.name, 30.0f * u, ImVec2(cx, y0 + 180.0f * u), IM_COL32(222, 214, 196, 255), 0.5f);
         text(StageText(row.stage), 22.0f * u, ImVec2(cx, y0 + 228.0f * u),
              ready ? IM_COL32(200, 176, 120, 255) : IM_COL32(150, 142, 128, 255), 0.5f);

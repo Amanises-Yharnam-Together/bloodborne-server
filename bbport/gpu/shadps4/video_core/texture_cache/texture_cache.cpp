@@ -7,6 +7,7 @@
 #include "bbport_free_check.h"
 #include "bbport_memory_hash.h"
 #include "bbport_portraits.h"
+#include "bbport_settings.h"
 #include "../bbcoop.h"
 #include "common/assert.h"
 #include "common/debug.h"
@@ -185,40 +186,54 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     }
 }
 
+/// bbport co-op: the screen's height in pixels (the HUD is drawn at the output's size).
+static int PortraitOutputHeight() {
+    const int output = std::clamp(BbSettings::Get().output_res.load(std::memory_order_relaxed), 0,
+                                  BbSettings::OutputCount - 1);
+    return BbSettings::OutputHeights[output];
+}
+
 bool TextureCache::RefreshPortraitSlot(Image& image) {
     const auto format = image.info.pixel_format;
     const bool rgba = format == vk::Format::eR8G8B8A8Unorm || format == vk::Format::eR8G8B8A8Srgb;
     const bool bgra = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
-    if (image.info.size.width != u32(BbPortraits::Side) ||
-        image.info.size.height != u32(BbPortraits::Side) || image.info.resources.layers != 1 ||
-        (!rgba && !bgra) || image.info.guest_address == 0) {
+    // The HUD's placeholders are BbPortraits::Side square; an older HUD's (a mod layer's) 64.
+    const int side = int(image.info.size.width);
+    if ((side != BbPortraits::Side && side != 64) || image.info.size.height != u32(side) ||
+        image.info.resources.layers != 1 || (!rgba && !bgra) || image.info.guest_address == 0) {
         image.portrait_slot = -1;
         return false;
     }
-    std::vector<u8> level0(BbPortraits::MipOffset(1));
+    std::vector<u8> level0(BbPortraits::MipOffset(1, side));
     runtime_memory_read_backing(image.info.guest_address + image.info.mips_layout[0].offset,
                                 level0.data(), level0.size());
-    const int slot = BbPortraits::PlaceholderSlot(level0);
+    const int slot = BbPortraits::PlaceholderSlot(level0, side);
     image.portrait_slot = slot;
     if (slot < 0) {
         return false;
     }
-    std::vector<u8> picture(level0.size());
+    std::vector<u8> picture(size_t(BbPortraits::PictureSide) * BbPortraits::PictureSide * 4);
     u32 version = 0;
     const bool shown = bbcoop_portrait_slot(slot, picture.data(), picture.size(), &version) != 0;
     image.portrait_version = version;
+    // Kaniel 2026-10-17 ("really poor quality"): the picture as big as the screen shows it, so
+    // that the texture's one level never shimmers (FitToScreen).
+    image.portrait_output = PortraitOutputHeight();
+    const auto fitted =
+        shown ? BbPortraits::FitToScreen(picture, BbPortraits::PictureSide, side,
+                                         BbPortraits::ShownPixels(image.portrait_output))
+              : std::vector<u8>{};
     const int levels = int(image.info.resources.levels);
-    const auto chain = BbPortraits::MipChain(
-        shown ? std::span<const u8>{picture} : std::span<const u8>{}, bgra, levels);
+    const auto chain = BbPortraits::MipChain(fitted, bgra, levels, side);
     const auto staging =
         runtime.GetStagingPool().Request(chain.size(), MemoryType::HostUncached, 16);
     std::memcpy(staging.mapped, chain.data(), chain.size());
     staging.Flush();
     boost::container::small_vector<vk::BufferImageCopy, 14> copies;
     for (int m = 0; m < levels; ++m) {
-        const u32 side = std::max(u32(BbPortraits::Side) >> m, 1u);
+        const u32 mip_side = std::max(u32(side) >> m, 1u);
         copies.push_back({
-            .bufferOffset = staging.offset + BbPortraits::MipOffset(m),
+            .bufferOffset = staging.offset + BbPortraits::MipOffset(m, side),
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
             .imageSubresource{.aspectMask = vk::ImageAspectFlagBits::eColor,
@@ -226,16 +241,18 @@ bool TextureCache::RefreshPortraitSlot(Image& image) {
                               .baseArrayLayer = 0,
                               .layerCount = 1},
             .imageOffset = {0, 0, 0},
-            .imageExtent = {side, side, 1},
+            .imageExtent = {mip_side, mip_side, 1},
         });
     }
     scheduler.EndRendering();
     runtime.UploadImage(&image, staging.buffer, copies);
     image.flags &= ~ImageFlagBits::Dirty;
     LOG_INFO(Render_Vulkan,
-             "Party portraits: slot {} texture {:#x} ({}, {} levels) shows {} (version {})", slot,
-             image.info.guest_address, vk::to_string(format), levels,
-             shown ? "the member's picture" : "nothing", version);
+             "Party portraits: slot {} texture {:#x} ({}, {} px, {} levels) shows {} (version {}, "
+             "{} px on the screen)",
+             slot, image.info.guest_address, vk::to_string(format), side, levels,
+             shown ? "the member's picture" : "nothing", version,
+             BbPortraits::ShownPixels(image.portrait_output));
     return true;
 }
 
@@ -898,9 +915,10 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, Vi
             downloads_queued.store(true, std::memory_order_release);
         }
     }
-    // bbport co-op: a portrait slot whose picture changed is uploaded again.
+    // bbport co-op: a portrait slot whose picture (or the screen's size) changed is uploaded again.
     if (image.portrait_slot >= 0 &&
-        bbcoop_portrait_version(image.portrait_slot) != image.portrait_version) {
+        (bbcoop_portrait_version(image.portrait_slot) != image.portrait_version ||
+         PortraitOutputHeight() != image.portrait_output)) {
         std::scoped_lock lock{mutex};
         image.flags |= ImageFlagBits::CpuDirty;
     }
