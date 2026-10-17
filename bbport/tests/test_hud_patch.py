@@ -129,6 +129,8 @@ class GfxTests(unittest.TestCase):
         # smaller than the first one (64 px).
         self.assertGreaterEqual(hud_patch.PORTRAIT_SIZE, 64 / 2)
         self.assertLessEqual(hud_patch.PORTRAIT_SIZE, 64 / 1.5)
+        # Kaniel 2026-10-17 (the face camera's portraits: "make them a little bit bigger"): 36 to 42.
+        self.assertGreaterEqual(hud_patch.PORTRAIT_SIZE, 42)
         bar_start = hud_patch.LIST_X + hud_patch.BAR_FROM_TAG[0]
         for index in range(len(hud_patch.PARTY_FACES)):
             cx, cy = hud_patch.portrait_centre(index)
@@ -156,7 +158,8 @@ class GfxTests(unittest.TestCase):
         # scaled), a few pixels round the picture, shown with it (a second layer of the face sprite's picture
         # frame).
         self.assertGreaterEqual(hud_patch.FRAME_PIXELS, 2 * hud_patch.FRAME_SIZE)
-        self.assertTrue(hud_patch.PORTRAIT_SIZE + 8 <= hud_patch.FRAME_SIZE <= hud_patch.PORTRAIT_SIZE + 16)
+        # The co-op art's ring: its inner gold circle is 69% of its width, just round the picture.
+        self.assertAlmostEqual(hud_patch.PORTRAIT_SIZE / hud_patch.FRAME_SIZE, 0.69, delta=0.02)
         strip = hud_patch.HUD_ICONS.read_bytes()
         _, tags = hud_patch.read_movie(hud_patch.patch_fe(fe_movie(), strip))
         first_frame = next(i for i, t in enumerate(tags) if t.code == hud_patch.SHOW_FRAME)
