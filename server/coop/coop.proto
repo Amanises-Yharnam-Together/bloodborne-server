@@ -196,6 +196,9 @@ message Vitals {
     uint32 needed = 7;
     Position at = 8;
     repeated ReviveHit hits = 9;
+    // Kaniel 2026-10-17: this member's cutscene (CutsceneVote): 0 none, 1 playing, 2 it voted to
+    // skip. The server keeps it with the rest.
+    uint32 cutscene = 10;
 }
 message VitalsBoard {
     message Member {

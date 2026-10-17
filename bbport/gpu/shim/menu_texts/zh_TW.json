@@ -327,5 +327,6 @@
  "The map: where you and your team are, and travel to a lit lamp": "地圖：你與隊友所在之處，以及前往已點亮的燈",
  "Map screen": "地圖畫面",
  "The map is open over the game: Circle comes back here": "地圖開在遊戲之上：按 ○ 回到這裡",
- "Triangle  Whole map": "△  整張地圖"
+ "Triangle  Whole map": "△  整張地圖",
+ "%d of %d want to skip": "%d/%d 人想跳過"
 }

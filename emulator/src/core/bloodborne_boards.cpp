@@ -726,6 +726,8 @@ std::condition_variable_any vitals_wake;
 MemberVitals vitals_mine;
 std::vector<ReviveHitTotal> vitals_hits;
 bool vitals_changed{};
+// This member's cutscene vote (CutsceneVote::Own), posted with its vitals.
+std::atomic<u32> own_cutscene{};
 
 } // namespace
 
@@ -943,6 +945,17 @@ void ResendOwnDataOnChange(bool in_session) {
     }
 }
 
+// This member's cutscene vote: posted with its vitals at once when it changes (any thread: the
+// pad's).
+void NoteCutsceneVote(u32 state) {
+    if (own_cutscene.exchange(state) == state) {
+        return;
+    }
+    std::scoped_lock lock{vitals_mutex};
+    vitals_changed = true;
+    vitals_wake.notify_all();
+}
+
 // Hands the client this member's vitals: posted at once when more than its position changed.
 void PostVitals(const MemberVitals& mine, std::vector<ReviveHitTotal> hits) {
     // On change only (the rig checks SessionArrival by it).
@@ -1020,6 +1033,7 @@ void RunServerBoards(std::stop_token stop) {
             if (vitals_due) {
                 vitals_changed = false;
                 mine = vitals_mine;
+                mine.cutscene = own_cutscene.load();
                 hits = vitals_hits;
             }
         }

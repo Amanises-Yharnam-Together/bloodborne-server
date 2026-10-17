@@ -3047,6 +3047,7 @@ struct MemberVitals {
     u32 needed = 0;
     LampPosition at{};
     u32 revive_damage = 0; // in the answer only
+    u32 cutscene = 0;      // CutsceneVote's state, through the server only (not the direct line)
     bool operator==(const MemberVitals&) const = default;
 };
 struct ReviveHitTotal {

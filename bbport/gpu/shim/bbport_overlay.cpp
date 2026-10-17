@@ -4081,6 +4081,32 @@ void Draw() {
 
 } // namespace Compass
 
+/// Kaniel 2026-10-17: a cutscene every party member on the map sees is skipped once all of them
+/// voted (Options, CutsceneVote): how many want to, low in the picture while someone does.
+namespace SkipVote {
+
+int want = 0, watching = 0; // present thread: as Visible() read it last
+bool shown = false;
+BbPartyLayout::Rect game{};
+
+bool Read() {
+    shown = bbcoop_cutscene_vote(&want, &watching) != 0;
+    return shown;
+}
+
+void Draw() {
+    using Ui::S;
+    using Ui::T;
+    char line[96];
+    std::snprintf(line, sizeof line, T("%d of %d want to skip", "%d из %d хотят пропустить"), want,
+                  watching);
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    Party::Text(draw, sans_font, S(18.0f), ImVec2(game.x + game.w * 0.5f, game.y + game.h * 0.86f),
+                Ui::Plain(0.9f), line, 0.5f);
+}
+
+} // namespace SkipVote
+
 /// Kaniel 2026-10-17: the map screen (an Elden Ring style map). The area's picture
 /// (BbMapCharts, drawn from the game's map files) on the menus' wall, framed in the game's card
 /// art: this player as an arrow turned with the camera, the party members on this map at their
@@ -5180,6 +5206,7 @@ bool HandleEvent(const SDL_Event& event) {
 bool Visible() {
     const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
     const bool compass = initialized && Compass::Read();
+    const bool skip_vote = initialized && SkipVote::Read();
     const bool was_team = Team::open;
     Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
     Joining::open = initialized && bbcoop_team_load_view(&Joining::load) != 0;
@@ -5201,7 +5228,7 @@ bool Visible() {
         Team::focus.fresh = true;
     }
     return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party || compass ||
-                           Team::open || Joining::open || Map::open || ScriptedKeysWaiting());
+                           skip_vote || Team::open || Joining::open || Map::open || ScriptedKeysWaiting());
 }
 
 bool MenuOpen() {
@@ -5342,6 +5369,11 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         Compass::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                          float(game.extent.height)};
         Compass::Draw();
+    }
+    if (SkipVote::shown && !menu_open && !quit_open && !Team::open && !Joining::open) {
+        SkipVote::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
+                          float(game.extent.height)};
+        SkipVote::Draw();
     }
     if (Team::open && !menu_open) {
         Team::Screen();

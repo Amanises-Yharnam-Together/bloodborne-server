@@ -14,7 +14,8 @@ there already), hurt <nearest|handle> <hp>, kill <nearest|self|handle>,
 teleport <x> <y> <z> [<heading>], approach <target> [<dx> [<dz> [<heading>]]], mark <target> (later "marked"),
 attack <target> [<timeout>] (1 HP left, then light attacks from each side until it dies),
 hit <target> [<timeout>] (light attacks until one lands),
-press <button> [<ms>], stick <x> <y> [<ms>], pickup [<meters>] [<timeout>] (onto the
+press <button> [<ms>], cutscene-options <s> (Options once the next cutscene has played that
+long: the script stands still under one), stick <x> <y> [<ms>], pickup [<meters>] [<timeout>] (onto the
 nearest usable map item, then X until it is gone), snapshot, log <text>,
 expect-hp <handle|self> <op> <value>, expect-session <n>, expect-map <map>,
 set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeout>],
@@ -91,6 +92,13 @@ TALK_THROUGH = [step for _ in range(12) for step in ("press cross 200", "wait 2"
 # closed again).
 WARD_LAMP_SPOTS = ("16.50 -9.5 104.08 -2.62", "16.65 -9.5 104.34 -2.62", "16.92 -9.5 103.68 -1.83",
                    "15.94 -9.5 104.24 2.88")
+
+
+# Vicar Amelia (m24_00, 2400800, at 68.4 35.7 340.9): her entrance (event 12401802, cutscene 24000060)
+# plays once the host stands in region 2402805; her skull's event is 12401803 (Kaniel's playtest
+# 2026-10-17).
+ALTAR = "68.4 36.0 343.0 0.52"  # beside her
+AMELIA_ARENA = "57.7 35.0 322.6 0.52"  # region 2402805
 
 
 # The way from the Ward lamp through the gate to Central Yharnam (a guest's trail, playtest
@@ -1169,6 +1177,27 @@ SCENARIOS = {
                      r"team lobby: a save's load waits for the team's Start"],
             "guest": [r"Co-op team lobby: the save plays in team \w+ as its guest"],
         },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
+    # Kaniel 2026-10-17: a cutscene both see (Vicar Amelia's entrance, m24_00 12401802: the host
+    # walks into her arena, 24000060 plays for both) is skipped only once both voted: the guest's
+    # Options alone skips nothing (1 of 2), the host's then skips it for both.
+    "skip-vote": {
+        "about": "both see Amelia's entrance; the guest's Options is a vote (1 of 2), the "
+                 "cutscene goes on; the host's Options makes it 2 of 2 and both skip it",
+        "roles": {
+            "host": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                     "wait-session 2 300", f"teleport {ALTAR}", "wait-members 2 60", "wait 5",
+                     "cutscene-options 16", f"teleport {AMELIA_ARENA}", "wait 30",
+                     "expect-session 2"],
+            "guest": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                      "wait-session 2 300", f"teleport {ALTAR}", "cutscene-options 6", "wait 30",
+                      "expect-session 2"],
+        },
+        "expect": {role: [r"cutscene player's step is PrologueWait[\s\S]*1 of 2 watching want to "
+                          r"skip[\s\S]*2 of 2 watching want to skip[\s\S]*cutscene player's "
+                          r"step is Epilog"] for role in ("host", "guest")},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },

@@ -489,6 +489,28 @@ extern "C" int bbcoop_cutscene_skip(void) {
     return Core::Bloodborne::Coop::CutsceneSkipPressed() ? 1 : 0;
 }
 
+extern "C" int bbcoop_cutscene_vote_pad(int options) {
+    using Pad = Core::Bloodborne::CutsceneVote::Pad;
+    switch (Core::Bloodborne::Coop::CutsceneVotePad(options != 0)) {
+    case Pad::Hide:
+        return 1;
+    case Pad::Press:
+        return 2;
+    case Pad::Leave:
+        break;
+    }
+    return 0;
+}
+
+extern "C" int bbcoop_cutscene_vote(int* want, int* watching) {
+    std::uint32_t voted = 0;
+    std::uint32_t all = 0;
+    const bool shown = Core::Bloodborne::Coop::CutsceneVoteView(voted, all);
+    *want = static_cast<int>(voted);
+    *watching = static_cast<int>(all);
+    return shown ? 1 : 0;
+}
+
 extern "C" void bbcoop_team_menu(int open) {
     Core::Bloodborne::Coop::TeamMenu(open != 0, open == 1);
 }

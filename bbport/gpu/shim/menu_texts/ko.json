@@ -327,5 +327,6 @@
  "The map: where you and your team are, and travel to a lit lamp": "지도: 당신과 팀원이 있는 곳, 밝혀진 등불로 이동",
  "Map screen": "지도 화면",
  "The map is open over the game: Circle comes back here": "지도가 게임 위에 열려 있습니다: ○로 돌아옵니다",
- "Triangle  Whole map": "△  전체 지도"
+ "Triangle  Whole map": "△  전체 지도",
+ "%d of %d want to skip": "%d/%d명이 건너뛰기 원함"
 }

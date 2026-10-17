@@ -785,6 +785,13 @@ TeamLoad::View TeamLoadView();
 bool TeamLoadCovers();
 // Options held down for the game to skip a cutscene under that screen (the port's pad).
 bool CutsceneSkipPressed();
+// Kaniel 2026-10-17: Options while a cutscene plays in a party session is a vote (CutsceneVote):
+// what the pad does with it (`options`: the player holds it), and the vote as the screen shows it
+// (false: nothing to show).
+CutsceneVote::Pad CutsceneVotePad(bool options);
+bool CutsceneVoteView(u32& want, u32& watchers);
+// The rig's cutscene-options: Options pressed once the next cutscene has played `after_ms`.
+void ArmCutsceneOptions(s64 after_ms);
 // SprjRemoMan's step methods (tag: the step), hooked at their entries.
 void PS4_SYSV_ABI NoteRemoStep(u64 step, const GuestRegisterSnapshot* registers);
 void TeamChoose(TeamGate::Choice choice);
@@ -903,6 +910,7 @@ void InstallSeamlessTravel(u64 base, u64 image_size);
 void EndSessionOnWorldTeardown();
 void ReviveGuestAfterGhostDeath();
 extern std::mutex vitals_mutex;
+void NoteCutsceneVote(u32 state);
 extern VitalsBoard vitals_board;
 extern std::string vitals_member;
 extern std::optional<std::chrono::steady_clock::time_point> vitals_heard_at;

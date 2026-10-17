@@ -327,5 +327,6 @@
  "The map: where you and your team are, and travel to a lit lamp": "Kartta: missä sinä ja tiimisi olette, ja matka sytytetylle lyhdylle",
  "Map screen": "Karttanäkymä",
  "The map is open over the game: Circle comes back here": "Kartta on auki pelin päällä: Ympyrä palaa tänne",
- "Triangle  Whole map": "Kolmio  Koko kartta"
+ "Triangle  Whole map": "Kolmio  Koko kartta",
+ "%d of %d want to skip": "%d/%d haluaa ohittaa"
 }
