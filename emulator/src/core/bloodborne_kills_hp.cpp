@@ -597,8 +597,30 @@ void LogHandOut(const std::string& who, const std::vector<u32>& ids) {
     }
 }
 
-void NoteHandOutSent(const std::string& member, std::span<const u8> payload) {
+void NoteHandOutSent(const std::string& member, std::span<u8> payload, bool writable) {
     const s64 now_ms = SteadyMilliseconds();
+    u32 count = 0;
+    if (payload.size() >= 4) {
+        std::memcpy(&count, payload.data(), 4);
+    }
+    if (writable && count <= 0x800 && payload.size() == 4 + size_t{count} * 4) {
+        std::vector<u32> entries(count);
+        std::memcpy(entries.data(), payload.data() + 4, size_t{count} * 4);
+        static HandOutSettle settle;
+        const std::vector<u32> settled = settle.Filter(member, entries, now_ms);
+        std::memcpy(payload.data() + 4, settled.data(), size_t{count} * 4);
+        const auto held = static_cast<u32>(std::ranges::count(settled, HandOutHeldEntry));
+        static std::map<std::string, u32> held_last;
+        static u32 held_logged = 0;
+        if (held_last[member] != held && held_logged < 400) {
+            held_last[member] = held;
+            ++held_logged;
+            LOG_INFO(Debug,
+                     "Bloodborne enemy owner: {} of {} enemies for {} held here until their "
+                     "hand-out settles (t={:.1f})",
+                     held, count, member, now_ms / 1000.0);
+        }
+    }
     std::vector<u32> ids = HandOutIds(payload);
     LogHandOut("to " + member, ids);
     std::scoped_lock lock{hand_out_mutex};
@@ -1082,7 +1104,7 @@ void WatchEnemyJumps(EnemyRole role) {
         const bool runs_here =
             hand_word != 0 && static_cast<s16>(ReadValue<u16>(hand_word, 0)) >= 0;
         const auto ran = ran_here.find(character);
-        if (ran != ran_here.end() && ran->second != runs_here && hands_logged < 200) {
+        if (ran != ran_here.end() && ran->second != runs_here && hands_logged < 1000) {
             ++hands_logged;
             LOG_INFO(Debug, "Bloodborne party: enemy {:x} ({:x}) changes hands: {} (t={:.1f})",
                      ReadValue<u32>(character, 0x08), ReadValue<u32>(character, 0x90),
