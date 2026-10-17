@@ -141,6 +141,8 @@ bool left_team_in_play = false; // team_mutex
 // Kaniel 2026-10-16: the team screen opened over the game from its System menu (TeamMenu), and
 // when it closed: the game's own page under it gets a Circle a moment later (TeamMenuBackPressed).
 std::atomic<bool> team_menu_open{false};
+// The rig's team-worlds: the team screen opens its world list (TeamWorldListAsked).
+std::atomic<bool> team_worlds_asked{false};
 bool team_menu_from_page = false; // team_back_mutex
 std::mutex team_back_mutex;
 TeamMenuBack team_menu_back;
@@ -973,21 +975,21 @@ bool HoldTitleLoadForTeam(u32 slot, bool fresh) {
                      team_world_hint.empty() ? "none" : team_world_hint);
         }
         // Kaniel 2026-10-16: the leader's screen starts on this save's own world (a new one for
-        // a new character); the leader may pick another.
+        // a new character); the leader may pick another. Kaniel 2026-10-17: so does the screen of
+        // a player in no team yet (the team it makes takes the pick).
         if (decision.step == TeamGate::Step::Hold && !team_world_default_sent) {
             const auto& lobby = team_gate.Lobby();
-            if (lobby && lobby->has_team() && lobby->team().leader() == me &&
-                !lobby->team().started()) {
+            if (lobby && (!lobby->has_team() || lobby->team().leader() == me)) {
                 team_world_default_sent = true;
-                const std::string pick = DefaultTeamWorld(*lobby, team_world_hint, title_fresh);
-                if (lobby->team().world() != pick) {
+                const auto pick = TeamScreenWorldPick(*lobby, me, team_world_hint, title_fresh);
+                if (pick) {
                     bbcoop::Envelope envelope;
                     envelope.mutable_team_request()->set_action(bbcoop::TeamRequest::WORLD);
-                    envelope.mutable_team_request()->set_world(pick);
+                    envelope.mutable_team_request()->set_world(*pick);
                     lobby_outbox.push_back(std::move(envelope));
+                    LOG_INFO(Debug, "Co-op team lobby: the team screen starts on {}",
+                             pick->empty() ? "a new world" : "world " + *pick);
                 }
-                LOG_INFO(Debug, "Co-op team lobby: the team screen starts on {}",
-                         pick.empty() ? "a new world" : "world " + pick);
             }
         }
         if (decision.step == TeamGate::Step::Hold) {
@@ -1237,6 +1239,10 @@ void TeamMenu(bool open, bool from_page) {
 
 bool TeamMenuOpen() {
     return team_menu_open.load(std::memory_order_relaxed);
+}
+
+bool TeamWorldListAsked() {
+    return team_worlds_asked.exchange(false, std::memory_order_relaxed);
 }
 
 bool TeamMenuBackPressed() {
@@ -1828,7 +1834,7 @@ void TickTeamWorld(s64 now_ms) {
 
 bool IsTeamScreenVerb(std::string_view verb) {
     return verb == "team-screen" || verb == "team-ready" || verb == "team-start" ||
-           verb == "team-alone";
+           verb == "team-alone" || verb == "team-worlds";
 }
 
 bool IsTeamTitleVerb(std::string_view verb) {
@@ -1886,7 +1892,10 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
             }
             return false;
         }
-        if (command.verb != "team-screen") {
+        if (command.verb == "team-worlds") {
+            // Kaniel 2026-10-17: the world list (the port's team screen opens it once asked).
+            team_worlds_asked.store(true, std::memory_order_relaxed);
+        } else if (command.verb != "team-screen") {
             TeamChoose(command.verb == "team-ready"   ? TeamGate::Choice::Ready
                        : command.verb == "team-start" ? TeamGate::Choice::Start
                                                       : TeamGate::Choice::Alone);

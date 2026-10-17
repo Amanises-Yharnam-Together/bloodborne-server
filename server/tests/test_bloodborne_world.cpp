@@ -1552,6 +1552,13 @@ int ATeamsWorldsAreKeptApart() {
     CHECK(b.lobby.worlds(0).character() == "Kaniel");
     CHECK(b.lobby.worlds(0).flags_on() == 2);
     CHECK(b.lobby.worlds(0).played_ms() > 0);
+    // Kaniel 2026-10-17: when it was made, and who played in it.
+    CHECK(b.lobby.worlds(0).created_ms() > 0 &&
+          b.lobby.worlds(0).created_ms() <= b.lobby.worlds(0).played_ms());
+    // (its game's hello names "Player aa", its report "Kaniel").
+    CHECK(b.lobby.worlds(0).characters_size() == 2 &&
+          b.lobby.worlds(0).characters(0) == "Player aa" &&
+          b.lobby.worlds(0).characters(1) == "Kaniel");
     stop();
     // The leader picks a new world: none of the first one's in it.
     bbcoop::Envelope pick;
@@ -1637,8 +1644,12 @@ int TheWorldsOfTheOldTeamsAreOnTheList() {
     }
     CHECK(ada && ada->character() == "Ada" && ada->played_ms() == 5000);
     CHECK(ada->flags_on() == 2 && ada->lamps() == 1);
+    // The earliest time known of it, and its host among the characters.
+    CHECK(ada->created_ms() == 5000);
+    CHECK(ada->characters_size() == 1 && ada->characters(0) == "Ada");
     CHECK(first && first->id() != "0" && !first->id().empty());
     CHECK(first->flags_on() == 1 && first->played_ms() > 0);
+    CHECK(first->created_ms() > 0 && first->created_ms() <= first->played_ms());
     CHECK(!QFile::exists(QDir{dir.path()}.filePath("teams.pb")));
     CHECK(QFile::exists(QDir{dir.path()}.filePath("teams.pb.old")));
     // Its party plays the world in its old folder.

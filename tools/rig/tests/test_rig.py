@@ -34,6 +34,7 @@ VERBS = {
     "return-point",
     "team-create", "team-invite", "team-accept", "team-wait", "team-leave",  # the lobby's
     "team-screen", "team-ready", "team-start", "team-alone",  # the team screen's buttons
+    "team-worlds",  # its world list
     "title-press", "title-wait", "title-shot", "title-keys", "keys",  # the port's menu keys
     "menu-invite", "menu-kick", "menu-join", "menu-leave",  # the team menu in game
     "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",

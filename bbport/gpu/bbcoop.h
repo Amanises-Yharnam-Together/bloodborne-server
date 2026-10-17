@@ -134,6 +134,12 @@ typedef struct bbcoop_lobby_world {
     char name[64]; /* "Kaniel's world" */
     char when[32]; /* when it was last played, local time ("16 Oct 19:12"), "" when not known */
     int lamps;     /* its lamps lit (how far it is) */
+    /* Kaniel 2026-10-17 (the list as the game's Load Game): when it was made ("14 Oct 2026", ""
+     * when not known), the characters that played in it ("Kaniel, Ada"), and 1 while another team
+     * plays it (it cannot be picked then). */
+    char created[32];
+    char characters[160];
+    int busy;
 } bbcoop_lobby_world;
 typedef struct bbcoop_lobby {
     int signed_in; /* the server answered */
@@ -148,7 +154,8 @@ typedef struct bbcoop_lobby {
      * a save playing, and playing in the team's world. */
     int menu, playing, in_hunt;
     /* Kaniel 2026-10-17: the server's worlds, the last played first, and the one the team's next
-     * Start plays: an index into them, -1 a new world. */
+     * Start plays (before a team: the one its team will take): an index into them, -1 a new
+     * world. */
     int world_count, world;
     bbcoop_lobby_world worlds[BBCOOP_LOBBY_WORLDS];
 } bbcoop_lobby;
@@ -170,6 +177,9 @@ int bbcoop_team_screen(void);
  * into its team's world where it stands (`team`: an invitation accepted first, or "" in a team). */
 void bbcoop_team_menu(int open);
 int bbcoop_team_menu_back(void);
+/* Kaniel 2026-10-17: the rig's team-worlds verb asks the team screen to open its world list: 1
+ * once. */
+int bbcoop_team_world_list_asked(void);
 void bbcoop_team_join_hunt(const char *team);
 /* Kaniel 2026-10-14: the team loading screen (League of Legends): each hunter's stage and bar,
  * up from the team's Start until every member is in the team's session. 0 when it is not up. */

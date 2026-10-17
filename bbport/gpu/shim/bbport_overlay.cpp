@@ -2359,6 +2359,231 @@ void MenuHint(ImDrawList* draw, ImVec2 win, ImVec2 size, float y, bool leader_ho
     ImGui::PopFont();
 }
 
+/// Kaniel 2026-10-17: the world list, as the game's Load Game lists its saves: one row per world
+/// of the server's (and a new one first), the d-pad moves, Cross picks, Triangle forgets (pressed
+/// twice), Circle goes back. Only the team's leader (or a player in no team yet: the team it makes
+/// takes the pick) opens it.
+struct WorldPicker {
+    bool open = false;
+    int row = 0; // 0: a new world, 1..: lobby.worlds[row - 1]
+    int top = 0; // the first row shown
+    bool moved = false; // the player moved the focus (else it follows the chosen world)
+    std::string armed; // the world Triangle asked about, and when
+    double armed_at = 0.0;
+};
+WorldPicker picker;
+
+bool CanPickWorld() {
+    return lobby.signed_in && !lobby.menu && (lobby.in_team ? lobby.leader && !lobby.started : true);
+}
+
+void OpenWorldPicker() {
+    picker.open = true;
+    picker.row = lobby.world >= 0 && lobby.world < lobby.world_count ? lobby.world + 1 : 0;
+    picker.top = 0;
+    picker.moved = false;
+    picker.armed.clear();
+}
+
+/// The list over the whole screen (the team screen's wall behind it).
+void DrawWorldPicker(ImDrawList* draw, ImVec2 win, ImVec2 size) {
+    const auto pressed = [](std::initializer_list<ImGuiKey> keys) {
+        for (const ImGuiKey key : keys) {
+            if (ImGui::IsKeyPressed(key, true)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const int rows = lobby.world_count + 1;
+    if (!picker.moved) {
+        picker.row = lobby.world >= 0 && lobby.world < lobby.world_count ? lobby.world + 1 : 0;
+    }
+    picker.row = std::clamp(picker.row, 0, rows - 1);
+    if (pressed({ImGuiKey_UpArrow, ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp})) {
+        picker.row = (picker.row + rows - 1) % rows;
+        picker.moved = true;
+    } else if (pressed({ImGuiKey_DownArrow, ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown, ImGuiKey_Tab})) {
+        picker.row = (picker.row + 1) % rows;
+        picker.moved = true;
+    }
+    bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+    bool choose = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+                  ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+    bool forget = ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
+
+    ImGui::PushFont(MenuArt::Font(), 40.0f);
+    const char* title = T("Choose a World", "Выбор мира");
+    ImVec2 ts = ImGui::CalcTextSize(title);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(30.0f)), Bright(), title);
+    ImGui::PopFont();
+    ImGui::PushFont(MenuArt::Font(), 20.0f);
+    const char* about = T("Each world keeps its own progress on the server; any team may hunt in it.",
+                          "Каждый мир хранит свой прогресс на сервере; охотиться в нём может любая команда.");
+    ts = ImGui::CalcTextSize(about);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(84.0f)), Gold(0.85f), about);
+    ImGui::PopFont();
+
+    // The rows, as many as fit; the list scrolls with the focused one.
+    const float list_w = std::min(S(1100.0f), size.x - S(80.0f));
+    const float list_x = win.x + (size.x - list_w) * 0.5f;
+    const float list_y = win.y + S(130.0f), list_end = win.y + size.y - S(170.0f);
+    const float row_h = S(104.0f), row_gap = S(8.0f);
+    const int shown = std::max(1, static_cast<int>((list_end - list_y + row_gap) / (row_h + row_gap)));
+    if (picker.row < picker.top) {
+        picker.top = picker.row;
+    } else if (picker.row >= picker.top + shown) {
+        picker.top = picker.row - shown + 1;
+    }
+    picker.top = std::clamp(picker.top, 0, std::max(0, rows - shown));
+    for (int r = picker.top; r < rows && r < picker.top + shown; ++r) {
+        const bbcoop_lobby_world* w = r == 0 ? nullptr : &lobby.worlds[r - 1];
+        const bool current = r == 0 ? lobby.world < 0 : lobby.world == r - 1;
+        const bool busy = w && w->busy;
+        const ImVec2 at(list_x, list_y + (r - picker.top) * (row_h + row_gap));
+        const ImVec2 end(at.x + list_w, at.y + row_h);
+        ImGui::SetCursorScreenPos(at);
+        ImGui::PushID(r);
+        const bool clicked = ImGui::InvisibleButton("##world", ImVec2(list_w, row_h));
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        if (hovered && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) {
+            picker.row = r;
+            picker.moved = true;
+        }
+        if (clicked) {
+            picker.row = r;
+            picker.moved = true;
+            choose = true;
+        }
+        const bool focused = picker.row == r;
+        if (MenuArt::Nine(draw, MenuArt::Row, at, end, 12.0f, S(9.0f), busy ? 0.5f : 1.0f)) {
+            if (focused) {
+                const float in = S(2.0f);
+                draw->AddRectFilled(ImVec2(at.x + in, at.y + in), ImVec2(end.x - in, end.y - in), Gold(0.10f));
+                draw->AddRect(ImVec2(at.x + in, at.y + in), ImVec2(end.x - in, end.y - in), Gold(0.9f), 0.0f, 0,
+                              S(1.5f));
+            }
+        } else {
+            draw->AddRectFilled(at, end, focused ? Gold(0.18f) : Gold(0.05f), S(2.0f));
+            draw->AddRect(at, end, focused ? Gold(0.95f) : Gold(busy ? 0.15f : 0.45f), S(2.0f), 0, S(1.2f));
+        }
+        const float tx = at.x + S(24.0f), tw = list_w - S(48.0f);
+        ImGui::PushFont(MenuArt::Font(), 26.0f);
+        const std::string name = w ? w->name : T("A new world", "Новый мир");
+        draw->AddText(ImVec2(tx, at.y + S(10.0f)), busy ? Dim(0.6f) : focused ? Bright() : Plain(),
+                      Fit(name.c_str(), tw - S(220.0f)).c_str());
+        if (current) {
+            const char* mark = T("Chosen", "Выбран");
+            const ImVec2 ms = ImGui::CalcTextSize(mark);
+            draw->AddText(ImVec2(end.x - S(24.0f) - ms.x, at.y + S(10.0f)), Gold(), mark);
+        }
+        ImGui::PopFont();
+        ImGui::PushFont(MenuArt::Font(), 19.0f);
+        std::string line, hunters;
+        if (!w) {
+            line = T("Starts from the leader's save; kept on the server from the first hunt.",
+                     "Начинается с сохранения лидера; хранится на сервере с первой охоты.");
+        } else {
+            const auto add = [&](const std::string& part) {
+                if (!part.empty()) {
+                    line += (line.empty() ? "" : "   ·   ") + part;
+                }
+            };
+            add(w->when[0] ? std::string(T("Last played ", "Последняя игра ")) + w->when : std::string{});
+            add(w->created[0] ? std::string(T("Made ", "Создан ")) + w->created : std::string{});
+            if (w->lamps > 0) {
+                const std::string count = std::to_string(w->lamps);
+                const std::string en = count + (w->lamps == 1 ? " lamp lit" : " lamps lit");
+                const std::string ru = "фонарей: " + count;
+                add(T(en.c_str(), ru.c_str()));
+            }
+            hunters = w->characters[0] ? std::string(T("Hunters: ", "Охотники: ")) + w->characters
+                                       : std::string(T("No hunter yet", "Ещё никто не играл"));
+        }
+        draw->AddText(ImVec2(tx, at.y + S(46.0f)), busy ? Dim(0.6f) : Plain(0.85f), Fit(line.c_str(), tw).c_str());
+        float hunters_w = tw;
+        if (busy) {
+            // Right on the hunters' line: why it cannot be picked now.
+            const char* note = T("Another team is hunting here now", "Здесь сейчас охотится другая команда");
+            const float nw = ImGui::CalcTextSize(note).x;
+            draw->AddText(ImVec2(end.x - S(24.0f) - nw, at.y + S(72.0f)), IM_COL32(220, 150, 110, 255), note);
+            hunters_w = tw - nw - S(24.0f);
+        }
+        if (!hunters.empty()) {
+            draw->AddText(ImVec2(tx, at.y + S(72.0f)), busy ? Dim(0.7f) : Gold(0.75f),
+                          Fit(hunters.c_str(), hunters_w).c_str());
+        }
+        ImGui::PopFont();
+    }
+    // More above or below: the game's arrows' place, as a line of dots.
+    ImGui::PushFont(MenuArt::Font(), 19.0f);
+    if (rows > shown) {
+        const std::string where = std::to_string(picker.row + 1) + " / " + std::to_string(rows);
+        ts = ImGui::CalcTextSize(where.c_str());
+        draw->AddText(ImVec2(list_x + list_w - ts.x, list_end + S(4.0f)), Dim(0.8f), where.c_str());
+    }
+    ImGui::PopFont();
+
+    // Back and Forget for the mouse too; Forget asks first.
+    const bbcoop_lobby_world* focused_world = picker.row > 0 ? &lobby.worlds[picker.row - 1] : nullptr;
+    const bool armed = focused_world && picker.armed == focused_world->id && ImGui::GetTime() - picker.armed_at < 4.0;
+    ImGui::PushFont(MenuArt::Font(), 22.0f);
+    const float bw = S(300.0f), bh = S(50.0f), gap = S(24.0f), by = win.y + size.y - S(150.0f);
+    float bx = win.x + (size.x - (2 * bw + gap)) * 0.5f;
+    const auto plain_button = [&](const char* id, const char* label, ImVec2 at, bool enabled) {
+        ImGui::SetCursorScreenPos(at);
+        const bool hit = ImGui::InvisibleButton(id, ImVec2(bw, bh)) && enabled;
+        const bool hover = ImGui::IsItemHovered();
+        const ImVec2 end(at.x + bw, at.y + bh);
+        if (!MenuArt::Nine(draw, MenuArt::Row, at, end, 12.0f, S(9.0f), enabled ? 1.0f : 0.5f)) {
+            draw->AddRect(at, end, Gold(enabled ? 0.45f : 0.15f), S(2.0f), 0, S(1.2f));
+        }
+        if (hover && enabled) {
+            draw->AddRect(at, end, Gold(0.9f), 0.0f, 0, S(1.5f));
+        }
+        const ImVec2 ls = ImGui::CalcTextSize(label);
+        draw->AddText(ImVec2(at.x + (bw - ls.x) * 0.5f, at.y + (bh - ls.y) * 0.5f), enabled ? Plain() : Dim(0.6f),
+                      label);
+        return hit;
+    };
+    if (plain_button("##forget", armed ? T("Forget it? Press again", "Забыть? Нажмите ещё раз")
+                                       : T("Forget this world", "Забыть этот мир"),
+                     ImVec2(bx, by), focused_world && !focused_world->busy)) {
+        forget = true;
+    }
+    bx += bw + gap;
+    if (plain_button("##back", T("Back", "Назад"), ImVec2(bx, by), true)) {
+        back = true;
+    }
+    ImGui::PopFont();
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    const char* line = lobby.notice[0] ? lobby.notice
+                                       : armed ? T("Forgotten worlds go off the list; the server keeps their files aside.",
+                                                   "Забытые миры исчезают из списка; сервер сохраняет их файлы отдельно.")
+                                               : T("D-pad: move     Cross: choose     Triangle: forget     Circle: back",
+                                                   "Крестовина: выбор     Крест: выбрать     Треугольник: забыть     Круг: назад");
+    ts = ImGui::CalcTextSize(line);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(24.0f)),
+                  lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.75f), line);
+    ImGui::PopFont();
+
+    if (forget && focused_world && !focused_world->busy) {
+        if (armed) {
+            picker.armed.clear();
+            bbcoop_lobby_request(BBCOOP_TEAM_FORGET_WORLD, focused_world->id);
+        } else {
+            picker.armed = focused_world->id;
+            picker.armed_at = ImGui::GetTime();
+        }
+    } else if (choose && !(focused_world && focused_world->busy)) {
+        bbcoop_lobby_request(BBCOOP_TEAM_WORLD, focused_world ? focused_world->id : "");
+        picker.open = false;
+    } else if (back) {
+        picker.open = false;
+    }
+}
+
 void Screen() {
     const auto pressed_any = [](std::initializer_list<ImGuiKey> keys) {
         for (const ImGuiKey key : keys) {
@@ -2420,6 +2645,20 @@ void Screen() {
     const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
     Divider(draw, x0, x1, win.y + S(14.0f));
     Divider(draw, x0, x1, win.y + size.y - S(14.0f));
+    if (bbcoop_team_world_list_asked() && CanPickWorld()) {
+        OpenWorldPicker();
+    }
+    if (picker.open && !CanPickWorld()) {
+        picker.open = false; // the team began, or its leader is another now
+    }
+    if (picker.open) {
+        DrawWorldPicker(draw, win, size);
+        focus.fresh = true; // back on the team screen: the focus goes to Begin / Ready again
+        ImGui::End();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        return;
+    }
 
     // Title and the team's state.
     ImGui::PushFont(MenuArt::Font(), 40.0f);
@@ -2549,60 +2788,28 @@ void Screen() {
     }
     ImGui::PopFont();
 
-    // Kaniel 2026-10-17: the team's world, one of the server's (any team plays any of them, each
-    // kept apart): the leader picks it (Cross goes to the next one, the last played first, then a
-    // new world) and may forget one (pressed twice), the others see it.
-    if (lobby.in_team && !lobby.menu) {
+    // Kaniel 2026-10-17: the world the hunt plays, one of the server's (any team plays any of them,
+    // each kept apart). Its leader (or a player in no team yet: the team it makes takes it) opens
+    // the list to choose it; the others see which it is.
+    if (!lobby.menu && (lobby.in_team || lobby.signed_in)) {
         ImGui::PushFont(MenuArt::Font(), 20.0f);
-        std::string world = T("A new world", "Новый мир");
-        const bbcoop_lobby_world* picked =
+        const bbcoop_lobby_world* chosen =
             lobby.world >= 0 && lobby.world < lobby.world_count ? &lobby.worlds[lobby.world] : nullptr;
-        if (picked) {
-            world = picked->name;
-            if (picked->when[0]) {
-                world += std::string("  ·  ") + picked->when;
-            }
-            if (picked->lamps > 0) {
-                const std::string count = std::to_string(picked->lamps);
-                const std::string en = count + (picked->lamps == 1 ? " lamp" : " lamps");
-                const std::string ru = "фонарей: " + count;
-                world += std::string("  ·  ") + T(en.c_str(), ru.c_str());
-            }
+        std::string world = chosen ? chosen->name : T("A new world", "Новый мир");
+        if (chosen && chosen->when[0]) {
+            world += std::string("  ·  ") + chosen->when;
         }
-        const std::string text = std::string(T("World: ", "Мир: ")) + world;
-        const bool can_pick = lobby.leader && !lobby.started;
-        const bool can_forget = can_pick && picked != nullptr;
-        const float forget_w = S(150.0f), forget_gap = S(10.0f);
         const ImVec2 row_size(S(640.0f), S(40.0f));
-        const float all_w = row_size.x + (can_forget ? forget_gap + forget_w : 0.0f);
-        const ImVec2 row_at(win.x + (size.x - all_w) * 0.5f, win.y + size.y - S(166.0f) - S(52.0f));
-        if (can_pick) {
+        const ImVec2 row_at(win.x + (size.x - row_size.x) * 0.5f, win.y + size.y - S(166.0f) - S(52.0f));
+        if (CanPickWorld()) {
+            const std::string text = std::string(T("Choose a world  —  ", "Выбрать мир  —  ")) + world;
             if (Button(draw, "world", Fit(text.c_str(), row_size.x - S(24.0f)).c_str(), row_at, row_size)) {
-                // The next world, then a new one, then the first again.
-                const int next = lobby.world + 1 >= lobby.world_count ? -1 : lobby.world + 1;
-                const int wrapped = lobby.world < 0 ? (lobby.world_count > 0 ? 0 : -1) : next;
-                bbcoop_lobby_request(BBCOOP_TEAM_WORLD, wrapped < 0 ? "" : lobby.worlds[wrapped].id);
+                OpenWorldPicker();
             }
-        } else {
-            const std::string shown = Fit(text.c_str(), row_size.x);
+        } else if (lobby.in_team) {
+            const std::string shown = Fit((std::string(T("World: ", "Мир: ")) + world).c_str(), row_size.x);
             ts = ImGui::CalcTextSize(shown.c_str());
             draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, row_at.y + S(8.0f)), Gold(0.85f), shown.c_str());
-        }
-        // Forget: the first press asks, a second one within a few seconds forgets (the server keeps
-        // the world's folder aside).
-        static std::string forget_armed;
-        static double forget_armed_at = 0.0;
-        const bool armed = can_forget && forget_armed == picked->id && ImGui::GetTime() - forget_armed_at < 4.0;
-        if (can_forget &&
-            Button(draw, "forget", armed ? T("Forget it?", "Забыть?") : T("Forget", "Забыть"),
-                   ImVec2(row_at.x + row_size.x + forget_gap, row_at.y), ImVec2(forget_w, row_size.y))) {
-            if (armed) {
-                forget_armed.clear();
-                bbcoop_lobby_request(BBCOOP_TEAM_FORGET_WORLD, picked->id);
-            } else {
-                forget_armed = picked->id;
-                forget_armed_at = ImGui::GetTime();
-            }
         }
         ImGui::PopFont();
     }
