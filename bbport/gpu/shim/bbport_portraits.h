@@ -22,7 +22,7 @@ constexpr int PictureSide = 128;
 constexpr int SlotCount = 3;
 // The portrait's size on the HUD's 1920x1080 stage (hud_patch.py PORTRAIT_SIZE): the HUD is drawn
 // at the output's size, so the screen shows it ShownPixels(output height) across.
-constexpr int StageSize = 36;
+constexpr int StageSize = 42;
 int ShownPixels(int output_height);
 // hud_patch.py portrait_magic: red and blue alike (the same in RGBA and BGRA), green the slot.
 constexpr std::array<std::uint8_t, 4> Magic(int slot) {

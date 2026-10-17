@@ -43,9 +43,10 @@ int main() {
     assert(PlaceholderSlot(Uniform(Magic(2), 64)) == -1);
 
     // Kaniel 2026-10-17 ("really poor quality"): the picture is 128 px (Core's PortraitSide) and the
-    // HUD shows it 36 px tall on its 1080p stage, at the output's size: 72 px at 4K.
-    static_assert(Side == 128 && PictureSide == 128 && StageSize == 36);
-    assert(ShownPixels(2160) == 72 && ShownPixels(1080) == 36 && ShownPixels(1440) == 48);
+    // HUD shows it 42 px tall on its 1080p stage (36 until Kaniel's "a little bit bigger"), at the
+    // output's size: 84 px at 4K.
+    static_assert(Side == 128 && PictureSide == 128 && StageSize == 42);
+    assert(ShownPixels(2160) == 84 && ShownPixels(1080) == 42 && ShownPixels(1440) == 56);
     assert(ShownPixels(0) == StageSize);
 
     // The mip chain: level 0 is the picture, each level after it half as wide, averaged.
