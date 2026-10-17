@@ -143,56 +143,54 @@ int main() {
     std::array<StageBindings, 6> stages{};
 
     // A fragment shader of 19 descriptors (7 buffers) and the vertex shader compiled behind it.
-    stages[Fragment] = Stage({0, 0, 0}, {19, 7, 2});
-    stages[Vertex] = Stage({19, 7, 2}, {5, 5, 0});
+    stages[Fragment] = Stage({0, 0}, {19, 7});
+    stages[Vertex] = Stage({19, 7}, {5, 5});
     assert(FirstMisplacedStage(stages) == -1);
 
     // The same vertex shader read back from a cache in which a later session wrote another
     // permutation under its name: it was compiled behind a fragment shader of 17 descriptors. The
     // layout built from the fragment shader gives binding 17 to a fragment sampler (the logged
     // VUID-VkGraphicsPipelineCreateInfo-layout-07988 of the shipped build).
-    stages[Vertex] = Stage({17, 7, 2}, {5, 5, 0});
+    stages[Vertex] = Stage({17, 7}, {5, 5});
     assert(FirstMisplacedStage(stages) == int(Vertex));
 
-    // Each of the three counters is checked.
-    stages[Vertex] = Stage({19, 6, 2}, {5, 5, 0});
-    assert(FirstMisplacedStage(stages) == int(Vertex));
-    stages[Vertex] = Stage({19, 7, 1}, {5, 5, 0});
+    // Both counters are checked (descriptors and buffers).
+    stages[Vertex] = Stage({19, 6}, {5, 5});
     assert(FirstMisplacedStage(stages) == int(Vertex));
 
     // A vertex-only pipeline whose vertex shader was compiled behind a fragment shader.
     stages = {};
-    stages[Vertex] = Stage({3, 1, 0}, {1, 1, 0});
+    stages[Vertex] = Stage({3, 1}, {1, 1});
     assert(FirstMisplacedStage(stages) == int(Vertex));
-    stages[Vertex] = Stage({0, 0, 0}, {1, 1, 0});
+    stages[Vertex] = Stage({0, 0}, {1, 1});
     assert(FirstMisplacedStage(stages) == -1);
 
     // A stage without resources keeps whatever start it was compiled with: it names no descriptor.
     stages = {};
-    stages[Fragment] = Stage({0, 0, 0}, {4, 2, 1});
-    stages[Vertex] = Stage({9, 9, 9}, {0, 0, 0}, false);
+    stages[Fragment] = Stage({0, 0}, {4, 2});
+    stages[Vertex] = Stage({9, 9}, {0, 0}, false);
     assert(FirstMisplacedStage(stages) == -1);
     // ... but it still adds its own size for the stages after it.
     stages = {};
-    stages[Fragment] = Stage({0, 0, 0}, {4, 2, 1});
-    stages[TessControl] = Stage({9, 9, 9}, {2, 0, 3}, false);
-    stages[TessEval] = Stage({6, 2, 4}, {1, 1, 0});
-    stages[Vertex] = Stage({7, 3, 4}, {1, 1, 0});
+    stages[Fragment] = Stage({0, 0}, {4, 2});
+    stages[TessControl] = Stage({9, 9}, {2, 0}, false);
+    stages[TessEval] = Stage({6, 2}, {1, 1});
+    stages[Vertex] = Stage({7, 3}, {1, 1});
     assert(FirstMisplacedStage(stages) == -1);
-    stages[Vertex] = Stage({6, 3, 4}, {1, 1, 0});
+    stages[Vertex] = Stage({6, 3}, {1, 1});
     assert(FirstMisplacedStage(stages) == int(Vertex));
 
     // Absent stages add nothing, and no stage at all is consistent.
     stages = {};
     assert(FirstMisplacedStage(stages) == -1);
-    stages[Fragment] = Stage({0, 0, 0}, {2, 1, 0});
-    stages[Vertex] = Stage({2, 1, 0}, {1, 1, 0});
+    stages[Fragment] = Stage({0, 0}, {2, 1});
+    stages[Vertex] = Stage({2, 1}, {1, 1});
     assert(FirstMisplacedStage(stages) == -1);
 
     // A compute pipeline is one stage that starts at zero.
-    const std::array<StageBindings, 1> compute{Stage({0, 0, 0}, {8, 4, 1})};
+    const std::array<StageBindings, 1> compute{Stage({0, 0}, {8, 4})};
     assert(FirstMisplacedStage(compute) == -1);
-    const std::array<StageBindings, 1> late_compute{Stage({1, 0, 0}, {8, 4, 1})};
+    const std::array<StageBindings, 1> late_compute{Stage({1, 0}, {8, 4})};
     assert(FirstMisplacedStage(late_compute) == 0);
 
     // The profile blob: versions first, then the profile, and nothing else.

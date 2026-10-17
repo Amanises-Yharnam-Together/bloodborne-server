@@ -290,7 +290,7 @@ void OcclusionQueries::Event(VAddr address, u32 pairs) {
     // them, a VRAM copy would show it stale ones).
     const u32 size = (pairs - 1) * 16 + 8;
     buffer_cache.force_writes_in_place = true;
-    const auto [buffer, offset] = buffer_cache.ObtainBuffer(address, size, true);
+    const auto [buffer, offset] = buffer_cache.ObtainBuffer(address, size, VideoCore::ObtainBufferFlags::IsWritten);
     buffer_cache.force_writes_in_place = false;
     if (active) {
         EndSegment();

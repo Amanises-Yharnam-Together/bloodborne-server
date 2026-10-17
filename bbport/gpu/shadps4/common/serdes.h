@@ -8,6 +8,8 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <cstring>
+#include <string>
 #include <vector>
 
 namespace Serialization {

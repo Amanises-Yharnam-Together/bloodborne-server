@@ -142,7 +142,8 @@ bool GpuTimestamps::Write(VAddr address, bool end_of_pipe) {
     scheduler.EndRendering(); // the copy and the dispatch are outside render passes
     // The value is read by the CPU: in place (a VRAM copy would show it a stale one).
     buffer_cache.force_writes_in_place = true;
-    const auto [buffer, offset] = buffer_cache.ObtainBuffer(address, sizeof(u64), true);
+    const auto [buffer, offset] = buffer_cache.ObtainBuffer(address, sizeof(u64),
+                                                            VideoCore::ObtainBufferFlags::IsWritten);
     buffer_cache.force_writes_in_place = false;
     const u32 slot = next_slot;
     next_slot = next_slot + 1 == NumSlots ? 1 : next_slot + 1;

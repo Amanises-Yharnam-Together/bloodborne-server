@@ -28,6 +28,7 @@
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
+#include "vulkan/vulkan.hpp"
 
 namespace tracy {
 class VkCtxScope;

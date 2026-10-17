@@ -448,7 +448,7 @@ void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
     }
     // BB_FREE_CHECK: the order of the fences in the command stream, checked where they land.
     const u64 seq = BbFreeCheck::NextFenceSeq();
-    rasterizer.ProcessDownloadImages();
+    rasterizer.OnFence();
     // BB_HONEST_LABELS: written once the GPU has finished the work before it, as the hardware
     // does (an end-of-pipe event), instead of when that work is recorded.
     // bbport: a timestamp without an interrupt: the GPU's own clock at the end of the pipe.
@@ -672,6 +672,7 @@ void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     rasterizer.WaitDeferredSignals();
     BbFreeCheck::Check(write_data->Address<u64>(), (header->type3.count.Value() - 2) * sizeof(u32),
                        write_data->data, BbFreeCheck::WriteData);
+    rasterizer.OnFence(); // as upstream: pending image downloads land before the CPU write
     BbWriteLog::Note(write_data->Address<u64>(), write_data->data,
                      (header->type3.count.Value() - 2) * sizeof(u32), BbWriteLog::WriteData);
     std::memcpy(write_data->Address<u64*>(), write_data->data,
@@ -700,7 +701,7 @@ void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
     // BB_HONEST_LABELS: end of shader work, so written once the GPU has finished it.
     if (Vulkan::Rasterizer::HonestLabels() &&
         event_eos.command == PM4CmdEventWriteEos::Command::SignalFence) {
-        rasterizer.ProcessDownloadImages();
+        rasterizer.OnFence();
         if (rasterizer.WriteLabelOnGpu(reinterpret_cast<VAddr>(event_eos.Address()),
                                        event_eos.DataDWord(), sizeof(u32))) {
             return; // written by the GPU once the shaders before it are done
@@ -713,7 +714,7 @@ void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
     // Copies deferred to the recording thread precede writes the guest sees.
     rasterizer.WaitHostCopies();
     rasterizer.WaitDeferredSignals();
-    rasterizer.ProcessDownloadImages();
+    rasterizer.OnFence();
     event_eos.SignalFence(&WriteEosLabel);
     if (event_eos.command == PM4CmdEventWriteEos::Command::GdsStore) {
         ASSERT(event_eos.size == 1);
@@ -863,6 +864,7 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
                 YIELD_CE();
                 RESUME_CE(task);
             }
+            task.handle.destroy();
             break;
         }
         default:
@@ -1037,8 +1039,7 @@ void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header,
         break;
     }
     case PM4ItOpcode::IndexBufferSize:
-        regs.num_indices = reinterpret_cast<const PM4CmdDrawIndexBufferSize*>(header)->num_indices;
-        mark_field(regs.num_indices);
+        // Not a register since upstream #5278: ProcessGraphics keeps it for indirect draws.
         break;
     case PM4ItOpcode::EventWrite: {
         const auto* event = reinterpret_cast<const PM4CmdEventWrite*>(header);
@@ -1777,6 +1778,27 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     });
                 break;
             }
+            case PM4ItOpcode::DrawIndirectCountMulti: {
+                const auto* draw_indirect =
+                    reinterpret_cast<const PM4CmdDrawIndirectCountMulti*>(header);
+                const auto offset = draw_indirect->data_offset;
+                const auto stride = sizeof(DrawIndirectArgs);
+                if (DebugState.DumpingCurrentReg()) {
+                    DebugState.PushRegsDump(base_addr, reinterpret_cast<uintptr_t>(header), regs);
+                }
+                if (!rasterizer) {
+                    break;
+                }
+                const auto cmd_address = reinterpret_cast<const void*>(header);
+                rasterizer->ScopeMarker(
+                    "gfx:{}:DrawIndirectCountMulti", fmt::make_format_args(cmd_address), [&] {
+                        rasterizer->DrawIndirect(
+                            false, indirect_args_addr, offset, draw_indirect->stride,
+                            draw_indirect->count, draw_indirect->count_addr,
+                            draw_indirect->base_vtx_loc, draw_indirect->start_inst_loc);
+                    });
+                break;
+            }
             case PM4ItOpcode::DrawIndirectMulti: {
                 if (PredicationSkips(header)) {
                     break;
@@ -1808,6 +1830,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     reinterpret_cast<const PM4CmdDrawIndexIndirect*>(header);
                 const auto offset = draw_index_indirect->data_offset;
                 const auto stride = sizeof(DrawIndexedIndirectArgs);
+                regs.max_index_size = index_buffer_num_indices;
                 if (DebugState.DumpingCurrentReg()) {
                     DebugState.PushRegsDump(base_addr, reinterpret_cast<uintptr_t>(header), regs);
                 }
@@ -1830,6 +1853,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const auto* draw_index_indirect =
                     reinterpret_cast<const PM4CmdDrawIndexIndirectMulti*>(header);
                 const auto offset = draw_index_indirect->data_offset;
+                regs.max_index_size = index_buffer_num_indices;
                 if (DebugState.DumpingCurrentReg()) {
                     DebugState.PushRegsDump(base_addr, reinterpret_cast<uintptr_t>(header), regs);
                 }
@@ -1853,6 +1877,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const auto* draw_index_indirect =
                     reinterpret_cast<const PM4CmdDrawIndexIndirectCountMulti*>(header);
                 const auto offset = draw_index_indirect->data_offset;
+                regs.max_index_size = index_buffer_num_indices;
                 if (DebugState.DumpingCurrentReg()) {
                     DebugState.PushRegsDump(base_addr, reinterpret_cast<uintptr_t>(header), regs);
                 }
@@ -1919,7 +1944,13 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             case PM4ItOpcode::NumInstances:
             case PM4ItOpcode::IndexBase:
             case PM4ItOpcode::IndexBufferSize: {
-                break; // registers: ApplyGraphicsRegisterPacket
+                if (opcode == PM4ItOpcode::IndexBufferSize) {
+                    // As upstream (#5278): the index buffer's capacity, for indirect draws; it
+                    // no longer overwrites the index count of direct draws.
+                    index_buffer_num_indices =
+                        reinterpret_cast<const PM4CmdDrawIndexBufferSize*>(header)->num_indices;
+                }
+                break; // other registers: ApplyGraphicsRegisterPacket
             }
             case PM4ItOpcode::SetBase: {
                 const auto* set_base = reinterpret_cast<const PM4CmdSetBase*>(header);
@@ -2259,6 +2290,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     YIELD_GFX();
                     RESUME_GFX(task);
                 }
+                task.handle.destroy();
                 break;
             }
             case PM4ItOpcode::IncrementDeCounter: {
@@ -2453,6 +2485,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                 YIELD_ASC(vqid);
                 RESUME_ASC(task, vqid);
             }
+            task.handle.destroy();
             break;
         }
         case PM4ItOpcode::DmaData: {
@@ -2603,6 +2636,9 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             if (!write_data->wr_one_addr.Value()) {
                 BbFreeCheck::Check(write_data->Address<u64>(), data_size, write_data->data,
                                    BbFreeCheck::ComputeWriteData);
+                if (rasterizer) {
+                    rasterizer->OnFence();
+                }
                 std::memcpy(write_data->Address<void*>(), write_data->data, data_size);
                 if (rasterizer) {
                     rasterizer->NoteCommandWrite(write_data->Address<VAddr>(), write_data->data,
@@ -2653,7 +2689,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             if (const auto* rm = reinterpret_cast<const PM4CmdReleaseMem*>(header);
                 rasterizer && Vulkan::Rasterizer::HonestLabels() &&
                 rm->data_sel.Value() != DataSelect::GdsMemStore) {
-                rasterizer->ProcessDownloadImages();
+                rasterizer->OnFence();
                 if (rm->data_sel.Value() == DataSelect::GpuClock64 &&
                     rm->int_sel.Value() == InterruptSelect::None &&
                     rasterizer->WriteTimestampOnGpu(rm->Address<VAddr>(), true)) {
@@ -2700,7 +2736,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                                    BbFreeCheck::ReleaseMem);
             }
             if (rasterizer) {
-                rasterizer->ProcessDownloadImages();
+                rasterizer->OnFence();
             }
             release_mem->SignalFence(
                 [pipe_id = queue.pipe_id] {

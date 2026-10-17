@@ -151,6 +151,16 @@ constexpr static std::array DescriptorHeapSizes = {
     vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1024},
 };
 
+/// bbport: selections keep their own copy (workers fill them while other threads add
+/// permutations, which moves the specializations the upstream pointer referred to).
+static std::optional<Shader::Gcn::FetchShaderData> ToFetchShader(
+    const Shader::Gcn::FetchShaderData& data) {
+    if (data.Empty()) {
+        return std::nullopt;
+    }
+    return data;
+}
+
 static u32 MapOutputs(std::span<Shader::OutputMap, 3> outputs, const AmdGpu::VsOutputControl& ctl) {
     u32 num_outputs = 0;
 
@@ -207,13 +217,14 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
     auto& info = sel.runtime_infos[u32(l_stage)];
     const auto& regs = (*sel.regs);
     const auto BuildCommon = [&](const auto& program) {
-        info.props.num_user_data = program.settings.num_user_regs;
-        info.props.num_input_vgprs = program.settings.vgpr_comp_cnt;
-        info.props.num_allocated_vgprs = program.NumVgprs();
         info.props.fp_denorm_mode32 = program.settings.fp_denorm_mode32;
         info.props.fp_denorm_mode16_64 = program.settings.fp_denorm_mode64;
         info.props.fp_round_mode32 = program.settings.fp_round_mode32;
         info.props.fp_round_mode16_64 = program.settings.fp_round_mode64;
+        info.props.num_allocated_vgprs = program.NumVgprs();
+        info.props.num_user_data = program.settings.num_user_regs;
+        info.props.num_input_vgprs = program.settings.vgpr_comp_cnt;
+        info.props.dx10_clamp = program.settings.dx10_clamp;
     };
     info.Initialize(stage, l_stage);
     switch (stage) {
@@ -286,6 +297,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         info.hw.fs.addr_flags = regs.ps_input_addr;
         info.hw.fs.num_inputs = regs.num_interp;
         info.hw.fs.front_face_all_bits = regs.barycentric_control.front_face_all_bits;
+        info.hw.fs.depth_before_shader = regs.depth_shader_control.depth_before_shader;
         info.hw.fs.num_samples =
             regs.ps_input_addr.sample_coverage_ena && regs.ps_input_ena.sample_coverage_ena
                 ? regs.aa_config.NumSamples()
@@ -315,10 +327,10 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         const auto& ps_inputs = regs.ps_inputs;
         for (u32 i = 0; i < regs.num_interp; i++) {
             info.hw.fs.inputs[i] = {
-                .param_index = u8(ps_inputs[i].input_offset),
-                .is_default = bool(ps_inputs[i].use_default),
-                .is_flat = bool(ps_inputs[i].flat_shade),
-                .default_value = u8(ps_inputs[i].default_value),
+                .param_index = u16(ps_inputs[i].input_offset),
+                .is_default = u16(ps_inputs[i].use_default),
+                .is_flat = u16(ps_inputs[i].flat_shade),
+                .default_value = u16(ps_inputs[i].default_value),
             };
         }
         for (u32 i = 0; i < Shader::MaxColorBuffers; i++) {
@@ -345,6 +357,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         info.props.fp_denorm_mode16_64 = cs_pgm.settings.fp_denorm_mode64;
         info.props.fp_round_mode32 = cs_pgm.settings.fp_round_mode32;
         info.props.fp_round_mode16_64 = cs_pgm.settings.fp_round_mode64;
+        info.props.dx10_clamp = cs_pgm.settings.dx10_clamp;
         info.hw.cs.workgroup_size = {cs_pgm.num_thread_x.full, cs_pgm.num_thread_y.full,
                                      cs_pgm.num_thread_z.full};
         info.hw.cs.tgid_enable = {cs_pgm.IsTgidEnabled(0), cs_pgm.IsTgidEnabled(1),
@@ -361,6 +374,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         info.sw.vs.step_rate_1 = regs.vgt_instance_step_rate_1;
         info.sw.vs.vertex_sgpr_offset = sel.draw_indirect_params.vertex_sgpr_offset;
         info.sw.vs.instance_sgpr_offset = sel.draw_indirect_params.instance_sgpr_offset;
+        info.sw.vs.is_indirect = sel.draw_indirect_params.is_indirect;
         info.sw.vs.tess_emulated_primitive =
             regs.primitive_type == AmdGpu::PrimitiveType::RectList ||
             regs.primitive_type == AmdGpu::PrimitiveType::QuadList;
@@ -1012,7 +1026,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             try {
                 pipeline = std::make_unique<GraphicsPipeline>(
                     instance, scheduler, desc_heap, profile, key, *pipeline_cache, infos,
-                    runtime_infos, fetch, modules, sdata, false);
+                    runtime_infos, fetch ? &*fetch : nullptr, modules, sdata, false);
             } catch (const std::exception& e) {
                 // The next draw that needs it compiles it on the GPU thread (and reports why).
                 std::printf("GPU: background pipeline compile failed (%s)\n", e.what());
@@ -1035,7 +1049,8 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     GraphicsPipeline::SerializationSupport sdata{};
     auto pipeline = std::make_unique<GraphicsPipeline>(
         instance, scheduler, desc_heap, profile, key, *pipeline_cache, sel.infos,
-        sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
+        sel.runtime_infos, sel.fetch_shader ? &*sel.fetch_shader : nullptr, sel.modules, sdata,
+        false);
     const auto* result = PublishGraphicsPipeline(key, pipeline_hash, std::move(pipeline), sdata,
                                                  claimed);
 
@@ -1071,7 +1086,9 @@ bool PipelineCache::EnsureGraphicsPipeline(PipelineSelection& worker_sel) {
     GraphicsPipeline::SerializationSupport sdata{};
     auto pipeline = std::make_unique<GraphicsPipeline>(
         instance, scheduler, desc_heap, profile, key, *pipeline_cache, worker_sel.infos,
-        worker_sel.runtime_infos, worker_sel.fetch_shader, worker_sel.modules, sdata, false);
+        worker_sel.runtime_infos,
+        worker_sel.fetch_shader ? &*worker_sel.fetch_shader : nullptr, worker_sel.modules, sdata,
+        false);
     // It was described with the worker's copy of each stage's Info (this draw's user data); the
     // GPU thread binds resources through the Info of the program.
     const auto& worker = *worker_sel.worker;
