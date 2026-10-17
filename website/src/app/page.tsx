@@ -42,7 +42,7 @@ const showcases = [
     href: "/docs/install#graphics",
     src: "/docs/launcher-settings.webp",
     width: 1200,
-    height: 1017,
+    height: 780,
     alt: "The launcher's settings: resolution, frame rate and upscaler.",
   },
   {
@@ -51,7 +51,7 @@ const showcases = [
     href: "/docs/install#coop-card",
     src: "/docs/launcher-coop.webp",
     width: 1200,
-    height: 690,
+    height: 696,
     alt: "The launcher's Co-op page with the game folder and the host's address filled in.",
   },
 ];
@@ -97,14 +97,14 @@ const features: {
     alt: "A guest receives four Blood Vials from the host in the game's own item dialog.",
   },
   {
-    title: "Teams from the System menu",
+    title: "Your team, any time",
     icon: "bell",
-    text: "Co-op Team sits in the game's own System menu. Open it any time to see who is online, invite them or leave.",
+    text: "Press Insert, or L3 + R3 on a pad, and choose Co-op Team. It shows your team, who is online and who invited you, without leaving the game.",
     href: "/docs/play#team",
-    src: "/docs/system-menu.webp",
-    width: 960,
-    height: 720,
-    alt: "The game's System menu with Co-op Team between Environment and Display.",
+    src: "/docs/insert-team.webp",
+    width: 1440,
+    height: 810,
+    alt: "The Co-op Team page from the Insert menu: Player 1 and Player 2 In the hunt, two empty places, Hunters online and Invitations.",
   },
   {
     title: "Ready, then the hunt",
@@ -112,8 +112,8 @@ const features: {
     text: "Members press Ready on the team screen. The leader begins the hunt and everyone loads into the same world.",
     href: "/docs/play#team",
     src: "/docs/team-guest.webp",
-    width: 1200,
-    height: 771,
+    width: 1440,
+    height: 810,
     alt: "The team screen seen by Player 2, with Ready instead of Begin the hunt.",
   },
 ];
@@ -125,7 +125,7 @@ const steps: StartStep[] = [
     href: "/docs/install#install",
     src: "/docs/launcher-home.webp",
     width: 1200,
-    height: 1017,
+    height: 780,
     alt: "The launcher's Home page after the first start.",
   },
   {
@@ -134,7 +134,7 @@ const steps: StartStep[] = [
     href: "/docs/install#coop-card",
     src: "/docs/launcher-coop.webp",
     width: 1200,
-    height: 690,
+    height: 696,
     alt: "The Co-op page with the game folder and the host's address.",
   },
   {
@@ -142,8 +142,8 @@ const steps: StartStep[] = [
     text: "Press PLAY, invite each other on the team screen and begin the hunt.",
     href: "/docs/play#team",
     src: "/docs/team-host.webp",
-    width: 1200,
-    height: 771,
+    width: 1440,
+    height: 810,
     alt: "The team screen with two hunters, before loading in.",
   },
 ];
@@ -180,16 +180,16 @@ export default function Home() {
         </div>
         <figure>
           <Image
-            src="/docs/team-host.webp"
-            alt="The Hunt Together team screen with two hunters and two empty places."
-            width={1200}
-            height={771}
+            src="/docs/loading.webp"
+            alt="The Hunt Begins loading screen: cards for Player 1 and Player 2 over a night city under the moon."
+            width={1440}
+            height={810}
             priority
             sizes="(min-width: 1024px) 640px, 100vw"
             className="h-auto w-full border-y border-silver/30 shadow-[0_30px_80px_rgb(0_0_0/0.7)]"
           />
           <figcaption className="mt-3 text-base text-muted-foreground italic">
-            The team screen, before loading in.
+            The Hunt Begins: the team loads into one world.
           </figcaption>
         </figure>
       </section>
