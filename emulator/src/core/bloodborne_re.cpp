@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
@@ -501,6 +502,133 @@ std::optional<LampPosition> CharacterPosition(u64 character) {
 // The local player's position.
 std::optional<LampPosition> LocalPlayerPosition() {
     return CharacterPosition(GetLocalPlayer());
+}
+
+// Kaniel 2026-10-17 (the compass): the game camera's heading. The camera object (the one bbport's
+// runtime_camhook.c turns: pivot +0xD0, drawn position +0x100, floats) hangs off the camera
+// manager [[CameraManagerPointerOffset] +CameraManagerField], at a path that is found once: a
+// pointer in the manager (CameraSearchSize bytes), or one in the object it points at (the first
+// CameraSearchInner bytes), to an object whose pivot is by the player and whose drawn position
+// is a camera's distance from it. The path found is logged; it is checked every read and looked
+// for again (at most once a second) when it stops looking like a camera.
+namespace {
+
+constexpr u64 CameraSearchSize = 0x1150;
+constexpr u64 CameraSearchInner = 0x400;
+constexpr u64 CameraPivotAt = 0xD0;
+constexpr u64 CameraDrawnAt = 0x100;
+
+struct CameraPath {
+    u64 outer = 0;            // the pointer's place in the manager
+    std::optional<u64> inner; // and in the object it points at, for a second step
+    bool operator==(const CameraPath&) const = default;
+};
+
+bool ReadCameraPoints(u64 camera, LampPosition& pivot, LampPosition& drawn) {
+    if (camera < 0x10000 || (camera & 7) != 0 ||
+        !HasMemoryAccess(camera + CameraPivotAt, CameraDrawnAt - CameraPivotAt + 12,
+                         MemoryProt::CpuRead)) {
+        return false;
+    }
+    std::memcpy(pivot.data(), reinterpret_cast<const void*>(camera + CameraPivotAt), 12);
+    std::memcpy(drawn.data(), reinterpret_cast<const void*>(camera + CameraDrawnAt), 12);
+    for (const float value : {pivot[0], pivot[1], pivot[2], drawn[0], drawn[1], drawn[2]}) {
+        if (!std::isfinite(value) || std::abs(value) > 1.0e5f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+float Distance(const LampPosition& a, const LampPosition& b) {
+    return std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+// A camera: its drawn position 0.3 to 30 m from its pivot (the follow camera; a cutscene's may be
+// farther, and is not the compass's).
+bool LooksLikeCamera(const LampPosition& pivot, const LampPosition& drawn) {
+    const float reach = Distance(pivot, drawn);
+    return reach >= 0.3f && reach <= 30.0f;
+}
+
+u64 CameraAt(u64 manager, const CameraPath& path) {
+    const u64 outer = ReadValue<u64>(manager, path.outer);
+    return path.inner ? ReadValue<u64>(outer, *path.inner) : outer;
+}
+
+std::optional<CameraPath> FindCameraPath(u64 manager, const LampPosition& player) {
+    if (!HasMemoryAccess(manager, CameraSearchSize, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    const auto is_camera = [&](u64 camera) {
+        LampPosition pivot{}, drawn{};
+        return ReadCameraPoints(camera, pivot, drawn) && LooksLikeCamera(pivot, drawn) &&
+               Distance(pivot, player) <= 3.0f;
+    };
+    for (u64 outer = 0; outer < CameraSearchSize; outer += 8) {
+        if (is_camera(ReadValue<u64>(manager, outer))) {
+            return CameraPath{outer};
+        }
+    }
+    for (u64 outer = 0; outer < CameraSearchSize; outer += 8) {
+        const u64 object = ReadValue<u64>(manager, outer);
+        if (object < 0x10000 || (object & 7) != 0 ||
+            !HasMemoryAccess(object, CameraSearchInner, MemoryProt::CpuRead)) {
+            continue;
+        }
+        for (u64 inner = 0; inner < CameraSearchInner; inner += 8) {
+            if (is_camera(ReadValue<u64>(object, inner))) {
+                return CameraPath{outer, inner};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+std::optional<float> CameraHeadingNow() {
+    static std::optional<CameraPath> path;
+    static s64 searched_at = std::numeric_limits<s64>::min();
+    static bool told_missing = false;
+    const u64 holder = ReadValue<u64>(image_base + CameraManagerPointerOffset, 0);
+    const u64 manager = holder >= 0x10000 ? ReadValue<u64>(holder, CameraManagerField) : 0;
+    if (manager < 0x10000) {
+        return std::nullopt;
+    }
+    LampPosition pivot{}, drawn{};
+    if (!path || !ReadCameraPoints(CameraAt(manager, *path), pivot, drawn) ||
+        !LooksLikeCamera(pivot, drawn)) {
+        const s64 now = SteadyMilliseconds();
+        const auto player = LocalPlayerPosition();
+        if (!player ||
+            (searched_at != std::numeric_limits<s64>::min() && now - searched_at < 1'000)) {
+            return std::nullopt;
+        }
+        searched_at = now;
+        const auto found = FindCameraPath(manager, *player);
+        if (!found) {
+            if (!told_missing) {
+                told_missing = true;
+                LOG_INFO(Debug,
+                         "Co-op compass: no camera found by the player in the camera "
+                         "manager {:#x} yet",
+                         manager);
+            }
+            return std::nullopt;
+        }
+        if (found != path) {
+            LOG_INFO(Debug, "Co-op compass: the camera is [[manager {:#x}]+{:#x}]{} = {:#x}",
+                     manager, found->outer,
+                     found->inner ? fmt::format("+{:#x}", *found->inner) : std::string{},
+                     CameraAt(manager, *found));
+        }
+        path = found;
+        if (!ReadCameraPoints(CameraAt(manager, *path), pivot, drawn)) {
+            return std::nullopt;
+        }
+    }
+    return CameraHeading(pivot, drawn);
 }
 
 // Kaniel 2026-10-12: the hardest bugs come where two maps meet (a fog border crossed back and

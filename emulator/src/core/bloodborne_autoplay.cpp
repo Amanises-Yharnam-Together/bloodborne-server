@@ -4,6 +4,7 @@
 // The rig's autoplay: its script verbs, census and pad. Split from bloodborne_re.cpp; the
 // shared declarations are in bloodborne_re_internal.h.
 
+#include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
@@ -29,6 +30,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <random>
 #include <span>
@@ -1353,6 +1355,42 @@ bool AutoplayExpectOthersNear(const AutoplayStep& step) {
     return true;
 }
 
+// expect-compass <bearing> <metres> [<degrees> [<metres>]] (Kaniel 2026-10-17, the teammate
+// compass): within 10 s a marker on the compass is at that bearing (degrees from straight ahead,
+// positive to the right) and distance, within the tolerances (20 degrees, 1.5 m). Logs what the
+// compass shows.
+bool AutoplayExpectCompass(const AutoplayStep& step) {
+    CompassView view;
+    const bool shown = ReadCompass(view);
+    std::string seen;
+    for (size_t i = 0; i < view.markers.size(); ++i) {
+        const CompassMarker& marker = view.markers[i];
+        seen += fmt::format(" [{} at {:.1f} deg, {:.1f} m, strip {:+.2f}{}]", view.names[i],
+                            marker.bearing * 180.0f / std::numbers::pi_v<float>, marker.distance,
+                            marker.place.x, marker.place.pinned ? " pinned" : "");
+    }
+    const std::string text =
+        shown ? fmt::format("camera heading {:.1f} deg,{}",
+                            view.heading * 180.0f / std::numbers::pi_v<float>, seen)
+              : view.why;
+    const double bearing = step.Number(0, 0.0), metres = step.Number(1, 0.0);
+    const double bearing_tolerance = step.Number(2, 20.0), metres_tolerance = step.Number(3, 1.5);
+    for (const CompassMarker& marker : view.markers) {
+        const double off = std::abs(
+            WrapAngle(marker.bearing - static_cast<float>(bearing * std::numbers::pi / 180.0)));
+        if (off * 180.0 / std::numbers::pi <= bearing_tolerance &&
+            std::abs(marker.distance - metres) <= metres_tolerance) {
+            LOG_INFO(Debug, "Bloodborne autoplay compass: {}", text);
+            return true;
+        }
+    }
+    if (step.elapsed > 10.0) {
+        step.failure = fmt::format("no marker at {:.0f} deg, {:.1f} m: {}", bearing, metres, text);
+        LOG_INFO(Debug, "Bloodborne autoplay compass: {}", text);
+    }
+    return false;
+}
+
 // expect-others-shown <n>: exactly n other players show in this world (not hidden: Kaniel
 // 2026-10-15, members gone to another map still stood here).
 bool AutoplayExpectOthersShown(const AutoplayStep& step) {
@@ -1661,6 +1699,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-session", AutoplayExpectSession},
     {"expect-others-near", AutoplayExpectOthersNear},
     {"expect-others-shown", AutoplayExpectOthersShown},
+    {"expect-compass", AutoplayExpectCompass},
     {"expect-map", AutoplayExpectMap},
     {"chapter", AutoplayChapter},
     {"keep-going", AutoplayKeepGoing},

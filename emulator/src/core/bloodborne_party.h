@@ -3326,6 +3326,8 @@ struct PanelMember {
     s32 max = 0;
     u32 landed = 0; // revive progress while down, in damage (ReviveShare)
     u32 needed = 0;
+    // Kaniel 2026-10-17 (the compass): where it stands, on the local player's map only.
+    std::optional<LampPosition> at;
     bool operator==(const PanelMember&) const = default;
 };
 struct PartyPanel {
@@ -3335,6 +3337,10 @@ struct PartyPanel {
     u32 landed = 0;
     u32 needed = 0;
     float give_up = 0.0f; // 0 to 1
+    // The compass's view: where the local player stands and the camera's heading
+    // (CameraHeading), as of the same tick.
+    std::optional<LampPosition> me;
+    std::optional<float> camera_heading;
 };
 // The panel's members from the board; `me` is where the local player stands while it can revive
 // someone (nothing while it is down or dead). The local player's own fields are left to fill.

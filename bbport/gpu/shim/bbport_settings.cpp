@@ -85,6 +85,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
+    } else if (key == "compass") {
+        v.compass = i != 0;
+    } else if (key == "compass_position") {
+        for (int p = 0; p < CompassPositionCount; ++p) {
+            if (value == CompassPositionNames[p]) {
+                v.compass_position = p;
+            }
+        }
     } else if (key == "fps_limit") {
         v.fps_limit = std::clamp(i, 0, 1000);
     } else if (key == "dlss_model") {
@@ -381,6 +389,9 @@ void Save() {
     put("reactive_max", fixed(v.reactive_max, 2));
     put("debug_view", std::to_string(v.debug_view.load()));
     put("show_fps", flag(v.show_fps));
+    put("compass", flag(v.compass));
+    put("compass_position",
+        CompassPositionNames[std::clamp(v.compass_position.load(), 0, CompassPositionCount - 1)]);
     put("fps_limit", std::to_string(v.fps_limit.load()));
     put("dlss_model", DlssModelNames[DlssModelIndex(v.dlss_model)]);
     put("window_mode", WindowModeNames[std::clamp(v.window_mode.load(), 0, WindowModeCount - 1)]);

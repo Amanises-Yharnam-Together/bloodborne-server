@@ -1189,9 +1189,12 @@ TEST(BloodbornePartyDeath, ListsTheOthersOnThePartyPanel) {
                                              .hp = 1,
                                              .max = 1000,
                                              .landed = 2,
-                                             .needed = 3}));
+                                             .needed = 3,
+                                             .at = LampPosition{1.0f, 0.0f, 0.0f}}));
     EXPECT_EQ(panel.members[1].name, "third");
     EXPECT_FALSE(panel.members[1].here);
+    // Kaniel 2026-10-17 (the compass): where a member on this map stands; nowhere on another map.
+    EXPECT_FALSE(panel.members[1].at.has_value());
     EXPECT_EQ(panel.members[2].name, ""); // its board name is not an online id
     EXPECT_EQ(panel.members[2].vital, Vital::Dead);
     EXPECT_EQ(panel.revive_target, 0);
