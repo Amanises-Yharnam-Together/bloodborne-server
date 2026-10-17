@@ -979,8 +979,7 @@ bool HoldTitleLoadForTeam(u32 slot, bool fresh) {
             if (lobby && lobby->has_team() && lobby->team().leader() == me &&
                 !lobby->team().started()) {
                 team_world_default_sent = true;
-                const std::string pick =
-                    DefaultTeamWorld(lobby->team(), team_world_hint, title_fresh);
+                const std::string pick = DefaultTeamWorld(*lobby, team_world_hint, title_fresh);
                 if (lobby->team().world() != pick) {
                     bbcoop::Envelope envelope;
                     envelope.mutable_team_request()->set_action(bbcoop::TeamRequest::WORLD);
@@ -1150,9 +1149,9 @@ void UpdateTeamLoad() {
         // A cutscene playing (SprjRemoMan's RegistWait .. Update): not ready, so it is skipped
         // under the screen.
         const int step = remo_step.load(std::memory_order_relaxed);
-        const bool cutscene = step >= 1 && step <= CutsceneSkip::PlayStep &&
-                              now_ms - remo_step_ms.load(std::memory_order_relaxed) <
-                                  CutsceneSkip::LongestMs;
+        const bool cutscene =
+            step >= 1 && step <= CutsceneSkip::PlayStep &&
+            now_ms - remo_step_ms.load(std::memory_order_relaxed) < CutsceneSkip::LongestMs;
         const TeamLoad::Stage own_stage = TeamLoad::OwnStage(loading, in, seen, needed);
         stage = team_load_settle.Settle(own_stage, needed, now_ms, cutscene);
         static TeamLoad::Stage logged_own = bbcoop::LoadProgress::WAITING;
@@ -1599,7 +1598,8 @@ void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id)
     request.set_action(action);
     if (action == bbcoop::TeamRequest::ACCEPT || action == bbcoop::TeamRequest::DECLINE) {
         request.set_team(id);
-    } else if (action == bbcoop::TeamRequest::WORLD) {
+    } else if (action == bbcoop::TeamRequest::WORLD ||
+               action == bbcoop::TeamRequest::FORGET_WORLD) {
         request.set_world(id);
     } else {
         request.set_member(id);

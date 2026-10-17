@@ -152,9 +152,8 @@ private:
         bool team = false;
         std::optional<bbcoop::TeamWorld> team_world;
         bool team_world_read = false;
-        // Kaniel 2026-10-16: which team and which of its worlds (TeamWorldInfo.id) this party
-        // is, from its key ("team:<team>/<world>"; FirstTeamWorld for "team:<team>").
-        std::string team_id;
+        // Kaniel 2026-10-17: which of the server's worlds (TeamWorldInfo.id) this party is, from
+        // its key ("world:<id>").
         std::string team_world_id;
     };
     struct Member {
@@ -216,7 +215,7 @@ private:
     void Flush(qint64 now_ms, Result& result);
     std::string Who(const Member& member) const;
     // The team lobby (phase 5): a player's sign-in and requests; every signed-in player's state
-    // after a change, a TeamStart to those the outcome starts, the teams to disk.
+    // after a change, a TeamStart to those the outcome starts, the world list to disk.
     void OnLobbyHello(Member& member, const bbcoop::LobbyHello& hello, qint64 now_ms,
                       Result& result);
     void OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, qint64 now_ms,
@@ -229,13 +228,20 @@ private:
     // What goes when a guest leaves its party's world (its game said so, or its team let it go).
     void ForgetMember(PartyWorld& world, const std::string& name, qint64 now_ms, Result& result);
     void SendLobby(qint64 now_ms);
-    void StoreTeams(Result& result);
     // Phase 5b: the team's world, read from its folder once; a host's report taken.
     const std::optional<bbcoop::TeamWorld>& TeamWorldOf(PartyWorld& world);
     void TakeTeamWorld(Member& member, PartyWorld& world, const bbcoop::TeamWorld& report,
                        qint64 now_ms, Result& result);
     void SendTeamWorld(PartyWorld& world, Member& member, qint64 now_ms);
-    void LoadTeams(Result& result);
+    // Kaniel 2026-10-17: the server's list of worlds (worlds.pb). Read at the start, made once
+    // from the teams file of the builds that kept teams and from the world folders not on it
+    // (worlds kept before the list); written when it changes.
+    void LoadWorldList(Result& result);
+    void StoreWorldList(Result& result);
+    // The folder of a party: its world's on the list ("world:<id>"), else a hash of its key.
+    QString FolderOf(const QByteArray& party) const;
+    // Worlds off the list: their folders go aside (forgotten/<folder>-<when>), nothing deleted.
+    void PutAside(const std::vector<std::string>& forgotten, Result& result);
 
     QString folder;
     qint64 heartbeat_ms;
@@ -246,6 +252,8 @@ private:
     std::map<quint64, ServerLink::Endpoint> endpoints;
     BloodborneCoop::TeamLobby lobby;
     bool lobby_changed = false; // a player's game went: states to send at the next tick
+    // The listed worlds' folders by world id, for those not in PartyFolderName("world:<id>").
+    std::map<std::string, QString> world_folders;
 };
 
 } // namespace BloodborneWorld

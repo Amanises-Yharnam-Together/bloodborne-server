@@ -18,8 +18,8 @@ option optimize_for = LITE_RUNTIME;
 enum Protocol {
     PROTOCOL_NONE = 0;
     // 2: phase 4's enemy owners; 3: phase 5's teams; 4: phase 6's team sessions; 5: a team's
-    // worlds (the leader picks one)
-    PROTOCOL_CURRENT = 5;
+    // worlds (the leader picks one); 6: the server's worlds, apart from its teams
+    PROTOCOL_CURRENT = 6;
 }
 
 // game -> server: the first message of the stream, and again whenever the stream starts over (the
@@ -438,8 +438,11 @@ message TeamRequest {
         UNREADY = 8;
         START = 9; // the leader: every ready member's game loads its save
         // Kaniel 2026-10-16: the leader picks the world the next Start plays: `world`, one of
-        // the team's worlds, or empty for a new one.
+        // the server's worlds, or empty for a new one.
         WORLD = 10;
+        // Kaniel 2026-10-17: the leader forgets one of the server's worlds (`world`): off the
+        // list, its folder kept aside on the server.
+        FORGET_WORLD = 11;
     }
     Action action = 1;
     string member = 2;
@@ -473,13 +476,15 @@ message TeamMember {
     uint32 sign = 7;
 }
 
-// Kaniel 2026-10-16: one of a team's worlds (each kept apart on the server, its own party key
-// "team:<team>/<id>"; id "0" is the world a team had before, "team:<team>").
+// Kaniel 2026-10-17: one of the server's worlds. Worlds are the server's, not a team's: any team
+// may play any of them (the server runs at home), each kept apart under its party key
+// "world:<id>".
 message TeamWorldInfo {
     string id = 1;
     string character = 2; // its host's character, as its host's reports last said
     int64 played_ms = 3;  // the last Start that played it (the server's clock, ms since 1970)
-    uint32 flags_on = 4;  // its world flags on, as its host last reported (how far it is)
+    uint32 flags_on = 4;  // its world flags on, as its host last reported
+    uint32 lamps = 5;     // its lamps lit, as its host last reported (how far it is)
 }
 
 message Team {
@@ -487,10 +492,11 @@ message Team {
     string leader = 2; // hosts the team's sessions
     repeated TeamMember members = 3;
     bool started = 4; // the leader pressed Start and a member still plays
-    // Kaniel 2026-10-16: the team's worlds, the last played first, and the one the next Start
-    // plays (empty: a new one).
-    repeated TeamWorldInfo worlds = 5;
+    reserved 5;
+    // Kaniel 2026-10-16: the world the next Start plays (TeamWorldInfo.id; empty: a new one), and
+    // its party key ("world:<id>"; empty for a new one): a game in another party is not in it.
     string world = 6;
+    string party = 7;
 }
 
 message TeamInvite {
@@ -505,13 +511,15 @@ message LobbyState {
     repeated TeamInvite invites = 2;
     repeated LobbyPlayer players = 3; // everyone else signed in to the lobby
     string notice = 4;                // why the player's last request was refused
+    // Kaniel 2026-10-17: every world on the server, the last played first.
+    repeated TeamWorldInfo worlds = 5;
 }
 
 // server -> game: load your save and play the team's world. To every ready member at Start, and
 // to a member that readies while the team plays.
 message TeamStart {
     string team = 1;
-    string party = 2; // the party key for the party hello ("team:<id>/<world>")
+    string party = 2; // the party key for the party hello ("world:<world>")
     string host = 3;  // the member that hosts the sessions (the leader)
     uint32 slot = 4;  // the save slot the member readied with
     string world = 5; // the team's world it plays (TeamWorldInfo.id)
@@ -589,15 +597,25 @@ message TeamWorld {
     string character = 5;         // game -> server: the host's character's name, if known
 }
 
-// shadNet's teams on disk (teams.pb, beside the worlds).
-message StoredInvite {
-    string to = 1;
-    TeamInvite invite = 2;
+// Kaniel 2026-10-17: the server's list of worlds on disk (worlds.pb, beside the worlds): each
+// world's line and its folder (a hash of its party key; a world from before the list keeps the
+// folder its team's key made). Teams are not kept: they live while their members play.
+message KeptWorld {
+    TeamWorldInfo info = 1;
+    string folder = 2;
 }
-message StoredTeams {
+message StoredWorlds {
     uint32 version = 1;
-    repeated Team teams = 2; // members as OFFLINE, not started
-    repeated StoredInvite invites = 3;
+    repeated KeptWorld worlds = 2; // the last played first
+}
+// What the list is made from once: the teams file of the builds that kept teams (teams.pb, only
+// read: a team's id and a world's id give the world's folder).
+message OldTeam {
+    string id = 1;
+    repeated TeamWorldInfo worlds = 5;
+}
+message OldStoredTeams {
+    repeated OldTeam teams = 2;
 }
 
 // One change to a party's world, as the journal keeps it (replayed on top of StoredWorld).

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The team lobby's rules (coop/team_lobby.h): teams, invites, Ready and Start,
-// and the store.
+// and the server's worlds.
 #include <iostream>
 #include <string>
 #include <vector>
@@ -117,8 +117,8 @@ int ReadyAndStart() {
   CHECK(start.starts.size() == 3);
   CHECK(lobby.TeamOf("a")->started());
   const bbcoop::TeamStart go = lobby.StartFor("a");
-  CHECK(go.party() == TeamLobby::PartyOf(team, go.world()) &&
-        go.host() == "a" && go.slot() == 2);
+  CHECK(go.party() == TeamLobby::PartyOf(go.world()) && go.host() == "a" &&
+        go.slot() == 2);
   CHECK(lobby.StartFor("b").slot() == 0 && lobby.StartFor("b").host() == "a");
   // c back at the title readies again and goes at once (joins the team as it
   // plays).
@@ -208,11 +208,9 @@ int LeaveAndRemove() {
   // The leader leaves: the next member leads.
   CHECK(lobby.Request("a", Request(Action::LEAVE)).changed);
   CHECK(lobby.TeamOf("b")->leader() == "b");
-  // The last one leaves: the team is gone (its world stays on the server's
-  // disk).
+  // The last one leaves: the team is gone (its world stays on the server).
   lobby.Request("b", Request(Action::LEAVE));
   CHECK(lobby.TeamOf("b") == nullptr);
-  CHECK(lobby.Store().teams_size() == 0);
   // A player in a team accepts no other team's invite before leaving its own.
   lobby.Request("a", Request(Action::CREATE));
   lobby.Request("b", Request(Action::CREATE));
@@ -226,32 +224,36 @@ int LeaveAndRemove() {
   return 0;
 }
 
-int StoreKeepsTeams() {
+// Kaniel 2026-10-17: a team is only a session. It lives while one of its
+// members is signed in: a member whose game crashed keeps its place (the grace)
+// while someone is still there, and once every member's game is gone the team
+// and its invites are gone.
+int ATeamIsGoneOnceEveryMemberIsGone() {
   TeamLobby lobby = NewLobby();
   lobby.Arrive("a", "Kaniel", false);
   lobby.Arrive("b", "Ada", false);
   lobby.Arrive("c", "Lisa", false);
   lobby.Request("a", Request(Action::CREATE));
+  const std::string team = lobby.TeamOf("a")->id();
   lobby.Request("a", Request(Action::INVITE, "b"));
-  lobby.Request("b", Request(Action::ACCEPT, {}, lobby.TeamOf("a")->id()));
+  lobby.Request("b", Request(Action::ACCEPT, {}, team));
   lobby.Request("a", Request(Action::INVITE, "c"));
-  lobby.Request("a", Request(Action::READY, {}, {}, 1));
-  lobby.Request("a", Request(Action::START));
-
-  TeamLobby restored = NewLobby();
-  restored.Restore(lobby.Store());
-  // Teams and invites come back; nobody signed in, ready or started.
-  CHECK(restored.TeamOf("a") && restored.TeamOf("a")->members_size() == 2);
-  CHECK(!restored.TeamOf("a")->started());
-  CHECK(!restored.TeamOf("a")->members(0).ready());
-  CHECK(restored.TeamOf("a")->members(1).name() == "Ada");
-  restored.Arrive("c", "Lisa", false);
-  CHECK(restored.StateFor("c").invites_size() == 1);
-  CHECK(restored.StateFor("c").players_size() == 0);
-  // New ids do not collide with restored ones.
-  restored.Arrive("d", "Dee", false);
-  restored.Request("d", Request(Action::CREATE));
-  CHECK(restored.TeamOf("d")->id() != restored.TeamOf("a")->id());
+  // a's game crashes: b is still there, a keeps its place.
+  CHECK(lobby.Leave("a").changed);
+  CHECK(lobby.TeamOf("a") && lobby.TeamOf("a")->members_size() == 2);
+  lobby.Arrive("a", "Kaniel", false);
+  CHECK(lobby.TeamOf("a")->leader() == "a");
+  // Both games gone: no team, no invite to it.
+  lobby.Leave("a");
+  CHECK(lobby.TeamOf("b") != nullptr);
+  CHECK(lobby.Leave("b").changed);
+  CHECK(lobby.TeamOf("a") == nullptr && lobby.TeamOf("b") == nullptr);
+  CHECK(lobby.StateFor("c").invites_size() == 0);
+  // Back, they are in no team (a new one is made as any other).
+  lobby.Arrive("a", "Kaniel", false);
+  CHECK(!lobby.StateFor("a").has_team());
+  CHECK(lobby.Request("a", Request(Action::CREATE)).changed);
+  CHECK(lobby.TeamOf("a")->id() != team);
   return 0;
 }
 
@@ -290,10 +292,6 @@ int GuestsKeepTheirPlayerSlots() {
   lobby.Request("a", Request(Action::LEAVE));
   CHECK(lobby.TeamOf("b")->leader() == "b" && SignOf(lobby, "b") == 0);
   CHECK(SignOf(lobby, "d") == 5 && SignOf(lobby, "e") == 6);
-  // Kept through a restart of the server.
-  TeamLobby restored = NewLobby();
-  restored.Restore(lobby.Store());
-  CHECK(SignOf(restored, "d") == 5 && SignOf(restored, "e") == 6);
   return 0;
 }
 
@@ -314,14 +312,25 @@ int AMemberOutOfATeamIsNamed() {
   using Departed = std::vector<TeamLobby::Departure>;
   // A refused removal names nobody.
   CHECK(lobby.Request("b", Request(Action::REMOVE, "c")).departed.empty());
+  // Named with the party of the world the team plays (none before its Start).
+  CHECK((lobby.Request("a", Request(Action::REMOVE, "c")).departed ==
+         Departed{{"c", team, ""}}));
+  lobby.Request("a", Request(Action::INVITE, "c"));
+  lobby.Request("c", Request(Action::ACCEPT, {}, team));
+  for (const char *m : {"a", "b", "c"}) {
+    lobby.Request(m, Request(Action::READY, {}, {}, 1));
+  }
+  lobby.Request("a", Request(Action::START));
+  const std::string party = lobby.TeamOf("a")->party();
+  CHECK(!party.empty());
   const TeamLobby::Outcome removed =
       lobby.Request("a", Request(Action::REMOVE, "c"));
-  CHECK((removed.departed == Departed{{"c", team}}));
+  CHECK((removed.departed == Departed{{"c", team, party}}));
   const TeamLobby::Outcome left = lobby.Request("b", Request(Action::LEAVE));
-  CHECK((left.departed == Departed{{"b", team}}));
+  CHECK((left.departed == Departed{{"b", team, party}}));
   // The last one out: its team is gone, and it is named all the same.
   CHECK((lobby.Request("a", Request(Action::LEAVE)).departed ==
-         Departed{{"a", team}}));
+         Departed{{"a", team, party}}));
   CHECK(lobby.Request("a", Request(Action::CREATE)).departed.empty());
   return 0;
 }
@@ -348,12 +357,6 @@ int PlayersAreSeenByTheirCharactersName() {
   // Back at the title, it says no name: the character's stays.
   lobby.Arrive("a", "", false);
   CHECK(lobby.StateFor("b").players(0).name() == "Lady Maria");
-  // And after a restart of the server, from its store.
-  TeamLobby again = NewLobby();
-  again.Restore(lobby.Store());
-  again.Arrive("a", "", false);
-  again.Arrive("b", "", false);
-  CHECK(again.StateFor("b").players(0).name() == "Lady Maria");
   return 0;
 }
 
@@ -382,111 +385,186 @@ int OfflineMemberLeavesAfterGrace() {
   CHECK(lobby.TeamOf("a") == nullptr);
   CHECK(lobby.TeamOf("b")->leader() == "b" &&
         lobby.TeamOf("b")->members_size() == 1);
-  // A team kept on the server's disk, nobody online after a restart: the
-  // grace starts with the server, then the team is gone.
-  TeamLobby again = NewLobby();
-  again.Restore(lobby.Store());
-  CHECK(!again.Expire(7000).changed);
-  CHECK(again.TeamOf("b") != nullptr);
-  CHECK(again.Expire(7000 + OfflineGraceMs).changed);
-  CHECK(again.TeamOf("b") == nullptr && again.Store().teams_size() == 0);
   return 0;
 }
 
-// Kaniel 2026-10-16: a new character got the team's old world. A team keeps
-// each of its worlds apart and the leader picks the one the next Start plays
-// (none picked: a new one).
-int TheLeaderPicksTheTeamsWorld() {
+// Kaniel 2026-10-17: worlds are the server's, apart from its teams. Every
+// world on the server is listed for every player (the last played first); a
+// team's leader picks any of them, or a new one, for the next Start.
+struct TwoHunters {
   TeamLobby lobby = NewLobby();
-  lobby.Arrive("a", "Kaniel", false);
-  lobby.Arrive("b", "Ada", false);
-  lobby.Request("a", Request(Action::CREATE));
-  const std::string team = lobby.TeamOf("a")->id();
-  lobby.Request("a", Request(Action::INVITE, "b"));
-  lobby.Request("b", Request(Action::ACCEPT, {}, team));
-  const auto pick = [&](const std::string &member, const std::string &world) {
+  std::string team;
+  TwoHunters() {
+    lobby.Arrive("a", "Kaniel", false);
+    lobby.Arrive("b", "Ada", false);
+    lobby.Request("a", Request(Action::CREATE));
+    team = lobby.TeamOf("a")->id();
+    lobby.Request("a", Request(Action::INVITE, "b"));
+    lobby.Request("b", Request(Action::ACCEPT, {}, team));
+  }
+  TeamLobby::Outcome Pick(const std::string &member, const std::string &world) {
     bbcoop::TeamRequest request = Request(Action::WORLD);
     request.set_world(world);
     return lobby.Request(member, request);
-  };
-  const auto play_and_stop = [&] {
+  }
+  TeamLobby::Outcome Forget(const std::string &member,
+                            const std::string &world) {
+    bbcoop::TeamRequest request = Request(Action::FORGET_WORLD);
+    request.set_world(world);
+    return lobby.Request(member, request);
+  }
+  TeamLobby::Outcome Start() {
     lobby.Request("a", Request(Action::READY, {}, {}, 3));
     lobby.Request("b", Request(Action::READY, {}, {}, 1));
-    const TeamLobby::Outcome start = lobby.Request("a", Request(Action::START));
+    return lobby.Request("a", Request(Action::START));
+  }
+  void Stop() {
     lobby.Arrive("a", "Kaniel", true);
     lobby.Arrive("a", "Kaniel", false);
     lobby.Arrive("b", "Ada", false);
-    return start;
-  };
-  // A new team has no world: its first Start makes one.
-  CHECK(lobby.TeamOf("a")->worlds_size() == 0 &&
-        lobby.TeamOf("a")->world().empty());
-  CHECK(play_and_stop().starts.size() == 2);
-  CHECK(lobby.TeamOf("a")->worlds_size() == 1);
-  const std::string first = lobby.TeamOf("a")->worlds(0).id();
-  CHECK(!first.empty() && first != "0");
+  }
+};
+
+int TheLeaderPicksAnyOfTheServersWorlds() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  // No world yet: the first Start makes one, listed for everyone.
+  CHECK(lobby.Worlds().empty() && lobby.TeamOf("a")->world().empty() &&
+        lobby.TeamOf("a")->party().empty());
+  CHECK(t.Start().starts.size() == 2);
+  CHECK(lobby.Worlds().size() == 1);
+  const std::string first = lobby.Worlds()[0].id();
+  CHECK(!first.empty());
   bbcoop::TeamStart go = lobby.StartFor("b");
-  CHECK(go.world() == first && go.party() == "team:" + team + "/" + first);
-  // Only the leader picks, only a world of the team's or a new one ("").
-  CHECK(!pick("b", first).notice.empty());
-  CHECK(!pick("a", "nope").notice.empty());
-  CHECK(pick("a", "").changed && lobby.TeamOf("a")->world().empty());
+  CHECK(go.world() == first && go.party() == "world:" + first);
+  CHECK(lobby.TeamOf("a")->party() == go.party());
+  CHECK(lobby.StateFor("b").worlds_size() == 1);
+  t.Stop();
+  // Only the leader picks, only a world of the server's or a new one ("").
+  CHECK(!t.Pick("b", first).notice.empty());
+  CHECK(!t.Pick("a", "nope").notice.empty());
+  CHECK(t.Pick("a", "").changed && lobby.TeamOf("a")->world().empty() &&
+        lobby.TeamOf("a")->party().empty());
   // A new world: another one, kept apart, the last played first.
-  play_and_stop();
-  CHECK(lobby.TeamOf("a")->worlds_size() == 2);
-  const std::string second = lobby.TeamOf("a")->worlds(0).id();
+  t.Start();
+  t.Stop();
+  CHECK(lobby.Worlds().size() == 2);
+  const std::string second = lobby.Worlds()[0].id();
   CHECK(second != first && lobby.StartFor("a").party() != go.party());
-  // The first one again, by the leader's pick: the same party as before.
-  CHECK(pick("a", first).changed);
+  // The first one again: the same party as before.
+  CHECK(t.Pick("a", first).changed);
   CHECK(lobby.StateFor("b").team().world() == first);
-  play_and_stop();
-  CHECK(lobby.TeamOf("a")->worlds_size() == 2);
-  CHECK(lobby.TeamOf("a")->worlds(0).id() == first);
+  t.Start();
+  CHECK(lobby.Worlds()[0].id() == first);
   CHECK(lobby.StartFor("a").party() == go.party());
   // No pick while the team plays.
-  lobby.Request("a", Request(Action::READY, {}, {}, 3));
-  lobby.Request("b", Request(Action::READY, {}, {}, 1));
-  lobby.Request("a", Request(Action::START));
-  CHECK(!pick("a", second).notice.empty());
+  CHECK(!t.Pick("a", second).notice.empty());
   // The server says what each world is (its host's reports) and when it was
-  // played; the store keeps the worlds and the pick.
+  // played.
   bbcoop::TeamWorldInfo note;
   note.set_id(first);
   note.set_character("Kaniel");
   note.set_flags_on(5441);
+  note.set_lamps(7);
   note.set_played_ms(1000);
-  CHECK(lobby.NoteWorld(team, note));
-  CHECK(!lobby.NoteWorld(team, note)); // nothing new
-  CHECK(lobby.StateFor("b").team().worlds(0).character() == "Kaniel");
-  TeamLobby again = NewLobby();
-  again.Restore(lobby.Store());
-  CHECK(again.Store().teams(0).worlds_size() == 2);
-  CHECK(again.Store().teams(0).worlds(0).character() == "Kaniel");
-  CHECK(again.Store().teams(0).world() == first);
-  // The world a team had before its worlds were apart: id "0", its old party.
-  CHECK(TeamLobby::PartyOf(team, "0") == "team:" + team);
-  note.set_id("0");
-  note.set_character("");
-  CHECK(lobby.NoteWorld(team, note));
-  CHECK(lobby.TeamOf("a")->worlds_size() == 3);
+  CHECK(lobby.NoteWorld(note));
+  CHECK(!lobby.NoteWorld(note)); // nothing new
+  CHECK(lobby.StateFor("b").worlds(0).character() == "Kaniel");
+  CHECK(lobby.StateFor("b").worlds(0).lamps() == 7);
+  // A world the server does not list is not added by a note.
+  note.set_id("gone");
+  CHECK(!lobby.NoteWorld(note));
+  CHECK(lobby.Worlds().size() == 2);
   return 0;
 }
 
-// A team keeps its last MaxTeamWorlds worlds.
-int ATeamKeepsItsLastWorlds() {
-  TeamLobby lobby = NewLobby();
-  lobby.Arrive("a", "Kaniel", false);
-  lobby.Request("a", Request(Action::CREATE));
-  const std::string team = lobby.TeamOf("a")->id();
-  for (size_t n = 0; n < MaxTeamWorlds + 2; ++n) {
-    bbcoop::TeamWorldInfo note;
-    note.set_id("w" + std::to_string(n));
-    note.set_played_ms(static_cast<int64_t>(n) + 1);
-    lobby.NoteWorld(team, note);
+// Another team plays the same worlds (the player ids are each install's own,
+// so worlds are nobody's), but not one another team plays now.
+int AnyTeamPlaysAnyWorld() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  t.Start();
+  const std::string world = lobby.Worlds()[0].id();
+  lobby.Arrive("a", "Kaniel", true);
+  lobby.Arrive("c", "Lisa", false);
+  lobby.Request("c", Request(Action::CREATE));
+  bbcoop::TeamRequest pick = Request(Action::WORLD);
+  pick.set_world(world);
+  CHECK(!lobby.Request("c", pick).notice.empty()); // played now
+  CHECK(lobby.StateFor("c").worlds_size() == 1);
+  t.Stop();
+  CHECK(lobby.Request("c", pick).changed);
+  lobby.Request("c", Request(Action::READY, {}, {}, 0));
+  const TeamLobby::Outcome go = lobby.Request("c", Request(Action::START));
+  CHECK(go.starts.size() == 1);
+  CHECK(lobby.StartFor("c").party() == "world:" + world);
+  // Now a's team may not start it.
+  lobby.Arrive("c", "Lisa", true);
+  CHECK(!t.Pick("a", world).notice.empty());
+  return 0;
+}
+
+// The leader forgets a world (off the list; the server puts its folder
+// aside). Not one a team plays now; a team that had it picked has a new one.
+int TheLeaderForgetsAWorld() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  t.Start();
+  const std::string world = lobby.Worlds()[0].id();
+  CHECK(!t.Forget("a", world).notice.empty()); // played now
+  t.Stop();
+  CHECK(!t.Forget("b", world).notice.empty()); // the leader only
+  CHECK(!t.Forget("a", "nope").notice.empty());
+  CHECK(lobby.TeamOf("a")->world() == world);
+  const TeamLobby::Outcome forgot = t.Forget("a", world);
+  CHECK(forgot.changed && forgot.notice.empty());
+  CHECK(forgot.forgotten == std::vector<std::string>{world});
+  CHECK(lobby.Worlds().empty());
+  CHECK(lobby.TeamOf("a")->world().empty() &&
+        lobby.TeamOf("a")->party().empty());
+  return 0;
+}
+
+// The server keeps its last MaxWorlds worlds: a new one past them puts the
+// least lately played aside (never one a team plays or picked).
+int TheServerKeepsItsLastWorlds() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  std::vector<bbcoop::TeamWorldInfo> kept;
+  for (size_t n = 0; n < MaxWorlds; ++n) {
+    bbcoop::TeamWorldInfo &world = kept.emplace_back();
+    world.set_id("w" + std::to_string(n));
+    world.set_played_ms(static_cast<int64_t>(MaxWorlds - n)); // w0 the last
   }
-  const bbcoop::Team &kept = *lobby.TeamOf("a");
-  CHECK(static_cast<size_t>(kept.worlds_size()) == MaxTeamWorlds);
-  CHECK(kept.worlds(0).id() == "w" + std::to_string(MaxTeamWorlds + 1));
+  lobby.SetWorlds(kept);
+  CHECK(lobby.Worlds().size() == MaxWorlds);
+  const std::string oldest = "w" + std::to_string(MaxWorlds - 1);
+  // The team picked the oldest: it stays; the one before it goes.
+  CHECK(t.Pick("a", oldest).changed);
+  CHECK(t.Pick("a", "").changed);
+  t.Pick("a", oldest);
+  lobby.Arrive("c", "Lisa", false);
+  lobby.Request("c", Request(Action::CREATE));
+  lobby.Request("c", Request(Action::READY, {}, {}, 0));
+  const TeamLobby::Outcome go = lobby.Request("c", Request(Action::START));
+  CHECK(go.starts.size() == 1);
+  CHECK(lobby.Worlds().size() == MaxWorlds);
+  CHECK(lobby.Worlds()[0].id() == lobby.TeamOf("c")->world());
+  CHECK(go.forgotten ==
+        std::vector<std::string>{"w" + std::to_string(MaxWorlds - 2)});
+  CHECK(lobby.TeamOf("a")->world() == oldest);
+  // New ids are no listed world's.
+  CHECK(lobby.NewWorldId() != lobby.NewWorldId());
+  return 0;
+}
+
+// A world's line says how far it is: its lamps lit (each lamp's active flag;
+// the flag after it, other map flags and other maps' are no lamps).
+int AWorldsLampsAreCounted() {
+  const std::vector<s32> on{1000,     12107810, 12107811, 12107830,
+                            12401800, 12207800, 14007810, 13997810};
+  CHECK(LampsLit(on) == 3);
+  CHECK(LampsLit({}) == 0);
   return 0;
 }
 
@@ -500,11 +578,14 @@ int main() {
   failed |= AStartedTeamStaysStartedWhileItsGamesLoad();
   failed |= LeaveAndRemove();
   failed |= OfflineMemberLeavesAfterGrace();
-  failed |= StoreKeepsTeams();
+  failed |= ATeamIsGoneOnceEveryMemberIsGone();
   failed |= GuestsKeepTheirPlayerSlots();
   failed |= AMemberOutOfATeamIsNamed();
-  failed |= TheLeaderPicksTheTeamsWorld();
-  failed |= ATeamKeepsItsLastWorlds();
+  failed |= TheLeaderPicksAnyOfTheServersWorlds();
+  failed |= AnyTeamPlaysAnyWorld();
+  failed |= TheLeaderForgetsAWorld();
+  failed |= TheServerKeepsItsLastWorlds();
+  failed |= AWorldsLampsAreCounted();
   if (failed == 0) {
     std::cout << "team lobby: all checks passed\n";
   }
