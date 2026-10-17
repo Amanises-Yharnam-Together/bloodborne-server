@@ -9,6 +9,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -167,6 +168,12 @@ std::vector<std::pair<s32, bool>> WorldFlagChanges(u32 flags_per_block,
 std::string FormatWorldFlags(const WorldFlags& world);
 std::optional<WorldFlags> ParseWorldFlags(std::string_view text);
 WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& world);
+// The time of day (9800 evening, 9801 night, 9802 blood moon: the maps' events pick their sky and
+// enemies by them as they load) the team's world has and this game's (`on`) lacks: a guest away
+// from the host's cutscene that brought it (Vicar Amelia's skull, Kaniel's playtest 2026-10-17)
+// takes it, and its next load shows it. Never one back.
+inline constexpr std::array<s32, 3> TimeOfDayFlags{9800, 9801, 9802};
+std::vector<s32> TimeOfDayToFollow(const WorldFlags& team, const std::function<bool(s32)>& on);
 
 // Phase 6: the team join without signs or a bell (docs/native-netcode/session.md, "Team join").
 // The team's host opens its game session itself (NetSync CreateSession) once it stands in its

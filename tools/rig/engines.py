@@ -133,7 +133,9 @@ class Port(Emulator):
         self.exe = self.home / "bin" / "bb-probe.exe"
         # The game with its 1.09 update over it (merge_game, run_scenario.py --setup).
         self.game_dir = self.rig / "port" / "game" / "CUSA03173"
-        self.mods = self.rig / "game" / "CUSA03173-mods"  # Potatoborne (rig-lowspec.ps1)
+        # Potatoborne (rig-lowspec.ps1) and the co-op event files; BB_RIG_MODS runs a branch's own
+        # (its party_boss_events.py output) without touching the shared folder.
+        self.mods = pathlib.Path(os.environ.get("BB_RIG_MODS", self.rig / "game" / "CUSA03173-mods"))
 
     def role_dir(self, role: str, lane: int | None = None) -> pathlib.Path:
         lane = LANE if lane is None else lane

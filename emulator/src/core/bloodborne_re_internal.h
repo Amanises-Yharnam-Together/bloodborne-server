@@ -813,6 +813,8 @@ bool IsTeamTitleVerb(std::string_view verb);
 // own world comes back when it plays alone; the team's host reports its world now and then.
 void ApplyTeamWorldOnLoad();
 void TickTeamWorld(s64 now_ms);
+// A team guest takes the team world's time of day (TimeOfDayToFollow) when it is not loading.
+void FollowTeamTimeOfDay(s64 now_ms);
 // The lobby as the server last sent it, for the game's menu (none before its answer), and this
 // player's lobby name; a request from the menu.
 std::optional<bbcoop::LobbyState> TeamLobbyState();

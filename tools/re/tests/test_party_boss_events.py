@@ -242,6 +242,38 @@ class GuestsUseTheDreamShops(unittest.TestCase):
         self.assertEqual(count, 1)
 
 
+class GuestsSeeTheNightFall(unittest.TestCase):
+    """Kaniel's playtest 2026-10-17: after Vicar Amelia the host examined the altar's skull, saw
+    the cutscene and the night fell; the guests saw neither. The skull's event (m24_00 12401803:
+    the cutscene and time of day 2, 2002:6) ends for a client (1003:6 state 1) before it waits for
+    the host's press, so a guest's copy was gone when the host's ran."""
+
+    WARD = 'm24_00_00_00.emevd.dcx'
+
+    def skull_event(self) -> list[tuple[int, int, bytes]]:
+        return [(2006, 1, struct.pack('<iBxxx', 2403413, 0)),
+                (1003, 2, struct.pack('<BBBxi', 0, 1, 1, 0)),
+                (1003, 101, struct.pack('<BBxxi', 0, 1, 12401800)),
+                flag_condition(0, 12401800),
+                (1014, 0, b''),
+                (2006, 2, struct.pack('<i', 2403413)),
+                (1003, 6, struct.pack('<BBxx', 0, 1)),
+                (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0)),
+                (3, 24, struct.pack('<bxxxii', 1, 2400010, 2401801)),
+                (2003, 2, struct.pack('<iBxxx', 9180, 1)),
+                (2002, 6, struct.pack('<iiiiii', 24000030, 0, -1, 24, 10000, 2))]
+
+    def test_the_skull_event_waits_on_a_guest_too(self):
+        original = build_emevd({12401803: self.skull_event()})
+        patched, count = tool.patch_client_events(original, tool.CLIENT_EVENTS[self.WARD])
+        events, before = read_events(patched)[12401803], read_events(original)[12401803]
+        self.assertEqual(events[6][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(count, 1)
+        # Only the host's press starts it: a guest's own press must not (its alive check stays).
+        self.assertEqual(events[7], before[7])
+        self.assertEqual(events[:6] + events[7:], before[:6] + before[7:])
+
+
 class LocalEventsKeepTheirParameters(unittest.TestCase):
     """Kaniel 2026-10-12: after the Dream patch the messengers sold weapons whose badges nobody
     had. Event 12101000 is started per slot with arguments (2000:0) that its parameter entries
