@@ -308,6 +308,19 @@ std::optional<PortraitPixels> PartyPortraits::Pixels(int slot) const {
     return found->second.pixels;
 }
 
+u32 PartyPortraits::IdOf(std::string_view member) const {
+    const auto found = by_member.find(member);
+    return found != by_member.end() ? found->second.id : 0;
+}
+
+std::optional<PortraitPixels> PartyPortraits::PixelsOf(std::string_view member) const {
+    const auto found = by_member.find(member);
+    if (found == by_member.end()) {
+        return std::nullopt;
+    }
+    return found->second.pixels;
+}
+
 void PartyPortraits::KeepOnly(std::span<const std::string> members) {
     std::erase_if(by_member, [&](const auto& entry) {
         return std::ranges::find(members, entry.first) == members.end();

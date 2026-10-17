@@ -1174,6 +1174,17 @@ bool ReadPortraitSlot(int slot, std::span<u8> rgba, u32& version) {
     return true;
 }
 
+bool ReadMemberPortrait(std::string_view member, std::span<u8> rgba, u32& id) {
+    std::scoped_lock lock{portraits_mutex};
+    id = party_portraits.IdOf(member);
+    const auto pixels = party_portraits.PixelsOf(member);
+    if (!pixels || rgba.size() < pixels->size()) {
+        return false;
+    }
+    std::ranges::copy(CircularPortrait(*pixels), rgba.begin());
+    return true;
+}
+
 u32 PortraitSlotVersion(int slot) {
     std::scoped_lock lock{portraits_mutex};
     return party_portraits.Version(slot);

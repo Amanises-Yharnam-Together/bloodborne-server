@@ -65,5 +65,8 @@ bool OffscreenPortraitWanted();
 // version, which changes whenever the picture does.
 bool ReadPortraitSlot(int slot, std::span<std::uint8_t> rgba, std::uint32_t& version);
 std::uint32_t PortraitSlotVersion(int slot);
+// Kaniel 2026-10-17 (the compass): a member's portrait by its board name (round, as the slots'):
+// `id` changes with the picture, 0 and false when it has none.
+bool ReadMemberPortrait(std::string_view member, std::span<std::uint8_t> rgba, std::uint32_t& id);
 
 } // namespace Core::Bloodborne

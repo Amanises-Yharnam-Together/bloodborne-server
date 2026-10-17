@@ -57,16 +57,19 @@ CompassPlace PlaceOnStrip(float bearing) {
 }
 
 std::vector<CompassMarker> CompassMarkers(std::span<const std::optional<CompassPoint>> members,
-                                          const CompassPoint& me, float camera_heading) {
+                                          const CompassPoint& me, float camera_heading,
+                                          const std::vector<bool>& down) {
     std::vector<CompassMarker> markers;
     for (size_t index = 0; index < members.size(); ++index) {
         const auto seen =
             members[index] ? BearingOf(me, camera_heading, *members[index]) : std::nullopt;
         if (seen) {
             markers.push_back({static_cast<s32>(index), seen->bearing, seen->distance,
-                               PlaceOnStrip(seen->bearing)});
+                               PlaceOnStrip(seen->bearing), index < down.size() && down[index]});
         }
     }
+    std::ranges::stable_partition(markers,
+                                  [](const CompassMarker& marker) { return !marker.down; });
     return markers;
 }
 

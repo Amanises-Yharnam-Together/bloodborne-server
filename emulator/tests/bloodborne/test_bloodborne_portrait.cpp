@@ -382,6 +382,24 @@ TEST(BloodbornePortrait, AMemberWithoutAPictureAnyMoreSaysSoAndTheListForgetsIt)
     EXPECT_FALSE(portraits.Pixels(0).has_value());
 }
 
+// Kaniel 2026-10-17: the compass's markers show each member's portrait by its board name, whatever
+// slot of the party list shows it (or none: the HUD's list did not run).
+TEST(BloodbornePortrait, AMembersPortraitIsReadByName) {
+    PartyPortraits portraits;
+    EXPECT_EQ(portraits.IdOf("rig_guest"), 0u);
+    EXPECT_FALSE(portraits.PixelsOf("rig_guest").has_value());
+    portraits.Take("rig_guest", Gradient(1));
+    const u32 first = portraits.IdOf("rig_guest");
+    EXPECT_NE(first, 0u);
+    EXPECT_EQ(portraits.PixelsOf("rig_guest"), Gradient(1));
+    EXPECT_FALSE(portraits.PixelsOf("rig_host").has_value());
+    portraits.Take("rig_guest", Gradient(2));
+    EXPECT_NE(portraits.IdOf("rig_guest"), first);
+    EXPECT_EQ(portraits.PixelsOf("rig_guest"), Gradient(2));
+    portraits.Forget("rig_guest");
+    EXPECT_EQ(portraits.IdOf("rig_guest"), 0u);
+}
+
 TEST(BloodbornePortrait, NoPictureAnyMoreIsSentAsAPictureIs) {
     PortraitSender sender;
     const std::vector<u64> one{1}, two{1, 2};

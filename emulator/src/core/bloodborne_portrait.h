@@ -120,6 +120,9 @@ public:
     bool Show(int slot, std::string_view member);
     u32 Version(int slot) const;
     std::optional<PortraitPixels> Pixels(int slot) const;
+    // A member's picture by its board name, and its id (0 for none; another picture, another id).
+    u32 IdOf(std::string_view member) const;
+    std::optional<PortraitPixels> PixelsOf(std::string_view member) const;
     // The members still in the party: the others' pictures go.
     void KeepOnly(std::span<const std::string> members);
 

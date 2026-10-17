@@ -23,6 +23,7 @@
 #include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
+#include "core/bloodborne_portrait.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
 #include "core/cpu_patches.h"
@@ -206,8 +207,23 @@ extern "C" int bbcoop_compass_view(bbcoop_compass* compass) {
         out.distance = marker.distance;
         out.x = marker.place.x;
         out.pinned = marker.place.pinned ? 1 : 0;
+        std::snprintf(out.board, sizeof(out.board), "%s", view.members[i].c_str());
+        out.vital = view.vitals[i];
+        out.revive = view.revives[i];
     }
     return compass->count > 0 ? 1 : 0;
+}
+
+static_assert(BBCOOP_PORTRAIT_SIDE == Core::Bloodborne::PortraitSide);
+
+extern "C" int bbcoop_member_portrait(const char* member, uint8_t* rgba, size_t size, uint32_t* id) {
+    uint32_t seen = 0;
+    const bool shown = member != nullptr &&
+                       Core::Bloodborne::ReadMemberPortrait(member, std::span<uint8_t>{rgba, size}, seen);
+    if (id != nullptr) {
+        *id = seen;
+    }
+    return shown ? 1 : 0;
 }
 
 extern "C" float bbcoop_revive_share(uint32_t landed, uint32_t needed) {

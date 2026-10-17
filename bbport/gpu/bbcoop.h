@@ -73,6 +73,11 @@ typedef struct bbcoop_compass_marker {
     int member;
     float bearing, distance, x;
     int pinned;
+    /* Kaniel 2026-10-17: its board name (bbcoop_member_portrait's key), BBCOOP_VITAL_* and its
+     * revive's progress (0 to 1) while down. Downed markers come last (drawn over the others). */
+    char board[40];
+    int vital;
+    float revive;
 } bbcoop_compass_marker;
 typedef struct bbcoop_compass {
     float heading; /* the camera's, for the strip's ticks */
@@ -80,6 +85,10 @@ typedef struct bbcoop_compass {
     bbcoop_compass_marker markers[BBCOOP_COMPASS_MARKERS];
 } bbcoop_compass;
 int bbcoop_compass_view(bbcoop_compass *compass);
+/* A member's portrait by its board name: round, BBCOOP_PORTRAIT_SIDE square RGBA into `rgba`
+ * (`size` bytes). Its id (changes with the picture, 0 none) into `id`; 1 when it has one. */
+enum { BBCOOP_PORTRAIT_SIDE = 128 };
+int bbcoop_member_portrait(const char *member, uint8_t *rgba, size_t size, uint32_t *id);
 /* A revive's progress, 0 to 1: the share of the damage it needs that has landed (`landed`
  * and `needed` from the panel). */
 float bbcoop_revive_share(uint32_t landed, uint32_t needed);

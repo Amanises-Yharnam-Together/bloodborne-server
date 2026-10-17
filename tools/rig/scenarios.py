@@ -21,8 +21,9 @@ set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeou
 wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, for
 expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
 expect-others-near <n> <meters> (n other players alive that close), expect-compass <bearing> <metres>
-[<degrees> [<metres>]] (within 10 s a marker of the teammate compass at that bearing, degrees right of
-straight ahead, and distance; 20 degrees and 1.5 m either way by default), expect-others-shown <n> (exactly n other players
+[<degrees> [<metres>]] [down|dead] (within 10 s a marker of the teammate compass at that bearing,
+degrees right of straight ahead, and distance; 20 degrees and 1.5 m either way by default; down or
+dead: the marker shows that), expect-others-shown <n> (exactly n other players
 shown, not hidden for another map), watch-unseen <handle> <seconds> (from now on, every frame the
 character is drawn logs "watched <handle> drawn"; forbid that), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
@@ -1238,6 +1239,23 @@ SCENARIOS = {
                       "wait 25"],
         },
         "expect": {role: [r"autoplay compass: camera heading"] for role in ("host", "guest")},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
+    # Kaniel 2026-10-17: a downed member's marker on the compass (the party list's downed badge,
+    # its revive, over the others). Both at the lamp; the guest falls and stays down.
+    "compass-down": {
+        "about": "the teammate compass shows a downed member as down, with its revive; the host "
+                 "shoots it",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120",
+                     "wait 2", "expect-compass 0 3 180 40 down", "shot host-compass-down",
+                     "wait 5", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", *LETHAL_FALL,
+                      "wait-vital down 30", "wait 20"],
+        },
+        "expect": {"host": [r"autoplay compass: camera heading .* down\]"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
