@@ -83,7 +83,7 @@ F Game(u64 va) {
 // ---- Texts: ids from IdBase up, looked up by the game like its own messages. ----
 constexpr u32 IdBase = 0x7f0000;
 struct Text {
-    std::u16string english, russian;
+    std::u16string by_language[BbSettings::MenuLanguageCount];
 };
 std::vector<Text> texts;
 
@@ -112,21 +112,17 @@ std::u16string Utf16(const char* utf8) {
     return out;
 }
 u32 AddText(const char* english, const char* russian) {
-    texts.push_back({Utf16(english), Utf16(russian)});
+    Text& text = texts.emplace_back();
+    for (int l = 0; l < BbSettings::MenuLanguageCount; ++l) {
+        text.by_language[l] = Utf16(BbSettings::Translate(BbSettings::MenuLanguage(l), english, russian));
+    }
     return IdBase + u32(texts.size() - 1);
 }
-/// The game's own language decides (its "Screen/Sound" text in Cyrillic: Russian, else English);
-/// the port's menu language until the game has looked that text up.
-enum class GameLanguage { Unknown, English, Russian };
-std::atomic<GameLanguage> game_language{GameLanguage::Unknown};
 
+/// In the game's own language (the one it reads, BB_LANGUAGE), whatever the port's menus speak.
 const char16_t* TextOf(u32 id) {
-    const Text& t = texts[id - IdBase];
-    const GameLanguage game = game_language.load();
-    const bool russian = game == GameLanguage::Unknown
-                             ? BbSettings::Get().menu_language == BbSettings::MenuLanguage::Russian
-                             : game == GameLanguage::Russian;
-    return russian ? t.russian.c_str() : t.english.c_str();
+    static const BbSettings::MenuLanguage game = BbSettings::GameLanguage();
+    return texts[id - IdBase].by_language[int(game)].c_str();
 }
 
 // Texts the trade menus change while the game runs (SetDynamicText): ids from DynamicIdBase, one
@@ -647,11 +643,6 @@ GAME_ABI const char16_t* LookupHook(void* repository, u32 table, u32 category, u
     }
     if (category == TextName && id == ScreenSoundItem && text) {
         screen_sound_text = text;
-        bool cyrillic = false;
-        for (const char16_t* c = text; *c; ++c) {
-            cyrillic = cyrillic || (*c >= 0x400 && *c < 0x500);
-        }
-        game_language = cyrillic ? GameLanguage::Russian : GameLanguage::English;
     }
     return text;
 }

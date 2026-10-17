@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -51,10 +52,16 @@ std::string Trimmed(std::string text) {
 void Set(Values& v, const std::string& key, const std::string& value) {
     const float f = float(std::atof(value.c_str()));
     const int i = std::atoi(value.c_str());
-    if (key == "menu_language") {
-        if (value == "en") v.menu_language = MenuLanguage::English;
-        else if (value == "ru") v.menu_language = MenuLanguage::Russian;
-        else std::printf("Settings: unknown menu_language '%s' (expected en or ru)\n", value.c_str());
+    if (key == "overlay_language") {
+        // Not menu_language (en / ru): every save wrote that one, chosen or not.
+        if (value == "auto") {
+            v.menu_language_auto = true;
+        } else if (const auto language = LanguageFromCode(value)) {
+            v.menu_language_auto = false;
+            v.menu_language = *language;
+        } else {
+            std::printf("Settings: unknown overlay_language '%s'\n", value.c_str());
+        }
     } else if (key == "upscaler") {
         for (int u = 0; u < UpscalerCount; ++u) {
             if (value == UpscalerName(u)) {
@@ -155,8 +162,103 @@ Values& Get() {
     return values;
 }
 
+namespace {
+
+struct LanguageInfo {
+    const char* code;
+    const char* name;
+    std::vector<int> ps4_ids;
+};
+
+const std::vector<LanguageInfo>& Languages() {
+    static const std::vector<LanguageInfo> languages = {
+        {"en", "English", {1, 18}},
+        {"ru", "Русский", {8}},
+#define BB_MENU_LANG(name, code, own_name, ...) {code, own_name, {__VA_ARGS__}},
+#include "bbport_menu_texts.inc"
+#undef BB_MENU_LANG
+    };
+    return languages;
+}
+
+constexpr int TableLanguages = MenuLanguageCount - 2;
+struct TableText {
+    const char* english;
+    const char* texts[TableLanguages];
+};
+constexpr TableText table_texts[] = {
+#define BB_MENU_TEXT(english, ...) {english, __VA_ARGS__},
+#include "bbport_menu_texts.inc"
+#undef BB_MENU_TEXT
+};
+
+} // namespace
+
+const char* Translate(MenuLanguage language, const char* english, const char* russian) {
+    if (language == MenuLanguage::English) {
+        return english;
+    }
+    if (language == MenuLanguage::Russian) {
+        return russian;
+    }
+    static const std::unordered_map<std::string_view, const TableText*> by_english = [] {
+        std::unordered_map<std::string_view, const TableText*> map;
+        for (const TableText& text : table_texts) {
+            map.emplace(text.english, &text);
+        }
+        return map;
+    }();
+    const auto found = by_english.find(english);
+    const int column = int(language) - 2;
+    if (found == by_english.end() || column < 0 || column >= TableLanguages) {
+        return english;
+    }
+    const char* text = found->second->texts[column];
+    return text ? text : english;
+}
+
 const char* MenuText(const char* english, const char* russian) {
-    return Get().menu_language == MenuLanguage::Russian ? russian : english;
+    return Translate(Get().menu_language, english, russian);
+}
+
+MenuLanguage LanguageFromPs4(int id) {
+    const auto& languages = Languages();
+    for (std::size_t l = 0; l < languages.size(); ++l) {
+        if (std::ranges::find(languages[l].ps4_ids, id) != languages[l].ps4_ids.end()) {
+            return MenuLanguage(l);
+        }
+    }
+    return MenuLanguage::English;
+}
+
+MenuLanguage GameLanguage() {
+    // runtime_services.c answers the game's language query from the same variable.
+    const char* id = std::getenv("BB_LANGUAGE");
+    return LanguageFromPs4(id && *id ? std::atoi(id) : 1);
+}
+
+const char* LanguageCode(MenuLanguage language) {
+    return Languages()[std::size_t(language)].code;
+}
+
+const char* LanguageName(MenuLanguage language) {
+    return Languages()[std::size_t(language)].name;
+}
+
+std::optional<MenuLanguage> LanguageFromCode(std::string_view code) {
+    const auto& languages = Languages();
+    for (std::size_t l = 0; l < languages.size(); ++l) {
+        if (code == languages[l].code) {
+            return MenuLanguage(l);
+        }
+    }
+    return std::nullopt;
+}
+
+void SetMenuLanguage(std::optional<MenuLanguage> language) {
+    auto& v = Get();
+    v.menu_language_auto = !language;
+    v.menu_language = language ? *language : GameLanguage();
 }
 
 void Load() {
@@ -164,22 +266,8 @@ void Load() {
     for (int e = 0; e < EffectCount; ++e) {
         v.effects[e] = Effects[e].default_on;
     }
-    // bbport: the menu's language until one is chosen in it (menu_language in bbport.ini): the
-    // launcher's (BB_MENU_LANGUAGE), else the system's, as the launcher picks its own.
-    {
-        const char* lang = std::getenv("BB_MENU_LANGUAGE");
-        if (!lang || !*lang) {
-            for (const char* key : {"LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"}) {
-                if (const char* value = std::getenv(key); value && *value) {
-                    lang = value;
-                    break;
-                }
-            }
-        }
-        v.menu_language = lang && (lang[0] == 'r' || lang[0] == 'R') && (lang[1] == 'u' || lang[1] == 'U')
-                              ? MenuLanguage::Russian
-                              : MenuLanguage::English;
-    }
+    // The menus speak the game's language until one is chosen in them (overlay_language).
+    v.menu_language_auto = true;
     bool file_fps_limit = false;
     bool file_window_mode = false;
     v.fps_limit = 0;
@@ -249,6 +337,9 @@ void Load() {
     v.startup_model_lod = v.model_lod;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
+    if (v.menu_language_auto) {
+        v.menu_language = GameLanguage();
+    }
 }
 
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
@@ -375,7 +466,7 @@ void Save() {
         return std::string(text);
     };
     const auto flag = [](bool value) { return std::string(value ? "1" : "0"); };
-    put("menu_language", v.menu_language == MenuLanguage::Russian ? "ru" : "en");
+    put("overlay_language", v.menu_language_auto ? "auto" : LanguageCode(v.menu_language));
     put("upscaler", UpscalerName(v.upscaler));
     put("preset", std::to_string(v.preset.load()));
     put("sharpen", flag(v.sharpen));

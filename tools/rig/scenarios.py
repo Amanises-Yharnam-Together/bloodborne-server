@@ -2345,9 +2345,11 @@ SCENARIOS = {
                      "keys r1 r1 r1 down", "wait 2", "shot menu-effect-row",
                      "keys right", "wait 2", "shot menu-effect-changed",
                      "keys left", "wait 2",
-                     # The Display page's language row: five down from its first.
-                     "keys l1 l1 down down down down down", "wait 2", "keys right", "wait 2",
-                     "shot menu-russian", "keys left", "wait 2",
+                     # The Display page's language row: seven down from its first (past the
+                     # compass rows, the greyed ones skipped). Auto (the game's language), English, Russian, ...: two
+                     # right is Russian.
+                     "keys l1 l1 down down down down down down down", "wait 2", "keys right right", "wait 2",
+                     "shot menu-russian", "keys left left", "wait 2",
                      # Up from a page's first row is Quit (nothing waits for a restart): its box
                      # opens on Cancel, which Cross takes.
                      "keys l1 r1 up enter", "wait 2", "shot menu-quit", "keys enter", "wait 3",
@@ -2357,6 +2359,31 @@ SCENARIOS = {
         "console_expect": {"host": [r"Overlay: the settings menu uses \d+ of \d+ pieces of the "
                                     r"game's menu art",
                                     r"Overlay: settings changed in the menu, saved"]},
+        "timeout": 300,
+    },
+    "menu-languages": {
+        "about": "the port's menus in the game's language (Simplified Chinese here, the game's "
+                 "own font for it) and every other the game has, chosen in the Insert menu: "
+                 "Japanese, German, Korean, Traditional Chinese, then back to the game's",
+        "settings": {"BB_LANGUAGE": "11"},
+        "roles": {
+            # The Display page's language row is seven down from its first: Auto, English,
+            # Russian, Japanese (3), French, Spanish, Spanish (Latin America), German (7),
+            # Italian, Dutch, Portuguese, Korean (11), Traditional Chinese (12), ...
+            "host": [START, "wait 5", "keys toggle", "wait 3", "shot menu-zh-cn",
+                     "keys down down down down down down down", "wait 2",
+                     "keys right right right", "wait 3", "shot menu-ja",
+                     "keys right right right right", "wait 3", "shot menu-de",
+                     "keys right right right right", "wait 3", "shot menu-ko",
+                     "keys right", "wait 3", "shot menu-zh-tw",
+                     "keys left left left left left left left left left left left left", "wait 3",
+                     "shot menu-auto", "keys toggle", "wait 3", "shot menu-closed"],
+        },
+        "expect": {"host": [r"menu keys right"]},
+        "console_expect": {"host": [r"Overlay: zh_CN text from the game's zhocn font",
+                                    r"Overlay: ja text from the game's engus font",
+                                    r"Overlay: ko text from the game's korkr font",
+                                    r"Overlay: zh_TW text from the game's zhotw font"]},
         "timeout": 300,
     },
     "soak": {
