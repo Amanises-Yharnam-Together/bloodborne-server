@@ -45,7 +45,6 @@ inline int FirstMisplacedStage(std::span<const StageBindings> stages) {
         }
         expected.unified += stage.size.unified;
         expected.buffer += stage.size.buffer;
-        expected.user_data += stage.size.user_data;
     }
     return -1;
 }

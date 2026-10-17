@@ -483,7 +483,7 @@ void BufferCache::LayerRefreshWatched(u64 block) {
     // path's SynchronizeMemory; paged bindings: LayerFlushUploads), the trap set again for its
     // next write. The GPU never writes it in VRAM: nothing of the GPU's to keep.
     const VAddr from = block << block_shift;
-    memory_tracker->UnmarkRegionAsGpuModified(from, block_size);
+    memory_tracker->UnmarkRegionAsGpuModified(from, block_size, false);
     gpu_modified_ranges.Subtract(from, block_size);
     memory_tracker->MarkRegionAsCpuModified(from, block_size);
     {
@@ -611,7 +611,7 @@ u64 BufferCache::LayerPromoteRun(u64 first, u64 end) {
     NoteDirectUse(first << block_shift, (end - first) << block_shift); // not stale at once
     const VAddr from = first << block_shift;
     const u64 bytes = (end - first) << block_shift;
-    memory_tracker->UnmarkRegionAsGpuModified(from, bytes);
+    memory_tracker->UnmarkRegionAsGpuModified(from, bytes, false);
     gpu_modified_ranges.Subtract(from, bytes);
     memory_tracker->MarkRegionAsCpuModified(from, bytes);
     SynchronizeMemory(target, from, static_cast<u32>(bytes), false, false);
@@ -702,7 +702,7 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
         memory_tracker->MarkRegionAsCpuModified(from, bytes);
         layer_demoted_bytes[reason].fetch_add(bytes, std::memory_order_relaxed);
         LayerRepublish(a, b); // paged bindings find them in place
-        memory_tracker->UnmarkRegionAsGpuModified(from, bytes);
+        memory_tracker->UnmarkRegionAsGpuModified(from, bytes, false);
         gpu_modified_ranges.Subtract(from, bytes);
     }
     // Mirrors left without valid blocks go once the GPU is past the commands recorded so far.
@@ -1118,7 +1118,7 @@ void BufferCache::LayerForgetGpuData() {
     }
     for (const auto& [address, size] : ranges) {
         gpu_modified_ranges.Subtract(address, size);
-        memory_tracker->UnmarkRegionAsGpuModified(address, size);
+        memory_tracker->UnmarkRegionAsGpuModified(address, size, false);
         layer_cpu_blocks.Add({address >> block_shift, ((address + size - 1) >> block_shift) + 1});
     }
 }
@@ -1395,7 +1395,7 @@ void BufferCache::LayerRefreshVolatile(VAddr address, u64 size) {
         if (from >= to) {
             return;
         }
-        memory_tracker->UnmarkRegionAsGpuModified(from, to - from);
+        memory_tracker->UnmarkRegionAsGpuModified(from, to - from, false);
         gpu_modified_ranges.Subtract(from, to - from);
         memory_tracker->MarkRegionAsCpuModified(from, to - from);
         layer_volatile_refresh_bytes += to - from;

@@ -16,6 +16,7 @@ namespace MemoryPatcher {
 
 extern EXPORT uintptr_t g_eboot_address;
 extern uint64_t g_eboot_image_size;
+extern std::string g_eboot_name;
 extern std::string g_game_serial;
 extern std::string patch_file;
 
@@ -48,4 +49,4 @@ void PatchMemory(const patchInfo& patch);
 static std::vector<int32_t> PatternToByte(const std::string& pattern);
 uintptr_t PatternScan(const std::string& signature);
 
-} // namespace MemoryPatcher
+} // namespace MemoryPatcher
