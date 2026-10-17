@@ -117,6 +117,12 @@ std::map<std::int32_t, std::span<const std::uint8_t>> FmgsOf(std::span<const std
 
 } // namespace
 
+std::map<std::uint32_t, std::string> GameText(std::span<const std::uint8_t> bnd, std::int32_t fmg) {
+    const auto fmgs = FmgsOf(bnd);
+    const auto found = fmgs.find(fmg);
+    return found == fmgs.end() ? std::map<std::uint32_t, std::string>{} : ParseFmg(found->second);
+}
+
 std::map<std::uint32_t, std::string> ItemNamesFromGameText(std::span<const std::uint8_t> items,
                                                            std::span<const std::uint8_t> menu) {
     std::map<std::uint32_t, std::string> names;

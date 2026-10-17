@@ -3350,6 +3350,8 @@ struct PanelMember {
     u32 needed = 0;
     // Kaniel 2026-10-17 (the compass): where it stands, on the local player's map only.
     std::optional<LampPosition> at;
+    // Kaniel 2026-10-17 (the map screen): the map it is on (0 when the board has none).
+    u32 map = 0;
     bool operator==(const PanelMember&) const = default;
 };
 struct PartyPanel {

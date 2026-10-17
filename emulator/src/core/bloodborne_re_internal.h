@@ -478,6 +478,8 @@ void ReconcileMemberPresence();
 void TickPartyTrip();
 void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
+// Kaniel 2026-10-17: the port's map screen's reads and trips (bloodborne_map_screen.cpp).
+void TickMapScreen();
 
 void TickAutoplay();
 // The rig's watch-unseen check (bloodborne_autoplay.cpp), after the co-op tick.

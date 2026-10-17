@@ -567,6 +567,41 @@ GAME_ABI void* TeamPageFactory(void* out, void* arg) {
     return Factory(out, arg, reinterpret_cast<void*>(&TeamContent), TextOf(team_page_name));
 }
 
+// ---- Kaniel 2026-10-17: the map screen. The System menu's "Map" item opens a page of the game's
+// own (one row saying so) and the map screen over it (bbport_overlay.cpp); closing it closes the
+// page too, as the team menu's. ----
+u32 map_page_name = 0, map_page_help = 0, map_row_name = 0, map_row_help = 0;
+int map_value = 0;
+
+GAME_ABI void MapRows(void* page, void*) {
+    using Push = void (GAME_ABI *)(void*, void*);
+    using AddRow = void (GAME_ABI *)(void*, void*, int*, void*, const int*);
+    using Make = void* (GAME_ABI *)(void*, u32, u32);
+    alignas(16) u8 pair[2 * TextSize] = {};
+    MakeTexts(pair, map_row_name, map_row_help);
+    u8* list = static_cast<u8*>(AlignedAlloc(ListSize));
+    std::memset(list, 0, ListSize);
+    alignas(16) u8 value[ValueSize] = {};
+    Game<Make>(MakeText)(value + 8, TextName, team_row_value);
+    Game<Push>(ListPush)(list, value);
+    DestroyText(value + 8);
+    map_value = 0;
+    Game<AddRow>(ListRow)(page, pair, &map_value, list, &team_default);
+    DestroyValues(list, ListCountOffset);
+    AlignedFree(list);
+    DestroyTexts(pair);
+    bbcoop_map_menu(1); // the page opens: the map screen over it
+}
+GAME_ABI void* MapContent(void* a, void* b) {
+    using Open = void* (GAME_ABI *)(void*, void*, const char*, void*, u64, u64);
+    title_override = nullptr;
+    return Game<Open>(OpenPage)(a, b, Game<const char*>(ControlsLayout),
+                                reinterpret_cast<void*>(&MapRows), 0, 0);
+}
+GAME_ABI void* MapPageFactory(void* out, void* arg) {
+    return Factory(out, arg, reinterpret_cast<void*>(&MapContent), TextOf(map_page_name));
+}
+
 // ---- Hooks ----
 using LookupFn = const char16_t* (GAME_ABI *)(void*, u32, u32, u32);
 using AddFn = void* (GAME_ABI *)(void*, void*, void*, void*);
@@ -667,6 +702,7 @@ GAME_ABI void* AddHook(void* menu, void* pair, void* function, void* out) {
     void* result = add_original(menu, pair, function, out);
     const void* screen_sound = screen_sound_text.load();
     if (screen_sound && *reinterpret_cast<const void* const*>(pair) == screen_sound) {
+        AddItem(menu, map_page_name, map_page_help, reinterpret_cast<void*>(&MapPageFactory));
         bbcoop_lobby lobby;
         if (bbcoop_lobby_view(&lobby)) {
             AddItem(menu, team_page_name, team_page_help, reinterpret_cast<void*>(&TeamPageFactory));
@@ -786,6 +822,12 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     team_row_help = AddText("The team screen is open over the game: its Close button comes back here",
                             "Экран команды открыт поверх игры: кнопка «Закрыть» вернёт сюда");
     team_row_value = AddText("Open", "Открыт");
+    map_page_name = AddText("Map", "Карта");
+    map_page_help = AddText("The map: where you and your team are, and travel to a lit lamp",
+                            "Карта: где вы и ваша команда, и путь к зажжённой лампе");
+    map_row_name = AddText("Map screen", "Экран карты");
+    map_row_help = AddText("The map is open over the game: Circle comes back here",
+                           "Карта открыта поверх игры: Круг вернёт сюда");
 
     for (const Page& p : pages) {
         for (const Row& r : p.rows) {

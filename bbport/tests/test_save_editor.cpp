@@ -181,6 +181,10 @@ int main() {
     assert(game.size() == 6);
     assert(ItemsFromGameText(std::vector<std::uint8_t>{'B', 'N', 'D', '3'}).empty());
     assert(ItemsFromGameText(std::vector<std::uint8_t>{}).empty());
+    // Kaniel 2026-10-17, the map screen: any FMG's strings by id (its lamps' and areas' names).
+    assert(GameText(bnd, 20).size() == 1 && GameText(bnd, 20).at(100) == "Sacrifice all Blood Echoes");
+    assert(GameText(bnd, 12).at(30000) == "Charred Hunter Garb \xc3\xa9");
+    assert(GameText(bnd, 99).empty() && GameText(std::vector<std::uint8_t>{}, 10).empty());
 
     // Kaniel 2026-10-15, trading any item: each item's name by its full item id, weapons at every
     // level, gems and runes from the menu text's FMG 31.

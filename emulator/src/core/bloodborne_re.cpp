@@ -883,6 +883,7 @@ void TickPartyController() {
     TickAutoplay();
     TickPartyTrip();
     TickPlayersOnThisMap();
+    TickMapScreen();
     CheckAutoplayWatch();
     LogJoinTaskChanges();
     WatchSummonJoin();

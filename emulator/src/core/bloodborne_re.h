@@ -9,6 +9,9 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
+
+#include "common/types.h"
 
 namespace Core::Bloodborne {
 
@@ -55,6 +58,24 @@ bool GameHudUp();
 // Kaniel 2026-10-17: the teammate compass as of the last party tick (bloodborne_compass.h); false
 // with `view.why` when it shows nothing.
 bool ReadCompass(CompassView& view);
+// Kaniel 2026-10-17: the port's map screen (bloodborne_map.h), as the game thread read it last
+// while the screen was open: where this player stands, the lamps lit (their warp points, the
+// Hunter's Dream always) and what would stop a trip now.
+struct MapScreenView {
+    bool in_world = false; // the game's HUD is up: not a load, a cutscene or the title
+    u32 map = 0;
+    std::optional<std::array<float, 3>> me;
+    std::optional<float> heading; // the camera's (bloodborne_compass.h)
+    std::vector<s32> lit;
+    bool down = false;
+    bool boss_fight = false;
+    bool travelling = false;
+};
+// `open`: the screen is up (the game thread reads for it only while it is). False before its
+// first reading.
+bool ReadMapScreen(MapScreenView& view, bool open);
+// A trip from the map to the lamp, started by the game thread when MapTravelCheck allows it.
+void RequestMapTrip(s32 warp_point);
 // Party portraits (bloodborne_portrait.h). The status page's model (its render target's RGBA
 // rows) as the port's texture cache read it back: this character's portrait once the page closes.
 void NoteStatusModel(std::span<const std::uint8_t> rgba, int width, int height);
