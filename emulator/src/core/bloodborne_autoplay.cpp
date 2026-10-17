@@ -1355,31 +1355,45 @@ bool AutoplayExpectOthersNear(const AutoplayStep& step) {
     return true;
 }
 
-// expect-compass <bearing> <metres> [<degrees> [<metres>]] (Kaniel 2026-10-17, the teammate
-// compass): within 10 s a marker on the compass is at that bearing (degrees from straight ahead,
-// positive to the right) and distance, within the tolerances (20 degrees, 1.5 m). Logs what the
-// compass shows.
+// expect-compass <bearing> <metres> [<degrees> [<metres>]] [down|dead] (Kaniel 2026-10-17, the
+// teammate compass): within 10 s a marker on the compass is at that bearing (degrees from straight
+// ahead, positive to the right) and distance, within the tolerances (20 degrees, 1.5 m), and in
+// that state when one is named. Logs what the compass shows.
 bool AutoplayExpectCompass(const AutoplayStep& step) {
     CompassView view;
     const bool shown = ReadCompass(view);
     std::string seen;
     for (size_t i = 0; i < view.markers.size(); ++i) {
         const CompassMarker& marker = view.markers[i];
-        seen += fmt::format(" [{} at {:.1f} deg, {:.1f} m, strip {:+.2f}{}]", view.names[i],
+        const int vital = view.vitals[i];
+        seen += fmt::format(" [{} at {:.1f} deg, {:.1f} m, strip {:+.2f}{}{}]", view.names[i],
                             marker.bearing * 180.0f / std::numbers::pi_v<float>, marker.distance,
-                            marker.place.x, marker.place.pinned ? " pinned" : "");
+                            marker.place.x, marker.place.pinned ? " pinned" : "",
+                            vital == static_cast<int>(Vital::Down)   ? " down"
+                            : vital == static_cast<int>(Vital::Dead) ? " dead"
+                                                                     : "");
     }
     const std::string text =
         shown ? fmt::format("camera heading {:.1f} deg,{}",
                             view.heading * 180.0f / std::numbers::pi_v<float>, seen)
               : view.why;
     const double bearing = step.Number(0, 0.0), metres = step.Number(1, 0.0);
-    const double bearing_tolerance = step.Number(2, 20.0), metres_tolerance = step.Number(3, 1.5);
-    for (const CompassMarker& marker : view.markers) {
+    // Kaniel 2026-10-17: a last word "down" or "dead" wants the marker in that state.
+    const std::string_view last = step.command.args.empty() ? "" : step.command.args.back();
+    const bool wants_state = last == "down" || last == "dead";
+    const int state = static_cast<int>(last == "down" ? Vital::Down : Vital::Dead);
+    const auto number = [&](size_t index, double fallback) {
+        return wants_state && index + 1 >= step.command.args.size() ? fallback
+                                                                    : step.Number(index, fallback);
+    };
+    const double bearing_tolerance = number(2, 20.0), metres_tolerance = number(3, 1.5);
+    for (size_t i = 0; i < view.markers.size(); ++i) {
+        const CompassMarker& marker = view.markers[i];
         const double off = std::abs(
             WrapAngle(marker.bearing - static_cast<float>(bearing * std::numbers::pi / 180.0)));
         if (off * 180.0 / std::numbers::pi <= bearing_tolerance &&
-            std::abs(marker.distance - metres) <= metres_tolerance) {
+            std::abs(marker.distance - metres) <= metres_tolerance &&
+            (!wants_state || view.vitals[i] == state)) {
             LOG_INFO(Debug, "Bloodborne autoplay compass: {}", text);
             return true;
         }

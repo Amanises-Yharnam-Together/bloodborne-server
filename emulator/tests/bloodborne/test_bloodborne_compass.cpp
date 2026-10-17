@@ -92,6 +92,23 @@ TEST(BloodborneCompass, StripPlacesAcrossItsSpanAndPinsTheRest) {
     EXPECT_EQ(PlaceOnStrip(Pi), (CompassPlace{1.0f, true}));
 }
 
+// Kaniel 2026-10-17: a downed member's marker comes over the others (drawn last), wherever it is.
+TEST(BloodborneCompass, DownedMarkersComeLast) {
+    const CompassPoint me{0.0f, 0.0f, 0.0f};
+    const std::vector<std::optional<CompassPoint>> members{
+        CompassPoint{0.0f, 0.0f, 5.0f}, CompassPoint{0.0f, 0.0f, -40.0f},
+        CompassPoint{1.0f, 0.0f, 5.0f}, std::nullopt};
+    const std::vector<bool> down{false, true, false, true};
+    const auto markers = CompassMarkers(members, me, 0.0f, down);
+    ASSERT_EQ(markers.size(), 3u);
+    EXPECT_EQ(markers[0].member, 0);
+    EXPECT_EQ(markers[1].member, 2);
+    EXPECT_EQ(markers[2].member, 1);
+    EXPECT_TRUE(markers[2].down);
+    EXPECT_TRUE(markers[2].place.pinned); // behind, at the strip's end, still shown
+    EXPECT_FALSE(markers[0].down);
+}
+
 TEST(BloodborneCompass, LivePositionsTakeTheNearestCharacterOnce) {
     const std::vector<std::optional<CompassPoint>> members{
         CompassPoint{0.0f, 0.0f, 0.0f}, CompassPoint{10.0f, 0.0f, 0.0f}, std::nullopt,

@@ -3494,28 +3494,100 @@ std::string Initial(const char* name) {
     return std::string(name, end);
 }
 
-/// A member's marker centred on `at`: a dark disc ringed in its colour with its initial, its
-/// distance under it; `arrow` -1 or 1 puts a chevron on that side (a member past the strip's end).
-void Marker(ImDrawList* draw, ImVec2 at, const bbcoop_compass_marker& marker, int arrow) {
+/// Kaniel 2026-10-17: the members' portraits on the markers, as the overlay's own textures: one
+/// per marker place, made once and filled again only when the member or its picture changes.
+struct PortraitTexture {
+    ImTextureData* texture = nullptr;
+    std::string member;
+    uint32_t id = 0;
+    bool has = false;
+};
+PortraitTexture portraits[BBCOOP_COMPASS_MARKERS];
+
+/// The markers' portrait textures brought up to date: before NewFrame, which hands new textures and
+/// their uploads to the backend.
+void RefreshPortraits() {
+    for (int place = 0; place < view.count; ++place) {
+        const bbcoop_compass_marker& marker = view.markers[place];
+        PortraitTexture& slot = portraits[place];
+        uint32_t id = 0;
+        bbcoop_member_portrait(marker.board, nullptr, 0, &id); // the id alone: no pixels asked for
+        if (slot.member != marker.board || slot.id != id) {
+            slot.member = marker.board;
+            slot.id = id;
+            slot.has = false;
+            static std::vector<uint8_t> rgba(size_t{BBCOOP_PORTRAIT_SIDE} * BBCOOP_PORTRAIT_SIDE * 4);
+            if (id != 0 && bbcoop_member_portrait(marker.board, rgba.data(), rgba.size(), &id)) {
+                if (slot.texture == nullptr) {
+                    slot.texture = IM_NEW(ImTextureData)();
+                    slot.texture->Create(ImTextureFormat_RGBA32, BBCOOP_PORTRAIT_SIDE, BBCOOP_PORTRAIT_SIDE);
+                    ImGui::RegisterUserTexture(slot.texture);
+                }
+                std::memcpy(slot.texture->GetPixels(), rgba.data(), rgba.size());
+                if (slot.texture->Status == ImTextureStatus_OK || slot.texture->Status == ImTextureStatus_WantUpdates) {
+                    ImTextureDataQueueUpload(slot.texture, 0, 0, BBCOOP_PORTRAIT_SIDE, BBCOOP_PORTRAIT_SIDE);
+                }
+                slot.has = true;
+            }
+        }
+    }
+}
+
+/// The marker's portrait texture, or null when the member has none (its initial is drawn then).
+ImTextureData* Portrait(int place, const bbcoop_compass_marker& marker) {
+    const PortraitTexture& slot = portraits[place];
+    return slot.has && slot.member == marker.board ? slot.texture : nullptr;
+}
+
+/// A member's marker centred on `at`: its portrait (or its initial on a dark disc) ringed in its
+/// colour, its distance under it; `arrow` -1 or 1 puts a chevron on that side (a member past the
+/// strip's end). Down: larger, the party list's downed badge with its red revive share pulsing
+/// round it and the revive's percentage with the distance. Dead: the party list's headstone.
+void Marker(ImDrawList* draw, ImVec2 at, int place, const bbcoop_compass_marker& marker, int arrow) {
     using Ui::S;
-    const float r = S(13.0f);
-    const ImU32 color = MemberColor(marker.member, 1.0f);
+    const bool down = marker.vital == BBCOOP_VITAL_DOWN, dead = marker.vital == BBCOOP_VITAL_DEAD;
+    const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
+    const float r = down ? S(17.0f) : S(13.0f);
+    const ImU32 color = down ? Party::Blood(0.75f + 0.25f * pulse) : MemberColor(marker.member, dead ? 0.5f : 1.0f);
     draw->AddCircleFilled(ImVec2(at.x + S(1.0f), at.y + S(1.5f)), r + S(1.5f), Party::Rgba(0, 0, 0, 0.55f), 32);
-    draw->AddCircleFilled(at, r, Party::Rgba(0.06f, 0.05f, 0.05f, 0.88f), 32);
-    draw->AddCircle(at, r, color, 32, S(2.0f));
-    const std::string initial = Initial(marker.name);
-    const float size = S(17.0f);
-    const ImVec2 extent = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, initial.c_str());
-    Party::Text(draw, serif_font, size, ImVec2(at.x, at.y - extent.y * 0.5f), Party::Bone(1.0f),
-                initial.c_str(), 0.5f);
+    using BbPartyIcons::Icon;
+    if (down && Party::Icon(draw, Icon::Downed, at, r * 2.6f, 1.0f)) {
+        // The badge's own ring fills red with the revive, as on the party list.
+        Party::RingShare(draw, at, r * 2.6f, BbPartyIcons::DownedRing, marker.revive, 0.8f + 0.2f * pulse);
+    } else if (dead && Party::Icon(draw, Icon::Fallen, at, r * 2.6f, 0.85f)) {
+    } else {
+        draw->AddCircleFilled(at, r, Party::Rgba(0.06f, 0.05f, 0.05f, 0.88f), 32);
+        if (ImTextureData* face = dead ? nullptr : Portrait(place, marker)) {
+            const float f = r - S(1.0f);
+            draw->AddImage(face->GetTexRef(), ImVec2(at.x - f, at.y - f), ImVec2(at.x + f, at.y + f));
+        } else {
+            const std::string initial = Initial(marker.name);
+            const float size = S(17.0f);
+            const ImVec2 extent = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, initial.c_str());
+            Party::Text(draw, serif_font, size, ImVec2(at.x, at.y - extent.y * 0.5f),
+                        dead ? Ui::Dim(1.0f) : Party::Bone(1.0f), initial.c_str(), 0.5f);
+        }
+        draw->AddCircle(at, r, color, 32, S(2.0f));
+        if (down) {
+            // No badge art: the revive's share as a red arc round the ring.
+            const float top = -IM_PI * 0.5f;
+            draw->PathArcTo(at, r + S(3.0f), top, top + 2.0f * IM_PI * std::clamp(marker.revive, 0.0f, 1.0f), 48);
+            draw->PathStroke(Party::Blood(0.9f), 0, S(3.0f));
+        }
+    }
     if (arrow != 0) {
         const float x = at.x + arrow * (r + S(5.0f)), h = S(6.0f);
         draw->AddTriangleFilled(ImVec2(x, at.y - h), ImVec2(x + arrow * h, at.y), ImVec2(x, at.y + h), color);
     }
-    char distance[24];
-    std::snprintf(distance, sizeof(distance), marker.distance < 10.0f ? "%.1f m" : "%.0f m",
-                  marker.distance);
-    Party::Text(draw, sans_font, S(13.0f), ImVec2(at.x, at.y + r + S(3.0f)), Ui::Plain(0.95f), distance, 0.5f);
+    char line[40];
+    if (down) {
+        std::snprintf(line, sizeof(line), marker.distance < 10.0f ? "%d%%  %.1f m" : "%d%%  %.0f m",
+                      int(std::lround(std::clamp(marker.revive, 0.0f, 1.0f) * 100.0f)), marker.distance);
+    } else {
+        std::snprintf(line, sizeof(line), marker.distance < 10.0f ? "%.1f m" : "%.0f m", marker.distance);
+    }
+    Party::Text(draw, sans_font, S(13.0f), ImVec2(at.x, at.y + r + S(3.0f)),
+                down ? Party::Rgba(1.0f, 0.52f, 0.46f, 1.0f) : Ui::Plain(dead ? 0.6f : 0.95f), line, 0.5f);
 }
 
 void Strip(ImDrawList* draw, float y) {
@@ -3556,7 +3628,7 @@ void Strip(ImDrawList* draw, float y) {
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const int arrow = marker.pinned ? (marker.x < 0.0f ? -1 : 1) : 0;
-        Marker(draw, ImVec2(mid + half * marker.x, y), marker, arrow);
+        Marker(draw, ImVec2(mid + half * marker.x, y), i, marker, arrow);
     }
 }
 
@@ -3568,7 +3640,7 @@ void Ring(ImDrawList* draw) {
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const ImVec2 at(mid.x + r * std::sin(marker.bearing), mid.y - r * std::cos(marker.bearing));
-        Marker(draw, at, marker, 0);
+        Marker(draw, at, i, marker, 0);
     }
 }
 
@@ -4090,6 +4162,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     }
     if (Team::open || Joining::open || menu_open || quit_open) {
         MenuArt::Load(); // the same: the game's menu art and font
+    }
+    if (Compass::shown) {
+        Compass::RefreshPortraits(); // the same: the markers' portraits
     }
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();

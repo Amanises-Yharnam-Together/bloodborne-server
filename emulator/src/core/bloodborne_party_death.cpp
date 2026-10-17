@@ -1982,14 +1982,19 @@ bool ReadCompass(CompassView& view) {
         return false;
     }
     std::vector<std::optional<LampPosition>> members;
+    std::vector<bool> down;
     for (const PanelMember& member : panel.members) {
         members.push_back(member.at);
+        down.push_back(member.vital == Vital::Down);
     }
     view.heading = *panel.camera_heading;
-    view.markers = CompassMarkers(members, *panel.me, view.heading);
+    view.markers = CompassMarkers(members, *panel.me, view.heading, down);
     for (const CompassMarker& marker : view.markers) {
         const PanelMember& member = panel.members[marker.member];
         view.names.push_back(member.shown.empty() ? member.name : member.shown);
+        view.members.push_back(member.member);
+        view.vitals.push_back(static_cast<int>(member.vital));
+        view.revives.push_back(ReviveShare(member.landed, member.needed));
     }
     if (view.markers.empty()) {
         view.why = "nobody else on this map";

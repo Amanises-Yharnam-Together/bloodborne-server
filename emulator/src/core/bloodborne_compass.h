@@ -58,10 +58,14 @@ struct CompassMarker {
     float bearing = 0.0f;
     float distance = 0.0f;
     CompassPlace place;
+    bool down = false;
     bool operator==(const CompassMarker&) const = default;
 };
+// Kaniel 2026-10-17: `down` (by index, may be empty) marks the downed members, whose markers come
+// last (drawn over the others).
 std::vector<CompassMarker> CompassMarkers(std::span<const std::optional<CompassPoint>> members,
-                                          const CompassPoint& me, float camera_heading);
+                                          const CompassPoint& me, float camera_heading,
+                                          const std::vector<bool>& down = {});
 
 // What the compass shows now (ReadCompass): the camera's heading and the markers, with each
 // marker's name (the party panel's), or why it shows nothing.
@@ -69,6 +73,11 @@ struct CompassView {
     float heading = 0.0f;
     std::vector<CompassMarker> markers;
     std::vector<std::string> names;
+    // Kaniel 2026-10-17, by marker too: its board name (its portrait's key), whether it is down or
+    // dead (Vital's numbers: 2 down, 3 dead) and its revive's progress (0 to 1).
+    std::vector<std::string> members;
+    std::vector<int> vitals;
+    std::vector<float> revives;
     std::string why;
 };
 
