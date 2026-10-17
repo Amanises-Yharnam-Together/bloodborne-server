@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "Jeder Frame verschiebt die Szene um einen Bruchteil eines Pixels, damit der Upscaler aus mehreren Frames mehr Details rekonstruiert.",
  "Character motion vectors": "Figuren-Bewegungsvektoren",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "Genaue Bewegung für animierte Objekte: Kleidung und Waffen zerfallen in Bewegung weniger. Gilt nach einem Neustart des Spiels.",
- "Frame generation (FSR 3.1)": "Frame-Generierung (FSR 3.1)",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "Verdoppelt die Bildrate: ein interpolierter Frame zwischen je zwei Spiel-Frames. Etwas mehr Eingabeverzögerung; am besten ab 60 FPS. Pausiert, solange die Bildrate über der halben Bildwiederholrate des Bildschirms liegt.",
  "FSR 4: auto exposure": "FSR 4: Auto-Belichtung",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "Das FSR-4-Netz normalisiert die Farbe nach Belichtung und entscheidet damit, wann ältere Frames verworfen werden.",
  "FSR 4: invert jitter sign": "FSR 4: Jitter-Vorzeichen umkehren",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "Die Karte ist über dem Spiel geöffnet: Kreis kehrt hierher zurück",
  "Triangle  Whole map": "Dreieck  Ganze Karte",
  "%d of %d want to skip": "%d von %d wollen überspringen",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Gebiet     Sticks, ziehen  Bewegen     L2 / R2, Mausrad  Zoom     Viereck  Du"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Gebiet     Sticks, ziehen  Bewegen     L2 / R2, Mausrad  Zoom     Viereck  Du",
+ "Frame generation: provider": "Frame-Generierung: Technik",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1: jede GPU, 2x. DLSS: Frame-Generierung von NVIDIA, flüssiger in Bewegung; bis 4x auf einer GeForce RTX 50.",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1: jede GPU, 2x. DLSS Frame Generation braucht eine GeForce RTX 40 oder neuer mit bbport_dlss.dll und nvngx_dlssg.dll.",
+ "Frame generation: multiplier": "Frame-Generierung: Faktor",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "Angezeigte Frames pro Spiel-Frame. FSR 3.1 und DLSS auf einer GeForce RTX 40: 2x; DLSS auf einer GeForce RTX 50: bis 4x. Jede Stufe mehr belegt etwas Videospeicher.",
+ "Fit to display refresh": "An Bildwiederholrate anpassen",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "Ein: nicht mehr Frames, als der Bildschirm zeigt (ohne FPS-Limit werden weniger erzeugt und die GPU wird entlastet). Aus: der gewählte Faktor; über der Bildwiederholrate zeigt der Bildschirm die neuesten Frames. Mit V-Sync immer angepasst.",
+ "Now %dx on a %d Hz display": "Jetzt %dx auf einem %d-Hz-Bildschirm",
+ "Paused: no room on the %d Hz display at this frame rate": "Pausiert: kein Platz auf dem %d-Hz-Bildschirm bei dieser Bildrate",
+ "Frame generation": "Frame-Generierung",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "Frames zwischen den Frames des Spiels: FSR 3.1 verdoppelt die Bildrate auf jeder GPU, DLSS erzeugt bis zu drei auf einer GeForce RTX 50 (4x). Etwas mehr Eingabeverzögerung und etwas Videospeicher; am besten ab 60 FPS. Standardmäßig aus."
 }

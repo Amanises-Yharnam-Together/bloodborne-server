@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "Varje bildruta förskjuter scenen en bråkdel av en pixel så att uppskalaren återskapar mer detaljer från flera bildrutor.",
  "Character motion vectors": "Rörelsevektorer för figurer",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "Exakt rörelse för animerade objekt: kläder och vapen bryts upp mindre i rörelse. Gäller efter omstart av spelet.",
- "Frame generation (FSR 3.1)": "Bildrutegenerering (FSR 3.1)",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "Fördubblar bildfrekvensen: en interpolerad bildruta mellan varannan spelbildruta. Ger lite inmatningsfördröjning; bäst från 60 FPS. Pausas när bildfrekvensen är över halva skärmens uppdateringsfrekvens.",
  "FSR 4: auto exposure": "FSR 4: automatisk exponering",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "FSR 4-nätverket normaliserar färg efter exponering och använder den för att avgöra när äldre bildrutor ska släppas.",
  "FSR 4: invert jitter sign": "FSR 4: invertera jittertecken",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "Kartan är öppen över spelet: Cirkel kommer tillbaka hit",
  "Triangle  Whole map": "Triangel  Hela kartan",
  "%d of %d want to skip": "%d av %d vill hoppa över",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Område     Spakar, dra  Flytta     L2 / R2, hjul  Zoom     Fyrkant  Du"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Område     Spakar, dra  Flytta     L2 / R2, hjul  Zoom     Fyrkant  Du",
+ "Frame generation: provider": "Bildrutegenerering: teknik",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1: alla GPU:er, 2x. DLSS: NVIDIAs bildrutegenerering, mjukare i rörelse; upp till 4x på ett GeForce RTX 50.",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1: alla GPU:er, 2x. DLSS Frame Generation kräver ett GeForce RTX 40 eller nyare, med bbport_dlss.dll och nvngx_dlssg.dll.",
+ "Frame generation: multiplier": "Bildrutegenerering: multiplikator",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "Visade bildrutor per spelbildruta. FSR 3.1 och DLSS på ett GeForce RTX 40: 2x; DLSS på ett GeForce RTX 50: upp till 4x. Varje steg till använder lite videominne.",
+ "Fit to display refresh": "Anpassa till skärmens frekvens",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "På: inte fler bildrutor än skärmen visar (utan FPS-gräns genereras färre och GPU:n belastas mindre). Av: multiplikatorn som vald; över uppdateringsfrekvensen visar skärmen de nyaste bildrutorna. Med V-Sync alltid anpassat.",
+ "Now %dx on a %d Hz display": "Nu %dx på en %d Hz-skärm",
+ "Paused: no room on the %d Hz display at this frame rate": "Pausad: inget utrymme på %d Hz-skärmen vid denna bildfrekvens",
+ "Frame generation": "Bildrutegenerering",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "Bildrutor mellan spelets egna: FSR 3.1 fördubblar bildfrekvensen på alla GPU:er, DLSS gör upp till tre på ett GeForce RTX 50 (4x). Ger lite inmatningsfördröjning och använder lite videominne; bäst från 60 FPS. Av som standard."
 }

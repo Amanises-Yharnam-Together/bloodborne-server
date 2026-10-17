@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "Jokainen ruutu siirtää kohtausta pikselin murto-osan verran, jotta skaalain koostaa enemmän yksityiskohtia useasta ruudusta.",
  "Character motion vectors": "Hahmojen liikevektorit",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "Tarkka liike animoiduille kohteille: vaatteet ja aseet hajoavat vähemmän liikkeessä. Tulee voimaan pelin uudelleenkäynnistyksen jälkeen.",
- "Frame generation (FSR 3.1)": "Ruutujen generointi (FSR 3.1)",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "Kaksinkertaistaa ruudunpäivityksen: yksi interpoloitu ruutu jokaisen kahden peliruudun väliin. Lisää hieman syöteviivettä; parhaimmillaan 60 FPS:stä ylöspäin. Keskeytyy, kun ruudunpäivitys ylittää puolet näytön virkistystaajuudesta.",
  "FSR 4: auto exposure": "FSR 4: automaattinen valotus",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "FSR 4 -verkko normalisoi värit valotuksen mukaan ja päättää sen avulla, milloin vanhemmat ruudut hylätään.",
  "FSR 4: invert jitter sign": "FSR 4: käännä värinän etumerkki",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "Kartta on auki pelin päällä: Ympyrä palaa tänne",
  "Triangle  Whole map": "Kolmio  Koko kartta",
  "%d of %d want to skip": "%d/%d haluaa ohittaa",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Alue     Tikut, veto  Siirrä     L2 / R2, rulla  Zoomaus     Neliö  Sinä"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Alue     Tikut, veto  Siirrä     L2 / R2, rulla  Zoomaus     Neliö  Sinä",
+ "Frame generation: provider": "Ruutujen generointi: tekniikka",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1: mikä tahansa GPU, 2x. DLSS: NVIDIAn ruutujen generointi, sulavampi liikkeessä; enintään 4x GeForce RTX 50:llä.",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1: mikä tahansa GPU, 2x. DLSS Frame Generation vaatii GeForce RTX 40:n tai uudemman sekä bbport_dlss.dll- ja nvngx_dlssg.dll-tiedostot.",
+ "Frame generation: multiplier": "Ruutujen generointi: kerroin",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "Näytettyjä ruutuja pelin ruutua kohden. FSR 3.1 ja DLSS GeForce RTX 40:llä: 2x; DLSS GeForce RTX 50:llä: enintään 4x. Jokainen lisäaskel vie hieman videomuistia.",
+ "Fit to display refresh": "Sovita näytön virkistystaajuuteen",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "Päällä: ei enempää ruutuja kuin näyttö näyttää (rajoittamattomassa pelissä generoidaan vähemmän ja GPU kuormittuu vähemmän). Pois: valittu kerroin; virkistystaajuuden yli näyttö näyttää uusimmat ruudut. V-Syncillä aina sovitettu.",
+ "Now %dx on a %d Hz display": "Nyt %dx %d Hz:n näytöllä",
+ "Paused: no room on the %d Hz display at this frame rate": "Keskeytetty: %d Hz:n näytöllä ei ole tilaa tällä ruudunpäivityksellä",
+ "Frame generation": "Ruutujen generointi",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "Ruutuja pelin omien väliin: FSR 3.1 kaksinkertaistaa ruudunpäivityksen millä tahansa GPU:lla, DLSS tekee enintään kolme GeForce RTX 50:llä (4x). Lisää hieman syöteviivettä ja vie hieman videomuistia; parhaimmillaan 60 FPS:stä ylöspäin. Oletuksena pois."
 }

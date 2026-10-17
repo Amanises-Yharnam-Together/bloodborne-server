@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "Cada fotograma desloca a cena uma fração de píxel para que o upscaler reconstrua mais detalhe a partir de vários fotogramas.",
  "Character motion vectors": "Vetores de movimento das personagens",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "Movimento preciso para objetos animados: roupas e armas desfazem-se menos em movimento. Aplica-se após reiniciar o jogo.",
- "Frame generation (FSR 3.1)": "Geração de fotogramas (FSR 3.1)",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "Duplica a taxa de fotogramas: um fotograma interpolado entre cada dois do jogo. Acrescenta algum atraso de resposta; melhor a partir de 60 FPS. Faz pausa enquanto a taxa de fotogramas estiver acima de metade da frequência do ecrã.",
  "FSR 4: auto exposure": "FSR 4: exposição automática",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "A rede do FSR 4 normaliza a cor pela exposição e usa-a para decidir quando descartar fotogramas antigos.",
  "FSR 4: invert jitter sign": "FSR 4: inverter sinal do jitter",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "O mapa está aberto sobre o jogo: Círculo volta aqui",
  "Triangle  Whole map": "Triângulo  Mapa inteiro",
  "%d of %d want to skip": "%d de %d querem saltar",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Área     Manípulos, arrastar  Mover     L2 / R2, roda  Zoom     Quadrado  Tu"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Área     Manípulos, arrastar  Mover     L2 / R2, roda  Zoom     Quadrado  Tu",
+ "Frame generation: provider": "Geração de fotogramas: tecnologia",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1: qualquer placa gráfica, 2x. DLSS: geração de fotogramas da NVIDIA, mais fluida em movimento; até 4x numa GeForce RTX 50.",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1: qualquer placa gráfica, 2x. O DLSS Frame Generation requer uma GeForce RTX 40 ou mais recente, com bbport_dlss.dll e nvngx_dlssg.dll.",
+ "Frame generation: multiplier": "Geração de fotogramas: multiplicador",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "Fotogramas mostrados por cada fotograma do jogo. FSR 3.1 e DLSS numa GeForce RTX 40: 2x; DLSS numa GeForce RTX 50: até 4x. Cada nível a mais usa alguma memória de vídeo.",
+ "Fit to display refresh": "Ajustar à frequência do ecrã",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "Ativado: não mais fotogramas do que o ecrã mostra (sem limite de FPS geram-se menos e a placa gráfica trabalha menos). Desativado: o multiplicador escolhido; acima da frequência, o ecrã mostra os fotogramas mais recentes. Com V-Sync ajusta-se sempre.",
+ "Now %dx on a %d Hz display": "Agora %dx num ecrã de %d Hz",
+ "Paused: no room on the %d Hz display at this frame rate": "Em pausa: sem margem no ecrã de %d Hz com esta taxa de fotogramas",
+ "Frame generation": "Geração de fotogramas",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "Fotogramas criados entre os do jogo: FSR 3.1 duplica a taxa de fotogramas em qualquer placa gráfica, DLSS cria até três numa GeForce RTX 50 (4x). Acrescenta algum atraso de resposta e usa alguma memória de vídeo; melhor a partir de 60 FPS. Desativado por predefinição."
 }

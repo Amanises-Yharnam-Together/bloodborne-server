@@ -59,8 +59,6 @@
  "Each frame shifts the scene by a fraction of a pixel so the upscaler reconstructs more detail from several frames.": "Her kare sahneyi bir pikselin kesri kadar kaydırır, böylece ölçekleyici birkaç kareden daha fazla ayrıntı oluşturur.",
  "Character motion vectors": "Karakter hareket vektörleri",
  "Accurate motion for animated objects: clothes and weapons break up less in motion. Applies after restarting the game.": "Animasyonlu nesneler için doğru hareket: giysiler ve silahlar hareket halindeyken daha az bozulur. Oyun yeniden başlatıldıktan sonra uygulanır.",
- "Frame generation (FSR 3.1)": "Kare oluşturma (FSR 3.1)",
- "Doubles the frame rate: one interpolated frame between every two game frames. Adds a little input lag; best from 60 FPS. Pauses while the frame rate is above half the display's refresh rate.": "Kare hızını ikiye katlar: her iki oyun karesi arasına bir ara kare. Biraz giriş gecikmesi ekler; en iyisi 60 FPS'den itibaren. Kare hızı ekran yenileme hızının yarısının üstündeyken duraklar.",
  "FSR 4: auto exposure": "FSR 4: otomatik pozlama",
  "The FSR 4 network normalises colour by exposure and uses it to decide when to drop older frames.": "FSR 4 ağı rengi pozlamaya göre normalleştirir ve eski kareleri ne zaman bırakacağına karar vermek için onu kullanır.",
  "FSR 4: invert jitter sign": "FSR 4: titreşim işaretini ters çevir",
@@ -328,5 +326,16 @@
  "The map is open over the game: Circle comes back here": "Harita oyunun üstünde açık: Daire buraya döner",
  "Triangle  Whole map": "Üçgen  Tüm harita",
  "%d of %d want to skip": "%d/%d atlamak istiyor",
- "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Bölge     Çubuklar, sürükle  Kaydır     L2 / R2, tekerlek  Yakınlaştır     Kare  Sen"
+ "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Bölge     Çubuklar, sürükle  Kaydır     L2 / R2, tekerlek  Yakınlaştır     Kare  Sen",
+ "Frame generation: provider": "Kare oluşturma: teknoloji",
+ "FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up to 4x on a GeForce RTX 50.": "FSR 3.1: her GPU, 2x. DLSS: NVIDIA'nın kare oluşturması, harekette daha akıcı; GeForce RTX 50'de 4x'e kadar.",
+ "FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer with bbport_dlss.dll and nvngx_dlssg.dll.": "FSR 3.1: her GPU, 2x. DLSS Frame Generation için GeForce RTX 40 veya daha yenisi ile bbport_dlss.dll ve nvngx_dlssg.dll gerekir.",
+ "Frame generation: multiplier": "Kare oluşturma: çarpan",
+ "Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a GeForce RTX 50: up to 4x. Each one more uses some video memory.": "Oyunun her karesi başına gösterilen kare. FSR 3.1 ve GeForce RTX 40'ta DLSS: 2x; GeForce RTX 50'de DLSS: 4x'e kadar. Her ek kademe biraz video belleği kullanır.",
+ "Fit to display refresh": "Ekran yenileme hızına uydur",
+ "On: no more frames than the display shows (an uncapped game gets fewer generated frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate the display shows the newest frames. With V-Sync always fitted.": "Açık: ekranın gösterdiğinden fazla kare yok (sınırsız FPS'de daha az kare oluşturulur, GPU daha az yorulur). Kapalı: seçilen çarpan; yenileme hızının üstünde ekran en yeni kareleri gösterir. V-Sync ile her zaman uydurulur.",
+ "Now %dx on a %d Hz display": "Şu an %dx, %d Hz ekran",
+ "Paused: no room on the %d Hz display at this frame rate": "Duraklatıldı: bu kare hızında %d Hz ekranda yer yok",
+ "Frame generation": "Kare oluşturma",
+ "Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some video memory; best from 60 FPS. Off by default.": "Oyunun kareleri arasına kareler: FSR 3.1 her GPU'da kare hızını ikiye katlar, DLSS GeForce RTX 50'de üçe kadar ekler (4x). Biraz giriş gecikmesi ekler ve biraz video belleği kullanır; en iyisi 60 FPS'den itibaren. Varsayılan olarak kapalı."
 }
