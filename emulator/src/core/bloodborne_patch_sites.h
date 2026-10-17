@@ -522,6 +522,11 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     {"session resend overflow", "server owns leaves", CoopSiteKind::Patch, 0x017897B2,
      "0F 82 B8 00 00 00", "E9 B9 00 00 00 90"},
     {"room timeout", "server owns leaves", CoopSiteKind::Patch, 0x01789F41, "76 79", "EB 79"},
+    // Lua's OnMatchingCheck (0x013808B0): a member its check (0x01338CE0) does not find ends the
+    // session (MultiPlayStopRequest) and sends this game home. The old host back as a guest after
+    // a host migration (rig party3/leader-returns3) failed it and left every few seconds; the
+    // failed check returns (`je` -> two nops), as its other branch does after a found member.
+    {"matching check", "server owns leaves", CoopSiteKind::Patch, 0x0138095F, "74 0B", "90 90"},
 
     // The character floor update's read of the floor (InstallFloorGuard): a floor of a map block
     // that is gone is cleared first.

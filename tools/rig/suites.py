@@ -1320,10 +1320,12 @@ SUITES = {
                               "expect-session 3"],
                      **{guest: ["sync lr3-back", "wait 10", "expect-session 3"]
                         for guest in ("guest", "guest2")}},
-                    known_bug="the old host's game, back as a guest, ends its own session (the "
-                              "game's Lua handlers at eboot+0x13808b0 and 0x1388680 call "
-                              "MultiPlayStopRequest) and crashes at eboot+0x13cffba (rig "
-                              "2026-10-15, phase 7)",
+                    # The old host boots here, from host-crash3's restart.
+                    boots_in=1,
+                    # Fixed 2026-10-17: Lua's OnMatchingCheck ended its session every few seconds
+                    # (patch site "matching check"); the crash at eboot+0x13cffba went with the
+                    # flag block guard.
+                    forbid={"host": [r"StopRequest from the game"]},
                     allow=CRASH_CLEANUP),
         ],
     },
