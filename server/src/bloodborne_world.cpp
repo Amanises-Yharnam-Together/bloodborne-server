@@ -1265,7 +1265,12 @@ void Service::OnLobbyHello(Member& member, const bbcoop::LobbyHello& hello, qint
             QStringLiteral("team lobby: %1 (%2) signed in")
                 .arg(QString::fromStdString(hello.member()), QString::fromStdString(hello.name())));
     }
-    Settle(lobby.Arrive(hello.member(), hello.name(), hello.playing()), now_ms, result);
+    const TeamLobby::Outcome arrived_outcome =
+        lobby.Arrive(hello.member(), hello.name(), hello.playing());
+    if (arrived_outcome.worlds_changed) {
+        StoreWorldList(result);
+    }
+    Settle(arrived_outcome, now_ms, result);
     if (arrived) {
         // Its state even when nothing changed for the others.
         bbcoop::Envelope envelope;
@@ -1286,6 +1291,7 @@ void Service::OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, 
             bbcoop::TeamWorldInfo note;
             note.set_id(team->world());
             note.set_played_ms(QDateTime::currentMSecsSinceEpoch());
+            note.set_created_ms(note.played_ms()); // a new world's birth (kept from the first)
             lobby.NoteWorld(note);
             result.log.append(QStringLiteral("team lobby: team %1 plays world %2")
                                   .arg(QString::fromStdString(team->id()),
@@ -1424,8 +1430,47 @@ void Service::StoreWorldList(Result& result) {
     }
 }
 
+namespace {
+
+// Kaniel 2026-10-17: what a world's line needs that a world from before did not keep: when it was
+// made (the earliest time its files know, or its last played) and its host among the characters.
+// Whether anything was filled in.
+bool FillWorldLine(bbcoop::TeamWorldInfo& info, const QDir& world_dir) {
+    bool filled = false;
+    if (info.created_ms() == 0) {
+        qint64 earliest = info.played_ms();
+        const auto note = [&](const QDateTime& at) {
+            if (at.isValid()) {
+                const qint64 ms = at.toMSecsSinceEpoch();
+                earliest = earliest == 0 ? ms : std::min(earliest, ms);
+            }
+        };
+        note(QFileInfo{world_dir.path()}.birthTime());
+        for (const QString& sub : {QString{}, QStringLiteral("backups")}) {
+            const QDir in{world_dir.filePath(sub)};
+            for (const QFileInfo& file : in.entryInfoList(QDir::Files)) {
+                note(file.birthTime());
+                note(file.lastModified());
+            }
+        }
+        if (earliest != 0) {
+            info.set_created_ms(earliest);
+            filled = true;
+        }
+    }
+    if (!info.character().empty() &&
+        std::ranges::find(info.characters(), info.character()) == info.characters().end()) {
+        info.add_characters(info.character());
+        filled = true;
+    }
+    return filled;
+}
+
+} // namespace
+
 void Service::LoadWorldList(Result& result) {
     const QDir dir{folder};
+    int filled = 0;
     std::vector<bbcoop::TeamWorldInfo> list;
     std::set<std::string> ids;
     std::set<QString> listed;
@@ -1444,8 +1489,9 @@ void Service::LoadWorldList(Result& result) {
             if (kept.info().id().empty() || !ids.insert(kept.info().id()).second) {
                 continue;
             }
-            list.push_back(kept.info());
             const QString name = QString::fromStdString(kept.folder());
+            list.push_back(kept.info());
+            filled += FillWorldLine(list.back(), QDir{dir.filePath(name)}) ? 1 : 0;
             world_folders[kept.info().id()] = name;
             listed.insert(name);
         }
@@ -1511,6 +1557,7 @@ void Service::LoadWorldList(Result& result) {
         }
         ids.insert(info.id());
         world_folders[info.id()] = name;
+        FillWorldLine(info, world_dir);
         list.push_back(info);
         ++adopted;
         result.log.append(
@@ -1524,7 +1571,7 @@ void Service::LoadWorldList(Result& result) {
     result.log.append(QStringLiteral("world list: %1 worlds (%2 new on it)")
                           .arg(lobby.Worlds().size())
                           .arg(adopted));
-    if (adopted > 0 || had_teams) {
+    if (adopted > 0 || filled > 0 || had_teams) {
         StoreWorldList(result);
     }
     if (had_teams) {

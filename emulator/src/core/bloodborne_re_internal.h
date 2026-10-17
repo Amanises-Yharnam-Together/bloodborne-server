@@ -792,6 +792,8 @@ void TeamChoose(TeamGate::Choice choice);
 void TeamMenu(bool open, bool from_page);
 bool TeamMenuOpen();
 bool TeamMenuBackPressed();
+// The rig's team-worlds verb asked the team screen to open its world list (once).
+bool TeamWorldListAsked();
 bool TeamPlaying(bool* in_hunt);
 void TeamJoinHunt(const std::string& invite_team);
 // The rig's in-game team menu verbs (menu-invite, menu-kick, menu-join, menu-leave).

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The team lobby's rules (coop/team_lobby.h): teams, invites, Ready and Start,
 // and the server's worlds.
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -516,7 +517,10 @@ int TheLeaderForgetsAWorld() {
   CHECK(!t.Forget("b", world).notice.empty()); // the leader only
   CHECK(!t.Forget("a", "nope").notice.empty());
   CHECK(lobby.TeamOf("a")->world() == world);
-  const TeamLobby::Outcome forgot = t.Forget("a", world);
+  // Kaniel 2026-10-17: a player in no team picks (and forgets) for the team it
+  // makes, as a leader does; here it forgets the world a's team picked.
+  lobby.Arrive("c", "Lisa", false);
+  const TeamLobby::Outcome forgot = t.Forget("c", world);
   CHECK(forgot.changed && forgot.notice.empty());
   CHECK(forgot.forgotten == std::vector<std::string>{world});
   CHECK(lobby.Worlds().empty());
@@ -558,6 +562,102 @@ int TheServerKeepsItsLastWorlds() {
   return 0;
 }
 
+// Kaniel 2026-10-17 (the world list, as the game's Load Game): a world's line
+// says the characters that played in it (each member's at a Start, the host's
+// reports) and when it was made (the first time the server notes, or the
+// earliest known of a world from before).
+int AWorldsLineSaysWhoPlayedItAndWhenItWasMade() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  t.Start();
+  const std::string world = lobby.Worlds()[0].id();
+  const auto has = [&](const std::string &name) {
+    const auto &list = lobby.Worlds()[0].characters();
+    return std::find(list.begin(), list.end(), name) != list.end();
+  };
+  CHECK(has("char of slot 3") && has("char of slot 1"));
+  CHECK(lobby.Worlds()[0].characters_size() == 2);
+  // The character each game plays in it (its hello says it, as the title's
+  // Ready names none).
+  CHECK(lobby.Arrive("b", "Ada", true).worlds_changed);
+  CHECK(has("Ada") && lobby.Worlds()[0].characters_size() == 3);
+  CHECK(!lobby.Arrive("b", "Ada", true).worlds_changed);
+  bbcoop::TeamWorldInfo note;
+  note.set_id(world);
+  note.set_created_ms(500);
+  note.add_characters("Kaniel");
+  note.add_characters("char of slot 1"); // known already
+  CHECK(lobby.NoteWorld(note));
+  CHECK(lobby.Worlds()[0].created_ms() == 500);
+  CHECK(lobby.Worlds()[0].characters_size() == 4 && has("Kaniel"));
+  // Made once: a later note keeps the first time.
+  note.set_created_ms(900);
+  note.clear_characters();
+  CHECK(!lobby.NoteWorld(note));
+  CHECK(lobby.Worlds()[0].created_ms() == 500);
+  // The host's character is one of them too.
+  note.set_character("Lady Maria");
+  CHECK(lobby.NoteWorld(note) && has("Lady Maria"));
+  return 0;
+}
+
+// Every player sees which world another team plays now (greyed in its list);
+// its own team's world is not "another's".
+int AWorldPlayedNowSaysByWhichTeam() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  t.Start();
+  lobby.Arrive("c", "Lisa", false);
+  bbcoop::LobbyState c = lobby.StateFor("c");
+  CHECK(c.worlds_size() == 1 && c.worlds(0).played_by() == t.team);
+  CHECK(lobby.StateFor("a").worlds(0).played_by() == t.team);
+  // Never stored with the world.
+  CHECK(lobby.Worlds()[0].played_by().empty());
+  t.Stop();
+  CHECK(lobby.StateFor("c").worlds(0).played_by().empty());
+  return 0;
+}
+
+// Kaniel 2026-10-17: the world is picked before the team is made: a player in
+// no team picks one, and the team it makes takes it.
+int APickBeforeATeamGoesIntoTheTeam() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  t.Start();
+  t.Stop();
+  const std::string world = lobby.Worlds()[0].id();
+  lobby.Arrive("c", "Lisa", false);
+  bbcoop::TeamRequest pick = Request(Action::WORLD);
+  pick.set_world("nope");
+  CHECK(!lobby.Request("c", pick).notice.empty());
+  pick.set_world(world);
+  CHECK(lobby.Request("c", pick).changed);
+  CHECK(lobby.StateFor("c").world() == world);
+  CHECK(!lobby.StateFor("a").has_team() || lobby.StateFor("a").world().empty());
+  CHECK(lobby.Request("c", Request(Action::CREATE)).changed);
+  CHECK(lobby.TeamOf("c")->world() == world &&
+        lobby.TeamOf("c")->party() == "world:" + world);
+  // A new world picked ("") makes a team with none.
+  lobby.Request("c", Request(Action::LEAVE));
+  pick.set_world("");
+  lobby.Request("c", pick);
+  lobby.Request("c", Request(Action::CREATE));
+  CHECK(lobby.TeamOf("c")->world().empty());
+  // A forgotten world is no player's pick any more.
+  lobby.Request("c", Request(Action::LEAVE));
+  pick.set_world(world);
+  lobby.Request("c", pick);
+  lobby.Request("d", Request(Action::CREATE)); // not signed in: refused
+  lobby.Arrive("d", "Dee", false);
+  lobby.Request("d", Request(Action::CREATE));
+  bbcoop::TeamRequest forget = Request(Action::FORGET_WORLD);
+  forget.set_world(world);
+  t.Pick("a", "");
+  CHECK(lobby.Request("d", forget).changed);
+  CHECK(lobby.StateFor("c").world().empty());
+  return 0;
+}
+
 // A world's line says how far it is: its lamps lit (each lamp's active flag;
 // the flag after it, other map flags and other maps' are no lamps).
 int AWorldsLampsAreCounted() {
@@ -586,6 +686,9 @@ int main() {
   failed |= TheLeaderForgetsAWorld();
   failed |= TheServerKeepsItsLastWorlds();
   failed |= AWorldsLampsAreCounted();
+  failed |= AWorldsLineSaysWhoPlayedItAndWhenItWasMade();
+  failed |= AWorldPlayedNowSaysByWhichTeam();
+  failed |= APickBeforeATeamGoesIntoTheTeam();
   if (failed == 0) {
     std::cout << "team lobby: all checks passed\n";
   }

@@ -1727,6 +1727,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"team-ready", AutoplayTeamVerb},
     {"team-start", AutoplayTeamVerb},
     {"team-alone", AutoplayTeamVerb},
+    {"team-worlds", AutoplayTeamVerb},
     {"title-press", AutoplayTeamVerb},
     {"title-wait", AutoplayTeamVerb},
     {"title-shot", AutoplayTeamVerb},

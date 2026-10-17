@@ -133,6 +133,12 @@ std::vector<bbcoop::TeamRequest> TeamJoinHuntRequests(const bbcoop::LobbyState& 
 // lists it; a new one ("") for a new character (`fresh`: the game starts it at the beginning) or
 // a save that never played in a team.
 std::string DefaultTeamWorld(const bbcoop::LobbyState& lobby, std::string_view hint, bool fresh);
+// Kaniel 2026-10-17: the world is picked before the team is made. What the team screen asks first
+// (a WORLD request's world): DefaultTeamWorld for a player in no team (its next team takes it) or
+// a leader whose team does not play yet, when that is not the pick already; else nothing.
+std::optional<std::string> TeamScreenWorldPick(const bbcoop::LobbyState& lobby,
+                                               const std::string& me, std::string_view hint,
+                                               bool fresh);
 // What the screen calls a world.
 std::string TeamWorldName(const bbcoop::TeamWorldInfo& world);
 

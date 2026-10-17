@@ -1323,6 +1323,26 @@ SCENARIOS = {
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
+    # Kaniel 2026-10-17: the world list (as the game's Load Game). A team's first hunt makes a
+    # world; back at the title the host leaves that team (its guest still hunts in it, so its
+    # world cannot change), and in no team its screen starts on that world (the save's own,
+    # picked before a team) and its list shows it, greyed: the guest's team plays it now.
+    "team-worlds": {
+        "about": "the world list: a team's hunt makes a world, the host's next screen starts on it "
+                 "and lists it (headless: pictures of the list)",
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", "done"],
+                     ["team-leave", "team-worlds", "title-wait 3", "title-shot worlds-list",
+                      "team-alone", START, "done"]],
+            "guest": [["team-accept", "team-ready", START, "wait-session 2 300", "wait 10",
+                       "done"]],
+        },
+        "expect": {
+            "host": [r"Co-op team lobby: the team screen starts on world \w+"],
+        },
+        "timeout": 300,
+    },
     "team-screen": {
         "about": "the team screen after Continue (run drawn: pictures): a team of two forms, the "
                  "guest readies, the host begins",

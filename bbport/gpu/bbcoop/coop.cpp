@@ -316,30 +316,44 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
             out.state = LobbyStateOf(m->state());
             out.ready = m->ready();
         }
-        // Kaniel 2026-10-17: the server's worlds (any team's to pick).
-        lobby->world = -1;
-        for (const bbcoop::TeamWorldInfo& w : state->worlds()) {
-            if (lobby->world_count == BBCOOP_LOBBY_WORLDS) {
-                break;
-            }
-            if (w.id() == team.world()) {
-                lobby->world = lobby->world_count;
-            }
-            bbcoop_lobby_world& out = lobby->worlds[lobby->world_count++];
-            CopyName(out.id, sizeof(out.id), w.id());
-            CopyName(out.name, sizeof(out.name), Core::Bloodborne::TeamWorldName(w));
-            out.lamps = static_cast<int>(w.lamps());
-            if (w.played_ms() > 0) {
-                const std::time_t at = static_cast<std::time_t>(w.played_ms() / 1000);
-                std::tm local{};
-#ifdef _WIN32
-                localtime_s(&local, &at);
-#else
-                localtime_r(&at, &local);
-#endif
-                std::strftime(out.when, sizeof(out.when), "%d %b %H:%M", &local);
-            }
+    }
+    // Kaniel 2026-10-17: the server's worlds (any team's to pick, the leader's or, before a team, the
+    // player's own pick), as the game's Load Game lists its saves.
+    const std::string pick = state->has_team() ? state->team().world() : state->world();
+    const std::string own_team = state->has_team() ? state->team().id() : std::string{};
+    lobby->world = -1;
+    const auto local_time = [](int64_t ms, char* out, size_t size, const char* format) {
+        if (ms <= 0) {
+            return;
         }
+        const std::time_t at = static_cast<std::time_t>(ms / 1000);
+        std::tm local{};
+#ifdef _WIN32
+        localtime_s(&local, &at);
+#else
+        localtime_r(&at, &local);
+#endif
+        std::strftime(out, size, format, &local);
+    };
+    for (const bbcoop::TeamWorldInfo& w : state->worlds()) {
+        if (lobby->world_count == BBCOOP_LOBBY_WORLDS) {
+            break;
+        }
+        if (w.id() == pick) {
+            lobby->world = lobby->world_count;
+        }
+        bbcoop_lobby_world& out = lobby->worlds[lobby->world_count++];
+        CopyName(out.id, sizeof(out.id), w.id());
+        CopyName(out.name, sizeof(out.name), Core::Bloodborne::TeamWorldName(w));
+        out.lamps = static_cast<int>(w.lamps());
+        local_time(w.played_ms(), out.when, sizeof(out.when), "%d %b %H:%M");
+        local_time(w.created_ms(), out.created, sizeof(out.created), "%d %b %Y");
+        std::string hunters;
+        for (const std::string& name : w.characters()) {
+            hunters += (hunters.empty() ? "" : ", ") + name;
+        }
+        CopyName(out.characters, sizeof(out.characters), hunters);
+        out.busy = !w.played_by().empty() && w.played_by() != own_team;
     }
     for (const bbcoop::LobbyPlayer& player : state->players()) {
         const bool mine = state->has_team() && player.team() == state->team().id();
@@ -400,6 +414,10 @@ extern "C" int bbcoop_cutscene_skip(void) {
 
 extern "C" void bbcoop_team_menu(int open) {
     Core::Bloodborne::Coop::TeamMenu(open != 0, open == 1);
+}
+
+extern "C" int bbcoop_team_world_list_asked(void) {
+    return Core::Bloodborne::Coop::TeamWorldListAsked() ? 1 : 0;
 }
 
 extern "C" int bbcoop_team_menu_back(void) {
