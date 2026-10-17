@@ -279,6 +279,17 @@ def script():
         ("POST", "/chalice", svc("ChannelGetInfo", UserId=13, ChannelIdList=[{"ChannelId": 2}, 1, 99, 2])),
         ("POST", "/chalice", svc("ChannelGetDetailsInfo", UserId=13, ChannelIdList=[{"ChannelId": 1}, 42])),
         ("POST", "/chalice", svc("ChannelGetInfo", UserId=13)),
+        # A standard chalice's ritual: the server's own dungeon for it, then its details.
+        ("POST", "/chalice", svc("ChannelSearch", UserId=13, FixedOrGeneralList=[{"FixedOrGeneral": 2}],
+                                 FormDataVersion=0, GetCount=1, HolyGrailTypeId=0, RitualLevel=1,
+                                 Status=1, SubFeatureFlag=256)),
+        ("POST", "/chalice", svc("ChannelSearch", UserId=13, FixedOrGeneralList=[{"FixedOrGeneral": 2}],
+                                 GetCount=1, HolyGrailTypeId=3, RitualLevel=5)),
+        ("POST", "/chalice", svc("ChannelSearch", UserId=13, FixedOrGeneralList=[{"FixedOrGeneral": 2}],
+                                 GetCount=1, HolyGrailTypeId=1, RitualLevel=9)),
+        ("POST", "/chalice", svc("ChannelGetDetailsInfo", UserId=13,
+                                 ChannelIdList=[{"ChannelId": 2000000010}, 1, 2000000099])),
+        ("POST", "/chalice", svc("ChannelGetInfo", UserId=13, ChannelIdList=[2000000053, 2])),
         ("POST", "/login", svc("Login", PlatformAccountId="alice")),
         ("GET", "/status", None),
     ]

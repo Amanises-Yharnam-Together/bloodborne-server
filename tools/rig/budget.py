@@ -34,6 +34,7 @@ SUITE_BOOT_S = 150
 # chapter. Most are older versions of a suite chapter (named after the arrow).
 LONG = {
     "soak": "a long session by design",
+    "chalice-team": "two rituals and two dungeon loads, measured 313 s",
     "guest-drops": "a 70 s wait for the drops (Kaniel's playtest 2026-10-16)",
     "boss-guest-runs": "50 s and 90 s waits by the boss (Kaniel's playtest 2026-10-16)",
     "cutscene-skip": "two stages (two boots), the opening cutscene played in between",

@@ -63,6 +63,30 @@ GLYPH_ALPHABET = "23456789abcdefghijkmnpqrstuvwxyz"
 
 SHOW_OWN_CHOICES = ("deaths", "ghosts", "lanterns")
 
+# Standard chalice dungeons. A standard (not root) chalice's ritual asks for the one dungeon the
+# server keeps for that chalice: ChannelSearch with FixedOrGeneral 2 and GetCount 1, then its
+# details by ChannelId. Without one the game says "Failed to contribute ritual materials" and
+# returns to the title. The server makes them itself, so they need no store. A dungeon is the
+# 124-byte record the game reads as FormData (base64): 1D, depth*10 + area (0 Pthumeru,
+# 1 Hintertomb, 2 Loran, 3 Isz), rites, layout; u32 seed; u32 0; the first 4 bytes again; the
+# chalice's goods id (u32 big-endian); 9 slots of 8 bytes, FF but for each's last byte (its
+# layer's code, FF for none); 32 bytes of 0. Keyed by RitualLevel * 10 + HolyGrailTypeId:
+# (rites, goods id, slot codes), as the game's own records of these chalices have them.
+STANDARD_DUNGEONS = {
+    10: (0, 6109, (0xFF, 0x23, 0x32)),
+    20: (0, 6209, (0xFF, 0x24, 0x32, 0x3C)),
+    21: (0, 6219, (0xFF, 0x23, 0x33, 0x3C, 0x0A)),
+    30: (0, 6309, (0xFF, 0x24, 0x32, 0x3D)),
+    31: (0, 6319, (0xFF, 0x25, 0x33, 0x3C, 0x0A)),
+    40: (10, 6409, (0xFF, 0x24, 0x32, 0x3D, 0x0E)),
+    42: (0, 6429, (0xFF, 0x23, 0x34, 0x3C)),
+    50: (0, 6509, (0xFF, 0x24, 0x32, 0x3D, 0x0E)),
+    52: (0, 6529, (0xFF, 0x26, 0x34, 0x3C)),
+    53: (0, 6539, (0x4F, 0x27, 0x35, 0x43, 0x0F)),
+}
+# Their ChannelIds: this base plus the key, far above any stored dungeon's.
+STANDARD_CHANNEL_BASE = 2000000000
+
 
 # --------------------------------------------------------------------------
 # Small helpers
@@ -588,6 +612,47 @@ class Store:
         return [found[i] for i in ids if i in found], [i for i in ids if i not in found]
 
 
+def standard_dungeon(key):
+    """The record of the standard chalice dungeon `key` (RitualLevel * 10 + HolyGrailTypeId)."""
+    if key not in STANDARD_DUNGEONS:
+        return None
+    rites, goods, codes = STANDARD_DUNGEONS[key]
+    head = bytes([0x1D, key, rites, 0])
+    slots = b"".join(bytes([0xFF] * 7 + [code]) for code in codes + (0xFF,) * (9 - len(codes)))
+    form = head + bytes(8) + head + goods.to_bytes(4, "big") + slots + bytes(32)  # seed 0
+    glyph = "chs" + GLYPH_ALPHABET[key // 32] + GLYPH_ALPHABET[key % 32]
+    stamp = "2015-03-24T00:00:00"
+    return {"ChannelId": STANDARD_CHANNEL_BASE + key, "ShareLevel": 2, "Status": 1,
+            "TurnoutLevel": 0, "FormDataVersion": 0,
+            "FormData": base64.b64encode(form).decode(), "DiscernmentWord": glyph,
+            "RitualLevel": key // 10, "HolyGrailTypeId": key % 10, "FixedOrGeneral": 2,
+            "SubFeatureFlag": 256, "CreateUserId": 0, "CreateCharaId": 0, "CreateDate": stamp,
+            "LastPlayDate": stamp, "WishMaterialList": [], "UnlockFlagList": []}
+
+
+def standard_search(req):
+    """The standard chalice dungeon a ritual's ChannelSearch asks for, or None."""
+    if id_list(req.get("FixedOrGeneralList"), "FixedOrGeneral") != [2]:
+        return None
+    level, area = req.get("RitualLevel"), req.get("HolyGrailTypeId")
+    if type(level) is not int or type(area) is not int or not 0 <= area <= 9:
+        return None
+    return standard_dungeon(level * 10 + area)
+
+
+def standard_details(req, payload, list_key):
+    """Adds the standard dungeons among a request's ChannelIds to an answer's list."""
+    ids = _ids(req, "ChannelIdList", "ChannelId")
+    found = [standard_dungeon(i - STANDARD_CHANNEL_BASE) for i in ids]
+    found = [d for d in found if d]
+    if not found:
+        return
+    taken = {d["ChannelId"] for d in found}
+    payload[list_key] = [d for d in payload.get(list_key, []) if d.get("ChannelId") not in taken] + found
+    payload["LostChannelIdList"] = [e for e in payload.get("LostChannelIdList", [])
+                                    if e.get("ChannelId") not in taken]
+
+
 # --------------------------------------------------------------------------
 # Service handlers backed by the store. Each returns the response fields to
 # add next to ResKind/MessageId. Names match the game's api_<Name> entries.
@@ -835,6 +900,8 @@ class Handler(BaseHTTPRequestHandler):
             # UserId so they are stable across restarts and never collide between users.
             count = max(1, min(as_int(request.get("CharaIdNum"), 1), 16))
             payload["PublishCharacterIdList"] = [{"PublishCharaId": uid * 16 + i + 1} for i in range(count)]
+        elif name == "ChannelSearch" and standard_search(request):
+            payload["ChannelList"] = [standard_search(request)]
         elif store and name in STORE_HANDLERS:
             try:
                 payload.update(STORE_HANDLERS[name](store, request, uid, chara))
@@ -853,6 +920,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.log_message("NOTE: unmapped service %s at %s -- answered generically", response_id, path)
         else:
             self.log_message("POST %s with no MessageId; answering ResKind 0", path)
+
+        if name == "ChannelGetDetailsInfo":
+            standard_details(request, payload, "ChannelList")
+        elif name == "ChannelGetInfo":
+            standard_details(request, payload, "ChannelInfoList")
 
         if os.environ.get("BB_TRACE_BODIES"):
             self.log_message("TRACE %s req=%s resp=%s", path, json.dumps(request)[:600], json.dumps(payload)[:300])
