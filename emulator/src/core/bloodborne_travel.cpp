@@ -1406,8 +1406,10 @@ void TickPlayersOnThisMap() {
     TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
     PlayGuestAsHost(in_session);
     TickGuestLampTrip();
+    // SHADPS4_BLOODBORNE_ESD_LOG=1: every member's talk answers, not only a guest's.
+    static const bool esd_log_all = std::getenv("SHADPS4_BLOODBORNE_ESD_LOG") != nullptr;
     LogEsdAnswers(in_session && party_controller &&
-                  party_controller->SearchEffectId() == SmallResonantBellEffect);
+                  (esd_log_all || party_controller->SearchEffectId() == SmallResonantBellEffect));
     RestoreSearchAfterTrip(in_session);
     const u32 map = PlayingMap();
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);

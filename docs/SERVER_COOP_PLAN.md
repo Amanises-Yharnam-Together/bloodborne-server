@@ -74,6 +74,17 @@ only (bbport is the target; every player and the server run one build).
   that chalice's dungeon (ChannelSearch FixedOrGeneral 2, then ChannelGetDetailsInfo); the
   server makes it (backend `StandardDungeon`), and two members who both conduct it meet in the
   one dungeon (rig `chalice-team`).
+  Second step: joining without a ritual. A dungeon's FormData is the 140-byte record the game
+  uploads (format 5; layout in the backend's `StandardDungeon`), and a join through the altar's
+  Chalice Dungeon Search builds the dungeon from it alone, free. That search
+  (ChannelSearch FixedOrGeneral 0 and 2, GetCount 100) lists the dungeons in use on the server:
+  the standard ones a ritual asked for and every uploaded one; chalice dungeons are kept in
+  memory when the server has no store. A guest's warp from the altar is the Dream's event
+  12107100, which ended for a client: the co-op event files let it run, in the guest's own game
+  (`party_boss_events.py`). Rig `chalice-join` (the host's ritual, the guest joins from the
+  search) and `chalice-join-host` (the other way round): they meet in the dungeon. Open: the
+  altar's talk shows no menu unless the player holds a chalice (any); the list is the server's,
+  not yet the team's.
 - **Server down:** team play needs the server; solo play with the personal world needs nothing, so
   nothing extra is built for it.
 - **Port only:** the new design is built for the port; shadPS4 keeps the old path until it is dropped.

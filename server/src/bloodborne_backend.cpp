@@ -823,6 +823,28 @@ public:
         return list;
     }
 
+    // Every dungeon uploaded, newest first (of that depth and area when given).
+    std::vector<Json> AllDungeons(const Json& level, const Json& area) {
+        QStringList where{QStringLiteral("1")};
+        QVariantList params;
+        const std::pair<const Json*, const char*> filters[] = {{&level, "ritual_level"},
+                                                               {&area, "holy_grail_type_id"}};
+        for (const auto& [value, column] : filters) {
+            if (!value->IsNull()) {
+                where.append(QString::fromLatin1(column) + QStringLiteral(" = ?"));
+                params.append(BindInt(AsInt(*value)));
+            }
+        }
+        std::vector<Json> list;
+        for (const Row& row : Query(QStringLiteral("SELECT * FROM chalice_dungeons WHERE %1 "
+                                                   "ORDER BY channel_id DESC")
+                                        .arg(where.join(QStringLiteral(" AND "))),
+                                    params)) {
+            list.push_back(DungeonRecord(row));
+        }
+        return list;
+    }
+
     std::optional<Json> WordSearch(const Json& word) {
         if (!Truthy(word)) {
             return std::nullopt;
@@ -1034,12 +1056,14 @@ Json IdObjects(const std::vector<qint64>& ids, const QString& key) {
 // Standard chalice dungeons. A standard (not root) chalice's ritual asks for the one dungeon the
 // server keeps for that chalice: ChannelSearch with FixedOrGeneral 2 and GetCount 1, then its
 // details by ChannelId. Without one the game says "Failed to contribute ritual materials" and
-// returns to the title. The server makes them itself, so they need no store. A dungeon is the
-// 124-byte record the game reads as FormData (base64): 1D, depth*10 + area (0 Pthumeru,
-// 1 Hintertomb, 2 Loran, 3 Isz), rites, layout; u32 seed; u32 0; the first 4 bytes again; the
-// chalice's goods id (u32 big-endian); 9 slots of 8 bytes, FF but for each's last byte (its
-// layer's code, FF for none); 32 bytes of 0. Keyed by RitualLevel * 10 + HolyGrailTypeId, as
-// the game's own records of these chalices have them.
+// returns to the title. The server makes them itself. FormData is the dungeon as the game uploads
+// one (ChannelUpload after a root chalice's ritual, format 5, little endian): u32 5, u32 140;
+// layout, rites, depth*10 + area (0 Pthumeru, 1 Hintertomb, 2 Loran, 3 Isz), 0x1D; u32 the
+// chalice's goods id; 9 layers of {u32 id, s32 code} (ids 9900000 + key*1000 + 30, 35, 50, 60,
+// 11; -1 for none); the conductor's name, 16 bytes ASCII, and 32 bytes UTF-16; zeros to 140. A
+// ritual builds its dungeon from the player's own chalice; a join through Chalice Dungeon Search
+// builds it from FormData alone. Keyed by RitualLevel * 10 + HolyGrailTypeId: (rites, goods id,
+// layer codes, 0xFF for none), as the game's own records of these chalices have them.
 struct StandardChalice {
     int key;
     quint8 rites;
@@ -1065,6 +1089,15 @@ const std::vector<StandardChalice>& StandardChalices() {
 
 // Their ChannelIds: this base plus the key, far above any stored dungeon's.
 constexpr qint64 StandardChannelBase = 2'000'000'000;
+// A layer's id is 9900000 + key * 1000 + its own offset.
+constexpr int StandardLayerIds[] = {30, 35, 50, 60, 11};
+constexpr char StandardConductor[] = "Hunter";
+
+void AppendLe32(QByteArray& out, quint32 value) {
+    for (int shift = 0; shift < 32; shift += 8) {
+        out.append(char((value >> shift) & 0xFF));
+    }
+}
 
 std::optional<Json> StandardDungeon(qint64 key) {
     const auto& chalices = StandardChalices();
@@ -1073,19 +1106,29 @@ std::optional<Json> StandardDungeon(qint64 key) {
     if (it == chalices.end()) {
         return std::nullopt;
     }
-    QByteArray header;
-    header.append(char(0x1D)).append(char(it->key)).append(char(it->rites)).append('\0');
-    QByteArray form = header;
-    form.append(8, '\0'); // seed 0, then 0
-    form.append(header);
-    for (int shift = 24; shift >= 0; shift -= 8) {
-        form.append(char((it->goods >> shift) & 0xFF));
-    }
+    QByteArray form;
+    AppendLe32(form, 5);
+    AppendLe32(form, 140);
+    form.append('\0').append(char(it->rites)).append(char(it->key)).append(char(0x1D));
+    AppendLe32(form, it->goods);
     for (size_t slot = 0; slot < 9; ++slot) {
-        form.append(7, char(0xFF));
-        form.append(char(slot < it->codes.size() ? it->codes[slot] : 0xFF));
+        if (slot < it->codes.size()) {
+            const quint8 code = it->codes[slot];
+            AppendLe32(form, quint32(9'900'000 + key * 1000 + StandardLayerIds[slot]));
+            AppendLe32(form, code == 0xFF ? 0xFFFFFFFFu : code);
+        } else {
+            AppendLe32(form, 0xFFFFFFFFu);
+            AppendLe32(form, 0xFFFFFFFFu);
+        }
     }
-    form.append(32, '\0');
+    const QByteArray conductor(StandardConductor);
+    form.append(conductor.leftJustified(16, '\0'));
+    QByteArray wide;
+    for (const char c : conductor) {
+        wide.append(c).append('\0');
+    }
+    form.append(wide.leftJustified(32, '\0'));
+    form = form.leftJustified(140, '\0');
     const QString glyph = QStringLiteral("chs") + QChar::fromLatin1(GlyphAlphabet[key / 32]) +
                           QChar::fromLatin1(GlyphAlphabet[key % 32]);
     const QString stamp = QStringLiteral("2015-03-24T00:00:00");
@@ -1123,6 +1166,13 @@ std::optional<Json> StandardSearch(const Json& req) {
         return std::nullopt;
     }
     return StandardDungeon(level.IntValue() * 10 + area.IntValue());
+}
+
+// Chalice Dungeon Search (FixedOrGeneral 0 among those asked): what dungeons are in use.
+bool IsDungeonSearch(const Json& req) {
+    const auto kinds =
+        IdList(req.Get(QStringLiteral("FixedOrGeneralList")), QStringLiteral("FixedOrGeneral"));
+    return std::find(kinds.begin(), kinds.end(), 0) != kinds.end();
 }
 
 // Adds the standard dungeons among a request's ChannelIds to an answer's list.
@@ -1380,6 +1430,19 @@ bool BloodborneBackend::Open(const BackendOptions& options, QString* error) {
         }
         m_store = std::move(store);
     }
+    m_memoryStore.reset();
+    m_chaliceStore = m_store.get();
+    if (!m_store) {
+        // Chalice dungeons only, so teammates can join each other's without a store.
+        m_memoryStore = std::make_unique<ContentStore>(QSet<QString>(), 0, 0, 0);
+        QString storeError;
+        if (!m_memoryStore->Open(QStringLiteral(":memory:"), &storeError)) {
+            *error = QStringLiteral("cannot open the chalice store in memory: %1").arg(storeError);
+            return false;
+        }
+        m_chaliceStore = m_memoryStore.get();
+    }
+    m_standardUsed.clear();
     return true;
 }
 
@@ -1474,11 +1537,47 @@ Json BloodborneBackend::Service(const QString& path, const Json& request) {
     } else if (const auto standard = name == QStringLiteral("ChannelSearch")
                                          ? StandardSearch(request)
                                          : std::nullopt) {
+        const qint64 key =
+            standard->Get(QStringLiteral("ChannelId")).IntValue() - StandardChannelBase;
+        m_standardUsed.erase(std::remove(m_standardUsed.begin(), m_standardUsed.end(), key),
+                             m_standardUsed.end());
+        m_standardUsed.push_back(key);
         payload.Set(QStringLiteral("ChannelList"), Json::Array({*standard}));
-    } else if (m_store && handlers.count(name)) {
+    } else if (name == QStringLiteral("ChannelSearch") && IsDungeonSearch(request)) {
+        // The dungeons in use on this server, newest first: the standard ones a ritual asked for
+        // and every one uploaded (shared or not: a team's dungeons are for the team), of the
+        // depth and area asked for when given. A teammate joins one there, free.
+        const Json level = request.Get(QStringLiteral("RitualLevel"));
+        const Json area = request.Get(QStringLiteral("HolyGrailTypeId"));
+        std::vector<Json> found;
+        for (auto it = m_standardUsed.rbegin(); it != m_standardUsed.rend(); ++it) {
+            if ((level.IsNull() || *it / 10 == AsInt(level)) &&
+                (area.IsNull() || *it % 10 == AsInt(area))) {
+                found.push_back(*StandardDungeon(*it));
+            }
+        }
+        try {
+            for (Json& dungeon : m_chaliceStore->AllDungeons(level, area)) {
+                found.push_back(std::move(dungeon));
+            }
+        } catch (const PythonError& e) {
+            qWarning().noquote() << "backend: ERROR in" << name << ":" << e.what();
+        }
+        qint64 limit = AsInt(request.Get(QStringLiteral("GetCount")), 100);
+        if (!limit) {
+            limit = 100;
+        }
+        Json list = Json::Array();
+        for (size_t i = 0; i < found.size() && qint64(i) < limit; ++i) {
+            list.Append(found[i]);
+        }
+        payload.Set(QStringLiteral("ChannelList"), list);
+    } else if ((m_store || name.startsWith(QStringLiteral("Channel"))) && handlers.count(name)) {
+        // Chalice dungeons are kept even without a store (in memory then): teammates join them.
+        const bool chalice = name.startsWith(QStringLiteral("Channel"));
         Json fields = Json::Object();
         try {
-            Context context{*m_store, request, uid, chara};
+            Context context{chalice ? *m_chaliceStore : *m_store, request, uid, chara};
             handlers.at(name)(context, fields);
             Merge(payload, fields);
         } catch (const PythonError& e) {
