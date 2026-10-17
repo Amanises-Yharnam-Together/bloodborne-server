@@ -111,6 +111,30 @@ int main() {
     assert(!BbSettings::FrameRateLocked(nullptr));
     std::puts("PASS: FPS limit and DLSS model settings");
 
+    // Kaniel 2026-10-17: the teammate compass, on at the top by default; the Insert menu turns it
+    // off or moves it (bottom, around the middle), kept in bbport.ini.
+    {
+        const BbSettings::Values fresh;
+        assert(fresh.compass && fresh.compass_position == BbSettings::CompassTop);
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+        const int file = mkstemp(path);
+        const char text[] = "compass=0\ncompass_position=reticle\n";
+        assert(write(file, text, sizeof(text) - 1) == ssize_t(sizeof(text) - 1));
+        close(file);
+        setenv("BB_CONFIG", path, 1);
+        BbSettings::Load();
+        assert(!s.compass && s.compass_position == BbSettings::CompassReticle);
+        s.compass = true;
+        s.compass_position = BbSettings::CompassBottom;
+        BbSettings::Save();
+        const std::string saved_compass = Read(path);
+        assert(saved_compass.find("compass=1\n") != std::string::npos);
+        assert(saved_compass.find("compass_position=bottom\n") != std::string::npos);
+        unlink(path);
+    }
+    std::puts("PASS: compass settings");
+
     // Kaniel 2026-10-10: window mode (windowed, borderless, exclusive) and HDR output in the game's
     // menus. The launcher's BB_FULLSCREEN counts until the file has a window mode.
     char fourth[512];

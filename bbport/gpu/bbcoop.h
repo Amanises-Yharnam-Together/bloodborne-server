@@ -61,6 +61,25 @@ typedef struct bbcoop_panel {
 /* Fills `panel`; 0 when there is nothing to draw (party death off, no party session, nobody else
  * on the vitals board and this player not down). */
 int bbcoop_party_panel(bbcoop_panel *panel);
+/* Kaniel 2026-10-17: the teammate compass. The party members on this player's map as the camera
+ * sees them: bearing in radians (0 ahead, positive to the right), distance in metres, `x` the
+ * place on the strip (-1 its left end, 1 its right end; `pinned`: past the strip's span, at its
+ * end) and `member` the index into the party panel's members (its colour). 0 when there is
+ * nothing to draw: no party session, nobody here, the camera not found, the game's HUD not up (a
+ * load, a cutscene). */
+enum { BBCOOP_COMPASS_MARKERS = 4 };
+typedef struct bbcoop_compass_marker {
+    char name[20]; /* the panel's name, "" when unknown */
+    int member;
+    float bearing, distance, x;
+    int pinned;
+} bbcoop_compass_marker;
+typedef struct bbcoop_compass {
+    float heading; /* the camera's, for the strip's ticks */
+    int count;
+    bbcoop_compass_marker markers[BBCOOP_COMPASS_MARKERS];
+} bbcoop_compass;
+int bbcoop_compass_view(bbcoop_compass *compass);
 /* A revive's progress, 0 to 1: the share of the damage it needs that has landed (`landed`
  * and `needed` from the panel). */
 float bbcoop_revive_share(uint32_t landed, uint32_t needed);

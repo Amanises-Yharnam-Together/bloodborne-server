@@ -20,6 +20,7 @@
 #include "common/logging/log.h"
 #include "common/memory_patcher.h"
 #include "common/singleton.h"
+#include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
@@ -187,6 +188,26 @@ extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
     panel->native_list = Core::Bloodborne::NativePartyListShown() ? 1 : 0;
     panel->native_prompt = Core::Bloodborne::NativePartyPromptShown() ? 1 : 0;
     return 1;
+}
+
+extern "C" int bbcoop_compass_view(bbcoop_compass* compass) {
+    *compass = {};
+    Core::Bloodborne::CompassView view;
+    if (!Core::Bloodborne::ReadCompass(view)) {
+        return 0;
+    }
+    compass->heading = view.heading;
+    for (size_t i = 0; i < view.markers.size() && i < BBCOOP_COMPASS_MARKERS; ++i) {
+        const auto& marker = view.markers[i];
+        auto& out = compass->markers[compass->count++];
+        std::snprintf(out.name, sizeof(out.name), "%s", view.names[i].c_str());
+        out.member = marker.member;
+        out.bearing = marker.bearing;
+        out.distance = marker.distance;
+        out.x = marker.place.x;
+        out.pinned = marker.place.pinned ? 1 : 0;
+    }
+    return compass->count > 0 ? 1 : 0;
 }
 
 extern "C" float bbcoop_revive_share(uint32_t landed, uint32_t needed) {

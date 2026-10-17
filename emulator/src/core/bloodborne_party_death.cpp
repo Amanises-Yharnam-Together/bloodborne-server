@@ -4,6 +4,7 @@
 // Party death: going down, revives, the bloodstain, the party panel. Split from bloodborne_re.cpp;
 // the shared declarations are in bloodborne_re_internal.h.
 
+#include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_portrait.h"
@@ -1370,6 +1371,25 @@ void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
     panel.landed = run.downed.DamageLanded();
     panel.needed = run.downed.DamageNeeded();
     panel.give_up = vital == Vital::Down ? run.give_up.Progress(tick.now) : 0.0f;
+    // Kaniel 2026-10-17, the compass: the members here where their characters stand now (the
+    // board's positions are a moment old), from this player's spot and the camera's heading.
+    if (tick.in_session && at) {
+        std::vector<std::optional<LampPosition>> members, characters;
+        for (const PanelMember& member : panel.members) {
+            members.push_back(member.at);
+        }
+        for (const OtherPlayer& other : OtherPlayers()) {
+            characters.push_back(other.at);
+        }
+        const auto live = LivePositions(members, characters, PresenceMetres);
+        for (size_t i = 0; i < panel.members.size(); ++i) {
+            if (live[i]) {
+                panel.members[i].at = live[i];
+            }
+        }
+        panel.me = at;
+        panel.camera_heading = CameraHeadingNow();
+    }
     SetPartyPanel(std::move(panel));
 }
 
@@ -1554,6 +1574,8 @@ void PS4_SYSV_ABI CountHudMade(u64, const GuestRegisterSnapshot*) {
     hud_generation.fetch_add(1, std::memory_order_relaxed);
 }
 std::atomic<s64> native_list_shown_ms{-1'000'000};
+// The game's HUD ticked its tags (UpdatePartyList): it is up (not in a load or a cutscene).
+std::atomic<s64> game_hud_ticked_ms{-1'000'000};
 
 void PutUtf16(std::array<char16_t, 64>& out, const std::string& text) {
     const size_t length = std::min<size_t>(text.size(), out.size() - 1);
@@ -1730,6 +1752,7 @@ void PS4_SYSV_ABI UpdatePartyList(u64, const GuestRegisterSnapshot* registers) {
     if (hud < 0x10000) {
         return;
     }
+    game_hud_ticked_ms.store(SteadyMilliseconds(), std::memory_order_relaxed);
     const u64 generation = hud_generation.load(std::memory_order_relaxed);
     if (PartyListOutdated(hud, generation, native_list.hud, native_list.generation)) {
         native_list = NativePartyList{.hud = hud, .generation = generation};
@@ -1926,12 +1949,52 @@ bool NativePartyListShown() {
 #endif
 }
 
+bool GameHudUp() {
+#ifdef BLOODBORNE_PARTY_HUD
+    return SteadyMilliseconds() - game_hud_ticked_ms.load(std::memory_order_relaxed) < 500;
+#else
+    return true;
+#endif
+}
+
 bool NativePartyPromptShown() {
 #ifdef BLOODBORNE_PARTY_HUD
     return SteadyMilliseconds() - native_prompt_shown_ms.load(std::memory_order_relaxed) < 500;
 #else
     return false;
 #endif
+}
+
+bool ReadCompass(CompassView& view) {
+    view = {};
+    PartyPanel panel;
+    ReadPartyPanel(panel);
+    if (!panel.me) {
+        view.why = "no party session here";
+        return false;
+    }
+    if (!panel.camera_heading) {
+        view.why = "the camera is not found";
+        return false;
+    }
+    if (!GameHudUp()) {
+        view.why = "the game's HUD is not up";
+        return false;
+    }
+    std::vector<std::optional<LampPosition>> members;
+    for (const PanelMember& member : panel.members) {
+        members.push_back(member.at);
+    }
+    view.heading = *panel.camera_heading;
+    view.markers = CompassMarkers(members, *panel.me, view.heading);
+    for (const CompassMarker& marker : view.markers) {
+        const PanelMember& member = panel.members[marker.member];
+        view.names.push_back(member.shown.empty() ? member.name : member.shown);
+    }
+    if (view.markers.empty()) {
+        view.why = "nobody else on this map";
+    }
+    return !view.markers.empty();
 }
 
 bool ReadPartyPanel(PartyPanel& panel) {

@@ -1131,6 +1131,22 @@ void DisplayTab() {
     Toggle("fps", T("FPS counter", "Счётчик FPS"), s.show_fps,
            T("Frames per second and frame time in the top right corner.",
              "Кадры в секунду и время кадра в правом верхнем углу."));
+    // Kaniel 2026-10-17: the teammate compass.
+    Toggle("compass", T("Teammate compass", "Компас союзников"), s.compass,
+           T("A strip turned with the camera shows where each hunter of your party on this map is "
+             "and how far, with their initial. One behind you sits at its end with an arrow.",
+             "Полоса, повёрнутая вместе с камерой, показывает, где каждый охотник вашей группы на "
+             "этой карте и как далеко, с его инициалом. Тот, кто позади, стоит на её краю со стрелкой."));
+    const char* compass_places[] = {T("Top", "Сверху"), T("Bottom", "Снизу"),
+                                    T("Around the middle", "Вокруг центра")};
+    Choice("compass_position", T("Compass position", "Положение компаса"),
+           std::clamp(s.compass_position.load(), 0, BbSettings::CompassPositionCount - 1),
+           BbSettings::CompassPositionCount, [&](int i) { return compass_places[i]; }, [](int) { return true; },
+           T("Top or bottom of the screen: a strip. Around the middle: the markers on a ring round "
+             "the centre of the screen, ahead at the top.",
+             "Сверху или снизу экрана: полоса. Вокруг центра: метки на кольце вокруг середины "
+             "экрана, впереди сверху."),
+           s.compass, [&](int i) { Store(s.compass_position, i, true); });
     Choice("fps_limit", T("FPS limit", "Лимит FPS"), BbSettings::FpsLimitIndex(s.fps_limit),
            BbSettings::FpsLimitCount,
            [&](int i) {
@@ -3401,6 +3417,151 @@ void Draw() {
 
 } // namespace Party
 
+/// Kaniel 2026-10-17: the teammate compass. A thin strip turned with the camera (ticks every 15
+/// degrees of the world, a notch for straight ahead) with each party member on this map as a
+/// marker in its colour, its initial and its distance under it; one behind sits at the strip's end
+/// with an arrow. In the ring position the markers go round the middle of the screen instead, at
+/// their bearing (ahead is up).
+namespace Compass {
+
+bbcoop_compass view{}; // present thread: as Visible() read it last
+bool shown = false;
+BbPartyLayout::Rect game{};
+
+bool Read() {
+    shown = BbSettings::Get().compass && bbcoop_compass_view(&view) != 0;
+    return shown;
+}
+
+/// The members' colours, by their place on the party panel: muted as the game's HUD (old gold,
+/// blood, pale steel, moss).
+ImU32 MemberColor(int member, float alpha) {
+    static constexpr float colors[][3] = {
+        {0.84f, 0.68f, 0.38f}, {0.74f, 0.22f, 0.18f}, {0.56f, 0.66f, 0.78f}, {0.58f, 0.68f, 0.46f}};
+    const float* c = colors[((member % 4) + 4) % 4];
+    return Party::Rgba(c[0], c[1], c[2], alpha);
+}
+
+/// The first letter of a name (UTF-8: a whole character), "?" for none.
+std::string Initial(const char* name) {
+    if (name == nullptr || name[0] == '\0') {
+        return "?";
+    }
+    if (name[0] >= 'a' && name[0] <= 'z') {
+        return std::string(1, char(name[0] - 'a' + 'A')); // a Latin one in capitals
+    }
+    size_t length = 1;
+    const auto lead = static_cast<unsigned char>(name[0]);
+    if (lead >= 0xF0) {
+        length = 4;
+    } else if (lead >= 0xE0) {
+        length = 3;
+    } else if (lead >= 0xC0) {
+        length = 2;
+    }
+    size_t end = 0;
+    while (end < length && name[end] != '\0') {
+        ++end;
+    }
+    return std::string(name, end);
+}
+
+/// A member's marker centred on `at`: a dark disc ringed in its colour with its initial, its
+/// distance under it; `arrow` -1 or 1 puts a chevron on that side (a member past the strip's end).
+void Marker(ImDrawList* draw, ImVec2 at, const bbcoop_compass_marker& marker, int arrow) {
+    using Ui::S;
+    const float r = S(13.0f);
+    const ImU32 color = MemberColor(marker.member, 1.0f);
+    draw->AddCircleFilled(ImVec2(at.x + S(1.0f), at.y + S(1.5f)), r + S(1.5f), Party::Rgba(0, 0, 0, 0.55f), 32);
+    draw->AddCircleFilled(at, r, Party::Rgba(0.06f, 0.05f, 0.05f, 0.88f), 32);
+    draw->AddCircle(at, r, color, 32, S(2.0f));
+    const std::string initial = Initial(marker.name);
+    const float size = S(17.0f);
+    const ImVec2 extent = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, initial.c_str());
+    Party::Text(draw, serif_font, size, ImVec2(at.x, at.y - extent.y * 0.5f), Party::Bone(1.0f),
+                initial.c_str(), 0.5f);
+    if (arrow != 0) {
+        const float x = at.x + arrow * (r + S(5.0f)), h = S(6.0f);
+        draw->AddTriangleFilled(ImVec2(x, at.y - h), ImVec2(x + arrow * h, at.y), ImVec2(x, at.y + h), color);
+    }
+    char distance[24];
+    std::snprintf(distance, sizeof(distance), marker.distance < 10.0f ? "%.1f m" : "%.0f m",
+                  marker.distance);
+    Party::Text(draw, sans_font, S(13.0f), ImVec2(at.x, at.y + r + S(3.0f)), Ui::Plain(0.95f), distance, 0.5f);
+}
+
+void Strip(ImDrawList* draw, float y) {
+    using Ui::S;
+    constexpr float Pi = 3.14159265f;
+    const float mid = game.x + game.w * 0.5f, half = S(280.0f);
+    // The shade behind it, fading out to both ends; no frame.
+    const ImU32 shade = Party::Rgba(0.02f, 0.02f, 0.02f, 0.50f), clear = Party::Rgba(0, 0, 0, 0);
+    draw->AddRectFilledMultiColor(ImVec2(mid - half, y - S(10.0f)), ImVec2(mid, y + S(10.0f)), clear, shade,
+                                  shade, clear);
+    draw->AddRectFilledMultiColor(ImVec2(mid, y - S(10.0f)), ImVec2(mid + half, y + S(10.0f)), shade, clear,
+                                  clear, shade);
+    // The line, fading out to both ends, as the game's dialog borders.
+    const int pieces = 24;
+    for (int i = 0; i < pieces; ++i) {
+        const float t0 = float(i) / pieces, t1 = float(i + 1) / pieces;
+        const float a = 0.8f * std::sin(Pi * (t0 + t1) * 0.5f);
+        draw->AddLine(ImVec2(mid - half + 2 * half * t0, y), ImVec2(mid - half + 2 * half * t1, y), Ui::Gold(a),
+                      S(1.0f));
+    }
+    // Ticks at every 15 degrees of the world's headings, turning with the camera; every 45 longer.
+    const float step = Pi / 12.0f;
+    for (int k = -24; k <= 24; ++k) {
+        const float world = std::round(view.heading / step) * step + k * step;
+        float bearing = std::remainder(world - view.heading, 2 * Pi);
+        if (std::abs(bearing) > Pi / 2) {
+            continue;
+        }
+        const float x = mid + half * bearing / (Pi / 2);
+        const bool major = std::lround(world / step) % 3 == 0;
+        const float a = 0.75f * std::cos(bearing);
+        const float h = major ? S(6.0f) : S(3.5f);
+        draw->AddLine(ImVec2(x, y - h), ImVec2(x, y + h), Ui::Gold(a), S(major ? 1.5f : 1.0f));
+    }
+    // Straight ahead: a small notch above the line.
+    draw->AddTriangleFilled(ImVec2(mid - S(5.0f), y - S(14.0f)), ImVec2(mid + S(5.0f), y - S(14.0f)),
+                            ImVec2(mid, y - S(7.0f)), Ui::Bright(0.9f));
+    for (int i = 0; i < view.count; ++i) {
+        const bbcoop_compass_marker& marker = view.markers[i];
+        const int arrow = marker.pinned ? (marker.x < 0.0f ? -1 : 1) : 0;
+        Marker(draw, ImVec2(mid + half * marker.x, y), marker, arrow);
+    }
+}
+
+void Ring(ImDrawList* draw) {
+    using Ui::S;
+    const ImVec2 mid(game.x + game.w * 0.5f, game.y + game.h * 0.5f);
+    const float r = S(150.0f);
+    draw->AddCircle(mid, r, Ui::Gold(0.18f), 96, S(1.0f));
+    for (int i = 0; i < view.count; ++i) {
+        const bbcoop_compass_marker& marker = view.markers[i];
+        const ImVec2 at(mid.x + r * std::sin(marker.bearing), mid.y - r * std::cos(marker.bearing));
+        Marker(draw, at, marker, 0);
+    }
+}
+
+void Draw() {
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    using Ui::S;
+    switch (BbSettings::Get().compass_position.load()) {
+    case BbSettings::CompassBottom:
+        Strip(draw, game.y + game.h - S(150.0f));
+        break;
+    case BbSettings::CompassReticle:
+        Ring(draw);
+        break;
+    default:
+        Strip(draw, game.y + S(52.0f));
+        break;
+    }
+}
+
+} // namespace Compass
+
 /// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1,
 /// consumed when the file appears (it is removed), one key press per frame.
 bool scripted_busy = false; // keys of the file still to press
@@ -3773,6 +3934,7 @@ bool HandleEvent(const SDL_Event& event) {
 
 bool Visible() {
     const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
+    const bool compass = initialized && Compass::Read();
     const bool was_team = Team::open;
     Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
     Joining::open = initialized && bbcoop_team_load_view(&Joining::load) != 0;
@@ -3781,7 +3943,7 @@ bool Visible() {
         SyncMousePos();
         Team::focus.fresh = true;
     }
-    return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party ||
+    return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party || compass ||
                            Team::open || Joining::open || ScriptedKeysWaiting());
 }
 
@@ -3913,6 +4075,11 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         Party::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                        float(game.extent.height)};
         Party::Draw();
+    }
+    if (Compass::shown && !menu_open && !quit_open && !Team::open && !Joining::open) {
+        Compass::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
+                         float(game.extent.height)};
+        Compass::Draw();
     }
     if (Team::open && !menu_open) {
         Team::Screen();

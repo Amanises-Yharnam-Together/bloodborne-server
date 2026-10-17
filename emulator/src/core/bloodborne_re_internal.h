@@ -369,6 +369,8 @@ extern std::chrono::steady_clock::time_point map_board_time;
 s32 SessionPlayers();
 std::optional<LampPosition> CharacterPosition(u64 character);
 std::optional<LampPosition> LocalPlayerPosition();
+// The game camera's heading (CameraHeading), nothing while its camera is not found.
+std::optional<float> CameraHeadingNow();
 
 s32 CharacterHp(u64 character);
 

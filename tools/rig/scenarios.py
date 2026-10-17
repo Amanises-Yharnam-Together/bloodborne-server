@@ -20,7 +20,9 @@ expect-hp <handle|self> <op> <value>, expect-session <n>, expect-map <map>,
 set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeout>],
 wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, for
 expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
-expect-others-near <n> <meters> (n other players alive that close), expect-others-shown <n> (exactly n other players
+expect-others-near <n> <meters> (n other players alive that close), expect-compass <bearing> <metres>
+[<degrees> [<metres>]] (within 10 s a marker of the teammate compass at that bearing, degrees right of
+straight ahead, and distance; 20 degrees and 1.5 m either way by default), expect-others-shown <n> (exactly n other players
 shown, not hidden for another map), watch-unseen <handle> <seconds> (from now on, every frame the
 character is drawn logs "watched <handle> drawn"; forbid that), godmode [off] (the player's HP kept at max), done. Targets: nearest, self or a handle in hex; kill
 uses the game's own kill (as an event's ForceCharacterDeath), so bosses die in one step.
@@ -65,6 +67,9 @@ IOSEFKA_VIEWS = [("south", -200.0, 206.8, 0.0), ("north", -200.0, 212.8, 3.1416)
                  ("west", -203.0, 209.8, -1.5708), ("east", -197.0, 209.8, 1.5708)]
 # Up the hallway north of her: out of the other player's pictures.
 IOSEFKA_WAIT = "-200.0 -40.5 218.0 0.0"
+# The compass scenario's spots: the guest up that hallway, the host 5.2 m south of it.
+COMPASS_GUEST = "-200.0 -40.5 218.0"
+COMPASS_HOST = "-200.0 -40.5 212.8"
 # 7 m from ENEMY (-216.7, 178.1), on the lamp's side: close enough for it to notice a player.
 GUEST_ALONE_SPOT = "-210.0 -54.5 181.0"
 GUEST_PAIR_SPOT = "-213.0 -54.5 184.0"  # 3-4 m from GUEST_ALONE_SPOT
@@ -1213,6 +1218,29 @@ SCENARIOS = {
     },
     # Kaniel 2026-10-15: the team's loading screen stays over the whole screen, the sound held,
     # until every guest has fully joined the host (its character spawned), then opens for all.
+    # Kaniel 2026-10-17: the teammate compass. The host stands 5.2 m south of the guest in the
+    # hallway north of Iosefka's door and turns. After a teleport with heading h the camera looks
+    # along (sin h, -cos h) (rig 2026-10-17: h 0 looks south, -z; a quarter turn west, -x; half a
+    # turn north): the guest behind the host, then on its right, then ahead. The guest, at h 0,
+    # looks south at the host.
+    "compass": {
+        "about": "the teammate compass: each game's marker for the other is at the bearing and "
+                 "distance where it stands as the camera sees it; the host shoots the strip",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 5",
+                     f"teleport {COMPASS_HOST} 0.0", "wait 12", "expect-compass 180 5.2",
+                     "shot host-compass-behind", f"teleport {COMPASS_HOST} 1.5708", "wait 4",
+                     "expect-compass 90 5.2", "shot host-compass-right",
+                     f"teleport {COMPASS_HOST} 3.1416", "wait 4", "expect-compass 0 5.2",
+                     "shot host-compass-ahead", "wait 10"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 8",
+                      f"teleport {COMPASS_GUEST} 0.0", "wait 10", "expect-compass 0 5.2",
+                      "wait 25"],
+        },
+        "expect": {role: [r"autoplay compass: camera heading"] for role in ("host", "guest")},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     "team-load-art": {
         "about": "the team loading screen's art (Kaniel 2026-10-17: the co-op art's night city, cards, "
                  "medallions and sigils): each game shoots its loading screen as it comes up",

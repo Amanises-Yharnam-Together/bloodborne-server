@@ -5704,6 +5704,7 @@ PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view
             .max = entry.max,
             .landed = entry.landed,
             .needed = entry.needed,
+            .at = map != 0 && entry.map == map ? std::optional{entry.at} : std::nullopt,
         });
     }
     return panel;
