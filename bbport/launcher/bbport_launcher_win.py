@@ -4803,7 +4803,7 @@ class Launcher:
         if not hasattr(self, 'patches_frame'):
             return
         tk, px = self.tk, self.px
-        from mods import discover
+        from mods import discover, unrecognized
         from patches import external_patches
         for holder in (self.mods_frame, self.patches_frame):
             for widget in holder.winfo_children():
@@ -4831,6 +4831,10 @@ class Launcher:
             self.label(self.mods_frame, _('Lower in the list loads later and wins conflicts.',
                                           'Ниже в списке — загружается позже и перекрывает.'), 'small', MUTED).pack(
                 anchor='w', pady=(px(6), 0))
+        # Folders that are not mods are named, with why, instead of left out silently.
+        for name, problem in unrecognized(root):
+            self.label(self.mods_frame, _('Not loaded: {}: {}', 'Не загружен: {}: {}').format(name, problem),
+                       'small', MUTED, wraplength=px(620), justify='left').pack(anchor='w', pady=(px(4), 0))
         chosen = load_json(DATA_DIR / 'patches.json', {})
         found = external_patches(Path(self.var('patches_dir', 'app').get() or DATA_DIR / 'patches'), PATCH_VERSION)
         old = {n: v.get() for n, v in self.patch_vars.items()}

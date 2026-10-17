@@ -199,6 +199,11 @@ def configure_shadnet():
         wanted = with_setting(wanted, "UnsecuredPort", SHADNET_PORT)
         wanted = with_setting(wanted, "WebApiPort", WEBAPI_PORT)
         wanted = with_backend(wanted, builtin_backend())
+        # BB_RIG_BACKEND_STORE=1: the backend keeps messages and chalice dungeons in a fresh file.
+        store = lane_dir() / "server" / "rig-content.sqlite"
+        store.unlink(missing_ok=True)
+        wanted = with_value(wanted, "BackendStore",
+                            store.as_posix() if os.environ.get("BB_RIG_BACKEND_STORE") == "1" else "")
         if wanted != text:
             config.write_text(wanted, encoding="utf-8", newline="")
 
@@ -415,6 +420,13 @@ def games() -> tuple[list[int], list[int]]:
                if pid.strip().isdigit()}
     return ([pid for pid in rig if pid not in ignored],
             [pid for pid in others if pid not in ignored])
+
+
+def player_blocks() -> bool:
+    """Whether a game someone plays keeps the rig from starting its own. BB_RIG_BESIDE_PLAYER=1:
+    a lane's headless games may run beside it (the player said so; the rig only ever closes its
+    own games)."""
+    return bool(games()[1]) and not (IN_LANES and os.environ.get("BB_RIG_BESIDE_PLAYER") == "1")
 
 
 def games_running() -> bool:
@@ -1097,7 +1109,7 @@ def run(name: str, batch: pathlib.Path, attempt: int = 1, scenario: dict | None 
         if not user_dir(role).is_dir():
             print(f"  {role}: no rig folder at {ENGINE.role_dir(role)}")
             return False
-    if games()[1]:
+    if player_blocks():
         print("  another game is running (someone is playing): not starting the rig's")
         return False
     saves_from = RIG / "saves" / scenario["saves"] / "savedata" if "saves" in scenario else None
@@ -1759,7 +1771,7 @@ def act(args: argparse.Namespace) -> int:
                       for chapter in suite["chapters"]))
         return 0
     # Another lane's games are the rig's own: only a game someone plays stops a lane's run.
-    if games()[1] if IN_LANES or args.lanes else games_running():
+    if player_blocks() if IN_LANES or args.lanes else games_running():
         print("A game is running; not starting the rig.")
         return 2
     unknown = [name for name in args.scenarios if name not in RUNNABLE]

@@ -3717,12 +3717,42 @@ std::vector<u32> HandOutIds(std::span<const u8> payload) {
     if (count > 0x800 || payload.size() < 4 + size_t{count} * 4) {
         return {};
     }
-    std::vector<u32> ids(count);
-    std::memcpy(ids.data(), payload.data() + 4, size_t{count} * 4);
-    for (u32& id : ids) {
-        id &= 0xFFFF;
+    std::vector<u32> ids;
+    for (u32 i = 0; i < count; ++i) {
+        u32 entry = 0;
+        std::memcpy(&entry, payload.data() + 4 + size_t{i} * 4, 4);
+        if ((entry & 0xFFFF) != HandOutHeldEntry) { // held by the owner (HandOutSettle)
+            ids.push_back(entry & 0xFFFF);
+        }
     }
     return ids;
+}
+
+std::vector<u32> HandOutSettle::Filter(const std::string& member, std::span<const u32> entries,
+                                       s64 now_ms) {
+    Member& state = members[member];
+    if (now_ms - state.last_ms > HandOutFreshMs) {
+        state = {}; // a load, a trip away: what it was handed before means nothing now
+    }
+    state.last_ms = now_ms;
+    std::vector<u32> out;
+    std::set<u32> wanted;
+    for (const u32 entry : entries) {
+        const u32 index = entry & 0xFFFF;
+        wanted.insert(index);
+        const s64 since = state.wanted_since.try_emplace(index, now_ms).first->second;
+        if (state.handed.contains(index) || now_ms - since >= HandOverSettleMs) {
+            state.handed.insert(index);
+            out.push_back(entry);
+        } else {
+            out.push_back(HandOutHeldEntry);
+        }
+    }
+    // Taken back: forgotten at once, so a hand-out again settles anew.
+    std::erase_if(state.wanted_since,
+                  [&](const auto& item) { return !wanted.contains(item.first); });
+    std::erase_if(state.handed, [&](u32 index) { return !wanted.contains(index); });
+    return out;
 }
 
 bool EnemyJumped(const std::array<float, 3>& before, const std::array<float, 3>& now) {

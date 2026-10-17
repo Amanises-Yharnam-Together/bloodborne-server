@@ -3027,19 +3027,11 @@ void Screen() {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
-    // Kaniel 2026-10-17: the night city (the co-op art's) behind it all, else the menus' wall,
-    // faint; the Bloodborne word above the cards.
-    if (CoopArt::Has()) {
-        const ImVec2 b = CoopArt::SizeOf(CoopArt::Piece::Backdrop);
-        // Cut to the screen's shape, from the top (the city's lower part is dark: the cards sit on it).
-        const float want = display.x / display.y, have = b.x / b.y;
-        const BbCoopArt::Share part = have > want ? BbCoopArt::Share{0.5f - want / have * 0.5f, 0.0f,
-                                                                      0.5f + want / have * 0.5f, 1.0f}
-                                                  : BbCoopArt::Share{0.0f, 0.0f, 1.0f, have / want};
-        CoopArt::Part(draw, CoopArt::Piece::Backdrop, ImVec2(0, 0), display, part, 0.9f);
-        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.6f);
-    } else if (MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 0.45f)) {
-        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.95f);
+    // The menus' wall under it all, as the team screen has it (Kaniel 2026-10-17: the same
+    // background as the party view; the co-op art's night city looked out of place); the Bloodborne
+    // word above the cards.
+    if (MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 1.0f)) {
+        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.75f);
     }
     const float u = display.y / 1080.0f; // 1080p pixels
     ImFont* font = MenuArt::Font();
@@ -3668,13 +3660,15 @@ bool Read() {
     return shown;
 }
 
-/// The members' colours, by their place on the party panel: muted as the game's HUD (old gold,
-/// blood, pale steel, moss).
-ImU32 MemberColor(int member, float alpha) {
-    static constexpr float colors[][3] = {
-        {0.84f, 0.68f, 0.38f}, {0.74f, 0.22f, 0.18f}, {0.56f, 0.66f, 0.78f}, {0.58f, 0.68f, 0.46f}};
-    const float* c = colors[((member % 4) + 4) % 4];
-    return Party::Rgba(c[0], c[1], c[2], alpha);
+/// Kaniel 2026-10-17 (after a play test): the compass in the light gray of the game's own counters
+/// (the souls at the top right), not gold, and a bit transparent: everything of it is drawn at
+/// Opacity. A downed member's marker stays red.
+constexpr float Opacity = 0.78f;
+ImU32 Gray(float alpha) {
+    return Party::Rgba(0.85f, 0.85f, 0.82f, alpha * Opacity);
+}
+ImU32 Faded(float r, float g, float b, float alpha) {
+    return Party::Rgba(r, g, b, alpha * Opacity);
 }
 
 /// The first letter of a name (UTF-8: a whole character), "?" for none.
@@ -3755,31 +3749,33 @@ void Marker(ImDrawList* draw, ImVec2 at, int place, const bbcoop_compass_marker&
     const bool down = marker.vital == BBCOOP_VITAL_DOWN, dead = marker.vital == BBCOOP_VITAL_DEAD;
     const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
     const float r = down ? S(17.0f) : S(13.0f);
-    const ImU32 color = down ? Party::Blood(0.75f + 0.25f * pulse) : MemberColor(marker.member, dead ? 0.5f : 1.0f);
-    draw->AddCircleFilled(ImVec2(at.x + S(1.0f), at.y + S(1.5f)), r + S(1.5f), Party::Rgba(0, 0, 0, 0.55f), 32);
+    const ImU32 color = down ? Party::Blood((0.75f + 0.25f * pulse) * Opacity) : Gray(dead ? 0.5f : 1.0f);
+    draw->AddCircleFilled(ImVec2(at.x + S(1.0f), at.y + S(1.5f)), r + S(1.5f), Faded(0, 0, 0, 0.55f), 32);
     using BbPartyIcons::Icon;
-    if (down && Party::Icon(draw, Icon::Downed, at, r * 2.6f, 1.0f)) {
+    if (down && Party::Icon(draw, Icon::Downed, at, r * 2.6f, Opacity)) {
         // The badge's own ring fills red with the revive, as on the party list.
-        Party::RingShare(draw, at, r * 2.6f, BbPartyIcons::DownedRing, marker.revive, 0.8f + 0.2f * pulse);
-    } else if (dead && Party::Icon(draw, Icon::Fallen, at, r * 2.6f, 0.85f)) {
+        Party::RingShare(draw, at, r * 2.6f, BbPartyIcons::DownedRing, marker.revive,
+                         (0.8f + 0.2f * pulse) * Opacity);
+    } else if (dead && Party::Icon(draw, Icon::Fallen, at, r * 2.6f, 0.6f * Opacity)) {
     } else {
-        draw->AddCircleFilled(at, r, Party::Rgba(0.06f, 0.05f, 0.05f, 0.88f), 32);
+        draw->AddCircleFilled(at, r, Faded(0.06f, 0.05f, 0.05f, 0.88f), 32);
         if (ImTextureData* face = dead ? nullptr : Portrait(place, marker)) {
             const float f = r - S(1.0f);
-            draw->AddImage(face->GetTexRef(), ImVec2(at.x - f, at.y - f), ImVec2(at.x + f, at.y + f));
+            draw->AddImage(face->GetTexRef(), ImVec2(at.x - f, at.y - f), ImVec2(at.x + f, at.y + f), ImVec2(0, 0),
+                          ImVec2(1, 1), Faded(1, 1, 1, 1));
         } else {
             const std::string initial = Initial(marker.name);
             const float size = S(17.0f);
             const ImVec2 extent = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, initial.c_str());
             Party::Text(draw, serif_font, size, ImVec2(at.x, at.y - extent.y * 0.5f),
-                        dead ? Ui::Dim(1.0f) : Party::Bone(1.0f), initial.c_str(), 0.5f);
+                        Gray(dead ? 0.5f : 1.0f), initial.c_str(), 0.5f);
         }
         draw->AddCircle(at, r, color, 32, S(2.0f));
         if (down) {
             // No badge art: the revive's share as a red arc round the ring.
             const float top = -IM_PI * 0.5f;
             draw->PathArcTo(at, r + S(3.0f), top, top + 2.0f * IM_PI * std::clamp(marker.revive, 0.0f, 1.0f), 48);
-            draw->PathStroke(Party::Blood(0.9f), 0, S(3.0f));
+            draw->PathStroke(Party::Blood(0.9f * Opacity), 0, S(3.0f));
         }
     }
     if (arrow != 0) {
@@ -3794,7 +3790,7 @@ void Marker(ImDrawList* draw, ImVec2 at, int place, const bbcoop_compass_marker&
         std::snprintf(line, sizeof(line), marker.distance < 10.0f ? "%.1f m" : "%.0f m", marker.distance);
     }
     Party::Text(draw, sans_font, S(13.0f), ImVec2(at.x, at.y + r + S(3.0f)),
-                down ? Party::Rgba(1.0f, 0.52f, 0.46f, 1.0f) : Ui::Plain(dead ? 0.6f : 0.95f), line, 0.5f);
+                down ? Faded(1.0f, 0.52f, 0.46f, 1.0f) : Gray(dead ? 0.6f : 0.95f), line, 0.5f);
 }
 
 void Strip(ImDrawList* draw, float y) {
@@ -3802,7 +3798,7 @@ void Strip(ImDrawList* draw, float y) {
     constexpr float Pi = 3.14159265f;
     const float mid = game.x + game.w * 0.5f, half = S(280.0f);
     // The shade behind it, fading out to both ends; no frame.
-    const ImU32 shade = Party::Rgba(0.02f, 0.02f, 0.02f, 0.50f), clear = Party::Rgba(0, 0, 0, 0);
+    const ImU32 shade = Faded(0.02f, 0.02f, 0.02f, 0.50f), clear = Party::Rgba(0, 0, 0, 0);
     draw->AddRectFilledMultiColor(ImVec2(mid - half, y - S(10.0f)), ImVec2(mid, y + S(10.0f)), clear, shade,
                                   shade, clear);
     draw->AddRectFilledMultiColor(ImVec2(mid, y - S(10.0f)), ImVec2(mid + half, y + S(10.0f)), shade, clear,
@@ -3812,7 +3808,7 @@ void Strip(ImDrawList* draw, float y) {
     for (int i = 0; i < pieces; ++i) {
         const float t0 = float(i) / pieces, t1 = float(i + 1) / pieces;
         const float a = 0.8f * std::sin(Pi * (t0 + t1) * 0.5f);
-        draw->AddLine(ImVec2(mid - half + 2 * half * t0, y), ImVec2(mid - half + 2 * half * t1, y), Ui::Gold(a),
+        draw->AddLine(ImVec2(mid - half + 2 * half * t0, y), ImVec2(mid - half + 2 * half * t1, y), Gray(a),
                       S(1.0f));
     }
     // Ticks at every 15 degrees of the world's headings, turning with the camera; every 45 longer.
@@ -3827,11 +3823,11 @@ void Strip(ImDrawList* draw, float y) {
         const bool major = std::lround(world / step) % 3 == 0;
         const float a = 0.75f * std::cos(bearing);
         const float h = major ? S(6.0f) : S(3.5f);
-        draw->AddLine(ImVec2(x, y - h), ImVec2(x, y + h), Ui::Gold(a), S(major ? 1.5f : 1.0f));
+        draw->AddLine(ImVec2(x, y - h), ImVec2(x, y + h), Gray(a), S(major ? 1.5f : 1.0f));
     }
     // Straight ahead: a small notch above the line.
     draw->AddTriangleFilled(ImVec2(mid - S(5.0f), y - S(14.0f)), ImVec2(mid + S(5.0f), y - S(14.0f)),
-                            ImVec2(mid, y - S(7.0f)), Ui::Bright(0.9f));
+                            ImVec2(mid, y - S(7.0f)), Gray(0.9f));
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const int arrow = marker.pinned ? (marker.x < 0.0f ? -1 : 1) : 0;
@@ -3843,7 +3839,7 @@ void Ring(ImDrawList* draw) {
     using Ui::S;
     const ImVec2 mid(game.x + game.w * 0.5f, game.y + game.h * 0.5f);
     const float r = S(150.0f);
-    draw->AddCircle(mid, r, Ui::Gold(0.18f), 96, S(1.0f));
+    draw->AddCircle(mid, r, Gray(0.18f), 96, S(1.0f));
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const ImVec2 at(mid.x + r * std::sin(marker.bearing), mid.y - r * std::cos(marker.bearing));

@@ -303,6 +303,44 @@ TEST(EnemyOwner, AFollowerRunsWhatTheOwnerHandedIt) {
     EXPECT_EQ(HandOutIds(std::vector<u8>{1, 0}), std::vector<u32>{});
 }
 
+// Kaniel's play test 2026-10-17: the dog near Iosefka's clinic (+0x90 index 0x2809) lagged while
+// both players fought it. The owner's game handed it out and took it back every 0.3-1.3 s (every
+// 0.25 s for minutes the day before), and each change of hands jumps it. The owner keeps an enemy
+// until its game has wanted to hand it out for HandOverSettleMs; taking one back stays at once
+// (the follower's game drops what a hand-out leaves out, so nobody would run it otherwise).
+TEST(EnemyOwner, AnEnemyGoesToAFollowerOnlyOnceTheHandOutSettles) {
+    HandOutSettle settle;
+    const u32 dog = 0x06e12809; // a changing high half, the index in the low one
+    const u32 held = HandOutHeldEntry;
+    // First wanted at 0 ms: held (the owner runs it) until a settle time has passed.
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, 0), std::vector<u32>{held});
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, 500), std::vector<u32>{held});
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, HandOverSettleMs),
+              std::vector<u32>{dog});
+    // Handed out: it stays out while the game hands it out, high half as the game wrote it.
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{0x07002809}, HandOverSettleMs + 250),
+              std::vector<u32>{0x07002809});
+    // Taken back by the game: gone at once. Wanted again 0.3 s later: held again (ping-pong).
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{}, 2000), std::vector<u32>{});
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, 2300), std::vector<u32>{held});
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{}, 2550), std::vector<u32>{});
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, 2800), std::vector<u32>{held});
+    // Other enemies and other members settle on their own; held ones keep their place.
+    const u32 hunter = 0x2871;
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{hunter, dog}, 3000),
+              (std::vector<u32>{held, held}));
+    EXPECT_EQ(settle.Filter("lisara", std::vector<u32>{hunter}, 3000), std::vector<u32>{held});
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{hunter, dog}, 3800),
+              (std::vector<u32>{held, dog}));
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{hunter, dog}, 4000),
+              (std::vector<u32>{hunter, dog}));
+    // A member whose last hand-out is stale starts over (a load, a trip away).
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, 60'000), std::vector<u32>{held});
+    // Held entries name no enemy: the follower's game skips them (block 31, slot 0x7FF).
+    const std::vector<u8> payload{2, 0, 0, 0, 0xff, 0xff, 0, 0, 0x09, 0x28, 0xe1, 0x06};
+    EXPECT_EQ(HandOutIds(payload), std::vector<u32>{0x2809});
+}
+
 // A follower's measure: the positions it took for the enemies by its player, per second.
 TEST(EnemyOwner, AFollowerCountsThePositionsOfTheEnemiesByIt) {
     // The packets name an enemy by its +0x90 index (map index << 11 | slot), the log by chr id.

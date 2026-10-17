@@ -28,6 +28,11 @@ When the host starts the server it asks one question: keep content?
   N  Everyone is online and co-op works, but the world stays empty. No
      messages, no bloodstains, no ghosts.
 
+Either way the chalice rituals work: a standard chalice's ritual (Pthumeru
+Chalice, Hintertomb Chalice and the like) asks the server for that
+chalice's dungeon, and the server makes it itself. Without it the game said
+"Failed to contribute ritual materials" and went back to the title.
+
 Either way there is nothing from the wider community: with this server you
 only ever see content from the people on your own server.
 

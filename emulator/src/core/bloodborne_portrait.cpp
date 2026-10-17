@@ -75,14 +75,12 @@ std::optional<PortraitCrop> HeadAndShoulders(std::span<const u8> rgba, int width
     };
 }
 
-std::optional<PortraitPixels> PortraitFromModel(std::span<const u8> rgba, int width, int height) {
-    if (width != StatusModelWidth || height != StatusModelHeight) {
-        return std::nullopt;
-    }
-    const auto crop = HeadAndShoulders(rgba, width, height);
-    if (!crop) {
-        return std::nullopt;
-    }
+namespace {
+
+// The `crop` of a model target resampled to a portrait on the backdrop; nothing when too little of
+// a character is in it.
+std::optional<PortraitPixels> PortraitOfCrop(std::span<const u8> rgba, int width,
+                                             const PortraitCrop* crop) {
     PortraitPixels out(PortraitBytes);
     const float step = float(crop->side) / float(PortraitSide * Samples);
     int figure_samples = 0;
@@ -114,6 +112,29 @@ std::optional<PortraitPixels> PortraitFromModel(std::span<const u8> rgba, int wi
         return std::nullopt;
     }
     return out;
+}
+
+} // namespace
+
+std::optional<PortraitPixels> PortraitFromModel(std::span<const u8> rgba, int width, int height) {
+    if (width != StatusModelWidth || height != StatusModelHeight) {
+        return std::nullopt;
+    }
+    const auto crop = HeadAndShoulders(rgba, width, height);
+    if (!crop) {
+        return std::nullopt;
+    }
+    return PortraitOfCrop(rgba, width, &*crop);
+}
+
+std::optional<PortraitPixels> FacePortraitFromModel(std::span<const u8> rgba, int width,
+                                                    int height) {
+    if (width != StatusModelWidth || height != StatusModelHeight ||
+        rgba.size() < size_t(width) * size_t(height) * 4) {
+        return std::nullopt;
+    }
+    const PortraitCrop crop{.x = 0, .y = FaceCropTop, .side = StatusModelWidth};
+    return PortraitOfCrop(rgba, width, &crop);
 }
 
 PortraitPixels CircularPortrait(const PortraitPixels& pixels) {

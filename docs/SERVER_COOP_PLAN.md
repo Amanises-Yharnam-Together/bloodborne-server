@@ -68,8 +68,12 @@ only (bbport is the target; every player and the server run one build).
   before it makes its team (`LobbyState.world`), and the team it makes takes the pick (the screen
   starts on the save's own world then too). Rig: `team-worlds` opens the list; scenario
   `team-worlds` shoots it.
-- **Chalice dungeons:** shared too, as team worlds (dungeon progress and glyphs per team). Never
-  tested on our version yet: a rig check of plain co-op in a dungeon comes first.
+- **Chalice dungeons:** team altars (Kaniel 2026-10-17): a ritual by any member puts its dungeon
+  on every member's altar, each enters on their own, progress per dungeon in the team's world.
+  First step done: rituals work online again. A standard chalice's ritual asks the server for
+  that chalice's dungeon (ChannelSearch FixedOrGeneral 2, then ChannelGetDetailsInfo); the
+  server makes it (backend `StandardDungeon`), and two members who both conduct it meet in the
+  one dungeon (rig `chalice-team`).
 - **Server down:** team play needs the server; solo play with the personal world needs nothing, so
   nothing extra is built for it.
 - **Port only:** the new design is built for the port; shadPS4 keeps the old path until it is dropped.

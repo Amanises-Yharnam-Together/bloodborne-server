@@ -2382,3 +2382,59 @@ SCENARIOS["iosefka-mine"]["roles"] = {
     role: [*steps[:6], f"expect-disabled {CLINIC} 1 30", *steps[6:]]
     for role, steps in SCENARIOS["iosefka-new"]["roles"].items()
 }
+
+
+# Chalice dungeons. The Dream's first ritual altar: talk t210060 on the talk dummy c9020_0005 at
+# (-18.27, -5.43, -16.88) in m21_00's MSB, used from 1 m east of it facing west. Its talk sets
+# 6708 on the first use (and shows a message first); its menu is Chalice Ritual (first),
+# Chalice Dungeon Search, Search by Chalice Glyph; Chalice Ritual, then Conduct Ritual, asks
+# "Conduct a ritual...?" (No first: left is Yes). After the ritual the altar's menu has its
+# layers, Layer One first (the warp 72100300). Chalice dungeons are map 0x1d000000.
+# A headless game draws no menus: BB_GAME_MENU_TRACE_IDS=262000-267999 makes the port print
+# which of the altar's texts it shows ("Game menu: shows ...").
+PTHUMERU_CHALICE = "goods:6109"
+RITUAL_BLOOD_1 = "goods:7000"
+ALTAR_SPOT = "-17.27 -5.23 -16.88 1.571"
+CHALICE_DUNGEON = "0x1d000000"
+
+
+def CHALICE_ENTER(role: str) -> list[str]:
+    """The Pthumeru Chalice and its materials, the Dream, the altar (its first use's message),
+    Chalice Ritual, Conduct Ritual, Yes, then the altar again and Layer One."""
+    return [f"trade-stock {PTHUMERU_CHALICE} 1", f"trade-stock {RITUAL_BLOOD_1} 10",
+            "trade-stock echoes 20000", f"travel {HUNTERS_DREAM}", "wait 5",
+            f"teleport {ALTAR_SPOT}", "wait 2", "press cross 200", "wait 7",
+            *[step for _ in range(4) for step in ("press cross 200", "wait 7")],
+            "press left 200", "wait 1", "press cross 200", "wait 20", f"log {role} ritual done",
+            *[step for _ in range(3) for step in ("press cross 200", "wait 10")],
+            f"wait-map {CHALICE_DUNGEON} 180", "wait 10", "snapshot",
+            f"log {role} in the dungeon"]
+
+
+SCENARIOS["chalice-ritual"] = {
+    "about": "a ritual with the Pthumeru Chalice at the Dream's altar, then its Layer One (the "
+             "server's own dungeon for the chalice: none made the game return to the title)",
+    "roles": {"host": [START, "godmode", *CHALICE_ENTER("host"), f"expect-map {CHALICE_DUNGEON}"]},
+    "expect": {"host": [r"host in the dungeon"]},
+    "timeout": 300,
+}
+
+# Each member of a team of two conducts the same chalice's ritual at its own altar; the server
+# gives both the one dungeon it keeps for that chalice, and each enters Layer One alone: they
+# meet in it.
+SCENARIOS["chalice-team"] = {
+    "about": "a team of two enters the same chalice dungeon, each from its own altar",
+    "roles": {
+        "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                 "godmode", "wait-session 2 300", "wait 10", *CHALICE_ENTER("host"),
+                 "wait-members 2 300", "wait 20", "expect-session 2", "snapshot"],
+        "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 2 300", "wait 30",
+                  "wait 10",
+                  *CHALICE_ENTER("guest"), "wait-members 2 300", "wait 20", "expect-session 2",
+                  "snapshot"],
+    },
+    "expect": {"host": [r"host in the dungeon"], "guest": [r"guest in the dungeon"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "allow": CRASH_CLEANUP,
+    "timeout": 1200,
+}
