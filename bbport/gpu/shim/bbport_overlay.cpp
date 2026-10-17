@@ -2820,19 +2820,11 @@ void Screen() {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 255));
-    // Kaniel 2026-10-17: the night city (the co-op art's) behind it all, else the menus' wall,
-    // faint; the Bloodborne word above the cards.
-    if (CoopArt::Has()) {
-        const ImVec2 b = CoopArt::SizeOf(CoopArt::Piece::Backdrop);
-        // Cut to the screen's shape, from the top (the city's lower part is dark: the cards sit on it).
-        const float want = display.x / display.y, have = b.x / b.y;
-        const BbCoopArt::Share part = have > want ? BbCoopArt::Share{0.5f - want / have * 0.5f, 0.0f,
-                                                                      0.5f + want / have * 0.5f, 1.0f}
-                                                  : BbCoopArt::Share{0.0f, 0.0f, 1.0f, have / want};
-        CoopArt::Part(draw, CoopArt::Piece::Backdrop, ImVec2(0, 0), display, part, 0.9f);
-        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.6f);
-    } else if (MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 0.45f)) {
-        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.95f);
+    // The menus' wall under it all, as the team screen has it (Kaniel 2026-10-17: the same
+    // background as the party view; the co-op art's night city looked out of place); the Bloodborne
+    // word above the cards.
+    if (MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 1.0f)) {
+        MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.75f);
     }
     const float u = display.y / 1080.0f; // 1080p pixels
     ImFont* font = MenuArt::Font();
