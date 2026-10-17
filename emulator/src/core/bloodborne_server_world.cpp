@@ -724,6 +724,7 @@ ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 no
         proposed_ms = 0;
     }
     TickTeamWorld(now_ms);
+    FollowTeamTimeOfDay(now_ms);
     NoteCharacterName(now_ms);
     ServerWorldKills world;
     Taken taken = TakeInbox(now_ms);
@@ -1830,6 +1831,40 @@ void TickTeamWorld(s64 now_ms) {
     Queue(std::move(envelope));
     LOG_INFO(Debug, "Co-op team world: this host's world to the server ({} flags on)",
              world.on.size());
+}
+
+// Kaniel's playtest 2026-10-17: the night (Vicar Amelia's skull) fell only in the games that
+// played its cutscene. A guest away from it takes the team world's time of day as the host's
+// report brings it; its next load shows it. Read between loads only, every 2 s.
+void FollowTeamTimeOfDay(s64 now_ms) {
+    static s64 checked_ms = 0;
+    if (!team_switch || !IsPartyGuestRole() || !InPartySession() || now_ms - checked_ms < 2'000) {
+        return;
+    }
+    checked_ms = now_ms;
+    WorldFlags team;
+    {
+        std::scoped_lock lock{team_mutex};
+        if (team_host || !team_world_taken || !team_world || !team_world->exists()) {
+            return;
+        }
+        for (const s32 flag : team_world->on()) {
+            if (std::ranges::find(TimeOfDayFlags, flag) != TimeOfDayFlags.end()) {
+                team.on.push_back(flag);
+            }
+        }
+    }
+    std::sort(team.on.begin(), team.on.end());
+    const u64 global = GetGlobalState();
+    if (team.on.empty() || global < 0x10000 || TryRead<u8>(global, 0x08).value_or(1) != 0) {
+        return;
+    }
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    for (const s32 flag : TimeOfDayToFollow(team, EventFlagOn)) {
+        reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
+        LOG_INFO(Debug, "Co-op team world: the team's time of day is this guest's too (flag {})",
+                 flag);
+    }
 }
 
 bool IsTeamScreenVerb(std::string_view verb) {

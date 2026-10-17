@@ -14,7 +14,9 @@ It also patches common.emevd's death events (9400: the first death wakes in the 
 wakes the player but end for a client (1003:6 state 1), so a party guest runs them too; the
 emulator then takes the guest there (ChooseDeathRespawn). The Hunter's Dream's first visit
 (m21_00 event 9401: the cutscene and the first Yharnam lamp, 12417810) ends for a client the
-same way, which left a guest's headstone with no place to awaken.
+same way, which left a guest's headstone with no place to awaken. Vicar Amelia's skull (m24_00
+event 12401803: its cutscene and the night) ended for a client the same way, so only the host saw
+the cutscene and the night fell only in its world.
 
 Boss fogs (open_boss_fog_for_guests): a white phantom's fog event waited for the host's
 "entered" flag, so a party guest could not enter a boss fog first (nor after a world reset). It
@@ -112,9 +114,13 @@ def patch_events(emevd: bytes, edits: list | None = None) -> tuple[bytes, int]:
 # Events that end for a client (1003:6 state 1) but must run for a party guest, per file.
 # 9350 awards insight (SpEffect 4680 once per point; see let_guests_earn_insight).
 # m21_00 12105043 wakes the insight messenger and sets the flag its shop opens on (12105045).
+# m24_00 12401803 is Vicar Amelia's skull: the host's press plays the cutscene and brings the night
+# (2002:6, time of day 2); a guest's copy, kept in step, now follows it (its own press still waits
+# for an alive host, 4:3).
 CLIENT_EVENTS = {
     'common.emevd.dcx': {9350, 9400, 9404, 9421},
     'm21_00_00_00.emevd.dcx': {9401, 12105043},
+    'm24_00_00_00.emevd.dcx': {12401803},
 }
 INSIGHT_EVENT = 9350
 INITIALIZE_EVENT = (2000, 0)
@@ -577,7 +583,10 @@ def main(argv: list[str] | None = None) -> int:
     # Every file is patched and checked before any is written, so a bad patch leaves the
     # folder as it was.
     outputs = {}
-    manifest = {'tool': 'party_boss_events.py', 'files': {}}
+    # The launcher makes the files again when its patcher's hash differs (events_current).
+    manifest = {'tool': 'party_boss_events.py',
+                'tool_sha256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
+                'files': {}}
     total = 0
     for name, path in sorted(files.items()):
         original = path.read_bytes()

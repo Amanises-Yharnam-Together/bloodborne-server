@@ -200,6 +200,23 @@ TEST(TeamWorld, ThePersonalWorldFileRoundTripsAndACutOneIsNone) {
     EXPECT_FALSE(ParseWorldFlags("blocks\n1\non\nx\nend\n"));
 }
 
+// Kaniel's playtest 2026-10-17: the night fell only in the host's world (Vicar Amelia's skull). A
+// guest away from the cutscene takes the team world's time of day (9800 evening, 9801 night,
+// 9802 blood moon), never turning one back.
+TEST(TeamWorld, AGuestTakesTheTeamsTimeOfDay) {
+    WorldFlags team;
+    team.blocks = {9};
+    team.on = {9301, 9800, 9801};
+    EXPECT_EQ(TimeOfDayToFollow(team, [](s32) { return false; }), (std::vector<s32>{9800, 9801}));
+    EXPECT_EQ(TimeOfDayToFollow(team, [](s32 flag) { return flag == 9800; }),
+              (std::vector<s32>{9801}));
+    EXPECT_TRUE(TimeOfDayToFollow(team, [](s32 flag) { return flag <= 9801; }).empty());
+    // The guest's blood moon stays: the team's world is behind, not this one's to undo.
+    team.on = {9800};
+    EXPECT_TRUE(TimeOfDayToFollow(team, [](s32 flag) { return flag >= 9800; }).empty());
+    EXPECT_TRUE(TimeOfDayToFollow(WorldFlags{}, [](s32) { return false; }).empty());
+}
+
 // Phase 6: the team join without signs or a bell. The host opens its session once it stands in
 // its world and says so once (the server keeps it for its guests); a guest joins the session the
 // server sent when it stands alone in its world.

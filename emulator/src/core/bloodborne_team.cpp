@@ -340,6 +340,22 @@ WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& message) {
     return world;
 }
 
+std::vector<s32> TimeOfDayToFollow(const WorldFlags& team, const std::function<bool(s32)>& on) {
+    s32 latest_own = 0;
+    for (const s32 flag : TimeOfDayFlags) {
+        if (on(flag)) {
+            latest_own = flag;
+        }
+    }
+    std::vector<s32> take;
+    for (const s32 flag : TimeOfDayFlags) {
+        if (flag > latest_own && std::binary_search(team.on.begin(), team.on.end(), flag)) {
+            take.push_back(flag);
+        }
+    }
+    return take;
+}
+
 TeamJoin::Action TeamJoin::Tick(const Frame& frame) {
     if (!frame.host) {
         if (frame.matching_state == MatchingStateSummonedGuest && frame.session_members <= 1) {

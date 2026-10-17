@@ -498,10 +498,28 @@ def prepared_key(settings):
     return json.dumps([settings.get('game', ''), settings.get('update', '')])
 
 
+def file_sha256(path):
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def events_current(install):
+    """Whether the event files were made by this install's event patcher (its manifest names the
+    patcher's hash): a release with a new patcher makes them again (Kaniel's playtest 2026-10-17, the
+    guests' night after Vicar Amelia)."""
+    manifest = Path(install) / 'event-patch' / 'manifest.json'
+    tool = Path(install) / 'tools' / 'party_boss_events.py'
+    try:
+        made = json.loads(manifest.read_text(encoding='utf-8'))
+        return made.get('tool_sha256') == file_sha256(tool)
+    except (OSError, ValueError):
+        return False
+
+
 def needs_prepare(install, settings):
     root = view_root(install)
     return (settings.get('prepared') != prepared_key(settings) or not is_game_folder(root / 'CUSA03173')
-            or not (Path(install) / 'event-patch' / 'manifest.json').is_file())
+            or not events_current(install))
 
 
 def host_overrides(host_ip):

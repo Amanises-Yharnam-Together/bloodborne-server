@@ -167,6 +167,25 @@ class EventFilesTests(unittest.TestCase):
         self.assertEqual(coop.event_differences(made, reference), ['b.emevd.dcx', 'c.emevd.dcx'])
         self.assertEqual(coop.event_differences(reference, reference), [])
 
+    def test_a_new_event_patcher_makes_the_files_again(self):
+        # Kaniel's playtest 2026-10-17: the release fixing Vicar Amelia's skull for guests changed
+        # party_boss_events.py, but an install made its event files once (Oct 14) and kept them.
+        with tempfile.TemporaryDirectory() as folder:
+            install = Path(folder)
+            (install / 'tools').mkdir()
+            (install / 'event-patch').mkdir()
+            tool = install / 'tools' / 'party_boss_events.py'
+            tool.write_bytes(b'old patcher')
+            self.assertFalse(coop.events_current(install), 'no manifest yet')
+            manifest = install / 'event-patch' / 'manifest.json'
+            manifest.write_text(json.dumps({'tool': 'party_boss_events.py', 'files': {}}), encoding='utf-8')
+            self.assertFalse(coop.events_current(install), 'a manifest from before the hash')
+            manifest.write_text(json.dumps({'tool_sha256': coop.file_sha256(tool), 'files': {}}),
+                                encoding='utf-8')
+            self.assertTrue(coop.events_current(install))
+            tool.write_bytes(b'new patcher')
+            self.assertFalse(coop.events_current(install))
+
 
 class PlayTests(unittest.TestCase):
     def test_the_game_starts_as_2_play_started_it(self):
