@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <atomic>
 
 namespace BbSettings {
@@ -19,7 +20,16 @@ inline bool IsFsr4(int upscaler) {
 }
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
-enum class MenuLanguage { English, Russian };
+/// The menus' languages: every one the game has (bbport_menu_texts.inc, written by
+/// scripts/menu_texts.py). English and Russian live in the sources, the rest in the table.
+enum class MenuLanguage {
+    English,
+    Russian,
+#define BB_MENU_LANG(name, ...) name,
+#include "bbport_menu_texts.inc"
+#undef BB_MENU_LANG
+};
+inline constexpr int MenuLanguageCount = int(MenuLanguage::Tr) + 1;
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
 /// menu label, default (the game's own behaviour).
@@ -82,7 +92,9 @@ inline constexpr int HdrPaperWhiteNits[] = {80, 100, 150, 200, 250, 300, 400};
 inline constexpr int HdrPaperWhiteCount = int(sizeof(HdrPaperWhiteNits) / sizeof(HdrPaperWhiteNits[0]));
 
 struct Values {
-    std::atomic<MenuLanguage> menu_language{MenuLanguage::Russian};
+    /// The menus' language: the game's (menu_language_auto) or the one chosen in the Insert menu.
+    std::atomic<MenuLanguage> menu_language{MenuLanguage::English};
+    std::atomic<bool> menu_language_auto{true};
     std::atomic<int> upscaler{UpscalerFsr3};
     std::atomic<int> preset{NativeAA};
     std::atomic<bool> sharpen{true};
@@ -160,8 +172,19 @@ struct Values {
 };
 
 Values& Get();
-/// Localized overlay text; the Language selector itself stays in English.
+/// Localized overlay text in the menus' language: the Russian given, the table's for the
+/// others, the English when the table lacks the text.
 const char* MenuText(const char* english, const char* russian);
+const char* Translate(MenuLanguage language, const char* english, const char* russian);
+/// The game's language: BB_LANGUAGE, the PS4 system language the game reads (English without it).
+MenuLanguage GameLanguage();
+MenuLanguage LanguageFromPs4(int id);
+/// bbport.ini's code ("en", "ru", "zh_TW", ...) and the language's own name.
+const char* LanguageCode(MenuLanguage language);
+const char* LanguageName(MenuLanguage language);
+std::optional<MenuLanguage> LanguageFromCode(std::string_view code);
+/// A language chosen in the menu, or none: the game's again.
+void SetMenuLanguage(std::optional<MenuLanguage> language);
 
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();

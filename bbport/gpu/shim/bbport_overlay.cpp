@@ -669,8 +669,138 @@ bool Rune(ImDrawList* draw, int index, ImVec2 p0, ImVec2 p1, float alpha = 1.0f)
     return true;
 }
 
-/// The menus' text font: the game's own when it loaded.
+// Japanese, Korean and Chinese (Kaniel 2026-10-17: every language the game has): the game's own
+// font of that language first, as the game draws it (menu/<folder>/font.gfx; the English one
+// holds the Japanese kana and kanji), then the system's for what the game's set lacks, made the
+// first time the menus speak the language. The plain overlay fonts get the same glyphs merged in.
+ImFont* language_fonts[BbSettings::MenuLanguageCount] = {};
+bool language_tried[BbSettings::MenuLanguageCount] = {};
+
+const char* GameFontFolder(BbSettings::MenuLanguage language) {
+    switch (language) {
+    case BbSettings::MenuLanguage::Ja:
+        return "engus";
+    case BbSettings::MenuLanguage::Ko:
+        return "korkr";
+    case BbSettings::MenuLanguage::ZhCn:
+        return "zhocn";
+    case BbSettings::MenuLanguage::ZhTw:
+        return "zhotw";
+    default:
+        return nullptr;
+    }
+}
+
+/// The system fonts with the language's glyphs (path, face in a collection), the first found.
+std::optional<std::pair<std::string, int>> SystemFont(BbSettings::MenuLanguage language) {
+    using L = BbSettings::MenuLanguage;
+    std::vector<std::pair<std::string, int>> candidates;
+#ifdef _WIN32
+    const char* windir = std::getenv("WINDIR");
+    const std::string fonts = std::string(windir && *windir ? windir : "C:\\Windows") + "\\Fonts\\";
+    const auto add = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            candidates.emplace_back(fonts + name, 0);
+        }
+    };
+    switch (language) {
+    case L::Ja: add({"YuGothM.ttc", "meiryo.ttc", "msgothic.ttc"}); break;
+    case L::Ko: add({"malgun.ttf", "gulim.ttc"}); break;
+    case L::ZhCn: add({"msyh.ttc", "simsun.ttc"}); break;
+    case L::ZhTw: add({"msjh.ttc", "mingliu.ttc"}); break;
+    default: break;
+    }
+#else
+    // Noto Sans CJK's collection: Japanese, Korean, Simplified and Traditional Chinese faces.
+    const int face = language == L::Ja ? 0 : language == L::Ko ? 1 : language == L::ZhCn ? 2 : 3;
+    for (const char* path : {"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                             "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+                             "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc"}) {
+        candidates.emplace_back(path, face);
+    }
+#endif
+    for (const auto& candidate : candidates) {
+        if (FILE* f = std::fopen(candidate.first.c_str(), "rb")) {
+            std::fclose(f);
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
+/// Before NewFrame: the fonts of the language the menus speak now.
+void LoadLanguage() {
+    const auto language = BbSettings::Get().menu_language.load();
+    const int l = int(language);
+    const char* folder = GameFontFolder(language);
+    if (!folder || language_tried[l]) {
+        return;
+    }
+    language_tried[l] = true;
+    std::vector<std::vector<std::uint8_t>> sources;
+    if (auto ttf = BbGameArt::TtfFromGfxFont(ReadGameFile((std::string("menu/") + folder + "/font.gfx").c_str()))) {
+        sources.push_back(std::move(*ttf));
+    }
+    if (std::string_view(folder) != "engus") {
+        // Latin and Cyrillic as in the other languages.
+        if (auto ttf = BbGameArt::TtfFromGfxFont(ReadGameFile("menu/engus/font.gfx"))) {
+            sources.push_back(std::move(*ttf));
+        }
+    }
+    sources.emplace_back(bb_serif_ttf, bb_serif_ttf_end);
+    const auto system = SystemFont(language);
+    if (system) {
+        if (FILE* f = std::fopen(system->first.c_str(), "rb")) {
+            std::vector<std::uint8_t> bytes;
+            std::uint8_t chunk[65536];
+            for (size_t n; (n = std::fread(chunk, 1, sizeof(chunk), f)) > 0;) {
+                bytes.insert(bytes.end(), chunk, chunk + n);
+            }
+            std::fclose(f);
+            sources.push_back(std::move(bytes));
+        }
+    }
+    ImFont* made = nullptr;
+    for (std::size_t i = 0; i < sources.size(); ++i) {
+        const bool system_face = system && i + 1 == sources.size();
+        void* data = IM_ALLOC(sources[i].size());
+        std::memcpy(data, sources[i].data(), sources[i].size());
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = true;
+        config.MergeMode = made != nullptr;
+        config.DstFont = made;
+        config.FontNo = system_face ? ImU32(system->second) : 0;
+        ImFont* added = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, int(sources[i].size()), 21.0f, &config);
+        made = made ? made : added;
+    }
+    language_fonts[l] = made;
+    // The overlay's plain fonts: the language's glyphs after their own (the first source above
+    // and the system's; the serif is already theirs).
+    for (ImFont* plain : {sans_font, serif_font}) {
+        for (std::size_t i = 0; plain && i < sources.size(); ++i) {
+            const bool system_face = system && i + 1 == sources.size();
+            if (i != 0 && !system_face) {
+                continue;
+            }
+            void* data = IM_ALLOC(sources[i].size());
+            std::memcpy(data, sources[i].data(), sources[i].size());
+            ImFontConfig config;
+            config.FontDataOwnedByAtlas = true;
+            config.MergeMode = true;
+            config.DstFont = plain;
+            config.FontNo = system_face ? ImU32(system->second) : 0;
+            ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, int(sources[i].size()), 18.0f, &config);
+        }
+    }
+    std::printf("Overlay: %s text from the game's %s font%s%s\n", BbSettings::LanguageCode(language), folder,
+                system ? " and " : "", system ? system->first.c_str() : "");
+}
+
+/// The menus' text font: the game's own when it loaded, in the menus' language.
 ImFont* Font() {
+    if (ImFont* own = language_fonts[int(BbSettings::Get().menu_language.load())]) {
+        return own;
+    }
     return font != nullptr ? font : serif_font;
 }
 
@@ -1170,12 +1300,17 @@ void DisplayTab() {
                    "следующего запуска (режим 60 FPS — собственные 60 игры); дальше меняется "
                    "сразу. Выкл оставляет режим лаунчера."),
            !BbSettings::FrameRateLocked(), [&](int i) { Store(s.fps_limit, BbSettings::FpsLimits[i], true); });
-    static const char* languages[] = {"English", "Русский"};
-    Choice("language", "Language", s.menu_language == BbSettings::MenuLanguage::Russian ? 1 : 0, 2,
-           [](int i) { return languages[i]; }, [](int) { return true; },
-           T("Language of this menu.", "Язык этого меню."), true, [&](int i) {
-               s.menu_language = i == 1 ? BbSettings::MenuLanguage::Russian
-                                        : BbSettings::MenuLanguage::English;
+    // Auto (the game's language), then every language the game has, in their own names.
+    static std::string auto_name;
+    auto_name = std::string("Auto (") + BbSettings::LanguageName(BbSettings::GameLanguage()) + ")";
+    Choice("language", "Language", s.menu_language_auto ? 0 : int(s.menu_language.load()) + 1,
+           BbSettings::MenuLanguageCount + 1,
+           [](int i) {
+               return i == 0 ? auto_name.c_str() : BbSettings::LanguageName(BbSettings::MenuLanguage(i - 1));
+           },
+           [](int) { return true; }, T("Language of this menu.", "Язык этого меню."), true, [&](int i) {
+               BbSettings::SetMenuLanguage(i == 0 ? std::nullopt
+                                                  : std::optional(BbSettings::MenuLanguage(i - 1)));
                BbSettings::Save();
            });
 }
@@ -4366,6 +4501,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     if (Team::open || Joining::open || menu_open || quit_open) {
         MenuArt::Load(); // the same: the game's menu art and font
     }
+    MenuArt::LoadLanguage(); // the same: Japanese, Korean or Chinese glyphs once they are needed
     if (Compass::shown) {
         Compass::RefreshPortraits(); // the same: the markers' portraits
     }

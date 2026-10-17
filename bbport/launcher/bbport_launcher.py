@@ -107,8 +107,12 @@ PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
 # choice labels stay short, so the selected one is shown in full.
 DRAW_PIPE = [("Авто", "", "Включён при 8 и более потоках процессора"), ("Включён", "1"),
              ("Выключен", "0", "Стабильнее, но медленнее")]
-LANGUAGES = [("Английский", "1"), ("Русский", "8"), ("Японский", "0"), ("Французский", "2"),
-             ("Испанский", "3"), ("Немецкий", "4"), ("Итальянский", "5")]
+# The game's language (BB_LANGUAGE): every one the game has text in, in its own name.
+LANGUAGES = [("English", "1"), ("English (UK)", "18"), ("Русский", "8"), ("日本語", "0"), ("Français", "2"),
+             ("Español", "3"), ("Español (Latinoamérica)", "20"), ("Deutsch", "4"), ("Italiano", "5"),
+             ("Nederlands", "6"), ("Português", "7"), ("Português (Brasil)", "17"), ("한국어", "9"),
+             ("繁體中文", "10"), ("简体中文", "11"), ("Suomi", "12"), ("Svenska", "13"), ("Dansk", "14"),
+             ("Norsk", "15"), ("Polski", "16"), ("Türkçe", "19")]
 LIVE_RESOLUTION = [("Авто (по видеокарте)", "auto"), ("Выключена (быстрее)", "0"), ("Включена", "1")]
 READBACKS = [("Relaxed", "", "По умолчанию"), ("Выключены", "0"), ("Precise", "2")]
 # Background pre-upload of the game's GPU memory into VRAM (BB_PREUPLOAD): auto = on with a discrete GPU.
@@ -256,8 +260,6 @@ def game_environment(s):
     env["BB_PATCHES_DIR"] = str(patches_dir(s))
     env["BB_PATCHES_CONFIG"] = str(DATA_DIR / "patches.json")
     env["BB_LANGUAGE"] = s["language"]
-    # The in-game menu speaks the launcher's language until one is chosen in it (menu_language).
-    env["BB_MENU_LANGUAGE"] = language()
     env["BB_FULLSCREEN"] = "1" if s["fullscreen"] else "0"
     env["BB_PRESENT_MODE"] = s["present_mode"]
     if s.get("gamepad"):
