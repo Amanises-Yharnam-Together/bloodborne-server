@@ -92,17 +92,48 @@ class StyleTest(unittest.TestCase):
     @unittest.skipUnless(tool.INNO_STYLES.is_file(), 'Inno Setup 6.6+ not installed')
     def test_inno_dark_style_has_no_blue_or_red_left(self):
         out = unpack(tool.restyle(tool.inno_dark_style()))
-        for _name, w, h, start in tool.read_images(out):
+        # the title bar's close button turns blood red under the pointer, as the launcher's does
+        _frames, buttons = tool.caption_parts(out)
+        close = {(image, x, y) for image, (x0, y0, x1, y1), _state, is_close in buttons if is_close
+                 for x in range(x0, x1) for y in range(y0, y1)}
+        for name, w, h, start in tool.read_images(out):
             px = out[start:start + w * h * 4]
             for i in range(0, len(px), 4 * 7):
                 b, g, r, a = px[i:i + 4]
-                if a < 64:
+                x, y = (i // 4) % w, h - 1 - (i // 4) // w
+                if a < 64 or max(r, g, b) < 40 or (name, x, y) in close:
                     continue
                 h_, s = hue((r, g, b))
                 self.assertFalse(s > 0.3 and (h_ < 25 or 70 < h_ < 260), (r, g, b, a))
         table = dict(tool.read_entries(out))
         self.assertEqual(table['clHighlight'], '$00365A6E')
         self.assertEqual(table['Window'], '$00130F0D')
+        self.assertEqual(table['CaptionTextNormal'], 'Segoe UI,9,1,174,165,144')
+
+    @unittest.skipUnless(tool.INNO_STYLES.is_file(), 'Inno Setup 6.6+ not installed')
+    def test_inno_title_bar_is_the_launchers(self):
+        out = unpack(tool.restyle(tool.inno_dark_style()))
+        frames, buttons = tool.caption_parts(out)
+        self.assertTrue(frames and len(buttons) >= 20, (len(frames), len(buttons)))
+        images = {name: (w, h, start) for name, w, h, start in tool.read_images(out)}
+
+        def colors(part):
+            image, (x0, y0, x1, y1) = part[0], part[1]
+            w, h, start = images[image]
+            seen = {}
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    o = start + ((h - 1 - y) * w + x) * 4
+                    b, g, r, a = out[o:o + 4]
+                    if a == 255:
+                        seen[(r, g, b)] = seen.get((r, g, b), 0) + 1
+            return max(seen, key=seen.get) if seen else None
+
+        # the bar is the launcher's ground; a button's hover its light wash, the close button's blood red
+        self.assertEqual(colors(next(f for f in frames if f[2] == 'Title')), (13, 15, 19))
+        hot = {(b[2], b[3]): colors(b) for b in buttons if b[0] == 'style.png'}
+        self.assertEqual(hot[('BitmapHot', False)], (40, 40, 40))
+        self.assertEqual(hot[('BitmapHot', True)], (138, 42, 38))
 
 
 class SetupScriptTest(unittest.TestCase):

@@ -44,6 +44,11 @@ PALETTE = {
 }
 IDENTS = {'clWhite': (255, 255, 255), 'clSilver': (192, 192, 192), 'clGray': (128, 128, 128)}
 PARCHMENT = (240, 226, 194)
+# The title bar as the launcher's own (CaptionButton): its ground, MUTED glyphs turning TEXT under the
+# pointer over a light wash, the close button blood red; DIM when the window is not the active one.
+BAR, MUTED, DIM, LINE_RGB = (13, 15, 19), (174, 165, 144), (110, 106, 96), (43, 48, 56)
+HOT, PRESSED, CLOSE_HOT, CLOSE_PRESSED = (40, 40, 40), (55, 54, 51), (138, 42, 38), (110, 34, 30)
+CAPTION_TEXT = {'CaptionTextNormal': MUTED, 'CaptionTextInactive': DIM}
 GOLD_HUE = 39 / 360
 
 
@@ -71,6 +76,10 @@ def tcolor(rgb):
 
 
 def restyle_value(name, value):
+    if name in CAPTION_TEXT:
+        font = value.split(',')
+        font[3:6] = (str(c) for c in CAPTION_TEXT[name])
+        return ','.join(font)
     if name in PALETTE:
         return PALETTE[name]
     if name == 'clWindowText' or value == 'clWhite':
@@ -145,6 +154,160 @@ def _recolor_pixels(px):
     return bytes(out)
 
 
+def _string(b, i):
+    return b[i + 1:i + 1 + b[i]].decode('latin1'), i + 1 + b[i]
+
+
+def _value(b, i):
+    """One property value of a Delphi binary form stream (TPF0), and where the next one starts."""
+    kind, i = b[i], i + 1
+    sizes = {0: 0, 2: 1, 3: 2, 4: 4, 5: 10, 8: 0, 9: 0}
+    if kind in sizes:
+        raw = b[i:i + sizes[kind]]
+        return (int.from_bytes(raw, 'little', signed=True) if kind in (2, 3, 4) else None), i + sizes[kind]
+    if kind in (6, 7):
+        return _string(b, i)
+    if kind in (0x0a, 0x0c, 0x14):
+        n, = struct.unpack_from('<i', b, i)
+        return None, i + 4 + n
+    if kind == 0x12:
+        n, = struct.unpack_from('<i', b, i)
+        return None, i + 4 + 2 * n
+    if kind == 0x0b:
+        while b[i]:
+            i = _string(b, i)[1]
+        return None, i + 1
+    if kind == 0x01:
+        while b[i]:
+            i = _value(b, i)[1]
+        return None, i + 1
+    if kind == 0x0e:
+        while b[i]:
+            if b[i] in (2, 3, 4):
+                i = _value(b, i)[1]
+            while b[i]:
+                i = _value(b, _string(b, i)[1])[1]
+            i += 1
+        return None, i + 1
+    raise ValueError(f'value kind {kind} at {i}')
+
+
+def _object(b, i, out):
+    if b[i] & 0xF0 == 0xF0:
+        i += 1
+    cls, i = _string(b, i)
+    name, i = _string(b, i)
+    props = {}
+    while b[i]:
+        key, i = _string(b, i)
+        props[key], i = _value(b, i)
+    out.append((cls, name, props))
+    i += 1
+    while b[i]:
+        i = _object(b, i, out)
+    return i + 1
+
+
+def style_objects(raw):
+    """(class, name, properties) of every object of the style, in order."""
+    out = []
+    for m in re.finditer(rb'TPF0', raw[_table_start_images(raw):]):
+        _object(raw, _table_start_images(raw) + m.end(), out)
+    return out
+
+
+def _table_start_images(raw):
+    _name, w, h, start = read_images(raw)[-1]
+    return start + w * h * 4 + 2
+
+
+FRAME_PARTS = ('Title', 'LeftBorder', 'RightBorder', 'BottomBorder', 'Client')
+STATES = ('Bitmap', 'ActiveBitmap', 'BitmapHot', 'BitmapPressed')
+
+
+def caption_parts(raw):
+    """The window frames' pictures, (image, rect, part), and their title bar buttons' pictures,
+    (image, rect, state, is close), from the style's form objects (Form and ToolWindow)."""
+    frames, buttons, in_form = [], [], False
+    for cls, name, props in style_objects(raw):
+        if cls == 'TSeStyleObject' and props.get('Kind') == 'skForm':
+            in_form = True
+        elif cls == 'TSeStyleObject' and props.get('Align') == 'saNone':
+            in_form = False
+        if not in_form:
+            continue
+        for state in STATES:
+            rect = tuple(props.get(f'{state}.{side}', 0) for side in ('Left', 'Top', 'Right', 'Bottom'))
+            if rect[2] <= rect[0] or rect[3] <= rect[1]:
+                continue
+            image = props.get(f'{state}.Name') or 'style.png'
+            if cls == 'TSeSystemButton':
+                buttons.append((image, rect, state, name.startswith('btnClose')))
+            elif name in FRAME_PARTS and state in ('Bitmap', 'ActiveBitmap'):
+                frames.append((image, rect, name))
+    return frames, buttons
+
+
+def _lum(px):
+    return 0.299 * px[2] + 0.587 * px[1] + 0.114 * px[0]
+
+
+def _repaint(raw, image, rect, paint):
+    """paint(pixels of the rect) -> new pixels; pixels are BGRA, premultiplied, rows stored bottom up."""
+    _n, w, h, start = image
+    x0, y0, x1, y1 = rect
+    offsets = [start + ((h - 1 - y) * w + x) * 4 for y in range(y0, y1) for x in range(x0, x1)]
+    new = paint([bytes(raw[o:o + 4]) for o in offsets])
+    for o, px in zip(offsets, new):
+        raw[o:o + 4] = px
+
+
+def _pixel(rgb, alpha=255):
+    r, g, b = rgb
+    return bytes((round(b * alpha / 255), round(g * alpha / 255), round(r * alpha / 255), alpha))
+
+
+def _frame_paint(pixels):
+    opaque = [p for p in pixels if p[3] == 255]
+    fill = max(set(opaque), key=opaque.count) if opaque else None
+    return [p if p[3] == 0 else _pixel(BAR if p == fill else LINE_RGB, p[3]) for p in pixels]
+
+
+def _button_paint(state, close):
+    if state == 'Bitmap':
+        ground, ink = BAR, DIM
+    elif state == 'ActiveBitmap':
+        ground, ink = BAR, MUTED
+    elif state == 'BitmapHot':
+        ground, ink = CLOSE_HOT if close else HOT, PARCHMENT
+    else:
+        ground, ink = CLOSE_PRESSED if close else PRESSED, PARCHMENT
+
+    def paint(pixels):
+        opaque = [p for p in pixels if p[3] == 255]
+        clear = len(opaque) * 2 < len(pixels)
+        base = None if clear else max(set(opaque), key=opaque.count)
+        far = max((abs(_lum(p) - (_lum(base) if base else 0)) for p in pixels if p[3]), default=1) or 1
+        out = []
+        for p in pixels:
+            if clear:
+                out.append(p if p[3] == 0 else _pixel(ink, p[3]))
+                continue
+            t = min(1.0, abs(_lum(p) - _lum(base)) / far)
+            out.append(_pixel(tuple(round(a + (b - a) * t) for a, b in zip(ground, ink)), 255 if p[3] else 0))
+        return out
+    return paint
+
+
+def repaint_caption(raw):
+    images = {image[0]: image for image in read_images(raw)}
+    frames, buttons = caption_parts(raw)
+    for image, rect, _part in frames:
+        _repaint(raw, images[image], rect, _frame_paint)
+    for image, rect, state, close in buttons:
+        _repaint(raw, images[image], rect, _button_paint(state, close))
+
+
 def restyle(style):
     if not style.startswith(HEADER):
         raise ValueError('not a VCL style file')
@@ -152,6 +315,7 @@ def restyle(style):
     raw = raw.replace(SOURCE_NAME.encode('utf-16-le'), NAME.encode('utf-16-le'), 1)
     for _name, w, h, start in read_images(raw):
         raw[start:start + w * h * 4] = _recolor_pixels(raw[start:start + w * h * 4])
+    repaint_caption(raw)
     table = _table_start(raw)
     parts, last = [bytes(raw[:table])], table
     for s, e, name, value in _entries(raw, table):
