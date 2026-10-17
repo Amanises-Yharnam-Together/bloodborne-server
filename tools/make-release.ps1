@@ -273,7 +273,11 @@ if (-not $Iscc) {
 if (-not $Iscc -or -not (Test-Path $Iscc)) { throw "No Inno Setup 6 (ISCC.exe): winget install JRSoftware.InnoSetup, or pass -Iscc" }
 $setup = Join-Path $Out $setupName
 if (Test-Path $setup) { Remove-Item -Force $setup }
-& $Iscc /Q "/DAppVersion=$Version" "/DSourceDir=$release" "/DOutputDir=$Out" `
+# The window style: this Inno Setup's own dark style in the launcher's colors (not part of the release).
+$style = Join-Path $stage "setup.vsf"
+& $checkPython -I (Join-Path $PSScriptRoot "release\setup_style.py") $style (Join-Path (Split-Path $Iscc) "SetupCustomStyle.e32")
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $style)) { throw "setup_style.py failed (Inno Setup 6.6 or newer is needed)" }
+& $Iscc /Q "/DAppVersion=$Version" "/DSourceDir=$release" "/DOutputDir=$Out" "/DStyleFile=$style" `
     "/DIconFile=$(Join-Path $bbport 'launcher\bloodborne.ico')" (Join-Path $PSScriptRoot "release\setup.iss")
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $setup)) { throw "Inno Setup failed ($LASTEXITCODE)" }
 $sha = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant()
