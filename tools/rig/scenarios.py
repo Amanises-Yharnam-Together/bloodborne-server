@@ -41,6 +41,7 @@ CENTRAL_YHARNAM_LAMP = 2412950  # the first lamp, where the rig's characters sta
 CENTRAL_YHARNAM_LAMP_2 = 2412951  # talk 241001, 3 m from talk 241319 (Gilbert's window?)
 CATHEDRAL_WARD = "0x18000000"
 CATHEDRAL_WARD_LAMP = 2402950
+CATHEDRAL_WARD_LAMP_LIT = 12407810  # its active flag (bloodborne_map.h's LampActiveFlag)
 ENEMY = "0x1001400b"  # 484 HP, 17 m from the lamp (farther ones are not awake)
 BY_THE_LAMP = "0x100140a0"  # 999 HP, 1.6 m from the first lamp: by Gilbert's window
 AWAY_FROM_LAMP = "-215.0 -54.5 178.0"  # beside that enemy, 17 m from the lamp
@@ -2384,6 +2385,42 @@ SCENARIOS = {
                                     r"Overlay: ja text from the game's engus font",
                                     r"Overlay: ko text from the game's korkr font",
                                     r"Overlay: zh_TW text from the game's zhotw font"]},
+        "timeout": 300,
+    },
+    # Kaniel 2026-10-17: the map screen (an Elden Ring style map). Cathedral Ward's lamp lit, the
+    # map opens on Central Yharnam (its picture drawn from the game's map files the first time),
+    # L1 goes to Cathedral Ward (the areas in order: the Dream, Cathedral Ward, Central Yharnam),
+    # Cross asks to travel to its lamp and Cross again travels.
+    "map-screen": {
+        "about": "the map screen: the area's picture drawn from the game's map files with the "
+                 "player's arrow and the lamps lit; L1 to another area; a trip from the map to its "
+                 "lamp; pictures of each",
+        "roles": {
+            # The player's own area is drawn ahead while the screen is shut; another as it shows.
+            "host": [START, "godmode", f"set-flag {CATHEDRAL_WARD_LAMP_LIT}", "wait 25", "keys map", "wait 10",
+                     "shot map-central-yharnam", "keys square", "wait 2", "shot map-centred", "keys l1",
+                     "wait 30", "shot map-cathedral-ward", "keys enter", "wait 2", "shot map-question",
+                     "keys enter", f"wait-map {CATHEDRAL_WARD} 120", "wait 8", "keys map", "wait 5",
+                     "shot map-arrived", "keys circle", "wait 2"],
+        },
+        "expect": {"host": [rf"Bloodborne map screen: travels to {CATHEDRAL_WARD_LAMP}",
+                            rf"Bloodborne map screen: arrived at {CATHEDRAL_WARD_LAMP}"]},
+        "console_expect": {"host": [r"Map: (drew|read) m24_01_00_00", r"Map: (drew|read) m24_00_00_00"]},
+        "timeout": 300,
+    },
+    # Kaniel 2026-10-17: the map screen in a session: the other hunter at its spot on the
+    # picture, ringed in the compass's light gray, and listed with its area.
+    "map-team": {
+        "about": "the map screen with a teammate: its marker where it stands, its name and area "
+                 "in the list; the host shoots it",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 5", f"teleport {COMPASS_HOST} 0.0",
+                     "wait 10", "keys map", "wait 12", "shot map-team", "keys circle", "wait 3",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 8", f"teleport {COMPASS_GUEST} 0.0",
+                      "wait 30", "expect-session 2"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
     "soak": {

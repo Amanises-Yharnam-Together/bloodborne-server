@@ -110,6 +110,9 @@ std::vector<Item> ItemsFromGameText(std::span<const std::uint8_t> bnd);
 /// runes (0x80000000 | id) from FMG 31 of `menu` (menu.msgbnd). Placeholders left out.
 std::map<std::uint32_t, std::string> ItemNamesFromGameText(std::span<const std::uint8_t> items,
                                                            std::span<const std::uint8_t> menu);
+/// Kaniel 2026-10-17 (the map screen): the strings of FMG `fmg` in a msgbnd (inflated), by id;
+/// empty on bad input.
+std::map<std::uint32_t, std::string> GameText(std::span<const std::uint8_t> bnd, std::int32_t fmg);
 /// An item's English name by its full item id from the game's own text (loaded once), or empty.
 std::string ItemName(std::uint32_t item_id);
 

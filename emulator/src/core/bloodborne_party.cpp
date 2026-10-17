@@ -4356,8 +4356,9 @@ std::optional<double> AutoplayChapterBudget(const AutoplayCommand& command) {
 }
 
 std::optional<std::string> AutoplayMenuKeys(const std::vector<std::string>& tokens) {
-    static constexpr std::array<std::string_view, 11> Keys{
-        "toggle", "up", "down", "left", "right", "enter", "back", "l1", "r1", "kdown", "kup"};
+    static constexpr std::array<std::string_view, 14> Keys{
+        "toggle", "up", "down",  "left", "right", "enter",  "back",
+        "l1",     "r1", "kdown", "kup",  "map",   "circle", "square"};
     if (tokens.empty()) {
         return std::nullopt;
     }
@@ -5735,6 +5736,7 @@ PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view
             .landed = entry.landed,
             .needed = entry.needed,
             .at = map != 0 && entry.map == map ? std::optional{entry.at} : std::nullopt,
+            .map = entry.map,
         });
     }
     return panel;
