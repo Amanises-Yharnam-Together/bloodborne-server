@@ -24,6 +24,7 @@
 #include "bbport_party_icons.h"
 #include "bbport_party_layout.h"
 #include "bbport_save_editor.h"
+#include "bbport_frame_gen_pace.h"
 #include "bbport_settings.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -993,6 +994,69 @@ void Choice(const char* id, const char* label, int current, int count, Label&& n
     }
 }
 
+/// Frame generation's provider, multiplier and fitting to the display, and what runs now
+/// (Supermedo's 026f8ff, 389124d). `on`: the switch is on and an upscaler selected.
+void FrameGenRows(bool on) {
+    auto& s = BbSettings::Get();
+    const int dlss_max = std::clamp(s.dlssg_max_multiplier.load(), 1, 4);
+    const bool dlss = s.frame_gen_provider == BbSettings::FrameGenDlss && dlss_max > 1;
+    static const char* providers[] = {"FSR 3.1", "DLSS"};
+    Choice("frame_gen_provider", T("Frame generation: provider", "Генерация кадров: технология"),
+           dlss ? 1 : 0, 2, [](int i) { return providers[i]; },
+           [&](int i) { return i == 0 || dlss_max > 1; },
+           dlss_max > 1
+               ? T("FSR 3.1: any GPU, 2x. DLSS: NVIDIA's frame generation, smoother in motion; up "
+                   "to 4x on a GeForce RTX 50.",
+                   "FSR 3.1: любая видеокарта, 2x. DLSS: генерация кадров NVIDIA, плавнее в "
+                   "движении; до 4x на GeForce RTX 50.")
+               : T("FSR 3.1: any GPU, 2x. DLSS Frame Generation needs a GeForce RTX 40 or newer "
+                   "with bbport_dlss.dll and nvngx_dlssg.dll.",
+                   "FSR 3.1: любая видеокарта, 2x. Для DLSS Frame Generation нужна GeForce RTX "
+                   "40 или новее, bbport_dlss.dll и nvngx_dlssg.dll."),
+           on, [&](int i) {
+               Store(s.frame_gen_provider, i ? int(BbSettings::FrameGenDlss) : int(BbSettings::FrameGenFsr3),
+                     true);
+           });
+    static const char* multipliers[] = {"2x", "3x", "4x"};
+    const int multiplier = dlss ? std::clamp(s.frame_gen_multiplier.load(), 2, dlss_max) : 2;
+    Choice("frame_gen_multiplier", T("Frame generation: multiplier", "Генерация кадров: множитель"),
+           multiplier - 2, 3, [](int i) { return multipliers[i]; },
+           [&](int i) { return i + 2 <= (dlss ? dlss_max : 2); },
+           T("Frames shown per game frame. FSR 3.1 and DLSS on a GeForce RTX 40: 2x; DLSS on a "
+             "GeForce RTX 50: up to 4x. Each one more uses some video memory.",
+             "Кадров на экране на каждый кадр игры. FSR 3.1 и DLSS на GeForce RTX 40: 2x; DLSS на "
+             "GeForce RTX 50: до 4x. Каждый следующий занимает видеопамять."),
+           on && dlss && dlss_max > 2, [&](int i) { Store(s.frame_gen_multiplier, i + 2, true); });
+    Toggle("frame_gen_fit", T("Fit to display refresh", "Под частоту экрана"), s.frame_gen_fit_display,
+           T("On: no more frames than the display shows (an uncapped game gets fewer generated "
+             "frames, and the GPU does less). Off: the multiplier as chosen; past the refresh rate "
+             "the display shows the newest frames. With V-Sync always fitted.",
+             "Вкл.: не больше кадров, чем показывает экран (при снятом ограничении FPS "
+             "генерируется меньше, видеокарта меньше нагружена). Выкл.: множитель как выбран. С "
+             "V-Sync всегда под экран."),
+           on);
+    if (!on) {
+        return;
+    }
+    static char line[160];
+    const int now = s.frame_gen_now.load();
+    const int hz = s.frame_gen_display_hz.load();
+    if (const char* problem = s.frame_gen_problem.load()) {
+        Note(problem, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
+    }
+    if (hz > 0 && now > 0) {
+        std::snprintf(line, sizeof(line), T("Now %dx on a %d Hz display", "Сейчас %dx на экране %d Гц"),
+                      now + 1, hz);
+        Note(line, Dim());
+    } else if (hz > 0 && s.fg_base_fps > 0.0f) {
+        std::snprintf(line, sizeof(line),
+                      T("Paused: no room on the %d Hz display at this frame rate",
+                        "Приостановлено: нет места на экране %d Гц при этой частоте кадров"),
+                      hz);
+        Note(line, Dim());
+    }
+}
+
 void SliderRow(const char* id, const char* label, std::atomic<float>& value, float lo, float hi,
                float step_size, const char* hint, bool enabled = true) {
     char text[32];
@@ -1275,15 +1339,15 @@ void UpscalerTab() {
              "Точное движение анимированных объектов: одежда и оружие меньше рассыпаются в "
              "движении. Применяется после перезапуска игры."),
            upscaler_on);
-    Toggle("frame_generation", T("Frame generation (FSR 3.1)", "Генерация кадров (FSR 3.1)"),
-           s.frame_generation,
-           T("Doubles the frame rate: one interpolated frame between every two game frames. Adds a "
-             "little input lag; best from 60 FPS. Pauses while the frame rate is above half the "
-             "display's refresh rate.",
-             "Удваивает частоту кадров: между каждыми двумя кадрами игры показывается один "
-             "интерполированный. Немного добавляет задержки ввода; лучше от 60 FPS. "
-             "Приостанавливается, пока частота кадров выше половины частоты экрана."),
+    Toggle("frame_generation", T("Frame generation", "Генерация кадров"), s.frame_generation,
+           T("Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS "
+             "makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some "
+             "video memory; best from 60 FPS. Off by default.",
+             "Кадры между кадрами игры: FSR 3.1 удваивает частоту кадров на любой видеокарте, DLSS "
+             "делает до трёх на GeForce RTX 50 (4x). Немного добавляет задержки ввода и занимает "
+             "видеопамять; лучше от 60 FPS. По умолчанию выключено."),
            upscaler_on);
+    FrameGenRows(upscaler_on && s.frame_generation);
     if (BbSettings::IsFsr4(s.upscaler)) {
         Toggle("fsr4_exposure", T("FSR 4: auto exposure", "FSR 4: автоэкспозиция"), s.fsr4_auto_exposure,
                T("The FSR 4 network normalises colour by exposure and uses it to decide when to "
@@ -2003,9 +2067,12 @@ void FpsCounter() {
                                 : s.upscaler == BbSettings::UpscalerXess   ? "XeSS"
                                                                            : "";
     if (s.fg_active) {
-        // Game frames -> frames shown: the interval of the shown images is half the game's.
-        ImGui::Text("%.0f -> %.0f FPS FG  %s", s.fg_base_fps.load(), s.fg_presented_fps.load(),
-                    upscaler_name);
+        // The frames shown, and the game's own rate (what resolution and upscaler change) with
+        // the multiplier (Supermedo's aabd7f7): "120 FPS (game 60, frame gen 2x)".
+        char text[96];
+        BbFrameGenPace::FpsText(text, sizeof(text), s.fg_presented_fps.load(), s.fg_base_fps.load(),
+                                true, frame_ms_avg);
+        ImGui::Text("%s  %s", text, upscaler_name);
     } else {
         ImGui::Text(BbSettings::MenuText("%.0f FPS  %.1f ms  %s", "%.0f FPS  %.1f мс  %s"),
                     frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f, frame_ms_avg,

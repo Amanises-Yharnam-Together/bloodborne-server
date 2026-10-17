@@ -17,6 +17,9 @@ enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, Upsca
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
 }
+/// Frame generation's provider (bbport.ini frame_gen_provider): FSR 3.1 on any GPU, DLSS Frame
+/// Generation on a GeForce RTX 40 (2x) or RTX 50 (up to 4x). BbFrameGenPace::Provider values.
+enum FrameGenProvider : int { FrameGenFsr3 = 1, FrameGenDlss = 2 };
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum class MenuLanguage { English, Russian };
@@ -124,6 +127,22 @@ struct Values {
     /// two game frames, on top of the selected upscaler. Off by default (bbport.ini
     /// frame_generation, BB_FRAME_GEN).
     std::atomic<bool> frame_generation{false};
+    /// Its provider (FrameGenProvider; bbport.ini frame_gen_provider fsr3|dlss,
+    /// BB_FRAME_GEN_PROVIDER) and the frames shown per game frame with DLSS (2..4;
+    /// frame_gen_multiplier, BB_FRAME_GEN_MULTIPLIER; FSR 3.1 makes one). Live.
+    std::atomic<int> frame_gen_provider{FrameGenFsr3};
+    std::atomic<int> frame_gen_multiplier{2};
+    /// At most the frames the display shows between two of the game's (an uncapped game then
+    /// gets fewer generated frames); off: the multiplier as chosen (frame_gen_fit_display,
+    /// BB_FRAME_GEN_FIT_DISPLAY). With V-Sync (FIFO) the frames are always fitted.
+    std::atomic<bool> frame_gen_fit_display{true};
+    /// Set by the renderer: the multiplier DLSS Frame Generation reaches on this GPU (1 without
+    /// it), why a provider stopped (or null), and what runs now: generated frames per game
+    /// frame (0 paused) and the display's refresh rate.
+    std::atomic<int> dlssg_max_multiplier{1};
+    std::atomic<const char*> frame_gen_problem{nullptr};
+    std::atomic<int> frame_gen_now{0};
+    std::atomic<int> frame_gen_display_hz{0};
     /// Frame cap of the unlocked frame rate, 0 none (bbport.ini fps_limit, the game menu; else
     /// the launcher's BB_FPS_LIMIT). Live.
     std::atomic<int> fps_limit{0};

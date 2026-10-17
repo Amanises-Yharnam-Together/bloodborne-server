@@ -207,4 +207,47 @@ int main() {
     assert(BbSettings::Line("key.l1") == std::optional<std::string>("Mouse X1") && !BbSettings::Line("pad.circle"));
     unlink(fifth);
     std::puts("PASS: control lines read, changed and removed");
+
+    // Frame generation (Supermedo's 026f8ff, 389124d): the switch stays frame_generation; the
+    // provider (FSR 3.1 or DLSS), the multiplier (2x-4x) and fitting to the display are new keys,
+    // with environment overrides for scripts.
+    char sixth[512];
+    std::snprintf(sixth, sizeof(sixth), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+    const int fd6 = mkstemp(sixth);
+    assert(fd6 >= 0);
+    const char ini6[] = "frame_generation=1\nframe_gen_provider=dlss\nframe_gen_multiplier=7\n"
+                        "frame_gen_fit_display=1\n";
+    assert(write(fd6, ini6, sizeof(ini6) - 1) == ssize_t(sizeof(ini6) - 1));
+    close(fd6);
+    setenv("BB_CONFIG", sixth, 1);
+    BbSettings::Load();
+    assert(s.frame_generation && s.frame_gen_provider == BbSettings::FrameGenDlss);
+    assert(s.frame_gen_multiplier == 4 && "clamped to 2..4");
+    assert(s.frame_gen_fit_display);
+    s.frame_gen_multiplier = 3;
+    BbSettings::Save();
+    const std::string saved6 = Read(sixth);
+    assert(saved6.find("frame_gen_provider=dlss\n") != std::string::npos);
+    assert(saved6.find("frame_gen_multiplier=3\n") != std::string::npos);
+    assert(saved6.find("frame_gen_fit_display=1\n") != std::string::npos);
+    setenv("BB_FRAME_GEN_PROVIDER", "fsr3", 1);
+    setenv("BB_FRAME_GEN_MULTIPLIER", "1", 1);
+    setenv("BB_FRAME_GEN_FIT_DISPLAY", "0", 1);
+    BbSettings::Load();
+    assert(s.frame_gen_provider == BbSettings::FrameGenFsr3 && s.frame_gen_multiplier == 2 &&
+           !s.frame_gen_fit_display);
+    unsetenv("BB_FRAME_GEN_PROVIDER");
+    unsetenv("BB_FRAME_GEN_MULTIPLIER");
+    unsetenv("BB_FRAME_GEN_FIT_DISPLAY");
+    // An unknown provider is FSR 3.1 (any GPU).
+    {
+        std::FILE* file = std::fopen(sixth, "w");
+        std::fputs("frame_gen_provider=xyz\n", file);
+        std::fclose(file);
+    }
+    s.frame_gen_provider = BbSettings::FrameGenDlss;
+    BbSettings::Load();
+    assert(s.frame_gen_provider == BbSettings::FrameGenFsr3);
+    unlink(sixth);
+    std::puts("PASS: frame generation provider, multiplier, fit to display");
 }

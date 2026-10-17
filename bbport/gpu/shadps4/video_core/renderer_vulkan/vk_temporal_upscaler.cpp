@@ -2158,7 +2158,7 @@ void TemporalUpscaler::CaptureForFrameGeneration(vk::Image depth, vk::ImageLayou
     }
     // The same sign convention as the upscaler dispatch (toggle 1 << 26 flips it).
     const float sign = BbToggle::Disabled(1u << 26) ? -1.0f : 1.0f;
-    frame_generation->CaptureScene({
+    FrameGeneration::Scene scene{
         .depth = depth,
         .depth_layout = layout,
         .depth_format = format,
@@ -2169,8 +2169,18 @@ void TemporalUpscaler::CaptureForFrameGeneration(vk::Image depth, vk::ImageLayou
         .frame_ms = frame_ms,
         .camera_near = camera_motion.Near(),
         .camera_fov = camera_motion.VerticalFov(),
+        // The camera the upscalers get (far plane 3000 when the projection's is infinite), and
+        // for DLSS its motion as clip-space matrices.
+        .camera_far = camera_motion.FarPlane(3000.0f),
+        .has_matrices = false,
+        .view_to_clip = {},
+        .clip_to_prev_clip = {},
+        .prev_clip_to_clip = {},
         .reset = was_reset,
-    });
+    };
+    scene.has_matrices = camera_motion.ClipTransforms(scene.view_to_clip, scene.clip_to_prev_clip,
+                                                      scene.prev_clip_to_clip);
+    frame_generation->CaptureScene(scene);
 }
 
 void TemporalUpscaler::CaptureNativeHudless(VideoCore::ImageId color) {

@@ -120,7 +120,8 @@ if (-not (& $haveDlss)) {
     $candidates = @($DlssDir) + @(Join-Path $env:BB_ROOT "port-src\bbport\out") | Where-Object { $_ }
     foreach ($dir in $candidates) {
         if (-not ($dlssFiles | Where-Object { -not (Test-Path (Join-Path $dir $_)) })) {
-            foreach ($file in $dlssFiles + "NVIDIA-DLSS-LICENSE.txt") {
+            # nvngx_dlssg.dll (DLSS Frame Generation) when the folder has it.
+            foreach ($file in $dlssFiles + "nvngx_dlssg.dll", "NVIDIA-DLSS-LICENSE.txt") {
                 if (Test-Path (Join-Path $dir $file)) { Copy-Item (Join-Path $dir $file) (Join-Path $bbport "out\$file") }
             }
             Write-Host "  DLSS bridge taken from $dir"
