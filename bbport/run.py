@@ -244,6 +244,9 @@ def main():
             lambda: button_icons.list_gamepads(probe.parent / 'bb-gpu-capabilities.exe'))
     except Exception:  # nothing about the icons may stop the game from starting
         env['BB_ICONS_SET'] = 'playstation'
+    # The view belongs to this process, which lasts for the whole game: a later launch removes it if this one is
+    # killed before its own cleanup below (mods.remove_stale_views).
+    env['BB_VIEW_OWNER'] = str(os.getpid())
     game = game_view(env, game, out, data, icons)
     mod_view = game if game.resolve() != original_game else None
     try:
@@ -336,11 +339,12 @@ def main():
     finally:
         if mod_view:
             # Read-only game files leave read-only links (mods.remove_overlay clears them, WinError 5).
-            from mods import remove_overlay
+            from mods import OWNER_SUFFIX, remove_overlay
             try:
                 remove_overlay(mod_view, original_game)
+                Path(str(mod_view) + OWNER_SUFFIX).unlink(missing_ok=True)
             except OSError:
-                pass
+                pass  # the next launch removes it (mods.remove_stale_views)
 
 
 if __name__ == '__main__':
