@@ -15,6 +15,8 @@
 //     busy; the yes/no box's answer lands in MenuMan +0x1CC (1 yes, 2 no). An abort function's call
 //     (self, ctx) -> bool runs every frame the job lives, true closes it.
 // Jobs are reference counted (+8), released as the game does (vtable slot 0 at the last).
+// A picked row runs only when the dialog's select lets it: the port's Give rows are let through
+// for any item, weapons too (bbport_trade_rows.h).
 #include "bbport_trade_menu.h"
 
 #include <algorithm>
@@ -26,6 +28,7 @@
 #include "../bbcoop.h"
 #include "bbport_game_menu.h"
 #include "bbport_save_editor.h"
+#include "bbport_trade_rows.h"
 
 namespace BbTradeMenu {
 namespace {
@@ -56,6 +59,8 @@ constexpr u64 MenuAnswerAt = 0x1CC;
 constexpr u64 MenuBusyAt = 0x2FC;
 constexpr u64 OperatorNew = 0x02BBE9A8;
 constexpr u64 OperatorDelete = 0x02BBE588;
+constexpr u64 PlayerGameDataPointer = 0x0553B130; // [+8]: PlayerGameData
+constexpr u64 EquipGameDataAt = 0x1D0;
 constexpr u32 RowNameCategory = 200, RowHelpCategory = 201, DialogCategory = 204;
 constexpr u32 GoodsItem = 0x40000000;
 constexpr u32 EchoesKind = 1, GoodsKind = 2, ItemKind = 3;
@@ -95,6 +100,8 @@ F Game(u64 va) {
 }
 
 u32 give_name = 0, give_help = 0, give_echoes_name = 0, give_echoes_help = 0;
+// The Give rows of the item commands open now (their labels), for the select's check.
+BbTradeRows::GiveRows give_rows;
 
 // ---- std::function implementations of our own (the game copies and destroys them) ----
 struct Impl {
@@ -242,6 +249,7 @@ void AddGiveRow(void* model, u32 name, u32 help, u32 kind, u32 id, u32 handle, u
 // near; "Give Blood Echoes" on every item's rows while the player holds any (Kaniel 2026-10-16:
 // echoes easy to find, not only on the vials and bullets).
 GAME_ABI void* OpenItemCommands(void** out, void* model, u8* factory) {
+    give_rows.Clear();
     u8* impl = factory ? *reinterpret_cast<u8**>(factory + 0x20) : nullptr;
     if (impl && *reinterpret_cast<u64*>(impl) == image + ItemCommandsFactoryVtable &&
         bbcoop_trade_on()) {
@@ -268,17 +276,47 @@ GAME_ABI void* OpenItemCommands(void** out, void* model, u8* factory) {
         std::fflush(stdout);
         for (int i = 0; give && i < count; ++i) {
             const std::string row = std::string("Give to ") + names[i];
+            give_rows.AddItem(row);
             AddGiveRow(model, BbGameMenu::SetDynamicText(2 + i, row.c_str()), give_help, kind, id,
                        goods ? 0 : handle, u32(i));
         }
         for (int i = 0; echoes && i < count; ++i) {
             const std::string row = std::string("Give Blood Echoes to ") + names[i];
+            give_rows.AddEchoes(row);
             AddGiveRow(model, BbGameMenu::SetDynamicText(5 + i, row.c_str()), give_echoes_help,
                        EchoesKind, 0, 0, u32(i));
         }
     }
     using Open = void* (GAME_ABI *)(void**, void*, void*);
     return Game<Open>(OpenCommandList)(out, model, factory);
+}
+
+// The item commands' select, in place of the game's "can be used now" (never for a weapon, armor
+// or gem: their Give rows did nothing, play test 2026-10-18): our Give rows run as the game's
+// Discard does, the game's rows keep its check.
+GAME_ABI bool SelectCheck(int index, u8* frame) {
+    const BbTradeRows::Row row =
+        give_rows.Find(BbTradeRows::LabelText(frame + BbTradeRows::PickedLabelAt));
+    const auto usable = [index] {
+        using Usable = bool (GAME_ABI *)(int);
+        return Game<Usable>(BbTradeRows::UsableCheck)(index);
+    };
+    const auto equip_state = [index] {
+        u8* game_data = *Game<u8**>(PlayerGameDataPointer);
+        u8* player = game_data ? *reinterpret_cast<u8**>(game_data + 8) : nullptr;
+        if (!player) {
+            return BbTradeRows::EquipBusy;
+        }
+        using Equip = int (GAME_ABI *)(void*, int);
+        return Game<Equip>(BbTradeRows::EquipCheck)(player + EquipGameDataAt, index);
+    };
+    const bool allowed = BbTradeRows::Allowed(row, usable, equip_state);
+    if (row != BbTradeRows::Row::Game) {
+        std::printf("Trade menu: Give row picked (inventory index %d): %s\n", index,
+                    allowed ? "runs" : "not now (the player can't change equipment)");
+        std::fflush(stdout);
+    }
+    return allowed;
 }
 
 // ---- In the world: the question for an offer, and the notices ----
@@ -435,6 +473,12 @@ bool PatchImage(unsigned char* image_start, std::uint64_t size, std::uint8_t*& s
         std::printf("Trade menu: unexpected code in the inventory, no Give row\n");
         return false;
     }
+    // The select's check first (it changes nothing when the code isn't the 1.09 eboot's).
+    if (!BbTradeRows::PatchSelectCheck(image_start, size, stubs + 64,
+                                       reinterpret_cast<const void*>(&SelectCheck))) {
+        std::printf("Trade menu: unexpected code in the item commands' select, no Give row\n");
+        return false;
+    }
     std::memcpy(image_start + InventoryRowFilter, KeepEveryRow, sizeof KeepEveryRow);
     give_name = BbGameMenu::AddGameText("Give", "Отдать");
     give_help = BbGameMenu::AddGameText("Give some to this party member",
@@ -486,7 +530,7 @@ bool PatchImage(unsigned char* image_start, std::uint64_t size, std::uint8_t*& s
     std::memcpy(site + 1, &numbers32, 4);
     site[5] = 0xEB;
     site[6] = u8(sizeof NumSelectNumbersCode - 7);
-    stubs += 16 + 48;
+    stubs += 16 + 48 + BbTradeRows::ThunkSize;
     bbcoop_trade_set_ui_tick(&TickCall);
     bbcoop_trade_set_namer(&NameItem);
     std::printf("Trade menu: in (Give rows, offers asked in the world)\n");
