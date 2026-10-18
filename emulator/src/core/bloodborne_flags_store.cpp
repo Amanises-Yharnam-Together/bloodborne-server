@@ -8,6 +8,7 @@
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -202,6 +203,32 @@ void ReloadRitualAltar(s32 altar) {
     const bool asked = reinterpret_cast<Reload>(image_base + ReloadRitualAltarOffset)(state);
     LOG_INFO(Debug, "Bloodborne party: ritual altar {} loaded the team's record ({}, status {})",
              altar, asked ? "done" : "busy", ReadValue<s32>(state, 0x25C));
+}
+
+// Kaniel 2026-10-18: a teammate who holds no chalice is given the chalice of the dungeon that came
+// to its altar, so the altar's talk (which opens only for a player holding one) opens as the
+// conductor's does. Its record's second byte (94k00008) is the dungeon's depth * 10 + area.
+void GiveAltarChalice(s32 altar) {
+    const s32 base = 94000000 + altar * 100000;
+    const auto depth_area = EventFlagBits(base + 8, 8);
+    const auto goods = depth_area ? AltarChaliceGoods(*depth_area & 0xFF) : std::nullopt;
+    if (!goods || !EventFlagOn(base + 5001) || !PlayerItemsReadable() || !TradeItemsCanBeAdded()) {
+        return;
+    }
+    for (const HeldGoods& held : HeldKeyGoods()) {
+        if (held.goods >= 6100 && held.goods <= 6599 && held.count > 0) {
+            return; // holds a chalice already
+        }
+    }
+    const TradeItem chalice{BloodborneCoop::TradeItemKind::Goods, *goods, 1};
+    if (TradeHeld(chalice) > 0) {
+        return;
+    }
+    AddTradeItems(std::span{&chalice, 1});
+    LOG_INFO(Debug,
+             "Bloodborne team altar: altar {} has the team's dungeon; given its chalice "
+             "(goods {}) to open it",
+             altar, *goods);
 }
 
 std::optional<s32> CurrentRitualAltar() {
@@ -1338,6 +1365,7 @@ void SetPartyWorldChanges(bool sharing) {
         for (auto it = altar_reloads.begin(); it != altar_reloads.end();) {
             if (now >= it->second) {
                 ReloadRitualAltar(it->first);
+                GiveAltarChalice(it->first);
                 it = altar_reloads.erase(it);
             } else {
                 ++it;
