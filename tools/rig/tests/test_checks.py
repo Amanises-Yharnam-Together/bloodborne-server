@@ -138,6 +138,18 @@ class GamesTest(unittest.TestCase):
         self.assertEqual(run_scenario.split_games(listing, exe), ([41], [25732, 777]),
                          "without the rig's folder: the build's own only")
 
+    def test_a_run_outside_the_lanes_stops_no_lanes_games(self):
+        # Rig 2026-10-18: a run with no --lane closed another thread's party-death on lane 3
+        # ("Window closed by user" in both of its games).
+        exe = pathlib.Path(r"C:\bb\out\rigr-bbport\bin\bb-probe.exe")
+        listing = (r"25732	C:\bb\out\x-bbport\bin\bb-probe.exe	C:\bb\out\x-bbport\bin\bb-probe.exe "
+                   r"C:\bb\rig\port\lanes\3\host\out\boot-linked.bin" "\n"
+                   r"26000	C:\bb\out\x-bbport\bin\bb-probe.exe	C:\bb\out\x-bbport\bin\bb-probe.exe "
+                   r"C:\bb\rig\port\host\out\boot-linked.bin" "\n"
+                   r"777	C:\Games\Bloodborne\bb-probe.exe	C:\Games\Bloodborne\bb-probe.exe x" "\n")
+        self.assertEqual(run_scenario.outside_lanes(listing, exe, pathlib.Path(r"C:\bb\rig")),
+                         [26000])
+
     def test_lanes_run_on_the_lanes_given(self):
         seen = []
 

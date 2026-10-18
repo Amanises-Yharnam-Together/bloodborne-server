@@ -1522,10 +1522,22 @@ void TextureCache::GarbageCollectImages() {
         // `tiled` is "cannot be written back" (gc_policy.h): since shadPS4 0.20.1 tiled images
         // are written back too (CanBeDownloaded); multisampled ones, ones with stencil or in a
         // format the copy cannot reinterpret still cannot.
+        // bbport (Supermedo f91543a): GPU-written tiled images stay, as before 0.20.1
+        // (BB_GC_WRITE_BACK_TILED=1: written back under pressure). Each write-back is a
+        // synchronous GPU->CPU copy, and on 6-8 GB cards, always over the pressure mark, the
+        // collector evicted render targets still in use: stalls and lost contents (a black
+        // Hunter's Dream). Over the critical mark one unused for a minute is written back still,
+        // or the card would run out of memory.
+        static const bool write_back_tiled = [] {
+            const char* env = std::getenv("BB_GC_WRITE_BACK_TILED");
+            return env && env[0] == '1';
+        }();
+        const bool unused_minute = aggresive && image.lru_touched_tick < tick_seconds_ago(60);
+        const bool keep_tiled = image.info.IsTiled() && !write_back_tiled && !unused_minute;
         const GcImageState state{.gpu_modified = True(image.flags & ImageFlagBits::GpuModified),
                                  .cpu_dirty = True(image.flags & CpuWritten),
                                  .gpu_dirty = True(image.flags & ImageFlagBits::GpuDirty),
-                                 .tiled = !image.CanBeDownloaded()};
+                                 .tiled = !image.CanBeDownloaded() || keep_tiled};
         const GcAction action = GcActionFor(state, pressured);
         // bbport: images that cannot go now (GPU-written: their contents exist only here, and
         // some cannot be written back at all) neither use up the deletions nor stay first in

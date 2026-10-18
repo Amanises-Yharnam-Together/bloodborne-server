@@ -1550,9 +1550,10 @@ void TickPartyTrip() {
     if (state < 0x10000 || !HasMemoryAccess(state, 0x09, MemoryProt::CpuRead)) {
         return;
     }
-    std::scoped_lock lock{party_trip_mutex};
+    std::unique_lock lock{party_trip_mutex};
     const auto now = PartyTrip::Clock::now();
     const bool was_active = party_trip.Active(now);
+    bool guest_arrived = false;
     // Raw, here and in the arrival line: the trip machinery is one of the tracker's inputs.
     party_trip.ObserveStage(GetCurrentPackedMap(), ReadValue<u8>(state, 0x08) != 0,
                             GetLocalPlayer());
@@ -1578,18 +1579,22 @@ void TickPartyTrip() {
         recreate_pending_after_join = false;
         recreated_since_trip.clear();
         restore_search_pending = true;
-        if (IsPartyGuestRole()) {
-            // Again on arrival, in case the load created no map items (see
-            // SetGuestPickupsBeforeMapItems): the headstone reads the lamps when it is used.
-            LOG_INFO(Debug,
-                     "Bloodborne party trip: set {} of the session's world changes on arrival",
-                     SetGuestWorldChanges());
-        }
+        // Again on arrival (below), in case the load created no map items (see
+        // SetGuestPickupsBeforeMapItems): the headstone reads the lamps when it is used.
+        guest_arrived = IsPartyGuestRole();
         if (guest_trip_in_flight) {
             guest_trip_in_flight = false;
             guest_trip_fixup_at = std::chrono::steady_clock::now() + std::chrono::seconds{1};
         }
         ScheduleWipeRespawn();
+    }
+    lock.unlock();
+    if (guest_arrived) {
+        // The game put the guest's own saved world back as the trip loaded, also after the load's
+        // pass: the map's team world again, then the session's changes.
+        ApplyTeamWorldOnLoad(true);
+        LOG_INFO(Debug, "Bloodborne party trip: set {} of the session's world changes on arrival",
+                 SetGuestWorldChanges());
     }
 }
 

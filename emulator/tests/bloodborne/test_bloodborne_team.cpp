@@ -4,6 +4,7 @@
 // Phase 5: the title's load held for the team (TeamGate) and a party controller that waits for
 // the team to say its role.
 #include <algorithm>
+#include <set>
 
 #include <gtest/gtest.h>
 
@@ -202,6 +203,23 @@ TEST(TeamWorld, AnOldWorldsHeldItemFlagsStayThePlayers) {
     target.on = {6045, 6645};
     EXPECT_EQ(WorldFlagChanges(1000, store.Blocks(), target),
               (std::vector<std::pair<s32, bool>>{{6045, true}}));
+}
+
+// Kaniel's play test 2026-10-18: a guest's trip gave its game its own saved world back, and the
+// opening's flag (12410000, only the team's world had it) was off again: a trip takes the blocks
+// of the map it goes to again (Central Yharnam's flags 12410000-12419999), no other.
+TEST(TeamWorld, ALoadTakesNewBlocksOnceAndAGuestsTripTakesItsMapsAgain) {
+    const std::vector<u32> covered{2, 12100, 12410, 12419, 12420};
+    const std::set<u32> taken{2, 12100, 12410, 12419, 12420};
+    EXPECT_FALSE(TakesTeamWorldBlock(12410, 1000, taken, covered, 0));
+    EXPECT_TRUE(TakesTeamWorldBlock(12410, 1000, {}, covered, 0)) << "no earlier load took it";
+    EXPECT_TRUE(TakesTeamWorldBlock(12410, 1000, taken, covered, 12410000));
+    EXPECT_TRUE(TakesTeamWorldBlock(12419, 1000, taken, covered, 12410000));
+    EXPECT_FALSE(TakesTeamWorldBlock(12420, 1000, taken, covered, 12410000)) << "the next map";
+    EXPECT_FALSE(TakesTeamWorldBlock(12100, 1000, taken, covered, 12410000)) << "the Dream's";
+    EXPECT_FALSE(TakesTeamWorldBlock(2, 1000, taken, covered, 12410000)) << "global flags";
+    // A block the team's world does not cover is never taken, trip or not.
+    EXPECT_FALSE(TakesTeamWorldBlock(12411, 1000, taken, covered, 12410000));
 }
 
 TEST(TeamWorld, ThePersonalWorldFileRoundTripsAndACutOneIsNone) {

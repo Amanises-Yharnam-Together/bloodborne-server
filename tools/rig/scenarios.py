@@ -1227,6 +1227,26 @@ SCENARIOS = {
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
+    # Play test 2026-10-18: guests got the opening cutscene again after a lamp trip from the Dream.
+    # The opening's flag (12410000) came on in the session (at the join's reload), never in the
+    # guest's own save, and a trip's load gives the guest's game its own saved world back; with the
+    # host away from Central Yharnam nothing set it again, and m24_01's event played the opening.
+    # Here the host sets TEAM_WORLD_FLAG (Central Yharnam's block, unused) while the guest is in the
+    # Dream, then waits there; the guest goes back to Central Yharnam: the flag is on.
+    "team-world-trip": {
+        "about": "a world flag the host set while the guest was in the Dream is on when the guest "
+                 "goes back to Central Yharnam, the host away in the Dream",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 30", f"set-flag {TEAM_WORLD_FLAG} 1",
+                     "wait 15", f"travel {HUNTERS_DREAM}", "wait 30", "wait 30", "wait 30",
+                     "done"],
+            "guest": [START, "wait-session 2 300", "wait 5", f"travel {HUNTERS_DREAM}", "wait 30",
+                      "wait 30", f"expect-flag {TEAM_WORLD_FLAG} 0", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait 20", f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+        },
+        "expect": {"guest": [r"party trip: arrived map=0x18010000"]},
+        "timeout": 300,
+    },
     # Release thread 2026-10-16 (dog): the host travelled to the Dream before it saw the guest's
     # character; neither game said ready and the guest stayed covered (its input held) until the
     # host came back. A member on another map is not waited for: both screens open with the host
