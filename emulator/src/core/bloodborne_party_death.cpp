@@ -1858,7 +1858,7 @@ void PS4_SYSV_ABI UpdatePartyList(u64, const GuestRegisterSnapshot* registers) {
         ShowListArt(i, PartyListArtFor(entries[i], has_faces && portrait));
         if (native_list.supplies[0].first != 0) {
             ShowListSprite(native_list.supplies, native_list.supply_frames, i,
-                           entries[i].visible ? 2 : 1);
+                           SupplyFrame(entries[i]));
             const auto texts = SupplyTexts(entries[i]);
             for (int which = 0; which < 2; ++which) {
                 if (native_list.supply_said[i][which] != texts[which] ||

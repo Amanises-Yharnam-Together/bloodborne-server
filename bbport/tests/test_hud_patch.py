@@ -164,6 +164,12 @@ class GfxTests(unittest.TestCase):
         self.assertEqual(int(re.search(r'constexpr int Side = (\d+);', header).group(1)), hud_patch.PORTRAIT_PIXELS)
         self.assertEqual(int(re.search(r'constexpr int StageSize = (\d+);', header).group(1)),
                          hud_patch.PORTRAIT_SIZE)
+        # Party death picks the vial and bullet's frame by these (bloodborne_party.h).
+        party = (Path(__file__).resolve().parents[2] / 'emulator/src/core/bloodborne_party.h').read_text(encoding='utf-8')
+        self.assertEqual(float(re.search(r'constexpr float SupplyShiftPx = ([0-9.]+)f;', party).group(1)),
+                         hud_patch.SUPPLY_SHIFT)
+        self.assertEqual(int(re.search(r'constexpr u32 SupplyShifts = (\d+);', party).group(1)),
+                         hud_patch.SUPPLY_SHIFTS)
 
     def test_each_slot_has_the_huds_own_vial_and_bullet_with_their_counts(self):
         # Kaniel 2026-10-18: the vials and bullets in the HUD's own art (the player's TriDrug and AmmoItem): per
@@ -179,20 +185,22 @@ class GfxTests(unittest.TestCase):
         for index, name in enumerate(hud_patch.PARTY_SUPPLIES):
             self.assertIn(name, places)
             sprite = sprites[hud_patch.place_parts(places[name])[0]]
-            self.assertEqual(struct.unpack_from('<H', sprite.body, 2)[0], 2, 'the counts, then the icons')
+            # The counts, then the icons too at each step right (Kaniel 2026-10-18: they follow the name).
+            self.assertEqual(struct.unpack_from('<H', sprite.body, 2)[0], 1 + hud_patch.SUPPLY_SHIFTS)
             inner = [hud_patch.place_parts(t) for t in sprite.children if t.code == hud_patch.PLACE_OBJECT2]
-            self.assertEqual([(c, n) for c, n, _ in inner],
+            self.assertEqual([(c, n) for c, n, _ in inner][:4],
                              [(text, 'SupplyVials'), (text, 'SupplyBullets'), (vial, None), (bullet, None)])
+            # The last frame moves all four SUPPLY_SHIFT * (SUPPLY_SHIFTS - 1) px right of the first.
+            moves = [t for t in sprite.children if t.code == hud_patch.PLACE_OBJECT2 and t.body[0] & 0x01]
+            self.assertEqual(len(moves), 4 * (hud_patch.SUPPLY_SHIFTS - 1))
+            first_x = hud_patch.place_matrix(sprite.children[0])[1]
+            last_x = hud_patch.place_matrix(moves[-4])[1]
+            self.assertEqual(last_x - first_x, round(hud_patch.SUPPLY_SHIFT * (hud_patch.SUPPLY_SHIFTS - 1) * 20))
             # On the name's line, right of most names, inside the bar's length.
             _, tx, ty = hud_patch.place_matrix(places[name])
             bar_y = hud_patch.LIST_Y + hud_patch.LIST_STEP * index + hud_patch.BAR_FROM_TAG[1]
             self.assertAlmostEqual(ty / 20, bar_y - 20, delta=1)
-            # Kaniel 2026-10-18 ("will it work fine with a long name?"): past the HP bar's end (x 300 on the
-            # stage), where no name reaches: 16 characters of the list's font (about 11 px each on the rig's
-            # 1080p shots) end near x 285.
-            bar_end, longest_name_end = 300, hud_patch.LIST_X + hud_patch.BAR_FROM_TAG[0] + 16 * 11
-            self.assertGreaterEqual(tx / 20 - hud_patch.SUPPLY_ICON / 2, bar_end + 6)
-            self.assertLess(longest_name_end, bar_end)
+            self.assertTrue(180 <= tx / 20 <= 240)
 
     def test_the_frame_rings_the_portrait(self):
         # Kaniel 2026-10-13: a round portrait in a Bloodborne frame, drawn larger than it shows (crisp when

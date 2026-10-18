@@ -30,7 +30,7 @@ FE = 'dvdroot_ps4/menu/fe.gfx'
 LAYER = 'party HUD'
 # Part of the generated file's name: a patcher that patches differently makes its file anew (the old
 # one is not reused). Bump it with every change to what patch_fe writes.
-PATCH_VERSION = b'party-hud 13'
+PATCH_VERSION = b'party-hud 14'
 DRAW_BANNER = 'Fe_fla._TextEffect_Draw_195'
 DRAW_FIELD = 'StaticText_522007'
 DOWNED_FIELD = 'CoopDownedText'
@@ -74,9 +74,11 @@ PARTY_FACES = ('CoopPartyFace0', 'CoopPartyFace1', 'CoopPartyFace2')
 PARTY_SUPPLIES = ('CoopSupply0', 'CoopSupply1', 'CoopSupply2')
 SUPPLY_TEXTS = ('SupplyVials', 'SupplyBullets')
 SUPPLY_ICON, SUPPLY_TEXT_SCALE, SUPPLY_STEP = 22, 0.75, 48  # icon px, the count's scale, from vial to bullet
-# The vial's centre x on the stage: past the HP bar's end (x 300), where no name reaches (Kaniel 2026-10-18: "will it
-# work fine with a long name?"); the line's y from the bar's middle.
-SUPPLY_X, SUPPLY_FROM_BAR = 320, -20
+SUPPLY_X, SUPPLY_FROM_BAR = 212, -20  # the vial's centre x on the stage; the line's y from the bar's middle
+# Kaniel 2026-10-18 ("will it work fine with a long name?"): they follow the name. Frame 2 shows them at SUPPLY_X,
+# each next frame SUPPLY_SHIFT px further right; party death picks the frame by the name's width
+# (bloodborne_party.h SupplyFrame), up to what a 16-character name needs.
+SUPPLY_SHIFT, SUPPLY_SHIFTS = 6.0, 32
 FIRST_SUPPLY_ID = 50120  # after the faces' ids
 PARTY_BADGES = ('CoopPartyBadge0', 'CoopPartyBadge1', 'CoopPartyBadge2')
 PORTRAIT_SIZE, PORTRAIT_PIXELS = 42, 128
@@ -551,7 +553,7 @@ def player_supply_parts(tags):
 
 
 def supply_centre(index):
-    """The centre of CoopSupply<index>'s vial on the stage: on the name's line, past the HP bar's end."""
+    """The centre of CoopSupply<index>'s vial on the stage: on the name's line, right of most names."""
     return SUPPLY_X, LIST_Y + LIST_STEP * index + BAR_FROM_TAG[1] + SUPPLY_FROM_BAR
 
 
@@ -576,12 +578,22 @@ def supply_tags(tags, depth):
         y = -(24 * SUPPLY_TEXT_SCALE) / 2 - 3
         return place(text, layer, name, matrix(SUPPLY_TEXT_SCALE, round(x * 20), round(y * 20)))
 
+    def moved(tag, shift):
+        """A PlaceObject2 that moves `tag`'s object `shift` px right (its depth, its matrix moved)."""
+        _, tx, ty = place_matrix(tag)
+        scale = place_matrix(tag)[0]
+        depth = place_depth(tag)
+        return Tag(PLACE_OBJECT2, bytes([0x05]) + struct.pack('<H', depth) +
+                   matrix(scale, tx + round(shift * 20), ty), False)
+
     for index, name in enumerate(PARTY_SUPPLIES):
         half = SUPPLY_ICON / 2 + 3
-        frames = [count(SUPPLY_TEXTS[0], half, 1), count(SUPPLY_TEXTS[1], SUPPLY_STEP + half, 2),
-                  Tag(SHOW_FRAME, b'', False),
-                  icon(vial_shape, 0, 3), icon(ammo_shape, SUPPLY_STEP, 4), Tag(SHOW_FRAME, b'', False)]
-        sprite = Tag(SPRITE, struct.pack('<HH', char, 2), True)
+        placed = [count(SUPPLY_TEXTS[0], half, 1), count(SUPPLY_TEXTS[1], SUPPLY_STEP + half, 2),
+                  icon(vial_shape, 0, 3), icon(ammo_shape, SUPPLY_STEP, 4)]
+        frames = placed[:2] + [Tag(SHOW_FRAME, b'', False)] + placed[2:] + [Tag(SHOW_FRAME, b'', False)]
+        for step in range(1, SUPPLY_SHIFTS):
+            frames += [moved(tag, step * SUPPLY_SHIFT) for tag in placed] + [Tag(SHOW_FRAME, b'', False)]
+        sprite = Tag(SPRITE, struct.pack('<HH', char, 1 + SUPPLY_SHIFTS), True)
         sprite.children = frames + [Tag(0, b'', False)]
         out.append(sprite)
         depth += 2

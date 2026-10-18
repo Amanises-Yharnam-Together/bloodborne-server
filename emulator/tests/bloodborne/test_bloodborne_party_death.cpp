@@ -365,6 +365,27 @@ TEST(BloodbornePartyHud, ThePartyListShowsEachMembersState) {
     EXPECT_EQ(SupplyTexts(supplied[0]), (std::array<std::string, 2>{"14", "9"}));
     EXPECT_EQ(SupplyTexts(supplied[1]), (std::array<std::string, 2>{"0", "0"}));
     EXPECT_EQ(SupplyTexts(PartyListEntry{}), (std::array<std::string, 2>{"", ""}));
+    // Kaniel 2026-10-18 ("will it work fine with a long name?", then "the vials after hp bar looks
+    // awful"): they follow the name. A short name keeps them at their place (frame 2); a longer one
+    // moves them right, a step (SupplyShiftPx) per frame, as far as a 16-character name needs.
+    PartyListEntry shown{.visible = true, .name = "gggtt"};
+    EXPECT_EQ(SupplyFrame(shown), 2u);
+    EXPECT_EQ(SupplyFrame(PartyListEntry{.name = "gggtt"}), 1u) << "nobody: no icons";
+    shown.name = "Gascoigne the Hunter";
+    const u32 long_frame = SupplyFrame(shown);
+    EXPECT_GT(long_frame, 2u);
+    EXPECT_LE(long_frame, 1 + SupplyShifts);
+    // Each step past the room a name has keeps the vial right of the name's end.
+    for (const char* name : {"Maria", "Eileen the Crow", "WWWWWWWWWWWWWWWW", "iiiiiiiiiiiiiiii"}) {
+        shown.name = name;
+        const float end = SupplyNameWidth(name);
+        const float vial_left = SupplyNameRoom + float(SupplyFrame(shown) - 2) * SupplyShiftPx;
+        EXPECT_GE(vial_left,
+                  std::min(end, SupplyNameRoom + float(SupplyShifts - 1) * SupplyShiftPx))
+            << name;
+    }
+    EXPECT_GT(SupplyNameWidth("WWWW"), SupplyNameWidth("iiii"));
+    EXPECT_NEAR(SupplyNameWidth("gggtt"), 55.0f, 6.0f) << "measured on the rig's 1080p shot";
 
     panel.members.erase(panel.members.begin(), panel.members.begin() + 3);
     const auto away = PartyListEntries(panel);
