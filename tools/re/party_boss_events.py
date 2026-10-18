@@ -16,7 +16,10 @@ emulator then takes the guest there (ChooseDeathRespawn). The Hunter's Dream's f
 (m21_00 event 9401: the cutscene and the first Yharnam lamp, 12417810) ends for a client the
 same way, which left a guest's headstone with no place to awaken. Vicar Amelia's skull (m24_00
 event 12401803: its cutscene and the night) ended for a client the same way, so only the host saw
-the cutscene and the night fell only in its world.
+the cutscene and the night fell only in its world. The Dream's ritual altars warp into the
+chalice dungeon picked at them (m21_00 event 12107100, a slot per altar) only for a non-client,
+so a party guest who joined a teammate's dungeon could not enter it; it runs in the guest's own
+game only (2000:2 0, below).
 
 Boss fogs (open_boss_fog_for_guests): a white phantom's fog event waited for the host's
 "entered" flag, so a party guest could not enter a boss fog first (nor after a world reset). It
@@ -119,7 +122,7 @@ def patch_events(emevd: bytes, edits: list | None = None) -> tuple[bytes, int]:
 # for an alive host, 4:3).
 CLIENT_EVENTS = {
     'common.emevd.dcx': {9350, 9400, 9404, 9421},
-    'm21_00_00_00.emevd.dcx': {9401, 12105043},
+    'm21_00_00_00.emevd.dcx': {9401, 12105043, 12107100},
     'm24_00_00_00.emevd.dcx': {12401803},
 }
 INSIGHT_EVENT = 9350
@@ -187,11 +190,12 @@ def patch_client_events(emevd: bytes, wanted: set[int],
 
 
 # Events that get 2000:2 0 (no network sync) as their first instruction, per file.
+# m21_00 12107100 (a slot per ritual altar) warps into the chalice dungeon picked at that altar.
 # m21_00 12101000 (slots 0-9) unlocks the messengers' shop lines from the player's own items
 # (12101004: the Hunter Chief Emblem); kept in step, a guest's Dream waited on the host's.
 LOCAL_EVENTS = {
     'm21_00_00_00.emevd.dcx': {12101000, 12101020, 12101021, 12101022, 12101024, 12101026,
-                               12101028},
+                               12101028, 12107100},
 }
 NETWORK_SYNC = (2000, 2)
 INSTRUCTION_SIZE = 32
@@ -226,9 +230,11 @@ def make_events_local(emevd: bytes, wanted: set[int],
     table = bytearray(data[instruction_offset:instructions_end])
     for first in targets:
         table[first:first] = record
-    for event in events:
+    inserted = set()
+    for index, event in enumerate(events):
         moved = sum(1 for first in targets if event[2] > first)
         if event[0] in wanted and event[2] in targets:
+            inserted.add(index)
             event[1] += 1
             if edits is not None:
                 edits.append({'event': event[0], 'action': 'insert', 'before': 0,
@@ -245,12 +251,13 @@ def make_events_local(emevd: bytes, wanted: set[int],
             fields[field] += delta
     struct.pack_into('<16q', out, 16, *fields)
     # A started event's parameters copy its arguments into instructions by index: those follow
-    # their instructions one down (Kaniel 2026-10-12: 12101000's item check took nothing).
-    for event in events:
-        if event[0] in wanted and event[2] in targets:
-            for k in range(event[3]):
-                at = fields[9] + event[4] + k * PARAMETER_SIZE
-                struct.pack_into('<q', out, at, struct.unpack_from('<q', out, at)[0] + 1)
+    # their instructions one down (Kaniel 2026-10-12: 12101000's item check took nothing), also
+    # in an event an earlier insert moved.
+    for index in inserted:
+        event = events[index]
+        for k in range(event[3]):
+            at = fields[9] + event[4] + k * PARAMETER_SIZE
+            struct.pack_into('<q', out, at, struct.unpack_from('<q', out, at)[0] + 1)
     struct.pack_into('<I', out, 0x0C, struct.unpack_from('<I', out, 0x0C)[0] + delta)
     return bytes(out), len(targets)
 

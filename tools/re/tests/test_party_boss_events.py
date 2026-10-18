@@ -242,6 +242,33 @@ class GuestsUseTheDreamShops(unittest.TestCase):
         self.assertEqual(count, 1)
 
 
+class GuestsEnterChaliceDungeons(unittest.TestCase):
+    """Team altars (2026-10-18): a party guest joined its teammate's chalice dungeon from Chalice
+    Dungeon Search and picked its layer, but never warped. The altar's talk sets the layer flag
+    (72100420 + altar); m21_00 event 12107100 (a slot per altar) waits on it and warps, but ends
+    for a client (1003:6 state 1). For a guest it runs too, and only in the guest's own game:
+    one player's warp is not the other's."""
+
+    DREAM = 'm21_00_00_00.emevd.dcx'
+    WARP = [(1003, 6, struct.pack('<BBxx', 0, 1)),
+            (3, 0, struct.pack('<BBxxi', 0, 1, 0)),
+            (1001, 0, struct.pack('<f', 4.0)),
+            (2003, 2, struct.pack('<iBxxx', 9020, 0)),
+            (2004, 14, struct.pack('<iiii', 10000, 0, 101164, 0))]
+
+    def test_the_altar_warp_runs_for_a_guest(self):
+        patched, count = tool.patch_client_events(build_emevd({12107100: self.WARP}),
+                                                  tool.CLIENT_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12107100][0][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(count, 1)
+
+    def test_the_altar_warp_is_each_players_own(self):
+        patched, count = tool.make_events_local(build_emevd({12107100: self.WARP}),
+                                                tool.LOCAL_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12107100][0], (2000, 2, bytes(4)))
+        self.assertEqual(count, 1)
+
+
 class GuestsSeeTheNightFall(unittest.TestCase):
     """Kaniel's playtest 2026-10-17: after Vicar Amelia the host examined the altar's skull, saw
     the cutscene and the night fell; the guests saw neither. The skull's event (m24_00 12401803:
@@ -291,6 +318,16 @@ class LocalEventsKeepTheirParameters(unittest.TestCase):
         self.assertEqual(parameters_of(patched, 12101000),
                          [(1, 4, 0, 4), (2, 4, 4, 4), (3, 0, 8, 4)])
         self.assertEqual(tool.make_events_local(patched, {12101000}), (patched, 0))
+
+    def test_an_event_an_earlier_insert_moved_keeps_them_too(self):
+        # 2026-10-18: the Dream's altar warp (12107100) comes after the shop events; the insert
+        # before it moved its instructions, and its parameters were left behind.
+        first = [(1003, 2, struct.pack('<BBBxi', 0, 1, 0, 0))]
+        warp = [(1003, 6, struct.pack('<BBxx', 0, 1)), (3, 0, struct.pack('<BBxxi', 0, 1, 0))]
+        original = build_emevd({12101000: first, 12107100: warp}, {12107100: [(1, 4, 0, 4)]})
+        patched, count = tool.make_events_local(original, {12101000, 12107100})
+        self.assertEqual(count, 2)
+        self.assertEqual(parameters_of(patched, 12107100), [(2, 4, 0, 4)])
 
 
 def parameters_of(emevd: bytes, wanted: int) -> list[tuple[int, int, int, int]]:

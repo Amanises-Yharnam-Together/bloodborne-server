@@ -81,10 +81,13 @@ class ServiceTest(unittest.TestCase):
                        "RitualLevel": 1, "SessionId": "s", "Status": 1, "SubFeatureFlag": 256,
                        "UnlockedFlagList": [{"UnlockedFlag": 0}, {"UnlockedFlag": 1},
                                             {"UnlockedFlag": 0}], "UserId": 1}
-    # The Pthumeru Chalice's dungeon: depth 1 in Pthumeru, no rites, layout 0, seed 0, the
-    # chalice (goods 6109) and its layers; the record the rig's ritual loaded.
-    PTHUMERU_FORM = ("1d0a000000000000000000001d0a0000000017dd" + "ff" * 15 + "23" + "ff" * 7 +
-                     "32" + "ff" * 48 + "00" * 32)
+    # The Pthumeru Chalice's dungeon as the game uploads dungeons (format 5, 140 bytes, little
+    # endian): depth 1 in Pthumeru, layout 0, no rites, the chalice (goods 6109), its layers
+    # (ids 9910030/35/50 with their codes), conductor "Hunter". A join through Chalice Dungeon
+    # Search reads only this (rig 2026-10-18: the old layout showed Depth 0 and died in the load).
+    PTHUMERU_FORM = ("050000008c00000000000a1ddd170000" "0e379700ffffffff1337970023000000"
+                     "2237970032000000" + "ff" * 48 + "48756e74657200000000000000000000"
+                     "480075006e007400650072" + "00" * 25)
 
     def test_standard_chalice_search_finds_its_dungeon(self):
         found = self.post("/channel/search?user_id=1", self.PTHUMERU_SEARCH)["ChannelList"]
@@ -110,6 +113,51 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(self.post("/channel/search?user_id=1", other).get("ChannelList", []), [])
         unknown = dict(self.PTHUMERU_SEARCH, RitualLevel=9)
         self.assertEqual(self.post("/channel/search?user_id=1", unknown).get("ChannelList", []), [])
+
+
+class ChaliceDungeonSearchTest(ServiceTest):
+    """Chalice Dungeon Search (FixedOrGeneral 0 and 2, up to 100) lists the dungeons in use on
+    this server: a teammate joins one there, free, instead of conducting its ritual. Its own
+    server: what is in use depends on the requests before. Tests run in name order."""
+
+    SEARCH = {"FixedOrGeneralList": [{"FixedOrGeneral": 0}, {"FixedOrGeneral": 2}],
+              "FormDataVersion": 0, "GetCount": 100, "HolyGrailTypeId": None,
+              "MessageId": "ChannelSearchRequest", "RitualLevel": None, "SessionId": "s",
+              "Status": 1, "SubFeatureFlag": None,
+              "UnlockedFlagList": [{"UnlockedFlag": 0}, {"UnlockedFlag": 1}, {"UnlockedFlag": 0}],
+              "UserId": 2}
+    UPLOAD = {"CharaId": 61458737, "FixedOrGeneral": 1, "FormData": "BQAAAIwAAAA=",
+              "FormDataVersion": 0, "HolyGrailTypeId": 0, "MessageId": "ChannelUploadRequest",
+              "RitualLevel": 1, "SessionId": "s", "ShareLevel": 0, "Status": 1,
+              "SubFeatureFlag": 0, "UnlockFlagList": [{"UnlockFlag": 0}], "UserId": 1}
+
+    def search(self, **changes):
+        return self.post("/channel/search?user_id=2",
+                         dict(self.SEARCH, **changes)).get("ChannelList", [])
+
+    def test_a_nothing_in_use_finds_nothing(self):
+        self.assertEqual(self.search(), [])
+
+    def test_b_a_ritual_puts_its_dungeon_in_the_search(self):
+        ritual = self.post("/channel/search?user_id=1", ServiceTest.PTHUMERU_SEARCH)["ChannelList"]
+        self.assertEqual(self.search(), ritual)
+        self.assertEqual(self.search(RitualLevel=1, HolyGrailTypeId=0), ritual)
+        self.assertEqual(self.search(RitualLevel=2), [], "another depth")
+        self.assertEqual(self.search(HolyGrailTypeId=1), [], "another area")
+
+    def test_c_an_upload_is_found_and_joined_without_a_store(self):
+        uploaded = self.post("/channel/upload?user_id=1", self.UPLOAD)
+        channel = uploaded["ChannelId"]
+        found = [d for d in self.search() if d["ChannelId"] == channel]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["FormData"], "BQAAAIwAAAA=")
+        self.assertEqual(found[0]["DiscernmentWord"], uploaded["DiscernmentWord"])
+        details = self.post("/channel/get_details_info?user_id=2",
+                            {"ChannelIdList": [{"ChannelId": channel}],
+                             "MessageId": "ChannelGetDetailsInfoRequest", "SessionId": "s",
+                             "UserId": 2})
+        self.assertEqual(details["ChannelList"], found)
+        self.assertEqual(details["LostChannelIdList"], [])
 
 
 class SsInfoTest(unittest.TestCase):

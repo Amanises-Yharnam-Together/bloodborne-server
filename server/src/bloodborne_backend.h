@@ -6,6 +6,7 @@
 #include <optional>
 #include <set>
 #include <utility>
+#include <vector>
 
 #include <QByteArray>
 #include <QList>
@@ -94,6 +95,12 @@ private:
 
     BackendOptions m_options;
     std::unique_ptr<ContentStore> m_store;
+    // Without a store, chalice dungeons are kept in memory; m_chaliceStore is the one in use.
+    std::unique_ptr<ContentStore> m_memoryStore;
+    ContentStore* m_chaliceStore = nullptr;
+    // Standard chalice dungeons a ritual asked for (keys), oldest first: Chalice Dungeon Search
+    // lists them.
+    std::vector<qint64> m_standardUsed;
     qint64 m_nextCreatedId = 1000;
     QSet<QString> m_unknownSeen;
     // (UserId, broadcast text's CRC-32) already delivered; in memory on purpose, so a restart

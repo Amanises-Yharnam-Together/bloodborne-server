@@ -41,6 +41,7 @@ import os
 import re
 import secrets
 import sqlite3
+import struct
 import sys
 import threading
 import time
@@ -66,12 +67,14 @@ SHOW_OWN_CHOICES = ("deaths", "ghosts", "lanterns")
 # Standard chalice dungeons. A standard (not root) chalice's ritual asks for the one dungeon the
 # server keeps for that chalice: ChannelSearch with FixedOrGeneral 2 and GetCount 1, then its
 # details by ChannelId. Without one the game says "Failed to contribute ritual materials" and
-# returns to the title. The server makes them itself, so they need no store. A dungeon is the
-# 124-byte record the game reads as FormData (base64): 1D, depth*10 + area (0 Pthumeru,
-# 1 Hintertomb, 2 Loran, 3 Isz), rites, layout; u32 seed; u32 0; the first 4 bytes again; the
-# chalice's goods id (u32 big-endian); 9 slots of 8 bytes, FF but for each's last byte (its
-# layer's code, FF for none); 32 bytes of 0. Keyed by RitualLevel * 10 + HolyGrailTypeId:
-# (rites, goods id, slot codes), as the game's own records of these chalices have them.
+# returns to the title. The server makes them itself. FormData is the dungeon as the game uploads
+# one (ChannelUpload after a root chalice's ritual, format 5, little endian): u32 5, u32 140;
+# layout, rites, depth*10 + area (0 Pthumeru, 1 Hintertomb, 2 Loran, 3 Isz), 0x1D; u32 the
+# chalice's goods id; 9 layers of {u32 id, s32 code} (ids 9900000 + key*1000 + 30, 35, 50, 60,
+# 11; -1 for none); the conductor's name, 16 bytes ASCII, and 32 bytes UTF-16; zeros to 140. A
+# ritual builds its dungeon from the player's own chalice; a join through Chalice Dungeon Search
+# builds it from FormData alone. Keyed by RitualLevel * 10 + HolyGrailTypeId: (rites, goods id,
+# layer codes, 0xFF for none), as the game's own records of these chalices have them.
 STANDARD_DUNGEONS = {
     10: (0, 6109, (0xFF, 0x23, 0x32)),
     20: (0, 6209, (0xFF, 0x24, 0x32, 0x3C)),
@@ -86,6 +89,9 @@ STANDARD_DUNGEONS = {
 }
 # Their ChannelIds: this base plus the key, far above any stored dungeon's.
 STANDARD_CHANNEL_BASE = 2000000000
+# A layer's id is 9900000 + key * 1000 + its own offset.
+STANDARD_LAYER_IDS = (30, 35, 50, 60, 11)
+STANDARD_CONDUCTOR = "Hunter"
 
 
 # --------------------------------------------------------------------------
@@ -593,6 +599,19 @@ class Store:
                 params + [limit]).fetchall()
         return [self.dungeon_record(r) for r in rows]
 
+    def all_dungeons(self, level=None, area=None):
+        """Every dungeon uploaded, newest first (of that depth and area when given)."""
+        where, params = ["1"], []
+        for value, column in ((level, "ritual_level"), (area, "holy_grail_type_id")):
+            if value is not None:
+                where.append(column + " = ?")
+                params.append(as_int(value))
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT * FROM chalice_dungeons WHERE {} ORDER BY channel_id DESC".format(" AND ".join(where)),
+                params).fetchall()
+        return [self.dungeon_record(r) for r in rows]
+
     def word_search(self, word):
         if not word:
             return None
@@ -617,9 +636,15 @@ def standard_dungeon(key):
     if key not in STANDARD_DUNGEONS:
         return None
     rites, goods, codes = STANDARD_DUNGEONS[key]
-    head = bytes([0x1D, key, rites, 0])
-    slots = b"".join(bytes([0xFF] * 7 + [code]) for code in codes + (0xFF,) * (9 - len(codes)))
-    form = head + bytes(8) + head + goods.to_bytes(4, "big") + slots + bytes(32)  # seed 0
+    form = struct.pack("<II4BI", 5, 140, 0, rites, key, 0x1D, goods)
+    for slot in range(9):
+        code = codes[slot] if slot < len(codes) else None
+        form += (struct.pack("<Ii", 9900000 + key * 1000 + STANDARD_LAYER_IDS[slot],
+                             -1 if code == 0xFF else code)
+                 if code is not None else struct.pack("<ii", -1, -1))
+    form += STANDARD_CONDUCTOR.encode("ascii").ljust(16, b"\0")
+    form += STANDARD_CONDUCTOR.encode("utf-16-le").ljust(32, b"\0")
+    form = form.ljust(140, b"\0")
     glyph = "chs" + GLYPH_ALPHABET[key // 32] + GLYPH_ALPHABET[key % 32]
     stamp = "2015-03-24T00:00:00"
     return {"ChannelId": STANDARD_CHANNEL_BASE + key, "ShareLevel": 2, "Status": 1,
@@ -651,6 +676,22 @@ def standard_details(req, payload, list_key):
     payload[list_key] = [d for d in payload.get(list_key, []) if d.get("ChannelId") not in taken] + found
     payload["LostChannelIdList"] = [e for e in payload.get("LostChannelIdList", [])
                                     if e.get("ChannelId") not in taken]
+
+
+def is_dungeon_search(req):
+    """Chalice Dungeon Search (FixedOrGeneral 0 among those asked): what dungeons are in use."""
+    return 0 in id_list(req.get("FixedOrGeneralList"), "FixedOrGeneral")
+
+
+def dungeon_search(req, used, store):
+    """The dungeons in use on this server, newest first: the standard ones a ritual asked for
+    (`used`, keys) and every one uploaded (shared or not: a team's dungeons are for the team),
+    of the depth and area asked for when given."""
+    level, area = req.get("RitualLevel"), req.get("HolyGrailTypeId")
+    found = [standard_dungeon(key) for key in reversed(used)
+             if (level is None or key // 10 == as_int(level)) and (area is None or key % 10 == as_int(area))]
+    found += store.all_dungeons(level, area)
+    return found[:as_int(req.get("GetCount"), 100) or 100]
 
 
 # --------------------------------------------------------------------------
@@ -901,7 +942,23 @@ class Handler(BaseHTTPRequestHandler):
             count = max(1, min(as_int(request.get("CharaIdNum"), 1), 16))
             payload["PublishCharacterIdList"] = [{"PublishCharaId": uid * 16 + i + 1} for i in range(count)]
         elif name == "ChannelSearch" and standard_search(request):
-            payload["ChannelList"] = [standard_search(request)]
+            standard = standard_search(request)
+            key = standard["ChannelId"] - STANDARD_CHANNEL_BASE
+            with self.server.chalice_lock:
+                if key in self.server.standard_used:
+                    self.server.standard_used.remove(key)
+                self.server.standard_used.append(key)
+            payload["ChannelList"] = [standard]
+        elif name == "ChannelSearch" and is_dungeon_search(request):
+            with self.server.chalice_lock:
+                used = list(self.server.standard_used)
+            payload["ChannelList"] = dungeon_search(request, used, self.server.chalice_store)
+        elif name.startswith("Channel") and name in STORE_HANDLERS:
+            # Chalice dungeons are kept even without a store (in memory then): teammates join them.
+            try:
+                payload.update(STORE_HANDLERS[name](self.server.chalice_store, request, uid, chara))
+            except Exception as exc:  # a store bug must never knock the game offline
+                self.log_message("ERROR in %s: %r -- answered without content", name, exc)
         elif store and name in STORE_HANDLERS:
             try:
                 payload.update(STORE_HANDLERS[name](store, request, uid, chara))
@@ -1019,6 +1076,9 @@ def main():
     httpd.broadcast_path = args.broadcast
     httpd.login_message_path = args.login_message
     httpd.store = store
+    httpd.chalice_store = store or Store(":memory:", (), 0, 0, 0)  # chalice dungeons only
+    httpd.chalice_lock = threading.Lock()
+    httpd.standard_used = []
 
     print("bb-dummy listening on 0.0.0.0:{}".format(args.port))
     print("  ss.info      {}{}".format(services_url, SS_INFO_PATH))
