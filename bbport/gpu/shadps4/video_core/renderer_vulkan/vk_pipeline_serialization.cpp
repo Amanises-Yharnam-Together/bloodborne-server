@@ -151,6 +151,12 @@ bool ComputePipeline::SerializationSupport::Deserialize(Serialization::Archive& 
 
 bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     compute_key.Deserialize(ar);
+    // bbport: as for graphics pipelines, a second entry of a preloaded pipeline is dropped.
+    if (compute_pipelines.contains(compute_key)) {
+        LOG_WARNING(Render_Vulkan, "Cached compute pipeline {:#x} skipped: it is in the cache twice",
+                    compute_key.value);
+        return false;
+    }
 
     ComputePipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
@@ -240,6 +246,15 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     // key without motion output. Built at first use instead, like the vertex shaders (Supermedo's
     // bbport f33e7617).
     if (sel.graphics_key.motion_vectors) {
+        DropSelection();
+        return false;
+    }
+    // bbport: a second entry of a pipeline that is preloaded already stopped the game at every
+    // start (ASSERT(is_new) below, Lisara's v0.3.11 cache): the first one stays, this one is
+    // dropped like any other unusable entry and its file removed.
+    if (graphics_pipelines.contains(sel.graphics_key)) {
+        LOG_WARNING(Render_Vulkan, "Cached pipeline {:#x} skipped: it is in the cache twice",
+                    std::hash<GraphicsPipelineKey>{}(sel.graphics_key));
         DropSelection();
         return false;
     }

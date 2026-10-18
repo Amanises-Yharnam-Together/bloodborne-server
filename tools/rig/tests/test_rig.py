@@ -596,6 +596,53 @@ class RunnerTest(unittest.TestCase):
                          "Insufficient system resources exist to complete the requested service.")
         self.assertIsNone(run_scenario.boot_failure("a game in the world\n"))
 
+    def test_cache_twice_copies_one_pipeline_entry_under_another_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = pathlib.Path(folder) / "played"
+            source.mkdir()
+            (source / "profile.bin").write_bytes(b"profile")
+            (source / "g_0x8a00000000000000.key").write_bytes(b"second")
+            (source / "g_0x1200000000000000.key").write_bytes(b"first")
+            (source / "c_0x0100000000000000.key").write_bytes(b"compute")
+            cache = pathlib.Path(folder) / "headless"
+            cache.mkdir()
+            (cache / "profile.bin").write_bytes(b"old")
+            original = run_scenario.seed_cache_twice(cache, source)
+            self.assertEqual(original, cache / "g_0x1200000000000000.key")
+            self.assertEqual((cache / run_scenario.CACHE_TWICE_NAME).read_bytes(), b"first")
+            self.assertEqual((cache / "profile.bin").read_bytes(), b"profile",
+                             "the played cache replaces the headless one")
+            self.assertTrue((source / "g_0x1200000000000000.key").exists())
+            self.assertFalse((source / run_scenario.CACHE_TWICE_NAME).exists(),
+                             "the cache it came from is left as it was")
+            self.assertEqual(run_scenario.seed_cache_twice(cache), original,
+                             "again in place: the copy is not copied")
+            empty = pathlib.Path(folder) / "empty"
+            empty.mkdir()
+            self.assertIsNone(run_scenario.seed_cache_twice(empty),
+                              "a headless game draws nothing: no entry to copy")
+
+    def test_cache_twice_wants_the_copy_skipped_and_one_file_left(self):
+        with tempfile.TemporaryDirectory() as folder:
+            original = pathlib.Path(folder) / "g_0x1200000000000000.key"
+            copy = pathlib.Path(folder) / run_scenario.CACHE_TWICE_NAME
+            original.write_bytes(b"key")
+            skipped = ("[Render.Vulkan] <Warning> vk_pipeline_serialization.cpp:256 "
+                       "LoadGraphicsPipeline: Cached pipeline 0x5 skipped: it is in the cache "
+                       "twice\n[Render] <Info> Preloaded 12 pipelines\n")
+            self.assertEqual(run_scenario.cache_twice_problems(skipped, original, copy), [])
+            copy.write_bytes(b"key")
+            stopped = ("[Debug] <Critical> vk_pipeline_serialization.cpp:292 LoadGraphicsPipeline: "
+                       "Assertion Failed!\n\n")
+            problems = run_scenario.cache_twice_problems(stopped, original, copy)
+            self.assertEqual(len(problems), 3, problems)
+            self.assertIn("stopped", problems[0])
+            self.assertIn("skipped", problems[1])
+            self.assertIn("both", problems[2])
+            original.unlink()
+            copy.unlink()
+            self.assertIn("neither", run_scenario.cache_twice_problems(skipped, original, copy)[0])
+
     def test_a_runs_pictures_go_with_its_logs(self):
         with tempfile.TemporaryDirectory() as folder:
             root = pathlib.Path(folder)
