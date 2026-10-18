@@ -1044,7 +1044,8 @@ ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPositio
 // Phase 7: the point a loaded guest resumes at: the server's (where it last stood in its team's
 // world: the newest) when it has one, else its own file's, which counts only out of a session.
 // Kaniel 2026-10-18: a team's load ends with its hunters together, so a guest's team load takes
-// its host's place (`from_host`, see HostPlaceOf) over both.
+// its host's place (`from_host`, see HostPlaceOf) over both when its own is on another map (one on
+// the host's map stays: phase 7's way back to where a guest's game died).
 std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<ResumePoint> from_file,
                                            std::optional<ResumePoint> from_server,
                                            std::optional<ResumePoint> from_host = std::nullopt);

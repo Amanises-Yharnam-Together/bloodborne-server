@@ -3013,6 +3013,21 @@ TEST(BloodborneGuestResume, ATeamLoadPutsTheGuestWhereItsHostStands) {
     EXPECT_EQ(step.warp_point, 2412950);
 }
 
+// Rig resume 2026-10-18: a guest whose game died in its host's world, 15 m from the lamp, came
+// back at the lamp beside the host instead of where it was (phase 7). Its own last place is on
+// the host's map already: together, so it counts; the host's place counts only from elsewhere.
+TEST(BloodborneGuestResume, ATeamGuestOnItsHostsMapKeepsItsOwnPlace) {
+    const ResumePoint own{0x18010000, {-215.0f, -54.5f, 178.0f}, 0};
+    const ResumePoint host{0x18010000, {-199.7f, -50.7f, 179.0f}, 0};
+    EXPECT_EQ(PickResumePoint(true, std::nullopt, own, host), std::optional{own});
+    const ResumePoint file{0x18010000, {-215.0f, -54.5f, 178.0f}, 900};
+    EXPECT_EQ(PickResumePoint(false, file, std::nullopt, host), std::optional{file});
+    EXPECT_EQ(PickResumePoint(true, file, std::nullopt, host), std::optional{host})
+        << "its file's point does not count in a session";
+    const ResumePoint dream{0x15000000, {-2.1f, -6.4f, -21.4f}, 0};
+    EXPECT_EQ(PickResumePoint(true, std::nullopt, dream, host), std::optional{host});
+}
+
 // The host's place may not be known yet as the guest's world comes in (both loading under the
 // team's screen): the guest waits for it a while before it falls back to its own last place.
 TEST(BloodborneGuestResume, ATeamGuestWaitsForItsHostsPlaceAWhile) {

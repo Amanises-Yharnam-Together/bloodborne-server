@@ -1413,13 +1413,11 @@ ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPositio
 std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<ResumePoint> from_file,
                                            std::optional<ResumePoint> from_server,
                                            std::optional<ResumePoint> from_host) {
-    if (from_host) {
+    const auto own = from_server ? from_server : (in_session ? std::nullopt : from_file);
+    if (from_host && !(own && own->map == from_host->map)) {
         return from_host;
     }
-    if (from_server) {
-        return from_server;
-    }
-    return in_session ? std::nullopt : from_file;
+    return own;
 }
 
 bool WaitsForHostPlace(bool team_load, bool host_known, s64 waited_ms) {
