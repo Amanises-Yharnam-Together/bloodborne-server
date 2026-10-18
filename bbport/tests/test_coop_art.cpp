@@ -4,6 +4,7 @@
 // card's parts lie on its frame; a damaged atlas decodes to nothing.
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <vector>
@@ -58,6 +59,22 @@ int main() {
     }
     // The backdrop: a picture, opaque everywhere.
     assert(AlphaAt(*atlas, Piece::Backdrop, 0.0f, 0.0f) == 255 && AlphaAt(*atlas, Piece::Backdrop, 1.0f, 1.0f) == 255);
+    // Kaniel 2026-10-18: the team screens in the souls counter's grey. The gold turns that grey (as
+    // bright as it was, no hue), the wax seal's red and the dark inside stay.
+    {
+        Atlas tiny{.width = 4, .height = 1, .rects = {}, .rgba = {
+            200, 176, 120, 255, // gold
+            138, 28, 28, 255,   // the seal's red
+            26, 29, 36, 255,    // the card's inside
+            100, 88, 60, 128}}; // dim gold, half covered
+        Greyed(tiny, SoulsGrey);
+        const auto px = [&](int i) { return &tiny.rgba[std::size_t(i) * 4]; };
+        assert(px(0)[0] <= px(0)[1] && px(0)[1] <= px(0)[2] && px(0)[2] - px(0)[0] <= 5); // grey
+        assert(std::abs(int(px(0)[0]) - int(SoulsGrey[0])) <= 6 && px(0)[3] == 255);
+        assert(px(1)[0] == 138 && px(1)[1] == 28 && px(1)[2] == 28);
+        assert(px(2)[0] == 26 && px(2)[1] == 29 && px(2)[2] == 36);
+        assert(px(3)[0] < px(0)[0] && px(3)[2] - px(3)[0] <= 5 && px(3)[3] == 128);
+    }
     // Damaged: nothing.
     std::vector<std::uint8_t> damaged = file;
     damaged[0] = 'X';

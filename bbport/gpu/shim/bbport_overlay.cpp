@@ -329,11 +329,13 @@ void Load() {
         return;
     }
     tried = true;
-    const auto atlas = BbCoopArt::Decode(bb_coop_art, size_t(bb_coop_art_end - bb_coop_art));
+    auto atlas = BbCoopArt::Decode(bb_coop_art, size_t(bb_coop_art_end - bb_coop_art));
     if (!atlas) {
         std::printf("Overlay: the co-op art did not decode; the game's menu art is used\n");
         return;
     }
+    // Kaniel 2026-10-18: in the souls counter's grey, not gold.
+    BbCoopArt::Greyed(*atlas, BbCoopArt::SoulsGrey);
     texture = IM_NEW(ImTextureData)();
     texture->Create(ImTextureFormat_RGBA32, atlas->width, atlas->height);
     std::memcpy(texture->GetPixels(), atlas->rgba.data(), atlas->rgba.size());
@@ -842,12 +844,29 @@ float S(float v) {
 const char* T(const char* english, const char* russian) {
     return BbSettings::MenuText(english, russian);
 }
+// The accent (gold) and the bright text over it; the team screens draw in the souls counter's
+// grey instead (Kaniel 2026-10-18, GreyAccent).
+ImVec4 accent{0.80f, 0.68f, 0.46f, 1.0f};
+ImVec4 accent_bright{0.96f, 0.88f, 0.70f, 1.0f};
 ImU32 Gold(float alpha = 1.0f) {
-    return ImGui::GetColorU32(ImVec4(0.80f, 0.68f, 0.46f, alpha));
+    return ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, alpha));
 }
 ImU32 Bright(float alpha = 1.0f) {
-    return ImGui::GetColorU32(ImVec4(0.96f, 0.88f, 0.70f, alpha));
+    return ImGui::GetColorU32(ImVec4(accent_bright.x, accent_bright.y, accent_bright.z, alpha));
 }
+/// While it lives, Gold() is the souls counter's grey and Bright() a near white.
+struct GreyAccent {
+    ImVec4 was = accent, was_bright = accent_bright;
+    GreyAccent() {
+        accent = ImVec4(BbCoopArt::SoulsGrey[0] / 255.0f, BbCoopArt::SoulsGrey[1] / 255.0f,
+                        BbCoopArt::SoulsGrey[2] / 255.0f, 1.0f);
+        accent_bright = ImVec4(0.93f, 0.94f, 0.94f, 1.0f);
+    }
+    ~GreyAccent() {
+        accent = was;
+        accent_bright = was_bright;
+    }
+};
 ImU32 Plain(float alpha = 1.0f) {
     return ImGui::GetColorU32(ImVec4(0.80f, 0.77f, 0.70f, alpha));
 }
@@ -2798,6 +2817,7 @@ void DrawWorldPicker(ImDrawList* draw, ImVec2 win, ImVec2 size) {
 }
 
 void Screen() {
+    const GreyAccent grey; // Kaniel 2026-10-18: the souls counter's grey, not gold
     const auto pressed_any = [](std::initializer_list<ImGuiKey> keys) {
         for (const ImGuiKey key : keys) {
             if (ImGui::IsKeyPressed(key, true)) {
@@ -3189,7 +3209,7 @@ void PlainScreen() {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(6, 5, 4, 255));
-    const ImU32 gold = IM_COL32(200, 176, 120, 255);
+    const ImU32 gold = Ui::Gold();
     const ImU32 dim = IM_COL32(140, 128, 110, 255);
     ImFont* font = MenuArt::Font();
     const float unit = display.y / 40.0f;
@@ -3233,6 +3253,7 @@ const char* StageText(int stage) {
 /// the input and the sound (bbcoop_sound_held) until every guest's character has spawned; no
 /// more top bar once this game's own world is in.
 void Screen() {
+    const Ui::GreyAccent grey; // Kaniel 2026-10-18: the souls counter's grey, not gold
     if (!MenuArt::Has(MenuArt::Card)) {
         PlainScreen();
         return;
@@ -3272,7 +3293,8 @@ void Screen() {
     // The cards.
     const int count = std::clamp(load.count, 1, 4);
     const float card_w = 300.0f * u, card_h = 420.0f * u, gap = 36.0f * u;
-    const float x_start = mid - (card_w * count + gap * (count - 1)) * 0.5f, y0 = 420.0f * u;
+    // Kaniel 2026-10-18: more room between the title's scrollwork and the cards (420 before).
+    const float x_start = mid - (card_w * count + gap * (count - 1)) * 0.5f, y0 = 480.0f * u;
     for (int i = 0; i < load.count && i < 4; ++i) {
         const bbcoop_team_load_row& row = load.rows[i];
         const float x0 = x_start + i * (card_w + gap), x1 = x0 + card_w, cx = (x0 + x1) * 0.5f;
@@ -3290,7 +3312,7 @@ void Screen() {
         }
         text(row.name, 30.0f * u, ImVec2(cx, y0 + 180.0f * u), IM_COL32(222, 214, 196, 255), 0.5f);
         text(StageText(row.stage), 22.0f * u, ImVec2(cx, y0 + 228.0f * u),
-             ready ? IM_COL32(200, 176, 120, 255) : IM_COL32(150, 142, 128, 255), 0.5f);
+             ready ? Ui::Gold() : IM_COL32(150, 142, 128, 255), 0.5f);
         // Progress on the game's own HP bar (red fill in its framed track).
         const float bar_w = card_w - 52.0f * u, bar_h = 17.0f * u, bx = cx - bar_w * 0.5f, by = y0 + 300.0f * u;
         const float fill = std::clamp(row.percent, 0, 100) / 100.0f;
