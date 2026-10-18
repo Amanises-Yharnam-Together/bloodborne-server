@@ -193,6 +193,7 @@ extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
     panel->give_up = party.give_up;
     panel->native_list = Core::Bloodborne::NativePartyListShown() ? 1 : 0;
     panel->native_prompt = Core::Bloodborne::NativePartyPromptShown() ? 1 : 0;
+    panel->native_supplies = Core::Bloodborne::NativePartySuppliesShown() ? 1 : 0;
     return 1;
 }
 

@@ -2960,7 +2960,10 @@ void WritePromptData(std::span<u8, HudPromptDataSize> data,
                      u64 text, size_t length);
 
 // The list's tags for the panel's first members: HP while up, the revive while down (of 100).
-std::array<PartyListEntry, PartyListSize> PartyListEntries(const struct PartyPanel& panel);
+std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& panel);
+// Kaniel 2026-10-18: what the HUD's own vial and bullet count fields beside a list entry's name say
+// (hud_patch.py CoopSupply0-2): its vials and bullets, nothing while the slot shows nobody.
+std::array<std::string, 2> SupplyTexts(const PartyListEntry& entry);
 // Where a tag goes on the HUD's 1920x1080 stage (its HP bar's left end).
 std::pair<s32, s32> PartyListPosition(int index);
 // The TagData the tag update takes for an entry; `role` and `name` are the addresses of its UTF-16

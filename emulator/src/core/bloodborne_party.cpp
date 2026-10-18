@@ -4774,6 +4774,13 @@ std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& pan
     return entries;
 }
 
+std::array<std::string, 2> SupplyTexts(const PartyListEntry& entry) {
+    if (!entry.visible) {
+        return {};
+    }
+    return {std::to_string(entry.vials), std::to_string(entry.bullets)};
+}
+
 PartyPrompt PartyPromptFor(const PartyPanel& panel) {
     if (panel.vital == Vital::Down) {
         return PartyPrompt{.shown = true, .text = "Hold to give up", .input = PromptInputCircle};

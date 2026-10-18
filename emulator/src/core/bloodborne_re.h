@@ -49,6 +49,9 @@ bool ReadPartyPanel(PartyPanel& panel);
 // The party HUD's own party list drew members within the last half second (the overlay leaves its
 // list out then).
 bool NativePartyListShown();
+// Kaniel 2026-10-18: the party list shows its members' vials and bullets in the HUD's own fields
+// (CoopSupply0-2) within the last half second (the overlay then draws none).
+bool NativePartySuppliesShown();
 // The party HUD's prompt (CoopPrompt) showed party death's prompt within the last half second (the
 // overlay then draws only its button glyph).
 bool NativePartyPromptShown();
