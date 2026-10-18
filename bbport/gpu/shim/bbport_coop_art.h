@@ -45,6 +45,13 @@ struct Atlas {
 // count or a piece outside the atlas.
 std::optional<Atlas> Decode(const std::uint8_t* data, std::size_t size);
 
+// Kaniel 2026-10-18: the team screens in the grey of the souls counter's numbers (sampled from
+// the HUD at 4K: #C1C4C5) instead of gold.
+constexpr std::uint8_t SoulsGrey[3] = {0xC1, 0xC4, 0xC5};
+// The atlas with its gold made `grey`: each gold pixel (warm, yellow to orange) that grey at its own
+// brightness; other colours (the wax seal's red, the dark inside) and coverage as they were.
+void Greyed(Atlas& atlas, const std::uint8_t grey[3]);
+
 // A part of a piece, in shares of its width and height.
 struct Share {
     float x0, y0, x1, y1;

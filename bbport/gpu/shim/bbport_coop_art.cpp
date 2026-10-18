@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_coop_art.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "miniz.h"
@@ -43,6 +44,24 @@ std::optional<Atlas> Decode(const std::uint8_t* data, std::size_t size) {
         return std::nullopt;
     }
     return atlas;
+}
+
+void Greyed(Atlas& atlas, const std::uint8_t grey[3]) {
+    // The gold's own brightness (the art's flat gold, 0xC8B078) is the grey's.
+    constexpr float GoldLuma = 0.299f * 200 + 0.587f * 176 + 0.114f * 120;
+    for (std::size_t at = 0; at + 3 < atlas.rgba.size(); at += 4) {
+        std::uint8_t* px = &atlas.rgba[at];
+        const int r = px[0], g = px[1], b = px[2];
+        // Warm: red over green over blue, the blue well below; yellow to orange, not red (where green
+        // is about as low as blue).
+        if (!(r >= g && g >= b && r - b > 12 && (r - g) * 10 < (r - b) * 7)) {
+            continue;
+        }
+        const float luma = 0.299f * float(r) + 0.587f * float(g) + 0.114f * float(b);
+        for (int c = 0; c < 3; ++c) {
+            px[c] = std::uint8_t(std::min(255.0f, float(grey[c]) * luma / GoldLuma + 0.5f));
+        }
+    }
 }
 
 } // namespace BbCoopArt
