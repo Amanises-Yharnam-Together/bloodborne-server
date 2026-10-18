@@ -425,8 +425,11 @@ PartyListArt PartyListArtFor(const PartyListEntry& entry, bool portrait) {
         return {};
     }
     if (portrait) {
-        return PartyListArt{
-            .icon = PartyListIconNone, .badge = entry.icon, .face = PortraitFrameShown};
+        const bool downed =
+            entry.icon >= PartyListIconDowned0 && entry.icon <= PartyListIconDowned0 + 10;
+        return PartyListArt{.icon = PartyListIconNone,
+                            .badge = PartyListIconNone,
+                            .face = downed ? PortraitFrameDowned : PortraitFrameShown};
     }
     return PartyListArt{.icon = entry.icon, .badge = PartyListIconNone, .face = PortraitFrameNone};
 }

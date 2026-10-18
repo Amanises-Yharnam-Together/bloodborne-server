@@ -193,6 +193,8 @@ std::optional<PortraitPixels> LoadPortrait(const std::filesystem::path& path);
 // GotoAndStop takes them.
 constexpr u32 PortraitFrameNone = 1;
 constexpr u32 PortraitFrameShown = 2;
+// The portrait in the red ring: the member is downed (Kaniel 2026-10-18: no badge, the ring tells).
+constexpr u32 PortraitFrameDowned = 3;
 struct PartyListArt {
     u32 icon = PartyListIconNone;
     u32 badge = PartyListIconNone;

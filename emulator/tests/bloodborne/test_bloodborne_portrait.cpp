@@ -486,13 +486,25 @@ TEST(BloodbornePortrait, TheListShowsThePortraitInACircle) {
     EXPECT_TRUE(CircularPortrait(PortraitPixels(10)).empty()) << "not a portrait";
 }
 
-TEST(BloodbornePortrait, AMemberWithAPortraitShowsItWithTheIconAsItsBadge) {
+TEST(BloodbornePortrait, AMemberWithAPortraitShowsNoBadgeAndARedRingWhenDowned) {
+    // Kaniel 2026-10-18: no badge on the portrait; its ring turns red while the member is downed.
     PartyListEntry entry;
     entry.visible = true;
     entry.icon = PartyListIconDowned0 + 3;
     EXPECT_EQ(PartyListArtFor(entry, true), (PartyListArt{.icon = PartyListIconNone,
-                                                          .badge = PartyListIconDowned0 + 3,
-                                                          .face = PortraitFrameShown}));
+                                                          .badge = PartyListIconNone,
+                                                          .face = PortraitFrameDowned}));
+    for (const u32 icon : {PartyListIconHunter, PartyListIconElsewhere, PartyListIconFallen}) {
+        entry.icon = icon;
+        EXPECT_EQ(PartyListArtFor(entry, true), (PartyListArt{.icon = PartyListIconNone,
+                                                              .badge = PartyListIconNone,
+                                                              .face = PortraitFrameShown}))
+            << icon;
+    }
+    entry.icon = PartyListIconDowned0 + 10;
+    EXPECT_EQ(PartyListArtFor(entry, true).face, PortraitFrameDowned)
+        << "revived to 100%: still down";
+    entry.icon = PartyListIconDowned0 + 3;
     EXPECT_EQ(PartyListArtFor(entry, false), (PartyListArt{.icon = PartyListIconDowned0 + 3,
                                                            .badge = PartyListIconNone,
                                                            .face = PortraitFrameNone}));
