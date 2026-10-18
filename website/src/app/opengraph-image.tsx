@@ -5,7 +5,7 @@ import { ImageResponse } from "next/og";
 import { site } from "@/lib/site";
 
 // The social preview: the emblem and the name, set like the game's title screen.
-export const alt = `${site.name}: play Bloodborne together on PC`;
+export const alt = `${site.shortName}: Bloodborne seamless co-op on PC`;
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -32,8 +32,10 @@ export default function Image() {
     >
       <img src={emblem} width={300} height={300} alt="" />
       <div style={{ display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: 92, lineHeight: 1 }}>Bloodborne</div>
-        <div style={{ fontSize: 54, color: "#d9b878", marginTop: 8 }}>Seamless Co-op</div>
+        <div style={{ fontSize: 88, lineHeight: 1 }}>Yharnam Together</div>
+        <div style={{ fontSize: 54, color: "#d9b878", marginTop: 8 }}>
+          Bloodborne Seamless Co-op
+        </div>
         <div
           style={{
             fontSize: 30,

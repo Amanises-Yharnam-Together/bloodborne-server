@@ -158,8 +158,10 @@ export default function Home() {
             className="size-40 drop-shadow-[0_0_40px_rgb(120_138_168/0.25)] sm:size-48"
           />
           <h1 className="mt-6 text-5xl leading-[1.05] font-normal text-bone sm:text-6xl">
-            Bloodborne
-            <span className="block text-title">Seamless Co-op</span>
+            Yharnam Together
+            <span className="mt-2 block text-3xl text-title sm:text-4xl">
+              Bloodborne Seamless Co-op
+            </span>
           </h1>
           <p className="mt-6 max-w-md text-xl">
             Play the whole game with your friends in one shared world, from the first lamp to the

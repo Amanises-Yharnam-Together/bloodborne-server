@@ -45,7 +45,7 @@ const install: DocPage = {
   slug: "install",
   title: "Install and set up",
   description:
-    "What you need, how to install Bloodborne Seamless Co-op, what each part of the launcher's Co-op page is for, and how the other players reach the host.",
+    "What you need, how to install Yharnam Together, what each part of the launcher's Co-op page is for, and how the other players reach the host.",
   sections: [
     {
       id: "requirements",
@@ -60,7 +60,9 @@ const install: DocPage = {
             "Everyone, the host included, on the same release. The server turns away a different build.",
           ],
         },
-        { type: "note", text: netcodeStatus.note },
+        ...(netcodeStatus.shippedInRelease
+          ? []
+          : [{ type: "note" as const, text: netcodeStatus.note }]),
       ],
     },
     {
@@ -454,7 +456,7 @@ const architecture: DocPage = {
   slug: "architecture",
   title: "How it works",
   description:
-    "The parts of Bloodborne Seamless Co-op: the native PC port, the co-op code built into it, the patched map events and the server one player runs.",
+    "The parts of Yharnam Together: the native PC port, the co-op code built into it, the patched map events and the server one player runs.",
   sections: [
     {
       id: "overview",
@@ -554,7 +556,7 @@ const netcode: DocPage = {
   slug: "netcode",
   title: "The server netcode",
   description:
-    "Why Bloodborne Seamless Co-op replaced peer-to-peer with a server that owns the team's world: the game's native netcode, the UDP protocol, the reliability layer, team worlds and the native team lobby.",
+    "Why Yharnam Together replaced peer-to-peer with a server that owns the team's world: the game's native netcode, the UDP protocol, the reliability layer, team worlds and the native team lobby.",
   sections: [
     {
       id: "why",
@@ -844,7 +846,7 @@ const build: DocPage = {
   slug: "build",
   title: "Build from source",
   description:
-    "Build the port, the server and the release of Bloodborne Seamless Co-op on Windows, run the local checks and the multi-game test rig.",
+    "Build the port, the server and the release of Yharnam Together on Windows, run the local checks and the multi-game test rig.",
   sections: [
     {
       id: "prerequisites",
@@ -946,7 +948,7 @@ const credits: DocPage = {
   slug: "credits",
   title: "Credits and license",
   description:
-    "The projects Bloodborne Seamless Co-op is built on, its GPL license, and its relationship to Sony Interactive Entertainment and FromSoftware (none).",
+    "The projects Yharnam Together is built on, its GPL license, and its relationship to Sony Interactive Entertainment and FromSoftware (none).",
   sections: [
     {
       id: "credits",

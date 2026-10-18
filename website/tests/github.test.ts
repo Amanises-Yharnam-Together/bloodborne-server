@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatBytes, parseRelease } from "@/lib/github";
+import { formatBytes, newestRelease, parseRelease } from "@/lib/github";
 
 const asset = (name: string, size = 100) => ({
   name,
@@ -35,6 +35,28 @@ describe("parseRelease", () => {
   });
   it("names an unnamed release by its tag", () => {
     expect(parseRelease({ tag_name: "v2", name: "", html_url: "u", assets: [] })?.name).toBe("v2");
+  });
+});
+
+describe("newestRelease", () => {
+  const rel = (tag: string, extra: object = {}) => ({
+    tag_name: tag,
+    html_url: `u/${tag}`,
+    assets: [],
+    ...extra,
+  });
+  it("takes the newest published release, pre-releases included", () => {
+    const r = newestRelease([
+      rel("v0.3.13-local", { draft: true }),
+      rel("v0.3.12-local", { prerelease: true }),
+      rel("v0.1.4"),
+    ]);
+    expect(r?.tag).toBe("v0.3.12-local");
+    expect(r?.prerelease).toBe(true);
+  });
+  it("is null for an empty or broken list", () => {
+    expect(newestRelease([])).toBeNull();
+    expect(newestRelease({ message: "Not Found" })).toBeNull();
   });
 });
 

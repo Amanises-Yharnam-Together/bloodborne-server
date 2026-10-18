@@ -1,9 +1,20 @@
-# Bloodborne Seamless Co-op
+# Yharnam Together: Bloodborne Seamless Co-op
 
 Seamless co-op for **Bloodborne** on PC, in the spirit of
 [Elden Ring Seamless Co-op](https://www.nexusmods.com/eldenring/mods/510): up to four hunters
-make a team, share one world, join each other without bells, signs or Insight, and keep playing together through
-lamp trips, deaths and boss fights.
+make a team, share one world, join each other without bells, signs or Insight, and keep playing
+together through lamp trips, deaths, boss fights and chalice dungeons.
+
+**Website, download and guides: <https://bloodborne-seamless-coop.vercel.app>**
+
+- [Download](https://bloodborne-seamless-coop.vercel.app/download): the newest release
+- [Install and set up](https://bloodborne-seamless-coop.vercel.app/docs/install): the setup, the
+  launcher's Co-op page, reaching the host
+- [Playing together](https://bloodborne-seamless-coop.vercel.app/docs/play): teams, the party
+  list, going down, giving items
+- [How it works](https://bloodborne-seamless-coop.vercel.app/docs/architecture) and
+  [the server netcode](https://bloodborne-seamless-coop.vercel.app/docs/netcode)
+- [Build from source](https://bloodborne-seamless-coop.vercel.app/docs/build)
 
 It runs on **Bloodborne PC**, the native Windows port of the PS4 game (the game's own code runs on
 your CPU, its graphics go through Vulkan; there is no emulator in between). The co-op server and
@@ -11,20 +22,14 @@ everything else it needs run on the players' own PCs.
 
 > [!IMPORTANT]
 > **No game files are included.** You need your own copy of Bloodborne for PS4, version **1.09**:
-> a decrypted dump of the game folder with the 1.09 update, or the PS4 `.pkg` files (the included
-> launcher installs them). This project is not affiliated with Sony Interactive Entertainment or
+> a decrypted dump of the game folder with the 1.09 update, or the PS4 `.pkg` files (the launcher
+> installs them). This project is not affiliated with Sony Interactive Entertainment or
 > FromSoftware.
 
 **Status: experimental, playable.** It is played regularly in parties of two and three and
 checked by an automated two- and three-game test rig on every change, but it is a fan project:
-expect rough edges and keep backups of your saves.
-
-**The server netcode** (every game talks only to a co-op server that owns the team's world, up to
-four players, teams made in the game's own menus) is built on the `server-coop` branch and in
-testing; the releases so far use the peer-to-peer design described below.
-
-The project's website (`website/`) has the download, an explainer and illustrated docs, including
-how the server netcode works.
+expect rough edges and keep backups of your saves. New builds come out as GitHub
+**pre-releases**; the launcher updates itself from them.
 
 ## Contents
 
@@ -39,49 +44,61 @@ how the server netcode works.
 
 ## What it does
 
-- **Teams, no bells.** Continue, Load Game or New Game opens the team screen: make a team of up to
-  four from the hunters online, Ready, and the leader begins the hunt. Every game loads its own
-  save, the loading screen stays up until the team is together, and you are in one world where
-  each of you stands: no bells (the bell items are gone from the game), no signs, no summoning.
-- **The team's world.** The team keeps one world on the server, started from the leader's save;
-  each save's own world is kept aside and comes back when it plays alone.
-- **Stay together.** Nobody is sent home: lamp trips, the Hunter's Dream, deaths, boss kills and
-  map changes all keep the party together. A guest who crashes or quits comes back into the same
-  session, where they were.
-- **One world.** Enemies, their HP and their deaths are shared: every player's hits count on the
-  same health bar, and a kill is a kill for everyone. NPCs, doors, lamps, shortcuts and boss kills
-  follow the host's world, and what a guest unlocks is kept in their own world too. Each player
-  keeps their own pickups, echoes and Insight.
-- **Party death** (from Elden Ring Nightreign, always on): a killing blow puts you down instead of
-  killing you while a partner stands on your map. They revive you by striking you; when everyone
-  on a map is down, the party wipes and wakes at its lamps.
+- **Teams instead of bells.** Continue, Load Game or New Game opens the team screen: make a team
+  of up to four from the hunters online, Ready, and the leader begins the hunt. The loading screen
+  stays up until the team is together. In the game, the **Insert** menu (or L3 + R3) opens
+  **Co-op Team** any time: invite, join a running team, or leave. Joining is instant, from
+  anywhere. There are no bells, signs or summoning.
+- **One world.** The team keeps one world on the server, started from the leader's save. Enemies,
+  their HP and their deaths are shared, a kill is a kill for everyone, and anyone can light a lamp
+  for everyone. Each save's own world comes back when it plays alone.
+- **Travel freely.** Every hunter travels on their own: you can be in different areas at the same
+  time and stay in the party. Nobody is pulled along or sent home by lamp trips, the Hunter's
+  Dream, deaths or boss kills.
+- **The party list.** Every hunter's portrait, name, HP, blood vials and quicksilver bullets, in
+  the game's own HUD style, wherever they are.
+- **Compass and map.** A compass shows where your team is, and the map shows them on every area
+  and takes you to a lamp.
+- **Going down** (from Elden Ring Nightreign, always on): a killing blow puts you down instead of
+  killing you while a partner is near. They revive you by striking you; when the whole party is
+  down, it wipes and wakes at the host's lamp, and the area resets.
+- **Giving items.** Hand items, weapons and Blood Echoes to a teammate from the **Give** menu.
+- **Chalice dungeons together.** Team altars: the team shares its chalice dungeons, and teammates
+  join a running dungeon from the altar.
 - **No stolen bloodstains.** Your echoes stay where you died until you pick them up.
-- **Harder enemies** (optional): HP, damage and poise multipliers for every enemy and boss, to make
-  up for the extra hunters.
-- **Self-hosted.** One player runs a small server (accounts, the team lobby, the teams' worlds,
-  every game's co-op traffic) and a stand-in for the game's online services. No PlayStation Network, no community server, nothing in the cloud.
-- **Everything from Bloodborne PC**: 60 FPS and above, resolutions up to 4K, DLSS, FSR 3.1/4 and XeSS
-  upscaling, frame generation, HDR, ReShade, mouse and keyboard, gamepads.
+- **Harder enemies** (optional): three times the HP and poise and half again the damage for every
+  enemy and boss, to make up for the extra hunters.
+- **Self-hosted.** One player's PC runs the co-op server (the team lobby, the teams' worlds,
+  every game's co-op traffic) and a stand-in for the game's online services. No PlayStation
+  Network, no community server, nothing in the cloud.
+- **Everything from Bloodborne PC**: 60 FPS and above, resolutions up to 4K, DLSS, FSR 3.1/4 and
+  XeSS upscaling, frame generation, HDR, ReShade, mouse and keyboard, gamepads.
 
 ## Play it
 
+The illustrated version of this is the
+[install guide](https://bloodborne-seamless-coop.vercel.app/docs/install).
+
 1. Download the setup `.exe` from the
-   [releases page](https://github.com/lKaniel/bloodborne-server/releases) and run it. Every player
-   in a team uses the same release.
-2. Open **Bloodborne Seamless Co-op** (the launcher). It finds your game (or **Install from PKG**
-   extracts it); on the Co-op card choose host (runs the co-op server on this PC) or player, the
-   host's IP and an account.
-3. Press **PLAY**. The host's server starts by itself; Windows asks once to let co-op through its
-   firewall.
+   [download page](https://bloodborne-seamless-coop.vercel.app/download) (or the
+   [releases page](https://github.com/lKaniel/bloodborne-server/releases)) and run it. Everyone in a
+   team, the host included, uses the same release.
+2. Open **Bloodborne Seamless Co-op** (the launcher) and go to its **Co-op** page: your Bloodborne
+   folder (**Find it for me**, **Browse…** or **Install from PKG…**), the host's IP address (the
+   host types their own) and Enemies (Off or Harder). **Done** lights up once nothing is missing.
+   There is no account to make.
+3. Press **PLAY**. On the host, PLAY starts the co-op server first. Windows asks once to let co-op
+   through its firewall.
 4. Continue, Load Game or New Game opens the team screen: create a team or accept an invite, Ready,
-   and the leader presses **Begin the hunt**.
+   and the leader begins the hunt. Later, the **Insert** menu's **Co-op Team** tab joins or invites
+   from inside the game.
 5. Everyone must reach the host's PC: the same VPN (Radmin VPN, Tailscale, ZeroTier) or the host's
    public IP with ports forwarded: TCP 31313, 31315, 20443 and **UDP 31314**. The UDP port carries
    every game's co-op traffic (the games never talk to each other directly), so it must be open.
 
-Requirements: Windows 10 (1903 or later) or 11, 64-bit, and a Vulkan 1.3 graphics card with a current
-driver. Python, the libraries and the servers are all inside the zip. Tested with CUSA03173 (the
-European Game of the Year edition) at 1.09; all players in a party should use the same edition.
+Requirements: Windows 10 (1903 or later) or 11, 64-bit, and a Vulkan 1.3 graphics card with a
+current driver. Everything else is in the setup. Tested with CUSA03173 (the European Game of the
+Year edition) at 1.09; all players in a party should use the same edition.
 
 ## How it works
 
@@ -134,12 +151,12 @@ More detail: [docs/BBPORT.md](docs/BBPORT.md) (the port and its co-op wiring),
 | Folder | What it is | Upstream |
 |---|---|---|
 | `bbport/` | Bloodborne PC, the native port, with the launcher and the Windows packaging | [deadinside28/bloodborne_pc](https://github.com/deadinside28/bloodborne_pc), [Supermedo/bloodborne_pc](https://github.com/Supermedo/bloodborne_pc), [AdrianCsT/bloodborne_pc](https://github.com/0xCydral/bloodborne_pc) |
-| `emulator/` | shadPS4 with P2P networking; `src/core/bloodborne_*` is the co-op code the port compiles in | [Wozzardman/shadp2p](https://github.com/Wozzardman/shadp2p) (from [shadPS4](https://github.com/shadps4-emu/shadPS4)) |
+| `emulator/` | shadPS4 with the original P2P networking; `src/core/bloodborne_*` is the co-op code the port compiles in | [Wozzardman/shadp2p](https://github.com/Wozzardman/shadp2p) (from [shadPS4](https://github.com/shadps4-emu/shadPS4)) |
 | `server/` | shadNet server: accounts, rooms, signaling, and the co-op server (team lobby, team worlds, the relay) | [Wozzardman/shadnet-p2p](https://github.com/Wozzardman/shadnet-p2p) |
 | `backend/` | stand-in for the game's online services | the LocalServer of the Bloodborne PC Online community package |
 | `tools/` | build, local CI, the co-op kits and releases, the test rig (`tools/rig`), RE helpers (`tools/re`) | |
 | `docs/` | design notes and handovers | |
-| `website/` | the project's website: landing page, download and docs (Next.js, deploys to Vercel) | |
+| `website/` | the project's website ([live](https://bloodborne-seamless-coop.vercel.app)): landing page, download and docs (Next.js, deploys to Vercel) | |
 
 All upstreams are imported with their full history (subtree merges), so `git log` shows their
 authors. The shadPS4 build of the co-op (`emulator/`) still works but the port is the main target;
@@ -173,7 +190,7 @@ git submodule update --init --recursive
 | `tools/build-emu.ps1` | builds the emulator (`out\emulator\build`) and its unit tests (`out\emulator\tests`) |
 | `tools/build-server.ps1` | builds shadnet and its tests (`out\server`) |
 | `tools/ci-check.ps1 -Component emulator\|server\|bbport\|backend\|tools [-All]` | local CI: clang-format 19, trailing whitespace, REUSE, build, tests |
-| `tools/make-release.ps1 -Version x.y.z` | builds a release zip (see below) |
+| `tools/make-release.ps1 -Version x.y.z` | builds the release setup `.exe` (see below) |
 | `tools/make-port-kit.ps1` | the developers' test kit for a Bloodborne.PC.Online install |
 | `tools/rig/run_scenario.py` | the automated multi-game test rig (two or three games on one PC) |
 
@@ -187,24 +204,27 @@ the same. Deploying it is described in [website/README.md](website/README.md).
 ## Make a release
 
 ```powershell
-tools\make-release.ps1 -Version 0.1.0              # build and zip into C:\bb\release
-tools\make-release.ps1 -Version 0.1.0 -Publish     # ... and create a draft GitHub release
+tools\make-release.ps1 -Version 0.4.0 -DlssDir C:\bb\dlss-abi2                   # build the setup .exe
+tools\make-release.ps1 -Version 0.4.0 -DlssDir C:\bb\dlss-abi2 -Publish -Prerelease  # ... and a draft pre-release
 ```
 
 It builds the port and packages it, builds shadnet with its Qt DLLs and the account tool, adds the
-kit's scripts, the release's setup and texts (`tools/release/kit`), the backend and the event
-patcher, checks the result (`tools/release/check_release.py`: everything a player needs is there,
-and no game file, save, log or setting is), zips it with its SHA-256 and, with `-Publish`, creates
-a **draft** release `v<version>` at the build's commit with the zip attached (`gh`, or the GitHub
-API with `GITHUB_TOKEN` or git's stored credential). Check the draft on GitHub and press Publish.
+release's texts (`tools/release/kit`), the backend and the event patcher, checks the result
+(`tools/release/check_release.py`: everything a player needs is there, and no game file, save, log
+or setting is), builds one setup `.exe` with Inno Setup (`tools/release/setup.iss`) with its
+SHA-256 and, with `-Publish`, creates a **draft** release `v<version>` at the build's commit with
+the setup attached (`gh`, or the GitHub API with `GITHUB_TOKEN` or git's stored credential). Check
+the draft on GitHub and press Publish. New builds go out as pre-releases (`-Prerelease`); the
+launcher updates itself from them and the website's download page offers the newest one.
 
 - Build from a clean, pushed commit: the script refuses uncommitted changes unless `-AllowDirty`
   (test builds only; those cannot be published).
 - `-GameDir <game folder with the 1.09 update>` names the game whose event files the release is
   tested with (default: the rig's game, `C:\bb\rig\port\game\CUSA03173`). Only their hashes go into
   the release (`event-reference.json`); each player's setup compares its own files against them.
-- `-DlssSdk <checkout of github.com/NVIDIA/DLSS>` builds the DLSS bridge; without it the release
-  has DLSS only if `bbport\out` already holds `bbport_dlss.dll`.
+- `-DlssDir <folder with bbport_dlss.dll and nvngx_dlss.dll>` or `-DlssSdk <checkout of
+  github.com/NVIDIA/DLSS>` brings DLSS and frame generation; without either the build stops
+  unless `-NoDlss`.
 - `-SkipPortBuild` / `-SkipServerBuild` reuse the builds that are there.
 
 ## Credits and forks
