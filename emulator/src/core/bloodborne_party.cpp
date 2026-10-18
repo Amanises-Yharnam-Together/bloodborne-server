@@ -4720,6 +4720,8 @@ std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& pan
                      : member.name.empty() ? member.member
                                            : member.name;
         entry.member = member.member;
+        entry.vials = member.vials;
+        entry.bullets = member.bullets;
         entry.name_line = RoleLine("ece8df", HtmlText(entry.name));
         entry.max = std::max(member.max, 1);
         entry.hp = std::clamp(member.hp, 0, entry.max);
@@ -5309,9 +5311,12 @@ VitalsBoard MergeDirectVitals(const VitalsBoard& board, std::span<const DirectVi
         const bool same_down = same->down == update.self.down;
         const u32 board_damage = same_down ? same->revive_damage : 0;
         const u32 board_cutscene = same->cutscene;
+        const u32 board_vials = same->vials, board_bullets = same->bullets;
         *same = update.self;
         same->revive_damage = board_damage;
-        same->cutscene = board_cutscene; // the direct line does not carry it
+        same->cutscene = board_cutscene; // the direct line does not carry these
+        same->vials = board_vials;
+        same->bullets = board_bullets;
     }
     for (MemberVitals& member : merged.members) {
         u32 hits = 0;
@@ -5739,6 +5744,8 @@ PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view
             .needed = entry.needed,
             .at = map != 0 && entry.map == map ? std::optional{entry.at} : std::nullopt,
             .map = entry.map,
+            .vials = entry.vials,
+            .bullets = entry.bullets,
         });
     }
     return panel;

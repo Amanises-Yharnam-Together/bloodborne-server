@@ -199,6 +199,10 @@ message Vitals {
     // Kaniel 2026-10-17: this member's cutscene (CutsceneVote): 0 none, 1 playing, 2 it voted to
     // skip. The server keeps it with the rest.
     uint32 cutscene = 10;
+    // Kaniel 2026-10-18: this member's Blood Vials and Quicksilver Bullets, shown beside its name
+    // in the others' party lists.
+    uint32 vials = 11;
+    uint32 bullets = 12;
 }
 message VitalsBoard {
     message Member {

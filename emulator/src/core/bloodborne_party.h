@@ -2908,6 +2908,8 @@ struct PartyListEntry {
     std::string name_line; // the name as shown, in white html (written over the tag's own)
     std::string member;    // its board name (whose portrait the slot shows)
     u32 icon = 1;          // its icon's frame (PartyListIcon...)
+    u32 vials = 0;         // Kaniel 2026-10-18: shown beside the name (the overlay draws them)
+    u32 bullets = 0;
 };
 // The icon sprite's frames beside each tag (CoopPartyIcon0-2, our drawings: hud_patch.py
 // HUD_ICON_FRAMES), 1-based as GotoAndStop takes them: none, the hunter, the lantern (another map),
@@ -3048,6 +3050,9 @@ struct MemberVitals {
     LampPosition at{};
     u32 revive_damage = 0; // in the answer only
     u32 cutscene = 0;      // CutsceneVote's state, through the server only (not the direct line)
+    // Kaniel 2026-10-18: its Blood Vials and Quicksilver Bullets (the server only, as cutscene).
+    u32 vials = 0;
+    u32 bullets = 0;
     bool operator==(const MemberVitals&) const = default;
 };
 struct ReviveHitTotal {
@@ -3353,6 +3358,9 @@ struct PanelMember {
     std::optional<LampPosition> at;
     // Kaniel 2026-10-17 (the map screen): the map it is on (0 when the board has none).
     u32 map = 0;
+    // Kaniel 2026-10-18: its vials and bullets, shown beside its name.
+    u32 vials = 0;
+    u32 bullets = 0;
     bool operator==(const PanelMember&) const = default;
 };
 struct PartyPanel {

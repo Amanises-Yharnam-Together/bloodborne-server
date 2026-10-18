@@ -353,6 +353,14 @@ TEST(BloodbornePartyHud, ThePartyListShowsEachMembersState) {
     EXPECT_EQ(entries[1].icon, PartyListIconDowned0 + 6) << "64% shows the 60% ring";
     EXPECT_EQ(entries[2].icon, PartyListIconFallen);
 
+    // Kaniel 2026-10-18: each member's vials and bullets go beside its name.
+    panel.members[0].vials = 14;
+    panel.members[0].bullets = 9;
+    const auto supplied = PartyListEntries(panel);
+    EXPECT_EQ(supplied[0].vials, 14u);
+    EXPECT_EQ(supplied[0].bullets, 9u);
+    EXPECT_EQ(supplied[1].vials, 0u);
+
     panel.members.erase(panel.members.begin(), panel.members.begin() + 3);
     const auto away = PartyListEntries(panel);
     EXPECT_EQ(away[0].role, "");
@@ -1202,6 +1210,13 @@ TEST(BloodbornePartyDeath, ListsTheOthersOnThePartyPanel) {
     EXPECT_EQ(panel.members[2].vital, Vital::Dead);
     EXPECT_EQ(panel.revive_target, 0);
     EXPECT_EQ(panel.vital, Vital::Off); // the local player's own down is the caller's to fill
+    // Kaniel 2026-10-18: each member's vials and bullets, from its vitals.
+    std::vector<MemberVitals> supplied = board;
+    supplied[1].vials = 11;
+    supplied[1].bullets = 4;
+    const PartyPanel stocked = BuildPartyPanel(supplied, Kaniel, CentralYharnam, LampPosition{});
+    EXPECT_EQ(stocked.members[0].vials, 11u);
+    EXPECT_EQ(stocked.members[0].bullets, 4u);
 
     EXPECT_EQ(BuildPartyPanel(board, Kaniel, CentralYharnam, LampPosition{9.0f, 0.0f, 0.0f})
                   .revive_target,

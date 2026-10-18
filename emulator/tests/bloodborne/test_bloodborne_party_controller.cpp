@@ -2557,6 +2557,11 @@ TEST(BloodborneDirectBoards, DirectVitalsGoOverTheBoardsCopy) {
     // (without one) must not wipe it.
     board.members[0].cutscene = 2;
     EXPECT_EQ(MergeDirectVitals(board, direct).members[0].cutscene, 2u);
+    // Kaniel 2026-10-18: so do its vials and bullets (the party list shows them by the name).
+    board.members[0].vials = 12;
+    board.members[0].bullets = 7;
+    EXPECT_EQ(MergeDirectVitals(board, direct).members[0].vials, 12u);
+    EXPECT_EQ(MergeDirectVitals(board, direct).members[0].bullets, 7u);
 }
 
 // A member's standing kills go to the peers whole (at once on a change, again every half

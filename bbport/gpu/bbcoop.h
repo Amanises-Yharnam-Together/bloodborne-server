@@ -47,6 +47,7 @@ typedef struct bbcoop_panel_member {
     int here;
     int32_t hp, hp_max;
     uint32_t landed, needed;
+    uint32_t vials, bullets; /* Kaniel 2026-10-18: beside the name */
 } bbcoop_panel_member;
 typedef struct bbcoop_panel {
     int member_count;
