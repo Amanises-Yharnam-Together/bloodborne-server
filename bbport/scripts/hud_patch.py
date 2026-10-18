@@ -30,7 +30,7 @@ FE = 'dvdroot_ps4/menu/fe.gfx'
 LAYER = 'party HUD'
 # Part of the generated file's name: a patcher that patches differently makes its file anew (the old
 # one is not reused). Bump it with every change to what patch_fe writes.
-PATCH_VERSION = b'party-hud 12'
+PATCH_VERSION = b'party-hud 13'
 DRAW_BANNER = 'Fe_fla._TextEffect_Draw_195'
 DRAW_FIELD = 'StaticText_522007'
 DOWNED_FIELD = 'CoopDownedText'
@@ -74,7 +74,9 @@ PARTY_FACES = ('CoopPartyFace0', 'CoopPartyFace1', 'CoopPartyFace2')
 PARTY_SUPPLIES = ('CoopSupply0', 'CoopSupply1', 'CoopSupply2')
 SUPPLY_TEXTS = ('SupplyVials', 'SupplyBullets')
 SUPPLY_ICON, SUPPLY_TEXT_SCALE, SUPPLY_STEP = 22, 0.75, 48  # icon px, the count's scale, from vial to bullet
-SUPPLY_X, SUPPLY_FROM_BAR = 212, -20  # the vial's centre x on the stage; the line's y from the bar's middle
+# The vial's centre x on the stage: past the HP bar's end (x 300), where no name reaches (Kaniel 2026-10-18: "will it
+# work fine with a long name?"); the line's y from the bar's middle.
+SUPPLY_X, SUPPLY_FROM_BAR = 320, -20
 FIRST_SUPPLY_ID = 50120  # after the faces' ids
 PARTY_BADGES = ('CoopPartyBadge0', 'CoopPartyBadge1', 'CoopPartyBadge2')
 PORTRAIT_SIZE, PORTRAIT_PIXELS = 42, 128
@@ -549,7 +551,7 @@ def player_supply_parts(tags):
 
 
 def supply_centre(index):
-    """The centre of CoopSupply<index>'s vial on the stage: on the name's line, right of most names."""
+    """The centre of CoopSupply<index>'s vial on the stage: on the name's line, past the HP bar's end."""
     return SUPPLY_X, LIST_Y + LIST_STEP * index + BAR_FROM_TAG[1] + SUPPLY_FROM_BAR
 
 

@@ -187,7 +187,12 @@ class GfxTests(unittest.TestCase):
             _, tx, ty = hud_patch.place_matrix(places[name])
             bar_y = hud_patch.LIST_Y + hud_patch.LIST_STEP * index + hud_patch.BAR_FROM_TAG[1]
             self.assertAlmostEqual(ty / 20, bar_y - 20, delta=1)
-            self.assertTrue(180 <= tx / 20 <= 240)
+            # Kaniel 2026-10-18 ("will it work fine with a long name?"): past the HP bar's end (x 300 on the
+            # stage), where no name reaches: 16 characters of the list's font (about 11 px each on the rig's
+            # 1080p shots) end near x 285.
+            bar_end, longest_name_end = 300, hud_patch.LIST_X + hud_patch.BAR_FROM_TAG[0] + 16 * 11
+            self.assertGreaterEqual(tx / 20 - hud_patch.SUPPLY_ICON / 2, bar_end + 6)
+            self.assertLess(longest_name_end, bar_end)
 
     def test_the_frame_rings_the_portrait(self):
         # Kaniel 2026-10-13: a round portrait in a Bloodborne frame, drawn larger than it shows (crisp when
