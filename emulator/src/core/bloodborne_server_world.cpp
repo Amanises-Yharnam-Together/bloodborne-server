@@ -358,7 +358,9 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
                              .needed = vitals.needed(),
                              .at = PositionOf(vitals.at()),
                              .revive_damage = entry.revive_damage(),
-                             .cutscene = vitals.cutscene()});
+                             .cutscene = vitals.cutscene(),
+                             .vials = vitals.vials(),
+                             .bullets = vitals.bullets()});
         }
         for (const auto& wipe : envelope.vitals_board().wipes()) {
             board.wipes.push_back(
@@ -912,6 +914,8 @@ void SendServerVitals(const MemberVitals& mine, std::span<const ReviveHitTotal> 
     vitals.set_landed(mine.landed);
     vitals.set_needed(mine.needed);
     vitals.set_cutscene(mine.cutscene);
+    vitals.set_vials(mine.vials);
+    vitals.set_bullets(mine.bullets);
     PutPosition(mine.at, vitals.mutable_at());
     for (const ReviveHitTotal& hit : hits) {
         bbcoop::ReviveHit* out = vitals.add_hits();

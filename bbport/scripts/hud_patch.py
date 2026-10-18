@@ -30,7 +30,7 @@ FE = 'dvdroot_ps4/menu/fe.gfx'
 LAYER = 'party HUD'
 # Part of the generated file's name: a patcher that patches differently makes its file anew (the old
 # one is not reused). Bump it with every change to what patch_fe writes.
-PATCH_VERSION = b'party-hud 10'
+PATCH_VERSION = b'party-hud 11'
 DRAW_BANNER = 'Fe_fla._TextEffect_Draw_195'
 DRAW_FIELD = 'StaticText_522007'
 DOWNED_FIELD = 'CoopDownedText'
@@ -102,6 +102,7 @@ def badge_centre(index):
 FIRST_NEW_ID = 50000
 
 SHOW_FRAME, PLACE_OBJECT2, PLACE_OBJECT3, EDIT_TEXT, SPRITE, SYMBOL_CLASS = 1, 26, 70, 37, 39, 76
+REMOVE_OBJECT2 = 28
 
 
 class Tag:
@@ -428,15 +429,32 @@ def party_icon_tags(depth, strip):
     return tags
 
 
-def face_sprite(char, square, frame):
+# The downed ring's red (the party list's downed drop's).
+DOWNED_RED = (208, 40, 30)
+
+
+def red_ring(rgba):
+    """The portrait ring (RGBA) in red: each pixel the red at its own brightness, its coverage kept."""
+    out = bytearray(len(rgba))
+    for i in range(0, len(rgba), 4):
+        r, g, b, a = rgba[i:i + 4]
+        light = min(1.0, (0.299 * r + 0.587 * g + 0.114 * b) / 170.0)
+        out[i:i + 4] = bytes((round(DOWNED_RED[0] * light), round(DOWNED_RED[1] * light), round(DOWNED_RED[2] * light), a))
+    return bytes(out)
+
+
+def face_sprite(char, square, frame, red_frame):
     """A portrait slot's sprite: nothing in its first frame, then the picture `square` with the `frame` shape
-    over it, concentric, FRAME_SIZE across on the stage."""
+    over it, concentric, FRAME_SIZE across on the stage; in its third the `red_frame` in its place (Kaniel
+    2026-10-18: the member is downed, no badge)."""
     scale = PORTRAIT_SIZE / PORTRAIT_PIXELS
     offset = round(-(FRAME_SIZE - PORTRAIT_SIZE) / 2 / scale * 20)
-    frames = [Tag(SHOW_FRAME, b'', False), place(square, 1),
-              place(frame, 2, place_matrix=matrix(FRAME_SIZE / FRAME_PIXELS / scale, offset, offset)),
+    ring = matrix(FRAME_SIZE / FRAME_PIXELS / scale, offset, offset)
+    frames = [Tag(SHOW_FRAME, b'', False), place(square, 1), place(frame, 2, place_matrix=ring),
+              Tag(SHOW_FRAME, b'', False),
+              Tag(REMOVE_OBJECT2, struct.pack('<H', 2), False), place(red_frame, 2, place_matrix=ring),
               Tag(SHOW_FRAME, b'', False)]
-    sprite = Tag(SPRITE, struct.pack('<HH', char, 2), True)
+    sprite = Tag(SPRITE, struct.pack('<HH', char, 3), True)
     sprite.children = frames + [Tag(0, b'', False)]
     return sprite
 
@@ -446,11 +464,13 @@ def portrait_tags(depth, icon_char, strip):
     over them, CoopPartyBadge0-2 (the icon sprite `icon_char`, small), from `depth` up."""
     _, frame_rgba = strip_drawings(strip)
     frame = FIRST_FACE_ID + 3 * len(PARTY_FACES)
-    tags, faces, char = [bitmap(frame, frame_rgba, FRAME_PIXELS), bitmap_square(frame + 1, frame, FRAME_PIXELS)], \
+    red = frame + 2
+    tags, faces, char = [bitmap(frame, frame_rgba, FRAME_PIXELS), bitmap_square(frame + 1, frame, FRAME_PIXELS),
+                         bitmap(red, red_ring(frame_rgba), FRAME_PIXELS), bitmap_square(red + 1, red, FRAME_PIXELS)], \
         [], FIRST_FACE_ID
     for slot in range(len(PARTY_FACES)):
         tags += [bitmap(char, bytes(portrait_magic(slot)) * PORTRAIT_PIXELS ** 2, PORTRAIT_PIXELS),
-                 bitmap_square(char + 1, char, PORTRAIT_PIXELS), face_sprite(char + 2, char + 1, frame + 1)]
+                 bitmap_square(char + 1, char, PORTRAIT_PIXELS), face_sprite(char + 2, char + 1, frame + 1, red + 1)]
         faces.append(char + 2)
         char += 3
     scale = PORTRAIT_SIZE / PORTRAIT_PIXELS

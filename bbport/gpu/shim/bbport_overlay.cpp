@@ -3648,6 +3648,9 @@ void TextWithGlyph(ImDrawList* draw, ImFont* font, float size, float mid, float 
     Text(draw, font, size, ImVec2(x, y), color, after);
 }
 
+void SupplyCounts(ImDrawList* draw, float right, float cy, float unit, uint32_t vials,
+                  uint32_t bullets, float alpha);
+
 void MemberList(ImDrawList* draw, float pulse) {
     using Ui::S;
     using Ui::T;
@@ -3700,6 +3703,7 @@ void MemberList(ImDrawList* draw, float pulse) {
                                  : dead ? Ui::Dim(a)
                                         : Rgba(0.95f, 0.94f, 0.92f, a);
         Text(draw, serif_font, S(21.0f), ImVec2(text_x, y + S(4.0f)), name_color, name);
+        SupplyCounts(draw, text_x + bar, y + S(15.0f), base_scale, member.vials, member.bullets, a);
         if (!member.here) {
             const float name_w = serif_font->CalcTextSizeA(S(21.0f), FLT_MAX, 0.0f, name).x;
             Text(draw, sans_font, S(13.0f), ImVec2(text_x + name_w + S(10.0f), y + S(10.0f)),
@@ -3860,11 +3864,61 @@ void PromptGlyph(ImDrawList* draw) {
                 size, 1.0f);
 }
 
+/// Kaniel 2026-10-18: a member's Blood Vials and Quicksilver Bullets, right aligned at `right`
+/// and centred on `cy` (`unit` screen pixels to a 1080p pixel): a red vial and its count, a silver
+/// bullet and its count.
+void SupplyCounts(ImDrawList* draw, float right, float cy, float unit, uint32_t vials,
+                  uint32_t bullets, float alpha) {
+    ImFont* font = MenuArt::Font();
+    const float size = 20.0f * unit;
+    const ImU32 ink = IM_COL32(0xC1, 0xC4, 0xC5, int(235 * alpha)), shade = IM_COL32(0, 0, 0, int(170 * alpha));
+    const auto count = [&](uint32_t value) {
+        char text[12];
+        std::snprintf(text, sizeof(text), "%u", value);
+        const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+        const ImVec2 at(std::floor(right - extent.x), std::floor(cy - extent.y * 0.5f));
+        draw->AddText(font, size, ImVec2(at.x + 1.5f * unit, at.y + 1.5f * unit), shade, text);
+        draw->AddText(font, size, at, ink, text);
+        right -= extent.x + 4.0f * unit;
+    };
+    count(bullets);
+    {
+        const float w = 6.0f * unit, h = 13.0f * unit, x0 = right - w, y0 = cy - h * 0.5f;
+        draw->AddRectFilled(ImVec2(x0, y0 + w * 0.5f), ImVec2(x0 + w, y0 + h),
+                            IM_COL32(150, 154, 160, int(240 * alpha)), 1.0f * unit);
+        draw->AddCircleFilled(ImVec2(x0 + w * 0.5f, y0 + w * 0.5f), w * 0.5f,
+                              IM_COL32(205, 208, 212, int(250 * alpha)));
+        right = x0 - 10.0f * unit;
+    }
+    count(vials);
+    {
+        const float r = 5.0f * unit, x = right - r, y = cy + 2.0f * unit;
+        draw->AddRectFilled(ImVec2(x - 1.6f * unit, y - r - 6.0f * unit), ImVec2(x + 1.6f * unit, y - r + 1.0f * unit),
+                            IM_COL32(170, 170, 176, int(240 * alpha)));
+        draw->AddCircleFilled(ImVec2(x, y), r, IM_COL32(150, 24, 22, int(245 * alpha)));
+        draw->AddCircle(ImVec2(x, y), r, IM_COL32(205, 208, 212, int(200 * alpha)), 0, 1.0f * unit);
+    }
+}
+
+/// The game's party list (the party HUD's CoopParty tags, hud_patch.py LIST_X/LIST_Y/LIST_STEP): each
+/// member's supplies on its name's line, at its HP bar's end (the tag at (204, 330 + 95 i), its bar
+/// from x 109 to about 300 on the 1080p stage).
+void Supplies(ImDrawList* draw) {
+    const float sx = game.w / 1920.0f, sy = game.h / 1080.0f;
+    for (int i = 0; i < panel.member_count && i < 3; ++i) {
+        const float bar_y = 330.0f + 95.0f * float(i) - 0.5f;
+        SupplyCounts(draw, game.x + 300.0f * sx, game.y + (bar_y - 20.0f) * sy, sy, panel.members[i].vials,
+                     panel.members[i].bullets, 1.0f);
+    }
+}
+
 void Draw() {
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
     const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
     if (!panel.native_list) { // else the game's HUD shows it (the party HUD's CoopParty tags)
         MemberList(draw, pulse);
+    } else {
+        Supplies(draw);
     }
     if (panel.vital == BBCOOP_VITAL_DOWN) {
         OwnDown(draw, pulse);

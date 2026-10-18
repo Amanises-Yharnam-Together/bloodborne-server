@@ -10,6 +10,7 @@
 #include "core/bloodborne_portrait.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
+#include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
 
 #include <algorithm>
@@ -417,6 +418,11 @@ void SendPeerHello() {
 
 namespace {
 
+// Kaniel 2026-10-18: this player's Blood Vials and Quicksilver Bullets (the game's thread reads
+// them, TickPortraits), for the others' party lists.
+std::atomic<u32> own_vials{};
+std::atomic<u32> own_bullets{};
+
 // The character's face data (PlayerGameData +0x4AC, 0xF0 bytes, as channel 8 sends it): its
 // portrait is kept on disk by it. Nothing before the character is loaded.
 std::optional<u64> OwnFaceFingerprint() {
@@ -639,6 +645,10 @@ void TickPortraits() {
         return;
     }
     ticked_at = now;
+    own_vials.store(
+        Coop::TradeHeld({BloodborneCoop::TradeItemKind::Goods, BloodborneCoop::BloodVialGoods, 0}));
+    own_bullets.store(Coop::TradeHeld(
+        {BloodborneCoop::TradeItemKind::Goods, BloodborneCoop::QuicksilverBulletGoods, 0}));
     const auto face = OwnFaceFingerprint();
     const auto outfit = face ? OwnOutfit() : std::nullopt;
     const auto key = outfit
@@ -1034,6 +1044,8 @@ void RunServerBoards(std::stop_token stop) {
                 vitals_changed = false;
                 mine = vitals_mine;
                 mine.cutscene = own_cutscene.load();
+                mine.vials = own_vials.load();
+                mine.bullets = own_bullets.load();
                 hits = vitals_hits;
             }
         }

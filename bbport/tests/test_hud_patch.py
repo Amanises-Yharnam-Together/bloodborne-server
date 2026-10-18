@@ -99,7 +99,8 @@ class GfxTests(unittest.TestCase):
         self.assertEqual(hud_patch.write_movie(hud_patch.read_movie(patched)), patched)
         _, tags = hud_patch.read_movie(patched)
         bitmaps = [t for t in tags if t.code == 36]
-        self.assertEqual(len(bitmaps), len(hud_patch.HUD_ICON_FRAMES) - 1 + len(hud_patch.PARTY_FACES) + 1)
+        # The icons, a placeholder per face, the ring and the downed (red) ring.
+        self.assertEqual(len(bitmaps), len(hud_patch.HUD_ICON_FRAMES) - 1 + len(hud_patch.PARTY_FACES) + 2)
         sprites = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == hud_patch.SPRITE}
         first_frame = next(i for i, t in enumerate(tags) if t.code == hud_patch.SHOW_FRAME)
         places = {hud_patch.place_parts(t)[1]: t for t in tags[:first_frame] if t.code == hud_patch.PLACE_OBJECT2}
@@ -174,7 +175,15 @@ class GfxTests(unittest.TestCase):
             scale = scale or 1
             sprite = sprites[hud_patch.place_parts(face)[0]]
             inner = [t for t in sprite.children if t.code == hud_patch.PLACE_OBJECT2]
-            self.assertEqual([hud_patch.place_depth(t) for t in inner], [1, 2], 'the picture, the frame over it')
+            self.assertEqual([hud_patch.place_depth(t) for t in inner], [1, 2, 2],
+                             'the picture, the frame over it, then the red frame in its place')
+            # The red ring: the same place as the ring, its own drawing, red.
+            self.assertEqual(hud_patch.place_matrix(inner[2]), hud_patch.place_matrix(inner[1]))
+            red_bitmap = bitmaps[hud_patch.shape_bitmap(shapes[hud_patch.place_parts(inner[2])[0]])]
+            red_argb = __import__('zlib').decompress(red_bitmap.body[7:])
+            reds = [red_argb[i + 1] > 2 * max(red_argb[i + 2], red_argb[i + 3]) for i in range(0, len(red_argb), 4)
+                    if red_argb[i] > 0xC0]
+            self.assertTrue(reds and all(reds), 'every drawn pixel red')
             # The frame: concentric with the portrait on the stage, FRAME_SIZE across.
             frame_scale, fx, fy = hud_patch.place_matrix(inner[1])
             size = hud_patch.FRAME_PIXELS * frame_scale * scale
@@ -234,7 +243,8 @@ class GfxTests(unittest.TestCase):
         import zlib
         for slot, name in enumerate(hud_patch.PARTY_FACES):
             sprite = sprites[hud_patch.place_parts(places[name])[0]]
-            self.assertEqual(struct.unpack_from('<H', sprite.body, 2)[0], 2, 'nothing, then the picture')
+            # Kaniel 2026-10-18: nothing, the picture in its ring, the picture in the red ring (downed).
+            self.assertEqual(struct.unpack_from('<H', sprite.body, 2)[0], 3, 'nothing, picture, downed')
             shape = shapes[hud_patch.place_parts(next(t for t in sprite.children if t.code == 26))[0]]
             bitmap = bitmaps[hud_patch.shape_bitmap(shape)]
             char, form, width, height = struct.unpack_from('<HBHH', bitmap.body)

@@ -182,6 +182,8 @@ extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
         out.hp_max = member.max;
         out.landed = member.landed;
         out.needed = member.needed;
+        out.vials = member.vials;
+        out.bullets = member.bullets;
     }
     panel->member_count = static_cast<int>(count);
     panel->revive_target = party.revive_target < static_cast<s32>(count) ? party.revive_target : -1;
