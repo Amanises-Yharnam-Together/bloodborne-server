@@ -1011,6 +1011,13 @@ bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 
     return party_configured && slot >= 0 && !done_for_slot && map != 0 && map != HuntersDream;
 }
 
+std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool holds) {
+    if (!party_configured || flag_on == holds) {
+        return std::nullopt;
+    }
+    return holds;
+}
+
 std::vector<s32> GuestProgressFlags(bool guest, bool in_session, u32 map, bool dream_visited,
                                     bool workshop_opened) {
     constexpr u32 HuntersDream = 0x15000000;

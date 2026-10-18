@@ -33,6 +33,8 @@ void QueueServerWorld(bbcoop::Envelope envelope);
 // taking one out (the one with `handle`, else the first) writes what it is into its data, adding
 // one makes it anew from its data (its gems too).
 u32 TradeHeld(const TradeItem& item);
+// Whether the player's items read at all (its game data is there): TradeHeld's 0 means none.
+bool PlayerItemsReadable();
 bool TakeTradeItems(std::span<TradeItem> items, u32 handle = 0);
 void AddTradeItems(std::span<const TradeItem> items);
 // Whether AddTradeItems can (the game's functions it calls are the ones it knows).

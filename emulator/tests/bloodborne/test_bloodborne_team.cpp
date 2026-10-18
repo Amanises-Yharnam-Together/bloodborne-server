@@ -159,6 +159,9 @@ TEST(TeamWorld, TheWorldsFlagsOnlyAreCaptured) {
     EXPECT_TRUE(IsWorldFlag(1500));
     EXPECT_FALSE(IsWorldFlag(4000)); // the session's
     EXPECT_FALSE(IsWorldFlag(9300)); // a player's own
+    // Holds the Sword Hunter Badge (Kaniel 2026-10-18): the host's put in a guest's save kept
+    // the Cleric Beast from giving the guest its badge.
+    EXPECT_FALSE(IsWorldFlag(6645));
     Store store;
     store.Set(1000);
     store.Set(1999);
@@ -188,6 +191,18 @@ TEST(TeamWorld, ChangesMakeTheWorldTheTargetAndLeaveTheRest) {
         store.Set(flag, on);
     }
     EXPECT_TRUE(WorldFlagChanges(1000, store.Blocks(), target).empty());
+}
+
+// A team world the server kept from before (Kaniel 2026-10-18) still lists the host's "holds the
+// Sword Hunter Badge" (6645): a member's save takes none of it, nor clears its own.
+TEST(TeamWorld, AnOldWorldsHeldItemFlagsStayThePlayers) {
+    Store store{.bytes = {std::vector<u8>(125)}, .ids = {6}}; // flags 6000-6999
+    store.Set(6640);
+    WorldFlags target;
+    target.blocks = {6};
+    target.on = {6045, 6645};
+    EXPECT_EQ(WorldFlagChanges(1000, store.Blocks(), target),
+              (std::vector<std::pair<s32, bool>>{{6045, true}}));
 }
 
 // Kaniel's play test 2026-10-18: a guest's trip gave its game its own saved world back, and the

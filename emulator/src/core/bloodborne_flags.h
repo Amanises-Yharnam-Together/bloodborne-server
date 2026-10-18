@@ -94,6 +94,33 @@ inline constexpr std::array<s32, 21> BossFogEntryFlags{
     12804800, 13304800, 13404808, 13404858, 13504808, 13504858, 13604808,
 };
 
+// The Dream's m21_00 event 12100450 sets each of these flags once the player holds its goods (the
+// workshop's tools, the hunter badges). The badges' givers read them: a boss event gives its badge
+// only while the flag is off (the Cleric Beast's 12411700 its Sword Hunter Badge by 6645, m21_00
+// 12101800 by 6642, m23_00 12301700 its Spark Hunter Badge by 6644); common event 9910 marks the
+// NPC badge gifts' lots taken by 6641 6643 6647 6649; the maps' start events switch objects by
+// 6630 6631 6640 6646 6648.
+struct HeldItemFlag {
+    s32 flag;
+    u32 goods;
+};
+inline constexpr std::array HeldItemFlags{
+    HeldItemFlag{6630, 4103}, // Blood Gem Workshop Tool
+    HeldItemFlag{6631, 4104}, // Rune Workshop Tool
+    HeldItemFlag{6632, 4105}, // Short Ritual Root Chalice
+    HeldItemFlag{6633, 4102}, // Workshop Haze Extractor
+    HeldItemFlag{6640, 4110}, // Saw Hunter Badge
+    HeldItemFlag{6641, 4112}, // Powder Keg Hunter Badge
+    HeldItemFlag{6642, 4113}, // Old Hunter Badge
+    HeldItemFlag{6643, 4111}, // Crow Hunter Badge
+    HeldItemFlag{6644, 4118}, // Spark Hunter Badge
+    HeldItemFlag{6645, 4114}, // Sword Hunter Badge
+    HeldItemFlag{6646, 4115}, // Radiant Sword Hunter Badge
+    HeldItemFlag{6647, 4116}, // Wheel Hunter Badge
+    HeldItemFlag{6648, 4119}, // Cosmic Eye Watcher Badge
+    HeldItemFlag{6649, 4117}, // Cainhurst Badge
+};
+
 namespace FlagTableDetail {
 
 constexpr FlagRange Range(s32 first, s32 last, FlagOwner owner, u32 behaviour,
@@ -107,6 +134,11 @@ inline constexpr std::array FirstRows{
     Range(4000, 4999, FlagOwner::Session, 0,
           "death and multiplayer bookkeeping (4000 a boss fight on, 4047 a player on the way "
           "out): the session's own"),
+    Range(6630, 6633, FlagOwner::PerPlayer, FlagCarriesHome,
+          "holds a workshop tool (HeldItemFlags, the Dream's 12100450): what this player holds"),
+    Range(6640, 6649, FlagOwner::PerPlayer, FlagCarriesHome,
+          "holds a hunter badge (HeldItemFlags): what this player holds; as the host's (a team "
+          "world) a guest never got its own Sword Hunter Badge from the Cleric Beast"),
     Range(9180, 9199, FlagOwner::Session, 0,
           "the bell's bookkeeping (common events 9181-9198), not progress; kept for the "
           "guest's world it gave Insight again"),

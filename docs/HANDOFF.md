@@ -183,6 +183,17 @@ does not give it again at home. The host's own events give the host its own, unc
 | Micolash (m26) | Mensis Cage | m26 12601850 (a boss kill event) | 72600301 -> 21000 | unknown (check the boss event patch) |
 | Many window NPCs; Blood Vial and Blood of Adella givers | Tonsil Stone, Blood Vial, Blood of Adella; gestures | the talk script itself (c1_52 adds, c1_65 the popup, c1_66 a gesture) | none | yes (runs in the guest's own game; not rig-tested) |
 | Hunter's Dream messengers | Notebook, bells, Eye of a Blood-drunk Hunter | m21 12101022-28 (made local) | 12101023-29 -> 10000-10050 | yes (earlier fix) |
+| Cleric Beast (m24_01 12411700) | Sword Hunter Badge | the boss event, skipped while 6645 is on | lot 50000010 | no / yes (rig together/boss-kill) |
+
+Hunter badges (2026-10-18, Kaniel: a guest never got the Sword Hunter Badge): the Dream's 12100450
+sets 6630-6633 and 6640-6649 once the player holds a workshop tool or badge, and the badges' givers
+skip theirs while it is on (the Cleric Beast's 6645; m21_00 12101800's 6642; m23_00 12301700's
+Spark Hunter Badge, 6644; common 9910 marks the NPC badge gifts' lots taken by 6641 6643 6647
+6649). Those flags were world flags, so a team world put the host's into every member's save and a
+guest whose host held the badge never got its own. They are each player's own now
+(`HeldItemFlags`, FLAGS.md), and in a party they follow what the player holds
+(`HeldItemFlagFix`, `KeepHeldItemFlagsOwn`, every second): a save with the host's value gets its
+badge, a player who holds one gets no second.
 
 Open: the death-flag events (Valtr's helm, Simon's bowblade) wait on 1003:101 checks not decoded
 yet; Queenly Flesh's trigger comes from an event that ends for a client; the Doll's exchange keeps

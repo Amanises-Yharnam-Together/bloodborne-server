@@ -793,6 +793,11 @@ std::span<const s32> ShopLineFlags();
 constexpr s64 GameStallMs = 5'000;
 bool GameThreadStalled(s64 now_ms, s64 last_tick_ms);
 bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 map);
+// A held-item flag (HeldItemFlags) in a party follows what this player holds: the value it must
+// take when it differs (on while the player holds the item, off while not), else nothing. Kaniel
+// 2026-10-18: a save that took the host's "holds the Sword Hunter Badge" from a team world never
+// got its own badge from the Cleric Beast.
+std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool holds);
 // Whether a load of the guest's world gets the kept world changes before its map items and
 // events: at home, and on a party trip (its own world loads while the session stays up).
 bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip);
