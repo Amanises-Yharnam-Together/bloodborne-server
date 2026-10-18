@@ -462,13 +462,17 @@ void SetGuestPickupsBeforeMapItems() {
     // A trip loads the guest's own world: its world changes go in once per trip, before the
     // throttle below (which skipped a Hunter's Dream load right after a pass on the old map).
     if (trip_load.Take(PartyTripActive(), party_trips_started.load())) {
-        // Raw, as ApplyHostMapState reads it: the map this load is creating.
+        // The team's world first (the guest's game has its own saved world back: Kaniel's play
+        // test 2026-10-18, the opening played again), then the host's map state and the
+        // session's changes on top. Raw, as ApplyHostMapState reads it: the map this load is
+        // creating.
+        ApplyTeamWorldOnLoad(true);
         LOG_INFO(Debug, "Bloodborne party: took {} flags of the host's state for map {:#x}",
                  ApplyHostMapState(), GetCurrentPackedMap());
         LOG_INFO(Debug,
                  "Bloodborne party: set {} of the session's world changes as a trip loads the "
                  "guest's own world",
-                 SetGuestWorldChanges());
+                 SetGuestWorldChanges(true));
     }
     if (now - last < std::chrono::seconds{5}) {
         return;
@@ -617,7 +621,7 @@ void KeepWorldChanges(const FlagChanges& changes) {
 namespace Coop {
 
 // At home: sets the kept changes in the guest's own world; the ones that took are done.
-size_t SetGuestWorldChanges() {
+size_t SetGuestWorldChanges(bool keep) {
     std::scoped_lock lock{guest_world_mutex};
     auto& world = GuestWorldChanges();
     using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
@@ -627,7 +631,7 @@ size_t SetGuestWorldChanges() {
                                                                              it->second);
         if (EventFlagOn(it->first) == it->second) {
             ++set;
-            it = world.erase(it);
+            it = keep ? std::next(it) : world.erase(it);
         } else {
             ++it;
         }
