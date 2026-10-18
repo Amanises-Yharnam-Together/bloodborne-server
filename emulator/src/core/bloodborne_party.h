@@ -2708,14 +2708,21 @@ std::string PositionRatesText(const std::map<u32, u32>& taken,
 // u32 size, payload}, r8d its size; it answers true for "sent"): a packet our link takes is
 // "sent", so the game's resend queue and its 180 s backlog timer (SprjSessionManager +0x2E0 /
 // +0x2F0, raised only by a backlog) stay empty. The packets our link took go to the member's
-// queues from the link's own thread, as the game's receive (0x0178D510, on its network thread)
-// does: the member's peer found in the net sync's list ([0x0553D6D0] +0x28: nodes {next, prev,
-// peer}, the peer's member id at +0x08), then the game's own fill 0x01790C20(peer, reliable,
-// bytes, size), which locks the queues itself. Not from a hook on NetSync's per-frame update:
-// a hook on a per-frame path made joins stall before (the talk position hook, 2026-10-10), and
-// with one there 4 of about 25 joins stalled on the rig.
+// queues as the game's receive (0x0178D510, NetSync's vtable +0x08) does: the member's peer found
+// in the net sync's list ([0x0553D6D0] +0x28: nodes {next, prev, peer}, the peer's member id at
+// +0x08), then the game's own fill 0x01790C20(peer, reliable, bytes, size).
+// Neither the fill nor the receive's pop of a channel's queue (0x017910F0) takes a lock: the game
+// fills and pops on its own threads in turn. Filled from our link's thread at any time, a queue's
+// list broke (rig 2026-10-18, party3 leader-returns3 4 of 4: "given memory block seems to be
+// improper or freed already", the pop's free on a character thread); a lock of ours over both
+// lost the network at party wipes. So the packets go in where the game's own came in: at the
+// start of NetSync's update (0x01789B60, its per-frame update on the game's thread, before its
+// receive). Only while that update has not run for NetSyncUpdateQuietMs (a load, a join's start:
+// rig 2026-10-10, joins stalled when only a per-frame path delivered) does the link deliver them.
 constexpr u64 TransportSendOffset = 0x00C8F0A0;
 constexpr u64 MemberQueuesFillOffset = 0x01790C20;
+constexpr u64 NetSyncUpdateOffset = 0x01789B60;
+constexpr s64 NetSyncUpdateQuietMs = 300;
 constexpr std::array<u8, 6> GamePacketLinkPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
 // A packet for a member the game has no queues for yet (it is still joining) waits this long.
 constexpr s64 HeldForUnknownMemberMs = 10'000;

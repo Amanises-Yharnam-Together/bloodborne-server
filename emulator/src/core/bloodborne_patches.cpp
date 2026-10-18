@@ -1000,8 +1000,23 @@ u64 NetSyncPeerOf(u64 net_sync, const std::string& member) {
     return 0;
 }
 
-// The packets our link took go into the members' queues, in the order they came (the link's
-// thread; the game's receive runs on its network thread too).
+// The packets our link took go into the members' queues, in the order they came: from NetSync's
+// update on the game's thread, or from the link's while that update is quiet (see
+// NetSyncUpdateOffset). One delivery at a time.
+std::mutex deliver_mutex;
+std::atomic<s64> net_sync_updated_ms{0};
+
+void DeliverGamePackets();
+
+void PS4_SYSV_ABI DeliverAtNetSyncUpdate(u64, const GuestRegisterSnapshot*) {
+    net_sync_updated_ms.store(GameLinkNowMs(), std::memory_order_relaxed);
+    // The game's thread never waits for the link's delivery: it goes on, next frame delivers.
+    std::unique_lock lock{deliver_mutex, std::try_to_lock};
+    if (lock.owns_lock()) {
+        DeliverGamePackets();
+    }
+}
+
 void DeliverGamePackets() {
     std::deque<InboundGamePacket> inbound;
     {
@@ -1193,7 +1208,10 @@ void RunGamePacketLink() {
                     game_link.dropped_routed, game_link.no_member, peers));
             }
         }
-        DeliverGamePackets();
+        if (now_ms - net_sync_updated_ms.load(std::memory_order_relaxed) >= NetSyncUpdateQuietMs) {
+            std::scoped_lock lock{deliver_mutex};
+            DeliverGamePackets();
+        }
         for (const auto& [address, bytes] : out) {
             Libraries::Net::P2PCoopSendTo(bytes.data(), static_cast<u32>(bytes.size()),
                                           address.first, address.second);
@@ -1221,8 +1239,13 @@ void InstallGamePacketLink(u64 base, u64 image_size) {
     }
     std::random_device random;
     game_link.instance = random() | 1;
-    const bool installed = InstallCoopHook(reinterpret_cast<void*>(base + TransportSendOffset),
-                                           GamePacketLinkPrologue, 0, TakeGamePacket);
+    const auto update = reinterpret_cast<void*>(base + NetSyncUpdateOffset);
+    bool installed = InstallCoopHook(update, GamePacketLinkPrologue, 0, DeliverAtNetSyncUpdate);
+    if (installed && !InstallCoopHook(reinterpret_cast<void*>(base + TransportSendOffset),
+                                      GamePacketLinkPrologue, 0, TakeGamePacket)) {
+        RemoveGuestCodeHook(update);
+        installed = false;
+    }
     if (!installed) {
         coop_features.Skipped("game packet link", "a hook did not go in");
         return;
