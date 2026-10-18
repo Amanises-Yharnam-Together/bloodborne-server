@@ -33,6 +33,11 @@ BOOT_MARKERS = {
     "seamless patches": "Bloodborne seamless patches enabled",
     "feature summary": "Co-op features: ",
 }
+# Another line that shows the same part in: the port in team mode (the team lobby decides the
+# party; no auto-rejoin) logged no "party controller" marker, so every port boot check failed.
+BOOT_MARKER_OR = {
+    "party controller": "Bloodborne party: the team lobby decides the party",
+}
 
 # The co-op install's one summary line ("Co-op features: N/M on (skipped: <feature> [<reason>],
 # ...)") and which features are required, from the co-op site table
@@ -106,7 +111,8 @@ PROBLEMS["a guarded game call was refused (a wrong object, or a vtable list miss
 
 def check_boot(text: str) -> list[str]:
     """The co-op parts missing from a boot log, and the co-op errors in it."""
-    failures = [f"missing: {name}" for name, marker in BOOT_MARKERS.items() if marker not in text]
+    failures = [f"missing: {name}" for name, marker in BOOT_MARKERS.items()
+                if marker not in text and BOOT_MARKER_OR.get(name, marker) not in text]
     failures += skipped_required(text)
     failures += [f"error: {line.strip()[:200]}" for line in text.splitlines()
                  if is_failure(line)]

@@ -33,6 +33,13 @@ class BootTest(unittest.TestCase):
         text = GOOD_BOOT.replace(tool.BOOT_MARKERS["join anywhere"], "something else")
         self.assertEqual(tool.check_boot(text), ["missing: join anywhere"])
 
+    def test_the_ports_team_mode_party_controller_counts(self):
+        team = line("InitPartyController: Bloodborne party: the team lobby decides the party "
+                    "(team mode)")
+        text = GOOD_BOOT.replace(tool.BOOT_MARKERS["party controller"], "something else")
+        self.assertEqual(tool.check_boot(text), ["missing: party controller"])
+        self.assertEqual(tool.check_boot(text + "\n" + team), [])
+
     def test_a_co_op_error_fails(self):
         text = GOOD_BOOT + "\n" + line(
             "Bloodborne sign timer signature mismatch at 0x18a9757", level="Error")

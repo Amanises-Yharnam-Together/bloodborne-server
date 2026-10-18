@@ -19,6 +19,8 @@ stay in rig/runs/<when>/<scenario>/ (the last RUNS_KEPT batches).
   py -3.12 tools/rig/run_scenario.py --save-baseline
   py -3.12 tools/rig/run_scenario.py --add-guest2   (a third game for parties of three)
   py -3.12 tools/rig/run_scenario.py --boot-check host [--seconds 40]   (tools/smoke-boot.ps1)
+  py -3.12 tools/rig/run_scenario.py --engine port --headless --lane 2 --boot-check host \
+      --cache-twice <a cache a game with a GPU wrote>   (one pipeline cached twice: skipped)
   py -3.12 tools/rig/run_scenario.py --engine port --play down-revive   (games to play by hand)
 
 A suite (suites.py) runs many chapters in one session from one boot: its games wait for each
@@ -1020,16 +1022,90 @@ def keep_shots(run_dir: pathlib.Path, roles: list[str]):
             shutil.move(str(shot), str(run_dir / f"{role}-{shot.name}"))
 
 
-def boot_check(role: str, seconds: int) -> int:
+# --boot-check --cache-twice: a pipeline cache entry copied under another name. Lisara's v0.3.11
+# cache held one pipeline in two files, and the second stopped the port at every start
+# (LoadGraphicsPipeline: ASSERT(is_new)); the port now skips it and removes its file.
+CACHE_TWICE_NAME = "g_0x0000000000000001.key"
+CACHE_TWICE_SKIPPED = "skipped: it is in the cache twice"
+
+
+def pipeline_cache(role: str) -> pathlib.Path:
+    """The port's shader and pipeline cache for the game (BB_GPU_USER_DIR's cache/<serial>)."""
+    return user_dir(role) / "cache" / "CUSA03173"
+
+
+def seed_cache_twice(cache: pathlib.Path, source: pathlib.Path | None = None
+                     ) -> pathlib.Path | None:
+    """The first graphics pipeline entry of `cache` twice: a copy of it under CACHE_TWICE_NAME.
+    `source` (a cache a game with a GPU wrote: a headless game draws nothing, so its own cache
+    has no pipelines) replaces `cache` first. The entry copied, or None when there is none."""
+    if source is not None:
+        shutil.rmtree(cache, ignore_errors=True)
+        shutil.copytree(source, cache)
+    copy = cache / CACHE_TWICE_NAME
+    copy.unlink(missing_ok=True)
+    entries = sorted(cache.glob("g_*.key"))
+    if not entries:
+        return None
+    copy.write_bytes(entries[0].read_bytes())
+    return entries[0]
+
+
+def cache_twice_problems(text: str, original: pathlib.Path, copy: pathlib.Path) -> list[str]:
+    """What is wrong after a boot with one pipeline in the cache twice: the game must go on, say
+    it skipped the second, and keep one of the two files (whichever it read first)."""
+    problems = []
+    if failure := boot_failure(text):
+        problems.append(f"the game stopped at an assertion: {failure}")
+    elif "Assertion Failed!" in text:
+        problems.append("the game stopped at an assertion")
+    if CACHE_TWICE_SKIPPED not in text:
+        problems.append(f"no entry was skipped as \"{CACHE_TWICE_SKIPPED}\"")
+    left = [path for path in (original, copy) if path.exists()]
+    if len(left) == 2:
+        problems.append(f"both files are left ({original.name}, {copy.name})")
+    elif not left:
+        problems.append(f"neither file is left ({original.name}, {copy.name})")
+    return problems
+
+
+def boot_check(role: str, seconds: int, cache_twice: str | None = None,
+               owner: str | None = None) -> int:
     """The boot smoke test (tools/smoke-boot.ps1): the role's game alone, in a party of its own
     so it never meets a real one, for `seconds`; every co-op patch and hook must be in by then
-    (check_party_log.py --boot). Needs no player and no server."""
+    (check_party_log.py --boot). Needs no player and no server. In a lane (--lane N) it takes the
+    lane and runs beside other lanes' games. `cache_twice` ("" or a cache folder to start from):
+    one pipeline is in the cache twice (seed_cache_twice), and the game must skip it."""
     if missing := ENGINE.missing():
         print(missing)
         return 2
-    if games_running():
+    if player_blocks() if IN_LANES else games_running():
         print("A game is running; not starting another.")
         return 2
+    if IN_LANES and not lanes.claim(RIG, LANE, owner or lanes.default_owner()):
+        print(f"Lane {LANE} is held or blocked (--lanes-status): not starting the game.")
+        return 2
+    try:
+        return boot_and_judge(role, seconds, cache_twice)
+    finally:
+        if IN_LANES:
+            lanes.release(RIG, LANE)
+
+
+def boot_and_judge(role: str, seconds: int, cache_twice: str | None) -> int:
+    original = copy = None
+    if cache_twice is not None:
+        if ENGINE.name != "port":
+            print("--cache-twice is the port's pipeline cache (--engine port)")
+            return 2
+        cache = pipeline_cache(role)
+        original = seed_cache_twice(cache, pathlib.Path(cache_twice) if cache_twice else None)
+        if original is None:
+            print(f"no pipeline in {cache} to copy: give --cache-twice a cache a game with a GPU "
+                  "wrote (a headless game draws none)")
+            return 2
+        copy = cache / CACHE_TWICE_NAME
+        print(f"{original.name} copied to {copy.name} in {cache}")
     started = time.time()
     game = launch(role, None, party="smoke:boot")
     while time.time() < started + seconds and game.poll() is None:
@@ -1043,6 +1119,9 @@ def boot_check(role: str, seconds: int) -> int:
         print(f"  the game ended by itself after {time.time() - started:.0f} s (code {exited}): "
               f"{boot_failure(text) or 'see ' + str(console_path(role))}")
     failures = check_party_log.check_boot(text)
+    if original is not None:
+        failures += [f"cache twice: {problem}"
+                     for problem in cache_twice_problems(text, original, copy)]
     for failure in failures:
         print(f"  FAIL {failure}")
     for warning in check_party_log.trace_warnings(text):
@@ -1701,6 +1780,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="boot the role's game alone and check that co-op went in")
     parser.add_argument("--seconds", type=int, default=40,
                         help="how long --boot-check lets the game boot (default 40)")
+    parser.add_argument("--cache-twice", nargs="?", const="", metavar="CACHE",
+                        help="with --boot-check (port): one pipeline in the shader cache twice; "
+                             "the game must skip it. CACHE: a cache a game with a GPU wrote, "
+                             "copied over the role's first (a headless game draws none)")
     parser.add_argument("--play", metavar="SCENARIO",
                         help="start a scenario's games with its settings and leave them to you "
                              "once they are in the world together")
@@ -1753,7 +1836,7 @@ def act(args: argparse.Namespace) -> int:
         print(f"made {', '.join(made)}" if made else "every role had a port folder already")
         return 0
     if args.boot_check:
-        return boot_check(args.boot_check, args.seconds)
+        return boot_check(args.boot_check, args.seconds, args.cache_twice, args.owner)
     if args.play:
         if args.play not in RUNNABLE:
             print(f"No such scenario: {args.play} (--list shows them)")
