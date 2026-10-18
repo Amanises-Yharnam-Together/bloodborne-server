@@ -292,7 +292,9 @@ private:
     /// bbport: guards graphics_pipelines and pipelines_compiling.
     std::shared_mutex pipelines_mutex;
     std::condition_variable_any pipelines_cv; ///< a pipeline compile finished
-    std::unordered_set<GraphicsPipelineKey> pipelines_compiling;
+    /// Keys being built, true where the background compiler has a job for it (not only a
+    /// draw-prep worker, which runs at idle priority: BbAsyncClaim).
+    std::unordered_map<GraphicsPipelineKey, bool> pipelines_compiling;
     bool async_compile{}; ///< BB_ASYNC_COMPILE, fixed at construction
     u64 prepared_hits = 0, prepared_misses = 0;
     const PreparedDraw* used_prepared = nullptr;

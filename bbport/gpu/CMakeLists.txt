@@ -523,6 +523,16 @@ add_executable(frame-slots-test EXCLUDE_FROM_ALL ../tests/test_frame_slots.cpp)
 target_compile_options(frame-slots-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(frame-slots-test PRIVATE shim)
 
+add_executable(async-claim-test EXCLUDE_FROM_ALL ../tests/test_async_claim.cpp)
+target_compile_options(async-claim-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(async-claim-test PRIVATE shim)
+
+# The push constant block the shaders read (header only: bbgpu's include directories, no link).
+add_executable(push-data-test EXCLUDE_FROM_ALL ../tests/test_push_data.cpp)
+target_compile_options(push-data-test PRIVATE -UNDEBUG)
+target_include_directories(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
+target_compile_definitions(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,COMPILE_DEFINITIONS>)
+
 add_executable(frame-gen-pace-test EXCLUDE_FROM_ALL ../tests/test_frame_gen_pace.cpp)
 target_compile_options(frame-gen-pace-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(frame-gen-pace-test PRIVATE shim)

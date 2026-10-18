@@ -236,15 +236,19 @@ struct PushData {
     static constexpr u32 XScaleIndex = 2;
     static constexpr u32 YScaleIndex = 3;
     static constexpr u32 BufOffsetIndex = 4;
-    /// bbport: members after the three buf_offsets vectors (see spirv_emit_context.cpp)
-    static constexpr u32 MotionParamIndex = BufOffsetIndex + 3;
+    /// bbport: one uvec4 member per 16 buffer bindings (a byte each), as many as NUM_BUFFERS
+    /// needs. Three were declared after NUM_BUFFERS went from 40 to 56 (GPU layer 0.20.1), and
+    /// bindings 48-55 read their offsets from motion_param (tests/test_push_data.cpp).
+    static constexpr u32 NumBufOffsetMembers = (NUM_BUFFERS + 15) / 16;
+    /// bbport: members after the buf_offsets vectors (see spirv_emit_context.cpp)
+    static constexpr u32 MotionParamIndex = BufOffsetIndex + NumBufOffsetMembers;
     static constexpr u32 SceneSizeIndex = MotionParamIndex + 1;
 
     float xoffset;
     float yoffset;
     float xscale;
     float yscale;
-    std::array<u8, NUM_BUFFERS> buf_offsets;
+    std::array<u8, NumBufOffsetMembers * 16> buf_offsets;
     u32 motion_param; ///< bbport: object motion parameter index (0: off)
     u32 scene_size; ///< reduced width | height << 16; zero means native pixel coordinates
 

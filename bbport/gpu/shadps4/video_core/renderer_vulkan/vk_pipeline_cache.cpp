@@ -40,6 +40,7 @@
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "bbport_async_claim.h"
 #include "bbport_spec_drop.h"
 #include "bbport_toggles.h"
 #ifdef _WIN32
@@ -981,18 +982,31 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     // pipeline while a compiler thread builds it, instead of the game standing still.
     const bool skippable = AsyncSkippable(sel, indirect);
     bool claimed = false;
+    bool take_over = false;
     {
         std::unique_lock lock{pipelines_mutex};
         for (;;) {
             if (const auto it = graphics_pipelines.find(key); it != graphics_pipelines.end()) {
                 return it->second.get();
             }
-            if (!pipelines_compiling.contains(key)) {
-                pipelines_compiling.insert(key);
+            const auto claim = pipelines_compiling.find(key);
+            const auto step = BbAsyncClaim::Next(claim != pipelines_compiling.end(),
+                                                 claim != pipelines_compiling.end() &&
+                                                     claim->second,
+                                                 skippable);
+            if (step == BbAsyncClaim::Step::Claim) {
+                pipelines_compiling.emplace(key, skippable);
                 claimed = true;
                 break;
             }
-            if (skippable) {
+            if (step == BbAsyncClaim::Step::TakeOver) {
+                // A draw-prep worker (idle priority) has it and may wait for seconds on a busy
+                // CPU: the background compiler builds it too, whichever is first stays.
+                claim->second = true;
+                take_over = true;
+                break;
+            }
+            if (step == BbAsyncClaim::Step::Skip) {
                 ++async_skipped;
                 return nullptr; // drawn from the frame its pipeline is ready
             }
@@ -1004,7 +1018,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             }
         }
     }
-    if (skippable && claimed) {
+    if (skippable && (claimed || take_over)) {
         if (!compiler) {
             const char* env = std::getenv("BB_ASYNC_PIPELINE_THREADS");
             const u32 threads = env && *env ? u32(std::strtoul(env, nullptr, 10))
@@ -1076,7 +1090,8 @@ bool PipelineCache::EnsureGraphicsPipeline(PipelineSelection& worker_sel) {
     const auto& key = worker_sel.graphics_key;
     {
         std::unique_lock lock{pipelines_mutex};
-        if (graphics_pipelines.contains(key) || !pipelines_compiling.insert(key).second) {
+        if (graphics_pipelines.contains(key) ||
+            !pipelines_compiling.try_emplace(key, false).second) {
             return true; // there, or another thread is on it
         }
     }
