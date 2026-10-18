@@ -131,8 +131,11 @@ def map_reset(roles, name: str = "everyone-leaves") -> dict:
                    steps, forbid=holds(roles))
 
 
-WIPE_SPOT = {"host": "-199.74 -50.56 182.42", "guest": "-196.74 -50.56 179.42",
-             "guest2": "-202.74 -50.56 179.42"}
+# Open sky, on the lower ground west of the first lamp (rig 2026-10-18: the old spots were
+# under a roof 9 m up, so every rise there landed on it, out of bounds, and the revives' swings
+# went wide; Kaniel). East of the lamp the open strip ends in a drop past x -194.
+WIPE_SPOT = {"host": "-212.0 -54.5 170.0", "guest": "-209.0 -54.5 170.0",
+             "guest2": "-209.0 -54.5 174.0"}
 
 
 # A guest's lethal fall with the host by it: from its own spot, or it lands on the host's body
