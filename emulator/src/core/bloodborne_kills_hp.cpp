@@ -538,6 +538,16 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
 
 namespace {
 
+// Dead in this game's world (IsDeadInItsWorld): its death flags, or 0 HP of a known max (an
+// enemy dead in the save loads so).
+bool DeadInItsWorld(u64 character) {
+    const u64 modules = ReadValue<u64>(character, 0x3B0);
+    const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+    return IsDeadInItsWorld(ReadValue<u8>(character, 0x1E3),
+                            data >= 0x10000 ? ReadValue<s32>(data, 0xF8) : 1,
+                            data >= 0x10000 ? ReadValue<s32>(data, 0xFC) : 0);
+}
+
 // A character the game keeps out of the world for now (its event's +0x28 / +0x29, or disabled):
 // an NPC behind a door, a boss before its fight.
 bool KeptOutByTheGame(u64 character) {
@@ -2475,7 +2485,7 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
     for (const u64 character : characters) {
         if (!players.contains(character)) {
             mine.push_back({ReadValue<u32>(character, 0x08), IsCharacterDisabled(character),
-                            IsDeadInItsWorld(ReadValue<u8>(character, 0x1E3))});
+                            DeadInItsWorld(character)});
             pointers.push_back(character);
         }
     }
@@ -2545,8 +2555,7 @@ void HoldStoryRemovals(u32 map, std::span<const u64> characters,
         const u32 handle = ReadValue<u32>(character, 0x08);
         seen.push_back({handle, ReadValue<u8>(character, 0x28) != 0, IsCharacterDisabled(character),
                         guest_hidden_here.contains(handle) || guest_switched_off.contains(handle),
-                        kill_hidden.contains(handle),
-                        IsDeadInItsWorld(ReadValue<u8>(character, 0x1E3))});
+                        kill_hidden.contains(handle), DeadInItsWorld(character)});
         pointers[handle] = character;
     }
     const s64 now = SteadyMilliseconds();
@@ -2639,8 +2648,7 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
         mine.push_back({ReadValue<u32>(character, 0x08), ReadValue<u8>(character, 0x28) != 0,
                         IsCharacterDisabled(character),
                         hosting && FarFromHost(host_at, CharacterPosition(character)),
-                        hosting && IsDeadInItsWorld(ReadValue<u8>(character, 0x1E3)) &&
-                            !IsBossSized(character)});
+                        hosting && DeadInItsWorld(character) && !IsBossSized(character)});
     }
     if (hosting) {
         if (!PostsShownState(SteadyMilliseconds(), world_changed_ms.load())) {
