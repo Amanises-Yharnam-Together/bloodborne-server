@@ -1393,6 +1393,32 @@ SCENARIOS = {
                            for role in ("host", "guest")},
         "timeout": 300,
     },
+    # Play test 2026-10-18 (v0.3.11-local): Krolebord had left the team's world in the Dream; at the
+    # next team load his game resumed him there while Kaniel, the host, loaded in Central Yharnam,
+    # and the team's screen opened with them apart. A guest's team load ends beside its host: here
+    # the guest leaves from the Dream, and its next team load (no START: nothing of the rig's own
+    # takes it anywhere) travels to the host and stands where it is before the screen opens.
+    "team-load-beside-host": {
+        "about": "a guest that left the team's world in the Dream loads with the team again and "
+                 "stands beside the host in Central Yharnam when the team's screen opens",
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", "wait 45", "done"],
+                     ["title-wait 60", "team-start", START, "wait-session 2 300", "wait 20",
+                      "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"]],
+            "guest": [["team-accept", "team-ready", START, "wait-session 2 300", "wait 5",
+                       f"travel {HUNTERS_DREAM}", "wait 30", "done"],
+                      ["team-ready", "wait-session 2 300", "wait 15", "expect-session 2",
+                       f"expect-map {CENTRAL_YHARNAM}", "expect-others-near 1 15"]],
+        },
+        "expect": {"guest": [r"team load: the host's place is map 0x18010000[\s\S]*guest resumes "
+                             r"on map 0x18010000; travelling[\s\S]*guest resumed at[\s\S]*the "
+                             r"guest's resume is done[\s\S]*this game is ready, 1 of 1 other "
+                             r"hunters' characters in its world[\s\S]*load view is gone"]},
+        "forbid": {"guest": [r"load view is gone[\s\S]*load view is up"]},
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
     # Phase 5b: the team's world. A world flag no save has (TEAM_WORLD_FLAG, Central Yharnam's
     # block, unused) set by the host in the team's first session is in the team's world; the
     # guest's save takes it at its next team load, and loses it again when it plays alone (its own
