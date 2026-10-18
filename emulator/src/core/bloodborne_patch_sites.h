@@ -65,6 +65,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"team lobby", false},
     {"team join", false},
     {"no multiplayer banners", false},
+    {"no lost-connection popup", false},
     {"own player numbers", false},
     {"host leaves", true},
     {"seamless travel", true},
@@ -293,6 +294,9 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // Kaniel 2026-10-16: the network banner, none in a party (ShowNetworkBannerPrologue).
     {"network banner", "no multiplayer banners", CoopSiteKind::Hook, 0x01BFFE80,
      "55 48 89 E5 41 57 41 56"},
+    // Kaniel 2026-10-18: no "Lost connection to the network" popup in a party (LanCutError...).
+    {"lan cut error", "no lost-connection popup", CoopSiteKind::Hook, 0x01387130,
+     "55 48 89 E5 41 56"},
     // Kaniel 2026-10-16: each joining member its own player number (PlayerNumberHandedOut).
     {"player number handed out", "own player numbers", CoopSiteKind::Hook, 0x0178C529,
      "89 85 8C FE FF FF 89 85 DC FE FF FF"},

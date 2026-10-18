@@ -2038,6 +2038,13 @@ const std::vector<CodePatch>& QuietSummonBannerPatches();
 // chimes): the network banner (0x01BFFE80, message id in edi) shows none of them.
 constexpr std::array<u8, 8> ShowNetworkBannerPrologue{0x55, 0x48, 0x89, 0xE5,
                                                       0x41, 0x57, 0x41, 0x56};
+// Kaniel 2026-10-18: a guest whose connection dropped and came back (the party went on) still
+// had "Lost connection to the network. Returning to title menu." (FMG 204, 4701) with its OK
+// button over the game. The network script's OnLanCutError (0x01387130, a Lua C function: the
+// error dialog with that text and the title return) does nothing in a party: the server keeps
+// the session, and a member alone plays on alone.
+constexpr u64 LanCutErrorOffset = 0x01387130;
+constexpr std::array<u8, 6> LanCutErrorPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x56};
 
 // Auto-rejoin for a configured party: whenever this player is back in its own world with no
 // session and no active search, start the role's search again (host: Beckoning, guest: Small

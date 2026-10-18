@@ -1331,6 +1331,28 @@ bool PS4_SYSV_ABI SkipNetworkBanner(u64, const GuestRegisterSnapshot* registers)
     return true;
 }
 
+// See LanCutErrorOffset: the network script's lost-connection error does nothing in a party.
+bool PS4_SYSV_ABI SkipLanCutError(u64, const GuestRegisterSnapshot*) {
+    static std::atomic<u32> logged{0};
+    if (logged.fetch_add(1) < 20) {
+        LOG_INFO(Debug, "Bloodborne party: lost-connection popup (OnLanCutError) not shown");
+    }
+    return true;
+}
+
+void InstallNoLostConnectionPopup(u64 base, u64 image_size) {
+    if (!party_controller || !CoopSitesMatch(base, image_size, "no lost-connection popup",
+                                             "a dropped connection shows the title-return popup")) {
+        return;
+    }
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + LanCutErrorOffset), LanCutErrorPrologue, 0,
+                         GuestFunctionOverride{SkipLanCutError})) {
+        coop_features.Skipped("no lost-connection popup", "the hook did not go in");
+        return;
+    }
+    coop_features.On("no lost-connection popup");
+}
+
 void InstallNoMultiplayerBanners(u64 base, u64 image_size) {
     if (!party_controller || !CoopSitesMatch(base, image_size, "no multiplayer banners",
                                              "join and leave banners show")) {
@@ -1578,6 +1600,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
     InstallNoMultiplayerBanners(base, image_size);
+    InstallNoLostConnectionPopup(base, image_size);
     InstallGuestsHitNpcs(base, image_size);
     InstallOwnPlayerNumbers(base, image_size);
     InstallMoviePlayerDeleteDelay(base, image_size);
