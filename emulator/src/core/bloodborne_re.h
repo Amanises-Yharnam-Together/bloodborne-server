@@ -70,12 +70,16 @@ struct MapScreenView {
     bool down = false;
     bool boss_fight = false;
     bool travelling = false;
+    std::vector<u32> cleared; // areas whose main bosses are down (AreaBossFlags)
 };
 // `open`: the screen is up (the game thread reads for it only while it is). False before its
 // first reading.
 bool ReadMapScreen(MapScreenView& view, bool open);
 // A trip from the map to the lamp, started by the game thread when MapTravelCheck allows it.
 void RequestMapTrip(s32 warp_point);
+// Kaniel 2026-10-18 (fog of war): the cells (bloodborne_map.h's ExploredCellMetres squares) this
+// character has walked on the map.
+std::vector<std::array<s16, 2>> ExploredOn(u32 packed_map);
 // Party portraits (bloodborne_portrait.h). The status page's model (its render target's RGBA
 // rows) as the port's texture cache read it back: this character's portrait once the page closes.
 void NoteStatusModel(std::span<const std::uint8_t> rgba, int width, int height);

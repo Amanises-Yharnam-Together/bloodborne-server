@@ -9,6 +9,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "common/types.h"
@@ -64,5 +65,23 @@ struct MapTripProgress {
     double seconds = 0.0; // since the trip started
 };
 bool MapTripArrived(const MapTripProgress& trip, u32 map_now, bool loading_now);
+
+// Kaniel 2026-10-18 (the map's fog of war): an area's main bosses' defeat flags (Hunter's Atlas's
+// list, MikeTat1988/HuntersAtlas); all of them on, the whole area shows on the map. None for the
+// Dream and the chalice dungeons.
+std::span<const s32> AreaBossFlags(u32 packed_map);
+
+// The fog of war's cells: where the player has walked, in ExploredCellMetres squares of a map.
+constexpr float ExploredCellMetres = 8.0f;
+struct ExploredCell {
+    u32 packed_map = 0;
+    s16 x = 0, z = 0;
+    auto operator<=>(const ExploredCell&) const = default;
+};
+ExploredCell ExploredCellAt(u32 packed_map, float x, float z);
+// The explored cells as kept in the user folder ("BBFOG1", a count, then map / x / z each), and
+// read back (nothing when it is not one).
+std::vector<u8> SaveExplored(const std::vector<ExploredCell>& cells);
+std::optional<std::vector<ExploredCell>> LoadExplored(std::span<const u8> file);
 
 } // namespace Core::Bloodborne

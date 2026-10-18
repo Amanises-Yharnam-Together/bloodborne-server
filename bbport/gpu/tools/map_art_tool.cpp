@@ -49,6 +49,9 @@ int main(int argc, char** argv) {
     void* png = tdefl_write_image_to_png_file_in_memory(chart->rgba.data(), chart->width, chart->height, 4, &size);
     std::ofstream(argv[3], std::ios::binary).write(static_cast<const char*>(png), std::streamsize(size));
     mz_free(png);
+    for (const auto& label : chart->labels) {
+        std::printf("label %d at %.1f %.1f\n", label.name_id, label.x, label.z);
+    }
     std::printf("%s: %dx%d at %.2f px/m, x0 %.2f z1 %.2f, drawn in %.1f s\n", argv[3], chart->width, chart->height,
                 chart->ppm, chart->x0, chart->z1, seconds);
     return 0;

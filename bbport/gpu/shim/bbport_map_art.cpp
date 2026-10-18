@@ -111,10 +111,12 @@ float Percentile(std::vector<float> values, double share) {
     return values[at];
 }
 
+constexpr std::uint32_t WaterColor = 0xFF4E6672u;
+
 bool SkippedMaterial(const std::string& mtd) {
     // Kaniel 2026-10-18 ("a lot of noise"): also the alpha-cut decals (_al: litter, grime, leaves on
     // the ground), grass cards and blood splats, specks from above.
-    static constexpr std::string_view Skipped[] = {"Sky", "sky", "Moon", "Sun_", "water", "Water", "_al", "grass", "Bloody"};
+    static constexpr std::string_view Skipped[] = {"Sky", "sky", "Moon", "Sun_", "_al", "grass", "Bloody"};
     return std::ranges::any_of(Skipped, [&](std::string_view word) { return mtd.find(word) != std::string::npos; });
 }
 
@@ -126,6 +128,82 @@ float TriangleArea(const float* t) {
 }
 
 } // namespace
+
+std::vector<float> Floors(std::span<const float> triangles) {
+    std::vector<float> floors;
+    for (std::size_t t = 0; t + 9 <= triangles.size(); t += 9) {
+        const float* v = triangles.data() + t;
+        const float ax = v[3] - v[0], ay = v[4] - v[1], az = v[5] - v[2];
+        const float bx = v[6] - v[0], by = v[7] - v[1], bz = v[8] - v[2];
+        const float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+        const float length = std::sqrt(nx * nx + ny * ny + nz * nz);
+        if (length > 0.0f && std::abs(ny) > 0.45f * length) {
+            floors.insert(floors.end(), v, v + 9);
+        }
+    }
+    return floors;
+}
+
+std::optional<std::vector<std::uint8_t>> ReadColorGrade(std::span<const std::uint8_t> tpf, const std::string& block) {
+    const auto textures = BbGameArt::ParseTpf(tpf);
+    if (!textures) {
+        return std::nullopt;
+    }
+    const BbGameArt::TpfTexture* found = nullptr;
+    for (const BbGameArt::TpfTexture& t : *textures) {
+        if (t.name == block + "_CGrading0001" || (!found && t.name.starts_with(block.substr(0, 3)))) {
+            found = &t;
+        }
+    }
+    // 16 wide, 256 tall, RGBA8 (DXGI 28/29), 4 bytes a texel in 8x8 tiles of Morton order.
+    if (!found || found->width != 16 || found->height != 256 || found->size < 16 * 256 * 4) {
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> grade(16 * 16 * 16 * 3);
+    std::size_t source = found->offset;
+    for (int ty = 0; ty < 256 / 8; ++ty) {
+        for (int tx = 0; tx < 16 / 8; ++tx) {
+            for (int i = 0; i < 64; ++i, source += 4) {
+                int x = 0, y = 0;
+                for (int bit = 0; bit < 3; ++bit) {
+                    x |= ((i >> (2 * bit)) & 1) << bit;
+                    y |= ((i >> (2 * bit + 1)) & 1) << bit;
+                }
+                const int row = ty * 8 + y, column = tx * 8 + x; // row: blue slice * 16 + green
+                std::memcpy(grade.data() + (std::size_t(row) * 16 + std::size_t(column)) * 3, tpf.data() + source, 3);
+            }
+        }
+    }
+    return grade;
+}
+
+std::array<float, 3> Graded(std::span<const std::uint8_t> grade, const float rgb[3]) {
+    if (grade.size() < 16 * 16 * 16 * 3) {
+        return {rgb[0], rgb[1], rgb[2]};
+    }
+    float f[3];
+    int i0[3], i1[3];
+    for (int c = 0; c < 3; ++c) {
+        const float v = std::clamp(rgb[c], 0.0f, 255.0f) / 255.0f * 15.0f;
+        i0[c] = std::min(14, int(v));
+        i1[c] = i0[c] + 1;
+        f[c] = v - float(i0[c]);
+    }
+    const auto at = [&](int r, int g, int b, int c) {
+        return float(grade[(std::size_t(b) * 256 + std::size_t(g) * 16 + std::size_t(r)) * 3 + std::size_t(c)]);
+    };
+    std::array<float, 3> out{};
+    for (int c = 0; c < 3; ++c) {
+        float v = 0;
+        for (int corner = 0; corner < 8; ++corner) {
+            const int r = corner & 1 ? i1[0] : i0[0], g = corner & 2 ? i1[1] : i0[1], b = corner & 4 ? i1[2] : i0[2];
+            const float w = (corner & 1 ? f[0] : 1 - f[0]) * (corner & 2 ? f[1] : 1 - f[1]) * (corner & 4 ? f[2] : 1 - f[2]);
+            v += w * at(r, g, b, c);
+        }
+        out[std::size_t(c)] = v;
+    }
+    return out;
+}
 
 std::uint32_t AverageColor(std::span<const std::uint8_t> tpf) {
     const auto textures = BbGameArt::ParseTpf(tpf);
@@ -221,6 +299,18 @@ std::optional<MapStudio> ReadMapStudio(std::span<const std::uint8_t> msb) {
         const Vec3 position = Vec3At(msb, record + 0x28);
         if (name.starts_with('c')) {
             studio.spots.push_back(position);
+            continue;
+        }
+        if (name.starts_with('h') && model >= 0 && std::size_t(model) < models.size() &&
+            models[std::size_t(model)].starts_with('h')) {
+            std::int64_t sub = 0;
+            std::int16_t banner = -1;
+            if (Get(msb, record + 0xB8, sub) && sub > 0) {
+                Get(msb, record + std::size_t(sub) + 8, banner);
+            }
+            studio.collisions.push_back(MapStudio::Collision{
+                Piece{models[std::size_t(model)], position, Vec3At(msb, record + 0x34), Vec3At(msb, record + 0x40)},
+                banner == -1 ? 0 : std::abs(banner)});
             continue;
         }
         if (!name.starts_with('m') || model < 0 || std::size_t(model) >= models.size() ||
@@ -346,7 +436,16 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
             vertex_count <= 0) {
             continue;
         }
-        const std::uint32_t mesh_color = material_color(material);
+        // Kaniel 2026-10-18: water as a calm blue-grey surface (its textures are foam and ripples).
+        std::uint32_t mesh_color = material_color(material);
+        if (colors && material >= 0 && material < materials) {
+            std::int32_t mtd = 0;
+            Get(flver, material_base + std::size_t(material) * 0x20 + 4, mtd);
+            const std::string name = Utf16At(flver, std::size_t(mtd));
+            if (name.find("water") != std::string::npos || name.find("Water") != std::string::npos) {
+                mesh_color = WaterColor;
+            }
+        }
         const std::size_t vertices = std::size_t(data) + buffer_offset + std::size_t(position_of[std::size_t(layout)]);
         if (vertices + std::size_t(vertex_count - 1) * std::size_t(vertex_size) + 12 > flver.size()) {
             continue;
@@ -521,6 +620,38 @@ Canvas::Canvas(const PlayArea& area, float ppm_, int max_side) {
     top.assign(std::size_t(width) * std::size_t(height), -std::numeric_limits<float>::infinity());
     light.assign(top.size(), 0);
     color.assign(top.size(), 0);
+    walk.assign(top.size(), 0);
+}
+
+void Canvas::AddWalkable(std::span<const float> floors) {
+    has_walk = has_walk || !floors.empty();
+    for (std::size_t t = 0; t + 9 <= floors.size(); t += 9) {
+        const float* v = floors.data() + t;
+        float px[3], py[3];
+        for (int k = 0; k < 3; ++k) {
+            px[k] = (v[k * 3] - x0) * ppm;
+            py[k] = (z1 - v[k * 3 + 2]) * ppm;
+        }
+        const int bx0 = std::max(0, int(std::floor(std::min({px[0], px[1], px[2]}))));
+        const int by0 = std::max(0, int(std::floor(std::min({py[0], py[1], py[2]}))));
+        const int bx1 = std::min(width - 1, int(std::floor(std::max({px[0], px[1], px[2]}))));
+        const int by1 = std::min(height - 1, int(std::floor(std::max({py[0], py[1], py[2]}))));
+        const float den = (py[1] - py[2]) * (px[0] - px[2]) + (px[2] - px[1]) * (py[0] - py[2]);
+        for (int y = by0; y <= by1; ++y) {
+            for (int x = bx0; x <= bx1; ++x) {
+                bool inside = bx0 == bx1 || by0 == by1 || std::abs(den) < 1e-9f;
+                if (!inside) {
+                    const float cx = float(x) + 0.5f, cy = float(y) + 0.5f;
+                    const float l1 = ((py[1] - py[2]) * (cx - px[2]) + (px[2] - px[1]) * (cy - py[2])) / den;
+                    const float l2 = ((py[2] - py[0]) * (cx - px[2]) + (px[0] - px[2]) * (cy - py[2])) / den;
+                    inside = l1 >= -0.05f && l2 >= -0.05f && 1.0f - l1 - l2 >= -0.05f;
+                }
+                if (inside) {
+                    walk[std::size_t(y) * std::size_t(width) + std::size_t(x)] = 1;
+                }
+            }
+        }
+    }
 }
 
 void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t> colors) {
@@ -612,7 +743,9 @@ void Canvas::Merge(const Canvas& other) {
             light[i] = other.light[i];
             color[i] = other.color[i];
         }
+        walk[i] = walk[i] | other.walk[i];
     }
+    has_walk = has_walk || other.has_walk;
 }
 
 Chart Canvas::Finish() const {
@@ -686,6 +819,52 @@ Chart Canvas::Finish() const {
             }
         }
     }
+    // Kaniel 2026-10-18 ("a lot of extra stuff outside the map"): with the walkable floors known,
+    // what lies more than Reach metres from all of them goes (two passes of a distance sweep).
+    std::vector<std::uint8_t> kept(top.size(), 1);
+    if (has_walk) {
+        const int reach = std::max(1, int(Reach * ppm));
+        std::vector<int> far(top.size(), 1 << 20);
+        for (std::size_t i = 0; i < top.size(); ++i) {
+            if (walk[i]) {
+                far[i] = 0;
+            }
+        }
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                int& d = far[std::size_t(y) * std::size_t(width) + std::size_t(x)];
+                if (x > 0) d = std::min(d, far[std::size_t(y) * std::size_t(width) + std::size_t(x - 1)] + 1);
+                if (y > 0) d = std::min(d, far[std::size_t(y - 1) * std::size_t(width) + std::size_t(x)] + 1);
+            }
+        }
+        for (int y = height - 1; y >= 0; --y) {
+            for (int x = width - 1; x >= 0; --x) {
+                int& d = far[std::size_t(y) * std::size_t(width) + std::size_t(x)];
+                if (x + 1 < width) d = std::min(d, far[std::size_t(y) * std::size_t(width) + std::size_t(x + 1)] + 1);
+                if (y + 1 < height) d = std::min(d, far[std::size_t(y + 1) * std::size_t(width) + std::size_t(x)] + 1);
+            }
+        }
+        for (std::size_t i = 0; i < top.size(); ++i) {
+            kept[i] = far[i] <= reach ? 1 : 0;
+        }
+    }
+    // Kaniel 2026-10-18 (shadows): the light from the north-west, 40 degrees up; a pixel with a
+    // surface rising above that line within 15 m toward the light lies in its shadow.
+    const float rise = std::tan(40.0f * 3.14159265f / 180.0f) / ppm * 1.41421356f; // metres a diagonal pixel
+    const int shadow_steps = int(15.0f * ppm / 1.41421356f);
+    const auto in_shadow = [&](int x, int y, float h) {
+        for (int k = 1; k <= shadow_steps; ++k) {
+            const int sx = x - k, sy = y - k;
+            if (sx < 0 || sy < 0) {
+                return false;
+            }
+            const float other = smooth_top[std::size_t(sy) * std::size_t(width) + std::size_t(sx)];
+            if (std::isfinite(other) && other - h > float(k) * rise) {
+                return true;
+            }
+        }
+        return false;
+    };
     const auto height_at = [&](int x, int y) {
         x = std::clamp(x, 0, width - 1);
         y = std::clamp(y, 0, height - 1);
@@ -699,7 +878,7 @@ Chart Canvas::Finish() const {
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const std::size_t at = std::size_t(y) * std::size_t(width) + std::size_t(x);
-            if (!std::isfinite(top[at])) {
+            if (!std::isfinite(top[at]) || !kept[at]) {
                 continue;
             }
             const float h = smooth_top[at];
@@ -725,13 +904,27 @@ Chart Canvas::Finish() const {
                 const float lum = std::max(1.0f, 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2]);
                 const float want = 95.0f + 120.0f * t;
                 for (int c = 0; c < 3; ++c) {
-                    const float vivid = lum + (rgb[c] - lum) * 1.7f;
+                    const float vivid = lum + (rgb[c] - lum) * 1.25f;
                     const float paper_tone = (umber[c] + (paper[c] - umber[c]) * t);
                     base[c] = std::clamp(vivid * want / lum, 0.0f, 255.0f) * 0.8f + paper_tone * 0.2f;
                 }
             }
+            const float shade = in_shadow(x, y, h) ? 0.72f : 1.0f;
+            float lit[3];
             for (int c = 0; c < 3; ++c) {
-                float v = base[c] * relief + grain;
+                lit[c] = std::clamp(base[c] * relief * shade, 0.0f, 255.0f);
+            }
+            // Kaniel 2026-10-18 ("the location feels in different colours"): the area's own grade.
+            if (!grade.empty()) {
+                // The table expects the lit, tone-mapped scene, darker than these flat colours.
+                const float dim[3] = {lit[0] * 0.8f, lit[1] * 0.8f, lit[2] * 0.8f};
+                const auto g = Graded(grade, dim);
+                for (int c = 0; c < 3; ++c) {
+                    lit[c] = lit[c] * 0.35f + g[std::size_t(c)] * 0.65f;
+                }
+            }
+            for (int c = 0; c < 3; ++c) {
+                float v = lit[c] + grain;
                 v = v * (1.0f - line) + ink[c] * line;
                 px[c] = std::uint8_t(std::clamp(v, 0.0f, 255.0f));
             }
@@ -757,6 +950,7 @@ Chart Cropped(const Chart& chart) {
     cx0 = std::max(0, cx0 - Margin), cy0 = std::max(0, cy0 - Margin);
     cx1 = std::min(chart.width - 1, cx1 + Margin), cy1 = std::min(chart.height - 1, cy1 + Margin);
     Chart out;
+    out.labels = chart.labels;
     out.width = cx1 - cx0 + 1;
     out.height = cy1 - cy0 + 1;
     out.ppm = chart.ppm;
@@ -773,7 +967,7 @@ Chart Cropped(const Chart& chart) {
 
 std::vector<std::uint8_t> Save(const Chart& chart) {
     std::vector<std::uint8_t> file(32);
-    std::memcpy(file.data(), "BBMAP4\0\0", 8);
+    std::memcpy(file.data(), "BBMAP5\0\0", 8);
     std::memcpy(file.data() + 8, &chart.width, 4);
     std::memcpy(file.data() + 12, &chart.height, 4);
     std::memcpy(file.data() + 16, &chart.x0, 4);
@@ -787,11 +981,23 @@ std::vector<std::uint8_t> Save(const Chart& chart) {
     const auto stored = std::uint32_t(size);
     std::memcpy(file.data() + 28, &stored, 4);
     file.insert(file.end(), packed.begin(), packed.begin() + std::ptrdiff_t(size));
+    // The labels after the pixels: a count, then (name id, x, z) each.
+    const auto count = std::uint32_t(chart.labels.size());
+    const auto put = [&](const void* v) {
+        const auto* b = static_cast<const std::uint8_t*>(v);
+        file.insert(file.end(), b, b + 4);
+    };
+    put(&count);
+    for (const Chart::Label& label : chart.labels) {
+        put(&label.name_id);
+        put(&label.x);
+        put(&label.z);
+    }
     return file;
 }
 
 std::optional<Chart> Load(std::span<const std::uint8_t> file) {
-    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP4\0\0", 8) != 0) {
+    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP5\0\0", 8) != 0) {
         return std::nullopt;
     }
     Chart chart;
@@ -810,6 +1016,19 @@ std::optional<Chart> Load(std::span<const std::uint8_t> file) {
     mz_ulong size = mz_ulong(chart.rgba.size());
     if (mz_uncompress(chart.rgba.data(), &size, file.data() + 32, stored) != MZ_OK || size != chart.rgba.size()) {
         return std::nullopt;
+    }
+    std::size_t at = 32 + stored;
+    std::uint32_t count = 0;
+    if (at + 4 <= file.size()) {
+        std::memcpy(&count, file.data() + at, 4);
+        at += 4;
+    }
+    for (std::uint32_t i = 0; i < count && at + 12 <= file.size() && i < 10000; ++i, at += 12) {
+        Chart::Label label;
+        std::memcpy(&label.name_id, file.data() + at, 4);
+        std::memcpy(&label.x, file.data() + at + 4, 4);
+        std::memcpy(&label.z, file.data() + at + 8, 4);
+        chart.labels.push_back(label);
     }
     return chart;
 }
@@ -886,6 +1105,30 @@ private:
     std::map<std::string, std::uint32_t> colors;
 };
 
+/// The collision meshes of an area (map/mAA_BB_00_00/hAA_BB_00_00.hkxbhd/.hkxbdt, the .patch ones
+/// over them) by their file names' stems ("h24_01_00_00_000100").
+std::map<std::string, std::vector<std::uint8_t>> CollisionFiles(const std::string& map_name, const ReadFile& read) {
+    std::map<std::string, std::vector<std::uint8_t>> files;
+    const std::string stem = "map/" + map_name + "/h" + map_name.substr(1);
+    for (const std::string suffix : {"", ".patch"}) {
+        const auto bhd = read(stem + ".hkxbhd" + suffix);
+        if (bhd.empty()) {
+            continue;
+        }
+        const auto bdt = read(stem + ".hkxbdt" + suffix);
+        for (const ArchiveEntry& entry : ReadArchiveHeader(bhd)) {
+            if (entry.offset + entry.size > bdt.size()) {
+                continue;
+            }
+            std::string name = entry.name.substr(entry.name.find_last_of("\\/") + 1);
+            name = name.substr(0, name.find('.'));
+            files[name].assign(bdt.begin() + std::ptrdiff_t(entry.offset),
+                               bdt.begin() + std::ptrdiff_t(entry.offset + entry.size));
+        }
+    }
+    return files;
+}
+
 /// The texture archives of area AA's folder: mAA_0000 .. mAA_0009 and mAA_BB_0000 .. (those
 /// that are there).
 std::vector<std::string> ArchivesOf(const std::string& map_name, const ReadFile& exists) {
@@ -960,6 +1203,48 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
     }
     threads = std::clamp(threads, 1, 16);
     std::vector<Canvas> canvases(std::size_t(threads), Canvas(*all, ppm, max_side));
+    // Kaniel 2026-10-18: the collision meshes' floors: where one can walk (what lies far from it
+    // goes) and where each place the game names lies (its label).
+    std::map<std::int32_t, std::array<double, 3>> places; // name id -> area-weighted x, z, area
+    for (const Source& source : sources) {
+        const auto files = CollisionFiles(source.name, read);
+        std::map<std::string, std::vector<float>> meshes;
+        for (const MapStudio::Collision& collision : source.studio.collisions) {
+            const std::string& model = collision.piece.model;
+            auto mesh = meshes.find(model);
+            if (mesh == meshes.end()) {
+                std::vector<float> triangles;
+                auto file = files.find(model);
+                if (file == files.end()) {
+                    file = files.find("h" + source.name.substr(1) + "_" + model.substr(1));
+                }
+                if (file != files.end()) {
+                    AppendCollisionTriangles(inflate(file->second), triangles);
+                }
+                mesh = meshes.emplace(model, Floors(triangles)).first;
+            }
+            std::vector<float> world;
+            Place(collision.piece, mesh->second, PlayArea{-1e9f, 1e9f, -1e9f, 1e9f, 1e9f}, world);
+            canvases[0].AddWalkable(world);
+            // Area names (ids ending in 0) are the title already.
+            if (collision.place_name > 0 && collision.place_name % 10 != 0) {
+                auto& place = places[collision.place_name];
+                for (std::size_t t = 0; t + 9 <= world.size(); t += 9) {
+                    const float a = TriangleArea(world.data() + t);
+                    place[0] += a * (world[t] + world[t + 3] + world[t + 6]) / 3.0;
+                    place[1] += a * (world[t + 2] + world[t + 5] + world[t + 8]) / 3.0;
+                    place[2] += a;
+                }
+            }
+        }
+    }
+    // The game's colour grade of the (first) area's block.
+    if (const auto tpf = BbGameArt::InflateDcx(read("map/" + sources[0].name.substr(0, 3) + "/" +
+                                                   sources[0].name.substr(0, 3) + "_cgrading.tpf.dcx"))) {
+        if (auto grade = ReadColorGrade(*tpf, sources[0].name.substr(0, 6))) {
+            canvases[0].SetGrade(std::move(*grade));
+        }
+    }
     const auto draw = [&](int part) {
         std::vector<float> model, world;
         std::vector<std::uint32_t> model_colors, world_colors;
@@ -992,7 +1277,13 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
     for (std::size_t part = 1; part < canvases.size(); ++part) {
         canvases[0].Merge(canvases[part]);
     }
-    return canvases[0].Finish();
+    Chart chart = canvases[0].Finish();
+    for (const auto& [id, place] : places) {
+        if (place[2] > 0) {
+            chart.labels.push_back(Chart::Label{id, float(place[0] / place[2]), float(place[1] / place[2])});
+        }
+    }
+    return chart;
 }
 
 } // namespace BbMapArt
