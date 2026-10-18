@@ -39,7 +39,7 @@ Every flag not in the table is **Host, carried home** (quest steps, NPCs, the Dr
 | the flag after each of those | Session | | "a phantom entered" (local music) |
 | a lamp's active flag and the one after (10007810 + map x 10000 + lamp x 20, maps 210-399) | Shared | carried home, host's map value | the game does not sync a lamp lit by another player |
 | 12000000-13999999 (the rest) | Host | carried home, host's map value | the maps' flags: doors, shortcuts, bosses, enemies |
-| 50000000-52899999, 53000000-53999999 | Host | the guest's own pickup list | map item pickups (kept in their own file, not carried with the rest) |
+| 50000000-52899999, 53000000-53999999 | Host | the guest's own pickup list | map item pickups (kept in their own file, not carried with the rest; never in a team's world: each character keeps its own, as it keeps the items) |
 | 52900000-52999999 | Host | carried home | chalice dungeon item flags: not pickups |
 | 72101000-72101099 | Per player | carried home | the pick in the Dream messengers' talk |
 | 72102000-72103999 | Session | headstone trip | a Dream headstone's "travel to <lamp>": a request, not progress |

@@ -167,6 +167,8 @@ START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
 ENEMY_JUMPED = r"Bloodborne party: enemy [0-9a-f]+ jumped"
 # Phase 5b: a world flag of Central Yharnam's block no event uses (the rig's saves have it off).
 TEAM_WORLD_FLAG = 12410999
+# The Blood Gem Workshop Tool's chest (its item lot's flag; neither rig character has opened it).
+WORKSHOP_TOOL_CHEST = 52411005
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
 # How a game joins: the port's team opens and joins the host's session itself (phase 6, no bell
 # and no signs); shadPS4 rings the bells.
@@ -1323,6 +1325,26 @@ SCENARIOS = {
     # The opening's flag (12410000) came on in the session (at the join's reload), never in the
     # guest's own save, and a trip's load gives the guest's game its own saved world back; with the
     # host away from Central Yharnam nothing set it again, and m24_01's event played the opening.
+    # Kaniel's play test 2026-10-18: the Workshop Tool's chest (item lot flag 52411005) opened again
+    # after the host's save took a team world without it. A map item pickup is each character's
+    # own: here the host opens the chest (its flag reaches the team's world), the guest's game
+    # starts again and takes the team's world as it loads, and its own chest stays closed.
+    "team-world-pickups": {
+        "about": "a chest the host opened stays closed for a guest whose save takes the team's "
+                 "world as it loads (map item pickups are each character's own)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", f"set-flag {WORKSHOP_TOOL_CHEST} 1",
+                     "wait 15", "wait-solo 200", "wait-session 2 420", "wait 30",
+                     f"expect-flag {WORKSHOP_TOOL_CHEST} 1", "done"],
+            "guest": [[START, "godmode", "wait-session 2 300",
+                       f"expect-flag {WORKSHOP_TOOL_CHEST} 0", "wait 25", "done"],
+                      [START, "godmode", "wait-session 2 420", "wait 10",
+                       f"expect-flag {WORKSHOP_TOOL_CHEST} 0", "done"]],
+        },
+        "expect": {"guest": [r"team's world is in this save: \d+ blocks"]},
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
     # Here the host sets TEAM_WORLD_FLAG (Central Yharnam's block, unused) while the guest is in the
     # Dream, then waits there; the guest goes back to Central Yharnam: the flag is on.
     "team-world-trip": {

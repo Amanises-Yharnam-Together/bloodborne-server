@@ -205,6 +205,26 @@ TEST(TeamWorld, AnOldWorldsHeldItemFlagsStayThePlayers) {
               (std::vector<std::pair<s32, bool>>{{6045, true}}));
 }
 
+// Kaniel's play test 2026-10-18: Kaniel took the Blood Gem Workshop Tool from its chest (item lot
+// flag 52411005), and later the chest opened again and gave its NG+ lot. The host's save takes the
+// team's world as it loads, and the world it took did not have the chest. A map item pickup goes
+// with the character that made it, as its item does: never in a team's world, never set or cleared
+// by one, never kept aside with a save's own world.
+TEST(TeamWorld, MapPickupsStayTheCharactersOwn) {
+    EXPECT_FALSE(IsWorldFlag(52411005)); // the Workshop Tool's chest
+    EXPECT_FALSE(IsWorldFlag(50000000));
+    EXPECT_FALSE(IsWorldFlag(53000010));
+    Store store{.bytes = {std::vector<u8>(125), std::vector<u8>(125)}, .ids = {12410, 52411}};
+    store.Set(52411005); // this save opened the chest
+    store.Set(12410005);
+    EXPECT_EQ(CaptureWorldFlags(1000, store.Blocks()).on, std::vector<s32>{12410005});
+    // A team's world without the chest leaves it open; one with another pickup opens nothing.
+    WorldFlags target;
+    target.blocks = {12410, 52411};
+    target.on = {12410005, 52411010};
+    EXPECT_TRUE(WorldFlagChanges(1000, store.Blocks(), target).empty());
+}
+
 // Kaniel's play test 2026-10-18: a guest's trip gave its game its own saved world back, and the
 // opening's flag (12410000, only the team's world had it) was off again: a trip takes the blocks
 // of the map it goes to again (Central Yharnam's flags 12410000-12419999), no other.

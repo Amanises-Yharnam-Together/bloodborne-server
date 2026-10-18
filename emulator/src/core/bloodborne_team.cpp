@@ -228,8 +228,11 @@ std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> firs
 }
 
 bool IsWorldFlag(s32 flag) {
-    const FlagOwner owner = RuleFor(flag).owner;
-    return owner == FlagOwner::Host || owner == FlagOwner::Shared;
+    // A map item pickup is the character's, as the item it gave (Kaniel's play test 2026-10-18:
+    // the Workshop Tool's chest opened again after the host's save took a world without it).
+    const FlagRule rule = RuleFor(flag);
+    return (rule.owner == FlagOwner::Host || rule.owner == FlagOwner::Shared) &&
+           !rule.Has(FlagMapPickup);
 }
 
 namespace {

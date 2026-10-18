@@ -145,7 +145,8 @@ std::optional<std::string> TeamScreenWorldPick(const bbcoop::LobbyState& lobby,
 std::string TeamWorldName(const bbcoop::TeamWorldInfo& world);
 
 // Phase 5b: a team's world (bbcoop::TeamWorld). The world's part of the event flags (FlagOwner
-// Host and Shared, docs/FLAGS.md; a character's own flags are never in it): the ones on, in the
+// Host and Shared, docs/FLAGS.md; a character's own flags and its map item pickups, which go with
+// the items they gave, are never in it): the ones on, in the
 // flag blocks the store had. The team's host reports its own; every member's save takes the team's
 // as it loads, its own kept aside (a file per save slot) until it plays alone again.
 struct WorldFlags {
