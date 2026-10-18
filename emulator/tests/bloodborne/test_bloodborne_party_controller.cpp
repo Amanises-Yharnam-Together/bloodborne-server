@@ -2980,6 +2980,49 @@ TEST(BloodborneGuestResume, TheServersPointCountsInATeamSession) {
     EXPECT_EQ(PickResumePoint(false, std::nullopt, std::nullopt), std::nullopt);
 }
 
+// Play test 2026-10-18 (v0.3.11-local): Krolebord's team load put him back where he had left the
+// world, in the Hunter's Dream, while Kaniel, the team's host, loaded in Central Yharnam; the
+// team's screen opened with them apart. Kaniel: after the team's loading screen they are together.
+// A guest's team load takes its host's place (up or down where it stands) over its own last one.
+TEST(BloodborneGuestResume, ATeamLoadPutsTheGuestWhereItsHostStands) {
+    const ResumePoint own{0x15000000, {-2.1f, -6.4f, -21.4f}, 0};
+    MemberVitals host{.member = "kaniel", .map = 0x18010000, .vital = Vital::Up};
+    host.at = {-215.5f, -51.0f, 172.25f};
+    MemberVitals guest{.member = "krolebord", .map = 0x15000000, .vital = Vital::Up};
+    const std::vector<MemberVitals> board{guest, host};
+    const auto place = HostPlaceOf(board, "kaniel");
+    ASSERT_TRUE(place.has_value());
+    EXPECT_EQ(place->map, 0x18010000u);
+    EXPECT_EQ(place->position, host.at);
+    EXPECT_EQ(PickResumePoint(true, std::nullopt, own, place), place) << "the host's, not its own";
+    EXPECT_EQ(PickResumePoint(false, std::nullopt, own, std::nullopt), std::optional{own});
+    // Down where it stands still counts; off (loading, at the title) or nowhere does not.
+    host.vital = Vital::Down;
+    EXPECT_TRUE(HostPlaceOf(std::vector{host}, "kaniel").has_value());
+    host.vital = Vital::Off;
+    EXPECT_FALSE(HostPlaceOf(std::vector{host}, "kaniel").has_value());
+    host.vital = Vital::Up;
+    host.map = 0;
+    EXPECT_FALSE(HostPlaceOf(std::vector{host}, "kaniel").has_value());
+    EXPECT_FALSE(HostPlaceOf(board, "").has_value()) << "no team host";
+    EXPECT_FALSE(HostPlaceOf(board, "someone").has_value());
+    // On another map it travels there (its first lamp), then stands at the host's spot.
+    const ResumeStep step =
+        ChooseResumeStep(*place, 0x15000000, own.position, 0, 0x15000000, own.position);
+    EXPECT_EQ(step.kind, ResumeStep::Kind::Travel);
+    EXPECT_EQ(step.warp_point, 2412950);
+}
+
+// The host's place may not be known yet as the guest's world comes in (both loading under the
+// team's screen): the guest waits for it a while before it falls back to its own last place.
+TEST(BloodborneGuestResume, ATeamGuestWaitsForItsHostsPlaceAWhile) {
+    EXPECT_TRUE(WaitsForHostPlace(true, false, 0));
+    EXPECT_TRUE(WaitsForHostPlace(true, false, HostPlaceWaitMs - 1));
+    EXPECT_FALSE(WaitsForHostPlace(true, false, HostPlaceWaitMs)) << "falls back";
+    EXPECT_FALSE(WaitsForHostPlace(true, true, 0)) << "known";
+    EXPECT_FALSE(WaitsForHostPlace(false, false, 0)) << "not a team's load";
+}
+
 // Phase 7: the resume moves a guest only while it still stands where its load put it; one that
 // already moved (a player who set off, the rig's own steps) stays (rig party-death 2026-10-15:
 // the resume teleported a guest in the middle of its fall).

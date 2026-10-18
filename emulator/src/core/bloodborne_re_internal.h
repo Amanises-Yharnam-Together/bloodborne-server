@@ -842,6 +842,12 @@ std::optional<bbcoop::LobbyState> TeamLobbyState();
 std::optional<ResumePoint> TakeServerResumePoint();
 // A new character in the slot: the server's point (the old character's) does not count this run.
 void RefuseServerResumePoint();
+// Kaniel 2026-10-18: a guest's team load (not a new character's) ends beside the team's host: the
+// resume takes the host's place, and the team's screen stays up until it is done (EndTeamResume).
+bool TeamResumeDue();
+void EndTeamResume();
+// The team's host as its Start named it ("" playing alone).
+std::string TeamStartHost();
 std::string TeamLobbyMember();
 // Phase 11: a member's character name (its board name), as the server's lobby last said it; ""
 // when the lobby does not know it.
