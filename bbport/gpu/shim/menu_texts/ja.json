@@ -325,6 +325,8 @@
  "Map screen": "マップ画面",
  "The map is open over the game: Circle comes back here": "マップはゲームの上に開いています：○で戻ります",
  "Triangle  Whole map": "△  マップ全体",
+ "R3  Floors": "R3  フロア",
+ "R3  Roofs": "R3  屋根",
  "%d of %d want to skip": "%d/%d人がスキップ希望",
  "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  エリア     スティック、ドラッグ  移動     L2 / R2、ホイール  拡大縮小     □  自分",
  "Frame generation: provider": "フレーム生成：方式",

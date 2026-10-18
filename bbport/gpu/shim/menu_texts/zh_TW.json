@@ -325,6 +325,8 @@
  "Map screen": "地圖畫面",
  "The map is open over the game: Circle comes back here": "地圖開在遊戲之上：按 ○ 回到這裡",
  "Triangle  Whole map": "△  整張地圖",
+ "R3  Floors": "R3  樓層",
+ "R3  Roofs": "R3  屋頂",
  "%d of %d want to skip": "%d/%d 人想跳過",
  "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  區域     類比搖桿、拖曳  移動     L2 / R2、滾輪  縮放     □  自己",
  "Frame generation: provider": "幀生成：技術",

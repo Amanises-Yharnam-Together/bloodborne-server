@@ -2439,6 +2439,18 @@ SCENARIOS = {
         "console_expect": {"host": [r"Map: (drew|read) m24_01_00_00", r"Map: (drew|read) m24_00_00_00"]},
         "timeout": 300,
     },
+    # Kaniel 2026-10-18 ("sometimes roofs, sometimes floors"): R3 shows the floors (under the
+    # roofs, the floor one stands on, walls inked) and again the roofs.
+    "map-floors": {
+        "about": "the map screen's floors: R3 shows the floor under the roofs at the player's "
+                 "height, R3 again the roofs; pictures of both",
+        "roles": {
+            "host": [START, "godmode", "wait 25", "keys map", "wait 12", "shot map-first", "keys r3", "wait 8",
+                     "shot map-switched", "keys r3", "wait 8", "shot map-switched-back", "keys circle", "wait 2"],
+        },
+        "console_expect": {"host": [r"Map: shows the floors at -?\d+\.\d m", r"Map: shows the roofs"]},
+        "timeout": 240,
+    },
     # Kaniel 2026-10-17: the map screen in a session: the other hunter at its spot on the
     # picture, ringed in the compass's light gray, and listed with its area.
     "map-team": {

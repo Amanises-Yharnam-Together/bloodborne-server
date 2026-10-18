@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -116,12 +117,35 @@ struct Chart {
         bool operator==(const Label&) const = default;
     };
     std::vector<Label> labels;
+    /// Kaniel 2026-10-18 ("sometimes roofs, sometimes floors"): the storeys under each cell of
+    /// FloorCell x FloorCell pixels: the picture's top there and up to Levels walkable floors
+    /// (the collision meshes'), highest first, each with its finished colour, so the map can show
+    /// the floor one stands on where a roof covers it (FloorView). Empty when not drawn.
+    static constexpr int FloorCell = 2, Levels = 3;
+    static constexpr std::int16_t NoHeight = INT16_MIN;
+    struct Storeys {
+        int width = 0, height = 0;         // in cells
+        std::vector<std::int16_t> roof;    // decimetres, NoHeight none
+        std::vector<std::int16_t> level;   // Levels a cell, decimetres, NoHeight none
+        std::vector<std::uint32_t> rgb;    // Levels a cell, 0xFFRRGGBB
+        bool operator==(const Storeys&) const = default;
+    };
+    Storeys storeys;
     /// Where the world spot (x, z) is in the picture, in pixels.
     std::array<float, 2> PixelOf(float x, float z) const { return {(x - x0) * ppm, (z1 - z) * ppm}; }
 };
 
 /// The chart cut to what is drawn in it (a few pixels round it); its frame follows.
 Chart Cropped(const Chart& chart);
+
+/// Kaniel 2026-10-18: a roof (the picture's top) more than 3 m over feet at height `y` at (x, z):
+/// the player is indoors, under a bridge or under trees, and the map shows floors.
+bool UnderRoof(const Chart& chart, float x, float y, float z);
+/// The picture as one standing at height `y` sees it: each cell's storey is its highest floor up
+/// to 1.5 m above `y`; where the picture's top lies more than 2.5 m above that floor (a roof, a
+/// bridge, a tree), the floor shows instead, inked where its storey ends (walls). `rgba` is the
+/// chart's own picture to change (its size).
+void FloorView(const Chart& chart, float y, std::uint8_t* rgba);
 
 /// The picture drawn up: world triangles added a model at a time (an area has tens of millions),
 /// the highest at each pixel kept with its slope's light; Finish shades it in ink on paper. `ppm`
@@ -142,9 +166,21 @@ public:
     /// Another canvas of the same play area and size drawn into this one (the higher surface wins):
     /// an area's models drawn by several threads at once.
     void Merge(const Canvas& other);
+    /// The storeys AddWalkable found on `other` (canvas 0) for this one too: the threads' canvases
+    /// colour them as they draw.
+    void ShareFloors(const Canvas& other);
     Chart Finish() const;
 
 private:
+    // The storeys (Chart::Storeys) under each cell as drawn: floor heights (-inf none; one table
+    // for the canvases of all threads, copies share it), and the drawn surface found at each (its
+    // height in decimetres, its light and colour).
+    void AddLevel(std::size_t cell, float h);
+    int cells_w = 0, cells_h = 0;
+    std::shared_ptr<std::vector<float>> level;
+    std::vector<std::int16_t> level_top;
+    std::vector<std::uint8_t> level_light;
+    std::vector<std::uint32_t> level_color;
     int width = 0, height = 0;
     float x0 = 0, z1 = 0, ppm = 1;
     std::vector<float> top;          // the highest surface's height at each pixel (-inf: none)
@@ -155,8 +191,9 @@ private:
     std::vector<std::uint8_t> grade;
 };
 
-/// A chart as kept in the user folder ("BBMAP5": the number goes up whenever the drawing changes,
-/// so pictures drawn the old way are drawn again; the frame, then the pixels zlib-compressed), and
+/// A chart as kept in the user folder ("BBMAP6": the number goes up whenever the drawing changes,
+/// so pictures drawn the old way are drawn again; the frame, the pixels zlib-compressed, the
+/// labels, then the storeys zlib-compressed), and
 /// read back (nothing when it is not one).
 std::vector<std::uint8_t> Save(const Chart& chart);
 std::optional<Chart> Load(std::span<const std::uint8_t> file);

@@ -325,6 +325,8 @@
  "Map screen": "Pantalla del mapa",
  "The map is open over the game: Circle comes back here": "El mapa está abierto sobre el juego: Círculo vuelve aquí",
  "Triangle  Whole map": "Triángulo  Mapa completo",
+ "R3  Floors": "R3  Pisos",
+ "R3  Roofs": "R3  Techos",
  "%d of %d want to skip": "%d de %d quieren saltar",
  "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Zona     Sticks, arrastrar  Mover     L2 / R2, rueda  Zoom     Cuadrado  Tú",
  "Frame generation: provider": "Generación de cuadros: tecnología",
