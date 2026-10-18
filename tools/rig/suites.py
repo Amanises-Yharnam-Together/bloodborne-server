@@ -683,21 +683,6 @@ SUITES = {
         "join_within": 180,
         "chapters": [
             join(PARTY2),
-            chapter("death-right-after-join", "the guest's game starts again and joins; its "
-                                              "lethal fall 2 s after the join puts it down, and "
-                                              "the host revives it",
-                    {"guest": [RESTART, START, "wait-session 2 420",
-                               f"teleport {WIPE_SPOT['guest']}", "wait 2", *LETHAL_FALL,
-                               "wait-vital down 30", "sync drj-down", "wait-vital up 120",
-                               "godmode"],
-                     "host": ["sync drj-down", "approach-downed", "wait 2", *REVIVE_HITS,
-                              "wait-member-vital up 30"]},
-                    expect={"guest": [r"party death: down \d+ on map 0x18010000",
-                                      r"party death: revived from down"]},
-                    forbid={"guest": [r"party guest died"]},
-                    known_bug="a guest's lethal fall right after its join does not put it down "
-                              "(backlog, Priority A deaths; rig 2026-10-15: no down in 30 s)",
-                    allow=CRASH_CLEANUP),
             chapter("down-revive", "the guest falls with 1 HP and goes down; the host strikes it "
                                    "up again",
                     {"host": ["wait-member-vital down 120", "shot sees-down", "approach-downed",
@@ -729,6 +714,23 @@ SUITES = {
                                      r"swing at .* counted for (?:2[6-9]|[3-9]\d|\d{3,}) damage)"],
                             "guest": [r"party death: revived from down"]},
                     forbid=holds(PARTY2)),
+            # After the two revives: each down costs more than the one before (twice, then four
+            # times the max HP, DownedState), and this restart starts the guest's count again.
+            # First (rig 2026-10-18, once this down worked), it made down-revive-heavy the third
+            # down: 64 R2 swings, over its budget.
+            chapter("death-right-after-join", "the guest's game starts again and joins; its "
+                                              "lethal fall 2 s after the join puts it down, and "
+                                              "the host revives it",
+                    {"guest": [RESTART, START, "wait-session 2 420",
+                               f"teleport {WIPE_SPOT['guest']}", "wait 2", *LETHAL_FALL,
+                               "wait-vital down 30", "sync drj-down", "wait-vital up 120",
+                               "godmode"],
+                     "host": ["sync drj-down", "approach-downed", "wait 2", *REVIVE_HITS,
+                              "wait-member-vital up 30"]},
+                    expect={"guest": [r"party death: down \d+ on map 0x18010000",
+                                      r"party death: revived from down"]},
+                    forbid={"guest": [r"party guest died"]},
+                    allow=CRASH_CLEANUP),
             chapter("down-no-kneel", "the guest goes down: neither its game nor the host's copy "
                                      "of it kneels (Kaniel 2026-10-15)",
                     {"host": ["wait-member-vital down 120", "wait 5",

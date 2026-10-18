@@ -1526,15 +1526,18 @@ void PS4_SYSV_ABI WriteNameplateRoleLine(u64, const GuestRegisterSnapshot* regis
         return;
     }
     const std::string name = NameplateName(data);
-    NoteNameplate(*index, name);
     PartyPanel panel;
-    if (!ReadPartyPanel(panel)) {
+    const bool have_panel = ReadPartyPanel(panel);
+    // Phase 11: the name over the member is its character's (the game writes its online id).
+    const auto line = have_panel ? NameplateNameLine(panel, name) : std::nullopt;
+    // One note per tag and frame: two (the id, then the character's name) alternated in the log
+    // every frame and used up its lines (rig 2026-10-18: smoke's trip found no names).
+    NoteNameplate(*index, line ? name + " shown as " + *line : name);
+    if (!have_panel) {
         return;
     }
-    // Phase 11: the name over the member is its character's (the game writes its online id).
-    if (const auto line = NameplateNameLine(panel, name)) {
+    if (line) {
         SetElementText(tag + HudTagNameLineAt, *line);
-        NoteNameplate(*index, name + " shown as " + *line);
     }
     if (!panel_has_downed.load(std::memory_order_relaxed)) {
         return;

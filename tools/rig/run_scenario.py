@@ -405,6 +405,37 @@ def split_games(listing: str, exe: pathlib.Path,
     return rig, others
 
 
+def outside_lanes(listing: str, exe: pathlib.Path, rig_folder: pathlib.Path) -> list[int]:
+    """The rig's games that are not in a lane (rig/port/lanes/<n>): what a run with no lane may
+    stop. Another thread's lane is its own (rig 2026-10-18: a run with no --lane closed a lane-3
+    run's games)."""
+    lanes_folder = (str(rig_folder).lower().rstrip("\\/") + os.sep + "port" + os.sep + "lanes"
+                    + os.sep)
+    commands = {}
+    for line in listing.splitlines():
+        pid, _, rest = line.strip().partition("\t")
+        if pid.isdigit():
+            commands[int(pid)] = rest.partition("\t")[2].lower().replace("/", os.sep)
+    return [pid for pid in split_games(listing, exe, rig_folder)[0]
+            if lanes_folder not in commands.get(pid, "")]
+
+
+def games_listing() -> str:
+    names = " OR ".join(f"Name='{name}'" for name in engines.GAME_PROCESSES)
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         f"Get-CimInstance Win32_Process -Filter \"{names}\" | "
+         "ForEach-Object { \"$($_.ProcessId)`t$($_.ExecutablePath)`t$($_.CommandLine)\" }"],
+        capture_output=True, text=True).stdout
+
+
+def stoppable_games() -> list[int]:
+    """The games a run with no lane closes: the rig's own outside the lanes."""
+    ignored = {int(pid) for pid in os.environ.get("BB_RIG_IGNORE_PIDS", "").split(",")
+               if pid.strip().isdigit()}
+    return [pid for pid in outside_lanes(games_listing(), ENGINE.exe, RIG) if pid not in ignored]
+
+
 def games() -> tuple[list[int], list[int]]:
     """Every build's games: someone playing the emulator stops a port run too."""
     names = " OR ".join(f"Name='{name}'" for name in engines.GAME_PROCESSES)
@@ -442,15 +473,15 @@ def stop_games():
     if IN_LANES:
         stop_lane_games()
         return
-    for pid in games()[0]:
+    for pid in stoppable_games():
         subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True)
     deadline = time.time() + 15
-    while time.time() < deadline and games()[0]:
+    while time.time() < deadline and stoppable_games():
         time.sleep(0.5)
-    for pid in games()[0]:
+    for pid in stoppable_games():
         subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
     deadline = time.time() + 20
-    while time.time() < deadline and games()[0]:
+    while time.time() < deadline and stoppable_games():
         time.sleep(0.5)
 
 
