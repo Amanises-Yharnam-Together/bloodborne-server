@@ -88,6 +88,30 @@ TEST(WorldLogFlags, FramesReadBackAndFitTheLink) {
     }
 }
 
+// A ritual altar's flags go to the team as they change, clears too: its dungeon is a byte pattern
+// in them, and a teammate's altar takes the whole pattern (see RitualAltarsAreTheTeams).
+TEST(WorldLogFlags, AnAltarsClearsAreSharedToo) {
+    FlagChanges changes;
+    changes.set = {94105001, 94100003};
+    changes.cleared = {94100000, 12417811};
+    EXPECT_EQ(FlagsToShare(changes), (std::vector<std::pair<s32, bool>>{
+                                         {94105001, true}, {94100003, true}, {94100000, false}}));
+}
+
+// A ritual or a join writes "the current altar" (929xxxxx, a view of the altar the player talks
+// to): its changes go to the team as that altar's own flags (94k), which the other members' games
+// keep; without a known altar they go nowhere.
+TEST(WorldLogFlags, TheCurrentAltarsChangesAreThatAltars) {
+    const FlagChanges changes{{92900003, 92905001, 12417830}, {92900000}};
+    const FlagChanges altar_one = AsAltarFlags(changes, 1);
+    EXPECT_EQ(altar_one.set, (std::vector<s32>{94100003, 94105001, 12417830}));
+    EXPECT_EQ(altar_one.cleared, (std::vector<s32>{94100000}));
+    const FlagChanges unknown = AsAltarFlags(changes, std::nullopt);
+    EXPECT_EQ(unknown.set, (std::vector<s32>{12417830}));
+    EXPECT_TRUE(unknown.cleared.empty());
+    EXPECT_FALSE(SharedWithParty(92900003)) << "the view itself is each game's own";
+}
+
 // The log carries what the flag boards carried: the flag table's Shared flags that turned on (a
 // lamp's active flag, a boss fog's entry), and the host's map flags that a guest takes by
 // TakesHostMapFlag. Never the bell's, a boss's "found", the Dream doors, the badge lines, a
@@ -124,9 +148,18 @@ TEST(WorldLogFlags, AnOutboxResendsEachEventForAWhile) {
     for (s32 flag = 0; flag < 100; ++flag) {
         outbox.Add(std::vector<std::pair<s32, bool>>{{flag, true}}, 20'000);
     }
-    const auto pending = outbox.Pending(20'000);
-    EXPECT_EQ(pending.size(), WorldLogFlagEventsPerFrame);
-    EXPECT_EQ(pending.back().flag, 99);
+    // A burst goes out a frame at a time, oldest first (the host takes rising numbers), then the
+    // newest frame repeats (2026-10-18: an altar record of 311 flags lost all but the last 64).
+    const auto first = outbox.Pending(20'000);
+    EXPECT_EQ(first.size(), WorldLogFlagEventsPerFrame);
+    EXPECT_EQ(first.front().flag, 0);
+    EXPECT_EQ(first.back().flag, 63);
+    const auto second = outbox.Pending(20'500);
+    EXPECT_EQ(second.front().flag, 64);
+    EXPECT_EQ(second.back().flag, 99);
+    const auto again = outbox.Pending(21'000);
+    EXPECT_EQ(again.size(), WorldLogFlagEventsPerFrame);
+    EXPECT_EQ(again.back().flag, 99);
 }
 
 TEST(WorldLogFlags, AnEventCountsOnceFromEitherCopy) {

@@ -44,6 +44,8 @@ enum FlagBehaviour : u32 {
     FlagGuestSetsInWorld = 1u << 6,
     // A messenger weapon line cleared once per save slot (ShopLineFlags).
     FlagShopLine = 1u << 7,
+    // A Shared flag's clears go to the party too, not only its sets (FlagsToShare).
+    FlagSharesClears = 1u << 8,
 };
 
 struct FlagRule {
@@ -162,6 +164,15 @@ inline constexpr std::array LastRows{
               .why = "a lamp's \"travel to the Hunter's Dream\" (7MMM01LL, map codes 211-399; "
                      "the Dream's 721001xx is the Doll's, 70000140 Gilbert's talk, 799001xx "
                      "the NPCs'): a request, not progress"},
+    FlagRange{.first = 94000000,
+              .last = 94905999,
+              .period = 100000,
+              .low = 0,
+              .high = 5999,
+              .rule = {FlagOwner::Shared, FlagCarriesHome | FlagSharesClears},
+              .why = "a ritual altar's dungeon (altar k: 94k00000-94k05999, its record packed "
+                     "into the flags, 94k05001 a chalice on it): team altars, a ritual or a join "
+                     "at one member's altar puts the dungeon on every member's"},
 };
 
 constexpr std::array<FlagRange, BossFogEntryFlags.size() * 2> BossFogRows() {

@@ -43,6 +43,7 @@ Every flag not in the table is **Host, carried home** (quest steps, NPCs, the Dr
 | 72101000-72101099 | Per player | carried home | the pick in the Dream messengers' talk |
 | 72102000-72103999 | Session | headstone trip | a Dream headstone's "travel to <lamp>": a request, not progress |
 | 7MMM01LL, map codes 211-399 | Session | lamp trip | a lamp's "travel to the Hunter's Dream": a request, not progress |
+| 94k00000-94k05999, altars k 0-9 | Shared | carried home; clears shared too | a ritual altar's dungeon record: a ritual or a join at one member's altar puts the dungeon on every member's (team altars) |
 
 Rows are looked up in order, most specific first: a flag takes the first row that holds it. Two
 rows only overlap when the later one holds the earlier one whole (the maps' flags hold the boss

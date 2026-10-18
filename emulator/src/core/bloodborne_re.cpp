@@ -455,7 +455,14 @@ std::mutex flag_board_mutex;
 std::vector<std::pair<s32, bool>> flags_to_post;
 
 void PostWorldChanges(const FlagChanges& changes) {
-    const auto shared = FlagsToShare(changes);
+    const bool altar_changed = std::ranges::any_of(changes.set, IsCurrentAltarFlag) ||
+                               std::ranges::any_of(changes.cleared, IsCurrentAltarFlag);
+    const std::optional<s32> altar = altar_changed ? CurrentRitualAltar() : std::nullopt;
+    if (altar_changed) {
+        LOG_INFO(Debug, "Bloodborne party: the current altar's flags changed (altar {})",
+                 altar ? fmt::to_string(*altar) : std::string{"unknown"});
+    }
+    const auto shared = FlagsToShare(altar_changed ? AsAltarFlags(changes, altar) : changes);
     if (shared.empty() || TakeFlagsForTheLog(shared)) {
         return;
     }

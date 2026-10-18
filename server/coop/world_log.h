@@ -178,7 +178,8 @@ constexpr size_t WorldLogFlagEventsPerFrame = 64;
 // the log's and the flag board's copies of one event).
 constexpr s64 WorldLogFlagRepeatMs = 10'000;
 // A member's events waiting to be taken: numbered as they come, sent until they are
-// WorldLogFlagResendWindowMs old (the newest WorldLogFlagEventsPerFrame).
+// WorldLogFlagResendWindowMs old, WorldLogFlagEventsPerFrame a frame: those not out yet, oldest
+// first, else the newest again.
 class WorldLogFlagOutbox {
 public:
     void Add(std::span<const std::pair<s32, bool>> changes, s64 now_ms);
@@ -195,6 +196,7 @@ public:
 
 private:
     u32 next = 0;
+    u32 out_to = 0; // the newest number sent
     std::vector<std::pair<WorldLogFlagEvent, s64>> sent;
     bool fresh = false;
 };

@@ -2535,57 +2535,52 @@ SCENARIOS["chalice-team"] = {
 }
 
 
-def CHALICE_JOIN(role: str) -> list[str]:
-    """At the Dream's altar, holding a chalice (its talk shows no menu without one): Chalice
-    Dungeon Search, Begin Search (four down), the first dungeon found, Join (left is Yes; a join
-    costs nothing), out of the talk; then the altar again and the joined dungeon's Layer One."""
+
+def CHALICE_FROM_OWN_ALTAR(role: str) -> list[str]:
+    """Holding a chalice (the altar's talk shows no menu without one), the Dream's altar and its
+    Layer One: a teammate's ritual put the dungeon there (team altars)."""
     return [f"trade-stock {PTHUMERU_CHALICE} 1", f"travel {HUNTERS_DREAM}", "wait 5",
-            f"teleport {ALTAR_SPOT}", "wait 2", "press cross 200", "wait 7", "press cross 200",
-            "wait 7", "press down 200", "wait 3", "press cross 200", "wait 8",
-            *[step for _ in range(4) for step in ("press down 200", "wait 2")],
-            "press cross 200", "wait 10", f"log {role} searched", "press cross 200", "wait 8",
-            "press left 200", "wait 1", "press cross 200", "wait 15", f"log {role} joined",
-            "press cross 200", "wait 8",
-            *[step for _ in range(4) for step in ("press circle 200", "wait 3")],
             f"teleport {ALTAR_SPOT}", "wait 2",
-            *[step for _ in range(3) for step in ("press cross 200", "wait 8")],
+            *[step for _ in range(3) for step in ("press cross 200", "wait 10")],
             f"wait-map {CHALICE_DUNGEON} 180", "wait 10", "snapshot", f"log {role} in the dungeon"]
 
 
-# Team altars (Kaniel 2026-10-17): the host conducts the ritual; the guest conducts none, finds
-# the dungeon in Chalice Dungeon Search (the server lists the dungeons in use) and joins it, free;
-# they meet in it. The guest's warp is the Dream's event 12107100, patched to run for a client
-# (party_boss_events.py).
-SCENARIOS["chalice-join"] = {
-    "about": "the host's ritual makes a chalice dungeon; the guest joins it through Chalice "
-             "Dungeon Search and they meet in it",
+# Team altars (Kaniel 2026-10-17/18): a ritual at one member's altar puts its dungeon on every
+# member's altar (the altar's flags are the team's, see FlagTable; the other games load the
+# record into their altar). The host conducts the ritual; the guest, holding a chalice but
+# conducting nothing, picks Layer One at its own altar; they meet in it. The guest's warp is the
+# Dream's event 12107100, patched to run for a client (party_boss_events.py).
+SCENARIOS["chalice-altar-team"] = {
+    "about": "the host's ritual puts the dungeon on the guest's own altar; the guest enters "
+             "its Layer One with no ritual nor search, and they meet in it",
     "roles": {
         "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
                  "godmode", "wait-session 2 300", "wait 10", *CHALICE_ENTER("host"),
                  "wait-members 2 400", "wait 20", "expect-session 2", "snapshot"],
         "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 2 300",
-                  *["wait 30"] * 5, *CHALICE_JOIN("guest"), "wait-members 2 300", "wait 20",
-                  "expect-session 2", "snapshot"],
+                  *["wait 30"] * 5, *CHALICE_FROM_OWN_ALTAR("guest"), "wait-members 2 300",
+                  "wait 20", "expect-session 2", "snapshot"],
     },
-    "expect": {"host": [r"host in the dungeon"], "guest": [r"guest joined", r"guest in the dungeon"]},
+    "expect": {"host": [r"host in the dungeon"], "guest": [r"guest in the dungeon"]},
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "allow": CRASH_CLEANUP,
     "timeout": 1200,
 }
 
-
-# The other way round: the guest's ritual, the host's join.
-SCENARIOS["chalice-join-host"] = {
-    "about": "the guest's ritual makes a chalice dungeon; the host joins it through Chalice "
-             "Dungeon Search and they meet in it",
+# The other way round: the guest's ritual, the host's own altar.
+SCENARIOS["chalice-altar-host"] = {
+    "about": "the guest's ritual puts the dungeon on the host's own altar; the host enters its "
+             "Layer One with no ritual nor search, and they meet in it",
     "roles": {
         "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
-                 "godmode", "wait-session 2 300", *["wait 30"] * 5, *CHALICE_JOIN("host"),
-                 "wait-members 2 300", "expect-session 2"],
+                 "godmode", "wait-session 2 300", *["wait 30"] * 5,
+                 *CHALICE_FROM_OWN_ALTAR("host"), "wait-members 2 300", "wait 20",
+                 "expect-session 2", "snapshot"],
         "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 2 300", "wait 10",
-                  *CHALICE_ENTER("guest"), "wait-members 2 400", "expect-session 2"],
+                  *CHALICE_ENTER("guest"), "wait-members 2 400", "wait 20",
+                  "expect-session 2", "snapshot"],
     },
-    "expect": {"host": [r"host joined", r"host in the dungeon"], "guest": [r"guest in the dungeon"]},
+    "expect": {"host": [r"host in the dungeon"], "guest": [r"guest in the dungeon"]},
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "allow": CRASH_CLEANUP,
     "timeout": 1200,

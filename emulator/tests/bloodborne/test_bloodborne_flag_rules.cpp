@@ -51,7 +51,7 @@ std::vector<s32> FlagSample() {
         9402,     9403,     9404,     10007810, 12100000, 12101000, 12101009, 12101010, 12101020,
         12101029, 12101030, 12107000, 12107810, 12110000, 12410900, 12414810, 12414811, 13998190,
         50000000, 52900000, 53000000, 54000000, 70000000, 70000100, 70000140, 72100000, 72100100,
-        72101000, 72102000, 72104000, 72110000, 79900100,
+        72101000, 72102000, 72104000, 72110000, 79900100, 94005001, 94105001, 94905999,
     };
     for (const s32 flag : Named) {
         AddAround(sample, flag);
@@ -250,6 +250,23 @@ TEST(BloodborneFlagRules, WeaponLinesFollowEachPlayersOwnBadges) {
         EXPECT_TRUE(KeepsLocalFlag(true, flag)) << flag;
         EXPECT_FALSE(TakesHostMapFlag(flag)) << flag;
         EXPECT_FALSE(SharedWithParty(flag)) << flag;
+    }
+}
+
+// Team altars (Kaniel 2026-10-17): a ritual at any member's altar puts its dungeon on every
+// member's altar. Ritual altar k keeps its dungeon in event flags 94k00000-94k05999 (8-bit values
+// packed into the flags, and switches such as "a chalice on it", 94k05001): those are the party's,
+// clears as well as sets, so the other altars take the same values.
+TEST(BloodborneFlagRules, RitualAltarsAreTheTeams) {
+    for (s32 altar = 0; altar < 10; ++altar) {
+        const s32 base = 94000000 + altar * 100000;
+        for (const s32 flag :
+             {base, base + 31, base + 5000, base + 5001, base + 5500, base + 5999}) {
+            EXPECT_TRUE(SharedWithParty(flag)) << flag;
+            EXPECT_TRUE(RuleFor(flag).Has(FlagSharesClears)) << flag;
+        }
+        EXPECT_FALSE(SharedWithParty(base + 6000)) << base + 6000;
+        EXPECT_FALSE(SharedWithParty(base - 1)) << base - 1;
     }
 }
 
