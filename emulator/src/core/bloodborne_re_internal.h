@@ -625,7 +625,10 @@ std::vector<std::pair<float, MapItemSpot>> UsableMapItemsNear(const std::array<f
 void LogItemButtonAndMapItems();
 extern std::atomic<int> character_slot;
 
-size_t SetGuestWorldChanges();
+// Sets the kept world changes in the guest's world: how many took. The ones that took are done
+// unless `keep` (a trip's load: the game puts its own saved world back after it, so the trip's
+// arrival sets them again).
+size_t SetGuestWorldChanges(bool keep = false);
 
 std::optional<s32> CountSetFlags();
 
@@ -824,7 +827,9 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
 bool IsTeamTitleVerb(std::string_view verb);
 // Phase 5b: the team's world goes into the save as it loads (before its map items), or the save's
 // own world comes back when it plays alone; the team's host reports its world now and then.
-void ApplyTeamWorldOnLoad();
+// `trip`: a guest's party trip, whose load gives its game its own saved world back: the blocks of
+// the map it goes to take the team's world again (TakesTeamWorldBlock).
+void ApplyTeamWorldOnLoad(bool trip = false);
 void TickTeamWorld(s64 now_ms);
 // A team guest takes the team world's time of day (TimeOfDayToFollow) when it is not loading.
 void FollowTeamTimeOfDay(s64 now_ms);

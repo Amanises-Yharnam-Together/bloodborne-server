@@ -397,7 +397,10 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
      hook, before the map's events): each flag block the load brings that the team's world
      covers and no earlier load this session took gets the team's values (only the flags that
      differ are set, with the game's SetEventFlag); later loads leave a taken block alone, so the
-     session's own changes stay.
+     session's own changes stay. A guest's party trip is the exception (play test 2026-10-18,
+     the opening cutscene again after the Dream): its load gives the guest's game its own saved
+     world back, so the blocks of the map it goes to take the team's world again, at the trip's
+     load and on arrival, and the session's kept changes go on top (rig `team-world-trip`).
    - **The save's own world aside.** Before a block takes the team's values, its world flags go
      to `user\bloodborne_party_personal_world_slot<N>.txt` (blocks already in the file keep what it
      says: a save that played a team before). A save loaded alone gets them back block by block

@@ -11,6 +11,7 @@
 #include <array>
 #include <functional>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -164,6 +165,13 @@ WorldFlags CaptureWorldFlags(u32 flags_per_block, std::span<const FlagBlockBits>
 std::vector<std::pair<s32, bool>> WorldFlagChanges(u32 flags_per_block,
                                                    std::span<const FlagBlockBits> blocks,
                                                    const WorldFlags& target);
+// Whether a load takes the team's world in `block`: one the team's world covers (`covered`,
+// sorted) that no earlier load took (`taken`), or on a guest's trip one of the map it goes to
+// (its 10000 flags from `trip_map_base`, MapFlagBase; 0: no trip). A trip's load gives the
+// guest's game its own saved world back (Kaniel's play test 2026-10-18: the opening's flag,
+// 12410000, only the team's world had was off again, and the opening played).
+bool TakesTeamWorldBlock(u32 block, u32 flags_per_block, const std::set<u32>& taken,
+                         std::span<const u32> covered, s32 trip_map_base);
 // The personal world kept aside, as its file has it ("blocks" then "on", a number a line).
 std::string FormatWorldFlags(const WorldFlags& world);
 std::optional<WorldFlags> ParseWorldFlags(std::string_view text);
