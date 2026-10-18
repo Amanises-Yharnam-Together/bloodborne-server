@@ -4283,9 +4283,10 @@ ImU32 LampLight(float alpha = 1.0f) {
 }
 
 /// Kaniel 2026-10-18 (fog of war, as Elden Ring's): only what this character has walked near (40 m
-/// round its walked cells), round its lit lamps and where it stands shows; the rest of the area is
-/// a dark silhouette. An area whose main bosses are down shows whole. The picture's pixels into
-/// `out`.
+/// round its walked cells), round its lit lamps and where it stands shows. Kaniel 2026-10-18 ("only
+/// dark fog, not even hidden area of map"): the rest is see-through, so only the screen's dark
+/// backing shows there, not even the area's outline. An area whose main bosses are down shows
+/// whole. The picture's pixels into `out`.
 bool rebuild = false; // the map opened: the pictures are made again with the fog as it is now
 /// The height the pictures show the floors at (BbMapArt::FloorView: the player's feet), NaN while
 /// they show the roofs.
@@ -4339,11 +4340,8 @@ void Fogged(const BbMapArt::Chart& chart, uint32_t map, std::uint8_t* out) {
             const auto at = [&](int a, int b) { return seen[std::size_t(b) * std::size_t(gw) + std::size_t(a)]; };
             const float v = (at(ix, iz) * (1 - fx) + at(ix + 1, iz) * fx) * (1 - fz) +
                             (at(ix, iz + 1) * (1 - fx) + at(ix + 1, iz + 1) * fx) * fz;
-            const float k = 0.12f + 0.88f * v;
             std::uint8_t* px = out + (std::size_t(y) * std::size_t(chart.width) + std::size_t(x)) * 4;
-            for (int c = 0; c < 3; ++c) {
-                px[c] = std::uint8_t(float(px[c]) * k);
-            }
+            px[3] = std::uint8_t(float(px[3]) * v);
         }
     }
 }
