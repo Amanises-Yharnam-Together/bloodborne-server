@@ -1411,11 +1411,30 @@ ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPositio
 }
 
 std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<ResumePoint> from_file,
-                                           std::optional<ResumePoint> from_server) {
+                                           std::optional<ResumePoint> from_server,
+                                           std::optional<ResumePoint> from_host) {
+    if (from_host) {
+        return from_host;
+    }
     if (from_server) {
         return from_server;
     }
     return in_session ? std::nullopt : from_file;
+}
+
+bool WaitsForHostPlace(bool team_load, bool host_known, s64 waited_ms) {
+    return team_load && !host_known && waited_ms < HostPlaceWaitMs;
+}
+
+std::optional<ResumePoint> HostPlaceOf(std::span<const MemberVitals> board, std::string_view host) {
+    if (host.empty()) {
+        return std::nullopt;
+    }
+    const auto it = std::ranges::find(board, host, &MemberVitals::member);
+    if (it == board.end() || it->map == 0 || (it->vital != Vital::Up && it->vital != Vital::Down)) {
+        return std::nullopt;
+    }
+    return ResumePoint{it->map, it->at, 0};
 }
 
 s32 MapFlagBase(u32 packed_map) {

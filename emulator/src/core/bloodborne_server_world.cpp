@@ -121,6 +121,8 @@ std::mutex team_load_view_mutex;
 TeamLoad::View team_load_view;
 // The screen is up: the port's sound holds (its audio thread reads it every buffer).
 std::atomic<bool> team_load_covers{false};
+// A guest's team load still to be put beside its host (TeamResumeDue).
+std::atomic<bool> team_resume_due{false};
 // Kaniel 2026-10-15: a cutscene under that screen is skipped. The cutscene player's (SprjRemoMan)
 // step as its step methods last ran (NoteRemoStep), and Options held for the skip (the pad reads
 // it).
@@ -1072,9 +1074,11 @@ bool HoldTitleLoadForTeam(u32 slot, bool fresh) {
             std::scoped_lock lock{team_mutex};
             team_load.Start(SteadyMilliseconds());
         }
+        team_resume_due.store(!host && !fresh);
         LOG_INFO(Debug, "Co-op team lobby: the save plays in team {} as its {}",
                  decision.start->team(), host ? "host" : "guest");
     } else {
+        team_resume_due.store(false);
         if (party_controller) {
             party_controller->Wait();
         }
@@ -1198,8 +1202,11 @@ void UpdateTeamLoad() {
     const s32 matching = manager >= 0x10000 && HasMemoryAccess(manager, 0x128, MemoryProt::CpuRead)
                              ? ReadValue<s32>(manager, 0x124)
                              : 0;
-    // The host is in once its session is open, a guest once it is in the session.
-    const bool in = IsPartyGuestRole() ? InPartySession() : matching == MatchingStateHosting;
+    // The host is in once its session is open, a guest once it is in the session and beside its
+    // host (play test 2026-10-18: the screen opened on a guest back in the Dream, its host in
+    // Central Yharnam).
+    const bool in = IsPartyGuestRole() ? InPartySession() && !TeamResumeDue()
+                                       : matching == MatchingStateHosting;
     // Kaniel 2026-10-15: ready once every other hunter's character stands in this world: spawned
     // (a body somewhere) and shown (one on another map is hidden, ReconcileMemberPresence). A team
     // guest joins in place, with no reload to wait for (InSessionWorld waited its 30 s for one).
@@ -1642,6 +1649,21 @@ std::optional<ResumePoint> TakeServerResumePoint() {
         server_resume_point.reset();
     }
     return std::exchange(server_resume_point, std::nullopt);
+}
+
+bool TeamResumeDue() {
+    return team_resume_due.load();
+}
+
+void EndTeamResume() {
+    if (team_resume_due.exchange(false)) {
+        LOG_INFO(Debug, "Co-op team load: the guest's resume is done");
+    }
+}
+
+std::string TeamStartHost() {
+    std::scoped_lock lock{team_mutex};
+    return team_gate.Start() ? team_gate.Start()->host() : std::string{};
 }
 
 void RefuseServerResumePoint() {

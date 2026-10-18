@@ -1043,8 +1043,15 @@ ResumeStep ChooseResumeStep(const ResumePoint& point, u32 map, const LampPositio
                             std::optional<LampPosition> loaded_at = std::nullopt);
 // Phase 7: the point a loaded guest resumes at: the server's (where it last stood in its team's
 // world: the newest) when it has one, else its own file's, which counts only out of a session.
+// Kaniel 2026-10-18: a team's load ends with its hunters together, so a guest's team load takes
+// its host's place (`from_host`, see HostPlaceOf) over both.
 std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<ResumePoint> from_file,
-                                           std::optional<ResumePoint> from_server);
+                                           std::optional<ResumePoint> from_server,
+                                           std::optional<ResumePoint> from_host = std::nullopt);
+// How long a guest's team load waits for its host's place (the host's world may still be loading
+// under the team's screen) before it resumes at its own last place.
+constexpr s64 HostPlaceWaitMs = 20'000;
+bool WaitsForHostPlace(bool team_load, bool host_known, s64 waited_ms);
 
 // World state per map (a message on the server link, once POST /bloodborne/party/mapstate): the
 // host posts the bits of its map's 10000 flags from MapFlagBase (MSB first, as the flag store keeps
@@ -3110,6 +3117,8 @@ struct MemberVitals {
     u32 bullets = 0;
     bool operator==(const MemberVitals&) const = default;
 };
+// Where the team's host stands (up or down, on a map) on the vitals board, as a resume point.
+std::optional<ResumePoint> HostPlaceOf(std::span<const MemberVitals> board, std::string_view host);
 struct ReviveHitTotal {
     std::string target;
     u32 down = 0;

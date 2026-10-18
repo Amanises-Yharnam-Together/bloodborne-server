@@ -1201,6 +1201,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     static s32 own_progress = 0;
     static u32 loaded_map = 0;                    // where the load the resume is for put the guest
     static std::optional<LampPosition> loaded_at; // and the spot it stood on then
+    static std::chrono::steady_clock::time_point travel_started{};
     static int for_slot = -1;
     if (!IsPartyGuestRole()) {
         return;
@@ -1252,11 +1253,32 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         if (!settled) {
             return;
         }
+        // Kaniel 2026-10-18: a team's load puts the guest beside the team's host (its world may
+        // still be loading: its place is waited for a while).
+        const bool team_load = TeamResumeDue();
+        std::optional<ResumePoint> host_place;
+        if (team_load) {
+            std::scoped_lock lock{vitals_mutex};
+            host_place = HostPlaceOf(vitals_board.members, TeamStartHost());
+        }
+        const s64 waited_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - *stable_since).count() -
+            3'000;
+        if (WaitsForHostPlace(team_load, host_place.has_value(), waited_ms)) {
+            return;
+        }
+        if (team_load) {
+            LOG_INFO(Debug, "Bloodborne party: team load: the host's place is {}",
+                     host_place ? fmt::format("map {:#x} ({}, {}, {})", host_place->map,
+                                              host_place->position[0], host_place->position[1],
+                                              host_place->position[2])
+                                : "not known; the guest's own last place");
+        }
         std::ifstream file{GuestResumeFile()};
         const std::string text{std::istreambuf_iterator<char>{file}, {}};
         // Phase 7: the server's point first (a team join puts the guest in a session at once).
-        const auto point =
-            PickResumePoint(in_session, ParseResumePoint(text), TakeServerResumePoint());
+        const auto point = PickResumePoint(in_session, ParseResumePoint(text),
+                                           TakeServerResumePoint(), host_place);
         // An unknown count (0) is no other character (see IsOtherCharacter).
         own_progress = in_session ? 0 : CountSetFlags().value_or(0);
         const ResumeStep step =
@@ -1280,9 +1302,13 @@ void ResumeWhereTheGuestLeft(bool in_session) {
             target = *point;
             guest_trip_point = step.warp_point;
             guest_lamp_trip_at = now;
+            travel_started = now;
             phase = Phase::Travelling;
             LOG_INFO(Debug, "Bloodborne party: guest resumes on map {:#x}; travelling to {}",
                      point->map, step.warp_point);
+        }
+        if (phase == Phase::Recording) {
+            EndTeamResume();
         }
         return;
     }
@@ -1290,8 +1316,14 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         if (map == target.map && settled) {
             TeleportLocalPlayer(target.position);
             phase = Phase::Recording;
+            EndTeamResume();
             LOG_INFO(Debug, "Bloodborne party: guest resumed at ({}, {}, {}) on map {:#x}",
                      target.position[0], target.position[1], target.position[2], map);
+        } else if (now - travel_started > std::chrono::seconds{120}) {
+            phase = Phase::Recording;
+            EndTeamResume();
+            LOG_WARNING(Debug, "Bloodborne party: the resume's trip to map {:#x} never arrived",
+                        target.map);
         }
         return;
     case Phase::Recording:
