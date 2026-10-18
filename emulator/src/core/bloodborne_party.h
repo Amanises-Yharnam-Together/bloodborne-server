@@ -760,6 +760,13 @@ struct FlagChanges {
 };
 FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> before,
                          std::span<const u8> after);
+// Ritual altars (see FlagTable): a ritual or a join writes "the current altar", flags
+// 92900000-92905999, a view of the altar k the player talks to (94k00000-94k05999). The same
+// changes as altar `altar`'s own flags; dropped when the altar is not known.
+FlagChanges AsAltarFlags(const FlagChanges& changes, std::optional<s32> altar);
+bool IsCurrentAltarFlag(s32 flag);
+// A Shared flag whose clears go to the party too (a ritual altar's, see FlagTable).
+bool SharesClearsWithParty(s32 flag);
 // Shared progression: the guest's copy of the host's world follows the host's flag changes, so
 // the changes it sees in a session (lamps, shortcuts, bosses, quest steps) are kept, latest
 // state per flag, in a file of "<flag> <0|1>" lines and set in the guest's own world once it is

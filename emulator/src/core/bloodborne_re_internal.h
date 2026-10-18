@@ -310,6 +310,12 @@ bool HostHasRoomForMore();
 std::optional<std::chrono::steady_clock::time_point> LastSummonSearchPost();
 
 bool EventFlagOn(s32 flag);
+// `bits` bits of event flags from `flag` (the game's own read), or nothing without the manager.
+std::optional<u32> EventFlagBits(s32 flag, u32 bits);
+// The ritual altar the player talks to (see AsAltarFlags), if its record is there.
+std::optional<s32> CurrentRitualAltar();
+// Ritual altar `altar` (0-6) loads its dungeon again from its flags.
+void ReloadRitualAltar(s32 altar);
 void LogBloodstainStateChanges();
 bool InPartySession();
 // The members of this game's session, itself counted (SprjSessionManager +0xF8..+0x100); 1

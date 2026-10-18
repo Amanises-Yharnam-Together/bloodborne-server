@@ -427,9 +427,20 @@ std::vector<WorldLogFlagEvent> WorldLogFlagOutbox::Pending(s64 now_ms) {
     std::erase_if(sent, [now_ms](const auto& entry) {
         return now_ms - entry.second > WorldLogFlagResendWindowMs;
     });
+    // The ones not out yet first, oldest first (the host takes rising numbers); then the newest
+    // frame again.
+    std::vector<WorldLogFlagEvent> events;
+    for (const auto& [event, at] : sent) {
+        if (event.number > out_to && events.size() < WorldLogFlagEventsPerFrame) {
+            events.push_back(event);
+        }
+    }
+    if (!events.empty()) {
+        out_to = events.back().number;
+        return events;
+    }
     const size_t from =
         sent.size() > WorldLogFlagEventsPerFrame ? sent.size() - WorldLogFlagEventsPerFrame : 0;
-    std::vector<WorldLogFlagEvent> events;
     for (size_t index = from; index < sent.size(); ++index) {
         events.push_back(sent[index].first);
     }

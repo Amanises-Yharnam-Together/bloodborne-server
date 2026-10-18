@@ -35,8 +35,8 @@ SUITE_BOOT_S = 150
 LONG = {
     "soak": "a long session by design",
     "chalice-team": "two rituals and two dungeon loads, measured 313 s",
-    "chalice-join": "a ritual, a search and two dungeon loads, measured 400 s",
-    "chalice-join-host": "a ritual, a search and two dungeon loads, measured 380 s",
+    "chalice-altar-host": "a ritual and two dungeon loads, measured 315 s",
+    "chalice-altar-team": "a ritual and two dungeon loads, measured 315 s",
     "guest-drops": "a 70 s wait for the drops (Kaniel's playtest 2026-10-16)",
     "boss-guest-runs": "50 s and 90 s waits by the boss (Kaniel's playtest 2026-10-16)",
     "cutscene-skip": "two stages (two boots), the opening cutscene played in between",

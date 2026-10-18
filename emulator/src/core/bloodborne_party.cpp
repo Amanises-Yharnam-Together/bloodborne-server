@@ -1180,7 +1180,40 @@ std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
             shared.emplace_back(flag, true);
         }
     }
+    for (const s32 flag : changes.cleared) {
+        if (SharesClearsWithParty(flag)) {
+            shared.emplace_back(flag, false);
+        }
+    }
     return shared;
+}
+
+namespace {
+constexpr s32 CurrentAltar = 92900000;
+constexpr s32 AltarFlags = 6000;
+} // namespace
+
+bool IsCurrentAltarFlag(s32 flag) {
+    return flag >= CurrentAltar && flag < CurrentAltar + AltarFlags;
+}
+
+FlagChanges AsAltarFlags(const FlagChanges& changes, std::optional<s32> altar) {
+    const auto map = [altar](const std::vector<s32>& flags) {
+        std::vector<s32> out;
+        for (const s32 flag : flags) {
+            if (!IsCurrentAltarFlag(flag)) {
+                out.push_back(flag);
+            } else if (altar && *altar >= 0 && *altar < 10) {
+                out.push_back(94000000 + *altar * 100000 + (flag - CurrentAltar));
+            }
+        }
+        return out;
+    };
+    return FlagChanges{map(changes.set), map(changes.cleared)};
+}
+
+bool SharesClearsWithParty(s32 flag) {
+    return SharedWithParty(flag) && RuleFor(flag).Has(FlagSharesClears);
 }
 
 bool SharedWithParty(s32 flag) {

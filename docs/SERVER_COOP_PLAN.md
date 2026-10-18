@@ -81,10 +81,19 @@ only (bbport is the target; every player and the server run one build).
   the standard ones a ritual asked for and every uploaded one; chalice dungeons are kept in
   memory when the server has no store. A guest's warp from the altar is the Dream's event
   12107100, which ended for a client: the co-op event files let it run, in the guest's own game
-  (`party_boss_events.py`). Rig `chalice-join` (the host's ritual, the guest joins from the
-  search) and `chalice-join-host` (the other way round): they meet in the dungeon. Open: the
-  altar's talk shows no menu unless the player holds a chalice (any); the list is the server's,
-  not yet the team's.
+  (`party_boss_events.py`). A rig run had the host conduct the ritual and the guest join from
+  the search, and they met in the dungeon (2026-10-18; in a team the search is no longer needed,
+  see below).
+  Third step: team altars without a search. An altar keeps its dungeon in event flags
+  (altar k: 94k00000-94k05999; a ritual writes them through the "current altar" view 929xxxxx),
+  and those are the team's (FlagTable, Shared with clears): the port maps the view to its altar,
+  sends the whole record (a ritual writes ~600 flags at once, more than a load's limit and the
+  flag frames' 64), and a teammate's game writes it into the same altar and has the altar load
+  it again (0x01AA40E0 from status 0) once all of it is there. Rig `chalice-altar-team` and
+  `chalice-altar-host`: one member's ritual, the other picks Layer One at its own altar, they
+  meet. Open: the altar's talk
+  shows no menu unless the player holds a chalice (any); the search lists the server's dungeons,
+  not only the team's.
 - **Server down:** team play needs the server; solo play with the personal world needs nothing, so
   nothing extra is built for it.
 - **Port only:** the new design is built for the port; shadPS4 keeps the old path until it is dropped.
