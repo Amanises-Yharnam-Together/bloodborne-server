@@ -1415,7 +1415,9 @@ SCENARIOS = {
                              r"on map 0x18010000; travelling[\s\S]*guest resumed at[\s\S]*the "
                              r"guest's resume is done[\s\S]*this game is ready, 1 of 1 other "
                              r"hunters' characters in its world[\s\S]*load view is gone"]},
-        "forbid": {"guest": [r"load view is gone[\s\S]*load view is up"]},
+        # Both stages' logs are read as one: a screen that opens and covers again counts in the
+        # second (the stage that travels).
+        "forbid": {"guest": [r"travelling[\s\S]*load view is gone[\s\S]*load view is up"]},
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },

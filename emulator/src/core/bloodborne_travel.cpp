@@ -1316,9 +1316,9 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         if (map == target.map && settled) {
             TeleportLocalPlayer(target.position);
             phase = Phase::Recording;
-            EndTeamResume();
             LOG_INFO(Debug, "Bloodborne party: guest resumed at ({}, {}, {}) on map {:#x}",
                      target.position[0], target.position[1], target.position[2], map);
+            EndTeamResume();
         } else if (now - travel_started > std::chrono::seconds{120}) {
             phase = Phase::Recording;
             EndTeamResume();
