@@ -3912,13 +3912,13 @@ void SupplyCounts(ImDrawList* draw, float right, float cy, float unit, uint32_t 
 }
 
 /// The game's party list (the party HUD's CoopParty tags, hud_patch.py LIST_X/LIST_Y/LIST_STEP): each
-/// member's supplies on its name's line, at its HP bar's end (the tag at (204, 330 + 95 i), its bar
-/// from x 109 to about 300 on the 1080p stage).
+/// member's supplies on its name's line, past its HP bar's end (the tag at (204, 330 + 95 i), its bar
+/// from x 109 to about 300 on the 1080p stage; hud_patch.py SUPPLY_X: no name reaches past it).
 void Supplies(ImDrawList* draw) {
     const float sx = game.w / 1920.0f, sy = game.h / 1080.0f;
     for (int i = 0; i < panel.member_count && i < 3; ++i) {
         const float bar_y = 330.0f + 95.0f * float(i) - 0.5f;
-        SupplyCounts(draw, game.x + 300.0f * sx, game.y + (bar_y - 20.0f) * sy, sy, panel.members[i].vials,
+        SupplyCounts(draw, game.x + 400.0f * sx, game.y + (bar_y - 20.0f) * sy, sy, panel.members[i].vials,
                      panel.members[i].bullets, 1.0f);
     }
 }
