@@ -1404,11 +1404,15 @@ SCENARIOS = {
         "roles": {
             "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
                       "wait-session 2 300", "wait 45", "done"],
-                     ["title-wait 60", "team-start", START, "wait-session 2 300", "wait 20",
-                      "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"]],
+                     # The team again (the server drops a team whose members all went offline,
+                     # as both games do between the stages).
+                     ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", "wait 20", "expect-session 2",
+                      f"expect-map {CENTRAL_YHARNAM}"]],
             "guest": [["team-accept", "team-ready", START, "wait-session 2 300", "wait 5",
                        f"travel {HUNTERS_DREAM}", "wait 30", "done"],
-                      ["team-ready", "wait-session 2 300", "wait 15", "expect-session 2",
+                      ["team-accept", "team-ready", "wait-session 2 300", "wait 15",
+                       "expect-session 2",
                        f"expect-map {CENTRAL_YHARNAM}", "expect-others-near 1 15"]],
         },
         "expect": {"guest": [r"team load: the host's place is map 0x18010000[\s\S]*guest resumes "
