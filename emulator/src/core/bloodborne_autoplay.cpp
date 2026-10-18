@@ -286,6 +286,7 @@ void LogAutoplayCensus(float meters) {
         return;
     }
     std::vector<std::pair<float, std::string>> close_by;
+    const std::unordered_map<u64, s32> entities = CharacterEntityIds(world);
     ForEachWorldCharacter(world, [&](u64 character) {
         if (character == GetLocalPlayer()) {
             return;
@@ -307,12 +308,14 @@ void LogAutoplayCensus(float meters) {
             close_by.emplace_back(
                 distance,
                 fmt::format("{:#x} hp {}/{} dead {:#x} hidden {} disabled {} at {:.1f} m "
-                            "({:.1f}, {:.1f}, {:.1f}) backread {}/{} draw {:#x}",
+                            "({:.1f}, {:.1f}, {:.1f}) backread {}/{} draw {:#x} team {} entity {}",
                             ReadValue<u32>(character, 0x08), ReadValue<s32>(data, 0xF8),
                             ReadValue<s32>(data, 0xFC), ReadValue<u8>(character, 0x1E3),
                             ReadValue<u8>(character, 0x28), IsCharacterDisabled(character) ? 1 : 0,
                             distance, x, y, z, BackreadLevel(character, 0x10),
-                            BackreadLevel(character, 0x14), DrawFlags(character)));
+                            BackreadLevel(character, 0x14), DrawFlags(character),
+                            ReadValue<s32>(character, CharacterTeamOffset),
+                            entities.contains(character) ? entities.at(character) : -1));
         }
     });
     std::ranges::sort(close_by);
@@ -670,6 +673,64 @@ bool AutoplayTeleport(const AutoplayStep& step) {
                          static_cast<float>(step.Number(2, 0))},
                         static_cast<float>(step.Number(3, 0)));
     return true;
+}
+
+// place <target> <x> <y> <z> [<heading>]: another character put there as the player's teleport
+// is (the host's Doll moved away from where a guest's copy of her stands, playtest 2026-10-18).
+bool AutoplayPlace(const AutoplayStep& step) {
+    const auto target = ParseAutoplayTarget(step.Arg(0));
+    const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+    if (!found || found->character == GetLocalPlayer()) {
+        step.failure = "no such character";
+        return false;
+    }
+    if (!PlaceCharacterAt(
+            found->character,
+            {static_cast<float>(step.Number(1, 0)), static_cast<float>(step.Number(2, 0)),
+             static_cast<float>(step.Number(3, 0)), 1.0f},
+            {0.0f, static_cast<float>(step.Number(4, 0)), 0.0f, 0.0f}, "AutoplayPlace")) {
+        step.failure = "no teleport";
+        return false;
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay: placed {:#x} at ({:.1f}, {:.1f}, {:.1f})",
+             ReadValue<u32>(found->character, 0x08), step.Number(1, 0), step.Number(2, 0),
+             step.Number(3, 0));
+    return true;
+}
+
+// expect-walks <metres> [<timeout>]: the left stick held forward until the player stands that far
+// from where it began (a player kept in a talk, kneeling at the Doll for good in
+// playtest 2026-10-18, never walks).
+bool AutoplayExpectWalks(const AutoplayStep& step) {
+    const auto at = LocalPlayerPosition();
+    if (!step.begun) {
+        if (!at) {
+            step.failure = "no player";
+            return false;
+        }
+        std::scoped_lock lock{autoplay_mutex};
+        autoplay_run.glide_from = *at;
+    }
+    LampPosition from{};
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        from = autoplay_run.glide_from;
+    }
+    const float dx = at ? (*at)[0] - from[0] : 0.0f;
+    const float dz = at ? (*at)[2] - from[2] : 0.0f;
+    const float walked = std::sqrt(dx * dx + dz * dz);
+    if (walked >= static_cast<float>(step.Number(0, 2))) {
+        autoplay_sticks.store(0x80808080);
+        LOG_INFO(Debug, "Bloodborne autoplay: walked {:.1f} m in {:.1f} s", walked, step.elapsed);
+        return true;
+    }
+    if (step.elapsed > step.Number(1, 10)) {
+        autoplay_sticks.store(0x80808080);
+        step.failure = fmt::format("walked {:.1f} m in {:.0f} s", walked, step.elapsed);
+        return false;
+    }
+    autoplay_sticks.store(0x80800080); // lx 0x80, ly 0x00: straight ahead
+    return false;
 }
 
 // glide <x y z>...: from where the player is along those points at walking pace, by small
@@ -1690,6 +1751,8 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"attack", AutoplayAttack},
     {"hit", AutoplayHit},
     {"teleport", AutoplayTeleport},
+    {"expect-walks", AutoplayExpectWalks},
+    {"place", AutoplayPlace},
     {"glide", AutoplayGlide},
     {"pickup", AutoplayPickup},
     {"rise", AutoplayRise},

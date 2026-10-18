@@ -81,6 +81,34 @@ TEST(EnemyOwner, TheOwnerRunsTheAiAFollowerTheNetworkController) {
     EXPECT_EQ(EnemyOwnershipWord(EnemyRole::Unknown), std::nullopt);
 }
 
+// Playtest 2026-10-18: krolebord was levelling up at the Doll when the Dream's owner changed; the
+// Doll went to the new owner's game in the middle of the talk (and to where she stood there, 16 m
+// away) and he stayed kneeling for good. The Doll runs in each player's own game.
+TEST(EnemyOwner, TheDollNeverChangesHands) {
+    EXPECT_FALSE(ChangesHandsWithTheMap(HuntersDreamDoll));
+    EXPECT_FALSE(ChangesHandsWithTheMap(2100700));
+    // Gehrman and the Dream's other characters (team 26 too), its messengers, an enemy without an
+    // entity id: as before.
+    for (const s32 other : {2100600, 2100200, 2100211, 2100950, 2100215, -1, 0}) {
+        EXPECT_TRUE(ChangesHandsWithTheMap(other)) << other;
+    }
+}
+
+// The game itself moves her too: the host's ownership step hands the network every character its
+// player is not near, a guest's hand-out (0x17) sets the rest of its table to 0xFFFF. Right after
+// that step her word goes back to this game's own, whatever this member's role on the map.
+TEST(EnemyOwner, TheDollStaysWithEachGameAfterTheOwnershipStep) {
+    for (const EnemyRole role : {EnemyRole::Owner, EnemyRole::Follower}) {
+        EXPECT_EQ(KeptLocalWord(role, HuntersDreamDoll, 0xFFFF), std::optional<u16>{1});
+        EXPECT_EQ(KeptLocalWord(role, HuntersDreamDoll, 0x8000), std::optional<u16>{1});
+        EXPECT_EQ(KeptLocalWord(role, HuntersDreamDoll, 1), std::nullopt);
+        EXPECT_EQ(KeptLocalWord(role, HuntersDreamDoll, 0), std::nullopt);
+        EXPECT_EQ(KeptLocalWord(role, 2100600, 0xFFFF), std::nullopt);
+    }
+    // No owner on the map: the game's own way.
+    EXPECT_EQ(KeptLocalWord(EnemyRole::Unknown, HuntersDreamDoll, 0xFFFF), std::nullopt);
+}
+
 // What the game sends at all; which member gets it is shadNet's since phase 9
 // (server/tests/test_packet_routes.cpp, which also keeps a follower from taking another
 // follower's enemies: krolebord 2026-10-15).

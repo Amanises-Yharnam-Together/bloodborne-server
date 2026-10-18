@@ -676,6 +676,8 @@ void GrantPartyEchoes();
 // Whether this guest hid or switched off the character to match the host (game thread).
 bool ChangedLikeTheHost(u32 handle);
 void ClaimEnemiesWhenAlone(bool in_session, u32 map);
+// Entity ids by character object (WorldChrMan's tables, as the lookup 0x0191A440 finds them).
+std::unordered_map<u64, s32> CharacterEntityIds(u64 world);
 // Phase 4 (see EnemyRole), the port: the server's owner of this
 // member's area decides who runs its enemies, instead of ClaimEnemiesWhenAlone.
 bool EnemyOwnerOn();
@@ -907,6 +909,9 @@ void SnapshotHostMapState(bool sharing);
 void TeleportLocalPlayer(const LampPosition& at, float heading = 0.0f);
 // Has every camera jump to where it should be on its next update (see PlacementCalls).
 void SnapCamera();
+// Any character put there as the player's teleport does (vtable +0x5F8, see PlaceCharacter).
+bool PlaceCharacterAt(u64 character, const std::array<float, 4>& position,
+                      const std::array<float, 4>& rotation, const char* what);
 // Moves the local player the way the game places it at a lamp (see PlaceCharacter); `what` names
 // the caller in the character check's log.
 bool PlaceLocalPlayer(const std::array<float, 4>& position, const std::array<float, 4>& rotation,

@@ -25,6 +25,7 @@ import suites  # noqa: E402
 VERBS = {
     "wait", "wait-session", "wait-members", "wait-map", "travel", "ensure-map", "hurt", "kill",
     "mark", "approach", "attack", "teleport", "press", "cutscene-options", "stick", "set-flag",
+    "expect-walks", "place",  # playtest 2026-10-18: a player kept in a talk never walks
     "expect-flag",
     "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "expect-others-shown",

@@ -100,6 +100,10 @@ namespace {
 std::unordered_map<u64, s32> unscaled_boss_max;
 u64 unscaled_boss_visit = 0; // see Place::visit: by character object, which a reload makes anew
 
+} // namespace
+
+namespace Coop {
+
 // Entity ids by character object, as the lookup 0x0191A440 finds them: WorldChrMan +0x90 tables
 // at +0x98, each with +0xE0 sorted (entity id, block << 14 | slot) pairs at +0xE8; the character
 // is [[+0x28] + block * 0x160 + 0xC0] + slot * 0x38.
@@ -124,6 +128,34 @@ std::unordered_map<u64, s32> CharacterEntityIds(u64 world) {
         }
     }
     return entities;
+}
+
+} // namespace Coop
+
+namespace {
+
+// The Doll's character in this world (see ChangesHandsWithTheMap), 0 when it has none: looked up
+// by her entity id once a second (and on a new world); the game thread only. Compared with the
+// world's characters, never read itself (a reload frees the old one).
+u64 DollCharacter() {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    static u64 looked_in = 0;
+    static u64 doll = 0;
+    static std::chrono::steady_clock::time_point looked{};
+    const auto now = std::chrono::steady_clock::now();
+    if (world != looked_in || now - looked >= std::chrono::seconds{1}) {
+        looked_in = world;
+        looked = now;
+        doll = 0;
+        if (world >= 0x10000) {
+            for (const auto& [character, entity] : CharacterEntityIds(world)) {
+                if (!ChangesHandsWithTheMap(entity)) {
+                    doll = character;
+                }
+            }
+        }
+    }
+    return doll;
 }
 
 } // namespace
@@ -474,8 +506,11 @@ void ClaimEnemiesWhenAlone(bool in_session, u32 map) {
         return;
     }
     size_t claimed = 0;
+    const u64 doll = DollCharacter();
     ForEachWorldCharacter(world, [&](u64 character) {
-        if (character == player || CharacterHp(character) <= 0) {
+        // Handed back when another member comes, the Doll's level-up would stop (see
+        // ChangesHandsWithTheMap).
+        if (character == player || character == doll || CharacterHp(character) <= 0) {
             return;
         }
         const u64 word = OwnershipWordAddress(world, character);
@@ -830,7 +865,23 @@ namespace Coop {
 void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) {
     const EnemyRole role = CurrentEnemyRole();
     const u64 world = registers->rdi;
-    if (role != EnemyRole::Owner || world < 0x10000) {
+    if (role == EnemyRole::Unknown || world < 0x10000) {
+        return;
+    }
+    // Whatever this member's role, the Doll stays in this game's hands (KeptLocalWord).
+    const u64 doll = DollCharacter();
+    if (doll != 0) {
+        ForEachWorldCharacter(world, [&](u64 character) {
+            const u64 word = character == doll ? OwnershipWordAddress(world, character) : 0;
+            if (word == 0 || !HasMemoryAccess(word, 2, MemoryProt::CpuWrite)) {
+                return;
+            }
+            if (const auto kept = KeptLocalWord(role, HuntersDreamDoll, ReadValue<u16>(word, 0))) {
+                WriteValue(word, 0, *kept);
+            }
+        });
+    }
+    if (role != EnemyRole::Owner) {
         return;
     }
     // Never a player: the other players' copies follow their own games (an AI controller on one
@@ -843,7 +894,7 @@ void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) 
     u32 marked = 0;
     const std::vector<u32> handed = FreshHandOut(role, SteadyMilliseconds());
     ForEachWorldCharacter(world, [&](u64 character) {
-        if (players.contains(character)) {
+        if (players.contains(character) || character == doll) {
             return;
         }
         const u64 control = ReadValue<u64>(character, 0x18);
@@ -1248,8 +1299,12 @@ void TickEnemyOwner(bool in_session, u32 map) {
                  "Bloodborne party: enemy follower runs {} enemies the owner handed it (t={:.1f})",
                  handed_to_this.size(), now_ms / 1000.0);
     }
+    // The Doll stays this game's (KeepAwakeEnemies): handed over in the middle of a level-up she
+    // kept krolebord kneeling (playtest 2026-10-18).
+    const u64 doll = DollCharacter();
     ForEachWorldCharacter(world, [&](u64 character) {
-        if (character == player || players.contains(character) || CharacterHp(character) <= 0 ||
+        if (character == player || character == doll || players.contains(character) ||
+            CharacterHp(character) <= 0 ||
             HandedOut(handed_to_this, ReadValue<u32>(character, 0x90))) {
             return;
         }
