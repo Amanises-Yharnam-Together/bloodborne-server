@@ -1904,8 +1904,7 @@ void ApplyTeamWorldOnLoad(bool trip) {
     LOG_INFO(Debug,
              "Co-op team world: the team's world is in this save{}: {} blocks, {} flags "
              "changed (version {})",
-             retake ? fmt::format(" again for map {:#x} after a trip's load",
-                                  GetCurrentPackedMap())
+             retake ? fmt::format(" again for map {:#x} after a trip's load", GetCurrentPackedMap())
                     : "",
              store->blocks.size(), changed, world->version());
 }

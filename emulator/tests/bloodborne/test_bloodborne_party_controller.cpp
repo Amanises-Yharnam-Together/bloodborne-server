@@ -2981,9 +2981,9 @@ TEST(BloodborneGuestResume, TheServersPointCountsInATeamSession) {
 }
 
 // Play test 2026-10-18 (v0.3.11-local): Krolebord's team load put him back where he had left the
-// world, in the Hunter's Dream, while Kaniel, the team's host, loaded in Central Yharnam; the team's
-// screen opened with them apart. Kaniel: after the team's loading screen they are together. A
-// guest's team load takes its host's place (up or down where it stands) over its own last one.
+// world, in the Hunter's Dream, while Kaniel, the team's host, loaded in Central Yharnam; the
+// team's screen opened with them apart. Kaniel: after the team's loading screen they are together.
+// A guest's team load takes its host's place (up or down where it stands) over its own last one.
 TEST(BloodborneGuestResume, ATeamLoadPutsTheGuestWhereItsHostStands) {
     const ResumePoint own{0x15000000, {-2.1f, -6.4f, -21.4f}, 0};
     MemberVitals host{.member = "kaniel", .map = 0x18010000, .vital = Vital::Up};
@@ -3007,8 +3007,8 @@ TEST(BloodborneGuestResume, ATeamLoadPutsTheGuestWhereItsHostStands) {
     EXPECT_FALSE(HostPlaceOf(board, "").has_value()) << "no team host";
     EXPECT_FALSE(HostPlaceOf(board, "someone").has_value());
     // On another map it travels there (its first lamp), then stands at the host's spot.
-    const ResumeStep step = ChooseResumeStep(*place, 0x15000000, own.position, 0, 0x15000000,
-                                             own.position);
+    const ResumeStep step =
+        ChooseResumeStep(*place, 0x15000000, own.position, 0, 0x15000000, own.position);
     EXPECT_EQ(step.kind, ResumeStep::Kind::Travel);
     EXPECT_EQ(step.warp_point, 2412950);
 }
