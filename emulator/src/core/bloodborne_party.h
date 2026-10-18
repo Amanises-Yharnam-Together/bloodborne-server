@@ -1957,6 +1957,12 @@ bool GetsKillDrop(bool in_session, bool member_kill, bool own_kill_as_guest, s32
 // A member's kill on this player's copy (hidden, or the game's kill near): only while the copy is
 // alive (`hp`, its HP now: 0 in its own death animation, before the death flags are set).
 bool AppliesMemberKill(bool member_killed, s32 hp);
+// A copy the world made again in place (no load: new characters for the same handles) is not
+// whole for a while: the game's kill on one made 0.1 s before crashed in its death step (Kaniel's
+// play log, 2026-10-18 16:16). A member's kill waits until the copy has been seen in the world
+// (`seen_ms`: when this game first saw that character) for NewCopySettlesMs.
+constexpr s64 NewCopySettlesMs = 2'000;
+bool CopyJustMade(s64 now_ms, s64 seen_ms);
 
 // Harder enemies (SHADPS4_BLOODBORNE_HARDER_ENEMIES=<hp>,<damage>,<poise>, e.g. "3,1.5,3"):
 // every NpcParam row's HP and poise and every AtkParam_Npc row's damage are multiplied once,

@@ -2181,6 +2181,14 @@ void KeepEnemyDeathsInStep(bool sharing) {
         }
     });
     const s64 now_ms = SteadyMilliseconds();
+    // When this game first saw each character, for the copies the world just made (CopyJustMade).
+    static std::unordered_map<u64, s64> seen_since;
+    std::erase_if(seen_since, [&](const auto& seen) {
+        return std::ranges::find(pointers, seen.first) == pointers.end();
+    });
+    for (const u64 character : pointers) {
+        seen_since.try_emplace(character, now_ms);
+    }
     for (size_t index = 0; index < characters.size(); ++index) {
         const auto changed = enemy_owner_changed_ms.find(pointers[index]);
         characters[index].settling = CharacterSettles(now_ms, world_changed_ms.load(),
@@ -2288,9 +2296,10 @@ void KeepEnemyDeathsInStep(bool sharing) {
         const u64 character = pointers[index];
         const u32 handle = characters[index].handle;
         const s32 hp = characters[index].hp;
+        const bool just_made = CopyJustMade(now_ms, seen_since.at(character));
         if (hp > 0) {
             zero_since.erase(character);
-        } else if (can_kill && !finished.contains(character)) {
+        } else if (can_kill && !just_made && !finished.contains(character)) {
             const auto since = zero_since.try_emplace(character, now_ms).first->second;
             const u8 death_flags = ReadValue<u8>(character, 0x1E3);
             if (FinishesStuckDeath(others.contains(handle), hp, death_flags, since, now_ms) &&
@@ -2305,7 +2314,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
             }
         }
         const auto it = hidden.find(character);
-        if (it == hidden.end() && hp > 0 &&
+        if (it == hidden.end() && hp > 0 && !just_made &&
             AppliesMemberKill(others.contains(handle), CharacterHp(character)) &&
             ReadValue<u8>(character, 0x28) == 0 &&
             HasMemoryAccess(character, 0x29, MemoryProt::CpuWrite)) {
