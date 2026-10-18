@@ -112,7 +112,9 @@ float Percentile(std::vector<float> values, double share) {
 }
 
 bool SkippedMaterial(const std::string& mtd) {
-    static constexpr std::string_view Skipped[] = {"Sky", "sky", "Moon", "Sun_", "water", "Water"};
+    // Kaniel 2026-10-18 ("a lot of noise"): also the alpha-cut decals (_al: litter, grime, leaves on
+    // the ground), grass cards and blood splats, specks from above.
+    static constexpr std::string_view Skipped[] = {"Sky", "sky", "Moon", "Sun_", "water", "Water", "_al", "grass", "Bloody"};
     return std::ranges::any_of(Skipped, [&](std::string_view word) { return mtd.find(word) != std::string::npos; });
 }
 
@@ -437,6 +439,20 @@ bool SkippedModel(std::string_view model, std::span<const float> triangles) {
     if (count == 0) {
         return true;
     }
+    // Kaniel 2026-10-18 ("a lot of noise"): small props (bottles, rubble, bodies, candles) are
+    // specks from above; a model within a metre and a half each way is left out.
+    {
+        float lo[3] = {triangles[0], triangles[1], triangles[2]}, hi[3] = {lo[0], lo[1], lo[2]};
+        for (std::size_t i = 0; i + 3 <= triangles.size(); i += 3) {
+            for (int c = 0; c < 3; ++c) {
+                lo[c] = std::min(lo[c], triangles[i + std::size_t(c)]);
+                hi[c] = std::max(hi[c], triangles[i + std::size_t(c)]);
+            }
+        }
+        if (hi[0] - lo[0] < 1.5f && hi[1] - lo[1] < 1.5f && hi[2] - lo[2] < 1.5f) {
+            return true;
+        }
+    }
     if (count > 64) {
         // A backdrop under or round the whole area (the Dream's sea of flowers, the woods' far
         // hills): its triangles spread thin, under one in 20 square metres over 200,000.
@@ -619,10 +635,61 @@ Chart Canvas::Finish() const {
     }
     const float low = Percentile(heights, 0.02), high = Percentile(heights, 0.98);
     const float span = std::max(1.0f, high - low);
+    // Kaniel 2026-10-18 ("a lot of noise"): each drawn pixel takes the median light and the most
+    // common colour of the 5x5 pixels round it on its own surface (within 0.75 m of its height), so
+    // grime and cobble specks blend while walls and roof edges stay sharp; a pixel with few such
+    // neighbours is a speck itself (a bottle, a stray leaf) and takes its whole window's median.
+    std::vector<float> smooth_top = top;
+    std::vector<std::uint8_t> smooth_light = light;
+    std::vector<std::uint32_t> smooth_color = color;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t at = std::size_t(y) * std::size_t(width) + std::size_t(x);
+            if (!std::isfinite(top[at])) {
+                continue;
+            }
+            float hs[25];
+            std::uint8_t ls[25];
+            std::uint32_t cs[25];
+            int n = 0;
+            const auto gather = [&](bool same_surface) {
+                n = 0;
+                for (int dy = -2; dy <= 2; ++dy) {
+                    for (int dx = -2; dx <= 2; ++dx) {
+                        const int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+                            continue;
+                        }
+                        const std::size_t o = std::size_t(ny) * std::size_t(width) + std::size_t(nx);
+                        if (std::isfinite(top[o]) && (!same_surface || std::abs(top[o] - top[at]) < 0.75f)) {
+                            hs[n] = top[o], ls[n] = light[o], cs[n] = color[o];
+                            ++n;
+                        }
+                    }
+                }
+            };
+            gather(true);
+            if (n < 8) {
+                gather(false);
+            }
+            std::nth_element(hs, hs + n / 2, hs + n);
+            std::nth_element(ls, ls + n / 2, ls + n);
+            smooth_top[at] = hs[n / 2];
+            smooth_light[at] = ls[n / 2];
+            int best = 0;
+            for (int i = 0; i < n; ++i) {
+                const int votes = int(std::count(cs, cs + n, cs[i]));
+                if (votes > best) {
+                    best = votes;
+                    smooth_color[at] = cs[i];
+                }
+            }
+        }
+    }
     const auto height_at = [&](int x, int y) {
         x = std::clamp(x, 0, width - 1);
         y = std::clamp(y, 0, height - 1);
-        const float h = top[std::size_t(y) * std::size_t(width) + std::size_t(x)];
+        const float h = smooth_top[std::size_t(y) * std::size_t(width) + std::size_t(x)];
         return std::isfinite(h) ? h : low - 8.0f;
     };
     // Ink on paper: low ground dark umber, high ground pale parchment, the light's relief over it,
@@ -635,22 +702,22 @@ Chart Canvas::Finish() const {
             if (!std::isfinite(top[at])) {
                 continue;
             }
-            const float h = top[at];
+            const float h = smooth_top[at];
             const float t = std::clamp((h - low) / span, 0.0f, 1.0f);
-            const float relief = 0.50f + 0.62f * float(light[at]) / 255.0f;
+            const float relief = 0.50f + 0.62f * float(smooth_light[at]) / 255.0f;
             const float drop = std::max({std::abs(height_at(x + 1, y) - height_at(x - 1, y)),
                                          std::abs(height_at(x, y + 1) - height_at(x, y - 1))});
-            const float line = std::clamp((drop - 1.5f) / 2.0f, 0.0f, 1.0f) * 0.6f;
+            const float line = std::clamp((drop - 2.0f) / 2.0f, 0.0f, 1.0f) * 0.55f;
             // A faint grain, as paper has (a hash of the pixel: the same picture every time).
             std::uint32_t hash = std::uint32_t(x) * 73856093u ^ std::uint32_t(y) * 19349663u;
             hash = (hash ^ (hash >> 13)) * 0x5bd1e995u;
-            const float grain = float((hash >> 24) & 0xFF) / 255.0f * 8.0f - 4.0f;
+            const float grain = float((hash >> 24) & 0xFF) / 255.0f * 3.0f - 1.5f;
             std::uint8_t* px = chart.rgba.data() + at * 4;
             float base[3];
             for (int c = 0; c < 3; ++c) {
                 base[c] = umber[c] + (paper[c] - umber[c]) * t;
             }
-            if (const std::uint32_t tint = color[at]; tint != 0) {
+            if (const std::uint32_t tint = smooth_color[at]; tint != 0) {
                 // Kaniel 2026-10-17 ("can we make it colored?"): the material's own colour,
                 // livelier than the dark textures and as bright as the height says, a little of
                 // the paper's tone kept.
@@ -706,7 +773,7 @@ Chart Cropped(const Chart& chart) {
 
 std::vector<std::uint8_t> Save(const Chart& chart) {
     std::vector<std::uint8_t> file(32);
-    std::memcpy(file.data(), "BBMAP3\0\0", 8);
+    std::memcpy(file.data(), "BBMAP4\0\0", 8);
     std::memcpy(file.data() + 8, &chart.width, 4);
     std::memcpy(file.data() + 12, &chart.height, 4);
     std::memcpy(file.data() + 16, &chart.x0, 4);
@@ -724,7 +791,7 @@ std::vector<std::uint8_t> Save(const Chart& chart) {
 }
 
 std::optional<Chart> Load(std::span<const std::uint8_t> file) {
-    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP3\0\0", 8) != 0) {
+    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP4\0\0", 8) != 0) {
         return std::nullopt;
     }
     Chart chart;

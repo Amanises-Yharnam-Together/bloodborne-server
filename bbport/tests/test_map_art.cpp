@@ -263,8 +263,11 @@ int main() {
                     {{0, false, {0, 1, 2, 1, 3, 2}}, {0x01000000, false, {0, 1, 2}}, {0x02000000, false, {0, 1, 2}}}};
         Mesh stairs{"M[ARSN].mtd", {{0, 1, 0}, {1, 1, 0}, {0, 2, 1}, {1, 2, 1}}, {{0, true, {0, 1, 2, 3, 0xFFFF, 0, 1, 2}}}};
         Mesh water{"M[ARSN]_water.mtd", {{0, 5, 0}, {9, 5, 0}, {0, 5, 9}}, {{0, false, {0, 1, 2}}}};
+        // Kaniel 2026-10-18: alpha-cut decals (litter, grime) and grass cards are left out too.
+        Mesh litter{"M[ARSN]_l_al.mtd", {{0, 6, 0}, {9, 6, 0}, {0, 6, 9}}, {{0, false, {0, 1, 2}}}};
+        Mesh grass{"M[A]_l_e_grass.mtd", {{0, 7, 0}, {9, 7, 0}, {0, 7, 9}}, {{0, false, {0, 1, 2}}}};
         std::vector<float> out;
-        assert(AppendTriangles(MakeFlver({ground, stairs, water}), out));
+        assert(AppendTriangles(MakeFlver({ground, stairs, water, litter, grass}), out));
         // ground 2, stairs: (0 1 2) (1 2 3) then the restart drops the windows over it, then (0 1 2).
         assert(out.size() == 9 * 5);
         assert(out[0] == 0 && out[3] == 1 && out[8] == 1); // the ground's first corner set
@@ -353,10 +356,13 @@ int main() {
 
     // Models left out: the sky (m9xxxxx), the distant views (m008xxx), a quad of huge triangles.
     {
-        const std::vector<float> small{0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const std::vector<float> small{0, 0, 0, 3, 0, 0, 0, 0, 3};
         const std::vector<float> huge{0, 0, 0, 30, 0, 0, 0, 0, 30};
         assert(SkippedModel("m900000", small) && SkippedModel("m008020", small));
         assert(!SkippedModel("m000100", small) && SkippedModel("m000100", huge));
+        // Kaniel 2026-10-18 ("a lot of noise"): a prop within 1.5 m each way (a bottle, rubble).
+        assert(SkippedModel("m000100", std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1.4f, 1}));
+        assert(!SkippedModel("m000100", std::vector<float>{0, 0, 0, 1, 0, 0, 0, 2, 1})); // a tall post stays
         assert(SkippedModel("m000100", {}));
         std::vector<float> many;
         for (int i = 0; i < 70; ++i) {
@@ -421,6 +427,20 @@ int main() {
         assert(low && low[3] == 255 && roof && roof[3] == 255);
         assert(south_east && south_east[3] == 0);
         assert(roof[0] > low[0]); // pale high ground, darker low ground
+        // Kaniel 2026-10-18 ("a lot of noise"): a lone speck of another colour on a surface takes its
+        // surroundings' colour, and a lone pixel standing up from it (a bottle) is flattened.
+        Canvas specks(area, 2.0f, 4096);
+        specks.Add(std::vector<float>{0, 0, 0, 10, 0, 0, 0, 0, 10, 10, 0, 0, 10, 0, 10, 0, 0, 10},
+                   std::vector<std::uint32_t>{0xFF208020u, 0xFF208020u});
+        specks.Add(std::vector<float>{5, 0.2f, 5, 5.3f, 0.2f, 5, 5, 0.2f, 5.3f}, std::vector<std::uint32_t>{0xFFC02020u});
+        specks.Add(std::vector<float>{2.1f, 1.2f, 2.1f, 2.3f, 1.2f, 2.1f, 2.1f, 1.2f, 2.3f},
+                   std::vector<std::uint32_t>{0xFF208020u});
+        const Chart calm = specks.Finish();
+        const std::uint8_t* speck = PixelAt(calm, 5.1f, 5.1f);
+        assert(speck && speck[1] > speck[0]); // green, not red
+        const std::uint8_t* bottle = PixelAt(calm, 2.2f, 2.2f);
+        const std::uint8_t* ground = PixelAt(calm, 3.0f, 3.0f);
+        assert(bottle && ground && std::abs(int(bottle[0]) - int(ground[0])) < 12); // no bright dot
         // A green material's ground comes out green.
         Canvas green(area, 2.0f, 4096);
         green.Add(std::vector<float>{0, 0, 0, 10, 0, 0, 0, 0, 10}, std::vector<std::uint32_t>{0xFF208020u});
