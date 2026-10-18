@@ -4192,6 +4192,66 @@ ImU32 LampLight(float alpha = 1.0f) {
     return Party::Rgba(1.0f, 0.80f, 0.48f, alpha);
 }
 
+/// Kaniel 2026-10-18 (fog of war, as Elden Ring's): only what this character has walked near (40 m
+/// round its walked cells), round its lit lamps and where it stands shows; the rest of the area is
+/// a dark silhouette. An area whose main bosses are down shows whole. The picture's pixels into
+/// `out`.
+bool rebuild = false; // the map opened: the pictures are made again with the fog as it is now
+void Fogged(const BbMapArt::Chart& chart, uint32_t map, std::uint8_t* out) {
+    std::memcpy(out, chart.rgba.data(), chart.rgba.size());
+    for (int i = 0; i < view.cleared_count; ++i) {
+        if (view.cleared[i] == (map & 0xFFFF0000u)) {
+            return;
+        }
+    }
+    // The reveal on a coarse grid (2 m), softened, then sampled for each pixel.
+    constexpr float Grid = 2.0f, Reveal = 40.0f;
+    const float w_m = float(chart.width) / chart.ppm, h_m = float(chart.height) / chart.ppm;
+    const int gw = int(w_m / Grid) + 2, gh = int(h_m / Grid) + 2;
+    std::vector<float> seen(std::size_t(gw) * std::size_t(gh), 0.0f);
+    const auto disc = [&](float x, float z, float radius) {
+        const float gx = (x - chart.x0) / Grid, gz = (chart.z1 - z) / Grid, r = radius / Grid;
+        for (int y = std::max(0, int(gz - r - 1)); y <= std::min(gh - 1, int(gz + r + 1)); ++y) {
+            for (int xx = std::max(0, int(gx - r - 1)); xx <= std::min(gw - 1, int(gx + r + 1)); ++xx) {
+                const float d = std::sqrt((float(xx) - gx) * (float(xx) - gx) + (float(y) - gz) * (float(y) - gz));
+                const float v = std::clamp((r - d) / (r * 0.35f), 0.0f, 1.0f); // soft rim
+                float& cell = seen[std::size_t(y) * std::size_t(gw) + std::size_t(xx)];
+                cell = std::max(cell, v);
+            }
+        }
+    };
+    static std::vector<int16_t> cells(2 * 65536);
+    const int count = bbcoop_map_explored(map, cells.data(), 65536);
+    for (int i = 0; i < count; ++i) {
+        disc((float(cells[size_t(i) * 2]) + 0.5f) * BBCOOP_MAP_CELL, (float(cells[size_t(i) * 2 + 1]) + 0.5f) * BBCOOP_MAP_CELL,
+             Reveal);
+    }
+    for (int i = 0; i < view.lamp_count; ++i) {
+        if (view.lamps[i].lit && view.lamps[i].map == (map & 0xFFFF0000u)) {
+            disc(view.lamps[i].x, view.lamps[i].z, 60.0f);
+        }
+    }
+    if (view.has_me && view.map == map) {
+        disc(view.x, view.z, Reveal);
+    }
+    for (int y = 0; y < chart.height; ++y) {
+        const float gz = (float(y) / chart.ppm) / Grid;
+        for (int x = 0; x < chart.width; ++x) {
+            const float gx = (float(x) / chart.ppm) / Grid;
+            const int ix = std::min(gw - 2, int(gx)), iz = std::min(gh - 2, int(gz));
+            const float fx = gx - float(ix), fz = gz - float(iz);
+            const auto at = [&](int a, int b) { return seen[std::size_t(b) * std::size_t(gw) + std::size_t(a)]; };
+            const float v = (at(ix, iz) * (1 - fx) + at(ix + 1, iz) * fx) * (1 - fz) +
+                            (at(ix, iz + 1) * (1 - fx) + at(ix + 1, iz + 1) * fx) * fz;
+            const float k = 0.12f + 0.88f * v;
+            std::uint8_t* px = out + (std::size_t(y) * std::size_t(chart.width) + std::size_t(x)) * 4;
+            for (int c = 0; c < 3; ++c) {
+                px[c] = std::uint8_t(float(px[c]) * k);
+            }
+        }
+    }
+}
+
 /// Textures for the frame ahead: the shown area's picture once it is drawn, the members'
 /// portraits. Before NewFrame, which hands new textures to the backend. (While the screen is shut,
 /// Visible asks for the picture of the player's own area, so it is ready when it opens.)
@@ -4207,6 +4267,16 @@ void Refresh() {
     }
     if (!open) {
         return;
+    }
+    if (rebuild && view.lamp_count > 0) { // once the first reading since opening is in
+        rebuild = false;
+        for (auto& [map, c] : charts) {
+            if (c.texture != nullptr) {
+                c.texture->WantDestroyNextFrame = true;
+                dying.push_back(c.texture);
+            }
+        }
+        charts.clear();
     }
     for (int i = 0; i < view.member_count; ++i) {
         Compass::RefreshPortrait(portraits[i], view.members[i].board);
@@ -4242,7 +4312,7 @@ void Refresh() {
         ChartTexture& slot = charts[map];
         slot = {map, chart, IM_NEW(ImTextureData)()};
         slot.texture->Create(ImTextureFormat_RGBA32, chart->width, chart->height);
-        std::memcpy(slot.texture->GetPixels(), chart->rgba.data(), chart->rgba.size());
+        Fogged(*chart, map, static_cast<std::uint8_t*>(slot.texture->GetPixels()));
         ImGui::RegisterUserTexture(slot.texture);
     }
 }
@@ -4424,6 +4494,21 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                                                chart.z1 - float(chart.height) / chart.ppm * 0.5f);
                 Party::Text(draw, MenuArt::Font(), S(map == state.shown ? 24.0f : 20.0f), at,
                             map == state.shown ? Bright() : Plain(0.8f), AreaName(map).c_str(), 0.5f);
+            }
+        }
+        // Kaniel 2026-10-18: the places the game names (Iosefka's Clinic, the Healing Church
+        // Workshop) where their floors lie, once close enough to read.
+        if (state.zoom >= S(1.0f)) {
+            for (const auto& [map, c] : charts) {
+                for (const BbMapArt::Chart::Label& label : c.chart->labels) {
+                    const std::string name = BbMapCharts::AreaName(label.name_id);
+                    if (!name.empty()) {
+                        // A little under its middle: a lamp's name sits over the lamp there.
+                        const ImVec2 at = frame.Screen(label.x, label.z);
+                        Party::Text(draw, MenuArt::Font(), S(17.0f), ImVec2(at.x, at.y + S(22.0f)), Plain(0.85f),
+                                    name.c_str(), 0.5f);
+                    }
+                }
             }
         }
         // The lamps lit in the other areas of the world, then the shown area's (focusable).
@@ -4821,6 +4906,13 @@ void Screen() {
     const float mid = win.x + size.x * 0.5f;
     draw->AddText(ImVec2(mid - ts.x * 0.5f, win.y + S(30.0f)), Bright(), title.c_str());
     ImGui::PopFont();
+    // Kaniel 2026-10-18: an area whose main bosses are down carries the party list's headstone.
+    for (int i = 0; i < view.cleared_count; ++i) {
+        if (view.cleared[i] == (state.shown & 0xFFFF0000u)) {
+            Party::Icon(draw, BbPartyIcons::Icon::Fallen, ImVec2(mid + ts.x * 0.5f + S(26.0f), win.y + S(54.0f)), S(34.0f),
+                        0.8f);
+        }
+    }
     if (areas.size() > 1) {
         ImGui::PushFont(MenuArt::Font(), 22.0f);
         draw->AddText(ImVec2(mid - ts.x * 0.5f - S(70.0f), win.y + S(42.0f)), Gold(0.8f), "L1");
@@ -5343,6 +5435,7 @@ bool Visible() {
     if (Map::open && !Map::was_open) {
         SyncMousePos();
         Map::state.fresh = true;
+        Map::rebuild = true;
     }
     if (Team::open && !was_team) {
         SyncMousePos();

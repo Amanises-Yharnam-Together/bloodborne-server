@@ -7,9 +7,13 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
+#include <set>
 
 #include "common/logging/log.h"
+#include "common/path_util.h"
 #include "core/bloodborne_lamp_points.h"
 #include "core/bloodborne_map.h"
 #include "core/bloodborne_party.h"
@@ -43,6 +47,55 @@ struct MapTrip {
     std::optional<Clock::time_point> fix_at;
 };
 MapTrip map_trip;
+
+// Kaniel 2026-10-18 (fog of war): the cells this character has walked, kept in the user folder by
+// its save slot (bloodborne_party_explored_slotN.txt), written a while after they change.
+std::mutex explored_mutex;
+std::set<ExploredCell> explored;
+int explored_slot = -2; // the slot the set was loaded for
+bool explored_dirty = false;
+Clock::time_point explored_saved_at{};
+
+std::filesystem::path ExploredFile(int slot) {
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) / SlotFileName("explored", slot);
+}
+
+void SaveExploredNow() {
+    if (explored_slot < 0) {
+        return;
+    }
+    const auto bytes = SaveExplored(std::vector<ExploredCell>(explored.begin(), explored.end()));
+    std::ofstream(ExploredFile(explored_slot), std::ios::binary)
+        .write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+    explored_dirty = false;
+    explored_saved_at = Clock::now();
+}
+
+void NoteExplored(u32 map, const LampPosition& at) {
+    const int slot = character_slot.load();
+    std::scoped_lock lock{explored_mutex};
+    if (slot != explored_slot) {
+        if (explored_dirty) {
+            SaveExploredNow();
+        }
+        explored.clear();
+        explored_slot = slot;
+        if (slot >= 0) {
+            std::ifstream file(ExploredFile(slot), std::ios::binary);
+            const std::vector<u8> bytes{std::istreambuf_iterator<char>(file), {}};
+            if (const auto cells = LoadExplored(bytes)) {
+                explored.insert(cells->begin(), cells->end());
+            }
+        }
+    }
+    if (slot < 0 || map == 0) {
+        return;
+    }
+    explored_dirty = explored.insert(ExploredCellAt(map, at[0], at[2])).second || explored_dirty;
+    if (explored_dirty && Clock::now() - explored_saved_at > std::chrono::seconds{20}) {
+        SaveExploredNow();
+    }
+}
 
 bool Loading() {
     const u64 global = GetGlobalState();
@@ -141,6 +194,18 @@ MapScreenView ReadMapScreenNow(bool loading) {
         }
         view.down = LocalPlayerDown();
         view.boss_fight = EventFlagOn(BossFightFlag);
+        if (view.me) {
+            NoteExplored(view.map, *view.me);
+        }
+        // The areas whose main bosses are all down: the map shows the whole of them.
+        for (const MapLamp& lamp : MapLamps()) {
+            const u32 area = lamp.packed_map;
+            const auto flags = AreaBossFlags(area);
+            if (!flags.empty() && std::ranges::find(view.cleared, area) == view.cleared.end() &&
+                std::ranges::all_of(flags, [](s32 flag) { return EventFlagOn(flag); })) {
+                view.cleared.push_back(area);
+            }
+        }
     }
     return view;
 }
@@ -158,12 +223,18 @@ void TickMapScreen() {
         TickMapTripArrival(map_trip.active && Loading());
         // Shut: only which map this player is on, every few seconds (the overlay draws its picture
         // ahead), and no game flags.
-        if (now - read_at >= std::chrono::seconds{3}) {
+        if (now - read_at >= std::chrono::seconds{1}) {
             read_at = now;
             const bool in_world = !Loading() && GameHudUp() && GetLocalPlayer() >= 0x10000;
+            const u32 map = in_world ? PlayingMap() : 0;
+            if (in_world) {
+                if (const auto at = LocalPlayerPosition()) {
+                    NoteExplored(map, *at);
+                }
+            }
             std::scoped_lock lock{map_view_mutex};
             map_view_now.in_world = in_world;
-            map_view_now.map = in_world ? PlayingMap() : 0;
+            map_view_now.map = map;
             map_view_read = true;
         }
         return;
@@ -207,6 +278,17 @@ bool ReadMapScreen(MapScreenView& view, bool open) {
     }
     view = map_view_now;
     return map_view_read;
+}
+
+std::vector<std::array<s16, 2>> ExploredOn(u32 packed_map) {
+    std::scoped_lock lock{explored_mutex};
+    std::vector<std::array<s16, 2>> cells;
+    for (const ExploredCell& cell : explored) {
+        if (cell.packed_map == (packed_map & 0xFFFF0000u)) {
+            cells.push_back({cell.x, cell.z});
+        }
+    }
+    return cells;
 }
 
 void RequestMapTrip(s32 warp_point) {

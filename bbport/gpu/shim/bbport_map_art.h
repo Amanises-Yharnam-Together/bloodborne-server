@@ -34,6 +34,14 @@ struct Piece {
 struct MapStudio {
     std::vector<Piece> pieces;
     std::vector<Vec3> spots;
+    /// Kaniel 2026-10-18: the collision parts ("h" parts of "h" models: the floors and walls one
+    /// walks on), each with the place name the game shows on entering it (item FMG 19, its
+    /// subtype data's +8; 0 none).
+    struct Collision {
+        Piece piece;
+        std::int32_t place_name = 0;
+    };
+    std::vector<Collision> collisions;
 };
 /// The MSB (inflated); nothing if it is not one.
 std::optional<MapStudio> ReadMapStudio(std::span<const std::uint8_t> msb);
@@ -49,6 +57,22 @@ using MaterialColor = std::function<std::uint32_t(std::string_view texture)>;
 /// if it is not a FLVER.
 bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& out,
                      std::vector<std::uint32_t>* colors = nullptr, const MaterialColor& color_of = {});
+
+/// A collision mesh's triangles (a Havok 2014 packfile of compressed meshes, inflated: one file of
+/// map/mAA_BB_00_00/hAA_BB_00_00.hkxbdt), three corners of x, y, z each, appended to `out` in the
+/// part's space. False if it is not one.
+bool AppendCollisionTriangles(std::span<const std::uint8_t> hkx, std::vector<float>& out);
+
+/// The upward faces of triangles (floors and ramps one can stand on: the normal within about 63
+/// degrees of up), the rest left out.
+std::vector<float> Floors(std::span<const float> triangles);
+
+/// The colour grade the game draws an area with (map/mAA/mAA_cgrading.tpf.dcx, its
+/// "mAA_BB_CGrading0001": a 16x16x16 table, blue slices of green rows of red, in the PS4's tiled
+/// order), as 16x16x16 RGB in plain order; nothing when the area has none.
+std::optional<std::vector<std::uint8_t>> ReadColorGrade(std::span<const std::uint8_t> tpf, const std::string& block);
+/// `rgb` through a grade (trilinear).
+std::array<float, 3> Graded(std::span<const std::uint8_t> grade, const float rgb[3]);
 
 /// A texture's average colour (a .tpf inflated, its first texture: BC1 or BC7, opaque pixels
 /// only) as 0xFFRRGGBB; 0 when it is not one of those.
@@ -85,6 +109,13 @@ struct Chart {
     int width = 0, height = 0;
     float x0 = 0, z1 = 0, ppm = 1;
     std::vector<std::uint8_t> rgba;
+    /// Kaniel 2026-10-18: the places named in it (item FMG 19 ids) where their floors lie.
+    struct Label {
+        std::int32_t name_id = 0;
+        float x = 0, z = 0;
+        bool operator==(const Label&) const = default;
+    };
+    std::vector<Label> labels;
     /// Where the world spot (x, z) is in the picture, in pixels.
     std::array<float, 2> PixelOf(float x, float z) const { return {(x - x0) * ppm, (z1 - z) * ppm}; }
 };
@@ -101,6 +132,13 @@ public:
     Canvas(const PlayArea& area, float ppm, int max_side);
     /// `colors`: each triangle's material colour (0xFFRRGGBB, 0 none); empty: none.
     void Add(std::span<const float> triangles, std::span<const std::uint32_t> colors = {});
+    /// Kaniel 2026-10-18 ("extra stuff outside the map"): walkable floors (Floors of the collision
+    /// meshes). Once any are added, Finish leaves out what lies more than `reach` metres from all
+    /// of them (distant views, floating rooftops beyond the walls).
+    void AddWalkable(std::span<const float> floors);
+    /// The game's colour grade for the picture (ReadColorGrade); none: the materials' own colours.
+    void SetGrade(std::vector<std::uint8_t> grade) { this->grade = std::move(grade); }
+    static constexpr float Reach = 12.0f;
     /// Another canvas of the same play area and size drawn into this one (the higher surface wins):
     /// an area's models drawn by several threads at once.
     void Merge(const Canvas& other);
@@ -112,9 +150,12 @@ private:
     std::vector<float> top;          // the highest surface's height at each pixel (-inf: none)
     std::vector<std::uint8_t> light; // its slope's light, 0 to 255
     std::vector<std::uint32_t> color; // its material's colour (0 none)
+    std::vector<std::uint8_t> walk;   // a walkable floor there (AddWalkable)
+    bool has_walk = false;
+    std::vector<std::uint8_t> grade;
 };
 
-/// A chart as kept in the user folder ("BBMAP4": the number goes up whenever the drawing changes,
+/// A chart as kept in the user folder ("BBMAP5": the number goes up whenever the drawing changes,
 /// so pictures drawn the old way are drawn again; the frame, then the pixels zlib-compressed), and
 /// read back (nothing when it is not one).
 std::vector<std::uint8_t> Save(const Chart& chart);

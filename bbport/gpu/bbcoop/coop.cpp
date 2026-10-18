@@ -261,6 +261,11 @@ extern "C" int bbcoop_map_view(bbcoop_map* map, int open) {
             out.z = (*member.at)[2];
         }
     }
+    for (const u32 area : view.cleared) {
+        if (map->cleared_count < 24) {
+            map->cleared[map->cleared_count++] = area;
+        }
+    }
     for (const MapLamp& lamp : MapLamps()) {
         if (map->lamp_count >= BBCOOP_MAP_LAMPS) {
             break;
@@ -285,6 +290,21 @@ static_assert(BBCOOP_MAP_GO == int(Core::Bloodborne::MapTravelBlock::None) &&
 
 extern "C" void bbcoop_map_travel(int32_t warp_point) {
     Core::Bloodborne::RequestMapTrip(warp_point);
+}
+
+extern "C" int bbcoop_map_explored(uint32_t map, int16_t* xz, int max) {
+    static_assert(BBCOOP_MAP_CELL == int(Core::Bloodborne::ExploredCellMetres));
+    const auto cells = Core::Bloodborne::ExploredOn(map);
+    int count = 0;
+    for (const auto& cell : cells) {
+        if (count >= max) {
+            break;
+        }
+        xz[count * 2] = cell[0];
+        xz[count * 2 + 1] = cell[1];
+        ++count;
+    }
+    return count;
 }
 
 extern "C" int32_t bbcoop_map_area_name_id(uint32_t map) {

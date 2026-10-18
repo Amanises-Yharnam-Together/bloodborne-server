@@ -122,11 +122,18 @@ typedef struct bbcoop_map {
     bbcoop_map_member members[BBCOOP_MAP_MEMBERS];
     int lamp_count;
     bbcoop_map_lamp lamps[BBCOOP_MAP_LAMPS];
+    /* Kaniel 2026-10-18: the areas whose main bosses are down (the map shows all of them). */
+    int cleared_count;
+    uint32_t cleared[24];
 } bbcoop_map;
 int bbcoop_map_view(bbcoop_map *map, int open);
 /* A trip from the map to the lamp (a warp point of the view's lamps), started by the game thread
  * if nothing stops it. */
 void bbcoop_map_travel(int32_t warp_point);
+/* Kaniel 2026-10-18 (fog of war): the cells this character has walked on a map, BBCOOP_MAP_CELL
+ * metres square, as (x, z) cell pairs into `xz` (2 * `max` values); returns how many. */
+enum { BBCOOP_MAP_CELL = 8 };
+int bbcoop_map_explored(uint32_t map, int16_t *xz, int max);
 /* An area's name id (item FMG 19) by its packed map. */
 int32_t bbcoop_map_area_name_id(uint32_t map);
 /* The map screen opens (1 from the game's System menu, 2 from the port's Insert menu or its key)

@@ -76,6 +76,25 @@ TEST(BloodborneMap, ATripStartsOnlyToALitLampFromTheWorld) {
     EXPECT_EQ(MapTravelCheck(state), MapTravelBlock::Travelling);
 }
 
+TEST(BloodborneMap, AnAreaIsClearedByItsMainBosses) {
+    EXPECT_EQ(std::vector<s32>(AreaBossFlags(0x18010000).begin(), AreaBossFlags(0x18010000).end()),
+              std::vector<s32>{12411800});
+    EXPECT_EQ(AreaBossFlags(0x18020000).size(), 2u); // Upper Cathedral Ward: both its bosses
+    EXPECT_TRUE(AreaBossFlags(0x15000000).empty());  // the Dream has none
+    EXPECT_TRUE(AreaBossFlags(0x1d000000).empty());  // nor the chalice dungeons
+}
+
+TEST(BloodborneMap, TheFogOfWarKeepsTheCellsWalked) {
+    EXPECT_EQ(ExploredCellAt(0x18010000, -193.4f, 68.5f), (ExploredCell{0x18010000, -25, 8}));
+    EXPECT_EQ(ExploredCellAt(0x18010000, 0.0f, -0.1f), (ExploredCell{0x18010000, 0, -1}));
+    const std::vector<ExploredCell> cells{{0x18010000, -25, 8}, {0x17000000, 15, 4}};
+    EXPECT_EQ(LoadExplored(SaveExplored(cells)), cells);
+    auto broken = SaveExplored(cells);
+    broken[0] = 'X';
+    EXPECT_EQ(LoadExplored(broken), std::nullopt);
+    EXPECT_EQ(LoadExplored(std::vector<u8>(5, 0)), std::nullopt);
+}
+
 TEST(BloodborneMap, ATripArrivesOnceItsMapIsInAfterALoad) {
     MapTripProgress trip{.target_map = 0x18010000, .seconds = 1.0};
     // Still on the target map before the load (a lamp on the same map): not yet.

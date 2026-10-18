@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "gpu/shim/bbport_game_art.h"
 #include "gpu/shim/bbport_map_art.h"
 
 using namespace BbMapArt;
@@ -267,13 +268,19 @@ int main() {
         Mesh litter{"M[ARSN]_l_al.mtd", {{0, 6, 0}, {9, 6, 0}, {0, 6, 9}}, {{0, false, {0, 1, 2}}}};
         Mesh grass{"M[A]_l_e_grass.mtd", {{0, 7, 0}, {9, 7, 0}, {0, 7, 9}}, {{0, false, {0, 1, 2}}}};
         std::vector<float> out;
-        assert(AppendTriangles(MakeFlver({ground, stairs, water, litter, grass}), out));
-        // ground 2, stairs: (0 1 2) (1 2 3) then the restart drops the windows over it, then (0 1 2).
-        assert(out.size() == 9 * 5);
+        std::vector<std::uint32_t> colors;
+        assert(AppendTriangles(MakeFlver({ground, stairs, water, litter, grass}), out, &colors,
+                               [](std::string_view) { return 0xFF808080u; }));
+        // ground 2, stairs: (0 1 2) (1 2 3) then the restart drops the windows over it, then (0 1 2);
+        // Kaniel 2026-10-18: the water's too, in its blue-grey; nothing of the litter or the grass.
+        assert(out.size() == 9 * 6 && colors.size() == 6);
         assert(out[0] == 0 && out[3] == 1 && out[8] == 1); // the ground's first corner set
         for (std::size_t i = 1; i < out.size(); i += 3) {
-            assert(out[i] < 5.0f); // nothing of the water's
+            assert(out[i] < 6.0f); // nothing of the litter's or the grass's
         }
+        assert(out[9 * 5 + 1] == 5.0f && colors[5] != 0xFF808080u); // the water, not its texture's colour
+        const std::uint32_t blue_grey = colors[5];
+        assert((blue_grey & 0xFF) > ((blue_grey >> 16) & 0xFF)); // bluer than red
         std::vector<float> none;
         assert(!AppendTriangles(std::vector<std::uint8_t>(0x100, 0), none) && none.empty());
     }
@@ -322,6 +329,55 @@ int main() {
         assert((average & 0xFF) > 120 && (average & 0xFF) < 135); // half blue
         tpf.Put<std::uint32_t>(16 + 0x20, 77); // BC3: not read
         assert(AverageColor(tpf.bytes) == 0 && AverageColor(std::vector<std::uint8_t>(64, 0)) == 0);
+    }
+
+    // Kaniel 2026-10-18 ("different colours than the location"): the area's colour grade, a
+    // 16x16x16 table in the PS4's tiled order; an identity table gives the colour back, a table
+    // turning everything red gives red.
+    {
+        Blob tpf;
+        tpf.bytes = {'T', 'P', 'F', 0};
+        tpf.Put<std::uint32_t>(8, 1);
+        tpf.Put<std::uint32_t>(16 + 0x00, 0x80);
+        tpf.Put<std::uint32_t>(16 + 0x04, 16 * 256 * 4);
+        tpf.Put<std::uint16_t>(16 + 12, 16);
+        tpf.Put<std::uint16_t>(16 + 14, 256);
+        tpf.Put<std::uint32_t>(16 + 0x18, 0x40);
+        tpf.Put<std::uint32_t>(16 + 0x20, 28);
+        std::size_t name = 0x40;
+        for (const char c : std::string("m24_01_CGrading0001")) {
+            tpf.Put<std::uint16_t>(name, std::uint16_t(c));
+            name += 2;
+        }
+        tpf.Put<std::uint16_t>(name, 0);
+        // Texel (column r, row b * 16 + g) at its tiled place: 8x8 tiles, Morton inside.
+        for (int row = 0; row < 256; ++row) {
+            for (int column = 0; column < 16; ++column) {
+                int i = 0;
+                for (int bit = 0; bit < 3; ++bit) {
+                    i |= ((column >> bit) & 1) << (2 * bit);
+                    i |= ((row % 8 >> bit) & 1) << (2 * bit + 1);
+                }
+                const std::size_t tile = std::size_t(row / 8) * 2 + std::size_t(column / 8);
+                const std::size_t at = 0x80 + (tile * 64 + std::size_t(i)) * 4;
+                tpf.Put<std::uint8_t>(at, std::uint8_t(column * 17));
+                tpf.Put<std::uint8_t>(at + 1, std::uint8_t(row % 16 * 17));
+                tpf.Put<std::uint8_t>(at + 2, std::uint8_t(row / 16 * 17));
+                tpf.Put<std::uint8_t>(at + 3, 255);
+            }
+        }
+        const auto grade = ReadColorGrade(tpf.bytes, "m24_01");
+        assert(grade && grade->size() == 16 * 16 * 16 * 3);
+        const float colour[3] = {200.0f, 100.0f, 30.0f};
+        const auto same = Graded(*grade, colour);
+        assert(std::abs(same[0] - 200.0f) < 1.0f && std::abs(same[1] - 100.0f) < 1.0f && std::abs(same[2] - 30.0f) < 1.0f);
+        std::vector<std::uint8_t> red(grade->size(), 0);
+        for (std::size_t i = 0; i < red.size(); i += 3) {
+            red[i] = 255;
+        }
+        const auto all_red = Graded(red, colour);
+        assert(all_red[0] > 254.0f && all_red[1] < 1.0f);
+        assert(!ReadColorGrade(std::vector<std::uint8_t>(16, 0), "m24_01"));
     }
 
     // A texture archive's header: each file's name, offset and size in the .tpfbdt.
@@ -441,6 +497,29 @@ int main() {
         const std::uint8_t* bottle = PixelAt(calm, 2.2f, 2.2f);
         const std::uint8_t* ground = PixelAt(calm, 3.0f, 3.0f);
         assert(bottle && ground && std::abs(int(bottle[0]) - int(ground[0])) < 12); // no bright dot
+        // Kaniel 2026-10-18 ("extra stuff outside the map"): with walkable floors given, what lies
+        // more than Canvas::Reach metres from them goes; what is near them stays.
+        {
+            const PlayArea wide{0, 60, 0, 10, 100};
+            Canvas outline(wide, 2.0f, 4096);
+            outline.Add(std::vector<float>{0, 0, 0, 60, 0, 0, 0, 0, 10, 60, 0, 0, 60, 0, 10, 0, 0, 10});
+            outline.AddWalkable(std::vector<float>{0, 0, 0, 10, 0, 0, 0, 0, 10, 10, 0, 0, 10, 0, 10, 0, 0, 10});
+            const Chart cut = outline.Finish();
+            assert(PixelAt(cut, 5, 5) && PixelAt(cut, 5, 5)[3] == 255);
+            assert(PixelAt(cut, 20, 5) && PixelAt(cut, 20, 5)[3] == 255);  // 10 m off: near enough
+            assert(!PixelAt(cut, 40, 5) || PixelAt(cut, 40, 5)[3] == 0);   // 30 m off: gone
+        }
+        // Shadows: the ground south-east of a tall block is darker than the ground north-west of it.
+        {
+            const PlayArea yard{0, 40, 0, 40, 100};
+            Canvas shade(yard, 2.0f, 4096);
+            shade.Add(std::vector<float>{0, 0, 0, 40, 0, 0, 0, 0, 40, 40, 0, 0, 40, 0, 40, 0, 0, 40});
+            shade.Add(std::vector<float>{18, 8, 18, 22, 8, 18, 18, 8, 22, 22, 8, 18, 22, 8, 22, 18, 8, 22});
+            const Chart lit = shade.Finish();
+            const std::uint8_t* behind = PixelAt(lit, 24, 16); // south-east of the block, its shadow
+            const std::uint8_t* before = PixelAt(lit, 16, 24); // north-west, in the light
+            assert(behind && before && behind[0] + 10 < before[0]);
+        }
         // A green material's ground comes out green.
         Canvas green(area, 2.0f, 4096);
         green.Add(std::vector<float>{0, 0, 0, 10, 0, 0, 0, 0, 10}, std::vector<std::uint32_t>{0xFF208020u});
@@ -471,8 +550,10 @@ int main() {
         for (int i = 0; i < 24; ++i) {
             chart.rgba.push_back(std::uint8_t(i * 10));
         }
+        chart.labels = {{2411, -219.5f, 182.25f}, {2421, 54.0f, 150.75f}};
         const auto file = Save(chart);
         const auto back = Load(file);
+        assert(back && back->labels == chart.labels);
         assert(back && back->width == 3 && back->height == 2 && back->x0 == -5.5f && back->z1 == 7.25f &&
                back->ppm == 2.5f && back->rgba == chart.rgba);
         auto broken = file;
@@ -502,6 +583,13 @@ int main() {
                 const std::uint8_t* px = PixelAt(*chart, x, z);
                 assert(px && px[3] == 255);
             }
+            // Iosefka's Clinic (item FMG 19, 2411) named where its floors lie, near its lamp.
+            bool clinic = false;
+            for (const Chart::Label& label : chart->labels) {
+                clinic = clinic || (label.name_id == 2411 && std::abs(label.x + 199.7f) < 40.0f &&
+                                    std::abs(label.z - 179.4f) < 40.0f);
+            }
+            assert(clinic);
             // In colour: the copper roofs and the moss are far from the paper's brown.
             std::size_t coloured = 0;
             for (std::size_t i = 0; i < chart->rgba.size(); i += 4) {
@@ -511,6 +599,34 @@ int main() {
             assert(coloured > 1000);
             std::printf("map-art: Central Yharnam drawn %dx%d, %zu pixels blue or green\n", chart->width,
                         chart->height, coloured);
+        }
+    }
+    // The game's collision floors: one under the Grand Cathedral's lamp, at its height.
+    if (const char* eboot = std::getenv("BLOODBORNE_EBOOT")) {
+        const auto dir = std::filesystem::path(eboot).parent_path() / "dvdroot_ps4" / "map" / "m24_00_00_00";
+        if (std::filesystem::exists(dir / "h24_00_00_00.hkxbhd")) {
+            const auto bhd = ReadAll(dir / "h24_00_00_00.hkxbhd"), bdt = ReadAll(dir / "h24_00_00_00.hkxbdt");
+            std::size_t meshes = 0, floors = 0;
+            bool under_lamp = false;
+            for (const ArchiveEntry& entry : ReadArchiveHeader(bhd)) {
+                const std::vector<std::uint8_t> packed(bdt.begin() + std::ptrdiff_t(entry.offset),
+                                                       bdt.begin() + std::ptrdiff_t(entry.offset + entry.size));
+                const auto hkx = BbGameArt::InflateDcx(packed);
+                std::vector<float> triangles;
+                if (hkx && AppendCollisionTriangles(*hkx, triangles)) {
+                    ++meshes;
+                    const auto flat = Floors(triangles);
+                    floors += flat.size() / 9;
+                    for (std::size_t t = 0; t + 9 <= flat.size(); t += 9) {
+                        const float cx = (flat[t] + flat[t + 3] + flat[t + 6]) / 3,
+                                    cz = (flat[t + 2] + flat[t + 5] + flat[t + 8]) / 3;
+                        under_lamp = under_lamp || (std::abs(cx - 67.85f) < 3 && std::abs(cz - 339.75f) < 3 &&
+                                                    std::abs(flat[t + 1] - 35.71f) < 2);
+                    }
+                }
+            }
+            std::printf("map-art: Cathedral Ward collision: %zu meshes, %zu floor triangles\n", meshes, floors);
+            assert(meshes > 10 && floors > 10000 && under_lamp);
         }
     }
     std::printf("map-art: all passed\n");
