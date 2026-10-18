@@ -515,6 +515,11 @@ add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bb
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)
 
+# bbport co-op: trading's Give rows run for any item, weapons too (shim/bbport_trade_rows.h).
+add_executable(trade-rows-test EXCLUDE_FROM_ALL ../tests/test_trade_rows.cpp shim/bbport_trade_rows.cpp)
+target_compile_options(trade-rows-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(trade-rows-test PRIVATE .. shim)
+
 add_executable(spec-drop-test EXCLUDE_FROM_ALL ../tests/test_spec_drop.cpp)
 target_compile_options(spec-drop-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(spec-drop-test PRIVATE shim)
