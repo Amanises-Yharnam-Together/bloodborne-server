@@ -4781,6 +4781,35 @@ std::array<std::string, 2> SupplyTexts(const PartyListEntry& entry) {
     return {std::to_string(entry.vials), std::to_string(entry.bullets)};
 }
 
+float SupplyNameWidth(std::string_view name) {
+    float width = 0.0f;
+    for (size_t at = 0; at < name.size(); ++at) {
+        const auto c = static_cast<unsigned char>(name[at]);
+        if ((c & 0xC0) == 0x80) {
+            continue; // a UTF-8 continuation: its letter counted once
+        }
+        if (std::string_view{"iljtfr.,'!|I1 "}.find(char(c)) != std::string_view::npos) {
+            width += 7.0f;
+        } else if (std::string_view{"mwMW"}.find(char(c)) != std::string_view::npos) {
+            width += 17.0f;
+        } else if (c >= 'A' && c <= 'Z') {
+            width += 14.0f;
+        } else {
+            width += 12.0f;
+        }
+    }
+    return width;
+}
+
+u32 SupplyFrame(const PartyListEntry& entry) {
+    if (!entry.visible) {
+        return 1;
+    }
+    const float past = std::max(0.0f, SupplyNameWidth(entry.name) - SupplyNameRoom);
+    const u32 steps = static_cast<u32>(std::ceil(past / SupplyShiftPx));
+    return 2 + std::min(steps, SupplyShifts - 1);
+}
+
 PartyPrompt PartyPromptFor(const PartyPanel& panel) {
     if (panel.vital == Vital::Down) {
         return PartyPrompt{.shown = true, .text = "Hold to give up", .input = PromptInputCircle};

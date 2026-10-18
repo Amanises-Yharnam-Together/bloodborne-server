@@ -2964,6 +2964,18 @@ std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& pan
 // Kaniel 2026-10-18: what the HUD's own vial and bullet count fields beside a list entry's name say
 // (hud_patch.py CoopSupply0-2): its vials and bullets, nothing while the slot shows nobody.
 std::array<std::string, 2> SupplyTexts(const PartyListEntry& entry);
+// Kaniel 2026-10-18 ("will it work fine with a long name?"): the vial and bullet follow the name.
+// CoopSupply's frame 2 shows them where a name up to SupplyNameRoom px wide ends before them; each
+// next frame SupplyShiftPx further right (hud_patch.py SUPPLY_SHIFT, SUPPLY_SHIFTS).
+constexpr float SupplyShiftPx = 6.0f;
+constexpr u32 SupplyShifts = 32;
+constexpr float SupplyNameRoom = 71.0f;
+// A name's width in the list's font on the 1080p stage, estimated per letter (measured on the rig's
+// shots: "gggtt" 55 px).
+float SupplyNameWidth(std::string_view name);
+// CoopSupply's frame for a list entry: 1 while it shows nobody, else 2 plus the steps its name
+// needs.
+u32 SupplyFrame(const PartyListEntry& entry);
 // Where a tag goes on the HUD's 1920x1080 stage (its HP bar's left end).
 std::pair<s32, s32> PartyListPosition(int index);
 // The TagData the tag update takes for an entry; `role` and `name` are the addresses of its UTF-16
