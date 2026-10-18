@@ -1394,9 +1394,9 @@ SCENARIOS = {
                      "team-wait 3", "team-start", START, "godmode", "wait-session 3 480", "wait 10",
                      "snapshot", "expect-session 3"],
             "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 3 480", "wait 10",
-                      "snapshot", "expect-session 3"],
+                      "expect-others-shown 2", "snapshot", "expect-session 3"],
             "guest2": ["team-accept", "team-ready", START, "godmode", "wait-session 3 480", "wait 10",
-                       "snapshot", "expect-session 3"],
+                       "expect-others-shown 2", "snapshot", "expect-session 3"],
         },
         "expect": {
             "host": [r"Co-op team lobby: the save plays in team \w+ as its host"],
