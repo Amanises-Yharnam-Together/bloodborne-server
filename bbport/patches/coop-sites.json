@@ -119,6 +119,7 @@
     {"name": "reliable channel check", "feature": "channel table", "kind": "hook", "offset": "0x01790DDE", "original": "48 63 43 64 48 83 F8 43", "patched": "", "accepted": []},
     {"name": "unreliable channel check", "feature": "channel table", "kind": "hook", "offset": "0x01790C73", "original": "49 89 D6 83 F8 43", "patched": "", "accepted": []},
     {"name": "transport send", "feature": "game packet link", "kind": "hook", "offset": "0x00C8F0A0", "original": "55 48 89 E5 41 57", "patched": "", "accepted": []},
+    {"name": "net sync update", "feature": "game packet link", "kind": "hook", "offset": "0x01789B60", "original": "55 48 89 E5 41 57", "patched": "", "accepted": []},
     {"name": "enemy HP round check", "feature": "enemy owner", "kind": "hook", "offset": "0x018EF26C", "original": "48 8B 9D 08 FF FF FF", "patched": "", "accepted": []},
     {"name": "enemy HP state read", "feature": "enemy owner", "kind": "hook", "offset": "0x018EF578", "original": "8B 87 24 01 00 00", "patched": "", "accepted": []},
     {"name": "enemy HP send branch", "feature": "enemy owner", "kind": "hook", "offset": "0x018EF587", "original": "80 BB 64 06 00 00 00", "patched": "", "accepted": []},

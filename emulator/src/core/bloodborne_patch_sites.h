@@ -270,6 +270,7 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // The game's packets in our frames (InstallGamePacketLink): the transport send (the member
     // queues' fill 0x01790C20 is called, not hooked).
     {"transport send", "game packet link", CoopSiteKind::Hook, 0x00C8F0A0, "55 48 89 E5 41 57"},
+    {"net sync update", "game packet link", CoopSiteKind::Hook, 0x01789B60, "55 48 89 E5 41 57"},
     // Phase 4's enemy owners (InstallEnemyOwner, see EnemyRole): the HP sync's host-only checks,
     // the receive from the host and the hit on an enemy.
     {"enemy HP round check", "enemy owner", CoopSiteKind::Hook, 0x018EF26C, "48 8B 9D 08 FF FF FF"},
