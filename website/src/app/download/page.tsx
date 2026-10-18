@@ -12,7 +12,7 @@ import { RELEASES_URL } from "@/lib/site";
 export const metadata: Metadata = {
   title: "Download",
   description:
-    "Download the latest release of Bloodborne Seamless Co-op for Windows: one installer for every player, free and open source. Requires your own Bloodborne 1.09.",
+    "Download the latest release of Yharnam Together (Bloodborne Seamless Co-op) for Windows: one installer for every player, free and open source. Requires your own Bloodborne 1.09.",
   alternates: { canonical: "/download" },
 };
 
@@ -80,7 +80,7 @@ function ReleaseCard({ release }: { release: Release }) {
     <Card className="gap-6">
       <CardHeader className="sm:grid-cols-[1fr_auto] sm:items-start">
         <div>
-          <Badge>Latest release</Badge>
+          <Badge>{release.prerelease ? "Newest pre-release" : "Latest release"}</Badge>
           <CardTitle className="mt-3 text-3xl">{release.name}</CardTitle>
           {date ? (
             <p className="mt-1 text-base text-muted-foreground">

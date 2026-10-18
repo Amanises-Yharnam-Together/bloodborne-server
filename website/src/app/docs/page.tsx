@@ -16,7 +16,7 @@ import { JsonLd } from "@/lib/json-ld";
 export const metadata: Metadata = {
   title: "Guide",
   description:
-    "The Bloodborne Seamless Co-op guide: installing, the launcher, playing as a team, and how the port and its server work.",
+    "The Yharnam Together (Bloodborne Seamless Co-op) guide: installing, the launcher, playing as a team, and how the port and its server work.",
   alternates: { canonical: "/docs" },
 };
 

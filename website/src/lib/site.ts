@@ -8,8 +8,8 @@ export const ISSUES_URL = `${REPO_URL}/issues`;
 export const blob = (path: string) => `${REPO_URL}/blob/main/${path}`;
 
 export const site = {
-  name: "Bloodborne Seamless Co-op",
-  shortName: "Seamless Co-op",
+  name: "Yharnam Together: Bloodborne Seamless Co-op",
+  shortName: "Yharnam Together",
   tagline: "Play all of Bloodborne with your friends, in one world.",
   description:
     "Free, open-source seamless co-op for Bloodborne on PC. Up to four players share one world on a native port of the PS4 game, connected through a small server one of them runs.",
@@ -27,12 +27,12 @@ export const site = {
   license: "GPL-2.0-or-later",
 } as const;
 
-// Where the server netcode stands. It is in main but not yet in a public release, which still
-// carries the first, peer-to-peer design; flip this when a release ships it.
+// Where the server netcode stands: it ships in the pre-releases (v0.3.x), which the download
+// page offers and the guide describes. The note shows on the install page while it is not shipped.
 export const netcodeStatus = {
-  shippedInRelease: false,
-  label: "In testing",
-  note: "The guide follows the next release, with the server netcode. Today's release (0.1.4) is the older peer-to-peer version: its Co-op card also asks for an account and a party password, and there is no team screen, so everyone joins the host a few seconds after loading.",
+  shippedInRelease: true,
+  label: "Shipped",
+  note: "",
 } as const;
 
 type Env = Record<string, string | undefined>;

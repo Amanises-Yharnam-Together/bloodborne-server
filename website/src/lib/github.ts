@@ -14,6 +14,7 @@ export type Release = {
   name: string;
   url: string;
   publishedAt: string;
+  prerelease: boolean;
   assets: ReleaseAsset[];
 };
 
@@ -52,8 +53,20 @@ export function parseRelease(json: unknown): Release | null {
     name: r.name?.trim() || r.tag_name,
     url: r.html_url,
     publishedAt: r.published_at ?? "",
+    prerelease: r.prerelease === true,
     assets,
   };
+}
+
+/** The newest published release in GitHub's list (newest first), pre-releases included: the
+ *  server co-op ships as pre-releases, and the guide describes them. */
+export function newestRelease(json: unknown): Release | null {
+  if (!Array.isArray(json)) return null;
+  for (const r of json) {
+    const parsed = parseRelease(r);
+    if (parsed) return parsed;
+  }
+  return null;
 }
 
 function rank(name: string): number {
@@ -74,7 +87,7 @@ export function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
 }
 
-/** The latest published release, cached for hours. Null when GitHub cannot be reached; the
+/** The newest published release, pre-releases included, cached for hours. Null when GitHub cannot be reached; the
  *  pages then link to the releases page instead. */
 export async function getLatestRelease(): Promise<Release | null> {
   "use cache";
@@ -85,9 +98,11 @@ export async function getLatestRelease(): Promise<Release | null> {
       "X-GitHub-Api-Version": "2022-11-28",
     };
     if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers });
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=10`, {
+      headers,
+    });
     if (!res.ok) return null;
-    return parseRelease(await res.json());
+    return newestRelease(await res.json());
   } catch {
     return null;
   }

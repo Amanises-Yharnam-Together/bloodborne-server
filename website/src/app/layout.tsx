@@ -18,8 +18,8 @@ const garamond = EB_Garamond({
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: `${site.name}: play Bloodborne together on PC`,
-    template: `%s | ${site.name}`,
+    default: `${site.shortName}: Bloodborne seamless co-op on PC`,
+    template: `%s | ${site.shortName}`,
   },
   description: site.description,
   applicationName: site.name,
