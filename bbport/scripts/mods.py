@@ -9,6 +9,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 
 # Top-level folders of the game's dvdroot_ps4: a mod made of these is a dvdroot_ps4 itself (adhoc:
 # the debug menu's fonts, which the retail game does not ship).
@@ -268,9 +269,87 @@ def copy_bytes(game, replacements):
     return total
 
 
-def build_overlay(game, out, mods, beside=True):
+OWNER_SUFFIX = '.owner'
+# A view from before owner files: removed once this old (no launch runs that long).
+UNOWNED_AGE = 12 * 3600
+
+
+def process_alive(pid):
+    """True unless the process `pid` is known to be gone (a process we may not query counts as alive)."""
+    if os.name == 'nt':
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE, ERROR_ACCESS_DENIED = 0x1000, 259, 5
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return kernel32.GetLastError() == ERROR_ACCESS_DENIED
+        try:
+            code = ctypes.c_ulong()
+            return not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def stale(view):
+    """True when no launch uses `view` any more: its owner process is gone, or it has no owner file and is old."""
+    owner = Path(str(view) + OWNER_SUFFIX)
+    try:
+        return not process_alive(int(owner.read_text(encoding='utf-8').strip()))
+    except (OSError, ValueError):
+        pass
+    try:
+        return time.time() - view.stat().st_mtime > UNOWNED_AGE
+    except OSError:
+        return False
+
+
+def remove_stale_views(folder, game):
+    """Removes the views in `folder` that a killed launch left behind (it never removed its own), and owner files
+    whose view is gone. A view still in use cannot be removed completely; it is left for a later launch."""
+    folder = Path(folder)
+    if not folder.is_dir():
+        return
+    for entry in folder.glob('mod-game-*'):
+        if entry.name.endswith(OWNER_SUFFIX):
+            if not Path(str(entry)[:-len(OWNER_SUFFIX)]).exists():
+                entry.unlink(missing_ok=True)
+        elif entry.is_dir() and stale(entry):
+            try:
+                remove_overlay(entry, game)
+                Path(str(entry) + OWNER_SUFFIX).unlink(missing_ok=True)
+                print(f'Mods: removed {entry.name}, left by a launch that has ended', file=sys.stderr)
+            except OSError as error:
+                print(f'Mods: could not remove {entry} yet: {error}', file=sys.stderr)
+
+
+def view_owner():
+    """The launch a new view is for: BB_VIEW_OWNER (run.py and run.sh set their own process id, which lasts for the
+    whole game), else this process's parent."""
+    try:
+        return int(os.environ['BB_VIEW_OWNER'])
+    except (KeyError, ValueError):
+        return os.getppid()
+
+
+def new_view(folder, game, owner):
+    remove_stale_views(folder, game)
+    overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=folder))
+    Path(str(overlay) + OWNER_SUFFIX).write_text(f'{owner}\n', encoding='utf-8')
+    return overlay
+
+
+def build_overlay(game, out, mods, beside=True, owner=None):
     """beside: with the game on another drive than out, the overlay goes beside the game (beside_game); False
-    keeps it in out (files are then copied, folders linked)."""
+    keeps it in out (files are then copied, folders linked). owner: the process the view is for (the launch that
+    removes it when the game ends; default view_owner()); views of owners that are gone are removed."""
+    owner = view_owner() if owner is None else owner
     game = Path(game).resolve(strict=True)
     replacements = []
     owners = {}
@@ -291,7 +370,7 @@ def build_overlay(game, out, mods, beside=True):
     overlay = None
     if beside and beside_game(game, out):
         try:
-            overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=game.parent))
+            overlay = new_view(game.parent, game, owner)
         except OSError as error:
             # A read-only or access-restricted library: build on out's volume instead. Files that
             # cannot be hard-linked across volumes are copied (never symlinked, upstream #102),
@@ -306,7 +385,7 @@ def build_overlay(game, out, mods, beside=True):
             print(f'Mods: cannot write to {game.parent} ({error.strerror or error}); '
                   f'building the overlay in {out}, this build copies {need / GB:.1f} GB', file=sys.stderr)
     if overlay is None:
-        overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=out))
+        overlay = new_view(out, game, owner)
     try:
         for entry in game.iterdir():
             make_link(overlay / entry.name, entry)
@@ -330,6 +409,7 @@ def build_overlay(game, out, mods, beside=True):
         return overlay
     except BaseException:
         remove_overlay(overlay)
+        Path(str(overlay) + OWNER_SUFFIX).unlink(missing_ok=True)
         raise
 
 

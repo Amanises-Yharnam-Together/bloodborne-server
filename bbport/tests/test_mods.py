@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
@@ -469,6 +470,87 @@ class IconLayerTests(unittest.TestCase):
                                  '--out', str(self.root / 'out'), '--mods-dir', str(self.moddir),
                                  '--icons-layer', str(self.icons)], capture_output=True, text=True, check=True)
         self.assertEqual((Path(result.stdout.strip()) / self.COMMON).read_bytes(), b'generated icons')
+
+
+class StaleViewTests(unittest.TestCase):
+    """A launch removes its view when the game ends, but a launch that is killed (the rig ends a test, a crash,
+    Task Manager) never gets there: every one left a mod-game-* folder, 1.7 GB each with the party HUD, and the
+    rig filled the disk. Each view names the process that owns it in <view>.owner, and the next launch removes
+    the views whose owner is gone."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.game = self.root / 'CUSA03173'
+        (self.game / 'dvdroot_ps4' / 'chr').mkdir(parents=True)
+        (self.game / 'dvdroot_ps4' / 'chr' / 'a.dcx').write_bytes(b'original')
+        (self.game / 'eboot.bin').write_bytes(b'exe')
+        mod = self.root / 'mods' / 'A' / 'dvdroot_ps4' / 'chr'
+        mod.mkdir(parents=True)
+        (mod / 'a.dcx').write_bytes(b'mod')
+        self.layers = [('A', self.root / 'mods' / 'A')]
+        self.out = self.root / 'out'
+
+    def finished_pid(self):
+        process = subprocess.Popen([sys.executable, '-c', 'pass'])
+        process.wait()
+        return process.pid
+
+    def build(self, owner):
+        return mods.build_overlay(self.game, self.out, self.layers, owner=owner)
+
+    def test_the_view_names_its_owner(self):
+        view = self.build(owner=os.getpid())
+        self.assertEqual(Path(str(view) + '.owner').read_text().strip(), str(os.getpid()))
+
+    def test_a_view_whose_owner_is_gone_is_removed_by_the_next_launch(self):
+        stale = self.build(owner=self.finished_pid())
+        current = self.build(owner=os.getpid())
+        self.assertFalse(stale.exists())
+        self.assertFalse(Path(str(stale) + '.owner').exists())
+        self.assertEqual((current / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+        self.assertEqual((self.game / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'original')
+        self.assertEqual((self.game / 'eboot.bin').read_bytes(), b'exe')
+
+    def test_a_running_launchs_view_is_kept(self):
+        running = self.build(owner=os.getpid())
+        self.build(owner=os.getpid())
+        self.assertEqual((running / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+
+    def test_views_from_before_owners_are_removed_once_old(self):
+        self.out.mkdir()
+        old, recent = self.out / 'mod-game-old', self.out / 'mod-game-recent'
+        for view in (old, recent):
+            (view / 'dvdroot_ps4').mkdir(parents=True)
+            (view / 'dvdroot_ps4' / 'x').write_bytes(b'x')
+        day_ago = time.time() - 24 * 3600
+        os.utime(old, (day_ago, day_ago))
+        self.build(owner=os.getpid())
+        self.assertFalse(old.exists())
+        self.assertTrue(recent.exists())
+
+    def test_an_owner_file_without_its_view_is_removed(self):
+        self.out.mkdir()
+        orphan = self.out / 'mod-game-gone.owner'
+        orphan.write_text(str(self.finished_pid()))
+        self.build(owner=os.getpid())
+        self.assertFalse(orphan.exists())
+
+    def test_the_script_names_the_launch_that_started_it(self):
+        command = [sys.executable, str(ROOT / 'scripts/mods.py'), str(self.game), '--out', str(self.out),
+                   '--mods-dir', str(self.root / 'mods')]
+        for env, owner in ((dict(os.environ, BB_VIEW_OWNER='4242'), '4242'), (os.environ, str(os.getpid()))):
+            env = {key: value for key, value in env.items() if owner == '4242' or key != 'BB_VIEW_OWNER'}
+            with self.subTest(owner=owner):
+                result = subprocess.run(command, capture_output=True, text=True, check=True, env=env)
+                view = Path(result.stdout.strip())
+                self.assertEqual(Path(str(view) + '.owner').read_text().strip(), owner)
+
+    def test_run_py_names_itself_the_owner(self):
+        self.assertIn("env['BB_VIEW_OWNER'] = str(os.getpid())", (ROOT / 'run.py').read_text(encoding='utf-8'))
+        self.assertIn('export BB_VIEW_OWNER=$(cat /proc/$$/winpid 2>/dev/null || echo $$)',
+                      (ROOT / 'run.sh').read_text(encoding='utf-8'))
 
 
 @unittest.skipUnless(os.name == 'nt', 'read-only hard links and junctions are Windows')
