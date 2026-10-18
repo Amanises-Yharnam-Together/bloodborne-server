@@ -81,6 +81,7 @@ LONG = {
     "crash-apart": "a 40 s wait; suite chapter: crashes/crash-apart",
     "host-crash-apart": "a 60 s wait; suite chapter: crashes/host-crash-apart",
     "team-world": "a 60 s wait, measured 472 s",
+    "team-world-lamps": "two team loads for the guest, a trip and a 20 s wait",
     "kill-apart": "a 45 s wait; suite chapter: smoke/kill-apart, trips/kill-apart",
     "dog": "a 45 s wait; suite chapter: trips/dog",
     "trade-menus": "a 40 s wait",

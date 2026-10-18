@@ -222,6 +222,34 @@ TEST(TeamWorld, ALoadTakesNewBlocksOnceAndAGuestsTripTakesItsMapsAgain) {
     EXPECT_FALSE(TakesTeamWorldBlock(12411, 1000, taken, covered, 12410000));
 }
 
+// Kaniel's play test 2026-10-18: krolebord joined the team and his lamps listed only Cathedral
+// Ward. A lamp stays lit only for a character whose lamp list holds it, so the team world's lit
+// lamps in the blocks a load took go on the guest's list too (an active flag, 10007810 + map *
+// 10000 + lamp * 20, to its lamp entity, map * 10000 + 1950 + lamp).
+TEST(TeamWorld, TheTeamWorldsLitLampsInTheTakenBlocksGoOnTheList) {
+    WorldFlags team;
+    team.blocks = {12207, 12410, 12417, 12427};
+    team.on = {12207810, 12410000, 12417810, 12417811, 12417830, 12427810};
+    EXPECT_EQ(TeamWorldLamps(1000, std::vector<u32>{12410, 12417, 12427}, team),
+              (std::vector<s32>{2411950, 2411951, 2421950}))
+        << "not the flag after a lamp's, not a story flag, not a block this load did not take";
+    EXPECT_TRUE(TeamWorldLamps(1000, std::vector<u32>{}, team).empty());
+}
+
+// The guest's join reload and its trips give its game its own saved world back (the rig's
+// team-world-lamps: the host's lamp, 12707810, went out at the guest's join), so every guest load
+// sets the team world's lamp flags again: a lamp's active flag and the one after, on in the team's
+// world and off here, in every block. Never one off.
+TEST(TeamWorld, AGuestsLoadSetsTheTeamWorldsLampFlagsItLacks) {
+    WorldFlags team;
+    team.blocks = {12410, 12417, 12707};
+    team.on = {12410000, 12417810, 12417811, 12707810, 12707811, 12707812};
+    const std::set<s32> here{12417810, 12417811, 12707830};
+    EXPECT_EQ(TeamLampFlagsToSet(team, [&](s32 flag) { return here.contains(flag); }),
+              (std::vector<s32>{12707810, 12707811}))
+        << "not a story flag, not one already on, not a flag two after the lamp's";
+}
+
 TEST(TeamWorld, ThePersonalWorldFileRoundTripsAndACutOneIsNone) {
     WorldFlags world;
     world.blocks = {1, 9};
