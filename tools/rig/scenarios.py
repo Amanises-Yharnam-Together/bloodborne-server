@@ -175,16 +175,16 @@ KNEEL = r"party death: (pose [1-9]\d* asked|.*'s copy kneels)"
 # return), which check_party_log reports as leaving the session outside a trip.
 CRASH_CLEANUP = [r"left the session outside a trip"]
 # Party death (SHADPS4_BLOODBORNE_PARTY_DEATH): a lethal hit puts a member down while another
-# stands on its map. A lethal fall is the hit the rig can deal: 1 HP left, then 25 m up
-# (from the first lamp it lands on a ledge 15 m down, about 40% of max HP; 8 m up did nothing, and
-# a 25 m drop kills outright).
+# stands on its map. A lethal fall is the hit the rig can deal: 1 HP left, then 18 m up. Under
+# open sky (WIPE_SPOT; rig 2026-10-18: 12 m did nothing, 18 m about 60% of max HP, 20 m and more
+# a death outright, not a hit); under a roof the player lands on it (the old spots, a roof 9 m up).
 PARTY_DEATH = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"}
 # After a real death each player has its own bloodstain where it fell (GameDataMan's record on
 # this map) and no enemy takes it (no echo theft): the bloodstain state lines say so.
 BLOODSTAIN_DROPPED = (r"bloodstain state map=0x18010000 has_mark=1 record_valid=\d+ "
                       r"record_30=-?\d+ record_38=\d+ record_block=0x18010000")
 BLOODSTAIN_STOLEN = r"bloodstain state .* stain_hidden=1"
-LETHAL_FALL = ["hurt self 1", "rise 25"]
+LETHAL_FALL = ["hurt self 1", "rise 18"]
 # Enemy HP kept in step: over the HP board (shadPS4's path) or by the area's owner (the port,
 # phase 4: one game runs each area's enemies, the others follow it).
 HP_SHARED = r"enemy HP (?:shared over the HP board|from the area's owner)"
@@ -198,8 +198,11 @@ OWNER_FOLLOWS = r"enemy owner: this game follows \w+ on map 0x18010000"
 GIVE_UP = [*LETHAL_FALL, "wait-vital down 30", "wait 2", "press circle 3600", "wait-vital dead 15"]
 # wipe3 spreads the three a few metres from the lamp before each falls, so nobody lands on another
 # member's body (the UI thread, 2026-10-12: a body under the fall took its damage).
-WIPE3_SPOT = {"host": "-199.74 -50.56 182.42", "guest": "-196.74 -50.56 179.42",
-              "guest2": "-202.74 -50.56 179.42"}
+# Open sky, on the lower ground west of the first lamp (rig 2026-10-18: the old spots were
+# under a roof 9 m up, so every rise there landed on it, out of bounds, and the revives' swings
+# went wide; Kaniel). East of the lamp the open strip ends in a drop past x -194.
+WIPE3_SPOT = {"host": "-212.0 -54.5 170.0", "guest": "-209.0 -54.5 170.0",
+              "guest2": "-209.0 -54.5 174.0"}
 # A first down takes three hits (R1 beside the downed member), at least 0.4 s apart. Each R1
 # lunges the hitter on, out of reach (2.5 m) after one, so it steps back beside it before each.
 # Revive hits until the downed member is up: how many depends on the striker's weapon (party death
