@@ -1859,6 +1859,22 @@ void ApplyTeamWorldOnLoad(bool trip) {
         return;
     }
     const WorldFlags target = WorldFlagsOf(*world);
+    if (!team_host) {
+        // Every load of a guest (its join's reload and its trips give it its own saved world
+        // back): the team's lamps lit again, and on this character's lamp list, or the game puts
+        // them out again (Kaniel's play test 2026-10-18: krolebord's lamps listed only Cathedral
+        // Ward, his own save's).
+        using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+        const std::vector<s32> lamp_flags = TeamLampFlagsToSet(target, EventFlagOn);
+        for (const s32 flag : lamp_flags) {
+            reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
+        }
+        if (!lamp_flags.empty()) {
+            ListLamps(TeamWorldLamps(store->store.flags_per_block, target.blocks, target));
+            LOG_INFO(Debug, "Co-op team world: {} of the team's lamp flags lit again in this load",
+                     lamp_flags.size());
+        }
+    }
     // The blocks this load brings that the team's world covers and no earlier load took; on a
     // guest's trip the ones of the map it goes to again (the host's save is the team's world,
     // never retaken). Raw, as the trip's load hook reads it: the map this load is creating.

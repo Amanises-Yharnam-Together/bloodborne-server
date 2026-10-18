@@ -310,6 +310,31 @@ bool TakesTeamWorldBlock(u32 block, u32 flags_per_block, const std::set<u32>& ta
            std::binary_search(covered.begin(), covered.end(), block);
 }
 
+std::vector<s32> TeamWorldLamps(u32 flags_per_block, std::span<const u32> blocks,
+                                const WorldFlags& target) {
+    std::vector<s32> lamps;
+    for (const s32 flag : target.on) {
+        const u32 block = static_cast<u32>(flag) / flags_per_block;
+        if (std::find(blocks.begin(), blocks.end(), block) == blocks.end()) {
+            continue;
+        }
+        if (const auto lamp = LampOfActiveFlag(flag)) {
+            lamps.push_back(*lamp);
+        }
+    }
+    return lamps;
+}
+
+std::vector<s32> TeamLampFlagsToSet(const WorldFlags& team, const std::function<bool(s32)>& on) {
+    std::vector<s32> flags;
+    for (const s32 flag : team.on) {
+        if ((LampOfActiveFlag(flag) || LampOfActiveFlag(flag - 1)) && !on(flag)) {
+            flags.push_back(flag);
+        }
+    }
+    return flags;
+}
+
 std::string FormatWorldFlags(const WorldFlags& world) {
     std::string text = "blocks\n";
     for (const u32 block : world.blocks) {

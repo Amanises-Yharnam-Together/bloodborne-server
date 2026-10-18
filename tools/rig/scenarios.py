@@ -1497,6 +1497,36 @@ SCENARIOS = {
         "allow": CRASH_CLEANUP,
         "timeout": 900,
     },
+    # Kaniel's play test 2026-10-18: krolebord joined the team and his lamps listed only Cathedral
+    # Ward. A lamp stays lit only for a character whose lamp list holds it (the game clears its
+    # active flag otherwise), and the team world's lamps went into the guest's flags at its load,
+    # never into its list. Here the host lights a lamp (FORBIDDEN_WOODS_LAMP_LIT) once the guest's
+    # game has gone; the guest's next team load takes it and keeps it lit, also after a trip.
+    "team-world-lamps": {
+        "about": "a lamp the host lit while the guest was away stays lit for the guest after its "
+                 "next team load and a trip",
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", "sync lamps-joined", "wait 15",
+                      f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "wait 20",
+                      f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "done"],
+                     ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", "sync lamps-back", "done"]],
+            "guest": [["team-accept", "team-ready", START, "wait-session 2 300",
+                       f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 0", "sync lamps-joined", "done"],
+                      ["team-accept", "team-ready", START, "wait-session 2 300", "wait 20",
+                       f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", f"travel {HUNTERS_DREAM}",
+                       "wait 25", f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "sync lamps-back",
+                       "done"]],
+        },
+        "expect": {
+            "guest": [r"Co-op team world: the team's world is in this save"],
+        },
+        "syncs": {"lamps-joined": {"chapter": "team-world-lamps", "roles": ["host", "guest"]},
+                  "lamps-back": {"chapter": "team-world-lamps", "roles": ["host", "guest"]}},
+        "allow": CRASH_CLEANUP,
+        "timeout": 600,
+    },
     # Kaniel 2026-10-17: the world list (as the game's Load Game). A team's first hunt makes a
     # world; back at the title the host leaves that team (its guest still hunts in it, so its
     # world cannot change), and in no team its screen starts on that world (the save's own,

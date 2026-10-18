@@ -172,6 +172,17 @@ std::vector<std::pair<s32, bool>> WorldFlagChanges(u32 flags_per_block,
 // 12410000, only the team's world had was off again, and the opening played).
 bool TakesTeamWorldBlock(u32 block, u32 flags_per_block, const std::set<u32>& taken,
                          std::span<const u32> covered, s32 trip_map_base);
+// The lamps lit in the team's world in the blocks a load took (`blocks`), as lamp entities
+// (LampOfActiveFlag). A lamp stays lit only for a character whose lamp list holds it, so they go on
+// the guest's list as its flags go in (Kaniel's play test 2026-10-18: krolebord's lamps listed only
+// Cathedral Ward, the one his own save had).
+std::vector<s32> TeamWorldLamps(u32 flags_per_block, std::span<const u32> blocks,
+                                const WorldFlags& target);
+// The lamp flags (a lamp's active flag and the one after, LampOfActiveFlag) on in the team's world
+// that are off in this game (`on`): a guest's join reload and its trips give its game its own saved
+// world back, which put the team's lamps out again in every map but the host's (the rig's
+// team-world-lamps), so each guest load sets them again. Never one off.
+std::vector<s32> TeamLampFlagsToSet(const WorldFlags& team, const std::function<bool(s32)>& on);
 // The personal world kept aside, as its file has it ("blocks" then "on", a number a line).
 std::string FormatWorldFlags(const WorldFlags& world);
 std::optional<WorldFlags> ParseWorldFlags(std::string_view text);
