@@ -1180,6 +1180,17 @@ TEST(BloodborneSharedKills, AMembersKillSkipsACopyAlreadyDying) {
     EXPECT_FALSE(AppliesMemberKill(false, 430)) << "nobody killed it";
 }
 
+// Kaniel's v0.3.11 play log (2026-10-18 16:16): a guest's game crashed in the game's kill
+// (0x018BF9A0, its death step reading a null part at +0x10). Central Yharnam's characters had
+// just been made again in place (new characters, no load), and a member's kill reached a new copy
+// near the guest 0.1 s after it was made. A member's kill waits until the copy has been in the
+// world for NewCopySettlesMs.
+TEST(BloodborneSharedKills, AMembersKillWaitsForACopyJustMade) {
+    EXPECT_TRUE(CopyJustMade(100'000, 100'000 - 100)) << "made 0.1 s ago, as in the crash";
+    EXPECT_TRUE(CopyJustMade(100'000, 100'000 - NewCopySettlesMs + 1));
+    EXPECT_FALSE(CopyJustMade(100'000, 100'000 - NewCopySettlesMs)) << "settled";
+}
+
 TEST(BloodborneSignTimers, EncodesTheGamesOwnTimerStores) {
     EXPECT_EQ(EncodeSignTimerStore(0x47, 5.0f),
               (std::array<u8, 7>{0xC7, 0x47, 0x28, 0x00, 0x00, 0xA0, 0x40}));
