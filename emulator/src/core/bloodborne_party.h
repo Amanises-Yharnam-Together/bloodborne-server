@@ -1529,6 +1529,10 @@ private:
 // A character's death flags (+0x1E3) say it is dead in its world: killed (bits 0 and 2, see
 // IsRealDeath) or dead in the save and put down at load (0x26).
 bool IsDeadInItsWorld(u8 death_flags);
+// Or its HP is 0 of a known max: an enemy dead in the save loads at 0 HP with no death flags,
+// neither hidden nor switched off (rig 2026-10-18; Kaniel's play test the same day: two such
+// enemies stood for the guests while his own screen had none).
+bool IsDeadInItsWorld(u8 death_flags, s32 hp, s32 max);
 // The characters the host's shown board has as dead (Kaniel 2026-10-11: after a trip to the
 // Dream and back the guests' own worlds had the host's dead enemies alive; they died before the
 // session, so no kill board had them).

@@ -2186,6 +2186,18 @@ TEST(BloodborneHiddenCharacters, DeadMeansKilledOrPutDownInTheSave) {
     EXPECT_FALSE(IsDeadInItsWorld(0x20));
 }
 
+// Kaniel's play test 2026-10-18: after his game crashed and loaded again, two Ward enemies dead in
+// his save were not on his screen, yet his game told the guests they stood (krolebord killed them
+// again, and Kaniel's game paid no echoes). Rig 2026-10-18: an enemy killed before the game starts
+// again loads with HP 0/484 and death flags 0x0, neither hidden nor switched off.
+TEST(BloodborneHiddenCharacters, AnEnemyLoadedAtNoHpIsDeadInItsWorld) {
+    EXPECT_TRUE(IsDeadInItsWorld(0x00, 0, 484)) << "dead in the save, loaded at 0 HP";
+    EXPECT_TRUE(IsDeadInItsWorld(0x06, 0, 484));
+    EXPECT_TRUE(IsDeadInItsWorld(0x01, 300, 484)) << "the death flags still count";
+    EXPECT_FALSE(IsDeadInItsWorld(0x00, 300, 484));
+    EXPECT_FALSE(IsDeadInItsWorld(0x00, 0, 0)) << "no HP read yet (a character still loading)";
+}
+
 // Kaniel 2026-10-11: Ada joined a session Brom was already in and did not see him; after
 // both went to the Dream and back (where the other players are re-created) they saw each other.
 // A guest that joins where another guest already is re-creates the others once, as after a trip.

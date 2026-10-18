@@ -41,6 +41,7 @@ LONG = {
     "guest-drops": "a 70 s wait for the drops (Kaniel's playtest 2026-10-16)",
     "boss-guest-runs": "50 s and 90 s waits by the boss (Kaniel's playtest 2026-10-16)",
     "cutscene-skip": "two stages (two boots), the opening cutscene played in between",
+    "dead-in-host-save": "two stages (two boots): the host's game starts again after its kill",
     "team-load-beside-host": "two stages (two boots), a 45 s wait for the guest to leave the Dream",
     "team-world-pickups": "two stages (two boots): the guest's save takes the team world again",
     "ward-door": "a 420 s wait for the Ward door",

@@ -1135,6 +1135,44 @@ SCENARIOS = {
                    "guest": [r"enemy 10010021 jumped", *SESSION_HOLDS]},
         "timeout": 300,
     },
+    "dead-in-host-save": {
+        "about": "Kaniel's play test 2026-10-18: the host kills an enemy and its game starts again "
+                 "(the enemy loads dead, at 0 HP, with no death flags); back in a session, the "
+                 "host's shown list says it is dead, so the guests' copies go too (krolebord saw "
+                 "such enemies standing, Kaniel saw nothing there)",
+        "roles": {
+            "host": [[START, "godmode", f"teleport {GUEST_ALONE_SPOT}", "wait 5",
+                      *attack(ENEMY), "wait 20", "done"],
+                     [START, "godmode", "wait-session 2 420", "wait 30", "census 40", "done"]],
+            "guest": [START, "godmode", "wait-session 2 300", "wait-solo 300",
+                      "wait-session 2 420", "wait 40", "done"],
+        },
+        # The shown list's bit 8: dead in the host's world (DeadInTheHostsWorld).
+        "expect": {"host": [r"census: 0x1001400b hp 0/",
+                            r"shown 0x1001400b on 0x18010000 bits (?:8|9|1[0-5])\b"]},
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
+    "guest-kill-pays-host": {
+        "about": "the guest kills an enemy beside it that the host's game handed to the "
+                 "guest's; the host 17 m away on the same map gets the kill's echoes too (the "
+                 "party shares souls; Kaniel's play test 2026-10-18 checked this path)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "sync guest-killed", "wait 20",
+                     "sync host-checked", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 5",
+                      f"teleport {GUEST_ALONE_SPOT}", "wait 10", *attack(ENEMY), "wait 2",
+                      "sync guest-killed", "sync host-checked", "expect-session 2"],
+        },
+        "syncs": {"guest-killed": {"chapter": "guest-kill-pays-host", "roles": ["host", "guest"]},
+                  "host-checked": {"chapter": "guest-kill-pays-host",
+                                   "roles": ["host", "guest"]}},
+        # The host's own game pays it.
+        "expect": {"host": [r"Bloodborne echoes: \+[1-9]\d* \(rates \d+\) from 0x18fc99b"],
+                   "guest": [r"Bloodborne echoes: \+[1-9]\d* \(rates \d+\) from 0x18fc99b"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     "echoes-apart": {
         "about": "the guest kills an enemy alone in Cathedral Ward; the host in Central Yharnam "
                  "gets its echoes",

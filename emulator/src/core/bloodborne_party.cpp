@@ -2055,6 +2055,10 @@ bool IsDeadInItsWorld(u8 death_flags) {
     return (death_flags & 0x05) != 0;
 }
 
+bool IsDeadInItsWorld(u8 death_flags, s32 hp, s32 max) {
+    return IsDeadInItsWorld(death_flags) || (max > 0 && hp <= 0);
+}
+
 std::unordered_set<u32> DeadInTheHostsWorld(std::span<const CharacterShown> host) {
     std::unordered_set<u32> dead;
     for (const CharacterShown& character : host) {
