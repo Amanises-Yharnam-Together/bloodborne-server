@@ -91,9 +91,11 @@ only (bbport is the target; every player and the server run one build).
   flag frames' 64), and a teammate's game writes it into the same altar and has the altar load
   it again (0x01AA40E0 from status 0) once all of it is there. Rig `chalice-altar-team` and
   `chalice-altar-host`: one member's ritual, the other picks Layer One at its own altar, they
-  meet. Open: the altar's talk
-  shows no menu unless the player holds a chalice (any); the search lists the server's dungeons,
-  not only the team's.
+  meet. The altar's talk opens only for a player holding a chalice (ESD function 47, "has
+  item" goods 6100-6539; chalices are not used up, so the conductor still holds its own): a
+  teammate holding none is given the dungeon's standard chalice when the record comes to its
+  altar (Kaniel 2026-10-18; rig `chalice-altar-no-chalice`).
+  Open: the search lists the server's dungeons, not only the team's.
 - **Server down:** team play needs the server; solo play with the personal world needs nothing, so
   nothing extra is built for it.
 - **Port only:** the new design is built for the port; shadPS4 keeps the old path until it is dropped.

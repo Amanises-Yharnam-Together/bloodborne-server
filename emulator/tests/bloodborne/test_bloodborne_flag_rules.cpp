@@ -315,6 +315,16 @@ TEST(BloodborneFlagRules, RitualAltarsAreTheTeams) {
     }
 }
 
+// Kaniel 2026-10-18: a teammate holding no chalice is given the chalice of the dungeon that came
+// to its altar (the altar's talk opens only for a player holding one, as the conductor does).
+TEST(BloodborneFlagRules, AnAltarsDungeonNamesItsChalice) {
+    EXPECT_EQ(AltarChaliceGoods(10), 6109u) << "Pthumeru Chalice, depth 1";
+    EXPECT_EQ(AltarChaliceGoods(21), 6219u) << "Hintertomb Chalice, depth 2";
+    EXPECT_EQ(AltarChaliceGoods(53), 6539u) << "Isz Chalice, depth 5";
+    EXPECT_FALSE(AltarChaliceGoods(0xFF)) << "an altar with no record";
+    EXPECT_FALSE(AltarChaliceGoods(11)) << "no standard chalice there";
+}
+
 TEST(BloodborneFlagRules, ListsComeFromTheTable) {
     EXPECT_EQ(GuestProgressFlags(true, true, 0x18000000, true, true),
               (std::vector<s32>{9401, 9403}));

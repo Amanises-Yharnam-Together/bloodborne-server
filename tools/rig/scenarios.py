@@ -2722,10 +2722,11 @@ SCENARIOS["chalice-team"] = {
 
 
 
-def CHALICE_FROM_OWN_ALTAR(role: str) -> list[str]:
-    """Holding a chalice (the altar's talk shows no menu without one), the Dream's altar and its
-    Layer One: a teammate's ritual put the dungeon there (team altars)."""
-    return [f"trade-stock {PTHUMERU_CHALICE} 1", f"travel {HUNTERS_DREAM}", "wait 5",
+def CHALICE_FROM_OWN_ALTAR(role: str, hold: bool = True) -> list[str]:
+    """The Dream's altar and its Layer One: a teammate's ritual put the dungeon there (team
+    altars). `hold`: with a chalice in the bag (without one the base game's altar shows no menu;
+    the port opens it while an altar holds a dungeon)."""
+    return [*([f"trade-stock {PTHUMERU_CHALICE} 1"] if hold else []), f"travel {HUNTERS_DREAM}", "wait 5",
             f"teleport {ALTAR_SPOT}", "wait 2",
             *[step for _ in range(3) for step in ("press cross 200", "wait 10")],
             f"wait-map {CHALICE_DUNGEON} 180", "wait 10", "snapshot", f"log {role} in the dungeon"]
@@ -2767,6 +2768,23 @@ SCENARIOS["chalice-altar-host"] = {
                   "expect-session 2", "snapshot"],
     },
     "expect": {"host": [r"host in the dungeon"], "guest": [r"guest in the dungeon"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "allow": CRASH_CLEANUP,
+    "timeout": 1200,
+}
+
+# Kaniel 2026-10-18: a teammate holding no chalice enters the team's dungeon too.
+SCENARIOS["chalice-altar-no-chalice"] = {
+    "about": "the host's ritual; the guest, holding no chalice, opens its own altar and enters "
+             "the dungeon's Layer One; they meet in it",
+    "roles": {
+        "host": SCENARIOS["chalice-altar-team"]["roles"]["host"],
+        "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 2 300",
+                  *["wait 30"] * 5, *CHALICE_FROM_OWN_ALTAR("guest", hold=False),
+                  "wait-members 2 300", "wait 20", "expect-session 2", "snapshot"],
+    },
+    "expect": {"host": [r"host in the dungeon"],
+               "guest": [r"given its chalice", r"guest in the dungeon"]},
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "allow": CRASH_CLEANUP,
     "timeout": 1200,

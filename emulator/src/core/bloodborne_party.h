@@ -767,6 +767,11 @@ FlagChanges AsAltarFlags(const FlagChanges& changes, std::optional<s32> altar);
 bool IsCurrentAltarFlag(s32 flag);
 // A Shared flag whose clears go to the party too (a ritual altar's, see FlagTable).
 bool SharesClearsWithParty(s32 flag);
+// Team altars: the chalice of an altar's dungeon (its record's depth * 10 + area, the standard
+// chalice of that depth and area), which a teammate holding none is given so that its own altar
+// opens as the conductor's does (the altar's talk asks for any chalice). Nothing for an unknown
+// one.
+std::optional<u32> AltarChaliceGoods(u32 depth_area);
 // Shared progression: the guest's copy of the host's world follows the host's flag changes, so
 // the changes it sees in a session (lamps, shortcuts, bosses, quest steps) are kept, latest
 // state per flag, in a file of "<flag> <0|1>" lines and set in the guest's own world once it is

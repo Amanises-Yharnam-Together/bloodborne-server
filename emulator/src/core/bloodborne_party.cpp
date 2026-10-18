@@ -1219,6 +1219,26 @@ FlagChanges AsAltarFlags(const FlagChanges& changes, std::optional<s32> altar) {
     return FlagChanges{map(changes.set), map(changes.cleared)};
 }
 
+std::optional<u32> AltarChaliceGoods(u32 depth_area) {
+    // The standard chalices (goods 6109 Pthumeru, ...), as the server's StandardDungeon has them.
+    constexpr std::array<std::pair<u32, u32>, 10> Chalices{{{10, 6109},
+                                                            {20, 6209},
+                                                            {21, 6219},
+                                                            {30, 6309},
+                                                            {31, 6319},
+                                                            {40, 6409},
+                                                            {42, 6429},
+                                                            {50, 6509},
+                                                            {52, 6529},
+                                                            {53, 6539}}};
+    for (const auto& [key, goods] : Chalices) {
+        if (key == depth_area) {
+            return goods;
+        }
+    }
+    return std::nullopt;
+}
+
 bool SharesClearsWithParty(s32 flag) {
     return SharedWithParty(flag) && RuleFor(flag).Has(FlagSharesClears);
 }
