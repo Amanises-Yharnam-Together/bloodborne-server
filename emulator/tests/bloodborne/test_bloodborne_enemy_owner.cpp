@@ -198,6 +198,33 @@ TEST(EnemyOwner, TheOwnerRunsEveryAwakeEnemyTheGameLetGo) {
     EXPECT_EQ(AwakeEnemyWord(EnemyRole::Unknown, 4, 4, 0xFFFF, false), std::nullopt);
 }
 
+// Kaniel's play test 2026-10-18: krolebord ran Cathedral Ward and hurt an enemy; the moment the
+// host came the host's game ran it from its spawn, and krolebord's copy jumped 19.9 m there. The
+// host now follows the map's owner for a while first (shadNet's HostTakeBackMs): its game runs
+// nothing then, whatever its own ownership step gave its own player.
+TEST(EnemyOwner, AHostThatFollowsLetsItsGameRunNothing) {
+    EXPECT_EQ(HostFollowerWord(EnemyRole::Follower, true, OwnedEnemyWord),
+              std::optional<u16>{0xFFFF});
+    EXPECT_EQ(HostFollowerWord(EnemyRole::Follower, true, 0), std::optional<u16>{0xFFFF});
+    // The network's already: unchanged.
+    EXPECT_EQ(HostFollowerWord(EnemyRole::Follower, true, 0xFFFF), std::nullopt);
+    // A guest's game follows by its own (TickEnemyOwner, the host's hand-out); an owner runs.
+    EXPECT_EQ(HostFollowerWord(EnemyRole::Follower, false, OwnedEnemyWord), std::nullopt);
+    EXPECT_EQ(HostFollowerWord(EnemyRole::Owner, true, OwnedEnemyWord), std::nullopt);
+    EXPECT_EQ(HostFollowerWord(EnemyRole::Unknown, true, OwnedEnemyWord), std::nullopt);
+}
+
+// The enemies around the owner's player: awake in the following host's game too (as the owner's
+// own game wakes them around the others), so its copies take the owner's places before the host
+// takes the map over.
+TEST(EnemyOwner, TheOwnerAndAHostThatFollowsWakeAroundTheOthers) {
+    EXPECT_TRUE(WakesAroundOthers(EnemyRole::Owner, true));
+    EXPECT_TRUE(WakesAroundOthers(EnemyRole::Owner, false));
+    EXPECT_TRUE(WakesAroundOthers(EnemyRole::Follower, true));
+    EXPECT_FALSE(WakesAroundOthers(EnemyRole::Follower, false));
+    EXPECT_FALSE(WakesAroundOthers(EnemyRole::Unknown, true));
+}
+
 TEST(EnemyOwner, OnlyThisPlayersBlockTakesTheOthersGroups) {
     // Another block's record (Cathedral Ward's, by the border): its groups are its own.
     WakeGroups other_block;
@@ -340,8 +367,16 @@ TEST(EnemyOwner, AnEnemyGoesToAFollowerOnlyOnceTheHandOutSettles) {
     HandOutSettle settle;
     const u32 dog = 0x06e12809; // a changing high half, the index in the low one
     const u32 held = HandOutHeldEntry;
-    // First wanted at 0 ms: held (the owner runs it) until a settle time has passed.
-    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, 0), std::vector<u32>{held});
+    // The first hand-out to a member (or after a gap) goes at once: nothing went back and forth
+    // yet. Kaniel's play test 2026-10-18: a host taking the map over from a guest (it followed
+    // the guest's game a while first) ran the enemies by that guest a second more, two changes of
+    // hands instead of none.
+    const u32 by_krolebord = 0x2062;
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{by_krolebord}, 0),
+              std::vector<u32>{by_krolebord});
+    // Later ones settle: wanted at 0 ms, held (the owner runs it) until a settle time has passed.
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{by_krolebord, dog}, 0),
+              (std::vector<u32>{by_krolebord, held}));
     EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, 500), std::vector<u32>{held});
     EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, HandOverSettleMs),
               std::vector<u32>{dog});
@@ -357,13 +392,18 @@ TEST(EnemyOwner, AnEnemyGoesToAFollowerOnlyOnceTheHandOutSettles) {
     const u32 hunter = 0x2871;
     EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{hunter, dog}, 3000),
               (std::vector<u32>{held, held}));
-    EXPECT_EQ(settle.Filter("lisara", std::vector<u32>{hunter}, 3000), std::vector<u32>{held});
+    EXPECT_EQ(settle.Filter("lisara", std::vector<u32>{0x2805}, 3000), std::vector<u32>{0x2805});
+    EXPECT_EQ(settle.Filter("lisara", std::vector<u32>{0x2805, hunter}, 3250),
+              (std::vector<u32>{0x2805, held}));
     EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{hunter, dog}, 3800),
               (std::vector<u32>{held, dog}));
     EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{hunter, dog}, 4000),
               (std::vector<u32>{hunter, dog}));
-    // A member whose last hand-out is stale starts over (a load, a trip away).
-    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, 60'000), std::vector<u32>{held});
+    // A member whose last hand-out is stale starts over (a load, a trip away, a host that followed
+    // the map's owner): its first goes at once.
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog}, 60'000), std::vector<u32>{dog});
+    EXPECT_EQ(settle.Filter("krolebord", std::vector<u32>{dog, hunter}, 60'250),
+              (std::vector<u32>{dog, held}));
     // Held entries name no enemy: the follower's game skips them (block 31, slot 0x7FF).
     const std::vector<u8> payload{2, 0, 0, 0, 0xff, 0xff, 0, 0, 0x09, 0x28, 0xe1, 0x06};
     EXPECT_EQ(HandOutIds(payload), std::vector<u32>{0x2809});

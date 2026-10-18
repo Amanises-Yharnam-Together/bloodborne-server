@@ -3747,6 +3747,17 @@ std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 wo
     return OwnedEnemyWord;
 }
 
+std::optional<u16> HostFollowerWord(EnemyRole role, bool hosting, u16 word) {
+    if (role != EnemyRole::Follower || !hosting || static_cast<s16>(word) < 0) {
+        return std::nullopt;
+    }
+    return u16{0xFFFF};
+}
+
+bool WakesAroundOthers(EnemyRole role, bool hosting) {
+    return role == EnemyRole::Owner || (role == EnemyRole::Follower && hosting);
+}
+
 bool SendsFullPositionPacket(EnemyRole role, s32 entries, s32 per_packet, s32 slot, s32 slots,
                              u32 sent_this_frame) {
     // The game sends the round's last packet itself (and one a frame of its own).
@@ -3798,13 +3809,16 @@ std::vector<u32> HandOutSettle::Filter(const std::string& member, std::span<cons
         state = {}; // a load, a trip away: what it was handed before means nothing now
     }
     state.last_ms = now_ms;
+    // The first one with enemies in it goes as it is (the game sends one a period, empty or not).
+    const bool first = !state.seen;
+    state.seen = state.seen || !entries.empty();
     std::vector<u32> out;
     std::set<u32> wanted;
     for (const u32 entry : entries) {
         const u32 index = entry & 0xFFFF;
         wanted.insert(index);
         const s64 since = state.wanted_since.try_emplace(index, now_ms).first->second;
-        if (state.handed.contains(index) || now_ms - since >= HandOverSettleMs) {
+        if (first || state.handed.contains(index) || now_ms - since >= HandOverSettleMs) {
             state.handed.insert(index);
             out.push_back(entry);
         } else {

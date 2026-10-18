@@ -1194,30 +1194,50 @@ int TheFirstMemberOnAnAreaRunsItsEnemies() {
   CHECK(host.OwnerOf(Yharnam) == "guest");
   CHECK(host.OwnerOf(Woods).empty()); // nobody is there any more
   // The session's host takes back the area it comes to: its game is the one the
-  // others' are built to follow.
-  host.Map(0x18010000, now + 1300);
-  guest.Map(Yharnam, now + 1300);
-  guest2.Map(0x18010000, now + 1300);
-  Pump(service, games, now + 1300);
+  // others' are built to follow. Not at once (Kaniel's play test 2026-10-18: a
+  // guest's hurt enemy went back to its spawn as the host came, the host's new
+  // copy stood there): it follows the owner's game for HostTakeBackMs first, so
+  // its copies stand where that game has them.
+  const auto all_there = [&](qint64 at) {
+    host.Map(0x18010000, at);
+    guest.Map(Yharnam, at);
+    guest2.Map(0x18010000, at);
+    Pump(service, games, at);
+  };
+  all_there(now + 1300);
+  CHECK(guest.OwnerOf(Yharnam) == "guest");
+  all_there(now + 2300);
+  all_there(now + 3300);
+  CHECK(guest.OwnerOf(Yharnam) == "guest"); // 2 s: not yet
+  CHECK(guest.EpochOf(Yharnam) == second);
+  all_there(now + 4300);
   CHECK(guest.OwnerOf(Yharnam) == "host");
   CHECK(guest.EpochOf(Yharnam) > second);
+  // A host that steps over a border and back (its map flips) starts again.
+  host.Map(Ward, now + 4400);
+  Pump(service, games, now + 4400);
+  CHECK(guest.OwnerOf(Yharnam) == "guest");
+  all_there(now + 4500);
+  CHECK(guest.OwnerOf(Yharnam) == "guest");
+  all_there(now + 7500);
+  CHECK(guest.OwnerOf(Yharnam) == "host");
 
   // An owner not heard of for a while (its game died) hands it on.
-  host.Map(0, now + 1400);
-  Pump(service, games, now + 1400);
+  host.Map(0, now + 7600);
+  Pump(service, games, now + 7600);
   CHECK(guest2.OwnerOf(Yharnam) == "guest");
-  guest2.Map(0x18010000, now + 2300);
-  Pump(service, games, now + 2300);
-  guest2.Map(0x18010000, now + 3300);
-  Pump(service, games, now + 3300);
+  guest2.Map(0x18010000, now + 8500);
+  Pump(service, games, now + 8500);
+  guest2.Map(0x18010000, now + 9500);
+  Pump(service, games, now + 9500);
   CHECK(guest2.OwnerOf(Yharnam) == "guest"); // 2 s: not yet
-  guest2.Map(0x18010000, now + 4300);
-  Pump(service, games, now + 4300);
+  guest2.Map(0x18010000, now + 10500);
+  Pump(service, games, now + 10500);
   CHECK(guest2.OwnerOf(Yharnam) == "guest2");
 
   // An area nobody is on has no owner.
-  guest2.Map(0, now + 4400);
-  Pump(service, games, now + 4400);
+  guest2.Map(0, now + 10600);
+  Pump(service, games, now + 10600);
   CHECK(host.OwnerOf(Yharnam).empty());
   return 0;
 }

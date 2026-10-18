@@ -88,6 +88,11 @@ class EnemyOwners {
 public:
     // A member whose map was not heard of for this long is gone (its game sends it every second).
     static constexpr std::int64_t SilentMs = 2'500;
+    // The host takes an area another member runs back once it has been there this long: until
+    // then its game follows that member's, so its copies take their places and HP (Kaniel's play
+    // test 2026-10-18: a guest's hurt enemy went back to its spawn as the host came, the host's
+    // fresh copy stood there). A host stepping over a border and back starts again.
+    static constexpr std::int64_t HostTakeBackMs = 3'000;
     // What an owner runs: one map (a block). The blocks of an area are loaded together, but the
     // game wakes a block's enemies only near a player in that world (rig 2026-10-14: a guest in
     // Cathedral Ward following the host in Central Yharnam saw them stand still).
@@ -123,6 +128,7 @@ private:
     std::map<std::string, Presence> members;
     std::map<std::uint32_t, Owner> owners;
     std::uint64_t epoch = 0;
+    std::int64_t latest_ms = 0; // the latest Place or Expire
 };
 
 } // namespace BloodborneWorld

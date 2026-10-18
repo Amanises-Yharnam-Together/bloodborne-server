@@ -726,7 +726,7 @@ namespace Coop {
 
 void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers) {
     woken_records.clear();
-    if (CurrentEnemyRole() != EnemyRole::Owner) {
+    if (!WakesAroundOthers(CurrentEnemyRole(), !IsPartyGuestRole())) {
         woken_for.store(0, std::memory_order_relaxed);
         return;
     }
@@ -881,7 +881,7 @@ void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) 
             }
         });
     }
-    if (role != EnemyRole::Owner) {
+    if (role == EnemyRole::Unknown || (role == EnemyRole::Follower && IsPartyGuestRole())) {
         return;
     }
     // Never a player: the other players' copies follow their own games (an AI controller on one
@@ -889,6 +889,32 @@ void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) 
     std::unordered_set<u64> players{GetLocalPlayer()};
     for (const OtherPlayer& other : OtherPlayers()) {
         players.insert(other.character);
+    }
+    if (role == EnemyRole::Follower) {
+        // The host follows the map's owner until it takes the map over (HostFollowerWord).
+        u32 let_go = 0;
+        ForEachWorldCharacter(world, [&](u64 character) {
+            const u64 word = OwnershipWordAddress(world, character);
+            if (players.contains(character) || character == doll || word == 0 ||
+                !HasMemoryAccess(word, 2, MemoryProt::CpuWrite) || IsMe(BossRunnerOf(character))) {
+                return;
+            }
+            if (const auto wanted = HostFollowerWord(role, true, ReadValue<u16>(word, 0))) {
+                WriteValue(word, 0, *wanted);
+                ++let_go;
+            }
+        });
+        static u32 last_let_go = 0;
+        static u32 let_go_logged = 0;
+        if (let_go != last_let_go && let_go_logged < 60) {
+            last_let_go = let_go;
+            ++let_go_logged;
+            LOG_INFO(Debug,
+                     "Bloodborne enemy owner: this host follows the map's owner; let its game's "
+                     "{} enemies go (t={:.1f})",
+                     let_go, SteadyMilliseconds() / 1000.0);
+        }
+        return;
     }
     u32 kept = 0;
     u32 marked = 0;

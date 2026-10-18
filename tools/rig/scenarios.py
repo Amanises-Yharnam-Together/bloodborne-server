@@ -65,6 +65,13 @@ WARD_ENEMY = "0x10010019"  # 211 HP, 7 m from the Cathedral Ward lamp (the neare
 # Another one, 22 m from that lamp (123 HP): lone-guest's, as WARD_ENEMY's kill stands from
 # ward-walk-kill on (Central Yharnam and the Ward load together, so it never comes back).
 WARD_ENEMY_2 = "0x10010021"
+# It spawns at (6.8, -11.0, 122.5) (rig census 2026-10-18): host-arrives-hurt-enemy puts it 4 m off
+# that, the guest beside it.
+HURT_ENEMY_AT = "6.8 -11.0 126.5"
+HURT_ENEMY_SPOT = "8.3 -11.0 127.5 0.0"
+# Then 20 m from it toward the lamp: inside the guest's jump watch (25 m), too far for the host's
+# game to hand it to the guest, so the host's copy runs it (from its spawn on the red build).
+HURT_ENEMY_AWAY = "15.0 -9.5 108.3 3.1"
 CLERIC_BEAST = "0x1001409f"  # entity 2410800; its death runs event 12411700
 CLERIC_BEAST_DEFEATED = 2411  # set by event 12411700 after Handle Boss Defeat
 GASCOIGNE = "0x1001409c"  # entity 2410810 (his beast form: 0x1001409e, 2410811)
@@ -1091,6 +1098,40 @@ SCENARIOS = {
                       r"enemy owner: this game follows \w+ on map 0x18000000)"],
         },
         "timeout": 720,
+    },
+    "host-arrives-hurt-enemy": {
+        "about": "Kaniel's play test 2026-10-18: the guest alone in Cathedral Ward moves an enemy "
+                 "off its spawn and hurts it; the host comes to the Ward and the enemy stays where "
+                 "and as hurt as it is on both games (krolebord's jumped 19.9 m back to its spawn "
+                 "as the host's new copy took over)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "sync guest-hurt",
+                     f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 120", "wait 15",
+                     f"expect-hp {WARD_ENEMY_2} < 123", "census 40", "sync host-checked",
+                     "expect-session 2"],
+            # Put off its spawn from the lamp, 26 m away: out of the guest's jump watch (25 m), so
+            # only a jump once the guest stands beside it counts.
+            "guest": [START, "godmode", "wait-session 2 300", "wait 5",
+                      f"travel {CATHEDRAL_WARD_LAMP}", "wait 8",
+                      f"place {WARD_ENEMY_2} {HURT_ENEMY_AT}", "wait 2",
+                      f"teleport {HURT_ENEMY_SPOT}", "wait 2", f"hurt {WARD_ENEMY_2} 60",
+                      "wait 3", "census 40", f"teleport {HURT_ENEMY_AWAY}", "wait 2",
+                      "sync guest-hurt", "wait-members 2 180", "wait 15",
+                      f"expect-hp {WARD_ENEMY_2} < 123", "census 40", "sync host-checked",
+                      "expect-session 2"],
+        },
+        "syncs": {"guest-hurt": {"chapter": "host-arrives-hurt-enemy", "roles": ["host", "guest"]},
+                  "host-checked": {"chapter": "host-arrives-hurt-enemy",
+                                   "roles": ["host", "guest"]}},
+        # The host follows the guest's game first (shadNet's HostTakeBackMs), then runs the Ward.
+        "expect": {"host": [r"enemy owner: this game follows \w+ on map 0x18000000",
+                            r"enemy owner: this game runs map 0x18000000's enemies"],
+                   "guest": [r"enemy owner: this game runs map 0x18000000's enemies",
+                             r"enemy owner: this game follows \w+ on map 0x18000000"]},
+        # The host's copy where it spawned (the red build's census), the guest's jumping there.
+        "forbid": {"host": [r"census: 0x10010021 .*\(6\.8, -11\.0, 122\.5\)", *SESSION_HOLDS],
+                   "guest": [r"enemy 10010021 jumped", *SESSION_HOLDS]},
+        "timeout": 300,
     },
     "echoes-apart": {
         "about": "the guest kills an enemy alone in Cathedral Ward; the host in Central Yharnam "

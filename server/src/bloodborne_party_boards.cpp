@@ -178,6 +178,7 @@ bbcoop::VitalsBoard PartyBoards::VitalsMessage() const {
 bool EnemyOwners::Place(const std::string& member, std::uint32_t map, std::int64_t now_ms,
                         bool host) {
     const std::uint32_t area = AreaOf(map);
+    latest_ms = std::max(latest_ms, now_ms);
     if (area == 0) {
         return members.erase(member) > 0 && Settle();
     }
@@ -192,6 +193,7 @@ bool EnemyOwners::Place(const std::string& member, std::uint32_t map, std::int64
 }
 
 bool EnemyOwners::Expire(std::int64_t now_ms) {
+    latest_ms = std::max(latest_ms, now_ms);
     if (std::erase_if(members, [now_ms](const auto& entry) {
             return now_ms - entry.second.heard_ms > SilentMs;
         }) == 0) {
@@ -227,9 +229,10 @@ bool EnemyOwners::Settle() {
             if (member == members.end() || member->second.area != entry.first) {
                 return true;
             }
-            // The session's host takes the area back.
+            // The session's host takes the area back, once it has followed its owner a while.
             return !member->second.host && std::ranges::any_of(members, [&](const auto& other) {
-                return other.second.host && other.second.area == entry.first;
+                return other.second.host && other.second.area == entry.first &&
+                       latest_ms - other.second.since_ms >= HostTakeBackMs;
             });
         }) > 0;
     for (const auto& [name, presence] : members) {
