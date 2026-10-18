@@ -31,6 +31,11 @@ def edit_text(char, html, color=b'\x9b\x21\x02\xff'):
     return tag(37, body, long=True)
 
 
+def shape(char, width, height):
+    """A DefineShape `width` x `height` px from the origin, without fills or edges."""
+    return tag(2, struct.pack('<H', char) + hud_patch.rect(width * 20, height * 20) + bytes([0, 0, 0, 0]))
+
+
 def sprite(char, *children):
     return tag(39, struct.pack('<HH', char, 1) + b''.join(children) + tag(1, b'') + tag(0, b''), long=True)
 
@@ -46,6 +51,7 @@ def movie(*tags):
 
 DRAW_HTML = ('<p align="center"><font size="124" color="#9b2102" letterSpacing="0.000000" kerning="1">'
              '<b>HUNTED NIGHTMARE</b></font></p>')
+STOCK_HTML = '<p align="left"><font size="24" color="#afafaf"><b>99</b></font></p>'
 DEAD_HTML = DRAW_HTML.replace('9b2102', '960807').replace('HUNTED NIGHTMARE', 'YOU DIED')
 
 
@@ -58,6 +64,11 @@ def fe_movie():
         edit_text(20, DEAD_HTML, b'\x96\x08\x07\xff'), sprite(21, place2(1, 20, 'StaticText_522001')),
         sprite(22, place2(1, 21, '')),
         sprite(30, tag(1, b'')), sprite(31, tag(1, b'')),
+        # The player's HUD: its vial (TriDrug: a drawing, Stock/Stock) and bullet (AmmoItem: a drawing).
+        shape(40, 48, 48), shape(41, 48, 48), edit_text(42, STOCK_HTML),
+        sprite(43, place2(1, 42, 'Stock')), sprite(44, place2(1, 40, ''), place2(2, 43, 'Stock')),
+        sprite(45, place2(1, 41, '')), sprite(46, place2(1, 44, 'TriDrug'), place2(2, 45, 'AmmoItem')),
+        place2(4, 46, 'PlayerHUD'),
         place2(5, 14, 'TextEffect_Draw'), place2(6, 22, 'TextEffect_Dead'), place2(9, 30, 'RemotePCTag0'),
         place2(10, 31, 'ActionButtonTop'),
         tag(1, b''),
@@ -153,6 +164,30 @@ class GfxTests(unittest.TestCase):
         self.assertEqual(int(re.search(r'constexpr int Side = (\d+);', header).group(1)), hud_patch.PORTRAIT_PIXELS)
         self.assertEqual(int(re.search(r'constexpr int StageSize = (\d+);', header).group(1)),
                          hud_patch.PORTRAIT_SIZE)
+
+    def test_each_slot_has_the_huds_own_vial_and_bullet_with_their_counts(self):
+        # Kaniel 2026-10-18: the vials and bullets in the HUD's own art (the player's TriDrug and AmmoItem): per
+        # slot a sprite of two frames (the counts, then the icons too), its count fields named for party death.
+        _, tags = hud_patch.read_movie(hud_patch.patch_fe(fe_movie(), hud_patch.HUD_ICONS.read_bytes()))
+        first_frame = next(i for i, t in enumerate(tags) if t.code == hud_patch.SHOW_FRAME)
+        places = {hud_patch.place_parts(t)[1]: t for t in tags[:first_frame] if t.code == hud_patch.PLACE_OBJECT2}
+        sprites = {struct.unpack_from('<H', t.body)[0]: t for t in tags if t.code == hud_patch.SPRITE}
+        parts = hud_patch.player_supply_parts(hud_patch.read_movie(fe_movie())[1])
+        if parts is None:
+            self.skipTest('this HUD has no player vial and bullet')
+        vial, bullet, text, _ = parts
+        for index, name in enumerate(hud_patch.PARTY_SUPPLIES):
+            self.assertIn(name, places)
+            sprite = sprites[hud_patch.place_parts(places[name])[0]]
+            self.assertEqual(struct.unpack_from('<H', sprite.body, 2)[0], 2, 'the counts, then the icons')
+            inner = [hud_patch.place_parts(t) for t in sprite.children if t.code == hud_patch.PLACE_OBJECT2]
+            self.assertEqual([(c, n) for c, n, _ in inner],
+                             [(text, 'SupplyVials'), (text, 'SupplyBullets'), (vial, None), (bullet, None)])
+            # On the name's line, right of most names, inside the bar's length.
+            _, tx, ty = hud_patch.place_matrix(places[name])
+            bar_y = hud_patch.LIST_Y + hud_patch.LIST_STEP * index + hud_patch.BAR_FROM_TAG[1]
+            self.assertAlmostEqual(ty / 20, bar_y - 20, delta=1)
+            self.assertTrue(180 <= tx / 20 <= 240)
 
     def test_the_frame_rings_the_portrait(self):
         # Kaniel 2026-10-13: a round portrait in a Bloodborne frame, drawn larger than it shows (crisp when

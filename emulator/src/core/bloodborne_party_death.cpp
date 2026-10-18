@@ -1560,6 +1560,13 @@ struct NativePartyList {
     using Sprites = std::array<std::pair<u64, u64>, PartyListSize>;
     Sprites icons{}, faces{}, badges{};
     std::array<u32, PartyListSize> icon_frames{}, face_frames{}, badge_frames{};
+    // Kaniel 2026-10-18: CoopSupply0-2 (the HUD's own vial and bullet beside each name) and their
+    // count fields' values (SupplyVials, SupplyBullets: PathRefs kept for the HUD's life), with
+    // what each says now; none in a HUD without them (a mod's).
+    Sprites supplies{};
+    std::array<u32, PartyListSize> supply_frames{};
+    std::array<std::array<u8*, 2>, PartyListSize> supply_texts{};
+    std::array<std::array<std::string, 2>, PartyListSize> supply_said{};
     // CoopPrompt: the game's interact prompt widget made for it; null without it.
     u8* prompt = nullptr;
     std::array<u8, HudPromptDataSize> prompt_data{};
@@ -1653,6 +1660,39 @@ void FindListSprites(u64 hud, const char* format, NativePartyList::Sprites& spri
     }
 }
 
+// The text fields under `format` (a slash path from the HUD, one per list slot): their PathRefs,
+// kept for the HUD's life (a value they hold is linked into the movie until it goes); all or none.
+void FindListTexts(u64 hud, const char* format,
+                   std::array<std::array<u8*, 2>, PartyListSize>& texts, int which) {
+    for (int i = 0; i < PartyListSize; ++i) {
+        auto* path = new (std::align_val_t{16}) u8[HudPathRefSize]{};
+        reinterpret_cast<HudLookup>(image_base + HudChildLookupOffset)(path, hud, format, i);
+        u32 type = 0;
+        std::memcpy(&type, path + HudPathRefTypeAt, sizeof(type));
+        if ((type & 0x8F) == 0) {
+            ::operator delete[](path, std::align_val_t{16});
+            for (auto& slot : texts) {
+                slot[which] = nullptr;
+            }
+            return;
+        }
+        texts[i][which] = path;
+    }
+}
+
+// A PathRef's text field set to `text` (plain), through its object interface's SetText.
+void SetPathText(const u8* path, const std::string& text) {
+    u64 object = 0, data = 0;
+    std::memcpy(&object, path + HudPathRefInterfaceAt, 8);
+    std::memcpy(&data, path + HudPathRefObjectAt, 8);
+    const u64 vtable = object >= 0x10000 ? ReadValue<u64>(object, 0) : 0;
+    const u64 set_text = vtable >= 0x10000 ? ReadValue<u64>(vtable, HudSetTextUtf8Slot) : 0;
+    if (set_text >= 0x10000) {
+        reinterpret_cast<void PS4_SYSV_ABI (*)(u64, u64, const char*, bool)>(set_text)(
+            object, data, text.c_str(), false);
+    }
+}
+
 void FindCoopPartyIcons(u64 hud) {
     FindListSprites(hud, "CoopPartyIcon%d", native_list.icons);
     FindListSprites(hud, "CoopPartyFace%d", native_list.faces);
@@ -1661,7 +1701,20 @@ void FindCoopPartyIcons(u64 hud) {
         native_list.faces = {};
         native_list.badges = {};
     }
+    FindListSprites(hud, "CoopSupply%d", native_list.supplies);
+    if (native_list.supplies[0].first != 0) {
+        FindListTexts(hud, "CoopSupply%d/SupplyVials", native_list.supply_texts, 0);
+        FindListTexts(hud, "CoopSupply%d/SupplyBullets", native_list.supply_texts, 1);
+    }
+    if (native_list.supply_texts[0][0] == nullptr || native_list.supply_texts[0][1] == nullptr) {
+        native_list.supplies = {};
+    }
+    LOG_INFO(Debug, "Bloodborne party HUD: vials and bullets in the HUD's own fields: {}",
+             native_list.supplies[0].first != 0 ? "yes" : "no (the overlay draws them)");
 }
+
+// Kaniel 2026-10-18: the list shows its members' vials and bullets in the HUD's own fields.
+std::atomic<s64> native_supplies_shown_ms{-1'000'000};
 
 // The interact prompt (CoopPrompt), when the HUD has one.
 void MakeCoopPrompt(u64 hud) {
@@ -1803,6 +1856,19 @@ void PS4_SYSV_ABI UpdatePartyList(u64, const GuestRegisterSnapshot* registers) {
         const bool portrait = Coop::ShowPartyPortrait(
             i, has_faces && entries[i].visible ? std::string_view{entries[i].member} : "");
         ShowListArt(i, PartyListArtFor(entries[i], has_faces && portrait));
+        if (native_list.supplies[0].first != 0) {
+            ShowListSprite(native_list.supplies, native_list.supply_frames, i,
+                           entries[i].visible ? 2 : 1);
+            const auto texts = SupplyTexts(entries[i]);
+            for (int which = 0; which < 2; ++which) {
+                if (native_list.supply_said[i][which] != texts[which] ||
+                    native_list.supply_said[i][which].empty()) {
+                    SetPathText(native_list.supply_texts[i][which], texts[which]);
+                    native_list.supply_said[i][which] = texts[which];
+                }
+            }
+            native_supplies_shown_ms.store(SteadyMilliseconds(), std::memory_order_relaxed);
+        }
         shown = shown || entries[i].visible;
     }
     if (shown) {
@@ -1944,6 +2010,14 @@ void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& st
 bool NativePartyListShown() {
 #ifdef BLOODBORNE_PARTY_HUD
     return SteadyMilliseconds() - native_list_shown_ms.load(std::memory_order_relaxed) < 500;
+#else
+    return false;
+#endif
+}
+
+bool NativePartySuppliesShown() {
+#ifdef BLOODBORNE_PARTY_HUD
+    return SteadyMilliseconds() - native_supplies_shown_ms.load(std::memory_order_relaxed) < 500;
 #else
     return false;
 #endif

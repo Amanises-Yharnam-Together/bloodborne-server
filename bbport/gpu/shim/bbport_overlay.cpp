@@ -3928,7 +3928,7 @@ void Draw() {
     const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
     if (!panel.native_list) { // else the game's HUD shows it (the party HUD's CoopParty tags)
         MemberList(draw, pulse);
-    } else {
+    } else if (!panel.native_supplies) { // else the HUD's own vial and bullet show them
         Supplies(draw);
     }
     if (panel.vital == BBCOOP_VITAL_DOWN) {

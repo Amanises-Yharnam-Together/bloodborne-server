@@ -30,7 +30,7 @@ FE = 'dvdroot_ps4/menu/fe.gfx'
 LAYER = 'party HUD'
 # Part of the generated file's name: a patcher that patches differently makes its file anew (the old
 # one is not reused). Bump it with every change to what patch_fe writes.
-PATCH_VERSION = b'party-hud 11'
+PATCH_VERSION = b'party-hud 12'
 DRAW_BANNER = 'Fe_fla._TextEffect_Draw_195'
 DRAW_FIELD = 'StaticText_522007'
 DOWNED_FIELD = 'CoopDownedText'
@@ -66,6 +66,16 @@ NAME_TOP_FROM_BAR, BAR_BOTTOM_FROM_BAR = -34.5, 4.5
 # ICON_PAD px left of the bar; the badge's size, its centre BADGE_DISTANCE px up and right of the portrait's, on
 # the diagonal, over the ring.
 PARTY_FACES = ('CoopPartyFace0', 'CoopPartyFace1', 'CoopPartyFace2')
+# Kaniel 2026-10-18: each member's Blood Vials and Quicksilver Bullets on its name's line, with the HUD's own
+# vial and bullet (the player's TriDrug and AmmoItem: their icon drawings and their count's text field, without
+# the square slot): CoopSupply0-2, a sprite of two frames (the counts, empty while nobody shows; then the icons
+# too), its text fields named SupplyVials and SupplyBullets (party death writes the counts). Its layout, from
+# the sprite's origin at the name line's right part: each icon SUPPLY_ICON px tall, its count right of it.
+PARTY_SUPPLIES = ('CoopSupply0', 'CoopSupply1', 'CoopSupply2')
+SUPPLY_TEXTS = ('SupplyVials', 'SupplyBullets')
+SUPPLY_ICON, SUPPLY_TEXT_SCALE, SUPPLY_STEP = 22, 0.75, 48  # icon px, the count's scale, from vial to bullet
+SUPPLY_X, SUPPLY_FROM_BAR = 212, -20  # the vial's centre x on the stage; the line's y from the bar's middle
+FIRST_SUPPLY_ID = 50120  # after the faces' ids
 PARTY_BADGES = ('CoopPartyBadge0', 'CoopPartyBadge1', 'CoopPartyBadge2')
 PORTRAIT_SIZE, PORTRAIT_PIXELS = 42, 128
 FRAME_SIZE, FRAME_PIXELS = 61, 128
@@ -487,6 +497,98 @@ def portrait_tags(depth, icon_char, strip):
     return tags
 
 
+def shape_bounds(tag):
+    """(xmin, xmax, ymin, ymax) in pixels of a DefineShape's bounds."""
+    body = tag.body
+    nbits = body[2] >> 3
+    bits = int.from_bytes(body[2:2 + (5 + 4 * nbits + 7) // 8], 'big')
+    total = (5 + 4 * nbits + 7) // 8 * 8
+    values = []
+    for i in range(4):
+        value = (bits >> (total - 5 - nbits * (i + 1))) & ((1 << nbits) - 1)
+        values.append((value - (1 << nbits) if value >> (nbits - 1) else value) / 20)
+    return tuple(values)
+
+
+def player_supply_parts(tags):
+    """(vial shape, bullet shape, count text) of the player's HUD (PlayerHUD's TriDrug and AmmoItem: the drawing
+    each places, and its Stock's Stock text field); None when this HUD has no such parts (a mod's)."""
+    defined = {struct.unpack_from('<H', t.body)[0]: t for t in tags
+               if t.code in (SPRITE, EDIT_TEXT, 2, 22, 32, 83)}
+    first_frame = next(i for i, t in enumerate(tags) if t.code == SHOW_FRAME)
+
+    def child(sprite, name):
+        for t in sprite.children:
+            if t.code in (PLACE_OBJECT2, PLACE_OBJECT3):
+                character, placed, _ = place_parts(t)
+                if placed == name and character in defined:
+                    return defined[character]
+        return None
+
+    def drawing(sprite):
+        for t in sprite.children:
+            if t.code in (PLACE_OBJECT2, PLACE_OBJECT3):
+                character, _, _ = place_parts(t)
+                if character in defined and defined[character].code in (2, 22, 32, 83):
+                    return character
+        return None
+
+    player = next((defined.get(place_parts(t)[0]) for t in tags[:first_frame]
+                   if t.code in (PLACE_OBJECT2, PLACE_OBJECT3) and place_parts(t)[1] == 'PlayerHUD'), None)
+    if player is None or player.code != SPRITE:
+        return None
+    vial, ammo = child(player, 'TriDrug'), child(player, 'AmmoItem')
+    if vial is None or ammo is None or vial.code != SPRITE or ammo.code != SPRITE:
+        return None
+    stock = child(vial, 'Stock')
+    text = child(stock, 'Stock') if stock is not None and stock.code == SPRITE else None
+    vial_shape, ammo_shape = drawing(vial), drawing(ammo)
+    if text is None or text.code != EDIT_TEXT or vial_shape is None or ammo_shape is None:
+        return None
+    return vial_shape, ammo_shape, struct.unpack_from('<H', text.body)[0], defined
+
+
+def supply_centre(index):
+    """The centre of CoopSupply<index>'s vial on the stage: on the name's line, right of most names."""
+    return SUPPLY_X, LIST_Y + LIST_STEP * index + BAR_FROM_TAG[1] + SUPPLY_FROM_BAR
+
+
+def supply_tags(tags, depth):
+    """The tags that define CoopSupply0-2 and place them (from `depth` up); none for a HUD without the player's
+    vial and bullet."""
+    parts = player_supply_parts(tags)
+    if parts is None:
+        return []
+    vial_shape, ammo_shape, text, defined = parts
+    out, char = [], FIRST_SUPPLY_ID
+
+    def icon(shape, cx, layer):
+        x0, x1, y0, y1 = shape_bounds(defined[shape])
+        scale = SUPPLY_ICON / max(y1 - y0, 1.0)
+        tx = cx - (x0 + x1) / 2 * scale
+        ty = -(y0 + y1) / 2 * scale
+        return place(shape, layer, place_matrix=matrix(scale, round(tx * 20), round(ty * 20)))
+
+    def count(name, x, layer):
+        # The field's box starts 2 px left of its text; its text 24 px tall: centred on the line.
+        y = -(24 * SUPPLY_TEXT_SCALE) / 2 - 3
+        return place(text, layer, name, matrix(SUPPLY_TEXT_SCALE, round(x * 20), round(y * 20)))
+
+    for index, name in enumerate(PARTY_SUPPLIES):
+        half = SUPPLY_ICON / 2 + 3
+        frames = [count(SUPPLY_TEXTS[0], half, 1), count(SUPPLY_TEXTS[1], SUPPLY_STEP + half, 2),
+                  Tag(SHOW_FRAME, b'', False),
+                  icon(vial_shape, 0, 3), icon(ammo_shape, SUPPLY_STEP, 4), Tag(SHOW_FRAME, b'', False)]
+        sprite = Tag(SPRITE, struct.pack('<HH', char, 2), True)
+        sprite.children = frames + [Tag(0, b'', False)]
+        out.append(sprite)
+        depth += 2
+        x, y = supply_centre(index)
+        out.append(place(char, depth, name, matrix(None, round(x * 20), round(y * 20))))
+        char += 1
+    return out
+
+
 def placed_icon_sprite(tags):
     """The icon sprite CoopPartyIcon0 shows, among these tags."""
     return next(place_parts(tag)[0] for tag in tags
@@ -515,6 +617,9 @@ def add_party_list(tags, strip=None, portraits=True):
             depth += 2 * len(PARTY_ICONS)
         if portraits and not names >= set(PARTY_FACES):
             added += portrait_tags(depth, placed_icon_sprite(places + added), strip)
+            depth += 2 * (len(PARTY_FACES) + len(PARTY_BADGES))
+        if not names >= set(PARTY_SUPPLIES):
+            added += supply_tags(tags, depth)
         tags[first_frame:first_frame] = added
         return
     prompt_sprite = next((place_parts(tag)[0] for tag in places if place_parts(tag)[1] == PROMPT_TAG), None)
@@ -534,6 +639,8 @@ def add_party_list(tags, strip=None, portraits=True):
         if portraits:
             added += portrait_tags(depth, placed_icon_sprite(added), strip)
             depth += 2 * (len(PARTY_FACES) + len(PARTY_BADGES))
+        added += supply_tags(tags, depth)
+        depth += 2 * len(PARTY_SUPPLIES)
     if prompt_sprite is not None:
         added.append(place(prompt_sprite, depth + 2, PROMPT,
                            matrix(None, round(PROMPT_AT[0] * 20), round(PROMPT_AT[1] * 20))))

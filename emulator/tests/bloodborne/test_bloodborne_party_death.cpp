@@ -360,6 +360,11 @@ TEST(BloodbornePartyHud, ThePartyListShowsEachMembersState) {
     EXPECT_EQ(supplied[0].vials, 14u);
     EXPECT_EQ(supplied[0].bullets, 9u);
     EXPECT_EQ(supplied[1].vials, 0u);
+    // Kaniel 2026-10-18: in the HUD's own count fields (CoopSupply0-2): the counts while the slot
+    // shows a member, nothing while it is empty.
+    EXPECT_EQ(SupplyTexts(supplied[0]), (std::array<std::string, 2>{"14", "9"}));
+    EXPECT_EQ(SupplyTexts(supplied[1]), (std::array<std::string, 2>{"0", "0"}));
+    EXPECT_EQ(SupplyTexts(PartyListEntry{}), (std::array<std::string, 2>{"", ""}));
 
     panel.members.erase(panel.members.begin(), panel.members.begin() + 3);
     const auto away = PartyListEntries(panel);
