@@ -1377,6 +1377,48 @@ void RecheckShopLinesOnce(u32 map) {
 // See HeldItemFlagFix: every second in a loaded world, each held-item flag follows this player's
 // own items, so a save that took the host's value from a team world gets its own badges from the
 // bosses, NPCs and maps, and a player who holds one never gets it twice.
+// See PhantomKeyItemsToGiveBack: while this guest is a phantom (character type 1) its key item
+// list is looked at every 250 ms; once its own list is back (another list, not a phantom), what
+// it gained in the phantom's comes back.
+void GiveBackPhantomKeyItems() {
+    constexpr s32 PhantomType = 1;
+    static u64 phantom_list = 0;
+    static std::vector<HeldGoods> first_look;
+    static std::vector<HeldGoods> last_look;
+    static s64 looked_ms = 0;
+    const u64 player = GetLocalPlayer();
+    if (!party_controller || player < 0x10000 || !PlayerItemsReadable()) {
+        return;
+    }
+    const u64 list = KeyItemList();
+    if (ReadValue<s32>(player, 0x78) == PhantomType) {
+        const s64 now_ms = SteadyMilliseconds();
+        if (now_ms - looked_ms < 250) {
+            return;
+        }
+        looked_ms = now_ms;
+        last_look = HeldKeyGoods();
+        if (list != phantom_list) {
+            phantom_list = list;
+            first_look = last_look;
+        }
+        return;
+    }
+    if (phantom_list == 0 || list == phantom_list) {
+        return;
+    }
+    phantom_list = 0;
+    for (const HeldGoods& held : PhantomKeyItemsToGiveBack(first_look, last_look, HeldKeyGoods())) {
+        const TradeItem item{BloodborneCoop::TradeItemKind::Goods, held.goods,
+                             static_cast<u32>(held.count)};
+        AddTradeItems(std::span{&item, 1});
+        LOG_INFO(Debug,
+                 "Bloodborne party: gave back {} x goods {}: gained as a phantom, dropped by "
+                 "the game with its key item list",
+                 held.count, held.goods);
+    }
+}
+
 void KeepHeldItemFlagsOwn() {
     static s64 checked_ms = 0;
     const s64 now_ms = SteadyMilliseconds();
@@ -1472,6 +1514,7 @@ void TickPlayersOnThisMap() {
         }
     }
     RecheckShopLinesOnce(IsUsablePackedMap(map) ? map : 0);
+    GiveBackPhantomKeyItems();
     KeepHeldItemFlagsOwn();
     static RecreateAfterJoin recreate_after_join;
     if (recreate_after_join.Tick(IsPartyGuestRole(), in_session,

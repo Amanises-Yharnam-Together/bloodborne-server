@@ -225,6 +225,23 @@ constexpr bool IsBellGoods(u32 goods) {
     return false;
 }
 
+// A goods the player holds and how many (the inventory's key items: its first part, below its
+// split at +0x24).
+struct HeldGoods {
+    u32 goods = 0;
+    s32 count = 0;
+    bool operator==(const HeldGoods&) const = default;
+};
+// Kaniel 2026-10-18 (krolebord's Sword Hunter Badge): in the join's state (character type 1, a
+// summoned phantom, until its first trip) a guest's key items are a list of the game's own
+// (inventory +0x58 points elsewhere). What the guest gains there (a boss's badge or key, an NPC's
+// gift, a pickup) the game drops when the guest's own list comes back at its first trip. What to
+// give back then: the key items of that list's last look beyond its first look (gained there),
+// less what the guest's own list holds now; never a bell (RemoveBellItems takes them).
+std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> first_look,
+                                                 std::span<const HeldGoods> last_look,
+                                                 std::span<const HeldGoods> home);
+
 // Event flag 4047 ("a player on the way out", docs/FLAGS.md): set when a session ends under a
 // player; a summoned guest's reload home cleared it. A team's guest stays in its world (no reload),
 // so once it stands out of a session with the flag on for ClearAfterMs, it is cleared: the party

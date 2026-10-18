@@ -540,6 +540,15 @@ SUITES = {
                                "expect-flag 6645 1"]},
                     expect={"host": [r"flags in session: .*\b4000\b"]},
                     forbid=holds(PARTY2)),
+            chapter("boss-badge-kept", "the guest got the badge in the join's state (a phantom, "
+                                       "before any trip): it still holds it after its first trip "
+                                       "to the Dream (Kaniel 2026-10-18: krolebord's went at his "
+                                       "first trip after the Cleric Beast)",
+                    {"host": ["sync badge-kept"],
+                     "guest": [f"travel {HUNTERS_DREAM}", f"wait-map {DREAM} 90", "wait 10",
+                               f"expect-held {SWORD_BADGE} 1", "sync badge-kept"]},
+                    expect={"guest": [r"gave back 1 x goods 4114: gained as a phantom"]},
+                    forbid=holds(PARTY2)),
         ],
     },
     "trips": {

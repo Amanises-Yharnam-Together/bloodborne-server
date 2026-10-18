@@ -195,6 +195,17 @@ guest whose host held the badge never got its own. They are each player's own no
 (`HeldItemFlagFix`, `KeepHeldItemFlagsOwn`, every second): a save with the host's value gets its
 badge, a player who holds one gets no second.
 
+Key items gained in the join's state (2026-10-18, krolebord's badge, logs 44/45): until its first
+trip a party guest is a summoned phantom (character type +0x78 = 1), and the game gives it a key
+item list of its own: the inventory's +0x58 (the key items, the entries below the split at +0x24)
+points to another list, without the guest's own key items. A key item the guest gains then (the
+Cleric Beast's badge at 50000010, a boss key, an NPC gift, a pickup) goes into that list, and at
+the first trip the guest's own list comes back and the game drops the other, with what was gained.
+Goods outside the key items, echoes and vials stay; a later trip drops nothing. The guest's tick
+looks at the phantom's list every 250 ms and, once another list is there and it is no phantom,
+gives back what it gained (`PhantomKeyItemsToGiveBack`, `GiveBackPhantomKeyItems`; never a bell).
+Rig: together/boss-badge-kept.
+
 Open: the death-flag events (Valtr's helm, Simon's bowblade) wait on 1003:101 checks not decoded
 yet; Queenly Flesh's trigger comes from an event that ends for a client; the Doll's exchange keeps
 the ornament on a guest. Shops, repair, upgrade and storage already run in each player's own game.
