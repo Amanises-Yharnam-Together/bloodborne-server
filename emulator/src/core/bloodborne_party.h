@@ -2559,6 +2559,16 @@ constexpr u16 OwnedEnemyWord = 1;
 // [control +0x14], `applied` +0x10) the game let go, unless the game keeps it out.
 std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 word, bool kept_out,
                                   bool handed_out = false);
+// Kaniel's play test 2026-10-18 (krolebord ran Cathedral Ward, the host came: its game ran his hurt
+// enemy from its spawn and krolebord's copy jumped 19.9 m there): the session's host coming to a
+// map another member runs follows that member's game a while first (shadNet's HostTakeBackMs).
+// Its game's ownership step gives its own player's enemies to it all the same: right after it, the
+// word such an enemy gets instead (the network's), or none (`hosting`: this game hosts).
+std::optional<u16> HostFollowerWord(EnemyRole role, bool hosting, u16 word);
+// Whether the activation pass wakes the enemies around the other players here (WakeAroundOthers):
+// on the owner, and on a host that follows (its copies by the owner take the owner's places, so
+// they stand there when it takes the map over).
+bool WakesAroundOthers(EnemyRole role, bool hosting);
 using GroupSet = std::array<u32, 8>;
 struct WakeGroups {
     GroupSet wakes{};   // chr +0x218, record +0x38
@@ -2627,7 +2637,10 @@ constexpr s64 HandOutFreshMs = 1'000;
 // until its game has wanted to hand it out to that member for HandOverSettleMs; one the game takes
 // back goes back at once (the follower's game drops what a hand-out leaves out, 0x018ED0ED).
 // HandOutHeldEntry is block 31, slot 0x7FF: the follower's game skips it (0x018ED127, 0x018ED13D)
-// and the payload keeps its size (it must be 4 + 4 n, 0x018ED0A5).
+// and the payload keeps its size (it must be 4 + 4 n, 0x018ED0A5). The first hand-out to a member
+// (or after a gap: a load, a trip, a host that followed the map's owner) goes as the game made it:
+// nothing went back and forth yet (Kaniel's play test 2026-10-18: a host taking the map over from a
+// guest ran the enemies by that guest a second more, two changes of hands instead of none).
 constexpr s64 HandOverSettleMs = 1'000;
 constexpr u32 HandOutHeldEntry = 0xFFFF;
 class HandOutSettle {
@@ -2640,6 +2653,7 @@ private:
         std::map<u32, s64> wanted_since; // by index, while the game hands it out
         std::set<u32> handed;            // by index, handed out by this filter
         s64 last_ms = 0;
+        bool seen = false; // a hand-out since the last gap
     };
     std::map<std::string, Member> members;
 };
