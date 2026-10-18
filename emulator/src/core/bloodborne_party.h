@@ -1559,19 +1559,24 @@ std::vector<CharacterSwitch> UndoneOnMapChange(const std::unordered_set<u32>& sw
 bool RecreateIsForAJoin(bool pending, bool for_join);
 // A guest joining a session another guest is already in re-creates the other players once, as
 // after a trip (Kaniel 2026-10-11: Ada joined after Brom and did not see him until both
-// went to the Dream and back). Tick says when: a guest, SettleMs after its join, seeing two or
-// more other members within WindowMs of it.
+// went to the Dream and back). Tick says when: a guest, SettleMs after it `arrived` in the
+// session's world, seeing two or more other members within WindowMs of that. The clock starts
+// there, not at the join (Krolebord 2026-10-18: joining from the team lobby with another guest,
+// his re-create came before the join's reload, which threw the copies away).
 class RecreateAfterJoin {
 public:
     static constexpr s64 SettleMs = 5000;
     static constexpr s64 WindowMs = 60000;
-    bool Tick(bool guest, bool in_session, size_t others, s64 now_ms) {
+    bool Tick(bool guest, bool in_session, size_t others, bool arrived, s64 now_ms) {
         if (!in_session) {
             joined_ms.reset();
             done = false;
             return false;
         }
         if (!joined_ms) {
+            if (!arrived) {
+                return false;
+            }
             joined_ms = now_ms;
         }
         const s64 since = now_ms - *joined_ms;

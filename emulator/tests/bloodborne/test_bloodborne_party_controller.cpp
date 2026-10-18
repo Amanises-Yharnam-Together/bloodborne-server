@@ -2180,25 +2180,40 @@ TEST(BloodborneHiddenCharacters, DeadMeansKilledOrPutDownInTheSave) {
 // A guest that joins where another guest already is re-creates the others once, as after a trip.
 TEST(BloodbornePartyController, AGuestJoiningAnotherGuestRecreatesThemOnce) {
     RecreateAfterJoin recreate;
-    EXPECT_FALSE(recreate.Tick(true, false, 0, 0)) << "not in a session yet";
-    EXPECT_FALSE(recreate.Tick(true, true, 1, 1000)) << "only the host: nothing to fix";
-    EXPECT_FALSE(recreate.Tick(true, true, 2, 1500)) << "settling first";
-    EXPECT_TRUE(recreate.Tick(true, true, 2, 1000 + RecreateAfterJoin::SettleMs + 1));
-    EXPECT_FALSE(recreate.Tick(true, true, 2, 20000)) << "once";
+    EXPECT_FALSE(recreate.Tick(true, false, 0, true, 0)) << "not in a session yet";
+    EXPECT_FALSE(recreate.Tick(true, true, 1, true, 1000)) << "only the host: nothing to fix";
+    EXPECT_FALSE(recreate.Tick(true, true, 2, true, 1500)) << "settling first";
+    EXPECT_TRUE(recreate.Tick(true, true, 2, true, 1000 + RecreateAfterJoin::SettleMs + 1));
+    EXPECT_FALSE(recreate.Tick(true, true, 2, true, 20000)) << "once";
     // Out of the session and in again: a new join.
-    EXPECT_FALSE(recreate.Tick(true, false, 0, 30000));
-    EXPECT_FALSE(recreate.Tick(true, true, 2, 31000));
-    EXPECT_TRUE(recreate.Tick(true, true, 2, 31000 + RecreateAfterJoin::SettleMs + 1));
+    EXPECT_FALSE(recreate.Tick(true, false, 0, true, 30000));
+    EXPECT_FALSE(recreate.Tick(true, true, 2, true, 31000));
+    EXPECT_TRUE(recreate.Tick(true, true, 2, true, 31000 + RecreateAfterJoin::SettleMs + 1));
 }
 
 TEST(BloodbornePartyController, OnlyAGuestRecreatesAfterItsJoinAndNotLongAfter) {
     RecreateAfterJoin host;
-    EXPECT_FALSE(host.Tick(false, true, 2, 0));
-    EXPECT_FALSE(host.Tick(false, true, 2, 10000)) << "the host's guests join it";
+    EXPECT_FALSE(host.Tick(false, true, 2, true, 0));
+    EXPECT_FALSE(host.Tick(false, true, 2, true, 10000)) << "the host's guests join it";
     RecreateAfterJoin late;
-    EXPECT_FALSE(late.Tick(true, true, 1, 0));
-    EXPECT_FALSE(late.Tick(true, true, 2, RecreateAfterJoin::WindowMs + 1))
+    EXPECT_FALSE(late.Tick(true, true, 1, true, 0));
+    EXPECT_FALSE(late.Tick(true, true, 2, true, RecreateAfterJoin::WindowMs + 1))
         << "a third player joining much later builds its own copies";
+}
+
+// Krolebord 2026-10-18: two guests joined Kaniel from the team lobby together. Krolebord's
+// re-create came 5 s after the join, still in his old world; the join's reload ~20 s later threw
+// the copy of Lisara away and he did not see her until the Dream. The settle clock starts once
+// the guest is in the session's world.
+TEST(BloodbornePartyController, AJoinRecreatesOnlyAfterTheJoinsWorldReload) {
+    RecreateAfterJoin recreate;
+    EXPECT_FALSE(recreate.Tick(true, true, 2, false, 0)) << "joined: still in its own world";
+    EXPECT_FALSE(recreate.Tick(true, true, 2, false, RecreateAfterJoin::SettleMs + 1))
+        << "the join's reload is still to come";
+    EXPECT_FALSE(recreate.Tick(true, true, 2, false, 20000));
+    EXPECT_FALSE(recreate.Tick(true, true, 2, true, 21000)) << "in the session's world: settling";
+    EXPECT_TRUE(recreate.Tick(true, true, 2, true, 21000 + RecreateAfterJoin::SettleMs + 1));
+    EXPECT_FALSE(recreate.Tick(true, true, 2, true, 40000)) << "once";
 }
 
 // Kaniel 2026-10-10: after trips, two players hitting one enemy saw different HP bars, and their

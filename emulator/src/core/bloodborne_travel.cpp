@@ -1450,7 +1450,7 @@ void TickPlayersOnThisMap() {
     static RecreateAfterJoin recreate_after_join;
     if (recreate_after_join.Tick(IsPartyGuestRole(), in_session,
                                  in_session ? OtherSessionMembers().size() : 0,
-                                 SteadyMilliseconds())) {
+                                 in_session && InSessionWorld(), SteadyMilliseconds())) {
         LOG_INFO(Debug, "Bloodborne party: joined where another guest is; re-creating the others");
         recreate_pending_after_join =
             RecreateIsForAJoin(recreate_players_pending, recreate_pending_after_join);
