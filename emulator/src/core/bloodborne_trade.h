@@ -35,6 +35,10 @@ void QueueServerWorld(bbcoop::Envelope envelope);
 u32 TradeHeld(const TradeItem& item);
 // Whether the player's items read at all (its game data is there): TradeHeld's 0 means none.
 bool PlayerItemsReadable();
+// The inventory's key item list (where +0x58 points: the guest's own, or the game's list for a
+// phantom, see PhantomKeyItemsToGiveBack) and what is in it; 0 and none when there is no data.
+u64 KeyItemList();
+std::vector<HeldGoods> HeldKeyGoods();
 bool TakeTradeItems(std::span<TradeItem> items, u32 handle = 0);
 void AddTradeItems(std::span<const TradeItem> items);
 // Whether AddTradeItems can (the game's functions it calls are the ones it knows).

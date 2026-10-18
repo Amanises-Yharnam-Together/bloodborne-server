@@ -358,6 +358,23 @@ TEST(BellItems, TheCoopBellsAndNothingElse) {
     EXPECT_EQ(BellGoods.size(), 4u);
 }
 
+// Kaniel 2026-10-18 (krolebord's Sword Hunter Badge): in the join's state a guest's key items are
+// a list of the game's own for phantoms; at the guest's first trip its own list comes back and the
+// game drops that one, with the Cleric Beast's badge in it. What it gained there comes back.
+TEST(PhantomKeyItems, WhatTheGuestGainedComesBack) {
+    const std::vector<HeldGoods> first_look{{4000, 1}};
+    const std::vector<HeldGoods> last_look{{4000, 1}, {4114, 1}, {4001, 2}, {200, 1}};
+    const std::vector<HeldGoods> home{{4000, 1}, {4001, 1}};
+    // The badge gained; one more Gold Pendant than home has (two gained); the key it came with
+    // and home holds stays as it is; a bell never comes back (RemoveBellItems).
+    EXPECT_EQ(PhantomKeyItemsToGiveBack(first_look, last_look, home),
+              (std::vector<HeldGoods>{{4114, 1}, {4001, 1}}));
+    // Home holds them already (a second trip): nothing twice.
+    EXPECT_TRUE(PhantomKeyItemsToGiveBack(first_look, last_look, last_look).empty());
+    // Nothing gained: nothing to give, whatever home lacks.
+    EXPECT_TRUE(PhantomKeyItemsToGiveBack(last_look, last_look, {}).empty());
+}
+
 // Rig 2026-10-14 (host-crash-apart, team-world): the host's game gone, the guest's game set 4047
 // ("a player on the way out") and, with no summon reload to clear it, never joined again.
 TEST(LeavingFlag, ClearedOnceAGuestStandsAloneAWhile) {

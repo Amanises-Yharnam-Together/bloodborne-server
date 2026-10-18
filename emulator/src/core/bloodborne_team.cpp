@@ -201,6 +201,32 @@ std::string TeamWorldName(const bbcoop::TeamWorldInfo& world) {
     return world.character().empty() ? "A world" : world.character() + "'s world";
 }
 
+std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> first_look,
+                                                 std::span<const HeldGoods> last_look,
+                                                 std::span<const HeldGoods> home) {
+    const auto count_in = [](std::span<const HeldGoods> list, u32 goods) {
+        s32 count = 0;
+        for (const HeldGoods& held : list) {
+            if (held.goods == goods) {
+                count += held.count;
+            }
+        }
+        return count;
+    };
+    std::vector<HeldGoods> give;
+    for (const HeldGoods& held : last_look) {
+        if (IsBellGoods(held.goods)) {
+            continue;
+        }
+        const s32 gained = held.count - count_in(first_look, held.goods);
+        const s32 missing = held.count - count_in(home, held.goods);
+        if (const s32 count = std::min(gained, missing); count > 0) {
+            give.push_back({held.goods, count});
+        }
+    }
+    return give;
+}
+
 bool IsWorldFlag(s32 flag) {
     const FlagOwner owner = RuleFor(flag).owner;
     return owner == FlagOwner::Host || owner == FlagOwner::Shared;
@@ -278,8 +304,8 @@ std::vector<std::pair<s32, bool>> WorldFlagChanges(u32 flags_per_block,
 bool TakesTeamWorldBlock(u32 block, u32 flags_per_block, const std::set<u32>& taken,
                          std::span<const u32> covered, s32 trip_map_base) {
     const s64 first = s64{block} * flags_per_block;
-    const bool trip_map = trip_map_base > 0 && first >= trip_map_base &&
-                          first < s64{trip_map_base} + 10'000;
+    const bool trip_map =
+        trip_map_base > 0 && first >= trip_map_base && first < s64{trip_map_base} + 10'000;
     return (trip_map || !taken.contains(block)) &&
            std::binary_search(covered.begin(), covered.end(), block);
 }

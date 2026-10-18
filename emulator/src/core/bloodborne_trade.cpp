@@ -283,6 +283,29 @@ bool PlayerItemsReadable() {
     return PlayerGameData() >= 0x10000;
 }
 
+u64 KeyItemList() {
+    const u64 data = PlayerGameData();
+    return data >= 0x10000 ? ReadValue<u64>(data + InventoryOffset, 0x58) : 0;
+}
+
+std::vector<HeldGoods> HeldKeyGoods() {
+    std::vector<HeldGoods> held;
+    const u64 data = PlayerGameData();
+    if (data < 0x10000) {
+        return held;
+    }
+    const u32 split = ReadValue<u32>(data + InventoryOffset, 0x24);
+    for (const u64 entry : InventoryEntries(data)) {
+        const u32 id = ReadValue<u32>(entry, 4);
+        const s32 count = ReadValue<s32>(entry, 8);
+        if (static_cast<u32>(EntryIndex(data, entry)) < split &&
+            (id & 0xF0000000) == GoodsCategory && count > 0) {
+            held.push_back({id & ~GoodsCategory, count});
+        }
+    }
+    return held;
+}
+
 // What the player holds of an item: its echoes, or the goods in its inventory (not the storage).
 u32 TradeHeld(const TradeItem& item) {
     const u64 data = PlayerGameData();
