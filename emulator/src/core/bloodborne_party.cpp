@@ -3914,6 +3914,18 @@ std::optional<u16> EnemyOwnershipWord(EnemyRole role) {
     return std::nullopt;
 }
 
+bool ChangesHandsWithTheMap(s32 entity) {
+    return entity != HuntersDreamDoll;
+}
+
+std::optional<u16> KeptLocalWord(EnemyRole role, s32 entity, u16 word) {
+    if (role == EnemyRole::Unknown || ChangesHandsWithTheMap(entity) ||
+        static_cast<s16>(word) >= 0) {
+        return std::nullopt;
+    }
+    return OwnedEnemyWord;
+}
+
 EnemyPacketFate EnemyPacketOut(u32 channel, EnemyRole role) {
     // A follower's near list (0x16) goes to the owner: the owner's game sends a member the state
     // of the enemies on its list (attacks too), and with none a far guest's enemies came for it

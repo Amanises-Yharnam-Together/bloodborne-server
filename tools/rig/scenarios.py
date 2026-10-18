@@ -37,6 +37,20 @@ all (the party HUD), kept in the run's folder as <role>-<name>.png; the emulator
 """
 
 HUNTERS_DREAM = 2102962
+
+# The Doll (0x10000001, team 26: a friendly NPC), 6.8 m from the Dream's lamp. From her east side,
+# facing her (a heading h faces (-sin h, cos h)), X opens her talk; more X go on through her
+# words, take her first choice (Level Up) and stay in its menu: then the menu's talk command 68
+# runs every frame (the guest's talk answers), as in krolebord's log (playtest 2026-10-18).
+DOLL = "0x10000001"
+# 13 m from her, where the host's Doll is put: in krolebord's teammates' worlds she stood 16 m from
+# where she stood in his (a guest's copy that follows the host's game goes there too).
+DOLL_ELSEWHERE = "-18.3 -5.4 -16.9"
+LEVEL_UP_AT_THE_DOLL = [f"approach {DOLL} 1.0 0 1.5708", "wait 2", "press cross 200", "wait 5",
+                        *[step for _ in range(4) for step in ("press cross 200", "wait 3")],
+                        "wait 2"]
+
+
 CENTRAL_YHARNAM = "0x18010000"
 CENTRAL_YHARNAM_LAMP = 2412950  # the first lamp, where the rig's characters start
 CENTRAL_YHARNAM_LAMP_2 = 2412951  # talk 241001, 3 m from talk 241319 (Gilbert's window?)
@@ -243,6 +257,40 @@ SCENARIOS = {
             "guest": [GUEST_JOINS],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
+    "doll-talk-arrival": {
+        "about": "playtest 2026-10-18: a guest levelling up at the Doll while the host arrives in "
+                 "the Dream (its characters change hands) and moves its own Doll away: the guest's "
+                 "Doll stays its game's and where she is, the guest closes the menu and walks away "
+                 "(krolebord stayed kneeling for good)",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "sync doll-menu",
+                     f"travel {HUNTERS_DREAM}", "wait-members 2 120", "wait 3",
+                     f"place {DOLL} {DOLL_ELSEWHERE}", "wait 3", "sync host-in-dream",
+                     "sync guest-walked", "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 5", f"travel {HUNTERS_DREAM}",
+                      "wait 8", "census 30", *LEVEL_UP_AT_THE_DOLL, "sync doll-menu",
+                      "sync host-in-dream", "wait 15", "press circle 200", "wait 2",
+                      "press circle 200", "wait 2", "press circle 200", "wait 2",
+                      "press circle 200", "wait 4", "expect-walks 2 10", "sync guest-walked",
+                      "snapshot", "expect-session 2"],
+        },
+        "syncs": {"doll-menu": {"chapter": "doll-talk-arrival", "roles": ["host", "guest"]},
+                  "host-in-dream": {"chapter": "doll-talk-arrival", "roles": ["host", "guest"]},
+                  "guest-walked": {"chapter": "doll-talk-arrival", "roles": ["host", "guest"]}},
+        # The level-up menu open (its command every frame), the guest running the Dream's
+        # characters until the host comes, then following the host's game.
+        "expect": {"host": [r"autoplay: placed 0x10000001"],
+                   "guest": [r"talk answers: .*f53=1x\d+ .*c68x\d\d",
+                             r"this game runs map 0x15000000",
+                             r"enemy owner: this game follows \S+ on map 0x15000000",
+                             r"autoplay: walked"]},
+        # The Doll never goes to another game's hands (the red build: "changes hands: follows" on
+        # both), nor on the guest where the host's copy stands (the host's own move shows there).
+        "forbid": {"host": [r"enemy 10000001 \(1\) changes hands: follows"],
+                   "guest": [r"enemy 10000001 \(1\) changes hands: follows",
+                             r"enemy 10000001 jumped"]},
         "timeout": 300,
     },
     "trip": {

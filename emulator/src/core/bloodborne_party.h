@@ -2474,6 +2474,16 @@ std::optional<s32> EnemySyncState(EnemyRole role, s32 state);
 // The state the hit on an enemy (0x01A29E40) sees instead: a host that follows sends its hits.
 std::optional<s32> EnemyHitState(EnemyRole role, s32 state);
 std::optional<u16> EnemyOwnershipWord(EnemyRole role);
+// The Doll (m21_00 entity 2100700, 0x10000001 in the Dream) stays in each player's own game
+// whatever its role on the map (Kaniel 2026-10-18: the Doll only): handed over in the middle of a
+// level-up, she went to where the new owner's copy stood (16 m away) and the talk never ended
+// (playtest 2026-10-18, krolebord kneeling at her for good). `entity`: the character's (-1: none).
+constexpr s32 HuntersDreamDoll = 2100700;
+bool ChangesHandsWithTheMap(s32 entity);
+// Her word right after the game's ownership step (see OwnershipStepEndOffset), where the host's
+// game hands the network every character its player is not near and a guest's hand-out (0x17)
+// the rest of its table: back to this game's own (OwnedEnemyWord) whenever the map has an owner.
+std::optional<u16> KeptLocalWord(EnemyRole role, s32 entity, u16 word);
 // Whether this owner's copies take the log's HP on becoming the owner: when it takes the map over
 // from another (its epoch past the first), not as the map's first owner (Kaniel 2026-10-15).
 bool TakesOverEnemyHp(const EnemyOwnerEntry& owner);

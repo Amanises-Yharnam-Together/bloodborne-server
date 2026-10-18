@@ -1143,10 +1143,9 @@ void SnapCamera() {
     }
 }
 
-bool PlaceLocalPlayer(const std::array<float, 4>& position, const std::array<float, 4>& rotation,
-                      const char* what) {
-    const u64 player = GetLocalPlayer();
-    const u64 vtable = IsCharacter(player, what) ? ReadValue<u64>(player, 0) : 0;
+bool PlaceCharacterAt(u64 character, const std::array<float, 4>& position,
+                      const std::array<float, 4>& rotation, const char* what) {
+    const u64 vtable = IsCharacter(character, what) ? ReadValue<u64>(character, 0) : 0;
     const u64 teleport = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x5F8) : 0;
     if (teleport < 0x10000) {
         return false;
@@ -1163,7 +1162,13 @@ bool PlaceLocalPlayer(const std::array<float, 4>& position, const std::array<flo
     };
     alignas(16) const std::array<float, 4> at = position;
     alignas(16) const std::array<float, 4> turn = rotation;
-    if (!PlaceCharacter(calls, player, at.data(), turn.data())) {
+    return PlaceCharacter(calls, character, at.data(), turn.data());
+}
+
+bool PlaceLocalPlayer(const std::array<float, 4>& position, const std::array<float, 4>& rotation,
+                      const char* what) {
+    const u64 player = GetLocalPlayer();
+    if (!PlaceCharacterAt(player, position, rotation, what)) {
         return false;
     }
     WriteValue(player, 0x1E1, static_cast<u8>(ReadValue<u8>(player, 0x1E1) | 2));
