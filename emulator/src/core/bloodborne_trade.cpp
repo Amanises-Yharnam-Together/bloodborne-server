@@ -279,6 +279,10 @@ void TakeServerTrade(bbcoop::Envelope envelope) {
     trade_inbox.push_back(std::move(envelope));
 }
 
+bool PlayerItemsReadable() {
+    return PlayerGameData() >= 0x10000;
+}
+
 // What the player holds of an item: its echoes, or the goods in its inventory (not the storage).
 u32 TradeHeld(const TradeItem& item) {
     const u64 data = PlayerGameData();

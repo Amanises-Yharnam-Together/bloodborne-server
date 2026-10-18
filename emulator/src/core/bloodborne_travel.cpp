@@ -5,6 +5,7 @@
 // bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h.
 
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_flags.h"
 #include "core/bloodborne_lamp_points.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
@@ -1373,6 +1374,30 @@ void RecheckShopLinesOnce(u32 map) {
              cleared, slot);
 }
 
+// See HeldItemFlagFix: every second in a loaded world, each held-item flag follows this player's
+// own items, so a save that took the host's value from a team world gets its own badges from the
+// bosses, NPCs and maps, and a player who holds one never gets it twice.
+void KeepHeldItemFlagsOwn() {
+    static s64 checked_ms = 0;
+    const s64 now_ms = SteadyMilliseconds();
+    if (!party_controller || now_ms - checked_ms < 1'000 || GetLocalPlayer() < 0x10000 ||
+        !PlayerItemsReadable()) {
+        return;
+    }
+    checked_ms = now_ms;
+    for (const HeldItemFlag& held : HeldItemFlags) {
+        const bool holds = TradeHeld({BloodborneCoop::TradeItemKind::Goods, held.goods, 0}) > 0;
+        const auto fix = HeldItemFlagFix(true, EventFlagOn(held.flag), holds);
+        if (!fix) {
+            continue;
+        }
+        reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
+            image_base + PartyGhostSetEventFlagOffset)(0, held.flag, *fix);
+        LOG_INFO(Debug, "Bloodborne party: held-item flag {} {}: this player {} goods {}",
+                 held.flag, *fix ? "set" : "cleared", holds ? "holds" : "has no", held.goods);
+    }
+}
+
 } // namespace
 
 namespace Coop {
@@ -1447,6 +1472,7 @@ void TickPlayersOnThisMap() {
         }
     }
     RecheckShopLinesOnce(IsUsablePackedMap(map) ? map : 0);
+    KeepHeldItemFlagsOwn();
     static RecreateAfterJoin recreate_after_join;
     if (recreate_after_join.Tick(IsPartyGuestRole(), in_session,
                                  in_session ? OtherSessionMembers().size() : 0,

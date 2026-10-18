@@ -5,8 +5,10 @@
 #include <cstdlib>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <fmt/format.h>
@@ -251,6 +253,49 @@ TEST(BloodborneFlagRules, WeaponLinesFollowEachPlayersOwnBadges) {
         EXPECT_FALSE(TakesHostMapFlag(flag)) << flag;
         EXPECT_FALSE(SharedWithParty(flag)) << flag;
     }
+}
+
+// Kaniel 2026-10-18: a guest never got the Sword Hunter Badge. The Dream's 12100450 sets 6645
+// once the player holds the badge, and the Cleric Beast's 12411700 gives the badge only while
+// 6645 is off. As a world flag, the team's world (the host's) put the host's 6645 into every
+// member's save. A held-item flag says what that player holds: its own, never the host's.
+TEST(BloodborneFlagRules, HeldItemFlagsAreEachPlayersOwn) {
+    for (const HeldItemFlag& held : HeldItemFlags) {
+        EXPECT_EQ(RuleFor(held.flag).owner, FlagOwner::PerPlayer) << held.flag;
+        EXPECT_TRUE(KeepsLocalFlag(true, held.flag)) << held.flag;
+        EXPECT_TRUE(CarriesToGuestWorld(held.flag)) << held.flag;
+        EXPECT_FALSE(TakesHostMapFlag(held.flag)) << held.flag;
+        EXPECT_FALSE(SharedWithParty(held.flag)) << held.flag;
+    }
+    // m21_00 event 12100450 (01.09): the workshop's tools, then the badges.
+    const std::vector<std::pair<s32, u32>> dream{
+        {6630, 4103}, {6631, 4104}, {6632, 4105}, {6633, 4102}, {6640, 4110},
+        {6641, 4112}, {6642, 4113}, {6643, 4111}, {6644, 4118}, {6645, 4114},
+        {6646, 4115}, {6647, 4116}, {6648, 4119}, {6649, 4117},
+    };
+    std::vector<std::pair<s32, u32>> table;
+    for (const HeldItemFlag& held : HeldItemFlags) {
+        table.emplace_back(held.flag, held.goods);
+    }
+    EXPECT_EQ(table, dream);
+    // Only those: the flags between them stay the host's.
+    for (s32 flag = 6600; flag < 6700; ++flag) {
+        const bool held = std::ranges::any_of(
+            HeldItemFlags, [&](const HeldItemFlag& item) { return item.flag == flag; });
+        EXPECT_EQ(RuleFor(flag).owner == FlagOwner::PerPlayer, held) << flag;
+    }
+}
+
+// A held-item flag follows what this player holds: on while it holds the item (as 12100450 sets
+// it), off while it does not (a save that took the host's value from a team world got it back
+// wrong, so the boss, NPC or pickup never gave the item). Outside a party, the game's own.
+TEST(BloodborneFlagRules, HeldItemFlagFollowsThePlayersItems) {
+    EXPECT_EQ(HeldItemFlagFix(true, true, false), std::optional<bool>{false});
+    EXPECT_EQ(HeldItemFlagFix(true, false, true), std::optional<bool>{true});
+    EXPECT_EQ(HeldItemFlagFix(true, true, true), std::nullopt);
+    EXPECT_EQ(HeldItemFlagFix(true, false, false), std::nullopt);
+    EXPECT_EQ(HeldItemFlagFix(false, true, false), std::nullopt);
+    EXPECT_EQ(HeldItemFlagFix(false, false, true), std::nullopt);
 }
 
 // Team altars (Kaniel 2026-10-17): a ritual at any member's altar puts its dungeon on every

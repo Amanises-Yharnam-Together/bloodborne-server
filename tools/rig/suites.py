@@ -37,6 +37,13 @@ from scenarios import (AWAY_FROM_LAMP, BLOODSTAIN_DROPPED, BLOODSTAIN_STOLEN,  #
                        IOSEFKA_WAIT, HP_LOWERED, KNEEL, YHARNAM_TO_WARD, attack, only_kill)
 
 DREAM = "0x15000000"  # the Hunter's Dream's map (HUNTERS_DREAM is its lamp)
+# The Cleric Beast's event (12411700) gives the Sword Hunter Badge (item lot 50000010) unless flag
+# 6645 ("holds the badge", set in the Dream) is on. The host holds it; the guest has none but the
+# host's 6645 in its save, as the team's world put it there before the flag was each player's own.
+SWORD_BADGE = "goods:4114"
+NO_SWORD_BADGE = [f"trade-stock {SWORD_BADGE} 0", "set-flag 6645 0"]
+HOLDS_SWORD_BADGE = [f"trade-stock {SWORD_BADGE} 1", "set-flag 6645 1"]
+HOSTS_SWORD_BADGE_FLAG = [f"trade-stock {SWORD_BADGE} 0", "set-flag 6645 1"]
 # The party list's icons came (Kaniel 2026-10-12: no team icons; the log said "icons none").
 PARTY_LIST_ICONS = r"party list is the HUD's own \(\d+ tags, icons (?!none)"
 # A Dream gift messenger the guest's game switched off as the host has it (Ada 2026-10-12: no
@@ -358,6 +365,21 @@ SUITES = {
                              "expect-session 3"),
                     expect={role: [r"menu keys toggle r1"] for role in PARTY3},
                     overlay_textures=list(PARTY3), forbid=holds(PARTY3)),
+            chapter("boss-badge", "the Cleric Beast dies in the host's world with both guests "
+                                  "there; the second guest's save has a host's \"holds the "
+                                  "badge\" flag (as a team world put it there): each player has "
+                                  "one Sword Hunter Badge after (Kaniel 2026-10-18: of three, "
+                                  "the second guest got none)",
+                    {"host": [*NO_SWORD_BADGE, "sync badge3-set", "wait 5",
+                              f"kill {CLERIC_BEAST}", f"wait-flag {CLERIC_BEAST_DEFEATED} 1 60",
+                              "sync badge3-dead", "wait 30", "expect-session 3",
+                              f"expect-held {SWORD_BADGE} 1 20"],
+                     "guest": [*NO_SWORD_BADGE, "sync badge3-set", "sync badge3-dead", "wait 30",
+                               "expect-session 3", f"expect-held {SWORD_BADGE} 1 20"],
+                     "guest2": [*HOSTS_SWORD_BADGE_FLAG, "sync badge3-set", "sync badge3-dead",
+                                "wait 30", "expect-session 3",
+                                f"expect-held {SWORD_BADGE} 1 20"]},
+                    forbid=holds(PARTY3)),
             # After the rejoin chapter's restart the guest's lethal fall is a death alone, not a
             # down (rig: smoke's wipe failed in 10 of 12 runs; party-death's, without a restart
             # just before, passes).
@@ -484,10 +506,18 @@ SUITES = {
                     # +0x28 are the check.
                     forbid=holds(PARTY2)),
             chapter("boss-kill", "the Cleric Beast dies in the host's world with the guest there; "
-                                 "the session holds",
-                    {"host": [f"kill {CLERIC_BEAST}", f"wait-flag {CLERIC_BEAST_DEFEATED} 1 60",
-                              "sync boss-dead", "wait 30", "expect-session 2"],
-                     "guest": ["sync boss-dead", "wait 30", "expect-session 2"]},
+                                 "the session holds. The host holds the Sword Hunter Badge "
+                                 "already and the guest's save has the host's \"holds it\" flag "
+                                 "(as a team world put it there): the guest gets its own badge, "
+                                 "the host no second one (Kaniel 2026-10-18: a guest never got "
+                                 "it)",
+                    {"host": [*HOLDS_SWORD_BADGE, "sync badge-set", "wait 5",
+                              f"kill {CLERIC_BEAST}", f"wait-flag {CLERIC_BEAST_DEFEATED} 1 60",
+                              "sync boss-dead", "wait 30", "expect-session 2",
+                              f"expect-held {SWORD_BADGE} 1", "expect-flag 6645 1"],
+                     "guest": [*HOSTS_SWORD_BADGE_FLAG, "sync badge-set", "sync boss-dead",
+                               "wait 30", "expect-session 2", f"expect-held {SWORD_BADGE} 1 20",
+                               "expect-flag 6645 1"]},
                     expect={"host": [r"flags in session: .*\b4000\b"]},
                     forbid=holds(PARTY2)),
         ],
