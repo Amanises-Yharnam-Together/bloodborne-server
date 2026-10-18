@@ -248,6 +248,16 @@ ImGuiKey KeyFromSdl(SDL_Keycode key) {
     case SDLK_RALT: return ImGuiKey_RightAlt;
     case SDLK_Q: return ImGuiKey_Q;
     case SDLK_E: return ImGuiKey_E;
+    // The map screen's keys (moving the picture, the player, closing it, floors).
+    case SDLK_W: return ImGuiKey_W;
+    case SDLK_A: return ImGuiKey_A;
+    case SDLK_S: return ImGuiKey_S;
+    case SDLK_D: return ImGuiKey_D;
+    case SDLK_C: return ImGuiKey_C;
+    case SDLK_M: return ImGuiKey_M;
+    case SDLK_F: return ImGuiKey_F;
+    case SDLK_EQUALS: return ImGuiKey_Equal;
+    case SDLK_MINUS: return ImGuiKey_Minus;
     default: return ImGuiKey_None;
     }
 }
@@ -264,6 +274,7 @@ ImGuiKey KeyFromGamepad(u8 button) {
     case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return ImGuiKey_GamepadDpadRight;
     case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return ImGuiKey_GamepadL1;
     case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return ImGuiKey_GamepadR1;
+    case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return ImGuiKey_GamepadR3;
     case SDL_GAMEPAD_BUTTON_START: return ImGuiKey_GamepadStart;
     case SDL_GAMEPAD_BUTTON_BACK: return ImGuiKey_GamepadBack;
     case SDL_GAMEPAD_BUTTON_TOUCHPAD: return ImGuiKey_GamepadBack;
@@ -4215,6 +4226,9 @@ struct State {
     // the mouse); the lit lamp under it, if any (its warp point).
     ImVec2 cursor{-1.0f, -1.0f};
     int32_t hover = 0;
+    // Kaniel 2026-10-18 ("sometimes roofs, sometimes floors"): 0 by itself (floors while a roof
+    // is over the player), 1 roofs, 2 floors (R3 or F switches).
+    int floors = 0;
 };
 State state;
 
@@ -4273,8 +4287,14 @@ ImU32 LampLight(float alpha = 1.0f) {
 /// a dark silhouette. An area whose main bosses are down shows whole. The picture's pixels into
 /// `out`.
 bool rebuild = false; // the map opened: the pictures are made again with the fog as it is now
+/// The height the pictures show the floors at (BbMapArt::FloorView: the player's feet), NaN while
+/// they show the roofs.
+float drawn_floors = NAN;
 void Fogged(const BbMapArt::Chart& chart, uint32_t map, std::uint8_t* out) {
     std::memcpy(out, chart.rgba.data(), chart.rgba.size());
+    if (!std::isnan(drawn_floors)) {
+        BbMapArt::FloorView(chart, drawn_floors, out);
+    }
     for (int i = 0; i < view.cleared_count; ++i) {
         if (view.cleared[i] == (map & 0xFFFF0000u)) {
             return;
@@ -4344,7 +4364,28 @@ void Refresh() {
     if (!open) {
         return;
     }
-    if (rebuild && view.lamp_count > 0) { // once the first reading since opening is in
+    // Kaniel 2026-10-18 ("sometimes roofs, sometimes floors"): floors where the player stands
+    // under a roof (indoors, under a bridge), roofs in the open; R3 or F picks the other.
+    float floors = NAN;
+    if (view.has_me) {
+        bool want = state.floors == 2;
+        if (state.floors == 0) {
+            const auto mine = BbMapCharts::Get(view.map);
+            want = mine && BbMapArt::UnderRoof(*mine, view.x, view.y, view.z);
+        }
+        floors = want ? view.y : NAN;
+    }
+    const bool same_floors = std::isnan(floors) ? std::isnan(drawn_floors)
+                                                : !std::isnan(drawn_floors) && std::abs(floors - drawn_floors) < 1.0f;
+    if ((rebuild || !same_floors) && view.lamp_count > 0) { // once the first reading since opening is in
+        if (!same_floors) {
+            drawn_floors = floors;
+            if (std::isnan(floors)) {
+                std::printf("Map: shows the roofs\n");
+            } else {
+                std::printf("Map: shows the floors at %.1f m\n", floors);
+            }
+        }
         rebuild = false;
         for (auto& [map, c] : charts) {
             if (c.texture != nullptr) {
@@ -4788,10 +4829,12 @@ void DrawKeys(ImDrawList* draw, float mid, float y) {
     const char* text = T("L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You",
                          "L1 / R1  Область     Стики, мышь  Сдвиг     L2 / R2, колесо  Масштаб     Квадрат  Вы");
     const char* whole = T("Triangle  Whole map", "Треугольник  Вся карта");
+    const char* floors = std::isnan(drawn_floors) ? T("R3  Floors", "R3  Этажи") : T("R3  Roofs", "R3  Крыши");
     const char* choose = T("Travel", "В путь");
     const char* back = T("Close", "Закрыть");
     const float icon = S(26.0f), space = S(28.0f);
-    float total = ImGui::CalcTextSize(text).x + space + ImGui::CalcTextSize(whole).x + space;
+    float total = ImGui::CalcTextSize(text).x + space + ImGui::CalcTextSize(whole).x + space +
+                  ImGui::CalcTextSize(floors).x + space;
     const bool art = MenuArt::Has(MenuArt::ButtonCross) && MenuArt::Has(MenuArt::ButtonCircle);
     if (art) {
         total += 2 * (icon + S(6.0f)) + ImGui::CalcTextSize(choose).x + ImGui::CalcTextSize(back).x + space;
@@ -4801,6 +4844,8 @@ void DrawKeys(ImDrawList* draw, float mid, float y) {
     x += ImGui::CalcTextSize(text).x + space;
     draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), whole);
     x += ImGui::CalcTextSize(whole).x + space;
+    draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), floors);
+    x += ImGui::CalcTextSize(floors).x + space;
     if (art) {
         for (const auto& [piece, label] : {std::pair{MenuArt::ButtonCross, choose}, {MenuArt::ButtonCircle, back}}) {
             MenuArt::Draw(draw, piece, ImVec2(x, y), ImVec2(x + icon, y + icon));
@@ -5017,6 +5062,9 @@ void Screen() {
             state.cx = view.x;
             state.cz = view.z;
         }
+        if (Pressed({ImGuiKey_GamepadR3, ImGuiKey_F}) && view.has_me) {
+            state.floors = std::isnan(drawn_floors) ? 2 : 1;
+        }
         // Kaniel 2026-10-17 ("one big map"): Triangle shows the whole world drawn so far.
         if (Pressed({ImGuiKey_GamepadFaceUp, ImGuiKey_Tab}) && !charts.empty()) {
             float x0 = FLT_MAX, x1 = -FLT_MAX, z0 = FLT_MAX, z1 = -FLT_MAX;
@@ -5124,7 +5172,7 @@ void ScriptedKeys() {
          : token == "r1" ? ImGuiKey_GamepadR1 : token == "kdown" ? ImGuiKey_DownArrow
          : token == "kup" ? ImGuiKey_UpArrow : token == "circle" ? ImGuiKey_GamepadFaceRight
          : token == "square" ? ImGuiKey_GamepadFaceLeft
-         : token == "triangle" ? ImGuiKey_GamepadFaceUp : ImGuiKey_None;
+         : token == "triangle" ? ImGuiKey_GamepadFaceUp : token == "r3" ? ImGuiKey_GamepadR3 : ImGuiKey_None;
     if (token == "back") {
         SetOpen(false);
         return;

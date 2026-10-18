@@ -621,6 +621,42 @@ Canvas::Canvas(const PlayArea& area, float ppm_, int max_side) {
     light.assign(top.size(), 0);
     color.assign(top.size(), 0);
     walk.assign(top.size(), 0);
+    cells_w = (width + Chart::FloorCell - 1) / Chart::FloorCell;
+    cells_h = (height + Chart::FloorCell - 1) / Chart::FloorCell;
+    const std::size_t levels = std::size_t(cells_w) * std::size_t(cells_h) * Chart::Levels;
+    level = std::make_shared<std::vector<float>>(levels, -std::numeric_limits<float>::infinity());
+    level_top.assign(levels, Chart::NoHeight);
+    level_light.assign(levels, 0);
+    level_color.assign(levels, 0);
+}
+
+void Canvas::AddLevel(std::size_t cell, float h) {
+    // A floor within 1.8 m of one known there is the same storey (a ramp, uneven ground); else a
+    // storey of its own, kept highest first (the lowest goes when there are too many).
+    float* l = level->data() + cell * Chart::Levels;
+    for (int k = 0; k < Chart::Levels && std::isfinite(l[k]); ++k) {
+        if (std::abs(l[k] - h) < 1.8f) {
+            l[k] = std::max(l[k], h);
+            return;
+        }
+    }
+    int at = 0;
+    while (at < Chart::Levels && std::isfinite(l[at]) && l[at] > h) {
+        ++at;
+    }
+    if (at == Chart::Levels) {
+        return;
+    }
+    for (int k = Chart::Levels - 1; k > at; --k) {
+        l[k] = l[k - 1];
+    }
+    l[at] = h;
+}
+
+void Canvas::ShareFloors(const Canvas& other) {
+    if (other.level->size() == level->size()) {
+        level = other.level;
+    }
 }
 
 void Canvas::AddWalkable(std::span<const float> floors) {
@@ -632,6 +668,7 @@ void Canvas::AddWalkable(std::span<const float> floors) {
             px[k] = (v[k * 3] - x0) * ppm;
             py[k] = (z1 - v[k * 3 + 2]) * ppm;
         }
+        const float high = std::max({v[1], v[4], v[7]});
         const int bx0 = std::max(0, int(std::floor(std::min({px[0], px[1], px[2]}))));
         const int by0 = std::max(0, int(std::floor(std::min({py[0], py[1], py[2]}))));
         const int bx1 = std::min(width - 1, int(std::floor(std::max({px[0], px[1], px[2]}))));
@@ -640,14 +677,22 @@ void Canvas::AddWalkable(std::span<const float> floors) {
         for (int y = by0; y <= by1; ++y) {
             for (int x = bx0; x <= bx1; ++x) {
                 bool inside = bx0 == bx1 || by0 == by1 || std::abs(den) < 1e-9f;
+                bool strictly = inside; // the storeys take only what the floor covers
+                float h = high;
                 if (!inside) {
                     const float cx = float(x) + 0.5f, cy = float(y) + 0.5f;
                     const float l1 = ((py[1] - py[2]) * (cx - px[2]) + (px[2] - px[1]) * (cy - py[2])) / den;
                     const float l2 = ((py[2] - py[0]) * (cx - px[2]) + (px[0] - px[2]) * (cy - py[2])) / den;
                     inside = l1 >= -0.05f && l2 >= -0.05f && 1.0f - l1 - l2 >= -0.05f;
+                    strictly = l1 >= -0.001f && l2 >= -0.001f && 1.0f - l1 - l2 >= -0.001f;
+                    h = std::clamp(l1 * v[1] + l2 * v[4] + (1.0f - l1 - l2) * v[7], std::min({v[1], v[4], v[7]}), high);
                 }
                 if (inside) {
                     walk[std::size_t(y) * std::size_t(width) + std::size_t(x)] = 1;
+                }
+                if (strictly) {
+                    AddLevel(std::size_t(y / Chart::FloorCell) * std::size_t(cells_w) + std::size_t(x / Chart::FloorCell),
+                             h);
                 }
             }
         }
@@ -692,6 +737,21 @@ void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t
                 top[at] = z;
                 light[at] = shade;
                 color[at] = tint;
+            }
+            // The floor's own surface (and what stands on it) under each storey: its colour for
+            // the floor view.
+            const std::size_t cell =
+                (std::size_t(y / Chart::FloorCell) * std::size_t(cells_w) + std::size_t(x / Chart::FloorCell)) *
+                Chart::Levels;
+            const std::vector<float>& floors = *level;
+            for (int k = 0; k < Chart::Levels && std::isfinite(floors[cell + std::size_t(k)]); ++k) {
+                const std::size_t l = cell + std::size_t(k);
+                const auto dm = std::int16_t(std::clamp(z * 10.0f, -32767.0f, 32767.0f));
+                if (z >= floors[l] - 0.4f && z <= floors[l] + 1.2f && dm > level_top[l]) {
+                    level_top[l] = dm;
+                    level_light[l] = shade;
+                    level_color[l] = tint;
+                }
             }
         };
         if (bx0 == bx1 && by0 == by1) {
@@ -746,6 +806,20 @@ void Canvas::Merge(const Canvas& other) {
         walk[i] = walk[i] | other.walk[i];
     }
     has_walk = has_walk || other.has_walk;
+    if (level != other.level && level->size() == other.level->size()) {
+        for (std::size_t l = 0; l < level->size(); ++l) {
+            if (!std::isfinite((*level)[l]) && std::isfinite((*other.level)[l])) {
+                (*level)[l] = (*other.level)[l];
+            }
+        }
+    }
+    for (std::size_t l = 0; l < level_top.size() && l < other.level_top.size(); ++l) {
+        if (other.level_top[l] > level_top[l]) {
+            level_top[l] = other.level_top[l];
+            level_light[l] = other.level_light[l];
+            level_color[l] = other.level_color[l];
+        }
+    }
 }
 
 Chart Canvas::Finish() const {
@@ -874,6 +948,40 @@ Chart Canvas::Finish() const {
     // Ink on paper: low ground dark umber, high ground pale parchment, the light's relief over it,
     // ink lines where the height drops away (walls, roof edges, the shore of the void).
     const float paper[3] = {214.0f, 198.0f, 162.0f}, umber[3] = {84.0f, 70.0f, 54.0f}, ink[3] = {38.0f, 29.0f, 22.0f};
+    // A surface's colour at height h: its light, its material, lit or in shadow, graded.
+    const auto colour = [&](float h, std::uint8_t light_at, std::uint32_t tint, float shade, float lit[3]) {
+        const float t = std::clamp((h - low) / span, 0.0f, 1.0f);
+        const float relief = 0.50f + 0.62f * float(light_at) / 255.0f;
+        float base[3];
+        for (int c = 0; c < 3; ++c) {
+            base[c] = umber[c] + (paper[c] - umber[c]) * t;
+        }
+        if (tint != 0) {
+            // Kaniel 2026-10-17 ("can we make it colored?"): the material's own colour,
+            // livelier than the dark textures and as bright as the height says, a little of
+            // the paper's tone kept.
+            float rgb[3] = {float((tint >> 16) & 0xFF), float((tint >> 8) & 0xFF), float(tint & 0xFF)};
+            const float lum = std::max(1.0f, 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2]);
+            const float want = 95.0f + 120.0f * t;
+            for (int c = 0; c < 3; ++c) {
+                const float vivid = lum + (rgb[c] - lum) * 1.25f;
+                const float paper_tone = (umber[c] + (paper[c] - umber[c]) * t);
+                base[c] = std::clamp(vivid * want / lum, 0.0f, 255.0f) * 0.8f + paper_tone * 0.2f;
+            }
+        }
+        for (int c = 0; c < 3; ++c) {
+            lit[c] = std::clamp(base[c] * relief * shade, 0.0f, 255.0f);
+        }
+        // Kaniel 2026-10-18 ("the location feels in different colours"): the area's own grade.
+        if (!grade.empty()) {
+            // The table expects the lit, tone-mapped scene, darker than these flat colours.
+            const float dim[3] = {lit[0] * 0.8f, lit[1] * 0.8f, lit[2] * 0.8f};
+            const auto g = Graded(grade, dim);
+            for (int c = 0; c < 3; ++c) {
+                lit[c] = lit[c] * 0.35f + g[std::size_t(c)] * 0.65f;
+            }
+        }
+    };
     // ppm-independent: a metre and a half of drop inks fully over 2 m.
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
@@ -882,8 +990,6 @@ Chart Canvas::Finish() const {
                 continue;
             }
             const float h = smooth_top[at];
-            const float t = std::clamp((h - low) / span, 0.0f, 1.0f);
-            const float relief = 0.50f + 0.62f * float(smooth_light[at]) / 255.0f;
             const float drop = std::max({std::abs(height_at(x + 1, y) - height_at(x - 1, y)),
                                          std::abs(height_at(x, y + 1) - height_at(x, y - 1))});
             const float line = std::clamp((drop - 2.0f) / 2.0f, 0.0f, 1.0f) * 0.55f;
@@ -892,43 +998,53 @@ Chart Canvas::Finish() const {
             hash = (hash ^ (hash >> 13)) * 0x5bd1e995u;
             const float grain = float((hash >> 24) & 0xFF) / 255.0f * 3.0f - 1.5f;
             std::uint8_t* px = chart.rgba.data() + at * 4;
-            float base[3];
-            for (int c = 0; c < 3; ++c) {
-                base[c] = umber[c] + (paper[c] - umber[c]) * t;
-            }
-            if (const std::uint32_t tint = smooth_color[at]; tint != 0) {
-                // Kaniel 2026-10-17 ("can we make it colored?"): the material's own colour,
-                // livelier than the dark textures and as bright as the height says, a little of
-                // the paper's tone kept.
-                float rgb[3] = {float((tint >> 16) & 0xFF), float((tint >> 8) & 0xFF), float(tint & 0xFF)};
-                const float lum = std::max(1.0f, 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2]);
-                const float want = 95.0f + 120.0f * t;
-                for (int c = 0; c < 3; ++c) {
-                    const float vivid = lum + (rgb[c] - lum) * 1.25f;
-                    const float paper_tone = (umber[c] + (paper[c] - umber[c]) * t);
-                    base[c] = std::clamp(vivid * want / lum, 0.0f, 255.0f) * 0.8f + paper_tone * 0.2f;
-                }
-            }
-            const float shade = in_shadow(x, y, h) ? 0.72f : 1.0f;
             float lit[3];
-            for (int c = 0; c < 3; ++c) {
-                lit[c] = std::clamp(base[c] * relief * shade, 0.0f, 255.0f);
-            }
-            // Kaniel 2026-10-18 ("the location feels in different colours"): the area's own grade.
-            if (!grade.empty()) {
-                // The table expects the lit, tone-mapped scene, darker than these flat colours.
-                const float dim[3] = {lit[0] * 0.8f, lit[1] * 0.8f, lit[2] * 0.8f};
-                const auto g = Graded(grade, dim);
-                for (int c = 0; c < 3; ++c) {
-                    lit[c] = lit[c] * 0.35f + g[std::size_t(c)] * 0.65f;
-                }
-            }
+            colour(h, smooth_light[at], smooth_color[at], in_shadow(x, y, h) ? 0.72f : 1.0f, lit);
             for (int c = 0; c < 3; ++c) {
                 float v = lit[c] + grain;
                 v = v * (1.0f - line) + ink[c] * line;
                 px[c] = std::uint8_t(std::clamp(v, 0.0f, 255.0f));
             }
             px[3] = 255;
+        }
+    }
+    // Kaniel 2026-10-18 (floors): each cell's top and its storeys' floors in their colours.
+    const auto decimetres = [](float h) {
+        return std::int16_t(std::clamp(std::lround(h * 10.0f), -32767L, 32767L));
+    };
+    Chart::Storeys& storeys = chart.storeys;
+    storeys.width = cells_w;
+    storeys.height = cells_h;
+    const std::size_t cells = std::size_t(cells_w) * std::size_t(cells_h);
+    storeys.roof.assign(cells, Chart::NoHeight);
+    storeys.level.assign(cells * Chart::Levels, Chart::NoHeight);
+    storeys.rgb.assign(cells * Chart::Levels, 0);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t at = std::size_t(y) * std::size_t(width) + std::size_t(x);
+            if (std::isfinite(top[at]) && kept[at]) {
+                std::int16_t& roof = storeys.roof[std::size_t(y / Chart::FloorCell) * std::size_t(cells_w) +
+                                                  std::size_t(x / Chart::FloorCell)];
+                roof = std::max(roof, decimetres(smooth_top[at]));
+            }
+        }
+    }
+    for (std::size_t cell = 0; cell < cells; ++cell) {
+        if (storeys.roof[cell] == Chart::NoHeight) {
+            continue; // nothing drawn there (or cut away)
+        }
+        for (int k = 0; k < Chart::Levels; ++k) {
+            const std::size_t l = cell * Chart::Levels + std::size_t(k);
+            const float floor = (*level)[l];
+            if (!std::isfinite(floor)) {
+                break;
+            }
+            float lit[3];
+            const bool seen = level_top[l] != Chart::NoHeight;
+            colour(floor, seen ? level_light[l] : 200, seen ? level_color[l] : 0u, 0.92f, lit);
+            storeys.level[l] = decimetres(floor);
+            storeys.rgb[l] = 0xFF000000u | (std::uint32_t(lit[0]) << 16) | (std::uint32_t(lit[1]) << 8) |
+                             std::uint32_t(lit[2]);
         }
     }
     return Cropped(chart);
@@ -949,6 +1065,8 @@ Chart Cropped(const Chart& chart) {
     constexpr int Margin = 6;
     cx0 = std::max(0, cx0 - Margin), cy0 = std::max(0, cy0 - Margin);
     cx1 = std::min(chart.width - 1, cx1 + Margin), cy1 = std::min(chart.height - 1, cy1 + Margin);
+    // On the storeys' cells, so they crop with it.
+    cx0 -= cx0 % Chart::FloorCell, cy0 -= cy0 % Chart::FloorCell;
     Chart out;
     out.labels = chart.labels;
     out.width = cx1 - cx0 + 1;
@@ -962,12 +1080,114 @@ Chart Cropped(const Chart& chart) {
                     chart.rgba.data() + ((std::size_t(y + cy0) * std::size_t(chart.width)) + std::size_t(cx0)) * 4,
                     std::size_t(out.width) * 4);
     }
+    const Chart::Storeys& from = chart.storeys;
+    if (from.width > 0) {
+        Chart::Storeys& to = out.storeys;
+        const int ox = cx0 / Chart::FloorCell, oy = cy0 / Chart::FloorCell;
+        to.width = std::min(from.width - ox, (out.width + Chart::FloorCell - 1) / Chart::FloorCell);
+        to.height = std::min(from.height - oy, (out.height + Chart::FloorCell - 1) / Chart::FloorCell);
+        for (int y = 0; y < to.height; ++y) {
+            const std::size_t row = std::size_t(y + oy) * std::size_t(from.width) + std::size_t(ox);
+            to.roof.insert(to.roof.end(), from.roof.begin() + std::ptrdiff_t(row),
+                           from.roof.begin() + std::ptrdiff_t(row + std::size_t(to.width)));
+            to.level.insert(to.level.end(), from.level.begin() + std::ptrdiff_t(row * Chart::Levels),
+                            from.level.begin() + std::ptrdiff_t((row + std::size_t(to.width)) * Chart::Levels));
+            to.rgb.insert(to.rgb.end(), from.rgb.begin() + std::ptrdiff_t(row * Chart::Levels),
+                          from.rgb.begin() + std::ptrdiff_t((row + std::size_t(to.width)) * Chart::Levels));
+        }
+    }
     return out;
+}
+
+namespace {
+/// The storeys' cell of the pixel (px, py); -1 outside them.
+std::ptrdiff_t CellOf(const Chart& chart, int px, int py) {
+    const Chart::Storeys& s = chart.storeys;
+    if (px < 0 || py < 0) {
+        return -1;
+    }
+    const int cx = px / Chart::FloorCell, cy = py / Chart::FloorCell;
+    return cx < s.width && cy < s.height ? std::ptrdiff_t(cy) * s.width + cx : -1;
+}
+} // namespace
+
+bool UnderRoof(const Chart& chart, float x, float y, float z) {
+    // Most of the 3 x 3 cells round the spot covered: a lamp post or a sign overhead is not a roof.
+    const auto [px, py] = chart.PixelOf(x, z);
+    const int feet = int(std::lround((y + 3.0f) * 10.0f));
+    int covered = 0;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            const std::ptrdiff_t cell =
+                CellOf(chart, int(std::floor(px)) + dx * Chart::FloorCell, int(std::floor(py)) + dy * Chart::FloorCell);
+            if (cell >= 0 && chart.storeys.roof[std::size_t(cell)] != Chart::NoHeight &&
+                chart.storeys.roof[std::size_t(cell)] > feet) {
+                ++covered;
+            }
+        }
+    }
+    return covered >= 5;
+}
+
+void FloorView(const Chart& chart, float y, std::uint8_t* rgba) {
+    const Chart::Storeys& s = chart.storeys;
+    if (s.width <= 0) {
+        return;
+    }
+    const std::size_t cells = std::size_t(s.width) * std::size_t(s.height);
+    const int at_most = int(std::lround((y + 1.5f) * 10.0f));
+    // Each cell's storey (its highest floor up to 1.5 m above the feet), and whether a roof covers it.
+    std::vector<std::int16_t> storey(cells, Chart::NoHeight);
+    std::vector<std::int8_t> shown(cells, -1);
+    for (std::size_t c = 0; c < cells; ++c) {
+        for (int k = 0; k < Chart::Levels; ++k) {
+            const std::int16_t l = s.level[c * Chart::Levels + std::size_t(k)];
+            if (l == Chart::NoHeight) {
+                break;
+            }
+            if (l <= at_most) {
+                storey[c] = l;
+                if (s.roof[c] != Chart::NoHeight && s.roof[c] > l + 25) {
+                    shown[c] = std::int8_t(k);
+                }
+                break;
+            }
+        }
+    }
+    const auto same = [&](std::size_t c, int cx, int cy) {
+        if (cx < 0 || cy < 0 || cx >= s.width || cy >= s.height) {
+            return false;
+        }
+        const std::int16_t other = storey[std::size_t(cy) * std::size_t(s.width) + std::size_t(cx)];
+        return other != Chart::NoHeight && std::abs(int(other) - int(storey[c])) <= 12;
+    };
+    const float ink[3] = {38.0f, 29.0f, 22.0f};
+    for (int py = 0; py < chart.height; ++py) {
+        for (int px = 0; px < chart.width; ++px) {
+            const std::ptrdiff_t cell = CellOf(chart, px, py);
+            if (cell < 0 || shown[std::size_t(cell)] < 0) {
+                continue;
+            }
+            const std::size_t c = std::size_t(cell);
+            const std::uint32_t rgb = s.rgb[c * Chart::Levels + std::size_t(shown[c])];
+            // Where the storey ends (a wall, a drop): the ink line on the cell's side that faces it.
+            const int cx = px / Chart::FloorCell, cy = py / Chart::FloorCell;
+            const int sx = px % Chart::FloorCell == 0 ? -1 : (px % Chart::FloorCell == Chart::FloorCell - 1 ? 1 : 0);
+            const int sy = py % Chart::FloorCell == 0 ? -1 : (py % Chart::FloorCell == Chart::FloorCell - 1 ? 1 : 0);
+            const bool edge = (sx != 0 && !same(c, cx + sx, cy)) || (sy != 0 && !same(c, cx, cy + sy));
+            std::uint8_t* out = rgba + (std::size_t(py) * std::size_t(chart.width) + std::size_t(px)) * 4;
+            const float v[3] = {float((rgb >> 16) & 0xFF), float((rgb >> 8) & 0xFF), float(rgb & 0xFF)};
+            for (int k = 0; k < 3; ++k) {
+                out[k] = std::uint8_t(edge ? v[k] * 0.3f + ink[k] * 0.7f : v[k]);
+            }
+            out[3] = 255;
+        }
+    }
 }
 
 std::vector<std::uint8_t> Save(const Chart& chart) {
     std::vector<std::uint8_t> file(32);
-    std::memcpy(file.data(), "BBMAP5\0\0", 8);
+    std::memcpy(file.data(), "BBMAP6\0\0", 8);
     std::memcpy(file.data() + 8, &chart.width, 4);
     std::memcpy(file.data() + 12, &chart.height, 4);
     std::memcpy(file.data() + 16, &chart.x0, 4);
@@ -993,11 +1213,31 @@ std::vector<std::uint8_t> Save(const Chart& chart) {
         put(&label.x);
         put(&label.z);
     }
+    // The storeys: their size, then the tops, the floors and their colours, zlib-compressed.
+    const Chart::Storeys& s = chart.storeys;
+    std::vector<std::uint8_t> raw;
+    const auto append = [&](const auto& values) {
+        const auto* b = reinterpret_cast<const std::uint8_t*>(values.data());
+        raw.insert(raw.end(), b, b + values.size() * sizeof(values[0]));
+    };
+    append(s.roof);
+    append(s.level);
+    append(s.rgb);
+    mz_ulong storeys_size = mz_compressBound(mz_ulong(raw.size()));
+    std::vector<std::uint8_t> storeys_packed(storeys_size);
+    if (mz_compress2(storeys_packed.data(), &storeys_size, raw.data(), mz_ulong(raw.size()), 6) != MZ_OK) {
+        return {};
+    }
+    const auto storeys_stored = std::uint32_t(storeys_size);
+    put(&s.width);
+    put(&s.height);
+    put(&storeys_stored);
+    file.insert(file.end(), storeys_packed.begin(), storeys_packed.begin() + std::ptrdiff_t(storeys_size));
     return file;
 }
 
 std::optional<Chart> Load(std::span<const std::uint8_t> file) {
-    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP5\0\0", 8) != 0) {
+    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP6\0\0", 8) != 0) {
         return std::nullopt;
     }
     Chart chart;
@@ -1030,6 +1270,32 @@ std::optional<Chart> Load(std::span<const std::uint8_t> file) {
         std::memcpy(&label.z, file.data() + at + 8, 4);
         chart.labels.push_back(label);
     }
+    Chart::Storeys s;
+    std::uint32_t storeys_stored = 0;
+    if (at + 12 > file.size()) {
+        return std::nullopt;
+    }
+    std::memcpy(&s.width, file.data() + at, 4);
+    std::memcpy(&s.height, file.data() + at + 4, 4);
+    std::memcpy(&storeys_stored, file.data() + at + 8, 4);
+    at += 12;
+    if (s.width < 0 || s.height < 0 || s.width > 8192 || s.height > 8192 || storeys_stored > file.size() - at) {
+        return std::nullopt;
+    }
+    const std::size_t cells = std::size_t(s.width) * std::size_t(s.height);
+    s.roof.resize(cells);
+    s.level.resize(cells * Chart::Levels);
+    s.rgb.resize(cells * Chart::Levels);
+    std::vector<std::uint8_t> raw(cells * 2 + cells * Chart::Levels * 2 + cells * Chart::Levels * 4);
+    mz_ulong raw_size = mz_ulong(raw.size());
+    if (cells > 0 &&
+        (mz_uncompress(raw.data(), &raw_size, file.data() + at, storeys_stored) != MZ_OK || raw_size != raw.size())) {
+        return std::nullopt;
+    }
+    std::memcpy(s.roof.data(), raw.data(), cells * 2);
+    std::memcpy(s.level.data(), raw.data() + cells * 2, cells * Chart::Levels * 2);
+    std::memcpy(s.rgb.data(), raw.data() + cells * 2 + cells * Chart::Levels * 2, cells * Chart::Levels * 4);
+    chart.storeys = std::move(s);
     return chart;
 }
 
@@ -1237,6 +1503,9 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
                 }
             }
         }
+    }
+    for (std::size_t i = 1; i < canvases.size(); ++i) {
+        canvases[i].ShareFloors(canvases[0]);
     }
     // The game's colour grade of the (first) area's block.
     if (const auto tpf = BbGameArt::InflateDcx(read("map/" + sources[0].name.substr(0, 3) + "/" +

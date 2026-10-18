@@ -325,6 +325,8 @@
  "Map screen": "지도 화면",
  "The map is open over the game: Circle comes back here": "지도가 게임 위에 열려 있습니다: ○로 돌아옵니다",
  "Triangle  Whole map": "△  전체 지도",
+ "R3  Floors": "R3  층",
+ "R3  Roofs": "R3  지붕",
  "%d of %d want to skip": "%d/%d명이 건너뛰기 원함",
  "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  지역     스틱, 드래그  이동     L2 / R2, 휠  확대/축소     □  나",
  "Frame generation: provider": "프레임 생성: 방식",

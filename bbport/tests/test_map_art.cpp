@@ -497,6 +497,48 @@ int main() {
         const std::uint8_t* bottle = PixelAt(calm, 2.2f, 2.2f);
         const std::uint8_t* ground = PixelAt(calm, 3.0f, 3.0f);
         assert(bottle && ground && std::abs(int(bottle[0]) - int(ground[0])) < 12); // no bright dot
+        // Kaniel 2026-10-18 ("sometimes roofs, sometimes floors"): a red-roofed house (6 m up, 5 to
+        // 15 m, walkable) on green ground, walls 2 m thick round a floor of grey stone; the roof
+        // shows from outside and from on it, the floor from under it, inked where it ends (walls).
+        {
+            const PlayArea yard{0, 20, 0, 20, 100};
+            Canvas house(yard, 2.0f, 4096);
+            const auto square = [](float a, float b, float y) {
+                return std::vector<float>{a, y, a, b, y, a, a, y, b, b, y, a, b, y, b, a, y, b};
+            };
+            std::vector<float> ground;
+            for (const auto& part : {std::array{0.0f, 20.0f, 0.0f, 5.0f}, std::array{0.0f, 20.0f, 15.0f, 20.0f},
+                                     std::array{0.0f, 5.0f, 5.0f, 15.0f}, std::array{15.0f, 20.0f, 5.0f, 15.0f}}) {
+                const std::vector<float> quad{part[0], 0, part[2], part[1], 0, part[2], part[0], 0, part[3],
+                                              part[1], 0, part[2], part[1], 0, part[3], part[0], 0, part[3]};
+                ground.insert(ground.end(), quad.begin(), quad.end());
+            }
+            house.AddWalkable(ground);
+            house.AddWalkable(square(7, 13, 0.2f)); // the floor inside the walls
+            house.AddWalkable(square(5, 15, 6.0f)); // the roof
+            house.Add(ground, std::vector<std::uint32_t>(8, 0xFF20A020u));
+            house.Add(square(7, 13, 0.2f), std::vector<std::uint32_t>(2, 0xFF808080u));
+            house.Add(square(5, 15, 6.0f), std::vector<std::uint32_t>(2, 0xFFC02020u));
+            const Chart chart = house.Finish();
+            const std::uint8_t* roof = PixelAt(chart, 10, 10);
+            assert(roof && roof[0] > roof[1] + 20); // red from above
+            assert(UnderRoof(chart, 10, 0.2f, 10) && !UnderRoof(chart, 2, 0, 2) && !UnderRoof(chart, 10, 6, 10));
+            std::vector<std::uint8_t> inside = chart.rgba;
+            FloorView(chart, 0.2f, inside.data());
+            const auto at = [&](float x, float z) {
+                const auto [px, py] = chart.PixelOf(x, z);
+                return inside.data() + (std::size_t(py) * std::size_t(chart.width) + std::size_t(px)) * 4;
+            };
+            const std::uint8_t* floor = at(10.1f, 10.1f);
+            assert(std::abs(int(floor[0]) - int(floor[1])) < 20 && std::abs(int(floor[1]) - int(floor[2])) < 25); // grey
+            assert(std::memcmp(at(2, 2), PixelAt(chart, 2, 2), 4) == 0); // outside: as it was
+            const std::uint8_t* wall = at(7.1f, 10.1f);                    // the floor's edge by the wall
+            assert(wall[0] * 4 < floor[0] * 3);                            // inked
+            // Standing on the roof: the roof.
+            std::vector<std::uint8_t> above = chart.rgba;
+            FloorView(chart, 6.0f, above.data());
+            assert(above == chart.rgba);
+        }
         // Kaniel 2026-10-18 ("extra stuff outside the map"): with walkable floors given, what lies
         // more than Canvas::Reach metres from them goes; what is near them stays.
         {
@@ -551,9 +593,14 @@ int main() {
             chart.rgba.push_back(std::uint8_t(i * 10));
         }
         chart.labels = {{2411, -219.5f, 182.25f}, {2421, 54.0f, 150.75f}};
+        chart.storeys.width = 2;
+        chart.storeys.height = 1;
+        chart.storeys.roof = {60, Chart::NoHeight};
+        chart.storeys.level = {50, 0, Chart::NoHeight, Chart::NoHeight, Chart::NoHeight, Chart::NoHeight};
+        chart.storeys.rgb = {0xFF102030u, 0xFF405060u, 0, 0, 0, 0};
         const auto file = Save(chart);
         const auto back = Load(file);
-        assert(back && back->labels == chart.labels);
+        assert(back && back->labels == chart.labels && back->storeys == chart.storeys);
         assert(back && back->width == 3 && back->height == 2 && back->x0 == -5.5f && back->z1 == 7.25f &&
                back->ppm == 2.5f && back->rgba == chart.rgba);
         auto broken = file;

@@ -325,6 +325,8 @@
  "Map screen": "Karttanäkymä",
  "The map is open over the game: Circle comes back here": "Kartta on auki pelin päällä: Ympyrä palaa tänne",
  "Triangle  Whole map": "Kolmio  Koko kartta",
+ "R3  Floors": "R3  Kerrokset",
+ "R3  Roofs": "R3  Katot",
  "%d of %d want to skip": "%d/%d haluaa ohittaa",
  "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Alue     Tikut, veto  Siirrä     L2 / R2, rulla  Zoomaus     Neliö  Sinä",
  "Frame generation: provider": "Ruutujen generointi: tekniikka",

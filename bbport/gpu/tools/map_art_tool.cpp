@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // bbport co-op: an area's map picture as the map screen draws it (shim/bbport_map_art.h), to a PNG.
 //   map-art-tool <dvdroot_ps4> <packed maps, hex: 18010000[,18000000...]> <out.png> [pixels a metre] [threads]
+//                [floors at height]
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -45,10 +46,24 @@ int main(int argc, char** argv) {
         return 1;
     }
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    size_t size = 0;
-    void* png = tdefl_write_image_to_png_file_in_memory(chart->rgba.data(), chart->width, chart->height, 4, &size);
-    std::ofstream(argv[3], std::ios::binary).write(static_cast<const char*>(png), std::streamsize(size));
-    mz_free(png);
+    const auto write = [&](const std::vector<std::uint8_t>& rgba, const std::string& path) {
+        size_t size = 0;
+        void* png = tdefl_write_image_to_png_file_in_memory(rgba.data(), chart->width, chart->height, 4, &size);
+        std::ofstream(path, std::ios::binary).write(static_cast<const char*>(png), std::streamsize(size));
+        mz_free(png);
+    };
+    write(chart->rgba, argv[3]);
+    // A sixth argument, heights (-12.5,3): also the floors as one standing at each sees them
+    // (BbMapArt::FloorView), in <out>-floors<height>.png.
+    for (const char* at = argc > 6 ? argv[6] : ""; *at;) {
+        char* end = nullptr;
+        const float height = std::strtof(at, &end);
+        std::vector<std::uint8_t> rgba = chart->rgba;
+        BbMapArt::FloorView(*chart, height, rgba.data());
+        const std::string out = argv[3];
+        write(rgba, out.substr(0, out.size() - 4) + "-floors" + std::to_string(int(height)) + ".png");
+        at = *end == ',' ? end + 1 : end;
+    }
     for (const auto& label : chart->labels) {
         std::printf("label %d at %.1f %.1f\n", label.name_id, label.x, label.z);
     }

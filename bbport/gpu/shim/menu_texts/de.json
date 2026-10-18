@@ -325,6 +325,8 @@
  "Map screen": "Kartenansicht",
  "The map is open over the game: Circle comes back here": "Die Karte ist über dem Spiel geöffnet: Kreis kehrt hierher zurück",
  "Triangle  Whole map": "Dreieck  Ganze Karte",
+ "R3  Floors": "R3  Etagen",
+ "R3  Roofs": "R3  Dächer",
  "%d of %d want to skip": "%d von %d wollen überspringen",
  "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Gebiet     Sticks, ziehen  Bewegen     L2 / R2, Mausrad  Zoom     Viereck  Du",
  "Frame generation: provider": "Frame-Generierung: Technik",

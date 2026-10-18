@@ -325,6 +325,8 @@
  "Map screen": "Ekran mapy",
  "The map is open over the game: Circle comes back here": "Mapa jest otwarta nad grą: Kółko wraca tutaj",
  "Triangle  Whole map": "Trójkąt  Cała mapa",
+ "R3  Floors": "R3  Piętra",
+ "R3  Roofs": "R3  Dachy",
  "%d of %d want to skip": "%d z %d chce pominąć",
  "L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You": "L1 / R1  Obszar     Gałki, przeciąganie  Ruch     L2 / R2, kółko  Powiększenie     Kwadrat  Ty",
  "Frame generation: provider": "Generowanie klatek: technologia",
