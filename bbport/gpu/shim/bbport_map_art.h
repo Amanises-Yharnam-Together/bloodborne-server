@@ -114,7 +114,7 @@ private:
     std::vector<std::uint32_t> color; // its material's colour (0 none)
 };
 
-/// A chart as kept in the user folder ("BBMAP3": the number goes up whenever the drawing changes,
+/// A chart as kept in the user folder ("BBMAP4": the number goes up whenever the drawing changes,
 /// so pictures drawn the old way are drawn again; the frame, then the pixels zlib-compressed), and
 /// read back (nothing when it is not one).
 std::vector<std::uint8_t> Save(const Chart& chart);
