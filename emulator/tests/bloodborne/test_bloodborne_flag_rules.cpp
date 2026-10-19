@@ -325,6 +325,22 @@ TEST(BloodborneFlagRules, AnAltarsDungeonNamesItsChalice) {
     EXPECT_FALSE(AltarChaliceGoods(11)) << "no standard chalice there";
 }
 
+// Kaniel 2026-10-19: one player's step into a chalice dungeon took everyone in the Dream along,
+// into a void. The altar's talk sets "warp to this altar's layer" (72100420 + altar) and the
+// layer's flag (72100300 + layer), and each game's own warp event (12107100, run in each game)
+// fires on them; the game sends those sets to the other players. They are each player's own, and
+// so is the current altar the warp event marks (9020 + altar).
+TEST(BloodborneFlagRules, AChaliceWarpIsEachPlayersOwn) {
+    for (const s32 flag : {72100300, 72100309, 72100420, 72100421, 72100426, 9020, 9021, 9026}) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::PerPlayer) << flag;
+        EXPECT_TRUE(KeepsLocalFlag(true, flag)) << flag;
+        EXPECT_FALSE(CarriesToGuestWorld(flag)) << flag << ": a request, not progress";
+        EXPECT_FALSE(SharedWithParty(flag)) << flag;
+    }
+    EXPECT_NE(RuleFor(72100310).owner, FlagOwner::PerPlayer);
+    EXPECT_NE(RuleFor(72100430).owner, FlagOwner::PerPlayer);
+}
+
 TEST(BloodborneFlagRules, ListsComeFromTheTable) {
     EXPECT_EQ(GuestProgressFlags(true, true, 0x18000000, true, true),
               (std::vector<s32>{9401, 9403}));
