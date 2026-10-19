@@ -43,6 +43,12 @@ float Luma(vec3 c) {
     return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
 
+// The mean luminance over about 4x4 pixels around `uv` (four bilinear taps `px` away).
+float AreaLuma(sampler2D image, vec2 uv, vec2 px) {
+    return 0.25 * (Luma(Read(image, uv + vec2(-px.x, -px.y))) + Luma(Read(image, uv + vec2(px.x, -px.y))) +
+                   Luma(Read(image, uv + vec2(-px.x, px.y))) + Luma(Read(image, uv + vec2(px.x, px.y))));
+}
+
 void main() {
     const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     const ivec2 size = imageSize(gain);
@@ -57,7 +63,9 @@ void main() {
     const vec3 diff = abs(pow(frame, vec3(1.0 / 2.2)) - pow(clean, vec3(1.0 / 2.2)));
     const float ui = smoothstep(0.10, 0.25, max(max(diff.r, diff.g), diff.b));
     const float ls = Luma(clean);
-    const float expand = HighlightGain(ls, headroom, highlights);
+    const vec2 px = 1.5 / vec2(size);
+    const float area = has_hudless != 0u ? AreaLuma(hudless, uv, px) : AreaLuma(display, uv, px);
+    const float expand = HighlightGain(LocalLuma(ls, area), headroom, highlights);
     if (valid < 0.5 || highlights <= 0.0) {
         imageStore(gain, pixel, vec4(mix(expand, 1.0, ui), ui, 0.0, 0.0));
         return;

@@ -470,9 +470,10 @@ float HdrPaperWhite() {
     if (picked != HdrAuto) {
         return float(picked);
     }
-    // At most a quarter of the peak: lights get two stops above white. Bloodborne's 16-bit scene
-    // holds nothing brighter than its SDR picture, so that room is all HDR adds.
-    return display > 0.0f ? std::min(display, PeakBeforeWhite() / 4.0f) : 200.0f;
+    // At most half the peak: lights get a stop above white. Bloodborne's 16-bit scene holds
+    // nothing brighter than its SDR picture, so that room is all HDR adds (Kaniel 2026-10-19: a
+    // quarter, 250 nits on his display, was too dark; the desktop's 480 fits under his 1000).
+    return display > 0.0f ? std::min(display, PeakBeforeWhite() / 2.0f) : 200.0f;
 }
 
 float HdrPeak() {
