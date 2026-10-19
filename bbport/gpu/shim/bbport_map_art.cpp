@@ -1129,6 +1129,25 @@ bool UnderRoof(const Chart& chart, float x, float y, float z) {
     return covered >= 5;
 }
 
+std::int16_t ShownHeight(const Chart& chart, std::size_t cell, float y) {
+    const Chart::Storeys& s = chart.storeys;
+    const std::int16_t roof = s.roof[cell];
+    if (std::isnan(y) || roof == Chart::NoHeight) {
+        return roof;
+    }
+    const int at_most = int(std::lround((y + 1.5f) * 10.0f));
+    for (int k = 0; k < Chart::Levels; ++k) {
+        const std::int16_t l = s.level[cell * Chart::Levels + std::size_t(k)];
+        if (l == Chart::NoHeight) {
+            break;
+        }
+        if (l <= at_most) {
+            return roof > l + 25 ? l : roof;
+        }
+    }
+    return roof;
+}
+
 void FloorView(const Chart& chart, float y, std::uint8_t* rgba) {
     const Chart::Storeys& s = chart.storeys;
     if (s.width <= 0) {

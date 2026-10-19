@@ -2688,6 +2688,19 @@ SCENARIOS = {
         "console_expect": {"host": [r"Map: shows the floors at -?\d+\.\d m", r"Map: shows the roofs"]},
         "timeout": 240,
     },
+    # Kaniel 2026-10-19 ("every map should be just one picture", "3d map ... as an optional
+    # feature"): every world on one picture (Triangle shows all of them), L3 the 3D view.
+    "map-3d": {
+        "about": "the map screen's one picture of every world and its 3D view: L3 turns the "
+                 "landscape on, Triangle shows all of it, L3 again the flat map; pictures of each",
+        "roles": {
+            "host": [START, "godmode", "wait 25", "keys map", "wait 15", "shot map-flat", "keys l3", "wait 4",
+                     "shot map-3d", "keys triangle", "wait 15", "shot map-3d-all", "keys l3", "wait 4",
+                     "shot map-flat-all", "keys circle", "wait 2"],
+        },
+        "console_expect": {"host": [r"Map: 3D view", r"Map: flat view"]},
+        "timeout": 240,
+    },
     # Kaniel 2026-10-17: the map screen in a session: the other hunter at its spot on the
     # picture, ringed in the compass's light gray, and listed with its area.
     "map-team": {

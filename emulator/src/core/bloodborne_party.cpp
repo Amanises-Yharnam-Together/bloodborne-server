@@ -4483,9 +4483,9 @@ std::optional<double> AutoplayChapterBudget(const AutoplayCommand& command) {
 }
 
 std::optional<std::string> AutoplayMenuKeys(const std::vector<std::string>& tokens) {
-    static constexpr std::array<std::string_view, 16> Keys{
-        "toggle", "up",    "down", "left", "right",  "enter",  "back",     "l1",
-        "r1",     "kdown", "kup",  "map",  "circle", "square", "triangle", "r3"};
+    static constexpr std::array<std::string_view, 17> Keys{
+        "toggle", "up",  "down", "left",   "right",  "enter",    "back", "l1", "r1",
+        "kdown",  "kup", "map",  "circle", "square", "triangle", "r3",   "l3"};
     if (tokens.empty()) {
         return std::nullopt;
     }

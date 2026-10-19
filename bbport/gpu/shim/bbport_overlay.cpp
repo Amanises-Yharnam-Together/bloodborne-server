@@ -257,6 +257,7 @@ ImGuiKey KeyFromSdl(SDL_Keycode key) {
     case SDLK_C: return ImGuiKey_C;
     case SDLK_M: return ImGuiKey_M;
     case SDLK_F: return ImGuiKey_F;
+    case SDLK_V: return ImGuiKey_V;
     case SDLK_EQUALS: return ImGuiKey_Equal;
     case SDLK_MINUS: return ImGuiKey_Minus;
     default: return ImGuiKey_None;
@@ -276,6 +277,7 @@ ImGuiKey KeyFromGamepad(u8 button) {
     case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return ImGuiKey_GamepadL1;
     case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return ImGuiKey_GamepadR1;
     case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return ImGuiKey_GamepadR3;
+    case SDL_GAMEPAD_BUTTON_LEFT_STICK: return ImGuiKey_GamepadL3;
     case SDL_GAMEPAD_BUTTON_START: return ImGuiKey_GamepadStart;
     case SDL_GAMEPAD_BUTTON_BACK: return ImGuiKey_GamepadBack;
     case SDL_GAMEPAD_BUTTON_TOUCHPAD: return ImGuiKey_GamepadBack;
@@ -4247,8 +4249,14 @@ struct State {
     // Kaniel 2026-10-18 ("sometimes roofs, sometimes floors"): 0 by itself (floors while a roof
     // is over the player), 1 roofs, 2 floors (R3 or F switches).
     int floors = 0;
+    // Kaniel 2026-10-19 ("3d map ... as an optional feature"): the picture as a landscape seen
+    // from an angle (L3 or V): turned `yaw` radians from north, tilted `pitch` from the ground
+    // (pi/2 straight down), round the height `cy` of the middle.
+    bool three_d = false;
+    float yaw = 0.0f, pitch = 0.95f, cy = NAN;
 };
 State state;
+bool three_d_kept = false; // the 3D view stays on the next time the map opens
 
 /// An area's picture as a texture.
 struct ChartTexture {
@@ -4256,8 +4264,8 @@ struct ChartTexture {
     std::shared_ptr<const BbMapArt::Chart> chart;
     ImTextureData* texture = nullptr;
 };
-/// Kaniel 2026-10-17 ("one big map"): the pictures of the shown area's world drawn so far (the
-/// other worlds' go when another is shown).
+/// Kaniel 2026-10-17 ("one big map"), 2026-10-19 ("every map should be just one picture"): the
+/// pictures of every area the screen goes through, drawn so far, on one atlas (AtlasOffset).
 std::map<uint32_t, ChartTexture> charts;
 std::vector<ImTextureData*> dying;
 
@@ -4288,6 +4296,36 @@ int WorldOf(uint32_t map) {
         return 3;
     default:
         return 100 + int(map >> 16);
+    }
+}
+
+/// Kaniel 2026-10-19 ("every map should be just one picture"): where each world lies on the one
+/// picture, in metres added to its own coordinates. The worlds share no coordinates with each
+/// other (each is a dream of its own), so they are laid side by side with 150 m between them:
+/// the waking world (x -575 to 495, z -492 to 782) in the middle, the Nightmare Frontier and the
+/// Hunter's Nightmare (x -770 to 221, z -997 to 47) east of it, the Nightmare of Mensis (x -215
+/// to 223, z -122 to 176) north of those, the Hunter's Dream and the Abandoned Old Workshop west.
+struct Place {
+    float dx = 0.0f, dz = 0.0f;
+};
+Place AtlasOffset(uint32_t map) {
+    switch (WorldOf(map)) {
+    case 1:
+        return {};
+    case 3:
+        return {1414.0f, 620.0f};
+    case 2:
+        return {859.0f, 939.0f};
+    default:
+        break;
+    }
+    switch (map >> 16) {
+    case 0x1500: // the Hunter's Dream
+        return {-793.0f, 145.0f};
+    case 0x1501: // the Abandoned Old Workshop
+        return {-891.0f, -165.0f};
+    default: // anything else (a chalice's): south-west of the waking world
+        return {-900.0f, -800.0f};
     }
 }
 
@@ -4414,8 +4452,7 @@ void Refresh() {
     for (int i = 0; i < view.member_count; ++i) {
         Compass::RefreshPortrait(portraits[i], view.members[i].board);
     }
-    // The shown area's world: the other worlds' pictures go, this one's come as they are drawn
-    // (the shown area's asked for first).
+    // Every area the screen goes through, as they are drawn (the shown area's asked for first).
     const auto world = WorldAreas();
     for (auto it = charts.begin(); it != charts.end();) {
         if (std::find(world.begin(), world.end(), it->first) == world.end()) {
@@ -4483,14 +4520,9 @@ std::vector<uint32_t> Areas() {
     return areas;
 }
 
-/// The areas drawn with the shown one: those of its world among Areas().
+/// The areas drawn with the shown one: all of Areas(), each world where AtlasOffset puts it.
 std::vector<uint32_t> WorldAreas() {
-    std::vector<uint32_t> world;
-    for (const uint32_t map : Areas()) {
-        if (WorldOf(map) == WorldOf(state.shown)) {
-            world.push_back(map);
-        }
-    }
+    std::vector<uint32_t> world = Areas();
     if (std::find(world.begin(), world.end(), state.shown) == world.end() && state.shown != 0) {
         world.push_back(state.shown);
     }
@@ -4525,13 +4557,36 @@ const char* BlockText(int block) {
     }
 }
 
-/// The view's transform: world (x, z) to the screen inside `box`.
+/// The view's transform: atlas (x, z) to the screen inside `box`; in the 3D view the spot turned
+/// by the yaw and seen from the pitch, its height `y` (metres; NaN: the middle's) lifting it.
 struct Frame {
     ImVec2 p0, p1;
     ImVec2 Mid() const { return ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f); }
-    ImVec2 Screen(float x, float z) const {
+    ImVec2 Screen(float x, float z, float y = NAN) const {
         const ImVec2 m = Mid();
-        return ImVec2(m.x + (x - state.cx) * state.zoom, m.y - (z - state.cz) * state.zoom);
+        if (!state.three_d) {
+            return ImVec2(m.x + (x - state.cx) * state.zoom, m.y - (z - state.cz) * state.zoom);
+        }
+        const float dx = x - state.cx, dz = z - state.cz;
+        const float c = std::cos(state.yaw), s = std::sin(state.yaw);
+        const float u = dx * c - dz * s, v = dx * s + dz * c; // right, ahead
+        const float up = std::isnan(y) || std::isnan(state.cy) ? 0.0f : y - state.cy;
+        return ImVec2(m.x + u * state.zoom,
+                      m.y - (v * std::sin(state.pitch) + up * std::cos(state.pitch)) * state.zoom);
+    }
+    /// An area's own spot, where its world lies on the atlas.
+    ImVec2 At(uint32_t map, float x, float z, float y = NAN) const {
+        const Place p = AtlasOffset(map);
+        return Screen(x + p.dx, z + p.dz, y);
+    }
+    /// A move of the picture by (sx, sy) screen pixels, in atlas metres.
+    std::array<float, 2> Metres(float sx, float sy) const {
+        if (!state.three_d) {
+            return {sx / state.zoom, -sy / state.zoom};
+        }
+        const float u = sx / state.zoom, v = -sy / state.zoom / std::max(0.2f, std::sin(state.pitch));
+        const float c = std::cos(state.yaw), s = std::sin(state.yaw);
+        return {u * c + v * s, -u * s + v * c};
     }
 };
 
@@ -4541,9 +4596,218 @@ float FitZoom(const Frame& frame, const BbMapArt::Chart& chart) {
     return std::min((frame.p1.x - frame.p0.x) / w, (frame.p1.y - frame.p0.y) / h) * 0.95f;
 }
 
-void CentreOnChart(const BbMapArt::Chart& chart) {
-    state.cx = chart.x0 + float(chart.width) / chart.ppm * 0.5f;
-    state.cz = chart.z1 - float(chart.height) / chart.ppm * 0.5f;
+void CentreOnChart(uint32_t map, const BbMapArt::Chart& chart) {
+    const Place p = AtlasOffset(map);
+    state.cx = chart.x0 + float(chart.width) / chart.ppm * 0.5f + p.dx;
+    state.cz = chart.z1 - float(chart.height) / chart.ppm * 0.5f + p.dz;
+}
+
+/// The atlas's extent of the pictures drawn so far: x0, x1, z0, z1.
+std::array<float, 4> AtlasExtent() {
+    float x0 = FLT_MAX, x1 = -FLT_MAX, z0 = FLT_MAX, z1 = -FLT_MAX;
+    for (const auto& [map, c] : charts) {
+        const BbMapArt::Chart& chart = *c.chart;
+        const Place p = AtlasOffset(map);
+        x0 = std::min(x0, chart.x0 + p.dx), x1 = std::max(x1, chart.x0 + float(chart.width) / chart.ppm + p.dx);
+        z0 = std::min(z0, chart.z1 - float(chart.height) / chart.ppm + p.dz), z1 = std::max(z1, chart.z1 + p.dz);
+    }
+    return {x0, x1, z0, z1};
+}
+
+/// The picture's top (BbMapArt::Chart::Storeys) at an atlas spot; NaN where nothing is drawn.
+float TopAt(float x, float z) {
+    for (const auto& [map, c] : charts) {
+        const BbMapArt::Chart& chart = *c.chart;
+        const BbMapArt::Chart::Storeys& s = chart.storeys;
+        const Place p = AtlasOffset(map);
+        const auto [px, py] = chart.PixelOf(x - p.dx, z - p.dz);
+        const int cx = int(std::floor(px)) / BbMapArt::Chart::FloorCell, cy = int(std::floor(py)) / BbMapArt::Chart::FloorCell;
+        if (px >= 0 && py >= 0 && cx < s.width && cy < s.height) {
+            const int16_t top = s.roof[size_t(cy) * size_t(s.width) + size_t(cx)];
+            if (top != BbMapArt::Chart::NoHeight) {
+                return float(top) / 10.0f;
+            }
+        }
+    }
+    return NAN;
+}
+
+/// Kaniel 2026-10-19 ("3d map ... as an optional feature"): the pictures as landscapes, each a
+/// grid over its tops (BbMapArt::Chart::Storeys) with the picture on it, drawn far to near so the
+/// near ground covers what lies behind it. The grid is coarse enough to stay under ImGui's 16-bit
+/// vertex count (about 40,000 vertices for everything in view); the slopes facing away from the
+/// light are darker, so walls read as walls.
+void DrawLandscapes(ImDrawList* draw, const Frame& frame) {
+    // What the frame can show: the corners taken back to the ground at the middle's height, with
+    // room for what stands up into it.
+    float vx0 = FLT_MAX, vx1 = -FLT_MAX, vz0 = FLT_MAX, vz1 = -FLT_MAX;
+    for (const ImVec2 corner : {frame.p0, frame.p1, ImVec2(frame.p0.x, frame.p1.y), ImVec2(frame.p1.x, frame.p0.y)}) {
+        const ImVec2 m = frame.Mid();
+        const auto [mx, mz] = frame.Metres(corner.x - m.x, corner.y - m.y);
+        vx0 = std::min(vx0, state.cx + mx), vx1 = std::max(vx1, state.cx + mx);
+        vz0 = std::min(vz0, state.cz + mz), vz1 = std::max(vz1, state.cz + mz);
+    }
+    const float margin = 80.0f;
+    vx0 -= margin, vx1 += margin, vz0 -= margin, vz1 += margin;
+    struct Piece {
+        const ChartTexture* c;
+        Place p;
+        int i0, i1, j0, j1; // cells in view
+        float ahead;        // how far ahead its middle lies (drawn far first)
+    };
+    std::vector<Piece> pieces;
+    double cells_in_view = 0;
+    const float c = std::cos(state.yaw), s = std::sin(state.yaw);
+    for (const auto& [map, ct] : charts) {
+        if (ct.texture == nullptr) {
+            continue;
+        }
+        const BbMapArt::Chart& chart = *ct.chart;
+        const BbMapArt::Chart::Storeys& st = chart.storeys;
+        if (st.width < 2 || st.height < 2) {
+            continue;
+        }
+        const Place p = AtlasOffset(map);
+        const float cell_m = float(BbMapArt::Chart::FloorCell) / chart.ppm;
+        const int i0 = std::max(0, int((vx0 - p.dx - chart.x0) / cell_m));
+        const int i1 = std::min(st.width - 1, int((vx1 - p.dx - chart.x0) / cell_m));
+        const int j0 = std::max(0, int((chart.z1 + p.dz - vz1) / cell_m));
+        const int j1 = std::min(st.height - 1, int((chart.z1 + p.dz - vz0) / cell_m));
+        if (i0 >= i1 || j0 >= j1) {
+            continue;
+        }
+        const float mx = chart.x0 + p.dx + float(i0 + i1) * 0.5f * cell_m - state.cx;
+        const float mz = chart.z1 + p.dz - float(j0 + j1) * 0.5f * cell_m - state.cz;
+        pieces.push_back(Piece{&ct, p, i0, i1, j0, j1, mx * s + mz * c});
+        cells_in_view += double(i1 - i0) * double(j1 - j0);
+    }
+    std::sort(pieces.begin(), pieces.end(), [](const Piece& a, const Piece& b) { return a.ahead > b.ahead; });
+    // One step for all: the grid's points stay under the budget (the window's other drawing
+    // shares the 65,536 vertices).
+    constexpr double Budget = 36000.0;
+    const int step = std::max(1, int(std::ceil(std::sqrt(cells_in_view / Budget))));
+    for (const Piece& piece : pieces) {
+        const BbMapArt::Chart& chart = *piece.c->chart;
+        const BbMapArt::Chart::Storeys& st = chart.storeys;
+        const float cell_m = float(BbMapArt::Chart::FloorCell) / chart.ppm;
+        const int nx = (piece.i1 - piece.i0) / step + 1, nz = (piece.j1 - piece.j0) / step + 1;
+        if (nx < 2 || nz < 2) {
+            continue;
+        }
+        const float tone = piece.c->map == state.shown ? 1.0f : 0.62f;
+        const auto top = [&](int i, int j) {
+            i = std::min(i, st.width - 1), j = std::min(j, st.height - 1);
+            // As the picture shows it: the floors where it shows the floors.
+            const int16_t t = BbMapArt::ShownHeight(chart, size_t(j) * size_t(st.width) + size_t(i), drawn_floors);
+            return t == BbMapArt::Chart::NoHeight ? NAN : float(t) / 10.0f;
+        };
+        // The grid's points: on screen, their place in the picture, their light.
+        draw->PushTexture(piece.c->texture->GetTexRef());
+        std::vector<float> heights(size_t(nx) * size_t(nz));
+        for (int b = 0; b < nz; ++b) {
+            for (int a = 0; a < nx; ++a) {
+                heights[size_t(b) * size_t(nx) + size_t(a)] = top(piece.i0 + a * step, piece.j0 + b * step);
+            }
+        }
+        // Lamp posts, trees and spires a point wide stand as needles over the grid: each point
+        // takes the median of the points round it (walls and roofs, many points wide, stay).
+        {
+            const std::vector<float> raw = heights;
+            for (int b = 0; b < nz; ++b) {
+                for (int a = 0; a < nx; ++a) {
+                    float& h = heights[size_t(b) * size_t(nx) + size_t(a)];
+                    if (std::isnan(h)) {
+                        continue;
+                    }
+                    float near[9];
+                    int n = 0;
+                    for (int db = -1; db <= 1; ++db) {
+                        for (int da = -1; da <= 1; ++da) {
+                            const int na = a + da, nb = b + db;
+                            if (na >= 0 && nb >= 0 && na < nx && nb < nz) {
+                                const float v = raw[size_t(nb) * size_t(nx) + size_t(na)];
+                                if (!std::isnan(v)) {
+                                    near[n++] = v;
+                                }
+                            }
+                        }
+                    }
+                    std::nth_element(near, near + n / 2, near + n);
+                    h = near[n / 2];
+                }
+            }
+        }
+        const auto h_at = [&](int a, int b) {
+            a = std::clamp(a, 0, nx - 1), b = std::clamp(b, 0, nz - 1);
+            return heights[size_t(b) * size_t(nx) + size_t(a)];
+        };
+        int quads = 0;
+        for (int b = 0; b + 1 < nz; ++b) {
+            for (int a = 0; a + 1 < nx; ++a) {
+                if (!std::isnan(h_at(a, b)) && !std::isnan(h_at(a + 1, b)) && !std::isnan(h_at(a, b + 1)) &&
+                    !std::isnan(h_at(a + 1, b + 1))) {
+                    ++quads;
+                }
+            }
+        }
+        if (quads == 0) {
+            draw->PopTexture();
+            continue;
+        }
+        // The grid's points once each (shared by the quads round them): on screen, their place in
+        // the picture, their light (steep ground, a wall, darker; more so facing away from the
+        // north-west light).
+        draw->PrimReserve(quads * 6, nx * nz);
+        const ImDrawIdx first = ImDrawIdx(draw->_VtxCurrentIdx);
+        const float u_scale = 1.0f / float(chart.width), v_scale = 1.0f / float(chart.height);
+        const float run = 2.0f * float(step) * cell_m;
+        for (int b = 0; b < nz; ++b) {
+            for (int a = 0; a < nx; ++a) {
+                const int i = piece.i0 + a * step, j = piece.j0 + b * step;
+                const float px = float(i * BbMapArt::Chart::FloorCell), py = float(j * BbMapArt::Chart::FloorCell);
+                const float x = chart.x0 + px / chart.ppm + piece.p.dx, z = chart.z1 - py / chart.ppm + piece.p.dz;
+                const float h = h_at(a, b);
+                float k = tone;
+                if (!std::isnan(h)) {
+                    const float east = h_at(a + 1, b), west = h_at(a - 1, b), south = h_at(a, b + 1), north = h_at(a, b - 1);
+                    const float rise_x = std::isnan(east) || std::isnan(west) ? 0.0f : east - west;
+                    const float rise_n = std::isnan(north) || std::isnan(south) ? 0.0f : north - south;
+                    const float steep = std::clamp(std::sqrt(rise_x * rise_x + rise_n * rise_n) / run - 0.6f, 0.0f, 1.5f);
+                    // Ground rising to the east or the south faces the light; to the west or north, away.
+                    const float away = std::clamp((-rise_x + rise_n) / std::max(0.01f, std::abs(rise_x) + std::abs(rise_n)),
+                                                  -1.0f, 1.0f);
+                    k *= 1.0f - steep * (0.24f + 0.14f * away);
+                }
+                draw->PrimWriteVtx(frame.Screen(x, z, std::isnan(h) ? 0.0f : h), ImVec2(px * u_scale, py * v_scale),
+                                   Party::Rgba(k, k, k, 1.0f));
+            }
+        }
+        // Quads far to near: along each axis from the end that lies ahead, the axis that runs most
+        // into the view outermost.
+        const bool x_back = s > 0.0f; // east lies ahead: from the east
+        const bool z_back = c < 0.0f; // south lies ahead: from the south (rows grow south)
+        const bool rows_outer = std::abs(c) >= std::abs(s);
+        const int outer_n = rows_outer ? nz - 1 : nx - 1, inner_n = rows_outer ? nx - 1 : nz - 1;
+        for (int oo = 0; oo < outer_n; ++oo) {
+            for (int ii = 0; ii < inner_n; ++ii) {
+                const int bb = rows_outer ? oo : ii, aa = rows_outer ? ii : oo;
+                const int b = z_back ? nz - 2 - bb : bb;
+                const int a = x_back ? nx - 2 - aa : aa;
+                if (std::isnan(h_at(a, b)) || std::isnan(h_at(a + 1, b)) || std::isnan(h_at(a, b + 1)) ||
+                    std::isnan(h_at(a + 1, b + 1))) {
+                    continue;
+                }
+                const auto idx = [&](int ia, int ib) { return ImDrawIdx(first + ib * nx + ia); };
+                draw->PrimWriteIdx(idx(a, b));
+                draw->PrimWriteIdx(idx(a + 1, b));
+                draw->PrimWriteIdx(idx(a + 1, b + 1));
+                draw->PrimWriteIdx(idx(a, b));
+                draw->PrimWriteIdx(idx(a + 1, b + 1));
+                draw->PrimWriteIdx(idx(a, b + 1));
+            }
+        }
+        draw->PopTexture();
+    }
 }
 
 /// A small lamp: its post and its glowing head; `focused` rings it.
@@ -4608,24 +4872,27 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
         // The world's other areas under the shown one, a little darker; the shown one over them.
         const auto picture = [&](const ChartTexture& c, float tone) {
             const BbMapArt::Chart& chart = *c.chart;
-            const ImVec2 a = frame.Screen(chart.x0, chart.z1);
-            const ImVec2 b =
-                frame.Screen(chart.x0 + float(chart.width) / chart.ppm, chart.z1 - float(chart.height) / chart.ppm);
+            const ImVec2 a = frame.At(c.map, chart.x0, chart.z1);
+            const ImVec2 b = frame.At(c.map, chart.x0 + float(chart.width) / chart.ppm,
+                                      chart.z1 - float(chart.height) / chart.ppm);
             draw->AddImage(c.texture->GetTexRef(), a, b, ImVec2(0, 0), ImVec2(1, 1), Party::Rgba(tone, tone, tone, 1.0f));
         };
-        for (const auto& [map, c] : charts) {
-            if (map != state.shown && c.texture != nullptr) {
-                picture(c, 0.62f);
+        if (state.three_d) {
+            DrawLandscapes(draw, frame);
+        } else {
+            for (const auto& [map, c] : charts) {
+                if (map != state.shown && c.texture != nullptr) {
+                    picture(c, 0.62f);
+                }
             }
+            picture(*shown, 1.0f);
         }
-        picture(*shown, 1.0f);
-        const int world = WorldOf(state.shown);
         // Zoomed out: each area's name over its middle.
         if (state.zoom < S(1.2f) && charts.size() > 1) {
             for (const auto& [map, c] : charts) {
                 const BbMapArt::Chart& chart = *c.chart;
-                const ImVec2 at = frame.Screen(chart.x0 + float(chart.width) / chart.ppm * 0.5f,
-                                               chart.z1 - float(chart.height) / chart.ppm * 0.5f);
+                const ImVec2 at = frame.At(map, chart.x0 + float(chart.width) / chart.ppm * 0.5f,
+                                           chart.z1 - float(chart.height) / chart.ppm * 0.5f);
                 Party::Text(draw, MenuArt::Font(), S(map == state.shown ? 24.0f : 20.0f), at,
                             map == state.shown ? Bright() : Plain(0.8f), AreaName(map).c_str(), 0.5f);
             }
@@ -4638,31 +4905,32 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                     const std::string name = BbMapCharts::AreaName(label.name_id);
                     if (!name.empty()) {
                         // A little under its middle: a lamp's name sits over the lamp there.
-                        const ImVec2 at = frame.Screen(label.x, label.z);
+                        const ImVec2 at = frame.At(map, label.x, label.z, TopAt(label.x + AtlasOffset(map).dx,
+                                                                                label.z + AtlasOffset(map).dz));
                         Party::Text(draw, MenuArt::Font(), S(17.0f), ImVec2(at.x, at.y + S(22.0f)), Plain(0.85f),
                                     name.c_str(), 0.5f);
                     }
                 }
             }
         }
-        // The lamps lit in the other areas of the world, then the shown area's (focusable).
+        // The lamps lit in the other areas, then the shown area's (focusable).
         for (int i = 0; i < view.lamp_count; ++i) {
             const bbcoop_map_lamp& lamp = view.lamps[i];
-            if (lamp.lit && lamp.map != state.shown && WorldOf(lamp.map) == world && charts.contains(lamp.map)) {
-                LampMark(draw, frame.Screen(lamp.x, lamp.z), false, 0.0f);
+            if (lamp.lit && lamp.map != state.shown && charts.contains(lamp.map)) {
+                LampMark(draw, frame.At(lamp.map, lamp.x, lamp.z, lamp.y), false, 0.0f);
             }
         }
         for (size_t i = 0; i < lamps.size(); ++i) {
-            LampMark(draw, frame.Screen(lamps[i]->x, lamps[i]->z), int(i) == state.focus, pulse);
+            LampMark(draw, frame.At(lamps[i]->map, lamps[i]->x, lamps[i]->z, lamps[i]->y), int(i) == state.focus, pulse);
         }
         for (int i = 0; i < view.member_count; ++i) {
             const bbcoop_map_member& m = view.members[i];
-            if (m.has_at && WorldOf(m.map) == world) {
-                MemberMark(draw, frame.Screen(m.x, m.z), i);
+            if (m.has_at && m.map != 0) {
+                MemberMark(draw, frame.At(m.map, m.x, m.z, m.y), i);
             }
         }
-        if (view.has_me && WorldOf(view.map) == world) {
-            PlayerMark(draw, frame.Screen(view.x, view.z));
+        if (view.has_me && view.map != 0) {
+            PlayerMark(draw, frame.At(view.map, view.x, view.z, view.y));
         }
         // The lamp under the cursor (else the list's): ringed, its name over it.
         const bbcoop_map_lamp* named = nullptr;
@@ -4675,7 +4943,7 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
             named = lamps[size_t(state.focus)];
         }
         if (named != nullptr) {
-            const ImVec2 at = frame.Screen(named->x, named->z);
+            const ImVec2 at = frame.At(named->map, named->x, named->z, named->y);
             LampMark(draw, at, true, pulse);
             const std::string name = BbMapCharts::LampName(named->name_id);
             Party::Text(draw, MenuArt::Font(), S(20.0f), ImVec2(at.x, at.y - S(40.0f)), Bright(), name.c_str(), 0.5f);
@@ -4848,11 +5116,12 @@ void DrawKeys(ImDrawList* draw, float mid, float y) {
                          "L1 / R1  Область     Стики, мышь  Сдвиг     L2 / R2, колесо  Масштаб     Квадрат  Вы");
     const char* whole = T("Triangle  Whole map", "Треугольник  Вся карта");
     const char* floors = std::isnan(drawn_floors) ? T("R3  Floors", "R3  Этажи") : T("R3  Roofs", "R3  Крыши");
+    const char* depth = state.three_d ? T("L3  Flat", "L3  Плоско") : T("L3  3D", "L3  3D");
     const char* choose = T("Travel", "В путь");
     const char* back = T("Close", "Закрыть");
     const float icon = S(26.0f), space = S(28.0f);
     float total = ImGui::CalcTextSize(text).x + space + ImGui::CalcTextSize(whole).x + space +
-                  ImGui::CalcTextSize(floors).x + space;
+                  ImGui::CalcTextSize(floors).x + space + ImGui::CalcTextSize(depth).x + space;
     const bool art = MenuArt::Has(MenuArt::ButtonCross) && MenuArt::Has(MenuArt::ButtonCircle);
     if (art) {
         total += 2 * (icon + S(6.0f)) + ImGui::CalcTextSize(choose).x + ImGui::CalcTextSize(back).x + space;
@@ -4864,6 +5133,8 @@ void DrawKeys(ImDrawList* draw, float mid, float y) {
     x += ImGui::CalcTextSize(whole).x + space;
     draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), floors);
     x += ImGui::CalcTextSize(floors).x + space;
+    draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), depth);
+    x += ImGui::CalcTextSize(depth).x + space;
     if (art) {
         for (const auto& [piece, label] : {std::pair{MenuArt::ButtonCross, choose}, {MenuArt::ButtonCircle, back}}) {
             MenuArt::Draw(draw, piece, ImVec2(x, y), ImVec2(x + icon, y + icon));
@@ -4891,16 +5162,31 @@ void MoveView(const Frame& frame) {
     const auto analog = [](ImGuiKey key) { return ImGui::GetKeyData(key)->AnalogValue; };
     float sx = analog(ImGuiKey_GamepadRStickRight) - analog(ImGuiKey_GamepadRStickLeft);
     float sy = analog(ImGuiKey_GamepadRStickDown) - analog(ImGuiKey_GamepadRStickUp);
-    sx += (ImGui::IsKeyDown(ImGuiKey_D) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_A) ? 1.0f : 0.0f);
-    sy += (ImGui::IsKeyDown(ImGuiKey_S) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_W) ? 1.0f : 0.0f);
-    const float speed = S(700.0f) / state.zoom; // metres a second at full tilt
-    state.cx += sx * speed * dt;
-    state.cz -= sy * speed * dt;
     const bool inside = io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x && io.MousePos.y >= frame.p0.y &&
                         io.MousePos.y < frame.p1.y;
+    if (state.three_d) {
+        // Kaniel 2026-10-19: in the 3D view the right stick (or the right mouse button dragged)
+        // turns the landscape and tilts it; the left stick's cursor and a left drag move it.
+        state.yaw += sx * 1.8f * dt;
+        state.pitch = std::clamp(state.pitch - sy * 0.9f * dt, 0.45f, 1.5707f);
+        if (inside && ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f)) {
+            state.yaw += io.MouseDelta.x * 0.006f;
+            state.pitch = std::clamp(state.pitch + io.MouseDelta.y * 0.004f, 0.45f, 1.5707f);
+        }
+        sx = sy = 0.0f;
+    }
+    sx += (ImGui::IsKeyDown(ImGuiKey_D) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_A) ? 1.0f : 0.0f);
+    sy += (ImGui::IsKeyDown(ImGuiKey_S) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_W) ? 1.0f : 0.0f);
+    const float speed = S(700.0f); // screen pixels a second at full tilt
+    {
+        const auto [mx, mz] = frame.Metres(sx * speed * dt, sy * speed * dt);
+        state.cx += mx;
+        state.cz += mz;
+    }
     if (inside && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) {
-        state.cx -= io.MouseDelta.x / state.zoom;
-        state.cz += io.MouseDelta.y / state.zoom;
+        const auto [mx, mz] = frame.Metres(io.MouseDelta.x, io.MouseDelta.y);
+        state.cx -= mx;
+        state.cz -= mz;
     }
     float zoom = 1.0f;
     if (ImGui::IsKeyDown(ImGuiKey_GamepadR2) || ImGui::IsKeyDown(ImGuiKey_Equal)) {
@@ -4913,16 +5199,15 @@ void MoveView(const Frame& frame) {
         zoom *= std::pow(1.25f, io.MouseWheel);
     }
     state.zoom = std::clamp(state.zoom * zoom, S(0.05f), S(12.0f));
-    // The middle stays over the world's pictures.
+    // The middle stays over the pictures.
     if (!charts.empty()) {
-        float x0 = FLT_MAX, x1 = -FLT_MAX, z0 = FLT_MAX, z1 = -FLT_MAX;
-        for (const auto& [map, c] : charts) {
-            const BbMapArt::Chart& chart = *c.chart;
-            x0 = std::min(x0, chart.x0), x1 = std::max(x1, chart.x0 + float(chart.width) / chart.ppm);
-            z0 = std::min(z0, chart.z1 - float(chart.height) / chart.ppm), z1 = std::max(z1, chart.z1);
-        }
+        const auto [x0, x1, z0, z1] = AtlasExtent();
         state.cx = std::clamp(state.cx, x0, x1);
         state.cz = std::clamp(state.cz, z0, z1);
+    }
+    // The 3D view turns round the ground at the middle (eased, so the picture never jumps).
+    if (const float top = TopAt(state.cx, state.cz); !std::isnan(top)) {
+        state.cy = std::isnan(state.cy) ? top : state.cy + (top - state.cy) * std::min(1.0f, dt * 4.0f);
     }
 }
 
@@ -4950,8 +5235,9 @@ void MoveCursor(const Frame& frame) {
     const ImVec2 kept(std::clamp(next.x, lo.x, hi.x), std::clamp(next.y, lo.y, hi.y));
     if (state.zoom > 0.0f && (sx != 0.0f || sy != 0.0f)) {
         // Past the edge: the picture scrolls under the cursor instead.
-        state.cx += (next.x - kept.x) / state.zoom;
-        state.cz -= (next.y - kept.y) / state.zoom;
+        const auto [mx, mz] = frame.Metres(next.x - kept.x, next.y - kept.y);
+        state.cx += mx;
+        state.cz += mz;
     }
     state.cursor = kept;
     // The lit lamp nearest the cursor, within reach.
@@ -4959,10 +5245,10 @@ void MoveCursor(const Frame& frame) {
     float best = S(26.0f) * S(26.0f);
     for (int i = 0; i < view.lamp_count; ++i) {
         const bbcoop_map_lamp& lamp = view.lamps[i];
-        if (!lamp.lit || WorldOf(lamp.map) != WorldOf(state.shown) || !charts.contains(lamp.map)) {
+        if (!lamp.lit || !charts.contains(lamp.map)) {
             continue;
         }
-        const ImVec2 at = frame.Screen(lamp.x, lamp.z);
+        const ImVec2 at = frame.At(lamp.map, lamp.x, lamp.z, lamp.y);
         const float d = (at.x - state.cursor.x) * (at.x - state.cursor.x) + (at.y - state.cursor.y) * (at.y - state.cursor.y);
         if (d < best) {
             best = d;
@@ -4980,6 +5266,7 @@ void Screen() {
         state = {};
         state.fresh = false;
         state.opened = ImGui::GetTime();
+        state.three_d = three_d_kept;
     }
     // The player's own area once the game thread has read where it stands (a moment after opening).
     if (!state.placed && (view.has_me || ImGui::GetTime() - state.opened > 1.5)) {
@@ -5065,32 +5352,55 @@ void Screen() {
     const Frame frame{ImVec2(win.x + S(40.0f), top), ImVec2(win.x + size.x - list_w - S(70.0f), bottom)};
     if (const ChartTexture* shown = Shown(); state.zoom <= 0.0f && shown != nullptr) {
         state.zoom = FitZoom(frame, *shown->chart);
-        CentreOnChart(*shown->chart);
+        CentreOnChart(state.shown, *shown->chart);
         if (view.has_me && view.map == state.shown) {
             state.zoom = std::max(state.zoom, S(3.0f)); // the streets round the player
-            state.cx = view.x;
-            state.cz = view.z;
+            const Place p = AtlasOffset(view.map);
+            state.cx = view.x + p.dx;
+            state.cz = view.z + p.dz;
         }
     }
     if (state.asking == 0) {
         if (state.zoom > 0.0f) {
             MoveView(frame);
+            // Kaniel 2026-10-19 ("just one picture"): once the middle leaves the named area for
+            // another's ground, that one is named and listed.
+            const auto under = [&](uint32_t map, const BbMapArt::Chart& chart) {
+                const Place p = AtlasOffset(map);
+                const auto [px, py] = chart.PixelOf(state.cx - p.dx, state.cz - p.dz);
+                return px >= 0 && py >= 0 && px < float(chart.width) && py < float(chart.height) &&
+                       chart.rgba[(size_t(py) * size_t(chart.width) + size_t(px)) * 4 + 3] != 0;
+            };
+            const ChartTexture* named = Shown();
+            if (named == nullptr || !under(state.shown, *named->chart)) {
+                for (const auto& [map, c] : charts) {
+                    if (map != state.shown && under(map, *c.chart)) {
+                        state.shown = map;
+                        state.focus = 0;
+                        break;
+                    }
+                }
+            }
         }
-        if (Pressed({ImGuiKey_GamepadFaceLeft, ImGuiKey_C}) && view.has_me && view.map == state.shown) {
-            state.cx = view.x;
-            state.cz = view.z;
+        if (Pressed({ImGuiKey_GamepadFaceLeft, ImGuiKey_C}) && view.has_me && view.map != 0) {
+            const Place p = AtlasOffset(view.map);
+            state.cx = view.x + p.dx;
+            state.cz = view.z + p.dz;
         }
         if (Pressed({ImGuiKey_GamepadR3, ImGuiKey_F}) && view.has_me) {
             state.floors = std::isnan(drawn_floors) ? 2 : 1;
         }
-        // Kaniel 2026-10-17 ("one big map"): Triangle shows the whole world drawn so far.
+        // Kaniel 2026-10-19 ("3d map ... as an optional feature"): L3 (or V) turns the 3D view on
+        // and off; it stays as left for the next time.
+        if (Pressed({ImGuiKey_GamepadL3, ImGuiKey_V})) {
+            state.three_d = !state.three_d;
+            three_d_kept = state.three_d;
+            std::printf("Map: %s view\n", state.three_d ? "3D" : "flat");
+        }
+        // Kaniel 2026-10-17 ("one big map"), 2026-10-19 ("just one picture"): Triangle shows every
+        // world drawn so far.
         if (Pressed({ImGuiKey_GamepadFaceUp, ImGuiKey_Tab}) && !charts.empty()) {
-            float x0 = FLT_MAX, x1 = -FLT_MAX, z0 = FLT_MAX, z1 = -FLT_MAX;
-            for (const auto& [map, c] : charts) {
-                const BbMapArt::Chart& chart = *c.chart;
-                x0 = std::min(x0, chart.x0), x1 = std::max(x1, chart.x0 + float(chart.width) / chart.ppm);
-                z0 = std::min(z0, chart.z1 - float(chart.height) / chart.ppm), z1 = std::max(z1, chart.z1);
-            }
+            const auto [x0, x1, z0, z1] = AtlasExtent();
             state.zoom = std::min((frame.p1.x - frame.p0.x) / std::max(1.0f, x1 - x0),
                                   (frame.p1.y - frame.p0.y) / std::max(1.0f, z1 - z0)) * 0.95f;
             state.zoom = std::max(state.zoom, S(0.05f));
@@ -5099,8 +5409,9 @@ void Screen() {
         }
         if (!lamps.empty() && (up || down || left || right)) {
             state.focus = std::clamp(state.focus + ((down || right) ? 1 : -1), 0, int(lamps.size()) - 1);
-            state.cx = lamps[size_t(state.focus)]->x; // the picture follows the focused lamp
-            state.cz = lamps[size_t(state.focus)]->z;
+            const Place p = AtlasOffset(lamps[size_t(state.focus)]->map);
+            state.cx = lamps[size_t(state.focus)]->x + p.dx; // the picture follows the focused lamp
+            state.cz = lamps[size_t(state.focus)]->z + p.dz;
             state.cursor = frame.Mid(); // and the cursor sits on it
         }
         MoveCursor(frame);
@@ -5190,7 +5501,8 @@ void ScriptedKeys() {
          : token == "r1" ? ImGuiKey_GamepadR1 : token == "kdown" ? ImGuiKey_DownArrow
          : token == "kup" ? ImGuiKey_UpArrow : token == "circle" ? ImGuiKey_GamepadFaceRight
          : token == "square" ? ImGuiKey_GamepadFaceLeft
-         : token == "triangle" ? ImGuiKey_GamepadFaceUp : token == "r3" ? ImGuiKey_GamepadR3 : ImGuiKey_None;
+         : token == "triangle" ? ImGuiKey_GamepadFaceUp : token == "r3" ? ImGuiKey_GamepadR3
+         : token == "l3" ? ImGuiKey_GamepadL3 : ImGuiKey_None;
     if (token == "back") {
         SetOpen(false);
         return;

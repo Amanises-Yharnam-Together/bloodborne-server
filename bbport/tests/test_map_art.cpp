@@ -538,6 +538,13 @@ int main() {
             std::vector<std::uint8_t> above = chart.rgba;
             FloorView(chart, 6.0f, above.data());
             assert(above == chart.rgba);
+            // Kaniel 2026-10-19 (the 3D view): the heights as shown: inside, the floor; on the
+            // roof or with the roofs shown, the roof.
+            const auto [hx, hy] = chart.PixelOf(10.1f, 10.1f);
+            const std::size_t cell = std::size_t(int(hy) / Chart::FloorCell) * std::size_t(chart.storeys.width) +
+                                     std::size_t(int(hx) / Chart::FloorCell);
+            assert(ShownHeight(chart, cell, 0.2f) == 2 && ShownHeight(chart, cell, 6.0f) == 60 &&
+                   ShownHeight(chart, cell, NAN) == 60);
         }
         // Kaniel 2026-10-18 ("extra stuff outside the map"): with walkable floors given, what lies
         // more than Canvas::Reach metres from them goes; what is near them stays.
