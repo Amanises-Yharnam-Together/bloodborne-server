@@ -13,6 +13,7 @@
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/vram_placement.h"
+#include "bbport_settings.h"
 
 #include <vk_mem_alloc.h>
 
@@ -21,6 +22,19 @@ namespace VideoCore {
 using namespace Vulkan;
 
 Common::IncrementalIdProvider<u64> Image::global_image_uid{};
+
+VramPlacement ActiveVramPlacement() {
+    static const VramPlacement placement = [] {
+        const VramPlacement p = VramPlacementFrom(std::getenv("BB_VRAM_PLACEMENT"),
+                                                  BbSettings::Line("vram_placement"));
+        std::printf("GPU: VRAM placement %s\n",
+                    p == VramPlacement::System
+                        ? "system (new textures in system memory near the limit)"
+                        : "reserve (textures in VRAM, a reserve for the game's memory)");
+        return p;
+    }();
+    return placement;
+}
 
 namespace {
 
@@ -175,7 +189,9 @@ bool UniqueImage::TryCreate(const vk::ImageCreateInfo& image_ci) {
     VkImage unsafe_image{};
     VmaAllocationInfo alloc_info{};
     VkResult result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
-    if (const u32 system_types = SystemMemoryTypesNearVramLimit(allocator)) {
+    if (const u32 system_types = ActiveVramPlacement() == VramPlacement::System
+                                     ? SystemMemoryTypesNearVramLimit(allocator)
+                                     : 0) {
         // VRAM near the driver's budget: in system memory (images the collector evicts come
         // back there), so VRAM goes to what can only be there.
         VmaAllocationCreateInfo system = alloc_ci;

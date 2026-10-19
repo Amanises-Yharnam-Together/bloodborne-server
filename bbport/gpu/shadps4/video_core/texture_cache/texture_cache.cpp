@@ -1416,6 +1416,9 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
 void TextureCache::GarbageCollectImages() {
     if (instance.CanReportMemoryUsage()) {
         total_used_memory = instance.GetDeviceMemoryUsage();
+        // bbport: the buffer cache's VRAM reserve is not in use until VRAM is full: counted, it
+        // put cards half a gigabyte closer to the marks than textures make them (a02c38f).
+        total_used_memory -= std::min(total_used_memory, buffer_cache.UnusedVramReserve());
         // bbport: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
         // much more than images (buffers backing guest memory), and the startup budget left
         // ~1 GB after its 8 GB system reserve: usage stayed above the critical mark, so the

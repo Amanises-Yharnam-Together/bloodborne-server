@@ -34,6 +34,7 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/texture_cache.h"
+#include "video_core/texture_cache/vram_placement.h"
 
 #include <mutex>
 #include <pthread.h>
@@ -659,6 +660,29 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
                        reqs.memoryTypeBits)
             .value();
     arena_memory_type_bits = reqs.memoryTypeBits;
+    // bbport: a reserve of VRAM for the game's memory (vram_placement.h): it only grows as areas
+    // load and, on NVIDIA, cannot be outside VRAM. Textures keep VRAM otherwise (Supermedo
+    // 5f65e2d). BB_VRAM_RESERVE_MB=0: none.
+    if (VideoCore::ActiveVramPlacement() == VideoCore::VramPlacement::Reserve) {
+        const auto& props = instance.GetMemoryProperties();
+        u64 size = VideoCore::ArenaReserveBytes(
+            !instance.IsIntegrated(),
+            props.memoryHeaps[props.memoryTypes[arena_memory_type_index].heapIndex].size,
+            block_size);
+        if (const char* env = std::getenv("BB_VRAM_RESERVE_MB")) {
+            size = std::min(size, std::strtoull(env, nullptr, 10) << 20) / block_size * block_size;
+        }
+        if (size != 0) {
+            auto reserve = device.allocateMemory(
+                {.allocationSize = size, .memoryTypeIndex = arena_memory_type_index});
+            if (reserve.result == vk::Result::eSuccess) {
+                vram_reserve = reserve.value;
+                vram_reserve_size = size;
+                std::printf("GPU: %llu MiB of VRAM kept for the game's memory\n",
+                            (unsigned long long)(size >> 20));
+            }
+        }
+    }
     {
         const auto& properties = instance.GetMemoryProperties();
         for (u32 i = 0; i < properties.memoryTypeCount; ++i) {
@@ -1813,6 +1837,15 @@ std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes) {
         };
         if (!memory) {
             memory = other_types();
+        }
+        if (!memory && vram_reserve && bytes <= vram_reserve_size) {
+            // The reserve kept at start for this (vram_placement.h), handed over as a block.
+            memory = std::exchange(vram_reserve, vk::DeviceMemory{});
+            size = vram_reserve_size;
+            BbStats::device_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
+            BbStats::residency_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
+            std::printf("Guest memory: VRAM is full: the game's memory takes its %llu MiB reserve\n",
+                        (unsigned long long)(size >> 20));
         }
         if (!memory) {
             // Still full (4 GB cards on area loads; deadinside28 PR #206): the images the

@@ -12,9 +12,31 @@ using VideoCore::GcAction;
 using VideoCore::GcActionFor;
 using VideoCore::GcImageState;
 using VideoCore::HeapUse;
+using VideoCore::ArenaReserveBytes;
 using VideoCore::SystemMemoryTypesNearVramLimit;
+using VideoCore::VramPlacement;
+using VideoCore::VramPlacementFrom;
 
 int main() {
+    // Where VRAM pressure goes (Supermedo 5f65e2d): by default textures stay in VRAM and game
+    // memory has a reserve; "system" (bbport.ini vram_placement, BB_VRAM_PLACEMENT wins) is
+    // #187's rule, new textures in system memory near the limit.
+    assert(VramPlacementFrom(nullptr, std::nullopt) == VramPlacement::Reserve);
+    assert(VramPlacementFrom(nullptr, std::string("system")) == VramPlacement::System);
+    assert(VramPlacementFrom(nullptr, std::string("reserve")) == VramPlacement::Reserve);
+    assert(VramPlacementFrom(nullptr, std::string("anything")) == VramPlacement::Reserve);
+    assert(VramPlacementFrom("system", std::string("reserve")) == VramPlacement::System);
+    assert(VramPlacementFrom("reserve", std::string("system")) == VramPlacement::Reserve);
+    assert(VramPlacementFrom("", std::string("system")) == VramPlacement::System);
+    // The reserve: 512 MiB, an eighth of smaller heaps, on discrete GPUs only, block aligned.
+    constexpr std::uint64_t MB = 1ull << 20;
+    assert(ArenaReserveBytes(true, 12288 * MB, 64 * 1024) == 512 * MB);
+    assert(ArenaReserveBytes(true, 4096 * MB, 64 * 1024) == 512 * MB);
+    assert(ArenaReserveBytes(true, 2048 * MB, 64 * 1024) == 256 * MB);
+    assert(ArenaReserveBytes(true, 2048 * MB + 100, 64 * 1024) == 256 * MB);
+    assert(ArenaReserveBytes(false, 12288 * MB, 64 * 1024) == 0);
+    assert(ArenaReserveBytes(true, 0, 64 * 1024) == 0);
+
     // Uploaded from guest memory only: rebuilt the same from it.
     assert(GcActionFor({}, false) == GcAction::Evict);
     assert(GcActionFor({}, true) == GcAction::Evict);

@@ -631,6 +631,19 @@ private:
     /// bbport: system memory for residency when VRAM is full (4 GB cards), if sparse binding takes it
     std::optional<u32> arena_fallback_type_index;
     u32 arena_memory_type_bits = 0; ///< memory types the arena's blocks can be bound to
+    /// bbport: VRAM kept at start for the game's memory once VRAM is otherwise full
+    /// (VramPlacement::Reserve); handed over whole as a residency block, then none.
+    vk::DeviceMemory vram_reserve{};
+    u64 vram_reserve_size{};
+
+public:
+    /// bbport: the reserve's bytes not handed over yet (not in use: the texture collector
+    /// leaves them out of the usage it compares).
+    [[nodiscard]] u64 UnusedVramReserve() const {
+        return vram_reserve ? vram_reserve_size : 0;
+    }
+
+private:
     vk::DeviceMemory residency_memory{}; ///< bbport: the 64 MiB block arena residency comes from
     u64 residency_size = 0, residency_used = 0;
     std::future<vk::DeviceMemory> spare_residency; ///< the next block, allocated in the background
