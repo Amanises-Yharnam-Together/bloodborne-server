@@ -27,7 +27,19 @@ export type Block =
       caption: string;
       width: number;
       height: number;
-    };
+    }
+  /** Several screenshots of one screen or flow, shown one at a time under a row of tabs. */
+  | { type: "gallery"; items: GalleryItem[] };
+
+export type GalleryItem = {
+  /** The tab's few words. */
+  label: string;
+  src: string;
+  alt: string;
+  caption: string;
+  width: number;
+  height: number;
+};
 
 /** The painted icons in public/art, shown beside a section's title. */
 export type IconName = "lantern" | "blades" | "bell" | "tricorn" | "vial" | "skull" | "hand";
@@ -74,8 +86,12 @@ const install: DocPage = {
           items: [
             `Download the setup \`.exe\` from the [download page](/download) or [GitHub releases](${RELEASES_URL}) and run it. It installs for your Windows user and adds a desktop shortcut.`,
             "Open **Bloodborne Seamless Co-op**. The launcher opens on **Home**, with the latest news.",
-            "Go to **Co-op** in the sidebar and fill it in (below). **Done** lights up once nothing is missing. Then press **PLAY**.",
+            "On first start the **Co-op** page opens by itself. Fill it in (below); **Done** lights up once nothing is missing. Then press **PLAY**.",
           ],
+        },
+        {
+          type: "p",
+          text: "Every screen of the setup and every launcher page, with what each is for, is in [Setup and the launcher](/docs/launcher).",
         },
         {
           type: "image",
@@ -99,8 +115,8 @@ const install: DocPage = {
           type: "image",
           src: "/docs/launcher-coop.webp",
           width: 1200,
-          height: 696,
-          alt: "The Co-op page filled in: the Bloodborne folder with a green check for version 01.09, the host's IP 10.0.0.2, Enemies Off, the Bring saves button and Done.",
+          height: 693,
+          alt: "The Co-op page filled in: the Bloodborne folder with a green check, version 01.00 with the 1.09 update next to it, the host's IP 10.0.0.2, Enemies Off (the normal game), the Bring saves button and Done.",
           caption: "Filled in: the folder is found, the host's IP is set and Enemies is Off.",
         },
         {
@@ -132,8 +148,8 @@ const install: DocPage = {
           type: "image",
           src: "/docs/launcher-coop-empty.webp",
           width: 1200,
-          height: 696,
-          alt: "The Co-op page on first start: the folder, the host's IP and Enemies empty, Done greyed out and the line Still needed: the game folder, the host's IP, the enemies.",
+          height: 693,
+          alt: "The Co-op page on first start: the folder empty with the warning Choose your Bloodborne folder, the host's IP and Enemies empty, Done greyed out and the line Still needed: the game folder, the host's IP, the enemies.",
           caption:
             "On first start, Done waits until the folder, the host's IP and the enemies are set.",
         },
@@ -226,7 +242,7 @@ const install: DocPage = {
         },
         {
           type: "image",
-          src: "/docs/launcher-settings.webp",
+          src: "/docs/launcher-settings-general.webp",
           width: 1200,
           height: 780,
           alt: "Settings, General: Output 1920 by 1080, Frame rate 60 FPS, Upscaler FSR 4, Preset Quality, Game and launcher language, Windowed, Frame generation, and Saves and shortcuts.",
@@ -265,11 +281,381 @@ const install: DocPage = {
   ],
 };
 
+const S = (name: string) => `/docs/${name}.webp`;
+
+const launcher: DocPage = {
+  slug: "launcher",
+  title: "Setup and the launcher",
+  description:
+    "Every screen of Yharnam Together's setup and launcher: installing, the first start, finding or installing the game, the Co-op page, the settings tabs and the status bar.",
+  sections: [
+    {
+      id: "setup",
+      title: "The setup",
+      icon: "lantern",
+      blocks: [
+        {
+          type: "p",
+          text: "The download is one setup `.exe`. It installs for your Windows user only, so it needs no administrator rights, and it holds everything: the port, the launcher, the co-op server and its tools. Nothing from the game is in it.",
+        },
+        {
+          type: "ol",
+          items: [
+            "Pick the setup's language.",
+            "**Next** on the welcome page.",
+            "Keep the suggested folder or **Browse…** to another. It needs about 1.6 GB.",
+            "Leave **Create a desktop shortcut** ticked if you want one, then **Install**.",
+            "**Finish** with **Launch** ticked opens the launcher.",
+          ],
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "Language",
+              src: S("setup-language"),
+              width: 618,
+              height: 286,
+              alt: "Select Setup Language: English chosen, with OK and Cancel.",
+              caption: "The setup's own language.",
+            },
+            {
+              label: "Welcome",
+              src: S("setup-welcome"),
+              width: 989,
+              height: 738,
+              alt: "Welcome to the Setup Wizard, beside the hunter emblem over a night city, with Next and Cancel.",
+              caption: "The welcome page.",
+            },
+            {
+              label: "Folder",
+              src: S("setup-folder"),
+              width: 989,
+              height: 738,
+              alt: "Select Destination Location with a folder path, Browse, and At least 1.60 GB of free disk space is required.",
+              caption: "Where it goes. The default is in your own user folder.",
+            },
+            {
+              label: "Ready",
+              src: S("setup-ready"),
+              width: 989,
+              height: 738,
+              alt: "Ready to Install: the destination folder and the task Create a desktop shortcut, with Back, Install and Cancel.",
+              caption: "A summary before it starts.",
+            },
+            {
+              label: "Installing",
+              src: S("setup-installing"),
+              width: 989,
+              height: 738,
+              alt: "Installing, with Extracting files and a progress bar.",
+              caption: "Copying the files.",
+            },
+            {
+              label: "Finished",
+              src: S("setup-finished"),
+              width: 989,
+              height: 738,
+              alt: "Completing the Setup Wizard with Launch ticked and Finish.",
+              caption: "Done. Finish opens the launcher.",
+            },
+          ],
+        },
+        {
+          type: "p",
+          text: "To remove it, uninstall it from Windows' **Installed apps**. It asks once before it removes anything.",
+        },
+        {
+          type: "image",
+          src: S("setup-uninstall"),
+          width: 660,
+          height: 231,
+          alt: "The uninstaller asking: Are you sure you want to completely remove it and all of its components? Yes or No.",
+          caption: "The uninstaller's one question.",
+        },
+      ],
+    },
+    {
+      id: "first-start",
+      title: "The first start",
+      blocks: [
+        {
+          type: "p",
+          text: "The first time, the launcher opens the **Co-op** page over Home by itself, and the status bar reads **Choose the game folder first**. **PLAY** stays grey until the page is done.",
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "Co-op opens",
+              src: S("launcher-coop-empty"),
+              width: 1200,
+              height: 693,
+              alt: "The Co-op page on first start: the folder empty with the warning Choose your Bloodborne folder, the host's IP and Enemies empty, and Still needed: the game folder, the host's IP, the enemies.",
+              caption: "What is still needed is listed beside Done.",
+            },
+            {
+              label: "Game found",
+              src: S("launcher-coop-found"),
+              width: 1200,
+              height: 693,
+              alt: "The Co-op page after Find it for me: the folder filled in and a green check, version 01.00 with the 1.09 update next to it. Still needed: the host's IP, the enemies.",
+              caption: "Find it for me found the game and its 1.09 update.",
+            },
+            {
+              label: "Done",
+              src: S("launcher-coop"),
+              width: 1200,
+              height: 693,
+              alt: "The Co-op page filled in: the folder, the host's IP 10.0.0.2 and Enemies Off (the normal game), with Done lit.",
+              caption: "Everything set: Done lights up.",
+            },
+            {
+              label: "Status bar",
+              src: S("launcher-bar-first"),
+              width: 1200,
+              height: 97,
+              alt: "The status bar on first start: grey status icons, Start server, Stop server, a grey PLAY and the line Choose the game folder first.",
+              caption: "Before the game folder is set.",
+            },
+          ],
+        },
+        {
+          type: "terms",
+          items: [
+            [
+              "Browse…",
+              "Pick the game folder yourself: the folder with `eboot.bin`, at 1.09 or with the 1.09 update next to it.",
+            ],
+            ["Find it for me", "Looks in the usual places, then on every drive."],
+            [
+              "Install from PKG…",
+              "Installs the game, the update and the DLC from your PS4 `.pkg` files (below).",
+            ],
+            [
+              "Host's IP address",
+              "The host's VPN or public address. The host types their own, which is how the launcher knows to start the server on PLAY.",
+            ],
+            [
+              "Enemies",
+              "Off is the normal game; Harder gives enemies three times the HP and poise and half again the damage. Everyone picks the same.",
+            ],
+            [
+              "Bring saves from another folder…",
+              "Copies your characters from a PS4 save folder, a shadPS4 `user` folder or an older install.",
+            ],
+          ],
+        },
+        {
+          type: "p",
+          text: "The Co-op page stays in the sidebar for later changes. More on each field, and on how the others reach the host, is in [Install and set up](/docs/install#coop-card).",
+        },
+      ],
+    },
+    {
+      id: "pkg",
+      title: "Install from PKG",
+      blocks: [
+        {
+          type: "p",
+          text: "If you have the PS4 `.pkg` files instead of a game folder, **Install from PKG…** unpacks them. **Choose PKG files…** takes the game, the 1.09 update and the DLC; **Scan a folder…** finds them for you and ticks the best ones. **Install into** is where the game goes.",
+        },
+        {
+          type: "image",
+          src: S("launcher-pkg"),
+          width: 853,
+          height: 431,
+          alt: "The Install from PKG window: Choose PKG files, Scan a folder, the Install into folder with Browse, and Cancel and Install.",
+          caption: "Install from PKG.",
+        },
+      ],
+    },
+    {
+      id: "home",
+      title: "Home",
+      blocks: [
+        {
+          type: "p",
+          text: "Home shows the project's news: what the latest release changed, with a link to all releases. Below it, **First time here**, **Make a team** and **In the game** open short guides. The launcher updates itself when a new release is out.",
+        },
+        {
+          type: "image",
+          src: S("launcher-home"),
+          width: 1200,
+          height: 780,
+          alt: "The launcher's Home page: the sidebar with Home, Co-op and Settings under the hunter emblem, the patch notes Team worlds, cleaner saves, trading by name, the guide tabs First time here, Make a team and In the game, and the status bar with PLAY.",
+          caption: "Home, with the latest patch notes.",
+        },
+      ],
+    },
+    {
+      id: "settings",
+      title: "Settings",
+      blocks: [
+        {
+          type: "p",
+          text: "**Settings** holds the port's options in tabs. Most players only need **General**. Many of the same options are also in the game's **Insert** menu.",
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "General",
+              src: S("launcher-settings-general"),
+              width: 1200,
+              height: 780,
+              alt: "Settings, General: Output resolution, Frame rate, Upscaler, Preset, Game language, Launcher language, Window mode, Frame generation, and Saves and shortcuts.",
+              caption: "General: the options most players change.",
+            },
+            {
+              label: "Graphics",
+              src: S("launcher-settings-graphics"),
+              width: 1200,
+              height: 780,
+              alt: "Settings, Graphics: Upscaler, Quality preset, Output resolution, Live resolution changes, Sharpening and Object motion vectors.",
+              caption: "Graphics: the upscaler in detail.",
+            },
+            {
+              label: "Display & FPS",
+              src: S("launcher-settings-display"),
+              width: 1200,
+              height: 780,
+              alt: "Settings, Display and FPS: Frame rate, Frame cap, Frames ahead of the GPU and Window mode.",
+              caption: "Display and FPS. Co-op always runs at 60.",
+            },
+            {
+              label: "Controls",
+              src: S("launcher-settings-controls"),
+              width: 1200,
+              height: 780,
+              alt: "Settings, Controls: the controller, the button icons and the mouse camera.",
+              caption: "Controls: pad, button icons and mouse.",
+            },
+            {
+              label: "Game",
+              src: S("launcher-settings-game"),
+              width: 1200,
+              height: 780,
+              alt: "Settings, Game and effects: the game folder, Install from PKG, the DLC, the saves folder, the game language and the player name.",
+              caption: "Game and effects: folders, the DLC and languages.",
+            },
+            {
+              label: "Cheats",
+              src: S("launcher-settings-cheats"),
+              width: 1200,
+              height: 780,
+              alt: "Settings, Cheats: cheats and gameplay tweaks, all off.",
+              caption: "Cheats and gameplay tweaks, all off by default.",
+            },
+            {
+              label: "Mods",
+              src: S("launcher-settings-mods"),
+              width: 1200,
+              height: 780,
+              alt: "Settings, Mods and patches: Load mods, the mods folder and the third-party patches folder.",
+              caption:
+                "Mods and patches. The game's files are never changed; mods are layered over them at start.",
+            },
+            {
+              label: "Advanced",
+              src: S("launcher-settings-advanced"),
+              width: 1200,
+              height: 780,
+              alt: "Settings, Advanced: launcher language, close the launcher when the game starts, animations, shortcuts, clear shader cache and performance options.",
+              caption: "Advanced: the launcher itself and diagnostics.",
+            },
+            {
+              label: "Log",
+              src: S("launcher-settings-log"),
+              width: 1200,
+              height: 780,
+              alt: "Settings, Log: an empty log with Clear and Copy.",
+              caption: "The launcher's log, with Copy for bug reports.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "status-bar",
+      title: "The status bar",
+      blocks: [
+        {
+          type: "p",
+          text: "The bar at the bottom is on every page: four status icons, the server buttons and **PLAY**. Under the icons, your frame rate, upscaler, resolution and mode. Hover an icon to see what it checks.",
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "Ready",
+              src: S("launcher-bar"),
+              width: 1200,
+              height: 97,
+              alt: "The status bar: four status icons, Start server, Stop server and PLAY, with 60 FPS, FSR 4, 1920 by 1080 and Co-op under the icons.",
+              caption: "Ready to play.",
+            },
+            {
+              label: "Server running",
+              src: S("launcher-server-running"),
+              width: 1200,
+              height: 97,
+              alt: "The same bar on the host, with the word Running beside the server buttons.",
+              caption: "On the host, with the co-op server running.",
+            },
+            {
+              label: "Game",
+              src: S("launcher-tip-game"),
+              width: 840,
+              height: 215,
+              alt: "The game icon's tooltip: Game version 01.09: every patch available.",
+              caption: "The game: found, at 1.09.",
+            },
+            {
+              label: "Saves",
+              src: S("launcher-tip-saves"),
+              width: 840,
+              height: 215,
+              alt: "The saves icon's tooltip: No saves yet: the game creates them in the install's user folder.",
+              caption: "The saves: where they are, or that there are none yet.",
+            },
+            {
+              label: "Upscaler",
+              src: S("launcher-tip-fsr4"),
+              width: 840,
+              height: 215,
+              alt: "The upscaler icon's tooltip: FSR 4 assets missing (Graphics); FSR 3.1 is used meanwhile.",
+              caption: "The upscaler: what is missing, and what is used meanwhile.",
+            },
+          ],
+        },
+        {
+          type: "terms",
+          items: [
+            [
+              "The four icons",
+              "The game, your saves, the graphics card and the upscaler. A green check means ready, a grey dot means not set yet.",
+            ],
+            [
+              "Start server, Stop server",
+              "Run the host's server without the game, for example when the host joins later. The word beside them says whether it is running.",
+            ],
+            [
+              "PLAY",
+              "Starts the game, and on the host the server first. Grey until the Co-op page is done.",
+            ],
+          ],
+        },
+      ],
+    },
+  ],
+};
+
 const play: DocPage = {
   slug: "play",
   title: "Playing together",
   description:
-    "How to make a team in the game, what the party list shows, how going down and reviving work, and how to give items to a teammate.",
+    "How to make a team in the game or join one in progress, the map and compass, what the party list shows, how going down and reviving work, and how to give items to a teammate.",
   sections: [
     {
       id: "team",
@@ -281,12 +667,65 @@ const play: DocPage = {
           text: "**Continue**, **Load Game** or **New Game** on the title screen opens the team screen, The Hunt Together. In the game, press **Insert** (or **L3 + R3**) and choose **Co-op Team**.",
         },
         {
-          type: "image",
-          src: "/docs/team-host.webp",
-          alt: "The Hunt Together team screen: four places, Player 1 as leader choosing a character, Player 2 ready, two empty places, the Hunters online and Invitations lists, and the buttons Leave the team, Begin the hunt and Play alone.",
-          caption: "The leader's view. Each place shows a hunter and where they are.",
-          width: 1440,
-          height: 810,
+          type: "gallery",
+          items: [
+            {
+              label: "No team",
+              src: S("team-none"),
+              width: 1440,
+              height: 810,
+              alt: "The Hunt Together with no team: four empty places, Player 2 and Player 3 in Hunters online, and Create a team, Ready (grey) and Play alone.",
+              caption: "Not in a team yet. The hunters online are listed with where they are.",
+            },
+            {
+              label: "Create",
+              src: S("team-created"),
+              width: 1440,
+              height: 810,
+              alt: "Player 1's team, 1 of 4: Player 1 as leader, three empty places, and Invite beside Player 2 and Player 3.",
+              caption: "Create a team: you lead, and your world is the team's.",
+            },
+            {
+              label: "Invite",
+              src: S("team-invite-sent"),
+              width: 1440,
+              height: 810,
+              alt: "The leader's team screen after inviting Player 2, whose Invite button is now grey.",
+              caption: "Invite calls a hunter to your team.",
+            },
+            {
+              label: "Invitation",
+              src: S("team-invite"),
+              width: 1440,
+              height: 810,
+              alt: "Player 2's team screen with the invitation Player 1 calls you to hunt, and Join and Decline.",
+              caption: "The invitation arrives: Join or Decline.",
+            },
+            {
+              label: "Joined",
+              src: S("team-joined"),
+              width: 1440,
+              height: 810,
+              alt: "Player 1's team, 2 of 4, seen by Player 2: Player 1 the leader and Player 2 choosing, with a Ready button.",
+              caption: "In the team. Pick your character, then Ready.",
+            },
+            {
+              label: "Ready",
+              src: S("team-ready"),
+              width: 1440,
+              height: 810,
+              alt: "The same screen with Player 2 marked Ready and the button now reading Not ready.",
+              caption: "Ready. The leader begins once everyone is.",
+            },
+            {
+              label: "Begin",
+              src: S("team-begin"),
+              width: 1440,
+              height: 810,
+              alt: "The leader's view: Player 2 Ready with a Remove button, and Begin the hunt lit.",
+              caption: "The leader's Begin the hunt.",
+            },
+          ],
         },
         {
           type: "terms",
@@ -307,32 +746,93 @@ const play: DocPage = {
           ],
         },
         {
-          type: "image",
-          src: "/docs/team-guest.webp",
-          alt: "The same team screen seen by Player 2, with the Ready button instead of Begin the hunt.",
-          caption: "A member's view: Ready instead of Begin the hunt.",
-          width: 1440,
-          height: 810,
-        },
-        {
           type: "p",
           text: "After **Begin the hunt** every game loads its own save. The loading screen, The Hunt Begins, lists each hunter as Loading, Joining the hunt or Ready, and opens for everyone at once. You arrive where your character stood. Starting the game again after a crash puts you back in the team.",
         },
         {
-          type: "image",
-          src: "/docs/loading.webp",
-          alt: "The Hunt Begins loading screen over a night city under the moon, with cards for Player 1 and Player 2, both Joining the hunt at about 80 percent.",
-          caption: "The Hunt Begins: everyone loads, then the hunt opens at once.",
-          width: 1440,
-          height: 810,
+          type: "gallery",
+          items: [
+            {
+              label: "Two hunters",
+              src: "/docs/loading.webp",
+              width: 1440,
+              height: 810,
+              alt: "The Hunt Begins loading screen over a night city under the moon, with cards for Player 1 and Player 2, both Joining the hunt at about 80 percent.",
+              caption: "The Hunt Begins: everyone loads, then the hunt opens at once.",
+            },
+            {
+              label: "Three hunters",
+              src: S("loading-3"),
+              width: 1440,
+              height: 810,
+              alt: "The Hunt Begins with three cards, Player 1, Player 2 and Player 3, all Joining the hunt at about 90 percent.",
+              caption: "A team of three, loading together.",
+            },
+            {
+              label: "Waiting",
+              src: S("loading-waiting"),
+              width: 1440,
+              height: 810,
+              alt: "The Hunt Begins with Player 1 and Player 2 Waiting at 0 percent and Player 3 Joining the hunt at 70 percent.",
+              caption: "Each card says where that hunter is: Waiting, Joining the hunt or Ready.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "hot-join",
+      title: "Join a hunt in progress",
+      icon: "blades",
+      blocks: [
+        {
+          type: "p",
+          text: "A team can take a new hunter at any time, wherever it is. In the game, press **Insert** (or **L3 + R3**) and choose **Co-op Team**: the same team screen opens. The leader invites, you **Join**, and your game loads into the team's world. If your character last stood on another map than the host, you arrive at the host's place; on the same map, you keep your own spot.",
         },
         {
-          type: "image",
-          src: "/docs/insert-team.webp",
-          alt: "The Co-op Team page opened from the Insert menu during play: Player 1 and Player 2 In the hunt, two empty places, Hunters online and Invitations.",
-          caption: "Co-op Team from the Insert menu, while you play.",
-          width: 1440,
-          height: 810,
+          type: "gallery",
+          items: [
+            {
+              label: "Co-op Team",
+              src: S("hotjoin-page"),
+              width: 1440,
+              height: 810,
+              alt: "Co-op Team opened from the Insert menu, not in a team, with Player 2 and Player 1 In the hunt.",
+              caption: "Co-op Team from the Insert menu, during play.",
+            },
+            {
+              label: "Invitation",
+              src: S("hotjoin-invite"),
+              width: 1440,
+              height: 810,
+              alt: "The same page with the invitation Player 1 calls you to hunt, and Join and Decline.",
+              caption: "A running team calls you.",
+            },
+            {
+              label: "Joining",
+              src: S("hotjoin-loading"),
+              width: 1440,
+              height: 810,
+              alt: "The Hunt Begins with Player 1 and Player 2 Ready at 100 percent and Player 3 Joining the hunt at 82 percent.",
+              caption: "Only the new hunter loads; the others are already in.",
+            },
+            {
+              label: "Joined",
+              src: S("hotjoin-joined"),
+              width: 1440,
+              height: 810,
+              alt: "Player 1's team, 3 of 4: Player 1, Player 2 and Player 3 all In the hunt, with Leave the team.",
+              caption: "A team of three, in the hunt.",
+            },
+            {
+              label: "Leader",
+              src: S("hotjoin-leader"),
+              width: 1440,
+              height: 810,
+              alt: "The leader's Co-op Team page during the hunt, with Remove under Player 2 and Player 3.",
+              caption: "The leader can remove a hunter at any time.",
+            },
+          ],
         },
       ],
     },
@@ -347,7 +847,91 @@ const play: DocPage = {
             "Enemies, their health and their deaths are shared. Everyone's hits land on the same health bar.",
             "Doors, levers, shortcuts, lamps and beaten bosses belong to the team's world, which the server keeps on the host's disk.",
             "Items you pick up, Blood Echoes and Insight are your own. NPC gifts are per player, so everyone gets their own.",
-            "Everyone travels on their own. Nobody is pulled to the host or sent home.",
+            "Everyone travels on their own, so the team can be in different areas at the same time. Nobody is pulled to the host or sent home, and the party list and the map show where everyone is.",
+            "Anyone can light a lamp for everyone.",
+          ],
+        },
+      ],
+    },
+    {
+      id: "map",
+      title: "Map and compass",
+      blocks: [
+        {
+          type: "p",
+          text: "The **Map** in the **Insert** menu shows every area of the game with your team on it. The lamps you have lit are listed on the right, and the **Hunters** list says which area each teammate is in. Pick a lit lamp and press **Travel** to go straight there.",
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "Your area",
+              src: S("map-team"),
+              width: 1440,
+              height: 810,
+              alt: "The map of Central Yharnam with the lamps 1st Floor Sickroom, Central Yharnam and Tomb of Oedon, and Player 2 listed under Hunters in Central Yharnam.",
+              caption: "Your area, its lamps and the hunters.",
+            },
+            {
+              label: "Three hunters",
+              src: S("map-hunters"),
+              width: 1440,
+              height: 810,
+              alt: "The map with Player 2 and Player 1 both listed in Central Yharnam under Hunters, and their markers on the map.",
+              caption: "Every teammate is marked on the map.",
+            },
+            {
+              label: "Whole map",
+              src: S("map-world"),
+              width: 1440,
+              height: 810,
+              alt: "The map zoomed out over the whole of Central Yharnam and the Workshop.",
+              caption: "Triangle shows the whole map; the sticks or a drag move it.",
+            },
+          ],
+        },
+        {
+          type: "terms",
+          items: [
+            ["L1 / R1", "The previous or next area."],
+            ["L2 / R2, mouse wheel", "Zoom."],
+            ["Square", "Back to where you are."],
+            ["Triangle", "The whole map."],
+            ["R3", "Show or hide the roofs."],
+            ["Cross", "Travel to the chosen lamp."],
+          ],
+        },
+        {
+          type: "p",
+          text: "The compass at the top of the screen shows your teammates while you play: a mark with their initial and how far they are. When someone is behind you or off to the side, the mark waits at the edge with an arrow pointing the way.",
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "Ahead",
+              src: S("compass-ahead"),
+              width: 1220,
+              height: 124,
+              alt: "The compass strip with a teammate's mark P in the middle, 5.5 m away.",
+              caption: "A teammate straight ahead.",
+            },
+            {
+              label: "Behind",
+              src: S("compass-behind"),
+              width: 1220,
+              height: 124,
+              alt: "The compass with the mark P at the right edge with an arrow, 5.4 m away.",
+              caption: "Behind you: the mark waits at the edge and points the way.",
+            },
+            {
+              label: "To the side",
+              src: S("compass-right"),
+              width: 1220,
+              height: 124,
+              alt: "The compass with the mark P at the right end of the strip, 5.5 m away.",
+              caption: "Off to your right.",
+            },
           ],
         },
       ],
@@ -446,6 +1030,51 @@ const play: DocPage = {
           caption: "The Insert menu, with Co-op Team at the bottom.",
           width: 1220,
           height: 830,
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "Display",
+              src: S("insert-display"),
+              width: 1200,
+              height: 820,
+              alt: "Insert settings, Display: output resolution, live resolution changes, window mode, HDR and the FPS counter.",
+              caption: "Display.",
+            },
+            {
+              label: "Upscaler",
+              src: S("insert-upscaler"),
+              width: 1200,
+              height: 820,
+              alt: "Insert settings, Upscaler: FSR 3.1, quality preset, sharpening, subpixel jitter, motion vectors and frame generation.",
+              caption: "Upscaler, changed while you play.",
+            },
+            {
+              label: "Game effects",
+              src: S("insert-effects"),
+              width: 1200,
+              height: 820,
+              alt: "Insert settings, Game effects: model detail, chromatic aberration, depth of field, motion blur, ambient occlusion and more.",
+              caption: "Game effects: the community patches, each on or off.",
+            },
+            {
+              label: "Controls",
+              src: S("insert-controls"),
+              width: 1200,
+              height: 820,
+              alt: "Insert settings, Controls: button icons, mouse camera and sensitivity, and the keyboard and pad bindings.",
+              caption: "Controls, with the key for every button.",
+            },
+            {
+              label: "Advanced",
+              src: S("insert-advanced"),
+              width: 1200,
+              height: 820,
+              alt: "Insert settings, Advanced: reactive mask options and debug view, then Co-op Team, Map and Quit to desktop.",
+              caption: "Advanced, with Co-op Team and Map at the bottom.",
+            },
+          ],
         },
       ],
     },
@@ -831,7 +1460,7 @@ const netcode: DocPage = {
       blocks: [
         {
           type: "p",
-          text: `The rewrite was built in phases on a branch, each with tests first and runs on the multi-game rig: a packet trace, a channel policy table, one UDP link to the server, the world log on the server, enemy owners from the server, the native team lobby, the server owning the session (faster joins, host migration, resuming after a drop), one owner per map with a single HP path, server routing with the old peer-to-peer paths deleted, and crash-safe world saves with a server that restarts without ending sessions. It is in main, in testing, and ships in the next public release.`,
+          text: `The rewrite was built in phases on a branch, each with tests first and runs on the multi-game rig: a packet trace, a channel policy table, one UDP link to the server, the world log on the server, enemy owners from the server, the native team lobby, the server owning the session (faster joins, host migration, resuming after a drop), one owner per map with a single HP path, server routing with the old peer-to-peer paths deleted, and crash-safe world saves with a server that restarts without ending sessions. It is in main and ships in the pre-releases.`,
         },
         {
           type: "p",
@@ -1019,7 +1648,7 @@ const credits: DocPage = {
   ],
 };
 
-export const docs: DocPage[] = [install, play, architecture, netcode, build, credits];
+export const docs: DocPage[] = [install, launcher, play, architecture, netcode, build, credits];
 
 export function getDoc(slug: string): DocPage | undefined {
   return docs.find((d) => d.slug === slug);

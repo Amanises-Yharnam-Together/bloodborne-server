@@ -26,6 +26,10 @@ function block(b: Block): string {
       return `*Figure: ${absolutize(b.caption)}* ${b.alt}`;
     case "image":
       return `![${b.alt}](${absoluteUrl(b.src)})\n*${absolutize(b.caption)}*`;
+    case "gallery":
+      return b.items
+        .map((i) => `![${i.alt}](${absoluteUrl(i.src)})\n*${i.label}: ${absolutize(i.caption)}*`)
+        .join("\n\n");
     case "code":
       return `\`\`\`${b.lang ?? ""}\n${b.text}\n\`\`\``;
     case "table": {

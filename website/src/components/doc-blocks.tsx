@@ -2,6 +2,7 @@ import Image from "next/image";
 
 import { ArtIcon } from "@/components/art-icon";
 import { figures } from "@/components/figures";
+import { ImageTabs } from "@/components/image-tabs";
 import { InlineText } from "@/components/inline";
 import type { Block, DocPage } from "@/content/docs";
 
@@ -72,13 +73,16 @@ function DocBlock({ block }: { block: Block }) {
             width={block.width}
             height={block.height}
             sizes="(min-width: 1024px) 832px, 100vw"
-            className="h-auto w-full border-y border-silver/30 bg-card shadow-[0_20px_60px_rgb(0_0_0/0.6)]"
+            className="mx-auto h-auto w-full border-y border-silver/30 bg-card shadow-[0_20px_60px_rgb(0_0_0/0.6)]"
+            style={{ maxWidth: block.width }}
           />
           <figcaption className="mt-3 text-sm text-muted-foreground italic">
             <InlineText text={block.caption} />
           </figcaption>
         </figure>
       );
+    case "gallery":
+      return <ImageTabs items={block.items} />;
     case "code":
       return (
         <pre>

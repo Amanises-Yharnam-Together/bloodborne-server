@@ -15,7 +15,7 @@ export function llmsIndex(): string {
     "Key facts:",
     "- Runs on Bloodborne PC, a native Windows port of the PS4 game (no emulator). Requires the player's own Bloodborne for PS4, version 1.09; no game files are included.",
     "- Up to four players per team with the server netcode; every game keeps one UDP link to a self-hosted server, which owns the team's world. No peer-to-peer.",
-    "- Status: the server netcode is in the main branch and in testing. The current public release (0.1.4) is the older peer-to-peer version, for up to three players.",
+    "- Status: experimental and playable. New builds are GitHub pre-releases with the server netcode; the launcher updates itself from them.",
     "- Free and open source (GPL-2.0-or-later). Unofficial fan project, not affiliated with Sony Interactive Entertainment or FromSoftware.",
     "",
     "## Docs",

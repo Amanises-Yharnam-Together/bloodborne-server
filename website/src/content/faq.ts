@@ -7,7 +7,7 @@ export const faq: { q: string; a: string }[] = [
   },
   {
     q: "How many can play together?",
-    a: "Up to four in a team with the server netcode. Today's release, the older peer-to-peer version, takes up to three.",
+    a: "Up to four in a team. A running team can take a new hunter at any time.",
   },
   {
     q: "Do I need to rent a server?",

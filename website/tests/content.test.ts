@@ -48,13 +48,19 @@ describe("docs content", () => {
                 ? b.rows.flat()
                 : b.type === "terms"
                   ? b.items.flat()
-                  : "text" in b
-                    ? [b.text]
-                    : [b.caption];
+                  : b.type === "gallery"
+                    ? b.items.map((i) => i.caption)
+                    : "text" in b
+                      ? [b.text]
+                      : [b.caption];
           for (const t of texts)
             for (const m of t.matchAll(/\]\((\/[^)#]*)/g))
               expect(internal, `${d.slug}: ${m[1]}`).toContain(m[1]);
         }
+  });
+
+  it("has a route for every docs page", () => {
+    for (const d of docs) expect(existsSync(`src/app/docs/${d.slug}/page.tsx`), d.slug).toBe(true);
   });
 
   it("uses figures that exist and images that are in public/", () => {
@@ -62,9 +68,9 @@ describe("docs content", () => {
       for (const s of d.sections)
         for (const b of s.blocks) {
           if (b.type === "figure") expect(figures).toHaveProperty(b.figure);
-          if (b.type === "image") {
-            expect(existsSync(`public${b.src}`), b.src).toBe(true);
-            expect(b.alt.length).toBeGreaterThan(10);
+          for (const img of b.type === "image" ? [b] : b.type === "gallery" ? b.items : []) {
+            expect(existsSync(`public${img.src}`), img.src).toBe(true);
+            expect(img.alt.length).toBeGreaterThan(10);
           }
         }
   });
