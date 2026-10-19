@@ -89,10 +89,12 @@ enum Map3d { Map3dOff, Map3dPrerendered, Map3dLive, Map3dCount };
 enum CompassPosition : int { CompassTop = 0, CompassBottom = 1, CompassReticle = 2, CompassPositionCount };
 inline constexpr const char* CompassPositionNames[] = {"top", "bottom", "reticle"};
 /// HDR output (HDR10, ST.2084 PQ): the display's peak brightness and the brightness of SDR
-/// white (the game's UI, paper white) the menus offer, in nits.
-inline constexpr int HdrPeakNits[] = {400, 600, 800, 1000, 1500, 2000, 4000};
+/// white (the game's UI, paper white) the menus offer, in nits. HdrAuto (first): the display's
+/// own values (HdrPeak, HdrPaperWhite); 480 is Windows' brightest SDR content brightness.
+inline constexpr int HdrAuto = 0;
+inline constexpr int HdrPeakNits[] = {HdrAuto, 400, 600, 800, 1000, 1500, 2000, 4000};
 inline constexpr int HdrPeakCount = int(sizeof(HdrPeakNits) / sizeof(HdrPeakNits[0]));
-inline constexpr int HdrPaperWhiteNits[] = {80, 100, 150, 200, 250, 300, 400};
+inline constexpr int HdrPaperWhiteNits[] = {HdrAuto, 80, 100, 150, 200, 250, 300, 400, 480};
 inline constexpr int HdrPaperWhiteCount = int(sizeof(HdrPaperWhiteNits) / sizeof(HdrPaperWhiteNits[0]));
 
 struct Values {
@@ -172,8 +174,12 @@ struct Values {
     std::atomic<int> window_mode{Windowed};
     /// HDR output (bbport.ini hdr): used when the display supports it (hdr_supported). Live.
     std::atomic<bool> hdr{false};
-    std::atomic<int> hdr_peak_nits{1000};
-    std::atomic<int> hdr_paper_white{200};
+    /// Nits, or HdrAuto (bbport.ini "auto"): the display's (hdr_display_*).
+    std::atomic<int> hdr_peak_nits{HdrAuto};
+    std::atomic<int> hdr_paper_white{HdrAuto};
+    /// Set by the window: the desktop's SDR white (Windows' SDR content brightness) and the
+    /// display's peak, in nits; 0 while unknown.
+    std::atomic<float> hdr_display_white{0.0f}, hdr_display_peak{0.0f};
     /// Highlight expansion 0..1 (host_shaders/hdr_highlight.glsl): 0.5 takes SDR white to the
     /// peak brightness, higher values lower the knee (0: the SDR picture at paper white only).
     std::atomic<float> hdr_highlights{0.5f};
@@ -247,6 +253,10 @@ int DlssModelIndex(int preset);
 /// The HDR rows' choices for a brightness: the nearest offered value.
 int HdrPeakIndex(int nits);
 int HdrPaperWhiteIndex(int nits);
+/// The HDR output's paper white and peak in nits: the picked brightness, else the display's,
+/// else 200 and 1000. The peak is never below the white.
+float HdrPaperWhite();
+float HdrPeak();
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
 float PresetScale(int preset);

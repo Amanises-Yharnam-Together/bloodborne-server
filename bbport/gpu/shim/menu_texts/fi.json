@@ -12,9 +12,7 @@
  "HDR10 output: the picture's white sits at the UI brightness, its highlights reach toward the peak brightness.": "HDR10-ulostulo: kuvan valkoinen on käyttöliittymän kirkkaudella, kirkkaat kohdat ulottuvat kohti huippukirkkautta.",
  "nits": "nitiä",
  "HDR peak brightness": "HDR-huippukirkkaus",
- "Your display's peak brightness (Windows HDR Calibration or the display's specs).": "Näyttösi huippukirkkaus (Windowsin HDR-kalibrointi tai näytön tekniset tiedot).",
  "HDR UI brightness": "HDR-käyttöliittymän kirkkaus",
- "Brightness of white in the picture and the interface (paper white). 200 is a good start; lower in a dark room.": "Valkoisen kirkkaus kuvassa ja käyttöliittymässä (paperinvalkoinen). 200 on hyvä alku; pimeässä huoneessa vähemmän.",
  "HDR scene highlights": "HDR-kohtauksen kirkkaat kohdat",
  "The game's HUD stays at UI brightness, and lamps and flames may get extra brightness from the game's 16-bit scene. Off: the whole SDR picture is stretched, HUD included.": "Pelin HUD pysyy käyttöliittymän kirkkaudessa, ja lamput ja liekit voivat saada lisäkirkkautta pelin 16-bittisestä kohtauksesta. Pois: koko SDR-kuva venytetään, myös HUD.",
  "HDR highlights": "HDR-kirkkaat kohdat",
@@ -248,8 +246,6 @@
  "Borderless": "Reunaton",
  "HDR10 output (shown when HDR is on for this display in Windows)": "HDR10-ulostulo (näkyy, kun HDR on päällä tälle näytölle Windowsissa)",
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Päällä: HUD käyttöliittymän kirkkaudessa, liekkejä tehostaa 16-bittinen kohtaus. Pois: kaikki venytetään",
- "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)": "Nitit: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (näytön huippu)",
- "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400": "Valkoinen, nitit: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 ei mitään, 5 valkoinen saavuttaa huipun, 10 suurempi osa kuvasta kirkastuu",
  "Frame rate": "Ruudunpäivitys",
  "Frame rate limit and DLSS model (bbport)": "Ruudunpäivitysraja ja DLSS-malli (bbport)",
@@ -349,5 +345,10 @@
  "Flat": "Litteä",
  "Toggled with {Cross} + {L3}": "Vaihdetaan: {Cross} + {L3}",
  "The map is open over the game: {Circle} comes back here": "Kartta on auki pelin päällä: {Circle} palaa tänne",
- "Free camera ({Cross} + {L3})": "Vapaa kamera ({Cross} + {L3})"
+ "Free camera ({Cross} + {L3})": "Vapaa kamera ({Cross} + {L3})",
+ "Auto": "Auto",
+ "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "Näyttösi huippukirkkaus. Auto: näytön ilmoittama huippu (Windowsin HDR-kalibrointi muuttaa sitä).",
+ "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Valkoisen kirkkaus kuvassa ja käyttöliittymässä (paperinvalkoinen). Auto: yhtä kirkas kuin työpöytä (Windowsin SDR-sisällön kirkkaus); pimeässä huoneessa vähemmän.",
+ "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nitit: 0 näytön oma, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Valkoinen, nitit: 0 kuin työpöydällä, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
 }

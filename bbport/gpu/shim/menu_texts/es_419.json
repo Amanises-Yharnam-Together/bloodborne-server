@@ -12,9 +12,7 @@
  "HDR10 output: the picture's white sits at the UI brightness, its highlights reach toward the peak brightness.": "Salida HDR10: el blanco de la imagen queda en el brillo de la interfaz y las luces intensas se acercan al brillo máximo.",
  "nits": "nits",
  "HDR peak brightness": "Brillo máximo HDR",
- "Your display's peak brightness (Windows HDR Calibration or the display's specs).": "Brillo máximo de tu pantalla (Calibración HDR de Windows o especificaciones de la pantalla).",
  "HDR UI brightness": "Brillo de interfaz HDR",
- "Brightness of white in the picture and the interface (paper white). 200 is a good start; lower in a dark room.": "Brillo del blanco en la imagen y la interfaz (paper white). 200 es un buen inicio; menos en una habitación oscura.",
  "HDR scene highlights": "Luces HDR de la escena",
  "The game's HUD stays at UI brightness, and lamps and flames may get extra brightness from the game's 16-bit scene. Off: the whole SDR picture is stretched, HUD included.": "El HUD del juego se queda en el brillo de la interfaz, y lámparas y llamas pueden ganar brillo gracias a la escena de 16 bits del juego. Desactivado: se estira toda la imagen SDR, HUD incluido.",
  "HDR highlights": "Luces HDR",
@@ -248,8 +246,6 @@
  "Borderless": "Sin bordes",
  "HDR10 output (shown when HDR is on for this display in Windows)": "Salida HDR10 (visible cuando HDR está activo para esta pantalla en Windows)",
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Sí: HUD al brillo de la interfaz, llamas realzadas por la escena de 16 bits. No: todo estirado",
- "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)": "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (pico de la pantalla)",
- "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400": "Blanco, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 nada, 5 el blanco llega al pico, 10 se ilumina más parte de la imagen",
  "Frame rate": "Tasa de cuadros",
  "Frame rate limit and DLSS model (bbport)": "Límite de cuadros y modelo DLSS (bbport)",
@@ -349,5 +345,10 @@
  "Flat": "Plano",
  "Toggled with {Cross} + {L3}": "Se activa con {Cross} + {L3}",
  "The map is open over the game: {Circle} comes back here": "El mapa está abierto sobre el juego: {Circle} vuelve aquí",
- "Free camera ({Cross} + {L3})": "Cámara libre ({Cross} + {L3})"
+ "Free camera ({Cross} + {L3})": "Cámara libre ({Cross} + {L3})",
+ "Auto": "Auto",
+ "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "Brillo máximo de tu pantalla. Auto: el pico que indica la pantalla (la Calibración HDR de Windows lo cambia).",
+ "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Brillo del blanco en la imagen y la interfaz (paper white). Auto: tan brillante como el escritorio (brillo del contenido SDR de Windows); menos en una habitación oscura.",
+ "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nits: 0 el de la pantalla, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Blanco, nits: 0 como el escritorio, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
 }

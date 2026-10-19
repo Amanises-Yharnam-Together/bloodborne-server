@@ -283,24 +283,26 @@ void DefineTexts() {
         true);
     {
         std::vector<u32> peaks, whites;
+        // The first choice of both: auto, the display's own values (BbSettings::HdrAuto).
+        const u32 automatic = AddText("Auto", "Авто");
         for (const int nits : BbSettings::HdrPeakNits) {
             const std::string text = std::to_string(nits) + " nits";
             const std::string text_ru = std::to_string(nits) + " нит";
-            peaks.push_back(AddText(text.c_str(), text_ru.c_str()));
+            peaks.push_back(nits == BbSettings::HdrAuto ? automatic : AddText(text.c_str(), text_ru.c_str()));
         }
         for (const int nits : BbSettings::HdrPaperWhiteNits) {
             const std::string text = std::to_string(nits) + " nits";
             const std::string text_ru = std::to_string(nits) + " нит";
-            whites.push_back(AddText(text.c_str(), text_ru.c_str()));
+            whites.push_back(nits == BbSettings::HdrAuto ? automatic : AddText(text.c_str(), text_ru.c_str()));
         }
         row(HdrPeak, "HDR peak brightness", "Пиковая яркость HDR",
-            "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)",
-            "Нит: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (пик монитора)", peaks,
+            "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
+            "Нит: 0 как у монитора, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000", peaks,
             Kind::Steps, true);
         row(HdrPaperWhite, "HDR UI brightness", "Яркость интерфейса HDR",
-            "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400",
-            "Белый, нит: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400", whites,
-            Kind::Steps, true);
+            "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480",
+            "Белый, нит: 0 как у рабочего стола, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480",
+            whites, Kind::Steps, true);
     }
     row(HdrHighlights, "HDR highlights", "Света HDR",
         "0 none, 5 white reaches the peak, 10 more of the picture brightens",

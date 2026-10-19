@@ -12,9 +12,7 @@
  "HDR10 output: the picture's white sits at the UI brightness, its highlights reach toward the peak brightness.": "HDR10-uitvoer: het wit van het beeld staat op de UI-helderheid, hooglichten lopen op naar de piekhelderheid.",
  "nits": "nits",
  "HDR peak brightness": "HDR-piekhelderheid",
- "Your display's peak brightness (Windows HDR Calibration or the display's specs).": "De piekhelderheid van je scherm (Windows HDR-kalibratie of de specificaties van het scherm).",
  "HDR UI brightness": "HDR-UI-helderheid",
- "Brightness of white in the picture and the interface (paper white). 200 is a good start; lower in a dark room.": "Helderheid van wit in het beeld en de interface (paper white). 200 is een goed begin; lager in een donkere kamer.",
  "HDR scene highlights": "HDR-hooglichten uit de scène",
  "The game's HUD stays at UI brightness, and lamps and flames may get extra brightness from the game's 16-bit scene. Off: the whole SDR picture is stretched, HUD included.": "De HUD van de game blijft op UI-helderheid, en lampen en vlammen kunnen extra helderheid krijgen uit de 16-bit-scène van de game. Uit: het hele SDR-beeld wordt opgerekt, HUD inbegrepen.",
  "HDR highlights": "HDR-hooglichten",
@@ -248,8 +246,6 @@
  "Borderless": "Randloos",
  "HDR10 output (shown when HDR is on for this display in Windows)": "HDR10-uitvoer (zichtbaar als HDR voor dit scherm aan staat in Windows)",
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Aan: HUD op UI-helderheid, vlammen geholpen door de 16-bit-scène. Uit: alles opgerekt",
- "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)": "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (piek van het scherm)",
- "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400": "Wit, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 geen, 5 wit bereikt de piek, 10 meer van het beeld wordt lichter",
  "Frame rate": "Framerate",
  "Frame rate limit and DLSS model (bbport)": "Frameratelimiet en DLSS-model (bbport)",
@@ -349,5 +345,10 @@
  "Flat": "Plat",
  "Toggled with {Cross} + {L3}": "Aan/uit met {Cross} + {L3}",
  "The map is open over the game: {Circle} comes back here": "De kaart is open boven het spel: {Circle} keert hier terug",
- "Free camera ({Cross} + {L3})": "Vrije camera ({Cross} + {L3})"
+ "Free camera ({Cross} + {L3})": "Vrije camera ({Cross} + {L3})",
+ "Auto": "Auto",
+ "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "De piekhelderheid van je scherm. Auto: de piek die het scherm doorgeeft (Windows HDR-kalibratie verandert die).",
+ "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Helderheid van wit in het beeld en de interface (paper white). Auto: zo helder als het bureaublad (helderheid van SDR-inhoud in Windows); lager in een donkere kamer.",
+ "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nits: 0 die van het scherm, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Wit, nits: 0 als het bureaublad, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
 }

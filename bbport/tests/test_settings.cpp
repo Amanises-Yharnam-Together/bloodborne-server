@@ -144,7 +144,9 @@ int main() {
     setenv("BB_FULLSCREEN", "1", 1);
     BbSettings::Load();
     assert(s.window_mode == BbSettings::Borderless && "the launcher's fullscreen is borderless");
-    assert(!s.hdr && s.hdr_peak_nits == 1000 && s.hdr_paper_white == 200);
+    // Kaniel 2026-10-19: white and peak follow the display (the desktop's SDR white and the
+    // display's peak) unless the player picks a brightness.
+    assert(!s.hdr && s.hdr_peak_nits == BbSettings::HdrAuto && s.hdr_paper_white == BbSettings::HdrAuto);
     assert(s.hdr_scene && "highlights from the 16-bit scene by default");
     s.window_mode = BbSettings::ExclusiveFullscreen;
     s.hdr = true;
@@ -175,7 +177,52 @@ int main() {
     assert(BbSettings::HdrPeakNits[BbSettings::HdrPeakIndex(1100)] == 1000);
     assert(BbSettings::HdrPeakNits[BbSettings::HdrPeakIndex(9000)] == 4000);
     assert(BbSettings::HdrPaperWhiteNits[BbSettings::HdrPaperWhiteIndex(203)] == 200);
+    assert(BbSettings::HdrPaperWhiteNits[BbSettings::HdrPaperWhiteIndex(480)] == 480 &&
+           "Windows' brightest SDR white is offered");
+    assert(BbSettings::HdrPeakIndex(BbSettings::HdrAuto) == 0 &&
+           BbSettings::HdrPaperWhiteIndex(BbSettings::HdrAuto) == 0);
+    assert(BbSettings::HdrPeakNits[BbSettings::HdrPeakIndex(100)] == 400 && "a brightness is never auto");
+    assert(BbSettings::HdrPaperWhiteNits[BbSettings::HdrPaperWhiteIndex(50)] == 80);
     std::puts("PASS: window mode and HDR settings");
+
+    // Kaniel 2026-10-19 (PG27UCDM, Windows SDR white 480 nits): auto takes the display's values;
+    // without them (an unknown display) 200 and 1000; the peak is never below the white.
+    {
+        char hdr_file[512];
+        std::snprintf(hdr_file, sizeof(hdr_file), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+        const int fd = mkstemp(hdr_file);
+        assert(fd >= 0);
+        const char ini[] = "hdr=1\nhdr_peak_nits=auto\nhdr_paper_white=auto\n";
+        assert(write(fd, ini, sizeof(ini) - 1) == ssize_t(sizeof(ini) - 1));
+        close(fd);
+        setenv("BB_CONFIG", hdr_file, 1);
+        s.hdr_peak_nits = 1500;
+        s.hdr_paper_white = 250;
+        BbSettings::Load();
+        assert(s.hdr_peak_nits == BbSettings::HdrAuto && s.hdr_paper_white == BbSettings::HdrAuto);
+        s.hdr_display_white = 0.0f;
+        s.hdr_display_peak = 0.0f;
+        assert(BbSettings::HdrPaperWhite() == 200.0f && BbSettings::HdrPeak() == 1000.0f);
+        s.hdr_display_white = 480.0f;
+        s.hdr_display_peak = 1000.0f;
+        assert(BbSettings::HdrPaperWhite() == 480.0f && BbSettings::HdrPeak() == 1000.0f);
+        s.hdr_display_peak = 400.0f;
+        assert(BbSettings::HdrPeak() == 480.0f && "no peak below the white");
+        s.hdr_paper_white = 250;
+        s.hdr_peak_nits = 1500;
+        assert(BbSettings::HdrPaperWhite() == 250.0f && BbSettings::HdrPeak() == 1500.0f &&
+               "a picked brightness wins");
+        s.hdr_paper_white = BbSettings::HdrAuto;
+        s.hdr_peak_nits = BbSettings::HdrAuto;
+        BbSettings::Save();
+        const std::string saved = Read(hdr_file);
+        assert(saved.find("hdr_peak_nits=auto\n") != std::string::npos);
+        assert(saved.find("hdr_paper_white=auto\n") != std::string::npos);
+        s.hdr_display_white = 0.0f;
+        s.hdr_display_peak = 0.0f;
+        unlink(hdr_file);
+    }
+    std::puts("PASS: HDR brightness follows the display");
 
     // Kaniel 2026-10-11: the controls in the game's menu. The lines it does not keep in Values
     // (key.*, pad.*, mouse_*, button_icons: runtime_pad.c and the icon step read them) are read

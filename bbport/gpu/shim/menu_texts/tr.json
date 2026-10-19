@@ -12,9 +12,7 @@
  "HDR10 output: the picture's white sits at the UI brightness, its highlights reach toward the peak brightness.": "HDR10 çıkışı: görüntünün beyazı arayüz parlaklığında durur, parlak noktaları tepe parlaklığa doğru uzanır.",
  "nits": "nit",
  "HDR peak brightness": "HDR tepe parlaklığı",
- "Your display's peak brightness (Windows HDR Calibration or the display's specs).": "Ekranınızın tepe parlaklığı (Windows HDR Kalibrasyonu veya ekranın özellikleri).",
  "HDR UI brightness": "HDR arayüz parlaklığı",
- "Brightness of white in the picture and the interface (paper white). 200 is a good start; lower in a dark room.": "Görüntüdeki ve arayüzdeki beyazın parlaklığı (kâğıt beyazı). 200 iyi bir başlangıç; karanlık odada daha düşük.",
  "HDR scene highlights": "Sahneden HDR parlamaları",
  "The game's HUD stays at UI brightness, and lamps and flames may get extra brightness from the game's 16-bit scene. Off: the whole SDR picture is stretched, HUD included.": "Oyunun HUD'u arayüz parlaklığında kalır; lambalar ve alevler oyunun 16 bit sahnesinden ek parlaklık alabilir. Kapalı: HUD dahil tüm SDR görüntü gerilir.",
  "HDR highlights": "HDR parlamaları",
@@ -248,8 +246,6 @@
  "Borderless": "Kenarlıksız",
  "HDR10 output (shown when HDR is on for this display in Windows)": "HDR10 çıkışı (Windows'ta bu ekranda HDR açıkken gösterilir)",
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Açık: HUD arayüz parlaklığında, alevler 16 bit sahneyle güçlenir. Kapalı: her şey gerilir",
- "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)": "Nit: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (ekranın tepesi)",
- "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400": "Beyaz, nit: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 yok, 5 beyaz tepeye ulaşır, 10 görüntünün daha fazlası aydınlanır",
  "Frame rate": "Kare hızı",
  "Frame rate limit and DLSS model (bbport)": "Kare hızı sınırı ve DLSS modeli (bbport)",
@@ -349,5 +345,10 @@
  "Flat": "Düz",
  "Toggled with {Cross} + {L3}": "{Cross} + {L3} ile açılıp kapanır",
  "The map is open over the game: {Circle} comes back here": "Harita oyunun üstünde açık: {Circle} buraya döner",
- "Free camera ({Cross} + {L3})": "Serbest kamera ({Cross} + {L3})"
+ "Free camera ({Cross} + {L3})": "Serbest kamera ({Cross} + {L3})",
+ "Auto": "Otomatik",
+ "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "Ekranınızın tepe parlaklığı. Otomatik: ekranın bildirdiği tepe (Windows HDR Kalibrasyonu bunu değiştirir).",
+ "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Görüntüdeki ve arayüzdeki beyazın parlaklığı (kâğıt beyazı). Otomatik: masaüstü kadar parlak (Windows'un SDR içerik parlaklığı); karanlık odada daha düşük.",
+ "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nit: 0 ekranın kendi değeri, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Beyaz, nit: 0 masaüstü gibi, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
 }
