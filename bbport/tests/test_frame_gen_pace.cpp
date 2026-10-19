@@ -79,6 +79,19 @@ int main() {
         assert(Run(limiter, clock, 6.0, 60.0, 240, false) == MaxGenerated);
         assert(!limiter.Paused(clock));
     }
+    // One long hitch (a load, a shader compile: 98 ms of a 16.7 ms interval) is no display that
+    // cannot keep up: no pause (Supermedo b382856). Ten overloaded frames in a row still pause.
+    {
+        Limiter limiter;
+        double clock = 0.0;
+        assert(Run(limiter, clock, 1.0, 60.0, 240, false) == MaxGenerated);
+        clock += 1.0 / 60.0;
+        assert(limiter.OnGameFrame(clock, 240, false, 1000.0 / 60.0, 98.0) == MaxGenerated);
+        assert(!limiter.Paused(clock));
+        assert(Run(limiter, clock, 1.0, 60.0, 240, false) == MaxGenerated);
+        assert(Run(limiter, clock, 0.5, 60.0, 240, false, 1.2) == 0);
+        assert(limiter.Paused(clock));
+    }
     // The refresh rate unknown (0): no room is assumed to be missing.
     {
         Limiter limiter;

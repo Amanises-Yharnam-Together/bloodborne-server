@@ -78,8 +78,10 @@ public:
         }
         // The share of the frame interval spent presenting: paced, about count / (count + 1).
         // Near one presenting holds the game back: off for a while, longer each time.
+        // Each frame counts at most 1.2: one long hitch (a load, a shader compile) is no display
+        // that cannot keep up; about ten overloaded frames in a row are (Supermedo b382856).
         if (interval_ms > 0.0) {
-            busy += (present_ms / interval_ms - busy) * 0.1;
+            busy += (std::min(present_ms / interval_ms, 1.2) - busy) * 0.1;
         }
         if (shown_before && busy > 0.97) {
             hold_seconds = now_s - hold_until > 60.0 ? 5 : std::min(hold_seconds * 2, 120);
