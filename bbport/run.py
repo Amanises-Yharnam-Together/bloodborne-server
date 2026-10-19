@@ -239,6 +239,21 @@ def main():
                                                lambda: button_icons.list_gamepads(tool))
         icons_dir, icons_note = decided.get('BB_ICONS_DIR'), decided.get('BB_ICONS_NOTE')
     icons = ['--icons-layer', icons_dir] if icons_dir else []
+    # Field of view (bbport.ini fov, degrees; 43 is the game's): the camera table with every camera's field of
+    # view scaled, a layer under the icons and the mods. fov.py keeps it between starts while the setting and the
+    # game file are the same. From Supermedo's bbport (b75e811).
+    fov_layer = out / 'fov'
+    fov = ini_value(config, 'fov')
+    if fov and fov.isdigit() and int(fov) != 43:
+        made = run_script('fov.py', game, '--out', fov_layer, '--fov', fov, capture=True, optional=True)
+        if made is None:
+            shutil.rmtree(fov_layer, ignore_errors=True)
+            print('Field of view: its camera table could not be written; the game keeps its own')
+        else:
+            print(made.strip())
+            icons += ['--layer', fov_layer]
+    else:
+        shutil.rmtree(fov_layer, ignore_errors=True)
     if icons_note:
         print(icons_note)
     # The icon set the overlay's button glyphs follow (party death's prompts): the one the game's own glyphs show.

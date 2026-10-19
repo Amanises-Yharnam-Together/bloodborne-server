@@ -350,5 +350,10 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "ディスプレイのピーク輝度。自動：ディスプレイが報告するピーク（Windows HDR キャリブレーションで変わります）。",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "映像とインターフェースの白の明るさ（ペーパーホワイト）。自動：デスクトップと同じ明るさ（Windows の SDR コンテンツの明るさ）、暗い部屋では低めに。",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "nit：0 ディスプレイの値，1-2 400，3 600，4 800，5-6 1000，7 1500，8-9 2000，10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白、nit：0 デスクトップと同じ，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白、nit：0 デスクトップと同じ，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480",
+ "Field of view": "視野角",
+ "%d (game)": "%d (ゲーム)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "縦の視野角 (度)。ゲームのカメラは 43 です。すべてのカメラが同じだけ広がります。ゲームの再起動後に反映されます。",
+ "Mute in the background": "バックグラウンドで消音",
+ "The game is silent while its window is not the active one.": "ゲームのウィンドウがアクティブでない間は音を出しません。"
 }

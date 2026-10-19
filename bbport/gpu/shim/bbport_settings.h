@@ -97,6 +97,9 @@ inline constexpr int HdrPeakCount = int(sizeof(HdrPeakNits) / sizeof(HdrPeakNits
 inline constexpr int HdrPaperWhiteNits[] = {HdrAuto, 80, 100, 150, 200, 250, 300, 400, 480};
 inline constexpr int HdrPaperWhiteCount = int(sizeof(HdrPaperWhiteNits) / sizeof(HdrPaperWhiteNits[0]));
 
+/// Field of view (fov.py): the game's camera has 43 degrees.
+inline constexpr int FovDefault = 43, FovMin = 30, FovMax = 90;
+
 struct Values {
     /// The menus' language: the game's (menu_language_auto) or the one chosen in the Insert menu.
     std::atomic<MenuLanguage> menu_language{MenuLanguage::English};
@@ -113,6 +116,12 @@ struct Values {
     std::atomic<float> reactive_max{0.9f};
     std::atomic<int> debug_view{DebugNone};
     std::atomic<bool> show_fps{false};
+    /// Silence the game while its window does not have focus (bbport.ini mute_unfocused,
+    /// bbgpu_audio_muted). From Supermedo's bbport (b75e811).
+    std::atomic<bool> mute_unfocused{false};
+    /// Vertical field of view in degrees, FovDefault the game's (bbport.ini fov; run.py makes
+    /// the camera table with fov.py at start).
+    std::atomic<int> fov{FovDefault};
     /// The teammate compass (bbport.ini compass, on by default) and where it is (CompassPosition).
     std::atomic<bool> compass{true};
     std::atomic<int> compass_position{CompassTop};
@@ -197,6 +206,7 @@ struct Values {
     bool startup_object_motion = true;
     bool startup_effects[EffectCount]{};
     int startup_model_lod = 0;
+    int startup_fov = FovDefault;
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
 };

@@ -350,5 +350,10 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "Skjermens topplysstyrke. Auto: toppen skjermen oppgir (Windows HDR-kalibrering endrer den).",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Lysstyrken til hvitt i bildet og grensesnittet (papirhvitt). Auto: like lyst som skrivebordet (Windows' lysstyrke for SDR-innhold); lavere i et mørkt rom.",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nits: 0 skjermens egen, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Hvitt, nits: 0 som skrivebordet, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Hvitt, nits: 0 som skrivebordet, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480",
+ "Field of view": "Synsfelt",
+ "%d (game)": "%d (spillet)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Loddrett synsfelt i grader; spillets kamera har 43. Hvert kamera utvides like mye. Gjelder etter at spillet startes på nytt.",
+ "Mute in the background": "Lydløs i bakgrunnen",
+ "The game is silent while its window is not the active one.": "Spillet er stille mens vinduet ikke er det aktive."
 }

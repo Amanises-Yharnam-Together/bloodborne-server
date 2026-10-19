@@ -34,6 +34,9 @@ int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 void bbgpu_game_thread_tick(void);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
+/* 1 while the game should be silent: bbport.ini mute_unfocused is on and the window does not
+ * have focus. Safe from any thread (the audio ports read it for every buffer). */
+int bbgpu_audio_muted(void);
 /* Mouse for the game (runtime_pad.c). enable asks the window to hold the mouse in relative mode
  * while the game window has focus and neither the settings menu nor the text dialog is open.
  * take returns the motion (counts), wheel steps and buttons (SDL_BUTTON_MASK, held or clicked)

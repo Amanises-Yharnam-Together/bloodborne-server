@@ -9,6 +9,7 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbcoop.h"
+#include "gpu/bbgpu.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -210,7 +211,9 @@ static float sound_hold_gain(Port *p) {
         if (held) { __atomic_store_n(&held_buffers,0,__ATOMIC_RELAXED); printf("Runtime: sound held under the team's loading screen\n"); }
         else printf("Runtime: sound back after %lu silent buffers\n",__atomic_load_n(&held_buffers,__ATOMIC_RELAXED));
     }
-    float target=held ? 0.f : 1.f;
+    /* mute_unfocused (bbgpu_audio_muted): silent while the window is in the background, with
+     * the same fade; the port keeps its pace, so the game's audio threads run on as before. */
+    float target=held || bbgpu_audio_muted() ? 0.f : 1.f;
     p->hold_gain += target>p->hold_gain ? .125f : target<p->hold_gain ? -.125f : 0.f;
     if (p->hold_gain<0.f) p->hold_gain=0.f;
     if (p->hold_gain>1.f) p->hold_gain=1.f;

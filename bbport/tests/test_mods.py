@@ -423,6 +423,21 @@ class IconLayerTests(unittest.TestCase):
         self.assertEqual((self.game / self.COMMON).read_bytes(), b'game icons')
         self.assertFalse([p for p in [result, *result.rglob('*')] if p.is_symlink()])
 
+    def test_port_layers_go_under_the_icons_and_the_mods(self):
+        # The field of view's camera table (fov.py): any mod with that file wins; a missing folder is skipped.
+        fov = self.root / 'fov'
+        (fov / 'dvdroot_ps4/param').mkdir(parents=True)
+        (fov / 'dvdroot_ps4/param/cams.dcx').write_bytes(b'wider')
+        self.user_mod('Other', 'other.dcx')
+        layers, note = mods.mod_layers(self.game, self.moddir, None, '1', self.icons,
+                                       [fov, self.root / 'missing'])
+        self.assertEqual([name for name, _ in layers], ['fov', 'button icons', 'Other'])
+        self.assertIsNone(note)
+        result = self.overlay(layers)
+        self.assertEqual((result / 'dvdroot_ps4/param/cams.dcx').read_bytes(), b'wider')
+        layers, _ = mods.mod_layers(self.game, self.moddir, None, '1', None, [fov])
+        self.assertEqual([name for name, _ in layers], ['fov', 'Other'])
+
     def test_the_icons_go_under_the_mods_and_other_mods_still_apply(self):
         self.user_mod('Other', 'other.dcx')
         layers, note = mods.mod_layers(self.game, self.moddir, None, '1', self.icons)

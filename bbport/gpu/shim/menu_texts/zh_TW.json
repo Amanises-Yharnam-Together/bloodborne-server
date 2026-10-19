@@ -350,5 +350,10 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "顯示器的峰值亮度。自動：顯示器回報的峰值（Windows HDR 校正會改變它）。",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "畫面與介面中白色的亮度（紙白）。自動：與桌面一樣亮（Windows 的 SDR 內容亮度）；暗室中可調低。",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "尼特：0 顯示器本身，1-2 400，3 600，4 800，5-6 1000，7 1500，8-9 2000，10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白色，尼特：0 與桌面相同，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白色，尼特：0 與桌面相同，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480",
+ "Field of view": "視野",
+ "%d (game)": "%d (遊戲)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "垂直視野角度；遊戲的鏡頭為 43。所有鏡頭按相同幅度放寬。重新啟動遊戲後生效。",
+ "Mute in the background": "背景時靜音",
+ "The game is silent while its window is not the active one.": "遊戲視窗不是使用中的視窗時，遊戲不發出聲音。"
 }

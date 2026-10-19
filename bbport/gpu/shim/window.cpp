@@ -244,6 +244,7 @@ bool WindowSDL::TakeMouse(float& dx, float& dy, float& wheel, u32& buttons) {
 // when the mouse is let go.
 void WindowSDL::UpdateMouseCapture() {
     const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    input_focused.store(focused, std::memory_order_relaxed);
     const bool want = mouse_enabled.load(std::memory_order_relaxed) && focused && !text_active &&
                       !BbOverlay::CapturesInput();
     if (want != SDL_GetWindowRelativeMouseMode(window)) {

@@ -350,5 +350,10 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "Luminosité de crête de votre écran. Auto : la crête que l'écran annonce (l'Étalonnage HDR Windows la modifie).",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Luminosité du blanc dans l'image et l'interface (blanc papier). Auto : aussi lumineux que le bureau (luminosité du contenu SDR de Windows) ; moins dans une pièce sombre.",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nits : 0 celle de l'écran, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Blanc, nits : 0 comme le bureau, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Blanc, nits : 0 comme le bureau, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480",
+ "Field of view": "Champ de vision",
+ "%d (game)": "%d (jeu)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Champ de vision vertical en degrés ; la caméra du jeu en a 43. Chaque caméra est élargie d'autant. S'applique après le redémarrage du jeu.",
+ "Mute in the background": "Muet en arrière-plan",
+ "The game is silent while its window is not the active one.": "Le jeu reste silencieux tant que sa fenêtre n'est pas active."
 }

@@ -350,5 +350,10 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "디스플레이의 최대 밝기. 자동: 디스플레이가 알려 주는 최대값(Windows HDR 보정으로 바뀜).",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "화면과 인터페이스의 흰색 밝기(페이퍼 화이트). 자동: 바탕 화면과 같은 밝기(Windows의 SDR 콘텐츠 밝기), 어두운 방에서는 낮추세요.",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "니트: 0 디스플레이 값, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "흰색, 니트: 0 바탕 화면과 같게, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "흰색, 니트: 0 바탕 화면과 같게, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480",
+ "Field of view": "시야각",
+ "%d (game)": "%d (게임)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "세로 시야각(도)입니다. 게임 카메라는 43입니다. 모든 카메라가 같은 만큼 넓어집니다. 게임을 다시 시작하면 적용됩니다.",
+ "Mute in the background": "백그라운드에서 음소거",
+ "The game is silent while its window is not the active one.": "게임 창이 활성 창이 아닌 동안 소리가 나지 않습니다."
 }

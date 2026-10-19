@@ -1459,6 +1459,25 @@ void FrameGenRows(bool on) {
     }
 }
 
+/// A whole-number setting from lo to hi, one step a press; `game` is shown as the game's own.
+void IntSliderRow(const char* id, const char* label, std::atomic<int>& value, int lo, int hi, int game,
+                  const char* hint, bool enabled = true) {
+    char text[48];
+    if (value == game) {
+        std::snprintf(text, sizeof(text), T("%d (game)", "%d (игра)"), value.load());
+    } else {
+        std::snprintf(text, sizeof(text), "%d", value.load());
+    }
+    float drag = -1.0f;
+    const int step = Row(id, label, text, hint, enabled, float(value - lo) / float(hi - lo), &drag);
+    if (step != 0) {
+        Store(value, std::clamp(value + step, lo, hi), true);
+    } else if (drag >= 0.0f) {
+        const int v = std::clamp(lo + int(std::lround(drag * float(hi - lo))), lo, hi);
+        Store(value, v, v != value);
+    }
+}
+
 void SliderRow(const char* id, const char* label, std::atomic<float>& value, float lo, float hi,
                float step_size, const char* hint, bool enabled = true) {
     char text[32];
@@ -1493,6 +1512,7 @@ bool ControlsNeedRestart() {
 bool RestartNeeded() {
     auto& s = BbSettings::Get();
     bool restart = s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
+                   s.fov != s.startup_fov ||
                    s.live_resolution != s.startup_live_resolution ||
                    BbSettings::ResolutionNeedsRestart() || ControlsNeedRestart();
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
@@ -1607,6 +1627,15 @@ void DisplayTab() {
     Toggle("fps", T("FPS counter", "Счётчик FPS"), s.show_fps,
            T("Frames per second and frame time in the top right corner.",
              "Кадры в секунду и время кадра в правом верхнем углу."));
+    IntSliderRow("fov", T("Field of view", "Поле зрения"), s.fov, BbSettings::FovMin, BbSettings::FovMax,
+                 BbSettings::FovDefault,
+                 T("Vertical field of view in degrees; the game's camera has 43. Every camera is "
+                   "widened by the same amount. Applies after restarting the game.",
+                   "Вертикальное поле зрения в градусах; у камеры игры 43. Каждая камера "
+                   "расширяется на ту же величину. Применяется после перезапуска игры."));
+    Toggle("mute_unfocused", T("Mute in the background", "Без звука в фоне"), s.mute_unfocused,
+           T("The game is silent while its window is not the active one.",
+             "Игра молчит, пока её окно не активно."));
     // Kaniel 2026-10-17: the teammate compass.
     Toggle("compass", T("Teammate compass", "Компас союзников"), s.compass,
            T("A strip turned with the camera shows where each hunter of your party on this map is "

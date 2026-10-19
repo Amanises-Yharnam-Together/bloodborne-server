@@ -451,15 +451,17 @@ def icons_note(layers):
     return f'Button icons are off for this run: {owner} has its own menu/common.tpf.dcx' if owner else None
 
 
-def mod_layers(game, mods_dir, config=None, enabled='1', icons=None):
-    """([(name, folder)], note): the layers of an overlay, lowest priority first. The button icons, when given,
-    go first so that any mod replaces them; a mod that has the same file as the icons takes them out, and the
-    note says so (None otherwise)."""
+def mod_layers(game, mods_dir, config=None, enabled='1', icons=None, port_layers=()):
+    """([(name, folder)], note): the layers of an overlay, lowest priority first. The port's own layers
+    (`port_layers`, such as the field of view's camera table) go first, then the button icons, so that any mod
+    replaces them; a mod that has the same file as the icons takes them out, and the note says so (None
+    otherwise)."""
+    own = [(Path(layer).name, Path(layer)) for layer in port_layers if Path(layer).is_dir()]
     layers = user_layers(game, mods_dir, config, enabled)
     if not icons:
-        return layers, None
+        return [*own, *layers], None
     note = icons_note(layers)
-    return (layers, note) if note else ([(ICONS_LAYER, Path(icons)), *layers], None)
+    return ([*own, *layers], note) if note else ([*own, (ICONS_LAYER, Path(icons)), *layers], None)
 
 
 def main():
@@ -470,10 +472,12 @@ def main():
     parser.add_argument('--config', type=Path)
     parser.add_argument('--enabled', choices=('0', '1'), default='1')
     parser.add_argument('--icons-layer', type=Path, help='a folder with the generated button icons (a layer under the mods)')
+    parser.add_argument('--layer', type=Path, action='append', default=[],
+                        help="a folder of the port's own (fov.py's camera table): a layer under the icons and the mods")
     parser.add_argument('--party-hud', action='store_true',
                         help='put the party HUD (hud_patch.py: the HUD the layers show, patched) over the mods')
     args = parser.parse_args()
-    layers, note = mod_layers(args.game, args.mods_dir, args.config, args.enabled, args.icons_layer)
+    layers, note = mod_layers(args.game, args.mods_dir, args.config, args.enabled, args.icons_layer, args.layer)
     if note:
         print(f'Mods: {note}', file=sys.stderr)
     if args.party_hud:
