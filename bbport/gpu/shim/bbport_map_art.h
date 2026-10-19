@@ -18,6 +18,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace BbMapArt {
@@ -78,6 +80,8 @@ struct Texture {
 struct Surface {
     std::shared_ptr<const Texture> diffuse, diffuse2, mask, light;
 };
+/// A surface's colour at a corner (its first and second texture coordinates, four floats).
+std::uint32_t SurfaceColor(const Surface& surface, const float* uv);
 std::optional<Texture> DecodeTexture(std::span<const std::uint8_t> tpf, int max_side = 256);
 
 /// The highest-detail triangles of a FLVER2 model (inflated), three corners of x, y, z each,
@@ -288,6 +292,41 @@ ObliqueView ViewOf(int view);
 /// A world spot's (u, w) and its nearness to the viewer in an oblique view.
 std::array<float, 3> ToView(const ObliqueView& view, float x, float y, float z);
 
+/// Kaniel 2026-10-19 ("an opt in option to view rendered in real time 3d map"): an area's models
+/// thinned for drawing live: their corners merged on a grid of `cell` metres (each merged corner
+/// at the average of its own, in their average colour: the texture's, blended, in the baked
+/// light), the triangles that fold to nothing or repeat left out. Positions in the area's own
+/// coordinates (x, y, z), colours 0xAABBGGRR (as a GPU reads RGBA bytes), three indices a triangle.
+struct AreaMesh {
+    std::vector<float> positions;
+    std::vector<std::uint32_t> colors;
+    std::vector<std::uint32_t> indices;
+    bool operator==(const AreaMesh&) const = default;
+};
+/// Kept in the user folder ("BBMESH1", zlib-compressed) and read back.
+std::vector<std::uint8_t> SaveMesh(const AreaMesh& mesh);
+std::optional<AreaMesh> LoadMesh(std::span<const std::uint8_t> file);
+/// Corners merged into `cell`-metre grid cells (MeshOf's thinning), for tests.
+class MeshBuilder {
+public:
+    explicit MeshBuilder(float cell) : cell{cell} {}
+    void Add(const float* triangle, const std::uint32_t corner_colors[3]);
+    void Merge(const MeshBuilder& other);
+    AreaMesh Finish() const;
+    std::size_t Triangles() const { return tris.size() / 3; }
+
+private:
+    std::uint32_t Corner(const float* at, std::uint32_t color);
+    float cell;
+    std::unordered_map<std::uint64_t, std::uint32_t> corner_of;
+    std::vector<double> sums;    // x, y, z, r, g, b each
+    std::vector<std::uint32_t> counts;
+    std::vector<std::uint32_t> tris;
+    std::unordered_set<std::uint64_t> seen; // the triangles already in (by their corners)
+};
+std::optional<AreaMesh> MeshOf(std::uint32_t packed_map, const ReadFile& read, int threads = 1,
+                               const ReadRange& read_range = {}, float cell = 0.4f);
+
 /// `textured`: the pictures in the game's own textures (else one colour a material); `view`
 /// 1 to 4: the oblique picture (ViewOf) instead of the one from above.
 std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, float ppm = 3.0f,
@@ -297,6 +336,6 @@ std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, f
 /// area, m24_00 to m24_02, share them).
 std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, const ReadFile& read, float ppm = 3.0f,
                                 int max_side = 3072, int threads = 1, const ReadRange& read_range = {},
-                                bool textured = false, int view = 0);
+                                bool textured = false, int view = 0, std::vector<MeshBuilder>* meshes = nullptr);
 
 } // namespace BbMapArt

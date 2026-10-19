@@ -1,6 +1,8 @@
 {
+ "Prerendered": "事前描画",
+ "Live": "リアルタイム",
+ "L3 on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "マップでL3を押すと、ゲームのモデルから場所を斜めから表示します。事前描画：各エリアは初回に一度だけバックグラウンドで描かれます。リアルタイム：視点を回転・傾けるたび（右スティック）、グラフィックカードがメモリを使ってモデルを描きます。低スペックのPCではオフのままにしてください。",
  "3D map": "3Dマップ",
- "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "マップでL3を押すと、ゲームのモデルから描いた場所を斜めから表示します。各エリアは初回に一度だけバックグラウンドで描かれ、メモリと時間を使います。低スペックのPCではオフのままにしてください。",
  "Turn on the 3D map in the settings (Insert, Display)": "設定で3Dマップをオンにしてください（Insert、表示）",
  "Preparing the 3D view...": "3Dビューを準備中...",
  "On": "ON",

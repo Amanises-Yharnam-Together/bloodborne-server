@@ -1,6 +1,8 @@
 {
+ "Prerendered": "Förritad",
+ "Live": "Live",
+ "L3 on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "L3 på kartan visar platsen snett ovanifrån från spelets modeller. Förritad: varje område ritas en gång, första gången, i bakgrunden. Live: grafikkortet ritar modellerna medan du vrider och lutar vyn (högra spaken), med dess minne. Låt den vara av på en svag dator.",
  "3D map": "3D-karta",
- "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "L3 på kartan visar platsen snett ovanifrån, ritad från spelets egna modeller. Varje område ritas en gång, första gången, i bakgrunden, vilket tar minne och tid; låt den vara av på en svag dator.",
  "Turn on the 3D map in the settings (Insert, Display)": "Slå på 3D-kartan i inställningarna (Insert, Skärm)",
  "Preparing the 3D view...": "Förbereder 3D-vyn...",
  "On": "På",

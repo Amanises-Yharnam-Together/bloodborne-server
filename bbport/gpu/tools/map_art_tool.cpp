@@ -29,6 +29,36 @@ int main(int argc, char** argv) {
     const std::uint32_t packed = maps.front();
     const float ppm = argc > 4 ? std::strtof(argv[4], nullptr) : 3.0f;
     const auto start = std::chrono::steady_clock::now();
+    // BB_MAP_MESH=<cell metres>: the live 3D map's mesh of the first map instead, to <out>.bbmesh.
+    if (const char* cell = std::getenv("BB_MAP_MESH")) {
+        const auto mesh = BbMapArt::MeshOf(
+            packed,
+            [&](const std::string& relative) {
+                std::ifstream file(root / relative, std::ios::binary);
+                return std::vector<std::uint8_t>{std::istreambuf_iterator<char>(file), {}};
+            },
+            argc > 5 ? std::atoi(argv[5]) : 4,
+            [&](const std::string& relative, std::uint64_t offset, std::uint64_t size) {
+                std::ifstream file(root / relative, std::ios::binary);
+                std::vector<std::uint8_t> bytes(size);
+                file.seekg(std::streamoff(offset));
+                file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(size));
+                bytes.resize(std::size_t(file.gcount()));
+                return bytes;
+            },
+            std::strtof(cell, nullptr));
+        if (!mesh) {
+            std::fprintf(stderr, "no mesh for %08x\n", packed);
+            return 1;
+        }
+        const auto file = BbMapArt::SaveMesh(*mesh);
+        std::ofstream(std::string(argv[3]) + ".bbmesh", std::ios::binary)
+            .write(reinterpret_cast<const char*>(file.data()), std::streamsize(file.size()));
+        std::printf("mesh: %zu corners, %zu triangles, %zu bytes saved, in %.1f s\n", mesh->colors.size(),
+                    mesh->indices.size() / 3, file.size(),
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        return 0;
+    }
     const auto chart = BbMapArt::ChartAreas(maps, [&](const std::string& relative) {
         std::ifstream file(root / relative, std::ios::binary);
         return std::vector<std::uint8_t>{std::istreambuf_iterator<char>(file), {}};

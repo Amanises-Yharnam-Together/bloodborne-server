@@ -137,6 +137,21 @@ foreach(BPP IN ITEMS 8 16 32 64 96 128)
     add_host_shader(tiling.comp tiling_micro_${BPP}_comp BITS_PER_PIXEL=${BPP} IS_MACRO_TILED=0)
     add_host_shader(tiling.comp tiling_macro_${BPP}_comp BITS_PER_PIXEL=${BPP} IS_MACRO_TILED=1)
 endforeach()
+# The port's own shaders (shim/shaders), into the same headers' folder.
+set(SHADER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/shim/shaders)
+function(add_port_shader FILENAME SHADER_NAME)
+    set(OUT ${SHADER_DIR}/${SHADER_NAME}.h)
+    string(TOUPPER ${SHADER_NAME} SYMBOL)
+    add_custom_command(OUTPUT ${OUT}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_DIR}
+        COMMAND ${GLSLANG_COMPILER} --target-env vulkan1.3 -o ${OUT} --vn ${SYMBOL} ${SHADER_SRC}/${FILENAME}
+        COMMAND ${CMAKE_COMMAND} "-DHEADER_FILE=${OUT}" -P ${CMAKE_CURRENT_SOURCE_DIR}/shadps4/video_core/host_shaders/AddShaderHeaderInclude.cmake
+        DEPENDS ${SHADER_SRC}/${FILENAME} VERBATIM)
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${OUT} PARENT_SCOPE)
+endfunction()
+# Kaniel 2026-10-19: the map screen's live 3D view (shim/bbport_map_3d.cpp).
+add_port_shader(map_3d.vert map_3d_vert)
+add_port_shader(map_3d.frag map_3d_frag)
 add_custom_target(host_shaders DEPENDS ${SHADER_HEADERS})
 
 file(GLOB_RECURSE VIDEO_CORE CONFIGURE_DEPENDS shadps4/video_core/*.cpp)

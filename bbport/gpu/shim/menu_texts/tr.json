@@ -1,6 +1,8 @@
 {
+ "Prerendered": "Önceden çizilmiş",
+ "Live": "Canlı",
+ "L3 on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "Haritada L3, yeri oyunun modellerinden açılı gösterir. Önceden çizilmiş: her bölge ilk seferde bir kez arka planda çizilir. Canlı: görünümü çevirip eğdikçe (sağ çubuk) modelleri ekran kartı belleğini kullanarak çizer. Zayıf bir bilgisayarda kapalı bırakın.",
  "3D map": "3B harita",
- "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "Haritada L3, yeri oyunun kendi modellerinden çizilmiş olarak açılı gösterir. Her bölge ilk seferde bir kez arka planda çizilir, bu bellek ve zaman alır; zayıf bir bilgisayarda kapalı bırakın.",
  "Turn on the 3D map in the settings (Insert, Display)": "3B haritayı ayarlardan açın (Insert, Görüntü)",
  "Preparing the 3D view...": "3B görünüm hazırlanıyor...",
  "On": "Açık",

@@ -41,6 +41,7 @@ static uint64_t module_count;
 static int entered_game;
 static int gpu_enabled;
 int vulkan_smoke(void);
+int bbport_prepare_map(const char *dvdroot, const char *user_dir);
 
 static void fail(const char *message) { fprintf(stderr, "ERROR: %s\n", message); exit(1); }
 
@@ -497,6 +498,8 @@ int main(int argc, char **argv) {
     mallopt(M_MMAP_THRESHOLD,32*1024*1024);
 #endif
     if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
+    /* Kaniel 2026-10-19: the launcher draws the map's pictures and 3D view ahead (bbport_map_charts.cpp). */
+    if (argc == 4 && !strcmp(argv[1], "--prepare-map")) return bbport_prepare_map(argv[2], argv[3]);
 #ifdef _WIN32
     /* The PS4 user range must stay free of host allocations (GPU driver, heaps), and the guest
      * TCB needs one of the 64 TEB TLS slots before DLLs (Vulkan drivers) take them. */

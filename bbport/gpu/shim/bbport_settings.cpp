@@ -101,7 +101,7 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "compass") {
         v.compass = i != 0;
     } else if (key == "map_3d") {
-        v.map_3d = i != 0;
+        v.map_3d = std::clamp(i, 0, Map3dCount - 1);
     } else if (key == "compass_position") {
         for (int p = 0; p < CompassPositionCount; ++p) {
             if (value == CompassPositionNames[p]) {
@@ -496,7 +496,7 @@ void Save() {
     put("compass", flag(v.compass));
     put("compass_position",
         CompassPositionNames[std::clamp(v.compass_position.load(), 0, CompassPositionCount - 1)]);
-    put("map_3d", flag(v.map_3d));
+    put("map_3d", std::to_string(std::clamp(v.map_3d.load(), 0, Map3dCount - 1)));
     put("fps_limit", std::to_string(v.fps_limit.load()));
     put("dlss_model", DlssModelNames[DlssModelIndex(v.dlss_model)]);
     put("window_mode", WindowModeNames[std::clamp(v.window_mode.load(), 0, WindowModeCount - 1)]);

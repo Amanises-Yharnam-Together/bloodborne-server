@@ -277,10 +277,30 @@ INI_FLOATS = {'sharpness', 'mouse_sensitivity'}  # written with two decimals
 INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'frame_generation': '0', 'show_fps': '1',
                 'frame_gen_provider': 'fsr3', 'frame_gen_multiplier': '2', 'frame_gen_fit_display': '1',
-                'output_res': '1920x1080', 'model_lod': '0',
+                'output_res': '1920x1080', 'model_lod': '0', 'map_3d': '0',
                 'live_resolution': 'auto', 'window_mode': 'windowed', 'hdr': '0',
                 'button_icons': bbport_controls.ICON_DEFAULT, **bbport_controls.MOUSE_DEFAULTS,
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS}}
+# Kaniel 2026-10-19: the map's 3D view (bbport.ini map_3d: BbSettings::Map3d).
+MAP_3D = [('0', ('Off', 'Выкл.')), ('1', ('Prerendered', 'Заранее нарисованная')), ('2', ('Live', 'В реальном времени'))]
+
+
+def map_areas(dvdroot):
+    """The game's map areas (map/MapStudio/mAA_BB_00_00.msb.dcx), as the prepare step draws them."""
+    studio = Path(dvdroot) / 'map' / 'MapStudio'
+    try:
+        return sorted(p.name[:6] for p in studio.glob('m??_??_00_00.msb.dcx'))
+    except OSError:
+        return []
+
+
+def map_prepared(dvdroot, user):
+    """(areas with their 3D view drawn, areas) in the saves folder's map/."""
+    areas = map_areas(dvdroot)
+    done = sum(1 for a in areas if (Path(user) / 'map' / f'{a}_00_00_v1.bbmap').is_file())
+    return done, len(areas)
+
+
 INI_FLOAT_RANGES = {'sharpness': (0.0, 2.0), 'mouse_sensitivity': bbport_controls.MOUSE_SENSITIVITY_RANGE}
 
 
@@ -3456,6 +3476,7 @@ class Launcher:
         show_note()
         for key in ('fps_mode', 'upscaler', 'output_res'):
             self.vars[key].trace_add('write', lambda *_a: self.refresh_status())
+        self.build_map_card(page)
         files = self.card(page, _('Saves and shortcuts', 'Сохранения и ярлыки'))
         holder = tk.Frame(files, bg=CARD)
         holder.grid(row=self.next_row(files), column=0, columnspan=2, sticky='w', pady=(px(12), 0))
@@ -3485,6 +3506,104 @@ class Launcher:
                         ).pack(side='left')
             self.update_line = self.label(holder, '', 'small', MUTED)
             self.update_line.pack(side='left', padx=(px(14), 0))
+
+    # --- the map's 3D view ----------------------------------------------------------------------
+
+    def build_map_card(self, page):
+        """Kaniel 2026-10-19 ("prerender should happen during setup/in launcher on visible place"): the map
+        screen's 3D view, and a button that draws every area's map and 3D view ahead, so the game shows them
+        at once."""
+        tk, px = self.tk, self.px
+        card = self.card(page, _('Map', 'Карта'))
+        self.row(card, _('3D map', '3D-карта'), self.choice(card, 'map_3d', 'ini', MAP_3D, 26),
+                 _('L3 on the in-game map shows the place from the game\'s own models, from an angle. Prerendered: '
+                   'drawn ahead (below), the map opens in 3D. Live: drawn by the graphics card as you turn the view; '
+                   'needs video memory.',
+                   'L3 на карте в игре показывает местность из моделей самой игры под углом. Заранее '
+                   'нарисованная: рисуется заранее (ниже), карта открывается в 3D. В реальном времени: рисует '
+                   'видеокарта, пока вы поворачиваете вид; нужна видеопамять.'))
+        self.map_label = self.label(card, '', wraplength=px(640), justify='left')
+        self.map_label.grid(row=self.next_row(card), column=0, columnspan=2, sticky='w', pady=(px(14), 0))
+        holder = tk.Frame(card, bg=CARD)
+        holder.grid(row=self.next_row(card), column=0, columnspan=2, sticky='w', pady=(px(12), 0))
+        self.map_button = self.button(holder, _('Prepare the 3D map', 'Подготовить 3D-карту'), self.prepare_map,
+                                      'primary')
+        self.map_button.pack(side='left')
+        self.map_progress = Bar(self, holder, 280)
+        self.map_progress.pack(side='left', padx=px(16))
+        self.note(card, _('Draws every area of your game once, about 15 seconds each (a few minutes in all, about '
+                          '140 MB), into the saves folder. The game then never has to draw them.',
+                          'Рисует каждую область вашей игры один раз, около 15 секунд на каждую (всего несколько '
+                          'минут, около 140 МБ), в папку сохранений. Тогда игре не нужно рисовать их самой.'), top=10)
+        self.preparing_map = False
+        self.refresh_map()
+
+    def map_folders(self):
+        """(dvdroot_ps4 of the game, the saves folder), the game's None when no game is chosen."""
+        game = self.coop_game_folder() if COOP_INSTALL else self.var('game_dir', 'app').get()
+        user = Path(self.var('user_dir', 'app').get() or DATA_DIR / 'user')
+        dvdroot = Path(game) / 'dvdroot_ps4' if game else None
+        return (dvdroot if dvdroot and dvdroot.is_dir() else None), user
+
+    def refresh_map(self):
+        if not hasattr(self, 'map_label') or self.preparing_map:
+            return
+        dvdroot, user = self.map_folders()
+        if dvdroot is None:
+            self.map_label.configure(text=_('Choose your game folder first.', 'Сначала выберите папку игры.'))
+            self.map_button.configure(state='disabled')
+            self.map_progress.set(0.0)
+            return
+        done, total = map_prepared(dvdroot, user)
+        self.map_label.configure(text=_('Prepared: all {} areas.', 'Подготовлено: все {} областей.').format(total)
+                                 if total and done == total else
+                                 _('Prepared: {} of {} areas.', 'Подготовлено: {} из {} областей.').format(done, total))
+        self.map_progress.set(done / total if total else 0.0)
+        self.map_button.configure(state='normal' if total and done < total else 'disabled')
+
+    def prepare_map(self):
+        """bb-probe --prepare-map in the background, its lines moving the bar; then the 3D map is on
+        (Prerendered) unless the player chose Live."""
+        dvdroot, user = self.map_folders()
+        probe = PORT_DIR / 'bin' / 'bb-probe.exe'
+        if dvdroot is None or not probe.is_file():
+            return
+        self.preparing_map = True
+        self.map_button.configure(state='disabled')
+        self.map_label.configure(text=_('Preparing…', 'Подготовка…'))
+
+        def work():
+            error = None
+            try:
+                user.mkdir(parents=True, exist_ok=True)
+                process = subprocess.Popen([str(probe), '--prepare-map', str(dvdroot), str(user)], cwd=str(PORT_DIR),
+                                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT, creationflags=NO_WINDOW, text=True,
+                                           encoding='utf-8', errors='replace')
+                for line in process.stdout:
+                    found = re.match(r'Map prepare: (\d+)/(\d+) (\S+)', line.strip())
+                    if found:
+                        n, total, area = int(found[1]), int(found[2]), found[3]
+                        self.ui_calls.put(lambda n=n, total=total, area=area: (
+                            self.map_progress.set((n - 1) / total),
+                            self.map_label.configure(text=_('Preparing {} ({} of {})…', 'Подготовка {} ({} из {})…')
+                                                     .format(area[:6], n, total))))
+                if process.wait() != 0:
+                    error = _('the drawing stopped (code {})', 'рисование прервано (код {})').format(process.returncode)
+            except OSError as failure:
+                error = str(failure)
+
+            def done():
+                self.preparing_map = False
+                if not error and self.var('map_3d', 'ini').get() == '0':
+                    self.var('map_3d', 'ini').set('1')  # Kaniel: the prepared 3D view is the default
+                self.refresh_map()
+                if error:
+                    self.messagebox.showerror(_('3D map', '3D-карта'),
+                                              _('Could not prepare the map: {}', 'Не удалось подготовить карту: {}')
+                                              .format(error))
+            self.ui_calls.put(done)
+        threading.Thread(target=work, daemon=True).start()
 
     # --- seamless co-op (the release: COOP_INSTALL) ---------------------------------------------
 
@@ -4619,6 +4738,7 @@ class Launcher:
     # ---- state -------------------------------------------------------------------------------
     def game_changed(self):
         self.refresh_game_line()
+        self.refresh_map()
         self.set_icon()
         self.refresh_status()
 
