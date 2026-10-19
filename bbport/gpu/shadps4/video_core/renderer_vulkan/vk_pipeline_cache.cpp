@@ -781,6 +781,16 @@ std::chrono::milliseconds MaxCompileWait() {
     return wait;
 }
 
+/// bbport: how long a draw drawn every frame may go without its pipeline while the background
+/// compiler builds it (BbAsyncClaim): a few frames. Past it the draw waits (BB_ASYNC_SKIP_MS).
+std::chrono::milliseconds MaxAsyncSkip() {
+    static const auto skip = [] {
+        const char* env = std::getenv("BB_ASYNC_SKIP_MS");
+        return std::chrono::milliseconds(env ? std::clamp(std::atoi(env), 0, 60000) : 100);
+    }();
+    return skip;
+}
+
 /// Content hash of a program's code as it is in guest memory now.
 u64 CodeHash(std::span<const u32> code) {
     return XXH3_64bits(code.data(), code.size_bytes());
@@ -990,19 +1000,22 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
                 return it->second.get();
             }
             const auto claim = pipelines_compiling.find(key);
-            const auto step = BbAsyncClaim::Next(claim != pipelines_compiling.end(),
-                                                 claim != pipelines_compiling.end() &&
-                                                     claim->second,
-                                                 skippable);
+            const bool background =
+                claim != pipelines_compiling.end() && claim->second.background;
+            const auto step = BbAsyncClaim::Next(
+                claim != pipelines_compiling.end(), background, skippable,
+                background && std::chrono::steady_clock::now() - claim->second.since >
+                                  MaxAsyncSkip());
             if (step == BbAsyncClaim::Step::Claim) {
-                pipelines_compiling.emplace(key, skippable);
+                pipelines_compiling.emplace(
+                    key, CompileClaim{skippable, std::chrono::steady_clock::now()});
                 claimed = true;
                 break;
             }
             if (step == BbAsyncClaim::Step::TakeOver) {
                 // A draw-prep worker (idle priority) has it and may wait for seconds on a busy
                 // CPU: the background compiler builds it too, whichever is first stays.
-                claim->second = true;
+                claim->second = {true, std::chrono::steady_clock::now()};
                 take_over = true;
                 break;
             }
@@ -1091,7 +1104,7 @@ bool PipelineCache::EnsureGraphicsPipeline(PipelineSelection& worker_sel) {
     {
         std::unique_lock lock{pipelines_mutex};
         if (graphics_pipelines.contains(key) ||
-            !pipelines_compiling.try_emplace(key, false).second) {
+            !pipelines_compiling.try_emplace(key, CompileClaim{}).second) {
             return true; // there, or another thread is on it
         }
     }

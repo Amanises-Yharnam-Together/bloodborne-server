@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
@@ -292,9 +293,13 @@ private:
     /// bbport: guards graphics_pipelines and pipelines_compiling.
     std::shared_mutex pipelines_mutex;
     std::condition_variable_any pipelines_cv; ///< a pipeline compile finished
-    /// Keys being built, true where the background compiler has a job for it (not only a
-    /// draw-prep worker, which runs at idle priority: BbAsyncClaim).
-    std::unordered_map<GraphicsPipelineKey, bool> pipelines_compiling;
+    /// Keys being built: whether the background compiler has a job for it (not only a
+    /// draw-prep worker, which runs at idle priority: BbAsyncClaim) and since when.
+    struct CompileClaim {
+        bool background = false;
+        std::chrono::steady_clock::time_point since{};
+    };
+    std::unordered_map<GraphicsPipelineKey, CompileClaim> pipelines_compiling;
     bool async_compile{}; ///< BB_ASYNC_COMPILE, fixed at construction
     u64 prepared_hits = 0, prepared_misses = 0;
     const PreparedDraw* used_prepared = nullptr;
