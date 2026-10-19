@@ -423,6 +423,24 @@ TEST(PhantomKeyItems, WhatTheGuestGainedComesBack) {
     EXPECT_TRUE(PhantomKeyItemsToGiveBack(last_look, last_look, {}).empty());
 }
 
+// Kaniel's play test 2026-10-19: krolebord's Saw Hunter Badge (4103) and Workshop Tool (4110) were
+// missing all session in the join's state; the phantom's list gets the guest's own key items.
+TEST(PhantomKeyItems, TheGuestsOwnKeyItemsGoInThePhantomsList) {
+    const std::vector<HeldGoods> own{{4103, 1}, {4110, 1}, {4000, 1}, {4001, 2}, {200, 1}};
+    const std::vector<HeldGoods> phantom{{4000, 1}, {4001, 1}};
+    // Each it lacks, as many as its own; one it has already stays; never a bell.
+    EXPECT_EQ(OwnKeyItemsForPhantom(own, phantom),
+              (std::vector<HeldGoods>{{4103, 1}, {4110, 1}, {4001, 1}}));
+    EXPECT_TRUE(OwnKeyItemsForPhantom(own, own).empty()) << "nothing twice";
+    EXPECT_TRUE(OwnKeyItemsForPhantom({}, phantom).empty()) << "no own look: nothing";
+    // Back home after a trip: what was put in comes back from home, never twice.
+    std::vector<HeldGoods> last_look = phantom;
+    for (const HeldGoods& put : OwnKeyItemsForPhantom(own, phantom)) {
+        last_look.push_back(put);
+    }
+    EXPECT_TRUE(PhantomKeyItemsToGiveBack(phantom, last_look, own).empty());
+}
+
 // Rig 2026-10-14 (host-crash-apart, team-world): the host's game gone, the guest's game set 4047
 // ("a player on the way out") and, with no summon reload to clear it, never joined again.
 TEST(LeavingFlag, ClearedOnceAGuestStandsAloneAWhile) {

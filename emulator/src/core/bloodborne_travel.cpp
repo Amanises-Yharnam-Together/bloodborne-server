@@ -1435,12 +1435,14 @@ void RecheckShopLinesOnce(u32 map) {
 // bosses, NPCs and maps, and a player who holds one never gets it twice.
 // See PhantomKeyItemsToGiveBack: while this guest is a phantom (character type 1) its key item
 // list is looked at every 250 ms; once its own list is back (another list, not a phantom), what
-// it gained in the phantom's comes back.
+// it gained in the phantom's comes back. Its own list is looked at as often out of the join's
+// state, and a new phantom's list gets its own key items (OwnKeyItemsForPhantom).
 void GiveBackPhantomKeyItems() {
     constexpr s32 PhantomType = 1;
     static u64 phantom_list = 0;
     static std::vector<HeldGoods> first_look;
     static std::vector<HeldGoods> last_look;
+    static std::vector<HeldGoods> own_look;
     static s64 looked_ms = 0;
     const u64 player = GetLocalPlayer();
     if (!party_controller || player < 0x10000 || !PlayerItemsReadable()) {
@@ -1457,10 +1459,23 @@ void GiveBackPhantomKeyItems() {
         if (list != phantom_list) {
             phantom_list = list;
             first_look = last_look;
+            for (const HeldGoods& held : OwnKeyItemsForPhantom(own_look, last_look)) {
+                const TradeItem item{BloodborneCoop::TradeItemKind::Goods, held.goods,
+                                     static_cast<u32>(held.count)};
+                AddTradeItems(std::span{&item, 1});
+                LOG_INFO(Debug,
+                         "Bloodborne party: {} x goods {} of the guest's own in the phantom's key "
+                         "items",
+                         held.count, held.goods);
+            }
         }
         return;
     }
     if (phantom_list == 0 || list == phantom_list) {
+        if (const s64 now_ms = SteadyMilliseconds(); now_ms - looked_ms >= 250) {
+            looked_ms = now_ms;
+            own_look = HeldKeyGoods();
+        }
         return;
     }
     phantom_list = 0;

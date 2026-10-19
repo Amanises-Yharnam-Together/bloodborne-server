@@ -263,6 +263,13 @@ struct HeldGoods {
 std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> first_look,
                                                  std::span<const HeldGoods> last_look,
                                                  std::span<const HeldGoods> home);
+// Kaniel's play test 2026-10-19: krolebord's Saw Hunter Badge and Workshop Tool were gone the whole
+// session (he never took a trip, so he stayed in the join's state): the phantom's list has none of
+// the guest's own key items. What of its own list (`own`, its last look before the join) to put in
+// the phantom's (`phantom`) as it comes: each one the phantom's lacks, never a bell. The game drops
+// them with that list, and PhantomKeyItemsToGiveBack gives none back twice (home holds them).
+std::vector<HeldGoods> OwnKeyItemsForPhantom(std::span<const HeldGoods> own,
+                                             std::span<const HeldGoods> phantom);
 
 // Event flag 4047 ("a player on the way out", docs/FLAGS.md): set when a session ends under a
 // player; a summoned guest's reload home cleared it. A team's guest stays in its world (no reload),

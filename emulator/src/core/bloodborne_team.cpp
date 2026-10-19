@@ -219,6 +219,33 @@ bool CharacterNameReadable(s64 title_load_ms, s64 save_opened_ms, s64 now_ms) {
            (save_opened_ms > title_load_ms && now_ms - save_opened_ms >= CharacterNameSettleMs);
 }
 
+namespace {
+s32 CountIn(std::span<const HeldGoods> list, u32 goods) {
+    s32 count = 0;
+    for (const HeldGoods& held : list) {
+        if (held.goods == goods) {
+            count += held.count;
+        }
+    }
+    return count;
+}
+} // namespace
+
+std::vector<HeldGoods> OwnKeyItemsForPhantom(std::span<const HeldGoods> own,
+                                             std::span<const HeldGoods> phantom) {
+    std::vector<HeldGoods> put;
+    for (const HeldGoods& held : own) {
+        if (IsBellGoods(held.goods) ||
+            std::ranges::any_of(put, [&](const HeldGoods& p) { return p.goods == held.goods; })) {
+            continue;
+        }
+        if (const s32 count = CountIn(own, held.goods) - CountIn(phantom, held.goods); count > 0) {
+            put.push_back({held.goods, count});
+        }
+    }
+    return put;
+}
+
 std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> first_look,
                                                  std::span<const HeldGoods> last_look,
                                                  std::span<const HeldGoods> home) {
