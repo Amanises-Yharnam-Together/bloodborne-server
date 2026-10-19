@@ -767,6 +767,11 @@ FlagChanges AsAltarFlags(const FlagChanges& changes, std::optional<s32> altar);
 bool IsCurrentAltarFlag(s32 flag);
 // A Shared flag whose clears go to the party too (a ritual altar's, see FlagTable).
 bool SharesClearsWithParty(s32 flag);
+// A ritual altar's talk runs in every game of a party: its "warp to the layer" (72100420 + altar)
+// and the layer (72100300 + layer) are not set in a game where the talker is another player's
+// character (`talker_is_another_player`), else every game warped its player (Kaniel's playtest
+// 2026-10-19). Any other talker, or none known, sets them as before.
+bool SkipsOthersAltarWarp(s32 flag, bool talker_is_another_player);
 // Team altars: the chalice of an altar's dungeon (its record's depth * 10 + area, the standard
 // chalice of that depth and area), which a teammate holding none is given so that its own altar
 // opens as the conductor's does (the altar's talk asks for any chalice). Nothing for an unknown

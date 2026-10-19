@@ -154,6 +154,11 @@ bool lamp_rests_enabled = LampRestsEnabled(std::getenv("SHADPS4_BLOODBORNE_LAMP_
 std::optional<std::chrono::steady_clock::time_point> lamp_touch_animation_at;
 alignas(16) std::array<u8, 0x100> no_talk_flag_range{}; // +0xA0 = +0xA4 = 0
 
+// The character talking in the talk whose functions were evaluated last on this thread (r15 is the
+// talk at the dispatcher, +0x18 its talker, as ESD function 14 reads it): its commands run right
+// after, so RestInsteadOfLampTravel knows whose talk sets a flag.
+thread_local u64 esd_talker = 0;
+
 } // namespace
 
 namespace Coop {
@@ -305,6 +310,20 @@ void TickGuestLampTrip() {
 
 void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers) {
     const s32 flag = static_cast<s32>(registers->r15);
+    // A ritual altar's talk runs in every game: only the talker's game sets its warp.
+    if (party_controller && esd_talker >= 0x10000 && esd_talker != GetLocalPlayer() &&
+        SkipsOthersAltarWarp(flag,
+                             std::ranges::any_of(OtherPlayers(), [](const OtherPlayer& other) {
+                                 return other.character == esd_talker;
+                             }))) {
+        registers->rax = reinterpret_cast<u64>(no_talk_flag_range.data());
+        static std::atomic<u32> logged{};
+        if (logged.fetch_add(1) < 20) {
+            LOG_INFO(Debug, "Bloodborne party: another player's altar talk sets flag {}; not here",
+                     flag);
+        }
+        return;
+    }
     const bool guest =
         party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect;
     if (flag >= 70000000 && flag < 80000000 && guest) {
@@ -424,6 +443,10 @@ std::atomic<bool> esd_answers_wanted{};
 
 void PS4_SYSV_ABI NoteEsdFunction(u64, GuestRegisterSnapshot* registers) {
     esd_function_asked = static_cast<s32>(registers->rax);
+    const u64 talk = registers->r15;
+    esd_talker = talk >= 0x10000 && HasMemoryAccess(talk, 0x20, MemoryProt::CpuRead)
+                     ? ReadValue<u64>(talk, 0x18)
+                     : 0;
 }
 
 // ESD function 26 (`movzx eax, byte [r15 + 0x30]`, a flag of the talk) answered 1 for a party

@@ -353,6 +353,21 @@ TEST(BloodborneFlagRules, AnAltarsDungeonNamesItsChalice) {
     EXPECT_FALSE(AltarChaliceGoods(11)) << "no standard chalice there";
 }
 
+// Kaniel's playtest 2026-10-19: one player's step into a chalice dungeon took everyone in the Dream
+// along, into a void. One player's talk with a ritual altar runs in every game, and each game's
+// talk set "warp to the layer" (72100420 + altar) and the layer (72100300 + layer) there, so each
+// game warped its own player. Only the game whose own player talks sets them; the warp event's
+// own clear (2026-10-20: #276 kept that from happening) is no talk and is not touched.
+TEST(BloodborneFlagRules, OnlyTheTalkersGameSetsTheAltarWarp) {
+    for (const s32 flag : {72100420, 72100421, 72100429, 72100300, 72100309}) {
+        EXPECT_TRUE(SkipsOthersAltarWarp(flag, true)) << flag << ": another player talks";
+        EXPECT_FALSE(SkipsOthersAltarWarp(flag, false)) << flag << ": this player, or not known";
+    }
+    for (const s32 flag : {72100419, 72100430, 72100299, 72100310, 70000230, 6708}) {
+        EXPECT_FALSE(SkipsOthersAltarWarp(flag, true)) << flag;
+    }
+}
+
 TEST(BloodborneFlagRules, ListsComeFromTheTable) {
     EXPECT_EQ(GuestProgressFlags(true, true, 0x18000000, true, true),
               (std::vector<s32>{9401, 9403}));
