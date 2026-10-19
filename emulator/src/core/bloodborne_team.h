@@ -177,12 +177,15 @@ std::vector<std::pair<s32, bool>> WorldFlagChanges(u32 flags_per_block,
                                                    std::span<const FlagBlockBits> blocks,
                                                    const WorldFlags& target);
 // Whether a load takes the team's world in `block`: one the team's world covers (`covered`,
-// sorted) that no earlier load took (`taken`), or on a guest's trip one of the map it goes to
-// (its 10000 flags from `trip_map_base`, MapFlagBase; 0: no trip). A trip's load gives the
-// guest's game its own saved world back (Kaniel's play test 2026-10-18: the opening's flag,
-// 12410000, only the team's world had was off again, and the opening played).
-bool TakesTeamWorldBlock(u32 block, u32 flags_per_block, const std::set<u32>& taken,
-                         std::span<const u32> covered, s32 trip_map_base);
+// sorted) that no earlier load took (`taken`), or on a guest's trip (`guest_trip`) every one. A
+// trip's load gives the guest's game its own saved world back (Kaniel's play test 2026-10-18:
+// the opening's flag, 12410000, only the team's world had was off again, and the opening
+// played), the global flags too: the NPCs' steps (Kaniel's play test 2026-10-19: krolebord saw
+// the newborn in Oedon Tomb's basement and Lisara NPCs by the Cathedral Ward lamp that
+// the team's progress had not brought yet). The team's world is also newer than the last take:
+// the host's progress since shows from the guest's next trip.
+bool TakesTeamWorldBlock(u32 block, const std::set<u32>& taken, std::span<const u32> covered,
+                         bool guest_trip);
 // The lamps lit in the team's world in the blocks a load took (`blocks`), as lamp entities
 // (LampOfActiveFlag). A lamp stays lit only for a character whose lamp list holds it, so they go on
 // the guest's list as its flags go in (Kaniel's play test 2026-10-18: krolebord's lamps listed only

@@ -1938,14 +1938,12 @@ void ApplyTeamWorldOnLoad(bool trip) {
         }
     }
     // The blocks this load brings that the team's world covers and no earlier load took; on a
-    // guest's trip the ones of the map it goes to again (the host's save is the team's world,
-    // never retaken). Raw, as the trip's load hook reads it: the map this load is creating.
+    // guest's trip every one again, the global flags (NPCs' steps) too: the trip's load gave its
+    // game its own saved world back (the host's save is the team's world, never retaken). The
+    // session's changes go on top after (SetGuestWorldChanges).
     const bool retake = trip && !team_host;
-    const s32 trip_map_base = retake ? MapFlagBase(GetCurrentPackedMap()) : 0;
-    const u32 per_block = store->store.flags_per_block;
     std::erase_if(store->blocks, [&](const FlagBlockBits& block) {
-        return !TakesTeamWorldBlock(block.id, per_block, team_world_blocks, target.blocks,
-                                    trip_map_base);
+        return !TakesTeamWorldBlock(block.id, team_world_blocks, target.blocks, retake);
     });
     if (store->blocks.empty()) {
         return;
@@ -1982,7 +1980,7 @@ void ApplyTeamWorldOnLoad(bool trip) {
     LOG_INFO(Debug,
              "Co-op team world: the team's world is in this save{}: {} blocks, {} flags "
              "changed (version {})",
-             retake ? fmt::format(" again for map {:#x} after a trip's load", GetCurrentPackedMap())
+             retake ? fmt::format(" again after a trip's load (map {:#x})", GetCurrentPackedMap())
                     : "",
              store->blocks.size(), changed, world->version());
 }

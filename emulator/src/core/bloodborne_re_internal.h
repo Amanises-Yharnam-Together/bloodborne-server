@@ -831,8 +831,8 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
 bool IsTeamTitleVerb(std::string_view verb);
 // Phase 5b: the team's world goes into the save as it loads (before its map items), or the save's
 // own world comes back when it plays alone; the team's host reports its world now and then.
-// `trip`: a guest's party trip, whose load gives its game its own saved world back: the blocks of
-// the map it goes to take the team's world again (TakesTeamWorldBlock).
+// `trip`: a guest's party trip, whose load gives its game its own saved world back: every block
+// takes the team's world again (TakesTeamWorldBlock).
 void ApplyTeamWorldOnLoad(bool trip = false);
 // Puts lamps (entities, LampOfActiveFlag) on this character's lamp list, so they stay lit for it.
 void ListLamps(std::span<const s32> lamps);

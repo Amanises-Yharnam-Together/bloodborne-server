@@ -349,12 +349,9 @@ std::vector<std::pair<s32, bool>> WorldFlagChanges(u32 flags_per_block,
     return changes;
 }
 
-bool TakesTeamWorldBlock(u32 block, u32 flags_per_block, const std::set<u32>& taken,
-                         std::span<const u32> covered, s32 trip_map_base) {
-    const s64 first = s64{block} * flags_per_block;
-    const bool trip_map =
-        trip_map_base > 0 && first >= trip_map_base && first < s64{trip_map_base} + 10'000;
-    return (trip_map || !taken.contains(block)) &&
+bool TakesTeamWorldBlock(u32 block, const std::set<u32>& taken, std::span<const u32> covered,
+                         bool guest_trip) {
+    return (guest_trip || !taken.contains(block)) &&
            std::binary_search(covered.begin(), covered.end(), block);
 }
 

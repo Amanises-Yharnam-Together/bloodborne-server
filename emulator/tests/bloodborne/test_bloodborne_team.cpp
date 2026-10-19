@@ -226,20 +226,22 @@ TEST(TeamWorld, MapPickupsStayTheCharactersOwn) {
 }
 
 // Kaniel's play test 2026-10-18: a guest's trip gave its game its own saved world back, and the
-// opening's flag (12410000, only the team's world had it) was off again: a trip takes the blocks
-// of the map it goes to again (Central Yharnam's flags 12410000-12419999), no other.
-TEST(TeamWorld, ALoadTakesNewBlocksOnceAndAGuestsTripTakesItsMapsAgain) {
+// opening's flag (12410000, only the team's world had it) was off again. 2026-10-19: the global
+// flags came back too, so krolebord and Lisara saw NPCs by their own saves' progress, not the
+// team's. A trip takes every block the team's world covers again.
+TEST(TeamWorld, ALoadTakesNewBlocksOnceAndAGuestsTripTakesEveryBlockAgain) {
     const std::vector<u32> covered{2, 12100, 12410, 12419, 12420};
     const std::set<u32> taken{2, 12100, 12410, 12419, 12420};
-    EXPECT_FALSE(TakesTeamWorldBlock(12410, 1000, taken, covered, 0));
-    EXPECT_TRUE(TakesTeamWorldBlock(12410, 1000, {}, covered, 0)) << "no earlier load took it";
-    EXPECT_TRUE(TakesTeamWorldBlock(12410, 1000, taken, covered, 12410000));
-    EXPECT_TRUE(TakesTeamWorldBlock(12419, 1000, taken, covered, 12410000));
-    EXPECT_FALSE(TakesTeamWorldBlock(12420, 1000, taken, covered, 12410000)) << "the next map";
-    EXPECT_FALSE(TakesTeamWorldBlock(12100, 1000, taken, covered, 12410000)) << "the Dream's";
-    EXPECT_FALSE(TakesTeamWorldBlock(2, 1000, taken, covered, 12410000)) << "global flags";
+    EXPECT_FALSE(TakesTeamWorldBlock(12410, taken, covered, false));
+    EXPECT_TRUE(TakesTeamWorldBlock(12410, {}, covered, false)) << "no earlier load took it";
+    EXPECT_TRUE(TakesTeamWorldBlock(12410, taken, covered, true));
+    EXPECT_TRUE(TakesTeamWorldBlock(12419, taken, covered, true));
+    EXPECT_TRUE(TakesTeamWorldBlock(12420, taken, covered, true)) << "the next map";
+    EXPECT_TRUE(TakesTeamWorldBlock(12100, taken, covered, true)) << "the Dream's";
+    EXPECT_TRUE(TakesTeamWorldBlock(2, taken, covered, true)) << "global flags (NPCs' steps)";
     // A block the team's world does not cover is never taken, trip or not.
-    EXPECT_FALSE(TakesTeamWorldBlock(12411, 1000, taken, covered, 12410000));
+    EXPECT_FALSE(TakesTeamWorldBlock(12411, taken, covered, true));
+    EXPECT_FALSE(TakesTeamWorldBlock(12411, {}, covered, false));
 }
 
 // Kaniel's play test 2026-10-18: krolebord joined the team and his lamps listed only Cathedral
