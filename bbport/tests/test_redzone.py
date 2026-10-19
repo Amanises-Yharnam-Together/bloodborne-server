@@ -4,16 +4,19 @@ Where Windows saves extended state in the compact XSAVE layout (Intel 12th gen a
 fault's frame holds the AVX registers up to 0x28 bytes below rsp, over the System V red zone, so
 a guest leaf function whose store faults on a GPU-tracked page loses its locals (the
 attack-trail crash at 0x28ce9b5). The Windows test runs that sequence for real: a vectored
-handler unprotects the page as the GPU tracker does.
+handler unprotects the page as the GPU tracker does. With the Legacy CPU translations
+(cpu_compat) the sites go in after them, and those next to translated code stay as they are.
 """
 from paths import ROOT
 import ctypes
 import json
 import os
+from pathlib import Path
 import struct
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
-from link_modules import LEA_DOWN, LEA_UP, protect_red_zones
+from link_modules import LEA_DOWN, LEA_UP, protect_image, protect_red_zones, red_zones_enabled
 
 SENTINEL = 0x1122334455667788
 STORE = 30  # offset of the faulting store in leaf()
@@ -50,6 +53,49 @@ class TrampolineBytes(unittest.TestCase):
         image = bytearray(leaf(0)[0])
         self.assertEqual(protect_red_zones(image, [[STORE, 'c70102000000', [-6]]], 0x100), (b'', 0))
         self.assertEqual(protect_red_zones(image, leaf(0)[1], 0x100, skip=[STORE + 3]), (b'', 0))
+        self.assertEqual(image, leaf(0)[0])
+
+
+class LinkedImage(unittest.TestCase):
+    """protect_image: after cpu_compat, one executable segment, CPU sites left alone.
+    From Supermedo/bloodborne_pc e750af8; the segment keeps this port's layout (the copies'
+    own size at the next 64 KiB), so an image without translations is the one linked before."""
+
+    def write_sites(self, sites):
+        directory = Path(os.environ.get('TEMP', '.'))
+        path = directory / f'bb-redzone-test-{os.getpid()}.json'
+        path.write_text(json.dumps(dict(sites=sites)))
+        self.addCleanup(path.unlink, missing_ok=True)
+        return path
+
+    def test_site_next_to_a_cpu_translation_is_left_alone(self):
+        code = leaf(0)[0]
+        untranslated = bytes(code)
+        image = bytearray(code)
+        image[STORE - 3] ^= 0xff  # a translated instruction ending right before the store
+        segments = [(0, len(image), 5)]
+        with patch.dict(os.environ, {'BB_RED_ZONE': '1'}):
+            report = protect_image(image, segments, untranslated, [], self.write_sites(leaf(0)[1]))
+        self.assertEqual((report['sites'], report['cpu_overlaps']), (0, [hex(STORE)]))
+        self.assertEqual(segments, [(0, len(code), 5)])
+
+    def test_applied_site_adds_one_executable_segment(self):
+        image = bytearray(leaf(0)[0])
+        segments = [(0, len(image), 5)]
+        with patch.dict(os.environ, {'BB_RED_ZONE': '1'}):
+            report = protect_image(image, segments, bytes(image), [], self.write_sites(leaf(0)[1]))
+        self.assertEqual((report['sites'], report['segment']), (1, '0x10000'))
+        size = report['trampoline_bytes']
+        self.assertEqual(segments[-1], (0x10000, size, 5))
+        self.assertEqual(len(image), 0x10000 + size)
+        self.assertEqual(image[0x10000:0x10000 + len(LEA_DOWN)], LEA_DOWN)
+
+    def test_disabled_leaves_the_image_unchanged(self):
+        image = bytearray(leaf(0)[0])
+        with patch.dict(os.environ, {'BB_RED_ZONE': '0'}):
+            self.assertFalse(red_zones_enabled())
+            report = protect_image(image, [], bytes(image), [], self.write_sites(leaf(0)[1]))
+        self.assertEqual((report['enabled'], report['sites']), (False, 0))
         self.assertEqual(image, leaf(0)[0])
 
 

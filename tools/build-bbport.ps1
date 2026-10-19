@@ -41,5 +41,8 @@ foreach ($dir in "scripts", "patches") {
     robocopy (Join-Path $Src $dir) (Join-Path $Out $dir) /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { Write-Host "copying $dir failed"; exit 1 }
 }
+# Legacy CPU (Intel 3rd generation and older): the plan scripts\cpu_compat.py applies.
+New-Item -ItemType Directory -Force (Join-Path $Out "tools") | Out-Null
+Copy-Item (Join-Path $Src "tools\legacy-cpu-plan.json") (Join-Path $Out "tools") -Force
 Write-Host "Port staged in $Out"
 exit 0
