@@ -303,6 +303,30 @@ class NoFogWallsInChaliceDungeons(unittest.TestCase):
         self.assertEqual(tool.patch_chalice_walls(original), (original, 0))
 
 
+class GuestsOpenChaliceBossDoors(unittest.TestCase):
+    """Kaniel 2026-10-19: a chalice dungeon's boss door said "Only the beckoner can open this door"
+    to guests. The door (ObjActParam 2901900-2901920) asks for SpEffect 9920, which m29's event 0
+    puts on the player (2004:8 10000 9920) after skipping that line for a client (1003:5 1 1).
+    The skip never matches, so every party member gets the effect and opens the door."""
+
+    OPENING = [(1003, 5, struct.pack('<BBxx', 1, 1)),
+               (2004, 8, struct.pack('<iii', 10000, 9920, 0)),
+               (1003, 5, struct.pack('<BBxx', 1, 0)),
+               (2003, 22, struct.pack('<iii', 12906660, 12906725, 0))]
+
+    def test_a_guest_gets_the_door_effect(self):
+        patched, count = tool.patch_chalice_door_effect(build_emevd({0: self.OPENING}))
+        events = read_events(patched)[0]
+        self.assertEqual(events[0][2][:2], bytes([1, tool.NEVER]))
+        self.assertEqual(events[2][2][:2], bytes([1, 0]), "the host's own skip stays")
+        self.assertEqual(count, 1)
+
+    def test_only_the_skip_before_the_effect(self):
+        other = [(1003, 5, struct.pack('<BBxx', 1, 1)), (2004, 8, struct.pack('<iii', 10000, 1, 0))]
+        original = build_emevd({0: other})
+        self.assertEqual(tool.patch_chalice_door_effect(original), (original, 0))
+
+
 class GuestsSeeTheNightFall(unittest.TestCase):
     """Kaniel's playtest 2026-10-17: after Vicar Amelia the host examined the altar's skull, saw
     the cutscene and the night fell; the guests saw neither. The skull's event (m24_00 12401803:
