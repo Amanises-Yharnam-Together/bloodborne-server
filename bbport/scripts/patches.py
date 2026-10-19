@@ -74,6 +74,15 @@ def intel_cpu(cpuinfo='/proc/cpuinfo'):
 SKIP_NETWORK_CHOICE='Skip Online/Offline Choice'
 
 
+# Two per-frame GX command heaps of 1 MiB instead of 256 KiB: the game writes through NULL when
+# one fills (deadinside28 #162, PR #224). On by default; BB_GX_COMMAND_HEAP=0 leaves them.
+GX_COMMAND_HEAP='Larger GX Per-Frame Command Heap'
+
+
+def gx_command_heap(env=os.environ):
+    return env.get('BB_GX_COMMAND_HEAP','1')!='0'
+
+
 def skip_network_choice(env=os.environ):
     if env.get('SHADPS4_BLOODBORNE_SEAMLESS_COOP')=='1':
         return False
@@ -497,6 +506,8 @@ def main():
         names.append(INTEL_TONEMAP)
     if skip_network_choice() and SKIP_NETWORK_CHOICE not in names:
         names.append(SKIP_NETWORK_CHOICE)
+    if gx_command_heap() and GX_COMMAND_HEAP not in names:
+        names.append(GX_COMMAND_HEAP)
     names=validate_patch_requirements(names,a.game_dir)
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     named=compile_named(a.xml,names,a.app_version,segments)
