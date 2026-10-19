@@ -115,6 +115,32 @@ bool SceneTargets::SetSize(SceneResolution::Size next) {
                 "(live)\n", size.width, size.height, size.width / 2, size.height / 2);
     return true;
 }
+void SceneTargets::CleanupStaleEntries() {
+    std::vector<std::unique_ptr<Entry>> stale;
+    for (auto it = entries.begin(); it != entries.end();) {
+        if (!lookup(it->second->source, it->second->uid)) {
+            tracked.erase(it->second->uid);
+            stale.push_back(std::move(it->second));
+            it = entries.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (stale.empty()) {
+        return;
+    }
+    recent = {};
+    const std::size_t freed = stale.size();
+    // Freed once the GPU is done with the commands recorded so far (no wait here).
+    scheduler.DeferOperation([stale = std::move(stale)]() mutable { stale.clear(); });
+    static u32 reported = 0;
+    if (reported < 8) {
+        ++reported;
+        std::printf("Scene targets: %zu proxies of evicted images freed (%zu kept)\n",
+                    freed, entries.size());
+    }
+}
+
 void SceneTargets::ResolveAll() {
     for (auto& [key, entry] : entries) {
         if (entry->state.dirty) {
