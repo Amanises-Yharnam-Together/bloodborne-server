@@ -2996,6 +2996,22 @@ std::size_t RemoveBellIcons(std::span<u8> sp_effect_param) {
     return changed;
 }
 
+std::size_t NameUnnamedGuestRole(std::span<u8, RoleTableSize> roles) {
+    std::size_t changed = 0;
+    for (std::size_t at = RoleTextsAt; at < RoleTextsEnd; at += sizeof(s32)) {
+        s32 guest = 0, unnamed = 0;
+        std::memcpy(&guest, roles.data() + GuestRole * RoleTableEntrySize + at, sizeof(guest));
+        std::memcpy(&unnamed, roles.data() + UnnamedGuestRole * RoleTableEntrySize + at,
+                    sizeof(unnamed));
+        if (guest != 0 && unnamed == 0) {
+            std::memcpy(roles.data() + UnnamedGuestRole * RoleTableEntrySize + at, &guest,
+                        sizeof(guest));
+            ++changed;
+        }
+    }
+    return changed;
+}
+
 const std::vector<CodePatch>& QuietSummonBannerPatches() {
     static const std::vector<CodePatch> patches = CoopPatchesOf("quiet summon banners");
     return patches;
@@ -4805,7 +4821,8 @@ std::optional<std::string> NameplateRoleLine(const PartyPanel& panel, std::strin
     }
     for (const PanelMember& member : panel.members) {
         const std::string_view id = member.name.empty() ? member.member : member.name;
-        if (id == name && member.vital == Vital::Down) {
+        // In a party the game names a member by its character (PlayerNameForTextOffset).
+        if ((id == name || member.shown == name) && member.vital == Vital::Down) {
             return fmt::format("<font color=\"#e74141\">Downed {}%</font>",
                                std::lround(ReviveShare(member.landed, member.needed) * 100.0f));
         }
@@ -4819,6 +4836,10 @@ std::string RoleLine(std::string_view color, std::string_view text) {
 }
 } // namespace
 
+std::string ShownName(const PanelMember& member) {
+    return member.shown.empty() ? std::string{UnknownHunterName} : member.shown;
+}
+
 std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& panel) {
     std::array<PartyListEntry, PartyListSize> entries{};
     for (size_t i = 0; i < entries.size() && i < panel.members.size(); ++i) {
@@ -4827,9 +4848,7 @@ std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& pan
         entry.visible = true;
         // No role line: the icon says the state; the name goes on white after the tag's update
         // (name_line), since the game's own name text took html badly (rig 2026-10-12: a hang).
-        entry.name = !member.shown.empty() ? member.shown
-                     : member.name.empty() ? member.member
-                                           : member.name;
+        entry.name = ShownName(member);
         entry.member = member.member;
         entry.vials = member.vials;
         entry.bullets = member.bullets;
@@ -4894,9 +4913,9 @@ PartyPrompt PartyPromptFor(const PartyPanel& panel) {
     }
     if (panel.revive_target >= 0 && panel.revive_target < static_cast<s32>(panel.members.size())) {
         const PanelMember& member = panel.members[static_cast<size_t>(panel.revive_target)];
+        // The character's name, as the party list shows it (website shots 2026-10-19: the id).
         return PartyPrompt{.shown = true,
-                           .text = fmt::format("Strike to revive {}",
-                                               member.name.empty() ? member.member : member.name),
+                           .text = fmt::format("Strike to revive {}", ShownName(member)),
                            .input = PromptInputR1};
     }
     return {};

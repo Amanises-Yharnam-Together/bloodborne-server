@@ -4086,7 +4086,7 @@ void Marker(ImDrawList* draw, ImVec2 at, int place, const bbcoop_compass_marker&
             draw->AddImage(face->GetTexRef(), ImVec2(at.x - f, at.y - f), ImVec2(at.x + f, at.y + f), ImVec2(0, 0),
                           ImVec2(1, 1), Faded(1, 1, 1, 1));
         } else {
-            const std::string initial = Initial(marker.name);
+            const std::string initial = Initial(marker.name[0] != '\0' ? marker.name : Ui::T("Hunter", "Охотник"));
             const float size = S(17.0f);
             const ImVec2 extent = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, initial.c_str());
             Party::Text(draw, serif_font, size, ImVec2(at.x, at.y - extent.y * 0.5f),
@@ -4579,12 +4579,13 @@ void MemberMark(ImDrawList* draw, ImVec2 at, int index, bool label = true) {
     const float r = S(13.0f);
     draw->AddCircleFilled(ImVec2(at.x + S(1.0f), at.y + S(1.5f)), r + S(1.5f), Party::Rgba(0, 0, 0, 0.55f), 32);
     draw->AddCircleFilled(at, r, Party::Rgba(0.06f, 0.05f, 0.05f, 0.92f), 32);
+    const char* name = m.name[0] != '\0' ? m.name : Ui::T("Hunter", "Охотник"); // never an online id
     const Compass::PortraitTexture& face = portraits[index];
     if (face.has && face.member == m.board && !dead) {
         const float f = r - S(1.0f);
         draw->AddImage(face.texture->GetTexRef(), ImVec2(at.x - f, at.y - f), ImVec2(at.x + f, at.y + f));
     } else {
-        const std::string initial = Compass::Initial(m.name);
+        const std::string initial = Compass::Initial(name);
         const float size = S(17.0f);
         const ImVec2 extent = serif_font->CalcTextSizeA(size, FLT_MAX, 0.0f, initial.c_str());
         Party::Text(draw, serif_font, size, ImVec2(at.x, at.y - extent.y * 0.5f), Gray(dead ? 0.5f : 1.0f),
@@ -4592,7 +4593,7 @@ void MemberMark(ImDrawList* draw, ImVec2 at, int index, bool label = true) {
     }
     draw->AddCircle(at, r, down ? Party::Blood(0.95f) : Gray(dead ? 0.5f : 1.0f), 32, S(2.0f));
     if (label) {
-        Party::Text(draw, sans_font, S(14.0f), ImVec2(at.x, at.y + r + S(3.0f)), Gray(0.95f), m.name, 0.5f);
+        Party::Text(draw, sans_font, S(14.0f), ImVec2(at.x, at.y + r + S(3.0f)), Gray(0.95f), name, 0.5f);
     }
 }
 
@@ -4761,7 +4762,8 @@ void DrawList(ImDrawList* draw, ImVec2 at, float width, float bottom, const std:
             const bbcoop_map_member& m = view.members[i];
             MemberMark(draw, ImVec2(at.x + S(14.0f), y + S(10.0f)), i, false);
             const std::string where = m.map == 0 ? T("Away", "Не в мире") : AreaName(m.map);
-            draw->AddText(ImVec2(at.x + S(38.0f), y + S(1.0f)), Plain(), Fit(m.name, width * 0.45f).c_str());
+            const char* name = m.name[0] != '\0' ? m.name : Ui::T("Hunter", "Охотник");
+            draw->AddText(ImVec2(at.x + S(38.0f), y + S(1.0f)), Plain(), Fit(name, width * 0.45f).c_str());
             const std::string shown = Fit(where.c_str(), width * 0.5f);
             const float wx = at.x + width - ImGui::CalcTextSize(shown.c_str()).x;
             draw->AddText(ImVec2(wx, y + S(1.0f)), m.map == view.map ? Gray(0.95f) : Dim(), shown.c_str());

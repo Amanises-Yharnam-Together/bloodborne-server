@@ -348,9 +348,9 @@ std::size_t PolishMessages() {
 
 namespace Coop {
 
-// Multiplayer UI polish for a party (Kaniel 2026-10-11): Host/Guest text and no bell icons, in
-// the loaded message files and SpEffectParam. Checked every second: a reloaded file gets it
-// again.
+// Multiplayer UI polish for a party (Kaniel 2026-10-11): Host/Guest text, a name for guest role 6
+// and no bell icons, in the loaded message files, the role table and SpEffectParam. Checked every
+// second: a reloaded file gets it again.
 void PolishMultiplayerUi() {
     static std::chrono::steady_clock::time_point last{};
     const auto now = std::chrono::steady_clock::now();
@@ -360,6 +360,14 @@ void PolishMultiplayerUi() {
     last = now;
     if (const std::size_t messages = PolishMessages(); messages != 0) {
         LOG_INFO(Debug, "Bloodborne party UI: {} messages now say Host and Guest", messages);
+    }
+    if (HasMemoryAccess(image_base + RoleTableOffset, RoleTableSize, MemoryProt::CpuReadWrite)) {
+        const std::span<u8, RoleTableSize> roles{
+            reinterpret_cast<u8*>(image_base + RoleTableOffset), RoleTableSize};
+        if (NameUnnamedGuestRole(roles) != 0) {
+            LOG_INFO(Debug, "Bloodborne party UI: guest role {} is named as role {}",
+                     UnnamedGuestRole, GuestRole);
+        }
     }
     if (const u64 effects = FindLoadedParam("SP_EFFECT_PARAM_ST"); effects != 0) {
         if (const auto table = WritableParam(effects, 0x210)) {

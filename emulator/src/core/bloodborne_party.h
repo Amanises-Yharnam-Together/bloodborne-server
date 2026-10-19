@@ -2038,12 +2038,36 @@ std::span<const PolishedMessage> PolishedMessages();
 // The text to write over `current` (message `id` of `category`), when `current` is still the
 // English original.
 std::optional<std::u16string_view> PolishedText(u32 category, s32 id, std::u16string_view current);
+// - Players by their characters' names (website shots 2026-10-19: "Joined rig_host."): the name
+//   the game puts in its texts and nameplates (0x01AE8680: out, player) is the player's online id
+//   (player +0x3D8) when [0x05562878] +0xD10 or GameDataMan's [+0x48] +0x11 is set
+//   (`jne` at 0x01AE8713, `je` at 0x01AE8727), else its character's name (PlayerGameData
+//   +0x5C0's holder). In a party both tests go: always the character's name.
+constexpr u64 PlayerNameForTextOffset = 0x01AE8680;
 // - No bell indicators: the co-op bells' resonance effects show a status icon by the HP bar
 //   (SpEffectParam iconId, +0x00: 9003 8801, 9004 8813, 9008 8802, 9009 8814). The icon goes;
 //   the effects, which the matching runs on, stay. Returns the rows changed.
 constexpr u64 SpEffectIconOffset = 0x00;
 constexpr std::array<s32, 4> CoopBellIconEffects{9003, 9004, 9008, 9009};
 std::size_t RemoveBellIcons(std::span<u8> sp_effect_param);
+// - No "?ActionEventInfo?" over a guest (website shots 2026-10-19): a nameplate's role line is the
+//   event text of the role table at 0x0553D750 (0x80 bytes per role, the player's role in
+//   PlayerGameData +0x5D8, read by 0x018FE420): +0x28, the text id 0x01AE8490 looks up (category
+//   0x65, then 30). The table's constructor (0x0187A1D0) gives the co-operator role 7 its texts
+//   (+0x28 107100, `mov dword [rax + 0x3A8]` at 0x0187AB15) but leaves role 6 without any, and a
+//   party guest can play as role 6 (rig 2026-10-19: one guest of two, on everyone's screen); the
+//   lookup of id 0 shows the event text's missing-text mark. Role 7's other texts (+0x24 to
+//   +0x4C: its join, death and leave messages, the summon message at +0x30) are missing the same
+//   way. Role 6 gets role 7's texts wherever it has none. Returns the texts changed.
+constexpr u64 RoleTableOffset = 0x0553D750;
+constexpr std::size_t RoleTableEntrySize = 0x80;
+constexpr std::size_t RoleTableSize = 0x22 * RoleTableEntrySize;
+constexpr std::size_t RoleNameTextAt = 0x28;
+constexpr std::size_t RoleTextsAt = 0x24;
+constexpr std::size_t RoleTextsEnd = 0x50;
+constexpr std::size_t UnnamedGuestRole = 6;
+constexpr std::size_t GuestRole = 7;
+std::size_t NameUnnamedGuestRole(std::span<u8, RoleTableSize> roles);
 // - No "Discovered the chime of a ..." banner right before the join's own banner: the summon's
 //   enter direction (CSEnterleaveDirectionStep) shows it with the network banner (0x01BFFE80,
 //   message id, 0) for the arriving member (STEP_C2H_Init_forSelfPrologue, 0x0196B4C9) and for
@@ -2923,6 +2947,10 @@ std::string GameStringUtf8(std::span<const u8, GameHudStringSize> raw,
 // Phase 11: the name line of the nameplate over `name` (the game's, an online id): the member's
 // character name as html text, when the panel knows one; else the game's own stays.
 std::optional<std::string> NameplateNameLine(const struct PartyPanel& panel, std::string_view name);
+// A member's name as the player sees it: its character's (the server's, PanelMember::shown), else
+// a Hunter; never its online id (website shots 2026-10-19: "Strike to revive rig_guest").
+constexpr std::string_view UnknownHunterName = "Hunter";
+std::string ShownName(const struct PanelMember& member);
 // Text for a game html field: &, < and > as entities.
 std::string HtmlText(std::string_view text);
 // Whether any member on the panel is down (only then does a nameplate say anything of ours).

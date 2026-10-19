@@ -187,6 +187,21 @@ TEST_F(BloodborneEboot, TheDownedBannerIsQueuedBySetTextEffect) {
     EXPECT_EQ(0x013427F5 + ReadAt<s32>(*text, 0x013427F1), SetTextEffectOffset);
 }
 
+// The role table's constructor names the co-operator role 7 (`mov dword [rax + 0x3A8], 107100`) and
+// clears role 6's texts (`vmovaps [rax + 0x320], xmm0`), and the nameplate reads the role's +0x28
+// from the table (`lea rcx, [rip + ...]; mov esi, [rcx + rax + 0x28]` at 0x01AE8643).
+TEST_F(BloodborneEboot, TheGuestRolesNameTextIsRole7s) {
+    EXPECT_EQ(Bytes(0x0187AB15, 10),
+              (std::vector<u8>{0xC7, 0x80, 0xA8, 0x03, 0x00, 0x00, 0x5C, 0xA2, 0x01, 0x00}));
+    EXPECT_EQ(GuestRole * RoleTableEntrySize + RoleNameTextAt, 0x3A8u);
+    EXPECT_EQ(Bytes(0x0187AA42, 8),
+              (std::vector<u8>{0xC5, 0xF8, 0x29, 0x80, 0x20, 0x03, 0x00, 0x00}));
+    EXPECT_EQ(UnnamedGuestRole * RoleTableEntrySize + 0x20, 0x320u);
+    EXPECT_EQ(Bytes(0x01AE8643, 3), (std::vector<u8>{0x48, 0x8D, 0x0D}));
+    EXPECT_EQ(0x01AE864A + ReadAt<s32>(*text, 0x01AE8646), RoleTableOffset);
+    EXPECT_EQ(Bytes(0x01AE864A, 4), (std::vector<u8>{0x8B, 0x74, 0x01, 0x28}));
+}
+
 // The party HUD's nameplate hook is the HUD tag update's one exit (`add rsp, 0xC8; pop rbx...`),
 // with the tag update's own start where the comment says (it keeps the tag in r14, data in r13).
 TEST_F(BloodborneEboot, TheNameplateHookIsTheTagUpdatesExit) {

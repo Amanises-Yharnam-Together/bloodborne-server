@@ -2347,11 +2347,14 @@ SCENARIOS = {
                       "expect-session 2"],
         },
         "expect": {
-            "host": [r"party death: ((real )?revive hit on|revive swing at)"],
+            # The prompt names the guest's character (website shots 2026-10-19: its online id).
+            "host": [r"party death: ((real )?revive hit on|revive swing at)",
+                     r'party HUD: prompt "Strike to revive (?!rig_)[^"]+"'],
             "guest": [r"party death: down \d+ on map 0x18010000",
                       r"party death: revived from down"],
         },
-        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party guest died"]},
+        "forbid": {"host": SESSION_HOLDS + [r'party HUD: prompt "Strike to revive rig_'],
+                   "guest": SESSION_HOLDS + [r"party guest died"]},
         "timeout": 300,
     },
     "down-wait": {

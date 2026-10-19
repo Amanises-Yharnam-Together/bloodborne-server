@@ -1022,6 +1022,7 @@ void SetBuildIdentity(std::string_view revision, u64 event_files) {
 
 void NoteSaveFileOpened(std::string_view guest_path) {
     if (const auto slot = CharacterSlotOfSavePath(guest_path)) {
+        NoteSaveOpenedForName();
         MakeEnemiesHarder();
         if (character_slot.exchange(*slot) != *slot) {
             LOG_INFO(Debug, "Bloodborne party: character save slot {}", *slot);

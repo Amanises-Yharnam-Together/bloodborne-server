@@ -201,6 +201,24 @@ std::string TeamWorldName(const bbcoop::TeamWorldInfo& world) {
     return world.character().empty() ? "A world" : world.character() + "'s world";
 }
 
+std::string TitleLoadCharacterName(bool fresh, std::string_view slot_name) {
+    while (!slot_name.empty() && (slot_name.back() == '\n' || slot_name.back() == '\r')) {
+        slot_name.remove_suffix(1);
+    }
+    // A character's name is at most 16 characters (UTF-8: count the lead bytes).
+    const auto letters = std::ranges::count_if(
+        slot_name, [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; });
+    if (fresh || letters > 16) {
+        return {};
+    }
+    return std::string{slot_name};
+}
+
+bool CharacterNameReadable(s64 title_load_ms, s64 save_opened_ms, s64 now_ms) {
+    return title_load_ms == 0 ||
+           (save_opened_ms > title_load_ms && now_ms - save_opened_ms >= CharacterNameSettleMs);
+}
+
 std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> first_look,
                                                  std::span<const HeldGoods> last_look,
                                                  std::span<const HeldGoods> home) {

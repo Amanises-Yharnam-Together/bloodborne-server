@@ -966,3 +966,25 @@ TEST(TeamMenuBack, CircleOnlyForTheGamesPage) {
     back.Closed(5000, false);
     EXPECT_FALSE(back.Pressed(5000 + TeamMenuBack::AfterMs));
 }
+
+// Kaniel 2026-10-19: from the title the team screen called everyone Hunter until the load. The
+// lobby hears the name last seen in the slot the title loads; nothing for a new character (the
+// slot's old one is not it) or a slot never played with names kept.
+TEST(TeamLobbyName, TheTitleLoadNamesTheSlotsCharacter) {
+    EXPECT_EQ(TitleLoadCharacterName(false, "Lady Maria"), "Lady Maria");
+    EXPECT_EQ(TitleLoadCharacterName(true, "Lady Maria"), "") << "a new character";
+    EXPECT_EQ(TitleLoadCharacterName(false, ""), "") << "never the last character's name";
+    EXPECT_EQ(TitleLoadCharacterName(false, "Lady Maria\r\n"), "Lady Maria") << "a file's line";
+    EXPECT_EQ(TitleLoadCharacterName(false, std::string(17, 'x')), "") << "longer than a name";
+}
+
+// The game holds the last character's name until the title's load has read the new save: the
+// name is read again only a while after the save file opened, so the old one never names the new
+// character's slot.
+TEST(TeamLobbyName, TheNameIsReadOnceTheLoadedSaveIsIn) {
+    EXPECT_TRUE(CharacterNameReadable(0, 0, 50'000)) << "no title load since the start";
+    EXPECT_FALSE(CharacterNameReadable(10'000, 0, 50'000)) << "the save not opened yet";
+    EXPECT_FALSE(CharacterNameReadable(10'000, 9'000, 50'000)) << "an open before the load";
+    EXPECT_FALSE(CharacterNameReadable(10'000, 12'000, 12'000 + CharacterNameSettleMs - 1));
+    EXPECT_TRUE(CharacterNameReadable(10'000, 12'000, 12'000 + CharacterNameSettleMs));
+}

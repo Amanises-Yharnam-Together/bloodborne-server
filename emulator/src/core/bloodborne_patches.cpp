@@ -1389,6 +1389,19 @@ void InstallNoMultiplayerBanners(u64 base, u64 image_size) {
     coop_features.On("no multiplayer banners");
 }
 
+// See PlayerNameForTextOffset: in a party the game names players by their characters.
+void InstallCharacterNames(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (!CoopSitesMatch(base, image_size, "character names",
+                        "nameplates and messages show online ids")) {
+        return;
+    }
+    WriteCoopPatches(base, "character names");
+    coop_features.On("character names");
+}
+
 // See QuietSummonBannerPatches: a party's joins show one banner, not two.
 void InstallQuietSummonBanners(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -1623,6 +1636,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
     InstallNoMultiplayerBanners(base, image_size);
+    InstallCharacterNames(base, image_size);
     InstallNoLostConnectionPopup(base, image_size);
     InstallGuestsHitNpcs(base, image_size);
     InstallOwnPlayerNumbers(base, image_size);

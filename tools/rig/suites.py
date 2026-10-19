@@ -326,17 +326,17 @@ SUITES = {
                               "expect-session 3", "expect-others-near 2 15"],
                      **{guest: ["sync trip-back", "wait 20", "snapshot", "expect-session 3",
                                 "expect-others-near 2 15"] for guest in GUESTS}},
-                    # Phase 11: the nameplates over the others show their characters' names.
+                    # Phase 11: the nameplates over the others show their characters' names
+                    # (2026-10-19: the game itself names them so, never by their online ids).
                     expect={"host": [r"re-creating (?:\S+ )*rig_guest (?:\S+ )*on map 0x18010000",
                                      r"re-creating (?:\S+ )*rig_guest2 (?:\S+ )*on map 0x18010000",
-                                     r'nameplate \d is "rig_guest2? shown as [^"]+"'],
-                            **{guest: [r'nameplate \d is "rig_host shown as [^"]+"']
-                               for guest in GUESTS}},
+                                     r'nameplate \d is "(?!rig_)[^"]+"'],
+                            **{guest: [r'nameplate \d is "(?!rig_)[^"]+"'] for guest in GUESTS}},
                     forbid=holds(PARTY3),
                     known_bug="after the host's trip the guests sometimes lose its character "
                               "(backlog, docs/HANDOFF.md; rig 2026-10-17, 1 of 3 smoke runs)",
                     known_problems=[r"expect-others-near 2 15 FAILED",
-                                    r"rig_host shown as"]),
+                                    r"nameplate"]),
             chapter("hit3", "each guest back from its own trip (three worlds apart), all three "
                             "hit one enemy in turn: one HP in every game, each hit counted once, "
                             "on the other bars within 0.15 s",
