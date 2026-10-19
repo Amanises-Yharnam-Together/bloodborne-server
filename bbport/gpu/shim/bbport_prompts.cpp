@@ -161,9 +161,29 @@ void OnUpload(std::uintptr_t address, std::size_t size, std::uint32_t width, std
         // A KG_* glyph: the menus' key guides and the buttons in their messages.
         std::uint8_t bytes[1024];
         runtime_memory_read_backing(address, bytes, sizeof(bytes));
-        const auto it = sets->glyph_by_hash.find(XXH3_64bits(bytes, sizeof(bytes)));
+        const std::uint64_t hash = XXH3_64bits(bytes, sizeof(bytes));
+        const auto it = sets->glyph_by_hash.find(hash);
         if (it != sets->glyph_by_hash.end()) {
             Add(address, it->second.first, sets->hashes[it->second.first][it->second.second]);
+        } else {
+            // Other 32x32 pictures (or glyphs a mod drew): named once each, the first few.
+            static std::mutex seen_mutex;
+            static std::set<std::uint64_t> seen;
+            std::scoped_lock lock{seen_mutex};
+            if (seen.size() < 24 && seen.insert(hash).second) {
+                std::printf("Button icons: a 32x32 picture at %#llx is none of the game's (hash %016llx)\n",
+                            (unsigned long long)address, (unsigned long long)hash);
+                // BB_PROMPT_TRACE=<folder>: its bytes saved there (to compare with the game's file).
+                if (const char* folder = std::getenv("BB_PROMPT_TRACE"); folder && *folder) {
+                    char name[512];
+                    std::snprintf(name, sizeof(name), "%s/prompt-%016llx.bin", folder,
+                                  (unsigned long long)hash);
+                    if (FILE* f = std::fopen(name, "wb")) {
+                        std::fwrite(bytes, 1, sizeof(bytes), f);
+                        std::fclose(f);
+                    }
+                }
+            }
         }
         return;
     }

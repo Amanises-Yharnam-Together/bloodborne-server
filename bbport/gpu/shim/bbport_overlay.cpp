@@ -185,8 +185,10 @@ std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
 
 // The ImGui backend's descriptor pool: one set per texture (the font atlas, the party art and
-// icons, the team screens' menu art), and the texture count last printed for the rig.
-constexpr int OverlayDescriptorSets = 64;
+// icons, the team screens' menu art, and with button_icons=auto the key guide icons of every
+// set: 98 textures), and the texture count last printed for the rig. Past it, menu art came out
+// garbled (Kaniel 2026-10-19: the settings page's ornaments and slider tracks).
+constexpr int OverlayDescriptorSets = 256;
 int textures_logged = -1;
 
 // Present rate for the FPS counter.
