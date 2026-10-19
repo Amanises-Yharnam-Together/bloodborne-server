@@ -380,6 +380,44 @@ int main() {
         assert(!ReadColorGrade(std::vector<std::uint8_t>(16, 0), "m24_01"));
     }
 
+    // Kaniel 2026-10-19 ("look almost like in game but view from above"): a texture decoded (an
+    // 8x4 BC1, red block then blue, in the PS4's tile order) and drawn on a triangle by its
+    // texture coordinates: the left half of the ground red, the right half blue.
+    {
+        Blob tpf;
+        tpf.bytes = {'T', 'P', 'F', 0};
+        tpf.Put<std::uint32_t>(8, 1);
+        tpf.Put<std::uint32_t>(16 + 0x00, 0x80);
+        tpf.Put<std::uint32_t>(16 + 0x04, 64 * 8);
+        tpf.Put<std::uint16_t>(16 + 12, 8);
+        tpf.Put<std::uint16_t>(16 + 14, 4);
+        tpf.Put<std::uint32_t>(16 + 0x18, 0x40);
+        tpf.Put<std::uint32_t>(16 + 0x20, 71);
+        tpf.Put<std::uint16_t>(0x40, 't');
+        // Block (0, 0) first, block (1, 0) second in Morton order; all indices 0 (colour 0).
+        tpf.Put<std::uint16_t>(0x80, 0xF800);
+        tpf.Put<std::uint16_t>(0x82, 0x0000);
+        tpf.Put<std::uint16_t>(0x88, 0x001F);
+        tpf.Put<std::uint16_t>(0x8A, 0x0000);
+        tpf.Put<std::uint8_t>(0x80 + 64 * 8 - 1, 0);
+        const auto texture = DecodeTexture(tpf.bytes);
+        assert(texture && texture->width == 8 && texture->height == 4);
+        const std::uint32_t left = texture->Sample(0.1f, 0.5f), right = texture->Sample(0.9f, 0.5f);
+        assert(((left >> 16) & 0xFF) > 200 && (left & 0xFF) < 50);
+        assert(((right >> 16) & 0xFF) < 50 && (right & 0xFF) > 200);
+        assert(texture->Sample(1.1f, 0.5f) == left); // wraps
+        const auto shared = std::make_shared<const Texture>(*texture);
+        Canvas painted(PlayArea{0, 20, 0, 10, 100}, 2.0f, 4096);
+        painted.SetTextures([&](std::uint32_t id) { return id == 7 ? shared : nullptr; });
+        const std::vector<float> ground{0, 0, 0, 20, 0, 0, 0, 0, 10, 20, 0, 0, 20, 0, 10, 0, 0, 10};
+        const std::vector<float> uvs{0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1};
+        painted.Add(ground, std::vector<std::uint32_t>(2, TexturedColor(7)), uvs);
+        const Chart chart = painted.Finish();
+        const std::uint8_t* west = PixelAt(chart, 3, 5);
+        const std::uint8_t* east = PixelAt(chart, 17, 5);
+        assert(west && east && west[0] > west[2] + 40 && east[2] > east[0] + 40);
+    }
+
     // A texture archive's header: each file's name, offset and size in the .tpfbdt.
     {
         Blob bhd;

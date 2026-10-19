@@ -40,7 +40,8 @@ int main(int argc, char** argv) {
             file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(size));
             bytes.resize(std::size_t(file.gcount()));
             return bytes;
-        });
+        },
+        std::getenv("BB_MAP_TEXTURED") != nullptr); // the game's own textures
     if (!chart) {
         std::fprintf(stderr, "no map for %08x\n", packed);
         return 1;

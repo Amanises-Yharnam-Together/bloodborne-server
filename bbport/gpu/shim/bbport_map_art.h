@@ -48,16 +48,34 @@ struct MapStudio {
 std::optional<MapStudio> ReadMapStudio(std::span<const std::uint8_t> msb);
 
 /// A material's colour by its diffuse texture's name ("m24_01_trims_003_a"): 0xFFRRGGBB, or 0
-/// when it has none.
+/// when it has none; or TexturedColor(id), a texture of the canvas's (Canvas::SetTextures).
 using MaterialColor = std::function<std::uint32_t(std::string_view texture)>;
+/// Kaniel 2026-10-19 ("look almost like in game but view from above"): a triangle drawn with its
+/// texture `id` instead of one colour.
+constexpr std::uint32_t TexturedColor(std::uint32_t id) {
+    return 0x01000000u | (id & 0xFFFFFFu);
+}
+constexpr bool IsTextured(std::uint32_t color) {
+    return (color >> 24) == 0x01;
+}
+/// A texture's pixels (a .tpf inflated, its first texture: BC1 or BC7, halved down to at most
+/// `max_side` pixels a side), 0xAARRGGBB rows; Sample wraps (u, v) as the game's samplers do.
+struct Texture {
+    int width = 0, height = 0;
+    std::vector<std::uint32_t> pixels;
+    std::uint32_t Sample(float u, float v) const;
+};
+std::optional<Texture> DecodeTexture(std::span<const std::uint8_t> tpf, int max_side = 128);
 
 /// The highest-detail triangles of a FLVER2 model (inflated), three corners of x, y, z each,
 /// appended to `out` in the model's space; with `colors`, each triangle's material colour
 /// (`color_of` its diffuse texture) appended to it. Left out: the lower levels of detail and the
 /// meshes whose material is the sky, the moon, the sun or water (a flat disc over a river). False
 /// if it is not a FLVER.
+/// With `uvs`, each triangle's texture coordinates (u, v of its three corners) appended to it.
 bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& out,
-                     std::vector<std::uint32_t>* colors = nullptr, const MaterialColor& color_of = {});
+                     std::vector<std::uint32_t>* colors = nullptr, const MaterialColor& color_of = {},
+                     std::vector<float>* uvs = nullptr);
 
 /// A collision mesh's triangles (a Havok 2014 packfile of compressed meshes, inflated: one file of
 /// map/mAA_BB_00_00/hAA_BB_00_00.hkxbdt), three corners of x, y, z each, appended to `out` in the
@@ -102,7 +120,8 @@ std::optional<PlayArea> PlayAreaOf(std::span<const Vec3> spots);
 /// the ones whose middle is outside the play area or wholly above its ceiling are left out. With
 /// `colors` (one a triangle) the kept ones' go to `out_colors`.
 void Place(const Piece& piece, std::span<const float> model, const PlayArea& area, std::vector<float>& out,
-           std::span<const std::uint32_t> colors = {}, std::vector<std::uint32_t>* out_colors = nullptr);
+           std::span<const std::uint32_t> colors = {}, std::vector<std::uint32_t>* out_colors = nullptr,
+           std::span<const float> uvs = {}, std::vector<float>* out_uvs = nullptr);
 
 /// An area's picture: RGBA rows, `ppm` pixels a metre; the pixel (px, py) shows x = x0 + px / ppm,
 /// z = z1 - py / ppm (north up). Transparent where nothing is.
@@ -157,8 +176,15 @@ std::int16_t ShownHeight(const Chart& chart, std::size_t cell, float y);
 class Canvas {
 public:
     Canvas(const PlayArea& area, float ppm, int max_side);
-    /// `colors`: each triangle's material colour (0xFFRRGGBB, 0 none); empty: none.
-    void Add(std::span<const float> triangles, std::span<const std::uint32_t> colors = {});
+    /// `colors`: each triangle's material colour (0xFFRRGGBB, 0 none; TexturedColor: its texture,
+    /// sampled at `uvs`, six a triangle); empty: none.
+    void Add(std::span<const float> triangles, std::span<const std::uint32_t> colors = {},
+             std::span<const float> uvs = {});
+    /// The textures TexturedColor ids name (looked up once a triangle; safe from several threads).
+    void SetTextures(std::function<std::shared_ptr<const Texture>(std::uint32_t id)> texture_of) {
+        this->texture_of = std::move(texture_of);
+        textured = true;
+    }
     /// Kaniel 2026-10-18 ("extra stuff outside the map"): walkable floors (Floors of the collision
     /// meshes). Once any are added, Finish leaves out what lies more than `reach` metres from all
     /// of them (distant views, floating rooftops beyond the walls).
@@ -191,10 +217,12 @@ private:
     std::vector<std::uint32_t> color; // its material's colour (0 none)
     std::vector<std::uint8_t> walk;   // a walkable floor there (AddWalkable)
     bool has_walk = false;
+    std::function<std::shared_ptr<const Texture>(std::uint32_t)> texture_of;
+    bool textured = false; // colours are the textures' own pixels: kept as they are
     std::vector<std::uint8_t> grade;
 };
 
-/// A chart as kept in the user folder ("BBMAP6": the number goes up whenever the drawing changes,
+/// A chart as kept in the user folder ("BBMAP7": the number goes up whenever the drawing changes,
 /// so pictures drawn the old way are drawn again; the frame, the pixels zlib-compressed, the
 /// labels, then the storeys zlib-compressed), and
 /// read back (nothing when it is not one).
@@ -212,11 +240,14 @@ std::string MapNameOf(std::uint32_t packed_map);
 using ReadFile = std::function<std::vector<std::uint8_t>(const std::string& relative)>;
 using ReadRange =
     std::function<std::vector<std::uint8_t>(const std::string& relative, std::uint64_t offset, std::uint64_t size)>;
+/// `textured`: the pictures in the game's own textures (else one colour a material).
 std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, float ppm = 3.0f,
-                               int max_side = 3072, int threads = 1, const ReadRange& read_range = {});
+                               int max_side = 3072, int threads = 1, const ReadRange& read_range = {},
+                               bool textured = false);
 /// Several areas in one picture, each placed by its own MSB's coordinates (the blocks of one
 /// area, m24_00 to m24_02, share them).
 std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, const ReadFile& read, float ppm = 3.0f,
-                                int max_side = 3072, int threads = 1, const ReadRange& read_range = {});
+                                int max_side = 3072, int threads = 1, const ReadRange& read_range = {},
+                                bool textured = false);
 
 } // namespace BbMapArt
