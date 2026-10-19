@@ -384,9 +384,9 @@ struct RawDump {
 };
 
 static bool BeginRawDump(const Instance& instance, u32 w, u32 h, const char* name, int index,
-                         RawDump& dump) {
+                         RawDump& dump, u32 bytes_per_pixel = 4) {
     const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                                       .size = VkDeviceSize(w) * h * 4,
+                                       .size = VkDeviceSize(w) * h * bytes_per_pixel,
                                        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
     const VmaAllocationCreateInfo alloc_ci{
         .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
@@ -793,6 +793,37 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                 CopyRawDump(cmdbuf, gain_dump, image, vk::ImageLayout::eTransferSrcOptimal);
             });
             EndRawDump(instance, draw_scheduler, std::move(gain_dump));
+            // The gain's inputs: the 16-bit scene and the UI-free SDR scene (hdr_scene_*, raw
+            // RGBA16F / RGBA8), for tuning the highlights offline.
+            const auto captures = scene_hdr.CapturedImages();
+            for (const auto& [capture, name] :
+                 {std::pair{captures.scene, "hdr_scene"}, std::pair{captures.hudless, "hdr_hudless"}}) {
+                RawDump capture_dump{};
+                if (!capture.image || !BeginRawDump(instance, capture.width, capture.height, name,
+                                                    frame_dump_index, capture_dump,
+                                                    capture.bytes_per_pixel)) {
+                    continue;
+                }
+                draw_scheduler.Record([capture_dump, image = capture.image](vk::CommandBuffer cmdbuf) {
+                    const auto barrier = [&](vk::ImageLayout from, vk::ImageLayout to) {
+                        const vk::ImageMemoryBarrier2 b{
+                            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                            .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+                            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                            .oldLayout = from,
+                            .newLayout = to,
+                            .image = image,
+                            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+                        cmdbuf.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1,
+                                                                   .pImageMemoryBarriers = &b});
+                    };
+                    barrier(vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferSrcOptimal);
+                    CopyRawDump(cmdbuf, capture_dump, image, vk::ImageLayout::eTransferSrcOptimal);
+                    barrier(vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+                });
+                EndRawDump(instance, draw_scheduler, std::move(capture_dump));
+            }
         }
         ++frame_dump_index;
     }

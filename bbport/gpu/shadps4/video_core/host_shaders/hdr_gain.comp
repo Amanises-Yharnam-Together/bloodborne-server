@@ -76,6 +76,7 @@ void main() {
     // grading exactly.
     const float g = clamp(lh / max(ls, 1e-4), 1.0, headroom);
     const float scene_gain = exp(log(g) * smoothstep(0.25, 0.8, ls));
-    const float value = min(max(expand, scene_gain), headroom);
+    // At most the peak (the expansion takes the game's lights there, past `headroom` times).
+    const float value = min(max(expand, scene_gain), max(headroom / max(ls, 1e-4), 1.0));
     imageStore(gain, pixel, vec4(mix(value, 1.0, ui), ui, 0.0, 0.0));
 }

@@ -180,8 +180,8 @@ struct Values {
     /// Set by the window: the desktop's SDR white (Windows' SDR content brightness) and the
     /// display's peak, in nits; 0 while unknown.
     std::atomic<float> hdr_display_white{0.0f}, hdr_display_peak{0.0f};
-    /// Highlight expansion 0..1 (host_shaders/hdr_highlight.glsl): 0.5 takes SDR white to the
-    /// peak brightness, higher values lower the knee (0: the SDR picture at paper white only).
+    /// Highlight expansion 0..1 (host_shaders/hdr_highlight.glsl): 0.5 takes the game's lights (and
+    /// white) to the peak brightness, higher values lower the knee (0: the SDR picture only).
     std::atomic<float> hdr_highlights{0.5f};
     /// HDR gain map per frame (vk_scene_hdr.h): the expansion leaves the game's HUD alone and
     /// takes extra brightness from the 16-bit scene where it has more; off: the whole SDR frame
@@ -253,8 +253,9 @@ int DlssModelIndex(int preset);
 /// The HDR rows' choices for a brightness: the nearest offered value.
 int HdrPeakIndex(int nits);
 int HdrPaperWhiteIndex(int nits);
-/// The HDR output's paper white and peak in nits: the picked brightness, else the display's,
-/// else 200 and 1000. The peak is never below the white.
+/// The HDR output's paper white and peak in nits: the picked brightness, else the display's
+/// (auto white at most a quarter of the peak), else 200 and 1000. The peak is never below the
+/// white.
 float HdrPaperWhite();
 float HdrPeak();
 

@@ -182,7 +182,9 @@ void SceneHdr::Ensure(VideoCore::UniqueImage& image, std::vector<View>& views,
         .arrayLayers = 1,
         .samples = vk::SampleCountFlagBits::e1,
         .tiling = vk::ImageTiling::eOptimal,
-        .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+        // Transfer source: BB_FRAME_DUMP_TRIGGER saves the copies (Captures).
+        .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst |
+                 vk::ImageUsageFlagBits::eTransferSrc,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
     SetObjectName(device, vk::Image(image), "Scene HDR {}", name);
@@ -403,6 +405,12 @@ void SceneHdr::Record(vk::CommandBuffer cmdbuf, const Job& job, vk::ImageView di
         .subresourceRange = ColorRange,
     };
     cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_present});
+}
+
+SceneHdr::Captures SceneHdr::CapturedImages() const {
+    const auto bytes = [](vk::Format format) { return format == vk::Format::eR16G16B16A16Sfloat ? 8u : 4u; };
+    return {.scene = {vk::Image(scene_copy), scene_width, scene_height, bytes(scene_format)},
+            .hudless = {vk::Image(hudless_copy), hudless_width, hudless_height, bytes(hudless_format)}};
 }
 
 SceneHdr::Gain SceneHdr::GainImage(u32 slot) const {
