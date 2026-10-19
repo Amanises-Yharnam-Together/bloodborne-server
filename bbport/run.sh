@@ -137,9 +137,11 @@ game_is_patched() {
     [[ $answer == patched ]]
 }
 # An explicit render size above 1080p skips the scaled path above, but patches.py still grows the
-# graphics heap: the direct memory has to follow, or the game stops at start (exit 139). A game
-# without the patches keeps its memory.
-if [[ -z ${BB_DMEM_MB:-} && ${BB_RENDER_RES:-} =~ ^[[:space:]]*([0-9]+)[[:space:]]*[xX][[:space:]]*([0-9]+)[[:space:]]*$ ]] &&
+# graphics heap: the direct memory has to follow, also over a smaller BB_DMEM_MB, or the game stops
+# at start (exit 139). A game without the patches keeps its memory.
+dmem=${BB_DMEM_MB:-}
+[[ $dmem =~ ^[0-9]{1,6}$ ]] || dmem=0
+if (( 10#$dmem < 9152 )) && [[ ${BB_RENDER_RES:-} =~ ^[[:space:]]*([0-9]+)[[:space:]]*[xX][[:space:]]*([0-9]+)[[:space:]]*$ ]] &&
         (( 10#${BASH_REMATCH[1]} * 10#${BASH_REMATCH[2]} > 1920 * 1080 )) && game_is_patched; then
     export BB_DMEM_MB=9152
     echo "Render ${BB_RENDER_RES}: direct memory ${BB_DMEM_MB} MiB"

@@ -87,6 +87,21 @@ class ResolutionMemoryTests(unittest.TestCase):
     def test_explicit_memory_budget_is_preserved(self):
         self.assertEqual(self.memory('3840x2160', '12000'), '12000')
 
+    def test_a_budget_too_small_for_the_heaps_is_raised(self):
+        # The rig pins the PS4's 5056 MiB: a lane left at 4K (or 1440p) faulted at boot at guest
+        # 0x443025, the 929 MB allocation after the enlarged 4 GB graphics heap finding no room.
+        for memory in ('5056', '8000', 'nonsense'):
+            with self.subTest(memory=memory):
+                self.assertEqual(self.memory('3840x2160', memory), '9152')
+        env, log = self.environment_at_patch_compilation(None, '5056', STUB_SCALED='3840x2160 3840x2160')
+        self.assertEqual(env['BB_DMEM_MB'], '9152')
+        self.assertEqual(log.count('direct memory'), 1)
+        self.assertIn('direct memory 9152 MiB', log)
+
+    def test_a_small_budget_stays_up_to_1080p(self):
+        self.assertEqual(self.memory('1280x720', '5056'), '5056')
+        self.assertEqual(self.memory(None, '5056'), '5056')
+
     def test_the_log_says_where_the_memory_comes_from(self):
         _, log = self.environment_at_patch_compilation('2560x1440')
         self.assertIn('Render 2560x1440: direct memory 9152 MiB', log)
