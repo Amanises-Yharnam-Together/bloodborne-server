@@ -1619,11 +1619,11 @@ void DisplayTab() {
                                   T("Live", "В реальном времени")};
     Choice("map_3d", T("3D map", "3D-карта"), std::clamp(s.map_3d.load(), 0, BbSettings::Map3dCount - 1),
            BbSettings::Map3dCount, [&](int i) { return map_3d_names[i]; }, [](int) { return true; },
-           T("L3 on the map shows the place from the game's own models, from an angle. Prerendered: "
+           T("{L3} on the map shows the place from the game's own models, from an angle. Prerendered: "
              "each area is drawn once, the first time, in the background. Live: the models are "
              "drawn on the graphics card as you turn and tilt the view (right stick), using its "
              "memory. Leave it off on a low-end PC.",
-             "L3 на карте показывает местность из моделей самой игры под углом. Заранее "
+             "{L3} на карте показывает местность из моделей самой игры под углом. Заранее "
              "нарисованная: каждая область рисуется один раз, при первом показе, в фоне. В "
              "реальном времени: модели рисуются видеокартой, пока вы поворачиваете и наклоняете "
              "вид (правый стик), используя её память. На слабом ПК оставьте выключенным."),
