@@ -5533,9 +5533,9 @@ std::optional<u32> WipeFor(const VitalsBoard& board, std::string_view self) {
     return std::nullopt;
 }
 
-bool BossRunnersOn(u32 packed_map) {
+bool BossRunnerFor(u32 packed_map, std::optional<u8> npc_type) {
     constexpr u32 ChaliceArea = 0x1D;
-    return packed_map >> 24 != ChaliceArea;
+    return packed_map >> 24 != ChaliceArea || npc_type == NpcTypeBoss;
 }
 
 std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
