@@ -146,6 +146,9 @@ bool UnderRoof(const Chart& chart, float x, float y, float z);
 /// bridge, a tree), the floor shows instead, inked where its storey ends (walls). `rgba` is the
 /// chart's own picture to change (its size).
 void FloorView(const Chart& chart, float y, std::uint8_t* rgba);
+/// The height FloorView shows at a storeys' cell for one standing at `y` (NaN: the roofs): the
+/// storey's floor where a roof covers it, else the top; Chart::NoHeight where nothing is.
+std::int16_t ShownHeight(const Chart& chart, std::size_t cell, float y);
 
 /// The picture drawn up: world triangles added a model at a time (an area has tens of millions),
 /// the highest at each pixel kept with its slope's light; Finish shades it in ink on paper. `ppm`

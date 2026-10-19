@@ -189,6 +189,8 @@ TEST(BloodborneAutoplay, MenuKeysAreTheOverlaysTokens) {
               std::optional<std::string>{"map r1 circle square\n"});
     // Kaniel 2026-10-18: R3 switches the map between the roofs and the floors.
     EXPECT_EQ(AutoplayMenuKeys({"r3"}), std::optional<std::string>{"r3\n"}) << "floors or roofs";
+    // Kaniel 2026-10-19: L3 turns the map's 3D view on and off.
+    EXPECT_EQ(AutoplayMenuKeys({"l3"}), std::optional<std::string>{"l3\n"}) << "the 3D view";
 }
 
 // Kaniel 2026-10-12: the hardest bugs come where two maps meet (a fog border crossed back and
