@@ -47,9 +47,11 @@ struct MapStudio {
 /// The MSB (inflated); nothing if it is not one.
 std::optional<MapStudio> ReadMapStudio(std::span<const std::uint8_t> msb);
 
-/// A material's colour by its diffuse texture's name ("m24_01_trims_003_a"): 0xFFRRGGBB, or 0
-/// when it has none; or TexturedColor(id), a texture of the canvas's (Canvas::SetTextures).
-using MaterialColor = std::function<std::uint32_t(std::string_view texture)>;
+/// A material's colour by its textures' names: the diffuse texture's ("m24_01_trims_003_a"), and
+/// when the material has them, after ';' its second diffuse texture, its blend mask and its baked
+/// light (the DOL texture, "24010000_m000100_gi_0000_00_dol_00"), each possibly empty. 0xFFRRGGBB,
+/// or 0 when it has none; or TexturedColor(id), a surface of the canvas's (Canvas::SetTextures).
+using MaterialColor = std::function<std::uint32_t(std::string_view textures)>;
 /// Kaniel 2026-10-19 ("look almost like in game but view from above"): a triangle drawn with its
 /// texture `id` instead of one colour.
 constexpr std::uint32_t TexturedColor(std::uint32_t id) {
@@ -63,16 +65,28 @@ constexpr bool IsTextured(std::uint32_t color) {
 struct Texture {
     int width = 0, height = 0;
     std::vector<std::uint32_t> pixels;
-    std::uint32_t Sample(float u, float v) const;
+    /// The smaller levels, each half the one before (a far surface takes a smaller one, so its
+    /// detail does not flicker into noise).
+    std::vector<Texture> mips;
+    std::uint32_t Sample(float u, float v, int level = 0) const;
+    /// The level for `texels` texels a picture pixel.
+    int LevelFor(float texels) const;
 };
-std::optional<Texture> DecodeTexture(std::span<const std::uint8_t> tpf, int max_side = 128);
+/// Kaniel 2026-10-19: what a textured triangle is drawn with: its diffuse texture, a second one
+/// mixed in by its blend mask (moss, mud, damage over stone), and the light the game baked for
+/// its model (sampled at the second texture coordinates).
+struct Surface {
+    std::shared_ptr<const Texture> diffuse, diffuse2, mask, light;
+};
+std::optional<Texture> DecodeTexture(std::span<const std::uint8_t> tpf, int max_side = 256);
 
 /// The highest-detail triangles of a FLVER2 model (inflated), three corners of x, y, z each,
 /// appended to `out` in the model's space; with `colors`, each triangle's material colour
 /// (`color_of` its diffuse texture) appended to it. Left out: the lower levels of detail and the
 /// meshes whose material is the sky, the moon, the sun or water (a flat disc over a river). False
 /// if it is not a FLVER.
-/// With `uvs`, each triangle's texture coordinates (u, v of its three corners) appended to it.
+/// With `uvs`, each triangle's texture coordinates appended to it: for each corner its first
+/// (u, v) and its second (the baked light's), twelve a triangle.
 bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& out,
                      std::vector<std::uint32_t>* colors = nullptr, const MaterialColor& color_of = {},
                      std::vector<float>* uvs = nullptr);
@@ -96,6 +110,17 @@ std::array<float, 3> Graded(std::span<const std::uint8_t> grade, const float rgb
 /// A texture's average colour (a .tpf inflated, its first texture: BC1 or BC7, opaque pixels
 /// only) as 0xFFRRGGBB; 0 when it is not one of those.
 std::uint32_t AverageColor(std::span<const std::uint8_t> tpf);
+
+/// Kaniel 2026-10-19 (torches and lamps glowing): a point light of an area's light file
+/// (map/mAA_BB_00_00/mAA_BB_00_00_0000.btl.dcx, inflated): where it is, its colour (0xFFRRGGBB),
+/// its reach in metres and its power. Spotlights and the sky's lights are left out.
+struct PointLight {
+    float x = 0, y = 0, z = 0;
+    std::uint32_t color = 0;
+    float radius = 0, power = 0;
+    bool operator==(const PointLight&) const = default;
+};
+std::vector<PointLight> ReadLights(std::span<const std::uint8_t> btl);
 
 /// A texture archive's header (BHF4, a .tpfbhd): each file's name and where it is in the .tpfbdt.
 struct ArchiveEntry {
@@ -176,12 +201,12 @@ std::int16_t ShownHeight(const Chart& chart, std::size_t cell, float y);
 class Canvas {
 public:
     Canvas(const PlayArea& area, float ppm, int max_side);
-    /// `colors`: each triangle's material colour (0xFFRRGGBB, 0 none; TexturedColor: its texture,
-    /// sampled at `uvs`, six a triangle); empty: none.
+    /// `colors`: each triangle's material colour (0xFFRRGGBB, 0 none; TexturedColor: its surface,
+    /// sampled at `uvs`, twelve a triangle); empty: none.
     void Add(std::span<const float> triangles, std::span<const std::uint32_t> colors = {},
              std::span<const float> uvs = {});
-    /// The textures TexturedColor ids name (looked up once a triangle; safe from several threads).
-    void SetTextures(std::function<std::shared_ptr<const Texture>(std::uint32_t id)> texture_of) {
+    /// The surfaces TexturedColor ids name (looked up once a triangle; safe from several threads).
+    void SetTextures(std::function<std::shared_ptr<const Surface>(std::uint32_t id)> texture_of) {
         this->texture_of = std::move(texture_of);
         textured = true;
     }
@@ -189,6 +214,9 @@ public:
     /// meshes). Once any are added, Finish leaves out what lies more than `reach` metres from all
     /// of them (distant views, floating rooftops beyond the walls).
     void AddWalkable(std::span<const float> floors);
+    /// A light whose warm glow Finish lays on the surfaces round it (the warm, small ones: torches,
+    /// lamps, candles).
+    void AddLight(const PointLight& light) { lights.push_back(light); }
     /// The game's colour grade for the picture (ReadColorGrade); none: the materials' own colours.
     void SetGrade(std::vector<std::uint8_t> grade) { this->grade = std::move(grade); }
     static constexpr float Reach = 12.0f;
@@ -217,12 +245,13 @@ private:
     std::vector<std::uint32_t> color; // its material's colour (0 none)
     std::vector<std::uint8_t> walk;   // a walkable floor there (AddWalkable)
     bool has_walk = false;
-    std::function<std::shared_ptr<const Texture>(std::uint32_t)> texture_of;
+    std::function<std::shared_ptr<const Surface>(std::uint32_t)> texture_of;
+    std::vector<PointLight> lights;
     bool textured = false; // colours are the textures' own pixels: kept as they are
     std::vector<std::uint8_t> grade;
 };
 
-/// A chart as kept in the user folder ("BBMAP7": the number goes up whenever the drawing changes,
+/// A chart as kept in the user folder ("BBMAP8": the number goes up whenever the drawing changes,
 /// so pictures drawn the old way are drawn again; the frame, the pixels zlib-compressed, the
 /// labels, then the storeys zlib-compressed), and
 /// read back (nothing when it is not one).

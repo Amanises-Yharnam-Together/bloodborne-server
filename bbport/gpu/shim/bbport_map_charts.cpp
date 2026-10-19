@@ -85,9 +85,10 @@ std::shared_ptr<const BbMapArt::Chart> Make(std::uint32_t packed_map) {
     }
     const auto start = std::chrono::steady_clock::now();
     const int threads = int(std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u));
-    // Kaniel 2026-10-18 ("sharper close-up"): 4 pixels a metre.
+    // Kaniel 2026-10-18 ("sharper close-up"), 2026-10-19 ("it generally should be sharper"): 6
+    // pixels a metre.
     // Kaniel 2026-10-19 ("it looks much better this way"): in the game's own textures.
-    auto drawn = BbMapArt::ChartArea(packed_map, ReadGameFile, 4.0f, 4096, threads, ReadGameRange, true);
+    auto drawn = BbMapArt::ChartArea(packed_map, ReadGameFile, 6.0f, 6144, threads, ReadGameRange, true);
     if (!drawn) {
         std::printf("Map: no picture of %s in the game's files\n", BbMapArt::MapNameOf(packed_map).c_str());
         return nullptr;
