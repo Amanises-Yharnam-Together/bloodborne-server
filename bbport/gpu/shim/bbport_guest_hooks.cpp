@@ -20,6 +20,7 @@
 #endif
 
 extern "C" void runtime_memory_note_write(uintptr_t address, uint64_t size);
+extern "C" int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
 
 namespace BbGuestHooks {
 namespace {
@@ -519,6 +520,157 @@ bool Patch(u64 address, const unsigned char* expected, std::size_t size) {
     code.Restore();
     return true;
 }
+
+/// Render jobs (deadinside28 0.6, the Laurence cinematic above 30 FPS): a runner whose job failed
+/// (result 1) keeps the slot it took from the job pool (+0x120), and with every slot held no job
+/// runs again: the cinematic stopped. The slot goes back to the pool through the game's own
+/// 0x1056990, at the stack check every exit of the job function (0x1068092) ends in, and when a
+/// runner is destroyed or reset with a slot still held (0x106798a, 0x1067a5c).
+std::atomic<u64> job_slots_released{0};
+
+void NoteJobSlotReleased(const char* how) {
+    const u64 n = job_slots_released.fetch_add(1) + 1;
+    if (n <= 5 || (n & (n - 1)) == 0) {
+        std::printf("Guest hooks: %s gave its render job slot back (%llu so far)\n", how,
+                    static_cast<unsigned long long>(n));
+    }
+}
+
+GUEST_ABI void JobSlotFix(u64 runner, u64 queue, std::uint32_t result, std::uint32_t) {
+    if (result != 1 || !runtime_memory_is_mapped(runner + 0x120, 8)) {
+        return;
+    }
+    u64& held = *reinterpret_cast<u64*>(runner + 0x120);
+    const u64 item = held;
+    if (!item || !queue) {
+        return;
+    }
+    using GiveBack = void(GUEST_ABI*)(u64 queue, u64 item);
+    reinterpret_cast<GiveBack>(ImageBase + 0x1056990)(queue, item);
+    held = 0;
+    NoteJobSlotReleased("a failed render job");
+}
+
+GUEST_ABI void JobSlotDrop(u64 runner) {
+    u64& held = *reinterpret_cast<u64*>(runner + 0x120);
+    const u64 item = held;
+    if (!item) {
+        return;
+    }
+    const u64 queue = *reinterpret_cast<const u64*>(ImageBase + 0x54b8788);
+    if (!queue) {
+        return;
+    }
+    using GiveBack = void(GUEST_ABI*)(u64 queue, u64 item);
+    reinterpret_cast<GiveBack>(ImageBase + 0x1056990)(queue, item);
+    held = 0;
+    NoteJobSlotReleased("a render job destroyed with a slot");
+}
+
+bool InstallJobSlotDropHook(u64 offset) {
+    // mov qword [rbx + 0x120], 0
+    static constexpr std::array<u8, 11> code = {0x48, 0xc7, 0x83, 0x20, 0x01, 0x00,
+                                                0x00, 0x00, 0x00, 0x00, 0x00};
+    const u64 address = ImageBase + offset;
+    if (std::memcmp(reinterpret_cast<const void*>(address), code.data(), code.size())) {
+        return false;
+    }
+    Emitter e;
+    e.SaveVolatile();
+    e.Bytes({0x48, 0x89, 0xdf}); // mov rdi, rbx (the runner)
+    e.CallAbs(reinterpret_cast<const void*>(&JobSlotDrop));
+    e.RestoreVolatile();
+    for (const u8 b : code) {
+        e.Bytes({b});
+    }
+    e.Bytes({0xff, 0x25, 0x00, 0x00, 0x00, 0x00}); // jmp [rip]
+    e.U64(address + code.size());
+    const u64 stub = PlaceStub(e);
+    std::uint32_t rel = 0;
+    if (!stub || !Rel32To(address + 5, stub, rel)) {
+        return false;
+    }
+    WriteJumpOverTrap(address, 0xe9, rel);
+    return true;
+}
+
+/// BB_JOB_SLOT_FIX=0: not installed.
+bool InstallJobSlotFix() {
+    if (const char* env = std::getenv("BB_JOB_SLOT_FIX"); env && env[0] == '0') {
+        return false;
+    }
+    constexpr u64 offset = 0x1068092;
+    // mov rax, [rbx]; cmp rax, [rbp-0x30]: the stack check every exit of that function ends in.
+    static constexpr std::array<u8, 7> code = {0x48, 0x8b, 0x03, 0x48, 0x3b, 0x45, 0xd0};
+    const u64 address = ImageBase + offset;
+    if (std::memcmp(reinterpret_cast<const void*>(address), code.data(), code.size())) {
+        return false;
+    }
+    // The destroy/reset sites first: all three or none.
+    static constexpr std::array<u8, 11> drop = {0x48, 0xc7, 0x83, 0x20, 0x01, 0x00,
+                                                0x00, 0x00, 0x00, 0x00, 0x00};
+    for (const u64 site : {u64{0x106798a}, u64{0x1067a5c}}) {
+        if (std::memcmp(reinterpret_cast<const void*>(ImageBase + site), drop.data(), drop.size())) {
+            return false;
+        }
+    }
+    Emitter e;
+    e.SaveVolatile();
+    e.Bytes({0x4c, 0x89, 0xf7}); // mov rdi, r14 (the runner)
+    // SaveVolatile keeps its stack anchor in r12; the game's r12 (the pool) is saved at [r12].
+    e.Bytes({0x49, 0x8b, 0x34, 0x24}); // mov rsi, [r12] (the saved pool)
+    e.Bytes({0x44, 0x89, 0xfa});       // mov edx, r15d (the result)
+    e.Bytes({0x89, 0xc1});             // mov ecx, eax (the original error)
+    e.CallAbs(reinterpret_cast<const void*>(&JobSlotFix));
+    e.RestoreVolatile();
+    for (const u8 b : code) {
+        e.Bytes({b}); // the two instructions the jump covers
+    }
+    e.Bytes({0xff, 0x25, 0x00, 0x00, 0x00, 0x00}); // jmp [rip]
+    e.U64(address + code.size());
+    const u64 stub = PlaceStub(e);
+    std::uint32_t rel = 0;
+    if (!stub || !Rel32To(address + 5, stub, rel)) {
+        return false;
+    }
+    WriteJumpOverTrap(address, 0xe9, rel);
+    const bool dropped = InstallJobSlotDropHook(0x106798a);
+    return InstallJobSlotDropHook(0x1067a5c) && dropped;
+}
+
+/// Yebis's blur-kernel sample parameters (GPUTexUtil_GetRecursiveSampleParameters, 0xbbc3e0): the
+/// base sample count, its first argument, must be at least 3 (an assertion the retail build
+/// compiled out). Game data now and then gives 2; the function then runs on in a state that
+/// does not end (the guest stops submitting: a black screen, crash 0xa0020007). The count is
+/// raised to 3 at the entry (deadinside28 0.6, their #207). BB_KERNEL_CLAMP=0: not installed.
+bool InstallKernelSampleClamp() {
+    if (const char* env = std::getenv("BB_KERNEL_CLAMP"); env && env[0] == '0') {
+        return false;
+    }
+    constexpr u64 offset = 0xbbc3e0;
+    // push rbp; mov rbp, rsp; push r15
+    static constexpr std::array<u8, 6> entry = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
+    const u64 address = ImageBase + offset;
+    if (std::memcmp(reinterpret_cast<const void*>(address), entry.data(), entry.size())) {
+        return false;
+    }
+    Emitter e;
+    e.Bytes({0x83, 0xff, 0x03});             // cmp edi, 3
+    e.Bytes({0x7d, 0x05});                   // jge over
+    e.Bytes({0xbf, 0x03, 0x00, 0x00, 0x00}); // mov edi, 3
+    for (const u8 b : entry) {
+        e.Bytes({b}); // the instructions the jump covers
+    }
+    e.Bytes({0xff, 0x25, 0x00, 0x00, 0x00, 0x00}); // jmp [rip]
+    e.U64(address + entry.size());
+    const u64 stub = PlaceStub(e);
+    std::uint32_t rel = 0;
+    if (!stub || !Rel32To(address + 5, stub, rel)) {
+        return false;
+    }
+    WriteJumpOverTrap(address, 0xe9, rel);
+    return true;
+}
 } // namespace
 
 void Install(RangeCallback on_gpu_range_allocated) {
@@ -535,18 +687,20 @@ void Install(RangeCallback on_gpu_range_allocated) {
     sigemptyset(&action.sa_mask);
     sigaction(SIGTRAP, &action, &previous_action);
 #endif
+    // Only the PC memory model (a range callback) needs to hear of the game's GPU allocations
+    // and resource copies; the crash fixes below go in with either model (deadinside28 PR #214).
+    const bool memory_hooks = on_gpu_range_allocated != nullptr;
     int patched = 0;
     for (const auto& site : MemcpySites) {
-        patched += Patch(ImageBase + site.offset, site.code, sizeof(site.code));
+        patched += memory_hooks && Patch(ImageBase + site.offset, site.code, sizeof(site.code));
     }
-    std::printf("Guest hooks: %d of %zu resource copy sites tell the GPU side of their writes\n",
-                patched, MemcpySites.size());
     on_range_allocated = on_gpu_range_allocated;
-    const bool allocator = Patch(ImageBase + AllocReturn, AllocReturnCode, sizeof(AllocReturnCode));
+    const bool allocator =
+        memory_hooks && Patch(ImageBase + AllocReturn, AllocReturnCode, sizeof(AllocReturnCode));
     // BB_HEAP_HOOKS=0 (bisecting): the heap's ranges are not reported.
     const char* heap_env = std::getenv("BB_HEAP_HOOKS");
-    const bool heap_hooks = !heap_env || heap_env[0] != '0';
-    if (BbStats::enabled) {
+    const bool heap_hooks = memory_hooks && (!heap_env || heap_env[0] != '0');
+    if (memory_hooks && BbStats::enabled) {
         Patch(ImageBase + CollectorEntry, CollectorEntryCode, sizeof(CollectorEntryCode));
     }
     int heap_sites = 0;
@@ -556,9 +710,16 @@ void Install(RangeCallback on_gpu_range_allocated) {
         }
         heap_sites += Patch(ImageBase + site, HeapAllocReturnCode, sizeof(HeapAllocReturnCode));
     }
-    std::printf("Guest hooks: GPU heap allocations seen at %d of %zu call sites\n", heap_sites,
-                HeapAllocReturns.size());
-    std::printf("Guest hooks: GPU memory allocator %s\n", allocator ? "tells the GPU side of new ranges" : "not found");
+    if (memory_hooks) {
+        std::printf("Guest hooks: %d of %zu resource copy sites tell the GPU side of their writes\n",
+                    patched, MemcpySites.size());
+        std::printf("Guest hooks: GPU heap allocations seen at %d of %zu call sites\n", heap_sites,
+                    HeapAllocReturns.size());
+        std::printf("Guest hooks: GPU memory allocator %s\n",
+                    allocator ? "tells the GPU side of new ranges" : "not found");
+    } else {
+        std::printf("Guest hooks: none for the GPU memory (this memory model keeps copies)\n");
+    }
     // Native detours over the traps just placed (BB_GUEST_HOOK_TRAPS=1 keeps the traps).
     const char* traps_env = std::getenv("BB_GUEST_HOOK_TRAPS");
     if (!(traps_env && traps_env[0] == '1') && (stub_page = MapStubPage()) != nullptr) {
@@ -574,11 +735,19 @@ void Install(RangeCallback on_gpu_range_allocated) {
             }
         }
         const bool gx_guard = InstallGxNodeGuard();
+        const bool job_slots = InstallJobSlotFix();
+        const bool kernel_clamp = InstallKernelSampleClamp();
         SealStubPage();
         std::printf("Guest hooks: %d native detours (no traps; BB_GUEST_HOOK_TRAPS=1: int3)\n",
                     detours);
         std::printf("Guest hooks: GX command heap guard %s\n",
                     gx_guard ? "in" : "not installed (other code there)");
+        std::printf("Guest hooks: render job slot fix %s\n", job_slots ? "on" : "not installed");
+        std::printf("Guest hooks: blur-kernel sample count clamp %s\n",
+                    kernel_clamp ? "on" : "not installed");
+    }
+    if (!memory_hooks) {
+        return;
     }
     BbHeapSites::Install();
     if (const char* env = std::getenv("BB_HEAP_SITES"); env && env[0] == '1') {

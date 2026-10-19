@@ -112,6 +112,11 @@ extern "C" void runtime_memory_note_write(uintptr_t address, uint64_t size) {
     noted_size = size;
 }
 
+// The render job slot fix checks its runner is mapped (not exercised here).
+extern "C" int runtime_memory_is_mapped(uintptr_t, uint64_t) {
+    return 0;
+}
+
 int main(int argc, char** argv) {
     const bool traps = argc > 1 && std::strcmp(argv[1], "traps") == 0;
     if (traps) {

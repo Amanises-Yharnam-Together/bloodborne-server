@@ -608,12 +608,18 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     // game the port knows nothing about.
     const char* hooks_env = std::getenv("BB_GUEST_HOOKS");
     const Game::Profile* game = Game::Active();
-    if (GuestInPlace() && game && game->install_hooks && !(hooks_env && hooks_env[0] == '0')) {
+    // Both memory models: the game's crash fixes go in with either; only the PC model (in
+    // place) hears of the game's GPU allocations (fresh_range; deadinside28 PR #214).
+    if (game && game->install_hooks && !(hooks_env && hooks_env[0] == '0')) {
         static BufferCache* hooked_cache = this;
-        game->install_hooks(Game::CoreServices{
-            .fresh_range = [](u64 address, u64 size) { hooked_cache->NoteFreshRange(address, size); },
-        });
-    } else if (GuestInPlace() && game) {
+        Game::CoreServices services{};
+        if (GuestInPlace()) {
+            services.fresh_range = [](u64 address, u64 size) {
+                hooked_cache->NoteFreshRange(address, size);
+            };
+        }
+        game->install_hooks(services);
+    } else if (game) {
         std::printf("Guest hooks: off (BB_GUEST_HOOKS=0): nothing in the game's own code is hooked\n");
     }
     if (LayerMode()) {
