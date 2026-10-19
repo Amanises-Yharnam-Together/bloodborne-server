@@ -5888,6 +5888,21 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     info.Queue = instance.GetGraphicsQueue();
     // One set per texture: the font atlas, the party art and icons, the team screens' menu art (18).
     info.DescriptorPoolSize = OverlayDescriptorSets;
+    // A failed descriptor set allocation leaves the texture with a null set, which the overlay's
+    // draw still binds: garbled art, and on NVIDIA a device lost after the presenter's post
+    // process (Lisara 2026-10-19, 102 textures in a pool of 64). Said in the log, not silent.
+    info.CheckVkResultFn = [](VkResult result) {
+        if (result >= 0) {
+            return;
+        }
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 8) {
+            std::printf("Overlay: Vulkan call failed (%d)%s\n", int(result),
+                        result == VK_ERROR_OUT_OF_POOL_MEMORY
+                            ? ": the texture pool is full, a texture has no descriptor set"
+                            : "");
+        }
+    };
     info.MinImageCount = std::max(image_count, 2u);
     info.ImageCount = std::max(image_count, 2u);
     info.UseDynamicRendering = true;
