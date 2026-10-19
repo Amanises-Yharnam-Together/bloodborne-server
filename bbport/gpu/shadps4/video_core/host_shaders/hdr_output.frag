@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // bbport: HDR10 output (host_passes/hdr_pass.h). The finished SDR frame (sRGB encoded, at the
 // swapchain's size) and the overlay layer (premultiplied, sRGB encoded) become Rec.2020 PQ: SDR
-// white sits at the paper white. Highlights: with a gain map (vk_scene_hdr.h) as bright as the
-// game's 16-bit scene had them, else the frame's own highlights are stretched toward the peak.
+// white sits at the paper white, decoded as gamma 2.2 (SdrToLinear). Highlights: with a gain map
+// (vk_scene_hdr.h) as bright as the game's 16-bit scene had them, else the frame's own highlights
+// are stretched toward the peak.
 
 #version 450
 #extension GL_GOOGLE_include_directive : require
@@ -23,8 +24,8 @@ layout (push_constant) uniform settings {
     float use_gain;    ///< 1: gain_map holds this frame's gains (the stretch is off)
 } pc;
 
-vec3 SrgbToLinear(vec3 c) {
-    return mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, lessThanEqual(c, vec3(0.04045)));
+vec3 SdrToLinear(vec3 c) {
+    return vec3(SdrToLinear(c.r), SdrToLinear(c.g), SdrToLinear(c.b));
 }
 
 // SMPTE ST.2084 (PQ) of absolute luminance.
@@ -52,11 +53,11 @@ void main() {
     // Under the overlay the SDR blend as it would be on an SDR display, without the stretch.
     vec3 linear;
     if (ui.a > 0.0) {
-        linear = SrgbToLinear(clamp(scene * (1.0 - ui.a) + ui.rgb, 0.0, 1.0));
+        linear = SdrToLinear(clamp(scene * (1.0 - ui.a) + ui.rgb, 0.0, 1.0));
     } else if (pc.use_gain > 0.5) {
-        linear = SrgbToLinear(scene) * max(texelFetch(gain_map, texel, 0).r, 1.0);
+        linear = SdrToLinear(scene) * max(texelFetch(gain_map, texel, 0).r, 1.0);
     } else {
-        linear = ExpandHighlights(SrgbToLinear(scene));
+        linear = ExpandHighlights(SdrToLinear(scene));
     }
     color = vec4(Pq(max(Bt709ToBt2020 * (linear * pc.paper_white), vec3(0.0))), 1.0);
 }
