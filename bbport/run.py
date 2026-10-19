@@ -175,6 +175,12 @@ def render_pixels(size):
     return int(match.group(1)) * int(match.group(2)) if match else 0
 
 
+def memory_mb(value):
+    """MiB of a BB_DMEM_MB value, 0 when absent or malformed (runtime_memory.c then uses 5056)."""
+    value = (value or '').strip()
+    return int(value) if value.isdigit() else 0
+
+
 def find_executable(name):
     """bin/ (packaged), else out/ (built with build.sh)."""
     for candidate in (PORT / 'bin' / name, PORT / 'out' / name):
@@ -289,18 +295,22 @@ def main():
             live = '1' if live == '1' or not patched else '0'
         if live == '1':
             print(f'Output {scaled_output}: live resolution changes (live_resolution=0: startup patch)')
-        elif scaled_output:
+        scaled = live != '1' and bool(scaled_output)
+        if scaled:
             env.update(BB_RENDER_RES=scaled_render, BB_OUTPUT_RES=scaled_output, BB_AUTO_RENDER_RES='1')
             env.setdefault('BB_DMEM_MB', HIGH_RESOLUTION_DMEM_MB)
+        # Above 1080p (the scaled path above, or an explicit BB_RENDER_RES: the launcher, a test)
+        # patches.py grows the graphics heap: the direct memory has to follow, also over a smaller
+        # BB_DMEM_MB (the rig's 5056), or the game stops at start (exit 139, or a write to 0 at guest
+        # 0x443025). A game without the patches keeps its memory.
+        pixels = render_pixels(env.get('BB_RENDER_RES'))
+        if patched and pixels > FULL_HD_PIXELS and memory_mb(env.get('BB_DMEM_MB')) < int(HIGH_RESOLUTION_DMEM_MB):
+            env['BB_DMEM_MB'] = HIGH_RESOLUTION_DMEM_MB
+            if not scaled:
+                print(f'Render {env["BB_RENDER_RES"]}: direct memory {env["BB_DMEM_MB"]} MiB')
+        if scaled:
             print(f'Output {scaled_output}: scene {scaled_render}, direct memory {env["BB_DMEM_MB"]} MiB '
                   '(live_resolution=1: live changes)')
-        # An explicit render size (BB_RENDER_RES: the launcher, a test) skips the scaled path above,
-        # but patches.py still grows the graphics heap above 1080p: the direct memory has to follow,
-        # or the game stops at start (exit 139). A game without the patches keeps its memory.
-        pixels = render_pixels(env.get('BB_RENDER_RES'))
-        if patched and pixels > FULL_HD_PIXELS and not env.get('BB_DMEM_MB'):
-            env['BB_DMEM_MB'] = HIGH_RESOLUTION_DMEM_MB
-            print(f'Render {env["BB_RENDER_RES"]}: direct memory {env["BB_DMEM_MB"]} MiB')
         run_script('patches.py', '--out', out, '--fps', fps, '--extra', env.get('BB_PATCHES', ''),
                    '--settings', config, '--game-dir', game, '--render-res', env.get('BB_RENDER_RES', ''),
                    '--output-res', env.get('BB_OUTPUT_RES', ''),
