@@ -1058,6 +1058,12 @@ std::optional<ResumePoint> PickResumePoint(bool in_session, std::optional<Resume
 // under the team's screen) before it resumes at its own last place.
 constexpr s64 HostPlaceWaitMs = 20'000;
 bool WaitsForHostPlace(bool team_load, bool host_known, s64 waited_ms);
+// Kaniel's play test 2026-10-19: a guest's team load joins its host's session after its own world
+// came in, and the join's reload puts it back where its save stood. krolebord's resume moved him
+// before that reload, which undid it. A team load resumes once the guest is in the session (its
+// reload done), or after `TeamSessionWaitMs` from its first load without one.
+constexpr s64 TeamSessionWaitMs = 60'000;
+bool WaitsForTeamSession(bool team_load, bool in_session, s64 waited_ms);
 
 // World state per map (a message on the server link, once POST /bloodborne/party/mapstate): the
 // host posts the bits of its map's 10000 flags from MapFlagBase (MSB first, as the flag store keeps
