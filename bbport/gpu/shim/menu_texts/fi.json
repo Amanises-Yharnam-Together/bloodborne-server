@@ -1,7 +1,7 @@
 {
  "Prerendered": "Esipiirretty",
  "Live": "Reaaliaikainen",
- "L3 on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "L3 kartalla näyttää paikan viistosti pelin malleista. Esipiirretty: jokainen alue piirretään kerran, ensimmäisellä kerralla, taustalla. Reaaliaikainen: näytönohjain piirtää mallit, kun käännät ja kallistat näkymää (oikea sauva), käyttäen muistiaan. Pidä pois päältä heikolla tietokoneella.",
+ "{L3} on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "{L3} kartalla näyttää paikan viistosti pelin malleista. Esipiirretty: jokainen alue piirretään kerran, ensimmäisellä kerralla, taustalla. Reaaliaikainen: näytönohjain piirtää mallit, kun käännät ja kallistat näkymää (oikea sauva), käyttäen muistiaan. Pidä pois päältä heikolla tietokoneella.",
  "3D map": "3D-kartta",
  "Turn on the 3D map in the settings (Insert, Display)": "Ota 3D-kartta käyttöön asetuksista (Insert, Näyttö)",
  "Preparing the 3D view...": "Valmistellaan 3D-näkymää...",

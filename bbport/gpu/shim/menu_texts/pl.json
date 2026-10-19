@@ -1,7 +1,7 @@
 {
  "Prerendered": "Wstępnie narysowana",
  "Live": "Na żywo",
- "L3 on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "L3 na mapie pokazuje miejsce pod kątem z modeli gry. Wstępnie narysowana: każdy obszar jest rysowany raz, za pierwszym razem, w tle. Na żywo: karta graficzna rysuje modele, gdy obracasz i pochylasz widok (prawa gałka), używając swojej pamięci. Na słabym PC zostaw wyłączone.",
+ "{L3} on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "{L3} na mapie pokazuje miejsce pod kątem z modeli gry. Wstępnie narysowana: każdy obszar jest rysowany raz, za pierwszym razem, w tle. Na żywo: karta graficzna rysuje modele, gdy obracasz i pochylasz widok (prawa gałka), używając swojej pamięci. Na słabym PC zostaw wyłączone.",
  "3D map": "Mapa 3D",
  "Turn on the 3D map in the settings (Insert, Display)": "Włącz mapę 3D w ustawieniach (Insert, Obraz)",
  "Preparing the 3D view...": "Przygotowywanie widoku 3D...",

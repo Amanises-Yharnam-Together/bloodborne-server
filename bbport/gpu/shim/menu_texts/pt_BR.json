@@ -1,7 +1,7 @@
 {
  "Prerendered": "Pré-desenhado",
  "Live": "Em tempo real",
- "L3 on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "L3 no mapa mostra o local em perspectiva a partir dos modelos do jogo. Pré-desenhado: cada área é desenhada uma vez, na primeira vez, em segundo plano. Em tempo real: a placa de vídeo desenha os modelos enquanto você gira e inclina a visão (analógico direito), usando a memória dela. Deixe desligado em um PC modesto.",
+ "{L3} on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "{L3} no mapa mostra o local em perspectiva a partir dos modelos do jogo. Pré-desenhado: cada área é desenhada uma vez, na primeira vez, em segundo plano. Em tempo real: a placa de vídeo desenha os modelos enquanto você gira e inclina a visão (analógico direito), usando a memória dela. Deixe desligado em um PC modesto.",
  "3D map": "Mapa 3D",
  "Turn on the 3D map in the settings (Insert, Display)": "Ative o mapa 3D nas configurações (Insert, Tela)",
  "Preparing the 3D view...": "Preparando a visão 3D...",
