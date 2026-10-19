@@ -58,6 +58,7 @@ SHOTS = [
     ("team-joined", "game-team-5-joined.png", GAME, 1440),
     ("team-ready", "game-team-6-ready.png", GAME, 1440),
     ("team-begin", "game-team-7-begin-the-hunt.png", GAME, 1440),
+    ("loading", "game-loading-2-b.png", GAME, 1440),
     ("loading-2", "game-loading-2-b.png", GAME, 1440),
     ("loading-3", "game-loading-3-b.png", GAME, 1440),
     ("loading-waiting", "game-loading-3-waiting.png", GAME, 1440),
@@ -66,6 +67,8 @@ SHOTS = [
     ("hotjoin-loading", "game-hot-join-3-loading.png", GAME, 1440),
     ("hotjoin-joined", "game-hot-join-4-joined.png", GAME, 1440),
     ("hotjoin-leader", "game-hot-join-5-leader-view.png", GAME, 1440),
+    ("insert-team", "game-hot-join-5-leader-view.png", GAME, 1440),
+    ("insert-menu", "game-insert-menu-coop-team.png", GAME, 1440),
     # map and compass
     ("map-team", "game-map-team.png", GAME, 1440),
     ("map-hunters", "game-map-hunters-3.png", GAME, 1440),
