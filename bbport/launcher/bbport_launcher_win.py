@@ -799,6 +799,19 @@ def load_json(path, default):
         return default
 
 
+def load_app_settings():
+    """settings.json over the defaults. A frame cap that is not one FRAME_CAPS offers is Auto: the Play page's Browse
+    button wrote the chosen game folder into it (AdrianCsT c4bc36a), and every start then failed. That folder becomes
+    the game folder again when it holds the game and the saved game folder does not."""
+    settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+    cap = str(settings.get('frame_cap') or '')
+    if cap not in {value for value, _label in FRAME_CAPS} | {'half'}:
+        if (Path(cap) / 'eboot.bin').is_file() and not (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
+            settings['game_dir'] = cap
+        settings['frame_cap'] = ''
+    return settings
+
+
 def ini_path():
     return Path(os.environ.get('BB_CONFIG', DATA_DIR / 'bbport.ini'))
 
@@ -2631,7 +2644,7 @@ class Launcher:
         from tkinter import font as tkfont
         self.tk, self.ttk, self.filedialog, self.messagebox, self.tkfont = tk, ttk, filedialog, messagebox, tkfont
         self.root = root
-        self.app = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+        self.app = load_app_settings()
         self.ini, self.ini_saved = launcher_ini(self.app)
         self.vars = {}
         # The ReShade preset lives in bin/reshade/ReShade.ini (the game's menu changes it too), not in settings.json.
@@ -3434,7 +3447,7 @@ class Launcher:
             holder = tk.Frame(cell, bg=CARD)
             holder.pack(fill='x')
             self.ttk.Entry(holder, textvariable=var, width=30).pack(side='left', fill='x', expand=True)
-            self.button(holder, _('Browse…', 'Обзор…'), lambda: self.browse_game(var)).pack(side='left',
+            self.button(holder, _('Browse…', 'Обзор…'), lambda game_dir=var: self.browse_game(game_dir)).pack(side='left',
                                                                                          padx=(px(8), 0))
             self.pkg_button(cell).pack(anchor='w', pady=(px(8), 0))
         for r, pairs in enumerate((((_('Output', 'Разрешение'), 'output_res', 'ini', OUTPUTS),
@@ -6105,7 +6118,7 @@ def main():
                     pass
         bbport_coop.stop_servers(PORT_DIR)
         sys.exit(0)
-    settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+    settings = load_app_settings()
     LANG = settings.get('ui_language') or windows_language()
     if args[:1] == ['--install-update'] and len(args) == 3:
         sys.exit(install_update(args[1], args[2]))
