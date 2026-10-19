@@ -24,6 +24,9 @@ export function SiteFooter() {
             <Link href="/docs/install" className="nav-link">
               Install guide
             </Link>
+            <Link href="/docs/launcher" className="nav-link">
+              Launcher guide
+            </Link>
             <a href={REPO_URL} rel="noopener" className="nav-link">
               Source code
             </a>
