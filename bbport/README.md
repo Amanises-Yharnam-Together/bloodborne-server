@@ -60,6 +60,7 @@ This fork brings together the work of several people and adds a few things of it
 | This fork | Shaders compiled ahead of the frame on the draw-preparation threads, and the driver's pipeline cache saved between runs: fewer first-time stutters |
 | This fork | Object motion vectors on AMD GPUs under Windows: their driver lost the device on the raw-pointer stores, so the motion buffers are now storage-buffer bindings (upstream [issue #39](https://github.com/deadinside28/bloodborne_pc/issues/39)) |
 | This fork | A fix for the crash when you are attacked on Intel 12th gen and newer CPUs (red-zone protection, from Supermedo [PR #2](https://github.com/Supermedo/bloodborne_pc/pull/2)) |
+| This fork | Older CPUs without BMI1, LZCNT or MOVBE (Intel 3rd generation Core and older): their instructions are translated when the game is linked, best effort (Legacy CPU, from Supermedo/bloodborne_pc, PR #10 by T0ug). Only on such CPUs: elsewhere the game code is unchanged. `legacy_cpu=0/1` in bbport.ini or `BB_LEGACY_CPU=0/1` overrides the detection |
 | This fork | A live VRAM budget on Windows |
 
 ## Features
@@ -248,7 +249,7 @@ Still stuck? Ask on the [Discord server](https://discord.gg/yTMG8c4Bqm) or open 
 
 bbport is the counterpart of Wine + DXVK for a single game: *Bloodborne* for PlayStation 4 (CUSA03173, game version 1.09). The game's original executable runs directly on the PC.
 
-- **CPU.** The PS4 CPU is x86-64, so the game's code runs directly on the PC's CPU, with no emulation and no instruction translation.
+- **CPU.** The PS4 CPU is x86-64, so the game's code runs directly on the PC's CPU, with no emulation and no instruction translation (on CPUs older than Intel 4th generation, the few instructions they lack are rewritten once, when the game is linked).
 - **System libraries.** As Wine replaces the Windows API, the bbport runtime (`src/runtime_*.c`) implements exactly the PS4 OS functions Bloodborne calls: memory, threads, files, audio, pad, saves.
 - **Memory.** In the new mode, as in a PC game: the game's data in system RAM, VRAM used the way a PC game uses it. The mode is still experimental and runs on AMD GPUs only. Without it, the game runs on the old memory model, as in 0.3.
 - **Graphics.** The graphics are translated to Vulkan by a renderer derived from shadPS4 and heavily extended for this game, including temporal upscaling with AMD FSR 3.1, FSR 4 and FSR 4.1.1. The PS4 GPU's command stream (PM4) is a recording of the game's graphics API calls: it is written by 99 functions of the statically linked libGnm, so decoding the stream and translating the calls themselves come to the same thing. GCN shaders are translated to SPIR-V. In the new mode the command processor's work (memory writes, DMA, fences) is translated into Vulkan commands as well.

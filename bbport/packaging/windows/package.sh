@@ -30,7 +30,7 @@ out/pyenv/Scripts/python.exe -c 'import PyInstaller, PIL' 2>/dev/null ||
 # The scripts run inside BLauncher.exe (--script): the standard modules they import come along.
 # The co-op kit runs its backend (backend/bb_dummy_server.py) and its event patcher this way too.
 hidden=()
-for module in argparse base64 collections hashlib json re shutil struct tempfile xml.etree.ElementTree \
+for module in argparse base64 bisect collections contextlib hashlib json re shutil struct tempfile xml.etree.ElementTree \
               urllib.request ctypes.wintypes binascii datetime http.server secrets sqlite3 uuid zlib; do
     hidden+=(--hidden-import "$module")
 done
@@ -127,6 +127,8 @@ ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |
         cp -u "$dll" "$dest/bin/"
     done
 cp -r scripts patches "$dest/"
+# Legacy CPU (Intel 3rd generation and older): the translation plan scripts/cpu_compat.py applies.
+mkdir -p "$dest/tools" && cp tools/legacy-cpu-plan.json "$dest/tools/"
 cp run.py LICENSE README.md packaging/windows/README-Windows.txt "$dest/"
 if [[ -d fsr4_shaders ]]; then cp -r fsr4_shaders "$dest/"; fi
 # DLSS (NVIDIA RTX): the MSVC-built bridge and NVIDIA's runtime, next to bb-probe.exe
