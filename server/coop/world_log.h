@@ -25,6 +25,27 @@ namespace BloodborneCoop {
 // The flags of a map's state from MapFlagBase (the emulator's): bits MSB first.
 constexpr s32 MapFlagCount = 10000;
 
+// Kaniel's playtest 2026-10-17: his Central Yharnam kills came back for him only after a lamp
+// trip while both guests stood in Cathedral Ward, where Central Yharnam's enemies are loaded too.
+// Maps the game loads together count as one for "someone is on that map" (the Ward and Central
+// Yharnam).
+constexpr bool MapsLoadedTogether(u32 a, u32 b) {
+    constexpr u32 CathedralWard = 0x18000000;
+    constexpr u32 CentralYharnam = 0x18010000;
+    return a == b || (a == CathedralWard && b == CentralYharnam) ||
+           (a == CentralYharnam && b == CathedralWard);
+}
+// `map` and the maps loaded with it.
+inline std::vector<u32> MapsLoadedWith(u32 map) {
+    std::vector<u32> maps{map};
+    for (const u32 other : {u32{0x18000000}, u32{0x18010000}}) {
+        if (other != map && MapsLoadedTogether(other, map)) {
+            maps.push_back(other);
+        }
+    }
+    return maps;
+}
+
 // Enemy HP kept in step (POST /bloodborne/party/hp, the map state board's format): each member
 // posts the enemies it has hurt during its visit, as (handle, HP, max HP), and every member
 // shows the lowest share of HP left. Since seamless travel each member runs its own copy of a
@@ -449,11 +470,22 @@ public:
     // A member went from the party's world (its own leave or new character, on the server): its
     // kills and HP report go, the entries for that.
     std::vector<WorldLogEntry> Drop(const std::string& member);
+    // Kaniel's play test 2026-10-19: every member on `map` died while another stood elsewhere,
+    // and the map came back half respawned, different for each of them. Nobody stands on it, so
+    // it starts over (as a wipe does, on that map alone): a Reset of `map`, its kills and HP
+    // reports gone, the host's shown characters there alive again. The members' kills there go
+    // too; a member's proposal that still holds one (sent before it heard the Reset) does not
+    // stand it again. The maps loaded with it start over with it (a kill is of the map it died
+    // on, which a walk across the Ward's border makes the other one).
+    std::vector<WorldLogEntry> ResetMap(u32 map);
 
     struct Member {
         u32 run = 0;
         u32 number = 0;
         WorldLogKills kills;
+        // Its kills on a map reset since (ResetMap) that its proposals still hold: not taken
+        // again until a proposal leaves one out.
+        std::set<u32> voided;
         bool operator==(const Member&) const = default;
     };
     struct FlagSender {

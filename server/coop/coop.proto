@@ -59,6 +59,9 @@ message Lifecycle {
     }
     Event event = 1;
     bool host = 2; // the member hosts the session
+    // WIPE: the map the member died on (its wipe's). With another member standing elsewhere only
+    // that map starts over (WorldLogHost::ResetMap), unless someone stands on it.
+    uint32 map = 3;
 }
 
 message MapKills {
@@ -552,6 +555,7 @@ message StoredMember {
     uint32 run = 2;
     uint32 number = 3;
     repeated MapKills kills = 4;
+    repeated uint32 voided = 5; // WorldLogHost::Member::voided
 }
 
 message StoredStanding {
@@ -651,6 +655,10 @@ message JournalRecord {
         MapStateReport map_state = 8;
         ReturnPointReport return_point = 9;
         Hp hp = 10;
+        ResetMap reset_map = 11;
+    }
+    message ResetMap {
+        uint32 map = 1;
     }
     message Start {
         uint64 epoch = 1;

@@ -747,6 +747,12 @@ struct ServerWorldKills {
     WorldLogReturnPoint return_point;   // the host's, as the log has it
 };
 ServerWorldKills TickServerWorld(const WorldLogKills& mine, bool propose, s64 now_ms);
+// The maps the party's log reset on their own since the last call (a Reset of one map: everyone
+// on it died while another member stood elsewhere); the game thread.
+std::vector<u32> TakeLogMapResets();
+// This member's real death reset its map while another member stood elsewhere (DeathReset::
+// OwnMap): shadNet starts that map over unless someone stands on it.
+void TellServerMapWipe(u32 map);
 // Step 3b: the host's characters on its map, its map's state and its return point, whole (sent on
 // a change); any member's shared flag events and HP report.
 void ShowToServer(u32 map, std::span<const CharacterShown> characters);

@@ -500,6 +500,9 @@ void FollowFlagsPath(bool log, s64 now_ms) {
     log_map_state = std::move(copy);
 }
 
+// The maps the party's log reset on their own (see TakeLogMapResets); the game thread only.
+std::vector<u32> log_map_resets;
+
 // The party's world on the server (phase 3): this member's kills, flags and (the host's) map
 // state and return point to it, what came from it applied. The party's kills as it has them.
 std::unordered_set<u32> RunServerWorld(const WorldLogKills& mine, s64 now_ms) {
@@ -509,6 +512,11 @@ std::unordered_set<u32> RunServerWorld(const WorldLogKills& mine, s64 now_ms) {
         TickServerWorld(mine, in_session && !wipe_hold.HoldsProposals(now_ms), now_ms);
     if (world.host_wiped) {
         wipe_hold.HostWiped(now_ms);
+    }
+    for (const WorldLogEntry& entry : world.applied) {
+        if (entry.kind == WorldLogKind::Reset && entry.map != 0) {
+            log_map_resets.push_back(entry.map);
+        }
     }
     ApplyFlagEntries(world.applied, now_ms);
     if (!in_session) {
@@ -530,6 +538,10 @@ std::unordered_set<u32> RunServerWorld(const WorldLogKills& mine, s64 now_ms) {
 } // namespace
 
 namespace Coop {
+
+std::vector<u32> TakeLogMapResets() {
+    return std::exchange(log_map_resets, {});
+}
 
 bool WorldLogSwitchOn() {
     return world_log_switch;
