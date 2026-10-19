@@ -87,6 +87,8 @@ std::string team_party;   // the team's party key once its Start let this game's
 std::string lobby_member; // this player in the lobby (its board name), once known
 std::string lobby_name;   // its character's name (phase 11), "" before one is known
 s64 lobby_name_read_ms = 0;
+s64 title_load_ms = 0; // the title's last save load (CharacterNameReadable)
+std::atomic<s64> save_opened_ms{0};
 bool lobby_playing = false;  // in a world (the load went)
 bool lobby_hello_due = true; // stream restarts and changes of lobby_playing
 std::deque<bbcoop::Envelope> lobby_outbox;
@@ -194,6 +196,26 @@ std::string ReadTeamWorldHint(int slot) {
 void WriteTeamWorldHint(int slot, const std::string& id) {
     std::ofstream file{TeamWorldHintFile(slot), std::ios::binary | std::ios::trunc};
     file << id << '\n';
+}
+
+// Kaniel 2026-10-19: each slot's character name, for the title's team screen
+// (TitleLoadCharacterName), and the last one played, for the title before a save is picked.
+std::filesystem::path CharacterNameFile(int slot) {
+    return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
+           (slot < 0 ? std::string{"bloodborne_party_character_last.txt"}
+                     : SlotFileName("character", slot));
+}
+
+std::string ReadCharacterName(int slot) {
+    std::ifstream file{CharacterNameFile(slot), std::ios::binary};
+    std::string name;
+    std::getline(file, name);
+    return TitleLoadCharacterName(false, name);
+}
+
+void WriteCharacterName(int slot, const std::string& name) {
+    std::ofstream file{CharacterNameFile(slot), std::ios::binary | std::ios::trunc};
+    file << name << '\n';
 }
 
 bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
@@ -706,6 +728,9 @@ void NoteCharacterName(s64 now_ms) {
             return;
         }
         lobby_name_read_ms = now_ms;
+        if (!CharacterNameReadable(title_load_ms, save_opened_ms.load(), now_ms)) {
+            return; // the game still holds the last character's name
+        }
     }
     std::string name = OwnCharacterName();
     if (name.empty()) {
@@ -714,6 +739,10 @@ void NoteCharacterName(s64 now_ms) {
     std::scoped_lock lock{team_mutex};
     if (name != lobby_name) {
         LOG_INFO(Debug, "Co-op team lobby: this character is \"{}\"", name);
+        if (const int slot = character_slot.load(); slot >= 0) {
+            WriteCharacterName(slot, name);
+        }
+        WriteCharacterName(-1, name);
         lobby_name = std::move(name);
         lobby_hello_due = true;
     }
@@ -957,14 +986,22 @@ void StartTeamLobby() {
             return;
         }
         const std::string member = BoardMemberOfOnlineId(online_id);
+        const std::string last_name = ReadCharacterName(-1);
         {
             std::scoped_lock lock{team_mutex};
             lobby_member = member;
+            if (lobby_name.empty()) {
+                lobby_name = last_name; // the title's lobby names the last character played
+            }
             lobby_hello_due = true;
         }
         StartThread();
         LOG_INFO(Debug, "Co-op team lobby: signing in as {} ({})", online_id, member);
     }}.detach();
+}
+
+void NoteSaveOpenedForName() {
+    save_opened_ms.store(SteadyMilliseconds());
 }
 
 bool HoldTitleLoadForTeam(u32 slot, bool fresh) {
@@ -985,6 +1022,12 @@ bool HoldTitleLoadForTeam(u32 slot, bool fresh) {
             title_fresh = fresh;
             team_world_hint = fresh ? std::string{} : ReadTeamWorldHint(static_cast<int>(slot));
             team_world_default_sent = false;
+            // The team screen names this save's character, not the last one played (never a
+            // stale name in the world's hunters list either).
+            lobby_name = fresh ? std::string{} : ReadCharacterName(static_cast<int>(slot));
+            lobby_name_read_ms = 0;
+            title_load_ms = SteadyMilliseconds();
+            lobby_hello_due = true;
             LOG_INFO(Debug,
                      "Co-op team lobby: the title loads slot {}{}: the team screen decides "
                      "({}; its team world {})",

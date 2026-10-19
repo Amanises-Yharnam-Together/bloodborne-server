@@ -783,6 +783,8 @@ void StartTeamLobby();
 // `fresh`: the game starts that character at the beginning (a new one: Kaniel 2026-10-16, its
 // team's world is a new one unless the leader picks another).
 bool HoldTitleLoadForTeam(u32 slot, bool fresh = false);
+// A save file opened (NoteSaveFileOpened): the game's character name is the save's soon after.
+void NoteSaveOpenedForName();
 // The title menu is up again: the next load asks the team again.
 void TeamBackAtTitle();
 // Kaniel 2026-10-16: a save loads from the title: what the last one's story removed is forgotten

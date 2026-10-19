@@ -519,7 +519,7 @@ TEST(BloodbornePortrait, TheListEntryNamesTheMembersBoardName) {
     panel.members.push_back(PanelMember{.member = "6b616e69656c", .name = "Kaniel"});
     const auto entries = PartyListEntries(panel);
     EXPECT_EQ(entries[0].member, "6b616e69656c");
-    EXPECT_EQ(entries[0].name, "Kaniel");
+    EXPECT_EQ(entries[0].name, "Hunter") << "its online id is never shown";
 }
 
 TEST(BloodbornePortrait, ThePortraitFrameIsACoopFrameOfTheNewProtocol) {

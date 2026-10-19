@@ -308,6 +308,9 @@ TEST(BloodbornePartyHud, TheNameplateOfADownedMemberShowsItsRevive) {
     EXPECT_EQ(NameplateRoleLine(panel, "rig_host"), std::nullopt);
     EXPECT_EQ(NameplateRoleLine(panel, "someone"), std::nullopt);
     EXPECT_EQ(NameplateRoleLine(panel, ""), std::nullopt);
+    panel.members[0].shown = "Lady Maria";
+    EXPECT_EQ(NameplateRoleLine(panel, "Lady Maria"), "<font color=\"#e74141\">Downed 64%</font>")
+        << "the game names the member by its character in a party (website shots 2026-10-19)";
     panel.members[0].name = "";
     EXPECT_EQ(NameplateRoleLine(panel, "a"), "<font color=\"#e74141\">Downed 64%</font>")
         << "a member without an online id goes by its board name";
@@ -337,15 +340,16 @@ TEST(BloodbornePartyHud, ThePartyListShowsEachMembersState) {
         .member = "d", .name = "far", .vital = Vital::Up, .here = false, .hp = 10, .max = 20});
     const auto entries = PartyListEntries(panel);
     EXPECT_TRUE(entries[0].visible);
-    EXPECT_EQ(entries[0].name, "rig_host");
-    EXPECT_EQ(entries[0].name_line, "<font color=\"#ece8df\">rig_host</font>") << "in white";
+    // No character name known yet: a Hunter, never the online id (website shots 2026-10-19).
+    EXPECT_EQ(entries[0].name, "Hunter");
+    EXPECT_EQ(entries[0].name_line, "<font color=\"#ece8df\">Hunter</font>") << "in white";
     EXPECT_EQ(entries[0].role, "") << "the icon says the state";
     EXPECT_EQ(entries[0].hp, 400);
     EXPECT_EQ(entries[0].max, 800);
     EXPECT_EQ(entries[1].role, "");
     EXPECT_EQ(entries[1].hp, 64);
     EXPECT_EQ(entries[1].max, 100);
-    EXPECT_EQ(entries[2].name, "c") << "no online id: the board name";
+    EXPECT_EQ(entries[2].name, "Hunter") << "nor the board name";
     EXPECT_EQ(entries[2].role, "");
     EXPECT_EQ(entries[2].hp, 0);
     EXPECT_EQ(entries[2].max, 900);
@@ -417,8 +421,13 @@ TEST(BloodbornePartyHud, ThePromptSaysWhatTheButtonDoes) {
     panel.members.push_back(PanelMember{.member = "a", .name = "rig_guest", .vital = Vital::Down});
     EXPECT_EQ(PartyPromptFor(panel), PartyPrompt{}) << "nobody in reach";
     panel.revive_target = 0;
+    EXPECT_EQ(PartyPromptFor(panel), (PartyPrompt{true, "Strike to revive Hunter", PromptInputR1}))
+        << "no character name known: never the online id";
+    // The website shots 2026-10-19: the prompt named the account, never the character.
+    panel.members[0].shown = "Lady Maria";
     EXPECT_EQ(PartyPromptFor(panel),
-              (PartyPrompt{true, "Strike to revive rig_guest", PromptInputR1}));
+              (PartyPrompt{true, "Strike to revive Lady Maria", PromptInputR1}))
+        << "the character's name when the server knows it";
     panel.vital = Vital::Down;
     EXPECT_EQ(PartyPromptFor(panel), (PartyPrompt{true, "Hold to give up", PromptInputCircle}))
         << "down: giving up comes first";
@@ -1263,7 +1272,7 @@ TEST(BloodbornePartyDeath, ThePanelShowsTheCharactersNames) {
     const auto entries = PartyListEntries(panel);
     EXPECT_EQ(entries[0].name, "Lady <Maria> & co");
     EXPECT_EQ(entries[0].name_line, "<font color=\"#ece8df\">Lady &lt;Maria&gt; &amp; co</font>");
-    EXPECT_EQ(entries[1].name, "third") << "no character name known: the online id";
+    EXPECT_EQ(entries[1].name, "Hunter") << "no character name known: never the online id";
 
     // The nameplate over a member (the game names it by its online id) says its character's name.
     EXPECT_EQ(NameplateNameLine(panel, "Ada"), "Lady &lt;Maria&gt; &amp; co");

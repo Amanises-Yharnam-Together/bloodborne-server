@@ -143,6 +143,16 @@ std::optional<std::string> TeamScreenWorldPick(const bbcoop::LobbyState& lobby,
                                                bool fresh);
 // What the screen calls a world.
 std::string TeamWorldName(const bbcoop::TeamWorldInfo& world);
+// Kaniel 2026-10-19: the team screen at the title called everyone Hunter until the save loaded.
+// The name the lobby hears while the title loads a slot: the character name last seen in that
+// slot (`slot_name`, a file's line, kept per slot), none for a new character (`fresh`) or a slot
+// never played with its name kept (never the last character's name: it may be another one's).
+std::string TitleLoadCharacterName(bool fresh, std::string_view slot_name);
+// Whether the game's own character name is this save's: no title load since the start
+// (`title_load_ms` 0), or the save file opened after the title's load (`save_opened_ms`) at least
+// CharacterNameSettleMs ago (until then the game still holds the last character's).
+constexpr s64 CharacterNameSettleMs = 3'000;
+bool CharacterNameReadable(s64 title_load_ms, s64 save_opened_ms, s64 now_ms);
 
 // Phase 5b: a team's world (bbcoop::TeamWorld). The world's part of the event flags (FlagOwner
 // Host and Shared, docs/FLAGS.md; a character's own flags and its map item pickups, which go with

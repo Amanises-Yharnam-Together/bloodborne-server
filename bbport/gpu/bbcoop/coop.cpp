@@ -173,9 +173,9 @@ extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
     for (std::size_t index = 0; index < count; ++index) {
         const auto& member = party.members[index];
         auto& out = panel->members[index];
-        // Phase 11: the character's name when the server knows it.
-        std::snprintf(out.name, sizeof(out.name), "%s",
-                      (member.shown.empty() ? member.name : member.shown).c_str());
+        // Phase 11: the character's name when the server knows it, else "" (the overlay says
+        // Hunter); never the online id.
+        std::snprintf(out.name, sizeof(out.name), "%s", member.shown.c_str());
         out.vital = static_cast<int>(member.vital);
         out.here = member.here ? 1 : 0;
         out.hp = member.hp;
@@ -253,7 +253,7 @@ extern "C" int bbcoop_map_view(bbcoop_map* map, int open) {
             break;
         }
         bbcoop_map_member& out = map->members[map->member_count++];
-        std::snprintf(out.name, sizeof(out.name), "%s", (member.shown.empty() ? member.name : member.shown).c_str());
+        std::snprintf(out.name, sizeof(out.name), "%s", member.shown.c_str()); // "": Hunter
         std::snprintf(out.board, sizeof(out.board), "%s", member.member.c_str());
         out.map = member.map;
         out.vital = static_cast<int>(member.vital);

@@ -1779,6 +1779,15 @@ void UpdatePartyPrompt(const PartyPanel& panel, float frame_time) {
         return;
     }
     const PartyPrompt prompt = PartyPromptFor(panel);
+    // Each new prompt in the log (the rig checks its words: website shots 2026-10-19 found an
+    // online id in it).
+    static std::string last_prompt;
+    static u32 prompts_logged = 0;
+    if (prompt.text != last_prompt && prompts_logged < 200) {
+        last_prompt = prompt.text;
+        ++prompts_logged;
+        LOG_INFO(Debug, "Bloodborne party HUD: prompt \"{}\"", prompt.text);
+    }
     PutUtf16(native_list.prompt_text, prompt.text);
     WritePromptData(native_list.prompt_data, string, prompt,
                     reinterpret_cast<u64>(native_list.prompt_text.data()), prompt.text.size());
@@ -2076,7 +2085,7 @@ bool ReadCompass(CompassView& view) {
     view.markers = CompassMarkers(members, *panel.me, view.heading, down);
     for (const CompassMarker& marker : view.markers) {
         const PanelMember& member = panel.members[marker.member];
-        view.names.push_back(member.shown.empty() ? member.name : member.shown);
+        view.names.push_back(member.shown); // "" before it is known: the overlay says Hunter
         view.members.push_back(member.member);
         view.vitals.push_back(static_cast<int>(member.vital));
         view.revives.push_back(ReviveShare(member.landed, member.needed));

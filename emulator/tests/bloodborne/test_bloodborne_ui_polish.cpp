@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -120,6 +121,50 @@ TEST(BloodborneUiPolish, RemovesTheCoopBellIcons) {
     SetIcon(npc, 0, 8801);
     EXPECT_EQ(RemoveBellIcons(npc), 0u);
     EXPECT_EQ(IconOf(npc, 0), 8801);
+}
+
+// The website shots 2026-10-19: "?ActionEventInfo?" over a guest playing as role 6, whose name
+// text the game leaves 0; it gets the co-operator's (role 7) name, once.
+TEST(BloodborneUiPolish, NamesTheGuestRoleTheGameLeftUnnamed) {
+    std::array<u8, RoleTableSize> roles{};
+    const auto name_of = [&](std::size_t role) {
+        s32 id = 0;
+        std::memcpy(&id, roles.data() + role * RoleTableEntrySize + RoleNameTextAt, sizeof(id));
+        return id;
+    };
+    const auto set_name = [&](std::size_t role, s32 id) {
+        std::memcpy(roles.data() + role * RoleTableEntrySize + RoleNameTextAt, &id, sizeof(id));
+    };
+    const auto text_of = [&](std::size_t role, std::size_t at) {
+        s32 id = 0;
+        std::memcpy(&id, roles.data() + role * RoleTableEntrySize + at, sizeof(id));
+        return id;
+    };
+    EXPECT_EQ(NameUnnamedGuestRole(roles), 0u) << "the table not made yet";
+    set_name(0, 107000);
+    set_name(GuestRole, 107100);
+    // The co-operator's summon message (+0x30, "Entered the world of <?hostName?>"), its death
+    // message (+0x3C) and a leave message (+0x4C); +0x20 is no text.
+    for (const auto& [at, id] : {std::pair{0x30u, 102100}, {0x3Cu, 103001}, {0x4Cu, 20000405}}) {
+        std::memcpy(roles.data() + GuestRole * RoleTableEntrySize + at, &id, sizeof(id));
+    }
+    const s32 other = 1234;
+    std::memcpy(roles.data() + GuestRole * RoleTableEntrySize + 0x20, &other, sizeof(other));
+    EXPECT_EQ(NameUnnamedGuestRole(roles), 4u);
+    EXPECT_EQ(name_of(UnnamedGuestRole), 107100);
+    EXPECT_EQ(text_of(UnnamedGuestRole, 0x30), 102100);
+    EXPECT_EQ(text_of(UnnamedGuestRole, 0x3C), 103001);
+    EXPECT_EQ(text_of(UnnamedGuestRole, 0x4C), 20000405);
+    EXPECT_EQ(text_of(UnnamedGuestRole, 0x20), 0) << "not a text";
+    EXPECT_EQ(name_of(0), 107000) << "the host's stays";
+    EXPECT_EQ(name_of(5), 0) << "no other role changes";
+    EXPECT_EQ(NameUnnamedGuestRole(roles), 0u) << "already done";
+    set_name(UnnamedGuestRole, 107150);
+    EXPECT_EQ(NameUnnamedGuestRole(roles), 0u) << "a name of its own stays";
+    EXPECT_EQ(name_of(UnnamedGuestRole), 107150);
+    // The eboot's own role 7 texts: +0x24 to +0x4C (0x0187AB0B to 0x0187AB79).
+    EXPECT_EQ(RoleTextsAt, 0x24u);
+    EXPECT_EQ(RoleTextsEnd, 0x50u);
 }
 
 // "Discovered the chime of a ..." comes right before the join banner; both of its calls go.
