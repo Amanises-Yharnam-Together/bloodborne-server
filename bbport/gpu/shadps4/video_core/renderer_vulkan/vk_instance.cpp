@@ -13,6 +13,7 @@
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "bbport_toggles.h"
+#include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -223,6 +224,46 @@ Instance::~Instance() {
     vmaDestroyAllocator(allocator);
 }
 
+void Instance::ReportDeviceLost(const char* where) const {
+    static std::atomic<bool> reported{false};
+    if (reported.exchange(true)) {
+        return;
+    }
+    std::printf("GPU: device lost (%s)\n", where);
+    if (!device_fault) {
+        std::printf("GPU: the driver gives no fault details (VK_EXT_device_fault unavailable)\n");
+        std::fflush(stdout);
+        return;
+    }
+    vk::DeviceFaultCountsEXT counts{};
+    if (device->getFaultInfoEXT(&counts, nullptr) != vk::Result::eSuccess &&
+        counts.addressInfoCount == 0 && counts.vendorInfoCount == 0) {
+        std::printf("GPU: no fault details from the driver\n");
+        std::fflush(stdout);
+        return;
+    }
+    std::vector<vk::DeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+    std::vector<vk::DeviceFaultVendorInfoEXT> vendor(counts.vendorInfoCount);
+    vk::DeviceFaultInfoEXT info{};
+    info.pAddressInfos = addresses.data();
+    info.pVendorInfos = vendor.data();
+    counts.vendorBinarySize = 0; // the vendor binary dump is not written
+    (void)device->getFaultInfoEXT(&counts, &info);
+    std::printf("GPU: fault: %s\n", info.description.data());
+    for (const auto& address : addresses) {
+        std::printf("GPU: fault address %s %#llx (+/- %#llx)\n",
+                    vk::to_string(address.addressType).c_str(),
+                    static_cast<unsigned long long>(address.reportedAddress),
+                    static_cast<unsigned long long>(address.addressPrecision));
+    }
+    for (const auto& item : vendor) {
+        std::printf("GPU: fault vendor info: %s (code %#llx, data %#llx)\n", item.description.data(),
+                    static_cast<unsigned long long>(item.vendorFaultCode),
+                    static_cast<unsigned long long>(item.vendorFaultData));
+    }
+    std::fflush(stdout);
+}
+
 std::string Instance::GetDriverVersionName() {
     // Extracted from
     // https://github.com/SaschaWillems/vulkan.gpuinfo.org/blob/5dddea46ea1120b0df14eef8f15ff8e318e35462/functions.php#L308-L314
@@ -256,7 +297,7 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE,
         vk::PhysicalDeviceCooperativeMatrixFeaturesKHR, vk::PhysicalDeviceShaderFloat8FeaturesEXT,
         vk::PhysicalDeviceMutableDescriptorTypeFeaturesEXT,
-        vk::PhysicalDeviceDescriptorBufferFeaturesEXT>();
+        vk::PhysicalDeviceDescriptorBufferFeaturesEXT, vk::PhysicalDeviceFaultFeaturesEXT>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -312,6 +353,9 @@ bool Instance::CreateDevice() {
     // Optional
     maintenance_5 = add_extension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
     maintenance_6 = add_extension(VK_KHR_MAINTENANCE_6_EXTENSION_NAME);
+    // bbport: after a device loss the driver says where the GPU faulted (ReportDeviceLost).
+    device_fault = feature_chain.get<vk::PhysicalDeviceFaultFeaturesEXT>().deviceFault &&
+                   add_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
     maintenance_8 = add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
     // bbport: GPU breadcrumbs (vk_breadcrumbs.h).
     buffer_marker = add_extension(VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
@@ -659,6 +703,9 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceMaintenance6FeaturesKHR{
             .maintenance6 = true,
         },
+        vk::PhysicalDeviceFaultFeaturesEXT{
+            .deviceFault = true,
+        },
         vk::PhysicalDeviceMaintenance8FeaturesKHR{
             .maintenance8 = true,
         },
@@ -746,6 +793,9 @@ bool Instance::CreateDevice() {
     }
     if (!maintenance_6) {
         device_chain.unlink<vk::PhysicalDeviceMaintenance6FeaturesKHR>();
+    }
+    if (!device_fault) {
+        device_chain.unlink<vk::PhysicalDeviceFaultFeaturesEXT>();
     }
     if (!maintenance_8) {
         device_chain.unlink<vk::PhysicalDeviceMaintenance8FeaturesKHR>();
@@ -885,6 +935,12 @@ bool Instance::CreateDevice() {
                         vk::to_string(time_domains_result));
         }
     }
+
+    // bbport: a device loss anywhere (Breadcrumbs::ReportDeviceLost) prints the driver's report.
+    static const Instance* fault_instance = nullptr;
+    fault_instance = this;
+    Breadcrumbs::SetFaultReporter(
+        [](const char* where) { fault_instance->ReportDeviceLost(where); });
 
     CreateAllocator();
     return true;

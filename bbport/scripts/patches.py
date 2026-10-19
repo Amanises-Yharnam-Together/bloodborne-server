@@ -376,6 +376,20 @@ def compile_external_named(selected, segments):
     return writes
 
 
+def drop_replaced_fps(named, fps_names, external_named):
+    """An external FPS patch of its own (e.g. "60FPS (no deltatime)", at 60 FPS++'s addresses
+    with other values) replaces the built-in preset whole: applied over it, the two mixed
+    (Supermedo 8042500). Returns (named without the preset if replaced, the replacing keys)."""
+    fps_ranges=[(offset,offset+len(data)) for name,offset,data in named if name in fps_names]
+    replacing=[]
+    for key,offset,data in external_named:
+        if key not in replacing and any(start<offset+len(data) and offset<end for start,end in fps_ranges):
+            replacing.append(key)
+    if not replacing:
+        return named,[]
+    return [w for w in named if w[0] not in fps_names],replacing
+
+
 # The co-op site table: every place in the eboot seamless co-op patches, hooks or calls
 # (emulator/src/core/bloodborne_patch_sites.h; its unit test writes this copy). The game patches
 # here are applied before co-op installs: one that writes over a co-op site makes co-op skip that
@@ -501,8 +515,14 @@ def main():
         print(f'Patches: scene {size[0]}x{size[1]}; UI {ui[0]}x{ui[1]}')
     if a.patches_dir:
         # After the built-in ones: an external patch of the same bytes wins.
-        named+=compile_external_named(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
-                                                         a.patches_config),segments)
+        external=compile_external_named(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
+                                                           a.patches_config),segments)
+        named,replacing=drop_replaced_fps(named,FPS_PRESETS[a.fps],external)
+        if replacing:
+            print(f'Patches: external {", ".join(replacing)} replaces the built-in '
+                  f'{", ".join(FPS_PRESETS[a.fps])}')
+            names=[n for n in names if n not in FPS_PRESETS[a.fps]]
+        named+=external
     try:
         report_coop_conflicts(coop_conflicts(named))
     except (OSError, ValueError, KeyError) as error:

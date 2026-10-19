@@ -328,6 +328,26 @@ class ExternalPatchTests(unittest.TestCase):
     def test_built_in_file_is_not_external(self):
         self.assertEqual(external_patches(XML.parent), [])
 
+    def test_external_fps_patch_replaces_the_preset(self):
+        # "60FPS (no deltatime)" writes at 60 FPS++'s addresses with other values: applied over
+        # the preset, the two mixed (Supermedo 8042500). The preset goes whole; others stay.
+        named = [('60 FPS++', 0x100, b'\x01\x02'), ('60 FPS++', 0x200, b'\x03'),
+                 ('Other', 0x300, b'\x04')]
+        external = [('fps.xml/60FPS (no deltatime)', 0x101, b'\x09')]
+        kept, replaced = patches.drop_replaced_fps(named, ['60 FPS++'], external)
+        self.assertEqual(kept, [('Other', 0x300, b'\x04')])
+        self.assertEqual(replaced, ['fps.xml/60FPS (no deltatime)'])
+        # An external patch elsewhere leaves the preset alone.
+        kept, replaced = patches.drop_replaced_fps(named, ['60 FPS++'],
+                                                   [('x.xml/On', 0x1000, b'\x90')])
+        self.assertEqual(kept, named)
+        self.assertEqual(replaced, [])
+        # Over a non-FPS patch only: the preset stays (the external one wins those bytes).
+        kept, replaced = patches.drop_replaced_fps(named, ['60 FPS++'],
+                                                   [('x.xml/On', 0x300, b'\x90')])
+        self.assertEqual(kept, named)
+        self.assertEqual(replaced, [])
+
 
 class SkipNetworkChoiceTests(unittest.TestCase):
     """The title's PLAY ONLINE / PLAY OFFLINE dialog is skipped by default."""

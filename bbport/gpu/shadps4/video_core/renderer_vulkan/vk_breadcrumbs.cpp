@@ -272,10 +272,21 @@ namespace {
 void Report(const char* title, const char* where);
 }
 
+namespace {
+std::atomic<void (*)(const char*)> fault_reporter{nullptr};
+}
+
+void SetFaultReporter(void (*report)(const char* where)) {
+    fault_reporter.store(report);
+}
+
 void ReportDeviceLost(const char* where) {
     static std::atomic_flag reported = ATOMIC_FLAG_INIT;
     if (enabled && !reported.test_and_set()) {
         Report("at device lost", where);
+    }
+    if (const auto report = fault_reporter.load()) {
+        report(where);
     }
 }
 
