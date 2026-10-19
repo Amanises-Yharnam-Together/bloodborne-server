@@ -464,6 +464,20 @@ constexpr u64 StandsOnPartFloorOffset = 0x0191B79E;
 constexpr std::array<u8, 10> StandsOnPartFloorRead{0x48, 0x8B, 0x8E, 0x88, 0x02,
                                                    0x00, 0x00, 0x48, 0x85, 0xC9};
 
+// Kaniel's crash 2026-10-19: a call to 0x47F8 from 0x01524B24. A remote player's per-frame
+// update (0x01524860) reads the object its physics holds as the one it stands on:
+//     MOV R13, [RAX + 0xA8]             <- 0x01524B0C (RAX: the physics module)
+//     TEST R13, R13 / JZ none
+//     MOV RAX, [R13] / CALL [RAX + 0x18]
+// Lisara's copy, hidden while she was on another map, kept an object of the map block Kaniel's
+// game had since dropped; the memory was reused and the "table" pointed at the heap. A game
+// object's table is in the game's image: an object whose table is not is gone, and the physics
+// lets go of it (as with none).
+constexpr u64 ContactObjectReadOffset = 0x01524B0C;
+constexpr std::array<u8, 7> ContactObjectRead{0x4C, 0x8B, 0xA8, 0xA8, 0x00, 0x00, 0x00};
+u64 guard_image_base = 0;
+u64 guard_image_size = 0;
+
 bool ReadableAt(u64 address, size_t size) {
     return address >= 0x10000 && HasMemoryAccess(address, size, MemoryProt::CpuRead);
 }
@@ -521,6 +535,66 @@ void PS4_SYSV_ABI ClearFloorThatIsGone(u64, GuestRegisterSnapshot* registers) {
     if (InPartySession()) {
         ClearStaleFloor(registers->rbx);
     }
+}
+
+void PS4_SYSV_ABI ClearContactObjectThatIsGone(u64, GuestRegisterSnapshot* registers) {
+    if (!InPartySession()) {
+        return;
+    }
+    const u64 physics = registers->rax;
+    if (!ReadableAt(physics + PhysicsContactObjectOffset, sizeof(u64))) {
+        return;
+    }
+    const u64 object = ReadValue<u64>(physics, PhysicsContactObjectOffset);
+    if (object == 0 ||
+        (ReadableAt(object, sizeof(u64)) &&
+         InGameImage(ReadValue<u64>(object, 0), guard_image_base, guard_image_size))) {
+        return;
+    }
+    WriteValue<u64>(physics, PhysicsContactObjectOffset, 0);
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 8) {
+        LOG_WARNING(Debug,
+                    "Bloodborne floor guard: physics {:#x} held an object that is gone ({:#x}, map "
+                    "{:#x}): let go of instead of a crash",
+                    physics, object, GetCurrentPackedMap());
+    }
+}
+
+// The game's per-character receive of a remote player's state (0x01A6D390, rdi: the character's
+// network state, whose first word is its member's identity; channel 6 through 0x01789200, which
+// frees each packet it takes off the member's queue). Two copies of one member (Kaniel's playtest
+// 2026-10-19) run it on two character threads against one queue: a double free (0x020B56D2) in
+// every other game when he joined back. Only the copy seen last takes them; the other's receive
+// takes nothing (returns 0, as with an empty queue).
+constexpr u64 MemberReceiveOffset = 0x01A6D390;
+constexpr std::array<u8, 6> MemberReceivePrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+
+bool PS4_SYSV_ABI SkipSecondCopyReceive(u64, GuestRegisterSnapshot* registers) {
+    if (!InPartySession()) {
+        return false;
+    }
+    const u64 network = registers->rdi;
+    const u64 identity = ReadableAt(network, sizeof(u64)) ? ReadValue<u64>(network, 0) : 0;
+    static std::mutex takers_mutex;
+    static MemberPacketTakers takers;
+    bool takes = true;
+    {
+        std::scoped_lock lock{takers_mutex};
+        takes = takers.Takes(network, identity, SteadyMilliseconds());
+    }
+    if (takes) {
+        return false;
+    }
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 8) {
+        LOG_WARNING(Debug,
+                    "Bloodborne packet guard: a second copy of member {:#x} (state {:#x}) takes "
+                    "none of its packets (the newest copy does)",
+                    identity, network);
+    }
+    registers->rax = 0;
+    return true;
 }
 
 void PS4_SYSV_ABI ClearQueriedFloorThatIsGone(u64, GuestRegisterSnapshot* registers) {
@@ -625,8 +699,33 @@ void InstallFloorGuard(u64 base, u64 image_size) {
                               SiteFailure(base, image_size, StandsOnPartFloorOffset));
         return;
     }
+    guard_image_base = base;
+    guard_image_size = image_size;
+    if (ContactObjectReadOffset + ContactObjectRead.size() > image_size ||
+        !InstallCoopHook(reinterpret_cast<void*>(base + ContactObjectReadOffset), ContactObjectRead,
+                         0, ClearContactObjectThatIsGone)) {
+        coop_features.Skipped("floor guard",
+                              SiteFailure(base, image_size, ContactObjectReadOffset));
+        return;
+    }
     coop_features.On("floor guard");
     LOG_INFO(Debug, "Bloodborne floor guard: a floor of a map block that is gone is cleared");
+}
+
+void InstallMemberPacketGuard(u64 base, u64 image_size) {
+    if (!party_controller) {
+        return;
+    }
+    if (MemberReceiveOffset + MemberReceivePrologue.size() > image_size ||
+        !InstallCoopHook(reinterpret_cast<void*>(base + MemberReceiveOffset), MemberReceivePrologue,
+                         0, SkipSecondCopyReceive)) {
+        LOG_ERROR(Debug, "Bloodborne packet guard unavailable; two copies of one member can still "
+                         "crash a game");
+        coop_features.Skipped("packet guard", SiteFailure(base, image_size, MemberReceiveOffset));
+        return;
+    }
+    coop_features.On("packet guard");
+    LOG_INFO(Debug, "Bloodborne packet guard: one copy of each member takes its packets");
 }
 
 void InstallSolidNpcsInParty(u64 base, u64 image_size) {

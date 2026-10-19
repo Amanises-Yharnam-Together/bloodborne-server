@@ -128,3 +128,63 @@ TEST(MemberPresence, AJoinStillBeforeItsCharacterAsksForTheData) {
     EXPECT_FALSE(WaitsForMemberData(RemoteGuestTask, InSessionStep));
     EXPECT_FALSE(WaitsForMemberData(LocalTaskKind(false), 1)) << "its own task";
 }
+
+// Kaniel's playtest 2026-10-19: Kaniel's game crashed and he joined back; Lisara's and krolebord's
+// games crashed (a double free at 0x020B56D2): his old copy had stayed, the game bound it to his
+// new join as well, and both copies took his packets off one queue on two threads. Of the copies
+// of one member, all but the one seen last stay hidden.
+TEST(MemberPresence, OnlyTheNewestCopyOfAMemberShows) {
+    // Kaniel's old copy (seen first) and his new one share his identity; Lisara's is her own.
+    EXPECT_EQ(StaleDuplicatePlayers(std::vector<u64>{0x6440, 0x6800, 0x6440},
+                                    std::vector<s64>{100, 200, 900}),
+              (std::vector<bool>{true, false, false}));
+    // Order does not matter, only when each was seen.
+    EXPECT_EQ(StaleDuplicatePlayers(std::vector<u64>{0x6440, 0x6440}, std::vector<s64>{900, 100}),
+              (std::vector<bool>{false, true}));
+    // Seen in the same tick: the later one in the list is kept.
+    EXPECT_EQ(StaleDuplicatePlayers(std::vector<u64>{0x6440, 0x6440}, std::vector<s64>{5, 5}),
+              (std::vector<bool>{true, false}));
+    // An unknown identity (0) is no one's.
+    EXPECT_EQ(StaleDuplicatePlayers(std::vector<u64>{0, 0, 0x6800}, std::vector<s64>{1, 2, 3}),
+              (std::vector<bool>{false, false, false}));
+}
+
+// Kaniel's crash 2026-10-19 (a call to 0x47F8 from 0x01524B24): Lisara's hidden copy kept the
+// object it stood on in a map block his game had since dropped; the memory was reused and the
+// object's table pointed at the heap. A game object's table is in the game's image.
+TEST(MemberPresence, AGoneContactObjectsTableIsOutsideTheImage) {
+    constexpr u64 Base = 0x8'0000'0000, Size = 0x0600'0000;
+    EXPECT_TRUE(InGameImage(0x8'0538'DF00, Base, Size));
+    EXPECT_FALSE(InGameImage(0x10'1FAA'8D40, Base, Size)) << "the heap";
+    EXPECT_FALSE(InGameImage(0x47F8, Base, Size));
+    EXPECT_FALSE(InGameImage(Base + Size, Base, Size));
+    EXPECT_TRUE(InGameImage(Base, Base, Size));
+}
+
+// Kaniel's playtest 2026-10-19: two copies of Kaniel in Lisara's game (his old one, bound again to
+// his new join, and the new one) took his packets off one queue on two threads: a double free.
+// Of the network states with one identity, only the one seen last takes them.
+TEST(MemberPresence, OneCopyOfAMemberTakesItsPackets) {
+    MemberPacketTakers takers;
+    // His old copy alone takes them.
+    EXPECT_TRUE(takers.Takes(0x1020, 0x6440, 0));
+    EXPECT_TRUE(takers.Takes(0x1020, 0x6440, 16));
+    // Lisara's copy is another member's.
+    EXPECT_TRUE(takers.Takes(0x3000, 0x6800, 16));
+    // His new copy comes: it takes them, the old one no longer does.
+    EXPECT_TRUE(takers.Takes(0x2040, 0x6440, 33));
+    EXPECT_FALSE(takers.Takes(0x1020, 0x6440, 33));
+    EXPECT_TRUE(takers.Takes(0x2040, 0x6440, 50));
+    EXPECT_FALSE(takers.Takes(0x1020, 0x6440, 50));
+    EXPECT_TRUE(takers.Takes(0x3000, 0x6800, 50));
+    // The new copy gone (not seen for a while): the old one takes them again.
+    EXPECT_TRUE(takers.Takes(0x1020, 0x6440, 50 + MemberPacketTakers::ForgetMs + 1));
+    // A state whose memory now holds another member's starts over as that member's (seen anew).
+    const s64 later = 50 + MemberPacketTakers::ForgetMs + 1;
+    EXPECT_TRUE(takers.Takes(0x3000, 0x6800, later));
+    EXPECT_TRUE(takers.Takes(0x1020, 0x6800, later + 1));
+    EXPECT_FALSE(takers.Takes(0x3000, 0x6800, later + 1));
+    // An unknown identity is never held back.
+    EXPECT_TRUE(takers.Takes(0x4000, 0, 0));
+    EXPECT_TRUE(takers.Takes(0x5000, 0, 0));
+}

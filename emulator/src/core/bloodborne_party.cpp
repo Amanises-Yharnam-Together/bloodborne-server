@@ -6015,4 +6015,44 @@ std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>>
     return shown;
 }
 
+std::vector<bool> StaleDuplicatePlayers(std::span<const u64> identities,
+                                        std::span<const s64> first_seen_ms) {
+    std::vector<bool> stale(identities.size(), false);
+    for (size_t i = 0; i < identities.size(); ++i) {
+        for (size_t j = 0; j < identities.size() && !stale[i]; ++j) {
+            const bool later = first_seen_ms[j] > first_seen_ms[i] ||
+                               (first_seen_ms[j] == first_seen_ms[i] && j > i);
+            stale[i] = j != i && identities[i] != 0 && identities[j] == identities[i] && later;
+        }
+    }
+    return stale;
+}
+
+bool InGameImage(u64 address, u64 base, u64 size) {
+    return address >= base && address - base < size;
+}
+
+bool MemberPacketTakers::Takes(u64 network, u64 identity, s64 now_ms) {
+    std::erase_if(takers, [&](const Taker& taker) {
+        return taker.network != network && now_ms - taker.last_ms > ForgetMs;
+    });
+    auto mine = std::ranges::find(takers, network, &Taker::network);
+    if (mine == takers.end()) {
+        takers.push_back({network, identity, now_ms, now_ms});
+        mine = std::prev(takers.end());
+    } else if (mine->identity != identity || now_ms - mine->last_ms > ForgetMs) {
+        *mine = {network, identity, now_ms, now_ms};
+    }
+    mine->last_ms = now_ms;
+    if (identity == 0) {
+        return true;
+    }
+    const Taker me = *mine;
+    return std::ranges::none_of(takers, [&](const Taker& other) {
+        return other.network != me.network && other.identity == me.identity &&
+               (other.first_ms > me.first_ms ||
+                (other.first_ms == me.first_ms && other.network > me.network));
+    });
+}
+
 } // namespace Core::Bloodborne

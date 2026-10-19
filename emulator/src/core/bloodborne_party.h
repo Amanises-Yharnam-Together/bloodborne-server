@@ -3216,6 +3216,31 @@ std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>>
                                     std::span<const MemberVitals> board, std::string_view self,
                                     u32 map);
 std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body);
+// Kaniel's playtest 2026-10-19: one member can end up with two characters here (his old copy
+// kept after a crash, bound again to his new join). Both take his packets off one queue on two
+// threads (a double free). Of the characters with one identity (0: unknown, no one's), all but the
+// one first seen last are stale: true.
+std::vector<bool> StaleDuplicatePlayers(std::span<const u64> identities,
+                                        std::span<const s64> first_seen_ms);
+// Whether `address` is in the game's image [base, base + size): where a game object's table is.
+bool InGameImage(u64 address, u64 base, u64 size);
+// The same at the game's per-character receive (0x01A6D390): of the network states (one per remote
+// player's character) with one member identity, only the one first seen last takes the member's
+// packets. A state not seen for ForgetMs is forgotten (its character is gone).
+class MemberPacketTakers {
+public:
+    static constexpr s64 ForgetMs = 2'000;
+    bool Takes(u64 network, u64 identity, s64 now_ms);
+
+private:
+    struct Taker {
+        u64 network = 0;
+        u64 identity = 0;
+        s64 first_ms = 0;
+        s64 last_ms = 0;
+    };
+    std::vector<Taker> takers;
+};
 // A member's own update (EncodeVitalsUpdate's line), as a peer sends it straight over the link.
 struct DirectVitals {
     MemberVitals self;
