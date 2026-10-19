@@ -232,7 +232,7 @@ void Instance::ReportDeviceLost(const char* where) const {
     }
     std::printf("GPU: device lost (%s)\n", where);
     if (!device_fault) {
-        std::printf("GPU: the driver gives no fault details (VK_EXT_device_fault unavailable)\n");
+        std::printf("GPU: no fault details (VK_EXT_device_fault off or unavailable; BB_DEVICE_FAULT=1)\n");
         std::fflush(stdout);
         return;
     }
@@ -355,7 +355,16 @@ bool Instance::CreateDevice() {
     maintenance_5 = add_extension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
     maintenance_6 = add_extension(VK_KHR_MAINTENANCE_6_EXTENSION_NAME);
     // bbport: after a device loss the driver says where the GPU faulted (ReportDeviceLost).
-    device_fault = feature_chain.get<vk::PhysicalDeviceFaultFeaturesEXT>().deviceFault &&
+    // Only with BB_DEVICE_FAULT=1: since it came on by default (v0.3.13) NVIDIA laptops built
+    // the shader cache's pipelines 5-15 times slower at every start (krolebord 1.3 s -> 17.5 s,
+    // Lisara 1.2 s -> 6.6 s) and objects went without new pipelines for seconds in play. It is
+    // the change to device creation in that release, so it is off until shown innocent.
+    static const bool want_device_fault = [] {
+        const char* env = std::getenv("BB_DEVICE_FAULT");
+        return env && env[0] == '1';
+    }();
+    device_fault = want_device_fault &&
+                   feature_chain.get<vk::PhysicalDeviceFaultFeaturesEXT>().deviceFault &&
                    add_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
     maintenance_8 = add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
     // bbport: GPU breadcrumbs (vk_breadcrumbs.h).

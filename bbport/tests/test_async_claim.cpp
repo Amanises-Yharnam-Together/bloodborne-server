@@ -21,6 +21,12 @@ int main() {
         std::printf("async-claim-test: a skippable draw skips on a worker's claim\n");
         return 1;
     }
+    // The background job has run past the moment a draw may go without: the draw waits for it.
+    if (Next(true, true, true, true) != Step::Wait) {
+        std::printf("async-claim-test: a draw goes without an overdue pipeline\n");
+        return 1;
+    }
+    assert(Next(true, true, true, false) == Step::Skip);
     // A draw that may not go without waits, whoever builds it.
     assert(Next(true, false, false) == Step::Wait);
     assert(Next(true, true, false) == Step::Wait);
