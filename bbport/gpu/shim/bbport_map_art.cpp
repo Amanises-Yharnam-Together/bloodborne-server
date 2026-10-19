@@ -242,6 +242,73 @@ std::uint32_t AverageColor(std::span<const std::uint8_t> tpf) {
     return 0xFF000000u | channel(0) << 16 | channel(1) << 8 | channel(2);
 }
 
+std::optional<Texture> DecodeTexture(std::span<const std::uint8_t> tpf, int max_side) {
+    const auto textures = BbGameArt::ParseTpf(tpf);
+    if (!textures || textures->empty()) {
+        return std::nullopt;
+    }
+    const BbGameArt::TpfTexture& texture = textures->front();
+    const bool bc1 = texture.dxgi == 71 || texture.dxgi == 72, bc7 = texture.dxgi == 98 || texture.dxgi == 99;
+    if ((!bc1 && !bc7) || texture.width < 4 || texture.height < 4 || texture.width > 8192 || texture.height > 8192) {
+        return std::nullopt;
+    }
+    const int block = bc1 ? 8 : 16, wb = texture.width / 4, hb = texture.height / 4;
+    if (std::size_t(texture.offset) + std::size_t(texture.size) > tpf.size()) {
+        return std::nullopt;
+    }
+    // The first level, in the PS4's tiles (8 x 8 blocks, padded).
+    const std::size_t tiled = std::size_t((wb + 7) / 8 * 8) * std::size_t((hb + 7) / 8 * 8) * std::size_t(block);
+    const auto blocks = BbGameArt::DeswizzleBlocks(tpf.subspan(texture.offset, std::min<std::size_t>(texture.size, tiled)),
+                                                   wb, hb, block);
+    std::vector<std::uint32_t> full(std::size_t(texture.width) * std::size_t(texture.height));
+    for (int by = 0; by < hb; ++by) {
+        for (int bx = 0; bx < wb; ++bx) {
+            const std::uint8_t* at = blocks.data() + (std::size_t(by) * std::size_t(wb) + std::size_t(bx)) * std::size_t(block);
+            const auto px = bc1 ? BbGameArt::DecodeBc1Block(std::span<const std::uint8_t, 8>(at, 8))
+                                : BbGameArt::DecodeBc7Block(std::span<const std::uint8_t, 16>(at, 16));
+            for (int i = 0; i < 16; ++i) {
+                const std::uint8_t* p = px.data() + i * 4;
+                full[std::size_t(by * 4 + i / 4) * std::size_t(texture.width) + std::size_t(bx * 4 + i % 4)] =
+                    std::uint32_t(p[3]) << 24 | std::uint32_t(p[0]) << 16 | std::uint32_t(p[1]) << 8 | p[2];
+            }
+        }
+    }
+    Texture out{texture.width, texture.height, std::move(full)};
+    // Halved (2 x 2 averages) down to max_side.
+    while (out.width > max_side || out.height > max_side) {
+        Texture half{std::max(1, out.width / 2), std::max(1, out.height / 2), {}};
+        half.pixels.resize(std::size_t(half.width) * std::size_t(half.height));
+        for (int y = 0; y < half.height; ++y) {
+            for (int x = 0; x < half.width; ++x) {
+                std::uint32_t sum[4] = {};
+                for (int k = 0; k < 4; ++k) {
+                    const int sx = std::min(out.width - 1, x * 2 + (k & 1)), sy = std::min(out.height - 1, y * 2 + (k >> 1));
+                    const std::uint32_t p = out.pixels[std::size_t(sy) * std::size_t(out.width) + std::size_t(sx)];
+                    for (int c = 0; c < 4; ++c) {
+                        sum[c] += (p >> (c * 8)) & 0xFF;
+                    }
+                }
+                std::uint32_t p = 0;
+                for (int c = 0; c < 4; ++c) {
+                    p |= (sum[c] / 4) << (c * 8);
+                }
+                half.pixels[std::size_t(y) * std::size_t(half.width) + std::size_t(x)] = p;
+            }
+        }
+        out = std::move(half);
+    }
+    return out;
+}
+
+std::uint32_t Texture::Sample(float u, float v) const {
+    if (width <= 0 || height <= 0) {
+        return 0;
+    }
+    const int x = int(std::floor((u - std::floor(u)) * float(width))) % width;
+    const int y = int(std::floor((v - std::floor(v)) * float(height))) % height;
+    return pixels[std::size_t(std::max(0, y)) * std::size_t(width) + std::size_t(std::max(0, x))];
+}
+
 std::vector<ArchiveEntry> ReadArchiveHeader(std::span<const std::uint8_t> bhd) {
     std::vector<ArchiveEntry> entries;
     std::int32_t count = 0;
@@ -329,7 +396,7 @@ std::optional<MapStudio> ReadMapStudio(std::span<const std::uint8_t> msb) {
 }
 
 bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& out, std::vector<std::uint32_t>* colors,
-                     const MaterialColor& color_of) {
+                     const MaterialColor& color_of, std::vector<float>* uvs) {
     if (flver.size() < 0x80 || std::memcmp(flver.data(), "FLVER\0L\0", 8) != 0) {
         return false;
     }
@@ -354,8 +421,14 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
     const std::size_t buffer_base = faceset_base + std::size_t(facesets) * 0x20;
     const std::size_t layout_base = buffer_base + std::size_t(buffers) * 0x20;
     const std::size_t texture_base = layout_base + std::size_t(layouts) * 0x10;
-    // Each layout's position member: its offset in the vertex and whether it is a float3 or float4.
+    // Each layout's position member: its offset in the vertex and whether it is a float3 or float4;
+    // its first texture coordinates (semantic 5): offset and type (0x15/0x16 shorts, 1 floats).
     std::vector<std::int32_t> position_of(std::size_t(layouts), -1);
+    std::vector<std::int32_t> uv_of(std::size_t(layouts), -1);
+    std::vector<std::uint32_t> uv_type(std::size_t(layouts), 0);
+    std::uint32_t version = 0;
+    Get(flver, 0x08, version);
+    const float uv_factor = version >= 0x2000F ? 2048.0f : 1024.0f;
     for (std::int32_t i = 0; i < layouts; ++i) {
         std::int32_t count = 0, members = 0;
         Get(flver, layout_base + std::size_t(i) * 0x10, count);
@@ -367,13 +440,16 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
             Get(flver, at + 4, offset);
             Get(flver, at + 8, type);
             Get(flver, at + 0xC, semantic);
-            if (semantic == 0 && (type == 2 || type == 3)) {
+            if (semantic == 0 && (type == 2 || type == 3) && position_of[std::size_t(i)] < 0) {
                 position_of[std::size_t(i)] = offset;
-                break;
+            }
+            if (semantic == 5 && uv_of[std::size_t(i)] < 0 && (type == 1 || type == 0x15 || type == 0x16)) {
+                uv_of[std::size_t(i)] = offset;
+                uv_type[std::size_t(i)] = type;
             }
         }
     }
-    std::vector<float> corners;
+    std::vector<float> corners, corner_uvs;
     std::vector<std::uint32_t> corner_colors;
     std::map<std::int32_t, std::uint32_t> material_colors;
     // A material's colour: its first diffuse texture's (path "...\m24_01_trims_003_a.tif").
@@ -450,11 +526,30 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
         if (vertices + std::size_t(vertex_count - 1) * std::size_t(vertex_size) + 12 > flver.size()) {
             continue;
         }
+        const std::int32_t uv_at = uv_of[std::size_t(layout)];
+        const std::size_t uv_base = std::size_t(data) + buffer_offset + std::size_t(std::max(0, uv_at));
+        const bool has_uv = uvs != nullptr && uv_at >= 0 &&
+                            uv_base + std::size_t(vertex_count - 1) * std::size_t(vertex_size) + 8 <= flver.size();
         const auto corner = [&](std::uint32_t index) {
             const std::uint8_t* p = flver.data() + vertices + std::size_t(index) * std::size_t(vertex_size);
             float xyz[3];
             std::memcpy(xyz, p, 12);
             corners.insert(corners.end(), xyz, xyz + 3);
+            if (uvs != nullptr) {
+                float uv[2] = {0.0f, 0.0f};
+                if (has_uv) {
+                    const std::uint8_t* q = flver.data() + uv_base + std::size_t(index) * std::size_t(vertex_size);
+                    if (uv_type[std::size_t(layout)] == 1) {
+                        std::memcpy(uv, q, 8);
+                    } else {
+                        std::int16_t s[2];
+                        std::memcpy(s, q, 4);
+                        uv[0] = float(s[0]) / uv_factor;
+                        uv[1] = float(s[1]) / uv_factor;
+                    }
+                }
+                corner_uvs.insert(corner_uvs.end(), uv, uv + 2);
+            }
         };
         for (std::int32_t f = 0; f < faceset_count; ++f) {
             std::int32_t faceset = -1;
@@ -516,6 +611,9 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
     out.insert(out.end(), corners.begin(), corners.end());
     if (colors) {
         colors->insert(colors->end(), corner_colors.begin(), corner_colors.end());
+    }
+    if (uvs) {
+        uvs->insert(uvs->end(), corner_uvs.begin(), corner_uvs.end());
     }
     return true;
 }
@@ -587,7 +685,8 @@ std::optional<PlayArea> PlayAreaOf(std::span<const Vec3> spots) {
 }
 
 void Place(const Piece& piece, std::span<const float> model, const PlayArea& area, std::vector<float>& out,
-           std::span<const std::uint32_t> colors, std::vector<std::uint32_t>* out_colors) {
+           std::span<const std::uint32_t> colors, std::vector<std::uint32_t>* out_colors, std::span<const float> uvs,
+           std::vector<float>* out_uvs) {
     const std::array<float, 9> m = RotationOf(piece.rotation, piece.scale);
     const Vec3& p = piece.position;
     float tri[9];
@@ -606,6 +705,12 @@ void Place(const Piece& piece, std::span<const float> model, const PlayArea& are
         out.insert(out.end(), tri, tri + 9);
         if (out_colors) {
             out_colors->push_back(t / 9 < colors.size() ? colors[t / 9] : 0u);
+        }
+        if (out_uvs) {
+            const std::size_t u = t / 9 * 6;
+            for (std::size_t k = 0; k < 6; ++k) {
+                out_uvs->push_back(u + k < uvs.size() ? uvs[u + k] : 0.0f);
+            }
         }
     }
 }
@@ -699,7 +804,7 @@ void Canvas::AddWalkable(std::span<const float> floors) {
     }
 }
 
-void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t> colors) {
+void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t> colors, std::span<const float> uvs) {
     // The light from the north-west, high, as an old map's relief.
     const float lx = -0.45f, ly = 0.78f, lz = 0.43f;
     for (std::size_t t = 0; t + 9 <= triangles.size(); t += 9) {
@@ -716,7 +821,18 @@ void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t
         }
         const float lambert = std::clamp((nx * lx + ny * ly + nz * lz) / length, 0.0f, 1.0f);
         const auto shade = std::uint8_t(std::lround(lambert * 255.0f));
-        const std::uint32_t tint = t / 9 < colors.size() ? colors[t / 9] : 0u;
+        std::uint32_t tint = t / 9 < colors.size() ? colors[t / 9] : 0u;
+        // Kaniel 2026-10-19: a textured triangle takes its texture's pixel at each spot.
+        std::shared_ptr<const Texture> texture;
+        const float* uv = nullptr;
+        if (IsTextured(tint)) {
+            texture = texture_of ? texture_of(tint & 0xFFFFFFu) : nullptr;
+            uv = t / 9 * 6 + 6 <= uvs.size() ? uvs.data() + t / 9 * 6 : nullptr;
+            if (!texture || !uv) {
+                tint = 0;
+                texture = nullptr;
+            }
+        }
         // Pixels of the corners (z north up).
         float px[3], py[3], h[3];
         for (int k = 0; k < 3; ++k) {
@@ -731,12 +847,21 @@ void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t
         if (bx0 > bx1 || by0 > by1) {
             continue;
         }
-        const auto plot = [&](int x, int y, float z) {
+        const auto plot = [&](int x, int y, float z, float l1 = 1.0f / 3, float l2 = 1.0f / 3) {
             const std::size_t at = std::size_t(y) * std::size_t(width) + std::size_t(x);
+            std::uint32_t c = tint;
+            if (texture) {
+                const float l3 = 1.0f - l1 - l2;
+                c = texture->Sample(l1 * uv[0] + l2 * uv[2] + l3 * uv[4], l1 * uv[1] + l2 * uv[3] + l3 * uv[5]);
+                if ((c >> 24) < 96) {
+                    return; // cut out (leaves, railings): what lies under shows
+                }
+                c |= 0xFF000000u;
+            }
             if (z > top[at]) {
                 top[at] = z;
                 light[at] = shade;
-                color[at] = tint;
+                color[at] = c;
             }
             // The floor's own surface (and what stands on it) under each storey: its colour for
             // the floor view.
@@ -750,7 +875,7 @@ void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t
                 if (z >= floors[l] - 0.4f && z <= floors[l] + 1.2f && dm > level_top[l]) {
                     level_top[l] = dm;
                     level_light[l] = shade;
-                    level_color[l] = tint;
+                    level_color[l] = c;
                 }
             }
         };
@@ -787,7 +912,7 @@ void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t
                 if (l1 < Slack || l2 < Slack || l3 < Slack) {
                     continue;
                 }
-                plot(x, y, l1 * h[0] + l2 * h[1] + l3 * h[2]);
+                plot(x, y, l1 * h[0] + l2 * h[1] + l3 * h[2], l1, l2);
             }
         }
     }
@@ -884,7 +1009,7 @@ Chart Canvas::Finish() const {
             smooth_top[at] = hs[n / 2];
             smooth_light[at] = ls[n / 2];
             int best = 0;
-            for (int i = 0; i < n; ++i) {
+            for (int i = 0; i < n && !textured; ++i) {
                 const int votes = int(std::count(cs, cs + n, cs[i]));
                 if (votes > best) {
                     best = votes;
@@ -956,7 +1081,14 @@ Chart Canvas::Finish() const {
         for (int c = 0; c < 3; ++c) {
             base[c] = umber[c] + (paper[c] - umber[c]) * t;
         }
-        if (tint != 0) {
+        if (tint != 0 && textured) {
+            // Kaniel 2026-10-19 ("look almost like in game"): the texture's own pixel, a little
+            // brighter (the game lights it), only a touch of the height's tone.
+            const float rgb[3] = {float((tint >> 16) & 0xFF), float((tint >> 8) & 0xFF), float(tint & 0xFF)};
+            for (int c = 0; c < 3; ++c) {
+                base[c] = std::clamp(rgb[c] * (1.15f + 0.25f * t), 0.0f, 255.0f);
+            }
+        } else if (tint != 0) {
             // Kaniel 2026-10-17 ("can we make it colored?"): the material's own colour,
             // livelier than the dark textures and as bright as the height says, a little of
             // the paper's tone kept.
@@ -1206,7 +1338,7 @@ void FloorView(const Chart& chart, float y, std::uint8_t* rgba) {
 
 std::vector<std::uint8_t> Save(const Chart& chart) {
     std::vector<std::uint8_t> file(32);
-    std::memcpy(file.data(), "BBMAP6\0\0", 8);
+    std::memcpy(file.data(), "BBMAP7\0\0", 8);
     std::memcpy(file.data() + 8, &chart.width, 4);
     std::memcpy(file.data() + 12, &chart.height, 4);
     std::memcpy(file.data() + 16, &chart.x0, 4);
@@ -1256,7 +1388,7 @@ std::vector<std::uint8_t> Save(const Chart& chart) {
 }
 
 std::optional<Chart> Load(std::span<const std::uint8_t> file) {
-    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP6\0\0", 8) != 0) {
+    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP7\0\0", 8) != 0) {
         return std::nullopt;
     }
     Chart chart;
@@ -1325,9 +1457,9 @@ std::string MapNameOf(std::uint32_t packed_map) {
 }
 
 std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, float ppm, int max_side, int threads,
-                               const ReadRange& read_range) {
+                               const ReadRange& read_range, bool textured) {
     const std::array<std::uint32_t, 1> one{packed_map};
-    return ChartAreas(one, read, ppm, max_side, threads, read_range);
+    return ChartAreas(one, read, ppm, max_side, threads, read_range, textured);
 }
 
 namespace {
@@ -1378,6 +1510,47 @@ public:
         return color;
     }
 
+    /// Kaniel 2026-10-19: a texture itself (its full copy, else its low-resolution one) as an id
+    /// for TexturedColor; -1 when there is none.
+    std::int32_t ImageOf(std::string_view texture) {
+        if (!read_range) {
+            return -1;
+        }
+        const std::string name(texture);
+        Where where;
+        {
+            std::scoped_lock lock{mutex};
+            if (const auto known = image_ids.find(name); known != image_ids.end()) {
+                return known->second;
+            }
+            auto found = index.find(name + ".tpf.dcx");
+            if (found == index.end()) {
+                found = index.find(name + "_l.tpf.dcx");
+            }
+            if (found == index.end()) {
+                image_ids[name] = -1;
+                return -1;
+            }
+            where = found->second;
+        }
+        const auto tpf = BbGameArt::InflateDcx(read_range(where.file, where.offset, where.size));
+        auto decoded = tpf ? DecodeTexture(*tpf) : std::nullopt;
+        std::scoped_lock lock{mutex};
+        if (const auto known = image_ids.find(name); known != image_ids.end()) {
+            return known->second; // another thread got there first
+        }
+        if (!decoded) {
+            image_ids[name] = -1;
+            return -1;
+        }
+        images.push_back(std::make_shared<const Texture>(std::move(*decoded)));
+        return image_ids[name] = std::int32_t(images.size() - 1);
+    }
+    std::shared_ptr<const Texture> Image(std::uint32_t id) {
+        std::scoped_lock lock{mutex};
+        return id < images.size() ? images[id] : nullptr;
+    }
+
 private:
     struct Where {
         std::string file;
@@ -1388,6 +1561,8 @@ private:
     std::mutex mutex;
     std::map<std::string, Where> index;
     std::map<std::string, std::uint32_t> colors;
+    std::map<std::string, std::int32_t> image_ids;
+    std::vector<std::shared_ptr<const Texture>> images;
 };
 
 /// The collision meshes of an area (map/mAA_BB_00_00/hAA_BB_00_00.hkxbhd/.hkxbdt, the .patch ones
@@ -1435,7 +1610,7 @@ std::vector<std::string> ArchivesOf(const std::string& map_name, const ReadFile&
 } // namespace
 
 std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, const ReadFile& read, float ppm,
-                                int max_side, int threads, const ReadRange& read_range) {
+                                int max_side, int threads, const ReadRange& read_range, bool textured) {
     TextureColors textures(read, read_range);
     const auto inflate = [](std::vector<std::uint8_t> file) {
         if (file.size() >= 4 && std::memcmp(file.data(), "DCX\0", 4) == 0) {
@@ -1526,6 +1701,11 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
     for (std::size_t i = 1; i < canvases.size(); ++i) {
         canvases[i].ShareFloors(canvases[0]);
     }
+    if (textured) {
+        for (Canvas& canvas : canvases) {
+            canvas.SetTextures([&](std::uint32_t id) { return textures.Image(id); });
+        }
+    }
     // The game's colour grade of the (first) area's block.
     if (const auto tpf = BbGameArt::InflateDcx(read("map/" + sources[0].name.substr(0, 3) + "/" +
                                                    sources[0].name.substr(0, 3) + "_cgrading.tpf.dcx"))) {
@@ -1534,23 +1714,34 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
         }
     }
     const auto draw = [&](int part) {
-        std::vector<float> model, world;
+        std::vector<float> model, world, model_uvs, world_uvs;
         std::vector<std::uint32_t> model_colors, world_colors;
-        const MaterialColor color_of = [&](std::string_view texture) { return textures.Of(texture); };
+        const MaterialColor color_of = [&](std::string_view texture) {
+            if (textured) {
+                if (const std::int32_t id = textures.ImageOf(texture); id >= 0) {
+                    return TexturedColor(std::uint32_t(id));
+                }
+            }
+            return textures.Of(texture);
+        };
         for (std::size_t m = std::size_t(part); m < models.size(); m += std::size_t(threads)) {
             const Model& it = models[m];
             const std::string& map = it.source->name;
             model.clear();
             model_colors.clear();
+            model_uvs.clear();
             const auto flver = inflate(read("map/" + map + "/" + map + "_" + it.name.substr(1) + ".flver.dcx"));
-            if (!AppendTriangles(flver, model, &model_colors, color_of) || SkippedModel(it.name, model)) {
+            if (!AppendTriangles(flver, model, &model_colors, color_of, textured ? &model_uvs : nullptr) ||
+                SkippedModel(it.name, model)) {
                 continue;
             }
             for (const Piece* piece : it.pieces) {
                 world.clear();
                 world_colors.clear();
-                Place(*piece, model, it.source->area, world, model_colors, &world_colors);
-                canvases[std::size_t(part)].Add(world, world_colors);
+                world_uvs.clear();
+                Place(*piece, model, it.source->area, world, model_colors, &world_colors, model_uvs,
+                      textured ? &world_uvs : nullptr);
+                canvases[std::size_t(part)].Add(world, world_colors, world_uvs);
             }
         }
     };
