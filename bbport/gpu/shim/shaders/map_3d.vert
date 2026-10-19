@@ -11,6 +11,7 @@ layout(push_constant) uniform Camera {
     vec4 middle;   // cx, cy, cz, zoom
     vec4 turn;     // cos(yaw), sin(yaw), sin(pitch), cos(pitch)
     vec4 frame;    // half width, half height (pixels), the area's place on the atlas (dx, dz)
+    vec4 chart;    // the map picture's frame (map_3d.frag)
 } camera;
 
 layout(location = 0) out vec4 out_color;

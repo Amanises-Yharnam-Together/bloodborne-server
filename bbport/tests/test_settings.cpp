@@ -135,6 +135,27 @@ int main() {
     }
     std::puts("PASS: compass settings");
 
+    // Kaniel 2026-10-19 ("a setting to remove fog of war, so I will be able to see the whole map"):
+    // the map's fog, on by default, kept in bbport.ini.
+    {
+        const BbSettings::Values fresh;
+        assert(fresh.map_fog);
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+        const int file = mkstemp(path);
+        const char text[] = "map_fog=0\n";
+        assert(write(file, text, sizeof(text) - 1) == ssize_t(sizeof(text) - 1));
+        close(file);
+        setenv("BB_CONFIG", path, 1);
+        BbSettings::Load();
+        assert(!s.map_fog);
+        s.map_fog = true;
+        BbSettings::Save();
+        assert(Read(path).find("map_fog=1\n") != std::string::npos);
+        unlink(path);
+    }
+    std::puts("PASS: map fog setting");
+
     // Kaniel 2026-10-10: window mode (windowed, borderless, exclusive) and HDR output in the game's
     // menus. The launcher's BB_FULLSCREEN counts until the file has a window mode.
     char fourth[512];

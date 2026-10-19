@@ -1,4 +1,7 @@
 {
+ "Map fog of war": "Karttåke",
+ "The map hides what your hunter has not walked near yet. Off shows the whole map.": "Kartet skjuler det jegeren din ennå ikke har gått i nærheten av. Av viser hele kartet.",
+ "Turn": "Snu",
  "Prerendered": "Forhåndstegnet",
  "Live": "Sanntid",
  "{L3} on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "{L3} på kartet viser stedet skrått ovenfra fra spillets modeller. Forhåndstegnet: hvert område tegnes én gang, første gang, i bakgrunnen. Sanntid: grafikkortet tegner modellene mens du snur og vipper visningen (høyre spak), med sitt minne. La det være av på en svak PC.",

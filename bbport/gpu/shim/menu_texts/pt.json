@@ -1,4 +1,7 @@
 {
+ "Map fog of war": "Nevoeiro do mapa",
+ "The map hides what your hunter has not walked near yet. Off shows the whole map.": "O mapa esconde aquilo de que o teu caçador ainda não se aproximou. Desligado mostra o mapa inteiro.",
+ "Turn": "Rodar",
  "Prerendered": "Pré-desenhado",
  "Live": "Em tempo real",
  "{L3} on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "{L3} no mapa mostra o local em perspetiva a partir dos modelos do jogo. Pré-desenhado: cada área é desenhada uma vez, da primeira vez, em segundo plano. Em tempo real: a placa gráfica desenha os modelos enquanto roda e inclina a vista (manípulo direito), usando a sua memória. Deixe desligado num PC modesto.",

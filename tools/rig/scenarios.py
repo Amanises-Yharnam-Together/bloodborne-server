@@ -2721,6 +2721,7 @@ SCENARIOS = {
         },
         "console_expect": {"host": [r"Map: 3D view", r"Map: flat view",
                                     r"Map: (drew|read) m24_01_00_00 view 1"]},
+        "settings": {"BB_MAP_3D": "1"},  # the 3D map is opt-in (Insert, Display)
         "timeout": 240,
     },
     # Kaniel 2026-10-17: the map screen in a session: the other hunter at its spot on the
