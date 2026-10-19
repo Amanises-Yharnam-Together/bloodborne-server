@@ -836,8 +836,28 @@ namespace {
 std::map<u32, BossRunnerPick> boss_runners;
 bool IsBossSized(u64 character); // below, with the characters shown like the host
 
+// The character's NpcParam npcType ([vtable +0x168 (character) +8] is its row, see
+// GiveMemberKillDrop), if it reads.
+std::optional<u8> NpcTypeOf(u64 character) {
+    const u64 vtable = ReadValue<u64>(character, 0);
+    const u64 npc_of = vtable >= 0x10000 ? ReadValue<u64>(vtable, 0x168) : 0;
+    if (npc_of < 0x10000) {
+        return std::nullopt;
+    }
+    const u64 holder = reinterpret_cast<u64 PS4_SYSV_ABI (*)(u64)>(npc_of)(character);
+    const u64 npc = holder >= 0x10000 ? ReadValue<u64>(holder, 8) : 0;
+    if (npc < 0x10000 || !HasMemoryAccess(npc, NpcTypeOffset + 1, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    return ReadValue<u8>(npc, NpcTypeOffset);
+}
+
 std::string BossRunnerOf(u64 character) {
-    if (!IsBossSized(character) || !BossRunnersOn(PlayingMap())) {
+    if (!IsBossSized(character)) {
+        return {};
+    }
+    if (const u32 map = PlayingMap();
+        !BossRunnerFor(map, map >> 24 == 0x1D ? NpcTypeOf(character) : std::optional<u8>{})) {
         return {};
     }
     const auto at = CharacterPosition(character);

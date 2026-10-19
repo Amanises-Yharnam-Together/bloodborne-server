@@ -1392,10 +1392,12 @@ TEST(PartyDeath, AWipeHoldsEnemyHpUntilItsTripLoadedTheMap) {
 // Kaniel's playtest 2026-10-19: in a chalice dungeon big enemies' AI lagged again and again. The
 // dungeon's enemies, scaled by its depth and the harder enemies, pass the boss size (1500 HP) by
 // the dozen, so the boss pick handed ordinary enemies to whichever guest came near, flipping at
-// every load. No enemy there is handed out: the map's own runner keeps them all.
-TEST(BloodbornePartyDeath, NoBossRunnerInAChaliceDungeon) {
-    EXPECT_FALSE(BossRunnersOn(0x1d000000));
-    EXPECT_FALSE(BossRunnersOn(0x1d010000));
-    EXPECT_TRUE(BossRunnersOn(0x18000000)) << "Central Yharnam";
-    EXPECT_TRUE(BossRunnersOn(0x19000000));
+// every load. There only the game's bosses (NpcParam npcType 1, the chalice bosses' rows too) are
+// handed out; elsewhere the boss size alone decides, as before.
+TEST(BloodbornePartyDeath, InAChaliceDungeonOnlyBossesAreHandedOut) {
+    EXPECT_TRUE(BossRunnerFor(0x1d000000, 1)) << "a chalice boss";
+    EXPECT_FALSE(BossRunnerFor(0x1d000000, 0)) << "a scaled ordinary enemy";
+    EXPECT_FALSE(BossRunnerFor(0x1d000000, std::nullopt)) << "its row unread";
+    EXPECT_TRUE(BossRunnerFor(0x18000000, 0)) << "Central Yharnam: the boss size decides";
+    EXPECT_TRUE(BossRunnerFor(0x19000000, std::nullopt));
 }
