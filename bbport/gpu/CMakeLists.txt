@@ -563,6 +563,10 @@ target_compile_options(push-data-test PRIVATE -UNDEBUG)
 target_include_directories(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
 target_compile_definitions(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,COMPILE_DEFINITIONS>)
 
+add_executable(prompt-sets-test EXCLUDE_FROM_ALL ../tests/test_prompt_sets.cpp)
+target_compile_options(prompt-sets-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(prompt-sets-test PRIVATE shim)
+
 add_executable(frame-gen-pace-test EXCLUDE_FROM_ALL ../tests/test_frame_gen_pace.cpp)
 target_compile_options(frame-gen-pace-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(frame-gen-pace-test PRIVATE shim)

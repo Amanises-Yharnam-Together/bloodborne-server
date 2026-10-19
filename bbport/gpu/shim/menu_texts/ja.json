@@ -90,7 +90,6 @@
  "Button icons": "ボタンアイコン",
  "Automatic": "自動",
  "Keyboard and mouse": "キーボードとマウス",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "ゲームが画面に表示するボタン。「キーボードとマウス」は下で割り当てたキーを表示。「自動」は起動時に接続されたコントローラーに従います（Xboxやその他のコントローラーはXboxアイコン、PlayStationコントローラーはPlayStationアイコン、未接続ならお使いのキー）。再起動後に適用。",
  "Mouse camera": "マウスでカメラ操作",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "ゲームウィンドウがフォーカス中はマウスでカメラを回します。ボタンとホイールは下で割り当て可能。InsertまたはAlt+Tabでマウスを解放します。",
  "Mouse sensitivity": "マウス感度",
@@ -350,5 +349,11 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "ディスプレイのピーク輝度。自動：ディスプレイが報告するピーク（Windows HDR キャリブレーションで変わります）。",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "映像とインターフェースの白の明るさ（ペーパーホワイト）。自動：デスクトップと同じ明るさ（Windows の SDR コンテンツの明るさ）、暗い部屋では低めに。",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "nit：0 ディスプレイの値，1-2 400，3 600，4 800，5-6 1000，7 1500，8-9 2000，10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白、nit：0 デスクトップと同じ，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白、nit：0 デスクトップと同じ，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480",
+ "Field of view": "視野角",
+ "%d (game)": "%d (ゲーム)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "縦の視野角 (度)。ゲームのカメラは 43 です。すべてのカメラが同じだけ広がります。ゲームの再起動後に反映されます。",
+ "Mute in the background": "バックグラウンドで消音",
+ "The game is silent while its window is not the active one.": "ゲームのウィンドウがアクティブでない間は音を出しません。",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "ゲームが画面に表示するボタンです。自動では、プレイ中の入力に合わせます。キーボードとマウスの間は下で割り当てたキー、コントローラーの間はそのボタン (PlayStation、Xbox、Switch) を表示し、持ち替えると切り替わります。ここでの変更は再起動後に反映されます。"
 }

@@ -90,7 +90,6 @@
  "Button icons": "按键图标",
  "Automatic": "自动",
  "Keyboard and mouse": "键盘和鼠标",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "游戏在屏幕上显示的按键。“键盘和鼠标”显示下方绑定的按键。“自动”按启动时连接的手柄决定（Xbox 及其他手柄显示 Xbox 图标，PlayStation 手柄显示 PlayStation 图标，无手柄则显示你的按键）。重启后生效。",
  "Mouse camera": "鼠标控制镜头",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "游戏窗口获得焦点时，鼠标转动镜头；鼠标按键和滚轮可在下方绑定。Insert 或 Alt+Tab 释放鼠标。",
  "Mouse sensitivity": "鼠标灵敏度",
@@ -350,5 +349,11 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "显示器的峰值亮度。自动：显示器报告的峰值（Windows HDR 校准会改变它）。",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "画面和界面中白色的亮度（纸白）。自动：与桌面一样亮（Windows 的 SDR 内容亮度），暗室中调低。",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "尼特：0 显示器自身，1-2 400，3 600，4 800，5-6 1000，7 1500，8-9 2000，10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白色，尼特：0 与桌面相同，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白色，尼特：0 与桌面相同，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480",
+ "Field of view": "视野",
+ "%d (game)": "%d (游戏)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "垂直视野角度；游戏的镜头为 43。所有镜头按相同幅度放宽。重启游戏后生效。",
+ "Mute in the background": "后台时静音",
+ "The game is silent while its window is not the active one.": "游戏窗口不是当前窗口时，游戏不发出声音。",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "游戏在屏幕上显示的按键。自动会跟随你正在使用的设备：使用键盘和鼠标时显示下方绑定的按键，使用手柄时显示手柄自己的按键（PlayStation、Xbox 或 Switch），切换设备时随之切换。此处的更改在重启后生效。"
 }

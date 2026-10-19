@@ -3,9 +3,44 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 
 namespace VideoCore {
+
+/// bbport: where VRAM pressure goes on discrete GPUs.
+///  - Reserve (default, Supermedo 5f65e2d): textures stay in VRAM; the buffer cache keeps a
+///    reserve of VRAM (ArenaReserveBytes) for the game's memory, which only fits in VRAM on
+///    NVIDIA. Moving textures to system memory near the limit (System) cost FPS after every
+///    death or area load on 4-8 GB cards (10-25 FPS until a restart): they never came back.
+///  - System (#187, krolebord's 6 GB device lost 2026-10-17): new textures go to system memory
+///    when VRAM is within its reserve of the driver's budget, and VMA counts the driver's usage.
+enum class VramPlacement { Reserve, System };
+
+/// BB_VRAM_PLACEMENT (when set and not empty) over bbport.ini's vram_placement: "system" picks
+/// System, anything else Reserve.
+inline VramPlacement VramPlacementFrom(const char* env, const std::optional<std::string>& ini) {
+    const std::string_view value = env && *env ? std::string_view{env}
+                                   : ini       ? std::string_view{*ini}
+                                               : std::string_view{};
+    return value == "system" ? VramPlacement::System : VramPlacement::Reserve;
+}
+
+/// This run's placement (BB_VRAM_PLACEMENT, bbport.ini vram_placement), decided once (image.cpp).
+VramPlacement ActiveVramPlacement();
+
+/// The VRAM the buffer cache keeps for the game's memory at start (VramPlacement::Reserve):
+/// 512 MiB, or an eighth of a smaller heap, in whole blocks; none on integrated GPUs.
+constexpr std::uint64_t ArenaReserveBytes(bool discrete, std::uint64_t heap_size,
+                                          std::uint64_t block_size) {
+    if (!discrete || block_size == 0) {
+        return 0;
+    }
+    const std::uint64_t size = std::min<std::uint64_t>(512ull << 20, heap_size / 8);
+    return size / block_size * block_size;
+}
 
 /// bbport: one memory heap as the driver reports it (VK_EXT_memory_budget).
 struct HeapUse {

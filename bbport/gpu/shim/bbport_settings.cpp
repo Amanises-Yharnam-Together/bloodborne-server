@@ -98,6 +98,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
+    } else if (key == "mute_unfocused") {
+        v.mute_unfocused = i != 0;
+    } else if (key == "fov") {
+        v.fov = std::clamp(i, FovMin, FovMax);
     } else if (key == "compass") {
         v.compass = i != 0;
     } else if (key == "map_3d") {
@@ -345,6 +349,7 @@ void Load() {
         v.startup_effects[e] = v.effects[e];
     }
     v.startup_model_lod = v.model_lod;
+    v.startup_fov = v.fov;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
     if (v.menu_language_auto) {
@@ -523,6 +528,9 @@ void Save() {
     put("reactive_max", fixed(v.reactive_max, 2));
     put("debug_view", std::to_string(v.debug_view.load()));
     put("show_fps", flag(v.show_fps));
+    put("mute_unfocused", flag(v.mute_unfocused));
+    // Read by run.py at start (fov.py).
+    put("fov", std::to_string(std::clamp(v.fov.load(), FovMin, FovMax)));
     put("compass", flag(v.compass));
     put("compass_position",
         CompassPositionNames[std::clamp(v.compass_position.load(), 0, CompassPositionCount - 1)]);

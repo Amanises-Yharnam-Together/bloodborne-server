@@ -224,6 +224,8 @@ def main():
     # menu, where the icon style may have changed, decide here: the launcher's choice is taken out of the
     # environment the game inherits, so its restart decides again. BB_ICONS=0: none (the rig).
     icons_dir, icons_note = env.pop('BB_ICONS_DIR', None), env.pop('BB_ICONS_NOTE', None)
+    prompt_sets = env.pop('BB_PROMPT_SETS', None) if icons_dir is not None or icons_note is not None else None
+    env.pop('BB_PROMPT_SETS', None)
     if icons_dir is None and icons_note is None and env.get('BB_ICONS', '1') != '0':
         sys.path.insert(0, str(PORT / 'scripts'))
         try:
@@ -238,7 +240,26 @@ def main():
                                                env.get('BB_MODS_ENABLED', '1'), env.get('BB_GAMEPAD', ''),
                                                lambda: button_icons.list_gamepads(tool))
         icons_dir, icons_note = decided.get('BB_ICONS_DIR'), decided.get('BB_ICONS_NOTE')
+        prompt_sets = decided.get('BB_PROMPT_SETS')
+    # button_icons=auto: the icons the port swaps in while the game runs (gpu/shim/bbport_prompts.cpp).
+    if prompt_sets:
+        env['BB_PROMPT_SETS'] = prompt_sets
     icons = ['--icons-layer', icons_dir] if icons_dir else []
+    # Field of view (bbport.ini fov, degrees; 43 is the game's): the camera table with every camera's field of
+    # view scaled, a layer under the icons and the mods. fov.py keeps it between starts while the setting and the
+    # game file are the same. From Supermedo's bbport (b75e811).
+    fov_layer = out / 'fov'
+    fov = ini_value(config, 'fov')
+    if fov and fov.isdigit() and int(fov) != 43:
+        made = run_script('fov.py', game, '--out', fov_layer, '--fov', fov, capture=True, optional=True)
+        if made is None:
+            shutil.rmtree(fov_layer, ignore_errors=True)
+            print('Field of view: its camera table could not be written; the game keeps its own')
+        else:
+            print(made.strip())
+            icons += ['--layer', fov_layer]
+    else:
+        shutil.rmtree(fov_layer, ignore_errors=True)
     if icons_note:
         print(icons_note)
     # The icon set the overlay's button glyphs follow (party death's prompts): the one the game's own glyphs show.

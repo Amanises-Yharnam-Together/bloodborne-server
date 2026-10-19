@@ -90,7 +90,6 @@
  "Button icons": "Knoppictogrammen",
  "Automatic": "Automatisch",
  "Keyboard and mouse": "Toetsenbord en muis",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "De knoppen die de game op het scherm toont. Toetsenbord en muis toont de hieronder toegewezen toetsen. Automatisch volgt de controller die bij de start is aangesloten (Xbox-pictogrammen voor een Xbox- of andere controller, PlayStation-pictogrammen voor een PlayStation-controller, je toetsen zonder controller). Na een herstart.",
  "Mouse camera": "Muiscamera",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "De muis draait de camera zolang het gamevenster focus heeft; de knoppen en het wiel kun je hieronder toewijzen. Insert of Alt+Tab laat de muis los.",
  "Mouse sensitivity": "Muisgevoeligheid",
@@ -350,5 +349,11 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "De piekhelderheid van je scherm. Auto: de piek die het scherm doorgeeft (Windows HDR-kalibratie verandert die).",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Helderheid van wit in het beeld en de interface (paper white). Auto: zo helder als het bureaublad (helderheid van SDR-inhoud in Windows); lager in een donkere kamer.",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nits: 0 die van het scherm, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Wit, nits: 0 als het bureaublad, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Wit, nits: 0 als het bureaublad, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480",
+ "Field of view": "Gezichtsveld",
+ "%d (game)": "%d (spel)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Verticaal gezichtsveld in graden; de camera van het spel heeft 43. Elke camera wordt evenveel verbreed. Geldt na het herstarten van het spel.",
+ "Mute in the background": "Geluid uit op de achtergrond",
+ "The game is silent while its window is not the active one.": "Het spel is stil zolang het venster niet het actieve is.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "De knoppen die het spel op het scherm toont. Automatisch volgt waarmee je speelt: de hieronder toegewezen toetsen zolang je toetsenbord en muis gebruikt, de knoppen van de controller (PlayStation, Xbox of Switch) zolang je er een gebruikt, en wisselt mee. Een wijziging hier geldt na een herstart."
 }

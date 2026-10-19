@@ -413,6 +413,10 @@ extern "C" int bbgpu_overlay_captures_input(void) {
     return BbOverlay::CapturesInput() ? 1 : 0;
 }
 
+extern "C" int bbgpu_audio_muted(void) {
+    return g_window && BbSettings::Get().mute_unfocused && !g_window->IsFocused() ? 1 : 0;
+}
+
 extern "C" void bbgpu_mouse_set_direct(void (*turn)(float dx, float dy), void (*drop)(void)) {
     Frontend::WindowSDL::mouse_drop.store(drop, std::memory_order_release);
     Frontend::WindowSDL::mouse_turn.store(turn, std::memory_order_release);

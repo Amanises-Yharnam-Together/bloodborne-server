@@ -90,7 +90,6 @@
  "Button icons": "Tastensymbole",
  "Automatic": "Automatisch",
  "Keyboard and mouse": "Tastatur und Maus",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "Die Tasten, die das Spiel auf dem Bildschirm zeigt. Tastatur und Maus zeigt die unten belegten Tasten. Automatisch folgt dem beim Start verbundenen Controller (Xbox-Symbole für Xbox- oder andere Controller, PlayStation-Symbole für PlayStation-Controller, ohne Controller die eigenen Tasten). Gilt nach einem Neustart.",
  "Mouse camera": "Mauskamera",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "Die Maus dreht die Kamera, solange das Spielfenster im Fokus ist; ihre Tasten und das Mausrad lassen sich unten belegen. Insert oder Alt+Tab gibt die Maus frei.",
  "Mouse sensitivity": "Mausempfindlichkeit",
@@ -350,5 +349,11 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "Spitzenhelligkeit des Bildschirms. Auto: die Spitze, die der Bildschirm meldet (die Windows-HDR-Kalibrierung ändert sie).",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Helligkeit von Weiß in Bild und Oberfläche (Paper White). Auto: so hell wie der Desktop (Windows-Helligkeit für SDR-Inhalte); in dunklen Räumen niedriger.",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nits: 0 die des Bildschirms, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Weiß, Nits: 0 wie der Desktop, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Weiß, Nits: 0 wie der Desktop, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480",
+ "Field of view": "Sichtfeld",
+ "%d (game)": "%d (Spiel)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Vertikales Sichtfeld in Grad; die Kamera des Spiels hat 43. Jede Kamera wird um denselben Betrag erweitert. Gilt nach einem Neustart des Spiels.",
+ "Mute in the background": "Im Hintergrund stumm",
+ "The game is silent while its window is not the active one.": "Das Spiel ist still, solange sein Fenster nicht das aktive ist.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Die Tasten, die das Spiel auf dem Bildschirm zeigt. Automatisch folgt dem, womit du spielst: den unten belegten Tasten, solange du Tastatur und Maus benutzt, den Tasten des Controllers (PlayStation, Xbox oder Switch), solange du einen benutzt, und wechselt mit. Eine Änderung hier gilt nach einem Neustart."
 }

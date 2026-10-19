@@ -1,6 +1,7 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
 #include <cctype>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -10,6 +11,7 @@
 #include "common/logging/log.h"
 #include "sdl_window.h"
 #include "bbport_overlay.h"
+#include "bbport_prompts.h"
 #include "bbport_settings.h"
 
 namespace Frontend {
@@ -244,6 +246,7 @@ bool WindowSDL::TakeMouse(float& dx, float& dy, float& wheel, u32& buttons) {
 // when the mouse is let go.
 void WindowSDL::UpdateMouseCapture() {
     const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    input_focused.store(focused, std::memory_order_relaxed);
     const bool want = mouse_enabled.load(std::memory_order_relaxed) && focused && !text_active &&
                       !BbOverlay::CapturesInput();
     if (want != SDL_GetWindowRelativeMouseMode(window)) {
@@ -262,6 +265,51 @@ void WindowSDL::UpdateMouseCapture() {
     }
 }
 
+namespace {
+
+/// The set of icons a controller's buttons are named by.
+BbPromptSets::Set PadSet(SDL_JoystickID id) {
+    static_assert(SDL_GAMEPAD_TYPE_PS3 == 4 && SDL_GAMEPAD_TYPE_PS5 == 6 &&
+                      SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO == 7 &&
+                      SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR == 10,
+                  "BbPromptSets::ForGamepadType follows SDL_GamepadType");
+    return BbPromptSets::ForGamepadType(int(SDL_GetGamepadTypeForID(id)));
+}
+
+void NotePromptDevice(const SDL_Event& event) {
+    switch (event.type) {
+    case SDL_EVENT_KEY_DOWN:
+        if (!event.key.repeat) {
+            BbPrompts::OnInput(BbPromptSets::Keyboard);
+        }
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_WHEEL:
+        BbPrompts::OnInput(BbPromptSets::Keyboard);
+        break;
+    case SDL_EVENT_MOUSE_MOTION:
+        if (std::abs(event.motion.xrel) + std::abs(event.motion.yrel) >= 3.0f) {
+            BbPrompts::OnInput(BbPromptSets::Keyboard);
+        }
+        break;
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        BbPrompts::OnInput(PadSet(event.gbutton.which));
+        break;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+        if (std::abs(int(event.gaxis.value)) > 16384) {
+            BbPrompts::OnInput(PadSet(event.gaxis.which));
+        }
+        break;
+    case SDL_EVENT_GAMEPAD_ADDED:
+        BbPrompts::OnControllerConnected(PadSet(event.gdevice.which));
+        break;
+    default:
+        break;
+    }
+}
+
+} // namespace
+
 bool WindowSDL::PollEvents() {
     {
         std::scoped_lock lock{text_mutex};
@@ -276,10 +324,16 @@ bool WindowSDL::PollEvents() {
         BbOverlay::UpdateTextInput(window);
     }
     BbOverlay::Tick();
+    BbPrompts::Apply(); // button_icons=auto: the icons of the device used last
     BbOverlay::TestTick();
     UpdateMouseCapture();
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        // button_icons=auto: the icons follow the device used last: a key, a click, the wheel or a
+        // real mouse movement, or a controller button or a stick or trigger pushed past half.
+        if (BbPrompts::Active()) {
+            NotePromptDevice(event);
+        }
         if (event.type == SDL_EVENT_MOUSE_MOTION) {
             last_mouse_motion_ms = SDL_GetTicks();
         }

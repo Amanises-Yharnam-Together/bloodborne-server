@@ -411,7 +411,8 @@ KINDS = {'KG_Cancel': 'disc', 'KG_OK': 'disc', 'KG_R_L': 'disc', 'KG_R_U': 'disc
          'KG_LS': 'disc', 'KG_RS': 'disc', 'KG_L1': 'key', 'KG_L2': 'key', 'KG_R1': 'key', 'KG_R2': 'key',
          'KG_Start': 'pill', 'KG_TP_L': 'touch', 'KG_TP_R': 'touch', 'KG_L_U': 'dpad', 'KG_L_D': 'dpad',
          'KG_L_LR': 'dpad', 'KG_L_UD': 'dpad', 'KG_L_UDLR': 'dpad'}
-ICON_SETS = ('playstation', 'xbox', 'keyboard')
+ICON_SETS = ('playstation', 'xbox', 'keyboard', 'switch')
+PAD_SETS = ('xbox', 'switch')  # drawn from the pad bindings, as discs
 MODIFIERS = ('Shift', 'Ctrl', 'Alt')
 
 Plan = namedtuple('Plan', 'kind tokens names')
@@ -467,12 +468,12 @@ def plan(icon_set, ini):
     and the bbport.ini values (key.<input>, pad.<input>, mouse_camera). A token is ('key', modifiers, key),
     ('pad', SDL button), ('stick', side) or ('mouse',). An input with nothing bound shows its default binding, or
     on the Xbox side the View button for a touchpad half, or a dash: no glyph is blank."""
-    if icon_set not in ('xbox', 'keyboard'):
+    if icon_set not in ('xbox', 'keyboard', 'switch'):
         raise IconError(f'no icons are drawn for {icon_set}')
     ini = ini or {}
     plans = {}
     for texture, names in SHAPES.items():
-        if icon_set == 'xbox':
+        if icon_set in PAD_SETS:
             if texture in ('KG_LS', 'KG_RS'):
                 tokens = [('stick', 'left' if texture == 'KG_LS' else 'right')]
             else:
@@ -513,6 +514,27 @@ XBOX_LEGENDS = {'leftshoulder': 'LB', 'rightshoulder': 'RB', 'lefttrigger': 'LT'
                 'leftstick': 'LS', 'rightstick': 'RS', 'guide': 'Gd', 'touchpad': 'TP', 'misc1': 'M1',
                 'paddle1': 'P1', 'paddle2': 'P2', 'paddle3': 'P3', 'paddle4': 'P4'}
 PAD_ARROWS = {'dpup': 'up', 'dpdown': 'down', 'dpleft': 'left', 'dpright': 'right'}
+# Switch buttons (a Pro Controller or Joy-Cons) by place: SDL names the bottom face button 'a', which Nintendo
+# labels B; the face letters are white, as on the pad. From Supermedo's bbport (c804508).
+SWITCH_FACE = {'a': 'B', 'b': 'A', 'x': 'Y', 'y': 'X'}
+SWITCH_LEGENDS = {'leftshoulder': 'L', 'rightshoulder': 'R', 'lefttrigger': 'ZL', 'righttrigger': 'ZR',
+                  'leftstick': 'LS', 'rightstick': 'RS', 'start': '+', 'back': '-', 'guide': 'Hm',
+                  'misc1': 'Cp'}
+
+
+def pad_legend(icon_set, button):
+    """(text, colour or None) of a pad button in a set ('xbox' or 'switch'); None for a drawn symbol."""
+    if icon_set == 'switch':
+        if button in SWITCH_FACE:
+            return SWITCH_FACE[button], None
+        if button in SWITCH_LEGENDS:
+            return SWITCH_LEGENDS[button], None
+        return XBOX_LEGENDS.get(button) or legend_for(button), None
+    if button in XBOX_FACE:
+        return XBOX_FACE[button]
+    if button in ('start', 'back') or button in PAD_ARROWS:
+        return None, None
+    return XBOX_LEGENDS.get(button) or legend_for(button), None
 
 # --- drawing -------------------------------------------------------------------------------------------
 # Everything is drawn 8 times larger and reduced, which anti-aliases the shapes; coordinates are in pixels
@@ -643,7 +665,7 @@ def draw_mouse(image, draw, box, lit=None):
 def draw_cap(draw, box, kind, set_name):
     """The container of a glyph: a disc (Xbox), a key cap (keyboard) or a rounded key, in the dark of the game's art."""
     x0, y0, x1, y1 = box
-    if kind == 'disc' and set_name == 'xbox':
+    if kind == 'disc' and set_name in PAD_SETS:
         draw.ellipse(scaled(box), fill=DARK, outline=EDGE, width=SS)
     elif kind == 'pill':
         draw.rounded_rectangle(scaled(box), radius=(x1 - x0) / 2 * SS, fill=DARK, outline=EDGE, width=SS)
@@ -657,7 +679,7 @@ def draw_cap(draw, box, kind, set_name):
 
 def inner_box(kind, set_name):
     x0, y0, x1, y1 = BOXES[kind]
-    if kind == 'disc' and set_name == 'xbox':
+    if kind == 'disc' and set_name in PAD_SETS:
         return x0 + 4.5, y0 + 4.5, x1 - 4.5, y1 - 4.5
     if kind == 'pill':
         return x0 + 2, y0 + 5, x1 - 2, y1 - 5
@@ -695,9 +717,12 @@ def draw_key(image, draw, token, box):
 MODIFIER_NAMES = {'Shift': 'Left Shift', 'Ctrl': 'Left Ctrl', 'Alt': 'Left Alt'}
 
 
-def draw_pad(draw, button, box):
-    """An Xbox button inside box."""
-    if button in XBOX_FACE:
+def draw_pad(draw, button, box, icon_set='xbox'):
+    """An Xbox or Switch button inside box."""
+    if icon_set == 'switch' and button not in PAD_ARROWS:
+        text, _color = pad_legend('switch', button)
+        put_text(draw, text, box, INK, top=17 if button in SWITCH_FACE else 12.0)
+    elif button in XBOX_FACE:
         text, color = XBOX_FACE[button]
         put_text(draw, text, box, color + (255,), top=17)
     elif button == 'start':  # Menu: three bars
@@ -797,7 +822,7 @@ def render_glyph(icon_set, glyph):
     if icon_set == 'keyboard' and kind == 'pill':  # a key cap across the whole width, its legend written level
         kind = 'key'
     if kind == 'dpad':
-        if icon_set == 'xbox':
+        if icon_set in PAD_SETS:
             draw_dpad(draw, set(glyph.names))
         elif len(tokens) == 4:
             for token, box in zip(tokens, key_caps('KG_L_UDLR', 4)):
@@ -828,7 +853,7 @@ def render_glyph(icon_set, glyph):
                 if token[1] in ('leftstick', 'rightstick'):
                     draw_click(draw, XBOX_LEGENDS[token[1]], inner)
                 else:
-                    draw_pad(draw, token[1], inner)
+                    draw_pad(draw, token[1], inner, icon_set)
     return image.resize((32, 32), Image.LANCZOS)
 
 
@@ -961,6 +986,94 @@ def generate(source, destination, icon_set, ini):
         handle.write(dcx_pack(bytes(patched)))
     os.replace(temporary, destination)
     return Generated(digest, sum(1 for _name, _rect, done in report if not done))
+
+
+# --- the prompt sets (button_icons=auto) -----------------------------------------------------------------
+# The icons follow the device in use while the game runs: the port finds the game's glyphs and atlas buttons in
+# guest memory as they are uploaded and writes the set of the device last used over them (gpu/shim/
+# bbport_prompts.cpp). This file holds, per texture area, where its 16-byte BC7 blocks are and their bytes in
+# every set. Format (little endian): b'BBPRMPT1', u32 set count, u32 entry count; per set a u8 length and its
+# name; per entry a u8 length and its name, u32 width, height (the texture's), piece count, the pieces' byte
+# offsets in the texture, then per set the pieces' 16 bytes each.
+PROMPT_SETS = ('playstation', 'xbox', 'keyboard', 'switch')
+
+
+def tiled_block_offset(bx, by, bw):
+    """The byte offset of block (bx, by) in a PS4 tiled BC7 texture bw blocks wide (tile_blocks' layout)."""
+    k = MORTON_8X8.index((bx % 8, by % 8))
+    return (((by // 8) * (bw // 8) + bx // 8) * 64 + k) * 16
+
+
+def prompt_sets(tpf, ini):
+    """The prompt sets file for the game's common TPF and the bbport.ini values."""
+    found = check_layout(tpf)
+    sets = {'playstation': bytes(tpf)}
+    for icon_set in PROMPT_SETS[1:]:
+        glyphs = build_glyphs(icon_set, ini)
+        patched = bytearray(patch_glyphs(tpf, glyphs))
+        patch_atlases(patched, glyphs)
+        sets[icon_set] = bytes(patched)
+    entries = []
+    for name in GLYPH_NAMES:
+        texture = found[name]
+        entries.append((name, 32, 32, texture.offset, list(range(0, GLYPH_BYTES, 16))))
+    by_name = {texture.name: texture for texture in parse_tpf(bytes(tpf))}
+    for atlas, rects in ATLAS_ICONS.items():
+        texture = by_name.get(atlas)
+        if texture is None or texture.dxgi != DXGI_BC7 or texture.width % GLYPH_SIZE or texture.height % GLYPH_SIZE:
+            continue
+        bw = texture.width // 4
+        for rect, _box, glyph in rects:
+            if rect[2] > texture.width or rect[3] > texture.height:
+                continue
+            offsets = [tiled_block_offset(bx, by, bw) for by in range(rect[1] // 4, rect[3] // 4)
+                       for bx in range(rect[0] // 4, rect[2] // 4)]
+            entries.append((f'{atlas}:{glyph}', texture.width, texture.height, texture.offset, offsets))
+    out = bytearray(b'BBPRMPT1' + struct.pack('<II', len(PROMPT_SETS), len(entries)))
+    for icon_set in PROMPT_SETS:
+        out += bytes([len(icon_set)]) + icon_set.encode()
+    for name, width, height, base, offsets in entries:
+        out += bytes([len(name)]) + name.encode() + struct.pack(f'<III{len(offsets)}I', width, height, len(offsets),
+                                                                 *offsets)
+        for icon_set in PROMPT_SETS:
+            data = sets[icon_set]
+            out += b''.join(data[base + o:base + o + 16] for o in offsets)
+    return bytes(out)
+
+
+def ensure_prompt_sets(game_dir, out_dir, ini):
+    """(path, built): out_dir/icons/prompts-<key>.bin for the game's common.tpf.dcx and the bindings in ini, made
+    once per source and bindings (built False when reused). IconError says why the game's file cannot be used."""
+    import hashlib
+    import os
+    from pathlib import Path
+    source = Path(game_dir) / COMMON_TPF
+    if not source.is_file():
+        raise IconError(f'{COMMON_TPF} is not in the game folder')
+    digest = source_hash(source)
+    shown = repr([(s, [(n, g.tokens) for n, g in plan(s, ini).items()]) for s in PROMPT_SETS[1:]])
+    key = hashlib.sha256(f'{ICONS_VERSION}|{digest}|prompts|{shown}'.encode()).hexdigest()[:16]
+    root = Path(out_dir) / 'icons'
+    target = root / f'prompts-{key}.bin'
+    if target.is_file():
+        os.utime(target)
+        return target, False
+    try:
+        with open(source, 'rb') as handle:
+            tpf = dcx_unpack(handle.read())
+        data = prompt_sets(tpf, ini)
+    except IconError:
+        raise
+    except Exception as error:
+        raise IconError(f'could not make the prompt sets ({type(error).__name__}: {error})') from None
+    root.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix('.tmp')
+    temporary.write_bytes(data)
+    os.replace(temporary, target)
+    old = sorted(root.glob('prompts-*.bin'), key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in old[KEEP_CACHED:]:
+        stale.unlink(missing_ok=True)
+    return target, True
 
 
 # --- the cache -------------------------------------------------------------------------------------------

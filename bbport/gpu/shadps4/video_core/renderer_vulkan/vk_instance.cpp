@@ -19,6 +19,7 @@
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_fsr4vk.h"
 #include "video_core/renderer_vulkan/vk_xess.h"
+#include "video_core/texture_cache/vram_placement.h"
 
 #include <vk_mem_alloc.h>
 
@@ -994,7 +995,10 @@ void Instance::CreateAllocator() {
     // 6 GB card the process held 5.8 GB of a 5.1 GB budget and images still went to VRAM, until
     // the GPU stopped (krolebord 2026-10-17; Supermedo's bbport acfe3a8).
     VmaAllocatorCreateFlags allocator_flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
-    if (supports_memory_budget) {
+    // Only with VRAM placement "system": with the driver's usage, images made WITHIN_BUDGET
+    // near the limit also land in system memory (the reserve placement keeps them in VRAM).
+    if (supports_memory_budget &&
+        VideoCore::ActiveVramPlacement() == VideoCore::VramPlacement::System) {
         allocator_flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
     }
     const VmaAllocatorCreateInfo allocator_info = {

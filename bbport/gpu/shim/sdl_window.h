@@ -28,6 +28,8 @@ public:
     SDL_Window* GetSDLWindow() const { return window; }
     WindowSystemInfo GetWindowInfo() const { return window_info; }
     bool IsOpen() const { return is_open.load(std::memory_order_relaxed); }
+    /// Any thread: whether the window had keyboard focus at the last event poll (mute_unfocused).
+    bool IsFocused() const { return input_focused.load(std::memory_order_relaxed); }
     /// Processes pending window events. Returns false once the user closed the window.
     bool PollEvents();
     /// Keyboard text entry for the system IME dialog; typed text shows in the title bar.
@@ -50,6 +52,7 @@ public:
 
 private:
     std::atomic<bool> mouse_enabled{false}, mouse_captured{false};
+    std::atomic<bool> input_focused{true};
     std::mutex mouse_mutex;
     float mouse_dx{}, mouse_dy{}, mouse_wheel{};
     u32 mouse_held{}, mouse_clicked{}; ///< clicked: pressed since the last TakeMouse

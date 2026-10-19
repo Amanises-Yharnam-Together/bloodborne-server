@@ -90,7 +90,6 @@
  "Button icons": "Ikony przycisków",
  "Automatic": "Automatyczne",
  "Keyboard and mouse": "Klawiatura i mysz",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "Przyciski pokazywane przez grę na ekranie. Klawiatura i mysz pokazuje klawisze przypisane poniżej. Automatyczne wybiera według kontrolera podłączonego przy starcie (ikony Xbox dla Xboksa lub innego kontrolera, PlayStation dla kontrolera PlayStation, twoje klawisze bez kontrolera). Działa po restarcie.",
  "Mouse camera": "Kamera myszą",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "Mysz obraca kamerę, gdy okno gry jest aktywne; jej przyciski i kółko można przypisać poniżej. Insert lub Alt+Tab zwalnia mysz.",
  "Mouse sensitivity": "Czułość myszy",
@@ -350,5 +349,11 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "Szczytowa jasność ekranu. Auto: szczyt podawany przez ekran (zmienia go Kalibracja HDR w Windows).",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Jasność bieli w obrazie i interfejsie (biel papieru). Auto: tak jasno jak pulpit (jasność zawartości SDR w Windows); mniej w ciemnym pokoju.",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nity: 0 jak podaje ekran, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Biel, nity: 0 jak pulpit, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Biel, nity: 0 jak pulpit, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480",
+ "Field of view": "Pole widzenia",
+ "%d (game)": "%d (gra)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Pionowe pole widzenia w stopniach; kamera gry ma 43. Każda kamera jest poszerzana o tyle samo. Działa po ponownym uruchomieniu gry.",
+ "Mute in the background": "Wycisz w tle",
+ "The game is silent while its window is not the active one.": "Gra milczy, dopóki jej okno nie jest aktywne.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Przyciski, które gra pokazuje na ekranie. Automatycznie podąża za tym, czym grasz: klawisze przypisane poniżej, gdy używasz klawiatury i myszy, przyciski kontrolera (PlayStation, Xbox lub Switch), gdy używasz kontrolera, i zmienia się na bieżąco. Zmiana tutaj działa po ponownym uruchomieniu."
 }

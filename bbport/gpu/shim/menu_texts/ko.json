@@ -90,7 +90,6 @@
  "Button icons": "버튼 아이콘",
  "Automatic": "자동",
  "Keyboard and mouse": "키보드와 마우스",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "게임이 화면에 표시하는 버튼. '키보드와 마우스'는 아래에서 지정한 키를 표시합니다. '자동'은 시작 시 연결된 컨트롤러를 따릅니다(Xbox 및 기타 컨트롤러는 Xbox 아이콘, PlayStation 컨트롤러는 PlayStation 아이콘, 없으면 사용자의 키). 재시작 후 적용.",
  "Mouse camera": "마우스 카메라",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "게임 창이 포커스된 동안 마우스로 카메라를 돌립니다. 버튼과 휠은 아래에서 지정할 수 있습니다. Insert 또는 Alt+Tab으로 마우스를 해제합니다.",
  "Mouse sensitivity": "마우스 감도",
@@ -350,5 +349,11 @@
  "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "디스플레이의 최대 밝기. 자동: 디스플레이가 알려 주는 최대값(Windows HDR 보정으로 바뀜).",
  "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "화면과 인터페이스의 흰색 밝기(페이퍼 화이트). 자동: 바탕 화면과 같은 밝기(Windows의 SDR 콘텐츠 밝기), 어두운 방에서는 낮추세요.",
  "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "니트: 0 디스플레이 값, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
- "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "흰색, 니트: 0 바탕 화면과 같게, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "흰색, 니트: 0 바탕 화면과 같게, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480",
+ "Field of view": "시야각",
+ "%d (game)": "%d (게임)",
+ "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "세로 시야각(도)입니다. 게임 카메라는 43입니다. 모든 카메라가 같은 만큼 넓어집니다. 게임을 다시 시작하면 적용됩니다.",
+ "Mute in the background": "백그라운드에서 음소거",
+ "The game is silent while its window is not the active one.": "게임 창이 활성 창이 아닌 동안 소리가 나지 않습니다.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "게임이 화면에 표시하는 버튼입니다. 자동은 지금 사용하는 장치를 따릅니다. 키보드와 마우스를 쓰는 동안에는 아래에서 지정한 키를, 컨트롤러를 쓰는 동안에는 그 버튼(PlayStation, Xbox, Switch)을 보여 주며, 바꾸면 바로 바뀝니다. 여기서 바꾼 설정은 다시 시작한 뒤 적용됩니다."
 }

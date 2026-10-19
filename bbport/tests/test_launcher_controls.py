@@ -583,10 +583,13 @@ class ButtonIconLaunchTests(unittest.TestCase):
         self.settings = {**launcher.APP_DEFAULTS, 'game_dir': str(self.game), 'mods_dir': str(self.root / 'mods')}
         self.pads = []
         self.ensure = mock.Mock(return_value=(self.layer, True, 0))
+        self.prompt_file = self.root / 'out/icons/prompts-1.bin'
+        self.prompts = mock.Mock(return_value=(self.prompt_file, True))
         self.real_ensure = self.icons.ensure_layer
         for patch in (mock.patch.object(launcher, 'DATA_DIR', self.root),
                       mock.patch.object(launcher, 'list_gamepads', lambda: self.pads),
-                      mock.patch.object(self.icons, 'ensure_layer', self.ensure)):
+                      mock.patch.object(self.icons, 'ensure_layer', self.ensure),
+                      mock.patch.object(self.icons, 'ensure_prompt_sets', self.prompts)):
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -598,26 +601,16 @@ class ButtonIconLaunchTests(unittest.TestCase):
         folder.mkdir(parents=True)
         (folder / 'common.tpf.dcx').write_bytes(b'mine')
 
-    def test_automatic_with_no_pad_draws_the_keyboard_and_mouse(self):
-        env = self.environment()
-        self.assertEqual(env['BB_ICONS_DIR'], str(self.layer))
-        self.assertEqual(self.ensure.call_args.args[2], 'keyboard')
-        self.assertEqual(self.ensure.call_args.args[0], self.game)
-        self.assertEqual(self.ensure.call_args.args[1], self.root / 'out')
-
-    def test_automatic_follows_the_connected_pad(self):
-        self.pads = [self.XBOX]
-        self.environment()
-        self.assertEqual(self.ensure.call_args.args[2], 'xbox')
-        self.pads = [self.DS4]
-        self.ensure.reset_mock()
-        self.assertNotIn('BB_ICONS_DIR', self.environment())
+    def test_automatic_hands_the_prompt_sets_to_the_game_with_no_layer(self):
+        # The icons follow the device in use while the game runs (bbport_prompts.cpp), any pad connected or none.
+        for pads in ([], [self.XBOX], [self.DS4]):
+            self.pads = pads
+            env = self.environment()
+            self.assertEqual(env['BB_PROMPT_SETS'], str(self.prompt_file))
+            self.assertNotIn('BB_ICONS_DIR', env)
         self.ensure.assert_not_called()
-
-    def test_automatic_uses_the_controller_the_player_chose(self):
-        self.pads = [self.DS4, self.XBOX]
-        self.environment(gamepad=self.XBOX[0])
-        self.assertEqual(self.ensure.call_args.args[2], 'xbox')
+        self.assertEqual(self.prompts.call_args.args[0], self.game)
+        self.assertEqual(self.prompts.call_args.args[1], self.root / 'out')
 
     def test_playstation_adds_no_layer_and_does_not_ask_the_pads(self):
         with mock.patch.object(launcher, 'list_gamepads', side_effect=AssertionError('asked')):
@@ -678,18 +671,18 @@ class ButtonIconLaunchTests(unittest.TestCase):
         (self.game / 'dvdroot_ps4/menu/common.tpf.dcx').unlink()
         self.assertEqual(self.environment('xbox'), {})
 
-    def test_the_game_environment_carries_the_layer_to_run_py(self):
+    def test_the_game_environment_carries_the_prompt_sets_to_run_py(self):
         self.pads = [self.XBOX]
-        with mock.patch.dict(launcher.os.environ):
+        with mock.patch.dict(launcher.os.environ, {'BB_PROMPT_SETS': 'old.bin'}):
             env = launcher.game_environment(self.settings)
-        self.assertEqual(env['BB_ICONS_DIR'], str(self.layer))
+        self.assertEqual(env['BB_PROMPT_SETS'], str(self.prompt_file))
 
     def test_run_py_passes_the_layer_to_the_mods_script(self):
         source = (ROOT / 'run.py').read_text(encoding='utf-8')
         self.assertIn("['--icons-layer', icons_dir]", source)
 
     def test_the_dropdown_texts_are_translated_everywhere(self):
-        texts = ['Button icons', 'Keyboard and mouse', 'Xbox', 'Automatic (from the controller)',
+        texts = ['Button icons', 'Keyboard and mouse', 'Xbox', 'Automatic (follows the controller or keyboard in use)',
                  'PlayStation (as in the game)']
         for _value, (english, *_russian) in controls.ICON_CHOICES:
             self.assertIn(english, bbport_lang.KEYS)
