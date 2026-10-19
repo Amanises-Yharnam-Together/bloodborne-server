@@ -2276,7 +2276,10 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
         .srcAccessMask = vk::AccessFlagBits2::eNone,
         .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+        // The guest render pass uses LOAD, even for a full-screen display copy: its attachment
+        // load waits for this layout transition too (deadinside28 0.6).
+        .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentRead |
+                         vk::AccessFlagBits2::eColorAttachmentWrite,
         .oldLayout = vk::ImageLayout::eUndefined,
         .newLayout = vk::ImageLayout::eGeneral,
         .image = vk::Image(display.image),
